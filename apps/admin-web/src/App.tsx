@@ -140,8 +140,35 @@ export function getDisplayBranch(branchId?: string, group?: string): string {
 }
 
 export function App() {
-  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
-  const [activeTab, setActiveTab] = useState<string>('dashboard');
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
+    try {
+      const savedUser = localStorage.getItem('ubm_admin_user');
+      const savedToken = localStorage.getItem('ubm_admin_token');
+      if (savedUser && savedToken) {
+        setAuthToken(savedToken);
+        return JSON.parse(savedUser);
+      }
+    } catch (e) {
+      console.error('Failed to parse saved user', e);
+    }
+    return null;
+  });
+  const [activeTab, setActiveTab] = useState<string>(() => {
+    const savedTab = localStorage.getItem('ubm_active_tab');
+    if (savedTab) return savedTab;
+    try {
+      const savedUser = localStorage.getItem('ubm_admin_user');
+      if (savedUser) {
+        const u = JSON.parse(savedUser);
+        if (u.role === 'ADMIN') return 'dashboard';
+        if (u.role === 'HR') return 'hr-dashboard';
+        if (u.role === 'STORE') return 'store-dashboard';
+        if (u.role === 'FINANCE') return 'fin-dashboard';
+        if (u.role === 'MARKETING') return 'mkt-dashboard';
+      }
+    } catch {}
+    return 'dashboard';
+  });
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -286,11 +313,14 @@ export function App() {
       localStorage.setItem('ubm_admin_user', JSON.stringify(res.user));
 
       // Reset active tab to default for role
-      if (res.user.role === 'ADMIN') setActiveTab('dashboard');
-      else if (res.user.role === 'HR') setActiveTab('hr-dashboard');
-      else if (res.user.role === 'STORE') setActiveTab('store-dashboard');
-      else if (res.user.role === 'FINANCE') setActiveTab('fin-dashboard');
-      else if (res.user.role === 'MARKETING') setActiveTab('mkt-dashboard');
+      let initialTab = 'dashboard';
+      if (res.user.role === 'ADMIN') initialTab = 'dashboard';
+      else if (res.user.role === 'HR') initialTab = 'hr-dashboard';
+      else if (res.user.role === 'STORE') initialTab = 'store-dashboard';
+      else if (res.user.role === 'FINANCE') initialTab = 'fin-dashboard';
+      else if (res.user.role === 'MARKETING') initialTab = 'mkt-dashboard';
+      setActiveTab(initialTab);
+      localStorage.setItem('ubm_active_tab', initialTab);
 
       await loadAllData(res.user);
       setSuccessMsg(`Đăng nhập thành công với vai trò: ${res.user.role}`);
@@ -310,6 +340,7 @@ export function App() {
     setCurrentUser(null);
     localStorage.removeItem('ubm_admin_token');
     localStorage.removeItem('ubm_admin_user');
+    localStorage.removeItem('ubm_active_tab');
     setSuccessMsg('Đã đăng xuất khỏi hệ thống.');
     setTimeout(() => setSuccessMsg(null), 3000);
   };
@@ -416,11 +447,51 @@ export function App() {
     }
   };
 
-  // Initial state: Always start at Login Screen so user sees the dedicated login UI
+  // Synchronize active tab to localStorage whenever it changes
   useEffect(() => {
-    // Clear any previous auto-login session to ensure login screen is displayed
-    localStorage.removeItem('ubm_admin_token');
-    localStorage.removeItem('ubm_admin_user');
+    if (activeTab) {
+      localStorage.setItem('ubm_active_tab', activeTab);
+    }
+  }, [activeTab]);
+
+  // Initial state: Auto restore session and load live data if previously logged in
+  useEffect(() => {
+    const savedUser = localStorage.getItem('ubm_admin_user');
+    const savedToken = localStorage.getItem('ubm_admin_token');
+    if (savedUser && savedToken) {
+      try {
+        const user = JSON.parse(savedUser);
+        setAuthToken(savedToken);
+        setCurrentUser(user);
+        loadAllData(user);
+
+        // Ping /me silently in background to keep session fresh
+        apiRequest('/me')
+          .then((res) => {
+            if (res.user) {
+              const updated: UserProfile = {
+                id: res.user.id || res.user.sub || user.id,
+                fullName: res.user.fullName || user.fullName,
+                role: res.user.role || user.role,
+                branchScope: res.user.branchScope || user.branchScope,
+                permissions: res.user.permissions || user.permissions || [],
+              };
+              setCurrentUser(updated);
+              localStorage.setItem('ubm_admin_user', JSON.stringify(updated));
+            }
+          })
+          .catch((err) => {
+            // ONLY log out if backend explicitly rejected with 401 Unauthorized / Token expired
+            // DO NOT log out on network disconnect or server cold boot
+            const msg = (err?.message || '').toLowerCase();
+            if (msg.includes('401') || msg.includes('unauthorized') || msg.includes('hết hạn') || msg.includes('không hợp lệ')) {
+              handleLogout();
+            }
+          });
+      } catch (err) {
+        console.error('Lỗi khôi phục phiên đăng nhập:', err);
+      }
+    }
   }, []);
 
 

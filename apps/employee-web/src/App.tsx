@@ -38,9 +38,20 @@ interface EmployeeProfile {
 }
 
 export function App() {
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [employee, setEmployee] = useState<EmployeeProfile | null>(null);
-  const [activeTab, setActiveTab] = useState<string>('home');
+  const [isLoggedIn, setIsLoggedIn] = useState<boolean>(() => {
+    return !!(localStorage.getItem('ubm_emp_token') && localStorage.getItem('ubm_emp_data'));
+  });
+  const [employee, setEmployee] = useState<EmployeeProfile | null>(() => {
+    try {
+      const saved = localStorage.getItem('ubm_emp_data');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [activeTab, setActiveTab] = useState<string>(() => {
+    return localStorage.getItem('ubm_emp_active_tab') || 'home';
+  });
   const [loading, setLoading] = useState(false);
   const [loginPhone, setLoginPhone] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -112,8 +123,18 @@ export function App() {
   const [testTimeLeft, setTestTimeLeft] = useState(480);
   const [testScore, setTestScore] = useState<number | null>(null);
 
+  // Synchronize active tab across reload
+  useEffect(() => {
+    if (activeTab) {
+      localStorage.setItem('ubm_emp_active_tab', activeTab);
+    }
+  }, [activeTab]);
+
   useEffect(() => {
     if (getAuthToken()) {
+      if (employee?.employee_id) {
+        loadEmployeeData(employee.employee_id);
+      }
       fetchMyProfile();
     }
   }, []);
@@ -126,12 +147,18 @@ export function App() {
   const fetchMyProfile = async () => {
     try {
       const data = await apiRequest('/me');
-      setEmployee(data.employee);
+      if (data.employee) {
+        setEmployee(data.employee);
+        localStorage.setItem('ubm_emp_data', JSON.stringify(data.employee));
+      }
       setIsLoggedIn(true);
-      await loadEmployeeData(data.employee?.employee_id);
-    } catch (err) {
-      setAuthToken('');
-      setIsLoggedIn(false);
+      await loadEmployeeData(data.employee?.employee_id || employee?.employee_id);
+    } catch (err: any) {
+      const msg = (err?.message || '').toLowerCase();
+      // Only force logout if token is explicitly rejected (401 / expired), not on network sleep
+      if (msg.includes('401') || msg.includes('unauthorized') || msg.includes('hết hạn') || msg.includes('không hợp lệ')) {
+        handleLogout();
+      }
     }
   };
 
@@ -164,6 +191,7 @@ export function App() {
       setCheckingStatus('ACTIVE');
       setAuthToken(res.token);
       setEmployee(res.employee);
+      localStorage.setItem('ubm_emp_data', JSON.stringify(res.employee));
       setIsLoggedIn(true);
       showToast(`Số điện thoại hợp lệ và đã được Admin kích hoạt! Tự động đăng nhập vào cổng ${res.stage === 'PROBATION' ? 'Thử việc' : 'Chính thức'}.`);
       await loadEmployeeData(res.employee.employee_id);
@@ -209,6 +237,9 @@ export function App() {
     setEmployee(null);
     setPayslipUnlocked(false);
     setActiveTab('home');
+    localStorage.removeItem('ubm_emp_data');
+    localStorage.removeItem('ubm_emp_token');
+    localStorage.removeItem('ubm_emp_active_tab');
   };
 
   // Submit Attendance Step 1 -> Step 2
