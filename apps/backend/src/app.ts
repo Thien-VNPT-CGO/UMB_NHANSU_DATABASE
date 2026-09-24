@@ -1,3 +1,5 @@
+import path from 'path';
+import fs from 'fs';
 import express from 'express';
 import cors from 'cors';
 import { GoogleSheetsAdapter } from './repositories/google-sheets.adapter.js';
@@ -926,6 +928,38 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+
+  // --- STATIC FRONTENDS SERVING (For All-in-One Cloud Deployment e.g. Render / Railway / Docker) ---
+  const possibleAdminDirs = [
+    path.resolve(process.cwd(), 'apps/admin-web/dist'),
+    path.resolve(process.cwd(), '../admin-web/dist'),
+    path.resolve(__dirname, '../../admin-web/dist'),
+  ];
+  const possibleEmpDirs = [
+    path.resolve(process.cwd(), 'apps/employee-web/dist'),
+    path.resolve(process.cwd(), '../employee-web/dist'),
+    path.resolve(__dirname, '../../employee-web/dist'),
+  ];
+
+  const adminDist = possibleAdminDirs.find(d => fs.existsSync(d));
+  const empDist = possibleEmpDirs.find(d => fs.existsSync(d));
+
+  if (adminDist) {
+    app.use('/admin', express.static(adminDist));
+    app.get('/admin/*', (_req, res) => {
+      res.sendFile(path.join(adminDist, 'index.html'));
+    });
+  }
+
+  if (empDist) {
+    app.use(express.static(empDist));
+    app.get('*', (req, res, next) => {
+      if (req.path.startsWith('/api') || req.path.startsWith('/auth') || req.path.startsWith('/admin') || req.path.startsWith('/socket.io')) {
+        return next();
+      }
+      res.sendFile(path.join(empDist, 'index.html'));
+    });
+  }
 
   return {
     app,

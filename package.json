@@ -8,7 +8,12 @@
     "apps/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces",
+    "build:shared": "npm run build --workspace=@ubm/shared",
+    "build:backend": "npm run build --workspace=@ubm/backend",
+    "build:admin": "npm run build --workspace=@ubm/admin-web",
+    "build:employee": "npm run build --workspace=@ubm/employee-web",
+    "build": "npm run build:shared && npm run build:backend && npm run build:admin && npm run build:employee",
+    "start": "node apps/backend/dist/server.js",
     "test": "npm run test --workspace=apps/backend",
     "dev:backend": "npm run dev --workspace=apps/backend",
     "dev:admin": "npm run dev --workspace=apps/admin-web",
