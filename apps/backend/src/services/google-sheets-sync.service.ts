@@ -1074,6 +1074,51 @@ export class GoogleSheetsSyncService {
       ]);
       await this.overwriteSheetData('HR_CHUYEN_CHINH_THUC', conversionHeaders, conversionRows);
 
+      // 15. Đồng bộ Tab HR: Chấm công thời gian thực (HR_CHAM_CONG)
+      const hrAttDef = SHEETS_DEFINITIONS.find(d => d.title === 'HR_CHAM_CONG');
+      if (hrAttDef) {
+        const attendanceEvents = (repo as any).attendanceEvents || ((repo as any).mockAdapter && (repo as any).mockAdapter.attendanceEvents) || [];
+        const attRows = attendanceEvents.map((evt: any) => {
+          const emp = employees.find((e: any) => e.employee_id === evt.employee_id);
+          return [
+            evt.event_id,
+            emp?.employee_code || evt.employee_id,
+            emp?.full_name || 'Nhân Viên',
+            evt.branch_id || emp?.default_branch_id || 'CN130',
+            evt.client_time ? evt.client_time.split('T')[0] : '',
+            evt.type === 'CHECK_IN' ? evt.client_time : '',
+            evt.type === 'CHECK_OUT' ? evt.client_time : '',
+            evt.is_late ? `Đi trễ (${evt.minutes_deviation}p)` : evt.is_early ? `Về sớm (${evt.minutes_deviation}p)` : 'Đúng giờ',
+            `${evt.distance_meters || 0}m (${evt.gps_status || 'VALID'})`,
+            evt.drive_path || evt.drive_object_id || 'Drive OK',
+          ];
+        });
+        await this.overwriteSheetData('HR_CHAM_CONG', hrAttDef.headers, attRows);
+      }
+
+      // 16. Đồng bộ Đơn nghỉ phép & Nghỉ khẩn cấp (DON_NGHI_PHEP & PHIEU_OFF_DOT_XUAT)
+      const leaveRequests = await repo.listLeaveRequests();
+      const leaveDef = SHEETS_DEFINITIONS.find(d => d.title === 'DON_NGHI_PHEP');
+      if (leaveDef) {
+        const leaveRows = leaveRequests.map((l: any) => {
+          const emp = employees.find((e: any) => e.employee_id === l.employee_id);
+          return [
+            l.request_id,
+            emp?.employee_code || l.employee_id,
+            l.branch_id || emp?.default_branch_id || 'CN130',
+            l.leave_type === 'DOT_XUAT' ? 'Nghỉ Đột Xuất' : 'Nghỉ Hàng Tuần',
+            l.requested_date,
+            l.shift_code || 'Cả ngày',
+            l.reason,
+            l.status,
+            l.reviewed_by || '',
+            l.review_note || '',
+            l.created_at || '',
+          ];
+        });
+        await this.overwriteSheetData('DON_NGHI_PHEP', leaveDef.headers, leaveRows);
+      }
+
       return {
         success: true,
         message: 'Đồng bộ toàn bộ dữ liệu lên Google Sheets thành công!',

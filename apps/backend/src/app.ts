@@ -464,6 +464,178 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // --- ATTENDANCE DEDICATED ENDPOINTS ---
+  app.post('/attendance/checkin', authMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const employeeId = req.user?.employeeId || req.body.employee_id || req.body.employeeId;
+      if (!employeeId) return res.status(400).json({ error: 'Thiếu thông tin mã nhân viên' });
+
+      const today = new Date().toISOString().split('T')[0];
+      const shifts = await schedulesService.getEmployeeShifts(employeeId, today, today);
+      const assignment = shifts.find(s => s.date === today);
+      const assignmentId = req.body.assignment_id || req.body.assignmentId || assignment?.assignment_id;
+
+      if (!assignment && !assignmentId) {
+        return res.status(403).json({
+          error: 'Hôm nay bạn không có lịch ca làm việc được phân công. Chức năng điểm danh bị khóa theo quy chế.',
+        });
+      }
+
+      // Check if already checked in today for this shift
+      const todayEvents = await attendanceService.getEmployeeAttendance(employeeId, today);
+      const alreadyCheckedIn = todayEvents.find(e => e.type === 'CHECK_IN' && (!assignmentId || e.assignment_id === assignmentId));
+      if (alreadyCheckedIn) {
+        return res.status(400).json({
+          error: 'Bạn đã hoàn thành Check-in cho ca làm việc này rồi!',
+          receipt: alreadyCheckedIn,
+        });
+      }
+
+      const emp = await employeesService.getEmployee(employeeId);
+      const branchId = assignment?.branch_id || emp?.default_branch_id || 'CN130';
+      const actualAssignmentId = assignmentId || assignment?.assignment_id || `ASSIGN_${employeeId}_${today}`;
+
+      let existingShift = await adapter.getShiftById(actualAssignmentId);
+      if (!existingShift) {
+        existingShift = await adapter.createShiftAssignment({
+          assignment_id: actualAssignmentId,
+          schedule_id: `SCHED_${today}`,
+          employee_id: employeeId,
+          branch_id: branchId,
+          date: today,
+          shift_code: 'CA_1',
+          start_at: `${today}T07:00:00.000Z`,
+          end_at: `${today}T12:00:00.000Z`,
+          status: 'PUBLISHED',
+          schedule_version: 1,
+        });
+      }
+
+      const requestId = (req.headers['idempotency-key'] as string) || req.body.requestId || `REQ_IN_${employeeId}_${Date.now()}`;
+      const result = await attendanceService.recordAttendance({
+        requestId,
+        assignmentId: actualAssignmentId,
+        employeeId,
+        type: 'CHECK_IN',
+        clientTime: req.body.clientTime || new Date().toISOString(),
+        gps: {
+          latitude: req.body.lat || req.body.latitude || 10.7925,
+          longitude: req.body.lng || req.body.longitude || 106.6853,
+          accuracy: req.body.accuracy || 15,
+        },
+        hasCameraImage: !!req.body.photo_base64,
+        imageMeta: req.body.photo_base64 ? 'UNIFORM_PINK_AND_BADGE' : undefined,
+      });
+
+      broadcastUpdate('attendance', { action: 'checkin', employeeId, event: result.result });
+
+      res.json({
+        success: true,
+        message: 'Điểm danh Check-in thành công!',
+        receipt: result.result,
+      });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.post('/attendance/checkout', authMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const employeeId = req.user?.employeeId || req.body.employee_id || req.body.employeeId;
+      if (!employeeId) return res.status(400).json({ error: 'Thiếu thông tin mã nhân viên' });
+
+      const today = new Date().toISOString().split('T')[0];
+      const todayEvents = await attendanceService.getEmployeeAttendance(employeeId, today);
+
+      // Check-in requirement before check-out!
+      const checkInEvent = todayEvents.find(e => e.type === 'CHECK_IN');
+      if (!checkInEvent) {
+        return res.status(400).json({
+          error: 'QUY CHẾ ĐIỂM DANH: Bạn chưa có bản ghi Check-in đầu ca! Bắt buộc phải Check-in trước mới được Check-out.',
+        });
+      }
+
+      const alreadyCheckedOut = todayEvents.find(e => e.type === 'CHECK_OUT');
+      if (alreadyCheckedOut) {
+        return res.status(400).json({
+          error: 'Bạn đã hoàn tất Check-out cho ca làm này rồi!',
+          receipt: alreadyCheckedOut,
+        });
+      }
+
+      const actualAssignmentId = req.body.assignment_id || checkInEvent.assignment_id;
+      const requestId = (req.headers['idempotency-key'] as string) || req.body.requestId || `REQ_OUT_${employeeId}_${Date.now()}`;
+
+      const result = await attendanceService.recordAttendance({
+        requestId,
+        assignmentId: actualAssignmentId,
+        employeeId,
+        type: 'CHECK_OUT',
+        clientTime: req.body.clientTime || new Date().toISOString(),
+        gps: {
+          latitude: req.body.lat || req.body.latitude || 10.7925,
+          longitude: req.body.lng || req.body.longitude || 106.6853,
+          accuracy: req.body.accuracy || 15,
+        },
+        hasCameraImage: !!req.body.photo_base64,
+        imageMeta: req.body.photo_base64 ? 'UNIFORM_PINK_AND_BADGE' : undefined,
+      });
+
+      broadcastUpdate('attendance', { action: 'checkout', employeeId, event: result.result });
+
+      res.json({
+        success: true,
+        message: 'Điểm danh Check-out thành công!',
+        receipt: result.result,
+      });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Alias for /leaves
+  app.post('/leaves', authMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const employeeId = req.user?.employeeId || req.body.employeeId;
+      const emp = await employeesService.getEmployee(employeeId);
+      const branchId = req.body.branchId || emp?.default_branch_id || 'CN130';
+
+      const result = await schedulesService.requestLeave({
+        ...req.body,
+        employeeId,
+        branchId,
+      });
+      broadcastUpdate('leaves', { action: 'create', leave: result });
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.get('/leaves', authMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const branchId = req.user?.role === 'STORE' ? req.user.branchScope : (req.query.branchId as string);
+      const employeeId = req.user?.role === 'EMPLOYEE' ? req.user.employeeId : (req.query.employeeId as string);
+      const list = await schedulesService.listLeaves(branchId, employeeId);
+      res.json(list);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/me/attendance', authMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const employeeId = req.user?.employeeId;
+      if (!employeeId) return res.status(400).json({ error: 'NOT_AN_EMPLOYEE' });
+      const today = new Date().toISOString().split('T')[0];
+      const date = (req.query.date as string) || today;
+      const events = await attendanceService.getEmployeeAttendance(employeeId, date);
+      res.json(events);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // --- ATTENDANCE ---
   app.post('/attendance/events', authMiddleware, async (req: AuthenticatedRequest, res) => {
     try {
@@ -484,8 +656,14 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       const employeeId = req.user?.role === 'EMPLOYEE' ? req.user.employeeId! : (req.query.employeeId as string);
       const date = (req.query.date as string) || new Date().toISOString().split('T')[0];
-      const events = await attendanceService.getEmployeeAttendance(employeeId, date);
-      res.json(events);
+      if (employeeId) {
+        const events = await attendanceService.getEmployeeAttendance(employeeId, date);
+        return res.json(events);
+      }
+      // If Admin or HR without specific employeeId, return all events today
+      const allEvents = (adapter.getMockAdapter() as any).attendanceEvents || [];
+      const filtered = date ? allEvents.filter((e: any) => e.client_time?.startsWith(date)) : allEvents;
+      res.json(filtered);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

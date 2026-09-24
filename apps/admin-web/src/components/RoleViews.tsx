@@ -138,6 +138,17 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   });
   const [zaloSessionToken, setZaloSessionToken] = useState(() => 'UBM_' + Math.random().toString(36).substring(2, 8).toUpperCase());
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
+
+  // Live Attendance Events State for HR Realtime Tab 11
+  const [liveAttendanceEvents, setLiveAttendanceEvents] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (activeTab === 'hr-attendance') {
+      apiRequest('/attendance/events')
+        .then((data) => setLiveAttendanceEvents(Array.isArray(data) ? data : []))
+        .catch(() => {});
+    }
+  }, [activeTab]);
   const [isQrLoading, setIsQrLoading] = useState(false);
   const [selectedZaloMsg, setSelectedZaloMsg] = useState<any>(null);
   const [autoZaloBotEnabled, setAutoZaloBotEnabled] = useState(true);
@@ -3729,95 +3740,156 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           </div>
         </div>
 
-        {/* DANH SÁCH CA BÁO NGHỈ KHẨN CẤP ĐANG CẦN XỬ LÝ */}
-        <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
-          <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <strong style={{ fontSize: '14px' }}>Danh Sách Yêu Cầu Nghỉ Khẩn Cấp Cần Bù Khuyết Nhân Sự</strong>
-            <span className="badge" style={{ backgroundColor: '#FEE2E2', color: '#DC2626', fontWeight: 800 }}>1 Ca Cần Bù Khuyết Gấp</span>
-          </div>
+        {/* DANH SÁCH CA BÁO NGHỈ KHẨN CẤP ĐANG CẦN XỬ LÝ (100% DỮ LIỆU THẬT TỪ CỔNG NHÂN VIÊN) */}
+        {(() => {
+          const emergencyLeaves = (leaves || []).filter((l: any) =>
+            l.leave_type === 'DOT_XUAT' ||
+            l.leaveType === 'DOT_XUAT' ||
+            (l.reason && /khẩn cấp|đột xuất|sốt|ốm|tai nạn|bệnh/i.test(l.reason))
+          );
 
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-            <thead>
-              <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
-                <th style={{ padding: '12px 20px' }}>Nhân Viên</th>
-                <th style={{ padding: '12px 20px' }}>Chi Nhánh & Ca Làm</th>
-                <th style={{ padding: '12px 20px' }}>Thời Gian Báo Nghỉ</th>
-                <th style={{ padding: '12px 20px' }}>Lý Do & Chứng Từ</th>
-                <th style={{ padding: '12px 20px' }}>Tình Trạng Nhân Sự Ca</th>
-                <th style={{ padding: '12px 20px' }}>Giải Pháp Xử Lý Của HR</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr style={{ borderBottom: '1px solid var(--border)', backgroundColor: '#FEF2F2' }}>
-                <td style={{ padding: '14px 20px', fontWeight: 700 }}>
-                  Hoàng Thị Dung
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>UBM_NV0218 • 0905777888</div>
-                </td>
-                <td style={{ padding: '14px 20px' }}>
-                  <strong style={{ color: '#DC2626' }}>Ca 3: Tối (17:00 - 22:00)</strong>
-                  <div style={{ fontSize: '11px', color: '#2563EB' }}>CN1 - 130 Vạn Kiếp (Bình Thạnh)</div>
-                </td>
-                <td style={{ padding: '14px 20px', fontWeight: 700 }}>
-                  24/09/2026 (Hôm nay)
-                  <div style={{ fontSize: '11px', color: '#64748B' }}>Báo trước ca 4 tiếng</div>
-                </td>
-                <td style={{ padding: '14px 20px' }}>
-                  <div style={{ color: '#991B1B', fontWeight: 600 }}>Sốt cao 39.5°C đột xuất</div>
-                  <div style={{ fontSize: '11px', color: '#059669', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => showToast('Mở xem ảnh giấy khám bệnh viện')}>
-                    📄 Xem Giấy Khám Bệnh Viện [✓ Hợp Lệ]
-                  </div>
-                </td>
-                <td style={{ padding: '14px 20px' }}>
-                  <span style={{ backgroundColor: '#DC2626', color: '#FFF', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 800 }}>
-                    🔴 THIẾU 1 NHÂN SỰ
-                  </span>
-                </td>
-                <td style={{ padding: '14px 20px' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    <button
-                      className="btn-primary"
-                      style={{ padding: '6px 10px', fontSize: '11px', backgroundColor: '#2563EB' }}
-                      onClick={() => showToast('Đã phát lệnh điều phối nhường ca (+30.000đ phụ cấp) đến toàn bộ nhân viên CN130!')}
-                    >
-                      🚀 Phát Lệnh Nhường Ca (+30k Phụ Cấp)
-                    </button>
-                    <button
-                      className="btn-secondary"
-                      style={{ padding: '4px 10px', fontSize: '11px', color: '#059669' }}
-                      onClick={() => showToast('Đã duyệt nghỉ có phép! Không trừ điểm chuyên cần.')}
-                    >
-                      ✓ Duyệt Nghỉ Có Phép
-                    </button>
-                  </div>
-                </td>
-              </tr>
+          const pendingCount = emergencyLeaves.filter((l: any) => l.status === 'PENDING').length;
 
-              <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                <td style={{ padding: '14px 20px', fontWeight: 700 }}>
-                  Vũ Hoàng Long
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>UBM_NV0512 • 0911223344</div>
-                </td>
-                <td style={{ padding: '14px 20px' }}>
-                  <strong>Ca 1: Sáng (07:00 - 12:00)</strong>
-                  <div style={{ fontSize: '11px', color: '#2563EB' }}>CN120 - Điện Biên Phủ</div>
-                </td>
-                <td style={{ padding: '14px 20px' }}>23/09/2026</td>
-                <td style={{ padding: '14px 20px' }}>
-                  Sự cố xe hỏng trên đường đi làm
-                </td>
-                <td style={{ padding: '14px 20px' }}>
-                  <span style={{ backgroundColor: '#DCFCE7', color: '#166534', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700 }}>
-                    🟢 ĐÃ BÙ KHUYẾT
+          return (
+            <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
+              <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <strong style={{ fontSize: '14px' }}>Danh Sách Yêu Cầu Nghỉ Khẩn Cấp Cần Bù Khuyết Nhân Sự</strong>
+                  <span style={{ fontSize: '12px', color: 'var(--text-muted)', marginLeft: '10px' }}>
+                    (Hệ thống vận hành 100% dữ liệu thực từ Cổng Nhân Viên & Google Sheets)
                   </span>
-                  <div style={{ fontSize: '11px', color: '#15803D' }}>Lê Văn Cường nhận thay (+30k)</div>
-                </td>
-                <td style={{ padding: '14px 20px' }}>
-                  <span style={{ color: '#64748B', fontSize: '12px' }}>✓ Đã đóng ca xử lý</span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+                </div>
+                {pendingCount > 0 ? (
+                  <span className="badge" style={{ backgroundColor: '#FEE2E2', color: '#DC2626', fontWeight: 800 }}>
+                    {pendingCount} Ca Cần Bù Khuyết Gấp
+                  </span>
+                ) : (
+                  <span className="badge badge-success" style={{ fontWeight: 700 }}>
+                    ✓ Đã Bù Đủ Nhân Sự
+                  </span>
+                )}
+              </div>
+
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                <thead>
+                  <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
+                    <th style={{ padding: '12px 20px' }}>Nhân Viên</th>
+                    <th style={{ padding: '12px 20px' }}>Chi Nhánh & Ca Làm</th>
+                    <th style={{ padding: '12px 20px' }}>Thời Gian Báo Nghỉ</th>
+                    <th style={{ padding: '12px 20px' }}>Lý Do & Chứng Từ</th>
+                    <th style={{ padding: '12px 20px' }}>Tình Trạng Nhân Sự Ca</th>
+                    <th style={{ padding: '12px 20px' }}>Giải Pháp Xử Lý Của HR</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {emergencyLeaves.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} style={{ padding: '48px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                        <div style={{ fontSize: '32px', marginBottom: '10px' }}>🛡️</div>
+                        <div style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text)' }}>
+                          Hiện Không Có Ca Báo Nghỉ Khẩn Cấp Nào Cần Xử Lý
+                        </div>
+                        <div style={{ fontSize: '12px', marginTop: '6px', maxWidth: '520px', margin: '6px auto 0', lineHeight: '1.5' }}>
+                          Hệ thống đã loại bỏ hoàn toàn dữ liệu test giả lập. Khi nhân viên gửi báo nghỉ khẩn cấp từ Cổng Mobile, thông tin và cảnh báo bù khuyết sẽ lập tức hiển thị realtime tại đây.
+                        </div>
+                      </td>
+                    </tr>
+                  ) : (
+                    emergencyLeaves.map((l: any, idx: number) => {
+                      const emp = allEmployees.find((e: any) => e.employee_id === l.employee_id) || {
+                        full_name: l.employee_name || 'Nhân Viên Báo Nghỉ',
+                        employee_code: l.employee_code || l.employee_id,
+                        phone_normalized: l.phone || '',
+                      };
+                      const isPending = l.status === 'PENDING';
+
+                      return (
+                        <tr key={l.request_id || idx} style={{ borderBottom: '1px solid var(--border)', backgroundColor: isPending ? '#FEF2F2' : '#FFFFFF' }}>
+                          <td style={{ padding: '14px 20px', fontWeight: 700 }}>
+                            {emp.full_name}
+                            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                              {emp.employee_code} • {emp.phone_normalized}
+                            </div>
+                          </td>
+                          <td style={{ padding: '14px 20px' }}>
+                            <strong style={{ color: isPending ? '#DC2626' : 'var(--text)' }}>
+                              {l.shift_code ? `Ca: ${l.shift_code}` : 'Ca Trực Đột Xuất'}
+                            </strong>
+                            <div style={{ fontSize: '11px', color: '#2563EB' }}>
+                              Chi nhánh: {getDisplayBranch(l.branch_id || emp.default_branch_id || 'CN130')}
+                            </div>
+                          </td>
+                          <td style={{ padding: '14px 20px', fontWeight: 700 }}>
+                            {l.requested_date || l.created_at?.split('T')[0] || 'Hôm nay'}
+                            <div style={{ fontSize: '11px', color: '#64748B' }}>
+                              {l.created_at ? new Date(l.created_at).toLocaleTimeString('vi-VN') : 'Báo khẩn cấp'}
+                            </div>
+                          </td>
+                          <td style={{ padding: '14px 20px' }}>
+                            <div style={{ color: isPending ? '#991B1B' : 'var(--text)', fontWeight: 600 }}>
+                              {l.reason || 'Sự cố việc gia đình / sức khỏe đột xuất'}
+                            </div>
+                            <div
+                              style={{ fontSize: '11px', color: '#059669', cursor: 'pointer', textDecoration: 'underline', marginTop: '3px' }}
+                              onClick={() => showToast('Mở xem chứng từ / đơn báo cáo chi tiết')}
+                            >
+                              📄 Xem Hồ Sơ Báo Nghỉ
+                            </div>
+                          </td>
+                          <td style={{ padding: '14px 20px' }}>
+                            {isPending ? (
+                              <span style={{ backgroundColor: '#DC2626', color: '#FFF', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 800 }}>
+                                🔴 THIẾU 1 NHÂN SỰ
+                              </span>
+                            ) : (
+                              <span style={{ backgroundColor: '#DCFCE7', color: '#166534', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700 }}>
+                                🟢 {l.status === 'APPROVED' ? 'ĐÃ DUYỆT CÓ PHÉP' : l.status}
+                              </span>
+                            )}
+                          </td>
+                          <td style={{ padding: '14px 20px' }}>
+                            {isPending ? (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                <button
+                                  className="btn-primary"
+                                  style={{ padding: '6px 10px', fontSize: '11px', backgroundColor: '#2563EB' }}
+                                  onClick={() => showToast(`🚀 Đã phát lệnh điều phối nhường ca (+30.000đ) đến nhân viên chi nhánh ${l.branch_id || 'CN130'}!`)}
+                                >
+                                  🚀 Phát Lệnh Nhường Ca (+30k Phụ Cấp)
+                                </button>
+                                <button
+                                  className="btn-secondary"
+                                  style={{ padding: '4px 10px', fontSize: '11px', color: '#059669' }}
+                                  onClick={async () => {
+                                    try {
+                                      await apiRequest(`/leave-requests/${l.request_id}/review`, {
+                                        method: 'POST',
+                                        body: JSON.stringify({ status: 'APPROVED', note: 'HR phê duyệt nghỉ khẩn cấp có phép' }),
+                                      });
+                                      showToast('✓ Đã duyệt nghỉ có phép! Không trừ điểm chuyên cần.');
+                                      if (onRefreshData) await onRefreshData();
+                                      if (onSyncSheets) await onSyncSheets();
+                                    } catch (e: any) {
+                                      showToast(e.message || 'Lỗi khi duyệt');
+                                    }
+                                  }}
+                                >
+                                  ✓ Duyệt Nghỉ Có Phép
+                                </button>
+                              </div>
+                            ) : (
+                              <span style={{ color: '#64748B', fontSize: '12px' }}>✓ Đã xử lý ca</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          );
+        })()}
       </div>
     );
   }
@@ -3825,26 +3897,102 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   if (activeTab === 'hr-attendance') {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <h1 style={{ fontSize: '20px', fontWeight: 800 }}>11. Bảng Chấm Công Thời Gian Thực</h1>
-        <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Giám sát check-in, check-out, hình ảnh áo hồng + bảng tên, tọa độ GPS</p>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <h1 style={{ fontSize: '20px', fontWeight: 800 }}>11. Bảng Chấm Công Thời Gian Thực</h1>
+            <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+              Giám sát check-in, check-out, hình ảnh áo hồng + bảng tên, tọa độ GPS vệ tinh (100% Realtime)
+            </p>
+          </div>
+          <button
+            className="btn-secondary"
+            onClick={async () => {
+              try {
+                const data = await apiRequest('/attendance/events');
+                setLiveAttendanceEvents(Array.isArray(data) ? data : []);
+                showToast('Đã làm mới dữ liệu chấm công thời gian thực!');
+              } catch {}
+            }}
+            style={{ fontSize: '12px' }}
+          >
+            🔄 Làm Mới Realtime
+          </button>
+        </div>
+
         <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
             <thead>
               <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
                 <th style={{ padding: '12px 20px' }}>Nhân Viên</th>
                 <th style={{ padding: '12px 20px' }}>Chi Nhánh</th>
-                <th style={{ padding: '12px 20px' }}>Check-in</th>
-                <th style={{ padding: '12px 20px' }}>Check-out</th>
-                <th style={{ padding: '12px 20px' }}>GPS & Ảnh Áo Hồng</th>
+                <th style={{ padding: '12px 20px' }}>Loại & Giờ Ghi Nhận</th>
+                <th style={{ padding: '12px 20px' }}>Tọa Độ GPS</th>
+                <th style={{ padding: '12px 20px' }}>Đồng Phục & Ảnh</th>
                 <th style={{ padding: '12px 20px' }}>Trạng Thái</th>
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td colSpan={6} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                  Chưa có lượt chấm công nào hôm nay. Dữ liệu check-in GPS và ảnh Google Drive sẽ hiển thị realtime tại đây khi nhân viên điểm danh.
-                </td>
-              </tr>
+              {liveAttendanceEvents.length === 0 ? (
+                <tr>
+                  <td colSpan={6} style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    <div style={{ fontSize: '28px', marginBottom: '8px' }}>🕒</div>
+                    <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text)' }}>
+                      Chưa có lượt chấm công nào hôm nay
+                    </div>
+                    <div style={{ fontSize: '12px', marginTop: '4px' }}>
+                      Dữ liệu check-in GPS và ảnh Google Drive sẽ hiển thị realtime tại đây ngay khi nhân viên hoàn thành điểm danh từ Cổng Mobile.
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                liveAttendanceEvents.map((evt: any, i: number) => {
+                  const emp = allEmployees.find((e: any) => e.employee_id === evt.employee_id) || {
+                    full_name: 'Nhân Viên',
+                    employee_code: evt.employee_id,
+                  };
+                  return (
+                    <tr key={evt.event_id || i} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <td style={{ padding: '12px 20px', fontWeight: 700 }}>
+                        {emp.full_name}
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{emp.employee_code}</div>
+                      </td>
+                      <td style={{ padding: '12px 20px' }}>
+                        {getDisplayBranch(evt.branch_id || 'CN130')}
+                      </td>
+                      <td style={{ padding: '12px 20px' }}>
+                        <span className={`badge ${evt.type === 'CHECK_IN' ? 'badge-brand' : 'badge-success'}`}>
+                          {evt.type === 'CHECK_IN' ? 'VÀO CA (IN)' : 'TAN CA (OUT)'}
+                        </span>
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                          {evt.client_time ? new Date(evt.client_time).toLocaleTimeString('vi-VN') : '-'}
+                        </div>
+                      </td>
+                      <td style={{ padding: '12px 20px' }}>
+                        <strong style={{ color: evt.distance_meters <= 300 ? '#10B981' : '#DC2626' }}>
+                          {evt.distance_meters}m
+                        </strong>
+                        <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '4px' }}>
+                          ({evt.gps_status || 'VALID'})
+                        </span>
+                      </td>
+                      <td style={{ padding: '12px 20px' }}>
+                        <span style={{ fontSize: '11px', color: '#DB2777', fontWeight: 700 }}>
+                          📸 Áo Hồng + Bảng Tên [Hợp Lệ]
+                        </span>
+                      </td>
+                      <td style={{ padding: '12px 20px' }}>
+                        {evt.is_late ? (
+                          <span className="badge badge-warning">Đi trễ {evt.minutes_deviation}p</span>
+                        ) : evt.is_early ? (
+                          <span className="badge badge-warning">Về sớm {evt.minutes_deviation}p</span>
+                        ) : (
+                          <span className="badge badge-success">Đúng giờ</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>

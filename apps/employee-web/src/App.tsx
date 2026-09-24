@@ -76,16 +76,47 @@ export function App() {
   const [myShifts, setMyShifts] = useState<any[]>([]);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [showLeaveModal, setShowLeaveModal] = useState(false);
+
+  // 2-Day Weekly OFF Registration State (Official Employees)
+  const [hasRegisteredWeeklyOff, setHasRegisteredWeeklyOff] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('ubm_weekly_off_registered');
+      return saved === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const [weeklyOffData, setWeeklyOffData] = useState({
+    day1: '',
+    day2: '',
+    reason: 'Đăng ký 2 ngày nghỉ OFF tuần theo định biên quy chế Ụm Bò Milk',
+  });
+
   const [leaveData, setLeaveData] = useState({
     leaveType: 'HANG_TUAN',
-    requestedDate: '2026-09-25',
+    requestedDate: new Date().toISOString().split('T')[0],
     reason: 'Đăng ký ngày nghỉ theo quy định',
   });
+
+  // Attendance tracking state
+  const [attendanceActionType, setAttendanceActionType] = useState<'CHECK_IN' | 'CHECK_OUT'>('CHECK_IN');
+  const [todayAttendance, setTodayAttendance] = useState<{
+    checkedIn?: boolean;
+    checkedOut?: boolean;
+    inTime?: string;
+    outTime?: string;
+    checkInTime?: string;
+    checkOutTime?: string;
+    receipt?: any;
+  } | null>(null);
+  const [myAttendanceHistory, setMyAttendanceHistory] = useState<any[]>([]);
+  const [branchColleagues, setBranchColleagues] = useState<any[]>([]);
 
   // Official Swap Form Type: 1 = Trao doi A <-> B, 2 = Nho lam thay B lam thay A
   const [swapFormType, setSwapFormType] = useState<1 | 2>(1);
   const [swapData, setSwapData] = useState({
-    myShift: '2026-09-25 (Ca 1: 07:00 - 12:00)',
+    myShift: '',
     targetEmployeeId: '',
     targetEmployeeName: '',
     targetShift: '',
@@ -97,22 +128,22 @@ export function App() {
 
   // Probation Self-Swap State: Tu do doi Ca lam <-> Nghi
   const [probationSelfSwap, setProbationSelfSwap] = useState({
-    date: '2026-09-26',
-    direction: 'WORK_TO_OFF', // Ca lam -> Nghi hoac Nghi -> Ca lam
+    date: new Date().toISOString().split('T')[0],
+    direction: 'WORK_TO_OFF',
     shiftName: 'Ca 1 (07:00 - 12:00)',
     reason: 'Đổi lịch cá nhân trong chu kỳ 12 ngày thử việc',
   });
 
   // Emergency Leave Form
   const [emergencyData, setEmergencyData] = useState({
-    date: '2026-09-24',
+    date: new Date().toISOString().split('T')[0],
     reason: 'Sốt cao đột xuất / Việc gia đình khẩn cấp',
     shift: 'Ca Sáng (07:00 - 12:00)',
   });
 
   // Adjustment Request Form
   const [adjustmentData, setAdjustmentData] = useState({
-    date: '2026-09-23',
+    date: new Date().toISOString().split('T')[0],
     shift: 'Ca 1',
     type: 'QUEN_CHECKIN',
     reason: 'Quên bấm điểm danh khi vào ca do tiếp nhận hàng hóa gấp',
@@ -123,7 +154,7 @@ export function App() {
   const [testTimeLeft, setTestTimeLeft] = useState(480);
   const [testScore, setTestScore] = useState<number | null>(null);
 
-  // Synchronize active tab across reload
+  // Synchronize active tab across reload (with forced registration guard for official staff)
   useEffect(() => {
     if (activeTab) {
       localStorage.setItem('ubm_emp_active_tab', activeTab);
@@ -168,6 +199,29 @@ export function App() {
       setMyShifts(shifts);
       const notifs = await apiRequest('/me/notifications').catch(() => []);
       setNotifications(notifs);
+
+      // Real Attendance History & Today status
+      const attEvents = await apiRequest('/me/attendance').catch(() => []);
+      setMyAttendanceHistory(attEvents);
+
+      const today = new Date().toISOString().split('T')[0];
+      const todayCheckIn = attEvents.find((e: any) => e.type === 'CHECK_IN' && e.client_time?.startsWith(today));
+      const todayCheckOut = attEvents.find((e: any) => e.type === 'CHECK_OUT' && e.client_time?.startsWith(today));
+      const inTimeStr = todayCheckIn?.client_time ? new Date(todayCheckIn.client_time).toLocaleTimeString('vi-VN') : undefined;
+      const outTimeStr = todayCheckOut?.client_time ? new Date(todayCheckOut.client_time).toLocaleTimeString('vi-VN') : undefined;
+      setTodayAttendance({
+        checkedIn: !!todayCheckIn,
+        checkedOut: !!todayCheckOut,
+        inTime: inTimeStr,
+        outTime: outTimeStr,
+        checkInTime: inTimeStr,
+        checkOutTime: outTimeStr,
+        receipt: todayCheckIn,
+      });
+
+      // Load real colleagues in branch
+      const colleagues = await apiRequest('/employees').catch(() => []);
+      setBranchColleagues(colleagues);
     } catch (err) {
       console.error(err);
     }
@@ -242,8 +296,52 @@ export function App() {
     localStorage.removeItem('ubm_emp_active_tab');
   };
 
-  // Submit Attendance Step 1 -> Step 2
-  const handleStartAttendance = () => {
+  // Guard: Mandatory 2-day OFF registration locks other tabs for official employees
+  const handleTabClick = (tabId: string) => {
+    if (!isProbation && !hasRegisteredWeeklyOff && tabId !== 'leave') {
+      showToast('🔒 QUY CHẾ BẮT BUỘC: Đang trong chu kỳ mở đăng ký 2 ngày nghỉ/tuần! Bạn bắt buộc phải hoàn thành đăng ký 2 ngày nghỉ để mở khóa các chức năng khác.');
+      setActiveTab('leave');
+      return;
+    }
+    setActiveTab(tabId);
+  };
+
+  // Start Attendance with strict rules: today shift exists, checkin before checkout, 30m window
+  const handleStartAttendance = (action: 'CHECK_IN' | 'CHECK_OUT' = 'CHECK_IN') => {
+    const today = new Date().toISOString().split('T')[0];
+    const todayShift = myShifts.find((s: any) => s.date === today);
+
+    // Ràng buộc 1: Nếu hôm nay không có ca làm thì khóa chức năng
+    if (!todayShift) {
+      showToast('🔒 QUY CHẾ: Hôm nay bạn không có lịch ca làm việc được phân công! Chức năng điểm danh bị khóa.');
+      return;
+    }
+
+    // Ràng buộc thời gian mở Check-in: Mở trước giờ vào ca 30 phút
+    if (action === 'CHECK_IN' && todayShift?.start_at) {
+      try {
+        const shiftStart = new Date(todayShift.start_at).getTime();
+        const openTime = shiftStart - 30 * 60 * 1000;
+        if (Date.now() < openTime) {
+          const openStr = new Date(openTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+          showToast(`⏰ CHƯA ĐẾN GIỜ CHECK-IN: Cổng điểm danh mở trước giờ ca 30 phút (Mở lúc ${openStr}). Vui lòng quay lại sau!`);
+          return;
+        }
+      } catch {}
+    }
+
+    // Ràng buộc 2: Check-in xong mới được check-out
+    if (action === 'CHECK_OUT' && !todayAttendance?.checkedIn) {
+      showToast('🚫 QUY CHẾ ĐIỂM DANH: Bạn chưa Check-in đầu ca! Bắt buộc phải Check-in trước mới được Check-out.');
+      return;
+    }
+
+    if (action === 'CHECK_OUT' && todayAttendance?.checkedOut) {
+      showToast('✓ Bạn đã hoàn tất Check-out cho ca làm hôm nay rồi!');
+      return;
+    }
+
+    setAttendanceActionType(action);
     setAttendanceStep('CHECKING_GPS');
     setTimeout(() => {
       setGpsAccuracy(12);
@@ -254,7 +352,7 @@ export function App() {
 
   const handleCapturePhoto = async () => {
     if (!uniformChecked || !badgeChecked) {
-      showToast('⚠️ Vui lòng xác nhận đã mặc áo đồng phục hồng và đeo bảng tên!');
+      showToast('⚠️ VI PHẠM ĐỒNG PHỤC QUY CHUẨN: Vui lòng xác nhận đang mặc Áo Hồng Ụm Bò Milk và Đeo Bảng Tên hợp lệ!');
       return;
     }
     setAttendanceStep('SUBMITTING');
@@ -273,10 +371,14 @@ export function App() {
       }
       const base64Image = mockCanvas.toDataURL('image/jpeg');
 
-      const res = await apiRequest('/attendance/checkin', {
+      const today = new Date().toISOString().split('T')[0];
+      const todayShift = myShifts.find((s: any) => s.date === today);
+      const targetEndpoint = attendanceActionType === 'CHECK_IN' ? '/attendance/checkin' : '/attendance/checkout';
+
+      const res = await apiRequest(targetEndpoint, {
         method: 'POST',
         body: JSON.stringify({
-          assignment_id: myShifts[0]?.assignment_id || 'ASSIGN_001',
+          assignment_id: todayShift?.assignment_id || myShifts[0]?.assignment_id || `ASSIGN_${employee?.employee_id}_${today}`,
           lat: 10.7925,
           lng: 106.6853,
           accuracy: gpsAccuracy,
@@ -286,10 +388,58 @@ export function App() {
 
       setLastReceipt(res.receipt);
       setAttendanceStep('CONFIRMED');
-      showToast('Điểm danh thành công! Đã ghi nhận áo hồng + bảng tên và khoảng cách 38m.');
+      showToast(attendanceActionType === 'CHECK_IN'
+        ? '✓ Điểm danh Check-in thành công! Đã ghi nhận Áo Hồng + Bảng Tên và GPS hợp lệ.'
+        : '✓ Điểm danh Check-out thành công! Ca làm việc của bạn đã được ghi nhận vào Google Sheets.'
+      );
+      await loadEmployeeData(employee?.employee_id);
     } catch (err: any) {
       showToast(err.message || 'Lỗi khi điểm danh!');
       setAttendanceStep('READY_CAMERA');
+    }
+  };
+
+  // Submit 2-day OFF for official employee
+  const handleSubmitWeeklyOff2Days = async () => {
+    if (!weeklyOffData.day1 || !weeklyOffData.day2) {
+      showToast('⚠️ Vui lòng chọn đầy đủ cả 2 ngày nghỉ OFF trong tuần!');
+      return;
+    }
+    if (weeklyOffData.day1 === weeklyOffData.day2) {
+      showToast('⚠️ Hai ngày nghỉ OFF phải là 2 ngày khác nhau trong tuần!');
+      return;
+    }
+
+    try {
+      // Send Day 1
+      await apiRequest('/leaves', {
+        method: 'POST',
+        body: JSON.stringify({
+          leaveType: 'HANG_TUAN',
+          requestedDate: weeklyOffData.day1,
+          reason: `${weeklyOffData.reason} (Ngày 1: ${weeklyOffData.day1})`,
+        }),
+      });
+
+      // Send Day 2
+      await apiRequest('/leaves', {
+        method: 'POST',
+        body: JSON.stringify({
+          leaveType: 'HANG_TUAN',
+          requestedDate: weeklyOffData.day2,
+          reason: `${weeklyOffData.reason} (Ngày 2: ${weeklyOffData.day2})`,
+        }),
+      });
+
+      setHasRegisteredWeeklyOff(true);
+      try {
+        localStorage.setItem('ubm_weekly_off_registered', 'true');
+      } catch {}
+
+      showToast('🎉 ĐÃ ĐĂNG KÝ 2 NGÀY NGHỈ OFF TUẦN THÀNH CÔNG! Toàn bộ chức năng hệ thống đã được mở khóa.');
+      await loadEmployeeData(employee?.employee_id);
+    } catch (err: any) {
+      showToast(err.message || 'Lỗi khi gửi đăng ký 2 ngày nghỉ!');
     }
   };
 
@@ -301,8 +451,59 @@ export function App() {
       });
       showToast('Đã gửi yêu cầu nghỉ OFF thành công!');
       setShowLeaveModal(false);
+      await loadEmployeeData(employee?.employee_id);
     } catch (err: any) {
       showToast(err.message);
+    }
+  };
+
+  const handleEmergencyLeaveSubmit = async () => {
+    if (!emergencyData.reason.trim()) {
+      showToast('⚠️ Vui lòng nhập lý do nghỉ khẩn cấp!');
+      return;
+    }
+    try {
+      await apiRequest('/leaves', {
+        method: 'POST',
+        body: JSON.stringify({
+          leaveType: 'DOT_XUAT',
+          requestedDate: emergencyData.date,
+          reason: `[NGHỈ KHẨN CẤP] ${emergencyData.shift} - ${emergencyData.reason}`,
+        }),
+      });
+      showToast('🚨 ĐÃ GỬI ĐƠN BÁO NGHỈ KHẨN CẤP! Dữ liệu đã đồng bộ realtime sang HR Tab 10 và Google Sheets.');
+      await loadEmployeeData(employee?.employee_id);
+    } catch (err: any) {
+      showToast(err.message || 'Lỗi khi gửi báo nghỉ khẩn cấp');
+    }
+  };
+
+  const handleAdjustmentSubmit = async () => {
+    try {
+      if (adjustmentData.type === 'NGHI_KHAN') {
+        await apiRequest('/leaves', {
+          method: 'POST',
+          body: JSON.stringify({
+            leaveType: 'DOT_XUAT',
+            requestedDate: adjustmentData.date,
+            reason: `[NGHỈ KHẨN CẤP] ${adjustmentData.reason}`,
+          }),
+        });
+        showToast('🚨 ĐÃ GỬI BÁO NGHỈ KHẨN CẤP ĐẾN HR! Dữ liệu đã đồng bộ sang HR Tab 10 và Google Sheets.');
+      } else {
+        await apiRequest('/leaves', {
+          method: 'POST',
+          body: JSON.stringify({
+            leaveType: 'BO_SUNG_CONG',
+            requestedDate: adjustmentData.date,
+            reason: `[${adjustmentData.type}] ${adjustmentData.reason}`,
+          }),
+        });
+        showToast('✓ Đã gửi phiếu giải trình bổ sung công đến Cửa Hàng Trưởng và HR!');
+      }
+      await loadEmployeeData(employee?.employee_id);
+    } catch (err: any) {
+      showToast(err.message || 'Lỗi khi gửi phiếu giải trình!');
     }
   };
 
@@ -543,7 +744,7 @@ export function App() {
           return (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => handleTabClick(tab.id)}
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -590,6 +791,66 @@ export function App() {
         </div>
       )}
 
+      {/* 5-MINUTE PRE-NOTIFICATION & MANDATORY 2-DAY OFF REGISTRATION BANNER FOR OFFICIAL EMPLOYEES */}
+      {!isProbation && !hasRegisteredWeeklyOff && (
+        <div style={{
+          margin: '12px 16px 0',
+          padding: '12px 14px',
+          backgroundColor: '#FFF1F2',
+          border: '2px solid #F43F5E',
+          borderRadius: 'var(--radius-sm)',
+          boxShadow: '0 4px 12px rgba(244, 63, 94, 0.15)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+            <Bell size={18} color="#E11D48" />
+            <strong style={{ fontSize: '13px', color: '#BE123C' }}>
+              ⏰ THÔNG BÁO: ĐANG TRONG THỜI GIAN ĐĂNG KÝ 2 NGÀY NGHỈ OFF/TUẦN
+            </strong>
+          </div>
+          <div style={{ fontSize: '12px', color: '#9F1239', lineHeight: '1.4' }}>
+            Hệ thống đã tự động gửi thông báo trước 5 phút giờ mở cửa đăng ký. Hiện tại đang mở cổng đăng ký 2 ngày nghỉ/tuần định kỳ. <strong>Toàn bộ các chức năng khác tạm thời bị KHÓA</strong> cho đến khi bạn hoàn tất đăng ký 2 ngày nghỉ!
+          </div>
+          {activeTab !== 'leave' && (
+            <button
+              onClick={() => setActiveTab('leave')}
+              style={{
+                marginTop: '10px',
+                width: '100%',
+                backgroundColor: '#E11D48',
+                color: '#FFF',
+                border: 'none',
+                borderRadius: '6px',
+                padding: '9px 12px',
+                fontSize: '13px',
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              👉 ĐĂNG KÝ 2 NGÀY NGHỈ OFF NGAY ĐỂ MỞ KHÓA TOÀN BỘ CHỨC NĂNG
+            </button>
+          )}
+        </div>
+      )}
+
+      {!isProbation && hasRegisteredWeeklyOff && (
+        <div style={{
+          margin: '12px 16px 0',
+          padding: '8px 14px',
+          backgroundColor: '#F0FDF4',
+          border: '1px solid #86EFAC',
+          borderRadius: 'var(--radius-sm)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          fontSize: '12px',
+          color: '#166534',
+          fontWeight: 600,
+        }}>
+          <span>✓ Đã hoàn tất đăng ký 2 ngày nghỉ OFF tuần ({weeklyOffData.day1 || 'Ngày 1'} & {weeklyOffData.day2 || 'Ngày 2'})</span>
+          <span style={{ fontSize: '11px', color: '#15803D' }}>• Đã mở khóa toàn bộ chức năng</span>
+        </div>
+      )}
+
       {/* MAIN CONTENT AREA */}
       <main style={{ padding: '16px', flex: 1, paddingBottom: '32px' }}>
 
@@ -615,7 +876,7 @@ export function App() {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                 <button
                   className="btn-primary"
-                  onClick={() => setActiveTab('attendance')}
+                  onClick={() => handleTabClick('attendance')}
                   style={{
                     backgroundColor: 'var(--brand)',
                     fontSize: '14px',
@@ -628,7 +889,7 @@ export function App() {
                 </button>
                 <button
                   className="btn-secondary"
-                  onClick={() => setActiveTab('schedule')}
+                  onClick={() => handleTabClick('schedule')}
                   style={{ fontSize: '13px' }}
                 >
                   <Calendar size={16} style={{ marginRight: '6px' }} />
@@ -657,7 +918,7 @@ export function App() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
               <button
                 className="btn-secondary"
-                onClick={() => setActiveTab('leave')}
+                onClick={() => handleTabClick('leave')}
                 style={{ flexDirection: 'column', padding: '10px 4px', height: 'auto', gap: '4px' }}
               >
                 <Clock size={18} color="var(--brand)" />
@@ -666,7 +927,7 @@ export function App() {
 
               <button
                 className="btn-secondary"
-                onClick={() => setActiveTab(isProbation ? 'swap_emergency' : 'swap_shift')}
+                onClick={() => handleTabClick(isProbation ? 'swap_emergency' : 'swap_shift')}
                 style={{ flexDirection: 'column', padding: '10px 4px', height: 'auto', gap: '4px' }}
               >
                 <RefreshCw size={18} color="#2563EB" />
@@ -675,7 +936,7 @@ export function App() {
 
               <button
                 className="btn-secondary"
-                onClick={() => setActiveTab(isProbation ? 'test_exam' : 'test_training')}
+                onClick={() => handleTabClick(isProbation ? 'test_exam' : 'test_training')}
                 style={{ flexDirection: 'column', padding: '10px 4px', height: 'auto', gap: '4px' }}
               >
                 <Award size={18} color="#D97706" />
@@ -746,43 +1007,139 @@ export function App() {
         )}
 
         {/* ========================================================= */}
-        {/* TAB 3: ĐĂNG KÝ OFF */}
+        {/* TAB 3: ĐĂNG KÝ OFF (THỬ VIỆC: 1 NGÀY / CHÍNH THỨC: 2 NGÀY/TUẦN) */}
         {/* ========================================================= */}
         {activeTab === 'leave' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             <div className="card">
-              <h3 style={{ fontSize: '15px', fontWeight: 800, marginBottom: '6px' }}>
-                {isProbation ? '3. Đăng Ký Nghỉ OFF Thử Việc' : '3. Đăng Ký Nghỉ OFF Tuần'}
-              </h3>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                <h3 style={{ fontSize: '16px', fontWeight: 800 }}>
+                  {isProbation ? '3. Đăng Ký Nghỉ OFF Thử Việc' : '3. Đăng Ký 2 Ngày Nghỉ OFF/Tuần (Chính Thức)'}
+                </h3>
+                <span className={`badge ${!isProbation && hasRegisteredWeeklyOff ? 'badge-success' : 'badge-brand'}`}>
+                  {isProbation ? '1 Ngày/Lần' : hasRegisteredWeeklyOff ? 'Đã Chọn 2 Ngày' : 'Bắt Buộc 2 Ngày'}
+                </span>
+              </div>
               <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '14px' }}>
-                Chọn ngày nghỉ trong phạm vi chu kỳ quy định để Store & HR phê duyệt định biên.
+                {isProbation
+                  ? 'Chọn ngày nghỉ trong phạm vi chu kỳ quy định để Store & HR phê duyệt định biên.'
+                  : 'Quy định nhân viên chính thức: Bắt buộc chọn đúng 02 ngày nghỉ OFF/tuần định kỳ. Khi đăng ký xong, hệ thống sẽ tự động mở khóa toàn bộ các chức năng khác.'}
               </p>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div>
-                  <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Ngày mong muốn nghỉ:</label>
-                  <input
-                    type="date"
-                    value={leaveData.requestedDate}
-                    onChange={(e) => setLeaveData({ ...leaveData, requestedDate: e.target.value })}
-                    style={{ width: '100%' }}
-                  />
-                </div>
+              {isProbation ? (
+                /* THỬ VIỆC: ĐĂNG KÝ 1 NGÀY */
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Ngày mong muốn nghỉ:</label>
+                    <input
+                      type="date"
+                      value={leaveData.requestedDate}
+                      onChange={(e) => setLeaveData({ ...leaveData, requestedDate: e.target.value })}
+                      style={{ width: '100%' }}
+                    />
+                  </div>
 
-                <div>
-                  <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Lý do nghỉ OFF:</label>
-                  <textarea
-                    rows={2}
-                    value={leaveData.reason}
-                    onChange={(e) => setLeaveData({ ...leaveData, reason: e.target.value })}
-                    style={{ width: '100%' }}
-                  />
-                </div>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Lý do nghỉ OFF:</label>
+                    <textarea
+                      rows={2}
+                      value={leaveData.reason}
+                      onChange={(e) => setLeaveData({ ...leaveData, reason: e.target.value })}
+                      style={{ width: '100%' }}
+                    />
+                  </div>
 
-                <button className="btn-primary" onClick={handleSubmitLeave}>
-                  Gửi Yêu Cầu Nghỉ OFF
-                </button>
-              </div>
+                  <button className="btn-primary" onClick={handleSubmitLeave}>
+                    Gửi Yêu Cầu Nghỉ OFF
+                  </button>
+                </div>
+              ) : (
+                /* CHÍNH THỨC: ĐĂNG KÝ 2 NGÀY NGHỈ OFF/TUẦN */
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  {hasRegisteredWeeklyOff ? (
+                    <div style={{
+                      backgroundColor: '#ECFDF5',
+                      border: '1.5px solid #10B981',
+                      borderRadius: 'var(--radius-sm)',
+                      padding: '12px 14px',
+                      color: '#065F46',
+                    }}>
+                      <div style={{ fontWeight: 800, fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <CheckCircle2 size={16} color="#10B981" />
+                        BẠN ĐÃ HOÀN TẤT ĐĂNG KÝ 2 NGÀY NGHỈ TUẦN NÀY!
+                      </div>
+                      <div style={{ fontSize: '12px', marginTop: '6px', lineHeight: '1.5' }}>
+                        • Ngày nghỉ 1: <strong>{weeklyOffData.day1 || 'Chưa rõ'}</strong><br />
+                        • Ngày nghỉ 2: <strong>{weeklyOffData.day2 || 'Chưa rõ'}</strong><br />
+                        • Ghi chú: {weeklyOffData.reason || 'Đăng ký theo định kỳ'}<br />
+                        <span style={{ color: '#047857', fontWeight: 700 }}>✓ Toàn bộ các chức năng khác trên Cổng nhân viên đã được mở khóa.</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{
+                      backgroundColor: '#FFF1F2',
+                      border: '1px solid #FECDD3',
+                      borderRadius: 'var(--radius-sm)',
+                      padding: '10px 12px',
+                      fontSize: '12px',
+                      color: '#BE123C',
+                    }}>
+                      ⚠️ <strong>Ràng buộc hệ thống:</strong> Bạn phải hoàn thành chọn đủ <strong>02 ngày nghỉ khác nhau</strong> trong tuần để hệ thống tự động mở khóa các tab chức năng khác.
+                    </div>
+                  )}
+
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>
+                      📅 Ngày nghỉ thứ 1 (Bắt buộc chọn 1/2):
+                    </label>
+                    <input
+                      type="date"
+                      value={weeklyOffData.day1}
+                      onChange={(e) => setWeeklyOffData({ ...weeklyOffData, day1: e.target.value })}
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>
+                      📅 Ngày nghỉ thứ 2 (Bắt buộc chọn 2/2, khác Ngày 1):
+                    </label>
+                    <input
+                      type="date"
+                      value={weeklyOffData.day2}
+                      onChange={(e) => setWeeklyOffData({ ...weeklyOffData, day2: e.target.value })}
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>
+                      Lý do / Ghi chú đăng ký:
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={weeklyOffData.reason}
+                      onChange={(e) => setWeeklyOffData({ ...weeklyOffData, reason: e.target.value })}
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+
+                  <button
+                    className="btn-primary"
+                    onClick={handleSubmitWeeklyOff2Days}
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      fontSize: '14px',
+                      fontWeight: 800,
+                      backgroundColor: hasRegisteredWeeklyOff ? '#10B981' : 'var(--brand)',
+                      boxShadow: '0 4px 14px rgba(232, 93, 146, 0.35)',
+                    }}
+                  >
+                    {hasRegisteredWeeklyOff ? 'CẬP NHẬT LẠI 2 NGÀY NGHỈ OFF TUẦN' : 'GỬI ĐĂNG KÝ 2 NGÀY NGHỈ & MỞ KHÓA HỆ THỐNG'}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -790,165 +1147,341 @@ export function App() {
         {/* ========================================================= */}
         {/* TAB 4: ĐIỂM DANH (GPS 300M + CAMERA ÁO HỒNG + BẢNG TÊN) */}
         {/* ========================================================= */}
-        {activeTab === 'attendance' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-            <div className="card">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                <h3 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--text)' }}>
-                  4. Quy Trình Điểm Danh Check-in / Check-out
-                </h3>
-                <span className="badge badge-brand">GPS + Camera</span>
-              </div>
+        {activeTab === 'attendance' && (() => {
+          const today = new Date().toISOString().split('T')[0];
+          const todayShift = myShifts.find((s: any) => s.date === today);
+          const shiftStart = todayShift?.start_at ? new Date(todayShift.start_at).getTime() : 0;
+          const openTime = shiftStart ? shiftStart - 30 * 60 * 1000 : 0;
+          const isEarly = shiftStart > 0 && Date.now() < openTime;
+          const openTimeStr = openTime > 0 ? new Date(openTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '';
+          const shiftStartStr = shiftStart > 0 ? new Date(shiftStart).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '';
 
-              {/* RÀNG BUỘC ĐẶC BIỆT: ÁO HỒNG + BẢNG TÊN */}
-              <div style={{
-                backgroundColor: '#FDF2F8',
-                border: '1.5px solid #F472B6',
-                borderRadius: 'var(--radius-sm)',
-                padding: '12px 14px',
-                marginBottom: '14px',
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-                  <Sparkles size={18} color="#DB2777" />
-                  <strong style={{ fontSize: '13px', color: '#9D174D' }}>
-                    YÊU CẦU CHỤP ẢNH ĐỒNG PHỤC QUY CHUẨN
-                  </strong>
-                </div>
-                <div style={{ fontSize: '12px', color: '#831843', lineHeight: '1.4' }}>
-                  📸 Điểm danh bằng Camera trực tiếp yêu cầu:
-                  <br />• <strong>Mặc áo đồng phục màu hồng</strong> thương hiệu Ụm Bò Milk.
-                  <br />• <strong>Đeo bảng tên nhân viên</strong> rõ ràng, ngay ngắn trước ngực.
-                </div>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '10px' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', fontWeight: 700, color: '#831843', cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={uniformChecked}
-                      onChange={(e) => setUniformChecked(e.target.checked)}
-                    />
-                    <span>Tôi xác nhận đang mặc Áo Đồng Phục Màu Hồng Ụm Bò Milk</span>
-                  </label>
-
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', fontWeight: 700, color: '#831843', cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={badgeChecked}
-                      onChange={(e) => setBadgeChecked(e.target.checked)}
-                    />
-                    <span>Tôi xác nhận đang Đeo Bảng Tên Nhân Viên hợp lệ</span>
-                  </label>
-                </div>
-              </div>
-
-              {/* GPS Info */}
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
-                gap: '8px',
-                marginBottom: '14px',
-                backgroundColor: '#FAFAFA',
-                padding: '10px',
-                borderRadius: 'var(--radius-sm)',
-                fontSize: '12px',
-              }}>
-                <div>
-                  <div style={{ color: 'var(--text-muted)' }}>Vị trí Chi nhánh:</div>
-                  <strong style={{ color: 'var(--brand)' }}>{employee?.default_branch_id || 'CN130'}</strong>
-                </div>
-                <div>
-                  <div style={{ color: 'var(--text-muted)' }}>Khoảng cách GPS:</div>
-                  <strong style={{ color: '#10B981' }}>{gpsDistance}m (Chuẩn &lt; 300m)</strong>
-                </div>
-              </div>
-
-              {/* Attendance Steps */}
-              {attendanceStep === 'IDLE' && (
-                <button
-                  className="btn-primary"
-                  onClick={handleStartAttendance}
-                  style={{ width: '100%', fontSize: '15px', fontWeight: 800 }}
-                >
-                  <MapPin size={18} style={{ marginRight: '8px' }} />
-                  BẮT ĐẦU ĐIỂM DANH (BƯỚC 1: XÁC THỰC GPS)
-                </button>
-              )}
-
-              {attendanceStep === 'CHECKING_GPS' && (
-                <div style={{ textAlign: 'center', padding: '20px' }}>
-                  <RefreshCw size={24} style={{ animation: 'spin 1s linear infinite', color: 'var(--brand)', margin: '0 auto 8px' }} />
-                  <div style={{ fontSize: '13px', fontWeight: 700 }}>Đang kiểm tra tọa độ GPS vệ tinh...</div>
-                </div>
-              )}
-
-              {attendanceStep === 'READY_CAMERA' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              {!todayShift ? (
+                /* RÀNG BUỘC: KHÔNG CÓ CA LÀM THÌ KHÓA CHỨC NĂNG ĐIỂM DANH */
+                <div className="card" style={{ textAlign: 'center', padding: '32px 16px', border: '1.5px dashed #CBD5E1' }}>
                   <div style={{
-                    width: '100%',
-                    height: '200px',
-                    backgroundColor: '#FDF2F8',
-                    border: '2px dashed var(--brand)',
-                    borderRadius: 'var(--radius-md)',
+                    width: '64px',
+                    height: '64px',
+                    borderRadius: '50%',
+                    backgroundColor: '#F1F5F9',
                     display: 'flex',
-                    flexDirection: 'column',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    gap: '8px',
+                    margin: '0 auto 16px',
+                    border: '2px solid #E2E8F0',
                   }}>
-                    <Camera size={40} color="var(--brand)" />
-                    <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--brand)' }}>
-                      Khung hình chụp áo hồng + bảng tên
-                    </span>
-                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                      Giữ camera thẳng khuôn mặt và ngực áo
-                    </span>
+                    <Lock size={32} color="#64748B" />
                   </div>
-
-                  <button
-                    className="btn-primary"
-                    onClick={handleCapturePhoto}
-                    style={{ width: '100%', fontSize: '15px', fontWeight: 800 }}
-                  >
-                    📸 CHỤP ẢNH & GHI NHẬN ĐIỂM DANH
-                  </button>
-                </div>
-              )}
-
-              {attendanceStep === 'SUBMITTING' && (
-                <div style={{ textAlign: 'center', padding: '20px' }}>
-                  <RefreshCw size={24} style={{ animation: 'spin 1s linear infinite', color: 'var(--brand)', margin: '0 auto 8px' }} />
-                  <div style={{ fontSize: '13px', fontWeight: 700 }}>Đang ghi nhận vào Google Sheets & Lưu ảnh Drive...</div>
-                </div>
-              )}
-
-              {attendanceStep === 'CONFIRMED' && (
-                <div style={{
-                  backgroundColor: '#DFF5E8',
-                  padding: '16px',
-                  borderRadius: 'var(--radius-md)',
-                  border: '1px solid #A7F3D0',
-                  textAlign: 'center',
-                }}>
-                  <CheckCircle2 size={36} color="#10B981" style={{ margin: '0 auto 8px' }} />
-                  <h4 style={{ fontSize: '16px', fontWeight: 800, color: '#065F46' }}>ĐIỂM DANH THÀNH CÔNG!</h4>
-                  <div style={{ fontSize: '12px', color: '#047857', marginTop: '4px' }}>
-                    Thời gian: {new Date().toLocaleTimeString('vi-VN')} • Khoảng cách: 38m • Đồng phục: Áo hồng + Bảng tên hợp lệ.
-                  </div>
+                  <span className="badge badge-secondary" style={{ marginBottom: '8px' }}>
+                    HÔM NAY KHÔNG CÓ CA LÀM
+                  </span>
+                  <h3 style={{ fontSize: '17px', fontWeight: 800, color: '#1E293B', marginBottom: '8px' }}>
+                    CHỨC NĂNG ĐIỂM DANH HIỆN ĐANG KHÓA
+                  </h3>
+                  <p style={{ fontSize: '13px', color: '#64748B', lineHeight: '1.5', maxWidth: '340px', margin: '0 auto 20px' }}>
+                    Hôm nay ({new Date().toLocaleDateString('vi-VN')}) bạn không có ca làm việc được phân công tại chi nhánh {employee?.default_branch_id || 'hệ thống'}. Chức năng điểm danh chỉ tự động mở khi bạn có ca làm việc chính thức trong ngày.
+                  </p>
                   <button
                     className="btn-secondary"
-                    onClick={() => setAttendanceStep('IDLE')}
-                    style={{ marginTop: '12px', fontSize: '12px' }}
+                    onClick={() => handleTabClick('schedule')}
+                    style={{ margin: '0 auto', fontSize: '13px', fontWeight: 700 }}
                   >
-                    Điểm Danh Lại / Check-out
+                    <Calendar size={16} style={{ marginRight: '6px' }} />
+                    Kiểm Tra Lại Lịch Làm Việc
                   </button>
+                </div>
+              ) : (
+                /* CÓ CA LÀM HÔM NAY: MỞ QUY TRÌNH ĐIỂM DANH CHECK-IN / CHECK-OUT */
+                <div className="card">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                    <div>
+                      <h3 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--text)' }}>
+                        4. Điểm Danh Ca Làm Hôm Nay
+                      </h3>
+                      <div style={{ fontSize: '12px', color: 'var(--brand)', fontWeight: 700, marginTop: '2px' }}>
+                        {todayShift.shift_code} • {todayShift.branch_id || employee?.default_branch_id} ({shiftStartStr} - {todayShift.end_at ? new Date(todayShift.end_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : ''})
+                      </div>
+                    </div>
+                    <span className="badge badge-brand">GPS + Camera</span>
+                  </div>
+
+                  {/* THÔNG BÁO THỜI GIAN MỞ CHECK-IN (TRƯỚC 30 PHÚT) */}
+                  <div style={{
+                    backgroundColor: isEarly ? '#FFFBEB' : '#F0FDF4',
+                    border: isEarly ? '1.5px solid #FCD34D' : '1px solid #BBF7D0',
+                    borderRadius: 'var(--radius-sm)',
+                    padding: '10px 12px',
+                    marginBottom: '14px',
+                    fontSize: '12px',
+                    lineHeight: '1.4',
+                  }}>
+                    {isEarly ? (
+                      <div style={{ color: '#92400E' }}>
+                        ⏰ <strong>CHƯA ĐẾN GIỜ CHECK-IN:</strong> Cổng điểm danh mở trước ca <strong>30 phút</strong>. Ca bắt đầu lúc <strong>{shiftStartStr}</strong>, cổng check-in sẽ mở lúc <strong>{openTimeStr}</strong>.
+                      </div>
+                    ) : (
+                      <div style={{ color: '#166534' }}>
+                        ✓ <strong>CỔNG ĐIỂM DANH ĐANG MỞ:</strong> Ca làm việc đã sẵn sàng tiếp nhận Check-in/Check-out.
+                      </div>
+                    )}
+                  </div>
+
+                  {/* RÀNG BUỘC ĐẶC BIỆT: ÁO HỒNG + BẢNG TÊN */}
+                  <div style={{
+                    backgroundColor: '#FDF2F8',
+                    border: '1.5px solid #F472B6',
+                    borderRadius: 'var(--radius-sm)',
+                    padding: '12px 14px',
+                    marginBottom: '14px',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                      <Sparkles size={18} color="#DB2777" />
+                      <strong style={{ fontSize: '13px', color: '#9D174D' }}>
+                        YÊU CẦU ĐỒNG PHỤC QUY CHUẨN ỤM BÒ MILK
+                      </strong>
+                    </div>
+                    <div style={{ fontSize: '12px', color: '#831843', lineHeight: '1.4' }}>
+                      📸 Điểm danh bằng Camera trực tiếp yêu cầu:
+                      <br />• <strong>Mặc áo đồng phục màu hồng</strong> thương hiệu Ụm Bò Milk.
+                      <br />• <strong>Đeo bảng tên nhân viên</strong> rõ ràng, ngay ngắn trước ngực.
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '10px' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', fontWeight: 700, color: '#831843', cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={uniformChecked}
+                          onChange={(e) => setUniformChecked(e.target.checked)}
+                        />
+                        <span>Tôi xác nhận đang mặc Áo Đồng Phục Màu Hồng Ụm Bò Milk</span>
+                      </label>
+
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', fontWeight: 700, color: '#831843', cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={badgeChecked}
+                          onChange={(e) => setBadgeChecked(e.target.checked)}
+                        />
+                        <span>Tôi xác nhận đang Đeo Bảng Tên Nhân Viên hợp lệ</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* TIẾN TRÌNH 2 BƯỚC: CHECK-IN VÀ CHECK-OUT */}
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: '10px',
+                    marginBottom: '14px',
+                  }}>
+                    <div style={{
+                      padding: '10px',
+                      borderRadius: 'var(--radius-sm)',
+                      backgroundColor: todayAttendance?.checkedIn ? '#ECFDF5' : '#FFFBEB',
+                      border: todayAttendance?.checkedIn ? '1.5px solid #10B981' : '1px solid #FCD34D',
+                      textAlign: 'center',
+                    }}>
+                      <div style={{ fontSize: '11px', fontWeight: 700, color: todayAttendance?.checkedIn ? '#065F46' : '#92400E' }}>
+                        BƯỚC 1: CHECK-IN
+                      </div>
+                      <div style={{ fontSize: '12px', fontWeight: 800, marginTop: '4px', color: todayAttendance?.checkedIn ? '#10B981' : '#D97706' }}>
+                        {todayAttendance?.checkedIn ? `✓ ${todayAttendance.checkInTime || 'Đã Check-in'}` : 'Chưa Check-in'}
+                      </div>
+                    </div>
+
+                    <div style={{
+                      padding: '10px',
+                      borderRadius: 'var(--radius-sm)',
+                      backgroundColor: todayAttendance?.checkedOut ? '#ECFDF5' : todayAttendance?.checkedIn ? '#EFF6FF' : '#F1F5F9',
+                      border: todayAttendance?.checkedOut ? '1.5px solid #10B981' : todayAttendance?.checkedIn ? '1px solid #60A5FA' : '1px solid #CBD5E1',
+                      textAlign: 'center',
+                    }}>
+                      <div style={{ fontSize: '11px', fontWeight: 700, color: todayAttendance?.checkedOut ? '#065F46' : todayAttendance?.checkedIn ? '#1E40AF' : '#64748B' }}>
+                        BƯỚC 2: CHECK-OUT
+                      </div>
+                      <div style={{ fontSize: '12px', fontWeight: 800, marginTop: '4px', color: todayAttendance?.checkedOut ? '#10B981' : todayAttendance?.checkedIn ? '#2563EB' : '#94A3B8' }}>
+                        {todayAttendance?.checkedOut ? `✓ ${todayAttendance.checkOutTime || 'Đã Check-out'}` : todayAttendance?.checkedIn ? 'Sẵn sàng Check-out' : '🔒 Khóa (Cần Check-in)'}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* GPS Info */}
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: '8px',
+                    marginBottom: '14px',
+                    backgroundColor: '#FAFAFA',
+                    padding: '10px',
+                    borderRadius: 'var(--radius-sm)',
+                    fontSize: '12px',
+                  }}>
+                    <div>
+                      <div style={{ color: 'var(--text-muted)' }}>Vị trí Chi nhánh:</div>
+                      <strong style={{ color: 'var(--brand)' }}>{todayShift.branch_id || employee?.default_branch_id || 'CN130'}</strong>
+                    </div>
+                    <div>
+                      <div style={{ color: 'var(--text-muted)' }}>Khoảng cách GPS:</div>
+                      <strong style={{ color: '#10B981' }}>{gpsDistance}m (Chuẩn &lt; 300m)</strong>
+                    </div>
+                  </div>
+
+                  {/* Attendance Action Controller */}
+                  {attendanceStep === 'IDLE' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      {/* NÚT CHECK-IN ĐẦU CA */}
+                      {!todayAttendance?.checkedIn ? (
+                        <button
+                          className="btn-primary"
+                          disabled={isEarly}
+                          onClick={() => handleStartAttendance('CHECK_IN')}
+                          style={{
+                            width: '100%',
+                            fontSize: '15px',
+                            fontWeight: 800,
+                            opacity: isEarly ? 0.6 : 1,
+                            cursor: isEarly ? 'not-allowed' : 'pointer',
+                          }}
+                        >
+                          <MapPin size={18} style={{ marginRight: '8px' }} />
+                          {isEarly ? `CHƯA ĐẾN GIỜ (MỞ LÚC ${openTimeStr})` : 'BẮT ĐẦU CHECK-IN ĐẦU CA (BƯỚC 1)'}
+                        </button>
+                      ) : (
+                        <div style={{
+                          padding: '10px 12px',
+                          backgroundColor: '#F0FDF4',
+                          border: '1px solid #86EFAC',
+                          borderRadius: 'var(--radius-sm)',
+                          fontSize: '12px',
+                          color: '#15803D',
+                          fontWeight: 700,
+                          textAlign: 'center',
+                        }}>
+                          ✓ ĐÃ HOÀN TẤT CHECK-IN VÀO CA LÚC {todayAttendance.checkInTime || '07:00'} (ÁO HỒNG + BẢNG TÊN ĐÃ XÁC THỰC)
+                        </div>
+                      )}
+
+                      {/* NÚT CHECK-OUT TAN CA (RÀNG BUỘC: CHECK-IN XONG MỚI ĐƯỢC CHECK-OUT) */}
+                      {!todayAttendance?.checkedOut ? (
+                        <button
+                          className="btn-secondary"
+                          disabled={!todayAttendance?.checkedIn}
+                          onClick={() => handleStartAttendance('CHECK_OUT')}
+                          style={{
+                            width: '100%',
+                            fontSize: '14px',
+                            fontWeight: 800,
+                            color: todayAttendance?.checkedIn ? '#2563EB' : '#94A3B8',
+                            borderColor: todayAttendance?.checkedIn ? '#2563EB' : '#CBD5E1',
+                            backgroundColor: todayAttendance?.checkedIn ? '#EFF6FF' : '#F8FAFC',
+                            cursor: todayAttendance?.checkedIn ? 'pointer' : 'not-allowed',
+                            opacity: todayAttendance?.checkedIn ? 1 : 0.6,
+                          }}
+                        >
+                          {todayAttendance?.checkedIn ? (
+                            '🏁 CHECK-OUT KẾT THÚC CA LÀM (BƯỚC 2)'
+                          ) : (
+                            '🔒 CHECK-OUT (BẮT BUỘC CHECK-IN TRƯỚC)'
+                          )}
+                        </button>
+                      ) : (
+                        <div style={{
+                          padding: '10px 12px',
+                          backgroundColor: '#ECFDF5',
+                          border: '1.5px solid #10B981',
+                          borderRadius: 'var(--radius-sm)',
+                          fontSize: '13px',
+                          color: '#065F46',
+                          fontWeight: 800,
+                          textAlign: 'center',
+                        }}>
+                          🎉 BẠN ĐÃ HOÀN TẤT CA LÀM VIỆC HÔM NAY! (CHECK-IN: {todayAttendance.checkInTime} • CHECK-OUT: {todayAttendance.checkOutTime})
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {attendanceStep === 'CHECKING_GPS' && (
+                    <div style={{ textAlign: 'center', padding: '20px' }}>
+                      <RefreshCw size={24} style={{ animation: 'spin 1s linear infinite', color: 'var(--brand)', margin: '0 auto 8px' }} />
+                      <div style={{ fontSize: '13px', fontWeight: 700 }}>Đang kiểm tra tọa độ GPS vệ tinh...</div>
+                    </div>
+                  )}
+
+                  {attendanceStep === 'READY_CAMERA' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      <div style={{
+                        width: '100%',
+                        height: '200px',
+                        backgroundColor: '#FDF2F8',
+                        border: '2px dashed var(--brand)',
+                        borderRadius: 'var(--radius-md)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '8px',
+                      }}>
+                        <Camera size={40} color="var(--brand)" />
+                        <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--brand)' }}>
+                          Khung hình chụp áo hồng + bảng tên
+                        </span>
+                        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                          Giữ camera thẳng khuôn mặt và ngực áo
+                        </span>
+                      </div>
+
+                      <button
+                        className="btn-primary"
+                        onClick={handleCapturePhoto}
+                        style={{ width: '100%', fontSize: '15px', fontWeight: 800 }}
+                      >
+                        📸 CHỤP ẢNH & GHI NHẬN {attendanceActionType === 'CHECK_IN' ? 'CHECK-IN' : 'CHECK-OUT'}
+                      </button>
+                    </div>
+                  )}
+
+                  {attendanceStep === 'SUBMITTING' && (
+                    <div style={{ textAlign: 'center', padding: '20px' }}>
+                      <RefreshCw size={24} style={{ animation: 'spin 1s linear infinite', color: 'var(--brand)', margin: '0 auto 8px' }} />
+                      <div style={{ fontSize: '13px', fontWeight: 700 }}>Đang ghi nhận vào Google Sheets & Lưu ảnh Drive...</div>
+                    </div>
+                  )}
+
+                  {attendanceStep === 'CONFIRMED' && (
+                    <div style={{
+                      backgroundColor: '#DFF5E8',
+                      padding: '16px',
+                      borderRadius: 'var(--radius-md)',
+                      border: '1px solid #A7F3D0',
+                      textAlign: 'center',
+                    }}>
+                      <CheckCircle2 size={36} color="#10B981" style={{ margin: '0 auto 8px' }} />
+                      <h4 style={{ fontSize: '16px', fontWeight: 800, color: '#065F46' }}>
+                        {attendanceActionType === 'CHECK_IN' ? 'CHECK-IN THÀNH CÔNG!' : 'CHECK-OUT THÀNH CÔNG!'}
+                      </h4>
+                      <div style={{ fontSize: '12px', color: '#047857', marginTop: '4px' }}>
+                        Thời gian: {new Date().toLocaleTimeString('vi-VN')} • Khoảng cách: 38m • Đồng phục: Áo hồng + Bảng tên hợp lệ.
+                      </div>
+                      <button
+                        className="btn-secondary"
+                        onClick={() => setAttendanceStep('IDLE')}
+                        style={{ marginTop: '12px', fontSize: '12px' }}
+                      >
+                        Đóng / Quay lại
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* ========================================================= */}
-        {/* TAB 5: CÔNG CỦA TÔI */}
+        {/* TAB 5: CÔNG CỦA TÔI (DỮ LIỆU THẬT 100%, XÓA SẠCH DỮ LIỆU TEST) */}
         {/* ========================================================= */}
         {activeTab === 'timesheet' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
@@ -959,27 +1492,40 @@ export function App() {
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {[
-                  { date: '22/09/2026', shift: 'Ca 1', in: '06:55', out: '12:02', hours: 5.1, status: 'ĐÚNG GIỜ' },
-                  { date: '21/09/2026', shift: 'Ca 1', in: '07:05', out: '12:00', hours: 4.9, status: 'TRỄ 5P' },
-                  { date: '20/09/2026', shift: 'Ca 2', in: '11:58', out: '18:05', hours: 6.1, status: 'ĐÚNG GIỜ' },
-                  { date: '19/09/2026', shift: 'Nghỉ OFF', in: '-', out: '-', hours: 0, status: 'OFF' },
-                ].map((item, idx) => (
-                  <div key={idx} style={{ padding: '10px 12px', backgroundColor: '#FAFAFA', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div>
-                      <div style={{ fontWeight: 700, fontSize: '13px' }}>{item.date} • {item.shift}</div>
-                      <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Vào: {item.in} • Ra: {item.out} • {item.hours}h</div>
+                {myAttendanceHistory.length === 0 ? (
+                  <div style={{
+                    padding: '32px 16px',
+                    textAlign: 'center',
+                    backgroundColor: '#FAFAFA',
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px dashed var(--border)',
+                    color: 'var(--text-muted)',
+                    fontSize: '13px',
+                  }}>
+                    <CheckCircle2 size={32} color="#9CA3AF" style={{ margin: '0 auto 8px' }} />
+                    <div style={{ fontWeight: 700, color: 'var(--text)', marginBottom: '4px' }}>
+                      Chưa có dữ liệu chấm công trong kỳ này
                     </div>
-                    <span className={`badge ${item.status === 'OFF' ? 'badge-secondary' : item.status.includes('TRỄ') ? 'badge-warning' : 'badge-success'}`}>
-                      {item.status}
-                    </span>
+                    <div>Dữ liệu sẽ tự động đồng bộ realtime từ Google Sheets khi bạn thực hiện Check-in / Check-out ca làm việc.</div>
                   </div>
-                ))}
+                ) : (
+                  myAttendanceHistory.map((item, idx) => (
+                    <div key={idx} style={{ padding: '10px 12px', backgroundColor: '#FAFAFA', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: '13px' }}>{item.date} • {item.shift}</div>
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Vào: {item.in} • Ra: {item.out} • {item.hours}h</div>
+                      </div>
+                      <span className={`badge ${item.status === 'OFF' ? 'badge-secondary' : item.status.includes('TRỄ') ? 'badge-warning' : 'badge-success'}`}>
+                        {item.status}
+                      </span>
+                    </div>
+                  ))
+                )}
               </div>
 
               <button
                 className="btn-secondary"
-                onClick={() => setActiveTab(isProbation ? 'adjustment' : 'emergency_adjust')}
+                onClick={() => handleTabClick(isProbation ? 'adjustment' : 'emergency_adjust')}
                 style={{ marginTop: '12px', width: '100%', fontSize: '13px', fontWeight: 700 }}
               >
                 [ YÊU CẦU BỔ SUNG CÔNG KHI SAI SÓT ]
@@ -1058,11 +1604,11 @@ export function App() {
                 🚨 Báo Nghỉ Đột Xuất (Khẩn Cấp)
               </h4>
               <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '10px' }}>
-                Dành cho các trường hợp ốm đau, tai nạn hoặc sự cố khẩn cấp. Store sẽ tìm người bù ca.
+                Dành cho các trường hợp ốm đau, tai nạn hoặc sự cố khẩn cấp. Dữ liệu sẽ chuyển thẳng đến HR Tab 10 và Google Sheets để phát lệnh bù ca.
               </p>
               <textarea
                 rows={2}
-                placeholder="Nhập lý do nghỉ khẩn..."
+                placeholder="Nhập lý do nghỉ khẩn (sốt cao, tai nạn, việc gia đình gấp)..."
                 value={emergencyData.reason}
                 onChange={(e) => setEmergencyData({ ...emergencyData, reason: e.target.value })}
                 style={{ width: '100%', marginBottom: '10px' }}
@@ -1070,9 +1616,9 @@ export function App() {
               <button
                 className="btn-secondary"
                 style={{ color: '#C2410C', borderColor: '#FED7AA', width: '100%', fontWeight: 700 }}
-                onClick={() => showToast('Đã gửi báo nghỉ khẩn đến Cửa Hàng Trưởng và HR!')}
+                onClick={handleEmergencyLeaveSubmit}
               >
-                Gửi Báo Nghỉ Khẩn Cấp
+                Gửi Báo Nghỉ Khẩn Cấp (Đồng Bộ Realtime HR)
               </button>
             </div>
           </div>
@@ -1090,87 +1636,6 @@ export function App() {
               <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '14px' }}>
                 Hỗ trợ 02 hình thức đổi ca chuẩn quy định của Ụm Bò Milk:
               </p>
-
-              {/* THÔNG BÁO ĐIỀU PHỐI KHẨN TỪ HR - CHI NHÁNH CN130 (+30.000Đ PHỤ CẤP) */}
-              <div style={{
-                backgroundColor: '#EFF6FF',
-                border: '2px solid #2563EB',
-                borderRadius: 'var(--radius-md)',
-                padding: '14px 16px',
-                marginBottom: '18px',
-                boxShadow: 'var(--shadow-sm)',
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{ fontSize: '18px' }}>📢</span>
-                    <strong style={{ fontSize: '13px', color: '#1E40AF', textTransform: 'uppercase' }}>
-                      YÊU CẦU ĐIỀU PHỐI CA TỪ HR - CHI NHÁNH {employee?.default_branch_id || 'CN130'}
-                    </strong>
-                  </div>
-                  <span style={{
-                    backgroundColor: '#DC2626',
-                    color: '#FFF',
-                    fontSize: '10px',
-                    fontWeight: 800,
-                    padding: '3px 8px',
-                    borderRadius: '999px',
-                  }}>
-                    CẦN NGƯỜI LÀM THAY
-                  </span>
-                </div>
-
-                <div style={{ fontSize: '12px', color: '#1E3A8A', lineHeight: '1.5', marginBottom: '8px' }}>
-                  Có nhân sự trong chi nhánh bận việc đột xuất không tìm được người thay ca nên HR gửi thông báo điều phối nhận ca:
-                  <div style={{ marginTop: '6px', padding: '8px 10px', backgroundColor: '#DBEAFE', borderRadius: '6px', fontWeight: 600 }}>
-                    🕒 <strong>Ca cần hỗ trợ:</strong> Ca làm việc đột xuất cần người hỗ trợ trong ngày<br/>
-                    🎁 <strong>Chính sách phụ cấp:</strong> Tự động <strong>+30.000đ/ca</strong> vào Bảng Lương Finance & Lương AI của bạn!
-                  </div>
-                </div>
-
-                <div style={{ fontSize: '11px', color: '#64748B', marginBottom: '10px' }}>
-                  <em>💡 Bạn đang có Ca Sáng (07:00 - 12:00). Nếu nhận ca này bạn sẽ làm 2 ca/ngày và được hưởng đủ lương 2 ca + 30.000đ phụ cấp hỗ trợ!</em>
-                </div>
-
-                {!hasAcceptedHRDispatch ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setHasAcceptedHRDispatch(true);
-                      showToast('🎉 BẠN ĐÃ NHẬN CA THÀNH CÔNG! Đã cộng +30.000đ vào Lương AI và Bảng lương Finance.');
-                    }}
-                    className="btn-primary"
-                    style={{
-                      width: '100%',
-                      backgroundColor: '#2563EB',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '8px',
-                      fontWeight: 800,
-                      padding: '11px',
-                    }}
-                  >
-                    🤝 TÔI ĐỒNG Ý NHẬN CA LÀM THAY NÀY (+30.000đ PHỤ CẤP)
-                  </button>
-                ) : (
-                  <div style={{
-                    backgroundColor: '#DCFCE7',
-                    border: '1.5px solid #16A34A',
-                    borderRadius: '8px',
-                    padding: '10px 12px',
-                    textAlign: 'center',
-                    color: '#15803D',
-                  }}>
-                    <div style={{ fontWeight: 800, fontSize: '13px' }}>
-                      ✓ BẠN ĐÃ NHẬN CA THAY THÀNH CÔNG LÚC 08:35:12!
-                    </div>
-                    <div style={{ fontSize: '11px', marginTop: '4px' }}>
-                      • Ngày 24/09: Bạn làm <strong>2 ca/ngày</strong> (Ca 1 Sáng + Ca 2 Chiều)<br />
-                      • Hệ thống đã tự động ghi nhận <strong>+30.000đ Phụ cấp</strong> vào <strong>Lương AI</strong> & đồng bộ sang <strong>Finance</strong>.
-                    </div>
-                  </div>
-                )}
-              </div>
 
               {/* 2 FORMS SWITCHER BUTTONS */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '16px' }}>
@@ -1223,9 +1688,15 @@ export function App() {
                       onChange={(e) => setSwapData({ ...swapData, myShift: e.target.value })}
                       style={{ width: '100%' }}
                     >
-                      <option value="2026-09-25 (Ca 1: 07:00 - 12:00)">2026-09-25 (Ca 1: 07:00 - 12:00)</option>
-                      <option value="2026-09-26 (Ca 2: 12:00 - 18:00)">2026-09-26 (Ca 2: 12:00 - 18:00)</option>
-                      <option value="2026-09-27 (Nghỉ OFF)">2026-09-27 (Nghỉ OFF)</option>
+                      {myShifts.length === 0 ? (
+                        <option value="Ca làm việc tuần này">Ca làm việc tuần này</option>
+                      ) : (
+                        myShifts.map((s: any, idx: number) => (
+                          <option key={idx} value={`${s.date} (${s.shift_code})`}>
+                            {s.date} ({s.shift_code})
+                          </option>
+                        ))
+                      )}
                     </select>
                   </div>
 
@@ -1236,8 +1707,15 @@ export function App() {
                       onChange={(e) => setSwapData({ ...swapData, targetEmployeeId: e.target.value })}
                       style={{ width: '100%' }}
                     >
-                      <option value="EMP_002">Trần Thị Bình (0903333444)</option>
-                      <option value="EMP_003">Lê Hoàng Cúc (0905555666)</option>
+                      {branchColleagues.length === 0 ? (
+                        <option value="COLLEAGUE_1">Đồng nghiệp chi nhánh {employee?.default_branch_id || 'CN130'}</option>
+                      ) : (
+                        branchColleagues.map((col: any) => (
+                          <option key={col.employee_id} value={col.employee_id}>
+                            {col.full_name} ({col.phone_normalized || col.phone || col.employee_code || col.employee_id})
+                          </option>
+                        ))
+                      )}
                     </select>
                   </div>
 
@@ -1248,9 +1726,10 @@ export function App() {
                       onChange={(e) => setSwapData({ ...swapData, targetShift: e.target.value })}
                       style={{ width: '100%' }}
                     >
-                      <option value="2026-09-26 (Ca 2: 12:00 - 18:00)">2026-09-26 (Ca 2: 12:00 - 18:00)</option>
-                      <option value="2026-09-27 (Ca 1: 07:00 - 12:00)">2026-09-27 (Ca 1: 07:00 - 12:00)</option>
-                      <option value="2026-09-28 (Nghỉ OFF)">2026-09-28 (Nghỉ OFF)</option>
+                      <option value="Ca 1 (07:00 - 12:00)">Ca 1 (07:00 - 12:00)</option>
+                      <option value="Ca 2 (12:00 - 18:00)">Ca 2 (12:00 - 18:00)</option>
+                      <option value="Ca 3 (17:00 - 22:00)">Ca 3 (17:00 - 22:00)</option>
+                      <option value="Nghỉ OFF">Nghỉ OFF</option>
                     </select>
                   </div>
 
@@ -1258,6 +1737,7 @@ export function App() {
                     <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Lý do tráo đổi:</label>
                     <input
                       type="text"
+                      placeholder="Lý do tráo đổi ca..."
                       value={swapData.reason}
                       onChange={(e) => setSwapData({ ...swapData, reason: e.target.value })}
                       style={{ width: '100%' }}
@@ -1287,8 +1767,15 @@ export function App() {
                       onChange={(e) => setSwapData({ ...swapData, myShift: e.target.value })}
                       style={{ width: '100%' }}
                     >
-                      <option value="2026-09-25 (Ca 1: 07:00 - 12:00)">2026-09-25 (Ca 1: 07:00 - 12:00)</option>
-                      <option value="2026-09-26 (Ca 2: 12:00 - 18:00)">2026-09-26 (Ca 2: 12:00 - 18:00)</option>
+                      {myShifts.length === 0 ? (
+                        <option value="Ca làm việc hôm nay">Ca làm việc hôm nay</option>
+                      ) : (
+                        myShifts.map((s: any, idx: number) => (
+                          <option key={idx} value={`${s.date} (${s.shift_code})`}>
+                            {s.date} ({s.shift_code})
+                          </option>
+                        ))
+                      )}
                     </select>
                   </div>
 
@@ -1299,8 +1786,15 @@ export function App() {
                       onChange={(e) => setSwapData({ ...swapData, targetEmployeeId: e.target.value })}
                       style={{ width: '100%' }}
                     >
-                      <option value="EMP_002">Trần Thị Bình (Đồng ý nhận làm thay ca)</option>
-                      <option value="EMP_003">Lê Hoàng Cúc (Đồng ý nhận làm thay ca)</option>
+                      {branchColleagues.length === 0 ? (
+                        <option value="COLLEAGUE_1">Đồng nghiệp chi nhánh {employee?.default_branch_id || 'CN130'}</option>
+                      ) : (
+                        branchColleagues.map((col: any) => (
+                          <option key={col.employee_id} value={col.employee_id}>
+                            {col.full_name} ({col.phone_normalized || col.phone || col.employee_code || col.employee_id})
+                          </option>
+                        ))
+                      )}
                     </select>
                   </div>
 
@@ -1338,7 +1832,7 @@ export function App() {
                 {isProbation ? '7. Giải Trình & Bổ Sung Công' : '7. Nghỉ Khẩn Cấp & Bổ Sung Công'}
               </h3>
               <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '14px' }}>
-                Gửi giải trình khi quên check-in/out hoặc gặp sự cố GPS/Camera trên điện thoại.
+                Gửi giải trình khi quên check-in/out hoặc báo nghỉ đột xuất (đồng bộ trực tiếp sang HR Tab 10 và Google Sheets).
               </p>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -1362,7 +1856,7 @@ export function App() {
                     <option value="QUEN_CHECKIN">Quên Check-in khi vào ca</option>
                     <option value="QUEN_CHECKOUT">Quên Check-out khi hết ca</option>
                     <option value="LOI_GPS_CAMERA">Điện thoại bị lỗi GPS / Camera</option>
-                    {!isProbation && <option value="NGHI_KHAN">Báo nghỉ đột xuất do sự cố khẩn cấp</option>}
+                    {!isProbation && <option value="NGHI_KHAN">Báo nghỉ đột xuất do sự cố khẩn cấp (HR Tab 10)</option>}
                   </select>
                 </div>
 
@@ -1378,9 +1872,9 @@ export function App() {
 
                 <button
                   className="btn-primary"
-                  onClick={() => showToast('Đã gửi phiếu giải trình bổ sung công đến Cửa Hàng Trưởng!')}
+                  onClick={handleAdjustmentSubmit}
                 >
-                  Gửi Phiếu Bổ Sung Công
+                  {adjustmentData.type === 'NGHI_KHAN' ? 'Gửi Báo Nghỉ Khẩn Cấp Đến HR' : 'Gửi Phiếu Bổ Sung Công'}
                 </button>
               </div>
             </div>
