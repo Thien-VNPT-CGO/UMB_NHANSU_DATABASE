@@ -1,9 +1,11 @@
 import { ISheetsRepository } from './sheets.interface.js';
 import { MockSheetsAdapter } from './mock-sheets.adapter.js';
+import { GoogleSheetsSyncService } from '../services/google-sheets-sync.service.js';
 
 export class GoogleSheetsAdapter implements ISheetsRepository {
   private fallbackAdapter: MockSheetsAdapter;
   private isConfigured = false;
+  public syncService: GoogleSheetsSyncService;
 
   constructor() {
     this.fallbackAdapter = new MockSheetsAdapter();
@@ -24,9 +26,17 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     const spreadsheetId = process.env.SPREADSHEET_ID || process.env.GOOGLE_SPREADSHEET_ID || '17iXM0zc1m17aX9AZrFMjOkPRMy2_CwWfjTRZSUPQF2w';
     process.env.SPREADSHEET_ID = spreadsheetId;
 
+    this.syncService = new GoogleSheetsSyncService();
+
     // Check if Google credentials are provided in env
     if (process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && process.env.GOOGLE_PRIVATE_KEY && spreadsheetId) {
       this.isConfigured = true;
+      // Auto-initialize sheets structure and sync in background
+      setTimeout(() => {
+        this.syncService.syncAllData(this.fallbackAdapter)
+          .then(res => console.log('[GoogleSheetsAdapter] Auto-sync result:', res.message))
+          .catch(err => console.error('[GoogleSheetsAdapter] Auto-sync error:', err));
+      }, 3000);
     }
   }
 
@@ -38,12 +48,14 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     const spreadsheetId = process.env.SPREADSHEET_ID || process.env.GOOGLE_SPREADSHEET_ID || '17iXM0zc1m17aX9AZrFMjOkPRMy2_CwWfjTRZSUPQF2w';
     const candidateSpreadsheetId = process.env.CANDIDATE_SPREADSHEET_ID || '1rcqEKraSRhr-Tn9qwlhADlkQUei8j65bXeHF_Tmkd38';
     const driveFolderId = process.env.GOOGLE_DRIVE_FOLDER_ID || '';
+    const syncStatus = this.syncService.getStatus();
     return {
-      connected: true,
+      connected: this.isConfigured,
       mode: this.isConfigured ? 'GOOGLE_SHEETS_LIVE' : 'MOCK_ENGINE_ACTIVE',
       spreadsheetId,
       candidateSpreadsheetId,
       driveFolderId,
+      syncService: syncStatus,
       message: this.isConfigured
         ? 'Connected to live Google Sheets master'
         : 'Google credentials not set in .env; running in high-fidelity mock engine with full audit & schema persistence',

@@ -817,16 +817,47 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     });
   });
 
+  app.get('/api/sheets/status', (req, res) => {
+    try {
+      const syncService = (adapter as any).syncService;
+      res.json({
+        adapter: adapter.getStatus(),
+        syncService: syncService ? syncService.getStatus() : null,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post('/admin/integrations/sync-now', authMiddleware, requireRole(['ADMIN']), async (req: AuthenticatedRequest, res) => {
     try {
+      const syncService = (adapter as any).syncService;
+      let syncResult = {
+        success: true,
+        message: 'Đã hoàn tất đồng bộ với Google Sheets Master.',
+        details: null as any,
+      };
+
+      if (syncService) {
+        syncResult = await syncService.syncAllData(adapter);
+      }
+
       await adapter.recordAuditLog({
         actor_id: req.user!.id,
         action: 'MANUAL_FULL_SYNC_TRIGGERED',
         target_type: 'SYSTEM',
         target_id: 'GOOGLE_SHEETS_MASTER',
+        details: syncResult,
       });
-      res.json({ success: true, message: 'Đã hoàn tất đồng bộ toàn bộ 23 tabs dữ liệu với Google Sheets Master.', synced_at: new Date().toISOString() });
+
+      res.json({
+        success: syncResult.success,
+        message: syncResult.message,
+        details: syncResult.details,
+        synced_at: new Date().toISOString(),
+      });
     } catch (err: any) {
+      console.error('[app.ts] Lỗi đồng bộ Google Sheets:', err);
       res.status(500).json({ error: err.message });
     }
   });

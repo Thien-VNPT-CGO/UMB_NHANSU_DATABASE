@@ -2191,21 +2191,80 @@ export function App() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
               <div>
                 <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>8. Tích Hợp & Đồng Bộ Google Sheets Master</h1>
-                <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Cấu trúc 23 Tabs Google Sheets, Google Drive Receipts, Realtime Socket.IO & Sequential Queue</p>
+                <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Cấu trúc 13 Tabs Google Sheets Master, Google Drive Receipts, Realtime Socket.IO & Sequential Queue</p>
+              </div>
+
+              {/* Live Connection Banner */}
+              <div style={{ backgroundColor: 'var(--surface)', padding: '16px 20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: integrationsStatus?.mode === 'GOOGLE_SHEETS_LIVE' ? 'var(--success)' : '#F59E0B' }} />
+                  <div>
+                    <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text)' }}>
+                      {integrationsStatus?.mode === 'GOOGLE_SHEETS_LIVE' ? 'Đã Kết Nối Google Sheets Master Trực Tiếp (Live Mode)' : 'Chế Độ Giả Lập Cục Bộ (Cần Thêm GOOGLE_SERVICE_ACCOUNT_JSON trên Render)'}
+                    </div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                      Mã Bảng Tính: <code style={{ backgroundColor: 'var(--bg)', padding: '2px 6px', borderRadius: '4px' }}>{integrationsStatus?.spreadsheetId || '17iXM0zc1m17aX9AZrFMjOkPRMy2_CwWfjTRZSUPQF2w'}</code>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <a
+                    href={`https://docs.google.com/spreadsheets/d/${integrationsStatus?.spreadsheetId || '17iXM0zc1m17aX9AZrFMjOkPRMy2_CwWfjTRZSUPQF2w'}/edit`}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{
+                      padding: '8px 16px',
+                      borderRadius: 'var(--radius-sm)',
+                      backgroundColor: 'var(--bg)',
+                      color: 'var(--brand)',
+                      border: '1px solid var(--border)',
+                      fontWeight: 600,
+                      fontSize: '13px',
+                      textDecoration: 'none',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                    }}
+                  >
+                    ↗ Mở Google Sheets Master
+                  </a>
+                  <button
+                    onClick={handleForceSync}
+                    disabled={loading}
+                    style={{
+                      padding: '8px 18px',
+                      borderRadius: 'var(--radius-sm)',
+                      backgroundColor: 'var(--brand)',
+                      color: '#FFF',
+                      fontWeight: 700,
+                      fontSize: '13px',
+                      border: 'none',
+                      cursor: loading ? 'not-allowed' : 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                    }}
+                  >
+                    {loading ? 'Đang Khởi Tạo & Đồng Bộ...' : '🚀 Khởi Tạo Cấu Trúc & Đồng Bộ Dữ Liệu Ngay'}
+                  </button>
+                </div>
               </div>
 
               {/* Status summary */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
                 <div style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
                   <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>GOOGLE SHEETS MASTER</div>
-                  <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--success)', marginTop: '4px' }}>23 / 23 Tabs</div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Độ trễ trung bình: 45ms</div>
+                  <div style={{ fontSize: '20px', fontWeight: 800, color: integrationsStatus?.mode === 'GOOGLE_SHEETS_LIVE' ? 'var(--success)' : '#F59E0B', marginTop: '4px' }}>
+                    {integrationsStatus?.mode === 'GOOGLE_SHEETS_LIVE' ? 'LIVE SYNC' : 'MOCK ENGINE'}
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>13 Tab Dữ Liệu Chuẩn</div>
                 </div>
 
                 <div style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
                   <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>GOOGLE DRIVE STORAGE</div>
-                  <div style={{ fontSize: '20px', fontWeight: 800, color: '#2563EB', marginTop: '4px' }}>84 Receipts</div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Dung lượng: 18.5 MB</div>
+                  <div style={{ fontSize: '20px', fontWeight: 800, color: '#2563EB', marginTop: '4px' }}>Folder Sẵn Sàng</div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Lưu ảnh Check-in/out GPS</div>
                 </div>
 
                 <div style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
@@ -2215,18 +2274,22 @@ export function App() {
                 </div>
 
                 <div style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-                  <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>SEQUENTIAL QUEUE</div>
-                  <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--success)', marginTop: '4px' }}>Healthy Idle</div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Single-Writer Active</div>
+                  <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>KIỂM SOÁT GHI ĐỒNG THỜI</div>
+                  <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--success)', marginTop: '4px' }}>Sequential Writer</div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Bảo vệ tính toàn vẹn Sheet</div>
                 </div>
               </div>
 
-              {/* 23 Tabs Grid */}
+              {/* Tabs Grid */}
               <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                  <h2 style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text)' }}>Danh Sách 23 Tabs Dữ Liệu Bất Biến (Google Sheets Schema)</h2>
+                  <div>
+                    <h2 style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text)' }}>Danh Sách Các Tab Master Trên Google Sheets</h2>
+                    <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>Khi bấm Đồng bộ, hệ thống sẽ tự động tạo các sheet tab này nếu chưa có và ghi dữ liệu đầy đủ.</p>
+                  </div>
                   <button
                     onClick={handleForceSync}
+                    disabled={loading}
                     style={{
                       padding: '8px 16px',
                       borderRadius: 'var(--radius-sm)',
@@ -2235,18 +2298,35 @@ export function App() {
                       fontWeight: 600,
                       fontSize: '12px',
                       border: 'none',
-                      cursor: 'pointer',
+                      cursor: loading ? 'not-allowed' : 'pointer',
                     }}
                   >
-                    Kiểm Tra Toàn Bộ 23 Tabs Ngay
+                    {loading ? 'Đang xử lý...' : 'Đồng Bộ Tất Cả Tab'}
                   </button>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px' }}>
-                  {integrationsStatus?.sheets?.tabs?.map((tabName: string, idx: number) => (
-                    <div key={idx} style={{ padding: '10px 12px', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--bg)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', fontWeight: 600 }}>
-                      <CheckCircle size={14} color="var(--success)" />
-                      {tabName}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
+                  {[
+                    'NHAN_VIEN_MASTER',
+                    'TAI_KHOAN_NHAN_VIEN',
+                    'ADMIN_ACCOUNTS',
+                    'PHAN_CONG_CA',
+                    'SU_KIEN_DIEM_DANH',
+                    'DON_NGHI_PHEP',
+                    'DON_DOI_CA',
+                    'DIEU_CHINH_CONG',
+                    'KY_LUONG',
+                    'CHI_TIET_LUONG',
+                    'AUDIT_LOG',
+                    'DANH_SACH_CHI_NHANH',
+                    'CAU_HINH_HE_THONG',
+                  ].map((tabName: string, idx: number) => (
+                    <div key={idx} style={{ padding: '12px 14px', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--bg)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', fontWeight: 600 }}>
+                      <CheckCircle size={16} color="var(--success)" />
+                      <div>
+                        <div>{tabName}</div>
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }}>Tự động ánh xạ & đồng bộ</div>
+                      </div>
                     </div>
                   ))}
                 </div>
