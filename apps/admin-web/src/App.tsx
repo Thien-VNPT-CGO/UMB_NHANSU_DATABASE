@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { apiRequest, setAuthToken, getApiBase, setCustomApiUrl } from './services/api';
+import { io, Socket } from 'socket.io-client';
+import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl } from './services/api';
 import {
   Users,
   Calendar,
@@ -621,6 +622,57 @@ export function App() {
     }
   }, []);
 
+  // 1. Socket.IO Realtime Connection Listener (Tự động cập nhật tức thời khi có thay đổi)
+  useEffect(() => {
+    if (!currentUser) return;
+    const token = getAuthToken();
+    if (!token) return;
+
+    let socket: Socket | null = null;
+    try {
+      const base = getApiBase();
+      socket = io(base, {
+        auth: { token },
+        transports: ['websocket', 'polling'],
+      });
+
+      socket.on('connect', () => {
+        console.log('🟢 [Socket.IO] Realtime kết nối thành công tới:', base);
+      });
+
+      // Lắng nghe sự kiện dữ liệu thay đổi trên toàn hệ thống
+      socket.on('data:updated', (payload: any) => {
+        console.log('⚡ [Socket.IO] Nhận tín hiệu cập nhật realtime:', payload);
+        loadAllData(currentUser);
+      });
+
+      socket.on('account.activated', () => loadAllData(currentUser));
+      socket.on('schedule.published', () => loadAllData(currentUser));
+      socket.on('attendance.recorded', () => loadAllData(currentUser));
+      socket.on('payroll.published', () => loadAllData(currentUser));
+    } catch (err) {
+      console.warn('[Socket.IO] Không thể khởi tạo kết nối realtime:', err);
+    }
+
+    return () => {
+      if (socket) {
+        socket.disconnect();
+      }
+    };
+  }, [currentUser]);
+
+  // 2. Realtime Background Auto-sync (Tự động kiểm tra và kéo dữ liệu mới nhất mỗi 8 giây)
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        loadAllData(currentUser);
+      }
+    }, 8000);
+
+    return () => clearInterval(interval);
+  }, [currentUser]);
 
   // Action handlers
   const handleActivateEmpAccount = async (id: string, ver: number) => {
@@ -2971,6 +3023,8 @@ export function App() {
             }}
             openNewEmpModal={() => setShowNewEmpModal(true)}
             openBroadcastModal={() => setShowBroadcastModal(true)}
+            onSyncSheets={handleForcePull}
+            onRefreshData={() => loadAllData(currentUser)}
           />
 
         </div>

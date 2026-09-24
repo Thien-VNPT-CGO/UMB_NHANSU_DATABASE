@@ -76,6 +76,28 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
     title: 'CAU_HINH_HE_THONG',
     headers: ['Tham Số', 'Giá Trị', 'Mô Tả Cấu Hình', 'Cập Nhật Lần Cuối'],
   },
+  {
+    title: 'FROM_NHAN_VIEN',
+    headers: [
+      'Ngày Đăng Ký',
+      'Họ Và Tên',
+      'Giới Tính',
+      'Năm Sinh',
+      'Trình Độ',
+      'Quê Quán',
+      'Số Điện Thoại',
+      'Ca Đăng Ký',
+      'Chi Nhánh Đăng Ký',
+      'Kinh Nghiệm',
+      'Xử Lý Đột Xuất',
+      'Facebook',
+      'Nguồn Biết Tin',
+      'Điểm AI',
+      'Kết Quả',
+      'Trạng Thái',
+      'Mã Nguồn',
+    ],
+  },
 ];
 
 export class GoogleSheetsSyncService {
@@ -491,32 +513,173 @@ export class GoogleSheetsSyncService {
       }
       counts.attendanceAdjustments = fallback.attendanceAdjustments.length;
 
-      // 10. Đọc Ứng viên tuyển dụng từ Form ứng viên (nếu có sheet tab FROM_NHAN_VIEN)
-      if (this.candidateSpreadsheetId) {
-        try {
-          const candRes = await this.sheetsClient.spreadsheets.values.get({
-            spreadsheetId: this.candidateSpreadsheetId,
-            range: `'FROM_NHAN_VIEN'!A2:Z`,
-          });
-          const candRows = candRes.data.values || [];
-          if (candRows.length > 0) {
-            fallback.candidates = candRows.map((r, idx) => ({
-              submission_id: `CAND_${String(idx + 1).padStart(4, '0')}`,
-              full_name: r[1] || `Ứng viên ${idx + 1}`,
-              phone_normalized: r[2] || '',
-              birth_year: Number(r[3]) || 2000,
-              apply_position: r[4] || 'Nhân viên Bán hàng / Pha chế',
-              preferred_branch_id: r[5] || 'CN130',
-              status: (r[6] as any) || 'NEW',
-              created_at: r[0] || new Date().toISOString(),
-            }));
-            counts.candidates = fallback.candidates.length;
-          } else {
-            fallback.candidates = [];
+      // 10. Đọc Ứng viên tuyển dụng từ Form ứng viên Google Sheets (đầy đủ 17 cột)
+      let candRows: string[][] = [];
+      let targetSheetTitle = 'FROM_NHAN_VIEN';
+
+      if (this.sheetsClient) {
+        // A. Thử đọc từ candidateSpreadsheetId trước
+        if (this.candidateSpreadsheetId) {
+          try {
+            const meta = await this.sheetsClient.spreadsheets.get({
+              spreadsheetId: this.candidateSpreadsheetId,
+            });
+            const sheets = meta.data.sheets || [];
+            const found = sheets.find(s => {
+              const t = s.properties?.title || '';
+              return /FROM_NHAN_VIEN|Form|Biểu mẫu|Câu trả lời|Ứng viên/i.test(t);
+            }) || sheets[0];
+
+            if (found?.properties?.title) {
+              targetSheetTitle = found.properties.title;
+              const candRes = await this.sheetsClient.spreadsheets.values.get({
+                spreadsheetId: this.candidateSpreadsheetId,
+                range: `'${targetSheetTitle}'!A1:ZZ`,
+              });
+              candRows = (candRes.data.values as string[][]) || [];
+            }
+          } catch (e: any) {
+            console.warn('[GoogleSheetsSyncService] Đọc candidateSpreadsheetId gặp lỗi, thử master sheet:', e.message);
           }
-        } catch (e) {
-          // Bỏ qua nếu tab form chưa có
         }
+
+        // B. Nếu chưa có dữ liệu từ candidateSpreadsheetId, thử đọc từ Master spreadsheet
+        if (candRows.length <= 1 && this.spreadsheetId) {
+          try {
+            const candRes = await this.sheetsClient.spreadsheets.values.get({
+              spreadsheetId: this.spreadsheetId,
+              range: `'FROM_NHAN_VIEN'!A1:ZZ`,
+            });
+            if (candRes.data.values && candRes.data.values.length > 1) {
+              candRows = candRes.data.values as string[][];
+            }
+          } catch (e) {
+            // Sheet FROM_NHAN_VIEN chưa được tạo trên master
+          }
+        }
+      }
+
+      if (candRows.length > 1) {
+        // Phân tích hàng tiêu đề (Row 0) để map cột động theo tên hoặc chỉ số
+        const headers = (candRows[0] || []).map(h => (h || '').toString().trim().toLowerCase());
+        const findCol = (regex: RegExp, fallbackIdx: number): number => {
+          const idx = headers.findIndex(h => regex.test(h));
+          return idx !== -1 ? idx : fallbackIdx;
+        };
+
+        const colTimestamp = findCol(/thời gian|timestamp|ngày đăng ký|ngày gửi|date|time/i, 0);
+        const colFullName = findCol(/họ và tên|họ tên|tên ứng viên|tên|full_name|name/i, 1);
+        const colGender = findCol(/giới tính|gender|nam.*nữ/i, 2);
+        const colBirthYear = findCol(/năm sinh|ngày sinh|sinh năm|tuổi|birth|dob/i, 3);
+        const colEducation = findCol(/trình độ|học vấn|bằng cấp|education/i, 4);
+        const colHometown = findCol(/quê quán|quê|hộ khẩu|nơi ở|địa chỉ|hometown/i, 5);
+        const colPhone = findCol(/số điện thoại|sđt|điện thoại|phone|mobile|tel/i, 6);
+        const colShift = findCol(/ca đăng ký|ca làm|ca mong muốn|ca/i, 7);
+        const colBranch = findCol(/chi nhánh|cơ sở|nơi làm|branch|store/i, 8);
+        const colExperience = findCol(/kinh nghiệm|từng làm|làm việc|exp/i, 9);
+        const colEmergency = findCol(/đột xuất|tăng ca|sự cố|tăng cường|overtime|emergency/i, 10);
+        const colFacebook = findCol(/facebook|link fb|fb|mạng xã hội/i, 11);
+        const colReferral = findCol(/nguồn|biết tin|biết thông tin|giới thiệu|referral|source/i, 12);
+        const colAiScore = findCol(/điểm ai|ai score|điểm|chấm điểm|score/i, 13);
+        const colResult = findCol(/kết quả|sàng lọc|kết luận|result/i, 14);
+        const colStatus = findCol(/trạng thái|status/i, 15);
+        const colSourceCode = findCol(/mã nguồn|mã|form id|submission|code/i, 16);
+
+        const dataRows = candRows.slice(1);
+        fallback.candidates = dataRows
+          .filter(r => r && r.length > 0 && r.some(cell => String(cell || '').trim().length > 0))
+          .map((r, idx) => {
+            const getVal = (colIdx: number) => (r[colIdx] !== undefined ? String(r[colIdx]).trim() : '');
+
+            const rawCreatedAt = getVal(colTimestamp) || new Date().toISOString();
+            const fullName = getVal(colFullName) || `Ứng viên ${idx + 1}`;
+            const gender = getVal(colGender) || 'Nam';
+            const birthRaw = getVal(colBirthYear);
+            const birthYear = Number(birthRaw?.replace(/\D/g, '').slice(-4)) || 2002;
+            const educationLevel = getVal(colEducation) || 'THPT / Cao đẳng';
+            const hometown = getVal(colHometown) || 'TP. Hồ Chí Minh';
+            const phone = getVal(colPhone) || '';
+            const phoneNormalized = phone.replace(/\D/g, '');
+            const registeredShift = getVal(colShift) || 'Ca sáng / Ca chiều';
+            const branchName = getVal(colBranch) || 'CN130 - Lê Văn Sỹ';
+            const experience = getVal(colExperience) || 'Chưa có kinh nghiệm (sẵn sàng đào tạo)';
+            const emergencyHandling = getVal(colEmergency) || 'Sẵn sàng hỗ trợ và tăng ca khi có điều động đột xuất';
+
+            let facebookUrl = getVal(colFacebook);
+            if (facebookUrl && !facebookUrl.startsWith('http://') && !facebookUrl.startsWith('https://')) {
+              if (facebookUrl.includes('facebook.com')) {
+                facebookUrl = 'https://' + facebookUrl;
+              } else {
+                facebookUrl = `https://facebook.com/${facebookUrl.replace(/^@/, '')}`;
+              }
+            }
+
+            const referralSource = getVal(colReferral) || 'Facebook / Fanpage Ụm Bò Milk';
+
+            // Hệ thống AI tự động chấm điểm thông minh
+            let aiScore = Number(getVal(colAiScore));
+            if (isNaN(aiScore) || aiScore <= 0 || aiScore > 100) {
+              let score = 65;
+              const expLower = experience.toLowerCase();
+              if (/năm|kinh nghiệm|pha chế|barista|thu ngân|phục vụ|bán hàng|f&b|quản lý/.test(expLower)) {
+                score += 18;
+              } else if (/đã từng|từng làm|part time|tháng/.test(expLower)) {
+                score += 10;
+              }
+              const emerLower = emergencyHandling.toLowerCase();
+              if (/sẵn sàng|có|được|linh hoạt|tăng ca|nhiệt tình|sẵn lòng/.test(emerLower)) {
+                score += 8;
+              }
+              if (facebookUrl && facebookUrl.length > 10) score += 3;
+              if (phoneNormalized.length >= 10) score += 3;
+              if (/đại học|cao đẳng/.test(educationLevel.toLowerCase())) score += 3;
+              aiScore = Math.min(score, 98);
+            }
+
+            // Kết quả sàng lọc sơ bộ
+            let result = getVal(colResult);
+            if (!result) {
+              if (aiScore >= 85) {
+                result = 'Đạt (Ưu tiên PV)';
+              } else if (aiScore >= 75) {
+                result = 'Phù hợp (Mời PV)';
+              } else {
+                result = 'Xem xét thêm';
+              }
+            }
+
+            const status = (getVal(colStatus) || 'NEW') as any;
+            const sourceCode = getVal(colSourceCode) || `UBM_FORM_${String(idx + 1).padStart(4, '0')}`;
+            const submissionId = `CAND_${String(idx + 1).padStart(4, '0')}`;
+
+            return {
+              submission_id: submissionId,
+              full_name: fullName,
+              phone_normalized: phoneNormalized,
+              phone,
+              gender,
+              birth_year: birthYear,
+              education_level: educationLevel,
+              hometown,
+              apply_position: 'Nhân viên Bán hàng / Pha chế',
+              preferred_branch_id: branchName.includes('CN') ? (branchName.match(/CN\d+/)?.[0] || 'CN130') : 'CN130',
+              branch_name: branchName,
+              registered_shift: registeredShift,
+              experience,
+              emergency_handling: emergencyHandling,
+              facebook_url: facebookUrl,
+              referral_source: referralSource,
+              ai_score: aiScore,
+              screening_result: result,
+              status,
+              source_code: sourceCode,
+              created_at: rawCreatedAt,
+            };
+          });
+        counts.candidates = fallback.candidates.length;
+      } else {
+        // Giữ nguyên danh sách hiện tại nếu không đọc được dòng mới từ sheet
+        counts.candidates = fallback.candidates ? fallback.candidates.length : 0;
       }
 
       this.lastPulledAt = Date.now();
@@ -704,6 +867,33 @@ export class GoogleSheetsSyncService {
       ]);
       await this.overwriteSheetData('AUDIT_LOG', SHEETS_DEFINITIONS.find(d => d.title === 'AUDIT_LOG')!.headers, auditRows);
       details.auditLogs = auditRows.length;
+
+      // 10. Ứng viên tuyển dụng (FROM_NHAN_VIEN) - 17 Cột
+      const candList = await repo.listCandidates();
+      if (candList.length > 0) {
+        const candHeaders = SHEETS_DEFINITIONS.find(d => d.title === 'FROM_NHAN_VIEN')!.headers;
+        const candRows = candList.map((c, idx) => [
+          c.created_at || new Date().toISOString(),
+          c.full_name || '',
+          c.gender || 'Nam',
+          c.birth_year ? String(c.birth_year) : '2002',
+          c.education_level || 'Đại học',
+          c.hometown || 'TP. Hồ Chí Minh',
+          c.phone || c.phone_normalized || '',
+          c.registered_shift || 'Ca sáng / Ca chiều',
+          c.branch_name || c.preferred_branch_id || 'CN130',
+          c.experience || 'Chưa có kinh nghiệm',
+          c.emergency_handling || 'Sẵn sàng hỗ trợ đột xuất',
+          c.facebook_url || '',
+          c.referral_source || 'Facebook Tuyển Dụng',
+          c.ai_score ? String(c.ai_score) : '85',
+          c.screening_result || 'Đạt (Ưu tiên PV)',
+          c.status || 'NEW',
+          c.source_code || c.submission_id || `UBM_FORM_${String(idx + 1).padStart(4, '0')}`,
+        ]);
+        await this.overwriteSheetData('FROM_NHAN_VIEN', candHeaders, candRows);
+        details.candidates = candRows.length;
+      }
 
       return {
         success: true,

@@ -30,7 +30,9 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     this.syncService = new GoogleSheetsSyncService();
 
     // Check if Google credentials are provided in env
-    if (process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && process.env.GOOGLE_PRIVATE_KEY && spreadsheetId) {
+    const hasJson = !!process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+    const hasEmailKey = !!(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && process.env.GOOGLE_PRIVATE_KEY);
+    if ((hasJson || hasEmailKey) && spreadsheetId) {
       this.isConfigured = true;
       // Auto-initialize sheets structure and pull real data on startup
       setTimeout(async () => {

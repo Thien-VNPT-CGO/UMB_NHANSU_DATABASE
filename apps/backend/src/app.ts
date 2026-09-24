@@ -38,6 +38,18 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   const payrollService = new PayrollService(adapter);
   const notificationsService = new NotificationsService(adapter);
 
+  // Realtime WebSocket broadcast helper
+  const broadcastUpdate = (entity: string, data?: any) => {
+    try {
+      const io = app.get('io');
+      if (io) {
+        io.emit('data:updated', { entity, data, timestamp: new Date().toISOString() });
+      }
+    } catch (e) {
+      // non-fatal
+    }
+  };
+
   // Health check & status
   app.get('/health', (req, res) => {
     res.json({
@@ -102,6 +114,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         expectedVersion,
         idempotencyKey
       );
+      broadcastUpdate('accounts', { action: 'activate', accountId });
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -121,6 +134,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         status,
         idempotencyKey
       );
+      broadcastUpdate('accounts', { action: 'revoke', accountId });
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -150,6 +164,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         ...req.body,
         actorId: req.user!.id,
       });
+      broadcastUpdate('employees', { action: 'create', employee: result });
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -163,6 +178,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         req.user!.id,
         req.body.expectedVersion || 1
       );
+      broadcastUpdate('employees', { action: 'transition', employee: result });
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -182,6 +198,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         target_type: 'NHAN_VIEN_MASTER',
         target_id: id,
       });
+      broadcastUpdate('employees', { action: 'delete', id });
       res.json({ success: true, message: `Đã xóa nhân viên ${id}` });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -200,6 +217,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.post('/applications/import', authMiddleware, requireRole(['ADMIN', 'HR']), async (req, res) => {
     try {
       const result = await employeesService.importCandidate(req.body);
+      broadcastUpdate('candidates', { action: 'import', candidate: result });
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -691,6 +709,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         target_id: created.admin_id,
         payload_after: created,
       });
+      broadcastUpdate('accounts', { action: 'createAdmin', account: created });
       res.json(created);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -707,6 +726,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         target_id: req.params.id,
         payload_after: updated,
       });
+      broadcastUpdate('accounts', { action: 'updateAdmin', account: updated });
       res.json(updated);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -729,6 +749,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         target_type: 'ADMIN_ACCOUNT',
         target_id: id,
       });
+      broadcastUpdate('accounts', { action: 'deleteAdmin', id });
       res.json({ success: true, message: `Đã xóa tài khoản ${id}` });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -870,7 +891,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/admin/integrations/sync-now', authMiddleware, requireRole(['ADMIN']), async (req: AuthenticatedRequest, res) => {
+  app.post('/admin/integrations/sync-now', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
     try {
       const syncService = (adapter as any).syncService;
       let syncResult = {
@@ -891,6 +912,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         details: syncResult,
       });
 
+      broadcastUpdate('all', { action: 'sync-now' });
+
       res.json({
         success: syncResult.success,
         message: syncResult.message,
@@ -903,13 +926,16 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/admin/integrations/pull-now', authMiddleware, requireRole(['ADMIN']), async (req: AuthenticatedRequest, res) => {
+  app.post('/admin/integrations/pull-now', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
     try {
       const syncService = (adapter as any).syncService;
       if (!syncService) {
         return res.status(400).json({ success: false, message: 'Google Sheets sync service không khả dụng' });
       }
       const pullResult = await syncService.pullAllDataFromGoogleSheets(adapter);
+
+      broadcastUpdate('all', { action: 'pull-now' });
+
       res.json({
         success: pullResult.success,
         message: pullResult.message,

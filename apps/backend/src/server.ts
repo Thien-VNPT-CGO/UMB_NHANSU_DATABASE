@@ -1,3 +1,6 @@
+import dotenv from 'dotenv';
+dotenv.config();
+
 import http from 'http';
 import { Server } from 'socket.io';
 import jwt from 'jsonwebtoken';
@@ -15,6 +18,9 @@ const io = new Server(server, {
     methods: ['GET', 'POST'],
   },
 });
+
+// Attach io to express app for route broadcasting
+app.set('io', io);
 
 // Pass io to services
 services.accountsService.setSocketServer(io);

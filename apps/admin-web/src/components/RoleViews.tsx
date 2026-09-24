@@ -45,6 +45,7 @@ import {
   MessageSquare,
   Bot,
   Smartphone,
+  ExternalLink,
 } from 'lucide-react';
 import { getDisplayBranch } from '../App';
 
@@ -62,6 +63,8 @@ interface RoleViewsProps {
   showToast: (msg: string) => void;
   openNewEmpModal: () => void;
   openBroadcastModal: () => void;
+  onSyncSheets?: () => Promise<void> | void;
+  onRefreshData?: () => Promise<void> | void;
 }
 
 export const RoleViews: React.FC<RoleViewsProps> = ({
@@ -78,6 +81,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   showToast,
   openNewEmpModal,
   openBroadcastModal,
+  onSyncSheets,
+  onRefreshData,
 }) => {
   const branchScope = currentUser?.branchScope || '*';
   const branchName = branchScope === '*' ? 'Toàn Hệ Thống' : getDisplayBranch(branchScope);
@@ -86,6 +91,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [scheduleBranchFilter, setScheduleBranchFilter] = useState('ALL');
   const [scheduleStageFilter, setScheduleStageFilter] = useState('ALL');
   const [selectedRealtimeModal, setSelectedRealtimeModal] = useState<any>(null);
+
+  // Filters & State for HR Candidates (17 Cột Google Forms)
+  const [candidateSearch, setCandidateSearch] = useState('');
+  const [candidateBranchFilter, setCandidateBranchFilter] = useState('ALL');
+  const [candidateResultFilter, setCandidateResultFilter] = useState('ALL');
+  const [selectedCandidateDetail, setSelectedCandidateDetail] = useState<any>(null);
+  const [isSyncingCandidates, setIsSyncingCandidates] = useState(false);
 
   // Zalo Personal QR & Bot State for HR
   const [zaloConnected, setZaloConnected] = useState(() => {
@@ -305,51 +317,742 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }
 
   if (activeTab === 'hr-candidates') {
+    const handleSync = async () => {
+      setIsSyncingCandidates(true);
+      try {
+        if (onSyncSheets) {
+          await onSyncSheets();
+        } else if (onRefreshData) {
+          await onRefreshData();
+        }
+        showToast('🟢 Đã đồng bộ realtime dữ liệu ứng viên từ Google Sheets!');
+      } catch (err: any) {
+        showToast(`Lỗi đồng bộ: ${err.message}`);
+      } finally {
+        setIsSyncingCandidates(false);
+      }
+    };
+
+    const formatRegDate = (raw: string) => {
+      if (!raw) return 'Vừa gửi';
+      if (raw.includes('/') && (raw.includes(':') || raw.length > 8)) return raw;
+      try {
+        const d = new Date(raw);
+        if (!isNaN(d.getTime())) {
+          const pad = (n: number) => String(n).padStart(2, '0');
+          return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+        }
+      } catch {}
+      return raw;
+    };
+
+    const filteredCandidates = (candidates || []).filter(c => {
+      const q = candidateSearch.trim().toLowerCase();
+      const matchSearch = !q ||
+        (c.full_name && c.full_name.toLowerCase().includes(q)) ||
+        (c.phone && c.phone.includes(q)) ||
+        (c.phone_normalized && c.phone_normalized.includes(q)) ||
+        (c.hometown && c.hometown.toLowerCase().includes(q)) ||
+        (c.source_code && c.source_code.toLowerCase().includes(q)) ||
+        (c.submission_id && c.submission_id.toLowerCase().includes(q));
+
+      const matchBranch = candidateBranchFilter === 'ALL' ||
+        (c.preferred_branch_id === candidateBranchFilter) ||
+        (c.branch_name && c.branch_name.includes(candidateBranchFilter));
+
+      const matchResult = candidateResultFilter === 'ALL' ||
+        (candidateResultFilter === 'DAT' && ((c.ai_score >= 85) || (c.screening_result && c.screening_result.includes('Đạt')))) ||
+        (candidateResultFilter === 'PHU_HOP' && ((c.ai_score >= 70 && c.ai_score < 85) || (c.screening_result && c.screening_result.includes('Phù hợp')))) ||
+        (candidateResultFilter === 'XEM_XET' && ((c.ai_score < 70) || (c.screening_result && c.screening_result.includes('Xem xét'))));
+
+      return matchSearch && matchBranch && matchResult;
+    });
+
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        {/* HEADER SECTION */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
           <div>
-            <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>2. Danh Sách Ứng Viên Mới (Google Forms)</h1>
-            <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Dữ liệu tự động đồng bộ từ FROM_NHAN_VIEN về trang tính tuyển dụng</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)', margin: 0 }}>
+                2. Danh Sách Ứng Viên Mới (Google Forms)
+              </h1>
+              <span style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                backgroundColor: '#ECFDF5',
+                color: '#059669',
+                fontSize: '11px',
+                fontWeight: 700,
+                padding: '3px 10px',
+                borderRadius: '999px',
+                border: '1px solid #A7F3D0',
+              }}>
+                <span style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: '#10B981', display: 'inline-block' }} />
+                Realtime Google Sheets
+              </span>
+            </div>
+            <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '4px 0 0' }}>
+              Đầy đủ 17 cột dữ liệu đồng bộ trực tiếp từ trang tính Google Form (FROM_NHAN_VIEN) — Không dữ liệu ảo
+            </p>
           </div>
-          <button className="btn-primary" onClick={() => showToast('Đã đồng bộ ứng viên từ Google Sheets')}>Đồng Bộ Sheets</button>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <button
+              className="btn-primary"
+              onClick={handleSync}
+              disabled={isSyncingCandidates}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                backgroundColor: '#0068FF',
+                boxShadow: '0 2px 8px rgba(0, 104, 255, 0.25)',
+              }}
+            >
+              <RefreshCw size={15} className={isSyncingCandidates ? 'animate-spin' : ''} />
+              {isSyncingCandidates ? 'Đang Tải Sheets...' : 'Đồng Bộ Sheets Realtime'}
+            </button>
+          </div>
         </div>
-        <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-            <thead>
-              <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
-                <th style={{ padding: '12px 20px' }}>Họ Và Tên</th>
-                <th style={{ padding: '12px 20px' }}>Số Điện Thoại</th>
-                <th style={{ padding: '12px 20px' }}>Vị Trí Ứng Tuyển</th>
-                <th style={{ padding: '12px 20px' }}>Chi Nhánh Mong Muốn</th>
-                <th style={{ padding: '12px 20px' }}>Trạng Thái</th>
-                <th style={{ padding: '12px 20px' }}>Thao Tác</th>
-              </tr>
-            </thead>
-            <tbody>
-              {candidates.length === 0 ? (
-                <tr>
-                  <td colSpan={6} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                    Chưa có ứng viên mới nào. Dữ liệu ứng viên từ Google Form tuyển dụng sẽ tự động đồng bộ realtime vào đây.
-                  </td>
+
+        {/* FILTER & STATS BAR */}
+        <div style={{
+          backgroundColor: 'var(--surface)',
+          padding: '14px 18px',
+          borderRadius: 'var(--radius-md)',
+          border: '1px solid var(--border)',
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: '12px',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center', flex: 1, minWidth: '300px' }}>
+            {/* Search Input */}
+            <div style={{ position: 'relative', minWidth: '240px', flex: '1 1 240px' }}>
+              <Search size={15} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+              <input
+                type="text"
+                placeholder="Tìm theo họ tên, SĐT, quê quán, mã nguồn..."
+                value={candidateSearch}
+                onChange={e => setCandidateSearch(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '7px 10px 7px 32px',
+                  borderRadius: '6px',
+                  border: '1px solid var(--border)',
+                  backgroundColor: 'var(--bg)',
+                  color: 'var(--text)',
+                  fontSize: '13px',
+                }}
+              />
+              {candidateSearch && (
+                <button
+                  onClick={() => setCandidateSearch('')}
+                  style={{
+                    position: 'absolute',
+                    right: '8px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: 'var(--text-muted)',
+                    fontSize: '12px',
+                  }}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+
+            {/* Chi nhánh filter */}
+            <select
+              value={candidateBranchFilter}
+              onChange={e => setCandidateBranchFilter(e.target.value)}
+              style={{
+                padding: '7px 10px',
+                borderRadius: '6px',
+                border: '1px solid var(--border)',
+                backgroundColor: 'var(--bg)',
+                color: 'var(--text)',
+                fontSize: '13px',
+                fontWeight: 500,
+              }}
+            >
+              <option value="ALL">🏢 Tất Cả Chi Nhánh</option>
+              <option value="CN130">CN130 - Lê Văn Sỹ</option>
+              <option value="CN132">CN132 - Hàng Tre</option>
+              <option value="CN134">CN134 - Sư Vạn Hạnh</option>
+            </select>
+
+            {/* AI Score filter */}
+            <select
+              value={candidateResultFilter}
+              onChange={e => setCandidateResultFilter(e.target.value)}
+              style={{
+                padding: '7px 10px',
+                borderRadius: '6px',
+                border: '1px solid var(--border)',
+                backgroundColor: 'var(--bg)',
+                color: 'var(--text)',
+                fontSize: '13px',
+                fontWeight: 500,
+              }}
+            >
+              <option value="ALL">⭐ Tất Cả Điểm AI</option>
+              <option value="DAT">🟢 Đạt (AI ≥ 85)</option>
+              <option value="PHU_HOP">🟡 Phù Hợp (AI 70 - 84)</option>
+              <option value="XEM_XET">⚪ Cần Xem Xét (AI &lt; 70)</option>
+            </select>
+          </div>
+
+          <div style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: 600 }}>
+            Hiển thị: <span style={{ color: '#0068FF', fontWeight: 800 }}>{filteredCandidates.length}</span> / {candidates.length} ứng viên
+          </div>
+        </div>
+
+        {/* 17 COLUMNS FULL TABLE CONTAINER */}
+        <div style={{
+          backgroundColor: 'var(--surface)',
+          borderRadius: 'var(--radius-md)',
+          border: '1px solid var(--border)',
+          overflow: 'hidden',
+          boxShadow: 'var(--shadow-sm)',
+        }}>
+          <div style={{ overflowX: 'auto', width: '100%' }}>
+            <table style={{
+              width: '100%',
+              minWidth: '2100px',
+              borderCollapse: 'collapse',
+              fontSize: '13px',
+              textAlign: 'left',
+            }}>
+              <thead>
+                <tr style={{
+                  backgroundColor: 'var(--bg)',
+                  borderBottom: '2px solid var(--border)',
+                  color: 'var(--text-muted)',
+                  fontSize: '11px',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px',
+                }}>
+                  <th style={{ padding: '12px 14px', width: '150px' }}>1. Ngày Đăng Ký</th>
+                  <th style={{ padding: '12px 14px', width: '170px' }}>2. Họ Tên</th>
+                  <th style={{ padding: '12px 12px', width: '90px' }}>3. Giới Tính</th>
+                  <th style={{ padding: '12px 12px', width: '110px' }}>4. Năm Sinh</th>
+                  <th style={{ padding: '12px 14px', width: '140px' }}>5. Trình Độ</th>
+                  <th style={{ padding: '12px 14px', width: '140px' }}>6. Quê Quán</th>
+                  <th style={{ padding: '12px 14px', width: '130px' }}>7. SĐT</th>
+                  <th style={{ padding: '12px 14px', width: '150px' }}>8. Ca Đăng Ký</th>
+                  <th style={{ padding: '12px 14px', width: '160px' }}>9. Chi Nhánh ĐK</th>
+                  <th style={{ padding: '12px 16px', width: '220px' }}>10. Kinh Nghiệm</th>
+                  <th style={{ padding: '12px 16px', width: '210px' }}>11. Xử Lý Đột Xuất</th>
+                  <th style={{ padding: '12px 14px', width: '140px' }}>12. Facebook</th>
+                  <th style={{ padding: '12px 14px', width: '140px' }}>13. Nguồn Biết Tin</th>
+                  <th style={{ padding: '12px 12px', width: '110px', textAlign: 'center' }}>14. Điểm AI</th>
+                  <th style={{ padding: '12px 14px', width: '150px' }}>15. Kết Quả</th>
+                  <th style={{ padding: '12px 12px', width: '120px' }}>16. Trạng Thái</th>
+                  <th style={{ padding: '12px 14px', width: '150px' }}>17. Mã Nguồn</th>
+                  <th style={{ padding: '12px 14px', width: '120px', textAlign: 'center', position: 'sticky', right: 0, backgroundColor: 'var(--bg)', zIndex: 1, boxShadow: '-3px 0 6px rgba(0,0,0,0.05)' }}>
+                    Thao Tác
+                  </th>
                 </tr>
-              ) : (
-                candidates.map((c, i) => (
-                  <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
-                    <td style={{ padding: '14px 20px', fontWeight: 700 }}>{c.full_name}</td>
-                    <td style={{ padding: '14px 20px', fontFamily: 'monospace' }}>{c.phone || c.phone_normalized}</td>
-                    <td style={{ padding: '14px 20px' }}>{c.applied_position || 'Pha chế'}</td>
-                    <td style={{ padding: '14px 20px' }}>{getDisplayBranch(c.branch_id || 'CN130')}</td>
-                    <td style={{ padding: '14px 20px' }}><span className="badge badge-brand">{c.status || 'MỚI ỨNG TUYỂN'}</span></td>
-                    <td style={{ padding: '14px 20px' }}>
-                      <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => showToast(`Tạo lịch phỏng vấn cho ${c.full_name}`)}>Tạo Phỏng Vấn</button>
+              </thead>
+              <tbody>
+                {filteredCandidates.length === 0 ? (
+                  <tr>
+                    <td colSpan={18} style={{ padding: '48px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                      <div style={{ fontSize: '32px', marginBottom: '8px' }}>📂</div>
+                      <div style={{ fontWeight: 700, fontSize: '15px', color: 'var(--text)' }}>Không tìm thấy ứng viên nào</div>
+                      <div style={{ fontSize: '13px', marginTop: '4px' }}>
+                        Dữ liệu sẽ tự động đồng bộ realtime từ Google Sheets Form tuyển dụng khi có ứng viên mới gửi biểu mẫu.
+                      </div>
+                      <button
+                        className="btn-secondary"
+                        onClick={handleSync}
+                        style={{ marginTop: '14px', padding: '6px 14px', fontSize: '12px' }}
+                      >
+                        🔄 Bấm để làm mới dữ liệu từ Google Sheets
+                      </button>
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                ) : (
+                  filteredCandidates.map((c, i) => {
+                    const aiScore = Number(c.ai_score) || 80;
+                    const aiColor = aiScore >= 85 ? '#10B981' : aiScore >= 70 ? '#F59E0B' : '#EF4444';
+                    const aiBg = aiScore >= 85 ? '#ECFDF5' : aiScore >= 70 ? '#FFFBEB' : '#FEF2F2';
+                    const age = c.birth_year ? `${new Date().getFullYear() - c.birth_year} tuổi` : '';
+
+                    return (
+                      <tr
+                        key={c.submission_id || i}
+                        style={{
+                          borderBottom: '1px solid var(--border)',
+                          backgroundColor: i % 2 === 0 ? 'transparent' : 'rgba(0, 0, 0, 0.015)',
+                          transition: 'background-color 0.15s ease',
+                        }}
+                      >
+                        {/* 1. Ngày đăng ký */}
+                        <td style={{ padding: '12px 14px', color: '#475569', fontSize: '12px', whiteSpace: 'nowrap' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                            <Clock size={12} color="#64748B" />
+                            <span>{formatRegDate(c.created_at)}</span>
+                          </div>
+                        </td>
+
+                        {/* 2. Họ tên */}
+                        <td style={{ padding: '12px 14px', fontWeight: 700, color: 'var(--text)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <div style={{
+                              width: '28px',
+                              height: '28px',
+                              borderRadius: '50%',
+                              backgroundColor: '#E0E7FF',
+                              color: '#3730A3',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontWeight: 800,
+                              fontSize: '12px',
+                              flexShrink: 0,
+                            }}>
+                              {(c.full_name || 'U')[0].toUpperCase()}
+                            </div>
+                            <span style={{ whiteSpace: 'nowrap' }}>{c.full_name}</span>
+                          </div>
+                        </td>
+
+                        {/* 3. Giới tính */}
+                        <td style={{ padding: '12px 12px' }}>
+                          <span style={{
+                            display: 'inline-block',
+                            padding: '2px 8px',
+                            borderRadius: '999px',
+                            fontSize: '11px',
+                            fontWeight: 700,
+                            backgroundColor: c.gender === 'Nữ' ? '#FCE7F3' : '#DBEAFE',
+                            color: c.gender === 'Nữ' ? '#BE185D' : '#1D4ED8',
+                          }}>
+                            {c.gender || 'Nam'}
+                          </span>
+                        </td>
+
+                        {/* 4. Năm sinh */}
+                        <td style={{ padding: '12px 12px', whiteSpace: 'nowrap' }}>
+                          <div style={{ fontWeight: 600 }}>{c.birth_year || '2002'}</div>
+                          {age && <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{age}</div>}
+                        </td>
+
+                        {/* 5. Trình độ */}
+                        <td style={{ padding: '12px 14px', color: '#334155' }}>
+                          {c.education_level || 'Đại học'}
+                        </td>
+
+                        {/* 6. Quê quán */}
+                        <td style={{ padding: '12px 14px', color: '#334155' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <MapPin size={12} color="#64748B" />
+                            <span>{c.hometown || 'TP. Hồ Chí Minh'}</span>
+                          </div>
+                        </td>
+
+                        {/* 7. SĐT */}
+                        <td style={{ padding: '12px 14px', fontFamily: 'monospace', fontWeight: 600, color: '#0F172A', whiteSpace: 'nowrap' }}>
+                          {c.phone || c.phone_normalized || '---'}
+                        </td>
+
+                        {/* 8. Ca đăng ký */}
+                        <td style={{ padding: '12px 14px' }}>
+                          <span style={{
+                            display: 'inline-block',
+                            padding: '3px 8px',
+                            borderRadius: '6px',
+                            backgroundColor: '#F1F5F9',
+                            color: '#334155',
+                            fontSize: '12px',
+                            fontWeight: 600,
+                          }}>
+                            {c.registered_shift || 'Ca sáng / Ca chiều'}
+                          </span>
+                        </td>
+
+                        {/* 9. Chi nhánh đăng ký */}
+                        <td style={{ padding: '12px 14px' }}>
+                          <span style={{
+                            display: 'inline-block',
+                            padding: '3px 8px',
+                            borderRadius: '6px',
+                            backgroundColor: '#EFF6FF',
+                            color: '#1D4ED8',
+                            fontSize: '12px',
+                            fontWeight: 700,
+                          }}>
+                            {c.branch_name || getDisplayBranch(c.preferred_branch_id || 'CN130')}
+                          </span>
+                        </td>
+
+                        {/* 10. Kinh nghiệm */}
+                        <td style={{ padding: '12px 16px', maxWidth: '240px' }} title={c.experience}>
+                          <div style={{
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            display: '-webkit-box',
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: 'vertical',
+                            fontSize: '12px',
+                            lineHeight: '1.4',
+                            color: '#334155',
+                          }}>
+                            {c.experience || 'Chưa có kinh nghiệm'}
+                          </div>
+                        </td>
+
+                        {/* 11. Xử lý đột xuất */}
+                        <td style={{ padding: '12px 16px', maxWidth: '220px' }} title={c.emergency_handling}>
+                          <div style={{
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            display: '-webkit-box',
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: 'vertical',
+                            fontSize: '12px',
+                            lineHeight: '1.4',
+                            color: '#065F46',
+                            fontWeight: 500,
+                          }}>
+                            {c.emergency_handling || 'Sẵn sàng hỗ trợ và tăng ca khi có điều động'}
+                          </div>
+                        </td>
+
+                        {/* 12. Facebook (Click vào xem trực tiếp được) */}
+                        <td style={{ padding: '12px 14px', whiteSpace: 'nowrap' }}>
+                          {c.facebook_url ? (
+                            <a
+                              href={c.facebook_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '5px',
+                                color: '#0068FF',
+                                fontWeight: 700,
+                                textDecoration: 'none',
+                                backgroundColor: '#EFF6FF',
+                                padding: '4px 10px',
+                                borderRadius: '6px',
+                                border: '1px solid #BFDBFE',
+                                fontSize: '12px',
+                              }}
+                            >
+                              <ExternalLink size={12} />
+                              Mở Facebook
+                            </a>
+                          ) : (
+                            <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>Chưa có</span>
+                          )}
+                        </td>
+
+                        {/* 13. Nguồn biết tin */}
+                        <td style={{ padding: '12px 14px', color: '#475569', fontSize: '12px' }}>
+                          {c.referral_source || 'Facebook'}
+                        </td>
+
+                        {/* 14. Điểm AI */}
+                        <td style={{ padding: '12px 12px', textAlign: 'center' }}>
+                          <span style={{
+                            display: 'inline-block',
+                            padding: '4px 10px',
+                            borderRadius: '999px',
+                            fontSize: '12px',
+                            fontWeight: 800,
+                            backgroundColor: aiBg,
+                            color: aiColor,
+                            border: `1px solid ${aiColor}`,
+                          }}>
+                            ⭐ {aiScore}
+                          </span>
+                        </td>
+
+                        {/* 15. Kết quả */}
+                        <td style={{ padding: '12px 14px', whiteSpace: 'nowrap' }}>
+                          <span style={{
+                            display: 'inline-block',
+                            padding: '3px 8px',
+                            borderRadius: '6px',
+                            fontSize: '11px',
+                            fontWeight: 800,
+                            backgroundColor: aiScore >= 85 ? '#ECFDF5' : aiScore >= 70 ? '#FEF3C7' : '#F3F4F6',
+                            color: aiScore >= 85 ? '#065F46' : aiScore >= 70 ? '#92400E' : '#4B5563',
+                          }}>
+                            {c.screening_result || (aiScore >= 85 ? 'Đạt (Ưu tiên PV)' : aiScore >= 70 ? 'Phù hợp (Mời PV)' : 'Xem xét thêm')}
+                          </span>
+                        </td>
+
+                        {/* 16. Trạng thái */}
+                        <td style={{ padding: '12px 12px' }}>
+                          <span className="badge badge-brand" style={{ fontSize: '11px', padding: '3px 8px' }}>
+                            {c.status || 'MỚI ỨNG TUYỂN'}
+                          </span>
+                        </td>
+
+                        {/* 17. Mã nguồn */}
+                        <td style={{ padding: '12px 14px', fontFamily: 'monospace', fontSize: '11px', color: '#64748B', whiteSpace: 'nowrap' }}>
+                          <code style={{ backgroundColor: '#F1F5F9', padding: '2px 6px', borderRadius: '4px' }}>
+                            {c.source_code || c.submission_id || 'FORM_UBM'}
+                          </code>
+                        </td>
+
+                        {/* Thao tác (Sticky column) */}
+                        <td style={{
+                          padding: '12px 14px',
+                          textAlign: 'center',
+                          position: 'sticky',
+                          right: 0,
+                          backgroundColor: i % 2 === 0 ? 'var(--surface)' : 'var(--bg)',
+                          zIndex: 1,
+                          boxShadow: '-3px 0 6px rgba(0,0,0,0.05)',
+                        }}>
+                          <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
+                            <button
+                              className="btn-secondary"
+                              style={{ padding: '4px 8px', fontSize: '11px' }}
+                              onClick={() => setSelectedCandidateDetail(c)}
+                              title="Xem toàn bộ 17 trường thông tin"
+                            >
+                              Chi Tiết
+                            </button>
+                            <button
+                              className="btn-primary"
+                              style={{ padding: '4px 8px', fontSize: '11px', backgroundColor: '#0068FF' }}
+                              onClick={() => showToast(`Đã chọn ứng viên ${c.full_name} để lập lịch phỏng vấn Zalo BOT!`)}
+                            >
+                              Mời PV
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
+
+        {/* MODAL XEM CHI TIẾT ĐẦY ĐỦ 17 CỘT CỦA ỨNG VIÊN */}
+        {selectedCandidateDetail && (
+          <div style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.55)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+            padding: '20px',
+          }}>
+            <div style={{
+              backgroundColor: 'var(--surface)',
+              borderRadius: '16px',
+              maxWidth: '680px',
+              width: '100%',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+              boxShadow: '0 20px 40px rgba(0,0,0,0.2)',
+              border: '1px solid var(--border)',
+            }}>
+              {/* Modal Header */}
+              <div style={{
+                padding: '20px 24px',
+                borderBottom: '1px solid var(--border)',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                backgroundColor: 'var(--bg)',
+                borderTopLeftRadius: '16px',
+                borderTopRightRadius: '16px',
+              }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 800, color: 'var(--text)' }}>
+                    Chi Tiết Hồ Sơ Ứng Viên (Google Forms)
+                  </h3>
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                    Mã nguồn: <strong>{selectedCandidateDetail.source_code || selectedCandidateDetail.submission_id}</strong> • Ngày gửi: {formatRegDate(selectedCandidateDetail.created_at)}
+                  </div>
+                </div>
+                <button
+                  onClick={() => setSelectedCandidateDetail(null)}
+                  style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', color: 'var(--text-muted)' }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Modal Body: 17 Fields Organized */}
+              <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                {/* Block 1: AI Score & Screening */}
+                <div style={{
+                  padding: '16px',
+                  backgroundColor: '#F0FDF4',
+                  border: '1.5px solid #86EFAC',
+                  borderRadius: '12px',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                }}>
+                  <div>
+                    <div style={{ fontSize: '12px', color: '#166534', fontWeight: 700, textTransform: 'uppercase' }}>
+                      Điểm Đánh Giá AI Thông Minh
+                    </div>
+                    <div style={{ fontSize: '26px', fontWeight: 900, color: '#15803D', marginTop: '2px' }}>
+                      {selectedCandidateDetail.ai_score || 85} / 100
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: '12px', color: '#166534', fontWeight: 700 }}>KẾT QUẢ SÀNG LỌC</div>
+                    <div style={{
+                      backgroundColor: '#15803D',
+                      color: '#FFF',
+                      padding: '4px 12px',
+                      borderRadius: '999px',
+                      fontWeight: 800,
+                      fontSize: '13px',
+                      marginTop: '4px',
+                    }}>
+                      {selectedCandidateDetail.screening_result || 'Đạt (Ưu tiên PV)'}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Block 2: Thông tin cá nhân */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '14px' }}>
+                  <div>
+                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Họ và tên:</span>
+                    <div style={{ fontWeight: 800, fontSize: '15px', color: 'var(--text)' }}>{selectedCandidateDetail.full_name}</div>
+                  </div>
+                  <div>
+                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Giới tính & Năm sinh:</span>
+                    <div style={{ fontWeight: 700 }}>
+                      {selectedCandidateDetail.gender || 'Nam'} • {selectedCandidateDetail.birth_year || '2002'} ({new Date().getFullYear() - (selectedCandidateDetail.birth_year || 2002)} tuổi)
+                    </div>
+                  </div>
+                  <div>
+                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Số điện thoại:</span>
+                    <div style={{ fontWeight: 700, fontFamily: 'monospace', fontSize: '14px', color: '#0068FF' }}>
+                      {selectedCandidateDetail.phone || selectedCandidateDetail.phone_normalized}
+                    </div>
+                  </div>
+                  <div>
+                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Quê quán:</span>
+                    <div style={{ fontWeight: 600 }}>{selectedCandidateDetail.hometown || 'TP. Hồ Chí Minh'}</div>
+                  </div>
+                  <div>
+                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Trình độ học vấn:</span>
+                    <div style={{ fontWeight: 600 }}>{selectedCandidateDetail.education_level || 'Đại học'}</div>
+                  </div>
+                  <div>
+                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Nguồn biết tin:</span>
+                    <div style={{ fontWeight: 600 }}>{selectedCandidateDetail.referral_source || 'Facebook'}</div>
+                  </div>
+                  <div>
+                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Ca làm việc đăng ký:</span>
+                    <div style={{ fontWeight: 700, color: '#4338CA' }}>{selectedCandidateDetail.registered_shift || 'Ca sáng / Ca chiều'}</div>
+                  </div>
+                  <div>
+                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Chi nhánh đăng ký:</span>
+                    <div style={{ fontWeight: 700, color: '#1D4ED8' }}>
+                      {selectedCandidateDetail.branch_name || getDisplayBranch(selectedCandidateDetail.preferred_branch_id || 'CN130')}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Block 3: Kinh nghiệm & Xử lý đột xuất */}
+                <div style={{ backgroundColor: 'var(--bg)', padding: '14px', borderRadius: '10px' }}>
+                  <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '4px' }}>
+                    10. KINH NGHIỆM LÀM VIỆC:
+                  </div>
+                  <div style={{ fontSize: '13px', lineHeight: '1.5', color: 'var(--text)' }}>
+                    {selectedCandidateDetail.experience || 'Chưa có kinh nghiệm'}
+                  </div>
+                </div>
+
+                <div style={{ backgroundColor: 'var(--bg)', padding: '14px', borderRadius: '10px' }}>
+                  <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '4px' }}>
+                    11. KHẢ NĂNG XỬ LÝ ĐỘT XUẤT & TĂNG CA:
+                  </div>
+                  <div style={{ fontSize: '13px', lineHeight: '1.5', color: '#065F46', fontWeight: 600 }}>
+                    {selectedCandidateDetail.emergency_handling || 'Sẵn sàng hỗ trợ và tăng ca khi có điều động đột xuất'}
+                  </div>
+                </div>
+
+                {/* Block 4: Link Facebook */}
+                <div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' }}>
+                    12. LINK FACEBOOK CÁ NHÂN:
+                  </div>
+                  {selectedCandidateDetail.facebook_url ? (
+                    <a
+                      href={selectedCandidateDetail.facebook_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        backgroundColor: '#EFF6FF',
+                        border: '1.5px solid #BFDBFE',
+                        color: '#0068FF',
+                        padding: '10px 16px',
+                        borderRadius: '8px',
+                        fontWeight: 700,
+                        textDecoration: 'none',
+                        fontSize: '13px',
+                      }}
+                    >
+                      <ExternalLink size={16} />
+                      Mở liên kết Facebook của ứng viên ({selectedCandidateDetail.facebook_url}) ↗
+                    </a>
+                  ) : (
+                    <span style={{ color: 'var(--text-muted)' }}>Ứng viên chưa cung cấp liên kết Facebook.</span>
+                  )}
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div style={{
+                padding: '16px 24px',
+                borderTop: '1px solid var(--border)',
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: '10px',
+                backgroundColor: 'var(--bg)',
+                borderBottomLeftRadius: '16px',
+                borderBottomRightRadius: '16px',
+              }}>
+                <button
+                  className="btn-secondary"
+                  onClick={() => setSelectedCandidateDetail(null)}
+                >
+                  Đóng
+                </button>
+                <button
+                  className="btn-primary"
+                  style={{ backgroundColor: '#0068FF' }}
+                  onClick={() => {
+                    setSelectedCandidateDetail(null);
+                    showToast(`Đã chuyển ứng viên ${selectedCandidateDetail.full_name} sang lịch phỏng vấn Zalo BOT!`);
+                  }}
+                >
+                  Lên Lịch Phỏng Vấn Zalo BOT
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

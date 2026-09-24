@@ -39,11 +39,24 @@ export interface CandidateApplication {
     birth_year: number;
     apply_position: string;
     preferred_branch_id: string;
-    status: 'NEW' | 'NEED_INFO' | 'INVITED_INTERVIEW' | 'INTERVIEWED' | 'ACCEPTED' | 'REJECTED';
+    status: 'NEW' | 'NEED_INFO' | 'INVITED_INTERVIEW' | 'INTERVIEWED' | 'ACCEPTED' | 'REJECTED' | string;
     interview_date?: string;
     interview_time_slot?: string;
     interviewer_id?: string;
     interview_score?: number;
     interview_notes?: string;
     created_at: string;
+    gender?: string;
+    education_level?: string;
+    hometown?: string;
+    phone?: string;
+    registered_shift?: string;
+    branch_name?: string;
+    experience?: string;
+    emergency_handling?: string;
+    facebook_url?: string;
+    referral_source?: string;
+    ai_score?: number;
+    screening_result?: string;
+    source_code?: string;
 }
