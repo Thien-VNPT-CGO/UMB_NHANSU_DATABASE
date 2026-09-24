@@ -147,8 +147,8 @@ export function App() {
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   // Login Form State
-  const [loginUsername, setLoginUsername] = useState('admin');
-  const [loginPassword, setLoginPassword] = useState('Master@@2027');
+  const [loginUsername, setLoginUsername] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
 
@@ -921,59 +921,7 @@ export function App() {
               </button>
             </form>
 
-            {/* Quick Login Helper Box */}
-            <div style={{
-              marginTop: '28px',
-              padding: '16px',
-              borderRadius: '10px',
-              backgroundColor: '#FFF8F4',
-              border: '1px solid #F8DDE7',
-            }}>
-              <div style={{
-                fontSize: '12px',
-                fontWeight: 700,
-                color: '#E85D92',
-                marginBottom: '10px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-              }}>
-                <Info size={14} />
-                Tài Khoản Mặc Định (Bấm để điền nhanh):
-              </div>
 
-              {/* Admin Button */}
-              <button
-                type="button"
-                onClick={() => {
-                  setLoginUsername('admin');
-                  setLoginPassword('Master@@2027');
-                }}
-                style={{
-                  width: '100%',
-                  padding: '8px 12px',
-                  borderRadius: '6px',
-                  backgroundColor: '#FFFFFF',
-                  border: '1px solid #E85D92',
-                  cursor: 'pointer',
-                  textAlign: 'left',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  marginBottom: '8px',
-                }}
-              >
-                <div>
-                  <span style={{ fontWeight: 800, color: '#E85D92', fontSize: '13px' }}>👑 Quản Trị Viên (Admin): </span>
-                  <span style={{ fontSize: '12px', color: '#273142', fontFamily: 'monospace' }}>admin | Master@@2027</span>
-                </div>
-                <span style={{ fontSize: '11px', color: '#E85D92', fontWeight: 700 }}>Chọn</span>
-              </button>
-
-              <div style={{ textAlign: 'center', fontSize: '11px', color: '#6B7280', marginTop: '6px' }}>
-                Hệ thống chỉ kích hoạt duy nhất tài khoản Quản Trị Viên Master Admin.
-              </div>
-            </div>
           </div>
         </div>
       </div>
