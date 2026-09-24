@@ -242,11 +242,12 @@ export class GoogleSheetsSyncService {
       // Hỗ trợ cả 2 trường hợp:
       // 1. Nhận GoogleSheetsAdapter (có .fallbackAdapter)
       // 2. Nhận MockSheetsAdapter trực tiếp
-      const fallback: MockSheetsAdapter = (repo as any).fallbackAdapter instanceof MockSheetsAdapter
-        ? (repo as any).fallbackAdapter
-        : (repo as any) instanceof MockSheetsAdapter
-          ? (repo as MockSheetsAdapter)
-          : null;
+      let fallback: MockSheetsAdapter | null = null;
+      if ((repo as any).fallbackAdapter instanceof MockSheetsAdapter) {
+        fallback = (repo as any).fallbackAdapter as MockSheetsAdapter;
+      } else if (repo instanceof MockSheetsAdapter) {
+        fallback = repo;
+      }
 
       if (!fallback) {
         return { success: false, message: 'Adapter không tương thích — cần MockSheetsAdapter hoặc GoogleSheetsAdapter', counts: null };
@@ -386,30 +387,38 @@ export class GoogleSheetsSyncService {
       // 7. Đọc ADMIN_ACCOUNTS (tài khoản quản trị thật từ Google Sheets)
       const adminRows = await this.readSheetRows('ADMIN_ACCOUNTS');
       if (adminRows.length > 0) {
-        // Giữ lại tài khoản bootstrap (ADM_001) nếu không có trong Sheets
-        const sheetsAdmins = adminRows
+        const currentAdmins = fallback.adminAccounts;
+        const sheetsAdmins: AdminAccount[] = adminRows
           .filter(r => r[0] && r[1]) // phải có admin_id và username
-          .map(r => ({
-            admin_id: r[0],
-            username: r[1],
-            // password_hash không được lưu trên Sheets — giữ lại từ bootstrap nếu cùng ID
-            password_hash: fallback.adminAccounts.find(a => a.admin_id === r[0])?.password_hash
-              || fallback.adminAccounts.find(a => a.username === r[1])?.password_hash
-              || '123456',
-            full_name: r[2] || 'Quản trị viên',
-            role: (r[3] as any) || 'HR',
-            branch_scope: r[4] || '*',
-            is_active: r[5] !== 'LOCKED',
-            version: 1,
-            created_at: r[6] || new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          }));
+          .map(r => {
+            // password_hash không được lưu trên Sheets — giữ lại từ bộ nhớ nếu cùng ID/username
+            const existingById = currentAdmins.find(a => a.admin_id === r[0]);
+            const existingByUser = currentAdmins.find(a => a.username === r[1]);
+            const passwordHash = existingById?.password_hash || existingByUser?.password_hash || '123456';
+            return {
+              admin_id: r[0],
+              username: r[1],
+              password_hash: passwordHash,
+              full_name: r[2] || 'Quản trị viên',
+              role: (r[3] as any) || 'HR',
+              branch_scope: r[4] || '*',
+              is_active: r[5] !== 'LOCKED',
+              version: 1,
+              created_at: r[6] || new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            };
+          });
+
         // Merge: ưu tiên Sheets, nhưng giữ bootstrap admin nếu chưa có trong Sheets
-        const bootstrapAdmin = fallback.adminAccounts.find(a => a.admin_id === 'ADM_001');
         const sheetsHasBootstrap = sheetsAdmins.some(a => a.admin_id === 'ADM_001' || a.username === 'admin');
-        fallback.adminAccounts = sheetsHasBootstrap
-          ? sheetsAdmins
-          : [bootstrapAdmin!, ...sheetsAdmins].filter(Boolean);
+        if (sheetsHasBootstrap) {
+          fallback.adminAccounts = sheetsAdmins;
+        } else {
+          const bootstrapAdmin = currentAdmins.find(a => a.admin_id === 'ADM_001');
+          fallback.adminAccounts = bootstrapAdmin
+            ? [bootstrapAdmin, ...sheetsAdmins]
+            : sheetsAdmins;
+        }
         counts.adminAccounts = fallback.adminAccounts.length;
       } else {
         // Sheets trống — giữ bootstrap admin để đảm bảo có thể đăng nhập
