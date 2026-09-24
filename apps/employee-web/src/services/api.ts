@@ -1,4 +1,24 @@
-export const API_BASE = (import.meta as any).env?.VITE_API_URL || (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' ? '' : 'http://localhost:4005');
+export function getApiBase(): string {
+  if (typeof window === 'undefined') return 'http://localhost:4005';
+  const custom = localStorage.getItem('ubm_custom_api_url');
+  if (custom) return custom.trim().replace(/\/+$/, '');
+  const envUrl = (import.meta as any).env?.VITE_API_URL;
+  if (envUrl) return envUrl.trim().replace(/\/+$/, '');
+  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+    return 'http://localhost:4005';
+  }
+  return window.location.origin;
+}
+
+export function setCustomApiUrl(url: string) {
+  if (!url) {
+    localStorage.removeItem('ubm_custom_api_url');
+  } else {
+    localStorage.setItem('ubm_custom_api_url', url.trim().replace(/\/+$/, ''));
+  }
+}
+
+export const API_BASE = getApiBase();
 
 let authToken = localStorage.getItem('ubm_emp_token') || '';
 
@@ -16,6 +36,7 @@ export function getAuthToken(): string {
 }
 
 export async function apiRequest<T = any>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  const base = getApiBase();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options.headers as Record<string, string>),
@@ -25,15 +46,23 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
     headers['Authorization'] = `Bearer ${authToken}`;
   }
 
-  const res = await fetch(`${API_BASE}${endpoint}`, {
-    ...options,
-    headers,
-  });
+  const url = `${base}${endpoint}`;
+  try {
+    const res = await fetch(url, {
+      ...options,
+      headers,
+    });
 
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(data.error || data.message || `Lỗi ${res.status}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || data.message || `Lỗi ${res.status}`);
+    }
+
+    return data;
+  } catch (err: any) {
+    if (err.message && err.message.toLowerCase().includes('failed to fetch')) {
+      throw new Error(`Không thể kết nối đến máy chủ Backend (${base}). Nếu máy chủ Render miễn phí đang khởi động (Sleep mode), vui lòng đợi 20-30 giây rồi thử lại.`);
+    }
+    throw err;
   }
-
-  return data;
 }

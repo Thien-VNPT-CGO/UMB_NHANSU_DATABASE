@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { apiRequest, setAuthToken } from './services/api';
+import { apiRequest, setAuthToken, getApiBase, setCustomApiUrl } from './services/api';
 import {
   Users,
   Calendar,
@@ -151,6 +151,8 @@ export function App() {
   const [loginPassword, setLoginPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [showServerConfig, setShowServerConfig] = useState(false);
+  const [customApiUrl, setCustomApiUrlState] = useState(localStorage.getItem('ubm_custom_api_url') || '');
 
   // 12 Modules States
   const [dashboardStats, setDashboardStats] = useState<any>(null);
@@ -920,8 +922,79 @@ export function App() {
                 )}
               </button>
             </form>
+            {/* Discreet Server Connection Setting */}
+            <div style={{ marginTop: '22px', textAlign: 'center' }}>
+              <button
+                type="button"
+                onClick={() => setShowServerConfig(!showServerConfig)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#9CA3AF',
+                  fontSize: '11px',
+                  cursor: 'pointer',
+                  textDecoration: 'underline',
+                  padding: '4px 8px',
+                }}
+              >
+                ⚙️ {showServerConfig ? 'Đóng cấu hình máy chủ' : 'Cấu hình địa chỉ máy chủ API (Nếu deploy riêng lẻ)'}
+              </button>
 
-
+              {showServerConfig && (
+                <div style={{
+                  marginTop: '10px',
+                  padding: '12px',
+                  backgroundColor: '#F9FAFB',
+                  borderRadius: '8px',
+                  border: '1px solid #E5E7EB',
+                  textAlign: 'left',
+                }}>
+                  <label style={{ fontSize: '11px', fontWeight: 600, color: '#4B5563', display: 'block', marginBottom: '4px' }}>
+                    Địa chỉ Backend API (Mặc định: <code style={{ color: '#E85D92' }}>{customApiUrl || getApiBase()}</code>)
+                  </label>
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <input
+                      type="url"
+                      placeholder="https://ten-backend.onrender.com"
+                      value={customApiUrl}
+                      onChange={(e) => setCustomApiUrlState(e.target.value)}
+                      style={{
+                        flex: 1,
+                        padding: '6px 10px',
+                        fontSize: '12px',
+                        border: '1px solid #D1D5DB',
+                        borderRadius: '6px',
+                        outline: 'none',
+                        backgroundColor: '#FFFFFF',
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomApiUrl(customApiUrl);
+                        setSuccessMsg('Đã lưu địa chỉ máy chủ API!');
+                        setTimeout(() => setSuccessMsg(null), 3000);
+                      }}
+                      style={{
+                        padding: '6px 12px',
+                        backgroundColor: '#E85D92',
+                        color: '#FFF',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        border: 'none',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Lưu
+                    </button>
+                  </div>
+                  <div style={{ fontSize: '10px', color: '#9CA3AF', marginTop: '4px' }}>
+                    💡 Để trống để tự động nhận diện theo tên miền hiện tại (All-in-One).
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

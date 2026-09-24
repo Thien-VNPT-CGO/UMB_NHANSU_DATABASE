@@ -61,7 +61,7 @@ io.on('connection', socket => {
   });
 });
 
-server.listen(PORT, () => {
+server.listen(Number(PORT), '0.0.0.0', () => {
   console.log(`====================================================`);
   console.log(`ỤM BÒ MILK HR SYSTEM V5.1 - BACKEND SERVER STARTED`);
   console.log(`Port: ${PORT}`);
