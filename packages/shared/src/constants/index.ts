@@ -1,0 +1,181 @@
+import { ShiftTemplate } from '../types/schedules.js';
+
+export const DESIGN_TOKENS = {
+  colors: {
+    bg: '#FFF8F4',
+    surface: '#FFFFFF',
+    brandSoft: '#F8DDE7',
+    brand: '#E85D92',
+    brandHover: '#D6457E',
+    text: '#273142',
+    textMuted: '#6B7280',
+    border: '#F0E2DE',
+    successSoft: '#DFF5E8',
+    success: '#10B981',
+    warningSoft: '#FEF3C7',
+    warning: '#F59E0B',
+    dangerSoft: '#FEE2E2',
+    danger: '#EF4444',
+  },
+  radii: {
+    sm: '8px',
+    md: '12px',
+    lg: '16px',
+    full: '9999px',
+  },
+  shadows: {
+    soft: '0 2px 8px rgba(39, 49, 66, 0.06)',
+    card: '0 4px 16px rgba(39, 49, 66, 0.08)',
+    modal: '0 12px 32px rgba(39, 49, 66, 0.16)',
+  },
+  transitions: {
+    fast: '120ms cubic-bezier(0.4, 0, 0.2, 1)',
+    normal: '180ms cubic-bezier(0.4, 0, 0.2, 1)',
+  },
+};
+
+export interface BranchInfo {
+  id: string;
+  name: string;
+  address: string;
+  latitude: number;
+  longitude: number;
+  radius_meters: number;
+  min_staff: number;
+  max_staff: number;
+  manager_name?: string;
+  status: 'ACTIVE' | 'MAINTENANCE' | 'CLOSED';
+}
+
+export const BRANCHES: BranchInfo[] = [
+  {
+    id: 'CN130',
+    name: 'Ụm Bò Milk - Chi Nhánh 130',
+    address: '130 Đường Số 1, Phường Tân Phú, Quận 7, TP. Hồ Chí Minh',
+    latitude: 10.776889,
+    longitude: 106.700806,
+    radius_meters: 300,
+    min_staff: 2,
+    max_staff: 5,
+    manager_name: 'Cửa Hàng Trưởng CN 130',
+    status: 'ACTIVE',
+  },
+  {
+    id: 'CN120',
+    name: 'Ụm Bò Milk - Chi Nhánh 120',
+    address: '120 Nguyễn Thị Minh Khai, Quận 3, TP. Hồ Chí Minh',
+    latitude: 10.773100,
+    longitude: 106.692400,
+    radius_meters: 300,
+    min_staff: 2,
+    max_staff: 4,
+    manager_name: 'Cửa Hàng Trưởng CN 120',
+    status: 'ACTIVE',
+  },
+  {
+    id: 'CN261',
+    name: 'Ụm Bò Milk - Chi Nhánh 261',
+    address: '261 Cách Mạng Tháng 8, Phường 12, Quận 10, TP. Hồ Chí Minh',
+    latitude: 10.781200,
+    longitude: 106.685300,
+    radius_meters: 300,
+    min_staff: 2,
+    max_staff: 4,
+    manager_name: 'Cửa Hàng Trưởng CN 261',
+    status: 'ACTIVE',
+  },
+  {
+    id: 'CN111',
+    name: 'Ụm Bò Milk - Chi Nhánh 111',
+    address: '111 Trần Não, Phường An Khánh, TP. Thủ Đức, TP. Hồ Chí Minh',
+    latitude: 10.796400,
+    longitude: 106.732100,
+    radius_meters: 300,
+    min_staff: 2,
+    max_staff: 5,
+    manager_name: 'Cửa Hàng Trưởng CN 111',
+    status: 'ACTIVE',
+  },
+  {
+    id: 'XUONG_SX',
+    name: 'Ụm Bò Milk - Xưởng Sản Xuất',
+    address: 'Khu Công Nghiệp Tân Bình, Tây Thạnh, Tân Phú, TP. Hồ Chí Minh',
+    latitude: 10.812300,
+    longitude: 106.623400,
+    radius_meters: 300,
+    min_staff: 4,
+    max_staff: 10,
+    manager_name: 'Quản Đốc Xưởng',
+    status: 'ACTIVE',
+  },
+  {
+    id: 'VAN_PHONG',
+    name: 'Ụm Bò Milk - Văn Phòng Trụ Sở',
+    address: 'Văn Phòng Điều Hành Trung Tâm Ụm Bò Milk, Quận 1, TP. Hồ Chí Minh',
+    latitude: 10.772500,
+    longitude: 106.698000,
+    radius_meters: 300,
+    min_staff: 1,
+    max_staff: 20,
+    manager_name: 'Ban Giám Đốc',
+    status: 'ACTIVE',
+  },
+];
+
+export const SHIFT_TEMPLATES: Record<string, ShiftTemplate> = {
+  CA_1: {
+    code: 'CA_1',
+    name: 'Ca 1 (Sáng)',
+    start_hour: 7,
+    start_minute: 0,
+    end_hour: 12,
+    end_minute: 0,
+    duration_hours: 5,
+  },
+  CA_2: {
+    code: 'CA_2',
+    name: 'Ca 2 (Chiều)',
+    start_hour: 12,
+    start_minute: 0,
+    end_hour: 18,
+    end_minute: 0,
+    duration_hours: 6,
+  },
+  CA_3: {
+    code: 'CA_3',
+    name: 'Ca 3 (Tối)',
+    start_hour: 18,
+    start_minute: 0,
+    end_hour: 23,
+    end_minute: 0,
+    duration_hours: 5,
+  },
+};
+
+export const STANDARD_HOURLY_RATES = {
+  PROBATION: 21000,
+  OFFICIAL: 25500,
+};
+
+export const ERROR_CODES = {
+  ACCOUNT_NOT_FOUND: 'ACCOUNT_NOT_FOUND',
+  PENDING_ACTIVATION: 'PENDING_ACTIVATION',
+  SUSPENDED: 'SUSPENDED',
+  REVOKED: 'REVOKED',
+  DUPLICATE_PHONE_NEEDS_HR: 'DUPLICATE_PHONE_NEEDS_HR',
+  EMPLOYMENT_NOT_ELIGIBLE: 'EMPLOYMENT_NOT_ELIGIBLE',
+  UNAUTHORIZED: 'UNAUTHORIZED',
+  FORBIDDEN: 'FORBIDDEN',
+  BRANCH_SCOPE_VIOLATION: 'BRANCH_SCOPE_VIOLATION',
+  VERSION_CONFLICT: 'VERSION_CONFLICT',
+  NEEDS_RECONCILIATION: 'NEEDS_RECONCILIATION',
+  SHEETS_UNAVAILABLE: 'SHEETS_UNAVAILABLE',
+  GPS_OUT_OF_BOUNDS: 'GPS_OUT_OF_BOUNDS',
+  GPS_ACCURACY_LOW: 'GPS_ACCURACY_LOW',
+  CAMERA_REQUIRED: 'CAMERA_REQUIRED',
+  SHIFT_NOT_FOUND: 'SHIFT_NOT_FOUND',
+  ATTENDANCE_ALREADY_RECORDED: 'ATTENDANCE_ALREADY_RECORDED',
+  SEPARATION_OF_DUTIES_VIOLATION: 'SEPARATION_OF_DUTIES_VIOLATION',
+} as const;
+
+export type ErrorCode = keyof typeof ERROR_CODES;

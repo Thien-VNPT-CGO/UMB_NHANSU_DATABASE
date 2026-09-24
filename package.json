@@ -1,0 +1,20 @@
+{
+  "name": "umbo-milk-hr-system",
+  "version": "1.0.0",
+  "description": "Ụm Bò Milk HR System V5.1 - Realtime, Google Sheets Master, Admin & Employee Web Apps",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspace=apps/backend",
+    "dev:backend": "npm run dev --workspace=apps/backend",
+    "dev:admin": "npm run dev --workspace=apps/admin-web",
+    "dev:employee": "npm run dev --workspace=apps/employee-web"
+  },
+  "keywords": ["hr", "sheets-master", "realtime", "socket.io", "react"],
+  "author": "Ụm Bò Milk",
+  "license": "UNLICENSED"
+}
