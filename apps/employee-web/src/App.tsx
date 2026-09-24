@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { apiRequest, setAuthToken, getAuthToken } from './services/api';
+import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl } from './services/api';
 import {
   Home,
   Calendar,
@@ -45,6 +45,8 @@ export function App() {
   const [loginPhone, setLoginPhone] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [showServerConfig, setShowServerConfig] = useState(false);
+  const [customApiUrl, setCustomApiUrlState] = useState(localStorage.getItem('ubm_custom_api_url') || '');
 
   // Attendance flow state
   const [attendanceStep, setAttendanceStep] = useState<'IDLE' | 'CHECKING_GPS' | 'READY_CAMERA' | 'SUBMITTING' | 'CONFIRMED'>('IDLE');
@@ -444,6 +446,76 @@ export function App() {
           <div style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.5' }}>
             🔒 Dữ liệu nhân sự mẫu đã được làm sạch hoàn toàn.<br />
             Nhân viên mới sau khi được <strong>Quản Trị Viên (Admin)</strong> tạo và kích hoạt trên Cổng Quản Trị Hệ Thống sẽ có thể đăng nhập bằng số điện thoại tại đây.
+          </div>
+
+          {/* Discreet Server Connection Setting */}
+          <div style={{ marginTop: '16px' }}>
+            <button
+              type="button"
+              onClick={() => setShowServerConfig(!showServerConfig)}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#9CA3AF',
+                fontSize: '11px',
+                cursor: 'pointer',
+                textDecoration: 'underline',
+                padding: '4px 8px',
+              }}
+            >
+              ⚙️ {showServerConfig ? 'Đóng cấu hình máy chủ' : 'Cấu hình địa chỉ máy chủ API (Nếu deploy riêng lẻ)'}
+            </button>
+
+            {showServerConfig && (
+              <div style={{
+                marginTop: '10px',
+                padding: '12px',
+                backgroundColor: '#FFFFFF',
+                borderRadius: '8px',
+                border: '1px solid #E5E7EB',
+                textAlign: 'left',
+              }}>
+                <label style={{ fontSize: '11px', fontWeight: 600, color: '#4B5563', display: 'block', marginBottom: '4px' }}>
+                  Địa chỉ Backend API (Mặc định: <code style={{ color: 'var(--brand)' }}>{customApiUrl || getApiBase()}</code>)
+                </label>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <input
+                    type="url"
+                    placeholder="https://ten-backend.onrender.com"
+                    value={customApiUrl}
+                    onChange={(e) => setCustomApiUrlState(e.target.value)}
+                    style={{
+                      flex: 1,
+                      padding: '6px 10px',
+                      fontSize: '12px',
+                      border: '1px solid #D1D5DB',
+                      borderRadius: '6px',
+                      outline: 'none',
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCustomApiUrl(customApiUrl);
+                      setToastMsg('Đã lưu địa chỉ máy chủ API!');
+                      setTimeout(() => setToastMsg(null), 3000);
+                    }}
+                    style={{
+                      padding: '6px 12px',
+                      backgroundColor: 'var(--brand)',
+                      color: '#FFF',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      border: 'none',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Lưu
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
