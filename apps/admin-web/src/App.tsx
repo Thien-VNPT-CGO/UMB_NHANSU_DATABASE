@@ -970,75 +970,8 @@ export function App() {
                 <span style={{ fontSize: '11px', color: '#E85D92', fontWeight: 700 }}>Chọn</span>
               </button>
 
-              {/* Other Roles */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
-                <button
-                  type="button"
-                  onClick={() => { setLoginUsername('hr_lead'); setLoginPassword('hr123'); }}
-                  style={{
-                    padding: '6px 10px',
-                    borderRadius: '6px',
-                    backgroundColor: '#FFFFFF',
-                    border: '1px solid #F0E2DE',
-                    cursor: 'pointer',
-                    fontSize: '11px',
-                    textAlign: 'left',
-                    color: '#273142',
-                  }}
-                >
-                  <strong style={{ color: '#2563EB' }}>HR:</strong> hr_lead / hr123
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => { setLoginUsername('store_130'); setLoginPassword('store123'); }}
-                  style={{
-                    padding: '6px 10px',
-                    borderRadius: '6px',
-                    backgroundColor: '#FFFFFF',
-                    border: '1px solid #F0E2DE',
-                    cursor: 'pointer',
-                    fontSize: '11px',
-                    textAlign: 'left',
-                    color: '#273142',
-                  }}
-                >
-                  <strong style={{ color: '#D97706' }}>Store 130:</strong> store_130
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => { setLoginUsername('finance_lead'); setLoginPassword('fin123'); }}
-                  style={{
-                    padding: '6px 10px',
-                    borderRadius: '6px',
-                    backgroundColor: '#FFFFFF',
-                    border: '1px solid #F0E2DE',
-                    cursor: 'pointer',
-                    fontSize: '11px',
-                    textAlign: 'left',
-                    color: '#273142',
-                  }}
-                >
-                  <strong style={{ color: '#10B981' }}>Finance:</strong> fin_lead
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => { setLoginUsername('mkt_lead'); setLoginPassword('mkt123'); }}
-                  style={{
-                    padding: '6px 10px',
-                    borderRadius: '6px',
-                    backgroundColor: '#FFFFFF',
-                    border: '1px solid #F0E2DE',
-                    cursor: 'pointer',
-                    fontSize: '11px',
-                    textAlign: 'left',
-                    color: '#273142',
-                  }}
-                >
-                  <strong style={{ color: '#8B5CF6' }}>MKT:</strong> mkt_lead
-                </button>
+              <div style={{ textAlign: 'center', fontSize: '11px', color: '#6B7280', marginTop: '6px' }}>
+                Hệ thống chỉ kích hoạt duy nhất tài khoản Quản Trị Viên Master Admin.
               </div>
             </div>
           </div>

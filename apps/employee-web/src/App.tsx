@@ -42,7 +42,7 @@ export function App() {
   const [employee, setEmployee] = useState<EmployeeProfile | null>(null);
   const [activeTab, setActiveTab] = useState<string>('home');
   const [loading, setLoading] = useState(false);
-  const [loginPhone, setLoginPhone] = useState('0901111222');
+  const [loginPhone, setLoginPhone] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
 
@@ -440,47 +440,10 @@ export function App() {
           </p>
         </div>
 
-        {/* Demo Fast Pickers */}
-        <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
-          <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '10px', textTransform: 'uppercase' }}>
-            Nhấn vào để thử nghiệm tự động:
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <button
-              className="btn-secondary"
-              style={{ fontSize: '13px', justifyContent: 'flex-start', textAlign: 'left', padding: '10px 14px' }}
-              onClick={() => { setLoginPhone('0901111222'); }}
-            >
-              <span className="badge badge-brand" style={{ marginRight: '8px', flexShrink: 0 }}>ĐÃ KÍCH HOẠT</span>
-              <div>
-                <strong>Nguyễn Văn An (0901111222)</strong>
-                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Thử việc (9 Tabs) · Tự động đăng nhập</div>
-              </div>
-            </button>
-
-            <button
-              className="btn-secondary"
-              style={{ fontSize: '13px', justifyContent: 'flex-start', textAlign: 'left', padding: '10px 14px' }}
-              onClick={() => { setLoginPhone('0903333444'); }}
-            >
-              <span className="badge badge-success" style={{ marginRight: '8px', flexShrink: 0 }}>ĐÃ KÍCH HOẠT</span>
-              <div>
-                <strong>Trần Thị Bình (0903333444)</strong>
-                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Chính thức (9 Tabs) · Tự động đăng nhập</div>
-              </div>
-            </button>
-
-            <button
-              className="btn-secondary"
-              style={{ fontSize: '13px', justifyContent: 'flex-start', textAlign: 'left', padding: '10px 14px' }}
-              onClick={() => { setLoginPhone('0905555666'); }}
-            >
-              <span className="badge badge-warning" style={{ marginRight: '8px', flexShrink: 0 }}>CHỜ KÍCH HOẠT</span>
-              <div>
-                <strong>Lê Hoàng Cúc (0905555666)</strong>
-                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Pending · Hệ thống tự động từ chối & báo lỗi</div>
-              </div>
-            </button>
+        <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px', textAlign: 'center' }}>
+          <div style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.5' }}>
+            🔒 Dữ liệu nhân sự mẫu đã được làm sạch hoàn toàn.<br />
+            Nhân viên mới sau khi được <strong>Quản Trị Viên (Admin)</strong> tạo và kích hoạt trên Cổng Quản Trị Hệ Thống sẽ có thể đăng nhập bằng số điện thoại tại đây.
           </div>
         </div>
       </div>
