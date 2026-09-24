@@ -36,10 +36,14 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   public getStatus() {
     const spreadsheetId = process.env.SPREADSHEET_ID || process.env.GOOGLE_SPREADSHEET_ID || '17iXM0zc1m17aX9AZrFMjOkPRMy2_CwWfjTRZSUPQF2w';
+    const candidateSpreadsheetId = process.env.CANDIDATE_SPREADSHEET_ID || '1rcqEKraSRhr-Tn9qwlhADlkQUei8j65bXeHF_Tmkd38';
+    const driveFolderId = process.env.GOOGLE_DRIVE_FOLDER_ID || '';
     return {
       connected: true,
       mode: this.isConfigured ? 'GOOGLE_SHEETS_LIVE' : 'MOCK_ENGINE_ACTIVE',
       spreadsheetId,
+      candidateSpreadsheetId,
+      driveFolderId,
       message: this.isConfigured
         ? 'Connected to live Google Sheets master'
         : 'Google credentials not set in .env; running in high-fidelity mock engine with full audit & schema persistence',
