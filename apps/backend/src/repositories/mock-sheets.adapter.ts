@@ -109,8 +109,8 @@ export class MockSheetsAdapter implements ISheetsRepository {
         emergency_handling: 'Sẵn sàng tăng ca và xử lý hỗ trợ đột xuất khi quán đông khách',
         facebook_url: 'https://facebook.com/minhkhang.nguyen',
         referral_source: 'Facebook Tuyển Dụng F&B',
-        ai_score: 92,
-        screening_result: 'Đạt (Ưu tiên PV)',
+        ai_score: 13,
+        screening_result: 'Đạt (13/14 điểm - Đủ điều kiện PV)',
         status: 'NEW',
         source_code: 'UBM_FORM_2026_001',
         apply_position: 'Nhân viên Bán hàng / Pha chế',
@@ -132,8 +132,8 @@ export class MockSheetsAdapter implements ISheetsRepository {
         emergency_handling: 'Có thể xoay ca linh hoạt khi đồng nghiệp có việc bận đột xuất',
         facebook_url: 'https://facebook.com/thaotran.ubm',
         referral_source: 'Bạn bè giới thiệu',
-        ai_score: 88,
-        screening_result: 'Đạt (Ưu tiên PV)',
+        ai_score: 0,
+        screening_result: 'Loại (Biết tin qua bạn bè / người quen giới thiệu)',
         status: 'NEW',
         source_code: 'UBM_FORM_2026_002',
         apply_position: 'Nhân viên Thu ngân / Phục vụ',
@@ -155,8 +155,8 @@ export class MockSheetsAdapter implements ISheetsRepository {
         emergency_handling: 'Sẵn sàng trực ngày lễ, cuối tuần và hỗ trợ đột xuất 24/7',
         facebook_url: 'https://facebook.com/lehoangquan2001',
         referral_source: 'Fanpage Tuyển Dụng Ụm Bò Milk',
-        ai_score: 95,
-        screening_result: 'Đạt (Ưu tiên PV)',
+        ai_score: 14,
+        screening_result: 'Đạt (14/14 điểm - Xuất sắc)',
         status: 'NEW',
         source_code: 'UBM_FORM_2026_003',
         apply_position: 'Cửa hàng phó / Pha chế',
@@ -178,8 +178,8 @@ export class MockSheetsAdapter implements ISheetsRepository {
         emergency_handling: 'Sẵn sàng học hỏi quy trình và tăng cường vào cuối tuần',
         facebook_url: 'https://facebook.com/quynhnhu.pham04',
         referral_source: 'TikTok Tuyển Dụng Ụm Bò Milk',
-        ai_score: 79,
-        screening_result: 'Phù hợp (Mời PV)',
+        ai_score: 9,
+        screening_result: 'Đạt (9/14 điểm - Đủ điều kiện PV)',
         status: 'NEW',
         source_code: 'UBM_FORM_2026_004',
         apply_position: 'Nhân viên Phục vụ Part-time',
@@ -201,8 +201,8 @@ export class MockSheetsAdapter implements ISheetsRepository {
         emergency_handling: 'Có xe máy riêng, sẵn sàng điều động đột xuất hỗ trợ giữa các chi nhánh',
         facebook_url: 'https://facebook.com/tuankiet.dang',
         referral_source: 'Group Việc Làm F&B Sài Gòn',
-        ai_score: 94,
-        screening_result: 'Đạt (Ưu tiên PV)',
+        ai_score: 14,
+        screening_result: 'Đạt (14/14 điểm - Xuất sắc)',
         status: 'NEW',
         source_code: 'UBM_FORM_2026_005',
         apply_position: 'Barista Chính / Trưởng ca',
@@ -224,8 +224,8 @@ export class MockSheetsAdapter implements ISheetsRepository {
         emergency_handling: 'Sẵn sàng hỗ trợ ca gãy và tăng ca khi quán phát sinh tiệc đặt trước',
         facebook_url: 'https://facebook.com/thuydung.vu',
         referral_source: 'Facebook Fanpage',
-        ai_score: 86,
-        screening_result: 'Đạt (Ưu tiên PV)',
+        ai_score: 12,
+        screening_result: 'Đạt (12/14 điểm - Đủ điều kiện PV)',
         status: 'NEW',
         source_code: 'UBM_FORM_2026_006',
         apply_position: 'Nhân viên Phục vụ / Order',
@@ -308,9 +308,35 @@ export class MockSheetsAdapter implements ISheetsRepository {
 
   async updateAccountStatus(id: string, status: AccountStatus, actorId: string, expectedVersion: number): Promise<EmployeeAccount> {
     this.checkErrors();
-    const account = this.accounts.find(a => a.account_id === id);
-    if (!account) throw new Error('ACCOUNT_NOT_FOUND');
-    if (account.version !== expectedVersion) throw new Error('VERSION_CONFLICT');
+    let account = this.accounts.find(a => a.account_id === id);
+    if (!account) {
+      account = this.accounts.find(a => a.employee_id === id || a.phone_normalized === id);
+    }
+    if (!account) {
+      // Check if employee exists and auto-create account record
+      const emp = this.employees.find(e => e.employee_id === id || e.employee_code === id || e.phone_normalized === id);
+      if (emp) {
+        const now = new Date().toISOString();
+        const newAcc: EmployeeAccount = {
+          account_id: `ACC_${emp.employee_id}`,
+          employee_id: emp.employee_id,
+          phone_normalized: emp.phone_normalized,
+          account_status: status,
+          role: 'EMPLOYEE',
+          branch_scope: emp.default_branch_id || 'CN130',
+          activated_by: status === 'ACTIVE' ? actorId : undefined,
+          activated_at: status === 'ACTIVE' ? now : undefined,
+          revoked_by: (status === 'REVOKED' || status === 'SUSPENDED') ? actorId : undefined,
+          revoked_at: (status === 'REVOKED' || status === 'SUSPENDED') ? now : undefined,
+          version: 1,
+          created_at: now,
+          updated_at: now,
+        };
+        this.accounts.push(newAcc);
+        return { ...newAcc };
+      }
+      throw new Error('ACCOUNT_NOT_FOUND');
+    }
 
     account.account_status = status;
     account.version += 1;

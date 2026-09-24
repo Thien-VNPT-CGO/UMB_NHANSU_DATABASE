@@ -355,8 +355,8 @@ export function App() {
     recipientIds: 'ALL',
   });
 
-  // Sub-tabs for Module 3: Kích Hoạt & Quản Lý Tài Khoản Nhân Viên
-  const [activationSubTab, setActivationSubTab] = useState<'NEW' | 'PROBATION' | 'OFFICIAL' | 'VAN_PHONG' | 'XUONG' | 'SALE'>('NEW');
+  // Sub-tabs for Module 3: Kích Hoạt & Quản Lý Tài Khoản Nhân Viên (Mặc định 'ALL' để luôn hiển thị đầy đủ nhân sự hệ thống)
+  const [activationSubTab, setActivationSubTab] = useState<'ALL' | 'NEW' | 'PROBATION' | 'OFFICIAL' | 'VAN_PHONG' | 'XUONG' | 'SALE' | 'SUSPENDED'>('ALL');
 
   // Modal & Form for Module 4: Thêm Hồ Sơ Nhân Viên Mới (Ràng buộc: UBM_NV0000 random từ 0000 đến 9999)
   const [showNewEmpModal, setShowNewEmpModal] = useState(false);
@@ -646,6 +646,19 @@ export function App() {
         loadAllData(currentUser);
       });
 
+      socket.on('employees', () => {
+        console.log('⚡ [Socket.IO] Nhận tín hiệu cập nhật danh sách nhân viên');
+        loadAllData(currentUser);
+      });
+      socket.on('accounts', () => {
+        console.log('⚡ [Socket.IO] Nhận tín hiệu cập nhật tài khoản nhân viên');
+        loadAllData(currentUser);
+      });
+      socket.on('candidates', () => {
+        console.log('⚡ [Socket.IO] Nhận tín hiệu ứng viên Google Forms mới');
+        loadAllData(currentUser);
+      });
+
       socket.on('account.activated', () => loadAllData(currentUser));
       socket.on('schedule.published', () => loadAllData(currentUser));
       socket.on('attendance.recorded', () => loadAllData(currentUser));
@@ -661,7 +674,7 @@ export function App() {
     };
   }, [currentUser]);
 
-  // 2. Realtime Background Auto-sync (Tự động kiểm tra và kéo dữ liệu mới nhất mỗi 8 giây)
+  // 2. Realtime Background Auto-sync (Tự động kiểm tra và kéo dữ liệu mới nhất mỗi 4 giây)
   useEffect(() => {
     if (!currentUser) return;
 
@@ -669,7 +682,7 @@ export function App() {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
         loadAllData(currentUser);
       }
-    }, 8000);
+    }, 4000);
 
     return () => clearInterval(interval);
   }, [currentUser]);
@@ -907,13 +920,18 @@ export function App() {
   // Filtered employee accounts & activation unified list
   const activationDataList = useMemo(() => {
     const items = allEmployees.map(emp => {
-      const acc = employeeAccounts.find(a => a.employee_id === emp.employee_id || a.phone_normalized === emp.phone_normalized);
+      const cleanPhone = (emp.phone_normalized || emp.phone || '').replace(/\D/g, '');
+      const acc = employeeAccounts.find(a => 
+        a.employee_id === emp.employee_id || 
+        a.account_id === emp.employee_id || 
+        (cleanPhone && a.phone_normalized?.replace(/\D/g, '') === cleanPhone)
+      );
       return {
         id: emp.employee_id,
         accountId: acc?.account_id || `ACC_${emp.employee_id}`,
         employeeCode: emp.employee_code || 'UBM_NV0000',
         fullName: emp.full_name,
-        phone: emp.phone_normalized,
+        phone: emp.phone_normalized || emp.phone,
         group: emp.group || 'STORE',
         employmentStatus: emp.employment_status,
         displayBranch: getDisplayBranch(emp.default_branch_id, emp.group),
@@ -921,13 +939,14 @@ export function App() {
         activatedAt: acc?.activated_at,
         activatedBy: acc?.activated_by,
         revokedAt: acc?.revoked_at,
-        version: acc?.version || 1,
+        version: acc?.version || emp.version || 1,
         hasRealAccount: !!acc,
       };
     });
 
     employeeAccounts.forEach(acc => {
-      if (!items.some(i => i.accountId === acc.account_id || i.phone === acc.phone_normalized)) {
+      const cleanPhone = (acc.phone_normalized || '').replace(/\D/g, '');
+      if (!items.some(i => i.id === acc.employee_id || i.accountId === acc.account_id || (cleanPhone && i.phone?.replace(/\D/g, '') === cleanPhone))) {
         items.push({
           id: acc.employee_id,
           accountId: acc.account_id,
@@ -941,7 +960,7 @@ export function App() {
           activatedAt: acc.activated_at,
           activatedBy: acc.activated_by,
           revokedAt: acc.revoked_at,
-          version: acc.version,
+          version: acc.version || 1,
           hasRealAccount: true,
         });
       }
@@ -954,7 +973,9 @@ export function App() {
     return activationDataList.filter(item => {
       // Sub-tab filter
       let matchSubTab = true;
-      if (activationSubTab === 'NEW') {
+      if (activationSubTab === 'ALL') {
+        matchSubTab = true;
+      } else if (activationSubTab === 'NEW') {
         matchSubTab = item.employmentStatus === 'PRE_ONBOARDING' || item.accountStatus === 'PENDING_ACTIVATION';
       } else if (activationSubTab === 'PROBATION') {
         matchSubTab = item.employmentStatus === 'PROBATION';
@@ -966,6 +987,8 @@ export function App() {
         matchSubTab = item.group === 'XUONG';
       } else if (activationSubTab === 'SALE') {
         matchSubTab = item.group === 'SALE';
+      } else if (activationSubTab === 'SUSPENDED') {
+        matchSubTab = item.accountStatus === 'SUSPENDED' || item.accountStatus === 'REVOKED';
       }
 
       // Search filter
@@ -980,12 +1003,14 @@ export function App() {
     });
   }, [activationDataList, activationSubTab, accountSearch]);
 
+  const countAll = activationDataList.length;
   const countNew = activationDataList.filter(i => i.employmentStatus === 'PRE_ONBOARDING' || i.accountStatus === 'PENDING_ACTIVATION').length;
   const countProbation = activationDataList.filter(i => i.employmentStatus === 'PROBATION').length;
   const countOfficial = activationDataList.filter(i => i.employmentStatus === 'OFFICIAL').length;
   const countOffice = activationDataList.filter(i => i.group === 'VAN_PHONG').length;
   const countFactory = activationDataList.filter(i => i.group === 'XUONG').length;
   const countSales = activationDataList.filter(i => i.group === 'SALE').length;
+  const countSuspended = activationDataList.filter(i => i.accountStatus === 'SUSPENDED' || i.accountStatus === 'REVOKED').length;
 
   // Filtered employee accounts (legacy fallback)
   const filteredAccounts = employeeAccounts.filter(acc => {
@@ -1866,12 +1891,14 @@ export function App() {
                 overflowX: 'auto',
               }}>
                 {[
-                  { key: 'NEW', label: 'Nhân viên mới', count: countNew, icon: '🌟' },
+                  { key: 'ALL', label: 'Tất cả nhân sự', count: countAll, icon: '🌟' },
+                  { key: 'NEW', label: 'Chờ kích hoạt', count: countNew, icon: '⏳' },
                   { key: 'PROBATION', label: 'Thử việc', count: countProbation, icon: '📝' },
                   { key: 'OFFICIAL', label: 'Chính thức', count: countOfficial, icon: '💼' },
                   { key: 'VAN_PHONG', label: 'Văn Phòng', count: countOffice, icon: '🏢' },
                   { key: 'XUONG', label: 'Xưởng', count: countFactory, icon: '🏭' },
                   { key: 'SALE', label: 'Sales', count: countSales, icon: '📈' },
+                  { key: 'SUSPENDED', label: 'Tạm khóa', count: countSuspended, icon: '🔒' },
                 ].map(t => {
                   const isActive = activationSubTab === t.key;
                   return (

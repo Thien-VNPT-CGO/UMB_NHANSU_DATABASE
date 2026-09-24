@@ -53,6 +53,7 @@ import {
 } from 'lucide-react';
 import { getDisplayBranch } from '../App';
 import { apiRequest } from '../services/api';
+import { evaluateCandidateAiScore } from '../services/ai-scorer';
 
 interface RoleViewsProps {
   activeTab: string;
@@ -664,10 +665,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         (c.preferred_branch_id === candidateBranchFilter) ||
         (c.branch_name && c.branch_name.includes(candidateBranchFilter));
 
+      const evalResult = evaluateCandidateAiScore(c);
       const matchResult = candidateResultFilter === 'ALL' ||
-        (candidateResultFilter === 'DAT' && ((c.ai_score >= 85) || (c.screening_result && c.screening_result.includes('Đạt')))) ||
-        (candidateResultFilter === 'PHU_HOP' && ((c.ai_score >= 70 && c.ai_score < 85) || (c.screening_result && c.screening_result.includes('Phù hợp')))) ||
-        (candidateResultFilter === 'XEM_XET' && ((c.ai_score < 70) || (c.screening_result && c.screening_result.includes('Xem xét'))));
+        (candidateResultFilter === 'DAT' && evalResult.result === 'Đạt') ||
+        (candidateResultFilter === 'LOAI' && evalResult.result === 'Loại');
 
       return matchSearch && matchBranch && matchResult;
     });
@@ -806,10 +807,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 fontWeight: 500,
               }}
             >
-              <option value="ALL">⭐ Tất Cả Điểm AI</option>
-              <option value="DAT">🟢 Đạt (AI ≥ 85)</option>
-              <option value="PHU_HOP">🟡 Phù Hợp (AI 70 - 84)</option>
-              <option value="XEM_XET">⚪ Cần Xem Xét (AI &lt; 70)</option>
+              <option value="ALL">⭐ Tất Cả Điểm AI (Thang 14)</option>
+              <option value="DAT">🟢 Đạt (≥ 8/14 điểm)</option>
+              <option value="LOAI">🔴 Loại (&lt; 8đ hoặc vi phạm)</option>
             </select>
           </div>
 
@@ -1067,33 +1067,50 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
                         {/* 14. Điểm AI */}
                         <td style={{ padding: '12px 12px', textAlign: 'center' }}>
-                          <span style={{
-                            display: 'inline-block',
-                            padding: '4px 10px',
-                            borderRadius: '999px',
-                            fontSize: '12px',
-                            fontWeight: 800,
-                            backgroundColor: aiBg,
-                            color: aiColor,
-                            border: `1px solid ${aiColor}`,
-                          }}>
-                            ⭐ {aiScore}
-                          </span>
+                          {(() => {
+                            const evalItem = evaluateCandidateAiScore(c);
+                            const isPass = evalItem.result === 'Đạt';
+                            return (
+                              <span style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                padding: '4px 10px',
+                                borderRadius: '999px',
+                                fontSize: '12px',
+                                fontWeight: 800,
+                                backgroundColor: isPass ? '#ECFDF5' : '#FEF2F2',
+                                color: isPass ? '#059669' : '#DC2626',
+                                border: `1px solid ${isPass ? '#A7F3D0' : '#FECACA'}`,
+                              }}>
+                                ⭐ {evalItem.score} / 14
+                              </span>
+                            );
+                          })()}
                         </td>
 
                         {/* 15. Kết quả */}
                         <td style={{ padding: '12px 14px', whiteSpace: 'nowrap' }}>
-                          <span style={{
-                            display: 'inline-block',
-                            padding: '3px 8px',
-                            borderRadius: '6px',
-                            fontSize: '11px',
-                            fontWeight: 800,
-                            backgroundColor: aiScore >= 85 ? '#ECFDF5' : aiScore >= 70 ? '#FEF3C7' : '#F3F4F6',
-                            color: aiScore >= 85 ? '#065F46' : aiScore >= 70 ? '#92400E' : '#4B5563',
-                          }}>
-                            {c.screening_result || (aiScore >= 85 ? 'Đạt (Ưu tiên PV)' : aiScore >= 70 ? 'Phù hợp (Mời PV)' : 'Xem xét thêm')}
-                          </span>
+                          {(() => {
+                            const evalItem = evaluateCandidateAiScore(c);
+                            const isPass = evalItem.result === 'Đạt';
+                            return (
+                              <span
+                                style={{
+                                  display: 'inline-block',
+                                  padding: '4px 9px',
+                                  borderRadius: '6px',
+                                  fontSize: '11px',
+                                  fontWeight: 800,
+                                  backgroundColor: isPass ? '#ECFDF5' : '#FEF2F2',
+                                  color: isPass ? '#059669' : '#DC2626',
+                                }}
+                                title={evalItem.screeningNote}
+                              >
+                                {isPass ? '✓ ĐẠT (Mời PV)' : '✕ LOẠI'}
+                              </span>
+                            );
+                          })()}
                         </td>
 
                         {/* 16. Trạng thái */}
@@ -1198,39 +1215,115 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
               {/* Modal Body: 17 Fields Organized */}
               <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
-                {/* Block 1: AI Score & Screening */}
-                <div style={{
-                  padding: '16px',
-                  backgroundColor: '#F0FDF4',
-                  border: '1.5px solid #86EFAC',
-                  borderRadius: '12px',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                }}>
-                  <div>
-                    <div style={{ fontSize: '12px', color: '#166534', fontWeight: 700, textTransform: 'uppercase' }}>
-                      Điểm Đánh Giá AI Thông Minh
+                {/* Block 1: AI Score & Screening (Ma trận 9 Tiêu chí Chuẩn UBM) */}
+                {(() => {
+                  const evalDetail = evaluateCandidateAiScore(selectedCandidateDetail);
+                  const isPass = evalDetail.result === 'Đạt';
+                  return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      <div style={{
+                        padding: '16px 20px',
+                        backgroundColor: isPass ? '#F0FDF4' : '#FEF2F2',
+                        border: `1.5px solid ${isPass ? '#86EFAC' : '#FCA5A5'}`,
+                        borderRadius: '12px',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        flexWrap: 'wrap',
+                        gap: '12px',
+                      }}>
+                        <div>
+                          <div style={{ fontSize: '12px', color: isPass ? '#166534' : '#991B1B', fontWeight: 700, textTransform: 'uppercase' }}>
+                            Điểm AI Chấm Tự Động (Thang 14 Điểm Chuẩn)
+                          </div>
+                          <div style={{ fontSize: '28px', fontWeight: 900, color: isPass ? '#15803D' : '#DC2626', marginTop: '2px' }}>
+                            {evalDetail.score} <span style={{ fontSize: '16px', fontWeight: 600 }}>/ 14 điểm</span>
+                          </div>
+                          <div style={{ fontSize: '12px', color: isPass ? '#166534' : '#991B1B', marginTop: '4px' }}>
+                            {evalDetail.screeningNote}
+                          </div>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <div style={{ fontSize: '12px', color: isPass ? '#166534' : '#991B1B', fontWeight: 700 }}>KẾT QUẢ SÀNG LỌC</div>
+                          <div style={{
+                            backgroundColor: isPass ? '#15803D' : '#DC2626',
+                            color: '#FFF',
+                            padding: '6px 16px',
+                            borderRadius: '999px',
+                            fontWeight: 800,
+                            fontSize: '14px',
+                            marginTop: '4px',
+                            display: 'inline-block',
+                          }}>
+                            {isPass ? '✓ ĐẠT (Đủ ĐK Phỏng Vấn)' : '✕ LOẠI'}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Bảng Chi Tiết 9 Tiêu Chí Chấm Điểm AI (Theo đúng biểu mẫu UBM) */}
+                      <div style={{
+                        backgroundColor: 'var(--surface)',
+                        border: '1px solid var(--border)',
+                        borderRadius: '10px',
+                        overflow: 'hidden',
+                      }}>
+                        <div style={{
+                          padding: '10px 14px',
+                          backgroundColor: 'var(--bg)',
+                          borderBottom: '1px solid var(--border)',
+                          fontWeight: 700,
+                          fontSize: '12px',
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                        }}>
+                          <span>📋 MA TRẬN 9 TIÊU CHÍ ĐÁNH GIÁ ỨNG VIÊN (MAXIMUM 14 ĐIỂM)</span>
+                          <span style={{ color: '#059669' }}>Điểm chuẩn: ≥ 8 / 14 điểm (Đạt)</span>
+                        </div>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                          <thead>
+                            <tr style={{ backgroundColor: 'var(--bg-subtle, #f9fafb)', textAlign: 'left', borderBottom: '1px solid var(--border)', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
+                              <th style={{ padding: '8px 12px', width: '45px' }}>STT</th>
+                              <th style={{ padding: '8px 12px', width: '220px' }}>Câu Hỏi / Tiêu Chí</th>
+                              <th style={{ padding: '8px 12px' }}>Dữ Liệu Khảo Sát & Nhận Xét Của AI</th>
+                              <th style={{ padding: '8px 12px', width: '110px', textAlign: 'center' }}>Thang Điểm</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {Object.entries(evalDetail.breakdown).map(([key, val], idx) => {
+                              const isDisq = (val as any).disqualified;
+                              return (
+                                <tr
+                                  key={key}
+                                  style={{
+                                    borderBottom: '1px solid var(--border)',
+                                    backgroundColor: isDisq ? '#FEF2F2' : 'transparent',
+                                  }}
+                                >
+                                  <td style={{ padding: '8px 12px', color: 'var(--text-muted)', fontWeight: 600 }}>{idx + 1}</td>
+                                  <td style={{ padding: '8px 12px', fontWeight: 700, color: 'var(--text)' }}>{val.title}</td>
+                                  <td style={{ padding: '8px 12px', color: isDisq ? '#DC2626' : '#334155' }}>
+                                    {val.note}
+                                  </td>
+                                  <td style={{ padding: '8px 12px', textAlign: 'center', fontWeight: 800 }}>
+                                    {isDisq ? (
+                                      <span style={{ color: '#DC2626', backgroundColor: '#FEE2E2', padding: '3px 8px', borderRadius: '4px', fontSize: '11px' }}>
+                                        LOẠI
+                                      </span>
+                                    ) : (
+                                      <span style={{ color: val.points > 0 ? '#059669' : '#6B7280', fontSize: '12px' }}>
+                                        +{val.points} / {val.max}đ
+                                      </span>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
-                    <div style={{ fontSize: '26px', fontWeight: 900, color: '#15803D', marginTop: '2px' }}>
-                      {selectedCandidateDetail.ai_score || 85} / 100
-                    </div>
-                  </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontSize: '12px', color: '#166534', fontWeight: 700 }}>KẾT QUẢ SÀNG LỌC</div>
-                    <div style={{
-                      backgroundColor: '#15803D',
-                      color: '#FFF',
-                      padding: '4px 12px',
-                      borderRadius: '999px',
-                      fontWeight: 800,
-                      fontSize: '13px',
-                      marginTop: '4px',
-                    }}>
-                      {selectedCandidateDetail.screening_result || 'Đạt (Ưu tiên PV)'}
-                    </div>
-                  </div>
-                </div>
+                  );
+                })()}
 
                 {/* Block 2: Thông tin cá nhân */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '14px' }}>
