@@ -46,8 +46,13 @@ import {
   Bot,
   Smartphone,
   ExternalLink,
+  Upload,
+  Download,
+  Trash2,
+  HelpCircle,
 } from 'lucide-react';
 import { getDisplayBranch } from '../App';
+import { apiRequest } from '../services/api';
 
 interface RoleViewsProps {
   activeTab: string;
@@ -217,6 +222,305 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const storeEmployees = allEmployees.filter(
     (e) => branchScope === '*' || e.default_branch_id === branchScope || e.branch_id === branchScope
   );
+
+  // --- OFFICIAL EMPLOYEES STATE & BULK IMPORT ---
+  const [officialSearch, setOfficialSearch] = useState('');
+  const [officialBranchFilter, setOfficialBranchFilter] = useState('ALL');
+  const [showImportOfficialModal, setShowImportOfficialModal] = useState(false);
+  const [importInputMode, setImportInputMode] = useState<'FILE' | 'PASTE'>('FILE');
+  const [importOfficialPastedText, setImportOfficialPastedText] = useState('');
+  const [parsedOfficialRows, setParsedOfficialRows] = useState<any[]>([]);
+  const [selectedFileName, setSelectedFileName] = useState('');
+  const [isSubmittingOfficialImport, setIsSubmittingOfficialImport] = useState(false);
+  const [importOfficialError, setImportOfficialError] = useState<string | null>(null);
+
+  // Tải file mẫu CSV với UTF-8 BOM để mở tiếng Việt không bị lỗi font trên Excel
+  const handleDownloadOfficialTemplate = () => {
+    const headers = [
+      'Mã NV',
+      'Họ Và Tên',
+      'Số Điện Thoại',
+      'Giới Tính',
+      'Ngày Sinh (DD/MM/YYYY)',
+      'CCCD/CMND',
+      'Email',
+      'Chi Nhánh',
+      'Nhóm',
+      'Lương Giờ (VNĐ)',
+      'Ngày Bắt Đầu (DD/MM/YYYY)',
+      'Ngày Chính Thức (DD/MM/YYYY)',
+    ];
+
+    const sampleRows = [
+      ['UBM_NV101', 'Nguyễn Văn An', '0912345678', 'Nam', '15/05/2000', '079200012345', 'nva@ubm.vn', 'CN1: 130 Vạn Kiếp (Bình Thạnh)', 'Pha Chế', '25500', '01/01/2026', '01/03/2026'],
+      ['UBM_NV102', 'Trần Thị Bích', '0987654321', 'Nữ', '20/08/2002', '079202054321', 'bichtran@ubm.vn', 'CN2: 261 Tô Hiến Thành (Q.10)', 'Thu Ngân', '25500', '15/01/2026', '15/03/2026'],
+      ['UBM_NV103', 'Lê Hoàng Cường', '0909887766', 'Nam', '10/11/1999', '079199098765', 'hoangcuong@ubm.vn', 'CN3: 120 Hoàng Diệu 2 (Thủ Đức)', 'Phục Vụ', '25500', '10/12/2025', '10/02/2026'],
+      ['UBM_NV104', 'Phạm Thị Dung', '0933112233', 'Nữ', '05/03/2001', '079201019876', 'phamdung@ubm.vn', 'CN4: 111 Tôn Đản (Q.4)', 'Pha Chế', '25500', '01/02/2026', '01/04/2026'],
+      ['UBM_NV105', 'Vũ Quốc Hùng', '0977445566', 'Nam', '12/09/1998', '079198076543', 'quochung@ubm.vn', 'Xưởng Sản Xuất (Củ Chi)', 'Bếp Bánh', '26000', '01/11/2025', '01/01/2026'],
+    ];
+
+    const csvContent =
+      '\uFEFF' +
+      [headers.join(','), ...sampleRows.map((r) => r.map((cell) => `"${cell.replace(/"/g, '""')}"`).join(','))].join(
+        '\r\n'
+      );
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `UBM_Mau_Import_NhanVien_ChinhThuc.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showToast('Đã tải xuống file mẫu import nhân viên chính thức (CSV/Excel)!');
+  };
+
+  const parseCsvRowCells = (rowStr: string, delimiter: string): string[] => {
+    const result: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < rowStr.length; i++) {
+      const char = rowStr[i];
+      if (char === '"') {
+        if (inQuotes && rowStr[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (char === delimiter && !inQuotes) {
+        result.push(current.trim());
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    result.push(current.trim());
+    return result;
+  };
+
+  const parseOfficialData = (rawText: string) => {
+    if (!rawText || !rawText.trim()) {
+      setParsedOfficialRows([]);
+      return;
+    }
+    const cleanText = rawText.replace(/^\uFEFF/, '');
+    const lines = cleanText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    if (lines.length === 0) {
+      setParsedOfficialRows([]);
+      return;
+    }
+
+    const firstLine = lines[0];
+    let delimiter = ',';
+    if (firstLine.includes('\t')) {
+      delimiter = '\t';
+    } else if (firstLine.includes(';') && !firstLine.includes(',')) {
+      delimiter = ';';
+    }
+
+    let startIdx = 0;
+    const firstLineCols = parseCsvRowCells(firstLine, delimiter).map((c) => c.toLowerCase());
+    if (
+      firstLineCols.some((c) =>
+        c.includes('họ') || c.includes('tên') || c.includes('name') ||
+        c.includes('mã') || c.includes('sđt') || c.includes('phone')
+      )
+    ) {
+      startIdx = 1;
+    }
+
+    const parsed: any[] = [];
+    for (let idx = startIdx; idx < lines.length; idx++) {
+      const rawLine = lines[idx];
+      const cols = parseCsvRowCells(rawLine, delimiter);
+      if (cols.length === 0 || cols.every((c) => !c)) continue;
+
+      let code = cols[0] || '';
+      let name = cols[1] || '';
+      let phone = cols[2] || '';
+      let gender = cols[3] || '';
+      let birthDate = cols[4] || '';
+      let idCard = cols[5] || '';
+      let email = cols[6] || '';
+      let branch = cols[7] || '';
+      let group = cols[8] || '';
+      let rateStr = cols[9] || '';
+      let startDate = cols[10] || '';
+      let officialDate = cols[11] || '';
+
+      if (
+        cols.length <= 4 &&
+        !code.toUpperCase().startsWith('UBM_NV') &&
+        !/^\d{9,11}$/.test(phone) &&
+        /^\d{9,11}$/.test(cols[1]?.replace(/\D/g, '') || '')
+      ) {
+        code = '';
+        name = cols[0] || '';
+        phone = cols[1] || '';
+        branch = cols[2] || '';
+        group = cols[3] || '';
+      }
+
+      const cleanPhone = phone.replace(/[\s.-]/g, '');
+      const errors: string[] = [];
+
+      if (!name.trim()) {
+        errors.push('Thiếu họ tên');
+      }
+      if (!cleanPhone || !/^0\d{8,11}$/.test(cleanPhone)) {
+        errors.push('SĐT không hợp lệ (cần 10 số)');
+      }
+
+      const parsedRate = rateStr ? parseInt(rateStr.replace(/\D/g, ''), 10) : 25500;
+      const ratePerHour = isNaN(parsedRate) || parsedRate <= 0 ? 25500 : parsedRate;
+
+      let branchId = 'CN130';
+      const cleanBranch = branch.trim().toLowerCase();
+      if (
+        cleanBranch.includes('văn phòng') ||
+        cleanBranch.includes('van phong') ||
+        cleanBranch.includes('đặng thai mai') ||
+        cleanBranch.includes('trụ sở')
+      ) {
+        branchId = 'VAN_PHONG';
+      } else if (
+        cleanBranch.includes('củ chi') ||
+        cleanBranch.includes('cu chi') ||
+        cleanBranch.includes('xưởng') ||
+        cleanBranch.includes('xuong')
+      ) {
+        branchId = 'XUONG_SX';
+      } else if (
+        cleanBranch.includes('130') ||
+        cleanBranch.includes('vạn kiếp') ||
+        cleanBranch.includes('cn1') ||
+        cleanBranch.includes('bình thạnh')
+      ) {
+        branchId = 'CN130';
+      } else if (
+        cleanBranch.includes('261') ||
+        cleanBranch.includes('tô hiến thành') ||
+        cleanBranch.includes('cn2') ||
+        cleanBranch.includes('q.10')
+      ) {
+        branchId = 'CN261';
+      } else if (
+        cleanBranch.includes('120') ||
+        cleanBranch.includes('hoàng diệu') ||
+        cleanBranch.includes('cn3') ||
+        cleanBranch.includes('thủ đức')
+      ) {
+        branchId = 'CN120';
+      } else if (
+        cleanBranch.includes('111') ||
+        cleanBranch.includes('tôn đản') ||
+        cleanBranch.includes('cn4') ||
+        cleanBranch.includes('q.4')
+      ) {
+        branchId = 'CN111';
+      } else if (branch.trim()) {
+        branchId = branch.trim();
+      }
+
+      parsed.push({
+        rowIndex: idx + 1,
+        employeeCode: code.trim(),
+        fullName: name.trim(),
+        phone: cleanPhone,
+        gender: gender.trim() || 'Nam',
+        birthDate: birthDate.trim(),
+        idCardNumber: idCard.trim(),
+        email: email.trim(),
+        branch: branch.trim() || getDisplayBranch(branchId),
+        branchId,
+        group:
+          group.trim() ||
+          (branchId === 'VAN_PHONG' ? 'VAN_PHONG' : branchId === 'XUONG_SX' ? 'XUONG' : 'STORE'),
+        employeeGroup: group.trim() || 'Nhân Viên Chính Thức',
+        ratePerHour,
+        startDate: startDate.trim(),
+        officialDate: officialDate.trim(),
+        isValid: errors.length === 0,
+        errors,
+      });
+    }
+
+    setParsedOfficialRows(parsed);
+  };
+
+  const handleFileUploadOfficial = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setSelectedFileName(file.name);
+    setImportOfficialError(null);
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const text = (evt.target?.result as string) || '';
+      setImportOfficialPastedText(text);
+      parseOfficialData(text);
+    };
+    reader.onerror = () => {
+      setImportOfficialError('Không thể đọc tệp tin. Vui lòng thử lại với định dạng .csv hoặc .txt UTF-8.');
+    };
+    reader.readAsText(file, 'utf-8');
+  };
+
+  const handleExecuteOfficialImport = async () => {
+    const validRows = parsedOfficialRows.filter((r) => r.isValid);
+    if (validRows.length === 0) {
+      setImportOfficialError('Không có dòng dữ liệu hợp lệ nào để import.');
+      return;
+    }
+
+    setIsSubmittingOfficialImport(true);
+    setImportOfficialError(null);
+
+    try {
+      const payload = {
+        employees: validRows.map((r) => ({
+          employeeCode: r.employeeCode || undefined,
+          fullName: r.fullName,
+          phone: r.phone,
+          branchId: r.branchId,
+          employmentStatus: 'OFFICIAL',
+          gender: r.gender,
+          birthDate: r.birthDate || undefined,
+          idCardNumber: r.idCardNumber || undefined,
+          email: r.email || undefined,
+          group: r.group,
+          ratePerHour: r.ratePerHour,
+          startDate: r.startDate || undefined,
+          officialDate: r.officialDate || undefined,
+        })),
+      };
+
+      const res = await apiRequest('/employees/bulk-import', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+
+      if (res.success) {
+        showToast(`🎉 Import thành công ${res.importedCount} nhân viên chính thức!`);
+        setShowImportOfficialModal(false);
+        setImportOfficialPastedText('');
+        setParsedOfficialRows([]);
+        setSelectedFileName('');
+
+        if (onRefreshData) await onRefreshData();
+        if (onSyncSheets) await onSyncSheets();
+      } else {
+        setImportOfficialError(res.error || res.message || 'Lỗi không xác định khi import.');
+      }
+    } catch (err: any) {
+      setImportOfficialError(err.message || 'Lỗi kết nối máy chủ khi import dữ liệu.');
+    } finally {
+      setIsSubmittingOfficialImport(false);
+    }
+  };
 
   // =========================================================================
   // HR VIEWS (15 TABS)
@@ -1761,43 +2065,775 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
   if (activeTab === 'hr-official') {
     const officialEmps = allEmployees.filter((e) => e.employment_status === 'OFFICIAL');
+    const filteredOfficialEmps = officialEmps.filter((emp) => {
+      if (officialBranchFilter !== 'ALL' && emp.default_branch_id !== officialBranchFilter && emp.branch_id !== officialBranchFilter) {
+        return false;
+      }
+      if (officialSearch.trim()) {
+        const q = officialSearch.toLowerCase().trim();
+        const code = (emp.employee_code || '').toLowerCase();
+        const name = (emp.full_name || '').toLowerCase();
+        const phone = (emp.phone_normalized || emp.phone || '').toLowerCase();
+        return code.includes(q) || name.includes(q) || phone.includes(q);
+      }
+      return true;
+    });
+
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <h1 style={{ fontSize: '20px', fontWeight: 800 }}>5. Danh Sách Nhân Viên Chính Thức</h1>
-        <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-            <thead>
-              <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
-                <th style={{ padding: '12px 20px' }}>Mã NV</th>
-                <th style={{ padding: '12px 20px' }}>Họ Và Tên</th>
-                <th style={{ padding: '12px 20px' }}>SĐT</th>
-                <th style={{ padding: '12px 20px' }}>Chi Nhánh</th>
-                <th style={{ padding: '12px 20px' }}>Mức Lương Giờ</th>
-                <th style={{ padding: '12px 20px' }}>Trạng Thái</th>
-              </tr>
-            </thead>
-            <tbody>
-              {officialEmps.length > 0 ? (
-                officialEmps.map((emp, i) => (
-                  <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
-                    <td style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--brand)' }}>{emp.employee_code}</td>
-                    <td style={{ padding: '14px 20px', fontWeight: 700 }}>{emp.full_name}</td>
-                    <td style={{ padding: '14px 20px', fontFamily: 'monospace' }}>{emp.phone_normalized}</td>
-                    <td style={{ padding: '14px 20px' }}>{getDisplayBranch(emp.default_branch_id)}</td>
-                    <td style={{ padding: '14px 20px', fontWeight: 700, color: '#10B981' }}>{emp.current_rate_per_hour ? `${emp.current_rate_per_hour.toLocaleString('vi-VN')} đ/h` : '25.000 đ/h'}</td>
-                    <td style={{ padding: '14px 20px' }}><span className="badge badge-success">CHÍNH THỨC</span></td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={6} style={{ textAlign: 'center', padding: '36px', color: 'var(--text-muted)' }}>
-                    Chưa có nhân viên chính thức trong danh sách. Dữ liệu sẽ đồng bộ từ Google Sheets.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+        {/* Header Action Bar */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+          <div>
+            <h1 style={{ fontSize: '22px', fontWeight: 800, margin: 0, color: 'var(--text)' }}>
+              5. Danh Sách Nhân Viên Chính Thức
+            </h1>
+            <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--text-muted)' }}>
+              Quản lý danh sách nhân sự chính thức, mức lương giờ chuẩn 25.500 đ/h và nhập khẩu dữ liệu hàng loạt.
+            </p>
+          </div>
+
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+            {/* Nút Tải File Mẫu */}
+            <button
+              onClick={handleDownloadOfficialTemplate}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '9px 16px',
+                backgroundColor: 'var(--surface)',
+                color: '#059669',
+                border: '1.5px solid #10B981',
+                borderRadius: '8px',
+                fontWeight: 700,
+                fontSize: '13px',
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+                boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = '#ECFDF5';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = 'var(--surface)';
+              }}
+              title="Tải tệp mẫu CSV có UTF-8 BOM chuẩn để mở bằng Excel hoặc Google Sheets"
+            >
+              <Download size={16} />
+              Tải File Mẫu (CSV / Excel)
+            </button>
+
+            {/* Nút Import Dữ Liệu Nhân Viên Chính Thức */}
+            <button
+              onClick={() => {
+                setShowImportOfficialModal(true);
+                setImportOfficialError(null);
+              }}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '9px 18px',
+                backgroundColor: '#059669',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '8px',
+                fontWeight: 700,
+                fontSize: '13px',
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+                boxShadow: '0 2px 6px rgba(5, 150, 105, 0.3)',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = '#047857';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = '#059669';
+              }}
+            >
+              <Upload size={16} />
+              Import Dữ Liệu Nhân Viên Chính Thức
+            </button>
+
+            {/* Nút Đồng Bộ */}
+            {onSyncSheets && (
+              <button
+                className="btn-outline"
+                onClick={onSyncSheets}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '9px 14px',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  borderRadius: '8px',
+                }}
+                title="Đồng bộ 2 chiều với Google Sheets"
+              >
+                <RefreshCw size={15} />
+                Đồng Bộ Sheets
+              </button>
+            )}
+          </div>
         </div>
+
+        {/* Stats Row */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
+          <div style={{ backgroundColor: 'var(--surface)', padding: '16px 20px', borderRadius: '12px', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: '14px' }}>
+            <div style={{ width: '44px', height: '44px', borderRadius: '10px', backgroundColor: '#ECFDF5', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#059669' }}>
+              <UserCheck size={22} />
+            </div>
+            <div>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Tổng Nhân Viên Chính Thức</div>
+              <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>{officialEmps.length} <span style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-muted)' }}>nhân sự</span></div>
+            </div>
+          </div>
+
+          <div style={{ backgroundColor: 'var(--surface)', padding: '16px 20px', borderRadius: '12px', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: '14px' }}>
+            <div style={{ width: '44px', height: '44px', borderRadius: '10px', backgroundColor: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#2563EB' }}>
+              <DollarSign size={22} />
+            </div>
+            <div>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Lương Giờ Tiêu Chuẩn</div>
+              <div style={{ fontSize: '20px', fontWeight: 800, color: '#059669' }}>25.500 <span style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-muted)' }}>đ/h</span></div>
+            </div>
+          </div>
+
+          <div style={{ backgroundColor: 'var(--surface)', padding: '16px 20px', borderRadius: '12px', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: '14px' }}>
+            <div style={{ width: '44px', height: '44px', borderRadius: '10px', backgroundColor: '#F5F3FF', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#7C3AED' }}>
+              <Building2 size={22} />
+            </div>
+            <div>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Phạm Vi Chi Nhánh</div>
+              <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {officialBranchFilter === 'ALL' ? 'Toàn bộ 4 Chi Nhánh + VP' : getDisplayBranch(officialBranchFilter)}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Filter & Search Bar */}
+        <div style={{
+          display: 'flex',
+          gap: '12px',
+          alignItems: 'center',
+          backgroundColor: 'var(--surface)',
+          padding: '12px 16px',
+          borderRadius: '10px',
+          border: '1px solid var(--border)',
+          flexWrap: 'wrap',
+        }}>
+          <div style={{ position: 'relative', flex: '1 1 240px', minWidth: '220px' }}>
+            <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+            <input
+              type="text"
+              placeholder="Tìm theo Mã NV, Họ Tên, Số Điện Thoại..."
+              value={officialSearch}
+              onChange={(e) => setOfficialSearch(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '8px 12px 8px 36px',
+                borderRadius: '8px',
+                border: '1px solid var(--border)',
+                backgroundColor: 'var(--bg)',
+                color: 'var(--text)',
+                fontSize: '13px',
+                outline: 'none',
+              }}
+            />
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: 600 }}>Chi nhánh:</span>
+            <select
+              value={officialBranchFilter}
+              onChange={(e) => setOfficialBranchFilter(e.target.value)}
+              style={{
+                padding: '8px 12px',
+                borderRadius: '8px',
+                border: '1px solid var(--border)',
+                backgroundColor: 'var(--bg)',
+                color: 'var(--text)',
+                fontSize: '13px',
+                fontWeight: 600,
+                outline: 'none',
+              }}
+            >
+              <option value="ALL">Tất Cả Chi Nhánh ({officialEmps.length})</option>
+              <option value="CN130">CN1: 130 Vạn Kiếp (Bình Thạnh)</option>
+              <option value="CN261">CN2: 261 Tô Hiến Thành (Q.10)</option>
+              <option value="CN120">CN3: 120 Hoàng Diệu 2 (Thủ Đức)</option>
+              <option value="CN111">CN4: 111 Tôn Đản (Q.4)</option>
+              <option value="VAN_PHONG">Văn Phòng (10 Đặng Thai Mai)</option>
+              <option value="XUONG_SX">Xưởng Sản Xuất (Củ Chi)</option>
+            </select>
+          </div>
+
+          {(officialSearch || officialBranchFilter !== 'ALL') && (
+            <button
+              onClick={() => {
+                setOfficialSearch('');
+                setOfficialBranchFilter('ALL');
+              }}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                background: 'none',
+                border: 'none',
+                color: 'var(--brand)',
+                fontSize: '12px',
+                cursor: 'pointer',
+                fontWeight: 600,
+                padding: '4px 8px',
+              }}
+            >
+              <RotateCcw size={12} />
+              Đặt lại bộ lọc
+            </button>
+          )}
+
+          <div style={{ marginLeft: 'auto', fontSize: '12px', color: 'var(--text-muted)' }}>
+            Hiển thị <strong>{filteredOfficialEmps.length}</strong> / {officialEmps.length} nhân sự
+          </div>
+        </div>
+
+        {/* Data Table */}
+        <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+              <thead>
+                <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase', borderBottom: '1px solid var(--border)' }}>
+                  <th style={{ padding: '12px 18px', width: '110px' }}>Mã NV</th>
+                  <th style={{ padding: '12px 18px' }}>Họ Và Tên</th>
+                  <th style={{ padding: '12px 18px', width: '130px' }}>Số Điện Thoại</th>
+                  <th style={{ padding: '12px 18px' }}>Chi Nhánh Làm Việc</th>
+                  <th style={{ padding: '12px 18px', width: '130px' }}>Khối / Vị Trí</th>
+                  <th style={{ padding: '12px 18px', width: '130px' }}>Mức Lương Giờ</th>
+                  <th style={{ padding: '12px 18px', width: '130px' }}>Ngày Chính Thức</th>
+                  <th style={{ padding: '12px 18px', width: '130px', textAlign: 'center' }}>Trạng Thái</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredOfficialEmps.length > 0 ? (
+                  filteredOfficialEmps.map((emp, i) => (
+                    <tr
+                      key={emp.id || i}
+                      style={{
+                        borderBottom: '1px solid var(--border)',
+                        transition: 'background-color 0.15s',
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.backgroundColor = 'var(--bg-subtle, #f9fafb)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.backgroundColor = 'transparent';
+                      }}
+                    >
+                      <td style={{ padding: '14px 18px', fontWeight: 800, color: 'var(--brand)', fontFamily: 'monospace', fontSize: '13px' }}>
+                        {emp.employee_code || `UBM_NV${100 + i}`}
+                      </td>
+                      <td style={{ padding: '14px 18px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <div style={{
+                            width: '32px',
+                            height: '32px',
+                            borderRadius: '50%',
+                            backgroundColor: '#E0E7FF',
+                            color: '#3730A3',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontWeight: 700,
+                            fontSize: '12px',
+                            flexShrink: 0,
+                          }}>
+                            {(emp.full_name || 'NV').charAt(0).toUpperCase()}
+                          </div>
+                          <div>
+                            <div style={{ fontWeight: 700, color: 'var(--text)' }}>{emp.full_name}</div>
+                            {emp.email && <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{emp.email}</div>}
+                          </div>
+                        </div>
+                      </td>
+                      <td style={{ padding: '14px 18px', fontFamily: 'monospace' }}>
+                        <a
+                          href={`tel:${emp.phone_normalized || emp.phone}`}
+                          style={{ color: 'var(--text)', textDecoration: 'none', fontWeight: 600 }}
+                          title="Gọi điện"
+                        >
+                          {emp.phone_normalized || emp.phone || '---'}
+                        </a>
+                      </td>
+                      <td style={{ padding: '14px 18px' }}>
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '3px 8px', borderRadius: '6px', backgroundColor: '#F1F5F9', fontSize: '12px', fontWeight: 600, color: '#334155' }}>
+                          <Store size={12} color="#64748B" />
+                          {getDisplayBranch(emp.default_branch_id || emp.branch_id, emp.group)}
+                        </div>
+                      </td>
+                      <td style={{ padding: '14px 18px' }}>
+                        <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>
+                          {emp.group === 'VAN_PHONG' ? 'Khối Văn Phòng' : emp.group === 'XUONG' ? 'Khối Sản Xuất' : 'Khối Cửa Hàng'}
+                        </span>
+                      </td>
+                      <td style={{ padding: '14px 18px', fontWeight: 800, color: '#059669', fontSize: '13px' }}>
+                        {emp.current_rate_per_hour
+                          ? `${Number(emp.current_rate_per_hour).toLocaleString('vi-VN')} đ/h`
+                          : '25.500 đ/h'}
+                      </td>
+                      <td style={{ padding: '14px 18px', fontSize: '12px', color: 'var(--text-muted)' }}>
+                        {emp.official_date || emp.start_date || 'Đang cập nhật'}
+                      </td>
+                      <td style={{ padding: '14px 18px', textAlign: 'center' }}>
+                        <span className="badge badge-success" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 700, letterSpacing: '0.3px' }}>
+                          <CheckCircle size={11} />
+                          CHÍNH THỨC
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={8} style={{ textAlign: 'center', padding: '48px 20px', color: 'var(--text-muted)' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
+                        <Users size={36} color="var(--border)" />
+                        <div style={{ fontWeight: 600, fontSize: '14px' }}>Không tìm thấy nhân viên chính thức nào</div>
+                        <div style={{ fontSize: '12px', maxWidth: '420px', lineHeight: 1.5 }}>
+                          Chưa có dữ liệu nhân viên chính thức hoặc không khớp với bộ lọc tìm kiếm. Bạn có thể bấm nút <strong>Import Dữ Liệu</strong> phía trên để tải danh sách vào hệ thống.
+                        </div>
+                        <button
+                          onClick={() => setShowImportOfficialModal(true)}
+                          style={{
+                            marginTop: '6px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            padding: '8px 16px',
+                            backgroundColor: '#059669',
+                            color: '#fff',
+                            border: 'none',
+                            borderRadius: '6px',
+                            fontSize: '12px',
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <Upload size={14} />
+                          Import Nhân Viên Ngay
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* MODAL IMPORT DỮ LIỆU NHÂN VIÊN CHÍNH THỨC */}
+        {showImportOfficialModal && (
+          <div style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.65)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+            padding: '16px',
+            backdropFilter: 'blur(3px)',
+          }}>
+            <div style={{
+              backgroundColor: 'var(--surface)',
+              borderRadius: '16px',
+              maxWidth: '860px',
+              width: '100%',
+              maxHeight: '92vh',
+              display: 'flex',
+              flexDirection: 'column',
+              boxShadow: '0 24px 48px rgba(0,0,0,0.3)',
+              border: '1px solid var(--border)',
+              overflow: 'hidden',
+              animation: 'fadeIn 0.2s ease-out',
+            }}>
+              {/* Modal Header */}
+              <div style={{
+                padding: '18px 24px',
+                borderBottom: '1px solid var(--border)',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                backgroundColor: 'var(--bg)',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <div style={{
+                    width: '36px',
+                    height: '36px',
+                    borderRadius: '8px',
+                    backgroundColor: '#ECFDF5',
+                    color: '#059669',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}>
+                    <Upload size={20} />
+                  </div>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '17px', fontWeight: 800, color: 'var(--text)' }}>
+                      Import Danh Sách Nhân Viên Chính Thức
+                    </h3>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                      Tải lên tệp CSV/Excel hoặc dán trực tiếp danh sách nhân viên từ bảng tính
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setShowImportOfficialModal(false)}
+                  style={{
+                    border: 'none',
+                    background: 'none',
+                    cursor: 'pointer',
+                    color: 'var(--text-muted)',
+                    padding: '6px',
+                    borderRadius: '6px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--border)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div style={{ padding: '20px 24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                {/* Note Banner & Download Template Button */}
+                <div style={{
+                  padding: '14px 16px',
+                  backgroundColor: '#F0FDF4',
+                  border: '1px solid #BBF7D0',
+                  borderRadius: '10px',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  gap: '12px',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', maxWidth: '580px' }}>
+                    <Info size={18} color="#16A34A" style={{ marginTop: '2px', flexShrink: 0 }} />
+                    <div style={{ fontSize: '12px', color: '#166534', lineHeight: 1.5 }}>
+                      <strong>Quy chuẩn import:</strong> Nhân viên import sẽ tự động được gán trạng thái <strong>CHÍNH THỨC</strong>, cấp tài khoản đăng nhập (mật khẩu: 6 số cuối SĐT) và đồng bộ xuống các Google Sheet. Mức lương giờ mặc định là <strong>25.500 đ/h</strong>.
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={handleDownloadOfficialTemplate}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '8px 14px',
+                      backgroundColor: '#16A34A',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: '6px',
+                      fontSize: '12px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      whiteSpace: 'nowrap',
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#15803D'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#16A34A'; }}
+                  >
+                    <Download size={14} />
+                    Tải File Mẫu (.CSV)
+                  </button>
+                </div>
+
+                {/* Input Mode Selector */}
+                <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setImportInputMode('FILE')}
+                    style={{
+                      padding: '8px 14px',
+                      borderRadius: '6px',
+                      border: 'none',
+                      fontSize: '13px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      backgroundColor: importInputMode === 'FILE' ? '#059669' : 'transparent',
+                      color: importInputMode === 'FILE' ? '#ffffff' : 'var(--text-muted)',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                    }}
+                  >
+                    <Upload size={14} />
+                    1. Tải Lên Tệp Tin (.csv, .xlsx, .tsv, .txt)
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setImportInputMode('PASTE')}
+                    style={{
+                      padding: '8px 14px',
+                      borderRadius: '6px',
+                      border: 'none',
+                      fontSize: '13px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      backgroundColor: importInputMode === 'PASTE' ? '#059669' : 'transparent',
+                      color: importInputMode === 'PASTE' ? '#ffffff' : 'var(--text-muted)',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                    }}
+                  >
+                    <FileSpreadsheet size={14} />
+                    2. Dán Trực Tiếp (Copy / Paste từ Sheets / Excel)
+                  </button>
+                </div>
+
+                {/* Input Area Depending on Mode */}
+                {importInputMode === 'FILE' ? (
+                  <div
+                    style={{
+                      border: '2px dashed var(--border)',
+                      borderRadius: '12px',
+                      padding: '28px 20px',
+                      textAlign: 'center',
+                      backgroundColor: 'var(--bg)',
+                      cursor: 'pointer',
+                      transition: 'border-color 0.2s',
+                    }}
+                    onClick={() => document.getElementById('official-file-input')?.click()}
+                  >
+                    <input
+                      id="official-file-input"
+                      type="file"
+                      accept=".csv,.txt,.tsv,.xlsx,.xls"
+                      onChange={handleFileUploadOfficial}
+                      style={{ display: 'none' }}
+                    />
+                    <div style={{ width: '48px', height: '48px', margin: '0 auto 12px', borderRadius: '50%', backgroundColor: '#ECFDF5', color: '#059669', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <Upload size={24} />
+                    </div>
+                    <div style={{ fontWeight: 700, fontSize: '14px', color: 'var(--text)', marginBottom: '4px' }}>
+                      {selectedFileName ? `Tệp đã chọn: ${selectedFileName}` : 'Nhấn vào đây để chọn tệp CSV / Excel'}
+                    </div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                      Hỗ trợ định dạng .csv, .tsv, .txt (mã hoá UTF-8). Kéo thả tệp tin hoặc nhấn để duyệt máy tính.
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px', display: 'flex', justifyContent: 'space-between' }}>
+                      <span>Dán các hàng sao chép từ Google Sheets hoặc Excel vào ô dưới đây (mỗi dòng 1 nhân viên):</span>
+                      <span style={{ fontFamily: 'monospace' }}>Mã NV [Tab] Họ Tên [Tab] SĐT [Tab] Chi Nhánh...</span>
+                    </div>
+                    <textarea
+                      rows={6}
+                      value={importOfficialPastedText}
+                      onChange={(e) => {
+                        setImportOfficialPastedText(e.target.value);
+                        parseOfficialData(e.target.value);
+                      }}
+                      placeholder={`Ví dụ sao chép từ Excel:\nUBM_NV101\tNguyễn Văn An\t0912345678\tNam\t15/05/2000\t079200012345\tnva@ubm.vn\tBÌNH TÂN\tPha Chế\t25500\t01/01/2026\t01/03/2026\nUBM_NV102\tTrần Thị Bích\t0987654321\tNữ\t20/08/2002\t079202054321\tbichtran@ubm.vn\tTÂN BÌNH\tThu Ngân\t25500\t15/01/2026\t15/03/2026`}
+                      style={{
+                        width: '100%',
+                        padding: '10px 12px',
+                        borderRadius: '8px',
+                        border: '1px solid var(--border)',
+                        backgroundColor: 'var(--bg)',
+                        color: 'var(--text)',
+                        fontSize: '12px',
+                        fontFamily: 'monospace',
+                        outline: 'none',
+                        resize: 'vertical',
+                      }}
+                    />
+                  </div>
+                )}
+
+                {/* Validation Status & Live Preview Table */}
+                {parsedOfficialRows.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text)' }}>
+                        Xem trước dữ liệu ({parsedOfficialRows.length} dòng):
+                      </div>
+                      <div style={{ display: 'flex', gap: '10px', fontSize: '12px' }}>
+                        <span style={{ color: '#059669', fontWeight: 700 }}>
+                          ✓ {parsedOfficialRows.filter((r) => r.isValid).length} hợp lệ
+                        </span>
+                        {parsedOfficialRows.filter((r) => !r.isValid).length > 0 && (
+                          <span style={{ color: '#DC2626', fontWeight: 700 }}>
+                            ✕ {parsedOfficialRows.filter((r) => !r.isValid).length} không hợp lệ
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div style={{
+                      maxHeight: '220px',
+                      overflowY: 'auto',
+                      border: '1px solid var(--border)',
+                      borderRadius: '8px',
+                      backgroundColor: 'var(--bg)',
+                    }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                        <thead>
+                          <tr style={{ backgroundColor: 'var(--surface)', textAlign: 'left', borderBottom: '1px solid var(--border)', fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+                            <th style={{ padding: '8px 12px', width: '50px' }}>STT</th>
+                            <th style={{ padding: '8px 12px', width: '90px' }}>Trạng Thái</th>
+                            <th style={{ padding: '8px 12px', width: '90px' }}>Mã NV</th>
+                            <th style={{ padding: '8px 12px' }}>Họ Và Tên</th>
+                            <th style={{ padding: '8px 12px', width: '100px' }}>SĐT</th>
+                            <th style={{ padding: '8px 12px' }}>Chi Nhánh</th>
+                            <th style={{ padding: '8px 12px', width: '90px' }}>Lương Giờ</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {parsedOfficialRows.map((row, idx) => (
+                            <tr
+                              key={idx}
+                              style={{
+                                borderBottom: '1px solid var(--border)',
+                                backgroundColor: row.isValid ? 'transparent' : '#FEF2F2',
+                              }}
+                            >
+                              <td style={{ padding: '8px 12px', color: 'var(--text-muted)' }}>{row.rowIndex}</td>
+                              <td style={{ padding: '8px 12px' }}>
+                                {row.isValid ? (
+                                  <span style={{ color: '#059669', fontWeight: 700, fontSize: '11px' }}>✓ Hợp lệ</span>
+                                ) : (
+                                  <span style={{ color: '#DC2626', fontWeight: 700, fontSize: '11px' }} title={row.errors.join(', ')}>
+                                    ✕ {row.errors[0]}
+                                  </span>
+                                )}
+                              </td>
+                              <td style={{ padding: '8px 12px', fontFamily: 'monospace', fontWeight: 600 }}>
+                                {row.employeeCode || <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>(Tự cấp)</span>}
+                              </td>
+                              <td style={{ padding: '8px 12px', fontWeight: 600 }}>{row.fullName || '---'}</td>
+                              <td style={{ padding: '8px 12px', fontFamily: 'monospace' }}>{row.phone || '---'}</td>
+                              <td style={{ padding: '8px 12px' }}>{row.branch || 'CN130'}</td>
+                              <td style={{ padding: '8px 12px', fontWeight: 700, color: '#059669' }}>
+                                {row.ratePerHour?.toLocaleString('vi-VN')} đ
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Error Banner */}
+                {importOfficialError && (
+                  <div style={{
+                    padding: '12px 16px',
+                    backgroundColor: '#FEF2F2',
+                    border: '1px solid #FECACA',
+                    borderRadius: '8px',
+                    color: '#991B1B',
+                    fontSize: '13px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                  }}>
+                    <AlertTriangle size={16} color="#DC2626" style={{ flexShrink: 0 }} />
+                    <div>{importOfficialError}</div>
+                  </div>
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div style={{
+                padding: '16px 24px',
+                borderTop: '1px solid var(--border)',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                backgroundColor: 'var(--bg)',
+              }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setImportOfficialPastedText('');
+                    setParsedOfficialRows([]);
+                    setSelectedFileName('');
+                    setImportOfficialError(null);
+                  }}
+                  disabled={parsedOfficialRows.length === 0}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    border: 'none',
+                    background: 'none',
+                    color: parsedOfficialRows.length > 0 ? '#DC2626' : 'var(--text-muted)',
+                    cursor: parsedOfficialRows.length > 0 ? 'pointer' : 'not-allowed',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                  }}
+                >
+                  <Trash2 size={14} />
+                  Xoá Dữ Liệu Đang Nhập
+                </button>
+
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button
+                    type="button"
+                    className="btn-outline"
+                    onClick={() => setShowImportOfficialModal(false)}
+                    style={{ padding: '9px 18px', fontSize: '13px', borderRadius: '8px' }}
+                  >
+                    Huỷ Bỏ
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleExecuteOfficialImport}
+                    disabled={isSubmittingOfficialImport || parsedOfficialRows.filter((r) => r.isValid).length === 0}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      padding: '9px 20px',
+                      backgroundColor: '#059669',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: '8px',
+                      fontWeight: 700,
+                      fontSize: '13px',
+                      cursor: (isSubmittingOfficialImport || parsedOfficialRows.filter((r) => r.isValid).length === 0) ? 'not-allowed' : 'pointer',
+                      opacity: (isSubmittingOfficialImport || parsedOfficialRows.filter((r) => r.isValid).length === 0) ? 0.6 : 1,
+                      boxShadow: '0 2px 6px rgba(5, 150, 105, 0.3)',
+                    }}
+                  >
+                    {isSubmittingOfficialImport ? (
+                      <>
+                        <RefreshCw size={15} className="spin" />
+                        Đang Nhập Dữ Liệu...
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle size={15} />
+                        Xác Nhận Import ({parsedOfficialRows.filter((r) => r.isValid).length} nhân sự)
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

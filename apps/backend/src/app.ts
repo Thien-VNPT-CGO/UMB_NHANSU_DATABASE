@@ -160,12 +160,91 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   app.post('/employees', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
     try {
+      const b = req.body;
       const result = await employeesService.createEmployee({
-        ...req.body,
+        fullName: (b.fullName || b.full_name || '').trim(),
+        phone: (b.phone || b.phone_normalized || '').trim(),
+        branchId: b.branchId || b.branch_id || b.default_branch_id || 'CN130',
+        employmentStatus: b.employmentStatus || b.employment_status || 'PROBATION',
+        gender: b.gender || 'NAM',
+        birthDate: b.birthDate || b.birth_date,
+        group: b.group || 'STORE',
+        employeeCode: b.employeeCode || b.employee_code,
+        idCardNumber: b.idCardNumber || b.id_card_number,
+        email: b.email,
+        startDate: b.startDate || b.start_date,
+        officialDate: b.officialDate || b.official_date,
+        ratePerHour: b.currentRatePerHour || b.current_rate_per_hour,
         actorId: req.user!.id,
       });
       broadcastUpdate('employees', { action: 'create', employee: result });
+      broadcastUpdate('accounts', { action: 'create_emp_account' });
       res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Bulk import official employees endpoint (Dành cho HR / Admin import nhân viên chính thức)
+  app.post('/employees/bulk-import', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const { employees } = req.body;
+      if (!Array.isArray(employees) || employees.length === 0) {
+        return res.status(400).json({ error: 'Danh sách nhân viên import rỗng hoặc không đúng định dạng.' });
+      }
+
+      const createdList: any[] = [];
+      const errors: string[] = [];
+
+      for (let i = 0; i < employees.length; i++) {
+        const item = employees[i];
+        const name = (item.fullName || item.full_name || '').trim();
+        const rawPhone = (item.phone || item.phone_normalized || '').trim();
+        const cleanPhone = rawPhone.replace(/\D/g, '');
+
+        if (!name) {
+          errors.push(`Dòng ${i + 1}: Thiếu Họ và Tên`);
+          continue;
+        }
+        if (!cleanPhone || cleanPhone.length < 9) {
+          errors.push(`Dòng ${i + 1} (${name}): Số điện thoại '${rawPhone}' không hợp lệ`);
+          continue;
+        }
+
+        try {
+          const created = await employeesService.createEmployee({
+            fullName: name,
+            phone: cleanPhone,
+            branchId: item.branchId || item.branch_id || item.default_branch_id || 'CN130',
+            employmentStatus: item.employmentStatus || item.employment_status || 'OFFICIAL',
+            gender: (item.gender === 'Nữ' || item.gender === 'NU') ? 'NU' : (item.gender === 'Khác' || item.gender === 'KHAC') ? 'KHAC' : 'NAM',
+            birthDate: item.birthDate || item.birth_date,
+            group: item.group || 'STORE',
+            employeeCode: item.employeeCode || item.employee_code,
+            idCardNumber: item.idCardNumber || item.id_card_number,
+            email: item.email,
+            startDate: item.startDate || item.start_date,
+            officialDate: item.officialDate || item.official_date,
+            ratePerHour: item.currentRatePerHour || item.current_rate_per_hour || 25500,
+            actorId: req.user!.id,
+          });
+          createdList.push(created);
+        } catch (e: any) {
+          errors.push(`Dòng ${i + 1} (${name}): ${e.message}`);
+        }
+      }
+
+      broadcastUpdate('employees', { action: 'bulk-import', count: createdList.length });
+      broadcastUpdate('accounts', { action: 'bulk-import', count: createdList.length });
+
+      res.json({
+        success: true,
+        message: `Đã import thành công ${createdList.length}/${employees.length} nhân viên chính thức!`,
+        importedCount: createdList.length,
+        totalRequested: employees.length,
+        employees: createdList,
+        errors: errors.length > 0 ? errors : undefined,
+      });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }

@@ -28,17 +28,24 @@ export class EmployeesService {
     birthDate?: string;
     group?: 'STORE' | 'XUONG' | 'VAN_PHONG' | 'SALE';
     employeeCode?: string;
+    idCardNumber?: string;
+    email?: string;
+    startDate?: string;
+    officialDate?: string;
+    ratePerHour?: number;
     actorId: string;
   }) {
-    const employeeId = `EMP_${Date.now()}`;
+    const employeeId = `EMP_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
     let employeeCode = data.employeeCode?.trim();
-    if (!employeeCode || !/^UBM_NV\d{4}$/.test(employeeCode)) {
-      const randomDigits = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+    if (!employeeCode || !/^UBM_NV\d+$/i.test(employeeCode)) {
+      const randomDigits = Math.floor(Math.random() * 1000000).toString().padStart(6, '0');
       employeeCode = `UBM_NV${randomDigits}`;
+    } else {
+      employeeCode = employeeCode.toUpperCase();
     }
-    const rate = data.employmentStatus === 'PROBATION'
+    const rate = data.ratePerHour || (data.employmentStatus === 'PROBATION'
       ? STANDARD_HOURLY_RATES.PROBATION
-      : STANDARD_HOURLY_RATES.OFFICIAL;
+      : STANDARD_HOURLY_RATES.OFFICIAL);
 
     return singleWriterQueue.enqueue({
       entityType: 'NHAN_VIEN_MASTER',
@@ -54,9 +61,12 @@ export class EmployeesService {
           group: data.group || 'STORE',
           default_branch_id: data.branchId,
           current_rate_per_hour: rate,
-          start_date: new Date().toISOString().split('T')[0],
+          start_date: data.startDate || new Date().toISOString().split('T')[0],
+          official_date: data.officialDate || (data.employmentStatus === 'OFFICIAL' ? (data.startDate || new Date().toISOString().split('T')[0]) : undefined),
           gender: data.gender,
           birth_date: data.birthDate,
+          id_card_number: data.idCardNumber,
+          email: data.email,
         });
 
         // Add stage history
