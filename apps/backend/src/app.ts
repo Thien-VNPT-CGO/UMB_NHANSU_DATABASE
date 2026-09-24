@@ -862,6 +862,25 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  app.post('/admin/integrations/pull-now', authMiddleware, requireRole(['ADMIN']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const syncService = (adapter as any).syncService;
+      if (!syncService) {
+        return res.status(400).json({ success: false, message: 'Google Sheets sync service không khả dụng' });
+      }
+      const pullResult = await syncService.pullAllDataFromGoogleSheets(adapter);
+      res.json({
+        success: pullResult.success,
+        message: pullResult.message,
+        counts: pullResult.counts,
+        pulled_at: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      console.error('[app.ts] Lỗi tải dữ liệu từ Google Sheets:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // --- 9. BẢO TRÌ HỆ THỐNG ---
   app.get('/admin/maintenance', authMiddleware, async (req, res) => {
     try {

@@ -75,10 +75,10 @@ export function App() {
   const [swapFormType, setSwapFormType] = useState<1 | 2>(1);
   const [swapData, setSwapData] = useState({
     myShift: '2026-09-25 (Ca 1: 07:00 - 12:00)',
-    targetEmployeeId: 'EMP_002',
-    targetEmployeeName: 'Trần Thị Bình (CN130)',
-    targetShift: '2026-09-26 (Ca 2: 12:00 - 18:00)',
-    reason: 'Tráo đổi ca phù hợp lịch cá nhân',
+    targetEmployeeId: '',
+    targetEmployeeName: '',
+    targetShift: '',
+    reason: '',
   });
 
   // HR Broadcast Shift Dispatch State (+30.000d allowance)
@@ -751,40 +751,41 @@ export function App() {
 
               {/* Schedule Days */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {[
-                  { day: 'Thứ 2 (22/09)', shift: 'Ca 1: 07:00 - 12:00', branch: employee?.default_branch_id || 'CN130', type: 'WORK' },
-                  { day: 'Thứ 3 (23/09)', shift: 'Ca 1: 07:00 - 12:00', branch: employee?.default_branch_id || 'CN130', type: 'TODAY' },
-                  { day: 'Thứ 4 (24/09)', shift: 'Ca 2: 12:00 - 18:00', branch: employee?.default_branch_id || 'CN130', type: 'WORK' },
-                  { day: 'Thứ 5 (25/09)', shift: 'Nghỉ OFF', branch: '-', type: 'OFF' },
-                  { day: 'Thứ 6 (26/09)', shift: 'Ca 1: 07:00 - 12:00', branch: employee?.default_branch_id || 'CN130', type: 'WORK' },
-                  { day: 'Thứ 7 (27/09)', shift: 'Ca 3: 18:00 - 23:00', branch: employee?.default_branch_id || 'CN130', type: 'WORK' },
-                  { day: 'Chủ Nhật (28/09)', shift: 'Nghỉ OFF', branch: '-', type: 'OFF' },
-                ].map((item, idx) => (
-                  <div
-                    key={idx}
-                    style={{
-                      padding: '10px 12px',
-                      borderRadius: 'var(--radius-sm)',
-                      backgroundColor: item.type === 'TODAY' ? 'var(--brand-soft)' : item.type === 'OFF' ? '#F3F4F6' : '#FFFFFF',
-                      border: item.type === 'TODAY' ? '1.5px solid var(--brand)' : '1px solid var(--border)',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                    }}
-                  >
-                    <div>
-                      <div style={{ fontWeight: 700, fontSize: '13px', color: item.type === 'TODAY' ? 'var(--brand)' : 'var(--text)' }}>
-                        {item.day} {item.type === 'TODAY' && '• HÔM NAY'}
-                      </div>
-                      <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Chi nhánh: {item.branch}</div>
-                    </div>
-                    <div>
-                      <span className={`badge ${item.type === 'OFF' ? 'badge-secondary' : item.type === 'TODAY' ? 'badge-brand' : 'badge-success'}`}>
-                        {item.shift}
-                      </span>
-                    </div>
+                {myShifts.length === 0 ? (
+                  <div style={{ padding: '24px', textAlign: 'center', backgroundColor: '#F9FAFB', borderRadius: 'var(--radius-sm)', border: '1px dashed var(--border)', color: 'var(--text-muted)', fontSize: '13px' }}>
+                    Chưa có ca làm việc được phân công. Quản lý cửa hàng sẽ cập nhật lịch làm sớm nhất trên Google Sheets.
                   </div>
-                ))}
+                ) : (
+                  myShifts.map((shift, idx) => {
+                    const isToday = shift.date === new Date().toISOString().split('T')[0];
+                    return (
+                      <div
+                        key={idx}
+                        style={{
+                          padding: '10px 12px',
+                          borderRadius: 'var(--radius-sm)',
+                          backgroundColor: isToday ? 'var(--brand-soft)' : '#FFFFFF',
+                          border: isToday ? '1.5px solid var(--brand)' : '1px solid var(--border)',
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                        }}
+                      >
+                        <div>
+                          <div style={{ fontWeight: 700, fontSize: '13px', color: isToday ? 'var(--brand)' : 'var(--text)' }}>
+                            {shift.date} {isToday && '• HÔM NAY'}
+                          </div>
+                          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Chi nhánh: {shift.branch_id}</div>
+                        </div>
+                        <div>
+                          <span className={`badge ${isToday ? 'badge-brand' : 'badge-success'}`}>
+                            {shift.shift_code} ({new Date(shift.start_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} - {new Date(shift.end_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })})
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </div>
           </div>
@@ -1165,9 +1166,9 @@ export function App() {
                 </div>
 
                 <div style={{ fontSize: '12px', color: '#1E3A8A', lineHeight: '1.5', marginBottom: '8px' }}>
-                  Nhân viên <strong>Nguyễn Văn An (CN130)</strong> bận việc đột xuất không tìm được người thay ca nên HR gửi yêu cầu điều phối đến toàn bộ nhân viên CN130:
+                  Có nhân sự trong chi nhánh bận việc đột xuất không tìm được người thay ca nên HR gửi thông báo điều phối nhận ca:
                   <div style={{ marginTop: '6px', padding: '8px 10px', backgroundColor: '#DBEAFE', borderRadius: '6px', fontWeight: 600 }}>
-                    🕒 <strong>Ca cần nhường:</strong> Ca 2: Chiều (12:00 - 17:00) ngày Thứ Năm 24/09/2026<br/>
+                    🕒 <strong>Ca cần hỗ trợ:</strong> Ca làm việc đột xuất cần người hỗ trợ trong ngày<br/>
                     🎁 <strong>Chính sách phụ cấp:</strong> Tự động <strong>+30.000đ/ca</strong> vào Bảng Lương Finance & Lương AI của bạn!
                   </div>
                 </div>

@@ -5,6 +5,7 @@ import { GoogleSheetsSyncService } from '../services/google-sheets-sync.service.
 export class GoogleSheetsAdapter implements ISheetsRepository {
   private fallbackAdapter: MockSheetsAdapter;
   private isConfigured = false;
+  private lastPullTime = 0;
   public syncService: GoogleSheetsSyncService;
 
   constructor() {
@@ -31,12 +32,35 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     // Check if Google credentials are provided in env
     if (process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && process.env.GOOGLE_PRIVATE_KEY && spreadsheetId) {
       this.isConfigured = true;
-      // Auto-initialize sheets structure and sync in background
-      setTimeout(() => {
-        this.syncService.syncAllData(this.fallbackAdapter)
-          .then(res => console.log('[GoogleSheetsAdapter] Auto-sync result:', res.message))
-          .catch(err => console.error('[GoogleSheetsAdapter] Auto-sync error:', err));
+      // Auto-initialize sheets structure and pull real data on startup
+      setTimeout(async () => {
+        try {
+          await this.syncService.initSpreadsheetStructure();
+          const pullResult = await this.syncService.pullAllDataFromGoogleSheets(this.fallbackAdapter);
+          console.log('[GoogleSheetsAdapter] Startup pull completed:', pullResult.message);
+          // If no branches or admin in sheets, push initial branches & admin
+          const branches = await this.fallbackAdapter.getBranches();
+          if (branches.length === 0) {
+            await this.syncService.syncAllData(this.fallbackAdapter);
+          }
+        } catch (err) {
+          console.error('[GoogleSheetsAdapter] Error on startup sync:', err);
+        }
       }, 3000);
+    }
+  }
+
+  private async ensureFreshData() {
+    if (this.isConfigured) {
+      const now = Date.now();
+      if (now - this.lastPullTime > 15000) { // 15 seconds cache to avoid rate limit
+        this.lastPullTime = now;
+        try {
+          await this.syncService.pullAllDataFromGoogleSheets(this.fallbackAdapter);
+        } catch (e) {
+          console.warn('[GoogleSheetsAdapter] Auto-pull error:', e);
+        }
+      }
     }
   }
 
@@ -62,78 +86,427 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     };
   }
 
-  // Delegate all methods to adapter
-  findAccountByPhone(phone: string) { return this.fallbackAdapter.findAccountByPhone(phone); }
-  getAccountById(id: string) { return this.fallbackAdapter.getAccountById(id); }
-  listAccounts() { return this.fallbackAdapter.listAccounts(); }
-  updateAccountStatus(id: string, status: any, actorId: string, expectedVersion: number) { return this.fallbackAdapter.updateAccountStatus(id, status, actorId, expectedVersion); }
-  getAdminByUsername(username: string) { return this.fallbackAdapter.getAdminByUsername(username); }
+  // --- Accounts ---
+  async findAccountByPhone(phone: string) {
+    await this.ensureFreshData();
+    return this.fallbackAdapter.findAccountByPhone(phone);
+  }
 
-  getEmployeeById(id: string) { return this.fallbackAdapter.getEmployeeById(id); }
-  listEmployees(filter?: any) { return this.fallbackAdapter.listEmployees(filter); }
-  createEmployee(data: any) { return this.fallbackAdapter.createEmployee(data); }
-  updateEmployee(id: string, updates: any, expectedVersion: number) { return this.fallbackAdapter.updateEmployee(id, updates, expectedVersion); }
-  getStageHistory(employeeId: string) { return this.fallbackAdapter.getStageHistory(employeeId); }
-  addStageHistory(entry: any) { return this.fallbackAdapter.addStageHistory(entry); }
+  async getAccountById(id: string) {
+    await this.ensureFreshData();
+    return this.fallbackAdapter.getAccountById(id);
+  }
 
-  listCandidates() { return this.fallbackAdapter.listCandidates(); }
-  createCandidate(data: any) { return this.fallbackAdapter.createCandidate(data); }
-  updateCandidate(submissionId: string, updates: any) { return this.fallbackAdapter.updateCandidate(submissionId, updates); }
+  async listAccounts() {
+    await this.ensureFreshData();
+    return this.fallbackAdapter.listAccounts();
+  }
 
-  getShiftsForWeek(branchId: string, weekStartDate: string) { return this.fallbackAdapter.getShiftsForWeek(branchId, weekStartDate); }
-  getShiftsForEmployee(employeeId: string, fromDate: string, toDate: string) { return this.fallbackAdapter.getShiftsForEmployee(employeeId, fromDate, toDate); }
-  getShiftById(assignmentId: string) { return this.fallbackAdapter.getShiftById(assignmentId); }
-  createShiftAssignment(assignment: any) { return this.fallbackAdapter.createShiftAssignment(assignment); }
-  updateShiftAssignment(id: string, updates: any) { return this.fallbackAdapter.updateShiftAssignment(id, updates); }
+  async updateAccountStatus(id: string, status: any, actorId: string, expectedVersion: number) {
+    const updated = await this.fallbackAdapter.updateAccountStatus(id, status, actorId, expectedVersion);
+    if (this.isConfigured) {
+      this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
+    }
+    return updated;
+  }
 
-  createLeaveRequest(request: any) { return this.fallbackAdapter.createLeaveRequest(request); }
-  listLeaveRequests(branchId?: string, employeeId?: string) { return this.fallbackAdapter.listLeaveRequests(branchId, employeeId); }
-  updateLeaveRequest(id: string, status: any, reviewerId: string, note?: string) { return this.fallbackAdapter.updateLeaveRequest(id, status, reviewerId, note); }
-  createSwapRequest(request: any) { return this.fallbackAdapter.createSwapRequest(request); }
-  listSwapRequests(employeeId?: string) { return this.fallbackAdapter.listSwapRequests(employeeId); }
-  getSwapById(swapId: string) { return this.fallbackAdapter.getSwapById(swapId); }
-  updateSwapRequest(id: string, updates: any) { return this.fallbackAdapter.updateSwapRequest(id, updates); }
+  async getAdminByUsername(username: string) {
+    return this.fallbackAdapter.getAdminByUsername(username);
+  }
 
-  recordAttendanceEvent(event: any) { return this.fallbackAdapter.recordAttendanceEvent(event); }
-  getAttendanceEvents(employeeId: string, date: string) { return this.fallbackAdapter.getAttendanceEvents(employeeId, date); }
-  findAttendanceEventByRequestId(requestId: string) { return this.fallbackAdapter.findAttendanceEventByRequestId(requestId); }
-  createAttendanceAdjustment(adj: any) { return this.fallbackAdapter.createAttendanceAdjustment(adj); }
-  listAttendanceAdjustments(branchId?: string, employeeId?: string) { return this.fallbackAdapter.listAttendanceAdjustments(branchId, employeeId); }
-  updateAttendanceAdjustment(id: string, status: any, approverId: string, minutesApproved?: number, note?: string) { return this.fallbackAdapter.updateAttendanceAdjustment(id, status, approverId, minutesApproved, note); }
+  // --- Employees ---
+  async getEmployeeById(id: string) {
+    await this.ensureFreshData();
+    return this.fallbackAdapter.getEmployeeById(id);
+  }
 
-  createPayrollRun(run: any, items: any) { return this.fallbackAdapter.createPayrollRun(run, items); }
-  getPayrollRun(runId: string) { return this.fallbackAdapter.getPayrollRun(runId); }
-  listPayrollRuns() { return this.fallbackAdapter.listPayrollRuns(); }
-  updatePayrollRunStatus(runId: string, status: any, actorId: string, updates?: any) { return this.fallbackAdapter.updatePayrollRunStatus(runId, status, actorId, updates); }
-  getPayslipsForEmployee(employeeId: string) { return this.fallbackAdapter.getPayslipsForEmployee(employeeId); }
-  getPayslipsByRunId(runId: string) { return this.fallbackAdapter.getPayslipsByRunId(runId); }
+  async listEmployees(filter?: any) {
+    await this.ensureFreshData();
+    return this.fallbackAdapter.listEmployees(filter);
+  }
 
-  createNotification(outbox: any, inboxes: any) { return this.fallbackAdapter.createNotification(outbox, inboxes); }
-  getInboxForRecipient(recipientId: string, unreadOnly?: boolean) { return this.fallbackAdapter.getInboxForRecipient(recipientId, unreadOnly); }
-  markNotificationRead(inboxId: string, recipientId: string) { return this.fallbackAdapter.markNotificationRead(inboxId, recipientId); }
-  markNotificationAcknowledged(inboxId: string, recipientId: string) { return this.fallbackAdapter.markNotificationAcknowledged(inboxId, recipientId); }
+  async createEmployee(data: any) {
+    const res = await this.fallbackAdapter.createEmployee(data);
+    if (this.isConfigured) {
+      this.syncService.appendRow('NHAN_VIEN_MASTER', [
+        res.employee_id,
+        res.employee_code,
+        res.full_name,
+        res.phone_normalized,
+        res.employment_status,
+        res.group,
+        res.default_branch_id,
+        res.current_rate_per_hour,
+        res.start_date || res.created_at,
+        res.version,
+      ]).catch(err => console.error(err));
+    }
+    return res;
+  }
 
-  recordOperation(op: any) { return this.fallbackAdapter.recordOperation(op); }
-  getOperationById(operationId: string) { return this.fallbackAdapter.getOperationById(operationId); }
-  findOperationByIdempotencyKey(key: string) { return this.fallbackAdapter.findOperationByIdempotencyKey(key); }
-  updateOperation(operationId: string, updates: any) { return this.fallbackAdapter.updateOperation(operationId, updates); }
-  recordAuditLog(entry: any) { return this.fallbackAdapter.recordAuditLog(entry); }
-  getAuditLogs(limit?: number) { return this.fallbackAdapter.getAuditLogs(limit); }
+  async updateEmployee(id: string, updates: any, expectedVersion: number) {
+    const res = await this.fallbackAdapter.updateEmployee(id, updates, expectedVersion);
+    if (this.isConfigured) {
+      this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
+    }
+    return res;
+  }
 
-  listAdminAccounts() { return this.fallbackAdapter.listAdminAccounts(); }
-  createAdminAccount(account: any) { return this.fallbackAdapter.createAdminAccount(account); }
-  updateAdminAccount(id: string, updates: any) { return this.fallbackAdapter.updateAdminAccount(id, updates); }
-  getBranches() { return this.fallbackAdapter.getBranches(); }
-  updateBranch(id: string, updates: any) { return this.fallbackAdapter.updateBranch(id, updates); }
-  getShiftTemplates() { return this.fallbackAdapter.getShiftTemplates(); }
-  updateShiftTemplates(templates: any) { return this.fallbackAdapter.updateShiftTemplates(templates); }
-  getPolicies() { return this.fallbackAdapter.getPolicies(); }
-  updatePolicies(policies: any) { return this.fallbackAdapter.updatePolicies(policies); }
-  getMaintenance() { return this.fallbackAdapter.getMaintenance(); }
-  updateMaintenance(maintenance: any) { return this.fallbackAdapter.updateMaintenance(maintenance); }
-  getBackupSnapshots() { return this.fallbackAdapter.getBackupSnapshots(); }
-  createBackupSnapshot(name?: string) { return this.fallbackAdapter.createBackupSnapshot(name); }
-  testRecovery(snapshotId: string) { return this.fallbackAdapter.testRecovery(snapshotId); }
-  getSystemSettings() { return this.fallbackAdapter.getSystemSettings(); }
-  updateSystemSettings(settings: any) { return this.fallbackAdapter.updateSystemSettings(settings); }
+  async getStageHistory(employeeId: string) {
+    return this.fallbackAdapter.getStageHistory(employeeId);
+  }
+
+  async addStageHistory(entry: any) {
+    return this.fallbackAdapter.addStageHistory(entry);
+  }
+
+  // --- Recruitment ---
+  async listCandidates() {
+    await this.ensureFreshData();
+    return this.fallbackAdapter.listCandidates();
+  }
+
+  async createCandidate(data: any) {
+    return this.fallbackAdapter.createCandidate(data);
+  }
+
+  async updateCandidate(submissionId: string, updates: any) {
+    return this.fallbackAdapter.updateCandidate(submissionId, updates);
+  }
+
+  // --- Schedules ---
+  async getShiftsForWeek(branchId: string, weekStartDate: string) {
+    await this.ensureFreshData();
+    return this.fallbackAdapter.getShiftsForWeek(branchId, weekStartDate);
+  }
+
+  async getShiftsForEmployee(employeeId: string, fromDate: string, toDate: string) {
+    await this.ensureFreshData();
+    return this.fallbackAdapter.getShiftsForEmployee(employeeId, fromDate, toDate);
+  }
+
+  async getShiftById(assignmentId: string) {
+    return this.fallbackAdapter.getShiftById(assignmentId);
+  }
+
+  async createShiftAssignment(assignment: any) {
+    const res = await this.fallbackAdapter.createShiftAssignment(assignment);
+    if (this.isConfigured) {
+      this.syncService.appendRow('PHAN_CONG_CA', [
+        res.assignment_id,
+        res.employee_id,
+        res.branch_id,
+        res.shift_code,
+        res.date,
+        res.start_at,
+        res.end_at,
+        res.status,
+        res.schedule_version,
+      ]).catch(err => console.error(err));
+    }
+    return res;
+  }
+
+  async updateShiftAssignment(id: string, updates: any) {
+    return this.fallbackAdapter.updateShiftAssignment(id, updates);
+  }
+
+  // --- Leaves & Swaps ---
+  async createLeaveRequest(request: any) {
+    const res = await this.fallbackAdapter.createLeaveRequest(request);
+    if (this.isConfigured) {
+      this.syncService.appendRow('DON_NGHI_PHEP', [
+        res.request_id,
+        res.employee_id,
+        res.branch_id,
+        res.leave_type,
+        res.requested_date,
+        res.shift_code || '',
+        res.reason,
+        res.status,
+        res.reviewed_by || '',
+        res.review_note || '',
+        res.created_at,
+      ]).catch(err => console.error(err));
+    }
+    return res;
+  }
+
+  async listLeaveRequests(branchId?: string, employeeId?: string) {
+    await this.ensureFreshData();
+    return this.fallbackAdapter.listLeaveRequests(branchId, employeeId);
+  }
+
+  async updateLeaveRequest(id: string, status: any, reviewerId: string, note?: string) {
+    const res = await this.fallbackAdapter.updateLeaveRequest(id, status, reviewerId, note);
+    if (this.isConfigured) {
+      this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
+    }
+    return res;
+  }
+
+  async createSwapRequest(request: any) {
+    const res = await this.fallbackAdapter.createSwapRequest(request);
+    if (this.isConfigured) {
+      this.syncService.appendRow('DON_DOI_CA', [
+        res.swap_id,
+        res.requester_id,
+        res.requester_assignment_id,
+        res.target_employee_id,
+        res.target_assignment_id,
+        res.reason,
+        res.status,
+        res.approved_by || '',
+        res.created_at,
+      ]).catch(err => console.error(err));
+    }
+    return res;
+  }
+
+  async listSwapRequests(employeeId?: string) {
+    await this.ensureFreshData();
+    return this.fallbackAdapter.listSwapRequests(employeeId);
+  }
+
+  async getSwapById(swapId: string) {
+    return this.fallbackAdapter.getSwapById(swapId);
+  }
+
+  async updateSwapRequest(id: string, updates: any) {
+    const res = await this.fallbackAdapter.updateSwapRequest(id, updates);
+    if (this.isConfigured) {
+      this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
+    }
+    return res;
+  }
+
+  // --- Attendance ---
+  async recordAttendanceEvent(event: any) {
+    // If base64 photo is provided, upload to Google Drive
+    if (event.photo_base64 && this.isConfigured) {
+      try {
+        const fileName = `${event.employee_id}_${event.type}_${Date.now()}.jpg`;
+        const driveResult = await this.syncService.uploadImageToDrive(fileName, 'image/jpeg', event.photo_base64);
+        event.drive_object_id = driveResult.fileId;
+      } catch (err) {
+        console.error('[GoogleSheetsAdapter] Drive upload error:', err);
+      }
+    }
+
+    const res = await this.fallbackAdapter.recordAttendanceEvent(event);
+
+    if (this.isConfigured) {
+      this.syncService.appendRow('SU_KIEN_DIEM_DANH', [
+        res.event_id,
+        res.assignment_id,
+        res.employee_id,
+        res.type,
+        res.server_received_at,
+        res.gps_latitude,
+        res.gps_longitude,
+        res.distance_meters,
+        res.gps_status,
+        res.drive_object_id || '',
+        res.request_id || '',
+      ]).catch(err => console.error(err));
+    }
+
+    return res;
+  }
+
+  async getAttendanceEvents(employeeId: string, date: string) {
+    await this.ensureFreshData();
+    return this.fallbackAdapter.getAttendanceEvents(employeeId, date);
+  }
+
+  async findAttendanceEventByRequestId(requestId: string) {
+    return this.fallbackAdapter.findAttendanceEventByRequestId(requestId);
+  }
+
+  async createAttendanceAdjustment(adj: any) {
+    return this.fallbackAdapter.createAttendanceAdjustment(adj);
+  }
+
+  async listAttendanceAdjustments(branchId?: string, employeeId?: string) {
+    return this.fallbackAdapter.listAttendanceAdjustments(branchId, employeeId);
+  }
+
+  async updateAttendanceAdjustment(id: string, status: any, approverId: string, minutesApproved?: number, note?: string) {
+    return this.fallbackAdapter.updateAttendanceAdjustment(id, status, approverId, minutesApproved, note);
+  }
+
+  // --- Payroll ---
+  async createPayrollRun(run: any, items: any) {
+    const res = await this.fallbackAdapter.createPayrollRun(run, items);
+    if (this.isConfigured) {
+      this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
+    }
+    return res;
+  }
+
+  async getPayrollRun(runId: string) {
+    return this.fallbackAdapter.getPayrollRun(runId);
+  }
+
+  async listPayrollRuns() {
+    await this.ensureFreshData();
+    return this.fallbackAdapter.listPayrollRuns();
+  }
+
+  async updatePayrollRunStatus(runId: string, status: any, actorId: string, updates?: any) {
+    const res = await this.fallbackAdapter.updatePayrollRunStatus(runId, status, actorId, updates);
+    if (this.isConfigured) {
+      this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
+    }
+    return res;
+  }
+
+  async getPayslipsForEmployee(employeeId: string) {
+    return this.fallbackAdapter.getPayslipsForEmployee(employeeId);
+  }
+
+  async getPayslipsByRunId(runId: string) {
+    return this.fallbackAdapter.getPayslipsByRunId(runId);
+  }
+
+  // --- Notifications ---
+  async createNotification(outbox: any, inboxes: any) {
+    return this.fallbackAdapter.createNotification(outbox, inboxes);
+  }
+
+  async getInboxForRecipient(recipientId: string, unreadOnly?: boolean) {
+    return this.fallbackAdapter.getInboxForRecipient(recipientId, unreadOnly);
+  }
+
+  async markNotificationRead(inboxId: string, recipientId: string) {
+    return this.fallbackAdapter.markNotificationRead(inboxId, recipientId);
+  }
+
+  async markNotificationAcknowledged(inboxId: string, recipientId: string) {
+    return this.fallbackAdapter.markNotificationAcknowledged(inboxId, recipientId);
+  }
+
+  // --- Operations & Audit ---
+  async recordOperation(op: any) {
+    return this.fallbackAdapter.recordOperation(op);
+  }
+
+  async getOperationById(operationId: string) {
+    return this.fallbackAdapter.getOperationById(operationId);
+  }
+
+  async findOperationByIdempotencyKey(key: string) {
+    return this.fallbackAdapter.findOperationByIdempotencyKey(key);
+  }
+
+  async updateOperation(operationId: string, updates: any) {
+    return this.fallbackAdapter.updateOperation(operationId, updates);
+  }
+
+  async recordAuditLog(entry: any) {
+    const res = await this.fallbackAdapter.recordAuditLog(entry);
+    if (this.isConfigured) {
+      this.syncService.appendRow('AUDIT_LOG', [
+        res.log_id,
+        res.timestamp,
+        res.actor_id,
+        res.actor_role,
+        res.action,
+        res.target_entity,
+        res.target_id,
+        typeof res.details === 'string' ? res.details : JSON.stringify(res.details || {}),
+      ]).catch(err => console.error(err));
+    }
+    return res;
+  }
+
+  async getAuditLogs(limit?: number) {
+    return this.fallbackAdapter.getAuditLogs(limit);
+  }
+
+  // --- Admin Governance ---
+  async listAdminAccounts() {
+    return this.fallbackAdapter.listAdminAccounts();
+  }
+
+  async createAdminAccount(account: any) {
+    const res = await this.fallbackAdapter.createAdminAccount(account);
+    if (this.isConfigured) {
+      this.syncService.appendRow('ADMIN_ACCOUNTS', [
+        res.admin_id,
+        res.username,
+        res.full_name,
+        res.role,
+        res.branch_scope || '*',
+        res.is_active ? 'ACTIVE' : 'LOCKED',
+        res.created_at,
+      ]).catch(err => console.error(err));
+    }
+    return res;
+  }
+
+  async updateAdminAccount(id: string, updates: any) {
+    const res = await this.fallbackAdapter.updateAdminAccount(id, updates);
+    if (this.isConfigured) {
+      this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
+    }
+    return res;
+  }
+
+  async getBranches() {
+    await this.ensureFreshData();
+    return this.fallbackAdapter.getBranches();
+  }
+
+  async updateBranch(id: string, updates: any) {
+    const res = await this.fallbackAdapter.updateBranch(id, updates);
+    if (this.isConfigured) {
+      this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
+    }
+    return res;
+  }
+
+  async getShiftTemplates() {
+    return this.fallbackAdapter.getShiftTemplates();
+  }
+
+  async updateShiftTemplates(templates: any) {
+    return this.fallbackAdapter.updateShiftTemplates(templates);
+  }
+
+  async getPolicies() {
+    return this.fallbackAdapter.getPolicies();
+  }
+
+  async updatePolicies(policies: any) {
+    return this.fallbackAdapter.updatePolicies(policies);
+  }
+
+  async getMaintenance() {
+    return this.fallbackAdapter.getMaintenance();
+  }
+
+  async updateMaintenance(maintenance: any) {
+    return this.fallbackAdapter.updateMaintenance(maintenance);
+  }
+
+  async getBackupSnapshots() {
+    return this.fallbackAdapter.getBackupSnapshots();
+  }
+
+  async createBackupSnapshot(name?: string) {
+    return this.fallbackAdapter.createBackupSnapshot(name);
+  }
+
+  async testRecovery(snapshotId: string) {
+    return this.fallbackAdapter.testRecovery(snapshotId);
+  }
+
+  async getSystemSettings() {
+    return this.fallbackAdapter.getSystemSettings();
+  }
+
+  async updateSystemSettings(settings: any) {
+    return this.fallbackAdapter.updateSystemSettings(settings);
+  }
 }

@@ -1,5 +1,22 @@
-import { google, sheets_v4 } from 'googleapis';
+import { google, sheets_v4, drive_v3 } from 'googleapis';
+import { Readable } from 'stream';
+import { v4 as uuidv4 } from 'uuid';
+import {
+  EmployeeMaster,
+  EmployeeAccount,
+  AdminAccount,
+  ShiftAssignment,
+  LeaveRequest,
+  SwapRequest,
+  AttendanceEvent,
+  PayrollRun,
+  BranchInfo,
+  AuditLogEntry,
+  CandidateApplication,
+  BRANCHES,
+} from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
+import { MockSheetsAdapter } from '../repositories/mock-sheets.adapter.js';
 
 export interface SheetDefinition {
   title: string;
@@ -9,7 +26,7 @@ export interface SheetDefinition {
 export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   {
     title: 'NHAN_VIEN_MASTER',
-    headers: ['ID Nhân Viên', 'Mã NV', 'Họ Và Tên', 'Số Điện Thoại', 'Trạng Thái', 'Nhóm', 'Chi Nhánh', 'Chức Vụ', 'Ngày Tạo', 'Phiên Bản'],
+    headers: ['ID Nhân Viên', 'Mã NV', 'Họ Và Tên', 'Số Điện Thoại', 'Trạng Thái', 'Nhóm', 'Chi Nhánh', 'Lương Giờ (VNĐ)', 'Ngày Bắt Đầu', 'Phiên Bản'],
   },
   {
     title: 'TAI_KHOAN_NHAN_VIEN',
@@ -21,7 +38,7 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   },
   {
     title: 'PHAN_CONG_CA',
-    headers: ['ID Ca Làm', 'ID Nhân Viên', 'Tên Nhân Viên', 'Mã Chi Nhánh', 'Mã Ca', 'Bắt Đầu', 'Kết Thúc', 'Trạng Thái', 'Phiên Bản'],
+    headers: ['ID Ca Làm', 'ID Nhân Viên', 'Mã Chi Nhánh', 'Mã Ca', 'Ngày Làm (YYYY-MM-DD)', 'Bắt Đầu', 'Kết Thúc', 'Trạng Thái', 'Phiên Bản'],
   },
   {
     title: 'SU_KIEN_DIEM_DANH',
@@ -29,11 +46,11 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   },
   {
     title: 'DON_NGHI_PHEP',
-    headers: ['ID Đơn Nghỉ', 'ID Nhân Viên', 'Loại Nghỉ', 'Từ Ngày', 'Đến Ngày', 'Lý Do', 'Trạng Thái', 'Người Duyệt', 'Ghi Chú Duyệt', 'Ngày Tạo'],
+    headers: ['ID Đơn Nghỉ', 'ID Nhân Viên', 'Chi Nhánh', 'Loại Nghỉ', 'Ngày Nghỉ (YYYY-MM-DD)', 'Ca Làm', 'Lý Do', 'Trạng Thái', 'Người Duyệt', 'Ghi Chú Duyệt', 'Ngày Tạo'],
   },
   {
     title: 'DON_DOI_CA',
-    headers: ['ID Đổi Ca', 'Người Yêu Cầu', 'Người Nhận Đổi', 'Ca Gốc', 'Ca Muốn Đổi', 'Lý Do', 'Trạng Thái', 'Quản Lý Duyệt', 'Ngày Tạo'],
+    headers: ['ID Đổi Ca', 'Người Yêu Cầu', 'Ca Yêu Cầu', 'Người Nhận', 'Ca Đổi', 'Lý Do', 'Trạng Thái', 'Người Duyệt', 'Ngày Tạo'],
   },
   {
     title: 'DIEU_CHINH_CONG',
@@ -41,15 +58,15 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   },
   {
     title: 'KY_LUONG',
-    headers: ['Mã Kỳ Lương', 'Tháng/Năm', 'Trạng Thái', 'Tổng Gross (VNĐ)', 'Tổng Thực Nhận (VNĐ)', 'Ngày Tạo', 'Ngày Chốt', 'Ngày Chi Trả'],
+    headers: ['Mã Kỳ Lương', 'Tháng/Năm', 'Trạng Thái', 'Tổng Tiền (VNĐ)', 'Ngày Tạo', 'Ngày Chốt', 'Ngày Chi Trả'],
   },
   {
     title: 'CHI_TIET_LUONG',
-    headers: ['Mã Phiếu', 'Mã Kỳ Lương', 'ID Nhân Viên', 'Tên Nhân Viên', 'Giờ Chuẩn', 'Giờ Tăng Ca', 'Lương Cơ Bản', 'Thưởng', 'Phạt/Khấu Trừ', 'Thực Nhận (VNĐ)', 'Trạng Thái'],
+    headers: ['Mã Phiếu', 'Mã Kỳ Lương', 'ID Nhân Viên', 'Mã NV', 'Họ Tên', 'Kỳ Lương', 'Giờ Chuẩn', 'Lương Giờ', 'Lương Cơ Bản', 'Phụ Cấp', 'Thưởng', 'Khấu Trừ', 'Thực Nhận (VNĐ)', 'Trạng Thái'],
   },
   {
     title: 'AUDIT_LOG',
-    headers: ['Mã Nhật Ký', 'Thời Gian', 'Người Thực Hiện', 'Vai Trò', 'Hành Động', 'Loại Đối Tượng', 'ID Đối Tượng', 'Chi Tiết'],
+    headers: ['Mã Nhật Ký', 'Thời Gian', 'Người Thực Hiện', 'Vai Trò', 'Hành Động', 'Đối Tượng', 'ID Đối Tượng', 'Chi Tiết'],
   },
   {
     title: 'DANH_SACH_CHI_NHANH',
@@ -63,11 +80,13 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
 
 export class GoogleSheetsSyncService {
   private sheetsClient: sheets_v4.Sheets | null = null;
+  private driveClient: drive_v3.Drive | null = null;
   private spreadsheetId: string;
   private candidateSpreadsheetId: string;
   private driveFolderId: string;
   private isConfigured = false;
   private authError: string | null = null;
+  private lastPulledAt: number = 0;
 
   constructor() {
     this.spreadsheetId = process.env.SPREADSHEET_ID || process.env.GOOGLE_SPREADSHEET_ID || '17iXM0zc1m17aX9AZrFMjOkPRMy2_CwWfjTRZSUPQF2w';
@@ -101,7 +120,6 @@ export class GoogleSheetsSyncService {
     }
 
     try {
-      // Fix escaped newlines in private key if stored in env string
       const formattedKey = key.includes('\\n') ? key.replace(/\\n/g, '\n') : key;
 
       const auth = new google.auth.JWT({
@@ -114,9 +132,10 @@ export class GoogleSheetsSyncService {
       });
 
       this.sheetsClient = google.sheets({ version: 'v4', auth });
+      this.driveClient = google.drive({ version: 'v3', auth });
       this.isConfigured = true;
       this.authError = null;
-      console.log(`[GoogleSheetsSyncService] Đã khởi tạo kết nối Google Sheets Service Account thành công cho: ${email}`);
+      console.log(`[GoogleSheetsSyncService] Đã kích hoạt Google Sheets API & Google Drive API thành công cho: ${email}`);
     } catch (err: any) {
       this.authError = `Lỗi khởi tạo JWT Auth: ${err.message}`;
       console.error('[GoogleSheetsSyncService]', this.authError);
@@ -132,6 +151,7 @@ export class GoogleSheetsSyncService {
       candidateSpreadsheetUrl: `https://docs.google.com/spreadsheets/d/${this.candidateSpreadsheetId}/edit`,
       driveFolderId: this.driveFolderId,
       authError: this.authError,
+      lastPulledAt: this.lastPulledAt ? new Date(this.lastPulledAt).toISOString() : null,
       sheetsCount: SHEETS_DEFINITIONS.length,
       definedTabs: SHEETS_DEFINITIONS.map(d => d.title),
     };
@@ -151,7 +171,6 @@ export class GoogleSheetsSyncService {
     }
 
     try {
-      // 1. Lấy danh sách các sheet tab hiện có
       const res = await this.sheetsClient.spreadsheets.get({
         spreadsheetId: this.spreadsheetId,
       });
@@ -161,14 +180,13 @@ export class GoogleSheetsSyncService {
 
       const createdSheets: string[] = [];
 
-      // 2. Thêm các sheet tab bị thiếu
       if (sheetsToCreate.length > 0) {
         const requests = sheetsToCreate.map(def => ({
           addSheet: {
             properties: {
               title: def.title,
               gridProperties: {
-                frozenRowCount: 1, // Cố định dòng tiêu đề
+                frozenRowCount: 1,
               },
             },
           },
@@ -182,7 +200,6 @@ export class GoogleSheetsSyncService {
         createdSheets.push(...sheetsToCreate.map(s => s.title));
       }
 
-      // 3. Viết dòng tiêu đề (Headers) cho từng sheet
       for (const def of SHEETS_DEFINITIONS) {
         await this.sheetsClient.spreadsheets.values.update({
           spreadsheetId: this.spreadsheetId,
@@ -194,13 +211,13 @@ export class GoogleSheetsSyncService {
         });
       }
 
-      console.log(`[GoogleSheetsSyncService] Khởi tạo cấu trúc hoàn tất! Đã tạo thêm: ${createdSheets.length} sheet tabs. Tổng: ${SHEETS_DEFINITIONS.length} tabs.`);
+      console.log(`[GoogleSheetsSyncService] Đã tạo ${createdSheets.length} sheet mới. Toàn bộ 13 tab sẵn sàng.`);
 
       return {
         success: true,
         createdSheets,
         existingSheets,
-        message: `Đã khởi tạo thành công ${createdSheets.length} sheet mới và cập nhật tiêu đề cho toàn bộ ${SHEETS_DEFINITIONS.length} sheet tabs!`,
+        message: `Đã khởi tạo thành công cấu trúc 13 sheet tabs trên Google Sheets!`,
       };
     } catch (err: any) {
       console.error('[GoogleSheetsSyncService] Lỗi khi tạo cấu trúc Sheets:', err);
@@ -214,17 +231,215 @@ export class GoogleSheetsSyncService {
   }
 
   /**
-   * Đồng bộ toàn bộ dữ liệu hiện tại lên Google Sheets
+   * ĐỌC DỮ LIỆU THỰC TẾ TỪ GOOGLE SHEETS VÀ CẬP NHẬT VÀO HỆ THỐNG (TWO-WAY SYNC)
+   */
+  public async pullAllDataFromGoogleSheets(repo: ISheetsRepository): Promise<{ success: boolean; message: string; counts: any }> {
+    if (!this.isConfigured || !this.sheetsClient) {
+      return { success: false, message: 'Google Sheets chưa kết nối', counts: null };
+    }
+
+    try {
+      const fallback = (repo as any).fallbackAdapter as MockSheetsAdapter;
+      if (!fallback) {
+        return { success: false, message: 'Adapter không tương thích', counts: null };
+      }
+
+      const counts: any = {};
+
+      // 1. Đọc NHAN_VIEN_MASTER
+      const empRows = await this.readSheetRows('NHAN_VIEN_MASTER');
+      if (empRows.length > 0) {
+        fallback.employees = empRows.map((r, idx) => ({
+          employee_id: r[0] || `EMP_${uuidv4().slice(0, 8)}`,
+          employee_code: r[1] || `UBM_NV${String(idx + 1).padStart(6, '0')}`,
+          full_name: r[2] || 'Nhân Viên',
+          phone_normalized: r[3] || '',
+          employment_status: (r[4] as any) || 'OFFICIAL',
+          group: (r[5] as any) || 'STORE',
+          default_branch_id: r[6] || 'CN130',
+          current_rate_per_hour: Number(r[7]) || 25500,
+          start_date: r[8] || new Date().toISOString().split('T')[0],
+          created_at: r[8] || new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          version: Number(r[9]) || 1,
+        }));
+      } else {
+        fallback.employees = [];
+      }
+      counts.employees = fallback.employees.length;
+
+      // 2. Đọc TAI_KHOAN_NHAN_VIEN
+      const accRows = await this.readSheetRows('TAI_KHOAN_NHAN_VIEN');
+      if (accRows.length > 0) {
+        fallback.accounts = accRows.map(r => ({
+          account_id: r[0] || `ACC_${uuidv4().slice(0, 8)}`,
+          employee_id: r[1] || '',
+          phone_normalized: r[2] || '',
+          role: (r[3] as any) || 'EMPLOYEE',
+          account_status: (r[4] as any) || 'ACTIVE',
+          branch_scope: r[8] || 'ALL',
+          activated_by: r[5] || 'ADM_001',
+          activated_at: r[6] || new Date().toISOString(),
+          created_at: r[6] || new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          version: Number(r[7]) || 1,
+        }));
+      } else {
+        fallback.accounts = [];
+      }
+      counts.accounts = fallback.accounts.length;
+
+      // 3. Đọc DANH_SACH_CHI_NHANH
+      const branchRows = await this.readSheetRows('DANH_SACH_CHI_NHANH');
+      if (branchRows.length > 0) {
+        fallback.branches = branchRows.map(r => ({
+          id: r[0],
+          name: r[1],
+          address: r[2],
+          latitude: Number(r[3]) || 10.776889,
+          longitude: Number(r[4]) || 106.700806,
+          radius_meters: Number(r[5]) || 300,
+          min_staff: 2,
+          max_staff: 10,
+          status: (r[6] as any) || 'ACTIVE',
+        }));
+      } else {
+        fallback.branches = [...BRANCHES];
+      }
+      counts.branches = fallback.branches.length;
+
+      // 4. Đọc PHAN_CONG_CA
+      const shiftRows = await this.readSheetRows('PHAN_CONG_CA');
+      if (shiftRows.length > 0) {
+        fallback.shifts = shiftRows.map(r => ({
+          assignment_id: r[0] || `SHF_${uuidv4().slice(0, 8)}`,
+          employee_id: r[1],
+          branch_id: r[2] || 'CN130',
+          shift_code: (r[3] as any) || 'CA_1',
+          date: r[4] || new Date().toISOString().split('T')[0],
+          start_at: r[5] || new Date().toISOString(),
+          end_at: r[6] || new Date().toISOString(),
+          status: (r[7] as any) || 'PUBLISHED',
+          schedule_version: Number(r[8]) || 1,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }));
+      } else {
+        fallback.shifts = [];
+      }
+      counts.shifts = fallback.shifts.length;
+
+      // 5. Đọc DON_NGHI_PHEP
+      const leaveRows = await this.readSheetRows('DON_NGHI_PHEP');
+      if (leaveRows.length > 0) {
+        fallback.leaveRequests = leaveRows.map(r => ({
+          request_id: r[0] || `LV_${uuidv4().slice(0, 8)}`,
+          employee_id: r[1],
+          branch_id: r[2] || 'CN130',
+          leave_type: (r[3] as any) || 'DOT_XUAT',
+          requested_date: r[4] || new Date().toISOString().split('T')[0],
+          shift_code: (r[5] as any) || undefined,
+          reason: r[6] || '',
+          status: (r[7] as any) || 'PENDING',
+          reviewed_by: r[8] || undefined,
+          review_note: r[9] || undefined,
+          created_at: r[10] || new Date().toISOString(),
+          version: 1,
+        }));
+      } else {
+        fallback.leaveRequests = [];
+      }
+      counts.leaves = fallback.leaveRequests.length;
+
+      // 6. Đọc SU_KIEN_DIEM_DANH
+      const attRows = await this.readSheetRows('SU_KIEN_DIEM_DANH');
+      if (attRows.length > 0) {
+        fallback.attendanceEvents = attRows.map(r => ({
+          event_id: r[0] || `ATT_${uuidv4().slice(0, 8)}`,
+          request_id: r[10] || uuidv4(),
+          assignment_id: r[1] || '',
+          employee_id: r[2] || '',
+          branch_id: '',
+          type: (r[3] as any) || 'CHECK_IN',
+          client_time: r[4] || new Date().toISOString(),
+          server_received_at: r[4] || new Date().toISOString(),
+          gps_latitude: Number(r[5]) || 0,
+          gps_longitude: Number(r[6]) || 0,
+          distance_meters: Number(r[7]) || 0,
+          gps_status: (r[8] as any) || 'VALID',
+          drive_object_id: r[9] || undefined,
+          created_at: r[4] || new Date().toISOString(),
+        }));
+      } else {
+        fallback.attendanceEvents = [];
+      }
+      counts.attendanceEvents = fallback.attendanceEvents.length;
+
+      // 7. Đọc Ứng viên tuyển dụng từ Form ứng viên (nếu có sheet tab FROM_NHAN_VIEN)
+      if (this.candidateSpreadsheetId) {
+        try {
+          const candRes = await this.sheetsClient.spreadsheets.values.get({
+            spreadsheetId: this.candidateSpreadsheetId,
+            range: `'FROM_NHAN_VIEN'!A2:Z`,
+          });
+          const candRows = candRes.data.values || [];
+          if (candRows.length > 0) {
+            fallback.candidates = candRows.map((r, idx) => ({
+              submission_id: `CAND_${String(idx + 1).padStart(4, '0')}`,
+              full_name: r[1] || `Ứng viên ${idx + 1}`,
+              phone_normalized: r[2] || '',
+              birth_year: Number(r[3]) || 2000,
+              apply_position: r[4] || 'Nhân viên Bán hàng / Pha chế',
+              preferred_branch_id: r[5] || 'CN130',
+              status: (r[6] as any) || 'NEW',
+              created_at: r[0] || new Date().toISOString(),
+            }));
+            counts.candidates = fallback.candidates.length;
+          } else {
+            fallback.candidates = [];
+          }
+        } catch (e) {
+          // Bỏ qua nếu tab form chưa có
+        }
+      }
+
+      this.lastPulledAt = Date.now();
+      console.log('[GoogleSheetsSyncService] Đã tải dữ liệu thực tế từ Google Sheets thành công:', counts);
+
+      return {
+        success: true,
+        message: 'Đã tải và cập nhật toàn bộ dữ liệu thật từ Google Sheets thành công!',
+        counts,
+      };
+    } catch (err: any) {
+      console.error('[GoogleSheetsSyncService] Lỗi khi pull dữ liệu từ Sheets:', err);
+      return { success: false, message: `Lỗi đọc Google Sheets: ${err.message}`, counts: null };
+    }
+  }
+
+  /**
+   * Đọc các dòng dữ liệu của một tab (bỏ qua dòng tiêu đề A1)
+   */
+  public async readSheetRows(sheetTitle: string): Promise<string[][]> {
+    if (!this.sheetsClient) return [];
+    try {
+      const res = await this.sheetsClient.spreadsheets.values.get({
+        spreadsheetId: this.spreadsheetId,
+        range: `'${sheetTitle}'!A2:Z`,
+      });
+      return (res.data.values as string[][]) || [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  /**
+   * ĐỒNG BỘ DỮ LIỆU LÊN GOOGLE SHEETS (GHI ĐÈ DỮ LIỆU)
    */
   public async syncAllData(repo: ISheetsRepository): Promise<{ success: boolean; message: string; details: any }> {
-    // Trước tiên đảm bảo các Sheet tab đã tồn tại
     const initResult = await this.initSpreadsheetStructure();
     if (!initResult.success) {
-      return {
-        success: false,
-        message: initResult.message,
-        details: null,
-      };
+      return { success: false, message: initResult.message, details: null };
     }
 
     if (!this.sheetsClient) {
@@ -273,7 +488,7 @@ export class GoogleSheetsSyncService {
         e.group,
         e.default_branch_id,
         e.current_rate_per_hour,
-        e.created_at,
+        e.start_date || e.created_at,
         e.version,
       ]);
       await this.overwriteSheetData('NHAN_VIEN_MASTER', SHEETS_DEFINITIONS.find(d => d.title === 'NHAN_VIEN_MASTER')!.headers, employeeRows);
@@ -299,9 +514,9 @@ export class GoogleSheetsSyncService {
       const shiftRows = shifts.map(s => [
         s.assignment_id,
         s.employee_id,
-        '',
         s.branch_id,
         s.shift_code,
+        s.date,
         s.start_at,
         s.end_at,
         s.status,
@@ -315,6 +530,7 @@ export class GoogleSheetsSyncService {
       const leaveRows = leaves.map(l => [
         l.request_id,
         l.employee_id,
+        l.branch_id,
         l.leave_type,
         l.requested_date,
         l.shift_code || '',
@@ -332,8 +548,8 @@ export class GoogleSheetsSyncService {
       const swapRows = swaps.map(sw => [
         sw.swap_id,
         sw.requester_id,
-        sw.target_employee_id,
         sw.requester_assignment_id,
+        sw.target_employee_id,
         sw.target_assignment_id,
         sw.reason,
         sw.status,
@@ -349,7 +565,6 @@ export class GoogleSheetsSyncService {
         pr.run_id,
         pr.period,
         pr.status,
-        pr.total_amount,
         pr.total_amount,
         pr.created_at,
         pr.published_at || '',
@@ -375,16 +590,49 @@ export class GoogleSheetsSyncService {
 
       return {
         success: true,
-        message: 'Đồng bộ dữ liệu hai chiều lên Google Sheets thành công!',
+        message: 'Đồng bộ toàn bộ dữ liệu lên Google Sheets thành công!',
         details,
       };
     } catch (err: any) {
       console.error('[GoogleSheetsSyncService] Lỗi đồng bộ dữ liệu:', err);
+      return { success: false, message: `Lỗi đồng bộ dữ liệu: ${err.message}`, details: null };
+    }
+  }
+
+  /**
+   * Tải ảnh chấm công lên Google Drive thật
+   */
+  public async uploadImageToDrive(fileName: string, mimeType: string, base64Data: string): Promise<{ fileId: string; webViewLink?: string }> {
+    if (!this.driveClient) {
+      return { fileId: `DRV_${Date.now()}` };
+    }
+
+    try {
+      const cleanBase64 = base64Data.replace(/^data:image\/\w+;base64,/, '');
+      const buffer = Buffer.from(cleanBase64, 'base64');
+      const stream = Readable.from(buffer);
+
+      const res = await this.driveClient.files.create({
+        requestBody: {
+          name: fileName,
+          parents: this.driveFolderId ? [this.driveFolderId] : undefined,
+        },
+        media: {
+          mimeType,
+          body: stream,
+        },
+        fields: 'id, webViewLink, webContentLink',
+      });
+
+      console.log(`[GoogleSheetsSyncService] Đã upload ảnh lên Google Drive thành công: ID = ${res.data.id}`);
+
       return {
-        success: false,
-        message: `Lỗi đồng bộ dữ liệu: ${err.message}`,
-        details: null,
+        fileId: res.data.id || `DRV_${Date.now()}`,
+        webViewLink: res.data.webViewLink || undefined,
       };
+    } catch (err: any) {
+      console.error('[GoogleSheetsSyncService] Lỗi khi upload ảnh lên Google Drive:', err);
+      return { fileId: `DRV_LOCAL_${Date.now()}` };
     }
   }
 
@@ -394,17 +642,15 @@ export class GoogleSheetsSyncService {
   private async overwriteSheetData(sheetTitle: string, headers: string[], rows: any[][]) {
     if (!this.sheetsClient) return;
 
-    // 1. Xóa dữ liệu cũ từ A2:Z
     try {
       await this.sheetsClient.spreadsheets.values.clear({
         spreadsheetId: this.spreadsheetId,
         range: `'${sheetTitle}'!A2:Z`,
       });
     } catch (e) {
-      // Bỏ qua nếu range chưa có data
+      // Bỏ qua nếu range trống
     }
 
-    // 2. Ghi tiêu đề + dữ liệu
     const allValues = [headers, ...rows];
     await this.sheetsClient.spreadsheets.values.update({
       spreadsheetId: this.spreadsheetId,

@@ -128,13 +128,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           <div style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
             <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>CHÍNH THỨC ĐẠT CHUẨN</div>
             <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--success)', marginTop: '6px' }}>
-              {allEmployees.filter((e) => e.employment_status === 'OFFICIAL').length || 24}
+              {allEmployees.filter((e) => e.employment_status === 'OFFICIAL').length}
             </div>
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Đang hoạt động trên 4 CN</div>
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Đang hoạt động trên các chi nhánh</div>
           </div>
           <div style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
             <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>YÊU CẦU CẦN DUYỆT</div>
-            <div style={{ fontSize: '28px', fontWeight: 800, color: '#D97706', marginTop: '6px' }}>{leaves.length || 3}</div>
+            <div style={{ fontSize: '28px', fontWeight: 800, color: '#D97706', marginTop: '6px' }}>{leaves.length}</div>
             <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Đơn OFF & Đổi ca đang chờ</div>
           </div>
         </div>
@@ -155,20 +155,38 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </tr>
             </thead>
             <tbody>
-              <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                <td style={{ padding: '14px 20px', fontWeight: 700, color: '#2563EB' }}>Phỏng Vấn Mới</td>
-                <td style={{ padding: '14px 20px' }}>Nguyễn Thu Trang (Vị trí Barista)</td>
-                <td style={{ padding: '14px 20px' }}>Chi Nhánh 130</td>
-                <td style={{ padding: '14px 20px' }}>14:30 Chiều nay (Google Meet)</td>
-                <td style={{ padding: '14px 20px' }}><button className="btn-secondary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => showToast('Mở phòng phỏng vấn Meet')}>Bắt Đầu Phỏng Vấn</button></td>
-              </tr>
-              <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                <td style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--brand)' }}>Xét Chuyển Chính Thức</td>
-                <td style={{ padding: '14px 20px' }}>Nguyễn Văn An (UBM_NV0482)</td>
-                <td style={{ padding: '14px 20px' }}>Chi Nhánh 130</td>
-                <td style={{ padding: '14px 20px' }}>Đạt 9.2/10 bài TEST đầu ra</td>
-                <td style={{ padding: '14px 20px' }}><button className="btn-primary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => showToast('Đã ký quyết định chuyển chính thức cho NV An!')}>Ký Quyết Định</button></td>
-              </tr>
+              {candidates.length === 0 && allEmployees.filter(e => e.employment_status === 'PROBATION').length === 0 ? (
+                <tr>
+                  <td colSpan={5} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    Không có nhiệm vụ phỏng vấn hoặc xét duyệt nào tồn đọng hôm nay. Hệ thống sẵn sàng đồng bộ realtime với Google Sheets.
+                  </td>
+                </tr>
+              ) : (
+                <>
+                  {candidates.slice(0, 3).map((c, i) => (
+                    <tr key={`cand-${i}`} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <td style={{ padding: '14px 20px', fontWeight: 700, color: '#2563EB' }}>Phỏng Vấn Mới</td>
+                      <td style={{ padding: '14px 20px' }}>{c.full_name} ({c.applied_position || 'Ứng viên'})</td>
+                      <td style={{ padding: '14px 20px' }}>{c.branch_id || 'Chưa xếp'}</td>
+                      <td style={{ padding: '14px 20px' }}>Chờ xếp lịch Meet</td>
+                      <td style={{ padding: '14px 20px' }}>
+                        <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => showToast('Mở phòng phỏng vấn Meet')}>Bắt Đầu</button>
+                      </td>
+                    </tr>
+                  ))}
+                  {allEmployees.filter(e => e.employment_status === 'PROBATION').slice(0, 3).map((e, i) => (
+                    <tr key={`emp-${i}`} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <td style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--brand)' }}>Xét Chuyển Chính Thức</td>
+                      <td style={{ padding: '14px 20px' }}>{e.full_name} ({e.employee_code})</td>
+                      <td style={{ padding: '14px 20px' }}>{e.branch_id}</td>
+                      <td style={{ padding: '14px 20px' }}>Đang thử việc</td>
+                      <td style={{ padding: '14px 20px' }}>
+                        <button className="btn-primary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => showToast(`Ký chuyển chính thức cho ${e.full_name}`)}>Ký Quyết Định</button>
+                      </td>
+                    </tr>
+                  ))}
+                </>
+              )}
             </tbody>
           </table>
         </div>
@@ -199,22 +217,26 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </tr>
             </thead>
             <tbody>
-              {[
-                { name: 'Phạm Hải Yến', phone: '0981234567', pos: 'Nhân viên Pha chế', branch: 'CN130', status: 'CHỜ PHỎNG VẤN' },
-                { name: 'Đỗ Minh Quân', phone: '0977889900', pos: 'Nhân viên Bán hàng', branch: 'CN120', status: 'MỚI ỨNG TUYỂN' },
-                { name: 'Vũ Thị Lan', phone: '0912334455', pos: 'Nhân viên Phụ kho', branch: 'Xưởng Củ Chi', status: 'ĐÃ DUYỆT HỒ SƠ' },
-              ].map((c, i) => (
-                <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
-                  <td style={{ padding: '14px 20px', fontWeight: 700 }}>{c.name}</td>
-                  <td style={{ padding: '14px 20px', fontFamily: 'monospace' }}>{c.phone}</td>
-                  <td style={{ padding: '14px 20px' }}>{c.pos}</td>
-                  <td style={{ padding: '14px 20px' }}>{c.branch}</td>
-                  <td style={{ padding: '14px 20px' }}><span className="badge badge-brand">{c.status}</span></td>
-                  <td style={{ padding: '14px 20px' }}>
-                    <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => showToast(`Tạo lịch phỏng vấn cho ${c.name}`)}>Tạo Phỏng Vấn</button>
+              {candidates.length === 0 ? (
+                <tr>
+                  <td colSpan={6} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    Chưa có ứng viên mới nào. Dữ liệu ứng viên từ Google Form tuyển dụng sẽ tự động đồng bộ realtime vào đây.
                   </td>
                 </tr>
-              ))}
+              ) : (
+                candidates.map((c, i) => (
+                  <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td style={{ padding: '14px 20px', fontWeight: 700 }}>{c.full_name}</td>
+                    <td style={{ padding: '14px 20px', fontFamily: 'monospace' }}>{c.phone || c.phone_normalized}</td>
+                    <td style={{ padding: '14px 20px' }}>{c.applied_position || 'Pha chế'}</td>
+                    <td style={{ padding: '14px 20px' }}>{getDisplayBranch(c.branch_id || 'CN130')}</td>
+                    <td style={{ padding: '14px 20px' }}><span className="badge badge-brand">{c.status || 'MỚI ỨNG TUYỂN'}</span></td>
+                    <td style={{ padding: '14px 20px' }}>
+                      <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => showToast(`Tạo lịch phỏng vấn cho ${c.full_name}`)}>Tạo Phỏng Vấn</button>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
@@ -238,7 +260,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             onClick={() => showToast('Đang làm mới phiên kết nối Zalo cá nhân của HR...')}
           >
             <Smartphone size={16} />
-            Phiên Zalo: Trần Thị Mai (Đang Kết Nối)
+            Phiên Zalo: {currentUser?.full_name || 'HR Ụm Bò Milk'} (Sẵn Sàng)
           </button>
         </div>
 
@@ -272,7 +294,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               padding: '4px 10px',
               borderRadius: '999px',
             }}>
-              ● BOT ZALO CÁ NHÂN ĐANG HOẠT ĐỘNG
+              ● BOT ZALO SẴN SÀNG KẾT NỐI
             </span>
           </div>
 
@@ -341,22 +363,22 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
               <div style={{ marginTop: '12px', width: '100%' }}>
                 <div style={{ fontSize: '13px', fontWeight: 800, color: '#0F172A' }}>
-                  Trần Thị Mai (HR Lead)
+                  {currentUser?.full_name || 'Quản Trị Nhân Sự HR'}
                 </div>
                 <div style={{ fontSize: '12px', color: '#0068FF', fontWeight: 600 }}>
-                  Zalo: 0989.234.888
+                  Zalo HR: Sẵn sàng kết nối
                 </div>
                 <div style={{
                   marginTop: '8px',
-                  backgroundColor: '#DCFCE7',
-                  border: '1px solid #86EFAC',
+                  backgroundColor: '#EFF6FF',
+                  border: '1px solid #BFDBFE',
                   borderRadius: '6px',
                   padding: '6px 8px',
                   fontSize: '11px',
-                  color: '#166534',
+                  color: '#1E40AF',
                   fontWeight: 700,
                 }}>
-                  ✓ Đã Quét QR & Kết Nối Thành Công
+                  Quét mã QR bằng ứng dụng Zalo trên điện thoại
                 </div>
 
                 <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
@@ -365,7 +387,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     style={{ flex: 1, fontSize: '11px', padding: '6px' }}
                     onClick={() => showToast('Mã QR Zalo đã được làm mới. Vui lòng quét lại trên điện thoại!')}
                   >
-                    Quét Lại QR
+                    Làm Mới QR
                   </button>
                   <button
                     className="btn-outline"
@@ -394,7 +416,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 </div>
                 <div style={{ fontSize: '12px', color: '#1E3A8A', lineHeight: '1.6' }}>
                   1. <strong>Tự động sinh Google Meet:</strong> Khi HR tạo lịch phỏng vấn, hệ thống tự động gọi API sinh phòng họp Google Meet bảo mật riêng biệt.<br />
-                  2. <strong>Liên kết Zalo cá nhân của HR:</strong> BOT tự động kích hoạt phiên Zalo cá nhân <strong>Trần Thị Mai (0989.234.888)</strong> mà HR đã quét QR đăng nhập trước đó.<br />
+                  2. <strong>Liên kết Zalo cá nhân của HR:</strong> BOT tự động kích hoạt phiên Zalo cá nhân của HR đã quét QR đăng nhập.<br />
                   3. <strong>Bắn tin nhắn thư mời chuyên nghiệp:</strong> BOT tự động gửi tin nhắn trang trọng kèm lịch hẹn, link Google Meet và hướng dẫn phỏng vấn trực tiếp đến Zalo của ứng viên mà HR không cần thao tác thủ công.
                 </div>
               </div>
@@ -412,7 +434,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     Xem Trước Mẫu Tin Nhắn Zalo BOT Tự Động Bắn Đi:
                   </div>
                   <span style={{ fontSize: '11px', color: '#059669', fontWeight: 700 }}>
-                    Gửi từ: Zalo Trần Thị Mai (0989.234.888)
+                    Gửi từ: Zalo HR Ụm Bò Milk
                   </span>
                 </div>
 
@@ -427,15 +449,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   fontFamily: 'system-ui, -apple-system, sans-serif',
                 }}>
                   <strong style={{ color: '#0068FF' }}>[ỤM BÒ MILK] THƯ MỜI PHỎNG VẤN VỊ TRÍ NHÂN VIÊN PHA CHẾ</strong><br />
-                  Chào bạn <strong>Phạm Hải Yến</strong>,<br />
+                  Chào bạn <strong>[Tên Ứng Viên]</strong>,<br />
                   Phòng Nhân Sự Ụm Bò Milk trân trọng mời bạn tham gia buổi phỏng vấn trực tuyến:<br />
-                  🕒 <strong>Thời gian:</strong> 14:30 - Thứ Năm, 24/09/2026 (Thời lượng: 30 phút)<br />
-                  📍 <strong>Chi nhánh tuyển dụng:</strong> CN1 - 130 Vạn Kiếp, Phường 3, Quận Bình Thạnh, TP.HCM<br />
-                  🔗 <strong>Link phòng họp Google Meet:</strong> <span style={{ color: '#0068FF', textDecoration: 'underline' }}>https://meet.google.com/ubm-interview-130</span><br />
-                  👤 <strong>Người phỏng vấn:</strong> Trần Thị Mai (HR Lead - Zalo này)<br />
+                  🕒 <strong>Thời gian:</strong> [Giờ phỏng vấn] - [Ngày hẹn phỏng vấn]<br />
+                  📍 <strong>Chi nhánh tuyển dụng:</strong> [Chi nhánh đăng ký làm việc]<br />
+                  🔗 <strong>Link phòng họp Google Meet:</strong> <span style={{ color: '#0068FF', textDecoration: 'underline' }}>https://meet.google.com/ubm-interview-[id]</span><br />
+                  👤 <strong>Người phỏng vấn:</strong> Phòng Nhân Sự Ụm Bò Milk<br />
                   📌 <em>Lưu ý: Bạn vui lòng vào trước 5 phút và chuẩn bị trang phục lịch sự nhé.</em><br />
                   <span style={{ fontSize: '11px', color: '#64748B', display: 'block', marginTop: '6px' }}>
-                    ✓✓ Đã gửi tự động qua Zalo cá nhân của HR lúc 14:31:05 [Đã nhận]
+                    ✓✓ Sẽ tự động gửi qua Zalo ứng viên khi HR xếp lịch phỏng vấn
                   </span>
                 </div>
               </div>
@@ -474,20 +496,36 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '14px' }}>
               <div>
                 <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Chọn ứng viên mới:</label>
-                <select style={{ width: '100%' }} defaultValue="Phạm Hải Yến">
-                  <option value="Phạm Hải Yến">Phạm Hải Yến (0981234567) - Pha chế</option>
-                  <option value="Nguyễn Thu Trang">Nguyễn Thu Trang (0912345678) - Thu ngân</option>
-                  <option value="Trần Đình Trọng">Trần Đình Trọng (0933445566) - Phục vụ</option>
+                <select style={{ width: '100%' }}>
+                  {candidates.length > 0 ? (
+                    candidates.map((c, i) => (
+                      <option key={i} value={c.full_name}>
+                        {c.full_name} ({c.phone || c.phone_normalized})
+                      </option>
+                    ))
+                  ) : (
+                    <option value="">Chưa có ứng viên (Dữ liệu từ Google Sheets)</option>
+                  )}
                 </select>
               </div>
 
               <div>
                 <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Chi nhánh tuyển dụng:</label>
                 <select style={{ width: '100%' }} defaultValue="CN130">
-                  <option value="CN130">CN1: 130 Vạn Kiếp (Bình Thạnh)</option>
-                  <option value="CN261">CN2: 261 Tô Hiến Thành (Q.10)</option>
-                  <option value="CN120">CN3: 120 Hoàng Diệu 2 (Thủ Đức)</option>
-                  <option value="CN111">CN4: 111 Tôn Đản (Q.4)</option>
+                  {branches.length > 0 ? (
+                    branches.map((b) => (
+                      <option key={b.branch_id || b.id} value={b.branch_id || b.id}>
+                        {b.name}
+                      </option>
+                    ))
+                  ) : (
+                    <>
+                      <option value="CN130">CN1: 130 Vạn Kiếp (Bình Thạnh)</option>
+                      <option value="CN261">CN2: 261 Tô Hiến Thành (Q.10)</option>
+                      <option value="CN120">CN3: 120 Hoàng Diệu 2 (Thủ Đức)</option>
+                      <option value="CN111">CN4: 111 Tôn Đản (Q.4)</option>
+                    </>
+                  )}
                 </select>
               </div>
 
@@ -518,7 +556,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               }}>
                 <Bot size={18} color="#0068FF" />
                 <span>
-                  ☑️ <strong>Kích hoạt BOT tự động:</strong> Tự động sinh link Google Meet + Dùng Zalo cá nhân của HR (Trần Thị Mai) để gửi thư mời phỏng vấn đến Zalo ứng viên!
+                  ☑️ <strong>Kích hoạt BOT tự động:</strong> Tự động sinh link Google Meet + Dùng Zalo cá nhân của HR để gửi thư mời phỏng vấn đến Zalo ứng viên!
                 </span>
               </div>
               <button
@@ -533,7 +571,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   justifyContent: 'center',
                   gap: '8px',
                 }}
-                onClick={() => showToast('🚀 BOT đã sinh link Meet và tự động gửi thư mời phỏng vấn từ Zalo cá nhân của HR (Trần Thị Mai) đến ứng viên Phạm Hải Yến (0981234567)!')}
+                onClick={() => showToast('🚀 BOT đã sinh link Meet và tự động gửi thư mời phỏng vấn từ Zalo cá nhân của HR đến ứng viên!')}
               >
                 <Send size={16} />
                 Tạo Lịch & BOT Bắn Tin Zalo Cá Nhân
@@ -566,107 +604,55 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </tr>
             </thead>
             <tbody>
-              <tr style={{ borderBottom: '1px solid var(--border)', backgroundColor: '#F8FAFC' }}>
-                <td style={{ padding: '14px 20px', fontWeight: 700 }}>
-                  Phạm Hải Yến
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>0981234567 • Zalo: Yến Trang</div>
-                </td>
-                <td style={{ padding: '14px 20px' }}>
-                  <strong>Nhân viên Pha chế</strong>
-                  <div style={{ fontSize: '11px', color: '#2563EB' }}>CN1 - 130 Vạn Kiếp (Bình Thạnh)</div>
-                </td>
-                <td style={{ padding: '14px 20px', fontWeight: 700, color: '#DC2626' }}>
-                  14:30 - 24/09/2026
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Thời lượng: 30 phút</div>
-                </td>
-                <td style={{ padding: '14px 20px' }}>
-                  <a
-                    href="https://meet.google.com/ubm-interview-130"
-                    target="_blank"
-                    rel="noreferrer"
-                    style={{ color: '#0068FF', textDecoration: 'none', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px' }}
-                  >
-                    meet.google.com/ubm-interview-130
-                  </a>
-                </td>
-                <td style={{ padding: '14px 20px' }}>
-                  <span style={{
-                    backgroundColor: '#EFF6FF',
-                    color: '#0068FF',
-                    padding: '3px 8px',
-                    borderRadius: '4px',
-                    fontSize: '11px',
-                    fontWeight: 800,
-                    border: '1px solid #BFDBFE',
-                  }}>
-                    💬 Zalo Cá Nhân Mai (0989.234.888)
-                  </span>
-                  <div style={{ fontSize: '11px', color: '#059669', marginTop: '3px' }}>✓ BOT đã gửi lúc 14:31</div>
-                </td>
-                <td style={{ padding: '14px 20px' }}>
-                  <span style={{ backgroundColor: '#DBEAFE', color: '#1E40AF', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700 }}>
-                    ĐÃ GỬI ZALO & MEET
-                  </span>
-                </td>
-                <td style={{ padding: '14px 20px' }}>
-                  <div style={{ display: 'flex', gap: '6px' }}>
-                    <button className="btn-primary" style={{ padding: '4px 10px', fontSize: '11px', backgroundColor: '#0068FF' }} onClick={() => showToast('Mở phòng Google Meet phỏng vấn')}>
-                      Vào Meet
-                    </button>
-                    <button className="btn-secondary" style={{ padding: '4px 8px', fontSize: '11px', color: '#059669' }} onClick={() => showToast('Đã đánh giá ĐẠT! Chuyển hồ sơ ứng viên sang Thử việc 12 ngày')}>
-                      Duyệt Thử Việc
-                    </button>
-                  </div>
-                </td>
-              </tr>
-              <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                <td style={{ padding: '14px 20px', fontWeight: 700 }}>
-                  Nguyễn Thu Trang
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>0912345678 • Zalo: Thu Trang</div>
-                </td>
-                <td style={{ padding: '14px 20px' }}>
-                  <strong>Thu ngân & Bán hàng</strong>
-                  <div style={{ fontSize: '11px', color: '#2563EB' }}>CN120 - Điện Biên Phủ</div>
-                </td>
-                <td style={{ padding: '14px 20px', fontWeight: 700 }}>
-                  10:00 - 25/09/2026
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Thời lượng: 30 phút</div>
-                </td>
-                <td style={{ padding: '14px 20px' }}>
-                  <a
-                    href="https://meet.google.com/ubm-interview-120"
-                    target="_blank"
-                    rel="noreferrer"
-                    style={{ color: '#0068FF', textDecoration: 'none', fontWeight: 700 }}
-                  >
-                    meet.google.com/ubm-interview-120
-                  </a>
-                </td>
-                <td style={{ padding: '14px 20px' }}>
-                  <span style={{
-                    backgroundColor: '#EFF6FF',
-                    color: '#0068FF',
-                    padding: '3px 8px',
-                    borderRadius: '4px',
-                    fontSize: '11px',
-                    fontWeight: 800,
-                    border: '1px solid #BFDBFE',
-                  }}>
-                    💬 Zalo Cá Nhân Mai (0989.234.888)
-                  </span>
-                  <div style={{ fontSize: '11px', color: '#059669', marginTop: '3px' }}>✓ BOT đã gửi lúc 09:15</div>
-                </td>
-                <td style={{ padding: '14px 20px' }}>
-                  <span style={{ backgroundColor: '#FEF3C7', color: '#92400E', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700 }}>
-                    CHỜ PHỎNG VẤN
-                  </span>
-                </td>
-                <td style={{ padding: '14px 20px' }}>
-                  <button className="btn-secondary" style={{ padding: '4px 8px', fontSize: '11px', color: '#059669' }} onClick={() => showToast('Duyệt đạt phỏng vấn')}>
-                    Đánh Giá
-                  </button>
-                </td>
-              </tr>
+              {candidates.length > 0 ? (
+                candidates.map((c, i) => (
+                  <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td style={{ padding: '14px 20px', fontWeight: 700 }}>
+                      {c.full_name}
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{c.phone || c.phone_normalized}</div>
+                    </td>
+                    <td style={{ padding: '14px 20px' }}>
+                      <strong>{c.position || 'Nhân viên mới'}</strong>
+                      <div style={{ fontSize: '11px', color: '#2563EB' }}>{getDisplayBranch(c.branch_id || 'CN130')}</div>
+                    </td>
+                    <td style={{ padding: '14px 20px', fontWeight: 700 }}>
+                      {c.interview_time || 'Chờ xếp lịch'}
+                    </td>
+                    <td style={{ padding: '14px 20px' }}>
+                      <span style={{ color: '#0068FF', fontWeight: 700 }}>meet.google.com/ubm-interview</span>
+                    </td>
+                    <td style={{ padding: '14px 20px' }}>
+                      <span style={{
+                        backgroundColor: '#EFF6FF',
+                        color: '#0068FF',
+                        padding: '3px 8px',
+                        borderRadius: '4px',
+                        fontSize: '11px',
+                        fontWeight: 800,
+                        border: '1px solid #BFDBFE',
+                      }}>
+                        💬 Zalo BOT
+                      </span>
+                    </td>
+                    <td style={{ padding: '14px 20px' }}>
+                      <span style={{ backgroundColor: '#FEF3C7', color: '#92400E', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700 }}>
+                        {c.status || 'CHỜ PHỎNG VẤN'}
+                      </span>
+                    </td>
+                    <td style={{ padding: '14px 20px' }}>
+                      <button className="btn-secondary" style={{ padding: '4px 8px', fontSize: '11px', color: '#059669' }} onClick={() => showToast('Duyệt đạt phỏng vấn')}>
+                        Đánh Giá
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={7} style={{ textAlign: 'center', padding: '36px', color: 'var(--text-muted)', fontSize: '13px' }}>
+                    Chưa có lịch phỏng vấn nào. Dữ liệu sẽ tự động xuất hiện khi tiếp nhận ứng viên từ Google Forms hoặc Google Sheets.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -675,6 +661,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }
 
   if (activeTab === 'hr-probation') {
+    const probationEmps = allEmployees.filter((e) => e.employment_status === 'PROBATION');
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -697,18 +684,26 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </tr>
             </thead>
             <tbody>
-              {allEmployees.filter((e) => e.employment_status === 'PROBATION').map((emp, i) => (
-                <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
-                  <td style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--brand)' }}>{emp.employee_code}</td>
-                  <td style={{ padding: '14px 20px', fontWeight: 700 }}>{emp.full_name}</td>
-                  <td style={{ padding: '14px 20px' }}>{getDisplayBranch(emp.default_branch_id)}</td>
-                  <td style={{ padding: '14px 20px' }}>Ngày 6/12 (4 ca làm, 2 OFF)</td>
-                  <td style={{ padding: '14px 20px' }}><span className="badge badge-success">9.2 / 10 (Đạt)</span></td>
-                  <td style={{ padding: '14px 20px' }}>
-                    <button className="btn-primary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => showToast(`Đã đề xuất chuyển chính thức cho ${emp.full_name}`)}>Đề Xuất Chính Thức</button>
+              {probationEmps.length > 0 ? (
+                probationEmps.map((emp, i) => (
+                  <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--brand)' }}>{emp.employee_code}</td>
+                    <td style={{ padding: '14px 20px', fontWeight: 700 }}>{emp.full_name}</td>
+                    <td style={{ padding: '14px 20px' }}>{getDisplayBranch(emp.default_branch_id)}</td>
+                    <td style={{ padding: '14px 20px' }}>Giai đoạn thử việc</td>
+                    <td style={{ padding: '14px 20px' }}><span className="badge badge-success">Sẵn sàng TEST</span></td>
+                    <td style={{ padding: '14px 20px' }}>
+                      <button className="btn-primary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => showToast(`Đã đề xuất chuyển chính thức cho ${emp.full_name}`)}>Đề Xuất Chính Thức</button>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={6} style={{ textAlign: 'center', padding: '36px', color: 'var(--text-muted)' }}>
+                    Hiện chưa có nhân viên trong giai đoạn thử việc. Dữ liệu sẽ đồng bộ từ Google Sheets.
                   </td>
                 </tr>
-              ))}
+              )}
             </tbody>
           </table>
         </div>
@@ -717,6 +712,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }
 
   if (activeTab === 'hr-official') {
+    const officialEmps = allEmployees.filter((e) => e.employment_status === 'OFFICIAL');
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <h1 style={{ fontSize: '20px', fontWeight: 800 }}>5. Danh Sách Nhân Viên Chính Thức</h1>
@@ -733,16 +729,24 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </tr>
             </thead>
             <tbody>
-              {allEmployees.filter((e) => e.employment_status === 'OFFICIAL').map((emp, i) => (
-                <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
-                  <td style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--brand)' }}>{emp.employee_code}</td>
-                  <td style={{ padding: '14px 20px', fontWeight: 700 }}>{emp.full_name}</td>
-                  <td style={{ padding: '14px 20px', fontFamily: 'monospace' }}>{emp.phone_normalized}</td>
-                  <td style={{ padding: '14px 20px' }}>{getDisplayBranch(emp.default_branch_id)}</td>
-                  <td style={{ padding: '14px 20px', fontWeight: 700, color: '#10B981' }}>25.000 đ/h</td>
-                  <td style={{ padding: '14px 20px' }}><span className="badge badge-success">CHÍNH THỨC</span></td>
+              {officialEmps.length > 0 ? (
+                officialEmps.map((emp, i) => (
+                  <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--brand)' }}>{emp.employee_code}</td>
+                    <td style={{ padding: '14px 20px', fontWeight: 700 }}>{emp.full_name}</td>
+                    <td style={{ padding: '14px 20px', fontFamily: 'monospace' }}>{emp.phone_normalized}</td>
+                    <td style={{ padding: '14px 20px' }}>{getDisplayBranch(emp.default_branch_id)}</td>
+                    <td style={{ padding: '14px 20px', fontWeight: 700, color: '#10B981' }}>{emp.current_rate_per_hour ? `${emp.current_rate_per_hour.toLocaleString('vi-VN')} đ/h` : '25.000 đ/h'}</td>
+                    <td style={{ padding: '14px 20px' }}><span className="badge badge-success">CHÍNH THỨC</span></td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={6} style={{ textAlign: 'center', padding: '36px', color: 'var(--text-muted)' }}>
+                    Chưa có nhân viên chính thức trong danh sách. Dữ liệu sẽ đồng bộ từ Google Sheets.
+                  </td>
                 </tr>
-              ))}
+              )}
             </tbody>
           </table>
         </div>
@@ -751,98 +755,51 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }
 
   if (activeTab === 'hr-conversion') {
+    const probationEmps = allEmployees.filter((e) => e.employment_status === 'PROBATION');
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <h1 style={{ fontSize: '20px', fontWeight: 800 }}>6. Xét Duyệt & Quyết Định Chuyển Chính Thức</h1>
         <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
           <div style={{ fontWeight: 700, fontSize: '14px', marginBottom: '8px' }}>Nhân sự đủ điều kiện chuyển chính thức:</div>
-          <div style={{ padding: '12px', backgroundColor: '#FDF2F8', border: '1px solid #F472B6', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <strong>Nguyễn Văn An (UBM_NV0482)</strong> • Điểm TEST: 9.2/10 • Ngày công: 7/7 ca • Đi trễ: 0 lần
+          {probationEmps.length > 0 ? (
+            probationEmps.map((emp, i) => (
+              <div key={i} style={{ padding: '12px', backgroundColor: '#FDF2F8', border: '1px solid #F472B6', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                <div>
+                  <strong>{emp.full_name} ({emp.employee_code})</strong> • Chi nhánh: {getDisplayBranch(emp.default_branch_id)}
+                </div>
+                <button className="btn-primary" onClick={() => showToast(`Đã ban hành Quyết định Chuyển Chính Thức cho ${emp.full_name}! Lương áp dụng 25.000 đ/h`)}>
+                  Ký Quyết Định
+                </button>
+              </div>
+            ))
+          ) : (
+            <div style={{ textAlign: 'center', padding: '24px', color: 'var(--text-muted)', fontSize: '13px' }}>
+              Hiện chưa có nhân sự thử việc đến hạn xét duyệt chuyển chính thức.
             </div>
-            <button className="btn-primary" onClick={() => showToast('Đã ban hành Quyết định Chuyển Chính Thức! Lương áp dụng 25.000 đ/h')}>
-              Ký Quyết Định (Effective 01/10/2026)
-            </button>
-          </div>
+          )}
         </div>
       </div>
     );
   }
 
   if (activeTab === 'hr-schedule') {
-    // Schedule mock data with Probation & Official employees
-    const scheduleItems = [
-      {
-        empId: 'EMP_001',
-        empCode: 'UBM_NV0482',
-        name: 'Nguyễn Văn An',
-        stage: 'PROBATION',
-        branch: 'CN130',
-        t2: { shift: 'Ca 1 (07-12)', status: 'COMPLETED', time: '06:55' },
-        t3: { shift: 'Ca 1 (07-12)', status: 'CHECKED_IN', time: '06:55:12', gps: '38m', uniform: true, badge: true, isToday: true },
-        t4: { shift: 'Ca 2 (12-18)', status: 'UPCOMING' },
+    const scheduleItems = allEmployees.map((emp) => {
+      const empShifts = shifts.filter((s) => s.employee_id === emp.employee_id);
+      return {
+        empId: emp.employee_id,
+        empCode: emp.employee_code || 'UBM_NV0000',
+        name: emp.full_name,
+        stage: emp.employment_status === 'PROBATION' ? 'PROBATION' : 'OFFICIAL',
+        branch: emp.default_branch_id || 'CN130',
+        t2: { shift: empShifts.find((s) => s.shift_code?.includes('T2'))?.shift_code || 'Ca 1 (07-12)', status: 'UPCOMING' },
+        t3: { shift: empShifts.find((s) => s.shift_code?.includes('T3'))?.shift_code || 'Ca 1 (07-12)', status: 'UPCOMING', isToday: true },
+        t4: { shift: empShifts.find((s) => s.shift_code?.includes('T4'))?.shift_code || 'Ca 2 (12-18)', status: 'UPCOMING' },
         t5: { shift: 'Nghỉ OFF', status: 'OFF' },
-        t6: { shift: 'Ca 1 (07-12)', status: 'UPCOMING' },
+        t6: { shift: empShifts.find((s) => s.shift_code?.includes('T6'))?.shift_code || 'Ca 1 (07-12)', status: 'UPCOMING' },
         t7: { shift: 'Nghỉ OFF', status: 'OFF' },
         cn: { shift: 'Ca 2 (12-18)', status: 'UPCOMING' },
-      },
-      {
-        empId: 'EMP_002',
-        empCode: 'UBM_NV1205',
-        name: 'Trần Thị Bình',
-        stage: 'OFFICIAL',
-        branch: 'CN130',
-        t2: { shift: 'Ca 1 (07-12)', status: 'COMPLETED', time: '06:58' },
-        t3: { shift: 'Ca 1 (07-12)', status: 'CHECKED_IN', time: '06:58:30', gps: '42m', uniform: true, badge: true, isToday: true },
-        t4: { shift: 'Ca 1 (07-12)', status: 'UPCOMING' },
-        t5: { shift: 'Nghỉ OFF', status: 'OFF' },
-        t6: { shift: 'Ca 2 (12-18)', status: 'UPCOMING' },
-        t7: { shift: 'Ca 2 (12-18)', status: 'UPCOMING' },
-        cn: { shift: 'Nghỉ OFF', status: 'OFF' },
-      },
-      {
-        empId: 'EMP_003',
-        empCode: 'UBM_NV8312',
-        name: 'Lê Hoàng Cúc',
-        stage: 'OFFICIAL',
-        branch: 'CN130',
-        t2: { shift: 'Ca 2 (12-18)', status: 'COMPLETED', time: '11:55' },
-        t3: { shift: 'Ca 2 (12-18)', status: 'PENDING', isToday: true },
-        t4: { shift: 'Nghỉ OFF', status: 'OFF' },
-        t5: { shift: 'Ca 1 (07-12)', status: 'UPCOMING' },
-        t6: { shift: 'Ca 1 (07-12)', status: 'UPCOMING' },
-        t7: { shift: 'Nghỉ OFF', status: 'OFF' },
-        cn: { shift: 'Ca 1 (07-12)', status: 'UPCOMING' },
-      },
-      {
-        empId: 'EMP_004',
-        empCode: 'UBM_NV5541',
-        name: 'Phạm Đức Dũng',
-        stage: 'OFFICIAL',
-        branch: 'CN130',
-        t2: { shift: 'Ca 3 (18-23)', status: 'COMPLETED', time: '17:50' },
-        t3: { shift: 'Ca 3 (18-23)', status: 'PENDING', isToday: true },
-        t4: { shift: 'Ca 2 (12-18)', status: 'UPCOMING' },
-        t5: { shift: 'Ca 2 (Nhận thay)', status: 'BONUS_SWAP', bonus: '+30.000đ', note: 'HR điều phối nhận thay cho NV A' },
-        t6: { shift: 'Nghỉ OFF', status: 'OFF' },
-        t7: { shift: 'Ca 3 (18-23)', status: 'UPCOMING' },
-        cn: { shift: 'Nghỉ OFF', status: 'OFF' },
-      },
-      {
-        empId: 'EMP_005',
-        empCode: 'UBM_NV9921',
-        name: 'Hoàng Minh Khang',
-        stage: 'PROBATION',
-        branch: 'CN120',
-        t2: { shift: 'Ca 1 (07-12)', status: 'COMPLETED', time: '06:50' },
-        t3: { shift: 'Nghỉ OFF', status: 'OFF', isToday: true },
-        t4: { shift: 'Ca 1 (07-12)', status: 'UPCOMING' },
-        t5: { shift: 'Ca 1 (07-12)', status: 'UPCOMING' },
-        t6: { shift: 'Nghỉ OFF', status: 'OFF' },
-        t7: { shift: 'Ca 2 (12-18)', status: 'UPCOMING' },
-        cn: { shift: 'Nghỉ OFF', status: 'OFF' },
-      },
-    ];
+      };
+    });
 
     const filteredSchedule = scheduleItems.filter((item) => {
       const matchBranch = scheduleBranchFilter === 'ALL' || item.branch === scheduleBranchFilter;
@@ -919,29 +876,30 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               animation: 'pulse 1.2s infinite',
             }} />
             <div style={{ fontSize: '13px', color: '#065F46' }}>
-              <strong>TỰ ĐỘNG ĐIỂM DANH REALTIME:</strong> Vừa nhận tín hiệu check-in từ Cổng Nhân Viên:
-              <strong style={{ color: '#047857', marginLeft: '6px' }}>Nguyễn Văn An (UBM_NV0482)</strong> lúc <strong>06:55:12</strong> tại <strong>CN130</strong> | GPS: <strong>38m (&lt;300m)</strong> | Đồng phục: <strong>Áo hồng + Bảng tên [✓ HỢP LỆ]</strong>.
+              <strong>TỰ ĐỘNG ĐIỂM DANH REALTIME:</strong> Kênh Socket.IO đang kết nối, tự động ghi nhận check-in từ Cổng Nhân Viên, xác thực GPS &lt; 300m và đồng bộ ảnh áo hồng lên Google Drive.
             </div>
           </div>
 
-          <button
-            onClick={() => setSelectedRealtimeModal(scheduleItems[0])}
-            style={{
-              padding: '6px 12px',
-              borderRadius: 'var(--radius-sm)',
-              backgroundColor: '#10B981',
-              color: '#FFFFFF',
-              border: 'none',
-              fontWeight: 700,
-              fontSize: '12px',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-            }}
-          >
-            <Eye size={14} /> Xem Bằng Chứng
-          </button>
+          {filteredSchedule.length > 0 && (
+            <button
+              onClick={() => setSelectedRealtimeModal(filteredSchedule[0])}
+              style={{
+                padding: '6px 12px',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: '#10B981',
+                color: '#FFFFFF',
+                border: 'none',
+                fontWeight: 700,
+                fontSize: '12px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+              }}
+            >
+              <Eye size={14} /> Xem Bằng Chứng
+            </button>
+          )}
         </div>
 
         {/* Filter Controls & Guide Bar */}
@@ -1352,15 +1310,25 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </tr>
             </thead>
             <tbody>
-              <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                <td style={{ padding: '14px 20px', fontWeight: 700 }}>Trần Thị Bình</td>
-                <td style={{ padding: '14px 20px' }}>Chi Nhánh 130</td>
-                <td style={{ padding: '14px 20px' }}>25/09/2026</td>
-                <td style={{ padding: '14px 20px' }}>Nghỉ tuần theo lịch cá nhân</td>
-                <td style={{ padding: '14px 20px' }}>
-                  <button className="btn-primary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => showToast('Đã duyệt đơn nghỉ phép')}>Duyệt Đơn</button>
-                </td>
-              </tr>
+              {leaves.length === 0 ? (
+                <tr>
+                  <td colSpan={5} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    Không có đơn xin nghỉ phép nào đang chờ duyệt. Dữ liệu sẽ tự động đồng bộ từ Google Sheets (Tab DON_XIN_NGHI).
+                  </td>
+                </tr>
+              ) : (
+                leaves.map((l, i) => (
+                  <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td style={{ padding: '14px 20px', fontWeight: 700 }}>{l.employee_name || l.employee_id}</td>
+                    <td style={{ padding: '14px 20px' }}>{l.branch_id || 'Chưa rõ'}</td>
+                    <td style={{ padding: '14px 20px' }}>{l.leave_date || l.created_at?.slice(0, 10)}</td>
+                    <td style={{ padding: '14px 20px' }}>{l.reason || 'Nghỉ cá nhân'}</td>
+                    <td style={{ padding: '14px 20px' }}>
+                      <button className="btn-primary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => showToast('Đã duyệt đơn nghỉ phép')}>Duyệt Đơn</button>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
@@ -1381,7 +1349,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           <button
             className="btn-primary"
             style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#2563EB' }}
-            onClick={() => showToast('Phiếu điều phối ca nhường khẩn cấp đã được kích hoạt và gửi đến nhân viên chi nhánh!')}
+            onClick={() => showToast('Phiếu điều phối ca nhường khẩn cấp đã được kích hoạt!')}
           >
             <Sparkles size={16} />
             + Tạo Phiếu Điều Phối Nhường Ca (+30.000đ)
@@ -1410,246 +1378,22 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         <div style={{
           backgroundColor: 'var(--surface)',
           borderRadius: 'var(--radius-md)',
-          border: '1.5px solid #2563EB',
-          boxShadow: 'var(--shadow-sm)',
-          overflow: 'hidden',
+          border: '1px solid var(--border)',
+          padding: '28px 20px',
+          textAlign: 'center',
         }}>
-          <div style={{
-            backgroundColor: '#1E40AF',
-            color: '#FFF',
-            padding: '14px 20px',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <RadioTower size={20} color="#93C5FD" />
-              <strong style={{ fontSize: '15px' }}>
-                PHIẾU ĐIỀU PHỐI NHƯỜNG CA KHẨN CẤP CỦA HR (MÃ: UBM_DP0924_01)
-              </strong>
-            </div>
-            <span style={{
-              backgroundColor: '#10B981',
-              color: '#FFF',
-              fontSize: '11px',
-              fontWeight: 800,
-              padding: '4px 10px',
-              borderRadius: '999px',
-            }}>
-              ĐANG PHÁT LỆNH REALTIME
-            </span>
+          <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-muted)' }}>
+            Hiện tại không có ca nhường khẩn cấp nào cần HR điều phối.
           </div>
-
-          <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
-            {/* BƯỚC 1: THÔNG TIN NHÂN VIÊN A XIN NHƯỜNG CA */}
-            <div style={{
-              backgroundColor: '#F8FAFC',
-              border: '1px solid var(--border)',
-              borderRadius: '8px',
-              padding: '14px 16px',
-            }}>
-              <div style={{ fontSize: '12px', fontWeight: 800, color: '#475569', textTransform: 'uppercase', marginBottom: '8px' }}>
-                Bước 1: Thông Tin Nhân Viên A Cần Nhường Ca (Không tìm được người thay)
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', fontSize: '13px' }}>
-                <div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Nhân viên xin nhường:</div>
-                  <strong style={{ color: '#0F172A' }}>Nguyễn Văn An (UBM_NV0482)</strong>
-                </div>
-                <div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Chi nhánh công tác:</div>
-                  <strong style={{ color: '#2563EB' }}>CN1 - 130 Vạn Kiếp (Bình Thạnh)</strong>
-                </div>
-                <div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Ca làm cần nhường:</div>
-                  <strong style={{ color: '#DC2626' }}>Ca 2: Chiều (12:00 - 17:00) [24/09]</strong>
-                </div>
-                <div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Mức phụ cấp tự động:</div>
-                  <strong style={{ color: '#059669', fontSize: '14px' }}>+30.000đ / ca hỗ trợ</strong>
-                </div>
-              </div>
-              <div style={{ marginTop: '8px', fontSize: '12px', color: '#64748B' }}>
-                <strong>Lý do của NV A:</strong> Bận việc đột xuất gia đình, đã đăng tìm tráo ca trong nhóm nhưng không có ai đổi được. Yêu cầu HR hỗ trợ điều phối toàn chi nhánh.
-              </div>
-            </div>
-
-            {/* BƯỚC 2: PHẠM VI GỬI THÔNG BÁO ĐẾN NHÂN VIÊN TRONG CHI NHÁNH */}
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                <div>
-                  <div style={{ fontSize: '13px', fontWeight: 800, color: '#1E293B', textTransform: 'uppercase' }}>
-                    Bước 2: Danh Sách Nhân Viên Thuộc Chi Nhánh CN130 Nhận Phiếu Điều Phối
-                  </div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                    Hệ thống tự động lọc 100% nhân sự thuộc <strong>Chi nhánh CN130</strong> (không gửi sang chi nhánh khác). Hiển thị rõ ai sẽ làm 2 ca/ngày nếu nhận.
-                  </div>
-                </div>
-                <span className="badge" style={{ backgroundColor: '#DBEAFE', color: '#1E40AF', fontWeight: 700 }}>
-                  4 Nhân Viên Trong Chi Nhánh CN130
-                </span>
-              </div>
-
-              <div style={{ border: '1px solid var(--border)', borderRadius: '8px', overflow: 'hidden' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
-                  <thead>
-                    <tr style={{ backgroundColor: '#F1F5F9', textAlign: 'left', color: '#475569', textTransform: 'uppercase', fontSize: '11px' }}>
-                      <th style={{ padding: '10px 14px' }}>Nhân Viên Nhận Thông Báo</th>
-                      <th style={{ padding: '10px 14px' }}>Chi Nhánh</th>
-                      <th style={{ padding: '10px 14px' }}>Ca Làm Hiện Tại (Ngày 24/09)</th>
-                      <th style={{ padding: '10px 14px' }}>Tác Động Khi Nhận Ca Của A</th>
-                      <th style={{ padding: '10px 14px' }}>Kênh Phát Lệnh</th>
-                      <th style={{ padding: '10px 14px' }}>Trạng Thái Tiếp Nhận</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr style={{ borderBottom: '1px solid var(--border)', backgroundColor: '#F0FDF4' }}>
-                      <td style={{ padding: '10px 14px', fontWeight: 700, color: '#0F172A' }}>
-                        Trần Thị Bình <span style={{ fontSize: '11px', color: '#64748B' }}>(UBM_NV0015 - 0903333444)</span>
-                      </td>
-                      <td style={{ padding: '10px 14px', fontWeight: 700, color: '#2563EB' }}>CN130</td>
-                      <td style={{ padding: '10px 14px' }}>
-                        <span className="badge badge-brand">Ca 1: Sáng (07:00 - 12:00)</span>
-                      </td>
-                      <td style={{ padding: '10px 14px' }}>
-                        <span style={{ color: '#059669', fontWeight: 800 }}>⚡ SẼ LÀM 2 CA/NGÀY</span> (Sáng + Chiều)<br />
-                        <strong style={{ color: '#059669' }}>+30.000đ Phụ Cấp Hỗ Trợ</strong>
-                      </td>
-                      <td style={{ padding: '10px 14px', color: '#64748B' }}>
-                        Webapp + Socket + SMS
-                      </td>
-                      <td style={{ padding: '10px 14px' }}>
-                        <span style={{
-                          backgroundColor: '#10B981',
-                          color: '#FFF',
-                          fontSize: '11px',
-                          fontWeight: 800,
-                          padding: '3px 8px',
-                          borderRadius: '4px',
-                        }}>
-                          ✓ ĐÃ BẤM NHẬN CA (08:35:12)
-                        </span>
-                      </td>
-                    </tr>
-                    <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                      <td style={{ padding: '10px 14px', fontWeight: 700, color: '#0F172A' }}>
-                        Lê Văn Cường <span style={{ fontSize: '11px', color: '#64748B' }}>(UBM_NV0102 - 0904555666)</span>
-                      </td>
-                      <td style={{ padding: '10px 14px', fontWeight: 700, color: '#2563EB' }}>CN130</td>
-                      <td style={{ padding: '10px 14px' }}>
-                        <span className="badge" style={{ backgroundColor: '#F1F5F9', color: '#64748B' }}>Nghỉ OFF</span>
-                      </td>
-                      <td style={{ padding: '10px 14px' }}>
-                        Làm 1 ca Chiều (Đổi từ OFF sang làm)<br />
-                        <strong style={{ color: '#059669' }}>+30.000đ Phụ Cấp Hỗ Trợ</strong>
-                      </td>
-                      <td style={{ padding: '10px 14px', color: '#64748B' }}>
-                        Webapp + Socket + SMS
-                      </td>
-                      <td style={{ padding: '10px 14px' }}>
-                        <span style={{ color: '#64748B', fontSize: '11px' }}>Đã nhận thông báo</span>
-                      </td>
-                    </tr>
-                    <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                      <td style={{ padding: '10px 14px', fontWeight: 700, color: '#0F172A' }}>
-                        Hoàng Thị Dung <span style={{ fontSize: '11px', color: '#64748B' }}>(UBM_NV0218 - 0905777888)</span>
-                      </td>
-                      <td style={{ padding: '10px 14px', fontWeight: 700, color: '#2563EB' }}>CN130</td>
-                      <td style={{ padding: '10px 14px' }}>
-                        <span className="badge badge-brand">Ca 3: Tối (17:00 - 22:00)</span>
-                      </td>
-                      <td style={{ padding: '10px 14px' }}>
-                        <span style={{ color: '#059669', fontWeight: 800 }}>⚡ SẼ LÀM 2 CA/NGÀY</span> (Chiều + Tối)<br />
-                        <strong style={{ color: '#059669' }}>+30.000đ Phụ Cấp Hỗ Trợ</strong>
-                      </td>
-                      <td style={{ padding: '10px 14px', color: '#64748B' }}>
-                        Webapp + Socket + SMS
-                      </td>
-                      <td style={{ padding: '10px 14px' }}>
-                        <span style={{ color: '#64748B', fontSize: '11px' }}>Đã nhận thông báo</span>
-                      </td>
-                    </tr>
-                    <tr>
-                      <td style={{ padding: '10px 14px', fontWeight: 700, color: '#0F172A' }}>
-                        Phạm Đức Dũng <span style={{ fontSize: '11px', color: '#64748B' }}>(UBM_NV0334 - 0906999000)</span>
-                      </td>
-                      <td style={{ padding: '10px 14px', fontWeight: 700, color: '#2563EB' }}>CN130</td>
-                      <td style={{ padding: '10px 14px' }}>
-                        <span className="badge" style={{ backgroundColor: '#F1F5F9', color: '#64748B' }}>Nghỉ OFF</span>
-                      </td>
-                      <td style={{ padding: '10px 14px' }}>
-                        Làm 1 ca Chiều (Đổi từ OFF sang làm)<br />
-                        <strong style={{ color: '#059669' }}>+30.000đ Phụ Cấp Hỗ Trợ</strong>
-                      </td>
-                      <td style={{ padding: '10px 14px', color: '#64748B' }}>
-                        Webapp + Socket + SMS
-                      </td>
-                      <td style={{ padding: '10px 14px' }}>
-                        <span style={{ color: '#64748B', fontSize: '11px' }}>Đã nhận thông báo</span>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* BƯỚC 3: KẾT QUẢ TIẾP NHẬN & TỰ ĐỘNG HẠCH TOÁN FINANCE VÀ CỔNG NHÂN VIÊN */}
-            <div style={{
-              backgroundColor: '#ECFDF5',
-              border: '1.5px solid #10B981',
-              borderRadius: '8px',
-              padding: '16px 18px',
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-                <CheckCircle size={20} color="#059669" />
-                <strong style={{ fontSize: '14px', color: '#065F46' }}>
-                  KẾT QUẢ ĐIỀU PHỐI: TRẦN THỊ BÌNH ĐÃ NHẬN CA THAY THÀNH CÔNG!
-                </strong>
-              </div>
-              <div style={{ fontSize: '13px', color: '#047857', lineHeight: '1.6' }}>
-                • <strong>Phân bổ ca làm việc:</strong> Nhân viên Trần Thị Bình nhận thêm <strong>Ca 2: Chiều (12:00 - 17:00) ngày 24/09</strong> ➔ Bình thực hiện <strong>LÀM 2 CA/NGÀY</strong> (Ca 1 Sáng + Ca 2 Chiều).<br />
-                • <strong>Tự động hạch toán Lương Finance:</strong> Hệ thống tự động ghi nhận thêm <strong>+30.000đ phụ cấp hỗ trợ làm thay</strong> vào Bảng tính lương Tháng 09/2026 của Trần Thị Bình.<br />
-                • <strong>Cập nhật Cổng Nhân Viên:</strong> Webapp của Bình tự động cập nhật lịch 2 ca và cộng +30.000đ vào mục <strong>Lương AI</strong>.<br />
-                • <strong>Nhân viên Nguyễn Văn An:</strong> Ca Chiều ngày 24/09 đã chuyển thành <em>"Đã nhường ca thành công cho Trần Thị Bình"</em>.
-              </div>
-              <div style={{ marginTop: '12px', display: 'flex', gap: '10px' }}>
-                <button
-                  className="btn-primary"
-                  style={{ backgroundColor: '#059669', fontSize: '12px', padding: '8px 14px' }}
-                  onClick={() => showToast('Đã xác nhận chốt phiếu điều phối và khóa ca làm việc thành công!')}
-                >
-                  ✓ Xác Nhận Chốt Phiếu Điều Phối
-                </button>
-                <button
-                  className="btn-outline"
-                  style={{ fontSize: '12px', padding: '8px 14px' }}
-                  onClick={() => showToast('Đang chuyển hướng sang Bảng Lương Finance để đối soát phụ cấp 30.000đ...')}
-                >
-                  Xem Tại Bảng Lương Finance
-                </button>
-              </div>
-            </div>
+          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px' }}>
+            Khi nhân viên không tìm được người thay ca và gửi yêu cầu khẩn, HR có thể bấm nút "Tạo Phiếu Điều Phối Nhường Ca (+30.000đ)" để phát lệnh tức thì tới nhân sự chi nhánh.
           </div>
         </div>
 
         {/* CÁC PHIẾU TRÁO ĐỔI CA THÔNG THƯỜNG (A <-> B) */}
-        <div style={{ backgroundColor: 'var(--surface)', padding: '16px 20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span className="badge badge-brand">Hình thức 1: Tráo đổi ca trực tiếp (A ⇄ B)</span>
-                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Cùng Chi Nhánh 130</span>
-              </div>
-              <div style={{ fontWeight: 800, fontSize: '14px', marginTop: '6px' }}>
-                Lê Văn Cường (Ca 1) ⇄ Phạm Đức Dũng (Ca 2) ngày 26/09
-              </div>
-              <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                Trạng thái: 2 nhân viên đã tự thỏa thuận và bấm đồng ý ➔ Đang chờ HR phê duyệt cuối.
-              </div>
-            </div>
-            <button className="btn-primary" onClick={() => showToast('HR đã duyệt hoàn tất! Lịch làm việc được tự động cập nhật.')}>
-              Phê Duyệt Tráo Đổi
-            </button>
+        <div style={{ backgroundColor: 'var(--surface)', padding: '24px 20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', textAlign: 'center' }}>
+          <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+            Không có yêu cầu tráo đổi ca trực tiếp (A ⇄ B) nào đang chờ HR phê duyệt.
           </div>
         </div>
       </div>
@@ -1807,13 +1551,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </tr>
             </thead>
             <tbody>
-              <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                <td style={{ padding: '14px 20px', fontWeight: 700 }}>Nguyễn Văn An</td>
-                <td style={{ padding: '14px 20px' }}>CN130</td>
-                <td style={{ padding: '14px 20px' }}>06:55</td>
-                <td style={{ padding: '14px 20px' }}>12:02</td>
-                <td style={{ padding: '14px 20px', color: 'var(--brand)', fontWeight: 600 }}>38m • Áo hồng + Bảng tên OK</td>
-                <td style={{ padding: '14px 20px' }}><span className="badge badge-success">HỢP LỆ</span></td>
+              <tr>
+                <td colSpan={6} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                  Chưa có lượt chấm công nào hôm nay. Dữ liệu check-in GPS và ảnh Google Drive sẽ hiển thị realtime tại đây khi nhân viên điểm danh.
+                </td>
               </tr>
             </tbody>
           </table>
@@ -1827,15 +1568,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <h1 style={{ fontSize: '20px', fontWeight: 800 }}>12. Bổ Sung & Điều Chỉnh Dữ Liệu Công</h1>
         <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Xử lý các trường hợp quên check-in/out hoặc sự cố GPS/Camera trên điện thoại</p>
-        <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <strong>Trần Thị Bình (CN130)</strong> • Lý do: Quên bấm check-in khi nhận bàn giao hàng sáng
-              <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Giờ đề xuất: 07:00 - Cửa Hàng Trưởng đã xác nhận có mặt thực tế</div>
-            </div>
-            <button className="btn-primary" onClick={() => showToast('HR đã duyệt bổ sung công! Không sửa event gốc, ghi nhận adjustment có audit.')}>
-              Duyệt Bổ Sung Công
-            </button>
+        <div style={{ backgroundColor: 'var(--surface)', padding: '24px 20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', textAlign: 'center' }}>
+          <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+            Hiện không có yêu cầu bổ sung hay điều chỉnh dữ liệu công nào đang chờ duyệt.
+          </div>
+          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
+            Mọi sự cố quên chấm công hoặc lỗi GPS được gửi từ Cổng Nhân Viên sẽ hiển thị tại đây để HR phê duyệt có audit trail.
           </div>
         </div>
       </div>
@@ -1946,79 +1684,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </tr>
             </thead>
             <tbody>
-              <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                <td style={{ padding: '14px 20px', fontWeight: 700 }}>
-                  Nguyễn Văn An
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>UBM_NV0482 • 0901111222</div>
-                </td>
-                <td style={{ padding: '14px 20px' }}>
-                  CN1 - 130 Vạn Kiếp (Bình Thạnh)
-                  <div style={{ fontSize: '11px', color: '#2563EB' }}>Thử việc ngày 6/12</div>
-                </td>
-                <td style={{ padding: '14px 20px' }}>
-                  <strong style={{ fontSize: '16px', color: '#059669' }}>9.2 / 10</strong>
-                </td>
-                <td style={{ padding: '14px 20px', fontWeight: 700 }}>23 / 25 câu đúng</td>
-                <td style={{ padding: '14px 20px' }}>06:15 / 08:00</td>
-                <td style={{ padding: '14px 20px' }}>
-                  <span style={{ backgroundColor: '#DCFCE7', color: '#166534', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 800 }}>
-                    🟢 ĐẠT CHUẨN ĐẦU RA
-                  </span>
-                </td>
-                <td style={{ padding: '14px 20px' }}>
-                  <button className="btn-primary" style={{ padding: '4px 10px', fontSize: '11px', backgroundColor: '#059669' }} onClick={() => showToast('Đã chuyển tiếp đề xuất ký hợp đồng chính thức!')}>
-                    Đề Xuất Chính Thức
-                  </button>
-                </td>
-              </tr>
-              <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                <td style={{ padding: '14px 20px', fontWeight: 700 }}>
-                  Lê Hoàng Cúc
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>UBM_NV0389 • 0905555666</div>
-                </td>
-                <td style={{ padding: '14px 20px' }}>
-                  CN120 - Điện Biên Phủ
-                  <div style={{ fontSize: '11px', color: '#2563EB' }}>Thử việc ngày 10/12</div>
-                </td>
-                <td style={{ padding: '14px 20px' }}>
-                  <strong style={{ fontSize: '16px', color: '#059669' }}>8.8 / 10</strong>
-                </td>
-                <td style={{ padding: '14px 20px', fontWeight: 700 }}>22 / 25 câu đúng</td>
-                <td style={{ padding: '14px 20px' }}>07:10 / 08:00</td>
-                <td style={{ padding: '14px 20px' }}>
-                  <span style={{ backgroundColor: '#DCFCE7', color: '#166534', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 800 }}>
-                    🟢 ĐẠT CHUẨN ĐẦU RA
-                  </span>
-                </td>
-                <td style={{ padding: '14px 20px' }}>
-                  <button className="btn-primary" style={{ padding: '4px 10px', fontSize: '11px', backgroundColor: '#059669' }} onClick={() => showToast('Đã chuyển tiếp đề xuất ký hợp đồng chính thức!')}>
-                    Đề Xuất Chính Thức
-                  </button>
-                </td>
-              </tr>
               <tr>
-                <td style={{ padding: '14px 20px', fontWeight: 700 }}>
-                  Trần Quốc Bảo
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>UBM_NV0611 • 0907777888</div>
-                </td>
-                <td style={{ padding: '14px 20px' }}>
-                  CN261 - Võ Văn Ngân
-                  <div style={{ fontSize: '11px', color: '#2563EB' }}>Thử việc ngày 4/12</div>
-                </td>
-                <td style={{ padding: '14px 20px' }}>
-                  <strong style={{ fontSize: '16px', color: '#DC2626' }}>7.6 / 10</strong>
-                </td>
-                <td style={{ padding: '14px 20px', fontWeight: 700 }}>19 / 25 câu đúng</td>
-                <td style={{ padding: '14px 20px' }}>08:00 (Hết giờ)</td>
-                <td style={{ padding: '14px 20px' }}>
-                  <span style={{ backgroundColor: '#FEE2E2', color: '#DC2626', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 800 }}>
-                    🔴 CHƯA ĐẠT (≥ 8.0)
-                  </span>
-                </td>
-                <td style={{ padding: '14px 20px' }}>
-                  <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: '11px', color: '#2563EB' }} onClick={() => showToast('Đã mở quyền cho làm bài thi lại lần 2!')}>
-                    Cho Thi Lại Lần 2
-                  </button>
+                <td colSpan={7} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                  Chưa có nhân viên thử việc nào nộp bài kiểm tra trắc nghiệm hôm nay. Dữ liệu nộp bài từ Cổng Nhân Viên sẽ tự động hiển thị và chấm điểm tại đây.
                 </td>
               </tr>
             </tbody>
@@ -2029,23 +1697,24 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }
 
   if (activeTab === 'hr-reports') {
+    const totalWorkingHours = payrollRuns.reduce((sum, p) => sum + (Number(p.total_hours) || 0), 0);
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <h1 style={{ fontSize: '20px', fontWeight: 800 }}>14. Báo Cáo Phân Tích Nhân Sự (HR Reports)</h1>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
           <div style={{ backgroundColor: 'var(--surface)', padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-            <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>TỶ LỆ CHUYỂN CHÍNH THỨC</div>
-            <div style={{ fontSize: '24px', fontWeight: 800, color: 'var(--success)', marginTop: '4px' }}>94.2%</div>
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>16/17 nhân sự đạt chuẩn</div>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>TỔNG NHÂN SỰ TOÀN HỆ THỐNG</div>
+            <div style={{ fontSize: '24px', fontWeight: 800, color: 'var(--brand)', marginTop: '4px' }}>{allEmployees.length} Nhân sự</div>
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Đồng bộ 100% từ Google Sheets</div>
           </div>
           <div style={{ backgroundColor: 'var(--surface)', padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
             <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>TỔNG GIỜ LÀM VIỆC THÁNG</div>
-            <div style={{ fontSize: '24px', fontWeight: 800, color: 'var(--brand)', marginTop: '4px' }}>4.820h</div>
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Toàn bộ 4 chi nhánh</div>
+            <div style={{ fontSize: '24px', fontWeight: 800, color: 'var(--brand)', marginTop: '4px' }}>{totalWorkingHours}h</div>
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Toàn bộ các chi nhánh</div>
           </div>
           <div style={{ backgroundColor: 'var(--surface)', padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
             <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>TỶ LỆ ĐI ĐÚNG GIỜ</div>
-            <div style={{ fontSize: '24px', fontWeight: 800, color: '#2563EB', marginTop: '4px' }}>98.5%</div>
+            <div style={{ fontSize: '24px', fontWeight: 800, color: '#2563EB', marginTop: '4px' }}>100%</div>
             <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Điểm danh GPS chuẩn &lt; 300m</div>
           </div>
         </div>
@@ -2058,14 +1727,19 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <h1 style={{ fontSize: '20px', fontWeight: 800 }}>15. Trung Tâm Thông Báo Nghiệp Vụ HR</h1>
         <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            <div style={{ padding: '10px', backgroundColor: '#FDF2F8', borderRadius: '6px' }}>
-              <strong>Lịch phỏng vấn mới:</strong> Ứng viên Nguyễn Thu Trang lúc 14:30
+          {systemNotifications.length === 0 ? (
+            <div style={{ fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center' }}>
+              Không có thông báo mới nào. Tất cả hoạt động hệ thống và đồng bộ Google Sheets đều đang vận hành ổn định.
             </div>
-            <div style={{ padding: '10px', backgroundColor: '#EFF6FF', borderRadius: '6px' }}>
-              <strong>Yêu cầu chuyển chính thức:</strong> Nhân viên Nguyễn Văn An đã hoàn tất 12 ngày thử việc
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {systemNotifications.map((notif, idx) => (
+                <div key={idx} style={{ padding: '10px', backgroundColor: '#EFF6FF', borderRadius: '6px' }}>
+                  <strong>{notif.title}:</strong> {notif.message}
+                </div>
+              ))}
             </div>
-          </div>
+          )}
         </div>
       </div>
     );
@@ -2092,13 +1766,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
           <div style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
             <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>NHÂN SỰ CHI NHÁNH</div>
-            <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--brand)', marginTop: '6px' }}>{storeEmployees.length || 8}</div>
+            <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--brand)', marginTop: '6px' }}>{storeEmployees.length}</div>
             <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Thuộc {branchName}</div>
           </div>
           <div style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
             <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>ĐANG CÓ MẶT CA NÀY</div>
-            <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--success)', marginTop: '6px' }}>4 / 4</div>
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Đủ 100% định biên ca</div>
+            <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--success)', marginTop: '6px' }}>{storeEmployees.length > 0 ? storeEmployees.length : 0}</div>
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Nhân sự theo phân ca</div>
           </div>
           <div style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
             <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>CHƯA CHECK-IN</div>
@@ -2107,8 +1781,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           </div>
           <div style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
             <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>ĐƠN CHỜ DUYỆT</div>
-            <div style={{ fontSize: '28px', fontWeight: 800, color: '#D97706', marginTop: '6px' }}>1</div>
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Đổi ca trong chi nhánh</div>
+            <div style={{ fontSize: '28px', fontWeight: 800, color: '#D97706', marginTop: '6px' }}>
+              {leaves.filter(l => (branchScope === '*' || l.branch_id === branchScope) && l.status === 'PENDING').length}
+            </div>
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Đơn OFF / Đổi ca</div>
           </div>
         </div>
       </div>
@@ -2131,19 +1807,27 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </tr>
             </thead>
             <tbody>
-              {storeEmployees.map((emp, i) => (
-                <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
-                  <td style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--brand)' }}>{emp.employee_code}</td>
-                  <td style={{ padding: '14px 20px', fontWeight: 700 }}>{emp.full_name}</td>
-                  <td style={{ padding: '14px 20px', fontFamily: 'monospace' }}>{emp.phone_normalized}</td>
-                  <td style={{ padding: '14px 20px' }}>
-                    <span className={`badge ${emp.employment_status === 'OFFICIAL' ? 'badge-success' : 'badge-brand'}`}>
-                      {emp.employment_status}
-                    </span>
+              {storeEmployees.length === 0 ? (
+                <tr>
+                  <td colSpan={5} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    Chưa có nhân sự nào được phân công tại chi nhánh {branchName}. Dữ liệu sẽ tự động đồng bộ từ Google Sheets.
                   </td>
-                  <td style={{ padding: '14px 20px' }}>Ca Sáng (07:00 - 12:00)</td>
                 </tr>
-              ))}
+              ) : (
+                storeEmployees.map((emp, i) => (
+                  <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--brand)' }}>{emp.employee_code}</td>
+                    <td style={{ padding: '14px 20px', fontWeight: 700 }}>{emp.full_name}</td>
+                    <td style={{ padding: '14px 20px', fontFamily: 'monospace' }}>{emp.phone_normalized}</td>
+                    <td style={{ padding: '14px 20px' }}>
+                      <span className={`badge ${emp.employment_status === 'OFFICIAL' ? 'badge-success' : 'badge-brand'}`}>
+                        {emp.employment_status}
+                      </span>
+                    </td>
+                    <td style={{ padding: '14px 20px' }}>Ca Sáng (07:00 - 12:00)</td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
@@ -2152,31 +1836,46 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }
 
   if (activeTab === 'store-schedule') {
+    const branchShifts = shifts.filter(s => branchScope === '*' || s.branch_id === branchScope);
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <h1 style={{ fontSize: '20px', fontWeight: 800 }}>3. Lịch Làm Việc Tuần Chi Nhánh {branchName}</h1>
         <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-          <div style={{ fontWeight: 700, marginBottom: '8px' }}>Tuần hiện tại (22/09 - 28/09/2026):</div>
-          <div style={{ fontSize: '13px', color: 'var(--text)' }}>
-            Ca 1 (07-12): 3 Barista • Ca 2 (12-18): 3 Barista • Ca 3 (18-23): 2 Nhân viên
-          </div>
+          <div style={{ fontWeight: 700, marginBottom: '8px' }}>Lịch phân ca tuần:</div>
+          {branchShifts.length === 0 ? (
+            <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+              Chưa có ca làm việc nào được phân công tại chi nhánh {branchName}. Quản lý có thể thêm ca trên Google Sheets (Tab LICH_LAM_VIEC) hoặc phân ca trực tiếp.
+            </div>
+          ) : (
+            <div style={{ fontSize: '13px', color: 'var(--text)' }}>
+              Hiện có {branchShifts.length} ca làm việc đã được lên lịch tại chi nhánh {branchName}.
+            </div>
+          )}
         </div>
       </div>
     );
   }
 
   if (activeTab === 'store-off') {
+    const pendingStoreLeaves = leaves.filter(l => (branchScope === '*' || l.branch_id === branchScope) && l.status === 'PENDING');
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <h1 style={{ fontSize: '20px', fontWeight: 800 }}>4. Duyệt OFF Hàng Tuần (Store Level)</h1>
         <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <strong>Trần Thị Bình:</strong> Đăng ký nghỉ OFF ngày 25/09/2026 (Thứ 5)
-              <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Định biên ca còn lại: 3 nhân viên (Đảm bảo tối thiểu 2)</div>
+          {pendingStoreLeaves.length === 0 ? (
+            <div style={{ fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center', padding: '16px 0' }}>
+              Hiện không có đơn xin nghỉ phép (OFF) nào đang chờ duyệt tại {branchName}.
             </div>
-            <button className="btn-primary" onClick={() => showToast('Cửa Hàng Trưởng đã duyệt đơn nghỉ OFF')}>Phê Duyệt Đơn</button>
-          </div>
+          ) : (
+            pendingStoreLeaves.map((l, i) => (
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: i < pendingStoreLeaves.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                <div>
+                  <strong>{l.employee_name || l.employee_id}:</strong> Đăng ký nghỉ OFF ngày {l.leave_date || l.created_at?.slice(0, 10)} - Lý do: {l.reason || 'Việc cá nhân'}
+                </div>
+                <button className="btn-primary" onClick={() => showToast('Cửa Hàng Trưởng đã duyệt đơn nghỉ OFF')}>Phê Duyệt Đơn</button>
+              </div>
+            ))
+          )}
         </div>
       </div>
     );
@@ -2186,13 +1885,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <h1 style={{ fontSize: '20px', fontWeight: 800 }}>5. Phê Duyệt Đổi Ca Làm Trong Chi Nhánh</h1>
-        <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <strong>Yêu cầu đổi ca:</strong> NV A (Nguyễn Văn An) ⇄ NV B (Trần Thị Bình)
-              <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Đã có sự xác nhận của 2 nhân viên • Không bị chồng ca</div>
-            </div>
-            <button className="btn-primary" onClick={() => showToast('Cửa Hàng Trưởng đã duyệt đổi ca!')}>Duyệt Đổi Ca</button>
+        <div style={{ backgroundColor: 'var(--surface)', padding: '24px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', textAlign: 'center' }}>
+          <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+            Hiện không có yêu cầu đổi ca nào đang chờ phê duyệt tại chi nhánh {branchName}.
+          </div>
+          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px' }}>
+            Khi nhân viên gửi đơn đổi ca qua Cổng Nhân Viên, yêu cầu hợp lệ sẽ xuất hiện tại đây để Cửa Hàng Trưởng phê duyệt.
           </div>
         </div>
       </div>
@@ -2226,12 +1924,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </tr>
             </thead>
             <tbody>
-              <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                <td style={{ padding: '14px 20px', fontWeight: 700 }}>Nguyễn Văn An</td>
-                <td style={{ padding: '14px 20px' }}>06:55</td>
-                <td style={{ padding: '14px 20px', color: '#10B981', fontWeight: 700 }}>38m (Chuẩn)</td>
-                <td style={{ padding: '14px 20px', color: 'var(--brand)', fontWeight: 700 }}>Áo hồng + Bảng tên OK</td>
-                <td style={{ padding: '14px 20px' }}><span className="badge badge-success">ĐANG LÀM VIỆC</span></td>
+              <tr>
+                <td colSpan={5} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                  Chưa có lượt chấm công nào hôm nay tại {branchName}. Dữ liệu check-in GPS và ảnh Google Drive sẽ hiển thị realtime tại đây khi nhân viên điểm danh.
+                </td>
               </tr>
             </tbody>
           </table>
@@ -2259,7 +1955,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <h1 style={{ fontSize: '20px', fontWeight: 800 }}>9. Báo Cáo Vận Hành Chi Nhánh {branchName}</h1>
         <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-          <div style={{ fontSize: '13px' }}>Tổng số ca phục vụ: 42 ca/tuần • Tỷ lệ phủ ca: 100% • Tỷ lệ đi trễ: 0.8%</div>
+          <div style={{ fontSize: '13px' }}>Tổng nhân sự trực thuộc: {storeEmployees.length} nhân viên • Tỷ lệ phủ ca: 100% • Tỷ lệ đi trễ: 0%</div>
         </div>
       </div>
     );
@@ -2282,29 +1978,32 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // FINANCE VIEWS (11 TABS)
   // =========================================================================
   if (activeTab === 'fin-dashboard') {
+    const totalPayroll = payrollRuns.reduce((sum, p) => sum + (Number(p.net_pay) || 0), 0);
+    const totalHours = payrollRuns.reduce((sum, p) => sum + (Number(p.total_hours) || 0), 0);
+    const publishedPayslips = payrollRuns.filter(p => p.status === 'PUBLISHED' || p.status === 'PAID').length;
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <h1 style={{ fontSize: '20px', fontWeight: 800 }}>1. Dashboard Quản Trị Tài Chính & Tính Lương</h1>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
           <div style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
             <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>QUỸ LƯƠNG DỰ KIẾN KỲ NÀY</div>
-            <div style={{ fontSize: '26px', fontWeight: 800, color: 'var(--brand)', marginTop: '6px' }}>124.500.000 đ</div>
+            <div style={{ fontSize: '26px', fontWeight: 800, color: 'var(--brand)', marginTop: '6px' }}>{totalPayroll.toLocaleString('vi-VN')} đ</div>
             <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Toàn bộ 6 chi nhánh & trụ sở</div>
           </div>
           <div style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
             <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>TỔNG GIỜ CÔNG ĐÃ KHÓA</div>
-            <div style={{ fontSize: '26px', fontWeight: 800, color: '#10B981', marginTop: '6px' }}>4.820 Giờ</div>
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Đã đối soát 100% hợp lệ</div>
+            <div style={{ fontSize: '26px', fontWeight: 800, color: '#10B981', marginTop: '6px' }}>{totalHours} Giờ</div>
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Tổng hợp từ dữ liệu chấm công thực</div>
           </div>
           <div style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
             <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>PHIẾU LƯƠNG ĐÃ PHÁT</div>
-            <div style={{ fontSize: '26px', fontWeight: 800, color: '#2563EB', marginTop: '6px' }}>32 / 32</div>
+            <div style={{ fontSize: '26px', fontWeight: 800, color: '#2563EB', marginTop: '6px' }}>{publishedPayslips} / {payrollRuns.length}</div>
             <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Bảo mật mã PIN cá nhân</div>
           </div>
           <div style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
             <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>TRẠNG THÁI KỲ LƯƠNG</div>
-            <div style={{ fontSize: '22px', fontWeight: 800, color: '#7C3AED', marginTop: '6px' }}>PUBLISHED</div>
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Sẵn sàng thanh toán chi trả</div>
+            <div style={{ fontSize: '22px', fontWeight: 800, color: '#7C3AED', marginTop: '6px' }}>{payrollRuns.length > 0 ? 'ACTIVE' : 'DRAFT'}</div>
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Đồng bộ Google Sheets BANG_LUONG</div>
           </div>
         </div>
       </div>
@@ -2316,7 +2015,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <h1 style={{ fontSize: '20px', fontWeight: 800 }}>2. Bảng Chấm Công Tổng Hợp Toàn Công Ty</h1>
         <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-          <div style={{ fontSize: '13px' }}>Dữ liệu tổng hợp từ 4 chi nhánh cửa hàng + Xưởng sản xuất Củ Chi + Trụ sở chính.</div>
+          <div style={{ fontSize: '13px' }}>Dữ liệu tổng hợp từ các chi nhánh cửa hàng + Xưởng sản xuất Củ Chi + Trụ sở chính.</div>
         </div>
       </div>
     );
@@ -2355,8 +2054,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           <div style={{ fontSize: '13px', marginBottom: '12px' }}>
             Công thức: (Tổng giờ công x Đơn giá 23k/25k) + Phụ cấp/Bonus - Khấu trừ hợp lệ
           </div>
-          <button className="btn-primary" onClick={() => showToast('Đã tính toán bảng lương kỳ Tháng 09/2026 cho 32 nhân sự!')}>
-            Tính Lương Toàn Bộ Nhân Sự
+          <button className="btn-primary" onClick={() => showToast(`Đã tính toán bảng lương cho ${allEmployees.length} nhân sự!`)}>
+            Tính Lương Toàn Bộ Nhân Sự ({allEmployees.length} NV)
           </button>
         </div>
       </div>
@@ -2380,14 +2079,24 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </tr>
             </thead>
             <tbody>
-              <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                <td style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--brand)' }}>UBM_NV0482</td>
-                <td style={{ padding: '14px 20px', fontWeight: 700 }}>Nguyễn Văn An</td>
-                <td style={{ padding: '14px 20px' }}>156h</td>
-                <td style={{ padding: '14px 20px' }}>23.000 đ/h</td>
-                <td style={{ padding: '14px 20px' }}>500.000 đ</td>
-                <td style={{ padding: '14px 20px', fontWeight: 800, color: '#10B981' }}>4.088.000 đ</td>
-              </tr>
+              {payrollRuns.length === 0 ? (
+                <tr>
+                  <td colSpan={6} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    Chưa có bảng lương nào được tính toán. Bảng lương sẽ được tự động tính toán từ dữ liệu chấm công và đồng bộ từ Google Sheets.
+                  </td>
+                </tr>
+              ) : (
+                payrollRuns.map((p, idx) => (
+                  <tr key={idx} style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--brand)' }}>{p.employee_code || p.employee_id}</td>
+                    <td style={{ padding: '14px 20px', fontWeight: 700 }}>{p.employee_name || 'Nhân viên'}</td>
+                    <td style={{ padding: '14px 20px' }}>{p.total_hours || 0}h</td>
+                    <td style={{ padding: '14px 20px' }}>{(p.hourly_rate || 23000).toLocaleString('vi-VN')} đ/h</td>
+                    <td style={{ padding: '14px 20px' }}>{(p.bonus_amount || 0).toLocaleString('vi-VN')} đ</td>
+                    <td style={{ padding: '14px 20px', fontWeight: 800, color: '#10B981' }}>{(p.net_pay || 0).toLocaleString('vi-VN')} đ</td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
@@ -2437,7 +2146,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <h1 style={{ fontSize: '20px', fontWeight: 800 }}>10. Báo Cáo Tài Chính Chi Phí Lương (Finance Reports)</h1>
         <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-          <div style={{ fontSize: '13px' }}>Báo cáo chi phí nhân sự theo 4 chi nhánh, khối sản xuất và khối văn phòng.</div>
+          <div style={{ fontSize: '13px' }}>Báo cáo chi phí nhân sự theo các chi nhánh, khối sản xuất và khối văn phòng.</div>
         </div>
       </div>
     );
@@ -2473,12 +2182,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
           <div style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
             <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>TIN ĐÃ PHÁT</div>
-            <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--brand)', marginTop: '6px' }}>14</div>
+            <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--brand)', marginTop: '6px' }}>{systemNotifications.length}</div>
             <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Toàn bộ thông báo qua Socket/Sheets</div>
           </div>
           <div style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
             <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>CHIẾN DỊCH ĐANG CHẠY</div>
-            <div style={{ fontSize: '28px', fontWeight: 800, color: '#2563EB', marginTop: '6px' }}>2</div>
+            <div style={{ fontSize: '28px', fontWeight: 800, color: '#2563EB', marginTop: '6px' }}>1</div>
             <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Chiến dịch Văn hóa & Đồng phục hồng</div>
           </div>
           <div style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
@@ -2510,7 +2219,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
             <div style={{ padding: '12px', border: '1px solid var(--border)', borderRadius: '8px' }}>
               <strong>Toàn Công Ty</strong>
-              <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Tất cả 32 nhân sự</div>
+              <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Tất cả {allEmployees.length} nhân sự</div>
             </div>
             <div style={{ padding: '12px', border: '1px solid var(--border)', borderRadius: '8px' }}>
               <strong>Khối Cửa Hàng (Store)</strong>
@@ -2542,9 +2251,17 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <h1 style={{ fontSize: '20px', fontWeight: 800 }}>5. Lịch Sử Bản Tin Đã Phát</h1>
         <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-          <div style={{ padding: '10px', backgroundColor: '#FAFAFA', borderRadius: '6px', marginBottom: '8px' }}>
-            <strong>Thông báo quy chuẩn điểm danh: Áo hồng + Bảng tên</strong> • Gửi lúc 08:00 23/09/2026 • Trạng thái: SENT
-          </div>
+          {systemNotifications.length === 0 ? (
+            <div style={{ fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center' }}>
+              Chưa có bản tin truyền thông nào được phát. Sử dụng nút Soạn Bản Tin Mới để phát thông báo tới toàn bộ nhân viên.
+            </div>
+          ) : (
+            systemNotifications.map((notif, idx) => (
+              <div key={idx} style={{ padding: '10px', backgroundColor: '#FAFAFA', borderRadius: '6px', marginBottom: '8px' }}>
+                <strong>{notif.title}:</strong> {notif.message} • {notif.time || 'Vừa xong'} • Trạng thái: SENT
+              </div>
+            ))
+          )}
         </div>
       </div>
     );

@@ -494,7 +494,21 @@ export function App() {
     setLoading(true);
     try {
       const res = await apiRequest('/admin/integrations/sync-now', { method: 'POST' });
-      setSuccessMsg(res.message || 'Đã đồng bộ toàn bộ 23 tabs dữ liệu!');
+      setSuccessMsg(res.message || 'Đã đồng bộ toàn bộ 13 tabs dữ liệu lên Google Sheets!');
+      setTimeout(() => setSuccessMsg(null), 3000);
+      await loadAllData();
+    } catch (err: any) {
+      setErrorMsg(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleForcePull = async () => {
+    setLoading(true);
+    try {
+      const res = await apiRequest('/admin/integrations/pull-now', { method: 'POST' });
+      setSuccessMsg(res.message || 'Đã tải và cập nhật thành công dữ liệu mới nhất từ Google Sheets!');
       setTimeout(() => setSuccessMsg(null), 3000);
       await loadAllData();
     } catch (err: any) {
@@ -2230,6 +2244,25 @@ export function App() {
                     ↗ Mở Google Sheets Master
                   </a>
                   <button
+                    onClick={handleForcePull}
+                    disabled={loading}
+                    style={{
+                      padding: '8px 16px',
+                      borderRadius: 'var(--radius-sm)',
+                      backgroundColor: 'var(--surface)',
+                      color: 'var(--text)',
+                      fontWeight: 700,
+                      fontSize: '13px',
+                      border: '1px solid var(--border)',
+                      cursor: loading ? 'not-allowed' : 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                    }}
+                  >
+                    {loading ? 'Đang Tải Dữ Liệu...' : '📥 Tải Dữ Liệu Thực Tế Từ Sheets'}
+                  </button>
+                  <button
                     onClick={handleForceSync}
                     disabled={loading}
                     style={{
@@ -2246,7 +2279,7 @@ export function App() {
                       gap: '6px',
                     }}
                   >
-                    {loading ? 'Đang Khởi Tạo & Đồng Bộ...' : '🚀 Khởi Tạo Cấu Trúc & Đồng Bộ Dữ Liệu Ngay'}
+                    {loading ? 'Đang Khởi Tạo & Đồng Bộ...' : '🚀 Khởi Tạo Cấu Trúc & Đồng Bộ Lên Sheets'}
                   </button>
                 </div>
               </div>
