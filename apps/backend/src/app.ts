@@ -169,6 +169,25 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  app.delete('/employees/:id', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const id = req.params.id;
+      const ok = await adapter.deleteEmployee(id);
+      if (!ok) {
+        return res.status(404).json({ error: 'Không tìm thấy hồ sơ nhân viên để xóa' });
+      }
+      await adapter.recordAuditLog({
+        actor_id: req.user!.id,
+        action: 'EMPLOYEE_DELETED',
+        target_type: 'NHAN_VIEN_MASTER',
+        target_id: id,
+      });
+      res.json({ success: true, message: `Đã xóa nhân viên ${id}` });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   app.get('/applications', authMiddleware, requireRole(['ADMIN', 'HR']), async (req, res) => {
     try {
       const list = await employeesService.listCandidates();
@@ -689,6 +708,28 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         payload_after: updated,
       });
       res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.delete('/admin/internal-accounts/:id', authMiddleware, requireRole(['ADMIN']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const id = req.params.id;
+      if (id === 'ADM_001') {
+        return res.status(400).json({ error: 'Không thể xóa tài khoản Quản trị viên gốc (ADM_001)' });
+      }
+      const ok = await adapter.deleteAdminAccount(id);
+      if (!ok) {
+        return res.status(404).json({ error: 'Không tìm thấy tài khoản để xóa' });
+      }
+      await adapter.recordAuditLog({
+        actor_id: req.user!.id,
+        action: 'INTERNAL_ACCOUNT_DELETED',
+        target_type: 'ADMIN_ACCOUNT',
+        target_id: id,
+      });
+      res.json({ success: true, message: `Đã xóa tài khoản ${id}` });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }

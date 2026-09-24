@@ -34,7 +34,7 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   },
   {
     title: 'ADMIN_ACCOUNTS',
-    headers: ['ID Admin', 'Tên Đăng Nhập', 'Họ Và Tên', 'Vai Trò', 'Phạm Vi Chi Nhánh', 'Trạng Thái', 'Ngày Tạo'],
+    headers: ['ID Admin', 'Tên Đăng Nhập', 'Mật Khẩu', 'Họ Và Tên', 'Vai Trò', 'Phạm Vi Chi Nhánh', 'Trạng Thái', 'Ngày Tạo'],
   },
   {
     title: 'PHAN_CONG_CA',
@@ -391,20 +391,30 @@ export class GoogleSheetsSyncService {
         const sheetsAdmins: AdminAccount[] = adminRows
           .filter(r => r[0] && r[1]) // phải có admin_id và username
           .map(r => {
-            // password_hash không được lưu trên Sheets — giữ lại từ bộ nhớ nếu cùng ID/username
+            // Hỗ trợ cả định dạng mới (8 cột có Mật Khẩu ở cột 2) và cũ (7 cột không có Mật Khẩu)
+            const hasPasswordCol = r.length >= 8;
+            const passwordFromSheet = hasPasswordCol ? r[2] : '';
+            const fullName = hasPasswordCol ? (r[3] || 'Quản trị viên') : (r[2] || 'Quản trị viên');
+            const role = hasPasswordCol ? (r[4] as any) : (r[3] as any);
+            const branchScope = hasPasswordCol ? (r[5] || '*') : (r[4] || '*');
+            const statusStr = hasPasswordCol ? r[6] : r[5];
+            const createdAt = hasPasswordCol ? r[7] : r[6];
+
             const existingById = currentAdmins.find(a => a.admin_id === r[0]);
             const existingByUser = currentAdmins.find(a => a.username === r[1]);
-            const passwordHash = existingById?.password_hash || existingByUser?.password_hash || '123456';
+            const fallbackPass = (r[1] === 'admin') ? 'Master@@2027' : '123456';
+            const passwordHash = passwordFromSheet || existingById?.password_hash || existingByUser?.password_hash || fallbackPass;
+
             return {
               admin_id: r[0],
               username: r[1],
               password_hash: passwordHash,
-              full_name: r[2] || 'Quản trị viên',
-              role: (r[3] as any) || 'HR',
-              branch_scope: r[4] || '*',
-              is_active: r[5] !== 'LOCKED',
+              full_name: fullName,
+              role: role || 'HR',
+              branch_scope: branchScope || '*',
+              is_active: statusStr !== 'LOCKED',
               version: 1,
-              created_at: r[6] || new Date().toISOString(),
+              created_at: createdAt || new Date().toISOString(),
               updated_at: new Date().toISOString(),
             };
           });
@@ -421,7 +431,20 @@ export class GoogleSheetsSyncService {
         }
         counts.adminAccounts = fallback.adminAccounts.length;
       } else {
-        // Sheets trống — giữ bootstrap admin để đảm bảo có thể đăng nhập
+        // Sheets trống — giữ bootstrap admin và tự động ghi bootstrap admin lên Sheet để lưu trữ bền vững
+        const bootstrapAdmin = fallback.adminAccounts.find(a => a.admin_id === 'ADM_001');
+        if (bootstrapAdmin) {
+          this.appendRow('ADMIN_ACCOUNTS', [
+            bootstrapAdmin.admin_id,
+            bootstrapAdmin.username,
+            bootstrapAdmin.password_hash,
+            bootstrapAdmin.full_name,
+            bootstrapAdmin.role,
+            bootstrapAdmin.branch_scope,
+            bootstrapAdmin.is_active ? 'ACTIVE' : 'LOCKED',
+            bootstrapAdmin.created_at,
+          ]).catch(err => console.warn('[GoogleSheetsSyncService] Could not auto-seed bootstrap admin:', err));
+        }
         counts.adminAccounts = fallback.adminAccounts.length;
       }
 
@@ -547,6 +570,7 @@ export class GoogleSheetsSyncService {
       const adminRows = admins.map(a => [
         a.admin_id,
         a.username,
+        a.password_hash || '123456',
         a.full_name,
         a.role,
         a.branch_scope || '*',

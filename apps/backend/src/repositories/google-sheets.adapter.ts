@@ -103,10 +103,31 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     return this.fallbackAdapter.listAccounts();
   }
 
+  async createAccount(account: any) {
+    const res = await this.fallbackAdapter.createAccount(account);
+    if (this.isConfigured) {
+      const ok = await this.syncService.appendRow('TAI_KHOAN_NHAN_VIEN', [
+        res.account_id,
+        res.employee_id,
+        res.phone_normalized,
+        res.role,
+        res.account_status,
+        res.activated_by || '',
+        res.activated_at || '',
+        res.version,
+      ]);
+      if (!ok) {
+        console.warn('[GoogleSheetsAdapter] appendRow TAI_KHOAN_NHAN_VIEN failed, running syncAllData');
+        await this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
+      }
+    }
+    return res;
+  }
+
   async updateAccountStatus(id: string, status: any, actorId: string, expectedVersion: number) {
     const updated = await this.fallbackAdapter.updateAccountStatus(id, status, actorId, expectedVersion);
     if (this.isConfigured) {
-      this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
+      await this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
     }
     return updated;
   }
@@ -133,7 +154,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   async createEmployee(data: any) {
     const res = await this.fallbackAdapter.createEmployee(data);
     if (this.isConfigured) {
-      this.syncService.appendRow('NHAN_VIEN_MASTER', [
+      const ok = await this.syncService.appendRow('NHAN_VIEN_MASTER', [
         res.employee_id,
         res.employee_code,
         res.full_name,
@@ -144,9 +165,21 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
         res.current_rate_per_hour,
         res.start_date || res.created_at,
         res.version,
-      ]).catch(err => console.error(err));
+      ]);
+      if (!ok) {
+        console.warn('[GoogleSheetsAdapter] appendRow NHAN_VIEN_MASTER failed, running syncAllData');
+        await this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
+      }
     }
     return res;
+  }
+
+  async deleteEmployee(id: string) {
+    const ok = await this.fallbackAdapter.deleteEmployee(id);
+    if (ok && this.isConfigured) {
+      await this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
+    }
+    return ok;
   }
 
   async updateEmployee(id: string, updates: any, expectedVersion: number) {
@@ -431,21 +464,27 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   // --- Admin Governance ---
   async listAdminAccounts() {
+    await this.ensureFreshData();
     return this.fallbackAdapter.listAdminAccounts();
   }
 
   async createAdminAccount(account: any) {
     const res = await this.fallbackAdapter.createAdminAccount(account);
     if (this.isConfigured) {
-      this.syncService.appendRow('ADMIN_ACCOUNTS', [
+      const ok = await this.syncService.appendRow('ADMIN_ACCOUNTS', [
         res.admin_id,
         res.username,
+        res.password_hash || '123456',
         res.full_name,
         res.role,
         res.branch_scope || '*',
         res.is_active ? 'ACTIVE' : 'LOCKED',
         res.created_at,
-      ]).catch(err => console.error(err));
+      ]);
+      if (!ok) {
+        console.warn('[GoogleSheetsAdapter] appendRow ADMIN_ACCOUNTS failed, running syncAllData');
+        await this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
+      }
     }
     return res;
   }
@@ -453,9 +492,17 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   async updateAdminAccount(id: string, updates: any) {
     const res = await this.fallbackAdapter.updateAdminAccount(id, updates);
     if (this.isConfigured) {
-      this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
+      await this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
     }
     return res;
+  }
+
+  async deleteAdminAccount(id: string) {
+    const ok = await this.fallbackAdapter.deleteAdminAccount(id);
+    if (ok && this.isConfigured) {
+      await this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
+    }
+    return ok;
   }
 
   async getBranches() {

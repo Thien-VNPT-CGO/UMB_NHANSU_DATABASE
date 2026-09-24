@@ -28,6 +28,7 @@ export interface ISheetsRepository {
   findAccountByPhone(phone: string): Promise<EmployeeAccount[]>;
   getAccountById(id: string): Promise<EmployeeAccount | null>;
   listAccounts(): Promise<EmployeeAccount[]>;
+  createAccount(account: Omit<EmployeeAccount, 'created_at' | 'updated_at' | 'version'>): Promise<EmployeeAccount>;
   updateAccountStatus(id: string, status: AccountStatus, actorId: string, expectedVersion: number): Promise<EmployeeAccount>;
   getAdminByUsername(username: string): Promise<AdminAccount | null>;
 
@@ -36,6 +37,7 @@ export interface ISheetsRepository {
   listEmployees(filter?: { branch?: string; status?: string }): Promise<EmployeeMaster[]>;
   createEmployee(data: Omit<EmployeeMaster, 'created_at' | 'updated_at' | 'version'>): Promise<EmployeeMaster>;
   updateEmployee(id: string, updates: Partial<EmployeeMaster>, expectedVersion: number): Promise<EmployeeMaster>;
+  deleteEmployee(id: string): Promise<boolean>;
   getStageHistory(employeeId: string): Promise<EmployeeStageHistory[]>;
   addStageHistory(entry: Omit<EmployeeStageHistory, 'version' | 'created_at'>): Promise<EmployeeStageHistory>;
 
@@ -94,6 +96,7 @@ export interface ISheetsRepository {
   listAdminAccounts(): Promise<AdminAccount[]>;
   createAdminAccount(account: Omit<AdminAccount, 'created_at' | 'updated_at' | 'version'>): Promise<AdminAccount>;
   updateAdminAccount(id: string, updates: Partial<AdminAccount>): Promise<AdminAccount>;
+  deleteAdminAccount(id: string): Promise<boolean>;
 
   getBranches(): Promise<BranchInfo[]>;
   updateBranch(id: string, updates: Partial<BranchInfo>): Promise<BranchInfo>;

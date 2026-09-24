@@ -538,6 +538,38 @@ export function App() {
     }
   };
 
+  const handleDeleteInternalAccount = async (adminId: string, username: string) => {
+    if (adminId === 'ADM_001' || username === 'admin') {
+      setErrorMsg('Không thể xóa tài khoản Quản trị viên gốc (admin)!');
+      return;
+    }
+    if (!window.confirm(`Bạn có chắc chắn muốn xóa tài khoản ${username}? Dữ liệu trên Google Sheet ADMIN_ACCOUNTS cũng sẽ được xóa đồng bộ.`)) {
+      return;
+    }
+    try {
+      await apiRequest(`/admin/internal-accounts/${adminId}`, { method: 'DELETE' });
+      setSuccessMsg(`Đã xóa tài khoản ${username} thành công trên cả hệ thống và Google Sheets!`);
+      setTimeout(() => setSuccessMsg(null), 3000);
+      await loadAllData();
+    } catch (err: any) {
+      setErrorMsg(err.message);
+    }
+  };
+
+  const handleDeleteEmployee = async (employeeId: string, fullName: string) => {
+    if (!window.confirm(`Bạn có chắc chắn muốn xóa nhân viên ${fullName} (${employeeId})? Dữ liệu trên Google Sheet NHAN_VIEN_MASTER và TAI_KHOAN_NHAN_VIEN sẽ được xóa đồng bộ.`)) {
+      return;
+    }
+    try {
+      await apiRequest(`/employees/${employeeId}`, { method: 'DELETE' });
+      setSuccessMsg(`Đã xóa hồ sơ nhân viên ${fullName} thành công!`);
+      setTimeout(() => setSuccessMsg(null), 3000);
+      await loadAllData();
+    } catch (err: any) {
+      setErrorMsg(err.message);
+    }
+  };
+
   const handleCreateInternalAccount = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -1583,7 +1615,7 @@ export function App() {
                             {acc.is_active ? 'Đang Hoạt Động' : 'Đã Khóa'}
                           </span>
                         </td>
-                        <td style={{ padding: '14px 20px' }}>
+                        <td style={{ padding: '14px 20px', display: 'flex', gap: '8px', alignItems: 'center' }}>
                           <button
                             onClick={() => handleToggleInternalAccount(acc)}
                             style={{
@@ -1597,8 +1629,25 @@ export function App() {
                               cursor: 'pointer',
                             }}
                           >
-                            {acc.is_active ? 'Khóa Tài Khoản' : 'Mở Khóa'}
+                            {acc.is_active ? 'Khóa' : 'Mở Khóa'}
                           </button>
+                          {acc.admin_id !== 'ADM_001' && acc.username !== 'admin' && (
+                            <button
+                              onClick={() => handleDeleteInternalAccount(acc.admin_id, acc.username)}
+                              style={{
+                                padding: '6px 12px',
+                                borderRadius: 'var(--radius-sm)',
+                                border: '1px solid var(--danger)',
+                                backgroundColor: 'var(--danger-soft)',
+                                color: 'var(--danger)',
+                                fontWeight: 600,
+                                fontSize: '12px',
+                                cursor: 'pointer',
+                              }}
+                            >
+                              Xóa
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -1959,6 +2008,7 @@ export function App() {
                       <th style={{ padding: '12px 20px' }}>Chi Nhánh</th>
                       <th style={{ padding: '12px 20px' }}>Lương Giờ (VND)</th>
                       <th style={{ padding: '12px 20px' }}>Giai Đoạn</th>
+                      <th style={{ padding: '12px 20px' }}>Thao Tác</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2029,6 +2079,23 @@ export function App() {
                              emp.employment_status === 'PROBATION' ? 'Thử Việc' :
                              emp.employment_status === 'PRE_ONBOARDING' ? 'Mới Tiếp Nhận' : emp.employment_status}
                           </span>
+                        </td>
+                        <td style={{ padding: '14px 20px' }}>
+                          <button
+                            onClick={() => handleDeleteEmployee(emp.employee_id, emp.full_name)}
+                            style={{
+                              padding: '6px 12px',
+                              borderRadius: 'var(--radius-sm)',
+                              border: '1px solid var(--danger)',
+                              backgroundColor: 'var(--danger-soft)',
+                              color: 'var(--danger)',
+                              fontWeight: 600,
+                              fontSize: '12px',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            Xóa
+                          </button>
                         </td>
                       </tr>
                     ))}

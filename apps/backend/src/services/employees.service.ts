@@ -70,20 +70,21 @@ export class EmployeesService {
           note: 'Khởi tạo hồ sơ ban đầu',
         });
 
-        // Create initial pending account
-        if (this.repo instanceof (await import('../repositories/mock-sheets.adapter.js')).MockSheetsAdapter) {
-          (this.repo as any).accounts.push({
-            account_id: `ACC_${Date.now()}`,
-            employee_id: employeeId,
-            phone_normalized: data.phone,
-            account_status: 'PENDING_ACTIVATION',
-            role: 'EMPLOYEE',
-            branch_scope: data.branchId,
-            version: 1,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          });
-        }
+        // Tự động tạo tài khoản nhân viên tương ứng và đồng bộ xuống Sheet TAI_KHOAN_NHAN_VIEN
+        const initialStatus = (data.employmentStatus === 'PRE_ONBOARDING' || !data.employmentStatus)
+          ? 'PENDING_ACTIVATION'
+          : 'ACTIVE';
+
+        await this.repo.createAccount({
+          account_id: `ACC_${Date.now()}`,
+          employee_id: employeeId,
+          phone_normalized: data.phone,
+          account_status: initialStatus as any,
+          role: 'EMPLOYEE',
+          branch_scope: data.branchId || 'CN130',
+          activated_by: initialStatus === 'ACTIVE' ? data.actorId : undefined,
+          activated_at: initialStatus === 'ACTIVE' ? new Date().toISOString() : undefined,
+        });
 
         return emp;
       },

@@ -185,6 +185,24 @@ export class MockSheetsAdapter implements ISheetsRepository {
     return { ...account };
   }
 
+  async createAccount(account: Omit<EmployeeAccount, 'created_at' | 'updated_at' | 'version'>): Promise<EmployeeAccount> {
+    this.checkErrors();
+    const existing = this.accounts.find(a => a.account_id === account.account_id || a.phone_normalized === account.phone_normalized);
+    if (existing) {
+      existing.account_status = account.account_status;
+      existing.updated_at = new Date().toISOString();
+      return { ...existing };
+    }
+    const newAcc: EmployeeAccount = {
+      ...account,
+      version: 1,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    this.accounts.push(newAcc);
+    return newAcc;
+  }
+
   async getAdminByUsername(username: string): Promise<AdminAccount | null> {
     this.checkErrors();
     return this.adminAccounts.find(a => a.username === username && a.is_active) || null;
@@ -229,6 +247,15 @@ export class MockSheetsAdapter implements ISheetsRepository {
       updated_at: new Date().toISOString(),
     });
     return { ...emp };
+  }
+
+  async deleteEmployee(id: string): Promise<boolean> {
+    this.checkErrors();
+    const empIndex = this.employees.findIndex(e => e.employee_id === id);
+    if (empIndex === -1) return false;
+    this.employees.splice(empIndex, 1);
+    this.accounts = this.accounts.filter(a => a.employee_id !== id);
+    return true;
   }
 
   async getStageHistory(employeeId: string): Promise<EmployeeStageHistory[]> {
@@ -636,6 +663,14 @@ export class MockSheetsAdapter implements ISheetsRepository {
       updated_at: new Date().toISOString(),
     });
     return { ...admin };
+  }
+
+  async deleteAdminAccount(id: string): Promise<boolean> {
+    this.checkErrors();
+    const idx = this.adminAccounts.findIndex(a => a.admin_id === id);
+    if (idx === -1) return false;
+    this.adminAccounts.splice(idx, 1);
+    return true;
   }
 
   async getBranches(): Promise<BranchInfo[]> {
