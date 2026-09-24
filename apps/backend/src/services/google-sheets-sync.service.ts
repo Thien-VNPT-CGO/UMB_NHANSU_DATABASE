@@ -239,9 +239,17 @@ export class GoogleSheetsSyncService {
     }
 
     try {
-      const fallback = (repo as any).fallbackAdapter as MockSheetsAdapter;
+      // Hỗ trợ cả 2 trường hợp:
+      // 1. Nhận GoogleSheetsAdapter (có .fallbackAdapter)
+      // 2. Nhận MockSheetsAdapter trực tiếp
+      const fallback: MockSheetsAdapter = (repo as any).fallbackAdapter instanceof MockSheetsAdapter
+        ? (repo as any).fallbackAdapter
+        : (repo as any) instanceof MockSheetsAdapter
+          ? (repo as MockSheetsAdapter)
+          : null;
+
       if (!fallback) {
-        return { success: false, message: 'Adapter không tương thích', counts: null };
+        return { success: false, message: 'Adapter không tương thích — cần MockSheetsAdapter hoặc GoogleSheetsAdapter', counts: null };
       }
 
       const counts: any = {};
@@ -375,7 +383,82 @@ export class GoogleSheetsSyncService {
       }
       counts.attendanceEvents = fallback.attendanceEvents.length;
 
-      // 7. Đọc Ứng viên tuyển dụng từ Form ứng viên (nếu có sheet tab FROM_NHAN_VIEN)
+      // 7. Đọc ADMIN_ACCOUNTS (tài khoản quản trị thật từ Google Sheets)
+      const adminRows = await this.readSheetRows('ADMIN_ACCOUNTS');
+      if (adminRows.length > 0) {
+        // Giữ lại tài khoản bootstrap (ADM_001) nếu không có trong Sheets
+        const sheetsAdmins = adminRows
+          .filter(r => r[0] && r[1]) // phải có admin_id và username
+          .map(r => ({
+            admin_id: r[0],
+            username: r[1],
+            // password_hash không được lưu trên Sheets — giữ lại từ bootstrap nếu cùng ID
+            password_hash: fallback.adminAccounts.find(a => a.admin_id === r[0])?.password_hash
+              || fallback.adminAccounts.find(a => a.username === r[1])?.password_hash
+              || '123456',
+            full_name: r[2] || 'Quản trị viên',
+            role: (r[3] as any) || 'HR',
+            branch_scope: r[4] || '*',
+            is_active: r[5] !== 'LOCKED',
+            version: 1,
+            created_at: r[6] || new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }));
+        // Merge: ưu tiên Sheets, nhưng giữ bootstrap admin nếu chưa có trong Sheets
+        const bootstrapAdmin = fallback.adminAccounts.find(a => a.admin_id === 'ADM_001');
+        const sheetsHasBootstrap = sheetsAdmins.some(a => a.admin_id === 'ADM_001' || a.username === 'admin');
+        fallback.adminAccounts = sheetsHasBootstrap
+          ? sheetsAdmins
+          : [bootstrapAdmin!, ...sheetsAdmins].filter(Boolean);
+        counts.adminAccounts = fallback.adminAccounts.length;
+      } else {
+        // Sheets trống — giữ bootstrap admin để đảm bảo có thể đăng nhập
+        counts.adminAccounts = fallback.adminAccounts.length;
+      }
+
+      // 8. Đọc DON_DOI_CA (đơn đổi ca)
+      const swapRows = await this.readSheetRows('DON_DOI_CA');
+      if (swapRows.length > 0) {
+        fallback.swapRequests = swapRows.map(r => ({
+          swap_id: r[0] || `SWP_${uuidv4().slice(0, 8)}`,
+          requester_id: r[1] || '',
+          requester_assignment_id: r[2] || '',
+          target_employee_id: r[3] || '',
+          target_assignment_id: r[4] || '',
+          reason: r[5] || '',
+          status: (r[6] as any) || 'PENDING_PARTNER',
+          approved_by: r[7] || undefined,
+          created_at: r[8] || new Date().toISOString(),
+          version: 1,
+        }));
+      } else {
+        fallback.swapRequests = [];
+      }
+      counts.swapRequests = fallback.swapRequests.length;
+
+      // 9. Đọc DIEU_CHINH_CONG (điều chỉnh công)
+      const adjRows = await this.readSheetRows('DIEU_CHINH_CONG');
+      if (adjRows.length > 0) {
+        fallback.attendanceAdjustments = adjRows.map(r => ({
+          adjustment_id: r[0] || `ADJ_${uuidv4().slice(0, 8)}`,
+          assignment_id: r[1] || '',
+          employee_id: r[2] || '',
+          branch_id: '',
+          reason: r[3] || '',
+          minutes_approved: Number(r[4]) || 0,
+          approver_id: r[5] || undefined,
+          status: (r[6] as any) || 'PENDING',
+          review_note: r[7] || undefined,
+          version: 1,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }));
+      } else {
+        fallback.attendanceAdjustments = [];
+      }
+      counts.attendanceAdjustments = fallback.attendanceAdjustments.length;
+
+      // 10. Đọc Ứng viên tuyển dụng từ Form ứng viên (nếu có sheet tab FROM_NHAN_VIEN)
       if (this.candidateSpreadsheetId) {
         try {
           const candRes = await this.sheetsClient.spreadsheets.values.get({

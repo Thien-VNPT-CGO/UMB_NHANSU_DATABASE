@@ -36,12 +36,13 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
       setTimeout(async () => {
         try {
           await this.syncService.initSpreadsheetStructure();
-          const pullResult = await this.syncService.pullAllDataFromGoogleSheets(this.fallbackAdapter);
-          console.log('[GoogleSheetsAdapter] Startup pull completed:', pullResult.message);
-          // If no branches or admin in sheets, push initial branches & admin
+          const pullResult = await this.syncService.pullAllDataFromGoogleSheets(this);
+          console.log('[GoogleSheetsAdapter] Startup pull completed:', pullResult.message, pullResult.counts);
+          // If no branches in sheets, push initial data (branches, admin) to Sheets
           const branches = await this.fallbackAdapter.getBranches();
           if (branches.length === 0) {
-            await this.syncService.syncAllData(this.fallbackAdapter);
+            console.log('[GoogleSheetsAdapter] Sheets empty — pushing initial branch config...');
+            await this.syncService.syncAllData(this);
           }
         } catch (err) {
           console.error('[GoogleSheetsAdapter] Error on startup sync:', err);
@@ -53,10 +54,10 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   private async ensureFreshData() {
     if (this.isConfigured) {
       const now = Date.now();
-      if (now - this.lastPullTime > 15000) { // 15 seconds cache to avoid rate limit
+      if (now - this.lastPullTime > 5000) { // 5 giây cache — realtime hơn cho production
         this.lastPullTime = now;
         try {
-          await this.syncService.pullAllDataFromGoogleSheets(this.fallbackAdapter);
+          await this.syncService.pullAllDataFromGoogleSheets(this);
         } catch (e) {
           console.warn('[GoogleSheetsAdapter] Auto-pull error:', e);
         }
@@ -111,6 +112,10 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   }
 
   async getAdminByUsername(username: string) {
+    // Khi được cấu hình với Google Sheets: đảm bảo dữ liệu admin mới nhất
+    if (this.isConfigured) {
+      await this.ensureFreshData();
+    }
     return this.fallbackAdapter.getAdminByUsername(username);
   }
 

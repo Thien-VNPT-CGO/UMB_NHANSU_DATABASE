@@ -126,27 +126,8 @@ export class MockSheetsAdapter implements ISheetsRepository {
       maintenance_message: 'Hệ thống đang bảo trì kỹ thuật định kỳ. Quý khách vui lòng thử lại sau ít phút.',
     };
 
-    // 10. Backup Snapshots
-    this.backupSnapshots = [
-      {
-        snapshot_id: 'SNAP_20260923_000000',
-        name: 'Daily Backup Snapshot (Google Sheets 23 Tabs & Drive)',
-        file_count: 23,
-        size_mb: 18.4,
-        created_at: '2026-09-23T00:00:00+07:00',
-        status: 'SUCCESS',
-        verified: true,
-      },
-      {
-        snapshot_id: 'SNAP_20260922_000000',
-        name: 'Pre-Deployment Baseline Snapshot',
-        file_count: 23,
-        size_mb: 18.1,
-        created_at: '2026-09-22T00:00:00+07:00',
-        status: 'SUCCESS',
-        verified: true,
-      },
-    ];
+    // 10. Backup Snapshots (bắt đầu rỗng — dữ liệu thật sẽ load từ Google Sheets)
+    this.backupSnapshots = [];
 
     // 11. System Technical Settings
     this.systemSettings = {
