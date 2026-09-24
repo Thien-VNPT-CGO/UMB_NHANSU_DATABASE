@@ -454,6 +454,7 @@ export class GoogleSheetsSyncService {
           employee_id: r[2] || '',
           branch_id: '',
           reason: r[3] || '',
+          minutes_requested: Number(r[4]) || 0,
           minutes_approved: Number(r[4]) || 0,
           approver_id: r[5] || undefined,
           status: (r[6] as any) || 'PENDING',
