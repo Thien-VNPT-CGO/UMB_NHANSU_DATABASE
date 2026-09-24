@@ -88,11 +88,36 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [selectedRealtimeModal, setSelectedRealtimeModal] = useState<any>(null);
 
   // Zalo Personal QR & Bot State for HR
-  const [zaloConnected, setZaloConnected] = useState(false);
-  const [zaloPhone, setZaloPhone] = useState(currentUser?.phone || '0988123456');
+  const [zaloConnected, setZaloConnected] = useState(() => {
+    try {
+      return localStorage.getItem('ubm_zalo_connected') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [zaloPhone, setZaloPhone] = useState(() => {
+    try {
+      return localStorage.getItem('ubm_hr_zalo_phone') || currentUser?.phone || '';
+    } catch {
+      return currentUser?.phone || '';
+    }
+  });
   const [isEditingPhone, setIsEditingPhone] = useState(false);
-  const [tempPhone, setTempPhone] = useState(currentUser?.phone || '0988123456');
-  const [zaloQrType, setZaloQrType] = useState<'PERSONAL' | 'LOGIN'>('PERSONAL');
+  const [tempPhone, setTempPhone] = useState(() => {
+    try {
+      return localStorage.getItem('ubm_hr_zalo_phone') || currentUser?.phone || '';
+    } catch {
+      return currentUser?.phone || '';
+    }
+  });
+  const [zaloQrType, setZaloQrType] = useState<'AUTH_CONFIRM' | 'PERSONAL' | 'UPLOAD'>('AUTH_CONFIRM');
+  const [uploadedQrImg, setUploadedQrImg] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('ubm_hr_uploaded_qr');
+    } catch {
+      return null;
+    }
+  });
   const [zaloSessionToken, setZaloSessionToken] = useState(() => 'UBM_' + Math.random().toString(36).substring(2, 8).toUpperCase());
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [isQrLoading, setIsQrLoading] = useState(false);
@@ -101,15 +126,25 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
   // Compute QR target URL for Zalo connection
   const qrTargetUrl = useMemo(() => {
+    if (zaloQrType === 'AUTH_CONFIRM') {
+      const origin = typeof window !== 'undefined' ? window.location.origin : '';
+      const pathname = typeof window !== 'undefined' ? window.location.pathname : '';
+      return `${origin}${pathname}?zalo_auth=1&session=${zaloSessionToken}&hr=${encodeURIComponent(currentUser?.full_name || 'Quản Trị Nhân Sự HR')}`;
+    }
     if (zaloQrType === 'PERSONAL') {
       const cleanPhone = (zaloPhone || '').replace(/\s+/g, '');
-      return `https://zalo.me/${cleanPhone || '0988123456'}`;
+      return cleanPhone ? `https://zalo.me/${cleanPhone}` : `https://zalo.me`;
     }
     return `https://id.zalo.me/account?continue=https%3A%2F%2Fchat.zalo.me&session=${zaloSessionToken}`;
-  }, [zaloQrType, zaloPhone, zaloSessionToken]);
+  }, [zaloQrType, zaloPhone, zaloSessionToken, currentUser]);
 
   // Generate real scannable QR Code image Data URL
   useEffect(() => {
+    if (zaloQrType === 'UPLOAD' && uploadedQrImg) {
+      setQrDataUrl(uploadedQrImg);
+      setIsQrLoading(false);
+      return;
+    }
     let active = true;
     setIsQrLoading(true);
     QRCode.toDataURL(qrTargetUrl, {
@@ -137,7 +172,34 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     return () => {
       active = false;
     };
-  }, [qrTargetUrl, zaloSessionToken]);
+  }, [qrTargetUrl, zaloSessionToken, zaloQrType, uploadedQrImg]);
+
+  // Listen for mobile phone scan confirmation via StorageEvent and BroadcastChannel
+  useEffect(() => {
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'ubm_zalo_connected' && e.newValue === 'true') {
+        setZaloConnected(true);
+        showToast('🟢 Zalo cá nhân đã được xác nhận kết nối thành công từ điện thoại!');
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+
+    let channel: BroadcastChannel | null = null;
+    try {
+      channel = new BroadcastChannel('ubm_zalo_channel');
+      channel.onmessage = (event) => {
+        if (event.data?.type === 'ZALO_CONNECTED') {
+          setZaloConnected(true);
+          showToast('🟢 Zalo cá nhân đã được xác nhận kết nối thành công từ điện thoại!');
+        }
+      };
+    } catch {}
+
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      if (channel) channel.close();
+    };
+  }, [showToast]);
 
   // Filter employees for Store
   const storeEmployees = allEmployees.filter(
@@ -353,14 +415,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             {/* CỘT TRÁI: MÃ QR QUÉT ZALO CÁ NHÂN & THÔNG TIN TÀI KHOẢN HR */}
             <div style={{
               backgroundColor: '#F8FAFC',
-              border: zaloConnected ? '1.5px solid #10B981' : '1.5px dashed #0068FF',
-              borderRadius: '10px',
+              border: zaloConnected ? '2px solid #10B981' : '1.5px solid #0068FF',
+              borderRadius: '12px',
               padding: '16px',
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',
               textAlign: 'center',
-              boxShadow: zaloConnected ? '0 2px 10px rgba(16, 185, 129, 0.1)' : undefined,
+              boxShadow: zaloConnected ? '0 4px 14px rgba(16, 185, 129, 0.15)' : '0 2px 10px rgba(0, 104, 255, 0.08)',
             }}>
               <div style={{
                 fontSize: '12px',
@@ -374,12 +436,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               }}>
                 {zaloConnected ? (
                   <>
-                    <CheckCircle size={15} color="#10B981" />
+                    <CheckCircle size={16} color="#10B981" />
                     ĐÃ KẾT NỐI ZALO CÁ NHÂN HR
                   </>
                 ) : (
                   <>
-                    <QrCode size={15} color="#0068FF" />
+                    <QrCode size={16} color="#0068FF" />
                     Mã QR Đăng Nhập Zalo Cá Nhân HR
                   </>
                 )}
@@ -392,44 +454,62 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 marginBottom: '10px',
                 backgroundColor: '#E2E8F0',
                 padding: '3px',
-                borderRadius: '6px',
+                borderRadius: '8px',
                 width: '100%'
               }}>
+                <button
+                  type="button"
+                  onClick={() => setZaloQrType('AUTH_CONFIRM')}
+                  style={{
+                    flex: 1,
+                    padding: '5px 4px',
+                    fontSize: '10.5px',
+                    fontWeight: 700,
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    backgroundColor: zaloQrType === 'AUTH_CONFIRM' ? '#0068FF' : 'transparent',
+                    color: zaloQrType === 'AUTH_CONFIRM' ? '#FFF' : '#475569',
+                    transition: 'all 0.15s ease'
+                  }}
+                >
+                  Xác Thực Trực Tiếp
+                </button>
                 <button
                   type="button"
                   onClick={() => setZaloQrType('PERSONAL')}
                   style={{
                     flex: 1,
-                    padding: '4px 6px',
-                    fontSize: '11px',
+                    padding: '5px 4px',
+                    fontSize: '10.5px',
                     fontWeight: 700,
                     border: 'none',
-                    borderRadius: '4px',
+                    borderRadius: '6px',
                     cursor: 'pointer',
                     backgroundColor: zaloQrType === 'PERSONAL' ? '#0068FF' : 'transparent',
                     color: zaloQrType === 'PERSONAL' ? '#FFF' : '#475569',
                     transition: 'all 0.15s ease'
                   }}
                 >
-                  Zalo Cá Nhân
+                  Zalo SĐT Thật
                 </button>
                 <button
                   type="button"
-                  onClick={() => setZaloQrType('LOGIN')}
+                  onClick={() => setZaloQrType('UPLOAD')}
                   style={{
                     flex: 1,
-                    padding: '4px 6px',
-                    fontSize: '11px',
+                    padding: '5px 4px',
+                    fontSize: '10.5px',
                     fontWeight: 700,
                     border: 'none',
-                    borderRadius: '4px',
+                    borderRadius: '6px',
                     cursor: 'pointer',
-                    backgroundColor: zaloQrType === 'LOGIN' ? '#0068FF' : 'transparent',
-                    color: zaloQrType === 'LOGIN' ? '#FFF' : '#475569',
+                    backgroundColor: zaloQrType === 'UPLOAD' ? '#0068FF' : 'transparent',
+                    color: zaloQrType === 'UPLOAD' ? '#FFF' : '#475569',
                     transition: 'all 0.15s ease'
                   }}
                 >
-                  Zalo Web Login
+                  Tải QR Zalo
                 </button>
               </div>
 
@@ -476,135 +556,191 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 )}
               </div>
 
-              {/* SĐT Zalo HR & Cấu hình */}
-              <div style={{ marginTop: '12px', width: '100%' }}>
-                <div style={{ fontSize: '13px', fontWeight: 800, color: '#0F172A' }}>
-                  {currentUser?.full_name || 'Quản Trị Nhân Sự HR'}
-                </div>
-
-                {/* Chỉnh sửa SĐT Zalo */}
-                {isEditingPhone ? (
-                  <div style={{ display: 'flex', gap: '4px', marginTop: '6px' }}>
-                    <input
-                      type="text"
-                      value={tempPhone}
-                      onChange={(e) => setTempPhone(e.target.value)}
-                      placeholder="09xxxxxxxx"
-                      style={{
-                        padding: '4px 8px',
-                        fontSize: '12px',
-                        borderRadius: '4px',
-                        border: '1px solid #0068FF',
-                        flex: 1,
-                        textAlign: 'center',
-                      }}
-                    />
-                    <button
-                      type="button"
-                      className="btn-primary"
-                      style={{ padding: '4px 8px', fontSize: '11px', backgroundColor: '#0068FF' }}
-                      onClick={() => {
-                        setZaloPhone(tempPhone);
-                        setIsEditingPhone(false);
-                        showToast(`Đã cập nhật SĐT Zalo HR: ${tempPhone}`);
-                      }}
-                    >
-                      Lưu
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-outline"
-                      style={{ padding: '4px 8px', fontSize: '11px' }}
-                      onClick={() => {
-                        setTempPhone(zaloPhone);
-                        setIsEditingPhone(false);
-                      }}
-                    >
-                      Hủy
-                    </button>
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', marginTop: '4px' }}>
-                    <span style={{ fontSize: '12px', color: '#0068FF', fontWeight: 700 }}>
-                      SĐT Zalo: {zaloPhone}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setIsEditingPhone(true)}
-                      style={{
-                        background: 'transparent',
-                        border: 'none',
-                        color: '#64748B',
-                        fontSize: '11px',
-                        cursor: 'pointer',
-                        textDecoration: 'underline',
-                        padding: 0,
-                      }}
-                    >
-                      Đổi số
-                    </button>
+              {/* Hướng dẫn và cấu hình theo tab */}
+              <div style={{ marginTop: '10px', width: '100%' }}>
+                {zaloQrType === 'AUTH_CONFIRM' && (
+                  <div style={{
+                    fontSize: '11px',
+                    color: '#1E40AF',
+                    backgroundColor: '#EFF6FF',
+                    border: '1px solid #BFDBFE',
+                    borderRadius: '6px',
+                    padding: '6px 8px',
+                    marginBottom: '8px',
+                    lineHeight: '1.4'
+                  }}>
+                    📱 <strong>Quét bằng app Zalo / Camera:</strong> Mở trang xác thực của Ụm Bò Milk, bấm <strong>"Xác nhận"</strong> để kết nối tự động vào máy tính.
                   </div>
                 )}
+
+                {zaloQrType === 'PERSONAL' && (
+                  <div style={{ marginBottom: '8px' }}>
+                    <div style={{ fontSize: '11px', color: '#D97706', backgroundColor: '#FEF3C7', padding: '6px 8px', borderRadius: '6px', marginBottom: '6px', lineHeight: '1.4' }}>
+                      ⚠️ <strong>Lưu ý:</strong> Zalo chỉ hiển thị trang cá nhân khi số điện thoại đã được đăng ký tài khoản Zalo thật.
+                    </div>
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                      <input
+                        type="text"
+                        value={tempPhone}
+                        onChange={(e) => setTempPhone(e.target.value)}
+                        placeholder="Nhập SĐT Zalo của bạn..."
+                        style={{
+                          padding: '5px 8px',
+                          fontSize: '11px',
+                          borderRadius: '4px',
+                          border: '1px solid #0068FF',
+                          flex: 1,
+                          textAlign: 'center',
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        style={{ padding: '5px 8px', fontSize: '11px', backgroundColor: '#0068FF' }}
+                        onClick={() => {
+                          const clean = tempPhone.trim().replace(/\s+/g, '');
+                          if (!clean) {
+                            showToast('Vui lòng nhập số điện thoại Zalo của bạn!');
+                            return;
+                          }
+                          setZaloPhone(clean);
+                          try {
+                            localStorage.setItem('ubm_hr_zalo_phone', clean);
+                          } catch {}
+                          showToast(`Đã cập nhật mã QR theo SĐT Zalo: ${clean}`);
+                        }}
+                      >
+                        Lưu QR
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {zaloQrType === 'UPLOAD' && (
+                  <div style={{ marginBottom: '8px' }}>
+                    <label style={{
+                      display: 'block',
+                      padding: '6px 10px',
+                      fontSize: '11px',
+                      backgroundColor: '#EFF6FF',
+                      border: '1px dashed #0068FF',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      color: '#0068FF',
+                      fontWeight: 700,
+                    }}>
+                      📁 Chọn ảnh QR Zalo từ máy tính
+                      <input
+                        type="file"
+                        accept="image/*"
+                        style={{ display: 'none' }}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            const reader = new FileReader();
+                            reader.onload = (ev) => {
+                              const res = ev.target?.result as string;
+                              setUploadedQrImg(res);
+                              try {
+                                localStorage.setItem('ubm_hr_uploaded_qr', res);
+                              } catch {}
+                              showToast('Đã tải lên ảnh mã QR Zalo cá nhân thành công!');
+                            };
+                            reader.readAsDataURL(file);
+                          }
+                        }}
+                      />
+                    </label>
+                  </div>
+                )}
+
+                <div style={{ fontSize: '13px', fontWeight: 800, color: '#0F172A', marginTop: '4px' }}>
+                  {currentUser?.full_name || 'Quản Trị Nhân Sự HR'}
+                </div>
 
                 <div style={{
                   fontSize: '11px',
                   color: zaloConnected ? '#059669' : '#0068FF',
-                  fontWeight: 600,
-                  marginTop: '4px'
-                }}>
-                  {zaloConnected ? '● Trạng thái: Đã đồng bộ Zalo cá nhân' : '○ Trạng thái: Sẵn sàng kết nối qua QR'}
-                </div>
-
-                <div style={{
-                  marginTop: '8px',
-                  backgroundColor: zaloConnected ? '#ECFDF5' : '#EFF6FF',
-                  border: zaloConnected ? '1px solid #A7F3D0' : '1px solid #BFDBFE',
-                  borderRadius: '6px',
-                  padding: '6px 8px',
-                  fontSize: '11px',
-                  color: zaloConnected ? '#065F46' : '#1E40AF',
                   fontWeight: 700,
+                  marginTop: '2px'
                 }}>
-                  {zaloConnected
-                    ? '✓ Đã kích hoạt BOT gửi thư mời qua tài khoản Zalo HR'
-                    : 'Quét mã QR bằng ứng dụng Zalo trên điện thoại'}
+                  {zaloConnected ? '● Trạng thái: Đã kết nối Zalo cá nhân' : '○ Trạng thái: Chờ kết nối qua QR'}
                 </div>
 
-                <div style={{ display: 'flex', gap: '6px', marginTop: '10px' }}>
-                  <button
-                    className="btn-secondary"
-                    style={{ flex: 1, fontSize: '11px', padding: '6px' }}
-                    onClick={() => {
-                      setZaloSessionToken('UBM_' + Math.random().toString(36).substring(2, 8).toUpperCase());
-                      showToast('Mã QR Zalo đã được làm mới. Vui lòng quét lại trên điện thoại!');
-                    }}
-                  >
-                    Làm Mới QR
-                  </button>
-
+                {/* NÚT KÍCH HOẠT NHANH 1-CHẠM TRỰC TIẾP TRÊN MÁY TÍNH */}
+                <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   {!zaloConnected ? (
                     <button
+                      type="button"
                       className="btn-primary"
-                      style={{ flex: 1.2, fontSize: '11px', padding: '6px', backgroundColor: '#10B981' }}
+                      style={{
+                        width: '100%',
+                        fontSize: '11.5px',
+                        padding: '8px',
+                        backgroundColor: '#10B981',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '6px',
+                        boxShadow: '0 2px 8px rgba(16, 185, 129, 0.25)',
+                      }}
                       onClick={() => {
                         setZaloConnected(true);
-                        showToast('🟢 Đã quét QR & kích hoạt kết nối Zalo cá nhân thành công!');
+                        try {
+                          localStorage.setItem('ubm_zalo_connected', 'true');
+                        } catch {}
+                        showToast('🟢 ĐÃ KẾT NỐI ZALO CÁ NHÂN HR THÀNH CÔNG! BOT sẵn sàng gửi thư mời.');
                       }}
                     >
-                      Xác Nhận Đã Quét
+                      <CheckCircle size={14} />
+                      ⚡ Kích Hoạt Kết Nối Zalo Ngay (Không Cần Quét)
                     </button>
                   ) : (
                     <button
+                      type="button"
                       className="btn-outline"
-                      style={{ flex: 1, fontSize: '11px', padding: '6px', color: '#DC2626', borderColor: '#FCA5A5' }}
+                      style={{
+                        width: '100%',
+                        fontSize: '11.5px',
+                        padding: '6px',
+                        color: '#DC2626',
+                        borderColor: '#FCA5A5',
+                        backgroundColor: '#FEF2F2',
+                      }}
                       onClick={() => {
                         setZaloConnected(false);
+                        try {
+                          localStorage.removeItem('ubm_zalo_connected');
+                        } catch {}
                         showToast('Đã đăng xuất phiên Zalo cá nhân!');
                       }}
                     >
-                      Đăng Xuất
+                      Đăng Xuất Phiên Zalo
                     </button>
                   )}
+
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <button
+                      className="btn-secondary"
+                      style={{ flex: 1, fontSize: '11px', padding: '6px' }}
+                      onClick={() => {
+                        setZaloSessionToken('UBM_' + Math.random().toString(36).substring(2, 8).toUpperCase());
+                        showToast('Mã QR Zalo đã được làm mới. Vui lòng quét lại trên điện thoại!');
+                      }}
+                    >
+                      Làm Mới QR
+                    </button>
+
+                    <button
+                      className="btn-outline"
+                      style={{ flex: 1, fontSize: '11px', padding: '6px', color: '#0068FF' }}
+                      onClick={() => {
+                        window.open('https://chat.zalo.me', '_blank');
+                      }}
+                    >
+                      Mở Zalo Web
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
