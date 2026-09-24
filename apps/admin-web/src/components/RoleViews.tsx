@@ -430,7 +430,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   Chào bạn <strong>Phạm Hải Yến</strong>,<br />
                   Phòng Nhân Sự Ụm Bò Milk trân trọng mời bạn tham gia buổi phỏng vấn trực tuyến:<br />
                   🕒 <strong>Thời gian:</strong> 14:30 - Thứ Năm, 24/09/2026 (Thời lượng: 30 phút)<br />
-                  📍 <strong>Chi nhánh tuyển dụng:</strong> CN130 - Cách Mạng Tháng 8, Q.3, TP.HCM<br />
+                  📍 <strong>Chi nhánh tuyển dụng:</strong> CN1 - 130 Vạn Kiếp, Phường 3, Quận Bình Thạnh, TP.HCM<br />
                   🔗 <strong>Link phòng họp Google Meet:</strong> <span style={{ color: '#0068FF', textDecoration: 'underline' }}>https://meet.google.com/ubm-interview-130</span><br />
                   👤 <strong>Người phỏng vấn:</strong> Trần Thị Mai (HR Lead - Zalo này)<br />
                   📌 <em>Lưu ý: Bạn vui lòng vào trước 5 phút và chuẩn bị trang phục lịch sự nhé.</em><br />
@@ -484,10 +484,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               <div>
                 <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Chi nhánh tuyển dụng:</label>
                 <select style={{ width: '100%' }} defaultValue="CN130">
-                  <option value="CN130">CN130 - Cách Mạng Tháng 8</option>
-                  <option value="CN120">CN120 - Điện Biên Phủ</option>
-                  <option value="CN261">CN261 - Võ Văn Ngân</option>
-                  <option value="CN111">CN111 - Phan Đăng Lưu</option>
+                  <option value="CN130">CN1: 130 Vạn Kiếp (Bình Thạnh)</option>
+                  <option value="CN261">CN2: 261 Tô Hiến Thành (Q.10)</option>
+                  <option value="CN120">CN3: 120 Hoàng Diệu 2 (Thủ Đức)</option>
+                  <option value="CN111">CN4: 111 Tôn Đản (Q.4)</option>
                 </select>
               </div>
 
@@ -573,7 +573,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 </td>
                 <td style={{ padding: '14px 20px' }}>
                   <strong>Nhân viên Pha chế</strong>
-                  <div style={{ fontSize: '11px', color: '#2563EB' }}>CN130 - Cách Mạng Tháng 8</div>
+                  <div style={{ fontSize: '11px', color: '#2563EB' }}>CN1 - 130 Vạn Kiếp (Bình Thạnh)</div>
                 </td>
                 <td style={{ padding: '14px 20px', fontWeight: 700, color: '#DC2626' }}>
                   14:30 - 24/09/2026
@@ -1458,7 +1458,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 </div>
                 <div>
                   <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Chi nhánh công tác:</div>
-                  <strong style={{ color: '#2563EB' }}>CN130 - Cách Mạng Tháng 8</strong>
+                  <strong style={{ color: '#2563EB' }}>CN1 - 130 Vạn Kiếp (Bình Thạnh)</strong>
                 </div>
                 <div>
                   <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Ca làm cần nhường:</div>
@@ -1722,7 +1722,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 </td>
                 <td style={{ padding: '14px 20px' }}>
                   <strong style={{ color: '#DC2626' }}>Ca 3: Tối (17:00 - 22:00)</strong>
-                  <div style={{ fontSize: '11px', color: '#2563EB' }}>CN130 - Cách Mạng Tháng 8</div>
+                  <div style={{ fontSize: '11px', color: '#2563EB' }}>CN1 - 130 Vạn Kiếp (Bình Thạnh)</div>
                 </td>
                 <td style={{ padding: '14px 20px', fontWeight: 700 }}>
                   24/09/2026 (Hôm nay)
@@ -1952,7 +1952,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>UBM_NV0482 • 0901111222</div>
                 </td>
                 <td style={{ padding: '14px 20px' }}>
-                  CN130 - Cách Mạng Tháng 8
+                  CN1 - 130 Vạn Kiếp (Bình Thạnh)
                   <div style={{ fontSize: '11px', color: '#2563EB' }}>Thử việc ngày 6/12</div>
                 </td>
                 <td style={{ padding: '14px 20px' }}>

@@ -127,16 +127,16 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
 // Quy chuẩn hiển thị chi nhánh: Khối văn phòng & sales => Trụ sở chính, Xưởng => Củ Chi, Store => theo chi nhánh cụ thể
 export function getDisplayBranch(branchId?: string, group?: string): string {
   if (group === 'VAN_PHONG' || group === 'SALE' || branchId === 'VAN_PHONG') {
-    return 'Trụ sở chính';
+    return 'Văn Phòng: 10 Đặng Thai Mai (Phú Nhuận)';
   }
   if (group === 'XUONG' || branchId === 'XUONG_SX') {
-    return 'Củ Chi';
+    return 'Xưởng Sản Xuất (Củ Chi)';
   }
-  if (branchId === 'CN130') return 'Chi Nhánh 130';
-  if (branchId === 'CN120') return 'Chi Nhánh 120';
-  if (branchId === 'CN261') return 'Chi Nhánh 261';
-  if (branchId === 'CN111') return 'Chi Nhánh 111';
-  return branchId || 'Trụ sở chính';
+  if (branchId === 'CN130' || branchId === 'CN1') return 'CN1: 130 Vạn Kiếp (Bình Thạnh)';
+  if (branchId === 'CN261' || branchId === 'CN2') return 'CN2: 261 Tô Hiến Thành (Q.10)';
+  if (branchId === 'CN120' || branchId === 'CN3') return 'CN3: 120 Hoàng Diệu 2 (Thủ Đức)';
+  if (branchId === 'CN111' || branchId === 'CN4') return 'CN4: 111 Tôn Đản (Q.4)';
+  return branchId || 'Trụ sở chính (10 Đặng Thai Mai)';
 }
 
 export function App() {
@@ -1853,12 +1853,12 @@ export function App() {
                   style={{ padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px' }}
                 >
                   <option value="ALL">Mọi Chi Nhánh</option>
-                  <option value="CN130">Chi Nhánh 130</option>
-                  <option value="CN120">Chi Nhánh 120</option>
-                  <option value="CN261">Chi Nhánh 261</option>
-                  <option value="CN111">Chi Nhánh 111</option>
-                  <option value="XUONG_SX">Củ Chi (Xưởng SX)</option>
-                  <option value="VAN_PHONG">Trụ sở chính (Văn Phòng & Sales)</option>
+                  <option value="CN130">CN1: 130 Vạn Kiếp (Bình Thạnh)</option>
+                  <option value="CN261">CN2: 261 Tô Hiến Thành (Q.10)</option>
+                  <option value="CN120">CN3: 120 Hoàng Diệu 2 (Thủ Đức)</option>
+                  <option value="CN111">CN4: 111 Tôn Đản (Q.4)</option>
+                  <option value="XUONG_SX">Xưởng Sản Xuất (Củ Chi)</option>
+                  <option value="VAN_PHONG">Văn Phòng: 10 Đặng Thai Mai (Phú Nhuận)</option>
                 </select>
               </div>
 
@@ -2715,12 +2715,12 @@ export function App() {
                   style={{ width: '100%', padding: '8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}
                 >
                   <option value="*">Toàn Hệ Thống (*)</option>
-                  <option value="CN130">Chi Nhánh 130</option>
-                  <option value="CN120">Chi Nhánh 120</option>
-                  <option value="CN261">Chi Nhánh 261</option>
-                  <option value="CN111">Chi Nhánh 111</option>
-                  <option value="XUONG_SX">Xưởng Sản Xuất</option>
-                  <option value="VAN_PHONG">Văn Phòng Trụ Sở</option>
+                  <option value="CN130">CN1: 130 Vạn Kiếp (Bình Thạnh)</option>
+                  <option value="CN261">CN2: 261 Tô Hiến Thành (Q.10)</option>
+                  <option value="CN120">CN3: 120 Hoàng Diệu 2 (Thủ Đức)</option>
+                  <option value="CN111">CN4: 111 Tôn Đản (Q.4)</option>
+                  <option value="XUONG_SX">Xưởng Sản Xuất (Củ Chi)</option>
+                  <option value="VAN_PHONG">Văn Phòng: 10 Đặng Thai Mai (Phú Nhuận)</option>
                 </select>
               </div>
               <div>
@@ -2791,12 +2791,12 @@ export function App() {
                   style={{ width: '100%', padding: '8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}
                 >
                   <option value="ALL">Tất cả nhân sự (Toàn hệ thống)</option>
-                  <option value="CN130">Nhân sự Chi Nhánh 130</option>
-                  <option value="CN120">Nhân sự Chi Nhánh 120</option>
-                  <option value="CN261">Nhân sự Chi Nhánh 261</option>
-                  <option value="CN111">Nhân sự Chi Nhánh 111</option>
-                  <option value="XUONG_SX">Nhân sự Xưởng Sản Xuất</option>
-                  <option value="VAN_PHONG">Nhân sự Văn Phòng Trụ Sở</option>
+                  <option value="CN130">Nhân sự CN1: 130 Vạn Kiếp (Bình Thạnh)</option>
+                  <option value="CN261">Nhân sự CN2: 261 Tô Hiến Thành (Q.10)</option>
+                  <option value="CN120">Nhân sự CN3: 120 Hoàng Diệu 2 (Thủ Đức)</option>
+                  <option value="CN111">Nhân sự CN4: 111 Tôn Đản (Q.4)</option>
+                  <option value="XUONG_SX">Nhân sự Xưởng Sản Xuất (Củ Chi)</option>
+                  <option value="VAN_PHONG">Nhân sự Văn Phòng: 10 Đặng Thai Mai (Phú Nhuận)</option>
                 </select>
               </div>
               <div>
@@ -2992,10 +2992,10 @@ export function App() {
                     onChange={(e) => setNewEmpForm({ ...newEmpForm, branchId: e.target.value })}
                     style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px' }}
                   >
-                    <option value="CN130">Chi Nhánh 130</option>
-                    <option value="CN120">Chi Nhánh 120</option>
-                    <option value="CN261">Chi Nhánh 261</option>
-                    <option value="CN111">Chi Nhánh 111</option>
+                    <option value="CN130">CN1: 130 Vạn Kiếp (Bình Thạnh)</option>
+                    <option value="CN261">CN2: 261 Tô Hiến Thành (Q.10)</option>
+                    <option value="CN120">CN3: 120 Hoàng Diệu 2 (Thủ Đức)</option>
+                    <option value="CN111">CN4: 111 Tôn Đản (Q.4)</option>
                   </select>
                 )}
               </div>
