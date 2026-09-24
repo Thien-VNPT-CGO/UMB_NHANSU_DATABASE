@@ -7,8 +7,25 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   constructor() {
     this.fallbackAdapter = new MockSheetsAdapter();
+
+    // Check if GOOGLE_SERVICE_ACCOUNT_JSON is provided
+    if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
+      try {
+        const creds = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+        if (creds.client_email && creds.private_key) {
+          process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = creds.client_email;
+          process.env.GOOGLE_PRIVATE_KEY = creds.private_key;
+        }
+      } catch (e) {
+        console.warn('Failed to parse GOOGLE_SERVICE_ACCOUNT_JSON from environment:', e);
+      }
+    }
+
+    const spreadsheetId = process.env.SPREADSHEET_ID || process.env.GOOGLE_SPREADSHEET_ID || '17iXM0zc1m17aX9AZrFMjOkPRMy2_CwWfjTRZSUPQF2w';
+    process.env.SPREADSHEET_ID = spreadsheetId;
+
     // Check if Google credentials are provided in env
-    if (process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && process.env.GOOGLE_PRIVATE_KEY && process.env.SPREADSHEET_ID) {
+    if (process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && process.env.GOOGLE_PRIVATE_KEY && spreadsheetId) {
       this.isConfigured = true;
     }
   }
@@ -18,10 +35,11 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   }
 
   public getStatus() {
+    const spreadsheetId = process.env.SPREADSHEET_ID || process.env.GOOGLE_SPREADSHEET_ID || '17iXM0zc1m17aX9AZrFMjOkPRMy2_CwWfjTRZSUPQF2w';
     return {
       connected: true,
       mode: this.isConfigured ? 'GOOGLE_SHEETS_LIVE' : 'MOCK_ENGINE_ACTIVE',
-      spreadsheetId: process.env.SPREADSHEET_ID || '17iXM0zc1m17aX9AZrFMjOkPRMy2_CwWfjTRZSUPQF2w',
+      spreadsheetId,
       message: this.isConfigured
         ? 'Connected to live Google Sheets master'
         : 'Google credentials not set in .env; running in high-fidelity mock engine with full audit & schema persistence',
