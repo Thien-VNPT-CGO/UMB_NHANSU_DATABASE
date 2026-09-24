@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import QRCode from 'qrcode';
 import {
   Users,
   Calendar,
@@ -87,9 +88,56 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [selectedRealtimeModal, setSelectedRealtimeModal] = useState<any>(null);
 
   // Zalo Personal QR & Bot State for HR
-  const [zaloConnected, setZaloConnected] = useState(true);
+  const [zaloConnected, setZaloConnected] = useState(false);
+  const [zaloPhone, setZaloPhone] = useState(currentUser?.phone || '0988123456');
+  const [isEditingPhone, setIsEditingPhone] = useState(false);
+  const [tempPhone, setTempPhone] = useState(currentUser?.phone || '0988123456');
+  const [zaloQrType, setZaloQrType] = useState<'PERSONAL' | 'LOGIN'>('PERSONAL');
+  const [zaloSessionToken, setZaloSessionToken] = useState(() => 'UBM_' + Math.random().toString(36).substring(2, 8).toUpperCase());
+  const [qrDataUrl, setQrDataUrl] = useState<string>('');
+  const [isQrLoading, setIsQrLoading] = useState(false);
   const [selectedZaloMsg, setSelectedZaloMsg] = useState<any>(null);
   const [autoZaloBotEnabled, setAutoZaloBotEnabled] = useState(true);
+
+  // Compute QR target URL for Zalo connection
+  const qrTargetUrl = useMemo(() => {
+    if (zaloQrType === 'PERSONAL') {
+      const cleanPhone = (zaloPhone || '').replace(/\s+/g, '');
+      return `https://zalo.me/${cleanPhone || '0988123456'}`;
+    }
+    return `https://id.zalo.me/account?continue=https%3A%2F%2Fchat.zalo.me&session=${zaloSessionToken}`;
+  }, [zaloQrType, zaloPhone, zaloSessionToken]);
+
+  // Generate real scannable QR Code image Data URL
+  useEffect(() => {
+    let active = true;
+    setIsQrLoading(true);
+    QRCode.toDataURL(qrTargetUrl, {
+      width: 240,
+      margin: 2,
+      errorCorrectionLevel: 'H',
+      color: {
+        dark: '#003366',
+        light: '#FFFFFF',
+      },
+    })
+      .then((url) => {
+        if (active) {
+          setQrDataUrl(url);
+          setIsQrLoading(false);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setQrDataUrl(`https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=8&data=${encodeURIComponent(qrTargetUrl)}`);
+          setIsQrLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [qrTargetUrl, zaloSessionToken]);
 
   // Filter employees for Store
   const storeEmployees = allEmployees.filter(
@@ -256,11 +304,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           </div>
           <button
             className="btn-primary"
-            style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#0068FF' }}
-            onClick={() => showToast('Đang làm mới phiên kết nối Zalo cá nhân của HR...')}
+            style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: zaloConnected ? '#0068FF' : '#475569' }}
+            onClick={() => {
+              setZaloSessionToken('UBM_' + Math.random().toString(36).substring(2, 8).toUpperCase());
+              showToast('Đang làm mới phiên kết nối Zalo cá nhân của HR...');
+            }}
           >
             <Smartphone size={16} />
-            Phiên Zalo: {currentUser?.full_name || 'HR Ụm Bò Milk'} (Sẵn Sàng)
+            Phiên Zalo: {currentUser?.full_name || 'HR Ụm Bò Milk'} ({zaloConnected ? '🟢 Đã Kết Nối' : 'Chờ Quét QR'})
           </button>
         </div>
 
@@ -287,14 +338,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               TÍCH HỢP ZALO CÁ NHÂN CỦA HR (QUÉT QR ĐĂNG NHẬP & KÍCH HOẠT BOT GỬI THƯ MỜI)
             </div>
             <span style={{
-              backgroundColor: '#10B981',
+              backgroundColor: zaloConnected ? '#10B981' : '#F59E0B',
               color: '#FFF',
               fontSize: '11px',
               fontWeight: 800,
               padding: '4px 10px',
               borderRadius: '999px',
             }}>
-              ● BOT ZALO SẴN SÀNG KẾT NỐI
+              {zaloConnected ? '● BOT ZALO ĐÃ KẾT NỐI & SẴN SÀNG' : '○ CHƯA KẾT NỐI ZALO (CẦN QUÉT QR)'}
             </span>
           </div>
 
@@ -302,100 +353,258 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             {/* CỘT TRÁI: MÃ QR QUÉT ZALO CÁ NHÂN & THÔNG TIN TÀI KHOẢN HR */}
             <div style={{
               backgroundColor: '#F8FAFC',
-              border: '1.5px dashed #0068FF',
+              border: zaloConnected ? '1.5px solid #10B981' : '1.5px dashed #0068FF',
               borderRadius: '10px',
               padding: '16px',
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',
               textAlign: 'center',
+              boxShadow: zaloConnected ? '0 2px 10px rgba(16, 185, 129, 0.1)' : undefined,
             }}>
-              <div style={{ fontSize: '12px', fontWeight: 800, color: '#0068FF', marginBottom: '10px', textTransform: 'uppercase' }}>
-                Mã QR Đăng Nhập Zalo Cá Nhân HR
+              <div style={{
+                fontSize: '12px',
+                fontWeight: 800,
+                color: zaloConnected ? '#059669' : '#0068FF',
+                marginBottom: '10px',
+                textTransform: 'uppercase',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}>
+                {zaloConnected ? (
+                  <>
+                    <CheckCircle size={15} color="#10B981" />
+                    ĐÃ KẾT NỐI ZALO CÁ NHÂN HR
+                  </>
+                ) : (
+                  <>
+                    <QrCode size={15} color="#0068FF" />
+                    Mã QR Đăng Nhập Zalo Cá Nhân HR
+                  </>
+                )}
               </div>
 
-              {/* MÔ PHỎNG QR CODE ZALO SẮC NÉT */}
+              {/* Mode Selector */}
               <div style={{
-                width: '150px',
-                height: '150px',
+                display: 'flex',
+                gap: '4px',
+                marginBottom: '10px',
+                backgroundColor: '#E2E8F0',
+                padding: '3px',
+                borderRadius: '6px',
+                width: '100%'
+              }}>
+                <button
+                  type="button"
+                  onClick={() => setZaloQrType('PERSONAL')}
+                  style={{
+                    flex: 1,
+                    padding: '4px 6px',
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    backgroundColor: zaloQrType === 'PERSONAL' ? '#0068FF' : 'transparent',
+                    color: zaloQrType === 'PERSONAL' ? '#FFF' : '#475569',
+                    transition: 'all 0.15s ease'
+                  }}
+                >
+                  Zalo Cá Nhân
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setZaloQrType('LOGIN')}
+                  style={{
+                    flex: 1,
+                    padding: '4px 6px',
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    backgroundColor: zaloQrType === 'LOGIN' ? '#0068FF' : 'transparent',
+                    color: zaloQrType === 'LOGIN' ? '#FFF' : '#475569',
+                    transition: 'all 0.15s ease'
+                  }}
+                >
+                  Zalo Web Login
+                </button>
+              </div>
+
+              {/* MÃ QR CODE ZALO THẬT SẮC NÉT (QUÉT ĐƯỢC 100% BẰNG ĐIỆN THOẠI) */}
+              <div style={{
+                width: '180px',
+                height: '180px',
                 backgroundColor: '#FFF',
-                border: '2px solid #E2E8F0',
-                borderRadius: '8px',
+                border: '2px solid #0068FF',
+                borderRadius: '10px',
                 padding: '8px',
                 display: 'flex',
                 flexDirection: 'column',
                 justifyContent: 'center',
                 alignItems: 'center',
                 position: 'relative',
-                boxShadow: 'var(--shadow-sm)',
+                boxShadow: '0 4px 12px rgba(0, 104, 255, 0.12)',
               }}>
-                <div style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(5, 1fr)',
-                  gap: '4px',
-                  width: '100%',
-                  height: '100%',
-                }}>
-                  {[...Array(25)].map((_, idx) => (
-                    <div
-                      key={idx}
-                      style={{
-                        backgroundColor: (idx % 2 === 0 || idx % 5 === 0 || idx === 12) ? '#0F172A' : '#E2E8F0',
-                        borderRadius: '2px',
-                      }}
+                {isQrLoading && !qrDataUrl ? (
+                  <div style={{ fontSize: '11px', color: '#64748B' }}>Đang sinh mã QR...</div>
+                ) : (
+                  <>
+                    <img
+                      src={qrDataUrl || `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(qrTargetUrl)}`}
+                      alt="Mã QR Zalo Cá Nhân HR"
+                      style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '4px' }}
                     />
-                  ))}
-                </div>
-                {/* Logo Zalo giữa QR */}
-                <div style={{
-                  position: 'absolute',
-                  backgroundColor: '#0068FF',
-                  color: '#FFF',
-                  fontSize: '11px',
-                  fontWeight: 900,
-                  padding: '2px 6px',
-                  borderRadius: '4px',
-                  boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-                }}>
-                  Zalo
-                </div>
+                    {/* Logo Zalo giữa QR */}
+                    <div style={{
+                      position: 'absolute',
+                      backgroundColor: '#0068FF',
+                      color: '#FFF',
+                      fontSize: '10px',
+                      fontWeight: 900,
+                      padding: '2px 6px',
+                      borderRadius: '4px',
+                      border: '2px solid #FFFFFF',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.25)',
+                      pointerEvents: 'none',
+                    }}>
+                      Zalo
+                    </div>
+                  </>
+                )}
               </div>
 
+              {/* SĐT Zalo HR & Cấu hình */}
               <div style={{ marginTop: '12px', width: '100%' }}>
                 <div style={{ fontSize: '13px', fontWeight: 800, color: '#0F172A' }}>
                   {currentUser?.full_name || 'Quản Trị Nhân Sự HR'}
                 </div>
-                <div style={{ fontSize: '12px', color: '#0068FF', fontWeight: 600 }}>
-                  Zalo HR: Sẵn sàng kết nối
+
+                {/* Chỉnh sửa SĐT Zalo */}
+                {isEditingPhone ? (
+                  <div style={{ display: 'flex', gap: '4px', marginTop: '6px' }}>
+                    <input
+                      type="text"
+                      value={tempPhone}
+                      onChange={(e) => setTempPhone(e.target.value)}
+                      placeholder="09xxxxxxxx"
+                      style={{
+                        padding: '4px 8px',
+                        fontSize: '12px',
+                        borderRadius: '4px',
+                        border: '1px solid #0068FF',
+                        flex: 1,
+                        textAlign: 'center',
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      style={{ padding: '4px 8px', fontSize: '11px', backgroundColor: '#0068FF' }}
+                      onClick={() => {
+                        setZaloPhone(tempPhone);
+                        setIsEditingPhone(false);
+                        showToast(`Đã cập nhật SĐT Zalo HR: ${tempPhone}`);
+                      }}
+                    >
+                      Lưu
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-outline"
+                      style={{ padding: '4px 8px', fontSize: '11px' }}
+                      onClick={() => {
+                        setTempPhone(zaloPhone);
+                        setIsEditingPhone(false);
+                      }}
+                    >
+                      Hủy
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', marginTop: '4px' }}>
+                    <span style={{ fontSize: '12px', color: '#0068FF', fontWeight: 700 }}>
+                      SĐT Zalo: {zaloPhone}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setIsEditingPhone(true)}
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: '#64748B',
+                        fontSize: '11px',
+                        cursor: 'pointer',
+                        textDecoration: 'underline',
+                        padding: 0,
+                      }}
+                    >
+                      Đổi số
+                    </button>
+                  </div>
+                )}
+
+                <div style={{
+                  fontSize: '11px',
+                  color: zaloConnected ? '#059669' : '#0068FF',
+                  fontWeight: 600,
+                  marginTop: '4px'
+                }}>
+                  {zaloConnected ? '● Trạng thái: Đã đồng bộ Zalo cá nhân' : '○ Trạng thái: Sẵn sàng kết nối qua QR'}
                 </div>
+
                 <div style={{
                   marginTop: '8px',
-                  backgroundColor: '#EFF6FF',
-                  border: '1px solid #BFDBFE',
+                  backgroundColor: zaloConnected ? '#ECFDF5' : '#EFF6FF',
+                  border: zaloConnected ? '1px solid #A7F3D0' : '1px solid #BFDBFE',
                   borderRadius: '6px',
                   padding: '6px 8px',
                   fontSize: '11px',
-                  color: '#1E40AF',
+                  color: zaloConnected ? '#065F46' : '#1E40AF',
                   fontWeight: 700,
                 }}>
-                  Quét mã QR bằng ứng dụng Zalo trên điện thoại
+                  {zaloConnected
+                    ? '✓ Đã kích hoạt BOT gửi thư mời qua tài khoản Zalo HR'
+                    : 'Quét mã QR bằng ứng dụng Zalo trên điện thoại'}
                 </div>
 
-                <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+                <div style={{ display: 'flex', gap: '6px', marginTop: '10px' }}>
                   <button
                     className="btn-secondary"
                     style={{ flex: 1, fontSize: '11px', padding: '6px' }}
-                    onClick={() => showToast('Mã QR Zalo đã được làm mới. Vui lòng quét lại trên điện thoại!')}
+                    onClick={() => {
+                      setZaloSessionToken('UBM_' + Math.random().toString(36).substring(2, 8).toUpperCase());
+                      showToast('Mã QR Zalo đã được làm mới. Vui lòng quét lại trên điện thoại!');
+                    }}
                   >
                     Làm Mới QR
                   </button>
-                  <button
-                    className="btn-outline"
-                    style={{ flex: 1, fontSize: '11px', padding: '6px', color: '#DC2626' }}
-                    onClick={() => showToast('Đã đăng xuất phiên Zalo cá nhân!')}
-                  >
-                    Đăng Xuất
-                  </button>
+
+                  {!zaloConnected ? (
+                    <button
+                      className="btn-primary"
+                      style={{ flex: 1.2, fontSize: '11px', padding: '6px', backgroundColor: '#10B981' }}
+                      onClick={() => {
+                        setZaloConnected(true);
+                        showToast('🟢 Đã quét QR & kích hoạt kết nối Zalo cá nhân thành công!');
+                      }}
+                    >
+                      Xác Nhận Đã Quét
+                    </button>
+                  ) : (
+                    <button
+                      className="btn-outline"
+                      style={{ flex: 1, fontSize: '11px', padding: '6px', color: '#DC2626', borderColor: '#FCA5A5' }}
+                      onClick={() => {
+                        setZaloConnected(false);
+                        showToast('Đã đăng xuất phiên Zalo cá nhân!');
+                      }}
+                    >
+                      Đăng Xuất
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -783,21 +992,115 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }
 
   if (activeTab === 'hr-schedule') {
-    const scheduleItems = allEmployees.map((emp) => {
+    // Dynamic calculation of current week days (Monday -> Sunday)
+    const now = new Date();
+    const dayOfWeek = now.getDay(); // 0 is Sun, 1 is Mon, ..., 6 is Sat
+    const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    const monday = new Date(now);
+    monday.setDate(now.getDate() + diffToMonday);
+
+    const weekDays = [
+      { key: 't2', code: 'T2', name: 'THỨ 2' },
+      { key: 't3', code: 'T3', name: 'THỨ 3' },
+      { key: 't4', code: 'T4', name: 'THỨ 4' },
+      { key: 't5', code: 'T5', name: 'THỨ 5' },
+      { key: 't6', code: 'T6', name: 'THỨ 6' },
+      { key: 't7', code: 'T7', name: 'THỨ 7' },
+      { key: 'cn', code: 'CN', name: 'CHỦ NHẬT' },
+    ].map((item, index) => {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + index);
+      const dd = String(d.getDate()).padStart(2, '0');
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const yyyy = d.getFullYear();
+      const dateStr = `${dd}/${mm}`;
+      const isoDate = `${yyyy}-${mm}-${dd}`;
+      const isToday = d.toDateString() === now.toDateString();
+
+      const dMidnight = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+      const nowMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      const isPast = dMidnight < nowMidnight;
+      const isFuture = dMidnight > nowMidnight;
+
+      return {
+        ...item,
+        date: d,
+        dateStr,
+        isoDate,
+        isToday,
+        isPast,
+        isFuture,
+      };
+    });
+
+    const todayItem = weekDays.find((d) => d.isToday) || weekDays[0];
+
+    const scheduleItems = allEmployees.map((emp, empIdx) => {
       const empShifts = shifts.filter((s) => s.employee_id === emp.employee_id);
+      const dayDataMap: Record<string, any> = {};
+
+      weekDays.forEach((day) => {
+        const foundShift = empShifts.find((s) => s.shift_code?.includes(day.code));
+        let defaultShiftName = 'Ca 1 (07-12)';
+        if (empIdx % 3 === 1) defaultShiftName = 'Ca 2 (12-18)';
+        if (empIdx % 3 === 2) defaultShiftName = 'Ca 3 (18-23)';
+
+        const isOffDay = (empIdx % 2 === 0 && day.key === 't5') || (empIdx % 2 === 1 && day.key === 't7');
+        const isBonusSwapDay = empIdx === 1 && day.key === 'cn';
+
+        if (isOffDay) {
+          dayDataMap[day.key] = {
+            shift: 'Nghỉ OFF',
+            status: 'OFF',
+            isToday: day.isToday,
+          };
+        } else if (isBonusSwapDay) {
+          dayDataMap[day.key] = {
+            shift: defaultShiftName,
+            status: 'BONUS_SWAP',
+            note: 'Nhận thay ca (+30.000đ)',
+            isToday: day.isToday,
+          };
+        } else if (day.isToday) {
+          // REALTIME ATTENDANCE ON EXACT TODAY!
+          if (empIdx === 0 || empIdx % 2 === 0) {
+            dayDataMap[day.key] = {
+              shift: foundShift?.shift_code || defaultShiftName,
+              status: 'CHECKED_IN',
+              time: '06:58',
+              gps: 'GPS hợp lệ (Khoảng cách 45m < 300m)',
+              isToday: true,
+            };
+          } else {
+            dayDataMap[day.key] = {
+              shift: foundShift?.shift_code || defaultShiftName,
+              status: 'PENDING',
+              isToday: true,
+            };
+          }
+        } else if (day.isPast) {
+          dayDataMap[day.key] = {
+            shift: foundShift?.shift_code || defaultShiftName,
+            status: 'COMPLETED',
+            time: '07:02 - 12:05',
+            isToday: false,
+          };
+        } else {
+          dayDataMap[day.key] = {
+            shift: foundShift?.shift_code || defaultShiftName,
+            status: 'UPCOMING',
+            isToday: false,
+          };
+        }
+      });
+
       return {
         empId: emp.employee_id,
-        empCode: emp.employee_code || 'UBM_NV0000',
+        empCode: emp.employee_code || `UBM_NV${String(1000 + empIdx)}`,
         name: emp.full_name,
         stage: emp.employment_status === 'PROBATION' ? 'PROBATION' : 'OFFICIAL',
-        branch: emp.default_branch_id || 'CN130',
-        t2: { shift: empShifts.find((s) => s.shift_code?.includes('T2'))?.shift_code || 'Ca 1 (07-12)', status: 'UPCOMING' },
-        t3: { shift: empShifts.find((s) => s.shift_code?.includes('T3'))?.shift_code || 'Ca 1 (07-12)', status: 'UPCOMING', isToday: true },
-        t4: { shift: empShifts.find((s) => s.shift_code?.includes('T4'))?.shift_code || 'Ca 2 (12-18)', status: 'UPCOMING' },
-        t5: { shift: 'Nghỉ OFF', status: 'OFF' },
-        t6: { shift: empShifts.find((s) => s.shift_code?.includes('T6'))?.shift_code || 'Ca 1 (07-12)', status: 'UPCOMING' },
-        t7: { shift: 'Nghỉ OFF', status: 'OFF' },
-        cn: { shift: 'Ca 2 (12-18)', status: 'UPCOMING' },
+        branch: emp.default_branch_id || emp.branch_id || 'CN130',
+        days: dayDataMap,
       };
     });
 
@@ -876,7 +1179,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               animation: 'pulse 1.2s infinite',
             }} />
             <div style={{ fontSize: '13px', color: '#065F46' }}>
-              <strong>TỰ ĐỘNG ĐIỂM DANH REALTIME:</strong> Kênh Socket.IO đang kết nối, tự động ghi nhận check-in từ Cổng Nhân Viên, xác thực GPS &lt; 300m và đồng bộ ảnh áo hồng lên Google Drive.
+              <strong>TỰ ĐỘNG ĐIỂM DANH REALTIME:</strong> Giám sát trực tiếp hôm nay ({todayItem.name}, ngày {todayItem.dateStr}/{new Date().getFullYear()}). Kênh Socket.IO đang kết nối, tự động ghi nhận check-in từ Cổng Nhân Viên, xác thực GPS &lt; 300m và đồng bộ ảnh áo hồng lên Google Drive.
             </div>
           </div>
 
@@ -975,16 +1278,42 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <thead>
               <tr style={{ backgroundColor: 'var(--bg)', borderBottom: '1px solid var(--border)', textAlign: 'center' }}>
                 <th style={{ padding: '12px 16px', textAlign: 'left', minWidth: '190px' }}>NHÂN VIÊN / VAI TRÒ</th>
-                <th style={{ padding: '12px 10px', minWidth: '140px' }}>THỨ 2 (22/09)</th>
-                <th style={{ padding: '12px 10px', minWidth: '160px', backgroundColor: '#FEF2F2', borderLeft: '2px solid #F87171', borderRight: '2px solid #F87171' }}>
-                  <div style={{ color: '#DC2626', fontWeight: 800 }}>THỨ 3 (HÔM NAY 23/09)</div>
-                  <div style={{ fontSize: '10px', color: '#B91C1C' }}>GIÁM SÁT REALTIME</div>
-                </th>
-                <th style={{ padding: '12px 10px', minWidth: '140px' }}>THỨ 4 (24/09)</th>
-                <th style={{ padding: '12px 10px', minWidth: '140px' }}>THỨ 5 (25/09)</th>
-                <th style={{ padding: '12px 10px', minWidth: '140px' }}>THỨ 6 (26/09)</th>
-                <th style={{ padding: '12px 10px', minWidth: '140px' }}>THỨ 7 (27/09)</th>
-                <th style={{ padding: '12px 10px', minWidth: '140px' }}>CHỦ NHẬT (28/09)</th>
+                {weekDays.map((day) => {
+                  if (day.isToday) {
+                    return (
+                      <th
+                        key={day.key}
+                        style={{
+                          padding: '12px 10px',
+                          minWidth: '160px',
+                          backgroundColor: '#FEF2F2',
+                          borderLeft: '2px solid #F87171',
+                          borderRight: '2px solid #F87171',
+                        }}
+                      >
+                        <div style={{ color: '#DC2626', fontWeight: 800 }}>{day.name} (HÔM NAY {day.dateStr})</div>
+                        <div style={{
+                          fontSize: '10px',
+                          color: '#B91C1C',
+                          fontWeight: 700,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '4px',
+                          marginTop: '2px',
+                        }}>
+                          <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#DC2626', animation: 'pulse 1.2s infinite' }} />
+                          GIÁM SÁT REALTIME
+                        </div>
+                      </th>
+                    );
+                  }
+                  return (
+                    <th key={day.key} style={{ padding: '12px 10px', minWidth: '140px' }}>
+                      {day.name} ({day.dateStr})
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
@@ -1012,16 +1341,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   </td>
 
                   {/* Day Columns */}
-                  {[
-                    { key: 't2', data: emp.t2 },
-                    { key: 't3', data: emp.t3, isToday: true },
-                    { key: 't4', data: emp.t4 },
-                    { key: 't5', data: emp.t5 },
-                    { key: 't6', data: emp.t6 },
-                    { key: 't7', data: emp.t7 },
-                    { key: 'cn', data: emp.cn },
-                  ].map((cell, cIdx) => {
-                    const d = cell.data as any;
+                  {weekDays.map((day) => {
+                    const d = (emp.days && emp.days[day.key]) || { shift: 'Nghỉ OFF', status: 'OFF' };
                     const isCheckedIn = d.status === 'CHECKED_IN';
                     const isPending = d.status === 'PENDING';
                     const isOff = d.status === 'OFF';
@@ -1029,14 +1350,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
                     return (
                       <td
-                        key={cIdx}
+                        key={day.key}
                         style={{
                           padding: '10px 8px',
                           verticalAlign: 'top',
                           textAlign: 'center',
-                          backgroundColor: cell.isToday ? '#FFFBFB' : isOff ? '#F9FAFB' : '#FFFFFF',
-                          borderLeft: cell.isToday ? '2px solid #FCA5A5' : undefined,
-                          borderRight: cell.isToday ? '2px solid #FCA5A5' : undefined,
+                          backgroundColor: day.isToday ? '#FFFBFB' : isOff ? '#F9FAFB' : '#FFFFFF',
+                          borderLeft: day.isToday ? '2px solid #FCA5A5' : undefined,
+                          borderRight: day.isToday ? '2px solid #FCA5A5' : undefined,
                         }}
                       >
                         <div style={{
@@ -1106,7 +1427,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             </div>
                           )}
 
-                          {isPending && cell.isToday && (
+                          {isPending && day.isToday && (
                             <div style={{ marginTop: '2px' }}>
                               <span style={{
                                 display: 'inline-flex',
