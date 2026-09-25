@@ -86,6 +86,34 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   };
   weeklyOffTick();
   setInterval(weeklyOffTick, 60_000);
+
+  // Background Auto-Sync Worker: Tự động kéo toàn bộ dữ liệu từ Google Sheets mỗi 15 giây
+  // và phát tín hiệu realtime qua Socket.IO tới toàn bộ ứng dụng web khi có dữ liệu thay đổi.
+  let lastSyncSignature = '';
+  const autoPullSheetsTick = async () => {
+    try {
+      const syncService = (adapter as any).syncService;
+      if (syncService && syncService.getStatus().isConfigured) {
+        const pullRes = await syncService.pullAllDataFromGoogleSheets(adapter);
+        if (pullRes && pullRes.success && pullRes.counts) {
+          const currentSignature = JSON.stringify(pullRes.counts);
+          if (lastSyncSignature && lastSyncSignature !== currentSignature) {
+            console.log('🔄 [Sheets Auto-Sync] Dữ liệu Google Sheets có thay đổi, đã tự động nạp lên hệ thống:', pullRes.counts);
+            io.emit('data:updated', { entity: 'all', data: pullRes.counts, timestamp: new Date().toISOString() });
+          }
+          lastSyncSignature = currentSignature;
+        }
+      }
+    } catch (err: any) {
+      console.warn('[sheets-auto-pull] tick error:', err?.message || err);
+    }
+  };
+
+  // Kéo dữ liệu tự động ngay sau khi khởi động 2 giây
+  setTimeout(autoPullSheetsTick, 2000);
+  // Định kỳ tự động quét và kéo dữ liệu mới từ Google Sheets mỗi 15 giây
+  const syncIntervalMs = Number(process.env.SHEETS_SYNC_INTERVAL_MS) || 15_000;
+  setInterval(autoPullSheetsTick, syncIntervalMs);
 });
 
 export { server, io };

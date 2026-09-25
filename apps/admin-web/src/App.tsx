@@ -1070,7 +1070,7 @@ export function App() {
       const res = await apiRequest('/admin/integrations/sync-now', { method: 'POST' });
       setSuccessMsg(res.message || 'Đã đồng bộ toàn bộ 13 tabs dữ liệu lên Google Sheets!');
       setTimeout(() => setSuccessMsg(null), 3000);
-      await loadAllData();
+      await loadAllData(currentUser, true);
     } catch (err: any) {
       setErrorMsg(err.message);
     } finally {
@@ -1084,7 +1084,7 @@ export function App() {
       const res = await apiRequest('/admin/integrations/pull-now', { method: 'POST' });
       setSuccessMsg(res.message || 'Đã tải và cập nhật thành công dữ liệu mới nhất từ Google Sheets!');
       setTimeout(() => setSuccessMsg(null), 3000);
-      await loadAllData();
+      await loadAllData(currentUser, true);
     } catch (err: any) {
       setErrorMsg(err.message);
     } finally {

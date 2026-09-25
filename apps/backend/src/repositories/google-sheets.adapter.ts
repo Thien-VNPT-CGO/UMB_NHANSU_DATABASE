@@ -541,6 +541,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   }
 
   async getShiftTemplates() {
+    await this.ensureFreshData();
     return this.fallbackAdapter.getShiftTemplates();
   }
 
@@ -549,6 +550,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   }
 
   async getPolicies() {
+    await this.ensureFreshData();
     return this.fallbackAdapter.getPolicies();
   }
 
@@ -557,6 +559,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   }
 
   async getMaintenance() {
+    await this.ensureFreshData();
     return this.fallbackAdapter.getMaintenance();
   }
 
@@ -577,10 +580,15 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   }
 
   async getSystemSettings() {
+    await this.ensureFreshData();
     return this.fallbackAdapter.getSystemSettings();
   }
 
   async updateSystemSettings(settings: any) {
-    return this.fallbackAdapter.updateSystemSettings(settings);
+    const updated = await this.fallbackAdapter.updateSystemSettings(settings);
+    if (this.isConfigured) {
+      await this.syncService.syncSystemSettingsToSheet(updated).catch(err => console.error(err));
+    }
+    return updated;
   }
 }

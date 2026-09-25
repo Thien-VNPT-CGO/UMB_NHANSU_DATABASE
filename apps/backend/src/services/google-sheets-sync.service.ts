@@ -71,6 +71,10 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
     headers: ['Mã Chi Nhánh', 'Tên Chi Nhánh', 'Địa Chỉ', 'Vĩ Độ GPS', 'Kinh Độ GPS', 'Bán Kính Cho Phép (m)', 'Trạng Thái'],
   },
   {
+    title: 'CAU_HINH_HE_THONG',
+    headers: ['Tham Số', 'Giá Trị', 'Mô Tả', 'Cập Nhật Lần Cuối'],
+  },
+  {
     title: 'FROM_NHAN_VIEN',
     headers: [
       'Ngày Đăng Ký',
@@ -92,7 +96,6 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
       'Mã Nguồn',
     ],
   },
-  // (Đã xóa các tab mirror HR_* / CHI_TIET_LUONG / CAU_HINH_HE_THONG không dùng — chỉ giữ 12 tab master)
 ];
 
 export class GoogleSheetsSyncService {
@@ -272,7 +275,7 @@ export class GoogleSheetsSyncService {
 
       const counts: any = {};
 
-      // Đọc 9 tabs cùng lúc trong 1 round-trip (realtime) thay vì 9 lượt nối tiếp.
+      // Đọc toàn bộ các tabs dữ liệu cùng lúc trong 1 round-trip (batchGet realtime)
       const batch = await this.readTabsBatch([
         'NHAN_VIEN_MASTER',
         'TAI_KHOAN_NHAN_VIEN',
@@ -283,25 +286,43 @@ export class GoogleSheetsSyncService {
         'ADMIN_ACCOUNTS',
         'DON_DOI_CA',
         'DIEU_CHINH_CONG',
+        'KY_LUONG',
+        'CAU_HINH_HE_THONG',
       ]);
 
       // 1. Đọc NHAN_VIEN_MASTER
       const empRows = batch['NHAN_VIEN_MASTER'];
       if (empRows.length > 0) {
-        fallback.employees = empRows.map((r, idx) => ({
-          employee_id: r[0] || `EMP_${uuidv4().slice(0, 8)}`,
-          employee_code: r[1] || `UBM_NV${String(idx + 1).padStart(6, '0')}`,
-          full_name: r[2] || 'Nhân Viên',
-          phone_normalized: r[3] || '',
-          employment_status: (r[4] as any) || 'OFFICIAL',
-          group: (r[5] as any) || 'STORE',
-          default_branch_id: r[6] || 'CN130',
-          current_rate_per_hour: Number(r[7]) || 25500,
-          start_date: r[8] || new Date().toISOString().split('T')[0],
-          created_at: r[8] || new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          version: Number(r[9]) || 1,
-        }));
+        fallback.employees = empRows
+          .filter(r => r && (r[2] || r[3]))
+          .map((r, idx) => {
+            const phone = (r[3] || '').trim();
+            const phoneClean = phone.replace(/\D/g, '');
+            const empId = r[0] && r[0].trim() ? r[0].trim() : (phoneClean ? `EMP_${phoneClean}` : `EMP_${uuidv4().slice(0, 8)}`);
+            const empCode = r[1] && r[1].trim() ? r[1].trim() : `UBM_NV${String(idx + 1).padStart(6, '0')}`;
+            const fullName = (r[2] || '').trim() || 'Nhân Viên';
+            const status = (r[4] as any) || 'OFFICIAL';
+            const group = (r[5] as any) || 'STORE';
+            const branchId = (r[6] || '').trim() || 'CN130';
+            const rate = Number(r[7]) || 25500;
+            const startDate = (r[8] || '').trim() || new Date().toISOString().split('T')[0];
+            const version = Number(r[9]) || 1;
+
+            return {
+              employee_id: empId,
+              employee_code: empCode,
+              full_name: fullName,
+              phone_normalized: phoneClean,
+              employment_status: status,
+              group: group,
+              default_branch_id: branchId,
+              current_rate_per_hour: rate,
+              start_date: startDate,
+              created_at: startDate,
+              updated_at: new Date().toISOString(),
+              version: version,
+            };
+          });
       } else {
         fallback.employees = [];
       }
@@ -310,24 +331,50 @@ export class GoogleSheetsSyncService {
       // 2. Đọc TAI_KHOAN_NHAN_VIEN
       const accRows = batch['TAI_KHOAN_NHAN_VIEN'];
       if (accRows.length > 0) {
-        fallback.accounts = accRows.map(r => ({
-          account_id: r[0] || `ACC_${uuidv4().slice(0, 8)}`,
-          employee_id: r[1] || '',
-          phone_normalized: r[2] || '',
-          role: (r[3] as any) || 'EMPLOYEE',
-          account_status: (r[4] as any) || 'ACTIVE',
-          branch_scope: r[8] || 'ALL',
-          activated_by: r[5] || 'ADM_001',
-          activated_at: r[6] || new Date().toISOString(),
-          created_at: r[6] || new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          version: Number(r[7]) || 1,
-          // 2 cột PIN appended ở cuối (tài khoản cũ chưa có -> PIN_NOT_SET cho đến khi HR cấp).
-          pin_hash: r[9] || undefined,
-          pin_must_change: r[10] === 'YES',
-        }));
+        fallback.accounts = accRows
+          .filter(r => r && (r[0] || r[2]))
+          .map(r => ({
+            account_id: r[0] || `ACC_${uuidv4().slice(0, 8)}`,
+            employee_id: r[1] || '',
+            phone_normalized: (r[2] || '').replace(/\D/g, ''),
+            role: (r[3] as any) || 'EMPLOYEE',
+            account_status: (r[4] as any) || 'ACTIVE',
+            branch_scope: r[8] || 'ALL',
+            activated_by: r[5] || 'ADM_001',
+            activated_at: r[6] || new Date().toISOString(),
+            created_at: r[6] || new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            version: Number(r[7]) || 1,
+            // 2 cột PIN appended ở cuối (tài khoản cũ chưa có -> PIN_NOT_SET cho đến khi HR cấp).
+            pin_hash: r[9] || undefined,
+            pin_must_change: r[10] === 'YES',
+          }));
       } else {
         fallback.accounts = [];
+      }
+
+      // TỰ ĐỘNG ĐỐI CHIẾU: Nhân viên có trong NHAN_VIEN_MASTER nhưng chưa có trong TAI_KHOAN_NHAN_VIEN
+      // -> Tự động sinh tài khoản để nhân viên đăng nhập được ngay bằng số điện thoại!
+      const existingPhones = new Set(fallback.accounts.map(a => a.phone_normalized).filter(Boolean));
+      for (const emp of fallback.employees) {
+        if (emp.phone_normalized && emp.phone_normalized.length >= 9 && !existingPhones.has(emp.phone_normalized)) {
+          existingPhones.add(emp.phone_normalized);
+          fallback.accounts.push({
+            account_id: `ACC_${emp.employee_id.replace(/^EMP_/, '')}`,
+            employee_id: emp.employee_id,
+            phone_normalized: emp.phone_normalized,
+            role: 'EMPLOYEE' as any,
+            account_status: (emp.employment_status === 'OFFICIAL' || emp.employment_status === 'PROBATION') ? 'ACTIVE' : 'PRE_ONBOARDING' as any,
+            branch_scope: emp.default_branch_id || 'ALL',
+            activated_by: 'AUTO_GOOGLE_SHEETS',
+            activated_at: new Date().toISOString(),
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            version: 1,
+            pin_hash: undefined,
+            pin_must_change: true,
+          });
+        }
       }
       counts.accounts = fallback.accounts.length;
 
@@ -531,7 +578,53 @@ export class GoogleSheetsSyncService {
       }
       counts.attendanceAdjustments = fallback.attendanceAdjustments.length;
 
-      // 10. Đọc Ứng viên tuyển dụng từ Form ứng viên Google Sheets (đầy đủ 17 cột)
+      // 10. Đọc KY_LUONG (kỳ lương)
+      const payrollRows = batch['KY_LUONG'];
+      if (payrollRows && payrollRows.length > 0) {
+        fallback.payrollRuns = payrollRows
+          .filter(r => r && (r[0] || r[1]))
+          .map(r => ({
+            run_id: r[0] || `RUN_${uuidv4().slice(0, 8)}`,
+            period: r[1] || new Date().toISOString().slice(0, 7),
+            branch_scope: 'ALL',
+            status: (r[2] as any) || 'DRAFT',
+            total_employees: 0,
+            total_hours: 0,
+            total_amount: Number(r[3]) || 0,
+            created_by: 'ADM_001',
+            created_at: r[4] || new Date().toISOString(),
+            updated_at: r[4] || new Date().toISOString(),
+            published_at: r[5] || undefined,
+            paid_at: r[6] || undefined,
+            version: 1,
+          }));
+      } else {
+        fallback.payrollRuns = [];
+      }
+      counts.payrollRuns = fallback.payrollRuns.length;
+
+      // 11. Đọc CAU_HINH_HE_THONG (cài đặt kỹ thuật hệ thống)
+      const configRows = batch['CAU_HINH_HE_THONG'];
+      if (configRows && configRows.length > 0) {
+        const settingsObj: any = {};
+        for (const r of configRows) {
+          const key = (r[0] || '').trim();
+          const val = r[1];
+          if (key) {
+            try {
+              settingsObj[key] = JSON.parse(val);
+            } catch {
+              settingsObj[key] = val;
+            }
+          }
+        }
+        if (Object.keys(settingsObj).length > 0) {
+          fallback.systemSettings = { ...fallback.systemSettings, ...settingsObj };
+          counts.systemSettings = Object.keys(settingsObj).length;
+        }
+      }
+
+      // 12. Đọc Ứng viên tuyển dụng từ Form ứng viên Google Sheets (đầy đủ 17 cột)
       let candRows: string[][] = [];
       let targetSheetTitle = 'FROM_NHAN_VIEN';
 
@@ -735,6 +828,26 @@ export class GoogleSheetsSyncService {
       // Giữ nguyên hành vi cũ: lỗi -> tab rỗng (caller tự fallback).
     }
     return out;
+  }
+
+  /**
+   * Đồng bộ cấu hình kỹ thuật hệ thống lên tab CAU_HINH_HE_THONG trên Google Sheets
+   */
+  public async syncSystemSettingsToSheet(settings: any): Promise<boolean> {
+    if (!this.sheetsClient) return false;
+    try {
+      const rows = Object.entries(settings || {}).map(([k, v]) => [
+        k,
+        typeof v === 'object' ? JSON.stringify(v) : String(v ?? ''),
+        `Cấu hình tham số ${k}`,
+        new Date().toISOString(),
+      ]);
+      await this.overwriteSheetData('CAU_HINH_HE_THONG', ['Tham Số', 'Giá Trị', 'Mô Tả', 'Cập Nhật Lần Cuối'], rows);
+      return true;
+    } catch (err: any) {
+      console.warn('[GoogleSheetsSyncService] Lỗi ghi CAU_HINH_HE_THONG:', err?.message || err);
+      return false;
+    }
   }
 
   /**
@@ -943,6 +1056,32 @@ export class GoogleSheetsSyncService {
           ];
         });
         await this.overwriteSheetData('DON_NGHI_PHEP', leaveDef.headers, leaveRows);
+      }
+
+      // 17. Đồng bộ Kỳ lương (KY_LUONG)
+      const payrollList = await repo.listPayrollRuns();
+      if (payrollList && payrollList.length > 0) {
+        const prDef = SHEETS_DEFINITIONS.find(d => d.title === 'KY_LUONG');
+        if (prDef) {
+          const prRows = payrollList.map((p: any) => [
+            p.run_id,
+            p.period,
+            p.status,
+            p.total_amount || 0,
+            p.created_at || '',
+            p.published_at || '',
+            p.paid_at || '',
+          ]);
+          await this.overwriteSheetData('KY_LUONG', prDef.headers, prRows);
+          details.payrollRuns = prRows.length;
+        }
+      }
+
+      // 18. Đồng bộ Cài đặt hệ thống (CAU_HINH_HE_THONG)
+      const sysSettings = await repo.getSystemSettings();
+      if (sysSettings) {
+        await this.syncSystemSettingsToSheet(sysSettings);
+        details.systemSettings = Object.keys(sysSettings).length;
       }
 
       return {
