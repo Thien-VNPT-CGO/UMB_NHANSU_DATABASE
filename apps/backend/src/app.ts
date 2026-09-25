@@ -86,7 +86,9 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.set('trust proxy', 1);
   app.disable('x-powered-by');
   app.use(helmetMiddleware());
-  app.use(cors(buildCorsOptions()));
+  const corsMiddleware = cors(buildCorsOptions());
+  app.use(corsMiddleware);
+  app.options('*', corsMiddleware);
   app.use(express.json({ limit: '2mb' }));
   app.use(generalRateLimiter());
   app.use('/auth/', authRateLimiter());

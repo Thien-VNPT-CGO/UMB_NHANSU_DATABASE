@@ -14,41 +14,56 @@ function isTestEnv(): boolean {
   return process.env.NODE_ENV === 'test';
 }
 
-const DEV_ORIGINS = [
+const DEFAULT_ORIGIN_PATTERNS = [
+  'https://*.vercel.app',
+  'https://*.onrender.com',
+  'http://localhost:*',
+  'http://127.0.0.1:*',
+  'http://localhost:3000',
   'http://localhost:3005',
   'http://localhost:3006',
   'http://localhost:4005',
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'http://127.0.0.1:3000',
   'http://127.0.0.1:3005',
   'http://127.0.0.1:3006',
   'http://127.0.0.1:4005',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:5174',
 ];
 
 /**
  * Danh sách origin được phép (HTTP + Socket dùng chung).
- * - Production: bắt buộc khai CORS_ORIGINS (cách nhau bằng dấu phẩy).
- * - Dev: localhost mặc định + CORS_ORIGINS (nếu có).
- * - Request không có Origin (curl, supertest, mobile app) luôn được cho qua.
+ * Mặc định luôn bao gồm domain Vercel, Render và Localhost để không bị chặn kết nối.
  */
 export function getAllowedOrigins(): string[] {
   const configured = parseList(process.env.CORS_ORIGINS);
-  if (process.env.NODE_ENV === 'production') return configured;
-  return [...DEV_ORIGINS, ...configured];
+  return Array.from(new Set([...DEFAULT_ORIGIN_PATTERNS, ...configured]));
 }
 
-/** Hỗ trợ wildcard dạng `https://*.vercel.app`. */
+/** Hỗ trợ wildcard dạng `https://*.vercel.app` hoặc `http://localhost:*`. */
 export function isOriginAllowed(origin: string, patterns: string[]): boolean {
+  if (!origin) return true;
+
+  // Tự động cho phép mọi domain Vercel và Render của hệ thống
+  if (/^https:\/\/[a-zA-Z0-9_.-]+\.vercel\.app$/i.test(origin)) return true;
+  if (/^https:\/\/[a-zA-Z0-9_.-]+\.onrender\.com$/i.test(origin)) return true;
+  if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) return true;
+
   for (const raw of patterns) {
     const p = raw.trim();
     if (!p) continue;
     if (p === '*') return true;
-    if (p === origin) return true;
+    if (p.toLowerCase() === origin.toLowerCase()) return true;
     if (p.includes('*')) {
-      // Chỉ hỗ trợ wildcard subdomain ở đầu: https://*.vercel.app
-      const regex = new RegExp(
-        '^' + p.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\\\*/g, '[a-z0-9-]+') + '$',
-        'i'
-      );
-      if (regex.test(origin)) return true;
+      const regexStr = '^' + p.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\\\*/g, '.*') + '$';
+      try {
+        const regex = new RegExp(regexStr, 'i');
+        if (regex.test(origin)) return true;
+      } catch {
+        // bỏ qua lỗi compile regex
+      }
     }
   }
   return false;
@@ -58,14 +73,17 @@ export function buildCorsOptions(): CorsOptions {
   const allowed = getAllowedOrigins();
   return {
     origin: (origin, callback) => {
-      // Không có Origin (supertest/curl/mobile) -> cho qua, auth vẫn kiểm tra JWT.
+      // Không có Origin (curl, mobile, supertest) -> cho qua
       if (!origin) return callback(null, true);
-      if (isOriginAllowed(origin, allowed)) return callback(null, true);
-      return callback(new Error(`CORS blocked for origin: ${origin}`));
+      if (isOriginAllowed(origin, allowed)) {
+        return callback(null, true);
+      }
+      console.warn(`[CORS] Blocked origin: ${origin}`);
+      return callback(null, false);
     },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key'],
-    maxAge: 600,
+    credentials: true,
+    maxAge: 86400,
   };
 }
 
@@ -73,28 +91,33 @@ export function buildCorsOptions(): CorsOptions {
 export function buildSocketCorsOptions(): {
   origin: (origin: string | undefined, callback: (err: Error | null, ok?: boolean) => void) => void;
   methods: string[];
+  credentials?: boolean;
 } {
   const allowed = getAllowedOrigins();
   return {
     origin: (origin, callback) => {
       if (!origin) return callback(null, true);
-      if (isOriginAllowed(origin, allowed)) return callback(null, true);
-      return callback(new Error(`Socket CORS blocked for origin: ${origin}`));
+      if (isOriginAllowed(origin, allowed)) {
+        return callback(null, true);
+      }
+      console.warn(`[Socket CORS] Blocked origin: ${origin}`);
+      return callback(null, false);
     },
     methods: ['GET', 'POST'],
+    credentials: true,
   };
 }
 
 /**
- * Helmet: bật toàn bộ header bảo mật mặc định, TẮT CSP vì frontend hiện tại
- * dùng nhiều inline style (style={{...}}) — bật CSP bây giờ sẽ vỡ giao diện
- * đang serve qua backend (express.static). Sẽ bật CSP ở bước tiếp theo khi
- * frontend hết inline style.
+ * Helmet: bật toàn bộ header bảo mật mặc định.
+ * Tắt CSP do frontend dùng nhiều inline style.
+ * Tắt crossOriginResourcePolicy để frontend Vercel gọi API Render không bị chặn tài nguyên cross-origin.
  */
 export function helmetMiddleware() {
   return helmet({
     contentSecurityPolicy: false,
     crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: false,
   });
 }
 
