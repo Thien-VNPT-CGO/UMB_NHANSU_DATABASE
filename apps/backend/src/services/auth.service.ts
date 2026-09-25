@@ -156,11 +156,26 @@ export class AuthService {
       throw new Error(ERROR_CODES.ACCOUNT_NOT_FOUND);
     }
 
+    // SĐT trùng nhiều tài khoản: dùng mã PIN để phân biệt — PIN đúng của
+    // tài khoản nào thì vào tài khoản đó, khỏi cần HR đối soát tay.
+    // (Kẻ chỉ biết SĐT mà không biết PIN vẫn không vào được.)
+    let account = accounts[0];
     if (accounts.length > 1) {
-      throw new Error(ERROR_CODES.DUPLICATE_PHONE_NEEDS_HR);
+      const matched = [];
+      for (const a of accounts) {
+        if (!a.pin_hash || !pinInput) continue;
+        if (await verifyPin(pinInput, a.pin_hash)) matched.push(a);
+      }
+      if (matched.length === 1) {
+        account = matched[0];
+      } else if (matched.length === 0) {
+        // Không lộ có bao nhiêu tài khoản: báo sai PIN như bình thường.
+        throw new Error('INVALID_PIN');
+      } else {
+        // Hiếm: 2 tài khoản trùng cả SĐT lẫn PIN -> vẫn cần HR đối soát.
+        throw new Error(ERROR_CODES.DUPLICATE_PHONE_NEEDS_HR);
+      }
     }
-
-    const account = accounts[0];
 
     // Không còn luồng kích hoạt/khóa: SĐT + PIN hợp lệ là đăng nhập được.
 
