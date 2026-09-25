@@ -398,8 +398,21 @@ export class GoogleSheetsSyncService {
 
       const counts: any = {};
 
+      // Đọc 9 tabs cùng lúc trong 1 round-trip (realtime) thay vì 9 lượt nối tiếp.
+      const batch = await this.readTabsBatch([
+        'NHAN_VIEN_MASTER',
+        'TAI_KHOAN_NHAN_VIEN',
+        'DANH_SACH_CHI_NHANH',
+        'PHAN_CONG_CA',
+        'DON_NGHI_PHEP',
+        'SU_KIEN_DIEM_DANH',
+        'ADMIN_ACCOUNTS',
+        'DON_DOI_CA',
+        'DIEU_CHINH_CONG',
+      ]);
+
       // 1. Đọc NHAN_VIEN_MASTER
-      const empRows = await this.readSheetRows('NHAN_VIEN_MASTER');
+      const empRows = batch['NHAN_VIEN_MASTER'];
       if (empRows.length > 0) {
         fallback.employees = empRows.map((r, idx) => ({
           employee_id: r[0] || `EMP_${uuidv4().slice(0, 8)}`,
@@ -421,7 +434,7 @@ export class GoogleSheetsSyncService {
       counts.employees = fallback.employees.length;
 
       // 2. Đọc TAI_KHOAN_NHAN_VIEN
-      const accRows = await this.readSheetRows('TAI_KHOAN_NHAN_VIEN');
+      const accRows = batch['TAI_KHOAN_NHAN_VIEN'];
       if (accRows.length > 0) {
         fallback.accounts = accRows.map(r => ({
           account_id: r[0] || `ACC_${uuidv4().slice(0, 8)}`,
@@ -445,7 +458,7 @@ export class GoogleSheetsSyncService {
       counts.accounts = fallback.accounts.length;
 
       // 3. Đọc DANH_SACH_CHI_NHANH
-      const branchRows = await this.readSheetRows('DANH_SACH_CHI_NHANH');
+      const branchRows = batch['DANH_SACH_CHI_NHANH'];
       if (branchRows.length > 0) {
         fallback.branches = branchRows.map(r => ({
           id: r[0],
@@ -464,7 +477,7 @@ export class GoogleSheetsSyncService {
       counts.branches = fallback.branches.length;
 
       // 4. Đọc PHAN_CONG_CA
-      const shiftRows = await this.readSheetRows('PHAN_CONG_CA');
+      const shiftRows = batch['PHAN_CONG_CA'];
       if (shiftRows.length > 0) {
         fallback.shifts = shiftRows.map(r => ({
           assignment_id: r[0] || `SHF_${uuidv4().slice(0, 8)}`,
@@ -485,7 +498,7 @@ export class GoogleSheetsSyncService {
       counts.shifts = fallback.shifts.length;
 
       // 5. Đọc DON_NGHI_PHEP
-      const leaveRows = await this.readSheetRows('DON_NGHI_PHEP');
+      const leaveRows = batch['DON_NGHI_PHEP'];
       if (leaveRows.length > 0) {
         fallback.leaveRequests = leaveRows.map(r => ({
           request_id: r[0] || `LV_${uuidv4().slice(0, 8)}`,
@@ -507,7 +520,7 @@ export class GoogleSheetsSyncService {
       counts.leaves = fallback.leaveRequests.length;
 
       // 6. Đọc SU_KIEN_DIEM_DANH
-      const attRows = await this.readSheetRows('SU_KIEN_DIEM_DANH');
+      const attRows = batch['SU_KIEN_DIEM_DANH'];
       if (attRows.length > 0) {
         fallback.attendanceEvents = attRows.map(r => ({
           event_id: r[0] || `ATT_${uuidv4().slice(0, 8)}`,
@@ -531,7 +544,7 @@ export class GoogleSheetsSyncService {
       counts.attendanceEvents = fallback.attendanceEvents.length;
 
       // 7. Đọc ADMIN_ACCOUNTS (tài khoản quản trị thật từ Google Sheets)
-      const adminRows = await this.readSheetRows('ADMIN_ACCOUNTS');
+      const adminRows = batch['ADMIN_ACCOUNTS'];
       if (adminRows.length > 0) {
         const currentAdmins = fallback.adminAccounts;
         const sheetsAdmins: AdminAccount[] = adminRows
@@ -602,7 +615,7 @@ export class GoogleSheetsSyncService {
       }
 
       // 8. Đọc DON_DOI_CA (đơn đổi ca)
-      const swapRows = await this.readSheetRows('DON_DOI_CA');
+      const swapRows = batch['DON_DOI_CA'];
       if (swapRows.length > 0) {
         fallback.swapRequests = swapRows.map(r => ({
           swap_id: r[0] || `SWP_${uuidv4().slice(0, 8)}`,
@@ -622,7 +635,7 @@ export class GoogleSheetsSyncService {
       counts.swapRequests = fallback.swapRequests.length;
 
       // 9. Đọc DIEU_CHINH_CONG (điều chỉnh công)
-      const adjRows = await this.readSheetRows('DIEU_CHINH_CONG');
+      const adjRows = batch['DIEU_CHINH_CONG'];
       if (adjRows.length > 0) {
         fallback.attendanceAdjustments = adjRows.map(r => ({
           adjustment_id: r[0] || `ADJ_${uuidv4().slice(0, 8)}`,
@@ -825,6 +838,29 @@ export class GoogleSheetsSyncService {
     } catch (e) {
       return [];
     }
+  }
+
+  /**
+   * Đọc NHIỀU tab trong 1 HTTP round-trip (batchGet) — nhanh gấp ~N lần so với
+   * đọc nối tiếp từng tab. Dùng cho full-pull realtime.
+   */
+  public async readTabsBatch(sheetTitles: string[]): Promise<Record<string, string[][]>> {
+    const out: Record<string, string[][]> = {};
+    for (const t of sheetTitles) out[t] = [];
+    if (!this.sheetsClient || sheetTitles.length === 0) return out;
+    try {
+      const res = await this.sheetsClient.spreadsheets.values.batchGet({
+        spreadsheetId: this.spreadsheetId,
+        ranges: sheetTitles.map(t => `'${t}'!A2:Z`),
+      });
+      const groups = res.data.valueRanges || [];
+      for (let i = 0; i < sheetTitles.length; i++) {
+        out[sheetTitles[i]] = (groups[i]?.values as string[][]) || [];
+      }
+    } catch (e) {
+      // Giữ nguyên hành vi cũ: lỗi -> tab rỗng (caller tự fallback).
+    }
+    return out;
   }
 
   /**

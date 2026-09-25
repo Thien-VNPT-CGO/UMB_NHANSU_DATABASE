@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl } from './services/api';
 import {
@@ -623,6 +623,26 @@ export function App() {
   }, []);
 
   // 1. Socket.IO Realtime Connection Listener (Tự động cập nhật tức thời khi có thay đổi)
+  // Gộp nhiều event dồn dập thành 1 lần tải (debounce 800ms) + chống tải chồng chéo.
+  const socketConnectedRef = useRef(false);
+  const reloadTimerRef = useRef<any>(null);
+  const reloadingRef = useRef(false);
+  const scheduleReload = (user = currentUser) => {
+    if (reloadTimerRef.current) return;
+    reloadTimerRef.current = setTimeout(async () => {
+      reloadTimerRef.current = null;
+      if (reloadingRef.current) {
+        scheduleReload(user);
+        return;
+      }
+      reloadingRef.current = true;
+      try {
+        await loadAllData(user);
+      } finally {
+        reloadingRef.current = false;
+      }
+    }, 800);
+  };
   useEffect(() => {
     if (!currentUser) return;
     const token = getAuthToken();
@@ -638,51 +658,66 @@ export function App() {
 
       socket.on('connect', () => {
         console.log('🟢 [Socket.IO] Realtime kết nối thành công tới:', base);
+        socketConnectedRef.current = true;
+        scheduleReload(currentUser);
+      });
+
+      socket.on('disconnect', () => {
+        socketConnectedRef.current = false;
       });
 
       // Lắng nghe sự kiện dữ liệu thay đổi trên toàn hệ thống
       socket.on('data:updated', (payload: any) => {
         console.log('⚡ [Socket.IO] Nhận tín hiệu cập nhật realtime:', payload);
-        loadAllData(currentUser);
+        scheduleReload(currentUser);
       });
 
       socket.on('employees', () => {
         console.log('⚡ [Socket.IO] Nhận tín hiệu cập nhật danh sách nhân viên');
-        loadAllData(currentUser);
+        scheduleReload(currentUser);
       });
       socket.on('accounts', () => {
         console.log('⚡ [Socket.IO] Nhận tín hiệu cập nhật tài khoản nhân viên');
-        loadAllData(currentUser);
+        scheduleReload(currentUser);
       });
       socket.on('candidates', () => {
         console.log('⚡ [Socket.IO] Nhận tín hiệu ứng viên Google Forms mới');
-        loadAllData(currentUser);
+        scheduleReload(currentUser);
       });
 
-      socket.on('account.activated', () => loadAllData(currentUser));
-      socket.on('schedule.published', () => loadAllData(currentUser));
-      socket.on('attendance.recorded', () => loadAllData(currentUser));
-      socket.on('payroll.published', () => loadAllData(currentUser));
+      socket.on('account.activated', () => scheduleReload(currentUser));
+      socket.on('schedule.published', () => scheduleReload(currentUser));
+      socket.on('attendance.recorded', () => scheduleReload(currentUser));
+      socket.on('payroll.published', () => scheduleReload(currentUser));
     } catch (err) {
       console.warn('[Socket.IO] Không thể khởi tạo kết nối realtime:', err);
     }
 
     return () => {
+      if (reloadTimerRef.current) {
+        clearTimeout(reloadTimerRef.current);
+        reloadTimerRef.current = null;
+      }
       if (socket) {
         socket.disconnect();
       }
+      socketConnectedRef.current = false;
     };
   }, [currentUser]);
 
-  // 2. Realtime Background Auto-sync (Tự động kiểm tra và kéo dữ liệu mới nhất mỗi 4 giây)
+  // 2. Poll dự phòng: chỉ khi socket mất kết nối (giảm tải server, mặc định realtime qua socket)
   useEffect(() => {
     if (!currentUser) return;
 
     const interval = setInterval(() => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-        loadAllData(currentUser);
+      if (
+        !socketConnectedRef.current &&
+        typeof document !== 'undefined' &&
+        document.visibilityState === 'visible'
+      ) {
+        scheduleReload(currentUser);
       }
-    }, 4000);
+    }, 15000);
 
     return () => clearInterval(interval);
   }, [currentUser]);

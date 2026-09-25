@@ -6,6 +6,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   private fallbackAdapter: MockSheetsAdapter;
   private isConfigured = false;
   private lastPullTime = 0;
+  private pullInFlight: Promise<unknown> | null = null;
   public syncService: GoogleSheetsSyncService;
 
   constructor() {
@@ -58,10 +59,19 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
       const now = Date.now();
       if (now - this.lastPullTime > 5000) { // 5 giây cache — realtime hơn cho production
         this.lastPullTime = now;
+        // Chống pull chồng chéo: nhiều request cùng lúc dùng chung 1 pull.
+        if (!this.pullInFlight) {
+          this.pullInFlight = this.syncService
+            .pullAllDataFromGoogleSheets(this)
+            .catch(e => console.warn('[GoogleSheetsAdapter] Auto-pull error:', e))
+            .finally(() => {
+              this.pullInFlight = null;
+            });
+        }
         try {
-          await this.syncService.pullAllDataFromGoogleSheets(this);
+          await this.pullInFlight;
         } catch (e) {
-          console.warn('[GoogleSheetsAdapter] Auto-pull error:', e);
+          // đã log ở trên
         }
       }
     }
