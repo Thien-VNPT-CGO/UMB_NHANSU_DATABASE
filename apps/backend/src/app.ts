@@ -15,6 +15,7 @@ import { ZaloService, defaultMeetUrl } from './services/zalo.service.js';
 import crypto from 'crypto';
 import { AccountsService } from './services/accounts.service.js';
 import { EmployeesService } from './services/employees.service.js';
+import { canonicalPhone, findDuplicatePhones } from './services/employees.service.js';
 import { SchedulesService } from './services/schedules.service.js';
 import { AttendanceService } from './services/attendance.service.js';
 import { PayrollService } from './services/payroll.service.js';
@@ -263,6 +264,15 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Quét SĐT trùng toàn hệ thống ( realtime cho HR đối soát ).
+  app.get('/admin/employee-accounts/duplicates', authMiddleware, requireRole(['ADMIN', 'HR']), async (req, res) => {
+    try {
+      res.json(await findDuplicatePhones(adapter));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // --- ACCOUNTS (Admin) ---
   app.get('/admin/employee-accounts', authMiddleware, requireRole(['ADMIN', 'HR']), async (req, res) => {
     try {
@@ -274,7 +284,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/admin/employee-accounts/:id/activate', authMiddleware, requireRole(['ADMIN']), validate({ params: idParams, body: activateAccountBody }), async (req: AuthenticatedRequest, res) => {
+  // Quy chế phân quyền: ADMIN chỉ KHÓA tài khoản; HR kích hoạt + cấp/reset PIN.
+  app.post('/admin/employee-accounts/:id/activate', authMiddleware, requireRole(['HR']), validate({ params: idParams, body: activateAccountBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const accountId = req.params.id;
       const expectedVersion = req.body.expectedVersion || 1;
@@ -313,7 +324,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // HR/Admin cấp mới hoặc reset mã PIN nhân viên (đánh dấu bắt đổi lần sau).
-  app.post('/admin/employee-accounts/:id/set-pin', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams, body: setEmployeePinBody }), async (req: AuthenticatedRequest, res) => {
+  app.post('/admin/employee-accounts/:id/set-pin', authMiddleware, requireRole(['HR']), validate({ params: idParams, body: setEmployeePinBody }), async (req: AuthenticatedRequest, res) => {
     try {
       await authService.setEmployeePin(req.params.id, req.body.pin, req.user!.id);
       broadcastUpdate('accounts', { action: 'set-pin', accountId: req.params.id });
@@ -325,7 +336,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   // Hệ thống TỰ sinh PIN + cấp vào tài khoản + bắn qua Zalo cá nhân HR tới SĐT nhân viên.
   // HR không cần thấy/chép PIN — chống lộ. Yêu cầu BOT Zalo đã kết nối.
-  app.post('/admin/employee-accounts/:id/send-pin-zalo', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {
+  app.post('/admin/employee-accounts/:id/send-pin-zalo', authMiddleware, requireRole(['HR']), validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {
     try {
       const account = await adapter.getAccountById(req.params.id);
       if (!account) return res.status(404).json({ error: 'ACCOUNT_NOT_FOUND' });
@@ -421,6 +432,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
       const createdList: any[] = [];
       const errors: string[] = [];
+      const seenPhones = new Map<string, number>(); // SĐT trong file -> dòng đầu tiên
 
       for (let i = 0; i < employees.length; i++) {
         const item = employees[i];
@@ -436,6 +448,13 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           errors.push(`Dòng ${i + 1} (${name}): Số điện thoại '${rawPhone}' không hợp lệ`);
           continue;
         }
+        // Trùng SĐT ngay trong file import
+        const canon = canonicalPhone(cleanPhone);
+        if (seenPhones.has(canon)) {
+          errors.push(`Dòng ${i + 1} (${name}): SĐT trùng với dòng ${seenPhones.get(canon)} trong cùng file! Mỗi SĐT chỉ dùng cho 1 nhân viên.`);
+          continue;
+        }
+        seenPhones.set(canon, i + 1);
 
         try {
           const created = await employeesService.createEmployee({
@@ -1264,6 +1283,9 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const pendingAdjustments = adjustments.filter(a => a.status === 'PENDING').length;
       const pendingRequestsCount = pendingLeaves + pendingSwaps + pendingAdjustments;
 
+      // SĐT trùng cần HR đối soát (realtime).
+      const duplicatePhones = await findDuplicatePhones(adapter);
+
       // Branch statuses
       const branchStatus = branches.map(b => {
         const bEmployees = employees.filter(e => e.default_branch_id === b.id);
@@ -1336,6 +1358,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           absentToday,
           pendingActivationCount,
           pendingRequestsCount,
+          duplicatePhoneCount: duplicatePhones.length,
         },
         branchStatus,
         systemHealth,

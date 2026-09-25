@@ -1014,6 +1014,17 @@ export function App() {
       }
     });
 
+    // Đánh dấu SĐT trùng realtime từ dữ liệu đã tải (đồng bộ với socket loadAllData).
+    const phoneCount = new Map<string, number>();
+    for (const it of items) {
+      const k = (it.phone || '').replace(/\D/g, '');
+      if (k) phoneCount.set(k, (phoneCount.get(k) || 0) + 1);
+    }
+    for (const it of items) {
+      const k = (it.phone || '').replace(/\D/g, '');
+      (it as any).isDuplicatePhone = !!k && (phoneCount.get(k) || 0) > 1;
+    }
+
     return items;
   }, [allEmployees, employeeAccounts]);
 
@@ -2061,6 +2072,21 @@ export function App() {
                           </td>
                           <td style={{ padding: '14px 20px', fontWeight: 600 }}>
                             {item.phone}
+                            {item.isDuplicatePhone && (
+                              <span title="SĐT này đang dùng chung cho nhiều hồ sơ! Đối soát trước khi kích hoạt — đăng nhập sẽ bị từ chối." style={{
+                                marginLeft: '6px',
+                                padding: '2px 7px',
+                                borderRadius: '999px',
+                                fontSize: '10px',
+                                fontWeight: 800,
+                                backgroundColor: '#FEF2F2',
+                                color: '#DC2626',
+                                border: '1px solid #FCA5A5',
+                                whiteSpace: 'nowrap',
+                              }}>
+                                ⚠️ Trùng SĐT
+                              </span>
+                            )}
                           </td>
                           <td style={{ padding: '14px 20px' }}>
                             <span style={{
@@ -2137,6 +2163,8 @@ export function App() {
                           </td>
                           <td style={{ padding: '14px 20px' }}>
                             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                              {/* Quy chế: HR kích hoạt + PIN; ADMIN chỉ KHÓA */}
+                              {currentUser?.role === 'HR' && (
                               <button
                                 onClick={() => handleSetEmpPin(item.accountId, item.fullName || item.phone)}
                                 disabled={!item.hasRealAccount}
@@ -2155,6 +2183,8 @@ export function App() {
                               >
                                 🔑 Cấp / Reset PIN
                               </button>
+                              )}
+                              {currentUser?.role === 'HR' && (
                               <button
                                 onClick={() => handleSendPinZalo(item.accountId, item.fullName || item.phone, item.phone)}
                                 disabled={!item.hasRealAccount}
@@ -2173,26 +2203,30 @@ export function App() {
                               >
                                 📩 Gửi PIN Zalo
                               </button>
-                              {item.accountStatus !== 'ACTIVE' ? (
+                              )}
+                              {item.accountStatus !== 'ACTIVE' && currentUser?.role === 'HR' ? (
                                 <button
                                   onClick={() => handleActivateEmpAccount(item.hasRealAccount ? item.accountId : item.id, item.version)}
+                                  disabled={item.isDuplicatePhone}
+                                  title={item.isDuplicatePhone ? 'SĐT đang trùng — đối soát (xóa/sửa hồ sơ trùng) trước khi kích hoạt!' : 'Kích hoạt tài khoản'}
                                   style={{
                                     padding: '6px 12px',
                                     borderRadius: 'var(--radius-sm)',
-                                    backgroundColor: 'var(--success)',
-                                    color: '#FFF',
+                                    backgroundColor: item.isDuplicatePhone ? '#E5E7EB' : 'var(--success)',
+                                    color: item.isDuplicatePhone ? '#6B7280' : '#FFF',
                                     fontWeight: 600,
                                     fontSize: '12px',
                                     border: 'none',
-                                    cursor: 'pointer',
-                                    boxShadow: '0 2px 4px rgba(16, 185, 129, 0.2)',
+                                    cursor: item.isDuplicatePhone ? 'not-allowed' : 'pointer',
+                                    boxShadow: item.isDuplicatePhone ? 'none' : '0 2px 4px rgba(16, 185, 129, 0.2)',
                                   }}
                                 >
-                                  Kích Hoạt Ngay
+                                  {item.isDuplicatePhone ? '🔒 Trùng SĐT' : 'Kích Hoạt Ngay'}
                                 </button>
-                              ) : (
+                              ) : currentUser?.role === 'ADMIN' ? (
                                 <button
                                   onClick={() => handleRevokeEmpAccount(item.accountId, item.version, 'SUSPENDED')}
+                                  title="ADMIN chỉ có quyền KHÓA tài khoản"
                                   style={{
                                     padding: '6px 12px',
                                     borderRadius: 'var(--radius-sm)',
@@ -2204,9 +2238,9 @@ export function App() {
                                     cursor: 'pointer',
                                   }}
                                 >
-                                  Khóa
+                                  🔒 Khóa
                                 </button>
-                              )}
+                              ) : null}
                             </div>
                           </td>
                         </tr>

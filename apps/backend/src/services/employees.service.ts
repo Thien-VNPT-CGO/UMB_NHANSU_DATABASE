@@ -7,6 +7,45 @@ import {
 } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { singleWriterQueue } from '../repositories/single-writer-queue.js';
+import { normalizePhone } from './auth.service.js';
+
+/** Chuẩn hóa SĐT về dạng so sánh được (10 số, đầu 0). */
+export function canonicalPhone(phone: string): string {
+  const digits = normalizePhone(phone || '').replace(/\D/g, '');
+  if (digits.length === 11 && digits.startsWith('84')) return '0' + digits.slice(2);
+  return digits;
+}
+
+export interface DuplicatePhoneGroup {
+  phone: string;
+  employees: { employee_id: string; employee_code: string; full_name: string }[];
+  accounts: { account_id: string; employee_id: string; account_status: string }[];
+}
+
+/** Quét toàn bộ SĐT trùng trên Sheets (nhân viên + tài khoản). */
+export async function findDuplicatePhones(repo: ISheetsRepository): Promise<DuplicatePhoneGroup[]> {
+  const [emps, accs] = await Promise.all([repo.listEmployees(), repo.listAccounts()]);
+  const byPhone = new Map<string, DuplicatePhoneGroup>();
+  const key = (phone: string) => {
+    const c = canonicalPhone(phone);
+    if (!c) return null;
+    let g = byPhone.get(c);
+    if (!g) {
+      g = { phone: c, employees: [], accounts: [] };
+      byPhone.set(c, g);
+    }
+    return g;
+  };
+  for (const e of emps) {
+    const g = key(e.phone_normalized);
+    if (g) g.employees.push({ employee_id: e.employee_id, employee_code: e.employee_code, full_name: e.full_name });
+  }
+  for (const a of accs) {
+    const g = key(a.phone_normalized);
+    if (g) g.accounts.push({ account_id: a.account_id, employee_id: a.employee_id, account_status: a.account_status });
+  }
+  return [...byPhone.values()].filter(g => g.employees.length + g.accounts.length > 2 || (g.employees.length > 1 || g.accounts.length > 1));
+}
 
 export class EmployeesService {
   constructor(private repo: ISheetsRepository) {}
@@ -52,6 +91,21 @@ export class EmployeesService {
       entityId: employeeId,
       actorId: data.actorId,
       execute: async () => {
+        // Ràng buộc SĐT duy nhất toàn hệ thống (so sánh sau chuẩn hóa).
+        const normPhone = canonicalPhone(data.phone);
+        if (!normPhone) throw new Error('INVALID_PHONE');
+        const existingEmps = await this.repo.listEmployees();
+        const clashEmp = existingEmps.find(e => canonicalPhone(e.phone_normalized) === normPhone);
+        if (clashEmp) {
+          throw new Error(`DUPLICATE_PHONE: SĐT ${data.phone} đã thuộc về ${clashEmp.full_name} (${clashEmp.employee_code})! Mỗi SĐT chỉ dùng cho 1 nhân viên.`);
+        }
+        const clashAccs = (await this.repo.listAccounts()).filter(
+          a => canonicalPhone(a.phone_normalized) === normPhone
+        );
+        if (clashAccs.length > 0) {
+          throw new Error(`DUPLICATE_PHONE: SĐT ${data.phone} đã có tài khoản ${clashAccs[0].account_id}! Mỗi SĐT chỉ dùng cho 1 nhân viên.`);
+        }
+
         const emp = await this.repo.createEmployee({
           employee_id: employeeId,
           employee_code: employeeCode,

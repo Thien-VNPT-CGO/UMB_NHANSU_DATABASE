@@ -247,6 +247,48 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     }
   };
 
+  // Map employee_id -> tài khoản (để nút Gửi PIN Zalo ở các tab danh sách NV)
+  const findAccountFor = (emp: any) => {
+    if (!emp) return null;
+    const cleanPhone = (emp.phone_normalized || emp.phone || '').replace(/\D/g, '');
+    return (activationDataList || []).find((a: any) =>
+      a.id === emp.employee_id ||
+      (cleanPhone && (a.phone || '').replace(/\D/g, '') === cleanPhone)
+    ) || null;
+  };
+
+  // Gửi PIN qua Zalo (dùng chung cho tab Thử việc + Chính thức)
+  const handleSendPinZalo = async (accountId: string, fullName: string, phone: string) => {
+    if (!window.confirm(`Tự động sinh mã PIN mới và GỬI QUA ZALO tới ${fullName} (${phone})?\nPIN cũ (nếu có) sẽ bị vô hiệu ngay. Nhân viên phải đổi PIN ở lần đăng nhập tiếp theo.`)) {
+      return;
+    }
+    try {
+      const res = await apiRequest(`/admin/employee-accounts/${accountId}/send-pin-zalo`, { method: 'POST' });
+      showToast(`✅ Đã gửi PIN qua Zalo tới ${fullName}! (tin nhắn #${res.msgId})`);
+      if (typeof onRefreshData === 'function') {
+        try { await onRefreshData(); } catch {}
+      }
+    } catch (err: any) {
+      const msg = String(err.message || '');
+      if (msg.includes('ZALO_NOT_CONNECTED')) {
+        showToast('BOT Zalo chưa kết nối! Vào tab "Lịch Phỏng Vấn & BOT Zalo" quét QR đăng nhập trước.');
+      } else if (msg.includes('ZALO_USER_NOT_FOUND') || msg.includes('ZALO_LOOKUP_FAILED')) {
+        showToast(`SĐT ${phone} không tìm thấy nick Zalo!`);
+      } else if (msg.includes('ZALO_NOT_FRIEND')) {
+        if (window.confirm(`${fullName} chưa kết bạn Zalo với nick HR. Gửi lời mời kết bạn ngay?`)) {
+          try {
+            await apiRequest('/admin/zalo/send-friend-request', { method: 'POST', body: JSON.stringify({ phone }) });
+            showToast('Đã gửi lời mời kết bạn Zalo! Khi NV đồng ý, bấm gửi PIN lại.');
+          } catch (e: any) {
+            showToast(e.message);
+          }
+        }
+      } else {
+        showToast(msg);
+      }
+    }
+  };
+
   // Gửi thư mời phỏng vấn qua Zalo cá nhân HR
   const handleSendZaloInvite = async (candidate: any) => {
     if (!zaloConnected) {
@@ -2094,7 +2136,28 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     <td style={{ padding: '14px 20px' }}>Giai đoạn thử việc</td>
                     <td style={{ padding: '14px 20px' }}><span className="badge badge-success">Sẵn sàng TEST</span></td>
                     <td style={{ padding: '14px 20px' }}>
-                      <button className="btn-primary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => showToast(`Đã đề xuất chuyển chính thức cho ${emp.full_name}`)}>Đề Xuất Chính Thức</button>
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                        <button className="btn-primary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => showToast(`Đã đề xuất chuyển chính thức cho ${emp.full_name}`)}>Đề Xuất Chính Thức</button>
+                        {currentUser?.role === 'HR' && (() => {
+                          const acc = findAccountFor(emp);
+                          return (
+                            <button
+                              className="btn-outline"
+                              style={{ padding: '4px 10px', fontSize: '12px', color: '#0068FF', borderColor: '#BFDBFE', cursor: acc ? 'pointer' : 'not-allowed', opacity: acc ? 1 : 0.5 }}
+                              title={acc ? 'Hệ thống tự sinh PIN mới và gửi qua Zalo tới SĐT nhân viên' : 'Chưa có tài khoản — kích hoạt ở tab Kích hoạt trước!'}
+                              onClick={() => {
+                                if (!acc) {
+                                  showToast('Nhân viên chưa có tài khoản! Hãy kích hoạt ở tab "Kích hoạt tài khoản NV" trước.');
+                                  return;
+                                }
+                                handleSendPinZalo(acc.accountId, emp.full_name, emp.phone_normalized || emp.phone);
+                              }}
+                            >
+                              📩 PIN Zalo
+                            </button>
+                          );
+                        })()}
+                      </div>
                     </td>
                   </tr>
                 ))

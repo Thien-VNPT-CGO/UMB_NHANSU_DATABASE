@@ -7,6 +7,7 @@ import {
 } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { singleWriterQueue } from '../repositories/single-writer-queue.js';
+import { canonicalPhone, findDuplicatePhones } from './employees.service.js';
 import { Server } from 'socket.io';
 
 export class AccountsService {
@@ -25,6 +26,24 @@ export class AccountsService {
     expectedVersion = 1,
     idempotencyKey?: string
   ): Promise<{ operationId: string; result: EmployeeAccount }> {
+    // Chặn kích hoạt khi SĐT đang trùng — HR phải đối soát trước (kẻo login vẫn lỗi).
+    const dups = await findDuplicatePhones(this.repo);
+    const target = await this.repo.getAccountById(accountId);
+    const checkPhone = target
+      ? canonicalPhone(target.phone_normalized)
+      : canonicalPhone((await this.repo.getEmployeeById(accountId))?.phone_normalized || '');
+    if (checkPhone) {
+      const clash = dups.find(
+        d => d.phone === checkPhone &&
+          (d.employees.length > 1 || (target
+            ? d.accounts.some(a => a.account_id !== accountId)
+            : d.accounts.length > 0))
+      );
+      if (clash) {
+        const holders = [...clash.employees.map(e => `${e.full_name} (${e.employee_code})`)].join(', ');
+        throw new Error(`DUPLICATE_PHONE_NEEDS_HR: SĐT ${clash.phone} đang trùng giữa: ${holders}! Đối soát xong mới được kích hoạt.`);
+      }
+    }
     return singleWriterQueue.enqueue({
       idempotencyKey: idempotencyKey || `ACTIVATE_${accountId}_${expectedVersion}`,
       entityType: 'TAI_KHOAN_NHAN_VIEN',
