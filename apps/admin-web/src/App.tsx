@@ -43,9 +43,31 @@ import {
   CreditCard,
   Radio,
   FileSpreadsheet,
-  Award
+  Award,
+  Volume2,
+  VolumeX,
+  Sparkles,
+  CheckCircle2
 } from 'lucide-react';
 import { RoleViews } from './components/RoleViews';
+import {
+  playNotificationDing,
+  playSuccessChime,
+  playWarningTone,
+  playButtonPop,
+  isSoundEnabled,
+  setSoundEnabled,
+} from './utils/sound-effects';
+
+export interface LiveToastItem {
+  id: string;
+  type?: 'CHECKIN' | 'CHECKOUT' | 'LEAVE' | 'SWAP' | 'PIN_CHANGED' | 'PIN_SENT' | 'ACCOUNT_ACTIVATED' | 'INFO' | 'WARNING';
+  title: string;
+  message: string;
+  linkTab?: string;
+  timestamp: string;
+  duration?: number;
+}
 
 interface UserProfile {
   id: string;
@@ -274,6 +296,62 @@ export function App() {
   const [leaves, setLeaves] = useState<any[]>([]);
   const [candidates, setCandidates] = useState<any[]>([]);
   const [payrollRuns, setPayrollRuns] = useState<any[]>([]);
+
+  // Live Notifications, Rich Toasts & Audio States (Admin & HR)
+  const [liveToasts, setLiveToasts] = useState<LiveToastItem[]>([]);
+  const [bellRinging, setBellRinging] = useState(false);
+  const [unreadNotifCount, setUnreadNotifCount] = useState(0);
+  const [showNotifPopover, setShowNotifPopover] = useState(false);
+  const [soundActive, setSoundActive] = useState(isSoundEnabled());
+
+  const addRichToast = (toast: Omit<LiveToastItem, 'id' | 'timestamp'>) => {
+    const id = `toast_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+    const newToast: LiveToastItem = {
+      ...toast,
+      id,
+      timestamp: new Date().toISOString(),
+      duration: toast.duration || 6000,
+    };
+
+    // Phát âm thanh phù hợp
+    if (toast.type === 'CHECKIN' || toast.type === 'CHECKOUT' || toast.type === 'LEAVE' || toast.type === 'SWAP' || toast.type === 'PIN_CHANGED') {
+      playNotificationDing();
+    } else if (toast.type === 'WARNING') {
+      playWarningTone();
+    } else {
+      playSuccessChime();
+    }
+
+    setLiveToasts((prev) => [newToast, ...prev].slice(0, 5));
+    setSystemNotifications((prev) => [
+      {
+        id,
+        title: toast.title,
+        message: toast.message,
+        created_at: new Date().toISOString(),
+        type: toast.type || 'INFO',
+        linkTab: toast.linkTab,
+        unread: true,
+      },
+      ...prev,
+    ]);
+    setUnreadNotifCount((prev) => prev + 1);
+    setBellRinging(true);
+    setTimeout(() => setBellRinging(false), 1200);
+
+    setTimeout(() => {
+      setLiveToasts((prev) => prev.filter((t) => t.id !== id));
+    }, toast.duration || 6000);
+  };
+
+  const showToast = (msg: string, type: 'INFO' | 'WARNING' | 'ACCOUNT_ACTIVATED' = 'INFO') => {
+    const isWarn = msg.includes('⚠️') || msg.toLowerCase().includes('lỗi') || type === 'WARNING';
+    addRichToast({
+      title: isWarn ? '⚠️ Thông Báo Cảnh Báo' : '✨ Thao Tác Thành Công',
+      message: msg,
+      type: isWarn ? 'WARNING' : 'INFO',
+    });
+  };
 
   // Filters & Search
   const [empSearch, setEmpSearch] = useState('');
@@ -527,6 +605,20 @@ export function App() {
     }
   }, [activeTab]);
 
+  // Hiệu ứng âm thanh micro-click cho mọi nút bấm chức năng của Admin & HR
+  useEffect(() => {
+    const handleGlobalButtonClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      const btn = target.closest('button, .btn-primary, .btn-secondary, [role="button"]');
+      if (btn && !(btn as HTMLButtonElement).disabled) {
+        playButtonPop();
+      }
+    };
+    document.addEventListener('click', handleGlobalButtonClick, true);
+    return () => document.removeEventListener('click', handleGlobalButtonClick, true);
+  }, []);
+
   // Initial state: Auto restore session and load live data if previously logged in
   useEffect(() => {
     const savedUser = localStorage.getItem('ubm_admin_user');
@@ -609,6 +701,21 @@ export function App() {
 
       socket.on('disconnect', () => {
         socketConnectedRef.current = false;
+      });
+
+      // Lắng nghe thông báo nghiệp vụ trực tiếp (Check-in, đơn nghỉ, đổi ca, đổi PIN...)
+      socket.on('system:notification', (notif: any) => {
+        console.log('🔔 [Socket.IO] Nhận thông báo nghiệp vụ realtime:', notif);
+        // Kiểm tra vai trò phù hợp
+        if (!notif.targetRoles || notif.targetRoles.includes(currentUser.role)) {
+          addRichToast({
+            type: notif.type,
+            title: notif.title || 'Thông Báo Hệ Thống',
+            message: notif.message,
+            linkTab: notif.linkTab,
+          });
+        }
+        scheduleReload(currentUser);
       });
 
       // Lắng nghe sự kiện dữ liệu thay đổi trên toàn hệ thống
@@ -1655,6 +1762,188 @@ export function App() {
               </button>
             )}
 
+            {/* Nút Bật/Tắt Âm Thanh Thông Báo */}
+            <button
+              onClick={() => {
+                const nextState = !soundActive;
+                setSoundActive(nextState);
+                setSoundEnabled(nextState);
+                if (nextState) {
+                  addRichToast({ title: '🔊 Âm Thanh Bật', message: 'Đã kích hoạt chuông và âm thanh thông báo realtime!', type: 'INFO' });
+                }
+              }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '34px',
+                height: '34px',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: soundActive ? 'var(--surface)' : 'var(--danger-soft)',
+                border: `1px solid ${soundActive ? 'var(--border)' : 'var(--danger)'}`,
+                color: soundActive ? 'var(--text)' : 'var(--danger)',
+                cursor: 'pointer',
+              }}
+              title={soundActive ? 'Đang bật âm thanh thông báo (Click để tắt)' : 'Đang tắt âm thanh (Click để bật)'}
+            >
+              {soundActive ? <Volume2 size={16} color="var(--brand)" /> : <VolumeX size={16} />}
+            </button>
+
+            {/* Nút Chuông Thông Báo Realtime & Notification Popover */}
+            <div style={{ position: 'relative' }}>
+              <button
+                onClick={() => {
+                  setShowNotifPopover(!showNotifPopover);
+                  if (!showNotifPopover) {
+                    setUnreadNotifCount(0);
+                  }
+                }}
+                className={bellRinging ? 'bell-ring-active' : ''}
+                style={{
+                  position: 'relative',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '36px',
+                  height: '36px',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: showNotifPopover ? 'var(--brand-soft)' : 'var(--surface)',
+                  border: `1px solid ${showNotifPopover ? 'var(--brand)' : 'var(--border)'}`,
+                  color: showNotifPopover ? 'var(--brand)' : 'var(--text)',
+                  cursor: 'pointer',
+                }}
+                title="Trung tâm thông báo realtime từ công nhân viên & hệ thống"
+              >
+                <Bell size={18} />
+                {unreadNotifCount > 0 && (
+                  <span style={{
+                    position: 'absolute',
+                    top: '-5px',
+                    right: '-5px',
+                    backgroundColor: '#EF4444',
+                    color: '#FFF',
+                    fontSize: '10px',
+                    fontWeight: 800,
+                    minWidth: '18px',
+                    height: '18px',
+                    borderRadius: '999px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: '0 4px',
+                    border: '2px solid #FFF',
+                    boxShadow: '0 2px 6px rgba(239, 68, 68, 0.4)',
+                  }}>
+                    {unreadNotifCount > 9 ? '9+' : unreadNotifCount}
+                  </span>
+                )}
+              </button>
+
+              {/* Dropdown Popover Danh Sách Thông Báo */}
+              {showNotifPopover && (
+                <div style={{
+                  position: 'absolute',
+                  top: '46px',
+                  right: 0,
+                  width: '360px',
+                  maxWidth: '90vw',
+                  backgroundColor: 'var(--surface)',
+                  borderRadius: '12px',
+                  boxShadow: '0 12px 32px rgba(0, 0, 0, 0.16)',
+                  border: '1px solid var(--border)',
+                  zIndex: 9999,
+                  overflow: 'hidden',
+                  animation: 'toastSlideIn 0.25s ease forwards',
+                }}>
+                  <div style={{
+                    padding: '12px 16px',
+                    borderBottom: '1px solid var(--border)',
+                    backgroundColor: '#FCFBF9',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Bell size={15} color="var(--brand)" />
+                      <strong style={{ fontSize: '13px', color: 'var(--text)' }}>Thông Báo Realtime</strong>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <button
+                        onClick={() => {
+                          setSystemNotifications((prev) => prev.map((n) => ({ ...n, unread: false })));
+                          setUnreadNotifCount(0);
+                        }}
+                        style={{ fontSize: '11px', color: 'var(--brand)', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer' }}
+                      >
+                        Đã đọc tất cả
+                      </button>
+                      <button
+                        onClick={() => setShowNotifPopover(false)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
+                      >
+                        <X size={15} />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{ maxHeight: '360px', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+                    {systemNotifications.length === 0 ? (
+                      <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px' }}>
+                        Chưa có thông báo mới nào hôm nay.
+                      </div>
+                    ) : (
+                      systemNotifications.slice(0, 15).map((notif: any, idx: number) => {
+                        return (
+                          <div
+                            key={notif.id || idx}
+                            onClick={() => {
+                              if (notif.linkTab) {
+                                setActiveTab(notif.linkTab);
+                                setShowNotifPopover(false);
+                              }
+                            }}
+                            style={{
+                              padding: '12px 16px',
+                              borderBottom: '1px solid var(--border-light)',
+                              cursor: notif.linkTab ? 'pointer' : 'default',
+                              backgroundColor: notif.unread ? '#FEF2F2' : 'transparent',
+                              transition: 'background-color 0.15s ease',
+                              display: 'flex',
+                              gap: '10px',
+                            }}
+                          >
+                            <div style={{ fontSize: '18px', lineHeight: 1 }}>
+                              {notif.type === 'CHECKIN' ? '🟢' :
+                               notif.type === 'CHECKOUT' ? '🏁' :
+                               notif.type === 'LEAVE' ? '📝' :
+                               notif.type === 'SWAP' ? '🤝' :
+                               notif.type === 'PIN_CHANGED' ? '🔑' :
+                               notif.type === 'PIN_SENT' ? '📩' :
+                               notif.type === 'ACCOUNT_ACTIVATED' ? '⚡' : '📢'}
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontSize: '12.5px', fontWeight: 700, color: 'var(--text)', marginBottom: '2px' }}>
+                                {notif.title || notif.subject || 'Thông Báo Hệ Thống'}
+                              </div>
+                              <div style={{ fontSize: '11.5px', color: 'var(--text-muted)', lineHeight: 1.4 }}>
+                                {notif.message || notif.content}
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px', fontSize: '10px', color: '#9CA3AF' }}>
+                                <span>{notif.created_at ? new Date(notif.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : 'Vừa xong'}</span>
+                                {notif.linkTab && (
+                                  <span style={{ color: 'var(--brand)', fontWeight: 700 }}>Xem chi tiết &rarr;</span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
             <div style={{
               display: 'flex',
               alignItems: 'center',
@@ -1665,7 +1954,7 @@ export function App() {
               color: 'var(--success)',
               fontSize: '12px',
               fontWeight: 700,
-            }}>
+            }} className="pulse-badge">
               <CheckCircle size={14} />
               Realtime Master Online
             </div>
@@ -1692,7 +1981,133 @@ export function App() {
           </div>
         </header>
 
-        {/* NOTIFICATION MESSAGES */}
+        {/* FLOATING RICH TOAST STACK (HIỂN THỊ THÔNG BÁO SỐNG ĐỘNG GÓC PHẢI MÀN HÌNH) */}
+        <div style={{
+          position: 'fixed',
+          top: '20px',
+          right: '24px',
+          zIndex: 99999,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '10px',
+          pointerEvents: 'none',
+          maxWidth: '380px',
+          width: '100%',
+        }}>
+          {liveToasts.map((toast) => {
+            const isSuccess = toast.type === 'ACCOUNT_ACTIVATED' || toast.type === 'PIN_SENT';
+            const isCheckIn = toast.type === 'CHECKIN';
+            const isLeave = toast.type === 'LEAVE';
+            const isSwap = toast.type === 'SWAP';
+            const isPin = toast.type === 'PIN_CHANGED';
+            const isWarn = toast.type === 'WARNING';
+
+            const borderColor = isCheckIn ? '#10B981' :
+                                isLeave ? '#F59E0B' :
+                                isSwap ? '#3B82F6' :
+                                isPin ? '#8B5CF6' :
+                                isWarn ? '#EF4444' :
+                                isSuccess ? '#10B981' : 'var(--brand)';
+
+            const bgGlow = isCheckIn ? 'rgba(16, 185, 129, 0.08)' :
+                           isLeave ? 'rgba(245, 158, 11, 0.08)' :
+                           isSwap ? 'rgba(59, 130, 246, 0.08)' :
+                           isPin ? 'rgba(139, 92, 246, 0.08)' :
+                           isWarn ? 'rgba(239, 68, 68, 0.08)' : 'rgba(232, 93, 146, 0.08)';
+
+            return (
+              <div
+                key={toast.id}
+                className="toast-slide-in"
+                style={{
+                  pointerEvents: 'auto',
+                  backgroundColor: '#FFFFFF',
+                  borderRadius: '12px',
+                  boxShadow: '0 10px 28px rgba(0, 0, 0, 0.14)',
+                  border: `1.5px solid ${borderColor}`,
+                  overflow: 'hidden',
+                  position: 'relative',
+                  backdropFilter: 'blur(8px)',
+                }}
+              >
+                <div style={{
+                  padding: '12px 14px',
+                  backgroundColor: bgGlow,
+                  display: 'flex',
+                  gap: '10px',
+                  alignItems: 'flex-start',
+                }}>
+                  <div style={{ fontSize: '20px', lineHeight: 1, marginTop: '2px' }}>
+                    {isCheckIn ? '🟢' :
+                     toast.type === 'CHECKOUT' ? '🏁' :
+                     isLeave ? '📝' :
+                     isSwap ? '🤝' :
+                     isPin ? '🔑' :
+                     isWarn ? '⚠️' : '✨'}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '3px' }}>
+                      <strong style={{ fontSize: '13px', color: 'var(--text)' }}>
+                        {toast.title}
+                      </strong>
+                      <button
+                        onClick={() => setLiveToasts((prev) => prev.filter((t) => t.id !== toast.id))}
+                        style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', padding: '2px' }}
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                    <div style={{ fontSize: '12px', color: 'var(--text)', lineHeight: 1.45 }}>
+                      {toast.message}
+                    </div>
+                    {toast.linkTab && (
+                      <button
+                        onClick={() => {
+                          setActiveTab(toast.linkTab!);
+                          setLiveToasts((prev) => prev.filter((t) => t.id !== toast.id));
+                        }}
+                        style={{
+                          marginTop: '8px',
+                          padding: '4px 10px',
+                          borderRadius: '6px',
+                          backgroundColor: borderColor,
+                          color: '#FFFFFF',
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          border: 'none',
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                        }}
+                      >
+                        <Eye size={12} /> Xem Chi Tiết Ngay &rarr;
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Progress bar đếm ngược */}
+                <div style={{
+                  height: '3px',
+                  backgroundColor: 'rgba(0, 0, 0, 0.05)',
+                  width: '100%',
+                }}>
+                  <div
+                    className="toast-progress-bar"
+                    style={{
+                      height: '100%',
+                      backgroundColor: borderColor,
+                      animationDuration: `${(toast.duration || 6000) / 1000}s`,
+                    }}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* NOTIFICATION MESSAGES (BANNER CŨ) */}
         {errorMsg && (
           <div style={{ padding: '12px 24px', backgroundColor: 'var(--danger-soft)', color: 'var(--danger)', fontSize: '13px', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span>Lỗi: {errorMsg}</span>

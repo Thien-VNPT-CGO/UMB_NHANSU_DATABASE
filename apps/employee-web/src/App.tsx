@@ -134,6 +134,11 @@ export function App() {
     targetShift: '',
     reason: '',
   });
+  // Ca thật của NV B (tải khi chọn B) + trạng thái bận chung cho các nút gửi
+  const [targetShifts, setTargetShifts] = useState<any[]>([]);
+  const [actionBusy, setActionBusy] = useState<string | null>(null);
+  // Mất mạng / server lỗi khi tải dữ liệu
+  const [dataStale, setDataStale] = useState(false);
 
   // HR Broadcast Shift Dispatch State (+30.000d allowance)
   const [hasAcceptedHRDispatch, setHasAcceptedHRDispatch] = useState(false);
@@ -207,13 +212,14 @@ export function App() {
 
   const loadEmployeeData = async (empId?: string) => {
     try {
-      const shifts = await apiRequest('/me/schedule').catch(() => []);
+      let fails = 0;
+      const shifts = await apiRequest('/me/schedule').catch(() => { fails++; return []; });
       setMyShifts(shifts);
-      const notifs = await apiRequest('/me/notifications').catch(() => []);
+      const notifs = await apiRequest('/me/notifications').catch(() => { fails++; return []; });
       setNotifications(notifs);
 
       // Real Attendance History & Today status
-      const attEvents = await apiRequest('/me/attendance').catch(() => []);
+      const attEvents = await apiRequest('/me/attendance').catch(() => { fails++; return []; });
       setMyAttendanceHistory(attEvents);
 
       const today = new Date().toISOString().split('T')[0];
@@ -232,8 +238,10 @@ export function App() {
       });
 
       // Load real colleagues in branch
-      const colleagues = await apiRequest('/employees').catch(() => []);
+      const colleagues = await apiRequest('/employees').catch(() => { fails++; return []; });
       setBranchColleagues(colleagues);
+      // Mất mạng toàn bộ -> báo rõ đang xem dữ liệu cũ, không im lặng
+      setDataStale(fails >= 4);
 
       // Đồng bộ cổng đăng ký OFF/tuần (banner + khóa/mở theo server)
       await refreshWeeklyOffStatus();
@@ -648,6 +656,96 @@ export function App() {
     } catch (err: any) {
       showToast(weeklyOffErrMsg(err, 'Lỗi khi gửi yêu cầu nghỉ!'));
     }
+  };
+
+  // Tải ca thật của NV B để chọn ca tráo/nhờ (dữ liệu thật từ /schedules)
+  const loadTargetShifts = async (targetEmployeeId: string) => {
+    setTargetShifts([]);
+    if (!targetEmployeeId) return;
+    try {
+      const branchId = employee?.default_branch_id || 'CN130';
+      const today = new Date().toISOString().split('T')[0];
+      const all = await apiRequest(`/schedules?branchId=${encodeURIComponent(branchId)}&week=${today}`);
+      setTargetShifts(Array.isArray(all) ? all.filter((s: any) => s.employee_id === targetEmployeeId && s.status === 'PUBLISHED') : []);
+    } catch (err: any) {
+      showToast(err.message || 'Không tải được lịch của đồng nghiệp!');
+    }
+  };
+
+  const handleSelectSwapTarget = (targetEmployeeId: string) => {
+    const col = branchColleagues.find((c: any) => c.employee_id === targetEmployeeId);
+    setSwapData(s => ({ ...s, targetEmployeeId, targetEmployeeName: col?.full_name || '', targetShift: '' }));
+    loadTargetShifts(targetEmployeeId);
+  };
+
+  // Gửi yêu cầu đổi ca THẬT lên server (cả 2 hình thức)
+  const handleSubmitSwap = async () => {
+    if (!swapData.myShift) {
+      showToast('⚠️ Vui lòng chọn ca làm của bạn!');
+      return;
+    }
+    if (!swapData.targetEmployeeId) {
+      showToast('⚠️ Vui lòng chọn đồng nghiệp!');
+      return;
+    }
+    if (!swapData.targetShift) {
+      showToast('⚠️ Đồng nghiệp chưa có ca nào để tráo/nhờ (hoặc chưa tải xong)! Vui lòng chọn lại.');
+      return;
+    }
+    if (!swapData.reason.trim()) {
+      showToast('⚠️ Vui lòng nhập lý do đổi ca!');
+      return;
+    }
+    setActionBusy('swap');
+    try {
+      const res = await apiRequest('/swap-requests', {
+        method: 'POST',
+        body: JSON.stringify({
+          requesterAssignmentId: swapData.myShift,
+          targetEmployeeId: swapData.targetEmployeeId,
+          targetAssignmentId: swapData.targetShift,
+          reason: swapData.reason,
+        }),
+      });
+      const sid = res?.result?.swap_id || res?.swap_id || '';
+      showToast(`✓ Đã gửi yêu cầu đổi ca THẬT! Mã đơn: ${sid}. Đang chờ NV B xác nhận rồi Store duyệt.`);
+      setSwapData({ myShift: '', targetEmployeeId: '', targetEmployeeName: '', targetShift: '', reason: '' });
+      setTargetShifts([]);
+      await loadEmployeeData(employee?.employee_id);
+    } catch (err: any) {
+      showToast(err.message || 'Lỗi khi gửi yêu cầu đổi ca!');
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
+  // Thử việc tự đổi ca: WORK_TO_OFF -> đơn nghỉ thật; các chiều khác chưa có nghiệp vụ server -> hướng dẫn thật
+  const handleProbationSelfSwap = async () => {
+    if (probationSelfSwap.direction === 'WORK_TO_OFF') {
+      if (!probationSelfSwap.date) {
+        showToast('⚠️ Vui lòng chọn ngày muốn nghỉ!');
+        return;
+      }
+      setActionBusy('selfswap');
+      try {
+        await apiRequest('/leaves', {
+          method: 'POST',
+          body: JSON.stringify({
+            leaveType: 'DOT_XUAT',
+            requestedDate: probationSelfSwap.date,
+            reason: `[TỰ ĐỔI CA THỬ VIỆC] ${probationSelfSwap.reason}`,
+          }),
+        });
+        showToast('✓ Đã gửi đơn xin nghỉ (tự đổi ca thử việc) THẬT! Chờ Store/HR duyệt trên hệ thống.');
+        await loadEmployeeData(employee?.employee_id);
+      } catch (err: any) {
+        showToast(err.message || 'Lỗi khi gửi đơn!');
+      } finally {
+        setActionBusy(null);
+      }
+      return;
+    }
+    showToast('ℹ️ Đổi giờ ca / xin đi làm ngày OFF: vui lòng báo trực tiếp Store để xếp lịch trên hệ thống. Chức năng tự đổi các chiều này chưa hỗ trợ gửi đơn.');
   };
 
   const handleEmergencyLeaveSubmit = async () => {
@@ -1945,9 +2043,11 @@ export function App() {
 
                 <button
                   className="btn-primary"
-                  onClick={() => showToast('Tự đổi ca thành công! Lịch thử việc cá nhân đã được tự do cập nhật.')}
+                  disabled={actionBusy === 'selfswap'}
+                  onClick={handleProbationSelfSwap}
+                  style={{ opacity: actionBusy === 'selfswap' ? 0.6 : 1 }}
                 >
-                  Xác Nhận Tự Đổi Ca Cá Nhân
+                  {actionBusy === 'selfswap' ? '⏳ ĐANG GỬI ĐƠN...' : 'Xác Nhận Tự Đổi Ca Cá Nhân'}
                 </button>
               </div>
             </div>
@@ -2042,11 +2142,12 @@ export function App() {
                       onChange={(e) => setSwapData({ ...swapData, myShift: e.target.value })}
                       style={{ width: '100%' }}
                     >
+                      <option value="">-- Chọn ca thật của bạn --</option>
                       {myShifts.length === 0 ? (
-                        <option value="Ca làm việc tuần này">Ca làm việc tuần này</option>
+                        <option value="">Chưa có ca nào trong tuần này</option>
                       ) : (
                         myShifts.map((s: any, idx: number) => (
-                          <option key={idx} value={`${s.date} (${s.shift_code})`}>
+                          <option key={idx} value={s.assignment_id}>
                             {s.date} ({s.shift_code})
                           </option>
                         ))
@@ -2058,13 +2159,16 @@ export function App() {
                     <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Đồng nghiệp cùng chi nhánh (Nhân viên B):</label>
                     <select
                       value={swapData.targetEmployeeId}
-                      onChange={(e) => setSwapData({ ...swapData, targetEmployeeId: e.target.value })}
+                      onChange={(e) => handleSelectSwapTarget(e.target.value)}
                       style={{ width: '100%' }}
                     >
+                      <option value="">-- Chọn đồng nghiệp --</option>
                       {branchColleagues.length === 0 ? (
-                        <option value="COLLEAGUE_1">Đồng nghiệp chi nhánh {employee?.default_branch_id || 'CN130'}</option>
+                        <option value="">Chưa tải được danh sách (kiểm tra mạng)</option>
                       ) : (
-                        branchColleagues.map((col: any) => (
+                        branchColleagues
+                          .filter((col: any) => col.employee_id !== employee?.employee_id)
+                          .map((col: any) => (
                           <option key={col.employee_id} value={col.employee_id}>
                             {col.full_name} ({col.phone_normalized || col.phone || col.employee_code || col.employee_id})
                           </option>
@@ -2074,16 +2178,18 @@ export function App() {
                   </div>
 
                   <div>
-                    <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Ca muốn tráo đổi từ đồng nghiệp B:</label>
+                    <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Ca muốn tráo đổi từ đồng nghiệp B (ca thật):</label>
                     <select
                       value={swapData.targetShift}
                       onChange={(e) => setSwapData({ ...swapData, targetShift: e.target.value })}
                       style={{ width: '100%' }}
                     >
-                      <option value="Ca 1 (07:00 - 12:00)">Ca 1 (07:00 - 12:00)</option>
-                      <option value="Ca 2 (12:00 - 18:00)">Ca 2 (12:00 - 18:00)</option>
-                      <option value="Ca 3 (17:00 - 22:00)">Ca 3 (17:00 - 22:00)</option>
-                      <option value="Nghỉ OFF">Nghỉ OFF</option>
+                      <option value="">-- Chọn ca thật của B --</option>
+                      {targetShifts.map((s: any, idx: number) => (
+                        <option key={idx} value={s.assignment_id}>
+                          {s.date} ({s.shift_code})
+                        </option>
+                      ))}
                     </select>
                   </div>
 
@@ -2100,9 +2206,11 @@ export function App() {
 
                   <button
                     className="btn-primary"
-                    onClick={() => showToast('Đã gửi yêu cầu Tráo đổi ca (A <-> B)! Đang chờ NV B xác nhận rồi Store duyệt.')}
+                    disabled={actionBusy === 'swap'}
+                    onClick={handleSubmitSwap}
+                    style={{ opacity: actionBusy === 'swap' ? 0.6 : 1 }}
                   >
-                    Gửi Yêu Cầu Tráo Đổi Ca (A ⇄ B)
+                    {actionBusy === 'swap' ? '⏳ ĐANG GỬI ĐƠN THẬT...' : 'Gửi Yêu Cầu Tráo Đổi Ca (A ⇄ B)'}
                   </button>
                 </div>
               )}

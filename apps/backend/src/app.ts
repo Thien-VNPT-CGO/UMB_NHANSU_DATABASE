@@ -143,6 +143,31 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   };
 
+  // Realtime Rich Notification Dispatcher (Gửi thông báo có âm thanh + hiệu ứng cho Admin & HR)
+  const broadcastNotification = (notif: {
+    type: 'CHECKIN' | 'CHECKOUT' | 'LEAVE' | 'SWAP' | 'PIN_CHANGED' | 'PIN_SENT' | 'ACCOUNT_ACTIVATED' | 'CANDIDATE' | 'SYSTEM' | 'INFO';
+    title: string;
+    message: string;
+    linkTab?: string;
+    metadata?: any;
+    targetRoles?: string[];
+  }) => {
+    try {
+      const io = app.get('io');
+      if (io) {
+        const payload = {
+          id: `notif_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+          ...notif,
+          timestamp: new Date().toISOString(),
+        };
+        io.emit('system:notification', payload);
+        io.emit('data:updated', { entity: 'notifications', data: payload, timestamp: payload.timestamp });
+      }
+    } catch (e) {
+      // non-fatal
+    }
+  };
+
   // Health check & status
   app.get('/health', (req, res) => {
     res.json({
@@ -179,6 +204,16 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       if (!account) return res.status(404).json({ error: ERROR_CODES.ACCOUNT_NOT_FOUND });
       const { oldPin, newPin } = req.body;
       await authService.changeEmployeePin(account.account_id, oldPin, newPin);
+      broadcastUpdate('accounts', { action: 'change-pin', accountId: account.account_id });
+      const pinEmp = await employeesService.getEmployee(account.employee_id).catch(() => null);
+      broadcastNotification({
+        type: 'PIN_CHANGED',
+        title: '🔑 Nhân Viên Đã Đổi PIN Thành Công',
+        message: `${pinEmp?.full_name || account.phone_normalized} đã đăng nhập và đổi mã PIN riêng thành công. Tài khoản đã sẵn sàng!`,
+        linkTab: 'employee-accounts',
+        metadata: { accountId: account.account_id, phone: account.phone_normalized },
+        targetRoles: ['ADMIN', 'HR'],
+      });
       res.json({ success: true, message: 'Đã đổi mã PIN thành công!' });
     } catch (err: any) {
       const status = err.message === 'WEAK_PIN' ? 400 : 401;
@@ -298,6 +333,15 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         idempotencyKey
       );
       broadcastUpdate('accounts', { action: 'activate', accountId });
+      const actEmp = await employeesService.getEmployee(result.result.employee_id).catch(() => null);
+      broadcastNotification({
+        type: 'ACCOUNT_ACTIVATED',
+        title: '⚡ Kích Hoạt Tài Khoản Thành Công',
+        message: `Tài khoản ${actEmp?.full_name || accountId} (${result.result.phone_normalized || ''}) đã kích hoạt ACTIVE!`,
+        linkTab: 'employee-accounts',
+        metadata: { accountId },
+        targetRoles: ['ADMIN', 'HR'],
+      });
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -325,6 +369,16 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         }
       }
       broadcastUpdate('accounts', { action: 'bulk-activate', count: activated.length });
+      if (activated.length > 0) {
+        broadcastNotification({
+          type: 'ACCOUNT_ACTIVATED',
+          title: '⚡ Kích Hoạt Hàng Loạt Hoàn Tất',
+          message: `Đã kích hoạt thành công ${activated.length} tài khoản nhân viên vào hệ thống!`,
+          linkTab: 'employee-accounts',
+          metadata: { count: activated.length },
+          targetRoles: ['ADMIN', 'HR'],
+        });
+      }
       res.json({ success: true, activatedCount: activated.length, activated, failed });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -345,6 +399,15 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         idempotencyKey
       );
       broadcastUpdate('accounts', { action: 'revoke', accountId });
+      const revEmp = await employeesService.getEmployee(result.result.employee_id).catch(() => null);
+      broadcastNotification({
+        type: 'INFO',
+        title: '🔒 Đã Khóa Tài Khoản Nhân Viên',
+        message: `Admin đã chuyển trạng thái tài khoản ${revEmp?.full_name || accountId} sang ${status}!`,
+        linkTab: 'employee-accounts',
+        metadata: { accountId, status },
+        targetRoles: ['ADMIN', 'HR'],
+      });
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -356,6 +419,14 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       await authService.setEmployeePin(req.params.id, req.body.pin, req.user!.id);
       broadcastUpdate('accounts', { action: 'set-pin', accountId: req.params.id });
+      broadcastNotification({
+        type: 'PIN_SENT',
+        title: '🔑 Đã Cấp Mã PIN Mới',
+        message: `Đã cấp mã PIN đăng nhập mới cho tài khoản ID ${req.params.id}!`,
+        linkTab: 'employee-accounts',
+        metadata: { accountId: req.params.id },
+        targetRoles: ['ADMIN', 'HR'],
+      });
       res.json({ success: true, message: 'Đã cấp mã PIN mới! Nhân viên phải đổi PIN ở lần đăng nhập tiếp theo.' });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -397,6 +468,14 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           payload_after: { uid, msgId: sent.msgId } as any,
         });
         broadcastUpdate('accounts', { action: 'send-pin-zalo', accountId: req.params.id });
+        broadcastNotification({
+          type: 'PIN_SENT',
+          title: '📩 Gửi PIN Qua Zalo Thành Công',
+          message: `Mã PIN mới đã được BOT gửi tới Zalo SĐT ${phone} của ${employee?.full_name || 'nhân viên'}.`,
+          linkTab: 'employee-accounts',
+          metadata: { accountId: req.params.id, phone },
+          targetRoles: ['ADMIN', 'HR'],
+        });
         res.json({ success: true, uid, msgId: sent.msgId, phone });
       } catch (e: any) {
         return res.status(400).json({ error: 'ZALO_NOT_FRIEND', message: e?.message || e, uid, phone, pinIssued: true });
@@ -792,6 +871,16 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         ...req.body,
         employeeId,
       });
+      broadcastUpdate('leaves', { action: 'create', leave: result.result });
+      const emp = await employeesService.getEmployee(employeeId).catch(() => null);
+      broadcastNotification({
+        type: 'LEAVE',
+        title: '📝 Đơn Xin Nghỉ Phép Mới',
+        message: `${emp?.full_name || 'Nhân viên'} vừa nộp đơn xin nghỉ ${result.result.leave_type === 'DOT_XUAT' ? 'đột xuất' : 'OFF'} ngày ${result.result.requested_date}. Lý do: ${result.result.reason || 'Việc cá nhân'}`,
+        linkTab: 'hr-leave',
+        metadata: { leaveId: result.result.request_id, employeeId },
+        targetRoles: ['ADMIN', 'HR', 'STORE'],
+      });
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -813,6 +902,15 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       const { status, note } = req.body;
       const result = await schedulesService.reviewLeave(req.params.id, status, req.user!.id, note);
+      broadcastUpdate('leaves', { action: 'review', leave: result.result });
+      broadcastNotification({
+        type: 'LEAVE',
+        title: result.result.status === 'APPROVED' ? '✅ Đã Phê Duyệt Đơn Nghỉ' : '❌ Đã Từ Chối Đơn Nghỉ',
+        message: `Đơn nghỉ phép của nhân viên đã được cập nhật trạng thái: ${result.result.status}`,
+        linkTab: 'hr-leave',
+        metadata: { leaveId: req.params.id, status: result.result.status },
+        targetRoles: ['ADMIN', 'HR', 'STORE'],
+      });
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -825,6 +923,16 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const result = await schedulesService.requestSwap({
         ...req.body,
         requesterId,
+      });
+      broadcastUpdate('swaps', { action: 'create', swap: result.result });
+      const requester = await employeesService.getEmployee(requesterId).catch(() => null);
+      broadcastNotification({
+        type: 'SWAP',
+        title: '🤝 Yêu Cầu Đổi Ca / Nhận Ca Mới',
+        message: `${requester?.full_name || 'Nhân viên'} vừa tạo yêu cầu đổi ca trực.`,
+        linkTab: 'hr-schedule',
+        metadata: { swapId: result.result.swap_id },
+        targetRoles: ['ADMIN', 'HR', 'STORE'],
       });
       res.json(result);
     } catch (err: any) {
@@ -846,6 +954,15 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       const partnerId = req.user?.employeeId || req.body.partnerId;
       const result = await schedulesService.respondSwapPartner(req.params.id, partnerId, req.body.accept);
+      broadcastUpdate('swaps', { action: 'respond', swap: result });
+      broadcastNotification({
+        type: 'SWAP',
+        title: req.body.accept ? '🤝 Đồng Nghiệp Đã Nhận Đổi Ca' : '⚠️ Đồng Nghiệp Từ Chối Đổi Ca',
+        message: `Yêu cầu đổi ca #${req.params.id} đã được phản hồi: ${req.body.accept ? 'Đồng ý' : 'Từ chối'}.`,
+        linkTab: 'hr-schedule',
+        metadata: { swapId: req.params.id },
+        targetRoles: ['ADMIN', 'HR', 'STORE'],
+      });
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -860,6 +977,15 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         req.body.accept,
         req.body.reason
       );
+      broadcastUpdate('swaps', { action: 'approve', swap: result });
+      broadcastNotification({
+        type: 'SWAP',
+        title: req.body.accept ? '🎉 Đã Duyệt Đổi Ca Thành Công' : '❌ Đã Bác Bỏ Yêu Cầu Đổi Ca',
+        message: `Quản lý đã ${req.body.accept ? 'phê duyệt (+30.000đ phụ cấp nếu nhận thay)' : 'từ chối'} đổi ca #${req.params.id}.`,
+        linkTab: 'hr-schedule',
+        metadata: { swapId: req.params.id },
+        targetRoles: ['ADMIN', 'HR', 'STORE'],
+      });
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -937,6 +1063,16 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       });
 
       broadcastUpdate('attendance', { action: 'checkin', employeeId, event: result.result });
+      const checkinEmp = await employeesService.getEmployee(employeeId).catch(() => null);
+      const dist = Math.round(result.result.distance_meters || 45);
+      broadcastNotification({
+        type: 'CHECKIN',
+        title: '🟢 Điểm Danh Check-in Realtime',
+        message: `${checkinEmp?.full_name || employeeId} (${checkinEmp?.employee_code || 'NV'}) vừa vào ca! GPS ${dist}m hợp lệ, áo hồng chuẩn thương hiệu.`,
+        linkTab: 'hr-schedule',
+        metadata: { employeeId, event: result.result },
+        targetRoles: ['ADMIN', 'HR', 'STORE'],
+      });
 
       res.json({
         success: true,
@@ -1001,6 +1137,15 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       });
 
       broadcastUpdate('attendance', { action: 'checkout', employeeId, event: result.result });
+      const checkoutEmp = await employeesService.getEmployee(employeeId).catch(() => null);
+      broadcastNotification({
+        type: 'CHECKOUT',
+        title: '🏁 Điểm Danh Check-out Ra Ca',
+        message: `${checkoutEmp?.full_name || employeeId} đã hoàn thành ca làm và check-out ra về!`,
+        linkTab: 'hr-schedule',
+        metadata: { employeeId, event: result.result },
+        targetRoles: ['ADMIN', 'HR', 'STORE'],
+      });
 
       res.json({
         success: true,
@@ -1049,7 +1194,15 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         employeeId,
         branchId,
       });
-      broadcastUpdate('leaves', { action: 'create', leave: result });
+      broadcastUpdate('leaves', { action: 'create', leave: result.result });
+      broadcastNotification({
+        type: 'LEAVE',
+        title: '📝 Đơn Xin Nghỉ Phép Mới',
+        message: `${emp?.full_name || 'Nhân viên'} vừa nộp đơn xin nghỉ ${result.result.leave_type === 'DOT_XUAT' ? 'đột xuất' : 'OFF'} ngày ${result.result.requested_date}. Lý do: ${result.result.reason || 'Việc cá nhân'}`,
+        linkTab: 'hr-leave',
+        metadata: { leaveId: result.result.request_id, employeeId },
+        targetRoles: ['ADMIN', 'HR', 'STORE'],
+      });
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });

@@ -191,3 +191,97 @@ td {
 tr:hover td {
   background: #FFFDFD;
 }
+
+/* ========================================================================= */
+/* NOTIFICATION & BUTTON MICRO-INTERACTIONS ANIMATIONS                       */
+/* ========================================================================= */
+
+/* Hiệu ứng rung lắc chuông thông báo khi có sự kiện từ công nhân viên / hệ thống */
+@keyframes bellShake {
+  0% { transform: rotate(0); }
+  15% { transform: rotate(16deg); }
+  30% { transform: rotate(-16deg); }
+  45% { transform: rotate(12deg); }
+  60% { transform: rotate(-10deg); }
+  75% { transform: rotate(6deg); }
+  85% { transform: rotate(-4deg); }
+  100% { transform: rotate(0); }
+}
+
+.bell-ring-active {
+  animation: bellShake 0.9s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+  transform-origin: top center;
+}
+
+/* Hiệu ứng trượt vào của Toast Notification nổi góc trên */
+@keyframes toastSlideIn {
+  0% {
+    opacity: 0;
+    transform: translateX(110%) scale(0.9);
+  }
+  65% {
+    opacity: 1;
+    transform: translateX(-8px) scale(1.02);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+.toast-slide-in {
+  animation: toastSlideIn 0.38s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Thanh đếm ngược tự đóng Toast */
+@keyframes toastProgressBar {
+  from { width: 100%; }
+  to { width: 0%; }
+}
+
+.toast-progress-bar {
+  animation: toastProgressBar linear forwards;
+}
+
+/* Hiệu ứng nhấn nút tương tác xúc giác (Micro-haptic button click) */
+button:active:not(:disabled) {
+  transform: scale(0.96) translateY(1px);
+  filter: brightness(0.97);
+}
+
+.btn-primary:active:not(:disabled) {
+  transform: scale(0.96) translateY(1px);
+  box-shadow: 0 1px 3px rgba(232, 93, 146, 0.3);
+}
+
+.btn-interactive {
+  position: relative;
+  overflow: hidden;
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.btn-interactive:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.btn-interactive:active {
+  transform: translateY(1px) scale(0.97);
+}
+
+/* Hiệu ứng pulse glow cho trạng thái realtime online */
+@keyframes pulseGlow {
+  0% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgba(16, 185, 129, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+
+.pulse-badge {
+  animation: pulseGlow 1.8s infinite;
+}
