@@ -724,6 +724,42 @@ export function App() {
     }
   };
 
+  // Hệ thống TỰ sinh PIN + bắn qua Zalo cá nhân HR tới đúng SĐT nhân viên.
+  // HR không cần thấy/chép PIN — chống lộ. Yêu cầu BOT Zalo đã kết nối.
+  const handleSendPinZalo = async (accountId: string, fullName: string, phone: string) => {
+    if (!window.confirm(`Tự động sinh mã PIN mới và GỬI QUA ZALO tới ${fullName} (${phone})?\nPIN cũ (nếu có) sẽ bị vô hiệu ngay. Nhân viên phải đổi PIN ở lần đăng nhập tiếp theo.`)) {
+      return;
+    }
+    try {
+      const res = await apiRequest(`/admin/employee-accounts/${accountId}/send-pin-zalo`, { method: 'POST' });
+      setSuccessMsg(`✅ Đã gửi PIN qua Zalo tới ${fullName}! (tin nhắn #${res.msgId})`);
+      setTimeout(() => setSuccessMsg(null), 4000);
+      await loadAllData();
+    } catch (err: any) {
+      const msg = String(err.message || '');
+      if (msg.includes('ZALO_NOT_CONNECTED')) {
+        setErrorMsg('BOT Zalo chưa kết nối! Vào tab "Lịch Phỏng Vấn & BOT Zalo" quét QR đăng nhập trước.');
+      } else if (msg.includes('ZALO_USER_NOT_FOUND') || msg.includes('ZALO_LOOKUP_FAILED')) {
+        setErrorMsg(`SĐT ${phone} không tìm thấy nick Zalo! Kiểm tra SĐT hoặc dùng nút "Cấp / Reset PIN" để trao trực tiếp.`);
+      } else if (msg.includes('ZALO_NOT_FRIEND')) {
+        if (window.confirm(`${fullName} chưa kết bạn Zalo với nick HR. Gửi lời mời kết bạn ngay? (Khi NV đồng ý, bấm "Gửi PIN qua Zalo" lại.)`)) {
+          try {
+            await apiRequest('/admin/zalo/send-friend-request', {
+              method: 'POST',
+              body: JSON.stringify({ phone }),
+            });
+            setSuccessMsg('Đã gửi lời mời kết bạn Zalo! Khi NV đồng ý, bấm "Gửi PIN qua Zalo" lại.');
+            setTimeout(() => setSuccessMsg(null), 4000);
+          } catch (e: any) {
+            setErrorMsg(e.message);
+          }
+        }
+      } else {
+        setErrorMsg(msg);
+      }
+    }
+  };
+
   const handleToggleInternalAccount = async (account: any) => {
     try {
       await apiRequest(`/admin/internal-accounts/${account.admin_id}`, {
@@ -2118,6 +2154,24 @@ export function App() {
                                 }}
                               >
                                 🔑 Cấp / Reset PIN
+                              </button>
+                              <button
+                                onClick={() => handleSendPinZalo(item.accountId, item.fullName || item.phone, item.phone)}
+                                disabled={!item.hasRealAccount}
+                                title={item.hasRealAccount ? 'Hệ thống tự sinh PIN mới và gửi qua Zalo tới SĐT nhân viên (cần BOT Zalo đã kết nối)' : 'Kích hoạt tài khoản trước!'}
+                                style={{
+                                  padding: '6px 12px',
+                                  borderRadius: 'var(--radius-sm)',
+                                  backgroundColor: item.hasRealAccount ? '#0068FF' : 'transparent',
+                                  border: '1px solid #0068FF',
+                                  color: item.hasRealAccount ? '#FFF' : 'var(--brand)',
+                                  fontWeight: 600,
+                                  fontSize: '12px',
+                                  cursor: item.hasRealAccount ? 'pointer' : 'not-allowed',
+                                  opacity: item.hasRealAccount ? 1 : 0.5,
+                                }}
+                              >
+                                📩 Gửi PIN Zalo
                               </button>
                               {item.accountStatus !== 'ACTIVE' ? (
                                 <button
