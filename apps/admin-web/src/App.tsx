@@ -266,8 +266,8 @@ export function App() {
     return 'dashboard';
   });
   const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [errorMsg, setErrorMsgState] = useState<string | null>(null);
+  const [successMsg, setSuccessMsgState] = useState<string | null>(null);
 
   // Login Form State
   const [loginUsername, setLoginUsername] = useState('');
@@ -345,13 +345,43 @@ export function App() {
     }, toast.duration || 6000);
   };
 
-  const showToast = (msg: string, type: 'INFO' | 'WARNING' | 'ACCOUNT_ACTIVATED' = 'INFO') => {
+  const showToast = (msg: string, type: 'INFO' | 'WARNING' | 'ACCOUNT_ACTIVATED' = 'INFO', customTitle?: string) => {
     const isWarn = msg.includes('⚠️') || msg.toLowerCase().includes('lỗi') || type === 'WARNING';
+    let title = customTitle || (isWarn ? '⚠️ Cảnh Báo Hệ Thống' : '✨ Thao Tác Thành Công');
+    if (!customTitle && !isWarn) {
+      const lower = msg.toLowerCase();
+      if (lower.includes('đồng bộ') || lower.includes('tải và cập nhật')) title = '⚡ Đồng Bộ Google Sheets Thành Công';
+      else if (lower.includes('kích hoạt')) title = '⚡ Kích Hoạt Tài Khoản Thành Công';
+      else if (lower.includes('pin')) title = '🔑 Cấp & Gửi PIN Zalo';
+      else if (lower.includes('sao lưu') || lower.includes('snapshot')) title = '💾 Bản Sao Lưu Snapshot';
+      else if (lower.includes('khôi phục') || lower.includes('phục hồi')) title = '🔄 Phục Hồi Dữ Liệu';
+      else if (lower.includes('xóa')) title = '🗑️ Đã Xóa Dữ Liệu';
+      else if (lower.includes('bảo trì')) title = '🛠️ Chế Độ Bảo Trì';
+      else if (lower.includes('chính sách')) title = '📜 Cập Nhật Chính Sách';
+      else if (lower.includes('cấu hình') || lower.includes('cài đặt')) title = '⚙️ Đã Lưu Cấu Hình';
+      else if (lower.includes('thông báo') || lower.includes('phát thanh')) title = '📢 Phát Thanh Thông Báo';
+    }
+
     addRichToast({
-      title: isWarn ? '⚠️ Thông Báo Cảnh Báo' : '✨ Thao Tác Thành Công',
+      title,
       message: msg,
-      type: isWarn ? 'WARNING' : 'INFO',
+      type: isWarn ? 'WARNING' : type,
+      duration: 5000,
     });
+  };
+
+  const setErrorMsg = (msg: string | null) => {
+    setErrorMsgState(msg);
+    if (msg) {
+      showToast(msg, 'WARNING');
+    }
+  };
+
+  const setSuccessMsg = (msg: string | null) => {
+    setSuccessMsgState(msg);
+    if (msg) {
+      showToast(msg, 'INFO');
+    }
   };
 
   // Filters & Search
@@ -1767,22 +1797,24 @@ export function App() {
             {currentUser?.role === 'ADMIN' && (
               <button
                 onClick={handleForceSync}
+                disabled={loading}
+                className="btn-interactive"
                 style={{
                   display: 'flex',
                   alignItems: 'center',
                   gap: '6px',
                   padding: '6px 12px',
                   borderRadius: 'var(--radius-sm)',
-                  backgroundColor: 'var(--surface)',
+                  backgroundColor: loading ? '#F3F4F6' : 'var(--surface)',
                   border: '1px solid var(--border)',
                   fontSize: '12px',
                   fontWeight: 600,
-                  cursor: 'pointer',
+                  cursor: loading ? 'not-allowed' : 'pointer',
                   color: 'var(--text)',
                 }}
               >
-                <RefreshCw size={14} />
-                Đồng Bộ Sheets 23 Tabs
+                <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+                {loading ? 'Đang Đồng Bộ Sheets...' : 'Đồng Bộ Sheets 23 Tabs'}
               </button>
             )}
 
@@ -2159,7 +2191,12 @@ export function App() {
                   <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Cập nhật theo thời gian thực từ Google Sheets Master và Socket.IO</p>
                 </div>
                 <button
-                  onClick={() => loadAllData()}
+                  onClick={async () => {
+                    await loadAllData();
+                    showToast('Đã tải lại toàn bộ số liệu thống kê Dashboard mới nhất!');
+                  }}
+                  disabled={loading}
+                  className="btn-interactive"
                   style={{
                     padding: '8px 16px',
                     borderRadius: 'var(--radius-sm)',
@@ -2168,13 +2205,15 @@ export function App() {
                     fontWeight: 600,
                     fontSize: '13px',
                     border: 'none',
-                    cursor: 'pointer',
+                    cursor: loading ? 'not-allowed' : 'pointer',
                     display: 'flex',
                     alignItems: 'center',
                     gap: '6px',
+                    boxShadow: '0 2px 6px rgba(232, 93, 146, 0.25)',
                   }}
                 >
-                  <RefreshCw size={14} /> Tải Lại Số Liệu
+                  <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+                  {loading ? 'Đang Tải Lại...' : 'Tải Lại Số Liệu'}
                 </button>
               </div>
 
@@ -3365,6 +3404,7 @@ export function App() {
                   <button
                     onClick={handleForcePull}
                     disabled={loading}
+                    className="btn-interactive"
                     style={{
                       padding: '8px 16px',
                       borderRadius: 'var(--radius-sm)',
@@ -3377,13 +3417,16 @@ export function App() {
                       display: 'inline-flex',
                       alignItems: 'center',
                       gap: '6px',
+                      boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
                     }}
                   >
+                    <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
                     {loading ? 'Đang Tải Dữ Liệu...' : '📥 Tải Dữ Liệu Thực Tế Từ Sheets'}
                   </button>
                   <button
                     onClick={handleForceSync}
                     disabled={loading}
+                    className="btn-interactive"
                     style={{
                       padding: '8px 18px',
                       borderRadius: 'var(--radius-sm)',
@@ -3396,8 +3439,10 @@ export function App() {
                       display: 'inline-flex',
                       alignItems: 'center',
                       gap: '6px',
+                      boxShadow: '0 2px 6px rgba(232, 93, 146, 0.3)',
                     }}
                   >
+                    <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
                     {loading ? 'Đang Khởi Tạo & Đồng Bộ...' : '🚀 Khởi Tạo Cấu Trúc & Đồng Bộ Lên Sheets'}
                   </button>
                 </div>

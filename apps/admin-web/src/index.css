@@ -243,15 +243,38 @@ tr:hover td {
   animation: toastProgressBar linear forwards;
 }
 
-/* Hiệu ứng nhấn nút tương tác xúc giác (Micro-haptic button click) */
+/* Hiệu ứng xoay mượt mà khi xử lý / đồng bộ dữ liệu */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.animate-spin {
+  animation: spin 0.9s linear infinite;
+}
+
+/* Hiệu ứng nhấn nút tương tác xúc giác (Micro-haptic button click) cho toàn bộ Admin & HR */
+button {
+  position: relative;
+  user-select: none;
+  transition: transform 0.12s cubic-bezier(0.2, 0.8, 0.4, 1),
+              box-shadow 0.15s ease,
+              background-color 0.15s ease,
+              filter 0.12s ease;
+}
+
+button:hover:not(:disabled) {
+  filter: brightness(1.03);
+}
+
 button:active:not(:disabled) {
-  transform: scale(0.96) translateY(1px);
-  filter: brightness(0.97);
+  transform: scale(0.95) translateY(1px) !important;
+  filter: brightness(0.93) !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12) !important;
 }
 
 .btn-primary:active:not(:disabled) {
-  transform: scale(0.96) translateY(1px);
-  box-shadow: 0 1px 3px rgba(232, 93, 146, 0.3);
+  transform: scale(0.95) translateY(1px) !important;
+  box-shadow: 0 1px 3px rgba(232, 93, 146, 0.3) !important;
 }
 
 .btn-interactive {
@@ -262,11 +285,11 @@ button:active:not(:disabled) {
 
 .btn-interactive:hover {
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
 .btn-interactive:active {
-  transform: translateY(1px) scale(0.97);
+  transform: translateY(1px) scale(0.95) !important;
 }
 
 /* Hiệu ứng pulse glow cho trạng thái realtime online */
