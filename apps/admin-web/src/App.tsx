@@ -722,6 +722,61 @@ export function App() {
     }
   };
 
+  // HR gửi PIN Zalo TẤT CẢ nhân viên ACTIVE trong sub-tab (chạy tuần tự từng người
+  // để Zalo không chặn spam + hiện tiến trình realtime). Chỉ tài khoản HR.
+  const [bulkPinProgress, setBulkPinProgress] = useState<null | {
+    total: number;
+    done: number;
+    running: boolean;
+    results: { name: string; phone: string; ok: boolean; msg: string }[];
+  }>(null);
+  const bulkPinCancelRef = useRef(false);
+
+  const handleBulkSendPinZalo = async (items: any[], tabLabel: string) => {
+    const targets = items.filter(i => i.hasRealAccount && i.accountStatus === 'ACTIVE');
+    if (targets.length === 0) {
+      setSuccessMsg('Không có tài khoản ACTIVE nào để gửi PIN trong tab này!');
+      setTimeout(() => setSuccessMsg(null), 3000);
+      return;
+    }
+    if (!window.confirm(`Gửi PIN qua Zalo cho TẤT CẢ ${targets.length} nhân viên ACTIVE trong tab "${tabLabel}"?\nMỗi người nhận 1 PIN mới (PIN cũ vô hiệu ngay). Cần BOT Zalo đã kết nối!`)) {
+      return;
+    }
+    bulkPinCancelRef.current = false;
+    setBulkPinProgress({ total: targets.length, done: 0, running: true, results: [] });
+    let okCount = 0;
+    for (const t of targets) {
+      if (bulkPinCancelRef.current) break;
+      try {
+        const res = await apiRequest(`/admin/employee-accounts/${t.accountId}/send-pin-zalo`, { method: 'POST' });
+        okCount++;
+        setBulkPinProgress(prev => prev && ({
+          ...prev,
+          done: prev.done + 1,
+          results: [...prev.results, { name: t.fullName, phone: t.phone, ok: true, msg: `Đã gửi (msg #${res.msgId})` }],
+        }));
+      } catch (err: any) {
+        const msg = String(err.message || '');
+        const short = msg.includes('ZALO_NOT_CONNECTED') ? 'BOT chưa kết nối'
+          : msg.includes('ZALO_NOT_FRIEND') ? 'Chưa kết bạn Zalo'
+          : msg.includes('ZALO_USER_NOT_FOUND') || msg.includes('ZALO_LOOKUP_FAILED') ? 'SĐT không có nick Zalo'
+          : msg;
+        setBulkPinProgress(prev => prev && ({
+          ...prev,
+          done: prev.done + 1,
+          results: [...prev.results, { name: t.fullName, phone: t.phone, ok: false, msg: short }],
+        }));
+        if (msg.includes('ZALO_NOT_CONNECTED')) break;
+      }
+      await new Promise(r => setTimeout(r, 800));
+    }
+    setBulkPinProgress(prev => prev && ({ ...prev, running: false }));
+    const total = targets.length;
+    setSuccessMsg(`📩 Gửi PIN Zalo xong: ${okCount}/${total} thành công!`);
+    setTimeout(() => setSuccessMsg(null), 5000);
+    await loadAllData();
+  };
+
   // HR cấp mới / reset mã PIN đăng nhập cho nhân viên (4-8 chữ số).
   // Dùng cho cả 2 trường hợp: cấp lần đầu và nhân viên QUÊN PIN (cấp lại số mới,
   // PIN cũ + mọi phiên đăng nhập cũ tự vô hiệu ngay). Hệ thống tự sinh PIN
@@ -2058,7 +2113,11 @@ export function App() {
                   const pending = filteredActivationItems.filter(i => i.accountStatus !== 'ACTIVE');
                   const tabLabel: Record<string, string> = { PROBATION: 'Thử việc', OFFICIAL: 'Chính thức', XUONG: 'Xưởng', VAN_PHONG: 'Văn Phòng', SALE: 'Sales' };
                   const label = tabLabel[activationSubTab] || activationSubTab;
+                  const pinTargets = currentUser?.role === 'HR'
+                    ? filteredActivationItems.filter(i => i.hasRealAccount && i.accountStatus === 'ACTIVE')
+                    : [];
                   return (
+                    <>
                     <button
                       onClick={() => handleBulkActivate(filteredActivationItems, label)}
                       disabled={pending.length === 0}
@@ -2077,6 +2136,27 @@ export function App() {
                     >
                       ⚡ Kích Hoạt Tất Cả ({pending.length})
                     </button>
+                    {currentUser?.role === 'HR' && (
+                    <button
+                      onClick={() => handleBulkSendPinZalo(filteredActivationItems, label)}
+                      disabled={pinTargets.length === 0}
+                      title={pinTargets.length === 0 ? 'Không có tài khoản ACTIVE để gửi PIN' : `Gửi PIN qua Zalo cho tất cả ${pinTargets.length} tài khoản ACTIVE trong tab này`}
+                      style={{
+                        padding: '8px 16px',
+                        borderRadius: 'var(--radius-sm)',
+                        backgroundColor: pinTargets.length === 0 ? '#E5E7EB' : '#0068FF',
+                        color: pinTargets.length === 0 ? '#6B7280' : '#FFF',
+                        fontWeight: 700,
+                        fontSize: '13px',
+                        border: 'none',
+                        cursor: pinTargets.length === 0 ? 'not-allowed' : 'pointer',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      📩 Gửi PIN Zalo Tất Cả ({pinTargets.length})
+                    </button>
+                    )}
+                    </>
                   );
                 })()}
                 <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>
@@ -2309,6 +2389,60 @@ export function App() {
                     )}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          )}
+
+          {/* MODAL TIẾN TRÌNH GỬI PIN ZALO TẤT CẢ (HR) */}
+          {bulkPinProgress && (
+            <div style={{
+              position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.55)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              zIndex: 9999, padding: '16px',
+            }}>
+              <div style={{
+                backgroundColor: 'var(--surface)', borderRadius: '12px',
+                width: '520px', maxWidth: '100%', maxHeight: '80vh',
+                display: 'flex', flexDirection: 'column', overflow: 'hidden',
+              }}>
+                <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border)', fontWeight: 800, fontSize: '15px' }}>
+                  📩 {bulkPinProgress.running ? `Đang gửi PIN Zalo... ${bulkPinProgress.done}/${bulkPinProgress.total}` : `Hoàn tất: ${bulkPinProgress.done}/${bulkPinProgress.total}`}
+                </div>
+                <div style={{ height: '8px', backgroundColor: 'var(--bg)', margin: '12px 18px 0', borderRadius: '999px', overflow: 'hidden' }}>
+                  <div style={{
+                    height: '100%',
+                    width: `${bulkPinProgress.total === 0 ? 0 : Math.round((bulkPinProgress.done / bulkPinProgress.total) * 100)}%`,
+                    backgroundColor: '#0068FF',
+                    transition: 'width 0.3s ease',
+                  }} />
+                </div>
+                <div style={{ padding: '12px 18px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '13px' }}>
+                  {bulkPinProgress.results.map((r, i) => (
+                    <div key={i} style={{
+                      display: 'flex', justifyContent: 'space-between', gap: '8px',
+                      padding: '8px 10px', borderRadius: '8px',
+                      backgroundColor: r.ok ? '#ECFDF5' : '#FEF2F2',
+                      border: `1px solid ${r.ok ? '#A7F3D0' : '#FECACA'}`,
+                    }}>
+                      <span style={{ fontWeight: 700 }}>{r.ok ? '✅' : '❌'} {r.name} <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>({r.phone})</span></span>
+                      <span style={{ color: r.ok ? '#059669' : '#DC2626', fontSize: '12px', textAlign: 'right' }}>{r.msg}</span>
+                    </div>
+                  ))}
+                  {bulkPinProgress.running && bulkPinProgress.results.length === 0 && (
+                    <div style={{ color: 'var(--text-muted)', fontSize: '13px' }}>⏳ Đang gửi người đầu tiên...</div>
+                  )}
+                </div>
+                <div style={{ padding: '12px 18px', borderTop: '1px solid var(--border)', display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                  {bulkPinProgress.running ? (
+                    <button className="btn-secondary" style={{ fontSize: '13px' }} onClick={() => { bulkPinCancelRef.current = true; }}>
+                      ⏹ Dừng lại
+                    </button>
+                  ) : (
+                    <button className="btn-primary" style={{ fontSize: '13px' }} onClick={() => setBulkPinProgress(null)}>
+                      Đóng
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           )}
