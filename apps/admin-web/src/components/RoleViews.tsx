@@ -1614,20 +1614,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 )}
               </div>
 
-              {/* Lưu ý lib unofficial */}
-              <div style={{
-                fontSize: '11px',
-                color: '#92400E',
-                backgroundColor: '#FEF3C7',
-                border: '1px solid #FCD34D',
-                borderRadius: '6px',
-                padding: '6px 8px',
-                marginBottom: '10px',
-                lineHeight: '1.4',
-                width: '100%',
-              }}>
-                ⚠️ <strong>Kết nối thật qua Zalo cá nhân</strong> (lib unofficial — có rủi ro bị Zalo khóa nick). Nên dùng <strong>nick phụ của HR</strong>, không dùng nick chính!
-              </div>
+              {/* (Đã ẩn cảnh báo lib unofficial theo yêu cầu) */}
               {/* MÃ QR ZALO THẬT DO SERVER SINH (quét bằng app Zalo trên điện thoại) */}
               <div style={{
                 width: '180px',
