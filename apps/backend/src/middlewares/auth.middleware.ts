@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { AuthUser, ERROR_CODES } from '@ubm/shared';
 import { AuthService } from '../services/auth.service.js';
+import { checkWeeklyOffGate } from '../services/weekly-off.service.js';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 
 export interface AuthenticatedRequest extends Request {
@@ -39,6 +40,21 @@ export function createAuthMiddleware(repo: ISheetsRepository) {
       const verified = await authService.verifyAccessToken(token);
       const { tv: _tv, ...user } = verified;
       req.user = user;
+
+      // Cổng đăng ký 2 ngày OFF/tuần: khóa chức năng khác đến khi hoàn tất.
+      const gate = await checkWeeklyOffGate(repo, user, req.path);
+      if (gate.locked) {
+        return res.status(403).json({
+          error: ERROR_CODES.WEEKLY_OFF_REGISTRATION_REQUIRED,
+          message:
+            'Hiện tại đang mở cổng đăng ký 2 ngày nghỉ/tuần định kỳ. Toàn bộ các chức năng khác tạm thời bị KHÓA cho đến khi bạn hoàn tất đăng ký 2 ngày nghỉ!',
+          code: ERROR_CODES.WEEKLY_OFF_REGISTRATION_REQUIRED,
+          windowClosesAt: gate.window.windowClosesAt,
+          required: gate.completion?.required ?? 2,
+          registered: gate.completion?.registered ?? [],
+        });
+      }
+
       next();
     } catch (error) {
       const msg = errorMessage(error);

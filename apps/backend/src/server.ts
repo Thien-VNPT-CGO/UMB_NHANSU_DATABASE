@@ -5,6 +5,7 @@ import http from 'http';
 import { Server } from 'socket.io';
 import { createApp } from './app.js';
 import { AuthService } from './services/auth.service.js';
+import { weeklyOffScheduler } from './services/weekly-off.service.js';
 import { buildSocketCorsOptions, getAllowedOrigins } from './config/security.js';
 
 const PORT = process.env.PORT || 4005;
@@ -74,7 +75,17 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   console.log(`CORS origins: ${getAllowedOrigins().join(', ') || '(none — set CORS_ORIGINS in production)'}`);
   console.log(`Google Sheets Mode: ${adapter.getStatus().mode}`);
   console.log(`Realtime Socket.IO: Ready`);
+  console.log(`Weekly-OFF gate: Fri 12:00 -> Sat 15:00 (VN) + reminder 5 min before`);
   console.log(`====================================================`);
+
+  // Scheduler nhắc mở cổng đăng ký OFF tuần (mỗi 60s + ngay khi boot).
+  const weeklyOffTick = () => {
+    weeklyOffScheduler
+      .tick(adapter, services.notificationsService)
+      .catch(err => console.warn('[weekly-off] tick failed:', err?.message || err));
+  };
+  weeklyOffTick();
+  setInterval(weeklyOffTick, 60_000);
 });
 
 export { server, io };

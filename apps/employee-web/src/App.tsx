@@ -93,6 +93,11 @@ export function App() {
     reason: 'Đăng ký 2 ngày nghỉ OFF tuần theo định biên quy chế Ụm Bò Milk',
   });
 
+  // Trạng thái cổng đăng ký OFF/tuần từ server (khung giờ T6 12h -> T7 15h)
+  const [weeklyOffWindow, setWeeklyOffWindow] = useState<any>(null);
+  const [weeklyOffLocked, setWeeklyOffLocked] = useState(false);
+  const [weeklyOffLockKnown, setWeeklyOffLockKnown] = useState(false);
+
   const [leaveData, setLeaveData] = useState({
     leaveType: 'HANG_TUAN',
     requestedDate: new Date().toISOString().split('T')[0],
@@ -222,6 +227,9 @@ export function App() {
       // Load real colleagues in branch
       const colleagues = await apiRequest('/employees').catch(() => []);
       setBranchColleagues(colleagues);
+
+      // Đồng bộ cổng đăng ký OFF/tuần (banner + khóa/mở theo server)
+      await refreshWeeklyOffStatus();
     } catch (err) {
       console.error(err);
     }
@@ -297,13 +305,62 @@ export function App() {
   };
 
   // Guard: Mandatory 2-day OFF registration locks other tabs for official employees
+  // Ưu tiên trạng thái khóa từ server; khi offline mới dùng cờ localStorage cũ.
+  const weeklyOffGateLocked = weeklyOffLockKnown ? weeklyOffLocked : !hasRegisteredWeeklyOff;
   const handleTabClick = (tabId: string) => {
-    if (!isProbation && !hasRegisteredWeeklyOff && tabId !== 'leave') {
+    if (!isProbation && weeklyOffGateLocked && tabId !== 'leave') {
       showToast('🔒 QUY CHẾ BẮT BUỘC: Đang trong chu kỳ mở đăng ký 2 ngày nghỉ/tuần! Bạn bắt buộc phải hoàn thành đăng ký 2 ngày nghỉ để mở khóa các chức năng khác.');
       setActiveTab('leave');
       return;
     }
     setActiveTab(tabId);
+  };
+
+  // Đồng bộ trạng thái cổng đăng ký OFF/tuần từ server (khung giờ + đã đủ 2 ngày chưa)
+  const refreshWeeklyOffStatus = async () => {
+    try {
+      const w = await apiRequest('/api/weekly-off-window').catch(() => null);
+      if (w) setWeeklyOffWindow(w);
+    } catch {}
+    if (!getAuthToken()) return;
+    try {
+      const st = await apiRequest('/me/weekly-off-status');
+      setWeeklyOffLocked(!!st.locked);
+      setWeeklyOffLockKnown(true);
+      if (st.completed) {
+        setHasRegisteredWeeklyOff(true);
+        try {
+          localStorage.setItem('ubm_weekly_off_registered', 'true');
+        } catch {}
+        if (Array.isArray(st.registered) && st.registered.length >= 2) {
+          setWeeklyOffData(d => ({
+            ...d,
+            day1: d.day1 || st.registered[0] || '',
+            day2: d.day2 || st.registered[1] || '',
+          }));
+        }
+      } else if (st.window?.phase === 'OPEN') {
+        // Chu kỳ mới đang mở mà chưa đủ 2 ngày -> khóa lại
+        setHasRegisteredWeeklyOff(false);
+        setWeeklyOffLocked(true);
+        try {
+          localStorage.setItem('ubm_weekly_off_registered', 'false');
+        } catch {}
+      }
+    } catch {}
+  };
+
+  // Dịch mã lỗi cổng đăng ký thành thông báo thân thiện
+  const weeklyOffErrMsg = (err: any, fallback: string) => {
+    const m = String(err?.message || '');
+    if (m.includes('WEEKLY_OFF_REGISTRATION_REQUIRED')) {
+      setActiveTab('leave');
+      return '🔒 Cổng đăng ký 2 ngày nghỉ đang mở — các chức năng khác bị KHÓA đến khi bạn hoàn tất đăng ký!';
+    }
+    if (m.includes('WEEKLY_OFF_WINDOW_CLOSED')) {
+      return '⏰ Đăng ký 2 ngày nghỉ OFF chỉ mở từ 12h00 Thứ 6 đến 15h00 Thứ 7 hàng tuần!';
+    }
+    return err?.message || fallback;
   };
 
   // Start Attendance with strict rules: today shift exists, checkin before checkout, 30m window
@@ -437,9 +494,10 @@ export function App() {
       } catch {}
 
       showToast('🎉 ĐÃ ĐĂNG KÝ 2 NGÀY NGHỈ OFF TUẦN THÀNH CÔNG! Toàn bộ chức năng hệ thống đã được mở khóa.');
+      await refreshWeeklyOffStatus();
       await loadEmployeeData(employee?.employee_id);
     } catch (err: any) {
-      showToast(err.message || 'Lỗi khi gửi đăng ký 2 ngày nghỉ!');
+      showToast(weeklyOffErrMsg(err, 'Lỗi khi gửi đăng ký 2 ngày nghỉ!'));
     }
   };
 
@@ -451,9 +509,10 @@ export function App() {
       });
       showToast('Đã gửi yêu cầu nghỉ OFF thành công!');
       setShowLeaveModal(false);
+      await refreshWeeklyOffStatus();
       await loadEmployeeData(employee?.employee_id);
     } catch (err: any) {
-      showToast(err.message);
+      showToast(weeklyOffErrMsg(err, 'Lỗi khi gửi yêu cầu nghỉ!'));
     }
   };
 
@@ -792,7 +851,29 @@ export function App() {
       )}
 
       {/* 5-MINUTE PRE-NOTIFICATION & MANDATORY 2-DAY OFF REGISTRATION BANNER FOR OFFICIAL EMPLOYEES */}
-      {!isProbation && !hasRegisteredWeeklyOff && (
+      {!isProbation && weeklyOffWindow?.phase === 'REMINDER' && (
+        <div style={{
+          margin: '12px 16px 0',
+          padding: '12px 14px',
+          backgroundColor: '#FFFBEB',
+          border: '2px solid #F59E0B',
+          borderRadius: 'var(--radius-sm)',
+          boxShadow: '0 4px 12px rgba(245, 158, 11, 0.15)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+            <Bell size={18} color="#D97706" />
+            <strong style={{ fontSize: '13px', color: '#92400E' }}>
+              ⏰ SẮP MỞ CỔNG ĐĂNG KÝ 2 NGÀY NGHỈ OFF/TUẦN
+            </strong>
+          </div>
+          <div style={{ fontSize: '12px', color: '#92400E', lineHeight: '1.4' }}>
+            Hệ thống đã tự động gửi thông báo trước 5 phút giờ mở cửa đăng ký. Cổng mở lúc{' '}
+            <strong>{weeklyOffWindow?.windowOpensAt ? new Date(weeklyOffWindow.windowOpensAt).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', weekday: 'long', day: '2-digit', month: '2-digit' }) : '12h00 Thứ 6'}</strong>{' '}
+            đến <strong>15h00 Thứ 7</strong>. Hãy chuẩn bị chọn 2 ngày nghỉ!
+          </div>
+        </div>
+      )}
+      {!isProbation && weeklyOffGateLocked && (
         <div style={{
           margin: '12px 16px 0',
           padding: '12px 14px',
@@ -805,6 +886,7 @@ export function App() {
             <Bell size={18} color="#E11D48" />
             <strong style={{ fontSize: '13px', color: '#BE123C' }}>
               ⏰ THÔNG BÁO: ĐANG TRONG THỜI GIAN ĐĂNG KÝ 2 NGÀY NGHỈ OFF/TUẦN
+              {weeklyOffWindow?.windowClosesAt ? ` (ĐÓNG LÚC ${new Date(weeklyOffWindow.windowClosesAt).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', weekday: 'long' }).toUpperCase()})` : ''}
             </strong>
           </div>
           <div style={{ fontSize: '12px', color: '#9F1239', lineHeight: '1.4' }}>

@@ -6,6 +6,11 @@ import { GoogleSheetsAdapter } from './repositories/google-sheets.adapter.js';
 import { singleWriterQueue } from './repositories/single-writer-queue.js';
 import { AuthService, sanitizeAdmin } from './services/auth.service.js';
 import { hashPassword } from './services/password.service.js';
+import {
+  assertHangTuanWindow,
+  getWeeklyOffCompletion,
+  getWeeklyOffWindow,
+} from './services/weekly-off.service.js';
 import { AccountsService } from './services/accounts.service.js';
 import { EmployeesService } from './services/employees.service.js';
 import { SchedulesService } from './services/schedules.service.js';
@@ -126,6 +131,11 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     });
   });
 
+  // Cổng đăng ký 2 ngày OFF/tuần: public để app hiển thị banner/đếm ngược.
+  app.get('/api/weekly-off-window', (req, res) => {
+    res.json(getWeeklyOffWindow());
+  });
+
   // --- AUTH ---
   app.post('/auth/employee/phone-login', validate({ body: phoneLoginBody }), async (req, res) => {
     try {
@@ -185,6 +195,33 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         return res.json({ user: req.user, employee: emp });
       }
       res.json({ user: req.user });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Trạng thái đăng ký OFF tuần của chính nhân viên (frontend đồng bộ khóa/mở).
+  app.get('/me/weekly-off-status', authMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const window = getWeeklyOffWindow();
+      if (req.user?.role !== 'EMPLOYEE' || !req.user.employeeId) {
+        return res.json({ window, required: 2, registered: [], completed: true, locked: false });
+      }
+      const emp = await employeesService.getEmployee(req.user.employeeId);
+      if (!emp || emp.employment_status !== 'OFFICIAL') {
+        return res.json({ window, required: 2, registered: [], completed: true, locked: false });
+      }
+      const completion = await getWeeklyOffCompletion(
+        adapter,
+        req.user.employeeId,
+        window.targetWeekMon,
+        window.targetWeekSun
+      );
+      res.json({
+        window,
+        ...completion,
+        locked: window.phase === 'OPEN' && !completion.completed,
+      });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -486,6 +523,20 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.post('/leave-requests', authMiddleware, validate({ body: leaveCreateBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const employeeId = req.user?.employeeId || req.body.employeeId;
+      try {
+        await assertHangTuanWindow(adapter, req.user!, req.body.leaveType);
+      } catch (werr: any) {
+        if (werr.message === ERROR_CODES.WEEKLY_OFF_WINDOW_CLOSED) {
+          return res.status(403).json({
+            error: werr.message,
+            message: `Đăng ký 2 ngày nghỉ OFF chỉ mở từ 12h00 Thứ 6 đến 15h00 Thứ 7 hàng tuần (lần tới: ${werr.window.windowOpensAt}).`,
+            code: werr.message,
+            windowOpensAt: werr.window.windowOpensAt,
+            windowClosesAt: werr.window.windowClosesAt,
+          });
+        }
+        throw werr;
+      }
       const result = await schedulesService.requestLeave({
         ...req.body,
         employeeId,
@@ -697,6 +748,20 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.post('/leaves', authMiddleware, validate({ body: leavesAliasBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const employeeId = req.user?.employeeId || req.body.employeeId;
+      try {
+        await assertHangTuanWindow(adapter, req.user!, req.body.leaveType);
+      } catch (werr: any) {
+        if (werr.message === ERROR_CODES.WEEKLY_OFF_WINDOW_CLOSED) {
+          return res.status(403).json({
+            error: werr.message,
+            message: `Đăng ký 2 ngày nghỉ OFF chỉ mở từ 12h00 Thứ 6 đến 15h00 Thứ 7 hàng tuần (lần tới: ${werr.window.windowOpensAt}).`,
+            code: werr.message,
+            windowOpensAt: werr.window.windowOpensAt,
+            windowClosesAt: werr.window.windowClosesAt,
+          });
+        }
+        throw werr;
+      }
       const emp = await employeesService.getEmployee(employeeId);
       const branchId = req.body.branchId || emp?.default_branch_id || 'CN130';
 
