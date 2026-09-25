@@ -95,20 +95,21 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
   ],
   HR: [
     { id: 'hr-dashboard', label: '1. Dashboard HR', icon: Building2 },
-    { id: 'hr-candidates', label: '2. Ứng viên mới', icon: UserCheck },
-    { id: 'hr-interviews', label: '3. Phỏng vấn', icon: Calendar },
-    { id: 'hr-probation', label: '4. Nhân viên Thử việc', icon: Users },
-    { id: 'hr-official', label: '5. Nhân viên Chính thức', icon: Users },
-    { id: 'hr-conversion', label: '6. Chuyển Chính thức', icon: Award },
-    { id: 'hr-schedule', label: '7. Lịch làm việc', icon: Calendar },
-    { id: 'hr-leave', label: '8. Nghỉ OFF', icon: Clock },
-    { id: 'hr-swap', label: '9. Đổi ca', icon: RefreshCw },
-    { id: 'hr-emergency', label: '10. Nghỉ đột xuất', icon: AlertTriangle },
-    { id: 'hr-attendance', label: '11. Chấm công', icon: CheckCircle },
-    { id: 'hr-adjustments', label: '12. Bổ sung/Điều chỉnh công', icon: FileText },
-    { id: 'hr-tests', label: '13. TEST nhân viên', icon: FileCheck },
-    { id: 'hr-reports', label: '14. Báo cáo HR', icon: FileSpreadsheet },
-    { id: 'hr-notifications', label: '15. Thông báo', icon: Bell },
+    { id: 'activation', label: '2. Kích hoạt & TK Nhân viên', icon: FileCheck },
+    { id: 'hr-candidates', label: '3. Ứng viên mới', icon: UserCheck },
+    { id: 'hr-interviews', label: '4. Phỏng vấn & BOT Zalo', icon: Calendar },
+    { id: 'hr-probation', label: '5. Nhân viên Thử việc', icon: Users },
+    { id: 'hr-official', label: '6. Nhân viên Chính thức', icon: Users },
+    { id: 'hr-conversion', label: '7. Chuyển Chính thức', icon: Award },
+    { id: 'hr-schedule', label: '8. Lịch làm việc', icon: Calendar },
+    { id: 'hr-leave', label: '9. Nghỉ OFF', icon: Clock },
+    { id: 'hr-swap', label: '10. Đổi ca', icon: RefreshCw },
+    { id: 'hr-emergency', label: '11. Nghỉ đột xuất', icon: AlertTriangle },
+    { id: 'hr-attendance', label: '12. Chấm công', icon: CheckCircle },
+    { id: 'hr-adjustments', label: '13. Bổ sung/Điều chỉnh công', icon: FileText },
+    { id: 'hr-tests', label: '14. TEST nhân viên', icon: FileCheck },
+    { id: 'hr-reports', label: '15. Báo cáo HR', icon: FileSpreadsheet },
+    { id: 'hr-notifications', label: '16. Thông báo', icon: Bell },
   ],
   STORE: [
     { id: 'store-dashboard', label: '1. Dashboard Store', icon: Store },
@@ -840,13 +841,36 @@ export function App() {
   const bulkPinCancelRef = useRef(false);
 
   const handleBulkSendPinZalo = async (items: any[], tabLabel: string) => {
-    const targets = items.filter(i => i.hasRealAccount && i.accountStatus === 'ACTIVE');
+    const targets = items
+      .map(i => {
+        if (i.accountId) {
+          return {
+            accountId: i.accountId,
+            fullName: i.fullName || i.full_name,
+            phone: i.phone || i.phone_normalized,
+            accountStatus: i.accountStatus || 'ACTIVE',
+          };
+        }
+        const cleanPhone = (i.phone_normalized || i.phone || '').replace(/\D/g, '');
+        const acc = (activationDataList || []).find((a: any) =>
+          a.id === i.employee_id ||
+          (cleanPhone && (a.phone || '').replace(/\D/g, '') === cleanPhone)
+        );
+        return {
+          accountId: acc?.accountId || acc?.id,
+          fullName: i.full_name || i.fullName || acc?.fullName,
+          phone: i.phone_normalized || i.phone || acc?.phone,
+          accountStatus: acc?.accountStatus || 'ACTIVE',
+        };
+      })
+      .filter(t => t.accountId && t.phone);
+
     if (targets.length === 0) {
-      setSuccessMsg('Không có tài khoản ACTIVE nào để gửi PIN trong tab này!');
+      setSuccessMsg(`Không có tài khoản nhân viên nào có thể gửi PIN Zalo trong tab "${tabLabel}"!`);
       setTimeout(() => setSuccessMsg(null), 3000);
       return;
     }
-    if (!window.confirm(`Gửi PIN qua Zalo cho TẤT CẢ ${targets.length} nhân viên ACTIVE trong tab "${tabLabel}"?\nMỗi người nhận 1 PIN mới (PIN cũ vô hiệu ngay). Cần BOT Zalo đã kết nối!`)) {
+    if (!window.confirm(`Gửi PIN qua Zalo cho TẤT CẢ ${targets.length} nhân viên trong tab "${tabLabel}"?\nMỗi người nhận 1 PIN mới (PIN cũ vô hiệu ngay). Cần BOT Zalo đã kết nối!`)) {
       return;
     }
     bulkPinCancelRef.current = false;
@@ -2524,54 +2548,63 @@ export function App() {
                   />
                   <Search size={16} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
                 </div>
-                {['HR', 'ADMIN'].includes(currentUser?.role || '') && ['PROBATION', 'OFFICIAL', 'XUONG', 'VAN_PHONG', 'SALE'].includes(activationSubTab) && (() => {
+                {['HR', 'ADMIN'].includes(currentUser?.role || '') && activationSubTab !== 'SUSPENDED' && (() => {
                   const pending = filteredActivationItems.filter(i => i.accountStatus !== 'ACTIVE');
-                  const tabLabel: Record<string, string> = { PROBATION: 'Thử việc', OFFICIAL: 'Chính thức', XUONG: 'Xưởng', VAN_PHONG: 'Văn Phòng', SALE: 'Sales' };
+                  const tabLabel: Record<string, string> = {
+                    ALL: 'Tất cả nhân sự',
+                    NEW: 'Chờ kích hoạt',
+                    PROBATION: 'Thử việc',
+                    OFFICIAL: 'Chính thức',
+                    XUONG: 'Xưởng',
+                    VAN_PHONG: 'Văn Phòng',
+                    SALE: 'Sales',
+                  };
                   const label = tabLabel[activationSubTab] || activationSubTab;
-                  const pinTargets = currentUser?.role === 'HR'
-                    ? filteredActivationItems.filter(i => i.hasRealAccount && i.accountStatus === 'ACTIVE')
-                    : [];
+                  const pinTargets = filteredActivationItems.filter(i =>
+                    (i.hasRealAccount && i.accountStatus === 'ACTIVE') ||
+                    (i.accountId && i.accountStatus === 'ACTIVE')
+                  );
                   return (
-                    <>
-                    <button
-                      onClick={() => handleBulkActivate(filteredActivationItems, label)}
-                      disabled={pending.length === 0}
-                      title={pending.length === 0 ? 'Không còn tài khoản cần kích hoạt' : `Kích hoạt tất cả ${pending.length} tài khoản chưa ACTIVE trong tab này`}
-                      style={{
-                        padding: '8px 16px',
-                        borderRadius: 'var(--radius-sm)',
-                        backgroundColor: pending.length === 0 ? '#E5E7EB' : 'var(--success)',
-                        color: pending.length === 0 ? '#6B7280' : '#FFF',
-                        fontWeight: 700,
-                        fontSize: '13px',
-                        border: 'none',
-                        cursor: pending.length === 0 ? 'not-allowed' : 'pointer',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      ⚡ Kích Hoạt Tất Cả ({pending.length})
-                    </button>
-                    {currentUser?.role === 'HR' && (
-                    <button
-                      onClick={() => handleBulkSendPinZalo(filteredActivationItems, label)}
-                      disabled={pinTargets.length === 0}
-                      title={pinTargets.length === 0 ? 'Không có tài khoản ACTIVE để gửi PIN' : `Gửi PIN qua Zalo cho tất cả ${pinTargets.length} tài khoản ACTIVE trong tab này`}
-                      style={{
-                        padding: '8px 16px',
-                        borderRadius: 'var(--radius-sm)',
-                        backgroundColor: pinTargets.length === 0 ? '#E5E7EB' : '#0068FF',
-                        color: pinTargets.length === 0 ? '#6B7280' : '#FFF',
-                        fontWeight: 700,
-                        fontSize: '13px',
-                        border: 'none',
-                        cursor: pinTargets.length === 0 ? 'not-allowed' : 'pointer',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      📩 Gửi PIN Zalo Tất Cả ({pinTargets.length})
-                    </button>
-                    )}
-                    </>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <button
+                        onClick={() => handleBulkActivate(filteredActivationItems, label)}
+                        disabled={pending.length === 0}
+                        title={pending.length === 0 ? 'Không còn tài khoản cần kích hoạt' : `Kích hoạt tất cả ${pending.length} tài khoản chưa ACTIVE trong tab này`}
+                        style={{
+                          padding: '8px 16px',
+                          borderRadius: 'var(--radius-sm)',
+                          backgroundColor: pending.length === 0 ? '#E5E7EB' : 'var(--success)',
+                          color: pending.length === 0 ? '#6B7280' : '#FFF',
+                          fontWeight: 700,
+                          fontSize: '13px',
+                          border: 'none',
+                          cursor: pending.length === 0 ? 'not-allowed' : 'pointer',
+                          whiteSpace: 'nowrap',
+                          boxShadow: pending.length > 0 ? '0 2px 6px rgba(16, 185, 129, 0.25)' : 'none',
+                        }}
+                      >
+                        ⚡ Kích Hoạt Tất Cả ({pending.length})
+                      </button>
+                      <button
+                        onClick={() => handleBulkSendPinZalo(filteredActivationItems, label)}
+                        disabled={pinTargets.length === 0}
+                        title={pinTargets.length === 0 ? 'Không có tài khoản ACTIVE để gửi PIN' : `Gửi PIN qua Zalo cho tất cả ${pinTargets.length} tài khoản ACTIVE trong tab này`}
+                        style={{
+                          padding: '8px 16px',
+                          borderRadius: 'var(--radius-sm)',
+                          backgroundColor: pinTargets.length === 0 ? '#E5E7EB' : '#0068FF',
+                          color: pinTargets.length === 0 ? '#6B7280' : '#FFF',
+                          fontWeight: 700,
+                          fontSize: '13px',
+                          border: 'none',
+                          cursor: pinTargets.length === 0 ? 'not-allowed' : 'pointer',
+                          whiteSpace: 'nowrap',
+                          boxShadow: pinTargets.length > 0 ? '0 2px 6px rgba(0, 104, 255, 0.25)' : 'none',
+                        }}
+                      >
+                        📩 Gửi PIN Zalo Tất Cả ({pinTargets.length})
+                      </button>
+                    </div>
                   );
                 })()}
                 <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>
@@ -3782,6 +3815,7 @@ export function App() {
             openBroadcastModal={() => setShowBroadcastModal(true)}
             onSyncSheets={handleForcePull}
             onRefreshData={() => loadAllData(currentUser)}
+            onBulkSendPinZalo={handleBulkSendPinZalo}
           />
 
         </div>

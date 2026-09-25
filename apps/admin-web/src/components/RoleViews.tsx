@@ -70,6 +70,7 @@ interface RoleViewsProps {
   openBroadcastModal: () => void;
   onSyncSheets?: () => Promise<void> | void;
   onRefreshData?: () => Promise<void> | void;
+  onBulkSendPinZalo?: (items: any[], tabLabel: string) => Promise<void> | void;
 }
 
 export const RoleViews: React.FC<RoleViewsProps> = ({
@@ -88,6 +89,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   openBroadcastModal,
   onSyncSheets,
   onRefreshData,
+  onBulkSendPinZalo,
 }) => {
   const branchScope = currentUser?.branchScope || '*';
   const branchName = branchScope === '*' ? 'Toàn Hệ Thống' : getDisplayBranch(branchScope);
@@ -2107,12 +2109,44 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const probationEmps = allEmployees.filter((e) => e.employment_status === 'PROBATION');
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
           <div>
             <h1 style={{ fontSize: '20px', fontWeight: 800 }}>4. Quản Lý Nhân Viên Thử Việc (12 Ngày)</h1>
             <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Theo dõi 12 ngày thử việc (7 làm / 5 OFF) và kết quả làm bài TEST</p>
           </div>
-          <button className="btn-primary" onClick={openNewEmpModal}>+ Thêm NV Thử Việc</button>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+            {['HR', 'ADMIN'].includes(currentUser?.role) && (
+              <button
+                className="btn-interactive"
+                onClick={() => {
+                  if (onBulkSendPinZalo) {
+                    onBulkSendPinZalo(probationEmps, 'Nhân viên Thử việc');
+                  } else {
+                    showToast('Đang khởi tạo chức năng gửi PIN Zalo...');
+                  }
+                }}
+                disabled={probationEmps.length === 0}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '9px 16px',
+                  backgroundColor: probationEmps.length === 0 ? '#E5E7EB' : '#0068FF',
+                  color: probationEmps.length === 0 ? '#6B7280' : '#FFF',
+                  border: 'none',
+                  borderRadius: 'var(--radius-sm)',
+                  fontWeight: 700,
+                  fontSize: '13px',
+                  cursor: probationEmps.length === 0 ? 'not-allowed' : 'pointer',
+                  boxShadow: probationEmps.length > 0 ? '0 2px 6px rgba(0, 104, 255, 0.25)' : 'none',
+                }}
+                title={probationEmps.length === 0 ? 'Chưa có nhân viên thử việc' : `Gửi PIN Zalo cho tất cả ${probationEmps.length} nhân viên thử việc`}
+              >
+                📩 Gửi PIN Zalo Tất Cả ({probationEmps.length})
+              </button>
+            )}
+            <button className="btn-primary" onClick={openNewEmpModal}>+ Thêm NV Thử Việc</button>
+          </div>
         </div>
         <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
@@ -2206,6 +2240,38 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           </div>
 
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+            {/* Nút Gửi PIN Zalo Tất Cả Chính Thức */}
+            {['HR', 'ADMIN'].includes(currentUser?.role) && (
+              <button
+                className="btn-interactive"
+                onClick={() => {
+                  if (onBulkSendPinZalo) {
+                    onBulkSendPinZalo(filteredOfficialEmps, 'Nhân viên Chính thức');
+                  } else {
+                    showToast('Đang khởi tạo chức năng gửi PIN Zalo...');
+                  }
+                }}
+                disabled={filteredOfficialEmps.length === 0}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '9px 16px',
+                  backgroundColor: filteredOfficialEmps.length === 0 ? '#E5E7EB' : '#0068FF',
+                  color: filteredOfficialEmps.length === 0 ? '#6B7280' : '#FFFFFF',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontWeight: 700,
+                  fontSize: '13px',
+                  cursor: filteredOfficialEmps.length === 0 ? 'not-allowed' : 'pointer',
+                  boxShadow: filteredOfficialEmps.length > 0 ? '0 2px 6px rgba(0, 104, 255, 0.25)' : 'none',
+                }}
+                title={filteredOfficialEmps.length === 0 ? 'Không có nhân viên chính thức' : `Gửi PIN Zalo cho tất cả ${filteredOfficialEmps.length} nhân viên chính thức`}
+              >
+                📩 Gửi PIN Zalo Tất Cả ({filteredOfficialEmps.length})
+              </button>
+            )}
+
             {/* Nút Tải File Mẫu */}
             <button
               onClick={handleDownloadOfficialTemplate}
