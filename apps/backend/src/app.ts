@@ -12,6 +12,7 @@ import {
   getWeeklyOffWindow,
 } from './services/weekly-off.service.js';
 import { ZaloService, defaultMeetUrl } from './services/zalo.service.js';
+import crypto from 'crypto';
 import { AccountsService } from './services/accounts.service.js';
 import { EmployeesService } from './services/employees.service.js';
 import { SchedulesService } from './services/schedules.service.js';
@@ -317,6 +318,50 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       await authService.setEmployeePin(req.params.id, req.body.pin, req.user!.id);
       broadcastUpdate('accounts', { action: 'set-pin', accountId: req.params.id });
       res.json({ success: true, message: 'Đã cấp mã PIN mới! Nhân viên phải đổi PIN ở lần đăng nhập tiếp theo.' });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Hệ thống TỰ sinh PIN + cấp vào tài khoản + bắn qua Zalo cá nhân HR tới SĐT nhân viên.
+  // HR không cần thấy/chép PIN — chống lộ. Yêu cầu BOT Zalo đã kết nối.
+  app.post('/admin/employee-accounts/:id/send-pin-zalo', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const account = await adapter.getAccountById(req.params.id);
+      if (!account) return res.status(404).json({ error: 'ACCOUNT_NOT_FOUND' });
+      const employee = await employeesService.getEmployee(account.employee_id);
+      const phone = employee?.phone_normalized || account.phone_normalized || '';
+      if (!phone) return res.status(400).json({ error: 'EMPLOYEE_NO_PHONE' });
+
+      const pin = String(1000 + crypto.randomInt(0, 9000));
+
+      // Tìm Zalo trước — chỉ cấp PIN mới khi chắc chắn gửi được (tránh reset oan).
+      let uid = '';
+      try {
+        const found = await zaloService.findUserByPhone(phone);
+        uid = found.uid;
+      } catch (e: any) {
+        return res.status(400).json({ error: e.message, phone, pinIssued: false });
+      }
+
+      await authService.setEmployeePin(req.params.id, pin, req.user!.id);
+      try {
+        const sent = await zaloService.sendText(
+          uid,
+          zaloService.buildPinText({ employeeName: employee?.full_name || 'bạn', pin })
+        );
+        await adapter.recordAuditLog({
+          actor_id: req.user!.id,
+          action: 'ZALO_PIN_SENT',
+          target_type: 'TAI_KHOAN_NHAN_VIEN',
+          target_id: req.params.id,
+          payload_after: { uid, msgId: sent.msgId } as any,
+        });
+        broadcastUpdate('accounts', { action: 'send-pin-zalo', accountId: req.params.id });
+        res.json({ success: true, uid, msgId: sent.msgId, phone });
+      } catch (e: any) {
+        return res.status(400).json({ error: 'ZALO_NOT_FRIEND', message: e?.message || e, uid, phone, pinIssued: true });
+      }
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }

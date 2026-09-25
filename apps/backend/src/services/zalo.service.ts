@@ -226,8 +226,16 @@ export class ZaloService {
     return { loginId };
   }
 
-  /** Ảnh QR hiện tại (frontend poll). Hết timeout chưa có QR -> null. */
+  /** Ảnh QR hiện tại, chuẩn hóa thành dataURL PNG (frontend <img> dùng trực tiếp). */
   async waitQrImage(loginId: string, timeoutMs = 10000): Promise<string | null> {
+    const raw = await this.waitQrRaw(loginId, timeoutMs);
+    if (!raw) return null;
+    if (raw.startsWith('data:')) return raw;
+    return `data:image/png;base64,${raw}`;
+  }
+
+  /** Ảnh QR hiện tại (frontend poll). Hết timeout chưa có QR -> null. */
+  private async waitQrRaw(loginId: string, timeoutMs = 10000): Promise<string | null> {
     if (this.login?.loginId !== loginId) return null;
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
@@ -301,8 +309,17 @@ export class ZaloService {
     return { success: true, msgId };
   }
 
-  buildInviteText(o: {
-    candidateName: string;
+  /** Mẫu tin nhắn gửi mã PIN đăng nhập cho nhân viên. */
+  buildPinText(o: { employeeName: string; pin: string }): string {
+    return [
+      `Chào ${o.employeeName},`,
+      `Mã PIN đăng nhập Cổng Nhân Viên Ụm Bò Milk của bạn là: ${o.pin}`,
+      `Dùng SĐT + mã PIN này để đăng nhập, rồi ĐỔI mã PIN riêng ngay ở lần đầu.`,
+      `Không chia sẻ mã PIN cho bất kỳ ai! (tin nhắn tự động từ HR).`,
+    ].join('\n');
+  }
+
+  buildInviteText(o: {    candidateName: string;
     position?: string;
     branchName?: string;
     interviewDate: string;

@@ -166,15 +166,20 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       setZaloLoginId(loginId);
       setZaloQrImage(null);
       // Chờ ảnh QR thật từ server (Zalo sinh, hết hạn sau ~60s)
-      for (let i = 0; i < 4; i++) {
+      let image: string | null = null;
+      for (let i = 0; i < 6; i++) {
         const img = await apiRequest(`/admin/zalo/qr/image/${loginId}`).catch(() => null);
-        if (img?.image) {
-          setZaloQrImage(img.image);
+        if (img?.image && String(img.image).startsWith('data:')) {
+          image = img.image;
+          setZaloQrImage(image);
           break;
         }
         await new Promise(r => setTimeout(r, 3000));
       }
-      if (!zaloQrImage) await refreshZaloStatus();
+      if (!image) {
+        showToast('⚠️ Chưa lấy được mã QR từ Zalo! Kiểm tra mạng server tới Zalo rồi bấm Làm Mới QR Thật để thử lại.');
+      }
+      await refreshZaloStatus();
     } catch (err: any) {
       showToast(err.message || 'Không tạo được mã QR Zalo!');
     } finally {
@@ -1645,6 +1650,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     <img
                       src={zaloQrImage}
                       alt="Mã QR đăng nhập Zalo"
+                      onError={() => {
+                        setZaloQrImage(null);
+                        showToast('⚠️ Ảnh QR lỗi! Bấm "Làm Mới QR Thật" để lấy mã mới.');
+                      }}
                       style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '4px' }}
                     />
                     <div style={{
