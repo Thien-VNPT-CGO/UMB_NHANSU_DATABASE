@@ -2425,6 +2425,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <th style={{ padding: '12px 18px', width: '130px' }}>Mức Lương Giờ</th>
                   <th style={{ padding: '12px 18px', width: '130px' }}>Ngày Chính Thức</th>
                   <th style={{ padding: '12px 18px', width: '130px', textAlign: 'center' }}>Trạng Thái</th>
+                  <th style={{ padding: '12px 18px', width: '120px', textAlign: 'center' }}>PIN Zalo</th>
                 </tr>
               </thead>
               <tbody>
@@ -2503,11 +2504,32 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           CHÍNH THỨC
                         </span>
                       </td>
+                      <td style={{ padding: '14px 18px', textAlign: 'center' }}>
+                        {currentUser?.role === 'HR' && (() => {
+                          const acc = findAccountFor(emp);
+                          return (
+                            <button
+                              className="btn-outline"
+                              style={{ padding: '4px 10px', fontSize: '11px', color: '#0068FF', borderColor: '#BFDBFE', cursor: acc ? 'pointer' : 'not-allowed', opacity: acc ? 1 : 0.5 }}
+                              title={acc ? 'Hệ thống tự sinh PIN mới và gửi qua Zalo tới SĐT nhân viên' : 'Chưa có tài khoản — kích hoạt ở tab Kích hoạt trước!'}
+                              onClick={() => {
+                                if (!acc) {
+                                  showToast('Nhân viên chưa có tài khoản! Hãy kích hoạt ở tab "Kích hoạt tài khoản NV" trước.');
+                                  return;
+                                }
+                                handleSendPinZalo(acc.accountId, emp.full_name, emp.phone_normalized || emp.phone);
+                              }}
+                            >
+                              📩 PIN Zalo
+                            </button>
+                          );
+                        })()}
+                      </td>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={8} style={{ textAlign: 'center', padding: '48px 20px', color: 'var(--text-muted)' }}>
+                    <td colSpan={9} style={{ textAlign: 'center', padding: '48px 20px', color: 'var(--text-muted)' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
                         <Users size={36} color="var(--border)" />
                         <div style={{ fontWeight: 600, fontSize: '14px' }}>Không tìm thấy nhân viên chính thức nào</div>
