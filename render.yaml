@@ -15,7 +15,7 @@ services:
         value: 20.18.0
       # Secrets — quản trị trong Render Dashboard (sync: false = không commit giá trị).
       - key: JWT_SECRET
-        sync: false
+        generateValue: true
       - key: CORS_ORIGINS
         value: https://umb-nhansu-database-admin-web.vercel.app,https://umb-nhansu-database-employee-web.vercel.app,https://*.vercel.app,https://*.onrender.com
       - key: ADMIN_SEED_PASSWORD
