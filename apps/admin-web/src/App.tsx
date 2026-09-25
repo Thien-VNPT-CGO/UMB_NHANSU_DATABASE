@@ -69,6 +69,7 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'audit', label: '10. Audit Log', icon: Clock },
     { id: 'backup', label: '11. Backup & Recovery', icon: HardDrive },
     { id: 'settings', label: '12. Cài đặt hệ thống', icon: Settings },
+    { id: 'hr-official', label: '13. Import NV Chính thức', icon: Users },
   ],
   HR: [
     { id: 'hr-dashboard', label: '1. Dashboard HR', icon: Building2 },
@@ -929,12 +930,14 @@ export function App() {
       return {
         id: emp.employee_id,
         accountId: acc?.account_id || `ACC_${emp.employee_id}`,
-        employeeCode: emp.employee_code || 'UBM_NV0000',
+        employeeCode: emp.employee_code || '—',
         fullName: emp.full_name,
         phone: emp.phone_normalized || emp.phone,
         group: emp.group || 'STORE',
         employmentStatus: emp.employment_status,
         displayBranch: getDisplayBranch(emp.default_branch_id, emp.group),
+        // Khóa màu theo nhóm thật (không so chuỗi hiển thị vì không bao giờ khớp).
+        branchKind: emp.group === 'VAN_PHONG' || emp.group === 'SALE' ? 'HQ' : emp.group === 'XUONG' ? 'FACTORY' : 'STORE',
         // Dữ liệu thật: chưa có tài khoản thì báo NO_ACCOUNT, KHÔNG giả ACTIVE.
         accountStatus: acc?.account_status || 'NO_ACCOUNT',
         activatedAt: acc?.activated_at,
@@ -957,6 +960,7 @@ export function App() {
           group: 'STORE',
           employmentStatus: 'PRE_ONBOARDING',
           displayBranch: getDisplayBranch(acc.branch_scope),
+          branchKind: 'STORE',
           accountStatus: acc.account_status,
           activatedAt: acc.activated_at,
           activatedBy: acc.activated_by,
@@ -2035,11 +2039,11 @@ export function App() {
                               padding: '3px 8px',
                               borderRadius: '4px',
                               backgroundColor:
-                                item.displayBranch === 'Trụ sở chính' ? '#EDE9FE' :
-                                item.displayBranch === 'Củ Chi' ? '#FEF3C7' : '#E0E7FF',
+                                item.branchKind === 'HQ' ? '#EDE9FE' :
+                                item.branchKind === 'FACTORY' ? '#FEF3C7' : '#E0E7FF',
                               color:
-                                item.displayBranch === 'Trụ sở chính' ? '#6D28D9' :
-                                item.displayBranch === 'Củ Chi' ? '#B45309' : '#3730A3',
+                                item.branchKind === 'HQ' ? '#6D28D9' :
+                                item.branchKind === 'FACTORY' ? '#B45309' : '#3730A3',
                               fontSize: '12px',
                               fontWeight: 700,
                             }}>
