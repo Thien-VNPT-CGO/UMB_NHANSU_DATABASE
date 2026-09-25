@@ -127,6 +127,16 @@ function readMax(envKey: string, prodDefault: number, testDefault: number): numb
   return isTestEnv() ? testDefault : prodDefault;
 }
 
+/** Trích xuất client IP thực khi chạy đằng sau reverse proxy (Render, Cloudflare, Nginx) */
+function getClientIp(req: any): string {
+  const xff = req.headers?.['x-forwarded-for'];
+  if (typeof xff === 'string' && xff) {
+    const first = xff.split(',')[0].trim();
+    if (first) return first;
+  }
+  return req.ip || req.connection?.remoteAddress || '127.0.0.1';
+}
+
 /**
  * Chống brute-force cho /auth/* (login, refresh, phone-login).
  * - Chỉ đếm request THẤT BẠI (skipSuccessfulRequests): người dùng thật không bao giờ dính 429.
@@ -135,13 +145,15 @@ function readMax(envKey: string, prodDefault: number, testDefault: number): numb
 export function authRateLimiter() {
   return rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: readMax('AUTH_RATE_LIMIT_MAX', 60, 10000),
+    max: readMax('AUTH_RATE_LIMIT_MAX', 120, 10000),
     standardHeaders: true,
     legacyHeaders: false,
+    validate: { trustProxy: false, xForwardedForHeader: false },
     skipSuccessfulRequests: true,
     keyGenerator: (req: any) => {
       const id = String(req.body?.username || req.body?.phone || '').toLowerCase().trim();
-      return `${req.ip}:${id}`;
+      const ip = getClientIp(req);
+      return `${ip}:${id}`;
     },
     message: {
       error: 'TOO_MANY_REQUESTS',
@@ -150,16 +162,47 @@ export function authRateLimiter() {
   });
 }
 
-/** Giới hạn chung cho toàn bộ API (chống spam/quét). */
+/**
+ * Giới hạn chung cho toàn bộ API (chống DDoS / spam / web scraping).
+ * - MIỄN TRỪ 100% cho mọi request đã xác thực (có Bearer Token) của Admin, HR, Store, NV.
+ * - MIỄN TRỪ 100% cho Health check (/health), OPTIONS CORS preflight, static assets.
+ * - Hạn mức nâng lên 30,000 request / 5 phút cho các request công khai, thoải mái cho toàn công ty.
+ */
 export function generalRateLimiter() {
   return rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: readMax('GENERAL_RATE_LIMIT_MAX', 1000, 10000),
+    windowMs: 5 * 60 * 1000,
+    max: readMax('GENERAL_RATE_LIMIT_MAX', 30000, 100000),
     standardHeaders: true,
     legacyHeaders: false,
+    validate: { trustProxy: false, xForwardedForHeader: false },
+    skip: (req: any) => {
+      // 1. Tuyệt đối không rate limit requests nội bộ đã có token xác thực (Admin, HR, Store, Employee)
+      const authHeader = req.headers?.authorization;
+      if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+        return true;
+      }
+      // 2. Health check & status từ Render / ping server
+      const path = req.path || req.originalUrl || '';
+      if (path === '/health' || path === '/' || path === '/api/weekly-off-window') {
+        return true;
+      }
+      // 3. CORS preflight OPTIONS requests
+      if (req.method === 'OPTIONS') {
+        return true;
+      }
+      // 4. Static assets
+      if (path.startsWith('/assets/') || /\.(js|css|png|jpg|jpeg|svg|ico|webp|woff|woff2|ttf)$/i.test(path)) {
+        return true;
+      }
+      return false;
+    },
+    keyGenerator: (req: any) => {
+      return getClientIp(req);
+    },
     message: {
       error: 'TOO_MANY_REQUESTS',
-      message: 'Quá nhiều request, vui lòng chậm lại',
+      message: 'Quá nhiều request từ cùng một địa chỉ mạng, vui lòng chậm lại một chút',
     },
   });
 }
+

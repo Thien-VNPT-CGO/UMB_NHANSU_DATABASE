@@ -35,7 +35,7 @@ export function getAuthToken(): string {
   return authToken;
 }
 
-export async function apiRequest<T = any>(endpoint: string, options: RequestInit = {}): Promise<T> {
+export async function apiRequest<T = any>(endpoint: string, options: RequestInit = {}, retries = 2): Promise<T> {
   const base = getApiBase();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -52,6 +52,15 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
       ...options,
       headers,
     });
+
+    // Tự động retry thông minh nếu gặp 429 (Too Many Requests)
+    if (res.status === 429 && retries > 0) {
+      const retryAfterHeader = res.headers.get('Retry-After');
+      const waitMs = retryAfterHeader ? Math.min(Number(retryAfterHeader) * 1000, 3000) : 1000;
+      console.warn(`[API] 429 Too Many Requests tại ${endpoint}. Tự động thử lại sau ${waitMs}ms...`);
+      await new Promise(r => setTimeout(r, waitMs));
+      return apiRequest<T>(endpoint, options, retries - 1);
+    }
 
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {

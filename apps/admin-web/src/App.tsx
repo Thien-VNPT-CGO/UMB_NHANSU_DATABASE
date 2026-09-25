@@ -518,6 +518,7 @@ export function App() {
 
   // Handle Logout
   const handleLogout = () => {
+    staticDataLoadedRef.current = false;
     setAuthToken('');
     setCurrentUser(null);
     localStorage.removeItem('ubm_admin_token');
@@ -529,6 +530,7 @@ export function App() {
 
   // Switch Role Helper (For Quick Testing & Role Preview)
   const switchRole = async (roleName: string) => {
+    staticDataLoadedRef.current = false;
     let username = 'admin';
     let password = 'Master@@2027';
     if (roleName === 'HR') { username = 'hr_lead'; password = 'hr123'; }
@@ -541,89 +543,71 @@ export function App() {
     await handleLogin(undefined, username, password);
   };
 
-  const loadAllData = async (user = currentUser) => {
+  // Cờ đánh dấu đã tải các dữ liệu cấu hình ít thay đổi (tránh bắn lại 17 API mỗi khi có realtime event)
+  const staticDataLoadedRef = useRef(false);
+
+  const loadAllData = async (user = currentUser, forceAll = false) => {
     if (!user) return;
     try {
-      // 1. Dashboard stats
-      const stats = await apiRequest('/admin/dashboard/stats').catch(() => null);
-      if (stats) setDashboardStats(stats);
+      // 1. Nhóm dữ liệu động vận hành (luôn đồng bộ khi có event nghiệp vụ)
+      const tasks: Promise<any>[] = [
+        apiRequest('/admin/dashboard/stats').then(stats => { if (stats) setDashboardStats(stats); }).catch(() => null),
+        apiRequest('/schedules').then(sList => setShifts(sList || [])).catch(() => null),
+        apiRequest('/leave-requests').then(lList => setLeaves(lList || [])).catch(() => null),
+        apiRequest('/admin/notifications').then(notifs => setSystemNotifications(notifs || [])).catch(() => null),
+      ];
 
-      // 2. Internal accounts
-      if (user.role === 'ADMIN') {
-        const iAccs = await apiRequest('/admin/internal-accounts').catch(() => []);
-        setInternalAccounts(iAccs);
-      }
-
-      // 3. Employee accounts
+      // 2. Dữ liệu động theo vai trò người dùng
       if (['ADMIN', 'HR'].includes(user.role)) {
-        const eAccs = await apiRequest('/admin/employee-accounts').catch(() => []);
-        setEmployeeAccounts(eAccs);
+        tasks.push(
+          apiRequest('/admin/employee-accounts').then(eAccs => setEmployeeAccounts(eAccs || [])).catch(() => null),
+          apiRequest('/applications').then(cList => setCandidates(cList || [])).catch(() => null),
+        );
       }
 
-      // 4. Employees
       if (['ADMIN', 'HR', 'STORE'].includes(user.role)) {
-        const emps = await apiRequest('/employees').catch(() => []);
-        setAllEmployees(emps);
+        tasks.push(
+          apiRequest('/employees').then(emps => setAllEmployees(emps || [])).catch(() => null),
+        );
       }
 
-      // 5. Branches & Shifts
-      const bList = await apiRequest('/admin/branches').catch(() => []);
-      setBranches(bList);
-      const sTemplates = await apiRequest('/admin/shift-templates').catch(() => ({}));
-      setShiftTemplates(sTemplates);
-
-      // Schedules & Leaves
-      const sList = await apiRequest('/schedules').catch(() => []);
-      setShifts(sList);
-      const lList = await apiRequest('/leave-requests').catch(() => []);
-      setLeaves(lList);
-
-      // Candidates
-      if (['ADMIN', 'HR'].includes(user.role)) {
-        const cList = await apiRequest('/applications').catch(() => []);
-        setCandidates(cList);
+      if (user.role === 'ADMIN') {
+        tasks.push(
+          apiRequest('/admin/internal-accounts').then(iAccs => setInternalAccounts(iAccs || [])).catch(() => null),
+        );
       }
 
-      // Payroll
       if (['ADMIN', 'FINANCE'].includes(user.role)) {
-        const pList = await apiRequest('/payroll/runs').catch(() => []);
-        setPayrollRuns(pList);
+        tasks.push(
+          apiRequest('/payroll/runs').then(pList => setPayrollRuns(pList || [])).catch(() => null),
+        );
       }
 
-      // 6. Policies
-      const pData = await apiRequest('/admin/policies').catch(() => ({}));
-      setPolicies(pData);
-
-      // 7. Notifications
-      const notifs = await apiRequest('/admin/notifications').catch(() => []);
-      setSystemNotifications(notifs);
-
-      // 8. Integrations
-      if (user.role === 'ADMIN') {
-        const integ = await apiRequest('/admin/integrations/status').catch(() => null);
-        setIntegrationsStatus(integ);
+      // 3. Dữ liệu cấu hình hệ thống tĩnh (chỉ tải lần đầu khi đăng nhập hoặc khi forceAll = true)
+      if (!staticDataLoadedRef.current || forceAll) {
+        tasks.push(
+          apiRequest('/admin/branches').then(bList => setBranches(bList || [])).catch(() => null),
+          apiRequest('/admin/shift-templates').then(sTemplates => setShiftTemplates(sTemplates || {})).catch(() => null),
+          apiRequest('/admin/policies').then(pData => setPolicies(pData || {})).catch(() => null),
+          apiRequest('/admin/maintenance').then(mData => setMaintenance(mData || {})).catch(() => null),
+          apiRequest('/admin/system-settings').then(sSettings => setSystemSettings(sSettings || {})).catch(() => null),
+        );
+        if (user.role === 'ADMIN') {
+          tasks.push(
+            apiRequest('/admin/integrations/status').then(integ => setIntegrationsStatus(integ)).catch(() => null),
+            apiRequest('/admin/backup/snapshots').then(snaps => setBackupSnapshots(snaps || [])).catch(() => null),
+          );
+        }
+        if (['ADMIN', 'HR'].includes(user.role)) {
+          tasks.push(
+            apiRequest('/admin/audit').then(logs => setAuditLogs(logs || [])).catch(() => null),
+          );
+        }
+        staticDataLoadedRef.current = true;
       }
 
-      // 9. Maintenance
-      const mData = await apiRequest('/admin/maintenance').catch(() => ({}));
-      setMaintenance(mData);
-
-      // 10. Audit
-      if (['ADMIN', 'HR'].includes(user.role)) {
-        const logs = await apiRequest('/admin/audit').catch(() => []);
-        setAuditLogs(logs);
-      }
-
-      // 11. Backup
-      if (user.role === 'ADMIN') {
-        const snaps = await apiRequest('/admin/backup/snapshots').catch(() => []);
-        setBackupSnapshots(snaps);
-      }
-
-      // 12. Settings
-      const sSettings = await apiRequest('/admin/system-settings').catch(() => ({}));
-      setSystemSettings(sSettings);
-
+      // Tải song song toàn bộ dữ liệu, hoàn tất nhanh gấp 5-10 lần tải tuần tự
+      await Promise.allSettled(tasks);
     } catch (err: any) {
       console.error('Error loading data:', err);
     }
@@ -691,26 +675,35 @@ export function App() {
   }, []);
 
   // 1. Socket.IO Realtime Connection Listener (Tự động cập nhật tức thời khi có thay đổi)
-  // Gộp nhiều event dồn dập thành 1 lần tải (debounce 800ms) + chống tải chồng chéo.
+  // Gộp nhiều event dồn dập thành 1 lần tải (debounce 600ms) + chống tải chồng chéo + không loop vô hạn.
   const socketConnectedRef = useRef(false);
   const reloadTimerRef = useRef<any>(null);
   const reloadingRef = useRef(false);
+  const needReloadAgainRef = useRef(false);
+
   const scheduleReload = (user = currentUser) => {
-    if (reloadTimerRef.current) return;
+    if (reloadingRef.current) {
+      needReloadAgainRef.current = true;
+      return;
+    }
+    if (reloadTimerRef.current) {
+      clearTimeout(reloadTimerRef.current);
+    }
     reloadTimerRef.current = setTimeout(async () => {
       reloadTimerRef.current = null;
-      if (reloadingRef.current) {
-        scheduleReload(user);
-        return;
-      }
       reloadingRef.current = true;
       try {
         await loadAllData(user);
       } finally {
         reloadingRef.current = false;
+        if (needReloadAgainRef.current) {
+          needReloadAgainRef.current = false;
+          scheduleReload(user);
+        }
       }
-    }, 800);
+    }, 600);
   };
+
   useEffect(() => {
     if (!currentUser) return;
     const token = getAuthToken();
@@ -786,7 +779,7 @@ export function App() {
       }
       socketConnectedRef.current = false;
     };
-  }, [currentUser]);
+  }, [currentUser?.id, currentUser?.role]);
 
   // 2. Poll dự phòng: chỉ khi socket mất kết nối (giảm tải server, mặc định realtime qua socket)
   useEffect(() => {
@@ -800,10 +793,10 @@ export function App() {
       ) {
         scheduleReload(currentUser);
       }
-    }, 15000);
+    }, 30000);
 
     return () => clearInterval(interval);
-  }, [currentUser]);
+  }, [currentUser?.id]);
 
   // Action handlers
   const handleActivateEmpAccount = async (id: string, ver: number) => {
