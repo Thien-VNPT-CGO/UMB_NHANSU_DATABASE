@@ -32,11 +32,11 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   },
   {
     title: 'TAI_KHOAN_NHAN_VIEN',
-    headers: ['ID Tài Khoản', 'ID Nhân Viên', 'Số Điện Thoại', 'Vai Trò', 'Trạng Thái', 'Phiên Bản', 'Mã PIN (hash)', 'Bắt Buộc Đổi PIN'],
+    headers: ['ID Tài Khoản', 'ID Nhân Viên', 'Số Điện Thoại', 'Vai Trò', 'Trạng Thái', 'Phiên Bản', 'Mã PIN (hash)', 'Bắt Buộc Đổi PIN', 'Mã PIN'],
   },
   {
     title: 'ADMIN_ACCOUNTS',
-    headers: ['ID Admin', 'Tên Đăng Nhập', 'Mật Khẩu', 'Họ Và Tên', 'Vai Trò', 'Phạm Vi Chi Nhánh', 'Ngày Tạo'],
+    headers: ['ID Admin', 'Tên Đăng Nhập', 'Mật Khẩu', 'Họ Và Tên', 'Vai Trò', 'Phạm Vi Chi Nhánh', 'Trạng Thái', 'Ngày Tạo'],
   },
   {
     title: 'PHAN_CONG_CA',
@@ -346,6 +346,8 @@ export class GoogleSheetsSyncService {
             // 2 cột PIN ở cuối (tài khoản cũ chưa có -> PIN_NOT_SET cho đến khi HR cấp).
             pin_hash: r[6] || undefined,
             pin_must_change: r[7] === 'YES',
+            // Cột Mã PIN bản rõ — chỉ hiển thị trên cổng quản trị (Admin/HR).
+            pin_code: r[8] || undefined,
           }));
       } else {
         fallback.accounts = [];
@@ -460,7 +462,7 @@ export class GoogleSheetsSyncService {
       }
       counts.attendanceEvents = fallback.attendanceEvents.length;
 
-      // 7. Đọc ADMIN_ACCOUNTS (tài khoản quản trị thật từ Google Sheets — không còn cột Trạng Thái/Khóa)
+      // 7. Đọc ADMIN_ACCOUNTS (hỗ trợ cả dòng cũ 7 cột không có Trạng Thái -> mặc định ACTIVE)
       const adminRows = batch['ADMIN_ACCOUNTS'];
       if (adminRows.length > 0) {
         const currentAdmins = fallback.adminAccounts;
@@ -471,7 +473,10 @@ export class GoogleSheetsSyncService {
             const fullName = r[3] || 'Quản trị viên';
             const role = (r[4] as any) || 'HR';
             const branchScope = r[5] || '*';
-            const createdAt = r[6] || new Date().toISOString();
+            // Dòng mới 8 cột: Trạng Thái ở cột 6, Ngày Tạo cột 7. Dòng cũ 7 cột: cột 6 là Ngày Tạo.
+            const hasStatusCol = r.length >= 8;
+            const statusStr = hasStatusCol ? r[6] : 'ACTIVE';
+            const createdAt = (hasStatusCol ? r[7] : r[6]) || new Date().toISOString();
 
             const existingById = currentAdmins.find(a => a.admin_id === r[0]);
             const existingByUser = currentAdmins.find(a => a.username === r[1]);
@@ -492,6 +497,7 @@ export class GoogleSheetsSyncService {
               full_name: fullName,
               role: role || 'HR',
               branch_scope: branchScope || '*',
+              is_active: statusStr !== 'LOCKED',
               version: 1,
               created_at: createdAt || new Date().toISOString(),
               updated_at: new Date().toISOString(),
@@ -520,6 +526,7 @@ export class GoogleSheetsSyncService {
             bootstrapAdmin.full_name,
             bootstrapAdmin.role,
             bootstrapAdmin.branch_scope,
+            bootstrapAdmin.is_active === false ? 'LOCKED' : 'ACTIVE',
             bootstrapAdmin.created_at,
           ]).catch(err => console.warn('[GoogleSheetsSyncService] Could not auto-seed bootstrap admin:', err));
         }
@@ -857,7 +864,7 @@ export class GoogleSheetsSyncService {
     try {
       const details: any = {};
 
-      // 1. Admin Accounts (không còn cột Trạng Thái/Khóa)
+      // 1. Admin Accounts (kèm cột Trạng Thái ACTIVE/LOCKED)
       const admins = await repo.listAdminAccounts();
       const adminRows = admins.map(a => [
         a.admin_id,
@@ -866,6 +873,7 @@ export class GoogleSheetsSyncService {
         a.full_name,
         a.role,
         a.branch_scope || '*',
+        (a as any).is_active === false ? 'LOCKED' : 'ACTIVE',
         a.created_at,
       ]);
       await this.overwriteSheetData('ADMIN_ACCOUNTS', SHEETS_DEFINITIONS.find(d => d.title === 'ADMIN_ACCOUNTS')!.headers, adminRows);
@@ -913,6 +921,7 @@ export class GoogleSheetsSyncService {
         acc.version,
         acc.pin_hash || '',
         acc.pin_must_change ? 'YES' : '',
+        (acc as any).pin_code || '',
       ]);
       await this.overwriteSheetData('TAI_KHOAN_NHAN_VIEN', SHEETS_DEFINITIONS.find(d => d.title === 'TAI_KHOAN_NHAN_VIEN')!.headers, accountRows);
       details.accounts = accountRows.length;

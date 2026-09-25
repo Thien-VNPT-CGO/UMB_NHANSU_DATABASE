@@ -85,6 +85,7 @@ export class MockSheetsAdapter implements ISheetsRepository {
         full_name: 'Quản Trị Viên Hệ Thống',
         role: 'ADMIN',
         branch_scope: '*',
+        is_active: true,
 
         version: 1,
         created_at: now,
@@ -177,12 +178,15 @@ export class MockSheetsAdapter implements ISheetsRepository {
     return [...this.accounts];
   }
 
-  async setAccountPin(id: string, pinHash: string, mustChange: boolean, actorId: string): Promise<EmployeeAccount> {
+  async setAccountPin(id: string, pinHash: string, mustChange: boolean, actorId: string, pinPlain?: string | null): Promise<EmployeeAccount> {
     this.checkErrors();
     const account = this.accounts.find(a => a.account_id === id);
     if (!account) throw new Error('ACCOUNT_NOT_FOUND');
     account.pin_hash = pinHash;
     account.pin_must_change = mustChange;
+    // pinPlain === null: xóa bản rõ. pinPlain === undefined: giữ nguyên bản rõ cũ.
+    // Luồng hiện tại: cả HR cấp và NV tự đổi đều lưu bản rõ để HR dễ quản lý.
+    if (pinPlain !== undefined) account.pin_code = pinPlain || undefined;
     // Đổi PIN thu hồi phiên cũ (token mang version cũ hết hiệu lực).
     account.version += 1;
     account.updated_at = new Date().toISOString();
@@ -662,6 +666,7 @@ export class MockSheetsAdapter implements ISheetsRepository {
     const now = new Date().toISOString();
     const newAdmin: AdminAccount = {
       ...account,
+      is_active: account.is_active ?? true,
       version: 1,
       created_at: now,
       updated_at: now,

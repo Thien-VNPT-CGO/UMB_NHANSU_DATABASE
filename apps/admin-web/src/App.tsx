@@ -509,7 +509,9 @@ export function App() {
     } catch (err: any) {
       setLoginError(err.message === 'INVALID_CREDENTIALS'
         ? 'Tên đăng nhập hoặc mật khẩu không chính xác. Vui lòng kiểm tra lại!'
-        : err.message);
+        : err.message === 'ACCOUNT_LOCKED'
+          ? 'Tài khoản này đã bị khóa. Vui lòng liên hệ quản trị viên hệ thống để mở khóa!'
+          : err.message);
     } finally {
       setLoading(false);
     }
@@ -726,6 +728,26 @@ export function App() {
         socketConnectedRef.current = false;
       });
 
+      socket.on('connect_error', (err: any) => {
+        // Token hết hiệu lực (ví dụ vừa bị khóa tài khoản) -> văng về đăng nhập.
+        const msg = String(err?.message || '');
+        if (msg.includes('AUTHENTICATION_ERROR')) {
+          handleLogout();
+        }
+      });
+
+      // Bị khóa tài khoản -> văng ra màn đăng nhập ngay lập tức.
+      socket.on('admin:forceLogout', (payload: any) => {
+        if (!payload?.adminId || payload.adminId === currentUser.id) {
+          addRichToast({
+            type: 'WARNING',
+            title: '🔒 Tài Khoản Đã Bị Khóa',
+            message: payload?.reason || 'Tài khoản của bạn đã bị khóa. Bạn đã bị đăng xuất.',
+          });
+          handleLogout();
+        }
+      });
+
       // Lắng nghe thông báo nghiệp vụ trực tiếp (Check-in, đơn nghỉ, đổi ca, đổi PIN...)
       socket.on('system:notification', (notif: any) => {
         console.log('🔔 [Socket.IO] Nhận thông báo nghiệp vụ realtime:', notif);
@@ -939,6 +961,30 @@ export function App() {
     }
   };
 
+  const handleToggleInternalAccount = async (account: any) => {
+    if (account.admin_id === 'ADM_001' || account.username === 'admin') {
+      setErrorMsg('Không thể khóa tài khoản Quản trị viên gốc (admin)!');
+      return;
+    }
+    const locking = account.is_active !== false;
+    if (!window.confirm(locking
+      ? `Khóa tài khoản ${account.username} (${account.full_name})?\nTài khoản sẽ bị văng ra màn đăng nhập ngay lập tức và không đăng nhập lại được cho đến khi mở khóa.`
+      : `Mở khóa tài khoản ${account.username} (${account.full_name})?`)) {
+      return;
+    }
+    try {
+      await apiRequest(`/admin/internal-accounts/${account.admin_id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ is_active: !locking }),
+      });
+      setSuccessMsg(`Đã ${locking ? 'khóa' : 'mở khóa'} tài khoản ${account.username}!`);
+      setTimeout(() => setSuccessMsg(null), 3000);
+      await loadAllData();
+    } catch (err: any) {
+      setErrorMsg(err.message);
+    }
+  };
+
   const handleDeleteInternalAccount = async (adminId: string, username: string) => {
     if (adminId === 'ADM_001' || username === 'admin') {
       setErrorMsg('Không thể xóa tài khoản Quản trị viên gốc (admin)!');
@@ -1147,6 +1193,8 @@ export function App() {
         branchKind: emp.group === 'VAN_PHONG' || emp.group === 'SALE' ? 'HQ' : emp.group === 'XUONG' ? 'FACTORY' : 'STORE',
         // Dữ liệu thật: chưa có tài khoản thì báo NO_ACCOUNT (chờ HR cấp PIN), có tài khoản là ACTIVE.
         accountStatus: acc ? 'ACTIVE' : 'NO_ACCOUNT',
+        // Mã PIN bản rõ — hiển thị cho cả Admin lẫn HR. Mất đi khi NV tự đổi PIN riêng.
+        pinCode: (acc as any)?.pin_code || '',
         version: acc?.version || emp.version || 1,
         hasRealAccount: !!acc,
         // PIN đã gửi qua Zalo, NV chưa đổi -> hiển thị nút Reset + trạng thái khóa
@@ -1168,6 +1216,7 @@ export function App() {
           displayBranch: getDisplayBranch(acc.branch_scope),
           branchKind: 'STORE',
           accountStatus: 'ACTIVE',
+          pinCode: (acc as any)?.pin_code || '',
           version: acc.version || 1,
           hasRealAccount: true,
           pinMustChange: acc.pin_must_change === true,
@@ -2325,6 +2374,7 @@ export function App() {
                       <th style={{ padding: '12px 20px' }}>Họ Và Tên</th>
                       <th style={{ padding: '12px 20px' }}>Vai Trò (Role)</th>
                       <th style={{ padding: '12px 20px' }}>Phạm Vi Chi Nhánh</th>
+                      <th style={{ padding: '12px 20px' }}>Trạng Thái</th>
                       <th style={{ padding: '12px 20px' }}>Thao Tác</th>
                     </tr>
                   </thead>
@@ -2347,7 +2397,34 @@ export function App() {
                           </span>
                         </td>
                         <td style={{ padding: '14px 20px', fontWeight: 600 }}>{acc.branch_scope === '*' ? 'Toàn Hệ Thống (*)' : acc.branch_scope}</td>
+                        <td style={{ padding: '14px 20px' }}>
+                          <span style={{
+                            padding: '4px 8px',
+                            borderRadius: 'var(--radius-full)',
+                            fontSize: '11px',
+                            fontWeight: 700,
+                            backgroundColor: acc.is_active === false ? 'var(--danger-soft)' : 'var(--success-soft)',
+                            color: acc.is_active === false ? 'var(--danger)' : 'var(--success)',
+                          }}>
+                            {acc.is_active === false ? 'Đã Khóa' : 'Đang Hoạt Động'}
+                          </span>
+                        </td>
                         <td style={{ padding: '14px 20px', display: 'flex', gap: '8px', alignItems: 'center' }}>
+                          <button
+                            onClick={() => handleToggleInternalAccount(acc)}
+                            style={{
+                              padding: '6px 12px',
+                              borderRadius: 'var(--radius-sm)',
+                              border: acc.is_active === false ? '1px solid var(--success)' : '1px solid var(--danger)',
+                              backgroundColor: 'transparent',
+                              color: acc.is_active === false ? 'var(--success)' : 'var(--danger)',
+                              fontWeight: 600,
+                              fontSize: '12px',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {acc.is_active === false ? 'Mở Khóa' : 'Khóa'}
+                          </button>
                           {acc.admin_id !== 'ADM_001' && acc.username !== 'admin' && (
                             <button
                               onClick={() => handleDeleteInternalAccount(acc.admin_id, acc.username)}
@@ -2519,6 +2596,7 @@ export function App() {
                       <th style={{ padding: '12px 20px' }}>Khối / Bộ Phận</th>
                       <th style={{ padding: '12px 20px' }}>Chi Nhánh</th>
                       <th style={{ padding: '12px 20px' }}>Giai Đoạn</th>
+                      <th style={{ padding: '12px 20px' }}>Mã PIN</th>
                       <th style={{ padding: '12px 20px' }}>Trạng Thái PIN</th>
                       <th style={{ padding: '12px 20px' }}>Thao Tác</th>
                     </tr>
@@ -2526,7 +2604,7 @@ export function App() {
                   <tbody>
                     {filteredActivationItems.length === 0 ? (
                       <tr>
-                        <td colSpan={8} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                        <td colSpan={9} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
                           Không có nhân sự nào trong tab này hoặc không khớp với tìm kiếm.
                         </td>
                       </tr>
@@ -2613,6 +2691,28 @@ export function App() {
                               {item.employmentStatus === 'OFFICIAL' ? 'Chính Thức' :
                                item.employmentStatus === 'PROBATION' ? 'Thử Việc' : 'Nhân Viên Mới'}
                             </span>
+                          </td>
+                          {/* Cột Mã PIN bản rõ — hiển thị cho cả Admin lẫn HR */}
+                          <td style={{ padding: '14px 20px' }}>
+                            {item.pinCode ? (
+                              <span style={{
+                                fontFamily: 'monospace',
+                                fontWeight: 800,
+                                fontSize: '14px',
+                                letterSpacing: '2px',
+                                color: 'var(--brand)',
+                                backgroundColor: 'var(--brand-soft)',
+                                padding: '4px 10px',
+                                borderRadius: '4px',
+                                whiteSpace: 'nowrap',
+                              }}>
+                                {item.pinCode}
+                              </span>
+                            ) : (
+                              <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                                Chưa cấp
+                              </span>
+                            )}
                           </td>
                           <td style={{ padding: '14px 20px' }}>
                             <span style={{

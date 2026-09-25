@@ -11,6 +11,8 @@ export interface EmployeeAccount {
   branch_scope: string; // 'ALL' or specific branchId
   /** Bcrypt hash của mã PIN đăng nhập (HR cấp, nhân viên bắt đổi lần đầu). */
   pin_hash?: string;
+  /** Mã PIN bản rõ — CHỈ hiển thị trên cổng quản trị (Admin/HR), không trả cho employee-web. */
+  pin_code?: string;
   /** True khi PIN hiện tại do HR cấp/reset — bắt buộc đổi ở lần đăng nhập sau. */
   pin_must_change?: boolean;
   version: number;
@@ -25,6 +27,8 @@ export interface AdminAccount {
   full_name: string;
   role: SystemRole;
   branch_scope: string;
+  /** false = bị khóa: văng ra đăng nhập ngay và không đăng nhập lại được. */
+  is_active: boolean;
   version: number;
   created_at: string;
   updated_at: string;

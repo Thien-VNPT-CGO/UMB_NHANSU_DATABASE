@@ -220,7 +220,8 @@ export class AuthService {
       throw new Error('INVALID_PIN');
     }
     const hashed = await hashPin(newPin); // ném WEAK_PIN nếu sai định dạng
-    return this.repo.setAccountPin(accountId, hashed, false, account.employee_id);
+    // NV tự đổi PIN -> cập nhật luôn bản rõ để HR dễ quản lý (cột Mã PIN hiển thị mã mới nhất).
+    return this.repo.setAccountPin(accountId, hashed, false, account.employee_id, newPin);
   }
 
   /** HR/Admin cấp mới hoặc reset PIN (đánh dấu bắt đổi ở lần đăng nhập sau). */
@@ -228,7 +229,8 @@ export class AuthService {
     const account = await this.repo.getAccountById(accountId);
     if (!account) throw new Error('ACCOUNT_NOT_FOUND');
     const hashed = await hashPin(pin); // ném WEAK_PIN nếu sai định dạng
-    return this.repo.setAccountPin(accountId, hashed, true, actorId);
+    // Lưu thêm bản rõ để hiển thị cột Mã PIN trên cổng quản trị (Admin/HR).
+    return this.repo.setAccountPin(accountId, hashed, true, actorId, pin);
   }
 
   async loginAdmin(username: string, password: string): Promise<{
@@ -240,6 +242,10 @@ export class AuthService {
 
     if (!admin) {
       throw new Error('INVALID_CREDENTIALS');
+    }
+    // Tài khoản nội bộ bị khóa: không cho đăng nhập lại.
+    if (admin.is_active === false) {
+      throw new Error('ACCOUNT_LOCKED');
     }
 
     let ok = false;
@@ -306,7 +312,7 @@ export class AuthService {
   async changeAdminPassword(adminId: string, oldPassword: string, newPassword: string) {
     const admins = await this.repo.listAdminAccounts();
     const admin = admins.find(a => a.admin_id === adminId);
-    if (!admin) throw new Error('ADMIN_NOT_FOUND');
+    if (!admin || admin.is_active === false) throw new Error('ADMIN_NOT_FOUND');
 
     let ok = false;
     if (isBcryptHash(admin.password_hash)) {
@@ -334,7 +340,7 @@ export class AuthService {
     return sanitizeAdmin(updated);
   }
 
-  /** Dùng refresh token (typ=refresh) để cấp lại access token mới, có kiểm tra version. */
+  /** Dùng refresh token (typ=refresh) để cấp lại access token mới, có kiểm tra version/khóa. */
   async refreshAccessToken(refreshToken: string): Promise<{ token: string }> {
     let decoded: any;
     try {
@@ -365,7 +371,7 @@ export class AuthService {
 
     const admins = await this.repo.listAdminAccounts();
     const admin = admins.find(a => a.admin_id === decoded.sub);
-    if (!admin || admin.version !== decoded.tv) {
+    if (!admin || admin.is_active === false || admin.version !== decoded.tv) {
       throw new Error('REFRESH_REVOKED');
     }
     const token = signAccess({
@@ -379,7 +385,7 @@ export class AuthService {
     return { token };
   }
 
-  /** Xác thực access token + kiểm tra version. Dùng chung cho middleware & socket. */
+  /** Xác thực access token + kiểm tra version/khóa. Dùng chung cho middleware & socket. */
   async verifyAccessToken(token: string): Promise<AuthUser & { tv: number }> {
     let decoded: any;
     try {
@@ -447,7 +453,7 @@ export class AuthService {
       }
       throw e;
     }
-    if (!admin) throw new Error('ACCOUNT_REVOKED');
+    if (!admin || admin.is_active === false) throw new Error('ACCOUNT_REVOKED');
     if (typeof decoded.tv === 'number' && admin.version !== decoded.tv) {
       throw new Error('TOKEN_REVOKED');
     }

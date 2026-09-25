@@ -1458,7 +1458,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   app.post('/admin/internal-accounts', authMiddleware, requireRole(['ADMIN']), validate({ body: internalAccountCreateBody }), async (req: AuthenticatedRequest, res) => {
     try {
-      const { admin_id, username, password, password_hash, full_name, role, branch_scope } = req.body;
+      const { admin_id, username, password, password_hash, full_name, role, branch_scope, is_active } = req.body;
       const plain = password || password_hash;
       if (!username || !plain) {
         return res.status(400).json({ error: 'MISSING_CREDENTIALS' });
@@ -1476,6 +1476,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         full_name,
         role: role || 'HR',
         branch_scope: branch_scope || '*',
+        is_active: is_active ?? true,
       });
       await adapter.recordAuditLog({
         actor_id: req.user!.id,
@@ -1493,9 +1494,11 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   app.put('/admin/internal-accounts/:id', authMiddleware, requireRole(['ADMIN']), validate({ params: adminIdParams, body: internalAccountUpdateBody }), async (req: AuthenticatedRequest, res) => {
     try {
+      // Chống tự khóa nhầm tài khoản gốc — kẹt hết Admin thì không ai mở lại được.
+      if (req.params.id === 'ADM_001' && (req.body as any)?.is_active === false) {
+        return res.status(400).json({ error: 'Không thể khóa tài khoản Quản trị viên gốc (ADM_001)' });
+      }
       const updates = { ...(req.body || {}) };
-      // Đã bỏ khóa tài khoản nội bộ: chặn is_active nếu client cũ còn gửi.
-      delete (updates as any).is_active;
       // Không cho đổi password qua PUT thường — dùng /auth/admin/change-password.
       // Nếu vẫn gửi password/password_hash thì hash lại, không lưu plaintext.
       const plain = updates.password || updates.password_hash;
@@ -1510,14 +1513,26 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       }
       delete updates.password;
       const updated = await adapter.updateAdminAccount(req.params.id, updates);
+      const locked = (updated as any).is_active === false;
       await adapter.recordAuditLog({
         actor_id: req.user!.id,
-        action: 'INTERNAL_ACCOUNT_UPDATED',
+        action: locked ? 'INTERNAL_ACCOUNT_LOCKED' : (updates as any)?.is_active === true ? 'INTERNAL_ACCOUNT_UNLOCKED' : 'INTERNAL_ACCOUNT_UPDATED',
         target_type: 'ADMIN_ACCOUNT',
         target_id: req.params.id,
         payload_after: sanitizeAdmin(updated),
       });
       broadcastUpdate('accounts', { action: 'updateAdmin', account: sanitizeAdmin(updated) });
+      if (locked) {
+        // Đá văng ngay: token cũ hết hiệu lực + socket báo client về màn đăng nhập.
+        try {
+          const io = app.get('io');
+          io?.to(`user:${req.params.id}`).emit('admin:forceLogout', {
+            event_id: `lock_${Date.now()}`,
+            adminId: req.params.id,
+            reason: 'Tài khoản của bạn đã bị khóa bởi quản trị viên.',
+          });
+        } catch { /* non-fatal */ }
+      }
       res.json(sanitizeAdmin(updated));
     } catch (err: any) {
       res.status(400).json({ error: err.message });
