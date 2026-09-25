@@ -46,6 +46,7 @@ import {
   announcementBody,
   attendanceEventBody,
   attendanceEventsQuery,
+  bulkActivateBody,
   bulkImportBody,
   candidateImportBody,
   checkinBody,
@@ -298,6 +299,33 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       );
       broadcastUpdate('accounts', { action: 'activate', accountId });
       res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Kích hoạt hàng loạt theo sub-tab (Thử việc / Chính thức / Xưởng / Văn phòng / Sales).
+  // Bỏ qua dòng trùng SĐT (ghi vào failed để HR đối soát), các dòng sạch vẫn kích hoạt.
+  app.post('/admin/employee-accounts/bulk-activate', authMiddleware, requireRole(['HR']), validate({ body: bulkActivateBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const activated: string[] = [];
+      const failed: { id: string; error: string }[] = [];
+      for (const accountId of req.body.accountIds) {
+        try {
+          // Với dòng chưa có tài khoản, frontend gửi employee_id — backend tự đối chiếu/tạo.
+          const target = await adapter.getAccountById(accountId)
+            || await adapter.getEmployeeById(accountId);
+          const key = target && 'account_id' in (target as any)
+            ? (target as any).account_id
+            : accountId;
+          await accountsService.activateAccount(key, req.user!.id, 1);
+          activated.push(key);
+        } catch (e: any) {
+          failed.push({ id: accountId, error: e.message });
+        }
+      }
+      broadcastUpdate('accounts', { action: 'bulk-activate', count: activated.length });
+      res.json({ success: true, activatedCount: activated.length, activated, failed });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }

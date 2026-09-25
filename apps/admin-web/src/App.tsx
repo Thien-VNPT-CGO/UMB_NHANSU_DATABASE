@@ -696,6 +696,32 @@ export function App() {
     }
   };
 
+  // HR kích hoạt TẤT CẢ tài khoản trong sub-tab hiện tại (Thử việc / Chính thức /
+  // Xưởng / Văn phòng / Sales). Dòng trùng SĐT tự bỏ qua, báo riêng để đối soát.
+  const handleBulkActivate = async (items: any[], tabLabel: string) => {
+    const targets = items.filter(i => i.accountStatus !== 'ACTIVE');
+    if (targets.length === 0) {
+      setSuccessMsg('Không còn tài khoản nào cần kích hoạt trong tab này!');
+      setTimeout(() => setSuccessMsg(null), 3000);
+      return;
+    }
+    if (!window.confirm(`Kích hoạt TẤT CẢ ${targets.length} tài khoản trong tab "${tabLabel}"?\nDòng trùng SĐT sẽ tự bỏ qua để đối soát sau.`)) {
+      return;
+    }
+    try {
+      const res = await apiRequest('/admin/employee-accounts/bulk-activate', {
+        method: 'POST',
+        body: JSON.stringify({ accountIds: targets.map(t => t.hasRealAccount ? t.accountId : t.id) }),
+      });
+      const failNote = res.failed?.length ? ` (${res.failed.length} dòng trùng SĐT bị bỏ qua)` : '';
+      setSuccessMsg(`✅ Đã kích hoạt ${res.activatedCount}/${targets.length} tài khoản${failNote}!`);
+      setTimeout(() => setSuccessMsg(null), 5000);
+      await loadAllData();
+    } catch (err: any) {
+      setErrorMsg(err.message);
+    }
+  };
+
   // HR cấp mới / reset mã PIN đăng nhập cho nhân viên (4-8 chữ số).
   // Dùng cho cả 2 trường hợp: cấp lần đầu và nhân viên QUÊN PIN (cấp lại số mới,
   // PIN cũ + mọi phiên đăng nhập cũ tự vô hiệu ngay). Hệ thống tự sinh PIN
@@ -988,6 +1014,8 @@ export function App() {
         revokedAt: acc?.revoked_at,
         version: acc?.version || emp.version || 1,
         hasRealAccount: !!acc,
+        // PIN đã gửi qua Zalo, NV chưa đổi -> hiển thị nút Reset + trạng thái khóa
+        pinMustChange: acc?.pin_must_change === true,
       };
     });
 
@@ -1010,6 +1038,7 @@ export function App() {
           revokedAt: acc.revoked_at,
           version: acc.version || 1,
           hasRealAccount: true,
+          pinMustChange: acc.pin_must_change === true,
         });
       }
     });
@@ -2007,8 +2036,9 @@ export function App() {
                 padding: '14px 16px',
                 borderRadius: 'var(--radius-md)',
                 border: '1px solid var(--border)',
+                flexWrap: 'wrap',
               }}>
-                <div style={{ flex: 1, position: 'relative' }}>
+                <div style={{ flex: 1, position: 'relative', minWidth: '220px' }}>
                   <input
                     type="text"
                     placeholder="Tìm nhanh theo SĐT (090...), Mã NV (UBM_NV...), Họ tên, Chi nhánh..."
@@ -2024,6 +2054,31 @@ export function App() {
                   />
                   <Search size={16} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
                 </div>
+                {currentUser?.role === 'HR' && ['PROBATION', 'OFFICIAL', 'XUONG', 'VAN_PHONG', 'SALE'].includes(activationSubTab) && (() => {
+                  const pending = filteredActivationItems.filter(i => i.accountStatus !== 'ACTIVE');
+                  const tabLabel: Record<string, string> = { PROBATION: 'Thử việc', OFFICIAL: 'Chính thức', XUONG: 'Xưởng', VAN_PHONG: 'Văn Phòng', SALE: 'Sales' };
+                  const label = tabLabel[activationSubTab] || activationSubTab;
+                  return (
+                    <button
+                      onClick={() => handleBulkActivate(filteredActivationItems, label)}
+                      disabled={pending.length === 0}
+                      title={pending.length === 0 ? 'Không còn tài khoản cần kích hoạt' : `Kích hoạt tất cả ${pending.length} tài khoản chưa ACTIVE trong tab này`}
+                      style={{
+                        padding: '8px 16px',
+                        borderRadius: 'var(--radius-sm)',
+                        backgroundColor: pending.length === 0 ? '#E5E7EB' : 'var(--success)',
+                        color: pending.length === 0 ? '#6B7280' : '#FFF',
+                        fontWeight: 700,
+                        fontSize: '13px',
+                        border: 'none',
+                        cursor: pending.length === 0 ? 'not-allowed' : 'pointer',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      ⚡ Kích Hoạt Tất Cả ({pending.length})
+                    </button>
+                  );
+                })()}
                 <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>
                   Quy tắc chi nhánh: Văn phòng & Sales: <strong style={{ color: 'var(--brand)' }}>Trụ sở chính</strong> | Xưởng: <strong style={{ color: 'var(--brand)' }}>Củ Chi</strong>
                 </div>
@@ -2155,7 +2210,13 @@ export function App() {
                                item.accountStatus === 'PENDING_ACTIVATION' ? 'Chờ Kích Hoạt' :
                                item.accountStatus === 'NO_ACCOUNT' ? 'Chưa Có TK' :
                                item.accountStatus === 'SUSPENDED' ? 'Tạm Khóa' : 'Đã Thu Hồi'}
+                              {item.pinMustChange ? ' 🔒' : ''}
                             </span>
+                            {item.pinMustChange && (
+                              <div title="PIN vừa gửi qua Zalo, mọi phiên cũ đã khóa — NV phải đổi PIN mới dùng được" style={{ fontSize: '10px', color: '#D97706', fontWeight: 700, marginTop: '3px' }}>
+                                🔒 Chờ NV đổi PIN
+                              </div>
+                            )}
                           </td>
                           <td style={{ padding: '14px 20px', fontSize: '11px', color: 'var(--text-muted)' }}>
                             {item.activatedAt ? `Kích hoạt: ${new Date(item.activatedAt).toLocaleDateString('vi-VN')} (${item.activatedBy || 'Admin'})` :
@@ -2188,11 +2249,11 @@ export function App() {
                               <button
                                 onClick={() => handleSendPinZalo(item.accountId, item.fullName || item.phone, item.phone)}
                                 disabled={!item.hasRealAccount}
-                                title={item.hasRealAccount ? 'Hệ thống tự sinh PIN mới và gửi qua Zalo tới SĐT nhân viên (cần BOT Zalo đã kết nối)' : 'Kích hoạt tài khoản trước!'}
+                                title={item.hasRealAccount ? (item.pinMustChange ? 'PIN đã gửi, NV chưa đổi — bấm để RESET gửi số mới (PIN cũ vô hiệu ngay)' : 'Hệ thống tự sinh PIN mới và gửi qua Zalo tới SĐT nhân viên (cần BOT Zalo đã kết nối)') : 'Kích hoạt tài khoản trước!'}
                                 style={{
                                   padding: '6px 12px',
                                   borderRadius: 'var(--radius-sm)',
-                                  backgroundColor: item.hasRealAccount ? '#0068FF' : 'transparent',
+                                  backgroundColor: item.hasRealAccount ? (item.pinMustChange ? '#F59E0B' : '#0068FF') : 'transparent',
                                   border: '1px solid #0068FF',
                                   color: item.hasRealAccount ? '#FFF' : 'var(--brand)',
                                   fontWeight: 600,
@@ -2201,7 +2262,7 @@ export function App() {
                                   opacity: item.hasRealAccount ? 1 : 0.5,
                                 }}
                               >
-                                📩 Gửi PIN Zalo
+                                {item.pinMustChange ? '🔄 Reset PIN Zalo' : '📩 Gửi PIN Zalo'}
                               </button>
                               )}
                               {item.accountStatus !== 'ACTIVE' && currentUser?.role === 'HR' ? (

@@ -2140,11 +2140,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         <button className="btn-primary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => showToast(`Đã đề xuất chuyển chính thức cho ${emp.full_name}`)}>Đề Xuất Chính Thức</button>
                         {currentUser?.role === 'HR' && (() => {
                           const acc = findAccountFor(emp);
+                          const needReset = !!acc?.pinMustChange;
                           return (
                             <button
                               className="btn-outline"
-                              style={{ padding: '4px 10px', fontSize: '12px', color: '#0068FF', borderColor: '#BFDBFE', cursor: acc ? 'pointer' : 'not-allowed', opacity: acc ? 1 : 0.5 }}
-                              title={acc ? 'Hệ thống tự sinh PIN mới và gửi qua Zalo tới SĐT nhân viên' : 'Chưa có tài khoản — kích hoạt ở tab Kích hoạt trước!'}
+                              style={{ padding: '4px 10px', fontSize: '12px', color: needReset ? '#D97706' : '#0068FF', borderColor: needReset ? '#FCD34D' : '#BFDBFE', cursor: acc ? 'pointer' : 'not-allowed', opacity: acc ? 1 : 0.5 }}
+                              title={acc ? (needReset ? 'PIN đã gửi, NV chưa đổi — bấm để RESET gửi số mới' : 'Hệ thống tự sinh PIN mới và gửi qua Zalo tới SĐT nhân viên') : 'Chưa có tài khoản — kích hoạt ở tab Kích hoạt trước!'}
                               onClick={() => {
                                 if (!acc) {
                                   showToast('Nhân viên chưa có tài khoản! Hãy kích hoạt ở tab "Kích hoạt tài khoản NV" trước.');
@@ -2153,7 +2154,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 handleSendPinZalo(acc.accountId, emp.full_name, emp.phone_normalized || emp.phone);
                               }}
                             >
-                              📩 PIN Zalo
+                              {needReset ? '🔄 Reset PIN' : '📩 PIN Zalo'}
                             </button>
                           );
                         })()}
@@ -2507,11 +2508,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       <td style={{ padding: '14px 18px', textAlign: 'center' }}>
                         {currentUser?.role === 'HR' && (() => {
                           const acc = findAccountFor(emp);
+                          const needReset = !!acc?.pinMustChange;
                           return (
                             <button
                               className="btn-outline"
-                              style={{ padding: '4px 10px', fontSize: '11px', color: '#0068FF', borderColor: '#BFDBFE', cursor: acc ? 'pointer' : 'not-allowed', opacity: acc ? 1 : 0.5 }}
-                              title={acc ? 'Hệ thống tự sinh PIN mới và gửi qua Zalo tới SĐT nhân viên' : 'Chưa có tài khoản — kích hoạt ở tab Kích hoạt trước!'}
+                              style={{ padding: '4px 10px', fontSize: '11px', color: needReset ? '#D97706' : '#0068FF', borderColor: needReset ? '#FCD34D' : '#BFDBFE', cursor: acc ? 'pointer' : 'not-allowed', opacity: acc ? 1 : 0.5 }}
+                              title={acc ? (needReset ? 'PIN đã gửi, NV chưa đổi — bấm để RESET gửi số mới' : 'Hệ thống tự sinh PIN mới và gửi qua Zalo tới SĐT nhân viên') : 'Chưa có tài khoản — kích hoạt ở tab Kích hoạt trước!'}
                               onClick={() => {
                                 if (!acc) {
                                   showToast('Nhân viên chưa có tài khoản! Hãy kích hoạt ở tab "Kích hoạt tài khoản NV" trước.');
@@ -2520,7 +2522,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 handleSendPinZalo(acc.accountId, emp.full_name, emp.phone_normalized || emp.phone);
                               }}
                             >
-                              📩 PIN Zalo
+                              {needReset ? '🔄 Reset PIN' : '📩 PIN Zalo'}
                             </button>
                           );
                         })()}
