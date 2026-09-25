@@ -3,9 +3,9 @@ dotenv.config();
 
 import http from 'http';
 import { Server } from 'socket.io';
-import jwt from 'jsonwebtoken';
 import { createApp } from './app.js';
-import { JWT_SECRET } from './services/auth.service.js';
+import { AuthService } from './services/auth.service.js';
+import { buildSocketCorsOptions, getAllowedOrigins } from './config/security.js';
 
 const PORT = process.env.PORT || 4005;
 
@@ -13,10 +13,7 @@ const { app, services, adapter } = createApp();
 const server = http.createServer(app);
 
 const io = new Server(server, {
-  cors: {
-    origin: '*',
-    methods: ['GET', 'POST'],
-  },
+  cors: buildSocketCorsOptions(),
 });
 
 // Attach io to express app for route broadcasting
@@ -29,20 +26,23 @@ services.attendanceService.setSocketServer(io);
 services.payrollService.setSocketServer(io);
 services.notificationsService.setSocketServer(io);
 
-// Socket.IO authentication and room management
+// Socket.IO authentication and room management (có kiểm tra revoke qua DB)
+const socketAuth = new AuthService(adapter);
 io.use((socket, next) => {
   const token = socket.handshake.auth?.token || socket.handshake.query?.token;
   if (!token || typeof token !== 'string') {
     return next(new Error('AUTHENTICATION_ERROR: Missing token'));
   }
 
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET) as any;
-    (socket as any).user = decoded;
-    next();
-  } catch (err) {
-    next(new Error('AUTHENTICATION_ERROR: Invalid token'));
-  }
+  socketAuth
+    .verifyAccessToken(token)
+    .then(decoded => {
+      (socket as any).user = decoded;
+      next();
+    })
+    .catch(() => {
+      next(new Error('AUTHENTICATION_ERROR: Invalid token'));
+    });
 });
 
 io.on('connection', socket => {
@@ -71,6 +71,7 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   console.log(`====================================================`);
   console.log(`ỤM BÒ MILK HR SYSTEM V5.1 - BACKEND SERVER STARTED`);
   console.log(`Port: ${PORT}`);
+  console.log(`CORS origins: ${getAllowedOrigins().join(', ') || '(none — set CORS_ORIGINS in production)'}`);
   console.log(`Google Sheets Mode: ${adapter.getStatus().mode}`);
   console.log(`Realtime Socket.IO: Ready`);
   console.log(`====================================================`);

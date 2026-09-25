@@ -4,7 +4,8 @@ import express from 'express';
 import cors from 'cors';
 import { GoogleSheetsAdapter } from './repositories/google-sheets.adapter.js';
 import { singleWriterQueue } from './repositories/single-writer-queue.js';
-import { AuthService } from './services/auth.service.js';
+import { AuthService, sanitizeAdmin } from './services/auth.service.js';
+import { hashPassword } from './services/password.service.js';
 import { AccountsService } from './services/accounts.service.js';
 import { EmployeesService } from './services/employees.service.js';
 import { SchedulesService } from './services/schedules.service.js';
@@ -12,9 +13,66 @@ import { AttendanceService } from './services/attendance.service.js';
 import { PayrollService } from './services/payroll.service.js';
 import { NotificationsService } from './services/notifications.service.js';
 import {
-  authMiddleware,
+  createAuthMiddleware,
   AuthenticatedRequest,
 } from './middlewares/auth.middleware.js';
+import {
+  authRateLimiter,
+  buildCorsOptions,
+  generalRateLimiter,
+  helmetMiddleware,
+} from './config/security.js';
+import { validate } from './middlewares/validate.middleware.js';
+import {
+  changePasswordBody,
+  adminLoginBody,
+  phoneLoginBody,
+  refreshBody,
+} from './validators/auth.validator.js';
+import {
+  activateAccountBody,
+  adjustmentApproveBody,
+  adjustmentCreateBody,
+  adjustmentsQuery,
+  announcementBody,
+  attendanceEventBody,
+  attendanceEventsQuery,
+  bulkImportBody,
+  candidateImportBody,
+  checkinBody,
+  checkoutBody,
+  employeeCreateBody,
+  idParams,
+  interviewBody,
+  leaveCreateBody,
+  leaveListQuery,
+  leaveReviewBody,
+  leavesAliasBody,
+  meAttendanceQuery,
+  meScheduleQuery,
+  notificationsQuery,
+  payrollCalculateBody,
+  payrollPeriodParams,
+  payrollRunIdParams,
+  payrollRunParams,
+  publishWeekBody,
+  publishWeekParams,
+  revokeAccountBody,
+  schedulesQuery,
+  shiftCreateBody,
+  swapApproveBody,
+  swapCreateBody,
+  swapRespondBody,
+  transitionBody,
+} from './validators/hr.validator.js';
+import {
+  backupCreateBody,
+  idParams as adminIdParams,
+  internalAccountCreateBody,
+  internalAccountUpdateBody,
+  opaqueConfigBody,
+  testRecoveryBody,
+} from './validators/admin.validator.js';
 import {
   requirePermission,
   requireRole,
@@ -24,12 +82,19 @@ import { ERROR_CODES } from '@ubm/shared';
 
 export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   const app = express();
-  app.use(cors());
-  app.use(express.json({ limit: '10mb' }));
+  // Render/Vercel chạy sau proxy — cần để rate-limit lấy đúng IP client.
+  app.set('trust proxy', 1);
+  app.disable('x-powered-by');
+  app.use(helmetMiddleware());
+  app.use(cors(buildCorsOptions()));
+  app.use(express.json({ limit: '2mb' }));
+  app.use(generalRateLimiter());
+  app.use('/auth/', authRateLimiter());
 
   const adapter = sheetsAdapter || new GoogleSheetsAdapter();
   singleWriterQueue.setRepository(adapter);
 
+  const authMiddleware = createAuthMiddleware(adapter);
   const authService = new AuthService(adapter);
   const accountsService = new AccountsService(adapter);
   const employeesService = new EmployeesService(adapter);
@@ -60,7 +125,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // --- AUTH ---
-  app.post('/auth/employee/phone-login', async (req, res) => {
+  app.post('/auth/employee/phone-login', validate({ body: phoneLoginBody }), async (req, res) => {
     try {
       const { phone } = req.body;
       const result = await authService.loginWithPhone(phone);
@@ -71,13 +136,43 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/auth/admin/login', async (req, res) => {
+  app.post('/auth/admin/login', validate({ body: adminLoginBody }), async (req, res) => {
     try {
       const { username, password } = req.body;
+      if (!username || !password) {
+        return res.status(400).json({ error: 'MISSING_CREDENTIALS' });
+      }
       const result = await authService.loginAdmin(username, password);
+      // Không bao giờ trả password_hash ra ngoài
+      if ((result.user as any)?.password_hash) delete (result.user as any).password_hash;
       res.json(result);
     } catch (err: any) {
       res.status(401).json({ error: err.message });
+    }
+  });
+
+  app.post('/auth/refresh', validate({ body: refreshBody }), async (req, res) => {
+    try {
+      const { refreshToken } = req.body || {};
+      if (!refreshToken) return res.status(400).json({ error: 'MISSING_REFRESH_TOKEN' });
+      const result = await authService.refreshAccessToken(refreshToken);
+      res.json(result);
+    } catch (err: any) {
+      res.status(401).json({ error: err.message });
+    }
+  });
+
+  app.post('/auth/admin/change-password', authMiddleware, validate({ body: changePasswordBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const { oldPassword, newPassword } = req.body || {};
+      if (!oldPassword || !newPassword) {
+        return res.status(400).json({ error: 'MISSING_CREDENTIALS' });
+      }
+      const updated = await authService.changeAdminPassword(req.user!.id, oldPassword, newPassword);
+      res.json(updated);
+    } catch (err: any) {
+      const status = err.message === 'WEAK_PASSWORD' ? 400 : 401;
+      res.status(status).json({ error: err.message });
     }
   });
 
@@ -103,7 +198,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/admin/employee-accounts/:id/activate', authMiddleware, requireRole(['ADMIN']), async (req: AuthenticatedRequest, res) => {
+  app.post('/admin/employee-accounts/:id/activate', authMiddleware, requireRole(['ADMIN']), validate({ params: idParams, body: activateAccountBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const accountId = req.params.id;
       const expectedVersion = req.body.expectedVersion || 1;
@@ -121,7 +216,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/admin/employee-accounts/:id/revoke', authMiddleware, requireRole(['ADMIN']), async (req: AuthenticatedRequest, res) => {
+  app.post('/admin/employee-accounts/:id/revoke', authMiddleware, requireRole(['ADMIN']), validate({ params: idParams, body: revokeAccountBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const accountId = req.params.id;
       const expectedVersion = req.body.expectedVersion || 1;
@@ -158,7 +253,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   );
 
-  app.post('/employees', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
+  app.post('/employees', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ body: employeeCreateBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const b = req.body;
       const result = await employeesService.createEmployee({
@@ -186,7 +281,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // Bulk import official employees endpoint (Dành cho HR / Admin import nhân viên chính thức)
-  app.post('/employees/bulk-import', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
+  app.post('/employees/bulk-import', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ body: bulkImportBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const { employees } = req.body;
       if (!Array.isArray(employees) || employees.length === 0) {
@@ -250,7 +345,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/employees/:id/transition-official', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
+  app.post('/employees/:id/transition-official', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams, body: transitionBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const result = await employeesService.transitionToOfficial(
         req.params.id,
@@ -264,7 +359,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.delete('/employees/:id', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
+  app.delete('/employees/:id', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {
     try {
       const id = req.params.id;
       const ok = await adapter.deleteEmployee(id);
@@ -293,7 +388,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/applications/import', authMiddleware, requireRole(['ADMIN', 'HR']), async (req, res) => {
+  app.post('/applications/import', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ body: candidateImportBody }), async (req, res) => {
     try {
       const result = await employeesService.importCandidate(req.body);
       broadcastUpdate('candidates', { action: 'import', candidate: result });
@@ -303,7 +398,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/interviews', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
+  app.post('/interviews', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ body: interviewBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const { submissionId, interviewDate, timeSlot } = req.body;
       const result = await employeesService.scheduleInterview(
@@ -322,6 +417,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.get(
     '/schedules',
     authMiddleware,
+    validate({ query: schedulesQuery }),
     enforceBranchScope(req => req.query.branchId as string),
     async (req: AuthenticatedRequest, res) => {
       try {
@@ -335,7 +431,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   );
 
-  app.get('/me/schedule', authMiddleware, async (req: AuthenticatedRequest, res) => {
+  app.get('/me/schedule', authMiddleware, validate({ query: meScheduleQuery }), async (req: AuthenticatedRequest, res) => {
     try {
       const employeeId = req.user?.employeeId;
       if (!employeeId) return res.status(400).json({ error: 'NOT_AN_EMPLOYEE' });
@@ -352,6 +448,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     '/schedules/shifts',
     authMiddleware,
     requireRole(['ADMIN', 'HR', 'STORE']),
+    validate({ body: shiftCreateBody }),
     enforceBranchScope(req => req.body.branchId),
     async (req: AuthenticatedRequest, res) => {
       try {
@@ -370,6 +467,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     '/schedules/:week/publish',
     authMiddleware,
     requireRole(['ADMIN', 'HR', 'STORE']),
+    validate({ params: publishWeekParams, body: publishWeekBody }),
     enforceBranchScope(req => req.body.branchId),
     async (req: AuthenticatedRequest, res) => {
       try {
@@ -383,7 +481,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   );
 
   // --- LEAVE & SWAP REQUESTS ---
-  app.post('/leave-requests', authMiddleware, async (req: AuthenticatedRequest, res) => {
+  app.post('/leave-requests', authMiddleware, validate({ body: leaveCreateBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const employeeId = req.user?.employeeId || req.body.employeeId;
       const result = await schedulesService.requestLeave({
@@ -396,7 +494,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.get('/leave-requests', authMiddleware, async (req: AuthenticatedRequest, res) => {
+  app.get('/leave-requests', authMiddleware, validate({ query: leaveListQuery }), async (req: AuthenticatedRequest, res) => {
     try {
       const branchId = req.user?.role === 'STORE' ? req.user.branchScope : (req.query.branchId as string);
       const employeeId = req.user?.role === 'EMPLOYEE' ? req.user.employeeId : (req.query.employeeId as string);
@@ -407,7 +505,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/leave-requests/:id/review', authMiddleware, requireRole(['ADMIN', 'HR', 'STORE']), async (req: AuthenticatedRequest, res) => {
+  app.post('/leave-requests/:id/review', authMiddleware, requireRole(['ADMIN', 'HR', 'STORE']), validate({ params: idParams, body: leaveReviewBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const { status, note } = req.body;
       const result = await schedulesService.reviewLeave(req.params.id, status, req.user!.id, note);
@@ -417,7 +515,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/swap-requests', authMiddleware, async (req: AuthenticatedRequest, res) => {
+  app.post('/swap-requests', authMiddleware, validate({ body: swapCreateBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const requesterId = req.user?.employeeId || req.body.requesterId;
       const result = await schedulesService.requestSwap({
@@ -440,7 +538,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/swap-requests/:id/respond', authMiddleware, async (req: AuthenticatedRequest, res) => {
+  app.post('/swap-requests/:id/respond', authMiddleware, validate({ params: idParams, body: swapRespondBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const partnerId = req.user?.employeeId || req.body.partnerId;
       const result = await schedulesService.respondSwapPartner(req.params.id, partnerId, req.body.accept);
@@ -450,7 +548,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/swap-requests/:id/approve', authMiddleware, requireRole(['ADMIN', 'HR', 'STORE']), async (req: AuthenticatedRequest, res) => {
+  app.post('/swap-requests/:id/approve', authMiddleware, requireRole(['ADMIN', 'HR', 'STORE']), validate({ params: idParams, body: swapApproveBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const result = await schedulesService.approveSwapManager(
         req.params.id,
@@ -465,7 +563,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // --- ATTENDANCE DEDICATED ENDPOINTS ---
-  app.post('/attendance/checkin', authMiddleware, async (req: AuthenticatedRequest, res) => {
+  app.post('/attendance/checkin', authMiddleware, validate({ body: checkinBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const employeeId = req.user?.employeeId || req.body.employee_id || req.body.employeeId;
       if (!employeeId) return res.status(400).json({ error: 'Thiếu thông tin mã nhân viên' });
@@ -539,7 +637,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/attendance/checkout', authMiddleware, async (req: AuthenticatedRequest, res) => {
+  app.post('/attendance/checkout', authMiddleware, validate({ body: checkoutBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const employeeId = req.user?.employeeId || req.body.employee_id || req.body.employeeId;
       if (!employeeId) return res.status(400).json({ error: 'Thiếu thông tin mã nhân viên' });
@@ -594,7 +692,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // Alias for /leaves
-  app.post('/leaves', authMiddleware, async (req: AuthenticatedRequest, res) => {
+  app.post('/leaves', authMiddleware, validate({ body: leavesAliasBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const employeeId = req.user?.employeeId || req.body.employeeId;
       const emp = await employeesService.getEmployee(employeeId);
@@ -612,7 +710,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.get('/leaves', authMiddleware, async (req: AuthenticatedRequest, res) => {
+  app.get('/leaves', authMiddleware, validate({ query: leaveListQuery }), async (req: AuthenticatedRequest, res) => {
     try {
       const branchId = req.user?.role === 'STORE' ? req.user.branchScope : (req.query.branchId as string);
       const employeeId = req.user?.role === 'EMPLOYEE' ? req.user.employeeId : (req.query.employeeId as string);
@@ -623,7 +721,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.get('/me/attendance', authMiddleware, async (req: AuthenticatedRequest, res) => {
+  app.get('/me/attendance', authMiddleware, validate({ query: meAttendanceQuery }), async (req: AuthenticatedRequest, res) => {
     try {
       const employeeId = req.user?.employeeId;
       if (!employeeId) return res.status(400).json({ error: 'NOT_AN_EMPLOYEE' });
@@ -637,7 +735,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // --- ATTENDANCE ---
-  app.post('/attendance/events', authMiddleware, async (req: AuthenticatedRequest, res) => {
+  app.post('/attendance/events', authMiddleware, validate({ body: attendanceEventBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const employeeId = req.user?.employeeId || req.body.employeeId;
       const requestId = (req.headers['idempotency-key'] as string) || req.body.requestId;
@@ -652,7 +750,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.get('/attendance/events', authMiddleware, async (req: AuthenticatedRequest, res) => {
+  app.get('/attendance/events', authMiddleware, validate({ query: attendanceEventsQuery }), async (req: AuthenticatedRequest, res) => {
     try {
       const employeeId = req.user?.role === 'EMPLOYEE' ? req.user.employeeId! : (req.query.employeeId as string);
       const date = (req.query.date as string) || new Date().toISOString().split('T')[0];
@@ -669,7 +767,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/attendance/adjustments', authMiddleware, async (req: AuthenticatedRequest, res) => {
+  app.post('/attendance/adjustments', authMiddleware, validate({ body: adjustmentCreateBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const employeeId = req.user?.employeeId || req.body.employeeId;
       const result = await attendanceService.requestAdjustment({
@@ -682,7 +780,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.get('/attendance/adjustments', authMiddleware, async (req: AuthenticatedRequest, res) => {
+  app.get('/attendance/adjustments', authMiddleware, validate({ query: adjustmentsQuery }), async (req: AuthenticatedRequest, res) => {
     try {
       const branchId = req.user?.role === 'STORE' ? req.user.branchScope : (req.query.branchId as string);
       const employeeId = req.user?.role === 'EMPLOYEE' ? req.user.employeeId : undefined;
@@ -693,7 +791,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/attendance/adjustments/:id/approve', authMiddleware, requireRole(['ADMIN', 'HR', 'STORE']), async (req: AuthenticatedRequest, res) => {
+  app.post('/attendance/adjustments/:id/approve', authMiddleware, requireRole(['ADMIN', 'HR', 'STORE']), validate({ params: idParams, body: adjustmentApproveBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const { status, minutesApproved, note } = req.body;
       const result = await attendanceService.reviewAdjustment(
@@ -710,7 +808,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // --- PAYROLL (Finance & Approver) ---
-  app.post('/payroll/:period/calculate', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
+  app.post('/payroll/:period/calculate', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollPeriodParams, body: payrollCalculateBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const branchScope = req.body.branchScope || '*';
       const result = await payrollService.calculateDraftPayroll(req.params.period, branchScope, req.user!.id);
@@ -729,7 +827,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.get('/payroll/runs/:id', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req, res) => {
+  app.get('/payroll/runs/:id', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollRunIdParams }), async (req, res) => {
     try {
       const details = await payrollService.getRunDetails(req.params.id);
       if (!details) return res.status(404).json({ error: 'PAYROLL_RUN_NOT_FOUND' });
@@ -739,7 +837,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/payroll/:run/reconcile', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
+  app.post('/payroll/:run/reconcile', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollRunParams }), async (req: AuthenticatedRequest, res) => {
     try {
       const result = await payrollService.reconcileRun(req.params.run, req.user!.id);
       res.json(result);
@@ -748,7 +846,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/payroll/:run/approve', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
+  app.post('/payroll/:run/approve', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollRunParams }), async (req: AuthenticatedRequest, res) => {
     try {
       const result = await payrollService.approveRun(req.params.run, req.user!.id);
       res.json(result);
@@ -757,7 +855,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/payroll/:run/publish', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
+  app.post('/payroll/:run/publish', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollRunParams }), async (req: AuthenticatedRequest, res) => {
     try {
       const result = await payrollService.publishRun(req.params.run, req.user!.id);
       res.json(result);
@@ -766,7 +864,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/payroll/:run/mark-paid', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
+  app.post('/payroll/:run/mark-paid', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollRunParams }), async (req: AuthenticatedRequest, res) => {
     try {
       const result = await payrollService.markPaid(req.params.run, req.user!.id);
       res.json(result);
@@ -788,7 +886,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // --- NOTIFICATIONS & ANNOUNCEMENTS ---
-  app.get('/me/notifications', authMiddleware, async (req: AuthenticatedRequest, res) => {
+  app.get('/me/notifications', authMiddleware, validate({ query: notificationsQuery }), async (req: AuthenticatedRequest, res) => {
     try {
       const recipientId = req.user?.employeeId || req.user?.id || 'ALL';
       const unreadOnly = req.query.filter === 'unread';
@@ -799,7 +897,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/me/notifications/:id/read', authMiddleware, async (req: AuthenticatedRequest, res) => {
+  app.post('/me/notifications/:id/read', authMiddleware, validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {
     try {
       const recipientId = req.user?.employeeId || req.user?.id || 'ALL';
       const updated = await notificationsService.markRead(req.params.id, recipientId);
@@ -809,7 +907,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/me/notifications/:id/acknowledge', authMiddleware, async (req: AuthenticatedRequest, res) => {
+  app.post('/me/notifications/:id/acknowledge', authMiddleware, validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {
     try {
       const recipientId = req.user?.employeeId || req.user?.id || 'ALL';
       const updated = await notificationsService.markAcknowledged(req.params.id, recipientId);
@@ -819,7 +917,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/announcements', authMiddleware, requireRole(['ADMIN', 'MARKETING']), async (req: AuthenticatedRequest, res) => {
+  app.post('/announcements', authMiddleware, requireRole(['ADMIN', 'MARKETING']), validate({ body: announcementBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const { title, summary, recipientIds, severity, targetPath } = req.body;
       const result = await notificationsService.sendNotification({
@@ -941,19 +1039,29 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.get('/admin/internal-accounts', authMiddleware, requireRole(['ADMIN']), async (req, res) => {
     try {
       const accounts = await adapter.listAdminAccounts();
-      res.json(accounts);
+      res.json(accounts.map(sanitizeAdmin));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.post('/admin/internal-accounts', authMiddleware, requireRole(['ADMIN']), async (req: AuthenticatedRequest, res) => {
+  app.post('/admin/internal-accounts', authMiddleware, requireRole(['ADMIN']), validate({ body: internalAccountCreateBody }), async (req: AuthenticatedRequest, res) => {
     try {
-      const { admin_id, username, password_hash, full_name, role, branch_scope, is_active } = req.body;
+      const { admin_id, username, password, password_hash, full_name, role, branch_scope, is_active } = req.body;
+      const plain = password || password_hash;
+      if (!username || !plain) {
+        return res.status(400).json({ error: 'MISSING_CREDENTIALS' });
+      }
+      let hashed: string;
+      try {
+        hashed = await hashPassword(plain);
+      } catch {
+        return res.status(400).json({ error: 'WEAK_PASSWORD' });
+      }
       const created = await adapter.createAdminAccount({
         admin_id: admin_id || `ADM_${Date.now()}`,
         username,
-        password_hash: password_hash || '123456',
+        password_hash: hashed,
         full_name,
         role: role || 'HR',
         branch_scope: branch_scope || '*',
@@ -964,33 +1072,47 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         action: 'INTERNAL_ACCOUNT_CREATED',
         target_type: 'ADMIN_ACCOUNT',
         target_id: created.admin_id,
-        payload_after: created,
+        payload_after: sanitizeAdmin(created),
       });
-      broadcastUpdate('accounts', { action: 'createAdmin', account: created });
-      res.json(created);
+      broadcastUpdate('accounts', { action: 'createAdmin', account: sanitizeAdmin(created) });
+      res.json(sanitizeAdmin(created));
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
   });
 
-  app.put('/admin/internal-accounts/:id', authMiddleware, requireRole(['ADMIN']), async (req: AuthenticatedRequest, res) => {
+  app.put('/admin/internal-accounts/:id', authMiddleware, requireRole(['ADMIN']), validate({ params: adminIdParams, body: internalAccountUpdateBody }), async (req: AuthenticatedRequest, res) => {
     try {
-      const updated = await adapter.updateAdminAccount(req.params.id, req.body);
+      const updates = { ...(req.body || {}) };
+      // Không cho đổi password qua PUT thường — dùng /auth/admin/change-password.
+      // Nếu vẫn gửi password/password_hash thì hash lại, không lưu plaintext.
+      const plain = updates.password || updates.password_hash;
+      if (plain && typeof plain === 'string') {
+        try {
+          updates.password_hash = await hashPassword(plain);
+        } catch {
+          return res.status(400).json({ error: 'WEAK_PASSWORD' });
+        }
+      } else {
+        delete updates.password_hash;
+      }
+      delete updates.password;
+      const updated = await adapter.updateAdminAccount(req.params.id, updates);
       await adapter.recordAuditLog({
         actor_id: req.user!.id,
         action: 'INTERNAL_ACCOUNT_UPDATED',
         target_type: 'ADMIN_ACCOUNT',
         target_id: req.params.id,
-        payload_after: updated,
+        payload_after: sanitizeAdmin(updated),
       });
-      broadcastUpdate('accounts', { action: 'updateAdmin', account: updated });
-      res.json(updated);
+      broadcastUpdate('accounts', { action: 'updateAdmin', account: sanitizeAdmin(updated) });
+      res.json(sanitizeAdmin(updated));
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
   });
 
-  app.delete('/admin/internal-accounts/:id', authMiddleware, requireRole(['ADMIN']), async (req: AuthenticatedRequest, res) => {
+  app.delete('/admin/internal-accounts/:id', authMiddleware, requireRole(['ADMIN']), validate({ params: adminIdParams }), async (req: AuthenticatedRequest, res) => {
     try {
       const id = req.params.id;
       if (id === 'ADM_001') {
@@ -1023,7 +1145,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.put('/admin/branches/:id', authMiddleware, requireRole(['ADMIN']), async (req: AuthenticatedRequest, res) => {
+  app.put('/admin/branches/:id', authMiddleware, requireRole(['ADMIN']), validate({ params: adminIdParams, body: opaqueConfigBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const updated = await adapter.updateBranch(req.params.id, req.body);
       await adapter.recordAuditLog({
@@ -1048,7 +1170,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.put('/admin/shift-templates', authMiddleware, requireRole(['ADMIN']), async (req: AuthenticatedRequest, res) => {
+  app.put('/admin/shift-templates', authMiddleware, requireRole(['ADMIN']), validate({ body: opaqueConfigBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const updated = await adapter.updateShiftTemplates(req.body);
       await adapter.recordAuditLog({
@@ -1074,7 +1196,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.put('/admin/policies', authMiddleware, requireRole(['ADMIN']), async (req: AuthenticatedRequest, res) => {
+  app.put('/admin/policies', authMiddleware, requireRole(['ADMIN']), validate({ body: opaqueConfigBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const updated = await adapter.updatePolicies(req.body);
       await adapter.recordAuditLog({
@@ -1215,7 +1337,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/admin/maintenance', authMiddleware, requireRole(['ADMIN']), async (req: AuthenticatedRequest, res) => {
+  app.post('/admin/maintenance', authMiddleware, requireRole(['ADMIN']), validate({ body: opaqueConfigBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const updated = await adapter.updateMaintenance(req.body);
       await adapter.recordAuditLog({
@@ -1251,7 +1373,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/admin/backup/snapshots', authMiddleware, requireRole(['ADMIN']), async (req: AuthenticatedRequest, res) => {
+  app.post('/admin/backup/snapshots', authMiddleware, requireRole(['ADMIN']), validate({ body: backupCreateBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const snap = await adapter.createBackupSnapshot(req.body.name);
       await adapter.recordAuditLog({
@@ -1267,7 +1389,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/admin/backup/test-recovery', authMiddleware, requireRole(['ADMIN']), async (req: AuthenticatedRequest, res) => {
+  app.post('/admin/backup/test-recovery', authMiddleware, requireRole(['ADMIN']), validate({ body: testRecoveryBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const result = await adapter.testRecovery(req.body.snapshot_id);
       res.json(result);
@@ -1286,7 +1408,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.put('/admin/system-settings', authMiddleware, requireRole(['ADMIN']), async (req: AuthenticatedRequest, res) => {
+  app.put('/admin/system-settings', authMiddleware, requireRole(['ADMIN']), validate({ body: opaqueConfigBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const updated = await adapter.updateSystemSettings(req.body);
       await adapter.recordAuditLog({
@@ -1334,6 +1456,22 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       res.sendFile(path.join(empDist, 'index.html'));
     });
   }
+
+  // --- Central error handler cho middleware (CORS, JSON parse) ---
+  // Các route hiện tại tự try/catch nên handler này chỉ bắt lỗi từ middleware.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (err && typeof err.message === 'string' && err.message.startsWith('CORS blocked')) {
+      return res.status(403).json({ error: 'CORS_FORBIDDEN', message: 'Origin không được phép' });
+    }
+    if (err?.type === 'entity.too.large') {
+      return res.status(413).json({ error: 'PAYLOAD_TOO_LARGE', message: 'Dữ liệu gửi lên quá lớn (tối đa 2MB)' });
+    }
+    if (err instanceof SyntaxError && 'body' in err) {
+      return res.status(400).json({ error: 'INVALID_JSON', message: 'Body không phải JSON hợp lệ' });
+    }
+    next(err);
+  });
 
   return {
     app,

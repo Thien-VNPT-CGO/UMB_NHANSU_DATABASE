@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
+import { hashPasswordSync } from '../services/password.service.js';
 import {
   EmployeeAccount,
   AdminAccount,
@@ -65,12 +66,23 @@ export class MockSheetsAdapter implements ISheetsRepository {
   public seedInitialData() {
     const now = new Date().toISOString();
 
+    // Seed password: ưu tiên env, mặc định dev-only. Production phải đổi ngay sau khi đăng nhập.
+    const seedPlain =
+      process.env.ADMIN_SEED_PASSWORD && process.env.ADMIN_SEED_PASSWORD.length >= 8
+        ? process.env.ADMIN_SEED_PASSWORD
+        : 'Master@@2027';
+    if (!process.env.ADMIN_SEED_PASSWORD) {
+      console.warn(
+        '[mock] ADMIN_SEED_PASSWORD not set — using default dev seed password. Change it immediately after login.'
+      );
+    }
+
     // 1. Admin Accounts (Admin, HR, Store, Finance, MKT)
     this.adminAccounts = [
       {
         admin_id: 'ADM_001',
         username: 'admin',
-        password_hash: 'Master@@2027',
+        password_hash: hashPasswordSync(seedPlain),
         full_name: 'Quản Trị Viên Hệ Thống',
         role: 'ADMIN',
         branch_scope: '*',
@@ -373,7 +385,8 @@ export class MockSheetsAdapter implements ISheetsRepository {
 
   async getAdminByUsername(username: string): Promise<AdminAccount | null> {
     this.checkErrors();
-    return this.adminAccounts.find(a => a.username === username && a.is_active) || null;
+    // Trả về cả account inactive để AuthService tự quyết định lỗi (tránh lộ trạng thái).
+    return this.adminAccounts.find(a => a.username === username) || null;
   }
 
   // --- Employees ---

@@ -67,3 +67,21 @@ GET /admin/integrations/status (kiem tra ket noi Sheets)
 POST /admin/integrations/pull-now (tai du lieu tu Sheets ngay)
 GET /admin/dashboard/stats (kiem tra dashboard)
 
+## Buoc 8: CI tu dong (.github/workflows/ci.yml)
+
+Moi push / pull request deu chay tren GitHub Actions (Node 20.18.0):
+1. `npm ci` -> `npm run build` (shared + backend + admin-web + employee-web)
+2. `docker build` image backend + smoke test GET /health == UP
+
+## Buoc 9: Chay bang Docker (thay the Render native)
+
+1. Copy `apps/backend/.env.example` -> `apps/backend/.env`, dien gia tri that
+2. `docker compose up --build -d`
+3. Kiem tra: `curl http://localhost:4005/health` -> `{"status":"UP",...}`
+4. Image all-in-one: backend serve luon admin-web + employee-web dist
+   (xem `apps/backend/Dockerfile`, context build la thu muc goc repo)
+
+Bien moi truong bo sung (xem `apps/backend/.env.example`):
+CORS_ORIGINS, AUTH_RATE_LIMIT_MAX, GENERAL_RATE_LIMIT_MAX,
+JWT_ACCESS_TTL, JWT_REFRESH_TTL, ADMIN_SEED_PASSWORD
+

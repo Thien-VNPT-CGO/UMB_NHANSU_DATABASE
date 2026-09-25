@@ -17,6 +17,7 @@ import {
 } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { MockSheetsAdapter } from '../repositories/mock-sheets.adapter.js';
+import { hashPasswordSync, isBcryptHash } from './password.service.js';
 import { evaluateCandidateAiScore } from './ai-scorer.js';
 
 export interface SheetDefinition {
@@ -544,8 +545,15 @@ export class GoogleSheetsSyncService {
 
             const existingById = currentAdmins.find(a => a.admin_id === r[0]);
             const existingByUser = currentAdmins.find(a => a.username === r[1]);
-            const fallbackPass = (r[1] === 'admin') ? 'Master@@2027' : '123456';
-            const passwordHash = passwordFromSheet || existingById?.password_hash || existingByUser?.password_hash || fallbackPass;
+            const rawPass =
+              passwordFromSheet ||
+              existingById?.password_hash ||
+              existingByUser?.password_hash ||
+              (r[1] === 'admin'
+                ? process.env.ADMIN_SEED_PASSWORD || 'Master@@2027'
+                : `Temp${Date.now().toString().slice(-6)}!`);
+            // Không bao giờ giữ plaintext: hash trước khi lưu vào memory.
+            const passwordHash = isBcryptHash(rawPass) ? rawPass : hashPasswordSync(rawPass);
 
             return {
               admin_id: r[0],

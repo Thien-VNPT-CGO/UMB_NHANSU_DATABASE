@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.node-version'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build all workspaces (shared + backend + admin-web + employee-web)
+        run: npm run build
+
+  docker:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build backend image (verify Dockerfile)
+        run: docker build -f apps/backend/Dockerfile -t ubm-backend:ci .
+
+      - name: Smoke test image (/health)
+        run: |
+          docker run -d --name ubm-ci -p 4005:4005 \
+            -e JWT_SECRET=ci-test-secret-0123456789abcdef-ci-test \
+            ubm-backend:ci
+          for i in $(seq 1 20); do
+            if docker exec ubm-ci wget -qO- http://localhost:4005/health | grep -q '"status":"UP"'; then
+              echo "HEALTH OK"; docker rm -f ubm-ci; exit 0
+            fi
+            sleep 3
+          done
+          echo "HEALTH CHECK FAILED"; docker logs ubm-ci; docker rm -f ubm-ci; exit 1

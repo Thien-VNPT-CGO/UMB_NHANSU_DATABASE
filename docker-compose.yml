@@ -1,0 +1,25 @@
+# Chạy backend UBM HR bằng Docker Compose.
+# 1. Copy apps/backend/.env.example -> apps/backend/.env, điền giá trị thật
+#    (JWT_SECRET, CORS_ORIGINS, GOOGLE_SERVICE_ACCOUNT_JSON, SPREADSHEET_ID...)
+# 2. docker compose up --build -d
+# 3. Kiểm tra: curl http://localhost:4005/health
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: apps/backend/Dockerfile
+    ports:
+      - "4005:4005"
+    env_file:
+      - path: ./apps/backend/.env
+        required: false
+    environment:
+      PORT: 4005
+      NODE_ENV: production
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4005/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped

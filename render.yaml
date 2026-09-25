@@ -5,6 +5,7 @@ services:
     plan: free
     buildCommand: npm install --include=dev && npm run build
     startCommand: npm start
+    healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production
@@ -12,3 +13,18 @@ services:
         value: 10000
       - key: NODE_VERSION
         value: 20.18.0
+      # Secrets — quản trị trong Render Dashboard (sync: false = không commit giá trị).
+      - key: JWT_SECRET
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: ADMIN_SEED_PASSWORD
+        sync: false
+      - key: GOOGLE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: SPREADSHEET_ID
+        sync: false
+      - key: CANDIDATE_SPREADSHEET_ID
+        sync: false
+      - key: GOOGLE_DRIVE_FOLDER_ID
+        sync: false
