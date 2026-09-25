@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl } from './services/api';
 import {
   Home,
@@ -66,15 +66,12 @@ export function App() {
 
   // Attendance flow state
   const [attendanceStep, setAttendanceStep] = useState<'IDLE' | 'CHECKING_GPS' | 'READY_CAMERA' | 'SUBMITTING' | 'CONFIRMED'>('IDLE');
-  const [gpsAccuracy, setGpsAccuracy] = useState<number>(18);
-  const [gpsDistance, setGpsDistance] = useState<number>(45);
   const [lastReceipt, setLastReceipt] = useState<any>(null);
   const [uniformChecked, setUniformChecked] = useState(true);
   const [badgeChecked, setBadgeChecked] = useState(true);
 
   // Payslip privacy lock
   const [payslipUnlocked, setPayslipUnlocked] = useState(false);
-  const [payslipPin, setPayslipPin] = useState('');
   const [payslips, setPayslips] = useState<any[]>([]);
 
   // Shift & Requests
@@ -111,6 +108,11 @@ export function App() {
 
   // Attendance tracking state
   const [attendanceActionType, setAttendanceActionType] = useState<'CHECK_IN' | 'CHECK_OUT'>('CHECK_IN');
+  // GPS thật từ thiết bị (null = chưa đo được, KHÔNG dùng số giả lập)
+  const [gpsCoords, setGpsCoords] = useState<{ lat: number; lng: number; accuracy: number } | null>(null);
+  // Ảnh chụp thật từ camera (dataURL), null = chưa chụp
+  const [photoData, setPhotoData] = useState<string | null>(null);
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
   const [todayAttendance, setTodayAttendance] = useState<{
     checkedIn?: boolean;
     checkedOut?: boolean;
@@ -475,34 +477,76 @@ export function App() {
 
     setAttendanceActionType(action);
     setAttendanceStep('CHECKING_GPS');
-    setTimeout(() => {
-      setGpsAccuracy(12);
-      setGpsDistance(38); // < 300m
-      setAttendanceStep('READY_CAMERA');
-    }, 900);
+    setGpsCoords(null);
+    setPhotoData(null);
+
+    // GPS THẬT 100%: đo từ vệ tinh thiết bị, không dùng tọa độ giả lập.
+    // Từ chối định vị / ngoài vùng phủ sóng -> dừng, KHÔNG ghi nhận.
+    if (!('geolocation' in navigator)) {
+      showToast('🚫 Thiết bị của bạn không hỗ trợ định vị GPS! Không thể điểm danh.');
+      setAttendanceStep('IDLE');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setGpsCoords({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracy: Math.round(pos.coords.accuracy),
+        });
+        setAttendanceStep('READY_CAMERA');
+      },
+      (err) => {
+        if (err.code === err.PERMISSION_DENIED) {
+          showToast('🚫 Bạn đã TỪ CHỐI quyền định vị! Hãy bật GPS + cho phép trình duyệt truy cập vị trí rồi thử lại. Không có GPS thật thì không điểm danh được.');
+        } else if (err.code === err.POSITION_UNAVAILABLE) {
+          showToast('📡 Không bắt được tín hiệu GPS (trong nhà/tầng hầm?). Hãy ra chỗ thoáng và thử lại!');
+        } else {
+          showToast('⏰ Đo GPS quá thời gian! Vui lòng thử lại.');
+        }
+        setAttendanceStep('IDLE');
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 }
+    );
   };
 
-  const handleCapturePhoto = async () => {
+  const handlePhotoSelected = async (file: File | undefined) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      showToast('⚠️ File không phải ảnh! Vui lòng chụp ảnh thật.');
+      return;
+    }
+    if (file.size > 1500 * 1024) {
+      showToast('⚠️ Ảnh quá lớn (>1.5MB)! Vui lòng chụp lại với độ phân giải thấp hơn.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setPhotoData(String(reader.result || ''));
+    };
+    reader.onerror = () => {
+      showToast('⚠️ Không đọc được ảnh! Vui lòng chụp lại.');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSubmitAttendance = async () => {
     if (!uniformChecked || !badgeChecked) {
       showToast('⚠️ VI PHẠM ĐỒNG PHỤC QUY CHUẨN: Vui lòng xác nhận đang mặc Áo Hồng Ụm Bò Milk và Đeo Bảng Tên hợp lệ!');
       return;
     }
+    // Bắt buộc: GPS thật + ảnh thật (check-in). Không có -> không gửi.
+    if (!gpsCoords) {
+      showToast('🚫 Chưa có tọa độ GPS thật! Vui lòng bấm Bắt đầu lại để đo GPS.');
+      setAttendanceStep('IDLE');
+      return;
+    }
+    if (attendanceActionType === 'CHECK_IN' && !photoData) {
+      showToast('📸 Bắt buộc chụp ảnh xác nhận khi check-in! Vui lòng chụp ảnh thật.');
+      return;
+    }
     setAttendanceStep('SUBMITTING');
     try {
-      const mockCanvas = document.createElement('canvas');
-      mockCanvas.width = 400;
-      mockCanvas.height = 400;
-      const ctx = mockCanvas.getContext('2d');
-      if (ctx) {
-        ctx.fillStyle = '#E85D92'; // Màu áo hồng Ụm Bò Milk
-        ctx.fillRect(0, 0, 400, 400);
-        ctx.fillStyle = '#FFFFFF';
-        ctx.font = 'bold 20px sans-serif';
-        ctx.fillText('ỤM BÒ MILK - UNIFORM CHECKED', 30, 200);
-        ctx.fillText(`NV: ${employee?.full_name}`, 30, 230);
-      }
-      const base64Image = mockCanvas.toDataURL('image/jpeg');
-
       const today = new Date().toISOString().split('T')[0];
       const todayShift = myShifts.find((s: any) => s.date === today);
       const targetEndpoint = attendanceActionType === 'CHECK_IN' ? '/attendance/checkin' : '/attendance/checkout';
@@ -510,25 +554,35 @@ export function App() {
       const res = await apiRequest(targetEndpoint, {
         method: 'POST',
         body: JSON.stringify({
-          assignment_id: todayShift?.assignment_id || myShifts[0]?.assignment_id || `ASSIGN_${employee?.employee_id}_${today}`,
-          lat: 10.7925,
-          lng: 106.6853,
-          accuracy: gpsAccuracy,
-          photo_base64: base64Image,
+          assignment_id: todayShift?.assignment_id || myShifts[0]?.assignment_id,
+          lat: gpsCoords.lat,
+          lng: gpsCoords.lng,
+          accuracy: gpsCoords.accuracy,
+          ...(photoData ? { photo_base64: photoData } : {}),
         }),
       });
 
       setLastReceipt(res.receipt);
       setAttendanceStep('CONFIRMED');
+      const gpsNote = res.receipt?.gps_status === 'OUT_OF_BOUNDS'
+        ? ' (⚠️ NGOÀI PHẠM VI 300m chi nhánh — đã ghi nhận để đối soát!)'
+        : res.receipt?.gps_status === 'LOW_ACCURACY'
+          ? ' (⚠️ GPS kém chính xác — đã ghi nhận!)'
+          : '';
       showToast(attendanceActionType === 'CHECK_IN'
-        ? '✓ Điểm danh Check-in thành công! Đã ghi nhận Áo Hồng + Bảng Tên và GPS hợp lệ.'
-        : '✓ Điểm danh Check-out thành công! Ca làm việc của bạn đã được ghi nhận vào Google Sheets.'
+        ? `✓ Điểm danh Check-in thành công! GPS thật + ảnh thật đã ghi nhận.${gpsNote}`
+        : `✓ Điểm danh Check-out thành công! Ca làm việc đã ghi nhận vào Google Sheets.${gpsNote}`
       );
       await loadEmployeeData(employee?.employee_id);
     } catch (err: any) {
       showToast(err.message || 'Lỗi khi điểm danh!');
       setAttendanceStep('READY_CAMERA');
     }
+  };
+
+  const handleCapturePhoto = async () => {
+    // Mở camera thật của điện thoại (không tạo ảnh giả bằng canvas).
+    photoInputRef.current?.click();
   };
 
   // Submit 2-day OFF for official employee
@@ -646,26 +700,18 @@ export function App() {
     }
   };
 
+  // Phiếu lương: 100% dữ liệu thật từ API /me/payslips (đã lọc đúng nhân viên ở server).
+  // Không dùng PIN giả hay phiếu mẫu — không có dữ liệu thì báo trống.
   const handleUnlockPayslip = async () => {
-    if (payslipPin === '1234' || payslipPin.length === 4) {
+    try {
+      const slips = await apiRequest('/me/payslips');
+      setPayslips(Array.isArray(slips) ? slips : []);
       setPayslipUnlocked(true);
-      showToast('Mở khóa phiếu lương thành công!');
-      const slips = await apiRequest('/me/payslips').catch(() => [
-        {
-          cycle_id: 'KY_09_2026',
-          title: 'Kỳ Lương Tháng 09/2026',
-          total_hours: 156,
-          rate_per_hour: employee?.current_rate_per_hour || 25000,
-          gross_amount: (156 * (employee?.current_rate_per_hour || 25000)),
-          bonus_amount: 500000,
-          deduction_amount: 0,
-          net_payout: (156 * (employee?.current_rate_per_hour || 25000)) + 500000,
-          status: 'PUBLISHED',
-        }
-      ]);
-      setPayslips(slips);
-    } else {
-      showToast('Mã PIN không đúng! (Gợi ý: 1234)');
+      if (!Array.isArray(slips) || slips.length === 0) {
+        showToast('Chưa có phiếu lương nào được phát hành cho bạn trong kỳ này!');
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Không tải được phiếu lương! Vui lòng thử lại.');
     }
   };
 
@@ -1586,8 +1632,14 @@ export function App() {
                       <strong style={{ color: 'var(--brand)' }}>{todayShift.branch_id || employee?.default_branch_id || 'CN130'}</strong>
                     </div>
                     <div>
-                      <div style={{ color: 'var(--text-muted)' }}>Khoảng cách GPS:</div>
-                      <strong style={{ color: '#10B981' }}>{gpsDistance}m (Chuẩn &lt; 300m)</strong>
+                      <div style={{ color: 'var(--text-muted)' }}>GPS thật của bạn:</div>
+                      {gpsCoords ? (
+                        <strong style={{ color: '#10B981' }}>
+                          ±{gpsCoords.accuracy}m (Chuẩn &lt; 300m)
+                        </strong>
+                      ) : (
+                        <strong style={{ color: '#94A3B8' }}>Chưa đo — bấm Bắt đầu để đo GPS</strong>
+                      )}
                     </div>
                   </div>
 
@@ -1675,9 +1727,17 @@ export function App() {
 
                   {attendanceStep === 'READY_CAMERA' && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      <input
+                        ref={photoInputRef}
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        style={{ display: 'none' }}
+                        onChange={(e) => handlePhotoSelected(e.target.files?.[0])}
+                      />
                       <div style={{
                         width: '100%',
-                        height: '200px',
+                        minHeight: '200px',
                         backgroundColor: '#FDF2F8',
                         border: '2px dashed var(--brand)',
                         borderRadius: 'var(--radius-md)',
@@ -1686,23 +1746,52 @@ export function App() {
                         alignItems: 'center',
                         justifyContent: 'center',
                         gap: '8px',
+                        overflow: 'hidden',
                       }}>
-                        <Camera size={40} color="var(--brand)" />
-                        <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--brand)' }}>
-                          Khung hình chụp áo hồng + bảng tên
-                        </span>
-                        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                          Giữ camera thẳng khuôn mặt và ngực áo
-                        </span>
+                        {photoData ? (
+                          <img src={photoData} alt="Ảnh điểm danh" style={{ width: '100%', maxHeight: '320px', objectFit: 'cover' }} />
+                        ) : (
+                          <>
+                            <Camera size={40} color="var(--brand)" />
+                            <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--brand)' }}>
+                              Chụp ảnh thật: áo hồng + bảng tên
+                            </span>
+                            <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                              Giữ camera thẳng khuôn mặt và ngực áo
+                            </span>
+                          </>
+                        )}
+                      </div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center' }}>
+                        GPS đã đo: {gpsCoords ? `${gpsCoords.lat.toFixed(6)}, ${gpsCoords.lng.toFixed(6)} (±${gpsCoords.accuracy}m)` : '—'}
                       </div>
 
-                      <button
-                        className="btn-primary"
-                        onClick={handleCapturePhoto}
-                        style={{ width: '100%', fontSize: '15px', fontWeight: 800 }}
-                      >
-                        📸 CHỤP ẢNH & GHI NHẬN {attendanceActionType === 'CHECK_IN' ? 'CHECK-IN' : 'CHECK-OUT'}
-                      </button>
+                      {!photoData ? (
+                        <button
+                          className="btn-primary"
+                          onClick={handleCapturePhoto}
+                          style={{ width: '100%', fontSize: '15px', fontWeight: 800 }}
+                        >
+                          📸 CHỤP ẢNH THẬT BẰNG CAMERA
+                        </button>
+                      ) : (
+                        <>
+                          <button
+                            className="btn-secondary"
+                            onClick={handleCapturePhoto}
+                            style={{ width: '100%', fontSize: '13px', fontWeight: 700 }}
+                          >
+                            🔄 CHỤP LẠI ẢNH KHÁC
+                          </button>
+                          <button
+                            className="btn-primary"
+                            onClick={handleSubmitAttendance}
+                            style={{ width: '100%', fontSize: '15px', fontWeight: 800 }}
+                          >
+                            ✅ GHI NHẬN {attendanceActionType === 'CHECK_IN' ? 'CHECK-IN' : 'CHECK-OUT'} (GPS + ẢNH THẬT)
+                          </button>
+                        </>
+                      )}
                     </div>
                   )}
 
@@ -1726,7 +1815,9 @@ export function App() {
                         {attendanceActionType === 'CHECK_IN' ? 'CHECK-IN THÀNH CÔNG!' : 'CHECK-OUT THÀNH CÔNG!'}
                       </h4>
                       <div style={{ fontSize: '12px', color: '#047857', marginTop: '4px' }}>
-                        Thời gian: {new Date().toLocaleTimeString('vi-VN')} • Khoảng cách: 38m • Đồng phục: Áo hồng + Bảng tên hợp lệ.
+                        Thời gian: {new Date().toLocaleTimeString('vi-VN')} • Khoảng cách:{' '}
+                        {typeof lastReceipt?.distance_meters === 'number' ? `${Math.round(lastReceipt.distance_meters)}m` : 'đang đối soát'}
+                        {lastReceipt?.gps_status === 'OUT_OF_BOUNDS' ? ' (⚠️ ngoài 300m — đã ghi nhận để đối soát)' : ''} • Đồng phục: Áo hồng + Bảng tên hợp lệ.
                       </div>
                       <button
                         className="btn-secondary"
@@ -2230,48 +2321,52 @@ export function App() {
               {!payslipUnlocked ? (
                 <div style={{ textAlign: 'center', padding: '16px 0' }}>
                   <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>
-                    Nhập mã PIN cá nhân 4 số để bảo vệ thông tin thu nhập của bạn.
+                    Phiếu lương do Kế toán phát hành — chỉ hiển thị đúng phiếu của bạn, không có dữ liệu mẫu.
                   </p>
-                  <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', marginBottom: '12px' }}>
-                    <input
-                      type="password"
-                      maxLength={4}
-                      placeholder="****"
-                      value={payslipPin}
-                      onChange={(e) => setPayslipPin(e.target.value)}
-                      style={{ width: '120px', textAlign: 'center', fontSize: '20px', fontWeight: 800, letterSpacing: '4px' }}
-                    />
-                  </div>
                   <button className="btn-primary" onClick={handleUnlockPayslip}>
-                    Mở Khóa Phiếu Lương
+                    Xem Phiếu Lương Của Tôi
                   </button>
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '8px' }}>
-                    (Mã PIN mặc định thử nghiệm: 1234)
+                </div>
+              ) : payslips.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '16px 0', fontSize: '13px', color: 'var(--text-muted)' }}>
+                  Chưa có phiếu lương nào được phát hành cho bạn trong kỳ này.
+                  <div>
+                    <button className="btn-secondary" onClick={() => setPayslipUnlocked(false)} style={{ fontSize: '12px', marginTop: '10px' }}>
+                      Tải Lại
+                    </button>
                   </div>
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  <div style={{ backgroundColor: '#FFFBF9', padding: '14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
-                    <div style={{ fontWeight: 800, fontSize: '14px', color: 'var(--brand)' }}>Kỳ Lương Tháng 09/2026</div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', margin: '8px 0' }}>
-                      <span>Tổng giờ công:</span>
-                      <strong>156 giờ</strong>
+                  {payslips.map((slip: any, idx: number) => (
+                    <div key={slip.item_id || slip.run_id || idx} style={{ backgroundColor: '#FFFBF9', padding: '14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
+                      <div style={{ fontWeight: 800, fontSize: '14px', color: 'var(--brand)' }}>
+                        {slip.period ? `Kỳ Lương Tháng ${String(slip.period).slice(5, 7)}/${String(slip.period).slice(0, 4)}` : (slip.title || 'Phiếu lương')}
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', margin: '8px 0' }}>
+                        <span>Tổng giờ công:</span>
+                        <strong>{Number(slip.standard_hours || 0).toLocaleString('vi-VN')} giờ ({slip.total_shifts ?? 0} ca)</strong>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', margin: '4px 0' }}>
+                        <span>Đơn giá:</span>
+                        <strong>{Number(slip.rate_snapshot || 0).toLocaleString('vi-VN')} đ/h</strong>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', margin: '4px 0' }}>
+                        <span>Phụ cấp / Thưởng:</span>
+                        <strong>{Number((slip.allowance || 0) + (slip.bonus || 0)).toLocaleString('vi-VN')} đ</strong>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', margin: '4px 0' }}>
+                        <span>Khấu trừ:</span>
+                        <strong>{Number(slip.deduction || 0).toLocaleString('vi-VN')} đ</strong>
+                      </div>
+                      <div style={{ borderTop: '1px solid var(--border)', paddingTop: '8px', marginTop: '8px', display: 'flex', justifyContent: 'space-between', fontSize: '14px', fontWeight: 800, color: '#10B981' }}>
+                        <span>THỰC NHẬN:</span>
+                        <span>{Number(slip.net_pay || 0).toLocaleString('vi-VN')} đ</span>
+                      </div>
                     </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', margin: '4px 0' }}>
-                      <span>Đơn giá:</span>
-                      <strong>{(employee?.current_rate_per_hour || (isProbation ? 23000 : 25000)).toLocaleString('vi-VN')} đ/h</strong>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', margin: '4px 0' }}>
-                      <span>Phụ cấp / Bonus:</span>
-                      <strong>500.000 đ</strong>
-                    </div>
-                    <div style={{ borderTop: '1px solid var(--border)', paddingTop: '8px', marginTop: '8px', display: 'flex', justifyContent: 'space-between', fontSize: '14px', fontWeight: 800, color: '#10B981' }}>
-                      <span>THỰC NHẬN:</span>
-                      <span>{(156 * (employee?.current_rate_per_hour || (isProbation ? 23000 : 25000)) + 500000).toLocaleString('vi-VN')} đ</span>
-                    </div>
-                  </div>
-                  <button className="btn-secondary" onClick={() => setPayslipUnlocked(false)} style={{ fontSize: '12px' }}>
-                    Khóa Lại Phiếu Lương
+                  ))}
+                  <button className="btn-secondary" onClick={() => { setPayslipUnlocked(false); setPayslips([]); }} style={{ fontSize: '12px' }}>
+                    Ẩn Phiếu Lương
                   </button>
                 </div>
               )}

@@ -25,6 +25,11 @@ export class SingleWriterQueue {
     this.repository = repo;
   }
 
+  /** Số job đang chờ trong hàng đợi (đo thật cho dashboard giám sát). */
+  public getPendingCount(): number {
+    return this.queue.length + (this.isProcessing ? 1 : 0);
+  }
+
   public async enqueue<T>(options: {
     idempotencyKey?: string;
     entityType: string;

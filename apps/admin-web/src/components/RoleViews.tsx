@@ -263,13 +263,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       'Ngày Chính Thức (DD/MM/YYYY)',
     ];
 
-    const sampleRows = [
-      ['UBM_NV101', 'Nguyễn Văn An', '0912345678', 'Nam', '15/05/2000', '079200012345', 'nva@ubm.vn', 'CN1: 130 Vạn Kiếp (Bình Thạnh)', 'Pha Chế', '25500', '01/01/2026', '01/03/2026'],
-      ['UBM_NV102', 'Trần Thị Bích', '0987654321', 'Nữ', '20/08/2002', '079202054321', 'bichtran@ubm.vn', 'CN2: 261 Tô Hiến Thành (Q.10)', 'Thu Ngân', '25500', '15/01/2026', '15/03/2026'],
-      ['UBM_NV103', 'Lê Hoàng Cường', '0909887766', 'Nam', '10/11/1999', '079199098765', 'hoangcuong@ubm.vn', 'CN3: 120 Hoàng Diệu 2 (Thủ Đức)', 'Phục Vụ', '25500', '10/12/2025', '10/02/2026'],
-      ['UBM_NV104', 'Phạm Thị Dung', '0933112233', 'Nữ', '05/03/2001', '079201019876', 'phamdung@ubm.vn', 'CN4: 111 Tôn Đản (Q.4)', 'Pha Chế', '25500', '01/02/2026', '01/04/2026'],
-      ['UBM_NV105', 'Vũ Quốc Hùng', '0977445566', 'Nam', '12/09/1998', '079198076543', 'quochung@ubm.vn', 'Xưởng Sản Xuất (Củ Chi)', 'Bếp Bánh', '26000', '01/11/2025', '01/01/2026'],
-    ];
+    // Template chỉ gồm header — KHÔNG dùng dữ liệu mẫu (quy chế dữ liệu thật 100%).
+    // HR tự điền dữ liệu thật của nhân viên vào file trước khi import.
+    const sampleRows: string[][] = [];
 
     const csvContent =
       '\uFEFF' +
