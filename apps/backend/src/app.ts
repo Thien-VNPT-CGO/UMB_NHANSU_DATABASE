@@ -31,6 +31,7 @@ import { validate } from './middlewares/validate.middleware.js';
 import {
   changePasswordBody,
   adminLoginBody,
+  employeeChangePinBody,
   phoneLoginBody,
   refreshBody,
 } from './validators/auth.validator.js';
@@ -76,6 +77,7 @@ import {
   internalAccountCreateBody,
   internalAccountUpdateBody,
   opaqueConfigBody,
+  setEmployeePinBody,
   testRecoveryBody,
 } from './validators/admin.validator.js';
 import {
@@ -139,11 +141,28 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   // --- AUTH ---
   app.post('/auth/employee/phone-login', validate({ body: phoneLoginBody }), async (req, res) => {
     try {
-      const { phone } = req.body;
-      const result = await authService.loginWithPhone(phone);
+      const { phone, pin } = req.body;
+      const result = await authService.loginWithPhone(phone, pin);
       res.json(result);
     } catch (err: any) {
       const status = err.message === ERROR_CODES.ACCOUNT_NOT_FOUND ? 404 : 400;
+      res.status(status).json({ error: err.message });
+    }
+  });
+
+  // Nhân viên tự đổi mã PIN (xóa cờ bắt-đổi-lần-đầu).
+  app.post('/auth/employee/change-pin', authMiddleware, validate({ body: employeeChangePinBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      if (req.user?.role !== 'EMPLOYEE' || !req.user.employeeId) {
+        return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
+      }
+      const account = await adapter.getAccountById(req.user.id);
+      if (!account) return res.status(404).json({ error: ERROR_CODES.ACCOUNT_NOT_FOUND });
+      const { oldPin, newPin } = req.body;
+      await authService.changeEmployeePin(account.account_id, oldPin, newPin);
+      res.json({ success: true, message: 'Đã đổi mã PIN thành công!' });
+    } catch (err: any) {
+      const status = err.message === 'WEAK_PIN' ? 400 : 401;
       res.status(status).json({ error: err.message });
     }
   });
@@ -231,7 +250,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.get('/admin/employee-accounts', authMiddleware, requireRole(['ADMIN', 'HR']), async (req, res) => {
     try {
       const accounts = await adapter.listAccounts();
-      res.json(accounts);
+      // Không bao giờ lộ pin_hash qua API.
+      res.json(accounts.map(({ pin_hash: _omit, ...rest }: any) => rest));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -270,6 +290,17 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       );
       broadcastUpdate('accounts', { action: 'revoke', accountId });
       res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // HR/Admin cấp mới hoặc reset mã PIN nhân viên (đánh dấu bắt đổi lần sau).
+  app.post('/admin/employee-accounts/:id/set-pin', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams, body: setEmployeePinBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      await authService.setEmployeePin(req.params.id, req.body.pin, req.user!.id);
+      broadcastUpdate('accounts', { action: 'set-pin', accountId: req.params.id });
+      res.json({ success: true, message: 'Đã cấp mã PIN mới! Nhân viên phải đổi PIN ở lần đăng nhập tiếp theo.' });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }

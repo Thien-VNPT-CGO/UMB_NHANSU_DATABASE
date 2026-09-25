@@ -7,7 +7,7 @@ import {
   EmployeeMaster,
 } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
-import { hashPassword, isBcryptHash, verifyPassword } from './password.service.js';
+import { hashPassword, hashPin, isBcryptHash, verifyPassword, verifyPin } from './password.service.js';
 
 const DEFAULT_FALLBACK_JWT_SECRET =
   'ubm-milk-hr-system-jwt-production-secret-key-2026-secure-random-token-v5';
@@ -137,12 +137,13 @@ export function sanitizeAdmin(admin: any) {
 export class AuthService {
   constructor(private repo: ISheetsRepository) {}
 
-  async loginWithPhone(phoneInput: string): Promise<{
+  async loginWithPhone(phoneInput: string, pinInput?: string): Promise<{
     token: string;
     refreshToken: string;
     employee: EmployeeMaster;
     role: SystemRole;
     stage: string;
+    mustChangePin: boolean;
   }> {
     const normalized = normalizePhone(phoneInput);
     if (!normalized) {
@@ -172,6 +173,14 @@ export class AuthService {
     }
     if (account.account_status !== 'ACTIVE') {
       throw new Error(`ACCOUNT_${account.account_status}`);
+    }
+
+    // PIN do HR cấp — chặn ké tài khoản chỉ biết SĐT.
+    if (!account.pin_hash) {
+      throw new Error('PIN_NOT_SET');
+    }
+    if (!pinInput || !(await verifyPin(pinInput, account.pin_hash))) {
+      throw new Error('INVALID_PIN');
     }
 
     const employee = await this.repo.getEmployeeById(account.employee_id);
@@ -210,7 +219,27 @@ export class AuthService {
       employee,
       role: 'EMPLOYEE',
       stage: employee.employment_status,
+      mustChangePin: account.pin_must_change === true,
     };
+  }
+
+  /** Nhân viên tự đổi PIN (luôn yêu cầu PIN cũ). Xóa cờ bắt-đổi-lần-đầu. */
+  async changeEmployeePin(accountId: string, oldPin: string, newPin: string) {
+    const account = await this.repo.getAccountById(accountId);
+    if (!account || account.account_status !== 'ACTIVE') throw new Error('ACCOUNT_NOT_FOUND');
+    if (!account.pin_hash || !(await verifyPin(oldPin, account.pin_hash))) {
+      throw new Error('INVALID_PIN');
+    }
+    const hashed = await hashPin(newPin); // ném WEAK_PIN nếu sai định dạng
+    return this.repo.setAccountPin(accountId, hashed, false, account.employee_id);
+  }
+
+  /** HR/Admin cấp mới hoặc reset PIN (đánh dấu bắt đổi ở lần đăng nhập sau). */
+  async setEmployeePin(accountId: string, pin: string, actorId: string) {
+    const account = await this.repo.getAccountById(accountId);
+    if (!account) throw new Error('ACCOUNT_NOT_FOUND');
+    const hashed = await hashPin(pin); // ném WEAK_PIN nếu sai định dạng
+    return this.repo.setAccountPin(accountId, hashed, true, actorId);
   }
 
   async loginAdmin(username: string, password: string): Promise<{
@@ -405,6 +434,7 @@ export class AuthService {
         phone: decoded.phone || '',
         fullName: decoded.fullName || '',
         permissions: decoded.permissions || [],
+        mustChangePin: account.pin_must_change === true,
         tv: decoded.tv,
       };
     }

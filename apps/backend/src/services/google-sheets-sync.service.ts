@@ -32,7 +32,7 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   },
   {
     title: 'TAI_KHOAN_NHAN_VIEN',
-    headers: ['ID Tài Khoản', 'ID Nhân Viên', 'Số Điện Thoại', 'Vai Trò', 'Trạng Thái', 'Người Kích Hoạt', 'Ngày Kích Hoạt', 'Phiên Bản'],
+    headers: ['ID Tài Khoản', 'ID Nhân Viên', 'Số Điện Thoại', 'Vai Trò', 'Trạng Thái', 'Người Kích Hoạt', 'Ngày Kích Hoạt', 'Phiên Bản', 'Mã PIN (hash)', 'Bắt Buộc Đổi PIN'],
   },
   {
     title: 'ADMIN_ACCOUNTS',
@@ -435,6 +435,9 @@ export class GoogleSheetsSyncService {
           created_at: r[6] || new Date().toISOString(),
           updated_at: new Date().toISOString(),
           version: Number(r[7]) || 1,
+          // 2 cột PIN appended ở cuối (tài khoản cũ chưa có -> PIN_NOT_SET cho đến khi HR cấp).
+          pin_hash: r[9] || undefined,
+          pin_must_change: r[10] === 'YES',
         }));
       } else {
         fallback.accounts = [];
@@ -897,6 +900,8 @@ export class GoogleSheetsSyncService {
         acc.activated_by || '',
         acc.activated_at || '',
         acc.version,
+        acc.pin_hash || '',
+        acc.pin_must_change ? 'YES' : '',
       ]);
       await this.overwriteSheetData('TAI_KHOAN_NHAN_VIEN', SHEETS_DEFINITIONS.find(d => d.title === 'TAI_KHOAN_NHAN_VIEN')!.headers, accountRows);
       details.accounts = accountRows.length;

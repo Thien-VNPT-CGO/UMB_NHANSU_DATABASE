@@ -111,7 +111,7 @@ export class SchedulesService {
     shiftCode?: ShiftCode;
     reason: string;
   }) {
-    const requestId = `LEAVE_${Date.now()}`;
+    const requestId = `LEAVE_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
 
     // Verify weekly OFF limits (max 2 days per week for HANG_TUAN if applied)
     if (data.leaveType === 'HANG_TUAN') {

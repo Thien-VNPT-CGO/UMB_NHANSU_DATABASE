@@ -54,7 +54,12 @@ export function App() {
   });
   const [loading, setLoading] = useState(false);
   const [loginPhone, setLoginPhone] = useState('');
+  const [loginPin, setLoginPin] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
+  // Bắt buộc đổi PIN do HR cấp ở lần đăng nhập đầu
+  const [mustChangePin, setMustChangePin] = useState(false);
+  const [newPin, setNewPin] = useState('');
+  const [confirmPin, setConfirmPin] = useState('');
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [showServerConfig, setShowServerConfig] = useState(false);
   const [customApiUrl, setCustomApiUrlState] = useState(localStorage.getItem('ubm_custom_api_url') || '');
@@ -237,9 +242,15 @@ export function App() {
 
   const [checkingStatus, setCheckingStatus] = useState<'IDLE' | 'CHECKING' | 'ACTIVE' | 'PENDING' | 'ERROR'>('IDLE');
 
-  const handlePhoneLogin = async (phoneToLogin = loginPhone) => {
+  const handlePhoneLogin = async (phoneToLogin = loginPhone, pinToLogin = loginPin) => {
     const cleaned = phoneToLogin.replace(/[\s\-\.\(\)]/g, '');
     if (cleaned.length < 10) return;
+    const pin = (pinToLogin || '').trim();
+    if (!/^\d{4,8}$/.test(pin)) {
+      setCheckingStatus('ERROR');
+      setLoginError('Vui lòng nhập mã PIN gồm 4-8 chữ số do HR cấp!');
+      return;
+    }
 
     setLoading(true);
     setCheckingStatus('CHECKING');
@@ -247,16 +258,23 @@ export function App() {
     try {
       const res = await apiRequest('/auth/employee/phone-login', {
         method: 'POST',
-        body: JSON.stringify({ phone: cleaned }),
+        body: JSON.stringify({ phone: cleaned, pin }),
       });
 
       setCheckingStatus('ACTIVE');
       setAuthToken(res.token);
-      setEmployee(res.employee);
-      localStorage.setItem('ubm_emp_data', JSON.stringify(res.employee));
-      setIsLoggedIn(true);
-      showToast(`Số điện thoại hợp lệ và đã được Admin kích hoạt! Tự động đăng nhập vào cổng ${res.stage === 'PROBATION' ? 'Thử việc' : 'Chính thức'}.`);
-      await loadEmployeeData(res.employee.employee_id);
+      if (res.refreshToken) {
+        try { localStorage.setItem('ubm_emp_refresh', res.refreshToken); } catch {}
+      }
+      if (res.mustChangePin) {
+        // PIN do HR cấp — bắt đổi trước khi vào cổng
+        setMustChangePin(true);
+        setNewPin('');
+        setConfirmPin('');
+        setLoginError(null);
+        return;
+      }
+      await finishLogin(res);
     } catch (err: any) {
       if (err.message === 'ACCOUNT_NOT_FOUND') {
         setCheckingStatus('ERROR');
@@ -264,6 +282,12 @@ export function App() {
       } else if (err.message === 'PENDING_ACTIVATION') {
         setCheckingStatus('PENDING');
         setLoginError(`Số điện thoại ${cleaned} đã có trên hệ thống nhưng CHƯA ĐƯỢC ADMIN KÍCH HOẠT (trạng thái: PENDING_ACTIVATION). Hệ thống từ chối đăng nhập.`);
+      } else if (err.message === 'PIN_NOT_SET') {
+        setCheckingStatus('ERROR');
+        setLoginError(`Tài khoản ${cleaned} chưa được cấp mã PIN. Vui lòng liên hệ HR để nhận mã PIN đăng nhập!`);
+      } else if (err.message === 'INVALID_PIN') {
+        setCheckingStatus('ERROR');
+        setLoginError('Mã PIN không đúng! Vui lòng kiểm tra lại. Nhập sai liên tục sẽ bị khóa tạm thời.');
       } else if (err.message === 'SUSPENDED' || err.message === 'REVOKED') {
         setCheckingStatus('ERROR');
         setLoginError(`Tài khoản liên kết với ${cleaned} đang bị TẠM KHÓA hoặc THU HỒI bởi Quản trị viên.`);
@@ -279,25 +303,67 @@ export function App() {
     }
   };
 
-  // Auto check when phone reaches 10 digits
+  const finishLogin = async (res: any) => {
+    setMustChangePin(false);
+    setEmployee(res.employee);
+    localStorage.setItem('ubm_emp_data', JSON.stringify(res.employee));
+    setIsLoggedIn(true);
+    showToast(`Đăng nhập thành công vào cổng ${res.stage === 'PROBATION' ? 'Thử việc' : 'Chính thức'}!`);
+    await loadEmployeeData(res.employee.employee_id);
+  };
+
+  const handleChangePin = async () => {
+    if (!/^\d{4,8}$/.test(newPin)) {
+      setLoginError('Mã PIN mới phải gồm 4-8 chữ số!');
+      return;
+    }
+    if (newPin !== confirmPin) {
+      setLoginError('Xác nhận mã PIN chưa khớp! Vui lòng nhập lại.');
+      return;
+    }
+    if (newPin === loginPin.trim()) {
+      setLoginError('Mã PIN mới phải khác mã PIN do HR cấp!');
+      return;
+    }
+    setLoading(true);
+    setLoginError(null);
+    try {
+      await apiRequest('/auth/employee/change-pin', {
+        method: 'POST',
+        body: JSON.stringify({ oldPin: loginPin.trim(), newPin }),
+      });
+      showToast('🎉 Đổi mã PIN thành công! Đây là mã PIN riêng của bạn, không chia sẻ cho người khác.');
+      setLoginPin(newPin);
+      // Token hiện tại đã bị thu hồi (version tăng) -> đăng nhập lại bằng PIN mới
+      setAuthToken('');
+      setMustChangePin(false);
+      await handlePhoneLogin(loginPhone, newPin);
+    } catch (err: any) {
+      setLoginError(err.message === 'INVALID_PIN' ? 'Mã PIN hiện tại không đúng!' : err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Không tự động đăng nhập (bảo mật PIN): người dùng bấm nút ĐĂNG NHẬP.
   useEffect(() => {
     const cleaned = loginPhone.replace(/[\s\-\.\(\)]/g, '');
-    if (cleaned.length === 10 && !isLoggedIn) {
-      const timer = setTimeout(() => {
-        handlePhoneLogin(cleaned);
-      }, 350);
-      return () => clearTimeout(timer);
-    } else if (cleaned.length < 10) {
+    if (cleaned.length < 10) {
       setCheckingStatus('IDLE');
       setLoginError(null);
     }
   }, [loginPhone]);
+
 
   const handleLogout = () => {
     setAuthToken('');
     setIsLoggedIn(false);
     setEmployee(null);
     setPayslipUnlocked(false);
+    setLoginPin('');
+    setMustChangePin(false);
+    setNewPin('');
+    setConfirmPin('');
     setActiveTab('home');
     localStorage.removeItem('ubm_emp_data');
     localStorage.removeItem('ubm_emp_token');
@@ -307,6 +373,15 @@ export function App() {
   // Guard: Mandatory 2-day OFF registration locks other tabs for official employees
   // Ưu tiên trạng thái khóa từ server; khi offline mới dùng cờ localStorage cũ.
   const weeklyOffGateLocked = weeklyOffLockKnown ? weeklyOffLocked : !hasRegisteredWeeklyOff;
+  // Cổng đăng ký chỉ mở T6 12h -> T7 15h. Chưa rõ trạng thái (offline) thì cho bấm, server sẽ quyết.
+  const weeklyOffRegOpen = !weeklyOffWindow || weeklyOffWindow.phase === 'OPEN';
+  const weeklyOffOpensAtStr = weeklyOffWindow?.windowOpensAt
+    ? new Date(weeklyOffWindow.windowOpensAt).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', weekday: 'long', day: '2-digit', month: '2-digit' })
+    : '12h00 Thứ 6';
+  // Bấm nút đăng ký ngoài khung giờ -> báo giờ mở thay vì gọi API
+  const notifyRegWindowClosed = () => {
+    showToast(`⏰ CHƯA ĐẾN GIỜ MỞ ĐĂNG KÝ! Cổng đăng ký 2 ngày nghỉ OFF mở lúc ${weeklyOffOpensAtStr} đến 15h00 Thứ 7. Hệ thống sẽ tự gửi thông báo trước 5 phút!`);
+  };
   const handleTabClick = (tabId: string) => {
     if (!isProbation && weeklyOffGateLocked && tabId !== 'leave') {
       showToast('🔒 QUY CHẾ BẮT BUỘC: Đang trong chu kỳ mở đăng ký 2 ngày nghỉ/tuần! Bạn bắt buộc phải hoàn thành đăng ký 2 ngày nghỉ để mở khóa các chức năng khác.');
@@ -458,6 +533,11 @@ export function App() {
 
   // Submit 2-day OFF for official employee
   const handleSubmitWeeklyOff2Days = async () => {
+    // Khóa ngoài khung giờ mở cổng (server cũng chặn, đây là lớp báo sớm)
+    if (!isProbation && !hasRegisteredWeeklyOff && !weeklyOffRegOpen) {
+      notifyRegWindowClosed();
+      return;
+    }
     if (!weeklyOffData.day1 || !weeklyOffData.day2) {
       showToast('⚠️ Vui lòng chọn đầy đủ cả 2 ngày nghỉ OFF trong tuần!');
       return;
@@ -700,7 +780,78 @@ export function App() {
               fontWeight: 600,
               marginBottom: '16px',
             }}>
-              <span>🔄 Đang kiểm tra trạng thái kích hoạt trên Google Sheets Master...</span>
+              <span>🔄 Đang xác thực SĐT + mã PIN trên Google Sheets Master...</span>
+            </div>
+          )}
+
+          {!mustChangePin && (
+            <>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                <label style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text)' }}>
+                  Mã PIN Đăng Nhập (4-8 số, do HR cấp)
+                </label>
+              </div>
+              <div style={{ position: 'relative', marginBottom: '14px' }}>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={8}
+                  placeholder="Ví dụ: 123456"
+                  value={loginPin}
+                  onChange={(e) => setLoginPin(e.target.value.replace(/\D/g, ''))}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handlePhoneLogin(); }}
+                  style={{ width: '100%', fontSize: '18px', fontWeight: 700, letterSpacing: '4px' }}
+                />
+              </div>
+
+              <button
+                className="btn-primary"
+                onClick={() => handlePhoneLogin()}
+                disabled={loading}
+                style={{ width: '100%', padding: '13px', fontSize: '15px', fontWeight: 800, marginBottom: '14px', opacity: loading ? 0.6 : 1 }}
+              >
+                {loading ? '⏳ ĐANG XÁC THỰC...' : '🔐 ĐĂNG NHẬP'}
+              </button>
+            </>
+          )}
+
+          {mustChangePin && (
+            <div style={{ backgroundColor: '#FFFBEB', border: '1.5px solid #F59E0B', borderRadius: 'var(--radius-sm)', padding: '14px', marginBottom: '14px' }}>
+              <div style={{ fontWeight: 800, fontSize: '14px', color: '#92400E', marginBottom: '6px' }}>
+                🔑 BẮT BUỘC ĐỔI MÃ PIN LẦN ĐẦU
+              </div>
+              <div style={{ fontSize: '12px', color: '#92400E', marginBottom: '12px', lineHeight: '1.5' }}>
+                Bạn đang dùng mã PIN do HR cấp. Hãy đặt mã PIN riêng (4-8 chữ số, khác mã HR cấp, không chia sẻ cho ai) để mở khóa hệ thống!
+              </div>
+              <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Mã PIN mới:</label>
+              <input
+                type="password"
+                inputMode="numeric"
+                maxLength={8}
+                placeholder="Nhập mã PIN mới"
+                value={newPin}
+                onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))}
+                style={{ width: '100%', fontSize: '18px', fontWeight: 700, letterSpacing: '4px', marginBottom: '10px' }}
+              />
+              <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Xác nhận mã PIN mới:</label>
+              <input
+                type="password"
+                inputMode="numeric"
+                maxLength={8}
+                placeholder="Nhập lại mã PIN mới"
+                value={confirmPin}
+                onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ''))}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleChangePin(); }}
+                style={{ width: '100%', fontSize: '18px', fontWeight: 700, letterSpacing: '4px', marginBottom: '12px' }}
+              />
+              <button
+                className="btn-primary"
+                onClick={handleChangePin}
+                disabled={loading}
+                style={{ width: '100%', padding: '13px', fontSize: '15px', fontWeight: 800, opacity: loading ? 0.6 : 1 }}
+              >
+                {loading ? '⏳ ĐANG ĐỔI PIN...' : '✅ ĐỔI PIN & VÀO HỆ THỐNG'}
+              </button>
             </div>
           )}
 
@@ -729,7 +880,7 @@ export function App() {
           )}
 
           <p style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.4' }}>
-            💡 <strong>Cơ chế tự động:</strong> Khi nhập đủ 10 số, hệ thống sẽ tự động tra cứu xem tài khoản đã được Admin kích hoạt hay chưa. Nếu đã kích hoạt, hệ thống sẽ tự động đăng nhập vào cổng làm việc.
+            💡 <strong>Bảo mật đăng nhập:</strong> Nhập đủ 10 số điện thoại + mã PIN (4-8 số do HR cấp) rồi bấm ĐĂNG NHẬP. Mỗi người giữ PIN riêng — không chia sẻ để tránh bị đăng nhập ké!
           </p>
         </div>
       </div>
@@ -1170,6 +1321,34 @@ export function App() {
                     </div>
                   )}
 
+                  {!hasRegisteredWeeklyOff && !weeklyOffRegOpen ? (
+                    /* KHÓA NGOÀI KHUNG GIỜ MỞ CỔNG (T6 12h -> T7 15h) */
+                    <div style={{
+                      backgroundColor: '#F1F5F9',
+                      border: '1.5px dashed #94A3B8',
+                      borderRadius: 'var(--radius-sm)',
+                      padding: '20px 14px',
+                      textAlign: 'center',
+                    }}>
+                      <Lock size={28} color="#64748B" />
+                      <div style={{ fontWeight: 800, fontSize: '14px', color: '#334155', margin: '8px 0 6px' }}>
+                        🔒 CHƯA ĐẾN GIỜ MỞ ĐĂNG KÝ
+                      </div>
+                      <div style={{ fontSize: '12px', color: '#64748B', lineHeight: '1.5' }}>
+                        Cổng đăng ký 2 ngày nghỉ OFF chỉ mở từ <strong>12h00 Thứ 6</strong> đến <strong>15h00 Thứ 7</strong> hàng tuần.<br />
+                        Lần mở tới: <strong>{weeklyOffOpensAtStr}</strong><br />
+                        Hệ thống sẽ tự động gửi thông báo trước 5 phút!
+                      </div>
+                      <button
+                        className="btn-primary"
+                        onClick={notifyRegWindowClosed}
+                        style={{ width: '100%', padding: '12px', fontSize: '14px', fontWeight: 800, marginTop: '12px', backgroundColor: '#64748B', boxShadow: 'none' }}
+                      >
+                        ⏰ XEM GIỜ MỞ CỔNG ĐĂNG KÝ
+                      </button>
+                    </div>
+                  ) : (
+                  <>
                   <div>
                     <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>
                       📅 Ngày nghỉ thứ 1 (Bắt buộc chọn 1/2):
@@ -1220,6 +1399,8 @@ export function App() {
                   >
                     {hasRegisteredWeeklyOff ? 'CẬP NHẬT LẠI 2 NGÀY NGHỈ OFF TUẦN' : 'GỬI ĐĂNG KÝ 2 NGÀY NGHỈ & MỞ KHÓA HỆ THỐNG'}
                   </button>
+                  </>
+                  )}
                 </div>
               )}
             </div>

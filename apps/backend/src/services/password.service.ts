@@ -36,3 +36,18 @@ export async function verifyPassword(plain: string, hash: string): Promise<boole
     return false;
   }
 }
+
+export const PIN_RE = /^\d{4,8}$/;
+
+/** Mã PIN nhân viên: 4-8 chữ số, hash bcrypt như mật khẩu. */
+export async function hashPin(pin: string): Promise<string> {
+  if (!pin || typeof pin !== 'string' || !PIN_RE.test(pin)) {
+    throw new Error('WEAK_PIN');
+  }
+  return bcrypt.hash(pin, BCRYPT_COST);
+}
+
+export async function verifyPin(pin: string, hash: string): Promise<boolean> {
+  if (!pin || !hash || !PIN_RE.test(pin)) return false;
+  return verifyPassword(pin, hash);
+}

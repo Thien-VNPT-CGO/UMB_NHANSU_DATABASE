@@ -8,4 +8,6 @@ export interface AuthUser {
     phone: string;
     fullName: string;
     permissions: UserPermission[];
+    /** Nhân viên đang dùng PIN do HR cấp — bị chặn API ngoài allowlist đến khi đổi. */
+    mustChangePin?: boolean;
 }

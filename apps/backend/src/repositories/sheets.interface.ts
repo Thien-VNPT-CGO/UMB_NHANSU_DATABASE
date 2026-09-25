@@ -30,6 +30,7 @@ export interface ISheetsRepository {
   listAccounts(): Promise<EmployeeAccount[]>;
   createAccount(account: Omit<EmployeeAccount, 'created_at' | 'updated_at' | 'version'>): Promise<EmployeeAccount>;
   updateAccountStatus(id: string, status: AccountStatus, actorId: string, expectedVersion: number): Promise<EmployeeAccount>;
+  setAccountPin(id: string, pinHash: string, mustChange: boolean, actorId: string): Promise<EmployeeAccount>;
   getAdminByUsername(username: string): Promise<AdminAccount | null>;
 
   // Employees

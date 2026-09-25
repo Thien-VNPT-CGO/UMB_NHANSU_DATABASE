@@ -9,6 +9,10 @@ export interface EmployeeAccount {
   account_status: AccountStatus;
   role: SystemRole;
   branch_scope: string; // 'ALL' or specific branchId
+  /** Bcrypt hash của mã PIN đăng nhập (HR cấp, nhân viên bắt đổi lần đầu). */
+  pin_hash?: string;
+  /** True khi PIN hiện tại do HR cấp/reset — bắt buộc đổi ở lần đăng nhập sau. */
+  pin_must_change?: boolean;
   activated_by?: string;
   activated_at?: string; // ISO 8601
   revoked_by?: string;

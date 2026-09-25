@@ -45,6 +45,12 @@ Sau khi dang nhap lan dau:
 2. Tao tai khoan HR/Store/Finance voi mat khau rieng
 3. Doi mat khau admin neu muon
 
+## Buoc 5b: Cap ma PIN dang nhap cho nhan vien (SĐT + PIN)
+
+1. HR vao tab Kich hoat tai khoan -> nut "🔑 Cấp PIN" -> nhap 4-8 chu so -> trao TRUC TIEP cho nhan vien
+2. Nhan vien dang nhap bang SĐT + PIN, bat buoc doi PIN moi o lan dau (API khac bi 403 PIN_CHANGE_REQUIRED den khi doi xong)
+3. Tai khoan cu chua co cot PIN -> bao PIN_NOT_SET, HR cap PIN la xong (Sheets tu them 2 cot: Ma PIN hash + Bat buoc doi PIN)
+
 ## Buoc 6: Quy trinh them nhan vien that
 
 1. Admin them nhan vien: POST /employees

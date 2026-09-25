@@ -716,6 +716,27 @@ export function App() {
     }
   };
 
+  // HR cấp mới / reset mã PIN đăng nhập cho nhân viên (4-8 chữ số)
+  const handleSetEmpPin = async (id: string, fullName: string) => {
+    const pin = window.prompt(`Cấp mã PIN đăng nhập cho ${fullName} (4-8 chữ số).\nNhân viên phải đổi PIN ở lần đăng nhập tiếp theo. Trao PIN trực tiếp, KHÔNG gửi qua nhóm chat!`);
+    if (pin === null) return;
+    if (!/^\d{4,8}$/.test(pin.trim())) {
+      setErrorMsg('Mã PIN phải gồm 4-8 chữ số!');
+      return;
+    }
+    try {
+      await apiRequest(`/admin/employee-accounts/${id}/set-pin`, {
+        method: 'POST',
+        body: JSON.stringify({ pin: pin.trim() }),
+      });
+      setSuccessMsg(`Đã cấp mã PIN mới cho ${fullName}! Nhớ trao trực tiếp cho nhân viên.`);
+      setTimeout(() => setSuccessMsg(null), 4000);
+      await loadAllData();
+    } catch (err: any) {
+      setErrorMsg(err.message);
+    }
+  };
+
   const handleToggleInternalAccount = async (account: any) => {
     try {
       await apiRequest(`/admin/internal-accounts/${account.admin_id}`, {
@@ -2085,7 +2106,23 @@ export function App() {
                              item.revokedAt ? `Khóa: ${new Date(item.revokedAt).toLocaleDateString('vi-VN')}` : 'Chưa kích hoạt'}
                           </td>
                           <td style={{ padding: '14px 20px' }}>
-                            <div style={{ display: 'flex', gap: '8px' }}>
+                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                              <button
+                                onClick={() => handleSetEmpPin(item.accountId, item.fullName || item.phone)}
+                                title="Cấp mới / reset mã PIN đăng nhập (nhân viên bắt đổi lần sau)"
+                                style={{
+                                  padding: '6px 12px',
+                                  borderRadius: 'var(--radius-sm)',
+                                  backgroundColor: 'transparent',
+                                  border: '1px solid var(--brand)',
+                                  color: 'var(--brand)',
+                                  fontWeight: 600,
+                                  fontSize: '12px',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                🔑 Cấp PIN
+                              </button>
                               {item.accountStatus !== 'ACTIVE' ? (
                                 <button
                                   onClick={() => handleActivateEmpAccount(item.accountId, item.version)}
