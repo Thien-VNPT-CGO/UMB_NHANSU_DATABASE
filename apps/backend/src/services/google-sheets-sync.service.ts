@@ -17,7 +17,7 @@ import {
 } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { MockSheetsAdapter } from '../repositories/mock-sheets.adapter.js';
-import { hashPasswordSync, isBcryptHash } from './password.service.js';
+import { hashPasswordSync, isBcryptHash, hashPin, generateAutoPin } from './password.service.js';
 import { evaluateCandidateAiScore } from './ai-scorer.js';
 
 export interface SheetDefinition {
@@ -329,7 +329,10 @@ export class GoogleSheetsSyncService {
       counts.employees = fallback.employees.length;
 
       // 2. Đọc TAI_KHOAN_NHAN_VIEN (không còn cột Người/Ngày Kích Hoạt — PIN là cửa duy nhất)
+      // Hệ thống TỰ sinh mã PIN khởi tạo cho mọi tài khoản chưa có (kể cả dữ liệu cũ):
+      // không còn HR cấp tay, nhân viên đăng nhập lần đầu rồi đặt PIN riêng ngay.
       const accRows = batch['TAI_KHOAN_NHAN_VIEN'];
+      let pinDirty = false;
       if (accRows.length > 0) {
         fallback.accounts = accRows
           .filter(r => r && (r[0] || r[2]))
@@ -343,22 +346,33 @@ export class GoogleSheetsSyncService {
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
             version: Number(r[5]) || 1,
-            // 2 cột PIN ở cuối (tài khoản cũ chưa có -> PIN_NOT_SET cho đến khi HR cấp).
             pin_hash: r[6] || undefined,
             pin_must_change: r[7] === 'YES',
             // Cột Mã PIN bản rõ — chỉ hiển thị trên cổng quản trị (Admin/HR).
             pin_code: r[8] || undefined,
           }));
+        // Backfill: tài khoản cũ chưa có PIN -> tự sinh ngay.
+        for (const acc of fallback.accounts) {
+          if (!acc.pin_hash) {
+            const autoPin = generateAutoPin();
+            acc.pin_hash = await hashPin(autoPin);
+            acc.pin_code = autoPin;
+            acc.pin_must_change = true;
+            acc.updated_at = new Date().toISOString();
+            pinDirty = true;
+          }
+        }
       } else {
         fallback.accounts = [];
       }
 
       // TỰ ĐỘNG ĐỐI CHIẾU: Nhân viên có trong NHAN_VIEN_MASTER nhưng chưa có trong TAI_KHOAN_NHAN_VIEN
-      // -> Tự động sinh tài khoản ACTIVE để nhân viên đăng nhập ngay bằng SĐT + PIN do HR cấp!
+      // -> Tự động sinh tài khoản ACTIVE kèm mã PIN khởi tạo để nhân viên đăng nhập ngay bằng SĐT!
       const existingPhones = new Set(fallback.accounts.map(a => a.phone_normalized).filter(Boolean));
       for (const emp of fallback.employees) {
         if (emp.phone_normalized && emp.phone_normalized.length >= 9 && !existingPhones.has(emp.phone_normalized)) {
           existingPhones.add(emp.phone_normalized);
+          const autoPin = generateAutoPin();
           fallback.accounts.push({
             account_id: `ACC_${emp.employee_id.replace(/^EMP_/, '')}`,
             employee_id: emp.employee_id,
@@ -369,12 +383,31 @@ export class GoogleSheetsSyncService {
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
             version: 1,
-            pin_hash: undefined,
+            pin_hash: await hashPin(autoPin),
+            pin_code: autoPin,
             pin_must_change: true,
           });
+          pinDirty = true;
         }
       }
       counts.accounts = fallback.accounts.length;
+
+      // PIN vừa sinh chỉ nằm trong bộ nhớ -> ghi ngay xuống Sheet để lần pull sau không sinh lại số khác.
+      if (pinDirty && this.sheetsClient) {
+        const rows = fallback.accounts.map(acc => [
+          acc.account_id,
+          acc.employee_id,
+          acc.phone_normalized,
+          acc.role,
+          acc.account_status,
+          acc.version,
+          (acc as any).pin_hash || '',
+          acc.pin_must_change ? 'YES' : '',
+          (acc as any).pin_code || '',
+        ]);
+        const def = SHEETS_DEFINITIONS.find(d => d.title === 'TAI_KHOAN_NHAN_VIEN')!;
+        await this.overwriteSheetData('TAI_KHOAN_NHAN_VIEN', def.headers, rows);
+      }
 
       // 3. Đọc DANH_SACH_CHI_NHANH
       const branchRows = batch['DANH_SACH_CHI_NHANH'];
@@ -1132,7 +1165,7 @@ export class GoogleSheetsSyncService {
   /**
    * Ghi đè dữ liệu một Sheet tab (giữ nguyên tiêu đề ở dòng 1)
    */
-  private async overwriteSheetData(sheetTitle: string, headers: string[], rows: any[][]) {
+  public async overwriteSheetData(sheetTitle: string, headers: string[], rows: any[][]) {
     if (!this.sheetsClient) return;
 
     try {

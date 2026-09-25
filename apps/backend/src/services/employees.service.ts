@@ -8,6 +8,7 @@ import {
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { singleWriterQueue } from '../repositories/single-writer-queue.js';
 import { normalizePhone } from './auth.service.js';
+import { generateAutoPin, hashPin } from './password.service.js';
 
 /** Chuẩn hóa SĐT về dạng so sánh được (10 số, đầu 0). */
 export function canonicalPhone(phone: string): string {
@@ -135,8 +136,9 @@ export class EmployeesService {
         });
 
         // Tự động tạo tài khoản nhân viên tương ứng và đồng bộ xuống Sheet TAI_KHOAN_NHAN_VIEN.
-        // Không còn luồng kích hoạt: tài khoản luôn ACTIVE, đăng nhập bằng mã PIN do HR cấp.
-        await this.repo.createAccount({
+        // Không còn luồng kích hoạt/cấp PIN tay: tài khoản luôn ACTIVE, hệ thống tự sinh
+        // mã PIN khởi tạo — nhân viên đăng nhập lần đầu rồi đặt PIN riêng ngay.
+        const newAcc = await this.repo.createAccount({
           account_id: `ACC_${Date.now()}`,
           employee_id: employeeId,
           phone_normalized: data.phone,
@@ -144,6 +146,14 @@ export class EmployeesService {
           role: 'EMPLOYEE',
           branch_scope: data.branchId || 'CN130',
         });
+        const autoPin = generateAutoPin();
+        await this.repo.setAccountPin(
+          newAcc.account_id,
+          await hashPin(autoPin),
+          true,
+          data.actorId,
+          autoPin
+        );
 
         return emp;
       },

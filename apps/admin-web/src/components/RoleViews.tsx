@@ -58,7 +58,6 @@ interface RoleViewsProps {
   activeTab: string;
   currentUser: any;
   allEmployees: any[];
-  activationDataList: any[];
   candidates: any[];
   shifts: any[];
   leaves: any[];
@@ -70,14 +69,12 @@ interface RoleViewsProps {
   openBroadcastModal: () => void;
   onSyncSheets?: () => Promise<void> | void;
   onRefreshData?: () => Promise<void> | void;
-  onBulkSendPinZalo?: (items: any[], tabLabel: string) => Promise<void> | void;
 }
 
 export const RoleViews: React.FC<RoleViewsProps> = ({
   activeTab,
   currentUser,
   allEmployees,
-  activationDataList,
   candidates,
   shifts,
   leaves,
@@ -89,7 +86,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   openBroadcastModal,
   onSyncSheets,
   onRefreshData,
-  onBulkSendPinZalo,
 }) => {
   const branchScope = currentUser?.branchScope || '*';
   const branchName = branchScope === '*' ? 'Toàn Hệ Thống' : getDisplayBranch(branchScope);
@@ -246,48 +242,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       }
     } finally {
       setInviteBusy(false);
-    }
-  };
-
-  // Map employee_id -> tài khoản (để nút Gửi PIN Zalo ở các tab danh sách NV)
-  const findAccountFor = (emp: any) => {
-    if (!emp) return null;
-    const cleanPhone = (emp.phone_normalized || emp.phone || '').replace(/\D/g, '');
-    return (activationDataList || []).find((a: any) =>
-      a.id === emp.employee_id ||
-      (cleanPhone && (a.phone || '').replace(/\D/g, '') === cleanPhone)
-    ) || null;
-  };
-
-  // Gửi PIN qua Zalo (dùng chung cho tab Thử việc + Chính thức)
-  const handleSendPinZalo = async (accountId: string, fullName: string, phone: string) => {
-    if (!window.confirm(`Tự động sinh mã PIN mới và GỬI QUA ZALO tới ${fullName} (${phone})?\nPIN cũ (nếu có) sẽ bị vô hiệu ngay. Nhân viên phải đổi PIN ở lần đăng nhập tiếp theo.`)) {
-      return;
-    }
-    try {
-      const res = await apiRequest(`/admin/employee-accounts/${accountId}/send-pin-zalo`, { method: 'POST' });
-      showToast(`✅ Đã gửi PIN qua Zalo tới ${fullName}! (tin nhắn #${res.msgId})`);
-      if (typeof onRefreshData === 'function') {
-        try { await onRefreshData(); } catch {}
-      }
-    } catch (err: any) {
-      const msg = String(err.message || '');
-      if (msg.includes('ZALO_NOT_CONNECTED')) {
-        showToast('BOT Zalo chưa kết nối! Vào tab "Lịch Phỏng Vấn & BOT Zalo" quét QR đăng nhập trước.');
-      } else if (msg.includes('ZALO_USER_NOT_FOUND') || msg.includes('ZALO_LOOKUP_FAILED')) {
-        showToast(`SĐT ${phone} không tìm thấy nick Zalo!`);
-      } else if (msg.includes('ZALO_NOT_FRIEND')) {
-        if (window.confirm(`${fullName} chưa kết bạn Zalo với nick HR. Gửi lời mời kết bạn ngay?`)) {
-          try {
-            await apiRequest('/admin/zalo/send-friend-request', { method: 'POST', body: JSON.stringify({ phone }) });
-            showToast('Đã gửi lời mời kết bạn Zalo! Khi NV đồng ý, bấm gửi PIN lại.');
-          } catch (e: any) {
-            showToast(e.message);
-          }
-        }
-      } else {
-        showToast(msg);
-      }
     }
   };
 
@@ -2115,36 +2069,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Theo dõi 12 ngày thử việc (7 làm / 5 OFF) và kết quả làm bài TEST</p>
           </div>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-            {['HR', 'ADMIN'].includes(currentUser?.role) && (
-              <button
-                className="btn-interactive"
-                onClick={() => {
-                  if (onBulkSendPinZalo) {
-                    onBulkSendPinZalo(probationEmps, 'Nhân viên Thử việc');
-                  } else {
-                    showToast('Đang khởi tạo chức năng gửi PIN Zalo...');
-                  }
-                }}
-                disabled={probationEmps.length === 0}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  padding: '9px 16px',
-                  backgroundColor: probationEmps.length === 0 ? '#E5E7EB' : '#0068FF',
-                  color: probationEmps.length === 0 ? '#6B7280' : '#FFF',
-                  border: 'none',
-                  borderRadius: 'var(--radius-sm)',
-                  fontWeight: 700,
-                  fontSize: '13px',
-                  cursor: probationEmps.length === 0 ? 'not-allowed' : 'pointer',
-                  boxShadow: probationEmps.length > 0 ? '0 2px 6px rgba(0, 104, 255, 0.25)' : 'none',
-                }}
-                title={probationEmps.length === 0 ? 'Chưa có nhân viên thử việc' : `Gửi PIN Zalo cho tất cả ${probationEmps.length} nhân viên thử việc`}
-              >
-                📩 Gửi PIN Zalo Tất Cả ({probationEmps.length})
-              </button>
-            )}
             <button className="btn-primary" onClick={openNewEmpModal}>+ Thêm NV Thử Việc</button>
           </div>
         </div>
@@ -2172,26 +2096,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     <td style={{ padding: '14px 20px' }}>
                       <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                         <button className="btn-primary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => showToast(`Đã đề xuất chuyển chính thức cho ${emp.full_name}`)}>Đề Xuất Chính Thức</button>
-                        {currentUser?.role === 'HR' && (() => {
-                          const acc = findAccountFor(emp);
-                          const needReset = !!acc?.pinMustChange;
-                          return (
-                            <button
-                              className="btn-outline"
-                              style={{ padding: '4px 10px', fontSize: '12px', color: needReset ? '#D97706' : '#0068FF', borderColor: needReset ? '#FCD34D' : '#BFDBFE', cursor: acc ? 'pointer' : 'not-allowed', opacity: acc ? 1 : 0.5 }}
-                              title={acc ? (needReset ? 'PIN đã gửi, NV chưa đổi — bấm để RESET gửi số mới' : 'Hệ thống tự sinh PIN mới và gửi qua Zalo tới SĐT nhân viên') : 'Chưa có tài khoản — liên hệ HR để cấp PIN!'}
-                              onClick={() => {
-                                if (!acc) {
-                                  showToast('Nhân viên chưa có tài khoản! Liên hệ HR để cấp mã PIN.');
-                                  return;
-                                }
-                                handleSendPinZalo(acc.accountId, emp.full_name, emp.phone_normalized || emp.phone);
-                              }}
-                            >
-                              {needReset ? '🔄 Reset PIN' : '📩 PIN Zalo'}
-                            </button>
-                          );
-                        })()}
                       </div>
                     </td>
                   </tr>
@@ -2240,38 +2144,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           </div>
 
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-            {/* Nút Gửi PIN Zalo Tất Cả Chính Thức */}
-            {['HR', 'ADMIN'].includes(currentUser?.role) && (
-              <button
-                className="btn-interactive"
-                onClick={() => {
-                  if (onBulkSendPinZalo) {
-                    onBulkSendPinZalo(filteredOfficialEmps, 'Nhân viên Chính thức');
-                  } else {
-                    showToast('Đang khởi tạo chức năng gửi PIN Zalo...');
-                  }
-                }}
-                disabled={filteredOfficialEmps.length === 0}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  padding: '9px 16px',
-                  backgroundColor: filteredOfficialEmps.length === 0 ? '#E5E7EB' : '#0068FF',
-                  color: filteredOfficialEmps.length === 0 ? '#6B7280' : '#FFFFFF',
-                  border: 'none',
-                  borderRadius: '8px',
-                  fontWeight: 700,
-                  fontSize: '13px',
-                  cursor: filteredOfficialEmps.length === 0 ? 'not-allowed' : 'pointer',
-                  boxShadow: filteredOfficialEmps.length > 0 ? '0 2px 6px rgba(0, 104, 255, 0.25)' : 'none',
-                }}
-                title={filteredOfficialEmps.length === 0 ? 'Không có nhân viên chính thức' : `Gửi PIN Zalo cho tất cả ${filteredOfficialEmps.length} nhân viên chính thức`}
-              >
-                📩 Gửi PIN Zalo Tất Cả ({filteredOfficialEmps.length})
-              </button>
-            )}
-
             {/* Nút Tải File Mẫu */}
             <button
               onClick={handleDownloadOfficialTemplate}
@@ -2492,7 +2364,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <th style={{ padding: '12px 18px', width: '130px' }}>Mức Lương Giờ</th>
                   <th style={{ padding: '12px 18px', width: '130px' }}>Ngày Chính Thức</th>
                   <th style={{ padding: '12px 18px', width: '130px', textAlign: 'center' }}>Trạng Thái</th>
-                  <th style={{ padding: '12px 18px', width: '120px', textAlign: 'center' }}>PIN Zalo</th>
                 </tr>
               </thead>
               <tbody>
@@ -2570,28 +2441,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           <CheckCircle size={11} />
                           CHÍNH THỨC
                         </span>
-                      </td>
-                      <td style={{ padding: '14px 18px', textAlign: 'center' }}>
-                        {currentUser?.role === 'HR' && (() => {
-                          const acc = findAccountFor(emp);
-                          const needReset = !!acc?.pinMustChange;
-                          return (
-                            <button
-                              className="btn-outline"
-                              style={{ padding: '4px 10px', fontSize: '11px', color: needReset ? '#D97706' : '#0068FF', borderColor: needReset ? '#FCD34D' : '#BFDBFE', cursor: acc ? 'pointer' : 'not-allowed', opacity: acc ? 1 : 0.5 }}
-                              title={acc ? (needReset ? 'PIN đã gửi, NV chưa đổi — bấm để RESET gửi số mới' : 'Hệ thống tự sinh PIN mới và gửi qua Zalo tới SĐT nhân viên') : 'Chưa có tài khoản — liên hệ HR để cấp PIN!'}
-                              onClick={() => {
-                                if (!acc) {
-                                  showToast('Nhân viên chưa có tài khoản! Liên hệ HR để cấp mã PIN.');
-                                  return;
-                                }
-                                handleSendPinZalo(acc.accountId, emp.full_name, emp.phone_normalized || emp.phone);
-                              }}
-                            >
-                              {needReset ? '🔄 Reset PIN' : '📩 PIN Zalo'}
-                            </button>
-                          );
-                        })()}
                       </td>
                     </tr>
                   ))

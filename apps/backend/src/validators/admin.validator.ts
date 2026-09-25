@@ -57,9 +57,4 @@ export const testRecoveryBody = z.object({
   snapshot_id: z.string().trim().min(1).max(128),
 });
 
-// HR cấp/reset mã PIN đăng nhập cho nhân viên (4-8 chữ số).
-export const setEmployeePinBody = z.object({
-  pin: z.string().trim().regex(/^\d{4,8}$/, 'Mã PIN gồm 4-8 chữ số'),
-});
-
 export { idParams };

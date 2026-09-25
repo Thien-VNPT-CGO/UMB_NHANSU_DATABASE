@@ -819,148 +819,6 @@ export function App() {
   }, [currentUser?.id]);
 
   // Action handlers
-  // HR gửi PIN Zalo TẤT CẢ nhân viên trong sub-tab (chạy tuần tự từng người
-  // để Zalo không chặn spam + hiện tiến trình realtime). Chỉ tài khoản HR.
-  const [bulkPinProgress, setBulkPinProgress] = useState<null | {
-    total: number;
-    done: number;
-    running: boolean;
-    results: { name: string; phone: string; ok: boolean; msg: string }[];
-  }>(null);
-  const bulkPinCancelRef = useRef(false);
-
-  const handleBulkSendPinZalo = async (items: any[], tabLabel: string) => {
-    const targets = items
-      .map(i => {
-        if (i.accountId) {
-          return {
-            accountId: i.accountId,
-            fullName: i.fullName || i.full_name,
-            phone: i.phone || i.phone_normalized,
-            accountStatus: i.accountStatus || 'ACTIVE',
-          };
-        }
-        const cleanPhone = (i.phone_normalized || i.phone || '').replace(/\D/g, '');
-        const acc = (activationDataList || []).find((a: any) =>
-          a.id === i.employee_id ||
-          (cleanPhone && (a.phone || '').replace(/\D/g, '') === cleanPhone)
-        );
-        return {
-          accountId: acc?.accountId || acc?.id,
-          fullName: i.full_name || i.fullName || acc?.fullName,
-          phone: i.phone_normalized || i.phone || acc?.phone,
-          accountStatus: acc?.accountStatus || 'ACTIVE',
-        };
-      })
-      .filter(t => t.accountId && t.phone);
-
-    if (targets.length === 0) {
-      setSuccessMsg(`Không có tài khoản nhân viên nào có thể gửi PIN Zalo trong tab "${tabLabel}"!`);
-      setTimeout(() => setSuccessMsg(null), 3000);
-      return;
-    }
-    if (!window.confirm(`Gửi PIN qua Zalo cho TẤT CẢ ${targets.length} nhân viên trong tab "${tabLabel}"?\nMỗi người nhận 1 PIN mới (PIN cũ vô hiệu ngay). Cần BOT Zalo đã kết nối!`)) {
-      return;
-    }
-    bulkPinCancelRef.current = false;
-    setBulkPinProgress({ total: targets.length, done: 0, running: true, results: [] });
-    let okCount = 0;
-    for (const t of targets) {
-      if (bulkPinCancelRef.current) break;
-      try {
-        const res = await apiRequest(`/admin/employee-accounts/${t.accountId}/send-pin-zalo`, { method: 'POST' });
-        okCount++;
-        setBulkPinProgress(prev => prev && ({
-          ...prev,
-          done: prev.done + 1,
-          results: [...prev.results, { name: t.fullName, phone: t.phone, ok: true, msg: `Đã gửi (msg #${res.msgId})` }],
-        }));
-      } catch (err: any) {
-        const msg = String(err.message || '');
-        const short = msg.includes('ZALO_NOT_CONNECTED') ? 'BOT chưa kết nối'
-          : msg.includes('ZALO_NOT_FRIEND') ? 'Chưa kết bạn Zalo'
-          : msg.includes('ZALO_USER_NOT_FOUND') || msg.includes('ZALO_LOOKUP_FAILED') ? 'SĐT không có nick Zalo'
-          : msg;
-        setBulkPinProgress(prev => prev && ({
-          ...prev,
-          done: prev.done + 1,
-          results: [...prev.results, { name: t.fullName, phone: t.phone, ok: false, msg: short }],
-        }));
-        if (msg.includes('ZALO_NOT_CONNECTED')) break;
-      }
-      await new Promise(r => setTimeout(r, 800));
-    }
-    setBulkPinProgress(prev => prev && ({ ...prev, running: false }));
-    const total = targets.length;
-    setSuccessMsg(`📩 Gửi PIN Zalo xong: ${okCount}/${total} thành công!`);
-    setTimeout(() => setSuccessMsg(null), 5000);
-    await loadAllData();
-  };
-
-  // HR cấp mới / reset mã PIN đăng nhập cho nhân viên (4-8 chữ số).
-  // Dùng cho cả 2 trường hợp: cấp lần đầu và nhân viên QUÊN PIN (cấp lại số mới,
-  // PIN cũ + mọi phiên đăng nhập cũ tự vô hiệu ngay). Hệ thống tự sinh PIN
-  // ngẫu nhiên 4 số điền sẵn — HR copy gửi NV, OK để cấp.
-  const handleSetEmpPin = async (id: string, fullName: string) => {
-    const randomPin = String(1000 + Math.floor(crypto.getRandomValues(new Uint32Array(1))[0] % 9000));
-    const pin = window.prompt(
-      `Cấp / RESET mã PIN cho ${fullName}.\nHệ thống đã tạo sẵn PIN ngẫu nhiên bên dưới — COPY gửi nhân viên TRƯỚC khi bấm OK!\nLưu ý: PIN cũ (nếu có) và mọi phiên đăng nhập của NV sẽ bị vô hiệu ngay. NV phải đổi PIN ở lần đăng nhập tiếp theo. Trao trực tiếp, KHÔNG gửi qua nhóm chat!`,
-      randomPin
-    );
-    if (pin === null) return;
-    if (!/^\d{4,8}$/.test(pin.trim())) {
-      setErrorMsg('Mã PIN phải gồm 4-8 chữ số!');
-      return;
-    }
-    try {
-      await apiRequest(`/admin/employee-accounts/${id}/set-pin`, {
-        method: 'POST',
-        body: JSON.stringify({ pin: pin.trim() }),
-      });
-      setSuccessMsg(`Đã cấp mã PIN mới cho ${fullName}! Nhớ trao trực tiếp cho nhân viên.`);
-      setTimeout(() => setSuccessMsg(null), 4000);
-      await loadAllData();
-    } catch (err: any) {
-      setErrorMsg(err.message);
-    }
-  };
-
-  // Hệ thống TỰ sinh PIN + bắn qua Zalo cá nhân HR tới đúng SĐT nhân viên.
-  // HR không cần thấy/chép PIN — chống lộ. Yêu cầu BOT Zalo đã kết nối.
-  const handleSendPinZalo = async (accountId: string, fullName: string, phone: string) => {
-    if (!window.confirm(`Tự động sinh mã PIN mới và GỬI QUA ZALO tới ${fullName} (${phone})?\nPIN cũ (nếu có) sẽ bị vô hiệu ngay. Nhân viên phải đổi PIN ở lần đăng nhập tiếp theo.`)) {
-      return;
-    }
-    try {
-      const res = await apiRequest(`/admin/employee-accounts/${accountId}/send-pin-zalo`, { method: 'POST' });
-      setSuccessMsg(`✅ Đã gửi PIN qua Zalo tới ${fullName}! (tin nhắn #${res.msgId})`);
-      setTimeout(() => setSuccessMsg(null), 4000);
-      await loadAllData();
-    } catch (err: any) {
-      const msg = String(err.message || '');
-      if (msg.includes('ZALO_NOT_CONNECTED')) {
-        setErrorMsg('BOT Zalo chưa kết nối! Vào tab "Lịch Phỏng Vấn & BOT Zalo" quét QR đăng nhập trước.');
-      } else if (msg.includes('ZALO_USER_NOT_FOUND') || msg.includes('ZALO_LOOKUP_FAILED')) {
-        setErrorMsg(`SĐT ${phone} không tìm thấy nick Zalo! Kiểm tra SĐT hoặc dùng nút "Cấp / Reset PIN" để trao trực tiếp.`);
-      } else if (msg.includes('ZALO_NOT_FRIEND')) {
-        if (window.confirm(`${fullName} chưa kết bạn Zalo với nick HR. Gửi lời mời kết bạn ngay? (Khi NV đồng ý, bấm "Gửi PIN qua Zalo" lại.)`)) {
-          try {
-            await apiRequest('/admin/zalo/send-friend-request', {
-              method: 'POST',
-              body: JSON.stringify({ phone }),
-            });
-            setSuccessMsg('Đã gửi lời mời kết bạn Zalo! Khi NV đồng ý, bấm "Gửi PIN qua Zalo" lại.');
-            setTimeout(() => setSuccessMsg(null), 4000);
-          } catch (e: any) {
-            setErrorMsg(e.message);
-          }
-        }
-      } else {
-        setErrorMsg(msg);
-      }
-    }
-  };
-
   const handleToggleInternalAccount = async (account: any) => {
     if (account.admin_id === 'ADM_001' || account.username === 'admin') {
       setErrorMsg('Không thể khóa tài khoản Quản trị viên gốc (admin)!');
@@ -1191,13 +1049,13 @@ export function App() {
         displayBranch: getDisplayBranch(emp.default_branch_id, emp.group),
         // Khóa màu theo nhóm thật (không so chuỗi hiển thị vì không bao giờ khớp).
         branchKind: emp.group === 'VAN_PHONG' || emp.group === 'SALE' ? 'HQ' : emp.group === 'XUONG' ? 'FACTORY' : 'STORE',
-        // Dữ liệu thật: chưa có tài khoản thì báo NO_ACCOUNT (chờ HR cấp PIN), có tài khoản là ACTIVE.
+        // Dữ liệu thật: chưa có tài khoản thì báo NO_ACCOUNT, có tài khoản là ACTIVE (PIN tự sinh).
         accountStatus: acc ? 'ACTIVE' : 'NO_ACCOUNT',
         // Mã PIN bản rõ — hiển thị cho cả Admin lẫn HR. Mất đi khi NV tự đổi PIN riêng.
         pinCode: (acc as any)?.pin_code || '',
         version: acc?.version || emp.version || 1,
         hasRealAccount: !!acc,
-        // PIN đã gửi qua Zalo, NV chưa đổi -> hiển thị nút Reset + trạng thái khóa
+        // Mã khởi tạo, NV chưa đổi -> hiển thị trạng thái chờ đổi PIN
         pinMustChange: acc?.pin_must_change === true,
       };
     });
@@ -2213,7 +2071,7 @@ export function App() {
                   <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--success)', marginTop: '6px' }}>
                     {employeeAccounts.filter((a: any) => a.pin_must_change).length}
                   </div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>PIN HR đã cấp, NV chưa đổi</div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>PIN khởi tạo, NV chưa đổi</div>
                 </div>
 
                 <div style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', boxShadow: 'var(--shadow-soft)' }}>
@@ -2458,7 +2316,7 @@ export function App() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               <div>
                 <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>3. PIN & Quản Lý Tài Khoản Nhân Viên</h1>
-                <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Phân nhóm theo 6 tab nghiệp vụ: Tất cả, Thử việc, Chính thức, Văn Phòng, Xưởng, Sales. Nhân viên đăng nhập trên Cổng Employee Web bằng SĐT + mã PIN do HR cấp.</p>
+                  <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Phân nhóm theo 6 tab nghiệp vụ: Tất cả, Thử việc, Chính thức, Văn Phòng, Xưởng, Sales. Nhân viên đăng nhập trên Cổng Employee Web bằng SĐT + mã PIN khởi tạo (tự sinh), rồi đặt PIN riêng ngay lần đầu.</p>
               </div>
 
               {/* 6 Sub-Tabs for PIN & Account Management */}
@@ -2543,43 +2401,9 @@ export function App() {
                   />
                   <Search size={16} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
                 </div>
-                {['HR', 'ADMIN'].includes(currentUser?.role || '') && (() => {
-                  const tabLabel: Record<string, string> = {
-                    ALL: 'Tất cả nhân sự',
-                    PROBATION: 'Thử việc',
-                    OFFICIAL: 'Chính thức',
-                    XUONG: 'Xưởng',
-                    VAN_PHONG: 'Văn Phòng',
-                    SALE: 'Sales',
-                  };
-                  const label = tabLabel[activationSubTab] || activationSubTab;
-                  const pinTargets = filteredActivationItems.filter(i =>
-                    i.accountId
-                  );
-                  return (
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-                      <button
-                        onClick={() => handleBulkSendPinZalo(filteredActivationItems, label)}
-                        disabled={pinTargets.length === 0}
-                        title={pinTargets.length === 0 ? 'Không có tài khoản để gửi PIN' : `Gửi PIN qua Zalo cho tất cả ${pinTargets.length} tài khoản trong tab này`}
-                        style={{
-                          padding: '8px 16px',
-                          borderRadius: 'var(--radius-sm)',
-                          backgroundColor: pinTargets.length === 0 ? '#E5E7EB' : '#0068FF',
-                          color: pinTargets.length === 0 ? '#6B7280' : '#FFF',
-                          fontWeight: 700,
-                          fontSize: '13px',
-                          border: 'none',
-                          cursor: pinTargets.length === 0 ? 'not-allowed' : 'pointer',
-                          whiteSpace: 'nowrap',
-                          boxShadow: pinTargets.length > 0 ? '0 2px 6px rgba(0, 104, 255, 0.25)' : 'none',
-                        }}
-                      >
-                        📩 Gửi PIN Zalo Tất Cả ({pinTargets.length})
-                      </button>
-                    </div>
-                  );
-                })()}
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>
+                  Mã PIN khởi tạo ở cột Mã PIN bên dưới — nhân viên dùng để đăng nhập lần đầu rồi đặt PIN riêng ngay.
+                </div>
                 <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>
                   Quy tắc chi nhánh: Văn phòng & Sales: <strong style={{ color: 'var(--brand)' }}>Trụ sở chính</strong> | Xưởng: <strong style={{ color: 'var(--brand)' }}>Củ Chi</strong>
                 </div>
@@ -2598,13 +2422,12 @@ export function App() {
                       <th style={{ padding: '12px 20px' }}>Giai Đoạn</th>
                       <th style={{ padding: '12px 20px' }}>Mã PIN</th>
                       <th style={{ padding: '12px 20px' }}>Trạng Thái PIN</th>
-                      <th style={{ padding: '12px 20px' }}>Thao Tác</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredActivationItems.length === 0 ? (
                       <tr>
-                        <td colSpan={9} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                        <td colSpan={8} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
                           Không có nhân sự nào trong tab này hoặc không khớp với tìm kiếm.
                         </td>
                       </tr>
@@ -2629,7 +2452,7 @@ export function App() {
                           <td style={{ padding: '14px 20px', fontWeight: 600 }}>
                             {item.phone}
                             {item.isDuplicatePhone && (
-                              <span title="SĐT này đang dùng chung cho nhiều hồ sơ! Đối soát trước khi cấp PIN — đăng nhập sẽ bị từ chối." style={{
+                              <span title="SĐT này đang dùng chung cho nhiều hồ sơ! Hệ thống dùng mã PIN để phân biệt khi đăng nhập." style={{
                                 marginLeft: '6px',
                                 padding: '2px 7px',
                                 borderRadius: '999px',
@@ -2692,7 +2515,7 @@ export function App() {
                                item.employmentStatus === 'PROBATION' ? 'Thử Việc' : 'Nhân Viên Mới'}
                             </span>
                           </td>
-                          {/* Cột Mã PIN bản rõ — hiển thị cho cả Admin lẫn HR */}
+                          {/* Cột Mã PIN khởi tạo — hiển thị cho cả Admin lẫn HR */}
                           <td style={{ padding: '14px 20px' }}>
                             {item.pinCode ? (
                               <span style={{
@@ -2710,7 +2533,7 @@ export function App() {
                               </span>
                             ) : (
                               <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                                Chưa cấp
+                                Chưa có
                               </span>
                             )}
                           </td>
@@ -2729,114 +2552,16 @@ export function App() {
                               {item.pinMustChange ? ' 🔒' : ''}
                             </span>
                             {item.pinMustChange && (
-                              <div title="PIN vừa gửi qua Zalo, mọi phiên cũ đã khóa — NV phải đổi PIN mới dùng được" style={{ fontSize: '10px', color: '#D97706', fontWeight: 700, marginTop: '3px' }}>
+                              <div title="NV dùng mã khởi tạo, chưa đặt PIN riêng — mọi phiên cũ đã vô hiệu" style={{ fontSize: '10px', color: '#D97706', fontWeight: 700, marginTop: '3px' }}>
                                 🔒 Chờ NV đổi PIN
                               </div>
                             )}
-                          </td>
-                          <td style={{ padding: '14px 20px' }}>
-                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                              {currentUser?.role === 'HR' && (
-                              <button
-                                onClick={() => handleSetEmpPin(item.accountId, item.fullName || item.phone)}
-                                disabled={!item.hasRealAccount}
-                                title={item.hasRealAccount ? 'Cấp mới hoặc RESET khi nhân viên quên PIN (PIN cũ vô hiệu ngay, NV bắt đổi lần sau)' : 'Chưa có tài khoản cho hồ sơ này!'}
-                                style={{
-                                  padding: '6px 12px',
-                                  borderRadius: 'var(--radius-sm)',
-                                  backgroundColor: 'transparent',
-                                  border: '1px solid var(--brand)',
-                                  color: 'var(--brand)',
-                                  fontWeight: 600,
-                                  fontSize: '12px',
-                                  cursor: item.hasRealAccount ? 'pointer' : 'not-allowed',
-                                  opacity: item.hasRealAccount ? 1 : 0.5,
-                                }}
-                              >
-                                🔑 Cấp / Reset PIN
-                              </button>
-                              )}
-                              {currentUser?.role === 'HR' && (
-                              <button
-                                onClick={() => handleSendPinZalo(item.accountId, item.fullName || item.phone, item.phone)}
-                                disabled={!item.hasRealAccount}
-                                title={item.hasRealAccount ? (item.pinMustChange ? 'PIN đã gửi, NV chưa đổi — bấm để RESET gửi số mới (PIN cũ vô hiệu ngay)' : 'Hệ thống tự sinh PIN mới và gửi qua Zalo tới SĐT nhân viên (cần BOT Zalo đã kết nối)') : 'Chưa có tài khoản cho hồ sơ này!'}
-                                style={{
-                                  padding: '6px 12px',
-                                  borderRadius: 'var(--radius-sm)',
-                                  backgroundColor: item.hasRealAccount ? (item.pinMustChange ? '#F59E0B' : '#0068FF') : 'transparent',
-                                  border: '1px solid #0068FF',
-                                  color: item.hasRealAccount ? '#FFF' : 'var(--brand)',
-                                  fontWeight: 600,
-                                  fontSize: '12px',
-                                  cursor: item.hasRealAccount ? 'pointer' : 'not-allowed',
-                                  opacity: item.hasRealAccount ? 1 : 0.5,
-                                }}
-                              >
-                                {item.pinMustChange ? '🔄 Reset PIN Zalo' : '📩 Gửi PIN Zalo'}
-                              </button>
-                              )}
-                            </div>
                           </td>
                         </tr>
                       ))
                     )}
                   </tbody>
                 </table>
-              </div>
-            </div>
-          )}
-
-          {/* MODAL TIẾN TRÌNH GỬI PIN ZALO TẤT CẢ (HR) */}
-          {bulkPinProgress && (
-            <div style={{
-              position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.55)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              zIndex: 9999, padding: '16px',
-            }}>
-              <div style={{
-                backgroundColor: 'var(--surface)', borderRadius: '12px',
-                width: '520px', maxWidth: '100%', maxHeight: '80vh',
-                display: 'flex', flexDirection: 'column', overflow: 'hidden',
-              }}>
-                <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border)', fontWeight: 800, fontSize: '15px' }}>
-                  📩 {bulkPinProgress.running ? `Đang gửi PIN Zalo... ${bulkPinProgress.done}/${bulkPinProgress.total}` : `Hoàn tất: ${bulkPinProgress.done}/${bulkPinProgress.total}`}
-                </div>
-                <div style={{ height: '8px', backgroundColor: 'var(--bg)', margin: '12px 18px 0', borderRadius: '999px', overflow: 'hidden' }}>
-                  <div style={{
-                    height: '100%',
-                    width: `${bulkPinProgress.total === 0 ? 0 : Math.round((bulkPinProgress.done / bulkPinProgress.total) * 100)}%`,
-                    backgroundColor: '#0068FF',
-                    transition: 'width 0.3s ease',
-                  }} />
-                </div>
-                <div style={{ padding: '12px 18px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '13px' }}>
-                  {bulkPinProgress.results.map((r, i) => (
-                    <div key={i} style={{
-                      display: 'flex', justifyContent: 'space-between', gap: '8px',
-                      padding: '8px 10px', borderRadius: '8px',
-                      backgroundColor: r.ok ? '#ECFDF5' : '#FEF2F2',
-                      border: `1px solid ${r.ok ? '#A7F3D0' : '#FECACA'}`,
-                    }}>
-                      <span style={{ fontWeight: 700 }}>{r.ok ? '✅' : '❌'} {r.name} <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>({r.phone})</span></span>
-                      <span style={{ color: r.ok ? '#059669' : '#DC2626', fontSize: '12px', textAlign: 'right' }}>{r.msg}</span>
-                    </div>
-                  ))}
-                  {bulkPinProgress.running && bulkPinProgress.results.length === 0 && (
-                    <div style={{ color: 'var(--text-muted)', fontSize: '13px' }}>⏳ Đang gửi người đầu tiên...</div>
-                  )}
-                </div>
-                <div style={{ padding: '12px 18px', borderTop: '1px solid var(--border)', display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                  {bulkPinProgress.running ? (
-                    <button className="btn-secondary" style={{ fontSize: '13px' }} onClick={() => { bulkPinCancelRef.current = true; }}>
-                      ⏹ Dừng lại
-                    </button>
-                  ) : (
-                    <button className="btn-primary" style={{ fontSize: '13px' }} onClick={() => setBulkPinProgress(null)}>
-                      Đóng
-                    </button>
-                  )}
-                </div>
               </div>
             </div>
           )}
@@ -3752,7 +3477,6 @@ export function App() {
             activeTab={activeTab}
             currentUser={currentUser}
             allEmployees={allEmployees}
-            activationDataList={activationDataList}
             candidates={candidates}
             shifts={shifts}
             leaves={leaves}
@@ -3767,7 +3491,6 @@ export function App() {
             openBroadcastModal={() => setShowBroadcastModal(true)}
             onSyncSheets={handleForcePull}
             onRefreshData={() => loadAllData(currentUser)}
-            onBulkSendPinZalo={handleBulkSendPinZalo}
           />
 
         </div>
@@ -4114,7 +3837,7 @@ export function App() {
                   onChange={(e) => setNewEmpForm({ ...newEmpForm, employmentStatus: e.target.value as any })}
                   style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px' }}
                 >
-                  <option value="PRE_ONBOARDING">Nhân viên mới (Chờ HR cấp PIN)</option>
+                  <option value="PRE_ONBOARDING">Nhân viên mới (PIN khởi tạo tự động)</option>
                   <option value="PROBATION">Thử việc (Lương 23.000 đ/h)</option>
                   <option value="OFFICIAL">Chính thức (Lương 25.000 đ/h)</option>
                 </select>

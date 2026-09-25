@@ -1,4 +1,5 @@
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 
 const BCRYPT_COST = 12;
 const BCRYPT_PREFIX = /^\$2[aby]\$\d{2}\$/;
@@ -38,6 +39,11 @@ export async function verifyPassword(plain: string, hash: string): Promise<boole
 }
 
 export const PIN_RE = /^\d{4,8}$/;
+
+/** Hệ thống tự sinh mã PIN khởi tạo (4 chữ số) gán cho từng tài khoản — không cần HR cấp tay. */
+export function generateAutoPin(): string {
+  return String(1000 + crypto.randomInt(0, 9000));
+}
 
 /** Mã PIN nhân viên: 4-8 chữ số, hash bcrypt như mật khẩu. */
 export async function hashPin(pin: string): Promise<string> {

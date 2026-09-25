@@ -239,15 +239,6 @@ export class AuthService {
     return this.repo.setAccountPin(accountId, hashed, false, account.employee_id, newPin);
   }
 
-  /** HR/Admin cấp mới hoặc reset PIN (đánh dấu bắt đổi ở lần đăng nhập sau). */
-  async setEmployeePin(accountId: string, pin: string, actorId: string) {
-    const account = await this.repo.getAccountById(accountId);
-    if (!account) throw new Error('ACCOUNT_NOT_FOUND');
-    const hashed = await hashPin(pin); // ném WEAK_PIN nếu sai định dạng
-    // Lưu thêm bản rõ để hiển thị cột Mã PIN trên cổng quản trị (Admin/HR).
-    return this.repo.setAccountPin(accountId, hashed, true, actorId, pin);
-  }
-
   async loginAdmin(username: string, password: string): Promise<{
     token: string;
     refreshToken: string;

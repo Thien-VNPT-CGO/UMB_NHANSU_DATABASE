@@ -12,7 +12,6 @@ import {
   getWeeklyOffWindow,
 } from './services/weekly-off.service.js';
 import { ZaloService, defaultMeetUrl } from './services/zalo.service.js';
-import crypto from 'crypto';
 import { AccountsService } from './services/accounts.service.js';
 import { EmployeesService } from './services/employees.service.js';
 import { canonicalPhone, findDuplicatePhones } from './services/employees.service.js';
@@ -82,7 +81,6 @@ import {
   internalAccountCreateBody,
   internalAccountUpdateBody,
   opaqueConfigBody,
-  setEmployeePinBody,
   testRecoveryBody,
 } from './validators/admin.validator.js';
 import {
@@ -317,78 +315,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  // --- ACCOUNTS: đăng nhập bằng SĐT + mã PIN do HR cấp (đã bỏ luồng kích hoạt/khóa) ---
-
-  // HR/Admin cấp mới hoặc reset mã PIN nhân viên (đánh dấu bắt đổi lần sau).
-  app.post('/admin/employee-accounts/:id/set-pin', authMiddleware, requireRole(['HR']), validate({ params: idParams, body: setEmployeePinBody }), async (req: AuthenticatedRequest, res) => {
-    try {
-      await authService.setEmployeePin(req.params.id, req.body.pin, req.user!.id);
-      broadcastUpdate('accounts', { action: 'set-pin', accountId: req.params.id });
-      broadcastNotification({
-        type: 'PIN_SENT',
-        title: '🔑 Đã Cấp Mã PIN Mới',
-        message: `Đã cấp mã PIN đăng nhập mới cho tài khoản ID ${req.params.id}!`,
-        linkTab: 'employee-accounts',
-        metadata: { accountId: req.params.id },
-        targetRoles: ['ADMIN', 'HR'],
-      });
-      res.json({ success: true, message: 'Đã cấp mã PIN mới! Nhân viên phải đổi PIN ở lần đăng nhập tiếp theo.' });
-    } catch (err: any) {
-      res.status(400).json({ error: err.message });
-    }
-  });
-
-  // Hệ thống TỰ sinh PIN + cấp vào tài khoản + bắn qua Zalo cá nhân HR tới SĐT nhân viên.
-  // HR không cần thấy/chép PIN — chống lộ. Yêu cầu BOT Zalo đã kết nối.
-  app.post('/admin/employee-accounts/:id/send-pin-zalo', authMiddleware, requireRole(['HR']), validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {
-    try {
-      const account = await adapter.getAccountById(req.params.id);
-      if (!account) return res.status(404).json({ error: 'ACCOUNT_NOT_FOUND' });
-      const employee = await employeesService.getEmployee(account.employee_id);
-      const phone = employee?.phone_normalized || account.phone_normalized || '';
-      if (!phone) return res.status(400).json({ error: 'EMPLOYEE_NO_PHONE' });
-
-      const pin = String(1000 + crypto.randomInt(0, 9000));
-
-      // Tìm Zalo trước — chỉ cấp PIN mới khi chắc chắn gửi được (tránh reset oan).
-      let uid = '';
-      try {
-        const found = await zaloService.findUserByPhone(phone);
-        uid = found.uid;
-      } catch (e: any) {
-        return res.status(400).json({ error: e.message, phone, pinIssued: false });
-      }
-
-      await authService.setEmployeePin(req.params.id, pin, req.user!.id);
-      try {
-        const sent = await zaloService.sendText(
-          uid,
-          zaloService.buildPinText({ employeeName: employee?.full_name || 'bạn', pin })
-        );
-        await adapter.recordAuditLog({
-          actor_id: req.user!.id,
-          action: 'ZALO_PIN_SENT',
-          target_type: 'TAI_KHOAN_NHAN_VIEN',
-          target_id: req.params.id,
-          payload_after: { uid, msgId: sent.msgId } as any,
-        });
-        broadcastUpdate('accounts', { action: 'send-pin-zalo', accountId: req.params.id });
-        broadcastNotification({
-          type: 'PIN_SENT',
-          title: '📩 Gửi PIN Qua Zalo Thành Công',
-          message: `Mã PIN mới đã được BOT gửi tới Zalo SĐT ${phone} của ${employee?.full_name || 'nhân viên'}.`,
-          linkTab: 'employee-accounts',
-          metadata: { accountId: req.params.id, phone },
-          targetRoles: ['ADMIN', 'HR'],
-        });
-        res.json({ success: true, uid, msgId: sent.msgId, phone });
-      } catch (e: any) {
-        return res.status(400).json({ error: 'ZALO_NOT_FRIEND', message: e?.message || e, uid, phone, pinIssued: true });
-      }
-    } catch (err: any) {
-      res.status(400).json({ error: err.message });
-    }
-  });
+  // --- ACCOUNTS: SĐT + mã PIN tự động (hệ thống tự sinh PIN khởi tạo cho từng tài khoản,
+  // nhân viên đăng nhập lần đầu rồi đặt PIN riêng ngay — không còn HR cấp tay) ---
 
   // --- EMPLOYEES & RECRUITMENT ---
   app.get(

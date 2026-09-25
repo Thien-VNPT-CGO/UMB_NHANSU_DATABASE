@@ -56,7 +56,7 @@ export function App() {
   const [loginPhone, setLoginPhone] = useState('');
   const [loginPin, setLoginPin] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
-  // Bắt buộc đổi PIN do HR cấp ở lần đăng nhập đầu
+  // Bắt buộc đổi PIN khởi tạo ở lần đăng nhập đầu
   const [mustChangePin, setMustChangePin] = useState(false);
   const [newPin, setNewPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
@@ -258,7 +258,7 @@ export function App() {
     const pin = (pinToLogin || '').trim();
     if (!/^\d{4,8}$/.test(pin)) {
       setCheckingStatus('ERROR');
-      setLoginError('Vui lòng nhập mã PIN gồm 4-8 chữ số do HR cấp!');
+      setLoginError('Vui lòng nhập mã PIN khởi tạo gồm 4-8 chữ số!');
       return;
     }
 
@@ -277,7 +277,7 @@ export function App() {
         try { localStorage.setItem('ubm_emp_refresh', res.refreshToken); } catch {}
       }
       if (res.mustChangePin) {
-        // PIN do HR cấp — bắt đổi trước khi vào cổng
+        // PIN khởi tạo — bắt đổi trước khi vào cổng
         setMustChangePin(true);
         setNewPin('');
         setConfirmPin('');
@@ -326,7 +326,7 @@ export function App() {
       return;
     }
     if (newPin === loginPin.trim()) {
-      setLoginError('Mã PIN mới phải khác mã PIN do HR cấp!');
+      setLoginError('Mã PIN mới phải khác mã PIN khởi tạo!');
       return;
     }
     setLoading(true);
@@ -926,7 +926,7 @@ export function App() {
             <>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                 <label style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text)' }}>
-                  Mã PIN Đăng Nhập (4-8 số, do HR cấp)
+                  Mã PIN Khởi Tạo (4-8 số, hỏi HR/Admin)
                 </label>
               </div>
               <div style={{ position: 'relative', marginBottom: '14px' }}>
@@ -959,7 +959,7 @@ export function App() {
                 🔑 BẮT BUỘC ĐỔI MÃ PIN LẦN ĐẦU
               </div>
               <div style={{ fontSize: '12px', color: '#92400E', marginBottom: '12px', lineHeight: '1.5' }}>
-                Bạn đang dùng mã PIN do HR cấp. Hãy đặt mã PIN riêng (4-8 chữ số, khác mã HR cấp, không chia sẻ cho ai) để mở khóa hệ thống!
+                Bạn đang dùng mã PIN khởi tạo. Hãy đặt mã PIN riêng (4-8 chữ số, khác mã khởi tạo, không chia sẻ cho ai) để mở khóa hệ thống!
               </div>
               <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Mã PIN mới:</label>
               <input
@@ -1018,7 +1018,7 @@ export function App() {
           )}
 
           <p style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.4' }}>
-            💡 <strong>Bảo mật đăng nhập:</strong> Nhập đủ 10 số điện thoại + mã PIN (4-8 số do HR cấp) rồi bấm ĐĂNG NHẬP. Mỗi người giữ PIN riêng — không chia sẻ để tránh bị đăng nhập ké!
+            💡 <strong>Bảo mật đăng nhập:</strong> Nhập đủ 10 số điện thoại + mã PIN khởi tạo (4-8 số, hỏi HR/Admin lần đầu) rồi bấm ĐĂNG NHẬP. Mỗi người giữ PIN riêng — không chia sẻ để tránh bị đăng nhập ké!
           </p>
         </div>
       </div>
