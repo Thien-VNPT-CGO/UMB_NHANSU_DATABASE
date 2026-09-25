@@ -134,20 +134,15 @@ export class EmployeesService {
           note: 'Khởi tạo hồ sơ ban đầu',
         });
 
-        // Tự động tạo tài khoản nhân viên tương ứng và đồng bộ xuống Sheet TAI_KHOAN_NHAN_VIEN
-        const initialStatus = (data.employmentStatus === 'PRE_ONBOARDING' || !data.employmentStatus)
-          ? 'PENDING_ACTIVATION'
-          : 'ACTIVE';
-
+        // Tự động tạo tài khoản nhân viên tương ứng và đồng bộ xuống Sheet TAI_KHOAN_NHAN_VIEN.
+        // Không còn luồng kích hoạt: tài khoản luôn ACTIVE, đăng nhập bằng mã PIN do HR cấp.
         await this.repo.createAccount({
           account_id: `ACC_${Date.now()}`,
           employee_id: employeeId,
           phone_normalized: data.phone,
-          account_status: initialStatus as any,
+          account_status: 'ACTIVE',
           role: 'EMPLOYEE',
           branch_scope: data.branchId || 'CN130',
-          activated_by: initialStatus === 'ACTIVE' ? data.actorId : undefined,
-          activated_at: initialStatus === 'ACTIVE' ? new Date().toISOString() : undefined,
         });
 
         return emp;

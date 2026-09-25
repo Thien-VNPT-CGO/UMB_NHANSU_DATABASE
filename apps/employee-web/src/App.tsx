@@ -250,7 +250,7 @@ export function App() {
     }
   };
 
-  const [checkingStatus, setCheckingStatus] = useState<'IDLE' | 'CHECKING' | 'ACTIVE' | 'PENDING' | 'ERROR'>('IDLE');
+  const [checkingStatus, setCheckingStatus] = useState<'IDLE' | 'CHECKING' | 'ACTIVE' | 'ERROR'>('IDLE');
 
   const handlePhoneLogin = async (phoneToLogin = loginPhone, pinToLogin = loginPin) => {
     const cleaned = phoneToLogin.replace(/[\s\-\.\(\)]/g, '');
@@ -289,18 +289,12 @@ export function App() {
       if (err.message === 'ACCOUNT_NOT_FOUND') {
         setCheckingStatus('ERROR');
         setLoginError(`Số điện thoại ${cleaned} chưa tồn tại trên Google Sheets Master. Vui lòng liên hệ HR để nộp hồ sơ.`);
-      } else if (err.message === 'PENDING_ACTIVATION') {
-        setCheckingStatus('PENDING');
-        setLoginError(`Số điện thoại ${cleaned} đã có trên hệ thống nhưng CHƯA ĐƯỢC ADMIN KÍCH HOẠT (trạng thái: PENDING_ACTIVATION). Hệ thống từ chối đăng nhập.`);
       } else if (err.message === 'PIN_NOT_SET') {
         setCheckingStatus('ERROR');
         setLoginError(`Tài khoản ${cleaned} chưa được cấp mã PIN. Vui lòng liên hệ HR để nhận mã PIN đăng nhập!`);
       } else if (err.message === 'INVALID_PIN') {
         setCheckingStatus('ERROR');
-        setLoginError('Mã PIN không đúng! Vui lòng kiểm tra lại. Nhập sai liên tục sẽ bị khóa tạm thời.');
-      } else if (err.message === 'SUSPENDED' || err.message === 'REVOKED') {
-        setCheckingStatus('ERROR');
-        setLoginError(`Tài khoản liên kết với ${cleaned} đang bị TẠM KHÓA hoặc THU HỒI bởi Quản trị viên.`);
+        setLoginError('Mã PIN không đúng! Vui lòng kiểm tra lại hoặc liên hệ HR để reset PIN.');
       } else if (err.message === 'DUPLICATE_PHONE_NEEDS_HR') {
         setCheckingStatus('ERROR');
         setLoginError(`Số điện thoại ${cleaned} bị trùng lặp trên 2 hồ sơ khác nhau. Cần gặp HR để đối soát thông tin.`);
@@ -904,7 +898,7 @@ export function App() {
                 fontWeight: 700,
                 letterSpacing: '1px',
                 paddingRight: '40px',
-                borderColor: checkingStatus === 'PENDING' ? 'var(--warning)' : checkingStatus === 'ERROR' ? 'var(--danger)' : undefined,
+                borderColor: checkingStatus === 'ERROR' ? 'var(--danger)' : undefined,
               }}
             />
             {checkingStatus === 'CHECKING' && (
@@ -1001,8 +995,8 @@ export function App() {
 
           {loginError && (
             <div style={{
-              backgroundColor: checkingStatus === 'PENDING' ? 'var(--warning-soft)' : 'var(--danger-soft)',
-              color: checkingStatus === 'PENDING' ? '#92400E' : 'var(--danger)',
+              backgroundColor: 'var(--danger-soft)',
+              color: 'var(--danger)',
               padding: '14px',
               borderRadius: 'var(--radius-sm)',
               fontSize: '13px',
@@ -1011,12 +1005,12 @@ export function App() {
               alignItems: 'flex-start',
               gap: '10px',
               marginBottom: '16px',
-              border: `1px solid ${checkingStatus === 'PENDING' ? '#FCD34D' : '#FCA5A5'}`,
+              border: '1px solid #FCA5A5',
             }}>
               <AlertCircle size={20} style={{ flexShrink: 0, marginTop: '2px' }} />
               <div>
                 <div style={{ fontWeight: 800, marginBottom: '2px' }}>
-                  {checkingStatus === 'PENDING' ? 'Tài Khoản Chưa Được Kích Hoạt' : 'Từ Chối Đăng Nhập'}
+                  Từ Chối Đăng Nhập
                 </div>
                 <div>{loginError}</div>
               </div>

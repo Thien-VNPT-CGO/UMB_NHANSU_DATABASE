@@ -3,7 +3,6 @@ import { hashPasswordSync } from '../services/password.service.js';
 import {
   EmployeeAccount,
   AdminAccount,
-  AccountStatus,
   EmployeeMaster,
   EmployeeStageHistory,
   CandidateApplication,
@@ -86,7 +85,6 @@ export class MockSheetsAdapter implements ISheetsRepository {
         full_name: 'Quản Trị Viên Hệ Thống',
         role: 'ADMIN',
         branch_scope: '*',
-        is_active: true,
 
         version: 1,
         created_at: now,
@@ -179,53 +177,6 @@ export class MockSheetsAdapter implements ISheetsRepository {
     return [...this.accounts];
   }
 
-  async updateAccountStatus(id: string, status: AccountStatus, actorId: string, expectedVersion: number): Promise<EmployeeAccount> {
-    this.checkErrors();
-    let account = this.accounts.find(a => a.account_id === id);
-    if (!account) {
-      account = this.accounts.find(a => a.employee_id === id || a.phone_normalized === id);
-    }
-    if (!account) {
-      // Check if employee exists and auto-create account record
-      const emp = this.employees.find(e => e.employee_id === id || e.employee_code === id || e.phone_normalized === id);
-      if (emp) {
-        const now = new Date().toISOString();
-        const newAcc: EmployeeAccount = {
-          account_id: `ACC_${emp.employee_id}`,
-          employee_id: emp.employee_id,
-          phone_normalized: emp.phone_normalized,
-          account_status: status,
-          role: 'EMPLOYEE',
-          branch_scope: emp.default_branch_id || 'CN130',
-          activated_by: status === 'ACTIVE' ? actorId : undefined,
-          activated_at: status === 'ACTIVE' ? now : undefined,
-          revoked_by: (status === 'REVOKED' || status === 'SUSPENDED') ? actorId : undefined,
-          revoked_at: (status === 'REVOKED' || status === 'SUSPENDED') ? now : undefined,
-          version: 1,
-          created_at: now,
-          updated_at: now,
-        };
-        this.accounts.push(newAcc);
-        return { ...newAcc };
-      }
-      throw new Error('ACCOUNT_NOT_FOUND');
-    }
-
-    account.account_status = status;
-    account.version += 1;
-    account.updated_at = new Date().toISOString();
-
-    if (status === 'ACTIVE') {
-      account.activated_by = actorId;
-      account.activated_at = account.updated_at;
-    } else if (status === 'REVOKED' || status === 'SUSPENDED') {
-      account.revoked_by = actorId;
-      account.revoked_at = account.updated_at;
-    }
-
-    return { ...account };
-  }
-
   async setAccountPin(id: string, pinHash: string, mustChange: boolean, actorId: string): Promise<EmployeeAccount> {
     this.checkErrors();
     const account = this.accounts.find(a => a.account_id === id);
@@ -266,7 +217,6 @@ export class MockSheetsAdapter implements ISheetsRepository {
 
   async getAdminByUsername(username: string): Promise<AdminAccount | null> {
     this.checkErrors();
-    // Trả về cả account inactive để AuthService tự quyết định lỗi (tránh lộ trạng thái).
     return this.adminAccounts.find(a => a.username === username) || null;
   }
 

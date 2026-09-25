@@ -162,18 +162,7 @@ export class AuthService {
 
     const account = accounts[0];
 
-    if (account.account_status === 'PENDING_ACTIVATION') {
-      throw new Error(ERROR_CODES.PENDING_ACTIVATION);
-    }
-    if (account.account_status === 'SUSPENDED') {
-      throw new Error(ERROR_CODES.SUSPENDED);
-    }
-    if (account.account_status === 'REVOKED') {
-      throw new Error(ERROR_CODES.REVOKED);
-    }
-    if (account.account_status !== 'ACTIVE') {
-      throw new Error(`ACCOUNT_${account.account_status}`);
-    }
+    // Không còn luồng kích hoạt/khóa: SĐT + PIN hợp lệ là đăng nhập được.
 
     // PIN do HR cấp — chặn ké tài khoản chỉ biết SĐT.
     if (!account.pin_hash) {
@@ -226,7 +215,7 @@ export class AuthService {
   /** Nhân viên tự đổi PIN (luôn yêu cầu PIN cũ). Xóa cờ bắt-đổi-lần-đầu. */
   async changeEmployeePin(accountId: string, oldPin: string, newPin: string) {
     const account = await this.repo.getAccountById(accountId);
-    if (!account || account.account_status !== 'ACTIVE') throw new Error('ACCOUNT_NOT_FOUND');
+    if (!account) throw new Error('ACCOUNT_NOT_FOUND');
     if (!account.pin_hash || !(await verifyPin(oldPin, account.pin_hash))) {
       throw new Error('INVALID_PIN');
     }
@@ -249,7 +238,7 @@ export class AuthService {
   }> {
     const admin = await this.repo.getAdminByUsername(username);
 
-    if (!admin || !admin.is_active) {
+    if (!admin) {
       throw new Error('INVALID_CREDENTIALS');
     }
 
@@ -317,7 +306,7 @@ export class AuthService {
   async changeAdminPassword(adminId: string, oldPassword: string, newPassword: string) {
     const admins = await this.repo.listAdminAccounts();
     const admin = admins.find(a => a.admin_id === adminId);
-    if (!admin || !admin.is_active) throw new Error('ADMIN_NOT_FOUND');
+    if (!admin) throw new Error('ADMIN_NOT_FOUND');
 
     let ok = false;
     if (isBcryptHash(admin.password_hash)) {
@@ -345,7 +334,7 @@ export class AuthService {
     return sanitizeAdmin(updated);
   }
 
-  /** Dùng refresh token (typ=refresh) để cấp lại access token mới, có kiểm tra version/is_active. */
+  /** Dùng refresh token (typ=refresh) để cấp lại access token mới, có kiểm tra version. */
   async refreshAccessToken(refreshToken: string): Promise<{ token: string }> {
     let decoded: any;
     try {
@@ -357,7 +346,7 @@ export class AuthService {
 
     if (decoded.role === 'EMPLOYEE') {
       const account = await this.repo.getAccountById(decoded.sub);
-      if (!account || account.account_status !== 'ACTIVE' || account.version !== decoded.tv) {
+      if (!account || account.version !== decoded.tv) {
         throw new Error('REFRESH_REVOKED');
       }
       const employee = await this.repo.getEmployeeById(account.employee_id);
@@ -376,7 +365,7 @@ export class AuthService {
 
     const admins = await this.repo.listAdminAccounts();
     const admin = admins.find(a => a.admin_id === decoded.sub);
-    if (!admin || !admin.is_active || admin.version !== decoded.tv) {
+    if (!admin || admin.version !== decoded.tv) {
       throw new Error('REFRESH_REVOKED');
     }
     const token = signAccess({
@@ -390,7 +379,7 @@ export class AuthService {
     return { token };
   }
 
-  /** Xác thực access token + kiểm tra revoke (version/is_active). Dùng chung cho middleware & socket. */
+  /** Xác thực access token + kiểm tra version. Dùng chung cho middleware & socket. */
   async verifyAccessToken(token: string): Promise<AuthUser & { tv: number }> {
     let decoded: any;
     try {
@@ -422,7 +411,7 @@ export class AuthService {
         }
         throw e;
       }
-      if (!account || account.account_status !== 'ACTIVE') throw new Error('ACCOUNT_REVOKED');
+      if (!account) throw new Error('ACCOUNT_REVOKED');
       if (typeof decoded.tv === 'number' && account.version !== decoded.tv) {
         throw new Error('TOKEN_REVOKED');
       }
@@ -458,7 +447,7 @@ export class AuthService {
       }
       throw e;
     }
-    if (!admin || !admin.is_active) throw new Error('ACCOUNT_REVOKED');
+    if (!admin) throw new Error('ACCOUNT_REVOKED');
     if (typeof decoded.tv === 'number' && admin.version !== decoded.tv) {
       throw new Error('TOKEN_REVOKED');
     }

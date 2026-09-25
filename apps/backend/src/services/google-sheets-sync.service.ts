@@ -32,11 +32,11 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   },
   {
     title: 'TAI_KHOAN_NHAN_VIEN',
-    headers: ['ID Tài Khoản', 'ID Nhân Viên', 'Số Điện Thoại', 'Vai Trò', 'Trạng Thái', 'Người Kích Hoạt', 'Ngày Kích Hoạt', 'Phiên Bản', 'Mã PIN (hash)', 'Bắt Buộc Đổi PIN'],
+    headers: ['ID Tài Khoản', 'ID Nhân Viên', 'Số Điện Thoại', 'Vai Trò', 'Trạng Thái', 'Phiên Bản', 'Mã PIN (hash)', 'Bắt Buộc Đổi PIN'],
   },
   {
     title: 'ADMIN_ACCOUNTS',
-    headers: ['ID Admin', 'Tên Đăng Nhập', 'Mật Khẩu', 'Họ Và Tên', 'Vai Trò', 'Phạm Vi Chi Nhánh', 'Trạng Thái', 'Ngày Tạo'],
+    headers: ['ID Admin', 'Tên Đăng Nhập', 'Mật Khẩu', 'Họ Và Tên', 'Vai Trò', 'Phạm Vi Chi Nhánh', 'Ngày Tạo'],
   },
   {
     title: 'PHAN_CONG_CA',
@@ -328,7 +328,7 @@ export class GoogleSheetsSyncService {
       }
       counts.employees = fallback.employees.length;
 
-      // 2. Đọc TAI_KHOAN_NHAN_VIEN
+      // 2. Đọc TAI_KHOAN_NHAN_VIEN (không còn cột Người/Ngày Kích Hoạt — PIN là cửa duy nhất)
       const accRows = batch['TAI_KHOAN_NHAN_VIEN'];
       if (accRows.length > 0) {
         fallback.accounts = accRows
@@ -338,23 +338,21 @@ export class GoogleSheetsSyncService {
             employee_id: r[1] || '',
             phone_normalized: (r[2] || '').replace(/\D/g, ''),
             role: (r[3] as any) || 'EMPLOYEE',
-            account_status: (r[4] as any) || 'ACTIVE',
-            branch_scope: r[8] || 'ALL',
-            activated_by: r[5] || 'ADM_001',
-            activated_at: r[6] || new Date().toISOString(),
-            created_at: r[6] || new Date().toISOString(),
+            account_status: 'ACTIVE' as any,
+            branch_scope: 'ALL',
+            created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
-            version: Number(r[7]) || 1,
-            // 2 cột PIN appended ở cuối (tài khoản cũ chưa có -> PIN_NOT_SET cho đến khi HR cấp).
-            pin_hash: r[9] || undefined,
-            pin_must_change: r[10] === 'YES',
+            version: Number(r[5]) || 1,
+            // 2 cột PIN ở cuối (tài khoản cũ chưa có -> PIN_NOT_SET cho đến khi HR cấp).
+            pin_hash: r[6] || undefined,
+            pin_must_change: r[7] === 'YES',
           }));
       } else {
         fallback.accounts = [];
       }
 
       // TỰ ĐỘNG ĐỐI CHIẾU: Nhân viên có trong NHAN_VIEN_MASTER nhưng chưa có trong TAI_KHOAN_NHAN_VIEN
-      // -> Tự động sinh tài khoản để nhân viên đăng nhập được ngay bằng số điện thoại!
+      // -> Tự động sinh tài khoản ACTIVE để nhân viên đăng nhập ngay bằng SĐT + PIN do HR cấp!
       const existingPhones = new Set(fallback.accounts.map(a => a.phone_normalized).filter(Boolean));
       for (const emp of fallback.employees) {
         if (emp.phone_normalized && emp.phone_normalized.length >= 9 && !existingPhones.has(emp.phone_normalized)) {
@@ -364,10 +362,8 @@ export class GoogleSheetsSyncService {
             employee_id: emp.employee_id,
             phone_normalized: emp.phone_normalized,
             role: 'EMPLOYEE' as any,
-            account_status: (emp.employment_status === 'OFFICIAL' || emp.employment_status === 'PROBATION') ? 'ACTIVE' : 'PRE_ONBOARDING' as any,
+            account_status: 'ACTIVE' as any,
             branch_scope: emp.default_branch_id || 'ALL',
-            activated_by: 'AUTO_GOOGLE_SHEETS',
-            activated_at: new Date().toISOString(),
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
             version: 1,
@@ -464,21 +460,18 @@ export class GoogleSheetsSyncService {
       }
       counts.attendanceEvents = fallback.attendanceEvents.length;
 
-      // 7. Đọc ADMIN_ACCOUNTS (tài khoản quản trị thật từ Google Sheets)
+      // 7. Đọc ADMIN_ACCOUNTS (tài khoản quản trị thật từ Google Sheets — không còn cột Trạng Thái/Khóa)
       const adminRows = batch['ADMIN_ACCOUNTS'];
       if (adminRows.length > 0) {
         const currentAdmins = fallback.adminAccounts;
         const sheetsAdmins: AdminAccount[] = adminRows
           .filter(r => r[0] && r[1]) // phải có admin_id và username
           .map(r => {
-            // Hỗ trợ cả định dạng mới (8 cột có Mật Khẩu ở cột 2) và cũ (7 cột không có Mật Khẩu)
-            const hasPasswordCol = r.length >= 8;
-            const passwordFromSheet = hasPasswordCol ? r[2] : '';
-            const fullName = hasPasswordCol ? (r[3] || 'Quản trị viên') : (r[2] || 'Quản trị viên');
-            const role = hasPasswordCol ? (r[4] as any) : (r[3] as any);
-            const branchScope = hasPasswordCol ? (r[5] || '*') : (r[4] || '*');
-            const statusStr = hasPasswordCol ? r[6] : r[5];
-            const createdAt = hasPasswordCol ? r[7] : r[6];
+            const passwordFromSheet = r[2] || '';
+            const fullName = r[3] || 'Quản trị viên';
+            const role = (r[4] as any) || 'HR';
+            const branchScope = r[5] || '*';
+            const createdAt = r[6] || new Date().toISOString();
 
             const existingById = currentAdmins.find(a => a.admin_id === r[0]);
             const existingByUser = currentAdmins.find(a => a.username === r[1]);
@@ -499,7 +492,6 @@ export class GoogleSheetsSyncService {
               full_name: fullName,
               role: role || 'HR',
               branch_scope: branchScope || '*',
-              is_active: statusStr !== 'LOCKED',
               version: 1,
               created_at: createdAt || new Date().toISOString(),
               updated_at: new Date().toISOString(),
@@ -528,7 +520,6 @@ export class GoogleSheetsSyncService {
             bootstrapAdmin.full_name,
             bootstrapAdmin.role,
             bootstrapAdmin.branch_scope,
-            bootstrapAdmin.is_active ? 'ACTIVE' : 'LOCKED',
             bootstrapAdmin.created_at,
           ]).catch(err => console.warn('[GoogleSheetsSyncService] Could not auto-seed bootstrap admin:', err));
         }
@@ -866,7 +857,7 @@ export class GoogleSheetsSyncService {
     try {
       const details: any = {};
 
-      // 1. Admin Accounts
+      // 1. Admin Accounts (không còn cột Trạng Thái/Khóa)
       const admins = await repo.listAdminAccounts();
       const adminRows = admins.map(a => [
         a.admin_id,
@@ -875,7 +866,6 @@ export class GoogleSheetsSyncService {
         a.full_name,
         a.role,
         a.branch_scope || '*',
-        a.is_active ? 'ACTIVE' : 'LOCKED',
         a.created_at,
       ]);
       await this.overwriteSheetData('ADMIN_ACCOUNTS', SHEETS_DEFINITIONS.find(d => d.title === 'ADMIN_ACCOUNTS')!.headers, adminRows);
@@ -912,7 +902,7 @@ export class GoogleSheetsSyncService {
       await this.overwriteSheetData('NHAN_VIEN_MASTER', SHEETS_DEFINITIONS.find(d => d.title === 'NHAN_VIEN_MASTER')!.headers, employeeRows);
       details.employees = employeeRows.length;
 
-      // 4. Tài khoản nhân viên
+      // 4. Tài khoản nhân viên (không còn cột Người/Ngày Kích Hoạt)
       const accounts = await repo.listAccounts();
       const accountRows = accounts.map(acc => [
         acc.account_id,
@@ -920,8 +910,6 @@ export class GoogleSheetsSyncService {
         acc.phone_normalized,
         acc.role,
         acc.account_status,
-        acc.activated_by || '',
-        acc.activated_at || '',
         acc.version,
         acc.pin_hash || '',
         acc.pin_must_change ? 'YES' : '',

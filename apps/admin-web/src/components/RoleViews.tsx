@@ -2179,10 +2179,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             <button
                               className="btn-outline"
                               style={{ padding: '4px 10px', fontSize: '12px', color: needReset ? '#D97706' : '#0068FF', borderColor: needReset ? '#FCD34D' : '#BFDBFE', cursor: acc ? 'pointer' : 'not-allowed', opacity: acc ? 1 : 0.5 }}
-                              title={acc ? (needReset ? 'PIN đã gửi, NV chưa đổi — bấm để RESET gửi số mới' : 'Hệ thống tự sinh PIN mới và gửi qua Zalo tới SĐT nhân viên') : 'Chưa có tài khoản — kích hoạt ở tab Kích hoạt trước!'}
+                              title={acc ? (needReset ? 'PIN đã gửi, NV chưa đổi — bấm để RESET gửi số mới' : 'Hệ thống tự sinh PIN mới và gửi qua Zalo tới SĐT nhân viên') : 'Chưa có tài khoản — liên hệ HR để cấp PIN!'}
                               onClick={() => {
                                 if (!acc) {
-                                  showToast('Nhân viên chưa có tài khoản! Hãy kích hoạt ở tab "Kích hoạt tài khoản NV" trước.');
+                                  showToast('Nhân viên chưa có tài khoản! Liên hệ HR để cấp mã PIN.');
                                   return;
                                 }
                                 handleSendPinZalo(acc.accountId, emp.full_name, emp.phone_normalized || emp.phone);
@@ -2579,10 +2579,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             <button
                               className="btn-outline"
                               style={{ padding: '4px 10px', fontSize: '11px', color: needReset ? '#D97706' : '#0068FF', borderColor: needReset ? '#FCD34D' : '#BFDBFE', cursor: acc ? 'pointer' : 'not-allowed', opacity: acc ? 1 : 0.5 }}
-                              title={acc ? (needReset ? 'PIN đã gửi, NV chưa đổi — bấm để RESET gửi số mới' : 'Hệ thống tự sinh PIN mới và gửi qua Zalo tới SĐT nhân viên') : 'Chưa có tài khoản — kích hoạt ở tab Kích hoạt trước!'}
+                              title={acc ? (needReset ? 'PIN đã gửi, NV chưa đổi — bấm để RESET gửi số mới' : 'Hệ thống tự sinh PIN mới và gửi qua Zalo tới SĐT nhân viên') : 'Chưa có tài khoản — liên hệ HR để cấp PIN!'}
                               onClick={() => {
                                 if (!acc) {
-                                  showToast('Nhân viên chưa có tài khoản! Hãy kích hoạt ở tab "Kích hoạt tài khoản NV" trước.');
+                                  showToast('Nhân viên chưa có tài khoản! Liên hệ HR để cấp mã PIN.');
                                   return;
                                 }
                                 handleSendPinZalo(acc.accountId, emp.full_name, emp.phone_normalized || emp.phone);

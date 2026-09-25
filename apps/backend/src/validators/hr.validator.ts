@@ -14,21 +14,6 @@ import {
   shortId,
 } from './common.js';
 
-// --- Employee accounts ---
-export const activateAccountBody = z.object({
-  expectedVersion,
-});
-
-export const bulkActivateBody = z.object({
-  // ID tài khoản (hoặc employee_id/SĐT nếu chưa có tài khoản — backend tự đối chiếu).
-  accountIds: z.array(z.string().trim().min(1).max(64)).min(1).max(200),
-});
-
-export const revokeAccountBody = z.object({
-  expectedVersion,
-  status: z.enum(['PENDING_ACTIVATION', 'ACTIVE', 'SUSPENDED', 'REVOKED']).default('REVOKED'),
-});
-
 // --- Employees ---
 // Handler hỗ trợ cả camelCase + snake_case và tự default, nên schema chỉ
 // khóa kiểu/chặn payload quá khổ, dùng passthrough để không mất field lạ.

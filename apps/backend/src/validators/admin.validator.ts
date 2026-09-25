@@ -14,7 +14,6 @@ export const internalAccountCreateBody = z
     full_name: optString(100),
     role: optString(32),
     branch_scope: optString(32),
-    is_active: z.boolean().optional(),
   })
   .passthrough()
   .superRefine((v, ctx) => {
@@ -36,7 +35,6 @@ export const internalAccountUpdateBody = z
     full_name: optString(100),
     role: optString(32),
     branch_scope: optString(32),
-    is_active: z.boolean().optional(),
   })
   .passthrough()
   .superRefine((v, ctx) => {

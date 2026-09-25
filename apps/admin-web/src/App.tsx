@@ -61,7 +61,7 @@ import {
 
 export interface LiveToastItem {
   id: string;
-  type?: 'CHECKIN' | 'CHECKOUT' | 'LEAVE' | 'SWAP' | 'PIN_CHANGED' | 'PIN_SENT' | 'ACCOUNT_ACTIVATED' | 'INFO' | 'WARNING';
+  type?: 'CHECKIN' | 'CHECKOUT' | 'LEAVE' | 'SWAP' | 'PIN_CHANGED' | 'PIN_SENT' | 'INFO' | 'WARNING';
   title: string;
   message: string;
   linkTab?: string;
@@ -81,7 +81,7 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
   ADMIN: [
     { id: 'dashboard', label: '1. Dashboard', icon: Building2 },
     { id: 'internal-accounts', label: '2. Tài khoản & Phân quyền', icon: Shield },
-    { id: 'activation', label: '3. Kích hoạt tài khoản NV', icon: FileCheck },
+    { id: 'activation', label: '3. PIN & TK Nhân viên', icon: FileCheck },
     { id: 'employees', label: '4. Quản lý Nhân viên', icon: Users },
     { id: 'branches', label: '5. Chi nhánh & Ca làm', icon: Calendar },
     { id: 'policies', label: '6. Chính sách hệ thống', icon: Sliders },
@@ -95,7 +95,7 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
   ],
   HR: [
     { id: 'hr-dashboard', label: '1. Dashboard HR', icon: Building2 },
-    { id: 'activation', label: '2. Kích hoạt & TK Nhân viên', icon: FileCheck },
+    { id: 'activation', label: '2. PIN & TK Nhân viên', icon: FileCheck },
     { id: 'hr-candidates', label: '3. Ứng viên mới', icon: UserCheck },
     { id: 'hr-interviews', label: '4. Phỏng vấn & BOT Zalo', icon: Calendar },
     { id: 'hr-probation', label: '5. Nhân viên Thử việc', icon: Users },
@@ -345,13 +345,12 @@ export function App() {
     }, toast.duration || 6000);
   };
 
-  const showToast = (msg: string, type: 'INFO' | 'WARNING' | 'ACCOUNT_ACTIVATED' = 'INFO', customTitle?: string) => {
+  const showToast = (msg: string, type: 'INFO' | 'WARNING' = 'INFO', customTitle?: string) => {
     const isWarn = msg.includes('⚠️') || msg.toLowerCase().includes('lỗi') || type === 'WARNING';
     let title = customTitle || (isWarn ? '⚠️ Cảnh Báo Hệ Thống' : '✨ Thao Tác Thành Công');
     if (!customTitle && !isWarn) {
       const lower = msg.toLowerCase();
       if (lower.includes('đồng bộ') || lower.includes('tải và cập nhật')) title = '⚡ Đồng Bộ Google Sheets Thành Công';
-      else if (lower.includes('kích hoạt')) title = '⚡ Kích Hoạt Tài Khoản Thành Công';
       else if (lower.includes('pin')) title = '🔑 Cấp & Gửi PIN Zalo';
       else if (lower.includes('sao lưu') || lower.includes('snapshot')) title = '💾 Bản Sao Lưu Snapshot';
       else if (lower.includes('khôi phục') || lower.includes('phục hồi')) title = '🔄 Phục Hồi Dữ Liệu';
@@ -409,8 +408,8 @@ export function App() {
     recipientIds: 'ALL',
   });
 
-  // Sub-tabs for Module 3: Kích Hoạt & Quản Lý Tài Khoản Nhân Viên (Mặc định 'ALL' để luôn hiển thị đầy đủ nhân sự hệ thống)
-  const [activationSubTab, setActivationSubTab] = useState<'ALL' | 'NEW' | 'PROBATION' | 'OFFICIAL' | 'VAN_PHONG' | 'XUONG' | 'SALE' | 'SUSPENDED'>('ALL');
+  // Sub-tabs for Module 3: PIN & Tài Khoản Nhân Viên (Mặc định 'ALL' để luôn hiển thị đầy đủ nhân sự hệ thống)
+  const [activationSubTab, setActivationSubTab] = useState<'ALL' | 'PROBATION' | 'OFFICIAL' | 'VAN_PHONG' | 'XUONG' | 'SALE'>('ALL');
 
   // Modal & Form for Module 4: Thêm Hồ Sơ Nhân Viên Mới (Ràng buộc: UBM_NV0000 random từ 0000 đến 9999)
   const [showNewEmpModal, setShowNewEmpModal] = useState(false);
@@ -761,7 +760,6 @@ export function App() {
         scheduleReload(currentUser);
       });
 
-      socket.on('account.activated', () => scheduleReload(currentUser));
       socket.on('schedule.published', () => scheduleReload(currentUser));
       socket.on('attendance.recorded', () => scheduleReload(currentUser));
       socket.on('payroll.published', () => scheduleReload(currentUser));
@@ -799,61 +797,7 @@ export function App() {
   }, [currentUser?.id]);
 
   // Action handlers
-  const handleActivateEmpAccount = async (id: string, ver: number) => {
-    try {
-      await apiRequest(`/admin/employee-accounts/${id}/activate`, {
-        method: 'POST',
-        body: JSON.stringify({ expectedVersion: ver }),
-      });
-      setSuccessMsg('Kích hoạt tài khoản nhân viên thành công!');
-      setTimeout(() => setSuccessMsg(null), 3000);
-      await loadAllData();
-    } catch (err: any) {
-      setErrorMsg(err.message);
-    }
-  };
-
-  const handleRevokeEmpAccount = async (id: string, ver: number, status: 'SUSPENDED' | 'REVOKED') => {
-    try {
-      await apiRequest(`/admin/employee-accounts/${id}/revoke`, {
-        method: 'POST',
-        body: JSON.stringify({ expectedVersion: ver, status }),
-      });
-      setSuccessMsg(`Đã chuyển trạng thái tài khoản thành ${status}!`);
-      setTimeout(() => setSuccessMsg(null), 3000);
-      await loadAllData();
-    } catch (err: any) {
-      setErrorMsg(err.message);
-    }
-  };
-
-  // HR kích hoạt TẤT CẢ tài khoản trong sub-tab hiện tại (Thử việc / Chính thức /
-  // Xưởng / Văn phòng / Sales). Dòng trùng SĐT tự bỏ qua, báo riêng để đối soát.
-  const handleBulkActivate = async (items: any[], tabLabel: string) => {
-    const targets = items.filter(i => i.accountStatus !== 'ACTIVE');
-    if (targets.length === 0) {
-      setSuccessMsg('Không còn tài khoản nào cần kích hoạt trong tab này!');
-      setTimeout(() => setSuccessMsg(null), 3000);
-      return;
-    }
-    if (!window.confirm(`Kích hoạt TẤT CẢ ${targets.length} tài khoản trong tab "${tabLabel}"?\nDòng trùng SĐT sẽ tự bỏ qua để đối soát sau.`)) {
-      return;
-    }
-    try {
-      const res = await apiRequest('/admin/employee-accounts/bulk-activate', {
-        method: 'POST',
-        body: JSON.stringify({ accountIds: targets.map(t => t.hasRealAccount ? t.accountId : t.id) }),
-      });
-      const failNote = res.failed?.length ? ` (${res.failed.length} dòng trùng SĐT bị bỏ qua)` : '';
-      setSuccessMsg(`✅ Đã kích hoạt ${res.activatedCount}/${targets.length} tài khoản${failNote}!`);
-      setTimeout(() => setSuccessMsg(null), 5000);
-      await loadAllData();
-    } catch (err: any) {
-      setErrorMsg(err.message);
-    }
-  };
-
-  // HR gửi PIN Zalo TẤT CẢ nhân viên ACTIVE trong sub-tab (chạy tuần tự từng người
+  // HR gửi PIN Zalo TẤT CẢ nhân viên trong sub-tab (chạy tuần tự từng người
   // để Zalo không chặn spam + hiện tiến trình realtime). Chỉ tài khoản HR.
   const [bulkPinProgress, setBulkPinProgress] = useState<null | {
     total: number;
@@ -995,20 +939,6 @@ export function App() {
     }
   };
 
-  const handleToggleInternalAccount = async (account: any) => {
-    try {
-      await apiRequest(`/admin/internal-accounts/${account.admin_id}`, {
-        method: 'PUT',
-        body: JSON.stringify({ is_active: !account.is_active }),
-      });
-      setSuccessMsg(`Đã ${account.is_active ? 'khóa' : 'mở khóa'} tài khoản ${account.username}!`);
-      setTimeout(() => setSuccessMsg(null), 3000);
-      await loadAllData();
-    } catch (err: any) {
-      setErrorMsg(err.message);
-    }
-  };
-
   const handleDeleteInternalAccount = async (adminId: string, username: string) => {
     if (adminId === 'ADM_001' || username === 'admin') {
       setErrorMsg('Không thể xóa tài khoản Quản trị viên gốc (admin)!');
@@ -1052,7 +982,6 @@ export function App() {
           role: newAdminForm.role,
           branch_scope: newAdminForm.branch_scope,
           password_hash: newAdminForm.password,
-          is_active: true,
         }),
       });
       setShowNewAdminModal(false);
@@ -1216,11 +1145,8 @@ export function App() {
         displayBranch: getDisplayBranch(emp.default_branch_id, emp.group),
         // Khóa màu theo nhóm thật (không so chuỗi hiển thị vì không bao giờ khớp).
         branchKind: emp.group === 'VAN_PHONG' || emp.group === 'SALE' ? 'HQ' : emp.group === 'XUONG' ? 'FACTORY' : 'STORE',
-        // Dữ liệu thật: chưa có tài khoản thì báo NO_ACCOUNT, KHÔNG giả ACTIVE.
-        accountStatus: acc?.account_status || 'NO_ACCOUNT',
-        activatedAt: acc?.activated_at,
-        activatedBy: acc?.activated_by,
-        revokedAt: acc?.revoked_at,
+        // Dữ liệu thật: chưa có tài khoản thì báo NO_ACCOUNT (chờ HR cấp PIN), có tài khoản là ACTIVE.
+        accountStatus: acc ? 'ACTIVE' : 'NO_ACCOUNT',
         version: acc?.version || emp.version || 1,
         hasRealAccount: !!acc,
         // PIN đã gửi qua Zalo, NV chưa đổi -> hiển thị nút Reset + trạng thái khóa
@@ -1241,10 +1167,7 @@ export function App() {
           employmentStatus: 'PRE_ONBOARDING',
           displayBranch: getDisplayBranch(acc.branch_scope),
           branchKind: 'STORE',
-          accountStatus: acc.account_status,
-          activatedAt: acc.activated_at,
-          activatedBy: acc.activated_by,
-          revokedAt: acc.revoked_at,
+          accountStatus: 'ACTIVE',
           version: acc.version || 1,
           hasRealAccount: true,
           pinMustChange: acc.pin_must_change === true,
@@ -1268,12 +1191,10 @@ export function App() {
 
   const filteredActivationItems = useMemo(() => {
     return activationDataList.filter(item => {
-      // Sub-tab filter
+      // Sub-tab filter (không còn tab Chờ kích hoạt / Tạm khóa — PIN là cửa duy nhất)
       let matchSubTab = true;
       if (activationSubTab === 'ALL') {
         matchSubTab = true;
-      } else if (activationSubTab === 'NEW') {
-        matchSubTab = item.employmentStatus === 'PRE_ONBOARDING' || item.accountStatus === 'PENDING_ACTIVATION' || item.accountStatus === 'NO_ACCOUNT';
       } else if (activationSubTab === 'PROBATION') {
         matchSubTab = item.employmentStatus === 'PROBATION';
       } else if (activationSubTab === 'OFFICIAL') {
@@ -1284,8 +1205,6 @@ export function App() {
         matchSubTab = item.group === 'XUONG';
       } else if (activationSubTab === 'SALE') {
         matchSubTab = item.group === 'SALE';
-      } else if (activationSubTab === 'SUSPENDED') {
-        matchSubTab = item.accountStatus === 'SUSPENDED' || item.accountStatus === 'REVOKED';
       }
 
       // Search filter
@@ -1301,13 +1220,11 @@ export function App() {
   }, [activationDataList, activationSubTab, accountSearch]);
 
   const countAll = activationDataList.length;
-  const countNew = activationDataList.filter(i => i.employmentStatus === 'PRE_ONBOARDING' || i.accountStatus === 'PENDING_ACTIVATION' || i.accountStatus === 'NO_ACCOUNT').length;
   const countProbation = activationDataList.filter(i => i.employmentStatus === 'PROBATION').length;
   const countOfficial = activationDataList.filter(i => i.employmentStatus === 'OFFICIAL').length;
   const countOffice = activationDataList.filter(i => i.group === 'VAN_PHONG').length;
   const countFactory = activationDataList.filter(i => i.group === 'XUONG').length;
   const countSales = activationDataList.filter(i => i.group === 'SALE').length;
-  const countSuspended = activationDataList.filter(i => i.accountStatus === 'SUSPENDED' || i.accountStatus === 'REVOKED').length;
 
   // Filtered employee accounts (legacy fallback)
   const filteredAccounts = employeeAccounts.filter(acc => {
@@ -1967,8 +1884,7 @@ export function App() {
                                notif.type === 'LEAVE' ? '📝' :
                                notif.type === 'SWAP' ? '🤝' :
                                notif.type === 'PIN_CHANGED' ? '🔑' :
-                               notif.type === 'PIN_SENT' ? '📩' :
-                               notif.type === 'ACCOUNT_ACTIVATED' ? '⚡' : '📢'}
+                               notif.type === 'PIN_SENT' ? '📩' : '📢'}
                             </div>
                             <div style={{ flex: 1 }}>
                               <div style={{ fontSize: '12.5px', fontWeight: 700, color: 'var(--text)', marginBottom: '2px' }}>
@@ -2044,7 +1960,7 @@ export function App() {
           width: '100%',
         }}>
           {liveToasts.map((toast) => {
-            const isSuccess = toast.type === 'ACCOUNT_ACTIVATED' || toast.type === 'PIN_SENT';
+            const isSuccess = toast.type === 'PIN_SENT';
             const isCheckIn = toast.type === 'CHECKIN';
             const isLeave = toast.type === 'LEAVE';
             const isSwap = toast.type === 'SWAP';
@@ -2244,11 +2160,11 @@ export function App() {
               {/* Row 2: Secondary KPIs & System Health */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
                 <div style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', boxShadow: 'var(--shadow-soft)' }}>
-                  <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>CHỜ KÍCH HOẠT SĐT</div>
-                  <div style={{ fontSize: '28px', fontWeight: 800, color: dashboardStats?.kpis?.pendingActivationCount > 0 ? 'var(--danger)' : 'var(--success)', marginTop: '6px' }}>
-                    {dashboardStats?.kpis?.pendingActivationCount ?? 0}
+                  <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>CHỜ NV ĐỔI PIN</div>
+                  <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--success)', marginTop: '6px' }}>
+                    {employeeAccounts.filter((a: any) => a.pin_must_change).length}
                   </div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Cần Admin/HR kích hoạt</div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>PIN HR đã cấp, NV chưa đổi</div>
                 </div>
 
                 <div style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', boxShadow: 'var(--shadow-soft)' }}>
@@ -2409,7 +2325,6 @@ export function App() {
                       <th style={{ padding: '12px 20px' }}>Họ Và Tên</th>
                       <th style={{ padding: '12px 20px' }}>Vai Trò (Role)</th>
                       <th style={{ padding: '12px 20px' }}>Phạm Vi Chi Nhánh</th>
-                      <th style={{ padding: '12px 20px' }}>Trạng Thái</th>
                       <th style={{ padding: '12px 20px' }}>Thao Tác</th>
                     </tr>
                   </thead>
@@ -2432,34 +2347,7 @@ export function App() {
                           </span>
                         </td>
                         <td style={{ padding: '14px 20px', fontWeight: 600 }}>{acc.branch_scope === '*' ? 'Toàn Hệ Thống (*)' : acc.branch_scope}</td>
-                        <td style={{ padding: '14px 20px' }}>
-                          <span style={{
-                            padding: '4px 8px',
-                            borderRadius: 'var(--radius-full)',
-                            fontSize: '11px',
-                            fontWeight: 700,
-                            backgroundColor: acc.is_active ? 'var(--success-soft)' : 'var(--danger-soft)',
-                            color: acc.is_active ? 'var(--success)' : 'var(--danger)',
-                          }}>
-                            {acc.is_active ? 'Đang Hoạt Động' : 'Đã Khóa'}
-                          </span>
-                        </td>
                         <td style={{ padding: '14px 20px', display: 'flex', gap: '8px', alignItems: 'center' }}>
-                          <button
-                            onClick={() => handleToggleInternalAccount(acc)}
-                            style={{
-                              padding: '6px 12px',
-                              borderRadius: 'var(--radius-sm)',
-                              border: acc.is_active ? '1px solid var(--danger)' : '1px solid var(--success)',
-                              backgroundColor: 'transparent',
-                              color: acc.is_active ? 'var(--danger)' : 'var(--success)',
-                              fontWeight: 600,
-                              fontSize: '12px',
-                              cursor: 'pointer',
-                            }}
-                          >
-                            {acc.is_active ? 'Khóa' : 'Mở Khóa'}
-                          </button>
                           {acc.admin_id !== 'ADM_001' && acc.username !== 'admin' && (
                             <button
                               onClick={() => handleDeleteInternalAccount(acc.admin_id, acc.username)}
@@ -2487,16 +2375,16 @@ export function App() {
           )}
 
           {/* ========================================================= */}
-          {/* MODULE 3: KÍCH HOẠT TÀI KHOẢN NHÂN VIÊN (6 SUB-TABS) */}
+          {/* MODULE 3: PIN & TÀI KHOẢN NHÂN VIÊN (6 SUB-TABS) */}
           {/* ========================================================= */}
           {activeTab === 'activation' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               <div>
-                <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>3. Kích Hoạt & Quản Lý Tài Khoản Nhân Viên</h1>
-                <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Phân nhóm theo 6 tab nghiệp vụ: Nhân viên mới, Thử việc, Chính thức, Văn Phòng, Xưởng, Sales. Phê duyệt kích hoạt để nhân viên tự động đăng nhập trên Cổng Employee Web.</p>
+                <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>3. PIN & Quản Lý Tài Khoản Nhân Viên</h1>
+                <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Phân nhóm theo 6 tab nghiệp vụ: Tất cả, Thử việc, Chính thức, Văn Phòng, Xưởng, Sales. Nhân viên đăng nhập trên Cổng Employee Web bằng SĐT + mã PIN do HR cấp.</p>
               </div>
 
-              {/* 6 Sub-Tabs for Activation & Account Management */}
+              {/* 6 Sub-Tabs for PIN & Account Management */}
               <div style={{
                 display: 'flex',
                 gap: '8px',
@@ -2506,13 +2394,11 @@ export function App() {
               }}>
                 {[
                   { key: 'ALL', label: 'Tất cả nhân sự', count: countAll, icon: '🌟' },
-                  { key: 'NEW', label: 'Chờ kích hoạt', count: countNew, icon: '⏳' },
                   { key: 'PROBATION', label: 'Thử việc', count: countProbation, icon: '📝' },
                   { key: 'OFFICIAL', label: 'Chính thức', count: countOfficial, icon: '💼' },
                   { key: 'VAN_PHONG', label: 'Văn Phòng', count: countOffice, icon: '🏢' },
                   { key: 'XUONG', label: 'Xưởng', count: countFactory, icon: '🏭' },
                   { key: 'SALE', label: 'Sales', count: countSales, icon: '📈' },
-                  { key: 'SUSPENDED', label: 'Tạm khóa', count: countSuspended, icon: '🔒' },
                 ].map(t => {
                   const isActive = activationSubTab === t.key;
                   return (
@@ -2580,11 +2466,9 @@ export function App() {
                   />
                   <Search size={16} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
                 </div>
-                {['HR', 'ADMIN'].includes(currentUser?.role || '') && activationSubTab !== 'SUSPENDED' && (() => {
-                  const pending = filteredActivationItems.filter(i => i.accountStatus !== 'ACTIVE');
+                {['HR', 'ADMIN'].includes(currentUser?.role || '') && (() => {
                   const tabLabel: Record<string, string> = {
                     ALL: 'Tất cả nhân sự',
-                    NEW: 'Chờ kích hoạt',
                     PROBATION: 'Thử việc',
                     OFFICIAL: 'Chính thức',
                     XUONG: 'Xưởng',
@@ -2593,34 +2477,14 @@ export function App() {
                   };
                   const label = tabLabel[activationSubTab] || activationSubTab;
                   const pinTargets = filteredActivationItems.filter(i =>
-                    (i.hasRealAccount && i.accountStatus === 'ACTIVE') ||
-                    (i.accountId && i.accountStatus === 'ACTIVE')
+                    i.accountId
                   );
                   return (
                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                       <button
-                        onClick={() => handleBulkActivate(filteredActivationItems, label)}
-                        disabled={pending.length === 0}
-                        title={pending.length === 0 ? 'Không còn tài khoản cần kích hoạt' : `Kích hoạt tất cả ${pending.length} tài khoản chưa ACTIVE trong tab này`}
-                        style={{
-                          padding: '8px 16px',
-                          borderRadius: 'var(--radius-sm)',
-                          backgroundColor: pending.length === 0 ? '#E5E7EB' : 'var(--success)',
-                          color: pending.length === 0 ? '#6B7280' : '#FFF',
-                          fontWeight: 700,
-                          fontSize: '13px',
-                          border: 'none',
-                          cursor: pending.length === 0 ? 'not-allowed' : 'pointer',
-                          whiteSpace: 'nowrap',
-                          boxShadow: pending.length > 0 ? '0 2px 6px rgba(16, 185, 129, 0.25)' : 'none',
-                        }}
-                      >
-                        ⚡ Kích Hoạt Tất Cả ({pending.length})
-                      </button>
-                      <button
                         onClick={() => handleBulkSendPinZalo(filteredActivationItems, label)}
                         disabled={pinTargets.length === 0}
-                        title={pinTargets.length === 0 ? 'Không có tài khoản ACTIVE để gửi PIN' : `Gửi PIN qua Zalo cho tất cả ${pinTargets.length} tài khoản ACTIVE trong tab này`}
+                        title={pinTargets.length === 0 ? 'Không có tài khoản để gửi PIN' : `Gửi PIN qua Zalo cho tất cả ${pinTargets.length} tài khoản trong tab này`}
                         style={{
                           padding: '8px 16px',
                           borderRadius: 'var(--radius-sm)',
@@ -2644,7 +2508,7 @@ export function App() {
                 </div>
               </div>
 
-              {/* Unified Activation & Account Table */}
+              {/* Unified PIN & Account Table */}
               <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                   <thead>
@@ -2655,15 +2519,14 @@ export function App() {
                       <th style={{ padding: '12px 20px' }}>Khối / Bộ Phận</th>
                       <th style={{ padding: '12px 20px' }}>Chi Nhánh</th>
                       <th style={{ padding: '12px 20px' }}>Giai Đoạn</th>
-                      <th style={{ padding: '12px 20px' }}>Trạng Thái TK</th>
-                      <th style={{ padding: '12px 20px' }}>Lịch Sử Kích Hoạt</th>
+                      <th style={{ padding: '12px 20px' }}>Trạng Thái PIN</th>
                       <th style={{ padding: '12px 20px' }}>Thao Tác</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredActivationItems.length === 0 ? (
                       <tr>
-                        <td colSpan={9} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                        <td colSpan={8} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
                           Không có nhân sự nào trong tab này hoặc không khớp với tìm kiếm.
                         </td>
                       </tr>
@@ -2688,7 +2551,7 @@ export function App() {
                           <td style={{ padding: '14px 20px', fontWeight: 600 }}>
                             {item.phone}
                             {item.isDuplicatePhone && (
-                              <span title="SĐT này đang dùng chung cho nhiều hồ sơ! Đối soát trước khi kích hoạt — đăng nhập sẽ bị từ chối." style={{
+                              <span title="SĐT này đang dùng chung cho nhiều hồ sơ! Đối soát trước khi cấp PIN — đăng nhập sẽ bị từ chối." style={{
                                 marginLeft: '6px',
                                 padding: '2px 7px',
                                 borderRadius: '999px',
@@ -2758,18 +2621,11 @@ export function App() {
                               fontSize: '11px',
                               fontWeight: 700,
                               backgroundColor:
-                                item.accountStatus === 'ACTIVE' ? 'var(--success-soft)' :
-                                item.accountStatus === 'PENDING_ACTIVATION' ? 'var(--warning-soft)' :
-                                item.accountStatus === 'NO_ACCOUNT' ? '#F1F5F9' : 'var(--danger-soft)',
+                                item.accountStatus === 'ACTIVE' ? 'var(--success-soft)' : '#F1F5F9',
                               color:
-                                item.accountStatus === 'ACTIVE' ? 'var(--success)' :
-                                item.accountStatus === 'PENDING_ACTIVATION' ? '#92400E' :
-                                item.accountStatus === 'NO_ACCOUNT' ? '#64748B' : 'var(--danger)',
+                                item.accountStatus === 'ACTIVE' ? 'var(--success)' : '#64748B',
                             }}>
-                              {item.accountStatus === 'ACTIVE' ? 'Đã Kích Hoạt' :
-                               item.accountStatus === 'PENDING_ACTIVATION' ? 'Chờ Kích Hoạt' :
-                               item.accountStatus === 'NO_ACCOUNT' ? 'Chưa Có TK' :
-                               item.accountStatus === 'SUSPENDED' ? 'Tạm Khóa' : 'Đã Thu Hồi'}
+                              {item.accountStatus === 'ACTIVE' ? 'Có Tài Khoản' : 'Chưa Có TK'}
                               {item.pinMustChange ? ' 🔒' : ''}
                             </span>
                             {item.pinMustChange && (
@@ -2778,18 +2634,13 @@ export function App() {
                               </div>
                             )}
                           </td>
-                          <td style={{ padding: '14px 20px', fontSize: '11px', color: 'var(--text-muted)' }}>
-                            {item.activatedAt ? `Kích hoạt: ${new Date(item.activatedAt).toLocaleDateString('vi-VN')} (${item.activatedBy || 'Admin'})` :
-                             item.revokedAt ? `Khóa: ${new Date(item.revokedAt).toLocaleDateString('vi-VN')}` : 'Chưa kích hoạt'}
-                          </td>
                           <td style={{ padding: '14px 20px' }}>
                             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                              {/* Quy chế: HR kích hoạt + PIN; ADMIN chỉ KHÓA */}
                               {currentUser?.role === 'HR' && (
                               <button
                                 onClick={() => handleSetEmpPin(item.accountId, item.fullName || item.phone)}
                                 disabled={!item.hasRealAccount}
-                                title={item.hasRealAccount ? 'Cấp mới hoặc RESET khi nhân viên quên PIN (PIN cũ vô hiệu ngay, NV bắt đổi lần sau)' : 'Kích hoạt tài khoản trước khi cấp PIN!'}
+                                title={item.hasRealAccount ? 'Cấp mới hoặc RESET khi nhân viên quên PIN (PIN cũ vô hiệu ngay, NV bắt đổi lần sau)' : 'Chưa có tài khoản cho hồ sơ này!'}
                                 style={{
                                   padding: '6px 12px',
                                   borderRadius: 'var(--radius-sm)',
@@ -2809,7 +2660,7 @@ export function App() {
                               <button
                                 onClick={() => handleSendPinZalo(item.accountId, item.fullName || item.phone, item.phone)}
                                 disabled={!item.hasRealAccount}
-                                title={item.hasRealAccount ? (item.pinMustChange ? 'PIN đã gửi, NV chưa đổi — bấm để RESET gửi số mới (PIN cũ vô hiệu ngay)' : 'Hệ thống tự sinh PIN mới và gửi qua Zalo tới SĐT nhân viên (cần BOT Zalo đã kết nối)') : 'Kích hoạt tài khoản trước!'}
+                                title={item.hasRealAccount ? (item.pinMustChange ? 'PIN đã gửi, NV chưa đổi — bấm để RESET gửi số mới (PIN cũ vô hiệu ngay)' : 'Hệ thống tự sinh PIN mới và gửi qua Zalo tới SĐT nhân viên (cần BOT Zalo đã kết nối)') : 'Chưa có tài khoản cho hồ sơ này!'}
                                 style={{
                                   padding: '6px 12px',
                                   borderRadius: 'var(--radius-sm)',
@@ -2825,43 +2676,6 @@ export function App() {
                                 {item.pinMustChange ? '🔄 Reset PIN Zalo' : '📩 Gửi PIN Zalo'}
                               </button>
                               )}
-                              {item.accountStatus !== 'ACTIVE' && ['HR', 'ADMIN'].includes(currentUser?.role || '') ? (
-                                <button
-                                  onClick={() => handleActivateEmpAccount(item.hasRealAccount ? item.accountId : item.id, item.version)}
-                                  disabled={item.isDuplicatePhone}
-                                  title={item.isDuplicatePhone ? 'SĐT đang trùng — đối soát (xóa/sửa hồ sơ trùng) trước khi kích hoạt!' : 'Kích hoạt tài khoản'}
-                                  style={{
-                                    padding: '6px 12px',
-                                    borderRadius: 'var(--radius-sm)',
-                                    backgroundColor: item.isDuplicatePhone ? '#E5E7EB' : 'var(--success)',
-                                    color: item.isDuplicatePhone ? '#6B7280' : '#FFF',
-                                    fontWeight: 600,
-                                    fontSize: '12px',
-                                    border: 'none',
-                                    cursor: item.isDuplicatePhone ? 'not-allowed' : 'pointer',
-                                    boxShadow: item.isDuplicatePhone ? 'none' : '0 2px 4px rgba(16, 185, 129, 0.2)',
-                                  }}
-                                >
-                                  {item.isDuplicatePhone ? '🔒 Trùng SĐT' : 'Kích Hoạt Ngay'}
-                                </button>
-                              ) : currentUser?.role === 'ADMIN' ? (
-                                <button
-                                  onClick={() => handleRevokeEmpAccount(item.accountId, item.version, 'SUSPENDED')}
-                                  title="ADMIN chỉ có quyền KHÓA tài khoản"
-                                  style={{
-                                    padding: '6px 12px',
-                                    borderRadius: 'var(--radius-sm)',
-                                    backgroundColor: 'transparent',
-                                    border: '1px solid var(--danger)',
-                                    color: 'var(--danger)',
-                                    fontWeight: 600,
-                                    fontSize: '12px',
-                                    cursor: 'pointer',
-                                  }}
-                                >
-                                  🔒 Khóa
-                                </button>
-                              ) : null}
                             </div>
                           </td>
                         </tr>
@@ -4200,7 +4014,7 @@ export function App() {
                   onChange={(e) => setNewEmpForm({ ...newEmpForm, employmentStatus: e.target.value as any })}
                   style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px' }}
                 >
-                  <option value="PRE_ONBOARDING">Nhân viên mới (Chờ kích hoạt tài khoản)</option>
+                  <option value="PRE_ONBOARDING">Nhân viên mới (Chờ HR cấp PIN)</option>
                   <option value="PROBATION">Thử việc (Lương 23.000 đ/h)</option>
                   <option value="OFFICIAL">Chính thức (Lương 25.000 đ/h)</option>
                 </select>

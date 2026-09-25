@@ -39,14 +39,12 @@ import {
   refreshBody,
 } from './validators/auth.validator.js';
 import {
-  activateAccountBody,
   adjustmentApproveBody,
   adjustmentCreateBody,
   adjustmentsQuery,
   announcementBody,
   attendanceEventBody,
   attendanceEventsQuery,
-  bulkActivateBody,
   bulkImportBody,
   candidateImportBody,
   checkinBody,
@@ -67,7 +65,6 @@ import {
   payrollRunParams,
   publishWeekBody,
   publishWeekParams,
-  revokeAccountBody,
   schedulesQuery,
   shiftCreateBody,
   swapApproveBody,
@@ -145,7 +142,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   // Realtime Rich Notification Dispatcher (Gửi thông báo có âm thanh + hiệu ứng cho Admin & HR)
   const broadcastNotification = (notif: {
-    type: 'CHECKIN' | 'CHECKOUT' | 'LEAVE' | 'SWAP' | 'PIN_CHANGED' | 'PIN_SENT' | 'ACCOUNT_ACTIVATED' | 'CANDIDATE' | 'SYSTEM' | 'INFO';
+    type: 'CHECKIN' | 'CHECKOUT' | 'LEAVE' | 'SWAP' | 'PIN_CHANGED' | 'PIN_SENT' | 'CANDIDATE' | 'SYSTEM' | 'INFO';
     title: string;
     message: string;
     linkTab?: string;
@@ -320,99 +317,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  // Quy chế phân quyền: ADMIN khóa + kích hoạt tài khoản; HR kích hoạt + cấp/reset PIN.
-  app.post('/admin/employee-accounts/:id/activate', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams, body: activateAccountBody }), async (req: AuthenticatedRequest, res) => {
-    try {
-      const accountId = req.params.id;
-      const expectedVersion = req.body.expectedVersion || 1;
-      const idempotencyKey = req.headers['idempotency-key'] as string;
-      const result = await accountsService.activateAccount(
-        accountId,
-        req.user!.id,
-        expectedVersion,
-        idempotencyKey
-      );
-      broadcastUpdate('accounts', { action: 'activate', accountId });
-      const actEmp = await employeesService.getEmployee(result.result.employee_id).catch(() => null);
-      broadcastNotification({
-        type: 'ACCOUNT_ACTIVATED',
-        title: '⚡ Kích Hoạt Tài Khoản Thành Công',
-        message: `Tài khoản ${actEmp?.full_name || accountId} (${result.result.phone_normalized || ''}) đã kích hoạt ACTIVE!`,
-        linkTab: 'employee-accounts',
-        metadata: { accountId },
-        targetRoles: ['ADMIN', 'HR'],
-      });
-      res.json(result);
-    } catch (err: any) {
-      res.status(400).json({ error: err.message });
-    }
-  });
-
-  // Kích hoạt hàng loạt theo sub-tab (Thử việc / Chính thức / Xưởng / Văn phòng / Sales).
-  // Bỏ qua dòng trùng SĐT (ghi vào failed để HR đối soát), các dòng sạch vẫn kích hoạt.
-  app.post('/admin/employee-accounts/bulk-activate', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ body: bulkActivateBody }), async (req: AuthenticatedRequest, res) => {
-    try {
-      const activated: string[] = [];
-      const failed: { id: string; error: string }[] = [];
-      for (const accountId of req.body.accountIds) {
-        try {
-          // Với dòng chưa có tài khoản, frontend gửi employee_id — backend tự đối chiếu/tạo.
-          const target = await adapter.getAccountById(accountId)
-            || await adapter.getEmployeeById(accountId);
-          const key = target && 'account_id' in (target as any)
-            ? (target as any).account_id
-            : accountId;
-          await accountsService.activateAccount(key, req.user!.id, 1);
-          activated.push(key);
-        } catch (e: any) {
-          failed.push({ id: accountId, error: e.message });
-        }
-      }
-      broadcastUpdate('accounts', { action: 'bulk-activate', count: activated.length });
-      if (activated.length > 0) {
-        broadcastNotification({
-          type: 'ACCOUNT_ACTIVATED',
-          title: '⚡ Kích Hoạt Hàng Loạt Hoàn Tất',
-          message: `Đã kích hoạt thành công ${activated.length} tài khoản nhân viên vào hệ thống!`,
-          linkTab: 'employee-accounts',
-          metadata: { count: activated.length },
-          targetRoles: ['ADMIN', 'HR'],
-        });
-      }
-      res.json({ success: true, activatedCount: activated.length, activated, failed });
-    } catch (err: any) {
-      res.status(400).json({ error: err.message });
-    }
-  });
-
-  app.post('/admin/employee-accounts/:id/revoke', authMiddleware, requireRole(['ADMIN']), validate({ params: idParams, body: revokeAccountBody }), async (req: AuthenticatedRequest, res) => {
-    try {
-      const accountId = req.params.id;
-      const expectedVersion = req.body.expectedVersion || 1;
-      const status = req.body.status || 'REVOKED';
-      const idempotencyKey = req.headers['idempotency-key'] as string;
-      const result = await accountsService.revokeAccount(
-        accountId,
-        req.user!.id,
-        expectedVersion,
-        status,
-        idempotencyKey
-      );
-      broadcastUpdate('accounts', { action: 'revoke', accountId });
-      const revEmp = await employeesService.getEmployee(result.result.employee_id).catch(() => null);
-      broadcastNotification({
-        type: 'INFO',
-        title: '🔒 Đã Khóa Tài Khoản Nhân Viên',
-        message: `Admin đã chuyển trạng thái tài khoản ${revEmp?.full_name || accountId} sang ${status}!`,
-        linkTab: 'employee-accounts',
-        metadata: { accountId, status },
-        targetRoles: ['ADMIN', 'HR'],
-      });
-      res.json(result);
-    } catch (err: any) {
-      res.status(400).json({ error: err.message });
-    }
-  });
+  // --- ACCOUNTS: đăng nhập bằng SĐT + mã PIN do HR cấp (đã bỏ luồng kích hoạt/khóa) ---
 
   // HR/Admin cấp mới hoặc reset mã PIN nhân viên (đánh dấu bắt đổi lần sau).
   app.post('/admin/employee-accounts/:id/set-pin', authMiddleware, requireRole(['HR']), validate({ params: idParams, body: setEmployeePinBody }), async (req: AuthenticatedRequest, res) => {
@@ -1438,7 +1343,6 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.get('/admin/dashboard/stats', authMiddleware, requireRole(['ADMIN', 'HR', 'STORE', 'FINANCE', 'MARKETING']), async (req: AuthenticatedRequest, res) => {
     try {
       const employees = await adapter.listEmployees();
-      const accounts = await adapter.listAccounts();
       const branches = await adapter.getBranches();
       const today = new Date().toISOString().split('T')[0];
       const shiftsToday = (await Promise.all(branches.map(b => adapter.getShiftsForWeek(b.id, today)))).flat();
@@ -1456,7 +1360,6 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       // Active working now (số ca PUBLISHED hôm nay — dữ liệu thật)
       const activeWorkingNow = shiftsToday.filter(s => s.status === 'PUBLISHED').length;
       const absentToday = leaves.filter(l => l.status === 'APPROVED' && l.requested_date === today).length;
-      const pendingActivationCount = accounts.filter(a => a.account_status === 'PENDING_ACTIVATION').length;
 
       // Pending requests
       const pendingLeaves = leaves.filter(l => l.status === 'PENDING').length;
@@ -1488,13 +1391,6 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
       // System alerts
       const systemAlerts = [];
-      if (pendingActivationCount > 0) {
-        systemAlerts.push({
-          level: 'WARNING',
-          category: 'ACCOUNT',
-          message: `Có ${pendingActivationCount} tài khoản nhân sự đang chờ kích hoạt.`,
-        });
-      }
       if (pendingRequestsCount > 0) {
         systemAlerts.push({
           level: 'INFO',
@@ -1537,7 +1433,6 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           officialEmployees,
           activeWorkingNow,
           absentToday,
-          pendingActivationCount,
           pendingRequestsCount,
           duplicatePhoneCount: duplicatePhones.length,
         },
@@ -1563,7 +1458,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   app.post('/admin/internal-accounts', authMiddleware, requireRole(['ADMIN']), validate({ body: internalAccountCreateBody }), async (req: AuthenticatedRequest, res) => {
     try {
-      const { admin_id, username, password, password_hash, full_name, role, branch_scope, is_active } = req.body;
+      const { admin_id, username, password, password_hash, full_name, role, branch_scope } = req.body;
       const plain = password || password_hash;
       if (!username || !plain) {
         return res.status(400).json({ error: 'MISSING_CREDENTIALS' });
@@ -1581,7 +1476,6 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         full_name,
         role: role || 'HR',
         branch_scope: branch_scope || '*',
-        is_active: is_active ?? true,
       });
       await adapter.recordAuditLog({
         actor_id: req.user!.id,
@@ -1600,6 +1494,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.put('/admin/internal-accounts/:id', authMiddleware, requireRole(['ADMIN']), validate({ params: adminIdParams, body: internalAccountUpdateBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const updates = { ...(req.body || {}) };
+      // Đã bỏ khóa tài khoản nội bộ: chặn is_active nếu client cũ còn gửi.
+      delete (updates as any).is_active;
       // Không cho đổi password qua PUT thường — dùng /auth/admin/change-password.
       // Nếu vẫn gửi password/password_hash thì hash lại, không lưu plaintext.
       const plain = updates.password || updates.password_hash;

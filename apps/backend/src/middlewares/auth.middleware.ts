@@ -13,7 +13,7 @@ function errorMessage(err: unknown): string {
 }
 
 /**
- * Factory: middleware xác thực có kiểm tra revoke qua DB (version/is_active).
+ * Factory: middleware xác thực có kiểm tra version qua DB.
  * Phải dùng factory này trong app (createAuthMiddleware(adapter)).
  */
 export function createAuthMiddleware(repo: ISheetsRepository) {

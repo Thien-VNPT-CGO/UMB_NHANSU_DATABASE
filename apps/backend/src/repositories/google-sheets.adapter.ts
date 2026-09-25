@@ -124,8 +124,6 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
         res.phone_normalized,
         res.role,
         res.account_status,
-        res.activated_by || '',
-        res.activated_at || '',
         res.version,
         (res as any).pin_hash || '',
         (res as any).pin_must_change ? 'YES' : '',
@@ -136,14 +134,6 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
       }
     }
     return res;
-  }
-
-  async updateAccountStatus(id: string, status: any, actorId: string, expectedVersion: number) {
-    const updated = await this.fallbackAdapter.updateAccountStatus(id, status, actorId, expectedVersion);
-    if (this.isConfigured) {
-      await this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
-    }
-    return updated;
   }
 
   async setAccountPin(id: string, pinHash: string, mustChange: boolean, actorId: string) {
@@ -500,7 +490,6 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
         res.full_name,
         res.role,
         res.branch_scope || '*',
-        res.is_active ? 'ACTIVE' : 'LOCKED',
         res.created_at,
       ]);
       if (!ok) {
