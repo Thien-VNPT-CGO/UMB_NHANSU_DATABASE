@@ -496,12 +496,13 @@ export class GoogleSheetsSyncService {
       counts.attendanceEvents = fallback.attendanceEvents.length;
 
       // 7. Đọc ADMIN_ACCOUNTS (hỗ trợ cả dòng cũ 7 cột không có Trạng Thái -> mặc định ACTIVE)
+      // Mỗi dòng lỗi chỉ bỏ qua dòng đó (log rõ username) — KHÔNG làm sập cả lần pull.
       const adminRows = batch['ADMIN_ACCOUNTS'];
       if (adminRows.length > 0) {
         const currentAdmins = fallback.adminAccounts;
-        const sheetsAdmins: AdminAccount[] = adminRows
-          .filter(r => r[0] && r[1]) // phải có admin_id và username
-          .map(r => {
+        const sheetsAdmins: AdminAccount[] = [];
+        for (const r of adminRows.filter(rr => rr[0] && rr[1])) { // phải có admin_id và username
+          try {
             const passwordFromSheet = r[2] || '';
             const fullName = r[3] || 'Quản trị viên';
             const role = (r[4] as any) || 'HR';
@@ -521,9 +522,23 @@ export class GoogleSheetsSyncService {
                 ? process.env.ADMIN_SEED_PASSWORD || 'Master@@2027'
                 : `Temp${Date.now().toString().slice(-6)}!`);
             // Không bao giờ giữ plaintext: hash trước khi lưu vào memory.
-            const passwordHash = isBcryptHash(rawPass) ? rawPass : hashPasswordSync(rawPass);
+            // Mật khẩu plaintext quá ngắn (<6 ký tự, ví dụ "hr123") sẽ ném WEAK_PASSWORD
+            // -> bắt ở catch bên dưới, giữ mật khẩu cũ đang có trong bộ nhớ.
+            let passwordHash: string;
+            if (isBcryptHash(rawPass)) {
+              passwordHash = rawPass;
+            } else {
+              try {
+                passwordHash = hashPasswordSync(rawPass);
+              } catch {
+                const fallbackHash = existingById?.password_hash || existingByUser?.password_hash;
+                if (!fallbackHash) throw new Error(`WEAK_PASSWORD for user ${r[1]} (mật khẩu trên Sheet quá ngắn, tối thiểu 6 ký tự)`);
+                console.warn(`[GoogleSheetsSyncService] Mật khẩu của '${r[1]}' trên Sheet quá ngắn — giữ mật khẩu cũ trong bộ nhớ. Hãy sửa ô mật khẩu (tối thiểu 6 ký tự).`);
+                passwordHash = fallbackHash;
+              }
+            }
 
-            return {
+            sheetsAdmins.push({
               admin_id: r[0],
               username: r[1],
               password_hash: passwordHash,
@@ -534,20 +549,29 @@ export class GoogleSheetsSyncService {
               version: 1,
               created_at: createdAt || new Date().toISOString(),
               updated_at: new Date().toISOString(),
-            };
-          });
-
-        // Merge: ưu tiên Sheets, nhưng giữ bootstrap admin nếu chưa có trong Sheets
-        const sheetsHasBootstrap = sheetsAdmins.some(a => a.admin_id === 'ADM_001' || a.username === 'admin');
-        if (sheetsHasBootstrap) {
-          fallback.adminAccounts = sheetsAdmins;
-        } else {
-          const bootstrapAdmin = currentAdmins.find(a => a.admin_id === 'ADM_001');
-          fallback.adminAccounts = bootstrapAdmin
-            ? [bootstrapAdmin, ...sheetsAdmins]
-            : sheetsAdmins;
+            });
+          } catch (e: any) {
+            console.warn(`[GoogleSheetsSyncService] Bỏ qua dòng ADMIN_ACCOUNTS lỗi (${r?.[1] || '?'}): ${e?.message || e}`);
+          }
         }
-        counts.adminAccounts = fallback.adminAccounts.length;
+
+        // Merge: ưu tiên Sheets, nhưng giữ bootstrap admin nếu chưa có trong Sheets.
+        // Nếu Sheet không đọc được dòng hợp lệ nào -> giữ nguyên bộ nhớ cũ (tránh mất hết tài khoản).
+        if (sheetsAdmins.length === 0) {
+          console.warn('[GoogleSheetsSyncService] ADMIN_ACCOUNTS không có dòng hợp lệ — giữ nguyên tài khoản trong bộ nhớ.');
+          counts.adminAccounts = fallback.adminAccounts.length;
+        } else {
+          const sheetsHasBootstrap = sheetsAdmins.some(a => a.admin_id === 'ADM_001' || a.username === 'admin');
+          if (sheetsHasBootstrap) {
+            fallback.adminAccounts = sheetsAdmins;
+          } else {
+            const bootstrapAdmin = currentAdmins.find(a => a.admin_id === 'ADM_001');
+            fallback.adminAccounts = bootstrapAdmin
+              ? [bootstrapAdmin, ...sheetsAdmins]
+              : sheetsAdmins;
+          }
+          counts.adminAccounts = fallback.adminAccounts.length;
+        }
       } else {
         // Sheets trống — giữ bootstrap admin và tự động ghi bootstrap admin lên Sheet để lưu trữ bền vững
         const bootstrapAdmin = fallback.adminAccounts.find(a => a.admin_id === 'ADM_001');
