@@ -481,9 +481,13 @@ export class MockSheetsAdapter implements ISheetsRepository {
     return newEvent;
   }
 
-  async getAttendanceEvents(employeeId: string, date: string): Promise<AttendanceEvent[]> {
+  async getAttendanceEvents(employeeId?: string, date?: string): Promise<AttendanceEvent[]> {
     this.checkErrors();
-    return this.attendanceEvents.filter(e => e.employee_id === employeeId && e.client_time.startsWith(date));
+    return this.attendanceEvents.filter(e => {
+      if (employeeId && employeeId !== '*' && e.employee_id !== employeeId) return false;
+      if (date && date !== '*' && !e.client_time.startsWith(date)) return false;
+      return true;
+    });
   }
 
   async findAttendanceEventByRequestId(requestId: string): Promise<AttendanceEvent | null> {

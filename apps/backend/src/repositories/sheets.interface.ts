@@ -65,7 +65,7 @@ export interface ISheetsRepository {
 
   // Attendance
   recordAttendanceEvent(event: Omit<AttendanceEvent, 'created_at'>): Promise<AttendanceEvent>;
-  getAttendanceEvents(employeeId: string, date: string): Promise<AttendanceEvent[]>;
+  getAttendanceEvents(employeeId?: string, date?: string): Promise<AttendanceEvent[]>;
   findAttendanceEventByRequestId(requestId: string): Promise<AttendanceEvent | null>;
   createAttendanceAdjustment(adj: Omit<AttendanceAdjustment, 'created_at' | 'updated_at' | 'version'>): Promise<AttendanceAdjustment>;
   listAttendanceAdjustments(branchId?: string, employeeId?: string): Promise<AttendanceAdjustment[]>;

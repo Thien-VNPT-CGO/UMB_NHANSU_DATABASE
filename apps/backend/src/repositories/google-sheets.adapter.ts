@@ -374,7 +374,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     return res;
   }
 
-  async getAttendanceEvents(employeeId: string, date: string) {
+  async getAttendanceEvents(employeeId?: string, date?: string) {
     await this.ensureFreshData();
     return this.fallbackAdapter.getAttendanceEvents(employeeId, date);
   }

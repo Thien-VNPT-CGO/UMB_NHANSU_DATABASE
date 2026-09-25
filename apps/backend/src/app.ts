@@ -918,6 +918,17 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  app.get('/attendance/events', authMiddleware, requireRole(['ADMIN', 'HR', 'STORE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const date = (req.query.date as string) || '';
+      const employeeId = (req.query.employeeId as string) || '*';
+      const events = await adapter.getAttendanceEvents(employeeId, date);
+      res.json(events);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Alias for /leaves
   app.post('/leaves', authMiddleware, validate({ body: leavesAliasBody }), async (req: AuthenticatedRequest, res) => {
     try {

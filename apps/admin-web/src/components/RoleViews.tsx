@@ -282,7 +282,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [liveAttendanceEvents, setLiveAttendanceEvents] = useState<any[]>([]);
 
   useEffect(() => {
-    if (activeTab === 'hr-attendance') {
+    if (activeTab === 'hr-attendance' || activeTab === 'hr-schedule') {
       apiRequest('/attendance/events')
         .then((data) => setLiveAttendanceEvents(Array.isArray(data) ? data : []))
         .catch(() => {});
@@ -2951,61 +2951,92 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const todayItem = weekDays.find((d) => d.isToday) || weekDays[0];
 
     const scheduleItems = allEmployees.map((emp, empIdx) => {
-      const empShifts = shifts.filter((s) => s.employee_id === emp.employee_id);
+      const empShifts = (shifts || []).filter((s: any) => s.employee_id === emp.employee_id);
+      const empLeaves = (leaves || []).filter((l: any) => l.employee_id === emp.employee_id && (l.status === 'APPROVED' || l.status === 'PENDING'));
+      const empEvents = (liveAttendanceEvents || []).filter((e: any) => e.employee_id === emp.employee_id);
       const dayDataMap: Record<string, any> = {};
 
       weekDays.forEach((day) => {
-        const foundShift = empShifts.find((s) => s.shift_code?.includes(day.code));
-        let defaultShiftName = 'Ca 1 (07-12)';
-        if (empIdx % 3 === 1) defaultShiftName = 'Ca 2 (12-18)';
-        if (empIdx % 3 === 2) defaultShiftName = 'Ca 3 (18-23)';
+        // Tìm ca làm việc THẬT được phân công trên hệ thống cho ngày này
+        const foundShift = empShifts.find((s: any) => s.date === day.isoDate || (s.date && s.date.startsWith(day.isoDate)));
+        // Đơn nghỉ phép đã duyệt hoặc chờ duyệt
+        const foundLeave = empLeaves.find((l: any) => l.requested_date === day.isoDate || (l.requested_date && l.requested_date.startsWith(day.isoDate)));
+        // Bản ghi điểm danh check-in và check-out thật từ Socket.IO / Database
+        const checkInEvent = empEvents.find((e: any) => e.type === 'CHECK_IN' && (e.assignment_id === foundShift?.assignment_id || (e.client_time && e.client_time.startsWith(day.isoDate))));
+        const checkOutEvent = empEvents.find((e: any) => e.type === 'CHECK_OUT' && (e.assignment_id === foundShift?.assignment_id || (e.client_time && e.client_time.startsWith(day.isoDate))));
 
-        const isOffDay = (empIdx % 2 === 0 && day.key === 't5') || (empIdx % 2 === 1 && day.key === 't7');
-        const isBonusSwapDay = empIdx === 1 && day.key === 'cn';
-
-        if (isOffDay) {
+        if (foundLeave) {
           dayDataMap[day.key] = {
-            shift: 'Nghỉ OFF',
+            shift: foundLeave.leave_type === 'DOT_XUAT' ? 'Nghỉ đột xuất' : 'Nghỉ OFF',
             status: 'OFF',
+            note: foundLeave.reason || 'Nghỉ theo đơn duyệt',
             isToday: day.isToday,
           };
-        } else if (isBonusSwapDay) {
+        } else if (!foundShift) {
+          // KHÔNG CÓ CA LÀM VIỆC NÀO ĐƯỢC PHÂN CÔNG THẬT -> HIỂN THỊ KHÔNG CÓ CA, KHÔNG LẤY DỮ LIỆU ĐIỂM DANH ẢO
           dayDataMap[day.key] = {
-            shift: defaultShiftName,
-            status: 'BONUS_SWAP',
-            note: 'Nhận thay ca (+30.000đ)',
+            shift: '—',
+            status: 'NO_SHIFT',
+            note: 'Không có ca',
             isToday: day.isToday,
           };
-        } else if (day.isToday) {
-          // REALTIME ATTENDANCE ON EXACT TODAY!
-          if (empIdx === 0 || empIdx % 2 === 0) {
+        } else {
+          // Có ca làm việc thật
+          let shiftName = foundShift.shift_code;
+          if (shiftName === 'CA_1') shiftName = 'Ca 1 (07-12)';
+          else if (shiftName === 'CA_2') shiftName = 'Ca 2 (12-18)';
+          else if (shiftName === 'CA_3') shiftName = 'Ca 3 (18-23)';
+
+          if (checkInEvent) {
+            const inTime = checkInEvent.client_time
+              ? new Date(checkInEvent.client_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+              : 'Đã check-in';
+            const distText = checkInEvent.distance_meters !== undefined ? `${checkInEvent.distance_meters}m` : '< 300m';
+
+            if (checkOutEvent) {
+              const outTime = checkOutEvent.client_time
+                ? new Date(checkOutEvent.client_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+                : 'Đã check-out';
+              dayDataMap[day.key] = {
+                shift: shiftName,
+                status: 'COMPLETED',
+                time: `${inTime} - ${outTime}`,
+                gps: `GPS hợp lệ (${distText})`,
+                isToday: day.isToday,
+                event: checkInEvent,
+              };
+            } else {
+              dayDataMap[day.key] = {
+                shift: shiftName,
+                status: 'CHECKED_IN',
+                time: inTime,
+                gps: `GPS hợp lệ (${distText})`,
+                isToday: day.isToday,
+                event: checkInEvent,
+              };
+            }
+          } else if (day.isToday) {
             dayDataMap[day.key] = {
-              shift: foundShift?.shift_code || defaultShiftName,
-              status: 'CHECKED_IN',
-              time: '06:58',
-              gps: 'GPS hợp lệ (Khoảng cách 45m < 300m)',
+              shift: shiftName,
+              status: 'PENDING',
+              note: 'Chưa check-in (Chờ ca)',
               isToday: true,
+            };
+          } else if (day.isPast) {
+            dayDataMap[day.key] = {
+              shift: shiftName,
+              status: 'ABSENT',
+              note: 'Không điểm danh',
+              isToday: false,
             };
           } else {
             dayDataMap[day.key] = {
-              shift: foundShift?.shift_code || defaultShiftName,
-              status: 'PENDING',
-              isToday: true,
+              shift: shiftName,
+              status: 'UPCOMING',
+              note: 'Lịch đã duyệt',
+              isToday: false,
             };
           }
-        } else if (day.isPast) {
-          dayDataMap[day.key] = {
-            shift: foundShift?.shift_code || defaultShiftName,
-            status: 'COMPLETED',
-            time: '07:02 - 12:05',
-            isToday: false,
-          };
-        } else {
-          dayDataMap[day.key] = {
-            shift: foundShift?.shift_code || defaultShiftName,
-            status: 'UPCOMING',
-            isToday: false,
-          };
         }
       });
 
@@ -3100,7 +3131,20 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
           {filteredSchedule.length > 0 && (
             <button
-              onClick={() => setSelectedRealtimeModal(filteredSchedule[0])}
+              onClick={() => {
+                const todayEmpWithCheckIn = filteredSchedule.find((emp) => {
+                  const todayData = emp.days?.[todayItem.key];
+                  return todayData?.status === 'CHECKED_IN' || todayData?.status === 'COMPLETED';
+                });
+                if (todayEmpWithCheckIn) {
+                  setSelectedRealtimeModal({
+                    emp: todayEmpWithCheckIn,
+                    dayData: todayEmpWithCheckIn.days[todayItem.key],
+                  });
+                } else {
+                  showToast('Chưa có nhân viên nào có lịch và điểm danh hôm nay để xem bằng chứng!');
+                }
+              }}
               style={{
                 padding: '6px 12px',
                 borderRadius: 'var(--radius-sm)',
@@ -3177,6 +3221,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </span>
             <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--text-muted)' }}>
               <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#9CA3AF' }} /> Nghỉ OFF
+            </span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#9CA3AF' }}>
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#E5E7EB', border: '1px solid #D1D5DB' }} /> — Không có ca
             </span>
           </div>
         </div>
@@ -3257,11 +3304,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
                   {/* Day Columns */}
                   {weekDays.map((day) => {
-                    const d = (emp.days && emp.days[day.key]) || { shift: 'Nghỉ OFF', status: 'OFF' };
+                    const d = (emp.days && emp.days[day.key]) || { shift: '—', status: 'NO_SHIFT', note: 'Không có ca' };
                     const isCheckedIn = d.status === 'CHECKED_IN';
                     const isPending = d.status === 'PENDING';
                     const isOff = d.status === 'OFF';
                     const isBonusSwap = d.status === 'BONUS_SWAP';
+                    const isNoShift = d.status === 'NO_SHIFT';
 
                     return (
                       <td
@@ -3270,138 +3318,161 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           padding: '10px 8px',
                           verticalAlign: 'top',
                           textAlign: 'center',
-                          backgroundColor: day.isToday ? '#FFFBFB' : isOff ? '#F9FAFB' : '#FFFFFF',
+                          backgroundColor: day.isToday ? '#FFFBFB' : isOff || isNoShift ? '#F9FAFB' : '#FFFFFF',
                           borderLeft: day.isToday ? '2px solid #FCA5A5' : undefined,
                           borderRight: day.isToday ? '2px solid #FCA5A5' : undefined,
                         }}
                       >
-                        <div style={{
-                          padding: '8px',
-                          borderRadius: '8px',
-                          backgroundColor: isCheckedIn
-                            ? '#ECFDF5'
-                            : isPending
-                            ? '#FEF3C7'
-                            : isBonusSwap
-                            ? '#EFF6FF'
-                            : isOff
-                            ? '#F3F4F6'
-                            : '#FAFAFA',
-                          border: isCheckedIn
-                            ? '1.5px solid #10B981'
-                            : isPending
-                            ? '1.5px solid #F59E0B'
-                            : isBonusSwap
-                            ? '1.5px solid #3B82F6'
-                            : '1px solid var(--border)',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '3px',
-                          boxShadow: isCheckedIn ? '0 2px 6px rgba(16, 185, 129, 0.15)' : undefined,
-                        }}>
-                          {/* Shift Name */}
-                          <div style={{ fontWeight: 700, fontSize: '11px', color: isOff ? '#9CA3AF' : 'var(--text)' }}>
-                            {d.shift}
+                        {isNoShift ? (
+                          <div style={{
+                            padding: '10px 6px',
+                            borderRadius: '8px',
+                            backgroundColor: '#F9FAFB',
+                            border: '1px dashed #E5E7EB',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            minHeight: '48px',
+                          }}>
+                            <span style={{ fontSize: '13px', fontWeight: 600, color: '#9CA3AF' }}>—</span>
+                            <span style={{ fontSize: '10px', color: '#9CA3AF', marginTop: '2px' }}>Không có ca</span>
                           </div>
+                        ) : (
+                          <div style={{
+                            padding: '8px',
+                            borderRadius: '8px',
+                            backgroundColor: isCheckedIn
+                              ? '#ECFDF5'
+                              : isPending
+                              ? '#FEF3C7'
+                              : isBonusSwap
+                              ? '#EFF6FF'
+                              : isOff
+                              ? '#F3F4F6'
+                              : '#FAFAFA',
+                            border: isCheckedIn
+                              ? '1.5px solid #10B981'
+                              : isPending
+                              ? '1.5px solid #F59E0B'
+                              : isBonusSwap
+                              ? '1.5px solid #3B82F6'
+                              : '1px solid var(--border)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '3px',
+                            boxShadow: isCheckedIn ? '0 2px 6px rgba(16, 185, 129, 0.15)' : undefined,
+                          }}>
+                            {/* Shift Name */}
+                            <div style={{ fontWeight: 700, fontSize: '11px', color: isOff ? '#9CA3AF' : 'var(--text)' }}>
+                              {d.shift}
+                            </div>
 
-                          {/* Realtime Attendance Status Badge */}
-                          {isCheckedIn && (
-                            <div style={{ marginTop: '2px' }}>
-                              <span style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '4px',
-                                padding: '2px 6px',
-                                borderRadius: '4px',
-                                backgroundColor: '#10B981',
-                                color: '#FFF',
-                                fontSize: '10px',
-                                fontWeight: 800,
-                              }}>
-                                <CheckCircle size={10} /> ĐÃ CHECK-IN {d.time}
-                              </span>
-                              <div style={{ fontSize: '10px', color: '#047857', fontWeight: 600, marginTop: '2px' }}>
-                                ✓ {d.gps} • Áo hồng + Bảng tên
-                              </div>
-                              <button
-                                onClick={() => setSelectedRealtimeModal(emp)}
-                                style={{
-                                  marginTop: '4px',
-                                  fontSize: '9.5px',
+                            {/* Realtime Attendance Status Badge */}
+                            {isCheckedIn && (
+                              <div style={{ marginTop: '2px' }}>
+                                <span style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
                                   padding: '2px 6px',
                                   borderRadius: '4px',
-                                  backgroundColor: '#FFFFFF',
-                                  border: '1px solid #10B981',
-                                  color: '#047857',
-                                  fontWeight: 700,
-                                  cursor: 'pointer',
-                                }}
-                              >
-                                Xem Chi Tiết GPS & Ảnh
-                              </button>
-                            </div>
-                          )}
-
-                          {isPending && day.isToday && (
-                            <div style={{ marginTop: '2px' }}>
-                              <span style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '4px',
-                                padding: '2px 6px',
-                                borderRadius: '4px',
-                                backgroundColor: '#F59E0B',
-                                color: '#FFF',
-                                fontSize: '10px',
-                                fontWeight: 800,
-                              }}>
-                                <Clock size={10} /> CHƯA CHECK-IN
-                              </span>
-                              <div style={{ fontSize: '9.5px', color: '#B45309', marginTop: '2px' }}>
-                                Đang chờ giờ vào ca
+                                  backgroundColor: '#10B981',
+                                  color: '#FFF',
+                                  fontSize: '10px',
+                                  fontWeight: 800,
+                                }}>
+                                  <CheckCircle size={10} /> ĐÃ CHECK-IN {d.time}
+                                </span>
+                                <div style={{ fontSize: '10px', color: '#047857', fontWeight: 600, marginTop: '2px' }}>
+                                  ✓ {d.gps} • Áo hồng + Bảng tên
+                                </div>
+                                <button
+                                  onClick={() => setSelectedRealtimeModal({ emp, dayData: d })}
+                                  style={{
+                                    marginTop: '4px',
+                                    fontSize: '9.5px',
+                                    padding: '2px 6px',
+                                    borderRadius: '4px',
+                                    backgroundColor: '#FFFFFF',
+                                    border: '1px solid #10B981',
+                                    color: '#047857',
+                                    fontWeight: 700,
+                                    cursor: 'pointer',
+                                  }}
+                                >
+                                  Xem Chi Tiết GPS & Ảnh
+                                </button>
                               </div>
-                            </div>
-                          )}
+                            )}
 
-                          {isBonusSwap && (
-                            <div style={{ marginTop: '2px' }}>
-                              <span style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '4px',
-                                padding: '2px 6px',
-                                borderRadius: '4px',
-                                backgroundColor: '#2563EB',
-                                color: '#FFF',
-                                fontSize: '10px',
-                                fontWeight: 800,
-                              }}>
-                                🤝 +30.000đ PHỤ CẤP
-                              </span>
-                              <div style={{ fontSize: '9.5px', color: '#1E40AF', marginTop: '2px' }}>
-                                {d.note}
+                            {isPending && day.isToday && (
+                              <div style={{ marginTop: '2px' }}>
+                                <span style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  padding: '2px 6px',
+                                  borderRadius: '4px',
+                                  backgroundColor: '#F59E0B',
+                                  color: '#FFF',
+                                  fontSize: '10px',
+                                  fontWeight: 800,
+                                }}>
+                                  <Clock size={10} /> CHƯA CHECK-IN
+                                </span>
+                                <div style={{ fontSize: '9.5px', color: '#B45309', marginTop: '2px' }}>
+                                  Đang chờ giờ vào ca
+                                </div>
                               </div>
-                            </div>
-                          )}
+                            )}
 
-                          {isOff && (
-                            <div style={{ fontSize: '10px', color: '#9CA3AF', fontWeight: 600 }}>
-                              Nghỉ định kỳ
-                            </div>
-                          )}
+                            {isBonusSwap && (
+                              <div style={{ marginTop: '2px' }}>
+                                <span style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  padding: '2px 6px',
+                                  borderRadius: '4px',
+                                  backgroundColor: '#2563EB',
+                                  color: '#FFF',
+                                  fontSize: '10px',
+                                  fontWeight: 800,
+                                }}>
+                                  🤝 +30.000đ PHỤ CẤP
+                                </span>
+                                <div style={{ fontSize: '9.5px', color: '#1E40AF', marginTop: '2px' }}>
+                                  {d.note}
+                                </div>
+                              </div>
+                            )}
 
-                          {d.status === 'COMPLETED' && (
-                            <div style={{ fontSize: '10px', color: '#059669', fontWeight: 600 }}>
-                              ✓ Đã xong ca ({d.time})
-                            </div>
-                          )}
+                            {isOff && (
+                              <div style={{ fontSize: '10px', color: '#9CA3AF', fontWeight: 600 }}>
+                                {d.note || 'Nghỉ định kỳ'}
+                              </div>
+                            )}
 
-                          {d.status === 'UPCOMING' && (
-                            <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
-                              Lịch đã duyệt
-                            </div>
-                          )}
-                        </div>
+                            {d.status === 'COMPLETED' && (
+                              <div style={{ fontSize: '10px', color: '#059669', fontWeight: 600 }}>
+                                ✓ Đã xong ca ({d.time})
+                              </div>
+                            )}
+
+                            {d.status === 'UPCOMING' && (
+                              <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
+                                Lịch đã duyệt
+                              </div>
+                            )}
+
+                            {d.status === 'ABSENT' && (
+                              <div style={{ fontSize: '10px', color: '#EF4444', fontWeight: 600 }}>
+                                Vắng ca (Chưa điểm danh)
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </td>
                     );
                   })}
@@ -3412,120 +3483,138 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         </div>
 
         {/* MODAL: XEM BẰNG CHỨNG ĐIỂM DANH REALTIME TỪ CỔNG NHÂN VIÊN */}
-        {selectedRealtimeModal && (
-          <div style={{
-            position: 'fixed',
-            inset: 0,
-            backgroundColor: 'rgba(0,0,0,0.5)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 999,
-            padding: '20px',
-          }}>
+        {selectedRealtimeModal && (() => {
+          const modalEmp = selectedRealtimeModal.emp || selectedRealtimeModal;
+          const modalDayData = selectedRealtimeModal.dayData || (modalEmp.days ? modalEmp.days[todayItem.key] : null);
+          const modalEvent = modalDayData?.event || selectedRealtimeModal.event;
+
+          return (
             <div style={{
-              backgroundColor: 'var(--surface)',
-              borderRadius: 'var(--radius-md)',
-              width: '480px',
-              maxWidth: '95vw',
-              padding: '24px',
-              boxShadow: 'var(--shadow-modal)',
-              border: '1.5px solid #10B981',
+              position: 'fixed',
+              inset: 0,
+              backgroundColor: 'rgba(0,0,0,0.5)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 999,
+              padding: '20px',
             }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <div style={{
-                    width: '32px',
-                    height: '32px',
-                    borderRadius: '50%',
-                    backgroundColor: '#DFF5E8',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}>
-                    <CheckCircle size={20} color="#10B981" />
-                  </div>
-                  <div>
-                    <h3 style={{ fontSize: '16px', fontWeight: 800, margin: 0 }}>
-                      Bằng Chứng Điểm Danh Realtime
-                    </h3>
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                      Dữ liệu nhận từ Cổng Nhân Viên qua Socket.IO Master
+              <div style={{
+                backgroundColor: 'var(--surface)',
+                borderRadius: 'var(--radius-md)',
+                width: '480px',
+                maxWidth: '95vw',
+                padding: '24px',
+                boxShadow: 'var(--shadow-modal)',
+                border: '1.5px solid #10B981',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div style={{
+                      width: '32px',
+                      height: '32px',
+                      borderRadius: '50%',
+                      backgroundColor: '#DFF5E8',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}>
+                      <CheckCircle size={20} color="#10B981" />
+                    </div>
+                    <div>
+                      <h3 style={{ fontSize: '16px', fontWeight: 800, margin: 0 }}>
+                        Bằng Chứng Điểm Danh Realtime
+                      </h3>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                        Dữ liệu nhận từ Cổng Nhân Viên qua Socket.IO Master
+                      </div>
                     </div>
                   </div>
-                </div>
-                <button
-                  onClick={() => setSelectedRealtimeModal(null)}
-                  style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)' }}
-                >
-                  <X size={20} />
-                </button>
-              </div>
-
-              {/* Detail Cards */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div style={{ padding: '12px', backgroundColor: '#F9FAFB', borderRadius: '8px', border: '1px solid var(--border)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Nhân viên:</span>
-                    <strong style={{ fontSize: '13px' }}>{selectedRealtimeModal.name} ({selectedRealtimeModal.empCode})</strong>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Chi nhánh:</span>
-                    <strong style={{ fontSize: '13px', color: 'var(--brand)' }}>{getDisplayBranch(selectedRealtimeModal.branch)}</strong>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Thời gian check-in:</span>
-                    <strong style={{ fontSize: '13px', color: '#10B981' }}>06:55:12 (Đúng giờ ca Sáng)</strong>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Tọa độ GPS & Khoảng cách:</span>
-                    <strong style={{ fontSize: '13px', color: '#10B981' }}>38 mét (Bán kính hợp lệ &lt; 300m)</strong>
-                  </div>
+                  <button
+                    onClick={() => setSelectedRealtimeModal(null)}
+                    style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)' }}
+                  >
+                    <X size={20} />
+                  </button>
                 </div>
 
-                {/* Uniform & Badge Visual Confirmation */}
-                <div style={{
-                  padding: '14px',
-                  backgroundColor: '#FDF2F8',
-                  borderRadius: '8px',
-                  border: '1.5px solid #F472B6',
-                  textAlign: 'center',
-                }}>
+                {/* Detail Cards */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div style={{ padding: '12px', backgroundColor: '#F9FAFB', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                      <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Nhân viên:</span>
+                      <strong style={{ fontSize: '13px' }}>{modalEmp.name} ({modalEmp.empCode})</strong>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                      <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Chi nhánh:</span>
+                      <strong style={{ fontSize: '13px', color: 'var(--brand)' }}>{getDisplayBranch(modalEmp.branch)}</strong>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                      <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Thời gian check-in:</span>
+                      <strong style={{ fontSize: '13px', color: '#10B981' }}>
+                        {modalDayData?.time || (modalEvent?.client_time ? new Date(modalEvent.client_time).toLocaleTimeString('vi-VN') : 'Chưa ghi nhận')}
+                      </strong>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Tọa độ GPS & Khoảng cách:</span>
+                      <strong style={{ fontSize: '13px', color: '#10B981' }}>
+                        {modalDayData?.gps || (modalEvent?.distance_meters !== undefined ? `${modalEvent.distance_meters} mét (Bán kính hợp lệ < 300m)` : 'Khoảng cách hợp lệ < 300m')}
+                      </strong>
+                    </div>
+                  </div>
+
+                  {/* Uniform & Badge Visual Confirmation */}
                   <div style={{
-                    width: '100%',
-                    height: '140px',
-                    borderRadius: '6px',
-                    backgroundColor: '#E85D92',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    color: '#FFF',
-                    boxShadow: 'inset 0 0 20px rgba(0,0,0,0.1)',
-                    marginBottom: '10px',
+                    padding: '14px',
+                    backgroundColor: '#FDF2F8',
+                    borderRadius: '8px',
+                    border: '1.5px solid #F472B6',
+                    textAlign: 'center',
                   }}>
-                    <Camera size={32} style={{ marginBottom: '6px' }} />
-                    <div style={{ fontWeight: 800, fontSize: '14px' }}>ẢNH CHỤP ĐỒNG PHỤC ÁO HỒNG ỤM BÒ MILK</div>
-                    <div style={{ fontSize: '11px', opacity: 0.9 }}>Bảng tên nhân viên: Đã xác thực hợp lệ</div>
+                    {modalEvent?.photo_url ? (
+                      <img
+                        src={modalEvent.photo_url}
+                        alt="Bằng chứng điểm danh"
+                        style={{ width: '100%', maxHeight: '200px', objectFit: 'cover', borderRadius: '6px', marginBottom: '10px' }}
+                      />
+                    ) : (
+                      <div style={{
+                        width: '100%',
+                        height: '140px',
+                        borderRadius: '6px',
+                        backgroundColor: '#E85D92',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: '#FFF',
+                        boxShadow: 'inset 0 0 20px rgba(0,0,0,0.1)',
+                        marginBottom: '10px',
+                      }}>
+                        <Camera size={32} style={{ marginBottom: '6px' }} />
+                        <div style={{ fontWeight: 800, fontSize: '14px' }}>ẢNH CHỤP ĐỒNG PHỤC ÁO HỒNG ỤM BÒ MILK</div>
+                        <div style={{ fontSize: '11px', opacity: 0.9 }}>Bảng tên nhân viên: Đã xác thực hợp lệ</div>
+                      </div>
+                    )}
+
+                    <div style={{ display: 'flex', justifyContent: 'center', gap: '16px', fontSize: '12px', fontWeight: 700, color: '#9D174D' }}>
+                      <span>✓ Áo màu hồng chuẩn thương hiệu</span>
+                      <span>✓ Đeo bảng tên rõ nét</span>
+                    </div>
                   </div>
 
-                  <div style={{ display: 'flex', justifyContent: 'center', gap: '16px', fontSize: '12px', fontWeight: 700, color: '#9D174D' }}>
-                    <span>✓ Áo màu hồng chuẩn thương hiệu</span>
-                    <span>✓ Đeo bảng tên rõ nét</span>
-                  </div>
+                  <button
+                    className="btn-primary"
+                    onClick={() => setSelectedRealtimeModal(null)}
+                    style={{ width: '100%', marginTop: '6px' }}
+                  >
+                    Đóng Hộp Thoại
+                  </button>
                 </div>
-
-                <button
-                  className="btn-primary"
-                  onClick={() => setSelectedRealtimeModal(null)}
-                  style={{ width: '100%', marginTop: '6px' }}
-                >
-                  Đóng Hộp Thoại
-                </button>
               </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
       </div>
     );
   }
