@@ -63,20 +63,12 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
     headers: ['Mã Kỳ Lương', 'Tháng/Năm', 'Trạng Thái', 'Tổng Tiền (VNĐ)', 'Ngày Tạo', 'Ngày Chốt', 'Ngày Chi Trả'],
   },
   {
-    title: 'CHI_TIET_LUONG',
-    headers: ['Mã Phiếu', 'Mã Kỳ Lương', 'ID Nhân Viên', 'Mã NV', 'Họ Tên', 'Kỳ Lương', 'Giờ Chuẩn', 'Lương Giờ', 'Lương Cơ Bản', 'Phụ Cấp', 'Thưởng', 'Khấu Trừ', 'Thực Nhận (VNĐ)', 'Trạng Thái'],
-  },
-  {
     title: 'AUDIT_LOG',
     headers: ['Mã Nhật Ký', 'Thời Gian', 'Người Thực Hiện', 'Vai Trò', 'Hành Động', 'Đối Tượng', 'ID Đối Tượng', 'Chi Tiết'],
   },
   {
     title: 'DANH_SACH_CHI_NHANH',
     headers: ['Mã Chi Nhánh', 'Tên Chi Nhánh', 'Địa Chỉ', 'Vĩ Độ GPS', 'Kinh Độ GPS', 'Bán Kính Cho Phép (m)', 'Trạng Thái'],
-  },
-  {
-    title: 'CAU_HINH_HE_THONG',
-    headers: ['Tham Số', 'Giá Trị', 'Mô Tả Cấu Hình', 'Cập Nhật Lần Cuối'],
   },
   {
     title: 'FROM_NHAN_VIEN',
@@ -100,125 +92,7 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
       'Mã Nguồn',
     ],
   },
-  // --- CÁC TAB DỮ LIỆU ĐỒNG BỘ CỦA TÀI KHOẢN HR ---
-  {
-    title: 'HR_UNG_VIEN',
-    headers: [
-      'Ngày Đăng Ký',
-      'Họ Và Tên',
-      'Giới Tính',
-      'Năm Sinh',
-      'Trình Độ',
-      'Quê Quán',
-      'Số Điện Thoại',
-      'Ca Đăng Ký',
-      'Chi Nhánh Đăng Ký',
-      'Kinh Nghiệm',
-      'Xử Lý Đột Xuất',
-      'Facebook',
-      'Nguồn Biết Tin',
-      'Điểm AI (Thang 14)',
-      'Kết Quả',
-      'Trạng Thái',
-      'Mã Nguồn',
-    ],
-  },
-  {
-    title: 'HR_THU_VIEC',
-    headers: [
-      'Mã NV',
-      'Họ Và Tên',
-      'Số Điện Thoại',
-      'Giới Tính',
-      'Ngày Sinh',
-      'Chi Nhánh',
-      'Khối / Vị Trí',
-      'Lương Giờ (VNĐ)',
-      'Ngày Bắt Đầu Thử Việc',
-      'Hạn Chuyển Chính Thức (30 ngày)',
-      'Trạng Thái',
-    ],
-  },
-  {
-    title: 'HR_CHINH_THUC',
-    headers: [
-      'Mã NV',
-      'Họ Và Tên',
-      'Số Điện Thoại',
-      'Giới Tính',
-      'Ngày Sinh',
-      'CCCD/CMND',
-      'Email',
-      'Chi Nhánh',
-      'Khối / Vị Trí',
-      'Lương Giờ (VNĐ)',
-      'Ngày Bắt Đầu',
-      'Ngày Chính Thức',
-      'Trạng Thái',
-    ],
-  },
-  {
-    title: 'HR_LICH_TUAN',
-    headers: [
-      'Mã Ca',
-      'Mã NV',
-      'Họ Và Tên',
-      'Số Điện Thoại',
-      'Chi Nhánh',
-      'Mã Ca Phân Công',
-      'Ngày Làm (YYYY-MM-DD)',
-      'Giờ Bắt Đầu',
-      'Giờ Kết Thúc',
-      'Trạng Thái Ca',
-      'Phiên Bản',
-    ],
-  },
-  {
-    title: 'HR_CHAM_CONG',
-    headers: [
-      'ID Sự Kiện',
-      'Mã NV',
-      'Họ Và Tên',
-      'Chi Nhánh',
-      'Loại Điểm Danh (IN/OUT)',
-      'Thời Gian Ghi Nhận',
-      'Khoảng Cách GPS (m)',
-      'Trạng Thái GPS',
-      'Hợp Lệ',
-    ],
-  },
-  {
-    title: 'HR_CHUYEN_CHINH_THUC',
-    headers: [
-      'Mã Quyết Định',
-      'Mã NV',
-      'Họ Và Tên',
-      'Chi Nhánh',
-      'Ngày Bắt Đầu Thử Việc',
-      'Ngày Đủ Điều Kiện',
-      'Lương Đề Xuất (25.500 đ/h)',
-      'Trạng Thái Ký Duyệt',
-      'Người Ký',
-    ],
-  },
-  {
-    title: 'HR_TINH_LUONG',
-    headers: [
-      'Mã Phiếu',
-      'Kỳ Lương',
-      'Mã NV',
-      'Họ Và Tên',
-      'Chi Nhánh',
-      'Tổng Giờ Làm',
-      'Lương Giờ (đ/h)',
-      'Lương Cơ Bản',
-      'Phụ Cấp',
-      'Thưởng',
-      'Khấu Trừ',
-      'Thực Nhận (VNĐ)',
-      'Trạng Thái',
-    ],
-  },
+  // (Đã xóa các tab mirror HR_* / CHI_TIET_LUONG / CAU_HINH_HE_THONG không dùng — chỉ giữ 12 tab master)
 ];
 
 export class GoogleSheetsSyncService {
@@ -1021,7 +895,7 @@ export class GoogleSheetsSyncService {
       await this.overwriteSheetData('AUDIT_LOG', SHEETS_DEFINITIONS.find(d => d.title === 'AUDIT_LOG')!.headers, auditRows);
       details.auditLogs = auditRows.length;
 
-      // 10. Ứng viên tuyển dụng (FROM_NHAN_VIEN & HR_UNG_VIEN) - 17 Cột
+      // 10. Ứng viên tuyển dụng (FROM_NHAN_VIEN) - 17 Cột
       const candList = await repo.listCandidates();
       if (candList.length > 0) {
         const candHeaders = SHEETS_DEFINITIONS.find(d => d.title === 'FROM_NHAN_VIEN')!.headers;
@@ -1045,104 +919,7 @@ export class GoogleSheetsSyncService {
           c.source_code || c.submission_id || `UBM_FORM_${String(idx + 1).padStart(4, '0')}`,
         ]);
         await this.overwriteSheetData('FROM_NHAN_VIEN', candHeaders, candRows);
-        await this.overwriteSheetData('HR_UNG_VIEN', candHeaders, candRows);
         details.candidates = candRows.length;
-      }
-
-      // 11. Đồng bộ Tab HR: Nhân sự thử việc (HR_THU_VIEC)
-      const probationEmps = employees.filter(e => e.employment_status === 'PROBATION');
-      const probationHeaders = SHEETS_DEFINITIONS.find(d => d.title === 'HR_THU_VIEC')!.headers;
-      const probationRows = probationEmps.map(e => [
-        e.employee_code,
-        e.full_name,
-        e.phone_normalized,
-        e.gender || 'Nam',
-        e.birth_date || '',
-        e.default_branch_id,
-        e.group || 'STORE',
-        e.current_rate_per_hour || 21000,
-        e.start_date || e.created_at,
-        // Hạn 30 ngày
-        new Date(new Date(e.start_date || e.created_at).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        'THỬ VIỆC',
-      ]);
-      await this.overwriteSheetData('HR_THU_VIEC', probationHeaders, probationRows);
-
-      // 12. Đồng bộ Tab HR: Nhân sự chính thức (HR_CHINH_THUC)
-      const officialEmps = employees.filter(e => e.employment_status === 'OFFICIAL');
-      const officialHeaders = SHEETS_DEFINITIONS.find(d => d.title === 'HR_CHINH_THUC')!.headers;
-      const officialRows = officialEmps.map(e => [
-        e.employee_code,
-        e.full_name,
-        e.phone_normalized,
-        e.gender || 'Nam',
-        e.birth_date || '',
-        e.id_card_number || '',
-        e.email || '',
-        e.default_branch_id,
-        e.group || 'STORE',
-        e.current_rate_per_hour || 25500,
-        e.start_date || e.created_at,
-        e.official_date || e.start_date || e.created_at,
-        'CHÍNH THỨC',
-      ]);
-      await this.overwriteSheetData('HR_CHINH_THUC', officialHeaders, officialRows);
-
-      // 13. Đồng bộ Tab HR: Lịch tuần (HR_LICH_TUAN)
-      const hrScheduleHeaders = SHEETS_DEFINITIONS.find(d => d.title === 'HR_LICH_TUAN')!.headers;
-      const hrScheduleRows = shifts.map(s => {
-        const emp = employees.find(e => e.employee_id === s.employee_id);
-        return [
-          s.assignment_id,
-          emp?.employee_code || s.employee_id,
-          emp?.full_name || 'Nhân viên',
-          emp?.phone_normalized || '',
-          s.branch_id,
-          s.shift_code,
-          s.date,
-          s.start_at,
-          s.end_at,
-          s.status,
-          s.schedule_version,
-        ];
-      });
-      await this.overwriteSheetData('HR_LICH_TUAN', hrScheduleHeaders, hrScheduleRows);
-
-      // 14. Đồng bộ Tab HR: Quyết định chuyển chính thức (HR_CHUYEN_CHINH_THUC)
-      const conversionHeaders = SHEETS_DEFINITIONS.find(d => d.title === 'HR_CHUYEN_CHINH_THUC')!.headers;
-      const conversionRows = probationEmps.map((e, idx) => [
-        `QD_CT_${String(idx + 1).padStart(4, '0')}`,
-        e.employee_code,
-        e.full_name,
-        e.default_branch_id,
-        e.start_date || e.created_at,
-        new Date(new Date(e.start_date || e.created_at).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        '25.500 đ/h',
-        'Chờ Duyệt Ký',
-        'HR Manager',
-      ]);
-      await this.overwriteSheetData('HR_CHUYEN_CHINH_THUC', conversionHeaders, conversionRows);
-
-      // 15. Đồng bộ Tab HR: Chấm công thời gian thực (HR_CHAM_CONG)
-      const hrAttDef = SHEETS_DEFINITIONS.find(d => d.title === 'HR_CHAM_CONG');
-      if (hrAttDef) {
-        const attendanceEvents = (repo as any).attendanceEvents || ((repo as any).mockAdapter && (repo as any).mockAdapter.attendanceEvents) || [];
-        const attRows = attendanceEvents.map((evt: any) => {
-          const emp = employees.find((e: any) => e.employee_id === evt.employee_id);
-          return [
-            evt.event_id,
-            emp?.employee_code || evt.employee_id,
-            emp?.full_name || 'Nhân Viên',
-            evt.branch_id || emp?.default_branch_id || 'CN130',
-            evt.client_time ? evt.client_time.split('T')[0] : '',
-            evt.type === 'CHECK_IN' ? evt.client_time : '',
-            evt.type === 'CHECK_OUT' ? evt.client_time : '',
-            evt.is_late ? `Đi trễ (${evt.minutes_deviation}p)` : evt.is_early ? `Về sớm (${evt.minutes_deviation}p)` : 'Đúng giờ',
-            `${evt.distance_meters || 0}m (${evt.gps_status || 'VALID'})`,
-            evt.drive_path || evt.drive_object_id || 'Drive OK',
-          ];
-        });
-        await this.overwriteSheetData('HR_CHAM_CONG', hrAttDef.headers, attRows);
       }
 
       // 16. Đồng bộ Đơn nghỉ phép & Nghỉ khẩn cấp (DON_NGHI_PHEP & PHIEU_OFF_DOT_XUAT)

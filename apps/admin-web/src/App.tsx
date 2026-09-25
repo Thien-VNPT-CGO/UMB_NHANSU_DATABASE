@@ -935,7 +935,8 @@ export function App() {
         group: emp.group || 'STORE',
         employmentStatus: emp.employment_status,
         displayBranch: getDisplayBranch(emp.default_branch_id, emp.group),
-        accountStatus: acc?.account_status || (emp.employment_status === 'PRE_ONBOARDING' ? 'PENDING_ACTIVATION' : 'ACTIVE'),
+        // Dữ liệu thật: chưa có tài khoản thì báo NO_ACCOUNT, KHÔNG giả ACTIVE.
+        accountStatus: acc?.account_status || 'NO_ACCOUNT',
         activatedAt: acc?.activated_at,
         activatedBy: acc?.activated_by,
         revokedAt: acc?.revoked_at,
@@ -976,7 +977,7 @@ export function App() {
       if (activationSubTab === 'ALL') {
         matchSubTab = true;
       } else if (activationSubTab === 'NEW') {
-        matchSubTab = item.employmentStatus === 'PRE_ONBOARDING' || item.accountStatus === 'PENDING_ACTIVATION';
+        matchSubTab = item.employmentStatus === 'PRE_ONBOARDING' || item.accountStatus === 'PENDING_ACTIVATION' || item.accountStatus === 'NO_ACCOUNT';
       } else if (activationSubTab === 'PROBATION') {
         matchSubTab = item.employmentStatus === 'PROBATION';
       } else if (activationSubTab === 'OFFICIAL') {
@@ -1004,7 +1005,7 @@ export function App() {
   }, [activationDataList, activationSubTab, accountSearch]);
 
   const countAll = activationDataList.length;
-  const countNew = activationDataList.filter(i => i.employmentStatus === 'PRE_ONBOARDING' || i.accountStatus === 'PENDING_ACTIVATION').length;
+  const countNew = activationDataList.filter(i => i.employmentStatus === 'PRE_ONBOARDING' || i.accountStatus === 'PENDING_ACTIVATION' || i.accountStatus === 'NO_ACCOUNT').length;
   const countProbation = activationDataList.filter(i => i.employmentStatus === 'PROBATION').length;
   const countOfficial = activationDataList.filter(i => i.employmentStatus === 'OFFICIAL').length;
   const countOffice = activationDataList.filter(i => i.group === 'VAN_PHONG').length;
@@ -2070,13 +2071,16 @@ export function App() {
                               fontWeight: 700,
                               backgroundColor:
                                 item.accountStatus === 'ACTIVE' ? 'var(--success-soft)' :
-                                item.accountStatus === 'PENDING_ACTIVATION' ? 'var(--warning-soft)' : 'var(--danger-soft)',
+                                item.accountStatus === 'PENDING_ACTIVATION' ? 'var(--warning-soft)' :
+                                item.accountStatus === 'NO_ACCOUNT' ? '#F1F5F9' : 'var(--danger-soft)',
                               color:
                                 item.accountStatus === 'ACTIVE' ? 'var(--success)' :
-                                item.accountStatus === 'PENDING_ACTIVATION' ? '#92400E' : 'var(--danger)',
+                                item.accountStatus === 'PENDING_ACTIVATION' ? '#92400E' :
+                                item.accountStatus === 'NO_ACCOUNT' ? '#64748B' : 'var(--danger)',
                             }}>
                               {item.accountStatus === 'ACTIVE' ? 'Đã Kích Hoạt' :
                                item.accountStatus === 'PENDING_ACTIVATION' ? 'Chờ Kích Hoạt' :
+                               item.accountStatus === 'NO_ACCOUNT' ? 'Chưa Có TK' :
                                item.accountStatus === 'SUSPENDED' ? 'Tạm Khóa' : 'Đã Thu Hồi'}
                             </span>
                           </td>
@@ -2088,7 +2092,8 @@ export function App() {
                             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                               <button
                                 onClick={() => handleSetEmpPin(item.accountId, item.fullName || item.phone)}
-                                title="Cấp mới / reset mã PIN đăng nhập (nhân viên bắt đổi lần sau)"
+                                disabled={!item.hasRealAccount}
+                                title={item.hasRealAccount ? 'Cấp mới / reset mã PIN đăng nhập (nhân viên bắt đổi lần sau)' : 'Kích hoạt tài khoản trước khi cấp PIN!'}
                                 style={{
                                   padding: '6px 12px',
                                   borderRadius: 'var(--radius-sm)',
@@ -2097,14 +2102,15 @@ export function App() {
                                   color: 'var(--brand)',
                                   fontWeight: 600,
                                   fontSize: '12px',
-                                  cursor: 'pointer',
+                                  cursor: item.hasRealAccount ? 'pointer' : 'not-allowed',
+                                  opacity: item.hasRealAccount ? 1 : 0.5,
                                 }}
                               >
                                 🔑 Cấp PIN
                               </button>
                               {item.accountStatus !== 'ACTIVE' ? (
                                 <button
-                                  onClick={() => handleActivateEmpAccount(item.accountId, item.version)}
+                                  onClick={() => handleActivateEmpAccount(item.hasRealAccount ? item.accountId : item.id, item.version)}
                                   style={{
                                     padding: '6px 12px',
                                     borderRadius: 'var(--radius-sm)',
@@ -2720,10 +2726,9 @@ export function App() {
                     'DON_DOI_CA',
                     'DIEU_CHINH_CONG',
                     'KY_LUONG',
-                    'CHI_TIET_LUONG',
                     'AUDIT_LOG',
                     'DANH_SACH_CHI_NHANH',
-                    'CAU_HINH_HE_THONG',
+                    'FROM_NHAN_VIEN',
                   ].map((tabName: string, idx: number) => (
                     <div key={idx} style={{ padding: '12px 14px', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--bg)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', fontWeight: 600 }}>
                       <CheckCircle size={16} color="var(--success)" />

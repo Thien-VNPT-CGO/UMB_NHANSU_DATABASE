@@ -29,10 +29,14 @@ Vao Google Drive Folder -> Them email Service Account voi quyen Editor
 
 ## Buoc 4: Cau truc Google Sheets tu dong tao
 
-Server se TAO 13 TAB khi khoi dong lan dau:
+Server se TAO 12 TAB khi khoi dong lan dau (chi tab he thong can, da xoa tab mirror HR_* / CHI_TIET_LUONG / CAU_HINH_HE_THONG):
 NHAN_VIEN_MASTER, TAI_KHOAN_NHAN_VIEN, ADMIN_ACCOUNTS, PHAN_CONG_CA
 SU_KIEN_DIEM_DANH, DON_NGHI_PHEP, DON_DOI_CA, DIEU_CHINH_CONG
-KY_LUONG, CHI_TIET_LUONG, AUDIT_LOG, DANH_SACH_CHI_NHANH, CAU_HINH_HE_THONG
+KY_LUONG, AUDIT_LOG, DANH_SACH_CHI_NHANH, FROM_NHAN_VIEN
+
+Luu y: neu Sheets cu van con cac tab HR_UNG_VIEN, HR_THU_VIEC, HR_CHINH_THUC,
+HR_LICH_TUAN, HR_CHAM_CONG, HR_CHUYEN_CHINH_THUC, HR_TINH_LUONG, CHI_TIET_LUONG,
+CAU_HINH_HE_THONG -> xoa tay tren Google Sheets (code khong tu xoa tab de tranh mat du lieu).
 
 ## Buoc 5: Tai khoan admin bootstrap
 
