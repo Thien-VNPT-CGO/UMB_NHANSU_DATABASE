@@ -943,12 +943,12 @@ export function App() {
               </div>
 
               <button
-                className="btn-primary"
+                className={`btn-primary${loading ? ' fx-loading' : ''}`}
                 onClick={() => handlePhoneLogin()}
                 disabled={loading}
                 style={{ width: '100%', padding: '13px', fontSize: '15px', fontWeight: 800, marginBottom: '14px', opacity: loading ? 0.6 : 1 }}
               >
-                {loading ? '⏳ ĐANG XÁC THỰC...' : '🔐 ĐĂNG NHẬP'}
+                {loading ? 'ĐANG XÁC THỰC...' : '🔐 ĐĂNG NHẬP'}
               </button>
             </>
           )}
@@ -983,12 +983,12 @@ export function App() {
                 style={{ width: '100%', fontSize: '18px', fontWeight: 700, letterSpacing: '4px', marginBottom: '12px' }}
               />
               <button
-                className="btn-primary"
+                className={`btn-primary${loading ? ' fx-loading' : ''}`}
                 onClick={handleChangePin}
                 disabled={loading}
                 style={{ width: '100%', padding: '13px', fontSize: '15px', fontWeight: 800, opacity: loading ? 0.6 : 1 }}
               >
-                {loading ? '⏳ ĐANG ĐỔI PIN...' : '✅ ĐỔI PIN & VÀO HỆ THỐNG'}
+                {loading ? 'ĐANG ĐỔI PIN...' : '✅ ĐỔI PIN & VÀO HỆ THỐNG'}
               </button>
             </div>
           )}
@@ -1115,29 +1115,23 @@ export function App() {
         })}
       </div>
 
-      {/* TOAST MESSAGE */}
-      {toastMsg && (
-        <div style={{
-          position: 'fixed',
-          top: '90px',
-          left: '16px',
-          right: '16px',
-          backgroundColor: '#273142',
-          color: '#FFF',
-          padding: '12px 16px',
-          borderRadius: 'var(--radius-sm)',
-          fontSize: '13px',
-          fontWeight: 600,
-          zIndex: 999,
-          boxShadow: 'var(--shadow-modal)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-        }}>
-          <CheckCircle2 size={16} color="var(--brand)" />
-          {toastMsg}
-        </div>
-      )}
+      {/* TOAST MESSAGE (phân loại thành công/lỗi + animation + thanh đếm ngược) */}
+      {toastMsg && (() => {
+        const m = toastMsg;
+        const isOk = /🎉|✓|✅|thành công/i.test(m);
+        const isErr = !isOk && /⚠️|🚫|❌|⛔|lỗi|không|chưa|thất bại|từ chối|vi phạm|cấm|hết/i.test(m);
+        const cls = isErr ? 'fx-toast-danger' : isOk ? 'fx-toast-success' : '';
+        return (
+          <div key={m} className={`fx-toast ${cls}`}>
+            {isErr
+              ? <AlertCircle size={16} color="#F87171" style={{ flexShrink: 0 }} />
+              : isOk
+                ? <span className="fx-pop"><CheckCircle2 size={16} color="#34D399" /></span>
+                : <CheckCircle2 size={16} color="var(--brand)" style={{ flexShrink: 0 }} />}
+            <span>{m}</span>
+          </div>
+        );
+      })()}
 
       {/* 5-MINUTE PRE-NOTIFICATION & MANDATORY 2-DAY OFF REGISTRATION BANNER FOR OFFICIAL EMPLOYEES */}
       {!isProbation && weeklyOffWindow?.phase === 'REMINDER' && (
@@ -1902,7 +1896,7 @@ export function App() {
                       border: '1px solid #A7F3D0',
                       textAlign: 'center',
                     }}>
-                      <CheckCircle2 size={36} color="#10B981" style={{ margin: '0 auto 8px' }} />
+                      <span className="fx-pop"><CheckCircle2 size={36} color="#10B981" style={{ margin: '0 auto 8px' }} /></span>
                       <h4 style={{ fontSize: '16px', fontWeight: 800, color: '#065F46' }}>
                         {attendanceActionType === 'CHECK_IN' ? 'CHECK-IN THÀNH CÔNG!' : 'CHECK-OUT THÀNH CÔNG!'}
                       </h4>

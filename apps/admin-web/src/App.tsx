@@ -2123,13 +2123,13 @@ export function App() {
 
         {/* NOTIFICATION MESSAGES (BANNER CŨ) */}
         {errorMsg && (
-          <div style={{ padding: '12px 24px', backgroundColor: 'var(--danger-soft)', color: 'var(--danger)', fontSize: '13px', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div key={errorMsg} className="fx-shake" style={{ padding: '12px 24px', backgroundColor: 'var(--danger-soft)', color: 'var(--danger)', fontSize: '13px', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span>Lỗi: {errorMsg}</span>
             <button onClick={() => setErrorMsg(null)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--danger)' }}><X size={16} /></button>
           </div>
         )}
         {successMsg && (
-          <div style={{ padding: '12px 24px', backgroundColor: 'var(--success-soft)', color: 'var(--success)', fontSize: '13px', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div key={successMsg} className="fx-fade-up" style={{ padding: '12px 24px', backgroundColor: 'var(--success-soft)', color: 'var(--success)', fontSize: '13px', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span>{successMsg}</span>
             <button onClick={() => setSuccessMsg(null)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--success)' }}><X size={16} /></button>
           </div>

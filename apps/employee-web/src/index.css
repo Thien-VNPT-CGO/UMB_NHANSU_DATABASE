@@ -149,3 +149,150 @@ input:focus, select:focus, textarea:focus {
   align-items: center;
   justify-content: center;
 }
+
+/* ========================================================================= */
+/* FX UPGRADE — ripple nút bấm, loading, toast phân loại, shake, entrance    */
+/* (đồng bộ ngôn ngữ hiệu ứng với cổng quản trị)                             */
+/* ========================================================================= */
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.animate-spin {
+  animation: spin 0.9s linear infinite;
+}
+
+/* Nhấn nút có phản hồi xúc giác + gợn sóng */
+button {
+  position: relative;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+button:active:not(:disabled) {
+  transform: scale(0.96) translateY(1px) !important;
+  filter: brightness(0.94) !important;
+}
+.btn-primary, .btn-secondary {
+  overflow: hidden;
+}
+.btn-primary::after, .btn-secondary::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.5) 0%, rgba(255, 255, 255, 0) 65%);
+  opacity: 0;
+  pointer-events: none;
+}
+.btn-primary:active::after, .btn-secondary:active::after {
+  animation: fx-ripple 0.45s ease-out;
+}
+@keyframes fx-ripple {
+  0% { opacity: 0.8; transform: scale(0.3); }
+  100% { opacity: 0; transform: scale(2.4); }
+}
+
+/* Nút đang xử lý: spinner + mờ (thêm class fx-loading khi loading=true) */
+.fx-loading {
+  pointer-events: none !important;
+  opacity: 0.75 !important;
+}
+.fx-loading::before {
+  content: '';
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: #fff;
+  animation: spin 0.7s linear infinite;
+  display: inline-block;
+}
+
+/* Toast nổi phân loại + thanh đếm ngược (khớp timeout 3.5s) */
+@keyframes fx-toast-drop {
+  0% { opacity: 0; transform: translateY(-16px) scale(0.96); }
+  60% { opacity: 1; transform: translateY(3px) scale(1.01); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes fx-toast-progress {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
+.fx-toast {
+  position: fixed;
+  top: 90px;
+  left: 16px;
+  right: 16px;
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px 15px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: var(--shadow-modal);
+  overflow: hidden;
+  background-color: #273142;
+  color: #FFF;
+  border-left: 4px solid var(--brand);
+  animation: fx-toast-drop 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.fx-toast-success { border-left-color: var(--success); }
+.fx-toast-danger { border-left-color: var(--danger); background-color: #3A2530; }
+.fx-toast::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  width: 100%;
+  background: var(--brand);
+  transform-origin: left;
+  animation: fx-toast-progress 3.5s linear forwards;
+}
+.fx-toast-success::after { background: var(--success); }
+.fx-toast-danger::after { background: var(--danger); }
+
+/* Rung khi báo lỗi */
+@keyframes fx-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-7px); }
+  40% { transform: translateX(6px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(3px); }
+}
+.fx-shake { animation: fx-shake 0.4s ease; }
+
+/* Nảy icon thành công */
+@keyframes fx-pop {
+  0% { transform: scale(0.4); opacity: 0; }
+  60% { transform: scale(1.25); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.fx-pop { animation: fx-pop 0.35s cubic-bezier(0.16, 1, 0.3, 1); display: inline-flex; }
+
+/* Thẻ hiện dần từ dưới (so le bằng style={{ '--fx-delay': '60ms' }}) */
+@keyframes fx-fade-up {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.fx-fade-up { animation: fx-fade-up 0.45s cubic-bezier(0.16, 1, 0.3, 1) both; animation-delay: var(--fx-delay, 0ms); }
+
+/* Skeleton lấp lánh khi tải dữ liệu */
+@keyframes fx-shimmer {
+  0% { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+.fx-skeleton {
+  background: linear-gradient(90deg, #F3E9E4 25%, #FBF4F0 50%, #F3E9E4 75%);
+  background-size: 800px 100%;
+  animation: fx-shimmer 1.2s linear infinite;
+  border-radius: var(--radius-sm);
+  min-height: 14px;
+}
+
+/* Chấm realtime nhấp nháy */
+@keyframes fx-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.fx-pulse-dot { animation: fx-blink 1.4s ease-in-out infinite; }
