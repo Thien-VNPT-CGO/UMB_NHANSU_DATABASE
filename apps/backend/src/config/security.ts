@@ -127,16 +127,25 @@ function readMax(envKey: string, prodDefault: number, testDefault: number): numb
   return isTestEnv() ? testDefault : prodDefault;
 }
 
-/** Chống brute-force cho /auth/* (login, refresh, phone-login). */
+/**
+ * Chống brute-force cho /auth/* (login, refresh, phone-login).
+ * - Chỉ đếm request THẤT BẠI (skipSuccessfulRequests): người dùng thật không bao giờ dính 429.
+ * - Key theo IP + tài khoản: cả văn phòng chung 1 IP cũng không dùng chung quota với nhau.
+ */
 export function authRateLimiter() {
   return rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: readMax('AUTH_RATE_LIMIT_MAX', 30, 10000),
+    max: readMax('AUTH_RATE_LIMIT_MAX', 60, 10000),
     standardHeaders: true,
     legacyHeaders: false,
+    skipSuccessfulRequests: true,
+    keyGenerator: (req: any) => {
+      const id = String(req.body?.username || req.body?.phone || '').toLowerCase().trim();
+      return `${req.ip}:${id}`;
+    },
     message: {
       error: 'TOO_MANY_REQUESTS',
-      message: 'Quá nhiều lần thử đăng nhập, vui lòng thử lại sau 15 phút',
+      message: 'Đăng nhập sai quá nhiều lần, vui lòng thử lại sau 15 phút',
     },
   });
 }
@@ -145,7 +154,7 @@ export function authRateLimiter() {
 export function generalRateLimiter() {
   return rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: readMax('GENERAL_RATE_LIMIT_MAX', 300, 10000),
+    max: readMax('GENERAL_RATE_LIMIT_MAX', 1000, 10000),
     standardHeaders: true,
     legacyHeaders: false,
     message: {

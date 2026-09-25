@@ -696,9 +696,16 @@ export function App() {
     }
   };
 
-  // HR cấp mới / reset mã PIN đăng nhập cho nhân viên (4-8 chữ số)
+  // HR cấp mới / reset mã PIN đăng nhập cho nhân viên (4-8 chữ số).
+  // Dùng cho cả 2 trường hợp: cấp lần đầu và nhân viên QUÊN PIN (cấp lại số mới,
+  // PIN cũ + mọi phiên đăng nhập cũ tự vô hiệu ngay). Hệ thống tự sinh PIN
+  // ngẫu nhiên 4 số điền sẵn — HR copy gửi NV, OK để cấp.
   const handleSetEmpPin = async (id: string, fullName: string) => {
-    const pin = window.prompt(`Cấp mã PIN đăng nhập cho ${fullName} (4-8 chữ số).\nNhân viên phải đổi PIN ở lần đăng nhập tiếp theo. Trao PIN trực tiếp, KHÔNG gửi qua nhóm chat!`);
+    const randomPin = String(1000 + Math.floor(crypto.getRandomValues(new Uint32Array(1))[0] % 9000));
+    const pin = window.prompt(
+      `Cấp / RESET mã PIN cho ${fullName}.\nHệ thống đã tạo sẵn PIN ngẫu nhiên bên dưới — COPY gửi nhân viên TRƯỚC khi bấm OK!\nLưu ý: PIN cũ (nếu có) và mọi phiên đăng nhập của NV sẽ bị vô hiệu ngay. NV phải đổi PIN ở lần đăng nhập tiếp theo. Trao trực tiếp, KHÔNG gửi qua nhóm chat!`,
+      randomPin
+    );
     if (pin === null) return;
     if (!/^\d{4,8}$/.test(pin.trim())) {
       setErrorMsg('Mã PIN phải gồm 4-8 chữ số!');
@@ -2097,7 +2104,7 @@ export function App() {
                               <button
                                 onClick={() => handleSetEmpPin(item.accountId, item.fullName || item.phone)}
                                 disabled={!item.hasRealAccount}
-                                title={item.hasRealAccount ? 'Cấp mới / reset mã PIN đăng nhập (nhân viên bắt đổi lần sau)' : 'Kích hoạt tài khoản trước khi cấp PIN!'}
+                                title={item.hasRealAccount ? 'Cấp mới hoặc RESET khi nhân viên quên PIN (PIN cũ vô hiệu ngay, NV bắt đổi lần sau)' : 'Kích hoạt tài khoản trước khi cấp PIN!'}
                                 style={{
                                   padding: '6px 12px',
                                   borderRadius: 'var(--radius-sm)',
@@ -2110,7 +2117,7 @@ export function App() {
                                   opacity: item.hasRealAccount ? 1 : 0.5,
                                 }}
                               >
-                                🔑 Cấp PIN
+                                🔑 Cấp / Reset PIN
                               </button>
                               {item.accountStatus !== 'ACTIVE' ? (
                                 <button

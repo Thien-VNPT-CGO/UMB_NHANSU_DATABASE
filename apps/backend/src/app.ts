@@ -99,7 +99,9 @@ const SERVER_STARTED_AT = Date.now();
 export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   const app = express();
   // Render/Vercel chạy sau proxy — cần để rate-limit lấy đúng IP client.
-  app.set('trust proxy', 1);
+  // Tin toàn bộ chuỗi proxy (Render/CDN) để req.ip là IP thật của client.
+  // Nếu chỉ trust 1 hop, mọi user sau proxy sẽ chung 1 IP -> dính 429 oan.
+  app.set('trust proxy', true);
   app.disable('x-powered-by');
   app.use(helmetMiddleware());
   const corsMiddleware = cors(buildCorsOptions());
