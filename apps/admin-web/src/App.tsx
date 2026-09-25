@@ -2054,7 +2054,7 @@ export function App() {
                   />
                   <Search size={16} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
                 </div>
-                {currentUser?.role === 'HR' && ['PROBATION', 'OFFICIAL', 'XUONG', 'VAN_PHONG', 'SALE'].includes(activationSubTab) && (() => {
+                {['HR', 'ADMIN'].includes(currentUser?.role || '') && ['PROBATION', 'OFFICIAL', 'XUONG', 'VAN_PHONG', 'SALE'].includes(activationSubTab) && (() => {
                   const pending = filteredActivationItems.filter(i => i.accountStatus !== 'ACTIVE');
                   const tabLabel: Record<string, string> = { PROBATION: 'Thử việc', OFFICIAL: 'Chính thức', XUONG: 'Xưởng', VAN_PHONG: 'Văn Phòng', SALE: 'Sales' };
                   const label = tabLabel[activationSubTab] || activationSubTab;
@@ -2265,7 +2265,7 @@ export function App() {
                                 {item.pinMustChange ? '🔄 Reset PIN Zalo' : '📩 Gửi PIN Zalo'}
                               </button>
                               )}
-                              {item.accountStatus !== 'ACTIVE' && currentUser?.role === 'HR' ? (
+                              {item.accountStatus !== 'ACTIVE' && ['HR', 'ADMIN'].includes(currentUser?.role || '') ? (
                                 <button
                                   onClick={() => handleActivateEmpAccount(item.hasRealAccount ? item.accountId : item.id, item.version)}
                                   disabled={item.isDuplicatePhone}

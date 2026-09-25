@@ -285,8 +285,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  // Quy chế phân quyền: ADMIN chỉ KHÓA tài khoản; HR kích hoạt + cấp/reset PIN.
-  app.post('/admin/employee-accounts/:id/activate', authMiddleware, requireRole(['HR']), validate({ params: idParams, body: activateAccountBody }), async (req: AuthenticatedRequest, res) => {
+  // Quy chế phân quyền: ADMIN khóa + kích hoạt tài khoản; HR kích hoạt + cấp/reset PIN.
+  app.post('/admin/employee-accounts/:id/activate', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams, body: activateAccountBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const accountId = req.params.id;
       const expectedVersion = req.body.expectedVersion || 1;
@@ -306,7 +306,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   // Kích hoạt hàng loạt theo sub-tab (Thử việc / Chính thức / Xưởng / Văn phòng / Sales).
   // Bỏ qua dòng trùng SĐT (ghi vào failed để HR đối soát), các dòng sạch vẫn kích hoạt.
-  app.post('/admin/employee-accounts/bulk-activate', authMiddleware, requireRole(['HR']), validate({ body: bulkActivateBody }), async (req: AuthenticatedRequest, res) => {
+  app.post('/admin/employee-accounts/bulk-activate', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ body: bulkActivateBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const activated: string[] = [];
       const failed: { id: string; error: string }[] = [];
