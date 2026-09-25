@@ -35,12 +35,19 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     const hasEmailKey = !!(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && process.env.GOOGLE_PRIVATE_KEY);
     if ((hasJson || hasEmailKey) && spreadsheetId) {
       this.isConfigured = true;
-      // Auto-initialize sheets structure and pull real data on startup
+      // Auto-initialize sheets structure and pull real data on startup.
+      // Pull dữ liệu chạy TRƯỚC để web app có dữ liệu ngay; tạo header chạy nền song song (không chặn).
       setTimeout(async () => {
         try {
-          await this.syncService.initSpreadsheetStructure();
-          const pullResult = await this.syncService.pullAllDataFromGoogleSheets(this);
-          console.log('[GoogleSheetsAdapter] Startup pull completed:', pullResult.message, pullResult.counts);
+          const pullPromise = this.syncService
+            .pullAllDataFromGoogleSheets(this)
+            .then(pullResult => {
+              console.log('[GoogleSheetsAdapter] Startup pull completed:', pullResult.message, pullResult.counts);
+            });
+          this.syncService.initSpreadsheetStructure().catch(err =>
+            console.warn('[GoogleSheetsAdapter] initSpreadsheetStructure (nền):', err?.message || err)
+          );
+          await pullPromise;
           // If no branches in sheets, push initial data (branches, admin) to Sheets
           const branches = await this.fallbackAdapter.getBranches();
           if (branches.length === 0) {
@@ -54,25 +61,45 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     }
   }
 
+  // Trả dữ liệu trong bộ nhớ NGAY LẬP TỨC, pull Sheets chạy nền.
+  // Chỉ đứng đợi khi kho còn rỗng hoàn toàn (lần đầu khởi động) — có timeout chống treo.
+  private needsSeed(): boolean {
+    const f = this.fallbackAdapter;
+    return f.adminAccounts.length === 0 && f.employees.length === 0 && f.accounts.length === 0;
+  }
+
+  private withTimeout(p: Promise<unknown>, ms: number): Promise<unknown> {
+    return Promise.race([
+      p,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('PULL_TIMEOUT')), ms)),
+    ]);
+  }
+
   private async ensureFreshData() {
-    if (this.isConfigured) {
-      const now = Date.now();
-      if (now - this.lastPullTime > 5000) { // 5 giây cache — realtime hơn cho production
-        this.lastPullTime = now;
-        // Chống pull chồng chéo: nhiều request cùng lúc dùng chung 1 pull.
-        if (!this.pullInFlight) {
-          this.pullInFlight = this.syncService
-            .pullAllDataFromGoogleSheets(this)
-            .catch(e => console.warn('[GoogleSheetsAdapter] Auto-pull error:', e))
-            .finally(() => {
-              this.pullInFlight = null;
-            });
-        }
-        try {
-          await this.pullInFlight;
-        } catch (e) {
-          // đã log ở trên
-        }
+    if (!this.isConfigured) return;
+    const now = Date.now();
+    if (now - this.lastPullTime <= 15000) { // 15s mới pull nền 1 lần — giảm tải quota, trả lời tức thì
+      if (this.pullInFlight && this.needsSeed()) {
+        try { await this.withTimeout(this.pullInFlight, 25000); } catch { /* dùng tạm bộ nhớ */ }
+      }
+      return;
+    }
+    this.lastPullTime = now;
+    // Chống pull chồng chéo: nhiều request cùng lúc dùng chung 1 pull nền.
+    if (!this.pullInFlight) {
+      this.pullInFlight = this.syncService
+        .pullAllDataFromGoogleSheets(this)
+        .catch(e => console.warn('[GoogleSheetsAdapter] Auto-pull error:', e))
+        .finally(() => {
+          this.pullInFlight = null;
+        });
+    }
+    // Kho đã có dữ liệu -> KHÔNG đợi, trả bộ nhớ ngay; pull nền xong client nhận socket data:updated.
+    if (this.needsSeed()) {
+      try {
+        await this.withTimeout(this.pullInFlight, 25000);
+      } catch (e) {
+        // Hết timeout vẫn phục vụ bằng bộ nhớ hiện có (kể cả rỗng) thay vì treo request.
       }
     }
   }

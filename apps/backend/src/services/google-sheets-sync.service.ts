@@ -290,6 +290,15 @@ export class GoogleSheetsSyncService {
         'CAU_HINH_HE_THONG',
       ]);
 
+      // Đọc lỗi/quota trả về toàn rỗng trong khi bộ nhớ đang có dữ liệu thật
+      // -> GIỮ NGUYÊN bộ nhớ, không ghi đè rỗng (tránh mất dữ liệu + login fail oan).
+      const gotAnyRows = Object.values(batch).some(arr => arr.length > 0);
+      const hadMemoryData = fallback.employees.length + fallback.accounts.length > 0;
+      if (!gotAnyRows && hadMemoryData) {
+        console.warn('[GoogleSheetsSyncService] Batch read trả về rỗng (nghi lỗi API/quota) — giữ nguyên dữ liệu trong bộ nhớ.');
+        return { success: false, message: 'Empty batch read — keeping in-memory data', counts: null };
+      }
+
       // 1. Đọc NHAN_VIEN_MASTER
       const empRows = batch['NHAN_VIEN_MASTER'];
       if (empRows.length > 0) {
@@ -393,20 +402,25 @@ export class GoogleSheetsSyncService {
       counts.accounts = fallback.accounts.length;
 
       // PIN vừa sinh chỉ nằm trong bộ nhớ -> ghi ngay xuống Sheet để lần pull sau không sinh lại số khác.
+      // Bọc try/catch: ghi lỗi KHÔNG được làm sập cả lần pull.
       if (pinDirty && this.sheetsClient) {
-        const rows = fallback.accounts.map(acc => [
-          acc.account_id,
-          acc.employee_id,
-          acc.phone_normalized,
-          acc.role,
-          acc.account_status,
-          acc.version,
-          (acc as any).pin_hash || '',
-          acc.pin_must_change ? 'YES' : '',
-          (acc as any).pin_code || '',
-        ]);
-        const def = SHEETS_DEFINITIONS.find(d => d.title === 'TAI_KHOAN_NHAN_VIEN')!;
-        await this.overwriteSheetData('TAI_KHOAN_NHAN_VIEN', def.headers, rows);
+        try {
+          const rows = fallback.accounts.map(acc => [
+            acc.account_id,
+            acc.employee_id,
+            acc.phone_normalized,
+            acc.role,
+            acc.account_status,
+            acc.version,
+            (acc as any).pin_hash || '',
+            acc.pin_must_change ? 'YES' : '',
+            (acc as any).pin_code || '',
+          ]);
+          const def = SHEETS_DEFINITIONS.find(d => d.title === 'TAI_KHOAN_NHAN_VIEN')!;
+          await this.overwriteSheetData('TAI_KHOAN_NHAN_VIEN', def.headers, rows);
+        } catch (e: any) {
+          console.warn('[GoogleSheetsSyncService] Ghi PIN khởi tạo xuống Sheet thất bại (sẽ thử lại lần pull sau):', e?.message || e);
+        }
       }
 
       // 3. Đọc DANH_SACH_CHI_NHANH
@@ -700,7 +714,7 @@ export class GoogleSheetsSyncService {
               targetSheetTitle = found.properties.title;
               const candRes = await this.sheetsClient.spreadsheets.values.get({
                 spreadsheetId: this.candidateSpreadsheetId,
-                range: `'${targetSheetTitle}'!A1:ZZ`,
+                range: `'${targetSheetTitle}'!A1:Q`,
               });
               candRows = (candRes.data.values as string[][]) || [];
             }
@@ -714,7 +728,7 @@ export class GoogleSheetsSyncService {
           try {
             const candRes = await this.sheetsClient.spreadsheets.values.get({
               spreadsheetId: this.spreadsheetId,
-              range: `'FROM_NHAN_VIEN'!A1:ZZ`,
+                range: `'FROM_NHAN_VIEN'!A1:Q`,
             });
             if (candRes.data.values && candRes.data.values.length > 1) {
               candRows = candRes.data.values as string[][];
