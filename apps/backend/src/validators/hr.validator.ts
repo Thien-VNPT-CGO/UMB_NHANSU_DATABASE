@@ -79,6 +79,33 @@ export const interviewBody = z.object({
   timeSlot: z.string().trim().min(1).max(64),
 });
 
+// --- Zalo cá nhân HR ---
+export const zaloLoginIdParams = z.object({
+  loginId: shortId(128),
+});
+
+export const zaloFindUserBody = z.object({
+  phone: z.string().trim().min(9).max(15),
+});
+
+export const zaloFriendRequestBody = z
+  .object({
+    phone: optString(20),
+    uid: optString(64),
+    message: z.string().trim().min(1).max(500).default('Chào bạn, mình là HR Ụm Bò Milk. Kết bạn để trao đổi lịch phỏng vấn nhé!'),
+  })
+  .superRefine((v, ctx) => {
+    if (!v.phone && !v.uid) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Cần phone hoặc uid', path: ['phone'] });
+    }
+  });
+
+export const zaloSendInviteBody = z.object({
+  interviewDate: optString(64),
+  timeSlot: optString(64),
+  meetUrl: optString(500),
+});
+
 // --- Schedules ---
 export const schedulesQuery = z.object({
   branchId: queryString(32),

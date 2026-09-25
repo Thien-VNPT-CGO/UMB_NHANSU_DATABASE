@@ -11,6 +11,7 @@ import {
   getWeeklyOffCompletion,
   getWeeklyOffWindow,
 } from './services/weekly-off.service.js';
+import { ZaloService, defaultMeetUrl } from './services/zalo.service.js';
 import { AccountsService } from './services/accounts.service.js';
 import { EmployeesService } from './services/employees.service.js';
 import { SchedulesService } from './services/schedules.service.js';
@@ -70,6 +71,10 @@ import {
   swapCreateBody,
   swapRespondBody,
   transitionBody,
+  zaloFindUserBody,
+  zaloFriendRequestBody,
+  zaloLoginIdParams,
+  zaloSendInviteBody,
 } from './validators/hr.validator.js';
 import {
   backupCreateBody,
@@ -115,6 +120,11 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   const attendanceService = new AttendanceService(adapter);
   const payrollService = new PayrollService(adapter);
   const notificationsService = new NotificationsService(adapter);
+  const zaloService = new ZaloService(adapter);
+  // Khôi phục phiên Zalo cá nhân HR sau restart (không cần quét QR lại).
+  setTimeout(() => {
+    zaloService.restoreSession().catch(err => console.warn('[zalo] restore error:', err?.message || err));
+  }, 4000);
 
   // Realtime WebSocket broadcast helper
   const broadcastUpdate = (entity: string, data?: any) => {
@@ -482,6 +492,118 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         req.user!.id
       );
       res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // --- ZALO CÁ NHÂN HR (QR login + gửi thư mời thật, lib unofficial) ---
+  app.post('/admin/zalo/qr/start', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const { loginId } = zaloService.startQrLogin(req.user!.id);
+      res.json({ loginId });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/admin/zalo/qr/image/:loginId', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: zaloLoginIdParams }), async (req, res) => {
+    try {
+      const image = await zaloService.waitQrImage(req.params.loginId, 12000);
+      if (!image) return res.status(204).end();
+      res.json({ image });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/admin/zalo/status', authMiddleware, requireRole(['ADMIN', 'HR']), async (req, res) => {
+    res.json(zaloService.status());
+  });
+
+  app.post('/admin/zalo/qr/cancel/:loginId', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: zaloLoginIdParams }), async (req, res) => {
+    res.json({ cancelled: zaloService.cancelQrLogin(req.params.loginId) });
+  });
+
+  app.post('/admin/zalo/disconnect', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
+    try {
+      await zaloService.disconnect(req.user!.id);
+      broadcastUpdate('zalo', { action: 'disconnect' });
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/admin/zalo/find-user', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ body: zaloFindUserBody }), async (req, res) => {
+    try {
+      res.json(await zaloService.findUserByPhone(req.body.phone));
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.post('/admin/zalo/send-friend-request', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ body: zaloFriendRequestBody }), async (req, res) => {
+    try {
+      let uid = req.body.uid;
+      if (!uid) {
+        const found = await zaloService.findUserByPhone(req.body.phone);
+        uid = found.uid;
+      }
+      const result = await zaloService.sendFriendRequest(uid, req.body.message);
+      res.json({ ...result, uid });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Gửi thư mời phỏng vấn qua Zalo cá nhân HR cho 1 ứng viên.
+  app.post('/interviews/:id/send-zalo-invite', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams, body: zaloSendInviteBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const candidates = await adapter.listCandidates();
+      const cand = candidates.find((c: any) => c.submission_id === req.params.id);
+      if (!cand) return res.status(404).json({ error: 'CANDIDATE_NOT_FOUND' });
+
+      const interviewDate = req.body.interviewDate || (cand as any).interview_date || new Date().toISOString().split('T')[0];
+      const timeSlot = req.body.timeSlot || (cand as any).interview_time_slot || '09:00 - 10:00';
+      const meetUrl = req.body.meetUrl || defaultMeetUrl() || undefined;
+
+      // Lưu lịch phỏng vấn trước khi gửi (idempotent theo submission).
+      await employeesService.scheduleInterview(req.params.id, interviewDate, timeSlot, req.user!.id);
+
+      const phone = (cand as any).phone_normalized || (cand as any).phone || '';
+      let uid = '';
+      try {
+        const found = await zaloService.findUserByPhone(phone);
+        uid = found.uid;
+      } catch (e: any) {
+        return res.status(400).json({ error: e.message, phone });
+      }
+
+      const text = zaloService.buildInviteText({
+        candidateName: (cand as any).full_name || 'bạn',
+        position: (cand as any).apply_position,
+        branchName: (cand as any).branch_name || (cand as any).preferred_branch_id,
+        interviewDate,
+        timeSlot,
+        meetUrl,
+      });
+
+      try {
+        const sent = await zaloService.sendText(uid, text);
+        await adapter.recordAuditLog({
+          actor_id: req.user!.id,
+          action: 'ZALO_INVITE_SENT',
+          target_type: 'CANDIDATE',
+          target_id: req.params.id,
+          payload_after: { uid, msgId: sent.msgId } as any,
+        });
+        broadcastUpdate('candidates', { action: 'zalo-invite', id: req.params.id });
+        res.json({ success: true, uid, msgId: sent.msgId, meetUrl: meetUrl || null });
+      } catch (e: any) {
+        // Thường do chưa kết bạn — HR dùng nút Kết bạn rồi gửi lại.
+        return res.status(400).json({ error: 'ZALO_NOT_FRIEND', message: e?.message || e, uid, phone });
+      }
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -1614,6 +1736,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       attendanceService,
       payrollService,
       notificationsService,
+      zaloService,
     },
   };
 }

@@ -1,5 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import QRCode from 'qrcode';
+import React, { useState, useEffect } from 'react';
 import {
   Users,
   Calendar,
@@ -105,39 +104,179 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [selectedCandidateDetail, setSelectedCandidateDetail] = useState<any>(null);
   const [isSyncingCandidates, setIsSyncingCandidates] = useState(false);
 
-  // Zalo Personal QR & Bot State for HR
-  const [zaloConnected, setZaloConnected] = useState(() => {
+  // Zalo cá nhân HR — trạng thái THẬT từ server (QR login qua zca-js, session lưu server).
+  const [zaloStatus, setZaloStatus] = useState<any>(null);
+  const [zaloQrImage, setZaloQrImage] = useState<string | null>(null);
+  const [zaloLoginId, setZaloLoginId] = useState<string | null>(null);
+  const [zaloBusy, setZaloBusy] = useState(false);
+  const zaloConnected = !!zaloStatus?.connected;
+  const zaloAccount = zaloStatus?.account || null;
+
+  const refreshZaloStatus = async () => {
     try {
-      return localStorage.getItem('ubm_zalo_connected') === 'true';
-    } catch {
-      return false;
-    }
-  });
-  const [zaloPhone, setZaloPhone] = useState(() => {
-    try {
-      return localStorage.getItem('ubm_hr_zalo_phone') || currentUser?.phone || '';
-    } catch {
-      return currentUser?.phone || '';
-    }
-  });
-  const [isEditingPhone, setIsEditingPhone] = useState(false);
-  const [tempPhone, setTempPhone] = useState(() => {
-    try {
-      return localStorage.getItem('ubm_hr_zalo_phone') || currentUser?.phone || '';
-    } catch {
-      return currentUser?.phone || '';
-    }
-  });
-  const [zaloQrType, setZaloQrType] = useState<'AUTH_CONFIRM' | 'PERSONAL' | 'UPLOAD'>('AUTH_CONFIRM');
-  const [uploadedQrImg, setUploadedQrImg] = useState<string | null>(() => {
-    try {
-      return localStorage.getItem('ubm_hr_uploaded_qr');
+      const st = await apiRequest('/admin/zalo/status');
+      setZaloStatus(st);
+      if (st?.connected) {
+        setZaloQrImage(null);
+        setZaloLoginId(null);
+      }
+      return st;
     } catch {
       return null;
     }
-  });
-  const [zaloSessionToken, setZaloSessionToken] = useState(() => 'UBM_' + Math.random().toString(36).substring(2, 8).toUpperCase());
-  const [qrDataUrl, setQrDataUrl] = useState<string>('');
+  };
+
+  useEffect(() => {
+    if (activeTab === 'hr-interviews') {
+      refreshZaloStatus();
+    }
+  }, [activeTab]);
+
+  // Poll trạng thái khi đang chờ quét QR
+  useEffect(() => {
+    if (!zaloLoginId || zaloConnected) return;
+    let alive = true;
+    const pollStatus = async () => {
+      const st = await refreshZaloStatus();
+      if (!alive) return;
+      const phase = st?.login?.phase;
+      if (phase === 'connected') {
+        showToast('🟢 Zalo cá nhân HR đã quét QR kết nối THÀNH CÔNG! BOT sẵn sàng gửi thư mời.');
+      } else if (phase === 'expired') {
+        showToast('⏰ Mã QR Zalo đã hết hạn! Hãy bấm Tạo mã QR mới.');
+        setZaloQrImage(null);
+        setZaloLoginId(null);
+      } else if (phase === 'failed') {
+        showToast(st?.login?.error || 'Kết nối Zalo thất bại!');
+        setZaloQrImage(null);
+        setZaloLoginId(null);
+      }
+    };
+    const t = setInterval(pollStatus, 3000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [zaloLoginId, zaloConnected]);
+
+  const handleZaloCreateQr = async () => {
+    setZaloBusy(true);
+    try {
+      const { loginId } = await apiRequest('/admin/zalo/qr/start', { method: 'POST' });
+      setZaloLoginId(loginId);
+      setZaloQrImage(null);
+      // Chờ ảnh QR thật từ server (Zalo sinh, hết hạn sau ~60s)
+      for (let i = 0; i < 4; i++) {
+        const img = await apiRequest(`/admin/zalo/qr/image/${loginId}`).catch(() => null);
+        if (img?.image) {
+          setZaloQrImage(img.image);
+          break;
+        }
+        await new Promise(r => setTimeout(r, 3000));
+      }
+      if (!zaloQrImage) await refreshZaloStatus();
+    } catch (err: any) {
+      showToast(err.message || 'Không tạo được mã QR Zalo!');
+    } finally {
+      setZaloBusy(false);
+    }
+  };
+
+  const handleZaloDisconnect = async () => {
+    if (!window.confirm('Ngắt kết nối Zalo cá nhân? BOT sẽ dừng gửi thư mời đến khi quét QR lại!')) return;
+    try {
+      await apiRequest('/admin/zalo/disconnect', { method: 'POST' });
+      setZaloStatus({ connected: false });
+      setZaloQrImage(null);
+      setZaloLoginId(null);
+      showToast('Đã ngắt kết nối Zalo cá nhân!');
+    } catch (err: any) {
+      showToast(err.message);
+    }
+  };
+
+  // Form lập lịch phỏng vấn + gửi thư mời Zalo thật
+  const [inviteCandidateId, setInviteCandidateId] = useState('');
+  const [inviteDateTime, setInviteDateTime] = useState('');
+  const [inviteMode, setInviteMode] = useState<'ONLINE' | 'OFFLINE'>('ONLINE');
+  const [inviteMeetUrl, setInviteMeetUrl] = useState('');
+  const [inviteBusy, setInviteBusy] = useState(false);
+
+  const handleCreateScheduleAndInvite = async () => {
+    if (!inviteCandidateId) {
+      showToast('Vui lòng chọn ứng viên!');
+      return;
+    }
+    if (!inviteDateTime) {
+      showToast('Vui lòng chọn thời gian phỏng vấn!');
+      return;
+    }
+    if (!zaloConnected) {
+      showToast('⚠️ Chưa kết nối Zalo cá nhân! Hãy quét QR đăng nhập ở khung trên trước.');
+      return;
+    }
+    const [d, t] = inviteDateTime.split('T');
+    setInviteBusy(true);
+    try {
+      const res = await apiRequest(`/interviews/${inviteCandidateId}/send-zalo-invite`, {
+        method: 'POST',
+        body: JSON.stringify({
+          interviewDate: d,
+          timeSlot: (t || '').slice(0, 5),
+          ...(inviteMode === 'ONLINE' && inviteMeetUrl.trim() ? { meetUrl: inviteMeetUrl.trim() } : {}),
+        }),
+      });
+      showToast(`✅ Đã lập lịch & gửi thư mời Zalo! (msg #${res.msgId})`);
+      if (typeof onRefreshData === 'function') {
+        try { await onRefreshData(); } catch {}
+      }
+    } catch (err: any) {
+      const msg = String(err.message || '');
+      if (msg.includes('ZALO_NOT_FRIEND')) {
+        showToast('⚠️ Ứng viên chưa kết bạn Zalo với nick HR! Hãy bấm "Gửi thư mời Zalo" ở dòng ứng viên để kết bạn trước.');
+      } else {
+        showToast(msg);
+      }
+    } finally {
+      setInviteBusy(false);
+    }
+  };
+
+  // Gửi thư mời phỏng vấn qua Zalo cá nhân HR
+  const handleSendZaloInvite = async (candidate: any) => {
+    if (!zaloConnected) {
+      showToast('⚠️ Chưa kết nối Zalo cá nhân! Hãy quét QR đăng nhập trước.');
+      return;
+    }
+    try {
+      showToast(`Đang gửi thư mời Zalo tới ${candidate.full_name}...`);
+      const res = await apiRequest(`/interviews/${candidate.submission_id}/send-zalo-invite`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      showToast(`✅ Đã gửi thư mời Zalo tới ${candidate.full_name}! (msg #${res.msgId})`);
+      if (typeof onRefreshData === 'function') {
+        try { await onRefreshData(); } catch {}
+      }
+    } catch (err: any) {
+      const msg = String(err.message || '');
+      if (msg.includes('ZALO_NOT_FRIEND')) {
+        if (window.confirm(`${candidate.full_name} chưa kết bạn Zalo với nick HR. Gửi lời mời kết bạn ngay?`)) {
+          try {
+            await apiRequest('/admin/zalo/send-friend-request', {
+              method: 'POST',
+              body: JSON.stringify({ phone: candidate.phone || candidate.phone_normalized }),
+            });
+            showToast('Đã gửi lời mời kết bạn Zalo! Khi ứng viên đồng ý, bấm Gửi thư mời lại.');
+          } catch (e: any) {
+            showToast(e.message);
+          }
+        }
+      } else {
+        showToast(msg);
+      }
+    }
+  };
 
   // Live Attendance Events State for HR Realtime Tab 11
   const [liveAttendanceEvents, setLiveAttendanceEvents] = useState<any[]>([]);
@@ -149,86 +288,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         .catch(() => {});
     }
   }, [activeTab]);
-  const [isQrLoading, setIsQrLoading] = useState(false);
-  const [selectedZaloMsg, setSelectedZaloMsg] = useState<any>(null);
-  const [autoZaloBotEnabled, setAutoZaloBotEnabled] = useState(true);
-
-  // Compute QR target URL for Zalo connection
-  const qrTargetUrl = useMemo(() => {
-    if (zaloQrType === 'AUTH_CONFIRM') {
-      const origin = typeof window !== 'undefined' ? window.location.origin : '';
-      const pathname = typeof window !== 'undefined' ? window.location.pathname : '';
-      return `${origin}${pathname}?zalo_auth=1&session=${zaloSessionToken}&hr=${encodeURIComponent(currentUser?.full_name || 'Quản Trị Nhân Sự HR')}`;
-    }
-    if (zaloQrType === 'PERSONAL') {
-      const cleanPhone = (zaloPhone || '').replace(/\s+/g, '');
-      return cleanPhone ? `https://zalo.me/${cleanPhone}` : `https://zalo.me`;
-    }
-    return `https://id.zalo.me/account?continue=https%3A%2F%2Fchat.zalo.me&session=${zaloSessionToken}`;
-  }, [zaloQrType, zaloPhone, zaloSessionToken, currentUser]);
-
-  // Generate real scannable QR Code image Data URL
-  useEffect(() => {
-    if (zaloQrType === 'UPLOAD' && uploadedQrImg) {
-      setQrDataUrl(uploadedQrImg);
-      setIsQrLoading(false);
-      return;
-    }
-    let active = true;
-    setIsQrLoading(true);
-    QRCode.toDataURL(qrTargetUrl, {
-      width: 240,
-      margin: 2,
-      errorCorrectionLevel: 'H',
-      color: {
-        dark: '#003366',
-        light: '#FFFFFF',
-      },
-    })
-      .then((url) => {
-        if (active) {
-          setQrDataUrl(url);
-          setIsQrLoading(false);
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setQrDataUrl(`https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=8&data=${encodeURIComponent(qrTargetUrl)}`);
-          setIsQrLoading(false);
-        }
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [qrTargetUrl, zaloSessionToken, zaloQrType, uploadedQrImg]);
-
-  // Listen for mobile phone scan confirmation via StorageEvent and BroadcastChannel
-  useEffect(() => {
-    const handleStorage = (e: StorageEvent) => {
-      if (e.key === 'ubm_zalo_connected' && e.newValue === 'true') {
-        setZaloConnected(true);
-        showToast('🟢 Zalo cá nhân đã được xác nhận kết nối thành công từ điện thoại!');
-      }
-    };
-    window.addEventListener('storage', handleStorage);
-
-    let channel: BroadcastChannel | null = null;
-    try {
-      channel = new BroadcastChannel('ubm_zalo_channel');
-      channel.onmessage = (event) => {
-        if (event.data?.type === 'ZALO_CONNECTED') {
-          setZaloConnected(true);
-          showToast('🟢 Zalo cá nhân đã được xác nhận kết nối thành công từ điện thoại!');
-        }
-      };
-    } catch {}
-
-    return () => {
-      window.removeEventListener('storage', handleStorage);
-      if (channel) channel.close();
-    };
-  }, [showToast]);
+  // (QR Zalo thật do server sinh qua /admin/zalo/* — không còn QR giả local.)
 
   // Filter employees for Store
   const storeEmployees = allEmployees.filter(
@@ -1468,19 +1528,19 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           <div>
             <h1 style={{ fontSize: '20px', fontWeight: 800 }}>3. Quản Lý Lịch Phỏng Vấn & BOT Zalo Cá Nhân</h1>
             <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-              Tích hợp Zalo cá nhân của HR qua mã QR, BOT hệ thống tự động sinh link Google Meet và tự động gửi thư mời kèm lịch hẹn đến Zalo ứng viên
+              Tích hợp Zalo cá nhân của HR qua mã QR quét thật, BOT gửi thư mời kèm lịch hẹn đến Zalo ứng viên (link Meet do HR dán hoặc cấu hình sẵn)
             </p>
           </div>
           <button
             className="btn-primary"
             style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: zaloConnected ? '#0068FF' : '#475569' }}
-            onClick={() => {
-              setZaloSessionToken('UBM_' + Math.random().toString(36).substring(2, 8).toUpperCase());
-              showToast('Đang làm mới phiên kết nối Zalo cá nhân của HR...');
+            onClick={async () => {
+              await refreshZaloStatus();
+              showToast(zaloConnected ? 'Đã làm mới trạng thái Zalo!' : 'Đang kiểm tra kết nối Zalo cá nhân...');
             }}
           >
             <Smartphone size={16} />
-            Phiên Zalo: {currentUser?.full_name || 'HR Ụm Bò Milk'} ({zaloConnected ? '🟢 Đã Kết Nối' : 'Chờ Quét QR'})
+            Phiên Zalo: {zaloAccount?.displayName || currentUser?.full_name || 'HR Ụm Bò Milk'} ({zaloConnected ? '🟢 Đã Kết Nối' : 'Chờ Quét QR'})
           </button>
         </div>
 
@@ -1554,73 +1614,21 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 )}
               </div>
 
-              {/* Mode Selector */}
+              {/* Lưu ý lib unofficial */}
               <div style={{
-                display: 'flex',
-                gap: '4px',
+                fontSize: '11px',
+                color: '#92400E',
+                backgroundColor: '#FEF3C7',
+                border: '1px solid #FCD34D',
+                borderRadius: '6px',
+                padding: '6px 8px',
                 marginBottom: '10px',
-                backgroundColor: '#E2E8F0',
-                padding: '3px',
-                borderRadius: '8px',
-                width: '100%'
+                lineHeight: '1.4',
+                width: '100%',
               }}>
-                <button
-                  type="button"
-                  onClick={() => setZaloQrType('AUTH_CONFIRM')}
-                  style={{
-                    flex: 1,
-                    padding: '5px 4px',
-                    fontSize: '10.5px',
-                    fontWeight: 700,
-                    border: 'none',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    backgroundColor: zaloQrType === 'AUTH_CONFIRM' ? '#0068FF' : 'transparent',
-                    color: zaloQrType === 'AUTH_CONFIRM' ? '#FFF' : '#475569',
-                    transition: 'all 0.15s ease'
-                  }}
-                >
-                  Xác Thực Trực Tiếp
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setZaloQrType('PERSONAL')}
-                  style={{
-                    flex: 1,
-                    padding: '5px 4px',
-                    fontSize: '10.5px',
-                    fontWeight: 700,
-                    border: 'none',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    backgroundColor: zaloQrType === 'PERSONAL' ? '#0068FF' : 'transparent',
-                    color: zaloQrType === 'PERSONAL' ? '#FFF' : '#475569',
-                    transition: 'all 0.15s ease'
-                  }}
-                >
-                  Zalo SĐT Thật
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setZaloQrType('UPLOAD')}
-                  style={{
-                    flex: 1,
-                    padding: '5px 4px',
-                    fontSize: '10.5px',
-                    fontWeight: 700,
-                    border: 'none',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    backgroundColor: zaloQrType === 'UPLOAD' ? '#0068FF' : 'transparent',
-                    color: zaloQrType === 'UPLOAD' ? '#FFF' : '#475569',
-                    transition: 'all 0.15s ease'
-                  }}
-                >
-                  Tải QR Zalo
-                </button>
+                ⚠️ <strong>Kết nối thật qua Zalo cá nhân</strong> (lib unofficial — có rủi ro bị Zalo khóa nick). Nên dùng <strong>nick phụ của HR</strong>, không dùng nick chính!
               </div>
-
-              {/* MÃ QR CODE ZALO THẬT SẮC NÉT (QUÉT ĐƯỢC 100% BẰNG ĐIỆN THOẠI) */}
+              {/* MÃ QR ZALO THẬT DO SERVER SINH (quét bằng app Zalo trên điện thoại) */}
               <div style={{
                 width: '180px',
                 height: '180px',
@@ -1635,16 +1643,23 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 position: 'relative',
                 boxShadow: '0 4px 12px rgba(0, 104, 255, 0.12)',
               }}>
-                {isQrLoading && !qrDataUrl ? (
-                  <div style={{ fontSize: '11px', color: '#64748B' }}>Đang sinh mã QR...</div>
-                ) : (
+                {zaloConnected && zaloAccount ? (
+                  <div style={{ textAlign: 'center' }}>
+                    {zaloAccount.avatar ? (
+                      <img src={zaloAccount.avatar} alt="Zalo HR" style={{ width: '72px', height: '72px', borderRadius: '50%', margin: '0 auto 8px' }} />
+                    ) : (
+                      <div style={{ fontSize: '36px' }}>🟢</div>
+                    )}
+                    <div style={{ fontSize: '13px', fontWeight: 800, color: '#065F46' }}>{zaloAccount.displayName || 'Zalo HR'}</div>
+                    <div style={{ fontSize: '11px', color: '#059669' }}>BOT sẵn sàng gửi thư mời</div>
+                  </div>
+                ) : zaloQrImage ? (
                   <>
                     <img
-                      src={qrDataUrl || `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(qrTargetUrl)}`}
-                      alt="Mã QR Zalo Cá Nhân HR"
+                      src={zaloQrImage}
+                      alt="Mã QR đăng nhập Zalo"
                       style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '4px' }}
                     />
-                    {/* Logo Zalo giữa QR */}
                     <div style={{
                       position: 'absolute',
                       backgroundColor: '#0068FF',
@@ -1660,109 +1675,30 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       Zalo
                     </div>
                   </>
+                ) : (
+                  <div style={{ fontSize: '11px', color: '#64748B', textAlign: 'center', padding: '0 12px' }}>
+                    {zaloBusy ? 'Đang xin mã QR từ Zalo...' : 'Bấm "Tạo mã QR Zalo" để lấy mã quét thật'}
+                  </div>
                 )}
               </div>
 
-              {/* Hướng dẫn và cấu hình theo tab */}
+              {/* Hướng dẫn quét QR thật */}
               <div style={{ marginTop: '10px', width: '100%' }}>
-                {zaloQrType === 'AUTH_CONFIRM' && (
-                  <div style={{
-                    fontSize: '11px',
-                    color: '#1E40AF',
-                    backgroundColor: '#EFF6FF',
-                    border: '1px solid #BFDBFE',
-                    borderRadius: '6px',
-                    padding: '6px 8px',
-                    marginBottom: '8px',
-                    lineHeight: '1.4'
-                  }}>
-                    📱 <strong>Quét bằng app Zalo / Camera:</strong> Mở trang xác thực của Ụm Bò Milk, bấm <strong>"Xác nhận"</strong> để kết nối tự động vào máy tính.
-                  </div>
-                )}
-
-                {zaloQrType === 'PERSONAL' && (
-                  <div style={{ marginBottom: '8px' }}>
-                    <div style={{ fontSize: '11px', color: '#D97706', backgroundColor: '#FEF3C7', padding: '6px 8px', borderRadius: '6px', marginBottom: '6px', lineHeight: '1.4' }}>
-                      ⚠️ <strong>Lưu ý:</strong> Zalo chỉ hiển thị trang cá nhân khi số điện thoại đã được đăng ký tài khoản Zalo thật.
-                    </div>
-                    <div style={{ display: 'flex', gap: '4px' }}>
-                      <input
-                        type="text"
-                        value={tempPhone}
-                        onChange={(e) => setTempPhone(e.target.value)}
-                        placeholder="Nhập SĐT Zalo của bạn..."
-                        style={{
-                          padding: '5px 8px',
-                          fontSize: '11px',
-                          borderRadius: '4px',
-                          border: '1px solid #0068FF',
-                          flex: 1,
-                          textAlign: 'center',
-                        }}
-                      />
-                      <button
-                        type="button"
-                        className="btn-primary"
-                        style={{ padding: '5px 8px', fontSize: '11px', backgroundColor: '#0068FF' }}
-                        onClick={() => {
-                          const clean = tempPhone.trim().replace(/\s+/g, '');
-                          if (!clean) {
-                            showToast('Vui lòng nhập số điện thoại Zalo của bạn!');
-                            return;
-                          }
-                          setZaloPhone(clean);
-                          try {
-                            localStorage.setItem('ubm_hr_zalo_phone', clean);
-                          } catch {}
-                          showToast(`Đã cập nhật mã QR theo SĐT Zalo: ${clean}`);
-                        }}
-                      >
-                        Lưu QR
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {zaloQrType === 'UPLOAD' && (
-                  <div style={{ marginBottom: '8px' }}>
-                    <label style={{
-                      display: 'block',
-                      padding: '6px 10px',
-                      fontSize: '11px',
-                      backgroundColor: '#EFF6FF',
-                      border: '1px dashed #0068FF',
-                      borderRadius: '6px',
-                      cursor: 'pointer',
-                      color: '#0068FF',
-                      fontWeight: 700,
-                    }}>
-                      📁 Chọn ảnh QR Zalo từ máy tính
-                      <input
-                        type="file"
-                        accept="image/*"
-                        style={{ display: 'none' }}
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) {
-                            const reader = new FileReader();
-                            reader.onload = (ev) => {
-                              const res = ev.target?.result as string;
-                              setUploadedQrImg(res);
-                              try {
-                                localStorage.setItem('ubm_hr_uploaded_qr', res);
-                              } catch {}
-                              showToast('Đã tải lên ảnh mã QR Zalo cá nhân thành công!');
-                            };
-                            reader.readAsDataURL(file);
-                          }
-                        }}
-                      />
-                    </label>
-                  </div>
-                )}
+                <div style={{
+                  fontSize: '11px',
+                  color: '#1E40AF',
+                  backgroundColor: '#EFF6FF',
+                  border: '1px solid #BFDBFE',
+                  borderRadius: '6px',
+                  padding: '6px 8px',
+                  marginBottom: '8px',
+                  lineHeight: '1.5',
+                }}>
+                  📱 <strong>Cách kết nối thật:</strong> Bấm <strong>"Tạo mã QR Zalo"</strong> → mở <strong>app Zalo trên điện thoại</strong> → quét mã → bấm <strong>Đăng nhập</strong> trên điện thoại. Phiên được lưu trên server, restart không cần quét lại.
+                </div>
 
                 <div style={{ fontSize: '13px', fontWeight: 800, color: '#0F172A', marginTop: '4px' }}>
-                  {currentUser?.full_name || 'Quản Trị Nhân Sự HR'}
+                  {zaloAccount?.displayName || currentUser?.full_name || 'Quản Trị Nhân Sự HR'}
                 </div>
 
                 <div style={{
@@ -1771,15 +1707,22 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   fontWeight: 700,
                   marginTop: '2px'
                 }}>
-                  {zaloConnected ? '● Trạng thái: Đã kết nối Zalo cá nhân' : '○ Trạng thái: Chờ kết nối qua QR'}
+                  {zaloConnected
+                    ? `● Đã kết nối Zalo: ${zaloAccount?.displayName || ''}`
+                    : (zaloStatus?.login?.phase === 'scanned'
+                      ? '● Đã quét — đang chờ bấm Đăng nhập trên điện thoại...'
+                      : zaloStatus?.login?.phase === 'expired'
+                        ? '○ Mã QR hết hạn — hãy tạo mã mới'
+                        : '○ Chờ tạo mã QR đăng nhập')}
                 </div>
 
-                {/* NÚT KÍCH HOẠT NHANH 1-CHẠM TRỰC TIẾP TRÊN MÁY TÍNH */}
+                {/* Nút tạo QR / ngắt kết nối thật */}
                 <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   {!zaloConnected ? (
                     <button
                       type="button"
                       className="btn-primary"
+                      disabled={zaloBusy}
                       style={{
                         width: '100%',
                         fontSize: '11.5px',
@@ -1790,17 +1733,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         justifyContent: 'center',
                         gap: '6px',
                         boxShadow: '0 2px 8px rgba(16, 185, 129, 0.25)',
+                        opacity: zaloBusy ? 0.6 : 1,
                       }}
-                      onClick={() => {
-                        setZaloConnected(true);
-                        try {
-                          localStorage.setItem('ubm_zalo_connected', 'true');
-                        } catch {}
-                        showToast('🟢 ĐÃ KẾT NỐI ZALO CÁ NHÂN HR THÀNH CÔNG! BOT sẵn sàng gửi thư mời.');
-                      }}
+                      onClick={handleZaloCreateQr}
                     >
-                      <CheckCircle size={14} />
-                      ⚡ Kích Hoạt Kết Nối Zalo Ngay (Không Cần Quét)
+                      <QrCode size={14} />
+                      {zaloBusy ? 'ĐANG XIN MÃ QR...' : '📷 TẠO MÃ QR ZALO THẬT'}
                     </button>
                   ) : (
                     <button
@@ -1814,15 +1752,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         borderColor: '#FCA5A5',
                         backgroundColor: '#FEF2F2',
                       }}
-                      onClick={() => {
-                        setZaloConnected(false);
-                        try {
-                          localStorage.removeItem('ubm_zalo_connected');
-                        } catch {}
-                        showToast('Đã đăng xuất phiên Zalo cá nhân!');
-                      }}
+                      onClick={handleZaloDisconnect}
                     >
-                      Đăng Xuất Phiên Zalo
+                      Ngắt Kết Nối Zalo
                     </button>
                   )}
 
@@ -1830,12 +1762,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     <button
                       className="btn-secondary"
                       style={{ flex: 1, fontSize: '11px', padding: '6px' }}
-                      onClick={() => {
-                        setZaloSessionToken('UBM_' + Math.random().toString(36).substring(2, 8).toUpperCase());
-                        showToast('Mã QR Zalo đã được làm mới. Vui lòng quét lại trên điện thoại!');
-                      }}
+                      onClick={handleZaloCreateQr}
                     >
-                      Làm Mới QR
+                      Làm Mới QR Thật
                     </button>
 
                     <button
@@ -1867,9 +1796,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   </strong>
                 </div>
                 <div style={{ fontSize: '12px', color: '#1E3A8A', lineHeight: '1.6' }}>
-                  1. <strong>Tự động sinh Google Meet:</strong> Khi HR tạo lịch phỏng vấn, hệ thống tự động gọi API sinh phòng họp Google Meet bảo mật riêng biệt.<br />
-                  2. <strong>Liên kết Zalo cá nhân của HR:</strong> BOT tự động kích hoạt phiên Zalo cá nhân của HR đã quét QR đăng nhập.<br />
-                  3. <strong>Bắn tin nhắn thư mời chuyên nghiệp:</strong> BOT tự động gửi tin nhắn trang trọng kèm lịch hẹn, link Google Meet và hướng dẫn phỏng vấn trực tiếp đến Zalo của ứng viên mà HR không cần thao tác thủ công.
+                  1. <strong>Link Google Meet:</strong> HR dán link phòng họp vào form lịch hẹn (hoặc cấu hình sẵn <code>ZALO_DEFAULT_MEET_URL</code> trên server).<br />
+                  2. <strong>Kết nối Zalo cá nhân thật của HR:</strong> quét QR đăng nhập 1 lần, phiên lưu trên server, restart không cần quét lại.<br />
+                  3. <strong>Bắn thư mời thật:</strong> bấm "Gửi thư mời Zalo" ở từng ứng viên — tin nhắn đi từ nick Zalo HR tới Zalo ứng viên (yêu cầu đã kết bạn, chưa bạn thì bấm Kết bạn trước).
                 </div>
               </div>
 
@@ -1905,7 +1834,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   Phòng Nhân Sự Ụm Bò Milk trân trọng mời bạn tham gia buổi phỏng vấn trực tuyến:<br />
                   🕒 <strong>Thời gian:</strong> [Giờ phỏng vấn] - [Ngày hẹn phỏng vấn]<br />
                   📍 <strong>Chi nhánh tuyển dụng:</strong> [Chi nhánh đăng ký làm việc]<br />
-                  🔗 <strong>Link phòng họp Google Meet:</strong> <span style={{ color: '#0068FF', textDecoration: 'underline' }}>https://meet.google.com/ubm-interview-[id]</span><br />
+                  🔗 <strong>Link phòng họp Google Meet:</strong> <span style={{ color: '#0068FF', textDecoration: 'underline' }}>[link Meet HR dán khi lập lịch]</span><br />
                   👤 <strong>Người phỏng vấn:</strong> Phòng Nhân Sự Ụm Bò Milk<br />
                   📌 <em>Lưu ý: Bạn vui lòng vào trước 5 phút và chuẩn bị trang phục lịch sự nhé.</em><br />
                   <span style={{ fontSize: '11px', color: '#64748B', display: 'block', marginTop: '6px' }}>
@@ -1948,10 +1877,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '14px' }}>
               <div>
                 <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Chọn ứng viên mới:</label>
-                <select style={{ width: '100%' }}>
+                <select style={{ width: '100%' }} value={inviteCandidateId} onChange={(e) => setInviteCandidateId(e.target.value)}>
+                  <option value="">-- Chọn ứng viên --</option>
                   {candidates.length > 0 ? (
                     candidates.map((c, i) => (
-                      <option key={i} value={c.full_name}>
+                      <option key={c.submission_id || i} value={c.submission_id}>
                         {c.full_name} ({c.phone || c.phone_normalized})
                       </option>
                     ))
@@ -1983,17 +1913,30 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
               <div>
                 <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Thời gian phỏng vấn:</label>
-                <input type="datetime-local" defaultValue="2026-09-24T14:30" style={{ width: '100%' }} />
+                <input type="datetime-local" value={inviteDateTime} onChange={(e) => setInviteDateTime(e.target.value)} style={{ width: '100%' }} />
               </div>
 
               <div>
                 <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Hình thức phỏng vấn:</label>
-                <select style={{ width: '100%' }} defaultValue="ONLINE">
-                  <option value="ONLINE">Google Meet Trực Tuyến (BOT tự sinh)</option>
+                <select style={{ width: '100%' }} value={inviteMode} onChange={(e) => setInviteMode(e.target.value as any)}>
+                  <option value="ONLINE">Google Meet Trực Tuyến</option>
                   <option value="OFFLINE">Trực Tiếp Tại Cửa Hàng</option>
                 </select>
               </div>
             </div>
+
+            {inviteMode === 'ONLINE' && (
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Link Google Meet (bỏ trống = dùng link mặc định server nếu có):</label>
+                <input
+                  type="text"
+                  value={inviteMeetUrl}
+                  onChange={(e) => setInviteMeetUrl(e.target.value)}
+                  placeholder="https://meet.google.com/xxx-yyyy-zzz"
+                  style={{ width: '100%' }}
+                />
+              </div>
+            )}
 
             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.2fr', gap: '14px', alignItems: 'center' }}>
               <div style={{
@@ -2008,11 +1951,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               }}>
                 <Bot size={18} color="#0068FF" />
                 <span>
-                  ☑️ <strong>Kích hoạt BOT tự động:</strong> Tự động sinh link Google Meet + Dùng Zalo cá nhân của HR để gửi thư mời phỏng vấn đến Zalo ứng viên!
+                  ☑️ <strong>Lập lịch + bắn tin thật:</strong> Lưu lịch phỏng vấn rồi gửi thư mời qua Zalo cá nhân HR đã kết nối!
+                  {!zaloConnected && <strong style={{ color: '#DC2626' }}> (Chưa kết nối Zalo!)</strong>}
                 </span>
               </div>
               <button
                 className="btn-primary"
+                disabled={inviteBusy}
                 style={{
                   backgroundColor: '#0068FF',
                   padding: '11px',
@@ -2022,11 +1967,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   alignItems: 'center',
                   justifyContent: 'center',
                   gap: '8px',
+                  opacity: inviteBusy ? 0.6 : 1,
                 }}
-                onClick={() => showToast('🚀 BOT đã sinh link Meet và tự động gửi thư mời phỏng vấn từ Zalo cá nhân của HR đến ứng viên!')}
+                onClick={handleCreateScheduleAndInvite}
               >
                 <Send size={16} />
-                Tạo Lịch & BOT Bắn Tin Zalo Cá Nhân
+                {inviteBusy ? 'ĐANG GỬI...' : 'Tạo Lịch & BOT Bắn Tin Zalo Cá Nhân'}
               </button>
             </div>
           </div>
@@ -2068,22 +2014,24 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       <div style={{ fontSize: '11px', color: '#2563EB' }}>{getDisplayBranch(c.branch_id || 'CN130')}</div>
                     </td>
                     <td style={{ padding: '14px 20px', fontWeight: 700 }}>
-                      {c.interview_time || 'Chờ xếp lịch'}
+                      {(c as any).interview_date ? `${(c as any).interview_time_slot || ''} ${ (c as any).interview_date}` : (c.interview_time || 'Chờ xếp lịch')}
                     </td>
                     <td style={{ padding: '14px 20px' }}>
-                      <span style={{ color: '#0068FF', fontWeight: 700 }}>meet.google.com/ubm-interview</span>
+                      <span style={{ color: '#0068FF', fontWeight: 700 }}>
+                        {(c as any).status === 'INVITED_INTERVIEW' ? 'Đã gửi thư mời Zalo' : 'Chưa gửi'}
+                      </span>
                     </td>
                     <td style={{ padding: '14px 20px' }}>
                       <span style={{
-                        backgroundColor: '#EFF6FF',
-                        color: '#0068FF',
+                        backgroundColor: (c as any).status === 'INVITED_INTERVIEW' ? '#ECFDF5' : '#EFF6FF',
+                        color: (c as any).status === 'INVITED_INTERVIEW' ? '#059669' : '#0068FF',
                         padding: '3px 8px',
                         borderRadius: '4px',
                         fontSize: '11px',
                         fontWeight: 800,
                         border: '1px solid #BFDBFE',
                       }}>
-                        💬 Zalo BOT
+                        {(c as any).status === 'INVITED_INTERVIEW' ? '✓ Đã gửi Zalo' : '💬 Chờ gửi Zalo'}
                       </span>
                     </td>
                     <td style={{ padding: '14px 20px' }}>
@@ -2092,9 +2040,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       </span>
                     </td>
                     <td style={{ padding: '14px 20px' }}>
-                      <button className="btn-secondary" style={{ padding: '4px 8px', fontSize: '11px', color: '#059669' }} onClick={() => showToast('Duyệt đạt phỏng vấn')}>
-                        Đánh Giá
-                      </button>
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                        <button className="btn-primary" style={{ padding: '4px 8px', fontSize: '11px', backgroundColor: '#0068FF' }} onClick={() => handleSendZaloInvite(c)}>
+                          📩 Gửi thư mời Zalo
+                        </button>
+                        <button className="btn-secondary" style={{ padding: '4px 8px', fontSize: '11px', color: '#059669' }} onClick={() => showToast('Duyệt đạt phỏng vấn')}>
+                          Đánh Giá
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))

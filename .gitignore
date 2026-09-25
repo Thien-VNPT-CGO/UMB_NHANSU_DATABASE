@@ -16,6 +16,9 @@ build/
 service-account*.json
 credentials*.json
 *.pem
+# Zalo personal session (cookies HR) — KHÔNG BAO GIỜ commit
+.zalo-session.json
+apps/backend/.zalo-session.json
 
 # Logs
 npm-debug.log*

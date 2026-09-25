@@ -140,20 +140,10 @@ export function getDisplayBranch(branchId?: string, group?: string): string {
   return branchId || 'Trụ sở chính (10 Đặng Thai Mai)';
 }
 
+// Trang xác thực Zalo mobile CŨ (luồng giả đã bỏ): giữ route để mã QR cũ quét vào
+// vẫn thấy thông báo hướng dẫn thay vì treo. Luồng thật: quét QR Zalo trực tiếp
+// bằng app Zalo trên điện thoại tại tab "Lịch Phỏng Vấn & BOT Zalo".
 function ZaloMobileAuthView({ hrName, sessionToken }: { hrName: string; sessionToken: string }) {
-  const [confirmed, setConfirmed] = useState(false);
-
-  const handleConfirm = () => {
-    try {
-      localStorage.setItem('ubm_zalo_connected', 'true');
-      localStorage.setItem('ubm_zalo_connected_time', Date.now().toString());
-      const channel = new BroadcastChannel('ubm_zalo_channel');
-      channel.postMessage({ type: 'ZALO_CONNECTED', sessionToken });
-      channel.close();
-    } catch {}
-    setConfirmed(true);
-  };
-
   return (
     <div style={{
       minHeight: '100vh',
@@ -170,18 +160,17 @@ function ZaloMobileAuthView({ hrName, sessionToken }: { hrName: string; sessionT
         backgroundColor: '#FFFFFF',
         borderRadius: '16px',
         boxShadow: '0 10px 25px rgba(0, 104, 255, 0.12)',
-        border: '1.5px solid #0068FF',
+        border: '1.5px solid #F59E0B',
         padding: '28px 20px',
         maxWidth: '420px',
         width: '100%',
         textAlign: 'center',
       }}>
-        {/* Logo / Icon */}
         <div style={{
           width: '64px',
           height: '64px',
           borderRadius: '50%',
-          backgroundColor: '#0068FF',
+          backgroundColor: '#F59E0B',
           color: '#FFF',
           display: 'flex',
           alignItems: 'center',
@@ -189,7 +178,6 @@ function ZaloMobileAuthView({ hrName, sessionToken }: { hrName: string; sessionT
           margin: '0 auto 16px',
           fontSize: '20px',
           fontWeight: 900,
-          boxShadow: '0 4px 12px rgba(0, 104, 255, 0.3)',
         }}>
           Zalo
         </div>
@@ -197,71 +185,27 @@ function ZaloMobileAuthView({ hrName, sessionToken }: { hrName: string; sessionT
         <h2 style={{ fontSize: '18px', fontWeight: 800, color: '#0F172A', margin: '0 0 6px' }}>
           ỤM BÒ MILK - HR SYSTEM
         </h2>
-        <div style={{ fontSize: '13px', color: '#0068FF', fontWeight: 700, marginBottom: '18px' }}>
-          Xác Thực Đăng Nhập Zalo Cá Nhân HR
+        <div style={{ fontSize: '13px', color: '#92400E', fontWeight: 700, marginBottom: '18px' }}>
+          Luồng xác thực cũ đã ngừng hoạt động
         </div>
 
-        {!confirmed ? (
-          <>
-            <div style={{
-              backgroundColor: '#F8FAFC',
-              border: '1px solid #E2E8F0',
-              borderRadius: '10px',
-              padding: '14px',
-              textAlign: 'left',
-              fontSize: '13px',
-              color: '#334155',
-              lineHeight: '1.6',
-              marginBottom: '20px',
-            }}>
-              <div>👤 <strong>Tài khoản HR:</strong> {hrName}</div>
-              <div>🔑 <strong>Mã phiên kết nối:</strong> <code style={{ color: '#0068FF', fontWeight: 700 }}>{sessionToken}</code></div>
-              <div>🕒 <strong>Thời gian:</strong> {new Date().toLocaleTimeString('vi-VN')} {new Date().toLocaleDateString('vi-VN')}</div>
-              <div style={{ marginTop: '8px', fontSize: '12px', color: '#64748B', borderTop: '1px solid #E2E8F0', paddingTop: '8px' }}>
-                Bằng cách xác nhận, bạn cho phép BOT hệ thống liên kết phiên Zalo cá nhân này để tự động gửi lịch phỏng vấn và link Google Meet đến ứng viên.
-              </div>
-            </div>
-
-            <button
-              onClick={handleConfirm}
-              style={{
-                width: '100%',
-                padding: '14px',
-                borderRadius: '10px',
-                backgroundColor: '#0068FF',
-                color: '#FFF',
-                border: 'none',
-                fontWeight: 800,
-                fontSize: '15px',
-                cursor: 'pointer',
-                boxShadow: '0 4px 12px rgba(0, 104, 255, 0.3)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px',
-              }}
-            >
-              ✓ XÁC NHẬN ĐĂNG NHẬP & KẾT NỐI
-            </button>
-          </>
-        ) : (
-          <div style={{
-            backgroundColor: '#ECFDF5',
-            border: '1.5px solid #10B981',
-            borderRadius: '10px',
-            padding: '20px 16px',
-            color: '#065F46',
-          }}>
-            <div style={{ fontSize: '36px', marginBottom: '8px' }}>🎉</div>
-            <div style={{ fontSize: '16px', fontWeight: 800, marginBottom: '6px' }}>
-              KẾT NỐI ZALO THÀNH CÔNG!
-            </div>
-            <div style={{ fontSize: '13px', lineHeight: '1.5', color: '#047857' }}>
-              Tài khoản Zalo cá nhân của bạn đã được liên kết với hệ thống Quản Trị Nhân Sự Ụm Bò Milk.<br />
-              <strong>Mời bạn quay lại màn hình máy tính làm việc.</strong>
-            </div>
+        <div style={{
+          backgroundColor: '#FFFBEB',
+          border: '1px solid #FDE68A',
+          borderRadius: '10px',
+          padding: '14px',
+          textAlign: 'left',
+          fontSize: '13px',
+          color: '#334155',
+          lineHeight: '1.6',
+          marginBottom: '20px',
+        }}>
+          <div>👤 <strong>Tài khoản HR:</strong> {hrName}</div>
+          <div>🔑 <strong>Mã phiên cũ:</strong> <code style={{ color: '#92400E', fontWeight: 700 }}>{sessionToken}</code></div>
+          <div style={{ marginTop: '8px', fontSize: '12px', color: '#64748B', borderTop: '1px solid #FDE68A', paddingTop: '8px' }}>
+            Từ nay kết nối Zalo cá nhân bằng cách <strong>quét mã QR thật bằng app Zalo</strong> ngay tại tab "Lịch Phỏng Vấn & BOT Zalo" trên máy tính. Không cần xác nhận tại trang này nữa — <strong>mời bạn quay lại màn hình máy tính làm việc.</strong>
           </div>
-        )}
+        </div>
       </div>
     </div>
   );
