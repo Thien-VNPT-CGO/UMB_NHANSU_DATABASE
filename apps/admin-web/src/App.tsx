@@ -874,22 +874,9 @@ export function App() {
     };
   }, [currentUser?.id, currentUser?.role]);
 
-  // 2. Poll dự phòng: chỉ khi socket mất kết nối (giảm tải server, mặc định realtime qua socket)
-  useEffect(() => {
-    if (!currentUser) return;
-
-    const interval = setInterval(() => {
-      if (
-        !socketConnectedRef.current &&
-        typeof document !== 'undefined' &&
-        document.visibilityState === 'visible'
-      ) {
-        scheduleReload(currentUser);
-      }
-    }, 30000);
-
-    return () => clearInterval(interval);
-  }, [currentUser?.id]);
+  // 2. Thuần socket realtime 100% (ràng buộc hệ thống): socket.io tự reconnect,
+  // event 'connect' bắn lại là tải mới — không poll định kỳ để giảm tải server.
+  // Mất mạng lâu: người dùng bấm nút Tải lại trên từng tab (loadAllData qua scheduleReload).
 
   // Action handlers
   const handleToggleInternalAccount = async (account: any) => {

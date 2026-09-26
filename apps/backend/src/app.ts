@@ -170,6 +170,37 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     res.json({ status: 'ok', time: new Date().toISOString() });
   });
 
+  // RÀNG BUỘC REALTIME 100%: mọi request GHI thành công đều bắn socket `data:updated`
+  // để 2 web app cập nhật tức thì — không route nào được phép im lặng.
+  const entityForPath = (p: string): string | null => {
+    if (p === '/ping' || p === '/health') return null;
+    if (p.startsWith('/auth/')) return null; // login đã có broadcast riêng khi cần
+    if (p.startsWith('/employees') || p.startsWith('/applications') || p.startsWith('/interviews')) return 'employees';
+    if (p.startsWith('/admin/employee-accounts') || p.startsWith('/admin/internal-accounts')) return 'accounts';
+    if (p.startsWith('/schedules') || p.startsWith('/leave-requests') || p.startsWith('/leaves') || p.startsWith('/swap-requests')) return 'schedules';
+    if (p.startsWith('/attendance')) return 'attendance';
+    if (p.startsWith('/payroll') || p.startsWith('/me/payslips')) return 'payroll';
+    if (p.startsWith('/me/notifications') || p.startsWith('/admin/notifications') || p.startsWith('/announcements')) return 'notifications';
+    if (p.startsWith('/admin/branches')) return 'branches';
+    if (p.startsWith('/admin/zalo')) return 'zalo';
+    if (p.startsWith('/admin/')) return 'settings';
+    if (p.startsWith('/me/')) return 'me';
+    return 'all';
+  };
+  app.use((req, res, next) => {
+    if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
+    const entity = entityForPath(req.path);
+    if (!entity) return next();
+    const origJson = res.json.bind(res);
+    (res as any).json = (body: any) => {
+      if (res.statusCode < 400) {
+        broadcastUpdate(entity, { method: req.method, path: req.path });
+      }
+      return origJson(body);
+    };
+    next();
+  });
+
   // Health check & status
   app.get('/health', (req, res) => {
     let memory: any = null;
