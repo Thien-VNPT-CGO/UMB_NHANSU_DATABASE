@@ -749,37 +749,36 @@ export class GoogleSheetsSyncService {
           }
         }
 
-        // Merge: ưu tiên Sheets, nhưng giữ bootstrap admin nếu chưa có trong Sheets.
-        // Nếu Sheet không đọc được dòng hợp lệ nào -> giữ nguyên bộ nhớ cũ (tránh mất hết tài khoản).
+        // Merge: ưu tiên Sheets, nhưng giữ các tài khoản seed mặc định (admin + umbomilk-hr)
+        // nếu chưa có trong Sheets. Sheet không đọc được dòng hợp lệ nào -> giữ nguyên bộ nhớ cũ.
+        const SEED_IDS = ['ADM_001', 'ADM_002'];
         if (sheetsAdmins.length === 0) {
           console.warn('[GoogleSheetsSyncService] ADMIN_ACCOUNTS không có dòng hợp lệ — giữ nguyên tài khoản trong bộ nhớ.');
           counts.adminAccounts = fallback.adminAccounts.length;
         } else {
-          const sheetsHasBootstrap = sheetsAdmins.some(a => a.admin_id === 'ADM_001' || a.username.toLowerCase() === 'admin');
-          if (sheetsHasBootstrap) {
-            fallback.adminAccounts = sheetsAdmins;
-          } else {
-            const bootstrapAdmin = currentAdmins.find(a => a.admin_id === 'ADM_001');
-            fallback.adminAccounts = bootstrapAdmin
-              ? [bootstrapAdmin, ...sheetsAdmins]
-              : sheetsAdmins;
+          const missingSeeds = currentAdmins.filter(
+            a => SEED_IDS.includes(a.admin_id) && !sheetsAdmins.some(s => s.admin_id === a.admin_id || s.username.toLowerCase() === a.username.toLowerCase())
+          );
+          fallback.adminAccounts = [...missingSeeds, ...sheetsAdmins];
+          if (missingSeeds.length > 0) {
+            console.log(`[GoogleSheetsSyncService] Giữ lại seed mặc định chưa có trên Sheets: ${missingSeeds.map(a => a.username).join(', ')}`);
           }
           counts.adminAccounts = fallback.adminAccounts.length;
         }
       } else {
-        // Sheets trống — giữ bootstrap admin và tự động ghi bootstrap admin lên Sheet để lưu trữ bền vững
-        const bootstrapAdmin = fallback.adminAccounts.find(a => a.admin_id === 'ADM_001');
-        if (bootstrapAdmin) {
+        // Sheets trống — giữ seed mặc định và tự động ghi lên Sheet để lưu trữ bền vững
+        const seeds = fallback.adminAccounts.filter(a => ['ADM_001', 'ADM_002'].includes(a.admin_id));
+        for (const seed of seeds) {
           this.appendRow('ADMIN_ACCOUNTS', [
-            bootstrapAdmin.admin_id,
-            bootstrapAdmin.username,
-            bootstrapAdmin.password_hash,
-            bootstrapAdmin.full_name,
-            bootstrapAdmin.role,
-            bootstrapAdmin.branch_scope,
-            bootstrapAdmin.is_active === false ? 'LOCKED' : 'ACTIVE',
-            bootstrapAdmin.created_at,
-          ]).catch(err => console.warn('[GoogleSheetsSyncService] Could not auto-seed bootstrap admin:', err));
+            seed.admin_id,
+            seed.username,
+            seed.password_hash,
+            seed.full_name,
+            seed.role,
+            seed.branch_scope,
+            (seed as any).is_active === false ? 'LOCKED' : 'ACTIVE',
+            seed.created_at,
+          ]).catch(err => console.warn('[GoogleSheetsSyncService] Could not auto-seed default account:', err));
         }
         counts.adminAccounts = fallback.adminAccounts.length;
       }

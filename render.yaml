@@ -20,6 +20,8 @@ services:
         value: https://umb-nhansu-database-admin-web.vercel.app,https://umb-nhansu-database-employee-web.vercel.app,https://*.vercel.app,https://*.onrender.com
       - key: ADMIN_SEED_PASSWORD
         sync: false
+      - key: HR_SEED_PASSWORD
+        sync: false
       - key: GOOGLE_SERVICE_ACCOUNT_JSON
         sync: false
       - key: SPREADSHEET_ID
