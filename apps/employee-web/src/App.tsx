@@ -369,6 +369,9 @@ export function App() {
       });
       showToast('🎉 Đổi mã PIN thành công! Đây là mã PIN riêng của bạn, không chia sẻ cho người khác.');
       setLoginPin(newPin);
+      // Xóa ô PIN mới/xác nhận để trình duyệt không giữ/gi autofill mã cũ.
+      setNewPin('');
+      setConfirmPin('');
       // Token hiện tại đã bị thu hồi (version tăng) -> đăng nhập lại bằng PIN mới
       setAuthToken('');
       setMustChangePin(false);
@@ -1027,6 +1030,10 @@ export function App() {
               <div style={{ position: 'relative', marginBottom: '14px' }}>
                 <input
                   type="password"
+                  name="ubm-login-pin"
+                  autoComplete="new-password"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
                   inputMode="numeric"
                   maxLength={8}
                   placeholder="Ví dụ: 123456"
@@ -1059,6 +1066,10 @@ export function App() {
               <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Mã PIN mới:</label>
               <input
                 type="password"
+                name="ubm-new-pin"
+                autoComplete="new-password"
+                data-lpignore="true"
+                data-1p-ignore="true"
                 inputMode="numeric"
                 maxLength={8}
                 placeholder="Nhập mã PIN mới"
@@ -1069,6 +1080,10 @@ export function App() {
               <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Xác nhận mã PIN mới:</label>
               <input
                 type="password"
+                name="ubm-confirm-pin"
+                autoComplete="new-password"
+                data-lpignore="true"
+                data-1p-ignore="true"
                 inputMode="numeric"
                 maxLength={8}
                 placeholder="Nhập lại mã PIN mới"
