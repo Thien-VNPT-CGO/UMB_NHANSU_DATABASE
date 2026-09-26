@@ -273,9 +273,11 @@ export function App() {
 
   const handlePhoneLogin = async (phoneToLogin = loginPhone, pinToLogin = loginPin) => {
     const cleaned = phoneToLogin.replace(/[\s\-\.\(\)]/g, '');
-    if (cleaned.length < 10) {
+    // Chấp nhận 3 kiểu: 0946914474 (10 số) / 946914474 (9 số, thiếu 0) / 84946914474 (84...).
+    // Server chuẩn hóa về 1 mối nên kiểu nào cũng hợp lệ.
+    if (cleaned.length < 9 || cleaned.length > 12) {
       setCheckingStatus('ERROR');
-      setLoginError('Vui lòng nhập đủ 10 số điện thoại!');
+      setLoginError('Vui lòng nhập số điện thoại (9-11 chữ số, ví dụ 0946914474)!');
       return;
     }
     const pin = (pinToLogin || '').trim();
@@ -381,7 +383,7 @@ export function App() {
   // Không tự động đăng nhập (bảo mật PIN): người dùng bấm nút ĐĂNG NHẬP.
   useEffect(() => {
     const cleaned = loginPhone.replace(/[\s\-\.\(\)]/g, '');
-    if (cleaned.length < 10) {
+    if (cleaned.length < 9) {
       setCheckingStatus('IDLE');
       setLoginError(null);
     }
@@ -1111,7 +1113,7 @@ export function App() {
           )}
 
           <p style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.4' }}>
-            💡 <strong>Bảo mật đăng nhập:</strong> Nhập đủ 10 số điện thoại + mã PIN khởi tạo (4-8 số, hỏi HR/Admin lần đầu) rồi bấm ĐĂNG NHẬP. Mỗi người giữ PIN riêng — không chia sẻ để tránh bị đăng nhập ké!
+            💡 <strong>Bảo mật đăng nhập:</strong> Nhập SĐT (0946914474, 946914474 hoặc 84946914474 đều được) + mã PIN khởi tạo (4-8 số, hỏi HR/Admin lần đầu) rồi bấm ĐĂNG NHẬP. Mỗi người giữ PIN riêng — không chia sẻ để tránh bị đăng nhập ké!
           </p>
           <button
             onClick={handleChangeApiBase}
