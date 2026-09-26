@@ -181,9 +181,9 @@ export function generalRateLimiter() {
       if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
         return true;
       }
-      // 2. Health check & status từ Render / ping server
+      // 2. Health check & status từ Render / ping server (kể cả /ping nhẹ cho UptimeRobot)
       const path = req.path || req.originalUrl || '';
-      if (path === '/health' || path === '/' || path === '/api/weekly-off-window') {
+      if (path === '/health' || path === '/' || path === '/ping' || path === '/api/weekly-off-window') {
         return true;
       }
       // 3. CORS preflight OPTIONS requests

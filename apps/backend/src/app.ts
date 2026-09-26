@@ -165,6 +165,12 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   };
 
+  // Ping siêu nhẹ cho UptimeRobot/monitor: KHÔNG chạm adapter/database/Sheets,
+  // KHÔNG tốn quota — chỉ giữ Render không sleep.
+  app.get('/ping', (req, res) => {
+    res.json({ status: 'ok', time: new Date().toISOString() });
+  });
+
   // Health check & status
   app.get('/health', (req, res) => {
     res.json({
