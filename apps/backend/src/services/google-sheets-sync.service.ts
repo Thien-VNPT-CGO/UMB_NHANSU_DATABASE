@@ -18,6 +18,7 @@ import {
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { MockSheetsAdapter } from '../repositories/mock-sheets.adapter.js';
 import { hashPasswordSync, isBcryptHash, hashPin, generateAutoPin } from './password.service.js';
+import { canonicalPhone } from './employees.service.js';
 import { evaluateCandidateAiScore } from './ai-scorer.js';
 
 export interface SheetDefinition {
@@ -306,7 +307,8 @@ export class GoogleSheetsSyncService {
           .filter(r => r && (r[2] || r[3]))
           .map((r, idx) => {
             const phone = (r[3] || '').trim();
-            const phoneClean = phone.replace(/\D/g, '');
+            // Chuẩn hóa triệt để: Sheet có thể ghi +84/84/mất số 0 đầu (ô numeric).
+            const phoneClean = canonicalPhone(phone);
             const empId = r[0] && r[0].trim() ? r[0].trim() : (phoneClean ? `EMP_${phoneClean}` : `EMP_${uuidv4().slice(0, 8)}`);
             const empCode = r[1] && r[1].trim() ? r[1].trim() : `UBM_NV${String(idx + 1).padStart(6, '0')}`;
             const fullName = (r[2] || '').trim() || 'Nhân Viên';
@@ -348,7 +350,7 @@ export class GoogleSheetsSyncService {
           .map(r => ({
             account_id: r[0] || `ACC_${uuidv4().slice(0, 8)}`,
             employee_id: r[1] || '',
-            phone_normalized: (r[2] || '').replace(/\D/g, ''),
+            phone_normalized: canonicalPhone(r[2] || ''),
             role: (r[3] as any) || 'EMPLOYEE',
             account_status: 'ACTIVE' as any,
             branch_scope: 'ALL',
@@ -810,7 +812,7 @@ export class GoogleSheetsSyncService {
             const educationLevel = getVal(colEducation) || 'THPT / Cao đẳng';
             const hometown = getVal(colHometown) || 'TP. Hồ Chí Minh';
             const phone = getVal(colPhone) || '';
-            const phoneNormalized = phone.replace(/\D/g, '');
+            const phoneNormalized = canonicalPhone(phone);
             const registeredShift = getVal(colShift) || 'Ca sáng / Ca chiều';
             const branchName = getVal(colBranch) || 'CN130 - Lê Văn Sỹ';
             const experience = getVal(colExperience) || 'Chưa có kinh nghiệm (sẵn sàng đào tạo)';

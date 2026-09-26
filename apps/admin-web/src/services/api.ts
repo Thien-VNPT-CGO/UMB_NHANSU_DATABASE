@@ -73,8 +73,10 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
 
     return data;
   } catch (err: any) {
-    if (err.message && err.message.toLowerCase().includes('failed to fetch')) {
-      throw new Error(`Không thể kết nối đến máy chủ Backend (${base}). Nếu máy chủ Render miễn phí đang khởi động (Sleep mode), vui lòng đợi 20-30 giây rồi bấm thử lại.`);
+    const msg = String(err?.message || '').toLowerCase();
+    // Safari iOS báo "Load failed", Chrome "Failed to fetch", Firefox "NetworkError".
+    if (msg.includes('failed to fetch') || msg.includes('load failed') || msg.includes('networkerror') || msg.includes('network request failed') || msg === 'load failed') {
+      throw new Error(`Không thể kết nối đến máy chủ Backend (${base}). Kiểm tra: 1) Backend đã chạy chưa, 2) Địa chỉ API đúng chưa (mở Cấu hình máy chủ API để xem), 3) Nếu dùng Render miễn phí đang Sleep thì đợi 20-30 giây rồi thử lại.`);
     }
     throw err;
   }

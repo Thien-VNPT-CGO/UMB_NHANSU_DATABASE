@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { hashPasswordSync } from '../services/password.service.js';
+import { canonicalPhone } from '../services/employees.service.js';
 import {
   EmployeeAccount,
   AdminAccount,
@@ -168,7 +169,10 @@ export class MockSheetsAdapter implements ISheetsRepository {
   // --- Accounts ---
   async findAccountByPhone(phone: string): Promise<EmployeeAccount[]> {
     this.checkErrors();
-    return this.accounts.filter(a => a.phone_normalized === phone);
+    // So khớp canonical 2 chiều: dữ liệu cũ (84-prefix/mất số 0) vẫn trúng.
+    const want = canonicalPhone(phone || '');
+    if (!want) return this.accounts.filter(a => a.phone_normalized === phone);
+    return this.accounts.filter(a => a.phone_normalized === phone || canonicalPhone(a.phone_normalized || '') === want);
   }
 
   async getAccountById(id: string): Promise<EmployeeAccount | null> {

@@ -10,10 +10,18 @@ import { singleWriterQueue } from '../repositories/single-writer-queue.js';
 import { normalizePhone } from './auth.service.js';
 import { generateAutoPin, hashPin } from './password.service.js';
 
-/** Chuẩn hóa SĐT về dạng so sánh được (10 số, đầu 0). */
+/** Chuẩn hóa SĐT về dạng so sánh được (10 số, đầu 0) — DÙNG DUY NHẤT ở mọi nơi.
+ *  Bao phủ: '+84...'/84... (Sheet ghi quốc tế), số bị rớt số 0 đầu (ô numeric),
+ *  khoảng trắng/gạch/ngoặc/chấm, dấu nháy text "'" của Sheets. */
 export function canonicalPhone(phone: string): string {
-  const digits = normalizePhone(phone || '').replace(/\D/g, '');
+  let digits = normalizePhone(phone || '').replace(/\D/g, '');
+  if (!digits) return '';
+  // 0084... -> 0...
+  if (digits.startsWith('0084') && digits.length > 4) digits = '0' + digits.slice(4);
+  // 84 + 9 số (11 chữ số) -> 0 + 9 số
   if (digits.length === 11 && digits.startsWith('84')) return '0' + digits.slice(2);
+  // Rớt số 0 đầu do ô numeric (9 số di động VN: 3/5/7/8/9...) -> thêm 0
+  if (digits.length === 9 && /^[35789]/.test(digits)) return '0' + digits;
   return digits;
 }
 

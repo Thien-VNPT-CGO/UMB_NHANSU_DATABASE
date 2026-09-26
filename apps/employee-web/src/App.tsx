@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { apiRequest, setAuthToken, getAuthToken } from './services/api';
+import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl } from './services/api';
 import {
   Home,
   Calendar,
@@ -70,6 +70,19 @@ export function App() {
   const [newPin, setNewPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+  // Địa chỉ backend đang gọi — hiển thị để chẩn đoán lỗi mạng, bấm để đổi.
+  const [apiBaseShown, setApiBaseShown] = useState<string>(() => {
+    try { return getApiBase(); } catch { return ''; }
+  });
+  const handleChangeApiBase = () => {
+    const cur = getApiBase();
+    const input = window.prompt('Địa chỉ máy chủ Backend (để trống = tự động):', localStorage.getItem('ubm_custom_api_url') || '');
+    if (input === null) return;
+    setCustomApiUrl(input.trim());
+    setApiBaseShown(getApiBase());
+    showToast(input.trim() ? `Đã đổi máy chủ sang ${getApiBase()}` : `Đã về chế độ tự động (${getApiBase()}). Mở địa chỉ /health trên trình duyệt để kiểm tra.`);
+    void cur;
+  };
 
   // Attendance flow state
   const [attendanceStep, setAttendanceStep] = useState<'IDLE' | 'CHECKING_GPS' | 'READY_CAMERA' | 'SUBMITTING' | 'CONFIRMED'>('IDLE');
@@ -1083,6 +1096,13 @@ export function App() {
           <p style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.4' }}>
             💡 <strong>Bảo mật đăng nhập:</strong> Nhập đủ 10 số điện thoại + mã PIN khởi tạo (4-8 số, hỏi HR/Admin lần đầu) rồi bấm ĐĂNG NHẬP. Mỗi người giữ PIN riêng — không chia sẻ để tránh bị đăng nhập ké!
           </p>
+          <button
+            onClick={handleChangeApiBase}
+            title="Bấm để đổi địa chỉ máy chủ nếu báo lỗi kết nối"
+            style={{ marginTop: '10px', border: 'none', background: 'none', fontSize: '11px', color: 'var(--text-muted)', textDecoration: 'underline', cursor: 'pointer', padding: 0 }}
+          >
+            🔌 Máy chủ: {apiBaseShown || '(chưa xác định)'} — bấm để đổi
+          </button>
         </div>
       </div>
     );
