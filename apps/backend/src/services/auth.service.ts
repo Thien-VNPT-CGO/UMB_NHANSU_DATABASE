@@ -157,6 +157,13 @@ export class AuthService {
     stage: string;
     mustChangePin: boolean;
   }> {
+    // Backend vừa rebuild, kho rỗng mà Sheets chưa đọc xong/không đọc được:
+    // chặn với mã rõ ràng để UI báo "đang tải", không báo "SĐT không tồn tại" oan
+    // (tránh HR tưởng mất dữ liệu mà tạo trùng tài khoản).
+    const readiness = this.repo.getReadiness?.();
+    if (readiness && !readiness.ready) {
+      throw new Error(readiness.reason === 'SHEETS_UNREACHABLE' ? 'SHEETS_UNAVAILABLE' : 'SHEETS_LOADING');
+    }
     const normalized = normalizePhone(phoneInput);
     if (!normalized) {
       throw new Error(ERROR_CODES.ACCOUNT_NOT_FOUND);

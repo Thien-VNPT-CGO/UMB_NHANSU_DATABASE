@@ -172,9 +172,22 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   // Health check & status
   app.get('/health', (req, res) => {
+    let memory: any = null;
+    try {
+      const mock = (adapter as any).getMockAdapter?.() || (adapter as any).fallbackAdapter;
+      if (mock) {
+        memory = {
+          employees: mock.employees?.length ?? null,
+          accounts: mock.accounts?.length ?? null,
+          adminAccounts: mock.adminAccounts?.length ?? null,
+        };
+      }
+    } catch { /* chỉ chẩn đoán, không chặn */ }
     res.json({
       status: 'UP',
       time: new Date().toISOString(),
+      readiness: (adapter as any).getReadiness?.() || { ready: true },
+      memory,
       sheetsStatus: adapter.getStatus(),
     });
   });
@@ -191,6 +204,18 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const result = await authService.loginWithPhone(phone, pin);
       res.json(result);
     } catch (err: any) {
+      if (err.message === 'SHEETS_LOADING') {
+        return res.status(503).json({
+          error: 'SHEETS_LOADING',
+          message: 'Hệ thống vừa khởi động, đang tải dữ liệu từ Google Sheets (khoảng 30 giây). Vui lòng đợi rồi đăng nhập lại — KHÔNG tạo lại tài khoản.',
+        });
+      }
+      if (err.message === 'SHEETS_UNAVAILABLE') {
+        return res.status(503).json({
+          error: 'SHEETS_UNAVAILABLE',
+          message: 'Không đọc được Google Sheets (kiểm tra cấu hình server). Vui lòng báo Admin/HR, không tạo lại tài khoản.',
+        });
+      }
       const status = err.message === ERROR_CODES.ACCOUNT_NOT_FOUND ? 404 : 400;
       res.status(status).json({ error: err.message });
     }

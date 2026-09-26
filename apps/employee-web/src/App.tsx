@@ -321,6 +321,12 @@ export function App() {
       } else if (err.message === 'DUPLICATE_PHONE_NEEDS_HR') {
         setCheckingStatus('ERROR');
         setLoginError(`Số điện thoại ${cleaned} bị trùng lặp trên 2 hồ sơ khác nhau. Cần gặp HR để đối soát thông tin.`);
+      } else if (err.message === 'SHEETS_LOADING') {
+        setCheckingStatus('ERROR');
+        setLoginError('⏳ Hệ thống vừa khởi động, đang tải dữ liệu (khoảng 30 giây). Vui lòng đợi rồi bấm ĐĂNG NHẬP lại — tài khoản của bạn vẫn còn, KHÔNG cần tạo lại!');
+      } else if (err.message === 'SHEETS_UNAVAILABLE') {
+        setCheckingStatus('ERROR');
+        setLoginError('⚠️ Máy chủ tạm thời không đọc được dữ liệu. Vui lòng báo HR/Admin kiểm tra, không tạo lại tài khoản.');
       } else {
         setCheckingStatus('ERROR');
         setLoginError(err.message);

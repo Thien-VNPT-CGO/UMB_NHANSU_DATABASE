@@ -23,6 +23,8 @@ import {
 
 
 export interface ISheetsRepository {
+  // Trạng thái sẵn sàng dữ liệu sau khởi động (kho rỗng + Sheets chưa đọc xong).
+  getReadiness?(): { ready: boolean; reason?: 'SHEETS_LOADING' | 'SHEETS_UNREACHABLE' | 'EMPTY_DATASET' };
   // Accounts
   findAccountByPhone(phone: string): Promise<EmployeeAccount[]>;
   getAccountById(id: string): Promise<EmployeeAccount | null>;

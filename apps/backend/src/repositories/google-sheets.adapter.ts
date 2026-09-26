@@ -8,6 +8,11 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   private lastPullTime = 0;
   private pullInFlight: Promise<unknown> | null = null;
   public syncService: GoogleSheetsSyncService;
+  // Sẵn sàng dữ liệu sau khởi động: kho rỗng + Sheets chưa đọc xong thì login phải
+  // báo SHEETS_LOADING (đợi), không báo ACCOUNT_NOT_FOUND oan.
+  // (needsSeed() không dùng được ở đây vì seed sẵn có admin -> luôn false.)
+  private startupPullDone = false;
+  private consecPullFails = 0;
 
   constructor() {
     this.fallbackAdapter = new MockSheetsAdapter();
@@ -35,19 +40,34 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     const hasEmailKey = !!(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && process.env.GOOGLE_PRIVATE_KEY);
     if ((hasJson || hasEmailKey) && spreadsheetId) {
       this.isConfigured = true;
+      console.log(`[GoogleSheetsAdapter] Khởi động với Sheets LIVE (spreadsheet: ${spreadsheetId.slice(0, 8)}..., creds: ${hasJson ? 'JSON' : 'EMAIL+KEY'})`);
       // Auto-initialize sheets structure and pull real data on startup.
       // Pull dữ liệu chạy TRƯỚC để web app có dữ liệu ngay; tạo header chạy nền song song (không chặn).
+      // Kiên trì retry khi kho còn rỗng (Render rebuild xong mà SheetsAPI/creds trục trặc
+      // mà bỏ cuộc là NV/IP vĩnh viễn "không tồn tại" dù Sheet có dữ liệu).
       setTimeout(async () => {
         try {
-          const pullPromise = this.syncService
-            .pullAllDataFromGoogleSheets(this)
-            .then(pullResult => {
-              console.log('[GoogleSheetsAdapter] Startup pull completed:', pullResult.message, pullResult.counts);
-            });
           this.syncService.initSpreadsheetStructure().catch(err =>
             console.warn('[GoogleSheetsAdapter] initSpreadsheetStructure (nền):', err?.message || err)
           );
-          await pullPromise;
+          for (let attempt = 1; attempt <= 8; attempt++) {
+            const pullResult = await this.syncService.pullAllDataFromGoogleSheets(this).catch(err => {
+              console.warn(`[GoogleSheetsAdapter] Startup pull lần ${attempt} lỗi:`, err?.message || err);
+              return null;
+            });
+            this.markPullSettled(!!pullResult?.counts);
+            if (pullResult) {
+              console.log('[GoogleSheetsAdapter] Startup pull completed:', pullResult.message, pullResult.counts);
+            }
+            if (this.hasStaffData()) break; // đã có dữ liệu thật — dừng retry
+            if (attempt < 8) {
+              console.warn(`[GoogleSheetsAdapter] Kho vẫn rỗng sau pull lần ${attempt} — thử lại sau 8s (Render vừa rebuild?).`);
+              await new Promise(r => setTimeout(r, 8000));
+            }
+          }
+          if (!this.hasStaffData()) {
+            console.error('[GoogleSheetsAdapter] NGUY HIỂM: 8 lần pull vẫn rỗng! Kiểm tra GOOGLE_SERVICE_ACCOUNT_JSON / SPREADSHEET_ID / quyền share Sheet cho service account. Login NV sẽ báo SHEETS_UNAVAILABLE thay vì sai PIN oan.');
+          }
           // If no branches in sheets, push initial data (branches, admin) to Sheets
           const branches = await this.fallbackAdapter.getBranches();
           if (branches.length === 0) {
@@ -58,7 +78,33 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
           console.error('[GoogleSheetsAdapter] Error on startup sync:', err);
         }
       }, 3000);
+    } else {
+      console.warn('[GoogleSheetsAdapter] Thiếu Google credentials — chạy MOCK (dữ liệu mẫu, restart là mất). Production phải cấu hình GOOGLE_SERVICE_ACCOUNT_JSON!');
     }
+  }
+
+  /** Kho đã có dữ liệu nhân sự thật (không tính seed admin). */
+  private hasStaffData(): boolean {
+    const f = this.fallbackAdapter;
+    return f.employees.length + f.accounts.length > 0;
+  }
+
+  private markPullSettled(ok: boolean) {
+    this.startupPullDone = true;
+    if (ok) {
+      this.consecPullFails = 0;
+    } else {
+      this.consecPullFails++;
+    }
+  }
+
+  /** Sẵn sàng phục vụ login chưa? Kho rỗng + đang retry pull -> chưa. */
+  getReadiness(): { ready: boolean; reason?: 'SHEETS_LOADING' | 'SHEETS_UNREACHABLE' | 'EMPTY_DATASET' } {
+    if (!this.isConfigured) return { ready: true };
+    if (this.hasStaffData()) return { ready: true };
+    if (this.consecPullFails >= 3) return { ready: false, reason: 'SHEETS_UNREACHABLE' };
+    if (!this.startupPullDone) return { ready: false, reason: 'SHEETS_LOADING' };
+    return { ready: true, reason: 'EMPTY_DATASET' };
   }
 
   // Hàng đợi ghi Sheets NỀN (không chặn response): các tác vụ ghi xếp hàng
@@ -114,7 +160,14 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     if (!this.pullInFlight) {
       this.pullInFlight = this.syncService
         .pullAllDataFromGoogleSheets(this)
-        .catch(e => console.warn('[GoogleSheetsAdapter] Auto-pull error:', e))
+        .then((r: any) => {
+          this.markPullSettled(!!r?.counts);
+          return r;
+        })
+        .catch(e => {
+          this.markPullSettled(false);
+          console.warn('[GoogleSheetsAdapter] Auto-pull error:', e);
+        })
         .finally(() => {
           this.pullInFlight = null;
         });

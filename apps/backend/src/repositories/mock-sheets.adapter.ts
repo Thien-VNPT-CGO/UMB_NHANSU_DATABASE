@@ -31,6 +31,11 @@ import { ISheetsRepository } from './sheets.interface.js';
 export class MockSheetsAdapter implements ISheetsRepository {
   public accounts: EmployeeAccount[] = [];
   public adminAccounts: AdminAccount[] = [];
+
+  /** Mock/local: dữ liệu nằm sẵn trong bộ nhớ — luôn sẵn sàng. */
+  getReadiness() {
+    return { ready: true as const };
+  }
   public employees: EmployeeMaster[] = [];
   public stageHistories: EmployeeStageHistory[] = [];
   public candidates: CandidateApplication[] = [];
