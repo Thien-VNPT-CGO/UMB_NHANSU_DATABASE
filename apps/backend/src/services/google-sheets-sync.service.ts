@@ -32,7 +32,7 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   },
   {
     title: 'TAI_KHOAN_NHAN_VIEN',
-    headers: ['ID Tài Khoản', 'ID Nhân Viên', 'Số Điện Thoại', 'Vai Trò', 'Trạng Thái', 'Phiên Bản', 'Mã PIN (hash)', 'Bắt Buộc Đổi PIN', 'Mã PIN'],
+    headers: ['ID Tài Khoản', 'ID Nhân Viên', 'Số Điện Thoại', 'Vai Trò', 'Trạng Thái', 'Phiên Bản', 'Mã PIN (hash)', 'Bắt Buộc Đổi PIN', 'Mã PIN', 'Thiết Bị Khóa'],
   },
   {
     title: 'ADMIN_ACCOUNTS',
@@ -359,6 +359,8 @@ export class GoogleSheetsSyncService {
             pin_must_change: r[7] === 'YES',
             // Cột Mã PIN bản rõ — chỉ hiển thị trên cổng quản trị (Admin/HR).
             pin_code: r[8] || undefined,
+            // Cột Thiết Bị Khóa (mới, cuối bảng — Sheet cũ thiếu thì coi như chưa khóa).
+            bound_device_id: (r[9] || '').trim() || undefined,
           }));
         // Backfill: tài khoản cũ chưa có PIN -> tự sinh ngay.
         for (const acc of fallback.accounts) {
@@ -443,6 +445,7 @@ export class GoogleSheetsSyncService {
             (acc as any).pin_hash || '',
             acc.pin_must_change ? 'YES' : '',
             (acc as any).pin_code || '',
+            (acc as any).bound_device_id || '',
           ]);
           const def = SHEETS_DEFINITIONS.find(d => d.title === 'TAI_KHOAN_NHAN_VIEN')!;
           await this.overwriteSheetData('TAI_KHOAN_NHAN_VIEN', def.headers, rows);
@@ -1021,6 +1024,7 @@ export class GoogleSheetsSyncService {
         acc.pin_hash || '',
         acc.pin_must_change ? 'YES' : '',
         (acc as any).pin_code || '',
+        (acc as any).bound_device_id || '',
       ]);
       await this.overwriteSheetData('TAI_KHOAN_NHAN_VIEN', SHEETS_DEFINITIONS.find(d => d.title === 'TAI_KHOAN_NHAN_VIEN')!.headers, accountRows);
       details.accounts = accountRows.length;

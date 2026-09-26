@@ -5,7 +5,7 @@ import cors from 'cors';
 import { GoogleSheetsAdapter } from './repositories/google-sheets.adapter.js';
 import { singleWriterQueue } from './repositories/single-writer-queue.js';
 import { AuthService, sanitizeAdmin } from './services/auth.service.js';
-import { hashPassword } from './services/password.service.js';
+import { hashPassword, hashPin, generateAutoPin } from './services/password.service.js';
 import {
   assertHangTuanWindow,
   getWeeklyOffCompletion,
@@ -81,6 +81,7 @@ import {
   internalAccountCreateBody,
   internalAccountUpdateBody,
   opaqueConfigBody,
+  resetDeviceBody,
   sendPinBody,
   testRecoveryBody,
 } from './validators/admin.validator.js';
@@ -181,10 +182,32 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   // --- AUTH ---
   app.post('/auth/employee/phone-login', validate({ body: phoneLoginBody }), async (req, res) => {
     try {
-      const { phone, pin } = req.body;
-      const result = await authService.loginWithPhone(phone, pin);
+      const { phone, pin, deviceId } = req.body;
+      const result = await authService.loginWithPhone(phone, pin, deviceId);
       res.json(result);
     } catch (err: any) {
+      if (err.message === 'DEVICE_MISMATCH') {
+        // Báo HR/Admin trong app để xử lý reset (best-effort, không chặn response).
+        try {
+          const admins = await adapter.listAdminAccounts();
+          const ids = admins.filter(a => (a.role === 'ADMIN' || a.role === 'HR') && a.is_active !== false).map(a => a.admin_id);
+          if (ids.length > 0) {
+            await notificationsService.sendNotification({
+              recipientIds: ids,
+              type: 'DEVICE_MISMATCH',
+              severity: 'ACTION_REQUIRED',
+              title: '📱 Đăng nhập từ thiết bị lạ bị chặn',
+              summary: `SĐT ${req.body?.phone || '(ẩn)'} vừa đăng nhập từ thiết bị chưa khóa. Liên hệ NV xác minh, Reset thiết bị nếu đổi máy thật.`,
+              targetPath: '/activation',
+              actorId: 'SYSTEM',
+            } as any).catch(() => null);
+          }
+        } catch { /* ignore */ }
+        return res.status(403).json({
+          error: 'DEVICE_MISMATCH',
+          message: 'Tài khoản đã khóa với 1 thiết bị duy nhất! Bạn đang dùng thiết bị khác. Vui lòng liên hệ HR/Admin để reset rồi đăng nhập lại.',
+        });
+      }
       const status = err.message === ERROR_CODES.ACCOUNT_NOT_FOUND ? 404 : 400;
       res.status(status).json({ error: err.message });
     }
@@ -198,8 +221,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       }
       const account = await adapter.getAccountById(req.user.id);
       if (!account) return res.status(404).json({ error: ERROR_CODES.ACCOUNT_NOT_FOUND });
-      const { oldPin, newPin } = req.body;
-      await authService.changeEmployeePin(account.account_id, oldPin, newPin);
+      const { oldPin, newPin, deviceId } = req.body;
+      await authService.changeEmployeePin(account.account_id, oldPin, newPin, deviceId);
       broadcastUpdate('accounts', { action: 'change-pin', accountId: account.account_id });
       const pinEmp = await employeesService.getEmployee(account.employee_id).catch(() => null);
       broadcastNotification({
@@ -212,6 +235,12 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       });
       res.json({ success: true, message: 'Đã đổi mã PIN thành công!' });
     } catch (err: any) {
+      if (err.message === 'DEVICE_MISMATCH') {
+        return res.status(403).json({
+          error: 'DEVICE_MISMATCH',
+          message: 'Thiết bị này không phải thiết bị đã khóa! Liên hệ HR/Admin để reset rồi thử lại.',
+        });
+      }
       const status = err.message === 'WEAK_PIN' ? 400 : 401;
       res.status(status).json({ error: err.message });
     }
@@ -341,6 +370,34 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   // --- ACCOUNTS: SĐT + mã PIN tự động (hệ thống tự sinh PIN khởi tạo cho từng tài khoản,
   // nhân viên đăng nhập lần đầu rồi đặt PIN riêng ngay — không còn HR cấp tay) ---
+
+  // Reset khóa thiết bị khi NV đổi máy (đồng thời cấp lại PIN khởi tạo để NV
+  // đăng nhập lại và đặt PIN mới -> khóa máy mới). ADMIN/HR only.
+  app.post('/admin/employee-accounts/:id/reset-device', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: adminIdParams, body: resetDeviceBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const account = await adapter.getAccountById(req.params.id);
+      if (!account) return res.status(404).json({ error: 'ACCOUNT_NOT_FOUND' });
+      await adapter.setAccountDevice(account.account_id, null, req.user!.id);
+      let newPin: string | null = null;
+      if (req.body?.resetPin !== false) {
+        newPin = generateAutoPin();
+        await adapter.setAccountPin(account.account_id, await hashPin(newPin), true, req.user!.id, newPin);
+      }
+      broadcastUpdate('accounts', { action: 'reset-device', accountId: account.account_id });
+      const emp = await employeesService.getEmployee(account.employee_id).catch(() => null);
+      broadcastNotification({
+        type: 'PIN_SENT',
+        title: '🔓 Đã reset thiết bị + cấp lại PIN',
+        message: `${emp?.full_name || account.phone_normalized} đã được mở khóa thiết bị${newPin ? ' và cấp PIN mới' : ''}. NV đăng nhập lại và đặt PIN để khóa máy mới.`,
+        linkTab: 'activation',
+        metadata: { accountId: account.account_id },
+        targetRoles: ['ADMIN', 'HR'],
+      });
+      res.json({ success: true, accountId: account.account_id, newPin, message: 'Đã reset thiết bị. NV đăng nhập lại bằng PIN và đặt PIN mới.' });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
 
   // Gửi mã PIN khởi tạo qua Zalo cá nhân HR (đơn lẻ hoặc hàng loạt cho NV chưa đổi PIN).
   // Yêu cầu Zalo đã kết nối (QR login trước). Gửi tuần tự + nghỉ 800ms để chống spam/khóa.

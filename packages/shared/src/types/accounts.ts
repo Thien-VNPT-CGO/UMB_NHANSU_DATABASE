@@ -15,6 +15,10 @@ export interface EmployeeAccount {
   pin_code?: string;
   /** True khi PIN hiện tại do HR cấp/reset — bắt buộc đổi ở lần đăng nhập sau. */
   pin_must_change?: boolean;
+  /** ID thiết bị duy nhất đã khóa (UUID do employee-web sinh, lưu localStorage). */
+  bound_device_id?: string;
+  /** Thời điểm khóa thiết bị (ISO). */
+  bound_device_at?: string;
   version: number;
   created_at: string;
   updated_at: string;

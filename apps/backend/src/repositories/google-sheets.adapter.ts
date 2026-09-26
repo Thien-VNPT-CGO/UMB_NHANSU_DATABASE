@@ -155,6 +155,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
         (res as any).pin_hash || '',
         (res as any).pin_must_change ? 'YES' : '',
         (res as any).pin_code || '',
+        (res as any).bound_device_id || '',
       ]);
       if (!ok) {
         console.warn('[GoogleSheetsAdapter] appendRow TAI_KHOAN_NHAN_VIEN failed, running syncAllData');
@@ -166,6 +167,14 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async setAccountPin(id: string, pinHash: string, mustChange: boolean, actorId: string, pinPlain?: string | null) {
     const updated = await this.fallbackAdapter.setAccountPin(id, pinHash, mustChange, actorId, pinPlain);
+    if (this.isConfigured) {
+      await this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
+    }
+    return updated;
+  }
+
+  async setAccountDevice(id: string, deviceId: string | null, actorId: string) {
+    const updated = await this.fallbackAdapter.setAccountDevice(id, deviceId, actorId);
     if (this.isConfigured) {
       await this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
     }

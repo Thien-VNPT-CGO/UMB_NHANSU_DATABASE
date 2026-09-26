@@ -390,6 +390,25 @@ export function App() {
   const [pinSummary, setPinSummary] = useState<{ sent: number; failed: number; total: number } | null>(null);
   const [sendingSingleId, setSendingSingleId] = useState<string | null>(null);
 
+  // Reset khóa thiết bị khi NV đổi máy (đồng thời cấp lại PIN để NV đăng nhập lại).
+  const [resettingDeviceId, setResettingDeviceId] = useState<string | null>(null);
+  const handleResetDevice = async (accountId: string, empName: string) => {
+    if (!window.confirm(`Reset thiết bị + cấp lại PIN cho ${empName}?\nNV sẽ phải đăng nhập lại bằng PIN mới và đặt PIN riêng để khóa máy mới.`)) return;
+    setResettingDeviceId(accountId);
+    try {
+      const res = await apiRequest(`/admin/employee-accounts/${accountId}/reset-device`, {
+        method: 'POST',
+        body: JSON.stringify({ resetPin: true }),
+      });
+      setSuccessMsg(`Đã reset thiết bị cho ${empName}! PIN mới: ${res.newPin || '(giữ PIN cũ)'} — gửi PIN này cho NV qua Zalo.`);
+      await loadAllData();
+    } catch (err: any) {
+      setErrorMsg(err.message);
+    } finally {
+      setResettingDeviceId(null);
+    }
+  };
+
   // Modals
   const [showNewAdminModal, setShowNewAdminModal] = useState(false);
   const [newAdminForm, setNewAdminForm] = useState({
@@ -1107,6 +1126,8 @@ export function App() {
         hasRealAccount: !!acc,
         // Mã khởi tạo, NV chưa đổi -> hiển thị trạng thái chờ đổi PIN
         pinMustChange: acc?.pin_must_change === true,
+        // Thiết bị đã khóa (1 máy duy nhất) — rỗng = chưa khóa.
+        boundDevice: (acc as any)?.bound_device_id || '',
       };
     });
 
@@ -1128,6 +1149,7 @@ export function App() {
           version: acc.version || 1,
           hasRealAccount: true,
           pinMustChange: acc.pin_must_change === true,
+          boundDevice: (acc as any)?.bound_device_id || '',
         });
       }
     });
@@ -2479,13 +2501,14 @@ export function App() {
                       <th style={{ padding: '12px 20px' }}>Giai Đoạn</th>
                       <th style={{ padding: '12px 20px' }}>Mã PIN</th>
                       <th style={{ padding: '12px 20px' }}>Trạng Thái PIN</th>
+                      <th style={{ padding: '12px 20px' }}>Thiết Bị</th>
                       <th style={{ padding: '12px 20px' }}>Gửi Zalo</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredActivationItems.length === 0 ? (
                       <tr>
-                        <td colSpan={9} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                        <td colSpan={10} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
                           Không có nhân sự nào trong tab này hoặc không khớp với tìm kiếm.
                         </td>
                       </tr>
@@ -2613,6 +2636,30 @@ export function App() {
                               <div title="NV dùng mã khởi tạo, chưa đặt PIN riêng — mọi phiên cũ đã vô hiệu" style={{ fontSize: '10px', color: '#D97706', fontWeight: 700, marginTop: '3px' }}>
                                 🔒 Chờ NV đổi PIN
                               </div>
+                            )}
+                          </td>
+                          {/* Cột thiết bị khóa — Reset khi NV đổi máy */}
+                          <td style={{ padding: '14px 20px' }}>
+                            {item.boundDevice ? (
+                              <div>
+                                <span title={`Device ID: ${item.boundDevice}`} style={{ padding: '3px 8px', borderRadius: 'var(--radius-full)', fontSize: '11px', fontWeight: 700, backgroundColor: '#E0E7FF', color: '#3730A3' }}>
+                                  📱 Đã khóa 1 máy
+                                </span>
+                                {item.hasRealAccount && (
+                                  <div>
+                                    <button
+                                      onClick={() => handleResetDevice(item.accountId, `${item.fullName} (${item.employeeCode})`)}
+                                      disabled={resettingDeviceId === item.accountId}
+                                      title="NV đổi máy: xóa khóa + cấp lại PIN để NV đăng nhập lại"
+                                      style={{ marginTop: '6px', padding: '5px 10px', borderRadius: 'var(--radius-sm)', backgroundColor: '#F59E0B', color: '#FFF', fontSize: '11px', fontWeight: 800, border: 'none', cursor: resettingDeviceId === item.accountId ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}
+                                    >
+                                      {resettingDeviceId === item.accountId ? '⏳ Đang reset...' : '🔓 Reset máy + PIN'}
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Chưa khóa</span>
                             )}
                           </td>
                           <td style={{ padding: '14px 20px' }}>

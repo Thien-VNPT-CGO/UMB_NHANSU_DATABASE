@@ -28,6 +28,24 @@ interface EmployeeProfile {
   default_branch_id: string;
 }
 
+// Khóa 1 thiết bị / 1 tài khoản: UUID ổn định theo trình duyệt (localStorage).
+// Xóa cache/cài lại PWA/đổi máy -> ID mới -> server chặn, HR/Admin reset.
+function getDeviceId(): string {
+  try {
+    const saved = localStorage.getItem('ubm_device_id');
+    if (saved) return saved;
+    const fresh: string = (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
+      ? String((crypto as any).randomUUID())
+      : `DEV_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    try { localStorage.setItem('ubm_device_id', fresh); } catch { /* ignore */ }
+    return fresh;
+  } catch {
+    return `DEV_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  }
+}
+
+const DEVICE_MISMATCH_MSG = '📱 Tài khoản đã khóa với 1 thiết bị duy nhất! Bạn đang dùng thiết bị khác. Vui lòng liên hệ HR/Admin để reset rồi đăng nhập lại.';
+
 export function App() {
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(() => {
     return !!(localStorage.getItem('ubm_emp_token') && localStorage.getItem('ubm_emp_data'));
@@ -289,7 +307,7 @@ export function App() {
     try {
       const res = await apiRequest('/auth/employee/phone-login', {
         method: 'POST',
-        body: JSON.stringify({ phone: cleaned, pin }),
+        body: JSON.stringify({ phone: cleaned, pin, deviceId: getDeviceId() }),
       });
 
       setCheckingStatus('ACTIVE');
@@ -319,6 +337,9 @@ export function App() {
       } else if (err.message === 'DUPLICATE_PHONE_NEEDS_HR') {
         setCheckingStatus('ERROR');
         setLoginError(`Số điện thoại ${cleaned} bị trùng lặp trên 2 hồ sơ khác nhau. Cần gặp HR để đối soát thông tin.`);
+      } else if (err.message === 'DEVICE_MISMATCH' || (err.message || '').includes('thiết bị')) {
+        setCheckingStatus('ERROR');
+        setLoginError(DEVICE_MISMATCH_MSG);
       } else {
         setCheckingStatus('ERROR');
         setLoginError(err.message);
@@ -355,16 +376,20 @@ export function App() {
     try {
       await apiRequest('/auth/employee/change-pin', {
         method: 'POST',
-        body: JSON.stringify({ oldPin: loginPin.trim(), newPin }),
+        body: JSON.stringify({ oldPin: loginPin.trim(), newPin, deviceId: getDeviceId() }),
       });
-      showToast('🎉 Đổi mã PIN thành công! Đây là mã PIN riêng của bạn, không chia sẻ cho người khác.');
+      showToast('🎉 Đổi mã PIN thành công! Tài khoản đã khóa với thiết bị này — không đăng nhập được trên máy khác.');
       setLoginPin(newPin);
       // Token hiện tại đã bị thu hồi (version tăng) -> đăng nhập lại bằng PIN mới
       setAuthToken('');
       setMustChangePin(false);
       await handlePhoneLogin(loginPhone, newPin);
     } catch (err: any) {
-      setLoginError(err.message === 'INVALID_PIN' ? 'Mã PIN hiện tại không đúng!' : err.message);
+      if (err.message === 'DEVICE_MISMATCH' || (err.message || '').includes('thiết bị')) {
+        setLoginError(DEVICE_MISMATCH_MSG);
+      } else {
+        setLoginError(err.message === 'INVALID_PIN' ? 'Mã PIN hiện tại không đúng!' : err.message);
+      }
     } finally {
       setLoading(false);
     }
