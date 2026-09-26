@@ -300,10 +300,23 @@ export class GoogleSheetsSyncService {
         return { success: false, message: 'Empty batch read — keeping in-memory data', counts: null };
       }
 
+      // Guard từng tab: MỘT tab đọc rỗng (glitch/quota/timeout cục bộ) trong khi bộ nhớ
+      // đang có dữ liệu tab đó -> GIỮ bộ nhớ, không gán rỗng (trước đây mất trắng entity
+      // rồi lần sync sau ghi rỗng ngược lên Sheet = mất vĩnh viễn).
+      const keepIfEmpty = (label: string, rows: any[][], existingCount: number): boolean => {
+        if (rows.length === 0 && existingCount > 0) {
+          console.warn(`[GoogleSheetsSyncService] Tab ${label} đọc rỗng nhưng bộ nhớ có ${existingCount} dòng — giữ bộ nhớ, bỏ qua tab này.`);
+          return true;
+        }
+        return false;
+      };
+
       // 1. Đọc NHAN_VIEN_MASTER
       const empRows = batch['NHAN_VIEN_MASTER'];
-      if (empRows.length > 0) {
-        fallback.employees = empRows
+      if (keepIfEmpty('NHAN_VIEN_MASTER', empRows, fallback.employees.length)) {
+        counts.employees = fallback.employees.length;
+      } else if (empRows.length > 0) {
+        const mappedEmps = empRows
           .filter(r => r && (r[2] || r[3]))
           .map((r, idx) => {
             const phone = (r[3] || '').trim();
@@ -334,7 +347,13 @@ export class GoogleSheetsSyncService {
               version: version,
             };
           });
-      } else {
+        // Đọc thiếu dòng (partial/truncated) mà bộ nhớ đang nhiều hơn gấp đôi -> giữ bộ nhớ.
+        if (mappedEmps.length > 0 && fallback.employees.length > 5 && mappedEmps.length * 2 < fallback.employees.length) {
+          console.warn(`[GoogleSheetsSyncService] NHAN_VIEN_MASTER đọc thiếu (${mappedEmps.length}/${fallback.employees.length}) — giữ bộ nhớ.`);
+        } else {
+          fallback.employees = mappedEmps as any;
+        }
+      } else if (fallback.employees.length === 0) {
         fallback.employees = [];
       }
       counts.employees = fallback.employees.length;
@@ -344,8 +363,10 @@ export class GoogleSheetsSyncService {
       // không còn HR cấp tay, nhân viên đăng nhập lần đầu rồi đặt PIN riêng ngay.
       const accRows = batch['TAI_KHOAN_NHAN_VIEN'];
       let pinDirty = false;
-      if (accRows.length > 0) {
-        fallback.accounts = accRows
+      if (keepIfEmpty('TAI_KHOAN_NHAN_VIEN', accRows, fallback.accounts.length)) {
+        counts.accounts = fallback.accounts.length;
+      } else if (accRows.length > 0) {
+        const mappedAccs = accRows
           .filter(r => r && (r[0] || r[2]))
           .map(r => ({
             account_id: r[0] || `ACC_${uuidv4().slice(0, 8)}`,
@@ -362,6 +383,13 @@ export class GoogleSheetsSyncService {
             // Cột Mã PIN bản rõ — chỉ hiển thị trên cổng quản trị (Admin/HR).
             pin_code: r[8] || undefined,
           }));
+        // Đọc thiếu dòng mà bộ nhớ đang nhiều hơn gấp đôi -> giữ bộ nhớ (chống mất PIN hàng loạt).
+        if (mappedAccs.length > 0 && fallback.accounts.length > 5 && mappedAccs.length * 2 < fallback.accounts.length) {
+          console.warn(`[GoogleSheetsSyncService] TAI_KHOAN_NHAN_VIEN đọc thiếu (${mappedAccs.length}/${fallback.accounts.length}) — giữ bộ nhớ.`);
+          counts.accounts = fallback.accounts.length;
+        } else {
+          fallback.accounts = mappedAccs as any;
+        }
         // Backfill: tài khoản cũ chưa có PIN -> tự sinh ngay.
         for (const acc of fallback.accounts) {
           if (!acc.pin_hash) {
@@ -373,7 +401,7 @@ export class GoogleSheetsSyncService {
             pinDirty = true;
           }
         }
-      } else {
+      } else if (fallback.accounts.length === 0) {
         fallback.accounts = [];
       }
 
@@ -438,13 +466,13 @@ export class GoogleSheetsSyncService {
           const rows = fallback.accounts.map(acc => [
             acc.account_id,
             acc.employee_id,
-            acc.phone_normalized,
+            GoogleSheetsSyncService.sheetText(acc.phone_normalized),
             acc.role,
             acc.account_status,
             acc.version,
             (acc as any).pin_hash || '',
             acc.pin_must_change ? 'YES' : '',
-            (acc as any).pin_code || '',
+            GoogleSheetsSyncService.sheetText((acc as any).pin_code || ''),
           ]);
           const def = SHEETS_DEFINITIONS.find(d => d.title === 'TAI_KHOAN_NHAN_VIEN')!;
           await this.overwriteSheetData('TAI_KHOAN_NHAN_VIEN', def.headers, rows);
@@ -1020,7 +1048,7 @@ export class GoogleSheetsSyncService {
         e.employee_id,
         e.employee_code,
         e.full_name,
-        e.phone_normalized,
+        GoogleSheetsSyncService.sheetText(e.phone_normalized),
         e.employment_status,
         e.group,
         e.default_branch_id,
@@ -1036,13 +1064,13 @@ export class GoogleSheetsSyncService {
       const accountRows = accounts.map(acc => [
         acc.account_id,
         acc.employee_id,
-        acc.phone_normalized,
+        GoogleSheetsSyncService.sheetText(acc.phone_normalized),
         acc.role,
         acc.account_status,
         acc.version,
         acc.pin_hash || '',
         acc.pin_must_change ? 'YES' : '',
-        (acc as any).pin_code || '',
+        GoogleSheetsSyncService.sheetText((acc as any).pin_code || ''),
       ]);
       await this.overwriteSheetData('TAI_KHOAN_NHAN_VIEN', SHEETS_DEFINITIONS.find(d => d.title === 'TAI_KHOAN_NHAN_VIEN')!.headers, accountRows);
       details.accounts = accountRows.length;
@@ -1229,15 +1257,8 @@ export class GoogleSheetsSyncService {
   public async overwriteSheetData(sheetTitle: string, headers: string[], rows: any[][]) {
     if (!this.sheetsClient) return;
 
-    try {
-      await this.sheetsClient.spreadsheets.values.clear({
-        spreadsheetId: this.spreadsheetId,
-        range: `'${sheetTitle}'!A2:Z`,
-      });
-    } catch (e) {
-      // Bỏ qua nếu range trống
-    }
-
+    // Ghi đè AN TOÀN: ghi dữ liệu mới TRƯỚC (A1...), rồi mới xóa phần đuôi thừa.
+    // (Bản cũ xóa trước-ghi sau: crash/quota ở giữa = mất trắng tab.)
     const allValues = [headers, ...rows];
     await this.sheetsClient.spreadsheets.values.update({
       spreadsheetId: this.spreadsheetId,
@@ -1247,6 +1268,23 @@ export class GoogleSheetsSyncService {
         values: allValues,
       },
     });
+
+    // Xóa đuôi thừa khi dữ liệu mới ngắn hơn cũ (tránh dòng ma).
+    try {
+      await this.sheetsClient.spreadsheets.values.clear({
+        spreadsheetId: this.spreadsheetId,
+        range: `'${sheetTitle}'!A${allValues.length + 1}:Z`,
+      });
+    } catch (e) {
+      // Bỏ qua nếu range trống
+    }
+  }
+
+  /** Ép Sheets giữ nguyên text (SĐT 033.../PIN 0428): USER_ENTERED hay nuốt số 0 đầu. */
+  public static sheetText(v: any): any {
+    const s = v === null || v === undefined ? '' : String(v);
+    if (s !== '' && /^0\d+$/.test(s)) return `'${s}`;
+    return v;
   }
 
   /**

@@ -175,13 +175,13 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
         const ok = await this.syncService.appendRow('TAI_KHOAN_NHAN_VIEN', [
           snapshot.account_id,
           snapshot.employee_id,
-          snapshot.phone_normalized,
+          GoogleSheetsSyncService.sheetText(snapshot.phone_normalized),
           snapshot.role,
           snapshot.account_status,
           snapshot.version,
           (snapshot as any).pin_hash || '',
           (snapshot as any).pin_must_change ? 'YES' : '',
-          (snapshot as any).pin_code || '',
+          GoogleSheetsSyncService.sheetText((snapshot as any).pin_code || ''),
         ]);
         if (!ok) {
           console.warn('[GoogleSheetsAdapter] appendRow TAI_KHOAN_NHAN_VIEN failed, running syncAllData');
@@ -226,7 +226,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
           snapshot.employee_id,
           snapshot.employee_code,
           snapshot.full_name,
-          snapshot.phone_normalized,
+          GoogleSheetsSyncService.sheetText(snapshot.phone_normalized),
           snapshot.employment_status,
           snapshot.group,
           snapshot.default_branch_id,
