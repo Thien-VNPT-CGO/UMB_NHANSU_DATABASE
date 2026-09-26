@@ -390,6 +390,26 @@ export function App() {
   const [pinSummary, setPinSummary] = useState<{ sent: number; failed: number; total: number } | null>(null);
   const [sendingSingleId, setSendingSingleId] = useState<string | null>(null);
 
+  // NV quên PIN: HR/Admin cấp lại PIN mới (PIN cũ hết hiệu lực ngay) rồi gửi cho NV.
+  const [resettingPinId, setResettingPinId] = useState<string | null>(null);
+  const handleResetPin = async (item: any) => {
+    if (!item?.hasRealAccount) {
+      setErrorMsg('Tài khoản chưa tồn tại, không thể reset PIN!');
+      return;
+    }
+    if (!window.confirm(`Cấp lại PIN mới cho ${item.fullName} (${item.phone})?\nPIN cũ hết hiệu lực ngay. Gửi PIN mới cho NV qua Zalo/tin nhắn.`)) return;
+    setResettingPinId(item.accountId);
+    try {
+      const res = await apiRequest(`/admin/employee-accounts/${item.accountId}/reset-pin`, { method: 'POST' });
+      setSuccessMsg(`Đã cấp PIN mới cho ${item.fullName}: ${res.pin} — gửi ngay cho NV! NV đăng nhập và đặt PIN riêng.`);
+      await loadAllData();
+    } catch (err: any) {
+      setErrorMsg(err.message);
+    } finally {
+      setResettingPinId(null);
+    }
+  };
+
   // Modals
   const [showNewAdminModal, setShowNewAdminModal] = useState(false);
   const [newAdminForm, setNewAdminForm] = useState({
@@ -1117,6 +1137,8 @@ export function App() {
         hasRealAccount: !!acc,
         // Mã khởi tạo, NV chưa đổi -> hiển thị trạng thái chờ đổi PIN
         pinMustChange: acc?.pin_must_change === true,
+        // Lần đổi/cấp PIN gần nhất (đổi PIN riêng, reset, xoay kỳ) để theo dõi tháng.
+        pinUpdatedAt: (acc as any)?.updated_at || '',
       };
     });
 
@@ -1138,6 +1160,7 @@ export function App() {
           version: acc.version || 1,
           hasRealAccount: true,
           pinMustChange: acc.pin_must_change === true,
+          pinUpdatedAt: (acc as any)?.updated_at || '',
         });
       }
     });
@@ -1193,6 +1216,22 @@ export function App() {
   const countFactory = activationDataList.filter(i => i.group === 'XUONG').length;
   const countSales = activationDataList.filter(i => i.group === 'SALE').length;
   const pendingPinCount = activationDataList.filter(i => i.pinMustChange && i.pinCode && i.hasRealAccount).length;
+
+  // Tổng quan PIN tháng hiện tại cho Admin/HR quan sát (kỳ xoay 1-5 hàng tháng).
+  const pinMonthStats = (() => {
+    const d = new Date();
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const real = activationDataList.filter(i => i.hasRealAccount);
+    const changed = real.filter(i => !i.pinMustChange && (i.pinUpdatedAt || '').slice(0, 7) >= key);
+    const pending = real.filter(i => i.pinMustChange);
+    return { key, total: real.length, changed: changed.length, pending: pending.length };
+  })();
+  const fmtPinTime = (s: string) => {
+    if (!s) return '—';
+    try {
+      return new Date(s).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    } catch { return '—'; }
+  };
 
   // Check if opened via QR scan from mobile phone for Zalo Auth Confirmation
   if (typeof window !== 'undefined') {
@@ -2476,6 +2515,14 @@ export function App() {
                 </div>
               </div>
 
+              {/* Banner theo dõi PIN tháng (kỳ xoay 1-5): ai đổi rồi / ai còn chờ */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', backgroundColor: '#FFFBEB', border: '1.5px solid #F59E0B', borderRadius: 'var(--radius-md)', padding: '12px 16px', fontSize: '13px' }}>
+                <span style={{ fontWeight: 800, color: '#92400E' }}>🔑 PIN tháng {pinMonthStats.key} (hạn 1-5):</span>
+                <span style={{ padding: '4px 12px', borderRadius: '999px', backgroundColor: '#DCFCE7', color: '#166534', fontWeight: 800, fontSize: '12px' }}>✅ Đã đổi riêng: {pinMonthStats.changed}/{pinMonthStats.total}</span>
+                <span style={{ padding: '4px 12px', borderRadius: '999px', backgroundColor: '#FEE2E2', color: '#991B1B', fontWeight: 800, fontSize: '12px' }}>🔒 Chờ đổi: {pinMonthStats.pending}</span>
+                <span style={{ color: '#92400E', fontSize: '12px' }}>NV quên PIN → bấm "Reset PIN" ở dòng đó để cấp mã mới rồi gửi cho NV.</span>
+              </div>
+
               {/* Unified PIN & Account Table */}
               <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
@@ -2489,13 +2536,14 @@ export function App() {
                       <th style={{ padding: '12px 20px' }}>Giai Đoạn</th>
                       <th style={{ padding: '12px 20px' }}>Mã PIN</th>
                       <th style={{ padding: '12px 20px' }}>Trạng Thái PIN</th>
+                      <th style={{ padding: '12px 20px' }}>Đổi PIN Cuối</th>
                       <th style={{ padding: '12px 20px' }}>Gửi Zalo</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredActivationItems.length === 0 ? (
                       <tr>
-                        <td colSpan={9} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                        <td colSpan={10} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
                           Không có nhân sự nào trong tab này hoặc không khớp với tìm kiếm.
                         </td>
                       </tr>
@@ -2625,7 +2673,11 @@ export function App() {
                               </div>
                             )}
                           </td>
+                          <td style={{ padding: '14px 20px', fontSize: '12px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                            {fmtPinTime(item.pinUpdatedAt)}
+                          </td>
                           <td style={{ padding: '14px 20px' }}>
+                            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                             {item.pinMustChange && item.pinCode && item.hasRealAccount ? (
                               <button
                                 onClick={() => handleBulkSendPin([item.accountId])}
@@ -2643,6 +2695,22 @@ export function App() {
                             ) : (
                               <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>—</span>
                             )}
+                            {item.hasRealAccount && (
+                              <button
+                                onClick={() => handleResetPin(item)}
+                                disabled={resettingPinId === item.accountId}
+                                title="NV quên PIN: cấp mã mới (mã cũ hết hiệu lực ngay)"
+                                style={{
+                                  padding: '6px 12px', borderRadius: 'var(--radius-sm)',
+                                  backgroundColor: '#F59E0B',
+                                  color: '#FFF', fontSize: '11px', fontWeight: 800, border: 'none',
+                                  cursor: resettingPinId === item.accountId ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap',
+                                }}
+                              >
+                                {resettingPinId === item.accountId ? '⏳...' : '🔄 Reset PIN'}
+                              </button>
+                            )}
+                            </div>
                           </td>
                         </tr>
                       ))

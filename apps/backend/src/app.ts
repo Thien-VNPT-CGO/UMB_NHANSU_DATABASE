@@ -5,7 +5,7 @@ import cors from 'cors';
 import { GoogleSheetsAdapter } from './repositories/google-sheets.adapter.js';
 import { singleWriterQueue } from './repositories/single-writer-queue.js';
 import { AuthService, sanitizeAdmin } from './services/auth.service.js';
-import { hashPassword } from './services/password.service.js';
+import { hashPassword, hashPin, generateAutoPin } from './services/password.service.js';
 import {
   assertHangTuanWindow,
   getWeeklyOffCompletion,
@@ -441,6 +441,30 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   // --- ACCOUNTS: SĐT + mã PIN tự động (hệ thống tự sinh PIN khởi tạo cho từng tài khoản,
   // nhân viên đăng nhập lần đầu rồi đặt PIN riêng ngay — không còn HR cấp tay) ---
+
+  // NV quên PIN: HR/Admin cấp lại PIN mới (PIN cũ hết hiệu lực ngay), gửi PIN mới cho NV.
+  app.post('/admin/employee-accounts/:id/reset-pin', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: adminIdParams }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const account = await adapter.getAccountById(req.params.id);
+      if (!account) return res.status(404).json({ error: 'ACCOUNT_NOT_FOUND' });
+      const newPin = generateAutoPin();
+      const updated = await adapter.setAccountPin(account.account_id, await hashPin(newPin), true, req.user!.id, newPin);
+      broadcastUpdate('accounts', { action: 'reset-pin', accountId: account.account_id });
+      const emp = await employeesService.getEmployee(account.employee_id).catch(() => null);
+      broadcastNotification({
+        type: 'PIN_SENT',
+        title: '🔑 Đã cấp lại PIN mới',
+        message: `${emp?.full_name || account.phone_normalized} đã được cấp PIN mới. Gửi ngay cho NV qua Zalo/tin nhắn — NV đăng nhập và đặt PIN riêng.`,
+        linkTab: 'activation',
+        metadata: { accountId: account.account_id },
+        targetRoles: ['ADMIN', 'HR'],
+      });
+      const { pin_hash: _omit, ...rest } = updated as any;
+      res.json({ success: true, accountId: account.account_id, pin: newPin, account: rest });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
 
   // Gửi mã PIN khởi tạo qua Zalo cá nhân HR (đơn lẻ hoặc hàng loạt cho NV chưa đổi PIN).
   // Yêu cầu Zalo đã kết nối (QR login trước). Gửi tuần tự + nghỉ 800ms để chống spam/khóa.

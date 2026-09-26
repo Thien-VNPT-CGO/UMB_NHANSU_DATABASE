@@ -6,6 +6,7 @@ import { Server } from 'socket.io';
 import { createApp } from './app.js';
 import { AuthService } from './services/auth.service.js';
 import { weeklyOffScheduler } from './services/weekly-off.service.js';
+import { pinRotationTick } from './services/pin-rotation.service.js';
 import { autoRemindersTick } from './services/auto-reminders.service.js';
 import { buildSocketCorsOptions, getAllowedOrigins } from './config/security.js';
 
@@ -124,6 +125,21 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   };
   setTimeout(autoRemindersTickSafe, 60_000); // đợi dữ liệu load xong lần đầu
   setInterval(autoRemindersTickSafe, 5 * 60_000);
+
+  // Xoay PIN định kỳ hàng tháng (ngày 1-5): cấp PIN mới theo mẻ, báo NV + HR/Admin.
+  const pinRotationTickSafe = () => {
+    pinRotationTick(adapter, services.notificationsService)
+      .then(prog => {
+        if (prog && !prog.completed) {
+          try {
+            io.emit('data:updated', { entity: 'accounts', data: { action: 'pin-rotation', ...prog }, timestamp: new Date().toISOString() });
+          } catch { /* non-fatal */ }
+        }
+      })
+      .catch(err => console.warn('[pin-rotation] tick error:', err?.message || err));
+  };
+  setTimeout(pinRotationTickSafe, 90_000); // sau pull đầu
+  setInterval(pinRotationTickSafe, 60 * 60_000);
 
   // Backup snapshot tự động mỗi 24h + tự verify; fail thì báo ADMIN/HR trong app.
   const autoBackupTick = async () => {
