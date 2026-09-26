@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import {
   AuthUser,
   ERROR_CODES,
@@ -12,16 +13,29 @@ import { hashPassword, hashPin, isBcryptHash, verifyPassword, verifyPin } from '
 const DEFAULT_FALLBACK_JWT_SECRET =
   'ubm-milk-hr-system-jwt-production-secret-key-2026-secure-random-token-v5';
 
+// Production thiếu JWT_SECRET: sinh secret ngẫu nhiên mỗi lần boot thay vì dùng
+// key cứng trong source (ai đọc source cũng ký được token giả). Token cũ hết
+// hiệu lực sau mỗi lần restart — chấp nhận được so với nguy cơ giả mạo.
+let ephemeralProdSecret: string | null = null;
+
 function getJwtSecret(): string {
   const secret = process.env.JWT_SECRET;
   if (secret && secret.trim().length >= 16) return secret.trim();
 
-  // Không ném Exception gây crash server nếu Render chưa kịp cấu hình biến môi trường
   if (process.env.NODE_ENV === 'production') {
-    console.warn(
-      '[auth] CẢNH BÁO: JWT_SECRET chưa được cấu hình hoặc quá ngắn trong biến môi trường. Đang dùng fallback key bảo mật. Bạn có thể cấu hình JWT_SECRET trong Render Dashboard bất cứ lúc nào.'
-    );
+    if (!ephemeralProdSecret) {
+      ephemeralProdSecret = crypto.randomBytes(48).toString('hex');
+      console.error(
+        '[auth] NGUY HIỂM: JWT_SECRET chưa được cấu hình! Đã sinh secret ngẫu nhiên tạm thời — mọi phiên đăng nhập sẽ hết hiệu lực khi restart. Hãy cấu hình JWT_SECRET (tối thiểu 16 ký tự) ngay.'
+      );
+    }
+    return ephemeralProdSecret;
   }
+
+  // Dev/local: fallback hằng số cho tiện, không dùng ở production.
+  console.warn(
+    '[auth] JWT_SECRET chưa được cấu hình — dùng dev fallback key. Không dùng cấu hình này ở production.'
+  );
   return DEFAULT_FALLBACK_JWT_SECRET;
 }
 
@@ -32,8 +46,6 @@ export function getAccessTtl(): string {
 export function getRefreshTtl(): string {
   return process.env.JWT_REFRESH_TTL || '7d';
 }
-
-export const JWT_SECRET = process.env.JWT_SECRET || '';
 
 export type AccessTokenType = 'access';
 export type RefreshTokenType = 'refresh';

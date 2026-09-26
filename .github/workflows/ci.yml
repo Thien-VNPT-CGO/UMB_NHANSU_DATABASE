@@ -35,11 +35,18 @@ jobs:
         run: |
           docker run -d --name ubm-ci -p 4005:4005 \
             -e JWT_SECRET=ci-test-secret-0123456789abcdef-ci-test \
+            -e ADMIN_SEED_PASSWORD=CiAdmin123456 \
             ubm-backend:ci
           for i in $(seq 1 20); do
             if docker exec ubm-ci wget -qO- http://localhost:4005/health | grep -q '"status":"UP"'; then
-              echo "HEALTH OK"; docker rm -f ubm-ci; exit 0
+              echo "HEALTH OK"; break;
             fi
             sleep 3
           done
-          echo "HEALTH CHECK FAILED"; docker logs ubm-ci; docker rm -f ubm-ci; exit 1
+
+      - name: Smoke test admin login (mock seed)
+        run: |
+          TOKEN=$(docker exec ubm-ci wget -qO- --post-data='{"username":"admin","password":"CiAdmin123456"}' --header='Content-Type: application/json' http://localhost:4005/auth/admin/login | grep -o '"token":"[^"]*"' | head -1)
+          if [ -z "$TOKEN" ]; then echo "ADMIN LOGIN FAILED"; docker logs ubm-ci; docker rm -f ubm-ci; exit 1; fi
+          echo "ADMIN LOGIN OK"
+          docker rm -f ubm-ci

@@ -93,6 +93,8 @@ export class EmployeesService {
       actorId: data.actorId,
       execute: async () => {
         // Ràng buộc SĐT duy nhất toàn hệ thống (so sánh sau chuẩn hóa).
+        // Chuẩn hóa về digits-only ngay từ đầu để login exact-match luôn trúng
+        // (tránh SĐT có khoảng trắng/gạch ngang tạo ở POST /employees).
         const normPhone = canonicalPhone(data.phone);
         if (!normPhone) throw new Error('INVALID_PHONE');
         const existingEmps = await this.repo.listEmployees();
@@ -111,7 +113,7 @@ export class EmployeesService {
           employee_id: employeeId,
           employee_code: employeeCode,
           full_name: data.fullName,
-          phone_normalized: data.phone,
+          phone_normalized: normPhone,
           employment_status: data.employmentStatus,
           group: data.group || 'STORE',
           default_branch_id: data.branchId,
@@ -141,7 +143,7 @@ export class EmployeesService {
         const newAcc = await this.repo.createAccount({
           account_id: `ACC_${Date.now()}`,
           employee_id: employeeId,
-          phone_normalized: data.phone,
+          phone_normalized: normPhone,
           account_status: 'ACTIVE',
           role: 'EMPLOYEE',
           branch_scope: data.branchId || 'CN130',

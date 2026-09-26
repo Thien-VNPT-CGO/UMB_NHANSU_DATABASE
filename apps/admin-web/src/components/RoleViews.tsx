@@ -2577,7 +2577,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', maxWidth: '580px' }}>
                     <Info size={18} color="#16A34A" style={{ marginTop: '2px', flexShrink: 0 }} />
                     <div style={{ fontSize: '12px', color: '#166534', lineHeight: 1.5 }}>
-                      <strong>Quy chuẩn import:</strong> Nhân viên import sẽ tự động được gán trạng thái <strong>CHÍNH THỨC</strong>, cấp tài khoản đăng nhập (mật khẩu: 6 số cuối SĐT) và đồng bộ xuống các Google Sheet. Mức lương giờ mặc định là <strong>25.500 đ/h</strong>.
+                      <strong>Quy chuẩn import:</strong> Nhân viên import sẽ tự động được gán trạng thái <strong>CHÍNH THỨC</strong>, cấp tài khoản đăng nhập (mã PIN khởi tạo tự sinh) và đồng bộ xuống các Google Sheet. Mức lương giờ mặc định là <strong>25.500 đ/h</strong>.
                     </div>
                   </div>
 
@@ -2902,7 +2902,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <div>
                   <strong>{emp.full_name} ({emp.employee_code})</strong> • Chi nhánh: {getDisplayBranch(emp.default_branch_id)}
                 </div>
-                <button className="btn-primary" onClick={() => showToast(`Đã ban hành Quyết định Chuyển Chính Thức cho ${emp.full_name}! Lương áp dụng 25.000 đ/h`)}>
+                <button className="btn-primary" onClick={() => showToast(`Đã ban hành Quyết định Chuyển Chính Thức cho ${emp.full_name}! Lương áp dụng 25.500 đ/h`)}>
                   Ký Quyết Định
                 </button>
               </div>

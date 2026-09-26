@@ -401,6 +401,34 @@ export class GoogleSheetsSyncService {
       }
       counts.accounts = fallback.accounts.length;
 
+      // TỰ ĐỘNG THU HỒI TRUY CẬP khi nhân viên chuyển TERMINATED (trên Sheet):
+      // tăng version tài khoản -> mọi token đang dùng hết hiệu lực ngay ở request kế tiếp.
+      // (Đăng nhập đã bị chặn; đây là lớp khóa phiên đang sống.)
+      for (const emp of fallback.employees) {
+        if (emp.employment_status !== 'TERMINATED') continue;
+        if ((fallback as any).terminatedRevoked?.has(emp.employee_id)) continue;
+        let revokedAny = false;
+        for (const acc of fallback.accounts) {
+          if (acc.employee_id === emp.employee_id) {
+            acc.version += 1;
+            acc.updated_at = new Date().toISOString();
+            revokedAny = true;
+          }
+        }
+        if (revokedAny) {
+          (fallback as any).terminatedRevoked?.add(emp.employee_id);
+          await repo.recordAuditLog({
+            log_id: `LOG_${Date.now()}_${emp.employee_id}`,
+            actor_id: 'SYSTEM',
+            actor_role: 'SYSTEM',
+            action: 'AUTO_REVOKE_TERMINATED',
+            target_entity: 'TAI_KHOAN_NHAN_VIEN',
+            target_id: emp.employee_id,
+            details: `Tự động thu hồi phiên đăng nhập của nhân viên nghỉ việc ${emp.full_name} (${emp.employee_code})`,
+          }).catch(() => null);
+        }
+      }
+
       // PIN vừa sinh chỉ nằm trong bộ nhớ -> ghi ngay xuống Sheet để lần pull sau không sinh lại số khác.
       // Bọc try/catch: ghi lỗi KHÔNG được làm sập cả lần pull.
       if (pinDirty && this.sheetsClient) {
@@ -1047,6 +1075,21 @@ export class GoogleSheetsSyncService {
       await this.overwriteSheetData('DON_DOI_CA', SHEETS_DEFINITIONS.find(d => d.title === 'DON_DOI_CA')!.headers, swapRows);
       details.swaps = swapRows.length;
 
+      // 7b. Điều chỉnh công (trước đây chỉ pull mà không push — tạo trên web sẽ mất khi restart)
+      const adjustments = await repo.listAttendanceAdjustments();
+      const adjRows = adjustments.map(a => [
+        a.adjustment_id,
+        a.assignment_id,
+        a.employee_id,
+        a.reason || '',
+        a.minutes_approved ?? a.minutes_requested ?? 0,
+        a.approver_id || '',
+        a.status,
+        a.review_note || '',
+      ]);
+      await this.overwriteSheetData('DIEU_CHINH_CONG', SHEETS_DEFINITIONS.find(d => d.title === 'DIEU_CHINH_CONG')!.headers, adjRows);
+      details.adjustments = adjRows.length;
+
       // 8. Bảng lương
       const payrollRuns = await repo.listPayrollRuns();
       const payrollRows = payrollRuns.map(pr => [
@@ -1101,48 +1144,6 @@ export class GoogleSheetsSyncService {
         ]);
         await this.overwriteSheetData('FROM_NHAN_VIEN', candHeaders, candRows);
         details.candidates = candRows.length;
-      }
-
-      // 16. Đồng bộ Đơn nghỉ phép & Nghỉ khẩn cấp (DON_NGHI_PHEP & PHIEU_OFF_DOT_XUAT)
-      const leaveRequests = await repo.listLeaveRequests();
-      const leaveDef = SHEETS_DEFINITIONS.find(d => d.title === 'DON_NGHI_PHEP');
-      if (leaveDef) {
-        const leaveRows = leaveRequests.map((l: any) => {
-          const emp = employees.find((e: any) => e.employee_id === l.employee_id);
-          return [
-            l.request_id,
-            emp?.employee_code || l.employee_id,
-            l.branch_id || emp?.default_branch_id || 'CN130',
-            l.leave_type === 'DOT_XUAT' ? 'Nghỉ Đột Xuất' : 'Nghỉ Hàng Tuần',
-            l.requested_date,
-            l.shift_code || 'Cả ngày',
-            l.reason,
-            l.status,
-            l.reviewed_by || '',
-            l.review_note || '',
-            l.created_at || '',
-          ];
-        });
-        await this.overwriteSheetData('DON_NGHI_PHEP', leaveDef.headers, leaveRows);
-      }
-
-      // 17. Đồng bộ Kỳ lương (KY_LUONG)
-      const payrollList = await repo.listPayrollRuns();
-      if (payrollList && payrollList.length > 0) {
-        const prDef = SHEETS_DEFINITIONS.find(d => d.title === 'KY_LUONG');
-        if (prDef) {
-          const prRows = payrollList.map((p: any) => [
-            p.run_id,
-            p.period,
-            p.status,
-            p.total_amount || 0,
-            p.created_at || '',
-            p.published_at || '',
-            p.paid_at || '',
-          ]);
-          await this.overwriteSheetData('KY_LUONG', prDef.headers, prRows);
-          details.payrollRuns = prRows.length;
-        }
       }
 
       // 18. Đồng bộ Cài đặt hệ thống (CAU_HINH_HE_THONG)

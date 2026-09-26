@@ -20,7 +20,6 @@ import {
   ChevronRight,
   Database,
   Lock,
-  Unlock,
   ExternalLink,
   Settings,
   HardDrive,
@@ -30,14 +29,11 @@ import {
   Search,
   Filter,
   RefreshCw,
-  Info,
-  Server,
   DownloadCloud,
   LogOut,
   Eye,
   EyeOff,
   UserCheck,
-  Briefcase,
   Store,
   FileText,
   CreditCard,
@@ -45,9 +41,7 @@ import {
   FileSpreadsheet,
   Award,
   Volume2,
-  VolumeX,
-  Sparkles,
-  CheckCircle2
+  VolumeX
 } from 'lucide-react';
 import { RoleViews } from './components/RoleViews';
 import {
@@ -388,7 +382,6 @@ export function App() {
   const [empGroupFilter, setEmpGroupFilter] = useState('ALL');
   const [empBranchFilter, setEmpBranchFilter] = useState('ALL');
   const [accountSearch, setAccountSearch] = useState('');
-  const [accountStatusFilter, setAccountStatusFilter] = useState('ALL');
 
   // Modals
   const [showNewAdminModal, setShowNewAdminModal] = useState(false);
@@ -555,8 +548,14 @@ export function App() {
         apiRequest('/admin/dashboard/stats').then(stats => { if (stats) setDashboardStats(stats); }).catch(() => null),
         apiRequest('/schedules').then(sList => setShifts(sList || [])).catch(() => null),
         apiRequest('/leave-requests').then(lList => setLeaves(lList || [])).catch(() => null),
-        apiRequest('/admin/notifications').then(notifs => setSystemNotifications(notifs || [])).catch(() => null),
       ];
+
+      // Thông báo hệ thống: backend chỉ cho ADMIN/HR/MARKETING -> không gọi cho STORE/FINANCE (tránh 403).
+      if (['ADMIN', 'HR', 'MARKETING'].includes(user.role)) {
+        tasks.push(
+          apiRequest('/admin/notifications').then(notifs => setSystemNotifications(notifs || [])).catch(() => null),
+        );
+      }
 
       // 2. Dữ liệu động theo vai trò người dùng
       if (['ADMIN', 'HR'].includes(user.role)) {
@@ -1132,15 +1131,6 @@ export function App() {
   const countOffice = activationDataList.filter(i => i.group === 'VAN_PHONG').length;
   const countFactory = activationDataList.filter(i => i.group === 'XUONG').length;
   const countSales = activationDataList.filter(i => i.group === 'SALE').length;
-
-  // Filtered employee accounts (legacy fallback)
-  const filteredAccounts = employeeAccounts.filter(acc => {
-    const matchSearch = accountSearch === '' ||
-      acc.phone_normalized?.includes(accountSearch) ||
-      acc.employee_id?.toLowerCase().includes(accountSearch.toLowerCase());
-    const matchStatus = accountStatusFilter === 'ALL' || acc.account_status === accountStatusFilter;
-    return matchSearch && matchStatus;
-  });
 
   // Check if opened via QR scan from mobile phone for Zalo Auth Confirmation
   if (typeof window !== 'undefined') {
@@ -3838,8 +3828,8 @@ export function App() {
                   style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px' }}
                 >
                   <option value="PRE_ONBOARDING">Nhân viên mới (PIN khởi tạo tự động)</option>
-                  <option value="PROBATION">Thử việc (Lương 23.000 đ/h)</option>
-                  <option value="OFFICIAL">Chính thức (Lương 25.000 đ/h)</option>
+                  <option value="PROBATION">Thử việc (Lương 21.000 đ/h)</option>
+                  <option value="OFFICIAL">Chính thức (Lương 25.500 đ/h)</option>
                 </select>
               </div>
 

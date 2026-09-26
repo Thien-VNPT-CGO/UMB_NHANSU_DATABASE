@@ -1,29 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl } from './services/api';
+import { apiRequest, setAuthToken, getAuthToken } from './services/api';
 import {
   Home,
   Calendar,
   Clock,
-  DollarSign,
   Bell,
   MapPin,
   Camera,
   CheckCircle2,
   AlertCircle,
   Lock,
-  ChevronRight,
   LogOut,
-  Send,
-  HelpCircle,
-  ShieldCheck,
-  Check,
-  X,
   RefreshCw,
   FileText,
   Award,
   AlertTriangle,
-  UserCheck,
-  Users,
   Sparkles,
 } from 'lucide-react';
 
@@ -61,8 +52,6 @@ export function App() {
   const [newPin, setNewPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
   const [toastMsg, setToastMsg] = useState<string | null>(null);
-  const [showServerConfig, setShowServerConfig] = useState(false);
-  const [customApiUrl, setCustomApiUrlState] = useState(localStorage.getItem('ubm_custom_api_url') || '');
 
   // Attendance flow state
   const [attendanceStep, setAttendanceStep] = useState<'IDLE' | 'CHECKING_GPS' | 'READY_CAMERA' | 'SUBMITTING' | 'CONFIRMED'>('IDLE');
@@ -77,17 +66,35 @@ export function App() {
   // Shift & Requests
   const [myShifts, setMyShifts] = useState<any[]>([]);
   const [notifications, setNotifications] = useState<any[]>([]);
-  const [showLeaveModal, setShowLeaveModal] = useState(false);
 
   // 2-Day Weekly OFF Registration State (Official Employees)
-  const [hasRegisteredWeeklyOff, setHasRegisteredWeeklyOff] = useState<boolean>(() => {
+  // Lưu theo tuần (thứ 2 đầu tuần) để sang tuần mới offline cũng không mở khóa nhầm.
+  const weeklyOffWeekKey = () => {
+    const d = new Date();
+    const day = (d.getDay() + 6) % 7; // Thứ 2 = 0
+    d.setDate(d.getDate() - day);
+    return d.toISOString().split('T')[0];
+  };
+  const readWeeklyOffSaved = () => {
     try {
-      const saved = localStorage.getItem('ubm_weekly_off_registered');
-      return saved === 'true';
+      const raw = localStorage.getItem('ubm_weekly_off_registered');
+      if (!raw) return false;
+      try {
+        const parsed = JSON.parse(raw);
+        return parsed?.week === weeklyOffWeekKey() && parsed?.value === true;
+      } catch {
+        return false; // định dạng cũ 'true'/'false' -> coi như hết hạn, server sẽ đồng bộ lại khi online
+      }
     } catch {
       return false;
     }
-  });
+  };
+  const persistWeeklyOff = (v: boolean) => {
+    try {
+      localStorage.setItem('ubm_weekly_off_registered', JSON.stringify({ week: weeklyOffWeekKey(), value: v }));
+    } catch {}
+  };
+  const [hasRegisteredWeeklyOff, setHasRegisteredWeeklyOff] = useState<boolean>(() => readWeeklyOffSaved());
 
   const [weeklyOffData, setWeeklyOffData] = useState({
     day1: '',
@@ -140,9 +147,6 @@ export function App() {
   // Mất mạng / server lỗi khi tải dữ liệu
   const [dataStale, setDataStale] = useState(false);
 
-  // HR Broadcast Shift Dispatch State (+30.000d allowance)
-  const [hasAcceptedHRDispatch, setHasAcceptedHRDispatch] = useState(false);
-
   // Probation Self-Swap State: Tu do doi Ca lam <-> Nghi
   const [probationSelfSwap, setProbationSelfSwap] = useState({
     date: new Date().toISOString().split('T')[0],
@@ -167,8 +171,6 @@ export function App() {
   });
 
   // Training Test Exam State (for Probation / Training)
-  const [showTestModal, setShowTestModal] = useState(false);
-  const [testTimeLeft, setTestTimeLeft] = useState(480);
   const [testScore, setTestScore] = useState<number | null>(null);
 
   // Synchronize active tab across reload (with forced registration guard for official staff)
@@ -218,8 +220,23 @@ export function App() {
       const notifs = await apiRequest('/me/notifications').catch(() => { fails++; return []; });
       setNotifications(notifs);
 
-      // Real Attendance History & Today status
-      const attEvents = await apiRequest('/me/attendance').catch(() => { fails++; return []; });
+      // Real Attendance History (30 ngày gần nhất, tải song song) & Today status
+      const pastDates: string[] = [];
+      for (let d = 29; d >= 0; d--) {
+        const dt = new Date();
+        dt.setDate(dt.getDate() - d);
+        pastDates.push(dt.toISOString().split('T')[0]);
+      }
+      const settled = await Promise.allSettled(pastDates.map(dt => apiRequest(`/me/attendance?date=${dt}`)));
+      let attEvents: any[] = [];
+      let okDays = 0;
+      for (const s of settled) {
+        if (s.status === 'fulfilled' && Array.isArray(s.value)) {
+          okDays++;
+          attEvents = attEvents.concat(s.value);
+        }
+      }
+      if (okDays === 0) fails++;
       setMyAttendanceHistory(attEvents);
 
       const today = new Date().toISOString().split('T')[0];
@@ -237,8 +254,8 @@ export function App() {
         receipt: todayCheckIn,
       });
 
-      // Load real colleagues in branch
-      const colleagues = await apiRequest('/employees').catch(() => { fails++; return []; });
+      // Load real colleagues in branch (đã che SĐT ở server — chỉ tên + mã NV)
+      const colleagues = await apiRequest('/me/colleagues').catch(() => { fails++; return []; });
       setBranchColleagues(colleagues);
       // Mất mạng toàn bộ -> báo rõ đang xem dữ liệu cũ, không im lặng
       setDataStale(fails >= 4);
@@ -254,7 +271,11 @@ export function App() {
 
   const handlePhoneLogin = async (phoneToLogin = loginPhone, pinToLogin = loginPin) => {
     const cleaned = phoneToLogin.replace(/[\s\-\.\(\)]/g, '');
-    if (cleaned.length < 10) return;
+    if (cleaned.length < 10) {
+      setCheckingStatus('ERROR');
+      setLoginError('Vui lòng nhập đủ 10 số điện thoại!');
+      return;
+    }
     const pin = (pinToLogin || '').trim();
     if (!/^\d{4,8}$/.test(pin)) {
       setCheckingStatus('ERROR');
@@ -408,9 +429,7 @@ export function App() {
       setWeeklyOffLockKnown(true);
       if (st.completed) {
         setHasRegisteredWeeklyOff(true);
-        try {
-          localStorage.setItem('ubm_weekly_off_registered', 'true');
-        } catch {}
+        persistWeeklyOff(true);
         if (Array.isArray(st.registered) && st.registered.length >= 2) {
           setWeeklyOffData(d => ({
             ...d,
@@ -422,9 +441,7 @@ export function App() {
         // Chu kỳ mới đang mở mà chưa đủ 2 ngày -> khóa lại
         setHasRegisteredWeeklyOff(false);
         setWeeklyOffLocked(true);
-        try {
-          localStorage.setItem('ubm_weekly_off_registered', 'false');
-        } catch {}
+        persistWeeklyOff(false);
       }
     } catch {}
   };
@@ -518,8 +535,9 @@ export function App() {
       showToast('⚠️ File không phải ảnh! Vui lòng chụp ảnh thật.');
       return;
     }
-    if (file.size > 1500 * 1024) {
-      showToast('⚠️ Ảnh quá lớn (>1.5MB)! Vui lòng chụp lại với độ phân giải thấp hơn.');
+    // Base64 phình ~33% + giới hạn body 2MB của server -> chặn từ 1MB cho chắc
+    if (file.size > 1024 * 1024) {
+      showToast('⚠️ Ảnh quá lớn (>1MB)! Vui lòng chụp lại với độ phân giải thấp hơn.');
       return;
     }
     const reader = new FileReader();
@@ -602,6 +620,18 @@ export function App() {
       showToast('⚠️ Hai ngày nghỉ OFF phải là 2 ngày khác nhau trong tuần!');
       return;
     }
+    if (!weeklyOffData.reason.trim()) {
+      showToast('⚠️ Vui lòng nhập lý do đăng ký nghỉ!');
+      return;
+    }
+    // 2 ngày phải nằm trong tuần mục tiêu của cổng (server cũng chặn, đây là lớp báo sớm)
+    const wk = (weeklyOffWindow as any)?.targetWeekMon && (weeklyOffWindow as any)?.targetWeekSun
+      ? { mon: (weeklyOffWindow as any).targetWeekMon, sun: (weeklyOffWindow as any).targetWeekSun }
+      : null;
+    if (wk && (weeklyOffData.day1 < wk.mon || weeklyOffData.day1 > wk.sun || weeklyOffData.day2 < wk.mon || weeklyOffData.day2 > wk.sun)) {
+      showToast(`⚠️ 2 ngày phải nằm trong tuần mục tiêu (${wk.mon} → ${wk.sun})!`);
+      return;
+    }
 
     try {
       // Send Day 1
@@ -625,9 +655,7 @@ export function App() {
       });
 
       setHasRegisteredWeeklyOff(true);
-      try {
-        localStorage.setItem('ubm_weekly_off_registered', 'true');
-      } catch {}
+      persistWeeklyOff(true);
 
       showToast('🎉 ĐÃ ĐĂNG KÝ 2 NGÀY NGHỈ OFF TUẦN THÀNH CÔNG! Toàn bộ chức năng hệ thống đã được mở khóa.');
       await refreshWeeklyOffStatus();
@@ -644,7 +672,6 @@ export function App() {
         body: JSON.stringify(leaveData),
       });
       showToast('Đã gửi yêu cầu nghỉ OFF thành công!');
-      setShowLeaveModal(false);
       await refreshWeeklyOffStatus();
       await loadEmployeeData(employee?.employee_id);
     } catch (err: any) {
@@ -765,23 +792,34 @@ export function App() {
 
   const handleAdjustmentSubmit = async () => {
     try {
+      if (!adjustmentData.date) {
+        showToast('⚠️ Vui lòng chọn ngày sự cố!');
+        return;
+      }
+      if (!adjustmentData.reason.trim()) {
+        showToast('⚠️ Vui lòng nhập chi tiết lý do & bằng chứng!');
+        return;
+      }
       if (adjustmentData.type === 'NGHI_KHAN') {
         await apiRequest('/leaves', {
           method: 'POST',
           body: JSON.stringify({
             leaveType: 'DOT_XUAT',
             requestedDate: adjustmentData.date,
-            reason: `[NGHỈ KHẨN CẤP] ${adjustmentData.reason}`,
+            reason: `[NGHỈ KHẨN CẤP] ${adjustmentData.reason.trim()}`,
           }),
         });
         showToast('🚨 ĐÃ GỬI BÁO NGHỈ KHẨN CẤP ĐẾN HR! Dữ liệu đã đồng bộ sang HR Tab 10 và Google Sheets.');
       } else {
-        await apiRequest('/leaves', {
+        // Bổ sung công/quên check-in-out -> đúng queue Điều Chỉnh Công để Store/HR duyệt
+        // (trước đây gửi nhầm sang /leaves loại BO_SUNG_CONG, HR không thấy để duyệt).
+        const shift = (myShifts || []).find((s: any) => s.date === adjustmentData.date) || (myShifts || [])[0];
+        await apiRequest('/attendance/adjustments', {
           method: 'POST',
           body: JSON.stringify({
-            leaveType: 'BO_SUNG_CONG',
-            requestedDate: adjustmentData.date,
-            reason: `[${adjustmentData.type}] ${adjustmentData.reason}`,
+            assignmentId: shift?.assignment_id || `SHIFT_UNKNOWN_${adjustmentData.date}`,
+            reason: `[${adjustmentData.type}] ${adjustmentData.date}: ${adjustmentData.reason.trim()}`,
+            minutesRequested: 0,
           }),
         });
         showToast('✓ Đã gửi phiếu giải trình bổ sung công đến Cửa Hàng Trưởng và HR!');
@@ -1114,6 +1152,13 @@ export function App() {
           );
         })}
       </div>
+
+      {/* Cờ mất mạng: đang xem dữ liệu cũ */}
+      {dataStale && (
+        <div style={{ margin: '12px 16px 0', padding: '10px 14px', backgroundColor: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 'var(--radius-sm)', fontSize: '12px', fontWeight: 700, color: '#DC2626' }}>
+          📡 Mất kết nối máy chủ — đang hiển thị dữ liệu cũ. Kiểm tra mạng rồi kéo xuống tải lại.
+        </div>
+      )}
 
       {/* TOAST MESSAGE (phân loại thành công/lỗi + animation + thanh đếm ngược) */}
       {toastMsg && (() => {
@@ -1928,39 +1973,58 @@ export function App() {
             <div className="card">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                 <h3 style={{ fontSize: '15px', fontWeight: 800 }}>5. Dữ Liệu Công Của Tôi</h3>
-                <span className="badge badge-brand">Kỳ Tháng 09/2026</span>
+                <span className="badge badge-brand">30 ngày gần nhất</span>
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {myAttendanceHistory.length === 0 ? (
-                  <div style={{
-                    padding: '32px 16px',
-                    textAlign: 'center',
-                    backgroundColor: '#FAFAFA',
-                    borderRadius: 'var(--radius-sm)',
-                    border: '1px dashed var(--border)',
-                    color: 'var(--text-muted)',
-                    fontSize: '13px',
-                  }}>
-                    <CheckCircle2 size={32} color="#9CA3AF" style={{ margin: '0 auto 8px' }} />
-                    <div style={{ fontWeight: 700, color: 'var(--text)', marginBottom: '4px' }}>
-                      Chưa có dữ liệu chấm công trong kỳ này
-                    </div>
-                    <div>Dữ liệu sẽ tự động đồng bộ realtime từ Google Sheets khi bạn thực hiện Check-in / Check-out ca làm việc.</div>
-                  </div>
-                ) : (
-                  myAttendanceHistory.map((item, idx) => (
-                    <div key={idx} style={{ padding: '10px 12px', backgroundColor: '#FAFAFA', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div>
-                        <div style={{ fontWeight: 700, fontSize: '13px' }}>{item.date} • {item.shift}</div>
-                        <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Vào: {item.in} • Ra: {item.out} • {item.hours}h</div>
+                {(() => {
+                  const byDate = new Map<string, any[]>();
+                  for (const e of myAttendanceHistory) {
+                    const d = (e.client_time || '').slice(0, 10);
+                    if (!d) continue;
+                    if (!byDate.has(d)) byDate.set(d, []);
+                    byDate.get(d)!.push(e);
+                  }
+                  const days = [...byDate.entries()].sort((a, b) => b[0].localeCompare(a[0]));
+                  if (days.length === 0) {
+                    return (
+                      <div style={{
+                        padding: '32px 16px',
+                        textAlign: 'center',
+                        backgroundColor: '#FAFAFA',
+                        borderRadius: 'var(--radius-sm)',
+                        border: '1px dashed var(--border)',
+                        color: 'var(--text-muted)',
+                        fontSize: '13px',
+                      }}>
+                        <CheckCircle2 size={32} color="#9CA3AF" style={{ margin: '0 auto 8px' }} />
+                        <div style={{ fontWeight: 700, color: 'var(--text)', marginBottom: '4px' }}>
+                          Chưa có dữ liệu chấm công trong 30 ngày qua
+                        </div>
+                        <div>Dữ liệu sẽ tự động đồng bộ realtime từ Google Sheets khi bạn thực hiện Check-in / Check-out ca làm việc.</div>
                       </div>
-                      <span className={`badge ${item.status === 'OFF' ? 'badge-secondary' : item.status.includes('TRỄ') ? 'badge-warning' : 'badge-success'}`}>
-                        {item.status}
-                      </span>
-                    </div>
-                  ))
-                )}
+                    );
+                  }
+                  return days.map(([date, evs]) => {
+                    const inEv = evs.find(e => e.type === 'CHECK_IN');
+                    const outEv = evs.find(e => e.type === 'CHECK_OUT');
+                    const fmt = (t?: string) => t ? new Date(t).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '--:--';
+                    const [y, m, dd] = date.split('-');
+                    const complete = !!(inEv && outEv);
+                    const outOfBounds = evs.some(e => e.gps_status === 'OUT_OF_BOUNDS');
+                    return (
+                      <div key={date} style={{ padding: '10px 12px', backgroundColor: '#FAFAFA', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                          <div style={{ fontWeight: 700, fontSize: '13px' }}>{dd}/{m}/{y}</div>
+                          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Vào: {fmt(inEv?.client_time)} • Ra: {fmt(outEv?.client_time)}</div>
+                        </div>
+                        <span className={`badge ${complete ? 'badge-success' : 'badge-warning'}`}>
+                          {complete ? (outOfBounds ? 'Đủ công (ngoài GPS)' : 'Đủ công') : 'Thiếu checkout'}
+                        </span>
+                      </div>
+                    );
+                  });
+                })()}
               </div>
 
               <button
@@ -2158,7 +2222,7 @@ export function App() {
                           .filter((col: any) => col.employee_id !== employee?.employee_id)
                           .map((col: any) => (
                           <option key={col.employee_id} value={col.employee_id}>
-                            {col.full_name} ({col.phone_normalized || col.phone || col.employee_code || col.employee_id})
+                            {col.full_name} ({col.employee_code || col.employee_id})
                           </option>
                         ))
                       )}
@@ -2241,7 +2305,7 @@ export function App() {
                       ) : (
                         branchColleagues.map((col: any) => (
                           <option key={col.employee_id} value={col.employee_id}>
-                            {col.full_name} ({col.phone_normalized || col.phone || col.employee_code || col.employee_id})
+                            {col.full_name} ({col.employee_code || col.employee_id})
                           </option>
                         ))
                       )}
@@ -2394,16 +2458,21 @@ export function App() {
                 9. Hộp Thư Thông Báo & Phiếu Lương Cá Nhân
               </h3>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {[
-                  { title: 'Lịch làm việc tuần mới đã được công bố', time: '10:30 Hôm nay', type: 'SCHEDULE' },
-                  { title: 'Nhắc nhở: Mặc áo hồng + bảng tên khi điểm danh', time: '08:00 Hôm nay', type: 'REMINDER' },
-                  { title: 'Phiếu lương Kỳ Tháng 09/2026 đã sẵn sàng', time: 'Hôm qua', type: 'PAYSLIP' },
-                ].map((n, idx) => (
-                  <div key={idx} style={{ padding: '10px 12px', backgroundColor: '#FAFAFA', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
-                    <div style={{ fontWeight: 700, fontSize: '13px' }}>{n.title}</div>
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>{n.time}</div>
+                {(Array.isArray(notifications) ? notifications : []).length === 0 ? (
+                  <div style={{ padding: '16px', textAlign: 'center', backgroundColor: '#FAFAFA', borderRadius: 'var(--radius-sm)', border: '1px dashed var(--border)', color: 'var(--text-muted)', fontSize: '13px' }}>
+                    Chưa có thông báo nào. Thông báo từ HR (lịch, lương, nhắc nhở) sẽ hiện ở đây theo thời gian thực.
                   </div>
-                ))}
+                ) : (
+                  (notifications as any[]).slice(0, 20).map((n: any, idx: number) => (
+                    <div key={n.inbox_id || idx} style={{ padding: '10px 12px', backgroundColor: n.read_at ? '#FAFAFA' : '#FFFBF9', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
+                      <div style={{ fontWeight: 700, fontSize: '13px' }}>{n.title}</div>
+                      <div style={{ fontSize: '12px', color: 'var(--text)', marginTop: '2px' }}>{n.summary}</div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                        {n.created_at ? new Date(n.created_at).toLocaleString('vi-VN') : ''}
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
 
@@ -2427,7 +2496,7 @@ export function App() {
                 <div style={{ textAlign: 'center', padding: '16px 0', fontSize: '13px', color: 'var(--text-muted)' }}>
                   Chưa có phiếu lương nào được phát hành cho bạn trong kỳ này.
                   <div>
-                    <button className="btn-secondary" onClick={() => setPayslipUnlocked(false)} style={{ fontSize: '12px', marginTop: '10px' }}>
+                    <button className="btn-secondary" onClick={() => handleUnlockPayslip()} style={{ fontSize: '12px', marginTop: '10px' }}>
                       Tải Lại
                     </button>
                   </div>

@@ -64,19 +64,32 @@ export class NotificationsService {
 
         const result = await this.repo.createNotification(outbox, inboxes);
 
-        // Emit Socket event to all recipients
+        // Emit Socket event to recipients. 'ALL' không có room user:ALL nào join
+        // -> phát tới từng room role + bắn data:updated để chuông/notification center tải lại.
         if (this.io) {
+          const payload = (inbox: NotificationInboxItem) => ({
+            inboxId: inbox.inbox_id,
+            eventId,
+            title: inbox.title,
+            summary: inbox.summary,
+            severity: inbox.severity,
+            targetPath: inbox.target_path,
+            createdAt: inbox.created_at,
+          });
           for (const inbox of result.inboxes) {
-            this.io.to(`user:${inbox.recipient_id}`).emit('notification.created', {
-              inboxId: inbox.inbox_id,
-              eventId,
-              title: inbox.title,
-              summary: inbox.summary,
-              severity: inbox.severity,
-              targetPath: inbox.target_path,
-              createdAt: inbox.created_at,
-            });
+            if (inbox.recipient_id === 'ALL') {
+              for (const r of ['ADMIN', 'HR', 'STORE', 'FINANCE', 'MARKETING', 'EMPLOYEE']) {
+                this.io.to(`role:${r}`).emit('notification.created', payload(inbox));
+              }
+            } else {
+              this.io.to(`user:${inbox.recipient_id}`).emit('notification.created', payload(inbox));
+            }
           }
+          this.io.emit('data:updated', {
+            entity: 'notifications',
+            data: { notification_id: notifId },
+            timestamp: new Date().toISOString(),
+          });
         }
 
         return result;

@@ -53,6 +53,9 @@ export class MockSheetsAdapter implements ISheetsRepository {
   public backupSnapshots: any[] = [];
   public systemSettings: any = {};
 
+  // Nhân viên TERMINATED đã thu hồi token (tránh audit spam mỗi lần pull)
+  public terminatedRevoked: Set<string> = new Set();
+
   // Fault injection controls
   public simulateNetworkError = false;
   public simulateQuotaError = false;
@@ -642,8 +645,18 @@ export class MockSheetsAdapter implements ISheetsRepository {
 
   async recordAuditLog(entry: Omit<AuditLogEntry, 'timestamp'>): Promise<AuditLogEntry> {
     this.checkErrors();
+    // Chuẩn hóa cả kiểu gọi legacy {target_type, payload_after, thiếu log_id/actor_role}
+    // để audit log luôn đủ field, đồng bộ Sheet không ra undefined.
+    const raw = entry as any;
+    const details = raw.details !== undefined ? raw.details : raw.payload_after;
     const newEntry: AuditLogEntry = {
-      ...entry,
+      log_id: raw.log_id || `LOG_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+      actor_id: raw.actor_id || 'SYSTEM',
+      actor_role: raw.actor_role || 'SYSTEM',
+      action: raw.action || 'UNKNOWN',
+      target_entity: raw.target_entity || raw.target_type || '',
+      target_id: raw.target_id || '',
+      details: typeof details === 'string' ? details : JSON.stringify(details || {}),
       timestamp: new Date().toISOString(),
     };
     this.auditLogs.unshift(newEntry);

@@ -268,6 +268,29 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Đồng nghiệp cùng chi nhánh (che SĐT — chỉ tên + mã NV để chọn đổi ca, chống lộ danh bạ).
+  app.get('/me/colleagues', authMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      if (req.user?.role !== 'EMPLOYEE' || !req.user.employeeId) {
+        return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
+      }
+      const me = await employeesService.getEmployee(req.user.employeeId);
+      const branchId = me?.default_branch_id || req.user.branchScope;
+      const list = await employeesService.listEmployees(branchId === '*' ? undefined : branchId);
+      res.json(
+        list
+          .filter(e => e.employee_id !== req.user!.employeeId && e.employment_status !== 'TERMINATED')
+          .map(e => ({
+            employee_id: e.employee_id,
+            employee_code: e.employee_code,
+            full_name: e.full_name,
+          }))
+      );
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Trạng thái đăng ký OFF tuần của chính nhân viên (frontend đồng bộ khóa/mở).
   app.get('/me/weekly-off-status', authMiddleware, async (req: AuthenticatedRequest, res) => {
     try {
@@ -925,15 +948,21 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const today = new Date().toISOString().split('T')[0];
       const todayEvents = await attendanceService.getEmployeeAttendance(employeeId, today);
 
+      // Lọc theo ca khi client gửi assignment (ngày 2 ca: mỗi ca check-in/out độc lập).
+      const assignmentFilter = req.body.assignment_id || req.body.assignmentId;
+      const relevantEvents = assignmentFilter
+        ? todayEvents.filter(e => e.assignment_id === assignmentFilter)
+        : todayEvents;
+
       // Check-in requirement before check-out!
-      const checkInEvent = todayEvents.find(e => e.type === 'CHECK_IN');
+      const checkInEvent = relevantEvents.find(e => e.type === 'CHECK_IN');
       if (!checkInEvent) {
         return res.status(400).json({
           error: 'QUY CHẾ ĐIỂM DANH: Bạn chưa có bản ghi Check-in đầu ca! Bắt buộc phải Check-in trước mới được Check-out.',
         });
       }
 
-      const alreadyCheckedOut = todayEvents.find(e => e.type === 'CHECK_OUT');
+      const alreadyCheckedOut = relevantEvents.find(e => e.type === 'CHECK_OUT');
       if (alreadyCheckedOut) {
         return res.status(400).json({
           error: 'Bạn đã hoàn tất Check-out cho ca làm này rồi!',
@@ -990,10 +1019,12 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.get('/attendance/events', authMiddleware, requireRole(['ADMIN', 'HR', 'STORE']), async (req: AuthenticatedRequest, res) => {
+  // Gộp 2 route trùng: EMPLOYEE chỉ xem công của mình, nội bộ xem theo query (mặc định tất cả).
+  app.get('/attendance/events', authMiddleware, validate({ query: attendanceEventsQuery }), async (req: AuthenticatedRequest, res) => {
     try {
+      const role = req.user?.role;
+      const employeeId = role === 'EMPLOYEE' ? req.user!.employeeId! : ((req.query.employeeId as string) || '*');
       const date = (req.query.date as string) || '';
-      const employeeId = (req.query.employeeId as string) || '*';
       const events = await adapter.getAttendanceEvents(employeeId, date);
       res.json(events);
     } catch (err: any) {
@@ -1079,23 +1110,6 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
-    }
-  });
-
-  app.get('/attendance/events', authMiddleware, validate({ query: attendanceEventsQuery }), async (req: AuthenticatedRequest, res) => {
-    try {
-      const employeeId = req.user?.role === 'EMPLOYEE' ? req.user.employeeId! : (req.query.employeeId as string);
-      const date = (req.query.date as string) || new Date().toISOString().split('T')[0];
-      if (employeeId) {
-        const events = await attendanceService.getEmployeeAttendance(employeeId, date);
-        return res.json(events);
-      }
-      // If Admin or HR without specific employeeId, return all events today
-      const allEvents = (adapter.getMockAdapter() as any).attendanceEvents || [];
-      const filtered = date ? allEvents.filter((e: any) => e.client_time?.startsWith(date)) : allEvents;
-      res.json(filtered);
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
     }
   });
 

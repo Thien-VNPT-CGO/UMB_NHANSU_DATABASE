@@ -6,6 +6,7 @@ import { Server } from 'socket.io';
 import { createApp } from './app.js';
 import { AuthService } from './services/auth.service.js';
 import { weeklyOffScheduler } from './services/weekly-off.service.js';
+import { autoRemindersTick } from './services/auto-reminders.service.js';
 import { buildSocketCorsOptions, getAllowedOrigins } from './config/security.js';
 
 const PORT = process.env.PORT || 4005;
@@ -114,6 +115,43 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   // Định kỳ tự động quét và kéo dữ liệu mới từ Google Sheets mỗi 15 giây
   const syncIntervalMs = Number(process.env.SHEETS_SYNC_INTERVAL_MS) || 15_000;
   setInterval(autoPullSheetsTick, syncIntervalMs);
+
+  // Nhắc việc tự động mỗi 5 phút: check-in Zalo trước ca, PIN quá hạn, đơn tồn duyệt.
+  const autoRemindersTickSafe = () => {
+    autoRemindersTick(adapter, services.notificationsService, services.zaloService).catch(err =>
+      console.warn('[auto-reminders] tick error:', err?.message || err)
+    );
+  };
+  setTimeout(autoRemindersTickSafe, 60_000); // đợi dữ liệu load xong lần đầu
+  setInterval(autoRemindersTickSafe, 5 * 60_000);
+
+  // Backup snapshot tự động mỗi 24h + tự verify; fail thì báo ADMIN/HR trong app.
+  const autoBackupTick = async () => {
+    try {
+      const snap = await adapter.createBackupSnapshot(`Auto ${new Date().toISOString().slice(0, 10)}`);
+      const check = await adapter.testRecovery(snap.snapshot_id).catch(() => null);
+      if (!check?.success) throw new Error('Verify snapshot thất bại');
+      console.log(`[auto-backup] Snapshot ${snap.snapshot_id} OK (${snap.size_mb}MB)`);
+    } catch (err: any) {
+      console.error('[auto-backup] FAILED:', err?.message || err);
+      try {
+        const admins = await adapter.listAdminAccounts();
+        const ids = admins.filter(a => (a.role === 'ADMIN' || a.role === 'HR') && a.is_active !== false).map(a => a.admin_id);
+        if (ids.length > 0) {
+          await services.notificationsService.sendNotification({
+            recipientIds: ids,
+            type: 'BACKUP_FAILED',
+            severity: 'URGENT',
+            title: '🚨 Backup tự động THẤT BẠI',
+            summary: `Snapshot định kỳ lỗi: ${err?.message || err}. Kiểm tra Google Drive/Sheets ngay.`,
+            actorId: 'SYSTEM',
+          });
+        }
+      } catch { /* không làm sập scheduler */ }
+    }
+  };
+  setTimeout(autoBackupTick, 5 * 60_000);
+  setInterval(autoBackupTick, 24 * 60 * 60_000);
 });
 
 export { server, io };

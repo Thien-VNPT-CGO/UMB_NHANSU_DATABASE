@@ -19,7 +19,7 @@
     "dev:employee": "npm run dev --workspace=apps/employee-web"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "keywords": ["hr", "sheets-master", "realtime", "socket.io", "react"],
   "author": "Ụm Bò Milk",

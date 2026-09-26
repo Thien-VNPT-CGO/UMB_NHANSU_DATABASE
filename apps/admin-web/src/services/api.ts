@@ -18,8 +18,6 @@ export function setCustomApiUrl(url: string) {
   }
 }
 
-export const API_BASE = getApiBase();
-
 let authToken = localStorage.getItem('ubm_admin_token') || '';
 
 export function setAuthToken(token: string) {

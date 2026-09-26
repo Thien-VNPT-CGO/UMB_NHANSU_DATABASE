@@ -402,7 +402,20 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   }
 
   async createAttendanceAdjustment(adj: any) {
-    return this.fallbackAdapter.createAttendanceAdjustment(adj);
+    const res = await this.fallbackAdapter.createAttendanceAdjustment(adj);
+    if (this.isConfigured) {
+      this.syncService.appendRow('DIEU_CHINH_CONG', [
+        res.adjustment_id,
+        res.assignment_id,
+        res.employee_id,
+        res.reason || '',
+        res.minutes_approved ?? res.minutes_requested ?? 0,
+        res.approver_id || '',
+        res.status,
+        res.review_note || '',
+      ]).catch(err => console.error(err));
+    }
+    return res;
   }
 
   async listAttendanceAdjustments(branchId?: string, employeeId?: string) {
@@ -410,7 +423,11 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   }
 
   async updateAttendanceAdjustment(id: string, status: any, approverId: string, minutesApproved?: number, note?: string) {
-    return this.fallbackAdapter.updateAttendanceAdjustment(id, status, approverId, minutesApproved, note);
+    const res = await this.fallbackAdapter.updateAttendanceAdjustment(id, status, approverId, minutesApproved, note);
+    if (this.isConfigured) {
+      this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
+    }
+    return res;
   }
 
   // --- Payroll ---
