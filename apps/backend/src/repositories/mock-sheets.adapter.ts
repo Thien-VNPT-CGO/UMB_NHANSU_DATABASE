@@ -250,7 +250,11 @@ export class MockSheetsAdapter implements ISheetsRepository {
 
   async getAdminByUsername(username: string): Promise<AdminAccount | null> {
     this.checkErrors();
-    return this.adminAccounts.find(a => a.username === username) || null;
+    const want = (username || '').trim();
+    if (!want) return null;
+    return this.adminAccounts.find(a => a.username === want)
+      || this.adminAccounts.find(a => (a.username || '').trim().toLowerCase() === want.toLowerCase())
+      || null;
   }
 
   // --- Employees ---

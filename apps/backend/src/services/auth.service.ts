@@ -302,7 +302,7 @@ export class AuthService {
     refreshToken: string;
     user: AuthUser;
   }> {
-    const admin = await this.repo.getAdminByUsername(username);
+    const admin = await this.repo.getAdminByUsername((username || '').trim());
 
     if (!admin) {
       throw new Error('INVALID_CREDENTIALS');

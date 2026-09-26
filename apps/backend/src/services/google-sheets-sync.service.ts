@@ -548,29 +548,31 @@ export class GoogleSheetsSyncService {
       if (adminRows.length > 0) {
         const currentAdmins = fallback.adminAccounts;
         const sheetsAdmins: AdminAccount[] = [];
+        const findExisting = (id: string, user: string) =>
+          currentAdmins.find(a => a.admin_id === id) ||
+          currentAdmins.find(a => (a.username || '').trim().toLowerCase() === user.toLowerCase());
         for (const r of adminRows.filter(rr => rr[0] && rr[1])) { // phải có admin_id và username
           try {
-            const passwordFromSheet = r[2] || '';
-            const fullName = r[3] || 'Quản trị viên';
-            const role = (r[4] as any) || 'HR';
-            const branchScope = r[5] || '*';
+            const adminId = String(r[0]).trim();
+            const username = String(r[1]).trim();
+            const passwordFromSheet = String(r[2] || '').trim();
+            const fullName = String(r[3] || '').trim() || 'Quản trị viên';
+            const role = (String(r[4] || '').trim() as any) || 'HR';
+            const branchScope = String(r[5] || '').trim() || '*';
             // Dòng mới 8 cột: Trạng Thái ở cột 6, Ngày Tạo cột 7. Dòng cũ 7 cột: cột 6 là Ngày Tạo.
             const hasStatusCol = r.length >= 8;
-            const statusStr = hasStatusCol ? r[6] : 'ACTIVE';
-            const createdAt = (hasStatusCol ? r[7] : r[6]) || new Date().toISOString();
+            const statusStr = String(hasStatusCol ? r[6] : 'ACTIVE').trim() || 'ACTIVE';
+            const createdAt = (String(hasStatusCol ? r[7] : r[6]).trim()) || new Date().toISOString();
 
-            const existingById = currentAdmins.find(a => a.admin_id === r[0]);
-            const existingByUser = currentAdmins.find(a => a.username === r[1]);
+            const existing = findExisting(adminId, username);
             const rawPass =
               passwordFromSheet ||
-              existingById?.password_hash ||
-              existingByUser?.password_hash ||
-              (r[1] === 'admin'
+              existing?.password_hash ||
+              (username.toLowerCase() === 'admin'
                 ? process.env.ADMIN_SEED_PASSWORD || 'Master@@2027'
                 : `Temp${Date.now().toString().slice(-6)}!`);
-            // Không bao giờ giữ plaintext: hash trước khi lưu vào memory.
-            // Mật khẩu plaintext quá ngắn (<6 ký tự, ví dụ "hr123") sẽ ném WEAK_PASSWORD
-            // -> bắt ở catch bên dưới, giữ mật khẩu cũ đang có trong bộ nhớ.
+            // Không bao giờ giữ plaintext và KHÔNG BAO GIỜ rớt dòng (rớt = mất tài khoản
+            // trong bộ nhớ -> INVALID_CREDENTIALS dù Sheet vẫn có dữ liệu).
             let passwordHash: string;
             if (isBcryptHash(rawPass)) {
               passwordHash = rawPass;
@@ -578,22 +580,40 @@ export class GoogleSheetsSyncService {
               try {
                 passwordHash = hashPasswordSync(rawPass);
               } catch {
-                const fallbackHash = existingById?.password_hash || existingByUser?.password_hash;
-                if (!fallbackHash) throw new Error(`WEAK_PASSWORD for user ${r[1]} (mật khẩu trên Sheet quá ngắn, tối thiểu 6 ký tự)`);
-                console.warn(`[GoogleSheetsSyncService] Mật khẩu của '${r[1]}' trên Sheet quá ngắn — giữ mật khẩu cũ trong bộ nhớ. Hãy sửa ô mật khẩu (tối thiểu 6 ký tự).`);
-                passwordHash = fallbackHash;
+                const fallbackHash = existing?.password_hash;
+                if (fallbackHash) {
+                  console.warn(`[GoogleSheetsSyncService] Mật khẩu của '${username}' trên Sheet quá ngắn (<6 ký tự) — giữ mật khẩu cũ trong bộ nhớ. Sửa ô mật khẩu (tối thiểu 6 ký tự).`);
+                  passwordHash = fallbackHash;
+                } else {
+                  // Tài khoản mới toanh mà mật khẩu Sheet quá ngắn: cấp Temp ngẫu nhiên
+                  // để GIỮ tài khoản tồn tại + báo rõ, HR reset mật khẩu sau.
+                  const temp = `Temp${Date.now().toString().slice(-6)}!`;
+                  console.error(`[GoogleSheetsSyncService] Mật khẩu của '${username}' trên Sheet quá ngắn và chưa từng có mật khẩu — đã cấp tạm thời, HR phải reset mật khẩu cho ${username} ngay!`);
+                  passwordHash = hashPasswordSync(temp);
+                  await repo.recordAuditLog({
+                    log_id: `LOG_${Date.now()}_${adminId}`,
+                    actor_id: 'SYSTEM',
+                    actor_role: 'SYSTEM',
+                    action: 'ADMIN_TEMP_PASSWORD',
+                    target_entity: 'TAI_KHOAN_ADMIN',
+                    target_id: adminId,
+                    details: `Mật khẩu Sheet của ${username} quá ngắn — đã cấp tạm, cần HR reset`,
+                  }).catch(() => null);
+                }
               }
             }
 
             sheetsAdmins.push({
-              admin_id: r[0],
-              username: r[1],
+              admin_id: adminId,
+              username,
               password_hash: passwordHash,
               full_name: fullName,
               role: role || 'HR',
               branch_scope: branchScope || '*',
-              is_active: statusStr !== 'LOCKED',
-              version: 1,
+              is_active: statusStr.toUpperCase() !== 'LOCKED',
+              // Giữ version trong bộ nhớ (Sheet không có cột version) — reset về 1
+              // mỗi lần pull sẽ đá văng mọi phiên đang đăng nhập.
+              version: existing?.version ?? 1,
               created_at: createdAt || new Date().toISOString(),
               updated_at: new Date().toISOString(),
             });
@@ -608,7 +628,7 @@ export class GoogleSheetsSyncService {
           console.warn('[GoogleSheetsSyncService] ADMIN_ACCOUNTS không có dòng hợp lệ — giữ nguyên tài khoản trong bộ nhớ.');
           counts.adminAccounts = fallback.adminAccounts.length;
         } else {
-          const sheetsHasBootstrap = sheetsAdmins.some(a => a.admin_id === 'ADM_001' || a.username === 'admin');
+          const sheetsHasBootstrap = sheetsAdmins.some(a => a.admin_id === 'ADM_001' || a.username.toLowerCase() === 'admin');
           if (sheetsHasBootstrap) {
             fallback.adminAccounts = sheetsAdmins;
           } else {
