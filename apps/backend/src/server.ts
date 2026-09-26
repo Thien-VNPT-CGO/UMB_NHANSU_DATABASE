@@ -112,8 +112,8 @@ server.listen(Number(PORT), '0.0.0.0', () => {
 
   // Kéo dữ liệu tự động ngay sau khi khởi động 2 giây
   setTimeout(autoPullSheetsTick, 2000);
-  // Định kỳ tự động quét và kéo dữ liệu mới từ Google Sheets mỗi 15 giây
-  const syncIntervalMs = Number(process.env.SHEETS_SYNC_INTERVAL_MS) || 15_000;
+  // Định kỳ tự động quét và kéo dữ liệu mới từ Google Sheets mỗi 10 giây
+  const syncIntervalMs = Number(process.env.SHEETS_SYNC_INTERVAL_MS) || 10_000;
   setInterval(autoPullSheetsTick, syncIntervalMs);
 
   // Nhắc việc tự động mỗi 5 phút: check-in Zalo trước ca, PIN quá hạn, đơn tồn duyệt.

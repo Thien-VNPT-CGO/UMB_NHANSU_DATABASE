@@ -61,6 +61,18 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     }
   }
 
+  // Hàng đợi ghi Sheets NỀN (không chặn response): các tác vụ ghi xếp hàng
+  // tuần tự, lỗi chỉ log — dữ liệu thật đã nằm trong bộ nhớ + socket báo realtime ngay.
+  private bgWriteChain: Promise<void> = Promise.resolve();
+
+  private scheduleSheetsWrite(task: () => Promise<unknown>, label: string) {
+    if (!this.isConfigured) return;
+    this.bgWriteChain = this.bgWriteChain
+      .then(() => task())
+      .then(() => undefined)
+      .catch(err => console.warn(`[GoogleSheetsAdapter] Ghi Sheets nền '${label}' thất bại (sẽ thử lại ở lần sync sau):`, (err as any)?.message || err));
+  }
+
   // Trả dữ liệu trong bộ nhớ NGAY LẬP TỨC, pull Sheets chạy nền.
   // Chỉ đứng đợi khi kho còn rỗng hoàn toàn (lần đầu khởi động) — có timeout chống treo.
   private needsSeed(): boolean {
@@ -78,7 +90,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   private async ensureFreshData() {
     if (!this.isConfigured) return;
     const now = Date.now();
-    if (now - this.lastPullTime <= 15000) { // 15s mới pull nền 1 lần — giảm tải quota, trả lời tức thì
+    if (now - this.lastPullTime <= 10000) { // 10s mới pull nền 1 lần — dữ liệu tươi trong 5-10s, trả lời tức thì
       if (this.pullInFlight && this.needsSeed()) {
         try { await this.withTimeout(this.pullInFlight, 25000); } catch { /* dùng tạm bộ nhớ */ }
       }
@@ -145,30 +157,31 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   async createAccount(account: any) {
     const res = await this.fallbackAdapter.createAccount(account);
     if (this.isConfigured) {
-      const ok = await this.syncService.appendRow('TAI_KHOAN_NHAN_VIEN', [
-        res.account_id,
-        res.employee_id,
-        res.phone_normalized,
-        res.role,
-        res.account_status,
-        res.version,
-        (res as any).pin_hash || '',
-        (res as any).pin_must_change ? 'YES' : '',
-        (res as any).pin_code || '',
-      ]);
-      if (!ok) {
-        console.warn('[GoogleSheetsAdapter] appendRow TAI_KHOAN_NHAN_VIEN failed, running syncAllData');
-        await this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
-      }
+      const snapshot = { ...res };
+      this.scheduleSheetsWrite(async () => {
+        const ok = await this.syncService.appendRow('TAI_KHOAN_NHAN_VIEN', [
+          snapshot.account_id,
+          snapshot.employee_id,
+          snapshot.phone_normalized,
+          snapshot.role,
+          snapshot.account_status,
+          snapshot.version,
+          (snapshot as any).pin_hash || '',
+          (snapshot as any).pin_must_change ? 'YES' : '',
+          (snapshot as any).pin_code || '',
+        ]);
+        if (!ok) {
+          console.warn('[GoogleSheetsAdapter] appendRow TAI_KHOAN_NHAN_VIEN failed, running syncAllData');
+          await this.syncService.syncAllData(this.fallbackAdapter);
+        }
+      }, 'TAI_KHOAN_NHAN_VIEN.append');
     }
     return res;
   }
 
   async setAccountPin(id: string, pinHash: string, mustChange: boolean, actorId: string, pinPlain?: string | null) {
     const updated = await this.fallbackAdapter.setAccountPin(id, pinHash, mustChange, actorId, pinPlain);
-    if (this.isConfigured) {
-      await this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
-    }
+    this.scheduleSheetsWrite(() => this.syncService.syncAllData(this.fallbackAdapter), 'PIN.syncAll');
     return updated;
   }
 
@@ -194,39 +207,40 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   async createEmployee(data: any) {
     const res = await this.fallbackAdapter.createEmployee(data);
     if (this.isConfigured) {
-      const ok = await this.syncService.appendRow('NHAN_VIEN_MASTER', [
-        res.employee_id,
-        res.employee_code,
-        res.full_name,
-        res.phone_normalized,
-        res.employment_status,
-        res.group,
-        res.default_branch_id,
-        res.current_rate_per_hour,
-        res.start_date || res.created_at,
-        res.version,
-      ]);
-      if (!ok) {
-        console.warn('[GoogleSheetsAdapter] appendRow NHAN_VIEN_MASTER failed, running syncAllData');
-        await this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
-      }
+      const snapshot = { ...res };
+      this.scheduleSheetsWrite(async () => {
+        const ok = await this.syncService.appendRow('NHAN_VIEN_MASTER', [
+          snapshot.employee_id,
+          snapshot.employee_code,
+          snapshot.full_name,
+          snapshot.phone_normalized,
+          snapshot.employment_status,
+          snapshot.group,
+          snapshot.default_branch_id,
+          snapshot.current_rate_per_hour,
+          snapshot.start_date || (snapshot as any).created_at,
+          snapshot.version,
+        ]);
+        if (!ok) {
+          console.warn('[GoogleSheetsAdapter] appendRow NHAN_VIEN_MASTER failed, running syncAllData');
+          await this.syncService.syncAllData(this.fallbackAdapter);
+        }
+      }, 'NHAN_VIEN_MASTER.append');
     }
     return res;
   }
 
   async deleteEmployee(id: string) {
     const ok = await this.fallbackAdapter.deleteEmployee(id);
-    if (ok && this.isConfigured) {
-      await this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
+    if (ok) {
+      this.scheduleSheetsWrite(() => this.syncService.syncAllData(this.fallbackAdapter), 'NHAN_VIEN_MASTER.delete');
     }
     return ok;
   }
 
   async updateEmployee(id: string, updates: any, expectedVersion: number) {
     const res = await this.fallbackAdapter.updateEmployee(id, updates, expectedVersion);
-    if (this.isConfigured) {
-      this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
-    }
+    this.scheduleSheetsWrite(() => this.syncService.syncAllData(this.fallbackAdapter), 'NHAN_VIEN_MASTER.update');
     return res;
   }
 
@@ -270,17 +284,18 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   async createShiftAssignment(assignment: any) {
     const res = await this.fallbackAdapter.createShiftAssignment(assignment);
     if (this.isConfigured) {
-      this.syncService.appendRow('PHAN_CONG_CA', [
-        res.assignment_id,
-        res.employee_id,
-        res.branch_id,
-        res.shift_code,
-        res.date,
-        res.start_at,
-        res.end_at,
-        res.status,
-        res.schedule_version,
-      ]).catch(err => console.error(err));
+      const snapshot = { ...res };
+      this.scheduleSheetsWrite(() => this.syncService.appendRow('PHAN_CONG_CA', [
+        snapshot.assignment_id,
+        snapshot.employee_id,
+        snapshot.branch_id,
+        snapshot.shift_code,
+        snapshot.date,
+        snapshot.start_at,
+        snapshot.end_at,
+        snapshot.status,
+        snapshot.schedule_version,
+      ]), 'PHAN_CONG_CA.append');
     }
     return res;
   }
@@ -293,19 +308,20 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   async createLeaveRequest(request: any) {
     const res = await this.fallbackAdapter.createLeaveRequest(request);
     if (this.isConfigured) {
-      this.syncService.appendRow('DON_NGHI_PHEP', [
-        res.request_id,
-        res.employee_id,
-        res.branch_id,
-        res.leave_type,
-        res.requested_date,
-        res.shift_code || '',
-        res.reason,
-        res.status,
-        res.reviewed_by || '',
-        res.review_note || '',
-        res.created_at,
-      ]).catch(err => console.error(err));
+      const snapshot = { ...res };
+      this.scheduleSheetsWrite(() => this.syncService.appendRow('DON_NGHI_PHEP', [
+        snapshot.request_id,
+        snapshot.employee_id,
+        snapshot.branch_id,
+        snapshot.leave_type,
+        snapshot.requested_date,
+        snapshot.shift_code || '',
+        snapshot.reason,
+        snapshot.status,
+        snapshot.reviewed_by || '',
+        snapshot.review_note || '',
+        snapshot.created_at,
+      ]), 'DON_NGHI_PHEP.append');
     }
     return res;
   }
@@ -317,26 +333,25 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async updateLeaveRequest(id: string, status: any, reviewerId: string, note?: string) {
     const res = await this.fallbackAdapter.updateLeaveRequest(id, status, reviewerId, note);
-    if (this.isConfigured) {
-      this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
-    }
+    this.scheduleSheetsWrite(() => this.syncService.syncAllData(this.fallbackAdapter), 'DON_NGHI_PHEP.update');
     return res;
   }
 
   async createSwapRequest(request: any) {
     const res = await this.fallbackAdapter.createSwapRequest(request);
     if (this.isConfigured) {
-      this.syncService.appendRow('DON_DOI_CA', [
-        res.swap_id,
-        res.requester_id,
-        res.requester_assignment_id,
-        res.target_employee_id,
-        res.target_assignment_id,
-        res.reason,
-        res.status,
-        res.approved_by || '',
-        res.created_at,
-      ]).catch(err => console.error(err));
+      const snapshot = { ...res };
+      this.scheduleSheetsWrite(() => this.syncService.appendRow('DON_DOI_CA', [
+        snapshot.swap_id,
+        snapshot.requester_id,
+        snapshot.requester_assignment_id,
+        snapshot.target_employee_id,
+        snapshot.target_assignment_id,
+        snapshot.reason,
+        snapshot.status,
+        snapshot.approved_by || '',
+        snapshot.created_at,
+      ]), 'DON_DOI_CA.append');
     }
     return res;
   }
@@ -352,9 +367,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async updateSwapRequest(id: string, updates: any) {
     const res = await this.fallbackAdapter.updateSwapRequest(id, updates);
-    if (this.isConfigured) {
-      this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
-    }
+    this.scheduleSheetsWrite(() => this.syncService.syncAllData(this.fallbackAdapter), 'DON_DOI_CA.update');
     return res;
   }
 
@@ -374,19 +387,20 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     const res = await this.fallbackAdapter.recordAttendanceEvent(event);
 
     if (this.isConfigured) {
-      this.syncService.appendRow('SU_KIEN_DIEM_DANH', [
-        res.event_id,
-        res.assignment_id,
-        res.employee_id,
-        res.type,
-        res.server_received_at,
-        res.gps_latitude,
-        res.gps_longitude,
-        res.distance_meters,
-        res.gps_status,
-        res.drive_object_id || '',
-        res.request_id || '',
-      ]).catch(err => console.error(err));
+      const snapshot = { ...res };
+      this.scheduleSheetsWrite(() => this.syncService.appendRow('SU_KIEN_DIEM_DANH', [
+        snapshot.event_id,
+        snapshot.assignment_id,
+        snapshot.employee_id,
+        snapshot.type,
+        snapshot.server_received_at,
+        snapshot.gps_latitude,
+        snapshot.gps_longitude,
+        snapshot.distance_meters,
+        snapshot.gps_status,
+        snapshot.drive_object_id || '',
+        snapshot.request_id || '',
+      ]), 'SU_KIEN_DIEM_DANH.append');
     }
 
     return res;
@@ -404,16 +418,17 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   async createAttendanceAdjustment(adj: any) {
     const res = await this.fallbackAdapter.createAttendanceAdjustment(adj);
     if (this.isConfigured) {
-      this.syncService.appendRow('DIEU_CHINH_CONG', [
-        res.adjustment_id,
-        res.assignment_id,
-        res.employee_id,
-        res.reason || '',
-        res.minutes_approved ?? res.minutes_requested ?? 0,
-        res.approver_id || '',
-        res.status,
-        res.review_note || '',
-      ]).catch(err => console.error(err));
+      const snapshot = { ...res };
+      this.scheduleSheetsWrite(() => this.syncService.appendRow('DIEU_CHINH_CONG', [
+        snapshot.adjustment_id,
+        snapshot.assignment_id,
+        snapshot.employee_id,
+        snapshot.reason || '',
+        snapshot.minutes_approved ?? snapshot.minutes_requested ?? 0,
+        snapshot.approver_id || '',
+        snapshot.status,
+        snapshot.review_note || '',
+      ]), 'DIEU_CHINH_CONG.append');
     }
     return res;
   }
@@ -424,18 +439,14 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async updateAttendanceAdjustment(id: string, status: any, approverId: string, minutesApproved?: number, note?: string) {
     const res = await this.fallbackAdapter.updateAttendanceAdjustment(id, status, approverId, minutesApproved, note);
-    if (this.isConfigured) {
-      this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
-    }
+    this.scheduleSheetsWrite(() => this.syncService.syncAllData(this.fallbackAdapter), 'DIEU_CHINH_CONG.update');
     return res;
   }
 
   // --- Payroll ---
   async createPayrollRun(run: any, items: any) {
     const res = await this.fallbackAdapter.createPayrollRun(run, items);
-    if (this.isConfigured) {
-      this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
-    }
+    this.scheduleSheetsWrite(() => this.syncService.syncAllData(this.fallbackAdapter), 'KY_LUONG.create');
     return res;
   }
 
@@ -450,9 +461,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async updatePayrollRunStatus(runId: string, status: any, actorId: string, updates?: any) {
     const res = await this.fallbackAdapter.updatePayrollRunStatus(runId, status, actorId, updates);
-    if (this.isConfigured) {
-      this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
-    }
+    this.scheduleSheetsWrite(() => this.syncService.syncAllData(this.fallbackAdapter), 'KY_LUONG.update');
     return res;
   }
 
@@ -501,16 +510,17 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   async recordAuditLog(entry: any) {
     const res = await this.fallbackAdapter.recordAuditLog(entry);
     if (this.isConfigured) {
-      this.syncService.appendRow('AUDIT_LOG', [
-        res.log_id,
-        res.timestamp,
-        res.actor_id,
-        res.actor_role,
-        res.action,
-        res.target_entity,
-        res.target_id,
-        typeof res.details === 'string' ? res.details : JSON.stringify(res.details || {}),
-      ]).catch(err => console.error(err));
+      const snapshot = { ...res };
+      this.scheduleSheetsWrite(() => this.syncService.appendRow('AUDIT_LOG', [
+        snapshot.log_id,
+        snapshot.timestamp,
+        snapshot.actor_id,
+        snapshot.actor_role,
+        snapshot.action,
+        snapshot.target_entity,
+        snapshot.target_id,
+        typeof snapshot.details === 'string' ? snapshot.details : JSON.stringify(snapshot.details || {}),
+      ]), 'AUDIT_LOG.append');
     }
     return res;
   }
@@ -528,36 +538,37 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   async createAdminAccount(account: any) {
     const res = await this.fallbackAdapter.createAdminAccount(account);
     if (this.isConfigured) {
-      const ok = await this.syncService.appendRow('ADMIN_ACCOUNTS', [
-        res.admin_id,
-        res.username,
-        res.password_hash || '123456',
-        res.full_name,
-        res.role,
-        res.branch_scope || '*',
-        (res as any).is_active === false ? 'LOCKED' : 'ACTIVE',
-        res.created_at,
-      ]);
-      if (!ok) {
-        console.warn('[GoogleSheetsAdapter] appendRow ADMIN_ACCOUNTS failed, running syncAllData');
-        await this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
-      }
+      const snapshot = { ...res };
+      this.scheduleSheetsWrite(async () => {
+        const ok = await this.syncService.appendRow('ADMIN_ACCOUNTS', [
+          snapshot.admin_id,
+          snapshot.username,
+          snapshot.password_hash || '123456',
+          snapshot.full_name,
+          snapshot.role,
+          snapshot.branch_scope || '*',
+          (snapshot as any).is_active === false ? 'LOCKED' : 'ACTIVE',
+          snapshot.created_at,
+        ]);
+        if (!ok) {
+          console.warn('[GoogleSheetsAdapter] appendRow ADMIN_ACCOUNTS failed, running syncAllData');
+          await this.syncService.syncAllData(this.fallbackAdapter);
+        }
+      }, 'ADMIN_ACCOUNTS.append');
     }
     return res;
   }
 
   async updateAdminAccount(id: string, updates: any) {
     const res = await this.fallbackAdapter.updateAdminAccount(id, updates);
-    if (this.isConfigured) {
-      await this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
-    }
+    this.scheduleSheetsWrite(() => this.syncService.syncAllData(this.fallbackAdapter), 'ADMIN_ACCOUNTS.update');
     return res;
   }
 
   async deleteAdminAccount(id: string) {
     const ok = await this.fallbackAdapter.deleteAdminAccount(id);
-    if (ok && this.isConfigured) {
-      await this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
+    if (ok) {
+      this.scheduleSheetsWrite(() => this.syncService.syncAllData(this.fallbackAdapter), 'ADMIN_ACCOUNTS.delete');
     }
     return ok;
   }
@@ -569,9 +580,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async updateBranch(id: string, updates: any) {
     const res = await this.fallbackAdapter.updateBranch(id, updates);
-    if (this.isConfigured) {
-      this.syncService.syncAllData(this.fallbackAdapter).catch(err => console.error(err));
-    }
+    this.scheduleSheetsWrite(() => this.syncService.syncAllData(this.fallbackAdapter), 'BRANCH.update');
     return res;
   }
 
@@ -622,7 +631,8 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   async updateSystemSettings(settings: any) {
     const updated = await this.fallbackAdapter.updateSystemSettings(settings);
     if (this.isConfigured) {
-      await this.syncService.syncSystemSettingsToSheet(updated).catch(err => console.error(err));
+      const snapshot = { ...updated };
+      this.scheduleSheetsWrite(() => this.syncService.syncSystemSettingsToSheet(snapshot), 'SETTINGS.update');
     }
     return updated;
   }
