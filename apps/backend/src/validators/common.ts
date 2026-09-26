@@ -19,6 +19,13 @@ export const queryString = (max = 64) => z.string().trim().max(max).optional();
 
 export const optString = (max = 500) => z.string().trim().max(max).optional();
 
+/** Chuỗi tolerant cho form admin: chấp nhận null/number (autofill), rỗng -> undefined. */
+export const looseOptString = (max = 500) =>
+  z.preprocess(
+    v => (v === null || v === undefined ? undefined : typeof v === 'string' ? v : String(v)),
+    z.string().trim().max(max).optional().transform(s => (s === '' ? undefined : s))
+  );
+
 export const latField = z.coerce.number().min(-90).max(90).optional();
 export const lngField = z.coerce.number().min(-180).max(180).optional();
 export const accuracyField = z.coerce.number().min(0).max(100_000).optional();

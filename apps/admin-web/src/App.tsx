@@ -433,6 +433,11 @@ export function App() {
       setErrorMsg('Vui lòng nhập số điện thoại');
       return;
     }
+    const phoneDigits = newEmpForm.phone.replace(/\D/g, '');
+    if (phoneDigits.length < 9 || phoneDigits.length > 11) {
+      setErrorMsg(`Số điện thoại '${newEmpForm.phone.trim()}' không hợp lệ (cần 9-11 chữ số)!`);
+      return;
+    }
     try {
       const finalBranch = (newEmpForm.group === 'VAN_PHONG' || newEmpForm.group === 'SALE')
         ? 'VAN_PHONG'

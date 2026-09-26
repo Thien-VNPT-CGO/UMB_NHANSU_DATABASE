@@ -62,7 +62,13 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
 
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      throw new Error(data.error || data.message || `Lỗi máy chủ (${res.status})`);
+      const detailText = Array.isArray((data as any)?.details)
+        ? ` — ${(data as any).details.map((d: any) => `${d.path || 'field'}: ${d.message}`).join('; ')}`
+        : '';
+      const err: any = new Error(`${data.error || data.message || `Lỗi máy chủ (${res.status})`}${detailText}`);
+      err.code = data.error;
+      err.details = (data as any)?.details;
+      throw err;
     }
 
     return data;

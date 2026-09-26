@@ -28,13 +28,16 @@ export function validate(schemas: ValidateSchemas) {
       next();
     } catch (err) {
       if (err instanceof z.ZodError) {
+        const details = err.errors.map(e => ({
+          path: e.path.join('.'),
+          message: e.message,
+        }));
+        // Log chi tiết để debug form admin (trước đây chỉ trả code chung).
+        console.warn(`[validate] ${req.method} ${req.path} FAILED:`, JSON.stringify(details));
         return res.status(400).json({
           error: 'VALIDATION_ERROR',
           message: 'Dữ liệu gửi lên không hợp lệ',
-          details: err.errors.map(e => ({
-            path: e.path.join('.'),
-            message: e.message,
-          })),
+          details,
         });
       }
       next(err);
