@@ -22,6 +22,8 @@ services:
         sync: false
       - key: HR_SEED_PASSWORD
         sync: false
+      - key: SHEETS_WEBHOOK_SECRET
+        generateValue: true
       - key: GOOGLE_SERVICE_ACCOUNT_JSON
         sync: false
       - key: SPREADSHEET_ID

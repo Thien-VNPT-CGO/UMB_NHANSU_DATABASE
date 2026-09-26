@@ -98,6 +98,36 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     }
   }
 
+  // Webhook từ Apps Script (onEdit trên Sheet): kéo ngay, không đợi nhịp 10s.
+  // Chống dồn: tối đa 1 lần kích hoạt/3s; pull chồng chéo dùng chung 1 promise.
+  private lastWebhookAt = 0;
+
+  public triggerSheetsPull(reason = 'webhook'): { accepted: boolean; done: Promise<unknown> } {
+    const noop = Promise.resolve(null);
+    if (!this.isConfigured) return { accepted: false, done: noop };
+    const now = Date.now();
+    if (now - this.lastWebhookAt < 3000) return { accepted: false, done: this.pullInFlight || noop };
+    this.lastWebhookAt = now;
+    this.lastPullTime = now; // đồng bộ nhịp auto-pull, tránh pull đúp ngay sau đó
+    if (!this.pullInFlight) {
+      console.log(`[GoogleSheetsAdapter] Kích hoạt pull ngay (${reason})`);
+      this.pullInFlight = this.syncService
+        .pullAllDataFromGoogleSheets(this)
+        .then((r: any) => {
+          this.markPullSettled(!!r?.counts);
+          return r;
+        })
+        .catch(e => {
+          this.markPullSettled(false);
+          console.warn('[GoogleSheetsAdapter] Webhook pull error:', e);
+        })
+        .finally(() => {
+          this.pullInFlight = null;
+        });
+    }
+    return { accepted: true, done: this.pullInFlight };
+  }
+
   /** Sẵn sàng phục vụ login chưa? Kho rỗng + đang retry pull -> chưa. */
   getReadiness(): { ready: boolean; reason?: 'SHEETS_LOADING' | 'SHEETS_UNREACHABLE' | 'EMPTY_DATASET' } {
     if (!this.isConfigured) return { ready: true };

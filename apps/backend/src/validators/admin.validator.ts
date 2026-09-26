@@ -65,4 +65,13 @@ export const sendPinBody = z
   })
   .passthrough();
 
+// --- Webhook Apps Script onEdit (body tự do, xác thực bằng secret header) ---
+export const webhookBody = z
+  .object({
+    tab: optString(64),
+    spreadsheetId: optString(128),
+    editedAt: optString(64),
+  })
+  .passthrough();
+
 export { idParams };

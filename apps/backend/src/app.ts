@@ -83,6 +83,7 @@ import {
   opaqueConfigBody,
   sendPinBody,
   testRecoveryBody,
+  webhookBody,
 } from './validators/admin.validator.js';
 import {
   requirePermission,
@@ -168,6 +169,31 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   // KHÔNG tốn quota — chỉ giữ Render không sleep.
   app.get('/ping', (req, res) => {
     res.json({ status: 'ok', time: new Date().toISOString() });
+  });
+
+  // Webhook Apps Script onEdit: sửa ô nào trên Sheet là web cập nhật trong 1-2s,
+  // không đợi nhịp pull 10s. Xác thực bằng secret header (fail-closed).
+  app.post('/hooks/sheets-edit', validate({ body: webhookBody }), async (req, res) => {
+    try {
+      const expected = process.env.SHEETS_WEBHOOK_SECRET || '';
+      const got = (req.headers['x-webhook-secret'] as string) || '';
+      if (!expected || got !== expected) {
+        return res.status(403).json({ error: 'WEBHOOK_FORBIDDEN' });
+      }
+      const tab = (req.body?.tab as string) || '';
+      const { accepted, done } = adapter.triggerSheetsPull(`webhook${tab ? ':' + tab : ''}`);
+      // Trả ngay để Apps Script không timeout; pull xong thì đẩy socket cho 2 web app.
+      done
+        .then((r: any) => {
+          if (r?.counts) {
+            broadcastUpdate('sheets', { source: 'webhook', tab: tab || 'all', counts: r.counts });
+          }
+        })
+        .catch(() => null);
+      res.json({ received: true, accepted, tab: tab || null });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // RÀNG BUỘC REALTIME 100%: mọi request GHI thành công đều bắn socket `data:updated`
