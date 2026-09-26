@@ -89,13 +89,6 @@ export function createAuthMiddleware(repo: ISheetsRepository) {
           code: msg,
         });
       }
-      if (msg === 'DEVICE_MISMATCH') {
-        return res.status(403).json({
-          error: 'DEVICE_MISMATCH',
-          message: 'Tài khoản đã khóa với 1 thiết bị duy nhất! Thiết bị này không phải máy đã đăng ký. Liên hệ HR/Admin để reset.',
-          code: 'DEVICE_MISMATCH',
-        });
-      }
       return res.status(401).json({
         error: ERROR_CODES.UNAUTHORIZED,
         message: 'Token không hợp lệ hoặc đã hết hạn',

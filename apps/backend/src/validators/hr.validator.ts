@@ -196,6 +196,9 @@ export const leavesAliasBody = z
 
 export const meAttendanceQuery = z.object({
   date: dateQuery,
+  // Khoảng ngày gộp 1 request (thay 30 request song song) — tối đa 31 ngày.
+  fromDate: dateQuery,
+  toDate: dateQuery,
 });
 
 export const attendanceEventBody = z

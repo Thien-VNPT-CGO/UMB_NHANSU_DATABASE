@@ -65,11 +65,4 @@ export const sendPinBody = z
   })
   .passthrough();
 
-// --- Reset khóa thiết bị + cấp lại PIN (NV đổi máy) ---
-export const resetDeviceBody = z
-  .object({
-    resetPin: z.boolean().optional().default(true),
-  })
-  .passthrough();
-
 export { idParams };

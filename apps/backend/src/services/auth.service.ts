@@ -57,7 +57,6 @@ interface BasePayload {
   fullName?: string;
   tv: number; // token version = account.version lúc phát hành (để revoke)
   typ: AccessTokenType | RefreshTokenType;
-  did?: string; // deviceId đã khóa (chỉ tài khoản EMPLOYEE)
 }
 
 interface EmployeePayload extends BasePayload {
@@ -150,14 +149,13 @@ export function sanitizeAdmin(admin: any) {
 export class AuthService {
   constructor(private repo: ISheetsRepository) {}
 
-  async loginWithPhone(phoneInput: string, pinInput?: string, deviceId?: string): Promise<{
+  async loginWithPhone(phoneInput: string, pinInput?: string): Promise<{
     token: string;
     refreshToken: string;
     employee: EmployeeMaster;
     role: SystemRole;
     stage: string;
     mustChangePin: boolean;
-    deviceLocked: boolean;
   }> {
     const normalized = normalizePhone(phoneInput);
     if (!normalized) {
@@ -206,33 +204,6 @@ export class AuthService {
       throw new Error(ERROR_CODES.EMPLOYMENT_NOT_ELIGIBLE);
     }
 
-    // KHÓA 1 THIẾT BỊ DUY NHẤT: tài khoản đã khóa mà device gửi lên khác -> chặn.
-    // Chưa khóa + client gửi deviceId -> bind ngay lần đăng nhập này (kể cả
-    // tài khoản cũ đã qua đổi PIN, để dần khóa hết toàn hệ thống).
-    const bound = (account as any).bound_device_id as string | undefined;
-    const did = (deviceId || '').trim();
-    if (bound) {
-      if (!did || did !== bound) {
-        await this.repo.recordAuditLog({
-          log_id: `LOG_${Date.now()}`,
-          actor_id: employee.employee_id,
-          actor_role: 'EMPLOYEE',
-          action: 'LOGIN_DEVICE_MISMATCH',
-          target_entity: 'TAI_KHOAN_NHAN_VIEN',
-          target_id: account.account_id,
-          details: `Login blocked: device ${did || '(missing)'} != bound device`,
-        }).catch(() => null);
-        throw new Error('DEVICE_MISMATCH');
-      }
-    } else if (did) {
-      try {
-        const updated = await this.repo.setAccountDevice(account.account_id, did, employee.employee_id);
-        account = updated;
-      } catch {
-        // Bind thất bại không chặn đăng nhập (client cũ/Sheets lỗi) — lần sau thử lại.
-      }
-    }
-
     const base = {
       sub: account.account_id,
       employeeId: employee.employee_id,
@@ -242,7 +213,6 @@ export class AuthService {
       fullName: employee.full_name,
       permissions: [] as UserPermission[],
       tv: account.version,
-      did: (account as any).bound_device_id || did || undefined,
     };
 
     const token = signAccess(base);
@@ -266,35 +236,19 @@ export class AuthService {
       role: 'EMPLOYEE',
       stage: employee.employment_status,
       mustChangePin: account.pin_must_change === true,
-      deviceLocked: !!(account as any).bound_device_id,
     };
   }
 
-  /** Nhân viên tự đổi PIN (luôn yêu cầu PIN cũ). Xóa cờ bắt-đổi-lần-đầu + khóa thiết bị. */
-  async changeEmployeePin(accountId: string, oldPin: string, newPin: string, deviceId?: string) {
+  /** Nhân viên tự đổi PIN (luôn yêu cầu PIN cũ). Xóa cờ bắt-đổi-lần-đầu. */
+  async changeEmployeePin(accountId: string, oldPin: string, newPin: string) {
     const account = await this.repo.getAccountById(accountId);
     if (!account) throw new Error('ACCOUNT_NOT_FOUND');
     if (!account.pin_hash || !(await verifyPin(oldPin, account.pin_hash))) {
       throw new Error('INVALID_PIN');
     }
-    // Thiết bị lạ không được đổi PIN để chiếm khóa.
-    const bound = (account as any).bound_device_id as string | undefined;
-    const did = (deviceId || '').trim();
-    if (bound && did && did !== bound) {
-      throw new Error('DEVICE_MISMATCH');
-    }
     const hashed = await hashPin(newPin); // ném WEAK_PIN nếu sai định dạng
     // NV tự đổi PIN -> cập nhật luôn bản rõ để HR dễ quản lý (cột Mã PIN hiển thị mã mới nhất).
-    const updated = await this.repo.setAccountPin(accountId, hashed, false, account.employee_id, newPin);
-    // Khóa thiết bị ngay khi đổi PIN (trường hợp login chưa bind, ví dụ client cũ).
-    if (!bound && did) {
-      try {
-        await this.repo.setAccountDevice(accountId, did, account.employee_id);
-      } catch {
-        // không chặn — đã đổi PIN thành công
-      }
-    }
-    return updated;
+    return this.repo.setAccountPin(accountId, hashed, false, account.employee_id, newPin);
   }
 
   async loginAdmin(username: string, password: string): Promise<{
@@ -419,11 +373,6 @@ export class AuthService {
       if (!account || account.version !== decoded.tv) {
         throw new Error('REFRESH_REVOKED');
       }
-      // Token refresh từ thiết bị lạ -> chặn (kẻ có refresh token copy cũng vô dụng).
-      const boundRefresh = (account as any).bound_device_id as string | undefined;
-      if (boundRefresh && decoded.did !== boundRefresh) {
-        throw new Error('DEVICE_MISMATCH');
-      }
       const employee = await this.repo.getEmployeeById(account.employee_id);
       const token = signAccess({
         sub: account.account_id,
@@ -434,7 +383,6 @@ export class AuthService {
         fullName: employee?.full_name || decoded.fullName || '',
         permissions: [],
         tv: account.version,
-        did: boundRefresh || decoded.did,
       });
       return { token };
     }
@@ -490,11 +438,6 @@ export class AuthService {
       if (!account) throw new Error('ACCOUNT_REVOKED');
       if (typeof decoded.tv === 'number' && account.version !== decoded.tv) {
         throw new Error('TOKEN_REVOKED');
-      }
-      // Access token từ thiết bị lạ (kể cả token cũ chưa có did) -> chặn.
-      const boundVerify = (account as any).bound_device_id as string | undefined;
-      if (boundVerify && decoded.did !== boundVerify) {
-        throw new Error('DEVICE_MISMATCH');
       }
       return {
         id: decoded.sub,

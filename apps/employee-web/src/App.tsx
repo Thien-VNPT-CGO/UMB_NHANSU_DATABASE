@@ -28,24 +28,6 @@ interface EmployeeProfile {
   default_branch_id: string;
 }
 
-// Khóa 1 thiết bị / 1 tài khoản: UUID ổn định theo trình duyệt (localStorage).
-// Xóa cache/cài lại PWA/đổi máy -> ID mới -> server chặn, HR/Admin reset.
-function getDeviceId(): string {
-  try {
-    const saved = localStorage.getItem('ubm_device_id');
-    if (saved) return saved;
-    const fresh: string = (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
-      ? String((crypto as any).randomUUID())
-      : `DEV_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-    try { localStorage.setItem('ubm_device_id', fresh); } catch { /* ignore */ }
-    return fresh;
-  } catch {
-    return `DEV_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-  }
-}
-
-const DEVICE_MISMATCH_MSG = '📱 Tài khoản đã khóa với 1 thiết bị duy nhất! Bạn đang dùng thiết bị khác. Vui lòng liên hệ HR/Admin để reset rồi đăng nhập lại.';
-
 export function App() {
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(() => {
     return !!(localStorage.getItem('ubm_emp_token') && localStorage.getItem('ubm_emp_data'));
@@ -246,35 +228,28 @@ export function App() {
   const loadEmployeeData = async (empId?: string) => {
     try {
       let fails = 0;
-      const shifts = await apiRequest('/me/schedule').catch(() => { fails++; return []; });
+      // 4 nhóm độc lập bắn SONG SONG (trước await nối tiếp + 30 request attendance).
+      const toDate = new Date().toISOString().split('T')[0];
+      const fromDt = new Date();
+      fromDt.setDate(fromDt.getDate() - 29);
+      const fromDate = fromDt.toISOString().split('T')[0];
+      const [shifts, notifs, attRange, colleagues] = await Promise.all([
+        apiRequest('/me/schedule').catch(() => { fails++; return []; }),
+        apiRequest('/me/notifications').catch(() => { fails++; return []; }),
+        apiRequest(`/me/attendance?fromDate=${fromDate}&toDate=${toDate}`).catch(() => { fails++; return null; }),
+        apiRequest('/me/colleagues').catch(() => { fails++; return []; }),
+        refreshWeeklyOffStatus(),
+      ]);
       setMyShifts(shifts);
-      const notifs = await apiRequest('/me/notifications').catch(() => { fails++; return []; });
       setNotifications(notifs);
-
-      // Real Attendance History (30 ngày gần nhất, tải song song) & Today status
-      const pastDates: string[] = [];
-      for (let d = 29; d >= 0; d--) {
-        const dt = new Date();
-        dt.setDate(dt.getDate() - d);
-        pastDates.push(dt.toISOString().split('T')[0]);
-      }
-      const settled = await Promise.allSettled(pastDates.map(dt => apiRequest(`/me/attendance?date=${dt}`)));
-      let attEvents: any[] = [];
-      let okDays = 0;
-      for (const s of settled) {
-        if (s.status === 'fulfilled' && Array.isArray(s.value)) {
-          okDays++;
-          attEvents = attEvents.concat(s.value);
-        }
-      }
-      if (okDays === 0) fails++;
-      setMyAttendanceHistory(attEvents);
+      const attEvents: any[] = Array.isArray(attRange) ? attRange : [];
 
       const today = new Date().toISOString().split('T')[0];
       const todayCheckIn = attEvents.find((e: any) => e.type === 'CHECK_IN' && e.client_time?.startsWith(today));
       const todayCheckOut = attEvents.find((e: any) => e.type === 'CHECK_OUT' && e.client_time?.startsWith(today));
       const inTimeStr = todayCheckIn?.client_time ? new Date(todayCheckIn.client_time).toLocaleTimeString('vi-VN') : undefined;
       const outTimeStr = todayCheckOut?.client_time ? new Date(todayCheckOut.client_time).toLocaleTimeString('vi-VN') : undefined;
+      setMyAttendanceHistory(attEvents);
       setTodayAttendance({
         checkedIn: !!todayCheckIn,
         checkedOut: !!todayCheckOut,
@@ -285,14 +260,9 @@ export function App() {
         receipt: todayCheckIn,
       });
 
-      // Load real colleagues in branch (đã che SĐT ở server — chỉ tên + mã NV)
-      const colleagues = await apiRequest('/me/colleagues').catch(() => { fails++; return []; });
       setBranchColleagues(colleagues);
       // Mất mạng toàn bộ -> báo rõ đang xem dữ liệu cũ, không im lặng
       setDataStale(fails >= 4);
-
-      // Đồng bộ cổng đăng ký OFF/tuần (banner + khóa/mở theo server)
-      await refreshWeeklyOffStatus();
     } catch (err) {
       console.error(err);
     }
@@ -320,7 +290,7 @@ export function App() {
     try {
       const res = await apiRequest('/auth/employee/phone-login', {
         method: 'POST',
-        body: JSON.stringify({ phone: cleaned, pin, deviceId: getDeviceId() }),
+        body: JSON.stringify({ phone: cleaned, pin }),
       });
 
       setCheckingStatus('ACTIVE');
@@ -350,9 +320,6 @@ export function App() {
       } else if (err.message === 'DUPLICATE_PHONE_NEEDS_HR') {
         setCheckingStatus('ERROR');
         setLoginError(`Số điện thoại ${cleaned} bị trùng lặp trên 2 hồ sơ khác nhau. Cần gặp HR để đối soát thông tin.`);
-      } else if (err.message === 'DEVICE_MISMATCH' || (err.message || '').includes('thiết bị')) {
-        setCheckingStatus('ERROR');
-        setLoginError(DEVICE_MISMATCH_MSG);
       } else {
         setCheckingStatus('ERROR');
         setLoginError(err.message);
@@ -389,20 +356,16 @@ export function App() {
     try {
       await apiRequest('/auth/employee/change-pin', {
         method: 'POST',
-        body: JSON.stringify({ oldPin: loginPin.trim(), newPin, deviceId: getDeviceId() }),
+        body: JSON.stringify({ oldPin: loginPin.trim(), newPin }),
       });
-      showToast('🎉 Đổi mã PIN thành công! Tài khoản đã khóa với thiết bị này — không đăng nhập được trên máy khác.');
+      showToast('🎉 Đổi mã PIN thành công! Đây là mã PIN riêng của bạn, không chia sẻ cho người khác.');
       setLoginPin(newPin);
       // Token hiện tại đã bị thu hồi (version tăng) -> đăng nhập lại bằng PIN mới
       setAuthToken('');
       setMustChangePin(false);
       await handlePhoneLogin(loginPhone, newPin);
     } catch (err: any) {
-      if (err.message === 'DEVICE_MISMATCH' || (err.message || '').includes('thiết bị')) {
-        setLoginError(DEVICE_MISMATCH_MSG);
-      } else {
-        setLoginError(err.message === 'INVALID_PIN' ? 'Mã PIN hiện tại không đúng!' : err.message);
-      }
+      setLoginError(err.message === 'INVALID_PIN' ? 'Mã PIN hiện tại không đúng!' : err.message);
     } finally {
       setLoading(false);
     }
