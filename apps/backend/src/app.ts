@@ -345,6 +345,18 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Trạng thái ghi Sheets nền cho UI poll: tạo xong bao lâu thì đã lên Sheet.
+  app.get('/admin/sync-status', authMiddleware, requireRole(['ADMIN', 'HR']), async (req, res) => {
+    try {
+      res.json({
+        ...(adapter as any).getPendingSheetsWrites?.() || { pendingWrites: 0, lastSheetsWriteAt: null },
+        time: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // --- ACCOUNTS: SĐT + mã PIN tự động (hệ thống tự sinh PIN khởi tạo cho từng tài khoản,
   // nhân viên đăng nhập lần đầu rồi đặt PIN riêng ngay — không còn HR cấp tay) ---
 
@@ -455,6 +467,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.post('/employees', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ body: employeeCreateBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const b = req.body;
+      const normPhone = canonicalPhone((b.phone || b.phone_normalized || '').trim());
       const result = await employeesService.createEmployee({
         fullName: (b.fullName || b.full_name || '').trim(),
         phone: (b.phone || b.phone_normalized || '').trim(),
@@ -473,7 +486,18 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       });
       broadcastUpdate('employees', { action: 'create', employee: result });
       broadcastUpdate('accounts', { action: 'create_emp_account' });
-      res.json(result);
+      // Đính kèm tài khoản vừa sinh (kèm PIN) để UI chèn tức thì, khỏi fetch lại.
+      const empId = (result as any)?.result?.employee_id || (result as any)?.employee_id;
+      let account: any = null;
+      try {
+        const accs = normPhone ? await adapter.findAccountByPhone(normPhone) : [];
+        const found = accs.find(a => a.employee_id === empId) || accs[0];
+        if (found) {
+          const { pin_hash: _omit, ...rest } = found as any;
+          account = rest;
+        }
+      } catch { /* UI tự tải lại sau */ }
+      res.json({ ...(result as any), account });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }

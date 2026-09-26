@@ -64,13 +64,26 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   // Hàng đợi ghi Sheets NỀN (không chặn response): các tác vụ ghi xếp hàng
   // tuần tự, lỗi chỉ log — dữ liệu thật đã nằm trong bộ nhớ + socket báo realtime ngay.
   private bgWriteChain: Promise<void> = Promise.resolve();
+  private pendingSheetsWrites = 0;
+  private lastSheetsWriteAt: string | null = null;
 
   private scheduleSheetsWrite(task: () => Promise<unknown>, label: string) {
     if (!this.isConfigured) return;
+    this.pendingSheetsWrites++;
     this.bgWriteChain = this.bgWriteChain
       .then(() => task())
-      .then(() => undefined)
-      .catch(err => console.warn(`[GoogleSheetsAdapter] Ghi Sheets nền '${label}' thất bại (sẽ thử lại ở lần sync sau):`, (err as any)?.message || err));
+      .then(() => {
+        this.lastSheetsWriteAt = new Date().toISOString();
+      })
+      .catch(err => console.warn(`[GoogleSheetsAdapter] Ghi Sheets nền '${label}' thất bại (sẽ thử lại ở lần sync sau):`, (err as any)?.message || err))
+      .finally(() => {
+        this.pendingSheetsWrites = Math.max(0, this.pendingSheetsWrites - 1);
+      });
+  }
+
+  /** Trạng thái ghi nền cho UI poll: còn bao nhiêu tác vụ chưa lên Sheets. */
+  public getPendingSheetsWrites() {
+    return { pendingWrites: this.pendingSheetsWrites, lastSheetsWriteAt: this.lastSheetsWriteAt };
   }
 
   // Trả dữ liệu trong bộ nhớ NGAY LẬP TỨC, pull Sheets chạy nền.

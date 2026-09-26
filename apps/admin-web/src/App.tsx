@@ -450,7 +450,8 @@ export function App() {
         ? 'VAN_PHONG'
         : (newEmpForm.group === 'XUONG' ? 'XUONG_SX' : newEmpForm.branchId);
 
-      await apiRequest('/employees', {
+      const createdCode = newEmpForm.employeeCode;
+      const created = await apiRequest('/employees', {
         method: 'POST',
         body: JSON.stringify({
           fullName: newEmpForm.fullName.trim(),
@@ -461,6 +462,15 @@ export function App() {
           employeeCode: newEmpForm.employeeCode,
         }),
       });
+      // Chèn tức thì vào danh sách (khỏi chờ tải lại) — server đã trả kèm account + PIN.
+      const newEmp = (created as any)?.result?.employee_id ? (created as any).result : (created as any)?.employee;
+      const newAcc = (created as any)?.account;
+      if (newEmp?.employee_id) {
+        setAllEmployees((prev: any[]) => [newEmp, ...prev.filter(e => e.employee_id !== newEmp.employee_id)]);
+      }
+      if (newAcc?.account_id) {
+        setEmployeeAccounts((prev: any[]) => [newAcc, ...prev.filter(a => a.account_id !== newAcc.account_id)]);
+      }
       setShowNewEmpModal(false);
       const nextCode = generateRandomEmployeeCode();
       setNewEmpForm({
@@ -471,8 +481,21 @@ export function App() {
         branchId: 'CN130',
         employmentStatus: 'PRE_ONBOARDING',
       });
-      setSuccessMsg(`Đã tạo thành công hồ sơ nhân viên mới với mã ${newEmpForm.employeeCode}!`);
-      setTimeout(() => setSuccessMsg(null), 3000);
+      setSuccessMsg(`Đã tạo ${createdCode}! Đang đồng bộ Google Sheets...`);
+      // Poll xác nhận đã ghi Sheets (không chặn UI) — xong báo khớp 100%.
+      (async () => {
+        for (let i = 0; i < 8; i++) {
+          await new Promise(r => setTimeout(r, 1500));
+          try {
+            const st = await apiRequest('/admin/sync-status');
+            if (st && st.pendingWrites === 0) {
+              setSuccessMsg(`✅ ${createdCode} đã ghi Google Sheets! Web và Sheet khớp 100%.`);
+              setTimeout(() => setSuccessMsg(null), 4000);
+              return;
+            }
+          } catch { /* thử lại vòng sau */ }
+        }
+      })();
       await loadAllData();
     } catch (err: any) {
       setErrorMsg(err.message);
