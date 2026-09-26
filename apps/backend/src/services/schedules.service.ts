@@ -9,6 +9,7 @@ import {
 } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { singleWriterQueue } from '../repositories/single-writer-queue.js';
+import { weekRangeOf } from './weekly-off.service.js';
 import { Server } from 'socket.io';
 
 export class SchedulesService {
@@ -113,11 +114,18 @@ export class SchedulesService {
   }) {
     const requestId = `LEAVE_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
 
-    // Verify weekly OFF limits (max 2 days per week for HANG_TUAN if applied)
+    // Verify weekly OFF limits (tối đa 2 ngày/tuần HANG_TUAN, tính theo tuần Mon-Sun
+    // chứa ngày đăng ký — kể cả đợt mở bù VIP tuần sau).
     if (data.leaveType === 'HANG_TUAN') {
+      const wk = weekRangeOf(data.requestedDate);
       const existingLeaves = await this.repo.listLeaveRequests(data.branchId, data.employeeId);
       const weeklyLeaves = existingLeaves.filter(
-        l => l.leave_type === 'HANG_TUAN' && l.status !== 'REJECTED' && l.status !== 'CANCELLED'
+        l =>
+          l.leave_type === 'HANG_TUAN' &&
+          l.status !== 'REJECTED' &&
+          l.status !== 'CANCELLED' &&
+          l.requested_date >= wk.mon &&
+          l.requested_date <= wk.sun
       );
       if (weeklyLeaves.length >= 2) {
         throw new Error('WEEKLY_OFF_LIMIT_REACHED: Tối đa 2 ngày OFF hàng tuần theo chính sách.');

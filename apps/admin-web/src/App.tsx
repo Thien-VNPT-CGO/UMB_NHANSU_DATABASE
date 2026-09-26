@@ -390,6 +390,17 @@ export function App() {
   const [pinSummary, setPinSummary] = useState<{ sent: number; failed: number; total: number } | null>(null);
   const [sendingSingleId, setSendingSingleId] = useState<string | null>(null);
 
+  // VIP: Admin mở bù cổng đăng ký OFF 2 ngày/tuần (mặc định 30 phút, tự đóng).
+  const [manualOff, setManualOff] = useState<any>(null);
+  const [manualMinutes, setManualMinutes] = useState(30);
+  const [manualTick, setManualTick] = useState(0);
+  const fetchManualOff = async () => {
+    try {
+      const st = await apiRequest('/admin/weekly-off/manual-status');
+      setManualOff(st);
+    } catch { /* không phải ADMIN hoặc offline */ }
+  };
+
   // NV quên PIN: HR/Admin cấp lại PIN mới (PIN cũ hết hiệu lực ngay) rồi gửi cho NV.
   const [resettingPinId, setResettingPinId] = useState<string | null>(null);
   const handleResetPin = async (item: any) => {
@@ -897,6 +908,49 @@ export function App() {
   // 2. Thuần socket realtime 100% (ràng buộc hệ thống): socket.io tự reconnect,
   // event 'connect' bắn lại là tải mới — không poll định kỳ để giảm tải server.
   // Mất mạng lâu: người dùng bấm nút Tải lại trên từng tab (loadAllData qua scheduleReload).
+
+  // VIP manual OFF: tải trạng thái khi vào dashboard + đếm ngược mỗi giây khi đang mở.
+  useEffect(() => {
+    if (activeTab !== 'dashboard' || currentUser?.role !== 'ADMIN') return;
+    fetchManualOff();
+    const refetch = setInterval(fetchManualOff, 15000);
+    return () => clearInterval(refetch);
+  }, [activeTab, currentUser?.role]);
+  useEffect(() => {
+    if (!manualOff?.active) return;
+    const t = setInterval(() => setManualTick(x => x + 1), 1000);
+    return () => clearInterval(t);
+  }, [manualOff?.active]);
+  const manualRemaining = (() => {
+    void manualTick;
+    if (!manualOff?.active || !manualOff?.manual?.activeUntil) return null;
+    const ms = new Date(manualOff.manual.activeUntil).getTime() - Date.now();
+    if (ms <= 0) return '00:00';
+    const m = Math.floor(ms / 60000);
+    const s = Math.floor((ms % 60000) / 1000);
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  })();
+  const handleManualOpen = async () => {
+    const mins = Math.min(Math.max(manualMinutes || 30, 1), 120);
+    if (!window.confirm(`Mở bù cổng đăng ký 2 ngày OFF ${mins} phút cho tuần ${manualOff?.manual?.targetWeekMon || 'sau'}?\nNV chưa đăng ký sẽ nhận thông báo và đăng ký ngay. Hết giờ tự đóng.`)) return;
+    try {
+      await apiRequest('/admin/weekly-off/open', { method: 'POST', body: JSON.stringify({ minutes: mins }) });
+      setSuccessMsg(`Đã mở bù cổng đăng ký ${mins} phút!`);
+      await fetchManualOff();
+      await loadAllData();
+    } catch (err: any) {
+      setErrorMsg(err.message);
+    }
+  };
+  const handleManualClose = async () => {
+    try {
+      await apiRequest('/admin/weekly-off/close', { method: 'POST' });
+      setSuccessMsg('Đã đóng cổng đăng ký mở bù.');
+      await fetchManualOff();
+    } catch (err: any) {
+      setErrorMsg(err.message);
+    }
+  };
 
   // Action handlers
   const handleToggleInternalAccount = async (account: any) => {
@@ -2122,6 +2176,34 @@ export function App() {
                   <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
                   {loading ? 'Đang Tải Lại...' : 'Tải Lại Số Liệu'}
                 </button>
+              </div>
+
+              {/* VIP: Admin mở bù cổng đăng ký OFF 2 ngày/tuần (30 phút, tự đóng) */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', backgroundColor: manualOff?.active ? '#ECFDF5' : '#FFFBEB', border: manualOff?.active ? '1.5px solid #10B981' : '1.5px solid #F59E0B', borderRadius: 'var(--radius-md)', padding: '14px 18px' }}>
+                <span style={{ fontSize: '22px' }}>{manualOff?.active ? '🟢' : '⭐'}</span>
+                <div style={{ flex: 1, minWidth: '220px' }}>
+                  <div style={{ fontWeight: 800, fontSize: '14px', color: 'var(--text)' }}>
+                    VIP: Mở bù đăng ký 2 ngày OFF tuần cho nhân viên
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                    {manualOff?.active && manualOff?.manual
+                      ? <>Đang mở cho tuần <strong>{manualOff.manual.targetWeekMon} → {manualOff.manual.targetWeekSun}</strong> • Tự đóng sau <strong style={{ color: '#059669', fontSize: '14px' }}>{manualRemaining}</strong></>
+                      : 'Khi hết khung T6–T7, Admin mở bù để NV đăng ký (mặc định 30 phút, tự đóng).'}
+                  </div>
+                </div>
+                {manualOff?.active ? (
+                  <button onClick={handleManualClose} style={{ padding: '9px 18px', borderRadius: 'var(--radius-sm)', backgroundColor: '#DC2626', color: '#FFF', fontSize: '13px', fontWeight: 800, border: 'none', cursor: 'pointer' }}>
+                    ⛔ Đóng ngay
+                  </button>
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)' }}>Phút:</label>
+                    <input type="number" min={1} max={120} value={manualMinutes} onChange={e => setManualMinutes(Number(e.target.value))} style={{ width: '64px', padding: '8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px', fontWeight: 700 }} />
+                    <button onClick={handleManualOpen} style={{ padding: '9px 18px', borderRadius: 'var(--radius-sm)', backgroundColor: '#7C3AED', color: '#FFF', fontSize: '13px', fontWeight: 800, border: 'none', cursor: 'pointer', boxShadow: '0 4px 12px rgba(124,58,237,0.25)' }}>
+                      ⚡ Mở cổng ngay
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* 8 KPI Cards */}

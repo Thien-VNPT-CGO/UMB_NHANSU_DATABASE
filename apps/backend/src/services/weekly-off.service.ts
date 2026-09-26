@@ -16,6 +16,10 @@ export interface WeeklyOffWindow {
   targetWeekMon: string;
   targetWeekSun: string;
   serverTime: string;
+  /** true khi cổng đang mở do Admin mở bù VIP (ngoài khung T6-T7). */
+  manual?: boolean;
+  /** ISO instant tự đóng của đợt mở bù (mặc định +30 phút). */
+  manualClosesAt?: string;
 }
 
 export interface WeeklyOffCompletion {
@@ -105,6 +109,127 @@ export function getWeeklyOffWindow(now: Date = new Date()): WeeklyOffWindow {
   };
 }
 
+/**
+ * VIP: Admin mở bù cổng đăng ký 2 ngày OFF ngoài khung giờ (mặc định 30 phút,
+ * tối đa 120 phút). Hết hạn tự đóng theo lazy-check (không cần timer, sống qua restart).
+ * Tuần mục tiêu của đợt mở bù = tuần SAU của tuần hiện tại (Thứ 2-CN kế tiếp).
+ */
+const MANUAL_SETTINGS_KEY = 'weeklyOffManual';
+const MANUAL_DEFAULT_MINUTES = 30;
+const MANUAL_MAX_MINUTES = 120;
+
+export interface ManualOffState {
+  activeUntil: string;
+  activatedBy: string;
+  activatedAt: string;
+  minutes: number;
+  targetWeekMon: string;
+  targetWeekSun: string;
+}
+
+/** Thứ 2 tuần SAU kể từ hiện tại (YYYY-MM-DD VN). */
+export function nextWeekRange(now: Date = new Date()): { mon: string; sun: string } {
+  const vn = shiftedNow(now);
+  const midnightUtcMs = Date.UTC(vn.getUTCFullYear(), vn.getUTCMonth(), vn.getUTCDate());
+  const dowMon0 = (vn.getUTCDay() + 6) % 7;
+  const nextMon = midnightUtcMs + (7 - dowMon0) * DAY_MS;
+  return { mon: toDateStr(new Date(nextMon)), sun: toDateStr(new Date(nextMon + 6 * DAY_MS)) };
+}
+
+/** Khung Mon-Sun chứa một ngày cho trước (giới hạn 2 OFF/tuần theo tuần này). */
+export function weekRangeOf(dateStr: string): { mon: string; sun: string } {
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return { mon: dateStr, sun: dateStr };
+  const dowMon0 = (d.getUTCDay() + 6) % 7;
+  const monMs = d.getTime() - dowMon0 * DAY_MS;
+  return { mon: toDateStr(new Date(monMs)), sun: toDateStr(new Date(monMs + 6 * DAY_MS)) };
+}
+
+async function getManualState(repo: ISheetsRepository): Promise<ManualOffState | null> {
+  try {
+    const settings = (await repo.getSystemSettings()) || {};
+    const m = settings[MANUAL_SETTINGS_KEY];
+    if (!m || typeof m !== 'object' || typeof m.activeUntil !== 'string') return null;
+    return m as ManualOffState;
+  } catch {
+    return null;
+  }
+}
+
+/** Cửa sổ hiệu lực: khung T6-T7 mặc định, hoặc đợt mở bù VIP còn hạn. */
+export async function getEffectiveWindow(
+  repo: ISheetsRepository,
+  now: Date = new Date()
+): Promise<WeeklyOffWindow> {
+  const base = getWeeklyOffWindow(now);
+  const manual = await getManualState(repo);
+  if (manual && new Date(manual.activeUntil).getTime() > now.getTime()) {
+    return {
+      ...base,
+      phase: 'OPEN',
+      manual: true,
+      manualClosesAt: manual.activeUntil,
+      targetWeekMon: manual.targetWeekMon,
+      targetWeekSun: manual.targetWeekSun,
+    };
+  }
+  return base;
+}
+
+export async function openManualRegistration(
+  repo: ISheetsRepository,
+  actorId: string,
+  minutes: number = MANUAL_DEFAULT_MINUTES,
+  now: Date = new Date()
+): Promise<WeeklyOffWindow & { manualClosesAt: string }> {
+  const mins = Math.min(Math.max(Math.floor(minutes) || MANUAL_DEFAULT_MINUTES, 1), MANUAL_MAX_MINUTES);
+  const target = nextWeekRange(now);
+  const activeUntil = new Date(now.getTime() + mins * 60_000).toISOString();
+  const state: ManualOffState = {
+    activeUntil,
+    activatedBy: actorId,
+    activatedAt: now.toISOString(),
+    minutes: mins,
+    targetWeekMon: target.mon,
+    targetWeekSun: target.sun,
+  };
+  const settings = (await repo.getSystemSettings().catch(() => ({}))) || {};
+  await repo.updateSystemSettings({ ...settings, [MANUAL_SETTINGS_KEY]: state });
+  await repo.recordAuditLog({
+    actor_id: actorId,
+    action: 'WEEKLY_OFF_MANUAL_OPEN',
+    target_type: 'CAU_HINH_HE_THONG',
+    target_id: MANUAL_SETTINGS_KEY,
+    payload_after: state,
+  } as any).catch(() => null);
+  const base = getWeeklyOffWindow(now);
+  return { ...base, phase: 'OPEN', manual: true, manualClosesAt: activeUntil, targetWeekMon: target.mon, targetWeekSun: target.sun };
+}
+
+export async function closeManualRegistration(repo: ISheetsRepository, actorId: string): Promise<void> {
+  const settings = (await repo.getSystemSettings().catch(() => ({}))) || {};
+  // updateSystemSettings MERGE (không xóa key vắng mặt) -> gán null tường minh.
+  await repo.updateSystemSettings({ ...settings, [MANUAL_SETTINGS_KEY]: null }).catch(() => null);
+  await repo.recordAuditLog({
+    actor_id: actorId,
+    action: 'WEEKLY_OFF_MANUAL_CLOSE',
+    target_type: 'CAU_HINH_HE_THONG',
+    target_id: MANUAL_SETTINGS_KEY,
+  } as any).catch(() => null);
+}
+
+export async function getManualStatus(repo: ISheetsRepository, now: Date = new Date()) {
+  const manual = await getManualState(repo);
+  const active = !!manual && new Date(manual.activeUntil).getTime() > now.getTime();
+  return {
+    active,
+    manual: active ? manual : null,
+    serverTime: now.toISOString(),
+    defaultMinutes: MANUAL_DEFAULT_MINUTES,
+    maxMinutes: MANUAL_MAX_MINUTES,
+  };
+}
+
 function isSheetsError(e: unknown): boolean {
   return String((e as Error)?.message || '').includes('SHEETS_');
 }
@@ -155,7 +280,7 @@ export async function checkWeeklyOffGate(
   path: string,
   now: Date = new Date()
 ): Promise<GateCheck> {
-  const window = getWeeklyOffWindow(now);
+  const window = await getEffectiveWindow(repo, now);
   if (user.role !== 'EMPLOYEE' || !user.employeeId) return { locked: false, window };
   if (window.phase !== 'OPEN') return { locked: false, window };
   if (isAllowedPath(path)) return { locked: false, window };
@@ -186,19 +311,29 @@ export async function checkWeeklyOffGate(
 
 /**
  * Ràng buộc khung giờ khi nộp đơn HANG_TUAN: nhân viên chính thức chỉ được
- * đăng ký trong lúc cổng OPEN. HR/Admin và thử việc không bị ràng buộc.
+ * đăng ký trong lúc cổng OPEN (khung T6-T7 hoặc đợt mở bù VIP của Admin).
+ * Ngày đăng ký phải nằm trong tuần mục tiêu của cổng đang mở.
  */
 export async function assertHangTuanWindow(
   repo: ISheetsRepository,
   user: { role: string; employeeId?: string },
   leaveType: unknown,
-  now: Date = new Date()
+  now: Date = new Date(),
+  requestedDate?: string
 ): Promise<WeeklyOffWindow> {
-  const window = getWeeklyOffWindow(now);
+  const window = await getEffectiveWindow(repo, now);
   if (leaveType !== 'HANG_TUAN' || user.role !== 'EMPLOYEE' || !user.employeeId) return window;
   const employee = await repo.getEmployeeById(user.employeeId);
   if (!employee || employee.employment_status !== 'OFFICIAL') return window;
-  if (window.phase === 'OPEN') return window;
+  if (window.phase === 'OPEN') {
+    if (requestedDate && (requestedDate < window.targetWeekMon || requestedDate > window.targetWeekSun)) {
+      const err: any = new Error(ERROR_CODES.WEEKLY_OFF_WINDOW_CLOSED);
+      err.window = window;
+      err.reason = `Ngày ${requestedDate} nằm ngoài tuần mục tiêu (${window.targetWeekMon} → ${window.targetWeekSun}).`;
+      throw err;
+    }
+    return window;
+  }
   const err: any = new Error(ERROR_CODES.WEEKLY_OFF_WINDOW_CLOSED);
   err.window = window;
   throw err;

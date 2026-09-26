@@ -1278,11 +1278,15 @@ export function App() {
             <Bell size={18} color="#E11D48" />
             <strong style={{ fontSize: '13px', color: '#BE123C' }}>
               ⏰ THÔNG BÁO: ĐANG TRONG THỜI GIAN ĐĂNG KÝ 2 NGÀY NGHỈ OFF/TUẦN
-              {weeklyOffWindow?.windowClosesAt ? ` (ĐÓNG LÚC ${new Date(weeklyOffWindow.windowClosesAt).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', weekday: 'long' }).toUpperCase()})` : ''}
+              {(weeklyOffWindow as any)?.manual && (weeklyOffWindow as any)?.manualClosesAt
+                ? ` (ADMIN MỞ BÙ — ĐÓNG LÚC ${new Date((weeklyOffWindow as any).manualClosesAt).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit' }).toUpperCase()})`
+                : weeklyOffWindow?.windowClosesAt ? ` (ĐÓNG LÚC ${new Date(weeklyOffWindow.windowClosesAt).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', weekday: 'long' }).toUpperCase()})` : ''}
             </strong>
           </div>
           <div style={{ fontSize: '12px', color: '#9F1239', lineHeight: '1.4' }}>
-            Hệ thống đã tự động gửi thông báo trước 5 phút giờ mở cửa đăng ký. Hiện tại đang mở cổng đăng ký 2 ngày nghỉ/tuần định kỳ. <strong>Toàn bộ các chức năng khác tạm thời bị KHÓA</strong> cho đến khi bạn hoàn tất đăng ký 2 ngày nghỉ!
+            {(weeklyOffWindow as any)?.manual
+              ? <>Admin vừa mở bổ sung cổng đăng ký cho tuần <strong>{(weeklyOffWindow as any)?.targetWeekMon} → {(weeklyOffWindow as any)?.targetWeekSun}</strong>. Tranh thủ đăng ký ngay trước giờ đóng! <strong>Toàn bộ các chức năng khác tạm thời bị KHÓA</strong> cho đến khi bạn hoàn tất đăng ký 2 ngày nghỉ!</>
+              : <>Hệ thống đã tự động gửi thông báo trước 5 phút giờ mở cửa đăng ký. Hiện tại đang mở cổng đăng ký 2 ngày nghỉ/tuần định kỳ. <strong>Toàn bộ các chức năng khác tạm thời bị KHÓA</strong> cho đến khi bạn hoàn tất đăng ký 2 ngày nghỉ!</>}
           </div>
           {activeTab !== 'leave' && (
             <button

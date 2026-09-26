@@ -8,8 +8,12 @@ import { AuthService, sanitizeAdmin } from './services/auth.service.js';
 import { hashPassword, hashPin, generateAutoPin } from './services/password.service.js';
 import {
   assertHangTuanWindow,
+  closeManualRegistration,
+  getEffectiveWindow,
+  getManualStatus,
   getWeeklyOffCompletion,
   getWeeklyOffWindow,
+  openManualRegistration,
 } from './services/weekly-off.service.js';
 import { ZaloService, defaultMeetUrl } from './services/zalo.service.js';
 import { AccountsService } from './services/accounts.service.js';
@@ -250,8 +254,51 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // Cổng đăng ký 2 ngày OFF/tuần: public để app hiển thị banner/đếm ngược.
-  app.get('/api/weekly-off-window', (req, res) => {
-    res.json(getWeeklyOffWindow());
+  // Bao gồm đợt mở bù VIP của Admin (manual) nếu còn hạn.
+  app.get('/api/weekly-off-window', async (req, res) => {
+    try {
+      res.json(await getEffectiveWindow(adapter));
+    } catch {
+      res.json(getWeeklyOffWindow());
+    }
+  });
+
+  // VIP: Admin mở bù cổng đăng ký OFF (mặc định 30 phút, tự đóng khi hết hạn).
+  app.post('/admin/weekly-off/open', authMiddleware, requireRole(['ADMIN']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const minutes = Number(req.body?.minutes) || 30;
+      const window = await openManualRegistration(adapter, req.user!.id, minutes);
+      broadcastUpdate('weekly-off', { action: 'manual-open', window });
+      broadcastNotification({
+        type: 'SYSTEM',
+        title: '🟢 Admin vừa mở bổ sung đăng ký 2 ngày OFF',
+        message: `Cổng đăng ký mở thêm ${minutes} phút cho tuần ${window.targetWeekMon} → ${window.targetWeekSun}. NV chưa đăng ký tranh thủ ngay!`,
+        linkTab: 'leave',
+        metadata: { window },
+        targetRoles: ['ADMIN', 'HR', 'STORE', 'EMPLOYEE'],
+      });
+      res.json({ success: true, window });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.post('/admin/weekly-off/close', authMiddleware, requireRole(['ADMIN']), async (req: AuthenticatedRequest, res) => {
+    try {
+      await closeManualRegistration(adapter, req.user!.id);
+      broadcastUpdate('weekly-off', { action: 'manual-close' });
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.get('/admin/weekly-off/manual-status', authMiddleware, requireRole(['ADMIN']), async (req, res) => {
+    try {
+      res.json(await getManualStatus(adapter));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // --- AUTH ---
@@ -383,7 +430,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   // Trạng thái đăng ký OFF tuần của chính nhân viên (frontend đồng bộ khóa/mở).
   app.get('/me/weekly-off-status', authMiddleware, async (req: AuthenticatedRequest, res) => {
     try {
-      const window = getWeeklyOffWindow();
+      const window = await getEffectiveWindow(adapter).catch(() => getWeeklyOffWindow());
       if (req.user?.role !== 'EMPLOYEE' || !req.user.employeeId) {
         return res.json({ window, required: 2, registered: [], completed: true, locked: false });
       }
@@ -934,12 +981,12 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       const employeeId = req.user?.employeeId || req.body.employeeId;
       try {
-        await assertHangTuanWindow(adapter, req.user!, req.body.leaveType);
+        await assertHangTuanWindow(adapter, req.user!, req.body.leaveType, new Date(), req.body.requestedDate || req.body.requested_date);
       } catch (werr: any) {
         if (werr.message === ERROR_CODES.WEEKLY_OFF_WINDOW_CLOSED) {
           return res.status(403).json({
             error: werr.message,
-            message: `Đăng ký 2 ngày nghỉ OFF chỉ mở từ 12h00 Thứ 6 đến 15h00 Thứ 7 hàng tuần (lần tới: ${werr.window.windowOpensAt}).`,
+            message: werr.reason || `Đăng ký 2 ngày nghỉ OFF chỉ mở từ 12h00 Thứ 6 đến 15h00 Thứ 7 hàng tuần (lần tới: ${werr.window.windowOpensAt}).`,
             code: werr.message,
             windowOpensAt: werr.window.windowOpensAt,
             windowClosesAt: werr.window.windowClosesAt,
@@ -1261,12 +1308,12 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       const employeeId = req.user?.employeeId || req.body.employeeId;
       try {
-        await assertHangTuanWindow(adapter, req.user!, req.body.leaveType);
+        await assertHangTuanWindow(adapter, req.user!, req.body.leaveType, new Date(), req.body.requestedDate || req.body.requested_date);
       } catch (werr: any) {
         if (werr.message === ERROR_CODES.WEEKLY_OFF_WINDOW_CLOSED) {
           return res.status(403).json({
             error: werr.message,
-            message: `Đăng ký 2 ngày nghỉ OFF chỉ mở từ 12h00 Thứ 6 đến 15h00 Thứ 7 hàng tuần (lần tới: ${werr.window.windowOpensAt}).`,
+            message: werr.reason || `Đăng ký 2 ngày nghỉ OFF chỉ mở từ 12h00 Thứ 6 đến 15h00 Thứ 7 hàng tuần (lần tới: ${werr.window.windowOpensAt}).`,
             code: werr.message,
             windowOpensAt: werr.window.windowOpensAt,
             windowClosesAt: werr.window.windowClosesAt,
