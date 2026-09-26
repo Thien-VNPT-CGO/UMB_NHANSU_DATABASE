@@ -481,15 +481,24 @@ export class GoogleSheetsSyncService {
             backfilled++;
           }
         }
+        counts.pinBackfilled = backfilled;
       } else if (fallback.accounts.length === 0) {
         fallback.accounts = [];
       }
 
-      // TỰ ĐỘNG ĐỐI CHIẾU: Nhân viên có trong NHAN_VIEN_MASTER nhưng chưa có trong TAI_KHOAN_NHAN_VIEN
+      // TỰ ĐỘNG ĐỐI CHIẾU: MỌI nhân viên có SĐT hợp lệ đều phải có tài khoản + PIN mặc định.
       // -> Tự động sinh tài khoản ACTIVE kèm mã PIN khởi tạo để nhân viên đăng nhập ngay bằng SĐT!
       const existingPhones = new Set(fallback.accounts.map(a => a.phone_normalized).filter(Boolean));
+      let autoCreated = 0;
+      const noPhoneSamples: string[] = [];
       for (const emp of fallback.employees) {
-        if (emp.phone_normalized && emp.phone_normalized.length >= 9 && !existingPhones.has(emp.phone_normalized)) {
+        if (emp.employment_status === 'TERMINATED') continue;
+        if (!emp.phone_normalized || emp.phone_normalized.length < 9) {
+          if (noPhoneSamples.length < 8) noPhoneSamples.push(`${emp.full_name} (${emp.employee_code})`);
+          continue;
+        }
+        if (!existingPhones.has(emp.phone_normalized)) {
+          if (autoCreated >= 30) continue; // giới hạn 30/pull để bcrypt không chặn server
           existingPhones.add(emp.phone_normalized);
           const autoPin = generateAutoPin();
           fallback.accounts.push({
@@ -507,9 +516,18 @@ export class GoogleSheetsSyncService {
             pin_must_change: true,
           });
           pinDirty = true;
+          autoCreated++;
         }
       }
+      if (autoCreated > 0) {
+        console.log(`[GoogleSheetsSyncService] Đã cấp PIN mặc định cho ${autoCreated} nhân viên có SĐT chưa có tài khoản.`);
+      }
+      if (noPhoneSamples.length > 0) {
+        console.warn(`[GoogleSheetsSyncService] ${noPhoneSamples.length}+ nhân viên THIẾU SĐT hợp lệ nên chưa cấp được PIN (mẫu: ${noPhoneSamples.join('; ')}). HR bổ sung SĐT trên Sheet!`);
+      }
       counts.accounts = fallback.accounts.length;
+      counts.accountsAutoCreated = autoCreated;
+      counts.employeesNoValidPhone = noPhoneSamples.length;
 
       // TỰ ĐỘNG THU HỒI TRUY CẬP khi nhân viên chuyển TERMINATED (trên Sheet):
       // tăng version tài khoản -> mọi token đang dùng hết hiệu lực ngay ở request kế tiếp.
