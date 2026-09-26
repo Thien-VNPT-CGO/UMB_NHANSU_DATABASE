@@ -57,4 +57,12 @@ export const testRecoveryBody = z.object({
   snapshot_id: z.string().trim().min(1).max(128),
 });
 
+// --- Gửi PIN khởi tạo qua Zalo cá nhân HR ---
+export const sendPinBody = z
+  .object({
+    accountIds: z.array(z.string().trim().min(1).max(64)).max(100).optional(),
+    allPending: z.boolean().optional(),
+  })
+  .passthrough();
+
 export { idParams };

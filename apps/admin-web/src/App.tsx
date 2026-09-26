@@ -383,6 +383,13 @@ export function App() {
   const [empBranchFilter, setEmpBranchFilter] = useState('ALL');
   const [accountSearch, setAccountSearch] = useState('');
 
+  // Gửi PIN khởi tạo qua Zalo (hàng loạt + từng dòng) + modal tiến trình
+  const [showPinModal, setShowPinModal] = useState(false);
+  const [pinSending, setPinSending] = useState(false);
+  const [pinResults, setPinResults] = useState<any[]>([]);
+  const [pinSummary, setPinSummary] = useState<{ sent: number; failed: number; total: number } | null>(null);
+  const [sendingSingleId, setSendingSingleId] = useState<string | null>(null);
+
   // Modals
   const [showNewAdminModal, setShowNewAdminModal] = useState(false);
   const [newAdminForm, setNewAdminForm] = useState({
@@ -469,6 +476,45 @@ export function App() {
       await loadAllData();
     } catch (err: any) {
       setErrorMsg(err.message);
+    }
+  };
+
+  // Gửi PIN khởi tạo qua Zalo cá nhân HR (bulk cho NV chưa đổi PIN hoặc 1 tài khoản).
+  // Lưu ý: activationDataList khai báo phía dưới nên chỉ truy cập trong handler (runtime), không tính ở đây.
+  const handleBulkSendPin = async (accountIds?: string[]) => {
+    const targets = accountIds && accountIds.length > 0
+      ? accountIds
+      : activationDataList.filter(i => i.pinMustChange && i.pinCode && i.hasRealAccount).map(i => i.accountId);
+    if (targets.length === 0) {
+      setErrorMsg('Không có nhân viên nào còn PIN khởi tạo chưa gửi!');
+      return;
+    }
+    if (targets.length === 1) setSendingSingleId(targets[0]);
+    setPinSending(true);
+    setShowPinModal(true);
+    setPinResults([]);
+    setPinSummary(null);
+    try {
+      const res = await apiRequest('/admin/employee-accounts/send-pin-zalo', {
+        method: 'POST',
+        body: JSON.stringify(accountIds && accountIds.length > 0 ? { accountIds: targets } : { allPending: true }),
+      });
+      setPinResults(res.results || []);
+      setPinSummary({ sent: res.sent || 0, failed: res.failed || 0, total: res.total || 0 });
+      if ((res.sent || 0) > 0) {
+        setSuccessMsg(`Đã gửi ${res.sent}/${res.total} mã PIN qua Zalo!${(res.failed || 0) > 0 ? ` ${res.failed} ca lỗi (xem chi tiết).` : ''}`);
+      } else {
+        setErrorMsg(res.message || 'Không gửi được ca nào — kiểm tra Zalo đã kết nối và kết bạn.');
+      }
+      await loadAllData();
+    } catch (err: any) {
+      setErrorMsg(err.message === 'ZALO_NOT_CONNECTED'
+        ? 'Zalo cá nhân HR chưa kết nối! Vào tab Zalo quét QR đăng nhập trước khi gửi PIN.'
+        : err.message);
+      setShowPinModal(true);
+    } finally {
+      setPinSending(false);
+      setSendingSingleId(null);
     }
   };
 
@@ -1136,6 +1182,7 @@ export function App() {
   const countOffice = activationDataList.filter(i => i.group === 'VAN_PHONG').length;
   const countFactory = activationDataList.filter(i => i.group === 'XUONG').length;
   const countSales = activationDataList.filter(i => i.group === 'SALE').length;
+  const pendingPinCount = activationDataList.filter(i => i.pinMustChange && i.pinCode && i.hasRealAccount).length;
 
   // Check if opened via QR scan from mobile phone for Zalo Auth Confirmation
   if (typeof window !== 'undefined') {
@@ -2399,6 +2446,21 @@ export function App() {
                 <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>
                   Mã PIN khởi tạo ở cột Mã PIN bên dưới — nhân viên dùng để đăng nhập lần đầu rồi đặt PIN riêng ngay.
                 </div>
+                <button
+                  onClick={() => handleBulkSendPin()}
+                  disabled={pinSending || pendingPinCount === 0}
+                  title={pendingPinCount === 0 ? 'Không còn PIN khởi tạo nào để gửi' : `Gửi PIN khởi tạo qua Zalo cho ${pendingPinCount} nhân viên chưa đổi PIN`}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '8px',
+                    padding: '10px 16px', borderRadius: 'var(--radius-sm)',
+                    backgroundColor: pinSending || pendingPinCount === 0 ? '#CBD5E1' : '#16A34A',
+                    color: '#FFF', fontSize: '13px', fontWeight: 800, border: 'none',
+                    cursor: pinSending || pendingPinCount === 0 ? 'not-allowed' : 'pointer',
+                    boxShadow: '0 4px 12px rgba(22,163,74,0.25)', whiteSpace: 'nowrap',
+                  }}
+                >
+                  📩 {pinSending ? 'Đang gửi...' : `Gửi PIN Zalo hàng loạt (${pendingPinCount})`}
+                </button>
                 <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>
                   Quy tắc chi nhánh: Văn phòng & Sales: <strong style={{ color: 'var(--brand)' }}>Trụ sở chính</strong> | Xưởng: <strong style={{ color: 'var(--brand)' }}>Củ Chi</strong>
                 </div>
@@ -2417,12 +2479,13 @@ export function App() {
                       <th style={{ padding: '12px 20px' }}>Giai Đoạn</th>
                       <th style={{ padding: '12px 20px' }}>Mã PIN</th>
                       <th style={{ padding: '12px 20px' }}>Trạng Thái PIN</th>
+                      <th style={{ padding: '12px 20px' }}>Gửi Zalo</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredActivationItems.length === 0 ? (
                       <tr>
-                        <td colSpan={8} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                        <td colSpan={9} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
                           Không có nhân sự nào trong tab này hoặc không khớp với tìm kiếm.
                         </td>
                       </tr>
@@ -2552,12 +2615,93 @@ export function App() {
                               </div>
                             )}
                           </td>
+                          <td style={{ padding: '14px 20px' }}>
+                            {item.pinMustChange && item.pinCode && item.hasRealAccount ? (
+                              <button
+                                onClick={() => handleBulkSendPin([item.accountId])}
+                                disabled={pinSending}
+                                title={`Gửi mã PIN ${item.pinCode} tới Zalo SĐT ${item.phone}`}
+                                style={{
+                                  padding: '6px 12px', borderRadius: 'var(--radius-sm)',
+                                  backgroundColor: sendingSingleId === item.accountId ? '#CBD5E1' : '#0EA5E9',
+                                  color: '#FFF', fontSize: '11px', fontWeight: 800, border: 'none',
+                                  cursor: pinSending ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap',
+                                }}
+                              >
+                                {sendingSingleId === item.accountId ? '⏳ Đang gửi...' : '📩 Gửi PIN'}
+                              </button>
+                            ) : (
+                              <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>—</span>
+                            )}
+                          </td>
                         </tr>
                       ))
                     )}
                   </tbody>
                 </table>
               </div>
+
+              {/* Modal tiến trình gửi PIN Zalo */}
+              {showPinModal && (
+                <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.45)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+                  <div style={{ backgroundColor: '#FFF', borderRadius: '12px', maxWidth: '640px', width: '100%', maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                    <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ fontWeight: 800, fontSize: '15px' }}>📩 Gửi mã PIN qua Zalo cá nhân HR</div>
+                      <button onClick={() => !pinSending && setShowPinModal(false)} disabled={pinSending} style={{ border: 'none', background: 'none', fontSize: '18px', cursor: pinSending ? 'not-allowed' : 'pointer' }}>✕</button>
+                    </div>
+                    <div style={{ padding: '16px 20px', overflowY: 'auto' }}>
+                      {pinSending && pinResults.length === 0 && (
+                        <div style={{ textAlign: 'center', padding: '24px 0', color: 'var(--text-muted)', fontSize: '13px' }}>
+                          <div style={{ fontSize: '28px', marginBottom: '8px' }}>⏳</div>
+                          Đang gửi tuần tự từng tin (nghỉ 0.8s/tin chống spam)... Vui lòng không đóng cửa sổ.
+                        </div>
+                      )}
+                      {pinSummary && (
+                        <div style={{ display: 'flex', gap: '10px', marginBottom: '12px', flexWrap: 'wrap' }}>
+                          <span style={{ padding: '6px 12px', borderRadius: '999px', backgroundColor: '#DCFCE7', color: '#166534', fontWeight: 800, fontSize: '12px' }}>✅ Thành công: {pinSummary.sent}</span>
+                          <span style={{ padding: '6px 12px', borderRadius: '999px', backgroundColor: '#FEE2E2', color: '#991B1B', fontWeight: 800, fontSize: '12px' }}>❌ Lỗi: {pinSummary.failed}</span>
+                          <span style={{ padding: '6px 12px', borderRadius: '999px', backgroundColor: '#F1F5F9', color: '#334155', fontWeight: 800, fontSize: '12px' }}>Tổng: {pinSummary.total}</span>
+                        </div>
+                      )}
+                      {pinResults.length > 0 && (
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                          <thead>
+                            <tr style={{ textAlign: 'left', color: 'var(--text-muted)' }}>
+                              <th style={{ padding: '6px' }}>Nhân viên</th>
+                              <th style={{ padding: '6px' }}>SĐT</th>
+                              <th style={{ padding: '6px' }}>Kết quả</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {pinResults.map((r: any) => (
+                              <tr key={r.accountId} style={{ borderTop: '1px solid var(--border)' }}>
+                                <td style={{ padding: '6px', fontWeight: 700 }}>{r.name}</td>
+                                <td style={{ padding: '6px', fontFamily: 'monospace' }}>{r.phone}</td>
+                                <td style={{ padding: '6px' }}>
+                                  {r.status === 'SENT' ? <span style={{ color: '#16A34A', fontWeight: 700 }}>✅ Đã gửi</span>
+                                    : r.status === 'NOT_FRIEND' ? <span style={{ color: '#D97706', fontWeight: 700 }}>⚠️ Chưa kết bạn — {r.detail}</span>
+                                    : r.status === 'NOT_FOUND' ? <span style={{ color: '#DC2626', fontWeight: 700 }}>❌ {r.detail}</span>
+                                    : <span style={{ color: '#DC2626', fontWeight: 700 }}>❌ {r.detail || r.status}</span>}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                      {pinSummary && pinSummary.failed > 0 && (
+                        <div style={{ marginTop: '12px', fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                          💡 Ca lỗi thường do chưa kết bạn Zalo: vào tab Zalo → tìm SĐT → Kết bạn → bấm Gửi lại từng dòng.
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ padding: '12px 20px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end' }}>
+                      <button onClick={() => setShowPinModal(false)} disabled={pinSending} style={{ padding: '8px 18px', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--brand)', color: '#FFF', fontWeight: 700, border: 'none', cursor: pinSending ? 'not-allowed' : 'pointer' }}>
+                        {pinSending ? 'Đang gửi...' : 'Đóng'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

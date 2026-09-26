@@ -81,6 +81,7 @@ import {
   internalAccountCreateBody,
   internalAccountUpdateBody,
   opaqueConfigBody,
+  sendPinBody,
   testRecoveryBody,
 } from './validators/admin.validator.js';
 import {
@@ -340,6 +341,93 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   // --- ACCOUNTS: SĐT + mã PIN tự động (hệ thống tự sinh PIN khởi tạo cho từng tài khoản,
   // nhân viên đăng nhập lần đầu rồi đặt PIN riêng ngay — không còn HR cấp tay) ---
+
+  // Gửi mã PIN khởi tạo qua Zalo cá nhân HR (đơn lẻ hoặc hàng loạt cho NV chưa đổi PIN).
+  // Yêu cầu Zalo đã kết nối (QR login trước). Gửi tuần tự + nghỉ 800ms để chống spam/khóa.
+  app.post('/admin/employee-accounts/send-pin-zalo', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ body: sendPinBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      if (!zaloService.isConnected()) {
+        return res.status(400).json({
+          error: 'ZALO_NOT_CONNECTED',
+          message: 'Zalo cá nhân HR chưa kết nối! Vào tab Zalo quét QR đăng nhập trước khi gửi PIN.',
+        });
+      }
+      const { accountIds, allPending } = req.body || {};
+      let accounts = await adapter.listAccounts();
+      // Chỉ gửi cho tài khoản còn PIN khởi tạo chưa đổi (có pin_code để gửi).
+      if (Array.isArray(accountIds) && accountIds.length > 0) {
+        const set = new Set(accountIds);
+        accounts = accounts.filter(a => set.has(a.account_id));
+      } else if (allPending) {
+        accounts = accounts.filter(a => a.pin_must_change === true && (a as any).pin_code);
+      } else {
+        accounts = accounts.filter(a => a.pin_must_change === true && (a as any).pin_code);
+      }
+      if (accounts.length === 0) {
+        return res.json({ success: true, total: 0, sent: 0, failed: 0, results: [], message: 'Không có tài khoản nào còn PIN khởi tạo để gửi.' });
+      }
+      if (accounts.length > 100) accounts = accounts.slice(0, 100);
+
+      const results: any[] = [];
+      let sent = 0;
+      for (const acc of accounts) {
+        const pin = (acc as any).pin_code;
+        const phone = acc.phone_normalized || '';
+        let empName = acc.employee_id;
+        try {
+          const emp = await employeesService.getEmployee(acc.employee_id).catch(() => null);
+          if (emp?.full_name) empName = emp.full_name;
+        } catch { /* giữ fallback */ }
+        if (!pin) {
+          results.push({ accountId: acc.account_id, phone, name: empName, status: 'NO_PIN', detail: 'NV đã đổi PIN riêng — không còn mã khởi tạo để gửi.' });
+          continue;
+        }
+        if (!phone) {
+          results.push({ accountId: acc.account_id, phone, name: empName, status: 'NO_PHONE', detail: 'Thiếu SĐT.' });
+          continue;
+        }
+        try {
+          const found = await zaloService.findUserByPhone(phone);
+          const text = zaloService.buildPinText({ employeeName: empName, pin });
+          try {
+            const sentRes = await zaloService.sendText(found.uid, text);
+            sent++;
+            results.push({ accountId: acc.account_id, phone, name: empName, status: 'SENT', detail: `Đã gửi tới UID ${found.uid}`, msgId: sentRes.msgId });
+            await adapter.recordAuditLog({
+              actor_id: req.user!.id,
+              action: 'ZALO_PIN_SENT',
+              target_type: 'TAI_KHOAN_NHAN_VIEN',
+              target_id: acc.account_id,
+            } as any).catch(() => null);
+          } catch (e: any) {
+            results.push({ accountId: acc.account_id, phone, name: empName, status: 'NOT_FRIEND', detail: 'Chưa kết bạn Zalo — bấm Kết bạn rồi gửi lại.', uid: found.uid });
+          }
+        } catch (e: any) {
+          const msg = e?.message || '';
+          results.push({
+            accountId: acc.account_id, phone, name: empName,
+            status: msg.includes('ZALO_USER_NOT_FOUND') ? 'NOT_FOUND' : 'ERROR',
+            detail: msg.includes('ZALO_USER_NOT_FOUND') ? 'SĐT chưa đăng ký Zalo hoặc chặn tìm kiếm.' : msg,
+          });
+        }
+        // Nghỉ giữa các tin để Zalo không đánh dấu spam.
+        await new Promise(r => setTimeout(r, 800));
+      }
+      const failed = results.length - sent;
+      broadcastUpdate('accounts', { action: 'send-pin-zalo', sent, failed });
+      broadcastNotification({
+        type: 'PIN_SENT',
+        title: `📩 Đã gửi ${sent}/${results.length} mã PIN qua Zalo`,
+        message: sent > 0 ? `Đã bắn PIN khởi tạo tới ${sent} nhân viên. ${failed > 0 ? `${failed} ca lỗi (chưa kết bạn/chưa có Zalo).` : 'Tất cả thành công!'}` : 'Không gửi được ca nào — kiểm tra kết bạn Zalo.',
+        linkTab: 'activation',
+        metadata: { sent, failed },
+        targetRoles: ['ADMIN', 'HR'],
+      });
+      res.json({ success: true, total: results.length, sent, failed, results });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 
   // --- EMPLOYEES & RECRUITMENT ---
   app.get(
