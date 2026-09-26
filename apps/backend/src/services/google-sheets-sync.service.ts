@@ -351,7 +351,12 @@ export class GoogleSheetsSyncService {
         if (mappedEmps.length > 0 && fallback.employees.length > 5 && mappedEmps.length * 2 < fallback.employees.length) {
           console.warn(`[GoogleSheetsSyncService] NHAN_VIEN_MASTER đọc thiếu (${mappedEmps.length}/${fallback.employees.length}) — giữ bộ nhớ.`);
         } else {
-          fallback.employees = mappedEmps as any;
+          // Chống phình trùng: cùng employee_id/SĐT chỉ giữ 1 (bản cuối = mới nhất).
+          const deduped = GoogleSheetsSyncService.dedupeBy(mappedEmps, e => (e as any).employee_id || (e as any).phone_normalized);
+          if (deduped.length !== mappedEmps.length) {
+            console.warn(`[GoogleSheetsSyncService] NHAN_VIEN_MASTER loại ${mappedEmps.length - deduped.length} dòng trùng.`);
+          }
+          fallback.employees = deduped as any;
         }
       } else if (fallback.employees.length === 0) {
         fallback.employees = [];
@@ -388,17 +393,33 @@ export class GoogleSheetsSyncService {
           console.warn(`[GoogleSheetsSyncService] TAI_KHOAN_NHAN_VIEN đọc thiếu (${mappedAccs.length}/${fallback.accounts.length}) — giữ bộ nhớ.`);
           counts.accounts = fallback.accounts.length;
         } else {
-          fallback.accounts = mappedAccs as any;
+          // Chống phình trùng: cùng account_id chỉ giữ 1; cùng (employee_id+SĐT) ưu tiên bản CÓ pin_hash.
+          const byId = GoogleSheetsSyncService.dedupeBy(mappedAccs, a => (a as any).account_id);
+          const byOwner = new Map<string, any>();
+          for (const a of byId) {
+            const k = `${(a as any).employee_id}|${(a as any).phone_normalized}`;
+            const cur = byOwner.get(k);
+            if (!cur || (!(cur as any).pin_hash && (a as any).pin_hash)) byOwner.set(k, a);
+          }
+          const deduped = [...byOwner.values()];
+          if (deduped.length !== mappedAccs.length) {
+            console.warn(`[GoogleSheetsSyncService] TAI_KHOAN_NHAN_VIEN loại ${mappedAccs.length - deduped.length} dòng trùng.`);
+          }
+          fallback.accounts = deduped as any;
         }
-        // Backfill: tài khoản cũ chưa có PIN -> tự sinh ngay.
+        // Backfill: tài khoản cũ chưa có PIN -> tự sinh ngay (giới hạn 20/pull
+        // để bcrypt không chặn event-loop hàng chục giây khi dữ liệu phình).
+        let backfilled = 0;
         for (const acc of fallback.accounts) {
           if (!acc.pin_hash) {
+            if (backfilled >= 20) break;
             const autoPin = generateAutoPin();
             acc.pin_hash = await hashPin(autoPin);
             acc.pin_code = autoPin;
             acc.pin_must_change = true;
             acc.updated_at = new Date().toISOString();
             pinDirty = true;
+            backfilled++;
           }
         }
       } else if (fallback.accounts.length === 0) {
@@ -481,6 +502,10 @@ export class GoogleSheetsSyncService {
         }
       }
 
+      // Các tab phụ (3-12): tab nào lỗi thì giữ dữ liệu cũ của tab đó, các tab
+      // còn lại vẫn cập nhật — 1 tab hỏng không được giết cả lần pull.
+      let partialError: string | null = null;
+      try {
       // 3. Đọc DANH_SACH_CHI_NHANH
       const branchRows = batch['DANH_SACH_CHI_NHANH'];
       if (branchRows.length > 0) {
@@ -924,12 +949,19 @@ export class GoogleSheetsSyncService {
         counts.candidates = fallback.candidates ? fallback.candidates.length : 0;
       }
 
+      } catch (tabErr: any) {
+        partialError = tabErr?.message || String(tabErr);
+        console.error('[GoogleSheetsSyncService] Tab phụ pull lỗi (tab chính NV/tài khoản vẫn giữ):', partialError);
+      }
+
       this.lastPulledAt = Date.now();
       console.log('[GoogleSheetsSyncService] Đã tải dữ liệu thực tế từ Google Sheets thành công:', counts);
 
       return {
-        success: true,
-        message: 'Đã tải và cập nhật toàn bộ dữ liệu thật từ Google Sheets thành công!',
+        success: !partialError,
+        message: partialError
+          ? `Pull một phần (tab chính OK, tab phụ lỗi: ${partialError})`
+          : 'Đã tải và cập nhật toàn bộ dữ liệu thật từ Google Sheets thành công!',
         counts,
       };
     } catch (err: any) {
@@ -1278,6 +1310,16 @@ export class GoogleSheetsSyncService {
     } catch (e) {
       // Bỏ qua nếu range trống
     }
+  }
+
+  /** Loại dòng trùng khi đọc Sheet (append/ghi đè chồng tạo dup): giữ bản CUỐI (mới nhất). */
+  private static dedupeBy<T>(rows: T[], key: (r: T) => string): T[] {
+    const map = new Map<string, T>();
+    for (const r of rows) {
+      const k = key(r);
+      if (k) map.set(k, r);
+    }
+    return [...map.values()];
   }
 
   /** Ép Sheets giữ nguyên text (SĐT 033.../PIN 0428): USER_ENTERED hay nuốt số 0 đầu. */

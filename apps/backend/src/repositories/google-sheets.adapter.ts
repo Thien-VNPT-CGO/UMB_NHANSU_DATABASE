@@ -132,6 +132,30 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     return { pendingWrites: this.pendingSheetsWrites, lastSheetsWriteAt: this.lastSheetsWriteAt };
   }
 
+  // Dồn full-sync: ghi 1 dòng (append) chạy ngay; ghi nguyên 13 tab (nặng, tốn quota)
+  // thì dồn tối đa 1 lần/10s — memory + socket đã tức thì cho UI, Sheet đuổi theo sau.
+  private lastFullSyncAt = 0;
+
+  private scheduleFullSync(label: string) {
+    if (!this.isConfigured) return;
+    this.pendingSheetsWrites++;
+    const run = async () => {
+      const wait = Math.max(0, 10000 - (Date.now() - this.lastFullSyncAt));
+      if (wait > 0) await new Promise(r => setTimeout(r, wait));
+      await this.syncService.syncAllData(this.fallbackAdapter);
+      this.lastFullSyncAt = Date.now();
+    };
+    this.bgWriteChain = this.bgWriteChain
+      .then(run)
+      .then(() => {
+        this.lastSheetsWriteAt = new Date().toISOString();
+      })
+      .catch(err => console.warn(`[GoogleSheetsAdapter] Full-sync nền '${label}' thất bại:`, (err as any)?.message || err))
+      .finally(() => {
+        this.pendingSheetsWrites = Math.max(0, this.pendingSheetsWrites - 1);
+      });
+  }
+
   // Trả dữ liệu trong bộ nhớ NGAY LẬP TỨC, pull Sheets chạy nền.
   // Chỉ đứng đợi khi kho còn rỗng hoàn toàn (lần đầu khởi động) — có timeout chống treo.
   private needsSeed(): boolean {
@@ -247,7 +271,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async setAccountPin(id: string, pinHash: string, mustChange: boolean, actorId: string, pinPlain?: string | null) {
     const updated = await this.fallbackAdapter.setAccountPin(id, pinHash, mustChange, actorId, pinPlain);
-    this.scheduleSheetsWrite(() => this.syncService.syncAllData(this.fallbackAdapter), 'PIN.syncAll');
+    this.scheduleFullSync('PIN.syncAll');
     return updated;
   }
 
@@ -299,14 +323,14 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   async deleteEmployee(id: string) {
     const ok = await this.fallbackAdapter.deleteEmployee(id);
     if (ok) {
-      this.scheduleSheetsWrite(() => this.syncService.syncAllData(this.fallbackAdapter), 'NHAN_VIEN_MASTER.delete');
+      this.scheduleFullSync('NHAN_VIEN_MASTER.delete');
     }
     return ok;
   }
 
   async updateEmployee(id: string, updates: any, expectedVersion: number) {
     const res = await this.fallbackAdapter.updateEmployee(id, updates, expectedVersion);
-    this.scheduleSheetsWrite(() => this.syncService.syncAllData(this.fallbackAdapter), 'NHAN_VIEN_MASTER.update');
+    this.scheduleFullSync('NHAN_VIEN_MASTER.update');
     return res;
   }
 
@@ -399,7 +423,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async updateLeaveRequest(id: string, status: any, reviewerId: string, note?: string) {
     const res = await this.fallbackAdapter.updateLeaveRequest(id, status, reviewerId, note);
-    this.scheduleSheetsWrite(() => this.syncService.syncAllData(this.fallbackAdapter), 'DON_NGHI_PHEP.update');
+    this.scheduleFullSync('DON_NGHI_PHEP.update');
     return res;
   }
 
@@ -433,7 +457,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async updateSwapRequest(id: string, updates: any) {
     const res = await this.fallbackAdapter.updateSwapRequest(id, updates);
-    this.scheduleSheetsWrite(() => this.syncService.syncAllData(this.fallbackAdapter), 'DON_DOI_CA.update');
+    this.scheduleFullSync('DON_DOI_CA.update');
     return res;
   }
 
@@ -505,14 +529,14 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async updateAttendanceAdjustment(id: string, status: any, approverId: string, minutesApproved?: number, note?: string) {
     const res = await this.fallbackAdapter.updateAttendanceAdjustment(id, status, approverId, minutesApproved, note);
-    this.scheduleSheetsWrite(() => this.syncService.syncAllData(this.fallbackAdapter), 'DIEU_CHINH_CONG.update');
+    this.scheduleFullSync('DIEU_CHINH_CONG.update');
     return res;
   }
 
   // --- Payroll ---
   async createPayrollRun(run: any, items: any) {
     const res = await this.fallbackAdapter.createPayrollRun(run, items);
-    this.scheduleSheetsWrite(() => this.syncService.syncAllData(this.fallbackAdapter), 'KY_LUONG.create');
+    this.scheduleFullSync('KY_LUONG.create');
     return res;
   }
 
@@ -527,7 +551,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async updatePayrollRunStatus(runId: string, status: any, actorId: string, updates?: any) {
     const res = await this.fallbackAdapter.updatePayrollRunStatus(runId, status, actorId, updates);
-    this.scheduleSheetsWrite(() => this.syncService.syncAllData(this.fallbackAdapter), 'KY_LUONG.update');
+    this.scheduleFullSync('KY_LUONG.update');
     return res;
   }
 
@@ -627,14 +651,14 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async updateAdminAccount(id: string, updates: any) {
     const res = await this.fallbackAdapter.updateAdminAccount(id, updates);
-    this.scheduleSheetsWrite(() => this.syncService.syncAllData(this.fallbackAdapter), 'ADMIN_ACCOUNTS.update');
+    this.scheduleFullSync('ADMIN_ACCOUNTS.update');
     return res;
   }
 
   async deleteAdminAccount(id: string) {
     const ok = await this.fallbackAdapter.deleteAdminAccount(id);
     if (ok) {
-      this.scheduleSheetsWrite(() => this.syncService.syncAllData(this.fallbackAdapter), 'ADMIN_ACCOUNTS.delete');
+      this.scheduleFullSync('ADMIN_ACCOUNTS.delete');
     }
     return ok;
   }
@@ -646,7 +670,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async updateBranch(id: string, updates: any) {
     const res = await this.fallbackAdapter.updateBranch(id, updates);
-    this.scheduleSheetsWrite(() => this.syncService.syncAllData(this.fallbackAdapter), 'BRANCH.update');
+    this.scheduleFullSync('BRANCH.update');
     return res;
   }
 
