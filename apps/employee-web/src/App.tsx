@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { io, Socket } from 'socket.io-client';
 import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl } from './services/api';
 import {
   Home,
@@ -395,6 +396,53 @@ export function App() {
     localStorage.removeItem('ubm_emp_token');
     localStorage.removeItem('ubm_emp_active_tab');
   };
+
+  // Refs chống stale-closure cho socket realtime (đặt sau loadEmployeeData).
+  const loadEmployeeDataRef = useRef(loadEmployeeData);
+  loadEmployeeDataRef.current = loadEmployeeData;
+  const showToastRef = useRef(showToast);
+  showToastRef.current = showToast;
+  const empIdRef = useRef<string | undefined>(undefined);
+  empIdRef.current = employee?.employee_id;
+
+  // Realtime Socket.IO: lịch/HR đổi gì là app NV cập nhật tức thì (debounce 1s).
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    const token = getAuthToken();
+    if (!token) return;
+    let socket: Socket | null = null;
+    let timer: any = null;
+    let reloading = false;
+    let queued = false;
+    const reload = () => {
+      if (reloading) { queued = true; return; }
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(async () => {
+        timer = null;
+        reloading = true;
+        try {
+          await loadEmployeeDataRef.current(empIdRef.current);
+        } catch { /* lần sau */ } finally {
+          reloading = false;
+          if (queued) { queued = false; reload(); }
+        }
+      }, 1000);
+    };
+    try {
+      socket = io(getApiBase(), { auth: { token }, transports: ['websocket', 'polling'] });
+      socket.on('connect', reload);
+      socket.on('data:updated', reload);
+      socket.on('notification.created', reload);
+      socket.on('system:notification', (n: any) => {
+        if (n?.message || n?.title) showToastRef.current(`🔔 ${n.title || ''}${n.title && n.message ? ': ' : ''}${n.message || ''}`.trim());
+        reload();
+      });
+    } catch { /* offline — lần mở sau thử lại */ }
+    return () => {
+      if (timer) clearTimeout(timer);
+      if (socket) socket.disconnect();
+    };
+  }, [isLoggedIn]);
 
   // Guard: Mandatory 2-day OFF registration locks other tabs for official employees
   // Ưu tiên trạng thái khóa từ server; khi offline mới dùng cờ localStorage cũ.
