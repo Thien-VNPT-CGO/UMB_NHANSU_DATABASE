@@ -108,6 +108,44 @@ export class GoogleSheetsSyncService {
   private isConfigured = false;
   private authError: string | null = null;
   private lastPulledAt: number = 0;
+  private lastWriteError: string | null = null;
+  private lastWriteAt: number = 0;
+  private initOkAt = 0;
+  private lastInitResult: { success: boolean; createdSheets: string[]; existingSheets: string[]; message: string } | null = null;
+
+  /** Bọc mọi gọi Google API bằng timeout: 1 request treo không được kẹt cả hàng đợi. */
+  private async sheetsCall<T>(label: string, fn: () => Promise<T>, ms = 20000): Promise<T> {
+    let timer: any = null;
+    try {
+      return await Promise.race([
+        fn(),
+        new Promise<T>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`SHEETS_TIMEOUT:${label} (${ms}ms)`)), ms);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  /** Lỗi ghi gần nhất cho /health chẩn đoán (vì sao Sheet không có dữ liệu mới). */
+  public getWriteStatus() {
+    return {
+      lastWriteError: this.lastWriteError,
+      lastWriteAt: this.lastWriteAt ? new Date(this.lastWriteAt).toISOString() : null,
+    };
+  }
+
+  private markWriteOk() {
+    this.lastWriteError = null;
+    this.lastWriteAt = Date.now();
+  }
+
+  private markWriteFail(where: string, err: any) {
+    const msg = `${where}: ${err?.message || err}`;
+    this.lastWriteError = msg;
+    console.warn(`[GoogleSheetsSyncService] ${msg}`);
+  }
 
   constructor() {
     this.spreadsheetId = process.env.SPREADSHEET_ID || process.env.GOOGLE_SPREADSHEET_ID || '17iXM0zc1m17aX9AZrFMjOkPRMy2_CwWfjTRZSUPQF2w';
@@ -173,6 +211,7 @@ export class GoogleSheetsSyncService {
       driveFolderId: this.driveFolderId,
       authError: this.authError,
       lastPulledAt: this.lastPulledAt ? new Date(this.lastPulledAt).toISOString() : null,
+      ...this.getWriteStatus(),
       sheetsCount: SHEETS_DEFINITIONS.length,
       definedTabs: SHEETS_DEFINITIONS.map(d => d.title),
     };
@@ -191,10 +230,17 @@ export class GoogleSheetsSyncService {
       };
     }
 
+    // Cache 10 phút: header hầu như không đổi, khỏi tốn 14 API call mỗi lần full-sync.
+    if (this.lastInitResult && Date.now() - this.initOkAt < 600000) {
+      return { ...this.lastInitResult, createdSheets: [...this.lastInitResult.createdSheets], existingSheets: [...this.lastInitResult.existingSheets] };
+    }
+
     try {
-      const res = await this.sheetsClient.spreadsheets.get({
-        spreadsheetId: this.spreadsheetId,
-      });
+      const res = await this.sheetsCall('init.get', () =>
+        this.sheetsClient!.spreadsheets.get({
+          spreadsheetId: this.spreadsheetId,
+        })
+      );
 
       const existingSheets = res.data.sheets?.map(s => s.properties?.title || '').filter(Boolean) || [];
       const sheetsToCreate = SHEETS_DEFINITIONS.filter(def => !existingSheets.includes(def.title));
@@ -213,27 +259,38 @@ export class GoogleSheetsSyncService {
           },
         }));
 
-        await this.sheetsClient.spreadsheets.batchUpdate({
-          spreadsheetId: this.spreadsheetId,
-          requestBody: { requests },
-        });
+        await this.sheetsCall('init.batchUpdate', () =>
+          this.sheetsClient!.spreadsheets.batchUpdate({
+            spreadsheetId: this.spreadsheetId,
+            requestBody: { requests },
+          })
+        );
 
         createdSheets.push(...sheetsToCreate.map(s => s.title));
       }
 
       for (const def of SHEETS_DEFINITIONS) {
-        await this.sheetsClient.spreadsheets.values.update({
-          spreadsheetId: this.spreadsheetId,
-          range: `'${def.title}'!A1:Z1`,
-          valueInputOption: 'USER_ENTERED',
-          requestBody: {
-            values: [def.headers],
-          },
-        });
+        await this.sheetsCall(`init.header.${def.title}`, () =>
+          this.sheetsClient!.spreadsheets.values.update({
+            spreadsheetId: this.spreadsheetId,
+            range: `'${def.title}'!A1:Z1`,
+            valueInputOption: 'USER_ENTERED',
+            requestBody: {
+              values: [def.headers],
+            },
+          })
+        );
       }
 
       console.log(`[GoogleSheetsSyncService] Đã tạo ${createdSheets.length} sheet mới. Toàn bộ 13 tab sẵn sàng.`);
 
+      this.initOkAt = Date.now();
+      this.lastInitResult = {
+        success: true,
+        createdSheets,
+        existingSheets,
+        message: `Đã khởi tạo thành công cấu trúc 13 sheet tabs trên Google Sheets!`,
+      };
       return {
         success: true,
         createdSheets,
@@ -976,10 +1033,12 @@ export class GoogleSheetsSyncService {
   public async readSheetRows(sheetTitle: string): Promise<string[][]> {
     if (!this.sheetsClient) return [];
     try {
-      const res = await this.sheetsClient.spreadsheets.values.get({
-        spreadsheetId: this.spreadsheetId,
-        range: `'${sheetTitle}'!A2:Z`,
-      });
+      const res = await this.sheetsCall(`read.${sheetTitle}`, () =>
+        this.sheetsClient!.spreadsheets.values.get({
+          spreadsheetId: this.spreadsheetId,
+          range: `'${sheetTitle}'!A2:Z`,
+        })
+      );
       return (res.data.values as string[][]) || [];
     } catch (e) {
       return [];
@@ -995,10 +1054,12 @@ export class GoogleSheetsSyncService {
     for (const t of sheetTitles) out[t] = [];
     if (!this.sheetsClient || sheetTitles.length === 0) return out;
     try {
-      const res = await this.sheetsClient.spreadsheets.values.batchGet({
-        spreadsheetId: this.spreadsheetId,
-        ranges: sheetTitles.map(t => `'${t}'!A2:Z`),
-      });
+      const res = await this.sheetsCall('read.batchGet', () =>
+        this.sheetsClient!.spreadsheets.values.batchGet({
+          spreadsheetId: this.spreadsheetId,
+          ranges: sheetTitles.map(t => `'${t}'!A2:Z`),
+        })
+      );
       const groups = res.data.valueRanges || [];
       for (let i = 0; i < sheetTitles.length; i++) {
         out[sheetTitles[i]] = (groups[i]?.values as string[][]) || [];
@@ -1259,17 +1320,22 @@ export class GoogleSheetsSyncService {
       const buffer = Buffer.from(cleanBase64, 'base64');
       const stream = Readable.from(buffer);
 
-      const res = await this.driveClient.files.create({
-        requestBody: {
-          name: fileName,
-          parents: this.driveFolderId ? [this.driveFolderId] : undefined,
-        },
-        media: {
-          mimeType,
-          body: stream,
-        },
-        fields: 'id, webViewLink, webContentLink',
-      });
+      const res = await this.sheetsCall(
+        'drive.upload',
+        () =>
+          this.driveClient!.files.create({
+            requestBody: {
+              name: fileName,
+              parents: this.driveFolderId ? [this.driveFolderId] : undefined,
+            },
+            media: {
+              mimeType,
+              body: stream,
+            },
+            fields: 'id, webViewLink, webContentLink',
+          }),
+        45000
+      );
 
       console.log(`[GoogleSheetsSyncService] Đã upload ảnh lên Google Drive thành công: ID = ${res.data.id}`);
 
@@ -1292,21 +1358,31 @@ export class GoogleSheetsSyncService {
     // Ghi đè AN TOÀN: ghi dữ liệu mới TRƯỚC (A1...), rồi mới xóa phần đuôi thừa.
     // (Bản cũ xóa trước-ghi sau: crash/quota ở giữa = mất trắng tab.)
     const allValues = [headers, ...rows];
-    await this.sheetsClient.spreadsheets.values.update({
-      spreadsheetId: this.spreadsheetId,
-      range: `'${sheetTitle}'!A1`,
-      valueInputOption: 'USER_ENTERED',
-      requestBody: {
-        values: allValues,
-      },
-    });
+    try {
+      await this.sheetsCall(`write.${sheetTitle}`, () =>
+        this.sheetsClient!.spreadsheets.values.update({
+          spreadsheetId: this.spreadsheetId,
+          range: `'${sheetTitle}'!A1`,
+          valueInputOption: 'USER_ENTERED',
+          requestBody: {
+            values: allValues,
+          },
+        })
+      );
+      this.markWriteOk();
+    } catch (e) {
+      this.markWriteFail(`overwrite ${sheetTitle}`, e);
+      throw e;
+    }
 
     // Xóa đuôi thừa khi dữ liệu mới ngắn hơn cũ (tránh dòng ma).
     try {
-      await this.sheetsClient.spreadsheets.values.clear({
-        spreadsheetId: this.spreadsheetId,
-        range: `'${sheetTitle}'!A${allValues.length + 1}:Z`,
-      });
+      await this.sheetsCall(`clear.${sheetTitle}`, () =>
+        this.sheetsClient!.spreadsheets.values.clear({
+          spreadsheetId: this.spreadsheetId,
+          range: `'${sheetTitle}'!A${allValues.length + 1}:Z`,
+        })
+      );
     } catch (e) {
       // Bỏ qua nếu range trống
     }
@@ -1336,16 +1412,20 @@ export class GoogleSheetsSyncService {
     if (!this.isConfigured || !this.sheetsClient) return false;
 
     try {
-      await this.sheetsClient.spreadsheets.values.append({
-        spreadsheetId: this.spreadsheetId,
-        range: `'${sheetTitle}'!A:A`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: {
-          values: [row],
-        },
-      });
+      await this.sheetsCall(`append.${sheetTitle}`, () =>
+        this.sheetsClient!.spreadsheets.values.append({
+          spreadsheetId: this.spreadsheetId,
+          range: `'${sheetTitle}'!A:A`,
+          valueInputOption: 'USER_ENTERED',
+          requestBody: {
+            values: [row],
+          },
+        })
+      );
+      this.markWriteOk();
       return true;
     } catch (err) {
+      this.markWriteFail(`append ${sheetTitle}`, err);
       console.error(`[GoogleSheetsSyncService] Lỗi append row vào ${sheetTitle}:`, err);
       return false;
     }
