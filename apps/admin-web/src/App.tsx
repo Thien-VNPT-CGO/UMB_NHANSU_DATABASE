@@ -932,10 +932,17 @@ export function App() {
   })();
   const handleManualOpen = async () => {
     const mins = Math.min(Math.max(manualMinutes || 30, 1), 120);
-    if (!window.confirm(`Mở bù cổng đăng ký 2 ngày OFF ${mins} phút cho tuần ${manualOff?.manual?.targetWeekMon || 'sau'}?\nNV chưa đăng ký sẽ nhận thông báo và đăng ký ngay. Hết giờ tự đóng.`)) return;
+    const st = manualOff?.stats;
+    const confirmMsg = st
+      ? `Mở bù cổng đăng ký 2 ngày OFF ${mins} phút cho tuần ${st.targetWeekMon} → ${st.targetWeekSun}?\n${st.registeredCount}/${st.totalOfficial} bạn ĐÃ đăng ký (được miễn, không cần đăng ký lại).\nChỉ ${st.unregisteredCount} bạn CHƯA đăng ký phải đăng ký bù. Hết giờ tự đóng.`
+      : `Mở bù cổng đăng ký 2 ngày OFF ${mins} phút cho tuần ${manualOff?.manual?.targetWeekMon || 'sau'}?\nBạn nào đã đăng ký rồi được miễn — chỉ NV chưa đăng ký mới phải đăng ký. Hết giờ tự đóng.`;
+    if (!window.confirm(confirmMsg)) return;
     try {
-      await apiRequest('/admin/weekly-off/open', { method: 'POST', body: JSON.stringify({ minutes: mins }) });
-      setSuccessMsg(`Đã mở bù cổng đăng ký ${mins} phút!`);
+      const res = await apiRequest('/admin/weekly-off/open', { method: 'POST', body: JSON.stringify({ minutes: mins }) });
+      const rst = res?.stats;
+      setSuccessMsg(rst
+        ? `Đã mở bù ${mins} phút cho tuần ${rst.targetWeekMon} → ${rst.targetWeekSun}: ${rst.registeredCount}/${rst.totalOfficial} đã đăng ký (miễn), ${rst.unregisteredCount} chưa đăng ký cần bù!`
+        : `Đã mở bù cổng đăng ký ${mins} phút!`);
       await fetchManualOff();
       await loadAllData();
     } catch (err: any) {
@@ -2190,6 +2197,16 @@ export function App() {
                       ? <>Đang mở cho tuần <strong>{manualOff.manual.targetWeekMon} → {manualOff.manual.targetWeekSun}</strong> • Tự đóng sau <strong style={{ color: '#059669', fontSize: '14px' }}>{manualRemaining}</strong></>
                       : 'Khi hết khung T6–T7, Admin mở bù để NV đăng ký (mặc định 30 phút, tự đóng).'}
                   </div>
+                  {manualOff?.stats && (
+                    <div style={{ fontSize: '12px', color: 'var(--text)', marginTop: '6px', backgroundColor: 'var(--bg)', borderRadius: '6px', padding: '8px 10px' }}>
+                      <strong>{manualOff.stats.registeredCount}/{manualOff.stats.totalOfficial}</strong> đã đăng ký (được miễn) • <strong style={{ color: '#DC2626' }}>{manualOff.stats.unregisteredCount} chưa đăng ký</strong>
+                      {(manualOff.stats.unregistered || []).length > 0 && (
+                        <div style={{ marginTop: '4px', color: 'var(--text-muted)' }}>
+                          Cần đăng ký bù: {(manualOff.stats.unregistered || []).slice(0, 8).map((u: any) => u.full_name).join(', ')}{(manualOff.stats.unregistered || []).length > 8 ? ` +${(manualOff.stats.unregistered || []).length - 8} bạn` : ''}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
                 {manualOff?.active ? (
                   <button onClick={handleManualClose} style={{ padding: '9px 18px', borderRadius: 'var(--radius-sm)', backgroundColor: '#DC2626', color: '#FFF', fontSize: '13px', fontWeight: 800, border: 'none', cursor: 'pointer' }}>

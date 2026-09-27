@@ -12,6 +12,7 @@ import {
   getEffectiveWindow,
   getManualStatus,
   getWeeklyOffCompletion,
+  getWeeklyOffStats,
   getWeeklyOffWindow,
   openManualRegistration,
 } from './services/weekly-off.service.js';
@@ -264,20 +265,25 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // VIP: Admin mở bù cổng đăng ký OFF (mặc định 30 phút, tự đóng khi hết hạn).
+  // Chỉ những bạn CHƯA đăng ký tuần này mới phải đăng ký bù; bạn đã đăng ký rồi được miễn.
   app.post('/admin/weekly-off/open', authMiddleware, requireRole(['ADMIN']), async (req: AuthenticatedRequest, res) => {
     try {
       const minutes = Number(req.body?.minutes) || 30;
       const window = await openManualRegistration(adapter, req.user!.id, minutes);
-      broadcastUpdate('weekly-off', { action: 'manual-open', window });
+      const stats = await getWeeklyOffStats(adapter, window.targetWeekMon, window.targetWeekSun).catch(() => null);
+      const unregisteredNames = (stats?.unregistered || []).slice(0, 10).map(u => u.full_name).join(', ');
+      broadcastUpdate('weekly-off', { action: 'manual-open', window, stats });
       broadcastNotification({
         type: 'SYSTEM',
         title: '🟢 Admin vừa mở bổ sung đăng ký 2 ngày OFF',
-        message: `Cổng đăng ký mở thêm ${minutes} phút cho tuần ${window.targetWeekMon} → ${window.targetWeekSun}. NV chưa đăng ký tranh thủ ngay!`,
+        message: stats
+          ? `Cổng mở thêm ${minutes} phút cho tuần ${window.targetWeekMon} → ${window.targetWeekSun}. ${stats.registeredCount}/${stats.totalOfficial} bạn đã đăng ký (được miễn). ${stats.unregisteredCount} bạn chưa đăng ký${unregisteredNames ? `: ${unregisteredNames}${stats.unregisteredCount > 10 ? '…' : ''}` : ''} — tranh thủ ngay!`
+          : `Cổng đăng ký mở thêm ${minutes} phút cho tuần ${window.targetWeekMon} → ${window.targetWeekSun}. NV chưa đăng ký tranh thủ ngay!`,
         linkTab: 'leave',
-        metadata: { window },
+        metadata: { window, stats },
         targetRoles: ['ADMIN', 'HR', 'STORE', 'EMPLOYEE'],
       });
-      res.json({ success: true, window });
+      res.json({ success: true, window, stats });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -295,7 +301,13 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   app.get('/admin/weekly-off/manual-status', authMiddleware, requireRole(['ADMIN']), async (req, res) => {
     try {
-      res.json(await getManualStatus(adapter));
+      const st: any = await getManualStatus(adapter);
+      // Kèm thống kê ai chưa đăng ký để Admin chỉ nhắc đúng người.
+      try {
+        const window = await getEffectiveWindow(adapter);
+        st.stats = await getWeeklyOffStats(adapter, window.targetWeekMon, window.targetWeekSun);
+      } catch { /* best-effort */ }
+      res.json(st);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

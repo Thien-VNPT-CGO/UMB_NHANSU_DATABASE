@@ -112,7 +112,8 @@ export function getWeeklyOffWindow(now: Date = new Date()): WeeklyOffWindow {
 /**
  * VIP: Admin mở bù cổng đăng ký 2 ngày OFF ngoài khung giờ (mặc định 30 phút,
  * tối đa 120 phút). Hết hạn tự đóng theo lazy-check (không cần timer, sống qua restart).
- * Tuần mục tiêu của đợt mở bù = tuần SAU của tuần hiện tại (Thứ 2-CN kế tiếp).
+ * Tuần mục tiêu = tuần của chu kỳ gần nhất (vừa đóng/đang mở): người đã đăng ký
+ * rồi được tính hoàn tất, chỉ người chưa đăng ký mới phải đăng ký bù.
  */
 const MANUAL_SETTINGS_KEY = 'weeklyOffManual';
 const MANUAL_DEFAULT_MINUTES = 30;
@@ -134,6 +135,87 @@ export function nextWeekRange(now: Date = new Date()): { mon: string; sun: strin
   const dowMon0 = (vn.getUTCDay() + 6) % 7;
   const nextMon = midnightUtcMs + (7 - dowMon0) * DAY_MS;
   return { mon: toDateStr(new Date(nextMon)), sun: toDateStr(new Date(nextMon + 6 * DAY_MS)) };
+}
+
+/**
+ * Tuần mục tiêu của CHU KỲ GẦN NHẤT (chu kỳ vừa đóng hoặc đang mở).
+ * Đợt mở bù VIP phải nhắm đúng tuần này để bạn nào đã đăng ký rồi
+ * được tính hoàn tất, chỉ những bạn chưa đăng ký mới bị khóa/nhắc.
+ * (nextWeekRange sai khi Admin mở bù vào Thứ 2–Thứ 5: nó nhảy sang tuần kế tiếp.)
+ */
+export function lastCycleTargetRange(now: Date = new Date()): { mon: string; sun: string } {
+  const vn = shiftedNow(now);
+  const dowMon0 = (vn.getUTCDay() + 6) % 7;
+  const mins = dowMon0 * 1440 + vn.getUTCHours() * 60 + vn.getUTCMinutes();
+  const midnightUtcMs = Date.UTC(vn.getUTCFullYear(), vn.getUTCMonth(), vn.getUTCDate());
+  const thisFridayMidnightUtc = midnightUtcMs + (OPEN_DOW_MON0 - dowMon0) * DAY_MS;
+  const fridayMidnightUtc = mins >= OPEN_START ? thisFridayMidnightUtc : thisFridayMidnightUtc - 7 * DAY_MS;
+  const mon = new Date(fridayMidnightUtc + 3 * DAY_MS);
+  const sun = new Date(fridayMidnightUtc + 9 * DAY_MS);
+  return { mon: toDateStr(mon), sun: toDateStr(sun) };
+}
+
+export interface WeeklyOffEmployeeStat {
+  employee_id: string;
+  full_name: string;
+  branch_id: string;
+  dates: string[];
+  completed: boolean;
+}
+
+export interface WeeklyOffStats {
+  targetWeekMon: string;
+  targetWeekSun: string;
+  totalOfficial: number;
+  registeredCount: number;
+  unregisteredCount: number;
+  registered: WeeklyOffEmployeeStat[];
+  unregistered: WeeklyOffEmployeeStat[];
+}
+
+/** Thống kê ai đã / chưa đăng ký OFF tuần — để mở bù chỉ nhắc đúng người chưa đăng ký. */
+export async function getWeeklyOffStats(
+  repo: ISheetsRepository,
+  targetWeekMon: string,
+  targetWeekSun: string
+): Promise<WeeklyOffStats> {
+  const [employees, leaves] = await Promise.all([
+    repo.listEmployees().catch(() => []),
+    repo.listLeaveRequests().catch(() => []),
+  ]);
+  const officials = (employees || []).filter((e: any) => e.employment_status === 'OFFICIAL');
+  const byEmp = new Map<string, string[]>();
+  for (const l of leaves || []) {
+    if ((l as any).leave_type !== 'HANG_TUAN') continue;
+    if ((l as any).status !== 'PENDING' && (l as any).status !== 'APPROVED') continue;
+    if ((l as any).requested_date < targetWeekMon || (l as any).requested_date > targetWeekSun) continue;
+    const arr = byEmp.get((l as any).employee_id) || [];
+    if (!arr.includes((l as any).requested_date)) arr.push((l as any).requested_date);
+    byEmp.set((l as any).employee_id, arr);
+  }
+  const registered: WeeklyOffEmployeeStat[] = [];
+  const unregistered: WeeklyOffEmployeeStat[] = [];
+  for (const e of officials) {
+    const dates = (byEmp.get((e as any).employee_id) || []).sort();
+    const stat: WeeklyOffEmployeeStat = {
+      employee_id: (e as any).employee_id,
+      full_name: (e as any).full_name || (e as any).employee_id,
+      branch_id: (e as any).default_branch_id || (e as any).branch_id || '',
+      dates,
+      completed: dates.length >= 2,
+    };
+    if (stat.completed) registered.push(stat);
+    else unregistered.push(stat);
+  }
+  return {
+    targetWeekMon,
+    targetWeekSun,
+    totalOfficial: officials.length,
+    registeredCount: registered.length,
+    unregisteredCount: unregistered.length,
+    registered,
+    unregistered,
+  };
 }
 
 /** Khung Mon-Sun chứa một ngày cho trước (giới hạn 2 OFF/tuần theo tuần này). */
@@ -183,7 +265,9 @@ export async function openManualRegistration(
   now: Date = new Date()
 ): Promise<WeeklyOffWindow & { manualClosesAt: string }> {
   const mins = Math.min(Math.max(Math.floor(minutes) || MANUAL_DEFAULT_MINUTES, 1), MANUAL_MAX_MINUTES);
-  const target = nextWeekRange(now);
+  // Nhắm đúng tuần của chu kỳ gần nhất (không phải tuần sau tuyệt đối):
+  // bạn đã đăng ký rồi vẫn được tính hoàn tất, chỉ người chưa đăng ký bị khóa.
+  const target = lastCycleTargetRange(now);
   const activeUntil = new Date(now.getTime() + mins * 60_000).toISOString();
   const state: ManualOffState = {
     activeUntil,
