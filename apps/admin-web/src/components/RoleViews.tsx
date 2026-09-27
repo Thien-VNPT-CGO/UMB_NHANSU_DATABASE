@@ -3659,8 +3659,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         showToast(e?.message || 'Lỗi khi duyệt đơn');
       }
     };
-    const pendingLeaves = (leaves || []).filter((l: any) => l.status === 'PENDING');
-    const doneLeaves = (leaves || []).filter((l: any) => l.status !== 'PENDING');
+    // Lịch OFF 2 ngày/tuần (HANG_TUAN) tự động ghi nhận — không hiện ở hàng chờ duyệt.
+    // Chỉ đơn đột xuất (DOT_XUAT) mới cần HR/Admin duyệt thủ công.
+    const approvalLeaves = (leaves || []).filter((l: any) => (l.leave_type || l.leaveType || 'DOT_XUAT') === 'DOT_XUAT');
+    const pendingLeaves = approvalLeaves.filter((l: any) => l.status === 'PENDING');
+    const doneLeaves = approvalLeaves.filter((l: any) => l.status !== 'PENDING');
     const renderLeaveRows = (list: any[], isPending: boolean) =>
       list.map((l: any, i: number) => {
         const leaveId = l.request_id || l.id;
@@ -3709,7 +3712,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           </span>
         </div>
         <div style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 'var(--radius-md)', padding: '10px 14px', fontSize: '12px', color: '#1E40AF' }}>
-          Chế độ duyệt thủ công: đơn OFF chỉ được tính nghỉ sau khi HR/Admin bấm <strong>Duyệt Đơn</strong>. Hệ thống không tự động duyệt.
+          Lịch OFF 2 ngày/tuần (HANG_TUAN) <strong>tự động ghi nhận, không cần duyệt</strong>. Tại đây chỉ duyệt đơn <strong>nghỉ đột xuất</strong>.
         </div>
         <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
@@ -3724,10 +3727,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </tr>
             </thead>
             <tbody>
-              {(leaves || []).length === 0 ? (
+              {approvalLeaves.length === 0 ? (
                 <tr>
                   <td colSpan={6} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                    Không có đơn xin nghỉ phép nào đang chờ duyệt. Dữ liệu sẽ tự động đồng bộ từ Google Sheets (Tab DON_NGHI_PHEP).
+                    Không có đơn nghỉ đột xuất nào đang chờ duyệt. Lịch OFF tuần tự động ghi nhận nên không hiện ở đây.
                   </td>
                 </tr>
               ) : (
@@ -4401,7 +4404,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }
 
   if (activeTab === 'store-off') {
-    const pendingStoreLeaves = leaves.filter((l: any) => (branchScope === '*' || l.branch_id === branchScope) && l.status === 'PENDING');
+    const pendingStoreLeaves = leaves.filter((l: any) => (branchScope === '*' || l.branch_id === branchScope) && l.status === 'PENDING' && (l.leave_type || l.leaveType || 'DOT_XUAT') === 'DOT_XUAT');
     const handleStoreReview = async (leaveId: string, status: 'APPROVED' | 'REJECTED') => {
       if (!leaveId) {
         showToast('Thiếu mã đơn nghỉ');
@@ -4424,7 +4427,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <h1 style={{ fontSize: '20px', fontWeight: 800 }}>4. Duyệt OFF Hàng Tuần (Store Level)</h1>
         <div style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 'var(--radius-md)', padding: '10px 14px', fontSize: '12px', color: '#1E40AF' }}>
-          Duyệt thủ công: đơn OFF tại {branchName} chỉ có hiệu lực sau khi Cửa Hàng Trưởng bấm Duyệt. Không tự động duyệt.
+          Lịch OFF 2 ngày/tuần tự động ghi nhận, không cần duyệt. Tại đây chỉ duyệt đơn đột xuất tại {branchName}.
         </div>
         <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
           {pendingStoreLeaves.length === 0 ? (

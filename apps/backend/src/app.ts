@@ -1000,14 +1000,17 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       });
       broadcastUpdate('leaves', { action: 'create', leave: result.result });
       const emp = await employeesService.getEmployee(employeeId).catch(() => null);
-      broadcastNotification({
-        type: 'LEAVE',
-        title: '📝 Đơn Xin Nghỉ Phép Mới',
-        message: `${emp?.full_name || 'Nhân viên'} vừa nộp đơn xin nghỉ ${result.result.leave_type === 'DOT_XUAT' ? 'đột xuất' : 'OFF'} ngày ${result.result.requested_date}. Lý do: ${result.result.reason || 'Việc cá nhân'}`,
-        linkTab: 'hr-leave',
-        metadata: { leaveId: result.result.request_id, employeeId },
-        targetRoles: ['ADMIN', 'HR', 'STORE'],
-      });
+      // Lịch OFF tuần tự động ghi nhận — không gửi phiếu duyệt. Chỉ báo đơn đột xuất.
+      if (result.result.leave_type === 'DOT_XUAT') {
+        broadcastNotification({
+          type: 'LEAVE',
+          title: '📝 Đơn Xin Nghỉ Phép Mới',
+          message: `${emp?.full_name || 'Nhân viên'} vừa nộp đơn xin nghỉ đột xuất ngày ${result.result.requested_date}. Lý do: ${result.result.reason || 'Việc cá nhân'}`,
+          linkTab: 'hr-leave',
+          metadata: { leaveId: result.result.request_id, employeeId },
+          targetRoles: ['ADMIN', 'HR', 'STORE'],
+        });
+      }
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -1330,14 +1333,17 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         branchId,
       });
       broadcastUpdate('leaves', { action: 'create', leave: result.result });
-      broadcastNotification({
-        type: 'LEAVE',
-        title: '📝 Đơn Xin Nghỉ Phép Mới',
-        message: `${emp?.full_name || 'Nhân viên'} vừa nộp đơn xin nghỉ ${result.result.leave_type === 'DOT_XUAT' ? 'đột xuất' : 'OFF'} ngày ${result.result.requested_date}. Lý do: ${result.result.reason || 'Việc cá nhân'}`,
-        linkTab: 'hr-leave',
-        metadata: { leaveId: result.result.request_id, employeeId },
-        targetRoles: ['ADMIN', 'HR', 'STORE'],
-      });
+      // Lịch OFF tuần tự động ghi nhận — không gửi phiếu duyệt. Chỉ báo đơn đột xuất.
+      if (result.result.leave_type === 'DOT_XUAT') {
+        broadcastNotification({
+          type: 'LEAVE',
+          title: '📝 Đơn Xin Nghỉ Phép Mới',
+          message: `${emp?.full_name || 'Nhân viên'} vừa nộp đơn xin nghỉ đột xuất ngày ${result.result.requested_date}. Lý do: ${result.result.reason || 'Việc cá nhân'}`,
+          linkTab: 'hr-leave',
+          metadata: { leaveId: result.result.request_id, employeeId },
+          targetRoles: ['ADMIN', 'HR', 'STORE'],
+        });
+      }
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });

@@ -132,6 +132,10 @@ export class SchedulesService {
       }
     }
 
+    // Lịch OFF 2 ngày/tuần (HANG_TUAN): tự động ghi nhận, không cần phiếu duyệt.
+    // Chỉ nghỉ đột xuất (DOT_XUAT) mới tạo phiếu PENDING chờ Store/HR duyệt.
+    const isWeeklyOff = data.leaveType === 'HANG_TUAN';
+    const nowIso = new Date().toISOString();
     return singleWriterQueue.enqueue({
       entityType: 'PHIEU_OFF',
       entityId: requestId,
@@ -145,7 +149,14 @@ export class SchedulesService {
           requested_date: data.requestedDate,
           shift_code: data.shiftCode,
           reason: data.reason,
-          status: 'PENDING',
+          status: isWeeklyOff ? 'APPROVED' : 'PENDING',
+          ...(isWeeklyOff
+            ? {
+                reviewed_by: 'SYSTEM',
+                reviewed_at: nowIso,
+                review_note: 'Tự động ghi nhận lịch OFF 2 ngày/tuần',
+              }
+            : {}),
         });
       },
     });
@@ -161,6 +172,12 @@ export class SchedulesService {
       entityId: requestId,
       actorId: reviewerId,
       execute: async () => {
+        // Lịch OFF tuần (HANG_TUAN) đã tự động ghi nhận — không cần duyệt lại.
+        const all = await this.repo.listLeaveRequests();
+        const existing = all.find(l => l.request_id === requestId);
+        if (existing && existing.leave_type === 'HANG_TUAN') {
+          throw new Error('WEEKLY_OFF_AUTO_RECORDED: Lịch OFF 2 ngày/tuần tự động ghi nhận, không cần duyệt.');
+        }
         const updated = await this.repo.updateLeaveRequest(requestId, status, reviewerId, note);
 
         if (this.io) {
