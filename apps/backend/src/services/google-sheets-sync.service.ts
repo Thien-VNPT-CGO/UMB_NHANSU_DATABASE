@@ -643,20 +643,27 @@ export class GoogleSheetsSyncService {
       // 5. Đọc DON_NGHI_PHEP
       const leaveRows = batch['DON_NGHI_PHEP'];
       if (leaveRows.length > 0) {
-        fallback.leaveRequests = leaveRows.map(r => ({
-          request_id: r[0] || `LV_${uuidv4().slice(0, 8)}`,
-          employee_id: r[1],
-          branch_id: r[2] || 'CN130',
-          leave_type: (r[3] as any) || 'DOT_XUAT',
-          requested_date: r[4] || new Date().toISOString().split('T')[0],
-          shift_code: (r[5] as any) || undefined,
-          reason: r[6] || '',
-          status: (r[7] as any) || 'PENDING',
-          reviewed_by: r[8] || undefined,
-          review_note: r[9] || undefined,
-          created_at: r[10] || new Date().toISOString(),
-          version: 1,
-        }));
+        fallback.leaveRequests = leaveRows.map(r => {
+          const leaveType = (r[3] as any) || 'DOT_XUAT';
+          let status = (r[7] as any) || 'PENDING';
+          // Đồng bộ dữ liệu cũ: lịch OFF tuần (HANG_TUAN) tự động ghi nhận —
+          // bản ghi PENDING từ trước thời điểm auto-approve được chữa thành APPROVED.
+          if (leaveType === 'HANG_TUAN' && status === 'PENDING') status = 'APPROVED';
+          return {
+            request_id: r[0] || `LV_${uuidv4().slice(0, 8)}`,
+            employee_id: r[1],
+            branch_id: r[2] || 'CN130',
+            leave_type: leaveType,
+            requested_date: r[4] || new Date().toISOString().split('T')[0],
+            shift_code: (r[5] as any) || undefined,
+            reason: r[6] || '',
+            status,
+            reviewed_by: r[8] || (status === 'APPROVED' && leaveType === 'HANG_TUAN' ? 'SYSTEM' : undefined),
+            review_note: r[9] || (status === 'APPROVED' && leaveType === 'HANG_TUAN' ? 'Tự động ghi nhận lịch OFF 2 ngày/tuần' : undefined),
+            created_at: r[10] || new Date().toISOString(),
+            version: 1,
+          };
+        });
       } else {
         fallback.leaveRequests = [];
       }

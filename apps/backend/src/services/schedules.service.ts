@@ -251,11 +251,25 @@ export class SchedulesService {
       entityId: requestId,
       actorId: reviewerId,
       execute: async () => {
-        // Lịch OFF tuần (HANG_TUAN) đã tự động ghi nhận — không cần duyệt lại.
+        // Lịch OFF tuần (HANG_TUAN) tự động ghi nhận — bản ghi PENDING cũ (trước thời
+        // điểm auto-approve) được tự chữa thành APPROVED thay vì báo lỗi kẹt mãi.
         const all = await this.repo.listLeaveRequests();
         const existing = all.find(l => l.request_id === requestId);
         if (existing && existing.leave_type === 'HANG_TUAN') {
-          throw new Error('WEEKLY_OFF_AUTO_RECORDED: Lịch OFF 2 ngày/tuần tự động ghi nhận, không cần duyệt.');
+          if (existing.status === 'APPROVED') return existing;
+          const healed = await this.repo.updateLeaveRequest(
+            requestId,
+            'APPROVED',
+            'SYSTEM',
+            'Tự động ghi nhận lịch OFF 2 ngày/tuần'
+          );
+          if (this.io) {
+            this.io.to(`user:${healed.employee_id}`).emit('leave.updated', {
+              requestId: healed.request_id,
+              status: healed.status,
+            });
+          }
+          return healed;
         }
         const updated = await this.repo.updateLeaveRequest(requestId, status, reviewerId, note);
 

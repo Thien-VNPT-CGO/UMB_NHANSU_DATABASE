@@ -2984,13 +2984,16 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         const checkOutEvent = empEvents.find((e: any) => e.type === 'CHECK_OUT' && (e.assignment_id === foundShift?.assignment_id || (e.client_time && e.client_time.startsWith(day.isoDate))));
 
         if (foundLeave) {
-          const isApprovedLeave = foundLeave.status === 'APPROVED';
+          // Lịch OFF tuần (HANG_TUAN) tự động ghi nhận — kể cả bản ghi PENDING cũ
+          // cũng hiển thị OFF (backend đã tự chữa thành APPROVED khi đồng bộ).
+          const isWeeklyOff = foundLeave.leave_type === 'HANG_TUAN';
+          const isApprovedLeave = isWeeklyOff || foundLeave.status === 'APPROVED';
           dayDataMap[day.key] = {
             shift: foundLeave.leave_type === 'DOT_XUAT' ? 'Nghỉ đột xuất' : 'Nghỉ OFF',
             status: isApprovedLeave ? 'OFF' : 'PENDING_LEAVE',
             note: isApprovedLeave
               ? (foundLeave.reason || 'Nghỉ theo đơn đã duyệt')
-              : `Chờ duyệt: ${foundLeave.reason || 'đơn OFF chưa duyệt'}`,
+              : `Chờ duyệt: ${foundLeave.reason || 'đơn đột xuất chưa duyệt'}`,
             isToday: day.isToday,
           };
         } else if (!foundShift) {
@@ -3720,7 +3723,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         );
       });
     // Lịch OFF tuần tự động ghi nhận — gom theo nhân viên + tuần Mon-Sun để HR/Admin theo dõi.
-    const weeklyOffLeaves = (leaves || []).filter((l: any) => (l.leave_type || l.leaveType) === 'HANG_TUAN');
+    // Bỏ bản REJECTED/CANCELLED (đăng ký cũ đã thay thế) để đồng bộ số ngày thực tế.
+    const weeklyOffLeaves = (leaves || []).filter((l: any) =>
+      (l.leave_type || l.leaveType) === 'HANG_TUAN' && l.status !== 'REJECTED' && l.status !== 'CANCELLED'
+    );
     const weekKeyOf = (dateStr: string) => {
       const d = new Date(`${dateStr}T00:00:00`);
       if (Number.isNaN(d.getTime())) return dateStr || '';
@@ -4528,7 +4534,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   if (activeTab === 'store-off') {
     const pendingStoreLeaves = leaves.filter((l: any) => (branchScope === '*' || l.branch_id === branchScope) && l.status === 'PENDING' && (l.leave_type || l.leaveType || 'DOT_XUAT') === 'DOT_XUAT');
     const storeWeeklyOff = (leaves || [])
-      .filter((l: any) => (branchScope === '*' || l.branch_id === branchScope) && (l.leave_type || l.leaveType) === 'HANG_TUAN')
+      .filter((l: any) => (branchScope === '*' || l.branch_id === branchScope) && (l.leave_type || l.leaveType) === 'HANG_TUAN' && l.status !== 'REJECTED' && l.status !== 'CANCELLED')
       .sort((a: any, b: any) => String(b.requested_date || '').localeCompare(String(a.requested_date || '')));
     const handleStoreReview = async (leaveId: string, status: 'APPROVED' | 'REJECTED') => {
       if (!leaveId) {
