@@ -95,6 +95,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [scheduleStageFilter, setScheduleStageFilter] = useState('ALL');
   const [selectedRealtimeModal, setSelectedRealtimeModal] = useState<any>(null);
 
+  // Filters xem lịch OFF 2 ngày/tuần (HR/Admin + Store)
+  const [weeklyOffBranchFilter, setWeeklyOffBranchFilter] = useState('ALL');
+  const [weeklyOffSearch, setWeeklyOffSearch] = useState('');
+
   // Filters & State for HR Candidates (17 Cột Google Forms)
   const [candidateSearch, setCandidateSearch] = useState('');
   const [candidateBranchFilter, setCandidateBranchFilter] = useState('ALL');
@@ -3703,18 +3707,63 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           </tr>
         );
       });
+    // Lịch OFF tuần tự động ghi nhận — gom theo nhân viên + tuần Mon-Sun để HR/Admin theo dõi.
+    const weeklyOffLeaves = (leaves || []).filter((l: any) => (l.leave_type || l.leaveType) === 'HANG_TUAN');
+    const weekKeyOf = (dateStr: string) => {
+      const d = new Date(`${dateStr}T00:00:00`);
+      if (Number.isNaN(d.getTime())) return dateStr || '';
+      const dowMon0 = (d.getDay() + 6) % 7;
+      const mon = new Date(d);
+      mon.setDate(d.getDate() - dowMon0);
+      const sun = new Date(mon);
+      sun.setDate(mon.getDate() + 6);
+      const fmt = (x: Date) => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+      return `${fmt(mon)} → ${fmt(sun)}`;
+    };
+    const weeklyOffGroups: Record<string, any> = {};
+    weeklyOffLeaves.forEach((l: any) => {
+      const reqDate = l.requested_date || l.requestedDate || '';
+      if (!reqDate) return;
+      const key = `${l.employee_id}__${weekKeyOf(reqDate)}`;
+      if (!weeklyOffGroups[key]) {
+        const emp = (allEmployees || []).find((e: any) => e.employee_id === l.employee_id);
+        weeklyOffGroups[key] = {
+          key,
+          employee_id: l.employee_id,
+          employee_name: l.employee_name || emp?.full_name || l.employee_id,
+          branch_id: l.branch_id || emp?.default_branch_id || '',
+          week: weekKeyOf(reqDate),
+          dates: [] as string[],
+        };
+      }
+      const g = weeklyOffGroups[key];
+      if (!g.dates.includes(reqDate)) g.dates.push(reqDate);
+    });
+    const weeklyOffList = Object.values(weeklyOffGroups)
+      .map((g: any) => ({ ...g, dates: g.dates.sort(), count: g.dates.length }))
+      .filter((g: any) => weeklyOffBranchFilter === 'ALL' || g.branch_id === weeklyOffBranchFilter)
+      .filter((g: any) => {
+        if (!weeklyOffSearch.trim()) return true;
+        const q = weeklyOffSearch.trim().toLowerCase();
+        return (g.employee_name || '').toLowerCase().includes(q) || (g.employee_id || '').toLowerCase().includes(q);
+      })
+      .sort((a: any, b: any) => b.week.localeCompare(a.week));
+    const weeklyOffBranchOptions = Array.from(new Set(weeklyOffLeaves.map((l: any) => l.branch_id).filter(Boolean)));
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h1 style={{ fontSize: '20px', fontWeight: 800 }}>8. Phê Duyệt Đơn Nghỉ Phép (OFF)</h1>
           <span className="badge" style={{ backgroundColor: pendingLeaves.length > 0 ? '#FEF3C7' : '#DCFCE7', color: pendingLeaves.length > 0 ? '#92400E' : '#166534', fontWeight: 800 }}>
-            {pendingLeaves.length} đơn chờ duyệt thủ công
+            {pendingLeaves.length} đơn đột xuất chờ duyệt
           </span>
         </div>
         <div style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 'var(--radius-md)', padding: '10px 14px', fontSize: '12px', color: '#1E40AF' }}>
-          Lịch OFF 2 ngày/tuần (HANG_TUAN) <strong>tự động ghi nhận, không cần duyệt</strong>. Tại đây chỉ duyệt đơn <strong>nghỉ đột xuất</strong>.
+          Lịch OFF 2 ngày/tuần (HANG_TUAN) <strong>tự động ghi nhận, không cần duyệt</strong> — xem ở bảng bên dưới. Tại đây chỉ duyệt đơn <strong>nghỉ đột xuất</strong>.
         </div>
         <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
+          <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--border)', fontWeight: 800, fontSize: '14px' }}>
+            Đơn nghỉ đột xuất cần duyệt
+          </div>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
             <thead>
               <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
@@ -3738,6 +3787,67 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   {renderLeaveRows(pendingLeaves, true)}
                   {renderLeaveRows(doneLeaves, false)}
                 </>
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
+          <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+            <div>
+              <strong style={{ fontSize: '14px' }}>Lịch OFF 2 ngày/tuần đã tự động ghi nhận ({weeklyOffList.length})</strong>
+              <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Nguồn: DON_NGHI_PHEP • loại HANG_TUAN • trạng thái APPROVED (SYSTEM). Không cần bấm duyệt.</div>
+            </div>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <select value={weeklyOffBranchFilter} onChange={e => setWeeklyOffBranchFilter(e.target.value)} style={{ fontSize: '12px', padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--border)' }}>
+                <option value="ALL">Tất cả chi nhánh</option>
+                {weeklyOffBranchOptions.map((b: string) => (
+                  <option key={b} value={b}>{getDisplayBranch(b) || b}</option>
+                ))}
+              </select>
+              <input
+                value={weeklyOffSearch}
+                onChange={e => setWeeklyOffSearch(e.target.value)}
+                placeholder="Tìm tên / mã NV..."
+                style={{ fontSize: '12px', padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--border)', minWidth: '180px' }}
+              />
+            </div>
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+            <thead>
+              <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
+                <th style={{ padding: '12px 20px' }}>Nhân Viên</th>
+                <th style={{ padding: '12px 20px' }}>Chi Nhánh</th>
+                <th style={{ padding: '12px 20px' }}>Tuần (Mon → Sun)</th>
+                <th style={{ padding: '12px 20px' }}>Ngày OFF đã đăng ký</th>
+                <th style={{ padding: '12px 20px' }}>Tình trạng</th>
+              </tr>
+            </thead>
+            <tbody>
+              {weeklyOffList.length === 0 ? (
+                <tr>
+                  <td colSpan={5} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    Chưa có đăng ký OFF tuần nào. Khi nhân viên đăng ký 2 ngày OFF (T6 12h → T7 15h), dữ liệu tự ghi nhận và hiện realtime tại đây.
+                  </td>
+                </tr>
+              ) : (
+                weeklyOffList.map((g: any) => (
+                  <tr key={g.key} style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td style={{ padding: '12px 20px', fontWeight: 700 }}>
+                      {g.employee_name}
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }}>{g.employee_id}</div>
+                    </td>
+                    <td style={{ padding: '12px 20px' }}>{getDisplayBranch(g.branch_id) || g.branch_id || 'Chưa rõ'}</td>
+                    <td style={{ padding: '12px 20px' }}>{g.week}</td>
+                    <td style={{ padding: '12px 20px', fontWeight: 600 }}>{g.dates.join(' • ')}</td>
+                    <td style={{ padding: '12px 20px' }}>
+                      {g.count >= 2 ? (
+                        <span className="badge badge-success" style={{ fontWeight: 700 }}>✓ Đủ 2 ngày</span>
+                      ) : (
+                        <span className="badge" style={{ backgroundColor: '#FEF3C7', color: '#92400E', fontWeight: 700 }}>Thiếu ({g.count}/2)</span>
+                      )}
+                    </td>
+                  </tr>
+                ))
               )}
             </tbody>
           </table>
@@ -4405,6 +4515,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
   if (activeTab === 'store-off') {
     const pendingStoreLeaves = leaves.filter((l: any) => (branchScope === '*' || l.branch_id === branchScope) && l.status === 'PENDING' && (l.leave_type || l.leaveType || 'DOT_XUAT') === 'DOT_XUAT');
+    const storeWeeklyOff = (leaves || [])
+      .filter((l: any) => (branchScope === '*' || l.branch_id === branchScope) && (l.leave_type || l.leaveType) === 'HANG_TUAN')
+      .sort((a: any, b: any) => String(b.requested_date || '').localeCompare(String(a.requested_date || '')));
     const handleStoreReview = async (leaveId: string, status: 'APPROVED' | 'REJECTED') => {
       if (!leaveId) {
         showToast('Thiếu mã đơn nghỉ');
@@ -4430,9 +4543,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           Lịch OFF 2 ngày/tuần tự động ghi nhận, không cần duyệt. Tại đây chỉ duyệt đơn đột xuất tại {branchName}.
         </div>
         <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
+          <div style={{ fontWeight: 800, fontSize: '13px', marginBottom: '10px' }}>Đơn đột xuất cần duyệt</div>
           {pendingStoreLeaves.length === 0 ? (
             <div style={{ fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center', padding: '16px 0' }}>
-              Hiện không có đơn xin nghỉ phép (OFF) nào đang chờ duyệt tại {branchName}.
+              Hiện không có đơn đột xuất nào đang chờ duyệt tại {branchName}.
             </div>
           ) : (
             pendingStoreLeaves.map((l: any, i: number) => {
@@ -4441,7 +4555,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               return (
                 <div key={leaveId || i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: i < pendingStoreLeaves.length - 1 ? '1px solid var(--border)' : 'none', gap: '12px' }}>
                   <div>
-                    <strong>{l.employee_name || l.employee_id}:</strong> Đăng ký nghỉ OFF ngày {reqDate} - Lý do: {l.reason || 'Việc cá nhân'}
+                    <strong>{l.employee_name || l.employee_id}:</strong> Nghỉ đột xuất ngày {reqDate} - Lý do: {l.reason || 'Việc cá nhân'}
                   </div>
                   <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
                     <button className="btn-primary" onClick={() => handleStoreReview(leaveId, 'APPROVED')}>Phê Duyệt Đơn</button>
@@ -4450,6 +4564,22 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 </div>
               );
             })
+          )}
+        </div>
+        <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
+          <div style={{ fontWeight: 800, fontSize: '13px' }}>Lịch OFF 2 ngày/tuần đã tự động ghi nhận ({storeWeeklyOff.length})</div>
+          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '10px' }}>Nhân viên đăng ký T6 12h → T7 15h là hệ thống tự ghi nhận, Store chỉ xem — không cần duyệt.</div>
+          {storeWeeklyOff.length === 0 ? (
+            <div style={{ fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center', padding: '12px 0' }}>
+              Chưa có đăng ký OFF tuần nào tại {branchName}.
+            </div>
+          ) : (
+            storeWeeklyOff.map((l: any, i: number) => (
+              <div key={l.request_id || i} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: i < storeWeeklyOff.length - 1 ? '1px solid var(--border)' : 'none', fontSize: '13px' }}>
+                <div><strong>{l.employee_name || l.employee_id}</strong> — OFF ngày {l.requested_date || l.requestedDate}</div>
+                <span className="badge badge-success">✓ Tự ghi nhận</span>
+              </div>
+            ))
           )}
         </div>
       </div>
