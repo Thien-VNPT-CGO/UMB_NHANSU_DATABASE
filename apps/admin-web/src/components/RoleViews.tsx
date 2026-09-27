@@ -4398,9 +4398,27 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }
 
   if (activeTab === 'hr-notifications') {
+    // Hai dạng dữ liệu: inbox DB (title/summary/severity/recipient_id/created_at) và
+    // socket realtime (title/message/type/linkTab/timestamp). Trước đây chỉ đọc
+    // notif.message nên bản tin Admin gửi (nằm ở summary) hiện tiêu đề trống nội dung.
+    const fmtNotifTime = (n: any) => {
+      const t = n.created_at || n.createdAt || n.timestamp || n.time;
+      if (!t) return 'Vừa xong';
+      try {
+        return new Date(t).toLocaleString('vi-VN');
+      } catch {
+        return String(t);
+      }
+    };
+    const unreadHrCount = systemNotifications.filter((n: any) => n.unread === true || (!n.read_at && n.inbox_id)).length;
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <h1 style={{ fontSize: '20px', fontWeight: 800 }}>15. Trung Tâm Thông Báo Nghiệp Vụ HR</h1>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h1 style={{ fontSize: '20px', fontWeight: 800 }}>15. Trung Tâm Thông Báo Nghiệp Vụ HR</h1>
+          <span className="badge" style={{ backgroundColor: unreadHrCount > 0 ? '#FEF3C7' : '#DCFCE7', color: unreadHrCount > 0 ? '#92400E' : '#166534', fontWeight: 800 }}>
+            {systemNotifications.length} thông báo{unreadHrCount > 0 ? ` • ${unreadHrCount} chưa đọc` : ''}
+          </span>
+        </div>
         <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
           {systemNotifications.length === 0 ? (
             <div style={{ fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center' }}>
@@ -4408,11 +4426,56 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {systemNotifications.map((notif, idx) => (
-                <div key={idx} style={{ padding: '10px', backgroundColor: '#EFF6FF', borderRadius: '6px' }}>
-                  <strong>{notif.title}:</strong> {notif.message}
-                </div>
-              ))}
+              {systemNotifications.map((notif: any, idx: number) => {
+                const body = notif.summary || notif.message || '';
+                const badge = notif.severity || notif.type || 'SYSTEM';
+                const recipient = notif.recipient_id || (Array.isArray(notif.targetRoles) ? notif.targetRoles.join(', ') : notif.recipientIds || 'ALL');
+                const target = notif.target_path || notif.targetPath || notif.linkTab;
+                const isUnread = notif.unread === true || (!!notif.inbox_id && !notif.read_at);
+                return (
+                  <div
+                    key={notif.inbox_id || notif.id || idx}
+                    style={{
+                      padding: '12px 14px',
+                      backgroundColor: isUnread ? '#EFF6FF' : '#F9FAFB',
+                      borderRadius: '8px',
+                      border: isUnread ? '1px solid #BFDBFE' : '1px solid var(--border)',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <span
+                        className="badge"
+                        style={{
+                          backgroundColor:
+                            badge === 'URGENT' ? 'var(--danger-soft)' :
+                            badge === 'SUCCESS' ? 'var(--success-soft)' : 'var(--brand-soft)',
+                          color:
+                            badge === 'URGENT' ? 'var(--danger)' :
+                            badge === 'SUCCESS' ? 'var(--success)' : 'var(--brand)',
+                          fontWeight: 800,
+                        }}
+                      >
+                        {badge}
+                      </span>
+                      <strong style={{ fontSize: '14px' }}>{notif.title || 'Thông báo'}</strong>
+                      {isUnread && (
+                        <span className="badge" style={{ backgroundColor: '#DBEAFE', color: '#1D4ED8', fontWeight: 700 }}>
+                          Mới
+                        </span>
+                      )}
+                    </div>
+                    {body ? (
+                      <div style={{ fontSize: '13px', color: 'var(--text)', marginTop: '6px', whiteSpace: 'pre-wrap' }}>{body}</div>
+                    ) : (
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px', fontStyle: 'italic' }}>(Không có nội dung)</div>
+                    )}
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>
+                      Gửi tới: {recipient} • Thời gian: {fmtNotifTime(notif)}
+                      {target ? ` • Mở tại: ${target}` : ''}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -4980,8 +5043,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </div>
           ) : (
             systemNotifications.map((notif, idx) => (
-              <div key={idx} style={{ padding: '10px', backgroundColor: '#FAFAFA', borderRadius: '6px', marginBottom: '8px' }}>
-                <strong>{notif.title}:</strong> {notif.message} • {notif.time || 'Vừa xong'} • Trạng thái: SENT
+              <div key={notif.inbox_id || notif.id || idx} style={{ padding: '10px', backgroundColor: '#FAFAFA', borderRadius: '6px', marginBottom: '8px' }}>
+                <strong>{notif.title || 'Thông báo'}:</strong> {notif.summary || notif.message || '(Không có nội dung)'} • {notif.created_at ? new Date(notif.created_at).toLocaleString('vi-VN') : (notif.time || 'Vừa xong')} • Trạng thái: SENT
               </div>
             ))
           )}
