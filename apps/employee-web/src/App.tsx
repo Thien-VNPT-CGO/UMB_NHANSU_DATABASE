@@ -421,6 +421,7 @@ export function App() {
     setActiveTab('home');
     localStorage.removeItem('ubm_emp_data');
     localStorage.removeItem('ubm_emp_token');
+    localStorage.removeItem('ubm_emp_refresh');
     localStorage.removeItem('ubm_emp_active_tab');
   };
 
@@ -533,6 +534,12 @@ export function App() {
     }
     if (m.includes('WEEKLY_OFF_WINDOW_CLOSED')) {
       return '⏰ Đăng ký 2 ngày nghỉ OFF chỉ mở từ 12h00 Thứ 6 đến 15h00 Thứ 7 hàng tuần!';
+    }
+    if (err?.code === 'SESSION_EXPIRED' || /unauthorized|401|hết hạn|đăng nhập lại/i.test(m)) {
+      return '🔒 Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại rồi đăng ký tiếp!';
+    }
+    if (m === 'UNAUTHORIZED') {
+      return '🔒 Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại rồi đăng ký tiếp!';
     }
     return err?.message || fallback;
   };

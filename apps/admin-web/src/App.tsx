@@ -590,6 +590,9 @@ export function App() {
       setCurrentUser(res.user);
       localStorage.setItem('ubm_admin_token', res.token);
       localStorage.setItem('ubm_admin_user', JSON.stringify(res.user));
+      if (res.refreshToken) {
+        try { localStorage.setItem('ubm_admin_refresh', res.refreshToken); } catch {}
+      }
 
       // Reset active tab to default for role
       let initialTab = 'dashboard';
@@ -621,6 +624,7 @@ export function App() {
     setAuthToken('');
     setCurrentUser(null);
     localStorage.removeItem('ubm_admin_token');
+    localStorage.removeItem('ubm_admin_refresh');
     localStorage.removeItem('ubm_admin_user');
     localStorage.removeItem('ubm_active_tab');
     setSuccessMsg('Đã đăng xuất khỏi hệ thống.');
