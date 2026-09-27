@@ -2977,10 +2977,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         const checkOutEvent = empEvents.find((e: any) => e.type === 'CHECK_OUT' && (e.assignment_id === foundShift?.assignment_id || (e.client_time && e.client_time.startsWith(day.isoDate))));
 
         if (foundLeave) {
+          const isApprovedLeave = foundLeave.status === 'APPROVED';
           dayDataMap[day.key] = {
             shift: foundLeave.leave_type === 'DOT_XUAT' ? 'Nghỉ đột xuất' : 'Nghỉ OFF',
-            status: 'OFF',
-            note: foundLeave.reason || 'Nghỉ theo đơn duyệt',
+            status: isApprovedLeave ? 'OFF' : 'PENDING_LEAVE',
+            note: isApprovedLeave
+              ? (foundLeave.reason || 'Nghỉ theo đơn đã duyệt')
+              : `Chờ duyệt: ${foundLeave.reason || 'đơn OFF chưa duyệt'}`,
             isToday: day.isToday,
           };
         } else if (!foundShift) {
@@ -3319,6 +3322,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     const isCheckedIn = d.status === 'CHECKED_IN';
                     const isPending = d.status === 'PENDING';
                     const isOff = d.status === 'OFF';
+                    const isPendingLeave = d.status === 'PENDING_LEAVE';
                     const isBonusSwap = d.status === 'BONUS_SWAP';
                     const isNoShift = d.status === 'NO_SHIFT';
 
@@ -3355,7 +3359,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             borderRadius: '8px',
                             backgroundColor: isCheckedIn
                               ? '#ECFDF5'
-                              : isPending
+                              : isPending || isPendingLeave
                               ? '#FEF3C7'
                               : isBonusSwap
                               ? '#EFF6FF'
@@ -3364,7 +3368,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                               : '#FAFAFA',
                             border: isCheckedIn
                               ? '1.5px solid #10B981'
-                              : isPending
+                              : isPending || isPendingLeave
                               ? '1.5px solid #F59E0B'
                               : isBonusSwap
                               ? '1.5px solid #3B82F6'
@@ -3462,6 +3466,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             {isOff && (
                               <div style={{ fontSize: '10px', color: '#9CA3AF', fontWeight: 600 }}>
                                 {d.note || 'Nghỉ định kỳ'}
+                              </div>
+                            )}
+
+                            {isPendingLeave && (
+                              <div style={{ fontSize: '10px', color: '#92400E', fontWeight: 700 }}>
+                                ⏳ {d.note || 'Chờ duyệt (chưa tính OFF)'}
                               </div>
                             )}
 
@@ -3631,9 +3641,76 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }
 
   if (activeTab === 'hr-leave') {
+    const handleReviewLeave = async (leaveId: string, status: 'APPROVED' | 'REJECTED') => {
+      if (!leaveId) {
+        showToast('Thiếu mã đơn nghỉ');
+        return;
+      }
+      if (!window.confirm(status === 'APPROVED' ? 'Xác nhận DUYỆT đơn nghỉ này?' : 'Xác nhận TỪ CHỐI đơn nghỉ này?')) return;
+      try {
+        await apiRequest(`/leave-requests/${leaveId}/review`, {
+          method: 'POST',
+          body: JSON.stringify({ status, note: status === 'APPROVED' ? 'HR/Admin phê duyệt' : 'HR/Admin từ chối' }),
+        });
+        showToast(status === 'APPROVED' ? 'Đã duyệt đơn nghỉ phép' : 'Đã từ chối đơn nghỉ phép');
+        if (onRefreshData) await onRefreshData();
+        if (onSyncSheets) await onSyncSheets();
+      } catch (e: any) {
+        showToast(e?.message || 'Lỗi khi duyệt đơn');
+      }
+    };
+    const pendingLeaves = (leaves || []).filter((l: any) => l.status === 'PENDING');
+    const doneLeaves = (leaves || []).filter((l: any) => l.status !== 'PENDING');
+    const renderLeaveRows = (list: any[], isPending: boolean) =>
+      list.map((l: any, i: number) => {
+        const leaveId = l.request_id || l.id;
+        const reqDate = l.requested_date || l.requestedDate || l.leave_date || l.created_at?.slice(0, 10) || '';
+        const leaveTypeLabel = (l.leave_type || l.leaveType) === 'DOT_XUAT' ? 'Đột xuất' : 'OFF hàng tuần';
+        return (
+          <tr key={leaveId || i} style={{ borderBottom: '1px solid var(--border)', backgroundColor: isPending ? '#FFFBEB' : undefined }}>
+            <td style={{ padding: '14px 20px', fontWeight: 700 }}>
+              {l.employee_name || l.employee_id}
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }}>{leaveTypeLabel}</div>
+            </td>
+            <td style={{ padding: '14px 20px' }}>{getDisplayBranch(l.branch_id) || l.branch_id || 'Chưa rõ'}</td>
+            <td style={{ padding: '14px 20px', fontWeight: 600 }}>{reqDate}</td>
+            <td style={{ padding: '14px 20px' }}>{l.reason || 'Nghỉ cá nhân'}</td>
+            <td style={{ padding: '14px 20px' }}>
+              <span
+                className="badge"
+                style={{
+                  backgroundColor: l.status === 'APPROVED' ? '#DCFCE7' : l.status === 'REJECTED' ? '#FEE2E2' : '#FEF3C7',
+                  color: l.status === 'APPROVED' ? '#166534' : l.status === 'REJECTED' ? '#991B1B' : '#92400E',
+                  fontWeight: 700,
+                }}
+              >
+                {l.status === 'APPROVED' ? 'Đã duyệt' : l.status === 'REJECTED' ? 'Đã từ chối' : 'Chờ duyệt'}
+              </span>
+            </td>
+            <td style={{ padding: '14px 20px' }}>
+              {isPending ? (
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <button className="btn-primary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => handleReviewLeave(leaveId, 'APPROVED')}>Duyệt Đơn</button>
+                  <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: '12px', color: '#DC2626' }} onClick={() => handleReviewLeave(leaveId, 'REJECTED')}>Từ chối</button>
+                </div>
+              ) : (
+                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Đã xử lý</span>
+              )}
+            </td>
+          </tr>
+        );
+      });
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <h1 style={{ fontSize: '20px', fontWeight: 800 }}>8. Phê Duyệt Đơn Nghỉ Phép (OFF)</h1>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h1 style={{ fontSize: '20px', fontWeight: 800 }}>8. Phê Duyệt Đơn Nghỉ Phép (OFF)</h1>
+          <span className="badge" style={{ backgroundColor: pendingLeaves.length > 0 ? '#FEF3C7' : '#DCFCE7', color: pendingLeaves.length > 0 ? '#92400E' : '#166534', fontWeight: 800 }}>
+            {pendingLeaves.length} đơn chờ duyệt thủ công
+          </span>
+        </div>
+        <div style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 'var(--radius-md)', padding: '10px 14px', fontSize: '12px', color: '#1E40AF' }}>
+          Chế độ duyệt thủ công: đơn OFF chỉ được tính nghỉ sau khi HR/Admin bấm <strong>Duyệt Đơn</strong>. Hệ thống không tự động duyệt.
+        </div>
         <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
             <thead>
@@ -3642,28 +3719,22 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <th style={{ padding: '12px 20px' }}>Chi Nhánh</th>
                 <th style={{ padding: '12px 20px' }}>Ngày Nghỉ</th>
                 <th style={{ padding: '12px 20px' }}>Lý Do</th>
+                <th style={{ padding: '12px 20px' }}>Trạng Thái</th>
                 <th style={{ padding: '12px 20px' }}>Thao Tác</th>
               </tr>
             </thead>
             <tbody>
-              {leaves.length === 0 ? (
+              {(leaves || []).length === 0 ? (
                 <tr>
-                  <td colSpan={5} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                    Không có đơn xin nghỉ phép nào đang chờ duyệt. Dữ liệu sẽ tự động đồng bộ từ Google Sheets (Tab DON_XIN_NGHI).
+                  <td colSpan={6} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    Không có đơn xin nghỉ phép nào đang chờ duyệt. Dữ liệu sẽ tự động đồng bộ từ Google Sheets (Tab DON_NGHI_PHEP).
                   </td>
                 </tr>
               ) : (
-                leaves.map((l, i) => (
-                  <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
-                    <td style={{ padding: '14px 20px', fontWeight: 700 }}>{l.employee_name || l.employee_id}</td>
-                    <td style={{ padding: '14px 20px' }}>{l.branch_id || 'Chưa rõ'}</td>
-                    <td style={{ padding: '14px 20px' }}>{l.leave_date || l.created_at?.slice(0, 10)}</td>
-                    <td style={{ padding: '14px 20px' }}>{l.reason || 'Nghỉ cá nhân'}</td>
-                    <td style={{ padding: '14px 20px' }}>
-                      <button className="btn-primary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => showToast('Đã duyệt đơn nghỉ phép')}>Duyệt Đơn</button>
-                    </td>
-                  </tr>
-                ))
+                <>
+                  {renderLeaveRows(pendingLeaves, true)}
+                  {renderLeaveRows(doneLeaves, false)}
+                </>
               )}
             </tbody>
           </table>
@@ -4330,24 +4401,52 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }
 
   if (activeTab === 'store-off') {
-    const pendingStoreLeaves = leaves.filter(l => (branchScope === '*' || l.branch_id === branchScope) && l.status === 'PENDING');
+    const pendingStoreLeaves = leaves.filter((l: any) => (branchScope === '*' || l.branch_id === branchScope) && l.status === 'PENDING');
+    const handleStoreReview = async (leaveId: string, status: 'APPROVED' | 'REJECTED') => {
+      if (!leaveId) {
+        showToast('Thiếu mã đơn nghỉ');
+        return;
+      }
+      if (!window.confirm(status === 'APPROVED' ? 'Cửa Hàng Trưởng xác nhận DUYỆT đơn OFF này?' : 'Cửa Hàng Trưởng xác nhận TỪ CHỐI đơn OFF này?')) return;
+      try {
+        await apiRequest(`/leave-requests/${leaveId}/review`, {
+          method: 'POST',
+          body: JSON.stringify({ status, note: status === 'APPROVED' ? 'Store duyệt OFF' : 'Store từ chối OFF' }),
+        });
+        showToast(status === 'APPROVED' ? 'Cửa Hàng Trưởng đã duyệt đơn nghỉ OFF' : 'Đã từ chối đơn nghỉ OFF');
+        if (onRefreshData) await onRefreshData();
+        if (onSyncSheets) await onSyncSheets();
+      } catch (e: any) {
+        showToast(e?.message || 'Lỗi khi duyệt đơn');
+      }
+    };
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <h1 style={{ fontSize: '20px', fontWeight: 800 }}>4. Duyệt OFF Hàng Tuần (Store Level)</h1>
+        <div style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 'var(--radius-md)', padding: '10px 14px', fontSize: '12px', color: '#1E40AF' }}>
+          Duyệt thủ công: đơn OFF tại {branchName} chỉ có hiệu lực sau khi Cửa Hàng Trưởng bấm Duyệt. Không tự động duyệt.
+        </div>
         <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
           {pendingStoreLeaves.length === 0 ? (
             <div style={{ fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center', padding: '16px 0' }}>
               Hiện không có đơn xin nghỉ phép (OFF) nào đang chờ duyệt tại {branchName}.
             </div>
           ) : (
-            pendingStoreLeaves.map((l, i) => (
-              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: i < pendingStoreLeaves.length - 1 ? '1px solid var(--border)' : 'none' }}>
-                <div>
-                  <strong>{l.employee_name || l.employee_id}:</strong> Đăng ký nghỉ OFF ngày {l.leave_date || l.created_at?.slice(0, 10)} - Lý do: {l.reason || 'Việc cá nhân'}
+            pendingStoreLeaves.map((l: any, i: number) => {
+              const leaveId = l.request_id || l.id;
+              const reqDate = l.requested_date || l.requestedDate || l.leave_date || l.created_at?.slice(0, 10) || '';
+              return (
+                <div key={leaveId || i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: i < pendingStoreLeaves.length - 1 ? '1px solid var(--border)' : 'none', gap: '12px' }}>
+                  <div>
+                    <strong>{l.employee_name || l.employee_id}:</strong> Đăng ký nghỉ OFF ngày {reqDate} - Lý do: {l.reason || 'Việc cá nhân'}
+                  </div>
+                  <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                    <button className="btn-primary" onClick={() => handleStoreReview(leaveId, 'APPROVED')}>Phê Duyệt Đơn</button>
+                    <button className="btn-secondary" style={{ color: '#DC2626' }} onClick={() => handleStoreReview(leaveId, 'REJECTED')}>Từ chối</button>
+                  </div>
                 </div>
-                <button className="btn-primary" onClick={() => showToast('Cửa Hàng Trưởng đã duyệt đơn nghỉ OFF')}>Phê Duyệt Đơn</button>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>
