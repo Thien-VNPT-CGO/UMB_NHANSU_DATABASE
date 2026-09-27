@@ -464,7 +464,24 @@ export class GoogleSheetsSyncService {
           if (deduped.length !== mappedAccs.length) {
             console.warn(`[GoogleSheetsSyncService] TAI_KHOAN_NHAN_VIEN loại ${mappedAccs.length - deduped.length} dòng trùng.`);
           }
-          fallback.accounts = deduped as any;
+          // MERGE chống mất PIN mới: NV vừa đổi PIN chỉ nằm trong bộ nhớ (+tăng version),
+          // Sheets vẫn còn hash/version cũ cho đến khi full-sync push xong (~10s).
+          // Pull mà thay thế thẳng sẽ ghi đè PIN mới -> NV báo "đổi PIN mà vẫn dùng PIN cũ".
+          // Quy tắc: cùng account_id, bản nào version lớn hơn thì thắng; tài khoản chỉ có
+          // trong bộ nhớ (chưa kịp push) được giữ lại.
+          const memById = new Map<string, any>((fallback.accounts || []).map((a: any) => [a.account_id, a]));
+          const merged: any[] = [];
+          for (const s of deduped) {
+            const m = memById.get((s as any).account_id);
+            if (m && Number(m.version || 0) > Number((s as any).version || 0)) {
+              merged.push(m);
+            } else {
+              merged.push(s);
+            }
+            memById.delete((s as any).account_id);
+          }
+          for (const m of memById.values()) merged.push(m);
+          fallback.accounts = merged as any;
         }
         // Backfill: tài khoản cũ chưa có PIN -> tự sinh ngay (giới hạn 20/pull
         // để bcrypt không chặn event-loop hàng chục giây khi dữ liệu phình).
