@@ -98,6 +98,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Filters xem lịch OFF 2 ngày/tuần (HR/Admin + Store)
   const [weeklyOffBranchFilter, setWeeklyOffBranchFilter] = useState('ALL');
   const [weeklyOffSearch, setWeeklyOffSearch] = useState('');
+  // Xem lịch tuần trước / hiện tại / sau (mặc định tuần hiện tại)
+  const [scheduleWeekOffset, setScheduleWeekOffset] = useState(0);
 
   // Filters & State for HR Candidates (17 Cột Google Forms)
   const [candidateSearch, setCandidateSearch] = useState('');
@@ -2922,10 +2924,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }
 
   if (activeTab === 'hr-schedule') {
-    // Dynamic calculation of current week days (Monday -> Sunday)
+    // Dynamic calculation of week days (Monday -> Sunday) + chuyển tuần trước/sau.
+    // Nhân viên đăng ký OFF 2 ngày cho TUẦN SAU (T6 12h → T7 15h) → bấm "Tuần sau" để xem OFF + ca đã xếp.
     const now = new Date();
     const dayOfWeek = now.getDay(); // 0 is Sun, 1 is Mon, ..., 6 is Sat
-    const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    const diffToMonday = (dayOfWeek === 0 ? -6 : 1 - dayOfWeek) + scheduleWeekOffset * 7;
     const monday = new Date(now);
     monday.setDate(now.getDate() + diffToMonday);
 
@@ -3101,6 +3104,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </div>
             <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '4px', marginBottom: 0 }}>
               Hiển thị phân loại Nhân viên Thử việc (Chu kỳ 12 ngày) & Chính thức. Tự động cập nhật trạng thái khi nhân viên điểm danh trên Cổng Nhân Viên.
+              {' '}Đang xem tuần <strong>{weekDays[0]?.isoDate} → {weekDays[6]?.isoDate}</strong>
+              {scheduleWeekOffset === 1 ? ' (tuần sau — gồm 2 ngày OFF NV đã đăng ký)' : scheduleWeekOffset > 1 ? ` (+${scheduleWeekOffset} tuần)` : scheduleWeekOffset < 0 ? ` (${scheduleWeekOffset} tuần)` : ' (tuần này)'}.
+              Ô xám <strong>Nghỉ OFF</strong> = lịch OFF tuần tự ghi nhận / đơn đột xuất đã duyệt; ô vàng <strong>⏳ Chờ duyệt</strong> = đơn đột xuất chưa duyệt.
             </p>
           </div>
 
@@ -3223,6 +3229,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <option value="PROBATION">🌸 Nhân Viên Thử Việc (12 ngày)</option>
                 <option value="OFFICIAL">💼 Nhân Viên Chính Thức</option>
               </select>
+            </div>
+            {/* Chuyển tuần: xem lịch tuần sau (NV đã đăng ký OFF 2 ngày) */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <button className="btn-secondary" style={{ fontSize: '12px', padding: '6px 10px' }} onClick={() => setScheduleWeekOffset(o => o - 1)}>◀ Tuần trước</button>
+              <button className="btn-secondary" style={{ fontSize: '12px', padding: '6px 10px', fontWeight: scheduleWeekOffset === 0 ? 800 : 400 }} onClick={() => setScheduleWeekOffset(0)}>Tuần này</button>
+              <button className="btn-primary" style={{ fontSize: '12px', padding: '6px 10px' }} onClick={() => setScheduleWeekOffset(o => o + 1)}>Tuần sau ▶</button>
             </div>
           </div>
 
