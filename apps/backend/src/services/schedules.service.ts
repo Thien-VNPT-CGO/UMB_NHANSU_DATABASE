@@ -162,6 +162,85 @@ export class SchedulesService {
     });
   }
 
+  /**
+   * Đăng ký / cập nhật lại 2 ngày OFF tuần trong MỘT operation nguyên tử.
+   * Fix lỗi mở bù VIP: gửi 2 POST rời rạc trước đây bị lỗi nửa chừng
+   * (ngày 1 ghi nhận, ngày 2 báo WEEKLY_OFF_LIMIT_REACHED) và không thể
+   * "cập nhật lại" khi đã đủ 2 ngày. Nay hủy các đăng ký cũ cùng tuần
+   * rồi ghi 2 ngày mới — luôn kết thúc với đúng 2 ngày.
+   */
+  async replaceWeeklyOff(data: {
+    employeeId: string;
+    branchId: string;
+    day1: string;
+    day2: string;
+    reason: string;
+  }) {
+    if (!data.day1 || !data.day2) {
+      throw new Error('WEEKLY_OFF_MISSING_DATES: Vui lòng chọn đầy đủ cả 2 ngày nghỉ OFF.');
+    }
+    if (data.day1 === data.day2) {
+      throw new Error('WEEKLY_OFF_DUPLICATE_DATES: Hai ngày nghỉ OFF phải khác nhau.');
+    }
+    const wk1 = weekRangeOf(data.day1);
+    const wk2 = weekRangeOf(data.day2);
+    if (wk1.mon !== wk2.mon || wk1.sun !== wk2.sun) {
+      throw new Error(
+        `WEEKLY_OFF_DIFFERENT_WEEKS: 2 ngày phải nằm trong cùng một tuần Mon-Sun (${wk1.mon} → ${wk1.sun}).`
+      );
+    }
+    return singleWriterQueue.enqueue({
+      entityType: 'PHIEU_OFF',
+      entityId: `${data.employeeId}_${wk1.mon}`,
+      actorId: data.employeeId,
+      execute: async () => {
+        const nowIso = new Date().toISOString();
+        const existing = await this.repo.listLeaveRequests(undefined, data.employeeId);
+        const oldOnes = existing.filter(
+          l =>
+            l.leave_type === 'HANG_TUAN' &&
+            l.status !== 'REJECTED' &&
+            l.status !== 'CANCELLED' &&
+            l.requested_date >= wk1.mon &&
+            l.requested_date <= wk1.sun
+        );
+        // Hủy đăng ký cũ cùng tuần (kể cả trùng ngày mới — sẽ ghi lại bên dưới).
+        for (const old of oldOnes) {
+          await this.repo.updateLeaveRequest(old.request_id, 'CANCELLED', data.employeeId, 'Thay thế bằng đăng ký OFF tuần mới');
+        }
+        const mkId = () =>
+          `LEAVE_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+        const created = [];
+        for (const [idx, date] of [data.day1, data.day2].entries()) {
+          const requestId = mkId();
+          created.push(
+            await this.repo.createLeaveRequest({
+              request_id: requestId,
+              employee_id: data.employeeId,
+              branch_id: data.branchId,
+              leave_type: 'HANG_TUAN',
+              requested_date: date,
+              reason: `${data.reason} (Ngày ${idx + 1}: ${date})`,
+              status: 'APPROVED',
+              reviewed_by: 'SYSTEM',
+              reviewed_at: nowIso,
+              review_note: 'Tự động ghi nhận lịch OFF 2 ngày/tuần',
+            })
+          );
+        }
+        if (this.io) {
+          for (const c of created) {
+            this.io.to(`user:${c.employee_id}`).emit('leave.updated', {
+              requestId: c.request_id,
+              status: c.status,
+            });
+          }
+        }
+        return { week: wk1, leaves: created };
+      },
+    });
+  }
+
   async listLeaves(branchId?: string, employeeId?: string) {
     return this.repo.listLeaveRequests(branchId, employeeId);
   }

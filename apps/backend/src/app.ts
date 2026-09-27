@@ -1350,6 +1350,43 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Đăng ký / cập nhật lại 2 ngày OFF tuần trong 1 request nguyên tử.
+  // Fix lỗi mở bù VIP: 2 POST rời rạc cũ bị lỗi nửa chừng và chặn "cập nhật lại".
+  const handleWeeklyOffReplace = async (req: AuthenticatedRequest, res: any) => {
+    try {
+      const employeeId = req.user?.employeeId || req.body.employeeId;
+      if (!employeeId) return res.status(400).json({ error: 'MISSING_EMPLOYEE' });
+      const day1: string = req.body.day1 || req.body.day_1 || req.body.requestedDate1;
+      const day2: string = req.body.day2 || req.body.day_2 || req.body.requestedDate2;
+      const reason: string = req.body.reason || 'Đăng ký 2 ngày nghỉ OFF tuần';
+      // Ràng buộc khung giờ mở cổng (kể cả đợt mở bù VIP) cho cả 2 ngày.
+      try {
+        await assertHangTuanWindow(adapter, req.user!, 'HANG_TUAN', new Date(), day1);
+        await assertHangTuanWindow(adapter, req.user!, 'HANG_TUAN', new Date(), day2);
+      } catch (werr: any) {
+        if (werr.message === ERROR_CODES.WEEKLY_OFF_WINDOW_CLOSED) {
+          return res.status(403).json({
+            error: werr.message,
+            message: werr.reason || 'Đăng ký 2 ngày nghỉ OFF chỉ mở từ 12h00 Thứ 6 đến 15h00 Thứ 7 hàng tuần.',
+            code: werr.message,
+            windowOpensAt: werr.window.windowOpensAt,
+            windowClosesAt: werr.window.windowClosesAt,
+          });
+        }
+        throw werr;
+      }
+      const emp = await employeesService.getEmployee(employeeId).catch(() => null);
+      const branchId = req.body.branchId || (emp as any)?.default_branch_id || 'CN130';
+      const result = await schedulesService.replaceWeeklyOff({ employeeId, branchId, day1, day2, reason });
+      broadcastUpdate('leaves', { action: 'weekly-off-replace', leaves: result.result.leaves });
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  };
+  app.put('/leaves/weekly-off', authMiddleware, validate({ body: leavesAliasBody }), handleWeeklyOffReplace);
+  app.put('/leave-requests/weekly-off', authMiddleware, validate({ body: leavesAliasBody }), handleWeeklyOffReplace);
+
   app.get('/leaves', authMiddleware, validate({ query: leaveListQuery }), async (req: AuthenticatedRequest, res) => {
     try {
       const branchId = req.user?.role === 'STORE' ? req.user.branchScope : (req.query.branchId as string);

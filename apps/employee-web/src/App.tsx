@@ -89,13 +89,19 @@ export function App() {
     d.setDate(d.getDate() - day);
     return d.toISOString().split('T')[0];
   };
-  const readWeeklyOffSaved = () => {
+  const readWeeklyOffSaved = (weekKey?: string) => {
     try {
       const raw = localStorage.getItem('ubm_weekly_off_registered');
       if (!raw) return false;
       try {
         const parsed = JSON.parse(raw);
-        return parsed?.week === weeklyOffWeekKey() && parsed?.value === true;
+        // Định dạng mới: map { [weekMon]: true } — hỗ trợ đợt mở bù VIP cho tuần sau.
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && parsed.week === undefined) {
+          const wk = weekKey || weeklyOffWeekKey();
+          return (parsed as any)[wk] === true;
+        }
+        const wk = weekKey || weeklyOffWeekKey();
+        return parsed?.week === wk && parsed?.value === true;
       } catch {
         return false; // định dạng cũ 'true'/'false' -> coi như hết hạn, server sẽ đồng bộ lại khi online
       }
@@ -103,9 +109,19 @@ export function App() {
       return false;
     }
   };
-  const persistWeeklyOff = (v: boolean) => {
+  const persistWeeklyOff = (v: boolean, weekKey?: string) => {
     try {
-      localStorage.setItem('ubm_weekly_off_registered', JSON.stringify({ week: weeklyOffWeekKey(), value: v }));
+      const wk = weekKey || weeklyOffWeekKey();
+      let map: Record<string, boolean> = {};
+      try {
+        const raw = localStorage.getItem('ubm_weekly_off_registered');
+        const parsed = raw ? JSON.parse(raw) : null;
+        if (parsed && typeof parsed === 'object' && parsed.week === undefined) map = parsed;
+        else if (parsed?.week && parsed?.value === true) map[parsed.week] = true;
+      } catch {}
+      if (v) map[wk] = true;
+      else delete map[wk];
+      localStorage.setItem('ubm_weekly_off_registered', JSON.stringify(map));
     } catch {}
   };
   const [hasRegisteredWeeklyOff, setHasRegisteredWeeklyOff] = useState<boolean>(() => readWeeklyOffSaved());
@@ -487,9 +503,11 @@ export function App() {
       const st = await apiRequest('/me/weekly-off-status');
       setWeeklyOffLocked(!!st.locked);
       setWeeklyOffLockKnown(true);
+      // Khóa local theo tuần MỤC TIÊU của cổng (kể cả đợt mở bù VIP cho tuần sau).
+      const targetWk = st?.window?.targetWeekMon || undefined;
       if (st.completed) {
         setHasRegisteredWeeklyOff(true);
-        persistWeeklyOff(true);
+        persistWeeklyOff(true, targetWk);
         if (Array.isArray(st.registered) && st.registered.length >= 2) {
           setWeeklyOffData(d => ({
             ...d,
@@ -501,7 +519,7 @@ export function App() {
         // Chu kỳ mới đang mở mà chưa đủ 2 ngày -> khóa lại
         setHasRegisteredWeeklyOff(false);
         setWeeklyOffLocked(true);
-        persistWeeklyOff(false);
+        persistWeeklyOff(false, targetWk);
       }
     } catch {}
   };
@@ -694,28 +712,39 @@ export function App() {
     }
 
     try {
-      // Send Day 1
-      await apiRequest('/leaves', {
-        method: 'POST',
-        body: JSON.stringify({
-          leaveType: 'HANG_TUAN',
-          requestedDate: weeklyOffData.day1,
-          reason: `${weeklyOffData.reason} (Ngày 1: ${weeklyOffData.day1})`,
-        }),
-      });
-
-      // Send Day 2
-      await apiRequest('/leaves', {
-        method: 'POST',
-        body: JSON.stringify({
-          leaveType: 'HANG_TUAN',
-          requestedDate: weeklyOffData.day2,
-          reason: `${weeklyOffData.reason} (Ngày 2: ${weeklyOffData.day2})`,
-        }),
-      });
+      // API nguyên tử: ghi 2 ngày trong 1 request (kể cả đợt mở bù VIP + cập nhật lại).
+      try {
+        await apiRequest('/leaves/weekly-off', {
+          method: 'PUT',
+          body: JSON.stringify({
+            day1: weeklyOffData.day1,
+            day2: weeklyOffData.day2,
+            reason: weeklyOffData.reason,
+          }),
+        });
+      } catch (e: any) {
+        // Fallback máy chủ cũ chưa có API mới: gửi 2 POST rời rạc như trước.
+        if (!String(e?.message || '').includes('NOT_FOUND') && !String(e?.message || '').includes('404')) throw e;
+        await apiRequest('/leaves', {
+          method: 'POST',
+          body: JSON.stringify({
+            leaveType: 'HANG_TUAN',
+            requestedDate: weeklyOffData.day1,
+            reason: `${weeklyOffData.reason} (Ngày 1: ${weeklyOffData.day1})`,
+          }),
+        });
+        await apiRequest('/leaves', {
+          method: 'POST',
+          body: JSON.stringify({
+            leaveType: 'HANG_TUAN',
+            requestedDate: weeklyOffData.day2,
+            reason: `${weeklyOffData.reason} (Ngày 2: ${weeklyOffData.day2})`,
+          }),
+        });
+      }
 
       setHasRegisteredWeeklyOff(true);
-      persistWeeklyOff(true);
+      persistWeeklyOff(true, (weeklyOffWindow as any)?.targetWeekMon || undefined);
 
       showToast('🎉 ĐÃ ĐĂNG KÝ 2 NGÀY NGHỈ OFF TUẦN THÀNH CÔNG! Toàn bộ chức năng hệ thống đã được mở khóa.');
       await refreshWeeklyOffStatus();
