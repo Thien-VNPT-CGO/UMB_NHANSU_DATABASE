@@ -1666,16 +1666,19 @@ export function App() {
                     const hasCheckOut = evts.some((e: any) => e.type === 'CHECK_OUT');
                     const absentRecorded = evts.some((e: any) => e.type === 'ABSENT');
                     const startMs = shift.start_at ? new Date(shift.start_at).getTime() : NaN;
+                    const endMs = shift.end_at ? new Date(shift.end_at).getTime() : NaN;
                     // Quá 3h chưa check-in -> khóa, nghỉ không lương
                     const isLocked = !hasCheckIn && Number.isFinite(startMs) && Date.now() - startMs > 3 * 60 * 60 * 1000;
                     const isComplete = hasCheckIn && hasCheckOut;
                     const isAbsent = !hasCheckIn && absentRecorded;
-                    // Vàng khi thiếu; chỉ NHẤP NHÁY khi NV đã vào ca (có check-in, chờ check-out)
-                    const isWorking = !isComplete && !isAbsent && !isLocked;
+                    // Hết giờ tan ca +30p mà chưa check-out -> chốt (hết nhấp nháy), thiếu là không lương
+                    const isMissingOut = hasCheckIn && !hasCheckOut && Number.isFinite(endMs) && Date.now() - endMs > 30 * 60 * 1000;
+                    // Vàng khi thiếu; chỉ NHẤP NHÁY khi NV đã vào ca và ca chưa hết giờ
+                    const isWorking = !isComplete && !isAbsent && !isLocked && !isMissingOut;
                     const isDoing = isWorking && hasCheckIn && !hasCheckOut;
-                    const cardBg = isAbsent ? '#FEF2F2' : isLocked ? '#F1F5F9' : isComplete ? '#ECFDF5' : isWorking ? '#FFFBEB' : isToday ? 'var(--brand-soft)' : '#FFFFFF';
-                    const cardBd = isAbsent ? '1.5px solid #EF4444' : isLocked ? '1.5px solid #64748B' : isComplete ? '1.5px solid #10B981' : isWorking ? '1.5px solid #F59E0B' : isToday ? '1.5px solid var(--brand)' : '1px solid var(--border)';
-                    const titleColor = isAbsent ? '#DC2626' : isLocked ? '#475569' : isComplete ? '#065F46' : isWorking ? '#92400E' : isToday ? 'var(--brand)' : 'var(--text)';
+                    const cardBg = isAbsent ? '#FEF2F2' : isLocked ? '#F1F5F9' : isComplete ? '#ECFDF5' : isMissingOut ? '#FFF7ED' : isWorking ? '#FFFBEB' : isToday ? 'var(--brand-soft)' : '#FFFFFF';
+                    const cardBd = isAbsent ? '1.5px solid #EF4444' : isLocked ? '1.5px solid #64748B' : isComplete ? '1.5px solid #10B981' : isMissingOut ? '1.5px solid #EA580C' : isWorking ? '1.5px solid #F59E0B' : isToday ? '1.5px solid var(--brand)' : '1px solid var(--border)';
+                    const titleColor = isAbsent ? '#DC2626' : isLocked ? '#475569' : isComplete ? '#065F46' : isMissingOut ? '#9A3412' : isWorking ? '#92400E' : isToday ? 'var(--brand)' : 'var(--text)';
                     return (
                       <div
                         key={idx}
@@ -1696,6 +1699,7 @@ export function App() {
                             {isComplete && ' • ✓ HOÀN THÀNH'}
                             {isAbsent && ' • 🔴 VẮNG'}
                             {isLocked && !isAbsent && ' • 🔒 KHÓA'}
+                            {isMissingOut && ' • THIẾU CHECK-OUT'}
                             {isDoing && ' • ĐANG LÀM'}
                           </div>
                           <div style={{ fontSize: '11px', color: isAbsent ? '#991B1B' : 'var(--text-muted)' }}>
@@ -1703,21 +1707,23 @@ export function App() {
                             {isComplete && ' • Đủ check-in + check-out'}
                             {isAbsent && ' • Hệ thống tự ghi vắng (không check-in/check-out qua ca)'}
                             {isLocked && !isAbsent && ' • Quá 3h chưa check-in — nghỉ không lương'}
+                            {isMissingOut && ' • Hết giờ chưa check-out — không lương'}
                             {isWorking && !hasCheckIn && ' • Chưa check-in'}
                             {isWorking && hasCheckIn && !hasCheckOut && ' • Chờ check-out'}
                           </div>
                         </div>
                         <div>
                           <span
-                            className={`badge ${isComplete ? 'badge-success' : isToday && !isWorking && !isLocked && !isAbsent ? 'badge-brand' : ''}`}
+                            className={`badge ${isComplete ? 'badge-success' : isToday && !isWorking && !isLocked && !isAbsent && !isMissingOut ? 'badge-brand' : ''}`}
                             style={
                               isAbsent ? { backgroundColor: '#DC2626', color: '#FFF', fontWeight: 800 }
                               : isLocked ? { backgroundColor: '#64748B', color: '#FFF', fontWeight: 800 }
+                              : isMissingOut ? { backgroundColor: '#EA580C', color: '#FFF', fontWeight: 800 }
                               : isWorking ? { backgroundColor: '#F59E0B', color: '#FFF', fontWeight: 800 }
                               : undefined
                             }
                           >
-                            {isAbsent ? 'VẮNG CA' : isLocked ? 'KHÓA' : isComplete ? 'HOÀN THÀNH' : `${shift.shift_code} (${new Date(shift.start_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} - ${new Date(shift.end_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })})`}
+                            {isAbsent ? 'VẮNG CA' : isLocked ? 'KHÓA' : isMissingOut ? 'THIẾU OUT' : isComplete ? 'HOÀN THÀNH' : `${shift.shift_code} (${new Date(shift.start_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} - ${new Date(shift.end_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })})`}
                           </span>
                         </div>
                       </div>

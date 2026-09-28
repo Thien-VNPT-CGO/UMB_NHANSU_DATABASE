@@ -3424,6 +3424,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             const ci = empEvents.find((e: any) => e.type === 'CHECK_IN' && matchShift(e, sh));
             const co = empEvents.find((e: any) => e.type === 'CHECK_OUT' && matchShift(e, sh));
             const ab = empEvents.find((e: any) => e.type === 'ABSENT' && matchShift(e, sh));
+            // Hết giờ tan ca +30p mà chưa check-out -> chốt (hết nhấp nháy), thiếu là không lương
+            const endMs = sh?.end_at ? new Date(sh.end_at).getTime() : NaN;
+            const pastEnd = Number.isFinite(endMs) && Date.now() - (endMs as number) > 30 * 60 * 1000;
             // Quá 3h kể từ giờ vào ca mà chưa check-in -> khóa, nghỉ không lương
             const startMs = sh?.start_at ? new Date(sh.start_at).getTime() : NaN;
             const locked = !ci && Number.isFinite(startMs) && Date.now() - (startMs as number) > 3 * 60 * 60 * 1000;
@@ -3438,6 +3441,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 : 'Đã check-in';
               const distText = ci.distance_meters !== undefined ? `${ci.distance_meters}m` : '< 300m';
 
+              if (!co && pastEnd) {
+                return {
+                  shift: shiftName,
+                  status: 'MISSING_OUT',
+                  note: `Vào ${inTime} nhưng hết giờ chưa check-out — không lương`,
+                  isToday: day.isToday,
+                  event: ci,
+                };
+              }
               if (co) {
                 const outTime = co.client_time
                   ? new Date(co.client_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
@@ -3782,6 +3794,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   {weekDays.map((day) => {
                     const d = (emp.days && emp.days[day.key]) || { shift: '—', status: 'NO_SHIFT', note: 'Không có ca' };
                     const isCheckedIn = d.status === 'CHECKED_IN';
+                    const isMissingOut = d.status === 'MISSING_OUT';
                     const isLocked = d.status === 'LOCKED';
                     const isPending = d.status === 'PENDING';
                     const isOff = d.status === 'OFF';
@@ -3826,6 +3839,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 ? '#DC2626'
                                 : sd.status === 'LOCKED'
                                 ? '#475569'
+                                : sd.status === 'MISSING_OUT'
+                                ? '#9A3412'
                                 : sd.status === 'CHECKED_IN' || sd.status === 'PENDING'
                                 ? '#B45309'
                                 : 'var(--text)';
@@ -3835,10 +3850,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 ? '#FEE2E2'
                                 : sd.status === 'LOCKED'
                                 ? '#F1F5F9'
+                                : sd.status === 'MISSING_OUT'
+                                ? '#FFF7ED'
                                 : sd.status === 'CHECKED_IN' || sd.status === 'PENDING'
                                 ? '#FEF3C7'
                                 : '#FAFAFA';
-                              const stBd = sd.status === 'ABSENT' ? '1.5px solid #EF4444' : sd.status === 'LOCKED' ? '1.5px solid #64748B' : '1px solid var(--border)';
+                              const stBd = sd.status === 'ABSENT' ? '1.5px solid #EF4444' : sd.status === 'LOCKED' ? '1.5px solid #64748B' : sd.status === 'MISSING_OUT' ? '1.5px solid #EA580C' : '1px solid var(--border)';
                               const stBlink = sd.status === 'CHECKED_IN';
                               return (
                                 <div key={si} style={{ padding: '6px', borderRadius: '8px', backgroundColor: stBg, border: stBd, animation: stBlink ? 'fx-blink 1.2s infinite' : undefined }}>
@@ -3848,6 +3865,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                       : sd.status === 'CHECKED_IN' ? `Đang làm${sd.time ? ` (vào ${sd.time})` : ''}`
                                       : sd.status === 'ABSENT' ? '🔴 Vắng'
                                       : sd.status === 'LOCKED' ? '🔒 Khóa — nghỉ không lương'
+                                      : sd.status === 'MISSING_OUT' ? 'Thiếu check-out — không lương'
                                       : sd.status === 'PENDING' ? 'Chưa check-in'
                                       : sd.note || sd.status}
                                   </div>
@@ -3861,6 +3879,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             borderRadius: '8px',
                             backgroundColor: isCheckedIn
                               ? '#FEF3C7'
+                              : isMissingOut
+                              ? '#FFF7ED'
                               : isAbsent
                               ? '#FEE2E2'
                               : isLocked
@@ -3874,6 +3894,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                               : '#FAFAFA',
                             border: isCheckedIn
                               ? '1.5px solid #F59E0B'
+                              : isMissingOut
+                              ? '1.5px solid #EA580C'
                               : isAbsent
                               ? '1.5px solid #EF4444'
                               : isLocked
@@ -3950,6 +3972,27 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 </span>
                                 <div style={{ fontSize: '10px', color: '#475569', fontWeight: 600, marginTop: '2px' }}>
                                   {d.note || 'Quá 3h chưa check-in'}
+                                </div>
+                              </div>
+                            )}
+
+                            {isMissingOut && (
+                              <div style={{ marginTop: '2px' }}>
+                                <span style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  padding: '2px 6px',
+                                  borderRadius: '4px',
+                                  backgroundColor: '#EA580C',
+                                  color: '#FFF',
+                                  fontSize: '10px',
+                                  fontWeight: 800,
+                                }}>
+                                  THIẾU CHECK-OUT — KHÔNG LƯƠNG
+                                </span>
+                                <div style={{ fontSize: '10px', color: '#9A3412', fontWeight: 600, marginTop: '2px' }}>
+                                  {d.note || 'Hết giờ chưa check-out'}
                                 </div>
                               </div>
                             )}
