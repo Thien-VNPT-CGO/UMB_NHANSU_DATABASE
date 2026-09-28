@@ -389,6 +389,52 @@ export class SchedulesService {
           throw new Error('CANNOT_ACCEPT_OWN_DISPATCH: Không thể tự nhận ca mình nhờ.');
         }
 
+        // NV tự tráo tay đôi (A ⇄ B): B bấm Đồng ý là hệ thống tự hoán đổi ca
+        // ngay, KHÔNG cần HR duyệt nữa (vẫn không phụ cấp +30k).
+        if (!isOpenDispatch && accept && (swap as any).swap_kind !== 'HR_DISPATCH') {
+          const reqShift = await this.repo.getShiftById(swap.requester_assignment_id);
+          const tgtShift = await this.repo.getShiftById(swap.target_assignment_id);
+          if (!reqShift || !tgtShift) {
+            throw new Error('SHIFTS_NOT_FOUND_FOR_SWAP');
+          }
+          await this.repo.updateShiftAssignment(reqShift.assignment_id, {
+            employee_id: swap.target_employee_id,
+            schedule_version: reqShift.schedule_version + 1,
+          });
+          await this.repo.updateShiftAssignment(tgtShift.assignment_id, {
+            employee_id: swap.requester_id,
+            schedule_version: tgtShift.schedule_version + 1,
+          });
+          const autoApproved = await this.repo.updateSwapRequest(swapId, {
+            status: 'APPROVED',
+            partner_responded_at: new Date().toISOString(),
+            approved_by: partnerId,
+            approved_at: new Date().toISOString(),
+            bonus_amount: 0,
+          });
+
+          const warnings: string[] = [];
+          try {
+            for (const empId of [swap.requester_id, swap.target_employee_id]) {
+              const day = (tgtShift.date || '').slice(0, 10);
+              const empShifts = await this.repo.getShiftsForEmployee(empId, day, day).catch(() => []);
+              const dayCount = (empShifts || []).filter(
+                (s: any) => (s.date || '').slice(0, 10) === day && s.status !== 'CANCELLED'
+              ).length;
+              if (dayCount > 1) {
+                warnings.push(`${empId} làm ${dayCount} ca ngày ${day} (mỗi ca điểm danh độc lập).`);
+              }
+            }
+          } catch { /* best-effort */ }
+
+          if (this.io) {
+            this.io.to(`user:${swap.requester_id}`).emit('swap.updated', { swapId, status: 'APPROVED' });
+            this.io.to(`user:${swap.target_employee_id}`).emit('swap.updated', { swapId, status: 'APPROVED' });
+          }
+
+          return { ...autoApproved, _warnings: warnings };
+        }
+
         const newStatus = accept ? 'PARTNER_ACCEPTED' : 'REJECTED';
         const updated = await this.repo.updateSwapRequest(swapId, {
           ...(isOpenDispatch && accept ? { target_employee_id: partnerId } : {}),

@@ -190,17 +190,19 @@ export function App() {
       setMySwaps(Array.isArray(list) ? list : []);
     } catch { /* offline: giữ danh sách cũ */ }
   };
-  // NV B xác nhận / từ chối phiếu tráo ca
+  // NV B xác nhận / từ chối phiếu tráo ca (B đồng ý là 2 ca hoán đổi ngay, không cần HR duyệt)
   const handleRespondSwap = async (swapId: string, accept: boolean) => {
-    if (!window.confirm(accept ? 'Đồng ý tráo đổi ca này? Phiếu chuyển sang chờ Store duyệt.' : 'Từ chối phiếu tráo đổi ca này?')) return;
+    if (!window.confirm(accept ? 'Đồng ý tráo đổi ca này? Hai ca sẽ hoán đổi người trực ngay!' : 'Từ chối phiếu tráo đổi ca này?')) return;
     setActionBusy('respond');
     try {
-      await apiRequest(`/swap-requests/${swapId}/respond`, {
+      const res = await apiRequest(`/swap-requests/${swapId}/respond`, {
         method: 'POST',
         body: JSON.stringify({ accept }),
       });
-      showToast(accept ? '✓ Đã đồng ý! Phiếu chuyển sang chờ Store duyệt.' : 'Đã từ chối phiếu đổi ca.');
+      const warns: string[] = (res as any)?.result?._warnings || (res as any)?._warnings || [];
+      showToast(accept ? `✓ Đã đồng ý! Hai ca hoán đổi ngay.${warns.length ? ` Lưu ý: ${warns.join(' ')}` : ''}` : 'Đã từ chối phiếu đổi ca.');
       await fetchMySwaps();
+      await loadEmployeeData(employee?.employee_id);
     } catch (e: any) {
       showToast(e?.message || 'Lỗi khi phản hồi!');
     } finally {
@@ -954,7 +956,7 @@ export function App() {
         }),
       });
       const sid = res?.result?.swap_id || res?.swap_id || '';
-      showToast(`✓ Đã gửi yêu cầu đổi ca THẬT! Mã đơn: ${sid}. Đang chờ NV B xác nhận rồi Store duyệt.`);
+      showToast(`✓ Đã gửi yêu cầu đổi ca THẬT! Mã đơn: ${sid}. B đồng ý là 2 ca hoán đổi ngay.`);
       setSwapData({ myShift: '', targetEmployeeId: '', targetEmployeeName: '', targetShift: '', reason: '' });
       setTargetShifts([]);
       await fetchMySwaps();

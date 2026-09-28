@@ -1363,10 +1363,14 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const partnerId = req.user?.employeeId || req.body.partnerId;
       const result = await schedulesService.respondSwapPartner(req.params.id, partnerId, req.body.accept);
       broadcastUpdate('swaps', { action: 'respond', swap: result });
+      const swRes: any = (result as any)?.result ?? result;
+      const autoDone = req.body.accept && swRes?.status === 'APPROVED';
       broadcastNotification({
         type: 'SWAP',
         title: req.body.accept ? '🤝 Đồng Nghiệp Đã Nhận Đổi Ca' : '⚠️ Đồng Nghiệp Từ Chối Đổi Ca',
-        message: `Yêu cầu đổi ca #${req.params.id} đã được phản hồi: ${req.body.accept ? 'Đồng ý' : 'Từ chối'}.`,
+        message: autoDone
+          ? `Tráo đổi ca #${req.params.id} đã tự hoàn tất: 2 ca hoán đổi người trực ngay (không cần HR duyệt).`
+          : `Yêu cầu đổi ca #${req.params.id} đã được phản hồi: ${req.body.accept ? 'Đồng ý, chờ Store duyệt' : 'Từ chối'}.`,
         linkTab: 'hr-schedule',
         metadata: { swapId: req.params.id },
         targetRoles: ['ADMIN', 'HR', 'STORE'],
