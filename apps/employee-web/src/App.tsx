@@ -343,6 +343,8 @@ export function App() {
       });
 
       setBranchColleagues(colleagues);
+      // Phiếu đổi ca chờ xác nhận (banner realtime)
+      fetchMySwaps().catch(() => null);
       // Mất mạng toàn bộ -> báo rõ đang xem dữ liệu cũ, không im lặng
       setDataStale(fails >= 4);
     } catch (err) {
@@ -495,6 +497,8 @@ export function App() {
   loadEmployeeDataRef.current = loadEmployeeData;
   const showToastRef = useRef(showToast);
   showToastRef.current = showToast;
+  const fetchMySwapsRef = useRef(fetchMySwaps);
+  fetchMySwapsRef.current = fetchMySwaps;
   const empIdRef = useRef<string | undefined>(undefined);
   empIdRef.current = employee?.employee_id;
 
@@ -515,6 +519,7 @@ export function App() {
         reloading = true;
         try {
           await loadEmployeeDataRef.current(empIdRef.current);
+          await fetchMySwapsRef.current().catch(() => null);
         } catch { /* lần sau */ } finally {
           reloading = false;
           if (queued) { queued = false; reload(); }
@@ -526,6 +531,18 @@ export function App() {
       socket.on('connect', reload);
       socket.on('data:updated', reload);
       socket.on('notification.created', reload);
+      // Phiếu đổi ca gửi tới tôi: tải ngay + popup để xác nhận/từ chối.
+      socket.on('swap.updated', async (p: any) => {
+        try { await fetchMySwapsRef.current(); } catch { /* bỏ qua */ }
+        if (p?.status === 'PENDING_PARTNER') {
+          showToastRef.current('🔔 Có phiếu đổi ca mới chờ bạn xác nhận! Mở tab Đổi ca để Đồng ý / Từ chối.');
+        } else if (p?.status === 'PARTNER_ACCEPTED') {
+          showToastRef.current('✓ Đồng nghiệp đã xác nhận đổi ca! Chờ Store duyệt.');
+        } else if (p?.status === 'APPROVED') {
+          showToastRef.current('✓ Store đã duyệt tráo ca! Lịch làm việc đã cập nhật.');
+        }
+        reload();
+      });
       socket.on('system:notification', (n: any) => {
         if (n?.message || n?.title) showToastRef.current(`🔔 ${n.title || ''}${n.title && n.message ? ': ' : ''}${n.message || ''}`.trim());
         reload();
@@ -1462,6 +1479,30 @@ export function App() {
         }}>
           <span>✓ Đã hoàn tất đăng ký 2 ngày nghỉ OFF tuần ({weeklyOffData.day1 || 'Ngày 1'} & {weeklyOffData.day2 || 'Ngày 2'})</span>
           <span style={{ fontSize: '11px', color: '#15803D' }}>• Đã mở khóa toàn bộ chức năng</span>
+        </div>
+      )}
+
+      {/* BANNER PHIẾU ĐỔI CA CHỜ XÁC NHẬN — hiện mọi tab cho đến khi B bấm Đồng ý/Từ chối */}
+      {!isProbation && mySwaps.some((s: any) => s.target_employee_id === employee?.employee_id && s.status === 'PENDING_PARTNER') && (
+        <div style={{
+          margin: '12px 16px 0',
+          padding: '12px 14px',
+          backgroundColor: '#FFFBEB',
+          border: '2px solid #F59E0B',
+          borderRadius: 'var(--radius-sm)',
+          boxShadow: '0 4px 12px rgba(245, 158, 11, 0.2)',
+        }}>
+          <div style={{ fontSize: '13px', fontWeight: 800, color: '#92400E' }}>
+            🔔 Bạn có {mySwaps.filter((s: any) => s.target_employee_id === employee?.employee_id && s.status === 'PENDING_PARTNER').length} phiếu đổi ca chờ xác nhận!
+          </div>
+          <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+            <button
+              onClick={() => setActiveTab('swap_shift')}
+              style={{ flex: 1, backgroundColor: '#D97706', color: '#FFF', border: 'none', borderRadius: '6px', padding: '9px 12px', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}
+            >
+              👉 Xem & xác nhận ngay
+            </button>
+          </div>
         </div>
       )}
 
