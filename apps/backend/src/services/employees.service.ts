@@ -31,13 +31,15 @@ export interface DuplicatePhoneGroup {
   accounts: { account_id: string; employee_id: string; account_status: string }[];
 }
 
-/** Chuẩn hóa khối/vị trí về 4 mã chuẩn (dữ liệu Sheets cũ có thể ghi tiếng Việt). */
+/** Chuẩn hóa khối/vị trí về 4 mã chuẩn (dữ liệu Sheets cũ ghi tiếng Việt tự do,
+ *  VD: 'Nhân viên bán hàng', 'Nhân viên cửa hàng'). Nhận diện theo từ khóa. */
 export function normalizeGroup(input: unknown): 'STORE' | 'XUONG' | 'VAN_PHONG' | 'SALE' {
   const g = String(input || '').trim().toUpperCase();
-  if (['STORE', 'CỬA HÀNG', 'CUA HANG', 'SHOP'].includes(g)) return 'STORE';
-  if (['XUONG', 'XƯỞNG', 'SAN XUAT', 'SẢN XUẤT', 'KHOI SAN XUAT', 'KHỐI SẢN XUẤT'].includes(g)) return 'XUONG';
-  if (['VAN_PHONG', 'VĂN PHÒNG', 'VAN PHONG', 'OFFICE', 'TRU SO', 'TRỤ SỞ'].includes(g)) return 'VAN_PHONG';
-  if (['SALE', 'BAN HANG', 'BÁN HÀNG', 'KINH DOANH'].includes(g)) return 'SALE';
+  if (!g) throw new Error(`INVALID_GROUP: khối '' không hợp lệ (STORE/XUONG/VAN_PHONG/SALE).`);
+  if (g === 'STORE' || g.includes('CỬA HÀNG') || g.includes('CUA HANG') || g.includes('SHOP') || g.includes('STORE')) return 'STORE';
+  if (g === 'XUONG' || g.includes('XƯỞNG') || g.includes('XUONG') || g.includes('SẢN XUẤT') || g.includes('SAN XUAT') || g.includes('CÔNG NHÂN') || g.includes('CONG NHAN')) return 'XUONG';
+  if (g === 'VAN_PHONG' || g.includes('VĂN PHÒNG') || g.includes('VAN PHONG') || g.includes('OFFICE') || g.includes('TRỤ SỞ') || g.includes('TRU SO')) return 'VAN_PHONG';
+  if (g === 'SALE' || g.includes('BÁN HÀNG') || g.includes('BAN HANG') || g.includes('KINH DOANH') || g.includes('SALE')) return 'SALE';
   throw new Error(`INVALID_GROUP: khối '${input}' không hợp lệ (STORE/XUONG/VAN_PHONG/SALE).`);
 }
 
