@@ -61,6 +61,7 @@ interface RoleViewsProps {
   candidates: any[];
   shifts: any[];
   leaves: any[];
+  swaps?: any[];
   payrollRuns: any[];
   branches: any[];
   systemNotifications: any[];
@@ -278,6 +279,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   candidates,
   shifts,
   leaves,
+  swaps = [],
   payrollRuns,
   branches,
   systemNotifications,
@@ -4267,28 +4269,100 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           </div>
         </div>
 
-        {/* KHUNG QUY TRÌNH HR TẠO PHIẾU & GỬI ĐIỀU PHỐI ĐẾN NHÂN VIÊN CHI NHÁNH */}
-        <div style={{
-          backgroundColor: 'var(--surface)',
-          borderRadius: 'var(--radius-md)',
-          border: '1px solid var(--border)',
-          padding: '28px 20px',
-          textAlign: 'center',
-        }}>
-          <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-muted)' }}>
-            Hiện tại không có ca nhường khẩn cấp nào cần HR điều phối.
-          </div>
-          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px' }}>
-            Khi nhân viên không tìm được người thay ca và gửi yêu cầu khẩn, HR có thể bấm nút "Tạo Phiếu Điều Phối Nhường Ca (+30.000đ)" để phát lệnh tức thì tới nhân sự chi nhánh.
-          </div>
-        </div>
-
-        {/* CÁC PHIẾU TRÁO ĐỔI CA THÔNG THƯỜNG (A <-> B) */}
-        <div style={{ backgroundColor: 'var(--surface)', padding: '24px 20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', textAlign: 'center' }}>
-          <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-            Không có yêu cầu tráo đổi ca trực tiếp (A ⇄ B) nào đang chờ HR phê duyệt.
-          </div>
-        </div>
+        {/* CÁC PHIẾU TRÁO ĐỔI CA (A ⇄ B) GỬI TỪ CỔNG NHÂN VIÊN — HR giám sát & duyệt */}
+        {(() => {
+          const list = swaps || [];
+          const ready = list.filter((s: any) => s.status === 'PARTNER_ACCEPTED');
+          const waiting = list.filter((s: any) => s.status === 'PENDING_PARTNER');
+          const done = list.filter((s: any) => !['PENDING_PARTNER', 'PARTNER_ACCEPTED'].includes(s.status));
+          const empName = (id: string) => (allEmployees || []).find((e: any) => e.employee_id === id)?.full_name || id;
+          const shiftInfo = (aid: string) => {
+            const s = (shifts || []).find((x: any) => x.assignment_id === aid);
+            return s ? `${s.shift_code} • ${s.date}` : (aid || '—');
+          };
+          const statusBadge = (st: string) => {
+            const map: Record<string, { bg: string; fg: string; label: string }> = {
+              PENDING_PARTNER: { bg: '#FEF3C7', fg: '#92400E', label: 'Chờ NV B xác nhận' },
+              PARTNER_ACCEPTED: { bg: '#DBEAFE', fg: '#1D4ED8', label: 'Chờ HR duyệt' },
+              APPROVED: { bg: '#DCFCE7', fg: '#166534', label: 'Đã duyệt' },
+              REJECTED: { bg: '#FEE2E2', fg: '#991B1B', label: 'Đã từ chối' },
+              CANCELLED: { bg: '#F3F4F6', fg: '#6B7280', label: 'Đã hủy' },
+            };
+            const m = map[st] || { bg: '#F3F4F6', fg: '#6B7280', label: st };
+            return <span className="badge" style={{ backgroundColor: m.bg, color: m.fg, fontWeight: 700 }}>{m.label}</span>;
+          };
+          const reviewSwap = async (sw: any, accept: boolean) => {
+            if (!window.confirm(accept ? `Duyệt tráo ca ${sw.swap_id}? Hai ca sẽ hoán đổi người trực.` : `Từ chối tráo ca ${sw.swap_id}?`)) return;
+            try {
+              await apiRequest(`/swap-requests/${sw.swap_id}/approve`, {
+                method: 'POST',
+                body: JSON.stringify(accept ? { accept: true } : { accept: false, reason: 'HR từ chối' }),
+              });
+              showToast(accept ? 'Đã duyệt tráo ca! Lịch đã hoán đổi.' : 'Đã từ chối tráo ca!');
+              if (onRefreshData) await onRefreshData();
+              if (onSyncSheets) await onSyncSheets();
+            } catch (e: any) {
+              showToast(e?.message || 'Lỗi khi duyệt!');
+            }
+          };
+          const renderRows = (rows: any[], canReview: boolean) =>
+            rows.map((sw: any) => (
+              <tr key={sw.swap_id} style={{ borderBottom: '1px solid var(--border)', backgroundColor: sw.status === 'PARTNER_ACCEPTED' ? '#EFF6FF' : undefined }}>
+                <td style={{ padding: '12px 20px', fontWeight: 700 }}>
+                  {empName(sw.requester_id)}
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }}>Ca: {shiftInfo(sw.requester_assignment_id)}</div>
+                </td>
+                <td style={{ padding: '12px 20px', fontWeight: 700 }}>
+                  {empName(sw.target_employee_id)}
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }}>Ca: {shiftInfo(sw.target_assignment_id)}</div>
+                </td>
+                <td style={{ padding: '12px 20px' }}>{sw.reason || '—'}</td>
+                <td style={{ padding: '12px 20px' }}>{statusBadge(sw.status)}</td>
+                <td style={{ padding: '12px 20px' }}>
+                  {canReview ? (
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <button className="btn-primary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => reviewSwap(sw, true)}>Duyệt</button>
+                      <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: '12px', color: '#DC2626' }} onClick={() => reviewSwap(sw, false)}>Từ chối</button>
+                    </div>
+                  ) : (
+                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{sw.status === 'APPROVED' ? 'Đã hoán đổi ca' : '—'}</span>
+                  )}
+                </td>
+              </tr>
+            ));
+          return (
+            <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
+              <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <strong style={{ fontSize: '14px' }}>Phiếu tráo đổi ca A ⇄ B ({list.length})</strong>
+                <span className="badge" style={{ backgroundColor: ready.length > 0 ? '#DBEAFE' : '#DCFCE7', color: ready.length > 0 ? '#1D4ED8' : '#166534', fontWeight: 800 }}>
+                  {ready.length} chờ HR duyệt • {waiting.length} chờ NV B
+                </span>
+              </div>
+              {list.length === 0 ? (
+                <div style={{ padding: '28px 20px', textAlign: 'center', fontSize: '13px', color: 'var(--text-muted)' }}>
+                  Chưa có yêu cầu tráo đổi ca nào từ Cổng Nhân Viên. Phiếu mới sẽ hiện realtime tại đây.
+                </div>
+              ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                  <thead>
+                    <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
+                      <th style={{ padding: '12px 20px' }}>NV A (Người đề xuất)</th>
+                      <th style={{ padding: '12px 20px' }}>NV B (Người nhận)</th>
+                      <th style={{ padding: '12px 20px' }}>Lý Do</th>
+                      <th style={{ padding: '12px 20px' }}>Tình Trạng</th>
+                      <th style={{ padding: '12px 20px' }}>HR Duyệt</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {renderRows(ready, true)}
+                    {renderRows(waiting, false)}
+                    {renderRows(done, false)}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          );
+        })()}
       </div>
     );
   }

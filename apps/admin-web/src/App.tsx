@@ -289,6 +289,7 @@ export function App() {
   // Additional HR/Store/Finance/MKT states
   const [shifts, setShifts] = useState<any[]>([]);
   const [leaves, setLeaves] = useState<any[]>([]);
+  const [swaps, setSwaps] = useState<any[]>([]);
   const [candidates, setCandidates] = useState<any[]>([]);
   const [payrollRuns, setPayrollRuns] = useState<any[]>([]);
 
@@ -677,6 +678,7 @@ export function App() {
       if (['ADMIN', 'HR', 'STORE'].includes(user.role)) {
         tasks.push(
           apiRequest('/employees').then(emps => setAllEmployees(emps || [])).catch(() => null),
+          apiRequest('/swap-requests').then(sList => setSwaps(sList || [])).catch(() => null),
         );
       }
 
@@ -3800,6 +3802,7 @@ export function App() {
             candidates={candidates}
             shifts={shifts}
             leaves={leaves}
+            swaps={swaps}
             payrollRuns={payrollRuns}
             branches={branches}
             systemNotifications={systemNotifications}
