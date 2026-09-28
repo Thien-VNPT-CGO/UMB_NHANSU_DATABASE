@@ -279,8 +279,71 @@ export class AttendanceService {
       entityId: adjId,
       actorId: approverId,
       execute: async () => {
-        return this.repo.updateAttendanceAdjustment(adjId, status, approverId, minutesApproved, note);
+        const updated = await this.repo.updateAttendanceAdjustment(adjId, status, approverId, minutesApproved, note);
+        // HR DUYỆT -> dựng lại bản ghi chấm công còn thiếu để lịch + realtime + lương
+        // ghi nhận ca có đi làm (đồng bộ Sheets như mọi sự kiện). Từ chối -> giữ nguyên.
+        let backfilled: string[] = [];
+        if (status === 'APPROVED') {
+          backfilled = await this.backfillFromAdjustment(updated).catch(() => []);
+        }
+        if (this.io && backfilled.length > 0) {
+          this.io.emit('data:updated', { entity: 'attendance', data: { action: 'adjustment-backfill', adjId }, timestamp: new Date().toISOString() });
+        }
+        return { ...updated, _backfilled: backfilled } as any;
       },
     });
+  }
+
+  /**
+   * Dựng sự kiện CHECK_IN/CHECK_OUT còn thiếu theo loại phiếu:
+   * [QUEN_CHECKIN] thiếu IN, [QUEN_CHECKOUT] thiếu OUT, [LOI_GPS_CAMERA] thiếu cả hai.
+   * Giờ lấy từ ca phân công, GPS đánh dấu bổ sung tay. Idempotent theo request_id.
+   */
+  private async backfillFromAdjustment(adj: AttendanceAdjustment): Promise<string[]> {
+    const done: string[] = [];
+    const shift = adj.assignment_id ? await this.repo.getShiftById(adj.assignment_id).catch(() => null) : null;
+    if (!shift) return done;
+    const reason = String((adj as any).reason || '');
+    const needIn = /QUEN_CHECKIN|LOI_GPS/i.test(reason);
+    const needOut = /QUEN_CHECKOUT|LOI_GPS/i.test(reason);
+    // Mặc định (không rõ loại): bù phía còn thiếu.
+    const events = await this.repo.getAttendanceEvents(adj.employee_id, (shift as any).date).catch(() => []);
+    const mine = (events || []).filter((e: any) => e.assignment_id === adj.assignment_id);
+    const hasIn = mine.some((e: any) => e.type === 'CHECK_IN');
+    const hasOut = mine.some((e: any) => e.type === 'CHECK_OUT');
+    const nowIso = new Date().toISOString();
+    const mk = async (type: 'CHECK_IN' | 'CHECK_OUT', clientTime: string) => {
+      const requestId = `ADJ_${type}_${adj.adjustment_id}`;
+      const dup = await this.repo.findAttendanceEventByRequestId(requestId).catch(() => null);
+      if (dup) return;
+      await this.repo.recordAttendanceEvent({
+        event_id: `EVT_ADJ_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+        request_id: requestId,
+        assignment_id: adj.assignment_id,
+        employee_id: adj.employee_id,
+        branch_id: (shift as any).branch_id,
+        type,
+        client_time: clientTime,
+        server_received_at: nowIso,
+        gps_latitude: 0,
+        gps_longitude: 0,
+        gps_accuracy: 0,
+        distance_meters: 0,
+        gps_status: 'UNAVAILABLE',
+        drive_object_id: '',
+        drive_path: '',
+        is_early: false,
+        is_late: false,
+        minutes_deviation: 0,
+      } as any);
+      done.push(type);
+    };
+    if ((needIn || (!needIn && !needOut && !hasIn)) && !hasIn) {
+      await mk('CHECK_IN', (shift as any).start_at);
+    }
+    if ((needOut || (!needIn && !needOut && !hasOut)) && !hasOut) {
+      await mk('CHECK_OUT', (shift as any).end_at);
+    }
+    return done;
   }
 }

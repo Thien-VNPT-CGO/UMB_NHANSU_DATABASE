@@ -5129,11 +5129,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       if (!window.confirm(status === 'APPROVED' ? `Duyệt bổ sung ${adj.minutes_requested || ''} phút công cho ${adj.employee_id}?` : `Từ chối phiếu của ${adj.employee_id}?`)) return;
       setAdjBusy(adj.adjustment_id);
       try {
-        await apiRequest(`/attendance/adjustments/${adj.adjustment_id}/approve`, {
+        const res = await apiRequest(`/attendance/adjustments/${adj.adjustment_id}/approve`, {
           method: 'POST',
           body: JSON.stringify({ status, minutesApproved: status === 'APPROVED' ? adj.minutes_requested : 0 }),
         });
-        showToast(status === 'APPROVED' ? 'Đã duyệt bổ sung công!' : 'Đã từ chối phiếu!');
+        const filled = (res as any)?.result?._backfilled || (res as any)?._backfilled || [];
+        showToast(status === 'APPROVED'
+          ? `Đã duyệt bổ sung công!${filled.length ? ` Đã dựng lại ${filled.join('+')} — lịch, realtime và lương cập nhật.` : ''}`
+          : 'Đã từ chối phiếu!');
         await loadAdjustments();
         if (onRefreshData) await onRefreshData();
         if (onSyncSheets) await onSyncSheets();
