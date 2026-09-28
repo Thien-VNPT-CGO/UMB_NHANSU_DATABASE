@@ -20,6 +20,7 @@ import { MockSheetsAdapter } from '../repositories/mock-sheets.adapter.js';
 import { hashPasswordSync, isBcryptHash, hashPin, generateAutoPin } from './password.service.js';
 import { canonicalPhone } from './employees.service.js';
 import { evaluateCandidateAiScore } from './ai-scorer.js';
+import { buildZipStore, ZipEntry } from '../utils/zip-store.js';
 
 export interface SheetDefinition {
   title: string;
@@ -46,6 +47,10 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   {
     title: 'SU_KIEN_DIEM_DANH',
     headers: ['ID Sự Kiện', 'ID Ca', 'ID Nhân Viên', 'Loại (IN/OUT)', 'Thời Gian Máy Chủ', 'Vĩ Độ GPS', 'Kinh Độ GPS', 'Khoảng Cách (m)', 'Trạng Thái GPS', 'Ảnh Drive Object', 'ID Yêu Cầu'],
+  },
+  {
+    title: 'LUUTRU_CHAMCONG_TUAN',
+    headers: ['ID Sự Kiện', 'ID Ca', 'ID Nhân Viên', 'Loại (IN/OUT)', 'Thời Gian Máy Chủ', 'Vĩ Độ GPS', 'Kinh Độ GPS', 'Khoảng Cách (m)', 'Trạng Thái GPS', 'Ảnh Drive Object', 'ID Yêu Cầu', 'Tuần Lưu Trữ'],
   },
   {
     title: 'DON_NGHI_PHEP',
@@ -1557,6 +1562,39 @@ export class GoogleSheetsSyncService {
     }
   }
 
+  /** Upload buffer bất kỳ lên Google Drive (dùng lưu ZIP archive tuần chấm công). */
+  public async uploadBufferToDrive(fileName: string, mimeType: string, buffer: Buffer): Promise<{ fileId: string; webViewLink?: string }> {
+    if (!this.driveClient) {
+      return { fileId: `DRV_${Date.now()}` };
+    }
+    try {
+      const stream = Readable.from(buffer);
+      const res = await this.sheetsCall(
+        'drive.uploadBuffer',
+        () =>
+          this.driveClient!.files.create({
+            requestBody: {
+              name: fileName,
+              parents: this.driveFolderId ? [this.driveFolderId] : undefined,
+            },
+            media: {
+              mimeType,
+              body: stream,
+            },
+            fields: 'id, webViewLink, webContentLink',
+          }),
+        60000
+      );
+      return {
+        fileId: res.data.id || `DRV_${Date.now()}`,
+        webViewLink: res.data.webViewLink || undefined,
+      };
+    } catch (err: any) {
+      console.error('[GoogleSheetsSyncService] Lỗi upload buffer lên Drive:', err);
+      return { fileId: `DRV_LOCAL_${Date.now()}` };
+    }
+  }
+
   /**
    * Tải ảnh chấm công lên Google Drive thật
    */
@@ -1597,6 +1635,190 @@ export class GoogleSheetsSyncService {
       console.error('[GoogleSheetsSyncService] Lỗi khi upload ảnh lên Google Drive:', err);
       return { fileId: `DRV_LOCAL_${Date.now()}` };
     }
+  }
+
+  private static safeZipName(s: string): string {
+    return String(s || 'Chua ro').replace(/[\\/:*?"<>|]/g, '-').trim() || 'Chua ro';
+  }
+
+  /**
+   * Dựng entries ZIP cho 1 ngày: {root}/{chi nhánh}/{ca}/{tên NV}/check in|out.jpg + CSV.
+   * Ảnh thật từ camera NV (bỏ qua bản ghi thiếu ảnh, CSV ghi THIEU_ANH).
+   */
+  public async attendanceZipEntriesForDate(
+    repo: ISheetsRepository,
+    date: string,
+    root: string
+  ): Promise<{ entries: ZipEntry[]; eventCount: number; photoCount: number }> {
+    const safe = GoogleSheetsSyncService.safeZipName;
+    const [y, m, d] = date.split('-');
+    const events: any[] = await repo.getAttendanceEvents(undefined, date).catch(() => []);
+    const employees = await repo.listEmployees().catch(() => []);
+    const empOf = (id: string) => (employees as any[]).find(e => e.employee_id === id);
+    const entries: ZipEntry[] = [];
+    let photoCount = 0;
+    const csvLines = ['Ngay,Chi nhanh,Ca lam,Nhan vien,Ma NV,Gio vao,Gio ra,GPS,Khoang cach (m),Anh check in,Anh check out'];
+    const byAssign = new Map<string, any[]>();
+    for (const e of events || []) {
+      const k = e.assignment_id || `${e.employee_id}__${e.type}`;
+      if (!byAssign.has(k)) byAssign.set(k, []);
+      byAssign.get(k)!.push(e);
+    }
+    for (const [, group] of byAssign) {
+      const first = group[0];
+      const emp = empOf(first.employee_id);
+      const empName = safe(emp?.full_name || first.employee_id);
+      const empCode = safe(emp?.employee_code || first.employee_id);
+      let shiftCode = 'Chua phan ca';
+      try {
+        const sh: any = first.assignment_id ? await (repo as any).getShiftById(first.assignment_id).catch(() => null) : null;
+        if (sh?.shift_code) shiftCode = safe(String(sh.shift_code).replace('CA_1', 'Ca 1 (07-12)').replace('CA_2', 'Ca 2 (12-18)').replace('CA_3', 'Ca 3 (18-23)'));
+      } catch { /* giữ mặc định */ }
+      const branch = safe(first.branch_id || emp?.default_branch_id || 'CN');
+      const folder = `${root}/${branch}/${shiftCode}/${empName} (${empCode})`;
+      const inEvt = group.find((e: any) => e.type === 'CHECK_IN');
+      const outEvt = group.find((e: any) => e.type === 'CHECK_OUT');
+      const absentEvt = group.find((e: any) => e.type === 'ABSENT');
+      const loadPhoto = async (evt: any, fname: string) => {
+        if (!evt?.drive_object_id || String(evt.drive_object_id).startsWith('DRV_')) return '';
+        try {
+          const dl = await this.downloadDriveFile(evt.drive_object_id);
+          if (dl?.buffer?.length) {
+            entries.push({ name: fname, data: dl.buffer });
+            photoCount++;
+            return fname;
+          }
+        } catch { /* thiếu ảnh */ }
+        return '';
+      };
+      const inPath = inEvt ? await loadPhoto(inEvt, `${folder}/check in.jpg`) : '';
+      const outPath = outEvt ? await loadPhoto(outEvt, `${folder}/check out.jpg`) : '';
+      const timeOf = (e: any) => (e?.client_time ? new Date(e.client_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '');
+      csvLines.push([
+        date, first.branch_id || '', shiftCode, `"${emp?.full_name || first.employee_id}"`, empCode,
+        timeOf(inEvt) || (absentEvt ? 'VANG' : ''), timeOf(outEvt),
+        inEvt?.gps_status || absentEvt?.gps_status || '', inEvt?.distance_meters ?? '',
+        inPath || 'THIEU_ANH', outPath || (outEvt ? 'THIEU_ANH' : ''),
+      ].join(','));
+    }
+    entries.push({
+      name: `${root}/danh-sach-diem-danh-${date}.csv`,
+      data: Buffer.from('\uFEFF' + csvLines.join('\n'), 'utf8'),
+    });
+    return { entries, eventCount: (events || []).length, photoCount };
+  }
+
+  /** Gói ZIP cả tuần (T2–CN): mỗi ngày 1 cụm folder như ngày lẻ + CSV tổng tuần. */
+  public async buildAttendanceWeekZip(
+    repo: ISheetsRepository,
+    weekMon: string
+  ): Promise<{ zip: Buffer; dates: string[]; eventCount: number; photoCount: number }> {
+    const [y, m, d0] = weekMon.split('-').map(Number);
+    const base = Date.UTC(y, m - 1, d0);
+    const isoOf = (t: number) => new Date(t).toISOString().slice(0, 10);
+    const weekSun = isoOf(base + 6 * 86_400_000);
+    const fmtD = (s: string) => `${s.slice(8, 10)}-${s.slice(5, 7)}-${s.slice(0, 4)}`;
+    const root = `Diem danh tuan ${fmtD(weekMon)} den ${fmtD(weekSun)}`;
+    const entries: ZipEntry[] = [];
+    const dates: string[] = [];
+    let eventCount = 0;
+    let photoCount = 0;
+    const weekCsv = ['Ngay,Chi nhanh,Ca lam,Nhan vien,Ma NV,Gio vao,Gio ra,GPS,Khoang cach (m),Anh check in,Anh check out'];
+    for (let i = 0; i < 7; i++) {
+      const date = isoOf(base + i * 86_400_000);
+      dates.push(date);
+      const dayRoot = `${root}/Diem danh ngay ${fmtD(date)}`;
+      const r = await this.attendanceZipEntriesForDate(repo, date, dayRoot);
+      for (const en of r.entries) {
+        if (en.name.endsWith('.csv')) {
+          const text = en.data.toString('utf8').replace(/^\uFEFF/, '').split('\n');
+          weekCsv.push(...text.slice(1).filter(x => x.trim() !== ''));
+        } else {
+          entries.push(en);
+        }
+      }
+      eventCount += r.eventCount;
+      photoCount += r.photoCount;
+    }
+    entries.push({
+      name: `${root}/tong-hop-tuan-${weekMon}-den-${weekSun}.csv`,
+      data: Buffer.from('\uFEFF' + weekCsv.join('\n'), 'utf8'),
+    });
+    return { zip: buildZipStore(entries), dates, eventCount, photoCount };
+  }
+
+  /**
+   * Lưu trữ + reset tuần chấm công (chạy 23h30 Chủ nhật, dự phòng 00h05 Thứ 2):
+   * 1) gói ZIP tuần up lên Drive, 2) chuyển dòng tuần sang tab LUUTRU_CHAMCONG_TUAN,
+   * 3) xóa dòng tuần khỏi tab chính + bộ nhớ để bảng realtime bắt đầu tuần mới.
+   * Idempotent theo systemSettings.attendanceArchive.lastWeekMon.
+   */
+  public async archiveAttendanceWeek(repo: ISheetsRepository, weekMon: string): Promise<{ archived: boolean; reason?: string; eventCount?: number; driveFileId?: string }> {
+    let fallback: MockSheetsAdapter | null = null;
+    if ((repo as any).fallbackAdapter instanceof MockSheetsAdapter) {
+      fallback = (repo as any).fallbackAdapter as MockSheetsAdapter;
+    } else if (repo instanceof MockSheetsAdapter) {
+      fallback = repo;
+    }
+    if (!fallback) return { archived: false, reason: 'ADAPTER_MISMATCH' };
+    const settings = await repo.getSystemSettings().catch(() => ({}));
+    if (settings?.attendanceArchive?.lastWeekMon === weekMon) {
+      return { archived: false, reason: 'ALREADY_ARCHIVED' };
+    }
+    const [y, m, d0] = weekMon.split('-').map(Number);
+    const base = Date.UTC(y, m - 1, d0);
+    const isoOf = (t: number) => new Date(t).toISOString().slice(0, 10);
+    const weekSun = isoOf(base + 6 * 86_400_000);
+    const inWeek = (dt: string) => dt >= weekMon && dt <= weekSun;
+
+    const { zip, eventCount } = await this.buildAttendanceWeekZip(repo, weekMon);
+    let driveFileId = '';
+    try {
+      const up = await this.uploadBufferToDrive(`Diem-danh-tuan-${weekMon}-den-${weekSun}.zip`, 'application/zip', zip);
+      driveFileId = up.fileId || '';
+    } catch { /* ZIP vẫn ghi Sheets, Drive thử lại lần sau */ }
+
+    await this.initSpreadsheetStructure().catch(() => null);
+    const rows = (fallback.attendanceEvents || [])
+      .filter((e: any) => inWeek((e.client_time || '').slice(0, 10)))
+      .map((e: any) => [
+        e.event_id, e.assignment_id, e.employee_id, e.type, e.server_received_at,
+        e.gps_latitude ?? '', e.gps_longitude ?? '', e.distance_meters ?? '', e.gps_status || '',
+        e.drive_object_id || '', e.request_id || '', `${weekMon}→${weekSun}`,
+      ]);
+    if (rows.length > 0 && this.sheetsClient) {
+      try {
+        const existing = await this.readTabsBatch(['LUUTRU_CHAMCONG_TUAN']).catch(() => ({ LUUTRU_CHAMCONG_TUAN: [] as string[][] }));
+        const oldRows = existing?.['LUUTRU_CHAMCONG_TUAN'] || [];
+        const def = SHEETS_DEFINITIONS.find(dd => dd.title === 'LUUTRU_CHAMCONG_TUAN')!;
+        await this.overwriteSheetData('LUUTRU_CHAMCONG_TUAN', def.headers, [...oldRows, ...rows]);
+      } catch (e: any) {
+        console.warn('[archive] Ghi tab lưu trữ thất bại:', e?.message || e);
+      }
+    }
+
+    // Reset: bộ nhớ + tab chính chỉ giữ sự kiện từ Thứ 2 tuần mới trở đi.
+    const nextMon = isoOf(base + 7 * 86_400_000);
+    fallback.attendanceEvents = (fallback.attendanceEvents || []).filter(
+      (e: any) => (e.client_time || '').slice(0, 10) >= nextMon
+    );
+    if (this.sheetsClient) {
+      try {
+        const mainRows = (fallback.attendanceEvents || []).map((e: any) => [
+          e.event_id, e.assignment_id, e.employee_id, e.type, e.server_received_at,
+          e.gps_latitude ?? '', e.gps_longitude ?? '', e.distance_meters ?? '', e.gps_status || '',
+          e.drive_object_id || '', e.request_id || '',
+        ]);
+        const def = SHEETS_DEFINITIONS.find(dd => dd.title === 'SU_KIEN_DIEM_DANH')!;
+        await this.overwriteSheetData('SU_KIEN_DIEM_DANH', def.headers, mainRows);
+      } catch (e: any) {
+        console.warn('[archive] Reset tab chính thất bại:', e?.message || e);
+      }
+    }
+
+    const next = { ...(settings || {}), attendanceArchive: { lastWeekMon: weekMon, archivedAt: new Date().toISOString(), eventCount, driveFileId } };
+    await repo.updateSystemSettings(next).catch(() => null);
+    return { archived: true, eventCount, driveFileId };
   }
 
   /** Tải bytes ảnh từ Google Drive (để xem trực tiếp / đóng gói ZIP tải về). */

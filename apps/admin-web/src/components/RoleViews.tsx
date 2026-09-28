@@ -362,6 +362,22 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Xuất ZIP chứng cứ điểm danh theo ngày
   const [exportAttDate, setExportAttDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [exportAttBusy, setExportAttBusy] = useState(false);
+  const [exportWeekBusy, setExportWeekBusy] = useState(false);
+  // Tuần T2–CN đang theo dõi (bảng realtime reset khi sang tuần mới, 23h30 CN tự lưu trữ)
+  const attWeek = (() => {
+    const now = new Date();
+    const dowMon0 = (now.getDay() + 6) % 7;
+    const mon = new Date(now);
+    mon.setDate(now.getDate() - dowMon0);
+    const sun = new Date(mon);
+    sun.setDate(mon.getDate() + 6);
+    const fmt = (x: Date) => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+    const fmtD = (s: string) => `${s.slice(8, 10)}-${s.slice(5, 7)}-${s.slice(0, 4)}`;
+    const monS = fmt(mon);
+    const sunS = fmt(sun);
+    const isSunday = now.getDay() === 0;
+    return { mon: monS, sun: sunS, label: `${fmtD(monS)} → ${fmtD(sunS)}`, isSunday };
+  })();
   // Bài TEST: HR tạo đề + giao đúng nhân viên (NV chỉ thấy bài của mình)
   const [testPapers, setTestPapers] = useState<any[]>([]);
   const [testSubs, setTestSubs] = useState<any[]>([]);
@@ -4881,6 +4897,42 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
               Giám sát check-in, check-out, hình ảnh áo hồng + bảng tên, tọa độ GPS vệ tinh (100% Realtime)
             </p>
+            <div style={{ marginTop: '8px', backgroundColor: attWeek.isSunday ? '#FFFBEB' : '#EFF6FF', border: attWeek.isSunday ? '1.5px solid #F59E0B' : '1px solid #BFDBFE', borderRadius: 'var(--radius-md)', padding: '10px 14px', fontSize: '12px', color: attWeek.isSunday ? '#92400E' : '#1E40AF' }}>
+              📅 Dữ liệu tuần <strong>{attWeek.label}</strong> (T2 → CN).
+              {attWeek.isSunday
+                ? <> <strong>Bắt buộc tải ZIP tuần trước 23h30 tối nay!</strong> 23h30 hệ thống tự lưu trữ lên Drive + reset bảng sang tuần mới.</>
+                : <> 23h30 Chủ nhật hệ thống tự lưu trữ + reset sang tuần mới — HR nên tải ZIP tuần trước đó.</>}
+              <button
+                className="btn-primary"
+                style={{ fontSize: '12px', marginLeft: '10px', padding: '6px 12px', backgroundColor: '#7C3AED' }}
+                disabled={exportWeekBusy}
+                onClick={async () => {
+                  setExportWeekBusy(true);
+                  try {
+                    const res = await fetch(`${getApiBase()}/admin/attendance/export-week?weekMon=${attWeek.mon}`, {
+                      headers: { Authorization: `Bearer ${getAuthToken()}` },
+                    });
+                    if (!res.ok) throw new Error('Tải thất bại');
+                    const blob = await res.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `diem-danh-tuan-${attWeek.mon}.zip`;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    setTimeout(() => URL.revokeObjectURL(url), 5000);
+                    showToast(`Đã tải ZIP tuần ${attWeek.label}!`);
+                  } catch {
+                    showToast('Lỗi khi tải ZIP tuần!');
+                  } finally {
+                    setExportWeekBusy(false);
+                  }
+                }}
+              >
+                {exportWeekBusy ? 'Đang gói...' : '⬇ Tải ZIP tuần này'}
+              </button>
+            </div>
           </div>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
             <input

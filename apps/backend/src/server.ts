@@ -146,6 +146,80 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   setTimeout(absenteeTickSafe, 120_000); // sau pull đầu
   setInterval(absenteeTickSafe, 15 * 60_000);
 
+  // Tuần chấm công T2–CN: CN 20h00 nhắc HR tải trước 23h30, 23h30 tự lưu trữ
+  // (ZIP tuần lên Drive + chuyển dòng sang tab LUUTRU + reset bảng realtime sang tuần mới),
+  // T2 00h05 chạy dự phòng nếu lúc 23h30 server ngủ. Mỗi mốc chạy 1 lần/tuần.
+  const weeklyDone = new Set<string>();
+  const vnParts = (d: Date) => {
+    const vn = new Date(d.getTime() + 7 * 3_600_000);
+    return { dowSun0: vn.getUTCDay(), hh: vn.getUTCHours(), mm: vn.getUTCMinutes(), dateStr: vn.toISOString().slice(0, 10) };
+  };
+  const mondayOf = (dateStr: string) => {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const t = Date.UTC(y, m - 1, d);
+    const dt = new Date(t);
+    const back = (dt.getUTCDay() + 6) % 7;
+    return new Date(t - back * 86_400_000).toISOString().slice(0, 10);
+  };
+  const attendanceWeekTick = async () => {
+    try {
+      const now = new Date();
+      const { dowSun0, hh, mm } = vnParts(now);
+      const syncService = (adapter as any).syncService;
+      if (!syncService?.archiveAttendanceWeek) return;
+      // CN 20h00: nhắc HR tải ZIP tuần trước 23h30
+      if (dowSun0 === 0 && hh === 20 && mm < 2) {
+        const key = `remind:${vnParts(now).dateStr}`;
+        if (!weeklyDone.has(key)) {
+          weeklyDone.add(key);
+          const admins = await adapter.listAdminAccounts().catch(() => []);
+          const ids = admins.filter(a => (a.role === 'ADMIN' || a.role === 'HR') && a.is_active !== false).map(a => a.admin_id);
+          if (ids.length > 0) {
+            await services.notificationsService.sendNotification({
+              recipientIds: ids,
+              type: 'ATTENDANCE_WEEK_EXPORT',
+              severity: 'ACTION_REQUIRED',
+              title: '⏰ Tải điểm danh tuần trước 23h30 tối nay',
+              summary: '23h30 hệ thống tự lưu trữ + reset bảng realtime sang tuần mới. HR tải ZIP tuần (tab Chấm công → Tải ZIP tuần) để lưu máy.',
+              actorId: 'SYSTEM',
+            }).catch(() => null);
+          }
+        }
+        return;
+      }
+      // CN 23h30: lưu trữ + reset
+      if (dowSun0 === 0 && hh === 23 && mm >= 30 && mm < 32) {
+        const weekMon = mondayOf(vnParts(now).dateStr);
+        const key = `archive:${weekMon}`;
+        if (!weeklyDone.has(key)) {
+          weeklyDone.add(key);
+          const r = await syncService.archiveAttendanceWeek(adapter, weekMon).catch((e: any) => ({ archived: false, reason: e?.message }));
+          console.log(`[attendance-week] Archive tuần ${weekMon}:`, JSON.stringify(r));
+          try {
+            io.emit('data:updated', { entity: 'attendance', data: { action: 'week-archived', weekMon, ...r }, timestamp: new Date().toISOString() });
+          } catch { /* non-fatal */ }
+        }
+        return;
+      }
+      // T2 00h05: dự phòng nếu CN 23h30 server ngủ
+      if (dowSun0 === 1 && hh === 0 && mm >= 5 && mm < 7) {
+        const ymd = vnParts(now).dateStr;
+        const [y, m, d] = ymd.split('-').map(Number);
+        const lastSun = new Date(Date.UTC(y, m - 1, d) - 86_400_000).toISOString().slice(0, 10);
+        const weekMon = mondayOf(lastSun);
+        const key = `archive:${weekMon}`;
+        if (!weeklyDone.has(key)) {
+          weeklyDone.add(key);
+          const r = await syncService.archiveAttendanceWeek(adapter, weekMon).catch((e: any) => ({ archived: false, reason: e?.message }));
+          console.log(`[attendance-week] Archive bù tuần ${weekMon}:`, JSON.stringify(r));
+        }
+      }
+    } catch (err: any) {
+      console.warn('[attendance-week] tick error:', err?.message || err);
+    }
+  };
+  setInterval(attendanceWeekTick, 60_000);
+
   // Xoay PIN định kỳ hàng tháng (ngày 1-5): cấp PIN mới theo mẻ, báo NV + HR/Admin.
   const pinRotationTickSafe = () => {
     pinRotationTick(adapter, services.notificationsService)
