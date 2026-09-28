@@ -4999,10 +4999,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     const hours = shift?.shift_code === 'CA_2' ? 6 : 5;
                     const shiftPay = hours * rate;
                     const startMs = shift?.start_at ? new Date(shift.start_at).getTime() : NaN;
+                    const endMs = shift?.end_at ? new Date(shift.end_at).getTime() : NaN;
                     const complete = !!(inEvt && outEvt);
                     const absent = !inEvt && !!absentEvt;
                     const locked = !inEvt && !absentEvt && Number.isFinite(startMs) && Date.now() - startMs > 3 * 60 * 60 * 1000;
-                    const working = !complete && !absent && !locked;
+                    // Hết giờ +30p mà chưa check-out -> chốt (hết nhấp nháy), thiếu là không lương
+                    const missingOut = !!inEvt && !outEvt && Number.isFinite(endMs) && Date.now() - endMs > 30 * 60 * 1000;
+                    const working = !complete && !absent && !locked && !missingOut;
                     const lateMin = inEvt?.is_late ? Number(inEvt.minutes_deviation) || 0 : 0;
                     const fineTxt = !inEvt ? '' : lateMin < 5 ? '' : lateMin < 30 ? ' • Phạt 30k' : lateMin < 60 ? ` • Phạt 50% (${Math.round(shiftPay * 0.5).toLocaleString('vi-VN')}đ)` : ' • Phạt 100% ca';
                     const statusBadge = complete
@@ -5011,12 +5014,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         ? <span className="badge" style={{ backgroundColor: '#FEE2E2', color: '#991B1B', fontWeight: 800 }}>🔴 VẮNG — không lương</span>
                         : locked
                           ? <span className="badge" style={{ backgroundColor: '#64748B', color: '#FFF', fontWeight: 800 }}>🔒 KHÓA — nghỉ không lương</span>
-                          : <span className="badge" style={{ backgroundColor: '#F59E0B', color: '#FFF', fontWeight: 800, animation: inEvt ? 'fx-blink 1.2s infinite' : undefined }}>{inEvt ? 'ĐANG LÀM (chờ check-out)' : 'CHƯA CHECK-IN'}</span>;
+                          : missingOut
+                            ? <span className="badge" style={{ backgroundColor: '#EA580C', color: '#FFF', fontWeight: 800 }}>THIẾU CHECK-OUT — không lương</span>
+                            : <span className="badge" style={{ backgroundColor: '#F59E0B', color: '#FFF', fontWeight: 800, animation: inEvt ? 'fx-blink 1.2s infinite' : undefined }}>{inEvt ? 'ĐANG LÀM (chờ check-out)' : 'CHƯA CHECK-IN'}</span>;
                     const photoOf = (evt: any) => evt?.drive_object_id && !String(evt.drive_object_id).startsWith('DRV_')
                       ? <AttPhoto eventId={evt.event_id} />
                       : <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Không ảnh</span>;
                     return (
-                      <tr key={key} style={{ borderBottom: '1px solid var(--border)', backgroundColor: complete ? undefined : absent ? '#FEF2F2' : locked ? '#F1F5F9' : working ? '#FFFBEB' : undefined }}>
+                      <tr key={key} style={{ borderBottom: '1px solid var(--border)', backgroundColor: complete ? undefined : absent ? '#FEF2F2' : locked ? '#F1F5F9' : missingOut ? '#FFF7ED' : working ? '#FFFBEB' : undefined }}>
                         <td style={{ padding: '12px 20px', fontWeight: 700 }}>
                           {emp.full_name}
                           <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{emp.employee_code}</div>
