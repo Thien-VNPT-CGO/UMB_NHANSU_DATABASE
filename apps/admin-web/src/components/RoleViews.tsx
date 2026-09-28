@@ -3130,7 +3130,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               className="btn-primary"
               style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', fontSize: '13px' }}
               onClick={() => {
-                setPublishBranch(scheduleBranchFilter !== 'ALL' ? scheduleBranchFilter : 'CN130');
+                setPublishBranch(branchScope !== '*' ? branchScope : (scheduleBranchFilter !== 'ALL' ? scheduleBranchFilter : 'CN130'));
                 setPublishPreview(null);
                 setPublishOpen(true);
               }}
@@ -3735,7 +3735,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 </div>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '12px', flexWrap: 'wrap' }}>
                   <span style={{ fontSize: '12px', fontWeight: 700 }}>Chi nhánh:</span>
-                  <select value={publishBranch} onChange={e => { setPublishBranch(e.target.value); setPublishPreview(null); }} style={{ padding: '6px 10px', fontSize: '12px', borderRadius: '6px' }}>
+                  <select
+                    value={publishBranch}
+                    disabled={branchScope !== '*'}
+                    title={branchScope !== '*' ? `Tài khoản Store chỉ phát hành cho ${branchName}` : 'Chọn chi nhánh cần phát hành'}
+                    onChange={e => { setPublishBranch(e.target.value); setPublishPreview(null); }}
+                    style={{ padding: '6px 10px', fontSize: '12px', borderRadius: '6px' }}
+                  >
                     <option value="CN130">Chi Nhánh 130</option>
                     <option value="CN120">Chi Nhánh 120</option>
                     <option value="CN261">Chi Nhánh 261</option>
