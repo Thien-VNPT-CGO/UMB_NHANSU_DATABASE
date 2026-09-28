@@ -389,9 +389,47 @@ export class SchedulesService {
           throw new Error('CANNOT_ACCEPT_OWN_DISPATCH: Không thể tự nhận ca mình nhờ.');
         }
 
-        // NV tự tráo tay đôi (A ⇄ B): B bấm Đồng ý là hệ thống tự hoán đổi ca
-        // ngay, KHÔNG cần HR duyệt nữa (vẫn không phụ cấp +30k).
+        // NV tự thỏa thuận với nhau: B bấm Đồng ý là chuyển ca ngay,
+        // KHÔNG cần HR duyệt nữa (vẫn không phụ cấp +30k).
+        // - Tráo tay đôi (A ⇄ B, đủ 2 ca): hoán đổi người trực.
+        // - Nhờ làm thay 1 chiều (không có ca đối ứng): chuyển ca A sang B.
         if (!isOpenDispatch && accept && (swap as any).swap_kind !== 'HR_DISPATCH') {
+          if (!swap.target_assignment_id) {
+            const coverShift = await this.repo.getShiftById(swap.requester_assignment_id);
+            if (!coverShift) {
+              throw new Error('SHIFTS_NOT_FOUND_FOR_SWAP');
+            }
+            await this.repo.updateShiftAssignment(coverShift.assignment_id, {
+              employee_id: swap.target_employee_id,
+              schedule_version: coverShift.schedule_version + 1,
+            });
+            const autoCover = await this.repo.updateSwapRequest(swapId, {
+              status: 'APPROVED',
+              partner_responded_at: new Date().toISOString(),
+              approved_by: partnerId,
+              approved_at: new Date().toISOString(),
+              bonus_amount: 0,
+            });
+
+            const coverWarnings: string[] = [];
+            try {
+              const day = (coverShift.date || '').slice(0, 10);
+              const empShifts = await this.repo.getShiftsForEmployee(swap.target_employee_id, day, day).catch(() => []);
+              const dayCount = (empShifts || []).filter(
+                (s: any) => (s.date || '').slice(0, 10) === day && s.status !== 'CANCELLED'
+              ).length;
+              if (dayCount > 1) {
+                coverWarnings.push(`${swap.target_employee_id} làm ${dayCount} ca ngày ${day} (mỗi ca điểm danh độc lập).`);
+              }
+            } catch { /* best-effort */ }
+
+            if (this.io) {
+              this.io.to(`user:${swap.requester_id}`).emit('swap.updated', { swapId, status: 'APPROVED' });
+              this.io.to(`user:${swap.target_employee_id}`).emit('swap.updated', { swapId, status: 'APPROVED' });
+            }
+
+            return { ...autoCover, _warnings: coverWarnings };
+          }
           const reqShift = await this.repo.getShiftById(swap.requester_assignment_id);
           const tgtShift = await this.repo.getShiftById(swap.target_assignment_id);
           if (!reqShift || !tgtShift) {

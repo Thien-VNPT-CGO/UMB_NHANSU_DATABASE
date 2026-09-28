@@ -4571,7 +4571,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 </td>
                 <td style={{ padding: '12px 20px', fontWeight: 700 }}>
                   {sw.target_employee_id ? empName(sw.target_employee_id) : <span style={{ color: '#B45309' }}>Mở cho cả chi nhánh</span>}
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }}>{sw.target_assignment_id ? `Ca: ${shiftInfo(sw.target_assignment_id)}` : ''}</div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }}>{sw.target_assignment_id ? `Ca: ${shiftInfo(sw.target_assignment_id)}` : (sw.target_employee_id ? 'Nhận làm thay (1 chiều)' : '')}</div>
                 </td>
                 <td style={{ padding: '12px 20px' }}>
                   <span className="badge" style={{ backgroundColor: isDispatch ? '#EDE9FE' : '#F3F4F6', color: isDispatch ? '#6D28D9' : '#4B5563', fontWeight: 700 }}>

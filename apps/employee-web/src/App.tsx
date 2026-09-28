@@ -2702,15 +2702,12 @@ export function App() {
                       onChange={(e) => setSwapData({ ...swapData, myShift: e.target.value })}
                       style={{ width: '100%' }}
                     >
-                      {myShifts.length === 0 ? (
-                        <option value="Ca làm việc hôm nay">Ca làm việc hôm nay</option>
-                      ) : (
-                        myShifts.map((s: any, idx: number) => (
-                          <option key={idx} value={`${s.date} (${s.shift_code})`}>
-                            {s.date} ({s.shift_code})
-                          </option>
-                        ))
-                      )}
+                      <option value="">-- Chọn ca của bạn --</option>
+                      {myShifts.map((s: any, idx: number) => (
+                        <option key={s.assignment_id || idx} value={s.assignment_id}>
+                          {s.date} ({s.shift_code})
+                        </option>
+                      ))}
                     </select>
                   </div>
 
@@ -2747,9 +2744,45 @@ export function App() {
                   <button
                     className="btn-primary"
                     style={{ backgroundColor: '#2563EB' }}
-                    onClick={() => showToast('Đã gửi yêu cầu Nhờ làm thay! NV B sẽ nhận được thông báo chấp thuận làm 2 ca.')}
+                    disabled={actionBusy === 'swap'}
+                    onClick={async () => {
+                      if (!swapData.myShift) {
+                        showToast('⚠️ Vui lòng chọn ca của bạn cần nhờ làm thay!');
+                        return;
+                      }
+                      if (!swapData.targetEmployeeId) {
+                        showToast('⚠️ Vui lòng chọn đồng nghiệp nhận làm thay!');
+                        return;
+                      }
+                      if (!swapData.reason.trim()) {
+                        showToast('⚠️ Vui lòng nhập lý do nhờ làm thay!');
+                        return;
+                      }
+                      setActionBusy('swap');
+                      try {
+                        const res = await apiRequest('/swap-requests', {
+                          method: 'POST',
+                          body: JSON.stringify({
+                            requesterAssignmentId: swapData.myShift,
+                            targetEmployeeId: swapData.targetEmployeeId,
+                            targetAssignmentId: '',
+                            reason: swapData.reason,
+                          }),
+                        });
+                        const sid = res?.result?.swap_id || res?.swap_id || '';
+                        showToast(`✓ Đã gửi yêu cầu nhờ làm thay! Mã đơn: ${sid}. B đồng ý là ca chuyển ngay.`);
+                        setSwapData({ myShift: '', targetEmployeeId: '', targetEmployeeName: '', targetShift: '', reason: '' });
+                        setTargetShifts([]);
+                        await fetchMySwaps();
+                        await loadEmployeeData(employee?.employee_id);
+                      } catch (err: any) {
+                        showToast(err.message || 'Lỗi khi gửi yêu cầu!');
+                      } finally {
+                        setActionBusy(null);
+                      }
+                    }}
                   >
-                    Gửi Yêu Cầu Nhờ Làm Thay Ca
+                    {actionBusy === 'swap' ? '⏳ ĐANG GỬI...' : 'Gửi Yêu Cầu Nhờ Làm Thay Ca'}
                   </button>
                 </div>
               )}
