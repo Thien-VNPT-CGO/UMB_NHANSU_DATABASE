@@ -10,6 +10,7 @@ import {
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { singleWriterQueue } from '../repositories/single-writer-queue.js';
 import { weekRangeOf } from './weekly-off.service.js';
+import { canonicalBranch } from './auto-schedule.service.js';
 import { Server } from 'socket.io';
 
 export class SchedulesService {
@@ -287,6 +288,7 @@ export class SchedulesService {
   }
 
   // --- Shift Swap ---
+  // NV tự tráo đổi với nhau: KHÔNG có phụ cấp +30k (chỉ HR điều phối mới có).
   async requestSwap(data: {
     requesterId: string;
     requesterAssignmentId: string;
@@ -302,12 +304,14 @@ export class SchedulesService {
       execute: async () => {
         const swap = await this.repo.createSwapRequest({
           swap_id: swapId,
+          swap_kind: 'EMPLOYEE_SWAP',
           requester_id: data.requesterId,
           requester_assignment_id: data.requesterAssignmentId,
           target_employee_id: data.targetEmployeeId,
           target_assignment_id: data.targetAssignmentId,
           reason: data.reason,
           status: 'PENDING_PARTNER',
+          bonus_amount: 0,
         });
 
         // Notify partner
@@ -324,6 +328,50 @@ export class SchedulesService {
     });
   }
 
+  /**
+   * HR tạo phiếu điều phối nhường ca (mở cho cả chi nhánh nhận, +30.000đ cho
+   * người nhận làm thay khi duyệt). requester = chủ ca cần người làm thay.
+   */
+  async createDispatch(data: {
+    requesterId: string;
+    requesterAssignmentId: string;
+    branchId: string;
+    reason: string;
+    actorId: string;
+  }) {
+    const shift = await this.repo.getShiftById(data.requesterAssignmentId);
+    if (!shift) throw new Error('SHIFT_NOT_FOUND_FOR_DISPATCH');
+    const swapId = `DISP_${Date.now()}`;
+    return singleWriterQueue.enqueue({
+      entityType: 'PHIEU_DOI_CA',
+      entityId: swapId,
+      actorId: data.actorId,
+      execute: async () => {
+        const swap = await this.repo.createSwapRequest({
+          swap_id: swapId,
+          swap_kind: 'HR_DISPATCH',
+          requester_id: data.requesterId,
+          requester_assignment_id: data.requesterAssignmentId,
+          target_employee_id: '',
+          target_assignment_id: '',
+          reason: data.reason,
+          status: 'PENDING_PARTNER',
+          bonus_amount: 0,
+        });
+
+        if (this.io) {
+          this.io.to(`branch:${data.branchId}`).emit('swap.updated', {
+            swapId,
+            status: 'PENDING_PARTNER',
+            kind: 'HR_DISPATCH',
+          });
+        }
+
+        return swap;
+      },
+    });
+  }
+
   async respondSwapPartner(swapId: string, partnerId: string, accept: boolean) {
     return singleWriterQueue.enqueue({
       entityType: 'PHIEU_DOI_CA',
@@ -331,12 +379,19 @@ export class SchedulesService {
       actorId: partnerId,
       execute: async () => {
         const swap = await this.repo.getSwapById(swapId);
-        if (!swap || swap.target_employee_id !== partnerId) {
+        if (!swap) throw new Error('SWAP_REQUEST_NOT_FOUND');
+        const isOpenDispatch =
+          (swap as any).swap_kind === 'HR_DISPATCH' && !swap.target_employee_id;
+        if (!isOpenDispatch && swap.target_employee_id !== partnerId) {
           throw new Error('SWAP_FORBIDDEN');
+        }
+        if (swap.requester_id === partnerId) {
+          throw new Error('CANNOT_ACCEPT_OWN_DISPATCH: Không thể tự nhận ca mình nhờ.');
         }
 
         const newStatus = accept ? 'PARTNER_ACCEPTED' : 'REJECTED';
         const updated = await this.repo.updateSwapRequest(swapId, {
+          ...(isOpenDispatch && accept ? { target_employee_id: partnerId } : {}),
           status: newStatus,
           partner_responded_at: new Date().toISOString(),
         });
@@ -346,11 +401,31 @@ export class SchedulesService {
             swapId,
             status: newStatus,
           });
+          if (isOpenDispatch && accept) {
+            this.io.to(`user:${partnerId}`).emit('swap.updated', {
+              swapId,
+              status: newStatus,
+            });
+          }
         }
 
         return updated;
       },
     });
+  }
+
+  /** Phiếu điều phối mở (HR_DISPATCH + PENDING_PARTNER) của 1 chi nhánh cho NV nhận ca. */
+  async listOpenDispatches(branchId: string) {
+    const all = await this.repo.listSwapRequests();
+    const out: any[] = [];
+    for (const s of all) {
+      if ((s as any).swap_kind !== 'HR_DISPATCH' || s.status !== 'PENDING_PARTNER') continue;
+      const shift = await this.repo.getShiftById(s.requester_assignment_id).catch(() => null);
+      if (!shift) continue;
+      if (branchId !== '*' && canonicalBranch((shift as any).branch_id) !== canonicalBranch(branchId)) continue;
+      out.push({ ...s, shift });
+    }
+    return out.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
   }
 
   async approveSwapManager(swapId: string, managerId: string, accept: boolean, reason?: string) {
@@ -371,6 +446,33 @@ export class SchedulesService {
             approved_by: managerId,
             approved_at: new Date().toISOString(),
           });
+        }
+
+        // HR điều phối nhường ca: chuyển 1 chiều ca cho người nhận + ghi +30.000đ.
+        // NV tự tráo (EMPLOYEE_SWAP): hoán đổi 2 ca, KHÔNG phụ cấp.
+        if ((swap as any).swap_kind === 'HR_DISPATCH') {
+          const coverShift = await this.repo.getShiftById(swap.requester_assignment_id);
+          if (!coverShift) {
+            throw new Error('SHIFTS_NOT_FOUND_FOR_SWAP');
+          }
+          await this.repo.updateShiftAssignment(coverShift.assignment_id, {
+            employee_id: swap.target_employee_id,
+            schedule_version: coverShift.schedule_version + 1,
+          });
+
+          const updatedDispatch = await this.repo.updateSwapRequest(swapId, {
+            status: 'APPROVED',
+            approved_by: managerId,
+            approved_at: new Date().toISOString(),
+            bonus_amount: 30000,
+          });
+
+          if (this.io) {
+            this.io.to(`user:${swap.requester_id}`).emit('swap.updated', { swapId, status: 'APPROVED' });
+            this.io.to(`user:${swap.target_employee_id}`).emit('swap.updated', { swapId, status: 'APPROVED' });
+          }
+
+          return updatedDispatch;
         }
 
         // Swap the assignments
@@ -396,6 +498,7 @@ export class SchedulesService {
           status: 'APPROVED',
           approved_by: managerId,
           approved_at: new Date().toISOString(),
+          bonus_amount: 0,
         });
 
         if (this.io) {

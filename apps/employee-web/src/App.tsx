@@ -1483,7 +1483,7 @@ export function App() {
       )}
 
       {/* BANNER PHIẾU ĐỔI CA CHỜ XÁC NHẬN — hiện mọi tab cho đến khi B bấm Đồng ý/Từ chối */}
-      {!isProbation && mySwaps.some((s: any) => s.target_employee_id === employee?.employee_id && s.status === 'PENDING_PARTNER') && (
+      {!isProbation && (mySwaps.some((s: any) => s.target_employee_id === employee?.employee_id && s.status === 'PENDING_PARTNER') || mySwaps.some((s: any) => (s.swap_kind || '') === 'HR_DISPATCH' && s.status === 'PENDING_PARTNER' && !s.target_employee_id)) && (
         <div style={{
           margin: '12px 16px 0',
           padding: '12px 14px',
@@ -1493,7 +1493,7 @@ export function App() {
           boxShadow: '0 4px 12px rgba(245, 158, 11, 0.2)',
         }}>
           <div style={{ fontSize: '13px', fontWeight: 800, color: '#92400E' }}>
-            🔔 Bạn có {mySwaps.filter((s: any) => s.target_employee_id === employee?.employee_id && s.status === 'PENDING_PARTNER').length} phiếu đổi ca chờ xác nhận!
+            🔔 Bạn có {mySwaps.filter((s: any) => s.target_employee_id === employee?.employee_id && s.status === 'PENDING_PARTNER').length} phiếu đổi ca chờ xác nhận{mySwaps.some((s: any) => (s.swap_kind || '') === 'HR_DISPATCH' && s.status === 'PENDING_PARTNER' && !s.target_employee_id) ? ' + ca HR điều phối (+30k) đang mở' : ''}!
           </div>
           <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
             <button
@@ -2401,6 +2401,21 @@ export function App() {
                 </div>
               </div>
             )}
+            {/* CA HR ĐIỀU PHỐI CẦN NGƯỜI LÀM THAY (+30k) — mở cho cả chi nhánh */}
+            {mySwaps.some((s: any) => (s.swap_kind || 'EMPLOYEE_SWAP') === 'HR_DISPATCH' && s.status === 'PENDING_PARTNER' && !s.target_employee_id) && (
+              <div className="card" style={{ border: '2px solid #2563EB', backgroundColor: '#EFF6FF' }}>
+                <h3 style={{ fontSize: '14px', fontWeight: 800, color: '#1E40AF' }}>🚀 Ca cần người làm thay (+30.000đ/ca)</h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px' }}>
+                  {mySwaps.filter((s: any) => (s.swap_kind || 'EMPLOYEE_SWAP') === 'HR_DISPATCH' && s.status === 'PENDING_PARTNER' && !s.target_employee_id).map((s: any) => (
+                    <div key={s.swap_id} style={{ backgroundColor: '#FFF', borderRadius: '8px', padding: '10px', fontSize: '12px' }}>
+                      <div><strong>{s.shift?.date || ''} • {s.shift?.shift_code || ''}</strong> — {s.reason || 'Cần người làm thay'}</div>
+                      <div style={{ color: '#059669', fontWeight: 700, marginTop: '2px' }}>Nhận ca được +30.000đ phụ cấp (HR điều phối)</div>
+                      <button className="btn-primary" style={{ width: '100%', marginTop: '8px', padding: '9px', backgroundColor: '#2563EB' }} disabled={actionBusy === 'respond'} onClick={() => handleRespondSwap(s.swap_id, true)}>Nhận ca này</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             {/* PHIẾU TÔI ĐÃ GỬI — theo dõi trạng thái */}
             {mySwaps.some((s: any) => s.requester_id === employee?.employee_id) && (
               <div className="card">
@@ -2556,7 +2571,8 @@ export function App() {
               {swapFormType === 2 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   <div style={{ backgroundColor: '#EFF6FF', padding: '10px', borderRadius: '8px', fontSize: '12px', color: '#1E40AF' }}>
-                    📌 <strong>Đặc điểm:</strong> Nhân viên B nhận làm thay ca cho A (B làm 2 ca/ngày ➔ có thể cùng/khác ngày, cùng/khác ca).
+                    📌 <strong>Đặc điểm:</strong> Nhân viên B nhận làm thay ca cho A (B làm 2 ca/ngày ➔ có thể cùng/khác ngày, cùng hoặc khác ca).<br />
+                    ⚠️ Tự thỏa thuận với nhau thì <strong>không</strong> có phụ cấp — chỉ ca do <strong>HR điều phối</strong> (mục trên) mới +30.000đ.
                   </div>
 
                   <div>

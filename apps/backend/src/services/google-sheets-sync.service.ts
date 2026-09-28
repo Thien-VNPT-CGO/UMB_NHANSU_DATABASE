@@ -53,7 +53,7 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   },
   {
     title: 'DON_DOI_CA',
-    headers: ['ID Đổi Ca', 'Người Yêu Cầu', 'Ca Yêu Cầu', 'Người Nhận', 'Ca Đổi', 'Lý Do', 'Trạng Thái', 'Người Duyệt', 'Ngày Tạo'],
+    headers: ['ID Đổi Ca', 'Người Yêu Cầu', 'Ca Yêu Cầu', 'Người Nhận', 'Ca Đổi', 'Lý Do', 'Trạng Thái', 'Người Duyệt', 'Ngày Tạo', 'Loại Phiếu', 'Phụ Cấp (đ)'],
   },
   {
     title: 'DIEU_CHINH_CONG',
@@ -972,6 +972,7 @@ export class GoogleSheetsSyncService {
       } else if (swapRows.length > 0) {
         const mappedSwaps = swapRows.map(r => ({
           swap_id: r[0] || `SWP_${uuidv4().slice(0, 8)}`,
+          swap_kind: (r[9] === 'HR_DISPATCH' ? 'HR_DISPATCH' : 'EMPLOYEE_SWAP') as any,
           requester_id: r[1] || '',
           requester_assignment_id: r[2] || '',
           target_employee_id: r[3] || '',
@@ -979,6 +980,7 @@ export class GoogleSheetsSyncService {
           reason: r[5] || '',
           status: (r[6] as any) || 'PENDING_PARTNER',
           approved_by: r[7] || undefined,
+          bonus_amount: Number(r[10]) || 0,
           created_at: r[8] || new Date().toISOString(),
           version: 1,
         }));
@@ -1454,6 +1456,8 @@ export class GoogleSheetsSyncService {
         sw.status,
         sw.approved_by || '',
         sw.created_at,
+        (sw as any).swap_kind || 'EMPLOYEE_SWAP',
+        (sw as any).bonus_amount || 0,
       ]);
       await this.overwriteSheetData('DON_DOI_CA', SHEETS_DEFINITIONS.find(d => d.title === 'DON_DOI_CA')!.headers, swapRows);
       details.swaps = swapRows.length;

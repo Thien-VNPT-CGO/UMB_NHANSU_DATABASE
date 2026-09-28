@@ -477,6 +477,8 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
         snapshot.status,
         snapshot.approved_by || '',
         snapshot.created_at,
+        (snapshot as any).swap_kind || 'EMPLOYEE_SWAP',
+        (snapshot as any).bonus_amount || 0,
       ]), 'DON_DOI_CA.append');
     }
     return res;

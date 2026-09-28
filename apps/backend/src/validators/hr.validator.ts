@@ -218,6 +218,14 @@ export const swapApproveBody = z.object({
   reason: optString(500),
 });
 
+// HR tạo phiếu điều phối nhường ca (+30k cho người nhận)
+export const swapDispatchBody = z.object({
+  requesterId: optString(64),
+  requesterAssignmentId: optString(64),
+  branchId: optString(32),
+  reason: optString(1000),
+}).passthrough();
+
 // --- Attendance ---
 const checkBody = z.object({
   employee_id: optString(64),

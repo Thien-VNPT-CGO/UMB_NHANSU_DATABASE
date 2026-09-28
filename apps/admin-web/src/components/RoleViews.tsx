@@ -302,6 +302,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [weeklyOffSearch, setWeeklyOffSearch] = useState('');
   // Xem lịch tuần trước / hiện tại / sau (mặc định tuần hiện tại)
   const [scheduleWeekOffset, setScheduleWeekOffset] = useState(0);
+  // Điều phối nhường ca HR (+30k cho người nhận)
+  const [dispatchOpen, setDispatchOpen] = useState(false);
+  const [dispEmpId, setDispEmpId] = useState('');
+  const [dispShiftId, setDispShiftId] = useState('');
+  const [dispReason, setDispReason] = useState('');
+  const [dispBusy, setDispBusy] = useState(false);
   // Phiếu bổ sung/điều chỉnh công: HR duyệt phiếu NV gửi từ cổng nhân viên
   const [adjustments, setAdjustments] = useState<any[]>([]);
   const [adjBusy, setAdjBusy] = useState<string | null>(null);
@@ -4244,7 +4250,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           <button
             className="btn-primary"
             style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#2563EB' }}
-            onClick={() => showToast('Phiếu điều phối ca nhường khẩn cấp đã được kích hoạt!')}
+            onClick={() => setDispatchOpen(true)}
           >
             <Sparkles size={16} />
             + Tạo Phiếu Điều Phối Nhường Ca (+30.000đ)
@@ -4265,7 +4271,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </strong>
           </div>
           <div style={{ fontSize: '13px', color: '#1E3A8A', lineHeight: '1.6' }}>
-            Nếu <strong>Nhân viên A không tìm được người thay/nhường ca</strong>, HR sẽ tạo phiếu và gửi yêu cầu điều phối đến <strong>toàn bộ nhân viên trong chi nhánh đó</strong>. Nhân viên nào bấm nhận ca làm thay cho A (sẽ làm 2 ca/ngày nếu ngày đó nhân viên đã có ca làm việc) ➔ <strong>Hệ thống tự động ghi nhận +30.000đ/ca phụ cấp hỗ trợ</strong> (tự động cộng thẳng vào Bảng Lương Finance và hiển thị trên Cổng Webapp Nhân Viên của bạn đó).
+            Nếu <strong>Nhân viên A không tìm được người thay/nhường ca</strong>, HR tạo phiếu điều phối gửi đến <strong>toàn bộ nhân viên trong chi nhánh đó</strong>. Nhân viên nào bấm nhận ca làm thay cho A ➔ <strong>+30.000đ/ca phụ cấp</strong> (tự động cộng vào Bảng Lương Finance).<br />
+            ⚠️ <strong>Chỉ phiếu do HR điều phối mới có +30k.</strong> Nhân viên tự tráo đổi với nhau (A ⇄ B) trên cổng nhân viên thì <strong>không</strong> có phụ cấp.
           </div>
         </div>
 
@@ -4306,15 +4313,25 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             }
           };
           const renderRows = (rows: any[], canReview: boolean) =>
-            rows.map((sw: any) => (
+            rows.map((sw: any) => {
+              const isDispatch = (sw.swap_kind || 'EMPLOYEE_SWAP') === 'HR_DISPATCH';
+              return (
               <tr key={sw.swap_id} style={{ borderBottom: '1px solid var(--border)', backgroundColor: sw.status === 'PARTNER_ACCEPTED' ? '#EFF6FF' : undefined }}>
                 <td style={{ padding: '12px 20px', fontWeight: 700 }}>
                   {empName(sw.requester_id)}
                   <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }}>Ca: {shiftInfo(sw.requester_assignment_id)}</div>
                 </td>
                 <td style={{ padding: '12px 20px', fontWeight: 700 }}>
-                  {empName(sw.target_employee_id)}
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }}>Ca: {shiftInfo(sw.target_assignment_id)}</div>
+                  {sw.target_employee_id ? empName(sw.target_employee_id) : <span style={{ color: '#B45309' }}>Mở cho cả chi nhánh</span>}
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }}>{sw.target_assignment_id ? `Ca: ${shiftInfo(sw.target_assignment_id)}` : ''}</div>
+                </td>
+                <td style={{ padding: '12px 20px' }}>
+                  <span className="badge" style={{ backgroundColor: isDispatch ? '#EDE9FE' : '#F3F4F6', color: isDispatch ? '#6D28D9' : '#4B5563', fontWeight: 700 }}>
+                    {isDispatch ? 'HR điều phối +30k' : 'NV tự tráo'}
+                  </span>
+                  {isDispatch && sw.status === 'APPROVED' && (
+                    <div style={{ fontSize: '11px', color: '#059669', fontWeight: 700, marginTop: '2px' }}>+30.000đ</div>
+                  )}
                 </td>
                 <td style={{ padding: '12px 20px' }}>{sw.reason || '—'}</td>
                 <td style={{ padding: '12px 20px' }}>{statusBadge(sw.status)}</td>
@@ -4325,11 +4342,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: '12px', color: '#DC2626' }} onClick={() => reviewSwap(sw, false)}>Từ chối</button>
                     </div>
                   ) : (
-                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{sw.status === 'APPROVED' ? 'Đã hoán đổi ca' : '—'}</span>
+                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{sw.status === 'APPROVED' ? (isDispatch ? 'Đã giao ca +30k' : 'Đã hoán đổi ca') : '—'}</span>
                   )}
                 </td>
               </tr>
-            ));
+              );
+            });
           return (
             <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
               <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -4348,6 +4366,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
                       <th style={{ padding: '12px 20px' }}>NV A (Người đề xuất)</th>
                       <th style={{ padding: '12px 20px' }}>NV B (Người nhận)</th>
+                      <th style={{ padding: '12px 20px' }}>Loại Phiếu</th>
                       <th style={{ padding: '12px 20px' }}>Lý Do</th>
                       <th style={{ padding: '12px 20px' }}>Tình Trạng</th>
                       <th style={{ padding: '12px 20px' }}>HR Duyệt</th>
@@ -4360,6 +4379,66 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   </tbody>
                 </table>
               )}
+            </div>
+          );
+        })()}
+
+        {/* MODAL HR TẠO PHIẾU ĐIỀU PHỐI NHƯỜNG CA (+30k cho người nhận) */}
+        {dispatchOpen && (() => {
+          const hrOfficials = (allEmployees || []).filter((e: any) => e.employment_status !== 'TERMINATED');
+          const empShifts = (shifts || []).filter((s: any) => s.employee_id === dispEmpId && s.status === 'PUBLISHED');
+          return (
+            <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+              <div style={{ backgroundColor: 'var(--surface)', borderRadius: '12px', maxWidth: '560px', width: '100%', padding: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h2 style={{ fontSize: '16px', fontWeight: 800, margin: 0 }}>Điều phối nhường ca (+30.000đ)</h2>
+                  <button className="btn-secondary" style={{ padding: '4px 12px' }} onClick={() => setDispatchOpen(false)}>Đóng</button>
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px' }}>
+                  Chọn NV cần người làm thay + ca của họ. Phiếu mở cho cả chi nhánh nhận — ai nhận và được duyệt thì +30.000đ vào lương.
+                </div>
+                <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginTop: '12px' }}>NV cần người làm thay (A):
+                  <select value={dispEmpId} onChange={e => { setDispEmpId(e.target.value); setDispShiftId(''); }} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}>
+                    <option value="">— Chọn nhân viên —</option>
+                    {hrOfficials.map((e: any) => <option key={e.employee_id} value={e.employee_id}>{e.full_name} ({e.employee_code})</option>)}
+                  </select>
+                </label>
+                <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginTop: '10px' }}>Ca cần người làm thay:
+                  <select value={dispShiftId} onChange={e => setDispShiftId(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}>
+                    <option value="">— Chọn ca —</option>
+                    {empShifts.map((s: any) => <option key={s.assignment_id} value={s.assignment_id}>{s.date} • {s.shift_code}</option>)}
+                  </select>
+                </label>
+                <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginTop: '10px' }}>Lý do điều phối:
+                  <input value={dispReason} onChange={e => setDispReason(e.target.value)} placeholder="VD: A ốm đột xuất, cần người trực thay ca 1 ngày 28/09" style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} />
+                </label>
+                <button
+                  className="btn-primary"
+                  disabled={dispBusy}
+                  style={{ width: '100%', marginTop: '14px', padding: '10px', fontWeight: 800, backgroundColor: '#2563EB' }}
+                  onClick={async () => {
+                    if (!dispEmpId || !dispShiftId) { showToast('Chọn đủ nhân viên và ca cần làm thay!'); return; }
+                    setDispBusy(true);
+                    try {
+                      await apiRequest('/swap-requests/dispatch', {
+                        method: 'POST',
+                        body: JSON.stringify({ requesterId: dispEmpId, requesterAssignmentId: dispShiftId, reason: dispReason }),
+                      });
+                      showToast('Đã phát phiếu điều phối! NV cùng chi nhánh sẽ thấy để nhận ca (+30k).');
+                      setDispatchOpen(false);
+                      setDispEmpId(''); setDispShiftId(''); setDispReason('');
+                      if (onRefreshData) await onRefreshData();
+                      if (onSyncSheets) await onSyncSheets();
+                    } catch (e: any) {
+                      showToast(e?.message || 'Lỗi khi tạo phiếu!');
+                    } finally {
+                      setDispBusy(false);
+                    }
+                  }}
+                >
+                  {dispBusy ? 'Đang phát...' : 'Phát phiếu điều phối'}
+                </button>
+              </div>
             </div>
           );
         })()}

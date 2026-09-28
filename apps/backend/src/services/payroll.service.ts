@@ -49,7 +49,21 @@ export class PayrollService {
           const rate = emp.current_rate_per_hour;
           const standardPay = empHours * rate;
           const allowance = 0;
-          const bonus = 0;
+          // Phụ cấp nhường ca +30.000đ/ca: CHỈ khi HR điều phối (HR_DISPATCH đã
+          // APPROVED, người nhận = target). NV tự tráo với nhau: 0đ.
+          let bonus = 0;
+          try {
+            const swaps = await this.repo.listSwapRequests(emp.employee_id);
+            bonus = swaps
+              .filter(
+                s =>
+                  (s as any).swap_kind === 'HR_DISPATCH' &&
+                  s.status === 'APPROVED' &&
+                  s.target_employee_id === emp.employee_id &&
+                  (s.approved_at || '').startsWith(period)
+              )
+              .reduce((sum, s) => sum + (Number((s as any).bonus_amount) || 30000), 0);
+          } catch { /* giữ bonus 0 khi đọc lỗi */ }
           const deduction = 0;
           const netPay = standardPay + allowance + bonus - deduction;
 

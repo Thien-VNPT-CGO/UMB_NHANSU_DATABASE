@@ -45,11 +45,17 @@ export interface LeaveRequest {
   version: number;
 }
 
+/** Loại phiếu đổi ca: NV tự tráo với nhau (không phụ cấp) hay HR điều phối nhường ca (+30k). */
+export type SwapKind = 'EMPLOYEE_SWAP' | 'HR_DISPATCH';
+
+export const HR_DISPATCH_BONUS_VND = 30000;
+
 export interface SwapRequest {
   swap_id: string;
-  requester_id: string; // Employee A
+  swap_kind: SwapKind; // mặc định EMPLOYEE_SWAP
+  requester_id: string; // Employee A (với HR_DISPATCH: chủ ca cần người làm thay)
   requester_assignment_id: string;
-  target_employee_id: string; // Employee B
+  target_employee_id: string; // Employee B (với HR_DISPATCH: '' khi mở, NV nhận ca khi chấp nhận)
   target_assignment_id: string;
   reason: string;
   status: 'PENDING_PARTNER' | 'PARTNER_ACCEPTED' | 'APPROVED' | 'REJECTED' | 'CANCELLED';
@@ -57,6 +63,8 @@ export interface SwapRequest {
   approved_by?: string;
   approved_at?: string;
   rejection_reason?: string;
+  /** Phụ cấp nhường ca (đ): chỉ HR_DISPATCH đã APPROVED mới có 30.000. */
+  bonus_amount?: number;
   created_at: string;
   version: number;
 }
