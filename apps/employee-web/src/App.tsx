@@ -174,6 +174,31 @@ export function App() {
   // Ca thật của NV B (tải khi chọn B) + trạng thái bận chung cho các nút gửi
   const [targetShifts, setTargetShifts] = useState<any[]>([]);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
+  // Phiếu đổi ca liên quan đến tôi (gửi đi + chờ tôi xác nhận)
+  const [mySwaps, setMySwaps] = useState<any[]>([]);
+  const fetchMySwaps = async () => {
+    try {
+      const list = await apiRequest('/swap-requests');
+      setMySwaps(Array.isArray(list) ? list : []);
+    } catch { /* offline: giữ danh sách cũ */ }
+  };
+  // NV B xác nhận / từ chối phiếu tráo ca
+  const handleRespondSwap = async (swapId: string, accept: boolean) => {
+    if (!window.confirm(accept ? 'Đồng ý tráo đổi ca này? Phiếu chuyển sang chờ Store duyệt.' : 'Từ chối phiếu tráo đổi ca này?')) return;
+    setActionBusy('respond');
+    try {
+      await apiRequest(`/swap-requests/${swapId}/respond`, {
+        method: 'POST',
+        body: JSON.stringify({ accept }),
+      });
+      showToast(accept ? '✓ Đã đồng ý! Phiếu chuyển sang chờ Store duyệt.' : 'Đã từ chối phiếu đổi ca.');
+      await fetchMySwaps();
+    } catch (e: any) {
+      showToast(e?.message || 'Lỗi khi phản hồi!');
+    } finally {
+      setActionBusy(null);
+    }
+  };
   // Mất mạng / server lỗi khi tải dữ liệu
   const [dataStale, setDataStale] = useState(false);
 
@@ -247,6 +272,7 @@ export function App() {
   // Bài TEST: tải khi mở tab + đếm ngược tự nộp khi hết giờ
   useEffect(() => {
     if (activeTab === 'test_exam' || activeTab === 'test_training') fetchMyTests();
+    if (activeTab === 'swap_shift') fetchMySwaps();
   }, [activeTab]);
   useEffect(() => {
     if (!activeTestId) return;
@@ -886,6 +912,7 @@ export function App() {
       showToast(`✓ Đã gửi yêu cầu đổi ca THẬT! Mã đơn: ${sid}. Đang chờ NV B xác nhận rồi Store duyệt.`);
       setSwapData({ myShift: '', targetEmployeeId: '', targetEmployeeName: '', targetShift: '', reason: '' });
       setTargetShifts([]);
+      await fetchMySwaps();
       await loadEmployeeData(employee?.employee_id);
     } catch (err: any) {
       showToast(err.message || 'Lỗi khi gửi yêu cầu đổi ca!');
@@ -2312,6 +2339,46 @@ export function App() {
         {/* ========================================================= */}
         {activeTab === 'swap_shift' && !isProbation && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {/* PHIẾU CHỜ TÔI (NV B) XÁC NHẬN — đồng nghiệp A gửi sang */}
+            {mySwaps.some((s: any) => s.target_employee_id === employee?.employee_id && s.status === 'PENDING_PARTNER') && (
+              <div className="card" style={{ border: '2px solid #F59E0B', backgroundColor: '#FFFBEB' }}>
+                <h3 style={{ fontSize: '14px', fontWeight: 800, color: '#92400E' }}>🔔 Có {mySwaps.filter((s: any) => s.target_employee_id === employee?.employee_id && s.status === 'PENDING_PARTNER').length} phiếu chờ bạn xác nhận</h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px' }}>
+                  {mySwaps.filter((s: any) => s.target_employee_id === employee?.employee_id && s.status === 'PENDING_PARTNER').map((s: any) => {
+                    const reqName = s.requester_name || (branchColleagues || []).find((c: any) => c.employee_id === s.requester_id)?.full_name || s.requester_id;
+                    return (
+                    <div key={s.swap_id} style={{ backgroundColor: '#FFF', borderRadius: '8px', padding: '10px', fontSize: '12px' }}>
+                      <div><strong>{reqName}</strong> muốn tráo đổi ca với bạn</div>
+                      <div style={{ color: 'var(--text-muted)', marginTop: '2px' }}>Lý do: {s.reason || '—'}</div>
+                      <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                        <button className="btn-primary" style={{ flex: 1, padding: '9px' }} disabled={actionBusy === 'respond'} onClick={() => handleRespondSwap(s.swap_id, true)}>✓ Đồng ý</button>
+                        <button className="btn-secondary" style={{ flex: 1, padding: '9px', color: '#DC2626' }} disabled={actionBusy === 'respond'} onClick={() => handleRespondSwap(s.swap_id, false)}>✕ Từ chối</button>
+                      </div>
+                    </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {/* PHIẾU TÔI ĐÃ GỬI — theo dõi trạng thái */}
+            {mySwaps.some((s: any) => s.requester_id === employee?.employee_id) && (
+              <div className="card">
+                <h3 style={{ fontSize: '13px', fontWeight: 800 }}>Phiếu tôi đã gửi ({mySwaps.filter((s: any) => s.requester_id === employee?.employee_id).length})</h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '8px', fontSize: '12px' }}>
+                  {mySwaps.filter((s: any) => s.requester_id === employee?.employee_id).map((s: any) => {
+                    const tgtName = s.target_name || (branchColleagues || []).find((c: any) => c.employee_id === s.target_employee_id)?.full_name || s.target_employee_id;
+                    return (
+                    <div key={s.swap_id} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
+                      <span>→ {tgtName}: {s.reason || ''}</span>
+                      <strong style={{ color: s.status === 'APPROVED' ? '#059669' : s.status === 'REJECTED' ? '#DC2626' : '#B45309' }}>
+                        {s.status === 'APPROVED' ? 'Đã duyệt' : s.status === 'REJECTED' ? 'Từ chối' : s.status === 'PARTNER_ACCEPTED' ? 'Chờ Store duyệt' : 'Chờ NV B'}
+                      </strong>
+                    </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             <div className="card">
               <h3 style={{ fontSize: '16px', fontWeight: 800, marginBottom: '6px' }}>
                 6. Đổi Ca Làm Việc (Nhân Viên Chính Thức)
