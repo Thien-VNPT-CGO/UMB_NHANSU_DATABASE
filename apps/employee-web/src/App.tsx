@@ -228,10 +228,12 @@ export function App() {
   // Adjustment Request Form
   const [adjustmentData, setAdjustmentData] = useState({
     date: new Date().toISOString().split('T')[0],
-    shift: 'Ca 1',
+    shift: 'Ca Sáng (07:00 - 12:00)',
     type: 'QUEN_CHECKIN',
     reason: 'Quên bấm điểm danh khi vào ca do tiếp nhận hàng hóa gấp',
   });
+  // Ca cần bổ sung (ngày 2 ca: phải chọn đúng ca thì HR duyệt mới cập nhật đúng)
+  const [adjustShiftId, setAdjustShiftId] = useState('');
 
   // Bài TEST do HR giao riêng cho mình (không được giao thì không thấy bài)
   const [myTests, setMyTests] = useState<any[]>([]);
@@ -1037,7 +1039,9 @@ export function App() {
       } else {
         // Bổ sung công/quên check-in-out -> đúng queue Điều Chỉnh Công để Store/HR duyệt
         // (trước đây gửi nhầm sang /leaves loại BO_SUNG_CONG, HR không thấy để duyệt).
-        const shift = (myShifts || []).find((s: any) => s.date === adjustmentData.date) || (myShifts || [])[0];
+        // Ngày 2 ca: ưu tiên ca đã chọn, HR duyệt sẽ cập nhật đúng check-in/out ca đó.
+        const dayShifts = (myShifts || []).filter((s: any) => s.date === adjustmentData.date);
+        const shift = dayShifts.find((s: any) => s.assignment_id === adjustShiftId) || dayShifts[0] || (myShifts || [])[0];
         await apiRequest('/attendance/adjustments', {
           method: 'POST',
           body: JSON.stringify({
@@ -2770,10 +2774,33 @@ export function App() {
                   <input
                     type="date"
                     value={adjustmentData.date}
-                    onChange={(e) => setAdjustmentData({ ...adjustmentData, date: e.target.value })}
+                    onChange={(e) => { setAdjustmentData({ ...adjustmentData, date: e.target.value }); setAdjustShiftId(''); }}
                     style={{ width: '100%' }}
                   />
                 </div>
+
+                {(() => {
+                  const dayShifts = (myShifts || []).filter((s: any) => s.date === adjustmentData.date);
+                  if (dayShifts.length <= 1) return null;
+                  return (
+                    <div>
+                      <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>
+                        Ca cần bổ sung (ngày này có {dayShifts.length} ca — chọn đúng ca thì duyệt mới cập nhật đúng):
+                      </label>
+                      <select
+                        value={adjustShiftId || dayShifts[0]?.assignment_id || ''}
+                        onChange={(e) => setAdjustShiftId(e.target.value)}
+                        style={{ width: '100%', padding: '9px', borderRadius: '6px', border: '1.5px solid var(--brand)', fontSize: '13px', fontWeight: 700 }}
+                      >
+                        {dayShifts.map((s: any) => (
+                          <option key={s.assignment_id} value={s.assignment_id}>
+                            {s.shift_code} ({s.start_at ? new Date(s.start_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : ''} - {s.end_at ? new Date(s.end_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : ''})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  );
+                })()}
 
                 <div>
                   <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Loại yêu cầu:</label>
@@ -2782,9 +2809,9 @@ export function App() {
                     onChange={(e) => setAdjustmentData({ ...adjustmentData, type: e.target.value })}
                     style={{ width: '100%' }}
                   >
-                    <option value="QUEN_CHECKIN">Quên Check-in khi vào ca</option>
-                    <option value="QUEN_CHECKOUT">Quên Check-out khi hết ca</option>
-                    <option value="LOI_GPS_CAMERA">Điện thoại bị lỗi GPS / Camera</option>
+                    <option value="QUEN_CHECKIN">Quên Check-in khi vào ca → duyệt là ghi check-in ca đó</option>
+                    <option value="QUEN_CHECKOUT">Quên Check-out khi hết ca → duyệt là ghi check-out ca đó</option>
+                    <option value="LOI_GPS_CAMERA">Điện thoại bị lỗi GPS / Camera → duyệt là ghi cả in + out</option>
                     {!isProbation && <option value="NGHI_KHAN">Báo nghỉ đột xuất do sự cố khẩn cấp (HR Tab 10)</option>}
                   </select>
                 </div>
