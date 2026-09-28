@@ -39,8 +39,8 @@ export const gpsObject = z
   .passthrough()
   .optional();
 
-/** Ảnh base64: giới hạn dưới trần JSON 2MB để không nuốt RAM. */
-export const photoField = z.string().max(2_000_000).optional();
+/** Ảnh base64 điểm danh: tối đa 5MB file (~6.8MB base64 + prefix data URL). */
+export const photoField = z.string().max(8_000_000).optional();
 
 /**
  * Body object mở (cấu hình chi nhánh, policies, templates...):

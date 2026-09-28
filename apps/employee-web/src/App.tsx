@@ -659,9 +659,9 @@ export function App() {
       showToast('⚠️ File không phải ảnh! Vui lòng chụp ảnh thật.');
       return;
     }
-    // Base64 phình ~33% + giới hạn body 2MB của server -> chặn từ 1MB cho chắc
-    if (file.size > 1024 * 1024) {
-      showToast('⚠️ Ảnh quá lớn (>1MB)! Vui lòng chụp lại với độ phân giải thấp hơn.');
+    // Giới hạn ảnh điểm danh 5MB (server + validator đã nới tương ứng)
+    if (file.size > 5 * 1024 * 1024) {
+      showToast('⚠️ Ảnh quá lớn (>5MB)! Vui lòng chụp lại với độ phân giải thấp hơn.');
       return;
     }
     const reader = new FileReader();

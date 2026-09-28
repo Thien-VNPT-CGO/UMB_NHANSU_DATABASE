@@ -118,7 +118,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   const corsMiddleware = cors(buildCorsOptions());
   app.use(corsMiddleware);
   app.options('*', corsMiddleware);
-  app.use(express.json({ limit: '2mb' }));
+  // Nới trần JSON để chứa ảnh điểm danh 5MB (base64 phình ~33% + overhead).
+  app.use(express.json({ limit: '10mb' }));
   app.use(generalRateLimiter());
   app.use('/auth/', authRateLimiter());
 
