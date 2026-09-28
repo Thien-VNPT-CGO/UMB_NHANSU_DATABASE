@@ -3395,10 +3395,17 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         } else {
           // Có ca làm việc thật — ngày 2 ca (do tráo đổi/nhận thay): tính từng ca riêng
           const dayShifts = empShifts.filter((s: any) => s.date === day.isoDate || (s.date && s.date.startsWith(day.isoDate)));
+          // Ca nào check-in ca đó: so khớp theo assignment_id. Chỉ dùng ngày làm
+          // fallback khi sự kiện/ca thiếu assignment (dữ liệu rất cũ) — nếu không,
+          // check-in ca sáng sẽ lan sang ca chiều cùng ngày.
+          const matchShift = (e: any, sh: any) => {
+            if (e.assignment_id && sh?.assignment_id) return e.assignment_id === sh.assignment_id;
+            return !!(e.client_time && e.client_time.startsWith(day.isoDate));
+          };
           const buildOne = (sh: any) => {
-            const ci = empEvents.find((e: any) => e.type === 'CHECK_IN' && (e.assignment_id === sh?.assignment_id || (e.client_time && e.client_time.startsWith(day.isoDate))));
-            const co = empEvents.find((e: any) => e.type === 'CHECK_OUT' && (e.assignment_id === sh?.assignment_id || (e.client_time && e.client_time.startsWith(day.isoDate))));
-            const ab = empEvents.find((e: any) => e.type === 'ABSENT' && (e.assignment_id === sh?.assignment_id || (e.client_time && e.client_time.startsWith(day.isoDate))));
+            const ci = empEvents.find((e: any) => e.type === 'CHECK_IN' && matchShift(e, sh));
+            const co = empEvents.find((e: any) => e.type === 'CHECK_OUT' && matchShift(e, sh));
+            const ab = empEvents.find((e: any) => e.type === 'ABSENT' && matchShift(e, sh));
             let shiftName = sh.shift_code;
             if (shiftName === 'CA_1') shiftName = 'Ca 1 (07-12)';
             else if (shiftName === 'CA_2') shiftName = 'Ca 2 (12-18)';
