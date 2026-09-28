@@ -300,6 +300,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [weeklyOffSearch, setWeeklyOffSearch] = useState('');
   // Xem lịch tuần trước / hiện tại / sau (mặc định tuần hiện tại)
   const [scheduleWeekOffset, setScheduleWeekOffset] = useState(0);
+  // Phiếu bổ sung/điều chỉnh công: HR duyệt phiếu NV gửi từ cổng nhân viên
+  const [adjustments, setAdjustments] = useState<any[]>([]);
+  const [adjBusy, setAdjBusy] = useState<string | null>(null);
+  const loadAdjustments = async () => {
+    try {
+      const list = await apiRequest('/attendance/adjustments');
+      setAdjustments(Array.isArray(list) ? list : []);
+    } catch { /* không quyền / offline */ }
+  };
   // Bài TEST: HR tạo đề + giao đúng nhân viên (NV chỉ thấy bài của mình)
   const [testPapers, setTestPapers] = useState<any[]>([]);
   const [testSubs, setTestSubs] = useState<any[]>([]);
@@ -358,6 +367,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     }
     if (activeTab === 'hr-tests') {
       loadTests();
+    }
+    if (activeTab === 'hr-adjustments') {
+      loadAdjustments();
     }
   }, [activeTab]);
 
@@ -4582,17 +4594,100 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }
 
   if (activeTab === 'hr-adjustments') {
+    const pendingAdj = adjustments.filter((a: any) => a.status === 'PENDING');
+    const doneAdj = adjustments.filter((a: any) => a.status !== 'PENDING');
+    const reviewAdj = async (adj: any, status: 'APPROVED' | 'REJECTED') => {
+      if (!window.confirm(status === 'APPROVED' ? `Duyệt bổ sung ${adj.minutes_requested || ''} phút công cho ${adj.employee_id}?` : `Từ chối phiếu của ${adj.employee_id}?`)) return;
+      setAdjBusy(adj.adjustment_id);
+      try {
+        await apiRequest(`/attendance/adjustments/${adj.adjustment_id}/approve`, {
+          method: 'POST',
+          body: JSON.stringify({ status, minutesApproved: status === 'APPROVED' ? adj.minutes_requested : 0 }),
+        });
+        showToast(status === 'APPROVED' ? 'Đã duyệt bổ sung công!' : 'Đã từ chối phiếu!');
+        await loadAdjustments();
+        if (onRefreshData) await onRefreshData();
+        if (onSyncSheets) await onSyncSheets();
+      } catch (e: any) {
+        showToast(e?.message || 'Lỗi khi duyệt!');
+      } finally {
+        setAdjBusy(null);
+      }
+    };
+    const renderAdjRows = (list: any[], isPending: boolean) =>
+      list.map((a: any) => {
+        const emp = (allEmployees || []).find((e: any) => e.employee_id === a.employee_id);
+        return (
+          <tr key={a.adjustment_id} style={{ borderBottom: '1px solid var(--border)', backgroundColor: isPending ? '#FFFBEB' : undefined }}>
+            <td style={{ padding: '12px 20px', fontWeight: 700 }}>
+              {emp?.full_name || a.employee_id}
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }}>{emp?.employee_code || ''}</div>
+            </td>
+            <td style={{ padding: '12px 20px' }}>{getDisplayBranch(a.branch_id) || a.branch_id || 'Chưa rõ'}</td>
+            <td style={{ padding: '12px 20px' }}>
+              <div>{a.reason || 'Bổ sung công'}</div>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Ca: {a.assignment_id || '—'} • Xin: {a.minutes_requested ?? 0} phút{a.minutes_approved !== undefined && a.status === 'APPROVED' ? ` • Duyệt: ${a.minutes_approved} phút` : ''}</div>
+            </td>
+            <td style={{ padding: '12px 20px', fontSize: '12px', color: 'var(--text-muted)' }}>{a.created_at ? new Date(a.created_at).toLocaleString('vi-VN') : '—'}</td>
+            <td style={{ padding: '12px 20px' }}>
+              <span className="badge" style={{ backgroundColor: a.status === 'APPROVED' ? '#DCFCE7' : a.status === 'REJECTED' ? '#FEE2E2' : '#FEF3C7', color: a.status === 'APPROVED' ? '#166534' : a.status === 'REJECTED' ? '#991B1B' : '#92400E', fontWeight: 700 }}>
+                {a.status === 'APPROVED' ? 'Đã duyệt' : a.status === 'REJECTED' ? 'Đã từ chối' : 'Chờ duyệt'}
+              </span>
+            </td>
+            <td style={{ padding: '12px 20px' }}>
+              {isPending ? (
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <button className="btn-primary" style={{ padding: '4px 10px', fontSize: '12px' }} disabled={adjBusy === a.adjustment_id} onClick={() => reviewAdj(a, 'APPROVED')}>Duyệt</button>
+                  <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: '12px', color: '#DC2626' }} disabled={adjBusy === a.adjustment_id} onClick={() => reviewAdj(a, 'REJECTED')}>Từ chối</button>
+                </div>
+              ) : (
+                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Đã xử lý</span>
+              )}
+            </td>
+          </tr>
+        );
+      });
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <h1 style={{ fontSize: '20px', fontWeight: 800 }}>12. Bổ Sung & Điều Chỉnh Dữ Liệu Công</h1>
-        <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Xử lý các trường hợp quên check-in/out hoặc sự cố GPS/Camera trên điện thoại</p>
-        <div style={{ backgroundColor: 'var(--surface)', padding: '24px 20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', textAlign: 'center' }}>
-          <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-            Hiện không có yêu cầu bổ sung hay điều chỉnh dữ liệu công nào đang chờ duyệt.
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <h1 style={{ fontSize: '20px', fontWeight: 800, margin: 0 }}>12. Bổ Sung & Điều Chỉnh Dữ Liệu Công</h1>
+            <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '4px 0 0' }}>Xử lý quên check-in/out hoặc sự cố GPS/Camera gửi từ Cổng Nhân Viên (có audit trail)</p>
           </div>
-          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
-            Mọi sự cố quên chấm công hoặc lỗi GPS được gửi từ Cổng Nhân Viên sẽ hiển thị tại đây để HR phê duyệt có audit trail.
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <span className="badge" style={{ backgroundColor: pendingAdj.length > 0 ? '#FEF3C7' : '#DCFCE7', color: pendingAdj.length > 0 ? '#92400E' : '#166534', fontWeight: 800 }}>
+              {pendingAdj.length} phiếu chờ duyệt
+            </span>
+            <button className="btn-secondary" style={{ fontSize: '12px', padding: '6px 12px' }} onClick={loadAdjustments}>Tải lại</button>
           </div>
+        </div>
+        <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+            <thead>
+              <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
+                <th style={{ padding: '12px 20px' }}>Nhân Viên</th>
+                <th style={{ padding: '12px 20px' }}>Chi Nhánh</th>
+                <th style={{ padding: '12px 20px' }}>Lý Do & Số Phút</th>
+                <th style={{ padding: '12px 20px' }}>Gửi Lúc</th>
+                <th style={{ padding: '12px 20px' }}>Trạng Thái</th>
+                <th style={{ padding: '12px 20px' }}>Thao Tác</th>
+              </tr>
+            </thead>
+            <tbody>
+              {adjustments.length === 0 ? (
+                <tr>
+                  <td colSpan={6} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    Hiện không có yêu cầu bổ sung hay điều chỉnh dữ liệu công nào. Phiếu NV gửi từ Cổng Nhân Viên sẽ hiện realtime tại đây.
+                  </td>
+                </tr>
+              ) : (
+                <>
+                  {renderAdjRows(pendingAdj, true)}
+                  {renderAdjRows(doneAdj, false)}
+                </>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
     );
