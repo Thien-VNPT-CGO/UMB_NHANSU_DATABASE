@@ -5146,6 +5146,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         setAdjBusy(null);
       }
     };
+    const adjRemaining = (a: any) => {
+      const created = new Date(a.created_at).getTime();
+      if (!Number.isFinite(created)) return null;
+      const left = Math.max(0, 60 * 60000 - (Date.now() - created));
+      const mm = Math.floor(left / 60000);
+      return `Còn ${mm}p hiệu lực`;
+    };
     const renderAdjRows = (list: any[], isPending: boolean) =>
       list.map((a: any) => {
         const emp = (allEmployees || []).find((e: any) => e.employee_id === a.employee_id);
@@ -5163,8 +5170,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <td style={{ padding: '12px 20px', fontSize: '12px', color: 'var(--text-muted)' }}>{a.created_at ? new Date(a.created_at).toLocaleString('vi-VN') : '—'}</td>
             <td style={{ padding: '12px 20px' }}>
               <span className="badge" style={{ backgroundColor: a.status === 'APPROVED' ? '#DCFCE7' : a.status === 'REJECTED' ? '#FEE2E2' : '#FEF3C7', color: a.status === 'APPROVED' ? '#166534' : a.status === 'REJECTED' ? '#991B1B' : '#92400E', fontWeight: 700 }}>
-                {a.status === 'APPROVED' ? 'Đã duyệt' : a.status === 'REJECTED' ? 'Đã từ chối' : 'Chờ duyệt'}
+                {a.status === 'APPROVED' ? 'Đã duyệt' : a.status === 'REJECTED' ? (String(a.review_note || '').startsWith('Tự động từ chối') ? 'Tự từ chối (hết hạn)' : 'Đã từ chối') : 'Chờ duyệt'}
               </span>
+              {isPending && (
+                <div style={{ fontSize: '11px', color: '#B45309', fontWeight: 700, marginTop: '2px' }}>⏳ {adjRemaining(a)}</div>
+              )}
             </td>
             <td style={{ padding: '12px 20px' }}>
               {isPending ? (
@@ -5184,7 +5194,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <h1 style={{ fontSize: '20px', fontWeight: 800, margin: 0 }}>12. Bổ Sung & Điều Chỉnh Dữ Liệu Công</h1>
-            <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '4px 0 0' }}>Xử lý quên check-in/out hoặc sự cố GPS/Camera gửi từ Cổng Nhân Viên (có audit trail)</p>
+            <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '4px 0 0' }}>Xử lý quên check-in/out hoặc sự cố GPS/Camera gửi từ Cổng Nhân Viên (có audit trail). Phiếu chỉ hiệu lực <strong>60 phút</strong> — quá hạn hệ thống tự từ chối.</p>
           </div>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <span className="badge" style={{ backgroundColor: pendingAdj.length > 0 ? '#FEF3C7' : '#DCFCE7', color: pendingAdj.length > 0 ? '#92400E' : '#166534', fontWeight: 800 }}>

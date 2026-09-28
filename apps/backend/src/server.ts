@@ -128,6 +128,23 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   setTimeout(autoRemindersTickSafe, 60_000); // đợi dữ liệu load xong lần đầu
   setInterval(autoRemindersTickSafe, 5 * 60_000);
 
+  // Phiếu bổ sung công hết hiệu lực sau 60 phút: tự từ chối PENDING quá hạn (5 phút/lần).
+  const adjustmentExpiryTickSafe = async () => {
+    try {
+      const r = await services.attendanceService.expireStaleAdjustments(new Date(), 60);
+      if (r.expired.length > 0) {
+        console.log(`[adjustments] Tự từ chối ${r.expired.length} phiếu quá 60 phút.`);
+        try {
+          io.emit('data:updated', { entity: 'adjustments', data: { action: 'auto-rejected', ids: r.expired }, timestamp: new Date().toISOString() });
+        } catch { /* non-fatal */ }
+      }
+    } catch (err: any) {
+      console.warn('[adjustments] expiry tick error:', err?.message || err);
+    }
+  };
+  setTimeout(adjustmentExpiryTickSafe, 90_000);
+  setInterval(adjustmentExpiryTickSafe, 5 * 60_000);
+
   // Tự ghi VẮNG: ca PUBLISHED qua giờ kết thúc 30p mà không check-in -> bản ghi
   // ABSENT làm chứng cứ (đỏ trên 2 cổng, đồng bộ Sheets). Chạy mỗi 15 phút.
   const absenteeTickSafe = async () => {

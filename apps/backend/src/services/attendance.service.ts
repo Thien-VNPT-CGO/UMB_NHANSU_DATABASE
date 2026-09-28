@@ -267,6 +267,50 @@ export class AttendanceService {
     return this.repo.listAttendanceAdjustments(branchId, employeeId);
   }
 
+  /**
+   * Ràng buộc hiệu lực phiếu: PENDING quá `ttlMinutes` (mặc định 60 phút) thì
+   * hệ thống tự từ chối. Idempotent (chỉ chạm PENDING).
+   */
+  async expireStaleAdjustments(now: Date = new Date(), ttlMinutes = 60): Promise<{ checked: number; expired: string[] }> {
+    const all = await this.repo.listAttendanceAdjustments().catch(() => []);
+    const expired: string[] = [];
+    let checked = 0;
+    for (const a of all || []) {
+      if ((a as any).status !== 'PENDING') continue;
+      checked++;
+      const created = new Date((a as any).created_at).getTime();
+      if (!Number.isFinite(created) || now.getTime() - created <= ttlMinutes * 60000) continue;
+      try {
+        await singleWriterQueue.enqueue({
+          entityType: 'DIEU_CHINH_CONG',
+          entityId: (a as any).adjustment_id,
+          actorId: 'SYSTEM',
+          execute: async () => {
+            const fresh = (await this.repo.listAttendanceAdjustments().catch(() => [])).find(
+              (x: any) => x.adjustment_id === (a as any).adjustment_id
+            );
+            if (!fresh || (fresh as any).status !== 'PENDING') return fresh;
+            return this.repo.updateAttendanceAdjustment(
+              (a as any).adjustment_id,
+              'REJECTED',
+              'SYSTEM',
+              0,
+              `Tự động từ chối: quá ${ttlMinutes} phút không duyệt (phiếu hết hiệu lực).`
+            );
+          },
+        });
+        expired.push((a as any).adjustment_id);
+        if (this.io) {
+          this.io.to(`user:${(a as any).employee_id}`).emit('adjustment.updated', {
+            adjustmentId: (a as any).adjustment_id,
+            status: 'REJECTED',
+          });
+        }
+      } catch { /* phiếu khác xử tiếp */ }
+    }
+    return { checked, expired };
+  }
+
   async reviewAdjustment(
     adjId: string,
     status: 'APPROVED' | 'REJECTED',
