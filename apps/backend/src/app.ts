@@ -56,6 +56,7 @@ import {
   candidateImportBody,
   checkinBody,
   checkoutBody,
+  colleagueShiftsQuery,
   defaultShiftBody,
   employeeCreateBody,
   employeeUpdateBody,
@@ -1017,6 +1018,46 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const fromDate = (req.query.fromDate as string) || new Date().toISOString().split('T')[0];
       const toDate = (req.query.toDate as string) || '2030-12-31';
       const shifts = await schedulesService.getEmployeeShifts(employeeId, fromDate, toDate);
+      res.json(shifts);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Ca thật của đồng nghiệp CÙNG chi nhánh để chọn tráo đổi.
+  // Xác thực theo chi nhánh trên HỒ SƠ (chuẩn hóa CN1/CN130...), không phụ thuộc
+  // branchScope cũ trong token — triệt để lỗi BRANCH_SCOPE_VIOLATION oan.
+  app.get('/me/colleague-shifts', authMiddleware, validate({ query: colleagueShiftsQuery }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const requesterId = req.user?.employeeId;
+      if (req.user?.role !== 'EMPLOYEE' || !requesterId) {
+        return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
+      }
+      const targetId = String(req.query.employeeId || '').trim();
+      if (!targetId) return res.status(400).json({ error: 'MISSING_EMPLOYEE' });
+      if (targetId === requesterId) return res.status(400).json({ error: 'CANNOT_SWAP_WITH_SELF' });
+      const me = await employeesService.getEmployee(requesterId).catch(() => null);
+      const target = await employeesService.getEmployee(targetId).catch(() => null);
+      if (!target || (target as any).employment_status === 'TERMINATED') {
+        return res.status(404).json({ error: 'COLLEAGUE_NOT_FOUND' });
+      }
+      const canon = (b?: string) => {
+        const x = String(b || '').trim().toUpperCase();
+        if (x === 'CN1' || x === 'CN130') return 'CN130';
+        if (x === 'CN2' || x === 'CN261') return 'CN261';
+        if (x === 'CN3' || x === 'CN120') return 'CN120';
+        if (x === 'CN4' || x === 'CN111') return 'CN111';
+        return x;
+      };
+      if (canon((me as any)?.default_branch_id) !== canon((target as any)?.default_branch_id)) {
+        return res.status(403).json({
+          error: 'DIFFERENT_BRANCH',
+          message: 'Chỉ được đổi ca với đồng nghiệp cùng chi nhánh.',
+        });
+      }
+      const fromDate = (req.query.fromDate as string) || new Date().toISOString().split('T')[0];
+      const toDate = (req.query.toDate as string) || '2030-12-31';
+      const shifts = await schedulesService.getEmployeeShifts(targetId, fromDate, toDate);
       res.json(shifts);
     } catch (err: any) {
       res.status(500).json({ error: err.message });

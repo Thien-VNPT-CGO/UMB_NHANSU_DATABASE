@@ -128,6 +128,13 @@ export const meScheduleQuery = z.object({
   toDate: dateQuery,
 });
 
+// Ca của đồng nghiệp cùng chi nhánh để đổi ca (xác thực theo hồ sơ, không theo scope token).
+export const colleagueShiftsQuery = z.object({
+  employeeId: queryString(64),
+  fromDate: dateQuery,
+  toDate: dateQuery,
+});
+
 export const shiftCreateBody = z
   .object({
     branchId: optString(32),

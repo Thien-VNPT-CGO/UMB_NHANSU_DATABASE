@@ -814,16 +814,35 @@ export function App() {
     }
   };
 
-  // Tải ca thật của NV B để chọn ca tráo/nhờ (dữ liệu thật từ /schedules)
+  // Tải ca thật của NV B để chọn ca tráo/nhờ.
+  // Dùng API /me/colleague-shifts (xác thực theo chi nhánh hồ sơ, không dính scope token cũ).
   const loadTargetShifts = async (targetEmployeeId: string) => {
     setTargetShifts([]);
     if (!targetEmployeeId) return;
+    const pickPublished = (all: any) =>
+      setTargetShifts(Array.isArray(all) ? all.filter((s: any) => s.status === 'PUBLISHED') : []);
     try {
-      const branchId = employee?.default_branch_id || 'CN130';
       const today = new Date().toISOString().split('T')[0];
-      const all = await apiRequest(`/schedules?branchId=${encodeURIComponent(branchId)}&week=${today}`);
-      setTargetShifts(Array.isArray(all) ? all.filter((s: any) => s.employee_id === targetEmployeeId && s.status === 'PUBLISHED') : []);
+      const all = await apiRequest(`/me/colleague-shifts?employeeId=${encodeURIComponent(targetEmployeeId)}&fromDate=${today}`);
+      pickPublished(all);
+      if ((all as any[]).length === 0) showToast('Đồng nghiệp chưa có ca nào để tráo/nhờ (hoặc chưa tải xong)! Vui lòng chọn lại.');
     } catch (err: any) {
+      // Fallback server cũ chưa có API mới (404 không mã lỗi).
+      if (!err?.code && /404/.test(String(err?.message || ''))) {
+        try {
+          const branchId = employee?.default_branch_id || 'CN130';
+          const today = new Date().toISOString().split('T')[0];
+          const all = await apiRequest(`/schedules?branchId=${encodeURIComponent(branchId)}&week=${today}`);
+          pickPublished(Array.isArray(all) ? all.filter((s: any) => s.employee_id === targetEmployeeId) : []);
+        } catch (e2: any) {
+          showToast(e2.message || 'Không tải được lịch của đồng nghiệp!');
+        }
+        return;
+      }
+      if (err?.code === 'SESSION_EXPIRED' || /hết hạn|đăng nhập lại/i.test(String(err?.message || ''))) {
+        showToast('🔒 Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại!');
+        return;
+      }
       showToast(err.message || 'Không tải được lịch của đồng nghiệp!');
     }
   };

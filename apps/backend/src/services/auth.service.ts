@@ -211,6 +211,18 @@ export class AuthService {
       throw new Error(ERROR_CODES.EMPLOYMENT_NOT_ELIGIBLE);
     }
 
+    // Tự chữa scope tài khoản lệch chi nhánh hồ sơ (VD: HR chuyển CN mà scope cũ
+    // còn CN cũ -> dính BRANCH_SCOPE_VIOLATION oan khi chọn đồng nghiệp cùng CN).
+    // Tăng version để pull Sheets không ghi đè lại + buộc token mới mang scope đúng.
+    try {
+      const empBranch = (employee as any).default_branch_id;
+      if (empBranch && (account as any).branch_scope !== empBranch) {
+        (account as any).branch_scope = empBranch;
+        (account as any).version = Number((account as any).version || 1) + 1;
+        (account as any).updated_at = new Date().toISOString();
+      }
+    } catch { /* best-effort */ }
+
     const base = {
       sub: account.account_id,
       employeeId: employee.employee_id,
