@@ -4927,6 +4927,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     if (!groups.has(k)) groups.set(k, []);
                     groups.get(k)!.push(e);
                   }
+                  // Đếm số ca/ngày của từng NV để HR dễ quan sát ngày 2 ca
+                  const dayCount = new Map<string, string[]>();
+                  for (const k of groups.keys()) {
+                    const evts = groups.get(k)!;
+                    const f = evts[0];
+                    const dk = `${f.employee_id}__${(f.client_time || '').slice(0, 10)}`;
+                    if (!dayCount.has(dk)) dayCount.set(dk, []);
+                    dayCount.get(dk)!.push(k);
+                  }
                   const timeOf = (t: string) => {
                     try { return new Date(t).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }); } catch { return '-'; }
                   };
@@ -4939,6 +4948,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       full_name: 'Nhân Viên',
                       employee_code: first.employee_id,
                     };
+                    const dayKeys = dayCount.get(`${first.employee_id}__${(first.client_time || '').slice(0, 10)}`) || [key];
+                    const shiftIdx = dayKeys.indexOf(key) + 1;
+                    const shiftTotal = dayKeys.length;
                     const shift = (shifts || []).find((s: any) => s.assignment_id === first.assignment_id);
                     const rate = Number((emp as any)?.current_rate_per_hour) || 25500;
                     const hours = shift?.shift_code === 'CA_2' ? 6 : 5;
@@ -4965,6 +4977,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         <td style={{ padding: '12px 20px', fontWeight: 700 }}>
                           {emp.full_name}
                           <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{emp.employee_code}</div>
+                          {shiftTotal > 1 && (
+                            <span className="badge" style={{ backgroundColor: '#EDE9FE', color: '#6D28D9', fontWeight: 800, marginTop: '2px' }}>
+                              {shiftTotal} ca hôm nay (ca {shiftIdx}/{shiftTotal})
+                            </span>
+                          )}
                         </td>
                         <td style={{ padding: '12px 20px' }}>
                           {getDisplayBranch(first.branch_id || shift?.branch_id || 'CN130')}
