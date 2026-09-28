@@ -97,6 +97,14 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
       'Mã Nguồn',
     ],
   },
+  {
+    title: 'BAI_THI',
+    headers: ['ID Bài', 'Tiêu Đề', 'Mô Tả', 'Câu Hỏi (JSON)', 'Điểm Đạt', 'Giới Hạn Giây', 'Trạng Thái', 'Người Tạo', 'Ngày Tạo', 'Phiên Bản'],
+  },
+  {
+    title: 'BAI_LAM',
+    headers: ['ID Bài Làm', 'ID Bài', 'ID Nhân Viên', 'Trạng Thái', 'Đáp Án (JSON)', 'Điểm', 'Đạt', 'Ngày Nộp', 'Ngày Tạo', 'Phiên Bản'],
+  },
 ];
 
 export class GoogleSheetsSyncService {
@@ -346,6 +354,8 @@ export class GoogleSheetsSyncService {
         'DIEU_CHINH_CONG',
         'KY_LUONG',
         'CAU_HINH_HE_THONG',
+        'BAI_THI',
+        'BAI_LAM',
       ]);
 
       // Đọc lỗi/quota trả về toàn rỗng trong khi bộ nhớ đang có dữ liệu thật
@@ -704,6 +714,69 @@ export class GoogleSheetsSyncService {
         fallback.leaveRequests = [];
       }
       counts.leaves = fallback.leaveRequests.length;
+
+      // 5b. Đọc BAI_THI (câu hỏi lưu JSON 1 ô; tab chưa có -> giữ bộ nhớ)
+      const paperRows = batch['BAI_THI'] || [];
+      if (keepIfEmpty('BAI_THI', paperRows, (fallback as any).testPapers?.length || 0)) {
+        counts.testPapers = ((fallback as any).testPapers || []).length;
+      } else if (paperRows.length > 0) {
+        let questions: any[] = [];
+        (fallback as any).testPapers = paperRows
+          .filter(r => r && r[0])
+          .map(r => {
+            try {
+              const parsed = JSON.parse(r[3] || '[]');
+              questions = Array.isArray(parsed) ? parsed : [];
+            } catch { questions = []; }
+            return {
+              test_id: r[0],
+              title: r[1] || 'Bài TEST',
+              description: r[2] || '',
+              questions,
+              pass_score: Number(r[4]) || 8,
+              time_limit_seconds: Number(r[5]) || 480,
+              status: (r[6] as any) || 'ASSIGNED',
+              created_by: r[7] || 'SYSTEM',
+              created_at: r[8] || new Date().toISOString(),
+              updated_at: r[8] || new Date().toISOString(),
+              version: Number(r[9]) || 1,
+            };
+          });
+        counts.testPapers = (fallback as any).testPapers.length;
+      } else if (((fallback as any).testPapers || []).length === 0) {
+        (fallback as any).testPapers = [];
+      }
+
+      // 5c. Đọc BAI_LAM
+      const subRows = batch['BAI_LAM'] || [];
+      if (keepIfEmpty('BAI_LAM', subRows, (fallback as any).testSubmissions?.length || 0)) {
+        counts.testSubmissions = ((fallback as any).testSubmissions || []).length;
+      } else if (subRows.length > 0) {
+        (fallback as any).testSubmissions = subRows
+          .filter(r => r && r[0])
+          .map(r => {
+            let answers: any = undefined;
+            try {
+              const parsed = JSON.parse(r[4] || 'null');
+              answers = Array.isArray(parsed) ? parsed : undefined;
+            } catch { answers = undefined; }
+            return {
+              submission_id: r[0],
+              test_id: r[1] || '',
+              employee_id: r[2] || '',
+              status: (r[3] as any) || 'ASSIGNED',
+              answers,
+              score: r[5] === '' || r[5] === undefined ? undefined : Number(r[5]),
+              passed: r[6] === 'YES' ? true : r[6] === 'NO' ? false : undefined,
+              submitted_at: r[7] || undefined,
+              created_at: r[8] || new Date().toISOString(),
+              version: Number(r[9]) || 1,
+            };
+          });
+        counts.testSubmissions = (fallback as any).testSubmissions.length;
+      } else if (((fallback as any).testSubmissions || []).length === 0) {
+        (fallback as any).testSubmissions = [];
+      }
 
       // 6. Đọc SU_KIEN_DIEM_DANH
       const attRows = batch['SU_KIEN_DIEM_DANH'];
@@ -1281,6 +1354,38 @@ export class GoogleSheetsSyncService {
       ]);
       await this.overwriteSheetData('DON_NGHI_PHEP', SHEETS_DEFINITIONS.find(d => d.title === 'DON_NGHI_PHEP')!.headers, leaveRows);
       details.leaves = leaveRows.length;
+
+      // 6b. Bài TEST + bài làm (HR giao đúng nhân viên)
+      const papers = await repo.listTestPapers().catch(() => []);
+      const paperRows = (papers || []).map(p => [
+        p.test_id,
+        p.title,
+        p.description || '',
+        JSON.stringify(p.questions || []),
+        p.pass_score ?? 8,
+        p.time_limit_seconds ?? 480,
+        p.status,
+        p.created_by,
+        p.created_at,
+        p.version,
+      ]);
+      await this.overwriteSheetData('BAI_THI', SHEETS_DEFINITIONS.find(d => d.title === 'BAI_THI')!.headers, paperRows);
+      details.testPapers = paperRows.length;
+      const subs = await repo.listTestSubmissions().catch(() => []);
+      const subRows = (subs || []).map(s => [
+        s.submission_id,
+        s.test_id,
+        s.employee_id,
+        s.status,
+        s.answers ? JSON.stringify(s.answers) : '',
+        s.score ?? '',
+        s.passed === true ? 'YES' : s.passed === false ? 'NO' : '',
+        s.submitted_at || '',
+        s.created_at,
+        s.version,
+      ]);
+      await this.overwriteSheetData('BAI_LAM', SHEETS_DEFINITIONS.find(d => d.title === 'BAI_LAM')!.headers, subRows);
+      details.testSubmissions = subRows.length;
 
       // 7. Đơn đổi ca
       const swaps = await repo.listSwapRequests();

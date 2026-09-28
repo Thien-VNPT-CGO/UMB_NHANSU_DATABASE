@@ -133,6 +133,20 @@ export const defaultShiftBody = z.object({
   shiftCode: optString(16),
 });
 
+// --- Bài TEST (HR tạo đề + giao đúng nhân viên) ---
+export const testPaperBody = z.object({
+  title: optString(200),
+  description: optString(2000),
+  questions: z.array(z.object({}).passthrough()).min(1).max(100).optional(),
+  passScore: z.coerce.number().min(0).max(10).optional(),
+  timeLimitSeconds: z.coerce.number().int().min(30).max(7200).optional(),
+  employeeIds: z.array(z.string().trim().min(1).max(64)).min(1).max(200).optional(),
+}).passthrough();
+
+export const testSubmitBody = z.object({
+  answers: z.array(z.coerce.number().int().min(0).max(25)).min(1).max(100),
+});
+
 export const autoPlanBody = z.object({
   branchId: optString(32),
   weekMon: optString(32),

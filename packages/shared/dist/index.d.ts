@@ -6,4 +6,5 @@ export * from './types/attendance.js';
 export * from './types/payroll.js';
 export * from './types/notifications.js';
 export * from './types/operations.js';
+export * from './types/tests.js';
 export * from './constants/index.js';

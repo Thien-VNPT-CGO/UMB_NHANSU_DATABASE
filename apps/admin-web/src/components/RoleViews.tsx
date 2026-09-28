@@ -300,6 +300,26 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [weeklyOffSearch, setWeeklyOffSearch] = useState('');
   // Xem lịch tuần trước / hiện tại / sau (mặc định tuần hiện tại)
   const [scheduleWeekOffset, setScheduleWeekOffset] = useState(0);
+  // Bài TEST: HR tạo đề + giao đúng nhân viên (NV chỉ thấy bài của mình)
+  const [testPapers, setTestPapers] = useState<any[]>([]);
+  const [testSubs, setTestSubs] = useState<any[]>([]);
+  const [testFormOpen, setTestFormOpen] = useState(false);
+  const [testTitle, setTestTitle] = useState('');
+  const [testDesc, setTestDesc] = useState('');
+  const [testPass, setTestPass] = useState(8);
+  const [testTime, setTestTime] = useState(480);
+  const [testQuestions, setTestQuestions] = useState<any[]>([{ content: '', options: ['', ''], correct: 0 }]);
+  const [testAssignees, setTestAssignees] = useState<string[]>([]);
+  const [testSearch, setTestSearch] = useState('');
+  const [testBusy, setTestBusy] = useState(false);
+  const loadTests = async () => {
+    try {
+      const d = await apiRequest('/tests');
+      setTestPapers(d.papers || []);
+      const s = d.submissions;
+      setTestSubs(Array.isArray(s) ? s : (s?.result || []));
+    } catch { /* không quyền / offline */ }
+  };
   // Modal Phát Hành Lịch: BOT tự xếp chỗ trống theo OFF đã đăng ký rồi PUBLISHED.
   const [publishOpen, setPublishOpen] = useState(false);
 
@@ -335,6 +355,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   useEffect(() => {
     if (activeTab === 'hr-interviews') {
       refreshZaloStatus();
+    }
+    if (activeTab === 'hr-tests') {
+      loadTests();
     }
   }, [activeTab]);
 
@@ -4493,10 +4516,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <button
               className="btn-primary"
               style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#2563EB' }}
-              onClick={() => showToast('Đã mở form thêm câu hỏi mới vào ngân hàng đề!')}
+              onClick={() => setTestFormOpen(v => !v)}
             >
               <Plus size={16} />
-              + Thêm Câu Hỏi Mới
+              + Tạo & Giao Bài TEST
             </button>
           </div>
         </div>
@@ -4555,31 +4578,138 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           </div>
         </div>
 
-        {/* BẢNG THEO DÕI KẾT QUẢ THI TEST CỦA NHÂN VIÊN */}
+        {/* TẠO & GIAO BÀI TEST: chỉ NV được chọn mới thấy bài trên cổng của mình */}
+        {testFormOpen && (
+          <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1.5px solid #2563EB', padding: '18px 20px' }}>
+            <div style={{ fontWeight: 800, fontSize: '15px', marginBottom: '4px' }}>Tạo đề & giao bài TEST</div>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>
+              HR soạn câu hỏi, chọn đúng nhân viên cần làm — bài chỉ hiển thị trên cổng của những người được giao.
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '10px', marginBottom: '10px' }}>
+              <input value={testTitle} onChange={e => setTestTitle(e.target.value)} placeholder="Tiêu đề bài test (VD: TEST nâng bậc T9)" style={{ padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '13px' }} />
+              <label style={{ fontSize: '12px' }}>Điểm đạt: <input type="number" min={0} max={10} step={0.5} value={testPass} onChange={e => setTestPass(Number(e.target.value))} style={{ width: '64px', padding: '6px', borderRadius: '6px', border: '1px solid var(--border)' }} />/10</label>
+              <label style={{ fontSize: '12px' }}>Giờ làm (giây): <input type="number" min={30} max={7200} value={testTime} onChange={e => setTestTime(Number(e.target.value))} style={{ width: '80px', padding: '6px', borderRadius: '6px', border: '1px solid var(--border)' }} /></label>
+            </div>
+            <textarea value={testDesc} onChange={e => setTestDesc(e.target.value)} placeholder="Mô tả / hướng dẫn làm bài" rows={2} style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '13px', marginBottom: '10px' }} />
+            {testQuestions.map((q, qi) => (
+              <div key={qi} style={{ border: '1px solid var(--border)', borderRadius: '8px', padding: '10px 12px', marginBottom: '8px' }}>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <strong style={{ fontSize: '13px' }}>Câu {qi + 1}</strong>
+                  <input value={q.content} onChange={e => { const c = [...testQuestions]; c[qi] = { ...c[qi], content: e.target.value }; setTestQuestions(c); }} placeholder="Nội dung câu hỏi" style={{ flex: 1, padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '13px' }} />
+                  <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: '12px', color: '#DC2626' }} onClick={() => setTestQuestions(testQuestions.filter((_, i) => i !== qi))} disabled={testQuestions.length <= 1}>Xóa</button>
+                </div>
+                {q.options.map((op: string, oi: number) => (
+                  <div key={oi} style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '6px' }}>
+                    <input type="radio" name={`tq-correct-${qi}`} checked={q.correct === oi} onChange={() => { const c = [...testQuestions]; c[qi] = { ...c[qi], correct: oi }; setTestQuestions(c); }} title="Đáp án đúng" />
+                    <input value={op} onChange={e => { const c = [...testQuestions]; const ops = [...c[qi].options]; ops[oi] = e.target.value; c[qi] = { ...c[qi], options: ops }; setTestQuestions(c); }} placeholder={`Đáp án ${String.fromCharCode(65 + oi)}`} style={{ flex: 1, padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '13px' }} />
+                    {q.options.length > 2 && (
+                      <button className="btn-secondary" style={{ padding: '2px 8px', fontSize: '11px' }} onClick={() => { const c = [...testQuestions]; const ops = c[qi].options.filter((_: string, i: number) => i !== oi); c[qi] = { ...c[qi], options: ops, correct: Math.min(c[qi].correct, ops.length - 1) }; setTestQuestions(c); }}>−</button>
+                    )}
+                  </div>
+                ))}
+                <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: '12px', marginTop: '6px' }} onClick={() => { const c = [...testQuestions]; c[qi] = { ...c[qi], options: [...c[qi].options, ''] }; setTestQuestions(c); }}>+ Thêm đáp án</button>
+              </div>
+            ))}
+            <button className="btn-secondary" style={{ fontSize: '12px', marginBottom: '10px' }} onClick={() => setTestQuestions([...testQuestions, { content: '', options: ['', ''], correct: 0 }])}>+ Thêm câu hỏi</button>
+            <div style={{ fontWeight: 700, fontSize: '13px', marginBottom: '6px' }}>Giao cho nhân viên ({testAssignees.length} đã chọn):</div>
+            <input value={testSearch} onChange={e => setTestSearch(e.target.value)} placeholder="Tìm tên / mã NV..." style={{ padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '13px', marginBottom: '6px', width: '260px' }} />
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', maxHeight: '150px', overflow: 'auto', marginBottom: '10px' }}>
+              {(allEmployees || [])
+                .filter((e: any) => e.employment_status !== 'TERMINATED')
+                .filter((e: any) => !testSearch.trim() || (e.full_name || '').toLowerCase().includes(testSearch.trim().toLowerCase()) || (e.employee_code || '').toLowerCase().includes(testSearch.trim().toLowerCase()))
+                .slice(0, 100)
+                .map((e: any) => (
+                  <label key={e.employee_id} style={{ fontSize: '12px', border: '1px solid var(--border)', borderRadius: '6px', padding: '4px 8px', cursor: 'pointer', backgroundColor: testAssignees.includes(e.employee_id) ? '#EFF6FF' : undefined }}>
+                    <input type="checkbox" checked={testAssignees.includes(e.employee_id)} onChange={() => setTestAssignees(testAssignees.includes(e.employee_id) ? testAssignees.filter(id => id !== e.employee_id) : [...testAssignees, e.employee_id])} /> {e.full_name} <span style={{ color: 'var(--text-muted)' }}>({e.employee_code})</span>
+                  </label>
+                ))}
+            </div>
+            <button
+              className="btn-primary"
+              disabled={testBusy}
+              style={{ backgroundColor: '#2563EB', width: '100%', padding: '10px', fontWeight: 800 }}
+              onClick={async () => {
+                if (!testTitle.trim()) { showToast('Nhập tiêu đề bài test!'); return; }
+                if (testAssignees.length === 0) { showToast('Chọn ít nhất 1 nhân viên để giao bài!'); return; }
+                setTestBusy(true);
+                try {
+                  const res = await apiRequest('/tests', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                      title: testTitle.trim(),
+                      description: testDesc.trim(),
+                      questions: testQuestions.map(q => ({ content: q.content, options: q.options, correct_index: q.correct })),
+                      passScore: testPass,
+                      timeLimitSeconds: testTime,
+                      employeeIds: testAssignees,
+                    }),
+                  });
+                  const n = res?.result?.assignedCount ?? res?.assignedCount ?? testAssignees.length;
+                  showToast(`Đã giao bài TEST cho ${n} nhân viên! Bài chỉ hiện trên cổng của họ.`);
+                  setTestFormOpen(false);
+                  setTestTitle(''); setTestDesc(''); setTestAssignees([]);
+                  setTestQuestions([{ content: '', options: ['', ''], correct: 0 }]);
+                  await loadTests();
+                  if (onRefreshData) await onRefreshData();
+                } catch (e: any) {
+                  showToast(e?.message || 'Lỗi khi giao bài');
+                } finally {
+                  setTestBusy(false);
+                }
+              }}
+            >
+              {testBusy ? 'Đang giao...' : `Giao bài cho ${testAssignees.length} nhân viên`}
+            </button>
+          </div>
+        )}
+
+        {/* BẢNG THEO DÕI KẾT QUẢ THI TEST CỦA NHÂN VIÊN (dữ liệu thật) */}
         <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
           <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <strong style={{ fontSize: '14px' }}>Kết Quả Thi TEST Đầu Ra Gần Nhất (Nhân Viên Thử Việc)</strong>
-            <span className="badge" style={{ backgroundColor: '#EFF6FF', color: '#2563EB', fontWeight: 700 }}>Đồng bộ tự động từ Cổng Nhân Viên</span>
+            <strong style={{ fontSize: '14px' }}>Đề đã giao & kết quả bài làm ({testPapers.length} đề)</strong>
+            <button className="btn-secondary" style={{ fontSize: '12px', padding: '4px 10px' }} onClick={loadTests}>Tải lại</button>
           </div>
 
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
             <thead>
               <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
+                <th style={{ padding: '12px 20px' }}>Bài TEST</th>
                 <th style={{ padding: '12px 20px' }}>Nhân Viên</th>
-                <th style={{ padding: '12px 20px' }}>Chi Nhánh & Giai Đoạn</th>
-                <th style={{ padding: '12px 20px' }}>Điểm Bài TEST</th>
-                <th style={{ padding: '12px 20px' }}>Số Câu Đúng</th>
-                <th style={{ padding: '12px 20px' }}>Thời Gian Làm</th>
-                <th style={{ padding: '12px 20px' }}>Kết Quả Đánh Giá</th>
-                <th style={{ padding: '12px 20px' }}>Thao Tác</th>
+                <th style={{ padding: '12px 20px' }}>Điểm</th>
+                <th style={{ padding: '12px 20px' }}>Kết Quả</th>
+                <th style={{ padding: '12px 20px' }}>Ngày Nộp</th>
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td colSpan={7} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                  Chưa có nhân viên thử việc nào nộp bài kiểm tra trắc nghiệm hôm nay. Dữ liệu nộp bài từ Cổng Nhân Viên sẽ tự động hiển thị và chấm điểm tại đây.
-                </td>
-              </tr>
+              {testSubs.length === 0 ? (
+                <tr>
+                  <td colSpan={5} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    Chưa giao bài TEST nào. Bấm "+ Tạo & Giao Bài TEST" — bài chỉ hiện trên cổng của NV được chọn.
+                  </td>
+                </tr>
+              ) : (
+                testSubs.map((s: any) => {
+                  const paper = testPapers.find((p: any) => p.test_id === s.test_id);
+                  const emp = (allEmployees || []).find((e: any) => e.employee_id === s.employee_id);
+                  return (
+                    <tr key={s.submission_id} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <td style={{ padding: '12px 20px', fontWeight: 700 }}>{paper?.title || s.test_id}</td>
+                      <td style={{ padding: '12px 20px' }}>{emp?.full_name || s.employee_id} <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>({emp?.employee_code || ''})</span></td>
+                      <td style={{ padding: '12px 20px', fontWeight: 800 }}>{s.status === 'SUBMITTED' ? `${s.score}/10` : '—'}</td>
+                      <td style={{ padding: '12px 20px' }}>
+                        {s.status === 'SUBMITTED' ? (
+                          <span className="badge" style={{ backgroundColor: s.passed ? '#DCFCE7' : '#FEE2E2', color: s.passed ? '#166534' : '#991B1B', fontWeight: 700 }}>
+                            {s.passed ? 'Đạt' : 'Chưa đạt'}
+                          </span>
+                        ) : (
+                          <span className="badge" style={{ backgroundColor: '#FEF3C7', color: '#92400E', fontWeight: 700 }}>Chờ làm</span>
+                        )}
+                      </td>
+                      <td style={{ padding: '12px 20px', fontSize: '12px' }}>{s.submitted_at ? new Date(s.submitted_at).toLocaleString('vi-VN') : '—'}</td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>

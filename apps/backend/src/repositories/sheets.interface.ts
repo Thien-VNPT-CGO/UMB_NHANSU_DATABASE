@@ -19,6 +19,8 @@ import {
   AdjustmentStatus,
   PayrollRunStatus,
   BranchInfo,
+  TestPaper,
+  TestSubmission,
 } from '@ubm/shared';
 
 
@@ -116,5 +118,14 @@ export interface ISheetsRepository {
 
   getSystemSettings(): Promise<any>;
   updateSystemSettings(settings: any): Promise<any>;
+
+  // Bài TEST nâng bậc & đào tạo (HR giao đúng nhân viên mới hiển thị)
+  createTestPaper(paper: Omit<TestPaper, 'created_at' | 'updated_at' | 'version'>): Promise<TestPaper>;
+  listTestPapers(): Promise<TestPaper[]>;
+  getTestPaper(id: string): Promise<TestPaper | null>;
+  updateTestPaper(id: string, updates: Partial<TestPaper>): Promise<TestPaper>;
+  createTestSubmission(sub: Omit<TestSubmission, 'created_at' | 'version'>): Promise<TestSubmission>;
+  listTestSubmissions(testId?: string, employeeId?: string): Promise<TestSubmission[]>;
+  updateTestSubmission(id: string, updates: Partial<TestSubmission>): Promise<TestSubmission>;
 }
 

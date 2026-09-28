@@ -614,6 +614,45 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     return this.fallbackAdapter.markNotificationAcknowledged(inboxId, recipientId);
   }
 
+  // --- Bài TEST (lưu bộ nhớ + full-sync đẩy Sheets nền như các entity khác) ---
+  async createTestPaper(paper: any) {
+    const res = await this.fallbackAdapter.createTestPaper(paper);
+    this.scheduleFullSync('BAI_THI.create');
+    return res;
+  }
+
+  async listTestPapers() {
+    await this.ensureFreshData();
+    return this.fallbackAdapter.listTestPapers();
+  }
+
+  async getTestPaper(id: string) {
+    return this.fallbackAdapter.getTestPaper(id);
+  }
+
+  async updateTestPaper(id: string, updates: any) {
+    const res = await this.fallbackAdapter.updateTestPaper(id, updates);
+    this.scheduleFullSync('BAI_THI.update');
+    return res;
+  }
+
+  async createTestSubmission(sub: any) {
+    const res = await this.fallbackAdapter.createTestSubmission(sub);
+    this.scheduleFullSync('BAI_LAM.create');
+    return res;
+  }
+
+  async listTestSubmissions(testId?: string, employeeId?: string) {
+    await this.ensureFreshData();
+    return this.fallbackAdapter.listTestSubmissions(testId, employeeId);
+  }
+
+  async updateTestSubmission(id: string, updates: any) {
+    const res = await this.fallbackAdapter.updateTestSubmission(id, updates);
+    this.scheduleFullSync('BAI_LAM.update');
+    return res;
+  }
+
   // --- Operations & Audit ---
   async recordOperation(op: any) {
     return this.fallbackAdapter.recordOperation(op);

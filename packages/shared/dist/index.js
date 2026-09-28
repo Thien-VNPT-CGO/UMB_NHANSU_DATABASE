@@ -22,4 +22,5 @@ __exportStar(require("./types/attendance.js"), exports);
 __exportStar(require("./types/payroll.js"), exports);
 __exportStar(require("./types/notifications.js"), exports);
 __exportStar(require("./types/operations.js"), exports);
+__exportStar(require("./types/tests.js"), exports);
 __exportStar(require("./constants/index.js"), exports);

@@ -25,6 +25,8 @@ import {
   BRANCHES,
   BranchInfo,
   SHIFT_TEMPLATES,
+  TestPaper,
+  TestSubmission,
 } from '@ubm/shared';
 import { ISheetsRepository } from './sheets.interface.js';
 
@@ -48,6 +50,8 @@ export class MockSheetsAdapter implements ISheetsRepository {
   public payslips: PayslipItem[] = [];
   public notificationOutbox: NotificationOutboxItem[] = [];
   public notificationInbox: NotificationInboxItem[] = [];
+  public testPapers: TestPaper[] = [];
+  public testSubmissions: TestSubmission[] = [];
   public operations: OperationRecord[] = [];
   public auditLogs: AuditLogEntry[] = [];
 
@@ -647,6 +651,56 @@ export class MockSheetsAdapter implements ISheetsRepository {
     if (!item.read_at) item.read_at = item.acknowledged_at;
     item.version += 1;
     return { ...item };
+  }
+
+  // --- Bài TEST (HR giao đúng nhân viên) ---
+  async createTestPaper(paper: Omit<TestPaper, 'created_at' | 'updated_at' | 'version'>): Promise<TestPaper> {
+    this.checkErrors();
+    const now = new Date().toISOString();
+    const rec: TestPaper = { ...paper, created_at: now, updated_at: now, version: 1 };
+    this.testPapers.push(rec);
+    return { ...rec, questions: rec.questions.map(q => ({ ...q, options: [...q.options] })) };
+  }
+
+  async listTestPapers(): Promise<TestPaper[]> {
+    this.checkErrors();
+    return this.testPapers.map(p => ({ ...p, questions: p.questions.map(q => ({ ...q, options: [...q.options] })) }));
+  }
+
+  async getTestPaper(id: string): Promise<TestPaper | null> {
+    this.checkErrors();
+    const p = this.testPapers.find(t => t.test_id === id);
+    return p ? { ...p, questions: p.questions.map(q => ({ ...q, options: [...q.options] })) } : null;
+  }
+
+  async updateTestPaper(id: string, updates: Partial<TestPaper>): Promise<TestPaper> {
+    this.checkErrors();
+    const p = this.testPapers.find(t => t.test_id === id);
+    if (!p) throw new Error('TEST_NOT_FOUND');
+    Object.assign(p, updates, { updated_at: new Date().toISOString(), version: p.version + 1 });
+    return this.getTestPaper(id) as Promise<TestPaper>;
+  }
+
+  async createTestSubmission(sub: Omit<TestSubmission, 'created_at' | 'version'>): Promise<TestSubmission> {
+    this.checkErrors();
+    const rec: TestSubmission = { ...sub, created_at: new Date().toISOString(), version: 1 };
+    this.testSubmissions.push(rec);
+    return { ...rec, answers: rec.answers ? [...rec.answers] : undefined };
+  }
+
+  async listTestSubmissions(testId?: string, employeeId?: string): Promise<TestSubmission[]> {
+    this.checkErrors();
+    return this.testSubmissions
+      .filter(s => (!testId || s.test_id === testId) && (!employeeId || s.employee_id === employeeId))
+      .map(s => ({ ...s, answers: s.answers ? [...s.answers] : undefined }));
+  }
+
+  async updateTestSubmission(id: string, updates: Partial<TestSubmission>): Promise<TestSubmission> {
+    this.checkErrors();
+    const s = this.testSubmissions.find(x => x.submission_id === id);
+    if (!s) throw new Error('SUBMISSION_NOT_FOUND');
+    Object.assign(s, updates, { version: s.version + 1 });
+    return { ...s, answers: s.answers ? [...s.answers] : undefined };
   }
 
   // --- Operations & Audit ---

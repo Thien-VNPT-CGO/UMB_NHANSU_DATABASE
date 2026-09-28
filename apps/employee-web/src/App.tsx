@@ -200,8 +200,33 @@ export function App() {
     reason: 'Quên bấm điểm danh khi vào ca do tiếp nhận hàng hóa gấp',
   });
 
-  // Training Test Exam State (for Probation / Training)
-  const [testScore, setTestScore] = useState<number | null>(null);
+  // Bài TEST do HR giao riêng cho mình (không được giao thì không thấy bài)
+  const [myTests, setMyTests] = useState<any[]>([]);
+  const [activeTestId, setActiveTestId] = useState<string | null>(null);
+  const [testAnswers, setTestAnswers] = useState<number[]>([]);
+  const [testLeft, setTestLeft] = useState(0);
+  const fetchMyTests = async () => {
+    try {
+      const list = await apiRequest('/me/tests');
+      setMyTests(Array.isArray(list) ? list : []);
+    } catch { /* offline: giữ danh sách cũ */ }
+  };
+  const submitActiveTest = async (isAuto = false) => {
+    if (!activeTestId) return;
+    const filled = testAnswers.map(a => (a < 0 ? 0 : a));
+    try {
+      const res = await apiRequest(`/me/tests/${activeTestId}/submit`, {
+        method: 'POST',
+        body: JSON.stringify({ answers: filled }),
+      });
+      const r = (res as any)?.result || res;
+      showToast(isAuto ? `Hết giờ — tự nộp bài! Điểm: ${r.score}/10.` : `Đã nộp bài! Điểm: ${r.score}/10 — ${r.passed ? 'Đạt' : 'Chưa đạt'}.`);
+      setActiveTestId(null);
+      await fetchMyTests();
+    } catch (e: any) {
+      showToast(e?.message || 'Lỗi khi nộp bài!');
+    }
+  };
 
   // Synchronize active tab across reload (with forced registration guard for official staff)
   useEffect(() => {
@@ -218,6 +243,20 @@ export function App() {
       fetchMyProfile();
     }
   }, []);
+
+  // Bài TEST: tải khi mở tab + đếm ngược tự nộp khi hết giờ
+  useEffect(() => {
+    if (activeTab === 'test_exam' || activeTab === 'test_training') fetchMyTests();
+  }, [activeTab]);
+  useEffect(() => {
+    if (!activeTestId) return;
+    if (testLeft <= 0) {
+      submitActiveTest(true);
+      return;
+    }
+    const t = setTimeout(() => setTestLeft(s => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [activeTestId, testLeft]);
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
@@ -2524,42 +2563,88 @@ export function App() {
                 <h3 style={{ fontSize: '15px', fontWeight: 800 }}>
                   {isProbation ? '8. Bài Thi TEST Đầu Ra Thử Việc' : '8. TEST Nâng Bậc & Đào Tạo Định Kỳ'}
                 </h3>
-                <span className="badge badge-brand">25 Câu Hỏi</span>
+                <button className="btn-secondary" style={{ fontSize: '11px', padding: '4px 10px' }} onClick={fetchMyTests}>Tải lại</button>
               </div>
-              <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '14px' }}>
-                Bài kiểm tra trắc nghiệm tiêu chuẩn chất lượng sản phẩm & vệ sinh an toàn thực phẩm Ụm Bò Milk.
-              </p>
-
-              {testScore === null ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  <div style={{ backgroundColor: '#FAFAFA', padding: '12px', borderRadius: 'var(--radius-sm)', fontSize: '13px' }}>
-                    <strong>Câu 1:</strong> Nhiệt độ thanh trùng sữa tươi tiêu chuẩn tại Ụm Bò Milk là bao nhiêu?
-                    <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                      <label><input type="radio" name="q1" defaultChecked /> A. 72°C - 75°C trong 15 giây</label>
-                      <label><input type="radio" name="q1" /> B. 100°C trong 5 phút</label>
-                    </div>
-                  </div>
-
-                  <button
-                    className="btn-primary"
-                    onClick={() => {
-                      setTestScore(9.2);
-                      showToast('Đã nộp bài thi thành công! Điểm: 9.2/10');
-                    }}
-                  >
-                    Nộp Bài Thi TEST (Đếm ngược: 480s)
-                  </button>
+              {myTests.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '24px 12px', color: 'var(--text-muted)' }}>
+                  <Award size={32} style={{ margin: '0 auto 8px', opacity: 0.5 }} />
+                  <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text)' }}>Chưa có bài TEST nào được giao</div>
+                  <div style={{ fontSize: '12px', marginTop: '4px' }}>Khi HR tạo bài và chọn đúng tên bạn, bài làm sẽ hiện ở đây.</div>
                 </div>
               ) : (
-                <div style={{ textAlign: 'center', padding: '16px', backgroundColor: '#DFF5E8', borderRadius: 'var(--radius-sm)' }}>
-                  <CheckCircle2 size={36} color="#10B981" style={{ margin: '0 auto 8px' }} />
-                  <h4 style={{ fontSize: '18px', fontWeight: 800, color: '#065F46' }}>Kết Quả: {testScore}/10</h4>
-                  <p style={{ fontSize: '12px', color: '#047857', margin: '4px 0 14px 0' }}>
-                    Đạt chuẩn xét duyệt! HR đã nhận được kết quả thi của bạn.
-                  </p>
-                  <button className="btn-secondary" style={{ width: '100%' }} onClick={() => setTestScore(null)}>
-                    Làm Lại Bài Thi
-                  </button>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {myTests.map((t: any) => {
+                    const sub = t.submission;
+                    const paper = t.paper;
+                    const isActive = activeTestId === sub.submission_id;
+                    const done = sub.status === 'SUBMITTED';
+                    return (
+                      <div key={sub.submission_id} style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '12px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                          <strong style={{ fontSize: '14px' }}>{paper.title}</strong>
+                          {done ? (
+                            <span className="badge" style={{ backgroundColor: sub.passed ? '#DCFCE7' : '#FEE2E2', color: sub.passed ? '#166534' : '#991B1B', fontWeight: 800 }}>
+                              {sub.score}/10 • {sub.passed ? 'Đạt' : 'Chưa đạt'}
+                            </span>
+                          ) : (
+                            <span className="badge badge-brand">Chờ làm • {paper.questions?.length || 0} câu</span>
+                          )}
+                        </div>
+                        {!!paper.description && <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>{paper.description}</div>}
+                        {done ? (
+                          <div style={{ fontSize: '12px', color: '#047857', marginTop: '6px' }}>
+                            Đã nộp{sub.submitted_at ? ` lúc ${new Date(sub.submitted_at).toLocaleString('vi-VN')}` : ''}. HR đã nhận kết quả.
+                          </div>
+                        ) : !isActive ? (
+                          <button
+                            className="btn-primary"
+                            style={{ width: '100%', marginTop: '10px' }}
+                            onClick={() => {
+                              setActiveTestId(sub.submission_id);
+                              setTestAnswers(new Array(paper.questions?.length || 0).fill(-1));
+                              setTestLeft(paper.time_limit_seconds || 480);
+                            }}
+                          >
+                            Bắt đầu làm bài ({paper.time_limit_seconds || 480}s)
+                          </button>
+                        ) : (
+                          <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                            <div style={{ fontSize: '12px', fontWeight: 800, color: testLeft < 60 ? '#DC2626' : 'var(--text)' }}>
+                              ⏱ Còn lại: {Math.floor(testLeft / 60)}:{String(testLeft % 60).padStart(2, '0')} (tự nộp khi hết giờ)
+                            </div>
+                            {(paper.questions || []).map((q: any, qi: number) => (
+                              <div key={qi} style={{ backgroundColor: '#FAFAFA', padding: '10px', borderRadius: 'var(--radius-sm)', fontSize: '13px' }}>
+                                <strong>Câu {qi + 1}:</strong> {q.content}
+                                <div style={{ marginTop: '6px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                  {(q.options || []).map((op: string, oi: number) => (
+                                    <label key={oi}>
+                                      <input
+                                        type="radio"
+                                        name={`t-${sub.submission_id}-${qi}`}
+                                        checked={testAnswers[qi] === oi}
+                                        onChange={() => { const a = [...testAnswers]; a[qi] = oi; setTestAnswers(a); }}
+                                      /> {String.fromCharCode(65 + oi)}. {op}
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                            <button
+                              className="btn-primary"
+                              onClick={async () => {
+                                if (testAnswers.some(a => a < 0)) {
+                                  if (!window.confirm('Còn câu chưa chọn đáp án. Vẫn nộp bài?')) return;
+                                }
+                                await submitActiveTest(false);
+                              }}
+                            >
+                              Nộp bài
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>

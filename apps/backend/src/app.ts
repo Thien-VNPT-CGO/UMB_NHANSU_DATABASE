@@ -22,6 +22,7 @@ import { EmployeesService } from './services/employees.service.js';
 import { canonicalPhone, findDuplicatePhones } from './services/employees.service.js';
 import { SchedulesService } from './services/schedules.service.js';
 import { AutoScheduleService } from './services/auto-schedule.service.js';
+import { TestsService } from './services/tests.service.js';
 import { AttendanceService } from './services/attendance.service.js';
 import { PayrollService } from './services/payroll.service.js';
 import { NotificationsService } from './services/notifications.service.js';
@@ -58,6 +59,8 @@ import {
   defaultShiftBody,
   employeeCreateBody,
   idParams,
+  testPaperBody,
+  testSubmitBody,
   interviewBody,
   leaveCreateBody,
   leaveListQuery,
@@ -128,6 +131,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   const employeesService = new EmployeesService(adapter);
   const schedulesService = new SchedulesService(adapter);
   const autoScheduleService = new AutoScheduleService(adapter);
+  const testsService = new TestsService(adapter);
   const attendanceService = new AttendanceService(adapter);
   const payrollService = new PayrollService(adapter);
   const notificationsService = new NotificationsService(adapter);
@@ -216,6 +220,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     if (p.startsWith('/attendance')) return 'attendance';
     if (p.startsWith('/payroll') || p.startsWith('/me/payslips')) return 'payroll';
     if (p.startsWith('/me/notifications') || p.startsWith('/admin/notifications') || p.startsWith('/announcements')) return 'notifications';
+    if (p.startsWith('/tests') || p.startsWith('/me/tests')) return 'tests';
     if (p.startsWith('/admin/branches')) return 'branches';
     if (p.startsWith('/admin/zalo')) return 'zalo';
     if (p.startsWith('/admin/')) return 'settings';
@@ -1048,6 +1053,69 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       }
     }
   );
+
+  // --- BÀI TEST (HR tạo đề + giao đúng nhân viên; NV chỉ thấy bài của mình) ---
+  app.post('/tests', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ body: testPaperBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await testsService.createPaper({
+        title: req.body.title,
+        description: req.body.description,
+        questions: req.body.questions,
+        passScore: req.body.passScore,
+        timeLimitSeconds: req.body.timeLimitSeconds,
+        employeeIds: req.body.employeeIds,
+        actorId: req.user!.id,
+      });
+      broadcastUpdate('tests', { action: 'create', testId: (result as any)?.result?.paper?.test_id });
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.get('/tests', authMiddleware, requireRole(['ADMIN', 'HR', 'STORE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const papers = await testsService.listPapers();
+      const testId = req.query.testId as string | undefined;
+      const subs = await testsService.listSubmissions(testId);
+      // STORE chỉ xem bài của NV thuộc phạm vi mình.
+      if (req.user?.role === 'STORE' && req.user.branchScope !== '*') {
+        const emps = await employeesService.listEmployees(req.user.branchScope);
+        const ids = new Set(emps.map(e => e.employee_id));
+        const mine = (subs as any)?.result ?? subs;
+        const filtered = Array.isArray(mine) ? mine.filter((s: any) => ids.has(s.employee_id)) : mine;
+        res.json({ papers, submissions: filtered });
+        return;
+      }
+      res.json({ papers, submissions: subs });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Cổng nhân viên: chỉ bài được giao cho mình (kèm đề đã ẩn đáp án).
+  app.get('/me/tests', authMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const employeeId = req.user?.employeeId;
+      if (!employeeId) return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
+      const list = await testsService.myTests(employeeId);
+      res.json(list);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/me/tests/:id/submit', authMiddleware, validate({ params: idParams, body: testSubmitBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const employeeId = req.user?.employeeId;
+      if (!employeeId) return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
+      const result = await testsService.submitAnswers(req.params.id, employeeId, req.body.answers);
+      broadcastUpdate('tests', { action: 'submit', submissionId: req.params.id });
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
 
   // --- LEAVE & SWAP REQUESTS ---
   app.post('/leave-requests', authMiddleware, validate({ body: leaveCreateBody }), async (req: AuthenticatedRequest, res) => {
@@ -2248,6 +2316,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       employeesService,
       schedulesService,
       autoScheduleService,
+      testsService,
       attendanceService,
       payrollService,
       notificationsService,
