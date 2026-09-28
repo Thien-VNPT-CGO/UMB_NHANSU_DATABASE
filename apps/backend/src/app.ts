@@ -1619,37 +1619,69 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.get('/attendance/photo/:eventId', authMiddleware, requireRole(['ADMIN', 'HR', 'STORE']), serveAttendancePhoto);
   app.get('/me/attendance/photo/:eventId', authMiddleware, serveAttendancePhoto);
 
-  // Tải gói chứng cứ điểm danh theo ngày: ZIP gồm folder từng ngày/chi nhánh/NV + CSV.
+  // Tải gói chứng cứ điểm danh theo ngày:
+  // ZIP/Diem danh ngay DD-MM-YYYY/{chi nhánh}/{ca làm}/{tên NV}/check in.jpg + check out.jpg
+  // (ảnh thật từ camera NV) + file CSV tổng hợp.
   app.get('/admin/attendance/export', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
     try {
       const date = String(req.query.date || new Date().toISOString().split('T')[0]);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
         return res.status(400).json({ error: 'INVALID_DATE: dùng định dạng YYYY-MM-DD.' });
       }
+      const [y, m, d] = date.split('-');
+      const root = `Diem danh ngay ${d}-${m}-${y}`;
+      const safe = (s: string) => String(s || 'Chua ro').replace(/[\\/:*?"<>|]/g, '-').trim() || 'Chua ro';
       const events: any[] = await adapter.getAttendanceEvents(undefined, date);
       const syncService = (adapter as any).syncService;
       const employees = await adapter.listEmployees().catch(() => []);
-      const empName = (id: string) => (employees as any[]).find(e => e.employee_id === id)?.full_name || id;
+      const empOf = (id: string) => (employees as any[]).find(e => e.employee_id === id);
       const entries: ZipEntry[] = [];
-      const csvLines = ['Ngay,Chi nhanh,Nhan vien,Ma NV,Loai,Gio,Trang thai GPS,Khoang cach (m),Anh'];
+      const csvLines = ['Ngay,Chi nhanh,Ca lam,Nhan vien,Ma NV,Gio vao,Gio ra,GPS,Khoang cach (m),Anh check in,Anh check out'];
+      // Gom theo ca phân công để ra đúng folder ca làm
+      const byAssign = new Map<string, any[]>();
       for (const e of events || []) {
-        const fname = `${date}/${e.branch_id || 'CN'}/${e.employee_id}_${e.type}.jpg`;
-        let hasPhoto = false;
-        if (e.drive_object_id && !String(e.drive_object_id).startsWith('DRV_')) {
+        const k = e.assignment_id || `${e.employee_id}__${e.type}`;
+        if (!byAssign.has(k)) byAssign.set(k, []);
+        byAssign.get(k)!.push(e);
+      }
+      for (const [, group] of byAssign) {
+        const first = group[0];
+        const emp = empOf(first.employee_id);
+        const empName = safe(emp?.full_name || first.employee_id);
+        const empCode = emp?.employee_code || first.employee_id;
+        let shiftCode = 'Chua phan ca';
+        try {
+          const sh: any = first.assignment_id ? await adapter.getShiftById(first.assignment_id).catch(() => null) : null;
+          if (sh?.shift_code) shiftCode = safe(String(sh.shift_code).replace('CA_1', 'Ca 1 (07-12)').replace('CA_2', 'Ca 2 (12-18)').replace('CA_3', 'Ca 3 (18-23)'));
+        } catch { /* giữ mặc định */ }
+        const branch = safe(first.branch_id || emp?.default_branch_id || 'CN');
+        const folder = `${root}/${branch}/${shiftCode}/${empName} (${safe(empCode)})`;
+        const inEvt = group.find((e: any) => e.type === 'CHECK_IN');
+        const outEvt = group.find((e: any) => e.type === 'CHECK_OUT');
+        const absentEvt = group.find((e: any) => e.type === 'ABSENT');
+        const loadPhoto = async (evt: any, fname: string) => {
+          if (!evt?.drive_object_id || String(evt.drive_object_id).startsWith('DRV_')) return '';
           try {
-            const dl = await syncService?.downloadDriveFile(e.drive_object_id);
+            const dl = await syncService?.downloadDriveFile(evt.drive_object_id);
             if (dl?.buffer?.length) {
               entries.push({ name: fname, data: dl.buffer });
-              hasPhoto = true;
+              return fname;
             }
-          } catch { /* ghi nhận thiếu ảnh trong CSV */ }
-        }
+          } catch { /* thiếu ảnh */ }
+          return '';
+        };
+        const inPath = inEvt ? await loadPhoto(inEvt, `${folder}/check in.jpg`) : '';
+        const outPath = outEvt ? await loadPhoto(outEvt, `${folder}/check out.jpg`) : '';
+        const timeOf = (e: any) => (e?.client_time ? new Date(e.client_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '');
         csvLines.push([
-          date, e.branch_id || '', `"${empName(e.employee_id)}"`, e.employee_id, e.type,
-          e.client_time || '', e.gps_status || '', e.distance_meters ?? '', hasPhoto ? fname : 'THIEU_ANH',
+          date, first.branch_id || '', shiftCode, `"${emp?.full_name || first.employee_id}"`, empCode,
+          timeOf(inEvt) || (absentEvt ? 'VANG' : ''), timeOf(outEvt),
+          inEvt?.gps_status || absentEvt?.gps_status || '', inEvt?.distance_meters ?? '',
+          inPath || 'THIEU_ANH', outPath || (outEvt ? 'THIEU_ANH' : ''),
         ].join(','));
       }
-      entries.push({ name: `${date}/danh-sach-diem-danh-${date}.csv`, data: Buffer.from('\uFEFF' + csvLines.join('\n'), 'utf8') });
+      const [y2, m2, d2] = date.split('-');
+      entries.push({ name: `Diem danh ngay ${d2}-${m2}-${y2}/danh-sach-diem-danh-${date}.csv`, data: Buffer.from('\uFEFF' + csvLines.join('\n'), 'utf8') });
       const zip = buildZipStore(entries);
       res.setHeader('Content-Type', 'application/zip');
       res.setHeader('Content-Disposition', `attachment; filename="diem-danh-${date}.zip"`);
