@@ -9,6 +9,24 @@ import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { singleWriterQueue } from '../repositories/single-writer-queue.js';
 import { Server } from 'socket.io';
 
+/**
+ * Nấc phạt đi trễ (NV chính thức), tính trên lương 1 ca:
+ * - Đến sớm/trong 4 phút đầu: không vi phạm.
+ * - Trễ 5–29 phút: phạt 30.000đ.
+ * - Trễ 30–59 phút: phạt 50% lương ca.
+ * - Trễ từ 60 phút: phạt 100% lương ca (ca không lương).
+ * - Thiếu check-in hoặc check-out: vắng 100% lương ca.
+ */
+export const LATE_FINE_FLAT_VND = 30000;
+
+export function lateFineFor(minutesLate: number, shiftPay: number): { tier: string; deduction: number; unpaid: boolean } {
+  const m = Math.floor(Number(minutesLate) || 0);
+  if (m < 5) return { tier: 'NONE', deduction: 0, unpaid: false };
+  if (m < 30) return { tier: 'FLAT_30K', deduction: LATE_FINE_FLAT_VND, unpaid: false };
+  if (m < 60) return { tier: 'HALF_SHIFT', deduction: Math.round(shiftPay * 0.5), unpaid: false };
+  return { tier: 'FULL_SHIFT', deduction: 0, unpaid: true };
+}
+
 export class PayrollService {
   constructor(
     private repo: ISheetsRepository,
@@ -39,7 +57,8 @@ export class PayrollService {
           const empShifts = await this.repo.getShiftsForEmployee(emp.employee_id, fromDate, toDate);
           const publishedShifts = empShifts.filter(s => s.status === 'PUBLISHED');
 
-          // Ca vắng không lương: có bản ghi ABSENT mà không có CHECK_IN -> trừ khỏi công.
+          // Ràng buộc: đủ check-in + check-out mới tính 1 lương/ca.
+          // Thiếu 1 trong 2 (kể cả bản ghi ABSENT) = vắng 100% lương ca.
           const eventsByDate = new Map<string, any[]>();
           const eventsOf = async (date: string) => {
             if (!eventsByDate.has(date)) {
@@ -47,27 +66,43 @@ export class PayrollService {
             }
             return eventsByDate.get(date)!;
           };
+          // Use employee rate snapshot
+          const rate = emp.current_rate_per_hour;
           let absentShifts = 0;
           let empHours = 0;
+          let standardPay = 0;
+          let deduction = 0;
+          const lateCases: string[] = [];
           for (const s of publishedShifts) {
             const dayEvents = await eventsOf(s.date);
-            const hasIn = dayEvents.some(
+            const inEvt = dayEvents.find(
               (e: any) => e.type === 'CHECK_IN' && (!e.assignment_id || e.assignment_id === s.assignment_id)
             );
-            const hasAbsent = dayEvents.some(
-              (e: any) => e.type === 'ABSENT' && (!e.assignment_id || e.assignment_id === s.assignment_id)
+            const hasOut = dayEvents.some(
+              (e: any) => e.type === 'CHECK_OUT' && (!e.assignment_id || e.assignment_id === s.assignment_id)
             );
-            if (!hasIn && hasAbsent) {
+            const template = SHIFT_TEMPLATES[s.shift_code];
+            const hours = template ? template.duration_hours : 5;
+            const shiftPay = hours * rate;
+            if (!inEvt || !hasOut) {
               absentShifts++;
               continue;
             }
-            const template = SHIFT_TEMPLATES[s.shift_code];
-            empHours += template ? template.duration_hours : 5;
+            const lateMin = inEvt.is_late ? Number(inEvt.minutes_deviation) || 0 : 0;
+            const fine = lateFineFor(lateMin, shiftPay);
+            if (fine.unpaid) {
+              absentShifts++;
+              lateCases.push(`${s.date} trễ ${lateMin}p: phạt 100%`);
+              continue;
+            }
+            empHours += hours;
+            standardPay += shiftPay;
+            if (fine.deduction > 0) {
+              deduction += fine.deduction;
+              lateCases.push(`${s.date} trễ ${lateMin}p: phạt ${fine.deduction.toLocaleString('vi-VN')}đ`);
+            }
           }
 
-          // Use employee rate snapshot
-          const rate = emp.current_rate_per_hour;
-          const standardPay = empHours * rate;
           const allowance = 0;
           // Phụ cấp nhường ca +30.000đ/ca: CHỈ khi HR điều phối (HR_DISPATCH đã
           // APPROVED, người nhận = target). NV tự tráo với nhau: 0đ.
@@ -84,7 +119,6 @@ export class PayrollService {
               )
               .reduce((sum, s) => sum + (Number((s as any).bonus_amount) || 30000), 0);
           } catch { /* giữ bonus 0 khi đọc lỗi */ }
-          const deduction = 0;
           const netPay = standardPay + allowance + bonus - deduction;
 
           totalHours += empHours;

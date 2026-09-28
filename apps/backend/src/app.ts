@@ -104,9 +104,10 @@ import {
   requireRole,
   enforceBranchScope,
 } from './middlewares/rbac.middleware.js';
-import { ERROR_CODES } from '@ubm/shared';
+import { ERROR_CODES, SHIFT_TEMPLATES } from '@ubm/shared';
 import { SHEETS_DEFINITIONS } from './services/google-sheets-sync.service.js';
 import { buildZipStore, ZipEntry } from './utils/zip-store.js';
+import { lateFineFor } from './services/payroll.service.js';
 
 // Thời điểm process khởi động — đo uptime thật (không hardcode).
 const SERVER_STARTED_AT = Date.now();
@@ -1486,10 +1487,23 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       broadcastUpdate('attendance', { action: 'checkin', employeeId, event: result.result });
       const checkinEmp = await employeesService.getEmployee(employeeId).catch(() => null);
       const dist = Math.round(result.result.distance_meters || 45);
+      // Báo nấc phạt trễ ngay khi check-in để NV/HR biết (5p:30k • 30p:50% • 60p:100% ca).
+      let lateNote = '';
+      if ((result.result as any).is_late) {
+        const mins = Number((result.result as any).minutes_deviation) || 0;
+        const tpl = (SHIFT_TEMPLATES as any)[(existingShift as any)?.shift_code];
+        const shiftPay = (tpl ? tpl.duration_hours : 5) * (Number((checkinEmp as any)?.current_rate_per_hour) || 25500);
+        const fine = lateFineFor(mins, shiftPay);
+        lateNote = fine.unpaid
+          ? ` Trễ ${mins}p: phạt 100% lương ca!`
+          : fine.deduction > 0
+            ? ` Trễ ${mins}p: phạt ${fine.deduction.toLocaleString('vi-VN')}đ!`
+            : '';
+      }
       broadcastNotification({
         type: 'CHECKIN',
-        title: '🟢 Điểm Danh Check-in Realtime',
-        message: `${checkinEmp?.full_name || employeeId} (${checkinEmp?.employee_code || 'NV'}) vừa vào ca! GPS ${dist}m hợp lệ, áo hồng chuẩn thương hiệu.`,
+        title: (result.result as any).is_late ? '🟡 Check-in Trễ Giờ' : '🟢 Điểm Danh Check-in Realtime',
+        message: `${checkinEmp?.full_name || employeeId} (${checkinEmp?.employee_code || 'NV'}) vừa vào ca! GPS ${dist}m hợp lệ, áo hồng chuẩn thương hiệu.${lateNote}`,
         linkTab: 'hr-schedule',
         metadata: { employeeId, event: result.result },
         targetRoles: ['ADMIN', 'HR', 'STORE'],

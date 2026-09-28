@@ -4967,13 +4967,21 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         )}
                       </td>
                       <td style={{ padding: '12px 20px' }}>
-                        {evt.is_late ? (
-                          <span className="badge badge-warning">Đi trễ {evt.minutes_deviation}p</span>
-                        ) : evt.is_early ? (
-                          <span className="badge badge-warning">Về sớm {evt.minutes_deviation}p</span>
-                        ) : (
-                          <span className="badge badge-success">Đúng giờ</span>
-                        )}
+                        {(() => {
+                          if (evt.is_late) {
+                            const mins = Number(evt.minutes_deviation) || 0;
+                            const emp = allEmployees.find((e: any) => e.employee_id === evt.employee_id);
+                            const rate = Number(emp?.current_rate_per_hour) || 25500;
+                            const shift = (shifts || []).find((s: any) => s.assignment_id === evt.assignment_id);
+                            const hours = shift?.shift_code === 'CA_1' ? 5 : shift?.shift_code === 'CA_2' ? 6 : shift?.shift_code === 'CA_3' ? 5 : 5;
+                            const pay = hours * rate;
+                            const fine = mins < 5 ? '' : mins < 30 ? ' • Phạt 30k' : mins < 60 ? ` • Phạt 50% (${Math.round(pay * 0.5).toLocaleString('vi-VN')}đ)` : ' • Phạt 100% ca';
+                            return <span className="badge badge-warning">Đi trễ {mins}p{fine}</span>;
+                          }
+                          if (evt.is_early) return <span className="badge badge-warning">Về sớm {evt.minutes_deviation}p</span>;
+                          if (evt.type === 'ABSENT') return <span className="badge" style={{ backgroundColor: '#FEE2E2', color: '#991B1B', fontWeight: 800 }}>Vắng — không lương</span>;
+                          return <span className="badge badge-success">Đúng giờ</span>;
+                        })()}
                       </td>
                     </tr>
                   );
