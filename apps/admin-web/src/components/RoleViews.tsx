@@ -342,6 +342,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [dispShiftId, setDispShiftId] = useState('');
   const [dispReason, setDispReason] = useState('');
   const [dispBusy, setDispBusy] = useState(false);
+  // Phiếu đổi ca: tải lại mỗi khi mở tab để không sót phiếu mới (kể cả khi socket ngủ)
+  const [swapList, setSwapList] = useState<any[] | null>(null);
+  const loadSwaps = async () => {
+    try {
+      const list = await apiRequest('/swap-requests');
+      setSwapList(Array.isArray(list) ? list : []);
+    } catch { /* không quyền / offline: giữ props */ }
+  };
   // Phiếu bổ sung/điều chỉnh công: HR duyệt phiếu NV gửi từ cổng nhân viên
   const [adjustments, setAdjustments] = useState<any[]>([]);
   const [adjBusy, setAdjBusy] = useState<string | null>(null);
@@ -415,6 +423,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     }
     if (activeTab === 'hr-adjustments') {
       loadAdjustments();
+    }
+    if (activeTab === 'hr-swap') {
+      loadSwaps();
     }
   }, [activeTab]);
 
@@ -4398,7 +4409,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
         {/* CÁC PHIẾU TRÁO ĐỔI CA (A ⇄ B) GỬI TỪ CỔNG NHÂN VIÊN — HR giám sát & duyệt */}
         {(() => {
-          const list = swaps || [];
+          const list = swapList !== null ? swapList : (swaps || []);
           const ready = list.filter((s: any) => s.status === 'PARTNER_ACCEPTED');
           const waiting = list.filter((s: any) => s.status === 'PENDING_PARTNER');
           const done = list.filter((s: any) => !['PENDING_PARTNER', 'PARTNER_ACCEPTED'].includes(s.status));
@@ -4428,6 +4439,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               });
               const warns: string[] = (res as any)?.result?._warnings || (res as any)?._warnings || [];
               showToast(accept ? `Đã duyệt! Lịch đã cập nhật.${warns.length ? ` Lưu ý: ${warns.join(' ')}` : ''}` : 'Đã từ chối phiếu!');
+              await loadSwaps();
               if (onRefreshData) await onRefreshData();
               if (onSyncSheets) await onSyncSheets();
             } catch (e: any) {

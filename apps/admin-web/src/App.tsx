@@ -87,6 +87,9 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'backup', label: '11. Backup & Recovery', icon: HardDrive },
     { id: 'settings', label: '12. Cài đặt hệ thống', icon: Settings },
     { id: 'hr-official', label: '13. Import NV Chính thức', icon: Users },
+    { id: 'hr-schedule', label: '14. Lịch làm việc', icon: Calendar },
+    { id: 'hr-leave', label: '15. Nghỉ OFF', icon: Clock },
+    { id: 'hr-swap', label: '16. Đổi ca', icon: RefreshCw },
   ],
   HR: [
     { id: 'hr-dashboard', label: '1. Dashboard HR', icon: Building2 },
