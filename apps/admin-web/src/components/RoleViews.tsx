@@ -3393,61 +3393,75 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             isToday: day.isToday,
           };
         } else {
-          // Có ca làm việc thật
-          let shiftName = foundShift.shift_code;
-          if (shiftName === 'CA_1') shiftName = 'Ca 1 (07-12)';
-          else if (shiftName === 'CA_2') shiftName = 'Ca 2 (12-18)';
-          else if (shiftName === 'CA_3') shiftName = 'Ca 3 (18-23)';
+          // Có ca làm việc thật — ngày 2 ca (do tráo đổi/nhận thay): tính từng ca riêng
+          const dayShifts = empShifts.filter((s: any) => s.date === day.isoDate || (s.date && s.date.startsWith(day.isoDate)));
+          const buildOne = (sh: any) => {
+            const ci = empEvents.find((e: any) => e.type === 'CHECK_IN' && (e.assignment_id === sh?.assignment_id || (e.client_time && e.client_time.startsWith(day.isoDate))));
+            const co = empEvents.find((e: any) => e.type === 'CHECK_OUT' && (e.assignment_id === sh?.assignment_id || (e.client_time && e.client_time.startsWith(day.isoDate))));
+            const ab = empEvents.find((e: any) => e.type === 'ABSENT' && (e.assignment_id === sh?.assignment_id || (e.client_time && e.client_time.startsWith(day.isoDate))));
+            let shiftName = sh.shift_code;
+            if (shiftName === 'CA_1') shiftName = 'Ca 1 (07-12)';
+            else if (shiftName === 'CA_2') shiftName = 'Ca 2 (12-18)';
+            else if (shiftName === 'CA_3') shiftName = 'Ca 3 (18-23)';
 
-          if (checkInEvent) {
-            const inTime = checkInEvent.client_time
-              ? new Date(checkInEvent.client_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
-              : 'Đã check-in';
-            const distText = checkInEvent.distance_meters !== undefined ? `${checkInEvent.distance_meters}m` : '< 300m';
+            if (ci) {
+              const inTime = ci.client_time
+                ? new Date(ci.client_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+                : 'Đã check-in';
+              const distText = ci.distance_meters !== undefined ? `${ci.distance_meters}m` : '< 300m';
 
-            if (checkOutEvent) {
-              const outTime = checkOutEvent.client_time
-                ? new Date(checkOutEvent.client_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
-                : 'Đã check-out';
-              dayDataMap[day.key] = {
-                shift: shiftName,
-                status: 'COMPLETED',
-                time: `${inTime} - ${outTime}`,
-                gps: `GPS hợp lệ (${distText})`,
-                isToday: day.isToday,
-                event: checkInEvent,
-              };
-            } else {
-              dayDataMap[day.key] = {
+              if (co) {
+                const outTime = co.client_time
+                  ? new Date(co.client_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+                  : 'Đã check-out';
+                return {
+                  shift: shiftName,
+                  status: 'COMPLETED',
+                  time: `${inTime} - ${outTime}`,
+                  gps: `GPS hợp lệ (${distText})`,
+                  isToday: day.isToday,
+                  event: ci,
+                };
+              }
+              return {
                 shift: shiftName,
                 status: 'CHECKED_IN',
                 time: inTime,
                 gps: `GPS hợp lệ (${distText})`,
                 isToday: day.isToday,
-                event: checkInEvent,
+                event: ci,
+              };
+            } else if (day.isToday) {
+              return {
+                shift: shiftName,
+                status: 'PENDING',
+                note: 'Chưa check-in (Chờ ca)',
+                isToday: true,
+              };
+            } else if (ab || day.isPast) {
+              return {
+                shift: shiftName,
+                status: 'ABSENT',
+                note: ab ? 'Hệ thống tự ghi vắng (chứng cứ Sheets)' : 'Không điểm danh',
+                isToday: false,
               };
             }
-          } else if (day.isToday) {
-            dayDataMap[day.key] = {
-              shift: shiftName,
-              status: 'PENDING',
-              note: 'Chưa check-in (Chờ ca)',
-              isToday: true,
-            };
-          } else if (absentEvent || day.isPast) {
-            dayDataMap[day.key] = {
-              shift: shiftName,
-              status: 'ABSENT',
-              note: absentEvent ? 'Hệ thống tự ghi vắng (chứng cứ Sheets)' : 'Không điểm danh',
-              isToday: false,
-            };
-          } else {
-            dayDataMap[day.key] = {
+            return {
               shift: shiftName,
               status: 'UPCOMING',
               note: 'Lịch đã duyệt',
               isToday: false,
             };
+          };
+          if (dayShifts.length > 1) {
+            dayDataMap[day.key] = {
+              shift: `${dayShifts.length} ca`,
+              status: 'MULTI',
+              isToday: day.isToday,
+              shifts: dayShifts.map(buildOne),
+            };
+          } else {
+            dayDataMap[day.key] = buildOne(foundShift);
           }
         }
       });
@@ -3762,6 +3776,38 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           }}>
                             <span style={{ fontSize: '13px', fontWeight: 600, color: '#9CA3AF' }}>—</span>
                             <span style={{ fontSize: '10px', color: '#9CA3AF', marginTop: '2px' }}>Không có ca</span>
+                          </div>
+                        ) : d.status === 'MULTI' ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            {(d.shifts || []).map((sd: any, si: number) => {
+                              const stColor = sd.status === 'COMPLETED' || sd.status === 'CHECKED_IN'
+                                ? '#047857'
+                                : sd.status === 'ABSENT'
+                                ? '#DC2626'
+                                : sd.status === 'PENDING'
+                                ? '#B45309'
+                                : 'var(--text)';
+                              const stBg = sd.status === 'COMPLETED' || sd.status === 'CHECKED_IN'
+                                ? '#ECFDF5'
+                                : sd.status === 'ABSENT'
+                                ? '#FEE2E2'
+                                : sd.status === 'PENDING'
+                                ? '#FEF3C7'
+                                : '#FAFAFA';
+                              const stBd = sd.status === 'ABSENT' ? '1.5px solid #EF4444' : '1px solid var(--border)';
+                              return (
+                                <div key={si} style={{ padding: '6px', borderRadius: '8px', backgroundColor: stBg, border: stBd }}>
+                                  <div style={{ fontWeight: 700, fontSize: '11px' }}>{sd.shift}</div>
+                                  <div style={{ fontSize: '10px', color: stColor, fontWeight: 700 }}>
+                                    {sd.status === 'COMPLETED' ? `✓ Xong${sd.time ? ` (${sd.time})` : ''}`
+                                      : sd.status === 'CHECKED_IN' ? `Đã check-in${sd.time ? ` ${sd.time}` : ''}`
+                                      : sd.status === 'ABSENT' ? '🔴 Vắng'
+                                      : sd.status === 'PENDING' ? 'Chưa check-in'
+                                      : sd.note || sd.status}
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
                         ) : (
                           <div style={{
@@ -4366,13 +4412,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             return <span className="badge" style={{ backgroundColor: m.bg, color: m.fg, fontWeight: 700 }}>{m.label}</span>;
           };
           const reviewSwap = async (sw: any, accept: boolean) => {
-            if (!window.confirm(accept ? `Duyệt tráo ca ${sw.swap_id}? Hai ca sẽ hoán đổi người trực.` : `Từ chối tráo ca ${sw.swap_id}?`)) return;
+            const isDispatch = (sw.swap_kind || 'EMPLOYEE_SWAP') === 'HR_DISPATCH';
+            if (!window.confirm(accept ? (isDispatch ? `Duyệt nhường ca ${sw.swap_id}? Ca chuyển cho người nhận + 30.000đ.` : `Duyệt tráo ca ${sw.swap_id}? Hai ca sẽ hoán đổi người trực.`) : `Từ chối phiếu ${sw.swap_id}?`)) return;
             try {
-              await apiRequest(`/swap-requests/${sw.swap_id}/approve`, {
+              const res = await apiRequest(`/swap-requests/${sw.swap_id}/approve`, {
                 method: 'POST',
                 body: JSON.stringify(accept ? { accept: true } : { accept: false, reason: 'HR từ chối' }),
               });
-              showToast(accept ? 'Đã duyệt tráo ca! Lịch đã hoán đổi.' : 'Đã từ chối tráo ca!');
+              const warns: string[] = (res as any)?.result?._warnings || (res as any)?._warnings || [];
+              showToast(accept ? `Đã duyệt! Lịch đã cập nhật.${warns.length ? ` Lưu ý: ${warns.join(' ')}` : ''}` : 'Đã từ chối phiếu!');
               if (onRefreshData) await onRefreshData();
               if (onSyncSheets) await onSyncSheets();
             } catch (e: any) {

@@ -634,16 +634,35 @@ export function App() {
     return err?.message || fallback;
   };
 
+  // Ca đang điểm danh (ngày 2 ca do tráo đổi: phải chọn đúng ca để check-in/out)
+  const [attendShiftId, setAttendShiftId] = useState('');
+  const getTodayShifts = () => {
+    const today = new Date().toISOString().split('T')[0];
+    return myShifts.filter((s: any) => s.date === today);
+  };
+  const getAttendShift = () => {
+    const list = getTodayShifts();
+    return list.find((s: any) => s.assignment_id === attendShiftId) || list[0];
+  };
+  const shiftChecked = (assignmentId?: string) => {
+    if (!assignmentId) return { in: false, out: false };
+    const evts = (myAttendanceHistory || []).filter((e: any) => e.assignment_id === assignmentId);
+    return {
+      in: evts.some((e: any) => e.type === 'CHECK_IN'),
+      out: evts.some((e: any) => e.type === 'CHECK_OUT'),
+    };
+  };
+
   // Start Attendance with strict rules: today shift exists, checkin before checkout, 30m window
   const handleStartAttendance = (action: 'CHECK_IN' | 'CHECK_OUT' = 'CHECK_IN') => {
-    const today = new Date().toISOString().split('T')[0];
-    const todayShift = myShifts.find((s: any) => s.date === today);
+    const todayShift = getAttendShift();
 
     // Ràng buộc 1: Nếu hôm nay không có ca làm thì khóa chức năng
     if (!todayShift) {
       showToast('🔒 QUY CHẾ: Hôm nay bạn không có lịch ca làm việc được phân công! Chức năng điểm danh bị khóa.');
       return;
     }
+    const st = shiftChecked(todayShift.assignment_id);
 
     // Ràng buộc thời gian mở Check-in: Mở trước giờ vào ca 30 phút
     if (action === 'CHECK_IN' && todayShift?.start_at) {
@@ -658,14 +677,14 @@ export function App() {
       } catch {}
     }
 
-    // Ràng buộc 2: Check-in xong mới được check-out
-    if (action === 'CHECK_OUT' && !todayAttendance?.checkedIn) {
-      showToast('🚫 QUY CHẾ ĐIỂM DANH: Bạn chưa Check-in đầu ca! Bắt buộc phải Check-in trước mới được Check-out.');
+    // Ràng buộc 2: Check-in xong mới được check-out (theo từng ca)
+    if (action === 'CHECK_OUT' && !st.in) {
+      showToast('🚫 QUY CHẾ ĐIỂM DANH: Bạn chưa Check-in ca này! Bắt buộc phải Check-in trước mới được Check-out.');
       return;
     }
 
-    if (action === 'CHECK_OUT' && todayAttendance?.checkedOut) {
-      showToast('✓ Bạn đã hoàn tất Check-out cho ca làm hôm nay rồi!');
+    if (action === 'CHECK_OUT' && st.out) {
+      showToast('✓ Bạn đã hoàn tất Check-out cho ca này rồi!');
       return;
     }
 
@@ -742,14 +761,13 @@ export function App() {
     }
     setAttendanceStep('SUBMITTING');
     try {
-      const today = new Date().toISOString().split('T')[0];
-      const todayShift = myShifts.find((s: any) => s.date === today);
+      const todayShift = getAttendShift();
       const targetEndpoint = attendanceActionType === 'CHECK_IN' ? '/attendance/checkin' : '/attendance/checkout';
 
       const res = await apiRequest(targetEndpoint, {
         method: 'POST',
         body: JSON.stringify({
-          assignment_id: todayShift?.assignment_id || myShifts[0]?.assignment_id,
+          assignment_id: todayShift?.assignment_id,
           lat: gpsCoords.lat,
           lng: gpsCoords.lng,
           accuracy: gpsCoords.accuracy,
@@ -1856,7 +1874,18 @@ export function App() {
         {/* ========================================================= */}
         {activeTab === 'attendance' && (() => {
           const today = new Date().toISOString().split('T')[0];
-          const todayShift = myShifts.find((s: any) => s.date === today);
+          const todayShifts = myShifts.filter((s: any) => s.date === today);
+          const todayShift = todayShifts.find((s: any) => s.assignment_id === attendShiftId) || todayShifts[0];
+          // Trạng thái theo TỪNG ca (ngày 2 ca do tráo đổi: mỗi ca check-in/out độc lập)
+          const shiftEvts = (myAttendanceHistory || []).filter((e: any) => e.assignment_id === todayShift?.assignment_id);
+          const shiftIn = shiftEvts.find((e: any) => e.type === 'CHECK_IN');
+          const shiftOut = shiftEvts.find((e: any) => e.type === 'CHECK_OUT');
+          const tabAtt = {
+            checkedIn: !!shiftIn,
+            checkedOut: !!shiftOut,
+            checkInTime: shiftIn?.client_time ? new Date(shiftIn.client_time).toLocaleTimeString('vi-VN') : undefined,
+            checkOutTime: shiftOut?.client_time ? new Date(shiftOut.client_time).toLocaleTimeString('vi-VN') : undefined,
+          };
           const shiftStart = todayShift?.start_at ? new Date(todayShift.start_at).getTime() : 0;
           const openTime = shiftStart ? shiftStart - 30 * 60 * 1000 : 0;
           const isEarly = shiftStart > 0 && Date.now() < openTime;
@@ -1913,6 +1942,26 @@ export function App() {
                     </div>
                     <span className="badge badge-brand">GPS + Camera</span>
                   </div>
+
+                  {/* NGÀY 2 CA (do tráo đổi/nhận thay): chọn đúng ca để điểm danh */}
+                  {todayShifts.length > 1 && (
+                    <div style={{ marginBottom: '12px' }}>
+                      <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>
+                        Hôm nay bạn có {todayShifts.length} ca — chọn ca để điểm danh:
+                      </label>
+                      <select
+                        value={todayShift?.assignment_id || ''}
+                        onChange={e => setAttendShiftId(e.target.value)}
+                        style={{ width: '100%', padding: '9px', borderRadius: '6px', border: '1.5px solid var(--brand)', fontSize: '13px', fontWeight: 700 }}
+                      >
+                        {todayShifts.map((s: any) => (
+                          <option key={s.assignment_id} value={s.assignment_id}>
+                            {s.shift_code} • {s.date} ({s.start_at ? new Date(s.start_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : ''} - {s.end_at ? new Date(s.end_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : ''})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
 
                   {/* THÔNG BÁO THỜI GIAN MỞ CHECK-IN (TRƯỚC 30 PHÚT) */}
                   <div style={{
@@ -1986,30 +2035,30 @@ export function App() {
                     <div style={{
                       padding: '10px',
                       borderRadius: 'var(--radius-sm)',
-                      backgroundColor: todayAttendance?.checkedIn ? '#ECFDF5' : '#FFFBEB',
-                      border: todayAttendance?.checkedIn ? '1.5px solid #10B981' : '1px solid #FCD34D',
+                      backgroundColor: tabAtt.checkedIn ? '#ECFDF5' : '#FFFBEB',
+                      border: tabAtt.checkedIn ? '1.5px solid #10B981' : '1px solid #FCD34D',
                       textAlign: 'center',
                     }}>
-                      <div style={{ fontSize: '11px', fontWeight: 700, color: todayAttendance?.checkedIn ? '#065F46' : '#92400E' }}>
+                      <div style={{ fontSize: '11px', fontWeight: 700, color: tabAtt.checkedIn ? '#065F46' : '#92400E' }}>
                         BƯỚC 1: CHECK-IN
                       </div>
-                      <div style={{ fontSize: '12px', fontWeight: 800, marginTop: '4px', color: todayAttendance?.checkedIn ? '#10B981' : '#D97706' }}>
-                        {todayAttendance?.checkedIn ? `✓ ${todayAttendance.checkInTime || 'Đã Check-in'}` : 'Chưa Check-in'}
+                      <div style={{ fontSize: '12px', fontWeight: 800, marginTop: '4px', color: tabAtt.checkedIn ? '#10B981' : '#D97706' }}>
+                        {tabAtt.checkedIn ? `✓ ${tabAtt.checkInTime || 'Đã Check-in'}` : 'Chưa Check-in'}
                       </div>
                     </div>
 
                     <div style={{
                       padding: '10px',
                       borderRadius: 'var(--radius-sm)',
-                      backgroundColor: todayAttendance?.checkedOut ? '#ECFDF5' : todayAttendance?.checkedIn ? '#EFF6FF' : '#F1F5F9',
-                      border: todayAttendance?.checkedOut ? '1.5px solid #10B981' : todayAttendance?.checkedIn ? '1px solid #60A5FA' : '1px solid #CBD5E1',
+                      backgroundColor: tabAtt.checkedOut ? '#ECFDF5' : tabAtt.checkedIn ? '#EFF6FF' : '#F1F5F9',
+                      border: tabAtt.checkedOut ? '1.5px solid #10B981' : tabAtt.checkedIn ? '1px solid #60A5FA' : '1px solid #CBD5E1',
                       textAlign: 'center',
                     }}>
-                      <div style={{ fontSize: '11px', fontWeight: 700, color: todayAttendance?.checkedOut ? '#065F46' : todayAttendance?.checkedIn ? '#1E40AF' : '#64748B' }}>
+                      <div style={{ fontSize: '11px', fontWeight: 700, color: tabAtt.checkedOut ? '#065F46' : tabAtt.checkedIn ? '#1E40AF' : '#64748B' }}>
                         BƯỚC 2: CHECK-OUT
                       </div>
-                      <div style={{ fontSize: '12px', fontWeight: 800, marginTop: '4px', color: todayAttendance?.checkedOut ? '#10B981' : todayAttendance?.checkedIn ? '#2563EB' : '#94A3B8' }}>
-                        {todayAttendance?.checkedOut ? `✓ ${todayAttendance.checkOutTime || 'Đã Check-out'}` : todayAttendance?.checkedIn ? 'Sẵn sàng Check-out' : '🔒 Khóa (Cần Check-in)'}
+                      <div style={{ fontSize: '12px', fontWeight: 800, marginTop: '4px', color: tabAtt.checkedOut ? '#10B981' : tabAtt.checkedIn ? '#2563EB' : '#94A3B8' }}>
+                        {tabAtt.checkedOut ? `✓ ${tabAtt.checkOutTime || 'Đã Check-out'}` : tabAtt.checkedIn ? 'Sẵn sàng Check-out' : '🔒 Khóa (Cần Check-in)'}
                       </div>
                     </div>
                   </div>
@@ -2045,7 +2094,7 @@ export function App() {
                   {attendanceStep === 'IDLE' && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                       {/* NÚT CHECK-IN ĐẦU CA */}
-                      {!todayAttendance?.checkedIn ? (
+                      {!tabAtt.checkedIn ? (
                         <button
                           className="btn-primary"
                           disabled={isEarly}
@@ -2072,28 +2121,28 @@ export function App() {
                           fontWeight: 700,
                           textAlign: 'center',
                         }}>
-                          ✓ ĐÃ HOÀN TẤT CHECK-IN VÀO CA LÚC {todayAttendance.checkInTime || '07:00'} (ÁO HỒNG + BẢNG TÊN ĐÃ XÁC THỰC)
+                          ✓ ĐÃ HOÀN TẤT CHECK-IN VÀO CA LÚC {tabAtt.checkInTime || '07:00'} (ÁO HỒNG + BẢNG TÊN ĐÃ XÁC THỰC)
                         </div>
                       )}
 
                       {/* NÚT CHECK-OUT TAN CA (RÀNG BUỘC: CHECK-IN XONG MỚI ĐƯỢC CHECK-OUT) */}
-                      {!todayAttendance?.checkedOut ? (
+                      {!tabAtt.checkedOut ? (
                         <button
                           className="btn-secondary"
-                          disabled={!todayAttendance?.checkedIn}
+                          disabled={!tabAtt.checkedIn}
                           onClick={() => handleStartAttendance('CHECK_OUT')}
                           style={{
                             width: '100%',
                             fontSize: '14px',
                             fontWeight: 800,
-                            color: todayAttendance?.checkedIn ? '#2563EB' : '#94A3B8',
-                            borderColor: todayAttendance?.checkedIn ? '#2563EB' : '#CBD5E1',
-                            backgroundColor: todayAttendance?.checkedIn ? '#EFF6FF' : '#F8FAFC',
-                            cursor: todayAttendance?.checkedIn ? 'pointer' : 'not-allowed',
-                            opacity: todayAttendance?.checkedIn ? 1 : 0.6,
+                            color: tabAtt.checkedIn ? '#2563EB' : '#94A3B8',
+                            borderColor: tabAtt.checkedIn ? '#2563EB' : '#CBD5E1',
+                            backgroundColor: tabAtt.checkedIn ? '#EFF6FF' : '#F8FAFC',
+                            cursor: tabAtt.checkedIn ? 'pointer' : 'not-allowed',
+                            opacity: tabAtt.checkedIn ? 1 : 0.6,
                           }}
                         >
-                          {todayAttendance?.checkedIn ? (
+                          {tabAtt.checkedIn ? (
                             '🏁 CHECK-OUT KẾT THÚC CA LÀM (BƯỚC 2)'
                           ) : (
                             '🔒 CHECK-OUT (BẮT BUỘC CHECK-IN TRƯỚC)'
@@ -2110,7 +2159,7 @@ export function App() {
                           fontWeight: 800,
                           textAlign: 'center',
                         }}>
-                          🎉 BẠN ĐÃ HOÀN TẤT CA LÀM VIỆC HÔM NAY! (CHECK-IN: {todayAttendance.checkInTime} • CHECK-OUT: {todayAttendance.checkOutTime})
+                          🎉 BẠN ĐÃ HOÀN TẤT CA LÀM VIỆC HÔM NAY! (CHECK-IN: {tabAtt.checkInTime} • CHECK-OUT: {tabAtt.checkOutTime})
                         </div>
                       )}
                     </div>

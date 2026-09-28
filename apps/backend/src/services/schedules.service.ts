@@ -467,12 +467,24 @@ export class SchedulesService {
             bonus_amount: 30000,
           });
 
+          const dispatchWarnings: string[] = [];
+          try {
+            const day = (coverShift.date || '').slice(0, 10);
+            const empShifts = await this.repo.getShiftsForEmployee(swap.target_employee_id, day, day).catch(() => []);
+            const dayCount = (empShifts || []).filter(
+              (s: any) => (s.date || '').slice(0, 10) === day && s.status !== 'CANCELLED'
+            ).length;
+            if (dayCount > 1) {
+              dispatchWarnings.push(`${swap.target_employee_id} làm ${dayCount} ca ngày ${day} (mỗi ca điểm danh độc lập, +30.000đ ca nhận thay).`);
+            }
+          } catch { /* best-effort */ }
+
           if (this.io) {
             this.io.to(`user:${swap.requester_id}`).emit('swap.updated', { swapId, status: 'APPROVED' });
             this.io.to(`user:${swap.target_employee_id}`).emit('swap.updated', { swapId, status: 'APPROVED' });
           }
 
-          return updatedDispatch;
+          return { ...updatedDispatch, _warnings: dispatchWarnings };
         }
 
         // Swap the assignments
@@ -501,12 +513,28 @@ export class SchedulesService {
           bonus_amount: 0,
         });
 
+        // Ghi nhận ngày 2 ca: sau hoán đổi, ai có >1 ca/ngày thì cảnh báo để
+        // theo dõi điểm danh từng ca (mỗi ca check-in/out độc lập).
+        const warnings: string[] = [];
+        try {
+          for (const empId of [swap.requester_id, swap.target_employee_id]) {
+            const day = (tgtShift.date || '').slice(0, 10);
+            const empShifts = await this.repo.getShiftsForEmployee(empId, day, day).catch(() => []);
+            const dayCount = (empShifts || []).filter(
+              (s: any) => (s.date || '').slice(0, 10) === day && s.status !== 'CANCELLED'
+            ).length;
+            if (dayCount > 1) {
+              warnings.push(`${empId} làm ${dayCount} ca ngày ${day} (mỗi ca điểm danh độc lập).`);
+            }
+          }
+        } catch { /* best-effort */ }
+
         if (this.io) {
           this.io.to(`user:${swap.requester_id}`).emit('swap.updated', { swapId, status: 'APPROVED' });
           this.io.to(`user:${swap.target_employee_id}`).emit('swap.updated', { swapId, status: 'APPROVED' });
         }
 
-        return updatedSwap;
+        return { ...updatedSwap, _warnings: warnings };
       },
     });
   }
