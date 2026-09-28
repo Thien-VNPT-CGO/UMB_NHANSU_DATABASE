@@ -57,6 +57,24 @@ export const transitionBody = z.object({
   expectedVersion,
 });
 
+export const employeeUpdateBody = z
+  .object({
+    fullName: looseOptString(100),
+    phone: looseOptString(20),
+    branchId: looseOptString(32),
+    group: looseOptString(32),
+    currentRatePerHour: z.coerce.number().int().min(0).max(10_000_000).optional(),
+    defaultShiftCode: looseOptString(16),
+    startDate: looseOptString(64),
+    officialDate: looseOptString(64),
+    email: looseOptString(100),
+    gender: looseOptString(10),
+    birthDate: looseOptString(64),
+    idCardNumber: looseOptString(32),
+    expectedVersion: z.coerce.number().int().min(0).optional(),
+  })
+  .passthrough();
+
 // --- Recruitment ---
 export const candidateImportBody = z
   .object({

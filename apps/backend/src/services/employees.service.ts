@@ -224,6 +224,89 @@ export class EmployeesService {
     });
   }
 
+  /** HR/Admin cập nhật hồ sơ nhân viên (tên, SĐT, chi nhánh, khối, lương, ca...). */
+  async updateEmployee(
+    employeeId: string,
+    updates: {
+      fullName?: string;
+      phone?: string;
+      branchId?: string;
+      group?: 'STORE' | 'XUONG' | 'VAN_PHONG' | 'SALE';
+      ratePerHour?: number;
+      defaultShiftCode?: 'CA_1' | 'CA_2' | 'CA_3' | null;
+      startDate?: string;
+      officialDate?: string;
+      email?: string;
+      gender?: 'NAM' | 'NU' | 'KHAC';
+      birthDate?: string;
+      idCardNumber?: string;
+      expectedVersion?: number;
+    },
+    actorId: string
+  ) {
+    const emp = await this.repo.getEmployeeById(employeeId);
+    if (!emp) throw new Error('EMPLOYEE_NOT_FOUND');
+    const patch: any = {};
+    if (updates.fullName !== undefined) {
+      const name = String(updates.fullName).trim();
+      if (!name) throw new Error('INVALID_FULL_NAME: Họ tên không được để trống.');
+      patch.full_name = name;
+    }
+    let normPhone: string | undefined;
+    if (updates.phone !== undefined) {
+      normPhone = canonicalPhone(updates.phone);
+      if (!normPhone) throw new Error('INVALID_PHONE');
+      if (normPhone !== canonicalPhone(emp.phone_normalized)) {
+        const existingEmps = await this.repo.listEmployees();
+        const clash = existingEmps.find(
+          e => e.employee_id !== employeeId && canonicalPhone(e.phone_normalized) === normPhone
+        );
+        if (clash) throw new Error(`DUPLICATE_PHONE: SĐT đã thuộc về ${clash.full_name} (${clash.employee_code})!`);
+        patch.phone_normalized = normPhone;
+      }
+    }
+    if (updates.branchId !== undefined) patch.default_branch_id = String(updates.branchId).trim() || emp.default_branch_id;
+    if (updates.group !== undefined) patch.group = updates.group;
+    if (updates.ratePerHour !== undefined) {
+      const rate = Number(updates.ratePerHour);
+      if (!Number.isFinite(rate) || rate < 0 || rate > 10_000_000) throw new Error('INVALID_RATE');
+      patch.current_rate_per_hour = Math.floor(rate);
+    }
+    if (updates.defaultShiftCode !== undefined) {
+      patch.default_shift_code = updates.defaultShiftCode || undefined;
+    }
+    if (updates.startDate !== undefined && updates.startDate) patch.start_date = String(updates.startDate);
+    if (updates.officialDate !== undefined && updates.officialDate) patch.official_date = String(updates.officialDate);
+    if (updates.email !== undefined) patch.email = String(updates.email).trim() || undefined;
+    if (updates.gender !== undefined) patch.gender = updates.gender;
+    if (updates.birthDate !== undefined && updates.birthDate) patch.birth_date = String(updates.birthDate);
+    if (updates.idCardNumber !== undefined) patch.id_card_number = String(updates.idCardNumber).trim() || undefined;
+
+    return singleWriterQueue.enqueue({
+      entityType: 'NHAN_VIEN_MASTER',
+      entityId: employeeId,
+      actorId,
+      execute: async () => {
+        const fresh = await this.repo.getEmployeeById(employeeId);
+        if (!fresh) throw new Error('EMPLOYEE_NOT_FOUND');
+        const expected = Number(updates.expectedVersion) || fresh.version;
+        if (expected !== fresh.version) throw new Error('VERSION_CONFLICT: Dữ liệu vừa bị thay đổi, tải lại rồi sửa tiếp.');
+        const updated = await this.repo.updateEmployee(employeeId, patch, fresh.version);
+        // Đổi SĐT -> đồng bộ tài khoản đăng nhập theo để NV vẫn login được số mới.
+        if (patch.phone_normalized) {
+          const accs = await this.repo.listAccounts().catch(() => []);
+          for (const acc of accs) {
+            if (acc.employee_id === employeeId && acc.phone_normalized !== patch.phone_normalized) {
+              (acc as any).phone_normalized = patch.phone_normalized;
+              (acc as any).updated_at = new Date().toISOString();
+            }
+          }
+        }
+        return updated;
+      },
+    });
+  }
+
   // Candidates & Recruitment
   async listCandidates() {
     return this.repo.listCandidates();

@@ -58,6 +58,7 @@ import {
   checkoutBody,
   defaultShiftBody,
   employeeCreateBody,
+  employeeUpdateBody,
   idParams,
   testPaperBody,
   testSubmitBody,
@@ -749,6 +750,44 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         employees: createdList,
         errors: errors.length > 0 ? errors : undefined,
       });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // HR/Admin cập nhật hồ sơ nhân viên (tên, SĐT, chi nhánh, khối, lương, ca...).
+  app.put('/employees/:id', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams, body: employeeUpdateBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const b = req.body;
+      const group = b.group ? String(b.group).toUpperCase() : undefined;
+      if (group && !['STORE', 'XUONG', 'VAN_PHONG', 'SALE'].includes(group)) {
+        return res.status(400).json({ error: 'INVALID_GROUP' });
+      }
+      const shiftRaw = b.defaultShiftCode !== undefined ? String(b.defaultShiftCode || '').toUpperCase() : undefined;
+      if (shiftRaw !== undefined && shiftRaw !== '' && !['CA_1', 'CA_2', 'CA_3'].includes(shiftRaw)) {
+        return res.status(400).json({ error: 'INVALID_SHIFT_CODE: ca cố định phải là CA_1, CA_2 hoặc CA_3.' });
+      }
+      const result = await employeesService.updateEmployee(
+        req.params.id,
+        {
+          fullName: b.fullName,
+          phone: b.phone,
+          branchId: b.branchId || b.branch_id || b.default_branch_id,
+          group: group as any,
+          ratePerHour: b.currentRatePerHour ?? b.current_rate_per_hour,
+          defaultShiftCode: shiftRaw === undefined ? undefined : ((shiftRaw || null) as any),
+          startDate: b.startDate || b.start_date,
+          officialDate: b.officialDate || b.official_date,
+          email: b.email,
+          gender: b.gender,
+          birthDate: b.birthDate || b.birth_date,
+          idCardNumber: b.idCardNumber || b.id_card_number,
+          expectedVersion: b.expectedVersion,
+        },
+        req.user!.id
+      );
+      broadcastUpdate('employees', { action: 'update', employee: result });
+      res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }

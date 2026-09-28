@@ -539,6 +539,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [selectedFileName, setSelectedFileName] = useState('');
   const [isSubmittingOfficialImport, setIsSubmittingOfficialImport] = useState(false);
   const [importOfficialError, setImportOfficialError] = useState<string | null>(null);
+  // --- Sửa hồ sơ NV chính thức (HR) ---
+  const [editingEmp, setEditingEmp] = useState<any>(null);
+  const [editEmpForm, setEditEmpForm] = useState<any>({});
+  const [editEmpBusy, setEditEmpBusy] = useState(false);
 
   // Tải file mẫu CSV với UTF-8 BOM để mở tiếng Việt không bị lỗi font trên Excel
   const handleDownloadOfficialTemplate = () => {
@@ -2595,6 +2599,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <th style={{ padding: '12px 18px', width: '130px' }}>Mức Lương Giờ</th>
                   <th style={{ padding: '12px 18px', width: '130px' }}>Ngày Chính Thức</th>
                   <th style={{ padding: '12px 18px', width: '130px', textAlign: 'center' }}>Trạng Thái</th>
+                  <th style={{ padding: '12px 18px', width: '110px', textAlign: 'center' }}>Thao Tác</th>
                 </tr>
               </thead>
               <tbody>
@@ -2673,6 +2678,28 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           CHÍNH THỨC
                         </span>
                       </td>
+                      <td style={{ padding: '14px 18px', textAlign: 'center' }}>
+                        <button
+                          className="btn-secondary"
+                          style={{ padding: '5px 12px', fontSize: '12px', fontWeight: 700 }}
+                          onClick={() => {
+                            setEditingEmp(emp);
+                            setEditEmpForm({
+                              fullName: emp.full_name || '',
+                              phone: emp.phone_normalized || '',
+                              branchId: emp.default_branch_id || 'CN130',
+                              group: emp.group || 'STORE',
+                              rate: emp.current_rate_per_hour || 25500,
+                              shift: emp.default_shift_code || '',
+                              startDate: emp.start_date || '',
+                              officialDate: emp.official_date || '',
+                              email: emp.email || '',
+                            });
+                          }}
+                        >
+                          Sửa
+                        </button>
+                      </td>
                     </tr>
                   ))
                 ) : (
@@ -2712,6 +2739,64 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </table>
           </div>
         </div>
+
+        {/* MODAL SỬA HỒ SƠ NHÂN VIÊN CHÍNH THỨC (HR) */}
+        {editingEmp && (
+          <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '16px' }}>
+            <div style={{ backgroundColor: 'var(--surface)', borderRadius: '12px', maxWidth: '560px', width: '100%', maxHeight: '90vh', overflow: 'auto', padding: '20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h2 style={{ fontSize: '16px', fontWeight: 800, margin: 0 }}>Sửa hồ sơ: {editingEmp.full_name} ({editingEmp.employee_code})</h2>
+                <button className="btn-secondary" style={{ padding: '4px 12px' }} onClick={() => setEditingEmp(null)}>Đóng</button>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '14px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 700 }}>Họ và tên<input value={editEmpForm.fullName || ''} onChange={e => setEditEmpForm({ ...editEmpForm, fullName: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
+                <label style={{ fontSize: '12px', fontWeight: 700 }}>SĐT (đổi số vẫn login được)<input value={editEmpForm.phone || ''} onChange={e => setEditEmpForm({ ...editEmpForm, phone: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
+                <label style={{ fontSize: '12px', fontWeight: 700 }}>Chi nhánh<select value={editEmpForm.branchId || 'CN130'} onChange={e => setEditEmpForm({ ...editEmpForm, branchId: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}><option value="CN130">CN130</option><option value="CN120">CN120</option><option value="CN261">CN261</option><option value="CN111">CN111</option></select></label>
+                <label style={{ fontSize: '12px', fontWeight: 700 }}>Khối<select value={editEmpForm.group || 'STORE'} onChange={e => setEditEmpForm({ ...editEmpForm, group: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}><option value="STORE">Cửa hàng</option><option value="XUONG">Xưởng</option><option value="VAN_PHONG">Văn phòng</option><option value="SALE">Sale</option></select></label>
+                <label style={{ fontSize: '12px', fontWeight: 700 }}>Lương giờ (đ/h)<input type="number" value={editEmpForm.rate || 25500} onChange={e => setEditEmpForm({ ...editEmpForm, rate: Number(e.target.value) })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
+                <label style={{ fontSize: '12px', fontWeight: 700 }}>Ca cố định<select value={editEmpForm.shift || ''} onChange={e => setEditEmpForm({ ...editEmpForm, shift: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}><option value="">— Chưa gán —</option><option value="CA_1">Ca 1 (07–12)</option><option value="CA_2">Ca 2 (12–18)</option><option value="CA_3">Ca 3 (18–23)</option></select></label>
+                <label style={{ fontSize: '12px', fontWeight: 700 }}>Ngày bắt đầu<input type="date" value={editEmpForm.startDate || ''} onChange={e => setEditEmpForm({ ...editEmpForm, startDate: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
+                <label style={{ fontSize: '12px', fontWeight: 700 }}>Ngày chính thức<input type="date" value={editEmpForm.officialDate || ''} onChange={e => setEditEmpForm({ ...editEmpForm, officialDate: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
+                <label style={{ fontSize: '12px', fontWeight: 700, gridColumn: '1 / -1' }}>Email<input value={editEmpForm.email || ''} onChange={e => setEditEmpForm({ ...editEmpForm, email: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
+              </div>
+              <button
+                className="btn-primary"
+                disabled={editEmpBusy}
+                style={{ width: '100%', marginTop: '14px', padding: '10px', fontWeight: 800, backgroundColor: '#059669' }}
+                onClick={async () => {
+                  setEditEmpBusy(true);
+                  try {
+                    await apiRequest(`/employees/${editingEmp.employee_id}`, {
+                      method: 'PUT',
+                      body: JSON.stringify({
+                        fullName: editEmpForm.fullName,
+                        phone: editEmpForm.phone,
+                        branchId: editEmpForm.branchId,
+                        group: editEmpForm.group,
+                        currentRatePerHour: editEmpForm.rate,
+                        defaultShiftCode: editEmpForm.shift,
+                        startDate: editEmpForm.startDate || undefined,
+                        officialDate: editEmpForm.officialDate || undefined,
+                        email: editEmpForm.email || undefined,
+                        expectedVersion: editingEmp.version,
+                      }),
+                    });
+                    showToast('Đã cập nhật hồ sơ nhân viên!');
+                    setEditingEmp(null);
+                    if (onRefreshData) await onRefreshData();
+                    if (onSyncSheets) await onSyncSheets();
+                  } catch (e: any) {
+                    showToast(e?.message || 'Lỗi khi cập nhật!');
+                  } finally {
+                    setEditEmpBusy(false);
+                  }
+                }}
+              >
+                {editEmpBusy ? 'Đang lưu...' : 'Lưu thay đổi'}
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* MODAL IMPORT DỮ LIỆU NHÂN VIÊN CHÍNH THỨC */}
         {showImportOfficialModal && (
