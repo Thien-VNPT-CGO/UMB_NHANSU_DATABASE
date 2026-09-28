@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl } from './services/api';
+import { APP_COMMIT } from './app-version';
 import {
   Users,
   Calendar,
@@ -262,6 +263,13 @@ export function App() {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsgState] = useState<string | null>(null);
   const [successMsg, setSuccessMsgState] = useState<string | null>(null);
+  // Bản API đang chạy (so với bản app để biết đã cập nhật chưa)
+  const [apiCommit, setApiCommit] = useState<string | null>(null);
+  useEffect(() => {
+    apiRequest('/version').then((v: any) => {
+      if (v?.commit) setApiCommit(String(v.commit).slice(0, 7));
+    }).catch(() => null);
+  }, []);
 
   // Login Form State
   const [loginUsername, setLoginUsername] = useState('');
@@ -1604,6 +1612,12 @@ export function App() {
                     💡 Để trống để tự động nhận diện theo tên miền hiện tại (All-in-One).
                   </div>
                 </div>
+              )}
+            </div>
+            <div style={{ marginTop: '14px', textAlign: 'center', fontSize: '10px', color: '#9CA3AF' }}>
+              Bản app: <code>{APP_COMMIT}</code> • Bản API: <code>{apiCommit || 'đang kiểm tra...'}</code>
+              {apiCommit && apiCommit !== APP_COMMIT && APP_COMMIT !== 'local' && (
+                <span style={{ color: '#DC2626', fontWeight: 700 }}> • Lệch bản — tải lại trang (Ctrl+F5) để nhận bản mới!</span>
               )}
             </div>
           </div>

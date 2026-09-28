@@ -189,6 +189,18 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     res.json({ status: 'ok', time: new Date().toISOString() });
   });
 
+  // Phiên bản đang chạy (public): so với commit main trên GitHub để biết
+  // hệ thống đã cập nhật bản mới nhất chưa. startedAt cho biết instance
+  // restart sau lần push cuối cùng chưa (Render free có thể chậm deploy).
+  app.get('/version', (req, res) => {
+    res.json({
+      service: 'umb-backend',
+      commit: process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || 'local-dev',
+      startedAt: new Date(SERVER_STARTED_AT).toISOString(),
+      time: new Date().toISOString(),
+    });
+  });
+
   // Webhook Apps Script onEdit: sửa ô nào trên Sheet là web cập nhật trong 1-2s,
   // không đợi nhịp pull 10s. Xác thực bằng secret header (fail-closed).
   app.post('/hooks/sheets-edit', validate({ body: webhookBody }), async (req, res) => {

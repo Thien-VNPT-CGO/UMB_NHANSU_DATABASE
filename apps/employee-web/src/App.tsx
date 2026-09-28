@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl } from './services/api';
+import { APP_COMMIT } from './app-version';
 import {
   Home,
   Calendar,
@@ -57,6 +58,13 @@ export function App() {
   const [apiBaseShown, setApiBaseShown] = useState<string>(() => {
     try { return getApiBase(); } catch { return ''; }
   });
+  // Bản API đang chạy (so với bản app để biết đã cập nhật chưa)
+  const [apiCommit, setApiCommit] = useState<string | null>(null);
+  useEffect(() => {
+    apiRequest('/version').then((v: any) => {
+      if (v?.commit) setApiCommit(String(v.commit).slice(0, 7));
+    }).catch(() => null);
+  }, []);
   const handleChangeApiBase = () => {
     const cur = getApiBase();
     const input = window.prompt('Địa chỉ máy chủ Backend (để trống = tự động):', localStorage.getItem('ubm_custom_api_url') || '');
@@ -1275,6 +1283,12 @@ export function App() {
           >
             🔌 Máy chủ: {apiBaseShown || '(chưa xác định)'} — bấm để đổi
           </button>
+          <div style={{ marginTop: '6px', fontSize: '10px', color: 'var(--text-muted)' }}>
+            Bản app: <code>{APP_COMMIT}</code> • Bản API: <code>{apiCommit || 'đang kiểm tra...'}</code>
+            {apiCommit && apiCommit !== APP_COMMIT && APP_COMMIT !== 'local' && (
+              <span style={{ color: 'var(--danger)', fontWeight: 700 }}> • Lệch bản — tải lại trang để nhận bản mới!</span>
+            )}
+          </div>
         </div>
       </div>
     );
