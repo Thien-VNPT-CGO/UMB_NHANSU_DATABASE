@@ -759,10 +759,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.put('/employees/:id', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams, body: employeeUpdateBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const b = req.body;
-      const group = b.group ? String(b.group).toUpperCase() : undefined;
-      if (group && !['STORE', 'XUONG', 'VAN_PHONG', 'SALE'].includes(group)) {
-        return res.status(400).json({ error: 'INVALID_GROUP' });
-      }
+      // Chuẩn hóa ở service (chấp nhận tên tiếng Việt từ dữ liệu cũ).
+      const group = b.group ? String(b.group) : undefined;
       const shiftRaw = b.defaultShiftCode !== undefined ? String(b.defaultShiftCode || '').toUpperCase() : undefined;
       if (shiftRaw !== undefined && shiftRaw !== '' && !['CA_1', 'CA_2', 'CA_3'].includes(shiftRaw)) {
         return res.status(400).json({ error: 'INVALID_SHIFT_CODE: ca cố định phải là CA_1, CA_2 hoặc CA_3.' });

@@ -31,6 +31,16 @@ export interface DuplicatePhoneGroup {
   accounts: { account_id: string; employee_id: string; account_status: string }[];
 }
 
+/** Chuẩn hóa khối/vị trí về 4 mã chuẩn (dữ liệu Sheets cũ có thể ghi tiếng Việt). */
+export function normalizeGroup(input: unknown): 'STORE' | 'XUONG' | 'VAN_PHONG' | 'SALE' {
+  const g = String(input || '').trim().toUpperCase();
+  if (['STORE', 'CỬA HÀNG', 'CUA HANG', 'SHOP'].includes(g)) return 'STORE';
+  if (['XUONG', 'XƯỞNG', 'SAN XUAT', 'SẢN XUẤT', 'KHOI SAN XUAT', 'KHỐI SẢN XUẤT'].includes(g)) return 'XUONG';
+  if (['VAN_PHONG', 'VĂN PHÒNG', 'VAN PHONG', 'OFFICE', 'TRU SO', 'TRỤ SỞ'].includes(g)) return 'VAN_PHONG';
+  if (['SALE', 'BAN HANG', 'BÁN HÀNG', 'KINH DOANH'].includes(g)) return 'SALE';
+  throw new Error(`INVALID_GROUP: khối '${input}' không hợp lệ (STORE/XUONG/VAN_PHONG/SALE).`);
+}
+
 /** Quét toàn bộ SĐT trùng trên Sheets (nhân viên + tài khoản). */
 export async function findDuplicatePhones(repo: ISheetsRepository): Promise<DuplicatePhoneGroup[]> {
   const [emps, accs] = await Promise.all([repo.listEmployees(), repo.listAccounts()]);
@@ -266,7 +276,9 @@ export class EmployeesService {
       }
     }
     if (updates.branchId !== undefined) patch.default_branch_id = String(updates.branchId).trim() || emp.default_branch_id;
-    if (updates.group !== undefined) patch.group = updates.group;
+    if (updates.group !== undefined && updates.group !== null && String(updates.group).trim() !== '') {
+      patch.group = normalizeGroup(updates.group);
+    }
     if (updates.ratePerHour !== undefined) {
       const rate = Number(updates.ratePerHour);
       if (!Number.isFinite(rate) || rate < 0 || rate > 10_000_000) throw new Error('INVALID_RATE');
