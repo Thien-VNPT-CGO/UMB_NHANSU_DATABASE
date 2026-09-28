@@ -13,6 +13,8 @@ export interface EmployeeMaster {
   employment_status: EmploymentStatus;
   group: EmployeeGroup;
   default_branch_id: string; // e.g. CN130
+  /** Ca làm cố định (CA_1/CA_2/CA_3) — BOT dựa vào đây để tự xếp lịch khi PUBLISH. */
+  default_shift_code?: 'CA_1' | 'CA_2' | 'CA_3';
   current_rate_per_hour: number; // e.g. 21000 for probation, 25500 for official
   start_date: string;
   official_date?: string;

@@ -29,7 +29,7 @@ export interface SheetDefinition {
 export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   {
     title: 'NHAN_VIEN_MASTER',
-    headers: ['ID Nhân Viên', 'Mã NV', 'Họ Và Tên', 'Số Điện Thoại', 'Trạng Thái', 'Nhóm', 'Chi Nhánh', 'Lương Giờ (VNĐ)', 'Ngày Bắt Đầu', 'Phiên Bản'],
+    headers: ['ID Nhân Viên', 'Mã NV', 'Họ Và Tên', 'Số Điện Thoại', 'Trạng Thái', 'Nhóm', 'Chi Nhánh', 'Lương Giờ (VNĐ)', 'Ngày Bắt Đầu', 'Phiên Bản', 'Ca Cố Định'],
   },
   {
     title: 'TAI_KHOAN_NHAN_VIEN',
@@ -388,6 +388,8 @@ export class GoogleSheetsSyncService {
             const rate = Number(r[7]) || 25500;
             const startDate = (r[8] || '').trim() || new Date().toISOString().split('T')[0];
             const version = Number(r[9]) || 1;
+            const shiftRaw = (r[10] || '').trim().toUpperCase();
+            const defaultShift = shiftRaw === 'CA_1' || shiftRaw === 'CA_2' || shiftRaw === 'CA_3' ? shiftRaw : undefined;
 
             return {
               employee_id: empId,
@@ -402,6 +404,7 @@ export class GoogleSheetsSyncService {
               created_at: startDate,
               updated_at: new Date().toISOString(),
               version: version,
+              ...(defaultShift ? { default_shift_code: defaultShift } : {}),
             };
           });
         // Đọc thiếu dòng (partial/truncated) mà bộ nhớ đang nhiều hơn gấp đôi -> giữ bộ nhớ.
@@ -1191,6 +1194,7 @@ export class GoogleSheetsSyncService {
         e.current_rate_per_hour,
         e.start_date || e.created_at,
         e.version,
+        (e as any).default_shift_code || '',
       ]);
       await this.overwriteSheetData('NHAN_VIEN_MASTER', SHEETS_DEFINITIONS.find(d => d.title === 'NHAN_VIEN_MASTER')!.headers, employeeRows);
       details.employees = employeeRows.length;

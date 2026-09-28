@@ -125,6 +125,16 @@ export const publishWeekParams = z.object({
 
 export const publishWeekBody = z.object({
   branchId: optString(32),
+  auto: optString(16),
+});
+
+export const defaultShiftBody = z.object({
+  shiftCode: optString(16),
+});
+
+export const autoPlanBody = z.object({
+  branchId: optString(32),
+  weekMon: optString(32),
 });
 
 // --- Leave & Swap ---

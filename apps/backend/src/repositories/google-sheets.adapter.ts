@@ -340,6 +340,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
           snapshot.current_rate_per_hour,
           snapshot.start_date || (snapshot as any).created_at,
           snapshot.version,
+          (snapshot as any).default_shift_code || '',
         ]);
         if (!ok) {
           console.warn('[GoogleSheetsAdapter] appendRow NHAN_VIEN_MASTER failed, running syncAllData');

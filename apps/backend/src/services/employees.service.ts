@@ -81,6 +81,7 @@ export class EmployeesService {
     startDate?: string;
     officialDate?: string;
     ratePerHour?: number;
+    defaultShiftCode?: 'CA_1' | 'CA_2' | 'CA_3';
     actorId: string;
   }) {
     const employeeId = `EMP_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
@@ -132,6 +133,7 @@ export class EmployeesService {
           birth_date: data.birthDate,
           id_card_number: data.idCardNumber,
           email: data.email,
+          ...(data.defaultShiftCode ? { default_shift_code: data.defaultShiftCode } : {}),
         });
 
         // Add stage history
@@ -198,6 +200,26 @@ export class EmployeesService {
         });
 
         return updated;
+      },
+    });
+  }
+
+  /** Gán / đổi ca cố định cho nhân viên (BOT dựa vào đây để tự xếp lịch). */
+  async setDefaultShift(employeeId: string, shiftCode: 'CA_1' | 'CA_2' | 'CA_3' | null, actorId: string) {
+    const emp = await this.repo.getEmployeeById(employeeId);
+    if (!emp) throw new Error('EMPLOYEE_NOT_FOUND');
+    return singleWriterQueue.enqueue({
+      entityType: 'NHAN_VIEN_MASTER',
+      entityId: employeeId,
+      actorId,
+      execute: async () => {
+        const fresh = await this.repo.getEmployeeById(employeeId);
+        if (!fresh) throw new Error('EMPLOYEE_NOT_FOUND');
+        return this.repo.updateEmployee(
+          employeeId,
+          shiftCode ? { default_shift_code: shiftCode } : { default_shift_code: undefined } as any,
+          fresh.version
+        );
       },
     });
   }

@@ -21,6 +21,7 @@ import { AccountsService } from './services/accounts.service.js';
 import { EmployeesService } from './services/employees.service.js';
 import { canonicalPhone, findDuplicatePhones } from './services/employees.service.js';
 import { SchedulesService } from './services/schedules.service.js';
+import { AutoScheduleService } from './services/auto-schedule.service.js';
 import { AttendanceService } from './services/attendance.service.js';
 import { PayrollService } from './services/payroll.service.js';
 import { NotificationsService } from './services/notifications.service.js';
@@ -49,10 +50,12 @@ import {
   announcementBody,
   attendanceEventBody,
   attendanceEventsQuery,
+  autoPlanBody,
   bulkImportBody,
   candidateImportBody,
   checkinBody,
   checkoutBody,
+  defaultShiftBody,
   employeeCreateBody,
   idParams,
   interviewBody,
@@ -124,6 +127,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   const accountsService = new AccountsService(adapter);
   const employeesService = new EmployeesService(adapter);
   const schedulesService = new SchedulesService(adapter);
+  const autoScheduleService = new AutoScheduleService(adapter);
   const attendanceService = new AttendanceService(adapter);
   const payrollService = new PayrollService(adapter);
   const notificationsService = new NotificationsService(adapter);
@@ -647,6 +651,9 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         startDate: b.startDate || b.start_date,
         officialDate: b.officialDate || b.official_date,
         ratePerHour: b.currentRatePerHour || b.current_rate_per_hour,
+        defaultShiftCode: ['CA_1', 'CA_2', 'CA_3'].includes(String(b.defaultShiftCode || b.default_shift_code || '').toUpperCase())
+          ? String(b.defaultShiftCode || b.default_shift_code).toUpperCase() as any
+          : undefined,
         actorId: req.user!.id,
       });
       broadcastUpdate('employees', { action: 'create', employee: result });
@@ -749,6 +756,27 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         req.body.expectedVersion || 1
       );
       broadcastUpdate('employees', { action: 'transition', employee: result });
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Gán / đổi ca cố định cho nhân viên (BOT dựa vào đây để tự xếp lịch khi PUBLISH).
+  app.put('/employees/:id/default-shift', authMiddleware, requireRole(['ADMIN', 'HR', 'STORE']), validate({ params: idParams, body: defaultShiftBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const raw = String(req.body?.shiftCode || req.body?.shift_code || '').trim().toUpperCase();
+      const shiftCode = raw === '' ? null : raw;
+      if (shiftCode !== null && shiftCode !== 'CA_1' && shiftCode !== 'CA_2' && shiftCode !== 'CA_3') {
+        return res.status(400).json({ error: 'INVALID_SHIFT_CODE: ca cố định phải là CA_1, CA_2 hoặc CA_3.' });
+      }
+      const emp = await employeesService.getEmployee(req.params.id);
+      if (!emp) return res.status(404).json({ error: 'EMPLOYEE_NOT_FOUND' });
+      if (req.user?.role === 'STORE' && req.user.branchScope !== '*' && emp.default_branch_id !== req.user.branchScope) {
+        return res.status(403).json({ error: 'BRANCH_SCOPE_FORBIDDEN' });
+      }
+      const result = await employeesService.setDefaultShift(req.params.id, shiftCode as any, req.user!.id);
+      broadcastUpdate('employees', { action: 'default-shift', employee: result });
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -980,8 +1008,41 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     async (req: AuthenticatedRequest, res) => {
       try {
         const branchId = req.body.branchId || req.user?.branchScope;
+        const auto = req.body.auto === true || req.body.auto === 'true' || req.body.auto === '1';
+        let autoSummary: any = null;
+        if (auto) {
+          // BOT tự xếp lịch lấp chỗ trống (trừ ngày OFF đã đăng ký) trước khi duyệt.
+          const exec = await autoScheduleService.execute(branchId, req.params.week, req.user!.id);
+          autoSummary = {
+            created: (exec as any).created ?? 0,
+            items: (exec as any).items ?? [],
+            warnings: (exec as any).warnings ?? [],
+            stats: (exec as any).stats ?? [],
+          };
+          broadcastUpdate('schedules', { action: 'auto-schedule', branchId, week: req.params.week, created: autoSummary.created });
+        }
         const result = await schedulesService.publishWeekSchedule(branchId, req.params.week, req.user!.id);
-        res.json(result);
+        broadcastUpdate('schedules', { action: 'publish', branchId, week: req.params.week });
+        res.json({ ...(result as any), auto: autoSummary });
+      } catch (err: any) {
+        res.status(400).json({ error: err.message });
+      }
+    }
+  );
+
+  // BOT xem trước kế hoạch xếp lịch (không ghi) — Admin/HR/Store duyệt rồi mới PUBLISH.
+  app.post(
+    '/schedules/auto-plan',
+    authMiddleware,
+    requireRole(['ADMIN', 'HR', 'STORE']),
+    validate({ body: autoPlanBody }),
+    enforceBranchScope(req => req.body.branchId),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const branchId = req.body.branchId || req.user?.branchScope || '*';
+        const weekMon = req.body.weekMon || new Date().toISOString().split('T')[0];
+        const plan = await autoScheduleService.plan(branchId, weekMon);
+        res.json(plan);
       } catch (err: any) {
         res.status(400).json({ error: err.message });
       }
@@ -2186,6 +2247,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       accountsService,
       employeesService,
       schedulesService,
+      autoScheduleService,
       attendanceService,
       payrollService,
       notificationsService,

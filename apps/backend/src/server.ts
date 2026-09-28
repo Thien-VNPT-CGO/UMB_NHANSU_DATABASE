@@ -25,6 +25,7 @@ app.set('io', io);
 // Pass io to services
 services.accountsService.setSocketServer(io);
 services.schedulesService.setSocketServer(io);
+(services as any).autoScheduleService?.setSocketServer?.(io);
 services.attendanceService.setSocketServer(io);
 services.payrollService.setSocketServer(io);
 services.notificationsService.setSocketServer(io);
