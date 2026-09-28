@@ -417,7 +417,22 @@ export class GoogleSheetsSyncService {
           if (deduped.length !== mappedEmps.length) {
             console.warn(`[GoogleSheetsSyncService] NHAN_VIEN_MASTER loại ${mappedEmps.length - deduped.length} dòng trùng.`);
           }
-          fallback.employees = deduped as any;
+          // MERGE chống mất ca cố định vừa gán: gán ca chỉ nằm trong bộ nhớ (+tăng
+          // version), Sheets được push sau (~10s debounce). Pull mà thay thế thẳng sẽ
+          // ghi đè ca vừa gán (gán người này xong mất ca người kia). Bản version lớn thắng.
+          const memEmpById = new Map<string, any>((fallback.employees || []).map((e: any) => [e.employee_id, e]));
+          const mergedEmps: any[] = [];
+          for (const s of deduped) {
+            const m = memEmpById.get((s as any).employee_id);
+            if (m && Number(m.version || 0) > Number((s as any).version || 0)) {
+              mergedEmps.push(m);
+            } else {
+              mergedEmps.push(s);
+            }
+            memEmpById.delete((s as any).employee_id);
+          }
+          for (const m of memEmpById.values()) mergedEmps.push(m);
+          fallback.employees = mergedEmps as any;
         }
       } else if (fallback.employees.length === 0) {
         fallback.employees = [];
@@ -624,8 +639,10 @@ export class GoogleSheetsSyncService {
 
       // 4. Đọc PHAN_CONG_CA
       const shiftRows = batch['PHAN_CONG_CA'];
-      if (shiftRows.length > 0) {
-        fallback.shifts = shiftRows.map(r => ({
+      if (keepIfEmpty('PHAN_CONG_CA', shiftRows, fallback.shifts.length)) {
+        counts.shifts = fallback.shifts.length;
+      } else if (shiftRows.length > 0) {
+        const mappedShifts = shiftRows.map(r => ({
           assignment_id: r[0] || `SHF_${uuidv4().slice(0, 8)}`,
           employee_id: r[1],
           branch_id: r[2] || 'CN130',
@@ -638,7 +655,23 @@ export class GoogleSheetsSyncService {
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         }));
-      } else {
+        // MERGE chống mất ca vừa PUBLISH: đổi trạng thái chỉ nằm trong bộ nhớ
+        // (+tăng schedule_version), Sheets push sau. Bản schedule_version lớn thắng;
+        // ca chỉ có trong bộ nhớ (vừa tạo, append đang bay) được giữ lại.
+        const memShiftById = new Map<string, any>((fallback.shifts || []).map((s: any) => [s.assignment_id, s]));
+        const mergedShifts: any[] = [];
+        for (const s of mappedShifts) {
+          const m = memShiftById.get((s as any).assignment_id);
+          if (m && Number(m.schedule_version || 0) > Number((s as any).schedule_version || 0)) {
+            mergedShifts.push(m);
+          } else {
+            mergedShifts.push(s);
+          }
+          memShiftById.delete((s as any).assignment_id);
+        }
+        for (const m of memShiftById.values()) mergedShifts.push(m);
+        fallback.shifts = mergedShifts as any;
+      } else if (fallback.shifts.length === 0) {
         fallback.shifts = [];
       }
       counts.shifts = fallback.shifts.length;

@@ -422,7 +422,10 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   }
 
   async updateShiftAssignment(id: string, updates: any) {
-    return this.fallbackAdapter.updateShiftAssignment(id, updates);
+    const res = await this.fallbackAdapter.updateShiftAssignment(id, updates);
+    // Đẩy Sheets nền để PUBLISH (DRAFT→PUBLISHED) và đổi ca không mất sau restart.
+    this.scheduleFullSync('PHAN_CONG_CA.update');
+    return res;
   }
 
   // --- Leaves & Swaps ---
