@@ -4899,17 +4899,16 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <thead>
               <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
                 <th style={{ padding: '12px 20px' }}>Nhân Viên</th>
-                <th style={{ padding: '12px 20px' }}>Chi Nhánh</th>
-                <th style={{ padding: '12px 20px' }}>Loại & Giờ Ghi Nhận</th>
-                <th style={{ padding: '12px 20px' }}>Tọa Độ GPS</th>
-                <th style={{ padding: '12px 20px' }}>Đồng Phục & Ảnh</th>
-                <th style={{ padding: '12px 20px' }}>Trạng Thái</th>
+                <th style={{ padding: '12px 20px' }}>Chi Nhánh & Ca</th>
+                <th style={{ padding: '12px 20px' }}>Giờ Vào / Ra & Phạt Trễ</th>
+                <th style={{ padding: '12px 20px' }}>Ảnh Check-in / Out</th>
+                <th style={{ padding: '12px 20px' }}>Trạng Thái Ca</th>
               </tr>
             </thead>
             <tbody>
               {liveAttendanceEvents.length === 0 ? (
                 <tr>
-                  <td colSpan={6} style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                  <td colSpan={5} style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
                     <div style={{ fontSize: '28px', marginBottom: '8px' }}>🕒</div>
                     <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text)' }}>
                       Chưa có lượt chấm công nào hôm nay
@@ -4920,72 +4919,84 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   </td>
                 </tr>
               ) : (
-                liveAttendanceEvents.map((evt: any, i: number) => {
-                  const emp = allEmployees.find((e: any) => e.employee_id === evt.employee_id) || {
-                    full_name: 'Nhân Viên',
-                    employee_code: evt.employee_id,
+                (() => {
+                  // Gom sự kiện theo từng ca phân công: 1 dòng = 1 ca (kể cả ngày 2 ca)
+                  const groups = new Map<string, any[]>();
+                  for (const e of liveAttendanceEvents) {
+                    const k = e.assignment_id || `${e.employee_id}__${(e.client_time || '').slice(0, 10)}__${e.type}`;
+                    if (!groups.has(k)) groups.set(k, []);
+                    groups.get(k)!.push(e);
+                  }
+                  const timeOf = (t: string) => {
+                    try { return new Date(t).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }); } catch { return '-'; }
                   };
-                  return (
-                    <tr key={evt.event_id || i} style={{ borderBottom: '1px solid var(--border)' }}>
-                      <td style={{ padding: '12px 20px', fontWeight: 700 }}>
-                        {emp.full_name}
-                        <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{emp.employee_code}</div>
-                      </td>
-                      <td style={{ padding: '12px 20px' }}>
-                        {getDisplayBranch(evt.branch_id || 'CN130')}
-                      </td>
-                      <td style={{ padding: '12px 20px' }}>
-                        <span className={`badge ${evt.type === 'CHECK_IN' ? 'badge-brand' : evt.type === 'ABSENT' ? '' : 'badge-success'}`} style={evt.type === 'ABSENT' ? { backgroundColor: '#FEE2E2', color: '#991B1B', fontWeight: 800 } : undefined}>
-                          {evt.type === 'CHECK_IN' ? 'VÀO CA (IN)' : evt.type === 'ABSENT' ? 'VẮNG (AUTO)' : 'TAN CA (OUT)'}
-                        </span>
-                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                          {evt.client_time ? new Date(evt.client_time).toLocaleTimeString('vi-VN') : '-'}
-                        </div>
-                      </td>
-                      <td style={{ padding: '12px 20px' }}>
-                        <strong style={{ color: evt.distance_meters <= 300 ? '#10B981' : '#DC2626' }}>
-                          {evt.distance_meters}m
-                        </strong>
-                        <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '4px' }}>
-                          ({evt.gps_status || 'VALID'})
-                        </span>
-                      </td>
-                      <td style={{ padding: '12px 20px' }}>
-                        {evt.type === 'ABSENT' ? (
-                          <span className="badge" style={{ backgroundColor: '#FEE2E2', color: '#991B1B', fontWeight: 800 }}>🔴 VẮNG (tự ghi)</span>
-                        ) : evt.drive_object_id && !String(evt.drive_object_id).startsWith('DRV_') ? (
+                  return [...groups.entries()].map(([key, evts]) => {
+                    const inEvt = evts.find((e: any) => e.type === 'CHECK_IN');
+                    const outEvt = evts.find((e: any) => e.type === 'CHECK_OUT');
+                    const absentEvt = evts.find((e: any) => e.type === 'ABSENT');
+                    const first = evts[0];
+                    const emp = allEmployees.find((e: any) => e.employee_id === first.employee_id) || {
+                      full_name: 'Nhân Viên',
+                      employee_code: first.employee_id,
+                    };
+                    const shift = (shifts || []).find((s: any) => s.assignment_id === first.assignment_id);
+                    const rate = Number((emp as any)?.current_rate_per_hour) || 25500;
+                    const hours = shift?.shift_code === 'CA_2' ? 6 : 5;
+                    const shiftPay = hours * rate;
+                    const startMs = shift?.start_at ? new Date(shift.start_at).getTime() : NaN;
+                    const complete = !!(inEvt && outEvt);
+                    const absent = !inEvt && !!absentEvt;
+                    const locked = !inEvt && !absentEvt && Number.isFinite(startMs) && Date.now() - startMs > 3 * 60 * 60 * 1000;
+                    const working = !complete && !absent && !locked;
+                    const lateMin = inEvt?.is_late ? Number(inEvt.minutes_deviation) || 0 : 0;
+                    const fineTxt = !inEvt ? '' : lateMin < 5 ? '' : lateMin < 30 ? ' • Phạt 30k' : lateMin < 60 ? ` • Phạt 50% (${Math.round(shiftPay * 0.5).toLocaleString('vi-VN')}đ)` : ' • Phạt 100% ca';
+                    const statusBadge = complete
+                      ? <span className="badge badge-success" style={{ fontWeight: 800 }}>✓ HOÀN THÀNH CA</span>
+                      : absent
+                        ? <span className="badge" style={{ backgroundColor: '#FEE2E2', color: '#991B1B', fontWeight: 800 }}>🔴 VẮNG — không lương</span>
+                        : locked
+                          ? <span className="badge" style={{ backgroundColor: '#64748B', color: '#FFF', fontWeight: 800 }}>🔒 KHÓA — nghỉ không lương</span>
+                          : <span className="badge" style={{ backgroundColor: '#F59E0B', color: '#FFF', fontWeight: 800, animation: inEvt ? 'fx-blink 1.2s infinite' : undefined }}>{inEvt ? 'ĐANG LÀM (chờ check-out)' : 'CHƯA CHECK-IN'}</span>;
+                    const photoOf = (evt: any) => evt?.drive_object_id && !String(evt.drive_object_id).startsWith('DRV_')
+                      ? <AttPhoto eventId={evt.event_id} />
+                      : <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Không ảnh</span>;
+                    return (
+                      <tr key={key} style={{ borderBottom: '1px solid var(--border)', backgroundColor: complete ? undefined : absent ? '#FEF2F2' : locked ? '#F1F5F9' : working ? '#FFFBEB' : undefined }}>
+                        <td style={{ padding: '12px 20px', fontWeight: 700 }}>
+                          {emp.full_name}
+                          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{emp.employee_code}</div>
+                        </td>
+                        <td style={{ padding: '12px 20px' }}>
+                          {getDisplayBranch(first.branch_id || shift?.branch_id || 'CN130')}
+                          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{shift ? `${shift.shift_code} • ${shift.date}` : (first.client_time || '').slice(0, 10)}</div>
+                        </td>
+                        <td style={{ padding: '12px 20px' }}>
+                          <div style={{ fontSize: '12px' }}>Vào: <strong>{inEvt ? timeOf(inEvt.client_time) : '—'}</strong>{inEvt?.is_late ? ` (trễ ${lateMin}p${fineTxt})` : ''}</div>
+                          <div style={{ fontSize: '12px', marginTop: '2px' }}>Ra: <strong>{outEvt ? timeOf(outEvt.client_time) : '—'}</strong>{outEvt?.is_early ? ` (sớm ${outEvt.minutes_deviation}p)` : ''}</div>
+                          {inEvt && (
+                            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                              GPS {(inEvt.distance_meters ?? 0)}m ({inEvt.gps_status || 'VALID'})
+                            </div>
+                          )}
+                        </td>
+                        <td style={{ padding: '12px 20px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <AttPhoto eventId={evt.event_id} />
-                            <span style={{ fontSize: '11px', color: '#DB2777', fontWeight: 700 }}>
-                              📸 Áo Hồng + Bảng Tên [Hợp Lệ]
-                            </span>
+                            <div style={{ textAlign: 'center' }}>
+                              {photoOf(inEvt)}
+                              <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Check-in</div>
+                            </div>
+                            <div style={{ textAlign: 'center' }}>
+                              {photoOf(outEvt)}
+                              <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Check-out</div>
+                            </div>
                           </div>
-                        ) : (
-                          <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                            📸 Chưa có ảnh (chấm công cũ)
-                          </span>
-                        )}
-                      </td>
-                      <td style={{ padding: '12px 20px' }}>
-                        {(() => {
-                          if (evt.is_late) {
-                            const mins = Number(evt.minutes_deviation) || 0;
-                            const emp = allEmployees.find((e: any) => e.employee_id === evt.employee_id);
-                            const rate = Number(emp?.current_rate_per_hour) || 25500;
-                            const shift = (shifts || []).find((s: any) => s.assignment_id === evt.assignment_id);
-                            const hours = shift?.shift_code === 'CA_1' ? 5 : shift?.shift_code === 'CA_2' ? 6 : shift?.shift_code === 'CA_3' ? 5 : 5;
-                            const pay = hours * rate;
-                            const fine = mins < 5 ? '' : mins < 30 ? ' • Phạt 30k' : mins < 60 ? ` • Phạt 50% (${Math.round(pay * 0.5).toLocaleString('vi-VN')}đ)` : ' • Phạt 100% ca';
-                            return <span className="badge badge-warning">Đi trễ {mins}p{fine}</span>;
-                          }
-                          if (evt.is_early) return <span className="badge badge-warning">Về sớm {evt.minutes_deviation}p</span>;
-                          if (evt.type === 'ABSENT') return <span className="badge" style={{ backgroundColor: '#FEE2E2', color: '#991B1B', fontWeight: 800 }}>Vắng — không lương</span>;
-                          return <span className="badge badge-success">Đúng giờ</span>;
-                        })()}
-                      </td>
-                    </tr>
-                  );
-                })
+                          <div style={{ fontSize: '11px', color: '#DB2777', fontWeight: 700, marginTop: '4px' }}>📸 Áo Hồng + Bảng Tên</div>
+                        </td>
+                        <td style={{ padding: '12px 20px' }}>{statusBadge}</td>
+                      </tr>
+                    );
+                  });
+                })()
               )}
             </tbody>
           </table>
