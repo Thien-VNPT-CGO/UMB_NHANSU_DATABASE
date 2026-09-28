@@ -1670,8 +1670,9 @@ export function App() {
                     const isLocked = !hasCheckIn && Number.isFinite(startMs) && Date.now() - startMs > 3 * 60 * 60 * 1000;
                     const isComplete = hasCheckIn && hasCheckOut;
                     const isAbsent = !hasCheckIn && absentRecorded;
-                    // Thiếu 1 trong 2 -> vàng nhấp nháy (đang làm); chỉ xanh khi đủ cả 2
+                    // Vàng khi thiếu; chỉ NHẤP NHÁY khi NV đã vào ca (có check-in, chờ check-out)
                     const isWorking = !isComplete && !isAbsent && !isLocked;
+                    const isDoing = isWorking && hasCheckIn && !hasCheckOut;
                     const cardBg = isAbsent ? '#FEF2F2' : isLocked ? '#F1F5F9' : isComplete ? '#ECFDF5' : isWorking ? '#FFFBEB' : isToday ? 'var(--brand-soft)' : '#FFFFFF';
                     const cardBd = isAbsent ? '1.5px solid #EF4444' : isLocked ? '1.5px solid #64748B' : isComplete ? '1.5px solid #10B981' : isWorking ? '1.5px solid #F59E0B' : isToday ? '1.5px solid var(--brand)' : '1px solid var(--border)';
                     const titleColor = isAbsent ? '#DC2626' : isLocked ? '#475569' : isComplete ? '#065F46' : isWorking ? '#92400E' : isToday ? 'var(--brand)' : 'var(--text)';
@@ -1686,7 +1687,7 @@ export function App() {
                           display: 'flex',
                           justifyContent: 'space-between',
                           alignItems: 'center',
-                          animation: isWorking ? 'fx-blink 1.2s infinite' : undefined,
+                          animation: isDoing ? 'fx-blink 1.2s infinite' : undefined,
                         }}
                       >
                         <div>
@@ -1695,7 +1696,7 @@ export function App() {
                             {isComplete && ' • ✓ HOÀN THÀNH'}
                             {isAbsent && ' • 🔴 VẮNG'}
                             {isLocked && !isAbsent && ' • 🔒 KHÓA'}
-                            {isWorking && ' • ĐANG LÀM'}
+                            {isDoing && ' • ĐANG LÀM'}
                           </div>
                           <div style={{ fontSize: '11px', color: isAbsent ? '#991B1B' : 'var(--text-muted)' }}>
                             Chi nhánh: {shift.branch_id}

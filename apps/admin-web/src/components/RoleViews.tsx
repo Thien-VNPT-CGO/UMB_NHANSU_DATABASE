@@ -3839,7 +3839,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 ? '#FEF3C7'
                                 : '#FAFAFA';
                               const stBd = sd.status === 'ABSENT' ? '1.5px solid #EF4444' : sd.status === 'LOCKED' ? '1.5px solid #64748B' : '1px solid var(--border)';
-                              const stBlink = sd.status === 'CHECKED_IN' || sd.status === 'PENDING';
+                              const stBlink = sd.status === 'CHECKED_IN';
                               return (
                                 <div key={si} style={{ padding: '6px', borderRadius: '8px', backgroundColor: stBg, border: stBd, animation: stBlink ? 'fx-blink 1.2s infinite' : undefined }}>
                                   <div style={{ fontWeight: 700, fontSize: '11px' }}>{sd.shift}</div>
@@ -3887,7 +3887,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             flexDirection: 'column',
                             gap: '3px',
                             boxShadow: isCheckedIn ? '0 2px 6px rgba(16, 185, 129, 0.15)' : undefined,
-                            animation: (isCheckedIn || isPending) ? 'fx-blink 1.2s infinite' : undefined,
+                            // Chỉ nhấp nháy ca NV đã vào (check-in rồi, chờ check-out)
+                            animation: isCheckedIn ? 'fx-blink 1.2s infinite' : undefined,
                           }}>
                             {/* Shift Name */}
                             <div style={{ fontWeight: 700, fontSize: '11px', color: isOff ? '#9CA3AF' : 'var(--text)' }}>
