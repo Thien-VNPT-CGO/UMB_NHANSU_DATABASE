@@ -71,6 +71,206 @@ interface RoleViewsProps {
   onRefreshData?: () => Promise<void> | void;
 }
 
+/** Chuẩn hóa mã chi nhánh (Sheets có thể ghi CN1..CN4, hệ thống dùng CN130/261/120/111). */
+export function canonicalBranchId(branchId?: string): string {
+  const b = String(branchId || '').trim().toUpperCase();
+  if (b === 'CN1' || b === 'CN130') return 'CN130';
+  if (b === 'CN2' || b === 'CN261') return 'CN261';
+  if (b === 'CN3' || b === 'CN120') return 'CN120';
+  if (b === 'CN4' || b === 'CN111') return 'CN111';
+  return b;
+}
+
+const PUBLISH_BRANCH_OPTIONS = ['CN130', 'CN120', 'CN261', 'CN111'];
+
+/** Thứ 2 (ISO) của tuần lệch `offset` so với tuần hiện tại. */
+export function mondayIsoOfOffset(offset: number): string {
+  const now = new Date();
+  const dayOfWeek = now.getDay();
+  const diff = (dayOfWeek === 0 ? -6 : 1 - dayOfWeek) + offset * 7;
+  const monday = new Date(now);
+  monday.setDate(now.getDate() + diff);
+  const dd = String(monday.getDate()).padStart(2, '0');
+  const mm = String(monday.getMonth() + 1).padStart(2, '0');
+  return `${monday.getFullYear()}-${mm}-${dd}`;
+}
+
+interface PublishScheduleModalProps {
+  weekMon: string;
+  weekSun: string;
+  /** '*' = Admin/HR tự chọn; ngược lại khóa theo phạm vi Store. */
+  lockBranch: string;
+  initialBranch: string;
+  allEmployees: any[];
+  showToast: (msg: string) => void;
+  onRefreshData?: () => Promise<void> | void;
+  onSyncSheets?: () => Promise<void> | void;
+  onClose: () => void;
+}
+
+/**
+ * Modal Phát Hành Lịch dùng chung HR + Store: gán ca cố định cho toàn bộ NV
+ * chính thức trong chi nhánh, xem trước kế hoạch BOT, xác nhận PUBLISH.
+ */
+export const PublishScheduleModal: React.FC<PublishScheduleModalProps> = ({
+  weekMon,
+  weekSun,
+  lockBranch,
+  initialBranch,
+  allEmployees,
+  showToast,
+  onRefreshData,
+  onSyncSheets,
+  onClose,
+}) => {
+  const locked = lockBranch !== '*';
+  const [branch, setBranch] = useState(locked ? canonicalBranchId(lockBranch) : initialBranch);
+  const [preview, setPreview] = useState<any>(null);
+  const [busy, setBusy] = useState(false);
+  const branchEmps = (allEmployees || []).filter((e: any) =>
+    e.employment_status === 'OFFICIAL' && canonicalBranchId(e.default_branch_id) === canonicalBranchId(branch)
+  );
+  const loadPreview = async () => {
+    setBusy(true);
+    try {
+      const plan = await apiRequest('/schedules/auto-plan', {
+        method: 'POST',
+        body: JSON.stringify({ branchId: branch, weekMon }),
+      });
+      setPreview(plan);
+    } catch (e: any) {
+      showToast(e?.message || 'Lỗi khi xem trước kế hoạch BOT');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const saveShift = async (empId: string, shift: string) => {
+    try {
+      await apiRequest(`/employees/${empId}/default-shift`, {
+        method: 'PUT',
+        body: JSON.stringify({ shiftCode: shift }),
+      });
+      showToast(shift ? 'Đã gán ca cố định' : 'Đã xóa ca cố định');
+      if (onRefreshData) await onRefreshData();
+    } catch (e: any) {
+      showToast(e?.message || 'Lỗi khi gán ca');
+    }
+  };
+  const doPublish = async () => {
+    if (!window.confirm(`BOT sẽ tự xếp ca chỗ trống tuần ${weekMon} → ${weekSun} (trừ ngày OFF đã đăng ký), giữ ca xếp tay, rồi PUBLISHED toàn chi nhánh ${branch}?\nTiếp tục?`)) return;
+    setBusy(true);
+    try {
+      const res = await apiRequest(`/schedules/${weekMon}/publish`, {
+        method: 'POST',
+        body: JSON.stringify({ branchId: branch, auto: true }),
+      });
+      const autoCount = res?.auto?.created ?? 0;
+      showToast(`Đã PUBLISH tuần ${weekMon}: BOT xếp thêm ${autoCount} ca, duyệt ${res?.count ?? 0} ca (DRAFT→PUBLISHED).`);
+      onClose();
+      if (onRefreshData) await onRefreshData();
+      if (onSyncSheets) await onSyncSheets();
+    } catch (e: any) {
+      showToast(e?.message || 'Lỗi khi phát hành lịch');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const grouped: Record<string, any[]> = {};
+  (preview?.items || []).forEach((it: any) => {
+    if (!grouped[it.date]) grouped[it.date] = [];
+    grouped[it.date].push(it);
+  });
+  return (
+    <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+      <div style={{ backgroundColor: 'var(--surface)', borderRadius: '12px', maxWidth: '720px', width: '100%', maxHeight: '88vh', overflow: 'auto', padding: '20px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h2 style={{ fontSize: '17px', fontWeight: 800, margin: 0 }}>Phát Hành Lịch Tuần (BOT tự xếp)</h2>
+          <button className="btn-secondary" style={{ padding: '4px 12px' }} onClick={onClose}>Đóng</button>
+        </div>
+        <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px', lineHeight: 1.6 }}>
+          Tuần <strong>{weekMon} → {weekSun}</strong> • BOT trừ ngày OFF đã đăng ký, cùng chi nhánh + cùng ca không trực trùng ngày, giữ ca xếp tay, ưu tiên bù đủ 12 ngày công/tháng.
+        </div>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '12px', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '12px', fontWeight: 700 }}>Chi nhánh:</span>
+          <select
+            value={branch}
+            disabled={locked}
+            title={locked ? 'Tài khoản Store chỉ phát hành cho chi nhánh của mình' : 'Chọn chi nhánh cần phát hành'}
+            onChange={e => { setBranch(e.target.value); setPreview(null); }}
+            style={{ padding: '6px 10px', fontSize: '12px', borderRadius: '6px' }}
+          >
+            {PUBLISH_BRANCH_OPTIONS.map(b => <option key={b} value={b}>{getDisplayBranch(b)}</option>)}
+          </select>
+          <button className="btn-secondary" style={{ fontSize: '12px' }} disabled={busy} onClick={loadPreview}>
+            {busy ? 'Đang tính...' : 'Xem trước kế hoạch BOT'}
+          </button>
+        </div>
+        <div style={{ marginTop: '12px', fontSize: '13px', fontWeight: 800 }}>Ca cố định NV ({branchEmps.length} chính thức):</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '6px', maxHeight: '180px', overflow: 'auto' }}>
+          {branchEmps.length === 0 && <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Chưa có NV chính thức tại chi nhánh này (kiểm tra mã chi nhánh hồ sơ NV).</div>}
+          {branchEmps.map((e: any) => (
+            <div key={e.employee_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', gap: '8px' }}>
+              <span><strong>{e.full_name}</strong> <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>{e.employee_code}</span></span>
+              <select
+                value={e.default_shift_code || ''}
+                onChange={ev => saveShift(e.employee_id, ev.target.value)}
+                style={{ padding: '4px 8px', fontSize: '12px', borderRadius: '6px' }}
+              >
+                <option value="">— Chưa gán —</option>
+                <option value="CA_1">Ca 1 (07–12)</option>
+                <option value="CA_2">Ca 2 (12–18)</option>
+                <option value="CA_3">Ca 3 (18–23)</option>
+              </select>
+            </div>
+          ))}
+        </div>
+        {preview && (
+          <div style={{ marginTop: '12px' }}>
+            <div style={{ fontSize: '13px', fontWeight: 800 }}>BOT sẽ xếp thêm {preview.items?.length || 0} ca:</div>
+            {Object.keys(grouped).sort().map(d => (
+              <div key={d} style={{ fontSize: '12px', marginTop: '4px' }}>
+                <strong>{d}</strong>: {grouped[d].map((it: any) => `${it.employee_name} (${it.shift_code})`).join(' • ')}
+              </div>
+            ))}
+            {(preview.warnings || []).length > 0 && (
+              <div style={{ marginTop: '8px', backgroundColor: '#FFFBEB', border: '1px solid #F59E0B', borderRadius: '6px', padding: '8px 10px', fontSize: '12px' }}>
+                {(preview.warnings || []).map((w: any, i: number) => <div key={i}>⚠️ {w.message}</div>)}
+              </div>
+            )}
+            {(preview.stats || []).length > 0 && (
+              <table style={{ width: '100%', fontSize: '12px', marginTop: '8px', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ textAlign: 'left', color: 'var(--text-muted)' }}>
+                    <th>NV</th><th>Ca</th><th>Tuần này</th><th>Tháng</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.stats.map((s: any) => (
+                    <tr key={s.employee_id} style={{ borderTop: '1px solid var(--border)' }}>
+                      <td>{s.employee_name}</td>
+                      <td>{s.shift_code}</td>
+                      <td>{s.weekly_days} ca</td>
+                      <td>{s.monthly_days} ngày ({s.monthly_key}{s.monthly_key_2 ? `; ${s.monthly_days_2} ngày (${s.monthly_key_2})` : ''})</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+        <button
+          className="btn-primary"
+          disabled={busy}
+          onClick={doPublish}
+          style={{ width: '100%', marginTop: '14px', padding: '10px', fontWeight: 800 }}
+        >
+          {busy ? 'Đang xử lý...' : `Xác nhận PUBLISH tuần ${weekMon} (BOT xếp + duyệt)`}
+        </button>
+      </div>
+    </div>
+  );
+};
+
 export const RoleViews: React.FC<RoleViewsProps> = ({
   activeTab,
   currentUser,
@@ -102,9 +302,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [scheduleWeekOffset, setScheduleWeekOffset] = useState(0);
   // Modal Phát Hành Lịch: BOT tự xếp chỗ trống theo OFF đã đăng ký rồi PUBLISHED.
   const [publishOpen, setPublishOpen] = useState(false);
-  const [publishBranch, setPublishBranch] = useState('CN130');
-  const [publishPreview, setPublishPreview] = useState<any>(null);
-  const [publishBusy, setPublishBusy] = useState(false);
 
   // Filters & State for HR Candidates (17 Cột Google Forms)
   const [candidateSearch, setCandidateSearch] = useState('');
@@ -3129,11 +3326,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <button
               className="btn-primary"
               style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', fontSize: '13px' }}
-              onClick={() => {
-                setPublishBranch(branchScope !== '*' ? branchScope : (scheduleBranchFilter !== 'ALL' ? scheduleBranchFilter : 'CN130'));
-                setPublishPreview(null);
-                setPublishOpen(true);
-              }}
+              onClick={() => setPublishOpen(true)}
             >
               <CheckCircle size={14} /> Phát Hành Lịch (PUBLISH)
             </button>
@@ -3665,157 +3858,19 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           );
         })()}
 
-        {/* Modal Phát Hành Lịch: BOT tự xếp chỗ trống theo OFF đã đăng ký rồi PUBLISHED */}
-        {publishOpen && (() => {
-          const weekMon = weekDays[0]?.isoDate || new Date().toISOString().split('T')[0];
-          const weekSun = weekDays[6]?.isoDate || weekMon;
-          const branchEmps = (allEmployees || []).filter((e: any) =>
-            e.employment_status === 'OFFICIAL' && (publishBranch === '*' || e.default_branch_id === publishBranch)
-          );
-          const loadPreview = async () => {
-            setPublishBusy(true);
-            try {
-              const plan = await apiRequest('/schedules/auto-plan', {
-                method: 'POST',
-                body: JSON.stringify({ branchId: publishBranch, weekMon }),
-              });
-              setPublishPreview(plan);
-            } catch (e: any) {
-              showToast(e?.message || 'Lỗi khi xem trước kế hoạch BOT');
-            } finally {
-              setPublishBusy(false);
-            }
-          };
-          const saveShift = async (empId: string, shift: string) => {
-            try {
-              await apiRequest(`/employees/${empId}/default-shift`, {
-                method: 'PUT',
-                body: JSON.stringify({ shiftCode: shift }),
-              });
-              showToast(shift ? 'Đã gán ca cố định' : 'Đã xóa ca cố định');
-              if (onRefreshData) await onRefreshData();
-            } catch (e: any) {
-              showToast(e?.message || 'Lỗi khi gán ca');
-            }
-          };
-          const doPublish = async () => {
-            if (!window.confirm(`BOT sẽ tự xếp ca chỗ trống tuần ${weekMon} → ${weekSun} (trừ ngày OFF đã đăng ký), giữ ca xếp tay, rồi PUBLISHED toàn chi nhánh ${publishBranch}?\nTiếp tục?`)) return;
-            setPublishBusy(true);
-            try {
-              const res = await apiRequest(`/schedules/${weekMon}/publish`, {
-                method: 'POST',
-                body: JSON.stringify({ branchId: publishBranch, auto: true }),
-              });
-              const autoCount = res?.auto?.created ?? 0;
-              showToast(`Đã PUBLISH tuần ${weekMon}: BOT xếp thêm ${autoCount} ca, duyệt ${res?.count ?? 0} ca (DRAFT→PUBLISHED).`);
-              setPublishOpen(false);
-              setPublishPreview(null);
-              if (onRefreshData) await onRefreshData();
-              if (onSyncSheets) await onSyncSheets();
-            } catch (e: any) {
-              showToast(e?.message || 'Lỗi khi phát hành lịch');
-            } finally {
-              setPublishBusy(false);
-            }
-          };
-          const grouped: Record<string, any[]> = {};
-          (publishPreview?.items || []).forEach((it: any) => {
-            if (!grouped[it.date]) grouped[it.date] = [];
-            grouped[it.date].push(it);
-          });
-          return (
-            <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-              <div style={{ backgroundColor: 'var(--surface)', borderRadius: '12px', maxWidth: '720px', width: '100%', maxHeight: '88vh', overflow: 'auto', padding: '20px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h2 style={{ fontSize: '17px', fontWeight: 800, margin: 0 }}>Phát Hành Lịch Tuần (BOT tự xếp)</h2>
-                  <button className="btn-secondary" style={{ padding: '4px 12px' }} onClick={() => { setPublishOpen(false); setPublishPreview(null); }}>Đóng</button>
-                </div>
-                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px', lineHeight: 1.6 }}>
-                  Tuần <strong>{weekMon} → {weekSun}</strong> • BOT trừ ngày OFF đã đăng ký, cùng chi nhánh + cùng ca không trực trùng ngày, giữ ca xếp tay, ưu tiên bù đủ 12 ngày công/tháng.
-                </div>
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '12px', flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: '12px', fontWeight: 700 }}>Chi nhánh:</span>
-                  <select
-                    value={publishBranch}
-                    disabled={branchScope !== '*'}
-                    title={branchScope !== '*' ? `Tài khoản Store chỉ phát hành cho ${branchName}` : 'Chọn chi nhánh cần phát hành'}
-                    onChange={e => { setPublishBranch(e.target.value); setPublishPreview(null); }}
-                    style={{ padding: '6px 10px', fontSize: '12px', borderRadius: '6px' }}
-                  >
-                    <option value="CN130">Chi Nhánh 130</option>
-                    <option value="CN120">Chi Nhánh 120</option>
-                    <option value="CN261">Chi Nhánh 261</option>
-                    <option value="CN111">Chi Nhánh 111</option>
-                  </select>
-                  <button className="btn-secondary" style={{ fontSize: '12px' }} disabled={publishBusy} onClick={loadPreview}>
-                    {publishBusy ? 'Đang tính...' : 'Xem trước kế hoạch BOT'}
-                  </button>
-                </div>
-                <div style={{ marginTop: '12px', fontSize: '13px', fontWeight: 800 }}>Ca cố định NV ({branchEmps.length} chính thức):</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '6px', maxHeight: '180px', overflow: 'auto' }}>
-                  {branchEmps.length === 0 && <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Chưa có NV chính thức tại chi nhánh này.</div>}
-                  {branchEmps.map((e: any) => (
-                    <div key={e.employee_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', gap: '8px' }}>
-                      <span><strong>{e.full_name}</strong> <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>{e.employee_code}</span></span>
-                      <select
-                        value={e.default_shift_code || ''}
-                        onChange={ev => saveShift(e.employee_id, ev.target.value)}
-                        style={{ padding: '4px 8px', fontSize: '12px', borderRadius: '6px' }}
-                      >
-                        <option value="">— Chưa gán —</option>
-                        <option value="CA_1">Ca 1 (07–12)</option>
-                        <option value="CA_2">Ca 2 (12–18)</option>
-                        <option value="CA_3">Ca 3 (18–23)</option>
-                      </select>
-                    </div>
-                  ))}
-                </div>
-                {publishPreview && (
-                  <div style={{ marginTop: '12px' }}>
-                    <div style={{ fontSize: '13px', fontWeight: 800 }}>BOT sẽ xếp thêm {publishPreview.items?.length || 0} ca:</div>
-                    {Object.keys(grouped).sort().map(d => (
-                      <div key={d} style={{ fontSize: '12px', marginTop: '4px' }}>
-                        <strong>{d}</strong>: {grouped[d].map((it: any) => `${it.employee_name} (${it.shift_code})`).join(' • ')}
-                      </div>
-                    ))}
-                    {(publishPreview.warnings || []).length > 0 && (
-                      <div style={{ marginTop: '8px', backgroundColor: '#FFFBEB', border: '1px solid #F59E0B', borderRadius: '6px', padding: '8px 10px', fontSize: '12px' }}>
-                        {(publishPreview.warnings || []).map((w: any, i: number) => <div key={i}>⚠️ {w.message}</div>)}
-                      </div>
-                    )}
-                    {(publishPreview.stats || []).length > 0 && (
-                      <table style={{ width: '100%', fontSize: '12px', marginTop: '8px', borderCollapse: 'collapse' }}>
-                        <thead>
-                          <tr style={{ textAlign: 'left', color: 'var(--text-muted)' }}>
-                            <th>NV</th><th>Ca</th><th>Tuần này</th><th>Tháng</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {publishPreview.stats.map((s: any) => (
-                            <tr key={s.employee_id} style={{ borderTop: '1px solid var(--border)' }}>
-                              <td>{s.employee_name}</td>
-                              <td>{s.shift_code}</td>
-                              <td>{s.weekly_days} ca</td>
-                              <td>{s.monthly_days} ngày ({s.monthly_key}{s.monthly_key_2 ? `; ${s.monthly_days_2} ngày (${s.monthly_key_2})` : ''})</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
-                  </div>
-                )}
-                <button
-                  className="btn-primary"
-                  disabled={publishBusy}
-                  onClick={doPublish}
-                  style={{ width: '100%', marginTop: '14px', padding: '10px', fontWeight: 800 }}
-                >
-                  {publishBusy ? 'Đang xử lý...' : `Xác nhận PUBLISH tuần ${weekMon} (BOT xếp + duyệt)`}
-                </button>
-              </div>
-            </div>
-          );
-        })()}
+        {publishOpen && (
+          <PublishScheduleModal
+            weekMon={weekDays[0]?.isoDate || new Date().toISOString().split('T')[0]}
+            weekSun={weekDays[6]?.isoDate || weekDays[0]?.isoDate || new Date().toISOString().split('T')[0]}
+            lockBranch={branchScope}
+            initialBranch={scheduleBranchFilter !== 'ALL' ? scheduleBranchFilter : 'CN130'}
+            allEmployees={allEmployees}
+            showToast={showToast}
+            onRefreshData={onRefreshData}
+            onSyncSheets={onSyncSheets}
+            onClose={() => setPublishOpen(false)}
+          />
+        )}
       </div>
     );
   }
@@ -4735,15 +4790,36 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }
 
   if (activeTab === 'store-schedule') {
-    const branchShifts = shifts.filter(s => branchScope === '*' || s.branch_id === branchScope);
+    const branchShifts = shifts.filter(s => branchScope === '*' || canonicalBranchId(s.branch_id) === canonicalBranchId(branchScope));
+    const storeWeekMon = mondayIsoOfOffset(scheduleWeekOffset);
+    const storeWeekSun = (() => {
+      const d = new Date(`${storeWeekMon}T00:00:00`);
+      d.setDate(d.getDate() + 6);
+      const dd = String(d.getDate()).padStart(2, '0');
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      return `${d.getFullYear()}-${mm}-${dd}`;
+    })();
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <h1 style={{ fontSize: '20px', fontWeight: 800 }}>3. Lịch Làm Việc Tuần Chi Nhánh {branchName}</h1>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+          <h1 style={{ fontSize: '20px', fontWeight: 800, margin: 0 }}>3. Lịch Làm Việc Tuần Chi Nhánh {branchName}</h1>
+          <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', fontSize: '13px' }} onClick={() => setPublishOpen(true)}>
+            <CheckCircle size={14} /> Phát Hành Lịch (PUBLISH)
+          </button>
+        </div>
+        <div style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 'var(--radius-md)', padding: '10px 14px', fontSize: '12px', color: '#1E40AF' }}>
+          Đang xem tuần <strong>{storeWeekMon} → {storeWeekSun}</strong>. Bấm PUBLISH để gán ca cố định cho NV, xem trước kế hoạch BOT (trừ ngày OFF đã đăng ký) rồi phát hành.
+        </div>
+        <div style={{ display: 'flex', gap: '6px' }}>
+          <button className="btn-secondary" style={{ fontSize: '12px', padding: '6px 10px' }} onClick={() => setScheduleWeekOffset(o => o - 1)}>◀ Tuần trước</button>
+          <button className="btn-secondary" style={{ fontSize: '12px', padding: '6px 10px', fontWeight: scheduleWeekOffset === 0 ? 800 : 400 }} onClick={() => setScheduleWeekOffset(0)}>Tuần này</button>
+          <button className="btn-primary" style={{ fontSize: '12px', padding: '6px 10px' }} onClick={() => setScheduleWeekOffset(o => o + 1)}>Tuần sau ▶</button>
+        </div>
         <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
           <div style={{ fontWeight: 700, marginBottom: '8px' }}>Lịch phân ca tuần:</div>
           {branchShifts.length === 0 ? (
             <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-              Chưa có ca làm việc nào được phân công tại chi nhánh {branchName}. Quản lý có thể thêm ca trên Google Sheets (Tab LICH_LAM_VIEC) hoặc phân ca trực tiếp.
+              Chưa có ca làm việc nào được phân công tại chi nhánh {branchName}. Bấm Phát Hành Lịch để BOT tự xếp theo OFF đã đăng ký.
             </div>
           ) : (
             <div style={{ fontSize: '13px', color: 'var(--text)' }}>
@@ -4751,6 +4827,19 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </div>
           )}
         </div>
+        {publishOpen && (
+          <PublishScheduleModal
+            weekMon={storeWeekMon}
+            weekSun={storeWeekSun}
+            lockBranch={branchScope}
+            initialBranch={canonicalBranchId(branchScope)}
+            allEmployees={allEmployees}
+            showToast={showToast}
+            onRefreshData={onRefreshData}
+            onSyncSheets={onSyncSheets}
+            onClose={() => setPublishOpen(false)}
+          />
+        )}
       </div>
     );
   }

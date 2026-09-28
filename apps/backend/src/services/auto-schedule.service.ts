@@ -53,6 +53,25 @@ export interface AutoPlanResult {
 
 const ACTIVE_SHIFTS: ShiftCode[] = ['CA_1', 'CA_2', 'CA_3'];
 
+/**
+ * Chuẩn hóa mã chi nhánh (Sheets có thể ghi CN1/CN2/CN3/CN4 trong khi
+ * hệ thống dùng CN130/CN261/CN120/CN111) để BOT không bỏ sót nhân viên.
+ */
+export function canonicalBranch(branchId?: string): string {
+  const b = String(branchId || '').trim().toUpperCase();
+  if (b === 'CN1' || b === 'CN130') return 'CN130';
+  if (b === 'CN2' || b === 'CN261') return 'CN261';
+  if (b === 'CN3' || b === 'CN120') return 'CN120';
+  if (b === 'CN4' || b === 'CN111') return 'CN111';
+  return b;
+}
+
+const sameBranch = (a?: string, b?: string): boolean => {
+  if (!a || !b) return false;
+  if (a === '*' || b === '*') return true;
+  return canonicalBranch(a) === canonicalBranch(b);
+};
+
 function addDays(dateStr: string, n: number): string {
   const d = new Date(`${dateStr}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + n);
@@ -86,7 +105,7 @@ export async function buildAutoPlan(
   const officials = (Array.isArray(employees) ? employees : []).filter(
     (e: any) =>
       e.employment_status === 'OFFICIAL' &&
-      (branchId === '*' || e.default_branch_id === branchId)
+      (branchId === '*' || sameBranch(e.default_branch_id, branchId))
   );
 
   const noShift = officials.filter((e: any) => !e.default_shift_code || !ACTIVE_SHIFTS.includes(e.default_shift_code));
@@ -99,7 +118,7 @@ export async function buildAutoPlan(
     offByEmp.get(empId)!.add(date);
   };
   for (const l of leaves || []) {
-    if (branchId !== '*' && (l as any).branch_id !== branchId) continue;
+    if (branchId !== '*' && !sameBranch((l as any).branch_id, branchId)) continue;
     const reqDate = (l as any).requested_date;
     if (!reqDate || reqDate < weekMon || reqDate > weekSun) continue;
     if ((l as any).leave_type === 'HANG_TUAN' && isValidOff((l as any).status)) {
@@ -110,7 +129,8 @@ export async function buildAutoPlan(
   }
 
   // Ca đã có (tay hoặc BOT lần trước): BOT không đụng vào.
-  const existing = (await repo.getShiftsForWeek(branchId, weekMon).catch(() => [])) as any[];
+  const existingRaw = (await repo.getShiftsForWeek(branchId, weekMon).catch(() => [])) as any[];
+  const existing = (existingRaw || []).filter((s: any) => branchId === '*' || sameBranch((s as any).branch_id, branchId));
   const occupiedShiftDay = new Set<string>(); // `${shift}|${date}`
   const empDay = new Set<string>(); // `${emp}|${date}`
   const weeklyCount = new Map<string, number>();
@@ -142,9 +162,10 @@ export async function buildAutoPlan(
   }
   for (const mrKey of monthFirstByKey.keys()) {
     const mr = monthRangeOf(`${mrKey}-15`);
-    const monthShifts = (await repo.getShiftsForWeek(branchId, mr.first).catch(() => [])) as any[];
-    for (const s of monthShifts || []) {
+    const monthShiftsRaw = (await repo.getShiftsForWeek(branchId, mr.first).catch(() => [])) as any[];
+    for (const s of monthShiftsRaw || []) {
       if ((s as any).status === 'CANCELLED') continue;
+      if (branchId !== '*' && !sameBranch((s as any).branch_id, branchId)) continue;
       if ((s as any).date < mr.first || (s as any).date > mr.last) continue;
       bumpMonth((s as any).employee_id, (s as any).date);
     }
@@ -165,7 +186,7 @@ export async function buildAutoPlan(
   for (const date of dates) {
     for (const shift of ACTIVE_SHIFTS) {
       if (occupiedShiftDay.has(`${shift}|${date}`)) continue; // đã có ca tay — giữ nguyên
-      const pool = schedulable.filter((e: any) => e.default_branch_id === (branchId === '*' ? e.default_branch_id : branchId));
+      const pool = schedulable.filter((e: any) => branchId === '*' || sameBranch(e.default_branch_id, branchId));
       const candidates = pool.filter(
         (e: any) =>
           e.default_shift_code === shift &&
@@ -191,7 +212,7 @@ export async function buildAutoPlan(
       items.push({
         employee_id: pick.employee_id,
         employee_name: pick.full_name || pick.employee_id,
-        branch_id: pick.default_branch_id,
+        branch_id: canonicalBranch(pick.default_branch_id) || branchId,
         shift_code: shift,
         date,
       });
@@ -205,7 +226,7 @@ export async function buildAutoPlan(
   const statMonthKey = weekMon.slice(0, 7);
   const statMonthKey2 = weekSun.slice(0, 7) !== statMonthKey ? weekSun.slice(0, 7) : undefined;
   const stats: AutoPlanEmpStat[] = schedulable
-    .filter((e: any) => branchId === '*' || e.default_branch_id === branchId)
+    .filter((e: any) => branchId === '*' || sameBranch(e.default_branch_id, branchId))
     .map((e: any) => ({
       employee_id: e.employee_id,
       employee_name: e.full_name || e.employee_id,
