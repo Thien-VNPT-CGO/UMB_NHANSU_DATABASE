@@ -107,6 +107,30 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   },
 ];
 
+/**
+ * Merge pull Sheets với bộ nhớ: bản version lớn hơn thắng (giữ trạng thái
+ * duyệt/nộp vừa thao tác chưa kịp push), bản chỉ có trong bộ nhớ được giữ lại.
+ * Chống cả họ lỗi "bấm duyệt báo lưu nhưng reload lại như cũ".
+ */
+function mergeById<T extends Record<string, any>>(memory: T[], sheets: T[], idKey: string, versionKeys: string[]): T[] {
+  const mem = new Map<string, T>((memory || []).map(m => [String(m[idKey]), m]));
+  const out: T[] = [];
+  for (const s of sheets || []) {
+    const key = String((s as any)[idKey]);
+    const m = mem.get(key);
+    if (m) {
+      const mv = Math.max(...versionKeys.map(k => Number((m as any)[k] || 0)));
+      const sv = Math.max(...versionKeys.map(k => Number((s as any)[k] || 0)));
+      out.push(mv > sv ? m : s);
+    } else {
+      out.push(s);
+    }
+    mem.delete(key);
+  }
+  for (const m of mem.values()) out.push(m);
+  return out;
+}
+
 export class GoogleSheetsSyncService {
   private sheetsClient: sheets_v4.Sheets | null = null;
   private driveClient: drive_v3.Drive | null = null;
@@ -705,8 +729,10 @@ export class GoogleSheetsSyncService {
 
       // 5. Đọc DON_NGHI_PHEP
       const leaveRows = batch['DON_NGHI_PHEP'];
-      if (leaveRows.length > 0) {
-        fallback.leaveRequests = leaveRows.map(r => {
+      if (keepIfEmpty('DON_NGHI_PHEP', leaveRows, fallback.leaveRequests.length)) {
+        counts.leaves = fallback.leaveRequests.length;
+      } else if (leaveRows.length > 0) {
+        const mappedLeaves = leaveRows.map(r => {
           const leaveType = (r[3] as any) || 'DOT_XUAT';
           let status = (r[7] as any) || 'PENDING';
           // Đồng bộ dữ liệu cũ: lịch OFF tuần (HANG_TUAN) tự động ghi nhận —
@@ -727,7 +753,8 @@ export class GoogleSheetsSyncService {
             version: 1,
           };
         });
-      } else {
+        fallback.leaveRequests = mergeById(fallback.leaveRequests, mappedLeaves, 'request_id', ['version']) as any;
+      } else if (fallback.leaveRequests.length === 0) {
         fallback.leaveRequests = [];
       }
       counts.leaves = fallback.leaveRequests.length;
@@ -737,10 +764,10 @@ export class GoogleSheetsSyncService {
       if (keepIfEmpty('BAI_THI', paperRows, (fallback as any).testPapers?.length || 0)) {
         counts.testPapers = ((fallback as any).testPapers || []).length;
       } else if (paperRows.length > 0) {
-        let questions: any[] = [];
-        (fallback as any).testPapers = paperRows
+        const mappedPapers = paperRows
           .filter(r => r && r[0])
           .map(r => {
+            let questions: any[] = [];
             try {
               const parsed = JSON.parse(r[3] || '[]');
               questions = Array.isArray(parsed) ? parsed : [];
@@ -759,6 +786,7 @@ export class GoogleSheetsSyncService {
               version: Number(r[9]) || 1,
             };
           });
+        (fallback as any).testPapers = mergeById((fallback as any).testPapers || [], mappedPapers, 'test_id', ['version']);
         counts.testPapers = (fallback as any).testPapers.length;
       } else if (((fallback as any).testPapers || []).length === 0) {
         (fallback as any).testPapers = [];
@@ -769,7 +797,7 @@ export class GoogleSheetsSyncService {
       if (keepIfEmpty('BAI_LAM', subRows, (fallback as any).testSubmissions?.length || 0)) {
         counts.testSubmissions = ((fallback as any).testSubmissions || []).length;
       } else if (subRows.length > 0) {
-        (fallback as any).testSubmissions = subRows
+        const mappedSubs = subRows
           .filter(r => r && r[0])
           .map(r => {
             let answers: any = undefined;
@@ -790,6 +818,7 @@ export class GoogleSheetsSyncService {
               version: Number(r[9]) || 1,
             };
           });
+        (fallback as any).testSubmissions = mergeById((fallback as any).testSubmissions || [], mappedSubs, 'submission_id', ['version']);
         counts.testSubmissions = (fallback as any).testSubmissions.length;
       } else if (((fallback as any).testSubmissions || []).length === 0) {
         (fallback as any).testSubmissions = [];
@@ -797,8 +826,10 @@ export class GoogleSheetsSyncService {
 
       // 6. Đọc SU_KIEN_DIEM_DANH
       const attRows = batch['SU_KIEN_DIEM_DANH'];
-      if (attRows.length > 0) {
-        fallback.attendanceEvents = attRows.map(r => ({
+      if (keepIfEmpty('SU_KIEN_DIEM_DANH', attRows, fallback.attendanceEvents.length)) {
+        counts.attendanceEvents = fallback.attendanceEvents.length;
+      } else if (attRows.length > 0) {
+        const mappedEvents = attRows.map(r => ({
           event_id: r[0] || `ATT_${uuidv4().slice(0, 8)}`,
           request_id: r[10] || uuidv4(),
           assignment_id: r[1] || '',
@@ -814,7 +845,8 @@ export class GoogleSheetsSyncService {
           drive_object_id: r[9] || undefined,
           created_at: r[4] || new Date().toISOString(),
         }));
-      } else {
+        fallback.attendanceEvents = mergeById(fallback.attendanceEvents, mappedEvents, 'event_id', ['created_at']);
+      } else if (fallback.attendanceEvents.length === 0) {
         fallback.attendanceEvents = [];
       }
       counts.attendanceEvents = fallback.attendanceEvents.length;
@@ -933,10 +965,12 @@ export class GoogleSheetsSyncService {
         counts.adminAccounts = fallback.adminAccounts.length;
       }
 
-      // 8. Đọc DON_DOI_CA (đơn đổi ca)
+      // 8. Đọc DON_DOI_CA (đơn đổi ca) — merge giữ trạng thái B vừa xác nhận chưa kịp push
       const swapRows = batch['DON_DOI_CA'];
-      if (swapRows.length > 0) {
-        fallback.swapRequests = swapRows.map(r => ({
+      if (keepIfEmpty('DON_DOI_CA', swapRows, fallback.swapRequests.length)) {
+        counts.swapRequests = fallback.swapRequests.length;
+      } else if (swapRows.length > 0) {
+        const mappedSwaps = swapRows.map(r => ({
           swap_id: r[0] || `SWP_${uuidv4().slice(0, 8)}`,
           requester_id: r[1] || '',
           requester_assignment_id: r[2] || '',
@@ -948,15 +982,18 @@ export class GoogleSheetsSyncService {
           created_at: r[8] || new Date().toISOString(),
           version: 1,
         }));
-      } else {
+        fallback.swapRequests = mergeById(fallback.swapRequests, mappedSwaps, 'swap_id', ['version']) as any;
+      } else if (fallback.swapRequests.length === 0) {
         fallback.swapRequests = [];
       }
       counts.swapRequests = fallback.swapRequests.length;
 
-      // 9. Đọc DIEU_CHINH_CONG (điều chỉnh công)
+      // 9. Đọc DIEU_CHINH_CONG (điều chỉnh công) — merge giữ trạng thái HR vừa duyệt
       const adjRows = batch['DIEU_CHINH_CONG'];
-      if (adjRows.length > 0) {
-        fallback.attendanceAdjustments = adjRows.map(r => ({
+      if (keepIfEmpty('DIEU_CHINH_CONG', adjRows, fallback.attendanceAdjustments.length)) {
+        counts.attendanceAdjustments = fallback.attendanceAdjustments.length;
+      } else if (adjRows.length > 0) {
+        const mappedAdj = adjRows.map(r => ({
           adjustment_id: r[0] || `ADJ_${uuidv4().slice(0, 8)}`,
           assignment_id: r[1] || '',
           employee_id: r[2] || '',
@@ -971,7 +1008,8 @@ export class GoogleSheetsSyncService {
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         }));
-      } else {
+        fallback.attendanceAdjustments = mergeById(fallback.attendanceAdjustments, mappedAdj, 'adjustment_id', ['version']) as any;
+      } else if (fallback.attendanceAdjustments.length === 0) {
         fallback.attendanceAdjustments = [];
       }
       counts.attendanceAdjustments = fallback.attendanceAdjustments.length;
