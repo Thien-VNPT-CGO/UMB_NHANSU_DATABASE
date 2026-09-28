@@ -39,8 +39,28 @@ export class PayrollService {
           const empShifts = await this.repo.getShiftsForEmployee(emp.employee_id, fromDate, toDate);
           const publishedShifts = empShifts.filter(s => s.status === 'PUBLISHED');
 
+          // Ca vắng không lương: có bản ghi ABSENT mà không có CHECK_IN -> trừ khỏi công.
+          const eventsByDate = new Map<string, any[]>();
+          const eventsOf = async (date: string) => {
+            if (!eventsByDate.has(date)) {
+              eventsByDate.set(date, await this.repo.getAttendanceEvents(emp.employee_id, date).catch(() => []));
+            }
+            return eventsByDate.get(date)!;
+          };
+          let absentShifts = 0;
           let empHours = 0;
           for (const s of publishedShifts) {
+            const dayEvents = await eventsOf(s.date);
+            const hasIn = dayEvents.some(
+              (e: any) => e.type === 'CHECK_IN' && (!e.assignment_id || e.assignment_id === s.assignment_id)
+            );
+            const hasAbsent = dayEvents.some(
+              (e: any) => e.type === 'ABSENT' && (!e.assignment_id || e.assignment_id === s.assignment_id)
+            );
+            if (!hasIn && hasAbsent) {
+              absentShifts++;
+              continue;
+            }
             const template = SHIFT_TEMPLATES[s.shift_code];
             empHours += template ? template.duration_hours : 5;
           }
@@ -78,6 +98,7 @@ export class PayrollService {
             full_name: emp.full_name,
             period,
             total_shifts: publishedShifts.length,
+            absent_shifts: absentShifts,
             standard_hours: empHours,
             rate_snapshot: rate,
             standard_pay: standardPay,

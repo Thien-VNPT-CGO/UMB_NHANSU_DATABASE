@@ -1661,35 +1661,62 @@ export function App() {
                   myShifts.filter((s: any, i: number, arr: any[]) => !s.assignment_id || arr.findIndex((x: any) => x.assignment_id === s.assignment_id) === i).map((shift, idx) => {
                     const todayStr = new Date().toISOString().split('T')[0];
                     const isToday = shift.date === todayStr;
-                    const isPast = shift.date < todayStr;
-                    const hasCheckIn = (myAttendanceHistory || []).some((e: any) => e.type === 'CHECK_IN' && (e.assignment_id === shift.assignment_id || (e.client_time && e.client_time.startsWith(shift.date))));
-                    const absentRecorded = (myAttendanceHistory || []).some((e: any) => e.type === 'ABSENT' && (e.assignment_id === shift.assignment_id || (e.client_time && e.client_time.startsWith(shift.date))));
-                    // Ngày đã qua mà không check-in: hệ thống tự ghi vắng (đỏ), đồng bộ Sheets làm chứng cứ
-                    const isAbsent = !hasCheckIn && (absentRecorded || isPast);
+                    const evts = (myAttendanceHistory || []).filter((e: any) => e.assignment_id === shift.assignment_id);
+                    const hasCheckIn = evts.some((e: any) => e.type === 'CHECK_IN');
+                    const hasCheckOut = evts.some((e: any) => e.type === 'CHECK_OUT');
+                    const absentRecorded = evts.some((e: any) => e.type === 'ABSENT');
+                    const startMs = shift.start_at ? new Date(shift.start_at).getTime() : NaN;
+                    // Quá 3h chưa check-in -> khóa, nghỉ không lương
+                    const isLocked = !hasCheckIn && Number.isFinite(startMs) && Date.now() - startMs > 3 * 60 * 60 * 1000;
+                    const isComplete = hasCheckIn && hasCheckOut;
+                    const isAbsent = !hasCheckIn && absentRecorded;
+                    // Thiếu 1 trong 2 -> vàng nhấp nháy (đang làm); chỉ xanh khi đủ cả 2
+                    const isWorking = !isComplete && !isAbsent && !isLocked;
+                    const cardBg = isAbsent ? '#FEF2F2' : isLocked ? '#F1F5F9' : isComplete ? '#ECFDF5' : isWorking ? '#FFFBEB' : isToday ? 'var(--brand-soft)' : '#FFFFFF';
+                    const cardBd = isAbsent ? '1.5px solid #EF4444' : isLocked ? '1.5px solid #64748B' : isComplete ? '1.5px solid #10B981' : isWorking ? '1.5px solid #F59E0B' : isToday ? '1.5px solid var(--brand)' : '1px solid var(--border)';
+                    const titleColor = isAbsent ? '#DC2626' : isLocked ? '#475569' : isComplete ? '#065F46' : isWorking ? '#92400E' : isToday ? 'var(--brand)' : 'var(--text)';
                     return (
                       <div
                         key={idx}
                         style={{
                           padding: '10px 12px',
                           borderRadius: 'var(--radius-sm)',
-                          backgroundColor: isAbsent ? '#FEF2F2' : isToday ? 'var(--brand-soft)' : '#FFFFFF',
-                          border: isAbsent ? '1.5px solid #EF4444' : isToday ? '1.5px solid var(--brand)' : '1px solid var(--border)',
+                          backgroundColor: cardBg,
+                          border: cardBd,
                           display: 'flex',
                           justifyContent: 'space-between',
                           alignItems: 'center',
+                          animation: isWorking ? 'fx-blink 1.2s infinite' : undefined,
                         }}
                       >
                         <div>
-                          <div style={{ fontWeight: 700, fontSize: '13px', color: isAbsent ? '#DC2626' : isToday ? 'var(--brand)' : 'var(--text)' }}>
-                            {shift.date} {isToday && '• HÔM NAY'} {isAbsent && '• 🔴 VẮNG'}
+                          <div style={{ fontWeight: 700, fontSize: '13px', color: titleColor }}>
+                            {shift.date} {isToday && '• HÔM NAY'}
+                            {isComplete && ' • ✓ HOÀN THÀNH'}
+                            {isAbsent && ' • 🔴 VẮNG'}
+                            {isLocked && !isAbsent && ' • 🔒 KHÓA'}
+                            {isWorking && ' • ĐANG LÀM'}
                           </div>
                           <div style={{ fontSize: '11px', color: isAbsent ? '#991B1B' : 'var(--text-muted)' }}>
-                            Chi nhánh: {shift.branch_id}{isAbsent ? ' • Hệ thống tự ghi vắng (không check-in/check-out qua ca)' : ''}
+                            Chi nhánh: {shift.branch_id}
+                            {isComplete && ' • Đủ check-in + check-out'}
+                            {isAbsent && ' • Hệ thống tự ghi vắng (không check-in/check-out qua ca)'}
+                            {isLocked && !isAbsent && ' • Quá 3h chưa check-in — nghỉ không lương'}
+                            {isWorking && !hasCheckIn && ' • Chưa check-in'}
+                            {isWorking && hasCheckIn && !hasCheckOut && ' • Chờ check-out'}
                           </div>
                         </div>
                         <div>
-                          <span className={`badge ${isAbsent ? '' : isToday ? 'badge-brand' : 'badge-success'}`} style={isAbsent ? { backgroundColor: '#DC2626', color: '#FFF', fontWeight: 800 } : undefined}>
-                            {isAbsent ? 'VẮNG CA' : `${shift.shift_code} (${new Date(shift.start_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} - ${new Date(shift.end_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })})`}
+                          <span
+                            className={`badge ${isComplete ? 'badge-success' : isToday && !isWorking && !isLocked && !isAbsent ? 'badge-brand' : ''}`}
+                            style={
+                              isAbsent ? { backgroundColor: '#DC2626', color: '#FFF', fontWeight: 800 }
+                              : isLocked ? { backgroundColor: '#64748B', color: '#FFF', fontWeight: 800 }
+                              : isWorking ? { backgroundColor: '#F59E0B', color: '#FFF', fontWeight: 800 }
+                              : undefined
+                            }
+                          >
+                            {isAbsent ? 'VẮNG CA' : isLocked ? 'KHÓA' : isComplete ? 'HOÀN THÀNH' : `${shift.shift_code} (${new Date(shift.start_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} - ${new Date(shift.end_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })})`}
                           </span>
                         </div>
                       </div>
@@ -1877,6 +1904,8 @@ export function App() {
           const todayShifts = myShifts.filter((s: any) => s.date === today);
           const todayShift = todayShifts.find((s: any) => s.assignment_id === attendShiftId) || todayShifts[0];
           // Trạng thái theo TỪNG ca (ngày 2 ca do tráo đổi: mỗi ca check-in/out độc lập)
+          const shiftStartMs = todayShift?.start_at ? new Date(todayShift.start_at).getTime() : NaN;
+          const shiftLocked = Number.isFinite(shiftStartMs) && Date.now() - shiftStartMs > 3 * 60 * 60 * 1000;
           const shiftEvts = (myAttendanceHistory || []).filter((e: any) => e.assignment_id === todayShift?.assignment_id);
           const shiftIn = shiftEvts.find((e: any) => e.type === 'CHECK_IN');
           const shiftOut = shiftEvts.find((e: any) => e.type === 'CHECK_OUT');
@@ -1960,6 +1989,13 @@ export function App() {
                           </option>
                         ))}
                       </select>
+                    </div>
+                  )}
+
+                  {/* KHÓA CA: quá 3h chưa check-in -> nghỉ không lương */}
+                  {todayShift && shiftLocked && !tabAtt.checkedIn && (
+                    <div style={{ backgroundColor: '#F1F5F9', border: '1.5px solid #64748B', borderRadius: 'var(--radius-sm)', padding: '10px 12px', marginBottom: '14px', fontSize: '12px', color: '#475569', fontWeight: 700 }}>
+                      🔒 Ca này đã bị KHÓA (quá 3 tiếng chưa check-in) — tính nghỉ việc không lương, không thể điểm danh bù.
                     </div>
                   )}
 

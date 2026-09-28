@@ -1441,6 +1441,15 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         });
       }
 
+      // Quá 3 tiếng kể từ giờ ca bắt đầu mà chưa check-in -> khóa, ca tính nghỉ không lương.
+      const checkinStartMs = new Date((existingShift as any).start_at).getTime();
+      if (Number.isFinite(checkinStartMs) && Date.now() - checkinStartMs > 3 * 60 * 60 * 1000) {
+        return res.status(403).json({
+          error: 'ATTENDANCE_LOCKED',
+          message: 'Quá 3 tiếng kể từ giờ vào ca mà chưa check-in: cổng đã khóa, ca này tính nghỉ việc không lương!',
+        });
+      }
+
       // GPS thật bắt buộc (không dùng tọa độ mặc định) + ảnh xác nhận bắt buộc khi check-in.
       const lat = req.body.lat ?? req.body.latitude;
       const lng = req.body.lng ?? req.body.longitude;
@@ -1513,6 +1522,18 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       // Check-in requirement before check-out!
       const checkInEvent = relevantEvents.find(e => e.type === 'CHECK_IN');
       if (!checkInEvent) {
+        // Quá 3 tiếng chưa check-in -> khóa luôn check-out, ca tính nghỉ không lương.
+        try {
+          const aid = req.body.assignment_id || req.body.assignmentId;
+          const sh: any = aid ? await adapter.getShiftById(aid).catch(() => null) : null;
+          const startMs = sh ? new Date(sh.start_at).getTime() : NaN;
+          if (Number.isFinite(startMs) && Date.now() - startMs > 3 * 60 * 60 * 1000) {
+            return res.status(403).json({
+              error: 'ATTENDANCE_LOCKED',
+              message: 'Quá 3 tiếng kể từ giờ vào ca mà chưa check-in: cổng đã khóa, ca này tính nghỉ việc không lương!',
+            });
+          }
+        } catch { /* giữ lỗi gốc bên dưới */ }
         return res.status(400).json({
           error: 'QUY CHẾ ĐIỂM DANH: Bạn chưa có bản ghi Check-in đầu ca! Bắt buộc phải Check-in trước mới được Check-out.',
         });

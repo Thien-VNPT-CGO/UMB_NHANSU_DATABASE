@@ -3424,6 +3424,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             const ci = empEvents.find((e: any) => e.type === 'CHECK_IN' && matchShift(e, sh));
             const co = empEvents.find((e: any) => e.type === 'CHECK_OUT' && matchShift(e, sh));
             const ab = empEvents.find((e: any) => e.type === 'ABSENT' && matchShift(e, sh));
+            // Quá 3h kể từ giờ vào ca mà chưa check-in -> khóa, nghỉ không lương
+            const startMs = sh?.start_at ? new Date(sh.start_at).getTime() : NaN;
+            const locked = !ci && Number.isFinite(startMs) && Date.now() - (startMs as number) > 3 * 60 * 60 * 1000;
             let shiftName = sh.shift_code;
             if (shiftName === 'CA_1') shiftName = 'Ca 1 (07-12)';
             else if (shiftName === 'CA_2') shiftName = 'Ca 2 (12-18)';
@@ -3455,6 +3458,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 gps: `GPS hợp lệ (${distText})`,
                 isToday: day.isToday,
                 event: ci,
+              };
+            } else if (locked) {
+              return {
+                shift: shiftName,
+                status: 'LOCKED',
+                note: 'Quá 3h chưa check-in — khóa, nghỉ không lương',
+                isToday: day.isToday,
               };
             } else if (day.isToday) {
               return {
@@ -3684,6 +3694,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </span>
             <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#DC2626' }}>
               <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#EF4444' }} /> Vắng ca (tự ghi)</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#B45309' }}>
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#F59E0B' }} /> Đang làm (vàng nhấp nháy)</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#475569' }}>
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#64748B' }} /> Khóa — nghỉ không lương</span>
             <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#9CA3AF' }}>
               <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#E5E7EB', border: '1px solid #D1D5DB' }} /> — Không có ca
             </span>
@@ -3768,6 +3782,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   {weekDays.map((day) => {
                     const d = (emp.days && emp.days[day.key]) || { shift: '—', status: 'NO_SHIFT', note: 'Không có ca' };
                     const isCheckedIn = d.status === 'CHECKED_IN';
+                    const isLocked = d.status === 'LOCKED';
                     const isPending = d.status === 'PENDING';
                     const isOff = d.status === 'OFF';
                     const isPendingLeave = d.status === 'PENDING_LEAVE';
@@ -3805,28 +3820,34 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         ) : d.status === 'MULTI' ? (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                             {(d.shifts || []).map((sd: any, si: number) => {
-                              const stColor = sd.status === 'COMPLETED' || sd.status === 'CHECKED_IN'
+                              const stColor = sd.status === 'COMPLETED'
                                 ? '#047857'
                                 : sd.status === 'ABSENT'
                                 ? '#DC2626'
-                                : sd.status === 'PENDING'
+                                : sd.status === 'LOCKED'
+                                ? '#475569'
+                                : sd.status === 'CHECKED_IN' || sd.status === 'PENDING'
                                 ? '#B45309'
                                 : 'var(--text)';
-                              const stBg = sd.status === 'COMPLETED' || sd.status === 'CHECKED_IN'
+                              const stBg = sd.status === 'COMPLETED'
                                 ? '#ECFDF5'
                                 : sd.status === 'ABSENT'
                                 ? '#FEE2E2'
-                                : sd.status === 'PENDING'
+                                : sd.status === 'LOCKED'
+                                ? '#F1F5F9'
+                                : sd.status === 'CHECKED_IN' || sd.status === 'PENDING'
                                 ? '#FEF3C7'
                                 : '#FAFAFA';
-                              const stBd = sd.status === 'ABSENT' ? '1.5px solid #EF4444' : '1px solid var(--border)';
+                              const stBd = sd.status === 'ABSENT' ? '1.5px solid #EF4444' : sd.status === 'LOCKED' ? '1.5px solid #64748B' : '1px solid var(--border)';
+                              const stBlink = sd.status === 'CHECKED_IN' || sd.status === 'PENDING';
                               return (
-                                <div key={si} style={{ padding: '6px', borderRadius: '8px', backgroundColor: stBg, border: stBd }}>
+                                <div key={si} style={{ padding: '6px', borderRadius: '8px', backgroundColor: stBg, border: stBd, animation: stBlink ? 'fx-blink 1.2s infinite' : undefined }}>
                                   <div style={{ fontWeight: 700, fontSize: '11px' }}>{sd.shift}</div>
                                   <div style={{ fontSize: '10px', color: stColor, fontWeight: 700 }}>
                                     {sd.status === 'COMPLETED' ? `✓ Xong${sd.time ? ` (${sd.time})` : ''}`
-                                      : sd.status === 'CHECKED_IN' ? `Đã check-in${sd.time ? ` ${sd.time}` : ''}`
+                                      : sd.status === 'CHECKED_IN' ? `Đang làm${sd.time ? ` (vào ${sd.time})` : ''}`
                                       : sd.status === 'ABSENT' ? '🔴 Vắng'
+                                      : sd.status === 'LOCKED' ? '🔒 Khóa — nghỉ không lương'
                                       : sd.status === 'PENDING' ? 'Chưa check-in'
                                       : sd.note || sd.status}
                                   </div>
@@ -3839,9 +3860,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             padding: '8px',
                             borderRadius: '8px',
                             backgroundColor: isCheckedIn
-                              ? '#ECFDF5'
+                              ? '#FEF3C7'
                               : isAbsent
                               ? '#FEE2E2'
+                              : isLocked
+                              ? '#F1F5F9'
                               : isPending || isPendingLeave
                               ? '#FEF3C7'
                               : isBonusSwap
@@ -3850,9 +3873,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                               ? '#F3F4F6'
                               : '#FAFAFA',
                             border: isCheckedIn
-                              ? '1.5px solid #10B981'
+                              ? '1.5px solid #F59E0B'
                               : isAbsent
                               ? '1.5px solid #EF4444'
+                              : isLocked
+                              ? '1.5px solid #64748B'
                               : isPending || isPendingLeave
                               ? '1.5px solid #F59E0B'
                               : isBonusSwap
@@ -3862,6 +3887,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             flexDirection: 'column',
                             gap: '3px',
                             boxShadow: isCheckedIn ? '0 2px 6px rgba(16, 185, 129, 0.15)' : undefined,
+                            animation: (isCheckedIn || isPending) ? 'fx-blink 1.2s infinite' : undefined,
                           }}>
                             {/* Shift Name */}
                             <div style={{ fontWeight: 700, fontSize: '11px', color: isOff ? '#9CA3AF' : 'var(--text)' }}>
@@ -3870,22 +3896,22 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
                             {/* Realtime Attendance Status Badge */}
                             {isCheckedIn && (
-                              <div style={{ marginTop: '2px' }}>
+                              <div style={{ marginTop: '2px', animation: 'fx-blink 1.2s infinite' }}>
                                 <span style={{
                                   display: 'inline-flex',
                                   alignItems: 'center',
                                   gap: '4px',
                                   padding: '2px 6px',
                                   borderRadius: '4px',
-                                  backgroundColor: '#10B981',
+                                  backgroundColor: '#F59E0B',
                                   color: '#FFF',
                                   fontSize: '10px',
                                   fontWeight: 800,
                                 }}>
-                                  <CheckCircle size={10} /> ĐÃ CHECK-IN {d.time}
+                                  <Clock size={10} /> ĐANG LÀM (vào {d.time})
                                 </span>
-                                <div style={{ fontSize: '10px', color: '#047857', fontWeight: 600, marginTop: '2px' }}>
-                                  ✓ {d.gps} • Áo hồng + Bảng tên
+                                <div style={{ fontSize: '10px', color: '#92400E', fontWeight: 600, marginTop: '2px' }}>
+                                  Chờ check-out để hoàn thành • {d.gps}
                                 </div>
                                 <button
                                   onClick={() => setSelectedRealtimeModal({ emp, dayData: d })}
@@ -3895,14 +3921,35 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                     padding: '2px 6px',
                                     borderRadius: '4px',
                                     backgroundColor: '#FFFFFF',
-                                    border: '1px solid #10B981',
-                                    color: '#047857',
+                                    border: '1px solid #F59E0B',
+                                    color: '#92400E',
                                     fontWeight: 700,
                                     cursor: 'pointer',
                                   }}
                                 >
                                   Xem Chi Tiết GPS & Ảnh
                                 </button>
+                              </div>
+                            )}
+
+                            {isLocked && (
+                              <div style={{ marginTop: '2px' }}>
+                                <span style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  padding: '2px 6px',
+                                  borderRadius: '4px',
+                                  backgroundColor: '#64748B',
+                                  color: '#FFF',
+                                  fontSize: '10px',
+                                  fontWeight: 800,
+                                }}>
+                                  🔒 KHÓA — NGHỈ KHÔNG LƯƠNG
+                                </span>
+                                <div style={{ fontSize: '10px', color: '#475569', fontWeight: 600, marginTop: '2px' }}>
+                                  {d.note || 'Quá 3h chưa check-in'}
+                                </div>
                               </div>
                             )}
 

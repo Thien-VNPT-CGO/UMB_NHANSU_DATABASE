@@ -30,6 +30,8 @@ export interface PayslipItem {
   full_name: string;
   period: string;
   total_shifts: number;
+  /** Số ca vắng không lương (qua 3h không check-in, có/không bản ghi ABSENT). */
+  absent_shifts?: number;
   standard_hours: number;
   rate_snapshot: number; // VND per hour
   standard_pay: number;
