@@ -1627,29 +1627,37 @@ export function App() {
                   </div>
                 ) : (
                   myShifts.map((shift, idx) => {
-                    const isToday = shift.date === new Date().toISOString().split('T')[0];
+                    const todayStr = new Date().toISOString().split('T')[0];
+                    const isToday = shift.date === todayStr;
+                    const isPast = shift.date < todayStr;
+                    const hasCheckIn = (myAttendanceHistory || []).some((e: any) => e.type === 'CHECK_IN' && (e.assignment_id === shift.assignment_id || (e.client_time && e.client_time.startsWith(shift.date))));
+                    const absentRecorded = (myAttendanceHistory || []).some((e: any) => e.type === 'ABSENT' && (e.assignment_id === shift.assignment_id || (e.client_time && e.client_time.startsWith(shift.date))));
+                    // Ngày đã qua mà không check-in: hệ thống tự ghi vắng (đỏ), đồng bộ Sheets làm chứng cứ
+                    const isAbsent = !hasCheckIn && (absentRecorded || isPast);
                     return (
                       <div
                         key={idx}
                         style={{
                           padding: '10px 12px',
                           borderRadius: 'var(--radius-sm)',
-                          backgroundColor: isToday ? 'var(--brand-soft)' : '#FFFFFF',
-                          border: isToday ? '1.5px solid var(--brand)' : '1px solid var(--border)',
+                          backgroundColor: isAbsent ? '#FEF2F2' : isToday ? 'var(--brand-soft)' : '#FFFFFF',
+                          border: isAbsent ? '1.5px solid #EF4444' : isToday ? '1.5px solid var(--brand)' : '1px solid var(--border)',
                           display: 'flex',
                           justifyContent: 'space-between',
                           alignItems: 'center',
                         }}
                       >
                         <div>
-                          <div style={{ fontWeight: 700, fontSize: '13px', color: isToday ? 'var(--brand)' : 'var(--text)' }}>
-                            {shift.date} {isToday && '• HÔM NAY'}
+                          <div style={{ fontWeight: 700, fontSize: '13px', color: isAbsent ? '#DC2626' : isToday ? 'var(--brand)' : 'var(--text)' }}>
+                            {shift.date} {isToday && '• HÔM NAY'} {isAbsent && '• 🔴 VẮNG'}
                           </div>
-                          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Chi nhánh: {shift.branch_id}</div>
+                          <div style={{ fontSize: '11px', color: isAbsent ? '#991B1B' : 'var(--text-muted)' }}>
+                            Chi nhánh: {shift.branch_id}{isAbsent ? ' • Hệ thống tự ghi vắng (không check-in/check-out qua ca)' : ''}
+                          </div>
                         </div>
                         <div>
-                          <span className={`badge ${isToday ? 'badge-brand' : 'badge-success'}`}>
-                            {shift.shift_code} ({new Date(shift.start_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} - {new Date(shift.end_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })})
+                          <span className={`badge ${isAbsent ? '' : isToday ? 'badge-brand' : 'badge-success'}`} style={isAbsent ? { backgroundColor: '#DC2626', color: '#FFF', fontWeight: 800 } : undefined}>
+                            {isAbsent ? 'VẮNG CA' : `${shift.shift_code} (${new Date(shift.start_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} - ${new Date(shift.end_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })})`}
                           </span>
                         </div>
                       </div>

@@ -51,7 +51,41 @@ import {
   HelpCircle,
 } from 'lucide-react';
 import { getDisplayBranch } from '../App';
-import { apiRequest } from '../services/api';
+import { apiRequest, getApiBase, getAuthToken } from '../services/api';
+
+/** Ảnh chấm công: tải blob kèm token rồi hiện (thẻ <img> không gửi được Authorization). */
+export const AttPhoto: React.FC<{ eventId: string; style?: React.CSSProperties; alt?: string }> = ({ eventId, style, alt }) => {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    let objUrl: string | null = null;
+    (async () => {
+      try {
+        const res = await fetch(`${getApiBase()}/attendance/photo/${eventId}`, {
+          headers: { Authorization: `Bearer ${getAuthToken()}` },
+        });
+        if (!res.ok) throw new Error('no photo');
+        const blob = await res.blob();
+        objUrl = URL.createObjectURL(blob);
+        if (alive) setUrl(objUrl);
+      } catch {
+        if (alive) setFailed(true);
+      }
+    })();
+    return () => {
+      alive = false;
+      if (objUrl) URL.revokeObjectURL(objUrl);
+    };
+  }, [eventId]);
+  if (failed || !eventId) {
+    return <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Chưa có ảnh</span>;
+  }
+  if (!url) {
+    return <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Đang tải ảnh...</span>;
+  }
+  return <img src={url} alt={alt || 'Ảnh chấm công'} style={{ width: '72px', height: '72px', objectFit: 'cover', borderRadius: '8px', border: '1px solid var(--border)', ...(style || {}) }} />;
+};
 import { evaluateCandidateAiScore } from '../services/ai-scorer';
 
 interface RoleViewsProps {
@@ -317,6 +351,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       setAdjustments(Array.isArray(list) ? list : []);
     } catch { /* không quyền / offline */ }
   };
+  // Xuất ZIP chứng cứ điểm danh theo ngày
+  const [exportAttDate, setExportAttDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [exportAttBusy, setExportAttBusy] = useState(false);
   // Bài TEST: HR tạo đề + giao đúng nhân viên (NV chỉ thấy bài của mình)
   const [testPapers, setTestPapers] = useState<any[]>([]);
   const [testSubs, setTestSubs] = useState<any[]>([]);
@@ -3331,6 +3368,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         // Bản ghi điểm danh check-in và check-out thật từ Socket.IO / Database
         const checkInEvent = empEvents.find((e: any) => e.type === 'CHECK_IN' && (e.assignment_id === foundShift?.assignment_id || (e.client_time && e.client_time.startsWith(day.isoDate))));
         const checkOutEvent = empEvents.find((e: any) => e.type === 'CHECK_OUT' && (e.assignment_id === foundShift?.assignment_id || (e.client_time && e.client_time.startsWith(day.isoDate))));
+        // Bản ghi VẮNG do hệ thống tự ghi sau khi qua ca không điểm danh (chứng cứ đồng bộ Sheets)
+        const absentEvent = empEvents.find((e: any) => e.type === 'ABSENT' && (e.assignment_id === foundShift?.assignment_id || (e.client_time && e.client_time.startsWith(day.isoDate))));
 
         if (foundLeave) {
           // Lịch OFF tuần (HANG_TUAN) tự động ghi nhận — kể cả bản ghi PENDING cũ
@@ -3395,11 +3434,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               note: 'Chưa check-in (Chờ ca)',
               isToday: true,
             };
-          } else if (day.isPast) {
+          } else if (absentEvent || day.isPast) {
             dayDataMap[day.key] = {
               shift: shiftName,
               status: 'ABSENT',
-              note: 'Không điểm danh',
+              note: absentEvent ? 'Hệ thống tự ghi vắng (chứng cứ Sheets)' : 'Không điểm danh',
               isToday: false,
             };
           } else {
@@ -3604,6 +3643,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--text-muted)' }}>
               <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#9CA3AF' }} /> Nghỉ OFF
             </span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#DC2626' }}>
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#EF4444' }} /> Vắng ca (tự ghi)</span>
             <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#9CA3AF' }}>
               <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#E5E7EB', border: '1px solid #D1D5DB' }} /> — Không có ca
             </span>
@@ -3693,6 +3734,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     const isPendingLeave = d.status === 'PENDING_LEAVE';
                     const isBonusSwap = d.status === 'BONUS_SWAP';
                     const isNoShift = d.status === 'NO_SHIFT';
+                    const isAbsent = d.status === 'ABSENT';
 
                     return (
                       <td
@@ -3701,7 +3743,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           padding: '10px 8px',
                           verticalAlign: 'top',
                           textAlign: 'center',
-                          backgroundColor: day.isToday ? '#FFFBFB' : isOff || isNoShift ? '#F9FAFB' : '#FFFFFF',
+                          backgroundColor: day.isToday ? '#FFFBFB' : isAbsent ? '#FEF2F2' : isOff || isNoShift ? '#F9FAFB' : '#FFFFFF',
                           borderLeft: day.isToday ? '2px solid #FCA5A5' : undefined,
                           borderRight: day.isToday ? '2px solid #FCA5A5' : undefined,
                         }}
@@ -3727,6 +3769,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             borderRadius: '8px',
                             backgroundColor: isCheckedIn
                               ? '#ECFDF5'
+                              : isAbsent
+                              ? '#FEE2E2'
                               : isPending || isPendingLeave
                               ? '#FEF3C7'
                               : isBonusSwap
@@ -3736,6 +3780,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                               : '#FAFAFA',
                             border: isCheckedIn
                               ? '1.5px solid #10B981'
+                              : isAbsent
+                              ? '1.5px solid #EF4444'
                               : isPending || isPendingLeave
                               ? '1.5px solid #F59E0B'
                               : isBonusSwap
@@ -3855,9 +3901,24 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                               </div>
                             )}
 
-                            {d.status === 'ABSENT' && (
-                              <div style={{ fontSize: '10px', color: '#EF4444', fontWeight: 600 }}>
-                                Vắng ca (Chưa điểm danh)
+                            {isAbsent && (
+                              <div style={{ marginTop: '2px' }}>
+                                <span style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  padding: '2px 6px',
+                                  borderRadius: '4px',
+                                  backgroundColor: '#DC2626',
+                                  color: '#FFF',
+                                  fontSize: '10px',
+                                  fontWeight: 800,
+                                }}>
+                                  🔴 VẮNG CA
+                                </span>
+                                <div style={{ fontSize: '10px', color: '#991B1B', fontWeight: 600, marginTop: '2px' }}>
+                                  {d.note || 'Không điểm danh'}
+                                </div>
                               </div>
                             )}
                           </div>
@@ -3966,6 +4027,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         alt="Bằng chứng điểm danh"
                         style={{ width: '100%', maxHeight: '200px', objectFit: 'cover', borderRadius: '6px', marginBottom: '10px' }}
                       />
+                    ) : modalEvent?.event_id ? (
+                      <div style={{ marginBottom: '10px' }}>
+                        <AttPhoto eventId={modalEvent.event_id} style={{ width: '100%', maxHeight: '220px', height: 'auto' }} alt="Ảnh chụp đồng phục áo hồng" />
+                        <div style={{ fontWeight: 800, fontSize: '13px', color: '#9D174D', marginTop: '6px' }}>ẢNH CHỤP ĐỒNG PHỤC ÁO HỒNG ỤM BÒ MILK</div>
+                        <div style={{ fontSize: '11px', color: '#9D174D' }}>Bảng tên nhân viên: Đã xác thực hợp lệ</div>
+                      </div>
                     ) : (
                       <div style={{
                         width: '100%',
@@ -4650,19 +4717,59 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               Giám sát check-in, check-out, hình ảnh áo hồng + bảng tên, tọa độ GPS vệ tinh (100% Realtime)
             </p>
           </div>
-          <button
-            className="btn-secondary"
-            onClick={async () => {
-              try {
-                const data = await apiRequest('/attendance/events');
-                setLiveAttendanceEvents(Array.isArray(data) ? data : []);
-                showToast('Đã làm mới dữ liệu chấm công thời gian thực!');
-              } catch {}
-            }}
-            style={{ fontSize: '12px' }}
-          >
-            🔄 Làm Mới Realtime
-          </button>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <input
+              type="date"
+              value={exportAttDate}
+              onChange={e => setExportAttDate(e.target.value)}
+              style={{ padding: '7px 10px', fontSize: '12px', borderRadius: '6px', border: '1px solid var(--border)' }}
+              title="Ngày cần tải chứng cứ điểm danh"
+            />
+            <button
+              className="btn-primary"
+              style={{ fontSize: '12px', backgroundColor: '#059669' }}
+              disabled={exportAttBusy}
+              onClick={async () => {
+                if (!exportAttDate) { showToast('Chọn ngày cần tải!'); return; }
+                setExportAttBusy(true);
+                try {
+                  const res = await fetch(`${getApiBase()}/admin/attendance/export?date=${exportAttDate}`, {
+                    headers: { Authorization: `Bearer ${getAuthToken()}` },
+                  });
+                  if (!res.ok) throw new Error('Tải thất bại');
+                  const blob = await res.blob();
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `diem-danh-${exportAttDate}.zip`;
+                  document.body.appendChild(a);
+                  a.click();
+                  a.remove();
+                  setTimeout(() => URL.revokeObjectURL(url), 5000);
+                  showToast(`Đã tải ZIP điểm danh ngày ${exportAttDate} (folder theo ngày/chi nhánh/NV + CSV)!`);
+                } catch {
+                  showToast('Lỗi khi tải gói điểm danh!');
+                } finally {
+                  setExportAttBusy(false);
+                }
+              }}
+            >
+              {exportAttBusy ? 'Đang gói...' : '⬇ Tải ZIP theo ngày'}
+            </button>
+            <button
+              className="btn-secondary"
+              onClick={async () => {
+                try {
+                  const data = await apiRequest('/attendance/events');
+                  setLiveAttendanceEvents(Array.isArray(data) ? data : []);
+                  showToast('Đã làm mới dữ liệu chấm công thời gian thực!');
+                } catch {}
+              }}
+              style={{ fontSize: '12px' }}
+            >
+              🔄 Làm Mới Realtime
+            </button>
+          </div>
         </div>
 
         <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
@@ -4706,8 +4813,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         {getDisplayBranch(evt.branch_id || 'CN130')}
                       </td>
                       <td style={{ padding: '12px 20px' }}>
-                        <span className={`badge ${evt.type === 'CHECK_IN' ? 'badge-brand' : 'badge-success'}`}>
-                          {evt.type === 'CHECK_IN' ? 'VÀO CA (IN)' : 'TAN CA (OUT)'}
+                        <span className={`badge ${evt.type === 'CHECK_IN' ? 'badge-brand' : evt.type === 'ABSENT' ? '' : 'badge-success'}`} style={evt.type === 'ABSENT' ? { backgroundColor: '#FEE2E2', color: '#991B1B', fontWeight: 800 } : undefined}>
+                          {evt.type === 'CHECK_IN' ? 'VÀO CA (IN)' : evt.type === 'ABSENT' ? 'VẮNG (AUTO)' : 'TAN CA (OUT)'}
                         </span>
                         <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
                           {evt.client_time ? new Date(evt.client_time).toLocaleTimeString('vi-VN') : '-'}
@@ -4722,9 +4829,20 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         </span>
                       </td>
                       <td style={{ padding: '12px 20px' }}>
-                        <span style={{ fontSize: '11px', color: '#DB2777', fontWeight: 700 }}>
-                          📸 Áo Hồng + Bảng Tên [Hợp Lệ]
-                        </span>
+                        {evt.type === 'ABSENT' ? (
+                          <span className="badge" style={{ backgroundColor: '#FEE2E2', color: '#991B1B', fontWeight: 800 }}>🔴 VẮNG (tự ghi)</span>
+                        ) : evt.drive_object_id && !String(evt.drive_object_id).startsWith('DRV_') ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <AttPhoto eventId={evt.event_id} />
+                            <span style={{ fontSize: '11px', color: '#DB2777', fontWeight: 700 }}>
+                              📸 Áo Hồng + Bảng Tên [Hợp Lệ]
+                            </span>
+                          </div>
+                        ) : (
+                          <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                            📸 Chưa có ảnh (chấm công cũ)
+                          </span>
+                        )}
                       </td>
                       <td style={{ padding: '12px 20px' }}>
                         {evt.is_late ? (

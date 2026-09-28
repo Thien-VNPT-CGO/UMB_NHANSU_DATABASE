@@ -471,8 +471,10 @@ export class MockSheetsAdapter implements ISheetsRepository {
       return existing;
     }
 
+    // photo_base64 chỉ để adapter upload Drive — không lưu vào bộ nhớ/Sheets (5MB/ảnh).
+    const { photo_base64: _drop, ...rest } = event as any;
     const newEvent: AttendanceEvent = {
-      ...event,
+      ...rest,
       created_at: new Date().toISOString(),
     };
     this.attendanceEvents.push(newEvent);

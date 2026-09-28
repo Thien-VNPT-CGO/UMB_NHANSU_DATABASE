@@ -1,4 +1,4 @@
-export type AttendanceEventType = 'CHECK_IN' | 'CHECK_OUT';
+export type AttendanceEventType = 'CHECK_IN' | 'CHECK_OUT' | 'ABSENT';
 
 export interface GPSCoordinates {
   latitude: number;

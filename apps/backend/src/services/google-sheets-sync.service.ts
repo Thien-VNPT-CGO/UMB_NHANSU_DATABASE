@@ -1593,6 +1593,23 @@ export class GoogleSheetsSyncService {
     }
   }
 
+  /** Tải bytes ảnh từ Google Drive (để xem trực tiếp / đóng gói ZIP tải về). */
+  public async downloadDriveFile(fileId: string): Promise<{ buffer: Buffer; mimeType: string }> {
+    if (!this.driveClient || !fileId || fileId.startsWith('DRV_')) {
+      throw new Error('DRIVE_FILE_NOT_AVAILABLE');
+    }
+    const res: any = await this.sheetsCall(
+      'drive.download',
+      () =>
+        this.driveClient!.files.get({ fileId, alt: 'media' }, { responseType: 'arraybuffer' }) as any,
+      45000
+    );
+    const data = res?.data;
+    const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
+    const meta: any = await this.sheetsCall('drive.get', () => this.driveClient!.files.get({ fileId, fields: 'mimeType' }) as any).catch(() => null);
+    return { buffer, mimeType: meta?.data?.mimeType || 'image/jpeg' };
+  }
+
   /**
    * Ghi đè dữ liệu một Sheet tab (giữ nguyên tiêu đề ở dòng 1)
    */

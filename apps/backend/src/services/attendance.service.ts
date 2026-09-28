@@ -55,6 +55,8 @@ export class AttendanceService {
     };
     hasCameraImage?: boolean;
     imageMeta?: string;
+    /** Ảnh base64 chấm công — adapter upload lên Drive, không lưu vào bộ nhớ/Sheets. */
+    photoBase64?: string;
   }): Promise<{ operationId: string; result: AttendanceEvent }> {
     return singleWriterQueue.enqueue({
       idempotencyKey: data.requestId,
@@ -131,8 +133,9 @@ export class AttendanceService {
           }
         }
 
-        // 6. Record to Master Ledger
+        // 6. Record to Master Ledger (photo_base64 chỉ để adapter upload Drive rồi bỏ)
         const event = await this.repo.recordAttendanceEvent({
+          ...(data.photoBase64 ? { photo_base64: data.photoBase64 } : {}),
           event_id: eventId,
           request_id: data.requestId,
           assignment_id: data.assignmentId,
@@ -171,6 +174,66 @@ export class AttendanceService {
 
   async getEmployeeAttendance(employeeId: string, date: string) {
     return this.repo.getAttendanceEvents(employeeId, date);
+  }
+
+  /**
+   * Tự động ghi VẮNG: ca PUBLISHED đã kết thúc quá `graceMinutes` mà không có
+   * CHECK_IN/ABSENT nào -> tạo bản ghi ABSENT làm chứng cứ (đồng bộ Sheets như
+   * mọi sự kiện khác). Idempotent theo request_id nên tick chồng không dup.
+   */
+  async markAbsentees(now: Date = new Date(), graceMinutes = 30): Promise<{ checked: number; marked: number }> {
+    const todayStr = now.toISOString().split('T')[0];
+    const branches = await this.repo.getBranches().catch(() => []);
+    const branchIds = (branches || []).map((b: any) => b.id || b.branch_id).filter(Boolean);
+    const scopes = branchIds.length > 0 ? branchIds : ['*'];
+    let checked = 0;
+    let marked = 0;
+    for (const branchId of scopes) {
+      const shifts = await this.repo.getShiftsForWeek(branchId, '2000-01-01').catch(() => []);
+      for (const s of shifts || []) {
+        if ((s as any).status !== 'PUBLISHED') continue;
+        if ((s as any).date >= todayStr) continue; // chỉ ngày đã qua
+        const endMs = new Date((s as any).end_at).getTime();
+        if (!Number.isFinite(endMs) || now.getTime() - endMs < graceMinutes * 60000) continue;
+        checked++;
+        const events = await this.repo.getAttendanceEvents((s as any).employee_id, (s as any).date).catch(() => []);
+        const mine = (events || []).filter(
+          (e: any) => e.assignment_id === (s as any).assignment_id && (e.type === 'CHECK_IN' || e.type === 'ABSENT')
+        );
+        if (mine.length > 0) continue;
+        const requestId = `ABSENT_${(s as any).assignment_id}`;
+        const dup = await this.repo.findAttendanceEventByRequestId(requestId).catch(() => null);
+        if (dup) continue;
+        await singleWriterQueue
+          .enqueue({
+            entityType: 'SU_KIEN_DIEM_DANH',
+            entityId: requestId,
+            actorId: 'SYSTEM',
+            execute: async () => {
+              const exists = await this.repo.findAttendanceEventByRequestId(requestId).catch(() => null);
+              if (exists) return exists;
+              return this.repo.recordAttendanceEvent({
+                event_id: `EVT_ABSENT_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+                request_id: requestId,
+                assignment_id: (s as any).assignment_id,
+                employee_id: (s as any).employee_id,
+                branch_id: (s as any).branch_id,
+                type: 'ABSENT' as any,
+                client_time: (s as any).end_at,
+                server_received_at: now.toISOString(),
+                gps_latitude: 0,
+                gps_longitude: 0,
+                gps_accuracy: 0,
+                distance_meters: 0,
+                gps_status: 'UNAVAILABLE',
+              } as any);
+            },
+          })
+          .catch(() => null);
+        marked++;
+      }
+    }
+    return { checked, marked };
   }
 
   // --- Adjustments ---

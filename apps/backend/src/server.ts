@@ -128,6 +128,24 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   setTimeout(autoRemindersTickSafe, 60_000); // đợi dữ liệu load xong lần đầu
   setInterval(autoRemindersTickSafe, 5 * 60_000);
 
+  // Tự ghi VẮNG: ca PUBLISHED qua giờ kết thúc 30p mà không check-in -> bản ghi
+  // ABSENT làm chứng cứ (đỏ trên 2 cổng, đồng bộ Sheets). Chạy mỗi 15 phút.
+  const absenteeTickSafe = async () => {
+    try {
+      const r = await services.attendanceService.markAbsentees(new Date(), 30);
+      if (r.marked > 0) {
+        console.log(`[absentee] Đã ghi vắng ${r.marked} ca (quét ${r.checked}).`);
+        try {
+          io.emit('data:updated', { entity: 'attendance', data: { action: 'absent-marked', ...r }, timestamp: new Date().toISOString() });
+        } catch { /* non-fatal */ }
+      }
+    } catch (err: any) {
+      console.warn('[absentee] tick error:', err?.message || err);
+    }
+  };
+  setTimeout(absenteeTickSafe, 120_000); // sau pull đầu
+  setInterval(absenteeTickSafe, 15 * 60_000);
+
   // Xoay PIN định kỳ hàng tháng (ngày 1-5): cấp PIN mới theo mẻ, báo NV + HR/Admin.
   const pinRotationTickSafe = () => {
     pinRotationTick(adapter, services.notificationsService)

@@ -106,6 +106,7 @@ import {
 } from './middlewares/rbac.middleware.js';
 import { ERROR_CODES } from '@ubm/shared';
 import { SHEETS_DEFINITIONS } from './services/google-sheets-sync.service.js';
+import { buildZipStore, ZipEntry } from './utils/zip-store.js';
 
 // Thời điểm process khởi động — đo uptime thật (không hardcode).
 const SERVER_STARTED_AT = Date.now();
@@ -1458,6 +1459,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         },
         hasCameraImage: true,
         imageMeta: 'UNIFORM_PINK_AND_BADGE',
+        photoBase64: req.body.photo_base64,
       });
 
       broadcastUpdate('attendance', { action: 'checkin', employeeId, event: result.result });
@@ -1538,6 +1540,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         },
         hasCameraImage: !!req.body.photo_base64,
         imageMeta: req.body.photo_base64 ? 'UNIFORM_PINK_AND_BADGE' : undefined,
+        photoBase64: req.body.photo_base64,
       });
 
       broadcastUpdate('attendance', { action: 'checkout', employeeId, event: result.result });
@@ -1571,6 +1574,76 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       res.json(events);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Ảnh check-in/out: stream trực tiếp từ Drive (kể cả file không public).
+  const serveAttendancePhoto = async (req: AuthenticatedRequest, res: any) => {
+    try {
+      const events = await adapter.getAttendanceEvents(undefined, '');
+      const evt: any = (events || []).find((e: any) => e.event_id === req.params.eventId);
+      if (!evt) return res.status(404).json({ error: 'PHOTO_NOT_FOUND' });
+      if (req.user?.role === 'EMPLOYEE' && evt.employee_id !== req.user.employeeId) {
+        return res.status(403).json({ error: 'FORBIDDEN' });
+      }
+      if (req.user?.role === 'STORE' && req.user.branchScope !== '*' && evt.branch_id !== req.user.branchScope) {
+        return res.status(403).json({ error: 'BRANCH_SCOPE_FORBIDDEN' });
+      }
+      if (!evt.drive_object_id || String(evt.drive_object_id).startsWith('DRV_')) {
+        return res.status(404).json({ error: 'PHOTO_NOT_UPLOADED: Ảnh chưa được upload lên Drive.' });
+      }
+      const syncService = (adapter as any).syncService;
+      if (!syncService?.downloadDriveFile) {
+        return res.status(503).json({ error: 'DRIVE_NOT_CONFIGURED' });
+      }
+      const { buffer, mimeType } = await syncService.downloadDriveFile(evt.drive_object_id);
+      res.setHeader('Content-Type', mimeType || 'image/jpeg');
+      res.setHeader('Cache-Control', 'private, max-age=3600');
+      res.send(buffer);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'PHOTO_DOWNLOAD_FAILED' });
+    }
+  };
+  app.get('/attendance/photo/:eventId', authMiddleware, requireRole(['ADMIN', 'HR', 'STORE']), serveAttendancePhoto);
+  app.get('/me/attendance/photo/:eventId', authMiddleware, serveAttendancePhoto);
+
+  // Tải gói chứng cứ điểm danh theo ngày: ZIP gồm folder từng ngày/chi nhánh/NV + CSV.
+  app.get('/admin/attendance/export', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const date = String(req.query.date || new Date().toISOString().split('T')[0]);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        return res.status(400).json({ error: 'INVALID_DATE: dùng định dạng YYYY-MM-DD.' });
+      }
+      const events: any[] = await adapter.getAttendanceEvents(undefined, date);
+      const syncService = (adapter as any).syncService;
+      const employees = await adapter.listEmployees().catch(() => []);
+      const empName = (id: string) => (employees as any[]).find(e => e.employee_id === id)?.full_name || id;
+      const entries: ZipEntry[] = [];
+      const csvLines = ['Ngay,Chi nhanh,Nhan vien,Ma NV,Loai,Gio,Trang thai GPS,Khoang cach (m),Anh'];
+      for (const e of events || []) {
+        const fname = `${date}/${e.branch_id || 'CN'}/${e.employee_id}_${e.type}.jpg`;
+        let hasPhoto = false;
+        if (e.drive_object_id && !String(e.drive_object_id).startsWith('DRV_')) {
+          try {
+            const dl = await syncService?.downloadDriveFile(e.drive_object_id);
+            if (dl?.buffer?.length) {
+              entries.push({ name: fname, data: dl.buffer });
+              hasPhoto = true;
+            }
+          } catch { /* ghi nhận thiếu ảnh trong CSV */ }
+        }
+        csvLines.push([
+          date, e.branch_id || '', `"${empName(e.employee_id)}"`, e.employee_id, e.type,
+          e.client_time || '', e.gps_status || '', e.distance_meters ?? '', hasPhoto ? fname : 'THIEU_ANH',
+        ].join(','));
+      }
+      entries.push({ name: `${date}/danh-sach-diem-danh-${date}.csv`, data: Buffer.from('\uFEFF' + csvLines.join('\n'), 'utf8') });
+      const zip = buildZipStore(entries);
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', `attachment; filename="diem-danh-${date}.zip"`);
+      res.send(zip);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'EXPORT_FAILED' });
     }
   });
 
