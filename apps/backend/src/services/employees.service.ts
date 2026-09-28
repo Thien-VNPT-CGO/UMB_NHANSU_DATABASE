@@ -292,14 +292,22 @@ export class EmployeesService {
         const expected = Number(updates.expectedVersion) || fresh.version;
         if (expected !== fresh.version) throw new Error('VERSION_CONFLICT: Dữ liệu vừa bị thay đổi, tải lại rồi sửa tiếp.');
         const updated = await this.repo.updateEmployee(employeeId, patch, fresh.version);
-        // Đổi SĐT -> đồng bộ tài khoản đăng nhập theo để NV vẫn login được số mới.
-        if (patch.phone_normalized) {
+        // Đổi SĐT / chi nhánh -> đồng bộ tài khoản đăng nhập theo để NV vẫn login
+        // được số mới và không dính BRANCH_SCOPE_VIOLATION oan khi đổi ca cùng chi nhánh.
+        if (patch.phone_normalized || patch.default_branch_id) {
           const accs = await this.repo.listAccounts().catch(() => []);
           for (const acc of accs) {
-            if (acc.employee_id === employeeId && acc.phone_normalized !== patch.phone_normalized) {
+            if (acc.employee_id !== employeeId) continue;
+            let touched = false;
+            if (patch.phone_normalized && acc.phone_normalized !== patch.phone_normalized) {
               (acc as any).phone_normalized = patch.phone_normalized;
-              (acc as any).updated_at = new Date().toISOString();
+              touched = true;
             }
+            if (patch.default_branch_id && (acc as any).branch_scope !== patch.default_branch_id) {
+              (acc as any).branch_scope = patch.default_branch_id;
+              touched = true;
+            }
+            if (touched) (acc as any).updated_at = new Date().toISOString();
           }
         }
         return updated;
