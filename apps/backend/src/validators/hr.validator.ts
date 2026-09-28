@@ -125,7 +125,8 @@ export const publishWeekParams = z.object({
 
 export const publishWeekBody = z.object({
   branchId: optString(32),
-  auto: optString(16),
+  // Frontend gửi auto: true (boolean) — chấp nhận cả boolean lẫn string.
+  auto: z.union([optString(16), z.boolean()]).optional(),
 });
 
 export const defaultShiftBody = z.object({
