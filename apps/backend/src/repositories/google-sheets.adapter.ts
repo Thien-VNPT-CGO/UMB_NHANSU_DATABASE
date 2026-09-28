@@ -354,6 +354,8 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   async deleteEmployee(id: string) {
     const ok = await this.fallbackAdapter.deleteEmployee(id);
     if (ok) {
+      // Đánh dấu để pull ngay sau đó không đọc lại dòng Sheet cũ (push xóa chạy sau ~10s).
+      try { (this.syncService as any)?.markEmployeeDeleted?.(id); } catch { /* best-effort */ }
       this.scheduleFullSync('NHAN_VIEN_MASTER.delete');
     }
     return ok;

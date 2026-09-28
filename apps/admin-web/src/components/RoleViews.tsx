@@ -2679,26 +2679,45 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         </span>
                       </td>
                       <td style={{ padding: '14px 18px', textAlign: 'center' }}>
-                        <button
-                          className="btn-secondary"
-                          style={{ padding: '5px 12px', fontSize: '12px', fontWeight: 700 }}
-                          onClick={() => {
-                            setEditingEmp(emp);
-                            setEditEmpForm({
-                              fullName: emp.full_name || '',
-                              phone: emp.phone_normalized || '',
-                              branchId: emp.default_branch_id || 'CN130',
-                              group: emp.group || 'STORE',
-                              rate: emp.current_rate_per_hour || 25500,
-                              shift: emp.default_shift_code || '',
-                              startDate: emp.start_date || '',
-                              officialDate: emp.official_date || '',
-                              email: emp.email || '',
-                            });
-                          }}
-                        >
-                          Sửa
-                        </button>
+                        <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
+                          <button
+                            className="btn-secondary"
+                            style={{ padding: '5px 12px', fontSize: '12px', fontWeight: 700 }}
+                            onClick={() => {
+                              setEditingEmp(emp);
+                              setEditEmpForm({
+                                fullName: emp.full_name || '',
+                                phone: emp.phone_normalized || '',
+                                branchId: emp.default_branch_id || 'CN130',
+                                group: emp.group || 'STORE',
+                                rate: emp.current_rate_per_hour || 25500,
+                                shift: emp.default_shift_code || '',
+                                startDate: emp.start_date || '',
+                                officialDate: emp.official_date || '',
+                                email: emp.email || '',
+                              });
+                            }}
+                          >
+                            Sửa
+                          </button>
+                          <button
+                            className="btn-secondary"
+                            style={{ padding: '5px 12px', fontSize: '12px', fontWeight: 700, color: '#DC2626' }}
+                            onClick={async () => {
+                              if (!window.confirm(`XÓA nhân viên ${emp.full_name} (${emp.employee_code})?\nHồ sơ + tài khoản đăng nhập sẽ bị xóa khỏi hệ thống và Google Sheets. Không thể hoàn tác!`)) return;
+                              try {
+                                await apiRequest(`/employees/${emp.employee_id}`, { method: 'DELETE' });
+                                showToast(`Đã xóa ${emp.full_name} khỏi hệ thống và Sheets!`);
+                                if (onRefreshData) await onRefreshData();
+                                if (onSyncSheets) await onSyncSheets();
+                              } catch (e: any) {
+                                showToast(e?.message || 'Lỗi khi xóa!');
+                              }
+                            }}
+                          >
+                            Xóa
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))

@@ -116,6 +116,23 @@ export class GoogleSheetsSyncService {
   private isConfigured = false;
   private authError: string | null = null;
   private lastPulledAt: number = 0;
+  /** Tombstone NV vừa xóa: pull trong ~120s sau xóa mà thấy ID này trên Sheet
+   *  (push xóa chưa kịp chạy) thì bỏ qua, tránh xóa xong bị khôi phục lại. */
+  private deletedEmployeeIds = new Map<string, number>();
+
+  public markEmployeeDeleted(employeeId: string) {
+    if (employeeId) this.deletedEmployeeIds.set(String(employeeId).trim(), Date.now());
+  }
+
+  private isEmployeeDeletedRecently(employeeId: string): boolean {
+    const t = this.deletedEmployeeIds.get(String(employeeId || '').trim());
+    if (!t) return false;
+    if (Date.now() - t > 120000) {
+      this.deletedEmployeeIds.delete(String(employeeId).trim());
+      return false;
+    }
+    return true;
+  }
   private lastWriteError: string | null = null;
   private lastWriteAt: number = 0;
   private initOkAt = 0;
@@ -384,7 +401,7 @@ export class GoogleSheetsSyncService {
         counts.employees = fallback.employees.length;
       } else if (empRows.length > 0) {
         const mappedEmps = empRows
-          .filter(r => r && (r[2] || r[3]))
+          .filter(r => r && (r[2] || r[3]) && (!r[0] || !this.isEmployeeDeletedRecently(r[0])))
           .map((r, idx) => {
             const phone = (r[3] || '').trim();
             // Chuẩn hóa triệt để: Sheet có thể ghi +84/84/mất số 0 đầu (ô numeric).
