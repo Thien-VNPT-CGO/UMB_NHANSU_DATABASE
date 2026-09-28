@@ -1658,7 +1658,7 @@ export function App() {
                     Chưa có ca làm việc được phân công. Quản lý cửa hàng sẽ cập nhật lịch làm sớm nhất trên Google Sheets.
                   </div>
                 ) : (
-                  myShifts.map((shift, idx) => {
+                  myShifts.filter((s: any, i: number, arr: any[]) => !s.assignment_id || arr.findIndex((x: any) => x.assignment_id === s.assignment_id) === i).map((shift, idx) => {
                     const todayStr = new Date().toISOString().split('T')[0];
                     const isToday = shift.date === todayStr;
                     const isPast = shift.date < todayStr;

@@ -709,9 +709,15 @@ export class GoogleSheetsSyncService {
         // MERGE chống mất ca vừa PUBLISH: đổi trạng thái chỉ nằm trong bộ nhớ
         // (+tăng schedule_version), Sheets push sau. Bản schedule_version lớn thắng;
         // ca chỉ có trong bộ nhớ (vừa tạo, append đang bay) được giữ lại.
+        // Chống dòng trùng trên Sheets (append thử lại) tạo "ca ma": cùng
+        // assignment_id chỉ giữ 1 bản mới nhất.
+        const dedupedMapped = GoogleSheetsSyncService.dedupeBy(mappedShifts, s => (s as any).assignment_id);
+        if (dedupedMapped.length !== mappedShifts.length) {
+          console.warn(`[GoogleSheetsSyncService] PHAN_CONG_CA loại ${mappedShifts.length - dedupedMapped.length} dòng trùng.`);
+        }
         const memShiftById = new Map<string, any>((fallback.shifts || []).map((s: any) => [s.assignment_id, s]));
         const mergedShifts: any[] = [];
-        for (const s of mappedShifts) {
+        for (const s of dedupedMapped) {
           const m = memShiftById.get((s as any).assignment_id);
           if (m && Number(m.schedule_version || 0) > Number((s as any).schedule_version || 0)) {
             mergedShifts.push(m);

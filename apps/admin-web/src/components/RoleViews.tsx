@@ -3404,8 +3404,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             isToday: day.isToday,
           };
         } else {
-          // Có ca làm việc thật — ngày 2 ca (do tráo đổi/nhận thay): tính từng ca riêng
-          const dayShifts = empShifts.filter((s: any) => s.date === day.isoDate || (s.date && s.date.startsWith(day.isoDate)));
+          // Có ca làm việc thật — ngày 2 ca (do tráo đổi/nhận thay): tính từng ca riêng.
+          // Lọc trùng assignment_id để dòng trùng không hiện thành "2 ca" ma.
+          const seenAssign = new Set<string>();
+          const dayShifts = empShifts.filter((s: any) => {
+            if (!(s.date === day.isoDate || (s.date && s.date.startsWith(day.isoDate)))) return false;
+            if (s.assignment_id && seenAssign.has(s.assignment_id)) return false;
+            if (s.assignment_id) seenAssign.add(s.assignment_id);
+            return true;
+          });
           // Ca nào check-in ca đó: so khớp theo assignment_id. Chỉ dùng ngày làm
           // fallback khi sự kiện/ca thiếu assignment (dữ liệu rất cũ) — nếu không,
           // check-in ca sáng sẽ lan sang ca chiều cùng ngày.
