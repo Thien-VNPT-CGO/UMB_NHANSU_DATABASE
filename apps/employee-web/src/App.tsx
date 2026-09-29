@@ -781,6 +781,17 @@ export function App() {
 
       setLastReceipt(res.receipt);
       setAttendanceStep('CONFIRMED');
+      // Điểm danh lại xong -> tự tắt banner bắt điểm danh lại (GPS vượt 300m)
+      try {
+        const redoIds = (Array.isArray(notifications) ? notifications : [])
+          .filter((n: any) => !n.read_at && (n.target_path === '/attendance') && /GPS|300m|phạm vi|vượt/i.test(`${n.title || ''} ${n.summary || ''}`))
+          .map((n: any) => n.inbox_id)
+          .filter(Boolean);
+        if (redoIds.length > 0) {
+          await Promise.all(redoIds.map(id => apiRequest(`/me/notifications/${id}/read`, { method: 'POST' }).catch(() => null)));
+          setNotifications((prev: any[]) => (Array.isArray(prev) ? prev.map(x => redoIds.includes(x.inbox_id) ? { ...x, read_at: new Date().toISOString() } : x) : prev));
+        }
+      } catch { /* không chặn luồng chính */ }
       const gpsNote = res.receipt?.gps_status === 'LOW_ACCURACY'
         ? ' (⚠️ GPS kém chính xác — đã ghi nhận!)'
         : '';
