@@ -529,6 +529,8 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
         snapshot.drive_object_id || '',
         snapshot.request_id || '',
         (snapshot as any).uniform_pink_ratio ?? '',
+        // Giữ giờ máy khách (kèm múi giờ +07:00) để lọc đúng ngày Việt Nam
+        (snapshot as any).client_time || '',
       ]), 'SU_KIEN_DIEM_DANH.append');
     }
 

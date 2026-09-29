@@ -481,11 +481,18 @@ export class MockSheetsAdapter implements ISheetsRepository {
     return newEvent;
   }
 
+  /** Ngày Việt Nam (UTC+7) của 1 mốc ISO — lọc đúng ngày dù giờ lưu UTC hay +07:00. */
+  private static vnDay(iso: string): string {
+    const t = new Date(iso || '').getTime();
+    if (!Number.isFinite(t)) return '';
+    return new Date(t + 7 * 3_600_000).toISOString().slice(0, 10);
+  }
+
   async getAttendanceEvents(employeeId?: string, date?: string): Promise<AttendanceEvent[]> {
     this.checkErrors();
     return this.attendanceEvents.filter(e => {
       if (employeeId && employeeId !== '*' && e.employee_id !== employeeId) return false;
-      if (date && date !== '*' && !e.client_time.startsWith(date)) return false;
+      if (date && date !== '*' && MockSheetsAdapter.vnDay(e.client_time) !== date) return false;
       return true;
     });
   }

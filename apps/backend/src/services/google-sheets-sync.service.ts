@@ -46,7 +46,7 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   },
   {
     title: 'SU_KIEN_DIEM_DANH',
-    headers: ['ID Sự Kiện', 'ID Ca', 'ID Nhân Viên', 'Loại (IN/OUT)', 'Thời Gian Máy Chủ', 'Vĩ Độ GPS', 'Kinh Độ GPS', 'Khoảng Cách (m)', 'Trạng Thái GPS', 'Ảnh Drive Object', 'ID Yêu Cầu', 'Hồng Đồng Phục (%)'],
+    headers: ['ID Sự Kiện', 'ID Ca', 'ID Nhân Viên', 'Loại (IN/OUT)', 'Thời Gian Máy Chủ', 'Vĩ Độ GPS', 'Kinh Độ GPS', 'Khoảng Cách (m)', 'Trạng Thái GPS', 'Ảnh Drive Object', 'ID Yêu Cầu', 'Hồng Đồng Phục (%)', 'Giờ Máy Khách'],
   },
   {
     title: 'LUUTRU_CHAMCONG_TUAN',
@@ -864,7 +864,8 @@ export class GoogleSheetsSyncService {
           employee_id: r[2] || '',
           branch_id: '',
           type: (r[3] as any) || 'CHECK_IN',
-          client_time: r[4] || new Date().toISOString(),
+          // Ưu tiên giờ máy khách (kèm +07:00) để lọc đúng ngày VN; dòng cũ lấy giờ server
+          client_time: r[12] || r[4] || new Date().toISOString(),
           server_received_at: r[4] || new Date().toISOString(),
           gps_latitude: Number(r[5]) || 0,
           gps_longitude: Number(r[6]) || 0,
@@ -1669,7 +1670,13 @@ export class GoogleSheetsSyncService {
     root: string
   ): Promise<{ entries: ZipEntry[]; eventCount: number; photoCount: number; missing: string[] }> {
     const safe = GoogleSheetsSyncService.safeZipName;
-    const events: any[] = await repo.getAttendanceEvents(undefined, date).catch(() => []);
+    const vnDay = (iso: string) => {
+      const t = new Date(iso || '').getTime();
+      if (!Number.isFinite(t)) return '';
+      return new Date(t + 7 * 3_600_000).toISOString().slice(0, 10);
+    };
+    const events: any[] = (await repo.getAttendanceEvents(undefined, date).catch(() => []))
+      .filter((e: any) => vnDay(e.client_time || '') === date);
     const employees = await repo.listEmployees().catch(() => []);
     const empOf = (id: string) => (employees as any[]).find(e => e.employee_id === id);
     const entries: ZipEntry[] = [];
@@ -1770,7 +1777,15 @@ export class GoogleSheetsSyncService {
     const base = Date.UTC(y, m - 1, d0);
     const isoOf = (t: number) => new Date(t).toISOString().slice(0, 10);
     const weekSun = isoOf(base + 6 * 86_400_000);
-    const inWeek = (dt: string) => dt >= weekMon && dt <= weekSun;
+    const vnDay = (iso: string) => {
+      const t = new Date(iso || '').getTime();
+      if (!Number.isFinite(t)) return '';
+      return new Date(t + 7 * 3_600_000).toISOString().slice(0, 10);
+    };
+    const inWeek = (dt: string) => {
+      const v = vnDay(dt);
+      return v >= weekMon && v <= weekSun;
+    };
 
     const { zip, eventCount } = await this.buildAttendanceWeekZip(repo, weekMon);
     let driveFileId = '';
@@ -1781,11 +1796,12 @@ export class GoogleSheetsSyncService {
 
     await this.initSpreadsheetStructure().catch(() => null);
     const rows = (fallback.attendanceEvents || [])
-      .filter((e: any) => inWeek((e.client_time || '').slice(0, 10)))
+      .filter((e: any) => inWeek(e.client_time || ''))
       .map((e: any) => [
         e.event_id, e.assignment_id, e.employee_id, e.type, e.server_received_at,
         e.gps_latitude ?? '', e.gps_longitude ?? '', e.distance_meters ?? '', e.gps_status || '',
-        e.drive_object_id || '', e.request_id || '', `${weekMon}→${weekSun}`,
+        e.drive_object_id || '', e.request_id || '', (e as any).uniform_pink_ratio ?? '',
+        e.client_time || '',
       ]);
     if (rows.length > 0 && this.sheetsClient) {
       try {
@@ -1798,17 +1814,16 @@ export class GoogleSheetsSyncService {
       }
     }
 
-    // Reset: bộ nhớ + tab chính chỉ giữ sự kiện từ Thứ 2 tuần mới trở đi.
+    // Reset: bộ nhớ + tab chính chỉ giữ sự kiện từ Thứ 2 tuần mới trở đi (theo ngày VN).
     const nextMon = isoOf(base + 7 * 86_400_000);
-    fallback.attendanceEvents = (fallback.attendanceEvents || []).filter(
-      (e: any) => (e.client_time || '').slice(0, 10) >= nextMon
-    );
+    fallback.attendanceEvents = (fallback.attendanceEvents || []).filter((e: any) => vnDay(e.client_time || '') >= nextMon);
     if (this.sheetsClient) {
       try {
         const mainRows = (fallback.attendanceEvents || []).map((e: any) => [
           e.event_id, e.assignment_id, e.employee_id, e.type, e.server_received_at,
           e.gps_latitude ?? '', e.gps_longitude ?? '', e.distance_meters ?? '', e.gps_status || '',
-          e.drive_object_id || '', e.request_id || '',
+          e.drive_object_id || '', e.request_id || '', (e as any).uniform_pink_ratio ?? '',
+          e.client_time || '',
         ]);
         const def = SHEETS_DEFINITIONS.find(dd => dd.title === 'SU_KIEN_DIEM_DANH')!;
         await this.overwriteSheetData('SU_KIEN_DIEM_DANH', def.headers, mainRows);
