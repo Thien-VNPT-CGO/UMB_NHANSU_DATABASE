@@ -405,8 +405,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     } catch { /* offline */ }
   };
   useEffect(() => {
-    if (activeTab === 'fin-timesheet') loadFinAttendance();
-  }, [activeTab]);
+    // Dữ liệu finance lấy 100% từ cổng NV (chấm công/lịch realtime) -> tự tải lại 30s
+    if (activeTab !== 'fin-timesheet') return;
+    loadFinAttendance();
+    const t = setInterval(loadFinAttendance, 30000);
+    return () => clearInterval(t);
+  }, [activeTab, finMonth]);
   const [payRunDetail, setPayRunDetail] = useState<any>(null);
   const [payRunBusy, setPayRunBusy] = useState<string | null>(null);
   const loadPayRunDetail = async (runId: string) => {
