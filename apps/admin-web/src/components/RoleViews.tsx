@@ -3484,9 +3484,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             // GPS vượt 300m (dữ liệu cũ từng ghi nhận): đánh dấu để báo đỏ + bắt làm lại
             const ciDist = Number(ci?.distance_meters);
             const gpsBad = !!ci && (ci?.gps_status === 'OUT_OF_BOUNDS' || (Number.isFinite(ciDist) && ciDist > 300));
-            // Hết giờ tan ca +30p mà chưa check-out -> chốt (hết nhấp nháy), thiếu là không lương
+            // Hết giờ tan ca +30p mà chưa check-out -> chốt (hết nhấp nháy), thiếu là không lương.
+            // Chốt cứng thêm 2 trường hợp lệch dữ liệu: ngày đã qua (bất kể end_at) và
+            // check-in quá 12h chưa out (end_at lỗi) — không bao giờ kẹt "Đang làm" mãi.
             const endMs = sh?.end_at ? new Date(sh.end_at).getTime() : NaN;
+            const ciMs = ci?.client_time ? new Date(ci.client_time).getTime() : NaN;
             const pastEnd = Number.isFinite(endMs) && Date.now() - (endMs as number) > 30 * 60 * 1000;
+            const staleIn = Number.isFinite(ciMs) && Date.now() - (ciMs as number) > 12 * 60 * 60 * 1000;
+            const pastDay = !day.isToday && day.isPast;
             // Quá 3h kể từ giờ vào ca mà chưa check-in -> khóa, nghỉ không lương
             const startMs = sh?.start_at ? new Date(sh.start_at).getTime() : NaN;
             const locked = !ci && Number.isFinite(startMs) && Date.now() - (startMs as number) > 3 * 60 * 60 * 1000;
@@ -3501,7 +3506,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 : 'Đã check-in';
               const distText = ci.distance_meters !== undefined ? `${ci.distance_meters}m` : '< 300m';
 
-              if (!co && pastEnd) {
+              if (!co && (pastEnd || pastDay || staleIn)) {
                 return {
                   shift: shiftName,
                   status: 'MISSING_OUT',
@@ -5199,8 +5204,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     const complete = !!(inEvt && outEvt);
                     const absent = !inEvt && !!absentEvt;
                     const locked = !inEvt && !absentEvt && Number.isFinite(startMs) && Date.now() - startMs > 3 * 60 * 60 * 1000;
-                    // Hết giờ +30p mà chưa check-out -> chốt (hết nhấp nháy), thiếu là không lương
-                    const missingOut = !!inEvt && !outEvt && Number.isFinite(endMs) && Date.now() - endMs > 30 * 60 * 1000;
+                    // Hết giờ +30p mà chưa check-out -> chốt (hết nhấp nháy), thiếu là không lương.
+                    // Chốt cứng thêm: ngày đã qua hoặc check-in quá 12h (end_at lỗi cũng chốt).
+                    const inMs = inEvt?.client_time ? new Date(inEvt.client_time).getTime() : NaN;
+                    const missingOut = !!inEvt && !outEvt && (Number.isFinite(endMs) && Date.now() - endMs > 30 * 60 * 1000
+                      || attViewDate < new Date().toISOString().split('T')[0]
+                      || (Number.isFinite(inMs) && Date.now() - inMs > 12 * 60 * 60 * 1000));
                     // Ca chưa tới giờ mở cổng (trước 30p) -> chờ, không tính vắng/trễ
                     const upcoming = !inEvt && !absentEvt && Number.isFinite(startMs) && Date.now() < startMs - 30 * 60 * 1000;
                     const working = !complete && !absent && !locked && !missingOut && !upcoming;

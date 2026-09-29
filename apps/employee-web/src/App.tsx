@@ -1800,8 +1800,12 @@ export function App() {
                     const isLocked = !hasCheckIn && Number.isFinite(startMs) && Date.now() - startMs > 3 * 60 * 60 * 1000;
                     const isComplete = hasCheckIn && hasCheckOut;
                     const isAbsent = !hasCheckIn && absentRecorded;
-                    // Hết giờ tan ca +30p mà chưa check-out -> chốt (hết nhấp nháy), thiếu là không lương
-                    const isMissingOut = hasCheckIn && !hasCheckOut && Number.isFinite(endMs) && Date.now() - endMs > 30 * 60 * 1000;
+                    // Hết giờ tan ca +30p mà chưa check-out -> chốt (hết nhấp nháy), thiếu là không lương.
+                    // Chốt cứng thêm: ngày đã qua hoặc check-in quá 12h (end_at lỗi cũng chốt).
+                    const inMs = (myAttendanceHistory || []).filter((e: any) => e.assignment_id === shift.assignment_id).find((e: any) => e.type === 'CHECK_IN')?.client_time;
+                    const inMsNum = inMs ? new Date(inMs).getTime() : NaN;
+                    const pastDay = shift.date < todayStr;
+                    const isMissingOut = hasCheckIn && !hasCheckOut && (Number.isFinite(endMs) && Date.now() - endMs > 30 * 60 * 1000 || pastDay || (Number.isFinite(inMsNum) && Date.now() - inMsNum > 12 * 60 * 60 * 1000));
                     // Vàng khi thiếu; chỉ NHẤP NHÁY khi NV đã vào ca và ca chưa hết giờ
                     const isWorking = !isComplete && !isAbsent && !isLocked && !isMissingOut;
                     const isDoing = isWorking && hasCheckIn && !hasCheckOut;
