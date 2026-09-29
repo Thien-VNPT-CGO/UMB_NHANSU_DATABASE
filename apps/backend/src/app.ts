@@ -104,7 +104,7 @@ import {
   requireRole,
   enforceBranchScope,
 } from './middlewares/rbac.middleware.js';
-import { ERROR_CODES, SHIFT_TEMPLATES } from '@ubm/shared';
+import { BRANCHES, ERROR_CODES, SHIFT_TEMPLATES } from '@ubm/shared';
 import { SHEETS_DEFINITIONS } from './services/google-sheets-sync.service.js';
 import { buildZipStore } from './utils/zip-store.js';
 import { lateFineFor } from './services/payroll.service.js';
@@ -1747,6 +1747,62 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         else { neverUploaded++; missing.push(e.event_id); }
       }
       res.json({ date, total: relevant.length, withPhoto: ok, uploadFailed, neverUploaded, missing });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Rà soát GPS vượt phạm vi: NV nào đã check-in/check-out cách chi nhánh quá
+  // bán kính (mặc định 300m) thì bắt điểm danh lại hết (báo thẳng cổng NV).
+  app.post('/admin/attendance/reverify-gps', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const date = String(req.body?.date || new Date().toISOString().split('T')[0]);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        return res.status(400).json({ error: 'INVALID_DATE' });
+      }
+      const radiusOf = (branchId?: string) =>
+        BRANCHES.find(b => b.id === branchId)?.radius_meters ?? 300;
+      const events: any[] = await adapter.getAttendanceEvents(undefined, date);
+      const bad = (events || []).filter(
+        e =>
+          (e.type === 'CHECK_IN' || e.type === 'CHECK_OUT') &&
+          Number(e.distance_meters) > radiusOf(e.branch_id)
+      );
+      const byEmp = new Map<string, any[]>();
+      for (const e of bad) {
+        if (!byEmp.has(e.employee_id)) byEmp.set(e.employee_id, []);
+        byEmp.get(e.employee_id)!.push(e);
+      }
+      const offenderIds = [...byEmp.keys()];
+      if (offenderIds.length > 0) {
+        const names = await Promise.all(
+          offenderIds.map(async id => (await employeesService.getEmployee(id).catch(() => null))?.full_name || id)
+        );
+        await notificationsService.sendNotification({
+          recipientIds: offenderIds,
+          type: 'ATTENDANCE_GPS_REDO',
+          severity: 'ACTION_REQUIRED',
+          title: '🚨 GPS vượt phạm vi — Bắt buộc điểm danh lại!',
+          summary: `Lượt điểm danh ngày ${date} của bạn cách chi nhánh quá 300m nên không hợp lệ. Mở tab Điểm danh, đến trong phạm vi và thực hiện lại ngay!`,
+          targetPath: '/attendance',
+          actorId: req.user!.id,
+        }).catch(() => null);
+        broadcastUpdate('attendance', { action: 'gps-reverify', date, offenders: offenderIds });
+        broadcastNotification({
+          type: 'INFO',
+          title: `🚨 Rà soát GPS: ${offenderIds.length} NV phải điểm danh lại`,
+          message: `${names.slice(0, 8).join(', ')}${names.length > 8 ? ` +${names.length - 8} người` : ''} — đã gửi yêu cầu điểm danh lại đến từng người (ngày ${date}).`,
+          linkTab: 'hr-attendance',
+          metadata: { date, offenders: offenderIds },
+          targetRoles: ['ADMIN', 'HR', 'STORE'],
+        });
+      }
+      const detail = [...byEmp.entries()].map(([id, evts]) => ({
+        employee_id: id,
+        count: evts.length,
+        max_distance: Math.max(...evts.map(e => Number(e.distance_meters) || 0)),
+      }));
+      res.json({ date, offenders: offenderIds.length, detail });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

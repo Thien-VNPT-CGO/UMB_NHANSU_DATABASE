@@ -1518,6 +1518,48 @@ export function App() {
         </div>
       )}
 
+      {/* BANNER BẮT ĐIỂM DANH LẠI (GPS vượt 300m) — hiện mọi tab đến khi xử lý */}
+      {(() => {
+        const redo = (Array.isArray(notifications) ? notifications : []).filter((n: any) =>
+          !n.read_at && (n.target_path === '/attendance') && /GPS|300m|phạm vi|vượt/i.test(`${n.title || ''} ${n.summary || ''}`)
+        );
+        if (redo.length === 0) return null;
+        return (
+          <div style={{
+            margin: '12px 16px 0',
+            padding: '12px 14px',
+            backgroundColor: '#FEF2F2',
+            border: '2px solid #DC2626',
+            borderRadius: 'var(--radius-sm)',
+            boxShadow: '0 4px 12px rgba(220, 38, 38, 0.2)',
+          }}>
+            <div style={{ fontSize: '13px', fontWeight: 800, color: '#991B1B' }}>
+              🚨 {redo[0].title || 'GPS vượt phạm vi — bắt buộc điểm danh lại!'}
+            </div>
+            <div style={{ fontSize: '12px', color: '#7F1D1D', marginTop: '4px' }}>{redo[0].summary || ''}</div>
+            <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+              <button
+                onClick={() => setActiveTab('attendance')}
+                style={{ flex: 1, backgroundColor: '#DC2626', color: '#FFF', border: 'none', borderRadius: '6px', padding: '9px 12px', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}
+              >
+                👉 Điểm danh lại ngay
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    await apiRequest(`/me/notifications/${redo[0].inbox_id}/read`, { method: 'POST' });
+                    setNotifications((prev: any[]) => prev.map(x => x.inbox_id === redo[0].inbox_id ? { ...x, read_at: new Date().toISOString() } : x));
+                  } catch {}
+                }}
+                style={{ backgroundColor: '#FFF', color: '#991B1B', border: '1px solid #FCA5A5', borderRadius: '6px', padding: '9px 12px', fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}
+              >
+                Để sau
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* BANNER PHIẾU ĐỔI CA CHỜ XÁC NHẬN — hiện mọi tab cho đến khi B bấm Đồng ý/Từ chối */}
       {!isProbation && (mySwaps.some((s: any) => s.target_employee_id === employee?.employee_id && s.status === 'PENDING_PARTNER') || mySwaps.some((s: any) => (s.swap_kind || '') === 'HR_DISPATCH' && s.status === 'PENDING_PARTNER' && !s.target_employee_id)) && (
         <div style={{

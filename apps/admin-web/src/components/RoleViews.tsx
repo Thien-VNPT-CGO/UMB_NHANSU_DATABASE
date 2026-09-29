@@ -3452,6 +3452,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             const ci = empEvents.find((e: any) => e.type === 'CHECK_IN' && matchShift(e, sh));
             const co = empEvents.find((e: any) => e.type === 'CHECK_OUT' && matchShift(e, sh));
             const ab = empEvents.find((e: any) => e.type === 'ABSENT' && matchShift(e, sh));
+            // GPS vượt 300m (dữ liệu cũ từng ghi nhận): đánh dấu để báo đỏ + bắt làm lại
+            const ciDist = Number(ci?.distance_meters);
+            const gpsBad = !!ci && (ci?.gps_status === 'OUT_OF_BOUNDS' || (Number.isFinite(ciDist) && ciDist > 300));
             // Hết giờ tan ca +30p mà chưa check-out -> chốt (hết nhấp nháy), thiếu là không lương
             const endMs = sh?.end_at ? new Date(sh.end_at).getTime() : NaN;
             const pastEnd = Number.isFinite(endMs) && Date.now() - (endMs as number) > 30 * 60 * 1000;
@@ -3486,7 +3489,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   shift: shiftName,
                   status: 'COMPLETED',
                   time: `${inTime} - ${outTime}`,
-                  gps: `GPS hợp lệ (${distText})`,
+                  gps: gpsBad ? `GPS VƯỢT ${ciDist}m (quá 300m)` : `GPS hợp lệ (${distText})`,
+                  gpsBad,
                   isToday: day.isToday,
                   event: ci,
                 };
@@ -3495,7 +3499,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 shift: shiftName,
                 status: 'CHECKED_IN',
                 time: inTime,
-                gps: `GPS hợp lệ (${distText})`,
+                gps: gpsBad ? `GPS VƯỢT ${ciDist}m (quá 300m)` : `GPS hợp lệ (${distText})`,
+                gpsBad,
                 isToday: day.isToday,
                 event: ci,
               };
@@ -3961,8 +3966,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 }}>
                                   <Clock size={10} /> ĐANG LÀM (vào {d.time})
                                 </span>
-                                <div style={{ fontSize: '10px', color: '#92400E', fontWeight: 600, marginTop: '2px' }}>
-                                  Chờ check-out để hoàn thành • {d.gps}
+                                <div style={{ fontSize: '10px', color: d.gpsBad ? '#DC2626' : '#92400E', fontWeight: 700, marginTop: '2px' }}>
+                                  {d.gpsBad ? `⚠️ ${d.gps} — bắt điểm danh lại!` : `Chờ check-out để hoàn thành • ${d.gps}`}
                                 </div>
                                 <button
                                   onClick={() => setSelectedRealtimeModal({ emp, dayData: d })}
@@ -5005,6 +5010,28 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               }}
             >
               {exportAttBusy ? 'Đang gói...' : '⬇ Tải ZIP theo ngày'}
+            </button>
+            <button
+              className="btn-primary"
+              style={{ fontSize: '12px', backgroundColor: '#DC2626' }}
+              onClick={async () => {
+                if (!window.confirm(`Rà soát GPS ngày ${exportAttDate}? NV nào check-in/out quá 300m sẽ bị bắt điểm danh lại hết.`)) return;
+                try {
+                  const r = await apiRequest('/admin/attendance/reverify-gps', {
+                    method: 'POST',
+                    body: JSON.stringify({ date: exportAttDate }),
+                  });
+                  showToast((r as any)?.offenders > 0
+                    ? `Đã gửi yêu cầu điểm danh lại cho ${(r as any).offenders} NV vượt GPS!`
+                    : 'Không phát hiện lượt nào vượt 300m.');
+                  const data = await apiRequest('/attendance/events').catch(() => []);
+                  setLiveAttendanceEvents(Array.isArray(data) ? data : []);
+                } catch (e: any) {
+                  showToast(e?.message || 'Lỗi khi rà soát!');
+                }
+              }}
+            >
+              📡 Rà soát GPS &gt;300m
             </button>
             <button
               className="btn-secondary"
