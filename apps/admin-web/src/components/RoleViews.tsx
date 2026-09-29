@@ -610,9 +610,19 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
   // Live Attendance Events State for HR Realtime Tab 11
   const [liveAttendanceEvents, setLiveAttendanceEvents] = useState<any[]>([]);
+  // Ngày đang xem ở bảng realtime (mặc định hôm nay) + tự refresh 30s khi mở tab
+  const [attViewDate, setAttViewDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const reloadAttEvents = async (date?: string) => {
+    try {
+      const d = date || attViewDate;
+      const data = await apiRequest(`/attendance/events?date=${d}`);
+      setLiveAttendanceEvents(Array.isArray(data) ? data : []);
+    } catch {}
+  };
 
   useEffect(() => {
     if (activeTab === 'hr-attendance' || activeTab === 'hr-schedule') {
+      // Lưới lịch cần sự kiện cả tuần -> tải không lọc ngày
       apiRequest('/attendance/events')
         .then((data) => setLiveAttendanceEvents(Array.isArray(data) ? data : []))
         .catch(() => {});
@@ -621,6 +631,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       loadPhotoStats(exportAttDate);
     }
   }, [activeTab]);
+  useEffect(() => {
+    if (activeTab !== 'hr-attendance') return;
+    reloadAttEvents();
+    const t = setInterval(() => reloadAttEvents(), 30000);
+    return () => clearInterval(t);
+  }, [activeTab, attViewDate]);
   // (QR Zalo thật do server sinh qua /admin/zalo/* — không còn QR giả local.)
 
   // Filter employees for Store
@@ -5041,14 +5057,18 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             >
               {gpsReverifyBusy ? 'Đang rà soát...' : '📡 Rà soát GPS >300m'}
             </button>
+            <input
+              type="date"
+              value={attViewDate}
+              onChange={e => setAttViewDate(e.target.value || new Date().toISOString().split('T')[0])}
+              style={{ padding: '7px 10px', fontSize: '12px', borderRadius: '6px', border: '1px solid var(--border)' }}
+              title="Ngày xem chấm công (mặc định hôm nay, tự refresh 30s)"
+            />
             <button
               className="btn-secondary"
               onClick={async () => {
-                try {
-                  const data = await apiRequest('/attendance/events');
-                  setLiveAttendanceEvents(Array.isArray(data) ? data : []);
-                  showToast('Đã làm mới dữ liệu chấm công thời gian thực!');
-                } catch {}
+                await reloadAttEvents();
+                showToast('Đã làm mới dữ liệu chấm công thời gian thực!');
               }}
               style={{ fontSize: '12px' }}
             >
@@ -5103,52 +5123,56 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </tr>
             </thead>
             <tbody>
-              {liveAttendanceEvents.length === 0 ? (
-                <tr>
-                  <td colSpan={5} style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                    <div style={{ fontSize: '28px', marginBottom: '8px' }}>🕒</div>
-                    <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text)' }}>
-                      Chưa có lượt chấm công nào hôm nay
-                    </div>
-                    <div style={{ fontSize: '12px', marginTop: '4px' }}>
-                      Dữ liệu check-in GPS và ảnh Google Drive sẽ hiển thị realtime tại đây ngay khi nhân viên hoàn thành điểm danh từ Cổng Mobile.
-                    </div>
-                  </td>
-                </tr>
-              ) : (
-                (() => {
-                  // Gom sự kiện theo từng ca phân công: 1 dòng = 1 ca (kể cả ngày 2 ca)
-                  const groups = new Map<string, any[]>();
+              {(() => {
+                  // 1 dòng = 1 ca phân công trong ngày đang xem (kể cả ngày 2 ca).
+                  // Ca chưa phát sinh sự kiện vẫn hiện đúng trạng thái (chờ/sắp tới).
+                  const dayShifts = (shifts || [])
+                    .filter((s: any) => (s.date || '').slice(0, 10) === attViewDate && s.status !== 'CANCELLED')
+                    .sort((a: any, b: any) => String(a.branch_id).localeCompare(String(b.branch_id)) || String(a.start_at).localeCompare(String(b.start_at)));
+                  const evtsByAssign = new Map<string, any[]>();
                   for (const e of liveAttendanceEvents) {
                     const k = e.assignment_id || `${e.employee_id}__${(e.client_time || '').slice(0, 10)}__${e.type}`;
-                    if (!groups.has(k)) groups.set(k, []);
-                    groups.get(k)!.push(e);
+                    if (!evtsByAssign.has(k)) evtsByAssign.set(k, []);
+                    evtsByAssign.get(k)!.push(e);
                   }
                   // Đếm số ca/ngày của từng NV để HR dễ quan sát ngày 2 ca
-                  const dayCount = new Map<string, string[]>();
-                  for (const k of groups.keys()) {
-                    const evts = groups.get(k)!;
-                    const f = evts[0];
-                    const dk = `${f.employee_id}__${(f.client_time || '').slice(0, 10)}`;
-                    if (!dayCount.has(dk)) dayCount.set(dk, []);
-                    dayCount.get(dk)!.push(k);
+                  const perEmp = new Map<string, any[]>();
+                  for (const s of dayShifts) {
+                    if (!perEmp.has(s.employee_id)) perEmp.set(s.employee_id, []);
+                    perEmp.get(s.employee_id)!.push(s);
                   }
+                  // Sự kiện lẻ không gắn ca nào (dữ liệu cũ) -> dòng riêng
+                  const orphanGroups = [...evtsByAssign.entries()].filter(([k]) => !dayShifts.some((s: any) => s.assignment_id === k));
                   const timeOf = (t: string) => {
                     try { return new Date(t).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }); } catch { return '-'; }
                   };
-                  return [...groups.entries()].map(([key, evts]) => {
+                  const rows: any[] = [
+                    ...dayShifts.map((s: any) => ({ shift: s, evts: evtsByAssign.get(s.assignment_id) || [] })),
+                    ...orphanGroups.map(([, evts]) => ({ shift: null, evts })),
+                  ];
+                  if (rows.length === 0) {
+                    return (
+                      <tr>
+                        <td colSpan={5} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                          Ngày {attViewDate} chưa phân ca nào. Ca phân công (DRAFT/PUBLISHED) sẽ hiện tại đây kèm đúng trạng thái.
+                        </td>
+                      </tr>
+                    );
+                  }
+                  return rows.map((row: any, ri: number) => {
+                    const { shift, evts } = row;
                     const inEvt = evts.find((e: any) => e.type === 'CHECK_IN');
                     const outEvt = evts.find((e: any) => e.type === 'CHECK_OUT');
                     const absentEvt = evts.find((e: any) => e.type === 'ABSENT');
-                    const first = evts[0];
-                    const emp = allEmployees.find((e: any) => e.employee_id === first.employee_id) || {
+                    const first = evts[0] || { employee_id: shift?.employee_id, branch_id: shift?.branch_id, client_time: attViewDate };
+                    const emp = allEmployees.find((e: any) => e.employee_id === (shift?.employee_id || first.employee_id)) || {
                       full_name: 'Nhân Viên',
-                      employee_code: first.employee_id,
+                      employee_code: shift?.employee_id || first.employee_id,
                     };
-                    const dayKeys = dayCount.get(`${first.employee_id}__${(first.client_time || '').slice(0, 10)}`) || [key];
-                    const shiftIdx = dayKeys.indexOf(key) + 1;
-                    const shiftTotal = dayKeys.length;
-                    const shift = (shifts || []).find((s: any) => s.assignment_id === first.assignment_id);
+                    const empDay = perEmp.get(shift?.employee_id || '') || [];
+                    const shiftIdx = shift ? empDay.indexOf(shift) + 1 : 1;
+                    const shiftTotal = shift ? empDay.length : 1;
+                    const key = shift?.assignment_id || `orphan-${ri}`;
                     const rate = Number((emp as any)?.current_rate_per_hour) || 25500;
                     const hours = shift?.shift_code === 'CA_2' ? 6 : 5;
                     const shiftPay = hours * rate;
@@ -5159,7 +5183,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     const locked = !inEvt && !absentEvt && Number.isFinite(startMs) && Date.now() - startMs > 3 * 60 * 60 * 1000;
                     // Hết giờ +30p mà chưa check-out -> chốt (hết nhấp nháy), thiếu là không lương
                     const missingOut = !!inEvt && !outEvt && Number.isFinite(endMs) && Date.now() - endMs > 30 * 60 * 1000;
-                    const working = !complete && !absent && !locked && !missingOut;
+                    // Ca chưa tới giờ mở cổng (trước 30p) -> chờ, không tính vắng/trễ
+                    const upcoming = !inEvt && !absentEvt && Number.isFinite(startMs) && Date.now() < startMs - 30 * 60 * 1000;
+                    const working = !complete && !absent && !locked && !missingOut && !upcoming;
                     const lateMin = inEvt?.is_late ? Number(inEvt.minutes_deviation) || 0 : 0;
                     const fineTxt = !inEvt ? '' : lateMin < 5 ? '' : lateMin < 30 ? ' • Phạt 30k' : lateMin < 60 ? ` • Phạt 50% (${Math.round(shiftPay * 0.5).toLocaleString('vi-VN')}đ)` : ' • Phạt 100% ca';
                     const overGps = [inEvt, outEvt].some((e: any) => e && (e.gps_status === 'OUT_OF_BOUNDS' || Number(e.distance_meters) > 300));
@@ -5171,12 +5197,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           ? <span className="badge" style={{ backgroundColor: '#64748B', color: '#FFF', fontWeight: 800 }}>🔒 KHÓA — nghỉ không lương</span>
                           : missingOut
                             ? <span className="badge" style={{ backgroundColor: '#EA580C', color: '#FFF', fontWeight: 800 }}>THIẾU CHECK-OUT — không lương</span>
-                            : <span className="badge" style={{ backgroundColor: '#F59E0B', color: '#FFF', fontWeight: 800, animation: inEvt ? 'fx-blink 1.2s infinite' : undefined }}>{inEvt ? 'ĐANG LÀM (chờ check-out)' : 'CHƯA CHECK-IN'}</span>;
+                            : upcoming
+                              ? <span className="badge" style={{ backgroundColor: '#E0E7FF', color: '#3730A3', fontWeight: 800 }}>LỊCH ĐÃ DUYỆT</span>
+                              : <span className="badge" style={{ backgroundColor: '#F59E0B', color: '#FFF', fontWeight: 800, animation: inEvt ? 'fx-blink 1.2s infinite' : undefined }}>{inEvt ? 'ĐANG LÀM (chờ check-out)' : 'CHƯA CHECK-IN'}</span>;
                     const photoOf = (evt: any) => evt?.drive_object_id && !String(evt.drive_object_id).startsWith('DRV_')
                       ? <AttPhoto eventId={evt.event_id} />
                       : <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Không ảnh</span>;
                     return (
-                      <tr key={key} style={{ borderBottom: '1px solid var(--border)', outline: overGps ? '2px solid #EF4444' : undefined, outlineOffset: '-2px', backgroundColor: complete && !overGps ? undefined : absent ? '#FEF2F2' : locked ? '#F1F5F9' : missingOut ? '#FFF7ED' : working || overGps ? '#FFFBEB' : undefined }}>
+                      <tr key={key} style={{ borderBottom: '1px solid var(--border)', outline: overGps ? '2px solid #EF4444' : undefined, outlineOffset: '-2px', backgroundColor: complete && !overGps ? undefined : absent ? '#FEF2F2' : locked ? '#F1F5F9' : missingOut ? '#FFF7ED' : upcoming ? '#EEF2FF' : working || overGps ? '#FFFBEB' : undefined }}>
                         <td style={{ padding: '12px 20px', fontWeight: 700 }}>
                           {emp.full_name}
                           <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{emp.employee_code}</div>
@@ -5221,8 +5249,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       </tr>
                     );
                   });
-                })()
-              )}
+                })()}
             </tbody>
           </table>
         </div>
