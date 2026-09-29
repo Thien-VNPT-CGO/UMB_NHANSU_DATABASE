@@ -363,6 +363,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [exportAttDate, setExportAttDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [exportAttBusy, setExportAttBusy] = useState(false);
   const [exportWeekBusy, setExportWeekBusy] = useState(false);
+  // Kết quả rà soát GPS mới nhất (hiện ngay trong tab)
+  const [gpsReverify, setGpsReverify] = useState<any>(null);
+  const [gpsReverifyBusy, setGpsReverifyBusy] = useState(false);
   const [photoStats, setPhotoStats] = useState<any>(null);
   const loadPhotoStats = async (date: string) => {
     try {
@@ -5014,13 +5017,16 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <button
               className="btn-primary"
               style={{ fontSize: '12px', backgroundColor: '#DC2626' }}
+              disabled={gpsReverifyBusy}
               onClick={async () => {
                 if (!window.confirm(`Rà soát GPS ngày ${exportAttDate}? NV nào check-in/out quá 300m sẽ bị bắt điểm danh lại hết.`)) return;
+                setGpsReverifyBusy(true);
                 try {
                   const r = await apiRequest('/admin/attendance/reverify-gps', {
                     method: 'POST',
                     body: JSON.stringify({ date: exportAttDate }),
                   });
+                  setGpsReverify({ date: exportAttDate, ...(r as any) });
                   showToast((r as any)?.offenders > 0
                     ? `Đã gửi yêu cầu điểm danh lại cho ${(r as any).offenders} NV vượt GPS!`
                     : 'Không phát hiện lượt nào vượt 300m.');
@@ -5028,10 +5034,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   setLiveAttendanceEvents(Array.isArray(data) ? data : []);
                 } catch (e: any) {
                   showToast(e?.message || 'Lỗi khi rà soát!');
+                } finally {
+                  setGpsReverifyBusy(false);
                 }
               }}
             >
-              📡 Rà soát GPS &gt;300m
+              {gpsReverifyBusy ? 'Đang rà soát...' : '📡 Rà soát GPS >300m'}
             </button>
             <button
               className="btn-secondary"
@@ -5048,6 +5056,40 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </button>
           </div>
         </div>
+
+        {gpsReverify && (
+          <div style={{ backgroundColor: (gpsReverify.offenders || 0) > 0 ? '#FEF2F2' : '#ECFDF5', border: (gpsReverify.offenders || 0) > 0 ? '1.5px solid #EF4444' : '1px solid #A7F3D0', borderRadius: 'var(--radius-md)', padding: '12px 16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <strong style={{ fontSize: '13px' }}>
+                📡 Kết quả rà soát GPS ngày {gpsReverify.date}: {(gpsReverify.offenders || 0) > 0 ? `${gpsReverify.offenders} NV vượt 300m — đã gửi yêu cầu điểm danh lại` : 'không phát hiện vi phạm'}
+              </strong>
+              <button className="btn-secondary" style={{ fontSize: '11px', padding: '3px 10px' }} onClick={() => setGpsReverify(null)}>Ẩn</button>
+            </div>
+            {(gpsReverify.detail || []).length > 0 && (
+              <table style={{ width: '100%', fontSize: '12px', marginTop: '8px', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ textAlign: 'left', color: 'var(--text-muted)' }}>
+                    <th style={{ padding: '4px 8px' }}>Nhân viên</th>
+                    <th style={{ padding: '4px 8px' }}>Số lượt vượt</th>
+                    <th style={{ padding: '4px 8px' }}>Xa nhất</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(gpsReverify.detail || []).map((d: any) => {
+                    const emp = (allEmployees || []).find((e: any) => e.employee_id === d.employee_id);
+                    return (
+                      <tr key={d.employee_id} style={{ borderTop: '1px solid #FECACA' }}>
+                        <td style={{ padding: '4px 8px', fontWeight: 700 }}>{emp?.full_name || d.employee_id}</td>
+                        <td style={{ padding: '4px 8px' }}>{d.count}</td>
+                        <td style={{ padding: '4px 8px', color: '#DC2626', fontWeight: 800 }}>{d.max_distance}m</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
 
         <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
@@ -5120,6 +5162,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     const working = !complete && !absent && !locked && !missingOut;
                     const lateMin = inEvt?.is_late ? Number(inEvt.minutes_deviation) || 0 : 0;
                     const fineTxt = !inEvt ? '' : lateMin < 5 ? '' : lateMin < 30 ? ' • Phạt 30k' : lateMin < 60 ? ` • Phạt 50% (${Math.round(shiftPay * 0.5).toLocaleString('vi-VN')}đ)` : ' • Phạt 100% ca';
+                    const overGps = [inEvt, outEvt].some((e: any) => e && (e.gps_status === 'OUT_OF_BOUNDS' || Number(e.distance_meters) > 300));
                     const statusBadge = complete
                       ? <span className="badge badge-success" style={{ fontWeight: 800 }}>✓ HOÀN THÀNH CA</span>
                       : absent
@@ -5133,10 +5176,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       ? <AttPhoto eventId={evt.event_id} />
                       : <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Không ảnh</span>;
                     return (
-                      <tr key={key} style={{ borderBottom: '1px solid var(--border)', backgroundColor: complete ? undefined : absent ? '#FEF2F2' : locked ? '#F1F5F9' : missingOut ? '#FFF7ED' : working ? '#FFFBEB' : undefined }}>
+                      <tr key={key} style={{ borderBottom: '1px solid var(--border)', outline: overGps ? '2px solid #EF4444' : undefined, outlineOffset: '-2px', backgroundColor: complete && !overGps ? undefined : absent ? '#FEF2F2' : locked ? '#F1F5F9' : missingOut ? '#FFF7ED' : working || overGps ? '#FFFBEB' : undefined }}>
                         <td style={{ padding: '12px 20px', fontWeight: 700 }}>
                           {emp.full_name}
                           <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{emp.employee_code}</div>
+                          {overGps && (
+                            <span className="badge" style={{ backgroundColor: '#FEE2E2', color: '#991B1B', fontWeight: 800, marginTop: '2px' }}>
+                              ⚠️ GPS vượt 300m — bắt làm lại
+                            </span>
+                          )}
                           {shiftTotal > 1 && (
                             <span className="badge" style={{ backgroundColor: '#EDE9FE', color: '#6D28D9', fontWeight: 800, marginTop: '2px' }}>
                               {shiftTotal} ca hôm nay (ca {shiftIdx}/{shiftTotal})
