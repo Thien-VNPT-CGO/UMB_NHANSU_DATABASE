@@ -5730,6 +5730,25 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
           <h1 style={{ fontSize: '20px', fontWeight: 800 }}>15. Trung Tâm Thông Báo Nghiệp Vụ HR</h1>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <button
+              className="btn-secondary"
+              style={{ fontSize: '12px', padding: '6px 12px' }}
+              onClick={async () => {
+                if (!window.confirm('Nạp lại lịch sử thông báo từ 28/09/2026 (dựng từ chấm công/đơn nghỉ/đổi ca/bài TEST có sẵn)? Chạy lại cũng không trùng.')) return;
+                try {
+                  const r = await apiRequest('/admin/notifications/backfill', {
+                    method: 'POST',
+                    body: JSON.stringify({ fromDate: '2026-09-28' }),
+                  });
+                  showToast(`Đã nạp ${(r as any)?.created || 0} thông báo từ 28/09 (bỏ qua ${(r as any)?.skipped || 0} bản đã có)!`);
+                  if (onRefreshData) await onRefreshData();
+                } catch (e: any) {
+                  showToast(e?.message || 'Lỗi khi nạp lịch sử!');
+                }
+              }}
+            >
+              ⏳ Nạp lại từ 28/09
+            </button>
             <select
               value={notifFilter}
               onChange={e => setNotifFilter(e.target.value)}

@@ -2528,6 +2528,118 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Nạp lại lịch sử thông báo từ dữ liệu có sẵn (chấm công/đơn nghỉ/đổi ca/bài TEST)
+  // kể từ fromDate (mặc định 28/09/2026). Lặp lại an toàn: bỏ qua bản đã nạp.
+  app.post('/admin/notifications/backfill', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const from = String(req.body?.fromDate || req.query?.fromDate || '2026-09-28');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) {
+        return res.status(400).json({ error: 'INVALID_DATE: fromDate dùng định dạng YYYY-MM-DD.' });
+      }
+      const since = (iso: string) => (iso || '') >= from;
+      const MAX_BACKFILL = 3000;
+      let budget = MAX_BACKFILL;
+      const existing = await adapter.getInboxForRecipient('ALL').catch(() => []);
+      const seen = new Set((existing || []).map((n: any) => n.inbox_id));
+      const employees = await adapter.listEmployees().catch(() => []);
+      const empName = (id: string) => (employees as any[]).find(e => e.employee_id === id)?.full_name || id;
+      let created = 0;
+      let skipped = 0;
+      const pushOne = async (key: string, type: string, title: string, summary: string, targetPath: string | undefined, createdAt: string) => {
+        const inboxId = `BFINBOX_${key}`;
+        if (seen.has(inboxId)) {
+          skipped++;
+          return;
+        }
+        if (budget-- <= 0) {
+          skipped++;
+          return;
+        }
+        seen.add(inboxId);
+        const notifId = `BF_${key}`;
+        await adapter.createNotification(
+          {
+            notification_id: notifId,
+            event_id: notifId,
+            recipient_id: 'ALL',
+            dedupe_key: notifId,
+            type,
+            severity: 'SYSTEM',
+            title,
+            summary,
+            target_path: targetPath,
+            channel: 'IN_APP',
+            delivery_status: 'QUEUED',
+            attempts: 1,
+          } as any,
+          [
+            {
+              inbox_id: inboxId,
+              notification_id: notifId,
+              recipient_id: 'ALL',
+              type,
+              title,
+              summary,
+              severity: 'SYSTEM',
+              target_path: targetPath,
+            } as any,
+          ]
+        ).catch(() => { skipped++; });
+        // Giữ đúng thời gian gốc thay vì "vừa xong"
+        try {
+          const mock: any = (adapter as any).getMockAdapter ? (adapter as any).getMockAdapter() : adapter;
+          const item = mock.notificationInbox?.find((n: any) => n.inbox_id === inboxId);
+          if (item && createdAt) item.created_at = createdAt;
+          const out = mock.notificationOutbox?.find((o: any) => o.notification_id === notifId);
+          if (out && createdAt) out.created_at = createdAt;
+        } catch { /* best-effort */ }
+        created++;
+      };
+
+      const attEvents: any[] = await adapter.getAttendanceEvents(undefined, '').catch(() => []);
+      for (const e of attEvents) {
+        const ts = e.server_received_at || e.created_at || e.client_time || '';
+        if (!since((ts || '').slice(0, 10))) continue;
+        if (e.type === 'CHECK_IN') {
+          await pushOne(`ATT_${e.event_id}`, 'emp.checkin', '🟢 Điểm Danh Check-in', `${empName(e.employee_id)} đã check-in (${e.client_time || ''}).`, '/hr-attendance', ts);
+        } else if (e.type === 'CHECK_OUT') {
+          await pushOne(`ATT_${e.event_id}`, 'emp.checkout', '🏁 Điểm Danh Check-out', `${empName(e.employee_id)} đã check-out (${e.client_time || ''}).`, '/hr-attendance', ts);
+        } else if (e.type === 'ABSENT') {
+          await pushOne(`ATT_${e.event_id}`, 'emp.checkin', '🔴 Tự Ghi Vắng Ca', `${empName(e.employee_id)} vắng ca ngày ${(e.client_time || '').slice(0, 10)}.`, '/hr-attendance', ts);
+        }
+      }
+      const leaves: any[] = await adapter.listLeaveRequests().catch(() => []);
+      for (const l of leaves) {
+        if (!since((l.created_at || '').slice(0, 10))) continue;
+        await pushOne(`LEAVE_${l.request_id}`, 'emp.leave', '📝 Đơn Nghỉ Phép', `${empName(l.employee_id)} nghỉ ${l.leave_type === 'DOT_XUAT' ? 'đột xuất' : 'OFF'} ngày ${l.requested_date} (${l.status}).`, '/hr-leave', l.created_at);
+      }
+      const swaps: any[] = await (adapter.getMockAdapter() as any).listSwapRequests().catch(() => []);
+      for (const s of swaps) {
+        if (!since((s.created_at || '').slice(0, 10))) continue;
+        await pushOne(`SWAP_${s.swap_id}`, 'emp.swap', '🤝 Đổi Ca', `${empName(s.requester_id)} ⇄ ${empName(s.target_employee_id || '?')} (${s.status}).`, '/hr-swap', s.created_at);
+      }
+      const papers: any[] = await (adapter as any).listTestPapers ? await (adapter as any).listTestPapers().catch(() => []) : [];
+      for (const p of papers || []) {
+        if (!since((p.created_at || '').slice(0, 10))) continue;
+        await pushOne(`TESTP_${p.test_id}`, 'emp.test', '📝 Giao Bài TEST', `Đã giao "${p.title}".`, '/hr-tests', p.created_at);
+      }
+      const subs: any[] = await (adapter as any).listTestSubmissions ? await (adapter as any).listTestSubmissions().catch(() => []) : [];
+      for (const s of subs || []) {
+        if (s.status !== 'SUBMITTED' || !since(((s as any).submitted_at || s.created_at || '').slice(0, 10))) continue;
+        await pushOne(
+          `TESTS_${s.submission_id}`, 'emp.test',
+          (s as any).passed ? '✅ Đạt Bài TEST' : '📝 Nộp Bài TEST',
+          `${empName(s.employee_id)} đạt ${(s as any).score ?? '?'}/10.`,
+          '/hr-tests', (s as any).submitted_at || s.created_at
+        );
+      }
+      broadcastUpdate('notifications', { action: 'backfill', from, created, skipped });
+      res.json({ from, created, skipped, capped: budget < 0 });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // --- 8. TÍCH HỢP & ĐỒNG BỘ ---
   app.get('/admin/integrations/status', authMiddleware, requireRole(['ADMIN']), (req, res) => {
     const raw = adapter.getStatus();
