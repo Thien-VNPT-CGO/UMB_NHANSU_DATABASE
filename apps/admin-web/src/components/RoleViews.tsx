@@ -5223,7 +5223,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <button className="btn-secondary" style={{ fontSize: '12px', padding: '6px 10px' }} onClick={() => setAttWeekOffset(o => o - 1)}>◀ Tuần trước</button>
             <button className="btn-secondary" style={{ fontSize: '12px', padding: '6px 10px', fontWeight: attWeekOffset === 0 ? 800 : 400 }} onClick={() => setAttWeekOffset(0)}>Tuần này</button>
             <button className="btn-primary" style={{ fontSize: '12px', padding: '6px 10px' }} onClick={() => setAttWeekOffset(o => o + 1)}>Tuần sau ▶</button>
-            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Tuần <strong>{attDays[0]?.iso} → {attDays[6]?.iso}</strong> • 1 ô = các ca trong ngày kèm đúng trạng thái</span>
+            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+              Tuần <strong>Thứ 2 {attDays[0] ? `${attDays[0].iso.slice(8, 10)}/${attDays[0].iso.slice(5, 7)}/${attDays[0].iso.slice(0, 4)}` : '…'} → CN {attDays[6] ? `${attDays[6].iso.slice(8, 10)}/${attDays[6].iso.slice(5, 7)}/${attDays[6].iso.slice(0, 4)}` : '…'}</strong> • 1 ô = các ca trong ngày kèm đúng trạng thái
+            </span>
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
             <thead>
