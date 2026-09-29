@@ -672,7 +672,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.get(
     '/employees',
     authMiddleware,
-    requireRole(['ADMIN', 'HR', 'STORE']),
+    requireRole(['ADMIN', 'HR', 'STORE', 'FINANCE']),
     enforceBranchScope(req => req.query.branchId as string),
     async (req: AuthenticatedRequest, res) => {
       try {

@@ -687,9 +687,13 @@ export function App() {
         );
       }
 
-      if (['ADMIN', 'HR', 'STORE'].includes(user.role)) {
+      if (['ADMIN', 'HR', 'STORE', 'FINANCE'].includes(user.role)) {
         tasks.push(
           apiRequest('/employees').then(emps => setAllEmployees(emps || [])).catch(() => null),
+        );
+      }
+      if (['ADMIN', 'HR', 'STORE'].includes(user.role)) {
+        tasks.push(
           apiRequest('/swap-requests').then(sList => setSwaps(sList || [])).catch(() => null),
         );
       }
