@@ -393,6 +393,55 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       setSwapList(Array.isArray(list) ? list : []);
     } catch { /* không quyền / offline: giữ props */ }
   };
+  // Tính lương + chấm công Finance
+  const [payCalcPeriod, setPayCalcPeriod] = useState(() => new Date().toISOString().slice(0, 7));
+  const [payCalcBusy, setPayCalcBusy] = useState(false);
+  const [finMonth, setFinMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [finAttEvents, setFinAttEvents] = useState<any[]>([]);
+  const loadFinAttendance = async () => {
+    try {
+      const data = await apiRequest('/attendance/events');
+      setFinAttEvents(Array.isArray(data) ? data : []);
+    } catch { /* offline */ }
+  };
+  useEffect(() => {
+    if (activeTab === 'fin-timesheet') loadFinAttendance();
+  }, [activeTab]);
+  const [payRunDetail, setPayRunDetail] = useState<any>(null);
+  const [payRunBusy, setPayRunBusy] = useState<string | null>(null);
+  const loadPayRunDetail = async (runId: string) => {
+    if (!runId) {
+      setPayRunDetail(null);
+      return;
+    }
+    try {
+      const d = await apiRequest(`/payroll/runs/${runId}`);
+      setPayRunDetail(d);
+    } catch (e: any) {
+      showToast(e?.message || 'Lỗi khi tải chi tiết kỳ lương!');
+    }
+  };
+  const payRunAction = async (runId: string, action: 'reconcile' | 'approve' | 'publish' | 'mark-paid') => {
+    const labels: Record<string, string> = {
+      reconcile: 'Đối soát',
+      approve: 'Phê duyệt (người duyệt phải khác người tính)',
+      publish: 'Phát hành phiếu lương',
+      'mark-paid': 'Xác nhận đã chi trả ngân hàng',
+    };
+    if (!window.confirm(`${labels[action]} kỳ lương ${runId}?`)) return;
+    setPayRunBusy(runId + action);
+    try {
+      await apiRequest(`/payroll/${runId}/${action}`, { method: 'POST', body: JSON.stringify({}) });
+      showToast(`Đã ${labels[action].toLowerCase()} kỳ lương!`);
+      setPayRunDetail(null);
+      if (onRefreshData) await onRefreshData();
+      if (onSyncSheets) await onSyncSheets();
+    } catch (e: any) {
+      showToast(e?.message || 'Lỗi!');
+    } finally {
+      setPayRunBusy(null);
+    }
+  };
   // Phiếu bổ sung/điều chỉnh công: HR duyệt phiếu NV gửi từ cổng nhân viên
   const [adjustments, setAdjustments] = useState<any[]>([]);
   const [adjBusy, setAdjBusy] = useState<string | null>(null);
@@ -6176,11 +6225,71 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }
 
   if (activeTab === 'fin-timesheet') {
+    const monthShifts = (shifts || []).filter((s: any) => (s.date || '').startsWith(finMonth) && s.status !== 'CANCELLED' && (branchScope === '*' || s.branch_id === branchScope));
+    const monthEmps = [...new Set(monthShifts.map((s: any) => s.employee_id))];
+    const finEmpRow = (empId: string) => {
+      const emp = (allEmployees || []).find((e: any) => e.employee_id === empId);
+      const mine = monthShifts.filter((s: any) => s.employee_id === empId);
+      let full = 0;
+      let partial = 0;
+      let absent = 0;
+      for (const s of mine) {
+        const evs = (finAttEvents || []).filter((e: any) => e.assignment_id === s.assignment_id);
+        const hasIn = evs.some((e: any) => e.type === 'CHECK_IN');
+        const hasOut = evs.some((e: any) => e.type === 'CHECK_OUT');
+        const hasAbs = evs.some((e: any) => e.type === 'ABSENT');
+        if (hasIn && hasOut) full++;
+        else if (!hasIn && hasAbs) absent++;
+        else if (s.date < new Date().toISOString().split('T')[0]) partial++;
+      }
+      const rate = Number(emp?.current_rate_per_hour) || 25500;
+      return { emp, mine: mine.length, full, partial, absent, est: full * 5 * rate };
+    };
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <h1 style={{ fontSize: '20px', fontWeight: 800 }}>2. Bảng Chấm Công Tổng Hợp Toàn Công Ty</h1>
-        <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-          <div style={{ fontSize: '13px' }}>Dữ liệu tổng hợp từ các chi nhánh cửa hàng + Xưởng sản xuất Củ Chi + Trụ sở chính.</div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+          <h1 style={{ fontSize: '20px', fontWeight: 800, margin: 0 }}>2. Bảng Chấm Công Tổng Hợp Toàn Công Ty</h1>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <input type="month" value={finMonth} onChange={e => setFinMonth(e.target.value || new Date().toISOString().slice(0, 7))} style={{ padding: '7px 10px', fontSize: '12px', borderRadius: '6px', border: '1px solid var(--border)' }} />
+            <button className="btn-secondary" style={{ fontSize: '12px', padding: '6px 12px' }} onClick={loadFinAttendance}>Tải lại</button>
+          </div>
+        </div>
+        <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+            <thead>
+              <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
+                <th style={{ padding: '12px 20px' }}>Nhân Viên</th>
+                <th style={{ padding: '12px 20px' }}>Ca Phân Công</th>
+                <th style={{ padding: '12px 20px' }}>Đủ Công</th>
+                <th style={{ padding: '12px 20px' }}>Thiếu (chưa chốt)</th>
+                <th style={{ padding: '12px 20px' }}>Vắng</th>
+                <th style={{ padding: '12px 20px' }}>Ước Lương</th>
+              </tr>
+            </thead>
+            <tbody>
+              {monthEmps.length === 0 ? (
+                <tr>
+                  <td colSpan={6} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    Tháng {finMonth} chưa có ca phân công nào{branchScope !== '*' ? ` tại ${branchName}` : ''}.
+                  </td>
+                </tr>
+              ) : (
+                monthEmps.map((id: string) => {
+                  const r = finEmpRow(id);
+                  return (
+                    <tr key={id} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <td style={{ padding: '12px 20px', fontWeight: 700 }}>{r.emp?.full_name || id}<div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }}>{r.emp?.employee_code || ''}</div></td>
+                      <td style={{ padding: '12px 20px' }}>{r.mine}</td>
+                      <td style={{ padding: '12px 20px', color: '#059669', fontWeight: 700 }}>{r.full}</td>
+                      <td style={{ padding: '12px 20px', color: '#B45309', fontWeight: 700 }}>{r.partial}</td>
+                      <td style={{ padding: '12px 20px', color: '#DC2626', fontWeight: 700 }}>{r.absent}</td>
+                      <td style={{ padding: '12px 20px', fontWeight: 700 }}>{r.est.toLocaleString('vi-VN')}đ</td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
     );
@@ -6200,84 +6309,220 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }
 
   if (activeTab === 'fin-payroll-periods') {
+    const nextAction: Record<string, { action: 'reconcile' | 'approve' | 'publish' | 'mark-paid'; label: string } | null> = {
+      DRAFT: { action: 'reconcile', label: 'Đối soát' },
+      RECONCILED: { action: 'approve', label: 'Phê duyệt' },
+      APPROVED: { action: 'publish', label: 'Phát hành' },
+      PUBLISHED: { action: 'mark-paid', label: 'Xác nhận PAID' },
+      PAID: null,
+    };
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <h1 style={{ fontSize: '20px', fontWeight: 800 }}>4. Quản Lý Kỳ Lương (Payroll Cycles)</h1>
         <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-          <div>Kỳ lương hiện tại: <strong>Kỳ Tháng 09/2026 (01/09 - 30/09/2026)</strong></div>
-          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>Quy trình: DRAFT ➔ RECONCILE ➔ APPROVED ➔ PUBLISHED ➔ PAID</div>
+          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>Quy trình: DRAFT ➔ RECONCILED ➔ APPROVED ➔ PUBLISHED ➔ PAID (người duyệt phải khác người tính)</div>
+          {(payrollRuns || []).length === 0 ? (
+            <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Chưa có kỳ lương nào. Sang tab 5 để tính kỳ mới.</div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+              <thead>
+                <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
+                  <th style={{ padding: '10px 14px' }}>Kỳ</th>
+                  <th style={{ padding: '10px 14px' }}>Trạng Thái</th>
+                  <th style={{ padding: '10px 14px' }}>NV / Giờ / Tổng Tiền</th>
+                  <th style={{ padding: '10px 14px' }}>Thao Tác</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(payrollRuns || []).map((r: any) => {
+                  const nx = nextAction[r.status];
+                  const busy = payRunBusy === r.run_id + (nx?.action || '');
+                  return (
+                    <tr key={r.run_id} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <td style={{ padding: '10px 14px', fontWeight: 700 }}>{r.period}</td>
+                      <td style={{ padding: '10px 14px' }}><span className="badge badge-brand">{r.status}</span></td>
+                      <td style={{ padding: '10px 14px' }}>{r.total_employees} NV • {r.total_hours}h • {(r.total_amount || 0).toLocaleString('vi-VN')}đ</td>
+                      <td style={{ padding: '10px 14px' }}>
+                        {nx ? (
+                          <button className="btn-primary" style={{ padding: '4px 12px', fontSize: '12px' }} disabled={busy} onClick={() => payRunAction(r.run_id, nx.action)}>
+                            {busy ? '...' : nx.label}
+                          </button>
+                        ) : (
+                          <span style={{ fontSize: '12px', color: 'var(--success)', fontWeight: 700 }}>✓ Hoàn tất</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
     );
   }
 
   if (activeTab === 'fin-calculate') {
+    const doCalculate = async () => {
+      const period = (payCalcPeriod || '').trim() || new Date().toISOString().slice(0, 7);
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
+        showToast('Kỳ lương phải dạng YYYY-MM (VD: 2026-09)!');
+        return;
+      }
+      if (!window.confirm(`Tính lương tháng ${period} cho ${branchScope === '*' ? 'toàn hệ thống' : branchName}?\nCông thức: giờ PUBLISHED đủ in+out × đơn giá + 30k nhường ca − phạt trễ/vắng.`)) return;
+      setPayCalcBusy(true);
+      try {
+        const res = await apiRequest(`/payroll/${period}/calculate`, {
+          method: 'POST',
+          body: JSON.stringify({ branchScope }),
+        });
+        const r = (res as any)?.result ?? res;
+        showToast(`Đã tính lương ${period}: ${r?.run?.total_employees ?? '?'} NV, ${Number(r?.run?.total_amount || 0).toLocaleString('vi-VN')}đ!`);
+        if (onRefreshData) await onRefreshData();
+        if (onSyncSheets) await onSyncSheets();
+      } catch (e: any) {
+        showToast(e?.message || 'Lỗi khi tính lương!');
+      } finally {
+        setPayCalcBusy(false);
+      }
+    };
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <h1 style={{ fontSize: '20px', fontWeight: 800 }}>5. Tính Toán Bảng Lương (Formula Engine)</h1>
         <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
           <div style={{ fontSize: '13px', marginBottom: '12px' }}>
-            Công thức: (Tổng giờ công x Đơn giá 23k/25k) + Phụ cấp/Bonus - Khấu trừ hợp lệ
+            Công thức: (giờ PUBLISHED đủ in+out × đơn giá) + 30k nhường ca (HR điều phối) − phạt trễ (30k/50%/100%) − ca vắng không lương.
+            Kỳ đã tính rồi tính lại sẽ tạo kỳ mới (không ghi đè).
           </div>
-          <button className="btn-primary" onClick={() => showToast(`Đã tính toán bảng lương cho ${allEmployees.length} nhân sự!`)}>
-            Tính Lương Toàn Bộ Nhân Sự ({allEmployees.length} NV)
-          </button>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <label style={{ fontSize: '12px', fontWeight: 700 }}>Kỳ lương:
+              <input
+                value={payCalcPeriod}
+                onChange={e => setPayCalcPeriod(e.target.value)}
+                placeholder="2026-09"
+                style={{ marginLeft: '6px', padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '13px', width: '120px' }}
+              />
+            </label>
+            <button className="btn-primary" disabled={payCalcBusy} onClick={doCalculate}>
+              {payCalcBusy ? 'Đang tính...' : `Tính Lương (${branchScope === '*' ? 'toàn hệ thống' : branchName})`}
+            </button>
+          </div>
         </div>
       </div>
     );
   }
 
   if (activeTab === 'fin-details') {
+    const slips: any[] = payRunDetail?.slips || [];
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <h1 style={{ fontSize: '20px', fontWeight: 800 }}>6. Chi Tiết Bảng Lương Từng Nhân Viên</h1>
-        <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-            <thead>
-              <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
-                <th style={{ padding: '12px 20px' }}>Mã NV</th>
-                <th style={{ padding: '12px 20px' }}>Họ Và Tên</th>
-                <th style={{ padding: '12px 20px' }}>Tổng Giờ</th>
-                <th style={{ padding: '12px 20px' }}>Đơn Giá</th>
-                <th style={{ padding: '12px 20px' }}>Thưởng / Phụ Cấp</th>
-                <th style={{ padding: '12px 20px' }}>Thực Nhận</th>
-              </tr>
-            </thead>
-            <tbody>
-              {payrollRuns.length === 0 ? (
-                <tr>
-                  <td colSpan={6} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                    Chưa có bảng lương nào được tính toán. Bảng lương sẽ được tự động tính toán từ dữ liệu chấm công và đồng bộ từ Google Sheets.
-                  </td>
-                </tr>
-              ) : (
-                payrollRuns.map((p, idx) => (
-                  <tr key={idx} style={{ borderBottom: '1px solid var(--border)' }}>
-                    <td style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--brand)' }}>{p.employee_code || p.employee_id}</td>
-                    <td style={{ padding: '14px 20px', fontWeight: 700 }}>{p.employee_name || 'Nhân viên'}</td>
-                    <td style={{ padding: '14px 20px' }}>{p.total_hours || 0}h</td>
-                    <td style={{ padding: '14px 20px' }}>{(p.hourly_rate || 23000).toLocaleString('vi-VN')} đ/h</td>
-                    <td style={{ padding: '14px 20px' }}>{(p.bonus_amount || 0).toLocaleString('vi-VN')} đ</td>
-                    <td style={{ padding: '14px 20px', fontWeight: 800, color: '#10B981' }}>{(p.net_pay || 0).toLocaleString('vi-VN')} đ</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+          <h1 style={{ fontSize: '20px', fontWeight: 800, margin: 0 }}>6. Chi Tiết Bảng Lương Từng Nhân Viên</h1>
+          <select
+            onChange={e => loadPayRunDetail(e.target.value)}
+            defaultValue=""
+            style={{ padding: '8px 12px', fontSize: '13px', borderRadius: '6px', border: '1px solid var(--border)' }}
+          >
+            <option value="">— Chọn kỳ lương —</option>
+            {(payrollRuns || []).map((r: any) => <option key={r.run_id} value={r.run_id}>{r.period} ({r.status})</option>)}
+          </select>
         </div>
+        {!payRunDetail ? (
+          <div style={{ backgroundColor: 'var(--surface)', padding: '32px 20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', textAlign: 'center', fontSize: '13px', color: 'var(--text-muted)' }}>
+            Chọn 1 kỳ lương để xem chi tiết từng phiếu (giờ công, thưởng nhường ca, phạt trễ, ca vắng, thực nhận).
+          </div>
+        ) : (
+          <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+              <thead>
+                <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
+                  <th style={{ padding: '12px 20px' }}>Mã NV</th>
+                  <th style={{ padding: '12px 20px' }}>Họ Và Tên</th>
+                  <th style={{ padding: '12px 20px' }}>Ca / Vắng</th>
+                  <th style={{ padding: '12px 20px' }}>Tổng Giờ</th>
+                  <th style={{ padding: '12px 20px' }}>Đơn Giá</th>
+                  <th style={{ padding: '12px 20px' }}>Thưởng +30k</th>
+                  <th style={{ padding: '12px 20px' }}>Phạt Trễ</th>
+                  <th style={{ padding: '12px 20px' }}>Thực Nhận</th>
+                </tr>
+              </thead>
+              <tbody>
+                {slips.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                      Kỳ này chưa có phiếu lương nào.
+                    </td>
+                  </tr>
+                ) : (
+                  slips.map((p: any) => (
+                    <tr key={p.item_id} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <td style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--brand)' }}>{p.employee_code || p.employee_id}</td>
+                      <td style={{ padding: '14px 20px', fontWeight: 700 }}>{p.full_name || 'Nhân viên'}</td>
+                      <td style={{ padding: '14px 20px' }}>{p.total_shifts || 0}{Number(p.absent_shifts) > 0 ? <span style={{ color: '#DC2626', fontWeight: 700 }}> (−{p.absent_shifts} vắng)</span> : ''}</td>
+                      <td style={{ padding: '14px 20px' }}>{p.standard_hours || 0}h</td>
+                      <td style={{ padding: '14px 20px' }}>{(p.rate_snapshot || 0).toLocaleString('vi-VN')} đ/h</td>
+                      <td style={{ padding: '14px 20px', color: '#059669', fontWeight: 700 }}>{(p.bonus || 0).toLocaleString('vi-VN')} đ</td>
+                      <td style={{ padding: '14px 20px', color: Number(p.deduction) > 0 ? '#DC2626' : undefined, fontWeight: Number(p.deduction) > 0 ? 700 : 400 }}>{(p.deduction || 0).toLocaleString('vi-VN')} đ</td>
+                      <td style={{ padding: '14px 20px', fontWeight: 800, color: '#10B981' }}>{(p.net_pay || 0).toLocaleString('vi-VN')} đ</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     );
   }
 
   if (activeTab === 'fin-payslips') {
+    const pubRuns = (payrollRuns || []).filter((r: any) => r.status === 'PUBLISHED' || r.status === 'PAID');
+    const slips: any[] = payRunDetail?.slips || [];
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <h1 style={{ fontSize: '20px', fontWeight: 800 }}>7. Phát Hành Phiếu Lương Cá Nhân (Bảo Mật PIN)</h1>
-        <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-          <button className="btn-primary" onClick={() => showToast('Đã phát hành phiếu lương an toàn đến Cổng Nhân Viên!')}>
-            Phát Hành Phiếu Lương (PUBLISH PAYSLIPS)
-          </button>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+          <h1 style={{ fontSize: '20px', fontWeight: 800, margin: 0 }}>7. Phát Hành Phiếu Lương Cá Nhân (Bảo Mật PIN)</h1>
+          <select
+            onChange={e => loadPayRunDetail(e.target.value)}
+            defaultValue=""
+            style={{ padding: '8px 12px', fontSize: '13px', borderRadius: '6px', border: '1px solid var(--border)' }}
+          >
+            <option value="">— Chọn kỳ đã phát hành —</option>
+            {pubRuns.map((r: any) => <option key={r.run_id} value={r.run_id}>{r.period} ({r.status})</option>)}
+          </select>
         </div>
+        {!payRunDetail ? (
+          <div style={{ backgroundColor: 'var(--surface)', padding: '32px 20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', textAlign: 'center', fontSize: '13px', color: 'var(--text-muted)' }}>
+            Chọn kỳ lương đã PUBLISHED để xem phiếu từng NV (NV chỉ thấy phiếu của mình trên cổng cá nhân sau khi phát hành).
+          </div>
+        ) : (
+          <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+              <thead>
+                <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
+                  <th style={{ padding: '12px 20px' }}>Mã NV</th>
+                  <th style={{ padding: '12px 20px' }}>Họ Và Tên</th>
+                  <th style={{ padding: '12px 20px' }}>Giờ / Ca</th>
+                  <th style={{ padding: '12px 20px' }}>Thưởng-Phạt</th>
+                  <th style={{ padding: '12px 20px' }}>Thực Nhận</th>
+                  <th style={{ padding: '12px 20px' }}>Trạng Thái</th>
+                </tr>
+              </thead>
+              <tbody>
+                {slips.map((p: any) => (
+                  <tr key={p.item_id} style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td style={{ padding: '12px 20px', fontWeight: 700, color: 'var(--brand)' }}>{p.employee_code}</td>
+                    <td style={{ padding: '12px 20px', fontWeight: 700 }}>{p.full_name}</td>
+                    <td style={{ padding: '12px 20px' }}>{p.standard_hours}h / {p.total_shifts} ca</td>
+                    <td style={{ padding: '12px 20px' }}>+{(p.bonus || 0).toLocaleString('vi-VN')} / −{(p.deduction || 0).toLocaleString('vi-VN')}</td>
+                    <td style={{ padding: '12px 20px', fontWeight: 800, color: '#10B981' }}>{(p.net_pay || 0).toLocaleString('vi-VN')}đ</td>
+                    <td style={{ padding: '12px 20px' }}><span className="badge badge-success">{p.status}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     );
   }
@@ -6294,13 +6539,28 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }
 
   if (activeTab === 'fin-payment') {
+    const payable = (payrollRuns || []).filter((r: any) => r.status === 'PUBLISHED');
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <h1 style={{ fontSize: '20px', fontWeight: 800 }}>9. Xác Nhận Chi Trả & Thanh Toán (PAID)</h1>
         <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-          <button className="btn-primary" style={{ backgroundColor: '#10B981' }} onClick={() => showToast('Đã xác nhận thanh toán thành công và đánh dấu PAID!')}>
-            Xác Nhận Đã Thanh Toán Ngân Hàng (PAID)
-          </button>
+          {payable.length === 0 ? (
+            <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Không có kỳ nào chờ chi trả (cần kỳ ở trạng thái PUBLISHED).</div>
+          ) : (
+            payable.map((r: any) => {
+              const busy = payRunBusy === r.run_id + 'mark-paid';
+              return (
+                <div key={r.run_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid var(--border)', gap: '10px', flexWrap: 'wrap' }}>
+                  <div style={{ fontSize: '13px' }}>
+                    <strong>Kỳ {r.period}</strong> • {r.total_employees} NV • {(r.total_amount || 0).toLocaleString('vi-VN')}đ
+                  </div>
+                  <button className="btn-primary" style={{ backgroundColor: '#10B981' }} disabled={busy} onClick={() => payRunAction(r.run_id, 'mark-paid')}>
+                    {busy ? '...' : 'Xác Nhận Đã Thanh Toán Ngân Hàng (PAID)'}
+                  </button>
+                </div>
+              );
+            })
+          )}
         </div>
       </div>
     );
