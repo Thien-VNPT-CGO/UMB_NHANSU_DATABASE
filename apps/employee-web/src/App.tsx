@@ -727,6 +727,56 @@ export function App() {
     );
   };
 
+  // Kiểm tra màu hồng đồng phục ngay trên máy (Canvas, không tốn server):
+  // áo mẫu hồng bụi (H ~300-360°, bão hòa vừa) phải chiếm tối thiểu khung hình,
+  // nếu không thì từ chối để NV chụp lại đúng đồng phục.
+  const checkPinkUniform = (dataUrl: string): Promise<{ ratio: number; pass: boolean }> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const W = 96;
+          const scale = W / img.width;
+          const H = Math.max(1, Math.round(img.height * scale));
+          const cv = document.createElement('canvas');
+          cv.width = W;
+          cv.height = H;
+          const ctx = cv.getContext('2d', { willReadFrequently: true });
+          if (!ctx) return resolve({ ratio: 0, pass: false });
+          ctx.drawImage(img, 0, 0, W, H);
+          const px = ctx.getImageData(0, 0, W, H).data;
+          let pink = 0;
+          const total = W * H;
+          for (let i = 0; i < total; i++) {
+            const r = px[i * 4] / 255;
+            const g = px[i * 4 + 1] / 255;
+            const b = px[i * 4 + 2] / 255;
+            const mx = Math.max(r, g, b);
+            const mn = Math.min(r, g, b);
+            const d = mx - mn;
+            const s = mx === 0 ? 0 : d / mx;
+            let h = 0;
+            if (d !== 0) {
+              if (mx === r) h = ((g - b) / d) % 6;
+              else if (mx === g) h = (b - r) / d + 2;
+              else h = (r - g) / d + 4;
+              h *= 60;
+              if (h < 0) h += 360;
+            }
+            // Hồng bụi áo mẫu (pastel nên bão hòa vừa): tông hồng/đỏ hồng, không quá tối
+            if (s > 0.18 && mx > 0.3 && (h >= 285 || h <= 12)) pink++;
+          }
+          const ratio = pink / total;
+          resolve({ ratio, pass: ratio >= 0.1 });
+        } catch {
+          resolve({ ratio: 0, pass: false });
+        }
+      };
+      img.onerror = () => resolve({ ratio: 0, pass: false });
+      img.src = dataUrl;
+    });
+  };
+
   const handlePhotoSelected = async (file: File | undefined) => {
     if (!file) return;
     if (!file.type.startsWith('image/')) {
@@ -739,8 +789,20 @@ export function App() {
       return;
     }
     const reader = new FileReader();
-    reader.onload = () => {
-      setPhotoData(String(reader.result || ''));
+    reader.onload = async () => {
+      const dataUrl = String(reader.result || '');
+      if (!dataUrl) {
+        showToast('⚠️ Không đọc được ảnh! Vui lòng chụp lại.');
+        return;
+      }
+      showToast('⏳ Đang kiểm tra đồng phục áo hồng...');
+      const { ratio, pass } = await checkPinkUniform(dataUrl);
+      if (!pass) {
+        showToast(`🚫 Ảnh thiếu màu hồng đồng phục (chỉ ${Math.round(ratio * 100)}%, cần từ 10%)! Hãy mặc áo hồng Ụm Bò Milk, chụp rõ thân áo rồi thử lại.`);
+        return;
+      }
+      setPhotoData(dataUrl);
+      showToast(`✓ Ảnh đạt chuẩn đồng phục (hồng ${Math.round(ratio * 100)}%)!`);
     };
     reader.onerror = () => {
       showToast('⚠️ Không đọc được ảnh! Vui lòng chụp lại.');
