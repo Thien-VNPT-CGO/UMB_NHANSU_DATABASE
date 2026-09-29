@@ -285,6 +285,11 @@ export function App() {
   useEffect(() => {
     if (activeTab === 'test_exam' || activeTab === 'test_training') fetchMyTests();
     if (activeTab === 'swap_shift') fetchMySwaps();
+    // Điểm danh/lịch: tải mới mỗi lần mở để trạng thái (vắng/khóa/bị thu hồi do GPS...)
+    // luôn khớp server — không giữ trạng thái cũ (VD: vẫn hiện "đang làm" dù đã bị xóa).
+    if ((activeTab === 'attendance' || activeTab === 'schedule') && employee?.employee_id) {
+      loadEmployeeData(employee.employee_id);
+    }
   }, [activeTab]);
   useEffect(() => {
     if (!activeTestId) return;
