@@ -5081,10 +5081,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       ...attWeekShifts.map((s: any) => s.employee_id),
       ...attWeekEvts.map((e: any) => e.employee_id),
     ])].filter(Boolean);
+    // Sắp xếp đồng bộ lịch làm việc: theo chi nhánh trước, rồi tên — ca trong ô theo CA_1→CA_2→CA_3
+    const SHIFT_ORDER: Record<string, number> = { CA_1: 1, CA_2: 2, CA_3: 3 };
     const attEmps = attEmpIds
-      .map(id => (allEmployees || []).find((e: any) => e.employee_id === id) || { employee_id: id, full_name: 'Nhân Viên', employee_code: id, employment_status: 'OFFICIAL' })
+      .map(id => (allEmployees || []).find((e: any) => e.employee_id === id) || { employee_id: id, full_name: 'Nhân Viên', employee_code: id, employment_status: 'OFFICIAL', default_branch_id: '' })
       .filter((e: any) => e.employment_status !== 'TERMINATED')
-      .sort((a: any, b: any) => String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi'));
+      .sort((a: any, b: any) =>
+        String(a.default_branch_id || '').localeCompare(String(b.default_branch_id || '')) ||
+        String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi')
+      );
     const attCellOf = (empId: string, iso: string) => {
       const shs = attWeekShifts.filter((s: any) => s.employee_id === empId && (s.date || '').slice(0, 10) === iso);
       const evs = attWeekEvts.filter((e: any) => e.employee_id === empId && vnDayOf(e.client_time || '') === iso);
@@ -5094,17 +5099,19 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         if (!byAssign.has(k)) byAssign.set(k, []);
         byAssign.get(k)!.push(e);
       }
-      const items: any[] = shs.map((s: any) => {
-        const list = byAssign.get(s.assignment_id) || [];
-        const st = attShiftStatus(
-          s,
-          list.find((e: any) => e.type === 'CHECK_IN'),
-          list.find((e: any) => e.type === 'CHECK_OUT'),
-          list.find((e: any) => e.type === 'ABSENT')
-        );
-        byAssign.delete(s.assignment_id);
-        return { shift: s, list, st };
-      });
+      const items: any[] = shs
+        .sort((a: any, b: any) => (SHIFT_ORDER[a.shift_code] || 9) - (SHIFT_ORDER[b.shift_code] || 9))
+        .map((s: any) => {
+          const list = byAssign.get(s.assignment_id) || [];
+          const st = attShiftStatus(
+            s,
+            list.find((e: any) => e.type === 'CHECK_IN'),
+            list.find((e: any) => e.type === 'CHECK_OUT'),
+            list.find((e: any) => e.type === 'ABSENT')
+          );
+          byAssign.delete(s.assignment_id);
+          return { shift: s, list, st };
+        });
       for (const [, list] of byAssign) {
         const f = list[0];
         const pseudo = { assignment_id: '', date: iso, shift_code: '?', employee_id: empId, branch_id: f.branch_id };
@@ -5332,7 +5339,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <tr key={emp.employee_id} style={{ borderBottom: '1px solid var(--border)' }}>
                     <td style={{ padding: '10px 14px', fontWeight: 700, fontSize: '12px' }}>
                       {emp.full_name}
-                      <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 400 }}>{emp.employee_code}</div>
+                      <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 400 }}>{emp.employee_code} • {getDisplayBranch(emp.default_branch_id) || emp.default_branch_id || ''}</div>
                     </td>
                     {attDays.map((day: any) => {
                       const items = attCellOf(emp.employee_id, day.iso);
@@ -5341,6 +5348,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           {items.length === 0 ? (
                             <span style={{ color: '#D1D5DB', fontSize: '14px' }}>—</span>
                           ) : (
+                            <>
+                              {items.length > 1 && (
+                                <span className="badge" style={{ backgroundColor: '#EDE9FE', color: '#6D28D9', fontWeight: 800, marginBottom: '4px' }}>
+                                  {items.length} ca
+                                </span>
+                              )}
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                               {items.map((it: any, ii: number) => {
                                 const timeOf = (t: string) => {
@@ -5372,6 +5385,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 );
                               })}
                             </div>
+                            </>
                           )}
                         </td>
                       );
