@@ -363,6 +363,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [exportAttDate, setExportAttDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [exportAttBusy, setExportAttBusy] = useState(false);
   const [exportWeekBusy, setExportWeekBusy] = useState(false);
+  const [photoStats, setPhotoStats] = useState<any>(null);
+  const loadPhotoStats = async (date: string) => {
+    try {
+      const s = await apiRequest(`/admin/attendance/photo-stats?date=${date}`);
+      setPhotoStats(s);
+    } catch {
+      setPhotoStats(null);
+    }
+  };
   // Tuần T2–CN đang theo dõi (bảng realtime reset khi sang tuần mới, 23h30 CN tự lưu trữ)
   const attWeek = (() => {
     const now = new Date();
@@ -604,6 +613,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       apiRequest('/attendance/events')
         .then((data) => setLiveAttendanceEvents(Array.isArray(data) ? data : []))
         .catch(() => {});
+    }
+    if (activeTab === 'hr-attendance') {
+      loadPhotoStats(exportAttDate);
     }
   }, [activeTab]);
   // (QR Zalo thật do server sinh qua /admin/zalo/* — không còn QR giả local.)
@@ -4938,10 +4950,25 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <input
               type="date"
               value={exportAttDate}
-              onChange={e => setExportAttDate(e.target.value)}
+              onChange={e => { setExportAttDate(e.target.value); loadPhotoStats(e.target.value); }}
               style={{ padding: '7px 10px', fontSize: '12px', borderRadius: '6px', border: '1px solid var(--border)' }}
               title="Ngày cần tải chứng cứ điểm danh"
             />
+            {photoStats && (
+              <span
+                className="badge"
+                title={photoStats.uploadFailed > 0 ? 'Upload lên Drive lỗi — kiểm tra quyền/thư mục Drive của service account' : photoStats.neverUploaded > 0 ? 'Lượt chấm công từ trước bản pipeline ảnh hoặc app chưa cập nhật' : 'Đủ ảnh'}
+                style={{
+                  backgroundColor: photoStats.withPhoto === photoStats.total && photoStats.total > 0 ? '#DCFCE7' : '#FEF3C7',
+                  color: photoStats.withPhoto === photoStats.total && photoStats.total > 0 ? '#166534' : '#92400E',
+                  fontWeight: 800,
+                }}
+              >
+                📸 {photoStats.withPhoto}/{photoStats.total} có ảnh
+                {photoStats.uploadFailed > 0 ? ` • ${photoStats.uploadFailed} lỗi upload` : ''}
+                {photoStats.neverUploaded > 0 ? ` • ${photoStats.neverUploaded} chưa upload` : ''}
+              </span>
+            )}
             <button
               className="btn-primary"
               style={{ fontSize: '12px', backgroundColor: '#059669' }}

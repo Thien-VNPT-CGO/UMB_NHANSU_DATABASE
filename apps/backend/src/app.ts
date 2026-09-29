@@ -1683,6 +1683,32 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Chẩn đoán ảnh chấm công theo ngày: bao nhiêu lượt có file Drive thật,
+  // bao nhiêu upload lỗi (DRV_LOCAL_), bao nhiêu chưa từng upload (DRV_ cũ).
+  app.get('/admin/attendance/photo-stats', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const date = String(req.query.date || new Date().toISOString().split('T')[0]);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        return res.status(400).json({ error: 'INVALID_DATE' });
+      }
+      const events: any[] = await adapter.getAttendanceEvents(undefined, date);
+      const relevant = (events || []).filter(e => e.type === 'CHECK_IN' || e.type === 'CHECK_OUT');
+      const missing: string[] = [];
+      let ok = 0;
+      let uploadFailed = 0;
+      let neverUploaded = 0;
+      for (const e of relevant) {
+        const id = String(e.drive_object_id || '');
+        if (id && !id.startsWith('DRV_')) ok++;
+        else if (id.startsWith('DRV_LOCAL_')) { uploadFailed++; missing.push(e.event_id); }
+        else { neverUploaded++; missing.push(e.event_id); }
+      }
+      res.json({ date, total: relevant.length, withPhoto: ok, uploadFailed, neverUploaded, missing });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Tải gói cả tuần T2–CN (để HR lưu trước 23h30 Chủ nhật).
   app.get('/admin/attendance/export-week', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
     try {
