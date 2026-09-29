@@ -660,6 +660,14 @@ export class MockSheetsAdapter implements ISheetsRepository {
     return { ...item };
   }
 
+  async pruneNotifications(beforeIso: string): Promise<number> {
+    this.checkErrors();
+    const n0 = this.notificationInbox.length;
+    this.notificationInbox = this.notificationInbox.filter(n => (n.created_at || '') >= beforeIso);
+    this.notificationOutbox = this.notificationOutbox.filter(o => (o.created_at || '') >= beforeIso);
+    return n0 - this.notificationInbox.length;
+  }
+
   async markNotificationAcknowledged(inboxId: string, recipientId: string): Promise<NotificationInboxItem> {
     this.checkErrors();
     const item = this.notificationInbox.find(n => n.inbox_id === inboxId && (n.recipient_id === recipientId || n.recipient_id === 'ALL'));

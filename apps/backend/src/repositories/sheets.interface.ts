@@ -85,6 +85,8 @@ export interface ISheetsRepository {
   // Notifications
   createNotification(outbox: Omit<NotificationOutboxItem, 'created_at'>, inboxes: Omit<NotificationInboxItem, 'created_at' | 'version'>[]): Promise<{ outbox: NotificationOutboxItem; inboxes: NotificationInboxItem[] }>;
   getInboxForRecipient(recipientId: string, unreadOnly?: boolean): Promise<NotificationInboxItem[]>;
+  /** Reset cổng quản trị 6h sáng Thứ 2: xóa thông báo cũ hơn mốc (Sheets giữ nguyên). */
+  pruneNotifications(beforeIso: string): Promise<number>;
   markNotificationRead(inboxId: string, recipientId: string): Promise<NotificationInboxItem>;
   markNotificationAcknowledged(inboxId: string, recipientId: string): Promise<NotificationInboxItem>;
 

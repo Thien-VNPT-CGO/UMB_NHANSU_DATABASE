@@ -81,6 +81,10 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
     headers: ['Tham Số', 'Giá Trị', 'Mô Tả', 'Cập Nhật Lần Cuối'],
   },
   {
+    title: 'THONGBAO_NV',
+    headers: ['ID Inbox', 'ID Thông Báo', 'Người Nhận', 'Loại', 'Tiêu Đề', 'Nội Dung', 'Mức Độ', 'Tab Liên Quan', 'Thời Gian', 'Đã Đọc'],
+  },
+  {
     title: 'FROM_NHAN_VIEN',
     headers: [
       'Ngày Đăng Ký',
@@ -420,6 +424,7 @@ export class GoogleSheetsSyncService {
         'CAU_HINH_HE_THONG',
         'BAI_THI',
         'BAI_LAM',
+        'THONGBAO_NV',
       ]);
 
       // Đọc lỗi/quota trả về toàn rỗng trong khi bộ nhớ đang có dữ liệu thật
@@ -851,6 +856,28 @@ export class GoogleSheetsSyncService {
         counts.testSubmissions = (fallback as any).testSubmissions.length;
       } else if (((fallback as any).testSubmissions || []).length === 0) {
         (fallback as any).testSubmissions = [];
+      }
+
+      // 5d. Đọc THONGBAO_NV (lịch sử thông báo từ cổng NV — merge, không bao giờ xóa)
+      const notifRows = batch['THONGBAO_NV'] || [];
+      if (notifRows.length > 0) {
+        const mappedNotif = notifRows
+          .filter(r => r && r[0])
+          .map(r => ({
+            inbox_id: r[0],
+            notification_id: r[1] || '',
+            recipient_id: r[2] || 'ALL',
+            type: r[3] || undefined,
+            title: r[4] || 'Thông báo',
+            summary: r[5] || '',
+            severity: (r[6] as any) || 'SYSTEM',
+            target_path: r[7] || undefined,
+            created_at: r[8] || new Date().toISOString(),
+            read_at: r[9] === 'YES' ? (r[8] || new Date().toISOString()) : undefined,
+            version: 1,
+          }));
+        fallback.notificationInbox = mergeById(fallback.notificationInbox, mappedNotif, 'inbox_id', ['version']) as any;
+        counts.notifications = fallback.notificationInbox.length;
       }
 
       // 6. Đọc SU_KIEN_DIEM_DANH

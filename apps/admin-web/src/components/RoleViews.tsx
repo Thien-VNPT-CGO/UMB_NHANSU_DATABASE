@@ -655,6 +655,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
   // Live Attendance Events State for HR Realtime Tab 11
   const [liveAttendanceEvents, setLiveAttendanceEvents] = useState<any[]>([]);
+  // Lọc lịch sử thông báo HR theo nguồn
+  const [notifFilter, setNotifFilter] = useState('ALL');
   // Lưới tuần cần sự kiện cả tuần -> luôn tải không lọc ngày, tự refresh 30s
   const reloadAttEvents = async () => {
     try {
@@ -5694,22 +5696,63 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       }
     };
     const unreadHrCount = systemNotifications.filter((n: any) => n.unread === true || (!n.read_at && n.inbox_id)).length;
+    // Lọc lịch sử theo nguồn từ cổng nhân viên (điểm danh/đổi ca/nghỉ/TEST/PIN)
+    const notifKindOf = (n: any) => {
+      const t = String(n.type || '');
+      if (t.startsWith('emp.')) return t;
+      const liveMap: Record<string, string> = {
+        CHECKIN: 'emp.checkin',
+        CHECKOUT: 'emp.checkout',
+        LEAVE: 'emp.leave',
+        SWAP: 'emp.swap',
+        PIN_CHANGED: 'emp.pin',
+        TEST: 'emp.test',
+      };
+      return liveMap[t] || 'system';
+    };
+    const notifKindLabel: Record<string, string> = {
+      ALL: 'Tất cả',
+      'emp.checkin': 'Điểm danh vào',
+      'emp.checkout': 'Điểm danh ra',
+      'emp.leave': 'Nghỉ phép',
+      'emp.swap': 'Đổi ca',
+      'emp.test': 'Thi TEST',
+      'emp.pin': 'Đổi PIN',
+      system: 'Hệ thống',
+    };
+    const shownNotifs = systemNotifications.filter((n: any) => {
+      if (notifFilter === 'ALL') return true;
+      if (notifFilter === 'system') return notifKindOf(n) === 'system';
+      return notifKindOf(n) === notifFilter;
+    });
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
           <h1 style={{ fontSize: '20px', fontWeight: 800 }}>15. Trung Tâm Thông Báo Nghiệp Vụ HR</h1>
-          <span className="badge" style={{ backgroundColor: unreadHrCount > 0 ? '#FEF3C7' : '#DCFCE7', color: unreadHrCount > 0 ? '#92400E' : '#166534', fontWeight: 800 }}>
-            {systemNotifications.length} thông báo{unreadHrCount > 0 ? ` • ${unreadHrCount} chưa đọc` : ''}
-          </span>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <select
+              value={notifFilter}
+              onChange={e => setNotifFilter(e.target.value)}
+              style={{ padding: '6px 10px', fontSize: '12px', borderRadius: '6px', border: '1px solid var(--border)', fontWeight: 700 }}
+            >
+              {Object.entries(notifKindLabel).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+            <span className="badge" style={{ backgroundColor: unreadHrCount > 0 ? '#FEF3C7' : '#DCFCE7', color: unreadHrCount > 0 ? '#92400E' : '#166534', fontWeight: 800 }}>
+              {shownNotifs.length} thông báo{unreadHrCount > 0 ? ` • ${unreadHrCount} chưa đọc` : ''}
+            </span>
+          </div>
+        </div>
+        <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+          Lịch sử từ cổng nhân viên được lưu realtime + đồng bộ tab Sheets THONGBAO_NV (tự tạo nếu chưa có). Cổng tự reset bản cũ vào 6h00 Thứ 2 hàng tuần — Sheets giữ nguyên, cập nhật liên tục.
         </div>
         <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-          {systemNotifications.length === 0 ? (
+          {shownNotifs.length === 0 ? (
             <div style={{ fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center' }}>
-              Không có thông báo mới nào. Tất cả hoạt động hệ thống và đồng bộ Google Sheets đều đang vận hành ổn định.
+              Không có thông báo nào trong mục này. Tất cả hoạt động hệ thống và đồng bộ Google Sheets đều đang vận hành ổn định.
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {systemNotifications.map((notif: any, idx: number) => {
+              {shownNotifs.map((notif: any, idx: number) => {
                 const body = notif.summary || notif.message || '';
                 const badge = notif.severity || notif.type || 'SYSTEM';
                 const recipient = notif.recipient_id || (Array.isArray(notif.targetRoles) ? notif.targetRoles.join(', ') : notif.recipientIds || 'ALL');

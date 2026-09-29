@@ -21,6 +21,8 @@ export interface NotificationInboxItem {
     inbox_id: string;
     notification_id: string;
     recipient_id: string;
+    /** Loại nguồn: emp.checkin / emp.checkout / emp.leave / emp.swap / emp.test / emp.pin / system... */
+    type?: string;
     title: string;
     summary: string;
     severity: NotificationSeverity;

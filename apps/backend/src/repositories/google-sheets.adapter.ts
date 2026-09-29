@@ -615,7 +615,29 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   // --- Notifications ---
   async createNotification(outbox: any, inboxes: any) {
-    return this.fallbackAdapter.createNotification(outbox, inboxes);
+    const res = await this.fallbackAdapter.createNotification(outbox, inboxes);
+    // Ghi nối tiếp vào tab THONGBAO_NV (append-only, không bao giờ reset theo cổng)
+    if (this.isConfigured) {
+      const rows = (res.inboxes || []).map((inbox: any) => ([
+        inbox.inbox_id,
+        inbox.notification_id,
+        inbox.recipient_id,
+        inbox.type || '',
+        inbox.title,
+        inbox.summary,
+        inbox.severity,
+        inbox.target_path || '',
+        inbox.created_at,
+        inbox.read_at ? 'YES' : '',
+      ]));
+      this.scheduleSheetsWrite(async () => {
+        for (const row of rows) {
+          const ok = await this.syncService.appendRow('THONGBAO_NV', row);
+          if (!ok) break;
+        }
+      }, 'THONGBAO_NV.append');
+    }
+    return res;
   }
 
   async getInboxForRecipient(recipientId: string, unreadOnly?: boolean) {
@@ -628,6 +650,10 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async markNotificationAcknowledged(inboxId: string, recipientId: string) {
     return this.fallbackAdapter.markNotificationAcknowledged(inboxId, recipientId);
+  }
+
+  async pruneNotifications(beforeIso: string) {
+    return this.fallbackAdapter.pruneNotifications(beforeIso);
   }
 
   // --- Bài TEST (lưu bộ nhớ + full-sync đẩy Sheets nền như các entity khác) ---

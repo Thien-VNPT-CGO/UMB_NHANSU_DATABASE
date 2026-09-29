@@ -56,6 +56,7 @@ export class NotificationsService {
           inbox_id: uuidv4(),
           notification_id: notifId,
           recipient_id: rid,
+          type: data.type,
           title: data.title,
           summary: data.summary,
           severity: data.severity,

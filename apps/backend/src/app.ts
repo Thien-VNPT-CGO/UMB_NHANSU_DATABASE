@@ -160,8 +160,18 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   };
 
   // Realtime Rich Notification Dispatcher (Gửi thông báo có âm thanh + hiệu ứng cho Admin & HR)
+  // Đồng thời LƯU TRỮ các sự kiện từ cổng nhân viên (điểm danh/đổi ca/nghỉ/PIN/TEST)
+  // vào inbox + tab Sheets THONGBAO_NV để HR xem lại lịch sử (realtime + bền vững).
+  const EMP_NOTIF_KIND: Record<string, string> = {
+    CHECKIN: 'emp.checkin',
+    CHECKOUT: 'emp.checkout',
+    LEAVE: 'emp.leave',
+    SWAP: 'emp.swap',
+    PIN_CHANGED: 'emp.pin',
+    TEST: 'emp.test',
+  };
   const broadcastNotification = (notif: {
-    type: 'CHECKIN' | 'CHECKOUT' | 'LEAVE' | 'SWAP' | 'PIN_CHANGED' | 'PIN_SENT' | 'CANDIDATE' | 'SYSTEM' | 'INFO';
+    type: 'CHECKIN' | 'CHECKOUT' | 'LEAVE' | 'SWAP' | 'PIN_CHANGED' | 'PIN_SENT' | 'CANDIDATE' | 'SYSTEM' | 'INFO' | 'TEST';
     title: string;
     message: string;
     linkTab?: string;
@@ -180,6 +190,25 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         io.emit('data:updated', { entity: 'notifications', data: payload, timestamp: payload.timestamp });
       }
     } catch (e) {
+      // non-fatal
+    }
+    // Lưu trữ nền (không chặn response): chỉ sự kiện từ cổng nhân viên
+    try {
+      const kind = EMP_NOTIF_KIND[notif.type];
+      if (kind) {
+        notificationsService
+          .sendNotification({
+            recipientIds: ['ALL'],
+            type: kind,
+            severity: 'SYSTEM',
+            title: notif.title,
+            summary: notif.message,
+            targetPath: notif.linkTab,
+            actorId: (notif.metadata?.employeeId || notif.metadata?.accountId || 'SYSTEM') as string,
+          })
+          .catch(() => null);
+      }
+    } catch {
       // non-fatal
     }
   };
@@ -1161,6 +1190,14 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         actorId: req.user!.id,
       });
       broadcastUpdate('tests', { action: 'create', testId: (result as any)?.result?.paper?.test_id });
+      broadcastNotification({
+        type: 'TEST',
+        title: '📝 HR Vừa Giao Bài TEST Mới',
+        message: `"${req.body.title}" đã được giao cho ${(req.body.employeeIds || []).length} nhân viên.`,
+        linkTab: 'hr-tests',
+        metadata: { testId: (result as any)?.result?.paper?.test_id },
+        targetRoles: ['ADMIN', 'HR', 'STORE'],
+      });
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -1205,6 +1242,16 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       if (!employeeId) return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
       const result = await testsService.submitAnswers(req.params.id, employeeId, req.body.answers);
       broadcastUpdate('tests', { action: 'submit', submissionId: req.params.id });
+      const graded: any = (result as any)?.result ?? result;
+      const emp = await employeesService.getEmployee(employeeId).catch(() => null);
+      broadcastNotification({
+        type: 'TEST',
+        title: graded?.passed ? '✅ NV Vừa Đạt Bài TEST' : '📝 NV Vừa Nộp Bài TEST',
+        message: `${(emp as any)?.full_name || employeeId} nộp bài đạt ${graded?.score ?? '?'}/10${graded?.passed ? ' (ĐẠT)' : ''}.`,
+        linkTab: 'hr-tests',
+        metadata: { submissionId: req.params.id, employeeId },
+        targetRoles: ['ADMIN', 'HR', 'STORE'],
+      });
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
