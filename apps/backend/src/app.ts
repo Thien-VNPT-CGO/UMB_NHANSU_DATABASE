@@ -1760,7 +1760,9 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         else if (id.startsWith('DRV_LOCAL_')) { uploadFailed++; missing.push(e.event_id); }
         else { neverUploaded++; missing.push(e.event_id); }
       }
-      res.json({ date, total: relevant.length, withPhoto: ok, uploadFailed, neverUploaded, missing });
+      const syncService = (adapter as any).syncService;
+      const drive = syncService?.getDriveUploadStatus ? syncService.getDriveUploadStatus() : null;
+      res.json({ date, total: relevant.length, withPhoto: ok, uploadFailed, neverUploaded, missing, drive });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

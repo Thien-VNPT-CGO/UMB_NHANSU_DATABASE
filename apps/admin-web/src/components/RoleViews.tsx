@@ -5102,7 +5102,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             {photoStats && (
               <span
                 className="badge"
-                title={photoStats.uploadFailed > 0 ? 'Upload lên Drive lỗi — kiểm tra quyền/thư mục Drive của service account' : photoStats.neverUploaded > 0 ? 'Lượt chấm công từ trước bản pipeline ảnh hoặc app chưa cập nhật' : 'Đủ ảnh'}
+                title={photoStats.uploadFailed > 0 ? `Upload Drive lỗi: ${photoStats.drive?.lastError || 'không rõ'} (thử lại tự động 3 lần/lượt)` : photoStats.neverUploaded > 0 ? 'Lượt chấm công từ trước bản pipeline ảnh hoặc app chưa cập nhật' : 'Đủ ảnh'}
                 style={{
                   backgroundColor: photoStats.withPhoto === photoStats.total && photoStats.total > 0 ? '#DCFCE7' : '#FEF3C7',
                   color: photoStats.withPhoto === photoStats.total && photoStats.total > 0 ? '#166534' : '#92400E',

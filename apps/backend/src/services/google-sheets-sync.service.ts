@@ -280,6 +280,7 @@ export class GoogleSheetsSyncService {
       candidateSpreadsheetId: this.candidateSpreadsheetId,
       candidateSpreadsheetUrl: `https://docs.google.com/spreadsheets/d/${this.candidateSpreadsheetId}/edit`,
       driveFolderId: this.driveFolderId,
+      driveUpload: this.getDriveUploadStatus(),
       authError: this.authError,
       lastPulledAt: this.lastPulledAt ? new Date(this.lastPulledAt).toISOString() : null,
       ...this.getWriteStatus(),
@@ -1617,43 +1618,69 @@ export class GoogleSheetsSyncService {
   /**
    * Tải ảnh chấm công lên Google Drive thật
    */
+  private lastDriveUploadError: string | null = null;
+  private lastDriveUploadAt: string | null = null;
+  private lastDriveUploadOkAt: string | null = null;
+
+  public getDriveUploadStatus() {
+    return {
+      driveFolderId: this.driveFolderId || null,
+      driveConfigured: !!this.driveClient,
+      lastError: this.lastDriveUploadError,
+      lastAttemptAt: this.lastDriveUploadAt,
+      lastOkAt: this.lastDriveUploadOkAt,
+    };
+  }
+
   public async uploadImageToDrive(fileName: string, mimeType: string, base64Data: string): Promise<{ fileId: string; webViewLink?: string }> {
     if (!this.driveClient) {
+      this.lastDriveUploadError = 'DRIVE_NOT_CONFIGURED: chưa cấu hình service account Drive';
       return { fileId: `DRV_${Date.now()}` };
     }
 
-    try {
-      const cleanBase64 = base64Data.replace(/^data:image\/\w+;base64,/, '');
-      const buffer = Buffer.from(cleanBase64, 'base64');
-      const stream = Readable.from(buffer);
+    const cleanBase64 = base64Data.replace(/^data:image\/\w+;base64,/, '');
+    const buffer = Buffer.from(cleanBase64, 'base64');
+    // Thử lại 3 lần (mạng Render free chập chờn, file 5MB) trước khi bỏ cuộc.
+    let lastErr: any = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const stream = Readable.from(buffer);
+        const res = await this.sheetsCall(
+          `drive.upload#${attempt}`,
+          () =>
+            this.driveClient!.files.create({
+              requestBody: {
+                name: fileName,
+                parents: this.driveFolderId ? [this.driveFolderId] : undefined,
+              },
+              media: {
+                mimeType,
+                body: stream,
+              },
+              fields: 'id, webViewLink, webContentLink',
+            }),
+          60000
+        );
 
-      const res = await this.sheetsCall(
-        'drive.upload',
-        () =>
-          this.driveClient!.files.create({
-            requestBody: {
-              name: fileName,
-              parents: this.driveFolderId ? [this.driveFolderId] : undefined,
-            },
-            media: {
-              mimeType,
-              body: stream,
-            },
-            fields: 'id, webViewLink, webContentLink',
-          }),
-        45000
-      );
+        console.log(`[GoogleSheetsSyncService] Đã upload ảnh lên Google Drive thành công: ID = ${res.data.id}`);
+        this.lastDriveUploadError = null;
+        this.lastDriveUploadOkAt = new Date().toISOString();
 
-      console.log(`[GoogleSheetsSyncService] Đã upload ảnh lên Google Drive thành công: ID = ${res.data.id}`);
-
-      return {
-        fileId: res.data.id || `DRV_${Date.now()}`,
-        webViewLink: res.data.webViewLink || undefined,
-      };
-    } catch (err: any) {
-      console.error('[GoogleSheetsSyncService] Lỗi khi upload ảnh lên Google Drive:', err);
-      return { fileId: `DRV_LOCAL_${Date.now()}` };
+        return {
+          fileId: res.data.id || `DRV_${Date.now()}`,
+          webViewLink: res.data.webViewLink || undefined,
+        };
+      } catch (err: any) {
+        lastErr = err;
+        console.warn(`[GoogleSheetsSyncService] Upload Drive lần ${attempt} thất bại:`, err?.message || err);
+        if (attempt < 3) await new Promise(r => setTimeout(r, attempt * 2000));
+      }
     }
+    const msg = String(lastErr?.message || lastErr);
+    this.lastDriveUploadError = msg;
+    this.lastDriveUploadAt = new Date().toISOString();
+    console.error('[GoogleSheetsSyncService] Upload Drive thất bại sau 3 lần:', msg);
+    return { fileId: `DRV_LOCAL_${Date.now()}` };
   }
 
   private static safeZipName(s: string): string {
