@@ -543,6 +543,15 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     return this.fallbackAdapter.findAttendanceEventByRequestId(requestId);
   }
 
+  async deleteAttendanceEvent(eventId: string) {
+    const ok = await this.fallbackAdapter.deleteAttendanceEvent(eventId);
+    if (ok) {
+      try { (this.syncService as any)?.markAttendanceEventDeleted?.(eventId); } catch { /* best-effort */ }
+      this.scheduleFullSync('SU_KIEN_DIEM_DANH.delete');
+    }
+    return ok;
+  }
+
   async createAttendanceAdjustment(adj: any) {
     const res = await this.fallbackAdapter.createAttendanceAdjustment(adj);
     if (this.isConfigured) {

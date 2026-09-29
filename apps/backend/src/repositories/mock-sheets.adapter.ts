@@ -495,6 +495,14 @@ export class MockSheetsAdapter implements ISheetsRepository {
     return this.attendanceEvents.find(e => e.request_id === requestId) || null;
   }
 
+  async deleteAttendanceEvent(eventId: string): Promise<boolean> {
+    this.checkErrors();
+    const idx = this.attendanceEvents.findIndex(e => e.event_id === eventId);
+    if (idx === -1) return false;
+    this.attendanceEvents.splice(idx, 1);
+    return true;
+  }
+
   async createAttendanceAdjustment(adj: Omit<AttendanceAdjustment, 'created_at' | 'updated_at' | 'version'>): Promise<AttendanceAdjustment> {
     this.checkErrors();
     const now = new Date().toISOString();

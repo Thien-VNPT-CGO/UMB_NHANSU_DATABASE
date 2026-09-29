@@ -5035,7 +5035,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               style={{ fontSize: '12px', backgroundColor: '#DC2626' }}
               disabled={gpsReverifyBusy}
               onClick={async () => {
-                if (!window.confirm(`Rà soát GPS ngày ${exportAttDate}? NV nào check-in/out quá 300m sẽ bị bắt điểm danh lại hết.`)) return;
+                if (!window.confirm(`Rà soát GPS ngày ${exportAttDate}? Hệ thống sẽ XÓA check-in/out vượt 300m (ca quay về chưa điểm danh) và bắt các NV đó điểm danh lại hết.`)) return;
                 setGpsReverifyBusy(true);
                 try {
                   const r = await apiRequest('/admin/attendance/reverify-gps', {
@@ -5044,7 +5044,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   });
                   setGpsReverify({ date: exportAttDate, ...(r as any) });
                   showToast((r as any)?.offenders > 0
-                    ? `Đã gửi yêu cầu điểm danh lại cho ${(r as any).offenders} NV vượt GPS!`
+                    ? `Đã xóa ${(r as any)?.voided || 0} bản ghi vượt GPS + gửi yêu cầu điểm danh lại cho ${(r as any).offenders} NV!`
                     : 'Không phát hiện lượt nào vượt 300m.');
                   const data = await apiRequest('/attendance/events').catch(() => []);
                   setLiveAttendanceEvents(Array.isArray(data) ? data : []);

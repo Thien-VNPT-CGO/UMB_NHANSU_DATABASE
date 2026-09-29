@@ -1768,6 +1768,18 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           (e.type === 'CHECK_IN' || e.type === 'CHECK_OUT') &&
           Number(e.distance_meters) > radiusOf(e.branch_id)
       );
+      // XÓA bản ghi vi phạm: xóa toàn bộ IN+OUT của (ca, nhân viên) chứa lượt vượt
+      // để ca quay về chưa điểm danh, bắt NV làm lại từ đầu.
+      const groupOf = (e: any) => e.assignment_id || `${e.employee_id}__${(e.client_time || '').slice(0, 10)}`;
+      const voidGroups = new Set(bad.map(groupOf));
+      let voided = 0;
+      for (const e of events || []) {
+        if ((e.type === 'CHECK_IN' || e.type === 'CHECK_OUT') && voidGroups.has(groupOf(e))) {
+          try {
+            if (await adapter.deleteAttendanceEvent(e.event_id)) voided++;
+          } catch { /* tiếp */ }
+        }
+      }
       const byEmp = new Map<string, any[]>();
       for (const e of bad) {
         if (!byEmp.has(e.employee_id)) byEmp.set(e.employee_id, []);
@@ -1802,7 +1814,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         count: evts.length,
         max_distance: Math.max(...evts.map(e => Number(e.distance_meters) || 0)),
       }));
-      res.json({ date, offenders: offenderIds.length, detail });
+      broadcastUpdate('attendance', { action: 'gps-voided', date, voided });
+      res.json({ date, offenders: offenderIds.length, voided, detail });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

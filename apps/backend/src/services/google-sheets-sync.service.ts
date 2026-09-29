@@ -148,6 +148,23 @@ export class GoogleSheetsSyncService {
   /** Tombstone NV vừa xóa: pull trong ~120s sau xóa mà thấy ID này trên Sheet
    *  (push xóa chưa kịp chạy) thì bỏ qua, tránh xóa xong bị khôi phục lại. */
   private deletedEmployeeIds = new Map<string, number>();
+  /** Tombstone sự kiện điểm danh vừa xóa (GPS vượt): pull trước khi push xóa kịp
+   *  mà đọc lại dòng cũ thì bỏ qua, tránh hồi sinh trong ~120s. */
+  private deletedEventIds = new Map<string, number>();
+
+  public markAttendanceEventDeleted(eventId: string) {
+    if (eventId) this.deletedEventIds.set(String(eventId).trim(), Date.now());
+  }
+
+  private isEventDeletedRecently(eventId: string): boolean {
+    const t = this.deletedEventIds.get(String(eventId || '').trim());
+    if (!t) return false;
+    if (Date.now() - t > 120000) {
+      this.deletedEventIds.delete(String(eventId).trim());
+      return false;
+    }
+    return true;
+  }
 
   public markEmployeeDeleted(employeeId: string) {
     if (employeeId) this.deletedEmployeeIds.set(String(employeeId).trim(), Date.now());
@@ -836,7 +853,7 @@ export class GoogleSheetsSyncService {
       }
 
       // 6. Đọc SU_KIEN_DIEM_DANH
-      const attRows = batch['SU_KIEN_DIEM_DANH'];
+      const attRows = (batch['SU_KIEN_DIEM_DANH'] || []).filter(r => r && r[0] && !this.isEventDeletedRecently(r[0]));
       if (keepIfEmpty('SU_KIEN_DIEM_DANH', attRows, fallback.attendanceEvents.length)) {
         counts.attendanceEvents = fallback.attendanceEvents.length;
       } else if (attRows.length > 0) {
