@@ -785,20 +785,69 @@ export function App() {
     });
   };
 
+  // Nén ảnh ngay trên máy: ảnh gốc điện thoại 3-8MB -> JPEG cạnh dài 1280px,
+  // chất lượng giảm dần đến khi ≤800KB. Hết lỗi quá dung lượng, upload nhanh.
+  const compressPhoto = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const MAX = 1280;
+          const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+          const w = Math.max(1, Math.round(img.width * scale));
+          const h = Math.max(1, Math.round(img.height * scale));
+          const cv = document.createElement('canvas');
+          cv.width = w;
+          cv.height = h;
+          cv.getContext('2d')!.drawImage(img, 0, 0, w, h);
+          URL.revokeObjectURL(url);
+          let q = 0.85;
+          const attempt = (): void => {
+            cv.toBlob((blob) => {
+              if (!blob) {
+                reject(new Error('compress'));
+                return;
+              }
+              if (blob.size > 800 * 1024 && q > 0.4) {
+                q = Math.round((q - 0.15) * 100) / 100;
+                attempt();
+                return;
+              }
+              const r = new FileReader();
+              r.onload = () => resolve(String(r.result || ''));
+              r.onerror = () => reject(new Error('read'));
+              r.readAsDataURL(blob);
+            }, 'image/jpeg', q);
+          };
+          attempt();
+        } catch (e) {
+          URL.revokeObjectURL(url);
+          reject(e);
+        }
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error('decode'));
+      };
+      img.src = url;
+    });
+  };
+
   const handlePhotoSelected = async (file: File | undefined) => {
     if (!file) return;
     if (!file.type.startsWith('image/')) {
       showToast('⚠️ File không phải ảnh! Vui lòng chụp ảnh thật.');
       return;
     }
-    // Giới hạn ảnh điểm danh 5MB (server + validator đã nới tương ứng)
-    if (file.size > 5 * 1024 * 1024) {
-      showToast('⚠️ Ảnh quá lớn (>5MB)! Vui lòng chụp lại với độ phân giải thấp hơn.');
+    // Chặn file dị thường >15MB để khỏi treo máy; còn lại tự nén xuống ≤800KB.
+    if (file.size > 15 * 1024 * 1024) {
+      showToast('⚠️ Ảnh quá lớn (>15MB)! Vui lòng chụp lại.');
       return;
     }
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const dataUrl = String(reader.result || '');
+    try {
+      showToast('⏳ Đang xử lý ảnh...');
+      const dataUrl = await compressPhoto(file);
       if (!dataUrl) {
         showToast('⚠️ Không đọc được ảnh! Vui lòng chụp lại.');
         return;
@@ -812,11 +861,9 @@ export function App() {
       setPhotoData(dataUrl);
       setPhotoPinkRatio(Math.round(ratio * 100));
       showToast(`✓ Ảnh đạt chuẩn đồng phục (hồng ${Math.round(ratio * 100)}%)!`);
-    };
-    reader.onerror = () => {
-      showToast('⚠️ Không đọc được ảnh! Vui lòng chụp lại.');
-    };
-    reader.readAsDataURL(file);
+    } catch {
+      showToast('⚠️ Không xử lý được ảnh! Vui lòng chụp lại.');
+    }
   };
 
   const handleSubmitAttendance = async () => {
