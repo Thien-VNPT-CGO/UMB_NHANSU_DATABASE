@@ -106,6 +106,20 @@ interface RoleViewsProps {
   onRefreshData?: () => Promise<void> | void;
 }
 
+/** Các tuần cố định T2–CN quanh tuần hiện tại cho dropdown (mặc định tuần này). */
+export function weekOptions(centerOffset = 0, span = 4): { offset: number; mon: string; sun: string; label: string }[] {
+  const out: { offset: number; mon: string; sun: string; label: string }[] = [];
+  for (let o = centerOffset - span; o <= centerOffset + span; o++) {
+    const mon = mondayIsoOfOffset(o);
+    const d = new Date(`${mon}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + 6);
+    const sun = d.toISOString().slice(0, 10);
+    const f = (s: string) => `${s.slice(8, 10)}/${s.slice(5, 7)}/${s.slice(0, 4)}`;
+    out.push({ offset: o, mon, sun, label: `${f(mon)} - ${f(sun)}${o === 0 ? ' (tuần này)' : ''}` });
+  }
+  return out;
+}
+
 /** Ngày Việt Nam (UTC+7) của 1 mốc ISO. */
 export function vnDayOf(iso: string): string {
   const t = new Date(iso || '').getTime();
@@ -3780,11 +3794,20 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <option value="OFFICIAL">💼 Nhân Viên Chính Thức</option>
               </select>
             </div>
-            {/* Chuyển tuần: xem lịch tuần sau (NV đã đăng ký OFF 2 ngày) */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <button className="btn-secondary" style={{ fontSize: '12px', padding: '6px 10px' }} onClick={() => setScheduleWeekOffset(o => o - 1)}>◀ Tuần trước</button>
-              <button className="btn-secondary" style={{ fontSize: '12px', padding: '6px 10px', fontWeight: scheduleWeekOffset === 0 ? 800 : 400 }} onClick={() => setScheduleWeekOffset(0)}>Tuần này</button>
-              <button className="btn-primary" style={{ fontSize: '12px', padding: '6px 10px' }} onClick={() => setScheduleWeekOffset(o => o + 1)}>Tuần sau ▶</button>
+            {/* Chọn tuần cố định T2–CN (mặc định tuần này, VD: 28/09/2026 - 04/10/2026) */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text)' }}>Tuần:</span>
+              <select
+                value={scheduleWeekOffset}
+                onChange={(e) => setScheduleWeekOffset(Number(e.target.value))}
+                style={{ padding: '6px 10px', fontSize: '12px', minHeight: '34px', borderRadius: '6px', fontWeight: 700 }}
+              >
+                {weekOptions().map(w => (
+                  <option key={w.offset} value={w.offset}>{w.label}</option>
+                ))}
+              </select>
+              <button className="btn-secondary" style={{ fontSize: '12px', padding: '6px 10px' }} onClick={() => setScheduleWeekOffset(o => o - 1)}>◀</button>
+              <button className="btn-primary" style={{ fontSize: '12px', padding: '6px 10px' }} onClick={() => setScheduleWeekOffset(o => o + 1)}>▶</button>
             </div>
           </div>
 
@@ -5220,9 +5243,18 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
         <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflowX: 'auto', padding: '12px 14px' }}>
           <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '10px' }}>
-            <button className="btn-secondary" style={{ fontSize: '12px', padding: '6px 10px' }} onClick={() => setAttWeekOffset(o => o - 1)}>◀ Tuần trước</button>
-            <button className="btn-secondary" style={{ fontSize: '12px', padding: '6px 10px', fontWeight: attWeekOffset === 0 ? 800 : 400 }} onClick={() => setAttWeekOffset(0)}>Tuần này</button>
-            <button className="btn-primary" style={{ fontSize: '12px', padding: '6px 10px' }} onClick={() => setAttWeekOffset(o => o + 1)}>Tuần sau ▶</button>
+            <span style={{ fontSize: '12px', fontWeight: 700 }}>Tuần:</span>
+            <select
+              value={attWeekOffset}
+              onChange={(e) => setAttWeekOffset(Number(e.target.value))}
+              style={{ padding: '6px 10px', fontSize: '12px', borderRadius: '6px', fontWeight: 700 }}
+            >
+              {weekOptions().map(w => (
+                <option key={w.offset} value={w.offset}>{w.label}</option>
+              ))}
+            </select>
+            <button className="btn-secondary" style={{ fontSize: '12px', padding: '6px 10px' }} onClick={() => setAttWeekOffset(o => o - 1)}>◀</button>
+            <button className="btn-primary" style={{ fontSize: '12px', padding: '6px 10px' }} onClick={() => setAttWeekOffset(o => o + 1)}>▶</button>
             <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
               Tuần <strong>Thứ 2 {attDays[0] ? `${attDays[0].iso.slice(8, 10)}/${attDays[0].iso.slice(5, 7)}/${attDays[0].iso.slice(0, 4)}` : '…'} → CN {attDays[6] ? `${attDays[6].iso.slice(8, 10)}/${attDays[6].iso.slice(5, 7)}/${attDays[6].iso.slice(0, 4)}` : '…'}</strong> • 1 ô = các ca trong ngày kèm đúng trạng thái
             </span>
