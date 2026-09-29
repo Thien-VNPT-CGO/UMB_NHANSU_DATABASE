@@ -655,22 +655,17 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
   // Live Attendance Events State for HR Realtime Tab 11
   const [liveAttendanceEvents, setLiveAttendanceEvents] = useState<any[]>([]);
-  // Ngày đang xem ở bảng realtime (mặc định hôm nay) + tự refresh 30s khi mở tab
-  const [attViewDate, setAttViewDate] = useState(() => new Date().toISOString().split('T')[0]);
-  const reloadAttEvents = async (date?: string) => {
+  // Lưới tuần cần sự kiện cả tuần -> luôn tải không lọc ngày, tự refresh 30s
+  const reloadAttEvents = async () => {
     try {
-      const d = date || attViewDate;
-      const data = await apiRequest(`/attendance/events?date=${d}`);
+      const data = await apiRequest('/attendance/events');
       setLiveAttendanceEvents(Array.isArray(data) ? data : []);
     } catch {}
   };
 
   useEffect(() => {
     if (activeTab === 'hr-attendance' || activeTab === 'hr-schedule') {
-      // Lưới lịch cần sự kiện cả tuần -> tải không lọc ngày
-      apiRequest('/attendance/events')
-        .then((data) => setLiveAttendanceEvents(Array.isArray(data) ? data : []))
-        .catch(() => {});
+      reloadAttEvents();
     }
     if (activeTab === 'hr-attendance') {
       loadPhotoStats(exportAttDate);
@@ -681,7 +676,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     reloadAttEvents();
     const t = setInterval(() => reloadAttEvents(), 30000);
     return () => clearInterval(t);
-  }, [activeTab, attViewDate]);
+  }, [activeTab]);
   useEffect(() => {
     // Lưới lịch cũng tự refresh 60s để trạng thái ca (vắng/khóa/hoàn thành) luôn khớp server
     if (activeTab !== 'hr-schedule') return;
@@ -5104,13 +5099,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </div>
           </div>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-            <input
-              type="date"
-              value={exportAttDate}
-              onChange={e => { setExportAttDate(e.target.value); loadPhotoStats(e.target.value); }}
-              style={{ padding: '7px 10px', fontSize: '12px', borderRadius: '6px', border: '1px solid var(--border)' }}
-              title="Ngày cần tải chứng cứ điểm danh"
-            />
             {photoStats && (
               <span
                 className="badge"
@@ -5187,13 +5175,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             >
               {gpsReverifyBusy ? 'Đang rà soát...' : '📡 Rà soát GPS >300m'}
             </button>
-            <input
-              type="date"
-              value={attViewDate}
-              onChange={e => setAttViewDate(e.target.value || new Date().toISOString().split('T')[0])}
-              style={{ padding: '7px 10px', fontSize: '12px', borderRadius: '6px', border: '1px solid var(--border)' }}
-              title="Ngày xem chấm công (mặc định hôm nay, tự refresh 30s)"
-            />
             <button
               className="btn-secondary"
               onClick={async () => {
