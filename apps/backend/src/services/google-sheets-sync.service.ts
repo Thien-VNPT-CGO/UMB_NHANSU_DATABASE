@@ -1658,7 +1658,8 @@ export class GoogleSheetsSyncService {
                 body: stream,
               },
               fields: 'id, webViewLink, webContentLink',
-            }),
+              supportsAllDrives: true,
+            } as any),
           60000
         );
 
@@ -1872,12 +1873,12 @@ export class GoogleSheetsSyncService {
     const res: any = await this.sheetsCall(
       'drive.download',
       () =>
-        this.driveClient!.files.get({ fileId, alt: 'media' }, { responseType: 'arraybuffer' }) as any,
+        this.driveClient!.files.get({ fileId, alt: 'media', supportsAllDrives: true } as any, { responseType: 'arraybuffer' }) as any,
       45000
     );
     const data = res?.data;
     const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
-    const meta: any = await this.sheetsCall('drive.get', () => this.driveClient!.files.get({ fileId, fields: 'mimeType' }) as any).catch(() => null);
+    const meta: any = await this.sheetsCall('drive.get', () => this.driveClient!.files.get({ fileId, fields: 'mimeType', supportsAllDrives: true } as any) as any).catch(() => null);
     return { buffer, mimeType: meta?.data?.mimeType || 'image/jpeg' };
   }
 
