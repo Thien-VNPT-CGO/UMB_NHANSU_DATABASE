@@ -4924,7 +4924,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     const res = await fetch(`${getApiBase()}/admin/attendance/export-week?weekMon=${attWeek.mon}`, {
                       headers: { Authorization: `Bearer ${getAuthToken()}` },
                     });
-                    if (!res.ok) throw new Error('Tải thất bại');
+                    if (!res.ok) {
+                      const err = await res.json().catch(() => ({}));
+                      throw new Error((err as any)?.message || 'Tải thất bại');
+                    }
                     const blob = await res.blob();
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
@@ -4934,9 +4937,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     a.click();
                     a.remove();
                     setTimeout(() => URL.revokeObjectURL(url), 5000);
-                    showToast(`Đã tải ZIP tuần ${attWeek.label}!`);
-                  } catch {
-                    showToast('Lỗi khi tải ZIP tuần!');
+                    showToast(`Đã tải ZIP tuần ${attWeek.label} (chỉ ảnh check in/out)!`);
+                  } catch (e: any) {
+                    showToast(e?.message || 'Lỗi khi tải ZIP tuần!');
                   } finally {
                     setExportWeekBusy(false);
                   }
@@ -4980,22 +4983,25 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   const res = await fetch(`${getApiBase()}/admin/attendance/export?date=${exportAttDate}`, {
                     headers: { Authorization: `Bearer ${getAuthToken()}` },
                   });
-                  if (!res.ok) throw new Error('Tải thất bại');
-                  const blob = await res.blob();
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement('a');
-                  a.href = url;
-                  a.download = `diem-danh-${exportAttDate}.zip`;
-                  document.body.appendChild(a);
-                  a.click();
-                  a.remove();
-                  setTimeout(() => URL.revokeObjectURL(url), 5000);
-                  showToast(`Đã tải ZIP điểm danh ngày ${exportAttDate} (folder theo ngày/chi nhánh/NV + CSV)!`);
-                } catch {
-                  showToast('Lỗi khi tải gói điểm danh!');
-                } finally {
-                  setExportAttBusy(false);
-                }
+                    if (!res.ok) {
+                      const err = await res.json().catch(() => ({}));
+                      throw new Error((err as any)?.message || 'Tải thất bại');
+                    }
+                    const blob = await res.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `diem-danh-${exportAttDate}.zip`;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    setTimeout(() => URL.revokeObjectURL(url), 5000);
+                    showToast(`Đã tải ZIP điểm danh ngày ${exportAttDate} (chỉ ảnh check in/out theo CN/ca/tên NV)!`);
+                  } catch (e: any) {
+                    showToast(e?.message || 'Lỗi khi tải gói điểm danh!');
+                  } finally {
+                    setExportAttBusy(false);
+                  }
               }}
             >
               {exportAttBusy ? 'Đang gói...' : '⬇ Tải ZIP theo ngày'}

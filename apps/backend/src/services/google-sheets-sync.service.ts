@@ -1642,24 +1642,24 @@ export class GoogleSheetsSyncService {
   }
 
   /**
-   * Dựng entries ZIP cho 1 ngày: {root}/{chi nhánh}/{ca}/{tên NV}/check in|out.jpg + CSV.
-   * Ảnh thật từ camera NV (bỏ qua bản ghi thiếu ảnh, CSV ghi THIEU_ANH).
+   * Dựng entries ZIP cho 1 ngày: {root}/{chi nhánh}/{ca}/{tên NV}/check in|out.jpg.
+   * CHỈ ảnh thật từ camera NV (không kèm file excel/CSV).
    */
   public async attendanceZipEntriesForDate(
     repo: ISheetsRepository,
     date: string,
     root: string
-  ): Promise<{ entries: ZipEntry[]; eventCount: number; photoCount: number }> {
+  ): Promise<{ entries: ZipEntry[]; eventCount: number; photoCount: number; missing: string[] }> {
     const safe = GoogleSheetsSyncService.safeZipName;
-    const [y, m, d] = date.split('-');
     const events: any[] = await repo.getAttendanceEvents(undefined, date).catch(() => []);
     const employees = await repo.listEmployees().catch(() => []);
     const empOf = (id: string) => (employees as any[]).find(e => e.employee_id === id);
     const entries: ZipEntry[] = [];
+    const missing: string[] = [];
     let photoCount = 0;
-    const csvLines = ['Ngay,Chi nhanh,Ca lam,Nhan vien,Ma NV,Gio vao,Gio ra,GPS,Khoang cach (m),Anh check in,Anh check out'];
     const byAssign = new Map<string, any[]>();
     for (const e of events || []) {
+      if (e.type !== 'CHECK_IN' && e.type !== 'CHECK_OUT') continue;
       const k = e.assignment_id || `${e.employee_id}__${e.type}`;
       if (!byAssign.has(k)) byAssign.set(k, []);
       byAssign.get(k)!.push(e);
@@ -1678,41 +1678,34 @@ export class GoogleSheetsSyncService {
       const folder = `${root}/${branch}/${shiftCode}/${empName} (${empCode})`;
       const inEvt = group.find((e: any) => e.type === 'CHECK_IN');
       const outEvt = group.find((e: any) => e.type === 'CHECK_OUT');
-      const absentEvt = group.find((e: any) => e.type === 'ABSENT');
       const loadPhoto = async (evt: any, fname: string) => {
-        if (!evt?.drive_object_id || String(evt.drive_object_id).startsWith('DRV_')) return '';
+        if (!evt?.drive_object_id || String(evt.drive_object_id).startsWith('DRV_')) {
+          missing.push(`${evt?.event_id || '?'}: chua co file Drive`);
+          return;
+        }
         try {
           const dl = await this.downloadDriveFile(evt.drive_object_id);
           if (dl?.buffer?.length) {
             entries.push({ name: fname, data: dl.buffer });
             photoCount++;
-            return fname;
+            return;
           }
-        } catch { /* thiếu ảnh */ }
-        return '';
+          missing.push(`${evt?.event_id || '?'}: tai Drive rong`);
+        } catch (err: any) {
+          missing.push(`${evt?.event_id || '?'}: loi tai Drive (${err?.message || err})`);
+        }
       };
-      const inPath = inEvt ? await loadPhoto(inEvt, `${folder}/check in.jpg`) : '';
-      const outPath = outEvt ? await loadPhoto(outEvt, `${folder}/check out.jpg`) : '';
-      const timeOf = (e: any) => (e?.client_time ? new Date(e.client_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '');
-      csvLines.push([
-        date, first.branch_id || '', shiftCode, `"${emp?.full_name || first.employee_id}"`, empCode,
-        timeOf(inEvt) || (absentEvt ? 'VANG' : ''), timeOf(outEvt),
-        inEvt?.gps_status || absentEvt?.gps_status || '', inEvt?.distance_meters ?? '',
-        inPath || 'THIEU_ANH', outPath || (outEvt ? 'THIEU_ANH' : ''),
-      ].join(','));
+      if (inEvt) await loadPhoto(inEvt, `${folder}/check in.jpg`);
+      if (outEvt) await loadPhoto(outEvt, `${folder}/check out.jpg`);
     }
-    entries.push({
-      name: `${root}/danh-sach-diem-danh-${date}.csv`,
-      data: Buffer.from('\uFEFF' + csvLines.join('\n'), 'utf8'),
-    });
-    return { entries, eventCount: (events || []).length, photoCount };
+    return { entries, eventCount: (events || []).length, photoCount, missing };
   }
 
-  /** Gói ZIP cả tuần (T2–CN): mỗi ngày 1 cụm folder như ngày lẻ + CSV tổng tuần. */
+  /** Gói ZIP cả tuần (T2–CN): mỗi ngày 1 cụm folder ảnh như ngày lẻ (không CSV). */
   public async buildAttendanceWeekZip(
     repo: ISheetsRepository,
     weekMon: string
-  ): Promise<{ zip: Buffer; dates: string[]; eventCount: number; photoCount: number }> {
+  ): Promise<{ zip: Buffer; dates: string[]; eventCount: number; photoCount: number; missing: string[] }> {
     const [y, m, d0] = weekMon.split('-').map(Number);
     const base = Date.UTC(y, m - 1, d0);
     const isoOf = (t: number) => new Date(t).toISOString().slice(0, 10);
@@ -1721,30 +1714,20 @@ export class GoogleSheetsSyncService {
     const root = `Diem danh tuan ${fmtD(weekMon)} den ${fmtD(weekSun)}`;
     const entries: ZipEntry[] = [];
     const dates: string[] = [];
+    const missing: string[] = [];
     let eventCount = 0;
     let photoCount = 0;
-    const weekCsv = ['Ngay,Chi nhanh,Ca lam,Nhan vien,Ma NV,Gio vao,Gio ra,GPS,Khoang cach (m),Anh check in,Anh check out'];
     for (let i = 0; i < 7; i++) {
       const date = isoOf(base + i * 86_400_000);
       dates.push(date);
       const dayRoot = `${root}/Diem danh ngay ${fmtD(date)}`;
       const r = await this.attendanceZipEntriesForDate(repo, date, dayRoot);
-      for (const en of r.entries) {
-        if (en.name.endsWith('.csv')) {
-          const text = en.data.toString('utf8').replace(/^\uFEFF/, '').split('\n');
-          weekCsv.push(...text.slice(1).filter(x => x.trim() !== ''));
-        } else {
-          entries.push(en);
-        }
-      }
+      entries.push(...r.entries);
+      missing.push(...r.missing);
       eventCount += r.eventCount;
       photoCount += r.photoCount;
     }
-    entries.push({
-      name: `${root}/tong-hop-tuan-${weekMon}-den-${weekSun}.csv`,
-      data: Buffer.from('\uFEFF' + weekCsv.join('\n'), 'utf8'),
-    });
-    return { zip: buildZipStore(entries), dates, eventCount, photoCount };
+    return { zip: buildZipStore(entries), dates, eventCount, photoCount, missing };
   }
 
   /**

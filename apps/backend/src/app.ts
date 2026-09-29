@@ -1673,7 +1673,16 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       if (!syncService?.attendanceZipEntriesForDate) {
         return res.status(503).json({ error: 'SYNC_NOT_READY' });
       }
-      const { entries } = await syncService.attendanceZipEntriesForDate(adapter, date, root);
+      const { entries, eventCount, photoCount, missing } = await syncService.attendanceZipEntriesForDate(adapter, date, root);
+      if (entries.length === 0) {
+        return res.status(400).json({
+          error: 'NO_PHOTOS',
+          message: `Ngày ${date}: ${eventCount} lượt chấm công nhưng không có ảnh nào tải được (đủ ảnh: ${photoCount}).`,
+          eventCount,
+          photoCount,
+          missing: missing.slice(0, 20),
+        });
+      }
       const zip = buildZipStore(entries);
       res.setHeader('Content-Type', 'application/zip');
       res.setHeader('Content-Disposition', `attachment; filename="diem-danh-${date}.zip"`);
@@ -1724,7 +1733,16 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const dt = new Date(Date.UTC(yy, mm - 1, dd));
       const dowMon0 = (dt.getUTCDay() + 6) % 7;
       const mon = new Date(dt.getTime() - dowMon0 * 86_400_000).toISOString().slice(0, 10);
-      const { zip } = await syncService.buildAttendanceWeekZip(adapter, mon);
+      const { zip, eventCount, photoCount, missing } = await syncService.buildAttendanceWeekZip(adapter, mon);
+      if (!photoCount) {
+        return res.status(400).json({
+          error: 'NO_PHOTOS',
+          message: `Tuần ${mon}: ${eventCount} lượt chấm công nhưng không có ảnh nào tải được.`,
+          eventCount,
+          photoCount,
+          missing: (missing || []).slice(0, 20),
+        });
+      }
       res.setHeader('Content-Type', 'application/zip');
       res.setHeader('Content-Disposition', `attachment; filename="diem-danh-tuan-${mon}.zip"`);
       res.send(zip);
