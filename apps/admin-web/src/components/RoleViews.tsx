@@ -554,8 +554,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       loadSwaps();
     }
   }, [activeTab]);
+  // Đồng hồ đếm ngược từng giây cho phiếu 60 phút (chỉ chạy ở tab duyệt để nhẹ máy)
+  const [adjNow, setAdjNow] = useState(() => Date.now());
   useEffect(() => {
-    // Phiếu 60 phút tự hủy: refresh 20s để đếm ngược + trạng thái realtime
+    if (activeTab !== 'hr-adjustments') return;
+    const clock = setInterval(() => setAdjNow(Date.now()), 1000);
+    return () => clearInterval(clock);
+  }, [activeTab]);
+  useEffect(() => {
+    // Phiếu 60 phút tự hủy: refresh 20s để cập nhật trạng thái realtime
     if (activeTab !== 'hr-adjustments') return;
     const t = setInterval(() => loadAdjustments(), 20000);
     return () => clearInterval(t);
@@ -5406,9 +5413,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const adjRemaining = (a: any) => {
       const created = new Date(a.created_at).getTime();
       if (!Number.isFinite(created)) return null;
-      const left = Math.max(0, 60 * 60000 - (Date.now() - created));
+      const left = Math.max(0, 60 * 60000 - (adjNow - created));
       const mm = Math.floor(left / 60000);
-      return `Còn ${mm}p hiệu lực`;
+      const ss = Math.floor((left % 60000) / 1000);
+      return `Còn ${mm}p ${String(ss).padStart(2, '0')}s hiệu lực`;
     };
     const renderAdjRows = (list: any[], isPending: boolean) =>
       list.map((a: any) => {

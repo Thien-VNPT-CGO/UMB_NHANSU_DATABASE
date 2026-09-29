@@ -240,6 +240,7 @@ export function App() {
   const [adjustShiftId, setAdjustShiftId] = useState('');
   // Phiếu bổ sung công của tôi (trạng thái realtime + đếm ngược 60 phút)
   const [myAdjustments, setMyAdjustments] = useState<any[]>([]);
+  const [adjNow, setAdjNow] = useState(() => Date.now());
   const fetchMyAdjustments = async () => {
     try {
       const list = await apiRequest('/attendance/adjustments');
@@ -295,6 +296,11 @@ export function App() {
   useEffect(() => {
     if (activeTab === 'test_exam' || activeTab === 'test_training') fetchMyTests();
     if (activeTab === 'swap_shift') fetchMySwaps();
+    // Đồng hồ đếm ngược phiếu 60 phút (chỉ chạy ở tab bổ sung công)
+    if (activeTab === 'adjustment' || activeTab === 'emergency_adjust') {
+      const clock = setInterval(() => setAdjNow(Date.now()), 1000);
+      return () => clearInterval(clock);
+    }
     if (activeTab === 'adjustment' || activeTab === 'emergency_adjust') {
       fetchMyAdjustments();
       const t = setInterval(fetchMyAdjustments, 30000);
@@ -3066,8 +3072,9 @@ export function App() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {myAdjustments.map((a: any) => {
                     const created = new Date(a.created_at).getTime();
-                    const leftMs = Number.isFinite(created) ? Math.max(0, 60 * 60000 - (Date.now() - created)) : 0;
+                    const leftMs = Number.isFinite(created) ? Math.max(0, 60 * 60000 - (adjNow - created)) : 0;
                     const leftMin = Math.floor(leftMs / 60000);
+                    const leftSec = Math.floor((leftMs % 60000) / 1000);
                     const auto = a.status === 'REJECTED' && String(a.review_note || '').startsWith('Tự động từ chối');
                     return (
                       <div key={a.adjustment_id} style={{ border: '1px solid var(--border)', borderRadius: '8px', padding: '10px', fontSize: '12px' }}>
@@ -3083,7 +3090,7 @@ export function App() {
                         </div>
                         {a.status === 'PENDING' && (
                           <div style={{ marginTop: '4px', color: '#B45309', fontWeight: 700 }}>
-                            ⏳ Còn {leftMin}p hiệu lực — quá hạn hệ thống tự hủy phiếu
+                            ⏳ Còn {leftMin}p {String(leftSec).padStart(2, '0')}s hiệu lực — quá hạn hệ thống tự hủy phiếu
                           </div>
                         )}
                         {a.status === 'APPROVED' && (
