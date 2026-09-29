@@ -36,10 +36,12 @@ export function getAuthToken(): string {
 // Tự gia hạn access token (8h) bằng refresh token (7d) khi gặp 401.
 // Trước đây refresh token được lưu mà không bao giờ dùng -> hết 8h là mọi
 // thao tác (kể cả đăng ký OFF) báo lỗi thô "UNAUTHORIZED".
-async function tryRefreshSession(): Promise<boolean> {
+// Trả về lý do để báo đúng: 'none' (chưa từng lưu mã gia hạn), 'expired'
+// (mã gia hạn hết hạn/sai), 'revoked' (tài khoản đổi PIN/quyền/khóa), 'ok'.
+async function tryRefreshSession(): Promise<'ok' | 'none' | 'expired' | 'revoked'> {
   try {
     const rt = localStorage.getItem('ubm_emp_refresh') || '';
-    if (!rt) return false;
+    if (!rt) return 'none';
     const base = getApiBase();
     const res = await fetch(`${base}/auth/refresh`, {
       method: 'POST',
@@ -47,11 +49,15 @@ async function tryRefreshSession(): Promise<boolean> {
       body: JSON.stringify({ refreshToken: rt }),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok || !(data as any)?.token) return false;
+    if (!res.ok || !(data as any)?.token) {
+      const msg = String((data as any)?.error || '');
+      if (/REVOKED|LOCKED/i.test(msg)) return 'revoked';
+      return 'expired';
+    }
     setAuthToken((data as any).token);
-    return true;
+    return 'ok';
   } catch {
-    return false;
+    return 'expired';
   }
 }
 
@@ -89,11 +95,13 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
     }
 
     // 401 hết hạn token -> thử gia hạn 1 lần rồi gọi lại (trừ chính API refresh).
+    let refreshWhy: string | null = null;
     if (res.status === 401 && !alreadyRefreshed && endpoint !== '/auth/refresh' && retries > 0) {
-      const ok = await tryRefreshSession();
-      if (ok) {
+      const r = await tryRefreshSession();
+      if (r === 'ok') {
         return apiRequest<T>(endpoint, { ...options, _refreshed: true } as any, retries - 1);
       }
+      refreshWhy = r;
     }
 
     const data = await res.json().catch(() => ({}));
@@ -101,7 +109,12 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
       // Hết phiên mà không gia hạn được -> xóa phiên cũ + báo rõ để đăng nhập lại.
       if (res.status === 401) {
         clearSession();
-        const err: any = new Error('Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại!');
+        const msg = refreshWhy === 'revoked'
+          ? 'Tài khoản có thay đổi (đổi PIN, chuyển chi nhánh hoặc bị khóa), vui lòng đăng nhập lại!'
+          : refreshWhy === 'none'
+            ? 'Phiên đăng nhập cũ không có mã gia hạn, vui lòng đăng nhập lại một lần!'
+            : 'Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại!';
+        const err: any = new Error(msg);
         err.code = 'SESSION_EXPIRED';
         throw err;
       }
