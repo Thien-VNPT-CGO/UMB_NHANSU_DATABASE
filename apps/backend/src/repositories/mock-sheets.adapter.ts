@@ -98,6 +98,16 @@ export class MockSheetsAdapter implements ISheetsRepository {
         '[mock] HR_SEED_PASSWORD not set — using default dev HR password. Change it immediately after login.'
       );
     }
+    // Kế toán mặc định: env FINANCE_SEED_PASSWORD, mặc định Umbomilk@2027 (chấm công + tính lương).
+    const finSeedPlain =
+      process.env.FINANCE_SEED_PASSWORD && process.env.FINANCE_SEED_PASSWORD.length >= 8
+        ? process.env.FINANCE_SEED_PASSWORD
+        : 'Umbomilk@2027';
+    if (!process.env.FINANCE_SEED_PASSWORD) {
+      console.warn(
+        '[mock] FINANCE_SEED_PASSWORD not set — using default dev finance password. Change it immediately after login.'
+      );
+    }
 
     // 1. Admin Accounts (Admin, HR mặc định + các tài khoản tạo thêm)
     this.adminAccounts = [
@@ -120,6 +130,19 @@ export class MockSheetsAdapter implements ISheetsRepository {
         password_hash: hashPasswordSync(hrSeedPlain),
         full_name: 'HR Ụm Bò Milk',
         role: 'HR',
+        branch_scope: '*',
+        is_active: true,
+
+        version: 1,
+        created_at: now,
+        updated_at: now,
+      },
+      {
+        admin_id: 'ADM_003',
+        username: 'finance',
+        password_hash: hashPasswordSync(finSeedPlain),
+        full_name: 'Kế Toán Ụm Bò Milk',
+        role: 'FINANCE',
         branch_scope: '*',
         is_active: true,
 
