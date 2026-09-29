@@ -106,6 +106,35 @@ interface RoleViewsProps {
   onRefreshData?: () => Promise<void> | void;
 }
 
+/** Ngày Việt Nam (UTC+7) của 1 mốc ISO. */
+export function vnDayOf(iso: string): string {
+  const t = new Date(iso || '').getTime();
+  if (!Number.isFinite(t)) return '';
+  return new Date(t + 7 * 3_600_000).toISOString().slice(0, 10);
+}
+
+/** Trạng thái 1 ca chấm công theo đúng luật (xanh/vàng nhấp nháy/xám/đỏ/cam/chàm). */
+export function attShiftStatus(shift: any, inEvt: any, outEvt: any, absentEvt: any): {
+  key: string; label: string; bg: string; fg: string; border: string; blink: boolean; lateMin: number;
+} {
+  const complete = !!(inEvt && outEvt);
+  if (complete) return { key: 'COMPLETED', label: '✓ Hoàn thành', bg: '#ECFDF5', fg: '#047857', border: '1px solid #A7F3D0', blink: false, lateMin: 0 };
+  const todayStr = vnDayOf(new Date().toISOString());
+  const shiftDay = String(shift?.date || '').slice(0, 10);
+  // Chốt cứng: ngày đã qua mà thiếu check-out (kể cả end_at lỗi) -> hết nhấp nháy
+  if (inEvt && !outEvt && shiftDay && shiftDay < todayStr) return { key: 'MISSING_OUT', label: 'Thiếu check-out — không lương', bg: '#FFF7ED', fg: '#9A3412', border: '1.5px solid #EA580C', blink: false, lateMin: 0 };
+  const startMs = shift?.start_at ? new Date(shift.start_at).getTime() : NaN;
+  const endMs = shift?.end_at ? new Date(shift.end_at).getTime() : NaN;
+  const now = Date.now();
+  if (!inEvt && absentEvt) return { key: 'ABSENT', label: '🔴 Vắng — không lương', bg: '#FEE2E2', fg: '#991B1B', border: '1.5px solid #EF4444', blink: false, lateMin: 0 };
+  if (!inEvt && Number.isFinite(startMs) && now - startMs > 3 * 60 * 60 * 1000) return { key: 'LOCKED', label: '🔒 Khóa — nghỉ không lương', bg: '#F1F5F9', fg: '#475569', border: '1.5px solid #64748B', blink: false, lateMin: 0 };
+  if (inEvt && !outEvt && Number.isFinite(endMs) && now - endMs > 30 * 60 * 1000) return { key: 'MISSING_OUT', label: 'Thiếu check-out — không lương', bg: '#FFF7ED', fg: '#9A3412', border: '1.5px solid #EA580C', blink: false, lateMin: 0 };
+  if (!inEvt && Number.isFinite(startMs) && now < startMs - 30 * 60 * 1000) return { key: 'UPCOMING', label: 'Lịch đã duyệt', bg: '#EEF2FF', fg: '#3730A3', border: '1px solid #C7D2FE', blink: false, lateMin: 0 };
+  const lateMin = inEvt?.is_late ? Number(inEvt.minutes_deviation) || 0 : 0;
+  if (inEvt) return { key: 'CHECKED_IN', label: 'Đang làm (chờ check-out)', bg: '#FEF3C7', fg: '#92400E', border: '1.5px solid #F59E0B', blink: true, lateMin };
+  return { key: 'PENDING', label: 'Chưa check-in', bg: '#FEF3C7', fg: '#92400E', border: '1px solid #FCD34D', blink: false, lateMin: 0 };
+}
+
 /** Chuẩn hóa mã chi nhánh (Sheets có thể ghi CN1..CN4, hệ thống dùng CN130/261/120/111). */
 export function canonicalBranchId(branchId?: string): string {
   const b = String(branchId || '').trim().toUpperCase();
@@ -363,6 +392,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [exportAttDate, setExportAttDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [exportAttBusy, setExportAttBusy] = useState(false);
   const [exportWeekBusy, setExportWeekBusy] = useState(false);
+  // Tuần đang xem ở lưới tuần realtime (0 = tuần này)
+  const [attWeekOffset, setAttWeekOffset] = useState(0);
   // Kết quả rà soát GPS mới nhất (hiện ngay trong tab)
   const [gpsReverify, setGpsReverify] = useState<any>(null);
   const [gpsReverifyBusy, setGpsReverifyBusy] = useState(false);
@@ -4948,6 +4979,59 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }
 
   if (activeTab === 'hr-attendance') {
+    // Lưới tuần Mon–CN như lịch làm việc: 1 ô = các ca trong ngày kèm đúng trạng thái
+    const attMon = mondayIsoOfOffset(attWeekOffset);
+    const attDays = [0, 1, 2, 3, 4, 5, 6].map(i => {
+      const d = new Date(`${attMon}T00:00:00Z`);
+      d.setUTCDate(d.getUTCDate() + i);
+      const iso = d.toISOString().slice(0, 10);
+      const codes = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'];
+      return { key: codes[i], code: codes[i], iso, isToday: iso === vnDayOf(new Date().toISOString()) };
+    });
+    const attWeekSet = new Set(attDays.map(d => d.iso));
+    const attWeekShifts = (shifts || []).filter((s: any) => attWeekSet.has((s.date || '').slice(0, 10)) && s.status !== 'CANCELLED');
+    const attWeekEvts = (liveAttendanceEvents || []).filter((e: any) => attWeekSet.has(vnDayOf(e.client_time || '')));
+    const attEmpIds = [...new Set([
+      ...attWeekShifts.map((s: any) => s.employee_id),
+      ...attWeekEvts.map((e: any) => e.employee_id),
+    ])].filter(Boolean);
+    const attEmps = attEmpIds
+      .map(id => (allEmployees || []).find((e: any) => e.employee_id === id) || { employee_id: id, full_name: 'Nhân Viên', employee_code: id, employment_status: 'OFFICIAL' })
+      .filter((e: any) => e.employment_status !== 'TERMINATED')
+      .sort((a: any, b: any) => String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi'));
+    const attCellOf = (empId: string, iso: string) => {
+      const shs = attWeekShifts.filter((s: any) => s.employee_id === empId && (s.date || '').slice(0, 10) === iso);
+      const evs = attWeekEvts.filter((e: any) => e.employee_id === empId && vnDayOf(e.client_time || '') === iso);
+      const byAssign = new Map<string, any[]>();
+      for (const e of evs) {
+        const k = e.assignment_id || `__${e.type}`;
+        if (!byAssign.has(k)) byAssign.set(k, []);
+        byAssign.get(k)!.push(e);
+      }
+      const items: any[] = shs.map((s: any) => {
+        const list = byAssign.get(s.assignment_id) || [];
+        const st = attShiftStatus(
+          s,
+          list.find((e: any) => e.type === 'CHECK_IN'),
+          list.find((e: any) => e.type === 'CHECK_OUT'),
+          list.find((e: any) => e.type === 'ABSENT')
+        );
+        byAssign.delete(s.assignment_id);
+        return { shift: s, list, st };
+      });
+      for (const [, list] of byAssign) {
+        const f = list[0];
+        const pseudo = { assignment_id: '', date: iso, shift_code: '?', employee_id: empId, branch_id: f.branch_id };
+        const st = attShiftStatus(
+          pseudo,
+          list.find((e: any) => e.type === 'CHECK_IN'),
+          list.find((e: any) => e.type === 'CHECK_OUT'),
+          list.find((e: any) => e.type === 'ABSENT')
+        );
+        items.push({ shift: pseudo, list, st });
+      }
+      return items;
+    };
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -5134,158 +5218,84 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           </div>
         )}
 
-        <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+        <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflowX: 'auto', padding: '12px 14px' }}>
+          <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '10px' }}>
+            <button className="btn-secondary" style={{ fontSize: '12px', padding: '6px 10px' }} onClick={() => setAttWeekOffset(o => o - 1)}>◀ Tuần trước</button>
+            <button className="btn-secondary" style={{ fontSize: '12px', padding: '6px 10px', fontWeight: attWeekOffset === 0 ? 800 : 400 }} onClick={() => setAttWeekOffset(0)}>Tuần này</button>
+            <button className="btn-primary" style={{ fontSize: '12px', padding: '6px 10px' }} onClick={() => setAttWeekOffset(o => o + 1)}>Tuần sau ▶</button>
+            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Tuần <strong>{attDays[0]?.iso} → {attDays[6]?.iso}</strong> • 1 ô = các ca trong ngày kèm đúng trạng thái</span>
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
             <thead>
-              <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
-                <th style={{ padding: '12px 20px' }}>Nhân Viên</th>
-                <th style={{ padding: '12px 20px' }}>Chi Nhánh & Ca</th>
-                <th style={{ padding: '12px 20px' }}>Giờ Vào / Ra & Phạt Trễ</th>
-                <th style={{ padding: '12px 20px' }}>Ảnh Check-in / Out</th>
-                <th style={{ padding: '12px 20px' }}>Trạng Thái Ca</th>
+              <tr style={{ backgroundColor: 'var(--bg)', borderBottom: '1px solid var(--border)', textAlign: 'center' }}>
+                <th style={{ padding: '12px 16px', textAlign: 'left', minWidth: '170px' }}>NHÂN VIÊN</th>
+                {attDays.map((day: any) => (
+                  <th key={day.key} style={{ padding: '12px 8px', minWidth: '130px', backgroundColor: day.isToday ? '#FFFBEB' : undefined }}>
+                    {day.code}
+                    <div style={{ fontSize: '10px', fontWeight: 400 }}>{day.iso.slice(8, 10)}/{day.iso.slice(5, 7)}</div>
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {(() => {
-                  // 1 dòng = 1 ca phân công trong ngày đang xem (kể cả ngày 2 ca).
-                  // Ca chưa phát sinh sự kiện vẫn hiện đúng trạng thái (chờ/sắp tới).
-                  const dayShifts = (shifts || [])
-                    .filter((s: any) => (s.date || '').slice(0, 10) === attViewDate && s.status !== 'CANCELLED')
-                    .sort((a: any, b: any) => String(a.branch_id).localeCompare(String(b.branch_id)) || String(a.start_at).localeCompare(String(b.start_at)));
-                  const evtsByAssign = new Map<string, any[]>();
-                  for (const e of liveAttendanceEvents) {
-                    const k = e.assignment_id || `${e.employee_id}__${(e.client_time || '').slice(0, 10)}__${e.type}`;
-                    if (!evtsByAssign.has(k)) evtsByAssign.set(k, []);
-                    evtsByAssign.get(k)!.push(e);
-                  }
-                  // Đếm số ca/ngày của từng NV để HR dễ quan sát ngày 2 ca
-                  const perEmp = new Map<string, any[]>();
-                  for (const s of dayShifts) {
-                    if (!perEmp.has(s.employee_id)) perEmp.set(s.employee_id, []);
-                    perEmp.get(s.employee_id)!.push(s);
-                  }
-                  // Sự kiện lẻ không gắn ca nào (dữ liệu cũ) -> dòng riêng
-                  const orphanGroups = [...evtsByAssign.entries()].filter(([k]) => !dayShifts.some((s: any) => s.assignment_id === k));
-                  const timeOf = (t: string) => {
-                    try { return new Date(t).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }); } catch { return '-'; }
-                  };
-                  const rows: any[] = [
-                    ...dayShifts.map((s: any) => ({ shift: s, evts: evtsByAssign.get(s.assignment_id) || [] })),
-                    ...orphanGroups.map(([, evts]) => ({ shift: null, evts })),
-                  ];
-                  if (rows.length === 0) {
-                    return (
-                      <tr>
-                        <td colSpan={5} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                          Ngày {attViewDate} chưa phân ca nào. Ca phân công (DRAFT/PUBLISHED) sẽ hiện tại đây kèm đúng trạng thái.
-                        </td>
-                      </tr>
-                    );
-                  }
-                  return rows.map((row: any, ri: number) => {
-                    const { shift, evts } = row;
-                    const inEvt = evts.find((e: any) => e.type === 'CHECK_IN');
-                    const outEvt = evts.find((e: any) => e.type === 'CHECK_OUT');
-                    const absentEvt = evts.find((e: any) => e.type === 'ABSENT');
-                    const first = evts[0] || { employee_id: shift?.employee_id, branch_id: shift?.branch_id, client_time: attViewDate };
-                    const emp = allEmployees.find((e: any) => e.employee_id === (shift?.employee_id || first.employee_id)) || {
-                      full_name: 'Nhân Viên',
-                      employee_code: shift?.employee_id || first.employee_id,
-                    };
-                    const empDay = perEmp.get(shift?.employee_id || '') || [];
-                    const shiftIdx = shift ? empDay.indexOf(shift) + 1 : 1;
-                    const shiftTotal = shift ? empDay.length : 1;
-                    const key = shift?.assignment_id || `orphan-${ri}`;
-                    const rate = Number((emp as any)?.current_rate_per_hour) || 25500;
-                    const hours = shift?.shift_code === 'CA_2' ? 6 : 5;
-                    const shiftPay = hours * rate;
-                    const startMs = shift?.start_at ? new Date(shift.start_at).getTime() : NaN;
-                    const endMs = shift?.end_at ? new Date(shift.end_at).getTime() : NaN;
-                    const complete = !!(inEvt && outEvt);
-                    const absent = !inEvt && !!absentEvt;
-                    const locked = !inEvt && !absentEvt && Number.isFinite(startMs) && Date.now() - startMs > 3 * 60 * 60 * 1000;
-                    // Hết giờ +30p mà chưa check-out -> chốt (hết nhấp nháy), thiếu là không lương.
-                    // Chốt cứng thêm: ngày đã qua hoặc check-in quá 12h (end_at lỗi cũng chốt).
-                    const inMs = inEvt?.client_time ? new Date(inEvt.client_time).getTime() : NaN;
-                    const missingOut = !!inEvt && !outEvt && (Number.isFinite(endMs) && Date.now() - endMs > 30 * 60 * 1000
-                      || attViewDate < new Date().toISOString().split('T')[0]
-                      || (Number.isFinite(inMs) && Date.now() - inMs > 12 * 60 * 60 * 1000));
-                    // Ca chưa tới giờ mở cổng (trước 30p) -> chờ, không tính vắng/trễ
-                    const upcoming = !inEvt && !absentEvt && Number.isFinite(startMs) && Date.now() < startMs - 30 * 60 * 1000;
-                    const working = !complete && !absent && !locked && !missingOut && !upcoming;
-                    const lateMin = inEvt?.is_late ? Number(inEvt.minutes_deviation) || 0 : 0;
-                    const fineTxt = !inEvt ? '' : lateMin < 5 ? '' : lateMin < 30 ? ' • Phạt 30k' : lateMin < 60 ? ` • Phạt 50% (${Math.round(shiftPay * 0.5).toLocaleString('vi-VN')}đ)` : ' • Phạt 100% ca';
-                    const overGps = [inEvt, outEvt].some((e: any) => e && (e.gps_status === 'OUT_OF_BOUNDS' || Number(e.distance_meters) > 300));
-                    const statusBadge = complete
-                      ? <span className="badge badge-success" style={{ fontWeight: 800 }}>✓ HOÀN THÀNH CA</span>
-                      : absent
-                        ? <span className="badge" style={{ backgroundColor: '#FEE2E2', color: '#991B1B', fontWeight: 800 }}>🔴 VẮNG — không lương</span>
-                        : locked
-                          ? <span className="badge" style={{ backgroundColor: '#64748B', color: '#FFF', fontWeight: 800 }}>🔒 KHÓA — nghỉ không lương</span>
-                          : missingOut
-                            ? <span className="badge" style={{ backgroundColor: '#EA580C', color: '#FFF', fontWeight: 800 }}>THIẾU CHECK-OUT — không lương</span>
-                            : upcoming
-                              ? <span className="badge" style={{ backgroundColor: '#E0E7FF', color: '#3730A3', fontWeight: 800 }}>LỊCH ĐÃ DUYỆT</span>
-                              : <span className="badge" style={{ backgroundColor: '#F59E0B', color: '#FFF', fontWeight: 800, animation: inEvt ? 'fx-blink 1.2s infinite' : undefined }}>{inEvt ? 'ĐANG LÀM (chờ check-out)' : 'CHƯA CHECK-IN'}</span>;
-                    const photoOf = (evt: any) => evt?.drive_object_id && !String(evt.drive_object_id).startsWith('DRV_')
-                      ? (
-                        <div>
-                          <AttPhoto eventId={evt.event_id} />
-                          {evt?.uniform_pink_ratio !== undefined && evt?.uniform_pink_ratio !== null && (
-                            <div style={{ fontSize: '10px', color: Number(evt.uniform_pink_ratio) >= 10 ? '#059669' : '#DC2626', fontWeight: 800, marginTop: '2px' }}>
-                              Hồng {evt.uniform_pink_ratio}%
-                            </div>
-                          )}
-                        </div>
-                      )
-                      : <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Không ảnh</span>;
-                    return (
-                      <tr key={key} style={{ borderBottom: '1px solid var(--border)', outline: overGps ? '2px solid #EF4444' : undefined, outlineOffset: '-2px', backgroundColor: complete && !overGps ? undefined : absent ? '#FEF2F2' : locked ? '#F1F5F9' : missingOut ? '#FFF7ED' : upcoming ? '#EEF2FF' : working || overGps ? '#FFFBEB' : undefined }}>
-                        <td style={{ padding: '12px 20px', fontWeight: 700 }}>
-                          {emp.full_name}
-                          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{emp.employee_code}</div>
-                          {overGps && (
-                            <span className="badge" style={{ backgroundColor: '#FEE2E2', color: '#991B1B', fontWeight: 800, marginTop: '2px' }}>
-                              ⚠️ GPS vượt 300m — bắt làm lại
-                            </span>
-                          )}
-                          {shiftTotal > 1 && (
-                            <span className="badge" style={{ backgroundColor: '#EDE9FE', color: '#6D28D9', fontWeight: 800, marginTop: '2px' }}>
-                              {shiftTotal} ca hôm nay (ca {shiftIdx}/{shiftTotal})
-                            </span>
-                          )}
-                        </td>
-                        <td style={{ padding: '12px 20px' }}>
-                          {getDisplayBranch(first.branch_id || shift?.branch_id || 'CN130')}
-                          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{shift ? `${shift.shift_code} • ${shift.date}` : (first.client_time || '').slice(0, 10)}</div>
-                        </td>
-                        <td style={{ padding: '12px 20px' }}>
-                          <div style={{ fontSize: '12px' }}>Vào: <strong>{inEvt ? timeOf(inEvt.client_time) : '—'}</strong>{inEvt?.is_late ? ` (trễ ${lateMin}p${fineTxt})` : ''}</div>
-                          <div style={{ fontSize: '12px', marginTop: '2px' }}>Ra: <strong>{outEvt ? timeOf(outEvt.client_time) : '—'}</strong>{outEvt?.is_early ? ` (sớm ${outEvt.minutes_deviation}p)` : ''}</div>
-                          {inEvt && (
-                            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                              GPS {(inEvt.distance_meters ?? 0)}m ({inEvt.gps_status || 'VALID'})
+              {attEmps.length === 0 ? (
+                <tr>
+                  <td colSpan={8} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    Tuần này chưa có ca phân công hay lượt chấm công nào.
+                  </td>
+                </tr>
+              ) : (
+                attEmps.map((emp: any) => (
+                  <tr key={emp.employee_id} style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td style={{ padding: '10px 14px', fontWeight: 700, fontSize: '12px' }}>
+                      {emp.full_name}
+                      <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 400 }}>{emp.employee_code}</div>
+                    </td>
+                    {attDays.map((day: any) => {
+                      const items = attCellOf(emp.employee_id, day.iso);
+                      return (
+                        <td key={day.key} style={{ padding: '6px', verticalAlign: 'top', backgroundColor: day.isToday ? '#FFFBFB' : undefined }}>
+                          {items.length === 0 ? (
+                            <span style={{ color: '#D1D5DB', fontSize: '14px' }}>—</span>
+                          ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                              {items.map((it: any, ii: number) => {
+                                const timeOf = (t: string) => {
+                                  try { return new Date(t).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }); } catch { return ''; }
+                                };
+                                const inE = it.list.find((e: any) => e.type === 'CHECK_IN');
+                                const outE = it.list.find((e: any) => e.type === 'CHECK_OUT');
+                                const late = inE?.is_late ? ` trễ ${Number(inE.minutes_deviation) || 0}p` : '';
+                                const thumb = (e: any) => e?.drive_object_id && !String(e.drive_object_id).startsWith('DRV_')
+                                  ? <AttPhoto eventId={e.event_id} style={{ width: '40px', height: '40px' }} />
+                                  : null;
+                                return (
+                                  <div key={ii} style={{ padding: '6px', borderRadius: '8px', backgroundColor: it.st.bg, border: it.st.border, animation: it.st.blink ? 'fx-blink 1.2s infinite' : undefined }}>
+                                    <div style={{ fontWeight: 800, fontSize: '11px' }}>{it.shift?.shift_code || 'Không ca'}</div>
+                                    <div style={{ fontSize: '10px', color: it.st.fg, fontWeight: 700 }}>{it.st.label}{late}</div>
+                                    <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
+                                      {inE ? `Vào ${timeOf(inE.client_time)}` : '—'} • {outE ? `Ra ${timeOf(outE.client_time)}` : '—'}
+                                    </div>
+                                    {(thumb(inE) || thumb(outE)) && (
+                                      <div style={{ display: 'flex', gap: '4px', marginTop: '4px' }}>
+                                        {thumb(inE)}
+                                        {thumb(outE)}
+                                      </div>
+                                    )}
+                                    {it.st.key === 'COMPLETED' && inE && (
+                                      <div style={{ fontSize: '10px', color: '#059669', fontWeight: 700 }}>Hồng {inE.uniform_pink_ratio ?? '?'}%</div>
+                                    )}
+                                  </div>
+                                );
+                              })}
                             </div>
                           )}
                         </td>
-                        <td style={{ padding: '12px 20px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <div style={{ textAlign: 'center' }}>
-                              {photoOf(inEvt)}
-                              <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Check-in</div>
-                            </div>
-                            <div style={{ textAlign: 'center' }}>
-                              {photoOf(outEvt)}
-                              <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Check-out</div>
-                            </div>
-                          </div>
-                          <div style={{ fontSize: '11px', color: '#DB2777', fontWeight: 700, marginTop: '4px' }}>📸 Áo Hồng + Bảng Tên</div>
-                        </td>
-                        <td style={{ padding: '12px 20px' }}>{statusBadge}</td>
-                      </tr>
-                    );
-                  });
-                })()}
+                      );
+                    })}
+                  </tr>
+                )))
+              }
             </tbody>
           </table>
         </div>
