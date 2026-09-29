@@ -989,9 +989,10 @@ export class GoogleSheetsSyncService {
           }
         }
 
-        // Merge: ưu tiên Sheets, nhưng giữ các tài khoản seed mặc định (admin + umbomilk-hr)
-        // nếu chưa có trong Sheets. Sheet không đọc được dòng hợp lệ nào -> giữ nguyên bộ nhớ cũ.
-        const SEED_IDS = ['ADM_001', 'ADM_002'];
+        // Merge: ưu tiên Sheets, nhưng giữ các tài khoản seed mặc định
+        // (admin + umbomilk-hr + finance) nếu chưa có trong Sheets. Sheet không
+        // đọc được dòng hợp lệ nào -> giữ nguyên bộ nhớ cũ.
+        const SEED_IDS = ['ADM_001', 'ADM_002', 'ADM_003'];
         if (sheetsAdmins.length === 0) {
           console.warn('[GoogleSheetsSyncService] ADMIN_ACCOUNTS không có dòng hợp lệ — giữ nguyên tài khoản trong bộ nhớ.');
           counts.adminAccounts = fallback.adminAccounts.length;
