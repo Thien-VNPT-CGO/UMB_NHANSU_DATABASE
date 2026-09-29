@@ -550,6 +550,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       loadSwaps();
     }
   }, [activeTab]);
+  useEffect(() => {
+    // Phiếu 60 phút tự hủy: refresh 20s để đếm ngược + trạng thái realtime
+    if (activeTab !== 'hr-adjustments') return;
+    const t = setInterval(() => loadAdjustments(), 20000);
+    return () => clearInterval(t);
+  }, [activeTab]);
 
   // Poll trạng thái khi đang chờ quét QR
   useEffect(() => {

@@ -238,6 +238,14 @@ export function App() {
   });
   // Ca cần bổ sung (ngày 2 ca: phải chọn đúng ca thì HR duyệt mới cập nhật đúng)
   const [adjustShiftId, setAdjustShiftId] = useState('');
+  // Phiếu bổ sung công của tôi (trạng thái realtime + đếm ngược 60 phút)
+  const [myAdjustments, setMyAdjustments] = useState<any[]>([]);
+  const fetchMyAdjustments = async () => {
+    try {
+      const list = await apiRequest('/attendance/adjustments');
+      setMyAdjustments(Array.isArray(list) ? list : []);
+    } catch { /* offline */ }
+  };
 
   // Bài TEST do HR giao riêng cho mình (không được giao thì không thấy bài)
   const [myTests, setMyTests] = useState<any[]>([]);
@@ -287,6 +295,11 @@ export function App() {
   useEffect(() => {
     if (activeTab === 'test_exam' || activeTab === 'test_training') fetchMyTests();
     if (activeTab === 'swap_shift') fetchMySwaps();
+    if (activeTab === 'adjustment' || activeTab === 'emergency_adjust') {
+      fetchMyAdjustments();
+      const t = setInterval(fetchMyAdjustments, 30000);
+      return () => clearInterval(t);
+    }
     // Điểm danh/lịch: tải mới mỗi lần mở để trạng thái (vắng/khóa/bị thu hồi do GPS...)
     // luôn khớp server — không giữ trạng thái cũ (VD: vẫn hiện "đang làm" dù đã bị xóa).
     if ((activeTab === 'attendance' || activeTab === 'schedule') && employee?.employee_id) {
@@ -1182,6 +1195,7 @@ export function App() {
         });
         showToast('✓ Đã gửi phiếu giải trình bổ sung công đến Cửa Hàng Trưởng và HR!');
       }
+      await fetchMyAdjustments();
       await loadEmployeeData(employee?.employee_id);
     } catch (err: any) {
       showToast(err.message || 'Lỗi khi gửi phiếu giải trình!');
@@ -3043,6 +3057,44 @@ export function App() {
                 </button>
               </div>
             </div>
+            {/* PHIẾU CỦA TÔI — trạng thái realtime + đếm ngược 60 phút */}
+            {myAdjustments.length > 0 && (
+              <div className="card">
+                <h3 style={{ fontSize: '14px', fontWeight: 800, marginBottom: '8px' }}>
+                  Phiếu của tôi ({myAdjustments.length})
+                </h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {myAdjustments.map((a: any) => {
+                    const created = new Date(a.created_at).getTime();
+                    const leftMs = Number.isFinite(created) ? Math.max(0, 60 * 60000 - (Date.now() - created)) : 0;
+                    const leftMin = Math.floor(leftMs / 60000);
+                    const auto = a.status === 'REJECTED' && String(a.review_note || '').startsWith('Tự động từ chối');
+                    return (
+                      <div key={a.adjustment_id} style={{ border: '1px solid var(--border)', borderRadius: '8px', padding: '10px', fontSize: '12px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center' }}>
+                          <strong style={{ flex: 1 }}>{a.reason || 'Bổ sung công'}</strong>
+                          <span className="badge" style={{
+                            backgroundColor: a.status === 'APPROVED' ? '#DCFCE7' : (auto ? '#F3F4F6' : '#FEE2E2'),
+                            color: a.status === 'APPROVED' ? '#166534' : (auto ? '#6B7280' : '#991B1B'),
+                            fontWeight: 800,
+                          }}>
+                            {a.status === 'APPROVED' ? 'Đã duyệt' : auto ? 'Tự hủy (hết 60p)' : a.status === 'REJECTED' ? 'Bị từ chối' : 'Chờ duyệt'}
+                          </span>
+                        </div>
+                        {a.status === 'PENDING' && (
+                          <div style={{ marginTop: '4px', color: '#B45309', fontWeight: 700 }}>
+                            ⏳ Còn {leftMin}p hiệu lực — quá hạn hệ thống tự hủy phiếu
+                          </div>
+                        )}
+                        {a.status === 'APPROVED' && (
+                          <div style={{ marginTop: '4px', color: '#047857' }}>✓ Lịch, chấm công và lương đã cập nhật theo phiếu.</div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
