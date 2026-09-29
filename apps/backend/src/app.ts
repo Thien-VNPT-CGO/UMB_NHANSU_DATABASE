@@ -1519,21 +1519,27 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         receipt: result.result,
       });
     } catch (err: any) {
-      if (String(err.message || '').startsWith('GPS_OUT_OF_BOUNDS')) {
-        const [, dist, limit] = String(err.message).split(':');
+      const gpsErr = String(err.message || '');
+      if (gpsErr.startsWith('GPS_OUT_OF_BOUNDS') || gpsErr.startsWith('GPS_LOW_ACCURACY')) {
+        const [, dist, limit] = gpsErr.split(':');
         const empId = req.user?.employeeId || req.body.employee_id || req.body.employeeId || '';
         const emp = empId ? await employeesService.getEmployee(empId).catch(() => null) : null;
+        const weak = gpsErr.startsWith('GPS_LOW_ACCURACY');
         broadcastNotification({
           type: 'INFO',
-          title: '⚠️ GPS Vượt Phạm Vi — Yêu Cầu Làm Lại',
-          message: `${(emp as any)?.full_name || empId} check-in cách chi nhánh ${dist}m (giới hạn ${limit || 300}m). Hệ thống đã TỪ CHỐI, yêu cầu đến gần chi nhánh và điểm danh lại!`,
+          title: weak ? '⚠️ GPS Yếu — Yêu Cầu Làm Lại' : '⚠️ GPS Vượt Phạm Vi — Yêu Cầu Làm Lại',
+          message: weak
+            ? `${(emp as any)?.full_name || empId} check-in nhưng GPS quá yếu (±${dist}m). Hệ thống đã TỪ CHỐI (không ghi nhận đang làm), yêu cầu ra chỗ thoáng và điểm danh lại!`
+            : `${(emp as any)?.full_name || empId} check-in cách chi nhánh ${dist}m (giới hạn ${limit || 300}m). Hệ thống đã TỪ CHỐI, yêu cầu đến gần chi nhánh và điểm danh lại!`,
           linkTab: 'hr-attendance',
           metadata: { employeeId: empId, distance: dist, limit },
           targetRoles: ['ADMIN', 'HR', 'STORE'],
         });
         return res.status(403).json({
-          error: 'GPS_OUT_OF_BOUNDS',
-          message: `Bạn đang cách chi nhánh ${dist}m (giới hạn ${limit || 300}m)! Hệ thống TỪ CHỐI lượt này — hãy đến trong phạm vi rồi chụp + điểm danh lại.`,
+          error: weak ? 'GPS_LOW_ACCURACY' : 'GPS_OUT_OF_BOUNDS',
+          message: weak
+            ? `GPS quá yếu (±${dist}m), không xác định được vị trí! Hệ thống TỪ CHỐI — hãy ra chỗ thoáng (ngoài trời) rồi điểm danh lại.`
+            : `Bạn đang cách chi nhánh ${dist}m (giới hạn ${limit || 300}m)! Hệ thống TỪ CHỐI lượt này — hãy đến trong phạm vi rồi chụp + điểm danh lại.`,
         });
       }
       res.status(400).json({ error: err.message });
@@ -1628,21 +1634,27 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         receipt: result.result,
       });
     } catch (err: any) {
-      if (String(err.message || '').startsWith('GPS_OUT_OF_BOUNDS')) {
-        const [, dist, limit] = String(err.message).split(':');
+      const gpsErr = String(err.message || '');
+      if (gpsErr.startsWith('GPS_OUT_OF_BOUNDS') || gpsErr.startsWith('GPS_LOW_ACCURACY')) {
+        const [, dist, limit] = gpsErr.split(':');
         const empId = req.user?.employeeId || req.body.employee_id || req.body.employeeId || '';
         const emp = empId ? await employeesService.getEmployee(empId).catch(() => null) : null;
+        const weak = gpsErr.startsWith('GPS_LOW_ACCURACY');
         broadcastNotification({
           type: 'INFO',
-          title: '⚠️ GPS Vượt Phạm Vi — Yêu Cầu Làm Lại',
-          message: `${(emp as any)?.full_name || empId} check-out cách chi nhánh ${dist}m (giới hạn ${limit || 300}m). Hệ thống đã TỪ CHỐI, yêu cầu đến gần chi nhánh và điểm danh lại!`,
+          title: weak ? '⚠️ GPS Yếu — Yêu Cầu Làm Lại' : '⚠️ GPS Vượt Phạm Vi — Yêu Cầu Làm Lại',
+          message: weak
+            ? `${(emp as any)?.full_name || empId} check-out nhưng GPS quá yếu (±${dist}m). Hệ thống đã TỪ CHỐI (không ghi nhận), yêu cầu ra chỗ thoáng và điểm danh lại!`
+            : `${(emp as any)?.full_name || empId} check-out cách chi nhánh ${dist}m (giới hạn ${limit || 300}m). Hệ thống đã TỪ CHỐI, yêu cầu đến gần chi nhánh và điểm danh lại!`,
           linkTab: 'hr-attendance',
           metadata: { employeeId: empId, distance: dist, limit },
           targetRoles: ['ADMIN', 'HR', 'STORE'],
         });
         return res.status(403).json({
-          error: 'GPS_OUT_OF_BOUNDS',
-          message: `Bạn đang cách chi nhánh ${dist}m (giới hạn ${limit || 300}m)! Hệ thống TỪ CHỐI lượt này — hãy đến trong phạm vi rồi điểm danh lại.`,
+          error: weak ? 'GPS_LOW_ACCURACY' : 'GPS_OUT_OF_BOUNDS',
+          message: weak
+            ? `GPS quá yếu (±${dist}m), không xác định được vị trí! Hệ thống TỪ CHỐI — hãy ra chỗ thoáng (ngoài trời) rồi điểm danh lại.`
+            : `Bạn đang cách chi nhánh ${dist}m (giới hạn ${limit || 300}m)! Hệ thống TỪ CHỐI lượt này — hãy đến trong phạm vi rồi điểm danh lại.`,
         });
       }
       res.status(400).json({ error: err.message });

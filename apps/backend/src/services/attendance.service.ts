@@ -80,27 +80,26 @@ export class AttendanceService {
         }
 
         // 3. Validate GPS
-        // Ràng buộc: quá bán kính chi nhánh (mặc định 300m) -> TỪ CHỐI ghi nhận,
-        // báo lỗi để NV làm lại (không còn chế độ "ghi nhận để đối soát").
+        // Ràng buộc: GPS không đúng (quá bán kính 300m HOẶC sóng quá yếu >150m)
+        // -> TỪ CHỐI ghi nhận, ca quay về chưa điểm danh để NV làm lại.
         const branch = BRANCHES.find(b => b.id === shift.branch_id);
         let distanceMeters = 0;
         let gpsStatus: GPSStatus = 'UNAVAILABLE';
 
         if (data.gps && branch) {
           if (data.gps.accuracy > 150) {
-            gpsStatus = 'LOW_ACCURACY';
+            throw new Error(`GPS_LOW_ACCURACY:${data.gps.accuracy}`);
+          }
+          distanceMeters = calculateDistanceMeters(
+            data.gps.latitude,
+            data.gps.longitude,
+            branch.latitude,
+            branch.longitude
+          );
+          if (distanceMeters <= branch.radius_meters) {
+            gpsStatus = 'VALID';
           } else {
-            distanceMeters = calculateDistanceMeters(
-              data.gps.latitude,
-              data.gps.longitude,
-              branch.latitude,
-              branch.longitude
-            );
-            if (distanceMeters <= branch.radius_meters) {
-              gpsStatus = 'VALID';
-            } else {
-              throw new Error(`GPS_OUT_OF_BOUNDS:${distanceMeters}:${branch.radius_meters}`);
-            }
+            throw new Error(`GPS_OUT_OF_BOUNDS:${distanceMeters}:${branch.radius_meters}`);
           }
         }
 

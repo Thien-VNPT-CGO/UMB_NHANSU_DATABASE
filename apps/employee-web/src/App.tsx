@@ -792,9 +792,8 @@ export function App() {
           setNotifications((prev: any[]) => (Array.isArray(prev) ? prev.map(x => redoIds.includes(x.inbox_id) ? { ...x, read_at: new Date().toISOString() } : x) : prev));
         }
       } catch { /* không chặn luồng chính */ }
-      const gpsNote = res.receipt?.gps_status === 'LOW_ACCURACY'
-        ? ' (⚠️ GPS kém chính xác — đã ghi nhận!)'
-        : '';
+      // GPS yếu/vượt phạm vi bị server từ chối thẳng (không ghi nhận) nên không còn nhánh này.
+      const gpsNote = '';
       showToast(attendanceActionType === 'CHECK_IN'
         ? `✓ Điểm danh Check-in thành công! GPS thật + ảnh thật đã ghi nhận.${gpsNote}`
         : `✓ Điểm danh Check-out thành công! Ca làm việc đã ghi nhận vào Google Sheets.${gpsNote}`
