@@ -80,6 +80,8 @@ export class AttendanceService {
         }
 
         // 3. Validate GPS
+        // Ràng buộc: quá bán kính chi nhánh (mặc định 300m) -> TỪ CHỐI ghi nhận,
+        // báo lỗi để NV làm lại (không còn chế độ "ghi nhận để đối soát").
         const branch = BRANCHES.find(b => b.id === shift.branch_id);
         let distanceMeters = 0;
         let gpsStatus: GPSStatus = 'UNAVAILABLE';
@@ -97,7 +99,7 @@ export class AttendanceService {
             if (distanceMeters <= branch.radius_meters) {
               gpsStatus = 'VALID';
             } else {
-              gpsStatus = 'OUT_OF_BOUNDS';
+              throw new Error(`GPS_OUT_OF_BOUNDS:${distanceMeters}:${branch.radius_meters}`);
             }
           }
         }

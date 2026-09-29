@@ -1519,6 +1519,23 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         receipt: result.result,
       });
     } catch (err: any) {
+      if (String(err.message || '').startsWith('GPS_OUT_OF_BOUNDS')) {
+        const [, dist, limit] = String(err.message).split(':');
+        const empId = req.user?.employeeId || req.body.employee_id || req.body.employeeId || '';
+        const emp = empId ? await employeesService.getEmployee(empId).catch(() => null) : null;
+        broadcastNotification({
+          type: 'INFO',
+          title: '⚠️ GPS Vượt Phạm Vi — Yêu Cầu Làm Lại',
+          message: `${(emp as any)?.full_name || empId} check-in cách chi nhánh ${dist}m (giới hạn ${limit || 300}m). Hệ thống đã TỪ CHỐI, yêu cầu đến gần chi nhánh và điểm danh lại!`,
+          linkTab: 'hr-attendance',
+          metadata: { employeeId: empId, distance: dist, limit },
+          targetRoles: ['ADMIN', 'HR', 'STORE'],
+        });
+        return res.status(403).json({
+          error: 'GPS_OUT_OF_BOUNDS',
+          message: `Bạn đang cách chi nhánh ${dist}m (giới hạn ${limit || 300}m)! Hệ thống TỪ CHỐI lượt này — hãy đến trong phạm vi rồi chụp + điểm danh lại.`,
+        });
+      }
       res.status(400).json({ error: err.message });
     }
   });
@@ -1611,6 +1628,23 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         receipt: result.result,
       });
     } catch (err: any) {
+      if (String(err.message || '').startsWith('GPS_OUT_OF_BOUNDS')) {
+        const [, dist, limit] = String(err.message).split(':');
+        const empId = req.user?.employeeId || req.body.employee_id || req.body.employeeId || '';
+        const emp = empId ? await employeesService.getEmployee(empId).catch(() => null) : null;
+        broadcastNotification({
+          type: 'INFO',
+          title: '⚠️ GPS Vượt Phạm Vi — Yêu Cầu Làm Lại',
+          message: `${(emp as any)?.full_name || empId} check-out cách chi nhánh ${dist}m (giới hạn ${limit || 300}m). Hệ thống đã TỪ CHỐI, yêu cầu đến gần chi nhánh và điểm danh lại!`,
+          linkTab: 'hr-attendance',
+          metadata: { employeeId: empId, distance: dist, limit },
+          targetRoles: ['ADMIN', 'HR', 'STORE'],
+        });
+        return res.status(403).json({
+          error: 'GPS_OUT_OF_BOUNDS',
+          message: `Bạn đang cách chi nhánh ${dist}m (giới hạn ${limit || 300}m)! Hệ thống TỪ CHỐI lượt này — hãy đến trong phạm vi rồi điểm danh lại.`,
+        });
+      }
       res.status(400).json({ error: err.message });
     }
   });

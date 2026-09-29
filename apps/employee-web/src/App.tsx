@@ -781,11 +781,9 @@ export function App() {
 
       setLastReceipt(res.receipt);
       setAttendanceStep('CONFIRMED');
-      const gpsNote = res.receipt?.gps_status === 'OUT_OF_BOUNDS'
-        ? ' (⚠️ NGOÀI PHẠM VI 300m chi nhánh — đã ghi nhận để đối soát!)'
-        : res.receipt?.gps_status === 'LOW_ACCURACY'
-          ? ' (⚠️ GPS kém chính xác — đã ghi nhận!)'
-          : '';
+      const gpsNote = res.receipt?.gps_status === 'LOW_ACCURACY'
+        ? ' (⚠️ GPS kém chính xác — đã ghi nhận!)'
+        : '';
       showToast(attendanceActionType === 'CHECK_IN'
         ? `✓ Điểm danh Check-in thành công! GPS thật + ảnh thật đã ghi nhận.${gpsNote}`
         : `✓ Điểm danh Check-out thành công! Ca làm việc đã ghi nhận vào Google Sheets.${gpsNote}`
