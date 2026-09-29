@@ -5762,7 +5762,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           </div>
         </div>
         <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-          Lịch sử từ cổng nhân viên được lưu realtime + đồng bộ tab Sheets THONGBAO_NV (tự tạo nếu chưa có). Cổng tự reset bản cũ vào 6h00 Thứ 2 hàng tuần — Sheets giữ nguyên, cập nhật liên tục.
+          Lịch sử từ cổng nhân viên được lưu realtime + đồng bộ tab Sheets THONGBAO_NV (tự tạo nếu chưa có). Cổng tự reset bản cũ vào 6h00 hằng ngày (1 lần/ngày) — Sheets giữ nguyên, cập nhật liên tục.
         </div>
         <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
           {shownNotifs.length === 0 ? (

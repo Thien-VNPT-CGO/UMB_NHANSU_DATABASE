@@ -237,24 +237,24 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   };
   setInterval(attendanceWeekTick, 60_000);
 
-  // Reset thông báo cổng quản trị 6h00 Thứ 2 hàng tuần: xóa bản ghi cũ hơn
-  // 00h00 Thứ 2 trong bộ nhớ (tab Sheets THONGBAO_NV giữ nguyên, cập nhật liên tục).
+  // Reset thông báo cổng quản trị 6h00 HẰNG NGÀY (1 lần/ngày): xóa bản ghi cũ hơn
+  // 00h00 cùng ngày trong bộ nhớ (tab Sheets THONGBAO_NV giữ nguyên, cập nhật liên tục).
   const notifResetDone = new Set<string>();
   const notifResetTick = async () => {
     try {
       const vn = new Date(Date.now() + 7 * 3_600_000);
-      if (vn.getUTCDay() !== 1 || vn.getUTCHours() < 6) return; // chỉ Thứ 2 sau 6h
-      const monday = vn.toISOString().slice(0, 10);
-      const key = `notif-reset:${monday}`;
+      if (vn.getUTCHours() < 6) return; // chỉ sau 6h sáng
+      const today = vn.toISOString().slice(0, 10);
+      const key = `notif-reset:${today}`;
       if (notifResetDone.has(key)) return;
       notifResetDone.add(key);
-      // Mốc 00h00 Thứ 2 giờ VN (quy về UTC để so chuỗi ISO cho đúng)
-      const [yy, mm, dd] = monday.split('-').map(Number);
+      // Mốc 00h00 hôm nay giờ VN (quy về UTC để so chuỗi ISO cho đúng)
+      const [yy, mm, dd] = today.split('-').map(Number);
       const cutoff = new Date(Date.UTC(yy, mm - 1, dd) - 7 * 3_600_000).toISOString();
       const removed = await adapter.pruneNotifications(cutoff).catch(() => 0);
-      console.log(`[notifications] Reset đầu tuần ${monday}: đã xóa ${removed} thông báo cũ (Sheets giữ nguyên).`);
+      console.log(`[notifications] Reset hằng ngày ${today}: đã xóa ${removed} thông báo cũ (Sheets giữ nguyên).`);
       try {
-        io.emit('data:updated', { entity: 'notifications', data: { action: 'weekly-reset', monday, removed }, timestamp: new Date().toISOString() });
+        io.emit('data:updated', { entity: 'notifications', data: { action: 'daily-reset', today, removed }, timestamp: new Date().toISOString() });
       } catch { /* non-fatal */ }
     } catch (err: any) {
       console.warn('[notifications] reset tick error:', err?.message || err);
