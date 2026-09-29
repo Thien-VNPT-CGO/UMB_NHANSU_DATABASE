@@ -5177,7 +5177,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             {photoStats && (
               <span
                 className="badge"
-                title={photoStats.uploadFailed > 0 ? `Upload Drive lỗi: ${photoStats.drive?.lastError || 'không rõ'} (thử lại tự động 3 lần/lượt)` : photoStats.neverUploaded > 0 ? 'Lượt chấm công từ trước bản pipeline ảnh hoặc app chưa cập nhật' : 'Đủ ảnh'}
+                title={photoStats.uploadFailed > 0 ? `Upload Drive lỗi: ${photoStats.drive?.lastError || 'không rõ'} (thử lại tự động 3 lần/lượt)` : photoStats.neverUploaded > 0 ? (photoStats.adapterPhoto ? `Server nhận ${photoStats.adapterPhoto.withPhoto} lượt CÓ ảnh, ${photoStats.adapterPhoto.withoutPhoto} lượt KHÔNG gửi ảnh (lượt ${photoStats.adapterPhoto.lastMissingEvent || '?'} lúc ${photoStats.adapterPhoto.lastMissingAt || '?'}) → app NV chưa gửi ảnh, yêu cầu NV tải lại trang/Cập nhật` : 'Lượt chấm công từ trước bản pipeline ảnh hoặc app chưa cập nhật') : 'Đủ ảnh'}
                 style={{
                   backgroundColor: photoStats.withPhoto === photoStats.total && photoStats.total > 0 ? '#DCFCE7' : '#FEF3C7',
                   color: photoStats.withPhoto === photoStats.total && photoStats.total > 0 ? '#166534' : '#92400E',

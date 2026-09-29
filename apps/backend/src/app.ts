@@ -1809,7 +1809,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       }
       const syncService = (adapter as any).syncService;
       const drive = syncService?.getDriveUploadStatus ? syncService.getDriveUploadStatus() : null;
-      res.json({ date, total: relevant.length, withPhoto: ok, uploadFailed, neverUploaded, missing, drive });
+      const adapterPhoto = (adapter as any).getPhotoStats ? (adapter as any).getPhotoStats() : null;
+      res.json({ date, total: relevant.length, withPhoto: ok, uploadFailed, neverUploaded, missing, drive, adapterPhoto });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

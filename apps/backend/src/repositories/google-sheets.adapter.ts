@@ -251,6 +251,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
       spreadsheetId,
       candidateSpreadsheetId,
       driveFolderId,
+      photoStats: this.getPhotoStats(),
       syncService: syncStatus,
       message: this.isConfigured
         ? 'Connected to live Google Sheets master'
@@ -500,7 +501,21 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   }
 
   // --- Attendance ---
+  private photoStats = { withPhoto: 0, withoutPhoto: 0, lastMissingAt: null as string | null, lastMissingEvent: null as string | null };
+
+  public getPhotoStats() {
+    return { ...this.photoStats };
+  }
+
   async recordAttendanceEvent(event: any) {
+    // Truy vết ảnh có tới server không (phân biệt app cũ không gửi vs upload lỗi)
+    if (event.photo_base64) {
+      this.photoStats.withPhoto++;
+    } else if (event.type === 'CHECK_IN' || event.type === 'CHECK_OUT') {
+      this.photoStats.withoutPhoto++;
+      this.photoStats.lastMissingAt = new Date().toISOString();
+      this.photoStats.lastMissingEvent = event.event_id || null;
+    }
     // If base64 photo is provided, upload to Google Drive
     if (event.photo_base64 && this.isConfigured) {
       try {
