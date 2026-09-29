@@ -239,6 +239,7 @@ const checkBody = z.object({
   longitude: lngField,
   accuracy: accuracyField,
   photo_base64: photoField,
+  uniform_pink_ratio: z.coerce.number().min(0).max(100).optional(),
   requestId: optString(128),
 });
 

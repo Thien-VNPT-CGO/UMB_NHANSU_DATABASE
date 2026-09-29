@@ -24,6 +24,8 @@ export interface AttendanceEvent {
   gps_status: GPSStatus;
   drive_object_id?: string;
   drive_path?: string; // attendance/YYYY/MM/DD/{branch_id}/{employee_id}/{shift_id}/{event_id}_IN.jpg
+  /** % điểm ảnh hồng đồng phục do app NV đo lúc chụp (cổng chặn <10%). */
+  uniform_pink_ratio?: number;
   is_early?: boolean;
   is_late?: boolean;
   minutes_deviation?: number; // Minutes early or late

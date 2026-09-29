@@ -637,6 +637,16 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const t = setInterval(() => reloadAttEvents(), 30000);
     return () => clearInterval(t);
   }, [activeTab, attViewDate]);
+  useEffect(() => {
+    // Lưới lịch cũng tự refresh 60s để trạng thái ca (vắng/khóa/hoàn thành) luôn khớp server
+    if (activeTab !== 'hr-schedule') return;
+    const t = setInterval(() => {
+      apiRequest('/attendance/events')
+        .then((data) => setLiveAttendanceEvents(Array.isArray(data) ? data : []))
+        .catch(() => {});
+    }, 60000);
+    return () => clearInterval(t);
+  }, [activeTab]);
   // (QR Zalo thật do server sinh qua /admin/zalo/* — không còn QR giả local.)
 
   // Filter employees for Store
@@ -4225,6 +4235,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         {modalDayData?.gps || (modalEvent?.distance_meters !== undefined ? `${modalEvent.distance_meters} mét (Bán kính hợp lệ < 300m)` : 'Khoảng cách hợp lệ < 300m')}
                       </strong>
                     </div>
+                    {modalEvent?.uniform_pink_ratio !== undefined && modalEvent?.uniform_pink_ratio !== null && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '6px' }}>
+                        <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Hồng đồng phục lúc chụp:</span>
+                        <strong style={{ fontSize: '13px', color: Number(modalEvent.uniform_pink_ratio) >= 10 ? '#059669' : '#DC2626' }}>
+                          {modalEvent.uniform_pink_ratio}% {Number(modalEvent.uniform_pink_ratio) >= 10 ? '(đạt)' : '(thấp)'}
+                        </strong>
+                      </div>
+                    )}
                   </div>
 
                   {/* Uniform & Badge Visual Confirmation */}
@@ -5201,7 +5219,16 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                               ? <span className="badge" style={{ backgroundColor: '#E0E7FF', color: '#3730A3', fontWeight: 800 }}>LỊCH ĐÃ DUYỆT</span>
                               : <span className="badge" style={{ backgroundColor: '#F59E0B', color: '#FFF', fontWeight: 800, animation: inEvt ? 'fx-blink 1.2s infinite' : undefined }}>{inEvt ? 'ĐANG LÀM (chờ check-out)' : 'CHƯA CHECK-IN'}</span>;
                     const photoOf = (evt: any) => evt?.drive_object_id && !String(evt.drive_object_id).startsWith('DRV_')
-                      ? <AttPhoto eventId={evt.event_id} />
+                      ? (
+                        <div>
+                          <AttPhoto eventId={evt.event_id} />
+                          {evt?.uniform_pink_ratio !== undefined && evt?.uniform_pink_ratio !== null && (
+                            <div style={{ fontSize: '10px', color: Number(evt.uniform_pink_ratio) >= 10 ? '#059669' : '#DC2626', fontWeight: 800, marginTop: '2px' }}>
+                              Hồng {evt.uniform_pink_ratio}%
+                            </div>
+                          )}
+                        </div>
+                      )
                       : <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Không ảnh</span>;
                     return (
                       <tr key={key} style={{ borderBottom: '1px solid var(--border)', outline: overGps ? '2px solid #EF4444' : undefined, outlineOffset: '-2px', backgroundColor: complete && !overGps ? undefined : absent ? '#FEF2F2' : locked ? '#F1F5F9' : missingOut ? '#FFF7ED' : upcoming ? '#EEF2FF' : working || overGps ? '#FFFBEB' : undefined }}>

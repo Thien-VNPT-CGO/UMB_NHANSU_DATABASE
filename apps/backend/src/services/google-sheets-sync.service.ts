@@ -46,7 +46,7 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   },
   {
     title: 'SU_KIEN_DIEM_DANH',
-    headers: ['ID Sự Kiện', 'ID Ca', 'ID Nhân Viên', 'Loại (IN/OUT)', 'Thời Gian Máy Chủ', 'Vĩ Độ GPS', 'Kinh Độ GPS', 'Khoảng Cách (m)', 'Trạng Thái GPS', 'Ảnh Drive Object', 'ID Yêu Cầu'],
+    headers: ['ID Sự Kiện', 'ID Ca', 'ID Nhân Viên', 'Loại (IN/OUT)', 'Thời Gian Máy Chủ', 'Vĩ Độ GPS', 'Kinh Độ GPS', 'Khoảng Cách (m)', 'Trạng Thái GPS', 'Ảnh Drive Object', 'ID Yêu Cầu', 'Hồng Đồng Phục (%)'],
   },
   {
     title: 'LUUTRU_CHAMCONG_TUAN',
@@ -871,6 +871,7 @@ export class GoogleSheetsSyncService {
           distance_meters: Number(r[7]) || 0,
           gps_status: (r[8] as any) || 'VALID',
           drive_object_id: r[9] || undefined,
+          uniform_pink_ratio: r[11] === '' || r[11] === undefined ? undefined : Number(r[11]),
           created_at: r[4] || new Date().toISOString(),
         }));
         fallback.attendanceEvents = mergeById(fallback.attendanceEvents, mappedEvents, 'event_id', ['created_at']);

@@ -57,6 +57,8 @@ export class AttendanceService {
     imageMeta?: string;
     /** Ảnh base64 chấm công — adapter upload lên Drive, không lưu vào bộ nhớ/Sheets. */
     photoBase64?: string;
+    /** % hồng đồng phục app NV đo được (lưu vết để HR đối soát). */
+    uniformPinkRatio?: number;
   }): Promise<{ operationId: string; result: AttendanceEvent }> {
     return singleWriterQueue.enqueue({
       idempotencyKey: data.requestId,
@@ -137,6 +139,7 @@ export class AttendanceService {
         // 6. Record to Master Ledger (photo_base64 chỉ để adapter upload Drive rồi bỏ)
         const event = await this.repo.recordAttendanceEvent({
           ...(data.photoBase64 ? { photo_base64: data.photoBase64 } : {}),
+          ...(Number.isFinite(Number(data.uniformPinkRatio)) ? { uniform_pink_ratio: Math.max(0, Math.min(100, Math.round(Number(data.uniformPinkRatio)))) } : {}),
           event_id: eventId,
           request_id: data.requestId,
           assignment_id: data.assignmentId,

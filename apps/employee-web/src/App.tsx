@@ -157,6 +157,8 @@ export function App() {
   const [gpsCoords, setGpsCoords] = useState<{ lat: number; lng: number; accuracy: number } | null>(null);
   // Ảnh chụp thật từ camera (dataURL), null = chưa chụp
   const [photoData, setPhotoData] = useState<string | null>(null);
+  // % hồng đồng phục đo được lúc chụp (gửi kèm để HR đối soát)
+  const [photoPinkRatio, setPhotoPinkRatio] = useState<number | null>(null);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const [todayAttendance, setTodayAttendance] = useState<{
     checkedIn?: boolean;
@@ -701,6 +703,7 @@ export function App() {
     setAttendanceStep('CHECKING_GPS');
     setGpsCoords(null);
     setPhotoData(null);
+    setPhotoPinkRatio(null);
 
     // GPS THẬT 100%: đo từ vệ tinh thiết bị, không dùng tọa độ giả lập.
     // Từ chối định vị / ngoài vùng phủ sóng -> dừng, KHÔNG ghi nhận.
@@ -807,6 +810,7 @@ export function App() {
         return;
       }
       setPhotoData(dataUrl);
+      setPhotoPinkRatio(Math.round(ratio * 100));
       showToast(`✓ Ảnh đạt chuẩn đồng phục (hồng ${Math.round(ratio * 100)}%)!`);
     };
     reader.onerror = () => {
@@ -843,8 +847,10 @@ export function App() {
           lng: gpsCoords.lng,
           accuracy: gpsCoords.accuracy,
           ...(photoData ? { photo_base64: photoData } : {}),
+          ...(photoPinkRatio !== null ? { uniform_pink_ratio: photoPinkRatio } : {}),
         }),
       });
+      setPhotoPinkRatio(null);
 
       setLastReceipt(res.receipt);
       setAttendanceStep('CONFIRMED');

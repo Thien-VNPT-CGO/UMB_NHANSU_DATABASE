@@ -21,6 +21,8 @@ export interface AttendanceEvent {
     gps_status: GPSStatus;
     drive_object_id?: string;
     drive_path?: string;
+    /** % điểm ảnh hồng đồng phục do app NV đo lúc chụp (cổng chặn <10%). */
+    uniform_pink_ratio?: number;
     is_early?: boolean;
     is_late?: boolean;
     minutes_deviation?: number;

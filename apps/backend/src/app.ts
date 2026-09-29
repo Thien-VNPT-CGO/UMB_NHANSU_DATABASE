@@ -1486,6 +1486,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         hasCameraImage: true,
         imageMeta: 'UNIFORM_PINK_AND_BADGE',
         photoBase64: req.body.photo_base64,
+        uniformPinkRatio: req.body.uniform_pink_ratio,
       });
 
       broadcastUpdate('attendance', { action: 'checkin', employeeId, event: result.result });
@@ -1615,6 +1616,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         hasCameraImage: !!req.body.photo_base64,
         imageMeta: req.body.photo_base64 ? 'UNIFORM_PINK_AND_BADGE' : undefined,
         photoBase64: req.body.photo_base64,
+        uniformPinkRatio: req.body.uniform_pink_ratio,
       });
 
       broadcastUpdate('attendance', { action: 'checkout', employeeId, event: result.result });
