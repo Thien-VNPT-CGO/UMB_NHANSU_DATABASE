@@ -4740,9 +4740,16 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           const waiting = list.filter((s: any) => s.status === 'PENDING_PARTNER');
           const done = list.filter((s: any) => !['PENDING_PARTNER', 'PARTNER_ACCEPTED'].includes(s.status));
           const empName = (id: string) => (allEmployees || []).find((e: any) => e.employee_id === id)?.full_name || id;
+          const shiftNameOf = (code: string) =>
+            code === 'CA_1' ? 'Ca 1 (07-12)' : code === 'CA_2' ? 'Ca 2 (12-18)' : code === 'CA_3' ? 'Ca 3 (18-23)' : (code || '');
+          // Mã SHIFT_AUTO_xxx là mã ca do BOT tự xếp sinh ra (không phải lỗi).
+          // Danh sách ca chỉ tải tuần hiện tại nên ca tuần khác hiện gọn + tooltip mã đầy đủ.
           const shiftInfo = (aid: string) => {
             const s = (shifts || []).find((x: any) => x.assignment_id === aid);
-            return s ? `${s.shift_code} • ${s.date}` : (aid || '—');
+            if (s) return `${shiftNameOf(s.shift_code)} • ${s.date}`;
+            if (!aid) return '—';
+            const tail = String(aid).slice(-5);
+            return `Ca #${tail} (tuần khác)`;
           };
           const statusBadge = (st: string) => {
             const map: Record<string, { bg: string; fg: string; label: string }> = {
@@ -4779,11 +4786,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               <tr key={sw.swap_id} style={{ borderBottom: '1px solid var(--border)', backgroundColor: sw.status === 'PARTNER_ACCEPTED' ? '#EFF6FF' : undefined }}>
                 <td style={{ padding: '12px 20px', fontWeight: 700 }}>
                   {empName(sw.requester_id)}
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }}>Ca: {shiftInfo(sw.requester_assignment_id)}</div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }} title={sw.requester_assignment_id || ''}>Ca: {shiftInfo(sw.requester_assignment_id)}</div>
                 </td>
                 <td style={{ padding: '12px 20px', fontWeight: 700 }}>
                   {sw.target_employee_id ? empName(sw.target_employee_id) : <span style={{ color: '#B45309' }}>Mở cho cả chi nhánh</span>}
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }}>{sw.target_assignment_id ? `Ca: ${shiftInfo(sw.target_assignment_id)}` : (sw.target_employee_id ? 'Nhận làm thay (1 chiều)' : '')}</div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }} title={sw.target_assignment_id || ''}>{sw.target_assignment_id ? `Ca: ${shiftInfo(sw.target_assignment_id)}` : (sw.target_employee_id ? 'Nhận làm thay (1 chiều)' : '')}</div>
                 </td>
                 <td style={{ padding: '12px 20px' }}>
                   <span className="badge" style={{ backgroundColor: isDispatch ? '#EDE9FE' : '#F3F4F6', color: isDispatch ? '#6D28D9' : '#4B5563', fontWeight: 700 }}>
