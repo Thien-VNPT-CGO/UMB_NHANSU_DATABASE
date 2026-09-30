@@ -149,6 +149,33 @@ export function attShiftStatus(shift: any, inEvt: any, outEvt: any, absentEvt: a
   return { key: 'PENDING', label: 'Chưa check-in', bg: '#FEF3C7', fg: '#92400E', border: '1px solid #FCD34D', blink: false, lateMin: 0 };
 }
 
+/**
+ * Lương + phạt 1 ca (mirror payroll.service lateFineFor để lưới realtime hiện ngay,
+ * Finance chốt số chính thức ở kỳ lương):
+ * trễ <5p: không phạt; 5–29p: -30k; 30–59p: -50% lương ca; ≥60p hoặc thiếu in/out: 0đ.
+ */
+export const SHIFT_HOURS_MAP: Record<string, number> = { CA_1: 5, CA_2: 6, CA_3: 5 };
+export function shiftPayInfo(shiftCode: string, ratePerHour: number, inEvt: any, outEvt: any): {
+  hours: number; rate: number; shiftPay: number; lateMin: number;
+  fineLabel: string; deduction: number; net: number; unpaid: boolean;
+} {
+  const hours = SHIFT_HOURS_MAP[shiftCode] ?? 5;
+  const rate = Number(ratePerHour) || 0;
+  const shiftPay = hours * rate;
+  const lateMin = inEvt?.is_late ? Number(inEvt.minutes_deviation) || 0 : 0;
+  if (!inEvt || !outEvt) {
+    return { hours, rate, shiftPay, lateMin, fineLabel: 'Thiếu check-in/out — không lương', deduction: 0, net: 0, unpaid: true };
+  }
+  const m = Math.floor(lateMin);
+  if (m < 5) return { hours, rate, shiftPay, lateMin, fineLabel: 'Đúng giờ — không phạt', deduction: 0, net: shiftPay, unpaid: false };
+  if (m < 30) return { hours, rate, shiftPay, lateMin, fineLabel: `Trễ ${m}p — phạt 30.000đ`, deduction: 30000, net: Math.max(0, shiftPay - 30000), unpaid: false };
+  if (m < 60) {
+    const d = Math.round(shiftPay * 0.5);
+    return { hours, rate, shiftPay, lateMin, fineLabel: `Trễ ${m}p — phạt 50% lương ca`, deduction: d, net: shiftPay - d, unpaid: false };
+  }
+  return { hours, rate, shiftPay, lateMin, fineLabel: `Trễ ${m}p — phạt 100% (không lương)`, deduction: 0, net: 0, unpaid: true };
+}
+
 /** Chuẩn hóa mã chi nhánh (Sheets có thể ghi CN1..CN4, hệ thống dùng CN130/261/120/111). */
 export function canonicalBranchId(branchId?: string): string {
   const b = String(branchId || '').trim().toUpperCase();
@@ -485,6 +512,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [exportWeekBusy, setExportWeekBusy] = useState(false);
   // Tuần đang xem ở lưới tuần realtime (0 = tuần này)
   const [attWeekOffset, setAttWeekOffset] = useState(0);
+  // Ô ca đang hover ở lưới realtime (hiện popup lương/phạt/đổi ca)
+  const [attHover, setAttHover] = useState<string | null>(null);
   // Kết quả rà soát GPS mới nhất (hiện ngay trong tab)
   const [gpsReverify, setGpsReverify] = useState<any>(null);
   const [gpsReverifyBusy, setGpsReverifyBusy] = useState(false);
@@ -5429,13 +5458,40 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 const thumb = (e: any) => e?.drive_object_id && !String(e.drive_object_id).startsWith('DRV_')
                                   ? <AttPhoto eventId={e.event_id} style={{ width: '40px', height: '40px' }} />
                                   : null;
+                                // Lương ca + phạt (tạm tính theo đơn giá hồ sơ; Finance chốt ở kỳ lương)
+                                const empRate = Number((emp as any)?.current_rate_per_hour) || 0;
+                                const pay = shiftPayInfo(it.shift?.shift_code, empRate, inE, outE);
+                                const fmtVnd = (n: number) => `${Math.round(n).toLocaleString('vi-VN')}đ`;
+                                // Đổi/nhường ca liên quan ca này (nếu có)
+                                const swapListAll = (typeof swapList !== 'undefined' && swapList !== null ? swapList : (swaps || [])) as any[];
+                                const relSwap = (swapListAll || []).find((s: any) =>
+                                  s.requester_assignment_id === it.shift?.assignment_id || s.target_assignment_id === it.shift?.assignment_id
+                                );
+                                const empNameOf = (id: string) => (allEmployees || []).find((e: any) => e.employee_id === id)?.full_name || id || '—';
+                                const hoverKey = `${emp.employee_id}|${day.iso}|${ii}`;
+                                const isDispatch = (relSwap?.swap_kind || 'EMPLOYEE_SWAP') === 'HR_DISPATCH';
                                 return (
-                                  <div key={ii} style={{ padding: '6px', borderRadius: '8px', backgroundColor: it.st.bg, border: it.st.border, animation: it.st.blink ? 'fx-blink 1.2s infinite' : undefined }}>
+                                  <div
+                                    key={ii}
+                                    style={{ padding: '6px', borderRadius: '8px', backgroundColor: it.st.bg, border: it.st.border, animation: it.st.blink ? 'fx-blink 1.2s infinite' : undefined, position: 'relative', cursor: 'default' }}
+                                    onMouseEnter={() => setAttHover(hoverKey)}
+                                    onMouseLeave={() => setAttHover(h => (h === hoverKey ? null : h))}
+                                  >
                                     <div style={{ fontWeight: 800, fontSize: '11px' }}>{it.shift?.shift_code || 'Không ca'}</div>
                                     <div style={{ fontSize: '10px', color: it.st.fg, fontWeight: 700 }}>{it.st.label}{late}</div>
                                     <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
                                       {inE ? `Vào ${timeOf(inE.client_time)}` : '—'} • {outE ? `Ra ${timeOf(outE.client_time)}` : '—'}
                                     </div>
+                                    {it.st.key === 'COMPLETED' && (
+                                      <div style={{ fontSize: '10px', color: pay.unpaid ? '#991B1B' : '#065F46', fontWeight: 800 }}>
+                                        💰 {fmtVnd(pay.net)}{pay.deduction > 0 ? ` (phạt ${fmtVnd(pay.deduction)})` : ''}{pay.unpaid ? ' (không lương)' : ''}
+                                      </div>
+                                    )}
+                                    {relSwap && (
+                                      <div style={{ fontSize: '10px', color: '#6D28D9', fontWeight: 700 }} title={`Phiếu ${relSwap.swap_id} • ${relSwap.status}`}>
+                                        ⇄ {empNameOf(relSwap.requester_id)} → {relSwap.target_employee_id ? empNameOf(relSwap.target_employee_id) : 'mở CN'}{isDispatch ? ' +30k' : ''}
+                                      </div>
+                                    )}
                                     {(thumb(inE) || thumb(outE)) && (
                                       <div style={{ display: 'flex', gap: '4px', marginTop: '4px' }}>
                                         {thumb(inE)}
@@ -5444,6 +5500,34 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                     )}
                                     {it.st.key === 'COMPLETED' && inE && (
                                       <div style={{ fontSize: '10px', color: '#059669', fontWeight: 700 }}>Hồng {inE.uniform_pink_ratio ?? '?'}%</div>
+                                    )}
+                                    {attHover === hoverKey && (
+                                      <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 60, width: '250px', backgroundColor: '#fff', border: '1px solid var(--border)', borderRadius: '10px', boxShadow: '0 12px 32px rgba(0,0,0,0.18)', padding: '10px 12px', fontSize: '11px', lineHeight: 1.6, color: 'var(--text)' }}>
+                                        <div style={{ fontWeight: 800, fontSize: '12px', marginBottom: '4px' }}>
+                                          {emp.full_name} • {it.shift?.shift_code || 'Không ca'} • {day.iso.slice(8, 10)}/{day.iso.slice(5, 10)}
+                                        </div>
+                                        <div>🕒 Vào: <strong>{inE ? timeOf(inE.client_time) : '—'}</strong> • Ra: <strong>{outE ? timeOf(outE.client_time) : '—'}</strong></div>
+                                        <div>📌 Trạng thái: <strong>{it.st.label}{late}</strong></div>
+                                        <div style={{ borderTop: '1px dashed var(--border)', margin: '6px 0', paddingTop: '6px' }}>
+                                          💵 Đơn giá: <strong>{empRate ? fmtVnd(empRate) + '/giờ' : 'chưa gán'}</strong> • Công: <strong>{pay.hours}h</strong><br />
+                                          💰 Lương ca: <strong>{fmtVnd(pay.shiftPay)}</strong><br />
+                                          ⚖ Phạt: <strong style={{ color: pay.deduction > 0 || pay.unpaid ? '#DC2626' : '#059669' }}>{pay.fineLabel}</strong><br />
+                                          ✅ Thực nhận ca: <strong style={{ color: '#065F46' }}>{fmtVnd(pay.net)}</strong>
+                                          <div style={{ color: 'var(--text-muted)', fontSize: '10px' }}>(Tạm tính realtime — Finance chốt số chính thức ở kỳ lương)</div>
+                                        </div>
+                                        <div style={{ borderTop: '1px dashed var(--border)', margin: '6px 0', paddingTop: '6px' }}>
+                                          ⇄ Đổi/nhường ca: {relSwap ? (
+                                            <span>
+                                              <strong>{empNameOf(relSwap.requester_id)} → {relSwap.target_employee_id ? empNameOf(relSwap.target_employee_id) : 'mở cả chi nhánh'}</strong><br />
+                                              Loại: {isDispatch ? 'HR điều phối (+30k người nhận)' : 'NV tự tráo (không phụ cấp)'} • Trạng thái: <strong>{relSwap.status}</strong><br />
+                                              <span style={{ color: 'var(--text-muted)' }}>Phiếu {relSwap.swap_id}</span>
+                                            </span>
+                                          ) : 'Không có'}
+                                        </div>
+                                        {it.st.key === 'COMPLETED' && inE && (
+                                          <div>👕 Áo hồng: <strong>{inE.uniform_pink_ratio ?? '?'}%</strong></div>
+                                        )}
+                                      </div>
                                     )}
                                   </div>
                                 );
