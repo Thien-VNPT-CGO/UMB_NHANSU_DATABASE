@@ -5170,8 +5170,19 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const attWeekSet = new Set(attDays.map(d => d.iso));
     const attWeekShifts = (shifts || []).filter((s: any) => attWeekSet.has((s.date || '').slice(0, 10)) && s.status !== 'CANCELLED');
     const attWeekEvts = (liveAttendanceEvents || []).filter((e: any) => attWeekSet.has(vnDayOf(e.client_time || '')));
+    const attSwapAll = ((typeof swapList !== 'undefined' && swapList !== null ? swapList : (swaps || [])) as any[]) || [];
+    // Chủ hiệu dụng của ca: B đã đồng ý nhận (PARTNER_ACCEPTED, chờ HR duyệt) thì ca
+    // đứng tên B + tính tiền theo đơn giá B. APPROVED thì dữ liệu đã chuyển chủ.
+    // PENDING (B chưa đồng ý) vẫn đứng tên chủ cũ.
+    const effEmpIdOf = (s: any) => {
+      const rel = attSwapAll.find((x: any) =>
+        x.status === 'PARTNER_ACCEPTED' && x.target_employee_id &&
+        (x.requester_assignment_id === s.assignment_id || x.target_assignment_id === s.assignment_id)
+      );
+      return rel ? rel.target_employee_id : s.employee_id;
+    };
     const attEmpIds = [...new Set([
-      ...attWeekShifts.map((s: any) => s.employee_id),
+      ...attWeekShifts.map((s: any) => effEmpIdOf(s)),
       ...attWeekEvts.map((e: any) => e.employee_id),
     ])].filter(Boolean);
     // Sắp xếp đồng bộ lịch làm việc: theo chi nhánh trước, rồi tên — ca trong ô theo CA_1→CA_2→CA_3
@@ -5184,7 +5195,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi')
       );
     const attCellOf = (empId: string, iso: string) => {
-      const shs = attWeekShifts.filter((s: any) => s.employee_id === empId && (s.date || '').slice(0, 10) === iso);
+      const shs = attWeekShifts.filter((s: any) => effEmpIdOf(s) === empId && (s.date || '').slice(0, 10) === iso);
       const evs = attWeekEvts.filter((e: any) => e.employee_id === empId && vnDayOf(e.client_time || '') === iso);
       const byAssign = new Map<string, any[]>();
       for (const e of evs) {
@@ -5463,8 +5474,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 const pay = shiftPayInfo(it.shift?.shift_code, empRate, inE, outE);
                                 const fmtVnd = (n: number) => `${Math.round(n).toLocaleString('vi-VN')}đ`;
                                 // Đổi/nhường ca liên quan ca này (nếu có)
-                                const swapListAll = (typeof swapList !== 'undefined' && swapList !== null ? swapList : (swaps || [])) as any[];
-                                const relSwap = (swapListAll || []).find((s: any) =>
+                                const relSwap = (attSwapAll || []).find((s: any) =>
                                   s.requester_assignment_id === it.shift?.assignment_id || s.target_assignment_id === it.shift?.assignment_id
                                 );
                                 const empNameOf = (id: string) => (allEmployees || []).find((e: any) => e.employee_id === id)?.full_name || id || '—';
@@ -5489,7 +5499,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                     )}
                                     {relSwap && (
                                       <div style={{ fontSize: '10px', color: '#6D28D9', fontWeight: 700 }} title={`Phiếu ${relSwap.swap_id} • ${relSwap.status}`}>
-                                        ⇄ {empNameOf(relSwap.requester_id)} → {relSwap.target_employee_id ? empNameOf(relSwap.target_employee_id) : 'mở CN'}{isDispatch ? ' +30k' : ''}
+                                        ⇄ {empNameOf(relSwap.requester_id)} → {relSwap.target_employee_id ? empNameOf(relSwap.target_employee_id) : 'mở CN'}{isDispatch ? ' +30k' : ''}{relSwap.status === 'PARTNER_ACCEPTED' ? ' • B đã nhận (chờ HR duyệt)' : relSwap.status === 'PENDING_PARTNER' ? ' • chờ B đồng ý' : ''}
                                       </div>
                                     )}
                                     {(thumb(inE) || thumb(outE)) && (
