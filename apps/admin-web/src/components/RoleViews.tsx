@@ -263,7 +263,9 @@ export const PublishScheduleModal: React.FC<PublishScheduleModalProps> = ({
         body: JSON.stringify({ branchId: branch, auto: true }),
       });
       const autoCount = res?.auto?.created ?? 0;
-      showToast(`Đã PUBLISH tuần ${weekMon}: BOT xếp thêm ${autoCount} ca, duyệt ${res?.count ?? 0} ca (DRAFT→PUBLISHED).`);
+      const warns: string[] = (res?.auto?.warnings || []).map((w: any) => w.message || '').filter(Boolean);
+      const warnText = warns.length > 0 ? ` Cảnh báo (${warns.length}): ${warns.slice(0, 3).join(' | ')}${warns.length > 3 ? ' | ...' : ''}` : '';
+      showToast(`Đã PUBLISH tuần ${weekMon}: BOT xếp thêm ${autoCount} ca, duyệt ${res?.count ?? 0} ca (DRAFT→PUBLISHED).${warnText}`);
       onClose();
       if (onRefreshData) await onRefreshData();
       if (onSyncSheets) await onSyncSheets();
@@ -3572,14 +3574,16 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         if (foundLeave) {
           // Lịch OFF tuần (HANG_TUAN) tự động ghi nhận — kể cả bản ghi PENDING cũ
           // cũng hiển thị OFF (backend đã tự chữa thành APPROVED khi đồng bộ).
+          // Ca đã xếp KHÔNG bị che: hiện kèm để phát hiện xếp trùng ngày OFF.
           const isWeeklyOff = foundLeave.leave_type === 'HANG_TUAN';
           const isApprovedLeave = isWeeklyOff || foundLeave.status === 'APPROVED';
+          const overlapShift = foundShift ? (foundShift.shift_code === 'CA_1' ? 'Ca 1 (07-12)' : foundShift.shift_code === 'CA_2' ? 'Ca 2 (12-18)' : foundShift.shift_code === 'CA_3' ? 'Ca 3 (18-23)' : foundShift.shift_code) : null;
           dayDataMap[day.key] = {
             shift: foundLeave.leave_type === 'DOT_XUAT' ? 'Nghỉ đột xuất' : 'Nghỉ OFF',
             status: isApprovedLeave ? 'OFF' : 'PENDING_LEAVE',
             note: isApprovedLeave
-              ? (foundLeave.reason || 'Nghỉ theo đơn đã duyệt')
-              : `Chờ duyệt: ${foundLeave.reason || 'đơn đột xuất chưa duyệt'}`,
+              ? ((foundLeave.reason || 'Nghỉ theo đơn đã duyệt') + (overlapShift ? ` • ⚠ đã xếp ${overlapShift} trùng ngày OFF — xóa ca hoặc hủy OFF` : ''))
+              : (`Chờ duyệt: ${foundLeave.reason || 'đơn đột xuất chưa duyệt'}` + (overlapShift ? ` • đã xếp ${overlapShift}` : '')),
             isToday: day.isToday,
           };
         } else if (!foundShift) {
