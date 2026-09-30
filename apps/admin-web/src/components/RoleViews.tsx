@@ -537,18 +537,18 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [attWeekOffset, setAttWeekOffset] = useState(0);
   // Ô ca đang hover ở lưới realtime (hiện popup lương/phạt/đổi ca)
   const [attHover, setAttHover] = useState<string | null>(null);
-  // Đồng hồ đếm ngược giờ PV (tab ứng viên) — tự vào Meet khi tới giờ
+  // Đồng hồ đếm ngược giờ PV (tab lịch phỏng vấn) — tự vào Meet khi tới giờ
   const [meetNow, setMeetNow] = useState(() => Date.now());
   const meetOpenedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (activeTab !== 'hr-candidates') return;
+    if (activeTab !== 'hr-interviews') return;
     const t = setInterval(() => setMeetNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, [activeTab]);
   // Tới giờ PV (trong 30p đầu): tự bung link Meet 1 lần/ứng viên/ngày + báo toast.
   // Trình duyệt có thể chặn popup — nút "Vào Meet" nhấp nháy luôn sẵn để bấm tay.
   useEffect(() => {
-    if (activeTab !== 'hr-candidates') return;
+    if (activeTab !== 'hr-interviews') return;
     for (const cd of (candidates || [])) {
       const st = interviewStartMs(cd);
       if (!st) continue;
