@@ -161,6 +161,26 @@ export function canonicalBranchId(branchId?: string): string {
 
 const PUBLISH_BRANCH_OPTIONS = ['CN130', 'CN120', 'CN261', 'CN111'];
 
+/**
+ * Chu kỳ đăng ký OFF tuần HIỆN TẠI (reset Thứ 6 11:45 VN).
+ * Chu kỳ mở lúc T6 11:45 đăng ký cho tuần Mon–Sun KẾ sau Thứ 6 đó.
+ * Sheet DON_NGHI_PHEP giữ toàn bộ lịch sử — UI chỉ lọc hiển thị theo chu kỳ.
+ */
+export function currentOffCycle(): { mon: string; sun: string; label: string; cycleFriday: string } {
+  const vn = new Date(Date.now() + 7 * 3_600_000);
+  const dowMon0 = (vn.getUTCDay() + 6) % 7;
+  const mins = vn.getUTCHours() * 60 + vn.getUTCMinutes();
+  let daysSinceFri = (dowMon0 - 4 + 7) % 7;
+  // Đang Thứ 6 nhưng chưa tới 11:45 → vẫn thuộc chu kỳ cũ (Thứ 6 tuần trước).
+  if (daysSinceFri === 0 && mins < 11 * 60 + 45) daysSinceFri = 7;
+  const midnightUtc = Date.UTC(vn.getUTCFullYear(), vn.getUTCMonth(), vn.getUTCDate());
+  const fri = new Date(midnightUtc - daysSinceFri * 86_400_000);
+  const mon = new Date(fri.getTime() + 3 * 86_400_000);
+  const sun = new Date(fri.getTime() + 9 * 86_400_000);
+  const fmt = (x: Date) => `${x.getUTCFullYear()}-${String(x.getUTCMonth() + 1).padStart(2, '0')}-${String(x.getUTCDate()).padStart(2, '0')}`;
+  return { mon: fmt(mon), sun: fmt(sun), label: `${fmt(mon)} → ${fmt(sun)}`, cycleFriday: fmt(fri) };
+}
+
 /** Thứ 2 (ISO) của tuần lệch `offset` so với tuần hiện tại. */
 export function mondayIsoOfOffset(offset: number): string {
   const now = new Date();
@@ -377,6 +397,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Filters xem lịch OFF 2 ngày/tuần (HR/Admin + Store)
   const [weeklyOffBranchFilter, setWeeklyOffBranchFilter] = useState('ALL');
   const [weeklyOffSearch, setWeeklyOffSearch] = useState('');
+  // Chu kỳ OFF hiển thị: 'CURRENT' = chu kỳ hiện tại (reset T6 11:45), hoặc label tuần cũ để xem lịch sử.
+  const [weeklyOffWeekFilter, setWeeklyOffWeekFilter] = useState('CURRENT');
   // Xem lịch tuần trước / hiện tại / sau (mặc định tuần hiện tại)
   const [scheduleWeekOffset, setScheduleWeekOffset] = useState(0);
   // Điều phối nhường ca HR (+30k cho người nhận)
@@ -4541,8 +4563,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       const g = weeklyOffGroups[key];
       if (!g.dates.includes(reqDate)) g.dates.push(reqDate);
     });
+    // Reset theo chu kỳ Thứ 6 11:45: mặc định chỉ hiện tuần mục tiêu của chu kỳ hiện tại.
+    const offCycle = currentOffCycle();
+    const weeklyOffWeeks = Array.from(new Set(Object.values(weeklyOffGroups).map((g: any) => g.week))).sort().reverse();
     const weeklyOffList = Object.values(weeklyOffGroups)
       .map((g: any) => ({ ...g, dates: g.dates.sort(), count: g.dates.length }))
+      .filter((g: any) => (weeklyOffWeekFilter === 'CURRENT' ? g.week === offCycle.label : g.week === weeklyOffWeekFilter))
       .filter((g: any) => weeklyOffBranchFilter === 'ALL' || g.branch_id === weeklyOffBranchFilter)
       .filter((g: any) => {
         if (!weeklyOffSearch.trim()) return true;
@@ -4597,9 +4623,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
             <div>
               <strong style={{ fontSize: '14px' }}>Lịch OFF 2 ngày/tuần đã tự động ghi nhận ({weeklyOffList.length})</strong>
-              <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Nguồn: DON_NGHI_PHEP • loại HANG_TUAN • trạng thái APPROVED (SYSTEM). Không cần bấm duyệt.</div>
+              <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Chu kỳ hiện tại: {offCycle.label} (mở T6 11:45) • Nguồn: DON_NGHI_PHEP — Sheet giữ toàn bộ lịch sử, sang chu kỳ mới bảng này reset.</div>
             </div>
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <select value={weeklyOffWeekFilter} onChange={e => setWeeklyOffWeekFilter(e.target.value)} style={{ fontSize: '12px', padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--border)' }} title="Chu kỳ hiển thị — Sheet vẫn lưu toàn bộ lịch sử">
+                <option value="CURRENT">Chu kỳ hiện tại ({offCycle.label})</option>
+                {weeklyOffWeeks.filter((w: string) => w !== offCycle.label).map((w: string) => (
+                  <option key={w} value={w}>Tuần {w}</option>
+                ))}
+              </select>
               <select value={weeklyOffBranchFilter} onChange={e => setWeeklyOffBranchFilter(e.target.value)} style={{ fontSize: '12px', padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--border)' }}>
                 <option value="ALL">Tất cả chi nhánh</option>
                 {weeklyOffBranchOptions.map((b: string) => (
@@ -4628,7 +4660,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               {weeklyOffList.length === 0 ? (
                 <tr>
                   <td colSpan={5} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                    Chưa có đăng ký OFF tuần nào. Khi nhân viên đăng ký 2 ngày OFF (T6 12h → T7 15h), dữ liệu tự ghi nhận và hiện realtime tại đây.
+                    Chưa có đăng ký OFF tuần nào trong chu kỳ này. Khi nhân viên đăng ký 2 ngày OFF (T6 11h45 → T7 15h), dữ liệu tự ghi nhận và hiện realtime tại đây.
                   </td>
                 </tr>
               ) : (
@@ -6056,8 +6088,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
   if (activeTab === 'store-off') {
     const pendingStoreLeaves = leaves.filter((l: any) => (branchScope === '*' || l.branch_id === branchScope) && l.status === 'PENDING' && (l.leave_type || l.leaveType || 'DOT_XUAT') === 'DOT_XUAT');
+    // Reset theo chu kỳ Thứ 6 11:45: Store chỉ xem tuần mục tiêu của chu kỳ hiện tại.
+    const storeOffCycle = currentOffCycle();
     const storeWeeklyOff = (leaves || [])
       .filter((l: any) => (branchScope === '*' || l.branch_id === branchScope) && (l.leave_type || l.leaveType) === 'HANG_TUAN' && l.status !== 'REJECTED' && l.status !== 'CANCELLED')
+      .filter((l: any) => String(l.requested_date || l.requestedDate || '') >= storeOffCycle.mon && String(l.requested_date || l.requestedDate || '') <= storeOffCycle.sun)
       .sort((a: any, b: any) => String(b.requested_date || '').localeCompare(String(a.requested_date || '')));
     const handleStoreReview = async (leaveId: string, status: 'APPROVED' | 'REJECTED') => {
       if (!leaveId) {
@@ -6109,7 +6144,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         </div>
         <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
           <div style={{ fontWeight: 800, fontSize: '13px' }}>Lịch OFF 2 ngày/tuần đã tự động ghi nhận ({storeWeeklyOff.length})</div>
-          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '10px' }}>Nhân viên đăng ký T6 12h → T7 15h là hệ thống tự ghi nhận, Store chỉ xem — không cần duyệt.</div>
+          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '10px' }}>Chu kỳ hiện tại: {storeOffCycle.label} (mở T6 11h45). Nhân viên đăng ký là hệ thống tự ghi nhận, Store chỉ xem — không cần duyệt. Sheet vẫn lưu toàn bộ lịch sử.</div>
           {storeWeeklyOff.length === 0 ? (
             <div style={{ fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center', padding: '12px 0' }}>
               Chưa có đăng ký OFF tuần nào tại {branchName}.
