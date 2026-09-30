@@ -5200,7 +5200,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       ...attWeekEvts.map((e: any) => e.employee_id),
     ])].filter(Boolean);
     // Sắp xếp Y HỆT Lịch Làm Việc: theo chi nhánh → ca cố định (CA_1→CA_2→CA_3) →
-    // thứ tự hồ sơ (allEmployees) — ca trong ô cũng theo CA_1→CA_2→CA_3
+    // thứ tự hồ sơ (allEmployees) — ca trong ô cũng theo CA_1→CA_2→CA_3.
+    // Thứ tự chi nhánh cố định: CN1 (130 Vạn Kiếp) → CN2 (261 Tô Hiến Thành) →
+    // CN3 (120 Hoàng Diệu 2) → CN4 (111 Tôn Đản).
+    const BRANCH_ORDER: Record<string, number> = { CN130: 1, CN261: 2, CN120: 3, CN111: 4 };
+    const branchRank = (b?: string) => BRANCH_ORDER[canonicalBranchId(b)] ?? 9;
     const SHIFT_ORDER: Record<string, number> = { CA_1: 1, CA_2: 2, CA_3: 3 };
     const empOrderIdx = new Map<string, number>(
       (allEmployees || []).map((e: any, i: number) => [e.employee_id, i])
@@ -5209,7 +5213,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       .map(id => (allEmployees || []).find((e: any) => e.employee_id === id) || { employee_id: id, full_name: 'Nhân Viên', employee_code: id, employment_status: 'OFFICIAL', default_branch_id: '' })
       .filter((e: any) => e.employment_status !== 'TERMINATED')
       .sort((a: any, b: any) =>
-        String(a.default_branch_id || '').localeCompare(String(b.default_branch_id || '')) ||
+        (branchRank(a.default_branch_id) - branchRank(b.default_branch_id)) ||
         ((SHIFT_ORDER[a.default_shift_code] || 9) - (SHIFT_ORDER[b.default_shift_code] || 9)) ||
         ((empOrderIdx.get(a.employee_id) ?? 9999) - (empOrderIdx.get(b.employee_id) ?? 9999)) ||
         String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi')
