@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Users,
   Calendar,
@@ -118,6 +118,18 @@ export function weekOptions(centerOffset = 0, span = 4): { offset: number; mon: 
     out.push({ offset: o, mon, sun, label: `${f(mon)} - ${f(sun)}${o === 0 ? ' (tuần này)' : ''}` });
   }
   return out;
+}
+
+/** Link Google Meet mặc định hệ thống cho mọi lịch PV online. */
+export const SYSTEM_MEET_URL = 'https://meet.google.com/ypp-srtm-fvm';
+
+/** Mốc giờ bắt đầu PV (giờ VN) từ ngày + khung giờ — null khi chưa xếp lịch. */
+export function interviewStartMs(c: any): number | null {
+  const d = String(c?.interview_date || '').slice(0, 10);
+  const m = String(c?.interview_time_slot || '').match(/(\d{1,2}):(\d{2})/);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || !m) return null;
+  const t = new Date(`${d}T${String(m[1]).padStart(2, '0')}:${m[2]}:00+07:00`).getTime();
+  return Number.isFinite(t) ? t : null;
 }
 
 /** Ngày Việt Nam (UTC+7) của 1 mốc ISO. */
@@ -525,6 +537,29 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [attWeekOffset, setAttWeekOffset] = useState(0);
   // Ô ca đang hover ở lưới realtime (hiện popup lương/phạt/đổi ca)
   const [attHover, setAttHover] = useState<string | null>(null);
+  // Đồng hồ đếm ngược giờ PV (tab ứng viên) — tự vào Meet khi tới giờ
+  const [meetNow, setMeetNow] = useState(() => Date.now());
+  const meetOpenedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (activeTab !== 'hr-candidates') return;
+    const t = setInterval(() => setMeetNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [activeTab]);
+  // Tới giờ PV (trong 30p đầu): tự bung link Meet 1 lần/ứng viên/ngày + báo toast.
+  // Trình duyệt có thể chặn popup — nút "Vào Meet" nhấp nháy luôn sẵn để bấm tay.
+  useEffect(() => {
+    if (activeTab !== 'hr-candidates') return;
+    for (const cd of (candidates || [])) {
+      const st = interviewStartMs(cd);
+      if (!st) continue;
+      const key = `${cd.submission_id}|${cd.interview_date}`;
+      if (meetNow >= st && meetNow - st < 30 * 60000 && !meetOpenedRef.current.has(key)) {
+        meetOpenedRef.current.add(key);
+        try { window.open(SYSTEM_MEET_URL, '_blank'); } catch { /* popup bị chặn */ }
+        showToast(`🔴 Tới giờ phỏng vấn ${cd.full_name} — mở link Meet!`);
+      }
+    }
+  }, [meetNow]);
   // Kết quả rà soát GPS mới nhất (hiện ngay trong tab)
   const [gpsReverify, setGpsReverify] = useState<any>(null);
   const [gpsReverifyBusy, setGpsReverifyBusy] = useState(false);
@@ -2564,12 +2599,32 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     </td>
                     <td style={{ padding: '14px 20px' }}>
                       {(() => {
-                        const zs = (c as any).zalo_invite_status;
-                        const zat = (c as any).zalo_invite_at ? new Date((c as any).zalo_invite_at).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : '';
-                        if (zs === 'SENT') return <span style={{ color: '#059669', fontWeight: 700 }}>✓ Đã gửi{zat ? ` • ${zat}` : ''}</span>;
-                        if (zs === 'NOT_FRIEND') return <span style={{ color: '#B45309', fontWeight: 700 }} title={(c as any).zalo_invite_error || ''}>⚠ Chưa kết bạn{zat ? ` • ${zat}` : ''}</span>;
-                        if (zs === 'FAILED') return <span style={{ color: '#DC2626', fontWeight: 700 }} title={(c as any).zalo_invite_error || ''}>✕ Gửi lỗi{zat ? ` • ${zat}` : ''}</span>;
-                        return <span style={{ color: '#0068FF', fontWeight: 700 }}>{(c as any).status === 'INVITED_INTERVIEW' ? 'Đã gửi thư mời Zalo' : 'Chưa gửi'}</span>;
+                        const st = interviewStartMs(c);
+                        if (!st) return <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Chờ xếp lịch Meet</span>;
+                        const diff = st - meetNow;
+                        const pad = (n: number) => String(n).padStart(2, '0');
+                        const fmtLeft = (ms: number) => {
+                          const s = Math.floor(ms / 1000);
+                          const h = Math.floor(s / 3600);
+                          const m = Math.floor((s % 3600) / 60);
+                          const ss = s % 60;
+                          return h > 0 ? `${h}h ${pad(m)}p ${pad(ss)}s` : `${m}p ${pad(ss)}s`;
+                        };
+                        if (diff <= 0 && meetNow - st < 60 * 60000) {
+                          return (
+                            <a href={SYSTEM_MEET_URL} target="_blank" rel="noreferrer"
+                              style={{ display: 'inline-block', backgroundColor: '#DC2626', color: '#FFF', fontWeight: 800, fontSize: '12px', padding: '8px 14px', borderRadius: '8px', textDecoration: 'none', animation: 'fx-blink 1.2s infinite' }}>
+                              🔴 ĐANG PV — Vào Meet
+                            </a>
+                          );
+                        }
+                        if (diff <= 0) return <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Đã qua giờ PV</span>;
+                        return (
+                          <div>
+                            <div style={{ fontSize: '12px', fontWeight: 800, color: '#1D4ED8' }}>⏳ Còn {fmtLeft(diff)}</div>
+                            <a href={SYSTEM_MEET_URL} target="_blank" rel="noreferrer" style={{ fontSize: '11px', color: '#0068FF', fontWeight: 700 }}>Vào trước qua Meet →</a>
+                          </div>
+                        );
                       })()}
                     </td>
                     <td style={{ padding: '14px 20px' }}>
@@ -2584,6 +2639,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       }}>
                         {(c as any).status === 'INVITED_INTERVIEW' ? '✓ Đã gửi Zalo' : '💬 Chờ gửi Zalo'}
                       </span>
+                      {(() => {
+                        const zs = (c as any).zalo_invite_status;
+                        if (!zs) return null;
+                        const zat = (c as any).zalo_invite_at ? new Date((c as any).zalo_invite_at).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : '';
+                        const style = { fontSize: '10px', fontWeight: 700, marginTop: '2px' } as any;
+                        if (zs === 'SENT') return <div style={{ ...style, color: '#059669' }}>Zalo: đã gửi{zat ? ` • ${zat}` : ''}</div>;
+                        if (zs === 'NOT_FRIEND') return <div style={{ ...style, color: '#B45309' }} title={(c as any).zalo_invite_error || ''}>Zalo: chưa kết bạn{zat ? ` • ${zat}` : ''}</div>;
+                        return <div style={{ ...style, color: '#DC2626' }} title={(c as any).zalo_invite_error || ''}>Zalo: gửi lỗi{zat ? ` • ${zat}` : ''}</div>;
+                      })()}
                       {(c as any).interview_date && (
                         <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '2px' }}>
                           PV: {(c as any).interview_time_slot || ''} {(c as any).interview_date}
