@@ -2656,7 +2656,18 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     </td>
                     <td style={{ padding: '14px 20px' }}>
                       <span style={{ backgroundColor: '#FEF3C7', color: '#92400E', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700 }}>
-                        {c.status || 'CHỜ PHỎNG VẤN'}
+                        {(() => {
+                          const vi: Record<string, string> = {
+                            NEW: 'Mới',
+                            NEED_INFO: 'Cần bổ sung thông tin',
+                            INVITED_INTERVIEW: 'Đã mời phỏng vấn',
+                            INTERVIEWED: 'Đã phỏng vấn',
+                            ACCEPTED: 'Đạt — nhận việc',
+                            REJECTED: 'Không đạt',
+                          };
+                          const s = String(c.status || '').trim();
+                          return vi[s] || s || 'Chờ phỏng vấn';
+                        })()}
                       </span>
                     </td>
                     <td style={{ padding: '14px 20px' }}>
