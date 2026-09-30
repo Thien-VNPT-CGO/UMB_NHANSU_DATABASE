@@ -5240,15 +5240,33 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const empOrderIdx = new Map<string, number>(
       (allEmployees || []).map((e: any, i: number) => [e.employee_id, i])
     );
+    // Ca xếp hàng: ca THỰC TẾ sớm nhất của NV trong tuần đang xem (ngày rồi ca),
+    // rớt về ca cố định hồ sơ khi tuần này chưa có ca — khớp với ô ca hiển thị.
+    const firstShiftRankOf = (empId: string): [number, string] => {
+      const mine = attWeekShifts
+        .filter((s: any) => effEmpIdOf(s) === empId)
+        .sort((x: any, y: any) =>
+          String(x.date || '').localeCompare(String(y.date || '')) ||
+          ((SHIFT_ORDER[x.shift_code] || 9) - (SHIFT_ORDER[y.shift_code] || 9))
+        );
+      if (mine.length > 0) return [SHIFT_ORDER[mine[0].shift_code] || 9, String(mine[0].date || '')];
+      return [9, ''];
+    };
     const attEmps = attEmpIds
       .map(id => (allEmployees || []).find((e: any) => e.employee_id === id) || { employee_id: id, full_name: 'Nhân Viên', employee_code: id, employment_status: 'OFFICIAL', default_branch_id: '' })
       .filter((e: any) => e.employment_status !== 'TERMINATED')
-      .sort((a: any, b: any) =>
-        (branchRank(a.default_branch_id) - branchRank(b.default_branch_id)) ||
-        ((SHIFT_ORDER[a.default_shift_code] || 9) - (SHIFT_ORDER[b.default_shift_code] || 9)) ||
-        ((empOrderIdx.get(a.employee_id) ?? 9999) - (empOrderIdx.get(b.employee_id) ?? 9999)) ||
-        String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi')
-      );
+      .sort((a: any, b: any) => {
+        const fa = firstShiftRankOf(a.employee_id);
+        const fb = firstShiftRankOf(b.employee_id);
+        return (
+          (branchRank(a.default_branch_id) - branchRank(b.default_branch_id)) ||
+          (fa[0] - fb[0]) ||
+          String(fa[1] || '').localeCompare(String(fb[1] || '')) ||
+          ((SHIFT_ORDER[a.default_shift_code] || 9) - (SHIFT_ORDER[b.default_shift_code] || 9)) ||
+          ((empOrderIdx.get(a.employee_id) ?? 9999) - (empOrderIdx.get(b.employee_id) ?? 9999)) ||
+          String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi')
+        );
+      });
     const attCellOf = (empId: string, iso: string) => {
       const shs = attWeekShifts.filter((s: any) => effEmpIdOf(s) === empId && (s.date || '').slice(0, 10) === iso);
       const evs = attWeekEvts.filter((e: any) => e.employee_id === empId && vnDayOf(e.client_time || '') === iso);
