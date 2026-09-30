@@ -273,7 +273,8 @@ export class AttendanceService {
 
   /**
    * Ràng buộc hiệu lực phiếu: PENDING quá `ttlMinutes` (mặc định 30 phút, tính từ
-   * lúc NV gửi phiếu) thì hệ thống tự từ chối. Idempotent (chỉ chạm PENDING).
+   * lúc NV gửi phiếu) thì hệ thống TỰ XÓA KHỎI HỆ THỐNG (bộ nhớ + Sheet qua
+   * full-sync), không để lại xác. Idempotent (chỉ chạm PENDING).
    */
   async expireStaleAdjustments(now: Date = new Date(), ttlMinutes = 30): Promise<{ checked: number; expired: string[] }> {
     const all = await this.repo.listAttendanceAdjustments().catch(() => []);
@@ -294,21 +295,19 @@ export class AttendanceService {
               (x: any) => x.adjustment_id === (a as any).adjustment_id
             );
             if (!fresh || (fresh as any).status !== 'PENDING') return fresh;
-            return this.repo.updateAttendanceAdjustment(
-              (a as any).adjustment_id,
-              'REJECTED',
-              'SYSTEM',
-              0,
-              `Tự động từ chối: quá ${ttlMinutes} phút không duyệt (phiếu hết hiệu lực).`
-            );
+            await this.repo.deleteAttendanceAdjustment((a as any).adjustment_id);
+            return { deleted: (a as any).adjustment_id } as any;
           },
         });
         expired.push((a as any).adjustment_id);
         if (this.io) {
           this.io.to(`user:${(a as any).employee_id}`).emit('adjustment.updated', {
             adjustmentId: (a as any).adjustment_id,
-            status: 'REJECTED',
+            status: 'DELETED',
           });
+          try {
+            this.io.emit('data:updated', { entity: 'adjustments', data: { action: 'auto-deleted', ids: expired }, timestamp: new Date().toISOString() });
+          } catch { /* non-fatal */ }
         }
       } catch { /* phiếu khác xử tiếp */ }
     }

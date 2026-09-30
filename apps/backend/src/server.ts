@@ -133,9 +133,9 @@ server.listen(Number(PORT), '0.0.0.0', () => {
     try {
       const r = await services.attendanceService.expireStaleAdjustments(new Date(), 30);
       if (r.expired.length > 0) {
-        console.log(`[adjustments] Tự từ chối ${r.expired.length} phiếu quá 30 phút.`);
+        console.log(`[adjustments] Tự xóa ${r.expired.length} phiếu quá 30 phút.`);
         try {
-          io.emit('data:updated', { entity: 'adjustments', data: { action: 'auto-rejected', ids: r.expired }, timestamp: new Date().toISOString() });
+          io.emit('data:updated', { entity: 'adjustments', data: { action: 'auto-deleted', ids: r.expired }, timestamp: new Date().toISOString() });
         } catch { /* non-fatal */ }
       }
     } catch (err: any) {

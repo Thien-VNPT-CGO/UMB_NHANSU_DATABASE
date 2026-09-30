@@ -3063,7 +3063,7 @@ export function App() {
                 {isProbation ? '7. Giải Trình & Bổ Sung Công' : '7. Nghỉ Khẩn Cấp & Bổ Sung Công'}
               </h3>
               <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '14px' }}>
-                Gửi giải trình khi quên check-in/out hoặc báo nghỉ đột xuất (đồng bộ trực tiếp sang HR Tab 10 và Google Sheets). Phiếu hiệu lực <strong>30 phút</strong> (tính từ lúc gửi) — quá hạn HR chưa duyệt thì hệ thống tự từ chối.
+                Gửi giải trình khi quên check-in/out hoặc báo nghỉ đột xuất (đồng bộ trực tiếp sang HR Tab 10 và Google Sheets). Phiếu hiệu lực <strong>30 phút</strong> (tính từ lúc gửi) — quá hạn HR chưa duyệt thì hệ thống tự xóa phiếu.
               </p>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -3159,7 +3159,7 @@ export function App() {
                         </div>
                         {a.status === 'PENDING' && (
                           <div style={{ marginTop: '4px', color: '#B45309', fontWeight: 700 }}>
-                            ⏳ Còn {leftMin}p {String(leftSec).padStart(2, '0')}s hiệu lực (tính từ lúc gửi) — quá hạn hệ thống tự hủy phiếu
+                            ⏳ Còn {leftMin}p {String(leftSec).padStart(2, '0')}s hiệu lực (tính từ lúc gửi) — quá hạn hệ thống tự xóa phiếu
                           </div>
                         )}
                         {a.status === 'PENDING' && (
