@@ -241,6 +241,13 @@ export function App() {
   // Phiếu bổ sung công của tôi (trạng thái realtime + đếm ngược 30 phút)
   const [myAdjustments, setMyAdjustments] = useState<any[]>([]);
   const [adjNow, setAdjNow] = useState(() => Date.now());
+  // Nhịp realtime trang chủ: tự nhảy trạng thái ca (sắp tới -> đang diễn ra -> đã xong)
+  const [homeNow, setHomeNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (activeTab !== 'home') return;
+    const t = setInterval(() => setHomeNow(Date.now()), 30000);
+    return () => clearInterval(t);
+  }, [activeTab]);
   const fetchMyAdjustments = async () => {
     try {
       const list = await apiRequest('/attendance/adjustments');
@@ -666,9 +673,40 @@ export function App() {
 
   // Ca đang điểm danh (ngày 2 ca do tráo đổi: phải chọn đúng ca để check-in/out)
   const [attendShiftId, setAttendShiftId] = useState('');
+  /** Ngày hôm nay theo giờ VN (tránh lệch ngày UTC 00:00–07:00). */
+  const vnTodayStr = () => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+  const SHIFT_HOURS_LABEL: Record<string, string> = {
+    CA_1: 'Ca 1: 07:00 - 12:00',
+    CA_2: 'Ca 2: 12:00 - 18:00',
+    CA_3: 'Ca 3: 18:00 - 23:00',
+  };
+  const shiftLabelOf = (s: any) => SHIFT_HOURS_LABEL[s?.shift_code] || (s?.shift_code ? String(s.shift_code) : '');
   const getTodayShifts = () => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = vnTodayStr();
     return myShifts.filter((s: any) => s.date === today);
+  };
+  /**
+   * Ca hiển thị realtime ở trang chủ: đang diễn ra > sắp tới hôm nay > ca cuối hôm nay.
+   * Không có ca nào -> shift null (hiện trạng thái nghỉ).
+   */
+  const getCurrentShift = (): { shift: any; all: any[]; phase: 'LIVE' | 'UPCOMING' | 'DONE' | 'NONE' } => {
+    const today = vnTodayStr();
+    const list = myShifts
+      .filter((s: any) => s.date === today && s.status !== 'CANCELLED')
+      .sort((a: any, b: any) => String(a.start_at || '').localeCompare(String(b.start_at || '')));
+    if (list.length === 0) return { shift: null, all: [], phase: 'NONE' };
+    const now = Date.now();
+    const startOf = (s: any) => new Date(s.start_at || `${s.date}T00:00:00+07:00`).getTime();
+    const endOf = (s: any) => new Date(s.end_at || `${s.date}T23:59:59+07:00`).getTime();
+    const live = list.find((s: any) => {
+      const st = startOf(s);
+      const en = endOf(s);
+      return Number.isFinite(st) && Number.isFinite(en) && now >= st && now <= en;
+    });
+    if (live) return { shift: live, all: list, phase: 'LIVE' };
+    const upcoming = list.find((s: any) => Number.isFinite(startOf(s)) && startOf(s) > now);
+    if (upcoming) return { shift: upcoming, all: list, phase: 'UPCOMING' };
+    return { shift: list[list.length - 1], all: list, phase: 'DONE' };
   };
   const getAttendShift = () => {
     const list = getTodayShifts();
@@ -1469,7 +1507,7 @@ export function App() {
   // =========================================================================
   // VIEW: LOGGED IN PORTAL
   // =========================================================================
-  const currentShift = myShifts[0];
+  const { shift: currentShift, all: todayShiftList, phase: currentShiftPhase } = getCurrentShift();
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#FFF8F4' }}>
@@ -1749,10 +1787,28 @@ export function App() {
                 <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--brand)' }}>{employee?.default_branch_id}</span>
               </div>
               <div style={{ fontSize: '18px', fontWeight: 800, margin: '6px 0', color: 'var(--text)' }}>
-                {currentShift ? (currentShift.shift_code === 'CA_1' ? 'Ca 1: 07:00 - 12:00' : 'Ca 2: 12:00 - 18:00') : 'Ca Sáng: 07:00 - 12:00'}
+                {currentShift ? shiftLabelOf(currentShift) : '😴 Hôm nay không có ca làm'}
               </div>
+              {currentShift && (
+                <div style={{ marginBottom: '8px' }}>
+                  <span className="badge" style={{
+                    backgroundColor: currentShiftPhase === 'LIVE' ? '#DCFCE7' : currentShiftPhase === 'UPCOMING' ? '#FEF3C7' : '#F3F4F6',
+                    color: currentShiftPhase === 'LIVE' ? '#166534' : currentShiftPhase === 'UPCOMING' ? '#92400E' : '#6B7280',
+                    fontWeight: 800,
+                  }}>
+                    {currentShiftPhase === 'LIVE' ? '● Đang trong ca' : currentShiftPhase === 'UPCOMING' ? '⏳ Ca sắp tới' : '✓ Ca đã xong'}
+                  </span>
+                  {todayShiftList.length > 1 && (
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>
+                      (hôm nay bạn có {todayShiftList.length} ca)
+                    </span>
+                  )}
+                </div>
+              )}
               <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '14px' }}>
-                * Yêu cầu: Mặc áo màu hồng Ụm Bò Milk + đeo bảng tên, có mặt trước 15 phút.
+                {currentShift
+                  ? '* Yêu cầu: Mặc áo màu hồng Ụm Bò Milk + đeo bảng tên, có mặt trước 15 phút.'
+                  : 'Hôm nay bạn không có lịch làm — nghỉ ngơi nhé! Muốn nhận ca thay, qua tab Đổi ca.'}
               </p>
 
               {/* Action Buttons */}
