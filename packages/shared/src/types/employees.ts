@@ -50,6 +50,11 @@ export interface CandidateApplication {
   interviewer_id?: string;
   interview_score?: number;
   interview_notes?: string;
+  /** Trạng thái gửi thư mời Zalo: SENT | NOT_FRIEND | FAILED */
+  zalo_invite_status?: string;
+  zalo_uid?: string;
+  zalo_invite_at?: string;
+  zalo_invite_error?: string;
   created_at: string;
 
   // 17 Cột Biểu Mẫu Tuyển Dụng Google Forms theo yêu cầu HR

@@ -387,7 +387,10 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   }
 
   async updateCandidate(submissionId: string, updates: any) {
-    return this.fallbackAdapter.updateCandidate(submissionId, updates);
+    const res = await this.fallbackAdapter.updateCandidate(submissionId, updates);
+    // Đẩy nền để lịch PV + trạng thái Zalo bền vững qua pull/reload (pull form gốc không có các cột này).
+    this.scheduleFullSync('FROM_NHAN_VIEN.update');
+    return res;
   }
 
   // --- Schedules ---

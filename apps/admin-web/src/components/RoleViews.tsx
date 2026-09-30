@@ -2543,9 +2543,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       {(c as any).interview_date ? `${(c as any).interview_time_slot || ''} ${ (c as any).interview_date}` : (c.interview_time || 'Chờ xếp lịch')}
                     </td>
                     <td style={{ padding: '14px 20px' }}>
-                      <span style={{ color: '#0068FF', fontWeight: 700 }}>
-                        {(c as any).status === 'INVITED_INTERVIEW' ? 'Đã gửi thư mời Zalo' : 'Chưa gửi'}
-                      </span>
+                      {(() => {
+                        const zs = (c as any).zalo_invite_status;
+                        const zat = (c as any).zalo_invite_at ? new Date((c as any).zalo_invite_at).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : '';
+                        if (zs === 'SENT') return <span style={{ color: '#059669', fontWeight: 700 }}>✓ Đã gửi{zat ? ` • ${zat}` : ''}</span>;
+                        if (zs === 'NOT_FRIEND') return <span style={{ color: '#B45309', fontWeight: 700 }} title={(c as any).zalo_invite_error || ''}>⚠ Chưa kết bạn{zat ? ` • ${zat}` : ''}</span>;
+                        if (zs === 'FAILED') return <span style={{ color: '#DC2626', fontWeight: 700 }} title={(c as any).zalo_invite_error || ''}>✕ Gửi lỗi{zat ? ` • ${zat}` : ''}</span>;
+                        return <span style={{ color: '#0068FF', fontWeight: 700 }}>{(c as any).status === 'INVITED_INTERVIEW' ? 'Đã gửi thư mời Zalo' : 'Chưa gửi'}</span>;
+                      })()}
                     </td>
                     <td style={{ padding: '14px 20px' }}>
                       <span style={{
@@ -2559,6 +2564,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       }}>
                         {(c as any).status === 'INVITED_INTERVIEW' ? '✓ Đã gửi Zalo' : '💬 Chờ gửi Zalo'}
                       </span>
+                      {(c as any).interview_date && (
+                        <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                          PV: {(c as any).interview_time_slot || ''} {(c as any).interview_date}
+                        </div>
+                      )}
                     </td>
                     <td style={{ padding: '14px 20px' }}>
                       <span style={{ backgroundColor: '#FEF3C7', color: '#92400E', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700 }}>

@@ -919,6 +919,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         timeSlot,
         req.user!.id
       );
+      broadcastUpdate('candidates', { action: 'schedule-interview', id: submissionId });
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -1005,6 +1006,13 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         const found = await zaloService.findUserByPhone(phone);
         uid = found.uid;
       } catch (e: any) {
+        // Lưu trạng thái gửi để reload vẫn thấy (realtime + bền vững qua pull).
+        await adapter.updateCandidate(req.params.id, {
+          zalo_invite_status: 'FAILED',
+          zalo_invite_at: new Date().toISOString(),
+          zalo_invite_error: String(e?.message || e),
+        } as any).catch(() => null);
+        broadcastUpdate('candidates', { action: 'zalo-invite-failed', id: req.params.id });
         return res.status(400).json({ error: e.message, phone });
       }
 
@@ -1026,10 +1034,25 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           target_id: req.params.id,
           payload_after: { uid, msgId: sent.msgId } as any,
         });
+        // Lưu trạng thái gửi lên hồ sơ ứng viên để reload vẫn thấy (realtime + bền vững qua pull).
+        await adapter.updateCandidate(req.params.id, {
+          zalo_invite_status: 'SENT',
+          zalo_uid: uid,
+          zalo_invite_at: new Date().toISOString(),
+          zalo_invite_error: undefined,
+        } as any).catch(() => null);
         broadcastUpdate('candidates', { action: 'zalo-invite', id: req.params.id });
         res.json({ success: true, uid, msgId: sent.msgId, meetUrl: meetUrl || null });
       } catch (e: any) {
         // Thường do chưa kết bạn — HR dùng nút Kết bạn rồi gửi lại.
+        const notFriend = String(e?.message || e).includes('FRIEND') || String(e?.message || e).includes('kết bạn');
+        await adapter.updateCandidate(req.params.id, {
+          zalo_invite_status: notFriend ? 'NOT_FRIEND' : 'FAILED',
+          zalo_uid: uid,
+          zalo_invite_at: new Date().toISOString(),
+          zalo_invite_error: String(e?.message || e),
+        } as any).catch(() => null);
+        broadcastUpdate('candidates', { action: 'zalo-invite-failed', id: req.params.id });
         return res.status(400).json({ error: 'ZALO_NOT_FRIEND', message: e?.message || e, uid, phone });
       }
     } catch (err: any) {

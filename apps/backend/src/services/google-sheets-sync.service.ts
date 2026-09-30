@@ -104,6 +104,11 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
       'Kết Quả',
       'Trạng Thái',
       'Mã Nguồn',
+      'Ngày PV',
+      'Khung Giờ PV',
+      'Người PV',
+      'Zalo Thư Mời',
+      'Zalo Lúc Gửi',
     ],
   },
   {
@@ -1158,7 +1163,7 @@ export class GoogleSheetsSyncService {
               targetSheetTitle = found.properties.title;
               const candRes = await this.sheetsClient.spreadsheets.values.get({
                 spreadsheetId: this.candidateSpreadsheetId,
-                range: `'${targetSheetTitle}'!A1:Q`,
+                range: `'${targetSheetTitle}'!A1:V`,
               });
               candRows = (candRes.data.values as string[][]) || [];
             }
@@ -1172,7 +1177,7 @@ export class GoogleSheetsSyncService {
           try {
             const candRes = await this.sheetsClient.spreadsheets.values.get({
               spreadsheetId: this.spreadsheetId,
-                range: `'FROM_NHAN_VIEN'!A1:Q`,
+                range: `'FROM_NHAN_VIEN'!A1:V`,
             });
             if (candRes.data.values && candRes.data.values.length > 1) {
               candRows = candRes.data.values as string[][];
@@ -1208,6 +1213,17 @@ export class GoogleSheetsSyncService {
         const colResult = findCol(/kết quả|sàng lọc|kết luận|result/i, 14);
         const colStatus = findCol(/trạng thái|status/i, 15);
         const colSourceCode = findCol(/mã nguồn|mã|form id|submission|code/i, 16);
+        // Cột vận hành do HR cập nhật (lịch PV + Zalo): form gốc không có -> fallback index cuối.
+        const colInterviewDate = findCol(/ngày pv|ngày phỏng vấn|interview.?date/i, 17);
+        const colInterviewSlot = findCol(/khung giờ pv|giờ pv|khung giờ|time.?slot|interview.?time/i, 18);
+        const colInterviewer = findCol(/người pv|người phỏng vấn|interviewer/i, 19);
+        const colZaloStatus = findCol(/zalo thư mời|thư mời zalo|zalo/i, 20);
+        const colZaloAt = findCol(/zalo lúc gửi|zalo.*gửi|invite.?at/i, 21);
+        // Giữ lịch PV + trạng thái Zalo trong bộ nhớ (HR vừa thao tác chưa kịp push):
+        // pull form gốc không có các cột này nên phải overlay, ngược lại reload là mất.
+        const prevById = new Map<string, any>(
+          ((fallback as any).candidates || []).map((c: any) => [c.submission_id, c])
+        );
 
         const dataRows = candRows.slice(1);
         fallback.candidates = dataRows
@@ -1256,12 +1272,21 @@ export class GoogleSheetsSyncService {
             const aiScore = aiEval.score;
             let result = getVal(colResult) || aiEval.screeningNote;
 
-            const status = (getVal(colStatus) || 'NEW') as any;
+            const rawStatus = getVal(colStatus) || '';
             const sourceCode = getVal(colSourceCode) || `UBM_FORM_${String(idx + 1).padStart(4, '0')}`;
             const submissionId = `CAND_${String(idx + 1).padStart(4, '0')}`;
+            const prev = prevById.get(submissionId) || {};
+            // Sheet form gốc không có trạng thái -> 'NEW'/trống thì giữ trạng thái bộ nhớ (INVITED...)
+            const status = (rawStatus && rawStatus !== 'NEW' ? rawStatus : (prev.status && prev.status !== 'NEW' ? prev.status : (rawStatus || 'NEW'))) as any;
 
             return {
               submission_id: submissionId,
+              interview_date: getVal(colInterviewDate) || prev.interview_date || undefined,
+              interview_time_slot: getVal(colInterviewSlot) || prev.interview_time_slot || undefined,
+              interviewer_id: getVal(colInterviewer) || prev.interviewer_id || undefined,
+              zalo_invite_status: getVal(colZaloStatus) || prev.zalo_invite_status || undefined,
+              zalo_invite_at: getVal(colZaloAt) || prev.zalo_invite_at || undefined,
+              zalo_uid: prev.zalo_uid || undefined,
               full_name: fullName,
               phone_normalized: phoneNormalized,
               phone,
@@ -1603,6 +1628,11 @@ export class GoogleSheetsSyncService {
           c.screening_result || 'Đạt (Đủ điều kiện PV)',
           c.status || 'NEW',
           c.source_code || c.submission_id || `UBM_FORM_${String(idx + 1).padStart(4, '0')}`,
+          (c as any).interview_date || '',
+          (c as any).interview_time_slot || '',
+          (c as any).interviewer_id || '',
+          (c as any).zalo_invite_status || '',
+          (c as any).zalo_invite_at || '',
         ]);
         await this.overwriteSheetData('FROM_NHAN_VIEN', candHeaders, candRows);
         details.candidates = candRows.length;
