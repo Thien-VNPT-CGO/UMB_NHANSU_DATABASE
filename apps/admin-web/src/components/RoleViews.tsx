@@ -576,7 +576,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       loadSwaps();
     }
   }, [activeTab]);
-  // Đồng hồ đếm ngược từng giây cho phiếu 60 phút (chỉ chạy ở tab duyệt để nhẹ máy)
+  // Đồng hồ đếm ngược từng giây cho phiếu 30 phút (chỉ chạy ở tab duyệt để nhẹ máy)
   const [adjNow, setAdjNow] = useState(() => Date.now());
   useEffect(() => {
     if (activeTab !== 'hr-adjustments') return;
@@ -584,7 +584,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     return () => clearInterval(clock);
   }, [activeTab]);
   useEffect(() => {
-    // Phiếu 60 phút tự hủy: refresh 20s để cập nhật trạng thái realtime
+    // Phiếu 30 phút tự hủy: refresh 20s để cập nhật trạng thái realtime
     if (activeTab !== 'hr-adjustments') return;
     const t = setInterval(() => loadAdjustments(), 20000);
     return () => clearInterval(t);
@@ -5459,7 +5459,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const adjRemaining = (a: any) => {
       const created = new Date(a.created_at).getTime();
       if (!Number.isFinite(created)) return null;
-      const left = Math.max(0, 60 * 60000 - (adjNow - created));
+      const left = Math.max(0, 30 * 60000 - (adjNow - created));
       const mm = Math.floor(left / 60000);
       const ss = Math.floor((left % 60000) / 1000);
       return `Còn ${mm}p ${String(ss).padStart(2, '0')}s hiệu lực`;
@@ -5505,7 +5505,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <h1 style={{ fontSize: '20px', fontWeight: 800, margin: 0 }}>12. Bổ Sung & Điều Chỉnh Dữ Liệu Công</h1>
-            <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '4px 0 0' }}>Xử lý quên check-in/out hoặc sự cố GPS/Camera gửi từ Cổng Nhân Viên (có audit trail). Phiếu chỉ hiệu lực <strong>60 phút</strong> — quá hạn hệ thống tự từ chối.</p>
+            <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '4px 0 0' }}>Xử lý quên check-in/out hoặc sự cố GPS/Camera gửi từ Cổng Nhân Viên (có audit trail). Phiếu chỉ hiệu lực <strong>30 phút</strong> (tính từ lúc NV gửi) — quá hạn hệ thống tự từ chối.</p>
           </div>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <span className="badge" style={{ backgroundColor: pendingAdj.length > 0 ? '#FEF3C7' : '#DCFCE7', color: pendingAdj.length > 0 ? '#92400E' : '#166534', fontWeight: 800 }}>

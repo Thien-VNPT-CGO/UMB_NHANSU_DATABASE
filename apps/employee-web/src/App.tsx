@@ -238,7 +238,7 @@ export function App() {
   });
   // Ca cần bổ sung (ngày 2 ca: phải chọn đúng ca thì HR duyệt mới cập nhật đúng)
   const [adjustShiftId, setAdjustShiftId] = useState('');
-  // Phiếu bổ sung công của tôi (trạng thái realtime + đếm ngược 60 phút)
+  // Phiếu bổ sung công của tôi (trạng thái realtime + đếm ngược 30 phút)
   const [myAdjustments, setMyAdjustments] = useState<any[]>([]);
   const [adjNow, setAdjNow] = useState(() => Date.now());
   const fetchMyAdjustments = async () => {
@@ -296,7 +296,7 @@ export function App() {
   useEffect(() => {
     if (activeTab === 'test_exam' || activeTab === 'test_training') fetchMyTests();
     if (activeTab === 'swap_shift') fetchMySwaps();
-    // Đồng hồ đếm ngược phiếu 60 phút (chỉ chạy ở tab bổ sung công)
+    // Đồng hồ đếm ngược phiếu 30 phút (chỉ chạy ở tab bổ sung công)
     if (activeTab === 'adjustment' || activeTab === 'emergency_adjust') {
       const clock = setInterval(() => setAdjNow(Date.now()), 1000);
       return () => clearInterval(clock);
@@ -2994,7 +2994,7 @@ export function App() {
                 {isProbation ? '7. Giải Trình & Bổ Sung Công' : '7. Nghỉ Khẩn Cấp & Bổ Sung Công'}
               </h3>
               <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '14px' }}>
-                Gửi giải trình khi quên check-in/out hoặc báo nghỉ đột xuất (đồng bộ trực tiếp sang HR Tab 10 và Google Sheets). Phiếu hiệu lực <strong>60 phút</strong> — quá hạn HR chưa duyệt thì hệ thống tự từ chối.
+                Gửi giải trình khi quên check-in/out hoặc báo nghỉ đột xuất (đồng bộ trực tiếp sang HR Tab 10 và Google Sheets). Phiếu hiệu lực <strong>30 phút</strong> (tính từ lúc gửi) — quá hạn HR chưa duyệt thì hệ thống tự từ chối.
               </p>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -3063,7 +3063,7 @@ export function App() {
                 </button>
               </div>
             </div>
-            {/* PHIẾU CỦA TÔI — trạng thái realtime + đếm ngược 60 phút */}
+                {/* PHIẾU CỦA TÔI — trạng thái realtime + đếm ngược 30 phút */}
             {myAdjustments.length > 0 && (
               <div className="card">
                 <h3 style={{ fontSize: '14px', fontWeight: 800, marginBottom: '8px' }}>
@@ -3072,7 +3072,7 @@ export function App() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {myAdjustments.map((a: any) => {
                     const created = new Date(a.created_at).getTime();
-                    const leftMs = Number.isFinite(created) ? Math.max(0, 60 * 60000 - (adjNow - created)) : 0;
+                    const leftMs = Number.isFinite(created) ? Math.max(0, 30 * 60000 - (adjNow - created)) : 0;
                     const leftMin = Math.floor(leftMs / 60000);
                     const leftSec = Math.floor((leftMs % 60000) / 1000);
                     const auto = a.status === 'REJECTED' && String(a.review_note || '').startsWith('Tự động từ chối');
@@ -3085,7 +3085,7 @@ export function App() {
                             color: a.status === 'APPROVED' ? '#166534' : (auto ? '#6B7280' : '#991B1B'),
                             fontWeight: 800,
                           }}>
-                            {a.status === 'APPROVED' ? 'Đã duyệt' : auto ? 'Tự hủy (hết 60p)' : a.status === 'REJECTED' ? 'Bị từ chối' : 'Chờ duyệt'}
+                            {a.status === 'APPROVED' ? 'Đã duyệt' : auto ? 'Tự hủy (hết 30p)' : a.status === 'REJECTED' ? 'Bị từ chối' : 'Chờ duyệt'}
                           </span>
                         </div>
                         {a.status === 'PENDING' && (

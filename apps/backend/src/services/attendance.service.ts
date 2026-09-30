@@ -272,10 +272,10 @@ export class AttendanceService {
   }
 
   /**
-   * Ràng buộc hiệu lực phiếu: PENDING quá `ttlMinutes` (mặc định 60 phút) thì
-   * hệ thống tự từ chối. Idempotent (chỉ chạm PENDING).
+   * Ràng buộc hiệu lực phiếu: PENDING quá `ttlMinutes` (mặc định 30 phút, tính từ
+   * lúc NV gửi phiếu) thì hệ thống tự từ chối. Idempotent (chỉ chạm PENDING).
    */
-  async expireStaleAdjustments(now: Date = new Date(), ttlMinutes = 60): Promise<{ checked: number; expired: string[] }> {
+  async expireStaleAdjustments(now: Date = new Date(), ttlMinutes = 30): Promise<{ checked: number; expired: string[] }> {
     const all = await this.repo.listAttendanceAdjustments().catch(() => []);
     const expired: string[] = [];
     let checked = 0;
