@@ -155,14 +155,25 @@ export function attShiftStatus(shift: any, inEvt: any, outEvt: any, absentEvt: a
  * trễ <5p: không phạt; 5–29p: -30k; 30–59p: -50% lương ca; ≥60p hoặc thiếu in/out: 0đ.
  */
 export const SHIFT_HOURS_MAP: Record<string, number> = { CA_1: 5, CA_2: 6, CA_3: 5 };
-export function shiftPayInfo(shiftCode: string, ratePerHour: number, inEvt: any, outEvt: any): {
+/** Phút trễ: ưu tiên cờ server, mất cờ (dòng Sheet cũ) thì tính bù từ giờ vào ca. */
+export function lateMinOf(inEvt: any, shiftStartAt?: string): number {
+  if (inEvt?.is_late) return Number(inEvt.minutes_deviation) || 0;
+  if (inEvt && (inEvt.is_late === undefined || inEvt.is_late === null)) {
+    const st = new Date(shiftStartAt || '').getTime();
+    const ct = new Date(inEvt.client_time || '').getTime();
+    if (Number.isFinite(st) && Number.isFinite(ct)) return Math.max(0, Math.round((ct - st) / 60000));
+  }
+  return 0;
+}
+
+export function shiftPayInfo(shiftCode: string, ratePerHour: number, inEvt: any, outEvt: any, shiftStartAt?: string): {
   hours: number; rate: number; shiftPay: number; lateMin: number;
   fineLabel: string; deduction: number; net: number; unpaid: boolean;
 } {
   const hours = SHIFT_HOURS_MAP[shiftCode] ?? 5;
   const rate = Number(ratePerHour) || 0;
   const shiftPay = hours * rate;
-  const lateMin = inEvt?.is_late ? Number(inEvt.minutes_deviation) || 0 : 0;
+  const lateMin = lateMinOf(inEvt, shiftStartAt);
   if (!inEvt || !outEvt) {
     return { hours, rate, shiftPay, lateMin, fineLabel: 'Thiếu check-in/out — không lương', deduction: 0, net: 0, unpaid: true };
   }
@@ -5489,13 +5500,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 };
                                 const inE = it.list.find((e: any) => e.type === 'CHECK_IN');
                                 const outE = it.list.find((e: any) => e.type === 'CHECK_OUT');
-                                const late = inE?.is_late ? ` trễ ${Number(inE.minutes_deviation) || 0}p` : '';
+                                const lateMinCell = lateMinOf(inE, it.shift?.start_at);
+                                const late = lateMinCell > 0 ? ` trễ ${lateMinCell}p` : '';
                                 const thumb = (e: any) => e?.drive_object_id && !String(e.drive_object_id).startsWith('DRV_')
                                   ? <AttPhoto eventId={e.event_id} style={{ width: '40px', height: '40px' }} />
                                   : null;
                                 // Lương ca + phạt (tạm tính theo đơn giá hồ sơ; Finance chốt ở kỳ lương)
                                 const empRate = Number((emp as any)?.current_rate_per_hour) || 0;
-                                const pay = shiftPayInfo(it.shift?.shift_code, empRate, inE, outE);
+                                const pay = shiftPayInfo(it.shift?.shift_code, empRate, inE, outE, it.shift?.start_at);
                                 const fmtVnd = (n: number) => `${Math.round(n).toLocaleString('vi-VN')}đ`;
                                 // Đổi/nhường ca liên quan ca này (nếu có) — phiếu mới nhất còn hiệu lực
                                 const relSwap = pickSwapOf(it.shift?.assignment_id);

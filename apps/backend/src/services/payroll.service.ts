@@ -88,7 +88,15 @@ export class PayrollService {
               absentShifts++;
               continue;
             }
-            const lateMin = inEvt.is_late ? Number(inEvt.minutes_deviation) || 0 : 0;
+            // Cờ trễ có thể mất sau vòng pull Sheet cũ -> tính bù từ giờ check-in so với giờ vào ca.
+            const lateMin = inEvt.is_late
+              ? Number(inEvt.minutes_deviation) || 0
+              : (() => {
+                  const st = new Date(s.start_at).getTime();
+                  const ct = new Date(inEvt.client_time).getTime();
+                  if (!Number.isFinite(st) || !Number.isFinite(ct)) return 0;
+                  return Math.max(0, Math.round((ct - st) / 60000));
+                })();
             const fine = lateFineFor(lateMin, shiftPay);
             if (fine.unpaid) {
               absentShifts++;
