@@ -79,7 +79,7 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   console.log(`CORS origins: ${getAllowedOrigins().join(', ') || '(none — set CORS_ORIGINS in production)'}`);
   console.log(`Google Sheets Mode: ${adapter.getStatus().mode}`);
   console.log(`Realtime Socket.IO: Ready`);
-  console.log(`Weekly-OFF gate: Fri 12:00 -> Sat 15:00 (VN) + reminder 5 min before`);
+  console.log(`Weekly-OFF gate: Fri 11:45 -> Sat 15:00 (VN) + reminder 5 min before`);
   console.log(`====================================================`);
 
   // Scheduler nhắc mở cổng đăng ký OFF tuần (mỗi 60s + ngay khi boot).
