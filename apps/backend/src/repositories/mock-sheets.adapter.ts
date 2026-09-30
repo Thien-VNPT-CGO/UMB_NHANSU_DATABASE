@@ -546,6 +546,14 @@ export class MockSheetsAdapter implements ISheetsRepository {
     return newAdj;
   }
 
+  async updateAttendanceEvent(eventId: string, patch: Partial<AttendanceEvent>): Promise<AttendanceEvent> {
+    this.checkErrors();
+    const evt = this.attendanceEvents.find(e => e.event_id === eventId);
+    if (!evt) throw new Error('ATTENDANCE_EVENT_NOT_FOUND');
+    Object.assign(evt, patch);
+    return { ...evt };
+  }
+
   async listAttendanceAdjustments(branchId?: string, employeeId?: string): Promise<AttendanceAdjustment[]> {
     this.checkErrors();
     return this.attendanceAdjustments.filter(a => {

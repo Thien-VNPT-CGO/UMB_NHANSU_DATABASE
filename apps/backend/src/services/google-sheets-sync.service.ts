@@ -1716,6 +1716,24 @@ export class GoogleSheetsSyncService {
     return adjRows.length;
   }
 
+  /**
+   * Đẩy riêng tab SU_KIEN_DIEM_DANH (await được): dùng sau khi xóa vi phạm/phạt
+   * trên lượt check-in/out để Sheet khớp ngay, pull sau không hồi sinh mức phạt cũ.
+   */
+  public async pushEventsTab(repo: { getAttendanceEvents(emp?: string, date?: string): Promise<any[]> }): Promise<number> {
+    const events = await repo.getAttendanceEvents('*', '*').catch(() => []);
+    const rows = (events || []).map((e: any) => [
+      e.event_id, e.assignment_id, e.employee_id, e.type, e.server_received_at,
+      e.gps_latitude ?? '', e.gps_longitude ?? '', e.distance_meters ?? '', e.gps_status || '',
+      e.drive_object_id || '', e.request_id || '', e.uniform_pink_ratio ?? '',
+      e.client_time || '',
+      e.is_late ? 'YES' : '', e.is_early ? 'YES' : '', Number(e.minutes_deviation) || 0,
+      e.fine_tier || 'NONE', Number(e.fine_amount) || 0,
+    ]);
+    await this.overwriteSheetData('SU_KIEN_DIEM_DANH', SHEETS_DEFINITIONS.find(d => d.title === 'SU_KIEN_DIEM_DANH')!.headers, rows);
+    return rows.length;
+  }
+
   /** Upload buffer bất kỳ lên Google Drive (dùng lưu ZIP archive tuần chấm công). */
   public async uploadBufferToDrive(fileName: string, mimeType: string, buffer: Buffer): Promise<{ fileId: string; webViewLink?: string }> {
     if (!this.driveClient) {

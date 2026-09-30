@@ -567,6 +567,19 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     return this.fallbackAdapter.getAttendanceEvents(employeeId, date);
   }
 
+  async updateAttendanceEvent(eventId: string, patch: any) {
+    const res = await this.fallbackAdapter.updateAttendanceEvent(eventId, patch);
+    // Đẩy Sheet đồng bộ để mức phạt đã xóa không bị pull hồi sinh.
+    if (this.isConfigured) {
+      try {
+        await this.syncService.pushEventsTab(this.fallbackAdapter);
+      } catch (err) {
+        console.warn('[GoogleSheetsAdapter] Đẩy SU_KIEN_DIEM_DANH sau cập nhật thất bại:', (err as any)?.message || err);
+      }
+    }
+    return res;
+  }
+
   async findAttendanceEventByRequestId(requestId: string) {
     return this.fallbackAdapter.findAttendanceEventByRequestId(requestId);
   }

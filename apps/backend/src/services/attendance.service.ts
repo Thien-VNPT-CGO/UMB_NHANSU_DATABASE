@@ -380,15 +380,38 @@ export class AttendanceService {
       execute: async () => {
         const updated = await this.repo.updateAttendanceAdjustment(adjId, status, approverId, minutesApproved, note);
         // HR DUYỆT -> dựng lại bản ghi chấm công còn thiếu để lịch + realtime + lương
-        // ghi nhận ca có đi làm (đồng bộ Sheets như mọi sự kiện). Từ chối -> giữ nguyên.
+        // ghi nhận ca có đi làm (đồng bộ Sheets như mọi sự kiện). Từ chối -> giữ nguyên
+        // vi phạm/phạt (ngược lại).
         let backfilled: string[] = [];
+        let violationCleared = 0;
         if (status === 'APPROVED') {
           backfilled = await this.backfillFromAdjustment(updated).catch(() => []);
+          // Duyệt = xóa vi phạm: gỡ cờ trễ + phạt trên mọi lượt IN/OUT của ca này
+          // để NV không bị tính vi phạm (lưới realtime + kỳ lương đều đọc từ đây).
+          try {
+            const adjEmp = (updated as any).employee_id;
+            const adjAssign = (updated as any).assignment_id;
+            if (adjEmp && adjAssign) {
+              const evts = await this.repo.getAttendanceEvents(adjEmp).catch(() => []);
+              for (const e of evts || []) {
+                if ((e as any).assignment_id !== adjAssign) continue;
+                if ((e as any).type !== 'CHECK_IN' && (e as any).type !== 'CHECK_OUT') continue;
+                if (!(e as any).is_late && !(e as any).fine_amount && !(e as any).fine_tier) continue;
+                await this.repo.updateAttendanceEvent((e as any).event_id, {
+                  is_late: false,
+                  minutes_deviation: 0,
+                  fine_tier: 'NONE',
+                  fine_amount: 0,
+                } as any).catch(() => null);
+                violationCleared++;
+              }
+            }
+          } catch { /* best-effort */ }
         }
-        if (this.io && backfilled.length > 0) {
+        if (this.io && (backfilled.length > 0 || violationCleared > 0)) {
           this.io.emit('data:updated', { entity: 'attendance', data: { action: 'adjustment-backfill', adjId }, timestamp: new Date().toISOString() });
         }
-        return { ...updated, _backfilled: backfilled } as any;
+        return { ...updated, _backfilled: backfilled, _violationCleared: violationCleared } as any;
       },
     });
   }

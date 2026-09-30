@@ -5746,9 +5746,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           body: JSON.stringify({ status, minutesApproved: status === 'APPROVED' ? adj.minutes_requested : 0 }),
         });
         const filled = (res as any)?.result?._backfilled || (res as any)?._backfilled || [];
+        const cleared = (res as any)?.result?._violationCleared || (res as any)?._violationCleared || 0;
         showToast(status === 'APPROVED'
-          ? `Đã duyệt bổ sung công!${filled.length ? ` Đã dựng lại ${filled.join('+')} — lịch, realtime và lương cập nhật.` : ''}`
-          : 'Đã từ chối phiếu!');
+          ? `Đã duyệt bổ sung công!${filled.length ? ` Đã dựng lại ${filled.join('+')} — lịch, realtime và lương cập nhật.` : ''}${cleared ? ` Đã xóa ${cleared} vi phạm/phạt check-in/out của ca.` : ''}`
+          : 'Đã từ chối phiếu (giữ nguyên vi phạm/phạt)!');
         await loadAdjustments();
         if (onRefreshData) await onRefreshData();
         if (onSyncSheets) await onSyncSheets();

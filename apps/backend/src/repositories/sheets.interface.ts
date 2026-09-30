@@ -70,6 +70,7 @@ export interface ISheetsRepository {
   getAttendanceEvents(employeeId?: string, date?: string): Promise<AttendanceEvent[]>;
   findAttendanceEventByRequestId(requestId: string): Promise<AttendanceEvent | null>;
   deleteAttendanceEvent(eventId: string): Promise<boolean>;
+  updateAttendanceEvent(eventId: string, patch: Partial<AttendanceEvent>): Promise<AttendanceEvent>;
   createAttendanceAdjustment(adj: Omit<AttendanceAdjustment, 'created_at' | 'updated_at' | 'version'>): Promise<AttendanceAdjustment>;
   listAttendanceAdjustments(branchId?: string, employeeId?: string): Promise<AttendanceAdjustment[]>;
   updateAttendanceAdjustment(id: string, status: AdjustmentStatus, approverId: string, minutesApproved?: number, note?: string): Promise<AttendanceAdjustment>;
