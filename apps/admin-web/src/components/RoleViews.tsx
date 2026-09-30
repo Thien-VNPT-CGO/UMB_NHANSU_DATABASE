@@ -2536,8 +2536,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{c.phone || c.phone_normalized}</div>
                     </td>
                     <td style={{ padding: '14px 20px' }}>
-                      <strong>{c.position || 'Nhân viên mới'}</strong>
-                      <div style={{ fontSize: '11px', color: '#2563EB' }}>{getDisplayBranch(c.branch_id || 'CN130')}</div>
+                      <strong>{c.apply_position || c.position || 'Nhân viên Bán hàng / Pha chế'}</strong>
+                      <div style={{ fontSize: '11px', color: '#2563EB' }}>{c.branch_name || getDisplayBranch(c.preferred_branch_id || c.branch_id || 'CN130')}</div>
                     </td>
                     <td style={{ padding: '14px 20px', fontWeight: 700 }}>
                       {(c as any).interview_date ? `${(c as any).interview_time_slot || ''} ${ (c as any).interview_date}` : (c.interview_time || 'Chờ xếp lịch')}
