@@ -1428,6 +1428,18 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Rà soát phiếu đổi/tráo ca sai quy định (ca ngoài tuần gửi phiếu): hủy phiếu
+  // + trả lịch từng NV về chủ ban đầu. Phiếu đúng tuần (kể cả tuần cũ) giữ nguyên.
+  app.post('/admin/swaps/audit-out-of-week', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await schedulesService.auditOutOfWeekSwaps(req.user!.id);
+      broadcastUpdate('swaps', { action: 'audit-out-of-week', ...result });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post('/swap-requests/:id/approve', authMiddleware, requireRole(['ADMIN', 'HR', 'STORE']), validate({ params: idParams, body: swapApproveBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const result = await schedulesService.approveSwapManager(

@@ -218,6 +218,11 @@ export async function getWeeklyOffStats(
   };
 }
 
+/** Tuần hiện tại (Mon-Sun) theo giờ VN — mốc ràng buộc đổi/tráo ca trong tuần đã sắp lịch. */
+export function currentVnWeekRange(now: Date = new Date()): { mon: string; sun: string } {
+  return weekRangeOf(toDateStr(shiftedNow(now)));
+}
+
 /** Khung Mon-Sun chứa một ngày cho trước (giới hạn 2 OFF/tuần theo tuần này). */
 export function weekRangeOf(dateStr: string): { mon: string; sun: string } {
   const d = new Date(`${dateStr}T00:00:00Z`);

@@ -4704,6 +4704,26 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               Theo dõi quy trình Tráo đổi ca (A ⇄ B) & Điều phối Nhường ca (+30.000đ/ca phụ cấp hỗ trợ) khi NV không tìm được người thay
             </p>
           </div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+          <button
+            className="btn-secondary"
+            style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}
+            onClick={async () => {
+              if (!window.confirm('Rà soát toàn bộ phiếu đổi/tráo ca SAI quy định (ca ngoài tuần gửi phiếu)?\nHệ thống sẽ HỦY phiếu + TRẢ lịch từng NV về chủ ban đầu. Phiếu đúng tuần (kể cả tuần cũ) được giữ nguyên.')) return;
+              try {
+                const r = await apiRequest('/admin/swaps/audit-out-of-week', { method: 'POST' });
+                const v = (r as any)?.violations || [];
+                showToast(`Rà soát ${(r as any)?.checked ?? 0} phiếu: hủy ${v.length} phiếu sai tuần, trả lịch về ban đầu.${v.length > 0 ? ' Chi tiết: ' + v.slice(0, 3).map((x: any) => `${x.swap_id} (${x.reason})`).join(' | ') + (v.length > 3 ? ' | ...' : '') : ''}`);
+                await loadSwaps();
+                if (onRefreshData) await onRefreshData();
+                if (onSyncSheets) await onSyncSheets();
+              } catch (e: any) {
+                showToast(e?.message || 'Lỗi khi rà soát!');
+              }
+            }}
+          >
+            🛡 Rà soát phiếu sai tuần
+          </button>
           <button
             className="btn-primary"
             style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#2563EB' }}
@@ -4712,6 +4732,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <Sparkles size={16} />
             + Tạo Phiếu Điều Phối Nhường Ca (+30.000đ)
           </button>
+          </div>
         </div>
 
         {/* CHÍNH SÁCH +30.000Đ PHỤ CẤP KHI NHẬN LÀM THAY / NHƯỜNG CA */}

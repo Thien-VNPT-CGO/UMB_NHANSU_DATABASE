@@ -9,7 +9,43 @@ import {
 } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { singleWriterQueue } from '../repositories/single-writer-queue.js';
-import { weekRangeOf } from './weekly-off.service.js';
+import { weekRangeOf, currentVnWeekRange } from './weekly-off.service.js';
+
+export interface OutOfWeekViolation {
+  swap_id: string;
+  swap_kind: string;
+  status: string;
+  created_at: string;
+  createdWeek: { mon: string; sun: string };
+  shiftDates: string[];
+  reason: string;
+  reverted: string[];
+  skipped: string[];
+}
+
+/** Ngày VN (YYYY-MM-DD) của một ISO instant. */
+function vnDateOf(iso: string): string {
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return '';
+  return new Date(t + 7 * 3_600_000).toISOString().slice(0, 10);
+}
+
+/**
+ * Ràng buộc đổi/tráo ca: mọi ca liên quan phải nằm trong TUẦN HIỆN TẠI
+ * (Mon-Sun chứa hôm nay, giờ VN) đã sắp lịch. Ngoài tuần -> từ chối.
+ */
+function assertDatesInCurrentWeek(dates: string[], now: Date = new Date()): { mon: string; sun: string } {
+  const wk = currentVnWeekRange(now);
+  for (const d of dates) {
+    const day = String(d || '').slice(0, 10);
+    if (!day || day < wk.mon || day > wk.sun) {
+      throw new Error(
+        `SWAP_OUT_OF_CURRENT_WEEK: Chỉ được đổi/tráo ca trong tuần hiện tại đã sắp lịch (${wk.mon} → ${wk.sun}). Ca ngày ${day || '?'} nằm ngoài tuần — hệ thống từ chối phiếu.`
+      );
+    }
+  }
+  return wk;
+}
 import { canonicalBranch } from './auto-schedule.service.js';
 import { Server } from 'socket.io';
 
@@ -297,6 +333,20 @@ export class SchedulesService {
     reason: string;
   }) {
     const swapId = `SWAP_${Date.now()}`;
+    // Chặn ngay từ lúc gửi: ca phải tồn tại + nằm trong tuần hiện tại.
+    const reqSh = data.requesterAssignmentId
+      ? await this.repo.getShiftById(data.requesterAssignmentId).catch(() => null)
+      : null;
+    const tgtSh = data.targetAssignmentId
+      ? await this.repo.getShiftById(data.targetAssignmentId).catch(() => null)
+      : null;
+    if (data.requesterAssignmentId && !reqSh) throw new Error('SWAP_SHIFT_NOT_FOUND: Ca của bạn không còn tồn tại.');
+    if (data.targetAssignmentId && !tgtSh) throw new Error('SWAP_SHIFT_NOT_FOUND: Ca của đồng nghiệp không còn tồn tại.');
+    if (reqSh && (reqSh as any).status === 'CANCELLED') throw new Error('SWAP_SHIFT_CANCELLED: Ca của bạn đã bị hủy, không thể đổi.');
+    if (tgtSh && (tgtSh as any).status === 'CANCELLED') throw new Error('SWAP_SHIFT_CANCELLED: Ca của đồng nghiệp đã bị hủy, không thể đổi.');
+    assertDatesInCurrentWeek(
+      [reqSh ? (reqSh as any).date : '', tgtSh ? (tgtSh as any).date : ''].filter(Boolean)
+    );
     return singleWriterQueue.enqueue({
       entityType: 'PHIEU_DOI_CA',
       entityId: swapId,
@@ -341,6 +391,8 @@ export class SchedulesService {
   }) {
     const shift = await this.repo.getShiftById(data.requesterAssignmentId);
     if (!shift) throw new Error('SHIFT_NOT_FOUND_FOR_DISPATCH');
+    if ((shift as any).status === 'CANCELLED') throw new Error('SWAP_SHIFT_CANCELLED: Ca cần người làm thay đã bị hủy.');
+    assertDatesInCurrentWeek([(shift as any).date]);
     const swapId = `DISP_${Date.now()}`;
     return singleWriterQueue.enqueue({
       entityType: 'PHIEU_DOI_CA',
@@ -387,6 +439,20 @@ export class SchedulesService {
         }
         if (swap.requester_id === partnerId) {
           throw new Error('CANNOT_ACCEPT_OWN_DISPATCH: Không thể tự nhận ca mình nhờ.');
+        }
+        // Đồng ý phiếu ngoài tuần hiện tại -> chặn (kể cả tráo tay đôi tự hoàn tất).
+        // Từ chối thì luôn cho qua để dọn phiếu.
+        if (accept) {
+          const dates: string[] = [];
+          const rSh = swap.requester_assignment_id
+            ? await this.repo.getShiftById(swap.requester_assignment_id).catch(() => null)
+            : null;
+          const tSh = swap.target_assignment_id
+            ? await this.repo.getShiftById(swap.target_assignment_id).catch(() => null)
+            : null;
+          if (rSh) dates.push((rSh as any).date);
+          if (tSh) dates.push((tSh as any).date);
+          if (dates.length > 0) assertDatesInCurrentWeek(dates);
         }
 
         // NV tự thỏa thuận với nhau: B bấm Đồng ý là chuyển ca ngay,
@@ -498,6 +564,103 @@ export class SchedulesService {
     });
   }
 
+  /**
+   * Rà soát toàn bộ phiếu đổi/tráo ca sai quy định (ca nằm NGOÀI tuần Mon-Sun
+   * chứa ngày gửi phiếu): hủy phiếu + trả lịch từng NV về chủ ban đầu.
+   * - Phiếu đúng tuần (kể cả tuần cũ đã qua) -> giữ nguyên.
+   * - APPROVED rồi -> đảo ngược người trực về chủ gốc (bỏ qua ca đã đổi chủ sau đó).
+   * - PENDING/PARTNER_ACCEPTED -> chỉ hủy phiếu (ca chưa hề bị đụng).
+   * Idempotent: phiếu REJECTED/CANCELLED bỏ qua.
+   */
+  async auditOutOfWeekSwaps(actorId: string): Promise<{ checked: number; violations: any[] }> {
+    const all = await this.repo.listSwapRequests().catch(() => []);
+    const violations: any[] = [];
+    for (const sw of all || []) {
+      const status = (sw as any).status;
+      if (status === 'REJECTED' || status === 'CANCELLED') continue;
+      const createdVn = vnDateOf((sw as any).created_at);
+      if (!createdVn) continue;
+      const createdWk = weekRangeOf(createdVn);
+      const ids = [(sw as any).requester_assignment_id, (sw as any).target_assignment_id].filter(Boolean);
+      const dates: string[] = [];
+      const missing: string[] = [];
+      for (const id of ids) {
+        const sh: any = await this.repo.getShiftById(id).catch(() => null);
+        if (!sh) missing.push(id);
+        else dates.push(String(sh.date || '').slice(0, 10));
+      }
+      const bad = dates.filter(d => !d || d < createdWk.mon || d > createdWk.sun);
+      if (bad.length === 0 && missing.length === 0) continue;
+
+      // --- Hoàn trả lịch về chủ ban đầu (chỉ khi phiếu đã APPROVED) ---
+      const reverted: string[] = [];
+      const skipped: string[] = [];
+      if (status === 'APPROVED') {
+        const reqId = (sw as any).requester_id;
+        const tgtId = (sw as any).target_employee_id;
+        const reqAid = (sw as any).requester_assignment_id;
+        const tgtAid = (sw as any).target_assignment_id;
+        const restore = async (aid: string, originalHolder: string, counterparty: string) => {
+          if (!aid || !originalHolder) return;
+          const sh: any = await this.repo.getShiftById(aid).catch(() => null);
+          if (!sh) { skipped.push(`${aid}: ca không còn — bỏ qua`); return; }
+          if (sh.employee_id === originalHolder) { reverted.push(`${aid}: đã đúng chủ ${originalHolder}`); return; }
+          if (counterparty && sh.employee_id !== counterparty) {
+            skipped.push(`${aid}: đang thuộc ${sh.employee_id} (đã đổi chủ sau đó) — giữ nguyên`);
+            return;
+          }
+          await this.repo.updateShiftAssignment(aid, {
+            employee_id: originalHolder,
+            schedule_version: (sh.schedule_version || 0) + 1,
+          });
+          reverted.push(`${aid}: trả về ${originalHolder}`);
+        };
+        if (tgtAid) {
+          await restore(reqAid, reqId, tgtId); // tráo 2 chiều
+          await restore(tgtAid, tgtId, reqId);
+        } else {
+          await restore(reqAid, reqId, tgtId); // nhờ làm thay 1 chiều / điều phối
+        }
+      }
+
+      const reason = missing.length > 0 && bad.length === 0
+        ? `Ca gốc không còn tồn tại (${missing.join(', ')})`
+        : `Ca ngày ${[...new Set(dates)].join(', ') || '?'} ngoài tuần gửi phiếu (${createdWk.mon} → ${createdWk.sun})`;
+      await singleWriterQueue.enqueue({
+        entityType: 'PHIEU_DOI_CA',
+        entityId: (sw as any).swap_id,
+        actorId,
+        execute: async () => {
+          const fresh: any = await this.repo.getSwapById((sw as any).swap_id).catch(() => null);
+          if (!fresh || fresh.status === 'REJECTED' || fresh.status === 'CANCELLED') return fresh;
+          return this.repo.updateSwapRequest((sw as any).swap_id, {
+            status: 'CANCELLED',
+            rejection_reason: 'Hủy do đổi/tráo ca ngoài tuần hiện tại (sai quy định) — đã trả lịch về ban đầu.',
+            approved_by: actorId,
+            approved_at: new Date().toISOString(),
+          } as any);
+        },
+      });
+      if (this.io) {
+        try {
+          this.io.emit('data:updated', { entity: 'swaps', data: { action: 'audit-cancel-out-of-week', swapId: (sw as any).swap_id }, timestamp: new Date().toISOString() });
+        } catch { /* non-fatal */ }
+      }
+      violations.push({
+        swap_id: (sw as any).swap_id,
+        swap_kind: (sw as any).swap_kind || 'EMPLOYEE_SWAP',
+        status,
+        created_at: (sw as any).created_at,
+        createdWeek: createdWk,
+        shiftDates: [...new Set(dates)],
+        reason,
+        reverted,
+        skipped,
+      });
+    }
+    return { checked: (all || []).length, violations };
+  }
+
   /** Phiếu điều phối mở (HR_DISPATCH + PENDING_PARTNER) của 1 chi nhánh cho NV nhận ca. */
   async listOpenDispatches(branchId: string) {
     const all = await this.repo.listSwapRequests();
@@ -521,6 +684,19 @@ export class SchedulesService {
         const swap = await this.repo.getSwapById(swapId);
         if (!swap || swap.status !== 'PARTNER_ACCEPTED') {
           throw new Error('SWAP_NOT_READY_FOR_APPROVAL');
+        }
+        // Duyệt phiếu ngoài tuần hiện tại -> chặn. Từ chối thì luôn cho qua.
+        if (accept) {
+          const dates: string[] = [];
+          const rSh = swap.requester_assignment_id
+            ? await this.repo.getShiftById(swap.requester_assignment_id).catch(() => null)
+            : null;
+          const tSh = swap.target_assignment_id
+            ? await this.repo.getShiftById(swap.target_assignment_id).catch(() => null)
+            : null;
+          if (rSh) dates.push((rSh as any).date);
+          if (tSh) dates.push((tSh as any).date);
+          if (dates.length > 0) assertDatesInCurrentWeek(dates);
         }
 
         if (!accept) {

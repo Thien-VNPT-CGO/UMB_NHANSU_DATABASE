@@ -685,6 +685,19 @@ export function App() {
     const today = vnTodayStr();
     return myShifts.filter((s: any) => s.date === today);
   };
+  /** Tuần hiện tại (Mon-Sun, giờ VN): chỉ được đổi/tráo ca trong tuần đã sắp lịch này. */
+  const swapWeekRange = () => {
+    const vn = new Date(Date.now() + 7 * 3_600_000);
+    const dowMon0 = (vn.getUTCDay() + 6) % 7;
+    const monMs = Date.UTC(vn.getUTCFullYear(), vn.getUTCMonth(), vn.getUTCDate()) - dowMon0 * 86_400_000;
+    const fmt = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+    return { mon: fmt(monMs), sun: fmt(monMs + 6 * 86_400_000) };
+  };
+  const inSwapWeek = (dateStr?: string) => {
+    const wk = swapWeekRange();
+    const d = String(dateStr || '').slice(0, 10);
+    return !!d && d >= wk.mon && d <= wk.sun;
+  };
   /**
    * Ca hiển thị realtime ở trang chủ: đang diễn ra > sắp tới hôm nay > ca cuối hôm nay.
    * Không có ca nào -> shift null (hiện trạng thái nghỉ).
@@ -2854,7 +2867,7 @@ export function App() {
               {swapFormType === 1 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   <div style={{ backgroundColor: '#FDF2F8', padding: '10px', borderRadius: '8px', fontSize: '12px', color: '#9D174D' }}>
-                    📌 <strong>Đặc điểm:</strong> Cùng chi nhánh ({employee?.default_branch_id || 'CN130'}). Có thể cùng hoặc khác ngày, cùng hoặc khác ca, OFF ⇄ Ca làm.
+                    📌 <strong>Đặc điểm:</strong> Cùng chi nhánh ({employee?.default_branch_id || 'CN130'}). Chỉ tráo ca <strong>trong tuần hiện tại</strong> ({swapWeekRange().mon} → {swapWeekRange().sun}) đã sắp lịch — ngoài tuần hệ thống từ chối.
                   </div>
 
                   <div>
@@ -2865,10 +2878,10 @@ export function App() {
                       style={{ width: '100%' }}
                     >
                       <option value="">-- Chọn ca thật của bạn --</option>
-                      {myShifts.length === 0 ? (
+                      {myShifts.filter((s: any) => inSwapWeek(s.date)).length === 0 ? (
                         <option value="">Chưa có ca nào trong tuần này</option>
                       ) : (
-                        myShifts.map((s: any, idx: number) => (
+                        myShifts.filter((s: any) => inSwapWeek(s.date)).map((s: any, idx: number) => (
                           <option key={idx} value={s.assignment_id}>
                             {s.date} ({s.shift_code})
                           </option>
@@ -2906,8 +2919,8 @@ export function App() {
                       onChange={(e) => setSwapData({ ...swapData, targetShift: e.target.value })}
                       style={{ width: '100%' }}
                     >
-                      <option value="">-- Chọn ca thật của B --</option>
-                      {targetShifts.map((s: any, idx: number) => (
+                      <option value="">-- Chọn ca thật của B (tuần hiện tại) --</option>
+                      {targetShifts.filter((s: any) => inSwapWeek(s.date)).map((s: any, idx: number) => (
                         <option key={idx} value={s.assignment_id}>
                           {s.date} ({s.shift_code})
                         </option>
@@ -2941,7 +2954,7 @@ export function App() {
               {swapFormType === 2 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   <div style={{ backgroundColor: '#EFF6FF', padding: '10px', borderRadius: '8px', fontSize: '12px', color: '#1E40AF' }}>
-                    📌 <strong>Đặc điểm:</strong> Nhân viên B nhận làm thay ca cho A (B làm 2 ca/ngày ➔ có thể cùng/khác ngày, cùng hoặc khác ca).<br />
+                    📌 <strong>Đặc điểm:</strong> Nhân viên B nhận làm thay ca cho A (B làm 2 ca/ngày). Chỉ nhờ ca <strong>trong tuần hiện tại</strong> ({swapWeekRange().mon} → {swapWeekRange().sun}) — ngoài tuần hệ thống từ chối.<br />
                     ⚠️ Tự thỏa thuận với nhau thì <strong>không</strong> có phụ cấp — chỉ ca do <strong>HR điều phối</strong> (mục trên) mới +30.000đ.
                   </div>
 
@@ -2952,8 +2965,8 @@ export function App() {
                       onChange={(e) => setSwapData({ ...swapData, myShift: e.target.value })}
                       style={{ width: '100%' }}
                     >
-                      <option value="">-- Chọn ca của bạn --</option>
-                      {myShifts.map((s: any, idx: number) => (
+                      <option value="">-- Chọn ca của bạn (tuần hiện tại) --</option>
+                      {myShifts.filter((s: any) => inSwapWeek(s.date)).map((s: any, idx: number) => (
                         <option key={s.assignment_id || idx} value={s.assignment_id}>
                           {s.date} ({s.shift_code})
                         </option>
