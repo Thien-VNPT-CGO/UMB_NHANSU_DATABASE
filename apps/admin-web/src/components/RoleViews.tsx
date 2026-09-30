@@ -5199,13 +5199,19 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       ...attWeekShifts.map((s: any) => effEmpIdOf(s)),
       ...attWeekEvts.map((e: any) => e.employee_id),
     ])].filter(Boolean);
-    // Sắp xếp đồng bộ lịch làm việc: theo chi nhánh trước, rồi tên — ca trong ô theo CA_1→CA_2→CA_3
+    // Sắp xếp Y HỆT Lịch Làm Việc: theo chi nhánh → ca cố định (CA_1→CA_2→CA_3) →
+    // thứ tự hồ sơ (allEmployees) — ca trong ô cũng theo CA_1→CA_2→CA_3
     const SHIFT_ORDER: Record<string, number> = { CA_1: 1, CA_2: 2, CA_3: 3 };
+    const empOrderIdx = new Map<string, number>(
+      (allEmployees || []).map((e: any, i: number) => [e.employee_id, i])
+    );
     const attEmps = attEmpIds
       .map(id => (allEmployees || []).find((e: any) => e.employee_id === id) || { employee_id: id, full_name: 'Nhân Viên', employee_code: id, employment_status: 'OFFICIAL', default_branch_id: '' })
       .filter((e: any) => e.employment_status !== 'TERMINATED')
       .sort((a: any, b: any) =>
         String(a.default_branch_id || '').localeCompare(String(b.default_branch_id || '')) ||
+        ((SHIFT_ORDER[a.default_shift_code] || 9) - (SHIFT_ORDER[b.default_shift_code] || 9)) ||
+        ((empOrderIdx.get(a.employee_id) ?? 9999) - (empOrderIdx.get(b.employee_id) ?? 9999)) ||
         String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi')
       );
     const attCellOf = (empId: string, iso: string) => {
@@ -5457,7 +5463,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <tr key={emp.employee_id} style={{ borderBottom: '1px solid var(--border)' }}>
                     <td style={{ padding: '10px 14px', fontWeight: 700, fontSize: '12px' }}>
                       {emp.full_name}
-                      <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 400 }}>{emp.employee_code} • {getDisplayBranch(emp.default_branch_id) || emp.default_branch_id || ''}</div>
+                      <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 400 }}>{emp.employee_code} • {getDisplayBranch(emp.default_branch_id) || emp.default_branch_id || ''}{emp.default_shift_code ? ` • ${emp.default_shift_code.replace('CA_', 'Ca ')}` : ''}</div>
                     </td>
                     {attDays.map((day: any) => {
                       const items = attCellOf(emp.employee_id, day.iso);
