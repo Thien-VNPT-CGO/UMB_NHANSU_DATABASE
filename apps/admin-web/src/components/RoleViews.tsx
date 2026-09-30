@@ -5524,6 +5524,29 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <div style={{ display: 'flex', gap: '6px' }}>
                   <button className="btn-primary" style={{ padding: '4px 10px', fontSize: '12px' }} disabled={adjBusy === a.adjustment_id} onClick={() => reviewAdj(a, 'APPROVED')}>Duyệt</button>
                   <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: '12px', color: '#DC2626' }} disabled={adjBusy === a.adjustment_id} onClick={() => reviewAdj(a, 'REJECTED')}>Từ chối</button>
+                  <button
+                    className="btn-secondary"
+                    style={{ padding: '4px 10px', fontSize: '12px', color: '#DC2626' }}
+                    disabled={adjBusy === a.adjustment_id}
+                    title="Xóa cứng phiếu đang chờ khỏi hệ thống (bộ nhớ + Sheet)"
+                    onClick={async () => {
+                      if (!window.confirm(`Xóa cứng phiếu đang chờ ${a.adjustment_id} khỏi hệ thống (không khôi phục)?`)) return;
+                      setAdjBusy(a.adjustment_id);
+                      try {
+                        await apiRequest(`/attendance/adjustments/${a.adjustment_id}`, { method: 'DELETE' });
+                        showToast('Đã xóa phiếu khỏi hệ thống!');
+                        await loadAdjustments();
+                        if (onRefreshData) await onRefreshData();
+                        if (onSyncSheets) await onSyncSheets();
+                      } catch (e: any) {
+                        showToast(e?.message || 'Lỗi khi xóa!');
+                      } finally {
+                        setAdjBusy(null);
+                      }
+                    }}
+                  >
+                    Xóa
+                  </button>
                 </div>
               ) : (
                 <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
