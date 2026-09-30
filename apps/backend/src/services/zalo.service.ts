@@ -66,6 +66,8 @@ function clearPersisted(): void {
   }
 }
 
+const ZALO_SESSION_SETTINGS_KEY = 'zaloSession';
+
 /**
  * Tích hợp Zalo CÁ NHÂN của HR qua lib unofficial zca-js (mô phỏng Zalo Web).
  * CẢNH BÁO: dùng API unofficial có thể khiến tài khoản HR bị Zalo khóa —
@@ -101,9 +103,48 @@ export class ZaloService {
     };
   }
 
+  /** Đọc phiên bền vững: file trước, rớt về cài đặt hệ thống (đồng bộ Sheets). */
+  private async loadPersistedAsync(): Promise<PersistedSession | null> {
+    const fromFile = loadPersisted();
+    if (fromFile) return fromFile;
+    try {
+      const settings = (await this.repo.getSystemSettings().catch(() => null)) || {};
+      const s = (settings as any)[ZALO_SESSION_SETTINGS_KEY];
+      if (s && typeof s === 'object' && s.imei && s.cookie && s.userAgent) {
+        // Ghi lại file để lần sau đọc nhanh.
+        savePersisted(s as PersistedSession);
+        return s as PersistedSession;
+      }
+    } catch (e) {
+      console.warn('[zalo] load session from settings failed:', (e as Error).message);
+    }
+    return null;
+  }
+
+  /** Ghi phiên bền vững: file + cài đặt hệ thống (sống qua restart/deploy Render). */
+  private async savePersistedAsync(s: PersistedSession): Promise<void> {
+    savePersisted(s);
+    try {
+      const settings = (await this.repo.getSystemSettings().catch(() => ({}))) || {};
+      await this.repo.updateSystemSettings({ ...settings, [ZALO_SESSION_SETTINGS_KEY]: s });
+    } catch (e) {
+      console.warn('[zalo] save session to settings failed:', (e as Error).message);
+    }
+  }
+
+  private async clearPersistedAsync(): Promise<void> {
+    clearPersisted();
+    try {
+      const settings = (await this.repo.getSystemSettings().catch(() => ({}))) || {};
+      await this.repo.updateSystemSettings({ ...settings, [ZALO_SESSION_SETTINGS_KEY]: null });
+    } catch {
+      // ignore
+    }
+  }
+
   /** Khôi phục phiên cũ sau restart (không cần quét QR lại). */
   async restoreSession(): Promise<boolean> {
-    const saved = loadPersisted();
+    const saved = await this.loadPersistedAsync();
     if (!saved) return false;
     try {
       const { Zalo } = await zca();
@@ -119,7 +160,7 @@ export class ZaloService {
       return true;
     } catch (e) {
       console.warn('[zalo] restore failed:', (e as Error).message);
-      clearPersisted();
+      await this.clearPersistedAsync();
       return false;
     }
   }
@@ -172,7 +213,7 @@ export class ZaloService {
                 userAgent: event.data.userAgent,
                 savedAt: new Date().toISOString(),
               };
-              savePersisted(persisted);
+              void this.savePersistedAsync(persisted);
               this.account = persisted;
               break;
             }
@@ -204,7 +245,7 @@ export class ZaloService {
           this.account.displayName = displayName;
           this.account.avatar = avatar;
           this.account.ownId = ownId;
-          savePersisted(this.account);
+          void this.savePersistedAsync(this.account);
         }
         done('connected', { account: { displayName, avatar, ownId } });
         await this.repo
@@ -259,7 +300,7 @@ export class ZaloService {
     this.api = null;
     this.account = null;
     this.login = null;
-    clearPersisted();
+    await this.clearPersistedAsync();
     await this.repo
       .recordAuditLog({
         log_id: `LOG_${Date.now()}`,
