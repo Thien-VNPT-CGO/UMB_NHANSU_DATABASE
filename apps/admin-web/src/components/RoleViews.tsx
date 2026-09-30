@@ -2369,7 +2369,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       : ({ CN130: 'CN1: 130 Vạn Kiếp (Bình Thạnh)', CN261: 'CN2: 261 Tô Hiến Thành (Q.10)', CN120: 'CN3: 120 Hoàng Diệu 2 (Thủ Đức)', CN111: 'CN4: 111 Tôn Đản (Q.4)' } as any)[inviteBranchId] || inviteBranchId;
                     const ph = (v?: string, fb?: string) => v || <span style={{ color: '#94A3B8' }}>{fb}</span>;
                     return (<>
-                      <strong style={{ color: '#0068FF' }}>[ỤM BÒ MILK] THƯ MỜI PHỎNG VẤN VỊ TRÍ {(pvCand?.apply_position || 'NHÂN VIÊN PHA CHẾ').toUpperCase()}</strong><br />
+                      <strong style={{ color: '#0068FF' }}>[ỤM BÒ MILK] THƯ MỜI PHỎNG VẤN VỊ TRÍ {(pvCand?.apply_position || 'NHÂN VIÊN BÁN HÀNG').toUpperCase()}</strong><br />
                       Chào bạn <strong>{ph(pvCand?.full_name, '[Tên Ứng Viên]')}</strong>,<br />
                       Phòng Nhân Sự Ụm Bò Milk trân trọng mời bạn tham gia buổi phỏng vấn{inviteMode === 'ONLINE' ? ' trực tuyến' : ''}:<br />
                       🕒 <strong>Thời gian:</strong> {ph(pvT?.slice(0, 5), '[Giờ phỏng vấn]')} - {ph(pvD, '[Ngày hẹn phỏng vấn]')}<br />
@@ -2556,7 +2556,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{c.phone || c.phone_normalized}</div>
                     </td>
                     <td style={{ padding: '14px 20px' }}>
-                      <strong>{c.apply_position || c.position || 'Nhân viên Bán hàng / Pha chế'}</strong>
+                      <strong>{c.apply_position || c.position || 'Nhân viên Bán hàng'}</strong>
                       <div style={{ fontSize: '11px', color: '#2563EB' }}>{c.branch_name || getDisplayBranch(c.preferred_branch_id || c.branch_id || 'CN130')}</div>
                     </td>
                     <td style={{ padding: '14px 20px', fontWeight: 700 }}>

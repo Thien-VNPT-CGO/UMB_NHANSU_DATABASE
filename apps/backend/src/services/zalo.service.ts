@@ -328,7 +328,7 @@ export class ZaloService {
     meetUrl?: string;
   }): string {
     const lines = [
-      `[ỤM BÒ MILK] THƯ MỜI PHỎNG VẤN VỊ TRÍ ${(o.position || 'NHÂN VIÊN PHA CHẾ').toUpperCase()}`,
+      `[ỤM BÒ MILK] THƯ MỜI PHỎNG VẤN VỊ TRÍ ${(o.position || 'NHÂN VIÊN BÁN HÀNG').toUpperCase()}`,
       `Chào bạn ${o.candidateName},`,
       `Phòng Nhân Sự Ụm Bò Milk trân trọng mời bạn tham gia buổi phỏng vấn${o.meetUrl ? ' trực tuyến' : ''}:`,
       `🕒 Thời gian: ${o.timeSlot} - ${o.interviewDate}`,

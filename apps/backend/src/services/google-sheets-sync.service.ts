@@ -1294,7 +1294,7 @@ export class GoogleSheetsSyncService {
               birth_year: birthYear,
               education_level: educationLevel,
               hometown,
-              apply_position: 'Nhân viên Bán hàng / Pha chế',
+              apply_position: 'Nhân viên Bán hàng',
               preferred_branch_id: branchName.includes('CN') ? (branchName.match(/CN\d+/)?.[0] || 'CN130') : 'CN130',
               branch_name: branchName,
               registered_shift: registeredShift,
