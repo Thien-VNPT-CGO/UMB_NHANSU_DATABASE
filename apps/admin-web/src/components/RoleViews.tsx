@@ -702,6 +702,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
   // Form lập lịch phỏng vấn + gửi thư mời Zalo thật
   const [inviteCandidateId, setInviteCandidateId] = useState('');
+  const [inviteBranchId, setInviteBranchId] = useState('CN130');
   const [inviteDateTime, setInviteDateTime] = useState('');
   const [inviteMode, setInviteMode] = useState<'ONLINE' | 'OFFLINE'>('ONLINE');
   // Link Meet mặc định hệ thống (không tùy chỉnh) — input hiển thị disabled.
@@ -722,6 +723,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       return;
     }
     const [d, t] = inviteDateTime.split('T');
+    const invBranchName = branches.length > 0
+      ? (branches.find((b: any) => (b.branch_id || b.id) === inviteBranchId)?.name || inviteBranchId)
+      : ({ CN130: 'CN1: 130 Vạn Kiếp (Bình Thạnh)', CN261: 'CN2: 261 Tô Hiến Thành (Q.10)', CN120: 'CN3: 120 Hoàng Diệu 2 (Thủ Đức)', CN111: 'CN4: 111 Tôn Đản (Q.4)' } as any)[inviteBranchId] || inviteBranchId;
     setInviteBusy(true);
     try {
       const res = await apiRequest(`/interviews/${inviteCandidateId}/send-zalo-invite`, {
@@ -729,6 +733,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         body: JSON.stringify({
           interviewDate: d,
           timeSlot: (t || '').slice(0, 5),
+          branchName: invBranchName,
           ...(inviteMode === 'ONLINE' && inviteMeetUrl.trim() ? { meetUrl: inviteMeetUrl.trim() } : {}),
         }),
       });
@@ -2356,17 +2361,31 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   color: '#1E293B',
                   fontFamily: 'system-ui, -apple-system, sans-serif',
                 }}>
-                  <strong style={{ color: '#0068FF' }}>[ỤM BÒ MILK] THƯ MỜI PHỎNG VẤN VỊ TRÍ NHÂN VIÊN PHA CHẾ</strong><br />
-                  Chào bạn <strong>[Tên Ứng Viên]</strong>,<br />
-                  Phòng Nhân Sự Ụm Bò Milk trân trọng mời bạn tham gia buổi phỏng vấn trực tuyến:<br />
-                  🕒 <strong>Thời gian:</strong> [Giờ phỏng vấn] - [Ngày hẹn phỏng vấn]<br />
-                  📍 <strong>Chi nhánh tuyển dụng:</strong> [Chi nhánh đăng ký làm việc]<br />
-                  🔗 <strong>Link phòng họp Google Meet:</strong> <span style={{ color: '#0068FF', textDecoration: 'underline' }}>[link Meet HR dán khi lập lịch]</span><br />
-                  👤 <strong>Người phỏng vấn:</strong> Phòng Nhân Sự Ụm Bò Milk<br />
-                  📌 <em>Lưu ý: Bạn vui lòng vào trước 5 phút và chuẩn bị trang phục lịch sự nhé.</em><br />
-                  <span style={{ fontSize: '11px', color: '#64748B', display: 'block', marginTop: '6px' }}>
-                    ✓✓ Sẽ tự động gửi qua Zalo ứng viên khi HR xếp lịch phỏng vấn
-                  </span>
+                  {(() => {
+                    const pvCand = candidates.find((c: any) => c.submission_id === inviteCandidateId);
+                    const [pvD, pvT] = (inviteDateTime || '').split('T');
+                    const pvBranch = branches.length > 0
+                      ? (branches.find((b: any) => (b.branch_id || b.id) === inviteBranchId)?.name || inviteBranchId)
+                      : ({ CN130: 'CN1: 130 Vạn Kiếp (Bình Thạnh)', CN261: 'CN2: 261 Tô Hiến Thành (Q.10)', CN120: 'CN3: 120 Hoàng Diệu 2 (Thủ Đức)', CN111: 'CN4: 111 Tôn Đản (Q.4)' } as any)[inviteBranchId] || inviteBranchId;
+                    const ph = (v?: string, fb?: string) => v || <span style={{ color: '#94A3B8' }}>{fb}</span>;
+                    return (<>
+                      <strong style={{ color: '#0068FF' }}>[ỤM BÒ MILK] THƯ MỜI PHỎNG VẤN VỊ TRÍ {(pvCand?.apply_position || 'NHÂN VIÊN PHA CHẾ').toUpperCase()}</strong><br />
+                      Chào bạn <strong>{ph(pvCand?.full_name, '[Tên Ứng Viên]')}</strong>,<br />
+                      Phòng Nhân Sự Ụm Bò Milk trân trọng mời bạn tham gia buổi phỏng vấn{inviteMode === 'ONLINE' ? ' trực tuyến' : ''}:<br />
+                      🕒 <strong>Thời gian:</strong> {ph(pvT?.slice(0, 5), '[Giờ phỏng vấn]')} - {ph(pvD, '[Ngày hẹn phỏng vấn]')}<br />
+                      📍 <strong>Chi nhánh tuyển dụng:</strong> {pvBranch}<br />
+                      {inviteMode === 'ONLINE' ? (
+                        <>🔗 <strong>Link phòng họp Google Meet:</strong> <span style={{ color: '#0068FF', textDecoration: 'underline' }}>{inviteMeetUrl}</span><br /></>
+                      ) : (
+                        <>📌 <strong>Hình thức:</strong> Trực tiếp tại cửa hàng — đến trước 5 phút<br /></>
+                      )}
+                      👤 <strong>Người phỏng vấn:</strong> Phòng Nhân Sự Ụm Bò Milk<br />
+                      📌 <em>Lưu ý: Bạn vui lòng vào trước 5 phút và chuẩn bị trang phục lịch sự nhé.</em><br />
+                      <span style={{ fontSize: '11px', color: '#64748B', display: 'block', marginTop: '6px' }}>
+                        ✓✓ BOT lấy đúng mẫu này (tên, giờ, chi nhánh, link) bắn qua Zalo khi HR bấm "Tạo Lịch & BOT Bắn Tin"
+                      </span>
+                    </>);
+                  })()}
                 </div>
               </div>
             </div>
@@ -2420,7 +2439,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
               <div>
                 <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Chi nhánh tuyển dụng:</label>
-                <select style={{ width: '100%' }} defaultValue="CN130">
+                <select style={{ width: '100%' }} value={inviteBranchId} onChange={(e) => setInviteBranchId(e.target.value)}>
                   {branches.length > 0 ? (
                     branches.map((b) => (
                       <option key={b.branch_id || b.id} value={b.branch_id || b.id}>

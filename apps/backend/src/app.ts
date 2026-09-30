@@ -995,8 +995,10 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
       const interviewDate = req.body.interviewDate || (cand as any).interview_date || new Date().toISOString().split('T')[0];
       const timeSlot = req.body.timeSlot || (cand as any).interview_time_slot || '09:00 - 10:00';
-      // Ràng buộc cứng: mọi lịch PV online dùng link Meet mặc định hệ thống, bỏ qua link client gửi lên.
-      const meetUrl = defaultMeetUrl() || undefined;
+      // Ràng buộc cứng: lịch PV online dùng link Meet mặc định hệ thống (bỏ qua link
+      // client gửi lên); OFFLINE (client không gửi meetUrl) thì không gắn link.
+      const meetUrl = req.body.meetUrl !== undefined ? (defaultMeetUrl() || undefined) : undefined;
+      const branchName = req.body.branchName || (cand as any).branch_name || (cand as any).preferred_branch_id;
 
       // Lưu lịch phỏng vấn trước khi gửi (idempotent theo submission).
       await employeesService.scheduleInterview(req.params.id, interviewDate, timeSlot, req.user!.id);
@@ -1020,7 +1022,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const text = zaloService.buildInviteText({
         candidateName: (cand as any).full_name || 'bạn',
         position: (cand as any).apply_position,
-        branchName: (cand as any).branch_name || (cand as any).preferred_branch_id,
+        branchName,
         interviewDate,
         timeSlot,
         meetUrl,

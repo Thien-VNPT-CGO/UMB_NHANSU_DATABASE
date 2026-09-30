@@ -115,6 +115,7 @@ export const zaloSendInviteBody = z.object({
   interviewDate: optString(64),
   timeSlot: optString(64),
   meetUrl: optString(500),
+  branchName: optString(128),
 });
 
 // --- Schedules ---

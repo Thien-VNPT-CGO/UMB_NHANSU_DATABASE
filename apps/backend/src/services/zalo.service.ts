@@ -319,6 +319,7 @@ export class ZaloService {
     ].join('\n');
   }
 
+  /** Mẫu tin nhắn BOT bắn đi — khớp khung "Xem Trước Mẫu Tin Nhắn Zalo BOT Tự Động Bắn Đi" trên cổng HR. */
   buildInviteText(o: {    candidateName: string;
     position?: string;
     branchName?: string;
@@ -327,17 +328,19 @@ export class ZaloService {
     meetUrl?: string;
   }): string {
     const lines = [
-      `Chào ${o.candidateName},`,
-      `Ụm Bò Milk mời bạn tham gia PHỎNG VẤN vị trí ${o.position || 'Nhân viên'}${o.branchName ? ` (${o.branchName})` : ''}.`,
-      `⏰ Thời gian: ${o.timeSlot} ngày ${o.interviewDate}`,
+      `[ỤM BÒ MILK] THƯ MỜI PHỎNG VẤN VỊ TRÍ ${(o.position || 'NHÂN VIÊN PHA CHẾ').toUpperCase()}`,
+      `Chào bạn ${o.candidateName},`,
+      `Phòng Nhân Sự Ụm Bò Milk trân trọng mời bạn tham gia buổi phỏng vấn${o.meetUrl ? ' trực tuyến' : ''}:`,
+      `🕒 Thời gian: ${o.timeSlot} - ${o.interviewDate}`,
+      `📍 Chi nhánh tuyển dụng: ${o.branchName || 'sẽ báo khi xác nhận'}`,
     ];
     if (o.meetUrl) {
-      lines.push(`🎥 Link Google Meet: ${o.meetUrl}`);
-      lines.push(`Vui lòng vào đúng giờ, bật camera và chuẩn bị CMND/CCCD.`);
+      lines.push(`🔗 Link phòng họp Google Meet: ${o.meetUrl}`);
     } else {
-      lines.push(`Địa điểm/hình thức chi tiết HR sẽ báo thêm. Vui lòng phản hồi xác nhận!`);
+      lines.push(`📌 Hình thức: Trực tiếp tại cửa hàng — bạn đến trước 5 phút nhé.`);
     }
-    lines.push(`Trân trọng, HR Ụm Bò Milk (tin nhắn tự động).`);
+    lines.push(`👤 Người phỏng vấn: Phòng Nhân Sự Ụm Bò Milk`);
+    lines.push(`📌 Lưu ý: Bạn vui lòng vào trước 5 phút và chuẩn bị trang phục lịch sự nhé.`);
     return lines.join('\n');
   }
 }
