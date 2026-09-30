@@ -1309,6 +1309,44 @@ export class GoogleSheetsSyncService {
               created_at: rawCreatedAt,
             };
           });
+        // Phủ dữ liệu vận hành (lịch PV + Zalo + trạng thái) từ master FROM_NHAN_VIEN:
+        // restart/sửa code làm bộ nhớ trắng, Sheet form gốc không có các cột này —
+        // không phủ thì reload là mất. Khớp theo submission_id, rớt về SĐT+tên.
+        try {
+          if (this.sheetsClient && this.spreadsheetId) {
+            const mRes = await this.sheetsClient.spreadsheets.values.get({
+              spreadsheetId: this.spreadsheetId,
+              range: `'FROM_NHAN_VIEN'!A1:V`,
+            });
+            const mRows = (mRes.data.values as string[][]) || [];
+            if (mRows.length > 1) {
+              const byId = new Map<string, string[]>();
+              const byPhoneName = new Map<string, string[]>();
+              mRows.slice(1).forEach((r, i) => {
+                if (!r || !r.some(c => String(c || '').trim())) return;
+                byId.set(`CAND_${String(i + 1).padStart(4, '0')}`, r);
+                const ph = canonicalPhone(String(r[6] || ''));
+                const nm = String(r[1] || '').trim().toLowerCase();
+                if (ph && nm) byPhoneName.set(`${ph}|${nm}`, r);
+              });
+              for (const c of fallback.candidates as any[]) {
+                const mr = byId.get(c.submission_id)
+                  || byPhoneName.get(`${c.phone_normalized || ''}|${String(c.full_name || '').trim().toLowerCase()}`);
+                if (!mr) continue;
+                const nz = (v: any) => (v !== undefined && String(v).trim() !== '' ? String(v).trim() : undefined);
+                const mStatus = nz(mr[15]);
+                if (mStatus && mStatus !== 'NEW') c.status = mStatus as any;
+                c.interview_date = nz(mr[17]) || c.interview_date;
+                c.interview_time_slot = nz(mr[18]) || c.interview_time_slot;
+                c.interviewer_id = nz(mr[19]) || c.interviewer_id;
+                c.zalo_invite_status = nz(mr[20]) || c.zalo_invite_status;
+                c.zalo_invite_at = nz(mr[21]) || c.zalo_invite_at;
+              }
+            }
+          }
+        } catch (e: any) {
+          console.warn('[GoogleSheetsSyncService] Phủ lịch PV/Zalo từ master thất bại (giữ dữ liệu form):', e?.message || e);
+        }
         counts.candidates = fallback.candidates.length;
       } else {
         // Giữ nguyên danh sách hiện tại nếu không đọc được dòng mới từ sheet
