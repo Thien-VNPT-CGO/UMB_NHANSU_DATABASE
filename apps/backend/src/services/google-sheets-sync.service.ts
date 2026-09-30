@@ -858,8 +858,13 @@ export class GoogleSheetsSyncService {
         (fallback as any).testSubmissions = [];
       }
 
-      // 5d. Đọc THONGBAO_NV (lịch sử thông báo từ cổng NV — merge, không bao giờ xóa)
+      // 5d. Đọc THONGBAO_NV (Sheet giữ toàn bộ lịch sử — merge, không bao giờ xóa).
+      // Inbox realtime chỉ giữ thông báo HÔM NAY (giờ VN): bản hôm qua pull về
+      // cũng bị loại ngay để không hiện lại sau reset 6h (fix lỗi reset xong lại đầy).
       const notifRows = batch['THONGBAO_NV'] || [];
+      const vnToday = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+      const [nYY, nMM, nDD] = vnToday.split('-').map(Number);
+      const notifCutoff = new Date(Date.UTC(nYY, nMM - 1, nDD) - 7 * 3_600_000).toISOString();
       if (notifRows.length > 0) {
         const mappedNotif = notifRows
           .filter(r => r && r[0])
@@ -877,8 +882,11 @@ export class GoogleSheetsSyncService {
             version: 1,
           }));
         fallback.notificationInbox = mergeById(fallback.notificationInbox, mappedNotif, 'inbox_id', ['version']) as any;
-        counts.notifications = fallback.notificationInbox.length;
       }
+      fallback.notificationInbox = (fallback.notificationInbox || []).filter(
+        (n: any) => (n.created_at || '') >= notifCutoff
+      );
+      counts.notifications = fallback.notificationInbox.length;
 
       // 6. Đọc SU_KIEN_DIEM_DANH
       const attRows = (batch['SU_KIEN_DIEM_DANH'] || []).filter(r => r && r[0] && !this.isEventDeletedRecently(r[0]));
