@@ -3764,7 +3764,17 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       };
     });
 
-    const filteredSchedule = scheduleItems.filter((item) => {
+    // Thứ tự hàng: chi nhánh CN1→CN2→CN3→CN4, rồi ca cố định Ca 1→Ca 2→Ca 3, rồi thứ tự hồ sơ.
+    const BRANCH_RANK: Record<string, number> = { CN130: 1, CN261: 2, CN120: 3, CN111: 4 };
+    const SHIFT_RANK: Record<string, number> = { CA_1: 1, CA_2: 2, CA_3: 3 };
+    const empShiftOf = (empId: string) =>
+      (allEmployees || []).find((e: any) => e.employee_id === empId)?.default_shift_code;
+    const sortedSchedule = [...scheduleItems].sort((a: any, b: any) =>
+      ((BRANCH_RANK[canonicalBranchId(a.branch)] ?? 9) - (BRANCH_RANK[canonicalBranchId(b.branch)] ?? 9)) ||
+      ((SHIFT_RANK[empShiftOf(a.empId)] ?? 9) - (SHIFT_RANK[empShiftOf(b.empId)] ?? 9)) ||
+      String(a.name || '').localeCompare(String(b.name || ''), 'vi')
+    );
+    const filteredSchedule = sortedSchedule.filter((item) => {
       const matchBranch = scheduleBranchFilter === 'ALL' || item.branch === scheduleBranchFilter;
       const matchStage = scheduleStageFilter === 'ALL' || item.stage === scheduleStageFilter;
       return matchBranch && matchStage;
