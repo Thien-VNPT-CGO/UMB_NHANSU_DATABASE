@@ -600,8 +600,24 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async deleteAttendanceAdjustment(id: string) {
     const res = await this.fallbackAdapter.deleteAttendanceAdjustment(id);
-    // Full-sync ghi đè tab DIEU_CHINH_CONG từ bộ nhớ -> dòng bị xóa khỏi Sheet luôn.
-    this.scheduleFullSync('DIEU_CHINH_CONG.delete');
+    if (res && this.isConfigured) {
+      // Đẩy Sheet ĐỒNG BỘ (await): dòng mất khỏi Sheet trước khi trả response,
+      // pull nền sau đó không thể merge hồi sinh phiếu (fix zombie).
+      try {
+        await this.syncService.pushAdjustmentsTab(this.fallbackAdapter);
+      } catch (err) {
+        console.warn('[GoogleSheetsAdapter] Đẩy DIEU_CHINH_CONG sau xóa thất bại (full-sync nền sẽ thử lại):', (err as any)?.message || err);
+        this.scheduleFullSync('DIEU_CHINH_CONG.delete');
+      }
+      // Cửa sổ đua: pull nền chen giữa lúc xóa và đẩy xong có thể merge lại —
+      // vét lại lần cuối cho chắc.
+      const fb: any = this.fallbackAdapter;
+      if (Array.isArray(fb.attendanceAdjustments)) {
+        fb.attendanceAdjustments = fb.attendanceAdjustments.filter((a: any) => a.adjustment_id !== id);
+      }
+    } else {
+      this.scheduleFullSync('DIEU_CHINH_CONG.delete');
+    }
     return res;
   }
 

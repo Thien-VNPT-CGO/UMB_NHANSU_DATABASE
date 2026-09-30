@@ -1622,6 +1622,26 @@ export class GoogleSheetsSyncService {
     }
   }
 
+  /**
+   * Đẩy riêng tab DIEU_CHINH_CONG (await được): dùng sau DELETE để dòng bị xóa
+   * khỏi Sheet NGAY, pull sau đó không thể hồi sinh phiếu (fix zombie).
+   */
+  public async pushAdjustmentsTab(repo: { listAttendanceAdjustments(): Promise<any[]> }): Promise<number> {
+    const adjustments = await repo.listAttendanceAdjustments().catch(() => []);
+    const adjRows = (adjustments || []).map(a => [
+      a.adjustment_id,
+      a.assignment_id,
+      a.employee_id,
+      a.reason || '',
+      a.minutes_approved ?? a.minutes_requested ?? 0,
+      a.approver_id || '',
+      a.status,
+      a.review_note || '',
+    ]);
+    await this.overwriteSheetData('DIEU_CHINH_CONG', SHEETS_DEFINITIONS.find(d => d.title === 'DIEU_CHINH_CONG')!.headers, adjRows);
+    return adjRows.length;
+  }
+
   /** Upload buffer bất kỳ lên Google Drive (dùng lưu ZIP archive tuần chấm công). */
   public async uploadBufferToDrive(fileName: string, mimeType: string, buffer: Buffer): Promise<{ fileId: string; webViewLink?: string }> {
     if (!this.driveClient) {
