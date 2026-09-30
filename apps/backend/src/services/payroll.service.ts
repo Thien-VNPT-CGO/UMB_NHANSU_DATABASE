@@ -97,17 +97,23 @@ export class PayrollService {
                   if (!Number.isFinite(st) || !Number.isFinite(ct)) return 0;
                   return Math.max(0, Math.round((ct - st) / 60000));
                 })();
+            // Ưu tiên mức phạt đã ghi nhận lúc check-in (ràng buộc chặt, không tính lại).
+            const storedTier = (inEvt as any).fine_tier;
+            const storedAmt = Number((inEvt as any).fine_amount) || 0;
+            const useStored = !!storedTier && storedTier !== 'NONE';
             const fine = lateFineFor(lateMin, shiftPay);
-            if (fine.unpaid) {
+            const unpaid = useStored ? storedTier === 'FULL_SHIFT' : fine.unpaid;
+            const deductAmt = useStored ? (storedTier === 'FULL_SHIFT' ? 0 : storedAmt) : fine.deduction;
+            if (unpaid) {
               absentShifts++;
               lateCases.push(`${s.date} trễ ${lateMin}p: phạt 100%`);
               continue;
             }
             empHours += hours;
             standardPay += shiftPay;
-            if (fine.deduction > 0) {
-              deduction += fine.deduction;
-              lateCases.push(`${s.date} trễ ${lateMin}p: phạt ${fine.deduction.toLocaleString('vi-VN')}đ`);
+            if (deductAmt > 0) {
+              deduction += deductAmt;
+              lateCases.push(`${s.date} trễ ${lateMin}p: phạt ${deductAmt.toLocaleString('vi-VN')}đ`);
             }
           }
 

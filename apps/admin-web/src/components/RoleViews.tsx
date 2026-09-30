@@ -189,6 +189,15 @@ export function shiftPayInfo(shiftCode: string, ratePerHour: number, inEvt: any,
   if (!inEvt || !outEvt) {
     return { hours, rate, shiftPay, lateMin, fineLabel: 'Thiếu check-in/out — không lương', deduction: 0, net: 0, unpaid: true };
   }
+  // Ưu tiên mức phạt server đã ghi nhận lúc check-in (ràng buộc chặt, không tính lại).
+  const storedTier = inEvt?.fine_tier;
+  if (storedTier && storedTier !== 'NONE') {
+    const amt = Number(inEvt.fine_amount) || 0;
+    if (storedTier === 'FULL_SHIFT') {
+      return { hours, rate, shiftPay, lateMin, fineLabel: `Trễ ${Math.floor(lateMin)}p — phạt 100% (không lương, đã ghi nhận)`, deduction: 0, net: 0, unpaid: true };
+    }
+    return { hours, rate, shiftPay, lateMin, fineLabel: `Trễ ${Math.floor(lateMin)}p — phạt ${amt.toLocaleString('vi-VN')}đ (đã ghi nhận)`, deduction: amt, net: Math.max(0, shiftPay - amt), unpaid: false };
+  }
   const m = Math.floor(lateMin);
   if (m < 5) return { hours, rate, shiftPay, lateMin, fineLabel: 'Đúng giờ — không phạt', deduction: 0, net: shiftPay, unpaid: false };
   if (m < 30) return { hours, rate, shiftPay, lateMin, fineLabel: `Trễ ${m}p — phạt 30.000đ`, deduction: 30000, net: Math.max(0, shiftPay - 30000), unpaid: false };

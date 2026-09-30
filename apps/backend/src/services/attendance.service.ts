@@ -6,9 +6,11 @@ import {
   BRANCHES,
   ERROR_CODES,
   GPSStatus,
+  SHIFT_TEMPLATES,
 } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { singleWriterQueue } from '../repositories/single-writer-queue.js';
+import { lateFineFor } from './payroll.service.js';
 import { Server } from 'socket.io';
 
 // Haversine formula for calculating distance in meters between two lat/lon points
@@ -136,8 +138,25 @@ export class AttendanceService {
           }
         }
 
+        // 5b. Ghi nhận phạt trễ NGAY lúc check-in (ràng buộc chặt):
+        // trễ 5-29p: 30k; 30-59p: 50% lương ca; ≥60p: 100% lương ca.
+        let fineTier = 'NONE';
+        let fineAmount = 0;
+        if (data.type === 'CHECK_IN' && isLate && minutesDeviation >= 5) {
+          try {
+            const emp = await this.repo.getEmployeeById(data.employeeId).catch(() => null);
+            const rate = Number((emp as any)?.current_rate_per_hour) || 0;
+            const hours = (SHIFT_TEMPLATES as any)[shift.shift_code]?.duration_hours || 5;
+            const fine = lateFineFor(minutesDeviation, hours * rate);
+            fineTier = fine.tier;
+            fineAmount = fine.unpaid ? hours * rate : fine.deduction;
+          } catch { /* giữ NONE khi không tính được */ }
+        }
+
         // 6. Record to Master Ledger (photo_base64 chỉ để adapter upload Drive rồi bỏ)
         const event = await this.repo.recordAttendanceEvent({
+          fine_tier: fineTier,
+          fine_amount: fineAmount,
           ...(data.photoBase64 ? { photo_base64: data.photoBase64 } : {}),
           ...(Number.isFinite(Number(data.uniformPinkRatio)) ? { uniform_pink_ratio: Math.max(0, Math.min(100, Math.round(Number(data.uniformPinkRatio)))) } : {}),
           event_id: eventId,

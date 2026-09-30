@@ -553,6 +553,9 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
         (snapshot as any).is_late ? 'YES' : '',
         (snapshot as any).is_early ? 'YES' : '',
         Number((snapshot as any).minutes_deviation) || 0,
+        // Phạt trễ ghi nhận ngay lúc check-in (ràng buộc chặt 5p:30k • 30p:50% • 60p:100%)
+        (snapshot as any).fine_tier || 'NONE',
+        Number((snapshot as any).fine_amount) || 0,
       ]), 'SU_KIEN_DIEM_DANH.append');
     }
 

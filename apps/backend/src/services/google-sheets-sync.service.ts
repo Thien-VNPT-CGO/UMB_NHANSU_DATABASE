@@ -46,7 +46,7 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   },
   {
     title: 'SU_KIEN_DIEM_DANH',
-    headers: ['ID Sự Kiện', 'ID Ca', 'ID Nhân Viên', 'Loại (IN/OUT)', 'Thời Gian Máy Chủ', 'Vĩ Độ GPS', 'Kinh Độ GPS', 'Khoảng Cách (m)', 'Trạng Thái GPS', 'Ảnh Drive Object', 'ID Yêu Cầu', 'Hồng Đồng Phục (%)', 'Giờ Máy Khách', 'Trễ (YES/NO)', 'Sớm (YES/NO)', 'Lệch (phút)'],
+    headers: ['ID Sự Kiện', 'ID Ca', 'ID Nhân Viên', 'Loại (IN/OUT)', 'Thời Gian Máy Chủ', 'Vĩ Độ GPS', 'Kinh Độ GPS', 'Khoảng Cách (m)', 'Trạng Thái GPS', 'Ảnh Drive Object', 'ID Yêu Cầu', 'Hồng Đồng Phục (%)', 'Giờ Máy Khách', 'Trễ (YES/NO)', 'Sớm (YES/NO)', 'Lệch (phút)', 'Phạt (nấc)', 'Phạt (đ)'],
   },
   {
     title: 'LUUTRU_CHAMCONG_TUAN',
@@ -918,6 +918,8 @@ export class GoogleSheetsSyncService {
           is_late: r[13] === 'YES' ? true : (r[13] ? false : undefined),
           is_early: r[14] === 'YES' ? true : (r[14] ? false : undefined),
           minutes_deviation: r[15] === '' || r[15] === undefined ? undefined : Number(r[15]),
+          fine_tier: r[16] || undefined,
+          fine_amount: r[17] === '' || r[17] === undefined ? undefined : Number(r[17]),
           created_at: r[4] || new Date().toISOString(),
         }));
         fallback.attendanceEvents = mergeById(fallback.attendanceEvents, mappedEvents, 'event_id', ['created_at']);
@@ -1984,6 +1986,8 @@ export class GoogleSheetsSyncService {
           e.gps_latitude ?? '', e.gps_longitude ?? '', e.distance_meters ?? '', e.gps_status || '',
           e.drive_object_id || '', e.request_id || '', (e as any).uniform_pink_ratio ?? '',
           e.client_time || '',
+          e.is_late ? 'YES' : '', e.is_early ? 'YES' : '', Number(e.minutes_deviation) || 0,
+          e.fine_tier || 'NONE', Number(e.fine_amount) || 0,
         ]);
         const def = SHEETS_DEFINITIONS.find(dd => dd.title === 'SU_KIEN_DIEM_DANH')!;
         await this.overwriteSheetData('SU_KIEN_DIEM_DANH', def.headers, mainRows);

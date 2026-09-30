@@ -29,6 +29,10 @@ export interface AttendanceEvent {
   is_early?: boolean;
   is_late?: boolean;
   minutes_deviation?: number; // Minutes early or late
+  /** Phạt trễ ghi nhận ngay lúc check-in: NONE | FLAT_30K | HALF_SHIFT | FULL_SHIFT */
+  fine_tier?: string;
+  /** Số tiền phạt (đ) đã ghi nhận — FULL_SHIFT = mất cả ca (net 0). */
+  fine_amount?: number;
   created_at: string;
 }
 
