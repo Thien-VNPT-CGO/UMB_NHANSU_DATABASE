@@ -598,6 +598,13 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     return res;
   }
 
+  async deleteAttendanceAdjustment(id: string) {
+    const res = await this.fallbackAdapter.deleteAttendanceAdjustment(id);
+    // Full-sync ghi đè tab DIEU_CHINH_CONG từ bộ nhớ -> dòng bị xóa khỏi Sheet luôn.
+    this.scheduleFullSync('DIEU_CHINH_CONG.delete');
+    return res;
+  }
+
   // --- Payroll ---
   async createPayrollRun(run: any, items: any) {
     const res = await this.fallbackAdapter.createPayrollRun(run, items);

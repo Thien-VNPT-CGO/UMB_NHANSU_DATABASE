@@ -555,6 +555,14 @@ export class MockSheetsAdapter implements ISheetsRepository {
     });
   }
 
+  async deleteAttendanceAdjustment(id: string): Promise<boolean> {
+    this.checkErrors();
+    const idx = this.attendanceAdjustments.findIndex(a => a.adjustment_id === id);
+    if (idx < 0) return false;
+    this.attendanceAdjustments.splice(idx, 1);
+    return true;
+  }
+
   async updateAttendanceAdjustment(id: string, status: AdjustmentStatus, approverId: string, minutesApproved?: number, note?: string): Promise<AttendanceAdjustment> {
     this.checkErrors();
     const adj = this.attendanceAdjustments.find(a => a.adjustment_id === id);

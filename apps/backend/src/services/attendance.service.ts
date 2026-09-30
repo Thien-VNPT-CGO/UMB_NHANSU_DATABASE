@@ -315,6 +315,39 @@ export class AttendanceService {
     return { checked, expired };
   }
 
+  /**
+   * Xóa cứng phiếu khỏi hệ thống (bộ nhớ + Sheet qua full-sync):
+   * - NV chỉ được hủy phiếu PENDING của chính mình.
+   * - HR/QL được xóa phiếu PENDING/REJECTED/CANCELLED.
+   * - APPROVED khóa cứng (đã dựng công + lương, xóa sẽ mồ côi dữ liệu).
+   */
+  async deleteAdjustment(adjId: string, actorId: string, isManager: boolean): Promise<any> {
+    return singleWriterQueue.enqueue({
+      entityType: 'DIEU_CHINH_CONG',
+      entityId: adjId,
+      actorId,
+      execute: async () => {
+        const all = await this.repo.listAttendanceAdjustments().catch(() => []);
+        const adj: any = (all || []).find((x: any) => x.adjustment_id === adjId);
+        if (!adj) throw new Error('ADJUSTMENT_NOT_FOUND: Phiếu không tồn tại.');
+        if (adj.status === 'APPROVED') {
+          throw new Error('ADJUSTMENT_APPROVED_LOCKED: Phiếu đã duyệt và dựng công — không được xóa.');
+        }
+        if (!isManager && (adj.employee_id !== actorId || adj.status !== 'PENDING')) {
+          throw new Error('ADJUSTMENT_NOT_OWNER: Chỉ được hủy phiếu đang chờ của chính mình.');
+        }
+        const ok = await this.repo.deleteAttendanceAdjustment(adjId);
+        if (!ok) throw new Error('ADJUSTMENT_NOT_FOUND: Phiếu không tồn tại.');
+        if (this.io) {
+          try {
+            this.io.emit('data:updated', { entity: 'adjustments', data: { action: 'deleted', adjId }, timestamp: new Date().toISOString() });
+          } catch { /* non-fatal */ }
+        }
+        return { deleted: adjId };
+      },
+    });
+  }
+
   async reviewAdjustment(
     adjId: string,
     status: 'APPROVED' | 'REJECTED',

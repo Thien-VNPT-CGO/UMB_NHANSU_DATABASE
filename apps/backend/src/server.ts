@@ -128,7 +128,7 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   setTimeout(autoRemindersTickSafe, 60_000); // đợi dữ liệu load xong lần đầu
   setInterval(autoRemindersTickSafe, 5 * 60_000);
 
-  // Phiếu bổ sung công hết hiệu lực sau 30 phút (tính từ lúc NV gửi): tự từ chối PENDING quá hạn (5 phút/lần).
+  // Phiếu bổ sung công hết hiệu lực sau 30 phút (tính từ lúc NV gửi): tự từ chối PENDING quá hạn (1 phút/lần cho khớp đếm ngược realtime).
   const adjustmentExpiryTickSafe = async () => {
     try {
       const r = await services.attendanceService.expireStaleAdjustments(new Date(), 30);
@@ -143,7 +143,7 @@ server.listen(Number(PORT), '0.0.0.0', () => {
     }
   };
   setTimeout(adjustmentExpiryTickSafe, 90_000);
-  setInterval(adjustmentExpiryTickSafe, 5 * 60_000);
+  setInterval(adjustmentExpiryTickSafe, 60_000);
 
   // Tự ghi VẮNG: ca PUBLISHED qua giờ kết thúc 30p mà không check-in -> bản ghi
   // ABSENT làm chứng cứ (đỏ trên 2 cổng, đồng bộ Sheets). Chạy mỗi 15 phút.

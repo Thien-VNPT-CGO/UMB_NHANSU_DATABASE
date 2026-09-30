@@ -586,9 +586,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     return () => clearInterval(clock);
   }, [activeTab]);
   useEffect(() => {
-    // Phiếu 30 phút tự hủy: refresh 20s để cập nhật trạng thái realtime
+    // Phiếu 30 phút tự hủy: refresh 15s để cập nhật trạng thái realtime
     if (activeTab !== 'hr-adjustments') return;
-    const t = setInterval(() => loadAdjustments(), 20000);
+    const t = setInterval(() => loadAdjustments(), 15000);
     return () => clearInterval(t);
   }, [activeTab]);
 
@@ -5526,7 +5526,32 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: '12px', color: '#DC2626' }} disabled={adjBusy === a.adjustment_id} onClick={() => reviewAdj(a, 'REJECTED')}>Từ chối</button>
                 </div>
               ) : (
-                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Đã xử lý</span>
+                <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                  <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Đã xử lý</span>
+                  <button
+                    className="btn-secondary"
+                    style={{ padding: '4px 10px', fontSize: '12px', color: '#DC2626' }}
+                    disabled={adjBusy === a.adjustment_id}
+                    title="Xóa cứng phiếu khỏi hệ thống (bộ nhớ + Sheet). Phiếu đã duyệt bị khóa, không xóa được."
+                    onClick={async () => {
+                      if (!window.confirm(`Xóa cứng phiếu ${a.adjustment_id} khỏi hệ thống (không khôi phục)?`)) return;
+                      setAdjBusy(a.adjustment_id);
+                      try {
+                        await apiRequest(`/attendance/adjustments/${a.adjustment_id}`, { method: 'DELETE' });
+                        showToast('Đã xóa phiếu khỏi hệ thống!');
+                        await loadAdjustments();
+                        if (onRefreshData) await onRefreshData();
+                        if (onSyncSheets) await onSyncSheets();
+                      } catch (e: any) {
+                        showToast(e?.message || 'Lỗi khi xóa!');
+                      } finally {
+                        setAdjBusy(null);
+                      }
+                    }}
+                  >
+                    Xóa
+                  </button>
+                </div>
               )}
             </td>
           </tr>

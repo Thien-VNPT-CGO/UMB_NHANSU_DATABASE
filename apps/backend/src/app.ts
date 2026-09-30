@@ -2087,6 +2087,22 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Xóa cứng phiếu khỏi hệ thống (NV: hủy phiếu PENDING của mình; HR/QL: dọn phiếu chưa duyệt).
+  // APPROVED khóa cứng. Xóa xong full-sync gỡ dòng khỏi Sheet DIEU_CHINH_CONG luôn.
+  app.delete('/attendance/adjustments/:id', authMiddleware, validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const role = req.user?.role;
+      const isManager = role === 'ADMIN' || role === 'HR' || role === 'STORE';
+      if (!isManager && role !== 'EMPLOYEE') return res.status(403).json({ error: 'FORBIDDEN' });
+      const actorId = isManager ? req.user!.id : req.user!.employeeId!;
+      const result = await attendanceService.deleteAdjustment(req.params.id, actorId, isManager);
+      broadcastUpdate('adjustments', { action: 'deleted', adjId: req.params.id });
+      res.json((result as any)?.result ?? result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   app.post('/attendance/adjustments/:id/approve', authMiddleware, requireRole(['ADMIN', 'HR', 'STORE']), validate({ params: idParams, body: adjustmentApproveBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const { status, minutesApproved, note } = req.body;

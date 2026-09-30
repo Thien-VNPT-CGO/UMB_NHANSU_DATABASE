@@ -310,7 +310,7 @@ export function App() {
     }
     if (activeTab === 'adjustment' || activeTab === 'emergency_adjust') {
       fetchMyAdjustments();
-      const t = setInterval(fetchMyAdjustments, 30000);
+      const t = setInterval(fetchMyAdjustments, 15000);
       return () => clearInterval(t);
     }
     // Điểm danh/lịch: tải mới mỗi lần mở để trạng thái (vắng/khóa/bị thu hồi do GPS...)
@@ -3159,8 +3159,26 @@ export function App() {
                         </div>
                         {a.status === 'PENDING' && (
                           <div style={{ marginTop: '4px', color: '#B45309', fontWeight: 700 }}>
-                            ⏳ Còn {leftMin}p {String(leftSec).padStart(2, '0')}s hiệu lực — quá hạn hệ thống tự hủy phiếu
+                            ⏳ Còn {leftMin}p {String(leftSec).padStart(2, '0')}s hiệu lực (tính từ lúc gửi) — quá hạn hệ thống tự hủy phiếu
                           </div>
+                        )}
+                        {a.status === 'PENDING' && (
+                          <button
+                            className="btn-secondary"
+                            style={{ marginTop: '6px', fontSize: '11px', padding: '5px 10px', color: '#DC2626' }}
+                            onClick={async () => {
+                              if (!window.confirm('Hủy phiếu này? Phiếu sẽ bị XÓA KHỎI hệ thống (không khôi phục).')) return;
+                              try {
+                                await apiRequest(`/attendance/adjustments/${a.adjustment_id}`, { method: 'DELETE' });
+                                showToast('Đã hủy và xóa phiếu khỏi hệ thống!');
+                                await fetchMyAdjustments();
+                              } catch (e: any) {
+                                showToast(e?.message || 'Lỗi khi hủy phiếu!');
+                              }
+                            }}
+                          >
+                            🗑 Hủy phiếu (xóa khỏi hệ thống)
+                          </button>
                         )}
                         {a.status === 'APPROVED' && (
                           <div style={{ marginTop: '4px', color: '#047857' }}>✓ Lịch, chấm công và lương đã cập nhật theo phiếu.</div>

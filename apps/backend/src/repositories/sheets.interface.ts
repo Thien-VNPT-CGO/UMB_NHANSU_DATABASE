@@ -73,6 +73,7 @@ export interface ISheetsRepository {
   createAttendanceAdjustment(adj: Omit<AttendanceAdjustment, 'created_at' | 'updated_at' | 'version'>): Promise<AttendanceAdjustment>;
   listAttendanceAdjustments(branchId?: string, employeeId?: string): Promise<AttendanceAdjustment[]>;
   updateAttendanceAdjustment(id: string, status: AdjustmentStatus, approverId: string, minutesApproved?: number, note?: string): Promise<AttendanceAdjustment>;
+  deleteAttendanceAdjustment(id: string): Promise<boolean>;
 
   // Payroll
   createPayrollRun(run: Omit<PayrollRun, 'created_at' | 'updated_at' | 'version'>, items: Omit<PayslipItem, 'created_at' | 'updated_at'>[]): Promise<{ run: PayrollRun; items: PayslipItem[] }>;
