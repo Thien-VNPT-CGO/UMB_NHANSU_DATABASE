@@ -9,6 +9,7 @@ export function requireRole(allowedRoles: SystemRole[]) {
     }
 
     if (!allowedRoles.includes(req.user.role)) {
+      console.warn(`[rbac] FORBIDDEN ${req.method} ${req.path} role=${req.user.role} allowed=${allowedRoles.join(',')}`);
       return res.status(403).json({
         error: ERROR_CODES.FORBIDDEN,
         message: `Tài khoản vai trò ${req.user.role} không có quyền thực hiện tác vụ này.`,

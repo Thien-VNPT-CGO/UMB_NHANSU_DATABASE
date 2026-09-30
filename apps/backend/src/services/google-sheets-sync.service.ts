@@ -932,7 +932,11 @@ export class GoogleSheetsSyncService {
             const username = String(r[1]).trim();
             const passwordFromSheet = String(r[2] || '').trim();
             const fullName = String(r[3] || '').trim() || 'Quản trị viên';
-            const role = (String(r[4] || '').trim() as any) || 'HR';
+            // Chuẩn hóa role (hoa/thường, khoảng trắng) để 'finance'/'Finance'/'FINANCE '
+            // không bị requireRole chặn oan với FORBIDDEN. Lạ -> rớt về HR an toàn.
+            const VALID_ROLES = ['ADMIN', 'HR', 'STORE', 'FINANCE', 'MARKETING', 'EMPLOYEE'];
+            const rawRole = String(r[4] || '').trim().toUpperCase();
+            const role = ((VALID_ROLES.includes(rawRole) ? rawRole : 'HR') as any);
             const branchScope = String(r[5] || '').trim() || '*';
             // Dòng mới 8 cột: Trạng Thái ở cột 6, Ngày Tạo cột 7. Dòng cũ 7 cột: cột 6 là Ngày Tạo.
             const hasStatusCol = r.length >= 8;
