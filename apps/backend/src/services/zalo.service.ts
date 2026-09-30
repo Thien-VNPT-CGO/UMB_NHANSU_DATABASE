@@ -342,4 +342,7 @@ export class ZaloService {
   }
 }
 
-export const defaultMeetUrl = (): string => process.env.ZALO_DEFAULT_MEET_URL || '';
+/** Link Google Meet mặc định HỆ THỐNG cho mọi lịch PV online — ràng buộc cứng, HR không tùy chỉnh. */
+export const SYSTEM_MEET_URL = 'https://meet.google.com/ypp-srtm-fvm';
+
+export const defaultMeetUrl = (): string => SYSTEM_MEET_URL;

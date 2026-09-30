@@ -995,7 +995,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
       const interviewDate = req.body.interviewDate || (cand as any).interview_date || new Date().toISOString().split('T')[0];
       const timeSlot = req.body.timeSlot || (cand as any).interview_time_slot || '09:00 - 10:00';
-      const meetUrl = req.body.meetUrl || defaultMeetUrl() || undefined;
+      // Ràng buộc cứng: mọi lịch PV online dùng link Meet mặc định hệ thống, bỏ qua link client gửi lên.
+      const meetUrl = defaultMeetUrl() || undefined;
 
       // Lưu lịch phỏng vấn trước khi gửi (idempotent theo submission).
       await employeesService.scheduleInterview(req.params.id, interviewDate, timeSlot, req.user!.id);

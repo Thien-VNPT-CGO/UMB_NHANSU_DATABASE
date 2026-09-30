@@ -704,7 +704,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [inviteCandidateId, setInviteCandidateId] = useState('');
   const [inviteDateTime, setInviteDateTime] = useState('');
   const [inviteMode, setInviteMode] = useState<'ONLINE' | 'OFFLINE'>('ONLINE');
-  const [inviteMeetUrl, setInviteMeetUrl] = useState('');
+  // Link Meet mặc định hệ thống (không tùy chỉnh) — input hiển thị disabled.
+  const inviteMeetUrl = 'https://meet.google.com/ypp-srtm-fvm';
   const [inviteBusy, setInviteBusy] = useState(false);
 
   const handleCreateScheduleAndInvite = async () => {
@@ -2453,13 +2454,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
             {inviteMode === 'ONLINE' && (
               <div>
-                <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Link Google Meet (bỏ trống = dùng link mặc định server nếu có):</label>
+                <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Link Google Meet (mặc định hệ thống — không tùy chỉnh):</label>
                 <input
                   type="text"
-                  value={inviteMeetUrl}
-                  onChange={(e) => setInviteMeetUrl(e.target.value)}
-                  placeholder="https://meet.google.com/xxx-yyyy-zzz"
-                  style={{ width: '100%' }}
+                  value="https://meet.google.com/ypp-srtm-fvm"
+                  disabled
+                  title="Link mặc định hệ thống cho mọi lịch PV"
+                  style={{ width: '100%', backgroundColor: '#F3F4F6', color: '#374151' }}
                 />
               </div>
             )}
