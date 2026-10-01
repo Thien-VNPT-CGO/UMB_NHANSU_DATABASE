@@ -47,7 +47,7 @@ import {
 import { RoleViews } from './components/RoleViews';
 import {
   playNotificationDing,
-  playRingtuneFile,
+  playRingtoneFile,
   playWarningTone,
   playButtonPop,
   isSoundEnabled,
@@ -327,7 +327,7 @@ export function App() {
     } else if (toast.type === 'WARNING') {
       playWarningTone();
     } else {
-      playRingtuneFile();
+      playRingtoneFile();
     }
 
     setLiveToasts((prev) => [newToast, ...prev].slice(0, 5));

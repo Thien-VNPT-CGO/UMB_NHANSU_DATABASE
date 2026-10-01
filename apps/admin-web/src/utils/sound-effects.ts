@@ -425,7 +425,7 @@ function getRingtoneEl(): HTMLAudioElement | null {
 }
 
 /** Phát file nhạc chuông kèm theo code (public/sounds/ringtune.mp4). Lỗi -> chuông hiện đại. */
-export function playRingtuneFile(): void {
+export function playRingtoneFile(): void {
   if (!isSoundEnabled()) return;
   ensureAudioUnlocked();
   const el = getRingtoneEl();
@@ -461,13 +461,12 @@ export function playRingtuneFile(): void {
     playModernChime();
   }
 }
-}
 
 /** Phát chuông theo kiểu HR đã chọn (mặc định: nhạc chuông hệ thống). */
 export function playNotificationByStyle(style?: NotificationSoundStyle): void {
   switch (style || getNotificationSoundStyle()) {
     case 'ringtune':
-      return playRingtuneFile();
+      return playRingtoneFile();
     case 'gentle':
       return playGentleChime();
     case 'bubbly':
