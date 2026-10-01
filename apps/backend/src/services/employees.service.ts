@@ -37,6 +37,14 @@ export interface DuplicatePhoneGroup {
   accounts: { account_id: string; employee_id: string; account_status: string }[];
 }
 
+/** Tách giá trị đa lựa chọn (ca / chi nhánh): "A / B, C" -> ["A","B","C"]. */
+export function splitMultiValue(input: unknown): string[] {
+  return String(input || '')
+    .split(/[,/+;|]/)
+    .map(s => s.trim())
+    .filter(Boolean);
+}
+
 /** Chuẩn hóa khối/vị trí về 4 mã chuẩn (dữ liệu Sheets cũ ghi tiếng Việt tự do,
  *  VD: 'Nhân viên bán hàng', 'Nhân viên cửa hàng'). Nhận diện theo từ khóa. */
 export function normalizeGroup(input: unknown): 'STORE' | 'XUONG' | 'VAN_PHONG' | 'SALE' {
@@ -495,13 +503,33 @@ export class EmployeesService {
     if (!cand) throw new Error('CANDIDATE_NOT_FOUND');
     if (cand.status === 'ACCEPTED') throw new Error('Ứng viên này đã được duyệt chính thức rồi!');
     if (cand.status === 'REJECTED') throw new Error('Ứng viên đã bị LOẠI! Khôi phục trước khi duyệt.');
-    const { parseScoreDetail } = await import('./interview-rubric.service.js');
-    const detail = parseScoreDetail((cand as any).interview_score_detail);
-    if (!detail || detail.total < 12 || detail.hasLoai) {
+    // Chặn duyệt khi đăng ký từ 2 ca / 2 chi nhánh trở lên: HR cập nhật lại 1 giá trị trước.
+    const shiftParts = splitMultiValue(cand.registered_shift);
+    if (shiftParts.length >= 2) {
+      throw new Error(`⛔ ${cand.full_name} đăng ký ${shiftParts.length} ca (${shiftParts.join(' + ')})! HR bấm "Cập nhật TT" cập nhật lại đúng 1 ca làm việc rồi mới được duyệt chính thức!`);
+    }
+    const branchParts = splitMultiValue(cand.preferred_branch_id).length >= 2
+      ? splitMultiValue(cand.preferred_branch_id)
+      : splitMultiValue(cand.branch_name);
+    if (branchParts.length >= 2) {
+      throw new Error(`⛔ ${cand.full_name} đăng ký ${branchParts.length} chi nhánh (${branchParts.join(' + ')})! HR bấm "Cập nhật TT" cập nhật lại đúng 1 chi nhánh rồi mới được duyệt chính thức!`);
+    }
+    // Tính lại điểm từ đáp án đã lưu (logic khóa chéo / ngưỡng hiện hành).
+    const { computeRubricScore, parseScoreDetail } = await import('./interview-rubric.service.js');
+    const saved = parseScoreDetail((cand as any).interview_score_detail);
+    let detail = saved;
+    if (saved?.rubricId && saved.answers) {
+      try {
+        detail = { ...computeRubricScore(saved.rubricId, saved.answers), answers: saved.answers };
+      } catch {
+        detail = saved;
+      }
+    }
+    if (!detail || detail.total < Math.min(12, detail.achievableMax ?? 12) || detail.hasLoai) {
       throw new Error(
         !detail
           ? 'Ứng viên chưa được chấm điểm rubric! HR chấm điểm trước (tab Lịch PV → Chấm điểm).'
-          : `Chưa đạt TIÊU CHÍ (đang ${detail.total}/13${detail.hasLoai ? ', dính đáp án LOẠI' : ''})! Cần PASS từ 12 điểm và không có đáp án LOẠI mới được duyệt chính thức.`
+          : `Chưa đạt TIÊU CHÍ (đang ${detail.total}/${detail.achievableMax ?? detail.max}${detail.hasLoai ? ', dính đáp án LOẠI' : ''})! Cần PASS từ 12 điểm và không có đáp án LOẠI mới được duyệt chính thức.`
       );
     }
     const branchId = (cand.preferred_branch_id || 'CN130').trim() || 'CN130';

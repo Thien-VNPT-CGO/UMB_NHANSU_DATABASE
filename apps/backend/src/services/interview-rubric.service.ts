@@ -20,6 +20,8 @@ export interface RubricQuestion {
   cond?: string;
   /** true = được chọn nhiều đáp án (cộng dồn điểm). Mặc định chọn 1. */
   multi?: boolean;
+  /** Nhóm khóa chéo: trong cùng nhóm chỉ 1 câu được tính (VD sinh viên Q4 khóa Q5 và ngược lại). */
+  lockGroup?: string;
   options: RubricOption[];
 }
 
@@ -34,7 +36,7 @@ export interface Rubric {
 export const INTERVIEW_RUBRICS: Rubric[] = [
   {
     id: 'store',
-    name: 'Cửa hàng (9 câu)',
+    name: 'TIÊU CHÍ LỌC HỒ SƠ CÓ KINH NGHIỆM',
     passScore: 12,
     maxScore: 13,
     questions: [
@@ -68,7 +70,8 @@ export const INTERVIEW_RUBRICS: Rubric[] = [
       {
         id: 's4',
         text: 'Bạn có hay tham gia sự kiện tình nguyện, văn nghệ hay câu lạc bộ ở trường không?',
-        cond: 'NẾU ỨNG VIÊN LÀ SINH VIÊN',
+        cond: 'NẾU ỨNG VIÊN LÀ SINH VIÊN (chọn câu này sẽ khóa Câu 5)',
+        lockGroup: 'student-status',
         options: [
           { label: 'Ưu tiên các bạn hướng ngoại, có tham gia', score: 2 },
           { label: 'Không tham gia, hoặc có nhưng ít nói, thái độ rụt rè', score: 0 },
@@ -77,7 +80,8 @@ export const INTERVIEW_RUBRICS: Rubric[] = [
       {
         id: 's5',
         text: 'Bạn có sở thích gì? (Như đi cà phê cùng bạn hay đọc sách)',
-        cond: 'NẾU ỨNG VIÊN KHÔNG BẰNG CẤP ĐI LÀM',
+        cond: 'NẾU ỨNG VIÊN KHÔNG BẰNG CẤP ĐI LÀM (chọn câu này sẽ khóa Câu 4)',
+        lockGroup: 'student-status',
         options: [
           { label: 'Hướng ngoại — thích nơi đông người, vận động, hoạt động đội nhóm', score: 1 },
           { label: 'Hướng nội solo (đọc sách, game, thể thao cá nhân...)', loai: true },
@@ -121,7 +125,7 @@ export const INTERVIEW_RUBRICS: Rubric[] = [
   },
   {
     id: 'office',
-    name: 'Văn phòng / Khối khác (7 câu)',
+    name: 'TIÊU CHÍ LỌC HỒ SƠ KHÔNG CÓ KINH NGHIỆM',
     passScore: 12,
     maxScore: 13,
     questions: [
@@ -196,10 +200,19 @@ export interface RubricScoreResult {
   rubricId: string;
   total: number;
   max: number;
+  /** Điểm tối đa trên phần được áp dụng (trừ câu bị khóa chéo). */
+  achievableMax: number;
   hasLoai: boolean;
   loaiQuestions: string[];
   passed: boolean;
   verdict: 'PASS' | 'CONSIDER' | 'FAIL' | 'LOAI';
+}
+
+/** Điểm tối đa của 1 câu (đáp án điểm cao nhất, multi thì cộng dồn). */
+function questionMax(q: RubricQuestion): number {
+  const scored = q.options.filter(o => !o.loai).map(o => o.score || 0);
+  if (scored.length === 0) return 0;
+  return q.multi ? scored.reduce((a, b) => a + b, 0) : Math.max(...scored);
 }
 
 /** Chấm điểm server-side từ đáp án HR chọn: answers[qid] = index đáp án (multi: mảng index). */
@@ -209,10 +222,38 @@ export function computeRubricScore(
 ): RubricScoreResult {
   const rubric = INTERVIEW_RUBRICS.find(r => r.id === rubricId);
   if (!rubric) throw new Error(`Bộ rubric '${rubricId}' không tồn tại (store/office)!`);
+  // Nhóm khóa chéo: chỉ câu đầu tiên được trả lời trong nhóm được tính, các câu
+  // còn lại bị khóa (VD tick Câu 4 sinh viên thì Câu 5 bị khóa và ngược lại).
+  const lockedOut = new Set<string>();
+  const groups = new Map<string, RubricQuestion[]>();
+  for (const q of rubric.questions) {
+    if (!q.lockGroup) continue;
+    const arr = groups.get(q.lockGroup) || [];
+    arr.push(q);
+    groups.set(q.lockGroup, arr);
+  }
+  const hasAnswers = (qid: string) => {
+    const raw = answers?.[qid];
+    const picked: number[] = Array.isArray(raw) ? raw : (typeof raw === 'number' ? [raw] : []);
+    return picked.some(idx => (rubric.questions.find(q => q.id === qid)?.options || [])[idx]);
+  };
+  for (const [, qs] of groups) {
+    const first = qs.find(q => hasAnswers(q.id));
+    for (const q of qs) {
+      if (q !== first) lockedOut.add(q.id);
+    }
+    // Chưa trả lời câu nào trong nhóm: chưa khóa câu nào (UI chặn lưu đến khi chọn 1).
+    if (!first) {
+      for (const q of qs) lockedOut.delete(q.id);
+    }
+  }
   let total = 0;
   let hasLoai = false;
   const loaiQuestions: string[] = [];
+  let achievableMax = 0;
   for (const q of rubric.questions) {
+    if (lockedOut.has(q.id)) continue;
+    achievableMax += questionMax(q);
     const raw = answers?.[q.id];
     const picked: number[] = Array.isArray(raw) ? raw : (typeof raw === 'number' ? [raw] : []);
     // Câu single: chỉ tính đáp án đầu tiên hợp lệ.
@@ -228,15 +269,19 @@ export function computeRubricScore(
       }
     }
   }
+  // PASS khi đạt ngưỡng trên phần được áp dụng (VD chỉ trả lời Câu 5 thì tối đa
+  // phần áp dụng là 11 — phải tuyệt đối mới pass).
+  const need = Math.min(rubric.passScore, achievableMax);
   let verdict: RubricScoreResult['verdict'];
   if (hasLoai) verdict = 'LOAI';
-  else if (total >= rubric.passScore) verdict = 'PASS';
+  else if (total >= need) verdict = 'PASS';
   else if (total >= 10) verdict = 'CONSIDER';
   else verdict = 'FAIL';
   return {
     rubricId,
     total,
     max: rubric.maxScore,
+    achievableMax,
     hasLoai,
     loaiQuestions,
     passed: verdict === 'PASS',

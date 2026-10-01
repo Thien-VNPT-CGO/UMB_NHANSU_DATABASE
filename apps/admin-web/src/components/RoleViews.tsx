@@ -87,7 +87,7 @@ export const AttPhoto: React.FC<{ eventId: string; style?: React.CSSProperties; 
   return <img src={url} alt={alt || 'Ảnh chấm công'} style={{ width: '72px', height: '72px', objectFit: 'cover', borderRadius: '8px', border: '1px solid var(--border)', ...(style || {}) }} />;
 };
 import { evaluateCandidateAiScore } from '../services/ai-scorer';
-import { candStatusVI, computeRubricClient, INTERVIEW_RUBRICS, parseScoreDetailClient } from '../services/interview-rubric';
+import { candStatusVI, computeRubricClient, INTERVIEW_RUBRICS, lockedQuestionIds, parseScoreDetailClient, requiredAnswerCount } from '../services/interview-rubric';
 
 interface RoleViewsProps {
   activeTab: string;
@@ -842,6 +842,51 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [editingShiftId, setEditingShiftId] = useState<string | null>(null);
   const [editingShiftVal, setEditingShiftVal] = useState('');
   const [shiftBusy, setShiftBusy] = useState(false);
+  // Modal cập nhật thông tin ứng viên (ca + chi nhánh) trước khi duyệt chính thức
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [updatingShift, setUpdatingShift] = useState('');
+  const [updatingBranch, setUpdatingBranch] = useState('');
+  const [updatingBusy, setUpdatingBusy] = useState(false);
+
+  const openUpdating = (candidate: any) => {
+    setUpdatingId(candidate.submission_id);
+    setUpdatingShift(String(candidate.registered_shift || 'Ca sáng'));
+    setUpdatingBranch(String(candidate.preferred_branch_id || 'CN130'));
+  };
+
+  const handleSaveUpdating = async () => {
+    if (!updatingId) return;
+    const shift = updatingShift.trim();
+    if (!shift) {
+      showToast('Ca làm việc không được để trống!');
+      return;
+    }
+    if (!updatingBranch) {
+      showToast('Vui lòng chọn 1 chi nhánh!');
+      return;
+    }
+    setUpdatingBusy(true);
+    try {
+      const b = branches.find((x: any) => (x.branch_id || x.id) === updatingBranch);
+      await apiRequest(`/applications/${updatingId}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          registered_shift: shift,
+          preferred_branch_id: updatingBranch,
+          branch_name: b?.name || updatingBranch,
+        }),
+      });
+      showToast(`✅ Đã cập nhật thông tin: 1 ca (${shift}) + 1 chi nhánh — giờ duyệt chính thức được!`);
+      setUpdatingId(null);
+      if (typeof onRefreshData === 'function') {
+        try { await onRefreshData(); } catch {}
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Cập nhật thất bại!');
+    } finally {
+      setUpdatingBusy(false);
+    }
+  };
 
   const handleCreateScheduleAndInvite = async () => {
     if (!inviteCandidateId) {
@@ -3027,9 +3072,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         if (!d) return null;
                         const vc = d.verdict === 'PASS' ? '#059669' : d.verdict === 'LOAI' ? '#DC2626' : '#B45309';
                         const vt = d.verdict === 'PASS' ? 'PASS' : d.verdict === 'LOAI' ? 'LOẠI thẳng' : d.verdict === 'CONSIDER' ? 'Cân nhắc' : 'Chưa đạt';
+                        const denom = (d as any).achievableMax ?? d.max;
                         return (
                           <div style={{ fontSize: '11px', color: vc, fontWeight: 800, marginTop: '4px' }}>
-                            📝 Rubric: {d.total}/{d.max} — {vt}
+                            📝 Rubric: {d.total}/{denom} — {vt}
                           </div>
                         );
                       })()}
@@ -3062,12 +3108,21 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 📝 Chấm điểm{d ? ` (${d.total})` : ''}
                               </button>
                             )}
+                            {!isAccepted && (
+                              <button
+                                style={{ ...btn2, backgroundColor: '#F59E0B', color: '#FFF', boxShadow: '0 2px 6px rgba(245,158,11,0.3)' }}
+                                onClick={() => openUpdating(c)}
+                                title="Cập nhật ca làm việc + chi nhánh (bắt buộc chốt 1 ca / 1 chi nhánh trước khi duyệt)"
+                              >
+                                ✏️ Cập nhật TT
+                              </button>
+                            )}
                             {canApprove && (
                               <button
                                 style={{ ...btn2, backgroundColor: '#10B981', color: '#FFF', boxShadow: '0 2px 6px rgba(16,185,129,0.35)' }}
                                 disabled={approveBusyId === c.submission_id}
                                 onClick={() => handleApproveCandidate(c)}
-                                title={`Đã PASS rubric (${d.total}/${d.max}) — duyệt thành nhân viên thử việc + cấp PIN`}
+                                title={`Đã PASS rubric (${d.total}/${(d as any).achievableMax ?? d.max}) — duyệt thành nhân viên thử việc + cấp PIN`}
                               >
                                 {approveBusyId === c.submission_id ? '⏳ Đang duyệt...' : '✅ Duyệt chính thức'}
                               </button>
@@ -3097,7 +3152,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           const cand = (candidates || []).find((x: any) => x.submission_id === scoringId);
           const rubric = INTERVIEW_RUBRICS.find(r => r.id === scoringRubric) || INTERVIEW_RUBRICS[0];
           const live = computeRubricClient(scoringRubric, scoringAnswers);
-          const answered = rubric.questions.filter(q => (scoringAnswers[q.id] || []).length > 0).length;
+          const lockedIds = lockedQuestionIds(scoringRubric, scoringAnswers);
+          const required = requiredAnswerCount(scoringRubric);
+          const answered = rubric.questions.filter(q => !lockedIds.includes(q.id) && (scoringAnswers[q.id] || []).length > 0).length;
           const verdictBg = live.verdict === 'PASS' ? '#ECFDF5' : live.verdict === 'LOAI' ? '#FEF2F2' : '#FFFBEB';
           const verdictTx = live.verdict === 'PASS' ? '#059669' : live.verdict === 'LOAI' ? '#DC2626' : '#92400E';
           const verdictLabel = live.verdict === 'PASS' ? '✅ PASS — đủ điều kiện Duyệt chính thức' : live.verdict === 'LOAI' ? '🚫 LOẠI thẳng — lưu sẽ tự loại ứng viên!' : live.verdict === 'CONSIDER' ? '⚠️ Cân nhắc (10-11đ) — chưa đủ duyệt' : '❌ Chưa đạt — cần chấm lại hoặc loại';
@@ -3119,22 +3176,34 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Đã chấm {answered}/{rubric.questions.length} câu</span>
                 </div>
                 <div style={{ padding: '16px 20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                  {rubric.questions.map((q, qi) => (
-                    <div key={q.id} style={{ border: '1px solid var(--border)', borderRadius: '10px', padding: '12px 14px', backgroundColor: (scoringAnswers[q.id] || []).length > 0 ? '#F8FAFC' : '#FFF' }}>
+                  {rubric.questions.map((q, qi) => {
+                    const isLocked = lockedIds.includes(q.id);
+                    return (
+                    <div key={q.id} style={{ border: '1px solid var(--border)', borderRadius: '10px', padding: '12px 14px', backgroundColor: isLocked ? '#F1F5F9' : (scoringAnswers[q.id] || []).length > 0 ? '#F8FAFC' : '#FFF', opacity: isLocked ? 0.65 : 1 }}>
                       <div style={{ fontSize: '13px', fontWeight: 800, color: '#0F172A', marginBottom: q.cond ? '2px' : '8px' }}>
                         Câu {qi + 1}: {q.text}
                       </div>
                       {q.cond && <div style={{ fontSize: '11px', fontWeight: 800, color: '#DC2626', marginBottom: '8px' }}>{q.cond}</div>}
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      {isLocked && <div style={{ fontSize: '11px', fontWeight: 800, color: '#64748B', marginBottom: '8px' }}>🔒 Đã bị khóa vì HR đã tick câu còn lại trong nhóm — bỏ chọn câu kia để mở lại.</div>}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', pointerEvents: isLocked ? 'none' : 'auto' }}>
                         {q.options.map((opt, oi) => {
                           const picked = (scoringAnswers[q.id] || []).includes(oi);
                           const toggle = () => {
                             setScoringAnswers(prev => {
-                              const cur = prev[q.id] || [];
-                              if (q.multi) {
-                                return { ...prev, [q.id]: cur.includes(oi) ? cur.filter(x => x !== oi) : [...cur, oi] };
+                              const next: Record<string, number[]> = { ...prev };
+                              // Khóa chéo: tick câu này thì xóa + khóa các câu cùng nhóm.
+                              if (q.lockGroup) {
+                                for (const g of rubric.questions) {
+                                  if (g.lockGroup === q.lockGroup && g.id !== q.id) delete next[g.id];
+                                }
                               }
-                              return { ...prev, [q.id]: cur.includes(oi) ? [] : [oi] };
+                              const cur = next[q.id] || [];
+                              if (q.multi) {
+                                next[q.id] = cur.includes(oi) ? cur.filter(x => x !== oi) : [...cur, oi];
+                              } else {
+                                next[q.id] = cur.includes(oi) ? [] : [oi];
+                              }
+                              return next;
                             });
                           };
                           return (
@@ -3149,17 +3218,18 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         })}
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
                 <div style={{ padding: '14px 20px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: verdictBg, gap: '12px', flexWrap: 'wrap' }}>
                   <div style={{ fontSize: '13px', fontWeight: 800, color: verdictTx }}>
-                    Tổng: {live.total}/{live.max} — {verdictLabel}
+                    Tổng: {live.total}/{live.achievableMax}{live.achievableMax !== live.max ? ` (MAX giấy ${live.max})` : ''} — {verdictLabel}
                   </div>
                   <button
                     onClick={handleSaveScore}
-                    disabled={scoringBusy || answered < rubric.questions.length}
-                    title={answered < rubric.questions.length ? 'Chấm đủ tất cả các câu mới được lưu' : 'Lưu điểm rubric'}
-                    style={{ padding: '10px 20px', borderRadius: '8px', backgroundColor: scoringBusy || answered < rubric.questions.length ? '#CBD5E1' : '#1E40AF', color: '#FFF', fontSize: '13px', fontWeight: 800, border: 'none', cursor: scoringBusy || answered < rubric.questions.length ? 'not-allowed' : 'pointer' }}
+                    disabled={scoringBusy || answered < required}
+                    title={answered < required ? `Chấm đủ ${required} câu (cặp khóa chéo tính 1) mới được lưu` : 'Lưu điểm rubric'}
+                    style={{ padding: '10px 20px', borderRadius: '8px', backgroundColor: scoringBusy || answered < required ? '#CBD5E1' : '#1E40AF', color: '#FFF', fontSize: '13px', fontWeight: 800, border: 'none', cursor: scoringBusy || answered < required ? 'not-allowed' : 'pointer' }}
                   >
                     {scoringBusy ? '⏳ Đang lưu...' : '💾 Lưu điểm'}
                   </button>
@@ -3169,8 +3239,66 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           );
         })()}
 
-        {/* MODAL KẾT QUẢ DUYỆT CHÍNH THỨC (mã NV + PIN trao tay) */}
-        {approveResult && (
+        {/* MODAL CẬP NHẬT THÔNG TIN ỨNG VIÊN (chốt 1 ca + 1 chi nhánh trước duyệt) */}
+        {updatingId && (() => {
+          const cand = (candidates || []).find((x: any) => x.submission_id === updatingId);
+          return (
+            <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+              <div style={{ backgroundColor: '#FFF', borderRadius: '14px', maxWidth: '480px', width: '100%', overflow: 'hidden' }}>
+                <div style={{ padding: '16px 20px', backgroundColor: '#F59E0B', color: '#FFF', fontWeight: 800, fontSize: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span>✏️ Cập nhật TT: {cand?.full_name || updatingId}</span>
+                  <button onClick={() => !updatingBusy && setUpdatingId(null)} disabled={updatingBusy} style={{ border: 'none', background: 'rgba(255,255,255,0.25)', color: '#FFF', fontSize: '15px', cursor: 'pointer', borderRadius: '6px', padding: '2px 8px' }}>✕</button>
+                </div>
+                <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  <div style={{ fontSize: '12px', color: '#92400E', backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '8px', padding: '8px 12px', lineHeight: '1.5' }}>
+                    Ứng viên đăng ký từ 2 ca / 2 chi nhánh trở lên phải chốt lại <strong>đúng 1 ca + 1 chi nhánh</strong> mới được Duyệt chính thức.
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 800, display: 'block', marginBottom: '4px' }}>Ca làm việc (1 ca duy nhất):</label>
+                    <input
+                      value={updatingShift}
+                      onChange={(e) => setUpdatingShift(e.target.value)}
+                      placeholder="VD: Ca sáng"
+                      style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid var(--border)', fontSize: '13px' }}
+                    />
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Đang đăng ký: {cand?.registered_shift || '—'}</div>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 800, display: 'block', marginBottom: '4px' }}>Chi nhánh (1 chi nhánh duy nhất):</label>
+                    <select
+                      value={updatingBranch}
+                      onChange={(e) => setUpdatingBranch(e.target.value)}
+                      style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid var(--border)', fontSize: '13px' }}
+                    >
+                      {branches.length > 0 ? (
+                        branches.map((b: any) => (
+                          <option key={b.branch_id || b.id} value={b.branch_id || b.id}>{b.name}</option>
+                        ))
+                      ) : (
+                        <>
+                          <option value="CN130">CN1: 130 Vạn Kiếp (Bình Thạnh)</option>
+                          <option value="CN261">CN2: 261 Tô Hiến Thành (Q.10)</option>
+                          <option value="CN120">CN3: 120 Hoàng Diệu 2 (Thủ Đức)</option>
+                          <option value="CN111">CN4: 111 Tôn Đản (Q.4)</option>
+                        </>
+                      )}
+                    </select>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Đang đăng ký: {cand?.branch_name || cand?.preferred_branch_id || '—'}</div>
+                  </div>
+                  <button
+                    onClick={handleSaveUpdating}
+                    disabled={updatingBusy}
+                    style={{ padding: '11px', borderRadius: '8px', backgroundColor: updatingBusy ? '#CBD5E1' : '#F59E0B', color: '#FFF', fontSize: '13px', fontWeight: 800, border: 'none', cursor: updatingBusy ? 'not-allowed' : 'pointer' }}
+                  >
+                    {updatingBusy ? '⏳ Đang lưu...' : '💾 Lưu cập nhật'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* MODAL KẾT QUẢ DUYỆT CHÍNH THỨC (mã NV + PIN trao tay) */}        {approveResult && (
           <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
             <div style={{ backgroundColor: '#FFF', borderRadius: '14px', maxWidth: '480px', width: '100%', overflow: 'hidden' }}>
               <div style={{ padding: '16px 20px', backgroundColor: '#10B981', color: '#FFF', fontWeight: 800, fontSize: '15px' }}>
