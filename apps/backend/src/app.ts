@@ -969,7 +969,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  // Duyệt chính thức: yêu cầu rubric PASS (≥12, không LOẠI) -> tạo NV thử việc + PIN.
+  // Duyệt thử việc: yêu cầu rubric PASS (≥12, không LOẠI) -> tạo NV thử việc + PIN.
   app.post('/applications/:id/approve', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {
     try {
       const result = await employeesService.approveCandidate(req.params.id, req.user!.id);

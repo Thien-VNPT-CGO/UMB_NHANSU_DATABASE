@@ -1003,7 +1003,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       if (res.autoRejected) {
         showToast(`🚫 Ứng viên dính đáp án LOẠI — đã tự động loại khỏi quy trình!`);
       } else {
-        const v = res.verdict === 'PASS' ? '✅ PASS — đủ điều kiện Duyệt chính thức!' : res.verdict === 'CONSIDER' ? '⚠️ Cân nhắc (10-11đ) — chưa đủ duyệt!' : '❌ Chưa đạt — cần chấm lại hoặc loại!';
+        const v = res.verdict === 'PASS' ? '✅ PASS — đủ điều kiện Duyệt Thử việc!' : res.verdict === 'CONSIDER' ? '⚠️ Cân nhắc (10-11đ) — chưa đủ duyệt!' : '❌ Chưa đạt — cần chấm lại hoặc loại!';
         showToast(`Đã lưu điểm rubric: ${res.total}/13. ${v}`);
       }
       setScoringId(null);
@@ -1017,9 +1017,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     }
   };
 
-  // Duyệt chính thức: chỉ pass rubric mới gọi được (server kiểm lại).
+  // Duyệt thử việc: chỉ pass rubric mới gọi được (server kiểm lại).
   const handleApproveCandidate = async (candidate: any) => {
-    if (!window.confirm(`Duyệt chính thức ${candidate.full_name} thành nhân viên thử việc?\nHệ thống sẽ tạo hồ sơ NV + tài khoản/PIN đăng nhập.`)) return;
+    if (!window.confirm(`Duyệt thử việc cho ${candidate.full_name}?\nHệ thống sẽ tạo hồ sơ NV thử việc + tài khoản/PIN đăng nhập.`)) return;
     setApproveBusyId(candidate.submission_id);
     try {
       const res: any = await apiRequest(`/applications/${candidate.submission_id}/approve`, { method: 'POST' });
@@ -3091,6 +3091,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           const d = parseScoreDetailClient((c as any)?.interview_score_detail);
                           const canApprove = !!d && d.passed && String(c.status || '') !== 'ACCEPTED';
                           const isAccepted = String(c.status || '') === 'ACCEPTED';
+                          const isScored = !!d;
                           return (<>
                             <button
                               style={{ ...btn2, backgroundColor: '#0068FF', color: '#FFF', boxShadow: '0 2px 6px rgba(0,104,255,0.3)' }}
@@ -3099,13 +3100,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             >
                               📩 Gửi thư mời Zalo
                             </button>
-                            {!isAccepted && (
+                            {!isAccepted && !isScored && (
                               <button
                                 style={{ ...btn2, backgroundColor: '#8B5CF6', color: '#FFF', boxShadow: '0 2px 6px rgba(139,92,246,0.3)' }}
                                 onClick={() => openScoring(c)}
-                                title="Chấm điểm theo TIÊU CHÍ LỌC HỒ SƠ (PASS từ 12/13)"
+                                title="Chấm điểm theo TIÊU CHÍ LỌC HỒ SƠ (chấm xong nút này ẩn đi)"
                               >
-                                📝 Chấm điểm{d ? ` (${d.total})` : ''}
+                                📝 Chấm điểm
                               </button>
                             )}
                             {!isAccepted && (
@@ -3122,9 +3123,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 style={{ ...btn2, backgroundColor: '#10B981', color: '#FFF', boxShadow: '0 2px 6px rgba(16,185,129,0.35)' }}
                                 disabled={approveBusyId === c.submission_id}
                                 onClick={() => handleApproveCandidate(c)}
-                                title={`Đã PASS rubric (${d.total}/${(d as any).achievableMax ?? d.max}) — duyệt thành nhân viên thử việc + cấp PIN`}
+                                title={`Đã PASS rubric (${d.total}/${(d as any).achievableMax ?? d.max}) — duyệt thử việc + cấp PIN`}
                               >
-                                {approveBusyId === c.submission_id ? '⏳ Đang duyệt...' : '✅ Duyệt chính thức'}
+                                {approveBusyId === c.submission_id ? '⏳ Đang duyệt...' : '✅ Duyệt Thử việc'}
                               </button>
                             )}
                             {isAccepted && (
@@ -3157,7 +3158,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           const answered = rubric.questions.filter(q => !lockedIds.includes(q.id) && (scoringAnswers[q.id] || []).length > 0).length;
           const verdictBg = live.verdict === 'PASS' ? '#ECFDF5' : live.verdict === 'LOAI' ? '#FEF2F2' : '#FFFBEB';
           const verdictTx = live.verdict === 'PASS' ? '#059669' : live.verdict === 'LOAI' ? '#DC2626' : '#92400E';
-          const verdictLabel = live.verdict === 'PASS' ? '✅ PASS — đủ điều kiện Duyệt chính thức' : live.verdict === 'LOAI' ? '🚫 LOẠI thẳng — lưu sẽ tự loại ứng viên!' : live.verdict === 'CONSIDER' ? '⚠️ Cân nhắc (10-11đ) — chưa đủ duyệt' : '❌ Chưa đạt — cần chấm lại hoặc loại';
+          const verdictLabel = live.verdict === 'PASS' ? '✅ PASS — đủ điều kiện Duyệt Thử việc' : live.verdict === 'LOAI' ? '🚫 LOẠI thẳng — lưu sẽ tự loại ứng viên!' : live.verdict === 'CONSIDER' ? '⚠️ Cân nhắc (10-11đ) — chưa đủ duyệt' : '❌ Chưa đạt — cần chấm lại hoặc loại';
           return (
             <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
               <div style={{ backgroundColor: '#FFF', borderRadius: '14px', maxWidth: '720px', width: '100%', maxHeight: '88vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -3251,7 +3252,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 </div>
                 <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
                   <div style={{ fontSize: '12px', color: '#92400E', backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '8px', padding: '8px 12px', lineHeight: '1.5' }}>
-                    Ứng viên đăng ký từ 2 ca / 2 chi nhánh trở lên phải chốt lại <strong>đúng 1 ca + 1 chi nhánh</strong> mới được Duyệt chính thức.
+                    Ứng viên đăng ký từ 2 ca / 2 chi nhánh trở lên phải chốt lại <strong>đúng 1 ca + 1 chi nhánh</strong> mới được Duyệt Thử việc.
                   </div>
                   <div>
                     <label style={{ fontSize: '12px', fontWeight: 800, display: 'block', marginBottom: '4px' }}>Ca làm việc (1 ca duy nhất):</label>
@@ -3297,12 +3298,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </div>
           );
         })()}
-
-        {/* MODAL KẾT QUẢ DUYỆT CHÍNH THỨC (mã NV + PIN trao tay) */}        {approveResult && (
+        {/* MODAL KẾT QUẢ DUYỆT THỬ VIỆC (mã NV + PIN trao tay) */}
+        {approveResult && (
           <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
             <div style={{ backgroundColor: '#FFF', borderRadius: '14px', maxWidth: '480px', width: '100%', overflow: 'hidden' }}>
               <div style={{ padding: '16px 20px', backgroundColor: '#10B981', color: '#FFF', fontWeight: 800, fontSize: '15px' }}>
-                ✅ Duyệt chính thức thành công!
+                ✅ Duyệt thử việc thành công!
               </div>
               <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '14px' }}>
                 <div><strong>Nhân viên:</strong> {(approveResult as any)?.employee?.full_name} ({(approveResult as any)?.employee?.employee_code})</div>

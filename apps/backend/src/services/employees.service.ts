@@ -479,10 +479,14 @@ export class EmployeesService {
       );
       return { total: scored.total, passed: false, verdict: scored.verdict, autoRejected: true, candidate: rejected };
     }
+    const cur = (await this.repo.listCandidates().catch(() => []))
+      .find((c: any) => c.submission_id === submissionId) as any;
     const updated = await this.repo.updateCandidate(submissionId, {
       interview_score: scored.total,
       interview_rubric: rubricId,
       interview_score_detail: detail,
+      // Chấm xong -> chờ HR duyệt thử việc (nút Chấm điểm ẩn đi, không chấm lại).
+      ...(cur && cur.status !== 'ACCEPTED' ? { status: 'SCORED' } : {}),
     } as any);
     await this.repo.recordAuditLog({
       log_id: `LOG_${Date.now()}`,
@@ -496,12 +500,12 @@ export class EmployeesService {
     return { total: scored.total, passed: scored.passed, verdict: scored.verdict, autoRejected: false, candidate: updated };
   }
 
-  /** Duyệt chính thức: yêu cầu rubric PASS (≥12, không LOẠI) -> tạo NV thử việc + PIN, ACCEPTED. */
+  /** Duyệt thử việc: yêu cầu rubric PASS (≥12, không LOẠI) -> tạo NV thử việc + PIN, ACCEPTED. */
   async approveCandidate(submissionId: string, actorId: string) {
     const cand = (await this.repo.listCandidates().catch(() => []))
       .find((c: any) => c.submission_id === submissionId) as any;
     if (!cand) throw new Error('CANDIDATE_NOT_FOUND');
-    if (cand.status === 'ACCEPTED') throw new Error('Ứng viên này đã được duyệt chính thức rồi!');
+    if (cand.status === 'ACCEPTED') throw new Error('Ứng viên này đã được duyệt thử việc rồi!');
     if (cand.status === 'REJECTED') throw new Error('Ứng viên đã bị LOẠI! Khôi phục trước khi duyệt.');
     // Chặn duyệt khi đăng ký từ 2 ca / 2 chi nhánh trở lên: HR cập nhật lại 1 giá trị trước.
     const shiftParts = splitMultiValue(cand.registered_shift);
@@ -529,7 +533,7 @@ export class EmployeesService {
       throw new Error(
         !detail
           ? 'Ứng viên chưa được chấm điểm rubric! HR chấm điểm trước (tab Lịch PV → Chấm điểm).'
-          : `Chưa đạt TIÊU CHÍ (đang ${detail.total}/${detail.achievableMax ?? detail.max}${detail.hasLoai ? ', dính đáp án LOẠI' : ''})! Cần PASS từ 12 điểm và không có đáp án LOẠI mới được duyệt chính thức.`
+          : `Chưa đạt TIÊU CHÍ (đang ${detail.total}/${detail.achievableMax ?? detail.max}${detail.hasLoai ? ', dính đáp án LOẠI' : ''})! Cần PASS từ 12 điểm và không có đáp án LOẠI mới được duyệt thử việc.`
       );
     }
     const branchId = (cand.preferred_branch_id || 'CN130').trim() || 'CN130';

@@ -294,7 +294,8 @@ export function candStatusVI(s: unknown): string {
     NEED_INFO: 'Cần bổ sung',
     INVITED_INTERVIEW: 'Đã mời phỏng vấn',
     INTERVIEWED: 'Đã phỏng vấn',
-    ACCEPTED: 'Đã duyệt chính thức',
+    SCORED: 'Chờ duyệt thử việc',
+    ACCEPTED: 'Đã duyệt thử việc',
     REJECTED: 'Đã loại',
   };
   const k = String(s || '').trim();
