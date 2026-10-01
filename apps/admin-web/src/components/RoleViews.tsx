@@ -1519,12 +1519,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       return raw;
     };
 
-    // Chọn ứng viên để lập lịch PV (điền sẵn ở tab Phỏng vấn & BOT Zalo).
-    const handlePickCandidateForInterview = (c: any) => {
-      setInviteCandidateId(c.submission_id);
-      showToast(`Đã chọn ${c.full_name} — qua tab "Phỏng vấn & BOT Zalo" để đặt lịch (chi nhánh tự điền theo hồ sơ)!`);
-    };
-
     // Chat Zalo: tự động kết bạn qua nick HR + gửi lời chào (không cần bấm xác nhận).
     const handleChatZalo = async (c: any) => {
       await chatZaloWithCandidate(c, showToast);
@@ -2036,9 +2030,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         }}>
                           <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', flexWrap: 'wrap' }}>
                             {(() => {
-                              const rowAi = evaluateCandidateAiScore(c);
                               const rowRejected = String(c.status || '') === 'REJECTED';
-                              const rowPass = rowAi.result === 'Đạt' && !rowRejected;
                               const btn: React.CSSProperties = {
                                 padding: '6px 12px', fontSize: '11px', fontWeight: 800,
                                 borderRadius: '8px', border: 'none', cursor: 'pointer',
@@ -2061,16 +2053,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                   >
                                     ♻️ Khôi Phục
                                   </button>
-                                ) : (<>
-                                  {rowPass && (
-                                    <button
-                                      style={{ ...btn, backgroundColor: '#0068FF', color: '#FFF', boxShadow: '0 2px 6px rgba(0,104,255,0.3)' }}
-                                      onClick={() => handlePickCandidateForInterview(c)}
-                                      title="Chọn để lập lịch phỏng vấn ở tab Phỏng vấn & BOT Zalo"
-                                    >
-                                      📅 Mời PV
-                                    </button>
-                                  )}
+                                ) : (
                                   <button
                                     style={{ ...btn, backgroundColor: '#10B981', color: '#FFF', boxShadow: '0 2px 6px rgba(16,185,129,0.3)' }}
                                     onClick={() => handleChatZalo(c)}
@@ -2078,7 +2061,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                   >
                                     💬 Chat Zalo
                                   </button>
-                                </>)}
+                                )}
                               </>);
                             })()}
                           </div>
