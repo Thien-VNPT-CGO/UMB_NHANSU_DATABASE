@@ -679,6 +679,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   useEffect(() => {
     if (activeTab !== 'hr-interviews') return;
     for (const cd of (candidates || [])) {
+      // Đã loại / đã duyệt thử việc: không còn lịch PV để nhắc hay tự mở Meet.
+      if (['REJECTED', 'ACCEPTED'].includes(String((cd as any)?.status || ''))) continue;
       const st = interviewStartMs(cd);
       if (!st) continue;
       const key = `${cd.submission_id}|${cd.interview_date}`;
@@ -916,8 +918,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Link Meet mặc định hệ thống (không tùy chỉnh) — input hiển thị disabled.
   const inviteMeetUrl = 'https://meet.google.com/ypp-srtm-fvm';
   const [inviteBusy, setInviteBusy] = useState(false);
-  // Danh sách ứng viên còn xét (đã loại ẩn khỏi tab PV).
-  const pvCandidates = (candidates || []).filter((c: any) => String(c?.status || '') !== 'REJECTED');
+  // Danh sách lịch PV: ẩn đã loại + đã duyệt thử việc (thành NV, không còn là ứng viên).
+  const pvCandidates = (candidates || []).filter((c: any) => !['REJECTED', 'ACCEPTED'].includes(String(c?.status || '')));
 
   /** Ràng buộc dữ liệu: chi nhánh của ứng viên đang chọn (khớp mã CN đúng / mã nhúng trong tên / tên chi nhánh). */
   const resolveCandidateBranch = (c: any): string => {
