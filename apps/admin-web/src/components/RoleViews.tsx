@@ -654,9 +654,28 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Tới giờ PV: popup cảnh báo + chuông riêng.
   const remind15Ref = useRef<Set<string>>(new Set());
   const t10Ref = useRef<Set<string>>(new Set());
+  const t5Ref = useRef<Set<string>>(new Set());
   const meetWindowsRef = useRef<Map<string, Window | null>>(new Map());
+  const [meetBlocked, setMeetBlocked] = useState(false);
   const [pvAlert, setPvAlert] = useState<any | null>(null);
   const [celebration, setCelebration] = useState<{ name: string; total: number; rubric: string } | null>(null);
+
+  /** Thử tự mở tab Meet — trả về true nếu trình duyệt cho phép (false = bị chặn popup). */
+  const tryOpenMeet = (key: string): boolean => {
+    try {
+      const w = window.open(SYSTEM_MEET_URL, '_blank');
+      meetWindowsRef.current.set(key, w);
+      if (!w) {
+        setMeetBlocked(true);
+        return false;
+      }
+      return true;
+    } catch {
+      meetWindowsRef.current.set(key, null);
+      setMeetBlocked(true);
+      return false;
+    }
+  };
   useEffect(() => {
     if (activeTab !== 'hr-interviews') return;
     for (const cd of (candidates || [])) {
@@ -669,30 +688,35 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         showToast(`⏰ Còn 15 phút tới giờ PV ${cd.full_name} (${String(cd.interview_time_slot || '').slice(0, 5)}) — HR chuẩn bị vào Meet!`);
       }
       // T-10 phút: tự mở Meet + popup chấm điểm (nếu chưa chấm).
+      // Lưu ý trình duyệt: tự mở tab không qua click có thể bị chặn popup —
+      // thử lại ở T-5 và T-0, đồng thời báo rõ để HR bấm mở tay 1 chạm.
       if (diff > 0 && diff <= 10 * 60000 && !t10Ref.current.has(key)) {
         t10Ref.current.add(key);
-        try {
-          const w = window.open(SYSTEM_MEET_URL, '_blank');
-          meetWindowsRef.current.set(key, w);
-        } catch {
-          meetWindowsRef.current.set(key, null);
-        }
+        const opened = tryOpenMeet(key);
         if (!parseScoreDetailClient((cd as any)?.interview_score_detail)) {
           setScoringRubric(((cd as any)?.interview_rubric === 'office' ? 'office' : 'store') as any);
           setScoringAnswers({});
           setScoringId(cd.submission_id);
         }
-        showToast(`🎬 Meet đã tự mở cho PV ${cd.full_name} + popup chấm điểm — HR chấm trực tiếp, lưu xong Meet tự đóng!`);
+        showToast(opened
+          ? `🎬 Meet đã tự mở cho PV ${cd.full_name} + popup chấm điểm — HR chấm trực tiếp, lưu xong Meet tự đóng!`
+          : `⚠️ Trình duyệt đã CHẶN tự mở Meet cho PV ${cd.full_name}! Tới giờ bấm "Vào Meet ngay" trong popup (1 chạm), hoặc bật "Luôn cho phép popup" cho trang web để lần sau tự mở.`);
+      }
+      // T-5 phút: mở bù nếu T-10 bị chặn.
+      if (diff > 0 && diff <= 5 * 60000 && !t5Ref.current.has(key)) {
+        t5Ref.current.add(key);
+        const prev = meetWindowsRef.current.get(key);
+        if (!prev || prev.closed) {
+          const opened = tryOpenMeet(key);
+          if (opened) showToast(`🎬 Meet đã tự mở (mở bù) cho PV ${cd.full_name} — còn 5 phút!`);
+        }
       }
       if (meetNow >= st && meetNow - st < 30 * 60000 && !meetOpenedRef.current.has(key)) {
         meetOpenedRef.current.add(key);
-        // Meet đã tự mở từ T-10 phút; chỉ mở lại nếu chưa có (popup từng bị chặn).
+        // Meet đã tự mở từ T-10/T-5; chỉ mở lại nếu chưa có (popup từng bị chặn).
         const prev = meetWindowsRef.current.get(key);
         if (!prev || prev.closed) {
-          try {
-            const w = window.open(SYSTEM_MEET_URL, '_blank');
-            meetWindowsRef.current.set(key, w);
-          } catch { /* popup bị chặn */ }
+          tryOpenMeet(key);
         }
         playInterviewAlert();
         setPvAlert(cd);
@@ -3385,6 +3409,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                   {pvAlert.branch_name || getDisplayBranch(pvAlert.preferred_branch_id || 'CN130')} • {pvAlert.phone || pvAlert.phone_normalized}
                 </div>
+                {meetBlocked && (
+                  <div style={{ fontSize: '11px', color: '#92400E', backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '8px', padding: '8px 10px', lineHeight: '1.5' }}>
+                    ⚠️ Trình duyệt đang chặn tự mở tab. Bấm “Vào Meet ngay” bên dưới (1 chạm là mở được), rồi bật <strong>“Luôn cho phép cửa sổ bật lên”</strong> cho trang web để các buổi sau tự mở.
+                  </div>
+                )}
                 <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
                   <button
                     onClick={() => { try { window.open(SYSTEM_MEET_URL, '_blank'); } catch {} setPvAlert(null); }}
