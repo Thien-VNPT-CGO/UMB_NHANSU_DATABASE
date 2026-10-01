@@ -191,9 +191,15 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       const io = app.get('io');
       if (io) {
+        // Nguồn phát sinh: sự kiện NV thao tác (cổng nhân viên) hay HR/hệ thống.
+        // 2 cổng lọc popup/chuông theo origin: admin chỉ nhận EMPLOYEE, NV chỉ nhận ADMIN.
+        const origin = (['CHECKIN', 'CHECKOUT', 'LEAVE', 'SWAP', 'PIN_CHANGED', 'TEST'] as string[]).includes(notif.type)
+          ? 'EMPLOYEE'
+          : 'ADMIN';
         const payload = {
           id: `notif_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
           ...notif,
+          origin,
           timestamp: new Date().toISOString(),
         };
         io.emit('system:notification', payload);

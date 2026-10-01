@@ -593,7 +593,9 @@ export function App() {
         reload();
       });
       socket.on('system:notification', (n: any) => {
-        if (n?.message || n?.title) showToastRef.current(`🔔 ${n.title || ''}${n.title && n.message ? ': ' : ''}${n.message || ''}`.trim());
+        // Ràng buộc 2 chiều: cổng nhân viên chỉ popup tin TỪ phía quản trị (HR).
+        const fromAdmin = !n?.origin || n.origin === 'ADMIN';
+        if (fromAdmin && (n?.message || n?.title)) showToastRef.current(`🔔 ${n.title || ''}${n.title && n.message ? ': ' : ''}${n.message || ''}`.trim());
         reload();
       });
     } catch { /* offline — lần mở sau thử lại */ }

@@ -866,10 +866,12 @@ export function App() {
       });
 
       // Lắng nghe thông báo nghiệp vụ trực tiếp (Check-in, đơn nghỉ, đổi ca, đổi PIN...)
+      // Ràng buộc 2 chiều: cổng quản trị chỉ popup/chuông tin TỪ cổng nhân viên.
       socket.on('system:notification', (notif: any) => {
         console.log('🔔 [Socket.IO] Nhận thông báo nghiệp vụ realtime:', notif);
+        const fromEmployee = !notif.origin || notif.origin === 'EMPLOYEE';
         // Kiểm tra vai trò phù hợp
-        if (!notif.targetRoles || notif.targetRoles.includes(currentUser.role)) {
+        if (fromEmployee && (!notif.targetRoles || notif.targetRoles.includes(currentUser.role))) {
           addRichToast({
             type: notif.type,
             title: notif.title || 'Thông Báo Hệ Thống',

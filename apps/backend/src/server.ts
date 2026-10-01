@@ -320,6 +320,7 @@ server.listen(Number(PORT), '0.0.0.0', () => {
               title: `⏰ Sắp tới giờ PV: ${item.candidateName} (${item.timeSlot} — còn ${item.minutesLeft} phút)`,
               message: `${item.candidateName} phỏng vấn lúc ${item.timeSlot} ngày ${item.date}. HR chuẩn bị vào Meet trước 5 phút!`,
               linkTab: 'hr-interviews',
+              origin: 'ADMIN',
               metadata: { submissionId: item.submissionId },
               targetRoles: ['ADMIN', 'HR'],
               timestamp: new Date().toISOString(),
