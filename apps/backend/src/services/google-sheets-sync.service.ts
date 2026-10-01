@@ -1730,8 +1730,7 @@ export class GoogleSheetsSyncService {
    * Đẩy riêng tab SU_KIEN_DIEM_DANH (await được): dùng sau khi xóa vi phạm/phạt
    * trên lượt check-in/out để Sheet khớp ngay, pull sau không hồi sinh mức phạt cũ.
    */
-  public async pushEventsTab(repo: { getAttendanceEvents(emp?: string, date?: string): Promise<any[]> }): Promise<number> {
-    const events = await repo.getAttendanceEvents('*', '*').catch(() => []);
+  public async pushEventsTab(repo: { getAttendanceEvents(emp?: string, date?: string): Promise<any[]> }): Promise<number> {    const events = await repo.getAttendanceEvents('*', '*').catch(() => []);
     const rows = (events || []).map((e: any) => [
       e.event_id, e.assignment_id, e.employee_id, e.type, e.server_received_at,
       e.gps_latitude ?? '', e.gps_longitude ?? '', e.distance_meters ?? '', e.gps_status || '',
@@ -1742,6 +1741,41 @@ export class GoogleSheetsSyncService {
     ]);
     await this.overwriteSheetData('SU_KIEN_DIEM_DANH', SHEETS_DEFINITIONS.find(d => d.title === 'SU_KIEN_DIEM_DANH')!.headers, rows);
     return rows.length;
+  }
+
+  /**
+   * Đẩy riêng tab FROM_NHAN_VIEN (await được): dùng sau khi xóa lịch PV trùng
+   * để Sheet khớp ngay, pull sau đó không thể hồi sinh lịch đã xóa (fix zombie).
+   */
+  public async pushCandidatesTab(repo: { listCandidates(): Promise<any[]> }): Promise<number> {
+    const candList = await repo.listCandidates().catch(() => []);
+    const candHeaders = SHEETS_DEFINITIONS.find(d => d.title === 'FROM_NHAN_VIEN')!.headers;
+    const candRows = (candList || []).map((c: any, idx: number) => [
+      c.created_at || new Date().toISOString(),
+      c.full_name || '',
+      c.gender || 'Nam',
+      c.birth_year ? String(c.birth_year) : '2002',
+      c.education_level || 'Đại học',
+      c.hometown || 'TP. Hồ Chí Minh',
+      c.phone || c.phone_normalized || '',
+      c.registered_shift || 'Ca sáng / Ca chiều',
+      c.branch_name || c.preferred_branch_id || 'CN130',
+      c.experience || 'Chưa có kinh nghiệm',
+      c.emergency_handling || 'Sẵn sàng hỗ trợ đột xuất',
+      c.facebook_url || '',
+      c.referral_source || 'Facebook Tuyển Dụng',
+      c.ai_score !== undefined ? String(c.ai_score) : '12',
+      c.screening_result || 'Đạt (Đủ điều kiện PV)',
+      c.status || 'NEW',
+      c.source_code || c.submission_id || `UBM_FORM_${String(idx + 1).padStart(4, '0')}`,
+      (c as any).interview_date || '',
+      (c as any).interview_time_slot || '',
+      (c as any).interviewer_id || '',
+      (c as any).zalo_invite_status || '',
+      (c as any).zalo_invite_at || '',
+    ]);
+    await this.overwriteSheetData('FROM_NHAN_VIEN', candHeaders, candRows);
+    return candRows.length;
   }
 
   /** Upload buffer bất kỳ lên Google Drive (dùng lưu ZIP archive tuần chấm công). */

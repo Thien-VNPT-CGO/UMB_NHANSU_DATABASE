@@ -401,6 +401,13 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     return res;
   }
 
+  /** Đẩy tab FROM_NHAN_VIEN lên Sheets NGAY (await): dùng sau xóa lịch PV trùng
+   *  để pull nền sau đó không hồi sinh lịch đã xóa. Mock/không cấu hình -> no-op. */
+  async pushCandidatesNow(): Promise<number> {
+    if (!this.isConfigured) return 0;
+    return this.syncService.pushCandidatesTab(this.fallbackAdapter);
+  }
+
   // --- Schedules ---
   async getShiftsForWeek(branchId: string, weekStartDate: string) {
     await this.ensureFreshData();

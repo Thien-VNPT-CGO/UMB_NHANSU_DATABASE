@@ -279,7 +279,7 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   setInterval(pinRotationTickSafe, 60 * 60_000);
 
   // Tự rà soát + xóa lịch PV trùng (< 30 phút cùng ngày) rồi yêu cầu đăng ký lại.
-  // Chạy sau pull đầu + mỗi 30 phút (chỉ chạm lịch sắp tới, lịch đã qua không đụng).
+  // Chạy sau pull đầu + mỗi 5 phút (chỉ chạm lịch sắp tới, lịch đã qua không đụng).
   const interviewDedupeTickSafe = () => {
     dedupeDuplicateInterviews(adapter, services.notificationsService, { dryRun: false, actorId: 'SYSTEM' })
       .then(r => {
@@ -293,7 +293,7 @@ server.listen(Number(PORT), '0.0.0.0', () => {
       .catch(err => console.warn('[interview-dedupe] tick error:', err?.message || err));
   };
   setTimeout(interviewDedupeTickSafe, 120_000);
-  setInterval(interviewDedupeTickSafe, 30 * 60_000);
+  setInterval(interviewDedupeTickSafe, 5 * 60_000);
 
   // Backup snapshot tự động mỗi 24h + tự verify; fail thì báo ADMIN/HR trong app.
   const autoBackupTick = async () => {

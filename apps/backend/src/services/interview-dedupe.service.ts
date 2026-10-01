@@ -66,6 +66,12 @@ export async function dedupeDuplicateInterviews(
     }
   }
 
+  // Đẩy Sheet NGAY để pull nền sau đó không hồi sinh lịch vừa xóa (fix zombie:
+  // xóa trong bộ nhớ rồi pull đọc lại lịch cũ từ master trước khi full-sync nền chạy).
+  try {
+    await (repo as any).pushCandidatesNow?.();
+  } catch { /* best-effort: tick sau thử lại */ }
+
   // Báo HR/Admin: danh sách bị xóa + khung trống để đăng ký lại ngay.
   try {
     const ids = await hrAdminIds(repo);
