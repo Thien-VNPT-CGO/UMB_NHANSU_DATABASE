@@ -946,42 +946,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     }
   };
 
-  // Gửi thư mời phỏng vấn qua Zalo cá nhân HR
-  const handleSendZaloInvite = async (candidate: any) => {
-    if (!zaloConnected) {
-      showToast('⚠️ Chưa kết nối Zalo cá nhân! Hãy quét QR đăng nhập trước.');
-      return;
-    }
-    try {
-      showToast(`Đang gửi thư mời Zalo tới ${candidate.full_name}...`);
-      const res = await apiRequest(`/interviews/${candidate.submission_id}/send-zalo-invite`, {
-        method: 'POST',
-        body: JSON.stringify({}),
-      });
-      showToast(`✅ Đã gửi thư mời Zalo tới ${candidate.full_name}! (msg #${res.msgId})`);
-      if (typeof onRefreshData === 'function') {
-        try { await onRefreshData(); } catch {}
-      }
-    } catch (err: any) {
-      const msg = String(err.message || '');
-      if (msg.includes('ZALO_NOT_FRIEND')) {
-        if (window.confirm(`${candidate.full_name} chưa kết bạn Zalo với nick HR. Gửi lời mời kết bạn ngay?`)) {
-          try {
-            await apiRequest('/admin/zalo/send-friend-request', {
-              method: 'POST',
-              body: JSON.stringify({ phone: candidate.phone || candidate.phone_normalized }),
-            });
-            showToast('Đã gửi lời mời kết bạn Zalo! Khi ứng viên đồng ý, bấm Gửi thư mời lại.');
-          } catch (e: any) {
-            showToast(e.message);
-          }
-        }
-      } else {
-        showToast(msg);
-      }
-    }
-  };
-
   // Mở modal chấm rubric cho 1 ứng viên (prefill điểm đã chấm nếu có).
   const openScoring = (candidate: any) => {
     const saved = parseScoreDetailClient((candidate as any)?.interview_score_detail);
@@ -3093,13 +3057,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           const isAccepted = String(c.status || '') === 'ACCEPTED';
                           const isScored = !!d;
                           return (<>
-                            <button
-                              style={{ ...btn2, backgroundColor: '#0068FF', color: '#FFF', boxShadow: '0 2px 6px rgba(0,104,255,0.3)' }}
-                              onClick={() => handleSendZaloInvite(c)}
-                              title="Gửi thư mời phỏng vấn qua Zalo cá nhân HR"
-                            >
-                              📩 Gửi thư mời Zalo
-                            </button>
                             {!isAccepted && !isScored && (
                               <button
                                 style={{ ...btn2, backgroundColor: '#8B5CF6', color: '#FFF', boxShadow: '0 2px 6px rgba(139,92,246,0.3)' }}
