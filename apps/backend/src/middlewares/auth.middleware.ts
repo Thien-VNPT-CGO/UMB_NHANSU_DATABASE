@@ -41,13 +41,15 @@ export function createAuthMiddleware(repo: ISheetsRepository) {
       const { tv: _tv, ...user } = verified;
       req.user = user;
 
-      // PIN tới hạn (lần đầu hoặc kỳ tự đổi 1-5 hàng tháng): chặn mọi API ngoài đổi PIN / xem hồ sơ.
+      // PIN tới hạn (lần đầu hoặc kỳ tự đổi 1-5 hàng tháng): CHỈ cho đổi PIN,
+      // xem hồ sơ gọn (/me) để kiểm tra phiên, và các API đăng nhập.
+      // Mọi API khác (kể cả /me/* chi tiết) đều bị chặn tới khi đổi xong —
+      // reload web hay token cũ cũng không lách được.
       if (
         user.role === 'EMPLOYEE' &&
         (user as AuthUser).mustChangePin === true &&
         !(
           req.path === '/me' ||
-          req.path.startsWith('/me/') ||
           req.path.startsWith('/auth/')
         )
       ) {

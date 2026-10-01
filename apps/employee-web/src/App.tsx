@@ -53,6 +53,68 @@ export function App() {
   const [mustChangePin, setMustChangePin] = useState(false);
   const [newPin, setNewPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
+  // PIN cũ nhập tay khi khôi phục phiên sau reload (loginPin đã mất)
+  const [oldPinInput, setOldPinInput] = useState('');
+  // Cổng kiểm tra phiên đã lưu với server khi mở web (chống reload lách đổi PIN)
+  const [sessionChecked, setSessionChecked] = useState<boolean>(() => {
+    try {
+      return !(localStorage.getItem('ubm_emp_token') && localStorage.getItem('ubm_emp_data'));
+    } catch {
+      return true;
+    }
+  });
+
+  // Boot: phiên cũ còn token thì XÁC MINH lại với server — tài khoản chưa đổi
+  // PIN thì bắt đổi ngay, không cho vào cổng (reload không lách được).
+  useEffect(() => {
+    if (sessionChecked) return;
+    let alive = true;
+    (async () => {
+      try {
+        const me: any = await apiRequest('/me');
+        if (!alive) return;
+        if (me?.user?.mustChangePin) {
+          // Treo ở màn đổi PIN: giữ token để gọi đổi, buộc nhập lại PIN cũ + PIN mới.
+          setEmployee(me.employee || null);
+          try {
+            const ph = (me.employee?.phone_normalized || me.employee?.phone || '').replace(/\D/g, '');
+            if (ph) setLoginPhone(ph);
+          } catch {}
+          setLoginPin('');
+          setOldPinInput('');
+          setNewPin('');
+          setConfirmPin('');
+          setMustChangePin(true);
+          setIsLoggedIn(false);
+          setLoginError('🔑 Tài khoản của bạn chưa đổi mã PIN mới! Vui lòng đổi PIN để vào hệ thống — tải lại trang cũng không bỏ qua được.');
+        } else {
+          if (me?.employee) {
+            setEmployee(me.employee);
+            try { localStorage.setItem('ubm_emp_data', JSON.stringify(me.employee)); } catch {}
+          }
+          setMustChangePin(false);
+          setIsLoggedIn(true);
+        }
+      } catch {
+        if (!alive) return;
+        // Token hết hạn/không hợp lệ -> xóa phiên cũ, về màn đăng nhập.
+        try {
+          localStorage.removeItem('ubm_emp_data');
+          localStorage.removeItem('ubm_emp_token');
+          localStorage.removeItem('ubm_emp_refresh');
+          localStorage.removeItem('ubm_emp_active_tab');
+        } catch {}
+        setAuthToken('');
+        setEmployee(null);
+        setIsLoggedIn(false);
+        setMustChangePin(false);
+      } finally {
+        if (alive) setSessionChecked(true);
+      }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   // Địa chỉ backend đang gọi — hiển thị để chẩn đoán lỗi mạng, bấm để đổi.
   const [apiBaseShown, setApiBaseShown] = useState<string>(() => {
@@ -481,6 +543,12 @@ export function App() {
   };
 
   const handleChangePin = async () => {
+    // Sau reload loginPin đã mất -> lấy PIN cũ từ ô nhập tay (bắt buộc nhập lại).
+    const effectiveOld = (loginPin.trim() || oldPinInput.trim());
+    if (!/^\d{4,8}$/.test(effectiveOld)) {
+      setLoginError('Vui lòng nhập mã PIN cũ hiện tại (4-8 chữ số)!');
+      return;
+    }
     if (!/^\d{4,8}$/.test(newPin)) {
       setLoginError('Mã PIN mới phải gồm 4-8 chữ số!');
       return;
@@ -489,7 +557,7 @@ export function App() {
       setLoginError('Xác nhận mã PIN chưa khớp! Vui lòng nhập lại.');
       return;
     }
-    if (newPin === loginPin.trim()) {
+    if (newPin === effectiveOld) {
       setLoginError('Mã PIN mới phải khác mã PIN cũ hiện tại!');
       return;
     }
@@ -498,13 +566,14 @@ export function App() {
     try {
       await apiRequest('/auth/employee/change-pin', {
         method: 'POST',
-        body: JSON.stringify({ oldPin: loginPin.trim(), newPin }),
+        body: JSON.stringify({ oldPin: effectiveOld, newPin }),
       });
       showToast('🎉 Đổi mã PIN thành công! Đây là mã PIN riêng của bạn, không chia sẻ cho người khác.');
       setLoginPin(newPin);
       // Xóa ô PIN mới/xác nhận để trình duyệt không giữ/gi autofill mã cũ.
       setNewPin('');
       setConfirmPin('');
+      setOldPinInput('');
       // Token hiện tại đã bị thu hồi (version tăng) -> đăng nhập lại bằng PIN mới
       setAuthToken('');
       setMustChangePin(false);
@@ -539,6 +608,7 @@ export function App() {
     setMustChangePin(false);
     setNewPin('');
     setConfirmPin('');
+    setOldPinInput('');
     setActiveTab('home');
     localStorage.removeItem('ubm_emp_data');
     localStorage.removeItem('ubm_emp_token');
@@ -1385,6 +1455,30 @@ export function App() {
   // =========================================================================
   // VIEW: PHONE LOGIN
   // =========================================================================
+  // Đang xác minh phiên đã lưu với server: đứng ở màn chờ, không cho vào cổng.
+  if (!sessionChecked) {
+    return (
+      <div style={{
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'center',
+        alignItems: 'center',
+        minHeight: '100vh',
+        padding: '24px 20px',
+        backgroundColor: '#FFF8F4',
+        gap: '12px',
+      }}>
+        <div style={{ fontSize: '40px' }}>🔐</div>
+        <div style={{ fontSize: '14px', fontWeight: 800, color: 'var(--brand)' }}>
+          Đang kiểm tra phiên đăng nhập...
+        </div>
+        <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+          Tài khoản chưa đổi PIN sẽ bị bắt đổi ngay, tải lại trang cũng không bỏ qua được.
+        </div>
+      </div>
+    );
+  }
+
   if (!isLoggedIn) {
     return (
       <div style={{
@@ -1511,6 +1605,24 @@ export function App() {
               <div style={{ fontSize: '12px', color: '#92400E', marginBottom: '12px', lineHeight: '1.5' }}>
                 Bạn đang dùng PIN cũ. Hãy tự đặt mã PIN mới (4-8 chữ số, khác PIN cũ, không chia sẻ cho ai) để mở khóa hệ thống! Không cần HR reset hay gửi PIN — quên PIN cũ thì hỏi HR xem lại mã hiện tại.
               </div>
+              {!loginPin && (
+                <>
+                  <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Mã PIN cũ hiện tại (bắt buộc nhập lại sau khi tải lại trang):</label>
+                  <input
+                    type="password"
+                    name="ubm-old-pin"
+                    autoComplete="new-password"
+                    data-lpignore="true"
+                    data-1p-ignore="true"
+                    inputMode="numeric"
+                    maxLength={8}
+                    placeholder="Nhập mã PIN cũ"
+                    value={oldPinInput}
+                    onChange={(e) => setOldPinInput(e.target.value.replace(/\D/g, ''))}
+                    style={{ width: '100%', fontSize: '18px', fontWeight: 700, letterSpacing: '4px', marginBottom: '10px' }}
+                  />
+                </>
+              )}
               <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Mã PIN mới:</label>
               <input
                 type="password"
@@ -1548,6 +1660,20 @@ export function App() {
               >
                 {loading ? 'ĐANG ĐỔI PIN...' : '✅ ĐỔI PIN & VÀO HỆ THỐNG'}
               </button>
+              {!loginPin && (
+                <button
+                  onClick={() => {
+                    setMustChangePin(false);
+                    setOldPinInput('');
+                    setNewPin('');
+                    setConfirmPin('');
+                    setLoginError(null);
+                  }}
+                  style={{ width: '100%', marginTop: '8px', border: 'none', background: 'none', fontSize: '12px', color: 'var(--text-muted)', textDecoration: 'underline', cursor: 'pointer' }}
+                >
+                  ← Nhập lại SĐT / mã PIN khác
+                </button>
+              )}
             </div>
           )}
 
