@@ -49,6 +49,10 @@ import {
   playNotificationDing,
   playSuccessChime,
   playModernChime,
+  playNotificationByStyle,
+  getNotificationSoundStyle,
+  setNotificationSoundStyle,
+  NOTIFICATION_SOUND_STYLES,
   playWarningTone,
   playButtonPop,
   isSoundEnabled,
@@ -312,6 +316,7 @@ export function App() {
   const [unreadNotifCount, setUnreadNotifCount] = useState(0);
   const [showNotifPopover, setShowNotifPopover] = useState(false);
   const [soundActive, setSoundActive] = useState(isSoundEnabled());
+  const [soundStyle, setSoundStyle] = useState(getNotificationSoundStyle());
 
   const addRichToast = (toast: Omit<LiveToastItem, 'id' | 'timestamp'>) => {
     const id = `toast_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
@@ -322,13 +327,13 @@ export function App() {
       duration: toast.duration || 6000,
     };
 
-    // Phát âm thanh phù hợp (chuông hiện đại cho thông báo chung)
+    // Phát âm thanh phù hợp (chuông chung theo kiểu HR đã chọn)
     if (toast.type === 'CHECKIN' || toast.type === 'CHECKOUT' || toast.type === 'LEAVE' || toast.type === 'SWAP' || toast.type === 'PIN_CHANGED') {
       playNotificationDing();
     } else if (toast.type === 'WARNING') {
       playWarningTone();
     } else {
-      playModernChime();
+      playNotificationByStyle();
     }
 
     setLiveToasts((prev) => [newToast, ...prev].slice(0, 5));
@@ -1806,6 +1811,35 @@ export function App() {
                 {loading ? 'Đang Đồng Bộ Sheets...' : 'Đồng Bộ Sheets 23 Tabs'}
               </button>
             )}
+
+            {/* Chọn kiểu chuông thông báo (nghe thử ngay khi đổi) */}
+            <select
+              value={soundStyle}
+              onChange={(e) => {
+                const v = e.target.value as typeof soundStyle;
+                setSoundStyle(v);
+                setNotificationSoundStyle(v);
+                playNotificationByStyle(v);
+              }}
+              style={{
+                padding: '6px 8px',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: 'var(--surface)',
+                border: '1px solid var(--border)',
+                fontSize: '12px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                color: 'var(--text)',
+                maxWidth: '170px',
+              }}
+              title="Chọn kiểu chuông thông báo — đổi là nghe thử ngay"
+            >
+              {NOTIFICATION_SOUND_STYLES.map((s) => (
+                <option key={s.id} value={s.id} title={s.desc}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
 
             {/* Nút Bật/Tắt Âm Thanh Thông Báo */}
             <button

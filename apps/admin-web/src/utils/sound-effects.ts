@@ -240,6 +240,118 @@ export function playFanfare(): void {
 }
 
 /**
+ * 8. Bộ kiểu chuông thông báo cho HR tự chọn (nghe thử + đặt mặc định trên cổng Admin).
+ * Tất cả Web Audio thuần, không file ngoài.
+ */
+
+export type NotificationSoundStyle = 'modern' | 'gentle' | 'bubbly' | 'digital' | 'warm';
+
+export const NOTIFICATION_SOUND_STYLES: Array<{ id: NotificationSoundStyle; label: string; desc: string }> = [
+  { id: 'modern', label: '💎 Hiện đại (Glass)', desc: 'Glockenspiel 3 nốt lấp lánh — mặc định' },
+  { id: 'gentle', label: '🍃 Nhẹ nhàng (Gentle)', desc: 'Marimba êm, tấn công chậm, thư giãn' },
+  { id: 'bubbly', label: '🫧 Vui tươi (Bubbly)', desc: 'Bong bóng bay lên, trẻ trung' },
+  { id: 'digital', label: '⚡ Công nghệ (Digital)', desc: 'Ping sắc + echo, gọn hiện đại' },
+  { id: 'warm', label: '🔔 Ấm áp (Warm Bell)', desc: 'Chuông trầm ngân dài, sang trọng' },
+];
+
+const SOUND_STYLE_KEY = 'ubm_notification_sound_style';
+
+export function getNotificationSoundStyle(): NotificationSoundStyle {
+  if (typeof window === 'undefined') return 'modern';
+  const v = localStorage.getItem(SOUND_STYLE_KEY);
+  return NOTIFICATION_SOUND_STYLES.some(s => s.id === v) ? (v as NotificationSoundStyle) : 'modern';
+}
+
+export function setNotificationSoundStyle(style: NotificationSoundStyle): void {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(SOUND_STYLE_KEY, style);
+}
+
+/** Nốt nhạc gọn dùng chung cho các kiểu chuông mới. */
+function tone(
+  ctx: AudioContext,
+  opts: { freq: number; at: number; dur: number; type?: OscillatorType; vol?: number; glideTo?: number }
+): void {
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = opts.type || 'sine';
+  osc.frequency.setValueAtTime(opts.freq, opts.at);
+  if (opts.glideTo) osc.frequency.exponentialRampToValueAtTime(opts.glideTo, opts.at + opts.dur * 0.7);
+  const vol = opts.vol ?? 0.2;
+  gain.gain.setValueAtTime(0.001, opts.at);
+  gain.gain.exponentialRampToValueAtTime(vol, opts.at + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, opts.at + opts.dur);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(opts.at);
+  osc.stop(opts.at + opts.dur + 0.02);
+}
+
+/** Nhẹ nhàng: marimba êm C5-E5-G5, tấn công chậm. */
+export function playGentleChime(): void {
+  if (!isSoundEnabled()) return;
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  [523.25, 659.25, 783.99].forEach((f, i) => {
+    tone(ctx, { freq: f, at: now + i * 0.14, dur: 0.7, type: 'triangle', vol: 0.14 });
+    tone(ctx, { freq: f / 2, at: now + i * 0.14, dur: 0.7, type: 'sine', vol: 0.07 });
+  });
+}
+
+/** Vui tươi: bong bóng bay lên, 3 nốt glide nhanh. */
+export function playBubblyChime(): void {
+  if (!isSoundEnabled()) return;
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  [420, 560, 720].forEach((f, i) => {
+    tone(ctx, { freq: f, glideTo: f * 2.1, at: now + i * 0.09, dur: 0.22, type: 'sine', vol: 0.2 });
+  });
+  tone(ctx, { freq: 1050, glideTo: 2100, at: now + 0.28, dur: 0.3, type: 'sine', vol: 0.16 });
+}
+
+/** Công nghệ: ping sắc + echo gọn. */
+export function playDigitalPing(): void {
+  if (!isSoundEnabled()) return;
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  tone(ctx, { freq: 1568, at: now, dur: 0.18, type: 'square', vol: 0.06 });
+  tone(ctx, { freq: 2093, at: now + 0.02, dur: 0.25, type: 'sine', vol: 0.18 });
+  tone(ctx, { freq: 2093, at: now + 0.22, dur: 0.3, type: 'sine', vol: 0.1 });
+}
+
+/** Ấm áp: chuông trầm G3-C4-E4 ngân dài. */
+export function playWarmBell(): void {
+  if (!isSoundEnabled()) return;
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  [196.0, 261.63, 329.63].forEach((f, i) => {
+    tone(ctx, { freq: f, at: now + i * 0.16, dur: 1.4, type: 'sine', vol: 0.2 });
+    tone(ctx, { freq: f * 2.01, at: now + i * 0.16, dur: 0.6, type: 'sine', vol: 0.05 });
+  });
+}
+
+/** Phát chuông theo kiểu HR đã chọn (mặc định: hiện đại). */
+export function playNotificationByStyle(style?: NotificationSoundStyle): void {
+  switch (style || getNotificationSoundStyle()) {
+    case 'gentle':
+      return playGentleChime();
+    case 'bubbly':
+      return playBubblyChime();
+    case 'digital':
+      return playDigitalPing();
+    case 'warm':
+      return playWarmBell();
+    case 'modern':
+    default:
+      return playModernChime();
+  }
+}
+
+/**
  * 4. Micro-click Haptic Tone
  * Dùng khi bấm các nút bấm chức năng tạo cảm giác phản hồi xúc giác
  */
