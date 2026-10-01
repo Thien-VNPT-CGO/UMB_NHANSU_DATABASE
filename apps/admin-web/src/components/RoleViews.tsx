@@ -124,6 +124,9 @@ export function weekOptions(centerOffset = 0, span = 4): { offset: number; mon: 
 /** Link Google Meet mặc định hệ thống cho mọi lịch PV online. */
 export const SYSTEM_MEET_URL = 'https://meet.google.com/ypp-srtm-fvm';
 
+/** 3 ca làm việc chuẩn của hệ thống (dùng cho dropdown chốt 1 ca). */
+export const SHIFT_OPTIONS = ['Ca sáng (07-12)', 'Ca chiều (12-18)', 'Ca tối (18-23)'];
+
 /** Mốc giờ bắt đầu PV (giờ VN) từ ngày + khung giờ — null khi chưa xếp lịch. */
 export function interviewStartMs(c: any): number | null {
   const d = String(c?.interview_date || '').slice(0, 10);
@@ -850,7 +853,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
   const openUpdating = (candidate: any) => {
     setUpdatingId(candidate.submission_id);
-    setUpdatingShift(String(candidate.registered_shift || 'Ca sáng'));
+    const cur = String(candidate.registered_shift || '');
+    setUpdatingShift(SHIFT_OPTIONS.find(o => cur.includes(o.split(' ')[1])) || SHIFT_OPTIONS[0]);
     setUpdatingBranch(String(candidate.preferred_branch_id || 'CN130'));
   };
 
@@ -2901,12 +2905,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         if (editingShiftId === c.submission_id) {
                           return (
                             <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                              <input
-                                value={editingShiftVal}
+                              <select
+                                value={SHIFT_OPTIONS.includes(editingShiftVal) ? editingShiftVal : SHIFT_OPTIONS[0]}
                                 onChange={(e) => setEditingShiftVal(e.target.value)}
-                                placeholder="VD: Ca sáng / Ca chiều"
-                                style={{ width: '130px', fontSize: '12px', padding: '5px 8px', borderRadius: '6px', border: '1px solid var(--border)' }}
-                              />
+                                style={{ width: '140px', fontSize: '12px', padding: '5px 8px', borderRadius: '6px', border: '1px solid var(--border)' }}
+                              >
+                                {SHIFT_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                              </select>
                               <button
                                 onClick={() => handleSaveShift(c)}
                                 disabled={shiftBusy}
@@ -3213,12 +3218,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   </div>
                   <div>
                     <label style={{ fontSize: '12px', fontWeight: 800, display: 'block', marginBottom: '4px' }}>Ca làm việc (1 ca duy nhất):</label>
-                    <input
+                    <select
                       value={updatingShift}
                       onChange={(e) => setUpdatingShift(e.target.value)}
-                      placeholder="VD: Ca sáng"
-                      style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid var(--border)', fontSize: '13px' }}
-                    />
+                      style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid var(--border)', fontSize: '13px', fontWeight: 700 }}
+                    >
+                      {SHIFT_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                    </select>
                     <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Đang đăng ký: {cand?.registered_shift || '—'}</div>
                   </div>
                   <div>
