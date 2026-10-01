@@ -4795,34 +4795,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     );
   }
 
-  if (activeTab === 'hr-conversion') {
-    const probationEmps = allEmployees.filter((e) => e.employment_status === 'PROBATION');
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <h1 style={{ fontSize: '20px', fontWeight: 800 }}>6. Xét Duyệt & Quyết Định Chuyển Chính Thức</h1>
-        <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-          <div style={{ fontWeight: 700, fontSize: '14px', marginBottom: '8px' }}>Nhân sự đủ điều kiện chuyển chính thức:</div>
-          {probationEmps.length > 0 ? (
-            probationEmps.map((emp, i) => (
-              <div key={i} style={{ padding: '12px', backgroundColor: '#FDF2F8', border: '1px solid #F472B6', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                <div>
-                  <strong>{emp.full_name} ({emp.employee_code})</strong> • Chi nhánh: {getDisplayBranch(emp.default_branch_id)}
-                </div>
-                <button className="btn-primary" onClick={() => showToast(`Đã ban hành Quyết định Chuyển Chính Thức cho ${emp.full_name}! Lương áp dụng 25.500 đ/h`)}>
-                  Ký Quyết Định
-                </button>
-              </div>
-            ))
-          ) : (
-            <div style={{ textAlign: 'center', padding: '24px', color: 'var(--text-muted)', fontSize: '13px' }}>
-              Hiện chưa có nhân sự thử việc đến hạn xét duyệt chuyển chính thức.
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
   if (activeTab === 'hr-schedule') {
     // Dynamic calculation of week days (Monday -> Sunday) + chuyển tuần trước/sau.
     // Nhân viên đăng ký OFF 2 ngày cho TUẦN SAU (T6 12h → T7 15h) → bấm "Tuần sau" để xem OFF + ca đã xếp.
