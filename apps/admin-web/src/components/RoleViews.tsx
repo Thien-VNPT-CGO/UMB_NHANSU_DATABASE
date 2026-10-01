@@ -132,6 +132,71 @@ export function interviewStartMs(c: any): number | null {
   return Number.isFinite(t) ? t : null;
 }
 
+/** Ràng buộc khung PV cố định 30 phút (mirror backend interview-slots.service). */
+export const PV_SLOT_MINUTES = 30;
+export const PV_WORK_START = '08:00';
+export const PV_WORK_END = '17:00';
+
+export function pvNormalizeSlot(input: unknown): string | null {
+  const m = String(input || '').match(/(\d{1,2})\s*:\s*(\d{2})/);
+  if (!m) return null;
+  const h = Number(m[1]);
+  const mi = Number(m[2]);
+  if (!Number.isInteger(h) || !Number.isInteger(mi) || h < 0 || h > 23 || mi < 0 || mi > 59) return null;
+  return `${String(h).padStart(2, '0')}:${String(mi).padStart(2, '0')}`;
+}
+
+/** Validate khung giờ PV ở client — trả text lỗi tiếng Việt để toast + yêu cầu đăng ký lại. */
+export function pvValidateSlot(dateInput: unknown, slotInput: unknown): { ok: true; normalized: string; startMs: number } | { ok: false; error: string } {
+  const date = String(dateInput || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return { ok: false, error: `Ngày phỏng vấn không hợp lệ! Vui lòng chọn lại ngày (dạng YYYY-MM-DD).` };
+  }
+  const norm = pvNormalizeSlot(slotInput);
+  if (!norm) {
+    return { ok: false, error: `Giờ phỏng vấn '${slotInput}' không hợp lệ! Khung cố định 30 phút — giờ phải dạng HH:mm (VD 08:00, 08:30). Vui lòng đăng ký lại.` };
+  }
+  const [h, mi] = norm.split(':').map(Number);
+  if (mi !== 0 && mi !== 30) {
+    return { ok: false, error: `Giờ ${norm} KHÔNG đúng khung cố định 30 phút! Mỗi bạn cách nhau 30 phút — phút phải là :00 hoặc :30 (VD 08:00, 08:30, 09:00). Vui lòng đăng ký lại.` };
+  }
+  const startMin = h * 60 + mi;
+  if (startMin < 8 * 60 || startMin > 16 * 60 + 30) {
+    return { ok: false, error: `Giờ ${norm} ngoài giờ phỏng vấn (08:00–17:00)! Giờ bắt đầu hợp lệ từ 08:00 đến 16:30. Vui lòng đăng ký lại.` };
+  }
+  const startMs = new Date(`${date}T${norm}:00+07:00`).getTime();
+  if (!Number.isFinite(startMs)) {
+    return { ok: false, error: `Không tính được mốc giờ ${norm} ngày ${date}! Vui lòng đăng ký lại.` };
+  }
+  return { ok: true, normalized: norm, startMs };
+}
+
+/** Tìm lịch cùng ngày kẹt < 30 phút (bỏ qua chính ứng viên đang xếp). */
+export function pvFindConflict(cands: any[], date: string, startMs: number, excludeId?: string): { name: string; slot: string } | null {
+  for (const c of cands || []) {
+    if (!c || (excludeId && (c as any).submission_id === excludeId)) continue;
+    if (String((c as any).interview_date || '').slice(0, 10) !== date) continue;
+    const st = interviewStartMs(c);
+    if (st === null) continue;
+    if (Math.abs(st - startMs) < PV_SLOT_MINUTES * 60_000) {
+      return { name: String((c as any).full_name || 'ứng viên khác'), slot: String((c as any).interview_time_slot || '').slice(0, 5) };
+    }
+  }
+  return null;
+}
+
+/** Các khung đã kín cùng ngày (HH:mm) để hiển thị gợi ý đăng ký lại. */
+export function pvBookedSlots(cands: any[], date: string, excludeId?: string): string[] {
+  const out: string[] = [];
+  for (const c of cands || []) {
+    if (!c || (excludeId && (c as any).submission_id === excludeId)) continue;
+    if (String((c as any).interview_date || '').slice(0, 10) !== date) continue;
+    const n = pvNormalizeSlot((c as any).interview_time_slot);
+    if (n && !out.includes(n)) out.push(n);
+  }
+  return out.sort();
+}
+
 /** Ngày Việt Nam (UTC+7) của 1 mốc ISO. */
 export function vnDayOf(iso: string): string {
   const t = new Date(iso || '').getTime();
@@ -767,6 +832,18 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       return;
     }
     const [d, t] = inviteDateTime.split('T');
+    // Ràng buộc khung cố định 30 phút (client-side): sai -> báo lỗi + yêu cầu đăng ký lại ngay.
+    const slotCheck = pvValidateSlot(d, (t || '').slice(0, 5));
+    if (!slotCheck.ok) {
+      showToast(`⛔ ${(slotCheck as any).error}`);
+      return;
+    }
+    const clash = pvFindConflict(candidates, d, (slotCheck as any).startMs, inviteCandidateId);
+    if (clash) {
+      const booked = pvBookedSlots(candidates, d, inviteCandidateId);
+      showToast(`⛔ TRÙNG LỊCH PV: ${clash.slot} ngày ${d} đã có ${clash.name} (mỗi bạn cách nhau 30 phút)!${booked.length > 0 ? ` Đã kín: ${booked.join(', ')}.` : ''} Vui lòng đăng ký lại khung giờ khác!`);
+      return;
+    }
     const invBranchName = branches.length > 0
       ? (branches.find((b: any) => (b.branch_id || b.id) === inviteBranchId)?.name || inviteBranchId)
       : ({ CN130: 'CN1: 130 Vạn Kiếp (Bình Thạnh)', CN261: 'CN2: 261 Tô Hiến Thành (Q.10)', CN120: 'CN3: 120 Hoàng Diệu 2 (Thủ Đức)', CN111: 'CN4: 111 Tôn Đản (Q.4)' } as any)[inviteBranchId] || inviteBranchId;
@@ -776,7 +853,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         method: 'POST',
         body: JSON.stringify({
           interviewDate: d,
-          timeSlot: (t || '').slice(0, 5),
+          timeSlot: (slotCheck as any).normalized,
           branchName: invBranchName,
           ...(inviteMode === 'ONLINE' && inviteMeetUrl.trim() ? { meetUrl: inviteMeetUrl.trim() } : {}),
         }),
@@ -789,6 +866,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       const msg = String(err.message || '');
       if (msg.includes('ZALO_NOT_FRIEND')) {
         showToast('⚠️ Ứng viên chưa kết bạn Zalo với nick HR! Hãy bấm "Gửi thư mời Zalo" ở dòng ứng viên để kết bạn trước.');
+      } else if (msg.startsWith('TRÙNG LỊCH PV') || msg.includes('khung cố định 30 phút') || msg.includes('ngoài giờ phỏng vấn') || msg.includes('đã qua') || msg.includes('đăng ký lại')) {
+        showToast(`⛔ ${msg}`);
       } else {
         showToast(msg);
       }
@@ -2502,8 +2581,22 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </div>
 
               <div>
-                <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Thời gian phỏng vấn:</label>
-                <input type="datetime-local" value={inviteDateTime} onChange={(e) => setInviteDateTime(e.target.value)} style={{ width: '100%' }} />
+                <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Thời gian phỏng vấn (khung cố định 30 phút):</label>
+                <input type="datetime-local" step={1800} value={inviteDateTime} onChange={(e) => setInviteDateTime(e.target.value)} style={{ width: '100%' }} />
+                <div style={{ fontSize: '11px', color: '#1E40AF', marginTop: '4px', lineHeight: '1.5' }}>
+                  ⏱️ Mỗi bạn cách nhau 30 phút — phút phải là <strong>:00</strong> hoặc <strong>:30</strong>, giờ hành chính <strong>08:00–17:00</strong>. Sai khung hệ thống báo lỗi và yêu cầu đăng ký lại.
+                </div>
+                {(() => {
+                  const dd = (inviteDateTime || '').split('T')[0];
+                  if (!/^\d{4}-\d{2}-\d{2}$/.test(dd || '')) return null;
+                  const booked = pvBookedSlots(candidates, dd, inviteCandidateId);
+                  if (booked.length === 0) return null;
+                  return (
+                    <div style={{ fontSize: '11px', color: '#92400E', backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '6px', padding: '6px 8px', marginTop: '6px', lineHeight: '1.5' }}>
+                      📅 Ngày {dd} đã kín: <strong>{booked.join(', ')}</strong> — vui lòng chọn khung khác cách ít nhất 30 phút!
+                    </div>
+                  );
+                })()}
               </div>
 
               <div>

@@ -9,6 +9,12 @@ import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { singleWriterQueue } from '../repositories/single-writer-queue.js';
 import { normalizePhone } from './auth.service.js';
 import { generateAutoPin, hashPin } from './password.service.js';
+import {
+  buildConflictMessage,
+  findSlotConflict,
+  suggestFreeSlots,
+  validateInterviewSlot,
+} from './interview-slots.service.js';
 
 /** Chuẩn hóa SĐT về dạng so sánh được (10 số, đầu 0) — DÙNG DUY NHẤT ở mọi nơi.
  *  Bao phủ: '+84...'/84... (Sheet ghi quốc tế), số bị rớt số 0 đầu (ô numeric),
@@ -348,10 +354,21 @@ export class EmployeesService {
     timeSlot: string,
     interviewerId: string
   ) {
+    // Ràng buộc khung cố định 30 phút: sai khung -> lỗi + yêu cầu đăng ký lại.
+    const checked = validateInterviewSlot(interviewDate, timeSlot);
+    if (!checked.ok) {
+      throw new Error(checked.error);
+    }
+    // Trùng lịch cùng ngày (< 30 phút với bạn khác) -> lỗi + gợi ý khung trống.
+    const all = await this.repo.listCandidates().catch(() => []);
+    const conflict = findSlotConflict(all, String(interviewDate).slice(0, 10), checked.value.startMs, submissionId);
+    if (conflict) {
+      throw new Error(buildConflictMessage(conflict, String(interviewDate).slice(0, 10), suggestFreeSlots(all, String(interviewDate).slice(0, 10), 5, submissionId)));
+    }
     return this.repo.updateCandidate(submissionId, {
       status: 'INVITED_INTERVIEW',
-      interview_date: interviewDate,
-      interview_time_slot: timeSlot,
+      interview_date: String(interviewDate).slice(0, 10),
+      interview_time_slot: checked.value.normalized,
       interviewer_id: interviewerId,
     });
   }

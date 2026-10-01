@@ -910,7 +910,10 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       broadcastUpdate('candidates', { action: 'schedule-interview', id: submissionId });
       res.json(result);
     } catch (err: any) {
-      res.status(400).json({ error: err.message });
+      const msg = String(err?.message || 'Lỗi xếp lịch phỏng vấn');
+      // Lỗi khung 30p / trùng lịch: trả text Việt trực tiếp để UI toast + yêu cầu đăng ký lại.
+      const status = msg.startsWith('TRÙNG LỊCH PV') ? 409 : 400;
+      res.status(status).json({ error: msg });
     }
   });
 
@@ -1047,7 +1050,13 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         return res.status(400).json({ error: 'ZALO_NOT_FRIEND', message: e?.message || e, uid, phone });
       }
     } catch (err: any) {
-      res.status(400).json({ error: err.message });
+      const msg = String(err?.message || 'Lỗi gửi thư mời Zalo');
+      // Lỗi khung 30p / trùng lịch từ bước lưu lịch: chặn gửi BOT, trả text để HR đăng ký lại.
+      if (msg.startsWith('TRÙNG LỊCH PV') || msg.includes('khung cố định 30 phút') || msg.includes('ngoài giờ phỏng vấn') || msg.includes('đã qua')) {
+        const status = msg.startsWith('TRÙNG LỊCH PV') ? 409 : 400;
+        return res.status(status).json({ error: msg });
+      }
+      res.status(400).json({ error: msg });
     }
   });
 
