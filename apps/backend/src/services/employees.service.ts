@@ -538,6 +538,12 @@ export class EmployeesService {
     }
     const branchId = (cand.preferred_branch_id || 'CN130').trim() || 'CN130';
     const genderRaw = String(cand.gender || '').trim().toLowerCase();
+    // Map ca đăng ký (1 ca duy nhất) -> ca cố định để BOT tự xếp lịch thử việc.
+    const shiftText = String(cand.registered_shift || '').toLowerCase();
+    const defaultShiftCode = /sáng|morning|ca\s*1/.test(shiftText) ? 'CA_1' as const
+      : /chiều|chieu|afternoon|ca\s*2/.test(shiftText) ? 'CA_2' as const
+      : /tối|toi|evening|night|ca\s*3/.test(shiftText) ? 'CA_3' as const
+      : undefined;
     const created: any = await this.createEmployee({
       fullName: cand.full_name,
       phone: cand.phone_normalized || cand.phone,
@@ -545,9 +551,22 @@ export class EmployeesService {
       employmentStatus: 'PROBATION',
       gender: genderRaw.startsWith('nữ') || genderRaw === 'nu' ? 'NU' : 'NAM',
       group: 'STORE',
+      ...(defaultShiftCode ? { defaultShiftCode } : {}),
       actorId,
     });
     const emp = created?.result || created;
+    // Lịch thử việc 12 ngày để hiển thị cho HR + NV mới.
+    const startDate = String((emp as any).start_date || new Date().toISOString().slice(0, 10)).slice(0, 10);
+    const endDate = new Date(`${startDate}T00:00:00Z`);
+    endDate.setUTCDate(endDate.getUTCDate() + 11);
+    const probation = {
+      startDate,
+      endDate: endDate.toISOString().slice(0, 10),
+      days: 12,
+      branchId,
+      shiftCode: defaultShiftCode || null,
+      shiftLabel: String(cand.registered_shift || ''),
+    };
     const updated = await this.repo.updateCandidate(submissionId, {
       status: 'ACCEPTED',
     } as any);
@@ -570,6 +589,6 @@ export class EmployeesService {
         account = rest;
       }
     } catch { /* UI tự tải lại */ }
-    return { employee: emp, account, candidate: updated };
+    return { employee: emp, account, candidate: updated, probation };
   }
 }

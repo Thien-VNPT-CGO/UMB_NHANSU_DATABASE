@@ -53,6 +53,28 @@ import {
 import { getDisplayBranch } from '../App';
 import { apiRequest, getApiBase, getAuthToken } from '../services/api';
 
+/** Chat Zalo với ứng viên: tự động kết bạn qua nick HR + gửi lời chào (dùng chung 2 tab). */
+export async function chatZaloWithCandidate(c: any, showToast: (msg: string) => void): Promise<void> {
+  const phone = c?.phone || c?.phone_normalized;
+  if (!phone) {
+    showToast('Ứng viên chưa có số điện thoại!');
+    return;
+  }
+  try {
+    showToast(`Đang tự động kết bạn Zalo tới ${c.full_name}...`);
+    await apiRequest('/admin/zalo/send-friend-request', {
+      method: 'POST',
+      body: JSON.stringify({
+        phone,
+        message: `Chào ${c.full_name}, mình là HR Ụm Bò Milk. Kết bạn để trao đổi lịch phỏng vấn nhé!`,
+      }),
+    });
+    showToast(`✅ Đã gửi kết bạn Zalo tới ${c.full_name}! Khi bạn ấy đồng ý, HR nhắn tin trực tiếp qua Zalo.`);
+  } catch (err: any) {
+    showToast(err.message || 'Gửi kết bạn Zalo thất bại!');
+  }
+}
+
 /** Ảnh chấm công: tải blob kèm token rồi hiện (thẻ <img> không gửi được Authorization). */
 export const AttPhoto: React.FC<{ eventId: string; style?: React.CSSProperties; alt?: string }> = ({ eventId, style, alt }) => {
   const [url, setUrl] = useState<string | null>(null);
@@ -1505,24 +1527,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
     // Chat Zalo: tự động kết bạn qua nick HR + gửi lời chào (không cần bấm xác nhận).
     const handleChatZalo = async (c: any) => {
-      const phone = c.phone || c.phone_normalized;
-      if (!phone) {
-        showToast('Ứng viên chưa có số điện thoại!');
-        return;
-      }
-      try {
-        showToast(`Đang tự động kết bạn Zalo tới ${c.full_name}...`);
-        await apiRequest('/admin/zalo/send-friend-request', {
-          method: 'POST',
-          body: JSON.stringify({
-            phone,
-            message: `Chào ${c.full_name}, mình là HR Ụm Bò Milk. Kết bạn để trao đổi lịch phỏng vấn nhé!`,
-          }),
-        });
-        showToast(`✅ Đã gửi kết bạn Zalo tới ${c.full_name}! Khi bạn ấy đồng ý, HR nhắn tin trực tiếp qua Zalo.`);
-      } catch (err: any) {
-        showToast(err.message || 'Gửi kết bạn Zalo thất bại!');
-      }
+      await chatZaloWithCandidate(c, showToast);
     };
 
     // Khôi phục ứng viên bị loại về Mới ứng tuyển.
@@ -3062,6 +3067,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           const isAccepted = String(c.status || '') === 'ACCEPTED';
                           const isScored = !!d;
                           return (<>
+                            <button
+                              style={{ ...btn2, backgroundColor: '#10B981', color: '#FFF', boxShadow: '0 2px 6px rgba(16,185,129,0.3)' }}
+                              onClick={() => chatZaloWithCandidate(c, showToast)}
+                              title="Tự động kết bạn Zalo qua nick HR + gửi lời chào để chát với ứng viên"
+                            >
+                              💬 Chat Zalo
+                            </button>
                             {!isAccepted && !isScored && (
                               <button
                                 style={{ ...btn2, backgroundColor: '#8B5CF6', color: '#FFF', boxShadow: '0 2px 6px rgba(139,92,246,0.3)' }}
@@ -3271,6 +3283,21 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '14px' }}>
                 <div><strong>Nhân viên:</strong> {(approveResult as any)?.employee?.full_name} ({(approveResult as any)?.employee?.employee_code})</div>
                 <div><strong>SĐT:</strong> {(approveResult as any)?.employee?.phone_normalized}</div>
+                {((approveResult as any)?.probation) && (
+                  <div style={{ backgroundColor: '#EFF6FF', border: '1.5px solid #93C5FD', borderRadius: '8px', padding: '12px' }}>
+                    <div style={{ fontSize: '13px', fontWeight: 800, color: '#1D4ED8', marginBottom: '6px' }}>📅 Lịch đi thử việc (12 ngày)</div>
+                    <div style={{ fontSize: '13px', color: '#0F172A' }}>
+                      Từ <strong>{(approveResult as any)?.probation?.startDate}</strong> đến <strong>{(approveResult as any)?.probation?.endDate}</strong>
+                    </div>
+                    <div style={{ fontSize: '13px', color: '#0F172A' }}>
+                      Chi nhánh: <strong>{getDisplayBranch((approveResult as any)?.probation?.branchId || 'CN130')}</strong>
+                    </div>
+                    <div style={{ fontSize: '13px', color: '#0F172A' }}>
+                      Ca: <strong>{(approveResult as any)?.probation?.shiftLabel || 'Theo phân công'}</strong>
+                    </div>
+                    <div style={{ fontSize: '11px', color: '#64748B', marginTop: '4px' }}>Lịch ca chi tiết do BOT tự xếp theo ca đăng ký — HR theo dõi ở tab Thử việc.</div>
+                  </div>
+                )}
                 <div style={{ backgroundColor: '#FFFBEB', border: '1.5px solid #F59E0B', borderRadius: '8px', padding: '12px', textAlign: 'center' }}>
                   <div style={{ fontSize: '12px', color: '#92400E', fontWeight: 700 }}>Mã PIN khởi tạo (trao TRỰC TIẾP cho NV):</div>
                   <div style={{ fontSize: '28px', fontWeight: 900, letterSpacing: '6px', color: '#92400E' }}>{(approveResult as any)?.account?.pin_code || '—'}</div>
