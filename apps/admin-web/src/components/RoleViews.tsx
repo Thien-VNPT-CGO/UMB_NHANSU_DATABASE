@@ -2709,6 +2709,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         const st = interviewStartMs(c);
                         if (!st) return <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Chờ xếp lịch Meet</span>;
                         const diff = st - meetNow;
+                        const elapsed = meetNow - st;
+                        const endMs = st + PV_SLOT_MINUTES * 60_000;
                         const pad = (n: number) => String(n).padStart(2, '0');
                         const fmtLeft = (ms: number) => {
                           const s = Math.floor(ms / 1000);
@@ -2717,15 +2719,35 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           const ss = s % 60;
                           return h > 0 ? `${h}h ${pad(m)}p ${pad(ss)}s` : `${m}p ${pad(ss)}s`;
                         };
-                        if (diff <= 0 && meetNow - st < 60 * 60000) {
+                        const fmtHM = (ms: number) => {
+                          const vn = new Date(ms + 7 * 3_600_000);
+                          return `${pad(vn.getUTCHours())}:${pad(vn.getUTCMinutes())}`;
+                        };
+                        // Đang trong khung 30 phút PV: nút đỏ nhấp nháy để vào Meet.
+                        if (diff <= 0 && elapsed < PV_SLOT_MINUTES * 60_000) {
                           return (
-                            <a href={SYSTEM_MEET_URL} target="_blank" rel="noreferrer"
-                              style={{ display: 'inline-block', backgroundColor: '#DC2626', color: '#FFF', fontWeight: 800, fontSize: '12px', padding: '8px 14px', borderRadius: '8px', textDecoration: 'none', animation: 'fx-blink 1.2s infinite' }}>
-                              🔴 ĐANG PV — Vào Meet
-                            </a>
+                            <div>
+                              <a href={SYSTEM_MEET_URL} target="_blank" rel="noreferrer"
+                                style={{ display: 'inline-block', backgroundColor: '#DC2626', color: '#FFF', fontWeight: 800, fontSize: '12px', padding: '8px 14px', borderRadius: '8px', textDecoration: 'none', animation: 'fx-blink 1.2s infinite' }}>
+                                🔴 ĐANG PV — Vào Meet
+                              </a>
+                              <div style={{ fontSize: '11px', color: '#DC2626', fontWeight: 700, marginTop: '4px' }}>
+                                Còn {fmtLeft(endMs - meetNow)} là hết 30 phút
+                              </div>
+                            </div>
                           );
                         }
-                        if (diff <= 0) return <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Đã qua giờ PV</span>;
+                        // Hết 30 phút PV: cập nhật trạng thái để HR biết ca PV đã xong.
+                        if (diff <= 0) return (
+                          <div>
+                            <div style={{ display: 'inline-block', fontSize: '12px', fontWeight: 800, color: '#065F46', backgroundColor: '#D1FAE5', padding: '6px 12px', borderRadius: '8px' }}>
+                              ✅ Hết giờ PV ({fmtHM(endMs)})
+                            </div>
+                            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                              Đủ 30 phút — chờ HR đánh giá →
+                            </div>
+                          </div>
+                        );
                         return (
                           <div>
                             <div style={{ fontSize: '12px', fontWeight: 800, color: '#1D4ED8' }}>⏳ Còn {fmtLeft(diff)}</div>
