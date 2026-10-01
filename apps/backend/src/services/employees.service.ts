@@ -354,6 +354,21 @@ export class EmployeesService {
     timeSlot: string,
     interviewerId: string
   ) {
+    // Ứng viên đã bị LOẠI: chặn xếp lịch, yêu cầu xem lại.
+    const existing = (await this.repo.listCandidates().catch(() => []))
+      .find((c: any) => c.submission_id === submissionId) as any;
+    if (existing?.status === 'REJECTED') {
+      throw new Error(`Ứng viên ${existing.full_name || ''} đã bị LOẠI khỏi quy trình tuyển dụng! Không thể xếp lịch phỏng vấn.`);
+    }
+    try {
+      const { evaluateCandidateAiScore } = await import('./ai-scorer.js');
+      if (evaluateCandidateAiScore(existing || {}).result === 'Loại') {
+        throw new Error(`Ứng viên ${existing?.full_name || ''} có Kết Quả sàng lọc là LOẠI! Không thể xếp lịch — cần HR xem lại hồ sơ.`);
+      }
+    } catch (e: any) {
+      if (String(e?.message || '').includes('LOẠI')) throw e;
+      // AI lỗi thì bỏ qua, validate khung giờ bên dưới vẫn chạy.
+    }
     // Ràng buộc khung cố định 30 phút: sai khung -> lỗi + yêu cầu đăng ký lại.
     const checked = validateInterviewSlot(interviewDate, timeSlot);
     if (!checked.ok) {
@@ -371,5 +386,158 @@ export class EmployeesService {
       interview_time_slot: checked.value.normalized,
       interviewer_id: interviewerId,
     });
+  }
+
+  /** Cập nhật thông tin ứng viên (ca đăng ký, chi nhánh...): whitelist chặt. */
+  async updateCandidateFields(submissionId: string, updates: any, actorId: string) {
+    const allowed: any = {};
+    if (updates.registered_shift !== undefined) {
+      const v = String(updates.registered_shift || '').trim().slice(0, 200);
+      if (!v) throw new Error('Ca đăng ký không được để trống!');
+      allowed.registered_shift = v;
+    }
+    if (updates.preferred_branch_id !== undefined) {
+      allowed.preferred_branch_id = String(updates.preferred_branch_id || '').trim().slice(0, 32);
+    }
+    if (updates.branch_name !== undefined) {
+      allowed.branch_name = String(updates.branch_name || '').trim().slice(0, 200);
+    }
+    // Khôi phục ứng viên bị loại -> về MỚI (HR xem xét lại).
+    if (updates.status === 'NEW') {
+      const cur = (await this.repo.listCandidates().catch(() => []))
+        .find((c: any) => c.submission_id === submissionId) as any;
+      if (!cur) throw new Error('CANDIDATE_NOT_FOUND');
+      if (cur.status !== 'REJECTED') throw new Error('Chỉ khôi phục được ứng viên đang bị LOẠI!');
+      allowed.status = 'NEW';
+    }
+    if (Object.keys(allowed).length === 0) throw new Error('Không có trường nào được phép cập nhật!');
+    const updated = await this.repo.updateCandidate(submissionId, allowed);
+    await this.repo.recordAuditLog({
+      log_id: `LOG_${Date.now()}`,
+      actor_id: actorId,
+      actor_role: 'HR',
+      action: 'CANDIDATE_UPDATED',
+      target_entity: 'UNG_VIEN',
+      target_id: submissionId,
+      details: `Updated ${Object.keys(allowed).join(', ')} for ${(updated as any).full_name || submissionId}`,
+    }).catch(() => null);
+    return updated;
+  }
+
+  /** Đánh LOẠI: trạng thái REJECTED + xóa lịch PV + xóa thư mời Zalo (ẩn khỏi 2 danh sách). */
+  async rejectCandidate(submissionId: string, actorId: string, reason?: string) {
+    const updated = await this.repo.updateCandidate(submissionId, {
+      status: 'REJECTED',
+      interview_date: undefined,
+      interview_time_slot: undefined,
+      interviewer_id: undefined,
+      zalo_invite_status: undefined,
+      zalo_uid: undefined,
+      zalo_invite_at: undefined,
+      zalo_invite_error: undefined,
+    } as any);
+    await this.repo.recordAuditLog({
+      log_id: `LOG_${Date.now()}`,
+      actor_id: actorId,
+      actor_role: 'HR',
+      action: 'CANDIDATE_REJECTED',
+      target_entity: 'UNG_VIEN',
+      target_id: submissionId,
+      details: `Rejected ${(updated as any).full_name || submissionId}${reason ? ` — ${reason}` : ''}; interview schedule cleared`,
+    }).catch(() => null);
+    return updated;
+  }
+
+  /** Chấm điểm rubric PV (server tự tính từ đáp án; có LOẠI thẳng -> REJECTED luôn). */
+  async scoreCandidate(
+    submissionId: string,
+    rubricId: string,
+    answers: Record<string, number | number[]>,
+    actorId: string
+  ) {
+    const { computeRubricScore } = await import('./interview-rubric.service.js');
+    const scored = computeRubricScore(rubricId, answers || {});
+    const detail = JSON.stringify({ ...scored, answers: answers || {}, scoredBy: actorId, scoredAt: new Date().toISOString() });
+    if (scored.hasLoai) {
+      await this.repo.updateCandidate(submissionId, {
+        interview_score: scored.total,
+        interview_rubric: rubricId,
+        interview_score_detail: detail,
+      } as any);
+      const rejected = await this.rejectCandidate(
+        submissionId,
+        actorId,
+        `Rubric ${rubricId}: dính đáp án LOẠI (${scored.loaiQuestions.slice(0, 2).join('; ')})`
+      );
+      return { total: scored.total, passed: false, verdict: scored.verdict, autoRejected: true, candidate: rejected };
+    }
+    const updated = await this.repo.updateCandidate(submissionId, {
+      interview_score: scored.total,
+      interview_rubric: rubricId,
+      interview_score_detail: detail,
+    } as any);
+    await this.repo.recordAuditLog({
+      log_id: `LOG_${Date.now()}`,
+      actor_id: actorId,
+      actor_role: 'HR',
+      action: 'CANDIDATE_SCORED',
+      target_entity: 'UNG_VIEN',
+      target_id: submissionId,
+      details: `Rubric ${rubricId}: ${scored.total}/${scored.max} (${scored.verdict})`,
+    }).catch(() => null);
+    return { total: scored.total, passed: scored.passed, verdict: scored.verdict, autoRejected: false, candidate: updated };
+  }
+
+  /** Duyệt chính thức: yêu cầu rubric PASS (≥12, không LOẠI) -> tạo NV thử việc + PIN, ACCEPTED. */
+  async approveCandidate(submissionId: string, actorId: string) {
+    const cand = (await this.repo.listCandidates().catch(() => []))
+      .find((c: any) => c.submission_id === submissionId) as any;
+    if (!cand) throw new Error('CANDIDATE_NOT_FOUND');
+    if (cand.status === 'ACCEPTED') throw new Error('Ứng viên này đã được duyệt chính thức rồi!');
+    if (cand.status === 'REJECTED') throw new Error('Ứng viên đã bị LOẠI! Khôi phục trước khi duyệt.');
+    const { parseScoreDetail } = await import('./interview-rubric.service.js');
+    const detail = parseScoreDetail((cand as any).interview_score_detail);
+    if (!detail || detail.total < 12 || detail.hasLoai) {
+      throw new Error(
+        !detail
+          ? 'Ứng viên chưa được chấm điểm rubric! HR chấm điểm trước (tab Lịch PV → Chấm điểm).'
+          : `Chưa đạt TIÊU CHÍ (đang ${detail.total}/13${detail.hasLoai ? ', dính đáp án LOẠI' : ''})! Cần PASS từ 12 điểm và không có đáp án LOẠI mới được duyệt chính thức.`
+      );
+    }
+    const branchId = (cand.preferred_branch_id || 'CN130').trim() || 'CN130';
+    const genderRaw = String(cand.gender || '').trim().toLowerCase();
+    const created: any = await this.createEmployee({
+      fullName: cand.full_name,
+      phone: cand.phone_normalized || cand.phone,
+      branchId,
+      employmentStatus: 'PROBATION',
+      gender: genderRaw.startsWith('nữ') || genderRaw === 'nu' ? 'NU' : 'NAM',
+      group: 'STORE',
+      actorId,
+    });
+    const emp = created?.result || created;
+    const updated = await this.repo.updateCandidate(submissionId, {
+      status: 'ACCEPTED',
+    } as any);
+    await this.repo.recordAuditLog({
+      log_id: `LOG_${Date.now()}`,
+      actor_id: actorId,
+      actor_role: 'HR',
+      action: 'CANDIDATE_APPROVED',
+      target_entity: 'UNG_VIEN',
+      target_id: submissionId,
+      details: `Approved ${(cand as any).full_name} (rubric ${detail.total}/13) -> employee ${(emp as any).employee_code}`,
+    }).catch(() => null);
+    // Kèm tài khoản + PIN khởi tạo để HR trao cho NV mới.
+    let account: any = null;
+    try {
+      const accs = await this.repo.findAccountByPhone(canonicalPhone(cand.phone_normalized || cand.phone));
+      const found = accs.find(a => a.employee_id === (emp as any).employee_id) || accs[0];
+      if (found) {
+        const { pin_hash: _omit, ...rest } = found as any;
+        account = rest;
+      }
+    } catch { /* UI tự tải lại */ }
+    return { employee: emp, account, candidate: updated };
   }
 }

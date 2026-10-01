@@ -7,7 +7,7 @@ import { createApp } from './app.js';
 import { AuthService } from './services/auth.service.js';
 import { weeklyOffScheduler } from './services/weekly-off.service.js';
 import { pinRotationTick } from './services/pin-rotation.service.js';
-import { dedupeDuplicateInterviews } from './services/interview-dedupe.service.js';
+import { dedupeDuplicateInterviews, enforceScreeningOutcomes } from './services/interview-dedupe.service.js';
 import { autoRemindersTick } from './services/auto-reminders.service.js';
 import { buildSocketCorsOptions, getAllowedOrigins } from './config/security.js';
 
@@ -278,7 +278,8 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   setTimeout(pinRotationTickSafe, 90_000); // sau pull đầu
   setInterval(pinRotationTickSafe, 60 * 60_000);
 
-  // Tự rà soát + xóa lịch PV trùng (< 30 phút cùng ngày) rồi yêu cầu đăng ký lại.
+  // Tự rà soát + xóa lịch PV trùng (< 30 phút cùng ngày) rồi yêu cầu đăng ký lại,
+  // đồng thời tự loại ứng viên Kết Quả LOẠI (ẩn khỏi danh sách).
   // Chạy sau pull đầu + mỗi 5 phút (chỉ chạm lịch sắp tới, lịch đã qua không đụng).
   const interviewDedupeTickSafe = () => {
     dedupeDuplicateInterviews(adapter, services.notificationsService, { dryRun: false, actorId: 'SYSTEM' })
@@ -287,6 +288,15 @@ server.listen(Number(PORT), '0.0.0.0', () => {
           console.log(`[interview-dedupe] Đã xóa ${r.removedCount} lịch PV trùng, yêu cầu đăng ký lại.`);
           try {
             io.emit('data:updated', { entity: 'candidates', data: { action: 'interview-duplicates-removed', removed: r.removedCount }, timestamp: new Date().toISOString() });
+          } catch { /* non-fatal */ }
+        }
+        return enforceScreeningOutcomes(adapter, services.notificationsService, 'SYSTEM');
+      })
+      .then(r => {
+        if (r && r.rejectedCount > 0) {
+          console.log(`[interview-dedupe] Tự động loại ${r.rejectedCount} ứng viên LOẠI.`);
+          try {
+            io.emit('data:updated', { entity: 'candidates', data: { action: 'auto-rejected', rejected: r.rejectedCount }, timestamp: new Date().toISOString() });
           } catch { /* non-fatal */ }
         }
       })

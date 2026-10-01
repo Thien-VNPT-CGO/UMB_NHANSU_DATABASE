@@ -62,6 +62,9 @@ import {
   swapDispatchBody,
   employeeCreateBody,
   employeeUpdateBody,
+  candidateRejectBody,
+  candidateScoreBody,
+  candidateUpdateBody,
   idParams,
   testPaperBody,
   testSubmitBody,
@@ -939,6 +942,54 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       res.json({ success: true, ...result });
     } catch (err: any) {
       res.status(500).json({ error: String(err?.message || 'Lỗi xóa lịch PV trùng') });
+    }
+  });
+
+  // --- ỨNG VIÊN: cập nhật ca đăng ký / khôi phục / chấm rubric / duyệt / loại ---
+  // Cập nhật ca đăng ký / chi nhánh / khôi phục (REJECTED -> NEW).
+  app.put('/applications/:id', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams, body: candidateUpdateBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await employeesService.updateCandidateFields(req.params.id, req.body || {}, req.user!.id);
+      broadcastUpdate('candidates', { action: 'update', id: req.params.id });
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: String(err?.message || 'Lỗi cập nhật ứng viên') });
+    }
+  });
+
+  // Chấm điểm rubric PV (server tự tính; dính LOẠI thẳng -> REJECTED + xóa lịch luôn).
+  app.post('/applications/:id/score', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams, body: candidateScoreBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const { rubric, answers } = req.body as any;
+      const result = await employeesService.scoreCandidate(req.params.id, rubric, answers || {}, req.user!.id);
+      broadcastUpdate('candidates', { action: 'score', id: req.params.id });
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(400).json({ error: String(err?.message || 'Lỗi chấm điểm rubric') });
+    }
+  });
+
+  // Duyệt chính thức: yêu cầu rubric PASS (≥12, không LOẠI) -> tạo NV thử việc + PIN.
+  app.post('/applications/:id/approve', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await employeesService.approveCandidate(req.params.id, req.user!.id);
+      broadcastUpdate('candidates', { action: 'approve', id: req.params.id });
+      broadcastUpdate('employees', { action: 'create', employee: (result as any).employee });
+      broadcastUpdate('accounts', { action: 'create_emp_account' });
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(400).json({ error: String(err?.message || 'Lỗi duyệt chính thức') });
+    }
+  });
+
+  // Đánh LOẠI thủ công: REJECTED + xóa lịch PV + xóa thư mời (ẩn khỏi 2 danh sách).
+  app.post('/applications/:id/reject', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams, body: candidateRejectBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await employeesService.rejectCandidate(req.params.id, req.user!.id, (req.body as any)?.reason);
+      broadcastUpdate('candidates', { action: 'reject', id: req.params.id });
+      res.json({ success: true, candidate: result });
+    } catch (err: any) {
+      res.status(400).json({ error: String(err?.message || 'Lỗi loại ứng viên') });
     }
   });
 

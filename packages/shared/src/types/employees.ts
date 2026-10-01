@@ -49,6 +49,10 @@ export interface CandidateApplication {
   interview_time_slot?: string;
   interviewer_id?: string;
   interview_score?: number;
+  /** Bộ rubric đã chấm: 'store' (9 câu) | 'office' (7 câu). */
+  interview_rubric?: string;
+  /** Chi tiết chấm rubric (JSON: {rubric, total, hasLoai, answers}). */
+  interview_score_detail?: string;
   interview_notes?: string;
   /** Trạng thái gửi thư mời Zalo: SENT | NOT_FRIEND | FAILED */
   zalo_invite_status?: string;

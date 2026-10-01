@@ -90,6 +90,23 @@ export const interviewBody = z.object({
   timeSlot: z.string().trim().min(1).max(64),
 });
 
+// --- Ứng viên: cập nhật ca đăng ký / khôi phục / chấm rubric ---
+export const candidateUpdateBody = z.object({
+  registered_shift: optString(200),
+  preferred_branch_id: optString(32),
+  branch_name: optString(200),
+  status: optString(16),
+}).passthrough();
+
+export const candidateScoreBody = z.object({
+  rubric: z.enum(['store', 'office']),
+  answers: z.record(z.union([z.coerce.number().int().min(0).max(20), z.array(z.coerce.number().int().min(0).max(20)).max(10)])),
+});
+
+export const candidateRejectBody = z.object({
+  reason: optString(500),
+}).passthrough();
+
 // --- Zalo cá nhân HR ---
 export const zaloLoginIdParams = z.object({
   loginId: shortId(128),

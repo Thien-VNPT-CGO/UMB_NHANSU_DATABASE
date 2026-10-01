@@ -87,6 +87,7 @@ export const AttPhoto: React.FC<{ eventId: string; style?: React.CSSProperties; 
   return <img src={url} alt={alt || 'Ảnh chấm công'} style={{ width: '72px', height: '72px', objectFit: 'cover', borderRadius: '8px', border: '1px solid var(--border)', ...(style || {}) }} />;
 };
 import { evaluateCandidateAiScore } from '../services/ai-scorer';
+import { candStatusVI, computeRubricClient, INTERVIEW_RUBRICS, parseScoreDetailClient } from '../services/interview-rubric';
 
 interface RoleViewsProps {
   activeTab: string;
@@ -817,6 +818,30 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Link Meet mặc định hệ thống (không tùy chỉnh) — input hiển thị disabled.
   const inviteMeetUrl = 'https://meet.google.com/ypp-srtm-fvm';
   const [inviteBusy, setInviteBusy] = useState(false);
+  // Danh sách ứng viên còn xét (đã loại ẩn khỏi tab PV).
+  const pvCandidates = (candidates || []).filter((c: any) => String(c?.status || '') !== 'REJECTED');
+
+  // Tự nhận diện chi nhánh theo hồ sơ ứng viên khi HR chọn tên.
+  useEffect(() => {
+    if (!inviteCandidateId) return;
+    const picked = (candidates || []).find((c: any) => c.submission_id === inviteCandidateId);
+    const bid = String(picked?.preferred_branch_id || '').trim();
+    if (bid && branches.some((b: any) => (b.branch_id || b.id) === bid)) {
+      setInviteBranchId(bid);
+    }
+  }, [inviteCandidateId]);
+
+  // Chấm điểm rubric + duyệt chính thức
+  const [scoringId, setScoringId] = useState<string | null>(null);
+  const [scoringRubric, setScoringRubric] = useState<'store' | 'office'>('store');
+  const [scoringAnswers, setScoringAnswers] = useState<Record<string, number[]>>({});
+  const [scoringBusy, setScoringBusy] = useState(false);
+  const [approveBusyId, setApproveBusyId] = useState<string | null>(null);
+  const [approveResult, setApproveResult] = useState<any | null>(null);
+  // Sửa ca đăng ký inline khi ứng viên đăng ký từ 2 ca trở lên
+  const [editingShiftId, setEditingShiftId] = useState<string | null>(null);
+  const [editingShiftVal, setEditingShiftVal] = useState('');
+  const [shiftBusy, setShiftBusy] = useState(false);
 
   const handleCreateScheduleAndInvite = async () => {
     if (!inviteCandidateId) {
@@ -909,6 +934,83 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       } else {
         showToast(msg);
       }
+    }
+  };
+
+  // Mở modal chấm rubric cho 1 ứng viên (prefill điểm đã chấm nếu có).
+  const openScoring = (candidate: any) => {
+    const saved = parseScoreDetailClient((candidate as any)?.interview_score_detail);
+    const rubric = (saved?.rubricId === 'office' ? 'office' : 'store') as 'store' | 'office';
+    setScoringRubric((candidate as any)?.interview_rubric === 'office' ? 'office' : rubric);
+    setScoringAnswers((saved?.answers && typeof saved.answers === 'object' ? saved.answers : {}) as Record<string, number[]>);
+    setScoringId(candidate.submission_id);
+  };
+
+  // Lưu điểm rubric (server tự tính lại; dính LOẠI thẳng -> tự REJECTED + xóa lịch).
+  const handleSaveScore = async () => {
+    if (!scoringId) return;
+    setScoringBusy(true);
+    try {
+      const res: any = await apiRequest(`/applications/${scoringId}/score`, {
+        method: 'POST',
+        body: JSON.stringify({ rubric: scoringRubric, answers: scoringAnswers }),
+      });
+      if (res.autoRejected) {
+        showToast(`🚫 Ứng viên dính đáp án LOẠI — đã tự động loại khỏi quy trình!`);
+      } else {
+        const v = res.verdict === 'PASS' ? '✅ PASS — đủ điều kiện Duyệt chính thức!' : res.verdict === 'CONSIDER' ? '⚠️ Cân nhắc (10-11đ) — chưa đủ duyệt!' : '❌ Chưa đạt — cần chấm lại hoặc loại!';
+        showToast(`Đã lưu điểm rubric: ${res.total}/13. ${v}`);
+      }
+      setScoringId(null);
+      if (typeof onRefreshData === 'function') {
+        try { await onRefreshData(); } catch {}
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Lưu điểm thất bại!');
+    } finally {
+      setScoringBusy(false);
+    }
+  };
+
+  // Duyệt chính thức: chỉ pass rubric mới gọi được (server kiểm lại).
+  const handleApproveCandidate = async (candidate: any) => {
+    if (!window.confirm(`Duyệt chính thức ${candidate.full_name} thành nhân viên thử việc?\nHệ thống sẽ tạo hồ sơ NV + tài khoản/PIN đăng nhập.`)) return;
+    setApproveBusyId(candidate.submission_id);
+    try {
+      const res: any = await apiRequest(`/applications/${candidate.submission_id}/approve`, { method: 'POST' });
+      setApproveResult(res);
+      if (typeof onRefreshData === 'function') {
+        try { await onRefreshData(); } catch {}
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Duyệt thất bại!');
+    } finally {
+      setApproveBusyId(null);
+    }
+  };
+
+  // Cập nhật ca đăng ký cho ứng viên đăng ký từ 2 ca trở lên.
+  const handleSaveShift = async (candidate: any) => {
+    const v = editingShiftVal.trim();
+    if (!v) {
+      showToast('Ca đăng ký không được để trống!');
+      return;
+    }
+    setShiftBusy(true);
+    try {
+      await apiRequest(`/applications/${candidate.submission_id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ registered_shift: v }),
+      });
+      showToast(`✅ Đã cập nhật ca làm việc cho ${candidate.full_name}: ${v}`);
+      setEditingShiftId(null);
+      if (typeof onRefreshData === 'function') {
+        try { await onRefreshData(); } catch {}
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Cập nhật ca thất bại!');
+    } finally {
+      setShiftBusy(false);
     }
   };
 
@@ -1382,6 +1484,51 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       return raw;
     };
 
+    // Chọn ứng viên để lập lịch PV (điền sẵn ở tab Phỏng vấn & BOT Zalo).
+    const handlePickCandidateForInterview = (c: any) => {
+      setInviteCandidateId(c.submission_id);
+      showToast(`Đã chọn ${c.full_name} — qua tab "Phỏng vấn & BOT Zalo" để đặt lịch (chi nhánh tự điền theo hồ sơ)!`);
+    };
+
+    // Chat Zalo: tự động kết bạn qua nick HR + gửi lời chào (không cần bấm xác nhận).
+    const handleChatZalo = async (c: any) => {
+      const phone = c.phone || c.phone_normalized;
+      if (!phone) {
+        showToast('Ứng viên chưa có số điện thoại!');
+        return;
+      }
+      try {
+        showToast(`Đang tự động kết bạn Zalo tới ${c.full_name}...`);
+        await apiRequest('/admin/zalo/send-friend-request', {
+          method: 'POST',
+          body: JSON.stringify({
+            phone,
+            message: `Chào ${c.full_name}, mình là HR Ụm Bò Milk. Kết bạn để trao đổi lịch phỏng vấn nhé!`,
+          }),
+        });
+        showToast(`✅ Đã gửi kết bạn Zalo tới ${c.full_name}! Khi bạn ấy đồng ý, HR nhắn tin trực tiếp qua Zalo.`);
+      } catch (err: any) {
+        showToast(err.message || 'Gửi kết bạn Zalo thất bại!');
+      }
+    };
+
+    // Khôi phục ứng viên bị loại về Mới ứng tuyển.
+    const handleRestoreCandidate = async (c: any) => {
+      if (!window.confirm(`Khôi phục ${c.full_name} về "Mới ứng tuyển" để xem xét lại?`)) return;
+      try {
+        await apiRequest(`/applications/${c.submission_id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ status: 'NEW' }),
+        });
+        showToast(`♻️ Đã khôi phục ${c.full_name}!`);
+        if (typeof onRefreshData === 'function') {
+          try { await onRefreshData(); } catch {}
+        }
+      } catch (err: any) {
+        showToast(err.message || 'Khôi phục thất bại!');
+      }
+    };
+
     const filteredCandidates = (candidates || []).filter(c => {
       const q = candidateSearch.trim().toLowerCase();
       const matchSearch = !q ||
@@ -1397,12 +1544,20 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         (c.branch_name && c.branch_name.includes(candidateBranchFilter));
 
       const evalResult = evaluateCandidateAiScore(c);
-      const matchResult = candidateResultFilter === 'ALL' ||
-        (candidateResultFilter === 'DAT' && evalResult.result === 'Đạt') ||
-        (candidateResultFilter === 'LOAI' && evalResult.result === 'Loại');
+      // Ứng viên đã loại (REJECTED) ẩn khỏi danh sách mặc định — xem lại bằng bộ lọc "Đã loại".
+      const isRejected = String(c.status || '') === 'REJECTED';
+      const matchResult = candidateResultFilter === 'ALL'
+        ? !isRejected
+        : candidateResultFilter === 'REJECTED'
+          ? isRejected
+          : candidateResultFilter === 'DAT'
+            ? !isRejected && evalResult.result === 'Đạt'
+            : !isRejected && evalResult.result === 'Loại';
 
       return matchSearch && matchBranch && matchResult;
     });
+
+    const rejectedCount = (candidates || []).filter(c => String(c.status || '') === 'REJECTED').length;
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -1430,7 +1585,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </span>
             </div>
             <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '4px 0 0' }}>
-              Đầy đủ 17 cột dữ liệu đồng bộ trực tiếp từ trang tính Google Form (FROM_NHAN_VIEN) — Không dữ liệu ảo
+                Đầy đủ 16 cột dữ liệu đồng bộ trực tiếp từ trang tính Google Form (FROM_NHAN_VIEN) — Không dữ liệu ảo
             </p>
           </div>
 
@@ -1541,6 +1696,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               <option value="ALL">⭐ Tất Cả Điểm AI (Thang 14)</option>
               <option value="DAT">🟢 Đạt (≥ 8/14 điểm)</option>
               <option value="LOAI">🔴 Loại (&lt; 8đ hoặc vi phạm)</option>
+              <option value="REJECTED">🚫 Đã loại (xem lại{rejectedCount > 0 ? `: ${rejectedCount}` : ''})</option>
             </select>
           </div>
 
@@ -1589,9 +1745,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <th style={{ padding: '12px 14px', width: '140px' }}>13. Nguồn Biết Tin</th>
                   <th style={{ padding: '12px 12px', width: '110px', textAlign: 'center' }}>14. Điểm AI</th>
                   <th style={{ padding: '12px 14px', width: '150px' }}>15. Kết Quả</th>
-                  <th style={{ padding: '12px 12px', width: '120px' }}>16. Trạng Thái</th>
-                  <th style={{ padding: '12px 14px', width: '150px' }}>17. Mã Nguồn</th>
-                  <th style={{ padding: '12px 14px', width: '120px', textAlign: 'center', position: 'sticky', right: 0, backgroundColor: 'var(--bg)', zIndex: 1, boxShadow: '-3px 0 6px rgba(0,0,0,0.05)' }}>
+                  <th style={{ padding: '12px 12px', width: '130px' }}>16. Trạng Thái</th>
+                  <th style={{ padding: '12px 14px', width: '190px', textAlign: 'center', position: 'sticky', right: 0, backgroundColor: 'var(--bg)', zIndex: 1, boxShadow: '-3px 0 6px rgba(0,0,0,0.05)' }}>
                     Thao Tác
                   </th>
                 </tr>
@@ -1599,7 +1754,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               <tbody>
                 {filteredCandidates.length === 0 ? (
                   <tr>
-                    <td colSpan={18} style={{ padding: '48px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    <td colSpan={17} style={{ padding: '48px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
                       <div style={{ fontSize: '32px', marginBottom: '8px' }}>📂</div>
                       <div style={{ fontWeight: 700, fontSize: '15px', color: 'var(--text)' }}>Không tìm thấy ứng viên nào</div>
                       <div style={{ fontSize: '13px', marginTop: '4px' }}>
@@ -1844,18 +1999,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           })()}
                         </td>
 
-                        {/* 16. Trạng thái */}
+                        {/* 16. Trạng thái (tiếng Việt) */}
                         <td style={{ padding: '12px 12px' }}>
                           <span className="badge badge-brand" style={{ fontSize: '11px', padding: '3px 8px' }}>
-                            {c.status || 'MỚI ỨNG TUYỂN'}
+                            {candStatusVI(c.status)}
                           </span>
-                        </td>
-
-                        {/* 17. Mã nguồn */}
-                        <td style={{ padding: '12px 14px', fontFamily: 'monospace', fontSize: '11px', color: '#64748B', whiteSpace: 'nowrap' }}>
-                          <code style={{ backgroundColor: '#F1F5F9', padding: '2px 6px', borderRadius: '4px' }}>
-                            {c.source_code || c.submission_id || 'FORM_UBM'}
-                          </code>
                         </td>
 
                         {/* Thao tác (Sticky column) */}
@@ -1868,22 +2016,53 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           zIndex: 1,
                           boxShadow: '-3px 0 6px rgba(0,0,0,0.05)',
                         }}>
-                          <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
-                            <button
-                              className="btn-secondary"
-                              style={{ padding: '4px 8px', fontSize: '11px' }}
-                              onClick={() => setSelectedCandidateDetail(c)}
-                              title="Xem toàn bộ 17 trường thông tin"
-                            >
-                              Chi Tiết
-                            </button>
-                            <button
-                              className="btn-primary"
-                              style={{ padding: '4px 8px', fontSize: '11px', backgroundColor: '#0068FF' }}
-                              onClick={() => showToast(`Đã chọn ứng viên ${c.full_name} để lập lịch phỏng vấn Zalo BOT!`)}
-                            >
-                              Mời PV
-                            </button>
+                          <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                            {(() => {
+                              const rowAi = evaluateCandidateAiScore(c);
+                              const rowRejected = String(c.status || '') === 'REJECTED';
+                              const rowPass = rowAi.result === 'Đạt' && !rowRejected;
+                              const btn: React.CSSProperties = {
+                                padding: '6px 12px', fontSize: '11px', fontWeight: 800,
+                                borderRadius: '8px', border: 'none', cursor: 'pointer',
+                                display: 'inline-flex', alignItems: 'center', gap: '4px',
+                                whiteSpace: 'nowrap',
+                              };
+                              return (<>
+                                <button
+                                  style={{ ...btn, backgroundColor: '#F1F5F9', color: '#334155', border: '1px solid #E2E8F0' }}
+                                  onClick={() => setSelectedCandidateDetail(c)}
+                                  title="Xem toàn bộ thông tin hồ sơ"
+                                >
+                                  👁 Chi Tiết
+                                </button>
+                                {rowRejected ? (
+                                  <button
+                                    style={{ ...btn, backgroundColor: '#FEF3C7', color: '#92400E' }}
+                                    onClick={() => handleRestoreCandidate(c)}
+                                    title="Khôi phục ứng viên về Mới ứng tuyển để xem xét lại"
+                                  >
+                                    ♻️ Khôi Phục
+                                  </button>
+                                ) : (<>
+                                  {rowPass && (
+                                    <button
+                                      style={{ ...btn, backgroundColor: '#0068FF', color: '#FFF', boxShadow: '0 2px 6px rgba(0,104,255,0.3)' }}
+                                      onClick={() => handlePickCandidateForInterview(c)}
+                                      title="Chọn để lập lịch phỏng vấn ở tab Phỏng vấn & BOT Zalo"
+                                    >
+                                      📅 Mời PV
+                                    </button>
+                                  )}
+                                  <button
+                                    style={{ ...btn, backgroundColor: '#10B981', color: '#FFF', boxShadow: '0 2px 6px rgba(16,185,129,0.3)' }}
+                                    onClick={() => handleChatZalo(c)}
+                                    title="Tự động kết bạn Zalo qua nick HR + gửi lời chào"
+                                  >
+                                    💬 Chat Zalo
+                                  </button>
+                                </>)}
+                              </>);
+                            })()}
                           </div>
                         </td>
                       </tr>
@@ -1895,7 +2074,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           </div>
         </div>
 
-        {/* MODAL XEM CHI TIẾT ĐẦY ĐỦ 17 CỘT CỦA ỨNG VIÊN */}
+        {/* MODAL XEM CHI TIẾT ĐẦY ĐỦ 16 CỘT CỦA ỨNG VIÊN */}
         {selectedCandidateDetail && (
           <div style={{
             position: 'fixed',
@@ -1933,7 +2112,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     Chi Tiết Hồ Sơ Ứng Viên (Google Forms)
                   </h3>
                   <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                    Mã nguồn: <strong>{selectedCandidateDetail.source_code || selectedCandidateDetail.submission_id}</strong> • Ngày gửi: {formatRegDate(selectedCandidateDetail.created_at)}
+                    Mã hồ sơ: <strong>{selectedCandidateDetail.submission_id}</strong> • Ngày gửi: {formatRegDate(selectedCandidateDetail.created_at)}
                   </div>
                 </div>
                 <button
@@ -2548,8 +2727,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Chọn ứng viên mới:</label>
                 <select style={{ width: '100%' }} value={inviteCandidateId} onChange={(e) => setInviteCandidateId(e.target.value)}>
                   <option value="">-- Chọn ứng viên --</option>
-                  {candidates.length > 0 ? (
-                    candidates.map((c, i) => (
+                  {pvCandidates.length > 0 ? (
+                    pvCandidates.map((c, i) => (
                       <option key={c.submission_id || i} value={c.submission_id}>
                         {c.full_name} ({c.phone || c.phone_normalized})
                       </option>
@@ -2558,6 +2737,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     <option value="">Chưa có ứng viên (Dữ liệu từ Google Sheets)</option>
                   )}
                 </select>
+                <div style={{ fontSize: '11px', color: '#1E40AF', marginTop: '4px' }}>
+                  🤖 Chọn tên là chi nhánh tự điền đúng theo hồ sơ ứng viên.
+                </div>
               </div>
 
               <div>
@@ -2682,6 +2864,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
                 <th style={{ padding: '12px 20px' }}>Ứng Viên</th>
                 <th style={{ padding: '12px 20px' }}>Vị Trí & Chi Nhánh</th>
+                <th style={{ padding: '12px 20px' }}>Ca Làm Việc ĐK</th>
                 <th style={{ padding: '12px 20px' }}>Thời Gian</th>
                 <th style={{ padding: '12px 20px' }}>Google Meet Sinh Tự Động</th>
                 <th style={{ padding: '12px 20px' }}>Kênh Gửi Zalo Cá Nhân</th>
@@ -2690,8 +2873,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </tr>
             </thead>
             <tbody>
-              {candidates.length > 0 ? (
-                candidates.map((c, i) => (
+              {pvCandidates.length > 0 ? (
+                pvCandidates.map((c, i) => (
                   <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
                     <td style={{ padding: '14px 20px', fontWeight: 700 }}>
                       {c.full_name}
@@ -2700,6 +2883,58 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     <td style={{ padding: '14px 20px' }}>
                       <strong>{c.apply_position || c.position || 'Nhân viên Bán hàng'}</strong>
                       <div style={{ fontSize: '11px', color: '#2563EB' }}>{c.branch_name || getDisplayBranch(c.preferred_branch_id || c.branch_id || 'CN130')}</div>
+                    </td>
+                    <td style={{ padding: '14px 20px' }}>
+                      {(() => {
+                        const shift = String(c.registered_shift || 'Ca sáng / Ca chiều');
+                        const parts = shift.split(/[,/+;|]/).map((s: string) => s.trim()).filter(Boolean);
+                        const multi = parts.length >= 2;
+                        if (editingShiftId === c.submission_id) {
+                          return (
+                            <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                              <input
+                                value={editingShiftVal}
+                                onChange={(e) => setEditingShiftVal(e.target.value)}
+                                placeholder="VD: Ca sáng / Ca chiều"
+                                style={{ width: '130px', fontSize: '12px', padding: '5px 8px', borderRadius: '6px', border: '1px solid var(--border)' }}
+                              />
+                              <button
+                                onClick={() => handleSaveShift(c)}
+                                disabled={shiftBusy}
+                                title="Lưu ca làm việc mới"
+                                style={{ padding: '5px 10px', borderRadius: '6px', backgroundColor: '#10B981', color: '#FFF', fontSize: '11px', fontWeight: 800, border: 'none', cursor: 'pointer' }}
+                              >
+                                Lưu
+                              </button>
+                              <button
+                                onClick={() => setEditingShiftId(null)}
+                                title="Hủy"
+                                style={{ padding: '5px 10px', borderRadius: '6px', backgroundColor: '#F1F5F9', color: '#475569', fontSize: '11px', fontWeight: 800, border: 'none', cursor: 'pointer' }}
+                              >
+                                Hủy
+                              </button>
+                            </div>
+                          );
+                        }
+                        return (
+                          <div>
+                            <span style={{ display: 'inline-block', padding: '4px 10px', borderRadius: '6px', backgroundColor: multi ? '#FEF3C7' : '#F1F5F9', color: multi ? '#92400E' : '#334155', fontSize: '12px', fontWeight: 700 }}>
+                              {shift}
+                            </span>
+                            {multi && (
+                              <div>
+                                <button
+                                  onClick={() => { setEditingShiftId(c.submission_id); setEditingShiftVal(shift); }}
+                                  title="Ứng viên đăng ký từ 2 ca trở lên — bấm để cập nhật lại"
+                                  style={{ marginTop: '4px', padding: '4px 10px', borderRadius: '6px', backgroundColor: '#F59E0B', color: '#FFF', fontSize: '11px', fontWeight: 800, border: 'none', cursor: 'pointer' }}
+                                >
+                                  ✏️ Cập nhật ca
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td style={{ padding: '14px 20px', fontWeight: 700 }}>
                       {(c as any).interview_date ? `${(c as any).interview_time_slot || ''} ${ (c as any).interview_date}` : (c.interview_time || 'Chờ xếp lịch')}
@@ -2785,35 +3020,70 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     </td>
                     <td style={{ padding: '14px 20px' }}>
                       <span style={{ backgroundColor: '#FEF3C7', color: '#92400E', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700 }}>
-                        {(() => {
-                          const vi: Record<string, string> = {
-                            NEW: 'Mới',
-                            NEED_INFO: 'Cần bổ sung thông tin',
-                            INVITED_INTERVIEW: 'Đã mời phỏng vấn',
-                            INTERVIEWED: 'Đã phỏng vấn',
-                            ACCEPTED: 'Đạt — nhận việc',
-                            REJECTED: 'Không đạt',
-                          };
-                          const s = String(c.status || '').trim();
-                          return vi[s] || s || 'Chờ phỏng vấn';
-                        })()}
+                        {candStatusVI(c.status)}
                       </span>
+                      {(() => {
+                        const d = parseScoreDetailClient((c as any)?.interview_score_detail);
+                        if (!d) return null;
+                        const vc = d.verdict === 'PASS' ? '#059669' : d.verdict === 'LOAI' ? '#DC2626' : '#B45309';
+                        const vt = d.verdict === 'PASS' ? 'PASS' : d.verdict === 'LOAI' ? 'LOẠI thẳng' : d.verdict === 'CONSIDER' ? 'Cân nhắc' : 'Chưa đạt';
+                        return (
+                          <div style={{ fontSize: '11px', color: vc, fontWeight: 800, marginTop: '4px' }}>
+                            📝 Rubric: {d.total}/{d.max} — {vt}
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td style={{ padding: '14px 20px' }}>
                       <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                        <button className="btn-primary" style={{ padding: '4px 8px', fontSize: '11px', backgroundColor: '#0068FF' }} onClick={() => handleSendZaloInvite(c)}>
-                          📩 Gửi thư mời Zalo
-                        </button>
-                        <button className="btn-secondary" style={{ padding: '4px 8px', fontSize: '11px', color: '#059669' }} onClick={() => showToast('Duyệt đạt phỏng vấn')}>
-                          Đánh Giá
-                        </button>
+                        {(() => {
+                          const btn2: React.CSSProperties = {
+                            padding: '6px 12px', fontSize: '11px', fontWeight: 800, borderRadius: '8px',
+                            border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px',
+                            whiteSpace: 'nowrap',
+                          };
+                          const d = parseScoreDetailClient((c as any)?.interview_score_detail);
+                          const canApprove = !!d && d.passed && String(c.status || '') !== 'ACCEPTED';
+                          const isAccepted = String(c.status || '') === 'ACCEPTED';
+                          return (<>
+                            <button
+                              style={{ ...btn2, backgroundColor: '#0068FF', color: '#FFF', boxShadow: '0 2px 6px rgba(0,104,255,0.3)' }}
+                              onClick={() => handleSendZaloInvite(c)}
+                              title="Gửi thư mời phỏng vấn qua Zalo cá nhân HR"
+                            >
+                              📩 Gửi thư mời Zalo
+                            </button>
+                            {!isAccepted && (
+                              <button
+                                style={{ ...btn2, backgroundColor: '#8B5CF6', color: '#FFF', boxShadow: '0 2px 6px rgba(139,92,246,0.3)' }}
+                                onClick={() => openScoring(c)}
+                                title="Chấm điểm theo TIÊU CHÍ LỌC HỒ SƠ (PASS từ 12/13)"
+                              >
+                                📝 Chấm điểm{d ? ` (${d.total})` : ''}
+                              </button>
+                            )}
+                            {canApprove && (
+                              <button
+                                style={{ ...btn2, backgroundColor: '#10B981', color: '#FFF', boxShadow: '0 2px 6px rgba(16,185,129,0.35)' }}
+                                disabled={approveBusyId === c.submission_id}
+                                onClick={() => handleApproveCandidate(c)}
+                                title={`Đã PASS rubric (${d.total}/${d.max}) — duyệt thành nhân viên thử việc + cấp PIN`}
+                              >
+                                {approveBusyId === c.submission_id ? '⏳ Đang duyệt...' : '✅ Duyệt chính thức'}
+                              </button>
+                            )}
+                            {isAccepted && (
+                              <span style={{ fontSize: '11px', color: '#059669', fontWeight: 800 }}>✅ Đã duyệt NV</span>
+                            )}
+                          </>);
+                        })()}
                       </div>
                     </td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={7} style={{ textAlign: 'center', padding: '36px', color: 'var(--text-muted)', fontSize: '13px' }}>
+                  <td colSpan={8} style={{ textAlign: 'center', padding: '36px', color: 'var(--text-muted)', fontSize: '13px' }}>
                     Chưa có lịch phỏng vấn nào. Dữ liệu sẽ tự động xuất hiện khi tiếp nhận ứng viên từ Google Forms hoặc Google Sheets.
                   </td>
                 </tr>
@@ -2821,6 +3091,109 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </tbody>
           </table>
         </div>
+
+        {/* MODAL CHẤM ĐIỂM RUBRIC TIÊU CHÍ LỌC HỒ SƠ */}
+        {scoringId && (() => {
+          const cand = (candidates || []).find((x: any) => x.submission_id === scoringId);
+          const rubric = INTERVIEW_RUBRICS.find(r => r.id === scoringRubric) || INTERVIEW_RUBRICS[0];
+          const live = computeRubricClient(scoringRubric, scoringAnswers);
+          const answered = rubric.questions.filter(q => (scoringAnswers[q.id] || []).length > 0).length;
+          const verdictBg = live.verdict === 'PASS' ? '#ECFDF5' : live.verdict === 'LOAI' ? '#FEF2F2' : '#FFFBEB';
+          const verdictTx = live.verdict === 'PASS' ? '#059669' : live.verdict === 'LOAI' ? '#DC2626' : '#92400E';
+          const verdictLabel = live.verdict === 'PASS' ? '✅ PASS — đủ điều kiện Duyệt chính thức' : live.verdict === 'LOAI' ? '🚫 LOẠI thẳng — lưu sẽ tự loại ứng viên!' : live.verdict === 'CONSIDER' ? '⚠️ Cân nhắc (10-11đ) — chưa đủ duyệt' : '❌ Chưa đạt — cần chấm lại hoặc loại';
+          return (
+            <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+              <div style={{ backgroundColor: '#FFF', borderRadius: '14px', maxWidth: '720px', width: '100%', maxHeight: '88vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#1E40AF', color: '#FFF' }}>
+                  <div>
+                    <div style={{ fontWeight: 800, fontSize: '15px' }}>📝 Chấm điểm PV: {cand?.full_name || scoringId}</div>
+                    <div style={{ fontSize: '12px', opacity: 0.9 }}>TIÊU CHÍ LỌC HỒ SƠ — PASS từ 12/13, đáp án LOẠI loại thẳng</div>
+                  </div>
+                  <button onClick={() => !scoringBusy && setScoringId(null)} disabled={scoringBusy} style={{ border: 'none', background: 'rgba(255,255,255,0.2)', color: '#FFF', fontSize: '16px', cursor: 'pointer', borderRadius: '6px', padding: '2px 8px' }}>✕</button>
+                </div>
+                <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--border)', display: 'flex', gap: '10px', alignItems: 'center', backgroundColor: '#F8FAFC' }}>
+                  <label style={{ fontSize: '12px', fontWeight: 800 }}>Bộ tiêu chí:</label>
+                  <select value={scoringRubric} onChange={(e) => { setScoringRubric(e.target.value as any); setScoringAnswers({}); }} style={{ padding: '6px 10px', borderRadius: '6px', fontSize: '13px', fontWeight: 700 }}>
+                    {INTERVIEW_RUBRICS.map(r => <option key={r.id} value={r.id}>{r.name} (MAX {r.maxScore})</option>)}
+                  </select>
+                  <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Đã chấm {answered}/{rubric.questions.length} câu</span>
+                </div>
+                <div style={{ padding: '16px 20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  {rubric.questions.map((q, qi) => (
+                    <div key={q.id} style={{ border: '1px solid var(--border)', borderRadius: '10px', padding: '12px 14px', backgroundColor: (scoringAnswers[q.id] || []).length > 0 ? '#F8FAFC' : '#FFF' }}>
+                      <div style={{ fontSize: '13px', fontWeight: 800, color: '#0F172A', marginBottom: q.cond ? '2px' : '8px' }}>
+                        Câu {qi + 1}: {q.text}
+                      </div>
+                      {q.cond && <div style={{ fontSize: '11px', fontWeight: 800, color: '#DC2626', marginBottom: '8px' }}>{q.cond}</div>}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        {q.options.map((opt, oi) => {
+                          const picked = (scoringAnswers[q.id] || []).includes(oi);
+                          const toggle = () => {
+                            setScoringAnswers(prev => {
+                              const cur = prev[q.id] || [];
+                              if (q.multi) {
+                                return { ...prev, [q.id]: cur.includes(oi) ? cur.filter(x => x !== oi) : [...cur, oi] };
+                              }
+                              return { ...prev, [q.id]: cur.includes(oi) ? [] : [oi] };
+                            });
+                          };
+                          return (
+                            <label key={oi} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', padding: '7px 10px', borderRadius: '7px', cursor: 'pointer', backgroundColor: picked ? (opt.loai ? '#FEE2E2' : '#DBEAFE') : '#F8FAFC', border: picked ? (opt.loai ? '1.5px solid #FCA5A5' : '1.5px solid #93C5FD') : '1px solid #E2E8F0', fontWeight: picked ? 800 : 500 }}>
+                              <input type={q.multi ? 'checkbox' : 'radio'} checked={picked} onChange={toggle} />
+                              <span style={{ flex: 1 }}>{opt.label}</span>
+                              <span style={{ fontWeight: 800, fontSize: '11px', padding: '2px 8px', borderRadius: '999px', backgroundColor: opt.loai ? '#DC2626' : '#1D4ED8', color: '#FFF' }}>
+                                {opt.loai ? 'LOẠI' : `${opt.score}đ`}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ padding: '14px 20px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: verdictBg, gap: '12px', flexWrap: 'wrap' }}>
+                  <div style={{ fontSize: '13px', fontWeight: 800, color: verdictTx }}>
+                    Tổng: {live.total}/{live.max} — {verdictLabel}
+                  </div>
+                  <button
+                    onClick={handleSaveScore}
+                    disabled={scoringBusy || answered < rubric.questions.length}
+                    title={answered < rubric.questions.length ? 'Chấm đủ tất cả các câu mới được lưu' : 'Lưu điểm rubric'}
+                    style={{ padding: '10px 20px', borderRadius: '8px', backgroundColor: scoringBusy || answered < rubric.questions.length ? '#CBD5E1' : '#1E40AF', color: '#FFF', fontSize: '13px', fontWeight: 800, border: 'none', cursor: scoringBusy || answered < rubric.questions.length ? 'not-allowed' : 'pointer' }}
+                  >
+                    {scoringBusy ? '⏳ Đang lưu...' : '💾 Lưu điểm'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* MODAL KẾT QUẢ DUYỆT CHÍNH THỨC (mã NV + PIN trao tay) */}
+        {approveResult && (
+          <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+            <div style={{ backgroundColor: '#FFF', borderRadius: '14px', maxWidth: '480px', width: '100%', overflow: 'hidden' }}>
+              <div style={{ padding: '16px 20px', backgroundColor: '#10B981', color: '#FFF', fontWeight: 800, fontSize: '15px' }}>
+                ✅ Duyệt chính thức thành công!
+              </div>
+              <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '14px' }}>
+                <div><strong>Nhân viên:</strong> {(approveResult as any)?.employee?.full_name} ({(approveResult as any)?.employee?.employee_code})</div>
+                <div><strong>SĐT:</strong> {(approveResult as any)?.employee?.phone_normalized}</div>
+                <div style={{ backgroundColor: '#FFFBEB', border: '1.5px solid #F59E0B', borderRadius: '8px', padding: '12px', textAlign: 'center' }}>
+                  <div style={{ fontSize: '12px', color: '#92400E', fontWeight: 700 }}>Mã PIN khởi tạo (trao TRỰC TIẾP cho NV):</div>
+                  <div style={{ fontSize: '28px', fontWeight: 900, letterSpacing: '6px', color: '#92400E' }}>{(approveResult as any)?.account?.pin_code || '—'}</div>
+                  <div style={{ fontSize: '11px', color: '#92400E' }}>NV đăng nhập SĐT + PIN này rồi đặt PIN riêng ngay.</div>
+                </div>
+                <button
+                  onClick={() => setApproveResult(null)}
+                  style={{ padding: '10px', borderRadius: '8px', backgroundColor: '#1E40AF', color: '#FFF', fontSize: '13px', fontWeight: 800, border: 'none', cursor: 'pointer' }}
+                >
+                  Đã rõ
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

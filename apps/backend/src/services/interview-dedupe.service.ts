@@ -1,6 +1,7 @@
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { NotificationsService } from './notifications.service.js';
 import { DedupePlan, planDedupe, suggestFreeSlots } from './interview-slots.service.js';
+import { evaluateCandidateAiScore } from './ai-scorer.js';
 
 export interface DedupeResult {
   plans: DedupePlan[];
@@ -96,4 +97,74 @@ export async function dedupeDuplicateInterviews(
   } catch { /* best-effort */ }
 
   return { plans, removedCount, dryRun };
+}
+
+/**
+ * Tự động thi hành Kết Quả sàng lọc LOẠI (cột 15):
+ *  ứng viên AI-chấm LOẠI mà còn NEW/NEED_INFO/INVITED -> REJECTED + xóa lịch PV
+ *  + xóa thư mời (ẩn khỏi 2 danh sách, xem lại bằng bộ lọc). Chạy cùng tick dedupe.
+ */
+export async function enforceScreeningOutcomes(
+  repo: ISheetsRepository,
+  notifications: NotificationsService,
+  actorId = 'SYSTEM'
+): Promise<{ rejectedCount: number; names: string[] }> {
+  const candidates = await repo.listCandidates().catch(() => []);
+  const names: string[] = [];
+  let rejectedCount = 0;
+  for (const c of candidates as any[]) {
+    if (!c || !['NEW', 'NEED_INFO', 'INVITED_INTERVIEW'].includes(String(c.status || ''))) continue;
+    let loai = false;
+    try {
+      loai = evaluateCandidateAiScore(c).result === 'Loại';
+    } catch {
+      continue;
+    }
+    if (!loai) continue;
+    try {
+      await repo.updateCandidate(c.submission_id, {
+        status: 'REJECTED',
+        interview_date: undefined,
+        interview_time_slot: undefined,
+        interviewer_id: undefined,
+        zalo_invite_status: undefined,
+        zalo_uid: undefined,
+        zalo_invite_at: undefined,
+        zalo_invite_error: undefined,
+      } as any);
+      await repo.recordAuditLog({
+        log_id: `LOG_${Date.now()}_${c.submission_id}`,
+        actor_id: actorId,
+        actor_role: 'SYSTEM',
+        action: 'CANDIDATE_AUTO_REJECTED',
+        target_entity: 'UNG_VIEN',
+        target_id: c.submission_id,
+        details: `Auto-rejected ${c.full_name} (AI screening LOAI); interview schedule cleared`,
+      });
+      names.push(String(c.full_name || c.submission_id));
+      rejectedCount++;
+    } catch {
+      continue;
+    }
+  }
+  if (rejectedCount > 0) {
+    try {
+      await (repo as any).pushCandidatesNow?.();
+    } catch { /* tick sau thử lại */ }
+    try {
+      const ids = await hrAdminIds(repo);
+      if (ids.length > 0) {
+        await notifications.sendNotification({
+          recipientIds: ids,
+          type: 'CANDIDATES_AUTO_REJECTED',
+          severity: 'SYSTEM',
+          title: `🚫 Tự động loại ${rejectedCount} ứng viên (Kết Quả LOẠI)`,
+          summary: `${names.slice(0, 10).join(', ')}${names.length > 10 ? ` (+${names.length - 10})` : ''} — đã xóa lịch PV, ẩn khỏi danh sách. Xem lại bằng bộ lọc "Đã loại".`,
+          targetPath: '/hr-candidates',
+          actorId: 'SYSTEM',
+        }).catch(() => null);
+      }
+    } catch { /* best-effort */ }
+  }
+  return { rejectedCount, names };
 }

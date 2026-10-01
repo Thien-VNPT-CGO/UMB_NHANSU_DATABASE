@@ -109,6 +109,8 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
       'Người PV',
       'Zalo Thư Mời',
       'Zalo Lúc Gửi',
+      'Điểm PV',
+      'Chi Tiết Chấm',
     ],
   },
   {
@@ -1173,7 +1175,7 @@ export class GoogleSheetsSyncService {
               targetSheetTitle = found.properties.title;
               const candRes = await this.sheetsClient.spreadsheets.values.get({
                 spreadsheetId: this.candidateSpreadsheetId,
-                range: `'${targetSheetTitle}'!A1:V`,
+                range: `'${targetSheetTitle}'!A1:X`,
               });
               candRows = (candRes.data.values as string[][]) || [];
             }
@@ -1187,7 +1189,7 @@ export class GoogleSheetsSyncService {
           try {
             const candRes = await this.sheetsClient.spreadsheets.values.get({
               spreadsheetId: this.spreadsheetId,
-                range: `'FROM_NHAN_VIEN'!A1:V`,
+                range: `'FROM_NHAN_VIEN'!A1:X`,
             });
             if (candRes.data.values && candRes.data.values.length > 1) {
               candRows = candRes.data.values as string[][];
@@ -1294,6 +1296,9 @@ export class GoogleSheetsSyncService {
               interview_date: getVal(colInterviewDate) || prev.interview_date || undefined,
               interview_time_slot: getVal(colInterviewSlot) || prev.interview_time_slot || undefined,
               interviewer_id: getVal(colInterviewer) || prev.interviewer_id || undefined,
+              interview_score: prev.interview_score,
+              interview_rubric: prev.interview_rubric || undefined,
+              interview_score_detail: prev.interview_score_detail || undefined,
               zalo_invite_status: getVal(colZaloStatus) || prev.zalo_invite_status || undefined,
               zalo_invite_at: getVal(colZaloAt) || prev.zalo_invite_at || undefined,
               zalo_uid: prev.zalo_uid || undefined,
@@ -1326,7 +1331,7 @@ export class GoogleSheetsSyncService {
           if (this.sheetsClient && this.spreadsheetId) {
             const mRes = await this.sheetsClient.spreadsheets.values.get({
               spreadsheetId: this.spreadsheetId,
-              range: `'FROM_NHAN_VIEN'!A1:V`,
+              range: `'FROM_NHAN_VIEN'!A1:X`,
             });
             const mRows = (mRes.data.values as string[][]) || [];
             if (mRows.length > 1) {
@@ -1351,6 +1356,14 @@ export class GoogleSheetsSyncService {
                 c.interviewer_id = nz(mr[19]) || c.interviewer_id;
                 c.zalo_invite_status = nz(mr[20]) || c.zalo_invite_status;
                 c.zalo_invite_at = nz(mr[21]) || c.zalo_invite_at;
+                if (nz(mr[22]) !== undefined) (c as any).interview_score = Number(nz(mr[22]));
+                if (nz(mr[23]) !== undefined) {
+                  (c as any).interview_score_detail = nz(mr[23]);
+                  try {
+                    const d = JSON.parse(nz(mr[23]) as string);
+                    if (d?.rubricId) (c as any).interview_rubric = d.rubricId;
+                  } catch { /* giữ nguyên */ }
+                }
               }
             }
           }
@@ -1683,6 +1696,8 @@ export class GoogleSheetsSyncService {
           (c as any).interviewer_id || '',
           (c as any).zalo_invite_status || '',
           (c as any).zalo_invite_at || '',
+          (c as any).interview_score ?? '',
+          (c as any).interview_score_detail || '',
         ]);
         await this.overwriteSheetData('FROM_NHAN_VIEN', candHeaders, candRows);
         details.candidates = candRows.length;
@@ -1773,6 +1788,8 @@ export class GoogleSheetsSyncService {
       (c as any).interviewer_id || '',
       (c as any).zalo_invite_status || '',
       (c as any).zalo_invite_at || '',
+      (c as any).interview_score ?? '',
+      (c as any).interview_score_detail || '',
     ]);
     await this.overwriteSheetData('FROM_NHAN_VIEN', candHeaders, candRows);
     return candRows.length;
