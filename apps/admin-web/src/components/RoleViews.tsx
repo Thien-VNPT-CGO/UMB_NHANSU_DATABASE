@@ -806,6 +806,16 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     return () => clearInterval(t);
   }, [activeTab]);
 
+  // Tự làm mới trạng thái khi chưa kết nối: backend tự khôi phục phiên sau
+  // restart/deploy — UI lật sang Đã Kết Nối mà không cần reload/quét QR lại.
+  useEffect(() => {
+    if (activeTab !== 'hr-interviews' || zaloConnected || zaloLoginId) return;
+    const t = setInterval(() => {
+      refreshZaloStatus();
+    }, 15000);
+    return () => clearInterval(t);
+  }, [activeTab, zaloConnected, zaloLoginId]);
+
   // Poll trạng thái khi đang chờ quét QR
   useEffect(() => {
     if (!zaloLoginId || zaloConnected) return;
@@ -2605,7 +2615,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       ? '● Đã quét — đang chờ bấm Đăng nhập trên điện thoại...'
                       : zaloStatus?.login?.phase === 'expired'
                         ? '○ Mã QR hết hạn — hãy tạo mã mới'
-                        : '○ Chờ tạo mã QR đăng nhập')}
+                        : (zaloStatus?.restoring
+                          ? '⏳ Đang khôi phục phiên Zalo đã lưu — không cần quét QR...'
+                          : (zaloStatus?.autoRestorePaused
+                            ? '○ Khôi phục thất bại nhiều lần — hãy quét QR đăng nhập lại'
+                            : (zaloStatus?.hasSavedSession
+                              ? '⏳ Phiên Zalo đã lưu — hệ thống tự kết nối lại trong giây lát, không cần quét QR...'
+                              : '○ Chờ tạo mã QR đăng nhập'))))}
                 </div>
 
                 {/* Nút tạo QR / ngắt kết nối thật */}

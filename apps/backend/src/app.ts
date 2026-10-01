@@ -147,9 +147,15 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   const notificationsService = new NotificationsService(adapter);
   const zaloService = new ZaloService(adapter);
   // Khôi phục phiên Zalo cá nhân HR sau restart (không cần quét QR lại).
-  setTimeout(() => {
+  // Chạy lần đầu sau khi pull Sheets xong + tick nền 5 phút giữ phiên tới khi HR đăng xuất.
+  // (Render free: disk mất sau mỗi deploy/sleep nên lần đầu đọc từ cài đặt hệ thống.)
+  const zaloRestoreTick = () => {
     zaloService.restoreSession().catch(err => console.warn('[zalo] restore error:', err?.message || err));
-  }, 4000);
+  };
+  setTimeout(zaloRestoreTick, 30000);
+  setInterval(() => {
+    (zaloService.autoRestoreTick() as Promise<boolean>).catch(err => console.warn('[zalo] auto-restore error:', err?.message || err));
+  }, 5 * 60_000);
 
   // Realtime WebSocket broadcast helper
   const broadcastUpdate = (entity: string, data?: any) => {

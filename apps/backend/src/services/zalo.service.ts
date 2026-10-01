@@ -77,11 +77,23 @@ export class ZaloService {
   private api: any = null;
   private account: PersistedSession | null = null;
   private login: ZaloLoginSession | null = null;
+  // Tự khôi phục phiên đã lưu: trạng thái + chống spam Zalo khi cookie hỏng.
+  private restoring = false;
+  private restoreFailCount = 0;
+  private savedSessionExists: boolean | null = null;
+  private lastRestoreError: string | null = null;
+  /** Sau quá nhiều lần khôi phục thất bại liên tiếp: dừng tự thử (tránh khóa nick), chờ HR quét QR lại. */
+  private static readonly MAX_RESTORE_FAILS = 12;
 
   constructor(private repo: ISheetsRepository) {}
 
   isConnected(): boolean {
     return !!this.api && !!this.account;
+  }
+
+  /** Backend có đang giữ phiên Zalo đã lưu không (để UI báo "đang khôi phục" thay vì bắt quét QR). */
+  hasSavedSessionSync(): boolean | null {
+    return this.savedSessionExists;
   }
 
   status() {
@@ -100,6 +112,10 @@ export class ZaloService {
             startedAt: this.login.startedAt,
           }
         : null,
+      restoring: this.restoring,
+      hasSavedSession: this.savedSessionExists,
+      autoRestorePaused: this.restoreFailCount >= ZaloService.MAX_RESTORE_FAILS,
+      lastRestoreError: this.lastRestoreError,
     };
   }
 
@@ -124,6 +140,9 @@ export class ZaloService {
   /** Ghi phiên bền vững: file + cài đặt hệ thống (sống qua restart/deploy Render). */
   private async savePersistedAsync(s: PersistedSession): Promise<void> {
     savePersisted(s);
+    this.savedSessionExists = true;
+    this.restoreFailCount = 0;
+    this.lastRestoreError = null;
     try {
       const settings = (await this.repo.getSystemSettings().catch(() => ({}))) || {};
       await this.repo.updateSystemSettings({ ...settings, [ZALO_SESSION_SETTINGS_KEY]: s });
@@ -134,6 +153,9 @@ export class ZaloService {
 
   private async clearPersistedAsync(): Promise<void> {
     clearPersisted();
+    this.savedSessionExists = false;
+    this.restoreFailCount = 0;
+    this.lastRestoreError = null;
     try {
       const settings = (await this.repo.getSystemSettings().catch(() => ({}))) || {};
       await this.repo.updateSystemSettings({ ...settings, [ZALO_SESSION_SETTINGS_KEY]: null });
@@ -142,27 +164,48 @@ export class ZaloService {
     }
   }
 
-  /** Khôi phục phiên cũ sau restart (không cần quét QR lại). */
+  /** Khôi phục phiên cũ sau restart (không cần quét QR lại).
+   *  Thất bại KHÔNG xóa phiên đã lưu (chỉ HR đăng xuất mới xóa) — tick nền sẽ thử lại. */
   async restoreSession(): Promise<boolean> {
-    const saved = await this.loadPersistedAsync();
-    if (!saved) return false;
+    if (this.restoring) return false;
+    if (this.isConnected()) return true;
+    this.restoring = true;
     try {
-      const { Zalo } = await zca();
-      const zalo = new Zalo({ logging: false, checkUpdate: false });
-      const api = await zalo.login({
-        imei: saved.imei,
-        cookie: saved.cookie,
-        userAgent: saved.userAgent,
-      });
-      this.api = api;
-      this.account = saved;
-      console.log('[zalo] session restored for', saved.displayName || saved.ownId);
-      return true;
-    } catch (e) {
-      console.warn('[zalo] restore failed:', (e as Error).message);
-      await this.clearPersistedAsync();
-      return false;
+      const saved = await this.loadPersistedAsync();
+      this.savedSessionExists = !!saved;
+      if (!saved) return false;
+      try {
+        const { Zalo } = await zca();
+        const zalo = new Zalo({ logging: false, checkUpdate: false });
+        const api = await zalo.login({
+          imei: saved.imei,
+          cookie: saved.cookie,
+          userAgent: saved.userAgent,
+        });
+        this.api = api;
+        this.account = saved;
+        this.restoreFailCount = 0;
+        this.lastRestoreError = null;
+        console.log('[zalo] session restored for', saved.displayName || saved.ownId);
+        return true;
+      } catch (e) {
+        this.restoreFailCount++;
+        this.lastRestoreError = (e as Error).message;
+        console.warn(`[zalo] restore failed (${this.restoreFailCount}x):`, (e as Error).message);
+        return false;
+      }
+    } finally {
+      this.restoring = false;
     }
+  }
+
+  /** Tick nền (5 phút/lần từ server.ts): chưa kết nối + còn phiên lưu + không quét QR
+   *  dở + chưa vượt ngưỡng lỗi -> thử khôi phục. Giữ phiên tới khi HR đăng xuất. */
+  async autoRestoreTick(): Promise<boolean> {
+    if (this.isConnected() || this.restoring) return this.isConnected();
+    if (this.restoreFailCount >= ZaloService.MAX_RESTORE_FAILS) return false;
+    if (this.login && (this.login.phase === 'qr_waiting' || this.login.phase === 'scanned')) return false;
+    return this.restoreSession();
   }
 
   /** Bắt đầu luồng quét QR (chạy nền, frontend poll image + status). */
