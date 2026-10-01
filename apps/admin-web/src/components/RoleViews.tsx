@@ -895,15 +895,36 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Danh sách ứng viên còn xét (đã loại ẩn khỏi tab PV).
   const pvCandidates = (candidates || []).filter((c: any) => String(c?.status || '') !== 'REJECTED');
 
-  // Tự nhận diện chi nhánh theo hồ sơ ứng viên khi HR chọn tên.
-  useEffect(() => {
-    if (!inviteCandidateId) return;
-    const picked = (candidates || []).find((c: any) => c.submission_id === inviteCandidateId);
-    const bid = String(picked?.preferred_branch_id || '').trim();
-    if (bid && branches.some((b: any) => (b.branch_id || b.id) === bid)) {
-      setInviteBranchId(bid);
+  /** Ràng buộc dữ liệu: chi nhánh của ứng viên đang chọn (khớp mã CN đúng / mã nhúng trong tên / tên chi nhánh). */
+  const resolveCandidateBranch = (c: any): string => {
+    if (!c) return '';
+    const ids: string[] = (branches || []).map((b: any) => String(b.branch_id || b.id || '').trim()).filter(Boolean);
+    const pref = String(c.preferred_branch_id || '').trim();
+    if (pref && ids.includes(pref)) return pref;
+    const m = `${c.branch_name || ''} ${pref}`.match(/CN\d+/i);
+    if (m) {
+      const code = m[0].toUpperCase();
+      if (ids.includes(code)) return code;
     }
-  }, [inviteCandidateId]);
+    const bn = String(c.branch_name || '').trim().toLowerCase();
+    if (bn) {
+      const byName = (branches || []).find((b: any) => {
+        const n = String(b.name || '').trim().toLowerCase();
+        return n && (bn.includes(n) || n.includes(bn));
+      });
+      if (byName) return String(byName.branch_id || byName.id);
+    }
+    return '';
+  };
+  const pickedCandidate = (candidates || []).find((c: any) => c.submission_id === inviteCandidateId);
+  const pickedBranchId = resolveCandidateBranch(pickedCandidate);
+
+  // Tự nhận diện chi nhánh theo hồ sơ ứng viên khi HR chọn tên
+  // (chạy lại khi dữ liệu ứng viên/chi nhánh về sau — ràng buộc luôn đúng).
+  useEffect(() => {
+    if (!inviteCandidateId || !pickedBranchId) return;
+    setInviteBranchId((cur) => (cur === pickedBranchId ? cur : pickedBranchId));
+  }, [inviteCandidateId, pickedBranchId]);
 
   // Chấm điểm rubric + duyệt chính thức
   const [scoringId, setScoringId] = useState<string | null>(null);
@@ -2834,6 +2855,19 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     </>
                   )}
                 </select>
+                {pickedCandidate && (
+                  <div style={{
+                    fontSize: '11px', marginTop: '4px', lineHeight: '1.5', padding: '6px 8px', borderRadius: '6px',
+                    color: pickedBranchId && inviteBranchId !== pickedBranchId ? '#92400E' : '#1E40AF',
+                    backgroundColor: pickedBranchId && inviteBranchId !== pickedBranchId ? '#FFFBEB' : '#EFF6FF',
+                    border: pickedBranchId && inviteBranchId !== pickedBranchId ? '1px solid #FDE68A' : '1px solid #BFDBFE',
+                  }}>
+                    🤖 Hồ sơ {pickedCandidate.full_name} đăng ký: <strong>{pickedCandidate.branch_name || getDisplayBranch(pickedCandidate.preferred_branch_id || 'CN130')}</strong>
+                    {pickedBranchId && inviteBranchId !== pickedBranchId
+                      ? ' — đang chọn khác chi nhánh ứng viên đăng ký!'
+                      : ' — đã tự điền đúng.'}
+                  </div>
+                )}
               </div>
 
               <div>
