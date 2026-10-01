@@ -678,9 +678,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   };
   useEffect(() => {
     if (activeTab !== 'hr-interviews') return;
+    const empPhones = new Set(
+      (allEmployees || []).map((e: any) => String(e.phone_normalized || (e as any).phone || '').replace(/\D/g, '').slice(-9)).filter(Boolean)
+    );
     for (const cd of (candidates || [])) {
-      // Đã loại / đã duyệt thử việc: không còn lịch PV để nhắc hay tự mở Meet.
+      // Đã loại / đã duyệt thử việc / đã có hồ sơ NV: không còn lịch PV để nhắc hay tự mở Meet.
       if (['REJECTED', 'ACCEPTED'].includes(String((cd as any)?.status || ''))) continue;
+      if (empPhones.has(String((cd as any)?.phone_normalized || (cd as any)?.phone || '').replace(/\D/g, '').slice(-9))) continue;
       const st = interviewStartMs(cd);
       if (!st) continue;
       const key = `${cd.submission_id}|${cd.interview_date}`;
@@ -919,7 +923,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const inviteMeetUrl = 'https://meet.google.com/ypp-srtm-fvm';
   const [inviteBusy, setInviteBusy] = useState(false);
   // Danh sách lịch PV: ẩn đã loại + đã duyệt thử việc (thành NV, không còn là ứng viên).
-  const pvCandidates = (candidates || []).filter((c: any) => !['REJECTED', 'ACCEPTED'].includes(String(c?.status || '')));
+  // Ràng buộc chéo theo SĐT: ứng viên nào đã có hồ sơ nhân viên (dù duyệt bằng
+  // đường nào: tab PV, tạo trực tiếp, duyệt trước đây) cũng ẩn khỏi tab PV.
+  const empPhoneSet = new Set(
+    (allEmployees || []).map((e: any) => String(e.phone_normalized || (e as any).phone || '').replace(/\D/g, '').slice(-9)).filter(Boolean)
+  );
+  const candPhoneKey = (c: any) => String(c?.phone_normalized || c?.phone || '').replace(/\D/g, '').slice(-9);
+  const pvCandidates = (candidates || []).filter((c: any) =>
+    !['REJECTED', 'ACCEPTED'].includes(String(c?.status || '')) && !empPhoneSet.has(candPhoneKey(c))
+  );
 
   /** Ràng buộc dữ liệu: chi nhánh của ứng viên đang chọn (khớp mã CN đúng / mã nhúng trong tên / tên chi nhánh). */
   const resolveCandidateBranch = (c: any): string => {
