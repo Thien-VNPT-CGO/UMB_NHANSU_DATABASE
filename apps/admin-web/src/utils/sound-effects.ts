@@ -30,12 +30,38 @@ export function isSoundEnabled(): boolean {
   return localStorage.getItem('ubm_sound_enabled') !== 'false';
 }
 
+/** Mở khóa âm thanh trình duyệt (autoplay policy): gọi khi HR tương tác lần đầu. */
+let audioUnlocked = false;
+
+function ensureAudioUnlocked(): void {
+  if (audioUnlocked || typeof window === 'undefined') return;
+  audioUnlocked = true;
+  try {
+    getAudioContext();
+  } catch { /* ignore */ }
+  try {
+    getRingtoneEl();
+  } catch { /* ignore */ }
+}
+
+/** Tự đăng ký 1 lần: chạm/phím đầu tiên là mở khóa + preload nhạc chuông ngay. */
+if (typeof window !== 'undefined') {
+  const unlockOnce = () => {
+    ensureAudioUnlocked();
+    window.removeEventListener('pointerdown', unlockOnce);
+    window.removeEventListener('keydown', unlockOnce);
+  };
+  window.addEventListener('pointerdown', unlockOnce);
+  window.addEventListener('keydown', unlockOnce);
+}
+
 /** Bật / Tắt âm thanh */
 export function setSoundEnabled(enabled: boolean): void {
   if (typeof window === 'undefined') return;
   localStorage.setItem('ubm_sound_enabled', enabled ? 'true' : 'false');
   if (enabled) {
-    playSuccessChime();
+    ensureAudioUnlocked();
+    playRingtoneFile();
   }
 }
 
@@ -372,17 +398,69 @@ export function playWarmBell(): void {
   });
 }
 
+/** Element nhạc chuông dùng chung: preload sẵn 1 lần, phát lại tức thì, hết lỗi 404/decode. */
+let ringtoneEl: HTMLAudioElement | null = null;
+let ringtoneBroken = false;
+
+function getRingtoneEl(): HTMLAudioElement | null {
+  if (typeof window === 'undefined' || typeof Audio === 'undefined') return null;
+  if (ringtoneBroken) return null;
+  if (!ringtoneEl) {
+    try {
+      const url = new URL('sounds/ringtune.mp4', document.baseURI).href;
+      const el = new Audio(url);
+      el.preload = 'auto';
+      el.volume = 0.9;
+      el.addEventListener('error', () => {
+        ringtoneBroken = true;
+        ringtoneEl = null;
+      });
+      el.load();
+      ringtoneEl = el;
+    } catch {
+      return null;
+    }
+  }
+  return ringtoneEl;
+}
+
 /** Phát file nhạc chuông kèm theo code (public/sounds/ringtune.mp4). Lỗi -> chuông hiện đại. */
 export function playRingtuneFile(): void {
   if (!isSoundEnabled()) return;
+  ensureAudioUnlocked();
+  const el = getRingtoneEl();
+  if (!el) {
+    playModernChime();
+    return;
+  }
   try {
-    const url = new URL('sounds/ringtune.mp4', document.baseURI).href;
-    const audio = new Audio(url);
-    audio.volume = 0.9;
-    audio.play().catch(() => playModernChime());
+    el.pause();
+    el.currentTime = 0;
+    const p = el.play();
+    if (p && typeof (p as Promise<void>).catch === 'function') {
+      (p as Promise<void>).catch(() => {
+        // Trình duyệt chặn autoplay (chưa tương tác): thử lại sau chạm đầu tiên.
+        if (typeof window !== 'undefined') {
+          const retry = () => {
+            window.removeEventListener('pointerdown', retry);
+            window.removeEventListener('keydown', retry);
+            try {
+              const el2 = getRingtoneEl();
+              if (el2) {
+                el2.currentTime = 0;
+                el2.play().catch(() => {});
+              }
+            } catch { /* ignore */ }
+          };
+          window.addEventListener('pointerdown', retry);
+          window.addEventListener('keydown', retry);
+        }
+      });
+    }
   } catch {
     playModernChime();
   }
+}
 }
 
 /** Phát chuông theo kiểu HR đã chọn (mặc định: nhạc chuông hệ thống). */
