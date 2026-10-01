@@ -90,6 +90,7 @@ export const INTERVIEW_RUBRICS: Rubric[] = [
       {
         id: 's6',
         text: 'Ngoại hình, tác phong',
+        multi: true,
         options: [
           { label: 'Mặt căng, không chào hỏi', loai: true },
           { label: 'Mặt hiền hậu, vui vẻ, tóc tai gọn gàng', score: 1 },
