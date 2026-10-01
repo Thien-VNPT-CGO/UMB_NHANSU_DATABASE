@@ -817,6 +817,37 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Link Meet mặc định hệ thống (không tùy chỉnh) — input hiển thị disabled.
   const inviteMeetUrl = 'https://meet.google.com/ypp-srtm-fvm';
   const [inviteBusy, setInviteBusy] = useState(false);
+  // Rà soát + xóa lịch PV trùng (< 30 phút cùng ngày)
+  const [dedupeBusy, setDedupeBusy] = useState(false);
+
+  const handleDedupeInterviews = async () => {
+    setDedupeBusy(true);
+    try {
+      const preview: any = await apiRequest('/admin/interviews/duplicates');
+      const plans: any[] = preview?.plans || [];
+      const total: number = preview?.removedCount || 0;
+      if (total === 0) {
+        showToast('✅ Không có lịch PV trùng (< 30 phút cùng ngày). Tất cả lịch hiện tại hợp lệ!');
+        return;
+      }
+      const lines = plans.flatMap((p: any) =>
+        (p.removed || []).map((r: any) => `• ${r.candidateName} (${r.timeSlot} ${p.date}) kẹt với ${r.keptCandidateName} (${r.keptTimeSlot})`)
+      );
+      if (!window.confirm(`Phát hiện ${total} lịch PV trùng (< 30 phút cùng ngày):\n\n${lines.slice(0, 10).join('\n')}${lines.length > 10 ? `\n(+${lines.length - 10} lịch khác)` : ''}\n\nBấm OK để XÓA các lịch trùng và yêu cầu đăng ký lại (giữ lịch giờ sớm nhất).`)) return;
+      const res: any = await apiRequest('/admin/interviews/dedupe', {
+        method: 'POST',
+        body: JSON.stringify({ dryRun: false }),
+      });
+      showToast(`🧹 Đã xóa ${res.removedCount || 0} lịch PV trùng! Vui lòng đăng ký lại khung trống cho các ứng viên bị xóa.`);
+      if (typeof onRefreshData === 'function') {
+        try { await onRefreshData(); } catch {}
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Rà soát lịch trùng thất bại!');
+    } finally {
+      setDedupeBusy(false);
+    }
+  };
 
   const handleCreateScheduleAndInvite = async () => {
     if (!inviteCandidateId) {
@@ -2665,11 +2696,27 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         {/* DANH SÁCH LỊCH PHỎNG VẤN & TRẠNG THÁI GỬI QUA ZALO CÁ NHÂN */}
         {/* ========================================================================= */}
         <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
-          <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
             <strong style={{ fontSize: '14px' }}>Lịch Phỏng Vấn Tuyển Dụng Đã Lên Lịch & Trạng Thái Gửi Zalo</strong>
-            <span className="badge" style={{ backgroundColor: '#EFF6FF', color: '#0068FF', fontWeight: 800 }}>
-              ĐÃ ĐỒNG BỘ BOT ZALO CÁ NHÂN
-            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <button
+                type="button"
+                onClick={handleDedupeInterviews}
+                disabled={dedupeBusy}
+                title="Rà soát lịch PV trùng nhau (< 30 phút cùng ngày), tự động xóa lịch kẹt và yêu cầu đăng ký lại"
+                style={{
+                  padding: '7px 14px', borderRadius: '8px',
+                  backgroundColor: dedupeBusy ? '#CBD5E1' : '#DC2626',
+                  color: '#FFF', fontSize: '12px', fontWeight: 800, border: 'none',
+                  cursor: dedupeBusy ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap',
+                }}
+              >
+                {dedupeBusy ? '⏳ Đang rà soát...' : '🧹 Rà soát lịch trùng'}
+              </button>
+              <span className="badge" style={{ backgroundColor: '#EFF6FF', color: '#0068FF', fontWeight: 800 }}>
+                ĐÃ ĐỒNG BỘ BOT ZALO CÁ NHÂN
+              </span>
+            </div>
           </div>
 
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>

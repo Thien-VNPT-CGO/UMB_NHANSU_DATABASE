@@ -17,6 +17,7 @@ import {
   openManualRegistration,
 } from './services/weekly-off.service.js';
 import { ZaloService, defaultMeetUrl } from './services/zalo.service.js';
+import { dedupeDuplicateInterviews } from './services/interview-dedupe.service.js';
 import { AccountsService } from './services/accounts.service.js';
 import { EmployeesService } from './services/employees.service.js';
 import { canonicalPhone, findDuplicatePhones } from './services/employees.service.js';
@@ -914,6 +915,30 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       // Lỗi khung 30p / trùng lịch: trả text Việt trực tiếp để UI toast + yêu cầu đăng ký lại.
       const status = msg.startsWith('TRÙNG LỊCH PV') ? 409 : 400;
       res.status(status).json({ error: msg });
+    }
+  });
+
+  // Rà soát lịch PV trùng (< 30 phút cùng ngày): xem trước, không xóa.
+  app.get('/admin/interviews/duplicates', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await dedupeDuplicateInterviews(adapter, notificationsService, { dryRun: true, actorId: req.user!.id });
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(500).json({ error: String(err?.message || 'Lỗi rà soát lịch PV') });
+    }
+  });
+
+  // Xóa lịch PV trùng + yêu cầu đăng ký lại (dryRun=true để xem trước).
+  app.post('/admin/interviews/dedupe', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const dryRun = (req.body as any)?.dryRun === true;
+      const result = await dedupeDuplicateInterviews(adapter, notificationsService, { dryRun, actorId: req.user!.id });
+      if (!dryRun && result.removedCount > 0) {
+        broadcastUpdate('candidates', { action: 'interview-duplicates-removed', removed: result.removedCount });
+      }
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(500).json({ error: String(err?.message || 'Lỗi xóa lịch PV trùng') });
     }
   });
 

@@ -7,6 +7,7 @@ import { createApp } from './app.js';
 import { AuthService } from './services/auth.service.js';
 import { weeklyOffScheduler } from './services/weekly-off.service.js';
 import { pinRotationTick } from './services/pin-rotation.service.js';
+import { dedupeDuplicateInterviews } from './services/interview-dedupe.service.js';
 import { autoRemindersTick } from './services/auto-reminders.service.js';
 import { buildSocketCorsOptions, getAllowedOrigins } from './config/security.js';
 
@@ -276,6 +277,23 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   };
   setTimeout(pinRotationTickSafe, 90_000); // sau pull đầu
   setInterval(pinRotationTickSafe, 60 * 60_000);
+
+  // Tự rà soát + xóa lịch PV trùng (< 30 phút cùng ngày) rồi yêu cầu đăng ký lại.
+  // Chạy sau pull đầu + mỗi 30 phút (chỉ chạm lịch sắp tới, lịch đã qua không đụng).
+  const interviewDedupeTickSafe = () => {
+    dedupeDuplicateInterviews(adapter, services.notificationsService, { dryRun: false, actorId: 'SYSTEM' })
+      .then(r => {
+        if (r && r.removedCount > 0) {
+          console.log(`[interview-dedupe] Đã xóa ${r.removedCount} lịch PV trùng, yêu cầu đăng ký lại.`);
+          try {
+            io.emit('data:updated', { entity: 'candidates', data: { action: 'interview-duplicates-removed', removed: r.removedCount }, timestamp: new Date().toISOString() });
+          } catch { /* non-fatal */ }
+        }
+      })
+      .catch(err => console.warn('[interview-dedupe] tick error:', err?.message || err));
+  };
+  setTimeout(interviewDedupeTickSafe, 120_000);
+  setInterval(interviewDedupeTickSafe, 30 * 60_000);
 
   // Backup snapshot tự động mỗi 24h + tự verify; fail thì báo ADMIN/HR trong app.
   const autoBackupTick = async () => {

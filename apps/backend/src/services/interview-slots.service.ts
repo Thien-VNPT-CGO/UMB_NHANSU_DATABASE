@@ -165,3 +165,77 @@ export function buildConflictMessage(conflict: SlotConflict, date: string, sugge
   const sugg = suggestions.length > 0 ? ` Khung trống cùng ngày ${date}: ${suggestions.join(', ')}. Vui lòng đăng ký lại!` : ' Vui lòng đăng ký lại khung giờ khác!';
   return `TRÙNG LỊCH PV: ${conflict.timeSlot || ''} ngày ${date} đã có ${conflict.candidateName} (mỗi bạn cách nhau 30 phút)!${sugg}`;
 }
+
+export interface DedupeRemoval {
+  submissionId: string;
+  candidateName: string;
+  date: string;
+  timeSlot: string;
+  /** Lịch được giữ lại gây kẹt (đăng ký trước / giờ sớm hơn). */
+  keptSubmissionId: string;
+  keptCandidateName: string;
+  keptTimeSlot: string;
+}
+
+export interface DedupePlan {
+  date: string;
+  scanned: number;
+  kept: number;
+  removed: DedupeRemoval[];
+}
+
+/**
+ * Rà soát toàn bộ lịch PV đã đăng ký, lập kế hoạch xóa lịch trùng:
+ *  - Chỉ xét lịch SẮP TỚI (chưa diễn ra) của ứng viên đang chờ PV (INVITED_INTERVIEW).
+ *  - Cùng ngày, sắp xếp theo giờ rồi giữ lịch đầu, xóa các lịch kẹt < 30 phút
+ *    (đồng giờ thì giữ hồ sơ tạo trước).
+ *  - Lịch đã qua / đã PV xong (INTERVIEWED...) không đụng tới.
+ *  Thuần tính toán (không ghi DB) — service dedupe sẽ thực thi + thông báo.
+ */
+export function planDedupe(candidates: any[], nowMs: number = Date.now()): DedupePlan[] {
+  const upcoming = (candidates || [])
+    .map(c => {
+      if (!c || (c as any).status !== 'INVITED_INTERVIEW') return null;
+      const d = String((c as any).interview_date || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
+      const st = candidateInterviewStartMs(c);
+      if (st === null) return null;
+      if (st + INTERVIEW_SLOT_MINUTES * 60_000 < nowMs - 5 * 60_000) return null; // đã diễn ra
+      return { c, d, st };
+    })
+    .filter((x): x is { c: any; d: string; st: number } => x !== null);
+
+  const byDate = new Map<string, { c: any; d: string; st: number }[]>();
+  for (const item of upcoming) {
+    const arr = byDate.get(item.d) || [];
+    arr.push(item);
+    byDate.set(item.d, arr);
+  }
+
+  const plans: DedupePlan[] = [];
+  for (const [date, items] of byDate) {
+    items.sort((a, b) => a.st - b.st || String(a.c.created_at || '').localeCompare(String(b.c.created_at || '')) || String(a.c.submission_id || '').localeCompare(String(b.c.submission_id || '')));
+    const kept: { c: any; st: number }[] = [];
+    const removed: DedupeRemoval[] = [];
+    for (const item of items) {
+      const clash = kept.find(k => Math.abs(k.st - item.st) < INTERVIEW_SLOT_MINUTES * 60_000);
+      if (clash) {
+        removed.push({
+          submissionId: String(item.c.submission_id || ''),
+          candidateName: String(item.c.full_name || 'ứng viên'),
+          date,
+          timeSlot: String(item.c.interview_time_slot || '').slice(0, 5),
+          keptSubmissionId: String(clash.c.submission_id || ''),
+          keptCandidateName: String(clash.c.full_name || 'ứng viên khác'),
+          keptTimeSlot: String(clash.c.interview_time_slot || '').slice(0, 5),
+        });
+      } else {
+        kept.push({ c: item.c, st: item.st });
+      }
+    }
+    if (removed.length > 0) {
+      plans.push({ date, scanned: items.length, kept: kept.length, removed });
+    }
+  }
+  return plans.sort((a, b) => a.date.localeCompare(b.date));
+}
