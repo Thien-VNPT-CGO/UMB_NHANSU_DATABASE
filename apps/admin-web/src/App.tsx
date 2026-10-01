@@ -49,6 +49,10 @@ import {
   playNotificationDing,
   playSuccessChime,
   playModernChime,
+  playCustomRingtone,
+  getCustomRingtone,
+  setCustomRingtone,
+  CUSTOM_RINGTONE_MAX_BYTES,
   playNotificationByStyle,
   getNotificationSoundStyle,
   setNotificationSoundStyle,
@@ -317,6 +321,7 @@ export function App() {
   const [showNotifPopover, setShowNotifPopover] = useState(false);
   const [soundActive, setSoundActive] = useState(isSoundEnabled());
   const [soundStyle, setSoundStyle] = useState(getNotificationSoundStyle());
+  const ringtoneInputRef = useRef<HTMLInputElement | null>(null);
 
   const addRichToast = (toast: Omit<LiveToastItem, 'id' | 'timestamp'>) => {
     const id = `toast_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
@@ -1812,11 +1817,68 @@ export function App() {
               </button>
             )}
 
+            {/* Tải nhạc chuông mp3 riêng */}
+            <input
+              type="file"
+              accept="audio/*"
+              ref={(el) => { ringtoneInputRef.current = el; }}
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                e.target.value = '';
+                if (!f) return;
+                if (!/^audio\//.test(f.type || '') && !/\.(mp3|wav|ogg|m4a)$/i.test(f.name)) {
+                  addRichToast({ title: '⚠️ File không hợp lệ', message: 'Vui lòng chọn file nhạc (mp3/wav/ogg/m4a)!', type: 'WARNING' });
+                  return;
+                }
+                if (f.size > CUSTOM_RINGTONE_MAX_BYTES) {
+                  addRichToast({ title: '⚠️ File quá lớn', message: `File ${(f.size / 1048576).toFixed(1)}MB vượt quá 3MB! Hãy cắt ngắn nhạc chuông rồi tải lại.`, type: 'WARNING' });
+                  return;
+                }
+                const reader = new FileReader();
+                reader.onload = () => {
+                  try {
+                    setCustomRingtone(String(reader.result || ''));
+                    setSoundStyle('custom');
+                    setNotificationSoundStyle('custom');
+                    playCustomRingtone();
+                    addRichToast({ title: '🎵 Đã tải nhạc chuông', message: `Đã đặt "${f.name}" làm chuông thông báo!`, type: 'INFO' });
+                  } catch {
+                    addRichToast({ title: '⚠️ Lưu thất bại', message: 'Bộ nhớ trình duyệt đầy! Hãy dùng file nhỏ hơn.', type: 'WARNING' });
+                  }
+                };
+                reader.readAsDataURL(f);
+              }}
+            />
+            <button
+              onClick={() => ringtoneInputRef.current?.click()}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '34px',
+                height: '34px',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: soundStyle === 'custom' ? '#EFF6FF' : 'var(--surface)',
+                border: `1px solid ${soundStyle === 'custom' ? '#0068FF' : 'var(--border)'}`,
+                color: soundStyle === 'custom' ? '#0068FF' : 'var(--text)',
+                cursor: 'pointer',
+                fontSize: '15px',
+              }}
+              title="Tải nhạc chuông mp3 riêng (tối đa 3MB) — tải xong tự phát thử và đặt làm chuông"
+            >
+              📁
+            </button>
             {/* Chọn kiểu chuông thông báo (nghe thử ngay khi đổi) */}
             <select
               value={soundStyle}
               onChange={(e) => {
                 const v = e.target.value as typeof soundStyle;
+                // Chọn kiểu Riêng nhưng chưa có file -> mở hộp tải file luôn.
+                if (v === 'custom' && !getCustomRingtone()) {
+                  ringtoneInputRef.current?.click();
+                  return;
+                }
                 setSoundStyle(v);
                 setNotificationSoundStyle(v);
                 playNotificationByStyle(v);

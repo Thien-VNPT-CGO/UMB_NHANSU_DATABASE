@@ -244,7 +244,7 @@ export function playFanfare(): void {
  * Tất cả Web Audio thuần, không file ngoài.
  */
 
-export type NotificationSoundStyle = 'modern' | 'gentle' | 'bubbly' | 'digital' | 'warm';
+export type NotificationSoundStyle = 'modern' | 'gentle' | 'bubbly' | 'digital' | 'warm' | 'custom';
 
 export const NOTIFICATION_SOUND_STYLES: Array<{ id: NotificationSoundStyle; label: string; desc: string }> = [
   { id: 'modern', label: '💎 Hiện đại (Glass)', desc: 'Glockenspiel 3 nốt lấp lánh — mặc định' },
@@ -252,7 +252,51 @@ export const NOTIFICATION_SOUND_STYLES: Array<{ id: NotificationSoundStyle; labe
   { id: 'bubbly', label: '🫧 Vui tươi (Bubbly)', desc: 'Bong bóng bay lên, trẻ trung' },
   { id: 'digital', label: '⚡ Công nghệ (Digital)', desc: 'Ping sắc + echo, gọn hiện đại' },
   { id: 'warm', label: '🔔 Ấm áp (Warm Bell)', desc: 'Chuông trầm ngân dài, sang trọng' },
+  { id: 'custom', label: '🎵 Riêng (mp3 tải lên)', desc: 'Nhạc chuông bạn tự tải lên' },
 ];
+
+const CUSTOM_RINGTONE_KEY = 'ubm_custom_ringtone';
+/** Giới hạn 3MB để vừa localStorage trình duyệt. */
+export const CUSTOM_RINGTONE_MAX_BYTES = 3 * 1024 * 1024;
+
+/** File mp3 nhạc chuông riêng HR đã tải lên (data URL). */
+export function getCustomRingtone(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return localStorage.getItem(CUSTOM_RINGTONE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setCustomRingtone(dataUrl: string): void {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(CUSTOM_RINGTONE_KEY, dataUrl);
+}
+
+export function clearCustomRingtone(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.removeItem(CUSTOM_RINGTONE_KEY);
+  } catch { /* ignore */ }
+}
+
+/** Phát nhạc chuông mp3 riêng (fallback về chuông hiện đại nếu chưa có file). */
+export function playCustomRingtone(): void {
+  if (!isSoundEnabled()) return;
+  const dataUrl = getCustomRingtone();
+  if (!dataUrl) {
+    playModernChime();
+    return;
+  }
+  try {
+    const audio = new Audio(dataUrl);
+    audio.volume = 0.9;
+    audio.play().catch(() => playModernChime());
+  } catch {
+    playModernChime();
+  }
+}
 
 const SOUND_STYLE_KEY = 'ubm_notification_sound_style';
 
@@ -345,6 +389,8 @@ export function playNotificationByStyle(style?: NotificationSoundStyle): void {
       return playDigitalPing();
     case 'warm':
       return playWarmBell();
+    case 'custom':
+      return playCustomRingtone();
     case 'modern':
     default:
       return playModernChime();
