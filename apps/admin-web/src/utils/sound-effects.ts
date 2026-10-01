@@ -248,12 +248,6 @@ export type NotificationSoundStyle = 'modern' | 'gentle' | 'bubbly' | 'digital' 
 
 export const NOTIFICATION_SOUND_STYLES: Array<{ id: NotificationSoundStyle; label: string; desc: string }> = [
   { id: 'ringtune', label: '🎵 Nhạc chuông hệ thống', desc: 'File ringtune.mp4 kèm theo code' },
-  { id: 'modern', label: '💎 Hiện đại (Glass)', desc: 'Glockenspiel 3 nốt lấp lánh' },
-  { id: 'gentle', label: '🍃 Nhẹ nhàng (Gentle)', desc: 'Marimba êm, tấn công chậm, thư giãn' },
-  { id: 'bubbly', label: '🫧 Vui tươi (Bubbly)', desc: 'Bong bóng bay lên, trẻ trung' },
-  { id: 'digital', label: '⚡ Công nghệ (Digital)', desc: 'Ping sắc + echo, gọn hiện đại' },
-  { id: 'warm', label: '🔔 Ấm áp (Warm Bell)', desc: 'Chuông trầm ngân dài, sang trọng' },
-  { id: 'custom', label: '🎵 Riêng (mp3 tải lên)', desc: 'Nhạc chuông bạn tự tải lên' },
 ];
 
 const CUSTOM_RINGTONE_KEY = 'ubm_custom_ringtone';
