@@ -282,6 +282,129 @@ export class SchedulesService {
     return this.repo.listLeaveRequests(branchId, employeeId);
   }
 
+  /**
+   * NV THỬ VIỆC đăng ký 5 ngày OFF trong 12 ngày thử việc (7 làm / 5 OFF):
+   *  - Đúng 5 ngày phân biệt, nằm trong [start_date, start_date+11], và đều là
+   *    NGÀY TƯƠNG LAI (hôm nay/quá khứ đang trong ca thử việc -> từ chối).
+   *  - Một lần duy nhất cho cả kỳ thử việc (đăng ký lại liên hệ Store/HR).
+   *  - Xác nhận xong: 5 phiếu THU_VIEC tự duyệt + TỰ XẾP 7 ca làm PUBLISHED
+   *    vào các ngày còn lại (ca cố định của NV, rớt về CA_1).
+   */
+  async registerProbationOff(data: {
+    employeeId: string;
+    branchId: string;
+    dates: string[];
+    actorId: string;
+  }) {
+    const emp = await this.repo.getEmployeeById(data.employeeId);
+    if (!emp || (emp as any).employment_status !== 'PROBATION') {
+      throw new Error('Chỉ nhân viên đang thử việc mới đăng ký OFF thử việc!');
+    }
+    const start = String((emp as any).start_date || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(start)) {
+      throw new Error('Hồ sơ chưa có ngày bắt đầu thử việc! Liên hệ HR bổ sung.');
+    }
+    const windowDays: string[] = [];
+    for (let i = 0; i < 12; i++) {
+      const d = new Date(`${start}T00:00:00Z`);
+      d.setUTCDate(d.getUTCDate() + i);
+      windowDays.push(d.toISOString().slice(0, 10));
+    }
+    const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+    const dates = [...new Set((data.dates || []).map(d => String(d || '').slice(0, 10)))];
+    if (dates.length !== 5) {
+      throw new Error(`Phải chọn đúng 5 ngày OFF thử việc (đang chọn ${dates.length} ngày)!`);
+    }
+    for (const d of dates) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || !windowDays.includes(d)) {
+        throw new Error(`Ngày ${d} nằm ngoài 12 ngày thử việc (${windowDays[0]} → ${windowDays[11]})!`);
+      }
+      if (d <= today) {
+        throw new Error(`Ngày ${d === today ? 'hôm nay' : d} đang trong ca thử việc — không được đăng ký OFF! Chỉ được chọn ngày tương lai.`);
+      }
+    }
+    const existing = await this.repo.listLeaveRequests(undefined, data.employeeId);
+    const already = existing.filter(
+      l =>
+        (l as any).leave_type === 'THU_VIEC' &&
+        l.status !== 'REJECTED' &&
+        l.status !== 'CANCELLED' &&
+        l.requested_date >= windowDays[0] &&
+        l.requested_date <= windowDays[11]
+    );
+    if (already.length > 0) {
+      throw new Error('Bạn đã đăng ký 5 ngày OFF thử việc rồi! Muốn đổi ngày liên hệ Store/HR.');
+    }
+    const shiftCode = (['CA_1', 'CA_2', 'CA_3'] as string[]).includes((emp as any).default_shift_code)
+      ? ((emp as any).default_shift_code as ShiftCode)
+      : 'CA_1';
+    const shiftFallback = !(emp as any).default_shift_code;
+    const template = SHIFT_TEMPLATES[shiftCode];
+    const branchId = data.branchId || (emp as any).default_branch_id || 'CN130';
+    const offSet = new Set(dates);
+    const workDays = windowDays.filter(d => !offSet.has(d));
+    const nowIso = new Date().toISOString();
+    return singleWriterQueue.enqueue({
+      entityType: 'PHIEU_OFF',
+      entityId: `${data.employeeId}_PROBATION`,
+      actorId: data.actorId,
+      execute: async () => {
+        const leaves = [];
+        for (const [idx, date] of dates.entries()) {
+          leaves.push(
+            await this.repo.createLeaveRequest({
+              request_id: `LEAVE_${Date.now()}_${idx}_${Math.floor(Math.random() * 100000)}`,
+              employee_id: data.employeeId,
+              branch_id: branchId,
+              leave_type: 'THU_VIEC',
+              requested_date: date,
+              reason: `Đăng ký OFF thử việc (ngày ${idx + 1}/5 trong 12 ngày thử việc)`,
+              status: 'APPROVED',
+              reviewed_by: 'SYSTEM',
+              reviewed_at: nowIso,
+              review_note: 'Tự động ghi nhận 5 ngày OFF thử việc',
+            })
+          );
+        }
+        const shifts = [];
+        for (const date of workDays) {
+          const dup = await this.repo.getShiftsForEmployee(data.employeeId, date, date);
+          if (dup.some(s => s.date === date)) continue;
+          shifts.push(
+            await this.repo.createShiftAssignment({
+              assignment_id: `SHIFT_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
+              employee_id: data.employeeId,
+              branch_id: branchId,
+              shift_code: shiftCode,
+              date,
+              start_at: `${date}T${String(template.start_hour).padStart(2, '0')}:00:00+07:00`,
+              end_at: `${date}T${String(template.end_hour).padStart(2, '0')}:00:00+07:00`,
+              status: 'PUBLISHED',
+              schedule_version: 1,
+            })
+          );
+        }
+        if (this.io) {
+          for (const c of leaves) {
+            this.io.to(`user:${c.employee_id}`).emit('leave.updated', {
+              requestId: c.request_id,
+              status: c.status,
+            });
+          }
+        }
+        return {
+          window: { mon: windowDays[0], sun: windowDays[11] },
+          offDates: dates.sort(),
+          workDates: workDays,
+          shiftCode,
+          shiftFallback,
+          leaves,
+          shifts: shifts.map(s => ({ date: s.date, shift_code: s.shift_code })),
+        };
+      },
+    });
+  }
+
   async reviewLeave(requestId: string, status: 'APPROVED' | 'REJECTED', reviewerId: string, note?: string) {
     return singleWriterQueue.enqueue({
       entityType: 'PHIEU_OFF',

@@ -151,6 +151,11 @@ export function App() {
     reason: 'Đăng ký ngày nghỉ theo quy định',
   });
 
+  // NV thử việc: chọn 5 ngày OFF trong 12 ngày thử việc (7 làm / 5 OFF)
+  const [probOffSelected, setProbOffSelected] = useState<string[]>([]);
+  const [probOffDone, setProbOffDone] = useState<{ offDates: string[]; workDates: string[] } | null>(null);
+  const [probOffBusy, setProbOffBusy] = useState(false);
+
   // Attendance tracking state
   const [attendanceActionType, setAttendanceActionType] = useState<'CHECK_IN' | 'CHECK_OUT'>('CHECK_IN');
   // GPS thật từ thiết bị (null = chưa đo được, KHÔNG dùng số giả lập)
@@ -1091,6 +1096,74 @@ export function App() {
     }
   };
 
+  // Ngày VN hiện tại (YYYY-MM-DD) cho lưới OFF thử việc
+  const probVnToday = () => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+
+  // 12 ngày thử việc tính từ ngày bắt đầu (start_date → +11)
+  const probationWindowDays = (): string[] => {
+    const s = String((employee as any)?.start_date || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return [];
+    const out: string[] = [];
+    for (let i = 0; i < 12; i++) {
+      const d = new Date(`${s}T00:00:00Z`);
+      d.setUTCDate(d.getUTCDate() + i);
+      out.push(d.toISOString().slice(0, 10));
+    }
+    return out;
+  };
+
+  // Tải trạng thái đã đăng ký 5 ngày OFF thử việc (nếu có)
+  const loadProbationOff = async () => {
+    try {
+      const list: any = await apiRequest('/leave-requests');
+      const arr = Array.isArray(list) ? list : [];
+      const win = probationWindowDays();
+      const mine = arr
+        .filter((l: any) => l?.leave_type === 'THU_VIEC' && l?.status === 'APPROVED' && win.includes(String(l.requested_date || '').slice(0, 10)))
+        .map((l: any) => String(l.requested_date).slice(0, 10))
+        .sort();
+      if (mine.length >= 5) {
+        const off = new Set(mine.slice(0, 5));
+        setProbOffDone({ offDates: [...off].sort(), workDates: win.filter(d => !off.has(d)) });
+      } else {
+        setProbOffDone(null);
+        if (mine.length > 0) setProbOffSelected(mine);
+      }
+    } catch { /* offline — giữ trạng thái cũ */ }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'leave' && isLoggedIn && (employee as any)?.employment_status === 'PROBATION') {
+      loadProbationOff();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, isLoggedIn, (employee as any)?.employee_id]);
+
+  // Xác nhận đăng ký 5 ngày OFF thử việc -> hệ thống TỰ XẾP 7 ca làm
+  const handleSubmitProbationOff = async () => {
+    const dates = [...probOffSelected].sort();
+    if (dates.length !== 5) {
+      showToast('⚠️ Vui lòng chọn đúng 5 ngày OFF trong 12 ngày thử việc!');
+      return;
+    }
+    if (!window.confirm(`Xác nhận đăng ký 5 ngày OFF thử việc (${dates.join(', ')})?\nHệ thống sẽ TỰ XẾP 7 ca làm vào các ngày còn lại. Đã xác nhận KHÔNG đổi lại được (liên hệ Store/HR)!`)) return;
+    setProbOffBusy(true);
+    try {
+      const res: any = await apiRequest('/leaves/probation-off', {
+        method: 'POST',
+        body: JSON.stringify({ dates }),
+      });
+      const r = res?.result || res;
+      setProbOffDone({ offDates: r.offDates || dates, workDates: r.workDates || [] });
+      showToast(`🎉 ĐÃ ĐĂNG KÝ 5 NGÀY OFF THỬ VIỆC! Hệ thống đã tự xếp ${(r.workDates || []).length} ca làm cho bạn.`);
+      await loadEmployeeData(employee?.employee_id);
+    } catch (err: any) {
+      showToast(err?.message || 'Lỗi khi đăng ký OFF thử việc!');
+    } finally {
+      setProbOffBusy(false);
+    }
+  };
+
   // Tải ca thật của NV B để chọn ca tráo/nhờ.
   // Dùng API /me/colleague-shifts (xác thực theo chi nhánh hồ sơ, không dính scope token cũ).
   const loadTargetShifts = async (targetEmployeeId: string) => {
@@ -2021,42 +2094,96 @@ export function App() {
                   {isProbation ? '3. Đăng Ký Nghỉ OFF Thử Việc' : '3. Đăng Ký 2 Ngày Nghỉ OFF/Tuần (Chính Thức)'}
                 </h3>
                 <span className={`badge ${!isProbation && hasRegisteredWeeklyOff ? 'badge-success' : 'badge-brand'}`}>
-                  {isProbation ? '1 Ngày/Lần' : hasRegisteredWeeklyOff ? 'Đã Chọn 2 Ngày' : 'Bắt Buộc 2 Ngày'}
+                  {isProbation ? '5 Ngày/Kỳ Thử Việc' : hasRegisteredWeeklyOff ? 'Đã Chọn 2 Ngày' : 'Bắt Buộc 2 Ngày'}
                 </span>
               </div>
               <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '14px' }}>
                 {isProbation
-                  ? 'Chọn ngày nghỉ trong phạm vi chu kỳ quy định để Store & HR phê duyệt định biên.'
+                  ? 'Quy định thử việc 12 ngày (7 làm / 5 OFF): bạn chọn 5 ngày OFF, bấm xác nhận là hệ thống TỰ XẾP 7 ca làm vào các ngày còn lại. Chỉ được 1 lần duy nhất!'
                   : 'Quy định nhân viên chính thức: Bắt buộc chọn đúng 02 ngày nghỉ OFF/tuần định kỳ. Khi đăng ký xong, hệ thống sẽ tự động mở khóa toàn bộ các chức năng khác.'}
               </p>
 
               {isProbation ? (
-                /* THỬ VIỆC: ĐĂNG KÝ 1 NGÀY */
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  <div>
-                    <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Ngày mong muốn nghỉ:</label>
-                    <input
-                      type="date"
-                      value={leaveData.requestedDate}
-                      onChange={(e) => setLeaveData({ ...leaveData, requestedDate: e.target.value })}
-                      style={{ width: '100%' }}
-                    />
-                  </div>
-
-                  <div>
-                    <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Lý do nghỉ OFF:</label>
-                    <textarea
-                      rows={2}
-                      value={leaveData.reason}
-                      onChange={(e) => setLeaveData({ ...leaveData, reason: e.target.value })}
-                      style={{ width: '100%' }}
-                    />
-                  </div>
-
-                  <button className="btn-primary" onClick={handleSubmitLeave}>
-                    Gửi Yêu Cầu Nghỉ OFF
-                  </button>
-                </div>
+                /* THỬ VIỆC: CHỌN 5 NGÀY OFF TRONG 12 NGÀY -> TỰ XẾP 7 CA LÀM */
+                (() => {
+                  const win = probationWindowDays();
+                  const today = probVnToday();
+                  const fmtD = (s: string) => `${s.slice(8, 10)}/${s.slice(5, 7)}`;
+                  const dow = (s: string) => ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'][new Date(`${s}T00:00:00Z`).getUTCDay()];
+                  if (win.length === 0) {
+                    return (
+                      <div style={{ backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 'var(--radius-sm)', padding: '14px', fontSize: '13px', color: '#92400E' }}>
+                        ⚠️ Hồ sơ chưa có ngày bắt đầu thử việc! Liên hệ HR bổ sung rồi quay lại đăng ký.
+                      </div>
+                    );
+                  }
+                  if (probOffDone) {
+                    return (
+                      <div style={{ backgroundColor: '#ECFDF5', border: '1.5px solid #10B981', borderRadius: 'var(--radius-sm)', padding: '12px 14px', color: '#065F46' }}>
+                        <div style={{ fontWeight: 800, fontSize: '13px' }}>🎉 BẠN ĐÃ ĐĂNG KÝ XONG 5 NGÀY OFF THỬ VIỆC!</div>
+                        <div style={{ fontSize: '12px', marginTop: '6px', lineHeight: '1.6' }}>
+                          • 5 ngày OFF: <strong>{probOffDone.offDates.join(', ')}</strong><br />
+                          • 7 ngày làm (hệ thống tự xếp ca): <strong>{probOffDone.workDates.join(', ')}</strong><br />
+                          <span style={{ fontWeight: 700 }}>✓ Muốn đổi ngày liên hệ Store/HR.</span>
+                        </div>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      <div style={{ fontSize: '12px', fontWeight: 800 }}>
+                        Kỳ thử việc: <strong>{win[0]} → {win[win.length - 1]}</strong> • Đã chọn <strong style={{ color: '#1D4ED8' }}>{probOffSelected.length}/5</strong> ngày OFF
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
+                        {win.map((d) => {
+                          const past = d <= today;
+                          const sel = probOffSelected.includes(d);
+                          return (
+                            <button
+                              key={d}
+                              disabled={past || probOffBusy}
+                              onClick={() => {
+                                if (sel) {
+                                  setProbOffSelected(probOffSelected.filter(x => x !== d));
+                                } else if (probOffSelected.length >= 5) {
+                                  showToast('⚠️ Chỉ được chọn tối đa 5 ngày OFF!');
+                                } else {
+                                  setProbOffSelected([...probOffSelected, d]);
+                                }
+                              }}
+                              title={past ? (d === today ? 'Hôm nay đang trong ca thử việc — không được đăng ký OFF!' : 'Ngày đã qua — không được đăng ký OFF!') : sel ? 'Bấm để bỏ chọn' : 'Bấm để chọn OFF'}
+                              style={{
+                                padding: '10px 4px',
+                                borderRadius: '8px',
+                                border: sel ? '2px solid #1D4ED8' : '1px solid var(--border)',
+                                backgroundColor: sel ? '#DBEAFE' : past ? '#F1F5F9' : 'var(--surface)',
+                                color: sel ? '#1D4ED8' : past ? '#94A3B8' : 'var(--text)',
+                                fontWeight: 800,
+                                fontSize: '12px',
+                                cursor: past ? 'not-allowed' : 'pointer',
+                                opacity: past ? 0.7 : 1,
+                              }}
+                            >
+                              <div>{past ? '🔒' : sel ? '✅' : '⭕'} {dow(d)}</div>
+                              <div>{fmtD(d)}</div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: '1.5' }}>
+                        🔒 Ngày hôm nay trở về trước đang trong kỳ thử việc — <strong>không được đăng ký OFF</strong>, chỉ chọn ngày tương lai.
+                      </div>
+                      <button
+                        className="btn-primary"
+                        disabled={probOffBusy || probOffSelected.length !== 5}
+                        onClick={handleSubmitProbationOff}
+                        style={{ opacity: probOffSelected.length !== 5 ? 0.6 : 1 }}
+                      >
+                        {probOffBusy ? 'ĐANG XẾP LỊCH...' : `XÁC NHẬN 5 NGÀY OFF & TỰ XẾP 7 CA LÀM (${probOffSelected.length}/5)`}
+                      </button>
+                    </div>
+                  );
+                })()
               ) : (
                 /* CHÍNH THỨC: ĐĂNG KÝ 2 NGÀY NGHỈ OFF/TUẦN */
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>

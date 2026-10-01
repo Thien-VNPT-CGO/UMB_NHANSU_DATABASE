@@ -236,6 +236,11 @@ export const swapApproveBody = z.object({
   reason: optString(500),
 });
 
+// NV thử việc đăng ký 5 ngày OFF trong 12 ngày thử việc (server kiểm tiếp).
+export const probationOffBody = z.object({
+  dates: z.array(z.string().trim().min(8).max(32)).min(1).max(12),
+});
+
 // HR tạo phiếu điều phối nhường ca (+30k cho người nhận)
 export const swapDispatchBody = z.object({
   requesterId: optString(64),

@@ -80,6 +80,7 @@ import {
   payrollPeriodParams,
   payrollRunIdParams,
   payrollRunParams,
+  probationOffBody,
   publishWeekBody,
   publishWeekParams,
   schedulesQuery,
@@ -2130,6 +2131,36 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       res.json(list);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // NV THỬ VIỆC đăng ký 5 ngày OFF trong 12 ngày thử việc (7 làm / 5 OFF).
+  // Xác nhận xong hệ thống TỰ XẾP 7 ca làm PUBLISHED vào các ngày còn lại.
+  app.post('/leaves/probation-off', authMiddleware, requireRole(['EMPLOYEE']), validate({ body: probationOffBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const employeeId = req.user?.employeeId;
+      if (!employeeId) return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
+      const emp = await employeesService.getEmployee(employeeId).catch(() => null);
+      const branchId = (req.body as any).branchId || (emp as any)?.default_branch_id || 'CN130';
+      const result = await schedulesService.registerProbationOff({
+        employeeId,
+        branchId,
+        dates: (req.body as any).dates || [],
+        actorId: employeeId,
+      });
+      broadcastUpdate('leaves', { action: 'probation-off', leaves: result.result.leaves });
+      broadcastUpdate('schedules', { action: 'probation-auto', employeeId });
+      broadcastNotification({
+        type: 'LEAVE',
+        title: '📝 NV Thử Việc Đã Đăng Ký 5 Ngày OFF',
+        message: `${emp?.full_name || employeeId} đã chọn 5 ngày OFF thử việc (${(result.result.offDates || []).join(', ')}). Hệ thống đã tự xếp ${(result.result.workDates || []).length} ca làm.`,
+        linkTab: 'hr-leave',
+        metadata: { employeeId },
+        targetRoles: ['ADMIN', 'HR', 'STORE'],
+      });
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: String(err?.message || 'Lỗi đăng ký OFF thử việc') });
     }
   });
 
