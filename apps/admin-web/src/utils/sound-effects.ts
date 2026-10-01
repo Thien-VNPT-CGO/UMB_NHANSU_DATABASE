@@ -244,10 +244,11 @@ export function playFanfare(): void {
  * Tất cả Web Audio thuần, không file ngoài.
  */
 
-export type NotificationSoundStyle = 'modern' | 'gentle' | 'bubbly' | 'digital' | 'warm' | 'custom';
+export type NotificationSoundStyle = 'modern' | 'gentle' | 'bubbly' | 'digital' | 'warm' | 'custom' | 'ringtune';
 
 export const NOTIFICATION_SOUND_STYLES: Array<{ id: NotificationSoundStyle; label: string; desc: string }> = [
-  { id: 'modern', label: '💎 Hiện đại (Glass)', desc: 'Glockenspiel 3 nốt lấp lánh — mặc định' },
+  { id: 'ringtune', label: '🎵 Nhạc chuông hệ thống', desc: 'File ringtune.mp4 kèm theo code' },
+  { id: 'modern', label: '💎 Hiện đại (Glass)', desc: 'Glockenspiel 3 nốt lấp lánh' },
   { id: 'gentle', label: '🍃 Nhẹ nhàng (Gentle)', desc: 'Marimba êm, tấn công chậm, thư giãn' },
   { id: 'bubbly', label: '🫧 Vui tươi (Bubbly)', desc: 'Bong bóng bay lên, trẻ trung' },
   { id: 'digital', label: '⚡ Công nghệ (Digital)', desc: 'Ping sắc + echo, gọn hiện đại' },
@@ -282,8 +283,7 @@ export function clearCustomRingtone(): void {
 }
 
 /** Phát nhạc chuông mp3 riêng (fallback về chuông hiện đại nếu chưa có file). */
-export function playCustomRingtone(): void {
-  if (!isSoundEnabled()) return;
+export function playCustomRingtone(): void {  if (!isSoundEnabled()) return;
   const dataUrl = getCustomRingtone();
   if (!dataUrl) {
     playModernChime();
@@ -301,9 +301,9 @@ export function playCustomRingtone(): void {
 const SOUND_STYLE_KEY = 'ubm_notification_sound_style';
 
 export function getNotificationSoundStyle(): NotificationSoundStyle {
-  if (typeof window === 'undefined') return 'modern';
+  if (typeof window === 'undefined') return 'ringtune';
   const v = localStorage.getItem(SOUND_STYLE_KEY);
-  return NOTIFICATION_SOUND_STYLES.some(s => s.id === v) ? (v as NotificationSoundStyle) : 'modern';
+  return NOTIFICATION_SOUND_STYLES.some(s => s.id === v) ? (v as NotificationSoundStyle) : 'ringtune';
 }
 
 export function setNotificationSoundStyle(style: NotificationSoundStyle): void {
@@ -378,9 +378,24 @@ export function playWarmBell(): void {
   });
 }
 
-/** Phát chuông theo kiểu HR đã chọn (mặc định: hiện đại). */
+/** Phát file nhạc chuông kèm theo code (public/sounds/ringtune.mp4). Lỗi -> chuông hiện đại. */
+export function playRingtuneFile(): void {
+  if (!isSoundEnabled()) return;
+  try {
+    const url = new URL('sounds/ringtune.mp4', document.baseURI).href;
+    const audio = new Audio(url);
+    audio.volume = 0.9;
+    audio.play().catch(() => playModernChime());
+  } catch {
+    playModernChime();
+  }
+}
+
+/** Phát chuông theo kiểu HR đã chọn (mặc định: nhạc chuông hệ thống). */
 export function playNotificationByStyle(style?: NotificationSoundStyle): void {
   switch (style || getNotificationSoundStyle()) {
+    case 'ringtune':
+      return playRingtuneFile();
     case 'gentle':
       return playGentleChime();
     case 'bubbly':
