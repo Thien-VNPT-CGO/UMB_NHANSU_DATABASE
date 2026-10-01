@@ -2838,34 +2838,20 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </div>
 
               <div>
-                <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Chi nhánh tuyển dụng:</label>
-                <select style={{ width: '100%' }} value={inviteBranchId} onChange={(e) => setInviteBranchId(e.target.value)}>
-                  {branches.length > 0 ? (
-                    branches.map((b) => (
-                      <option key={b.branch_id || b.id} value={b.branch_id || b.id}>
-                        {b.name}
-                      </option>
-                    ))
-                  ) : (
-                    <>
-                      <option value="CN130">CN1: 130 Vạn Kiếp (Bình Thạnh)</option>
-                      <option value="CN261">CN2: 261 Tô Hiến Thành (Q.10)</option>
-                      <option value="CN120">CN3: 120 Hoàng Diệu 2 (Thủ Đức)</option>
-                      <option value="CN111">CN4: 111 Tôn Đản (Q.4)</option>
-                    </>
-                  )}
-                </select>
+                <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Chi nhánh tuyển dụng (tự theo ứng viên):</label>
+                <div style={{
+                  width: '100%', padding: '9px 12px', borderRadius: '8px',
+                  backgroundColor: '#F1F5F9', border: '1px solid var(--border)',
+                  fontSize: '13px', fontWeight: 800, color: '#1D4ED8',
+                }}>
+                  {(() => {
+                    const b = branches.find((x: any) => (x.branch_id || x.id) === inviteBranchId);
+                    return b?.name || ({ CN130: 'CN1: 130 Vạn Kiếp (Bình Thạnh)', CN261: 'CN2: 261 Tô Hiến Thành (Q.10)', CN120: 'CN3: 120 Hoàng Diệu 2 (Thủ Đức)', CN111: 'CN4: 111 Tôn Đản (Q.4)' } as any)[inviteBranchId] || inviteBranchId || '— Chưa chọn ứng viên —';
+                  })()}
+                </div>
                 {pickedCandidate && (
-                  <div style={{
-                    fontSize: '11px', marginTop: '4px', lineHeight: '1.5', padding: '6px 8px', borderRadius: '6px',
-                    color: pickedBranchId && inviteBranchId !== pickedBranchId ? '#92400E' : '#1E40AF',
-                    backgroundColor: pickedBranchId && inviteBranchId !== pickedBranchId ? '#FFFBEB' : '#EFF6FF',
-                    border: pickedBranchId && inviteBranchId !== pickedBranchId ? '1px solid #FDE68A' : '1px solid #BFDBFE',
-                  }}>
-                    🤖 Hồ sơ {pickedCandidate.full_name} đăng ký: <strong>{pickedCandidate.branch_name || getDisplayBranch(pickedCandidate.preferred_branch_id || 'CN130')}</strong>
-                    {pickedBranchId && inviteBranchId !== pickedBranchId
-                      ? ' — đang chọn khác chi nhánh ứng viên đăng ký!'
-                      : ' — đã tự điền đúng.'}
+                  <div style={{ fontSize: '11px', marginTop: '4px', color: '#1E40AF' }}>
+                    🤖 Hồ sơ {pickedCandidate.full_name} đăng ký: <strong>{pickedCandidate.branch_name || getDisplayBranch(pickedCandidate.preferred_branch_id || 'CN130')}</strong> — đã tự điền đúng.
                   </div>
                 )}
               </div>
