@@ -33,6 +33,8 @@ export interface ISheetsRepository {
   listAccounts(): Promise<EmployeeAccount[]>;
   createAccount(account: Omit<EmployeeAccount, 'created_at' | 'updated_at' | 'version'>): Promise<EmployeeAccount>;
   setAccountPin(id: string, pinHash: string, mustChange: boolean, actorId: string, pinPlain?: string | null): Promise<EmployeeAccount>;
+  /** Đánh dấu tới hạn đổi PIN định kỳ (giữ nguyên hash — NV tự đổi từ PIN cũ, KHÔNG reset, KHÔNG tăng version để khỏi văng phiên). */
+  markAccountPinMustChange(id: string, actorId: string): Promise<EmployeeAccount>;
   getAdminByUsername(username: string): Promise<AdminAccount | null>;
 
   // Employees

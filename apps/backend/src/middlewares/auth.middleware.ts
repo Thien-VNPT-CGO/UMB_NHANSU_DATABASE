@@ -41,7 +41,7 @@ export function createAuthMiddleware(repo: ISheetsRepository) {
       const { tv: _tv, ...user } = verified;
       req.user = user;
 
-      // PIN do HR cấp chưa đổi: chặn mọi API ngoài đổi PIN / xem hồ sơ.
+      // PIN tới hạn (lần đầu hoặc kỳ tự đổi 1-5 hàng tháng): chặn mọi API ngoài đổi PIN / xem hồ sơ.
       if (
         user.role === 'EMPLOYEE' &&
         (user as AuthUser).mustChangePin === true &&
@@ -53,7 +53,7 @@ export function createAuthMiddleware(repo: ISheetsRepository) {
       ) {
         return res.status(403).json({
           error: 'PIN_CHANGE_REQUIRED',
-          message: 'Bạn đang dùng mã PIN do HR cấp. Vui lòng đổi mã PIN mới trước khi sử dụng hệ thống!',
+          message: 'Tới kỳ đổi PIN định kỳ (hạn 1-5 hàng tháng). Vui lòng đăng nhập bằng PIN CŨ rồi tự đặt PIN mới khác PIN cũ — không cần HR reset/gửi PIN!',
           code: 'PIN_CHANGE_REQUIRED',
         });
       }

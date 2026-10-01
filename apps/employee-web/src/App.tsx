@@ -447,7 +447,7 @@ export function App() {
         setLoginError(`Tài khoản ${cleaned} chưa được cấp mã PIN. Vui lòng liên hệ HR để nhận mã PIN đăng nhập!`);
       } else if (err.message === 'INVALID_PIN') {
         setCheckingStatus('ERROR');
-        setLoginError('Mã PIN không đúng! Vui lòng kiểm tra lại hoặc liên hệ HR để reset PIN.');
+        setLoginError('Mã PIN không đúng! Nhập lại PIN cũ của bạn. Nếu quên PIN cũ, hỏi HR xem lại mã PIN hiện tại (HR không reset PIN).');
       } else if (err.message === 'DUPLICATE_PHONE_NEEDS_HR') {
         setCheckingStatus('ERROR');
         setLoginError(`Số điện thoại ${cleaned} bị trùng lặp trên 2 hồ sơ khác nhau. Cần gặp HR để đối soát thông tin.`);
@@ -485,7 +485,7 @@ export function App() {
       return;
     }
     if (newPin === loginPin.trim()) {
-      setLoginError('Mã PIN mới phải khác mã PIN khởi tạo!');
+      setLoginError('Mã PIN mới phải khác mã PIN cũ hiện tại!');
       return;
     }
     setLoading(true);
@@ -505,7 +505,11 @@ export function App() {
       setMustChangePin(false);
       await handlePhoneLogin(loginPhone, newPin);
     } catch (err: any) {
-      setLoginError(err.message === 'INVALID_PIN' ? 'Mã PIN hiện tại không đúng!' : err.message);
+      if (err.message === 'SAME_PIN') {
+        setLoginError('Mã PIN mới phải khác mã PIN cũ hiện tại!');
+      } else {
+        setLoginError(err.message === 'INVALID_PIN' ? 'Mã PIN hiện tại không đúng!' : err.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -1393,7 +1397,7 @@ export function App() {
             <>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                 <label style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text)' }}>
-                  Mã PIN Khởi Tạo (4-8 số, hỏi HR/Admin)
+                  Mã PIN hiện tại (4-8 số)
                 </label>
               </div>
               <div style={{ position: 'relative', marginBottom: '14px' }}>
@@ -1427,10 +1431,10 @@ export function App() {
           {mustChangePin && (
             <div style={{ backgroundColor: '#FFFBEB', border: '1.5px solid #F59E0B', borderRadius: 'var(--radius-sm)', padding: '14px', marginBottom: '14px' }}>
               <div style={{ fontWeight: 800, fontSize: '14px', color: '#92400E', marginBottom: '6px' }}>
-                🔑 BẮT BUỘC ĐỔI MÃ PIN LẦN ĐẦU
+                🔑 TỚI KỲ ĐỔI PIN ĐỊNH KỲ (HẠN 1-5 HÀNG THÁNG)
               </div>
               <div style={{ fontSize: '12px', color: '#92400E', marginBottom: '12px', lineHeight: '1.5' }}>
-                Bạn đang dùng mã PIN khởi tạo. Hãy đặt mã PIN riêng (4-8 chữ số, khác mã khởi tạo, không chia sẻ cho ai) để mở khóa hệ thống!
+                Bạn đang dùng PIN cũ. Hãy tự đặt mã PIN mới (4-8 chữ số, khác PIN cũ, không chia sẻ cho ai) để mở khóa hệ thống! Không cần HR reset hay gửi PIN — quên PIN cũ thì hỏi HR xem lại mã hiện tại.
               </div>
               <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Mã PIN mới:</label>
               <input
@@ -1497,7 +1501,7 @@ export function App() {
           )}
 
           <p style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.4' }}>
-            💡 <strong>Bảo mật đăng nhập:</strong> Nhập SĐT (0946914474, 946914474 hoặc 84946914474 đều được) + mã PIN khởi tạo (4-8 số, hỏi HR/Admin lần đầu) rồi bấm ĐĂNG NHẬP. Mỗi người giữ PIN riêng — không chia sẻ để tránh bị đăng nhập ké!
+            💡 <strong>Bảo mật đăng nhập:</strong> Nhập SĐT (0946914474, 946914474 hoặc 84946914474 đều được) + mã PIN hiện tại (4-8 số) rồi bấm ĐĂNG NHẬP. Tới kỳ 1-5 hàng tháng, hệ thống yêu cầu tự đổi PIN mới từ PIN cũ — không cần HR reset/gửi PIN! Mỗi người giữ PIN riêng — không chia sẻ!
           </p>
           <button
             onClick={handleChangeApiBase}

@@ -120,11 +120,13 @@ export async function autoRemindersTick(
     const ids = await hrAdminIds(repo);
     if (ids.length === 0) return;
 
-    // 2. PIN khởi tạo quá 3 ngày chưa đổi
+    // 2. PIN khởi tạo quá 3 ngày chưa đổi (chỉ tài khoản mới chưa từng tự đổi;
+    // kỳ xoay hàng tháng đã có thông báo riêng từ pin-rotation, không nhắc lại ở đây).
     if (!notifiedDaily.has(`pin:${today}`)) {
       const accounts = await repo.listAccounts();
       const stale = accounts.filter(a => {
         if (a.pin_must_change !== true) return false;
+        if ((a as any).pin_changed_at) return false;
         const created = new Date(a.created_at || a.updated_at).getTime();
         return Number.isFinite(created) && now - created > 3 * DAY_MS;
       });

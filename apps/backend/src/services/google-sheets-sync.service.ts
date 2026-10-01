@@ -34,7 +34,7 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   },
   {
     title: 'TAI_KHOAN_NHAN_VIEN',
-    headers: ['ID Tài Khoản', 'ID Nhân Viên', 'Số Điện Thoại', 'Vai Trò', 'Trạng Thái', 'Phiên Bản', 'Mã PIN (hash)', 'Bắt Buộc Đổi PIN', 'Mã PIN'],
+    headers: ['ID Tài Khoản', 'ID Nhân Viên', 'Số Điện Thoại', 'Vai Trò', 'Trạng Thái', 'Phiên Bản', 'Mã PIN (hash)', 'Bắt Buộc Đổi PIN', 'Mã PIN', 'Đổi PIN Cuối', 'Kỳ PIN'],
   },
   {
     title: 'ADMIN_ACCOUNTS',
@@ -547,6 +547,9 @@ export class GoogleSheetsSyncService {
             pin_must_change: r[7] === 'YES',
             // Cột Mã PIN bản rõ — chỉ hiển thị trên cổng quản trị (Admin/HR).
             pin_code: r[8] || undefined,
+            // Cột Đổi PIN Cuối (ISO) + Kỳ PIN (YYYY-MM): tự đổi định kỳ hàng tháng 1-5.
+            pin_changed_at: r[9] || undefined,
+            pin_rotation_cycle: r[10] || undefined,
           }));
         // Đọc thiếu dòng mà bộ nhớ đang nhiều hơn gấp đôi -> giữ bộ nhớ (chống mất PIN hàng loạt).
         // Kể cả map ra rỗng (dòng lỗi/filter hết) mà bộ nhớ đang có -> giữ.
@@ -599,6 +602,9 @@ export class GoogleSheetsSyncService {
             pinDirty = true;
             backfilled++;
           }
+          // Chuẩn hóa lần đầu cho cột mới (không ghi đè dữ liệu đã có).
+          if ((acc as any).pin_changed_at === undefined) (acc as any).pin_changed_at = '';
+          if ((acc as any).pin_rotation_cycle === undefined) (acc as any).pin_rotation_cycle = '';
         }
         counts.pinBackfilled = backfilled;
       } else if (fallback.accounts.length === 0) {
@@ -690,6 +696,8 @@ export class GoogleSheetsSyncService {
             (acc as any).pin_hash || '',
             acc.pin_must_change ? 'YES' : '',
             GoogleSheetsSyncService.sheetText((acc as any).pin_code || ''),
+            GoogleSheetsSyncService.sheetText((acc as any).pin_changed_at || ''),
+            GoogleSheetsSyncService.sheetText((acc as any).pin_rotation_cycle || ''),
           ]);
           const def = SHEETS_DEFINITIONS.find(d => d.title === 'TAI_KHOAN_NHAN_VIEN')!;
           await this.overwriteSheetData('TAI_KHOAN_NHAN_VIEN', def.headers, rows);
@@ -1514,6 +1522,8 @@ export class GoogleSheetsSyncService {
         acc.pin_hash || '',
         acc.pin_must_change ? 'YES' : '',
         GoogleSheetsSyncService.sheetText((acc as any).pin_code || ''),
+        GoogleSheetsSyncService.sheetText((acc as any).pin_changed_at || ''),
+        GoogleSheetsSyncService.sheetText((acc as any).pin_rotation_cycle || ''),
       ]);
       await this.overwriteSheetData('TAI_KHOAN_NHAN_VIEN', SHEETS_DEFINITIONS.find(d => d.title === 'TAI_KHOAN_NHAN_VIEN')!.headers, accountRows);
       details.accounts = accountRows.length;

@@ -290,6 +290,8 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
           (snapshot as any).pin_hash || '',
           (snapshot as any).pin_must_change ? 'YES' : '',
           GoogleSheetsSyncService.sheetText((snapshot as any).pin_code || ''),
+          GoogleSheetsSyncService.sheetText((snapshot as any).pin_changed_at || ''),
+          GoogleSheetsSyncService.sheetText((snapshot as any).pin_rotation_cycle || ''),
         ]);
         if (!ok) {
           console.warn('[GoogleSheetsAdapter] appendRow TAI_KHOAN_NHAN_VIEN failed, running syncAllData');
@@ -303,6 +305,12 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   async setAccountPin(id: string, pinHash: string, mustChange: boolean, actorId: string, pinPlain?: string | null) {
     const updated = await this.fallbackAdapter.setAccountPin(id, pinHash, mustChange, actorId, pinPlain);
     this.scheduleFullSync('PIN.syncAll');
+    return updated;
+  }
+
+  async markAccountPinMustChange(id: string, actorId: string) {
+    const updated = await this.fallbackAdapter.markAccountPinMustChange(id, actorId);
+    this.scheduleFullSync('PIN_ROTATION.syncAll');
     return updated;
   }
 

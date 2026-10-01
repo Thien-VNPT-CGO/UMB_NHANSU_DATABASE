@@ -9,6 +9,7 @@ import {
 } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { hashPassword, hashPin, isBcryptHash, verifyPassword, verifyPin } from './password.service.js';
+import { isPinRotationDue } from './pin-rotation.service.js';
 
 const DEFAULT_FALLBACK_JWT_SECRET =
   'ubm-milk-hr-system-jwt-production-secret-key-2026-secure-random-token-v5';
@@ -254,7 +255,7 @@ export class AuthService {
       employee,
       role: 'EMPLOYEE',
       stage: employee.employment_status,
-      mustChangePin: account.pin_must_change === true,
+      mustChangePin: account.pin_must_change === true || isPinRotationDue(account, new Date()),
     };
   }
 
@@ -264,6 +265,9 @@ export class AuthService {
     if (!account) throw new Error('ACCOUNT_NOT_FOUND');
     if (!account.pin_hash || !(await verifyPin(oldPin, account.pin_hash))) {
       throw new Error('INVALID_PIN');
+    }
+    if ((oldPin || '').trim() === (newPin || '').trim()) {
+      throw new Error('SAME_PIN');
     }
     const hashed = await hashPin(newPin); // ném WEAK_PIN nếu sai định dạng
     // NV tự đổi PIN -> cập nhật luôn bản rõ để HR dễ quản lý (cột Mã PIN hiển thị mã mới nhất).
@@ -466,7 +470,7 @@ export class AuthService {
         phone: decoded.phone || '',
         fullName: decoded.fullName || '',
         permissions: decoded.permissions || [],
-        mustChangePin: account.pin_must_change === true,
+        mustChangePin: account.pin_must_change === true || isPinRotationDue(account, new Date()),
         tv: decoded.tv,
       };
     }

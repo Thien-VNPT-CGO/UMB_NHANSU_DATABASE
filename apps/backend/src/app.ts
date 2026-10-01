@@ -5,7 +5,7 @@ import cors from 'cors';
 import { GoogleSheetsAdapter } from './repositories/google-sheets.adapter.js';
 import { singleWriterQueue } from './repositories/single-writer-queue.js';
 import { AuthService, sanitizeAdmin } from './services/auth.service.js';
-import { hashPassword, hashPin, generateAutoPin } from './services/password.service.js';
+import { hashPassword } from './services/password.service.js';
 import {
   assertHangTuanWindow,
   closeManualRegistration,
@@ -393,7 +393,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  // Nhân viên tự đổi mã PIN (xóa cờ bắt-đổi-lần-đầu).
+  // Nhân viên tự đổi mã PIN từ PIN cũ (kỳ định kỳ hàng tháng 1-5 + lần đầu).
   app.post('/auth/employee/change-pin', authMiddleware, validate({ body: employeeChangePinBody }), async (req: AuthenticatedRequest, res) => {
     try {
       if (req.user?.role !== 'EMPLOYEE' || !req.user.employeeId) {
@@ -415,7 +415,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       });
       res.json({ success: true, message: 'Đã đổi mã PIN thành công!' });
     } catch (err: any) {
-      const status = err.message === 'WEAK_PIN' ? 400 : 401;
+      const status = err.message === 'WEAK_PIN' || err.message === 'SAME_PIN' ? 400 : 401;
       res.status(status).json({ error: err.message });
     }
   });
@@ -556,29 +556,17 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   // --- ACCOUNTS: SĐT + mã PIN tự động (hệ thống tự sinh PIN khởi tạo cho từng tài khoản,
   // nhân viên đăng nhập lần đầu rồi đặt PIN riêng ngay — không còn HR cấp tay) ---
+  // Kỳ định kỳ hàng tháng (1-5): NV TỰ đổi PIN mới từ PIN cũ — KHÔNG reset.
+  // HR không reset PIN nữa: khi NV quên PIN cũ thì xem cột Mã PIN (bản rõ hiện tại)
+  // để nhắc lại, NV tự đổi từ PIN đó.
 
-  // NV quên PIN: HR/Admin cấp lại PIN mới (PIN cũ hết hiệu lực ngay), gửi PIN mới cho NV.
-  app.post('/admin/employee-accounts/:id/reset-pin', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: adminIdParams }), async (req: AuthenticatedRequest, res) => {
-    try {
-      const account = await adapter.getAccountById(req.params.id);
-      if (!account) return res.status(404).json({ error: 'ACCOUNT_NOT_FOUND' });
-      const newPin = generateAutoPin();
-      const updated = await adapter.setAccountPin(account.account_id, await hashPin(newPin), true, req.user!.id, newPin);
-      broadcastUpdate('accounts', { action: 'reset-pin', accountId: account.account_id });
-      const emp = await employeesService.getEmployee(account.employee_id).catch(() => null);
-      broadcastNotification({
-        type: 'PIN_SENT',
-        title: '🔑 Đã cấp lại PIN mới',
-        message: `${emp?.full_name || account.phone_normalized} đã được cấp PIN mới. Gửi ngay cho NV qua Zalo/tin nhắn — NV đăng nhập và đặt PIN riêng.`,
-        linkTab: 'activation',
-        metadata: { accountId: account.account_id },
-        targetRoles: ['ADMIN', 'HR'],
-      });
-      const { pin_hash: _omit, ...rest } = updated as any;
-      res.json({ success: true, accountId: account.account_id, pin: newPin, account: rest });
-    } catch (err: any) {
-      res.status(400).json({ error: err.message });
-    }
+  // ĐÃ BỎ reset PIN (theo yêu cầu vận hành 2026-10): giữ route để frontend cũ
+  // không gãy, nhưng luôn trả 410 + hướng dẫn quy trình tự đổi.
+  app.post('/admin/employee-accounts/:id/reset-pin', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: adminIdParams }), async (_req: AuthenticatedRequest, res) => {
+    return res.status(410).json({
+      error: 'PIN_RESET_DISABLED',
+      message: 'Đã bỏ reset PIN: NV tự đổi PIN mới từ PIN cũ trong kỳ 1-5 hàng tháng. Nếu NV quên PIN cũ, HR xem cột Mã PIN để nhắc lại PIN hiện tại, NV đăng nhập bằng PIN đó rồi tự đổi PIN mới.',
+    });
   });
 
   // Gửi mã PIN khởi tạo qua Zalo cá nhân HR (đơn lẻ hoặc hàng loạt cho NV chưa đổi PIN).

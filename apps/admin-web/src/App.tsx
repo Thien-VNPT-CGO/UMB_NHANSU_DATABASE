@@ -414,24 +414,15 @@ export function App() {
     } catch { /* không phải ADMIN hoặc offline */ }
   };
 
-  // NV quên PIN: HR/Admin cấp lại PIN mới (PIN cũ hết hiệu lực ngay) rồi gửi cho NV.
-  const [resettingPinId, setResettingPinId] = useState<string | null>(null);
+  // ĐÃ BỎ reset PIN (vận hành 2026-10): NV tự đổi từ PIN cũ trong kỳ 1-5.
+  // HR quên PIN -> xem cột Mã PIN (bản rõ hiện tại) để nhắc lại, không cấp mới.
   const handleResetPin = async (item: any) => {
-    if (!item?.hasRealAccount) {
-      setErrorMsg('Tài khoản chưa tồn tại, không thể reset PIN!');
-      return;
+    if (item?.pinCode) {
+      setSuccessMsg(`PIN hiện tại của ${item.fullName} (${item.phone}): ${item.pinCode} — đọc cho NV để NV đăng nhập bằng PIN này rồi tự đổi PIN mới (không reset).`);
+    } else {
+      setErrorMsg('Đã bỏ reset PIN: NV tự đổi PIN mới từ PIN cũ (hạn 1-5 hàng tháng). Tài khoản này chưa có mã PIN để nhắc.');
     }
-    if (!window.confirm(`Cấp lại PIN mới cho ${item.fullName} (${item.phone})?\nPIN cũ hết hiệu lực ngay. Gửi PIN mới cho NV qua Zalo/tin nhắn.`)) return;
-    setResettingPinId(item.accountId);
-    try {
-      const res = await apiRequest(`/admin/employee-accounts/${item.accountId}/reset-pin`, { method: 'POST' });
-      setSuccessMsg(`Đã cấp PIN mới cho ${item.fullName}: ${res.pin} — gửi ngay cho NV! NV đăng nhập và đặt PIN riêng.`);
-      await loadAllData();
-    } catch (err: any) {
-      setErrorMsg(err.message);
-    } finally {
-      setResettingPinId(null);
-    }
+    return;
   };
 
   // Modals
@@ -1221,7 +1212,7 @@ export function App() {
         // Mã khởi tạo, NV chưa đổi -> hiển thị trạng thái chờ đổi PIN
         pinMustChange: acc?.pin_must_change === true,
         // Lần đổi/cấp PIN gần nhất (đổi PIN riêng, reset, xoay kỳ) để theo dõi tháng.
-        pinUpdatedAt: (acc as any)?.updated_at || '',
+        pinUpdatedAt: (acc as any)?.pin_changed_at || (acc as any)?.updated_at || '',
       };
     });
 
@@ -1243,7 +1234,7 @@ export function App() {
           version: acc.version || 1,
           hasRealAccount: true,
           pinMustChange: acc.pin_must_change === true,
-          pinUpdatedAt: (acc as any)?.updated_at || '',
+          pinUpdatedAt: (acc as any)?.pin_changed_at || (acc as any)?.updated_at || '',
         });
       }
     });
@@ -2647,7 +2638,7 @@ export function App() {
                 <span style={{ fontWeight: 800, color: '#92400E' }}>🔑 PIN tháng {pinMonthStats.key} (hạn 1-5):</span>
                 <span style={{ padding: '4px 12px', borderRadius: '999px', backgroundColor: '#DCFCE7', color: '#166534', fontWeight: 800, fontSize: '12px' }}>✅ Đã đổi riêng: {pinMonthStats.changed}/{pinMonthStats.total}</span>
                 <span style={{ padding: '4px 12px', borderRadius: '999px', backgroundColor: '#FEE2E2', color: '#991B1B', fontWeight: 800, fontSize: '12px' }}>🔒 Chờ đổi: {pinMonthStats.pending}</span>
-                <span style={{ color: '#92400E', fontSize: '12px' }}>NV quên PIN → bấm "Reset PIN" ở dòng đó để cấp mã mới rồi gửi cho NV.</span>
+                <span style={{ color: '#92400E', fontSize: '12px' }}>NV tự đổi PIN mới từ PIN cũ (hạn 1-5) — không reset. NV quên PIN cũ → bấm "👁 Nhắc PIN" để xem mã hiện tại.</span>
               </div>
 
               {/* Unified PIN & Account Table */}
@@ -2822,19 +2813,18 @@ export function App() {
                             ) : (
                               <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>—</span>
                             )}
-                            {item.hasRealAccount && (
+                            {item.hasRealAccount && item.pinCode && (
                               <button
                                 onClick={() => handleResetPin(item)}
-                                disabled={resettingPinId === item.accountId}
-                                title="NV quên PIN: cấp mã mới (mã cũ hết hiệu lực ngay)"
+                                title="Đã bỏ reset: xem cột Mã PIN để nhắc lại PIN hiện tại cho NV tự đổi"
                                 style={{
                                   padding: '6px 12px', borderRadius: 'var(--radius-sm)',
-                                  backgroundColor: '#F59E0B',
+                                  backgroundColor: '#94A3B8',
                                   color: '#FFF', fontSize: '11px', fontWeight: 800, border: 'none',
-                                  cursor: resettingPinId === item.accountId ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap',
+                                  cursor: 'pointer', whiteSpace: 'nowrap',
                                 }}
                               >
-                                {resettingPinId === item.accountId ? '⏳...' : '🔄 Reset PIN'}
+                                👁 Nhắc PIN
                               </button>
                             )}
                             </div>

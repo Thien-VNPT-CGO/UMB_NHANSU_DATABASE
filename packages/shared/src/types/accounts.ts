@@ -15,6 +15,10 @@ export interface EmployeeAccount {
   pin_code?: string;
   /** True khi PIN hiện tại do HR cấp/reset — bắt buộc đổi ở lần đăng nhập sau. */
   pin_must_change?: boolean;
+  /** ISO lần NV tự đổi PIN gần nhất (dùng cho xoay PIN định kỳ hàng tháng 1-5, không reset). */
+  pin_changed_at?: string;
+  /** Kỳ YYYY-MM mà NV đã hoàn tất tự đổi PIN (VD 2026-10). */
+  pin_rotation_cycle?: string;
   version: number;
   created_at: string;
   updated_at: string;

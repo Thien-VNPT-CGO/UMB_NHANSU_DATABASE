@@ -249,9 +249,19 @@ export class MockSheetsAdapter implements ISheetsRepository {
     // pinPlain === null: xóa bản rõ. pinPlain === undefined: giữ nguyên bản rõ cũ.
     // Luồng hiện tại: cả HR cấp và NV tự đổi đều lưu bản rõ để HR dễ quản lý.
     if (pinPlain !== undefined) account.pin_code = pinPlain || undefined;
+    const nowIso = new Date().toISOString();
+    // Ghi nhận lần đổi PIN (dùng cho xoay định kỳ hàng tháng 1-5).
+    (account as any).pin_changed_at = nowIso;
+    if (!mustChange) {
+      // NV tự đổi từ PIN cũ -> đánh dấu đã hoàn tất kỳ hiện tại (giờ VN).
+      try {
+        const vn = new Date(Date.now() + 7 * 3_600_000);
+        (account as any).pin_rotation_cycle = `${vn.getUTCFullYear()}-${String(vn.getUTCMonth() + 1).padStart(2, '0')}`;
+      } catch { /* best-effort */ }
+    }
     // Đổi PIN thu hồi phiên cũ (token mang version cũ hết hiệu lực).
     account.version += 1;
-    account.updated_at = new Date().toISOString();
+    account.updated_at = nowIso;
     await this.recordAuditLog({
       log_id: `LOG_${Date.now()}`,
       actor_id: actorId,
@@ -260,6 +270,27 @@ export class MockSheetsAdapter implements ISheetsRepository {
       target_entity: 'TAI_KHOAN_NHAN_VIEN',
       target_id: id,
       details: `PIN updated for account ${id}`,
+    });
+    return { ...account };
+  }
+
+  async markAccountPinMustChange(id: string, actorId: string): Promise<EmployeeAccount> {
+    this.checkErrors();
+    const account = this.accounts.find(a => a.account_id === id);
+    if (!account) throw new Error('ACCOUNT_NOT_FOUND');
+    if (account.pin_must_change === true) return { ...account };
+    account.pin_must_change = true;
+    // KHÔNG đổi hash, KHÔNG tăng version (giữ phiên đăng nhập, middleware vẫn chặn
+    // bằng cờ mustChange mới nhất — NV đăng nhập bằng PIN cũ rồi tự đặt PIN mới).
+    account.updated_at = new Date().toISOString();
+    await this.recordAuditLog({
+      log_id: `LOG_${Date.now()}`,
+      actor_id: actorId,
+      actor_role: 'SYSTEM',
+      action: 'ACCOUNT_PIN_ROTATION_DUE',
+      target_entity: 'TAI_KHOAN_NHAN_VIEN',
+      target_id: id,
+      details: `Monthly self-rotation due for account ${id} (keep old PIN, require self-change)`,
     });
     return { ...account };
   }

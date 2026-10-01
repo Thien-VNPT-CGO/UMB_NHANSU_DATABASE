@@ -1,30 +1,59 @@
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { NotificationsService } from './notifications.service.js';
-import { generateAutoPin, hashPin } from './password.service.js';
 
 /**
- * Xoay mã PIN định kỳ hàng tháng (ngày 1-5):
- *  - Ngày 1: chốt danh sách tài khoản NV đang hoạt động, cấp PIN mới (mustChange),
- *    báo NV (in-app) + báo HR/Admin (dùng nút Gửi PIN Zalo hàng loạt để phát PIN).
- *  - Xử lý theo mẻ 15 tài khoản/tick để bcrypt không chặn server.
- *  - NV bắt đổi PIN riêng ở lần đăng nhập sau (cổng PIN_CHANGE_REQUIRED có sẵn).
- *  - Trạng thái theo dõi trên cổng Admin/HR: cột Mã PIN + Trạng thái PIN + Đổi PIN cuối.
+ * Xoay mã PIN định kỳ hàng tháng — CHẾ ĐỘ TỰ ĐỔI TỪ PIN CŨ (từ 2026-10):
+ *  - KHÔNG reset / KHÔNG sinh PIN mới hàng loạt, KHÔNG cần HR gửi PIN.
+ *  - Từ ngày 1 mỗi tháng: tài khoản nào chưa tự đổi PIN trong tháng hiện tại
+ *    (pin_changed_at trước 00:00 ngày 1, hoặc pin_must_change đang true)
+ *    sẽ bị gắn cờ pin_must_change=true — GIỮ NGUYÊN hash cũ.
+ *  - NV đăng nhập bằng SĐT + PIN CŨ (vẫn hợp lệ), bị chặn mọi API ngoài
+ *    đổi PIN / xem hồ sơ (PIN_CHANGE_REQUIRED có sẵn) cho tới khi tự đặt
+ *    PIN mới khác PIN cũ trong hạn 1-5. Sau ngày 5 vẫn chặn đến khi đổi xong.
+ *  - HR KHÔNG reset PIN nữa: khi NV quên PIN cũ thì HR xem cột Mã PIN
+ *    (bản rõ hiện tại) để nhắc lại, NV tự đổi từ PIN đó.
  */
-
-const CHUNK = 15;
 
 function tzOffsetHours(): number {
   const raw = Number(process.env.WEEKLY_OFF_TZ_OFFSET_HOURS);
   return Number.isFinite(raw) && raw !== 0 ? raw : 7;
 }
 
-function vnNow(now: Date = new Date()): Date {
+export function vnNow(now: Date = new Date()): Date {
   return new Date(now.getTime() + tzOffsetHours() * 3_600_000);
 }
 
-function cycleKey(now: Date): string {
+export function cycleKey(now: Date = new Date()): string {
   const vn = vnNow(now);
   return `${vn.getUTCFullYear()}-${String(vn.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+/** Mốc 00:00 ngày 1 đầu tháng hiện tại (giờ VN, trả về epoch ms UTC). */
+export function monthStartMs(now: Date = new Date()): number {
+  const vn = vnNow(now);
+  const y = vn.getUTCFullYear();
+  const m = vn.getUTCMonth();
+  return Date.UTC(y, m, 1) - tzOffsetHours() * 3_600_000;
+}
+
+/** True khi tài khoản tới hạn tự đổi PIN trong kỳ hiện tại. */
+export function isPinRotationDue(account: any, now: Date = new Date()): boolean {
+  if (!account) return false;
+  if (account.pin_must_change === true) return true;
+  const cycle = cycleKey(now);
+  // Đã tự đổi trong kỳ này -> xong.
+  if ((account as any).pin_rotation_cycle === cycle) return false;
+  const changedAt = (account as any).pin_changed_at;
+  if (!changedAt) {
+    // Tài khoản legacy chưa có mốc đổi: chỉ bắt đổi nếu đã tồn tại từ trước
+    // tháng này (tài khoản mới tạo trong tháng đã có mustChange riêng).
+    const created = new Date(account.created_at || '').getTime();
+    if (Number.isFinite(created) && created >= monthStartMs(now)) return false;
+    return true;
+  }
+  const t = new Date(changedAt).getTime();
+  if (!Number.isFinite(t)) return true;
+  return t < monthStartMs(now);
 }
 
 async function hrAdminIds(repo: ISheetsRepository): Promise<string[]> {
@@ -50,8 +79,6 @@ export async function pinRotationTick(
   now: Date = new Date()
 ): Promise<PinRotationProgress | null> {
   const cycle = cycleKey(now);
-  // Kỳ mới mở khi sang tháng (chu kỳ YYYY-MM); ngày 1-5 là hạn NV hoàn tất đổi PIN
-  // (thông báo ghi rõ, cổng PIN_CHANGE_REQUIRED cưỡng chế ở mọi lần đăng nhập).
   let settings: any = {};
   try {
     settings = (await repo.getSystemSettings()) || {};
@@ -60,85 +87,128 @@ export async function pinRotationTick(
   }
   let rot = settings.pinRotation || {};
 
-  if (!rot.cycle || rot.cycle < cycle) {
-    // Mở kỳ mới: chốt danh sách tài khoản NV đang hoạt động.
-    const accounts = await repo.listAccounts().catch(() => []);
-    const ids: string[] = [];
-    for (const a of accounts) {
-      try {
-        const emp = await repo.getEmployeeById(a.employee_id).catch(() => null);
-        if (!emp || emp.employment_status === 'TERMINATED') continue;
-      } catch {
-        continue;
-      }
-      ids.push(a.account_id);
-    }
-    rot = { cycle, remaining: ids, total: ids.length, startedAt: now.toISOString(), doneNotified: false };
+  // Sang tháng mới -> mở kỳ mới (reset cờ đã thông báo).
+  if (!rot.cycle || rot.cycle !== cycle) {
+    rot = { cycle, notifiedEmployee: false, notifiedAdmin: false, startedAt: now.toISOString() };
     try {
       await repo.updateSystemSettings({ ...settings, pinRotation: rot });
     } catch { /* thử lại tick sau */ }
-    const monthLabel = cycle;
-    const adminIds = await hrAdminIds(repo);
-    try {
-      await notifications.sendNotification({
-        recipientIds: ['ALL'],
-        type: 'PIN_ROTATION_STARTED',
-        severity: 'ACTION_REQUIRED',
-        title: `🔑 Kỳ đổi PIN định kỳ tháng ${monthLabel} (1-5/${monthLabel.split('-')[1]})`,
-        summary: 'Hệ thống đã cấp mã PIN mới cho toàn bộ nhân viên. Vui lòng liên hệ HR nhận PIN mới, đăng nhập và đặt PIN riêng trong ngày 1-5. Sau ngày 5 chưa đổi vẫn phải đổi mới dùng được hệ thống!',
-        targetPath: '/home',
-        actorId: 'SYSTEM',
-      }).catch(() => null);
-      if (adminIds.length > 0) {
-        await notifications.sendNotification({
-          recipientIds: adminIds,
-          type: 'PIN_ROTATION_STARTED',
-          severity: 'ACTION_REQUIRED',
-          title: `🔑 Đã mở kỳ đổi PIN tháng ${monthLabel}: ${ids.length} tài khoản`,
-          summary: `Đã cấp PIN mới cho ${ids.length} tài khoản NV. Dùng nút "Gửi PIN Zalo hàng loạt" ở tab PIN & TK để phát PIN. Theo dõi cột Trạng thái PIN + Đổi PIN cuối.`,
-          targetPath: '/activation',
-          actorId: 'SYSTEM',
-        }).catch(() => null);
-      }
-    } catch { /* best-effort */ }
+    settings = { ...settings, pinRotation: rot };
   }
 
-  if (rot.cycle !== cycle) return null;
-  const remaining: string[] = Array.isArray(rot.remaining) ? rot.remaining : [];
-  if (remaining.length === 0) {
-    if (!rot.doneNotified && (rot.total || 0) > 0) {
+  // Chốt danh sách tài khoản NV đang hoạt động + tới hạn tự đổi.
+  let accounts: any[] = [];
+  try {
+    accounts = await repo.listAccounts();
+  } catch {
+    return null;
+  }
+  const active: any[] = [];
+  for (const a of accounts) {
+    try {
+      const emp = await repo.getEmployeeById(a.employee_id).catch(() => null);
+      if (!emp || (emp as any).employment_status === 'TERMINATED') continue;
+    } catch {
+      continue;
+    }
+    active.push(a);
+  }
+
+  // Gắn cờ (giữ hash cũ) cho tài khoản tới hạn mà chưa bị gắn.
+  for (const a of active) {
+    if (a.pin_must_change === true) continue;
+    if (!isPinRotationDue(a, now)) continue;
+    try {
+      if (typeof (repo as any).markAccountPinMustChange === 'function') {
+        await (repo as any).markAccountPinMustChange(a.account_id, 'SYSTEM');
+      } else {
+        // Fallback cho adapter cũ: tự gắn cờ trực tiếp (không đổi hash/version).
+        (a as any).pin_must_change = true;
+        (a as any).updated_at = new Date().toISOString();
+      }
+    } catch { /* bỏ qua, tick sau thử lại */ }
+  }
+
+  const pending = active.filter(a => a.pin_must_change === true || isPinRotationDue(a, now)).length;
+  // Đếm lại sau khi gắn cờ: tài khoản đã gắn đều tính là pending cho tới khi NV tự đổi.
+  let pendingAfter = 0;
+  let done = 0;
+  try {
+    const fresh = await repo.listAccounts();
+    const freshActive = [];
+    for (const a of fresh) {
+      const emp = await repo.getEmployeeById(a.employee_id).catch(() => null);
+      if (!emp || (emp as any).employment_status === 'TERMINATED') continue;
+      freshActive.push(a);
+    }
+    for (const a of freshActive) {
+      if (a.pin_must_change === true) pendingAfter++;
+      else done++;
+    }
+    const total = freshActive.length;
+    // Thông báo 1 lần/kỳ (ngày 1 hoặc lần đầu phát hiện nợ PIN).
+    const monthLabel = cycle;
+    const day = vnNow(now).getUTCDate();
+    if (pendingAfter > 0) {
+      if (!rot.notifiedEmployee) {
+        rot.notifiedEmployee = true;
+        try {
+          await repo.updateSystemSettings({ ...(await repo.getSystemSettings().catch(() => ({}))), pinRotation: rot });
+        } catch { /* ignore */ }
+        try {
+          await notifications.sendNotification({
+            recipientIds: ['ALL'],
+            type: 'PIN_ROTATION_STARTED',
+            severity: 'ACTION_REQUIRED',
+            title: `🔑 Kỳ đổi PIN định kỳ tháng ${monthLabel} (hạn 1-5/${monthLabel.split('-')[1]})`,
+            summary: `Từ PIN CŨ của bạn: đăng nhập bằng SĐT + PIN cũ, rồi tự đặt PIN mới khác PIN cũ trong ngày 1-5. Quá hạn vẫn phải đổi mới dùng được. KHÔNG cần HR reset/gửi PIN — quên PIN cũ thì hỏi HR xem lại mã hiện tại.`,
+            targetPath: '/home',
+            actorId: 'SYSTEM',
+          }).catch(() => null);
+        } catch { /* best-effort */ }
+      }
+      if (!rot.notifiedAdmin && day >= 1) {
+        rot.notifiedAdmin = true;
+        try {
+          await repo.updateSystemSettings({ ...(await repo.getSystemSettings().catch(() => ({}))), pinRotation: rot });
+        } catch { /* ignore */ }
+        const ids = await hrAdminIds(repo);
+        if (ids.length > 0) {
+          try {
+            await notifications.sendNotification({
+              recipientIds: ids,
+              type: 'PIN_ROTATION_STARTED',
+              severity: 'ACTION_REQUIRED',
+              title: `🔑 Kỳ tự đổi PIN tháng ${monthLabel}: ${pendingAfter}/${total} chưa đổi`,
+              summary: `NV tự đổi từ PIN cũ (hạn 1-5, sau hạn vẫn chặn tới khi đổi). HR KHÔNG reset/gửi PIN hàng loạt nữa — chỉ xem cột Mã PIN để nhắc lại PIN cũ khi NV quên. Theo dõi cột Trạng thái PIN + Đổi PIN cuối.`,
+              targetPath: '/activation',
+              actorId: 'SYSTEM',
+            }).catch(() => null);
+          } catch { /* best-effort */ }
+        }
+      }
+    } else if (total > 0 && !rot.doneNotified) {
       rot.doneNotified = true;
       try {
         await repo.updateSystemSettings({ ...(await repo.getSystemSettings().catch(() => ({}))), pinRotation: rot });
       } catch { /* ignore */ }
       const ids = await hrAdminIds(repo);
       if (ids.length > 0) {
-        await notifications.sendNotification({
-          recipientIds: ids,
-          type: 'PIN_ROTATION_DONE',
-          severity: 'SYSTEM',
-          title: `✅ Đã cấp xong PIN tháng ${cycle}: ${rot.total}/${rot.total}`,
-          summary: 'Toàn bộ tài khoản đã có PIN mới. NV sẽ đổi PIN riêng khi đăng nhập — theo dõi cột Trạng thái PIN.',
-          targetPath: '/activation',
-          actorId: 'SYSTEM',
-        }).catch(() => null);
+        try {
+          await notifications.sendNotification({
+            recipientIds: ids,
+            type: 'PIN_ROTATION_DONE',
+            severity: 'SYSTEM',
+            title: `✅ Xong kỳ tự đổi PIN tháng ${cycle}: ${done}/${total}`,
+            summary: 'Toàn bộ NV đã tự đổi PIN mới từ PIN cũ trong kỳ này.',
+            targetPath: '/activation',
+            actorId: 'SYSTEM',
+          }).catch(() => null);
+        } catch { /* best-effort */ }
       }
     }
-    return { cycle, rotated: rot.total || 0, pending: 0, total: rot.total || 0, completed: true };
+    return { cycle, rotated: done, pending: pendingAfter, total, completed: pendingAfter === 0 };
+  } catch {
+    return { cycle, rotated: 0, pending, total: active.length, completed: false };
   }
-
-  const chunk = remaining.slice(0, CHUNK);
-  for (const id of chunk) {
-    try {
-      const pin = generateAutoPin();
-      await repo.setAccountPin(id, await hashPin(pin), true, 'SYSTEM', pin);
-    } catch {
-      // tài khoản lỗi bỏ qua, các kỳ sau đối chiếu lại
-    }
-  }
-  rot.remaining = remaining.slice(chunk.length);
-  try {
-    await repo.updateSystemSettings({ ...(await repo.getSystemSettings().catch(() => ({}))), pinRotation: rot });
-  } catch { /* thử lại tick sau */ }
-  return { cycle, rotated: (rot.total || 0) - rot.remaining.length, pending: rot.remaining.length, total: rot.total || 0, completed: false };
 }
