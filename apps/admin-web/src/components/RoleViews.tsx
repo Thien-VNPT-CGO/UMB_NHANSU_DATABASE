@@ -3812,7 +3812,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                   rate: emp.current_rate_per_hour || 21000,
                                   shift: emp.default_shift_code || '',
                                   startDate: String(emp.start_date || '').slice(0, 10),
-                                  officialDate: emp.official_date || '',
+                                  officialDate: String(emp.official_date || '').slice(0, 10),
                                   email: emp.email || '',
                                 });
                               }}
@@ -4263,8 +4263,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 group: emp.group || 'STORE',
                                 rate: emp.current_rate_per_hour || 25500,
                                 shift: emp.default_shift_code || '',
-                                startDate: emp.start_date || '',
-                                officialDate: emp.official_date || '',
+                                startDate: String(emp.start_date || '').slice(0, 10),
+                                officialDate: String(emp.official_date || '').slice(0, 10),
                                 email: emp.email || '',
                               });
                             }}
