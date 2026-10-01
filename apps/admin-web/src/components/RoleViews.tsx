@@ -647,12 +647,19 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }, [activeTab]);
   // Tới giờ PV (trong 30p đầu): tự bung link Meet 1 lần/ứng viên/ngày + báo toast.
   // Trình duyệt có thể chặn popup — nút "Vào Meet" nhấp nháy luôn sẵn để bấm tay.
+  // Trước giờ PV 15 phút: báo toast nhắc HR chuẩn bị (1 lần/ứng viên/ngày).
+  const remind15Ref = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (activeTab !== 'hr-interviews') return;
     for (const cd of (candidates || [])) {
       const st = interviewStartMs(cd);
       if (!st) continue;
       const key = `${cd.submission_id}|${cd.interview_date}`;
+      const diff = st - meetNow;
+      if (diff > 0 && diff <= 15 * 60000 && !remind15Ref.current.has(key)) {
+        remind15Ref.current.add(key);
+        showToast(`⏰ Còn 15 phút tới giờ PV ${cd.full_name} (${String(cd.interview_time_slot || '').slice(0, 5)}) — HR chuẩn bị vào Meet!`);
+      }
       if (meetNow >= st && meetNow - st < 30 * 60000 && !meetOpenedRef.current.has(key)) {
         meetOpenedRef.current.add(key);
         try { window.open(SYSTEM_MEET_URL, '_blank'); } catch { /* popup bị chặn */ }

@@ -8,6 +8,7 @@ import { AuthService } from './services/auth.service.js';
 import { weeklyOffScheduler } from './services/weekly-off.service.js';
 import { pinRotationTick } from './services/pin-rotation.service.js';
 import { dedupeDuplicateInterviews, enforceScreeningOutcomes } from './services/interview-dedupe.service.js';
+import { interviewReminderTick } from './services/interview-reminders.service.js';
 import { autoRemindersTick } from './services/auto-reminders.service.js';
 import { buildSocketCorsOptions, getAllowedOrigins } from './config/security.js';
 
@@ -304,6 +305,32 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   };
   setTimeout(interviewDedupeTickSafe, 120_000);
   setInterval(interviewDedupeTickSafe, 5 * 60_000);
+
+  // Nhắc HR trước giờ PV 15 phút (mỗi 60s): inbox bền vững + popup realtime.
+  const interviewReminderTickSafe = () => {
+    interviewReminderTick(adapter, services.notificationsService, Date.now())
+      .then(r => {
+        if (!r || r.reminded.length === 0) return;
+        for (const item of r.reminded) {
+          console.log(`[interview-reminder] Sắp PV: ${item.candidateName} ${item.timeSlot} ${item.date} (còn ${item.minutesLeft}p).`);
+          try {
+            io.emit('system:notification', {
+              id: `notif_${Date.now()}_${item.submissionId}`,
+              type: 'CANDIDATE',
+              title: `⏰ Sắp tới giờ PV: ${item.candidateName} (${item.timeSlot} — còn ${item.minutesLeft} phút)`,
+              message: `${item.candidateName} phỏng vấn lúc ${item.timeSlot} ngày ${item.date}. HR chuẩn bị vào Meet trước 5 phút!`,
+              linkTab: 'hr-interviews',
+              metadata: { submissionId: item.submissionId },
+              targetRoles: ['ADMIN', 'HR'],
+              timestamp: new Date().toISOString(),
+            });
+          } catch { /* non-fatal */ }
+        }
+      })
+      .catch(err => console.warn('[interview-reminder] tick error:', err?.message || err));
+  };
+  setTimeout(interviewReminderTickSafe, 30_000);
+  setInterval(interviewReminderTickSafe, 60_000);
 
   // Backup snapshot tự động mỗi 24h + tự verify; fail thì báo ADMIN/HR trong app.
   const autoBackupTick = async () => {
