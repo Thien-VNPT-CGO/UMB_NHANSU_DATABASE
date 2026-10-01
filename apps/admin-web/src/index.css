@@ -393,3 +393,8 @@ button:active:not(:disabled) {
 /* Chấm realtime nhấp nháy */
 @keyframes fx-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 .fx-pulse-dot { animation: fx-blink 1.4s ease-in-out infinite; }
+
+/* Bảng tuyên dương bung vào */
+@keyframes fx-pop-in { 0% { opacity: 0; transform: scale(0.7); } 60% { opacity: 1; transform: scale(1.06); } 100% { opacity: 1; transform: scale(1); } }
+/* Nút cảnh báo giờ PV */
+@keyframes fx-shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-5px); } 40% { transform: translateX(5px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(4px); } }

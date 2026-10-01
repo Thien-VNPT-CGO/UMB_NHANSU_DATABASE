@@ -52,6 +52,8 @@ import {
 } from 'lucide-react';
 import { getDisplayBranch } from '../App';
 import { apiRequest, getApiBase, getAuthToken } from '../services/api';
+import { playInterviewAlert, playFanfare } from '../utils/sound-effects';
+import { PerfectScoreCelebration } from './PerfectScoreCelebration';
 
 /** Chat Zalo với ứng viên: tự động kết bạn qua nick HR + gửi lời chào (dùng chung 2 tab). */
 export async function chatZaloWithCandidate(c: any, showToast: (msg: string) => void): Promise<void> {
@@ -648,7 +650,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Tới giờ PV (trong 30p đầu): tự bung link Meet 1 lần/ứng viên/ngày + báo toast.
   // Trình duyệt có thể chặn popup — nút "Vào Meet" nhấp nháy luôn sẵn để bấm tay.
   // Trước giờ PV 15 phút: báo toast nhắc HR chuẩn bị (1 lần/ứng viên/ngày).
+  // Trước giờ PV 10 phút: tự mở Meet + tự mở popup chấm điểm để HR chấm trực tiếp.
+  // Tới giờ PV: popup cảnh báo + chuông riêng.
   const remind15Ref = useRef<Set<string>>(new Set());
+  const t10Ref = useRef<Set<string>>(new Set());
+  const meetWindowsRef = useRef<Map<string, Window | null>>(new Map());
+  const [pvAlert, setPvAlert] = useState<any | null>(null);
+  const [celebration, setCelebration] = useState<{ name: string; total: number; rubric: string } | null>(null);
   useEffect(() => {
     if (activeTab !== 'hr-interviews') return;
     for (const cd of (candidates || [])) {
@@ -660,10 +668,34 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         remind15Ref.current.add(key);
         showToast(`⏰ Còn 15 phút tới giờ PV ${cd.full_name} (${String(cd.interview_time_slot || '').slice(0, 5)}) — HR chuẩn bị vào Meet!`);
       }
+      // T-10 phút: tự mở Meet + popup chấm điểm (nếu chưa chấm).
+      if (diff > 0 && diff <= 10 * 60000 && !t10Ref.current.has(key)) {
+        t10Ref.current.add(key);
+        try {
+          const w = window.open(SYSTEM_MEET_URL, '_blank');
+          meetWindowsRef.current.set(key, w);
+        } catch {
+          meetWindowsRef.current.set(key, null);
+        }
+        if (!parseScoreDetailClient((cd as any)?.interview_score_detail)) {
+          setScoringRubric(((cd as any)?.interview_rubric === 'office' ? 'office' : 'store') as any);
+          setScoringAnswers({});
+          setScoringId(cd.submission_id);
+        }
+        showToast(`🎬 Meet đã tự mở cho PV ${cd.full_name} + popup chấm điểm — HR chấm trực tiếp, lưu xong Meet tự đóng!`);
+      }
       if (meetNow >= st && meetNow - st < 30 * 60000 && !meetOpenedRef.current.has(key)) {
         meetOpenedRef.current.add(key);
-        try { window.open(SYSTEM_MEET_URL, '_blank'); } catch { /* popup bị chặn */ }
-        showToast(`🔴 Tới giờ phỏng vấn ${cd.full_name} — mở link Meet!`);
+        // Meet đã tự mở từ T-10 phút; chỉ mở lại nếu chưa có (popup từng bị chặn).
+        const prev = meetWindowsRef.current.get(key);
+        if (!prev || prev.closed) {
+          try {
+            const w = window.open(SYSTEM_MEET_URL, '_blank');
+            meetWindowsRef.current.set(key, w);
+          } catch { /* popup bị chặn */ }
+        }
+        playInterviewAlert();
+        setPvAlert(cd);
       }
     }
   }, [meetNow]);
@@ -997,11 +1029,29 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         method: 'POST',
         body: JSON.stringify({ rubric: scoringRubric, answers: scoringAnswers }),
       });
+      // Đóng cửa sổ Meet đã tự mở cho ca PV này (nếu còn mở).
+      try {
+        const cand = (candidates || []).find((x: any) => x.submission_id === scoringId);
+        const date = String(cand?.interview_date || '').slice(0, 10);
+        const w = meetWindowsRef.current.get(`${scoringId}|${date}`);
+        if (w && !w.closed) w.close();
+        meetWindowsRef.current.delete(`${scoringId}|${date}`);
+      } catch { /* bỏ qua */ }
       if (res.autoRejected) {
         showToast(`🚫 Ứng viên dính đáp án LOẠI — đã tự động loại khỏi quy trình!`);
       } else {
         const v = res.verdict === 'PASS' ? '✅ PASS — đủ điều kiện Duyệt Thử việc!' : res.verdict === 'CONSIDER' ? '⚠️ Cân nhắc (10-11đ) — chưa đủ duyệt!' : '❌ Chưa đạt — cần chấm lại hoặc loại!';
         showToast(`Đã lưu điểm rubric: ${res.total}/13. ${v}`);
+      }
+      // Tuyệt đối 13/13: màn pháo hoa tuyên dương + fanfare.
+      if (!res.autoRejected && res.total === 13 && res.passed) {
+        const cand = (candidates || []).find((x: any) => x.submission_id === scoringId);
+        playFanfare();
+        setCelebration({
+          name: String(cand?.full_name || 'Ứng viên xuất sắc'),
+          total: res.total,
+          rubric: scoringRubric === 'office' ? 'TIÊU CHÍ LỌC HỒ SƠ KHÔNG CÓ KINH NGHIỆM' : 'TIÊU CHÍ LỌC HỒ SƠ CÓ KINH NGHIỆM',
+        });
       }
       setScoringId(null);
       if (typeof onRefreshData === 'function') {
@@ -3204,8 +3254,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           );
         })()}
 
-        {/* MODAL CẬP NHẬT THÔNG TIN ỨNG VIÊN (chốt 1 ca + 1 chi nhánh trước duyệt) */}
-        {updatingId && (() => {
+        {/* MODAL CẬP NHẬT THÔNG TIN ỨNG VIÊN (chốt 1 ca + 1 chi nhánh trước duyệt) */}        {updatingId && (() => {
           const cand = (candidates || []).find((x: any) => x.submission_id === updatingId);
           return (
             <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
@@ -3302,6 +3351,50 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </div>
             </div>
           </div>
+        )}
+
+        {/* POPUP ĐẾN GIỜ PV: cảnh báo + chuông riêng, HR vào Meet ngay */}
+        {pvAlert && (
+          <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.55)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+            <div style={{ backgroundColor: '#FFF', borderRadius: '16px', maxWidth: '440px', width: '100%', overflow: 'hidden', animation: 'fx-shake 0.5s ease' }}>
+              <div style={{ padding: '16px 20px', backgroundColor: '#DC2626', color: '#FFF', fontWeight: 900, fontSize: '16px', textAlign: 'center' }}>
+                🔴 ĐẾN GIỜ PHỎNG VẤN!
+              </div>
+              <div style={{ padding: '22px 20px', textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div style={{ fontSize: '22px', fontWeight: 900, color: '#0F172A' }}>{pvAlert.full_name}</div>
+                <div style={{ fontSize: '14px', color: '#475569', fontWeight: 700 }}>
+                  {String(pvAlert.interview_time_slot || '').slice(0, 5)} • {String(pvAlert.interview_date || '').slice(0, 10)}
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  {pvAlert.branch_name || getDisplayBranch(pvAlert.preferred_branch_id || 'CN130')} • {pvAlert.phone || pvAlert.phone_normalized}
+                </div>
+                <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                  <button
+                    onClick={() => { try { window.open(SYSTEM_MEET_URL, '_blank'); } catch {} setPvAlert(null); }}
+                    style={{ flex: 1, padding: '12px', borderRadius: '10px', backgroundColor: '#DC2626', color: '#FFF', fontSize: '14px', fontWeight: 900, border: 'none', cursor: 'pointer' }}
+                  >
+                    🔴 Vào Meet ngay
+                  </button>
+                  <button
+                    onClick={() => setPvAlert(null)}
+                    style={{ flex: 1, padding: '12px', borderRadius: '10px', backgroundColor: '#F1F5F9', color: '#334155', fontSize: '14px', fontWeight: 800, border: 'none', cursor: 'pointer' }}
+                  >
+                    Để sau
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MÀN PHÁO HOA TUYÊN DƯƠNG 13/13 TUYỆT ĐỐI */}
+        {celebration && (
+          <PerfectScoreCelebration
+            name={celebration.name}
+            total={celebration.total}
+            rubric={celebration.rubric}
+            onClose={() => setCelebration(null)}
+          />
         )}
       </div>
     );

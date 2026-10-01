@@ -137,6 +137,109 @@ export function playWarningTone(): void {
 }
 
 /**
+ * 5. Chuông thông báo hiện đại (Modern Glass Chime)
+ * Âm glockenspiel 3 nốt ngân + lấp lánh overtone — chuông chung cho mọi toast realtime.
+ */
+export function playModernChime(): void {
+  if (!isSoundEnabled()) return;
+  const ctx = getAudioContext();
+  if (!ctx) return;
+
+  const now = ctx.currentTime;
+  // E6 - G6 - B6: hợp âm Em lấp lánh, hiện đại
+  const notes = [1318.5, 1568.0, 1975.5];
+
+  notes.forEach((freq, idx) => {
+    const startTime = now + idx * 0.09;
+    // Nốt chính (sine, ngân vang)
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(freq, startTime);
+    gain.gain.setValueAtTime(0.001, startTime);
+    gain.gain.exponentialRampToValueAtTime(0.22, startTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.9);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(startTime);
+    osc.stop(startTime + 0.92);
+    // Overtone lấp lánh (gấp đôi tần số, nhỏ hơn, tắt nhanh)
+    const spark = ctx.createOscillator();
+    const sparkGain = ctx.createGain();
+    spark.type = 'sine';
+    spark.frequency.setValueAtTime(freq * 2, startTime);
+    sparkGain.gain.setValueAtTime(0.001, startTime);
+    sparkGain.gain.exponentialRampToValueAtTime(0.06, startTime + 0.015);
+    sparkGain.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.35);
+    spark.connect(sparkGain);
+    sparkGain.connect(ctx.destination);
+    spark.start(startTime);
+    spark.stop(startTime + 0.37);
+  });
+}
+
+/**
+ * 6. Báo giờ phỏng vấn (Interview Alert)
+ * Chuông 2 tông khẩn trương lặp 3 lần — khác mọi âm khác để HR nhận ra ngay.
+ */
+export function playInterviewAlert(): void {
+  if (!isSoundEnabled()) return;
+  const ctx = getAudioContext();
+  if (!ctx) return;
+
+  const now = ctx.currentTime;
+  for (let round = 0; round < 3; round++) {
+    const base = now + round * 0.42;
+    // Cặp 2 tông khẩn trương (A5 -> E6)
+    const pairs: Array<[number, number]> = [[880, 0], [1318.5, 0.16]];
+    for (const [freq, off] of pairs) {
+      const t = base + off;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, t);
+      gain.gain.setValueAtTime(0.001, t);
+      gain.gain.exponentialRampToValueAtTime(0.28, t + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.24);
+    }
+  }
+}
+
+/**
+ * 7. Nhạc chiến thắng (Fanfare)
+ * Fanfare C-E-G-C-E-G-C lên cao — dùng khi ứng viên đạt tuyệt đối / duyệt thành công.
+ */
+export function playFanfare(): void {
+  if (!isSoundEnabled()) return;
+  const ctx = getAudioContext();
+  if (!ctx) return;
+
+  const now = ctx.currentTime;
+  const seq: Array<[number, number]> = [
+    [523.25, 0], [659.25, 0.12], [783.99, 0.24], [1046.5, 0.36],
+    [783.99, 0.52], [1046.5, 0.6], [1318.5, 0.76],
+  ];
+  for (const [freq, off] of seq) {
+    const t = now + off;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(freq, t);
+    gain.gain.setValueAtTime(0.001, t);
+    gain.gain.exponentialRampToValueAtTime(0.22, t + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(t);
+    osc.stop(t + 0.52);
+  }
+}
+
+/**
  * 4. Micro-click Haptic Tone
  * Dùng khi bấm các nút bấm chức năng tạo cảm giác phản hồi xúc giác
  */

@@ -48,6 +48,7 @@ import { RoleViews } from './components/RoleViews';
 import {
   playNotificationDing,
   playSuccessChime,
+  playModernChime,
   playWarningTone,
   playButtonPop,
   isSoundEnabled,
@@ -321,13 +322,13 @@ export function App() {
       duration: toast.duration || 6000,
     };
 
-    // Phát âm thanh phù hợp
+    // Phát âm thanh phù hợp (chuông hiện đại cho thông báo chung)
     if (toast.type === 'CHECKIN' || toast.type === 'CHECKOUT' || toast.type === 'LEAVE' || toast.type === 'SWAP' || toast.type === 'PIN_CHANGED') {
       playNotificationDing();
     } else if (toast.type === 'WARNING') {
       playWarningTone();
     } else {
-      playSuccessChime();
+      playModernChime();
     }
 
     setLiveToasts((prev) => [newToast, ...prev].slice(0, 5));
