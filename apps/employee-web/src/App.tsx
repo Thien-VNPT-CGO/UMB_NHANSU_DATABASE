@@ -166,12 +166,17 @@ export function App() {
       try {
         const parsed = JSON.parse(raw);
         // Định dạng mới: map { [weekMon]: true } — hỗ trợ đợt mở bù VIP cho tuần sau.
+        let map: Record<string, boolean> = {};
         if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && parsed.week === undefined) {
-          const wk = weekKey || weeklyOffWeekKey();
-          return (parsed as any)[wk] === true;
+          map = parsed;
+        } else if (parsed?.week && parsed?.value === true) {
+          map[parsed.week] = true;
         }
         const wk = weekKey || weeklyOffWeekKey();
-        return parsed?.week === wk && parsed?.value === true;
+        if (map[wk] === true) return true;
+        // Đăng ký cho tuần MỤC TIÊU (sau tuần hiện tại): reload cuối tuần vẫn khóa.
+        // Key cũ hơn tuần hiện tại tự hết hiệu lực (không mở khóa nhầm tuần mới).
+        return Object.keys(map).some(k => map[k] === true && /^\d{4}-\d{2}-\d{2}$/.test(k) && k >= wk);
       } catch {
         return false; // định dạng cũ 'true'/'false' -> coi như hết hạn, server sẽ đồng bộ lại khi online
       }
@@ -1118,7 +1123,12 @@ export function App() {
 
   // Submit 2-day OFF for official employee
   const handleSubmitWeeklyOff2Days = async () => {
-    if (weeklyOffBusy) return;    // Khóa ngoài khung giờ mở cổng (server cũng chặn, đây là lớp báo sớm)
+    if (weeklyOffBusy) return;
+    // Đã đăng ký đủ 2 ngày -> khóa cứng, không cho gửi lại (kể cả gọi trực tiếp).
+    if (hasRegisteredWeeklyOff) {
+      showToast('🔒 Bạn đã đăng ký đủ 2 ngày OFF tuần này! Mỗi tuần chỉ được đăng ký 1 lần — cần đổi ngày vui lòng liên hệ HR/Store.');
+      return;
+    }    // Khóa ngoài khung giờ mở cổng (server cũng chặn, đây là lớp báo sớm)
     if (!isProbation && !hasRegisteredWeeklyOff && !weeklyOffRegOpen) {
       notifyRegWindowClosed();
       return;
@@ -2384,7 +2394,26 @@ export function App() {
                     </div>
                   )}
 
-                  {!hasRegisteredWeeklyOff && !weeklyOffRegOpen ? (
+                  {hasRegisteredWeeklyOff ? (
+                    /* ĐÃ ĐĂNG KÝ ĐỦ 2 NGÀY -> KHÓA CỨNG CHỨC NĂNG (kể cả reload lại web).
+                       Muốn đổi ngày thì liên hệ HR. */
+                    <div style={{
+                      backgroundColor: '#F1F5F9',
+                      border: '1.5px dashed #94A3B8',
+                      borderRadius: 'var(--radius-sm)',
+                      padding: '20px 14px',
+                      textAlign: 'center',
+                    }}>
+                      <Lock size={28} color="#059669" />
+                      <div style={{ fontWeight: 800, fontSize: '14px', color: '#065F46', margin: '8px 0 6px' }}>
+                        🔒 ĐÃ KHÓA ĐĂNG KÝ (đủ 2 ngày OFF/tuần)
+                      </div>
+                      <div style={{ fontSize: '12px', color: '#475569', lineHeight: '1.6' }}>
+                        Bạn đã đăng ký: <strong>{weeklyOffData.day1 || '—'}</strong> và <strong>{weeklyOffData.day2 || '—'}</strong>.<br />
+                        Mỗi tuần chỉ được đăng ký 1 lần duy nhất — cần đổi ngày vui lòng liên hệ HR/Store.
+                      </div>
+                    </div>
+                  ) : !weeklyOffRegOpen ? (
                     /* KHÓA NGOÀI KHUNG GIỜ MỞ CỔNG (T6 12h -> T7 15h) */
                     <div style={{
                       backgroundColor: '#F1F5F9',
