@@ -306,6 +306,24 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   setTimeout(interviewDedupeTickSafe, 120_000);
   setInterval(interviewDedupeTickSafe, 5 * 60_000);
 
+  // Tự kẹp lịch OFF tuần quá 2 ngày/NV/tuần về đúng 2 ngày mới nhất (giữ 2 phiếu mới
+  // nhất, hủy phần thừa do lọt đếm/bấm đúp/dữ liệu cũ) — chạy sau pull đầu + mỗi 5 phút,
+  // không cần HR bấm nút. Có thay đổi -> bắn realtime để các cổng tải lại ngay.
+  const weeklyOffClampTickSafe = () => {
+    (services.schedulesService as any).clampWeeklyOffOverLimit('SYSTEM', false)
+      .then((r: any) => {
+        if (r && r.cancelledCount > 0) {
+          console.log(`[weekly-off-clamp] Đã kẹp ${r.cancelledCount} phiếu OFF quá 2 ngày/tuần về đúng 2 ngày mới nhất.`);
+          try {
+            io.emit('data:updated', { entity: 'leaves', data: { action: 'weekly-off-overlimit-clamp', cancelled: r.cancelledCount }, timestamp: new Date().toISOString() });
+          } catch { /* non-fatal */ }
+        }
+      })
+      .catch((err: any) => console.warn('[weekly-off-clamp] tick error:', err?.message || err));
+  };
+  setTimeout(weeklyOffClampTickSafe, 150_000);
+  setInterval(weeklyOffClampTickSafe, 5 * 60_000);
+
   // Nhắc HR trước giờ PV 15 phút (mỗi 60s): inbox bền vững + popup realtime.
   const interviewReminderTickSafe = () => {
     interviewReminderTick(adapter, services.notificationsService, Date.now())

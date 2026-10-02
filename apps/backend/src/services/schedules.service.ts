@@ -248,6 +248,53 @@ export class SchedulesService {
     // Kẹp quá giới hạn: mỗi NV mỗi tuần tối đa 2 ngày OFF (trường hợp lọt 3 ngày do
     // phiếu cũ khác CN / bấm gửi 2 lần / dữ liệu cũ). Giữ 2 phiếu MỚI NHẤT (đúng lần
     // đăng ký cuối trên cổng NV), hủy phần thừa.
+    const clamp = await this.clampWeeklyOffOverLimit(actorId, dryRun, leaves, empById, today);
+    if (dryRun || (groups.length === 0 && clamp.overLimit.length === 0)) {
+      return { dryRun: true, today, groups, cancelledCount: 0, overLimit: clamp.overLimit, cancelledOverLimitCount: 0 };
+    }
+    let cancelledCount = 0;
+    const doneIds = new Set<string>(clamp.doneIds);
+    for (const g of groups) {
+      for (const lid of g.leaveIds) {
+        if (doneIds.has(lid)) continue;
+        doneIds.add(lid);
+        await this.repo.updateLeaveRequest(lid, 'CANCELLED', actorId, 'Reset lịch OFF trùng ca cùng chi nhánh — NV đăng ký lại theo luật chống trống ca').catch(() => null);
+        cancelledCount++;
+      }
+    }
+    await this.repo.recordAuditLog({
+      log_id: `LOG_${Date.now()}`,
+      actor_id: actorId,
+      actor_role: 'HR',
+      action: 'WEEKLY_OFF_OVERLAP_RESET',
+      target_entity: 'PHIEU_OFF',
+      target_id: `${groups.length}_groups`,
+      details: `Reset ${cancelledCount} phiếu OFF trùng ca (${groups.map(g => `${g.branch} ${g.date} ${g.slot}: ${g.employees.join(', ')}`).join(' | ')}) + kẹp ${clamp.cancelledCount} phiếu quá 2 ngày/tuần (${clamp.overLimit.map(o => `${o.employee} tuần ${o.week}: giữ ${o.kept.join(', ')}, hủy ${o.cancelled.join(', ')}`).join(' | ')})`,
+    } as any).catch(() => null);
+    return { dryRun: false, today, groups, cancelledCount, overLimit: clamp.overLimit, cancelledOverLimitCount: clamp.cancelledCount };
+  }
+
+  /** Kẹp mỗi NV mỗi tuần tối đa 2 ngày OFF HANG_TUAN (từ hôm nay trở đi). Giữ 2 phiếu
+   *  MỚI NHẤT, hủy phần thừa. Dùng cho nút HR + tick tự chữa định kỳ (không cần HR bấm).
+   *  Trả về doneIds để caller gộp (tránh hủy trùng với nhóm trùng ca). */
+  async clampWeeklyOffOverLimit(
+    actorId: string,
+    dryRun = true,
+    preloadedLeaves?: any[],
+    preloadedEmpById?: Map<string, any>,
+    preloadedToday?: string
+  ): Promise<{
+    overLimit: { employee_id: string; employee: string; week: string; kept: string[]; cancelled: string[]; leaveIds: string[] }[];
+    cancelledCount: number;
+    doneIds: string[];
+  }> {
+    const today = preloadedToday || new Date(Date.now() + 7 * 3_600_000).toISOString().split('T')[0];
+    const leaves = preloadedLeaves || await this.repo.listLeaveRequests().catch(() => []);
+    let empById = preloadedEmpById;
+    if (!empById) {
+      const emps = await this.repo.listEmployees().catch(() => []);
+      empById = new Map<string, any>((emps || []).map((e: any) => [e.employee_id, e]));
+    }
     const byEmpWeek = new Map<string, any[]>();
     for (const l of leaves || []) {
       if ((l as any).leave_type !== 'HANG_TUAN') continue;
@@ -280,38 +327,28 @@ export class SchedulesService {
       });
     }
     overLimit.sort((a, b) => a.week.localeCompare(b.week) || a.employee.localeCompare(b.employee));
-    if (dryRun || (groups.length === 0 && overLimit.length === 0)) {
-      return { dryRun: true, today, groups, cancelledCount: 0, overLimit, cancelledOverLimitCount: 0 };
-    }
+    const doneIds: string[] = [];
+    if (dryRun) return { overLimit, cancelledCount: 0, doneIds };
     let cancelledCount = 0;
-    const doneIds = new Set<string>();
-    for (const g of groups) {
-      for (const lid of g.leaveIds) {
-        if (doneIds.has(lid)) continue;
-        doneIds.add(lid);
-        await this.repo.updateLeaveRequest(lid, 'CANCELLED', actorId, 'Reset lịch OFF trùng ca cùng chi nhánh — NV đăng ký lại theo luật chống trống ca').catch(() => null);
+    for (const o of overLimit) {
+      for (const lid of o.leaveIds) {
+        await this.repo.updateLeaveRequest(lid, 'CANCELLED', actorId, 'Kẹp về tối đa 2 ngày OFF/tuần — giữ 2 ngày đăng ký mới nhất').catch(() => null);
+        doneIds.push(lid);
         cancelledCount++;
       }
     }
-    let cancelledOverLimitCount = 0;
-    for (const o of overLimit) {
-      for (const lid of o.leaveIds) {
-        if (doneIds.has(lid)) continue;
-        doneIds.add(lid);
-        await this.repo.updateLeaveRequest(lid, 'CANCELLED', actorId, 'Kẹp về tối đa 2 ngày OFF/tuần — giữ 2 ngày đăng ký mới nhất').catch(() => null);
-        cancelledOverLimitCount++;
-      }
+    if (cancelledCount > 0) {
+      await this.repo.recordAuditLog({
+        log_id: `LOG_${Date.now()}`,
+        actor_id: actorId,
+        actor_role: actorId === 'SYSTEM' ? 'SYSTEM' : 'HR',
+        action: 'WEEKLY_OFF_OVERLIMIT_CLAMP',
+        target_entity: 'PHIEU_OFF',
+        target_id: `${overLimit.length}_employees`,
+        details: `Kẹp ${cancelledCount} phiếu quá 2 ngày/tuần (${overLimit.map(o => `${o.employee} tuần ${o.week}: giữ ${o.kept.join(', ')}, hủy ${o.cancelled.join(', ')}`).join(' | ')})`,
+      } as any).catch(() => null);
     }
-    await this.repo.recordAuditLog({
-      log_id: `LOG_${Date.now()}`,
-      actor_id: actorId,
-      actor_role: 'HR',
-      action: 'WEEKLY_OFF_OVERLAP_RESET',
-      target_entity: 'PHIEU_OFF',
-      target_id: `${groups.length}_groups`,
-      details: `Reset ${cancelledCount} phiếu OFF trùng ca (${groups.map(g => `${g.branch} ${g.date} ${g.slot}: ${g.employees.join(', ')}`).join(' | ')}) + kẹp ${cancelledOverLimitCount} phiếu quá 2 ngày/tuần (${overLimit.map(o => `${o.employee} tuần ${o.week}: giữ ${o.kept.join(', ')}, hủy ${o.cancelled.join(', ')}`).join(' | ')})`,
-    } as any).catch(() => null);
-    return { dryRun: false, today, groups, cancelledCount, overLimit, cancelledOverLimitCount };
+    return { overLimit, cancelledCount, doneIds };
   }
 
   async requestLeave(data: {
@@ -331,14 +368,13 @@ export class SchedulesService {
     if (data.leaveType === 'HANG_TUAN') {
       const wk = weekRangeOf(data.requestedDate);
       const existingLeaves = await this.repo.listLeaveRequests(undefined, data.employeeId);
-      const weeklyLeaves = existingLeaves.filter(
-        l =>
-          l.leave_type === 'HANG_TUAN' &&
-          l.status !== 'REJECTED' &&
-          l.status !== 'CANCELLED' &&
-          l.requested_date >= wk.mon &&
-          l.requested_date <= wk.sun
-      );
+      const weeklyLeaves = existingLeaves.filter(l => {
+        if (l.leave_type !== 'HANG_TUAN') return false;
+        if (l.status === 'REJECTED' || l.status === 'CANCELLED') return false;
+        // So sánh sau chuẩn hóa: ngày lưu dạng locale ('10/07/2026') so thô sẽ lọt đếm.
+        const d = normSheetDate(l.requested_date);
+        return d >= wk.mon && d <= wk.sun;
+      });
       if (weeklyLeaves.length >= 2) {
         throw new Error('WEEKLY_OFF_LIMIT_REACHED: Tối đa 2 ngày OFF hàng tuần theo chính sách.');
       }
@@ -418,14 +454,12 @@ export class SchedulesService {
       execute: async () => {
         const nowIso = new Date().toISOString();
         const existing = await this.repo.listLeaveRequests(undefined, data.employeeId);
-        const oldOnes = existing.filter(
-          l =>
-            l.leave_type === 'HANG_TUAN' &&
-            l.status !== 'REJECTED' &&
-            l.status !== 'CANCELLED' &&
-            l.requested_date >= wk1.mon &&
-            l.requested_date <= wk1.sun
-        );
+        const oldOnes = existing.filter(l => {
+          if (l.leave_type !== 'HANG_TUAN') return false;
+          if (l.status === 'REJECTED' || l.status === 'CANCELLED') return false;
+          const d = normSheetDate(l.requested_date);
+          return d >= wk1.mon && d <= wk1.sun;
+        });
         // Hủy đăng ký cũ cùng tuần (kể cả trùng ngày mới — sẽ ghi lại bên dưới).
         for (const old of oldOnes) {
           await this.repo.updateLeaveRequest(old.request_id, 'CANCELLED', data.employeeId, 'Thay thế bằng đăng ký OFF tuần mới');

@@ -1,6 +1,7 @@
 ﻿import { ERROR_CODES } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { NotificationsService } from './notifications.service.js';
+import { normSheetDate } from './employees.service.js';
 
 export type WeeklyOffPhase = 'OPEN' | 'REMINDER' | 'CLOSED';
 
@@ -188,9 +189,10 @@ export async function getWeeklyOffStats(
   for (const l of leaves || []) {
     if ((l as any).leave_type !== 'HANG_TUAN') continue;
     if ((l as any).status !== 'PENDING' && (l as any).status !== 'APPROVED') continue;
-    if ((l as any).requested_date < targetWeekMon || (l as any).requested_date > targetWeekSun) continue;
+    const d = normSheetDate((l as any).requested_date);
+    if (d < targetWeekMon || d > targetWeekSun) continue;
     const arr = byEmp.get((l as any).employee_id) || [];
-    if (!arr.includes((l as any).requested_date)) arr.push((l as any).requested_date);
+    if (!arr.includes(d)) arr.push(d);
     byEmp.set((l as any).employee_id, arr);
   }
   const registered: WeeklyOffEmployeeStat[] = [];
@@ -331,14 +333,14 @@ export async function getWeeklyOffCompletion(
 ): Promise<WeeklyOffCompletion> {
   const leaves = await repo.listLeaveRequests(undefined, employeeId);
   const registered = leaves
-    .filter(
-      l =>
-        l.leave_type === 'HANG_TUAN' &&
-        (l.status === 'PENDING' || l.status === 'APPROVED') &&
-        l.requested_date >= targetWeekMon &&
-        l.requested_date <= targetWeekSun
-    )
-    .map(l => l.requested_date)
+    .filter(l => {
+      if (l.leave_type !== 'HANG_TUAN') return false;
+      if (l.status !== 'PENDING' && l.status !== 'APPROVED') return false;
+      // Chuẩn hóa trước khi so tuần: ngày locale Sheet so thô sẽ sai completion.
+      const d = normSheetDate(l.requested_date);
+      return d >= targetWeekMon && d <= targetWeekSun;
+    })
+    .map(l => normSheetDate(l.requested_date))
     .sort();
   const unique = [...new Set(registered)];
   return { required: 2, registered: unique, completed: unique.length >= 2 };
