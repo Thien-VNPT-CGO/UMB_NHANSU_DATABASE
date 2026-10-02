@@ -275,6 +275,22 @@ export function fmtPvTime(c: any): string {
 export const PV_NOJOIN_CANCEL_MIN = 5;
 export const PV_CANCEL_COUNTDOWN_SEC = 20;
 
+/** Dịch mã lỗi gửi Zalo thành câu hướng dẫn HR (dùng cho toast tạo lịch + gửi lại). */
+export function zaloInviteErrorText(err: any): string | null {
+  const msg = String(err?.message || '');
+  const code = String((err as any)?.code || '');
+  const s = `${code} ${msg}`;
+  if (/ZALO_NOT_CONNECTED/.test(s)) return '⚠️ Nick Zalo HR chưa kết nối (phiên hết hạn hoặc chưa quét QR)! Quét QR đăng nhập lại ở khung trên rồi bấm Gửi lại.';
+  if (/ZALO_USER_NOT_FOUND/.test(s)) return '⚠️ SĐT ứng viên chưa đăng ký Zalo! Kiểm tra lại SĐT rồi bấm Gửi lại.';
+  if (/ZALO_NOT_FRIEND/.test(s)) return '⚠️ Ứng viên chưa kết bạn Zalo với nick HR! Bấm "Chat Zalo" ở dòng ứng viên để kết bạn trước, rồi bấm Gửi lại.';
+  if (/TRÙNG LỊCH PV/.test(msg)) {
+    const m = msg.match(/Đã kín: ([^.]+)/);
+    return `⛔ ${msg}${m ? '' : ' Vui lòng đăng ký lại khung giờ khác!'}`;
+  }
+  if (/khung cố định 30 phút|ngoài giờ phỏng vấn|đã qua|đăng ký lại/.test(msg)) return `⛔ ${msg}`;
+  return null;
+}
+
 /** Ngày Việt Nam (UTC+7) của 1 mốc ISO. */
 export function vnDayOf(iso: string): string {
   const t = new Date(iso || '').getTime();
@@ -1020,6 +1036,29 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Link Meet mặc định hệ thống (không tùy chỉnh) — input hiển thị disabled.
   const inviteMeetUrl = 'https://meet.google.com/ypp-srtm-fvm';
   const [inviteBusy, setInviteBusy] = useState(false);
+  // Gửi lại thư mời Zalo cho lịch đã có (khi lần trước Gửi lỗi / chưa kết bạn).
+  const [pvRetryBusyId, setPvRetryBusyId] = useState<string | null>(null);
+  const handleRetryZaloInvite = async (c: any) => {
+    const sid = String((c as any)?.submission_id || '');
+    const d = toISODate((c as any)?.interview_date);
+    const t = String((c as any)?.interview_time_slot || '').slice(0, 5);
+    if (!sid || !d || !/^\d{2}:\d{2}$/.test(t) || pvRetryBusyId) return;
+    setPvRetryBusyId(sid);
+    try {
+      const res: any = await apiRequest(`/interviews/${sid}/send-zalo-invite`, {
+        method: 'POST',
+        // Dùng đúng lịch đã lưu + link Meet mặc định (meetUrl:'' = ép ONLINE lấy link hệ thống).
+        body: JSON.stringify({ interviewDate: d, timeSlot: t, meetUrl: '' }),
+      });
+      showToast(`✅ Gửi lại thư mời Zalo thành công! (msg #${res.msgId})`);
+      if (onRefreshData) await onRefreshData();
+      if (onSyncSheets) await onSyncSheets();
+    } catch (err: any) {
+      showToast(zaloInviteErrorText(err) || (err?.message || 'Lỗi khi gửi lại!'));
+    } finally {
+      setPvRetryBusyId(null);
+    }
+  };
   // Chặn chọn quá khứ ngay ở input (lớp mềm — server vẫn validate + báo đăng ký lại).
   const pvMinDateTime = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
   // Danh sách lịch PV: ẩn đã loại + đã duyệt thử việc (thành NV, không còn là ứng viên).
@@ -1167,14 +1206,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         try { await onRefreshData(); } catch {}
       }
     } catch (err: any) {
-      const msg = String(err.message || '');
-      if (msg.includes('ZALO_NOT_FRIEND')) {
-        showToast('⚠️ Ứng viên chưa kết bạn Zalo với nick HR! Hãy bấm "Gửi thư mời Zalo" ở dòng ứng viên để kết bạn trước.');
-      } else if (msg.startsWith('TRÙNG LỊCH PV') || msg.includes('khung cố định 30 phút') || msg.includes('ngoài giờ phỏng vấn') || msg.includes('đã qua') || msg.includes('đăng ký lại')) {
-        showToast(`⛔ ${msg}`);
-      } else {
-        showToast(msg);
-      }
+      showToast(zaloInviteErrorText(err) || String(err.message || ''));
     } finally {
       setInviteBusy(false);
     }
@@ -3259,8 +3291,31 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         const zat = (c as any).zalo_invite_at ? new Date((c as any).zalo_invite_at).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : '';
                         const style = { fontSize: '10px', fontWeight: 700, marginTop: '2px' } as any;
                         if (zs === 'SENT') return <div style={{ ...style, color: '#059669' }}>Đã gửi{zat ? ` • ${zat}` : ''}</div>;
-                        if (zs === 'NOT_FRIEND') return <div style={{ ...style, color: '#B45309' }} title={(c as any).zalo_invite_error || ''}>Chưa kết bạn{zat ? ` • ${zat}` : ''}</div>;
-                        return <div style={{ ...style, color: '#DC2626' }} title={(c as any).zalo_invite_error || ''}>Gửi lỗi{zat ? ` • ${zat}` : ''}</div>;
+                        if (zs === 'NOT_FRIEND') return <div style={{ ...style, color: '#B45309' }} title="Ứng viên chưa kết bạn Zalo với nick HR — bấm Chat Zalo kết bạn rồi Gửi lại">Chưa kết bạn{zat ? ` • ${zat}` : ''}</div>;
+                        if (zs === 'NO_ZALO') return <div style={{ ...style, color: '#DC2626' }} title={(c as any).zalo_invite_error || ''}>SĐT chưa có Zalo{zat ? ` • ${zat}` : ''}</div>;
+                        // FAILED: dịch lý do thật để HR biết xử lý gì (thay vì chỉ 'Gửi lỗi').
+                        const rawErr = String((c as any).zalo_invite_error || '');
+                        let failShort = 'Gửi lỗi — bấm Gửi lại';
+                        if (/ZALO_NOT_CONNECTED/.test(rawErr)) failShort = 'Mất kết nối Zalo HR — quét QR lại';
+                        else if (/ZALO_LOOKUP_FAILED/.test(rawErr)) failShort = 'Lỗi tra cứu Zalo — bấm Gửi lại';
+                        else if (/ZALO_SEND_FAILED/.test(rawErr)) failShort = 'Gửi thất bại — bấm Gửi lại';
+                        return <div style={{ ...style, color: '#DC2626' }} title={rawErr || 'Lỗi gửi Zalo'}>{failShort}{zat ? ` • ${zat}` : ''}</div>;
+                      })()}
+                      {(() => {
+                        const zs = (c as any).zalo_invite_status;
+                        const sid = (c as any).submission_id;
+                        if (!['FAILED', 'NOT_FRIEND', 'NO_ZALO'].includes(String(zs || '')) || !(c as any).interview_date) return null;
+                        const busy = pvRetryBusyId === sid;
+                        return (
+                          <button
+                            disabled={busy}
+                            onClick={() => handleRetryZaloInvite(c)}
+                            title="Gửi lại thư mời theo đúng lịch đã lưu (không cần nhập lại form)"
+                            style={{ marginTop: '4px', padding: '4px 10px', borderRadius: '6px', backgroundColor: busy ? '#9CA3AF' : '#0068FF', color: '#FFF', fontSize: '11px', fontWeight: 800, border: 'none', cursor: busy ? 'wait' : 'pointer' }}
+                          >
+                            {busy ? '⏳ Đang gửi...' : '↻ Gửi lại Zalo'}
+                          </button>
+                        );
                       })()}
                       {(c as any).interview_date && (
                         <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '2px' }}>

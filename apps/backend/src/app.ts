@@ -1101,14 +1101,33 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         const found = await zaloService.findUserByPhone(phone);
         uid = found.uid;
       } catch (e: any) {
+        // Phân loại để UI hiện đúng lý do + nút Gửi lại: SĐT chưa có Zalo (NO_ZALO),
+        // mất kết nối nick HR (NOT_CONNECTED), còn lại là lỗi tra cứu mạng/lib.
+        const raw = String(e?.message || e);
+        const noZalo = raw.includes('ZALO_USER_NOT_FOUND');
+        const notConn = raw.includes('ZALO_NOT_CONNECTED');
         // Lưu trạng thái gửi để reload vẫn thấy (realtime + bền vững qua pull).
         await adapter.updateCandidate(req.params.id, {
-          zalo_invite_status: 'FAILED',
+          zalo_invite_status: noZalo ? 'NO_ZALO' : 'FAILED',
           zalo_invite_at: new Date().toISOString(),
-          zalo_invite_error: String(e?.message || e),
+          zalo_invite_error: raw,
         } as any).catch(() => null);
         broadcastUpdate('candidates', { action: 'zalo-invite-failed', id: req.params.id });
-        return res.status(400).json({ error: e.message, phone });
+        if (notConn) {
+          return res.status(400).json({
+            error: 'ZALO_NOT_CONNECTED',
+            message: 'Nick Zalo HR chưa kết nối (phiên hết hạn hoặc chưa quét QR)! Quét QR đăng nhập lại ở khung trên rồi bấm Gửi lại.',
+            phone,
+          });
+        }
+        if (noZalo) {
+          return res.status(400).json({
+            error: 'ZALO_USER_NOT_FOUND',
+            message: `SĐT ${phone} chưa đăng ký Zalo! Kiểm tra lại SĐT ứng viên rồi bấm Gửi lại.`,
+            phone,
+          });
+        }
+        return res.status(400).json({ error: raw, phone });
       }
 
       const text = zaloService.buildInviteText({
@@ -1139,16 +1158,22 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         broadcastUpdate('candidates', { action: 'zalo-invite', id: req.params.id });
         res.json({ success: true, uid, msgId: sent.msgId, meetUrl: meetUrl || null });
       } catch (e: any) {
-        // Thường do chưa kết bạn — HR dùng nút Kết bạn rồi gửi lại.
-        const notFriend = String(e?.message || e).includes('FRIEND') || String(e?.message || e).includes('kết bạn');
+        // Thường do chưa kết bạn — HR dùng nút Kết bạn rồi gửi lại. Phân loại mã
+        // lỗi thật để UI hiện đúng (trước đây mọi lỗi gửi đều báo NOT_FRIEND).
+        const rawSend = String(e?.message || e);
+        const notFriend = rawSend.includes('FRIEND') || rawSend.includes('kết bạn');
+        const sendNotConn = rawSend.includes('ZALO_NOT_CONNECTED');
         await adapter.updateCandidate(req.params.id, {
           zalo_invite_status: notFriend ? 'NOT_FRIEND' : 'FAILED',
           zalo_uid: uid,
           zalo_invite_at: new Date().toISOString(),
-          zalo_invite_error: String(e?.message || e),
+          zalo_invite_error: rawSend,
         } as any).catch(() => null);
         broadcastUpdate('candidates', { action: 'zalo-invite-failed', id: req.params.id });
-        return res.status(400).json({ error: 'ZALO_NOT_FRIEND', message: e?.message || e, uid, phone });
+        if (sendNotConn) {
+          return res.status(400).json({ error: 'ZALO_NOT_CONNECTED', message: 'Nick Zalo HR chưa kết nối (phiên hết hạn hoặc chưa quét QR)! Quét QR đăng nhập lại ở khung trên rồi bấm Gửi lại.', uid, phone });
+        }
+        return res.status(400).json({ error: notFriend ? 'ZALO_NOT_FRIEND' : rawSend, message: rawSend, uid, phone });
       }
     } catch (err: any) {
       const msg = String(err?.message || 'Lỗi gửi thư mời Zalo');
