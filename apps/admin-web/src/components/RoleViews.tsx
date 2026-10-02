@@ -629,22 +629,27 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         body: JSON.stringify({ dryRun: true }),
       });
       const groups = (preview?.groups || []) as any[];
-      if (groups.length === 0) {
-        showToast('✅ Không có lịch OFF nào trùng ca (cùng CN + cùng ca + cùng ngày) từ hôm nay trở đi!');
+      const overLimit = (preview?.overLimit || []) as any[];
+      if (groups.length === 0 && overLimit.length === 0) {
+        showToast('✅ Không có lịch OFF nào trùng ca hay quá 2 ngày/tuần từ hôm nay trở đi!');
         return;
       }
       const lines = groups.slice(0, 10).map((g: any) =>
-        `• ${g.branch} ${g.date} ${g.slot}: ${(g.employees || []).join(', ')}`
+        `• TRÙNG: ${g.branch} ${g.date} ${g.slot}: ${(g.employees || []).join(', ')}`
       ).join('\n');
       const more = groups.length > 10 ? `\n… +${groups.length - 10} nhóm nữa` : '';
+      const olLines = overLimit.slice(0, 10).map((o: any) =>
+        `• QUÁ 2 NGÀY: ${o.employee} (tuần ${o.week}): giữ ${(o.kept || []).join(', ')}, hủy ${(o.cancelled || []).join(', ')}`
+      ).join('\n');
+      const olMore = overLimit.length > 10 ? `\n… +${overLimit.length - 10} bạn nữa` : '';
       if (!window.confirm(
-        `Tìm thấy ${groups.length} nhóm OFF trùng ca (từ hôm nay trở đi):\n${lines}${more}\n\nBấm OK để HỦY toàn bộ phiếu trùng → NV về trạng thái chưa đăng ký và đăng ký lại theo luật chống trống ca.\nKHÔNG thể hoàn tác!`
+        `Rà soát từ hôm nay: ${groups.length} nhóm OFF trùng ca + ${overLimit.length} bạn quá 2 ngày/tuần:\n${lines}${more}${olLines ? `\n${olLines}${olMore}` : ''}\n\nBấm OK để HỦY toàn bộ phiếu trùng/thừa → NV về trạng thái chưa đăng ký (trùng ca) hoặc giữ đúng 2 ngày mới nhất (quá giới hạn) rồi đăng ký lại.\nKHÔNG thể hoàn tác!`
       )) return;
       const res: any = await apiRequest('/admin/weekly-off/reset-overlaps', {
         method: 'POST',
         body: JSON.stringify({ dryRun: false }),
       });
-      showToast(`🧹 Đã hủy ${res?.cancelledCount || 0} phiếu OFF trùng ca (${(res?.groups || []).length} nhóm) — NV liên quan đăng ký lại!`);
+      showToast(`🧹 Đã hủy ${res?.cancelledCount || 0} phiếu trùng ca + kẹp ${res?.cancelledOverLimitCount || 0} phiếu quá 2 ngày/tuần — NV liên quan đăng ký lại!`);
       if (onRefreshData) await onRefreshData();
       if (onPushSheets) await onPushSheets();
     } catch (e: any) {

@@ -201,6 +201,8 @@ export function App() {
     day2: '',
     reason: 'Đăng ký 2 ngày nghỉ OFF tuần theo định biên quy chế Ụm Bò Milk',
   });
+  // Chống bấm gửi 2 lần (bấm đúp tạo phiếu trùng ngày thứ 3).
+  const [weeklyOffBusy, setWeeklyOffBusy] = useState(false);
 
   // Trạng thái cổng đăng ký OFF/tuần từ server (khung giờ T6 12h -> T7 15h)
   const [weeklyOffWindow, setWeeklyOffWindow] = useState<any>(null);
@@ -1116,7 +1118,7 @@ export function App() {
 
   // Submit 2-day OFF for official employee
   const handleSubmitWeeklyOff2Days = async () => {
-    // Khóa ngoài khung giờ mở cổng (server cũng chặn, đây là lớp báo sớm)
+    if (weeklyOffBusy) return;    // Khóa ngoài khung giờ mở cổng (server cũng chặn, đây là lớp báo sớm)
     if (!isProbation && !hasRegisteredWeeklyOff && !weeklyOffRegOpen) {
       notifyRegWindowClosed();
       return;
@@ -1143,6 +1145,7 @@ export function App() {
     }
 
     try {
+      setWeeklyOffBusy(true);
       // API nguyên tử: ghi 2 ngày trong 1 request (kể cả đợt mở bù VIP + cập nhật lại).
       try {
         await apiRequest('/leaves/weekly-off', {
@@ -1182,6 +1185,8 @@ export function App() {
       await loadEmployeeData(employee?.employee_id);
     } catch (err: any) {
       showToast(weeklyOffErrMsg(err, 'Lỗi khi gửi đăng ký 2 ngày nghỉ!'));
+    } finally {
+      setWeeklyOffBusy(false);
     }
   };
 
@@ -2449,16 +2454,18 @@ export function App() {
                   <button
                     className="btn-primary"
                     onClick={handleSubmitWeeklyOff2Days}
+                    disabled={weeklyOffBusy}
                     style={{
                       width: '100%',
                       padding: '12px',
                       fontSize: '14px',
                       fontWeight: 800,
-                      backgroundColor: hasRegisteredWeeklyOff ? '#10B981' : 'var(--brand)',
+                      backgroundColor: weeklyOffBusy ? '#9CA3AF' : hasRegisteredWeeklyOff ? '#10B981' : 'var(--brand)',
                       boxShadow: '0 4px 14px rgba(232, 93, 146, 0.35)',
+                      opacity: weeklyOffBusy ? 0.7 : 1,
                     }}
                   >
-                    {hasRegisteredWeeklyOff ? 'CẬP NHẬT LẠI 2 NGÀY NGHỈ OFF TUẦN' : 'GỬI ĐĂNG KÝ 2 NGÀY NGHỈ & MỞ KHÓA HỆ THỐNG'}
+                    {weeklyOffBusy ? '⏳ ĐANG GỬI...' : hasRegisteredWeeklyOff ? 'CẬP NHẬT LẠI 2 NGÀY NGHỈ OFF TUẦN' : 'GỬI ĐĂNG KÝ 2 NGÀY NGHỈ & MỞ KHÓA HỆ THỐNG'}
                   </button>
                   </>
                   )}
