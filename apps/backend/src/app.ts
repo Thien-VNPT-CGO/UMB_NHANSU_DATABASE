@@ -2208,6 +2208,25 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Reset ALL lịch OFF tuần (pass bảo vệ, mặc định Umbomilk@999 — đổi bằng env
+  // WEEKLY_OFF_RESET_PASS): hủy toàn bộ phiếu HANG_TUAN còn hiệu lực từ hôm nay để
+  // NV đăng ký lại từ đầu. dryRun=true chỉ đếm trước.
+  app.post('/admin/weekly-off/reset-all', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const dryRun = (req.body as any)?.dryRun !== false;
+      const pass = String((req.body as any)?.pass || '');
+      const result = await schedulesService.resetAllWeeklyOff(req.user!.id, pass, dryRun);
+      if (!dryRun && result.cancelledCount > 0) {
+        broadcastUpdate('leaves', { action: 'weekly-off-reset-all', cancelled: result.cancelledCount });
+      }
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      const msg = String(err?.message || 'Lỗi reset ALL lịch OFF');
+      const status = msg.startsWith('RESET_PASS_INVALID') ? 403 : 500;
+      res.status(status).json({ error: msg });
+    }
+  });
+
   app.get('/leaves', authMiddleware, validate({ query: leaveListQuery }), async (req: AuthenticatedRequest, res) => {
     try {
       const branchId = req.user?.role === 'STORE' ? req.user.branchScope : (req.query.branchId as string);

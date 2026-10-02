@@ -201,6 +201,57 @@ export class SchedulesService {
     return new Error(`⛔ Ngày ${dd} đã có ${clash.name} cùng ${label} đăng ký OFF trước! Vui lòng đăng ký lại ngày khác để không trống ca.`);
   }
 
+  /** Pass mặc định của nút Reset ALL lịch OFF (đổi bằng env WEEKLY_OFF_RESET_PASS). */
+  static readonly WEEKLY_OFF_RESET_ALL_DEFAULT_PASS = 'Umbomilk@999';
+
+  /** Reset ALL lịch OFF tuần (HANG_TUAN còn hiệu lực từ hôm nay): hủy toàn bộ để NV
+   *  đăng ký lại từ đầu. Xem trước (dryRun) không cần pass; THỰC THI bắt buộc đúng
+   *  pass (so ở server, không log pass). Pass mặc định Umbomilk@999. */
+  async resetAllWeeklyOff(actorId: string, pass: string, dryRun = true): Promise<{
+    dryRun: boolean;
+    today: string;
+    leaveCount: number;
+    employeeCount: number;
+    employees: string[];
+    cancelledCount: number;
+  }> {
+    const expected = process.env.WEEKLY_OFF_RESET_PASS || SchedulesService.WEEKLY_OFF_RESET_ALL_DEFAULT_PASS;
+    if (!dryRun && String(pass || '') !== String(expected)) {
+      throw new Error('RESET_PASS_INVALID: Sai mật khẩu Reset ALL! Liên hệ quản trị để lấy pass.');
+    }
+    const today = new Date(Date.now() + 7 * 3_600_000).toISOString().split('T')[0];
+    const [emps, leaves] = await Promise.all([
+      this.repo.listEmployees().catch(() => []),
+      this.repo.listLeaveRequests().catch(() => []),
+    ]);
+    const empById = new Map<string, any>((emps || []).map((e: any) => [e.employee_id, e]));
+    const targets = (leaves || []).filter((l: any) => {
+      if ((l as any).leave_type !== 'HANG_TUAN') return false;
+      if (!['APPROVED', 'PENDING'].includes((l as any).status)) return false;
+      return normSheetDate((l as any).requested_date) >= today;
+    });
+    const empIds = [...new Set(targets.map((l: any) => String((l as any).employee_id)))];
+    const employees = empIds.map(id => String(empById.get(id)?.full_name || id)).sort((a, b) => a.localeCompare(b, 'vi'));
+    if (dryRun) {
+      return { dryRun: true, today, leaveCount: targets.length, employeeCount: empIds.length, employees, cancelledCount: 0 };
+    }
+    let cancelledCount = 0;
+    for (const l of targets) {
+      await this.repo.updateLeaveRequest((l as any).request_id, 'CANCELLED', actorId, 'Reset ALL lịch OFF tuần — NV đăng ký lại từ đầu').catch(() => null);
+      cancelledCount++;
+    }
+    await this.repo.recordAuditLog({
+      log_id: `LOG_${Date.now()}`,
+      actor_id: actorId,
+      actor_role: 'HR',
+      action: 'WEEKLY_OFF_RESET_ALL',
+      target_entity: 'PHIEU_OFF',
+      target_id: 'ALL',
+      details: `Reset ALL ${cancelledCount} phiếu OFF tuần của ${empIds.length} NV (${employees.slice(0, 20).join(', ')}) — NV đăng ký lại`,
+    } as any).catch(() => null);
+    return { dryRun: false, today, leaveCount: targets.length, employeeCount: empIds.length, employees, cancelledCount };
+  }
+
   /** Rà soát lịch OFF tuần TRÙNG ca đã đăng ký từ trước (cùng chi nhánh + cùng ca +
    *  cùng ngày, từ hôm nay trở đi). dryRun=true chỉ xem trước; dryRun=false hủy
    *  toàn bộ phiếu trùng (CANCELLED) để NV về trạng thái chưa đăng ký và đăng ký lại.

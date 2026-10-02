@@ -619,8 +619,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [weeklyOffBranchFilter, setWeeklyOffBranchFilter] = useState('ALL');
   const [weeklyOffSearch, setWeeklyOffSearch] = useState('');
   // Reset lịch OFF trùng ca đã đăng ký từ trước về chưa đăng ký (NV đăng ký lại).
-  const [offOverlapBusy, setOffOverlapBusy] = useState(false);
-  const handleResetWeeklyOffOverlaps = async () => {
+  const [offOverlapBusy, setOffOverlapBusy] = useState(false);  const handleResetWeeklyOffOverlaps = async () => {
     if (offOverlapBusy) return;
     setOffOverlapBusy(true);
     try {
@@ -656,6 +655,49 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       showToast(e?.message || 'Lỗi khi reset lịch OFF trùng ca!');
     } finally {
       setOffOverlapBusy(false);
+    }
+  };
+  // Reset ALL lịch OFF tuần: xóa hết đăng ký để NV đăng ký lại — mở modal nhập pass mới chạy.
+  const [offResetAllOpen, setOffResetAllOpen] = useState(false);
+  const [offResetAllPass, setOffResetAllPass] = useState('');
+  const [offResetAllBusy, setOffResetAllBusy] = useState(false);
+  const [offResetAllPreview, setOffResetAllPreview] = useState<any>(null);
+  const openResetAllModal = async () => {
+    setOffResetAllPass('');
+    setOffResetAllPreview(null);
+    setOffResetAllOpen(true);
+    try {
+      const preview: any = await apiRequest('/admin/weekly-off/reset-all', {
+        method: 'POST',
+        body: JSON.stringify({ dryRun: true }),
+      });
+      setOffResetAllPreview(preview);
+    } catch (e: any) {
+      showToast(e?.message || 'Lỗi khi xem trước Reset ALL!');
+      setOffResetAllOpen(false);
+    }
+  };
+  const handleResetAllWeeklyOff = async () => {
+    if (offResetAllBusy) return;
+    if (!offResetAllPass.trim()) {
+      showToast('⚠️ Vui lòng nhập mật khẩu Reset ALL!');
+      return;
+    }
+    setOffResetAllBusy(true);
+    try {
+      const res: any = await apiRequest('/admin/weekly-off/reset-all', {
+        method: 'POST',
+        body: JSON.stringify({ dryRun: false, pass: offResetAllPass.trim() }),
+      });
+      showToast(`🗑 Đã Reset ALL: hủy ${res?.cancelledCount || 0} phiếu OFF của ${res?.employeeCount || 0} NV — tất cả đăng ký lại từ đầu!`);
+      setOffResetAllOpen(false);
+      setOffResetAllPass('');
+      if (onRefreshData) await onRefreshData();
+      if (onPushSheets) await onPushSheets();
+    } catch (e: any) {
+      showToast(e?.message || 'Lỗi khi Reset ALL!');
+    } finally {
+      setOffResetAllBusy(false);
     }
   };
   // Chu kỳ OFF hiển thị: 'CURRENT' = chu kỳ hiện tại (reset T6 11:45), hoặc label tuần cũ để xem lịch sử.
@@ -6189,6 +6231,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               >
                 {offOverlapBusy ? '⏳ Đang xử lý...' : '🧹 Reset lịch OFF trùng ca'}
               </button>
+              <button
+                onClick={openResetAllModal}
+                title="Xóa HẾT lịch OFF đã đăng ký (từ hôm nay) để toàn bộ NV đăng ký lại — cần nhập pass"
+                style={{ fontSize: '12px', padding: '6px 12px', borderRadius: '6px', border: '1.5px solid #DC2626', backgroundColor: '#FFF', color: '#DC2626', fontWeight: 800, cursor: 'pointer' }}
+              >
+                🗑 Reset ALL
+              </button>
               <select value={weeklyOffWeekFilter} onChange={e => setWeeklyOffWeekFilter(e.target.value)} style={{ fontSize: '12px', padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--border)' }} title="Chu kỳ hiển thị — Sheet vẫn lưu toàn bộ lịch sử">
                 <option value="CURRENT">Chu kỳ hiện tại ({offCycle.label})</option>
                 {weeklyOffWeeks.filter((w: string) => w !== offCycle.label).map((w: string) => (
@@ -6249,6 +6298,51 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </tbody>
           </table>
         </div>
+        {/* MODAL RESET ALL LỊCH OFF (khóa pass) */}
+        {offResetAllOpen && (
+          <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '16px' }}>
+            <div style={{ backgroundColor: 'var(--surface)', borderRadius: '12px', maxWidth: '480px', width: '100%', padding: '20px', border: '2px solid #DC2626' }}>
+              <h2 style={{ fontSize: '16px', fontWeight: 800, margin: '0 0 8px', color: '#DC2626' }}>🗑 Reset ALL lịch OFF 2 ngày/tuần</h2>
+              <div style={{ fontSize: '13px', color: 'var(--text)', lineHeight: '1.6', backgroundColor: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '8px', padding: '10px 12px' }}>
+                Hành động này sẽ <strong>HỦY TOÀN BỘ</strong> phiếu OFF còn hiệu lực từ hôm nay
+                {offResetAllPreview ? (<> (<strong>{offResetAllPreview.leaveCount || 0} phiếu của {offResetAllPreview.employeeCount || 0} NV</strong>)</>) : '…'} —
+                toàn bộ nhân viên phải <strong>đăng ký lại từ đầu</strong>. Không thể hoàn tác!
+              </div>
+              {offResetAllPreview && (offResetAllPreview.employees || []).length > 0 && (
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '8px', maxHeight: '120px', overflowY: 'auto' }}>
+                  NV bị ảnh hưởng: {(offResetAllPreview.employees || []).slice(0, 20).join(', ')}{(offResetAllPreview.employees || []).length > 20 ? ` +${(offResetAllPreview.employees || []).length - 20} bạn` : ''}
+                </div>
+              )}
+              <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginTop: '12px' }}>
+                Mật khẩu Reset ALL:
+                <input
+                  type="password"
+                  value={offResetAllPass}
+                  onChange={(e) => setOffResetAllPass(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleResetAllWeeklyOff(); }}
+                  placeholder="Nhập pass mới thực thi được"
+                  style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1.5px solid #DC2626', marginTop: '4px', fontSize: '14px', outline: 'none' }}
+                />
+              </label>
+              <div style={{ display: 'flex', gap: '10px', marginTop: '14px' }}>
+                <button
+                  onClick={() => { setOffResetAllOpen(false); setOffResetAllPass(''); }}
+                  disabled={offResetAllBusy}
+                  style={{ flex: 1, padding: '10px', borderRadius: '8px', backgroundColor: '#F1F5F9', color: '#334155', fontSize: '13px', fontWeight: 800, border: 'none', cursor: 'pointer' }}
+                >
+                  Đóng
+                </button>
+                <button
+                  onClick={handleResetAllWeeklyOff}
+                  disabled={offResetAllBusy}
+                  style={{ flex: 2, padding: '10px', borderRadius: '8px', backgroundColor: offResetAllBusy ? '#9CA3AF' : '#DC2626', color: '#FFF', fontSize: '13px', fontWeight: 800, border: 'none', cursor: offResetAllBusy ? 'wait' : 'pointer' }}
+                >
+                  {offResetAllBusy ? '⏳ Đang reset...' : '🗑 XÁC NHẬN RESET ALL'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
