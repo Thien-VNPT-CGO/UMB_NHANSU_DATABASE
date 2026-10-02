@@ -31,6 +31,61 @@ export function canonicalPhone(phone: string): string {
   return digits;
 }
 
+/** Chuẩn hóa mọi biến thể ngày về YYYY-MM-DD — DÙNG DUY NHẤT ở mọi nơi.
+ *  Bao phủ: 'YYYY-MM-DD', ISO datetime ('....T..'), số serial Sheets, và chuỗi
+ *  ngày theo locale do Sheets trả về ('M/D/YYYY' US hoặc 'D/M/YYYY' VN — Sheets
+ *  tự biến '2026-10-05' ghi bằng USER_ENTERED thành serial rồi đọc lại theo
+ *  locale, từng gây mất ngày bắt đầu NV thử việc sau reload). Không parse được -> ''. */
+export function normSheetDate(input: unknown): string {
+  let s = String(input ?? '').trim().replace(/^'/, '');
+  if (!s) return '';
+  // Serial Sheets (số ngày từ 1899-12-30): '45929' hoặc 45929
+  if (/^\d{4,6}$/.test(s)) {
+    const n = Number(s);
+    if (n > 20000 && n < 80000) {
+      const ms = Math.round((n - 25569) * 86_400_000);
+      return new Date(ms).toISOString().slice(0, 10);
+    }
+    return '';
+  }
+  // ISO: 'YYYY-MM-DD' hoặc 'YYYY-MM-DDTHH...' (kể cả có giờ +07:00)
+  const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (iso) {
+    const y = Number(iso[1]); const m = Number(iso[2]); const d = Number(iso[3]);
+    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    }
+    return '';
+  }
+  // Slash: 'a/b/yyyy' — a>12 chắc chắn D/M/Y; b>12 chắc chắn M/D/Y;
+  // còn lại mơ hồ -> ưu tiên D/M/Y (locale vi của Sheet sản xuất).
+  const sl = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+  if (sl) {
+    let y = Number(sl[3]); if (y < 100) y += 2000;
+    const a = Number(sl[1]); const b = Number(sl[2]);
+    let m: number; let d: number;
+    if (a > 12 && b <= 12) { d = a; m = b; }
+    else if (b > 12 && a <= 12) { m = a; d = b; }
+    else { d = a; m = b; }
+    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    }
+    return '';
+  }
+  // Thử Date parser cuối cùng (VD 'Oct 5, 2026'), quy về ngày UTC để ổn định.
+  const t = new Date(s).getTime();
+  if (Number.isFinite(t)) return new Date(t).toISOString().slice(0, 10);
+  return '';
+}
+
+/** Ép Sheets lưu ngày dạng TEXT ('YYYY-MM-DD) để USER_ENTERED không biến thành
+ *  serial rồi đọc lại theo locale. Đọc về vẫn ra đúng 'YYYY-MM-DD' (dấu nháy là
+ *  marker nhập liệu, không nằm trong giá trị). */
+export function sheetDateText(input: unknown): string {
+  const iso = normSheetDate(input);
+  return iso ? `'${iso}` : '';
+}
+
 export interface DuplicatePhoneGroup {
   phone: string;
   employees: { employee_id: string; employee_code: string; full_name: string }[];
@@ -153,8 +208,10 @@ export class EmployeesService {
           group: data.group || 'STORE',
           default_branch_id: data.branchId,
           current_rate_per_hour: rate,
-          start_date: data.startDate || new Date().toISOString().split('T')[0],
-          official_date: data.officialDate || (data.employmentStatus === 'OFFICIAL' ? (data.startDate || new Date().toISOString().split('T')[0]) : undefined),
+          // Chuẩn hóa YYYY-MM-DD ngay khi ghi để mọi nguồn (form/import/Sheet tay)
+          // đều lưu 1 định dạng, không vỡ tiến độ 12 ngày sau reload.
+          start_date: normSheetDate(data.startDate) || new Date().toISOString().split('T')[0],
+          official_date: normSheetDate(data.officialDate) || (data.employmentStatus === 'OFFICIAL' ? (normSheetDate(data.startDate) || new Date().toISOString().split('T')[0]) : undefined),
           gender: data.gender,
           birth_date: data.birthDate,
           id_card_number: data.idCardNumber,
@@ -303,8 +360,14 @@ export class EmployeesService {
     if (updates.defaultShiftCode !== undefined) {
       patch.default_shift_code = updates.defaultShiftCode || undefined;
     }
-    if (updates.startDate !== undefined && updates.startDate) patch.start_date = String(updates.startDate);
-    if (updates.officialDate !== undefined && updates.officialDate) patch.official_date = String(updates.officialDate);
+    // Chuẩn hóa YYYY-MM-DD trước khi lưu: input có thể là 'D/M/YYYY' do HR gõ tay
+    // hoặc locale-string từ Sheet — không chuẩn hóa sẽ vỡ tiến độ 12 ngày sau reload.
+    if (updates.startDate !== undefined && updates.startDate) {
+      patch.start_date = normSheetDate(updates.startDate) || String(updates.startDate).trim();
+    }
+    if (updates.officialDate !== undefined && updates.officialDate) {
+      patch.official_date = normSheetDate(updates.officialDate) || String(updates.officialDate).trim();
+    }
     if (updates.email !== undefined) patch.email = String(updates.email).trim() || undefined;
     if (updates.gender !== undefined) patch.gender = updates.gender;
     if (updates.birthDate !== undefined && updates.birthDate) patch.birth_date = String(updates.birthDate);
@@ -556,7 +619,7 @@ export class EmployeesService {
     });
     const emp = created?.result || created;
     // Lịch thử việc 12 ngày để hiển thị cho HR + NV mới.
-    const startDate = String((emp as any).start_date || new Date().toISOString().slice(0, 10)).slice(0, 10);
+    const startDate = normSheetDate((emp as any).start_date) || new Date().toISOString().slice(0, 10);
     const endDate = new Date(`${startDate}T00:00:00Z`);
     endDate.setUTCDate(endDate.getUTCDate() + 11);
     const probation = {

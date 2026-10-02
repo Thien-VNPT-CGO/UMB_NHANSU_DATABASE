@@ -757,6 +757,38 @@ export function App() {
   const [attendShiftId, setAttendShiftId] = useState('');
   /** Ngày hôm nay theo giờ VN (tránh lệch ngày UTC 00:00–07:00). */
   const vnTodayStr = () => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+  /** Chuẩn hóa mọi biến thể ngày về YYYY-MM-DD (mirror backend normSheetDate):
+   *  ISO/ISO-datetime, serial Sheets, 'M/D/YYYY'/'D/M/YYYY' (Sheets tự biến
+   *  'YYYY-MM-DD' ghi bằng USER_ENTERED thành serial rồi đọc lại theo locale). */
+  const toISODate = (input: unknown): string => {
+    let s = String(input ?? '').trim().replace(/^'/, '');
+    if (!s) return '';
+    if (/^\d{4,6}$/.test(s)) {
+      const n = Number(s);
+      if (n > 20000 && n < 80000) return new Date(Math.round((n - 25569) * 86_400_000)).toISOString().slice(0, 10);
+      return '';
+    }
+    const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (iso) {
+      const m = Number(iso[2]); const d = Number(iso[3]);
+      if (m >= 1 && m <= 12 && d >= 1 && d <= 31) return `${iso[1]}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      return '';
+    }
+    const sl = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+    if (sl) {
+      let y = Number(sl[3]); if (y < 100) y += 2000;
+      const a = Number(sl[1]); const b = Number(sl[2]);
+      let m: number; let dd: number;
+      if (a > 12 && b <= 12) { dd = a; m = b; }
+      else if (b > 12 && a <= 12) { m = a; dd = b; }
+      else { dd = a; m = b; }
+      if (m >= 1 && m <= 12 && dd >= 1 && dd <= 31) return `${y}-${String(m).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+      return '';
+    }
+    const t = new Date(s).getTime();
+    if (Number.isFinite(t)) return new Date(t).toISOString().slice(0, 10);
+    return '';
+  };
   const SHIFT_HOURS_LABEL: Record<string, string> = {
     CA_1: 'Ca 1: 07:00 - 12:00',
     CA_2: 'Ca 2: 12:00 - 18:00',
@@ -1172,8 +1204,8 @@ export function App() {
 
   // 12 ngày thử việc tính từ ngày bắt đầu (start_date → +11)
   const probationWindowDays = (): string[] => {
-    const s = String((employee as any)?.start_date || '').slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return [];
+    const s = toISODate((employee as any)?.start_date);
+    if (!s) return [];
     const out: string[] = [];
     for (let i = 0; i < 12; i++) {
       const d = new Date(`${s}T00:00:00Z`);
@@ -1190,8 +1222,9 @@ export function App() {
       const arr = Array.isArray(list) ? list : [];
       const win = probationWindowDays();
       const mine = arr
-        .filter((l: any) => l?.leave_type === 'THU_VIEC' && l?.status === 'APPROVED' && win.includes(String(l.requested_date || '').slice(0, 10)))
-        .map((l: any) => String(l.requested_date).slice(0, 10))
+        .filter((l: any) => l?.leave_type === 'THU_VIEC' && l?.status === 'APPROVED' && win.includes(toISODate(l.requested_date)))
+        .map((l: any) => toISODate(l.requested_date))
+        .filter(Boolean)
         .sort();
       if (mine.length >= 5) {
         const off = new Set(mine.slice(0, 5));

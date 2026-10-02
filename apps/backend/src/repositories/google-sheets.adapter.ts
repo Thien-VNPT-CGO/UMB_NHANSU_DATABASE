@@ -1,5 +1,6 @@
 import { ISheetsRepository } from './sheets.interface.js';
 import { MockSheetsAdapter } from './mock-sheets.adapter.js';
+import { sheetDateText } from '../services/employees.service.js';
 import { GoogleSheetsSyncService } from '../services/google-sheets-sync.service.js';
 
 export class GoogleSheetsAdapter implements ISheetsRepository {
@@ -347,10 +348,10 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
           snapshot.group,
           snapshot.default_branch_id,
           snapshot.current_rate_per_hour,
-          snapshot.start_date || (snapshot as any).created_at,
+          sheetDateText(snapshot.start_date || (snapshot as any).created_at),
           snapshot.version,
           (snapshot as any).default_shift_code || '',
-          (snapshot as any).official_date || '',
+          sheetDateText((snapshot as any).official_date),
           (snapshot as any).email || '',
         ]);
         if (!ok) {

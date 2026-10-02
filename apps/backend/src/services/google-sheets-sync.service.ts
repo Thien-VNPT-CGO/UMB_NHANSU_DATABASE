@@ -19,6 +19,7 @@ import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { MockSheetsAdapter } from '../repositories/mock-sheets.adapter.js';
 import { hashPasswordSync, isBcryptHash, hashPin, generateAutoPin } from './password.service.js';
 import { canonicalPhone } from './employees.service.js';
+import { normSheetDate, sheetDateText } from './employees.service.js';
 import { evaluateCandidateAiScore } from './ai-scorer.js';
 import { buildZipStore, ZipEntry } from '../utils/zip-store.js';
 
@@ -472,13 +473,15 @@ export class GoogleSheetsSyncService {
             const group = (r[5] as any) || 'STORE';
             const branchId = (r[6] || '').trim() || 'CN130';
             const rate = Number(r[7]) || 25500;
-            const startDate = (r[8] || '').trim() || new Date().toISOString().split('T')[0];
+            // Ngày chuẩn YYYY-MM-DD: ô Sheet có thể là serial/locate-format do
+            // USER_ENTERED (VD '10/5/2026') — chuẩn hóa để không mất ngày sau reload.
+            const startDate = normSheetDate(r[8]) || new Date().toISOString().split('T')[0];
             const version = Number(r[9]) || 1;
             const shiftRaw = (r[10] || '').trim().toUpperCase();
             const defaultShift = shiftRaw === 'CA_1' || shiftRaw === 'CA_2' || shiftRaw === 'CA_3' ? shiftRaw : undefined;
             // Cột M/N (sheet mới): Ngày Chính Thức + Email — sheet cũ thiếu thì giữ rỗng,
             // merge version bên dưới sẽ giữ bản bộ nhớ khi version bộ nhớ >= sheet.
-            const officialDate = (r[11] || '').trim();
+            const officialDate = normSheetDate(r[11]);
             const email = (r[12] || '').trim();
 
             return {
@@ -495,7 +498,7 @@ export class GoogleSheetsSyncService {
               updated_at: new Date().toISOString(),
               version: version,
               ...(defaultShift ? { default_shift_code: defaultShift } : {}),
-              ...(officialDate ? { official_date: officialDate.slice(0, 10) } : {}),
+              ...(officialDate ? { official_date: officialDate } : {}),
               ...(email ? { email } : {}),
             };
           });
@@ -747,7 +750,7 @@ export class GoogleSheetsSyncService {
           employee_id: r[1],
           branch_id: r[2] || 'CN130',
           shift_code: (r[3] as any) || 'CA_1',
-          date: r[4] || new Date().toISOString().split('T')[0],
+          date: normSheetDate(r[4]) || new Date().toISOString().split('T')[0],
           start_at: r[5] || new Date().toISOString(),
           end_at: r[6] || new Date().toISOString(),
           status: (r[7] as any) || 'PUBLISHED',
@@ -798,7 +801,7 @@ export class GoogleSheetsSyncService {
             employee_id: r[1],
             branch_id: r[2] || 'CN130',
             leave_type: leaveType,
-            requested_date: r[4] || new Date().toISOString().split('T')[0],
+            requested_date: normSheetDate(r[4]) || new Date().toISOString().split('T')[0],
             shift_code: (r[5] as any) || undefined,
             reason: r[6] || '',
             status,
@@ -1522,10 +1525,12 @@ export class GoogleSheetsSyncService {
         e.group,
         e.default_branch_id,
         e.current_rate_per_hour,
-        e.start_date || e.created_at,
+        // Ép TEXT để USER_ENTERED không biến 'YYYY-MM-DD' thành serial Sheets
+        // (đọc lại theo locale -> mất ngày sau reload). Xem sheetDateText.
+        sheetDateText(e.start_date || (e as any).created_at),
         e.version,
         (e as any).default_shift_code || '',
-        (e as any).official_date || '',
+        sheetDateText((e as any).official_date),
         (e as any).email || '',
       ]);
       await this.overwriteSheetData('NHAN_VIEN_MASTER', SHEETS_DEFINITIONS.find(d => d.title === 'NHAN_VIEN_MASTER')!.headers, employeeRows);
@@ -1556,7 +1561,7 @@ export class GoogleSheetsSyncService {
         s.employee_id,
         s.branch_id,
         s.shift_code,
-        s.date,
+        sheetDateText(s.date),
         s.start_at,
         s.end_at,
         s.status,
@@ -1572,7 +1577,7 @@ export class GoogleSheetsSyncService {
         l.employee_id,
         l.branch_id,
         l.leave_type,
-        l.requested_date,
+        sheetDateText(l.requested_date),
         l.shift_code || '',
         l.reason,
         l.status,

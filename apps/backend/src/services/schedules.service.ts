@@ -47,6 +47,7 @@ function assertDatesInCurrentWeek(dates: string[], now: Date = new Date()): { mo
   return wk;
 }
 import { canonicalBranch } from './auto-schedule.service.js';
+import { normSheetDate } from './employees.service.js';
 import { Server } from 'socket.io';
 
 export class SchedulesService {
@@ -300,8 +301,8 @@ export class SchedulesService {
     if (!emp || (emp as any).employment_status !== 'PROBATION') {
       throw new Error('Chỉ nhân viên đang thử việc mới đăng ký OFF thử việc!');
     }
-    const start = String((emp as any).start_date || '').slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(start)) {
+    const start = normSheetDate((emp as any).start_date);
+    if (!start) {
       throw new Error('Hồ sơ chưa có ngày bắt đầu thử việc! Liên hệ HR bổ sung.');
     }
     const windowDays: string[] = [];
@@ -311,7 +312,7 @@ export class SchedulesService {
       windowDays.push(d.toISOString().slice(0, 10));
     }
     const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
-    const dates = [...new Set((data.dates || []).map(d => String(d || '').slice(0, 10)))];
+    const dates = [...new Set((data.dates || []).map(d => normSheetDate(d)).filter(Boolean))];
     if (dates.length !== 5) {
       throw new Error(`Phải chọn đúng 5 ngày OFF thử việc (đang chọn ${dates.length} ngày)!`);
     }

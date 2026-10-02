@@ -149,6 +149,40 @@ export function weekOptions(centerOffset = 0, span = 4): { offset: number; mon: 
   return out;
 }
 
+/** Chuẩn hóa mọi biến thể ngày về YYYY-MM-DD (mirror backend normSheetDate):
+ *  ISO/ISO-datetime, serial Sheets, 'M/D/YYYY' (US) / 'D/M/YYYY' (VN — Sheets tự
+ *  biến 'YYYY-MM-DD' ghi bằng USER_ENTERED thành serial rồi đọc lại theo locale,
+ *  từng gây mất ngày bắt đầu NV thử việc sau reload). Không parse được -> ''. */
+export function toISODate(input: unknown): string {
+  let s = String(input ?? '').trim().replace(/^'/, '');
+  if (!s) return '';
+  if (/^\d{4,6}$/.test(s)) {
+    const n = Number(s);
+    if (n > 20000 && n < 80000) return new Date(Math.round((n - 25569) * 86_400_000)).toISOString().slice(0, 10);
+    return '';
+  }
+  const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (iso) {
+    const m = Number(iso[2]); const d = Number(iso[3]);
+    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) return `${iso[1]}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    return '';
+  }
+  const sl = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+  if (sl) {
+    let y = Number(sl[3]); if (y < 100) y += 2000;
+    const a = Number(sl[1]); const b = Number(sl[2]);
+    let m: number; let d: number;
+    if (a > 12 && b <= 12) { d = a; m = b; }
+    else if (b > 12 && a <= 12) { m = a; d = b; }
+    else { d = a; m = b; }
+    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    return '';
+  }
+  const t = new Date(s).getTime();
+  if (Number.isFinite(t)) return new Date(t).toISOString().slice(0, 10);
+  return '';
+}
+
 /** Link Google Meet mặc định hệ thống cho mọi lịch PV online. */
 export const SYSTEM_MEET_URL = 'https://meet.google.com/ypp-srtm-fvm';
 
@@ -3485,7 +3519,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     });
     // Tiến độ 12 ngày thử việc (7 làm / 5 OFF) tính từ ngày bắt đầu.
     const probationProgress = (emp: any): { done: number; left: number; pct: number } | null => {
-      const s = String(emp.start_date || '').slice(0, 10);
+      const s = toISODate(emp.start_date);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
       const startMs = new Date(`${s}T00:00:00+07:00`).getTime();
       if (!Number.isFinite(startMs)) return null;
@@ -3750,7 +3784,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             : '21.000 đ/h'}
                         </td>
                         <td style={{ padding: '14px 18px', fontSize: '12px', color: 'var(--text-muted)' }}>
-                          {emp.start_date || 'Đang cập nhật'}
+                          {toISODate(emp.start_date) || 'Đang cập nhật'}
                         </td>
                         <td style={{ padding: '14px 18px' }}>
                           {prog ? (
@@ -4248,7 +4282,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           : '25.500 đ/h'}
                       </td>
                       <td style={{ padding: '14px 18px', fontSize: '12px', color: 'var(--text-muted)' }}>
-                        {emp.official_date || emp.start_date || 'Đang cập nhật'}
+                        {toISODate(emp.official_date) || toISODate(emp.start_date) || 'Đang cập nhật'}
                       </td>
                       <td style={{ padding: '14px 18px', textAlign: 'center' }}>
                         <span className="badge badge-success" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 700, letterSpacing: '0.3px' }}>
@@ -4270,8 +4304,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 group: emp.group || 'STORE',
                                 rate: emp.current_rate_per_hour || 25500,
                                 shift: emp.default_shift_code || '',
-                                startDate: String(emp.start_date || '').slice(0, 10),
-                                officialDate: String(emp.official_date || '').slice(0, 10),
+                                startDate: toISODate(emp.start_date),
+                                officialDate: toISODate(emp.official_date),
                                 email: emp.email || '',
                               });
                             }}
