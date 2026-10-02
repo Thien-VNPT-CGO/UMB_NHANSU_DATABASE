@@ -2661,12 +2661,13 @@ export function App() {
                       <th style={{ padding: '12px 20px' }}>Mã PIN</th>
                       <th style={{ padding: '12px 20px' }}>Trạng Thái PIN</th>
                       <th style={{ padding: '12px 20px' }}>Đổi PIN Cuối</th>
+                      <th style={{ padding: '12px 20px' }}>Thao Tác</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredActivationItems.length === 0 ? (
                       <tr>
-                        <td colSpan={9} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                        <td colSpan={10} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
                           Không có nhân sự nào trong tab này hoặc không khớp với tìm kiếm.
                         </td>
                       </tr>
@@ -2798,6 +2799,24 @@ export function App() {
                           </td>
                           <td style={{ padding: '14px 20px', fontSize: '12px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
                             {fmtPinTime(item.pinUpdatedAt)}
+                          </td>
+                          <td style={{ padding: '14px 20px' }}>
+                            <button
+                              onClick={() => handleDeleteEmployee(item.id, item.fullName)}
+                              title="Xóa nhân viên khỏi hệ thống (cả Google Sheets NHAN_VIEN_MASTER và TAI_KHOAN_NHAN_VIEN)"
+                              style={{
+                                padding: '6px 12px',
+                                borderRadius: 'var(--radius-sm)',
+                                border: '1px solid var(--danger)',
+                                backgroundColor: 'var(--danger-soft)',
+                                color: 'var(--danger)',
+                                fontWeight: 600,
+                                fontSize: '12px',
+                                cursor: 'pointer',
+                              }}
+                            >
+                              🗑️ Xóa
+                            </button>
                           </td>
                         </tr>
                       ))
