@@ -263,6 +263,28 @@ export function pvBookedSlots(cands: any[], date: string, excludeId?: string): s
   return out.sort();
 }
 
+/** Kiểm tra xem ứng viên có verdict 'FAIL' (Chưa đạt) từ rubric chấm điểm không. */
+export function getFailVerdictInfo(c: any): { isFail: boolean; scoredAt: number; remainingMs: number } {
+  const d = parseScoreDetailClient((c as any)?.interview_score_detail);
+  if (!d || d.verdict !== 'FAIL') return { isFail: false, scoredAt: 0, remainingMs: 0 };
+  // Lấy thời gian chấm điểm từ updated_at của ứng viên, fallback về created_at, cuối cùng là now
+  const scoredAt = Date.parse((c as any)?.updated_at || (c as any)?.created_at || Date.now());
+  const AUTO_DELETE_HOURS = 24;
+  const deadlineMs = scoredAt + AUTO_DELETE_HOURS * 60 * 60 * 1000;
+  const remainingMs = Math.max(0, deadlineMs - Date.now());
+  return { isFail: true, scoredAt, remainingMs };
+}
+
+/** Format milliseconds thành HH:MM:SS */
+export function formatCountdown(ms: number): string {
+  if (ms <= 0) return '00:00:00';
+  const totalSec = Math.floor(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
 /** Chuẩn hiển thị cột Thời Gian lịch PV: dd/MM/yyyy - HH:mm. */
 export function fmtPvTime(c: any): string {
   const d = toISODate((c as any)?.interview_date);
@@ -1228,6 +1250,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [updatingShift, setUpdatingShift] = useState('');
   const [updatingBranch, setUpdatingBranch] = useState('');
   const [updatingBusy, setUpdatingBusy] = useState(false);
+
+  // Real-time clock for countdown timers (FAIL verdict = 24h auto-delete)
+  const [nowMs, setNowMs] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
 
   const openUpdating = (candidate: any) => {
     setUpdatingId(candidate.submission_id);
@@ -3382,66 +3411,91 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       })()}
                     </td>
                     <td style={{ padding: '14px 20px' }}>
-                      <span style={{ backgroundColor: '#FEF3C7', color: '#92400E', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700 }}>
-                        {candStatusVI(c.status)}
-                      </span>
                       {(() => {
-                        const d = parseScoreDetailClient((c as any)?.interview_score_detail);
-                        if (!d) return null;
-                        const vc = d.verdict === 'PASS' ? '#059669' : d.verdict === 'LOAI' ? '#DC2626' : '#B45309';
-                        const vt = d.verdict === 'PASS' ? 'PASS' : d.verdict === 'LOAI' ? 'LOẠI thẳng' : d.verdict === 'CONSIDER' ? 'Cân nhắc' : 'Chưa đạt';
-                        const denom = (d as any).achievableMax ?? d.max;
+                        const failInfo = getFailVerdictInfo(c);
+                        if (failInfo.isFail) {
+                          return (
+                            <div>
+                              <span style={{ backgroundColor: '#FEF2F2', color: '#DC2626', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700, border: '1px solid #FCA5A5' }}>
+                                ⚠️ Chưa đạt — Tự xoá sau: {formatCountdown(failInfo.remainingMs)}
+                              </span>
+                              <div style={{ fontSize: '11px', color: '#DC2626', fontWeight: 700, marginTop: '4px', fontVariantNumeric: 'tabular-nums' }}>
+                                Hệ thống sẽ tự động xoá ứng viên này khỏi hệ thống sau 24h kể từ lúc chấm điểm ({new Date(failInfo.scoredAt + 24*60*60*1000).toLocaleString('vi-VN')})
+                              </div>
+                            </div>
+                          );
+                        }
                         return (
-                          <div style={{ fontSize: '11px', color: vc, fontWeight: 800, marginTop: '4px' }}>
-                            📝 Rubric: {d.total}/{denom} — {vt}
-                          </div>
+                          <>
+                            <span style={{ backgroundColor: '#FEF3C7', color: '#92400E', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700 }}>
+                              {candStatusVI(c.status)}
+                            </span>
+                            {(() => {
+                              const d = parseScoreDetailClient((c as any)?.interview_score_detail);
+                              if (!d) return null;
+                              const vc = d.verdict === 'PASS' ? '#059669' : d.verdict === 'LOAI' ? '#DC2626' : '#B45309';
+                              const vt = d.verdict === 'PASS' ? 'PASS' : d.verdict === 'LOAI' ? 'LOẠI thẳng' : d.verdict === 'CONSIDER' ? 'Cân nhắc' : 'Chưa đạt';
+                              const denom = (d as any).achievableMax ?? d.max;
+                              return (
+                                <div style={{ fontSize: '11px', color: vc, fontWeight: 800, marginTop: '4px' }}>
+                                  📝 Rubric: {d.total}/{denom} — {vt}
+                                </div>
+                              );
+                            })()}
+                          </>
                         );
                       })()}
                     </td>
                     <td style={{ padding: '14px 20px' }}>
-                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                        {(() => {
-                          const btn2: React.CSSProperties = {
-                            padding: '6px 12px', fontSize: '11px', fontWeight: 800, borderRadius: '8px',
-                            border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px',
-                            whiteSpace: 'nowrap',
-                          };
-                          const d = parseScoreDetailClient((c as any)?.interview_score_detail);
-                          const canApprove = !!d && d.passed && String(c.status || '') !== 'ACCEPTED';
-                          const isAccepted = String(c.status || '') === 'ACCEPTED';
-                          const isScored = !!d;
-                          return (<>
+                      {(() => {
+                        const failInfo = getFailVerdictInfo(c);
+                        const btn2: React.CSSProperties = {
+                          padding: '6px 12px', fontSize: '11px', fontWeight: 800, borderRadius: '8px',
+                          border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px',
+                          whiteSpace: 'nowrap',
+                        };
+                        const d = parseScoreDetailClient((c as any)?.interview_score_detail);
+                        const canApprove = !!d && d.passed && String(c.status || '') !== 'ACCEPTED';
+                        const isAccepted = String(c.status || '') === 'ACCEPTED';
+                        const isScored = !!d;
+                        const disabledForFail = failInfo.isFail;
+                        const disabledStyle = { opacity: 0.5, cursor: 'not-allowed', backgroundColor: '#94A3B8' };
+                        return (
+                          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                             <button
-                              style={{ ...btn2, backgroundColor: '#10B981', color: '#FFF', boxShadow: '0 2px 6px rgba(16,185,129,0.3)' }}
-                              onClick={() => chatZaloWithCandidate(c, showToast)}
-                              title="Tự động kết bạn Zalo qua nick HR + gửi lời chào để chát với ứng viên"
+                              disabled={disabledForFail}
+                              style={{ ...btn2, backgroundColor: disabledForFail ? '#94A3B8' : '#10B981', color: '#FFF', boxShadow: disabledForFail ? 'none' : '0 2px 6px rgba(16,185,129,0.3)' }}
+                              onClick={() => !disabledForFail && chatZaloWithCandidate(c, showToast)}
+                              title={disabledForFail ? 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)' : 'Tự động kết bạn Zalo qua nick HR + gửi lời chào để chát với ứng viên'}
                             >
                               💬 Chat Zalo
                             </button>
                             {!isAccepted && !isScored && (
                               <button
-                                style={{ ...btn2, backgroundColor: '#8B5CF6', color: '#FFF', boxShadow: '0 2px 6px rgba(139,92,246,0.3)' }}
-                                onClick={() => openScoring(c)}
-                                title="Chấm điểm theo TIÊU CHÍ LỌC HỒ SƠ (chấm xong nút này ẩn đi)"
+                                disabled={disabledForFail}
+                                style={{ ...btn2, backgroundColor: disabledForFail ? '#94A3B8' : '#8B5CF6', color: '#FFF', boxShadow: disabledForFail ? 'none' : '0 2px 6px rgba(139,92,246,0.3)' }}
+                                onClick={() => !disabledForFail && openScoring(c)}
+                                title={disabledForFail ? 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)' : 'Chấm điểm theo TIÊU CHÍ LỌC HỒ SƠ (chấm xong nút này ẩn đi)'}
                               >
                                 📝 Chấm điểm
                               </button>
                             )}
                             {!isAccepted && (
                               <button
-                                style={{ ...btn2, backgroundColor: '#F59E0B', color: '#FFF', boxShadow: '0 2px 6px rgba(245,158,11,0.3)' }}
-                                onClick={() => openUpdating(c)}
-                                title="Cập nhật ca làm việc + chi nhánh (bắt buộc chốt 1 ca / 1 chi nhánh trước khi duyệt)"
+                                disabled={disabledForFail}
+                                style={{ ...btn2, backgroundColor: disabledForFail ? '#94A3B8' : '#F59E0B', color: '#FFF', boxShadow: disabledForFail ? 'none' : '0 2px 6px rgba(245,158,11,0.3)' }}
+                                onClick={() => !disabledForFail && openUpdating(c)}
+                                title={disabledForFail ? 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)' : 'Cập nhật ca làm việc + chi nhánh (bắt buộc chốt 1 ca / 1 chi nhánh trước khi duyệt)'}
                               >
                                 ✏️ Cập nhật TT
                               </button>
                             )}
                             {canApprove && (
                               <button
-                                style={{ ...btn2, backgroundColor: '#10B981', color: '#FFF', boxShadow: '0 2px 6px rgba(16,185,129,0.35)' }}
-                                disabled={approveBusyId === c.submission_id}
-                                onClick={() => handleApproveCandidate(c)}
-                                title={`Đã PASS rubric (${d.total}/${(d as any).achievableMax ?? d.max}) — duyệt thử việc + cấp PIN`}
+                                disabled={disabledForFail || approveBusyId === c.submission_id}
+                                style={{ ...btn2, backgroundColor: disabledForFail ? '#94A3B8' : '#10B981', color: '#FFF', boxShadow: disabledForFail ? 'none' : '0 2px 6px rgba(16,185,129,0.35)' }}
+                                onClick={() => !disabledForFail && handleApproveCandidate(c)}
+                                title={disabledForFail ? 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)' : `Đã PASS rubric (${d.total}/${(d as any).achievableMax ?? d.max}) — duyệt thử việc + cấp PIN`}
                               >
                                 {approveBusyId === c.submission_id ? '⏳ Đang duyệt...' : '✅ Duyệt Thử việc'}
                               </button>
@@ -3449,9 +3503,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             {isAccepted && (
                               <span style={{ fontSize: '11px', color: '#059669', fontWeight: 800 }}>✅ Đã duyệt NV</span>
                             )}
-                          </>);
-                        })()}
-                      </div>
+                            {disabledForFail && (
+                              <span style={{ fontSize: '11px', color: '#DC2626', fontWeight: 800, alignSelf: 'center' }}>🔒 Khoá (tự xoá 24h)</span>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </td>
                   </tr>
                 ))
