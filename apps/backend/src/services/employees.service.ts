@@ -495,6 +495,32 @@ export class EmployeesService {
     return updated;
   }
 
+  /** HR hủy lịch PV (quá 5 phút không vào Meet / chủ động hủy): xóa ngày+khung giờ
+   *  đã đăng ký, trạng thái về NEW (chưa đăng ký lịch PV). Giữ nguyên điểm đã chấm. */
+  async cancelInterviewSchedule(submissionId: string, actorId: string, reason?: string) {
+    const cur = (await this.repo.listCandidates().catch(() => []))
+      .find((c: any) => c.submission_id === submissionId) as any;
+    if (!cur) throw new Error('CANDIDATE_NOT_FOUND');
+    if (!cur.interview_date) throw new Error('Ứng viên chưa có lịch phỏng vấn để hủy!');
+    if (cur.status === 'ACCEPTED') throw new Error('Ứng viên đã duyệt thử việc — không thể hủy lịch PV!');
+    const updated = await this.repo.updateCandidate(submissionId, {
+      status: 'NEW',
+      interview_date: undefined,
+      interview_time_slot: undefined,
+      interviewer_id: undefined,
+    } as any);
+    await this.repo.recordAuditLog({
+      log_id: `LOG_${Date.now()}`,
+      actor_id: actorId,
+      actor_role: 'HR',
+      action: 'INTERVIEW_CANCELLED',
+      target_entity: 'UNG_VIEN',
+      target_id: submissionId,
+      details: `Hủy lịch PV ${cur.interview_time_slot || ''} ${String(cur.interview_date || '').slice(0, 10)} của ${(updated as any).full_name || submissionId}${reason ? ` — ${reason}` : ''}; về trạng thái chưa đăng ký lịch`,
+    }).catch(() => null);
+    return updated;
+  }
+
   /** Đánh LOẠI: trạng thái REJECTED + xóa lịch PV + xóa thư mời Zalo (ẩn khỏi 2 danh sách). */
   async rejectCandidate(submissionId: string, actorId: string, reason?: string) {
     const updated = await this.repo.updateCandidate(submissionId, {

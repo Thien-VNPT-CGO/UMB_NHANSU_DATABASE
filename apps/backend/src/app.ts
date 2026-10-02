@@ -970,9 +970,21 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  // Chấm điểm rubric PV (server tự tính; dính LOẠI thẳng -> REJECTED + xóa lịch luôn).
-  app.post('/applications/:id/score', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams, body: candidateScoreBody }), async (req: AuthenticatedRequest, res) => {
+  // Hủy lịch PV (quá 5 phút không vào Meet / HR chủ động hủy): xóa ngày+khung giờ,
+  // trạng thái về NEW (chưa đăng ký lịch PV). Giữ nguyên điểm đã chấm nếu có.
+  app.post('/interviews/:id/cancel', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {
     try {
+      const reason = String((req.body as any)?.reason || '').slice(0, 500);
+      const result = await employeesService.cancelInterviewSchedule(req.params.id, req.user!.id, reason || undefined);
+      broadcastUpdate('candidates', { action: 'interview-cancelled', id: req.params.id });
+      res.json({ success: true, candidate: result });
+    } catch (err: any) {
+      res.status(400).json({ error: String(err?.message || 'Lỗi hủy lịch phỏng vấn') });
+    }
+  });
+
+  // Chấm điểm rubric PV (server tự tính; dính LOẠI thẳng -> REJECTED + xóa lịch luôn).
+  app.post('/applications/:id/score', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams, body: candidateScoreBody }), async (req: AuthenticatedRequest, res) => {    try {
       const { rubric, answers } = req.body as any;
       const result = await employeesService.scoreCandidate(req.params.id, rubric, answers || {}, req.user!.id);
       broadcastUpdate('candidates', { action: 'score', id: req.params.id });

@@ -263,6 +263,18 @@ export function pvBookedSlots(cands: any[], date: string, excludeId?: string): s
   return out.sort();
 }
 
+/** Chuẩn hiển thị cột Thời Gian lịch PV: dd/MM/yyyy - HH:mm. */
+export function fmtPvTime(c: any): string {
+  const d = toISODate((c as any)?.interview_date);
+  const t = String((c as any)?.interview_time_slot || '').slice(0, 5);
+  if (!d || !/^\d{2}:\d{2}$/.test(t)) return '';
+  return `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)} - ${t}`;
+}
+
+/** Auto-huỷ lịch PV: sau giờ hẹn N phút không ai vào Meet thì hiện nút Huỷ + đếm ngược. */
+export const PV_NOJOIN_CANCEL_MIN = 5;
+export const PV_CANCEL_COUNTDOWN_SEC = 20;
+
 /** Ngày Việt Nam (UTC+7) của 1 mốc ISO. */
 export function vnDayOf(iso: string): string {
   const t = new Date(iso || '').getTime();
@@ -697,6 +709,41 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const meetWindowsRef = useRef<Map<string, Window | null>>(new Map());
   const [meetBlocked, setMeetBlocked] = useState(false);
   const [pvAlert, setPvAlert] = useState<any | null>(null);
+  // Auto-huỷ lịch PV: quá 5 phút không vào Meet -> nút Huỷ + đếm ngược 20s.
+  // pvJoined: HR đã bấm Vào Meet / mở chấm điểm (= có người vào) -> giữ lịch, tắt đếm ngược.
+  const pvJoinedRef = useRef<Set<string>>(new Set());
+  const pvAutoCancelRef = useRef<Set<string>>(new Set());
+  const [pvCancelBusyId, setPvCancelBusyId] = useState<string | null>(null);
+  const markPvJoined = (c: any) => {
+    if (!c) return;
+    pvJoinedRef.current.add(`${(c as any).submission_id}|${String((c as any).interview_date || '').slice(0, 10)}`);
+  };
+  /** Hủy lịch PV: xóa ngày+khung đã đăng ký, về trạng thái chưa đăng ký lịch. */
+  const handleCancelInterview = async (c: any, auto: boolean) => {
+    const sid = String((c as any)?.submission_id || '');
+    if (!sid || pvCancelBusyId) return;
+    const key = `${sid}|${String((c as any).interview_date || '').slice(0, 10)}`;
+    if (auto) {
+      if (pvAutoCancelRef.current.has(key)) return;
+      pvAutoCancelRef.current.add(key);
+    }
+    setPvCancelBusyId(sid);
+    try {
+      await apiRequest(`/interviews/${sid}/cancel`, {
+        method: 'POST',
+        body: JSON.stringify({ reason: auto ? 'Quá 5 phút không vào Meet (tự động hủy sau đếm ngược 20s)' : 'HR hủy lịch phỏng vấn' }),
+      });
+      showToast(auto ? `⏰ Tự động hủy lịch PV ${c?.full_name || ''} (quá 5 phút không vào Meet)!` : `Đã hủy lịch PV ${c?.full_name || ''} — về trạng thái chưa đăng ký lịch.`);
+      pvJoinedRef.current.delete(key);
+      if (onRefreshData) await onRefreshData();
+      if (onSyncSheets) await onSyncSheets();
+    } catch (e: any) {
+      if (auto) pvAutoCancelRef.current.delete(key);
+      showToast(e?.message || 'Lỗi khi hủy lịch phỏng vấn!');
+    } finally {
+      setPvCancelBusyId(null);
+    }
+  };
   const [celebration, setCelebration] = useState<{ name: string; total: number; rubric: string } | null>(null);
 
   /** Thử tự mở tab Meet — trả về true nếu trình duyệt cho phép (false = bị chặn popup). */
@@ -765,6 +812,18 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         }
         playInterviewAlert();
         setPvAlert(cd);
+      }
+      // Quá 5 phút không vào Meet (không bấm Vào Meet, không chấm điểm) -> tự động
+      // hủy sau đếm ngược 20s (UI đếm ngược ở cột Meet). Có người vào -> giữ lịch.
+      const elapsed = meetNow - st;
+      const noJoinCancelMs = PV_NOJOIN_CANCEL_MIN * 60_000;
+      const scored = !!parseScoreDetailClient((cd as any)?.interview_score_detail);
+      if (elapsed >= noJoinCancelMs + PV_CANCEL_COUNTDOWN_SEC * 1000
+        && !scored
+        && !pvJoinedRef.current.has(key)
+        && !pvAutoCancelRef.current.has(key)
+        && !pvCancelBusyId) {
+        handleCancelInterview(cd, true);
       }
     }
   }, [meetNow]);
@@ -961,6 +1020,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Link Meet mặc định hệ thống (không tùy chỉnh) — input hiển thị disabled.
   const inviteMeetUrl = 'https://meet.google.com/ypp-srtm-fvm';
   const [inviteBusy, setInviteBusy] = useState(false);
+  // Chặn chọn quá khứ ngay ở input (lớp mềm — server vẫn validate + báo đăng ký lại).
+  const pvMinDateTime = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
   // Danh sách lịch PV: ẩn đã loại + đã duyệt thử việc (thành NV, không còn là ứng viên).
   // Ràng buộc chéo theo SĐT: ứng viên nào đã có hồ sơ nhân viên (dù duyệt bằng
   // đường nào: tab PV, tạo trực tiếp, duyệt trước đây) cũng ẩn khỏi tab PV.
@@ -1121,7 +1182,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
   // Mở modal chấm rubric cho 1 ứng viên (prefill điểm đã chấm nếu có).
   const openScoring = (candidate: any) => {
-    const saved = parseScoreDetailClient((candidate as any)?.interview_score_detail);
+    // HR mở chấm điểm = đang xử lý buổi PV -> giữ lịch, tắt đếm ngược tự hủy.
+    markPvJoined(candidate);    const saved = parseScoreDetailClient((candidate as any)?.interview_score_detail);
     const rubric = (saved?.rubricId === 'office' ? 'office' : 'store') as 'store' | 'office';
     setScoringRubric((candidate as any)?.interview_rubric === 'office' ? 'office' : rubric);
     setScoringAnswers((saved?.answers && typeof saved.answers === 'object' ? saved.answers : {}) as Record<string, number[]>);
@@ -2919,7 +2981,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
               <div>
                 <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Thời gian phỏng vấn (khung cố định 30 phút):</label>
-                <input type="datetime-local" step={1800} value={inviteDateTime} onChange={(e) => setInviteDateTime(e.target.value)} style={{ width: '100%' }} />
+                <input type="datetime-local" step={1800} min={pvMinDateTime} value={inviteDateTime} onChange={(e) => setInviteDateTime(e.target.value)} style={{ width: '100%' }} />
                 <div style={{ fontSize: '11px', color: '#1E40AF', marginTop: '4px', lineHeight: '1.5' }}>
                   ⏱️ Mỗi bạn cách nhau 30 phút — phút phải là <strong>:00</strong> hoặc <strong>:30</strong>, giờ hành chính <strong>08:00–17:00</strong>. Sai khung hệ thống báo lỗi và yêu cầu đăng ký lại.
                 </div>
@@ -2930,7 +2992,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   if (booked.length === 0) return null;
                   return (
                     <div style={{ fontSize: '11px', color: '#92400E', backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '6px', padding: '6px 8px', marginTop: '6px', lineHeight: '1.5' }}>
-                      📅 Ngày {dd} đã kín: <strong>{booked.join(', ')}</strong> — vui lòng chọn khung khác cách ít nhất 30 phút!
+                      📅 Ngày {`${dd.slice(8, 10)}/${dd.slice(5, 7)}/${dd.slice(0, 4)}`} đã kín: <strong>{booked.join(', ')}</strong> — vui lòng chọn khung khác cách ít nhất 30 phút!
                     </div>
                   );
                 })()}
@@ -3006,7 +3068,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <strong style={{ fontSize: '14px' }}>Lịch Phỏng Vấn Tuyển Dụng Đã Lên Lịch & Trạng Thái Gửi Zalo</strong>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                🤖 Hệ thống tự rà soát + xóa lịch trùng (&lt; 30 phút) mỗi 30 phút
+                🤖 Hệ thống tự rà soát + xóa lịch trùng (&lt; 30 phút) mỗi 5 phút
               </span>
               <span className="badge" style={{ backgroundColor: '#EFF6FF', color: '#0068FF', fontWeight: 800 }}>
                 ĐÃ ĐỒNG BỘ BOT ZALO CÁ NHÂN
@@ -3093,7 +3155,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       })()}
                     </td>
                     <td style={{ padding: '14px 20px', fontWeight: 700 }}>
-                      {(c as any).interview_date ? `${(c as any).interview_time_slot || ''} ${ (c as any).interview_date}` : (c.interview_time || 'Chờ xếp lịch')}
+                      {fmtPvTime(c) || (c.interview_time || 'Chờ xếp lịch')}
                     </td>
                     <td style={{ padding: '14px 20px' }}>
                       {(() => {
@@ -3114,11 +3176,43 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           const vn = new Date(ms + 7 * 3_600_000);
                           return `${pad(vn.getUTCHours())}:${pad(vn.getUTCMinutes())}`;
                         };
+                        // Quá 5 phút không ai vào Meet (chưa bấm Vào Meet, chưa chấm điểm):
+                        // hiện nút Huỷ Phỏng vấn + đếm ngược 20s. HR bấm Huỷ -> xóa lịch
+                        // ngay; hết 20s -> hệ thống tự hủy. Có người vào -> giữ lịch.
+                        const pvKey = `${(c as any).submission_id}|${String((c as any).interview_date || '').slice(0, 10)}`;
+                        const pvJoined = pvJoinedRef.current.has(pvKey);
+                        const pvScored = !!parseScoreDetailClient((c as any)?.interview_score_detail);
+                        const noJoinMs = PV_NOJOIN_CANCEL_MIN * 60_000;
+                        if (elapsed >= noJoinMs && !pvJoined && !pvScored) {
+                          const remainSec = Math.max(0, PV_CANCEL_COUNTDOWN_SEC - Math.floor((elapsed - noJoinMs) / 1000));
+                          const busy = pvCancelBusyId === (c as any).submission_id;
+                          return (
+                            <div style={{ backgroundColor: '#FEF2F2', border: '1.5px solid #FCA5A5', borderRadius: '8px', padding: '8px 10px' }}>
+                              <div style={{ fontSize: '12px', fontWeight: 800, color: '#991B1B' }}>
+                                ⚠️ Quá {PV_NOJOIN_CANCEL_MIN} phút chưa vào Meet
+                              </div>
+                              <div style={{ fontSize: '12px', fontWeight: 800, color: '#DC2626', margin: '4px 0', fontVariantNumeric: 'tabular-nums' }}>
+                                ⏳ Tự hủy sau: 00:{String(remainSec).padStart(2, '0')}
+                              </div>
+                              <button
+                                disabled={busy}
+                                onClick={() => handleCancelInterview(c, false)}
+                                style={{ display: 'inline-block', backgroundColor: busy ? '#9CA3AF' : '#DC2626', color: '#FFF', fontWeight: 800, fontSize: '12px', padding: '8px 14px', borderRadius: '8px', border: 'none', cursor: busy ? 'wait' : 'pointer', width: '100%' }}
+                              >
+                                {busy ? '⏳ Đang hủy...' : '✖ Huỷ Phỏng vấn'}
+                              </button>
+                              <a href={SYSTEM_MEET_URL} target="_blank" rel="noreferrer" onClick={() => markPvJoined(c)}
+                                style={{ display: 'block', fontSize: '11px', color: '#0068FF', fontWeight: 700, marginTop: '4px', textAlign: 'center' }}>
+                                Vào Meet ngay để giữ lịch →
+                              </a>
+                            </div>
+                          );
+                        }
                         // Đang trong khung 30 phút PV: nút đỏ nhấp nháy để vào Meet.
                         if (diff <= 0 && elapsed < PV_SLOT_MINUTES * 60_000) {
                           return (
                             <div>
-                              <a href={SYSTEM_MEET_URL} target="_blank" rel="noreferrer"
+                              <a href={SYSTEM_MEET_URL} target="_blank" rel="noreferrer" onClick={() => markPvJoined(c)}
                                 style={{ display: 'inline-block', backgroundColor: '#DC2626', color: '#FFF', fontWeight: 800, fontSize: '12px', padding: '8px 14px', borderRadius: '8px', textDecoration: 'none', animation: 'fx-blink 1.2s infinite' }}>
                                 🔴 ĐANG PV — Vào Meet
                               </a>
@@ -3142,7 +3236,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         return (
                           <div>
                             <div style={{ fontSize: '12px', fontWeight: 800, color: '#1D4ED8' }}>⏳ Còn {fmtLeft(diff)}</div>
-                            <a href={SYSTEM_MEET_URL} target="_blank" rel="noreferrer" style={{ fontSize: '11px', color: '#0068FF', fontWeight: 700 }}>Vào trước qua Meet →</a>
+                            <a href={SYSTEM_MEET_URL} target="_blank" rel="noreferrer" onClick={() => markPvJoined(c)} style={{ fontSize: '11px', color: '#0068FF', fontWeight: 700 }}>Vào trước qua Meet →</a>
                           </div>
                         );
                       })()}
@@ -3164,13 +3258,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         if (!zs) return null;
                         const zat = (c as any).zalo_invite_at ? new Date((c as any).zalo_invite_at).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : '';
                         const style = { fontSize: '10px', fontWeight: 700, marginTop: '2px' } as any;
-                        if (zs === 'SENT') return <div style={{ ...style, color: '#059669' }}>Zalo: đã gửi{zat ? ` • ${zat}` : ''}</div>;
-                        if (zs === 'NOT_FRIEND') return <div style={{ ...style, color: '#B45309' }} title={(c as any).zalo_invite_error || ''}>Zalo: chưa kết bạn{zat ? ` • ${zat}` : ''}</div>;
-                        return <div style={{ ...style, color: '#DC2626' }} title={(c as any).zalo_invite_error || ''}>Zalo: gửi lỗi{zat ? ` • ${zat}` : ''}</div>;
+                        if (zs === 'SENT') return <div style={{ ...style, color: '#059669' }}>Đã gửi{zat ? ` • ${zat}` : ''}</div>;
+                        if (zs === 'NOT_FRIEND') return <div style={{ ...style, color: '#B45309' }} title={(c as any).zalo_invite_error || ''}>Chưa kết bạn{zat ? ` • ${zat}` : ''}</div>;
+                        return <div style={{ ...style, color: '#DC2626' }} title={(c as any).zalo_invite_error || ''}>Gửi lỗi{zat ? ` • ${zat}` : ''}</div>;
                       })()}
                       {(c as any).interview_date && (
                         <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                          PV: {(c as any).interview_time_slot || ''} {(c as any).interview_date}
+                          PV: {fmtPvTime(c) || `${(c as any).interview_time_slot || ''} ${(c as any).interview_date}`}
                         </div>
                       )}
                     </td>
