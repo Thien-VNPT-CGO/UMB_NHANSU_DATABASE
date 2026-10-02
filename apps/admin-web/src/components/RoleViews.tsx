@@ -660,10 +660,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Reset ALL lịch OFF tuần: xóa hết đăng ký để NV đăng ký lại — mở modal nhập pass mới chạy.
   const [offResetAllOpen, setOffResetAllOpen] = useState(false);
   const [offResetAllPass, setOffResetAllPass] = useState('');
+  // Chống trình duyệt/quản lý mật khẩu TỰ ĐIỀN pass (autofill): chỉ chấp nhận giá trị
+  // HR gõ tay — mở modal/focus mà chưa gõ thì luôn là rỗng.
+  const offResetAllTypedRef = useRef(false);
   const [offResetAllBusy, setOffResetAllBusy] = useState(false);
   const [offResetAllPreview, setOffResetAllPreview] = useState<any>(null);
   const openResetAllModal = async () => {
     setOffResetAllPass('');
+    offResetAllTypedRef.current = false;
     setOffResetAllPreview(null);
     setOffResetAllOpen(true);
     try {
@@ -6317,8 +6321,16 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 Mật khẩu Reset ALL:
                 <input
                   type="password"
+                  name="ubm-off-reset-all-pass"
+                  autoComplete="new-password"
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  data-lpignore="true"
+                  data-1p-ignore="true"
                   value={offResetAllPass}
-                  onChange={(e) => setOffResetAllPass(e.target.value)}
+                  onChange={(e) => { offResetAllTypedRef.current = true; setOffResetAllPass(e.target.value); }}
+                  onFocus={() => { if (!offResetAllTypedRef.current) setOffResetAllPass(''); }}
                   onKeyDown={(e) => { if (e.key === 'Enter') handleResetAllWeeklyOff(); }}
                   placeholder="Nhập pass mới thực thi được"
                   style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1.5px solid #DC2626', marginTop: '4px', fontSize: '14px', outline: 'none' }}
