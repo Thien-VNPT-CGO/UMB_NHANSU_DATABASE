@@ -216,8 +216,22 @@ export class GoogleSheetsSyncService {
   private initOkAt = 0;
   private lastInitResult: { success: boolean; createdSheets: string[]; existingSheets: string[]; message: string } | null = null;
 
-  /** Bọc mọi gọi Google API bằng timeout: 1 request treo không được kẹt cả hàng đợi. */
+  /** Minimum interval between write requests to stay under 60 writes/minute quota. */
+  private static readonly WRITE_RATE_LIMIT_MS = 1100;
+
+  /** Bọc mọi gọi Google API bằng timeout + rate limiting cho write operations. */
   private async sheetsCall<T>(label: string, fn: () => Promise<T>, ms = 20000): Promise<T> {
+    const isWrite = label.startsWith('write.') || label.startsWith('append.') || label.startsWith('clear.') || label === 'init.batchUpdate';
+    
+    if (isWrite) {
+      const now = Date.now();
+      const wait = Math.max(0, GoogleSheetsSyncService.WRITE_RATE_LIMIT_MS - (now - this.lastWriteAt));
+      if (wait > 0) {
+        await new Promise(r => setTimeout(r, wait));
+      }
+      this.lastWriteAt = Date.now();
+    }
+
     let timer: any = null;
     try {
       return await Promise.race([
