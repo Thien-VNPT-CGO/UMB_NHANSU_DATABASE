@@ -3431,8 +3431,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                               </span>
                               <div style={{ fontSize: '11px', color: '#DC2626', fontWeight: 700, marginTop: '4px', fontVariantNumeric: 'tabular-nums' }}>
                                 {isExpired
-                                  ? `Đã quá 24h kể từ lúc chấm điểm (${new Date(failInfo.scoredAt + 24*60*60*1000).toLocaleString('vi-VN')}) — cần xử lý thủ công`
-                                  : `Hệ thống sẽ tự động xoá ứng viên này khỏi hệ thống sau 24h kể từ lúc chấm điểm (${new Date(failInfo.scoredAt + 24*60*60*1000).toLocaleString('vi-VN')})`}
+                                  ? `⛔ Đã quá 24h — Hệ thống sẽ tự động xoá ứng viên này ra khỏi hệ thống (hết hạn lúc ${new Date(failInfo.scoredAt + 24*60*60*1000).toLocaleString('vi-VN')})`
+                                  : `⏳ Hệ thống sẽ tự động xoá ứng viên này ra khỏi hệ thống sau 24h kể từ lúc chấm điểm (${new Date(failInfo.scoredAt + 24*60*60*1000).toLocaleString('vi-VN')})`}
                               </div>
                             </div>
                           );
@@ -3478,7 +3478,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                               disabled={disabledForFail}
                               style={{ ...btn2, backgroundColor: disabledForFail ? '#94A3B8' : '#10B981', color: '#FFF', boxShadow: disabledForFail ? 'none' : '0 2px 6px rgba(16,185,129,0.3)' }}
                               onClick={() => !disabledForFail && chatZaloWithCandidate(c, showToast)}
-                              title={disabledForFail ? (failInfo.remainingMs <= 0 ? 'Ứng viên Chưa đạt — đã quá 24h, cần xử lý thủ công' : 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)') : 'Tự động kết bạn Zalo qua nick HR + gửi lời chào để chát với ứng viên'}
+                              title={disabledForFail ? (failInfo.remainingMs <= 0 ? 'Ứng viên Chưa đạt — đã quá 24h, hệ thống sẽ tự động xoá khỏi hệ thống' : 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)') : 'Tự động kết bạn Zalo qua nick HR + gửi lời chào để chát với ứng viên'}
                             >
                               💬 Chat Zalo
                             </button>
@@ -3487,7 +3487,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 disabled={disabledForFail}
                                 style={{ ...btn2, backgroundColor: disabledForFail ? '#94A3B8' : '#8B5CF6', color: '#FFF', boxShadow: disabledForFail ? 'none' : '0 2px 6px rgba(139,92,246,0.3)' }}
                                 onClick={() => !disabledForFail && openScoring(c)}
-                                title={disabledForFail ? (failInfo.remainingMs <= 0 ? 'Ứng viên Chưa đạt — đã quá 24h, cần xử lý thủ công' : 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)') : 'Chấm điểm theo TIÊU CHÍ LỌC HỒ SƠ (chấm xong nút này ẩn đi)'}
+                                title={disabledForFail ? (failInfo.remainingMs <= 0 ? 'Ứng viên Chưa đạt — đã quá 24h, hệ thống sẽ tự động xoá khỏi hệ thống' : 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)') : 'Chấm điểm theo TIÊU CHÍ LỌC HỒ SƠ (chấm xong nút này ẩn đi)'}
                               >
                                 📝 Chấm điểm
                               </button>
@@ -3497,7 +3497,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 disabled={disabledForFail}
                                 style={{ ...btn2, backgroundColor: disabledForFail ? '#94A3B8' : '#F59E0B', color: '#FFF', boxShadow: disabledForFail ? 'none' : '0 2px 6px rgba(245,158,11,0.3)' }}
                                 onClick={() => !disabledForFail && openUpdating(c)}
-                                title={disabledForFail ? (failInfo.remainingMs <= 0 ? 'Ứng viên Chưa đạt — đã quá 24h, cần xử lý thủ công' : 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)') : 'Cập nhật ca làm việc + chi nhánh (bắt buộc chốt 1 ca / 1 chi nhánh trước khi duyệt)'}
+                                title={disabledForFail ? (failInfo.remainingMs <= 0 ? 'Ứng viên Chưa đạt — đã quá 24h, hệ thống sẽ tự động xoá khỏi hệ thống' : 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)') : 'Cập nhật ca làm việc + chi nhánh (bắt buộc chốt 1 ca / 1 chi nhánh trước khi duyệt)'}
                               >
                                 ✏️ Cập nhật TT
                               </button>
@@ -3507,7 +3507,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 disabled={disabledForFail || approveBusyId === c.submission_id}
                                 style={{ ...btn2, backgroundColor: disabledForFail ? '#94A3B8' : '#10B981', color: '#FFF', boxShadow: disabledForFail ? 'none' : '0 2px 6px rgba(16,185,129,0.35)' }}
                                 onClick={() => !disabledForFail && handleApproveCandidate(c)}
-                                title={disabledForFail ? (failInfo.remainingMs <= 0 ? 'Ứng viên Chưa đạt — đã quá 24h, cần xử lý thủ công' : 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)') : `Đã PASS rubric (${d.total}/${(d as any).achievableMax ?? d.max}) — duyệt thử việc + cấp PIN`}
+                                title={disabledForFail ? (failInfo.remainingMs <= 0 ? 'Ứng viên Chưa đạt — đã quá 24h, hệ thống sẽ tự động xoá khỏi hệ thống' : 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)') : `Đã PASS rubric (${d.total}/${(d as any).achievableMax ?? d.max}) — duyệt thử việc + cấp PIN`}
                               >
                                 {approveBusyId === c.submission_id ? '⏳ Đang duyệt...' : '✅ Duyệt Thử việc'}
                               </button>
@@ -3517,7 +3517,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             )}
                             {disabledForFail && (
                               <span style={{ fontSize: '11px', color: '#DC2626', fontWeight: 800, alignSelf: 'center' }}>
-                                {failInfo.remainingMs <= 0 ? '🔒 Khoá (đã quá 24h)' : '🔒 Khoá (tự xoá 24h)'}
+                                {failInfo.remainingMs <= 0 ? '🔒 Đã quá 24h — tự xoá khỏi hệ thống' : '🔒 Khoá (tự xoá 24h)'}
                               </span>
                             )}
                           </div>
