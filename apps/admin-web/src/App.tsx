@@ -3825,6 +3825,7 @@ export function App() {
             openNewEmpModal={() => setShowNewEmpModal(true)}
             openBroadcastModal={() => setShowBroadcastModal(true)}
             onSyncSheets={handleForcePull}
+            onPushSheets={handleForceSync}
             onRefreshData={() => loadAllData(currentUser)}
           />
 

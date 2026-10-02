@@ -30,7 +30,7 @@ export interface SheetDefinition {
 export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   {
     title: 'NHAN_VIEN_MASTER',
-    headers: ['ID Nhân Viên', 'Mã NV', 'Họ Và Tên', 'Số Điện Thoại', 'Trạng Thái', 'Nhóm', 'Chi Nhánh', 'Lương Giờ (VNĐ)', 'Ngày Bắt Đầu', 'Phiên Bản', 'Ca Cố Định'],
+    headers: ['ID Nhân Viên', 'Mã NV', 'Họ Và Tên', 'Số Điện Thoại', 'Trạng Thái', 'Nhóm', 'Chi Nhánh', 'Lương Giờ (VNĐ)', 'Ngày Bắt Đầu', 'Phiên Bản', 'Ca Cố Định', 'Ngày Chính Thức', 'Email'],
   },
   {
     title: 'TAI_KHOAN_NHAN_VIEN',
@@ -476,6 +476,10 @@ export class GoogleSheetsSyncService {
             const version = Number(r[9]) || 1;
             const shiftRaw = (r[10] || '').trim().toUpperCase();
             const defaultShift = shiftRaw === 'CA_1' || shiftRaw === 'CA_2' || shiftRaw === 'CA_3' ? shiftRaw : undefined;
+            // Cột M/N (sheet mới): Ngày Chính Thức + Email — sheet cũ thiếu thì giữ rỗng,
+            // merge version bên dưới sẽ giữ bản bộ nhớ khi version bộ nhớ >= sheet.
+            const officialDate = (r[11] || '').trim();
+            const email = (r[12] || '').trim();
 
             return {
               employee_id: empId,
@@ -491,6 +495,8 @@ export class GoogleSheetsSyncService {
               updated_at: new Date().toISOString(),
               version: version,
               ...(defaultShift ? { default_shift_code: defaultShift } : {}),
+              ...(officialDate ? { official_date: officialDate.slice(0, 10) } : {}),
+              ...(email ? { email } : {}),
             };
           });
         // Đọc thiếu dòng (partial/truncated) mà bộ nhớ đang nhiều hơn gấp đôi -> giữ bộ nhớ.
@@ -1519,6 +1525,8 @@ export class GoogleSheetsSyncService {
         e.start_date || e.created_at,
         e.version,
         (e as any).default_shift_code || '',
+        (e as any).official_date || '',
+        (e as any).email || '',
       ]);
       await this.overwriteSheetData('NHAN_VIEN_MASTER', SHEETS_DEFINITIONS.find(d => d.title === 'NHAN_VIEN_MASTER')!.headers, employeeRows);
       details.employees = employeeRows.length;

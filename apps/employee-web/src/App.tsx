@@ -423,8 +423,9 @@ export function App() {
     try {
       let fails = 0;
       // 4 nhóm độc lập bắn SONG SONG (trước await nối tiếp + 30 request attendance).
-      const toDate = new Date().toISOString().split('T')[0];
-      const fromDt = new Date();
+      // Dùng ngày VN để toDate bao trọn sự kiện hôm nay (backend lọc theo ngày VN).
+      const toDate = new Date(Date.now() + 7 * 3_600_000).toISOString().split('T')[0];
+      const fromDt = new Date(Date.now() + 7 * 3_600_000);
       fromDt.setDate(fromDt.getDate() - 29);
       const fromDate = fromDt.toISOString().split('T')[0];
       const [shifts, notifs, attRange, colleagues] = await Promise.all([
@@ -1242,7 +1243,7 @@ export function App() {
     const pickPublished = (all: any) =>
       setTargetShifts(Array.isArray(all) ? all.filter((s: any) => s.status === 'PUBLISHED') : []);
     try {
-      const today = new Date().toISOString().split('T')[0];
+      const today = vnTodayStr();
       const all = await apiRequest(`/me/colleague-shifts?employeeId=${encodeURIComponent(targetEmployeeId)}&fromDate=${today}`);
       pickPublished(all);
       if ((all as any[]).length === 0) showToast('Đồng nghiệp chưa có ca nào để tráo/nhờ (hoặc chưa tải xong)! Vui lòng chọn lại.');
@@ -1251,7 +1252,7 @@ export function App() {
       if (!err?.code && /404/.test(String(err?.message || ''))) {
         try {
           const branchId = employee?.default_branch_id || 'CN130';
-          const today = new Date().toISOString().split('T')[0];
+          const today = vnTodayStr();
           const all = await apiRequest(`/schedules?branchId=${encodeURIComponent(branchId)}&week=${today}`);
           pickPublished(Array.isArray(all) ? all.filter((s: any) => s.employee_id === targetEmployeeId) : []);
         } catch (e2: any) {
@@ -2129,7 +2130,7 @@ export function App() {
                   </div>
                 ) : (
                   myShifts.filter((s: any, i: number, arr: any[]) => !s.assignment_id || arr.findIndex((x: any) => x.assignment_id === s.assignment_id) === i).map((shift, idx) => {
-                    const todayStr = new Date().toISOString().split('T')[0];
+                    const todayStr = vnTodayStr();
                     const isToday = shift.date === todayStr;
                     const evts = (myAttendanceHistory || []).filter((e: any) => e.assignment_id === shift.assignment_id);
                     const hasCheckIn = evts.some((e: any) => e.type === 'CHECK_IN');
@@ -2435,7 +2436,9 @@ export function App() {
         {/* TAB 4: ĐIỂM DANH (GPS 300M + CAMERA ÁO HỒNG + BẢNG TÊN) */}
         {/* ========================================================= */}
         {activeTab === 'attendance' && (() => {
-          const today = new Date().toISOString().split('T')[0];
+          // Ngày VN (UTC+7): cổng CA_1 mở 06:30 VN (= 23:30 UTC hôm trước) nên phải
+          // dùng ngày VN — dùng ngày UTC sẽ lookup nhầm ca 00:00–07:00 VN.
+          const today = vnTodayStr();
           const todayShifts = myShifts.filter((s: any) => s.date === today);
           const todayShift = todayShifts.find((s: any) => s.assignment_id === attendShiftId) || todayShifts[0];
           // Trạng thái theo TỪNG ca (ngày 2 ca do tráo đổi: mỗi ca check-in/out độc lập)

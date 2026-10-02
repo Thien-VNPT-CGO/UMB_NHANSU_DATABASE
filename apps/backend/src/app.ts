@@ -1585,7 +1585,9 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const employeeId = req.user?.employeeId || req.body.employee_id || req.body.employeeId;
       if (!employeeId) return res.status(400).json({ error: 'Thiếu thông tin mã nhân viên' });
 
-      const today = new Date().toISOString().split('T')[0];
+      // Ngày VN (UTC+7): ca CA_1 mở cổng 06:30 VN (= 23:30 UTC hôm trước) nên không
+      // được dùng ngày UTC — 00:00–07:00 VN sẽ lookup nhầm sang ngày hôm qua.
+      const today = new Date(Date.now() + 7 * 3_600_000).toISOString().split('T')[0];
       const shifts = await schedulesService.getEmployeeShifts(employeeId, today, today);
       const assignment = shifts.find(s => s.date === today);
       const assignmentId = req.body.assignment_id || req.body.assignmentId || assignment?.assignment_id;
@@ -1619,6 +1621,29 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
       // Quá 3 tiếng kể từ giờ ca bắt đầu mà chưa check-in -> khóa, ca tính nghỉ không lương.
       const checkinStartMs = new Date((existingShift as any).start_at).getTime();
+      // Ràng buộc cổng điểm danh: chỉ mở trước giờ vào ca N phút (mặc định 30p theo
+      // policies.check_in_window_minutes). Check-in sớm hơn -> từ chối để đồng bộ
+      // với cổng nhân viên (thời gian điểm danh bắt đầu từ lúc mở cổng).
+      if (Number.isFinite(checkinStartMs)) {
+        let gateMinutes = 30;
+        try {
+          const policies = await adapter.getPolicies().catch(() => null);
+          const w = Number((policies as any)?.check_in_window_minutes);
+          if (Number.isFinite(w) && w > 0 && w <= 180) gateMinutes = Math.floor(w);
+        } catch { /* giữ mặc định 30p */ }
+        const gateOpenMs = checkinStartMs - gateMinutes * 60 * 1000;
+        if (Date.now() < gateOpenMs) {
+          const openStr = new Date(gateOpenMs).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+          const startStr = new Date(checkinStartMs).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+          return res.status(403).json({
+            error: 'CHECKIN_TOO_EARLY',
+            message: `⏰ CHƯA ĐẾN GIỜ CHECK-IN: Cổng điểm danh mở trước giờ ca ${gateMinutes} phút (mở lúc ${openStr}, ca bắt đầu ${startStr}). Vui lòng quay lại sau!`,
+            gateOpenAt: new Date(gateOpenMs).toISOString(),
+            shiftStartAt: (existingShift as any).start_at,
+            gateMinutes,
+          });
+        }
+      }
       if (Number.isFinite(checkinStartMs) && Date.now() - checkinStartMs > 3 * 60 * 60 * 1000) {
         return res.status(403).json({
           error: 'ATTENDANCE_LOCKED',
@@ -1723,7 +1748,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const employeeId = req.user?.employeeId || req.body.employee_id || req.body.employeeId;
       if (!employeeId) return res.status(400).json({ error: 'Thiếu thông tin mã nhân viên' });
 
-      const today = new Date().toISOString().split('T')[0];
+      const today = new Date(Date.now() + 7 * 3_600_000).toISOString().split('T')[0];
       const todayEvents = await attendanceService.getEmployeeAttendance(employeeId, today);
 
       // Lọc theo ca khi client gửi assignment (ngày 2 ca: mỗi ca check-in/out độc lập).
@@ -2168,7 +2193,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       const employeeId = req.user?.employeeId;
       if (!employeeId) return res.status(400).json({ error: 'NOT_AN_EMPLOYEE' });
-      const today = new Date().toISOString().split('T')[0];
+      const today = new Date(Date.now() + 7 * 3_600_000).toISOString().split('T')[0];
       const fromDate = (req.query.fromDate as string) || (req.query.date as string) || today;
       const toDate = (req.query.toDate as string) || (req.query.date as string) || today;
       // Gộp nhiều ngày trong 1 request (đọc bộ nhớ, rẻ) — giới hạn 31 ngày chống lạm dụng.

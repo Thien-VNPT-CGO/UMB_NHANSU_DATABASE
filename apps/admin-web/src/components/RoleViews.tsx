@@ -128,6 +128,10 @@ interface RoleViewsProps {
   openNewEmpModal: () => void;
   openBroadcastModal: () => void;
   onSyncSheets?: () => Promise<void> | void;
+  /** Đẩy bộ nhớ -> Google Sheets NGAY (sync-now). Dùng sau khi Sửa hồ sơ NV để
+   *  ngày bắt đầu/ngày chính thức bền vững qua reload — pull ngay sau PUT có thể
+   *  đọc Sheet cũ (push nền ~10s) và gây cảm giác mất dữ liệu realtime. */
+  onPushSheets?: () => Promise<void> | void;
   onRefreshData?: () => Promise<void> | void;
 }
 
@@ -538,6 +542,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   openNewEmpModal,
   openBroadcastModal,
   onSyncSheets,
+  onPushSheets,
   onRefreshData,
 }) => {
   const branchScope = currentUser?.branchScope || '*';
@@ -3903,7 +3908,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     showToast('Đã cập nhật hồ sơ nhân viên!');
                     setEditingEmp(null);
                     if (onRefreshData) await onRefreshData();
-                    if (onSyncSheets) await onSyncSheets();
+                    // Đẩy bộ nhớ -> Sheets NGAY (không pull: pull lúc này đọc Sheet
+                    // cũ vì push nền ~10s, gây mất ngày bắt đầu sau reload).
+                    if (onPushSheets) await onPushSheets();
                   } catch (e: any) {
                     showToast(e?.message || 'Lỗi khi cập nhật!');
                   } finally {
@@ -4374,7 +4381,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     showToast('Đã cập nhật hồ sơ nhân viên!');
                     setEditingEmp(null);
                     if (onRefreshData) await onRefreshData();
-                    if (onSyncSheets) await onSyncSheets();
+                    // Đẩy bộ nhớ -> Sheets NGAY (không pull: pull lúc này đọc Sheet
+                    // cũ vì push nền ~10s, gây mất ngày bắt đầu sau reload).
+                    if (onPushSheets) await onPushSheets();
                   } catch (e: any) {
                     showToast(e?.message || 'Lỗi khi cập nhật!');
                   } finally {

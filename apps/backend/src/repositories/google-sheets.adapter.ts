@@ -350,6 +350,8 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
           snapshot.start_date || (snapshot as any).created_at,
           snapshot.version,
           (snapshot as any).default_shift_code || '',
+          (snapshot as any).official_date || '',
+          (snapshot as any).email || '',
         ]);
         if (!ok) {
           console.warn('[GoogleSheetsAdapter] appendRow NHAN_VIEN_MASTER failed, running syncAllData');
