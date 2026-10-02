@@ -1044,29 +1044,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Link Meet mặc định hệ thống (không tùy chỉnh) — input hiển thị disabled.
   const inviteMeetUrl = 'https://meet.google.com/ypp-srtm-fvm';
   const [inviteBusy, setInviteBusy] = useState(false);
-  // Gửi lại thư mời Zalo cho lịch đã có (khi lần trước Gửi lỗi / chưa kết bạn).
-  const [pvRetryBusyId, setPvRetryBusyId] = useState<string | null>(null);
-  const handleRetryZaloInvite = async (c: any) => {
-    const sid = String((c as any)?.submission_id || '');
-    const d = toISODate((c as any)?.interview_date);
-    const t = String((c as any)?.interview_time_slot || '').slice(0, 5);
-    if (!sid || !d || !/^\d{2}:\d{2}$/.test(t) || pvRetryBusyId) return;
-    setPvRetryBusyId(sid);
-    try {
-      const res: any = await apiRequest(`/interviews/${sid}/send-zalo-invite`, {
-        method: 'POST',
-        // Dùng đúng lịch đã lưu + link Meet mặc định (meetUrl:'' = ép ONLINE lấy link hệ thống).
-        body: JSON.stringify({ interviewDate: d, timeSlot: t, meetUrl: '' }),
-      });
-      showToast(`✅ Gửi lại thư mời Zalo thành công! (msg #${res.msgId})`);
-      if (onRefreshData) await onRefreshData();
-      if (onSyncSheets) await onSyncSheets();
-    } catch (err: any) {
-      showToast(zaloInviteErrorText(err) || (err?.message || 'Lỗi khi gửi lại!'));
-    } finally {
-      setPvRetryBusyId(null);
-    }
-  };
   // Chặn chọn quá khứ ngay ở input (lớp mềm — server vẫn validate + báo đăng ký lại).
   const pvMinDateTime = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
   // Danh sách lịch PV: ẩn đã loại + đã duyệt thử việc (thành NV, không còn là ứng viên).
@@ -3105,7 +3082,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         {/* ========================================================================= */}
         <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
           <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-            <strong style={{ fontSize: '14px' }}>Lịch Phỏng Vấn Tuyển Dụng Đã Lên Lịch & Trạng Thái Gửi Zalo</strong>
+            <strong style={{ fontSize: '14px' }}>Lịch Phỏng Vấn Tuyển Dụng Đã Lên Lịch</strong>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
                 🤖 Hệ thống tự rà soát + xóa lịch trùng (&lt; 30 phút) mỗi 5 phút
@@ -3124,7 +3101,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <th style={{ padding: '12px 20px' }}>Ca Làm Việc ĐK</th>
                 <th style={{ padding: '12px 20px' }}>Thời Gian</th>
                 <th style={{ padding: '12px 20px' }}>Google Meet Sinh Tự Động</th>
-                <th style={{ padding: '12px 20px' }}>Kênh Gửi Zalo Cá Nhân</th>
                 <th style={{ padding: '12px 20px' }}>Trạng Thái</th>
                 <th style={{ padding: '12px 20px' }}>Thao Tác</th>
               </tr>
@@ -3282,56 +3258,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       })()}
                     </td>
                     <td style={{ padding: '14px 20px' }}>
-                      <span style={{
-                        backgroundColor: (c as any).status === 'INVITED_INTERVIEW' ? '#ECFDF5' : '#EFF6FF',
-                        color: (c as any).status === 'INVITED_INTERVIEW' ? '#059669' : '#0068FF',
-                        padding: '3px 8px',
-                        borderRadius: '4px',
-                        fontSize: '11px',
-                        fontWeight: 800,
-                        border: '1px solid #BFDBFE',
-                      }}>
-                        {(c as any).status === 'INVITED_INTERVIEW' ? '✓ Đã gửi Zalo' : '💬 Chờ gửi Zalo'}
-                      </span>
-                      {(() => {
-                        const zs = (c as any).zalo_invite_status;
-                        if (!zs) return null;
-                        const zat = (c as any).zalo_invite_at ? new Date((c as any).zalo_invite_at).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : '';
-                        const style = { fontSize: '10px', fontWeight: 700, marginTop: '2px' } as any;
-                        if (zs === 'SENT') return <div style={{ ...style, color: '#059669' }}>Đã gửi{zat ? ` • ${zat}` : ''}</div>;
-                        if (zs === 'NOT_FRIEND') return <div style={{ ...style, color: '#B45309' }} title="Ứng viên chưa kết bạn Zalo với nick HR — bấm Chat Zalo kết bạn rồi Gửi lại">Chưa kết bạn{zat ? ` • ${zat}` : ''}</div>;
-                        if (zs === 'NO_ZALO') return <div style={{ ...style, color: '#DC2626' }} title={(c as any).zalo_invite_error || ''}>SĐT chưa có Zalo{zat ? ` • ${zat}` : ''}</div>;
-                        // FAILED: dịch lý do thật để HR biết xử lý gì (thay vì chỉ 'Gửi lỗi').
-                        const rawErr = String((c as any).zalo_invite_error || '');
-                        let failShort = 'Gửi lỗi — bấm Gửi lại';
-                        if (/ZALO_NOT_CONNECTED/.test(rawErr)) failShort = 'Mất kết nối Zalo HR — quét QR lại';
-                        else if (/ZALO_LOOKUP_FAILED/.test(rawErr)) failShort = 'Lỗi tra cứu Zalo — bấm Gửi lại';
-                        else if (/ZALO_SEND_FAILED/.test(rawErr)) failShort = 'Gửi thất bại — bấm Gửi lại';
-                        return <div style={{ ...style, color: '#DC2626' }} title={rawErr || 'Lỗi gửi Zalo'}>{failShort}{zat ? ` • ${zat}` : ''}</div>;
-                      })()}
-                      {(() => {
-                        const zs = (c as any).zalo_invite_status;
-                        const sid = (c as any).submission_id;
-                        if (!['FAILED', 'NOT_FRIEND', 'NO_ZALO'].includes(String(zs || '')) || !(c as any).interview_date) return null;
-                        const busy = pvRetryBusyId === sid;
-                        return (
-                          <button
-                            disabled={busy}
-                            onClick={() => handleRetryZaloInvite(c)}
-                            title="Gửi lại thư mời theo đúng lịch đã lưu (không cần nhập lại form)"
-                            style={{ marginTop: '4px', padding: '4px 10px', borderRadius: '6px', backgroundColor: busy ? '#9CA3AF' : '#0068FF', color: '#FFF', fontSize: '11px', fontWeight: 800, border: 'none', cursor: busy ? 'wait' : 'pointer' }}
-                          >
-                            {busy ? '⏳ Đang gửi...' : '↻ Gửi lại Zalo'}
-                          </button>
-                        );
-                      })()}
-                      {(c as any).interview_date && (
-                        <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                          PV: {fmtPvTime(c) || `${(c as any).interview_time_slot || ''} ${(c as any).interview_date}`}
-                        </div>
-                      )}
-                    </td>
-                    <td style={{ padding: '14px 20px' }}>
                       <span style={{ backgroundColor: '#FEF3C7', color: '#92400E', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700 }}>
                         {candStatusVI(c.status)}
                       </span>
@@ -3407,7 +3333,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 ))
               ) : (
                 <tr>
-                  <td colSpan={8} style={{ textAlign: 'center', padding: '36px', color: 'var(--text-muted)', fontSize: '13px' }}>
+                    <td colSpan={7} style={{ textAlign: 'center', padding: '36px', color: 'var(--text-muted)', fontSize: '13px' }}>
                     Chưa có lịch phỏng vấn nào. Dữ liệu sẽ tự động xuất hiện khi tiếp nhận ứng viên từ Google Forms hoặc Google Sheets.
                   </td>
                 </tr>
