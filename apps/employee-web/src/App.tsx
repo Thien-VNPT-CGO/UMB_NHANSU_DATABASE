@@ -2407,6 +2407,9 @@ export function App() {
                     </div>
                   ) : (
                   <>
+                  <div style={{ fontSize: '11px', color: '#92400E', backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '6px', padding: '8px 10px', marginBottom: '4px', lineHeight: '1.5' }}>
+                    ⚠️ <strong>Luật chống trống ca:</strong> 2 bạn cùng ca — cùng chi nhánh không được OFF chung 1 ngày. Ai đăng ký trước giữ ngày, người đăng ký trùng sẽ bị chặn và phải chọn ngày khác!
+                  </div>
                   <div>
                     <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>
                       📅 Ngày nghỉ thứ 1 (Bắt buộc chọn 1/2):

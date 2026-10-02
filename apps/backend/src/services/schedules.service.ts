@@ -142,6 +142,65 @@ export class SchedulesService {
   }
 
   // --- Leaves ---
+  /** Ca làm của NV vào 1 ngày: ca đã xếp lịch (ưu tiên) rớt về ca cố định. */
+  private async shiftsOfDay(employeeId: string, date: string, fallbackShift?: string): Promise<string[]> {
+    try {
+      const ss = await this.repo.getShiftsForEmployee(employeeId, date, date).catch(() => []);
+      const codes = [...new Set((ss || [])
+        .map((s: any) => String(s?.shift_code || '').toUpperCase())
+        .filter((c: string) => /^CA_[123]$/.test(c)))];
+      if (codes.length > 0) return codes;
+    } catch { /* rớt về ca cố định */ }
+    const fb = String(fallbackShift || '').toUpperCase();
+    return /^CA_[123]$/.test(fb) ? [fb] : [];
+  }
+
+  /** Ràng buộc chống trùng OFF cùng ca cùng chi nhánh: 2 NV cùng ca không được OFF
+   *  chung 1 ngày (ai đăng ký trước giữ ngày). Trả về người đã giữ ngày để BOT báo
+   *  + chặn đăng ký; null khi được phép (kể cả khi không xác định được ca). */
+  async findSameShiftOffClash(
+    employeeId: string,
+    branchId: string,
+    date: string
+  ): Promise<{ name: string; slot: string } | null> {
+    const d = normSheetDate(date);
+    if (!d) return null;
+    const [emps, leaves] = await Promise.all([
+      this.repo.listEmployees().catch(() => []),
+      this.repo.listLeaveRequests().catch(() => []),
+    ]);
+    const me = (emps || []).find((e: any) => e.employee_id === employeeId) as any;
+    if (!me || (me as any).employment_status === 'TERMINATED') return null;
+    const myBranch = (me as any).default_branch_id || (me as any).branch_id || branchId;
+    const myShifts = await this.shiftsOfDay(employeeId, d, (me as any).default_shift_code);
+    if (myShifts.length === 0) return null;
+    const offEmpIds = new Set<string>();
+    for (const l of leaves || []) {
+      if ((l as any).leave_type !== 'HANG_TUAN') continue;
+      if (!['APPROVED', 'PENDING'].includes((l as any).status)) continue;
+      if (normSheetDate((l as any).requested_date) !== d) continue;
+      if ((l as any).employee_id === employeeId) continue;
+      offEmpIds.add((l as any).employee_id);
+    }
+    if (offEmpIds.size === 0) return null;
+    for (const o of (emps || []) as any[]) {
+      if (!offEmpIds.has(o.employee_id)) continue;
+      if (o.employment_status === 'TERMINATED') continue;
+      if ((o.default_branch_id || o.branch_id) !== myBranch) continue;
+      const oShifts = await this.shiftsOfDay(o.employee_id, d, o.default_shift_code);
+      const common = myShifts.find(s => oShifts.includes(s));
+      if (common) return { name: String(o.full_name || o.employee_id), slot: common };
+    }
+    return null;
+  }
+
+  /** Câu lỗi chuẩn khi trùng OFF cùng ca (chứa 'đăng ký lại' để UI toast + bắt chọn ngày khác). */
+  private sameShiftOffError(date: string, clash: { name: string; slot: string }): Error {
+    const dd = `${date.slice(8, 10)}/${date.slice(5, 7)}/${date.slice(0, 4)}`;
+    const label = clash.slot === 'CA_1' ? 'Ca 1 (07–12)' : clash.slot === 'CA_2' ? 'Ca 2 (12–18)' : clash.slot === 'CA_3' ? 'Ca 3 (18–23)' : clash.slot;
+    return new Error(`⛔ Ngày ${dd} đã có ${clash.name} cùng ${label} đăng ký OFF trước! Vui lòng đăng ký lại ngày khác để không trống ca.`);
+  }
+
   async requestLeave(data: {
     employeeId: string;
     branchId: string;
@@ -168,6 +227,9 @@ export class SchedulesService {
       if (weeklyLeaves.length >= 2) {
         throw new Error('WEEKLY_OFF_LIMIT_REACHED: Tối đa 2 ngày OFF hàng tuần theo chính sách.');
       }
+      // Cùng ca cùng chi nhánh không OFF chung ngày (ai đăng ký trước giữ ngày).
+      const clash = await this.findSameShiftOffClash(data.employeeId, data.branchId, data.requestedDate);
+      if (clash) throw this.sameShiftOffError(normSheetDate(data.requestedDate), clash);
     }
 
     // Lịch OFF 2 ngày/tuần (HANG_TUAN): tự động ghi nhận, không cần phiếu duyệt.
@@ -226,6 +288,13 @@ export class SchedulesService {
       throw new Error(
         `WEEKLY_OFF_DIFFERENT_WEEKS: 2 ngày phải nằm trong cùng một tuần Mon-Sun (${wk1.mon} → ${wk1.sun}).`
       );
+    }
+    // Cùng ca cùng chi nhánh không OFF chung ngày (ai đăng ký trước giữ ngày) —
+    // kiểm tra TRƯỚC khi hủy đăng ký cũ để đăng ký lại cùng ngày cũ luôn được phép
+    // (phiếu cũ của chính mình không tính là trùng).
+    for (const date of [normSheetDate(data.day1), normSheetDate(data.day2)]) {
+      const clash = await this.findSameShiftOffClash(data.employeeId, data.branchId, date);
+      if (clash) throw this.sameShiftOffError(date, clash);
     }
     return singleWriterQueue.enqueue({
       entityType: 'PHIEU_OFF',
