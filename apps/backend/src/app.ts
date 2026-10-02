@@ -2192,6 +2192,22 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.put('/leaves/weekly-off', authMiddleware, validate({ body: leavesAliasBody }), handleWeeklyOffReplace);
   app.put('/leave-requests/weekly-off', authMiddleware, validate({ body: leavesAliasBody }), handleWeeklyOffReplace);
 
+  // HR rà soát + reset lịch OFF tuần TRÙNG ca đã đăng ký từ trước (cùng CN + cùng ca
+  // + cùng ngày): hủy phiếu trùng để NV về trạng thái chưa đăng ký và đăng ký lại
+  // theo luật chống trống ca. dryRun=true chỉ xem trước, không xóa.
+  app.post('/admin/weekly-off/reset-overlaps', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const dryRun = (req.body as any)?.dryRun !== false;
+      const result = await schedulesService.resetOverlappingWeeklyOff(req.user!.id, dryRun);
+      if (!dryRun && result.cancelledCount > 0) {
+        broadcastUpdate('leaves', { action: 'weekly-off-overlap-reset', groups: result.groups });
+      }
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(500).json({ error: String(err?.message || 'Lỗi reset lịch OFF trùng ca') });
+    }
+  });
+
   app.get('/leaves', authMiddleware, validate({ query: leaveListQuery }), async (req: AuthenticatedRequest, res) => {
     try {
       const branchId = req.user?.role === 'STORE' ? req.user.branchScope : (req.query.branchId as string);

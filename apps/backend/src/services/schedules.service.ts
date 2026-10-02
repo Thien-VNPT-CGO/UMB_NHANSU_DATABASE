@@ -201,6 +201,73 @@ export class SchedulesService {
     return new Error(`⛔ Ngày ${dd} đã có ${clash.name} cùng ${label} đăng ký OFF trước! Vui lòng đăng ký lại ngày khác để không trống ca.`);
   }
 
+  /** Rà soát lịch OFF tuần TRÙNG ca đã đăng ký từ trước (cùng chi nhánh + cùng ca +
+   *  cùng ngày, từ hôm nay trở đi). dryRun=true chỉ xem trước; dryRun=false hủy
+   *  toàn bộ phiếu trùng (CANCELLED) để NV về trạng thái chưa đăng ký và đăng ký lại.
+   *  Trả về chi tiết từng nhóm để HR xác nhận. */
+  async resetOverlappingWeeklyOff(actorId: string, dryRun = true): Promise<{
+    dryRun: boolean;
+    today: string;
+    groups: { branch: string; date: string; slot: string; employees: string[]; leaveIds: string[] }[];
+    cancelledCount: number;
+  }> {
+    const today = new Date(Date.now() + 7 * 3_600_000).toISOString().split('T')[0];
+    const [emps, leaves] = await Promise.all([
+      this.repo.listEmployees().catch(() => []),
+      this.repo.listLeaveRequests().catch(() => []),
+    ]);
+    const empById = new Map<string, any>((emps || []).map((e: any) => [e.employee_id, e]));
+    // Gom phiếu OFF còn hiệu lực từ hôm nay theo (chi nhánh | ngày | ca).
+    const buckets = new Map<string, { branch: string; date: string; slot: string; empIds: string[]; leaveIds: string[] }>();
+    for (const l of leaves || []) {
+      if ((l as any).leave_type !== 'HANG_TUAN') continue;
+      if (!['APPROVED', 'PENDING'].includes((l as any).status)) continue;
+      const d = normSheetDate((l as any).requested_date);
+      if (!d || d < today) continue;
+      const emp = empById.get((l as any).employee_id) as any;
+      if (!emp || emp.employment_status === 'TERMINATED') continue;
+      const branch = emp.default_branch_id || emp.branch_id || 'CN130';
+      const shifts = await this.shiftsOfDay(emp.employee_id, d, emp.default_shift_code);
+      for (const slot of shifts) {
+        const key = `${branch}|${d}|${slot}`;
+        let b = buckets.get(key);
+        if (!b) { b = { branch, date: d, slot, empIds: [], leaveIds: [] }; buckets.set(key, b); }
+        if (!b.empIds.includes(emp.employee_id)) b.empIds.push(emp.employee_id);
+        b.leaveIds.push((l as any).request_id);
+      }
+    }
+    const groups = [...buckets.values()]
+      .filter(b => b.empIds.length >= 2)
+      .map(b => ({
+        ...b,
+        employees: b.empIds.map(id => String(empById.get(id)?.full_name || id)),
+      }))
+      .sort((a, b) => a.date.localeCompare(b.date) || a.branch.localeCompare(b.branch));
+    if (dryRun || groups.length === 0) {
+      return { dryRun: true, today, groups, cancelledCount: 0 };
+    }
+    let cancelledCount = 0;
+    const doneIds = new Set<string>();
+    for (const g of groups) {
+      for (const lid of g.leaveIds) {
+        if (doneIds.has(lid)) continue;
+        doneIds.add(lid);
+        await this.repo.updateLeaveRequest(lid, 'CANCELLED', actorId, 'Reset lịch OFF trùng ca cùng chi nhánh — NV đăng ký lại theo luật chống trống ca').catch(() => null);
+        cancelledCount++;
+      }
+    }
+    await this.repo.recordAuditLog({
+      log_id: `LOG_${Date.now()}`,
+      actor_id: actorId,
+      actor_role: 'HR',
+      action: 'WEEKLY_OFF_OVERLAP_RESET',
+      target_entity: 'PHIEU_OFF',
+      target_id: `${groups.length}_groups`,
+      details: `Reset ${cancelledCount} phiếu OFF trùng ca (${groups.map(g => `${g.branch} ${g.date} ${g.slot}: ${g.employees.join(', ')}`).join(' | ')})`,
+    } as any).catch(() => null);
+    return { dryRun: false, today, groups, cancelledCount };
+  }
+
   async requestLeave(data: {
     employeeId: string;
     branchId: string;

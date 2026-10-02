@@ -618,6 +618,41 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Filters xem lịch OFF 2 ngày/tuần (HR/Admin + Store)
   const [weeklyOffBranchFilter, setWeeklyOffBranchFilter] = useState('ALL');
   const [weeklyOffSearch, setWeeklyOffSearch] = useState('');
+  // Reset lịch OFF trùng ca đã đăng ký từ trước về chưa đăng ký (NV đăng ký lại).
+  const [offOverlapBusy, setOffOverlapBusy] = useState(false);
+  const handleResetWeeklyOffOverlaps = async () => {
+    if (offOverlapBusy) return;
+    setOffOverlapBusy(true);
+    try {
+      const preview: any = await apiRequest('/admin/weekly-off/reset-overlaps', {
+        method: 'POST',
+        body: JSON.stringify({ dryRun: true }),
+      });
+      const groups = (preview?.groups || []) as any[];
+      if (groups.length === 0) {
+        showToast('✅ Không có lịch OFF nào trùng ca (cùng CN + cùng ca + cùng ngày) từ hôm nay trở đi!');
+        return;
+      }
+      const lines = groups.slice(0, 10).map((g: any) =>
+        `• ${g.branch} ${g.date} ${g.slot}: ${(g.employees || []).join(', ')}`
+      ).join('\n');
+      const more = groups.length > 10 ? `\n… +${groups.length - 10} nhóm nữa` : '';
+      if (!window.confirm(
+        `Tìm thấy ${groups.length} nhóm OFF trùng ca (từ hôm nay trở đi):\n${lines}${more}\n\nBấm OK để HỦY toàn bộ phiếu trùng → NV về trạng thái chưa đăng ký và đăng ký lại theo luật chống trống ca.\nKHÔNG thể hoàn tác!`
+      )) return;
+      const res: any = await apiRequest('/admin/weekly-off/reset-overlaps', {
+        method: 'POST',
+        body: JSON.stringify({ dryRun: false }),
+      });
+      showToast(`🧹 Đã hủy ${res?.cancelledCount || 0} phiếu OFF trùng ca (${(res?.groups || []).length} nhóm) — NV liên quan đăng ký lại!`);
+      if (onRefreshData) await onRefreshData();
+      if (onPushSheets) await onPushSheets();
+    } catch (e: any) {
+      showToast(e?.message || 'Lỗi khi reset lịch OFF trùng ca!');
+    } finally {
+      setOffOverlapBusy(false);
+    }
+  };
   // Chu kỳ OFF hiển thị: 'CURRENT' = chu kỳ hiện tại (reset T6 11:45), hoặc label tuần cũ để xem lịch sử.
   const [weeklyOffWeekFilter, setWeeklyOffWeekFilter] = useState('CURRENT');
   // Xem lịch tuần trước / hiện tại / sau (mặc định tuần hiện tại)
@@ -6141,6 +6176,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Chu kỳ hiện tại: {offCycle.label} (mở T6 11:45) • Nguồn: DON_NGHI_PHEP — Sheet giữ toàn bộ lịch sử, sang chu kỳ mới bảng này reset.</div>
             </div>
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <button
+                disabled={offOverlapBusy}
+                onClick={handleResetWeeklyOffOverlaps}
+                title="Rà soát lịch OFF trùng ca đã đăng ký từ trước (cùng CN + cùng ca + cùng ngày) rồi hủy về chưa đăng ký để NV đăng ký lại"
+                style={{ fontSize: '12px', padding: '6px 12px', borderRadius: '6px', border: 'none', backgroundColor: offOverlapBusy ? '#9CA3AF' : '#DC2626', color: '#FFF', fontWeight: 800, cursor: offOverlapBusy ? 'wait' : 'pointer' }}
+              >
+                {offOverlapBusy ? '⏳ Đang xử lý...' : '🧹 Reset lịch OFF trùng ca'}
+              </button>
               <select value={weeklyOffWeekFilter} onChange={e => setWeeklyOffWeekFilter(e.target.value)} style={{ fontSize: '12px', padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--border)' }} title="Chu kỳ hiển thị — Sheet vẫn lưu toàn bộ lịch sử">
                 <option value="CURRENT">Chu kỳ hiện tại ({offCycle.label})</option>
                 {weeklyOffWeeks.filter((w: string) => w !== offCycle.label).map((w: string) => (
