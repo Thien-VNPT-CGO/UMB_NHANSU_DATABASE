@@ -880,10 +880,16 @@ export function App() {
         scheduleReload(currentUser);
       });
 
-      // Lắng nghe sự kiện dữ liệu thay đổi trên toàn hệ thống
+      // Lắng nghe sự kiện dữ liệu thay đổi trên toàn hệ thống.
+      // Cấu hình (chi nhánh/ca mẫu/chính sách/bảo trì/cài đặt) chỉ tải 1 lần lúc đăng
+      // nhập — có sự kiện config thì tải lại cả static để các máy đồng bộ 100%.
       socket.on('data:updated', (payload: any) => {
         console.log('⚡ [Socket.IO] Nhận tín hiệu cập nhật realtime:', payload);
-        scheduleReload(currentUser);
+        if (payload?.entity === 'config') {
+          loadAllData(currentUser, true);
+        } else {
+          scheduleReload(currentUser);
+        }
       });
 
       socket.on('employees', () => {

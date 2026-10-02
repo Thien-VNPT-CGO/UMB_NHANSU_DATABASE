@@ -2359,6 +2359,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         minutesApproved,
         note
       );
+      // Realtime: cổng NV thấy kết quả duyệt + bảng công/HR tải lại ngay.
+      broadcastUpdate('adjustments', { action: 'review', id: req.params.id, status });
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -2370,6 +2372,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       const branchScope = req.body.branchScope || '*';
       const result = await payrollService.calculateDraftPayroll(req.params.period, branchScope, req.user!.id);
+      // Realtime: các máy Finance khác thấy kỳ lương mới tính ngay.
+      broadcastUpdate('payroll', { action: 'calculate', period: req.params.period });
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -2398,6 +2402,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.post('/payroll/:run/reconcile', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollRunParams }), async (req: AuthenticatedRequest, res) => {
     try {
       const result = await payrollService.reconcileRun(req.params.run, req.user!.id);
+      broadcastUpdate('payroll', { action: 'reconcile', run: req.params.run });
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -2407,6 +2412,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.post('/payroll/:run/approve', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollRunParams }), async (req: AuthenticatedRequest, res) => {
     try {
       const result = await payrollService.approveRun(req.params.run, req.user!.id);
+      broadcastUpdate('payroll', { action: 'approve', run: req.params.run });
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -2416,6 +2422,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.post('/payroll/:run/publish', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollRunParams }), async (req: AuthenticatedRequest, res) => {
     try {
       const result = await payrollService.publishRun(req.params.run, req.user!.id);
+      broadcastUpdate('payroll', { action: 'publish', run: req.params.run });
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -2425,6 +2432,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.post('/payroll/:run/mark-paid', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollRunParams }), async (req: AuthenticatedRequest, res) => {
     try {
       const result = await payrollService.markPaid(req.params.run, req.user!.id);
+      broadcastUpdate('payroll', { action: 'mark-paid', run: req.params.run });
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -2459,6 +2467,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       const recipientId = req.user?.employeeId || req.user?.id || 'ALL';
       const updated = await notificationsService.markRead(req.params.id, recipientId);
+      // Realtime: số chưa đọc đồng bộ giữa các tab/thiết bị cùng tài khoản.
+      broadcastUpdate('notifications', { action: 'read', id: req.params.id });
       res.json(updated);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -2469,6 +2479,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       const recipientId = req.user?.employeeId || req.user?.id || 'ALL';
       const updated = await notificationsService.markAcknowledged(req.params.id, recipientId);
+      broadcastUpdate('notifications', { action: 'acknowledge', id: req.params.id });
       res.json(updated);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -2736,6 +2747,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         target_id: req.params.id,
         payload_after: updated,
       });
+      // Realtime: các máy khác tải lại danh sách chi nhánh/GPS ngay.
+      broadcastUpdate('config', { area: 'branches', id: req.params.id });
       res.json(updated);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -2761,6 +2774,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         target_id: 'SHIFT_TEMPLATES',
         payload_after: updated,
       });
+      broadcastUpdate('config', { area: 'shift-templates' });
       res.json(updated);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -2787,6 +2801,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         target_id: 'SYSTEM_POLICIES',
         payload_after: updated,
       });
+      broadcastUpdate('config', { area: 'policies' });
       res.json(updated);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -3038,6 +3053,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         target_id: 'MAINTENANCE',
         payload_after: updated,
       });
+      broadcastUpdate('config', { area: 'maintenance' });
       res.json(updated);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -3074,6 +3090,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         target_id: snap.snapshot_id,
         payload_after: snap,
       });
+      broadcastUpdate('config', { area: 'backup-snapshots', id: snap.snapshot_id });
       res.json(snap);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -3109,6 +3126,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         target_id: 'SYSTEM_SETTINGS',
         payload_after: updated,
       });
+      broadcastUpdate('config', { area: 'system-settings' });
       res.json(updated);
     } catch (err: any) {
       res.status(400).json({ error: err.message });

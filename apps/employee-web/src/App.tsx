@@ -631,6 +631,10 @@ export function App() {
   showToastRef.current = showToast;
   const fetchMySwapsRef = useRef(fetchMySwaps);
   fetchMySwapsRef.current = fetchMySwaps;
+  const fetchMyAdjustmentsRef = useRef(fetchMyAdjustments);
+  fetchMyAdjustmentsRef.current = fetchMyAdjustments;
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
   const empIdRef = useRef<string | undefined>(undefined);
   empIdRef.current = employee?.employee_id;
 
@@ -643,7 +647,7 @@ export function App() {
     let timer: any = null;
     let reloading = false;
     let queued = false;
-    const reload = () => {
+    const reload = (entity?: string) => {
       if (reloading) { queued = true; return; }
       if (timer) clearTimeout(timer);
       timer = setTimeout(async () => {
@@ -652,6 +656,10 @@ export function App() {
         try {
           await loadEmployeeDataRef.current(empIdRef.current);
           await fetchMySwapsRef.current().catch(() => null);
+          // Kết quả duyệt phiếu công: tải lại ngay khi đang ở tab phiếu (khỏi chờ poll 15s).
+          if (entity === 'adjustments' && (activeTabRef.current === 'adjustment' || activeTabRef.current === 'emergency_adjust')) {
+            await fetchMyAdjustmentsRef.current().catch(() => null);
+          }
         } catch { /* lần sau */ } finally {
           reloading = false;
           if (queued) { queued = false; reload(); }
@@ -660,8 +668,8 @@ export function App() {
     };
     try {
       socket = io(getApiBase(), { auth: { token }, transports: ['websocket', 'polling'] });
-      socket.on('connect', reload);
-      socket.on('data:updated', reload);
+      socket.on('connect', () => reload());
+      socket.on('data:updated', (p: any) => reload(p?.entity));
       socket.on('notification.created', reload);
       // Phiếu đổi ca gửi tới tôi: tải ngay + popup để xác nhận/từ chối.
       socket.on('swap.updated', async (p: any) => {
