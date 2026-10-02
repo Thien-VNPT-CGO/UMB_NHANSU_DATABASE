@@ -976,6 +976,13 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       const reason = String((req.body as any)?.reason || '').slice(0, 500);
       const result = await employeesService.cancelInterviewSchedule(req.params.id, req.user!.id, reason || undefined);
+      // Chống hồi sinh: đánh dấu tombstone + đẩy master FROM_NHAN_VIEN NGAY (await)
+      // để pull nền/pull tay sau đó không đọc lại dòng lịch cũ (pattern như dedupe).
+      try {
+        const syncSvc = (adapter as any)?.syncService;
+        syncSvc?.markInterviewScheduleCleared?.(req.params.id);
+        await (adapter as any)?.pushCandidatesNow?.();
+      } catch { /* best-effort, tombstone đã chặn hồi sinh 120s */ }
       broadcastUpdate('candidates', { action: 'interview-cancelled', id: req.params.id });
       res.json({ success: true, candidate: result });
     } catch (err: any) {

@@ -729,6 +729,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // pvJoined: HR đã bấm Vào Meet / mở chấm điểm (= có người vào) -> giữ lịch, tắt đếm ngược.
   const pvJoinedRef = useRef<Set<string>>(new Set());
   const pvAutoCancelRef = useRef<Set<string>>(new Set());
+  // Mốc thử auto-huỷ gần nhất (thất bại mạng -> thử lại mỗi 30s thay vì spam mỗi giây).
+  const pvAutoRetryRef = useRef<Map<string, number>>(new Map());
   const [pvCancelBusyId, setPvCancelBusyId] = useState<string | null>(null);
   const markPvJoined = (c: any) => {
     if (!c) return;
@@ -740,8 +742,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     if (!sid || pvCancelBusyId) return;
     const key = `${sid}|${String((c as any).interview_date || '').slice(0, 10)}`;
     if (auto) {
-      if (pvAutoCancelRef.current.has(key)) return;
       pvAutoCancelRef.current.add(key);
+      pvAutoRetryRef.current.set(key, Date.now());
     }
     setPvCancelBusyId(sid);
     try {
@@ -751,10 +753,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       });
       showToast(auto ? `⏰ Tự động hủy lịch PV ${c?.full_name || ''} (quá 5 phút không vào Meet)!` : `Đã hủy lịch PV ${c?.full_name || ''} — về trạng thái chưa đăng ký lịch.`);
       pvJoinedRef.current.delete(key);
+      pvAutoRetryRef.current.delete(key);
       if (onRefreshData) await onRefreshData();
-      if (onSyncSheets) await onSyncSheets();
+      // Đẩy bộ nhớ -> Sheets NGAY (tuyệt đối không pull: pull lúc này đọc Sheet cũ
+      // vì push nền ~10s sẽ HỒI SINH lịch vừa hủy — đúng bug countdown 00:00 đứng im).
+      if (onPushSheets) await onPushSheets();
     } catch (e: any) {
-      if (auto) pvAutoCancelRef.current.delete(key);
+      // Auto thất bại (mất mạng/server chưa deploy): giữ cờ đã bắn, thử lại mỗi 30s
+      // ở vòng tick — không xóa cờ để tránh bắn + toast spam mỗi giây.
       showToast(e?.message || 'Lỗi khi hủy lịch phỏng vấn!');
     } finally {
       setPvCancelBusyId(null);
@@ -831,13 +837,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       }
       // Quá 5 phút không vào Meet (không bấm Vào Meet, không chấm điểm) -> tự động
       // hủy sau đếm ngược 20s (UI đếm ngược ở cột Meet). Có người vào -> giữ lịch.
+      // Thất bại (mất mạng) -> thử lại mỗi 30s; nút Huỷ tay luôn bấm được.
       const elapsed = meetNow - st;
       const noJoinCancelMs = PV_NOJOIN_CANCEL_MIN * 60_000;
       const scored = !!parseScoreDetailClient((cd as any)?.interview_score_detail);
+      const lastAutoTry = pvAutoRetryRef.current.get(key) || 0;
       if (elapsed >= noJoinCancelMs + PV_CANCEL_COUNTDOWN_SEC * 1000
         && !scored
         && !pvJoinedRef.current.has(key)
-        && !pvAutoCancelRef.current.has(key)
+        && (!pvAutoCancelRef.current.has(key) || meetNow - lastAutoTry >= 30000)
         && !pvCancelBusyId) {
         handleCancelInterview(cd, true);
       }

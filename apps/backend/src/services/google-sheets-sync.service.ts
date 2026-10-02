@@ -191,6 +191,26 @@ export class GoogleSheetsSyncService {
     }
     return true;
   }
+
+  /** Tombstone lịch PV vừa hủy (tay/auto sau 5p không vào Meet): pull overlay
+   *  FROM_NHAN_VIEN trong ~120s sau hủy mà thấy dòng lịch cũ (push chưa kịp chạy)
+   *  thì ÉP XÓA lịch thay vì hồi sinh — trước đây hủy xong reload là lịch về lại. */
+  private clearedInterviewIds = new Map<string, number>();
+
+  public markInterviewScheduleCleared(submissionId: string) {
+    if (submissionId) this.clearedInterviewIds.set(String(submissionId).trim(), Date.now());
+  }
+
+  private isInterviewScheduleClearedRecently(submissionId: string): boolean {
+    const k = String(submissionId || '').trim();
+    const t = this.clearedInterviewIds.get(k);
+    if (!t) return false;
+    if (Date.now() - t > 120000) {
+      this.clearedInterviewIds.delete(k);
+      return false;
+    }
+    return true;
+  }
   private lastWriteError: string | null = null;
   private lastWriteAt: number = 0;
   private initOkAt = 0;
@@ -1357,6 +1377,14 @@ export class GoogleSheetsSyncService {
                 const mr = byId.get(c.submission_id)
                   || byPhoneName.get(`${c.phone_normalized || ''}|${String(c.full_name || '').trim().toLowerCase()}`);
                 if (!mr) continue;
+                // Lịch vừa bị hủy (tay/auto): ÉP XÓA thay vì hồi sinh dòng cũ trên Sheet.
+                if (this.isInterviewScheduleClearedRecently(c.submission_id)) {
+                  c.interview_date = undefined;
+                  c.interview_time_slot = undefined;
+                  c.interviewer_id = undefined;
+                  if ((c as any).status === 'INVITED_INTERVIEW') (c as any).status = 'NEW';
+                  continue;
+                }
                 const nz = (v: any) => (v !== undefined && String(v).trim() !== '' ? String(v).trim() : undefined);
                 const mStatus = nz(mr[15]);
                 if (mStatus && mStatus !== 'NEW') c.status = mStatus as any;
