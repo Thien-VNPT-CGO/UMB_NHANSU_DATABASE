@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl } from './services/api';
 import { APP_COMMIT } from './app-version';
+import { PremiumLogin } from './components/PremiumLogin';
 import {
   Home,
   Calendar,
@@ -548,6 +549,64 @@ export function App() {
     setIsLoggedIn(true);
     showToast(`Đăng nhập thành công vào cổng ${res.stage === 'PROBATION' ? 'Thử việc' : 'Chính thức'}!`);
     await loadEmployeeData(res.employee.employee_id);
+  };
+
+  // Premium 3-step login: verify thật qua API, ném lỗi để UI rung + đỏ (không vào success).
+  const premiumResRef = useRef<any>(null);
+  const premiumErrorText = (err: any, cleaned: string): string => {
+    const code = String(err?.code || err?.message || '');
+    if (/ACCOUNT_NOT_FOUND/.test(code)) return `Số ${cleaned} chưa tồn tại trên Master. Liên hệ HR để nộp hồ sơ.`;
+    if (/PIN_NOT_SET/.test(code)) return `Tài khoản ${cleaned} chưa được cấp PIN. Liên hệ HR để nhận mã!`;
+    if (/INVALID_PIN/.test(code)) return 'Mã PIN chưa đúng! Kiểm tra lại hoặc hỏi HR xem lại mã hiện tại.';
+    if (/DUPLICATE_PHONE_NEEDS_HR/.test(code)) return `SĐT ${cleaned} bị trùng 2 hồ sơ. Gặp HR để đối soát.`;
+    if (/SHEETS_LOADING/.test(code)) return '⏳ Hệ thống vừa khởi động, đang tải dữ liệu (~30s). Đợi rồi thử lại!';
+    if (/SHEETS_UNAVAILABLE/.test(code)) return '⚠️ Máy chủ tạm không đọc được dữ liệu. Báo HR/Admin kiểm tra.';
+    return err?.message || 'Đăng nhập thất bại. Thử lại!';
+  };
+  const handlePremiumLogin = async (phoneToLogin: string, pinToLogin: string) => {
+    const cleaned = phoneToLogin.replace(/[\s\-\.\(\)]/g, '');
+    setLoginPhone(phoneToLogin);
+    setLoginPin(pinToLogin);
+    setCheckingStatus('CHECKING');
+    setLoginError(null);
+    try {
+      const res = await apiRequest('/auth/employee/phone-login', {
+        method: 'POST',
+        body: JSON.stringify({ phone: cleaned, pin: (pinToLogin || '').trim() }),
+      });
+      setAuthToken(res.token);
+      if (res.refreshToken) {
+        try { localStorage.setItem('ubm_emp_refresh', res.refreshToken); } catch {}
+      }
+      if (res.mustChangePin) {
+        // Không vào success — chuyển sang màn đổi PIN bắt buộc.
+        setEmployee(res.employee || null);
+        setNewPin('');
+        setConfirmPin('');
+        setOldPinInput('');
+        setMustChangePin(true);
+        setIsLoggedIn(false);
+        setLoginError('🔑 Tài khoản của bạn chưa đổi mã PIN mới! Vui lòng đổi PIN để vào hệ thống.');
+        const e: any = new Error('MUST_CHANGE_PIN');
+        e.code = 'MUST_CHANGE_PIN';
+        throw e;
+      }
+      // Giữ kết quả, chờ success animation xong mới vào cổng.
+      premiumResRef.current = res;
+      setCheckingStatus('ACTIVE');
+    } catch (err: any) {
+      if (err?.code === 'MUST_CHANGE_PIN' || err?.message === 'MUST_CHANGE_PIN') throw err;
+      setCheckingStatus('ERROR');
+      const msg = premiumErrorText(err, cleaned);
+      setLoginError(msg);
+      throw new Error(msg);
+    }
+  };
+  const handlePremiumSuccess = async () => {
+    const res = premiumResRef.current;
+    premiumResRef.current = null;
+    if (!res) return;
+    await finishLogin(res);
   };
 
   const handleChangePin = async () => {
@@ -1536,7 +1595,8 @@ export function App() {
     );
   }
 
-  if (!isLoggedIn) {
+  // Màn đổi PIN bắt buộc giữ giao diện cũ (an toàn nghiệp vụ 1-5 hàng tháng).
+  if (!isLoggedIn && mustChangePin) {
     return (
       <div style={{
         display: 'flex',
@@ -1776,6 +1836,18 @@ export function App() {
           </div>
         </div>
       </div>
+    );
+  }
+
+  // Premium 3-step login (SĐT -> PIN 6 ô -> success + confetti). Nhánh đổi PIN ở trên.
+  if (!isLoggedIn) {
+    return (
+      <PremiumLogin
+        initialPhone={loginPhone}
+        loading={loading}
+        onLogin={handlePremiumLogin}
+        onSuccess={handlePremiumSuccess}
+      />
     );
   }
 

@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>UBM • Đăng nhập cổng nhân viên (Demo PIN 123456)</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  body { font-family: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; min-height: 100vh; min-height: 100dvh; display: flex; align-items: center; justify-content: center; padding: 20px 16px; color: #EEF2FF; background: radial-gradient(1100px 500px at 15% -5%, rgba(99,102,241,.38), transparent 60%), radial-gradient(900px 480px at 90% 110%, rgba(16,185,129,.22), transparent 60%), linear-gradient(160deg, #0B1026 0%, #141A3A 45%, #1E1B4B 100%); position: relative; overflow: hidden; }
+  .bg-grid { position: absolute; inset: 0; pointer-events: none; opacity: .5; background-image: linear-gradient(rgba(255,255,255,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.045) 1px, transparent 1px); background-size: 44px 44px; mask-image: radial-gradient(ellipse 90% 70% at 50% 40%, black 30%, transparent 75%); -webkit-mask-image: radial-gradient(ellipse 90% 70% at 50% 40%, black 30%, transparent 75%); }
+  .orb { position: absolute; border-radius: 50%; filter: blur(70px); pointer-events: none; }
+  .card { position: relative; width: 100%; max-width: 420px; border-radius: 20px; padding: 28px 26px 24px; background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.05)); border: 1px solid rgba(255,255,255,.14); box-shadow: 0 1px 0 rgba(255,255,255,.15) inset, 0 20px 50px rgba(2,6,23,.55), 0 8px 20px rgba(79,70,229,.25), 0 0 0 8px rgba(99,102,241,.06); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }
+  .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+  .logo { width: 48px; height: 48px; border-radius: 16px; background: linear-gradient(135deg,#6366F1,#10B981); display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 22px; box-shadow: 0 8px 20px rgba(99,102,241,.45); border: 1px solid rgba(255,255,255,.25); }
+  .steps { display: flex; gap: 6px; margin: 14px 0 18px; }
+  .stepbar { height: 4px; flex: 1; border-radius: 999px; background: rgba(255,255,255,.14); overflow: hidden; }
+  .stepbar > i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg,#818CF8,#34D399); transition: width .45s cubic-bezier(.16,1,.3,1); }
+  h2 { font-size: 22px; font-weight: 800; letter-spacing: -.02em; margin-bottom: 6px; }
+  .sub { font-size: 13px; color: rgba(226,232,240,.75); margin-bottom: 18px; line-height: 1.55; }
+  .label { font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: rgba(199,210,254,.9); margin-bottom: 8px; display: flex; justify-content: space-between; }
+  .phone-wrap { display: flex; border-radius: 16px; overflow: hidden; border: 1.5px solid rgba(255,255,255,.16); background: rgba(2,6,23,.45); transition: border-color .2s, box-shadow .2s; }
+  .phone-wrap:focus-within { border-color: #818CF8; box-shadow: 0 0 0 4px rgba(99,102,241,.25); }
+  .phone-wrap.err { border-color: #F87171; box-shadow: 0 0 0 4px rgba(248,113,113,.18); }
+  .prefix { display: flex; align-items: center; padding: 0 14px; font-weight: 800; font-size: 16px; background: rgba(99,102,241,.18); border-right: 1px solid rgba(255,255,255,.12); white-space: nowrap; }
+  #phone { flex: 1; min-width: 0; border: none; outline: none; background: transparent; color: #fff; font-size: 19px; font-weight: 700; letter-spacing: .08em; padding: 15px 14px; }
+  #phone::placeholder { color: rgba(148,163,184,.6); font-weight: 500; }
+  .hint { font-size: 12px; margin-top: 8px; min-height: 18px; color: rgba(252,165,165,.95); font-weight: 600; }
+  .btn { width: 100%; border: none; cursor: pointer; border-radius: 16px; padding: 15px 16px; font-size: 15px; font-weight: 800; color: #fff; margin-top: 14px; background: linear-gradient(135deg, #6366F1 0%, #4F46E5 55%, #059669 130%); box-shadow: 0 10px 24px rgba(99,102,241,.45), 0 2px 6px rgba(16,185,129,.25), 0 1px 0 rgba(255,255,255,.25) inset; transition: transform .12s, box-shadow .2s, filter .2s; display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .btn:hover:not(:disabled) { filter: brightness(1.08); transform: translateY(-1px); box-shadow: 0 14px 32px rgba(99,102,241,.55); }
+  .btn:active:not(:disabled) { transform: translateY(1px) scale(.99); }
+  .btn:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+  .pin-row { display: flex; gap: 10px; justify-content: center; margin: 6px 0 4px; }
+  .pin-box { width: 48px; height: 56px; text-align: center; font-size: 24px; font-weight: 800; color: #fff; caret-color: #A5B4FC; background: rgba(2,6,23,.5); border: 1.5px solid rgba(255,255,255,.16); border-radius: 16px; outline: none; transition: border-color .18s, box-shadow .18s, transform .12s, background .18s; }
+  .pin-box:focus { border-color: #818CF8; box-shadow: 0 0 0 4px rgba(99,102,241,.28); transform: translateY(-2px); background: rgba(30,27,75,.7); }
+  .pin-box.filled { border-color: rgba(52,211,153,.7); background: rgba(6,78,59,.35); }
+  .pin-row.err .pin-box { border-color: #F87171; background: rgba(127,29,29,.35); }
+  @keyframes shake { 0%,100% { transform: translateX(0); } 15% { transform: translateX(-9px); } 30% { transform: translateX(8px); } 45% { transform: translateX(-6px); } 60% { transform: translateX(5px); } 75% { transform: translateX(-3px); } 90% { transform: translateX(2px); } }
+  .shake { animation: shake .45s ease; }
+  .err-box { margin-top: 12px; font-size: 13px; font-weight: 600; color: #FECACA; background: rgba(127,29,29,.4); border: 1px solid rgba(248,113,113,.4); padding: 10px 12px; border-radius: 12px; line-height: 1.5; }
+  .back { margin-top: 12px; width: 100%; background: transparent; border: none; color: rgba(199,210,254,.85); font-size: 13px; font-weight: 700; cursor: pointer; padding: 10px; border-radius: 10px; }
+  .back:hover { background: rgba(255,255,255,.07); color: #fff; }
+  .success { text-align: center; padding: 8px 0 4px; position: relative; }
+  #confetti { position: absolute; inset: -26px; width: calc(100% + 52px); height: calc(100% + 52px); pointer-events: none; }
+  .check { width: 110px; height: 110px; margin: 6px auto 14px; }
+  .check circle.main { stroke-dasharray: 302; stroke-dashoffset: 302; animation: draw .7s cubic-bezier(.65,0,.35,1) forwards; }
+  .check path.tick { stroke-dasharray: 60; stroke-dashoffset: 60; animation: draw .45s .65s cubic-bezier(.65,0,.35,1) forwards; }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+  @keyframes fadeup { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+  .fadeup { animation: fadeup .6s cubic-bezier(.16,1,.3,1) both; }
+  .secure { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 16px; font-size: 11.5px; color: rgba(148,163,184,.9); }
+  .spinner { width: 17px; height: 17px; border-radius: 50%; border: 2.5px solid rgba(255,255,255,.35); border-top-color: #fff; animation: spin .7s linear infinite; display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .hidden { display: none !important; }
+  @media (max-width: 400px) { .pin-box { width: 44px; height: 52px; } .pin-row { gap: 8px; } .card { padding: 24px 18px 20px; } }
+</style>
+</head>
+<body>
+<div class="bg-grid"></div>
+<div class="orb" style="width:320px;height:320px;left:-90px;top:-80px;background:rgba(99,102,241,.35)"></div>
+<div class="orb" style="width:260px;height:260px;right:-70px;bottom:-60px;background:rgba(16,185,129,.28)"></div>
+
+<div class="card">
+  <div class="brand">
+    <div class="logo">U</div>
+    <div>
+      <div style="font-weight:800;font-size:16px">ỤM BÒ MILK</div>
+      <div style="font-size:11.5px;color:rgba(199,210,254,.8);font-weight:600;letter-spacing:.08em">CỔNG NHÂN VIÊN • V5.1</div>
+    </div>
+    <div style="margin-left:auto;font-size:11px;font-weight:800;color:#6EE7B7;background:rgba(16,185,129,.15);border:1px solid rgba(52,211,153,.35);padding:4px 10px;border-radius:999px">● Bảo mật</div>
+  </div>
+
+  <div class="steps">
+    <div class="stepbar"><i id="bar0" style="width:100%"></i></div>
+    <div class="stepbar"><i id="bar1" style="width:0%"></i></div>
+    <div class="stepbar"><i id="bar2" style="width:0%"></i></div>
+  </div>
+
+  <!-- STEP 1 -->
+  <div id="stepPhone">
+    <h2>Đăng nhập</h2>
+    <p class="sub">Nhập số điện thoại đã đăng ký với HR để nhận mã PIN và vào cổng chấm công.</p>
+    <div class="label"><span>Số điện thoại</span><span id="phoneCount">0/11</span></div>
+    <div class="phone-wrap" id="phoneWrap">
+      <span class="prefix">🇻🇳 +84</span>
+      <input id="phone" type="tel" inputmode="numeric" autocomplete="tel" placeholder="901 111 222" autofocus />
+    </div>
+    <div class="hint" id="phoneHint"></div>
+    <button class="btn" id="btnContinue" disabled>Tiếp tục →</button>
+    <div class="secure">🔒 Dữ liệu được mã hóa • Demo PIN đúng là <b>&nbsp;123456</b></div>
+  </div>
+
+  <!-- STEP 2 -->
+  <div id="stepPin" class="hidden">
+    <h2>Nhập mã PIN</h2>
+    <p class="sub">Xác thực SĐT <b id="maskedPhone" style="color:#fff"></b> bằng mã PIN 6 số được cấp.</p>
+    <div class="label"><span>Mã PIN • 6 số</span><span id="pinCount">0/6</span></div>
+    <div class="pin-row" id="pinRow">
+      <input class="pin-box" type="password" inputmode="numeric" maxlength="1" aria-label="PIN 1" />
+      <input class="pin-box" type="password" inputmode="numeric" maxlength="1" aria-label="PIN 2" />
+      <input class="pin-box" type="password" inputmode="numeric" maxlength="1" aria-label="PIN 3" />
+      <input class="pin-box" type="password" inputmode="numeric" maxlength="1" aria-label="PIN 4" />
+      <input class="pin-box" type="password" inputmode="numeric" maxlength="1" aria-label="PIN 5" />
+      <input class="pin-box" type="password" inputmode="numeric" maxlength="1" aria-label="PIN 6" />
+    </div>
+    <div id="verifying" class="hidden" style="display:flex;align-items:center;justify-content:center;gap:8;margin-top:12px;font-size:13px;font-weight:700;color:#A5B4FC">
+      <span class="spinner"></span> Đang xác thực...
+    </div>
+    <div id="pinError" class="err-box hidden"></div>
+    <button class="btn" id="btnVerify" disabled style="opacity:.5">Xác nhận đăng nhập</button>
+    <button class="back" id="btnBack">← Đổi số khác</button>
+  </div>
+
+  <!-- STEP 3 -->
+  <div id="stepSuccess" class="hidden">
+    <div class="success">
+      <canvas id="confetti"></canvas>
+      <svg class="check" viewBox="0 0 110 110" fill="none">
+        <circle cx="55" cy="55" r="48" stroke="rgba(16,185,129,.25)" stroke-width="12" />
+        <circle class="main" cx="55" cy="55" r="48" stroke="#10B981" stroke-width="6" stroke-linecap="round" />
+        <path class="tick" d="M36 56 L50 70 L75 42" stroke="#34D399" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+      <div class="fadeup" style="font-size:21px;font-weight:800;animation-delay:.85s">Xác thực thành công</div>
+      <div class="fadeup" style="font-size:13px;color:rgba(226,232,240,.75);margin-top:6px;animation-delay:1s">Xin chào <b id="helloPhone" style="color:#fff"></b> • Đang chuẩn bị chuyển hướng...</div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var DEMO_PIN = '123456';
+  var phone = '', pin = ['', '', '', '', '', ''];
+  var phoneInput = document.getElementById('phone');
+  var phoneWrap = document.getElementById('phoneWrap');
+  var phoneHint = document.getElementById('phoneHint');
+  var phoneCount = document.getElementById('phoneCount');
+  var btnContinue = document.getElementById('btnContinue');
+  var stepPhone = document.getElementById('stepPhone');
+  var stepPin = document.getElementById('stepPin');
+  var stepSuccess = document.getElementById('stepSuccess');
+  var pinRow = document.getElementById('pinRow');
+  var boxes = Array.prototype.slice.call(pinRow.querySelectorAll('.pin-box'));
+  var pinCount = document.getElementById('pinCount');
+  var pinError = document.getElementById('pinError');
+  var btnVerify = document.getElementById('btnVerify');
+  var btnBack = document.getElementById('btnBack');
+  var verifyingEl = document.getElementById('verifying');
+  var bar1 = document.getElementById('bar1');
+  var bar2 = document.getElementById('bar2');
+
+  function validPhone(d) { return d.length >= 9 && d.length <= 12; }
+
+  phoneInput.addEventListener('input', function () {
+    phone = phoneInput.value.replace(/\D/g, '').slice(0, 11);
+    phoneInput.value = phone;
+    phoneCount.textContent = phone.length + '/11';
+    var ok = validPhone(phone);
+    btnContinue.disabled = !ok;
+    if (phone.length > 0 && !ok) { phoneWrap.classList.add('err'); phoneHint.textContent = 'Số điện thoại cần 9–12 chữ số (VD: 0901111222).'; }
+    else { phoneWrap.classList.remove('err'); phoneHint.textContent = ''; }
+  });
+  phoneInput.addEventListener('keydown', function (e) { if (e.key === 'Enter' && validPhone(phone)) goPin(); });
+  btnContinue.addEventListener('click', goPin);
+
+  function mask(p) { return p.length >= 4 ? '*** *** ' + p.slice(-3) : p; }
+  function goPin() {
+    if (!validPhone(phone)) return;
+    stepPhone.classList.add('hidden');
+    stepPin.classList.remove('hidden');
+    bar1.style.width = '100%';
+    document.getElementById('maskedPhone').textContent = mask(phone);
+    pin = ['', '', '', '', '', ''];
+    syncPin();
+    hideError();
+    setTimeout(function () { boxes[0].focus(); }, 80);
+  }
+  btnBack.addEventListener('click', function () {
+    stepPin.classList.add('hidden');
+    stepPhone.classList.remove('hidden');
+    bar1.style.width = '0%';
+    hideError();
+    phoneInput.focus();
+  });
+
+  function syncPin() {
+    boxes.forEach(function (b, i) {
+      b.value = pin[i];
+      b.classList.toggle('filled', !!pin[i]);
+    });
+    var filled = pin.filter(Boolean).length;
+    pinCount.textContent = filled + '/6';
+    var full = pin.every(function (d) { return d !== ''; });
+    btnVerify.disabled = !full;
+    btnVerify.style.opacity = full ? '1' : '.5';
+    if (full) setTimeout(verify, 180);
+  }
+
+  boxes.forEach(function (box, i) {
+    box.addEventListener('input', function () {
+      var d = box.value.replace(/\D/g, '').slice(-1);
+      pin[i] = d;
+      syncPin();
+      if (d && i < 5) setTimeout(function () { boxes[i + 1].focus(); }, 10);
+    });
+    box.addEventListener('keydown', function (e) {
+      if (e.key === 'Backspace') {
+        if (pin[i]) { pin[i] = ''; syncPin(); }
+        else if (i > 0) { e.preventDefault(); pin[i - 1] = ''; syncPin(); setTimeout(function () { boxes[i - 1].focus(); }, 10); }
+      } else if (e.key === 'ArrowLeft' && i > 0) boxes[i - 1].focus();
+      else if (e.key === 'ArrowRight' && i < 5) boxes[i + 1].focus();
+      else if (e.key === 'Enter' && pin.every(function (d) { return d !== ''; })) verify();
+    });
+    box.addEventListener('paste', function (e) {
+      e.preventDefault();
+      var t = (e.clipboardData.getData('text') || '').replace(/\D/g, '').slice(0, 6);
+      if (!t) return;
+      pin = ['','','','','',''];
+      t.split('').forEach(function (ch, k) { pin[k] = ch; });
+      syncPin();
+      var idx = Math.min(t.length, 5);
+      setTimeout(function () { boxes[idx].focus(); if (t.length === 6) verify(); }, 10);
+    });
+    box.addEventListener('focus', function () { box.select(); });
+  });
+
+  var busy = false;
+  function showError(msg) {
+    pinError.textContent = '⚠️ ' + msg;
+    pinError.classList.remove('hidden');
+    pinRow.classList.add('err');
+    pinRow.classList.remove('shake');
+    void pinRow.offsetWidth;
+    pinRow.classList.add('shake');
+  }
+  function hideError() { pinError.classList.add('hidden'); pinRow.classList.remove('err'); }
+  btnVerify.addEventListener('click', function () { verify(); });
+
+  function verify() {
+    if (busy) return;
+    if (!pin.every(function (d) { return d !== ''; })) return;
+    busy = true;
+    hideError();
+    verifyingEl.classList.remove('hidden');
+    verifyingEl.style.display = 'flex';
+    var code = pin.join('');
+    setTimeout(function () {
+      verifyingEl.classList.add('hidden');
+      verifyingEl.style.display = 'none';
+      busy = false;
+      if (code !== DEMO_PIN) {
+        showError('Mã PIN chưa đúng (demo: ' + DEMO_PIN + '). Đã reset, nhập lại nhé!');
+        pin = ['', '', '', '', '', ''];
+        syncPin();
+        setTimeout(function () { boxes[0].focus(); }, 450);
+        return;
+      }
+      stepPin.classList.add('hidden');
+      stepSuccess.classList.remove('hidden');
+      bar2.style.width = '100%';
+      document.getElementById('helloPhone').textContent = mask(phone);
+      fireConfetti();
+    }, 650);
+  }
+
+  function fireConfetti() {
+    var cv = document.getElementById('confetti');
+    var ctx = cv.getContext('2d');
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var w = cv.width = Math.floor(cv.offsetWidth * dpr);
+    var h = cv.height = Math.floor(cv.offsetHeight * dpr);
+    var colors = ['#10B981','#34D399','#6366F1','#A5B4FC','#F59E0B','#F472B6','#FFFFFF'];
+    var cx = w / 2, cy = h * 0.38;
+    var parts = [];
+    for (var i = 0; i < 140; i++) {
+      var a = Math.random() * Math.PI * 2, s = (4 + Math.random() * 9) * dpr;
+      parts.push({ x: cx, y: cy, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 4 * dpr, size: (3 + Math.random() * 5) * dpr, color: colors[(Math.random() * colors.length) | 0], rot: Math.random() * Math.PI, vr: (Math.random() - .5) * .25, life: 1, decay: .008 + Math.random() * .008, rect: Math.random() > .4 });
+    }
+    var raf = 0, g = .22 * dpr;
+    (function tick() {
+      ctx.clearRect(0, 0, w, h);
+      var alive = false;
+      for (var k = 0; k < parts.length; k++) {
+        var p = parts[k];
+        p.vy += g; p.vx *= .985; p.vy *= .985; p.x += p.vx; p.y += p.vy; p.rot += p.vr; p.life -= p.decay;
+        if (p.life > 0 && p.y < h + 20) alive = true; else continue;
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, Math.min(1, p.life * 1.4));
+        ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.fillStyle = p.color;
+        if (p.rect) ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * .62);
+        else { ctx.beginPath(); ctx.arc(0, 0, p.size / 2, 0, Math.PI * 2); ctx.fill(); }
+        ctx.restore();
+      }
+      if (alive) raf = requestAnimationFrame(tick); else ctx.clearRect(0, 0, w, h);
+    })();
+  }
+})();
+</script>
+</body>
+</html>
