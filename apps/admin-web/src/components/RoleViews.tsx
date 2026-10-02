@@ -5179,9 +5179,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       };
     });
 
-    // Thứ tự hàng: chi nhánh CN1→CN2→CN3→CN4, rồi CA THẬT trong tuần đang xem
-    // (Ca 1 → Ca 2 → Ca 3: Ca1, Ca1, Ca2, Ca2, Ca3, Ca3...), rồi ca cố định, rồi tên.
-    // Ca chính = ca xuất hiện nhiều nhất tuần (lệch số ngày thì ca đầu tuần thắng).
+    // Thứ tự hàng: chi nhánh CN1→CN2→CN3→CN4, rồi ca chuẩn của từng NV
+    // (Ca 1 → Ca 2 → Ca 3: Ca1, Ca1, Ca2, Ca2, Ca3, Ca3...), rồi mã NV, rồi tên.
+    // RÀNG BUỘC ỔN ĐỊNH BỐ CỤC: key ca là ca cố định trong hồ sơ (không đổi khi NV
+    // tráo/đổi ca tuần với nhau) — ca thật trong tuần chỉ làm fallback cho NV chưa
+    // gán ca cố định. Đổi ca tuần không bao giờ xáo thứ tự hàng.
     const BRANCH_RANK: Record<string, number> = { CN130: 1, CN261: 2, CN120: 3, CN111: 4 };
     const SHIFT_RANK: Record<string, number> = { CA_1: 1, CA_2: 2, CA_3: 3 };
     const empShiftOf = (empId: string) =>
@@ -5197,12 +5199,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       for (const c of Object.keys(freq)) {
         if (!best || freq[c] > freq[best] || (freq[c] === freq[best] && firstIdx[c] < firstIdx[best])) best = c;
       }
-      return best || empShiftOf(item.empId) || '';
+      return best;
     };
+    // Ca sắp xếp = ca cố định (ổn định) — chỉ NV chưa gán mới dùng ca thật trong tuần.
+    const sortShiftOf = (item: any): string => empShiftOf(item.empId) || weekShiftOf(item) || '';
     const sortedSchedule = [...scheduleItems].sort((a: any, b: any) =>
       ((BRANCH_RANK[canonicalBranchId(a.branch)] ?? 9) - (BRANCH_RANK[canonicalBranchId(b.branch)] ?? 9)) ||
-      ((SHIFT_RANK[weekShiftOf(a)] ?? 9) - (SHIFT_RANK[weekShiftOf(b)] ?? 9)) ||
-      ((SHIFT_RANK[empShiftOf(a.empId)] ?? 9) - (SHIFT_RANK[empShiftOf(b.empId)] ?? 9)) ||
+      ((SHIFT_RANK[sortShiftOf(a)] ?? 9) - (SHIFT_RANK[sortShiftOf(b)] ?? 9)) ||
+      String(a.empCode || '').localeCompare(String(b.empCode || '')) ||
       String(a.name || '').localeCompare(String(b.name || ''), 'vi')
     );
     const filteredSchedule = sortedSchedule.filter((item) => {
