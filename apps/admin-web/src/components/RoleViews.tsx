@@ -267,8 +267,17 @@ export function pvBookedSlots(cands: any[], date: string, excludeId?: string): s
 export function getFailVerdictInfo(c: any): { isFail: boolean; scoredAt: number; remainingMs: number } {
   const d = parseScoreDetailClient((c as any)?.interview_score_detail);
   if (!d || d.verdict !== 'FAIL') return { isFail: false, scoredAt: 0, remainingMs: 0 };
-  // Lấy thời gian chấm điểm từ updated_at của ứng viên, fallback về created_at, cuối cùng là now
-  const scoredAt = Date.parse((c as any)?.updated_at || (c as any)?.created_at || Date.now());
+  
+  // Lấy thời gian chấm điểm: ưu tiên updated_at > created_at > interview_date+time > now
+  let scoredAt = Date.parse((c as any)?.updated_at);
+  if (!Number.isFinite(scoredAt)) scoredAt = Date.parse((c as any)?.created_at);
+  if (!Number.isFinite(scoredAt)) {
+    // Fallback: dùng ngày giờ phỏng vấn (nếu có) + 1 tiếng
+    const interviewMs = interviewStartMs(c);
+    if (interviewMs !== null && Number.isFinite(interviewMs)) scoredAt = interviewMs + 60 * 60 * 1000;
+  }
+  if (!Number.isFinite(scoredAt)) scoredAt = Date.now();
+  
   const AUTO_DELETE_HOURS = 24;
   const deadlineMs = scoredAt + AUTO_DELETE_HOURS * 60 * 60 * 1000;
   const remainingMs = Math.max(0, deadlineMs - Date.now());
@@ -3414,13 +3423,16 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       {(() => {
                         const failInfo = getFailVerdictInfo(c);
                         if (failInfo.isFail) {
+                          const isExpired = failInfo.remainingMs <= 0;
                           return (
                             <div>
-                              <span style={{ backgroundColor: '#FEF2F2', color: '#DC2626', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700, border: '1px solid #FCA5A5' }}>
-                                ⚠️ Chưa đạt — Tự xoá sau: {formatCountdown(failInfo.remainingMs)}
+                              <span style={{ backgroundColor: isExpired ? '#FEE2E2' : '#FEF2F2', color: '#DC2626', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700, border: '1px solid #FCA5A5' }}>
+                                {isExpired ? '⛔ Chưa đạt — Đã quá hạn 24h' : `⚠️ Chưa đạt — Tự xoá sau: ${formatCountdown(failInfo.remainingMs)}`}
                               </span>
                               <div style={{ fontSize: '11px', color: '#DC2626', fontWeight: 700, marginTop: '4px', fontVariantNumeric: 'tabular-nums' }}>
-                                Hệ thống sẽ tự động xoá ứng viên này khỏi hệ thống sau 24h kể từ lúc chấm điểm ({new Date(failInfo.scoredAt + 24*60*60*1000).toLocaleString('vi-VN')})
+                                {isExpired
+                                  ? `Đã quá 24h kể từ lúc chấm điểm (${new Date(failInfo.scoredAt + 24*60*60*1000).toLocaleString('vi-VN')}) — cần xử lý thủ công`
+                                  : `Hệ thống sẽ tự động xoá ứng viên này khỏi hệ thống sau 24h kể từ lúc chấm điểm (${new Date(failInfo.scoredAt + 24*60*60*1000).toLocaleString('vi-VN')})`}
                               </div>
                             </div>
                           );
@@ -3466,7 +3478,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                               disabled={disabledForFail}
                               style={{ ...btn2, backgroundColor: disabledForFail ? '#94A3B8' : '#10B981', color: '#FFF', boxShadow: disabledForFail ? 'none' : '0 2px 6px rgba(16,185,129,0.3)' }}
                               onClick={() => !disabledForFail && chatZaloWithCandidate(c, showToast)}
-                              title={disabledForFail ? 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)' : 'Tự động kết bạn Zalo qua nick HR + gửi lời chào để chát với ứng viên'}
+                              title={disabledForFail ? (failInfo.remainingMs <= 0 ? 'Ứng viên Chưa đạt — đã quá 24h, cần xử lý thủ công' : 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)') : 'Tự động kết bạn Zalo qua nick HR + gửi lời chào để chát với ứng viên'}
                             >
                               💬 Chat Zalo
                             </button>
@@ -3475,7 +3487,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 disabled={disabledForFail}
                                 style={{ ...btn2, backgroundColor: disabledForFail ? '#94A3B8' : '#8B5CF6', color: '#FFF', boxShadow: disabledForFail ? 'none' : '0 2px 6px rgba(139,92,246,0.3)' }}
                                 onClick={() => !disabledForFail && openScoring(c)}
-                                title={disabledForFail ? 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)' : 'Chấm điểm theo TIÊU CHÍ LỌC HỒ SƠ (chấm xong nút này ẩn đi)'}
+                                title={disabledForFail ? (failInfo.remainingMs <= 0 ? 'Ứng viên Chưa đạt — đã quá 24h, cần xử lý thủ công' : 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)') : 'Chấm điểm theo TIÊU CHÍ LỌC HỒ SƠ (chấm xong nút này ẩn đi)'}
                               >
                                 📝 Chấm điểm
                               </button>
@@ -3485,7 +3497,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 disabled={disabledForFail}
                                 style={{ ...btn2, backgroundColor: disabledForFail ? '#94A3B8' : '#F59E0B', color: '#FFF', boxShadow: disabledForFail ? 'none' : '0 2px 6px rgba(245,158,11,0.3)' }}
                                 onClick={() => !disabledForFail && openUpdating(c)}
-                                title={disabledForFail ? 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)' : 'Cập nhật ca làm việc + chi nhánh (bắt buộc chốt 1 ca / 1 chi nhánh trước khi duyệt)'}
+                                title={disabledForFail ? (failInfo.remainingMs <= 0 ? 'Ứng viên Chưa đạt — đã quá 24h, cần xử lý thủ công' : 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)') : 'Cập nhật ca làm việc + chi nhánh (bắt buộc chốt 1 ca / 1 chi nhánh trước khi duyệt)'}
                               >
                                 ✏️ Cập nhật TT
                               </button>
@@ -3495,7 +3507,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 disabled={disabledForFail || approveBusyId === c.submission_id}
                                 style={{ ...btn2, backgroundColor: disabledForFail ? '#94A3B8' : '#10B981', color: '#FFF', boxShadow: disabledForFail ? 'none' : '0 2px 6px rgba(16,185,129,0.35)' }}
                                 onClick={() => !disabledForFail && handleApproveCandidate(c)}
-                                title={disabledForFail ? 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)' : `Đã PASS rubric (${d.total}/${(d as any).achievableMax ?? d.max}) — duyệt thử việc + cấp PIN`}
+                                title={disabledForFail ? (failInfo.remainingMs <= 0 ? 'Ứng viên Chưa đạt — đã quá 24h, cần xử lý thủ công' : 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)') : `Đã PASS rubric (${d.total}/${(d as any).achievableMax ?? d.max}) — duyệt thử việc + cấp PIN`}
                               >
                                 {approveBusyId === c.submission_id ? '⏳ Đang duyệt...' : '✅ Duyệt Thử việc'}
                               </button>
@@ -3504,7 +3516,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                               <span style={{ fontSize: '11px', color: '#059669', fontWeight: 800 }}>✅ Đã duyệt NV</span>
                             )}
                             {disabledForFail && (
-                              <span style={{ fontSize: '11px', color: '#DC2626', fontWeight: 800, alignSelf: 'center' }}>🔒 Khoá (tự xoá 24h)</span>
+                              <span style={{ fontSize: '11px', color: '#DC2626', fontWeight: 800, alignSelf: 'center' }}>
+                                {failInfo.remainingMs <= 0 ? '🔒 Khoá (đã quá 24h)' : '🔒 Khoá (tự xoá 24h)'}
+                              </span>
                             )}
                           </div>
                         );
