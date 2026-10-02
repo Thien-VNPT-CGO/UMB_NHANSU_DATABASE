@@ -768,22 +768,60 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   };
   const [celebration, setCelebration] = useState<{ name: string; total: number; rubric: string } | null>(null);
 
-  /** Thử tự mở tab Meet — trả về true nếu trình duyệt cho phép (false = bị chặn popup). */
-  const tryOpenMeet = (key: string): boolean => {
+  /** Thử tự mở tab Meet — trả về true nếu trình duyệt cho phép (false = bị chặn popup).
+   *  Bị chặn -> đưa vào hàng đợi, lần bấm CHUỘT/PHÍM kế tiếp của HR trên trang
+   *  (có cử chỉ người dùng) sẽ mở bù ngay — không cần bật popup thủ công. */
+  const pendingMeetRef = useRef<Map<string, string>>(new Map());
+  const tryOpenMeet = (key: string, label?: string): boolean => {
     try {
       const w = window.open(SYSTEM_MEET_URL, '_blank');
       meetWindowsRef.current.set(key, w);
       if (!w) {
         setMeetBlocked(true);
+        pendingMeetRef.current.set(key, label || key);
         return false;
       }
+      pendingMeetRef.current.delete(key);
       return true;
     } catch {
       meetWindowsRef.current.set(key, null);
       setMeetBlocked(true);
+      pendingMeetRef.current.set(key, label || key);
       return false;
     }
   };
+  // Xả hàng đợi Meet bị chặn ở cử chỉ người dùng kế tiếp (click/phím bất kỳ).
+  useEffect(() => {
+    if (activeTab !== 'hr-interviews') return;
+    const flush = (e?: Event) => {
+      if (pendingMeetRef.current.size === 0) return;
+      // Bấm đúng nút Meet thì nút đó tự mở — không xả trùng thêm tab.
+      try {
+        if ((e as any)?.target && ((e as any).target as HTMLElement).closest?.('[data-meet-open]')) return;
+      } catch { /* bỏ qua */ }
+      const entries = [...pendingMeetRef.current.entries()];
+      pendingMeetRef.current.clear();
+      let opened = 0;
+      for (const [k, label] of entries) {
+        try {
+          const w = window.open(SYSTEM_MEET_URL, '_blank');
+          meetWindowsRef.current.set(k, w);
+          if (w) { opened++; continue; }
+        } catch { /* vẫn chặn -> giữ lại */ }
+        pendingMeetRef.current.set(k, label);
+      }
+      if (opened > 0) {
+        setMeetBlocked(pendingMeetRef.current.size > 0);
+        showToast(`🎬 Đã mở Meet (${opened} phòng) — HR vào phỏng vấn ngay!`);
+      }
+    };
+    document.addEventListener('click', flush, true);
+    document.addEventListener('keydown', flush, true);
+    return () => {
+      document.removeEventListener('click', flush, true);
+      document.removeEventListener('keydown', flush, true);
+    };
+  }, [activeTab]);
   useEffect(() => {
     if (activeTab !== 'hr-interviews') return;
     const empPhones = new Set(
@@ -806,7 +844,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       // thử lại ở T-5 và T-0, đồng thời báo rõ để HR bấm mở tay 1 chạm.
       if (diff > 0 && diff <= 10 * 60000 && !t10Ref.current.has(key)) {
         t10Ref.current.add(key);
-        const opened = tryOpenMeet(key);
+        const opened = tryOpenMeet(key, cd.full_name);
         if (!parseScoreDetailClient((cd as any)?.interview_score_detail)) {
           setScoringRubric(((cd as any)?.interview_rubric === 'office' ? 'office' : 'store') as any);
           setScoringAnswers({});
@@ -814,14 +852,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         }
         showToast(opened
           ? `🎬 Meet đã tự mở cho PV ${cd.full_name} + popup chấm điểm — HR chấm trực tiếp, lưu xong Meet tự đóng!`
-          : `⚠️ Trình duyệt đã CHẶN tự mở Meet cho PV ${cd.full_name}! Tới giờ bấm "Vào Meet ngay" trong popup (1 chạm), hoặc bật "Luôn cho phép popup" cho trang web để lần sau tự mở.`);
+          : `⚠️ Trình duyệt đã CHẶN tự mở Meet cho PV ${cd.full_name}! Chỉ cần BẤM vào bất kỳ đâu trên trang (kể cả nút "Vào Meet ngay" trong popup) là Meet mở ngay — không cần bật popup thủ công.`);
       }
       // T-5 phút: mở bù nếu T-10 bị chặn.
       if (diff > 0 && diff <= 5 * 60000 && !t5Ref.current.has(key)) {
         t5Ref.current.add(key);
         const prev = meetWindowsRef.current.get(key);
         if (!prev || prev.closed) {
-          const opened = tryOpenMeet(key);
+          const opened = tryOpenMeet(key, cd.full_name);
           if (opened) showToast(`🎬 Meet đã tự mở (mở bù) cho PV ${cd.full_name} — còn 5 phút!`);
         }
       }
@@ -830,7 +868,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         // Meet đã tự mở từ T-10/T-5; chỉ mở lại nếu chưa có (popup từng bị chặn).
         const prev = meetWindowsRef.current.get(key);
         if (!prev || prev.closed) {
-          tryOpenMeet(key);
+          tryOpenMeet(key, cd.full_name);
         }
         playInterviewAlert();
         setPvAlert(cd);
@@ -3217,7 +3255,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                               >
                                 {busy ? '⏳ Đang hủy...' : '✖ Huỷ Phỏng vấn'}
                               </button>
-                              <a href={SYSTEM_MEET_URL} target="_blank" rel="noreferrer" onClick={() => markPvJoined(c)}
+                              <a href={SYSTEM_MEET_URL} target="_blank" rel="noreferrer" data-meet-open="1" onClick={() => markPvJoined(c)}
                                 style={{ display: 'block', fontSize: '11px', color: '#0068FF', fontWeight: 700, marginTop: '4px', textAlign: 'center' }}>
                                 Vào Meet ngay để giữ lịch →
                               </a>
@@ -3228,7 +3266,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         if (diff <= 0 && elapsed < PV_SLOT_MINUTES * 60_000) {
                           return (
                             <div>
-                              <a href={SYSTEM_MEET_URL} target="_blank" rel="noreferrer" onClick={() => markPvJoined(c)}
+                              <a href={SYSTEM_MEET_URL} target="_blank" rel="noreferrer" data-meet-open="1" onClick={() => markPvJoined(c)}
                                 style={{ display: 'inline-block', backgroundColor: '#DC2626', color: '#FFF', fontWeight: 800, fontSize: '12px', padding: '8px 14px', borderRadius: '8px', textDecoration: 'none', animation: 'fx-blink 1.2s infinite' }}>
                                 🔴 ĐANG PV — Vào Meet
                               </a>
@@ -3252,7 +3290,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         return (
                           <div>
                             <div style={{ fontSize: '12px', fontWeight: 800, color: '#1D4ED8' }}>⏳ Còn {fmtLeft(diff)}</div>
-                            <a href={SYSTEM_MEET_URL} target="_blank" rel="noreferrer" onClick={() => markPvJoined(c)} style={{ fontSize: '11px', color: '#0068FF', fontWeight: 700 }}>Vào trước qua Meet →</a>
+                            <a href={SYSTEM_MEET_URL} target="_blank" rel="noreferrer" data-meet-open="1" onClick={() => markPvJoined(c)} style={{ fontSize: '11px', color: '#0068FF', fontWeight: 700 }}>Vào trước qua Meet →</a>
                           </div>
                         );
                       })()}
@@ -3550,12 +3588,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 </div>
                 {meetBlocked && (
                   <div style={{ fontSize: '11px', color: '#92400E', backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '8px', padding: '8px 10px', lineHeight: '1.5' }}>
-                    ⚠️ Trình duyệt đang chặn tự mở tab. Bấm “Vào Meet ngay” bên dưới (1 chạm là mở được), rồi bật <strong>“Luôn cho phép cửa sổ bật lên”</strong> cho trang web để các buổi sau tự mở.
+                    ⚠️ Trình duyệt đang chặn tự mở tab. Bấm <strong>“Vào Meet ngay”</strong> bên dưới là mở được ngay (hoặc bấm bất kỳ đâu trên trang — hệ thống tự mở bù).
                   </div>
                 )}
                 <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
                   <button
-                    onClick={() => { try { window.open(SYSTEM_MEET_URL, '_blank'); } catch {} setPvAlert(null); }}
+                    data-meet-open="1"
+                    onClick={() => { try { window.open(SYSTEM_MEET_URL, '_blank'); } catch {} markPvJoined(pvAlert); pendingMeetRef.current.delete(`${(pvAlert as any)?.submission_id}|${String((pvAlert as any)?.interview_date || '').slice(0, 10)}`); setPvAlert(null); }}
                     style={{ flex: 1, padding: '12px', borderRadius: '10px', backgroundColor: '#DC2626', color: '#FFF', fontSize: '14px', fontWeight: 900, border: 'none', cursor: 'pointer' }}
                   >
                     🔴 Vào Meet ngay
