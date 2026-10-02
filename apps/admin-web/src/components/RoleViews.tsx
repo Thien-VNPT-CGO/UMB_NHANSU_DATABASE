@@ -5203,6 +5203,16 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     };
     // Ca sắp xếp = ca cố định (ổn định) — chỉ NV chưa gán mới dùng ca thật trong tuần.
     const sortShiftOf = (item: any): string => empShiftOf(item.empId) || weekShiftOf(item) || '';
+    const SHIFT_LABEL: Record<string, string> = { CA_1: 'Ca 1 (07–12)', CA_2: 'Ca 2 (12–18)', CA_3: 'Ca 3 (18–23)' };
+    // Tóm tắt ca làm trong tuần đang xem: "Ca 1 ×4 • Ca 2 ×1" (theo ca thật từng ngày).
+    const weekShiftSummary = (item: any): string => {
+      const counts: Record<string, number> = {};
+      (item.weekShiftCodes || []).forEach((c: string) => { counts[c] = (counts[c] || 0) + 1; });
+      const parts = Object.keys(counts)
+        .sort((a, b) => (SHIFT_RANK[a] ?? 9) - (SHIFT_RANK[b] ?? 9))
+        .map((c) => `${SHIFT_LABEL[c] || c} ×${counts[c]}`);
+      return parts.join(' • ');
+    };
     const sortedSchedule = [...scheduleItems].sort((a: any, b: any) =>
       ((BRANCH_RANK[canonicalBranchId(a.branch)] ?? 9) - (BRANCH_RANK[canonicalBranchId(b.branch)] ?? 9)) ||
       ((SHIFT_RANK[sortShiftOf(a)] ?? 9) - (SHIFT_RANK[sortShiftOf(b)] ?? 9)) ||
@@ -5478,6 +5488,22 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
                       {getDisplayBranch(emp.branch)}
                     </div>
+                    {(() => {
+                      const summary = weekShiftSummary(emp);
+                      if (summary) {
+                        return (
+                          <div style={{ fontSize: '11px', color: '#1D4ED8', fontWeight: 700, marginTop: '4px', lineHeight: '1.5' }}>
+                            🕒 Ca tuần: {summary}
+                          </div>
+                        );
+                      }
+                      const fixed = empShiftOf(emp.empId);
+                      return (
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600, marginTop: '4px' }}>
+                          {fixed && SHIFT_LABEL[fixed] ? `🕒 Ca cố định: ${SHIFT_LABEL[fixed]}` : '🕒 Chưa xếp ca tuần này'}
+                        </div>
+                      );
+                    })()}
                     {emp.stage === 'PROBATION' && (
                       <div style={{ fontSize: '10px', color: '#D97706', fontWeight: 700, marginTop: '2px' }}>
                         Chu kỳ 12 ngày (7 làm / 5 OFF)
