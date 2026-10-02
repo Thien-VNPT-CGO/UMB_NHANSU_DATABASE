@@ -5010,6 +5010,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       const empLeaves = (leaves || []).filter((l: any) => l.employee_id === emp.employee_id && (l.status === 'APPROVED' || l.status === 'PENDING'));
       const empEvents = (liveAttendanceEvents || []).filter((e: any) => e.employee_id === emp.employee_id);
       const dayDataMap: Record<string, any> = {};
+      // Mã ca THẬT từng ngày trong tuần đang xem (để sắp xếp Ca 1 → Ca 2 → Ca 3).
+      const weekShiftCodes: string[] = [];
 
       weekDays.forEach((day) => {
         // Tìm ca làm việc THẬT được phân công trên hệ thống cho ngày này
@@ -5063,6 +5065,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             return !!(e.client_time && e.client_time.startsWith(day.isoDate));
           };
           const buildOne = (sh: any) => {
+            if (sh?.shift_code) weekShiftCodes.push(String(sh.shift_code));
             const ci = empEvents.find((e: any) => e.type === 'CHECK_IN' && matchShift(e, sh));
             const co = empEvents.find((e: any) => e.type === 'CHECK_OUT' && matchShift(e, sh));
             const ab = empEvents.find((e: any) => e.type === 'ABSENT' && matchShift(e, sh));
@@ -5172,16 +5175,33 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         stage: emp.employment_status === 'PROBATION' ? 'PROBATION' : 'OFFICIAL',
         branch: emp.default_branch_id || emp.branch_id || 'CN130',
         days: dayDataMap,
+        weekShiftCodes,
       };
     });
 
-    // Thứ tự hàng: chi nhánh CN1→CN2→CN3→CN4, rồi ca cố định Ca 1→Ca 2→Ca 3, rồi thứ tự hồ sơ.
+    // Thứ tự hàng: chi nhánh CN1→CN2→CN3→CN4, rồi CA THẬT trong tuần đang xem
+    // (Ca 1 → Ca 2 → Ca 3: Ca1, Ca1, Ca2, Ca2, Ca3, Ca3...), rồi ca cố định, rồi tên.
+    // Ca chính = ca xuất hiện nhiều nhất tuần (lệch số ngày thì ca đầu tuần thắng).
     const BRANCH_RANK: Record<string, number> = { CN130: 1, CN261: 2, CN120: 3, CN111: 4 };
     const SHIFT_RANK: Record<string, number> = { CA_1: 1, CA_2: 2, CA_3: 3 };
     const empShiftOf = (empId: string) =>
       (allEmployees || []).find((e: any) => e.employee_id === empId)?.default_shift_code;
+    const weekShiftOf = (item: any): string => {
+      const freq: Record<string, number> = {};
+      const firstIdx: Record<string, number> = {};
+      (item.weekShiftCodes || []).forEach((c: string, i: number) => {
+        freq[c] = (freq[c] || 0) + 1;
+        if (firstIdx[c] === undefined) firstIdx[c] = i;
+      });
+      let best = '';
+      for (const c of Object.keys(freq)) {
+        if (!best || freq[c] > freq[best] || (freq[c] === freq[best] && firstIdx[c] < firstIdx[best])) best = c;
+      }
+      return best || empShiftOf(item.empId) || '';
+    };
     const sortedSchedule = [...scheduleItems].sort((a: any, b: any) =>
       ((BRANCH_RANK[canonicalBranchId(a.branch)] ?? 9) - (BRANCH_RANK[canonicalBranchId(b.branch)] ?? 9)) ||
+      ((SHIFT_RANK[weekShiftOf(a)] ?? 9) - (SHIFT_RANK[weekShiftOf(b)] ?? 9)) ||
       ((SHIFT_RANK[empShiftOf(a.empId)] ?? 9) - (SHIFT_RANK[empShiftOf(b.empId)] ?? 9)) ||
       String(a.name || '').localeCompare(String(b.name || ''), 'vi')
     );
