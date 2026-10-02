@@ -2661,13 +2661,12 @@ export function App() {
                       <th style={{ padding: '12px 20px' }}>Mã PIN</th>
                       <th style={{ padding: '12px 20px' }}>Trạng Thái PIN</th>
                       <th style={{ padding: '12px 20px' }}>Đổi PIN Cuối</th>
-                      <th style={{ padding: '12px 20px' }}>Gửi Zalo</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredActivationItems.length === 0 ? (
                       <tr>
-                        <td colSpan={10} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                        <td colSpan={9} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
                           Không có nhân sự nào trong tab này hoặc không khớp với tìm kiếm.
                         </td>
                       </tr>
@@ -2799,41 +2798,6 @@ export function App() {
                           </td>
                           <td style={{ padding: '14px 20px', fontSize: '12px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
                             {fmtPinTime(item.pinUpdatedAt)}
-                          </td>
-                          <td style={{ padding: '14px 20px' }}>
-                            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                            {item.pinMustChange && item.pinCode && item.hasRealAccount ? (
-                              <button
-                                onClick={() => handleBulkSendPin([item.accountId])}
-                                disabled={pinSending}
-                                title={`Gửi mã PIN ${item.pinCode} tới Zalo SĐT ${item.phone}`}
-                                style={{
-                                  padding: '6px 12px', borderRadius: 'var(--radius-sm)',
-                                  backgroundColor: sendingSingleId === item.accountId ? '#CBD5E1' : '#0EA5E9',
-                                  color: '#FFF', fontSize: '11px', fontWeight: 800, border: 'none',
-                                  cursor: pinSending ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap',
-                                }}
-                              >
-                                {sendingSingleId === item.accountId ? '⏳ Đang gửi...' : '📩 Gửi PIN'}
-                              </button>
-                            ) : (
-                              <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>—</span>
-                            )}
-                            {item.hasRealAccount && item.pinCode && (
-                              <button
-                                onClick={() => handleResetPin(item)}
-                                title="Đã bỏ reset: xem cột Mã PIN để nhắc lại PIN hiện tại cho NV tự đổi"
-                                style={{
-                                  padding: '6px 12px', borderRadius: 'var(--radius-sm)',
-                                  backgroundColor: '#94A3B8',
-                                  color: '#FFF', fontSize: '11px', fontWeight: 800, border: 'none',
-                                  cursor: 'pointer', whiteSpace: 'nowrap',
-                                }}
-                              >
-                                👁 Nhắc PIN
-                              </button>
-                            )}
-                            </div>
                           </td>
                         </tr>
                       ))
