@@ -54,7 +54,41 @@ export function connectRealtime(base: string, token: string, guards: RealtimeGua
         /* bỏ qua */
       }
       guards.onGiveUp?.(fails);
+      // Tự hồi sinh: server free-tier hay sleep, mạng chập chờn — cứ 60s thử nối
+      // lại 1 lần (rẻ, im lặng). Có mạng lại là realtime chạy tiếp, khỏi bắt NV
+      // đăng nhập lại. Dừng hẳn khi App unmount (stopRealtimeRevive).
+      const st = socket as any;
+      if (!st.__reviveTimer) {
+        st.__reviveTimer = setInterval(() => {
+          if (st.__dead) return;
+          if (socket.disconnected) {
+            fails = 0;
+            gaveUp = false;
+            try {
+              socket.connect();
+            } catch {
+              /* lần sau */
+            }
+          }
+        }, 60000);
+      }
     }
   });
   return socket;
+}
+
+/** Dừng timer tự nối lại (gọi khi App unmount/logout để khỏi rò rỉ). */
+export function stopRealtimeRevive(socket: Socket | null | undefined) {
+  try {
+    const st = socket as any;
+    if (st) {
+      st.__dead = true;
+      if (st.__reviveTimer) {
+        clearInterval(st.__reviveTimer);
+        st.__reviveTimer = null;
+      }
+    }
+  } catch {
+    /* bỏ qua */
+  }
 }

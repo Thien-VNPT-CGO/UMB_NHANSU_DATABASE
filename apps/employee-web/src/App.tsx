@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Socket } from 'socket.io-client';
 import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl, onPinLockRequired } from './services/api';
-import { connectRealtime } from './services/realtime';
+import { connectRealtime, stopRealtimeRevive } from './services/realtime';
 import { APP_COMMIT } from './app-version';
 import { PremiumLogin } from './components/PremiumLogin';
 import {
@@ -61,6 +61,47 @@ function MyAdjPhoto({ adjustmentId, style }: { adjustmentId: string; style?: Rea
   if (failed) return null;
   if (!url) return <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Đang tải ảnh...</span>;
   return <img src={url} alt="Ảnh bằng chứng" style={{ width: '72px', height: '72px', objectFit: 'cover', borderRadius: '8px', border: '1px solid var(--border)', ...(style || {}) }} />;
+}
+
+/** Banner bản cập nhật mới từ IT: hiện khi API đã sang commit mới hơn bản app
+ *  đang chạy (trình duyệt cache bản cũ). Bấm là tải lại trang lấy bản mới. */
+function UpdateBanner({ apiCommit, onLater }: { apiCommit: string | null; onLater: () => void }) {
+  return (
+    <div style={{
+      position: 'fixed',
+      left: '12px',
+      right: '12px',
+      bottom: '12px',
+      zIndex: 9998,
+      display: 'flex',
+      alignItems: 'center',
+      gap: '10px',
+      padding: '12px 14px',
+      borderRadius: '14px',
+      background: 'linear-gradient(135deg, #0F172A 0%, #1E1B4B 60%, #831843 100%)',
+      color: '#FFF',
+      boxShadow: '0 12px 32px rgba(0,0,0,0.35)',
+      border: '1px solid rgba(232, 93, 146, 0.5)',
+    }}>
+      <span style={{ fontSize: '22px' }}>🚀</span>
+      <div style={{ flex: 1, fontSize: '12px', lineHeight: 1.5 }}>
+        <div style={{ fontWeight: 800, fontSize: '13px' }}>Có bản cập nhật mới từ IT{apiCommit ? ` (${apiCommit})` : ''}!</div>
+        <div style={{ color: 'rgba(255,255,255,0.75)' }}>Bấm "Cập nhật ngay" để tải bản mới nhất (sửa lỗi + tính năng mới).</div>
+      </div>
+      <button
+        onClick={() => window.location.reload()}
+        style={{ padding: '9px 16px', borderRadius: '999px', border: 'none', background: 'linear-gradient(135deg, #E85D92, #F59E0B)', color: '#FFF', fontSize: '12px', fontWeight: 800, cursor: 'pointer', whiteSpace: 'nowrap' }}
+      >
+        Cập nhật ngay
+      </button>
+      <button
+        onClick={onLater}
+        style={{ padding: '9px 10px', borderRadius: '999px', border: '1px solid rgba(255,255,255,0.35)', background: 'transparent', color: 'rgba(255,255,255,0.8)', fontSize: '12px', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}
+      >
+        Để sau
+      </button>
+    </div>
+  );
 }
 
 /** Màn hình bảo trì cổng nhân viên: hiện đại, tự hồi khi Admin tắt bảo trì. */
@@ -249,13 +290,43 @@ export function App() {
   const [apiBaseShown, setApiBaseShown] = useState<string>(() => {
     try { return getApiBase(); } catch { return ''; }
   });
-  // Bản API đang chạy (so với bản app để biết đã cập nhật chưa)
+  // Bản API đang chạy (so với bản app để biết đã cập nhật chưa).
+  // IT push bản mới -> API đổi commit trước, app cũ poll thấy lệch là hiện
+  // banner "Cập nhật ngay" (kẻo NV dùng bản cũ mãi vì trình duyệt cache).
   const [apiCommit, setApiCommit] = useState<string | null>(null);
+  const [updateReady, setUpdateReady] = useState(false);
+  const updateSnoozedRef = useRef<string | null>(null);
+  const checkAppVersion = async () => {
+    try {
+      const v: any = await apiRequest('/version');
+      const c = v?.commit ? String(v.commit).slice(0, 7) : null;
+      if (!c) return;
+      setApiCommit(c);
+      // App dev ('local') không so. Đã bấm "Để sau" cho commit này thì không hiện lại.
+      if (APP_COMMIT !== 'local' && c !== APP_COMMIT && updateSnoozedRef.current !== c) {
+        setUpdateReady(true);
+      } else if (c === APP_COMMIT || updateSnoozedRef.current === c) {
+        setUpdateReady(false);
+      }
+    } catch { /* offline: giữ trạng thái cũ */ }
+  };
+  const checkAppVersionRef = useRef(checkAppVersion);
+  checkAppVersionRef.current = checkAppVersion;
   useEffect(() => {
-    apiRequest('/version').then((v: any) => {
-      if (v?.commit) setApiCommit(String(v.commit).slice(0, 7));
-    }).catch(() => null);
+    checkAppVersionRef.current().catch(() => null);
+    // Poll mỗi 5 phút + mỗi lần mở lại tab (về từ nền là kiểm tra ngay).
+    const t = setInterval(() => { checkAppVersionRef.current().catch(() => null); }, 5 * 60 * 1000);
+    const onVis = () => {
+      if (document.visibilityState === 'visible') checkAppVersionRef.current().catch(() => null);
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', onVis); };
   }, []);
+  const snoozeAppUpdate = () => {
+    // Ghi nhớ commit đang lệch để không hiện lại cho tới khi có bản mới hơn nữa.
+    updateSnoozedRef.current = apiCommit;
+    setUpdateReady(false);
+  };
   const handleChangeApiBase = () => {
     const cur = getApiBase();
     const input = window.prompt('Địa chỉ máy chủ Backend (để trống = tự động):', localStorage.getItem('ubm_custom_api_url') || '');
@@ -992,7 +1063,7 @@ export function App() {
           console.warn(
             `[Socket.IO] Không nối được realtime tới ${base} sau nhiều lần thử (địa chỉ máy chủ sai / server đang ngủ / mạng chặn websocket). Đã tạm dừng thử lại — bấm "đổi máy chủ" dưới màn hình đăng nhập nếu cần. Dữ liệu vẫn tải được khi mở tab.`
           );
-          showToastRef.current('📡 Không kết nối được realtime — dữ liệu vẫn tải khi bạn mở từng tab. Kiểm tra địa chỉ máy chủ nếu lỗi kéo dài!');
+          showToastRef.current('📡 Không kết nối được realtime — app sẽ tự thử nối lại mỗi phút, dữ liệu vẫn tải khi bạn mở từng tab. Kiểm tra địa chỉ máy chủ nếu lỗi kéo dài!');
         },
       });
       socket.on('data:updated', (p: any) => {
@@ -1022,7 +1093,10 @@ export function App() {
     } catch { /* offline — lần mở sau thử lại */ }
     return () => {
       if (timer) clearTimeout(timer);
-      if (socket) socket.disconnect();
+      if (socket) {
+        stopRealtimeRevive(socket);
+        socket.disconnect();
+      }
     };
   }, [isLoggedIn]);
 
@@ -2186,13 +2260,16 @@ export function App() {
   // Premium 3-step login (SĐT -> PIN 6 ô -> success + confetti). Nhánh đổi PIN ở trên.
   if (!isLoggedIn) {
     return (
-      <PremiumLogin
-        initialPhone={loginPhone}
-        loading={loading}
-        onLogin={handlePremiumLogin}
-        onCheckPhone={handleCheckPhone}
-        onSuccess={handlePremiumSuccess}
-      />
+      <>
+        <PremiumLogin
+          initialPhone={loginPhone}
+          loading={loading}
+          onLogin={handlePremiumLogin}
+          onCheckPhone={handleCheckPhone}
+          onSuccess={handlePremiumSuccess}
+        />
+        {updateReady && <UpdateBanner apiCommit={apiCommit} onLater={snoozeAppUpdate} />}
+      </>
     );
   }
 
@@ -4370,6 +4447,7 @@ export function App() {
         )}
 
       </main>
+      {updateReady && <UpdateBanner apiCommit={apiCommit} onLater={snoozeAppUpdate} />}
     </div>
   );
 }
