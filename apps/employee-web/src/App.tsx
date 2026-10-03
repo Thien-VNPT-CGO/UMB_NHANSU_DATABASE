@@ -3865,11 +3865,6 @@ export function App() {
                           </span>
                         </div>
                         {a.status === 'PENDING' && (
-                          <div style={{ marginTop: '4px', color: 'var(--text-muted)', fontWeight: 600 }}>
-                            Đã gửi {a.created_at ? new Date(a.created_at).toLocaleString('vi-VN') : ''} — quá 1 ngày HR chưa duyệt, hệ thống sẽ tự động từ chối.
-                          </div>
-                        )}
-                        {a.status === 'PENDING' && (
                           <button
                             className="btn-secondary"
                             style={{ marginTop: '6px', fontSize: '11px', padding: '5px 10px', color: '#DC2626' }}

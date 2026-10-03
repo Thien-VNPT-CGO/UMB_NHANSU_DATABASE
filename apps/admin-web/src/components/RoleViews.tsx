@@ -7822,9 +7822,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               <span className="badge" style={{ backgroundColor: a.status === 'APPROVED' ? '#DCFCE7' : a.status === 'REJECTED' ? '#FEE2E2' : '#FEF3C7', color: a.status === 'APPROVED' ? '#166534' : a.status === 'REJECTED' ? '#991B1B' : '#92400E', fontWeight: 700 }}>
                 {a.status === 'APPROVED' ? 'Đã duyệt' : a.status === 'REJECTED' ? (String(a.review_note || '').startsWith('Tự động từ chối') ? 'Tự từ chối (hết hạn)' : 'Đã từ chối') : 'Chờ duyệt'}
               </span>
-              {isPending && (
-                <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600, marginTop: '2px' }}>Gửi {a.created_at ? new Date(a.created_at).toLocaleString('vi-VN') : ''} — quá 1 ngày chưa duyệt, hệ thống sẽ tự động từ chối.</div>
-              )}
             </td>
             <td style={{ padding: '12px 20px' }}>
               {isPending ? (
