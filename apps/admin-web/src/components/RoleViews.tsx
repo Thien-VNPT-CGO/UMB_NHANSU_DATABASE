@@ -9258,7 +9258,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
           <div>
-            <h1 style={{ fontSize: '20px', fontWeight: 800, margin: 0 }}>15. Hồ Sơ Nhân Viên (Sales)</h1>
+            <h1 style={{ fontSize: '20px', fontWeight: 800, margin: 0 }}>15. Hồ Sơ Nhân Viên Ụm Bò Milk</h1>
             <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '4px 0 0' }}>
               Dashboard trực quan theo nhân viên bán hàng — thông tin lõi lấy thật từ hồ sơ, số liệu sales mở rộng là <strong>demo minh họa</strong>.
             </p>
