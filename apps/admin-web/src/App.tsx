@@ -103,12 +103,11 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'hr-schedule', label: '7. Lịch làm việc', icon: Calendar },
     { id: 'hr-leave', label: '8. Nghỉ OFF', icon: Clock },
     { id: 'hr-swap', label: '9. Đổi ca', icon: RefreshCw },
-    { id: 'hr-emergency', label: '10. Nghỉ đột xuất', icon: AlertTriangle },
-    { id: 'hr-attendance', label: '11. Chấm công', icon: CheckCircle },
-    { id: 'hr-adjustments', label: '12. Bổ sung/Điều chỉnh công', icon: FileText },
-    { id: 'hr-tests', label: '13. TEST nhân viên', icon: FileCheck },
-    { id: 'hr-reports', label: '14. Báo cáo HR', icon: FileSpreadsheet },
-    { id: 'hr-notifications', label: '15. Thông báo', icon: Bell },
+    { id: 'hr-attendance', label: '10. Chấm công', icon: CheckCircle },
+    { id: 'hr-adjustments', label: '11. Bổ sung/Điều chỉnh công', icon: FileText },
+    { id: 'hr-tests', label: '12. TEST nhân viên', icon: FileCheck },
+    { id: 'hr-reports', label: '13. Báo cáo HR', icon: FileSpreadsheet },
+    { id: 'hr-notifications', label: '14. Thông báo', icon: Bell },
   ],
   STORE: [
     { id: 'store-dashboard', label: '1. Dashboard Store', icon: Store },
@@ -740,6 +739,14 @@ export function App() {
       localStorage.setItem('ubm_active_tab', activeTab);
     }
   }, [activeTab]);
+
+  // Tab đã lưu có thể không còn tồn tại (VD tab bị gỡ bỏ) -> về tab đầu của vai trò.
+  useEffect(() => {
+    const tabs = ROLE_TABS[currentUser?.role || 'ADMIN'] || [];
+    if (activeTab && tabs.length > 0 && !tabs.some(t => t.id === activeTab)) {
+      setActiveTab(tabs[0].id);
+    }
+  }, [activeTab, currentUser?.role]);
 
   // Hiệu ứng âm thanh micro-click cho mọi nút bấm chức năng của Admin & HR
   useEffect(() => {

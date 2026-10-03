@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
 import {
   Users,
   Calendar,
@@ -7142,200 +7142,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     );
   }
 
-  if (activeTab === 'hr-emergency') {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            <h1 style={{ fontSize: '20px', fontWeight: 800 }}>10. Xử Lý Nghỉ Đột Xuất & Khẩn Cấp</h1>
-            <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-              Tiếp nhận ca báo nghỉ khẩn cấp (ốm đau, sự cố gia đình) và kích hoạt giải pháp bù khuyết nhân sự tức thì
-            </p>
-          </div>
-          <button
-            className="btn-primary"
-            style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#DC2626' }}
-            onClick={() => showToast('Đang phát lệnh cảnh báo nhân sự thiếu hụt khẩn cấp đến Cửa Hàng Trưởng và HR!')}
-          >
-            <AlertTriangle size={16} />
-            + Báo Cáo Sự Cố Nhân Sự Khẩn Cấp
-          </button>
-        </div>
-
-        {/* QUY TRÌNH XỬ LÝ NGHỈ KHẨN CẤP */}
-        <div style={{
-          backgroundColor: '#FFF7ED',
-          border: '1.5px solid #EA580C',
-          borderRadius: 'var(--radius-md)',
-          padding: '16px 20px',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-            <AlertTriangle size={18} color="#C2410C" />
-            <strong style={{ fontSize: '14px', color: '#9A3412', textTransform: 'uppercase' }}>
-              QUY TRÌNH BÙ KHUYẾT NHÂN SỰ KHI CÓ CA NGHỈ ĐỘT XUẤT:
-            </strong>
-          </div>
-          <div style={{ fontSize: '13px', color: '#7C2D12', lineHeight: '1.6' }}>
-            1. Nhân viên gửi đơn báo nghỉ khẩn cấp kèm lý do & chứng từ qua <strong>Cổng Nhân Viên (Webapp Mobile)</strong>.<br />
-            2. Hệ thống phát cảnh báo đỏ Realtime đến <strong>Cửa Hàng Trưởng</strong> và <strong>HR</strong>.<br />
-            3. HR duyệt đơn nghỉ có phép và kích hoạt <strong>Chính sách Điều Phối Nhường Ca (+30.000đ Phụ Cấp Hỗ Trợ)</strong> cho toàn bộ nhân viên trong chi nhánh đó để đảm bảo ca làm không bị gián đoạn.
-          </div>
-        </div>
-
-        {/* DANH SÁCH CA BÁO NGHỈ KHẨN CẤP ĐANG CẦN XỬ LÝ (100% DỮ LIỆU THẬT TỪ CỔNG NHÂN VIÊN) */}
-        {(() => {
-          const emergencyLeaves = (leaves || []).filter((l: any) =>
-            l.leave_type === 'DOT_XUAT' ||
-            l.leaveType === 'DOT_XUAT' ||
-            (l.reason && /khẩn cấp|đột xuất|sốt|ốm|tai nạn|bệnh/i.test(l.reason))
-          );
-
-          const pendingCount = emergencyLeaves.filter((l: any) => l.status === 'PENDING').length;
-
-          return (
-            <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
-              <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
-                  <strong style={{ fontSize: '14px' }}>Danh Sách Yêu Cầu Nghỉ Khẩn Cấp Cần Bù Khuyết Nhân Sự</strong>
-                  <span style={{ fontSize: '12px', color: 'var(--text-muted)', marginLeft: '10px' }}>
-                    (Hệ thống vận hành 100% dữ liệu thực từ Cổng Nhân Viên & Google Sheets)
-                  </span>
-                </div>
-                {pendingCount > 0 ? (
-                  <span className="badge" style={{ backgroundColor: '#FEE2E2', color: '#DC2626', fontWeight: 800 }}>
-                    {pendingCount} Ca Cần Bù Khuyết Gấp
-                  </span>
-                ) : (
-                  <span className="badge badge-success" style={{ fontWeight: 700 }}>
-                    ✓ Đã Bù Đủ Nhân Sự
-                  </span>
-                )}
-              </div>
-
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-                <thead>
-                  <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
-                    <th style={{ padding: '12px 20px' }}>Nhân Viên</th>
-                    <th style={{ padding: '12px 20px' }}>Chi Nhánh & Ca Làm</th>
-                    <th style={{ padding: '12px 20px' }}>Thời Gian Báo Nghỉ</th>
-                    <th style={{ padding: '12px 20px' }}>Lý Do & Chứng Từ</th>
-                    <th style={{ padding: '12px 20px' }}>Tình Trạng Nhân Sự Ca</th>
-                    <th style={{ padding: '12px 20px' }}>Giải Pháp Xử Lý Của HR</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {emergencyLeaves.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} style={{ padding: '48px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                        <div style={{ fontSize: '32px', marginBottom: '10px' }}>🛡️</div>
-                        <div style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text)' }}>
-                          Hiện Không Có Ca Báo Nghỉ Khẩn Cấp Nào Cần Xử Lý
-                        </div>
-                        <div style={{ fontSize: '12px', marginTop: '6px', maxWidth: '520px', margin: '6px auto 0', lineHeight: '1.5' }}>
-                          Hệ thống đã loại bỏ hoàn toàn dữ liệu test giả lập. Khi nhân viên gửi báo nghỉ khẩn cấp từ Cổng Mobile, thông tin và cảnh báo bù khuyết sẽ lập tức hiển thị realtime tại đây.
-                        </div>
-                      </td>
-                    </tr>
-                  ) : (
-                    emergencyLeaves.map((l: any, idx: number) => {
-                      const emp = allEmployees.find((e: any) => e.employee_id === l.employee_id) || {
-                        full_name: l.employee_name || 'Nhân Viên Báo Nghỉ',
-                        employee_code: l.employee_code || l.employee_id,
-                        phone_normalized: l.phone || '',
-                      };
-                      const isPending = l.status === 'PENDING';
-
-                      return (
-                        <tr key={l.request_id || idx} style={{ borderBottom: '1px solid var(--border)', backgroundColor: isPending ? '#FEF2F2' : '#FFFFFF' }}>
-                          <td style={{ padding: '14px 20px', fontWeight: 700 }}>
-                            {emp.full_name}
-                            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                              {emp.employee_code} • {emp.phone_normalized}
-                            </div>
-                          </td>
-                          <td style={{ padding: '14px 20px' }}>
-                            <strong style={{ color: isPending ? '#DC2626' : 'var(--text)' }}>
-                              {l.shift_code ? `Ca: ${l.shift_code}` : 'Ca Trực Đột Xuất'}
-                            </strong>
-                            <div style={{ fontSize: '11px', color: '#2563EB' }}>
-                              Chi nhánh: {getDisplayBranch(l.branch_id || emp.default_branch_id || 'CN130')}
-                            </div>
-                          </td>
-                          <td style={{ padding: '14px 20px', fontWeight: 700 }}>
-                            {l.requested_date || l.created_at?.split('T')[0] || 'Hôm nay'}
-                            <div style={{ fontSize: '11px', color: '#64748B' }}>
-                              {l.created_at ? new Date(l.created_at).toLocaleTimeString('vi-VN') : 'Báo khẩn cấp'}
-                            </div>
-                          </td>
-                          <td style={{ padding: '14px 20px' }}>
-                            <div style={{ color: isPending ? '#991B1B' : 'var(--text)', fontWeight: 600 }}>
-                              {l.reason || 'Sự cố việc gia đình / sức khỏe đột xuất'}
-                            </div>
-                            <div
-                              style={{ fontSize: '11px', color: '#059669', cursor: 'pointer', textDecoration: 'underline', marginTop: '3px' }}
-                              onClick={() => showToast('Mở xem chứng từ / đơn báo cáo chi tiết')}
-                            >
-                              📄 Xem Hồ Sơ Báo Nghỉ
-                            </div>
-                          </td>
-                          <td style={{ padding: '14px 20px' }}>
-                            {isPending ? (
-                              <span style={{ backgroundColor: '#DC2626', color: '#FFF', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 800 }}>
-                                🔴 THIẾU 1 NHÂN SỰ
-                              </span>
-                            ) : (
-                              <span style={{ backgroundColor: '#DCFCE7', color: '#166534', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700 }}>
-                                🟢 {l.status === 'APPROVED' ? 'ĐÃ DUYỆT CÓ PHÉP' : l.status}
-                              </span>
-                            )}
-                          </td>
-                          <td style={{ padding: '14px 20px' }}>
-                            {isPending ? (
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                <button
-                                  className="btn-primary"
-                                  style={{ padding: '6px 10px', fontSize: '11px', backgroundColor: '#2563EB' }}
-                                  onClick={() => showToast(`🚀 Đã phát lệnh điều phối nhường ca (+30.000đ) đến nhân viên chi nhánh ${l.branch_id || 'CN130'}!`)}
-                                >
-                                  🚀 Phát Lệnh Nhường Ca (+30k Phụ Cấp)
-                                </button>
-                                <button
-                                  className="btn-secondary"
-                                  style={{ padding: '4px 10px', fontSize: '11px', color: '#059669' }}
-                                  onClick={async () => {
-                                    try {
-                                      await apiRequest(`/leave-requests/${l.request_id}/review`, {
-                                        method: 'POST',
-                                        body: JSON.stringify({ status: 'APPROVED', note: 'HR phê duyệt nghỉ khẩn cấp có phép' }),
-                                      });
-                                      showToast('✓ Đã duyệt nghỉ có phép! Không trừ điểm chuyên cần.');
-                                      if (onRefreshData) await onRefreshData();
-                                      if (onSyncSheets) await onSyncSheets();
-                                    } catch (e: any) {
-                                      showToast(e.message || 'Lỗi khi duyệt');
-                                    }
-                                  }}
-                                >
-                                  ✓ Duyệt Nghỉ Có Phép
-                                </button>
-                              </div>
-                            ) : (
-                              <span style={{ color: '#64748B', fontSize: '12px' }}>✓ Đã xử lý ca</span>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-          );
-        })()}
-      </div>
-    );
-  }
-
   if (activeTab === 'hr-attendance') {
     // Lưới tuần Mon–CN như lịch làm việc: 1 ô = các ca trong ngày kèm đúng trạng thái
     const attMon = mondayIsoOfOffset(attWeekOffset);
@@ -7454,7 +7260,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
-            <h1 style={{ fontSize: '20px', fontWeight: 800 }}>11. Bảng Chấm Công Thời Gian Thực</h1>
+            <h1 style={{ fontSize: '20px', fontWeight: 800 }}>10. Bảng Chấm Công Thời Gian Thực</h1>
             <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
               Giám sát check-in, check-out, hình ảnh áo hồng + bảng tên, tọa độ GPS vệ tinh (100% Realtime)
             </p>
@@ -7918,7 +7724,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
-            <h1 style={{ fontSize: '20px', fontWeight: 800, margin: 0 }}>12. Bổ Sung & Điều Chỉnh Dữ Liệu Công</h1>
+            <h1 style={{ fontSize: '20px', fontWeight: 800, margin: 0 }}>11. Bổ Sung & Điều Chỉnh Dữ Liệu Công</h1>
             <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '4px 0 0' }}>Xử lý quên check-in/out hoặc sự cố GPS/Camera gửi từ Cổng Nhân Viên (có audit trail). Phiếu gửi quá <strong>1 ngày</strong> chưa duyệt thì hệ thống <strong>tự động từ chối</strong> (giữ phiếu để đối soát, tự xóa sau 7 ngày nữa).</p>
           </div>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -7965,7 +7771,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
-            <h1 style={{ fontSize: '20px', fontWeight: 800 }}>13. Quản Lý Ngân Hàng Câu Hỏi & Bài Thi TEST</h1>
+            <h1 style={{ fontSize: '20px', fontWeight: 800 }}>12. Quản Lý Ngân Hàng Câu Hỏi & Bài Thi TEST</h1>
             <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
               Bộ đề 25 câu hỏi trắc nghiệm đánh giá đầu ra thử việc (12 ngày) & sát hạch nghiệp vụ định kỳ Ụm Bò Milk V5.1
             </p>
@@ -8150,7 +7956,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-          <h1 style={{ fontSize: '20px', fontWeight: 800, margin: 0 }}>14. Báo Cáo Phân Tích Nhân Sự (HR Reports)</h1>
+          <h1 style={{ fontSize: '20px', fontWeight: 800, margin: 0 }}>13. Báo Cáo Phân Tích Nhân Sự (HR Reports)</h1>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)' }}>Kỳ báo cáo:</label>
             <input
@@ -8317,7 +8123,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-          <h1 style={{ fontSize: '20px', fontWeight: 800 }}>15. Trung Tâm Thông Báo Nghiệp Vụ HR</h1>
+           <h1 style={{ fontSize: '20px', fontWeight: 800 }}>14. Trung Tâm Thông Báo Nghiệp Vụ HR</h1>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <select
               value={notifFilter}
