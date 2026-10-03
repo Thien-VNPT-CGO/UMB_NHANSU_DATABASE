@@ -1840,11 +1840,21 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       const { status, note } = req.body;
       const result = await schedulesService.reviewLeave(req.params.id, status, req.user!.id, note);
+      const reviewed = result.result as any;
+      const leaveEmp = await employeesService.getEmployee(reviewed.employee_id).catch(() => null);
+      const reviewerName = req.user!.fullName || req.user!.id;
+      const verdict = status === 'APPROVED' ? 'duyệt' : 'từ chối';
+      await adapter.recordAuditLog({
+        actor_id: req.user!.id,
+        action: status === 'APPROVED' ? 'LEAVE_APPROVED' : 'LEAVE_REJECTED',
+        target_type: 'DON_NGHI_PHEP',
+        target_id: req.params.id,
+      });
       broadcastUpdate('leaves', { action: 'review', leave: result.result });
       broadcastNotification({
         type: 'LEAVE',
         title: result.result.status === 'APPROVED' ? '✅ Đã Phê Duyệt Đơn Nghỉ' : '❌ Đã Từ Chối Đơn Nghỉ',
-        message: `Đơn nghỉ phép của nhân viên đã được cập nhật trạng thái: ${result.result.status}`,
+        message: `Đơn nghỉ ngày ${String(reviewed.requested_date || '').slice(0, 10)} của ${(leaveEmp as any)?.full_name || reviewed.employee_id} đã được ${reviewerName} ${verdict}${note ? ` — Lý do: ${note}` : ''}.`,
         linkTab: 'hr-leave',
         metadata: { leaveId: req.params.id, status: result.result.status },
         targetRoles: ['ADMIN', 'HR', 'STORE'],
