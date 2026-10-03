@@ -3729,11 +3729,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                               <span style={{ backgroundColor: isExpired ? '#FEE2E2' : '#FEF2F2', color: '#DC2626', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700, border: '1px solid #FCA5A5' }}>
                                 {isExpired ? '⛔ Chưa đạt — Đã quá hạn 24h' : `⚠️ Chưa đạt — Tự xoá sau: ${formatCountdown(failInfo.remainingMs)}`}
                               </span>
-                              <div style={{ fontSize: '11px', color: '#DC2626', fontWeight: 700, marginTop: '4px', fontVariantNumeric: 'tabular-nums' }}>
-                                {isExpired
-                                  ? '⛔ Đã quá 24h — bấm nút Xóa ở cột Thao tác để xóa khỏi hệ thống.'
-                                  : `⏳ Hệ thống sẽ tự động xoá ứng viên này ra khỏi hệ thống sau 24h kể từ lúc chấm điểm (${new Date(failInfo.scoredAt + 24*60*60*1000).toLocaleString('vi-VN')})`}
-                              </div>
+                              {!isExpired && (
+                                <div style={{ fontSize: '11px', color: '#DC2626', fontWeight: 700, marginTop: '4px', fontVariantNumeric: 'tabular-nums' }}>
+                                  {`⏳ Hệ thống sẽ tự động xoá ứng viên này ra khỏi hệ thống sau 24h kể từ lúc chấm điểm (${new Date(failInfo.scoredAt + 24*60*60*1000).toLocaleString('vi-VN')})`}
+                                </div>
+                              )}
                             </div>
                           );
                         }
