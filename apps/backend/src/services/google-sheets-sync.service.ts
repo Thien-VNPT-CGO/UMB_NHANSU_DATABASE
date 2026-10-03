@@ -1941,6 +1941,72 @@ export class GoogleSheetsSyncService {
   }
 
   /**
+   * Đẩy riêng tab NHAN_VIEN_MASTER (await được): dùng sau DELETE để dòng bị xóa
+   * khỏi Sheet NGAY trong cùng request, pull sau đó không thể hồi sinh.
+   */
+  public async pushEmployeesTab(repo: { listEmployees(): Promise<any[]> }): Promise<number> {
+    const employees = await repo.listEmployees().catch(() => []);
+    const rows = (employees || []).map((e: any) => ([
+      e.employee_id,
+      e.employee_code,
+      e.full_name,
+      GoogleSheetsSyncService.sheetText(e.phone_normalized),
+      e.employment_status,
+      e.group,
+      e.default_branch_id,
+      e.current_rate_per_hour,
+      sheetDateText(e.start_date || e.created_at),
+      e.version,
+      e.default_shift_code || '',
+      sheetDateText(e.official_date),
+      e.email || '',
+    ]));
+    await this.overwriteSheetData('NHAN_VIEN_MASTER', SHEETS_DEFINITIONS.find(d => d.title === 'NHAN_VIEN_MASTER')!.headers, rows);
+    return rows.length;
+  }
+
+  /**
+   * Đẩy riêng tab TAI_KHOAN_NHAN_VIEN (await được): dùng sau DELETE tài khoản.
+   */
+  public async pushAccountsTab(repo: { listAccounts(): Promise<any[]> }): Promise<number> {
+    const accounts = await repo.listAccounts().catch(() => []);
+    const rows = (accounts || []).map((acc: any) => ([
+      acc.account_id,
+      acc.employee_id,
+      GoogleSheetsSyncService.sheetText(acc.phone_normalized),
+      acc.role,
+      acc.account_status,
+      acc.version,
+      acc.pin_hash || '',
+      acc.pin_must_change ? 'YES' : '',
+      GoogleSheetsSyncService.sheetText(acc.pin_code || ''),
+      GoogleSheetsSyncService.sheetText(acc.pin_changed_at || ''),
+      GoogleSheetsSyncService.sheetText(acc.pin_rotation_cycle || ''),
+    ]));
+    await this.overwriteSheetData('TAI_KHOAN_NHAN_VIEN', SHEETS_DEFINITIONS.find(d => d.title === 'TAI_KHOAN_NHAN_VIEN')!.headers, rows);
+    return rows.length;
+  }
+
+  /**
+   * Đẩy riêng tab ADMIN_ACCOUNTS (await được): dùng sau DELETE tài khoản nội bộ.
+   */
+  public async pushAdminsTab(repo: { listAdminAccounts(): Promise<any[]> }): Promise<number> {
+    const admins = await repo.listAdminAccounts().catch(() => []);
+    const rows = (admins || []).map((a: any) => ([
+      a.admin_id,
+      a.username,
+      a.password_hash || '123456',
+      a.full_name,
+      a.role,
+      a.branch_scope || '*',
+      a.is_active === false ? 'LOCKED' : 'ACTIVE',
+      a.created_at,
+    ]));
+    await this.overwriteSheetData('ADMIN_ACCOUNTS', SHEETS_DEFINITIONS.find(d => d.title === 'ADMIN_ACCOUNTS')!.headers, rows);
+    return rows.length;
+  }
+
+  /**
    * Đẩy riêng tab DIEU_CHINH_CONG (await được): dùng sau DELETE để dòng bị xóa
    * khỏi Sheet NGAY, pull sau đó không thể hồi sinh phiếu (fix zombie).
    */

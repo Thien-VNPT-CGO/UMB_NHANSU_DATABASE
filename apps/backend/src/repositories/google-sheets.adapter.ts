@@ -366,10 +366,19 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   async deleteEmployee(id: string) {
     const ok = await this.fallbackAdapter.deleteEmployee(id);
     if (ok) {
-      // Đánh dấu để pull ngay sau đó không đọc lại dòng Sheet cũ (push xóa chạy sau ~10s).
+      // Đánh dấu để pull ngay sau đó không đọc lại dòng Sheet cũ.
       try { (this.syncService as any)?.markEmployeeDeleted?.(id); } catch { /* best-effort */ }
       try { (this.syncService as any)?.markAccountDeleted?.(id); } catch { /* best-effort */ }
-      this.scheduleFullSync('NHAN_VIEN_MASTER.delete');
+      if (this.isConfigured) {
+        // Xóa ĐỒNG BỘ khỏi Sheet ngay trong request (không đợi full-sync nền).
+        try {
+          await this.syncService.pushEmployeesTab(this.fallbackAdapter);
+          await this.syncService.pushAccountsTab(this.fallbackAdapter);
+        } catch (err) {
+          console.warn('[GoogleSheetsAdapter] Đẩy tab sau xóa NV thất bại (full-sync nền sẽ thử lại):', (err as any)?.message || err);
+          this.scheduleFullSync('NHAN_VIEN_MASTER.delete');
+        }
+      }
     }
     return ok;
   }
@@ -379,7 +388,14 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     const ok = await this.fallbackAdapter.deleteAccount(accountId);
     if (ok) {
       try { (this.syncService as any)?.markAccountDeleted?.(accountId); } catch { /* best-effort */ }
-      this.scheduleFullSync('TAI_KHOAN_NHAN_VIEN.delete');
+      if (this.isConfigured) {
+        try {
+          await this.syncService.pushAccountsTab(this.fallbackAdapter);
+        } catch (err) {
+          console.warn('[GoogleSheetsAdapter] Đẩy tab sau xóa TK thất bại (full-sync nền sẽ thử lại):', (err as any)?.message || err);
+          this.scheduleFullSync('TAI_KHOAN_NHAN_VIEN.delete');
+        }
+      }
     }
     return ok;
   }
@@ -624,7 +640,14 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     const ok = await this.fallbackAdapter.deleteAttendanceEvent(eventId);
     if (ok) {
       try { (this.syncService as any)?.markAttendanceEventDeleted?.(eventId); } catch { /* best-effort */ }
-      this.scheduleFullSync('SU_KIEN_DIEM_DANH.delete');
+      if (this.isConfigured) {
+        try {
+          await this.syncService.pushEventsTab(this.fallbackAdapter);
+        } catch (err) {
+          console.warn('[GoogleSheetsAdapter] Đẩy tab sau xóa sự kiện thất bại (full-sync nền sẽ thử lại):', (err as any)?.message || err);
+          this.scheduleFullSync('SU_KIEN_DIEM_DANH.delete');
+        }
+      }
     }
     return ok;
   }
@@ -880,8 +903,13 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async deleteAdminAccount(id: string) {
     const ok = await this.fallbackAdapter.deleteAdminAccount(id);
-    if (ok) {
-      this.scheduleFullSync('ADMIN_ACCOUNTS.delete');
+    if (ok && this.isConfigured) {
+      try {
+        await this.syncService.pushAdminsTab(this.fallbackAdapter);
+      } catch (err) {
+        console.warn('[GoogleSheetsAdapter] Đẩy tab sau xóa TK nội bộ thất bại (full-sync nền sẽ thử lại):', (err as any)?.message || err);
+        this.scheduleFullSync('ADMIN_ACCOUNTS.delete');
+      }
     }
     return ok;
   }
