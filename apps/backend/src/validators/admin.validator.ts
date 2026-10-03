@@ -70,6 +70,21 @@ export const emergencyGrantBody = z.object({
   employeeId: z.string().trim().min(1).max(64),
 });
 
+// --- Lên lịch kiểm tra đầu ra thử việc (Google Meet + bài trắc nghiệm) ---
+export const probationAssessmentBody = z.object({
+  employeeId: z.string().trim().min(1).max(64),
+  meetDate: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ngày Meet phải dạng YYYY-MM-DD'),
+  meetTime: z.string().trim().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Giờ Meet phải dạng HH:mm'),
+  meetUrl: z.string().trim().min(1).max(500),
+  quizTestId: z.string().trim().min(1).max(64).optional(),
+});
+
+export const probationMeetDoneBody = z.object({
+  employeeId: z.string().trim().min(1).max(64),
+  passed: z.boolean(),
+  note: z.string().trim().max(500).optional(),
+});
+
 // --- Webhook Apps Script onEdit (body tự do, xác thực bằng secret header) ---
 export const webhookBody = z
   .object({

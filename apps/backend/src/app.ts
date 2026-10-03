@@ -99,6 +99,8 @@ import {
 import {
   backupCreateBody,
   emergencyGrantBody,
+  probationAssessmentBody,
+  probationMeetDoneBody,
   idParams as adminIdParams,
   internalAccountCreateBody,
   internalAccountUpdateBody,
@@ -645,6 +647,157 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const grants = await readEmergencyGrants();
       const g = grants[employeeId];
       res.json({ enabled: !!g && !g.usedAt });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // --- KIỂM TRA ĐẦU RA THỬ VIỆC (Google Meet vấn đáp + bài trắc nghiệm) ---
+  // Lịch lưu trong system settings (không đổi schema Sheet):
+  // probationAssessments = { [employeeId]: { meetDate, meetTime, meetUrl,
+  //   quizTestId?, meetDone?, createdBy, createdAt, updatedAt } }.
+  // Ngày hoàn thành thử việc = start_date + 11 ngày (cửa sổ 12 ngày).
+  const ASSESSMENT_KEY = 'probationAssessments';
+  const readAssessments = async (): Promise<Record<string, any>> => {
+    try {
+      const settings = (await adapter.getSystemSettings()) || {};
+      return (settings as any)[ASSESSMENT_KEY] || {};
+    } catch {
+      return {};
+    }
+  };
+  const probationEndDateOf = (emp: any): string => {
+    const s = String((emp as any)?.start_date || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return '';
+    const d = new Date(`${s}T00:00:00Z`);
+    if (!Number.isFinite(d.getTime())) return '';
+    d.setUTCDate(d.getUTCDate() + 11);
+    return d.toISOString().slice(0, 10);
+  };
+
+  // Admin/HR lên lịch kiểm tra đầu ra cho 1 NV thử việc (gửi cả 2 hình thức 1 lần).
+  app.post('/admin/probation-assessment/schedule', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ body: probationAssessmentBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const { employeeId, meetDate, meetTime, meetUrl, quizTestId } = req.body;
+      const emp = await employeesService.getEmployee(employeeId).catch(() => null);
+      if (!emp) return res.status(404).json({ error: 'Không tìm thấy hồ sơ nhân viên' });
+      if ((emp as any).employment_status !== 'PROBATION') {
+        return res.status(400).json({ error: 'Chỉ lên lịch kiểm tra đầu ra cho nhân viên đang thử việc!' });
+      }
+      if (quizTestId) {
+        const papers = await testsService.listPapers().catch(() => []);
+        if (!papers.some((p: any) => p.test_id === quizTestId)) {
+          return res.status(404).json({ error: 'Không tìm thấy đề trắc nghiệm đã chọn!' });
+        }
+      }
+      const settings = (await adapter.getSystemSettings()) || {};
+      const all = { ...((settings as any)[ASSESSMENT_KEY] || {}) };
+      const prev = all[employeeId] || {};
+      all[employeeId] = {
+        ...prev,
+        meetDate, meetTime, meetUrl,
+        ...(quizTestId ? { quizTestId } : {}),
+        meetDone: prev.meetDone || null,
+        createdBy: req.user!.id,
+        createdAt: prev.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      await adapter.updateSystemSettings({ ...settings, [ASSESSMENT_KEY]: all });
+      await adapter.recordAuditLog({
+        actor_id: req.user!.id,
+        action: 'PROBATION_ASSESSMENT_SCHEDULED',
+        target_type: 'NHAN_VIEN_MASTER',
+        target_id: employeeId,
+      });
+      const endDate = probationEndDateOf(emp);
+      const quizPart = quizTestId ? ' + làm bài trắc nghiệm được giao ở tab Thi TEST' : '';
+      await notificationsService.sendNotification({
+        recipientIds: [employeeId],
+        type: 'PROBATION_ASSESSMENT',
+        severity: 'ACTION_REQUIRED',
+        title: `📅 Lịch kiểm tra đầu ra thử việc (hoàn thành ${endDate ? endDate.split('-').reverse().join('/') : 'kỳ này'})`,
+        summary: `${(emp as any).full_name || ''} ơi, bạn được xếp kiểm tra đầu ra lúc ${meetTime} ngày ${meetDate.split('-').reverse().join('/')} qua Google Meet. Bấm vào để xem link Meet${quizPart}!`,
+        targetPath: '/schedule',
+        actorId: req.user!.id,
+      }).catch(() => null);
+      broadcastUpdate('probationAssessment', { action: 'schedule', employeeId });
+      res.json({ success: true, message: `Đã lên lịch kiểm tra đầu ra cho ${(emp as any).full_name || employeeId} (Meet ${meetTime} ${meetDate})!` });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Admin/HR xem toàn bộ lịch kiểm tra đầu ra (kèm điểm trắc nghiệm nếu NV đã nộp).
+  app.get('/admin/probation-assessment/list', authMiddleware, requireRole(['ADMIN', 'HR']), async (_req, res) => {
+    try {
+      const all = await readAssessments();
+      const out = [];
+      for (const [employeeId, a] of Object.entries<any>(all)) {
+        const emp = await employeesService.getEmployee(employeeId).catch(() => null);
+        let quiz: any = null;
+        if (a?.quizTestId) {
+          const subs = await testsService.listSubmissions(a.quizTestId, employeeId).catch(() => []);
+          const s = (Array.isArray(subs) ? subs : []).find((x: any) => x.employee_id === employeeId);
+          if (s) quiz = { status: s.status, score: s.score ?? null, passed: s.passed ?? null, submittedAt: s.submitted_at || null };
+        }
+        out.push({
+          employeeId,
+          fullName: (emp as any)?.full_name || employeeId,
+          employeeCode: (emp as any)?.employee_code || '',
+          endDate: emp ? probationEndDateOf(emp) : '',
+          stillProbation: !!emp && (emp as any).employment_status === 'PROBATION',
+          ...a,
+          quiz,
+        });
+      }
+      res.json({ assessments: out });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Admin/HR chấm xong phần vấn đáp Meet (Đạt / Không đạt).
+  app.post('/admin/probation-assessment/meet-done', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ body: probationMeetDoneBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const { employeeId, passed, note } = req.body;
+      const settings = (await adapter.getSystemSettings()) || {};
+      const all = { ...((settings as any)[ASSESSMENT_KEY] || {}) };
+      if (!all[employeeId]) return res.status(404).json({ error: 'Nhân viên này chưa được lên lịch kiểm tra đầu ra!' });
+      all[employeeId] = {
+        ...all[employeeId],
+        meetDone: { passed: !!passed, note: String(note || ''), at: new Date().toISOString(), by: req.user!.id },
+        updatedAt: new Date().toISOString(),
+      };
+      await adapter.updateSystemSettings({ ...settings, [ASSESSMENT_KEY]: all });
+      await adapter.recordAuditLog({
+        actor_id: req.user!.id,
+        action: passed ? 'PROBATION_MEET_PASSED' : 'PROBATION_MEET_FAILED',
+        target_type: 'NHAN_VIEN_MASTER',
+        target_id: employeeId,
+      });
+      broadcastUpdate('probationAssessment', { action: 'meet-done', employeeId, passed: !!passed });
+      res.json({ success: true, message: `Đã ghi nhận vấn đáp Meet: ${passed ? 'ĐẠT' : 'CHƯA ĐẠT'}!` });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Nhân viên xem lịch kiểm tra đầu ra của chính mình (+ điểm trắc nghiệm).
+  app.get('/me/probation-assessment', authMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const employeeId = req.user?.employeeId;
+      if (!employeeId) return res.json({ assessment: null });
+      const all = await readAssessments();
+      const a = all[employeeId];
+      if (!a) return res.json({ assessment: null });
+      let quiz: any = null;
+      if (a.quizTestId) {
+        const subs = await testsService.listSubmissions(a.quizTestId, employeeId).catch(() => []);
+        const s = (Array.isArray(subs) ? subs : []).find((x: any) => x.employee_id === employeeId);
+        if (s) quiz = { status: s.status, score: s.score ?? null, passed: s.passed ?? null };
+      }
+      const emp = await employeesService.getEmployee(employeeId).catch(() => null);
+      res.json({ assessment: { ...a, quiz, endDate: emp ? probationEndDateOf(emp) : '' } });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

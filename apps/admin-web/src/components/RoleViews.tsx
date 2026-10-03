@@ -1092,6 +1092,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     if (activeTab === 'hr-tests' || activeTab === 'hr-probation') {
       loadTests();
     }
+    if (activeTab === 'hr-probation') {
+      loadAssessments();
+    }
     if (activeTab === 'hr-adjustments') {
       loadAdjustments();
     }
@@ -1506,6 +1509,21 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [probationSearch, setProbationSearch] = useState('');
   const [probationBranchFilter, setProbationBranchFilter] = useState('ALL');
   const [probationDoubleOnly, setProbationDoubleOnly] = useState(false);
+  // Kiểm tra đầu ra thử việc (Meet vấn đáp + trắc nghiệm): lịch theo từng NV.
+  const [assessList, setAssessList] = useState<any[]>([]);
+  const [assessModalEmp, setAssessModalEmp] = useState<any | null>(null);
+  const [assessDate, setAssessDate] = useState('');
+  const [assessTime, setAssessTime] = useState('09:00');
+  const [assessMeetUrl, setAssessMeetUrl] = useState('');
+  const [assessQuizId, setAssessQuizId] = useState('');
+  const [assessBusy, setAssessBusy] = useState(false);
+  const [meetBusyId, setMeetBusyId] = useState<string | null>(null);
+  const loadAssessments = async () => {
+    try {
+      const d: any = await apiRequest('/admin/probation-assessment/list');
+      setAssessList(Array.isArray(d?.assessments) ? d.assessments : []);
+    } catch { /* không quyền / offline */ }
+  };
   const [importInputMode, setImportInputMode] = useState<'FILE' | 'PASTE'>('FILE');
   const [importOfficialPastedText, setImportOfficialPastedText] = useState('');
   const [parsedOfficialRows, setParsedOfficialRows] = useState<any[]>([]);
@@ -3815,6 +3833,20 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     };
     const probationEmps = allEmployees.filter((e) => e.employment_status === 'PROBATION');
     const doubleShiftEmps = probationEmps.filter((e) => probationShiftDensity(e.employee_id).maxPerDay >= 2);
+    // Ngày hoàn thành thử việc = start_date + 11 (cửa sổ 12 ngày). Không có ngày
+    // bắt đầu -> null (HR bổ sung rồi mới biết hạn).
+    const probationEndOf = (emp: any): { end: string; leftDays: number; due: boolean } | null => {
+      const s = String(emp?.start_date || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+      const endMs = new Date(`${s}T00:00:00Z`).getTime() + 11 * 86_400_000;
+      if (!Number.isFinite(endMs)) return null;
+      const end = new Date(endMs).toISOString().slice(0, 10);
+      const todayStr = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+      const leftDays = Math.round((new Date(`${end}T00:00:00Z`).getTime() - new Date(`${todayStr}T00:00:00Z`).getTime()) / 86_400_000);
+      return { end, leftDays, due: leftDays <= 0 };
+    };
+    const assessByEmp = new Map<string, any>((assessList || []).map((a: any) => [a.employeeId, a]));
+    const fmtDM = (iso: string) => iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : '—';
     const filteredProbationEmps = probationEmps.filter((emp) => {
       if (probationBranchFilter !== 'ALL' && emp.default_branch_id !== probationBranchFilter && emp.branch_id !== probationBranchFilter) {
         return false;
@@ -4042,8 +4074,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <th style={{ padding: '12px 18px', width: '130px' }}>Khối / Vị Trí</th>
                   <th style={{ padding: '12px 18px', width: '130px' }}>Mức Lương Giờ</th>
                   <th style={{ padding: '12px 18px', width: '130px' }}>Ngày Bắt Đầu</th>
+                  <th style={{ padding: '12px 18px', width: '120px' }}>Ngày Hoàn Thành</th>
                   <th style={{ padding: '12px 18px', width: '170px' }}>Tiến Độ Thử Việc</th>
                   <th style={{ padding: '12px 18px', width: '170px' }}>Mật Độ Ca</th>
+                  <th style={{ padding: '12px 18px', width: '210px' }}>Kiểm Tra Đầu Ra</th>
                   <th style={{ padding: '12px 18px', width: '120px', textAlign: 'center' }}>Điểm Bài TEST</th>
                   <th style={{ padding: '12px 18px', width: '130px', textAlign: 'center' }}>Trạng Thái</th>
                   <th style={{ padding: '12px 18px', width: '220px', textAlign: 'center' }}>Thao Tác</th>
@@ -4124,6 +4158,22 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           {toISODate(emp.start_date) || 'Đang cập nhật'}
                         </td>
                         <td style={{ padding: '14px 18px' }}>
+                          {(() => {
+                            const e = probationEndOf(emp);
+                            if (!e) return <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Chờ ngày bắt đầu</span>;
+                            return (
+                              <div>
+                                <div style={{ fontSize: '13px', fontWeight: 800, color: e.due ? '#DC2626' : 'var(--text)' }}>
+                                  {fmtDM(e.end)}
+                                </div>
+                                <div style={{ fontSize: '11px', fontWeight: 700, color: e.due ? '#DC2626' : e.leftDays <= 2 ? '#B45309' : 'var(--text-muted)' }}>
+                                  {e.due ? '🔔 Đến hạn xét duyệt!' : e.leftDays <= 2 ? `Còn ${e.leftDays} ngày — lên lịch kiểm tra!` : `Còn ${e.leftDays} ngày`}
+                                </div>
+                              </div>
+                            );
+                          })()}
+                        </td>
+                        <td style={{ padding: '14px 18px' }}>
                           {prog ? (
                             <div>
                               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', fontWeight: 700, color: prog.left === 0 ? '#059669' : prog.left <= 3 ? '#DC2626' : 'var(--text-muted)', marginBottom: '4px' }}>
@@ -4165,6 +4215,50 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Chưa xếp ca</span>
                           )}
                         </td>
+                        <td style={{ padding: '14px 18px' }}>
+                          {(() => {
+                            const a = assessByEmp.get(emp.employee_id);
+                            if (!a) {
+                              return <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Chưa lên lịch — bấm “📅 Lên lịch đầu ra” ở cột Thao tác.</span>;
+                            }
+                            const q = a.quiz;
+                            return (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '12px' }}>
+                                <div>
+                                  {a.meetDone ? (
+                                    <span style={{ display: 'inline-block', padding: '3px 9px', borderRadius: '999px', fontWeight: 800, fontSize: '11px', backgroundColor: a.meetDone.passed ? '#ECFDF5' : '#FEF2F2', color: a.meetDone.passed ? '#059669' : '#DC2626', border: `1px solid ${a.meetDone.passed ? '#A7F3D0' : '#FECACA'}` }}>
+                                      🎥 Meet: {a.meetDone.passed ? 'ĐẠT' : 'CHƯA ĐẠT'}
+                                    </span>
+                                  ) : (
+                                    <span style={{ display: 'inline-block', padding: '3px 9px', borderRadius: '999px', fontWeight: 800, fontSize: '11px', backgroundColor: '#EFF6FF', color: '#1D4ED8', border: '1px solid #BFDBFE' }}>
+                                      🎥 Meet: {a.meetDate ? `${a.meetTime} ${fmtDM(a.meetDate)}` : 'đã lên lịch'}
+                                    </span>
+                                  )}
+                                  {a.meetDate && !a.meetDone && (
+                                    <a href={a.meetUrl} target="_blank" rel="noreferrer" style={{ marginLeft: '6px', fontSize: '11px', fontWeight: 700, color: '#0068FF' }}>Vào Meet →</a>
+                                  )}
+                                </div>
+                                <div>
+                                  {!a.quizTestId ? (
+                                    <span style={{ color: 'var(--text-muted)' }}>📝 Quiz: chưa giao</span>
+                                  ) : !q ? (
+                                    <span title="Mới lưu lịch, đề này chưa được giao cho NV — sang tab TEST giao đúng đề này cho NV" style={{ display: 'inline-block', padding: '3px 9px', borderRadius: '999px', fontWeight: 800, fontSize: '11px', backgroundColor: '#FFFBEB', color: '#92400E', border: '1px solid #FDE68A' }}>
+                                      📝 Quiz: mới lưu lịch — sang TEST giao bài!
+                                    </span>
+                                  ) : q.status === 'ASSIGNED' ? (
+                                    <span style={{ display: 'inline-block', padding: '3px 9px', borderRadius: '999px', fontWeight: 800, fontSize: '11px', backgroundColor: '#FFFBEB', color: '#92400E', border: '1px solid #FDE68A' }}>
+                                      📝 Quiz: chờ NV nộp
+                                    </span>
+                                  ) : (
+                                    <span style={{ display: 'inline-block', padding: '3px 9px', borderRadius: '999px', fontWeight: 800, fontSize: '11px', backgroundColor: q.passed ? '#ECFDF5' : '#FEF2F2', color: q.passed ? '#059669' : '#DC2626', border: `1px solid ${q.passed ? '#A7F3D0' : '#FECACA'}` }}>
+                                      📝 Quiz: {q.score ?? '—'}/10 {q.passed ? 'ĐẠT' : 'CHƯA ĐẠT'}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })()}
+                        </td>
                         <td style={{ padding: '14px 18px', textAlign: 'center' }}>
                           {best !== null ? (
                             <span style={{ display: 'inline-block', padding: '4px 10px', borderRadius: '999px', fontSize: '12px', fontWeight: 800, backgroundColor: best >= 8 ? '#ECFDF5' : '#FEF2F2', color: best >= 8 ? '#059669' : '#DC2626', border: `1px solid ${best >= 8 ? '#A7F3D0' : '#FECACA'}` }}>
@@ -4182,6 +4276,63 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         </td>
                         <td style={{ padding: '14px 18px', textAlign: 'center' }}>
                           <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                            <button
+                              className="btn-secondary"
+                              style={{ padding: '5px 12px', fontSize: '12px', fontWeight: 700, color: '#1D4ED8', borderColor: '#BFDBFE' }}
+                              onClick={() => {
+                                const a = assessByEmp.get(emp.employee_id);
+                                setAssessModalEmp(emp);
+                                setAssessDate(a?.meetDate || probationEndOf(emp)?.end || '');
+                                setAssessTime(a?.meetTime || '09:00');
+                                setAssessMeetUrl(a?.meetUrl || '');
+                                setAssessQuizId(a?.quizTestId || '');
+                              }}
+                              title="Lên lịch kiểm tra đầu ra: vấn đáp Google Meet + giao bài trắc nghiệm, gửi thông báo cả 2 cho NV"
+                            >
+                              📅 Lên lịch đầu ra
+                            </button>
+                            {(() => {
+                              const a = assessByEmp.get(emp.employee_id);
+                              if (!a || a.meetDone) return null;
+                              const busy = meetBusyId === emp.employee_id;
+                              const mark = async (passed: boolean) => {
+                                if (!window.confirm(`Chấm vấn đáp Meet của ${emp.full_name}: ${passed ? 'ĐẠT' : 'CHƯA ĐẠT'}?`)) return;
+                                setMeetBusyId(emp.employee_id);
+                                try {
+                                  await apiRequest('/admin/probation-assessment/meet-done', {
+                                    method: 'POST',
+                                    body: JSON.stringify({ employeeId: emp.employee_id, passed }),
+                                  });
+                                  showToast(passed ? `✅ ${emp.full_name} vấn đáp Meet ĐẠT!` : `📝 Đã ghi ${emp.full_name} vấn đáp Meet CHƯA ĐẠT.`);
+                                  await loadAssessments();
+                                  if (onRefreshData) await onRefreshData();
+                                } catch (e: any) {
+                                  showToast(e?.message || 'Lỗi khi chấm Meet!');
+                                } finally {
+                                  setMeetBusyId(null);
+                                }
+                              };
+                              return (<>
+                                <button
+                                  className="btn-secondary"
+                                  disabled={busy}
+                                  style={{ padding: '5px 12px', fontSize: '12px', fontWeight: 700, color: '#059669', borderColor: '#A7F3D0' }}
+                                  onClick={() => mark(true)}
+                                  title="Chấm vấn đáp Google Meet: ĐẠT"
+                                >
+                                  ✓ Meet Đạt
+                                </button>
+                                <button
+                                  className="btn-secondary"
+                                  disabled={busy}
+                                  style={{ padding: '5px 12px', fontSize: '12px', fontWeight: 700, color: '#DC2626', borderColor: '#FECACA' }}
+                                  onClick={() => mark(false)}
+                                  title="Chấm vấn đáp Google Meet: CHƯA ĐẠT"
+                                >
+                                  ✗ Chưa đạt
+                                </button>
+                              </>);
+                            })()}
                             <button
                               className="btn-primary"
                               style={{ padding: '5px 12px', fontSize: '12px', fontWeight: 700, backgroundColor: '#059669' }}
@@ -4246,7 +4397,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   })
                 ) : (
                   <tr>
-                    <td colSpan={12} style={{ textAlign: 'center', padding: '48px 20px', color: 'var(--text-muted)' }}>
+                    <td colSpan={13} style={{ textAlign: 'center', padding: '48px 20px', color: 'var(--text-muted)' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
                         <Users size={36} color="var(--border)" />
                         <div style={{ fontWeight: 600, fontSize: '14px' }}>Hiện chưa có nhân viên trong giai đoạn thử việc</div>
@@ -4261,6 +4412,67 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </table>
           </div>
         </div>
+
+        {/* MODAL LÊN LỊCH KIỂM TRA ĐẦU RA (Meet vấn đáp + trắc nghiệm, gửi cả 2 cho NV) */}
+        {assessModalEmp && (
+          <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0, 0, 0, 0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '16px' }}>
+            <div style={{ backgroundColor: 'var(--surface)', borderRadius: '12px', maxWidth: '520px', width: '100%', maxHeight: '90vh', overflow: 'auto', padding: '20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h2 style={{ fontSize: '16px', fontWeight: 800, margin: 0 }}>📅 Kiểm tra đầu ra: {assessModalEmp.full_name} ({assessModalEmp.employee_code})</h2>
+                <button className="btn-secondary" style={{ padding: '4px 12px' }} onClick={() => !assessBusy && setAssessModalEmp(null)}>Đóng</button>
+              </div>
+              <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px', lineHeight: 1.5 }}>
+                Ngày hoàn thành thử việc: <strong>{probationEndOf(assessModalEmp)?.end?.split('-').reverse().join('/') || '—'}</strong>. Lên lịch xong hệ thống gửi ngay thông báo cả 2 hình thức cho NV (Meet + trắc nghiệm).
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '14px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 700 }}>Ngày vấn đáp Meet<input type="date" value={assessDate} onChange={(e) => setAssessDate(e.target.value)} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
+                <label style={{ fontSize: '12px', fontWeight: 700 }}>Giờ vấn đáp<input type="time" value={assessTime} onChange={(e) => setAssessTime(e.target.value)} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
+              </div>
+              <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginTop: '10px' }}>Link Google Meet<input value={assessMeetUrl} onChange={(e) => setAssessMeetUrl(e.target.value)} placeholder="https://meet.google.com/xxx-yyyy-zzz" style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
+              <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginTop: '10px' }}>Bài trắc nghiệm giao kèm (không bắt buộc)
+                <select value={assessQuizId} onChange={(e) => setAssessQuizId(e.target.value)} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}>
+                  <option value="">— Không giao bài (HR giao sau ở tab TEST) —</option>
+                  {(testPapers || []).map((p: any) => (
+                    <option key={p.test_id} value={p.test_id}>{p.title} (đạt {p.pass_score}/10)</option>
+                  ))}
+                </select>
+              </label>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '8px', lineHeight: 1.5 }}>
+                💡 Muốn giao bài trắc nghiệm có sẵn cho NV: lên lịch ở đây (lưu quiz vào lịch) rồi sang tab TEST giao đúng đề đó cho NV — hoặc giao trước rồi quay lại chọn đề.
+              </div>
+              <button
+                className="btn-primary"
+                disabled={assessBusy || !assessDate || !assessTime || !assessMeetUrl.trim()}
+                onClick={async () => {
+                  setAssessBusy(true);
+                  try {
+                    const res: any = await apiRequest('/admin/probation-assessment/schedule', {
+                      method: 'POST',
+                      body: JSON.stringify({
+                        employeeId: assessModalEmp.employee_id,
+                        meetDate: assessDate,
+                        meetTime: assessTime,
+                        meetUrl: assessMeetUrl.trim(),
+                        ...(assessQuizId ? { quizTestId: assessQuizId } : {}),
+                      }),
+                    });
+                    showToast(`✅ ${res?.message || 'Đã lên lịch kiểm tra đầu ra!'}`);
+                    setAssessModalEmp(null);
+                    await loadAssessments();
+                    if (onRefreshData) await onRefreshData();
+                  } catch (e: any) {
+                    showToast(e?.message || 'Lỗi khi lên lịch!');
+                  } finally {
+                    setAssessBusy(false);
+                  }
+                }}
+                style={{ width: '100%', marginTop: '14px', padding: '10px', fontWeight: 800, opacity: assessBusy || !assessDate || !assessTime || !assessMeetUrl.trim() ? 0.6 : 1 }}
+              >
+                {assessBusy ? '⏳ ĐANG LƯU...' : '📩 LƯU LỊCH & GỬI THÔNG BÁO CHO NV'}
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* MODAL SỬA HỒ SƠ NV THỬ VIỆC (HR) — dùng chung state với tab chính thức */}
         {editingEmp && (

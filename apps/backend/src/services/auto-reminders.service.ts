@@ -7,6 +7,8 @@ import { ZaloService } from './zalo.service.js';
  *  1. Nhắc check-in qua Zalo trước ca 15 phút (NV chưa check-in).
  *  2. Nhắc HR/Admin (in-app): NV chưa đổi PIN khởi tạo quá 3 ngày.
  *  3. Nhắc HR/Admin (in-app): đơn chờ duyệt quá 24h (nghỉ/đổi ca/bổ sung công).
+ *  4. Nhắc hoàn thành thử việc (in-app): NV hết hạn hôm nay / còn ≤2 ngày
+ *     (ngày hoàn thành = start_date + 11) + báo chính NV đó trong ngày cuối.
  * Chống spam bằng cờ theo ngày trong bộ nhớ.
  */
 
@@ -142,6 +144,62 @@ export async function autoRemindersTick(
           targetPath: '/activation',
           actorId: 'SYSTEM',
         }).catch(() => null);
+      }
+    }
+
+    // 4. Hoàn thành thử việc: hết hạn hôm nay / còn ≤2 ngày (ngày hoàn thành
+    // = start_date + 11). Báo HR 1 lần/ngày + báo chính NV trong ngày cuối.
+    if (!notifiedDaily.has(`prob:${today}`)) {
+      try {
+        const emps = await repo.listEmployees().catch(() => []);
+        const endOf = (startDate: string): string => {
+          const s = String(startDate || '').slice(0, 10);
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return '';
+          const d = new Date(`${s}T00:00:00Z`);
+          if (!Number.isFinite(d.getTime())) return '';
+          d.setUTCDate(d.getUTCDate() + 11);
+          return d.toISOString().slice(0, 10);
+        };
+        const dayMs = (d: string) => new Date(`${d}T00:00:00Z`).getTime();
+        const probs = (emps || []).filter((e: any) => (e as any)?.employment_status === 'PROBATION');
+        const endingToday = probs.filter((e: any) => endOf((e as any).start_date) === today);
+        const endingSoon = probs.filter((e: any) => {
+          const end = endOf((e as any).start_date);
+          if (!end || end <= today) return false;
+          return dayMs(end) - dayMs(today) <= 2 * DAY_MS;
+        });
+        if (endingToday.length > 0 || endingSoon.length > 0) {
+          notifiedDaily.add(`prob:${today}`);
+          const fmt = (e: any) => `${(e as any).full_name} (${(e as any).employee_code})`;
+          const parts: string[] = [];
+          if (endingToday.length > 0) parts.push(`Hết hạn HÔM NAY (${today.split('-').reverse().join('/')}): ${endingToday.slice(0, 5).map(fmt).join('; ')}${endingToday.length > 5 ? ` (+${endingToday.length - 5} người)` : ''}`);
+          if (endingSoon.length > 0) parts.push(`Còn ≤2 ngày: ${endingSoon.slice(0, 5).map(fmt).join('; ')}${endingSoon.length > 5 ? ` (+${endingSoon.length - 5} người)` : ''}`);
+          await notifications.sendNotification({
+            recipientIds: ids,
+            type: 'PROBATION_ENDING',
+            severity: 'ACTION_REQUIRED',
+            title: `🎓 ${endingToday.length + endingSoon.length} NV sắp/đến hạn hoàn thành thử việc`,
+            summary: `${parts.join(' • ')}. Lên lịch kiểm tra đầu ra (Meet + trắc nghiệm) rồi xét duyệt chính thức!`,
+            targetPath: '/hr-probation',
+            actorId: 'SYSTEM',
+          }).catch(() => null);
+        }
+        // Báo chính NV trong ngày hoàn thành để chuẩn bị kiểm tra đầu ra.
+        for (const e of endingToday) {
+          try {
+            await notifications.sendNotification({
+              recipientIds: [(e as any).employee_id],
+              type: 'PROBATION_ENDING',
+              severity: 'ACTION_REQUIRED',
+              title: '🎓 Hôm nay là ngày hoàn thành thử việc của bạn!',
+              summary: 'Chuẩn bị kiểm tra đầu ra (vấn đáp Google Meet + bài trắc nghiệm theo lịch HR đã gửi). Chúc bạn đạt kết quả tốt!',
+              targetPath: '/schedule',
+              actorId: 'SYSTEM',
+            }).catch(() => null);
+          } catch { /* best-effort từng người */ }
+        }
+      } catch (e: any) {
+        console.warn('[auto-reminders] probation tick:', e?.message || e);
       }
     }
 

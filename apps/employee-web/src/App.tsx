@@ -371,6 +371,15 @@ export function App() {
     } catch { /* offline */ }
   };
 
+  // Lịch kiểm tra đầu ra thử việc (Meet vấn đáp + trắc nghiệm) do HR lên lịch.
+  const [probationAssessment, setProbationAssessment] = useState<any | null>(null);
+  const fetchProbationAssessment = async () => {
+    try {
+      const d: any = await apiRequest('/me/probation-assessment');
+      setProbationAssessment(d?.assessment || null);
+    } catch { /* offline: giữ trạng thái cũ */ }
+  };
+
   // Bài TEST do HR giao riêng cho mình (không được giao thì không thấy bài)
   const [myTests, setMyTests] = useState<any[]>([]);
   const [activeTestId, setActiveTestId] = useState<string | null>(null);
@@ -419,6 +428,10 @@ export function App() {
   useEffect(() => {
     if (activeTab === 'test_exam' || activeTab === 'test_training') fetchMyTests();
     if (activeTab === 'swap_shift') fetchMySwaps();
+    // Lịch kiểm tra đầu ra: tải lại khi mở trang chủ / lịch / thi (luôn tươi).
+    if (activeTab === 'home' || activeTab === 'schedule' || activeTab === 'test_exam' || activeTab === 'test_training') {
+      fetchProbationAssessment();
+    }
     // Trạng thái kích hoạt báo nghỉ khẩn (NV thử việc): mở tab là kiểm tra lại.
     if (activeTab === 'swap_emergency') fetchEmergencyStatus();
     // Đồng hồ đếm ngược phiếu 30 phút (chỉ chạy ở tab bổ sung công)
@@ -507,6 +520,8 @@ export function App() {
       });
 
       setBranchColleagues(colleagues);
+      // Lịch kiểm tra đầu ra thử việc (banner Meet + Quiz luôn tươi theo realtime)
+      fetchProbationAssessment().catch(() => null);
       // Phiếu đổi ca chờ xác nhận (banner realtime)
       fetchMySwaps().catch(() => null);
       // Mất mạng toàn bộ -> báo rõ đang xem dữ liệu cũ, không im lặng
@@ -2220,6 +2235,45 @@ export function App() {
         {/* ========================================================= */}
         {activeTab === 'home' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            {/* BANNER KIỂM TRA ĐẦU RA THỬ VIỆC (Meet vấn đáp + trắc nghiệm) */}
+            {isProbation && probationAssessment && !probationAssessment?.meetDone && (() => {
+              const a = probationAssessment;
+              const meetMs = new Date(`${a.meetDate}T${String(a.meetTime || '09:00').slice(0, 5)}:00+07:00`).getTime();
+              const diffMs = Number.isFinite(meetMs) ? meetMs - Date.now() : NaN;
+              const diffTxt = !Number.isFinite(diffMs) ? '' : diffMs <= 0 ? 'ĐÃ ĐẾN GIỜ — vào ngay!' : (() => {
+                const m = Math.floor(diffMs / 60000);
+                const d = Math.floor(m / 1440);
+                const h = Math.floor((m % 1440) / 60);
+                const mm = m % 60;
+                return d > 0 ? `Còn ${d} ngày ${h} giờ` : h > 0 ? `Còn ${h} giờ ${mm} phút` : `Còn ${mm} phút`;
+              })();
+              const q = a.quiz;
+              const quizPending = !!a.quizTestId && (!q || q.status === 'ASSIGNED');
+              return (
+                <div style={{ padding: '12px 14px', backgroundColor: '#EFF6FF', border: '2px solid #2563EB', borderRadius: 'var(--radius-sm)', boxShadow: '0 4px 12px rgba(37, 99, 235, 0.2)' }}>
+                  <div style={{ fontSize: '13px', fontWeight: 800, color: '#1E40AF' }}>
+                    🎓 Kiểm tra đầu ra thử việc — {a.meetTime} ngày {String(a.meetDate || '').split('-').reverse().join('/')}
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#1E40AF', marginTop: '4px' }}>
+                    1️⃣ Vấn đáp Google Meet {diffTxt ? `(${diffTxt})` : ''} • 2️⃣ Bài trắc nghiệm{quizPending ? ' (đang chờ bạn làm)' : q ? ` (đã nộp: ${q.score ?? '—'}/10)` : ''}.
+                    {a.endDate ? <> Ngày hoàn thành thử việc của bạn: <strong>{String(a.endDate).split('-').reverse().join('/')}</strong>.</> : null}
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '10px', flexWrap: 'wrap' }}>
+                    <a href={a.meetUrl} target="_blank" rel="noreferrer" style={{ flex: 1, minWidth: '140px', backgroundColor: '#2563EB', color: '#FFF', borderRadius: '6px', padding: '9px 12px', fontSize: '13px', fontWeight: 700, cursor: 'pointer', textDecoration: 'none', textAlign: 'center' }}>
+                      🎥 Vào Meet vấn đáp
+                    </a>
+                    {quizPending && (
+                      <button
+                        onClick={() => setActiveTab(isProbation ? 'test_exam' : 'test_training')}
+                        style={{ flex: 1, minWidth: '140px', backgroundColor: '#FFF', color: '#1E40AF', border: '1.5px solid #2563EB', borderRadius: '6px', padding: '9px 12px', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}
+                      >
+                        📝 Làm bài trắc nghiệm
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
             {/* Shift Card */}
             <div className="card" style={{ background: 'linear-gradient(135deg, #FFFFFF 0%, #FFF8F4 100%)', border: '1px solid #F0D5DF' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
@@ -2342,6 +2396,11 @@ export function App() {
                   ? 'Quy định thử việc: 12 ngày (7 ngày làm việc thực tế, 5 ngày nghỉ OFF chuẩn định biên).'
                   : 'Lịch làm việc chính thức tuần từ Thứ Hai đến Chủ Nhật.'}
               </p>
+              {isProbation && probationAssessment?.endDate && (
+                <div style={{ fontSize: '12px', fontWeight: 700, color: '#1E40AF', backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 'var(--radius-sm)', padding: '8px 12px', marginBottom: '12px' }}>
+                  🎓 Ngày hoàn thành thử việc của bạn: {String(probationAssessment.endDate).split('-').reverse().join('/')} — HR sẽ gửi lịch kiểm tra đầu ra (Meet + trắc nghiệm) trước ngày này.
+                </div>
+              )}
 
               {/* NV thử việc: bạn có đang đẩy nhanh (2 ca/ngày) không */}
               {isProbation && myShifts.length > 0 && (() => {
@@ -3938,15 +3997,33 @@ export function App() {
                     Chưa có thông báo nào. Thông báo từ HR (lịch, lương, nhắc nhở) sẽ hiện ở đây theo thời gian thực.
                   </div>
                 ) : (
-                  (notifications as any[]).slice(0, 20).map((n: any, idx: number) => (
-                    <div key={n.inbox_id || idx} style={{ padding: '10px 12px', backgroundColor: n.read_at ? '#FAFAFA' : '#FFFBF9', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
-                      <div style={{ fontWeight: 700, fontSize: '13px' }}>{n.title}</div>
+                  (notifications as any[]).slice(0, 20).map((n: any, idx: number) => {
+                    const goTab = String(n.target_path || '');
+                    const canGo = ['/schedule', '/home', '/attendance', '/leave', '/test_exam', '/test_training'].includes(goTab);
+                    return (
+                    <div
+                      key={n.inbox_id || idx}
+                      onClick={async () => {
+                        if (n.inbox_id && !n.read_at) {
+                          try {
+                            await apiRequest(`/me/notifications/${n.inbox_id}/read`, { method: 'POST' });
+                            setNotifications((prev: any[]) => (Array.isArray(prev) ? prev.map(x => x.inbox_id === n.inbox_id ? { ...x, read_at: new Date().toISOString() } : x) : prev));
+                          } catch { /* offline: vẫn cho điều hướng */ }
+                        }
+                        if (goTab === '/test_exam' || goTab === '/test_training') setActiveTab(isProbation ? 'test_exam' : 'test_training');
+                        else if (canGo) setActiveTab(goTab.slice(1));
+                      }}
+                      title={canGo ? 'Bấm để mở đúng mục liên quan' : undefined}
+                      style={{ padding: '10px 12px', backgroundColor: n.read_at ? '#FAFAFA' : '#FFFBF9', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', cursor: canGo ? 'pointer' : 'default' }}
+                    >
+                      <div style={{ fontWeight: 700, fontSize: '13px' }}>{n.title} {canGo && '→'}</div>
                       <div style={{ fontSize: '12px', color: 'var(--text)', marginTop: '2px' }}>{n.summary}</div>
                       <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
                         {n.created_at ? new Date(n.created_at).toLocaleString('vi-VN') : ''}
                       </div>
                     </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             </div>
