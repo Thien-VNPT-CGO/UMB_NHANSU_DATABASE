@@ -2038,6 +2038,30 @@ export class GoogleSheetsSyncService {
   }
 
   /**
+   * Đẩy riêng tab DON_DOI_CA (await được): dùng sau mọi mutation phiếu
+   * (tạo/nhận/duyệt/hủy) để trạng thái bền vững trên Sheet NGAY trong cùng
+   * request — restart/sleep server không mất phiếu, pull sau đó khôi phục đủ.
+   */
+  public async pushSwapsTab(repo: { listSwapRequests(): Promise<any[]> }): Promise<number> {
+    const swaps = await repo.listSwapRequests().catch(() => []);
+    const swapRows = (swaps || []).map((sw: any) => [
+      sw.swap_id,
+      sw.requester_id,
+      sw.requester_assignment_id,
+      sw.target_employee_id,
+      sw.target_assignment_id,
+      sw.reason,
+      sw.status,
+      sw.approved_by || '',
+      sw.created_at,
+      (sw as any).swap_kind || 'EMPLOYEE_SWAP',
+      (sw as any).bonus_amount || 0,
+    ]);
+    await this.overwriteSheetData('DON_DOI_CA', SHEETS_DEFINITIONS.find(d => d.title === 'DON_DOI_CA')!.headers, swapRows);
+    return swapRows.length;
+  }
+
+  /**
    * Đẩy riêng tab DIEU_CHINH_CONG (await được): dùng sau DELETE để dòng bị xóa
    * khỏi Sheet NGAY, pull sau đó không thể hồi sinh phiếu (fix zombie).
    */

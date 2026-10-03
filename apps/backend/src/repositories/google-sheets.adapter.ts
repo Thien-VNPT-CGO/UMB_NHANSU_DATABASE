@@ -531,19 +531,26 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     const res = await this.fallbackAdapter.createSwapRequest(request);
     if (this.isConfigured) {
       const snapshot = { ...res };
-      this.scheduleSheetsWrite(() => this.syncService.appendRow('DON_DOI_CA', [
-        snapshot.swap_id,
-        snapshot.requester_id,
-        snapshot.requester_assignment_id,
-        snapshot.target_employee_id,
-        snapshot.target_assignment_id,
-        snapshot.reason,
-        snapshot.status,
-        snapshot.approved_by || '',
-        snapshot.created_at,
-        (snapshot as any).swap_kind || 'EMPLOYEE_SWAP',
-        (snapshot as any).bonus_amount || 0,
-      ]), 'DON_DOI_CA.append');
+      // Ghi ĐỒNG BỘ (await, timeout): phiếu mới phải bền vững ngay — restart
+      // trước khi flush là web mất phiếu trong khi Sheet vẫn dồn dòng mới.
+      try {
+        await Promise.race([
+          this.syncService.appendRow('DON_DOI_CA', [
+            snapshot.swap_id,
+            snapshot.requester_id,
+            snapshot.requester_assignment_id,
+            snapshot.target_employee_id,
+            snapshot.target_assignment_id,
+            snapshot.reason,
+            snapshot.status,
+            snapshot.approved_by || '',
+            snapshot.created_at,
+            (snapshot as any).swap_kind || 'EMPLOYEE_SWAP',
+            (snapshot as any).bonus_amount || 0,
+          ]).catch(() => false),
+          new Promise<false>(r => setTimeout(() => r(false), 12000)),
+        ]);
+      } catch { /* best-effort: full-sync nền sẽ thử lại */ }
     }
     return res;
   }
@@ -559,7 +566,16 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async updateSwapRequest(id: string, updates: any) {
     const res = await this.fallbackAdapter.updateSwapRequest(id, updates);
-    this.scheduleFullSync('DON_DOI_CA.update');
+    // Đẩy TAB đồng bộ (await, timeout) thay vì full-sync debounce: mọi đổi trạng
+    // thái (B nhận/duyệt/từ chối/hủy) bền vững ngay, restart không "reset" phiếu.
+    if (this.isConfigured) {
+      try {
+        await Promise.race([
+          this.syncService.pushSwapsTab(this.fallbackAdapter).catch(() => 0),
+          new Promise<number>(r => setTimeout(() => r(0), 15000)),
+        ]);
+      } catch { /* best-effort */ }
+    }
     return res;
   }
 
