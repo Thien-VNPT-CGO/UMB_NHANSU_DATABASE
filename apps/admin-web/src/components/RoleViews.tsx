@@ -49,10 +49,7 @@ import {
   Trash2,
   HelpCircle,
   Printer,
-  TrendingUp,
-  Target,
   ShieldCheck,
-  Briefcase,
   IdCard,
 } from 'lucide-react';
 import { getDisplayBranch } from '../App';
@@ -519,95 +516,6 @@ export function attShiftStatus(shift: any, inEvt: any, outEvt: any, absentEvt: a
  * Finance chốt số chính thức ở kỳ lương):
  * trễ <5p: không phạt; 5–29p: -30k; 30–59p: -50% lương ca; ≥60p hoặc thiếu in/out: 0đ.
  */
-/** Hash chuỗi ổn định -> số liệu demo nhất quán mỗi lần mở (không phải dữ liệu thật). */
-export function demoHash(s: string): number {
-  let h = 7;
-  for (const c of String(s || 'x')) h = ((h * 31 + c.charCodeAt(0)) | 0);
-  return Math.abs(h);
-}
-
-export interface SalesDemoProfile {
-  revenueTarget: number;
-  revenueActual: number;
-  winRate: number;
-  newCustomers: number;
-  csat: number;
-  monthly: { label: string; value: number }[];
-  tiers: { from: number; rate: number }[];
-  allowances: { label: string; amount: number }[];
-  contracts: { label: string; status: string; detail: string; done: boolean }[];
-  skills: { label: string; level: number }[];
-  crm: string;
-  deals: { name: string; value: number; stage: string; prob: number }[];
-  emergencyName: string;
-  emergencyPhone: string;
-  address: string;
-  cccdIssuedAt: string;
-  cccdIssuedBy: string;
-}
-
-/** Số liệu sales MỞ RỘNG dạng demo minh họa (ổn định theo mã NV). Dữ liệu lõi
- *  (tên, mã, SĐT, chi nhánh, trạng thái, lương giờ) lấy THẬT từ hồ sơ. */
-export function salesDemoOf(emp: any): SalesDemoProfile {
-  const h = demoHash(emp?.employee_id);
-  const targets = [80000000, 100000000, 120000000, 150000000];
-  const revenueTarget = targets[h % targets.length];
-  const actualPct = 72 + ((h >> 3) % 58);
-  const revenueActual = Math.round((revenueTarget * actualPct) / 100);
-  const months = ['T1', 'T2', 'T3', 'T4', 'T5', 'T6'];
-  const monthly = months.map((label, i) => {
-    const v = (h >> (i * 2)) % 100;
-    return { label, value: Math.round((revenueTarget * (0.55 + (v / 100) * 0.75)) / 1000000) * 1000000 };
-  });
-  const dealNames = ['Chuỗi cafe Trung Nguyên', 'Siêu thị mini Sài Gòn', 'Nhà hàng Hải Sản 68', 'Khách sạn Hương Sen', 'Canteen KCN Tân Bình', 'Tiệm bánh An Phúc'];
-  const dealStages = ['Tiếp cận', 'Đàm phán', 'Chốt hợp đồng'];
-  const deals = [0, 1, 2, 3].map(i => {
-    const v = (h >> (i * 5 + 11)) % 100;
-    return {
-      name: dealNames[(h + i * 2) % dealNames.length],
-      value: (20 + ((h >> (i * 3 + 4)) % 180)) * 1000000,
-      stage: dealStages[Math.min(2, Math.floor(v / 34))],
-      prob: 20 + (v % 75),
-    };
-  });
-  const surnames = ['Nguyễn', 'Trần', 'Lê', 'Phạm'];
-  return {
-    revenueTarget,
-    revenueActual,
-    winRate: 55 + ((h >> 5) % 31),
-    newCustomers: 4 + ((h >> 7) % 11),
-    csat: (42 + ((h >> 9) % 8)) / 10,
-    monthly,
-    tiers: [
-      { from: 0, rate: 2 },
-      { from: 80000000, rate: 3.5 },
-      { from: 120000000, rate: 5 },
-    ],
-    allowances: [
-      { label: 'Xăng xe công tác', amount: 1500000 },
-      { label: 'Điện thoại', amount: 500000 },
-    ],
-    contracts: [
-      { label: 'HĐLĐ chính thức', status: emp?.employment_status === 'OFFICIAL' ? 'Đã ký' : 'Chưa đến kỳ ký', detail: emp?.official_date ? `Hiệu lực từ ${emp.official_date}` : 'Ký khi hết thử việc', done: emp?.employment_status === 'OFFICIAL' },
-      { label: 'Thỏa thuận bảo mật dữ liệu khách hàng (NDA)', status: h % 3 === 0 ? 'Chờ ký' : 'Đã ký', detail: h % 3 === 0 ? 'HR gửi bổ sung' : 'Đã lưu hồ sơ', done: h % 3 !== 0 },
-      { label: 'Cam kết không lôi kéo khách hàng', status: h % 4 === 0 ? 'Chờ ký' : 'Đã cam kết', detail: h % 4 === 0 ? 'HR gửi bổ sung' : 'Đã lưu hồ sơ', done: h % 4 !== 0 },
-    ],
-    skills: [
-      { label: 'Kỹ năng chốt sales', level: 60 + (h % 36) },
-      { label: 'Tư vấn & chăm sóc khách', level: 55 + ((h >> 2) % 40) },
-      { label: 'Quản lý pipeline CRM', level: 50 + ((h >> 4) % 40) },
-      { label: 'Xử lý từ chối', level: 58 + ((h >> 6) % 34) },
-    ],
-    crm: ['HubSpot CRM', 'Zalo OA + Google Sheets', 'Getfly CRM'][(h >> 8) % 3],
-    deals,
-    emergencyName: `${surnames[h % surnames.length]} Văn An (người thân)`,
-    emergencyPhone: `09${String(10000000 + (h % 89999999))}`,
-    address: `${100 + (h % 800)} ${['Vạn Kiếp, Bình Thạnh', 'Tô Hiến Thành, Q.10', 'Hoàng Diệu 2, Thủ Đức', 'Tôn Đản, Q.4'][h % 4]}, TP.HCM`,
-    cccdIssuedAt: '2021-06-15',
-    cccdIssuedBy: 'Cục CSQLHC về TTXH',
-  };
-}
-
 export const SHIFT_HOURS_MAP: Record<string, number> = { CA_1: 5, CA_2: 6, CA_3: 5 };
 /** Phút trễ: ưu tiên cờ server, mất cờ (dòng Sheet cũ) thì tính bù từ giờ vào ca. */
 export function lateMinOf(inEvt: any, shiftStartAt?: string): number {
@@ -1068,7 +976,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [profileSearch, setProfileSearch] = useState('');
   const [profileGroup, setProfileGroup] = useState('SALE');
   const [profileEmpId, setProfileEmpId] = useState<string | null>(null);
-  const [profileSub, setProfileSub] = useState<'overview' | 'identity' | 'kpi' | 'pay' | 'legal' | 'pipeline'>('overview');
+  const [profileSub, setProfileSub] = useState<'overview' | 'identity' | 'att' | 'pay' | 'legal'>('overview');
   const loadAdjustments = async () => {
     try {
       const list = await apiRequest('/attendance/adjustments');
@@ -9183,7 +9091,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
   if (activeTab === 'hr-profile') {
     const vnd = (n: number) => `${Number(n || 0).toLocaleString('vi-VN')}đ`;
-    const shortVnd = (n: number) => n >= 1000000 ? `${Math.round(n / 1000000)}tr` : `${Math.round(n / 1000)}k`;
     const filteredEmps = (allEmployees || [])
       .filter((e: any) => (profileGroup === 'ALL' ? true : (e.group || e.nhom) === profileGroup))
       .filter((e: any) => {
@@ -9199,10 +9106,18 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     );
     const profEmp = (allEmployees || []).find((e: any) => e.employee_id === profileEmpId)
       || saleFirst.find((e: any) => e.group === 'SALE') || saleFirst[0] || null;
-    const demo = profEmp ? salesDemoOf(profEmp) : null;
+    // Hiệu suất chấm công THẬT từ sự kiện điểm danh + lịch đã tải
+    const empEvts = (liveAttendanceEvents || []).filter((e: any) => e.employee_id === profEmp?.employee_id);
+    const empIns = empEvts.filter((e: any) => e.type === 'CHECK_IN');
+    const empOuts = empEvts.filter((e: any) => e.type === 'CHECK_OUT');
+    const workDays = new Set(empIns.map((e: any) => vnDayOf(e.client_time || ''))).size;
+    const lateCount = empIns.filter((e: any) => e.is_late).length;
+    const lateMins = empIns.reduce((s: number, e: any) => s + (e.is_late ? Number(e.minutes_deviation) || 0 : 0), 0);
+    const earlyCount = empOuts.filter((e: any) => e.is_early).length;
+    const empShiftCount = (shifts || []).filter((s: any) => s.employee_id === profEmp?.employee_id && s.status !== 'CANCELLED').length;
     const initials = String(profEmp?.full_name || '?').split(' ').map((w: string) => w[0]).slice(-2).join('').toUpperCase();
     const exportProfile = (fmt: 'json' | 'csv') => {
-      if (!profEmp || !demo) {
+      if (!profEmp) {
         showToast('Chưa chọn nhân viên để xuất hồ sơ!');
         return;
       }
@@ -9211,22 +9126,26 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         ['Mã NV', profEmp.employee_code || ''],
         ['SĐT', profEmp.phone_normalized || ''],
         ['Email', profEmp.email || ''],
+        ['Giới tính', profEmp.gender || ''],
         ['Ngày sinh', profEmp.birth_date || ''],
         ['CCCD', profEmp.id_card_number || ''],
         ['Chi nhánh', getDisplayBranch(profEmp.default_branch_id) || profEmp.default_branch_id || ''],
         ['Nhóm', profEmp.group || ''],
+        ['Ca cố định', profEmp.default_shift_code || ''],
         ['Trạng thái', profEmp.employment_status || ''],
         ['Ngày vào làm', profEmp.start_date || ''],
-        ['Doanh số mục tiêu (demo)', String(demo.revenueTarget)],
-        ['Doanh số thực đạt (demo)', String(demo.revenueActual)],
-        ['Tỷ lệ chốt % (demo)', String(demo.winRate)],
-        ['Khách ký mới (demo)', String(demo.newCustomers)],
-        ['CSAT (demo)', String(demo.csat)],
+        ['Ngày chính thức', profEmp.official_date || ''],
+        ['Lương giờ', String(profEmp.current_rate_per_hour || '')],
+        ['Ngày công (điểm danh)', String(workDays)],
+        ['Lượt check-in', String(empIns.length)],
+        ['Đi trễ (lượt)', String(lateCount)],
+        ['Tổng phút trễ', String(lateMins)],
+        ['Về sớm (lượt)', String(earlyCount)],
       ];
       let blob: Blob;
       let filename: string;
       if (fmt === 'json') {
-        blob = new Blob([JSON.stringify({ hoSo: profEmp, salesDemo: demo, exportedAt: new Date().toISOString() }, null, 2)], { type: 'application/json' });
+        blob = new Blob([JSON.stringify({ hoSo: profEmp, chamCong: { workDays, checkIns: empIns.length, lateCount, lateMins, earlyCount }, exportedAt: new Date().toISOString() }, null, 2)], { type: 'application/json' });
         filename = `ho-so-${profEmp.employee_code || profEmp.employee_id}.json`;
       } else {
         const csv = '\uFEFF' + ['Trường,Giá trị', ...rows.map(([k, v]) => `"${k}","${String(v).replace(/"/g, '""')}"`)].join('\n');
@@ -9246,21 +9165,18 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const subTabs: { id: typeof profileSub; label: string }[] = [
       { id: 'overview', label: '📊 Tổng quan' },
       { id: 'identity', label: '🪪 Nhân thân & Pháp lý' },
-      { id: 'kpi', label: '🎯 KPI & Hiệu suất' },
-      { id: 'pay', label: '💰 Lương–Thưởng–Hoa hồng' },
-      { id: 'legal', label: '📜 Hợp đồng & Cam kết' },
-      { id: 'pipeline', label: '🤝 Kỹ năng & Pipeline' },
+      { id: 'att', label: '⏱ Hiệu suất chấm công' },
+      { id: 'pay', label: '💰 Lương & Thu nhập' },
+      { id: 'legal', label: '📜 Hợp đồng' },
     ];
     const card: React.CSSProperties = { backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', padding: '16px 20px' };
-    const barTrack: React.CSSProperties = { height: '10px', borderRadius: '999px', backgroundColor: 'var(--bg)', overflow: 'hidden' };
-    const maxMonth = Math.max(1, ...(demo?.monthly.map(m => m.value) || [1]));
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
           <div>
             <h1 style={{ fontSize: '20px', fontWeight: 800, margin: 0 }}>15. Hồ Sơ Nhân Viên Ụm Bò Milk</h1>
             <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '4px 0 0' }}>
-              Dashboard trực quan theo nhân viên bán hàng — thông tin lõi lấy thật từ hồ sơ, số liệu sales mở rộng là <strong>demo minh họa</strong>.
+              Dashboard trực quan theo nhân viên bán hàng — 100% dữ liệu thật từ hồ sơ, chấm công và lương hệ thống.
             </p>
           </div>
           <div style={{ display: 'flex', gap: '8px' }}>
@@ -9340,7 +9256,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <span className="badge" style={{ backgroundColor: 'rgba(255,255,255,0.2)', color: '#FFF', fontWeight: 700 }}>Vào làm: {profEmp.start_date || '—'}</span>
                 </div>
               </div>
-              <span className="badge" style={{ backgroundColor: '#F59E0B', color: '#78350F', fontWeight: 800 }}>DEMO sales mở rộng</span>
             </div>
 
             {/* SUB-TAB THÔNG MINH */}
@@ -9360,49 +9275,32 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               ))}
             </div>
 
-            {(profileSub === 'overview' || profileSub === 'kpi') && demo && (
+            {(profileSub === 'overview' || profileSub === 'att') && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px' }}>
                   <div style={card}>
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}><Target size={14} /> DOANH SỐ THỰC / MỤC TIÊU</div>
-                    <div style={{ fontSize: '20px', fontWeight: 800, color: '#1D4ED8', marginTop: '4px' }}>{Math.round(demo.revenueActual / demo.revenueTarget * 100)}%</div>
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{shortVnd(demo.revenueActual)} / {shortVnd(demo.revenueTarget)}</div>
-                    <div style={{ ...barTrack, marginTop: '8px' }}>
-                      <div style={{ width: `${Math.min(100, Math.round(demo.revenueActual / demo.revenueTarget * 100))}%`, height: '100%', background: 'linear-gradient(90deg, #2563EB, #06B6D4)' }} />
-                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 700 }}>📅 NGÀY CÔNG (CÓ MẶT)</div>
+                    <div style={{ fontSize: '20px', fontWeight: 800, color: '#1D4ED8', marginTop: '4px' }}>{workDays}</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>ngày có check-in / {empShiftCount} ca được xếp</div>
                   </div>
                   <div style={card}>
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}><TrendingUp size={14} /> TỶ LỆ CHỐT ĐƠN</div>
-                    <div style={{ fontSize: '20px', fontWeight: 800, color: '#059669', marginTop: '4px' }}>{demo.winRate}%</div>
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Win / Conversion rate</div>
-                    <div style={{ ...barTrack, marginTop: '8px' }}>
-                      <div style={{ width: `${demo.winRate}%`, height: '100%', background: 'linear-gradient(90deg, #059669, #34D399)' }} />
-                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 700 }}>⏱ LƯỢT CHECK-IN / OUT</div>
+                    <div style={{ fontSize: '20px', fontWeight: 800, color: '#059669', marginTop: '4px' }}>{empIns.length} / {empOuts.length}</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>vào ca / ra ca đã ghi nhận</div>
                   </div>
                   <div style={card}>
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 700 }}>🤝 KHÁCH KÝ MỚI</div>
-                    <div style={{ fontSize: '20px', fontWeight: 800, color: '#7C3AED', marginTop: '4px' }}>{demo.newCustomers}</div>
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>khách hàng / kỳ</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 700 }}>⏰ ĐI TRỄ</div>
+                    <div style={{ fontSize: '20px', fontWeight: 800, color: lateCount > 0 ? '#D97706' : '#059669', marginTop: '4px' }}>{lateCount} lượt</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>tổng {lateMins} phút trễ</div>
                   </div>
                   <div style={card}>
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 700 }}>⭐ CSAT HÀI LÒNG</div>
-                    <div style={{ fontSize: '20px', fontWeight: 800, color: '#D97706', marginTop: '4px' }}>{demo.csat.toFixed(1)}/5.0</div>
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>đánh giá khách hàng</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 700 }}>🏃 VỀ SỚM</div>
+                    <div style={{ fontSize: '20px', fontWeight: 800, color: earlyCount > 0 ? '#D97706' : '#059669', marginTop: '4px' }}>{earlyCount} lượt</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>check-out trước giờ ca</div>
                   </div>
                 </div>
-                <div style={card}>
-                  <div style={{ fontWeight: 800, fontSize: '14px', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <TrendingUp size={16} color="var(--brand)" /> Biểu đồ tăng trưởng doanh số 6 kỳ (demo)
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'flex-end', gap: '10px', height: '150px', paddingTop: '6px' }}>
-                    {demo.monthly.map(m => (
-                      <div key={m.label} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', height: '100%', justifyContent: 'flex-end' }}>
-                        <div style={{ fontSize: '10px', fontWeight: 800, color: 'var(--brand)' }}>{shortVnd(m.value)}</div>
-                        <div style={{ width: '100%', maxWidth: '52px', height: `${Math.max(6, Math.round(m.value / maxMonth * 100))}%`, borderRadius: '6px 6px 0 0', background: 'linear-gradient(180deg, #E85D92, #F59E0B)' }} />
-                        <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 700 }}>{m.label}</div>
-                      </div>
-                    ))}
-                  </div>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                  Số liệu thật từ lượt điểm danh và lịch đã tải trên hệ thống (phạm vi dữ liệu đang hiển thị).
                 </div>
               </div>
             )}
@@ -9411,25 +9309,22 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               <div style={card}>
                 <div style={{ fontWeight: 800, fontSize: '14px', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <IdCard size={16} color="var(--brand)" /> Nhân thân & Pháp lý cơ bản
-                  <span className="badge" style={{ backgroundColor: '#FEF3C7', color: '#92400E', fontWeight: 700, fontSize: '10px' }}>ô * là demo</span>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '10px', fontSize: '13px' }}>
                   {[
-                    ['Họ tên', profEmp.full_name, false],
-                    ['Mã nhân viên', profEmp.employee_code, false],
-                    ['Ảnh thẻ', 'Chưa cập nhật ảnh thẻ', true],
-                    ['Ngày sinh', profEmp.birth_date || '—', false],
-                    ['CCCD', profEmp.id_card_number || '—', false],
-                    ['CCCD ngày cấp *', demo?.cccdIssuedAt || '', true],
-                    ['CCCD nơi cấp *', demo?.cccdIssuedBy || '', true],
-                    ['Nơi cư trú *', demo?.address || '', true],
-                    ['SĐT', profEmp.phone_normalized || '', false],
-                    ['Email công ty', profEmp.email || '—', false],
-                    ['Người liên hệ khẩn cấp *', demo ? `${demo.emergencyName} • ${demo.emergencyPhone}` : '', true],
-                    ['Giới tính', profEmp.gender || '—', false],
-                  ].map(([k, v, isDemo]) => (
+                    ['Họ tên', profEmp.full_name],
+                    ['Mã nhân viên', profEmp.employee_code],
+                    ['Ngày sinh', profEmp.birth_date || '—'],
+                    ['CCCD', profEmp.id_card_number || '—'],
+                    ['SĐT', profEmp.phone_normalized || '—'],
+                    ['Email công ty', profEmp.email || '—'],
+                    ['Giới tính', profEmp.gender || '—'],
+                    ['Chi nhánh', getDisplayBranch(profEmp.default_branch_id) || profEmp.default_branch_id || '—'],
+                    ['Nhóm', profEmp.group || '—'],
+                    ['Ca cố định', profEmp.default_shift_code || '—'],
+                  ].map(([k, v]) => (
                     <div key={k as string} style={{ backgroundColor: 'var(--bg)', borderRadius: '8px', padding: '10px 12px' }}>
-                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 700 }}>{k}{isDemo ? ' *' : ''}</div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 700 }}>{k}</div>
                       <div style={{ fontWeight: 700, marginTop: '2px' }}>{v || '—'}</div>
                     </div>
                   ))}
@@ -9437,91 +9332,44 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </div>
             )}
 
-            {(profileSub === 'overview' || profileSub === 'pay') && demo && (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
-                <div style={card}>
-                  <div style={{ fontWeight: 800, fontSize: '14px', marginBottom: '12px' }}>💰 Lương cứng & Phụ cấp</div>
-                  <div style={{ fontSize: '13px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <span>Lương cứng cơ bản (thật, từ đơn giá giờ)</span>
-                      <strong>{vnd((profEmp.current_rate_per_hour || 0) * 8 * 26)}/tháng</strong>
-                    </div>
-                    {demo.allowances.map(a => (
-                      <div key={a.label} style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span>{a.label} (demo)</span>
-                        <strong>{vnd(a.amount)}</strong>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div style={card}>
-                  <div style={{ fontWeight: 800, fontSize: '14px', marginBottom: '12px' }}>📈 Hoa hồng theo bậc (demo)</div>
-                  {demo.tiers.map((t, i) => (
-                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', padding: '6px 0', borderBottom: i < demo.tiers.length - 1 ? '1px solid var(--border)' : 'none' }}>
-                      <span>Từ {vnd(t.from)}</span>
-                      <strong style={{ color: 'var(--brand)' }}>{t.rate}%</strong>
-                    </div>
-                  ))}
-                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '8px' }}>Thưởng vượt định ngạch: +1% cho phần vượt mục tiêu (demo).</div>
-                </div>
-              </div>
-            )}
-
-            {(profileSub === 'overview' || profileSub === 'legal') && demo && (
+            {(profileSub === 'overview' || profileSub === 'pay') && (
               <div style={card}>
-                <div style={{ fontWeight: 800, fontSize: '14px', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <ShieldCheck size={16} color="var(--brand)" /> Hợp đồng & Pháp lý chống xung đột lợi ích
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  {demo.contracts.map(c => (
-                    <div key={c.label} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', backgroundColor: 'var(--bg)', borderRadius: '8px', padding: '10px 12px' }}>
-                      <span style={{ fontSize: '18px' }}>{c.done ? '✅' : '⏳'}</span>
-                      <div>
-                        <div style={{ fontWeight: 800, fontSize: '13px' }}>{c.label} — <span style={{ color: c.done ? '#059669' : '#D97706' }}>{c.status}</span></div>
-                        <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{c.detail}</div>
-                      </div>
-                    </div>
-                  ))}
+                <div style={{ fontWeight: 800, fontSize: '14px', marginBottom: '12px' }}>💰 Lương & Thu nhập</div>
+                <div style={{ fontSize: '13px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Lương giờ hiện tại</span>
+                    <strong>{vnd(profEmp.current_rate_per_hour)}/giờ</strong>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Lương tháng tạm tính (8h × 26 công)</span>
+                    <strong>{vnd((profEmp.current_rate_per_hour || 0) * 8 * 26)}/tháng</strong>
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Số chính thức theo phiếu lương Finance (tab lương). Chưa có chính sách phụ cấp/hoa hồng sales trên hệ thống.</div>
                 </div>
               </div>
             )}
 
-            {(profileSub === 'overview' || profileSub === 'pipeline') && demo && (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
+            {(profileSub === 'overview' || profileSub === 'legal') && (() => {
+              const isOff = profEmp.employment_status === 'OFFICIAL';
+              return (
                 <div style={card}>
                   <div style={{ fontWeight: 800, fontSize: '14px', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <Briefcase size={16} color="var(--brand)" /> Kỹ năng & CRM (demo)
+                    <ShieldCheck size={16} color="var(--brand)" /> Hợp đồng lao động
                   </div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '10px' }}>Công cụ CRM phụ trách: <strong style={{ color: 'var(--text)' }}>{demo.crm}</strong></div>
-                  {demo.skills.map(s => (
-                    <div key={s.label} style={{ marginBottom: '10px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', fontWeight: 700 }}>
-                        <span>{s.label}</span><span>{s.level}%</span>
+                  <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', backgroundColor: 'var(--bg)', borderRadius: '8px', padding: '10px 12px' }}>
+                    <span style={{ fontSize: '18px' }}>{isOff ? '✅' : '⏳'}</span>
+                    <div>
+                      <div style={{ fontWeight: 800, fontSize: '13px' }}>
+                        HĐLĐ chính thức — <span style={{ color: isOff ? '#059669' : '#D97706' }}>{isOff ? 'Đã ký' : 'Chưa đến kỳ ký (đang thử việc)'}</span>
                       </div>
-                      <div style={{ ...barTrack, marginTop: '4px' }}>
-                        <div style={{ width: `${s.level}%`, height: '100%', background: 'linear-gradient(90deg, #7C3AED, #E85D92)' }} />
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                        {profEmp.official_date ? `Hiệu lực từ ${profEmp.official_date}` : `Vào làm từ ${profEmp.start_date || '—'}`}
                       </div>
                     </div>
-                  ))}
-                </div>
-                <div style={card}>
-                  <div style={{ fontWeight: 800, fontSize: '14px', marginBottom: '12px' }}>🎯 Thương vụ đang theo đuổi (demo)</div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    {demo.deals.map((d, i) => (
-                      <div key={i} style={{ backgroundColor: 'var(--bg)', borderRadius: '8px', padding: '10px 12px', fontSize: '13px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
-                          <strong>{d.name}</strong>
-                          <strong style={{ color: 'var(--brand)' }}>{shortVnd(d.value)}</strong>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                          <span>{d.stage}</span><span>Xác suất {d.prob}%</span>
-                        </div>
-                      </div>
-                    ))}
                   </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
           </>
         )}
       </div>
