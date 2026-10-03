@@ -63,9 +63,9 @@ function MyAdjPhoto({ adjustmentId, style }: { adjustmentId: string; style?: Rea
   return <img src={url} alt="Ảnh bằng chứng" style={{ width: '72px', height: '72px', objectFit: 'cover', borderRadius: '8px', border: '1px solid var(--border)', ...(style || {}) }} />;
 }
 
-/** Banner bản cập nhật mới từ IT: hiện khi API đã sang commit mới hơn bản app
- *  đang chạy (trình duyệt cache bản cũ). Bấm là tải lại trang lấy bản mới. */
-function UpdateBanner({ apiCommit, onLater }: { apiCommit: string | null; onLater: () => void }) {
+/** Banner bản cập nhật mới từ IT: hiện khi index.html trên server đã đổi
+ *  (frontend có bản mới thật). Bấm là tải lại trang lấy bản mới. */
+function UpdateBanner({ onLater }: { onLater: () => void }) {
   return (
     <div style={{
       position: 'fixed',
@@ -85,7 +85,7 @@ function UpdateBanner({ apiCommit, onLater }: { apiCommit: string | null; onLate
     }}>
       <span style={{ fontSize: '22px' }}>🚀</span>
       <div style={{ flex: 1, fontSize: '12px', lineHeight: 1.5 }}>
-        <div style={{ fontWeight: 800, fontSize: '13px' }}>Có bản cập nhật mới từ IT{apiCommit ? ` (${apiCommit})` : ''}!</div>
+        <div style={{ fontWeight: 800, fontSize: '13px' }}>Có bản cập nhật mới từ IT!</div>
         <div style={{ color: 'rgba(255,255,255,0.75)' }}>Bấm "Cập nhật ngay" để tải bản mới nhất (sửa lỗi + tính năng mới).</div>
       </div>
       <button
@@ -290,22 +290,40 @@ export function App() {
   const [apiBaseShown, setApiBaseShown] = useState<string>(() => {
     try { return getApiBase(); } catch { return ''; }
   });
-  // Bản API đang chạy (so với bản app để biết đã cập nhật chưa).
-  // IT push bản mới -> API đổi commit trước, app cũ poll thấy lệch là hiện
-  // banner "Cập nhật ngay" (kẻo NV dùng bản cũ mãi vì trình duyệt cache).
+  // Bản API đang chạy (chỉ hiển thị để đối chiếu, KHÔNG dùng để quyết định banner).
   const [apiCommit, setApiCommit] = useState<string | null>(null);
+  // Banner "Có bản cập nhật": so HASH index.html của chính frontend đang chạy
+  // với bản mới nhất trên server (fetch no-store). Reload là hết banner — không
+  // bao giờ kẹt như kiểu so commit frontend với commit backend (2 deploy khác nhịp).
   const [updateReady, setUpdateReady] = useState(false);
+  const indexHashRef = useRef<string | null>(null);
+  const latestHashRef = useRef<string | null>(null);
   const updateSnoozedRef = useRef<string | null>(null);
+  const hashStr = (s: string): string => {
+    let h = 5381;
+    for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+    return String(h);
+  };
   const checkAppVersion = async () => {
+    // Giữ hiển thị bản API (thông tin).
     try {
       const v: any = await apiRequest('/version');
-      const c = v?.commit ? String(v.commit).slice(0, 7) : null;
-      if (!c) return;
-      setApiCommit(c);
-      // App dev ('local') không so. Đã bấm "Để sau" cho commit này thì không hiện lại.
-      if (APP_COMMIT !== 'local' && c !== APP_COMMIT && updateSnoozedRef.current !== c) {
+      if (v?.commit) setApiCommit(String(v.commit).slice(0, 7));
+    } catch { /* offline: giữ cũ */ }
+    // Tín hiệu chính: nội dung index.html đã đổi -> frontend có bản mới thật.
+    try {
+      const res = await fetch('index.html', { cache: 'no-store' });
+      if (!res.ok) return;
+      const text = await res.text();
+      const h = hashStr(text);
+      latestHashRef.current = h;
+      if (!indexHashRef.current) {
+        indexHashRef.current = h;
+        return;
+      }
+      if (h !== indexHashRef.current && updateSnoozedRef.current !== h) {
         setUpdateReady(true);
-      } else if (c === APP_COMMIT || updateSnoozedRef.current === c) {
+      } else if (h === indexHashRef.current || updateSnoozedRef.current === h) {
         setUpdateReady(false);
       }
     } catch { /* offline: giữ trạng thái cũ */ }
@@ -323,8 +341,8 @@ export function App() {
     return () => { clearInterval(t); document.removeEventListener('visibilitychange', onVis); };
   }, []);
   const snoozeAppUpdate = () => {
-    // Ghi nhớ commit đang lệch để không hiện lại cho tới khi có bản mới hơn nữa.
-    updateSnoozedRef.current = apiCommit;
+    // Ghi nhớ hash đang lệch để không hiện lại cho tới khi có bản mới hơn nữa.
+    updateSnoozedRef.current = latestHashRef.current;
     setUpdateReady(false);
   };
   const handleChangeApiBase = async () => {
@@ -2303,8 +2321,8 @@ export function App() {
           </button>
           <div style={{ marginTop: '6px', fontSize: '10px', color: 'var(--text-muted)' }}>
             Bản app: <code>{APP_COMMIT}</code> • Bản API: <code>{apiCommit || 'đang kiểm tra...'}</code>
-            {apiCommit && apiCommit !== APP_COMMIT && APP_COMMIT !== 'local' && (
-              <span style={{ color: 'var(--danger)', fontWeight: 700 }}> • Lệch bản — tải lại trang để nhận bản mới!</span>
+            {updateReady && (
+              <span style={{ color: 'var(--danger)', fontWeight: 700 }}> • Có bản mới — tải lại trang để nhận!</span>
             )}
           </div>
         </div>
@@ -2323,7 +2341,7 @@ export function App() {
           onCheckPhone={handleCheckPhone}
           onSuccess={handlePremiumSuccess}
         />
-        {updateReady && <UpdateBanner apiCommit={apiCommit} onLater={snoozeAppUpdate} />}
+        {updateReady && <UpdateBanner onLater={snoozeAppUpdate} />}
       </>
     );
   }
@@ -4523,7 +4541,7 @@ export function App() {
         )}
 
       </main>
-      {updateReady && <UpdateBanner apiCommit={apiCommit} onLater={snoozeAppUpdate} />}
+      {updateReady && <UpdateBanner onLater={snoozeAppUpdate} />}
     </div>
   );
 }
