@@ -354,7 +354,17 @@ export function App() {
   };
 
   const showToast = (msg: string, type: 'INFO' | 'WARNING' = 'INFO', customTitle?: string) => {
-    const isWarn = msg.includes('⚠️') || msg.toLowerCase().includes('lỗi') || type === 'WARNING';
+    // Lỗi backend trả về mã tiếng Anh (ADJUSTMENT_DUPLICATE, GPS_OUT_OF_BOUNDS,
+    // SHIFT_NOT_FOUND...) — không chứa chữ "lỗi" nên trước đây render nhầm thành
+    // "Thao Tác Thành Công". Nhận diện cả mã lỗi + từ khóa tiếng Anh để không bao
+    // giờ báo thành công giả.
+    const lower = msg.toLowerCase();
+    // Mã lỗi backend toàn chữ hoa (ADJUSTMENT_DUPLICATE, SESSION_EXPIRED...).
+    // Loại token chứa số trước (UBM_NV0001, EMP_..., SWP_... là mã đơn/hồ sơ, không phải lỗi).
+    const noIds = msg.replace(/\b[A-Z]{2,}_[A-Z0-9_]*(?:\d[A-Z0-9_]*)+\b/g, '');
+    const isBackendCode = /[A-Z]{2,}_[A-Z0-9_]{2,}/.test(noIds);
+    const enErr = ['fail', 'error', 'forbidden', 'unauthorized', 'denied', 'invalid', 'required', 'timeout', 'exception', 'exceed', 'unavailable', 'missing', 'mismatch', 'conflict', 'duplicat', 'expired', 'not found', 'not_found', 'cannot', "can't", 'could not', 'unable', 'bad request', 'too many', 'out of'];
+    const isWarn = msg.includes('⚠️') || lower.includes('lỗi') || type === 'WARNING' || isBackendCode || enErr.some(k => lower.includes(k));
     let title = customTitle || (isWarn ? '⚠️ Cảnh Báo Hệ Thống' : '✨ Thao Tác Thành Công');
     if (!customTitle && !isWarn) {
       const lower = msg.toLowerCase();

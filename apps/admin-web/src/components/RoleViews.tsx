@@ -158,7 +158,7 @@ interface RoleViewsProps {
   payrollRuns: any[];
   branches: any[];
   systemNotifications: any[];
-  showToast: (msg: string) => void;
+  showToast: (msg: string, type?: 'INFO' | 'WARNING', customTitle?: string) => void;
   openNewEmpModal: () => void;
   openBroadcastModal: () => void;
   onSyncSheets?: () => Promise<void> | void;
@@ -967,6 +967,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Phiếu bổ sung/điều chỉnh công: HR duyệt phiếu NV gửi từ cổng nhân viên
   const [adjustments, setAdjustments] = useState<any[]>([]);
   const [adjBusy, setAdjBusy] = useState<string | null>(null);
+  // Chống bấm đúp các nút ghi dữ liệu (server cũng chặn trùng, đây là lớp báo sớm).
+  const [transitionBusyId, setTransitionBusyId] = useState<string | null>(null);
+  const [swapReviewBusy, setSwapReviewBusy] = useState<string | null>(null);
+  const [storeReviewBusy, setStoreReviewBusy] = useState<string | null>(null);
+  const [schedReloadBusy, setSchedReloadBusy] = useState(false);
+  const [storeConfirmBusy, setStoreConfirmBusy] = useState(false);
   // Phiếu đang xem chi tiết (popup: tên NV + lý do & số phút + ảnh + thời gian)
   const [selectedAdj, setSelectedAdj] = useState<any | null>(null);
   const loadAdjustments = async () => {
@@ -2090,7 +2096,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       <td style={{ padding: '14px 20px' }}>{c.branch_id || 'Chưa xếp'}</td>
                       <td style={{ padding: '14px 20px' }}>Chờ xếp lịch Meet</td>
                       <td style={{ padding: '14px 20px' }}>
-                        <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => showToast('Mở phòng phỏng vấn Meet')}>Bắt Đầu</button>
+                        <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => { try { window.open(SYSTEM_MEET_URL, '_blank'); } catch {} showToast('Đã mở phòng phỏng vấn Meet hệ thống trong tab mới — đón ứng viên rồi quay lại chấm kết quả.'); }}>Bắt Đầu</button>
                       </td>
                     </tr>
                   ))}
@@ -2101,7 +2107,34 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       <td style={{ padding: '14px 20px' }}>{e.branch_id}</td>
                       <td style={{ padding: '14px 20px' }}>Đang thử việc</td>
                       <td style={{ padding: '14px 20px' }}>
-                        <button className="btn-primary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => showToast(`Ký chuyển chính thức cho ${e.full_name}`)}>Ký Quyết Định</button>
+                        <button
+                          className="btn-primary"
+                          style={{ padding: '4px 10px', fontSize: '12px' }}
+                          disabled={transitionBusyId === e.employee_id}
+                          onClick={async () => {
+                            if (!window.confirm(`Ký quyết định chuyển chính thức cho ${e.full_name} (${e.employee_code})?`)) return;
+                            setTransitionBusyId(e.employee_id);
+                            try {
+                              await apiRequest(`/employees/${e.employee_id}/transition-official`, {
+                                method: 'POST',
+                                body: JSON.stringify({ expectedVersion: (e as any).version || 1 }),
+                              });
+                              showToast(`Đã ký chuyển chính thức cho ${e.full_name}! Hồ sơ, lương giờ và lịch đã cập nhật.`);
+                              if (onRefreshData) await onRefreshData();
+                            } catch (err: any) {
+                              if (onRefreshData) await Promise.resolve(onRefreshData()).catch(() => null);
+                              showToast(err?.message || 'Lỗi khi ký quyết định!');
+                            } finally {
+                              setTransitionBusyId(null);
+                            }
+                            if (onSyncSheets) {
+                              try {
+                                const r = onSyncSheets();
+                                if (r && typeof (r as any).catch === 'function') (r as any).catch(() => null);
+                              } catch { /* bỏ qua */ }
+                            }
+                          }}
+                        >{transitionBusyId === e.employee_id ? '⏳...' : 'Ký Quyết Định'}</button>
                       </td>
                     </tr>
                   ))}
@@ -2975,12 +3008,24 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <button
                   className="btn-primary"
                   style={{ backgroundColor: '#0068FF' }}
-                  onClick={() => {
+                  onClick={async () => {
+                    // Chưa có luồng lên lịch tự động trong modal này: sao chép SĐT thật
+                    // + hướng dẫn qua Tab 3 (nơi có form ngày/giờ/chi nhánh + gửi Zalo).
+                    const phone = selectedCandidateDetail.phone || selectedCandidateDetail.phone_normalized || '';
+                    try {
+                      if (phone) await navigator.clipboard.writeText(phone);
+                    } catch { /* clipboard bị chặn thì bỏ qua */ }
+                    const name = selectedCandidateDetail.full_name || 'ứng viên';
                     setSelectedCandidateDetail(null);
-                    showToast(`Đã chuyển ứng viên ${selectedCandidateDetail.full_name} sang lịch phỏng vấn Zalo BOT!`);
+                    showToast(
+                      phone
+                        ? `Đã sao chép SĐT ${phone} — qua Tab 3 (Lịch PV & BOT Zalo) để chọn ngày giờ và gửi thư mời cho ${name}.`
+                        : `Ứng viên ${name} chưa có SĐT — qua Tab 3 (Lịch PV & BOT Zalo) để xử lý.`,
+                      'WARNING'
+                    );
                   }}
                 >
-                  Lên Lịch Phỏng Vấn Zalo BOT
+                  Sao Chép SĐT & Lên Lịch Ở Tab 3
                 </button>
               </div>
             </div>
@@ -5927,9 +5972,26 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <button
               className="btn-primary"
               style={{ backgroundColor: '#10B981', display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', fontSize: '13px' }}
-              onClick={() => showToast('🟢 Socket.IO: Đã đồng bộ realtime 100% dữ liệu điểm danh từ Cổng Nhân Viên!')}
+              disabled={schedReloadBusy}
+              onClick={async () => {
+                if (schedReloadBusy) return;
+                setSchedReloadBusy(true);
+                try {
+                  if (onRefreshData) await onRefreshData();
+                  const data = await apiRequest('/attendance/events');
+                  const evts = Array.isArray(data) ? data : [];
+                  setLiveAttendanceEvents(evts);
+                  const weekSet = new Set((weekDays || []).map((d: any) => d.isoDate));
+                  const weekCount = evts.filter((e: any) => weekSet.has(vnDayOf(e.client_time || ''))).length;
+                  showToast(`Đã tải lại realtime: ${evts.length} lượt điểm danh (tuần này ${weekCount}). Lịch và trạng thái ca đã khớp server.`);
+                } catch (e: any) {
+                  showToast(e?.message || 'Lỗi khi tải lại realtime!');
+                } finally {
+                  setSchedReloadBusy(false);
+                }
+              }}
             >
-              <RefreshCw size={14} /> Tải Lại Realtime
+              <RefreshCw size={14} /> {schedReloadBusy ? 'Đang tải...' : 'Tải Lại Realtime'}
             </button>
             <button
               className="btn-primary"
@@ -6934,6 +6996,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           const reviewSwap = async (sw: any, accept: boolean) => {
             const isDispatch = (sw.swap_kind || 'EMPLOYEE_SWAP') === 'HR_DISPATCH';
             if (!window.confirm(accept ? (isDispatch ? `Duyệt nhường ca ${sw.swap_id}? Ca chuyển cho người nhận + 30.000đ.` : `Duyệt tráo ca ${sw.swap_id}? Hai ca sẽ hoán đổi người trực.`) : `Từ chối phiếu ${sw.swap_id}?`)) return;
+            if (swapReviewBusy) return;
+            setSwapReviewBusy(sw.swap_id);
             try {
               const res = await apiRequest(`/swap-requests/${sw.swap_id}/approve`, {
                 method: 'POST',
@@ -6945,7 +7009,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               if (onRefreshData) await onRefreshData();
               if (onSyncSheets) await onSyncSheets();
             } catch (e: any) {
+              await loadSwaps().catch(() => null);
               showToast(e?.message || 'Lỗi khi duyệt!');
+            } finally {
+              setSwapReviewBusy(null);
             }
           };
           const renderRows = (rows: any[], canReview: boolean) =>
@@ -6974,8 +7041,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <td style={{ padding: '12px 20px' }}>
                   {canReview ? (
                     <div style={{ display: 'flex', gap: '6px' }}>
-                      <button className="btn-primary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => reviewSwap(sw, true)}>Duyệt</button>
-                      <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: '12px', color: '#DC2626' }} onClick={() => reviewSwap(sw, false)}>Từ chối</button>
+                      <button className="btn-primary" style={{ padding: '4px 10px', fontSize: '12px' }} disabled={swapReviewBusy === sw.swap_id} onClick={() => reviewSwap(sw, true)}>{swapReviewBusy === sw.swap_id ? '⏳...' : 'Duyệt'}</button>
+                      <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: '12px', color: '#DC2626' }} disabled={swapReviewBusy === sw.swap_id} onClick={() => reviewSwap(sw, false)}>{swapReviewBusy === sw.swap_id ? '⏳...' : 'Từ chối'}</button>
                     </div>
                   ) : (
                     <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{sw.status === 'APPROVED' ? (isDispatch ? 'Đã giao ca +30k' : 'Đã hoán đổi ca') : '—'}</span>
@@ -8366,6 +8433,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         return;
       }
       if (!window.confirm(status === 'APPROVED' ? 'Cửa Hàng Trưởng xác nhận DUYỆT đơn OFF này?' : 'Cửa Hàng Trưởng xác nhận TỪ CHỐI đơn OFF này?')) return;
+      if (storeReviewBusy) return;
+      setStoreReviewBusy(leaveId);
       try {
         await apiRequest(`/leave-requests/${leaveId}/review`, {
           method: 'POST',
@@ -8375,7 +8444,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         if (onRefreshData) await onRefreshData();
         if (onSyncSheets) await onSyncSheets();
       } catch (e: any) {
+        if (onRefreshData) await Promise.resolve(onRefreshData()).catch(() => null);
         showToast(e?.message || 'Lỗi khi duyệt đơn');
+      } finally {
+        setStoreReviewBusy(null);
       }
     };
     return (
@@ -8400,8 +8472,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     <strong>{l.employee_name || l.employee_id}:</strong> Nghỉ đột xuất ngày {reqDate} - Lý do: {l.reason || 'Việc cá nhân'}
                   </div>
                   <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-                    <button className="btn-primary" onClick={() => handleStoreReview(leaveId, 'APPROVED')}>Phê Duyệt Đơn</button>
-                    <button className="btn-secondary" style={{ color: '#DC2626' }} onClick={() => handleStoreReview(leaveId, 'REJECTED')}>Từ chối</button>
+                    <button className="btn-primary" disabled={storeReviewBusy === leaveId} onClick={() => handleStoreReview(leaveId, 'APPROVED')}>{storeReviewBusy === leaveId ? '⏳...' : 'Phê Duyệt Đơn'}</button>
+                    <button className="btn-secondary" style={{ color: '#DC2626' }} disabled={storeReviewBusy === leaveId} onClick={() => handleStoreReview(leaveId, 'REJECTED')}>{storeReviewBusy === leaveId ? '⏳...' : 'Từ chối'}</button>
                   </div>
                 </div>
               );
@@ -8484,14 +8556,57 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }
 
   if (activeTab === 'store-confirm-att') {
+    const todayVN = vnDayOf(new Date().toISOString());
+    const todayBranchShifts = (shifts || []).filter((s: any) =>
+      (s.date || '').slice(0, 10) === todayVN && s.status !== 'CANCELLED' &&
+      (branchScope === '*' || s.branch_id === branchScope)
+    );
+    const todayBranchEvts = (liveAttendanceEvents || []).filter((e: any) =>
+      vnDayOf(e.client_time || '') === todayVN &&
+      todayBranchShifts.some((s: any) => s.assignment_id === e.assignment_id)
+    );
+    const checkedIn = todayBranchEvts.filter((e: any) => e.type === 'CHECK_IN').length;
+    const checkedOut = todayBranchEvts.filter((e: any) => e.type === 'CHECK_OUT').length;
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <h1 style={{ fontSize: '20px', fontWeight: 800 }}>8. Xác Nhận Công Hợp Lệ Chuyển Sang Kế Toán</h1>
-        <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Cửa Hàng Trưởng xác nhận bảng công ngày trước khi chuyển sang Finance tính lương</p>
-        <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-          <button className="btn-primary" onClick={() => showToast('Đã xác nhận dữ liệu công chi nhánh thành công!')}>
-            Xác Nhận & Khóa Công Ngày Hôm Nay
-          </button>
+        <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Cửa Hàng Trưởng đối soát bảng công ngày trước khi chuyển sang Finance tính lương. Chốt/khóa công thực hiện ở kỳ lương Finance.</p>
+        <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div style={{ fontSize: '13px' }}>
+            Hôm nay ({todayVN}) tại {branchName}: <strong>{todayBranchShifts.length} ca</strong> • <strong>{checkedIn} check-in</strong> • <strong>{checkedOut} check-out</strong>
+            {todayBranchShifts.length > checkedIn && (
+              <span style={{ color: '#92400E' }}> • Thiếu {todayBranchShifts.length - checkedIn} lượt vào ca</span>
+            )}
+          </div>
+          <div>
+            <button
+              className="btn-primary"
+              disabled={storeConfirmBusy}
+              onClick={async () => {
+                if (storeConfirmBusy) return;
+                setStoreConfirmBusy(true);
+                try {
+                  if (onRefreshData) await onRefreshData();
+                  const data = await apiRequest('/attendance/events');
+                  const evts = Array.isArray(data) ? data : [];
+                  setLiveAttendanceEvents(evts);
+                  const fresh = evts.filter((e: any) =>
+                    vnDayOf(e.client_time || '') === todayVN &&
+                    todayBranchShifts.some((s: any) => s.assignment_id === e.assignment_id)
+                  );
+                  const fi = fresh.filter((e: any) => e.type === 'CHECK_IN').length;
+                  const fo = fresh.filter((e: any) => e.type === 'CHECK_OUT').length;
+                  showToast(`Đã đối soát dữ liệu hôm nay tại ${branchName}: ${todayBranchShifts.length} ca, ${fi} check-in, ${fo} check-out. Số liệu đã khớp server.`);
+                } catch (e: any) {
+                  showToast(e?.message || 'Lỗi khi đối soát dữ liệu!');
+                } finally {
+                  setStoreConfirmBusy(false);
+                }
+              }}
+            >
+              {storeConfirmBusy ? '⏳ Đang đối soát...' : 'Tải & Đối Soát Dữ Liệu Hôm Nay'}
+            </button>
+          </div>
         </div>
       </div>
     );

@@ -327,14 +327,22 @@ export function App() {
     updateSnoozedRef.current = apiCommit;
     setUpdateReady(false);
   };
-  const handleChangeApiBase = () => {
-    const cur = getApiBase();
+  const handleChangeApiBase = async () => {
     const input = window.prompt('Địa chỉ máy chủ Backend (để trống = tự động):', localStorage.getItem('ubm_custom_api_url') || '');
     if (input === null) return;
     setCustomApiUrl(input.trim());
-    setApiBaseShown(getApiBase());
-    showToast(input.trim() ? `Đã đổi máy chủ sang ${getApiBase()}` : `Đã về chế độ tự động (${getApiBase()}). Mở địa chỉ /health trên trình duyệt để kiểm tra.`);
-    void cur;
+    const base = getApiBase();
+    setApiBaseShown(base);
+    // Kiểm chứng thật bằng /health trước khi báo — tránh đổi sang địa chỉ chết
+    // rồi mọi thao tác sau mới lòi lỗi.
+    showToast('⏳ Đang kiểm tra kết nối máy chủ...');
+    try {
+      const res = await fetch(`${base}/health`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      showToast(input.trim() ? `Đã đổi máy chủ sang ${base} — kết nối OK!` : `Đã về chế độ tự động (${base}) — kết nối OK!`);
+    } catch {
+      showToast(`⚠️ Địa chỉ ${base} không phản hồi! Kiểm tra lại địa chỉ hoặc mạng — mọi chức năng sẽ lỗi cho tới khi đúng.`);
+    }
   };
 
   // Attendance flow state
@@ -616,6 +624,9 @@ export function App() {
   const [activeTestId, setActiveTestId] = useState<string | null>(null);
   const [testAnswers, setTestAnswers] = useState<number[]>([]);
   const [testLeft, setTestLeft] = useState(0);
+  const [testSubmitBusy, setTestSubmitBusy] = useState(false);
+  // Chặn nộp lặp: hết giờ effect bắn mỗi giây, fail mà không khóa sẽ spam POST vô hạn.
+  const autoSubmitRef = useRef<string | null>(null);
   const fetchMyTests = async () => {
     try {
       const list = await apiRequest('/me/tests');
@@ -624,6 +635,8 @@ export function App() {
   };
   const submitActiveTest = async (isAuto = false) => {
     if (!activeTestId) return;
+    if (testSubmitBusy) return;
+    setTestSubmitBusy(true);
     const filled = testAnswers.map(a => (a < 0 ? 0 : a));
     try {
       const res = await apiRequest(`/me/tests/${activeTestId}/submit`, {
@@ -631,11 +644,19 @@ export function App() {
         body: JSON.stringify({ answers: filled }),
       });
       const r = (res as any)?.result || res;
-      showToast(isAuto ? `Hết giờ — tự nộp bài! Điểm: ${r.score}/10.` : `Đã nộp bài! Điểm: ${r.score}/10 — ${r.passed ? 'Đạt' : 'Chưa đạt'}.`);
+      // Chỉ báo điểm khi server trả điểm số thật, không thì báo đã ghi nhận chung.
+      if (r && Number.isFinite(Number(r.score))) {
+        showToast(isAuto ? `Hết giờ — tự nộp bài! Điểm: ${r.score}/10.` : `Đã nộp bài! Điểm: ${r.score}/10 — ${r.passed ? 'Đạt' : 'Chưa đạt'}.`);
+      } else {
+        showToast(isAuto ? 'Hết giờ — đã tự nộp bài! Chờ HR chấm điểm.' : 'Đã nộp bài! Chờ HR chấm điểm.');
+      }
       setActiveTestId(null);
+      autoSubmitRef.current = null;
       await fetchMyTests();
     } catch (e: any) {
       showToast(e?.message || 'Lỗi khi nộp bài!');
+    } finally {
+      setTestSubmitBusy(false);
     }
   };
 
@@ -692,9 +713,16 @@ export function App() {
     }
   }, [activeTab]);
   useEffect(() => {
-    if (!activeTestId) return;
+    if (!activeTestId) {
+      autoSubmitRef.current = null;
+      return;
+    }
     if (testLeft <= 0) {
-      submitActiveTest(true);
+      // Hết giờ chỉ tự nộp 1 lần/bài — fail thì chờ NV bấm nộp tay, không spam POST.
+      if (autoSubmitRef.current !== activeTestId) {
+        autoSubmitRef.current = activeTestId;
+        submitActiveTest(true);
+      }
       return;
     }
     const t = setTimeout(() => setTestLeft(s => s - 1), 1000);
@@ -1637,6 +1665,8 @@ export function App() {
   };
 
   const handleSubmitLeave = async () => {
+    if (actionBusy) return;
+    setActionBusy('leave-submit');
     try {
       await apiRequest('/leaves', {
         method: 'POST',
@@ -1647,6 +1677,8 @@ export function App() {
       await loadEmployeeData(employee?.employee_id);
     } catch (err: any) {
       showToast(weeklyOffErrMsg(err, 'Lỗi khi gửi yêu cầu nghỉ!'));
+    } finally {
+      setActionBusy(null);
     }
   };
 
@@ -1788,7 +1820,7 @@ export function App() {
         }),
       });
       const sid = res?.result?.swap_id || res?.swap_id || '';
-      showToast(`✓ Đã gửi yêu cầu đổi ca THẬT! Mã đơn: ${sid}. B đồng ý là 2 ca hoán đổi ngay.`);
+      showToast(sid ? `✓ Đã gửi yêu cầu đổi ca THẬT! Mã đơn: ${sid}. B đồng ý là 2 ca hoán đổi ngay.` : '✓ Đã gửi yêu cầu đổi ca! Mở danh sách phiếu để kiểm tra trạng thái.');
       setSwapData({ myShift: '', targetEmployeeId: '', targetEmployeeName: '', targetShift: '', reason: '' });
       setTargetShifts([]);
       await fetchMySwaps();
@@ -1834,6 +1866,9 @@ export function App() {
       showToast('⚠️ Vui lòng nhập lý do nghỉ khẩn cấp!');
       return;
     }
+    // Lượt 1 lần duy nhất: chặn bấm đúp race 2 POST (server cũng chặn, đây là lớp báo sớm).
+    if (actionBusy) return;
+    setActionBusy('emg-submit');
     try {
       await apiRequest('/leaves', {
         method: 'POST',
@@ -1852,6 +1887,8 @@ export function App() {
         setEmergencyEnabled(false);
       }
       showToast(err.message || 'Lỗi khi gửi báo nghỉ khẩn cấp');
+    } finally {
+      setActionBusy(null);
     }
   };
 
@@ -3753,10 +3790,11 @@ export function App() {
               />
               <button
                 className="btn-secondary"
-                style={{ color: '#C2410C', borderColor: '#FED7AA', width: '100%', fontWeight: 700 }}
+                style={{ color: '#C2410C', borderColor: '#FED7AA', width: '100%', fontWeight: 700, opacity: actionBusy ? 0.6 : 1 }}
+                disabled={!!actionBusy}
                 onClick={handleEmergencyLeaveSubmit}
               >
-                Gửi Báo Nghỉ Khẩn Cấp (Đồng Bộ Realtime HR)
+                {actionBusy ? '⏳ ĐANG GỬI...' : 'Gửi Báo Nghỉ Khẩn Cấp (Đồng Bộ Realtime HR)'}
               </button>
             </div>
             )}
@@ -4038,7 +4076,7 @@ export function App() {
                           }),
                         });
                         const sid = res?.result?.swap_id || res?.swap_id || '';
-                        showToast(`✓ Đã gửi yêu cầu nhờ làm thay! Mã đơn: ${sid}. B đồng ý là ca chuyển ngay.`);
+                        showToast(sid ? `✓ Đã gửi yêu cầu nhờ làm thay! Mã đơn: ${sid}. B đồng ý là ca chuyển ngay.` : '✓ Đã gửi yêu cầu nhờ làm thay! Mở danh sách phiếu để kiểm tra trạng thái.');
                         setSwapData({ myShift: '', targetEmployeeId: '', targetEmployeeName: '', targetShift: '', reason: '' });
                         setTargetShifts([]);
                         await fetchMySwaps();
@@ -4211,18 +4249,23 @@ export function App() {
                           <button
                             className="btn-secondary"
                             style={{ marginTop: '6px', fontSize: '11px', padding: '5px 10px', color: '#DC2626' }}
+                            disabled={actionBusy === `cancel-${a.adjustment_id}`}
                             onClick={async () => {
                               if (!window.confirm('Hủy phiếu này? Phiếu sẽ bị XÓA KHỎI hệ thống (không khôi phục).')) return;
+                              if (actionBusy) return;
+                              setActionBusy(`cancel-${a.adjustment_id}`);
                               try {
                                 await apiRequest(`/attendance/adjustments/${a.adjustment_id}`, { method: 'DELETE' });
                                 showToast('Đã hủy và xóa phiếu khỏi hệ thống!');
                                 await fetchMyAdjustments();
                               } catch (e: any) {
                                 showToast(e?.message || 'Lỗi khi hủy phiếu!');
+                              } finally {
+                                setActionBusy(null);
                               }
                             }}
                           >
-                            🗑 Hủy phiếu (xóa khỏi hệ thống)
+                            {actionBusy === `cancel-${a.adjustment_id}` ? '⏳ Đang hủy...' : '🗑 Hủy phiếu (xóa khỏi hệ thống)'}
                           </button>
                         )}
                         {a.status === 'APPROVED' && (
@@ -4315,14 +4358,16 @@ export function App() {
                             ))}
                             <button
                               className="btn-primary"
+                              disabled={testSubmitBusy}
                               onClick={async () => {
                                 if (testAnswers.some(a => a < 0)) {
                                   if (!window.confirm('Còn câu chưa chọn đáp án. Vẫn nộp bài?')) return;
                                 }
                                 await submitActiveTest(false);
                               }}
+                              style={{ opacity: testSubmitBusy ? 0.6 : 1 }}
                             >
-                              Nộp bài
+                              {testSubmitBusy ? '⏳ ĐANG NỘP...' : 'Nộp bài'}
                             </button>
                           </div>
                         )}
