@@ -20,6 +20,7 @@ import {
   Award,
   AlertTriangle,
   Sparkles,
+  Wrench,
 } from 'lucide-react';
 
 interface EmployeeProfile {
@@ -60,6 +61,102 @@ function MyAdjPhoto({ adjustmentId, style }: { adjustmentId: string; style?: Rea
   if (failed) return null;
   if (!url) return <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Đang tải ảnh...</span>;
   return <img src={url} alt="Ảnh bằng chứng" style={{ width: '72px', height: '72px', objectFit: 'cover', borderRadius: '8px', border: '1px solid var(--border)', ...(style || {}) }} />;
+}
+
+/** Màn hình bảo trì cổng nhân viên: hiện đại, tự hồi khi Admin tắt bảo trì. */
+function MaintenanceScreen({ message, checking, onRetry }: { message: string; checking: boolean; onRetry: () => void }) {
+  return (
+    <div style={{
+      minHeight: '100vh',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '32px 20px',
+      background: 'linear-gradient(160deg, #0F172A 0%, #1E1B4B 45%, #831843 100%)',
+      color: '#FFF',
+      textAlign: 'center',
+    }}>
+      <style>{`
+        @keyframes ubm-maint-spin { to { transform: rotate(360deg); } }
+        @keyframes ubm-maint-float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+        @keyframes ubm-maint-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+      `}</style>
+      <div style={{ animation: 'ubm-maint-float 3s ease-in-out infinite', marginBottom: '20px', position: 'relative' }}>
+        <div style={{
+          width: '112px',
+          height: '112px',
+          borderRadius: '32px',
+          background: 'linear-gradient(135deg, #E85D92 0%, #F59E0B 100%)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          boxShadow: '0 20px 60px rgba(232, 93, 146, 0.45)',
+        }}>
+          <Wrench size={52} color="#FFF" />
+        </div>
+        <div style={{
+          position: 'absolute',
+          inset: '-10px',
+          borderRadius: '40px',
+          border: '2px dashed rgba(255,255,255,0.35)',
+          animation: 'ubm-maint-spin 14s linear infinite',
+        }} />
+      </div>
+      <div style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '8px',
+        fontSize: '11px',
+        fontWeight: 800,
+        letterSpacing: '2px',
+        color: '#FDE68A',
+        backgroundColor: 'rgba(245, 158, 11, 0.15)',
+        border: '1px solid rgba(245, 158, 11, 0.4)',
+        borderRadius: '999px',
+        padding: '6px 14px',
+        marginBottom: '14px',
+      }}>
+        <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#F59E0B', animation: 'ubm-maint-pulse 1.5s ease-in-out infinite' }} />
+        BẢO TRÌ KỸ THUẬT
+      </div>
+      <h1 style={{ fontSize: '24px', fontWeight: 800, margin: '0 0 8px' }}>Cổng nhân viên tạm khóa</h1>
+      <p style={{ fontSize: '14px', color: 'rgba(255,255,255,0.85)', maxWidth: '420px', lineHeight: 1.6, margin: '0 0 6px' }}>
+        {message || 'Hệ thống đang bảo trì kỹ thuật định kỳ. Quý khách vui lòng thử lại sau ít phút.'}
+      </p>
+      <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)', maxWidth: '420px', lineHeight: 1.6, margin: '0 0 22px' }}>
+        Nhân sự đang kiểm kê hoặc cập nhật ca làm — mọi dữ liệu chấm công của bạn được giữ nguyên.
+      </p>
+      <button
+        onClick={onRetry}
+        disabled={checking}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '8px',
+          padding: '12px 28px',
+          borderRadius: '999px',
+          border: 'none',
+          background: 'linear-gradient(135deg, #E85D92, #F59E0B)',
+          color: '#FFF',
+          fontSize: '14px',
+          fontWeight: 800,
+          cursor: checking ? 'wait' : 'pointer',
+          opacity: checking ? 0.7 : 1,
+          boxShadow: '0 8px 24px rgba(232, 93, 146, 0.4)',
+        }}
+      >
+        <RefreshCw size={16} style={checking ? { animation: 'ubm-maint-spin 1s linear infinite' } : undefined} />
+        {checking ? 'Đang kiểm tra...' : 'Kiểm tra lại ngay'}
+      </button>
+      <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)', marginTop: '14px' }}>
+        Hệ thống tự động kiểm tra lại mỗi 30 giây
+      </div>
+      <div style={{ fontSize: '12px', fontWeight: 800, color: 'rgba(255,255,255,0.7)', marginTop: '26px', letterSpacing: '1px' }}>
+        ỤM BÒ MILK • CỔNG NHÂN VIÊN
+      </div>
+    </div>
+  );
 }
 
 export function App() {
@@ -376,6 +473,35 @@ export function App() {
     } catch { /* offline: giữ trạng thái cũ */ }
   };
 
+  // Trạng thái bảo trì cổng NV do Admin bật (null = chưa tải xong -> fail-open, không khóa nhầm).
+  const [portalMaint, setPortalMaint] = useState<{ active: boolean; message: string } | null>(null);
+  const [maintChecking, setMaintChecking] = useState(false);
+  const fetchPortalMaintenance = async (): Promise<boolean | null> => {
+    try {
+      const m: any = await apiRequest('/public/portal-maintenance');
+      const active = !!(m?.system_maintenance || m?.employee_web_maintenance);
+      setPortalMaint({ active, message: String(m?.maintenance_message || '') });
+      return active;
+    } catch { /* offline/server cũ: coi như không bảo trì */ return null; }
+  };
+  const fetchPortalMaintenanceRef = useRef(fetchPortalMaintenance);
+  fetchPortalMaintenanceRef.current = fetchPortalMaintenance;
+  const handleRetryMaintenance = async () => {
+    setMaintChecking(true);
+    try { await fetchPortalMaintenance(); } finally { setMaintChecking(false); }
+  };
+
+  // Trạng thái bảo trì: tải ngay khi mở cổng (kể cả chưa đăng nhập) để khóa kịp thời.
+  useEffect(() => {
+    fetchPortalMaintenanceRef.current().catch(() => null);
+  }, []);
+  // Đang bảo trì -> tự kiểm tra lại mỗi 30s để mở cổng ngay khi Admin tắt (khỏi cần F5).
+  useEffect(() => {
+    if (!portalMaint?.active) return;
+    const t = setInterval(() => { fetchPortalMaintenanceRef.current().catch(() => null); }, 30000);
+    return () => clearInterval(t);
+  }, [portalMaint?.active]);
+
   // Adjustment Request Form
   const [adjustmentData, setAdjustmentData] = useState({
     date: new Date().toISOString().split('T')[0],
@@ -654,6 +780,8 @@ export function App() {
     setIsLoggedIn(true);
     showToast(`Đăng nhập thành công vào cổng ${res.stage === 'PROBATION' ? 'Thử việc' : 'Chính thức'}!`);
     await loadEmployeeData(res.employee.employee_id);
+    // Đăng nhập xong kiểm tra bảo trì ngay để khóa kịp nếu Admin vừa bật.
+    await fetchPortalMaintenance().catch(() => null);
   };
 
   // Bước 1 login mới (không nút Tiếp tục): SĐT có tồn tại trong CSDL không.
@@ -860,7 +988,11 @@ export function App() {
           showToastRef.current('📡 Không kết nối được realtime — dữ liệu vẫn tải khi bạn mở từng tab. Kiểm tra địa chỉ máy chủ nếu lỗi kéo dài!');
         },
       });
-      socket.on('data:updated', (p: any) => reload(p?.entity));
+      socket.on('data:updated', (p: any) => {
+        reload(p?.entity);
+        // Admin bật/tắt bảo trì -> cập nhật màn khóa cổng ngay (kể cả đang đăng nhập).
+        if (p?.entity === 'config') fetchPortalMaintenanceRef.current().catch(() => null);
+      });
       socket.on('notification.created', reload);
       // Phiếu đổi ca gửi tới tôi: tải ngay + popup để xác nhận/từ chối.
       socket.on('swap.updated', async (p: any) => {
@@ -1789,6 +1921,14 @@ export function App() {
           Tài khoản chưa đổi PIN sẽ bị bắt đổi ngay, tải lại trang cũng không bỏ qua được.
         </div>
       </div>
+    );
+  }
+
+  // Cổng bị Admin tạm khóa bảo trì -> chặn TOÀN BỘ (kể cả màn đăng nhập/đổi PIN),
+  // hiện màn bảo trì hiện đại thay vì để NV thao tác trong lúc kiểm kê/cập nhật ca.
+  if (portalMaint?.active) {
+    return (
+      <MaintenanceScreen message={portalMaint.message} checking={maintChecking} onRetry={handleRetryMaintenance} />
     );
   }
 

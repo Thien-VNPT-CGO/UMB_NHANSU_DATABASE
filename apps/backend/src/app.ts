@@ -3531,6 +3531,23 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // --- 9. BẢO TRÌ HỆ THỐNG ---
+  // Trạng thái bảo trì PUBLIC cho cổng NV (không cần đăng nhập để hiện màn bảo trì).
+  // Chỉ lộ 3 trường an toàn: 2 cờ + thông điệp (không lộ cấu hình chi tiết từng phân hệ).
+  app.get('/public/portal-maintenance', async (req, res) => {
+    try {
+      const m: any = await adapter.getMaintenance().catch(() => ({}));
+      res.json({
+        system_maintenance: !!m?.system_maintenance,
+        employee_web_maintenance: !!m?.employee_web_maintenance,
+        maintenance_message: String(m?.maintenance_message || ''),
+        updated_at: m?.updated_at || null,
+      });
+    } catch {
+      // Fail-open: lỗi đọc thì coi như KHÔNG bảo trì để khỏi khóa nhầm toàn bộ NV.
+      res.json({ system_maintenance: false, employee_web_maintenance: false, maintenance_message: '' });
+    }
+  });
+
   app.get('/admin/maintenance', authMiddleware, async (req, res) => {
     try {
       const maintenance = await adapter.getMaintenance();
