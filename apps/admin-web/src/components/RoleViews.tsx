@@ -8168,13 +8168,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         {r && (
           <>
             <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-              Kỳ <strong>{String(r.period).slice(5, 7)}/{String(r.period).slice(0, 4)}</strong> • {r.officialCount} NV chính thức{r.zeroHourCount > 0 && <> • {r.zeroHourCount} người chưa có giờ công</>} • Lương theo {r.runStatus ? `kỳ đã chốt (${r.runStatus})` : 'tạm tính từ chấm công (Finance chưa chốt kỳ)'}.
+              Kỳ <strong>{String(r.period).slice(5, 7)}/{String(r.period).slice(0, 4)}</strong> • {r.officialCount} chính thức + {r.probationCount} thử việc{r.zeroHourCount > 0 && <> • {r.zeroHourCount} người chưa có giờ công</>} • Lương theo {r.runStatus ? `kỳ đã chốt (${r.runStatus})` : 'tạm tính từ chấm công (Finance chưa chốt kỳ)'}.
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
               <div style={{ backgroundColor: 'var(--surface)', padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>TỔNG GIỜ NV CHÍNH THỨC</div>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>TỔNG GIỜ LÀM VIỆC</div>
                 <div style={{ fontSize: '24px', fontWeight: 800, color: 'var(--brand)', marginTop: '4px' }}>{r.totalHours}h</div>
-                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Ca đủ check-in + check-out</div>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Chính thức {r.officialHours}h • Thử việc {r.probationHours}h</div>
               </div>
               <div style={{ backgroundColor: 'var(--surface)', padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid #A7F3D0' }}>
                 <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>🏆 NHIỀU GIỜ NHẤT</div>
@@ -8189,13 +8189,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               <div style={{ backgroundColor: 'var(--surface)', padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
                 <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>TỔNG LƯƠNG THÁNG</div>
                 <div style={{ fontSize: '24px', fontWeight: 800, color: '#2563EB', marginTop: '4px' }}>{vnd(r.totalSalary)}</div>
-                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{r.officialCount} NV chính thức</div>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Chính thức {vnd(r.officialSalary)} • Thử việc {vnd(r.probationSalary)}</div>
               </div>
             </div>
 
             <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
               <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', fontSize: '14px', fontWeight: 800 }}>
-                Giờ làm & lương từng nhân viên chính thức ({r.rows.length})
+                Giờ làm & lương từng nhân viên ({r.rows.length})
               </div>
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
@@ -8203,6 +8203,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
                       <th style={{ padding: '12px 20px' }}>Mã NV</th>
                       <th style={{ padding: '12px 20px' }}>Họ Và Tên</th>
+                      <th style={{ padding: '12px 20px' }}>Diện</th>
                       <th style={{ padding: '12px 20px' }}>Chi Nhánh</th>
                       <th style={{ padding: '12px 20px', textAlign: 'center' }}>Số Ca</th>
                       <th style={{ padding: '12px 20px', textAlign: 'center' }}>Giờ Làm</th>
@@ -8213,8 +8214,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <tbody>
                     {r.rows.length === 0 ? (
                       <tr>
-                        <td colSpan={7} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                          Kỳ này chưa có nhân viên chính thức nào.
+                        <td colSpan={8} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                          Kỳ này chưa có nhân viên chính thức hay thử việc nào.
                         </td>
                       </tr>
                     ) : (
@@ -8225,6 +8226,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             {row.fullName}
                             {r.top && row.employeeId === r.top.employeeId && <span title="Nhiều giờ nhất tháng" style={{ marginLeft: '6px' }}>🏆</span>}
                             {r.bottom && row.employeeId === r.bottom.employeeId && r.rows.length > 1 && <span title="Ít giờ nhất tháng (có làm)" style={{ marginLeft: '6px' }}>🔻</span>}
+                          </td>
+                          <td style={{ padding: '12px 20px' }}>
+                            <span style={{
+                              fontSize: '11px', fontWeight: 800, padding: '3px 9px', borderRadius: '999px',
+                              backgroundColor: row.stage === 'OFFICIAL' ? 'var(--success-soft)' : '#DBEAFE',
+                              color: row.stage === 'OFFICIAL' ? 'var(--success)' : '#1D4ED8',
+                            }}>
+                              {row.stage === 'OFFICIAL' ? 'Chính thức' : 'Thử việc'}
+                            </span>
                           </td>
                           <td style={{ padding: '12px 20px', fontSize: '12px' }}>{getDisplayBranch(row.branchId, row.group)}</td>
                           <td style={{ padding: '12px 20px', textAlign: 'center' }}>{row.shifts}{row.absentShifts > 0 && <span title={`${row.absentShifts} ca vắng/không lương`} style={{ color: '#DC2626', fontWeight: 700 }}> (-{row.absentShifts})</span>}</td>

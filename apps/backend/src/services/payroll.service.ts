@@ -256,11 +256,13 @@ export class PayrollService {
   }
 
   /**
-   * Tổng hợp tháng cho NV CHÍNH THỨC (HR Reports, read-only, không tạo kỳ lương):
+   * Tổng hợp tháng cho NV CHÍNH THỨC + THỬ VIỆC (HR Reports, read-only,
+   * không tạo kỳ lương):
    *  - Giờ làm = ca PUBLISHED có đủ check-in + check-out (vắng/trễ 100% không tính giờ).
    *  - Lương = phiếu của kỳ lương đã chốt (nếu có) — chưa chốt thì tạm tính theo
-   *    công thức draft (lương ca - phạt trễ + phụ cấp điều phối).
-   * Trả về tổng giờ, tổng lương, NV nhiều/ít giờ nhất + chi tiết từng người.
+   *    công thức draft (lương ca theo đơn giá snapshot từng người - phạt trễ +
+   *    phụ cấp điều phối).
+   * Trả về tổng giờ/lương (chung + tách từng diện), NV nhiều/ít giờ nhất + chi tiết.
    */
   async summarizeOfficialMonth(period: string) {
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period || '')) {
@@ -269,7 +271,7 @@ export class PayrollService {
     const fromDate = `${period}-01`;
     const toDate = `${period}-31`;
     const employees = (await this.repo.listEmployees()).filter(
-      e => (e as any)?.employment_status === 'OFFICIAL'
+      e => ['OFFICIAL', 'PROBATION'].includes((e as any)?.employment_status)
     );
 
     // Phiếu kỳ đã chốt (nếu Finance đã tính lương tháng này) -> lương thực tế.
@@ -353,6 +355,7 @@ export class PayrollService {
         fullName: (emp as any).full_name,
         branchId: (emp as any).default_branch_id,
         group: (emp as any).group,
+        stage: (emp as any).employment_status,
         rate,
         shifts,
         absentShifts,
@@ -365,14 +368,21 @@ export class PayrollService {
     }
     rows.sort((a, b) => b.hours - a.hours || String(a.fullName).localeCompare(String(b.fullName)));
     const worked = rows.filter(r => r.hours > 0);
+    const sumBy = (stage: string, key: 'hours' | 'salary') =>
+      Math.round(rows.filter(r => r.stage === stage).reduce((s, r) => s + r[key], 0) * 10) / 10;
     const totalHours = Math.round(rows.reduce((s, r) => s + r.hours, 0) * 10) / 10;
     const totalSalary = rows.reduce((s, r) => s + r.salary, 0);
     return {
       period,
-      officialCount: rows.length,
+      officialCount: rows.filter(r => r.stage === 'OFFICIAL').length,
+      probationCount: rows.filter(r => r.stage === 'PROBATION').length,
       zeroHourCount: rows.length - worked.length,
       totalHours,
       totalSalary,
+      officialHours: sumBy('OFFICIAL', 'hours'),
+      probationHours: sumBy('PROBATION', 'hours'),
+      officialSalary: sumBy('OFFICIAL', 'salary'),
+      probationSalary: sumBy('PROBATION', 'salary'),
       runStatus,
       top: worked[0] || null,
       bottom: worked[worked.length - 1] || null,
