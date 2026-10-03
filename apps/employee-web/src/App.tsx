@@ -303,6 +303,15 @@ export function App() {
     reason: 'Sốt cao đột xuất / Việc gia đình khẩn cấp',
     shift: 'Ca Sáng (07:00 - 12:00)',
   });
+  // Báo nghỉ khẩn với NV thử việc: mặc định ẨN, chỉ hiện khi Admin/HR kích hoạt
+  // 1 lượt duy nhất. Gửi xong phiếu là lượt bị tiêu thụ -> tự ẩn lại ngay.
+  const [emergencyEnabled, setEmergencyEnabled] = useState(false);
+  const fetchEmergencyStatus = async () => {
+    try {
+      const st: any = await apiRequest('/me/emergency-leave-status');
+      setEmergencyEnabled(!!st?.enabled);
+    } catch { /* offline: giữ trạng thái cũ */ }
+  };
 
   // Adjustment Request Form
   const [adjustmentData, setAdjustmentData] = useState({
@@ -378,6 +387,8 @@ export function App() {
   useEffect(() => {
     if (activeTab === 'test_exam' || activeTab === 'test_training') fetchMyTests();
     if (activeTab === 'swap_shift') fetchMySwaps();
+    // Trạng thái kích hoạt báo nghỉ khẩn (NV thử việc): mở tab là kiểm tra lại.
+    if (activeTab === 'swap_emergency') fetchEmergencyStatus();
     // Đồng hồ đếm ngược phiếu 30 phút (chỉ chạy ở tab bổ sung công)
     if (activeTab === 'adjustment' || activeTab === 'emergency_adjust') {
       const clock = setInterval(() => setAdjNow(Date.now()), 1000);
@@ -1494,9 +1505,14 @@ export function App() {
           reason: `[NGHỈ KHẨN CẤP] ${emergencyData.shift} - ${emergencyData.reason}`,
         }),
       });
-      showToast('🚨 ĐÃ GỬI ĐƠN BÁO NGHỈ KHẨN CẤP! Dữ liệu đã đồng bộ realtime sang HR Tab 10 và Google Sheets.');
+      // Lượt dùng 1 lần đã bị tiêu thụ ở server — ẩn chức năng ngay lập tức.
+      setEmergencyEnabled(false);
+      showToast('🚨 ĐÃ GỬI ĐƠN BÁO NGHỈ KHẨN CẤP! Lượt dùng 1 lần của bạn đã hết — chức năng tự ẩn. Dữ liệu đã đồng bộ realtime sang HR Tab 10 và Google Sheets.');
       await loadEmployeeData(employee?.employee_id);
     } catch (err: any) {
+      if (String(err?.message || '').includes('EMERGENCY_LEAVE_NOT_GRANTED')) {
+        setEmergencyEnabled(false);
+      }
       showToast(err.message || 'Lỗi khi gửi báo nghỉ khẩn cấp');
     }
   };
@@ -3166,14 +3182,19 @@ export function App() {
               </div>
             </div>
 
-            {/* Báo Nghỉ Khẩn */}
-            <div className="card" style={{ border: '1px solid #FED7AA' }}>
+            {/* Báo Nghỉ Khẩn: mặc định ẨN với NV thử việc — chỉ hiện khi Admin/HR
+                kích hoạt 1 lượt duy nhất. Gửi xong phiếu là tự ẩn lại ngay. */}
+            {emergencyEnabled && (
+            <div className="card" style={{ border: '1.5px solid #F59E0B' }}>
               <h4 style={{ fontSize: '14px', fontWeight: 800, color: '#C2410C', marginBottom: '8px' }}>
                 🚨 Báo Nghỉ Đột Xuất (Khẩn Cấp)
               </h4>
               <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '10px' }}>
                 Dành cho các trường hợp ốm đau, tai nạn hoặc sự cố khẩn cấp. Dữ liệu sẽ chuyển thẳng đến HR Tab 10 và Google Sheets để phát lệnh bù ca.
               </p>
+              <div style={{ fontSize: '12px', color: '#92400E', backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '8px', padding: '8px 12px', marginBottom: '10px', fontWeight: 700 }}>
+                ✅ Admin đã kích hoạt cho bạn <strong>1 lần duy nhất</strong> — gửi xong phiếu này chức năng sẽ tự ẩn!
+              </div>
               <textarea
                 rows={2}
                 placeholder="Nhập lý do nghỉ khẩn (sốt cao, tai nạn, việc gia đình gấp)..."
@@ -3189,6 +3210,7 @@ export function App() {
                 Gửi Báo Nghỉ Khẩn Cấp (Đồng Bộ Realtime HR)
               </button>
             </div>
+            )}
           </div>
         )}
 

@@ -65,6 +65,11 @@ export const sendPinBody = z
   })
   .passthrough();
 
+// --- Kích hoạt Báo nghỉ khẩn 1 lần cho NV thử việc ---
+export const emergencyGrantBody = z.object({
+  employeeId: z.string().trim().min(1).max(64),
+});
+
 // --- Webhook Apps Script onEdit (body tự do, xác thực bằng secret header) ---
 export const webhookBody = z
   .object({

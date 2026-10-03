@@ -302,6 +302,8 @@ export function App() {
   const [swaps, setSwaps] = useState<any[]>([]);
   const [candidates, setCandidates] = useState<any[]>([]);
   const [payrollRuns, setPayrollRuns] = useState<any[]>([]);
+  // Lượt kích hoạt Báo nghỉ khẩn 1 lần cho NV thử việc: { [employeeId]: { grantedAt, grantedBy, usedAt? } }
+  const [emergencyGrants, setEmergencyGrants] = useState<Record<string, any>>({});
 
   // Live Notifications, Rich Toasts & Audio States (Admin & HR)
   const [liveToasts, setLiveToasts] = useState<LiveToastItem[]>([]);
@@ -673,6 +675,7 @@ export function App() {
         tasks.push(
           apiRequest('/admin/employee-accounts').then(eAccs => setEmployeeAccounts(eAccs || [])).catch(() => null),
           apiRequest('/applications').then(cList => setCandidates(cList || [])).catch(() => null),
+          apiRequest('/admin/emergency-leave/grants').then((g: any) => setEmergencyGrants(g?.grants || {})).catch(() => null),
         );
       }
 
@@ -1028,6 +1031,29 @@ export function App() {
     try {
       await apiRequest(`/employees/${employeeId}`, { method: 'DELETE' });
       setSuccessMsg(`Đã xóa hồ sơ nhân viên ${fullName} thành công!`);
+      setTimeout(() => setSuccessMsg(null), 3000);
+      await loadAllData();
+    } catch (err: any) {
+      setErrorMsg(err.message);
+    }
+  };
+
+  // Kích hoạt Báo nghỉ khẩn 1 lần cho NV (chủ yếu NV thử việc — mặc định bị ẩn).
+  // NV chỉ dùng được đúng 1 lần: gửi xong phiếu là lượt bị tiêu thụ, chức năng tự ẩn.
+  const handleGrantEmergency = async (employeeId: string, fullName: string) => {
+    if (!window.confirm(`Kích hoạt chức năng Báo nghỉ khẩn cho ${fullName} (${employeeId})?\n\nNhân viên chỉ dùng được ĐÚNG 1 LẦN — gửi xong phiếu là hệ thống tự ẩn chức năng này đi.`)) {
+      return;
+    }
+    try {
+      const res: any = await apiRequest('/admin/emergency-leave/grant', {
+        method: 'POST',
+        body: JSON.stringify({ employeeId }),
+      });
+      setEmergencyGrants(prev => ({
+        ...prev,
+        [employeeId]: { grantedAt: new Date().toISOString(), grantedBy: 'me', usedAt: null },
+      }));
+      setSuccessMsg(res?.message || `Đã kích hoạt báo nghỉ khẩn 1 lần cho ${fullName}!`);
       setTimeout(() => setSuccessMsg(null), 3000);
       await loadAllData();
     } catch (err: any) {
@@ -3110,21 +3136,61 @@ export function App() {
                           </span>
                         </td>
                         <td style={{ padding: '14px 20px' }}>
-                          <button
-                            onClick={() => handleDeleteEmployee(emp.employee_id, emp.full_name)}
-                            style={{
-                              padding: '6px 12px',
-                              borderRadius: 'var(--radius-sm)',
-                              border: '1px solid var(--danger)',
-                              backgroundColor: 'var(--danger-soft)',
-                              color: 'var(--danger)',
-                              fontWeight: 600,
-                              fontSize: '12px',
-                              cursor: 'pointer',
-                            }}
-                          >
-                            Xóa
-                          </button>
+                          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+                            {emp.employment_status === 'PROBATION' && (() => {
+                              const g = emergencyGrants[emp.employee_id];
+                              if (g && !g.usedAt) {
+                                return (
+                                  <span title={`Đã kích hoạt lúc ${new Date(g.grantedAt).toLocaleString('vi-VN')} — NV dùng 1 lần rồi tự ẩn`} style={{
+                                    padding: '6px 12px',
+                                    borderRadius: 'var(--radius-sm)',
+                                    backgroundColor: '#FEF3C7',
+                                    color: '#92400E',
+                                    border: '1px solid #FDE68A',
+                                    fontWeight: 700,
+                                    fontSize: '11px',
+                                    whiteSpace: 'nowrap',
+                                  }}>
+                                    🚨 Đã kích hoạt (chờ dùng)
+                                  </span>
+                                );
+                              }
+                              return (
+                                <button
+                                  onClick={() => handleGrantEmergency(emp.employee_id, emp.full_name)}
+                                  title="Mở chức năng Báo nghỉ khẩn cho NV này — chỉ dùng ĐÚNG 1 LẦN, gửi xong phiếu hệ thống tự ẩn"
+                                  style={{
+                                    padding: '6px 12px',
+                                    borderRadius: 'var(--radius-sm)',
+                                    border: '1px solid #F59E0B',
+                                    backgroundColor: '#FFFBEB',
+                                    color: '#92400E',
+                                    fontWeight: 700,
+                                    fontSize: '12px',
+                                    cursor: 'pointer',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  🚨 Kích hoạt nghỉ khẩn 1 lần{g?.usedAt ? ' (cấp lại)' : ''}
+                                </button>
+                              );
+                            })()}
+                            <button
+                              onClick={() => handleDeleteEmployee(emp.employee_id, emp.full_name)}
+                              style={{
+                                padding: '6px 12px',
+                                borderRadius: 'var(--radius-sm)',
+                                border: '1px solid var(--danger)',
+                                backgroundColor: 'var(--danger-soft)',
+                                color: 'var(--danger)',
+                                fontWeight: 600,
+                                fontSize: '12px',
+                                cursor: 'pointer',
+                              }}
+                            >
+                              Xóa
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}

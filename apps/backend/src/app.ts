@@ -97,6 +97,7 @@ import {
 } from './validators/hr.validator.js';
 import {
   backupCreateBody,
+  emergencyGrantBody,
   idParams as adminIdParams,
   internalAccountCreateBody,
   internalAccountUpdateBody,
@@ -583,6 +584,66 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const accounts = await adapter.listAccounts();
       // Không bao giờ lộ pin_hash qua API.
       res.json(accounts.map(({ pin_hash: _omit, ...rest }: any) => rest));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // --- BÁO NGHỈ KHẨN 1 LẦN cho NV thử việc (mặc định ẩn) ---
+  // Lượt kích hoạt lưu trong system settings (không đổi schema Sheet):
+  // emergencyLeaveGrants = { [employeeId]: { grantedAt, grantedBy, usedAt? } }.
+  // NV thử việc chỉ thấy + dùng được chức năng khi có lượt chưa dùng; gửi xong
+  // phiếu là lượt bị tiêu thụ ngay (chức năng tự ẩn lại).
+  const EMERGENCY_GRANT_KEY = 'emergencyLeaveGrants';
+  const readEmergencyGrants = async (): Promise<Record<string, any>> => {
+    try {
+      const settings = (await adapter.getSystemSettings()) || {};
+      return (settings as any)[EMERGENCY_GRANT_KEY] || {};
+    } catch {
+      return {};
+    }
+  };
+
+  // Admin/HR kích hoạt 1 lượt báo nghỉ khẩn cho 1 nhân viên (dùng 1 lần duy nhất).
+  app.post('/admin/emergency-leave/grant', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ body: emergencyGrantBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const employeeId = String(req.body.employeeId || '').trim();
+      const emp = await employeesService.getEmployee(employeeId).catch(() => null);
+      if (!emp) return res.status(404).json({ error: 'Không tìm thấy hồ sơ nhân viên' });
+      const settings = (await adapter.getSystemSettings()) || {};
+      const grants = { ...((settings as any)[EMERGENCY_GRANT_KEY] || {}) };
+      grants[employeeId] = { grantedAt: new Date().toISOString(), grantedBy: req.user!.id, usedAt: null };
+      await adapter.updateSystemSettings({ ...settings, [EMERGENCY_GRANT_KEY]: grants });
+      await adapter.recordAuditLog({
+        actor_id: req.user!.id,
+        action: 'EMERGENCY_LEAVE_GRANTED',
+        target_type: 'NHAN_VIEN_MASTER',
+        target_id: employeeId,
+      });
+      broadcastUpdate('emergencyLeave', { action: 'grant', employeeId });
+      res.json({ success: true, message: `Đã kích hoạt báo nghỉ khẩn 1 lần cho ${(emp as any).full_name || employeeId}` });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Admin/HR xem toàn bộ lượt kích hoạt (để hiển thị trạng thái chờ dùng/đã dùng).
+  app.get('/admin/emergency-leave/grants', authMiddleware, requireRole(['ADMIN', 'HR']), async (_req, res) => {
+    try {
+      res.json({ grants: await readEmergencyGrants() });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Nhân viên tự xem mình có lượt báo nghỉ khẩn chưa dùng không.
+  app.get('/me/emergency-leave-status', authMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const employeeId = req.user?.employeeId;
+      if (!employeeId) return res.json({ enabled: false });
+      const grants = await readEmergencyGrants();
+      const g = grants[employeeId];
+      res.json({ enabled: !!g && !g.usedAt });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -2187,11 +2248,39 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const emp = await employeesService.getEmployee(employeeId);
       const branchId = req.body.branchId || emp?.default_branch_id || 'CN130';
 
+      // NV thử việc: Báo nghỉ khẩn chỉ dùng được khi Admin/HR đã kích hoạt 1 lượt.
+      const isProbationEmergency =
+        (emp as any)?.employment_status === 'PROBATION' &&
+        String(req.body.leaveType || '') === 'DOT_XUAT' &&
+        String(req.body.reason || '').startsWith('[NGHỈ KHẨN CẤP]');
+      if (isProbationEmergency) {
+        const grants = await readEmergencyGrants();
+        const g = grants[employeeId];
+        if (!g || g.usedAt) {
+          return res.status(403).json({
+            error: 'EMERGENCY_LEAVE_NOT_GRANTED',
+            message: 'Chức năng Báo nghỉ khẩn chưa được kích hoạt cho bạn. Vui lòng báo Store/Admin để được mở 1 lượt dùng duy nhất!',
+          });
+        }
+      }
+
       const result = await schedulesService.requestLeave({
         ...req.body,
         employeeId,
         branchId,
       });
+      // Dùng xong là tiêu thụ lượt ngay — chức năng tự ẩn lại phía nhân viên.
+      if (isProbationEmergency) {
+        try {
+          const settings = (await adapter.getSystemSettings()) || {};
+          const grants = { ...((settings as any)[EMERGENCY_GRANT_KEY] || {}) };
+          if (grants[employeeId] && !grants[employeeId].usedAt) {
+            grants[employeeId] = { ...grants[employeeId], usedAt: new Date().toISOString() };
+            await adapter.updateSystemSettings({ ...settings, [EMERGENCY_GRANT_KEY]: grants });
+            broadcastUpdate('emergencyLeave', { action: 'used', employeeId });
+          }
+        } catch { /* best-effort: phiếu đã tạo thành công, lượt sẽ hết ở lần kiểm tra sau */ }
+      }
       broadcastUpdate('leaves', { action: 'create', leave: result.result });
       // Lịch OFF tuần tự động ghi nhận — không gửi phiếu duyệt. Chỉ báo đơn đột xuất.
       if (result.result.leave_type === 'DOT_XUAT') {
