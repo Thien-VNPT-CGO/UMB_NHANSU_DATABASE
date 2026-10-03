@@ -2,8 +2,9 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 
 /**
  * PremiumLogin — Màn hình đăng nhập SĐT + PIN 6 số cho cổng nhân viên UBM.
- * Senior UI/UX: Dark Fintech (Deep Navy / Indigo + Emerald), card 20px, layered shadow,
- * responsive mobile -> desktop, zero external dependencies (chỉ React).
+ * Senior UI/UX: tông HỒNG ban đầu (nền kem #FFF8F4 + brand #E85D92, success Emerald),
+ * card 20px bo mềm, đổ bóng đa tầng, responsive mobile -> desktop,
+ * zero external dependencies (chỉ React).
  *
  * Luồng 3 bước: phone -> pin (6 ô) -> success (SVG tick + confetti canvas).
  * Mặc định demo PIN đúng là `123456` khi không truyền `onLogin` (test ngay không cần backend).
@@ -85,7 +86,7 @@ export function PremiumLogin({
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const w = (canvas.width = Math.floor(canvas.offsetWidth * dpr));
     const h = (canvas.height = Math.floor(canvas.offsetHeight * dpr));
-    const colors = ['#10B981', '#34D399', '#6366F1', '#A5B4FC', '#F59E0B', '#F472B6', '#FFFFFF'];
+    const colors = ['#E85D92', '#F472B6', '#F9A8D4', '#10B981', '#34D399', '#F59E0B', '#FFFFFF'];
     const cx = w / 2;
     const cy = h * 0.38;
     const parts = Array.from({ length: 140 }, () => {
@@ -229,57 +230,56 @@ export function PremiumLogin({
     <div className="pl-root">
       <style>{`
         .pl-root { min-height: 100vh; min-height: 100dvh; display: flex; align-items: center; justify-content: center; padding: 20px 16px; position: relative; overflow: hidden;
-          background: radial-gradient(1100px 500px at 15% -5%, rgba(99,102,241,.38), transparent 60%), radial-gradient(900px 480px at 90% 110%, rgba(16,185,129,.22), transparent 60%), linear-gradient(160deg, #0B1026 0%, #141A3A 45%, #1E1B4B 100%); color: #EEF2FF;
+          background: radial-gradient(1000px 480px at 50% -8%, rgba(232,93,146,.16), transparent 60%), radial-gradient(800px 420px at 50% 115%, rgba(245,158,11,.10), transparent 60%), linear-gradient(180deg, #FFF8F4 0%, #FDF0F4 55%, #FBE7EE 100%); color: #273142;
           font-family: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
-        .pl-bg-grid { position: absolute; inset: 0; pointer-events: none; opacity: .5;
-          background-image: linear-gradient(rgba(255,255,255,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.045) 1px, transparent 1px);
+        .pl-bg-grid { position: absolute; inset: 0; pointer-events: none; opacity: .6;
+          background-image: linear-gradient(rgba(232,93,146,.07) 1px, transparent 1px), linear-gradient(90deg, rgba(232,93,146,.07) 1px, transparent 1px);
           background-size: 44px 44px; mask-image: radial-gradient(ellipse 90% 70% at 50% 40%, black 30%, transparent 75%); }
         .pl-orb { position: absolute; border-radius: 50%; filter: blur(70px); pointer-events: none; }
         .pl-card { position: relative; width: 100%; max-width: 420px; border-radius: 20px; padding: 28px 26px 24px;
-          background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.05));
-          border: 1px solid rgba(255,255,255,.14);
-          box-shadow: 0 1px 0 rgba(255,255,255,.15) inset, 0 20px 50px rgba(2,6,23,.55), 0 8px 20px rgba(79,70,229,.25), 0 0 0 8px rgba(99,102,241,.06);
-          backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }
+          background: #FFFFFF;
+          border: 1px solid #F0E2DE;
+          box-shadow: 0 1px 0 rgba(255,255,255,.9) inset, 0 20px 50px rgba(157,23,77,.12), 0 8px 20px rgba(232,93,146,.14), 0 0 0 8px rgba(232,93,146,.05); }
         .pl-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
         .pl-logo { width: 48px; height: 48px; border-radius: 16px; overflow: hidden; flex-shrink: 0;
-          background: linear-gradient(135deg,#6366F1,#10B981); display: flex; align-items: center; justify-content: center;
-          font-weight: 800; font-size: 20px; color: #fff; box-shadow: 0 8px 20px rgba(99,102,241,.45); border: 1px solid rgba(255,255,255,.25); }
+          background: linear-gradient(135deg,#E85D92,#D6457E); display: flex; align-items: center; justify-content: center;
+          font-weight: 800; font-size: 20px; color: #fff; box-shadow: 0 8px 20px rgba(232,93,146,.40); border: 2px solid #F8DDE7; }
         .pl-logo img { width: 100%; height: 100%; object-fit: cover; }
         .pl-steps { display: flex; gap: 6px; margin: 14px 0 18px; }
-        .pl-stepbar { height: 4px; flex: 1; border-radius: 999px; background: rgba(255,255,255,.14); overflow: hidden; }
-        .pl-stepbar > i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg,#818CF8,#34D399); transition: width .45s cubic-bezier(.16,1,.3,1); }
-        .pl-title { font-size: 22px; font-weight: 800; letter-spacing: -.02em; margin: 0 0 6px; }
-        .pl-sub { font-size: 13px; color: rgba(226,232,240,.75); margin: 0 0 18px; line-height: 1.55; }
-        .pl-field-label { font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: rgba(199,210,254,.9); margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
-        .pl-phone-wrap { display: flex; align-items: stretch; gap: 0; border-radius: 16px; overflow: hidden; border: 1.5px solid rgba(255,255,255,.16); background: rgba(2,6,23,.45); transition: border-color .2s, box-shadow .2s; }
-        .pl-phone-wrap:focus-within { border-color: #818CF8; box-shadow: 0 0 0 4px rgba(99,102,241,.25); }
-        .pl-phone-wrap.pl-err { border-color: #F87171; box-shadow: 0 0 0 4px rgba(248,113,113,.18); }
-        .pl-prefix { display: flex; align-items: center; gap: 6px; padding: 0 14px; font-weight: 800; font-size: 16px; color: #E0E7FF; background: rgba(99,102,241,.18); border-right: 1px solid rgba(255,255,255,.12); white-space: nowrap; }
-        .pl-phone-input { flex: 1; min-width: 0; border: none; outline: none; background: transparent; color: #fff; font-size: 19px; font-weight: 700; letter-spacing: .08em; padding: 15px 14px; }
-        .pl-phone-input::placeholder { color: rgba(148,163,184,.6); font-weight: 500; letter-spacing: .02em; }
-        .pl-hint { font-size: 12px; margin-top: 8px; min-height: 18px; color: rgba(252,165,165,.95); font-weight: 600; }
+        .pl-stepbar { height: 4px; flex: 1; border-radius: 999px; background: #F5D9E3; overflow: hidden; }
+        .pl-stepbar > i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg,#E85D92,#10B981); transition: width .45s cubic-bezier(.16,1,.3,1); }
+        .pl-title { font-size: 22px; font-weight: 800; letter-spacing: -.02em; margin: 0 0 6px; color: #273142; }
+        .pl-sub { font-size: 13px; color: #6B7280; margin: 0 0 18px; line-height: 1.55; }
+        .pl-field-label { font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #9D174D; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
+        .pl-phone-wrap { display: flex; align-items: stretch; gap: 0; border-radius: 16px; overflow: hidden; border: 1.5px solid #F0E2DE; background: #FFF8F4; transition: border-color .2s, box-shadow .2s; }
+        .pl-phone-wrap:focus-within { border-color: #E85D92; box-shadow: 0 0 0 4px rgba(232,93,146,.15); }
+        .pl-phone-wrap.pl-err { border-color: #EF4444; box-shadow: 0 0 0 4px rgba(239,68,68,.12); }
+        .pl-prefix { display: flex; align-items: center; gap: 6px; padding: 0 14px; font-weight: 800; font-size: 16px; color: #9D174D; background: #F8DDE7; border-right: 1px solid #F0E2DE; white-space: nowrap; }
+        .pl-phone-input { flex: 1; min-width: 0; border: none; outline: none; background: transparent; color: #273142; font-size: 19px; font-weight: 700; letter-spacing: .08em; padding: 15px 14px; }
+        .pl-phone-input::placeholder { color: #B6BFC9; font-weight: 500; letter-spacing: .02em; }
+        .pl-hint { font-size: 12px; margin-top: 8px; min-height: 18px; color: #DC2626; font-weight: 600; }
         .pl-btn { width: 100%; border: none; cursor: pointer; border-radius: 16px; padding: 15px 16px; font-size: 15px; font-weight: 800; letter-spacing: .01em; color: #fff; margin-top: 14px;
-          background: linear-gradient(135deg, #6366F1 0%, #4F46E5 55%, #059669 130%);
-          box-shadow: 0 10px 24px rgba(99,102,241,.45), 0 2px 6px rgba(16,185,129,.25), 0 1px 0 rgba(255,255,255,.25) inset;
+          background: linear-gradient(135deg, #E85D92 0%, #D6457E 100%);
+          box-shadow: 0 10px 24px rgba(232,93,146,.35), 0 2px 6px rgba(214,69,126,.25), 0 1px 0 rgba(255,255,255,.25) inset;
           transition: transform .12s ease, box-shadow .2s ease, filter .2s ease; display: flex; align-items: center; justify-content: center; gap: 8px; }
-        .pl-btn:hover:not(:disabled) { filter: brightness(1.08); box-shadow: 0 14px 32px rgba(99,102,241,.55), 0 2px 6px rgba(16,185,129,.3), 0 1px 0 rgba(255,255,255,.25) inset; transform: translateY(-1px); }
-        .pl-btn:active:not(:disabled) { transform: translateY(1px) scale(.99); }
+        .pl-btn:hover:not(:disabled) { filter: brightness(1.05); box-shadow: 0 14px 32px rgba(232,93,146,.45), 0 1px 0 rgba(255,255,255,.25) inset; transform: translateY(-1px); }
+        .pl-btn:active:not(:disabled) { transform: translateY(1px) scale(.99); background: #D6457E; }
         .pl-btn:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
         .pl-btn.pl-loading { pointer-events: none; opacity: .8; }
-        .pl-spinner { width: 17px; height: 17px; border-radius: 50%; border: 2.5px solid rgba(255,255,255,.35); border-top-color: #fff; animation: pl-spin .7s linear infinite; }
+        .pl-spinner { width: 17px; height: 17px; border-radius: 50%; border: 2.5px solid rgba(255,255,255,.4); border-top-color: #fff; animation: pl-spin .7s linear infinite; }
         @keyframes pl-spin { to { transform: rotate(360deg); } }
         .pl-pin-row { display: flex; gap: 10px; justify-content: center; margin: 6px 0 4px; }
-        .pl-pin-box { width: 48px; height: 56px; text-align: center; font-size: 24px; font-weight: 800; color: #fff; caret-color: #A5B4FC;
-          background: rgba(2,6,23,.5); border: 1.5px solid rgba(255,255,255,.16); border-radius: 16px; outline: none;
+        .pl-pin-box { width: 48px; height: 56px; text-align: center; font-size: 24px; font-weight: 800; color: #273142; caret-color: #E85D92;
+          background: #FFF8F4; border: 1.5px solid #F0E2DE; border-radius: 16px; outline: none;
           transition: border-color .18s, box-shadow .18s, transform .12s, background .18s; }
-        .pl-pin-box:focus { border-color: #818CF8; box-shadow: 0 0 0 4px rgba(99,102,241,.28); transform: translateY(-2px); background: rgba(30,27,75,.7); }
-        .pl-pin-box.pl-filled { border-color: rgba(52,211,153,.7); background: rgba(6,78,59,.35); }
-        .pl-pin-row.pl-err .pl-pin-box { border-color: #F87171; background: rgba(127,29,29,.35); }
+        .pl-pin-box:focus { border-color: #E85D92; box-shadow: 0 0 0 4px rgba(232,93,146,.15); transform: translateY(-2px); background: #FFFFFF; }
+        .pl-pin-box.pl-filled { border-color: #10B981; background: #DFF5E8; }
+        .pl-pin-row.pl-err .pl-pin-box { border-color: #EF4444; background: #FEE2E2; }
         @keyframes pl-shake { 0%,100% { transform: translateX(0); } 15% { transform: translateX(-9px); } 30% { transform: translateX(8px); } 45% { transform: translateX(-6px); } 60% { transform: translateX(5px); } 75% { transform: translateX(-3px); } 90% { transform: translateX(2px); } }
         .pl-shake { animation: pl-shake .45s ease; }
-        .pl-err-box { margin-top: 12px; font-size: 13px; font-weight: 600; color: #FECACA; background: rgba(127,29,29,.4); border: 1px solid rgba(248,113,113,.4); padding: 10px 12px; border-radius: 12px; line-height: 1.5; }
-        .pl-back { margin-top: 12px; width: 100%; background: transparent; border: none; color: rgba(199,210,254,.85); font-size: 13px; font-weight: 700; cursor: pointer; padding: 10px; border-radius: 10px; transition: background .15s; }
-        .pl-back:hover { background: rgba(255,255,255,.07); color: #fff; }
+        .pl-err-box { margin-top: 12px; font-size: 13px; font-weight: 600; color: #991B1B; background: #FEE2E2; border: 1px solid #FCA5A5; padding: 10px 12px; border-radius: 12px; line-height: 1.5; }
+        .pl-back { margin-top: 12px; width: 100%; background: transparent; border: none; color: #9D174D; font-size: 13px; font-weight: 700; cursor: pointer; padding: 10px; border-radius: 10px; transition: background .15s; }
+        .pl-back:hover { background: #F8DDE7; }
         .pl-success { text-align: center; padding: 8px 0 4px; position: relative; }
         .pl-confetti { position: absolute; inset: -26px; width: calc(100% + 52px); height: calc(100% + 52px); pointer-events: none; }
         .pl-check { width: 110px; height: 110px; margin: 6px auto 14px; }
@@ -289,13 +289,13 @@ export function PremiumLogin({
         @keyframes pl-fadeup { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
         .pl-fadeup { animation: pl-fadeup .6s cubic-bezier(.16,1,.3,1) both; }
         .pl-fadeup-1 { animation-delay: .85s; } .pl-fadeup-2 { animation-delay: 1s; } .pl-fadeup-3 { animation-delay: 1.15s; }
-        .pl-secure { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 16px; font-size: 11.5px; color: rgba(148,163,184,.9); }
+        .pl-secure { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 16px; font-size: 11.5px; color: #6B7280; }
         @media (max-width: 400px) { .pl-pin-box { width: 44px; height: 52px; } .pl-pin-row { gap: 8px; } .pl-card { padding: 24px 18px 20px; } }
       `}</style>
 
       <div className="pl-bg-grid" />
-      <div className="pl-orb" style={{ width: 320, height: 320, left: -90, top: -80, background: 'rgba(99,102,241,.35)' }} />
-      <div className="pl-orb" style={{ width: 260, height: 260, right: -70, bottom: -60, background: 'rgba(16,185,129,.28)' }} />
+      <div className="pl-orb" style={{ width: 320, height: 320, left: -90, top: -80, background: 'rgba(232,93,146,.22)' }} />
+      <div className="pl-orb" style={{ width: 260, height: 260, right: -70, bottom: -60, background: 'rgba(16,185,129,.16)' }} />
 
       <div className="pl-card">
         <div className="pl-brand">
@@ -304,10 +304,10 @@ export function PremiumLogin({
             <span style={{ display: 'none' }}>U</span>
           </div>
           <div>
-            <div style={{ fontWeight: 800, fontSize: 16, letterSpacing: '-.01em' }}>ỤM BÒ MILK</div>
-            <div style={{ fontSize: 11.5, color: 'rgba(199,210,254,.8)', fontWeight: 600, letterSpacing: '.08em' }}>CỔNG NHÂN VIÊN • V5.1</div>
+            <div style={{ fontWeight: 800, fontSize: 16, letterSpacing: '-.01em', color: '#E85D92' }}>ỤM BÒ MILK</div>
+            <div style={{ fontSize: 11.5, color: '#6B7280', fontWeight: 600, letterSpacing: '.08em' }}>CỔNG NHÂN VIÊN • V5.1</div>
           </div>
-          <div style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 800, color: '#6EE7B7', background: 'rgba(16,185,129,.15)', border: '1px solid rgba(52,211,153,.35)', padding: '4px 10px', borderRadius: 999 }}>
+          <div style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 800, color: '#065F46', background: '#DFF5E8', border: '1px solid #A7E3C5', padding: '4px 10px', borderRadius: 999 }}>
             ● Bảo mật
           </div>
         </div>
@@ -330,7 +330,7 @@ export function PremiumLogin({
             <p className="pl-sub">
               {step === 'phone'
                 ? 'Nhập số điện thoại đã đăng ký với HR để nhận mã PIN và vào cổng chấm công.'
-                : <>Xác thực SĐT <b style={{ color: '#fff' }}>{maskedPhone}</b> bằng mã PIN 6 số được cấp.</>}
+                : <>Xác thực SĐT <b style={{ color: '#E85D92' }}>{maskedPhone}</b> bằng mã PIN 6 số được cấp.</>}
             </p>
           </>
         )}
@@ -384,8 +384,8 @@ export function PremiumLogin({
               ))}
             </div>
             {(verifying || loading) && (
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 12, fontSize: 13, fontWeight: 700, color: '#A5B4FC' }}>
-                <span className="pl-spinner" /> Đang xác thực...
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 12, fontSize: 13, fontWeight: 700, color: '#E85D92' }}>
+                <span className="pl-spinner" style={{ borderColor: 'rgba(232,93,146,.3)', borderTopColor: '#E85D92' }} /> Đang xác thực...
               </div>
             )}
             {error && !verifying && !loading && <div className="pl-err-box">⚠️ {error}</div>}
@@ -411,13 +411,13 @@ export function PremiumLogin({
               <circle cx="55" cy="55" r="48" stroke="rgba(16,185,129,.25)" strokeWidth="12" />
               <path d="M36 56 L50 70 L75 42" stroke="#34D399" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
-            <div className="pl-fadeup pl-fadeup-1" style={{ fontSize: 21, fontWeight: 800 }}>Xác thực thành công</div>
-            <div className="pl-fadeup pl-fadeup-2" style={{ fontSize: 13, color: 'rgba(226,232,240,.75)', marginTop: 6 }}>
-              Xin chào <b style={{ color: '#fff' }}>{maskedPhone}</b> • Đang chuẩn bị chuyển hướng...
+            <div className="pl-fadeup pl-fadeup-1" style={{ fontSize: 21, fontWeight: 800, color: '#273142' }}>Xác thực thành công</div>
+            <div className="pl-fadeup pl-fadeup-2" style={{ fontSize: 13, color: '#6B7280', marginTop: 6 }}>
+              Xin chào <b style={{ color: '#E85D92' }}>{maskedPhone}</b> • Đang chuẩn bị chuyển hướng...
             </div>
             <div className="pl-fadeup pl-fadeup-3" style={{ display: 'flex', justifyContent: 'center', gap: 6, marginTop: 14 }}>
               {[0, 1, 2].map((i) => (
-                <span key={i} style={{ width: 8, height: 8, borderRadius: '50%', background: '#34D399', display: 'inline-block', animation: `pl-spin 1s ${i * 0.15}s infinite` }} />
+                <span key={i} style={{ width: 8, height: 8, borderRadius: '50%', background: '#10B981', display: 'inline-block', animation: `pl-spin 1s ${i * 0.15}s infinite` }} />
               ))}
             </div>
           </div>
