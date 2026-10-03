@@ -260,6 +260,11 @@ export class AttendanceService {
   }
 
   // --- Adjustments ---
+  /** Loại phiếu từ tiền tố [TYPE] trong lý do (để chống gửi trùng cùng ca). */
+  static adjustmentKindOf(reason: string): string {
+    return String(reason || '').match(/^\[([A-Z_]+)\]/)?.[1] || '';
+  }
+
   async requestAdjustment(data: {
     assignmentId: string;
     employeeId: string;
@@ -267,12 +272,28 @@ export class AttendanceService {
     reason: string;
     minutesRequested: number;
   }) {
-    const adjId = `ADJ_${Date.now()}`;
+    // ID duy nhất tuyệt đối (trước đây chỉ Date.now() -> 2 phiếu cùng mili giây
+    // sẽ trùng ID, bản ghi đè nhau, xóa/sửa chỉ trúng 1 bản).
+    const adjId = `ADJ_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
     return singleWriterQueue.enqueue({
       entityType: 'DIEU_CHINH_CONG',
       entityId: adjId,
       actorId: data.employeeId,
       execute: async () => {
+        // Chống trùng phiếu: cùng NV + cùng ca + cùng loại mà đã có phiếu PENDING
+        // (bấm đúp, mạng retry, gửi lại) thì từ chối tạo mới.
+        const kind = AttendanceService.adjustmentKindOf(data.reason);
+        const existing = await this.repo.listAttendanceAdjustments(undefined, data.employeeId).catch(() => []);
+        const dup = (existing || []).find((x: any) =>
+          (x as any).status === 'PENDING' &&
+          (x as any).assignment_id === data.assignmentId &&
+          (kind
+            ? AttendanceService.adjustmentKindOf((x as any).reason) === kind
+            : (x as any).reason === data.reason)
+        );
+        if (dup) {
+          throw new Error('ADJUSTMENT_DUPLICATE: Bạn đã có phiếu cùng ca đang chờ duyệt, không cần gửi lại! Chờ HR xử lý phiếu hiện tại.');
+        }
         return this.repo.createAttendanceAdjustment({
           adjustment_id: adjId,
           assignment_id: data.assignmentId,
@@ -431,6 +452,18 @@ export class AttendanceService {
       entityId: adjId,
       actorId: approverId,
       execute: async () => {
+        // HR bấm trùng (danh sách cũ, 2 người cùng duyệt, retry mạng): chỉ phiếu
+        // đang PENDING mới được xử lý — đã duyệt/từ chối/xóa thì báo rõ để tải lại.
+        const all = await this.repo.listAttendanceAdjustments().catch(() => []);
+        const fresh = (all || []).find((x: any) => x.adjustment_id === adjId);
+        if (!fresh) {
+          throw new Error('ADJUSTMENT_NOT_FOUND: Phiếu không tồn tại (có thể đã bị xóa). Tải lại danh sách!');
+        }
+        if ((fresh as any).status !== 'PENDING') {
+          const label = (fresh as any).status === 'APPROVED' ? 'đã duyệt'
+            : (fresh as any).status === 'REJECTED' ? 'đã từ chối' : (fresh as any).status;
+          throw new Error(`ADJUSTMENT_NOT_PENDING: Phiếu này ${label} rồi, không xử lý lại! Tải lại danh sách.`);
+        }
         const updated = await this.repo.updateAttendanceAdjustment(adjId, status, approverId, minutesApproved, note);
         // HR DUYỆT -> dựng lại bản ghi chấm công còn thiếu để lịch + realtime + lương
         // ghi nhận ca có đi làm (đồng bộ Sheets như mọi sự kiện). Từ chối -> giữ nguyên

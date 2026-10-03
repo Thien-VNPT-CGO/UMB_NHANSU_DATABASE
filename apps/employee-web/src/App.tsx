@@ -1609,6 +1609,8 @@ export function App() {
   };
 
   const handleAdjustmentSubmit = async () => {
+    // Chống bấm đúp gửi trùng phiếu (server cũng chặn trùng, đây là lớp báo sớm).
+    if (actionBusy === 'adj-submit') return;
     try {
       if (!adjustmentData.date) {
         showToast('⚠️ Vui lòng chọn ngày sự cố!');
@@ -1618,6 +1620,7 @@ export function App() {
         showToast('⚠️ Vui lòng nhập chi tiết lý do & bằng chứng!');
         return;
       }
+      setActionBusy('adj-submit');
       if (adjustmentData.type === 'NGHI_KHAN') {
         await apiRequest('/leaves', {
           method: 'POST',
@@ -1648,6 +1651,8 @@ export function App() {
       await loadEmployeeData(employee?.employee_id);
     } catch (err: any) {
       showToast(err.message || 'Lỗi khi gửi phiếu giải trình!');
+    } finally {
+      setActionBusy(null);
     }
   };
 
@@ -3837,9 +3842,11 @@ export function App() {
 
                 <button
                   className="btn-primary"
+                  disabled={actionBusy === 'adj-submit'}
                   onClick={handleAdjustmentSubmit}
+                  style={{ opacity: actionBusy === 'adj-submit' ? 0.6 : 1 }}
                 >
-                  {adjustmentData.type === 'NGHI_KHAN' ? 'Gửi Báo Nghỉ Khẩn Cấp Đến HR' : 'Gửi Phiếu Bổ Sung Công'}
+                  {actionBusy === 'adj-submit' ? '⏳ ĐANG GỬI...' : (adjustmentData.type === 'NGHI_KHAN' ? 'Gửi Báo Nghỉ Khẩn Cấp Đến HR' : 'Gửi Phiếu Bổ Sung Công')}
                 </button>
               </div>
             </div>
