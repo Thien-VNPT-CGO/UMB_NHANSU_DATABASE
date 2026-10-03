@@ -46,6 +46,23 @@ function assertDatesInCurrentWeek(dates: string[], now: Date = new Date()): { mo
   }
   return wk;
 }
+
+/**
+ * Ràng buộc đổi/tráo ca theo publish: chỉ ca đã được HR PUBLISH (NV đã thấy
+ * trên lịch) mới được đổi — ca DRAFT (nháp, HR chưa chốt) thì chặn cả 2 chiều.
+ * Ngược lại: tuần nào HR chưa publish thì tuần đó không đổi ca được.
+ */
+function assertShiftsPublished(shifts: (any | null | undefined)[]): void {
+  for (const s of shifts) {
+    if (!s) continue;
+    if ((s as any).status !== 'PUBLISHED') {
+      const day = String((s as any).date || '').slice(0, 10) || '?';
+      throw new Error(
+        `SWAP_SHIFT_NOT_PUBLISHED: Ca ngày ${day} chưa được HR publish (đang nháp) — chỉ đổi/tráo ca đã publish mà bạn đã thấy trên lịch. Báo HR publish lịch tuần này để mở đổi ca.`
+      );
+    }
+  }
+}
 import { canonicalBranch } from './auto-schedule.service.js';
 import { normSheetDate } from './employees.service.js';
 import { Server } from 'socket.io';
@@ -819,6 +836,8 @@ export class SchedulesService {
     if (data.targetAssignmentId && !tgtSh) throw new Error('SWAP_SHIFT_NOT_FOUND: Ca của đồng nghiệp không còn tồn tại.');
     if (reqSh && (reqSh as any).status === 'CANCELLED') throw new Error('SWAP_SHIFT_CANCELLED: Ca của bạn đã bị hủy, không thể đổi.');
     if (tgtSh && (tgtSh as any).status === 'CANCELLED') throw new Error('SWAP_SHIFT_CANCELLED: Ca của đồng nghiệp đã bị hủy, không thể đổi.');
+    // Lịch phải được HR publish (NV đã thấy) thì mới đổi — ca nháp chặn cả 2 chiều.
+    assertShiftsPublished([reqSh, tgtSh]);
     assertDatesInCurrentWeek(
       [reqSh ? (reqSh as any).date : '', tgtSh ? (tgtSh as any).date : ''].filter(Boolean)
     );
@@ -867,6 +886,7 @@ export class SchedulesService {
     const shift = await this.repo.getShiftById(data.requesterAssignmentId);
     if (!shift) throw new Error('SHIFT_NOT_FOUND_FOR_DISPATCH');
     if ((shift as any).status === 'CANCELLED') throw new Error('SWAP_SHIFT_CANCELLED: Ca cần người làm thay đã bị hủy.');
+    assertShiftsPublished([shift]);
     assertDatesInCurrentWeek([(shift as any).date]);
     const swapId = `DISP_${Date.now()}`;
     return singleWriterQueue.enqueue({
@@ -928,6 +948,8 @@ export class SchedulesService {
           if (rSh) dates.push((rSh as any).date);
           if (tSh) dates.push((tSh as any).date);
           if (dates.length > 0) assertDatesInCurrentWeek(dates);
+          // Ca phải còn ở trạng thái đã publish lúc B nhận (chặn ca bị gỡ/hủy sau khi gửi).
+          assertShiftsPublished([rSh, tSh]);
         }
 
         // NV tự thỏa thuận với nhau: B bấm Đồng ý là chuyển ca ngay,
@@ -1172,6 +1194,8 @@ export class SchedulesService {
           if (rSh) dates.push((rSh as any).date);
           if (tSh) dates.push((tSh as any).date);
           if (dates.length > 0) assertDatesInCurrentWeek(dates);
+          // HR duyệt cũng yêu cầu ca còn published (không duyệt ca nháp/hủy).
+          assertShiftsPublished([rSh, tSh]);
         }
 
         if (!accept) {

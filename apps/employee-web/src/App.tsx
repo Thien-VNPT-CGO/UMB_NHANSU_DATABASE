@@ -1283,6 +1283,13 @@ export function App() {
     const d = String(dateStr || '').slice(0, 10);
     return !!d && d >= wk.mon && d <= wk.sun;
   };
+  /** Chỉ ca HR đã PUBLISH (NV đã thấy trên lịch) mới được đổi/tráo — ca DRAFT
+   *  (nháp, HR chưa chốt) chặn cả 2 chiều; tuần nào chưa publish thì tuần đó
+   *  không đổi được. Server là lớp chặn cuối (SWAP_SHIFT_NOT_PUBLISHED). */
+  const isSwapReadyShift = (s: any) => !!s && s.status === 'PUBLISHED';
+  const swapReadyShifts = (list: any[]) => (list || []).filter((s: any) => inSwapWeek(s.date) && isSwapReadyShift(s));
+  const swapDraftCount = (list: any[]) => (list || []).filter((s: any) => inSwapWeek(s.date) && !isSwapReadyShift(s)).length;
+  const swapNotReadyMsg = (label: string) => `⛔ ${label} chưa được HR publish (đang nháp) — chỉ đổi ca đã publish mà bạn đã thấy trên lịch. Báo HR publish lịch tuần này để mở đổi ca.`;
   /**
    * Ca hiển thị realtime ở trang chủ: đang diễn ra > sắp tới hôm nay > ca cuối hôm nay.
    * Không có ca nào -> shift null (hiện trạng thái nghỉ).
@@ -1806,6 +1813,17 @@ export function App() {
     }
     if (!swapData.reason.trim()) {
       showToast('⚠️ Vui lòng nhập lý do đổi ca!');
+      return;
+    }
+    // Chặn sớm ca chưa publish (server cũng chặn SWAP_SHIFT_NOT_PUBLISHED).
+    const mySh = (myShifts || []).find((s: any) => s.assignment_id === swapData.myShift);
+    if (mySh && !isSwapReadyShift(mySh)) {
+      showToast(swapNotReadyMsg('Ca của bạn'));
+      return;
+    }
+    const tgtSh = (targetShifts || []).find((s: any) => s.assignment_id === swapData.targetShift);
+    if (tgtSh && !isSwapReadyShift(tgtSh)) {
+      showToast(swapNotReadyMsg('Ca của đồng nghiệp'));
       return;
     }
     setActionBusy('swap');
@@ -3910,21 +3928,24 @@ export function App() {
               {swapFormType === 1 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   <div style={{ backgroundColor: '#FDF2F8', padding: '10px', borderRadius: '8px', fontSize: '12px', color: '#9D174D' }}>
-                    📌 <strong>Đặc điểm:</strong> Cùng chi nhánh ({employee?.default_branch_id || 'CN130'}). Chỉ tráo ca <strong>trong tuần hiện tại</strong> ({swapWeekRange().mon} → {swapWeekRange().sun}) đã sắp lịch — ngoài tuần hệ thống từ chối.
+                    📌 <strong>Đặc điểm:</strong> Cùng chi nhánh ({employee?.default_branch_id || 'CN130'}). Chỉ tráo ca <strong>trong tuần hiện tại</strong> ({swapWeekRange().mon} → {swapWeekRange().sun}) <strong>đã được HR publish</strong> — ca nháp/chưa publish và ngoài tuần hệ thống đều từ chối.
+                    {swapDraftCount(myShifts) > 0 && (
+                      <><br />⚠️ Bạn có {swapDraftCount(myShifts)} ca tuần này chưa publish — báo HR publish để đổi được.</>
+                    )}
                   </div>
 
                   <div>
-                    <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Ca làm của bạn (Nhân viên A):</label>
+                    <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Ca làm của bạn (Nhân viên A — chỉ ca đã publish):</label>
                     <select
                       value={swapData.myShift}
                       onChange={(e) => setSwapData({ ...swapData, myShift: e.target.value })}
                       style={{ width: '100%' }}
                     >
                       <option value="">-- Chọn ca thật của bạn --</option>
-                      {myShifts.filter((s: any) => inSwapWeek(s.date)).length === 0 ? (
-                        <option value="">Chưa có ca nào trong tuần này</option>
+                      {swapReadyShifts(myShifts).length === 0 ? (
+                        <option value="">Chưa có ca publish nào trong tuần này</option>
                       ) : (
-                        myShifts.filter((s: any) => inSwapWeek(s.date)).map((s: any, idx: number) => (
+                        swapReadyShifts(myShifts).map((s: any, idx: number) => (
                           <option key={idx} value={s.assignment_id}>
                             {s.date} ({s.shift_code})
                           </option>
@@ -3997,19 +4018,22 @@ export function App() {
               {swapFormType === 2 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   <div style={{ backgroundColor: '#EFF6FF', padding: '10px', borderRadius: '8px', fontSize: '12px', color: '#1E40AF' }}>
-                    📌 <strong>Đặc điểm:</strong> Nhân viên B nhận làm thay ca cho A (B làm 2 ca/ngày). Chỉ nhờ ca <strong>trong tuần hiện tại</strong> ({swapWeekRange().mon} → {swapWeekRange().sun}) — ngoài tuần hệ thống từ chối.<br />
+                    📌 <strong>Đặc điểm:</strong> Nhân viên B nhận làm thay ca cho A (B làm 2 ca/ngày). Chỉ nhờ ca <strong>trong tuần hiện tại</strong> ({swapWeekRange().mon} → {swapWeekRange().sun}) <strong>đã được HR publish</strong> — ngoài tuần hệ thống từ chối.<br />
                     ⚠️ Tự thỏa thuận với nhau thì <strong>không</strong> có phụ cấp — chỉ ca do <strong>HR điều phối</strong> (mục trên) mới +30.000đ.
+                    {swapDraftCount(myShifts) > 0 && (
+                      <><br />⚠️ Bạn có {swapDraftCount(myShifts)} ca tuần này chưa publish — báo HR publish để nhờ được.</>
+                    )}
                   </div>
 
                   <div>
-                    <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Ca của bạn cần nhờ người làm thay:</label>
+                    <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Ca của bạn cần nhờ người làm thay (chỉ ca đã publish):</label>
                     <select
                       value={swapData.myShift}
                       onChange={(e) => setSwapData({ ...swapData, myShift: e.target.value })}
                       style={{ width: '100%' }}
                     >
                       <option value="">-- Chọn ca của bạn (tuần hiện tại) --</option>
-                      {myShifts.filter((s: any) => inSwapWeek(s.date)).map((s: any, idx: number) => (
+                      {swapReadyShifts(myShifts).map((s: any, idx: number) => (
                         <option key={s.assignment_id || idx} value={s.assignment_id}>
                           {s.date} ({s.shift_code})
                         </option>
@@ -4063,6 +4087,13 @@ export function App() {
                       if (!swapData.reason.trim()) {
                         showToast('⚠️ Vui lòng nhập lý do nhờ làm thay!');
                         return;
+                      }
+                      {
+                        const mySh = (myShifts || []).find((s: any) => s.assignment_id === swapData.myShift);
+                        if (mySh && !isSwapReadyShift(mySh)) {
+                          showToast(swapNotReadyMsg('Ca của bạn'));
+                          return;
+                        }
                       }
                       setActionBusy('swap');
                       try {
