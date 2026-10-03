@@ -860,6 +860,30 @@ export function App() {
 
   // Ca đang điểm danh (ngày 2 ca do tráo đổi: phải chọn đúng ca để check-in/out)
   const [attendShiftId, setAttendShiftId] = useState('');
+  /** Mật độ ca của chính NV: gom ca theo ngày (loại CANCELLED, khử trùng) để
+   *  biết mình có ngày nào làm 2 ca (đẩy nhanh thử việc) hay không. */
+  const shiftDensityOf = (list: any[]) => {
+    const seen = new Set<string>();
+    const byDate = new Map<string, any[]>();
+    for (const s of list || []) {
+      if (!s || s.status === 'CANCELLED') continue;
+      const key = s.assignment_id || `${s.date}|${s.shift_code}|${s.start_at}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const d = String(s.date || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) continue;
+      if (!byDate.has(d)) byDate.set(d, []);
+      byDate.get(d)!.push(s);
+    }
+    const multiDays: { date: string; count: number; codes: string }[] = [];
+    for (const [d, arr] of byDate) {
+      if (arr.length >= 2) {
+        multiDays.push({ date: d, count: arr.length, codes: arr.map((x: any) => String(x.shift_code || '')).join(' + ') });
+      }
+    }
+    multiDays.sort((a, b) => a.date.localeCompare(b.date));
+    return { total: seen.size, multiDays };
+  };
   /** Ngày hôm nay theo giờ VN (tránh lệch ngày UTC 00:00–07:00). */
   const vnTodayStr = () => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
   /** Chuẩn hóa mọi biến thể ngày về YYYY-MM-DD (mirror backend normSheetDate):
@@ -2287,6 +2311,27 @@ export function App() {
                   : 'Lịch làm việc chính thức tuần từ Thứ Hai đến Chủ Nhật.'}
               </p>
 
+              {/* NV thử việc: bạn có đang đẩy nhanh (2 ca/ngày) không */}
+              {isProbation && myShifts.length > 0 && (() => {
+                const density = shiftDensityOf(myShifts);
+                if (density.multiDays.length === 0) {
+                  return (
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', backgroundColor: '#F9FAFB', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '10px 12px', marginBottom: '12px', fontWeight: 600 }}>
+                      📅 Bạn đang làm chuẩn <strong>1 ca/ngày</strong> • Tổng <strong>{density.total} ca</strong> đã xếp. Muốn đẩy nhanh 2 ca/ngày thì báo Store xếp thêm ca.
+                    </div>
+                  );
+                }
+                return (
+                  <div style={{ fontSize: '12px', color: '#92400E', backgroundColor: '#FFFBEB', border: '1.5px solid #F59E0B', borderRadius: 'var(--radius-sm)', padding: '10px 12px', marginBottom: '12px', lineHeight: 1.6 }}>
+                    <div style={{ fontWeight: 800, fontSize: '13px' }}>⚡ Bạn đang đẩy nhanh: {density.multiDays.length} ngày làm 2 ca!</div>
+                    {density.multiDays.map(m => (
+                      <div key={m.date}>• <strong>{m.date.slice(8, 10)}/{m.date.slice(5, 7)}</strong>: {m.codes} ({m.count} ca)</div>
+                    ))}
+                    <div style={{ marginTop: '4px' }}>Tổng <strong>{density.total} ca</strong> đã xếp trong kỳ thử việc.</div>
+                  </div>
+                );
+              })()}
+
               {/* Schedule Days */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {myShifts.length === 0 ? (
@@ -2297,6 +2342,8 @@ export function App() {
                   myShifts.filter((s: any, i: number, arr: any[]) => !s.assignment_id || arr.findIndex((x: any) => x.assignment_id === s.assignment_id) === i).map((shift, idx) => {
                     const todayStr = vnTodayStr();
                     const isToday = shift.date === todayStr;
+                    // Ngày này có mấy ca (để gắn thẻ 2 ca/ngày khi đẩy nhanh thử việc).
+                    const dayShiftCount = myShifts.filter((x: any) => x?.status !== 'CANCELLED' && String(x?.date || '').slice(0, 10) === String(shift.date || '').slice(0, 10)).length;
                     const evts = (myAttendanceHistory || []).filter((e: any) => e.assignment_id === shift.assignment_id);
                     const hasCheckIn = evts.some((e: any) => e.type === 'CHECK_IN');
                     const hasCheckOut = evts.some((e: any) => e.type === 'CHECK_OUT');
@@ -2336,6 +2383,7 @@ export function App() {
                         <div>
                           <div style={{ fontWeight: 700, fontSize: '13px', color: titleColor }}>
                             {shift.date} {isToday && '• HÔM NAY'}
+                            {dayShiftCount >= 2 && ' • ⚡ 2 CA/NGÀY'}
                             {isComplete && ' • ✓ HOÀN THÀNH'}
                             {isAbsent && ' • 🔴 VẮNG'}
                             {isLocked && !isAbsent && ' • 🔒 KHÓA'}
@@ -3137,6 +3185,30 @@ export function App() {
               }}>
                 ✨ <strong>Quy tắc Thử việc:</strong> Nhân viên được <strong>tự đổi ca chính mình tự do</strong> (Ca làm ⇄ Nghỉ OFF) trong chu kỳ 12 ngày thử việc để chủ động sắp xếp thời gian làm quen công việc.
               </div>
+
+              {/* Mật độ ca hiện tại của bạn (để biết mình có đang 2 ca/ngày không) */}
+              {(() => {
+                const density = shiftDensityOf(myShifts);
+                if (myShifts.length === 0) return null;
+                return (
+                  <div style={{
+                    backgroundColor: density.multiDays.length > 0 ? '#FFFBEB' : '#F9FAFB',
+                    border: density.multiDays.length > 0 ? '1.5px solid #F59E0B' : '1px solid var(--border)',
+                    padding: '10px 12px',
+                    borderRadius: 'var(--radius-sm)',
+                    fontSize: '12px',
+                    color: density.multiDays.length > 0 ? '#92400E' : 'var(--text-muted)',
+                    marginBottom: '14px',
+                    lineHeight: 1.6,
+                  }}>
+                    {density.multiDays.length > 0 ? (
+                      <>⚡ <strong>Bạn đang đẩy nhanh:</strong> {density.multiDays.map(m => `${m.date.slice(8, 10)}/${m.date.slice(5, 7)} (${m.codes})`).join(' • ')} — tổng {density.total} ca đã xếp.</>
+                    ) : (
+                      <>📅 Hiện tại bạn làm <strong>1 ca/ngày</strong> — tổng <strong>{density.total} ca</strong> đã xếp. Muốn đẩy nhanh 2 ca/ngày thì báo Store xếp thêm ca.</>
+                    )}
+                  </div>
+                );
+              })()}
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <div>
