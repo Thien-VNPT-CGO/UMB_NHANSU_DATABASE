@@ -76,23 +76,12 @@ interface UserProfile {
 export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: any }>> = {
   ADMIN: [
     { id: 'dashboard', label: '1. Dashboard', icon: Building2 },
-    { id: 'internal-accounts', label: '2. Tài khoản & Phân quyền', icon: Shield },
-    { id: 'activation', label: '3. PIN & TK Nhân viên', icon: FileCheck },
-    { id: 'employees', label: '4. Quản lý Nhân viên', icon: Users },
-    { id: 'branches', label: '5. Chi nhánh & Ca làm', icon: Calendar },
-    { id: 'policies', label: '6. Chính sách hệ thống', icon: Sliders },
-    { id: 'notifications', label: '7. Thông báo hệ thống', icon: Bell },
-    { id: 'integrations', label: '8. Tích hợp & Đồng bộ', icon: Database },
-    { id: 'maintenance', label: '9. Bảo trì hệ thống', icon: Activity },
-    { id: 'audit', label: '10. Audit Log', icon: Clock },
-    { id: 'backup', label: '11. Backup & Recovery', icon: HardDrive },
-    { id: 'settings', label: '12. Cài đặt hệ thống', icon: Settings },
-    { id: 'hr-official', label: '13. Import NV Chính thức', icon: Users },
-    { id: 'hr-schedule', label: '14. Lịch làm việc', icon: Calendar },
-    { id: 'hr-leave', label: '15. Nghỉ OFF', icon: Clock },
-    { id: 'hr-swap', label: '16. Đổi ca', icon: RefreshCw },
-    { id: 'hr-attendance', label: '17. Chấm công realtime', icon: CheckCircle },
-    { id: 'hr-probation', label: '18. Nhân viên Thử việc', icon: Users },
+    { id: 'staff', label: '2. Nhân sự', icon: Users },
+    { id: 'accounts', label: '3. Tài khoản & PIN', icon: Shield },
+    { id: 'operations', label: '4. Vận hành ca & công', icon: Calendar },
+    { id: 'notify', label: '5. Thông báo', icon: Bell },
+    { id: 'system', label: '6. Cấu hình hệ thống', icon: Settings },
+    { id: 'safety', label: '7. Nhật ký & Sao lưu', icon: HardDrive },
   ],
   HR: [
     { id: 'hr-dashboard', label: '1. Dashboard HR', icon: Building2 },
@@ -148,6 +137,51 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'mkt-notifications', label: '9. Thông báo hệ thống', icon: Bell },
   ],
 };
+
+/** Gộp tab ADMIN 18 -> 7 (giữ đủ chức năng): ánh xạ id tab cũ (thông báo/toast/
+ *  tab đã lưu) về tab gộp. Vai trò khác giữ id cũ nên không ảnh hưởng. */
+export const ADMIN_TAB_ALIASES: Record<string, string> = {
+  employees: 'staff',
+  'hr-official': 'staff',
+  'hr-probation': 'staff',
+  'internal-accounts': 'accounts',
+  activation: 'accounts',
+  branches: 'operations',
+  'hr-schedule': 'operations',
+  'hr-leave': 'operations',
+  'hr-swap': 'operations',
+  'hr-attendance': 'operations',
+  notifications: 'notify',
+  policies: 'system',
+  integrations: 'system',
+  maintenance: 'system',
+  settings: 'system',
+  audit: 'safety',
+  backup: 'safety',
+};
+
+export function resolveAdminTab(role: string | undefined, tabId: string): string {
+  if (role === 'ADMIN' && ADMIN_TAB_ALIASES[tabId]) return ADMIN_TAB_ALIASES[tabId];
+  return tabId;
+}
+
+/** Nav neo trong tab gộp (ADMIN 7 tab): cuộn tới từng mục, không cần state dùng chung. */
+export function SecNav({ items }: { items: Array<[string, string]> }) {
+  return (
+    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+      {items.map(([id, label]) => (
+        <button
+          key={id}
+          className="btn-secondary"
+          style={{ fontSize: '12px', padding: '6px 12px' }}
+          onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 // Quy chuẩn hiển thị chi nhánh: Khối văn phòng & sales => Trụ sở chính, Xưởng => Củ Chi, Store => theo chi nhánh cụ thể
 export function getDisplayBranch(branchId?: string, group?: string): string {
@@ -756,13 +790,18 @@ export function App() {
     }
   }, [activeTab]);
 
-  // Tab đã lưu có thể không còn tồn tại (VD tab bị gỡ bỏ) -> về tab đầu của vai trò.
+  // Tab đã lưu có thể không còn tồn tại (VD tab bị gỡ bỏ/gộp) -> về tab đầu của vai trò.
   useEffect(() => {
     const tabs = ROLE_TABS[currentUser?.role || 'ADMIN'] || [];
     if (activeTab && tabs.length > 0 && !tabs.some(t => t.id === activeTab)) {
       setActiveTab(tabs[0].id);
     }
   }, [activeTab, currentUser?.role]);
+
+  // Chuyển tab có phân giải id cũ (thông báo/toast từ server còn trỏ tab trước khi gộp).
+  const goTab = (tabId: string) => {
+    setActiveTab(resolveAdminTab(currentUser?.role, tabId));
+  };
 
   // Hiệu ứng âm thanh micro-click cho mọi nút bấm chức năng của Admin & HR
   useEffect(() => {
@@ -2037,7 +2076,7 @@ export function App() {
                             key={notif.id || idx}
                             onClick={() => {
                               if (notif.linkTab) {
-                                setActiveTab(notif.linkTab);
+                                goTab(notif.linkTab);
                                 setShowNotifPopover(false);
                               }
                             }}
@@ -2201,7 +2240,7 @@ export function App() {
                     {toast.linkTab && (
                       <button
                         onClick={() => {
-                          setActiveTab(toast.linkTab!);
+                          goTab(toast.linkTab!);
                           setLiveToasts((prev) => prev.filter((t) => t.id !== toast.id));
                         }}
                         style={{
@@ -2500,8 +2539,9 @@ export function App() {
           {/* ========================================================= */}
           {/* MODULE 2: TÀI KHOẢN & PHÂN QUYỀN NỘI BỘ */}
           {/* ========================================================= */}
-          {activeTab === 'internal-accounts' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          {activeTab === 'accounts' && (
+            <div id="sec-accounts-internal" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              <SecNav items={[['sec-accounts-internal', 'Tài khoản nội bộ'], ['sec-accounts-pin', 'PIN & TK nhân viên']]} />
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
                   <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>2. Quản Lý Tài Khoản Nội Bộ & Phân Quyền</h1>
@@ -2616,8 +2656,8 @@ export function App() {
           {/* ========================================================= */}
           {/* MODULE 3: PIN & TÀI KHOẢN NHÂN VIÊN (6 SUB-TABS) */}
           {/* ========================================================= */}
-          {activeTab === 'activation' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          {(activeTab === 'activation' || activeTab === 'accounts') && (
+            <div id="sec-accounts-pin" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               <div>
                 <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>3. PIN & Quản Lý Tài Khoản Nhân Viên</h1>
                   <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Phân nhóm theo 6 tab nghiệp vụ: Tất cả, Thử việc, Chính thức, Văn Phòng, Xưởng, Sales. Nhân viên đăng nhập trên Cổng Employee Web bằng SĐT + mã PIN 6 số (tự sinh), rồi đặt PIN riêng ngay lần đầu. PIN chưa đủ 6 số sẽ bị hệ thống tự động reset và bắt NV đổi lại.</p>
@@ -3016,8 +3056,9 @@ export function App() {
           {/* ========================================================= */}
           {/* MODULE 4: QUẢN LÝ NHÂN VIÊN */}
           {/* ========================================================= */}
-          {activeTab === 'employees' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          {activeTab === 'staff' && (
+            <div id="sec-staff-list" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              <SecNav items={[['sec-staff-list', 'Danh sách nhân viên'], ['sec-official', 'NV chính thức'], ['sec-probation', 'NV thử việc']]} />
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
                   <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>4. Quản Lý Hồ Sơ & Lộ Trình Nhân Viên</h1>
@@ -3247,8 +3288,9 @@ export function App() {
           {/* ========================================================= */}
           {/* MODULE 5: CHI NHÁNH & CA LÀM */}
           {/* ========================================================= */}
-          {activeTab === 'branches' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+          {activeTab === 'operations' && (
+            <div id="sec-branches" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+              <SecNav items={[['sec-branches', 'Chi nhánh & ca'], ['sec-schedule', 'Lịch làm việc'], ['sec-leave', 'Nghỉ OFF'], ['sec-swap', 'Đổi ca'], ['sec-attendance', 'Chấm công']]} />
               <div>
                 <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>5. Quản Lý Chi Nhánh & Cấu Hình Ca Làm</h1>
                 <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Tọa độ GPS, bán kính quét hợp lệ (300m), định biên nhân sự và khung giờ ca 1/2/3</p>
@@ -3312,8 +3354,9 @@ export function App() {
           {/* ========================================================= */}
           {/* MODULE 6: CHÍNH SÁCH HỆ THỐNG */}
           {/* ========================================================= */}
-          {activeTab === 'policies' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '800px' }}>
+          {activeTab === 'system' && (
+            <div id="sec-policies" style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '800px' }}>
+              <SecNav items={[['sec-policies', 'Chính sách'], ['sec-integrations', 'Tích hợp & đồng bộ'], ['sec-maintenance', 'Bảo trì'], ['sec-settings', 'Cài đặt']]} />
               <div>
                 <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>6. Cấu Hình Chính Sách Hệ Thống</h1>
                 <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Cửa sổ điểm danh, bán kính GPS, đăng ký OFF tuần và tiêu chuẩn bài kiểm tra TEST</p>
@@ -3407,7 +3450,7 @@ export function App() {
           {/* ========================================================= */}
           {/* MODULE 7: THÔNG BÁO HỆ THỐNG */}
           {/* ========================================================= */}
-          {activeTab === 'notifications' && (
+          {activeTab === 'notify' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
@@ -3478,8 +3521,8 @@ export function App() {
           {/* ========================================================= */}
           {/* MODULE 8: TÍCH HỢP & ĐỒNG BỘ */}
           {/* ========================================================= */}
-          {activeTab === 'integrations' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+          {activeTab === 'system' && (
+            <div id="sec-integrations" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
               <div>
                 <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>8. Tích Hợp & Đồng Bộ Google Sheets Master</h1>
                 <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Cấu trúc 13 Tabs Google Sheets Master, Google Drive Receipts, Realtime Socket.IO & Sequential Queue</p>
@@ -3652,8 +3695,8 @@ export function App() {
           {/* ========================================================= */}
           {/* MODULE 9: BẢO TRÌ HỆ THỐNG */}
           {/* ========================================================= */}
-          {activeTab === 'maintenance' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '800px' }}>
+          {activeTab === 'system' && (
+            <div id="sec-maintenance" style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '800px' }}>
               <div>
                 <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>9. Quản Lý Chế Độ Bảo Trì Kỹ Thuật</h1>
                 <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Bật/tắt bảo trì toàn hệ thống, Web nhân viên hoặc từng phân hệ riêng biệt</p>
@@ -3736,8 +3779,9 @@ export function App() {
           {/* ========================================================= */}
           {/* MODULE 10: AUDIT LOG */}
           {/* ========================================================= */}
-          {activeTab === 'audit' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          {activeTab === 'safety' && (
+            <div id="sec-audit" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              <SecNav items={[['sec-audit', 'Audit log'], ['sec-backup', 'Backup & Recovery']]} />
               <div>
                 <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>10. Nhật Ký Hệ Thống Bất Biến (Audit Trail)</h1>
                 <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Ghi lại toàn bộ hành động: Actor ID, Hành động, Đối tượng, Thời gian và JSON Before/After</p>
@@ -3779,8 +3823,8 @@ export function App() {
           {/* ========================================================= */}
           {/* MODULE 11: BACKUP & RECOVERY */}
           {/* ========================================================= */}
-          {activeTab === 'backup' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          {activeTab === 'safety' && (
+            <div id="sec-backup" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
                   <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>11. Sao Lưu & Phục Hồi Dữ Liệu (Backup & Recovery)</h1>
@@ -3869,8 +3913,8 @@ export function App() {
           {/* ========================================================= */}
           {/* MODULE 12: CÀI ĐẶT HỆ THỐNG */}
           {/* ========================================================= */}
-          {activeTab === 'settings' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '800px' }}>
+          {activeTab === 'system' && (
+            <div id="sec-settings" style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '800px' }}>
               <div>
                 <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>12. Cài Đặt Tham Số Kỹ Thuật Hệ Thống</h1>
                 <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Logo, tên hệ thống, định dạng ngày giờ, múi giờ và thời gian hết hạn phiên làm việc</p>

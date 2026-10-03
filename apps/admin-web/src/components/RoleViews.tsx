@@ -1295,13 +1295,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     if (activeTab === 'hr-reports') {
       loadMonthlyReport();
     }
-    if (activeTab === 'hr-probation') {
+    if (activeTab === 'hr-probation' || activeTab === 'staff') {
       loadAssessments();
     }
     if (activeTab === 'hr-adjustments') {
       loadAdjustments();
     }
-    if (activeTab === 'hr-swap') {
+    if (activeTab === 'hr-swap' || activeTab === 'operations') {
       loadSwaps();
     }
   }, [activeTab]);
@@ -1676,22 +1676,22 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   };
 
   useEffect(() => {
-    if (activeTab === 'hr-attendance' || activeTab === 'hr-schedule') {
+    if (activeTab === 'hr-attendance' || activeTab === 'hr-schedule' || activeTab === 'operations') {
       reloadAttEvents();
     }
-    if (activeTab === 'hr-attendance') {
+    if (activeTab === 'hr-attendance' || activeTab === 'operations') {
       loadPhotoStats(exportAttDate);
     }
   }, [activeTab]);
   useEffect(() => {
-    if (activeTab !== 'hr-attendance') return;
+    if (activeTab !== 'hr-attendance' && activeTab !== 'operations') return;
     reloadAttEvents();
     const t = setInterval(() => reloadAttEvents(), 30000);
     return () => clearInterval(t);
   }, [activeTab]);
   useEffect(() => {
     // Lưới lịch cũng tự refresh 60s để trạng thái ca (vắng/khóa/hoàn thành) luôn khớp server
-    if (activeTab !== 'hr-schedule') return;
+    if (activeTab !== 'hr-schedule' && activeTab !== 'operations') return;
     const t = setInterval(() => {
       apiRequest('/attendance/events')
         .then((data) => setLiveAttendanceEvents(Array.isArray(data) ? data : []))
@@ -4045,7 +4045,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     );
   }
 
-  if (activeTab === 'hr-probation') {
+  if (activeTab === 'hr-probation' || activeTab === 'staff') {
     // Mật độ ca thử việc: gom ca theo ngày (loại CANCELLED, khử trùng assignment_id).
     // Bạn nào muốn đẩy nhanh (2 ca/ngày) sẽ lộ ở đây: maxPerDay >= 2 + danh sách ngày.
     const probationShiftDensity = (empId: string): { maxPerDay: number; total: number; multiDays: { date: string; count: number; codes: string }[] } => {
@@ -4130,7 +4130,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       return p !== null && p.left <= 3;
     }).length;
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      <div id="sec-probation" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         {/* Header Action Bar */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
           <div>
@@ -4795,7 +4795,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     );
   }
 
-  if (activeTab === 'hr-official') {
+  if (activeTab === 'hr-official' || activeTab === 'staff') {
     const officialEmps = allEmployees.filter((e) => e.employment_status === 'OFFICIAL');
     const filteredOfficialEmps = officialEmps.filter((emp) => {
       if (officialBranchFilter !== 'ALL' && emp.default_branch_id !== officialBranchFilter && emp.branch_id !== officialBranchFilter) {
@@ -4812,7 +4812,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     });
 
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      <div id="sec-official" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         {/* Header Action Bar */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
           <div>
@@ -5672,7 +5672,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     );
   }
 
-  if (activeTab === 'hr-schedule') {
+  if (activeTab === 'hr-schedule' || activeTab === 'operations') {
     // Dynamic calculation of week days (Monday -> Sunday) + chuyển tuần trước/sau.
     // Nhân viên đăng ký OFF 2 ngày cho TUẦN SAU (T6 09h → T7 09h) → bấm "Tuần sau" để xem OFF + ca đã xếp.
     const now = new Date();
@@ -5938,7 +5938,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     });
 
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      <div id="sec-schedule" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         {/* Top Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
           <div>
@@ -6709,7 +6709,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     );
   }
 
-  if (activeTab === 'hr-leave') {
+  if (activeTab === 'hr-leave' || activeTab === 'operations') {
     // Lịch OFF tuần tự động ghi nhận — gom theo nhân viên + tuần Mon-Sun để HR/Admin theo dõi.
     // Bỏ bản REJECTED/CANCELLED (đăng ký cũ đã thay thế) để đồng bộ số ngày thực tế.
     const weeklyOffLeaves = (leaves || []).filter((l: any) =>
@@ -6760,7 +6760,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       .sort((a: any, b: any) => b.week.localeCompare(a.week));
     const weeklyOffBranchOptions = Array.from(new Set(weeklyOffLeaves.map((l: any) => l.branch_id).filter(Boolean)));
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      <div id="sec-leave" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h1 style={{ fontSize: '20px', fontWeight: 800 }}>8. Lịch OFF 2 ngày/tuần</h1>
         </div>
@@ -6906,9 +6906,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     );
   }
 
-  if (activeTab === 'hr-swap') {
+  if (activeTab === 'hr-swap' || activeTab === 'operations') {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      <div id="sec-swap" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <h1 style={{ fontSize: '20px', fontWeight: 800 }}>9. Giám Sát & Điều Phối Đổi Ca / Nhường Ca</h1>
@@ -7065,7 +7065,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     );
   }
 
-  if (activeTab === 'hr-attendance') {
+  if (activeTab === 'hr-attendance' || activeTab === 'operations') {
     // Lưới tuần Mon–CN như lịch làm việc: 1 ô = các ca trong ngày kèm đúng trạng thái
     const attMon = mondayIsoOfOffset(attWeekOffset);
     const attDays = [0, 1, 2, 3, 4, 5, 6].map(i => {
@@ -7180,7 +7180,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       return items;
     };
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      <div id="sec-attendance" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <h1 style={{ fontSize: '20px', fontWeight: 800 }}>10. Bảng Chấm Công Thời Gian Thực</h1>
