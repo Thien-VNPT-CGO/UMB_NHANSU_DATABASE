@@ -484,6 +484,7 @@ export function App() {
   });
   // Ca thật của NV B (tải khi chọn B) + trạng thái bận chung cho các nút gửi
   const [targetShifts, setTargetShifts] = useState<any[]>([]);
+  const [targetShiftsLoading, setTargetShiftsLoading] = useState(false);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   // Phiếu đổi ca liên quan đến tôi (gửi đi + chờ tôi xác nhận)
   const [mySwaps, setMySwaps] = useState<any[]>([]);
@@ -1788,7 +1789,11 @@ export function App() {
   // Dùng API /me/colleague-shifts (xác thực theo chi nhánh hồ sơ, không dính scope token cũ).
   const loadTargetShifts = async (targetEmployeeId: string) => {
     setTargetShifts([]);
-    if (!targetEmployeeId) return;
+    if (!targetEmployeeId) {
+      setTargetShiftsLoading(false);
+      return;
+    }
+    setTargetShiftsLoading(true);
     const pickPublished = (all: any) =>
       setTargetShifts(Array.isArray(all) ? all.filter((s: any) => s.status === 'PUBLISHED') : []);
     try {
@@ -1814,6 +1819,8 @@ export function App() {
         return;
       }
       showToast(err.message || 'Không tải được lịch của đồng nghiệp!');
+    } finally {
+      setTargetShiftsLoading(false);
     }
   };
 
@@ -3983,15 +3990,24 @@ export function App() {
                       style={{ width: '100%' }}
                     >
                       <option value="">-- Chọn ca thật của bạn --</option>
-                      {swapReadyShifts(myShifts).length === 0 ? (
-                        <option value="">Chưa có ca publish nào trong tuần này</option>
-                      ) : (
-                        swapReadyShifts(myShifts).map((s: any, idx: number) => (
-                          <option key={idx} value={s.assignment_id}>
-                            {s.date} ({s.shift_code})
+                      {(() => {
+                        const ready = swapReadyShifts(myShifts);
+                        if (ready.length > 0) {
+                          return ready.map((s: any, idx: number) => (
+                            <option key={idx} value={s.assignment_id}>
+                              {s.date} ({s.shift_code})
+                            </option>
+                          ));
+                        }
+                        const hasAny = (myShifts || []).some((s: any) => inSwapWeek(s.date));
+                        return (
+                          <option value="">
+                            {hasAny
+                              ? 'Chưa có ca publish nào — HR chưa publish lịch (báo HR publish)'
+                              : 'Chưa có lịch từ tuần hiện tại trở đi — báo HR xếp lịch & publish'}
                           </option>
-                        ))
-                      )}
+                        );
+                      })()}
                     </select>
                   </div>
 
@@ -4025,8 +4041,11 @@ export function App() {
                       style={{ width: '100%' }}
                     >
                       <option value="">-- Chọn ca thật của B (tuần hiện tại trở đi) --</option>
-                      {swapData.targetEmployeeId && targetShifts.filter((s: any) => inSwapWeek(s.date)).length === 0 && (
-                        <option value="">B chưa có ca publish nào — báo HR publish lịch cho B</option>
+                      {targetShiftsLoading && (
+                        <option value="">⏳ Đang tải lịch của B...</option>
+                      )}
+                      {!targetShiftsLoading && swapData.targetEmployeeId && targetShifts.filter((s: any) => inSwapWeek(s.date)).length === 0 && (
+                        <option value="">B chưa có ca publish nào từ tuần hiện tại trở đi — báo HR publish lịch cho B</option>
                       )}
                       {targetShifts.filter((s: any) => inSwapWeek(s.date)).map((s: any, idx: number) => (
                         <option key={idx} value={s.assignment_id}>
@@ -4079,12 +4098,25 @@ export function App() {
                       onChange={(e) => setSwapData({ ...swapData, myShift: e.target.value })}
                       style={{ width: '100%' }}
                     >
-                      <option value="">-- Chọn ca của bạn (tuần hiện tại) --</option>
-                      {swapReadyShifts(myShifts).map((s: any, idx: number) => (
-                        <option key={s.assignment_id || idx} value={s.assignment_id}>
-                          {s.date} ({s.shift_code})
-                        </option>
-                      ))}
+                      <option value="">-- Chọn ca của bạn (tuần hiện tại trở đi) --</option>
+                      {(() => {
+                        const ready = swapReadyShifts(myShifts);
+                        if (ready.length > 0) {
+                          return ready.map((s: any, idx: number) => (
+                            <option key={s.assignment_id || idx} value={s.assignment_id}>
+                              {s.date} ({s.shift_code})
+                            </option>
+                          ));
+                        }
+                        const hasAny = (myShifts || []).some((s: any) => inSwapWeek(s.date));
+                        return (
+                          <option value="">
+                            {hasAny
+                              ? 'Chưa có ca publish nào — HR chưa publish lịch (báo HR publish)'
+                              : 'Chưa có lịch từ tuần hiện tại trở đi — báo HR xếp lịch & publish'}
+                          </option>
+                        );
+                      })()}
                     </select>
                   </div>
 
