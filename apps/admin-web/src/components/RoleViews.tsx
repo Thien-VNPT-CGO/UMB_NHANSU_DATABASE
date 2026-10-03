@@ -7796,7 +7796,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           : 'Đã từ chối phiếu (giữ nguyên vi phạm/phạt)!');
         await loadAdjustments();
         if (onRefreshData) await onRefreshData();
-        if (onSyncSheets) await onSyncSheets();
       } catch (e: any) {
         // Thao tác rớt (VD phiếu đã được xử lý ở máy khác) -> tải lại ngay để
         // hàng cũ biến mất, HR không bấm lỗi lặp trên dữ liệu đã cũ.
@@ -7804,6 +7803,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         showToast(e?.message || 'Lỗi khi duyệt!');
       } finally {
         setAdjBusy(null);
+      }
+      // Đồng bộ Sheets chạy nền, không giữ nút (tránh kẹt disabled khi mạng chậm).
+      if (onSyncSheets) {
+        try {
+          const r = onSyncSheets();
+          if (r && typeof (r as any).catch === 'function') (r as any).catch(() => null);
+        } catch { /* bỏ qua */ }
       }
     };
     const renderAdjRows = (list: any[], isPending: boolean) =>
@@ -7829,8 +7835,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <td style={{ padding: '12px 20px' }}>
               {isPending ? (
                 <div style={{ display: 'flex', gap: '6px' }}>
-                  <button className="btn-primary" style={{ padding: '4px 10px', fontSize: '12px' }} disabled={adjBusy === a.adjustment_id} onClick={() => reviewAdj(a, 'APPROVED')}>Duyệt</button>
-                  <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: '12px', color: '#DC2626' }} disabled={adjBusy === a.adjustment_id} onClick={() => reviewAdj(a, 'REJECTED')}>Từ chối</button>
+                  <button className="btn-primary" style={{ padding: '4px 10px', fontSize: '12px' }} disabled={adjBusy === a.adjustment_id} onClick={() => reviewAdj(a, 'APPROVED')}>{adjBusy === a.adjustment_id ? '⏳...' : 'Duyệt'}</button>
+                  <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: '12px', color: '#DC2626' }} disabled={adjBusy === a.adjustment_id} onClick={() => reviewAdj(a, 'REJECTED')}>{adjBusy === a.adjustment_id ? '⏳...' : 'Từ chối'}</button>
                   <button
                     className="btn-secondary"
                     style={{ padding: '4px 10px', fontSize: '12px', color: '#DC2626' }}
@@ -7844,26 +7850,39 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         showToast('Đã xóa phiếu khỏi hệ thống!');
                         await loadAdjustments();
                         if (onRefreshData) await onRefreshData();
-                        if (onSyncSheets) await onSyncSheets();
                       } catch (e: any) {
                         await loadAdjustments().catch(() => null);
                         showToast(e?.message || 'Lỗi khi xóa!');
                       } finally {
                         setAdjBusy(null);
                       }
+                      if (onSyncSheets) {
+                        try {
+                          const r = onSyncSheets();
+                          if (r && typeof (r as any).catch === 'function') (r as any).catch(() => null);
+                        } catch { /* bỏ qua */ }
+                      }
                     }}
                   >
-                    Xóa
+                    {adjBusy === a.adjustment_id ? '⏳...' : 'Xóa'}
                   </button>
                 </div>
               ) : (
                 <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                   <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Đã xử lý</span>
+                  {a.status === 'APPROVED' ? (
+                    <span
+                      title="Phiếu đã duyệt và dựng công — bị khóa cứng, không được xóa để khỏi mồ côi dữ liệu lương."
+                      style={{ padding: '4px 10px', fontSize: '12px', fontWeight: 700, color: '#9CA3AF', backgroundColor: '#F3F4F6', borderRadius: '6px', border: '1px solid #E5E7EB', cursor: 'not-allowed' }}
+                    >
+                      🔒 Khóa
+                    </span>
+                  ) : (
                   <button
                     className="btn-secondary"
                     style={{ padding: '4px 10px', fontSize: '12px', color: '#DC2626' }}
                     disabled={adjBusy === a.adjustment_id}
-                    title="Xóa cứng phiếu khỏi hệ thống (bộ nhớ + Sheet). Phiếu đã duyệt bị khóa, không xóa được."
+                    title="Xóa cứng phiếu khỏi hệ thống (bộ nhớ + Sheet)."
                     onClick={async () => {
                       if (!window.confirm(`Xóa cứng phiếu ${a.adjustment_id} khỏi hệ thống (không khôi phục)?`)) return;
                       setAdjBusy(a.adjustment_id);
@@ -7872,17 +7891,23 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         showToast('Đã xóa phiếu khỏi hệ thống!');
                         await loadAdjustments();
                         if (onRefreshData) await onRefreshData();
-                        if (onSyncSheets) await onSyncSheets();
                       } catch (e: any) {
                         await loadAdjustments().catch(() => null);
                         showToast(e?.message || 'Lỗi khi xóa!');
                       } finally {
                         setAdjBusy(null);
                       }
+                      if (onSyncSheets) {
+                        try {
+                          const r = onSyncSheets();
+                          if (r && typeof (r as any).catch === 'function') (r as any).catch(() => null);
+                        } catch { /* bỏ qua */ }
+                      }
                     }}
                   >
-                    Xóa
+                    {adjBusy === a.adjustment_id ? '⏳...' : 'Xóa'}
                   </button>
+                  )}
                 </div>
               )}
             </td>

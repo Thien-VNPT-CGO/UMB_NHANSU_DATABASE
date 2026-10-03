@@ -1320,24 +1320,27 @@ export class GoogleSheetsSyncService {
       let targetSheetTitle = 'FROM_NHAN_VIEN';
 
       if (this.sheetsClient) {
-        // A. Thử đọc từ candidateSpreadsheetId trước
+        // A. Thử đọc từ candidateSpreadsheetId trước (bọc timeout: Google treo
+        // request này là cả pull treo theo, UI chờ vô hạn).
         if (this.candidateSpreadsheetId) {
           try {
-            const meta = await this.sheetsClient.spreadsheets.get({
-              spreadsheetId: this.candidateSpreadsheetId,
-            });
+            const meta: any = await this.sheetsCall('read.candidateMeta', () =>
+              this.sheetsClient!.spreadsheets.get({
+                spreadsheetId: this.candidateSpreadsheetId,
+              }) as any, 25000);
             const sheets = meta.data.sheets || [];
-            const found = sheets.find(s => {
+            const found = sheets.find((s: any) => {
               const t = s.properties?.title || '';
               return /FROM_NHAN_VIEN|Form|Biểu mẫu|Câu trả lời|Ứng viên/i.test(t);
             }) || sheets[0];
 
             if (found?.properties?.title) {
               targetSheetTitle = found.properties.title;
-              const candRes = await this.sheetsClient.spreadsheets.values.get({
-                spreadsheetId: this.candidateSpreadsheetId,
-                range: `'${targetSheetTitle}'!A1:X`,
-              });
+              const candRes: any = await this.sheetsCall('read.candidates', () =>
+                this.sheetsClient!.spreadsheets.values.get({
+                  spreadsheetId: this.candidateSpreadsheetId,
+                  range: `'${targetSheetTitle}'!A1:X`,
+                }) as any, 25000);
               candRows = (candRes.data.values as string[][]) || [];
             }
           } catch (e: any) {
@@ -1348,10 +1351,11 @@ export class GoogleSheetsSyncService {
         // B. Nếu chưa có dữ liệu từ candidateSpreadsheetId, thử đọc từ Master spreadsheet
         if (candRows.length <= 1 && this.spreadsheetId) {
           try {
-            const candRes = await this.sheetsClient.spreadsheets.values.get({
-              spreadsheetId: this.spreadsheetId,
+            const candRes: any = await this.sheetsCall('read.candidatesMaster', () =>
+              this.sheetsClient!.spreadsheets.values.get({
+                spreadsheetId: this.spreadsheetId,
                 range: `'FROM_NHAN_VIEN'!A1:X`,
-            });
+              }) as any, 25000);
             if (candRes.data.values && candRes.data.values.length > 1) {
               candRows = candRes.data.values as string[][];
             }
@@ -1490,10 +1494,11 @@ export class GoogleSheetsSyncService {
         // không phủ thì reload là mất. Khớp theo submission_id, rớt về SĐT+tên.
         try {
           if (this.sheetsClient && this.spreadsheetId) {
-            const mRes = await this.sheetsClient.spreadsheets.values.get({
-              spreadsheetId: this.spreadsheetId,
-              range: `'FROM_NHAN_VIEN'!A1:X`,
-            });
+            const mRes: any = await this.sheetsCall('read.candidatesOverlay', () =>
+              this.sheetsClient!.spreadsheets.values.get({
+                spreadsheetId: this.spreadsheetId,
+                range: `'FROM_NHAN_VIEN'!A1:X`,
+              }) as any, 25000);
             const mRows = (mRes.data.values as string[][]) || [];
             if (mRows.length > 1) {
               const byId = new Map<string, string[]>();
