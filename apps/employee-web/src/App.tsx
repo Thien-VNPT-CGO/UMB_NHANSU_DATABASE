@@ -3967,8 +3967,11 @@ export function App() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   <div style={{ backgroundColor: '#FDF2F8', padding: '10px', borderRadius: '8px', fontSize: '12px', color: '#9D174D' }}>
                     📌 <strong>Đặc điểm:</strong> Cùng chi nhánh ({employee?.default_branch_id || 'CN130'}). Đổi ca <strong>từ tuần hiện tại trở đi</strong> ({swapWeekRange().mon} → …) <strong>khi tuần đó đã được HR publish</strong> — ca nháp/chưa publish và ca tuần đã qua hệ thống đều từ chối.
-                    {swapDraftCount(myShifts) > 0 && (
+                    {swapDraftCount(myShifts) > 0 && swapReadyShifts(myShifts).length > 0 && (
                       <><br />⚠️ Bạn có {swapDraftCount(myShifts)} ca tuần này chưa publish — báo HR publish để đổi được.</>
+                    )}
+                    {myShifts.some((s: any) => inSwapWeek(s.date)) && swapReadyShifts(myShifts).length === 0 && (
+                      <><br />⛔ Tuần này bạn có ca nhưng <strong>HR chưa publish ca nào</strong> nên ô chọn ca trống là đúng — báo HR publish lịch rồi mở lại tab này.</>
                     )}
                   </div>
 
@@ -4021,7 +4024,10 @@ export function App() {
                       onChange={(e) => setSwapData({ ...swapData, targetShift: e.target.value })}
                       style={{ width: '100%' }}
                     >
-                      <option value="">-- Chọn ca thật của B (tuần hiện tại) --</option>
+                      <option value="">-- Chọn ca thật của B (tuần hiện tại trở đi) --</option>
+                      {swapData.targetEmployeeId && targetShifts.filter((s: any) => inSwapWeek(s.date)).length === 0 && (
+                        <option value="">B chưa có ca publish nào — báo HR publish lịch cho B</option>
+                      )}
                       {targetShifts.filter((s: any) => inSwapWeek(s.date)).map((s: any, idx: number) => (
                         <option key={idx} value={s.assignment_id}>
                           {s.date} ({s.shift_code})
@@ -4058,8 +4064,11 @@ export function App() {
                   <div style={{ backgroundColor: '#EFF6FF', padding: '10px', borderRadius: '8px', fontSize: '12px', color: '#1E40AF' }}>
                     📌 <strong>Đặc điểm:</strong> Nhân viên B nhận làm thay ca cho A (B làm 2 ca/ngày). Chỉ nhờ ca <strong>từ tuần hiện tại trở đi</strong> ({swapWeekRange().mon} → …) <strong>khi tuần đó đã được HR publish</strong> — ca tuần đã qua hệ thống từ chối.<br />
                     ⚠️ Tự thỏa thuận với nhau thì <strong>không</strong> có phụ cấp — chỉ ca do <strong>HR điều phối</strong> (mục trên) mới +30.000đ.
-                    {swapDraftCount(myShifts) > 0 && (
+                    {swapDraftCount(myShifts) > 0 && swapReadyShifts(myShifts).length > 0 && (
                       <><br />⚠️ Bạn có {swapDraftCount(myShifts)} ca tuần này chưa publish — báo HR publish để nhờ được.</>
+                    )}
+                    {myShifts.some((s: any) => inSwapWeek(s.date)) && swapReadyShifts(myShifts).length === 0 && (
+                      <><br />⛔ Tuần này bạn có ca nhưng <strong>HR chưa publish ca nào</strong> nên ô chọn ca trống là đúng — báo HR publish lịch rồi mở lại tab này.</>
                     )}
                   </div>
 

@@ -2059,6 +2059,29 @@ export class GoogleSheetsSyncService {
   }
 
   /**
+   * Đẩy riêng tab PHAN_CONG_CA (await được): dùng sau PUBLISH để trạng thái
+   * PUBLISHED bền vững trên Sheet NGAY trong cùng request — restart ngay sau
+   * publish cũng không rớt về DRAFT (NV mất quyền đổi ca oan).
+   */
+  public async pushShiftsTab(repo: { getShiftsForWeek(branch: string, weekMon: string): Promise<any[]> }): Promise<number> {
+    const sixtyDaysAgo = new Date(Date.now() + 7 * 3_600_000 - 60 * 86_400_000).toISOString().slice(0, 10);
+    const shifts = await repo.getShiftsForWeek('*', sixtyDaysAgo).catch(() => []);
+    const shiftRows = (shifts || []).map((s: any) => [
+      s.assignment_id,
+      s.employee_id,
+      s.branch_id,
+      s.shift_code,
+      sheetDateText(s.date),
+      sheetDateTimeText(s.start_at),
+      sheetDateTimeText(s.end_at),
+      s.status || 'DRAFT',
+      Number(s.schedule_version) || 1,
+    ]);
+    await this.overwriteSheetData('PHAN_CONG_CA', SHEETS_DEFINITIONS.find(d => d.title === 'PHAN_CONG_CA')!.headers, shiftRows);
+    return shiftRows.length;
+  }
+
+  /**
    * Đẩy riêng tab SU_KIEN_DIEM_DANH (await được): dùng sau khi xóa vi phạm/phạt
    * trên lượt check-in/out để Sheet khớp ngay, pull sau không hồi sinh mức phạt cũ.
    */

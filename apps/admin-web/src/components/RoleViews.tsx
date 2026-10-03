@@ -672,7 +672,8 @@ export const PublishScheduleModal: React.FC<PublishScheduleModalProps> = ({
       const autoCount = res?.auto?.created ?? 0;
       const warns: string[] = (res?.auto?.warnings || []).map((w: any) => w.message || '').filter(Boolean);
       const warnText = warns.length > 0 ? ` Cảnh báo (${warns.length}): ${warns.slice(0, 3).join(' | ')}${warns.length > 3 ? ' | ...' : ''}` : '';
-      showToast(`Đã PUBLISH tuần ${weekMon}: BOT xếp thêm ${autoCount} ca, duyệt ${res?.count ?? 0} ca (DRAFT→PUBLISHED).${warnText}`);
+      const persistWarn = res?.sheetPersisted === false ? ' ⚠️ Chưa ghi được lên Google Sheets — restart server có thể rớt về nháp, bấm Đồng bộ lại!' : '';
+      showToast(`Đã PUBLISH tuần ${weekMon}: BOT xếp thêm ${autoCount} ca, duyệt ${res?.count ?? 0} ca (DRAFT→PUBLISHED).${warnText}${persistWarn}`);
       onClose();
       if (onRefreshData) await onRefreshData();
       if (onSyncSheets) await onSyncSheets();

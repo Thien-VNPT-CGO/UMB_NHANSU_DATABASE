@@ -1590,7 +1590,22 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         }
         const result = await schedulesService.publishWeekSchedule(branchId, req.params.week, req.user!.id);
         broadcastUpdate('schedules', { action: 'publish', branchId, week: req.params.week });
-        res.json({ ...(result as any), auto: autoSummary });
+        // Ghi Sheet ĐỒNG BỘ để PUBLISHED bền vững ngay (restart sau publish
+        // không rớt về DRAFT khiến NV mất quyền đổi ca oan). Rớt thì báo cờ để
+        // HR bấm đồng bộ lại — không chặn response (bộ nhớ đã đúng).
+        let sheetPersisted = false;
+        try {
+          const syncSvc = (adapter as any)?.syncService;
+          if (syncSvc?.pushShiftsTab) {
+            sheetPersisted = await Promise.race([
+              syncSvc.pushShiftsTab(adapter).then(() => true).catch(() => false),
+              new Promise<false>(r => setTimeout(() => r(false), 15000)),
+            ]);
+          } else {
+            sheetPersisted = true;
+          }
+        } catch { sheetPersisted = false; }
+        res.json({ ...(result as any), auto: autoSummary, sheetPersisted });
       } catch (err: any) {
         res.status(400).json({ error: err.message });
       }
