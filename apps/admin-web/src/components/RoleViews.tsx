@@ -6610,71 +6610,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }
 
   if (activeTab === 'hr-leave') {
-    const handleReviewLeave = async (leaveId: string, status: 'APPROVED' | 'REJECTED') => {
-      if (!leaveId) {
-        showToast('Thiếu mã đơn nghỉ');
-        return;
-      }
-      if (!window.confirm(status === 'APPROVED' ? 'Xác nhận DUYỆT đơn nghỉ này?' : 'Xác nhận TỪ CHỐI đơn nghỉ này?')) return;
-      try {
-        await apiRequest(`/leave-requests/${leaveId}/review`, {
-          method: 'POST',
-          body: JSON.stringify({ status, note: status === 'APPROVED' ? 'HR/Admin phê duyệt' : 'HR/Admin từ chối' }),
-        });
-        showToast(status === 'APPROVED' ? 'Đã duyệt đơn nghỉ phép' : 'Đã từ chối đơn nghỉ phép');
-        if (onRefreshData) await onRefreshData();
-        if (onSyncSheets) await onSyncSheets();
-      } catch (e: any) {
-        showToast(e?.message || 'Lỗi khi duyệt đơn');
-      }
-    };
-    // Lịch OFF 2 ngày/tuần (HANG_TUAN) tự động ghi nhận — không hiện ở hàng chờ duyệt.
-    // Chỉ đơn đột xuất (DOT_XUAT) mới cần HR/Admin duyệt thủ công.
-    const approvalLeaves = (leaves || []).filter((l: any) => (l.leave_type || l.leaveType || 'DOT_XUAT') === 'DOT_XUAT');
-    const pendingLeaves = approvalLeaves.filter((l: any) => l.status === 'PENDING');
-    const doneLeaves = approvalLeaves.filter((l: any) => l.status !== 'PENDING');
-    const renderLeaveRows = (list: any[], isPending: boolean) =>
-      list.map((l: any, i: number) => {
-        const leaveId = l.request_id || l.id;
-        const reqDate = l.requested_date || l.requestedDate || l.leave_date || l.created_at?.slice(0, 10) || '';
-        const leaveTypeLabel = (l.leave_type || l.leaveType) === 'DOT_XUAT' ? 'Đột xuất' : 'OFF hàng tuần';
-        // Hiển thị tên + mã NV giống bảng Lịch OFF 2 ngày/tuần (tra hồ sơ theo employee_id).
-        const leaveEmp = (allEmployees || []).find((e: any) => e.employee_id === l.employee_id);
-        return (
-          <tr key={leaveId || i} style={{ borderBottom: '1px solid var(--border)', backgroundColor: isPending ? '#FFFBEB' : undefined }}>
-            <td style={{ padding: '14px 20px', fontWeight: 700 }}>
-              {leaveEmp?.full_name || l.employee_name || l.employee_id}
-              <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }}>{leaveEmp?.employee_code || l.employee_id}</div>
-              <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }}>{leaveTypeLabel}</div>
-            </td>
-            <td style={{ padding: '14px 20px' }}>{getDisplayBranch(l.branch_id) || l.branch_id || 'Chưa rõ'}</td>
-            <td style={{ padding: '14px 20px', fontWeight: 600 }}>{reqDate}</td>
-            <td style={{ padding: '14px 20px' }}>{l.reason || 'Nghỉ cá nhân'}</td>
-            <td style={{ padding: '14px 20px' }}>
-              <span
-                className="badge"
-                style={{
-                  backgroundColor: l.status === 'APPROVED' ? '#DCFCE7' : l.status === 'REJECTED' ? '#FEE2E2' : '#FEF3C7',
-                  color: l.status === 'APPROVED' ? '#166534' : l.status === 'REJECTED' ? '#991B1B' : '#92400E',
-                  fontWeight: 700,
-                }}
-              >
-                {l.status === 'APPROVED' ? 'Đã duyệt' : l.status === 'REJECTED' ? 'Đã từ chối' : 'Chờ duyệt'}
-              </span>
-            </td>
-            <td style={{ padding: '14px 20px' }}>
-              {isPending ? (
-                <div style={{ display: 'flex', gap: '6px' }}>
-                  <button className="btn-primary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => handleReviewLeave(leaveId, 'APPROVED')}>Duyệt Đơn</button>
-                  <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: '12px', color: '#DC2626' }} onClick={() => handleReviewLeave(leaveId, 'REJECTED')}>Từ chối</button>
-                </div>
-              ) : (
-                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Đã xử lý</span>
-              )}
-            </td>
-          </tr>
-        );
-      });
     // Lịch OFF tuần tự động ghi nhận — gom theo nhân viên + tuần Mon-Sun để HR/Admin theo dõi.
     // Bỏ bản REJECTED/CANCELLED (đăng ký cũ đã thay thế) để đồng bộ số ngày thực tế.
     const weeklyOffLeaves = (leaves || []).filter((l: any) =>
@@ -6727,44 +6662,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h1 style={{ fontSize: '20px', fontWeight: 800 }}>8. Phê Duyệt Đơn Nghỉ Phép (OFF)</h1>
-          <span className="badge" style={{ backgroundColor: pendingLeaves.length > 0 ? '#FEF3C7' : '#DCFCE7', color: pendingLeaves.length > 0 ? '#92400E' : '#166534', fontWeight: 800 }}>
-            {pendingLeaves.length} đơn đột xuất chờ duyệt
-          </span>
+          <h1 style={{ fontSize: '20px', fontWeight: 800 }}>8. Lịch OFF 2 ngày/tuần</h1>
         </div>
         <div style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 'var(--radius-md)', padding: '10px 14px', fontSize: '12px', color: '#1E40AF' }}>
-          Lịch OFF 2 ngày/tuần (HANG_TUAN) <strong>tự động ghi nhận, không cần duyệt</strong> — xem ở bảng bên dưới. Tại đây chỉ duyệt đơn <strong>nghỉ đột xuất</strong>.
-        </div>
-        <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
-          <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--border)', fontWeight: 800, fontSize: '14px' }}>
-            Đơn nghỉ đột xuất cần duyệt
-          </div>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-            <thead>
-              <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
-                <th style={{ padding: '12px 20px' }}>Nhân Viên</th>
-                <th style={{ padding: '12px 20px' }}>Chi Nhánh</th>
-                <th style={{ padding: '12px 20px' }}>Ngày Nghỉ</th>
-                <th style={{ padding: '12px 20px' }}>Lý Do</th>
-                <th style={{ padding: '12px 20px' }}>Trạng Thái</th>
-                <th style={{ padding: '12px 20px' }}>Thao Tác</th>
-              </tr>
-            </thead>
-            <tbody>
-              {approvalLeaves.length === 0 ? (
-                <tr>
-                  <td colSpan={6} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                    Không có đơn nghỉ đột xuất nào đang chờ duyệt. Lịch OFF tuần tự động ghi nhận nên không hiện ở đây.
-                  </td>
-                </tr>
-              ) : (
-                <>
-                  {renderLeaveRows(pendingLeaves, true)}
-                  {renderLeaveRows(doneLeaves, false)}
-                </>
-              )}
-            </tbody>
-          </table>
+          Lịch OFF 2 ngày/tuần (HANG_TUAN) <strong>tự động ghi nhận, không cần duyệt</strong> — theo dõi ở bảng bên dưới.
         </div>
         <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
           <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
