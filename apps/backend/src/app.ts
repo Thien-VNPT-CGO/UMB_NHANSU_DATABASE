@@ -902,6 +902,32 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Xóa trực tiếp 1 tài khoản NV (dọn dòng mồ côi ở tab PIN: còn tài khoản
+  // nhưng đã mất hồ sơ NHAN_VIEN_MASTER nên nút xóa thường báo 404 oan).
+  app.delete('/employee-accounts/:id', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const id = req.params.id;
+      const del = (adapter as any).deleteAccount;
+      if (typeof del !== 'function') {
+        return res.status(500).json({ error: 'Máy chủ chưa hỗ trợ xóa tài khoản trực tiếp' });
+      }
+      const ok = await del.call(adapter, id);
+      if (!ok) {
+        return res.status(404).json({ error: 'Không tìm thấy tài khoản để xóa' });
+      }
+      await adapter.recordAuditLog({
+        actor_id: req.user!.id,
+        action: 'EMPLOYEE_ACCOUNT_DELETED',
+        target_type: 'TAI_KHOAN_NHAN_VIEN',
+        target_id: id,
+      });
+      broadcastUpdate('accounts', { action: 'delete', id });
+      res.json({ success: true, message: `Đã xóa tài khoản ${id}` });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   app.get('/applications', authMiddleware, requireRole(['ADMIN', 'HR']), async (req, res) => {
     try {
       const list = await employeesService.listCandidates();

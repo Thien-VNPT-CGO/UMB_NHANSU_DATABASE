@@ -182,6 +182,29 @@ export class GoogleSheetsSyncService {
     if (employeeId) this.deletedEmployeeIds.set(String(employeeId).trim(), Date.now());
   }
 
+  /** Tombstone tài khoản vừa xóa (kể cả dòng mồ côi): pull trong ~120s sau xóa
+   *  mà thấy dòng này trên Sheet (push xóa chưa kịp chạy) thì bỏ qua, tránh hồi sinh. */
+  private deletedAccountIds = new Map<string, number>();
+
+  public markAccountDeleted(accountId: string) {
+    if (accountId) this.deletedAccountIds.set(String(accountId).trim(), Date.now());
+  }
+
+  private isAccountDeletedRecently(accountId: string, employeeId?: string): boolean {
+    const check = (k: string): boolean => {
+      const t = this.deletedAccountIds.get(k);
+      if (!t) return false;
+      if (Date.now() - t > 120000) {
+        this.deletedAccountIds.delete(k);
+        return false;
+      }
+      return true;
+    };
+    const a = String(accountId || '').trim();
+    const e = String(employeeId || '').trim();
+    return (a !== '' && check(a)) || (e !== '' && check(e));
+  }
+
   private isEmployeeDeletedRecently(employeeId: string): boolean {
     const t = this.deletedEmployeeIds.get(String(employeeId || '').trim());
     if (!t) return false;
@@ -577,7 +600,7 @@ export class GoogleSheetsSyncService {
         counts.accounts = fallback.accounts.length;
       } else if (accRows.length > 0) {
         const mappedAccs = accRows
-          .filter(r => r && (r[0] || r[2]))
+          .filter(r => r && (r[0] || r[2]) && !this.isAccountDeletedRecently(r[0], r[1]))
           .map(r => ({
             account_id: r[0] || `ACC_${uuidv4().slice(0, 8)}`,
             employee_id: r[1] || '',

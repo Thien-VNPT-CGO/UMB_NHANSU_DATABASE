@@ -366,9 +366,25 @@ export class MockSheetsAdapter implements ISheetsRepository {
   async deleteEmployee(id: string): Promise<boolean> {
     this.checkErrors();
     const empIndex = this.employees.findIndex(e => e.employee_id === id);
-    if (empIndex === -1) return false;
-    this.employees.splice(empIndex, 1);
-    this.accounts = this.accounts.filter(a => a.employee_id !== id);
+    let removedEmp = false;
+    if (empIndex !== -1) {
+      this.employees.splice(empIndex, 1);
+      removedEmp = true;
+    }
+    // Luôn dọn tài khoản liên đới — kể cả khi hồ sơ NV đã mất (tài khoản mồ côi
+    // hiện ở tab PIN mà không xóa được, bấm xóa báo 404 oan).
+    const before = this.accounts.length;
+    this.accounts = this.accounts.filter(a => a.employee_id !== id && a.account_id !== id);
+    const removedAcc = this.accounts.length < before;
+    return removedEmp || removedAcc;
+  }
+
+  /** Xóa trực tiếp 1 tài khoản NV (dùng cho dòng mồ côi không còn hồ sơ). */
+  async deleteAccount(accountId: string): Promise<boolean> {
+    this.checkErrors();
+    const accIndex = this.accounts.findIndex(a => a.account_id === accountId);
+    if (accIndex === -1) return false;
+    this.accounts.splice(accIndex, 1);
     return true;
   }
 

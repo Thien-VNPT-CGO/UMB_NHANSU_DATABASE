@@ -1035,6 +1035,21 @@ export function App() {
     }
   };
 
+  // Xóa dòng mồ côi ở tab PIN: còn tài khoản nhưng đã mất hồ sơ nhân viên.
+  const handleDeleteOrphanAccount = async (accountId: string, phone: string) => {
+    if (!window.confirm(`Dòng này KHÔNG còn hồ sơ nhân viên (tài khoản mồ côi ${accountId} — SĐT ${phone}). Bạn có chắc muốn xóa vĩnh viễn tài khoản này khỏi hệ thống và Google Sheet TAI_KHOAN_NHAN_VIEN?`)) {
+      return;
+    }
+    try {
+      await apiRequest(`/employee-accounts/${accountId}`, { method: 'DELETE' });
+      setSuccessMsg(`Đã xóa tài khoản mồ côi ${accountId} thành công!`);
+      setTimeout(() => setSuccessMsg(null), 3000);
+      await loadAllData();
+    } catch (err: any) {
+      setErrorMsg(err.message);
+    }
+  };
+
   const handleCreateInternalAccount = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -1219,9 +1234,12 @@ export function App() {
         pinMustChange: acc?.pin_must_change === true,
         // Lần đổi/cấp PIN gần nhất (đổi PIN riêng, reset, xoay kỳ) để theo dõi tháng.
         pinUpdatedAt: (acc as any)?.pin_changed_at || (acc as any)?.updated_at || '',
+        isOrphan: false,
       };
     });
 
+    // Dòng mồ côi: còn tài khoản nhưng đã mất hồ sơ NHAN_VIEN_MASTER —
+    // gắn cờ để nút Xóa gọi API xóa tài khoản trực tiếp (không báo 404 oan).
     employeeAccounts.forEach(acc => {
       const cleanPhone = (acc.phone_normalized || '').replace(/\D/g, '');
       if (!items.some(i => i.id === acc.employee_id || i.accountId === acc.account_id || (cleanPhone && i.phone?.replace(/\D/g, '') === cleanPhone))) {
@@ -1241,6 +1259,7 @@ export function App() {
           hasRealAccount: true,
           pinMustChange: acc.pin_must_change === true,
           pinUpdatedAt: (acc as any)?.pin_changed_at || (acc as any)?.updated_at || '',
+          isOrphan: true,
         });
       }
     });
@@ -2685,6 +2704,22 @@ export function App() {
                             }}>
                               {item.employeeCode}
                             </span>
+                            {item.isOrphan && (
+                              <div title="Tài khoản này không còn hồ sơ trong NHAN_VIEN_MASTER (dữ liệu mồ côi). Bấm Xóa ở cột Thao tác để dọn khỏi hệ thống." style={{
+                                marginTop: '4px',
+                                display: 'inline-block',
+                                padding: '2px 7px',
+                                borderRadius: '999px',
+                                fontSize: '10px',
+                                fontWeight: 800,
+                                backgroundColor: '#FEF2F2',
+                                color: '#DC2626',
+                                border: '1px solid #FCA5A5',
+                                whiteSpace: 'nowrap',
+                              }}>
+                                ⚠️ Không có hồ sơ
+                              </div>
+                            )}
                           </td>
                           <td style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--text)' }}>
                             {item.fullName}
@@ -2801,22 +2836,41 @@ export function App() {
                             {fmtPinTime(item.pinUpdatedAt)}
                           </td>
                           <td style={{ padding: '14px 20px' }}>
-                            <button
-                              onClick={() => handleDeleteEmployee(item.id, item.fullName)}
-                              title="Xóa nhân viên khỏi hệ thống (cả Google Sheets NHAN_VIEN_MASTER và TAI_KHOAN_NHAN_VIEN)"
-                              style={{
-                                padding: '6px 12px',
-                                borderRadius: 'var(--radius-sm)',
-                                border: '1px solid var(--danger)',
-                                backgroundColor: 'var(--danger-soft)',
-                                color: 'var(--danger)',
-                                fontWeight: 600,
-                                fontSize: '12px',
-                                cursor: 'pointer',
-                              }}
-                            >
-                              🗑️ Xóa
-                            </button>
+                            {item.isOrphan ? (
+                              <button
+                                onClick={() => handleDeleteOrphanAccount(item.accountId, item.phone)}
+                                title="Dòng mồ côi (không còn hồ sơ): xóa vĩnh viễn tài khoản khỏi hệ thống và Google Sheet TAI_KHOAN_NHAN_VIEN"
+                                style={{
+                                  padding: '6px 12px',
+                                  borderRadius: 'var(--radius-sm)',
+                                  border: '1px solid var(--danger)',
+                                  backgroundColor: 'var(--danger-soft)',
+                                  color: 'var(--danger)',
+                                  fontWeight: 600,
+                                  fontSize: '12px',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                🗑️ Xóa rác
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => handleDeleteEmployee(item.id, item.fullName)}
+                                title="Xóa nhân viên khỏi hệ thống (cả Google Sheets NHAN_VIEN_MASTER và TAI_KHOAN_NHAN_VIEN)"
+                                style={{
+                                  padding: '6px 12px',
+                                  borderRadius: 'var(--radius-sm)',
+                                  border: '1px solid var(--danger)',
+                                  backgroundColor: 'var(--danger-soft)',
+                                  color: 'var(--danger)',
+                                  fontWeight: 600,
+                                  fontSize: '12px',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                🗑️ Xóa
+                              </button>
+                            )}
                           </td>
                         </tr>
                       ))

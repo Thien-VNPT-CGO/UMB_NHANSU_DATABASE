@@ -368,7 +368,18 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     if (ok) {
       // Đánh dấu để pull ngay sau đó không đọc lại dòng Sheet cũ (push xóa chạy sau ~10s).
       try { (this.syncService as any)?.markEmployeeDeleted?.(id); } catch { /* best-effort */ }
+      try { (this.syncService as any)?.markAccountDeleted?.(id); } catch { /* best-effort */ }
       this.scheduleFullSync('NHAN_VIEN_MASTER.delete');
+    }
+    return ok;
+  }
+
+  /** Xóa trực tiếp 1 tài khoản NV (dọn dòng mồ côi không còn hồ sơ nhân viên). */
+  async deleteAccount(accountId: string) {
+    const ok = await this.fallbackAdapter.deleteAccount(accountId);
+    if (ok) {
+      try { (this.syncService as any)?.markAccountDeleted?.(accountId); } catch { /* best-effort */ }
+      this.scheduleFullSync('TAI_KHOAN_NHAN_VIEN.delete');
     }
     return ok;
   }
