@@ -63,7 +63,7 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   },
   {
     title: 'DIEU_CHINH_CONG',
-    headers: ['ID Điều Chỉnh', 'ID Ca', 'ID Nhân Viên', 'Lý Do', 'Số Phút Được Duyệt', 'Người Duyệt', 'Trạng Thái', 'Ghi Chú'],
+    headers: ['ID Điều Chỉnh', 'ID Ca', 'ID Nhân Viên', 'Lý Do', 'Số Phút Được Duyệt', 'Người Duyệt', 'Trạng Thái', 'Ghi Chú', 'Ảnh Bằng Chứng (Drive ID)'],
   },
   {
     title: 'KY_LUONG',
@@ -1193,6 +1193,7 @@ export class GoogleSheetsSyncService {
           approver_id: r[5] || undefined,
           status: (r[6] as any) || 'PENDING',
           review_note: r[7] || undefined,
+          evidence_drive_id: r[8] || undefined,
           version: 1,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -1855,6 +1856,7 @@ export class GoogleSheetsSyncService {
         a.approver_id || '',
         a.status,
         a.review_note || '',
+        (a as any).evidence_drive_id || '',
       ]);
       await this.overwriteSheetData('DIEU_CHINH_CONG', SHEETS_DEFINITIONS.find(d => d.title === 'DIEU_CHINH_CONG')!.headers, adjRows);
       details.adjustments = adjRows.length;
@@ -2021,6 +2023,7 @@ export class GoogleSheetsSyncService {
       a.approver_id || '',
       a.status,
       a.review_note || '',
+      a.evidence_drive_id || '',
     ]);
     await this.overwriteSheetData('DIEU_CHINH_CONG', SHEETS_DEFINITIONS.find(d => d.title === 'DIEU_CHINH_CONG')!.headers, adjRows);
     return adjRows.length;

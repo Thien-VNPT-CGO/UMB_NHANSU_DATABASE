@@ -271,6 +271,8 @@ export class AttendanceService {
     branchId: string;
     reason: string;
     minutesRequested: number;
+    /** Ảnh bằng chứng base64 — adapter upload lên Drive thành evidence_drive_id rồi bỏ. */
+    photoBase64?: string;
   }) {
     // ID duy nhất tuyệt đối (trước đây chỉ Date.now() -> 2 phiếu cùng mili giây
     // sẽ trùng ID, bản ghi đè nhau, xóa/sửa chỉ trúng 1 bản).
@@ -302,6 +304,8 @@ export class AttendanceService {
           reason: data.reason,
           minutes_requested: data.minutesRequested,
           status: 'PENDING',
+          // Transient: adapter upload Drive -> evidence_drive_id rồi tự bỏ (không lưu base64).
+          ...(data.photoBase64 ? { photo_base64: data.photoBase64 } : {}),
         });
       },
     });

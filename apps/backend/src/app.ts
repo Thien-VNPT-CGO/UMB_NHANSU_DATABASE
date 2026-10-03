@@ -2326,6 +2326,36 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.get('/attendance/photo/:eventId', authMiddleware, requireRole(['ADMIN', 'HR', 'STORE']), serveAttendancePhoto);
   app.get('/me/attendance/photo/:eventId', authMiddleware, serveAttendancePhoto);
 
+  // Ảnh bằng chứng kèm phiếu bổ sung công: stream trực tiếp từ Drive (kể cả file không public).
+  const serveAdjustmentPhoto = async (req: AuthenticatedRequest, res: any) => {
+    try {
+      const list = await attendanceService.listAdjustments(undefined, undefined);
+      const adj: any = (list || []).find((x: any) => x.adjustment_id === req.params.id);
+      if (!adj) return res.status(404).json({ error: 'PHOTO_NOT_FOUND' });
+      if (req.user?.role === 'EMPLOYEE' && adj.employee_id !== req.user.employeeId) {
+        return res.status(403).json({ error: 'FORBIDDEN' });
+      }
+      if (req.user?.role === 'STORE' && req.user.branchScope !== '*' && adj.branch_id && adj.branch_id !== req.user.branchScope) {
+        return res.status(403).json({ error: 'BRANCH_SCOPE_FORBIDDEN' });
+      }
+      if (!adj.evidence_drive_id || String(adj.evidence_drive_id).startsWith('DRV_')) {
+        return res.status(404).json({ error: 'PHOTO_NOT_UPLOADED: Phiếu này không có ảnh bằng chứng.' });
+      }
+      const syncService = (adapter as any).syncService;
+      if (!syncService?.downloadDriveFile) {
+        return res.status(503).json({ error: 'DRIVE_NOT_CONFIGURED' });
+      }
+      const { buffer, mimeType } = await syncService.downloadDriveFile(adj.evidence_drive_id);
+      res.setHeader('Content-Type', mimeType || 'image/jpeg');
+      res.setHeader('Cache-Control', 'private, max-age=3600');
+      res.send(buffer);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'PHOTO_DOWNLOAD_FAILED' });
+    }
+  };
+  app.get('/attendance/adjustments/:id/photo', authMiddleware, requireRole(['ADMIN', 'HR', 'STORE']), serveAdjustmentPhoto);
+  app.get('/me/attendance/adjustments/:id/photo', authMiddleware, serveAdjustmentPhoto);
+
   // Tải gói chứng cứ điểm danh theo ngày:
   // ZIP/Diem danh ngay DD-MM-YYYY/{chi nhánh}/{ca làm}/{tên NV}/check in.jpg + check out.jpg
   // (ảnh thật từ camera NV) + file CSV tổng hợp.
@@ -2768,6 +2798,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const result = await attendanceService.requestAdjustment({
         ...req.body,
         employeeId,
+        // Client gửi snake_case photo_base64, service nhận camelCase photoBase64.
+        photoBase64: req.body.photoBase64 || req.body.photo_base64,
       });
       res.json(result);
     } catch (err: any) {

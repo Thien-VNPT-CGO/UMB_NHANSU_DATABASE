@@ -583,8 +583,10 @@ export class MockSheetsAdapter implements ISheetsRepository {
   async createAttendanceAdjustment(adj: Omit<AttendanceAdjustment, 'created_at' | 'updated_at' | 'version'>): Promise<AttendanceAdjustment> {
     this.checkErrors();
     const now = new Date().toISOString();
+    // photo_base64 chỉ để adapter upload Drive — không lưu vào bộ nhớ/Sheets (5MB/ảnh).
+    const { photo_base64: _dropPhoto, ...clean } = adj as any;
     const newAdj: AttendanceAdjustment = {
-      ...adj,
+      ...clean,
       created_at: now,
       updated_at: now,
       version: 1,

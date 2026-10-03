@@ -49,6 +49,8 @@ export interface AttendanceAdjustment {
   approver_id?: string;
   status: AdjustmentStatus;
   review_note?: string;
+  /** Drive file ID ảnh bằng chứng NV upload kèm phiếu (upload lúc tạo, xem qua /attendance/adjustments/:id/photo). */
+  evidence_drive_id?: string;
   created_at: string;
   updated_at: string;
   version: number;

@@ -653,6 +653,19 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   }
 
   async createAttendanceAdjustment(adj: any) {
+    // Ảnh bằng chứng kèm phiếu: upload Drive trước, chỉ lưu Drive file ID (mirror recordAttendanceEvent).
+    if (adj.photo_base64 && this.isConfigured) {
+      try {
+        const fileName = `ADJ_evidence_${adj.employee_id || 'unknown'}_${Date.now()}.jpg`;
+        const driveResult = await this.syncService.uploadImageToDrive(fileName, 'image/jpeg', adj.photo_base64);
+        if (driveResult?.fileId && !String(driveResult.fileId).startsWith('DRV_')) {
+          adj.evidence_drive_id = driveResult.fileId;
+        }
+      } catch (err) {
+        console.error('[GoogleSheetsAdapter] Drive upload evidence error:', err);
+      }
+    }
+    delete adj.photo_base64;
     const res = await this.fallbackAdapter.createAttendanceAdjustment(adj);
     if (this.isConfigured) {
       const snapshot = { ...res };
@@ -665,6 +678,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
         snapshot.approver_id || '',
         snapshot.status,
         snapshot.review_note || '',
+        (snapshot as any).evidence_drive_id || '',
       ]), 'DIEU_CHINH_CONG.append');
     }
     return res;

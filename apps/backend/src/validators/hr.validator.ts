@@ -318,6 +318,8 @@ export const attendanceEventsQuery = z.object({
 export const adjustmentCreateBody = z
   .object({
     employeeId: optString(64),
+    /** Ảnh bằng chứng NV upload kèm phiếu (base64 data URL, ≤5MB file) — adapter upload Drive rồi bỏ. */
+    photo_base64: photoField,
   })
   .passthrough();
 

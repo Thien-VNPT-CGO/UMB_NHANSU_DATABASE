@@ -32,6 +32,36 @@ interface EmployeeProfile {
   default_branch_id: string;
 }
 
+/** Ảnh bằng chứng phiếu bổ sung công của tôi: tải blob kèm token rồi hiện (thẻ <img> không gửi được Authorization). */
+function MyAdjPhoto({ adjustmentId, style }: { adjustmentId: string; style?: React.CSSProperties }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    let objUrl: string | null = null;
+    (async () => {
+      try {
+        const res = await fetch(`${getApiBase()}/me/attendance/adjustments/${adjustmentId}/photo`, {
+          headers: { Authorization: `Bearer ${getAuthToken()}` },
+        });
+        if (!res.ok) throw new Error('no photo');
+        const blob = await res.blob();
+        objUrl = URL.createObjectURL(blob);
+        if (alive) setUrl(objUrl);
+      } catch {
+        if (alive) setFailed(true);
+      }
+    })();
+    return () => {
+      alive = false;
+      if (objUrl) URL.revokeObjectURL(objUrl);
+    };
+  }, [adjustmentId]);
+  if (failed) return null;
+  if (!url) return <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Đang tải ảnh...</span>;
+  return <img src={url} alt="Ảnh bằng chứng" style={{ width: '72px', height: '72px', objectFit: 'cover', borderRadius: '8px', border: '1px solid var(--border)', ...(style || {}) }} />;
+}
+
 export function App() {
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(() => {
     return !!(localStorage.getItem('ubm_emp_token') && localStorage.getItem('ubm_emp_data'));
@@ -355,6 +385,10 @@ export function App() {
   });
   // Ca cần bổ sung (ngày 2 ca: phải chọn đúng ca thì HR duyệt mới cập nhật đúng)
   const [adjustShiftId, setAdjustShiftId] = useState('');
+  // Ảnh bằng chứng kèm phiếu bổ sung công (dataURL đã nén ≤800KB, null = chưa chọn)
+  const [evidencePhoto, setEvidencePhoto] = useState<string | null>(null);
+  const [evidenceBusy, setEvidenceBusy] = useState(false);
+  const evidenceInputRef = useRef<HTMLInputElement | null>(null);
   // Phiếu bổ sung công của tôi (trạng thái realtime)
   const [myAdjustments, setMyAdjustments] = useState<any[]>([]);
   // Nhịp realtime trang chủ: tự nhảy trạng thái ca (sắp tới -> đang diễn ra -> đã xong)
@@ -1608,6 +1642,34 @@ export function App() {
     }
   };
 
+  // Ảnh bằng chứng kèm phiếu bổ sung công: nén ngay trên máy (tái dùng compressPhoto
+  // của điểm danh, KHÔNG kiểm tra áo hồng — bằng chứng có thể là ảnh chụp màn hình/giấy tờ).
+  const handleEvidenceSelected = async (file: File | undefined) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      showToast('⚠️ File không phải ảnh! Vui lòng chụp/chọn ảnh thật.');
+      return;
+    }
+    if (file.size > 15 * 1024 * 1024) {
+      showToast('⚠️ Ảnh quá lớn (>15MB)! Vui lòng chụp lại.');
+      return;
+    }
+    setEvidenceBusy(true);
+    try {
+      const dataUrl = await compressPhoto(file);
+      if (!dataUrl) {
+        showToast('⚠️ Không đọc được ảnh! Vui lòng chụp lại.');
+        return;
+      }
+      setEvidencePhoto(dataUrl);
+      showToast('✓ Đã đính kèm ảnh bằng chứng! Ảnh sẽ gửi cùng phiếu cho HR duyệt.');
+    } catch {
+      showToast('⚠️ Không xử lý được ảnh! Vui lòng chụp lại.');
+    } finally {
+      setEvidenceBusy(false);
+    }
+  };
+
   const handleAdjustmentSubmit = async () => {
     // Chống bấm đúp gửi trùng phiếu (server cũng chặn trùng, đây là lớp báo sớm).
     if (actionBusy === 'adj-submit') return;
@@ -1643,8 +1705,11 @@ export function App() {
             assignmentId: shift?.assignment_id || `SHIFT_UNKNOWN_${adjustmentData.date}`,
             reason: `[${adjustmentData.type}] ${adjustmentData.date}: ${adjustmentData.reason.trim()}`,
             minutesRequested: 0,
+            // Ảnh bằng chứng: server upload Drive rồi chỉ lưu Drive ID (không lưu base64).
+            ...(evidencePhoto ? { photo_base64: evidencePhoto } : {}),
           }),
         });
+        setEvidencePhoto(null);
         showToast('✓ Đã gửi phiếu giải trình bổ sung công đến Cửa Hàng Trưởng và HR!');
       }
       await fetchMyAdjustments();
@@ -3820,7 +3885,11 @@ export function App() {
                   <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Loại yêu cầu:</label>
                   <select
                     value={adjustmentData.type}
-                    onChange={(e) => setAdjustmentData({ ...adjustmentData, type: e.target.value })}
+                    onChange={(e) => {
+                      setAdjustmentData({ ...adjustmentData, type: e.target.value });
+                      // Báo nghỉ khẩn đi luồng đơn nghỉ (không kèm ảnh) -> bỏ ảnh đã chọn nếu có.
+                      if (e.target.value === 'NGHI_KHAN') setEvidencePhoto(null);
+                    }}
                     style={{ width: '100%' }}
                   >
                     <option value="QUEN_CHECKIN">Quên Check-in khi vào ca → duyệt là ghi check-in ca đó</option>
@@ -3839,6 +3908,44 @@ export function App() {
                     style={{ width: '100%' }}
                   />
                 </div>
+
+                {adjustmentData.type !== 'NGHI_KHAN' && (
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>
+                      📷 Ảnh bằng chứng <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(không bắt buộc — chụp từ điện thoại để HR duyệt nhanh)</span>:
+                    </label>
+                    <input
+                      ref={evidenceInputRef}
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      style={{ display: 'none' }}
+                      onChange={(e) => { handleEvidenceSelected(e.target.files?.[0]); e.target.value = ''; }}
+                    />
+                    {evidencePhoto ? (
+                      <div style={{ display: 'flex', gap: '10px', alignItems: 'center', border: '1.5px solid #86EFAC', backgroundColor: '#F0FDF4', borderRadius: '8px', padding: '8px' }}>
+                        <img src={evidencePhoto} alt="Ảnh bằng chứng" style={{ width: '72px', height: '72px', objectFit: 'cover', borderRadius: '8px', border: '1px solid var(--border)' }} />
+                        <div style={{ flex: 1, fontSize: '12px', color: '#166534', fontWeight: 700 }}>✓ Đã đính kèm ảnh — sẽ gửi cùng phiếu.</div>
+                        <button
+                          className="btn-secondary"
+                          style={{ fontSize: '11px', padding: '5px 10px', color: '#DC2626' }}
+                          onClick={() => setEvidencePhoto(null)}
+                        >
+                          🗑 Xóa ảnh
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        className="btn-secondary"
+                        style={{ width: '100%', padding: '12px', fontSize: '13px', fontWeight: 700, border: '2px dashed var(--brand)', backgroundColor: '#FDF2F8' }}
+                        disabled={evidenceBusy}
+                        onClick={() => evidenceInputRef.current?.click()}
+                      >
+                        {evidenceBusy ? '⏳ Đang xử lý ảnh...' : '📷 Chụp / Chọn ảnh bằng chứng từ điện thoại'}
+                      </button>
+                    )}
+                  </div>
+                )}
 
                 <button
                   className="btn-primary"
@@ -3871,6 +3978,11 @@ export function App() {
                             {a.status === 'APPROVED' ? 'Đã duyệt' : auto ? 'Tự động từ chối (quá 1 ngày)' : a.status === 'REJECTED' ? 'Bị từ chối' : 'Chờ duyệt'}
                           </span>
                         </div>
+                        {a.evidence_drive_id && (
+                          <div style={{ marginTop: '6px' }}>
+                            <MyAdjPhoto adjustmentId={a.adjustment_id} />
+                          </div>
+                        )}
                         {a.status === 'PENDING' && (
                           <button
                             className="btn-secondary"

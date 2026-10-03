@@ -110,6 +110,40 @@ export const AttPhoto: React.FC<{ eventId: string; style?: React.CSSProperties; 
   }
   return <img src={url} alt={alt || 'Ảnh chấm công'} style={{ width: '72px', height: '72px', objectFit: 'cover', borderRadius: '8px', border: '1px solid var(--border)', ...(style || {}) }} />;
 };
+
+/** Ảnh bằng chứng phiếu bổ sung công: tải blob kèm token rồi hiện (thẻ <img> không gửi được Authorization). */
+export const AdjPhoto: React.FC<{ adjustmentId: string; style?: React.CSSProperties }> = ({ adjustmentId, style }) => {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    let objUrl: string | null = null;
+    (async () => {
+      try {
+        const res = await fetch(`${getApiBase()}/attendance/adjustments/${adjustmentId}/photo`, {
+          headers: { Authorization: `Bearer ${getAuthToken()}` },
+        });
+        if (!res.ok) throw new Error('no photo');
+        const blob = await res.blob();
+        objUrl = URL.createObjectURL(blob);
+        if (alive) setUrl(objUrl);
+      } catch {
+        if (alive) setFailed(true);
+      }
+    })();
+    return () => {
+      alive = false;
+      if (objUrl) URL.revokeObjectURL(objUrl);
+    };
+  }, [adjustmentId]);
+  if (failed || !adjustmentId) {
+    return <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>—</span>;
+  }
+  if (!url) {
+    return <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Đang tải...</span>;
+  }
+  return <img src={url} alt="Ảnh bằng chứng" style={{ width: '48px', height: '48px', objectFit: 'cover', borderRadius: '8px', border: '1px solid var(--border)', cursor: 'zoom-in', ...(style || {}) }} />;
+};
 import { evaluateCandidateAiScore } from '../services/ai-scorer';
 import { candStatusVI, computeRubricClient, INTERVIEW_RUBRICS, lockedQuestionIds, parseScoreDetailClient, requiredAnswerCount } from '../services/interview-rubric';
 
@@ -933,6 +967,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Phiếu bổ sung/điều chỉnh công: HR duyệt phiếu NV gửi từ cổng nhân viên
   const [adjustments, setAdjustments] = useState<any[]>([]);
   const [adjBusy, setAdjBusy] = useState<string | null>(null);
+  // Phiếu đang xem chi tiết (popup: tên NV + lý do & số phút + ảnh + thời gian)
+  const [selectedAdj, setSelectedAdj] = useState<any | null>(null);
   const loadAdjustments = async () => {
     try {
       const list = await apiRequest('/attendance/adjustments');
@@ -7527,14 +7563,25 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         const emp = (allEmployees || []).find((e: any) => e.employee_id === a.employee_id);
         return (
           <tr key={a.adjustment_id} style={{ borderBottom: '1px solid var(--border)', backgroundColor: isPending ? '#FFFBEB' : undefined }}>
-            <td style={{ padding: '12px 20px', fontWeight: 700 }}>
-              {emp?.full_name || a.employee_id}
+            <td
+              style={{ padding: '12px 20px', fontWeight: 700, cursor: 'pointer' }}
+              title="Bấm để xem chi tiết phiếu (lý do, số phút, ảnh bằng chứng)"
+              onClick={() => setSelectedAdj(a)}
+            >
+              <span style={{ color: 'var(--brand)', textDecoration: 'underline' }}>{emp?.full_name || a.employee_id}</span>
               <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }}>{emp?.employee_code || ''}</div>
             </td>
             <td style={{ padding: '12px 20px' }}>{getDisplayBranch(a.branch_id) || a.branch_id || 'Chưa rõ'}</td>
             <td style={{ padding: '12px 20px' }}>
               <div>{a.reason || 'Bổ sung công'}</div>
               <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Ca: {a.assignment_id || '—'} • Xin: {a.minutes_requested ?? 0} phút{a.minutes_approved !== undefined && a.status === 'APPROVED' ? ` • Duyệt: ${a.minutes_approved} phút` : ''}</div>
+            </td>
+            <td style={{ padding: '12px 20px' }} onClick={() => a.evidence_drive_id && setSelectedAdj(a)} title={a.evidence_drive_id ? 'Bấm để xem ảnh lớn' : undefined}>
+              {a.evidence_drive_id ? (
+                <AdjPhoto adjustmentId={a.adjustment_id} />
+              ) : (
+                <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>—</span>
+              )}
             </td>
             <td style={{ padding: '12px 20px', fontSize: '12px', color: 'var(--text-muted)' }}>{a.created_at ? new Date(a.created_at).toLocaleString('vi-VN') : '—'}</td>
             <td style={{ padding: '12px 20px' }}>
@@ -7645,6 +7692,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <th style={{ padding: '12px 20px' }}>Nhân Viên</th>
                 <th style={{ padding: '12px 20px' }}>Chi Nhánh</th>
                 <th style={{ padding: '12px 20px' }}>Lý Do & Số Phút</th>
+                <th style={{ padding: '12px 20px' }}>Hình Ảnh</th>
                 <th style={{ padding: '12px 20px' }}>Gửi Lúc</th>
                 <th style={{ padding: '12px 20px' }}>Trạng Thái</th>
                 <th style={{ padding: '12px 20px' }}>Thao Tác</th>
@@ -7653,7 +7701,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <tbody>
               {adjustments.length === 0 ? (
                 <tr>
-                  <td colSpan={6} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                  <td colSpan={7} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
                     Hiện không có yêu cầu bổ sung hay điều chỉnh dữ liệu công nào. Phiếu NV gửi từ Cổng Nhân Viên sẽ hiện realtime tại đây.
                   </td>
                 </tr>
@@ -7666,6 +7714,57 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </tbody>
           </table>
         </div>
+        {/* POPUP CHI TIẾT PHIẾU: bấm tên NV / ảnh ở bảng để xem đầy đủ */}
+        {selectedAdj && (() => {
+          const selEmp = (allEmployees || []).find((e: any) => e.employee_id === selectedAdj.employee_id);
+          return (
+            <div
+              style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '16px' }}
+              onClick={() => setSelectedAdj(null)}
+            >
+              <div
+                style={{ backgroundColor: 'var(--surface)', borderRadius: '12px', maxWidth: '560px', width: '100%', maxHeight: '90vh', overflowY: 'auto', padding: '20px', border: '1px solid var(--border)' }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                  <h2 style={{ fontSize: '16px', fontWeight: 800, margin: 0 }}>📋 Chi Tiết Phiếu Bổ Sung Công</h2>
+                  <button className="btn-secondary" style={{ fontSize: '12px', padding: '5px 12px' }} onClick={() => setSelectedAdj(null)}>✕ Đóng</button>
+                </div>
+                <div style={{ fontSize: '14px', fontWeight: 800, marginBottom: '2px' }}>
+                  👤 {selEmp?.full_name || selectedAdj.employee_id}
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>
+                  {selEmp?.employee_code || selectedAdj.employee_id} • {getDisplayBranch(selectedAdj.branch_id) || selectedAdj.branch_id || 'Chưa rõ chi nhánh'}
+                </div>
+                <div style={{ backgroundColor: 'var(--bg)', borderRadius: '8px', padding: '12px', fontSize: '13px', marginBottom: '12px' }}>
+                  <div style={{ fontWeight: 700, marginBottom: '4px' }}>Lý do & Số phút:</div>
+                  <div>{selectedAdj.reason || 'Bổ sung công'}</div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                    Ca: {selectedAdj.assignment_id || '—'} • Xin: {selectedAdj.minutes_requested ?? 0} phút
+                    {selectedAdj.minutes_approved !== undefined && selectedAdj.status === 'APPROVED' ? ` • Duyệt: ${selectedAdj.minutes_approved} phút` : ''}
+                  </div>
+                </div>
+                <div style={{ fontWeight: 700, fontSize: '13px', marginBottom: '6px' }}>🖼 Hình ảnh bằng chứng:</div>
+                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '12px', backgroundColor: '#111827', borderRadius: '8px', padding: '8px' }}>
+                  {selectedAdj.evidence_drive_id ? (
+                    <AdjPhoto adjustmentId={selectedAdj.adjustment_id} style={{ width: '100%', height: 'auto', maxHeight: '380px', objectFit: 'contain', cursor: 'default' }} />
+                  ) : (
+                    <span style={{ fontSize: '13px', color: '#9CA3AF', padding: '24px' }}>Phiếu này không có ảnh bằng chứng</span>
+                  )}
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px' }}>
+                  <span>🕒 Gửi lúc: {selectedAdj.created_at ? new Date(selectedAdj.created_at).toLocaleString('vi-VN') : '—'}</span>
+                  <span
+                    className="badge"
+                    style={{ backgroundColor: selectedAdj.status === 'APPROVED' ? '#DCFCE7' : selectedAdj.status === 'REJECTED' ? '#FEE2E2' : '#FEF3C7', color: selectedAdj.status === 'APPROVED' ? '#166534' : selectedAdj.status === 'REJECTED' ? '#991B1B' : '#92400E', fontWeight: 700 }}
+                  >
+                    {selectedAdj.status === 'APPROVED' ? 'Đã duyệt' : selectedAdj.status === 'REJECTED' ? 'Đã từ chối' : 'Chờ duyệt'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </div>
     );
   }
