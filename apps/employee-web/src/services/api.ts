@@ -66,6 +66,14 @@ function clearSession() {
   try { localStorage.removeItem('ubm_emp_refresh'); } catch {}
 }
 
+// Ràng buộc chu kỳ đổi PIN: server trả 403 PIN_CHANGE_REQUIRED khi NV chưa đổi
+// PIN mới theo chu kỳ (kể cả dính gate GIỮA PHIÊN, VD sang tháng mới). App đăng
+// ký 1 lần để tự khóa toàn bộ chức năng về màn đổi PIN (không bấm gì được nữa).
+let pinLockHandler: (() => void) | null = null;
+export function onPinLockRequired(cb: (() => void) | null) {
+  pinLockHandler = cb;
+}
+
 export async function apiRequest<T = any>(endpoint: string, options: RequestInit = {}, retries = 2): Promise<T> {
   const base = getApiBase();
   const headers: Record<string, string> = {
@@ -106,6 +114,10 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
 
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
+      // Chưa đổi PIN mới theo chu kỳ -> báo App khóa toàn bộ chức năng ngay.
+      if (res.status === 403 && ((data as any)?.error === 'PIN_CHANGE_REQUIRED' || (data as any)?.code === 'PIN_CHANGE_REQUIRED')) {
+        try { pinLockHandler?.(); } catch { /* không chặn lỗi gốc */ }
+      }
       // Hết phiên mà không gia hạn được -> xóa phiên cũ + báo rõ để đăng nhập lại.
       if (res.status === 401) {
         clearSession();

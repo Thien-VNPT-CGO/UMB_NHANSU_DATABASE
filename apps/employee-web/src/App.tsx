@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Socket } from 'socket.io-client';
-import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl } from './services/api';
+import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl, onPinLockRequired } from './services/api';
 import { connectRealtime } from './services/realtime';
 import { APP_COMMIT } from './app-version';
 import { PremiumLogin } from './components/PremiumLogin';
@@ -415,6 +415,21 @@ export function App() {
       localStorage.setItem('ubm_emp_active_tab', activeTab);
     }
   }, [activeTab]);
+
+  // Khóa cứng chu kỳ PIN: dính gate PIN_CHANGE_REQUIRED ở BẤT KỲ API nào (kể cả
+  // giữa phiên, VD sang tháng mới) -> quăng toàn bộ cổng về màn đổi PIN, khóa
+  // mọi chức năng cho tới khi NV đặt PIN mới xong. Backend đã chặn request.
+  useEffect(() => {
+    onPinLockRequired(() => {
+      setMustChangePin(true);
+      setIsLoggedIn(false);
+      setNewPin('');
+      setConfirmPin('');
+      setOldPinInput('');
+      setLoginError('🔒 Tài khoản của bạn chưa đổi mã PIN mới theo chu kỳ! Toàn bộ chức năng tạm thời bị KHÓA — vui lòng đặt mã PIN mới (đúng 6 số, khác PIN cũ) để mở khóa hệ thống.');
+    });
+    return () => onPinLockRequired(null);
+  }, []);
 
   useEffect(() => {
     if (getAuthToken()) {
