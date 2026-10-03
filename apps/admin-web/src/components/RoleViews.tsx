@@ -35,7 +35,6 @@ import {
   Radio,
   FileSpreadsheet,
   Award,
-  Sparkles,
   MapPin,
   Camera,
   RadioTower,
@@ -6929,25 +6928,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           >
             🛡 Rà soát phiếu sai tuần
           </button>
-          </div>
-        </div>
-
-        {/* CHÍNH SÁCH +30.000Đ PHỤ CẤP KHI NHẬN LÀM THAY / NHƯỜNG CA */}
-        <div style={{
-          backgroundColor: '#EFF6FF',
-          border: '1.5px solid #3B82F6',
-          borderRadius: 'var(--radius-md)',
-          padding: '16px 20px',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-            <Sparkles size={18} color="#2563EB" />
-            <strong style={{ fontSize: '14px', color: '#1E40AF', textTransform: 'uppercase' }}>
-              CHÍNH SÁCH ĐIỀU PHỐI NHƯỜNG CA CỦA HR (+30.000đ/CA HỖ TRỢ):
-            </strong>
-          </div>
-          <div style={{ fontSize: '13px', color: '#1E3A8A', lineHeight: '1.6' }}>
-            Nếu <strong>Nhân viên A không tìm được người thay/nhường ca</strong>, HR tạo phiếu điều phối gửi đến <strong>toàn bộ nhân viên trong chi nhánh đó</strong>. Nhân viên nào bấm nhận ca làm thay cho A ➔ <strong>+30.000đ/ca phụ cấp</strong> (tự động cộng vào Bảng Lương Finance).<br />
-            ⚠️ <strong>Chỉ phiếu do HR điều phối mới có +30k.</strong> Nhân viên tự tráo đổi với nhau (A ⇄ B) trên cổng nhân viên thì <strong>không</strong> có phụ cấp.
           </div>
         </div>
 
