@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { io, Socket } from 'socket.io-client';
+import { Socket } from 'socket.io-client';
 import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl } from './services/api';
+import { connectRealtime } from './services/realtime';
 import { APP_COMMIT } from './app-version';
 import { PremiumLogin } from './components/PremiumLogin';
 import {
@@ -804,8 +805,18 @@ export function App() {
       }, 1000);
     };
     try {
-      socket = io(getApiBase(), { auth: { token }, transports: ['websocket', 'polling'] });
-      socket.on('connect', () => reload());
+      const base = getApiBase();
+      // Realtime có bảo vệ: backoff reconnect + tự ngắt sau nhiều lỗi liên tiếp
+      // (sai địa chỉ máy chủ / server ngủ) để khỏi spam lỗi WebSocket vô hạn.
+      socket = connectRealtime(base, token, {
+        onConnect: () => reload(),
+        onGiveUp: () => {
+          console.warn(
+            `[Socket.IO] Không nối được realtime tới ${base} sau nhiều lần thử (địa chỉ máy chủ sai / server đang ngủ / mạng chặn websocket). Đã tạm dừng thử lại — bấm "đổi máy chủ" dưới màn hình đăng nhập nếu cần. Dữ liệu vẫn tải được khi mở tab.`
+          );
+          showToastRef.current('📡 Không kết nối được realtime — dữ liệu vẫn tải khi bạn mở từng tab. Kiểm tra địa chỉ máy chủ nếu lỗi kéo dài!');
+        },
+      });
       socket.on('data:updated', (p: any) => reload(p?.entity));
       socket.on('notification.created', reload);
       // Phiếu đổi ca gửi tới tôi: tải ngay + popup để xác nhận/từ chối.

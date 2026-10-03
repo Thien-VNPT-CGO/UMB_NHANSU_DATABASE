@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { io, Socket } from 'socket.io-client';
+import { Socket } from 'socket.io-client';
 import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl } from './services/api';
+import { connectRealtime } from './services/realtime';
 import { APP_COMMIT } from './app-version';
 import {
   Users,
@@ -832,19 +833,23 @@ export function App() {
     let socket: Socket | null = null;
     try {
       const base = getApiBase();
-      socket = io(base, {
-        auth: { token },
-        transports: ['websocket', 'polling'],
-      });
-
-      socket.on('connect', () => {
-        console.log('🟢 [Socket.IO] Realtime kết nối thành công tới:', base);
-        socketConnectedRef.current = true;
-        scheduleReload(currentUser);
-      });
-
-      socket.on('disconnect', () => {
-        socketConnectedRef.current = false;
+      // Realtime có bảo vệ: backoff reconnect + tự ngắt sau nhiều lỗi liên tiếp
+      // (sai địa chỉ máy chủ / server ngủ) để khỏi spam lỗi WebSocket vô hạn.
+      socket = connectRealtime(base, token, {
+        onConnect: () => {
+          console.log('🟢 [Socket.IO] Realtime kết nối thành công tới:', base);
+          socketConnectedRef.current = true;
+          scheduleReload(currentUser);
+        },
+        onDisconnect: () => {
+          socketConnectedRef.current = false;
+        },
+        onGiveUp: () => {
+          console.warn(
+            `[Socket.IO] Không nối được realtime tới ${base} sau nhiều lần thử (địa chỉ máy chủ sai / server đang ngủ / mạng chặn websocket). Đã tạm dừng thử lại — kiểm tra địa chỉ máy chủ rồi đăng nhập lại. Dữ liệu vẫn tải được bằng nút Tải lại.`
+          );
+          socketConnectedRef.current = false;
+        },
       });
 
       socket.on('connect_error', (err: any) => {
