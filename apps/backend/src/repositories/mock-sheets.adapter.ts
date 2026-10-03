@@ -428,6 +428,14 @@ export class MockSheetsAdapter implements ISheetsRepository {
     return { ...cand };
   }
 
+  async deleteCandidate(submissionId: string): Promise<boolean> {
+    this.checkErrors();
+    const idx = this.candidates.findIndex(c => c.submission_id === submissionId);
+    if (idx < 0) return false;
+    this.candidates.splice(idx, 1);
+    return true;
+  }
+
   // --- Schedules ---
   async getShiftsForWeek(branchId: string, weekStartDate: string): Promise<ShiftAssignment[]> {
     this.checkErrors();

@@ -52,6 +52,7 @@ export interface ISheetsRepository {
   listCandidates(): Promise<CandidateApplication[]>;
   createCandidate(data: Omit<CandidateApplication, 'created_at'>): Promise<CandidateApplication>;
   updateCandidate(submissionId: string, updates: Partial<CandidateApplication>): Promise<CandidateApplication>;
+  deleteCandidate(submissionId: string): Promise<boolean>;
 
   // Schedules
   getShiftsForWeek(branchId: string, weekStartDate: string): Promise<ShiftAssignment[]>;

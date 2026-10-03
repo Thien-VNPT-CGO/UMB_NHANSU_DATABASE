@@ -1017,6 +1017,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Mốc thử auto-huỷ gần nhất (thất bại mạng -> thử lại mỗi 30s thay vì spam mỗi giây).
   const pvAutoRetryRef = useRef<Map<string, number>>(new Map());
   const [pvCancelBusyId, setPvCancelBusyId] = useState<string | null>(null);
+  // Xóa cứng ứng viên (HR bấm tay, thay cho chờ tự động).
+  const [candDelBusyId, setCandDelBusyId] = useState<string | null>(null);
   // Xác nhận / đánh vắng PV (HR bấm tay khi UV báo qua điện thoại/Zalo).
   const [rsvpBusyId, setRsvpBusyId] = useState<string | null>(null);
   const handleConfirmInterview = async (c: any) => {
@@ -3729,7 +3731,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                               </span>
                               <div style={{ fontSize: '11px', color: '#DC2626', fontWeight: 700, marginTop: '4px', fontVariantNumeric: 'tabular-nums' }}>
                                 {isExpired
-                                  ? `⛔ Đã quá 24h — Hệ thống sẽ tự động xoá ứng viên này ra khỏi hệ thống (hết hạn lúc ${new Date(failInfo.scoredAt + 24*60*60*1000).toLocaleString('vi-VN')})`
+                                  ? '⛔ Đã quá 24h — bấm nút Xóa ở cột Thao tác để xóa khỏi hệ thống.'
                                   : `⏳ Hệ thống sẽ tự động xoá ứng viên này ra khỏi hệ thống sau 24h kể từ lúc chấm điểm (${new Date(failInfo.scoredAt + 24*60*60*1000).toLocaleString('vi-VN')})`}
                               </div>
                             </div>
@@ -3837,6 +3839,29 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             {isAccepted && (
                               <span style={{ fontSize: '11px', color: '#059669', fontWeight: 800 }}>✅ Đã duyệt NV</span>
                             )}
+                            <button
+                              disabled={candDelBusyId === c.submission_id}
+                              style={{ ...btn2, backgroundColor: '#DC2626', color: '#FFF', boxShadow: '0 2px 6px rgba(220,38,38,0.3)' }}
+                              onClick={async () => {
+                                const sid = String(c?.submission_id || '');
+                                if (!sid || candDelBusyId) return;
+                                if (!window.confirm(`Xóa cứng ứng viên ${c?.full_name || sid} khỏi hệ thống + Google Sheet? Không khôi phục được!`)) return;
+                                setCandDelBusyId(sid);
+                                try {
+                                  await apiRequest(`/applications/${sid}`, { method: 'DELETE' });
+                                  showToast(`Đã xóa ${c?.full_name || sid} khỏi hệ thống + Sheet!`);
+                                  if (onRefreshData) await onRefreshData();
+                                  if (onPushSheets) await onPushSheets();
+                                } catch (e: any) {
+                                  showToast(e?.message || 'Lỗi khi xóa ứng viên!');
+                                } finally {
+                                  setCandDelBusyId(null);
+                                }
+                              }}
+                              title="Xóa cứng khỏi hệ thống + Google Sheet ngay (không khôi phục)"
+                            >
+                              {candDelBusyId === c.submission_id ? '⏳ Đang xóa...' : '🗑 Xóa'}
+                            </button>
                             {disabledForFail && (
                               <span style={{ fontSize: '11px', color: '#DC2626', fontWeight: 800, alignSelf: 'center' }}>
                                 {failInfo.remainingMs <= 0 ? '🔒 Đã quá 24h — tự xoá khỏi hệ thống' : '🔒 Khoá (tự xoá 24h)'}

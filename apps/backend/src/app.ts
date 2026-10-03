@@ -1252,6 +1252,29 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Xóa cứng ứng viên khỏi hệ thống + Google Sheet NGAY (không khôi phục).
+  // HR dùng khi loại hồ sơ rác/chưa đạt thay vì chờ tự động.
+  app.delete('/applications/:id', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const cands = await adapter.listCandidates().catch(() => []);
+      const cand: any = (cands || []).find((c: any) => c.submission_id === req.params.id);
+      if (!cand) return res.status(404).json({ error: 'CANDIDATE_NOT_FOUND' });
+      const ok = await (adapter as any).deleteCandidate(req.params.id);
+      if (!ok) return res.status(404).json({ error: 'CANDIDATE_NOT_FOUND' });
+      await adapter.recordAuditLog({
+        actor_id: req.user!.id,
+        action: 'CANDIDATE_DELETED',
+        target_entity: 'UNG_VIEN',
+        target_id: req.params.id,
+        details: `Xóa cứng ứng viên ${cand.full_name || req.params.id} khỏi hệ thống + Sheet`,
+      } as any).catch(() => null);
+      broadcastUpdate('candidates', { action: 'deleted', id: req.params.id });
+      res.json({ success: true, deleted: req.params.id });
+    } catch (err: any) {
+      res.status(400).json({ error: String(err?.message || 'Lỗi xóa ứng viên') });
+    }
+  });
+
   // HR hủy lịch PV (quá 5 phút không vào Meet / chủ động hủy): xóa ngày+khung giờ,
   // trạng thái về NEW (chưa đăng ký lịch PV). Giữ nguyên điểm đã chấm.
   app.post('/interviews/:id/cancel', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {

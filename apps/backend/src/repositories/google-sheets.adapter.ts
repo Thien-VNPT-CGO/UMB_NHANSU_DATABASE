@@ -445,6 +445,21 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     return res;
   }
 
+  /** Xóa cứng ứng viên khỏi hệ thống + đẩy Sheet NGAY (await) để pull sau
+   *  không hồi sinh (pattern như xóa phiếu). */
+  async deleteCandidate(submissionId: string): Promise<boolean> {
+    const ok = await this.fallbackAdapter.deleteCandidate(submissionId);
+    if (ok && this.isConfigured) {
+      try {
+        await this.syncService.pushCandidatesTab(this.fallbackAdapter);
+      } catch (err) {
+        console.warn('[GoogleSheetsAdapter] Đẩy FROM_NHAN_VIEN sau xóa ứng viên thất bại:', (err as any)?.message || err);
+        this.scheduleFullSync('FROM_NHAN_VIEN.delete');
+      }
+    }
+    return ok;
+  }
+
   /** Đẩy tab FROM_NHAN_VIEN lên Sheets NGAY (await): dùng sau xóa lịch PV trùng
    *  để pull nền sau đó không hồi sinh lịch đã xóa. Mock/không cấu hình -> no-op. */
   async pushCandidatesNow(): Promise<number> {
