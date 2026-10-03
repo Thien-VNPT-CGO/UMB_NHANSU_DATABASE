@@ -263,6 +263,130 @@ export function pvBookedSlots(cands: any[], date: string, excludeId?: string): s
   return out.sort();
 }
 
+/** Tick chọn nhân viên (dùng chung cho giao bài TEST tay + đề random):
+ *  tìm kiếm + chọn tất cả/bỏ chọn + thẻ NV có avatar, badge đếm, layout lưới. */
+export function EmployeeTickPicker(props: {
+  employees: any[];
+  selected: string[];
+  onToggle: (id: string) => void;
+  onSelectVisible: (ids: string[]) => void;
+  onClear: () => void;
+  search: string;
+  onSearchChange: (v: string) => void;
+  accent?: string;
+  softBg?: string;
+  maxHeight?: number;
+}) {
+  const {
+    employees, selected, onToggle, onSelectVisible, onClear,
+    search, onSearchChange, accent = '#7C3AED', softBg = '#F5F3FF',
+    maxHeight = 208,
+  } = props;
+  const q = search.trim().toLowerCase();
+  const filtered = (employees || [])
+    .filter((e: any) => e?.employment_status !== 'TERMINATED')
+    .filter((e: any) => !q
+      || (e.full_name || '').toLowerCase().includes(q)
+      || (e.employee_code || '').toLowerCase().includes(q)
+      || (e.phone_normalized || '').includes(q))
+    .slice(0, 120);
+  const visibleIds = filtered.map((e: any) => e.employee_id);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id: string) => selected.includes(id));
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
+        <span style={{ fontWeight: 800, fontSize: '13px' }}>Tick chọn nhân viên làm bài</span>
+        <span style={{
+          fontSize: '11px', fontWeight: 800, padding: '3px 10px', borderRadius: '999px',
+          backgroundColor: selected.length > 0 ? accent : '#F1F5F9',
+          color: selected.length > 0 ? '#FFF' : '#64748B',
+        }}>
+          {selected.length} đã chọn
+        </span>
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: '6px' }}>
+          {!allVisibleSelected && visibleIds.length > 0 && (
+            <button
+              type="button"
+              onClick={() => onSelectVisible(visibleIds)}
+              style={{ fontSize: '11px', fontWeight: 700, color: accent, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: '2px 4px' }}
+            >
+              Chọn tất cả ({visibleIds.length})
+            </button>
+          )}
+          {selected.length > 0 && (
+            <button
+              type="button"
+              onClick={onClear}
+              style={{ fontSize: '11px', fontWeight: 700, color: '#DC2626', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: '2px 4px' }}
+            >
+              Bỏ chọn hết
+            </button>
+          )}
+        </span>
+      </div>
+      <div style={{ position: 'relative', marginBottom: '8px' }}>
+        <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+        <input
+          value={search}
+          onChange={(e) => onSearchChange(e.target.value)}
+          placeholder="Tìm tên / mã NV / SĐT..."
+          style={{ width: '100%', maxWidth: '320px', padding: '7px 10px 7px 32px', borderRadius: '8px', border: '1px solid var(--border)', fontSize: '13px', outline: 'none' }}
+        />
+      </div>
+      {filtered.length === 0 ? (
+        <div style={{ fontSize: '12px', color: 'var(--text-muted)', backgroundColor: 'var(--bg)', border: '1px dashed var(--border)', borderRadius: '8px', padding: '14px', textAlign: 'center' }}>
+          Không tìm thấy nhân viên nào khớp từ khóa.
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(215px, 1fr))', gap: '8px', maxHeight, overflowY: 'auto', padding: '10px', backgroundColor: 'var(--bg)', border: '1px solid var(--border)', borderRadius: '10px' }}>
+          {filtered.map((e: any) => {
+            const checked = selected.includes(e.employee_id);
+            return (
+              <label
+                key={e.employee_id}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '9px', padding: '8px 10px',
+                  borderRadius: '10px', cursor: 'pointer', backgroundColor: checked ? softBg : 'var(--surface)',
+                  border: checked ? `1.5px solid ${accent}` : '1px solid var(--border)',
+                  boxShadow: checked ? `0 2px 8px ${accent}22` : 'none',
+                  transition: 'all .12s ease',
+                }}
+              >
+                <span style={{
+                  width: '30px', height: '30px', borderRadius: '50%', flexShrink: 0,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontWeight: 800, fontSize: '13px',
+                  backgroundColor: checked ? accent : '#F1F5F9',
+                  color: checked ? '#FFF' : '#64748B',
+                }}>
+                  {checked ? '✓' : String(e.full_name || 'NV').charAt(0).toUpperCase()}
+                </span>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: 'block', fontSize: '12.5px', fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {e.full_name}
+                  </span>
+                  <span style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)' }}>
+                    {e.employee_code}{e.employment_status === 'PROBATION' ? ' • Thử việc' : e.employment_status === 'OFFICIAL' ? ' • Chính thức' : ''}
+                  </span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => onToggle(e.employee_id)}
+                  style={{ accentColor: accent, width: '15px', height: '15px', flexShrink: 0, cursor: 'pointer' }}
+                />
+              </label>
+            );
+          })}
+        </div>
+      )}
+      <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>
+        Hiển thị {filtered.length} nhân viên{selected.length > 0 && <> • <strong style={{ color: accent }}>{selected.length} đã chọn</strong> — bấm "Bỏ chọn hết" để chọn lại</>}.
+      </div>
+    </div>
+  );
+}
+
 /** Kiểm tra xem ứng viên có verdict 'FAIL' (Chưa đạt) từ rubric chấm điểm không. */
 export function getFailVerdictInfo(c: any): { isFail: boolean; scoredAt: number; remainingMs: number } {
   const d = parseScoreDetailClient((c as any)?.interview_score_detail);
@@ -7900,19 +8024,20 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   </div>
                 </details>
               )}
-              <div style={{ fontWeight: 700, fontSize: '13px', marginTop: '12px', marginBottom: '6px' }}>Tick chọn nhân viên làm bài ({bankAssignees.length} đã chọn):</div>
-              <input value={bankSearch} onChange={(e) => setBankSearch(e.target.value)} placeholder="Tìm tên / mã NV..." style={{ padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '13px', marginBottom: '6px', width: '260px' }} />
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', maxHeight: '150px', overflow: 'auto', marginBottom: '10px' }}>
-                {(allEmployees || [])
-                  .filter((e: any) => e.employment_status !== 'TERMINATED')
-                  .filter((e: any) => !bankSearch.trim() || (e.full_name || '').toLowerCase().includes(bankSearch.trim().toLowerCase()) || (e.employee_code || '').toLowerCase().includes(bankSearch.trim().toLowerCase()))
-                  .slice(0, 100)
-                  .map((e: any) => (
-                    <label key={e.employee_id} style={{ fontSize: '12px', border: '1px solid var(--border)', borderRadius: '6px', padding: '4px 8px', cursor: 'pointer', backgroundColor: bankAssignees.includes(e.employee_id) ? '#F5F3FF' : undefined }}>
-                      <input type="checkbox" checked={bankAssignees.includes(e.employee_id)} onChange={() => setBankAssignees(bankAssignees.includes(e.employee_id) ? bankAssignees.filter(id => id !== e.employee_id) : [...bankAssignees, e.employee_id])} /> {e.full_name} <span style={{ color: 'var(--text-muted)' }}>({e.employee_code})</span>
-                    </label>
-                  ))}
+              <div style={{ marginTop: '12px' }}>
+                <EmployeeTickPicker
+                  employees={allEmployees || []}
+                  selected={bankAssignees}
+                  onToggle={(id) => setBankAssignees(bankAssignees.includes(id) ? bankAssignees.filter(x => x !== id) : [...bankAssignees, id])}
+                  onSelectVisible={(ids) => setBankAssignees([...new Set([...bankAssignees, ...ids])])}
+                  onClear={() => setBankAssignees([])}
+                  search={bankSearch}
+                  onSearchChange={setBankSearch}
+                  accent="#7C3AED"
+                  softBg="#F5F3FF"
+                />
               </div>
+              <div style={{ marginBottom: '10px' }} />
               <button
                 className="btn-primary"
                 disabled={bankBusy || bankAssignees.length === 0}
@@ -7981,19 +8106,18 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </div>
             ))}
             <button className="btn-secondary" style={{ fontSize: '12px', marginBottom: '10px' }} onClick={() => setTestQuestions([...testQuestions, { content: '', options: ['', ''], correct: 0 }])}>+ Thêm câu hỏi</button>
-            <div style={{ fontWeight: 700, fontSize: '13px', marginBottom: '6px' }}>Giao cho nhân viên ({testAssignees.length} đã chọn):</div>
-            <input value={testSearch} onChange={e => setTestSearch(e.target.value)} placeholder="Tìm tên / mã NV..." style={{ padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '13px', marginBottom: '6px', width: '260px' }} />
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', maxHeight: '150px', overflow: 'auto', marginBottom: '10px' }}>
-              {(allEmployees || [])
-                .filter((e: any) => e.employment_status !== 'TERMINATED')
-                .filter((e: any) => !testSearch.trim() || (e.full_name || '').toLowerCase().includes(testSearch.trim().toLowerCase()) || (e.employee_code || '').toLowerCase().includes(testSearch.trim().toLowerCase()))
-                .slice(0, 100)
-                .map((e: any) => (
-                  <label key={e.employee_id} style={{ fontSize: '12px', border: '1px solid var(--border)', borderRadius: '6px', padding: '4px 8px', cursor: 'pointer', backgroundColor: testAssignees.includes(e.employee_id) ? '#EFF6FF' : undefined }}>
-                    <input type="checkbox" checked={testAssignees.includes(e.employee_id)} onChange={() => setTestAssignees(testAssignees.includes(e.employee_id) ? testAssignees.filter(id => id !== e.employee_id) : [...testAssignees, e.employee_id])} /> {e.full_name} <span style={{ color: 'var(--text-muted)' }}>({e.employee_code})</span>
-                  </label>
-                ))}
-            </div>
+            <EmployeeTickPicker
+              employees={allEmployees || []}
+              selected={testAssignees}
+              onToggle={(id) => setTestAssignees(testAssignees.includes(id) ? testAssignees.filter(x => x !== id) : [...testAssignees, id])}
+              onSelectVisible={(ids) => setTestAssignees([...new Set([...testAssignees, ...ids])])}
+              onClear={() => setTestAssignees([])}
+              search={testSearch}
+              onSearchChange={setTestSearch}
+              accent="#2563EB"
+              softBg="#EFF6FF"
+            />
+            <div style={{ marginBottom: '10px' }} />
             <button
               className="btn-primary"
               disabled={testBusy}
