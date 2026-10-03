@@ -7798,6 +7798,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         if (onRefreshData) await onRefreshData();
         if (onSyncSheets) await onSyncSheets();
       } catch (e: any) {
+        // Thao tác rớt (VD phiếu đã được xử lý ở máy khác) -> tải lại ngay để
+        // hàng cũ biến mất, HR không bấm lỗi lặp trên dữ liệu đã cũ.
+        await loadAdjustments().catch(() => null);
         showToast(e?.message || 'Lỗi khi duyệt!');
       } finally {
         setAdjBusy(null);
@@ -7843,6 +7846,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         if (onRefreshData) await onRefreshData();
                         if (onSyncSheets) await onSyncSheets();
                       } catch (e: any) {
+                        await loadAdjustments().catch(() => null);
                         showToast(e?.message || 'Lỗi khi xóa!');
                       } finally {
                         setAdjBusy(null);
@@ -7870,6 +7874,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         if (onRefreshData) await onRefreshData();
                         if (onSyncSheets) await onSyncSheets();
                       } catch (e: any) {
+                        await loadAdjustments().catch(() => null);
                         showToast(e?.message || 'Lỗi khi xóa!');
                       } finally {
                         setAdjBusy(null);
