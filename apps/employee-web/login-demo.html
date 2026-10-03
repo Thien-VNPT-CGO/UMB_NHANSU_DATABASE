@@ -86,7 +86,11 @@
       <input id="phone" type="tel" inputmode="numeric" autocomplete="tel" placeholder="901 111 222" autofocus />
     </div>
     <div class="hint" id="phoneHint"></div>
-    <button class="btn" id="btnContinue" disabled>Tiếp tục →</button>
+    <div id="phoneChecking" class="hidden" style="display:flex;align-items:center;justify-content:center;gap:8;margin-top:14px;font-size:13px;font-weight:700;color:#E85D92">
+      <span class="spinner"></span> Đang kiểm tra SĐT trong hệ thống...
+    </div>
+    <div id="phoneNotFound" class="err-box hidden"></div>
+    <div id="phoneIdle" style="text-align:center;margin-top:14px;font-size:12.5px;color:#6B7280;font-weight:600">Nhập đủ số, hệ thống sẽ tự kiểm tra và chuyển sang nhập PIN.</div>
     <div class="secure">🔒 Dữ liệu được mã hóa • Demo PIN đúng là <b>&nbsp;123456</b></div>
   </div>
 
@@ -134,7 +138,9 @@
   var phoneWrap = document.getElementById('phoneWrap');
   var phoneHint = document.getElementById('phoneHint');
   var phoneCount = document.getElementById('phoneCount');
-  var btnContinue = document.getElementById('btnContinue');
+  var phoneChecking = document.getElementById('phoneChecking');
+  var phoneNotFound = document.getElementById('phoneNotFound');
+  var phoneIdle = document.getElementById('phoneIdle');
   var stepPhone = document.getElementById('stepPhone');
   var stepPin = document.getElementById('stepPin');
   var stepSuccess = document.getElementById('stepSuccess');
@@ -150,17 +156,39 @@
 
   function validPhone(d) { return d.length >= 9 && d.length <= 12; }
 
+  var checkTimer = null, checking = false;
+  function setPhoneStatus(mode, msg) {
+    phoneChecking.classList.toggle('hidden', mode !== 'checking');
+    phoneChecking.style.display = mode === 'checking' ? 'flex' : 'none';
+    phoneNotFound.classList.toggle('hidden', mode !== 'error');
+    if (mode === 'error') phoneNotFound.textContent = '⚠️ ' + msg;
+    phoneIdle.style.display = mode === 'idle' ? 'block' : 'none';
+    if (mode === 'idle' && validPhone(phone)) phoneIdle.textContent = '✓ Đủ số — hệ thống đang tự kiểm tra...';
+    else if (mode === 'idle') phoneIdle.textContent = 'Nhập đủ số, hệ thống sẽ tự kiểm tra và chuyển sang nhập PIN.';
+  }
+  function runPhoneCheck() {
+    if (!validPhone(phone) || checking) return;
+    checking = true;
+    setPhoneStatus('checking');
+    setTimeout(function () {
+      checking = false;
+      // Demo: SĐT hợp lệ là tồn tại trong hệ thống.
+      goPin();
+    }, 600);
+  }
   phoneInput.addEventListener('input', function () {
     phone = phoneInput.value.replace(/\D/g, '').slice(0, 11);
     phoneInput.value = phone;
     phoneCount.textContent = phone.length + '/11';
     var ok = validPhone(phone);
-    btnContinue.disabled = !ok;
     if (phone.length > 0 && !ok) { phoneWrap.classList.add('err'); phoneHint.textContent = 'Số điện thoại cần 9–12 chữ số (VD: 0901111222).'; }
     else { phoneWrap.classList.remove('err'); phoneHint.textContent = ''; }
+    if (!ok) { if (checkTimer) clearTimeout(checkTimer); setPhoneStatus('idle'); return; }
+    setPhoneStatus('idle');
+    if (checkTimer) clearTimeout(checkTimer);
+    checkTimer = setTimeout(runPhoneCheck, 700);
   });
-  phoneInput.addEventListener('keydown', function (e) { if (e.key === 'Enter' && validPhone(phone)) goPin(); });
-  btnContinue.addEventListener('click', goPin);
+  phoneInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') runPhoneCheck(); });
 
   function mask(p) { return p.length >= 4 ? '*** *** ' + p.slice(-3) : p; }
   function goPin() {

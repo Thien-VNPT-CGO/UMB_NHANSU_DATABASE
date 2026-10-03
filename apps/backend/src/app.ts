@@ -41,6 +41,7 @@ import { validate } from './middlewares/validate.middleware.js';
 import {
   changePasswordBody,
   adminLoginBody,
+  checkPhoneBody,
   employeeChangePinBody,
   phoneLoginBody,
   refreshBody,
@@ -387,6 +388,28 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // --- AUTH ---
+  // Bước 1 luồng đăng nhập: SĐT có tồn tại trong CSDL không (chưa cần PIN).
+  app.post('/auth/employee/check-phone', validate({ body: checkPhoneBody }), async (req, res) => {
+    try {
+      const exists = await authService.phoneExists(req.body.phone);
+      res.json({ exists });
+    } catch (err: any) {
+      if (err.message === 'SHEETS_LOADING') {
+        return res.status(503).json({
+          error: 'SHEETS_LOADING',
+          message: 'Hệ thống vừa khởi động, đang tải dữ liệu từ Google Sheets (khoảng 30 giây). Vui lòng đợi rồi thử lại.',
+        });
+      }
+      if (err.message === 'SHEETS_UNAVAILABLE') {
+        return res.status(503).json({
+          error: 'SHEETS_UNAVAILABLE',
+          message: 'Không đọc được Google Sheets (kiểm tra cấu hình server). Vui lòng báo Admin/HR.',
+        });
+      }
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   app.post('/auth/employee/phone-login', validate({ body: phoneLoginBody }), async (req, res) => {
     try {
       const { phone, pin } = req.body;

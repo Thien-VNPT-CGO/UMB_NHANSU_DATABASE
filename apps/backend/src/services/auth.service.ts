@@ -283,6 +283,18 @@ export class AuthService {
     };
   }
 
+  /** Kiểm tra SĐT có tồn tại trong CSDL không (bước 1 luồng đăng nhập, chưa cần PIN). */
+  async phoneExists(phoneInput: string): Promise<boolean> {
+    const readiness = this.repo.getReadiness?.();
+    if (readiness && !readiness.ready) {
+      throw new Error(readiness.reason === 'SHEETS_UNREACHABLE' ? 'SHEETS_UNAVAILABLE' : 'SHEETS_LOADING');
+    }
+    const normalized = normalizePhone(phoneInput);
+    if (!normalized) return false;
+    const accounts = await this.repo.findAccountByPhone(normalized);
+    return accounts.length > 0;
+  }
+
   /** Nhân viên tự đổi PIN (luôn yêu cầu PIN cũ). Xóa cờ bắt-đổi-lần-đầu. */
   async changeEmployeePin(accountId: string, oldPin: string, newPin: string) {
     const account = await this.repo.getAccountById(accountId);

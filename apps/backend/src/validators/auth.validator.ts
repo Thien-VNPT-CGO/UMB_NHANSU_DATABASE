@@ -12,6 +12,11 @@ export const adminLoginBody = z.object({
   password: z.string().min(1).max(128),
 });
 
+// Kiểm tra SĐT có tồn tại trong CSDL không (bước 1 luồng đăng nhập, chưa cần PIN).
+export const checkPhoneBody = z.object({
+  phone: z.string().trim().min(9).max(15),
+});
+
 export const refreshBody = z.object({
   refreshToken: z.string().min(10).max(8192),
 });

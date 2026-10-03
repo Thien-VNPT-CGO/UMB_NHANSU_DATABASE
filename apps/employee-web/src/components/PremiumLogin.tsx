@@ -16,6 +16,8 @@ export interface PremiumLoginProps {
   externalError?: string | null;
   /** Verify thật (gọi API). Ném lỗi khi sai. Nếu không truyền -> dùng demoPin để test. */
   onLogin?: (phone: string, pin: string) => Promise<void>;
+  /** Kiểm tra SĐT có tồn tại trong CSDL không. Không truyền -> demo luôn tồn tại. */
+  onCheckPhone?: (phone: string) => Promise<boolean>;
   /** Gọi sau khi hiện success ~1.8s (để parent chuyển hướng / setLoggedIn). */
   onSuccess?: (phone: string) => void;
   demoPin?: string;
@@ -38,6 +40,7 @@ export function PremiumLogin({
   loading = false,
   externalError = null,
   onLogin,
+  onCheckPhone,
   onSuccess,
   demoPin = DEMO_DEFAULT_PIN,
   pinLength = 6,
@@ -49,9 +52,12 @@ export function PremiumLogin({
   const [verifying, setVerifying] = useState(false);
   const [shakeKey, setShakeKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [checkingPhone, setCheckingPhone] = useState(false);
+  const [phoneCheckError, setPhoneCheckError] = useState<string | null>(null);
   const inputRefs = useRef<Array<HTMLInputElement | null>>([]);
   const confettiRef = useRef<HTMLCanvasElement | null>(null);
   const successTimer = useRef<any>(null);
+  const phoneCheckSeq = useRef(0);
 
   // Đồng bộ lỗi từ parent (API thật báo sai PIN...)
   useEffect(() => {
@@ -72,10 +78,52 @@ export function PremiumLogin({
     setPhoneTouched(true);
     if (!isValidPhone(phone)) return;
     setError(null);
+    setPhoneCheckError(null);
+    setCheckingPhone(false);
     setStep('pin');
     setPin(Array(pinLength).fill(''));
     setTimeout(() => inputRefs.current[0]?.focus(), 80);
   }, [phone, pinLength]);
+
+  // Tự động kiểm tra SĐT trong CSDL khi nhập đủ số (không cần bấm nút).
+  const runPhoneCheck = useCallback(async () => {
+    if (!isValidPhone(phone)) return;
+    const seq = ++phoneCheckSeq.current;
+    setCheckingPhone(true);
+    setPhoneCheckError(null);
+    try {
+      let exists: boolean;
+      if (onCheckPhone) {
+        exists = await onCheckPhone(phone);
+      } else {
+        // Demo mode: SĐT hợp lệ là tồn tại.
+        await new Promise((r) => setTimeout(r, 600));
+        exists = true;
+      }
+      if (phoneCheckSeq.current !== seq) return;
+      if (exists) {
+        goToPin();
+      } else {
+        setPhoneCheckError(`Số ${phone} chưa tồn tại trong hệ thống. Vui lòng kiểm tra lại hoặc liên hệ HR để nộp hồ sơ!`);
+      }
+    } catch (e: any) {
+      if (phoneCheckSeq.current !== seq) return;
+      setPhoneCheckError(e?.message || 'Không kiểm tra được SĐT. Vui lòng thử lại!');
+    } finally {
+      if (phoneCheckSeq.current === seq) setCheckingPhone(false);
+    }
+  }, [phone, onCheckPhone, goToPin]);
+
+  // Debounce: ngừng gõ 700ms mới gọi kiểm tra (tránh spam API từng ký tự).
+  useEffect(() => {
+    if (step !== 'phone' || !isValidPhone(phone)) {
+      setCheckingPhone(false);
+      return;
+    }
+    setPhoneCheckError(null);
+    const t = setTimeout(() => { void runPhoneCheck(); }, 700);
+    return () => clearTimeout(t);
+  }, [phone, step, runPhoneCheck]);
 
   // ---- Confetti thuần Canvas, zero lib ----
   const fireConfetti = useCallback(() => {
@@ -350,13 +398,23 @@ export function PremiumLogin({
                 autoFocus
                 onChange={(e) => setPhone(normalizePhone(e.target.value))}
                 onBlur={() => setPhoneTouched(true)}
-                onKeyDown={(e) => { if (e.key === 'Enter') goToPin(); }}
+                onKeyDown={(e) => { if (e.key === 'Enter') void runPhoneCheck(); }}
               />
             </div>
             <div className="pl-hint">{showPhoneError ? 'Số điện thoại cần 9–12 chữ số (VD: 0901111222).' : ''}</div>
-            <button className={`pl-btn${loading ? ' pl-loading' : ''}`} disabled={!phoneValid || loading} onClick={goToPin}>
-              {loading ? <><span className="pl-spinner" /> Đang xử lý...</> : <>Tiếp tục →</>}
-            </button>
+            {checkingPhone && phoneValid && (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 14, fontSize: 13, fontWeight: 700, color: '#E85D92' }}>
+                <span className="pl-spinner" style={{ borderColor: 'rgba(232,93,146,.3)', borderTopColor: '#E85D92' }} /> Đang kiểm tra SĐT trong hệ thống...
+              </div>
+            )}
+            {!checkingPhone && phoneCheckError && phoneValid && (
+              <div className="pl-err-box">⚠️ {phoneCheckError}</div>
+            )}
+            {!checkingPhone && !phoneCheckError && (
+              <div style={{ textAlign: 'center', marginTop: 14, fontSize: 12.5, color: '#6B7280', fontWeight: 600 }}>
+                {phoneValid ? '✓ Đủ số — hệ thống đang tự kiểm tra...' : 'Nhập đủ số, hệ thống sẽ tự kiểm tra và chuyển sang nhập PIN.'}
+              </div>
+            )}
             <div className="pl-secure">🔒 Dữ liệu được mã hóa • Không chia sẻ PIN cho bất kỳ ai</div>
           </div>
         )}

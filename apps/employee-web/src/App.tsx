@@ -554,6 +554,21 @@ export function App() {
     await loadEmployeeData(res.employee.employee_id);
   };
 
+  // Bước 1 login mới (không nút Tiếp tục): SĐT có tồn tại trong CSDL không.
+  const handleCheckPhone = async (phoneToCheck: string): Promise<boolean> => {
+    const cleaned = phoneToCheck.replace(/[\s\-\.\(\)]/g, '');
+    setLoginPhone(phoneToCheck);
+    try {
+      const res = await apiRequest('/auth/employee/check-phone', {
+        method: 'POST',
+        body: JSON.stringify({ phone: cleaned }),
+      });
+      return (res as any)?.exists === true;
+    } catch (err: any) {
+      throw new Error(premiumErrorText(err, cleaned));
+    }
+  };
+
   // Premium 3-step login: verify thật qua API, ném lỗi để UI rung + đỏ (không vào success).
   const premiumResRef = useRef<any>(null);
   const premiumErrorText = (err: any, cleaned: string): string => {
@@ -1851,6 +1866,7 @@ export function App() {
         initialPhone={loginPhone}
         loading={loading}
         onLogin={handlePremiumLogin}
+        onCheckPhone={handleCheckPhone}
         onSuccess={handlePremiumSuccess}
       />
     );
