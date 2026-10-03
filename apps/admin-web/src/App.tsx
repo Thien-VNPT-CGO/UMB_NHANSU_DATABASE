@@ -36,6 +36,7 @@ import {
   Eye,
   EyeOff,
   UserCheck,
+  IdCard,
   Store,
   FileText,
   CreditCard,
@@ -108,6 +109,7 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'hr-tests', label: '12. TEST nhân viên', icon: FileCheck },
     { id: 'hr-reports', label: '13. Báo cáo HR', icon: FileSpreadsheet },
     { id: 'hr-notifications', label: '14. Thông báo', icon: Bell },
+    { id: 'hr-profile', label: '15. Hồ Sơ Nhân Viên', icon: IdCard },
   ],
   STORE: [
     { id: 'store-dashboard', label: '1. Dashboard Store', icon: Store },
