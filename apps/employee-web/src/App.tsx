@@ -713,6 +713,11 @@ export function App() {
   useEffect(() => {
     if (activeTab === 'test_exam' || activeTab === 'test_training') fetchMyTests();
     if (activeTab === 'swap_shift') fetchMySwaps();
+    // Mở tab đổi ca: tải mới lịch để trạng thái publish của HR luôn tươi —
+    // HR vừa publish tuần mới mà giữ lịch cũ (DRAFT) thì rào publish chặn oan.
+    if ((activeTab === 'swap_shift' || activeTab === 'swap_emergency') && employee?.employee_id) {
+      loadEmployeeData(employee.employee_id);
+    }
     // Lịch kiểm tra đầu ra: tải lại khi mở trang chủ / lịch / thi (luôn tươi).
     if (activeTab === 'home' || activeTab === 'schedule' || activeTab === 'test_exam' || activeTab === 'test_training') {
       fetchProbationAssessment();
