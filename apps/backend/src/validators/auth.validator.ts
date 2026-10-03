@@ -22,9 +22,12 @@ export const changePasswordBody = z.object({
   newPassword: z.string().min(6).max(72),
 });
 
-const pinFormat = z.string().trim().regex(/^\d{4,8}$/, 'Mã PIN gồm 4-8 chữ số');
+// PIN cũ: chấp nhận 4-8 chữ số để tài khoản legacy vẫn đổi được lần cuối.
+// PIN mới: bắt buộc đúng 6 chữ số (ràng buộc từ 2026-10).
+const oldPinFormat = z.string().trim().regex(/^\d{4,8}$/, 'Mã PIN cũ gồm 4-8 chữ số');
+const newPinFormat = z.string().trim().regex(/^\d{6}$/, 'Mã PIN mới phải đúng 6 chữ số');
 
 export const employeeChangePinBody = z.object({
-  oldPin: pinFormat,
-  newPin: pinFormat,
+  oldPin: oldPinFormat,
+  newPin: newPinFormat,
 });

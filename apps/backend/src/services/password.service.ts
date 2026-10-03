@@ -38,14 +38,22 @@ export async function verifyPassword(plain: string, hash: string): Promise<boole
   }
 }
 
-export const PIN_RE = /^\d{4,8}$/;
+/** Mã PIN hợp lệ: đúng 6 chữ số (ràng buộc từ 2026-10). */
+export const PIN_RE = /^\d{6}$/;
 
-/** Hệ thống tự sinh mã PIN khởi tạo (4 chữ số) gán cho từng tài khoản — không cần HR cấp tay. */
+/**
+ * Đầu vào khi đăng nhập: chấp nhận 4-8 chữ số để tài khoản legacy (PIN cũ
+ * chưa đủ 6 số) vẫn đăng nhập được 1 lần — server sẽ gắn cờ bắt đổi PIN 6 số
+ * mới ngay (hoặc auto-reset nếu phát hiện qua cột pin_code).
+ */
+export const PIN_INPUT_RE = /^\d{4,8}$/;
+
+/** Hệ thống tự sinh mã PIN khởi tạo (đúng 6 chữ số) gán cho từng tài khoản — không cần HR cấp tay. */
 export function generateAutoPin(): string {
-  return String(1000 + crypto.randomInt(0, 9000));
+  return String(100000 + crypto.randomInt(0, 900000));
 }
 
-/** Mã PIN nhân viên: 4-8 chữ số, hash bcrypt như mật khẩu. */
+/** Mã PIN nhân viên: đúng 6 chữ số, hash bcrypt như mật khẩu. */
 export async function hashPin(pin: string): Promise<string> {
   if (!pin || typeof pin !== 'string' || !PIN_RE.test(pin)) {
     throw new Error('WEAK_PIN');
@@ -54,6 +62,6 @@ export async function hashPin(pin: string): Promise<string> {
 }
 
 export async function verifyPin(pin: string, hash: string): Promise<boolean> {
-  if (!pin || !hash || !PIN_RE.test(pin)) return false;
+  if (!pin || !hash || !PIN_INPUT_RE.test(pin)) return false;
   return verifyPassword(pin, hash);
 }

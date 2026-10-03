@@ -8,7 +8,7 @@ import {
   EmployeeMaster,
 } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
-import { hashPassword, hashPin, isBcryptHash, verifyPassword, verifyPin } from './password.service.js';
+import { generateAutoPin, hashPassword, hashPin, isBcryptHash, verifyPassword, verifyPin } from './password.service.js';
 import { isPinRotationDue } from './pin-rotation.service.js';
 
 const DEFAULT_FALLBACK_JWT_SECRET =
@@ -203,8 +203,32 @@ export class AuthService {
     if (!account.pin_hash) {
       throw new Error('PIN_NOT_SET');
     }
+    // Ràng buộc 6 số (từ 2026-10): PIN hiển thị chưa đủ 6 số -> tự động reset
+    // sang mã 6 số mới + bắt đổi, PIN cũ hết hiệu lực ngay. NV hỏi HR lấy mã mới.
+    const shownPin = String((account as any).pin_code || '');
+    if (shownPin && !/^\d{6}$/.test(shownPin)) {
+      try {
+        const freshPin = generateAutoPin();
+        await this.repo.setAccountPin(account.account_id, await hashPin(freshPin), true, account.employee_id, freshPin);
+      } catch (e) {
+        console.warn('[auth] auto-reset legacy PIN failed:', (e as Error)?.message || e);
+      }
+      throw new Error('PIN_RESET_REQUIRED');
+    }
     if (!pinInput || !(await verifyPin(pinInput, account.pin_hash))) {
       throw new Error('INVALID_PIN');
+    }
+    // Đăng nhập bằng PIN legacy (4-5/7-8 số, hash cũ) -> bắt đổi sang PIN 6 số mới ngay.
+    let legacyPinLogin = false;
+    if (String(pinInput).trim().length !== 6) {
+      legacyPinLogin = true;
+      try {
+        if (typeof (this.repo as any).markAccountPinMustChange === 'function') {
+          await (this.repo as any).markAccountPinMustChange(account.account_id, 'SYSTEM');
+        } else {
+          (account as any).pin_must_change = true;
+        }
+      } catch { /* best-effort */ }
     }
 
     const employee = await this.repo.getEmployeeById(account.employee_id);
@@ -255,7 +279,7 @@ export class AuthService {
       employee,
       role: 'EMPLOYEE',
       stage: employee.employment_status,
-      mustChangePin: account.pin_must_change === true || isPinRotationDue(account, new Date()),
+      mustChangePin: legacyPinLogin || account.pin_must_change === true || isPinRotationDue(account, new Date()),
     };
   }
 

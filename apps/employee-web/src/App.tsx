@@ -485,9 +485,9 @@ export function App() {
       return;
     }
     const pin = (pinToLogin || '').trim();
-    if (!/^\d{4,8}$/.test(pin)) {
+    if (!/^\d{6}$/.test(pin)) {
       setCheckingStatus('ERROR');
-      setLoginError('Vui lòng nhập mã PIN khởi tạo gồm 4-8 chữ số!');
+      setLoginError('Vui lòng nhập mã PIN đúng 6 chữ số!');
       return;
     }
 
@@ -521,9 +521,12 @@ export function App() {
       } else if (err.message === 'PIN_NOT_SET') {
         setCheckingStatus('ERROR');
         setLoginError(`Tài khoản ${cleaned} chưa được cấp mã PIN. Vui lòng liên hệ HR để nhận mã PIN đăng nhập!`);
+      } else if (err.message === 'PIN_RESET_REQUIRED') {
+        setCheckingStatus('ERROR');
+        setLoginError('Mã PIN cũ của bạn chưa đủ 6 số nên hệ thống đã tự động reset. Vui lòng hỏi HR lấy mã PIN 6 số mới rồi đăng nhập và đổi PIN riêng!');
       } else if (err.message === 'INVALID_PIN') {
         setCheckingStatus('ERROR');
-        setLoginError('Mã PIN không đúng! Nhập lại PIN cũ của bạn. Nếu quên PIN cũ, hỏi HR xem lại mã PIN hiện tại (HR không reset PIN).');
+        setLoginError('Mã PIN không đúng! Nhập lại mã PIN 6 số của bạn. Nếu quên, hỏi HR xem lại mã PIN hiện tại.');
       } else if (err.message === 'DUPLICATE_PHONE_NEEDS_HR') {
         setCheckingStatus('ERROR');
         setLoginError(`Số điện thoại ${cleaned} bị trùng lặp trên 2 hồ sơ khác nhau. Cần gặp HR để đối soát thông tin.`);
@@ -557,6 +560,7 @@ export function App() {
     const code = String(err?.code || err?.message || '');
     if (/ACCOUNT_NOT_FOUND/.test(code)) return `Số ${cleaned} chưa tồn tại trên Master. Liên hệ HR để nộp hồ sơ.`;
     if (/PIN_NOT_SET/.test(code)) return `Tài khoản ${cleaned} chưa được cấp PIN. Liên hệ HR để nhận mã!`;
+    if (/PIN_RESET_REQUIRED/.test(code)) return 'Mã PIN cũ của bạn chưa đủ 6 số nên hệ thống đã tự động reset. Hỏi HR lấy mã PIN 6 số mới rồi đăng nhập và đổi PIN riêng!';
     if (/INVALID_PIN/.test(code)) return 'Mã PIN chưa đúng! Kiểm tra lại hoặc hỏi HR xem lại mã hiện tại.';
     if (/DUPLICATE_PHONE_NEEDS_HR/.test(code)) return `SĐT ${cleaned} bị trùng 2 hồ sơ. Gặp HR để đối soát.`;
     if (/SHEETS_LOADING/.test(code)) return '⏳ Hệ thống vừa khởi động, đang tải dữ liệu (~30s). Đợi rồi thử lại!';
@@ -611,13 +615,14 @@ export function App() {
 
   const handleChangePin = async () => {
     // Sau reload loginPin đã mất -> lấy PIN cũ từ ô nhập tay (bắt buộc nhập lại).
+    // PIN cũ chấp nhận 4-8 số (tài khoản legacy đổi lần cuối), PIN mới bắt buộc đúng 6 số.
     const effectiveOld = (loginPin.trim() || oldPinInput.trim());
     if (!/^\d{4,8}$/.test(effectiveOld)) {
-      setLoginError('Vui lòng nhập mã PIN cũ hiện tại (4-8 chữ số)!');
+      setLoginError('Vui lòng nhập mã PIN cũ hiện tại!');
       return;
     }
-    if (!/^\d{4,8}$/.test(newPin)) {
-      setLoginError('Mã PIN mới phải gồm 4-8 chữ số!');
+    if (!/^\d{6}$/.test(newPin)) {
+      setLoginError('Mã PIN mới phải đúng 6 chữ số!');
       return;
     }
     if (newPin !== confirmPin) {
@@ -1683,7 +1688,7 @@ export function App() {
             <>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                 <label style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text)' }}>
-                  Mã PIN hiện tại (4-8 số)
+                  Mã PIN hiện tại (đúng 6 số)
                 </label>
               </div>
               <div style={{ position: 'relative', marginBottom: '14px' }}>
@@ -1694,10 +1699,10 @@ export function App() {
                   data-lpignore="true"
                   data-1p-ignore="true"
                   inputMode="numeric"
-                  maxLength={8}
+                  maxLength={6}
                   placeholder="Ví dụ: 123456"
                   value={loginPin}
-                  onChange={(e) => setLoginPin(e.target.value.replace(/\D/g, ''))}
+                  onChange={(e) => setLoginPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
                   onKeyDown={(e) => { if (e.key === 'Enter') handlePhoneLogin(); }}
                   style={{ width: '100%', fontSize: '18px', fontWeight: 700, letterSpacing: '4px' }}
                 />
@@ -1720,7 +1725,7 @@ export function App() {
                 🔑 TỚI KỲ ĐỔI PIN ĐỊNH KỲ (HẠN 1-5 HÀNG THÁNG)
               </div>
               <div style={{ fontSize: '12px', color: '#92400E', marginBottom: '12px', lineHeight: '1.5' }}>
-                Bạn đang dùng PIN cũ. Hãy tự đặt mã PIN mới (4-8 chữ số, khác PIN cũ, không chia sẻ cho ai) để mở khóa hệ thống! Không cần HR reset hay gửi PIN — quên PIN cũ thì hỏi HR xem lại mã hiện tại.
+                Bạn đang dùng PIN cũ. Hãy tự đặt mã PIN mới (đúng 6 chữ số, khác PIN cũ, không chia sẻ cho ai) để mở khóa hệ thống! Mã PIN chưa đủ 6 số đã bị hệ thống tự động reset — hỏi HR lấy mã 6 số mới nếu chưa có. Quên PIN cũ thì hỏi HR xem lại mã hiện tại.
               </div>
               {!loginPin && (
                 <>
@@ -1740,7 +1745,7 @@ export function App() {
                   />
                 </>
               )}
-              <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Mã PIN mới:</label>
+              <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Mã PIN mới (đúng 6 số):</label>
               <input
                 type="password"
                 name="ubm-new-pin"
@@ -1748,10 +1753,10 @@ export function App() {
                 data-lpignore="true"
                 data-1p-ignore="true"
                 inputMode="numeric"
-                maxLength={8}
-                placeholder="Nhập mã PIN mới"
+                maxLength={6}
+                placeholder="Nhập mã PIN mới 6 số"
                 value={newPin}
-                onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))}
+                onChange={(e) => setNewPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
                 style={{ width: '100%', fontSize: '18px', fontWeight: 700, letterSpacing: '4px', marginBottom: '10px' }}
               />
               <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Xác nhận mã PIN mới:</label>
@@ -1762,10 +1767,10 @@ export function App() {
                 data-lpignore="true"
                 data-1p-ignore="true"
                 inputMode="numeric"
-                maxLength={8}
-                placeholder="Nhập lại mã PIN mới"
+                maxLength={6}
+                placeholder="Nhập lại mã PIN mới 6 số"
                 value={confirmPin}
-                onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ''))}
+                onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
                 onKeyDown={(e) => { if (e.key === 'Enter') handleChangePin(); }}
                 style={{ width: '100%', fontSize: '18px', fontWeight: 700, letterSpacing: '4px', marginBottom: '12px' }}
               />
@@ -1819,7 +1824,7 @@ export function App() {
           )}
 
           <p style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.4' }}>
-            💡 <strong>Bảo mật đăng nhập:</strong> Nhập SĐT (0946914474, 946914474 hoặc 84946914474 đều được) + mã PIN hiện tại (4-8 số) rồi bấm ĐĂNG NHẬP. Tới kỳ 1-5 hàng tháng, hệ thống yêu cầu tự đổi PIN mới từ PIN cũ — không cần HR reset/gửi PIN! Mỗi người giữ PIN riêng — không chia sẻ!
+            💡 <strong>Bảo mật đăng nhập:</strong> Nhập SĐT (0946914474, 946914474 hoặc 84946914474 đều được) + mã PIN đúng 6 số rồi bấm ĐĂNG NHẬP. Mã PIN chưa đủ 6 số sẽ bị hệ thống tự động reset — hỏi HR lấy mã 6 số mới rồi đổi PIN riêng! Tới kỳ 1-5 hàng tháng, hệ thống yêu cầu tự đổi PIN mới từ PIN cũ. Mỗi người giữ PIN riêng — không chia sẻ!
           </p>
           <button
             onClick={handleChangeApiBase}

@@ -151,6 +151,9 @@ export function PremiumLogin({
       setTimeout(fireConfetti, 60);
       successTimer.current = setTimeout(() => onSuccess?.(phone), 1900);
     } catch (e: any) {
+      // Tài khoản bắt đổi PIN (kỳ 1-5 / PIN legacy / PIN mới reset): parent chuyển
+      // sang màn đổi PIN, không hiện lỗi ở đây.
+      if (e?.message === 'MUST_CHANGE_PIN' || e?.code === 'MUST_CHANGE_PIN') return;
       const msg = e?.message === 'demo-invalid'
         ? `Mã PIN chưa đúng (demo: ${demoPin}). Nhập lại nhé!`
         : (e?.message || 'Mã PIN chưa đúng. Vui lòng thử lại!');

@@ -2531,7 +2531,7 @@ export function App() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               <div>
                 <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>3. PIN & Quản Lý Tài Khoản Nhân Viên</h1>
-                  <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Phân nhóm theo 6 tab nghiệp vụ: Tất cả, Thử việc, Chính thức, Văn Phòng, Xưởng, Sales. Nhân viên đăng nhập trên Cổng Employee Web bằng SĐT + mã PIN khởi tạo (tự sinh), rồi đặt PIN riêng ngay lần đầu.</p>
+                  <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Phân nhóm theo 6 tab nghiệp vụ: Tất cả, Thử việc, Chính thức, Văn Phòng, Xưởng, Sales. Nhân viên đăng nhập trên Cổng Employee Web bằng SĐT + mã PIN 6 số (tự sinh), rồi đặt PIN riêng ngay lần đầu. PIN chưa đủ 6 số sẽ bị hệ thống tự động reset và bắt NV đổi lại.</p>
               </div>
 
               {/* 6 Sub-Tabs for PIN & Account Management */}
@@ -2617,7 +2617,7 @@ export function App() {
                   <Search size={16} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
                 </div>
                 <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>
-                  Mã PIN khởi tạo ở cột Mã PIN bên dưới — nhân viên dùng để đăng nhập lần đầu rồi đặt PIN riêng ngay.
+                  Mã PIN 6 số ở cột Mã PIN bên dưới — nhân viên dùng để đăng nhập lần đầu rồi đặt PIN riêng ngay.
                 </div>
                 <button
                   onClick={() => handleBulkSendPin()}

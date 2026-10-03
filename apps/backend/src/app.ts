@@ -406,6 +406,12 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         });
       }
       const status = err.message === ERROR_CODES.ACCOUNT_NOT_FOUND ? 404 : 400;
+      if (err.message === 'PIN_RESET_REQUIRED') {
+        return res.status(400).json({
+          error: 'PIN_RESET_REQUIRED',
+          message: 'Mã PIN cũ của bạn chưa đủ 6 số nên hệ thống đã tự động reset. Vui lòng hỏi HR lấy mã PIN 6 số mới rồi đăng nhập và đổi PIN riêng!',
+        });
+      }
       res.status(status).json({ error: err.message });
     }
   });
