@@ -1505,6 +1505,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // --- PROBATION EMPLOYEES STATE (mirror tab chính thức) ---
   const [probationSearch, setProbationSearch] = useState('');
   const [probationBranchFilter, setProbationBranchFilter] = useState('ALL');
+  const [probationDoubleOnly, setProbationDoubleOnly] = useState(false);
   const [importInputMode, setImportInputMode] = useState<'FILE' | 'PASTE'>('FILE');
   const [importOfficialPastedText, setImportOfficialPastedText] = useState('');
   const [parsedOfficialRows, setParsedOfficialRows] = useState<any[]>([]);
@@ -3782,9 +3783,43 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }
 
   if (activeTab === 'hr-probation') {
+    // Mật độ ca thử việc: gom ca theo ngày (loại CANCELLED, khử trùng assignment_id).
+    // Bạn nào muốn đẩy nhanh (2 ca/ngày) sẽ lộ ở đây: maxPerDay >= 2 + danh sách ngày.
+    const probationShiftDensity = (empId: string): { maxPerDay: number; total: number; multiDays: { date: string; count: number; codes: string }[] } => {
+      const list = (shifts || []).filter((s: any) => s?.employee_id === empId && s?.status !== 'CANCELLED');
+      const seen = new Set<string>();
+      const byDate = new Map<string, any[]>();
+      for (const s of list) {
+        const key = s.assignment_id || `${s.date}|${s.shift_code}|${s.start_at}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const d = String(s.date || '').slice(0, 10);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) continue;
+        if (!byDate.has(d)) byDate.set(d, []);
+        byDate.get(d)!.push(s);
+      }
+      let max = 0;
+      const multi: { date: string; count: number; codes: string }[] = [];
+      for (const [d, arr] of byDate) {
+        if (arr.length > max) max = arr.length;
+        if (arr.length >= 2) {
+          multi.push({
+            date: d,
+            count: arr.length,
+            codes: arr.map((x: any) => String(x.shift_code || '').replace(/^CA_/, 'Ca ')).join(' + '),
+          });
+        }
+      }
+      multi.sort((a, b) => a.date.localeCompare(b.date));
+      return { maxPerDay: max, total: seen.size, multiDays: multi };
+    };
     const probationEmps = allEmployees.filter((e) => e.employment_status === 'PROBATION');
+    const doubleShiftEmps = probationEmps.filter((e) => probationShiftDensity(e.employee_id).maxPerDay >= 2);
     const filteredProbationEmps = probationEmps.filter((emp) => {
       if (probationBranchFilter !== 'ALL' && emp.default_branch_id !== probationBranchFilter && emp.branch_id !== probationBranchFilter) {
+        return false;
+      }
+      if (probationDoubleOnly && probationShiftDensity(emp.employee_id).maxPerDay < 2) {
         return false;
       }
       if (probationSearch.trim()) {
@@ -3826,7 +3861,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               4. Quản Lý Nhân Viên Thử Việc (12 Ngày)
             </h1>
             <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--text-muted)' }}>
-              Theo dõi 12 ngày thử việc (7 làm / 5 OFF), kết quả làm bài TEST và đề xuất lên chính thức.
+              Theo dõi 12 ngày thử việc (7 làm / 5 OFF), kết quả làm bài TEST và đề xuất lên chính thức. Bạn nào đẩy nhanh (2 ca/ngày) hiện badge ⚡ ở cột Mật độ ca.
             </p>
           </div>
 
@@ -3883,6 +3918,16 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <div>
               <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Lương Giờ Thử Việc</div>
               <div style={{ fontSize: '20px', fontWeight: 800, color: '#059669' }}>21.000 <span style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-muted)' }}>đ/h</span></div>
+            </div>
+          </div>
+
+          <div style={{ backgroundColor: 'var(--surface)', padding: '16px 20px', borderRadius: '12px', border: '1px solid #FDE68A', display: 'flex', alignItems: 'center', gap: '14px' }}>
+            <div style={{ width: '44px', height: '44px', borderRadius: '10px', backgroundColor: '#FFFBEB', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#D97706', fontSize: '22px', fontWeight: 800 }}>
+              ⚡
+            </div>
+            <div>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Đẩy Nhanh (2 ca/ngày)</div>
+              <div style={{ fontSize: '20px', fontWeight: 800, color: '#B45309' }}>{doubleShiftEmps.length} <span style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-muted)' }}>nhân sự</span></div>
             </div>
           </div>
         </div>
@@ -3944,11 +3989,22 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </select>
           </div>
 
-          {(probationSearch || probationBranchFilter !== 'ALL') && (
+          <label title="Chỉ hiện NV có ngày làm 2 ca trở lên (đẩy nhanh thử việc)" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 700, color: probationDoubleOnly ? '#B45309' : 'var(--text-muted)', backgroundColor: probationDoubleOnly ? '#FFFBEB' : 'transparent', border: `1.5px solid ${probationDoubleOnly ? '#F59E0B' : 'var(--border)'}`, borderRadius: '8px', padding: '7px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+            <input
+              type="checkbox"
+              checked={probationDoubleOnly}
+              onChange={(e) => setProbationDoubleOnly(e.target.checked)}
+              style={{ accentColor: '#F59E0B', width: '14px', height: '14px' }}
+            />
+            ⚡ Chỉ hiện 2 ca/ngày ({doubleShiftEmps.length})
+          </label>
+
+          {(probationSearch || probationBranchFilter !== 'ALL' || probationDoubleOnly) && (
             <button
               onClick={() => {
                 setProbationSearch('');
                 setProbationBranchFilter('ALL');
+                setProbationDoubleOnly(false);
               }}
               style={{
                 display: 'inline-flex',
@@ -3987,6 +4043,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <th style={{ padding: '12px 18px', width: '130px' }}>Mức Lương Giờ</th>
                   <th style={{ padding: '12px 18px', width: '130px' }}>Ngày Bắt Đầu</th>
                   <th style={{ padding: '12px 18px', width: '170px' }}>Tiến Độ Thử Việc</th>
+                  <th style={{ padding: '12px 18px', width: '170px' }}>Mật Độ Ca</th>
                   <th style={{ padding: '12px 18px', width: '120px', textAlign: 'center' }}>Điểm Bài TEST</th>
                   <th style={{ padding: '12px 18px', width: '130px', textAlign: 'center' }}>Trạng Thái</th>
                   <th style={{ padding: '12px 18px', width: '220px', textAlign: 'center' }}>Thao Tác</th>
@@ -3997,6 +4054,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   filteredProbationEmps.map((emp, i) => {
                     const prog = probationProgress(emp);
                     const best = probationBestScore(emp.employee_id);
+                    const density = probationShiftDensity(emp.employee_id);
                     return (
                       <tr
                         key={emp.employee_id || i}
@@ -4080,6 +4138,33 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Chưa rõ ngày bắt đầu</span>
                           )}
                         </td>
+                        <td style={{ padding: '14px 18px' }}>
+                          {density.maxPerDay >= 2 ? (
+                            <div>
+                              <span title={`Các ngày làm 2+ ca:\n${density.multiDays.map((m) => `${m.date.slice(8, 10)}/${m.date.slice(5, 7)}: ${m.codes}`).join('\n')}`} style={{ display: 'inline-block', padding: '4px 10px', borderRadius: '999px', fontSize: '12px', fontWeight: 800, backgroundColor: '#FFFBEB', color: '#B45309', border: '1px solid #F59E0B', whiteSpace: 'nowrap' }}>
+                                ⚡ {density.maxPerDay} ca/ngày
+                              </span>
+                              <div style={{ fontSize: '11px', color: '#92400E', fontWeight: 600, marginTop: '4px', lineHeight: 1.5 }}>
+                                {density.multiDays.slice(0, 3).map((m) => `${m.date.slice(8, 10)}/${m.date.slice(5, 7)} (${m.codes})`).join(' • ')}
+                                {density.multiDays.length > 3 && ` +${density.multiDays.length - 3} ngày`}
+                              </div>
+                              <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                                Tổng {density.total} ca đã xếp
+                              </div>
+                            </div>
+                          ) : density.maxPerDay === 1 ? (
+                            <div>
+                              <span style={{ display: 'inline-block', padding: '4px 10px', borderRadius: '999px', fontSize: '12px', fontWeight: 700, backgroundColor: '#F1F5F9', color: '#475569' }}>
+                                1 ca/ngày
+                              </span>
+                              <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                                Tổng {density.total} ca đã xếp
+                              </div>
+                            </div>
+                          ) : (
+                            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Chưa xếp ca</span>
+                          )}
+                        </td>
                         <td style={{ padding: '14px 18px', textAlign: 'center' }}>
                           {best !== null ? (
                             <span style={{ display: 'inline-block', padding: '4px 10px', borderRadius: '999px', fontSize: '12px', fontWeight: 800, backgroundColor: best >= 8 ? '#ECFDF5' : '#FEF2F2', color: best >= 8 ? '#059669' : '#DC2626', border: `1px solid ${best >= 8 ? '#A7F3D0' : '#FECACA'}` }}>
@@ -4161,7 +4246,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   })
                 ) : (
                   <tr>
-                    <td colSpan={11} style={{ textAlign: 'center', padding: '48px 20px', color: 'var(--text-muted)' }}>
+                    <td colSpan={12} style={{ textAlign: 'center', padding: '48px 20px', color: 'var(--text-muted)' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
                         <Users size={36} color="var(--border)" />
                         <div style={{ fontWeight: 600, fontSize: '14px' }}>Hiện chưa có nhân viên trong giai đoạn thử việc</div>
