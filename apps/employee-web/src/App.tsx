@@ -297,6 +297,38 @@ export function App() {
     reason: 'Đổi lịch cá nhân trong chu kỳ 12 ngày thử việc',
   });
 
+  // NV thử việc TỰ thêm ca đẩy nhanh (không cần HR duyệt, tối đa 2 ca/ngày).
+  const [extraShift, setExtraShift] = useState({
+    date: '',
+    shiftCode: 'CA_2',
+  });
+  const [extraShiftBusy, setExtraShiftBusy] = useState(false);
+  const handleAddExtraShift = async () => {
+    if (!extraShift.date) {
+      showToast('⚠️ Vui lòng chọn ngày muốn thêm ca!');
+      return;
+    }
+    setExtraShiftBusy(true);
+    try {
+      const res: any = await apiRequest('/me/probation-extra-shift', {
+        method: 'POST',
+        body: JSON.stringify({ date: extraShift.date, shiftCode: extraShift.shiftCode }),
+      });
+      const s = res?.result || res;
+      showToast(`⚡ Đã tự thêm ${s.shift_code} ngày ${s.date} thành công! Không cần HR duyệt — HR đã nhận thông báo theo dõi.`);
+      await loadEmployeeData(employee?.employee_id);
+    } catch (err: any) {
+      const msg = String(err?.message || '');
+      if (/MAX_2_SHIFTS_PER_DAY/.test(msg)) {
+        showToast(`🚨 Ngày này bạn đã đủ 2 ca — hệ thống KHÔNG cho xếp thêm và đã báo Nhân sự! ${msg.replace(/^MAX_2_SHIFTS_PER_DAY:\s*/, '')}`);
+      } else {
+        showToast(msg || 'Lỗi khi tự thêm ca!');
+      }
+    } finally {
+      setExtraShiftBusy(false);
+    }
+  };
+
   // Emergency Leave Form
   const [emergencyData, setEmergencyData] = useState({
     date: new Date().toISOString().split('T')[0],
@@ -3252,6 +3284,78 @@ export function App() {
                   {actionBusy === 'selfswap' ? '⏳ ĐANG GỬI ĐƠN...' : 'Xác Nhận Tự Đổi Ca Cá Nhân'}
                 </button>
               </div>
+            </div>
+
+            {/* TỰ THÊM CA ĐẨY NHANH: NV thử việc tự xếp thêm ca vào ngày muốn tăng
+                tiến độ — không cần HR duyệt, tối đa 2 ca/ngày. Quá 2 ca là hệ
+                thống chặn + báo HR ngay. */}
+            <div className="card" style={{ border: '1.5px solid #F59E0B' }}>
+              <h4 style={{ fontSize: '14px', fontWeight: 800, color: '#92400E', marginBottom: '8px' }}>
+                ⚡ Tự Thêm Ca Đẩy Nhanh Tiến Độ
+              </h4>
+              <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '10px', lineHeight: 1.5 }}>
+                Muốn đẩy nhanh thì tự chọn <strong>ngày + ca</strong> để thêm vào lịch của chính bạn — có hiệu lực ngay, <strong>không cần HR duyệt</strong>. Ràng buộc cứng: <strong>tối đa 2 ca/ngày</strong>, quá là hệ thống chặn và báo Nhân sự!
+              </p>
+              {(() => {
+                const win = probationWindowDays();
+                const today = probVnToday();
+                const dayShifts = extraShift.date
+                  ? myShifts.filter((s: any) => s?.status !== 'CANCELLED' && String(s?.date || '').slice(0, 10) === extraShift.date)
+                  : [];
+                const full = dayShifts.length >= 2;
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Ngày thêm ca:</label>
+                        <input
+                          type="date"
+                          value={extraShift.date}
+                          min={today}
+                          max={win.length > 0 ? win[win.length - 1] : undefined}
+                          onChange={(e) => setExtraShift({ ...extraShift, date: e.target.value })}
+                          style={{ width: '100%' }}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Ca muốn thêm:</label>
+                        <select
+                          value={extraShift.shiftCode}
+                          onChange={(e) => setExtraShift({ ...extraShift, shiftCode: e.target.value })}
+                          style={{ width: '100%' }}
+                        >
+                          <option value="CA_1">Ca 1 (07:00 - 12:00)</option>
+                          <option value="CA_2">Ca 2 (12:00 - 18:00)</option>
+                          <option value="CA_3">Ca 3 (18:00 - 23:00)</option>
+                        </select>
+                      </div>
+                    </div>
+                    {extraShift.date && (
+                      <div style={{
+                        fontSize: '12px', fontWeight: 700, padding: '8px 12px', borderRadius: '8px',
+                        backgroundColor: full ? '#FEF2F2' : '#F0FDF4',
+                        border: full ? '1.5px solid #EF4444' : '1px solid #86EFAC',
+                        color: full ? '#991B1B' : '#166534',
+                      }}>
+                        {full
+                          ? `🚨 Ngày ${extraShift.date} đã đủ 2 ca (${dayShifts.map((s: any) => s.shift_code).join(' + ')}) — hệ thống KHÔNG cho xếp thêm!`
+                          : dayShifts.length === 0
+                            ? `📅 Ngày ${extraShift.date} chưa có ca nào — thêm ca là bạn có 1 ca.`
+                            : `📅 Ngày ${extraShift.date} đang có 1 ca (${dayShifts[0].shift_code}) — thêm nữa là đủ 2 ca.`}
+                      </div>
+                    )}
+                    <button
+                      className="btn-primary"
+                      disabled={extraShiftBusy || !extraShift.date || full}
+                      onClick={handleAddExtraShift}
+                      title={full ? 'Ngày này đã đủ 2 ca — hệ thống chặn xếp thêm!' : 'Tự thêm ca vào lịch của bạn (có hiệu lực ngay)'}
+                      style={{ opacity: extraShiftBusy || !extraShift.date || full ? 0.6 : 1 }}
+                    >
+                      {extraShiftBusy ? '⏳ ĐANG THÊM CA...' : '⚡ THÊM CA NÀY VÀO LỊCH CỦA TÔI'}
+                    </button>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Báo Nghỉ Khẩn: mặc định ẨN với NV thử việc — chỉ hiện khi Admin/HR

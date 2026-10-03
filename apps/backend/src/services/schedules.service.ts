@@ -675,6 +675,75 @@ export class SchedulesService {
     });
   }
 
+  /**
+   * NV thử việc TỰ thêm ca đẩy nhanh tiến độ — KHÔNG cần HR duyệt.
+   *  - Chỉ NV đang PROBATION, ngày trong 12 ngày thử việc, không chọn ngày quá khứ.
+   *  - Ràng buộc cứng: tối đa 2 ca/ngày (kiểm tra TRONG queue để chống bấm đúp/
+   *    gọi song song mà lọt 3 ca). Vượt -> ném MAX_2_SHIFTS_PER_DAY (route sẽ
+   *    báo HR), trùng ca -> SHIFT_ALREADY_EXISTS.
+   *  - Ca tạo thẳng PUBLISHED để NV điểm danh được ngay.
+   */
+  async addProbationExtraShift(data: {
+    employeeId: string;
+    date: string;
+    shiftCode: ShiftCode;
+    actorId: string;
+  }) {
+    const emp = await this.repo.getEmployeeById(data.employeeId);
+    if (!emp || (emp as any).employment_status !== 'PROBATION') {
+      throw new Error('Chỉ nhân viên đang thử việc mới được tự thêm ca đẩy nhanh!');
+    }
+    const start = normSheetDate((emp as any).start_date);
+    if (!start) {
+      throw new Error('Hồ sơ chưa có ngày bắt đầu thử việc! Liên hệ HR bổ sung.');
+    }
+    const windowDays: string[] = [];
+    for (let i = 0; i < 12; i++) {
+      const d = new Date(`${start}T00:00:00Z`);
+      d.setUTCDate(d.getUTCDate() + i);
+      windowDays.push(d.toISOString().slice(0, 10));
+    }
+    const date = String(data.date || '').slice(0, 10);
+    const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !windowDays.includes(date)) {
+      throw new Error(`Ngày ${date || '?'} nằm ngoài 12 ngày thử việc (${windowDays[0]} → ${windowDays[11]})!`);
+    }
+    if (date < today) {
+      throw new Error(`Ngày ${date} đã qua — chỉ được thêm ca từ hôm nay trở đi!`);
+    }
+    const template = SHIFT_TEMPLATES[data.shiftCode];
+    if (!template) {
+      throw new Error(`Mã ca ${data.shiftCode} không hợp lệ!`);
+    }
+    const branchId = (emp as any).default_branch_id || 'CN130';
+    return singleWriterQueue.enqueue({
+      entityType: 'PHAN_CONG_CA',
+      entityId: `${data.employeeId}_${date}`,
+      actorId: data.actorId,
+      execute: async () => {
+        const existing = (await this.repo.getShiftsForEmployee(data.employeeId, date, date))
+          .filter(s => String(s.date || '').slice(0, 10) === date && s.status !== 'CANCELLED');
+        if (existing.length >= 2) {
+          throw new Error(`MAX_2_SHIFTS_PER_DAY: Ngày ${date} của bạn đã đủ 2 ca (${existing.map(s => s.shift_code).join(' + ')}) — hệ thống KHÔNG cho xếp thêm, đã báo Nhân sự theo dõi!`);
+        }
+        if (existing.some(s => s.shift_code === data.shiftCode)) {
+          throw new Error(`Ca ${data.shiftCode} ngày ${date} đã có rồi — hãy chọn ca khác!`);
+        }
+        return this.repo.createShiftAssignment({
+          assignment_id: `SHIFT_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
+          employee_id: data.employeeId,
+          branch_id: branchId,
+          shift_code: data.shiftCode,
+          date,
+          start_at: `${date}T${String(template.start_hour).padStart(2, '0')}:00:00+07:00`,
+          end_at: `${date}T${String(template.end_hour).padStart(2, '0')}:00:00+07:00`,
+          status: 'PUBLISHED',
+          schedule_version: 1,
+        });
+      },
+    });
+  }
+
   async reviewLeave(requestId: string, status: 'APPROVED' | 'REJECTED', reviewerId: string, note?: string) {
     return singleWriterQueue.enqueue({
       entityType: 'PHIEU_OFF',

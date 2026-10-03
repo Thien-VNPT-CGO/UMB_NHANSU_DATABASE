@@ -82,6 +82,7 @@ import {
   payrollRunIdParams,
   payrollRunParams,
   probationOffBody,
+  probationExtraShiftBody,
   publishWeekBody,
   publishWeekParams,
   schedulesQuery,
@@ -2409,6 +2410,51 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: String(err?.message || 'Lỗi đăng ký OFF thử việc') });
+    }
+  });
+
+  // NV thử việc TỰ thêm ca đẩy nhanh (không cần HR duyệt, tối đa 2 ca/ngày).
+  // Vượt 2 ca -> chặn + thông báo ngay đến Nhân sự (HR) để theo dõi.
+  app.post('/me/probation-extra-shift', authMiddleware, requireRole(['EMPLOYEE']), validate({ body: probationExtraShiftBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const employeeId = req.user?.employeeId;
+      if (!employeeId) return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
+      const { result: shift } = await schedulesService.addProbationExtraShift({
+        employeeId,
+        date: String(req.body.date || '').slice(0, 10),
+        shiftCode: req.body.shiftCode,
+        actorId: employeeId,
+      });
+      const emp = await employeesService.getEmployee(employeeId).catch(() => null);
+      broadcastUpdate('schedules', { action: 'probation-extra', employeeId });
+      broadcastNotification({
+        type: 'LEAVE',
+        title: '⚡ NV Thử Việc Tự Thêm Ca Đẩy Nhanh',
+        message: `${emp?.full_name || employeeId} vừa tự thêm ${shift.shift_code} ngày ${shift.date} (không cần duyệt).`,
+        linkTab: 'hr-probation',
+        metadata: { employeeId, date: shift.date, shiftCode: shift.shift_code },
+        targetRoles: ['ADMIN', 'HR', 'STORE'],
+      });
+      res.json({ success: true, result: shift });
+    } catch (err: any) {
+      const msg = String(err?.message || 'Lỗi khi tự thêm ca!');
+      // Cố xếp ca thứ 3 trong ngày -> chặn + báo HR ngay lập tức.
+      if (msg.startsWith('MAX_2_SHIFTS_PER_DAY')) {
+        try {
+          const employeeId = req.user?.employeeId;
+          const emp = await employeesService.getEmployee(employeeId || '').catch(() => null);
+          broadcastNotification({
+            type: 'LEAVE',
+            title: '🚨 NV Thử Việc Cố Xếp Quá 2 Ca/Ngày (Đã Chặn)',
+            message: `${emp?.full_name || employeeId} vừa cố thêm ca ngày ${String(req.body.date || '').slice(0, 10)} dù đã đủ 2 ca — hệ thống đã chặn, HR kiểm tra lại lịch của NV này!`,
+            linkTab: 'hr-probation',
+            metadata: { employeeId, date: String(req.body.date || '').slice(0, 10) },
+            targetRoles: ['ADMIN', 'HR', 'STORE'],
+          });
+        } catch { /* best-effort */ }
+        return res.status(400).json({ error: 'MAX_2_SHIFTS_PER_DAY', message: msg.replace(/^MAX_2_SHIFTS_PER_DAY:\s*/, '') });
+      }
+      res.status(400).json({ error: msg });
     }
   });
 

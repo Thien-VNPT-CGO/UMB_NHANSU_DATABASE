@@ -241,6 +241,12 @@ export const probationOffBody = z.object({
   dates: z.array(z.string().trim().min(8).max(32)).min(1).max(12),
 });
 
+// NV thử việc TỰ thêm ca đẩy nhanh (không cần HR duyệt, tối đa 2 ca/ngày).
+export const probationExtraShiftBody = z.object({
+  date: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ngày phải dạng YYYY-MM-DD'),
+  shiftCode: z.enum(['CA_1', 'CA_2', 'CA_3']),
+});
+
 // HR tạo phiếu điều phối nhường ca (+30k cho người nhận)
 export const swapDispatchBody = z.object({
   requesterId: optString(64),
