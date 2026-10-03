@@ -6638,10 +6638,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         const leaveId = l.request_id || l.id;
         const reqDate = l.requested_date || l.requestedDate || l.leave_date || l.created_at?.slice(0, 10) || '';
         const leaveTypeLabel = (l.leave_type || l.leaveType) === 'DOT_XUAT' ? 'Đột xuất' : 'OFF hàng tuần';
+        // Hiển thị tên + mã NV giống bảng Lịch OFF 2 ngày/tuần (tra hồ sơ theo employee_id).
+        const leaveEmp = (allEmployees || []).find((e: any) => e.employee_id === l.employee_id);
         return (
           <tr key={leaveId || i} style={{ borderBottom: '1px solid var(--border)', backgroundColor: isPending ? '#FFFBEB' : undefined }}>
             <td style={{ padding: '14px 20px', fontWeight: 700 }}>
-              {l.employee_name || l.employee_id}
+              {leaveEmp?.full_name || l.employee_name || l.employee_id}
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }}>{leaveEmp?.employee_code || l.employee_id}</div>
               <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }}>{leaveTypeLabel}</div>
             </td>
             <td style={{ padding: '14px 20px' }}>{getDisplayBranch(l.branch_id) || l.branch_id || 'Chưa rõ'}</td>
