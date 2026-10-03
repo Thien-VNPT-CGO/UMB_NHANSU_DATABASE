@@ -58,6 +58,9 @@ export function PremiumLogin({
   const confettiRef = useRef<HTMLCanvasElement | null>(null);
   const successTimer = useRef<any>(null);
   const phoneCheckSeq = useRef(0);
+  // SĐT đã kiểm tra xong / đã vào màn PIN — quay lại "Đổi số khác" thì giữ nguyên
+  // số cũ trên ô nhập và KHÔNG tự kiểm tra lại cho tới khi user sửa số.
+  const checkedPhoneRef = useRef<string | null>(null);
 
   // Đồng bộ lỗi từ parent (API thật báo sai PIN...)
   useEffect(() => {
@@ -77,6 +80,7 @@ export function PremiumLogin({
   const goToPin = useCallback(() => {
     setPhoneTouched(true);
     if (!isValidPhone(phone)) return;
+    checkedPhoneRef.current = phone;
     setError(null);
     setPhoneCheckError(null);
     setCheckingPhone(false);
@@ -115,11 +119,14 @@ export function PremiumLogin({
   }, [phone, onCheckPhone, goToPin]);
 
   // Debounce: ngừng gõ 700ms mới gọi kiểm tra (tránh spam API từng ký tự).
+  // Bỏ qua khi số chưa thay đổi kể từ lần kiểm tra trước (VD: vừa bấm "Đổi số
+  // khác" quay lại — giữ số cũ trên ô nhập, không đẩy về màn PIN ngay).
   useEffect(() => {
     if (step !== 'phone' || !isValidPhone(phone)) {
       setCheckingPhone(false);
       return;
     }
+    if (phone === checkedPhoneRef.current) return;
     setPhoneCheckError(null);
     const t = setTimeout(() => { void runPhoneCheck(); }, 700);
     return () => clearTimeout(t);
@@ -412,7 +419,11 @@ export function PremiumLogin({
             )}
             {!checkingPhone && !phoneCheckError && (
               <div style={{ textAlign: 'center', marginTop: 14, fontSize: 12.5, color: '#6B7280', fontWeight: 600 }}>
-                {phoneValid ? '✓ Đủ số — hệ thống đang tự kiểm tra...' : 'Nhập đủ số, hệ thống sẽ tự kiểm tra và chuyển sang nhập PIN.'}
+                {!phoneValid
+                  ? 'Nhập đủ số, hệ thống sẽ tự kiểm tra và chuyển sang nhập PIN.'
+                  : phone === checkedPhoneRef.current
+                    ? 'Số được giữ lại — sửa số rồi hệ thống sẽ tự kiểm tra lại.'
+                    : '✓ Đủ số — hệ thống đang tự kiểm tra...'}
               </div>
             )}
             <div className="pl-secure">🔒 Dữ liệu được mã hóa • Không chia sẻ PIN cho bất kỳ ai</div>
