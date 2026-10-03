@@ -15,6 +15,9 @@ import { Server } from 'socket.io';
  * 4. Chỉ lấp chỗ trống: ngày/ca đã có ca xếp tay (DRAFT/PUBLISHED) thì giữ nguyên.
  * 5. Ưu tiên người ít ngày công tháng (tháng dương lịch chứa ngày xếp) để đảm bảo
  *    tối thiểu 12 ngày làm việc/tháng, rồi đến người ít ca trong tuần (chia 3/4).
+ * 6. NV THỬ VIỆC độc lập hoàn toàn: ca thử việc (tự đăng ký 5 OFF / tự thêm ca)
+ *    KHÔNG chiếm slot của NV chính thức — BOT xếp lịch chính thức như thể các
+ *    ca thử việc không tồn tại (không ảnh hưởng lẫn nhau).
  */
 export interface AutoPlanItem {
   employee_id: string;
@@ -129,6 +132,13 @@ export async function buildAutoPlan(
   }
 
   // Ca đã có (tay hoặc BOT lần trước): BOT không đụng vào.
+  // NGOẠI LỆ: ca của NV THỬ VIỆC không chiếm slot chính thức (quy tắc 6) —
+  // lịch thử việc (7 ngày làm tự xếp) và lịch chính thức độc lập nhau.
+  const probationIds = new Set<string>(
+    (Array.isArray(employees) ? employees : [])
+      .filter((e: any) => e.employment_status === 'PROBATION')
+      .map((e: any) => String(e.employee_id))
+  );
   const existingRaw = (await repo.getShiftsForWeek(branchId, weekMon).catch(() => [])) as any[];
   const existing = (existingRaw || []).filter((s: any) => branchId === '*' || sameBranch((s as any).branch_id, branchId));
   const occupiedShiftDay = new Set<string>(); // `${shift}|${date}`
@@ -136,6 +146,7 @@ export async function buildAutoPlan(
   const weeklyCount = new Map<string, number>();
   for (const s of existing || []) {
     if ((s as any).status === 'CANCELLED') continue;
+    if (probationIds.has(String((s as any).employee_id))) continue;
     if ((s as any).date < weekMon || (s as any).date > weekSun) continue;
     occupiedShiftDay.add(`${(s as any).shift_code}|${(s as any).date}`);
     const k = `${(s as any).employee_id}|${(s as any).date}`;
