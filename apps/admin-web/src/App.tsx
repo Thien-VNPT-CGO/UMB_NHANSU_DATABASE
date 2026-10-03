@@ -90,6 +90,7 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'hr-leave', label: '15. Nghỉ OFF', icon: Clock },
     { id: 'hr-swap', label: '16. Đổi ca', icon: RefreshCw },
     { id: 'hr-attendance', label: '17. Chấm công realtime', icon: CheckCircle },
+    { id: 'hr-probation', label: '18. Nhân viên Thử việc', icon: Users },
   ],
   HR: [
     { id: 'hr-dashboard', label: '1. Dashboard HR', icon: Building2 },
