@@ -1177,6 +1177,24 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       setBankLoading(false);
     }
   };
+  // Báo cáo tháng NV chính thức: tổng giờ, nhất/ít nhất, lương từng người.
+  const currentVnMonth = () => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7);
+  const [reportPeriod, setReportPeriod] = useState(currentVnMonth());
+  const [monthlyReport, setMonthlyReport] = useState<any | null>(null);
+  const [reportLoading, setReportLoading] = useState(false);
+  const loadMonthlyReport = async (period?: string) => {
+    const p = period || reportPeriod;
+    setReportLoading(true);
+    try {
+      const d: any = await apiRequest(`/admin/reports/official-monthly?period=${encodeURIComponent(p)}`);
+      setMonthlyReport(d);
+    } catch (e: any) {
+      showToast(e?.message || 'Không tải được báo cáo tháng!');
+      setMonthlyReport(null);
+    } finally {
+      setReportLoading(false);
+    }
+  };
   // Bài TEST: HR giao đề random từ ngân hàng + theo dõi kết quả (NV chỉ thấy bài của mình)
   const [testPapers, setTestPapers] = useState<any[]>([]);
   const [testSubs, setTestSubs] = useState<any[]>([]);
@@ -1229,6 +1247,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     }
     if (activeTab === 'hr-tests') {
       loadBank();
+    }
+    if (activeTab === 'hr-reports') {
+      loadMonthlyReport();
     }
     if (activeTab === 'hr-probation') {
       loadAssessments();
@@ -8111,27 +8132,119 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }
 
   if (activeTab === 'hr-reports') {
-    const totalWorkingHours = payrollRuns.reduce((sum, p) => sum + (Number(p.total_hours) || 0), 0);
+    const r = monthlyReport;
+    const vnd = (n: number) => `${Number(n || 0).toLocaleString('vi-VN')}đ`;
+    const personLine = (p: any) => p ? `${p.fullName} (${p.employeeCode}) — ${p.hours}h` : '—';
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <h1 style={{ fontSize: '20px', fontWeight: 800 }}>14. Báo Cáo Phân Tích Nhân Sự (HR Reports)</h1>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
-          <div style={{ backgroundColor: 'var(--surface)', padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-            <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>TỔNG NHÂN SỰ TOÀN HỆ THỐNG</div>
-            <div style={{ fontSize: '24px', fontWeight: 800, color: 'var(--brand)', marginTop: '4px' }}>{allEmployees.length} Nhân sự</div>
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Đồng bộ 100% từ Google Sheets</div>
-          </div>
-          <div style={{ backgroundColor: 'var(--surface)', padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-            <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>TỔNG GIỜ LÀM VIỆC THÁNG</div>
-            <div style={{ fontSize: '24px', fontWeight: 800, color: 'var(--brand)', marginTop: '4px' }}>{totalWorkingHours}h</div>
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Toàn bộ các chi nhánh</div>
-          </div>
-          <div style={{ backgroundColor: 'var(--surface)', padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-            <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>TỶ LỆ ĐI ĐÚNG GIỜ</div>
-            <div style={{ fontSize: '24px', fontWeight: 800, color: '#2563EB', marginTop: '4px' }}>100%</div>
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Điểm danh GPS chuẩn &lt; 300m</div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+          <h1 style={{ fontSize: '20px', fontWeight: 800, margin: 0 }}>14. Báo Cáo Phân Tích Nhân Sự (HR Reports)</h1>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)' }}>Kỳ báo cáo:</label>
+            <input
+              type="month"
+              value={reportPeriod}
+              max={currentVnMonth()}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(v)) return;
+                setReportPeriod(v);
+                loadMonthlyReport(v);
+              }}
+              style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid var(--border)', fontSize: '13px', fontWeight: 700 }}
+            />
+            <button className="btn-secondary" style={{ fontSize: '12px', padding: '6px 12px' }} onClick={() => loadMonthlyReport()} disabled={reportLoading}>
+              {reportLoading ? '⏳ Đang tổng hợp...' : '↻ Tải lại'}
+            </button>
           </div>
         </div>
+
+        {!r && !reportLoading && (
+          <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px dashed var(--border)', padding: '36px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
+            Chưa có dữ liệu kỳ này. Chọn kỳ khác hoặc bấm Tải lại.
+          </div>
+        )}
+
+        {r && (
+          <>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+              Kỳ <strong>{String(r.period).slice(5, 7)}/{String(r.period).slice(0, 4)}</strong> • {r.officialCount} NV chính thức{r.zeroHourCount > 0 && <> • {r.zeroHourCount} người chưa có giờ công</>} • Lương theo {r.runStatus ? `kỳ đã chốt (${r.runStatus})` : 'tạm tính từ chấm công (Finance chưa chốt kỳ)'}.
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
+              <div style={{ backgroundColor: 'var(--surface)', padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>TỔNG GIỜ NV CHÍNH THỨC</div>
+                <div style={{ fontSize: '24px', fontWeight: 800, color: 'var(--brand)', marginTop: '4px' }}>{r.totalHours}h</div>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Ca đủ check-in + check-out</div>
+              </div>
+              <div style={{ backgroundColor: 'var(--surface)', padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid #A7F3D0' }}>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>🏆 NHIỀU GIỜ NHẤT</div>
+                <div style={{ fontSize: '16px', fontWeight: 800, color: '#059669', marginTop: '4px' }}>{r.top ? `${r.top.fullName}` : '—'}</div>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{r.top ? `${r.top.employeeCode} • ${r.top.hours}h • ${vnd(r.top.salary)}` : 'Chưa có giờ công'}</div>
+              </div>
+              <div style={{ backgroundColor: 'var(--surface)', padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid #FECACA' }}>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>🔻 ÍT GIỜ NHẤT (có làm)</div>
+                <div style={{ fontSize: '16px', fontWeight: 800, color: '#DC2626', marginTop: '4px' }}>{r.bottom ? `${r.bottom.fullName}` : '—'}</div>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{r.bottom ? `${r.bottom.employeeCode} • ${r.bottom.hours}h • ${vnd(r.bottom.salary)}` : 'Chưa có giờ công'}</div>
+              </div>
+              <div style={{ backgroundColor: 'var(--surface)', padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>TỔNG LƯƠNG THÁNG</div>
+                <div style={{ fontSize: '24px', fontWeight: 800, color: '#2563EB', marginTop: '4px' }}>{vnd(r.totalSalary)}</div>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{r.officialCount} NV chính thức</div>
+              </div>
+            </div>
+
+            <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
+              <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', fontSize: '14px', fontWeight: 800 }}>
+                Giờ làm & lương từng nhân viên chính thức ({r.rows.length})
+              </div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                  <thead>
+                    <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
+                      <th style={{ padding: '12px 20px' }}>Mã NV</th>
+                      <th style={{ padding: '12px 20px' }}>Họ Và Tên</th>
+                      <th style={{ padding: '12px 20px' }}>Chi Nhánh</th>
+                      <th style={{ padding: '12px 20px', textAlign: 'center' }}>Số Ca</th>
+                      <th style={{ padding: '12px 20px', textAlign: 'center' }}>Giờ Làm</th>
+                      <th style={{ padding: '12px 20px', textAlign: 'right' }}>Đơn Giá</th>
+                      <th style={{ padding: '12px 20px', textAlign: 'right' }}>Lương Tháng</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {r.rows.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                          Kỳ này chưa có nhân viên chính thức nào.
+                        </td>
+                      </tr>
+                    ) : (
+                      r.rows.map((row: any) => (
+                        <tr key={row.employeeId} style={{ borderBottom: '1px solid var(--border)' }}>
+                          <td style={{ padding: '12px 20px', fontFamily: 'monospace', fontWeight: 700, color: 'var(--brand)' }}>{row.employeeCode}</td>
+                          <td style={{ padding: '12px 20px', fontWeight: 700 }}>
+                            {row.fullName}
+                            {r.top && row.employeeId === r.top.employeeId && <span title="Nhiều giờ nhất tháng" style={{ marginLeft: '6px' }}>🏆</span>}
+                            {r.bottom && row.employeeId === r.bottom.employeeId && r.rows.length > 1 && <span title="Ít giờ nhất tháng (có làm)" style={{ marginLeft: '6px' }}>🔻</span>}
+                          </td>
+                          <td style={{ padding: '12px 20px', fontSize: '12px' }}>{getDisplayBranch(row.branchId, row.group)}</td>
+                          <td style={{ padding: '12px 20px', textAlign: 'center' }}>{row.shifts}{row.absentShifts > 0 && <span title={`${row.absentShifts} ca vắng/không lương`} style={{ color: '#DC2626', fontWeight: 700 }}> (-{row.absentShifts})</span>}</td>
+                          <td style={{ padding: '12px 20px', textAlign: 'center', fontWeight: 800 }}>{row.hours}h</td>
+                          <td style={{ padding: '12px 20px', textAlign: 'right', color: 'var(--text-muted)' }}>{vnd(row.rate)}/h</td>
+                          <td style={{ padding: '12px 20px', textAlign: 'right', fontWeight: 800, color: '#059669' }}>
+                            {vnd(row.salary)}
+                            <span title={row.salarySource === 'run' ? 'Lương thực tế theo kỳ Finance đã chốt' : 'Tạm tính từ chấm công (Finance chưa chốt kỳ này)'} style={{ display: 'inline-block', marginLeft: '6px', fontSize: '10px', fontWeight: 800, padding: '2px 7px', borderRadius: '999px', backgroundColor: row.salarySource === 'run' ? '#DCFCE7' : '#FEF3C7', color: row.salarySource === 'run' ? '#166534' : '#92400E' }}>
+                              {row.salarySource === 'run' ? 'Thực tế' : 'Tạm tính'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
+        )}
       </div>
     );
   }

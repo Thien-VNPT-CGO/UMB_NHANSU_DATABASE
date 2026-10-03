@@ -2842,6 +2842,18 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // HR Reports: tổng hợp tháng NV chính thức (tổng giờ, nhất/nhỏ nhất, lương
+  // từng người). Lương lấy từ kỳ đã chốt, chưa chốt thì tạm tính theo công thức.
+  app.get('/admin/reports/official-monthly', authMiddleware, requireRole(['ADMIN', 'HR']), async (req, res) => {
+    try {
+      const vn = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7);
+      const period = String((req.query as any)?.period || vn);
+      res.json(await payrollService.summarizeOfficialMonth(period));
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   app.post('/payroll/:run/reconcile', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollRunParams }), async (req: AuthenticatedRequest, res) => {
     try {
       const result = await payrollService.reconcileRun(req.params.run, req.user!.id);

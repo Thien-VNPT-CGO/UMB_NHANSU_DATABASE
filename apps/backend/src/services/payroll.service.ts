@@ -254,4 +254,129 @@ export class PayrollService {
   async getEmployeePayslips(employeeId: string) {
     return this.repo.getPayslipsForEmployee(employeeId);
   }
+
+  /**
+   * Tổng hợp tháng cho NV CHÍNH THỨC (HR Reports, read-only, không tạo kỳ lương):
+   *  - Giờ làm = ca PUBLISHED có đủ check-in + check-out (vắng/trễ 100% không tính giờ).
+   *  - Lương = phiếu của kỳ lương đã chốt (nếu có) — chưa chốt thì tạm tính theo
+   *    công thức draft (lương ca - phạt trễ + phụ cấp điều phối).
+   * Trả về tổng giờ, tổng lương, NV nhiều/ít giờ nhất + chi tiết từng người.
+   */
+  async summarizeOfficialMonth(period: string) {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period || '')) {
+      throw new Error('Kỳ báo cáo phải dạng YYYY-MM (VD: 2026-10)!');
+    }
+    const fromDate = `${period}-01`;
+    const toDate = `${period}-31`;
+    const employees = (await this.repo.listEmployees()).filter(
+      e => (e as any)?.employment_status === 'OFFICIAL'
+    );
+
+    // Phiếu kỳ đã chốt (nếu Finance đã tính lương tháng này) -> lương thực tế.
+    let runSlips = new Map<string, any>();
+    let runStatus: string | null = null;
+    try {
+      const runs = await this.repo.listPayrollRuns();
+      const run = runs.find(r => String((r as any).period) === period);
+      if (run) {
+        runStatus = String((run as any).status || '');
+        const slips = await this.repo.getPayslipsByRunId((run as any).run_id);
+        runSlips = new Map((slips || []).map((s: any) => [s.employee_id, s]));
+      }
+    } catch { /* không có kỳ lương thì toàn bộ là tạm tính */ }
+
+    const rows: any[] = [];
+    for (const emp of employees) {
+      const empShifts = await this.repo.getShiftsForEmployee(emp.employee_id, fromDate, toDate);
+      const published = empShifts.filter(s => s.status === 'PUBLISHED');
+      const rate = Number((emp as any).current_rate_per_hour) || 0;
+      let hours = 0;
+      let shifts = 0;
+      let absentShifts = 0;
+      let standardPay = 0;
+      let deduction = 0;
+      let bonus = 0;
+      for (const s of published) {
+        const dayEvents = await this.repo.getAttendanceEvents(emp.employee_id, s.date).catch(() => []);
+        const inEvt = dayEvents.find(
+          (e: any) => e.type === 'CHECK_IN' && (!e.assignment_id || e.assignment_id === s.assignment_id)
+        );
+        const hasOut = dayEvents.some(
+          (e: any) => e.type === 'CHECK_OUT' && (!e.assignment_id || e.assignment_id === s.assignment_id)
+        );
+        const template = SHIFT_TEMPLATES[s.shift_code];
+        const h = template ? template.duration_hours : 5;
+        if (!inEvt || !hasOut) {
+          absentShifts++;
+          continue;
+        }
+        const lateMin = inEvt.is_late
+          ? Number(inEvt.minutes_deviation) || 0
+          : (() => {
+              const st = new Date(s.start_at).getTime();
+              const ct = new Date(inEvt.client_time).getTime();
+              if (!Number.isFinite(st) || !Number.isFinite(ct)) return 0;
+              return Math.max(0, Math.round((ct - st) / 60000));
+            })();
+        const storedTier = (inEvt as any).fine_tier;
+        const storedAmt = Number((inEvt as any).fine_amount) || 0;
+        const useStored = !!storedTier && storedTier !== 'NONE';
+        const fine = lateFineFor(lateMin, h * rate);
+        const unpaid = useStored ? storedTier === 'FULL_SHIFT' : fine.unpaid;
+        if (unpaid) {
+          absentShifts++;
+          continue;
+        }
+        const deductAmt = useStored ? (storedTier === 'FULL_SHIFT' ? 0 : storedAmt) : fine.deduction;
+        hours += h;
+        shifts++;
+        standardPay += h * rate;
+        deduction += deductAmt;
+      }
+      try {
+        const swaps = await this.repo.listSwapRequests(emp.employee_id);
+        bonus = swaps
+          .filter(
+            s =>
+              (s as any).swap_kind === 'HR_DISPATCH' &&
+              s.status === 'APPROVED' &&
+              s.target_employee_id === emp.employee_id &&
+              ((s as any).approved_at || '').startsWith(period)
+          )
+          .reduce((sum, s) => sum + (Number((s as any).bonus_amount) || 30000), 0);
+      } catch { /* giữ bonus 0 */ }
+      const liveNet = standardPay + bonus - deduction;
+      const slip = runSlips.get(emp.employee_id);
+      rows.push({
+        employeeId: emp.employee_id,
+        employeeCode: (emp as any).employee_code,
+        fullName: (emp as any).full_name,
+        branchId: (emp as any).default_branch_id,
+        group: (emp as any).group,
+        rate,
+        shifts,
+        absentShifts,
+        hours: Math.round(hours * 10) / 10,
+        salary: slip ? Number((slip as any).net_pay) || 0 : liveNet,
+        salarySource: slip ? 'run' : 'live',
+        deduction,
+        bonus,
+      });
+    }
+    rows.sort((a, b) => b.hours - a.hours || String(a.fullName).localeCompare(String(b.fullName)));
+    const worked = rows.filter(r => r.hours > 0);
+    const totalHours = Math.round(rows.reduce((s, r) => s + r.hours, 0) * 10) / 10;
+    const totalSalary = rows.reduce((s, r) => s + r.salary, 0);
+    return {
+      period,
+      officialCount: rows.length,
+      zeroHourCount: rows.length - worked.length,
+      totalHours,
+      totalSalary,
+      runStatus,
+      top: worked[0] || null,
+      bottom: worked[worked.length - 1] || null,
+      rows,
+    };
+  }
 }
