@@ -750,6 +750,19 @@ export class SchedulesService {
       entityId: requestId,
       actorId: reviewerId,
       execute: async () => {
+        // Chống bấm trùng (danh sách cũ, 2 người cùng duyệt, retry mạng): chỉ phiếu
+        // đang PENDING mới được xử lý — đã duyệt/từ chối/xóa thì báo rõ để tải lại.
+        const preCheck = await this.repo.listLeaveRequests().catch(() => []);
+        const current = (preCheck || []).find(l => l.request_id === requestId);
+        if (!current) {
+          throw new Error('LEAVE_NOT_FOUND: Đơn nghỉ không tồn tại (có thể đã bị xóa). Tải lại danh sách!');
+        }
+        if ((current as any).status !== 'PENDING') {
+          const label = (current as any).status === 'APPROVED' ? 'đã duyệt'
+            : (current as any).status === 'REJECTED' ? 'đã từ chối'
+            : String((current as any).status);
+          throw new Error(`LEAVE_NOT_PENDING: Đơn này ${label} rồi, không xử lý lại! Tải lại danh sách.`);
+        }
         // Lịch OFF tuần (HANG_TUAN) tự động ghi nhận — bản ghi PENDING cũ (trước thời
         // điểm auto-approve) được tự chữa thành APPROVED thay vì báo lỗi kẹt mãi.
         const all = await this.repo.listLeaveRequests();

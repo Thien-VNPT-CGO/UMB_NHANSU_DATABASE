@@ -22,7 +22,7 @@ export interface ShiftAssignment {
     created_at: string;
     updated_at: string;
 }
-export type LeaveType = 'DOT_XUAT' | 'HANG_TUAN';
+export type LeaveType = 'DOT_XUAT' | 'HANG_TUAN' | 'THU_VIEC';
 export type RequestApprovalStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED';
 export interface LeaveRequest {
     request_id: string;
