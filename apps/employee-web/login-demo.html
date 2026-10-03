@@ -111,7 +111,7 @@
       <span class="spinner"></span> Đang xác thực...
     </div>
     <div id="pinError" class="err-box hidden"></div>
-    <button class="btn" id="btnVerify" disabled style="opacity:.5">Xác nhận đăng nhập</button>
+    <div id="pinAuto" style="text-align:center;margin-top:12px;font-size:12.5px;color:#6B7280;font-weight:600">Nhập đủ 6 số là hệ thống tự kiểm tra — không cần bấm thêm nút nào.</div>
     <button class="back" id="btnBack">← Đổi số khác</button>
   </div>
 
@@ -148,7 +148,6 @@
   var boxes = Array.prototype.slice.call(pinRow.querySelectorAll('.pin-box'));
   var pinCount = document.getElementById('pinCount');
   var pinError = document.getElementById('pinError');
-  var btnVerify = document.getElementById('btnVerify');
   var btnBack = document.getElementById('btnBack');
   var verifyingEl = document.getElementById('verifying');
   var bar1 = document.getElementById('bar1');
@@ -218,8 +217,6 @@
     var filled = pin.filter(Boolean).length;
     pinCount.textContent = filled + '/6';
     var full = pin.every(function (d) { return d !== ''; });
-    btnVerify.disabled = !full;
-    btnVerify.style.opacity = full ? '1' : '.5';
     if (full) setTimeout(verify, 180);
   }
 
@@ -261,7 +258,6 @@
     pinRow.classList.add('shake');
   }
   function hideError() { pinError.classList.add('hidden'); pinRow.classList.remove('err'); }
-  btnVerify.addEventListener('click', function () { verify(); });
 
   function verify() {
     if (busy) return;

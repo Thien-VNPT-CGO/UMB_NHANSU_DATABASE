@@ -458,14 +458,11 @@ export function PremiumLogin({
               </div>
             )}
             {error && !verifying && !loading && <div className="pl-err-box">⚠️ {error}</div>}
-            <button
-              className="pl-btn"
-              disabled={!pin.every((x) => x !== '') || verifying || loading}
-              onClick={() => doVerify(pin.join(''))}
-              style={{ opacity: !pin.every((x) => x !== '') ? 0.5 : 1 }}
-            >
-              {(verifying || loading) ? <><span className="pl-spinner" /> Đang kiểm tra...</> : 'Xác nhận đăng nhập'}
-            </button>
+            {!error && !verifying && !loading && (
+              <div style={{ textAlign: 'center', marginTop: 12, fontSize: 12.5, color: '#6B7280', fontWeight: 600 }}>
+                Nhập đủ 6 số là hệ thống tự kiểm tra — không cần bấm thêm nút nào.
+              </div>
+            )}
             <button className="pl-back" onClick={() => { setStep('phone'); setError(null); setPin(Array(pinLength).fill('')); }}>
               ← Đổi số khác
             </button>
