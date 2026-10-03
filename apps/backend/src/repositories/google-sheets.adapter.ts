@@ -563,29 +563,36 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
     if (this.isConfigured) {
       const snapshot = { ...res };
-      this.scheduleSheetsWrite(() => this.syncService.appendRow('SU_KIEN_DIEM_DANH', [
-        snapshot.event_id,
-        snapshot.assignment_id,
-        snapshot.employee_id,
-        snapshot.type,
-        snapshot.server_received_at,
-        snapshot.gps_latitude,
-        snapshot.gps_longitude,
-        snapshot.distance_meters,
-        snapshot.gps_status,
-        snapshot.drive_object_id || '',
-        snapshot.request_id || '',
-        (snapshot as any).uniform_pink_ratio ?? '',
-        // Giữ giờ máy khách (kèm múi giờ +07:00) để lọc đúng ngày Việt Nam
-        (snapshot as any).client_time || '',
-        // Cờ trễ/sớm (phạt lương): Sheet phải lưu, pull mới khôi phục được
-        (snapshot as any).is_late ? 'YES' : '',
-        (snapshot as any).is_early ? 'YES' : '',
-        Number((snapshot as any).minutes_deviation) || 0,
-        // Phạt trễ ghi nhận ngay lúc check-in (ràng buộc chặt 5p:30k • 30p:50% • 60p:100%)
-        (snapshot as any).fine_tier || 'NONE',
-        Number((snapshot as any).fine_amount) || 0,
-      ]), 'SU_KIEN_DIEM_DANH.append');
+      this.scheduleSheetsWrite(async () => {
+        const ok = await this.syncService.appendRow('SU_KIEN_DIEM_DANH', [
+          snapshot.event_id,
+          snapshot.assignment_id,
+          snapshot.employee_id,
+          snapshot.type,
+          snapshot.server_received_at,
+          snapshot.gps_latitude,
+          snapshot.gps_longitude,
+          snapshot.distance_meters,
+          snapshot.gps_status,
+          snapshot.drive_object_id || '',
+          snapshot.request_id || '',
+          (snapshot as any).uniform_pink_ratio ?? '',
+          // Giữ giờ máy khách (kèm múi giờ +07:00) để lọc đúng ngày Việt Nam
+          (snapshot as any).client_time || '',
+          // Cờ trễ/sớm (phạt lương): Sheet phải lưu, pull mới khôi phục được
+          (snapshot as any).is_late ? 'YES' : '',
+          (snapshot as any).is_early ? 'YES' : '',
+          Number((snapshot as any).minutes_deviation) || 0,
+          // Phạt trễ ghi nhận ngay lúc check-in (ràng buộc chặt 5p:30k • 30p:50% • 60p:100%)
+          (snapshot as any).fine_tier || 'NONE',
+          Number((snapshot as any).fine_amount) || 0,
+        ]);
+        if (!ok) {
+          // Append rớt (quota/timeout): đẩy nguyên tab để điểm danh không mất khỏi Sheet.
+          console.warn('[GoogleSheetsAdapter] appendRow SU_KIEN_DIEM_DANH failed, pushing full events tab');
+          await this.syncService.pushEventsTab(this.fallbackAdapter);
+        }
+      }, 'SU_KIEN_DIEM_DANH.append');
     }
 
     return res;
@@ -721,9 +728,20 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
         inbox.read_at ? 'YES' : '',
       ]));
       this.scheduleSheetsWrite(async () => {
+        let failed = false;
         for (const row of rows) {
           const ok = await this.syncService.appendRow('THONGBAO_NV', row);
-          if (!ok) break;
+          if (!ok) { failed = true; break; }
+        }
+        if (failed) {
+          // Append rớt (quota/timeout): thử lại 1 lần sau 5s. KHÔNG push nguyên tab
+          // (tab này giữ toàn bộ lịch sử — overwrite từ bộ nhớ chỉ-hôm-nay sẽ xóa lịch sử).
+          console.warn('[GoogleSheetsAdapter] appendRow THONGBAO_NV failed, retrying once in 5s');
+          await new Promise(r => setTimeout(r, 5000));
+          for (const row of rows) {
+            const ok = await this.syncService.appendRow('THONGBAO_NV', row);
+            if (!ok) break;
+          }
         }
       }, 'THONGBAO_NV.append');
     }
@@ -885,7 +903,15 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   }
 
   async updateShiftTemplates(templates: any) {
-    return this.fallbackAdapter.updateShiftTemplates(templates);
+    const res = await this.fallbackAdapter.updateShiftTemplates(templates);
+    // Mock đã mirror vào systemSettings — đẩy nền lên tab CAU_HINH_HE_THONG.
+    if (this.isConfigured) {
+      this.scheduleSheetsWrite(async () => {
+        const settings = await this.fallbackAdapter.getSystemSettings();
+        await this.syncService.syncSystemSettingsToSheet(settings);
+      }, 'SETTINGS.templates');
+    }
+    return res;
   }
 
   async getPolicies() {
@@ -894,7 +920,14 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   }
 
   async updatePolicies(policies: any) {
-    return this.fallbackAdapter.updatePolicies(policies);
+    const res = await this.fallbackAdapter.updatePolicies(policies);
+    if (this.isConfigured) {
+      this.scheduleSheetsWrite(async () => {
+        const settings = await this.fallbackAdapter.getSystemSettings();
+        await this.syncService.syncSystemSettingsToSheet(settings);
+      }, 'SETTINGS.policies');
+    }
+    return res;
   }
 
   async getMaintenance() {
@@ -903,7 +936,14 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   }
 
   async updateMaintenance(maintenance: any) {
-    return this.fallbackAdapter.updateMaintenance(maintenance);
+    const res = await this.fallbackAdapter.updateMaintenance(maintenance);
+    if (this.isConfigured) {
+      this.scheduleSheetsWrite(async () => {
+        const settings = await this.fallbackAdapter.getSystemSettings();
+        await this.syncService.syncSystemSettingsToSheet(settings);
+      }, 'SETTINGS.maintenance');
+    }
+    return res;
   }
 
   async getBackupSnapshots() {

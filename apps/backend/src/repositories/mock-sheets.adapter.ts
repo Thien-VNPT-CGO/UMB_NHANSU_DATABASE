@@ -930,6 +930,9 @@ export class MockSheetsAdapter implements ISheetsRepository {
   async updateShiftTemplates(templates: any): Promise<any> {
     this.checkErrors();
     this.shiftTemplates = { ...templates };
+    // Mirror vào systemSettings để đi theo luồng đồng bộ CAU_HINH_HE_THONG
+    // (restart/pull khôi phục lại — xem GoogleSheetsSyncService pull config).
+    (this.systemSettings as any).shiftTemplates = { ...templates };
     return { ...this.shiftTemplates };
   }
 
@@ -941,6 +944,8 @@ export class MockSheetsAdapter implements ISheetsRepository {
   async updatePolicies(policies: any): Promise<any> {
     this.checkErrors();
     this.policies = { ...this.policies, ...policies, updated_at: new Date().toISOString() };
+    // Mirror vào systemSettings để đi theo luồng đồng bộ CAU_HINH_HE_THONG.
+    (this.systemSettings as any).policies = { ...this.policies };
     return { ...this.policies };
   }
 
@@ -952,6 +957,8 @@ export class MockSheetsAdapter implements ISheetsRepository {
   async updateMaintenance(maintenance: any): Promise<any> {
     this.checkErrors();
     this.maintenance = { ...this.maintenance, ...maintenance, updated_at: new Date().toISOString() };
+    // Mirror vào systemSettings để đi theo luồng đồng bộ CAU_HINH_HE_THONG.
+    (this.systemSettings as any).maintenance = { ...this.maintenance };
     return { ...this.maintenance };
   }
 

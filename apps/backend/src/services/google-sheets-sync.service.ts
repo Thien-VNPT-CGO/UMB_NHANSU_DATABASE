@@ -122,6 +122,14 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
     title: 'BAI_LAM',
     headers: ['ID Bài Làm', 'ID Bài', 'ID Nhân Viên', 'Trạng Thái', 'Đáp Án (JSON)', 'Điểm', 'Đạt', 'Ngày Nộp', 'Ngày Tạo', 'Phiên Bản'],
   },
+  {
+    title: 'PHIEU_LUONG',
+    headers: ['ID Phiếu', 'Mã Kỳ Lương', 'ID Nhân Viên', 'Mã NV', 'Họ Và Tên', 'Kỳ Lương', 'Số Ca', 'Ca Vắng', 'Giờ Chuẩn', 'Đơn Giá', 'Lương Chuẩn', 'Phụ Cấp', 'Thưởng', 'Khấu Trừ', 'Thực Nhận', 'Trạng Thái'],
+  },
+  {
+    title: 'LICH_SU_GIAI_DOAN',
+    headers: ['ID Giai Đoạn', 'ID Nhân Viên', 'Giai Đoạn', 'Hiệu Lực Từ', 'Lương Giờ', 'Người Duyệt', 'Ghi Chú', 'Phiên Bản', 'Ngày Tạo'],
+  },
 ];
 
 /**
@@ -371,7 +379,7 @@ export class GoogleSheetsSyncService {
       };
     }
 
-    // Cache 10 phút: header hầu như không đổi, khỏi tốn 14 API call mỗi lần full-sync.
+    // Cache 10 phút: header hầu như không đổi, khỏi tốn ~N API call mỗi lần full-sync.
     if (this.lastInitResult && Date.now() - this.initOkAt < 600000) {
       return { ...this.lastInitResult, createdSheets: [...this.lastInitResult.createdSheets], existingSheets: [...this.lastInitResult.existingSheets] };
     }
@@ -423,20 +431,20 @@ export class GoogleSheetsSyncService {
         );
       }
 
-      console.log(`[GoogleSheetsSyncService] Đã tạo ${createdSheets.length} sheet mới. Toàn bộ 13 tab sẵn sàng.`);
+      console.log(`[GoogleSheetsSyncService] Đã tạo ${createdSheets.length} sheet mới. Toàn bộ ${SHEETS_DEFINITIONS.length} tab sẵn sàng.`);
 
       this.initOkAt = Date.now();
       this.lastInitResult = {
         success: true,
         createdSheets,
         existingSheets,
-        message: `Đã khởi tạo thành công cấu trúc 13 sheet tabs trên Google Sheets!`,
+        message: `Đã khởi tạo thành công cấu trúc ${SHEETS_DEFINITIONS.length} sheet tabs trên Google Sheets!`,
       };
       return {
         success: true,
         createdSheets,
         existingSheets,
-        message: `Đã khởi tạo thành công cấu trúc 13 sheet tabs trên Google Sheets!`,
+        message: `Đã khởi tạo thành công cấu trúc ${SHEETS_DEFINITIONS.length} sheet tabs trên Google Sheets!`,
       };
     } catch (err: any) {
       console.error('[GoogleSheetsSyncService] Lỗi khi tạo cấu trúc Sheets:', err);
@@ -490,6 +498,8 @@ export class GoogleSheetsSyncService {
         'BAI_THI',
         'BAI_LAM',
         'THONGBAO_NV',
+        'PHIEU_LUONG',
+        'LICH_SU_GIAI_DOAN',
       ]);
 
       // Đọc lỗi/quota trả về toàn rỗng trong khi bộ nhớ đang có dữ liệu thật
@@ -1218,6 +1228,64 @@ export class GoogleSheetsSyncService {
       }
       counts.payrollRuns = fallback.payrollRuns.length;
 
+      // 10b. Đọc PHIEU_LUONG (chi tiết từng phiếu — merge theo ID, không bao giờ xóa).
+      const slipRows = batch['PHIEU_LUONG'] || [];
+      if (keepIfEmpty('PHIEU_LUONG', slipRows, (fallback.payslips || []).length)) {
+        counts.payslips = (fallback.payslips || []).length;
+      } else if (slipRows.length > 0) {
+        const mappedSlips = slipRows
+          .filter(r => r && r[0])
+          .map(r => ({
+            item_id: r[0],
+            run_id: r[1] || '',
+            employee_id: r[2] || '',
+            employee_code: r[3] || '',
+            full_name: r[4] || '',
+            period: r[5] || '',
+            total_shifts: Number(r[6]) || 0,
+            absent_shifts: Number(r[7]) || 0,
+            standard_hours: Number(r[8]) || 0,
+            rate_snapshot: Number(r[9]) || 0,
+            standard_pay: Number(r[10]) || 0,
+            allowance: Number(r[11]) || 0,
+            bonus: Number(r[12]) || 0,
+            deduction: Number(r[13]) || 0,
+            net_pay: Number(r[14]) || 0,
+            status: (r[15] as any) || 'DRAFT',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            version: 1,
+          }));
+        fallback.payslips = mergeById(fallback.payslips || [], mappedSlips, 'item_id', ['version']) as any;
+        counts.payslips = fallback.payslips.length;
+      } else if ((fallback.payslips || []).length === 0) {
+        fallback.payslips = [];
+      }
+
+      // 10c. Đọc LICH_SU_GIAI_DOAN (lịch sử thử việc/chính thức — merge theo ID).
+      const stageRows = batch['LICH_SU_GIAI_DOAN'] || [];
+      if (keepIfEmpty('LICH_SU_GIAI_DOAN', stageRows, (fallback.stageHistories || []).length)) {
+        counts.stageHistories = (fallback.stageHistories || []).length;
+      } else if (stageRows.length > 0) {
+        const mappedStages = stageRows
+          .filter(r => r && r[0])
+          .map(r => ({
+            period_id: r[0],
+            employee_id: r[1] || '',
+            stage: (r[2] || '') as any,
+            effective_from: r[3] || '',
+            rate_per_hour: Number(r[4]) || 0,
+            approved_by: r[5] || '',
+            note: r[6] || '',
+            version: Number(r[7]) || 1,
+            created_at: r[8] || new Date().toISOString(),
+          }));
+        fallback.stageHistories = mergeById(fallback.stageHistories || [], mappedStages, 'period_id', ['version']) as any;
+        counts.stageHistories = fallback.stageHistories.length;
+      } else if ((fallback.stageHistories || []).length === 0) {
+        fallback.stageHistories = [];
+      }
+
       // 11. Đọc CAU_HINH_HE_THONG (cài đặt kỹ thuật hệ thống)
       const configRows = batch['CAU_HINH_HE_THONG'];
       if (configRows && configRows.length > 0) {
@@ -1236,6 +1304,14 @@ export class GoogleSheetsSyncService {
         if (Object.keys(settingsObj).length > 0) {
           fallback.systemSettings = { ...fallback.systemSettings, ...settingsObj };
           counts.systemSettings = Object.keys(settingsObj).length;
+          // Cấu hình giao diện/vận hành (ca mẫu, chính sách, bảo trì) được mirror
+          // trong systemSettings để đồng bộ Sheets — pull về thì khôi phục lại
+          // bộ nhớ để restart không mất (xem MockSheetsAdapter.updateShiftTemplates).
+          for (const k of ['shiftTemplates', 'policies', 'maintenance'] as const) {
+            if (settingsObj[k] !== undefined && settingsObj[k] !== null) {
+              (fallback as any)[k] = settingsObj[k];
+            }
+          }
         }
       }
 
@@ -1638,8 +1714,10 @@ export class GoogleSheetsSyncService {
       await this.overwriteSheetData('TAI_KHOAN_NHAN_VIEN', SHEETS_DEFINITIONS.find(d => d.title === 'TAI_KHOAN_NHAN_VIEN')!.headers, accountRows);
       details.accounts = accountRows.length;
 
-      // 5. Phân công ca
-      const shifts = await repo.getShiftsForWeek('*', new Date().toISOString().split('T')[0]);
+      // 5. Phân công ca — giữ 60 ngày quá khứ + toàn bộ tương lai (trước đây chỉ
+      // từ hôm nay trở đi nên ca cũ bị xóa khỏi Sheet sau mỗi full-sync).
+      const sixtyDaysAgo = new Date(Date.now() + 7 * 3_600_000 - 60 * 86_400_000).toISOString().slice(0, 10);
+      const shifts = await repo.getShiftsForWeek('*', sixtyDaysAgo);
       const shiftRows = shifts.map(s => [
         s.assignment_id,
         s.employee_id,
@@ -1703,6 +1781,45 @@ export class GoogleSheetsSyncService {
       ]);
       await this.overwriteSheetData('BAI_LAM', SHEETS_DEFINITIONS.find(d => d.title === 'BAI_LAM')!.headers, subRows);
       details.testSubmissions = subRows.length;
+
+      // 6c. Phiếu lương chi tiết (trước đây chỉ nằm bộ nhớ — restart là mất).
+      const slipsForPush = await this.collectAllPayslips(repo);
+      const slipPushRows = (slipsForPush || []).map((s: any) => ([
+        s.item_id,
+        s.run_id,
+        s.employee_id,
+        s.employee_code || '',
+        s.full_name || '',
+        s.period || '',
+        s.total_shifts ?? 0,
+        s.absent_shifts ?? 0,
+        s.standard_hours ?? 0,
+        s.rate_snapshot ?? 0,
+        s.standard_pay ?? 0,
+        s.allowance ?? 0,
+        s.bonus ?? 0,
+        s.deduction ?? 0,
+        s.net_pay ?? 0,
+        s.status || 'DRAFT',
+      ]));
+      await this.overwriteSheetData('PHIEU_LUONG', SHEETS_DEFINITIONS.find(d => d.title === 'PHIEU_LUONG')!.headers, slipPushRows);
+      details.payslips = slipPushRows.length;
+
+      // 6d. Lịch sử giai đoạn NV (thử việc/chính thức — trước đây chỉ nằm bộ nhớ).
+      const stageList = await this.collectAllStageHistories(repo);
+      const stagePushRows = (stageList || []).map((h: any) => ([
+        h.period_id,
+        h.employee_id,
+        h.stage || '',
+        h.effective_from || '',
+        h.rate_per_hour ?? 0,
+        h.approved_by || '',
+        h.reason || h.note || '',
+        h.version ?? 1,
+        h.created_at || '',
+      ]));
+      await this.overwriteSheetData('LICH_SU_GIAI_DOAN', SHEETS_DEFINITIONS.find(d => d.title === 'LICH_SU_GIAI_DOAN')!.headers, stagePushRows);
+      details.stageHistories = stagePushRows.length;
 
       // 7. Đơn đổi ca
       const swaps = await repo.listSwapRequests();
@@ -2241,6 +2358,38 @@ export class GoogleSheetsSyncService {
       if (k) map.set(k, r);
     }
     return [...map.values()];
+  }
+
+  /** Gom toàn bộ phiếu lương qua các kỳ (phục vụ push tab PHIEU_LUONG). */
+  private async collectAllPayslips(repo: ISheetsRepository): Promise<any[]> {
+    const out: any[] = [];
+    const seen = new Set<string>();
+    try {
+      const runs = await repo.listPayrollRuns();
+      for (const r of runs || []) {
+        const slips = await repo.getPayslipsByRunId((r as any).run_id).catch(() => []);
+        for (const s of slips || []) {
+          if ((s as any)?.item_id && !seen.has((s as any).item_id)) {
+            seen.add((s as any).item_id);
+            out.push(s);
+          }
+        }
+      }
+    } catch { /* best-effort */ }
+    return out;
+  }
+
+  /** Gom toàn bộ lịch sử giai đoạn NV (phục vụ push tab LICH_SU_GIAI_DOAN). */
+  private async collectAllStageHistories(repo: ISheetsRepository): Promise<any[]> {
+    const out: any[] = [];
+    try {
+      const emps = await repo.listEmployees();
+      for (const e of emps || []) {
+        const h = await repo.getStageHistory((e as any).employee_id).catch(() => []);
+        out.push(...(h || []));
+      }
+    } catch { /* best-effort */ }
+    return out;
   }
 
   /** Ép Sheets giữ nguyên text (SĐT 033.../PIN 0428): USER_ENTERED hay nuốt số 0 đầu. */
