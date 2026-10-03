@@ -165,6 +165,9 @@ export class GoogleSheetsSyncService {
   private isConfigured = false;
   private authError: string | null = null;
   private lastPulledAt: number = 0;
+  /** Mốc pull gần nhất đã xử lý xong tab CAU_HINH_HE_THONG (null = chưa từng).
+   *  Đọc bảo trì đợi mốc này để không trả seed OFF ngay sau boot. */
+  public lastSettingsPullAt: number | null = null;
   /** Tombstone NV vừa xóa: pull trong ~120s sau xóa mà thấy ID này trên Sheet
    *  (push xóa chưa kịp chạy) thì bỏ qua, tránh xóa xong bị khôi phục lại. */
   private deletedEmployeeIds = new Map<string, number>();
@@ -1328,10 +1331,17 @@ export class GoogleSheetsSyncService {
           // trong systemSettings để đồng bộ Sheets — pull về thì khôi phục lại
           // bộ nhớ để restart không mất (xem MockSheetsAdapter.updateShiftTemplates).
           for (const k of ['shiftTemplates', 'policies', 'maintenance'] as const) {
-            if (settingsObj[k] !== undefined && settingsObj[k] !== null) {
-              (fallback as any)[k] = settingsObj[k];
+            const v = (settingsObj as any)[k];
+            if (v === undefined || v === null) continue;
+            // Dòng maintenance hỏng (chuỗi thay vì object) thì GIỮ bộ nhớ, không
+            // ghi đè — nếu không reload sẽ tưởng đã TẮT bảo trì.
+            if (k === 'maintenance' && typeof v !== 'object') {
+              console.warn('[GoogleSheetsSyncService] Bỏ qua dòng maintenance hỏng trên Sheet (giữ trạng thái bộ nhớ).');
+              continue;
             }
+            (fallback as any)[k] = v;
           }
+          this.lastSettingsPullAt = Date.now();
         }
       }
 

@@ -714,12 +714,16 @@ export function App() {
       }
 
       // 3. Dữ liệu cấu hình hệ thống tĩnh (chỉ tải lần đầu khi đăng nhập hoặc khi forceAll = true)
+      // NGOẠI LỆ: trạng thái bảo trì luôn tải mới mỗi lần (rẻ, 1 request) để công
+      // tắc BẬT/TẮT không bao giờ hiển thị sai vì cache tĩnh sau reload.
+      tasks.push(
+        apiRequest('/admin/maintenance').then(mData => setMaintenance(mData || {})).catch(() => null),
+      );
       if (!staticDataLoadedRef.current || forceAll) {
         tasks.push(
           apiRequest('/admin/branches').then(bList => setBranches(bList || [])).catch(() => null),
           apiRequest('/admin/shift-templates').then(sTemplates => setShiftTemplates(sTemplates || {})).catch(() => null),
           apiRequest('/admin/policies').then(pData => setPolicies(pData || {})).catch(() => null),
-          apiRequest('/admin/maintenance').then(mData => setMaintenance(mData || {})).catch(() => null),
           apiRequest('/admin/system-settings').then(sSettings => setSystemSettings(sSettings || {})).catch(() => null),
         );
         if (user.role === 'ADMIN') {
@@ -1192,12 +1196,27 @@ export function App() {
 
   const handleSaveMaintenance = async (updatedMaintenance: any) => {
     try {
-      await apiRequest('/admin/maintenance', {
+      const saved: any = await apiRequest('/admin/maintenance', {
         method: 'POST',
         body: JSON.stringify(updatedMaintenance),
       });
-      setMaintenance(updatedMaintenance);
-      setSuccessMsg('Đã cập nhật trạng thái bảo trì hệ thống!');
+      // Lấy đúng bản server đã merge (không dùng echo request) + đọc lại xác minh
+      // để không bao giờ báo thành công giả khi server chưa nhận.
+      setMaintenance(saved || {});
+      const verify: any = await apiRequest('/admin/maintenance').catch(() => null);
+      if (verify) setMaintenance(verify);
+      const wantEmp = !!updatedMaintenance.employee_web_maintenance;
+      const wantSys = !!updatedMaintenance.system_maintenance;
+      const got = verify || saved || {};
+      if (!!got.employee_web_maintenance !== wantEmp || !!got.system_maintenance !== wantSys) {
+        setErrorMsg('Máy chủ chưa nhận trạng thái bảo trì! Kiểm tra mạng rồi bấm lại.');
+        return;
+      }
+      if ((saved as any)?._sheetPersisted === false) {
+        setSuccessMsg('Đã bật bảo trì, nhưng chưa ghi được lên Google Sheets — restart server có thể mất cờ, bấm lưu lại!');
+      } else {
+        setSuccessMsg('Đã cập nhật trạng thái bảo trì hệ thống!');
+      }
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (err: any) {
       setErrorMsg(err.message);

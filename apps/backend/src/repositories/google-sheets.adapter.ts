@@ -991,18 +991,56 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async getMaintenance() {
     await this.ensureFreshData();
+    // Sau boot, pull đầu chưa xong mà đọc ngay sẽ trả seed OFF -> UI tưởng đã
+    // TẮT bảo trì (reload là "mất"). Đợi pull cấu hình xong (có timeout).
+    await this.waitForSettingsPull().catch(() => null);
     return this.fallbackAdapter.getMaintenance();
+  }
+
+  /** Chờ tab CAU_HINH_HE_THONG được pull lần đầu (tối đa ~20s). */
+  public async waitForSettingsPull(timeoutMs = 20000): Promise<void> {
+    if (!this.isConfigured) return;
+    const svc = this.syncService as any;
+    if (svc?.lastSettingsPullAt) return;
+    // Pull đã từng chạy xong mà vẫn không có tab cấu hình -> Sheet trống thật,
+    // đợi nữa cũng vô ích, trả memory luôn.
+    if ((this as any).startupPullDone && !(this as any).pullInFlight) return;
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      try {
+        const p = (this as any).pullInFlight;
+        if (p) await Promise.race([p, new Promise(r => setTimeout(r, 2000))]);
+        else await new Promise(r => setTimeout(r, 500));
+      } catch { /* thử lại */ }
+      if ((this.syncService as any)?.lastSettingsPullAt) return;
+      if ((this as any).startupPullDone && !(this as any).pullInFlight) return;
+    }
   }
 
   async updateMaintenance(maintenance: any) {
     const res = await this.fallbackAdapter.updateMaintenance(maintenance);
+    let sheetPersisted = false;
     if (this.isConfigured) {
-      this.scheduleSheetsWrite(async () => {
+      // Cờ bảo trì sống qua restart nhờ Sheet: ghi ĐỒNG BỘ (await, timeout 12s)
+      // thay vì fire-and-forget — bật xong restart ngay cũng không mất.
+      try {
         const settings = await this.fallbackAdapter.getSystemSettings();
-        await this.syncService.syncSystemSettingsToSheet(settings);
-      }, 'SETTINGS.maintenance');
+        sheetPersisted = await Promise.race([
+          this.syncService.syncSystemSettingsToSheet(settings).catch(() => false),
+          new Promise<false>(r => setTimeout(() => r(false), 12000)),
+        ]);
+      } catch { sheetPersisted = false; }
+      if (!sheetPersisted) {
+        // Ghi đồng bộ rớt -> xếp hàng nền thử lại (không chặn response).
+        this.scheduleSheetsWrite(async () => {
+          const settings = await this.fallbackAdapter.getSystemSettings();
+          await this.syncService.syncSystemSettingsToSheet(settings);
+        }, 'SETTINGS.maintenance-retry');
+      }
+    } else {
+      sheetPersisted = true; // mock/dev: bộ nhớ là nguồn thật
     }
-    return res;
+    return { ...res, _sheetPersisted: sheetPersisted };
   }
 
   async getBackupSnapshots() {
