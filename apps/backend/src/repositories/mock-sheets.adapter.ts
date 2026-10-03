@@ -177,7 +177,7 @@ export class MockSheetsAdapter implements ISheetsRepository {
     this.policies = {
       check_in_window_minutes: 30,
       gps_radius_meters: 300,
-      weekly_off_window: 'T6 11:45 -> T7 15:00',
+      weekly_off_window: 'T6 09:00 -> T7 09:00',
       max_weekly_off_days: 2,
       test_question_count: 25,
       test_passing_score: 8.0,

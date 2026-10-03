@@ -436,7 +436,7 @@ export function App() {
   // Chống bấm gửi 2 lần (bấm đúp tạo phiếu trùng ngày thứ 3).
   const [weeklyOffBusy, setWeeklyOffBusy] = useState(false);
 
-  // Trạng thái cổng đăng ký OFF/tuần từ server (khung giờ T6 12h -> T7 15h)
+  // Trạng thái cổng đăng ký OFF/tuần từ server (khung giờ T6 09h -> T7 09h)
   const [weeklyOffWindow, setWeeklyOffWindow] = useState<any>(null);
   const [weeklyOffLocked, setWeeklyOffLocked] = useState(false);
   const [weeklyOffLockKnown, setWeeklyOffLockKnown] = useState(false);
@@ -1156,14 +1156,14 @@ export function App() {
   // Guard: Mandatory 2-day OFF registration locks other tabs for official employees
   // Ưu tiên trạng thái khóa từ server; khi offline mới dùng cờ localStorage cũ.
   const weeklyOffGateLocked = weeklyOffLockKnown ? weeklyOffLocked : !hasRegisteredWeeklyOff;
-  // Cổng đăng ký chỉ mở T6 11h45 -> T7 15h. Chưa rõ trạng thái (offline) thì cho bấm, server sẽ quyết.
+  // Cổng đăng ký chỉ mở T6 09h00 -> T7 09h00. Chưa rõ trạng thái (offline) thì cho bấm, server sẽ quyết.
   const weeklyOffRegOpen = !weeklyOffWindow || weeklyOffWindow.phase === 'OPEN';
   const weeklyOffOpensAtStr = weeklyOffWindow?.windowOpensAt
     ? new Date(weeklyOffWindow.windowOpensAt).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', weekday: 'long', day: '2-digit', month: '2-digit' })
-    : '11h45 Thứ 6';
+    : '09h00 Thứ 6';
   // Bấm nút đăng ký ngoài khung giờ -> báo giờ mở thay vì gọi API
   const notifyRegWindowClosed = () => {
-    showToast(`⏰ CHƯA ĐẾN GIỜ MỞ ĐĂNG KÝ! Cổng đăng ký 2 ngày nghỉ OFF mở lúc ${weeklyOffOpensAtStr} đến 15h00 Thứ 7. Hệ thống sẽ tự gửi thông báo trước 5 phút!`);
+      showToast(`⏰ CHƯA ĐẾN GIỜ MỞ ĐĂNG KÝ! Cổng đăng ký 2 ngày nghỉ OFF mở lúc ${weeklyOffOpensAtStr} đến 09h00 Thứ 7. Hệ thống sẽ tự gửi thông báo trước 5 phút!`);
   };
   const handleTabClick = (tabId: string) => {
     if (!isProbation && weeklyOffGateLocked && tabId !== 'leave') {
@@ -1214,7 +1214,7 @@ export function App() {
       return '🔒 Cổng đăng ký 2 ngày nghỉ đang mở — các chức năng khác bị KHÓA đến khi bạn hoàn tất đăng ký!';
     }
     if (m.includes('WEEKLY_OFF_WINDOW_CLOSED')) {
-      return '⏰ Đăng ký 2 ngày nghỉ OFF chỉ mở từ 11h45 Thứ 6 đến 15h00 Thứ 7 hàng tuần!';
+      return '⏰ Đăng ký 2 ngày nghỉ OFF chỉ mở từ 09h00 Thứ 6 đến 09h00 Thứ 7 hàng tuần!';
     }
     if (err?.code === 'SESSION_EXPIRED' || /unauthorized|401|hết hạn|đăng nhập lại/i.test(m)) {
       return '🔒 Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại rồi đăng ký tiếp!';
@@ -2506,8 +2506,8 @@ export function App() {
           </div>
           <div style={{ fontSize: '12px', color: '#92400E', lineHeight: '1.4' }}>
             Hệ thống đã tự động gửi thông báo trước 5 phút giờ mở cửa đăng ký. Cổng mở lúc{' '}
-            <strong>{weeklyOffWindow?.windowOpensAt ? new Date(weeklyOffWindow.windowOpensAt).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', weekday: 'long', day: '2-digit', month: '2-digit' }) : '11h45 Thứ 6'}</strong>{' '}
-            đến <strong>15h00 Thứ 7</strong>. Hãy chuẩn bị chọn 2 ngày nghỉ!
+                <strong>{weeklyOffWindow?.windowOpensAt ? new Date(weeklyOffWindow.windowOpensAt).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', weekday: 'long', day: '2-digit', month: '2-digit' }) : '09h00 Thứ 6'}</strong>{' '}
+                đến <strong>09h00 Thứ 7</strong>. Hãy chuẩn bị chọn 2 ngày nghỉ!
           </div>
         </div>
       )}
@@ -3084,7 +3084,7 @@ export function App() {
                       </div>
                     </div>
                   ) : !weeklyOffRegOpen ? (
-                    /* KHÓA NGOÀI KHUNG GIỜ MỞ CỔNG (T6 12h -> T7 15h) */
+                    /* KHÓA NGOÀI KHUNG GIỜ MỞ CỔNG (T6 09h -> T7 09h) */
                     <div style={{
                       backgroundColor: '#F1F5F9',
                       border: '1.5px dashed #94A3B8',
@@ -3097,7 +3097,7 @@ export function App() {
                         🔒 CHƯA ĐẾN GIỜ MỞ ĐĂNG KÝ
                       </div>
                       <div style={{ fontSize: '12px', color: '#64748B', lineHeight: '1.5' }}>
-                        Cổng đăng ký 2 ngày nghỉ OFF chỉ mở từ <strong>11h45 Thứ 6</strong> đến <strong>15h00 Thứ 7</strong> hàng tuần.<br />
+                        Cổng đăng ký 2 ngày nghỉ OFF chỉ mở từ <strong>09h00 Thứ 6</strong> đến <strong>09h00 Thứ 7</strong> hàng tuần.<br />
                         Lần mở tới: <strong>{weeklyOffOpensAtStr}</strong><br />
                         Hệ thống sẽ tự động gửi thông báo trước 5 phút!
                       </div>

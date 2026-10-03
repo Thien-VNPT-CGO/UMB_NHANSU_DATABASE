@@ -3344,7 +3344,7 @@ export function App() {
                   <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Khung giờ đăng ký lịch OFF tuần:</label>
                   <input
                     type="text"
-                    value={policies.weekly_off_window || 'T6 11:45 -> T7 15:00'}
+                    value={policies.weekly_off_window || 'T6 09:00 -> T7 09:00'}
                     onChange={(e) => setPolicies({ ...policies, weekly_off_window: e.target.value })}
                     style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}
                   />

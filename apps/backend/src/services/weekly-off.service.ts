@@ -9,9 +9,9 @@ export interface WeeklyOffWindow {
   phase: WeeklyOffPhase;
   /** Ngày Thứ 6 của chu kỳ đăng ký (YYYY-MM-DD, giờ VN). */
   weekKey: string;
-  /** ISO instant mở cổng (11h45 Thứ 6 VN). */
+  /** ISO instant mở cổng (09h00 Thứ 6 VN). */
   windowOpensAt: string;
-  /** ISO instant đóng cổng (15h00 Thứ 7 VN). */
+  /** ISO instant đóng cổng (09h00 Thứ 7 VN). */
   windowClosesAt: string;
   /** Tuần mục tiêu đăng ký (Thứ 2 - Chủ nhật kế tiếp, YYYY-MM-DD VN). */
   targetWeekMon: string;
@@ -52,9 +52,9 @@ function shiftedNow(now: Date): Date {
 }
 
 const OPEN_DOW_MON0 = 4; // Thứ 6 (0 = Thứ 2)
-const OPEN_MINUTES = 11 * 60 + 45; // 11h45 (reset chu kỳ đăng ký tuần tiếp theo)
+const OPEN_MINUTES = 9 * 60; // 09h00 (reset chu kỳ đăng ký tuần tiếp theo)
 const CLOSE_DOW_MON0 = 5; // Thứ 7
-const CLOSE_MINUTES = 15 * 60; // 15h00
+const CLOSE_MINUTES = 9 * 60; // 09h00
 
 function reminderMinutes(): number {
   return readNumber('WEEKLY_OFF_REMINDER_MINUTES', 5);
@@ -92,7 +92,7 @@ export function getWeeklyOffWindow(now: Date = new Date()): WeeklyOffWindow {
   }
 
   const weekKey = toDateStr(new Date(fridayMidnightUtc));
-  // 11h45 Thứ 6 VN = 11h45 - offset theo giờ UTC.
+  // 09h00 Thứ 6 VN = 09h00 - offset theo giờ UTC.
   const windowOpensAt = new Date(fridayMidnightUtc + (OPEN_MINUTES - tzOffsetHours() * 60) * 60_000);
   const windowClosesAt = new Date(windowOpensAt.getTime() + (OPEN_END - OPEN_START) * 60_000);
 
@@ -432,10 +432,10 @@ export async function assertHangTuanWindow(
 
 const REMINDER_TITLE = '⏰ Sắp mở cổng đăng ký 2 ngày OFF tuần';
 const REMINDER_SUMMARY =
-  'Cổng đăng ký mở lúc 11h45 Thứ 6 đến 15h00 Thứ 7. Hãy chuẩn bị chọn 2 ngày nghỉ — các chức năng khác sẽ tạm khóa đến khi bạn hoàn tất đăng ký!';
+  'Cổng đăng ký mở lúc 09h00 Thứ 6 đến 09h00 Thứ 7. Hãy chuẩn bị chọn 2 ngày nghỉ — các chức năng khác sẽ tạm khóa đến khi bạn hoàn tất đăng ký!';
 const OPENED_TITLE = '🟢 Đã mở cổng đăng ký 2 ngày OFF tuần';
 const OPENED_SUMMARY =
-  'Hiện tại đang mở cổng đăng ký 2 ngày nghỉ/tuần định kỳ (đến 15h00 Thứ 7). Toàn bộ các chức năng khác tạm thời bị KHÓA cho đến khi bạn hoàn tất đăng ký 2 ngày nghỉ!';
+  'Hiện tại đang mở cổng đăng ký 2 ngày nghỉ/tuần định kỳ (đến 09h00 Thứ 7). Toàn bộ các chức năng khác tạm thời bị KHÓA cho đến khi bạn hoàn tất đăng ký 2 ngày nghỉ!';
 
 export class WeeklyOffScheduler {
   private sent = new Set<string>();

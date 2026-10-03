@@ -1809,7 +1809,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         if (werr.message === ERROR_CODES.WEEKLY_OFF_WINDOW_CLOSED) {
           return res.status(403).json({
             error: werr.message,
-            message: werr.reason || `Đăng ký 2 ngày nghỉ OFF chỉ mở từ 11h45 Thứ 6 đến 15h00 Thứ 7 hàng tuần (lần tới: ${werr.window.windowOpensAt}).`,
+            message: werr.reason || `Đăng ký 2 ngày nghỉ OFF chỉ mở từ 09h00 Thứ 6 đến 09h00 Thứ 7 hàng tuần (lần tới: ${werr.window.windowOpensAt}).`,
             code: werr.message,
             windowOpensAt: werr.window.windowOpensAt,
             windowClosesAt: werr.window.windowClosesAt,
@@ -2546,7 +2546,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         if (werr.message === ERROR_CODES.WEEKLY_OFF_WINDOW_CLOSED) {
           return res.status(403).json({
             error: werr.message,
-            message: werr.reason || `Đăng ký 2 ngày nghỉ OFF chỉ mở từ 11h45 Thứ 6 đến 15h00 Thứ 7 hàng tuần (lần tới: ${werr.window.windowOpensAt}).`,
+            message: werr.reason || `Đăng ký 2 ngày nghỉ OFF chỉ mở từ 09h00 Thứ 6 đến 09h00 Thứ 7 hàng tuần (lần tới: ${werr.window.windowOpensAt}).`,
             code: werr.message,
             windowOpensAt: werr.window.windowOpensAt,
             windowClosesAt: werr.window.windowClosesAt,
@@ -2625,7 +2625,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         if (werr.message === ERROR_CODES.WEEKLY_OFF_WINDOW_CLOSED) {
           return res.status(403).json({
             error: werr.message,
-            message: werr.reason || 'Đăng ký 2 ngày nghỉ OFF chỉ mở từ 11h45 Thứ 6 đến 15h00 Thứ 7 hàng tuần.',
+            message: werr.reason || 'Đăng ký 2 ngày nghỉ OFF chỉ mở từ 09h00 Thứ 6 đến 09h00 Thứ 7 hàng tuần.',
             code: werr.message,
             windowOpensAt: werr.window.windowOpensAt,
             windowClosesAt: werr.window.windowClosesAt,
