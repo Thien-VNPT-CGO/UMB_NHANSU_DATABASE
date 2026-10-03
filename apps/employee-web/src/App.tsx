@@ -1297,9 +1297,11 @@ export function App() {
     return { mon: fmt(monMs), sun: fmt(monMs + 6 * 86_400_000) };
   };
   const inSwapWeek = (dateStr?: string) => {
+    // Tuần HR đã publish (kể cả tuần sau) thì được đổi: chặn ca tuần đã qua,
+    // ca tương lai do rào PUBLISHED quyết định (chưa publish -> server từ chối).
     const wk = swapWeekRange();
     const d = String(dateStr || '').slice(0, 10);
-    return !!d && d >= wk.mon && d <= wk.sun;
+    return !!d && d >= wk.mon;
   };
   /** Chỉ ca HR đã PUBLISH (NV đã thấy trên lịch) mới được đổi/tráo — ca DRAFT
    *  (nháp, HR chưa chốt) chặn cả 2 chiều; tuần nào chưa publish thì tuần đó
@@ -3946,7 +3948,7 @@ export function App() {
               {swapFormType === 1 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   <div style={{ backgroundColor: '#FDF2F8', padding: '10px', borderRadius: '8px', fontSize: '12px', color: '#9D174D' }}>
-                    📌 <strong>Đặc điểm:</strong> Cùng chi nhánh ({employee?.default_branch_id || 'CN130'}). Chỉ tráo ca <strong>trong tuần hiện tại</strong> ({swapWeekRange().mon} → {swapWeekRange().sun}) <strong>đã được HR publish</strong> — ca nháp/chưa publish và ngoài tuần hệ thống đều từ chối.
+                    📌 <strong>Đặc điểm:</strong> Cùng chi nhánh ({employee?.default_branch_id || 'CN130'}). Đổi ca <strong>từ tuần hiện tại trở đi</strong> ({swapWeekRange().mon} → …) <strong>khi tuần đó đã được HR publish</strong> — ca nháp/chưa publish và ca tuần đã qua hệ thống đều từ chối.
                     {swapDraftCount(myShifts) > 0 && (
                       <><br />⚠️ Bạn có {swapDraftCount(myShifts)} ca tuần này chưa publish — báo HR publish để đổi được.</>
                     )}
@@ -4036,7 +4038,7 @@ export function App() {
               {swapFormType === 2 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   <div style={{ backgroundColor: '#EFF6FF', padding: '10px', borderRadius: '8px', fontSize: '12px', color: '#1E40AF' }}>
-                    📌 <strong>Đặc điểm:</strong> Nhân viên B nhận làm thay ca cho A (B làm 2 ca/ngày). Chỉ nhờ ca <strong>trong tuần hiện tại</strong> ({swapWeekRange().mon} → {swapWeekRange().sun}) <strong>đã được HR publish</strong> — ngoài tuần hệ thống từ chối.<br />
+                    📌 <strong>Đặc điểm:</strong> Nhân viên B nhận làm thay ca cho A (B làm 2 ca/ngày). Chỉ nhờ ca <strong>từ tuần hiện tại trở đi</strong> ({swapWeekRange().mon} → …) <strong>khi tuần đó đã được HR publish</strong> — ca tuần đã qua hệ thống từ chối.<br />
                     ⚠️ Tự thỏa thuận với nhau thì <strong>không</strong> có phụ cấp — chỉ ca do <strong>HR điều phối</strong> (mục trên) mới +30.000đ.
                     {swapDraftCount(myShifts) > 0 && (
                       <><br />⚠️ Bạn có {swapDraftCount(myShifts)} ca tuần này chưa publish — báo HR publish để nhờ được.</>

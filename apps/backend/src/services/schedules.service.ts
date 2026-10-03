@@ -31,16 +31,18 @@ function vnDateOf(iso: string): string {
 }
 
 /**
- * Ràng buộc đổi/tráo ca: mọi ca liên quan phải nằm trong TUẦN HIỆN TẠI
- * (Mon-Sun chứa hôm nay, giờ VN) đã sắp lịch. Ngoài tuần -> từ chối.
+ * Ràng buộc tuần đổi/tráo ca: ca phải từ TUẦN HIỆN TẠI trở đi (Mon-Sun chứa
+ * hôm nay, giờ VN) — ca của tuần đã qua thì chặn. Tuần tương lai (kể cả tuần
+ * sau) được đổi khi HR đã publish lịch tuần đó (kiểm tra PUBLISHED riêng):
+ * publish rồi thì áp dụng, chưa publish thì chặn.
  */
-function assertDatesInCurrentWeek(dates: string[], now: Date = new Date()): { mon: string; sun: string } {
+function assertSwapDatesAllowed(dates: string[], now: Date = new Date()): { mon: string; sun: string } {
   const wk = currentVnWeekRange(now);
   for (const d of dates) {
     const day = String(d || '').slice(0, 10);
-    if (!day || day < wk.mon || day > wk.sun) {
+    if (!day || day < wk.mon) {
       throw new Error(
-        `SWAP_OUT_OF_CURRENT_WEEK: Chỉ được đổi/tráo ca trong tuần hiện tại đã sắp lịch (${wk.mon} → ${wk.sun}). Ca ngày ${day || '?'} nằm ngoài tuần — hệ thống từ chối phiếu.`
+        `SWAP_DATE_IN_PAST: Ca ngày ${day || '?'} đã qua (tuần hiện tại ${wk.mon} → ${wk.sun}) — chỉ đổi/tráo ca từ tuần hiện tại trở đi và tuần đó phải được HR publish.`
       );
     }
   }
@@ -838,7 +840,7 @@ export class SchedulesService {
     if (tgtSh && (tgtSh as any).status === 'CANCELLED') throw new Error('SWAP_SHIFT_CANCELLED: Ca của đồng nghiệp đã bị hủy, không thể đổi.');
     // Lịch phải được HR publish (NV đã thấy) thì mới đổi — ca nháp chặn cả 2 chiều.
     assertShiftsPublished([reqSh, tgtSh]);
-    assertDatesInCurrentWeek(
+    assertSwapDatesAllowed(
       [reqSh ? (reqSh as any).date : '', tgtSh ? (tgtSh as any).date : ''].filter(Boolean)
     );
     return singleWriterQueue.enqueue({
@@ -887,7 +889,7 @@ export class SchedulesService {
     if (!shift) throw new Error('SHIFT_NOT_FOUND_FOR_DISPATCH');
     if ((shift as any).status === 'CANCELLED') throw new Error('SWAP_SHIFT_CANCELLED: Ca cần người làm thay đã bị hủy.');
     assertShiftsPublished([shift]);
-    assertDatesInCurrentWeek([(shift as any).date]);
+    assertSwapDatesAllowed([(shift as any).date]);
     const swapId = `DISP_${Date.now()}`;
     return singleWriterQueue.enqueue({
       entityType: 'PHIEU_DOI_CA',
@@ -947,7 +949,7 @@ export class SchedulesService {
             : null;
           if (rSh) dates.push((rSh as any).date);
           if (tSh) dates.push((tSh as any).date);
-          if (dates.length > 0) assertDatesInCurrentWeek(dates);
+          if (dates.length > 0) assertSwapDatesAllowed(dates);
           // Ca phải còn ở trạng thái đã publish lúc B nhận (chặn ca bị gỡ/hủy sau khi gửi).
           assertShiftsPublished([rSh, tSh]);
         }
@@ -1193,7 +1195,7 @@ export class SchedulesService {
             : null;
           if (rSh) dates.push((rSh as any).date);
           if (tSh) dates.push((tSh as any).date);
-          if (dates.length > 0) assertDatesInCurrentWeek(dates);
+          if (dates.length > 0) assertSwapDatesAllowed(dates);
           // HR duyệt cũng yêu cầu ca còn published (không duyệt ca nháp/hủy).
           assertShiftsPublished([rSh, tSh]);
         }
