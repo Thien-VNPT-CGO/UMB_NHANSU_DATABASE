@@ -2250,6 +2250,94 @@ export class GoogleSheetsSyncService {
     return v;
   }
 
+  /** ID Sheet ngân hàng câu hỏi trắc nghiệm (HR chia sẻ quyền Xem cho service account). */
+  public static testBankSpreadsheetId(): string {
+    return (process.env.TEST_BANK_SPREADSHEET_ID || '1h06TrHMRnBOHMkp7Ri4Rz8yRw8ptemQp0ftjMldHYdc').trim();
+  }
+
+  /** Tên tab chứa câu hỏi trong Sheet ngân hàng. */
+  public static testBankSheetName(): string {
+    return (process.env.TEST_BANK_SHEET_NAME || 'TRAC_NGHIEM').trim();
+  }
+
+  /**
+   * Đọc ngân hàng câu hỏi trắc nghiệm từ Google Sheet ngoài.
+   * Cấu trúc cột: Câu hỏi | A | B | C | D | Đáp án (chữ A-E hoặc số 1-5) | Giải thích.
+   * Trả về danh sách câu hợp lệ (bỏ dòng thiếu nội dung/đáp án/không rõ đáp án đúng).
+   */
+  public async readTestBankQuestions(): Promise<{
+    spreadsheetId: string;
+    sheetName: string;
+    questions: { content: string; options: string[]; correct_index: number; explanation: string }[];
+    totalRows: number;
+    skipped: number;
+  }> {
+    if (!this.isConfigured || !this.sheetsClient) {
+      throw new Error('TEST_BANK_NOT_CONFIGURED: Chưa cấu hình Google Service Account trên server!');
+    }
+    const spreadsheetId = GoogleSheetsSyncService.testBankSpreadsheetId();
+    const sheetName = GoogleSheetsSyncService.testBankSheetName();
+    let values: string[][] = [];
+    try {
+      const res: any = await this.sheetsCall(
+        'bank.read',
+        () =>
+          this.sheetsClient!.spreadsheets.values.get({
+            spreadsheetId,
+            range: `'${sheetName}'!A1:G`,
+          }) as any,
+        30000
+      );
+      values = (res?.data?.values || []) as string[][];
+    } catch (e: any) {
+      const msg = String(e?.message || e);
+      if (/403|PERMISSION_DENIED|permission/i.test(msg)) {
+        throw new Error('TEST_BANK_NO_ACCESS: Sheet ngân hàng câu hỏi chưa được chia sẻ quyền Xem cho service account! Mở Sheet -> Chia sẻ -> thêm email service account với quyền Người xem.');
+      }
+      if (/404|NOT_FOUND|Unable to parse range/i.test(msg)) {
+        throw new Error(`TEST_BANK_NO_TAB: Không tìm thấy tab "${sheetName}" trong Sheet ngân hàng câu hỏi!`);
+      }
+      throw new Error(`TEST_BANK_READ_FAILED: Không đọc được Sheet ngân hàng câu hỏi (${msg}).`);
+    }
+    // Tìm dòng tiêu đề (ô đầu chứa "câu hỏi") — dữ liệu bắt đầu từ dòng sau.
+    let startIdx = 0;
+    for (let i = 0; i < Math.min(values.length, 10); i++) {
+      if (/câu hỏi/i.test(String(values[i]?.[0] || ''))) {
+        startIdx = i + 1;
+        break;
+      }
+    }
+    const questions: { content: string; options: string[]; correct_index: number; explanation: string }[] = [];
+    let skipped = 0;
+    for (let i = startIdx; i < values.length; i++) {
+      const r = values[i] || [];
+      const content = String(r[0] ?? '').trim();
+      if (!content) continue; // dòng trống
+      const rawOptions = [r[1], r[2], r[3], r[4]].map(v => String(v ?? '').trim());
+      // Giữ nguyên thứ tự A-D, chỉ loại đáp án trống ở cuối (đáp án trống ở giữa -> câu lỗi).
+      const options = [...rawOptions];
+      while (options.length > 0 && options[options.length - 1] === '') options.pop();
+      const answerRaw = String(r[5] ?? '').trim().toUpperCase();
+      // Chấp nhận: "B", "2", "Đáp án đúng là B"...
+      let correct = -1;
+      const letter = (answerRaw.match(/[A-E]/) || [])[0];
+      const digit = (answerRaw.match(/[1-5]/) || [])[0];
+      if (letter) correct = letter.charCodeAt(0) - 65;
+      else if (digit) correct = Number(digit) - 1;
+      if (options.length < 2 || correct < 0 || correct >= options.length || !options[correct]) {
+        skipped++;
+        continue;
+      }
+      questions.push({
+        content,
+        options,
+        correct_index: correct,
+        explanation: String(r[6] ?? '').trim(),
+      });
+    }
+    return { spreadsheetId, sheetName, questions, totalRows: Math.max(0, values.length - startIdx), skipped };
+  }
+
   /**
    * Thêm một dòng mới vào cuối Sheet tab (Append)
    */

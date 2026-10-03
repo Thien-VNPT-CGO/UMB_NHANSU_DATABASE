@@ -190,6 +190,16 @@ export const testSubmitBody = z.object({
   answers: z.array(z.coerce.number().int().min(0).max(25)).min(1).max(100),
 });
 
+// HR tạo đề random từ ngân hàng câu hỏi (Google Sheet) + giao cho NV đã tick chọn.
+export const testBankBody = z.object({
+  title: optString(200),
+  description: optString(2000),
+  passScore: z.coerce.number().min(0).max(10).optional(),
+  timeLimitSeconds: z.coerce.number().int().min(30).max(7200).optional(),
+  employeeIds: z.array(z.string().trim().min(1).max(64)).min(1).max(200),
+  count: z.coerce.number().int().min(1).max(50).optional(),
+});
+
 export const autoPlanBody = z.object({
   branchId: optString(32),
   weekMon: optString(32),

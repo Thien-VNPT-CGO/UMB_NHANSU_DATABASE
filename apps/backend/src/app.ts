@@ -68,6 +68,7 @@ import {
   candidateUpdateBody,
   idParams,
   testPaperBody,
+  testBankBody,
   testSubmitBody,
   interviewBody,
   leaveCreateBody,
@@ -1636,6 +1637,93 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         targetRoles: ['ADMIN', 'HR', 'STORE'],
       });
       res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // --- NGÂN HÀNG CÂU HỎI TRẮC NGHIỆM (Google Sheet ngoài) ---
+  // HR xem trước: Sheet có bao nhiêu câu hợp lệ (kèm 3 câu mẫu, hiện cả đáp án
+  // đúng để HR đối chiếu) trước khi random giao bài.
+  app.get('/admin/test-bank/preview', authMiddleware, requireRole(['ADMIN', 'HR']), async (_req, res) => {
+    try {
+      const bank = await adapter.syncService.readTestBankQuestions();
+      res.json({
+        spreadsheetId: bank.spreadsheetId,
+        sheetName: bank.sheetName,
+        sheetUrl: `https://docs.google.com/spreadsheets/d/${bank.spreadsheetId}/edit`,
+        count: bank.questions.length,
+        totalRows: bank.totalRows,
+        skipped: bank.skipped,
+        sample: bank.questions.slice(0, 3).map(q => ({
+          content: q.content,
+          options: q.options,
+          correct: String.fromCharCode(65 + q.correct_index),
+          explanation: q.explanation,
+        })),
+      });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // HR random N câu khác nhau từ ngân hàng + giao cho NV đã tick chọn.
+  // Mỗi NV nhận 1 bài làm riêng + thông báo inbox yêu cầu hoàn thành.
+  app.post('/admin/tests/from-bank', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ body: testBankBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const count = Math.max(1, Math.min(50, Number(req.body.count) || 25));
+      const employeeIds: string[] = [...new Set(((req.body.employeeIds || []) as string[]).map((s: string) => String(s)))];
+      const bank = await adapter.syncService.readTestBankQuestions();
+      if (bank.questions.length < count) {
+        return res.status(400).json({
+          error: `Ngân hàng câu hỏi chỉ có ${bank.questions.length} câu hợp lệ (bỏ ${bank.skipped} dòng lỗi), không đủ ${count} câu! Bổ sung câu hỏi trên Sheet rồi thử lại.`,
+        });
+      }
+      // Fisher-Yates: xáo toàn bộ rồi cắt N câu đầu -> N câu khác nhau chắc chắn.
+      const pool = [...bank.questions];
+      for (let i = pool.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [pool[i], pool[j]] = [pool[j], pool[i]];
+      }
+      const picked = pool.slice(0, count);
+      const vn = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+      const title = String(req.body.title || '').trim() || `TEST trắc nghiệm ${count} câu — ${vn.split('-').reverse().join('/')}`;
+      const result = await testsService.createPaper({
+        title,
+        description: String(req.body.description || `Đề random ${count} câu từ ngân hàng câu hỏi (${bank.sheetName}).`),
+        questions: picked.map((q, i) => ({
+          question_id: `BANK_${Date.now()}_${i + 1}`,
+          content: q.content,
+          options: q.options,
+          correct_index: q.correct_index,
+          points: 1,
+        })),
+        passScore: req.body.passScore ?? 8,
+        timeLimitSeconds: req.body.timeLimitSeconds ?? 480,
+        employeeIds,
+        actorId: req.user!.id,
+      });
+      const testId = (result as any)?.result?.paper?.test_id;
+      // Thông báo đến từng NV được giao: inbox + realtime (socket đã bắn trong createPaper).
+      await notificationsService.sendNotification({
+        recipientIds: employeeIds,
+        type: 'TEST_ASSIGNED',
+        severity: 'ACTION_REQUIRED',
+        title: `📝 Bạn được giao bài trắc nghiệm (${count} câu)`,
+        summary: `HR vừa giao "${title}". Mở tab Thi TEST để làm bài ngay — hoàn thành để đủ điều kiện xét duyệt!`,
+        targetPath: '/test_exam',
+        actorId: req.user!.id,
+      }).catch(() => null);
+      broadcastUpdate('tests', { action: 'create-bank', testId });
+      broadcastNotification({
+        type: 'TEST',
+        title: '🎲 HR Vừa Giao Đề Random Từ Ngân Hàng Câu Hỏi',
+        message: `"${title}" (${count} câu) đã được giao cho ${employeeIds.length} nhân viên.`,
+        linkTab: 'hr-tests',
+        metadata: { testId },
+        targetRoles: ['ADMIN', 'HR', 'STORE'],
+      });
+      res.json({ ...(result as any)?.result, questionCount: count });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }

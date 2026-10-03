@@ -1033,6 +1033,26 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const isSunday = now.getDay() === 0;
     return { mon: monS, sun: sunS, label: `${fmtD(monS)} → ${fmtD(sunS)}`, isSunday };
   })();
+  // Đề random từ ngân hàng câu hỏi (Google Sheet ngoài): tick NV + gửi 1 lần.
+  const [bankInfo, setBankInfo] = useState<any | null>(null);
+  const [bankLoading, setBankLoading] = useState(false);
+  const [bankTitle, setBankTitle] = useState('');
+  const [bankCount, setBankCount] = useState(25);
+  const [bankAssignees, setBankAssignees] = useState<string[]>([]);
+  const [bankSearch, setBankSearch] = useState('');
+  const [bankBusy, setBankBusy] = useState(false);
+  const loadBank = async () => {
+    setBankLoading(true);
+    try {
+      const d: any = await apiRequest('/admin/test-bank/preview');
+      setBankInfo(d);
+      if (d?.count && bankCount > d.count) setBankCount(d.count);
+    } catch (e: any) {
+      setBankInfo({ error: e?.message || 'Không đọc được ngân hàng câu hỏi!' });
+    } finally {
+      setBankLoading(false);
+    }
+  };
   // Bài TEST: HR tạo đề + giao đúng nhân viên (NV chỉ thấy bài của mình)
   const [testPapers, setTestPapers] = useState<any[]>([]);
   const [testSubs, setTestSubs] = useState<any[]>([]);
@@ -1091,6 +1111,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     }
     if (activeTab === 'hr-tests' || activeTab === 'hr-probation') {
       loadTests();
+    }
+    if (activeTab === 'hr-tests') {
+      loadBank();
     }
     if (activeTab === 'hr-probation') {
       loadAssessments();
@@ -7831,6 +7854,98 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <div style={{ fontSize: '24px', fontWeight: 800, color: '#059669', marginTop: '4px' }}>95.8%</div>
             <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>23/24 nhân sự đạt lần đầu</div>
           </div>
+        </div>
+
+        {/* ĐỀ RANDOM TỪ NGÂN HÀNG CÂU HỎI: tick NV + gửi 1 lần, mỗi NV nhận đề riêng */}
+        <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1.5px solid #7C3AED', padding: '18px 20px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+            <div style={{ fontWeight: 800, fontSize: '15px' }}>🎲 Đề Random Từ Ngân Hàng Câu Hỏi (Google Sheet)</div>
+            <button className="btn-secondary" style={{ fontSize: '12px', padding: '4px 10px' }} onClick={loadBank} disabled={bankLoading}>
+              {bankLoading ? '⏳ Đang đọc Sheet...' : '↻ Đọc lại Sheet'}
+            </button>
+          </div>
+          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px', lineHeight: 1.6 }}>
+            Hệ thống lấy ngẫu nhiên <strong>{bankCount} câu khác nhau</strong> từ Sheet ngân hàng, tạo đề riêng và giao cho đúng NV đã tick — NV nhận thông báo inbox + yêu cầu hoàn thành ngay trên cổng của mình.
+            {bankInfo?.sheetUrl && <> Sheet: <a href={bankInfo.sheetUrl} target="_blank" rel="noreferrer" style={{ color: '#0068FF', fontWeight: 700 }}>mở ngân hàng câu hỏi →</a></>}
+          </div>
+          {bankInfo?.error ? (
+            <div style={{ marginTop: '10px', fontSize: '13px', fontWeight: 700, color: '#991B1B', backgroundColor: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '8px', padding: '10px 12px', lineHeight: 1.6 }}>
+              ⚠️ {bankInfo.error}
+              <div style={{ fontWeight: 500, marginTop: '4px' }}>Khắc phục: mở Sheet ngân hàng → Chia sẻ → thêm email service account của hệ thống với quyền Người xem, rồi bấm Đọc lại Sheet.</div>
+            </div>
+          ) : (
+            <>
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'end', marginTop: '12px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 700 }}>Tiêu đề đề thi
+                  <input value={bankTitle} onChange={(e) => setBankTitle(e.target.value)} placeholder="Để trống = tự đặt theo ngày" style={{ display: 'block', width: '280px', maxWidth: '100%', padding: '7px 10px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '13px', marginTop: '4px' }} />
+                </label>
+                <label style={{ fontSize: '12px', fontWeight: 700 }}>Số câu random
+                  <input type="number" min={1} max={Math.min(50, bankInfo?.count || 50)} value={bankCount} onChange={(e) => setBankCount(Math.max(1, Math.min(50, Number(e.target.value) || 25)))} style={{ display: 'block', width: '90px', padding: '7px 10px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '13px', marginTop: '4px' }} />
+                </label>
+                <span style={{ fontSize: '12px', color: 'var(--text-muted)', paddingBottom: '8px' }}>
+                  {bankLoading ? 'Đang đọc Sheet...' : bankInfo ? <>Ngân hàng có <strong style={{ color: '#7C3AED' }}>{bankInfo.count} câu hợp lệ</strong>{bankInfo.skipped > 0 && <> (bỏ {bankInfo.skipped} dòng lỗi)</>}.</> : 'Mở tab là hệ thống tự đọc Sheet.'}
+                </span>
+              </div>
+              {bankInfo?.sample?.length > 0 && (
+                <details style={{ marginTop: '8px', fontSize: '12px' }}>
+                  <summary style={{ cursor: 'pointer', fontWeight: 700, color: '#7C3AED' }}>Xem 3 câu mẫu từ Sheet (kèm đáp án đúng để đối chiếu)</summary>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '6px' }}>
+                    {bankInfo.sample.map((q: any, i: number) => (
+                      <div key={i} style={{ backgroundColor: 'var(--bg)', borderRadius: '6px', padding: '8px 10px' }}>
+                        <div style={{ fontWeight: 700 }}>{i + 1}. {q.content}</div>
+                        <div style={{ color: 'var(--text-muted)', marginTop: '2px' }}>{(q.options || []).map((o: string, oi: number) => `${String.fromCharCode(65 + oi)}. ${o}`).join(' • ')}</div>
+                        <div style={{ color: '#059669', fontWeight: 700, marginTop: '2px' }}>Đáp án: {q.correct}{q.explanation ? ` — ${q.explanation}` : ''}</div>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
+              <div style={{ fontWeight: 700, fontSize: '13px', marginTop: '12px', marginBottom: '6px' }}>Tick chọn nhân viên làm bài ({bankAssignees.length} đã chọn):</div>
+              <input value={bankSearch} onChange={(e) => setBankSearch(e.target.value)} placeholder="Tìm tên / mã NV..." style={{ padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '13px', marginBottom: '6px', width: '260px' }} />
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', maxHeight: '150px', overflow: 'auto', marginBottom: '10px' }}>
+                {(allEmployees || [])
+                  .filter((e: any) => e.employment_status !== 'TERMINATED')
+                  .filter((e: any) => !bankSearch.trim() || (e.full_name || '').toLowerCase().includes(bankSearch.trim().toLowerCase()) || (e.employee_code || '').toLowerCase().includes(bankSearch.trim().toLowerCase()))
+                  .slice(0, 100)
+                  .map((e: any) => (
+                    <label key={e.employee_id} style={{ fontSize: '12px', border: '1px solid var(--border)', borderRadius: '6px', padding: '4px 8px', cursor: 'pointer', backgroundColor: bankAssignees.includes(e.employee_id) ? '#F5F3FF' : undefined }}>
+                      <input type="checkbox" checked={bankAssignees.includes(e.employee_id)} onChange={() => setBankAssignees(bankAssignees.includes(e.employee_id) ? bankAssignees.filter(id => id !== e.employee_id) : [...bankAssignees, e.employee_id])} /> {e.full_name} <span style={{ color: 'var(--text-muted)' }}>({e.employee_code})</span>
+                    </label>
+                  ))}
+              </div>
+              <button
+                className="btn-primary"
+                disabled={bankBusy || bankAssignees.length === 0}
+                style={{ backgroundColor: '#7C3AED', width: '100%', padding: '10px', fontWeight: 800, opacity: bankBusy || bankAssignees.length === 0 ? 0.6 : 1 }}
+                onClick={async () => {
+                  if (bankAssignees.length === 0) { showToast('Tick chọn ít nhất 1 nhân viên để giao bài!'); return; }
+                  if (!window.confirm(`Random ${bankCount} câu khác nhau từ ngân hàng và giao cho ${bankAssignees.length} nhân viên?\nMỗi NV nhận đề riêng + thông báo yêu cầu hoàn thành ngay.`)) return;
+                  setBankBusy(true);
+                  try {
+                    const res: any = await apiRequest('/admin/tests/from-bank', {
+                      method: 'POST',
+                      body: JSON.stringify({
+                        title: bankTitle.trim(),
+                        employeeIds: bankAssignees,
+                        count: bankCount,
+                      }),
+                    });
+                    const n = res?.assignedCount ?? bankAssignees.length;
+                    showToast(`🎲 Đã random ${res?.questionCount ?? bankCount} câu và giao cho ${n} nhân viên! NV đã nhận thông báo làm bài.`);
+                    setBankTitle(''); setBankAssignees([]);
+                    await loadTests();
+                    if (onRefreshData) await onRefreshData();
+                  } catch (e: any) {
+                    showToast(e?.message || 'Lỗi khi giao đề random!');
+                  } finally {
+                    setBankBusy(false);
+                  }
+                }}
+              >
+                {bankBusy ? '⏳ Đang random & giao...' : `🎲 Random ${bankCount} câu & giao cho ${bankAssignees.length} nhân viên`}
+              </button>
+            </>
+          )}
         </div>
 
         {/* TẠO & GIAO BÀI TEST: chỉ NV được chọn mới thấy bài trên cổng của mình */}
