@@ -355,9 +355,8 @@ export function App() {
   });
   // Ca cần bổ sung (ngày 2 ca: phải chọn đúng ca thì HR duyệt mới cập nhật đúng)
   const [adjustShiftId, setAdjustShiftId] = useState('');
-  // Phiếu bổ sung công của tôi (trạng thái realtime + đếm ngược 30 phút)
+  // Phiếu bổ sung công của tôi (trạng thái realtime)
   const [myAdjustments, setMyAdjustments] = useState<any[]>([]);
-  const [adjNow, setAdjNow] = useState(() => Date.now());
   // Nhịp realtime trang chủ: tự nhảy trạng thái ca (sắp tới -> đang diễn ra -> đã xong)
   const [homeNow, setHomeNow] = useState(() => Date.now());
   useEffect(() => {
@@ -450,11 +449,6 @@ export function App() {
     }
     // Trạng thái kích hoạt báo nghỉ khẩn (NV thử việc): mở tab là kiểm tra lại.
     if (activeTab === 'swap_emergency') fetchEmergencyStatus();
-    // Đồng hồ đếm ngược phiếu 30 phút (chỉ chạy ở tab bổ sung công)
-    if (activeTab === 'adjustment' || activeTab === 'emergency_adjust') {
-      const clock = setInterval(() => setAdjNow(Date.now()), 1000);
-      return () => clearInterval(clock);
-    }
     if (activeTab === 'adjustment' || activeTab === 'emergency_adjust') {
       fetchMyAdjustments();
       const t = setInterval(fetchMyAdjustments, 15000);
@@ -3780,7 +3774,7 @@ export function App() {
                 {isProbation ? '7. Giải Trình & Bổ Sung Công' : '7. Nghỉ Khẩn Cấp & Bổ Sung Công'}
               </h3>
               <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '14px' }}>
-                Gửi giải trình khi quên check-in/out hoặc báo nghỉ đột xuất (đồng bộ trực tiếp sang HR Tab 10 và Google Sheets). Phiếu hiệu lực <strong>30 phút</strong> (tính từ lúc gửi) — quá hạn HR chưa duyệt thì hệ thống tự xóa phiếu.
+                Gửi giải trình khi quên check-in/out hoặc báo nghỉ đột xuất (đồng bộ trực tiếp sang HR Tab 10 và Google Sheets). Phiếu gửi HR quá <strong>1 ngày</strong> chưa duyệt thì hệ thống <strong>tự động từ chối</strong> (giữ phiếu để đối soát, tự xóa sau 7 ngày nữa).
               </p>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -3849,7 +3843,7 @@ export function App() {
                 </button>
               </div>
             </div>
-                {/* PHIẾU CỦA TÔI — trạng thái realtime + đếm ngược 30 phút */}
+                {/* PHIẾU CỦA TÔI — trạng thái realtime (quá 1 ngày HR chưa duyệt -> tự từ chối) */}
             {myAdjustments.length > 0 && (
               <div className="card">
                 <h3 style={{ fontSize: '14px', fontWeight: 800, marginBottom: '8px' }}>
@@ -3857,10 +3851,6 @@ export function App() {
                 </h3>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {myAdjustments.map((a: any) => {
-                    const created = new Date(a.created_at).getTime();
-                    const leftMs = Number.isFinite(created) ? Math.max(0, 30 * 60000 - (adjNow - created)) : 0;
-                    const leftMin = Math.floor(leftMs / 60000);
-                    const leftSec = Math.floor((leftMs % 60000) / 1000);
                     const auto = a.status === 'REJECTED' && String(a.review_note || '').startsWith('Tự động từ chối');
                     return (
                       <div key={a.adjustment_id} style={{ border: '1px solid var(--border)', borderRadius: '8px', padding: '10px', fontSize: '12px' }}>
@@ -3871,12 +3861,12 @@ export function App() {
                             color: a.status === 'APPROVED' ? '#166534' : (auto ? '#6B7280' : '#991B1B'),
                             fontWeight: 800,
                           }}>
-                            {a.status === 'APPROVED' ? 'Đã duyệt' : auto ? 'Tự hủy (hết 30p)' : a.status === 'REJECTED' ? 'Bị từ chối' : 'Chờ duyệt'}
+                            {a.status === 'APPROVED' ? 'Đã duyệt' : auto ? 'Tự động từ chối (quá 1 ngày)' : a.status === 'REJECTED' ? 'Bị từ chối' : 'Chờ duyệt'}
                           </span>
                         </div>
                         {a.status === 'PENDING' && (
-                          <div style={{ marginTop: '4px', color: '#B45309', fontWeight: 700 }}>
-                            ⏳ Còn {leftMin}p {String(leftSec).padStart(2, '0')}s hiệu lực (tính từ lúc gửi) — quá hạn hệ thống tự xóa phiếu
+                          <div style={{ marginTop: '4px', color: 'var(--text-muted)', fontWeight: 600 }}>
+                            Đã gửi {a.created_at ? new Date(a.created_at).toLocaleString('vi-VN') : ''} — quá 1 ngày HR chưa duyệt, hệ thống sẽ tự động từ chối.
                           </div>
                         )}
                         {a.status === 'PENDING' && (
@@ -4025,7 +4015,7 @@ export function App() {
                 ) : (
                   (notifications as any[]).slice(0, 20).map((n: any, idx: number) => {
                     const goTab = String(n.target_path || '');
-                    const canGo = ['/schedule', '/home', '/attendance', '/leave', '/test_exam', '/test_training'].includes(goTab);
+                    const canGo = ['/schedule', '/home', '/attendance', '/leave', '/test_exam', '/test_training', '/adjustment'].includes(goTab);
                     return (
                     <div
                       key={n.inbox_id || idx}
@@ -4037,6 +4027,7 @@ export function App() {
                           } catch { /* offline: vẫn cho điều hướng */ }
                         }
                         if (goTab === '/test_exam' || goTab === '/test_training') setActiveTab(isProbation ? 'test_exam' : 'test_training');
+                        else if (goTab === '/adjustment') setActiveTab(isProbation ? 'adjustment' : 'emergency_adjust');
                         else if (canGo) setActiveTab(goTab.slice(1));
                       }}
                       title={canGo ? 'Bấm để mở đúng mục liên quan' : undefined}

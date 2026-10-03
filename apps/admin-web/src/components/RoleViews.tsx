@@ -1261,15 +1261,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       loadSwaps();
     }
   }, [activeTab]);
-  // Đồng hồ đếm ngược từng giây cho phiếu 30 phút (chỉ chạy ở tab duyệt để nhẹ máy)
-  const [adjNow, setAdjNow] = useState(() => Date.now());
   useEffect(() => {
-    if (activeTab !== 'hr-adjustments') return;
-    const clock = setInterval(() => setAdjNow(Date.now()), 1000);
-    return () => clearInterval(clock);
-  }, [activeTab]);
-  useEffect(() => {
-    // Phiếu 30 phút tự hủy: refresh 15s để cập nhật trạng thái realtime
+    // Phiếu quá 1 ngày chưa duyệt thì tự từ chối: refresh 15s để cập nhật trạng thái realtime
     if (activeTab !== 'hr-adjustments') return;
     const t = setInterval(() => loadAdjustments(), 15000);
     return () => clearInterval(t);
@@ -7810,14 +7803,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         setAdjBusy(null);
       }
     };
-    const adjRemaining = (a: any) => {
-      const created = new Date(a.created_at).getTime();
-      if (!Number.isFinite(created)) return null;
-      const left = Math.max(0, 30 * 60000 - (adjNow - created));
-      const mm = Math.floor(left / 60000);
-      const ss = Math.floor((left % 60000) / 1000);
-      return `Còn ${mm}p ${String(ss).padStart(2, '0')}s hiệu lực`;
-    };
     const renderAdjRows = (list: any[], isPending: boolean) =>
       list.map((a: any) => {
         const emp = (allEmployees || []).find((e: any) => e.employee_id === a.employee_id);
@@ -7838,7 +7823,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 {a.status === 'APPROVED' ? 'Đã duyệt' : a.status === 'REJECTED' ? (String(a.review_note || '').startsWith('Tự động từ chối') ? 'Tự từ chối (hết hạn)' : 'Đã từ chối') : 'Chờ duyệt'}
               </span>
               {isPending && (
-                <div style={{ fontSize: '11px', color: '#B45309', fontWeight: 700, marginTop: '2px' }}>⏳ {adjRemaining(a)}</div>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600, marginTop: '2px' }}>Gửi {a.created_at ? new Date(a.created_at).toLocaleString('vi-VN') : ''} — quá 1 ngày chưa duyệt, hệ thống sẽ tự động từ chối.</div>
               )}
             </td>
             <td style={{ padding: '12px 20px' }}>
@@ -7907,7 +7892,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <h1 style={{ fontSize: '20px', fontWeight: 800, margin: 0 }}>12. Bổ Sung & Điều Chỉnh Dữ Liệu Công</h1>
-            <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '4px 0 0' }}>Xử lý quên check-in/out hoặc sự cố GPS/Camera gửi từ Cổng Nhân Viên (có audit trail). Phiếu chỉ hiệu lực <strong>30 phút</strong> (tính từ lúc NV gửi) — quá hạn hệ thống tự xóa phiếu.</p>
+            <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '4px 0 0' }}>Xử lý quên check-in/out hoặc sự cố GPS/Camera gửi từ Cổng Nhân Viên (có audit trail). Phiếu gửi quá <strong>1 ngày</strong> chưa duyệt thì hệ thống <strong>tự động từ chối</strong> (giữ phiếu để đối soát, tự xóa sau 7 ngày nữa).</p>
           </div>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <span className="badge" style={{ backgroundColor: pendingAdj.length > 0 ? '#FEF3C7' : '#DCFCE7', color: pendingAdj.length > 0 ? '#92400E' : '#166534', fontWeight: 800 }}>

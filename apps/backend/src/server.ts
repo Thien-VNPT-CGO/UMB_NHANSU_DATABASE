@@ -130,14 +130,35 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   setTimeout(autoRemindersTickSafe, 60_000); // đợi dữ liệu load xong lần đầu
   setInterval(autoRemindersTickSafe, 5 * 60_000);
 
-  // Phiếu bổ sung công hết hiệu lực sau 30 phút (tính từ lúc NV gửi): tự từ chối PENDING quá hạn (1 phút/lần cho khớp đếm ngược realtime).
+  // Phiếu bổ sung công gửi HR quá 1 ngày chưa duyệt: tự động TỪ CHỐI (giữ phiếu
+  // để đối soát) + báo inbox NV; phiếu đã tự từ chối quá 7 ngày nữa thì tự XÓA.
+  // Chạy mỗi 5 phút (không còn đếm ngược từng giây nên không cần mỗi phút).
   const adjustmentExpiryTickSafe = async () => {
     try {
-      const r = await services.attendanceService.expireStaleAdjustments(new Date(), 30);
-      if (r.expired.length > 0) {
-        console.log(`[adjustments] Tự xóa ${r.expired.length} phiếu quá 30 phút.`);
+      const r = await services.attendanceService.expireStaleAdjustments(new Date());
+      if (r.rejected.length > 0) {
+        console.log(`[adjustments] Tự từ chối ${r.rejected.length} phiếu quá 1 ngày HR chưa duyệt.`);
+        for (const item of r.rejected) {
+          try {
+            await services.notificationsService.sendNotification({
+              recipientIds: [item.employeeId],
+              type: 'ADJUSTMENT_AUTO_REJECTED',
+              severity: 'ACTION_REQUIRED',
+              title: '⏳ Phiếu bổ sung công quá 1 ngày chưa được duyệt',
+              summary: 'HR chưa duyệt phiếu của bạn sau 1 ngày nên hệ thống đã tự động từ chối. Cần thì gửi lại phiếu mới hoặc báo trực tiếp Store/HR!',
+              targetPath: '/adjustment',
+              actorId: 'SYSTEM',
+            }).catch(() => null);
+          } catch { /* best-effort từng người */ }
+        }
         try {
-          io.emit('data:updated', { entity: 'adjustments', data: { action: 'auto-deleted', ids: r.expired }, timestamp: new Date().toISOString() });
+          io.emit('data:updated', { entity: 'adjustments', data: { action: 'auto-rejected', ids: r.rejected.map(x => x.adjustmentId) }, timestamp: new Date().toISOString() });
+        } catch { /* non-fatal */ }
+      }
+      if (r.deleted.length > 0) {
+        console.log(`[adjustments] Tự xóa ${r.deleted.length} phiếu đã tự từ chối quá 7 ngày.`);
+        try {
+          io.emit('data:updated', { entity: 'adjustments', data: { action: 'auto-deleted', ids: r.deleted }, timestamp: new Date().toISOString() });
         } catch { /* non-fatal */ }
       }
     } catch (err: any) {
@@ -145,7 +166,7 @@ server.listen(Number(PORT), '0.0.0.0', () => {
     }
   };
   setTimeout(adjustmentExpiryTickSafe, 90_000);
-  setInterval(adjustmentExpiryTickSafe, 60_000);
+  setInterval(adjustmentExpiryTickSafe, 5 * 60_000);
 
   // Tự ghi VẮNG: ca PUBLISHED qua giờ kết thúc 30p mà không check-in -> bản ghi
   // ABSENT làm chứng cứ (đỏ trên 2 cổng, đồng bộ Sheets). Chạy mỗi 15 phút.

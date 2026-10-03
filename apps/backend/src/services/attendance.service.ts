@@ -291,46 +291,99 @@ export class AttendanceService {
   }
 
   /**
-   * Ràng buộc hiệu lực phiếu: PENDING quá `ttlMinutes` (mặc định 30 phút, tính từ
-   * lúc NV gửi phiếu) thì hệ thống TỰ XÓA KHỎI HỆ THỐNG (bộ nhớ + Sheet qua
-   * full-sync), không để lại xác. Idempotent (chỉ chạm PENDING).
+   * Ràng buộc hiệu lực phiếu bổ sung công (từ 2026-10):
+   *  - PENDING quá `ttlMinutes` (mặc định 1440 = 1 ngày, tính từ lúc NV gửi)
+   *    mà HR chưa duyệt -> hệ thống TỰ ĐỘNG TỪ CHỐI (REJECTED + ghi chú, NV và
+   *    HR đều thấy).
+   *  - Phiếu đã tự từ chối quá 7 ngày nữa -> TỰ ĐỘNG XÓA KHỎI HỆ THỐNG
+   *    (bộ nhớ + Sheet), không để lại xác.
+   * Idempotent (kiểm tra lại trạng thái trong queue trước khi chạm).
    */
-  async expireStaleAdjustments(now: Date = new Date(), ttlMinutes = 30): Promise<{ checked: number; expired: string[] }> {
+  static readonly AUTO_REJECT_NOTE = 'Tự động từ chối (quá 1 ngày HR chưa duyệt)';
+  async expireStaleAdjustments(now: Date = new Date(), ttlMinutes = 1440): Promise<{
+    checked: number;
+    expired: string[];
+    rejected: { adjustmentId: string; employeeId: string }[];
+    deleted: string[];
+  }> {
+    const RETAIN_DAYS = 7;
     const all = await this.repo.listAttendanceAdjustments().catch(() => []);
-    const expired: string[] = [];
+    const rejected: { adjustmentId: string; employeeId: string }[] = [];
+    const deleted: string[] = [];
     let checked = 0;
     for (const a of all || []) {
-      if ((a as any).status !== 'PENDING') continue;
-      checked++;
+      const adjId = (a as any).adjustment_id;
+      const status = (a as any).status;
       const created = new Date((a as any).created_at).getTime();
-      if (!Number.isFinite(created) || now.getTime() - created <= ttlMinutes * 60000) continue;
-      try {
-        await singleWriterQueue.enqueue({
-          entityType: 'DIEU_CHINH_CONG',
-          entityId: (a as any).adjustment_id,
-          actorId: 'SYSTEM',
-          execute: async () => {
-            const fresh = (await this.repo.listAttendanceAdjustments().catch(() => [])).find(
-              (x: any) => x.adjustment_id === (a as any).adjustment_id
-            );
-            if (!fresh || (fresh as any).status !== 'PENDING') return fresh;
-            await this.repo.deleteAttendanceAdjustment((a as any).adjustment_id);
-            return { deleted: (a as any).adjustment_id } as any;
-          },
-        });
-        expired.push((a as any).adjustment_id);
-        if (this.io) {
-          this.io.to(`user:${(a as any).employee_id}`).emit('adjustment.updated', {
-            adjustmentId: (a as any).adjustment_id,
-            status: 'DELETED',
+      if (!Number.isFinite(created)) continue;
+      const ageMin = (now.getTime() - created) / 60000;
+      // Pha 1: quá hạn HR duyệt -> tự từ chối (giữ phiếu để 2 bên đối soát).
+      if (status === 'PENDING') {
+        checked++;
+        if (ageMin <= ttlMinutes) continue;
+        try {
+          await singleWriterQueue.enqueue({
+            entityType: 'DIEU_CHINH_CONG',
+            entityId: adjId,
+            actorId: 'SYSTEM',
+            execute: async () => {
+              const fresh = (await this.repo.listAttendanceAdjustments().catch(() => [])).find(
+                (x: any) => x.adjustment_id === adjId
+              );
+              if (!fresh || (fresh as any).status !== 'PENDING') return fresh;
+              await this.repo.updateAttendanceAdjustment(adjId, 'REJECTED', 'SYSTEM', undefined, AttendanceService.AUTO_REJECT_NOTE);
+              return { rejected: adjId } as any;
+            },
           });
-          try {
-            this.io.emit('data:updated', { entity: 'adjustments', data: { action: 'auto-deleted', ids: expired }, timestamp: new Date().toISOString() });
-          } catch { /* non-fatal */ }
-        }
-      } catch { /* phiếu khác xử tiếp */ }
+          rejected.push({ adjustmentId: adjId, employeeId: (a as any).employee_id });
+          if (this.io) {
+            this.io.to(`user:${(a as any).employee_id}`).emit('adjustment.updated', {
+              adjustmentId: adjId,
+              status: 'REJECTED',
+            });
+          }
+        } catch { /* phiếu khác xử tiếp */ }
+        continue;
+      }
+      // Pha 2: phiếu đã tự từ chối quá 7 ngày -> xóa cứng khỏi hệ thống.
+      if (
+        status === 'REJECTED' &&
+        String((a as any).review_note || '').startsWith('Tự động từ chối') &&
+        ageMin > RETAIN_DAYS * 1440
+      ) {
+        checked++;
+        try {
+          await singleWriterQueue.enqueue({
+            entityType: 'DIEU_CHINH_CONG',
+            entityId: adjId,
+            actorId: 'SYSTEM',
+            execute: async () => {
+              const fresh = (await this.repo.listAttendanceAdjustments().catch(() => [])).find(
+                (x: any) => x.adjustment_id === adjId
+              );
+              if (!fresh || (fresh as any).status !== 'REJECTED') return fresh;
+              await this.repo.deleteAttendanceAdjustment(adjId);
+              return { deleted: adjId } as any;
+            },
+          });
+          deleted.push(adjId);
+        } catch { /* phiếu khác xử tiếp */ }
+      }
     }
-    return { checked, expired };
+    if (this.io && (rejected.length > 0 || deleted.length > 0)) {
+      try {
+        this.io.emit('data:updated', {
+          entity: 'adjustments',
+          data: {
+            action: 'auto-expired',
+            rejected: rejected.map(r => r.adjustmentId),
+            deleted,
+          },
+          timestamp: new Date().toISOString(),
+        });
+      } catch { /* non-fatal */ }
+    }
+    return { checked, expired: rejected.map(r => r.adjustmentId), rejected, deleted };
   }
 
   /**
