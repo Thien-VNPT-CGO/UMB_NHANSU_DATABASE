@@ -71,11 +71,12 @@ export const emergencyGrantBody = z.object({
 });
 
 // --- Lên lịch kiểm tra đầu ra thử việc (Google Meet + bài trắc nghiệm) ---
+// meetUrl để trống -> server tự điền link Meet hiện tại của hệ thống.
 export const probationAssessmentBody = z.object({
   employeeId: z.string().trim().min(1).max(64),
   meetDate: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ngày Meet phải dạng YYYY-MM-DD'),
   meetTime: z.string().trim().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Giờ Meet phải dạng HH:mm'),
-  meetUrl: z.string().trim().min(1).max(500),
+  meetUrl: z.string().trim().max(500).optional().default(''),
   quizTestId: z.string().trim().min(1).max(64).optional(),
 });
 

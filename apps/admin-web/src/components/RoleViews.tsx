@@ -4279,13 +4279,24 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             <button
                               className="btn-secondary"
                               style={{ padding: '5px 12px', fontSize: '12px', fontWeight: 700, color: '#1D4ED8', borderColor: '#BFDBFE' }}
-                              onClick={() => {
+                              onClick={async () => {
                                 const a = assessByEmp.get(emp.employee_id);
                                 setAssessModalEmp(emp);
                                 setAssessDate(a?.meetDate || probationEndOf(emp)?.end || '');
                                 setAssessTime(a?.meetTime || '09:00');
-                                setAssessMeetUrl(a?.meetUrl || '');
                                 setAssessQuizId(a?.quizTestId || '');
+                                if (a?.meetUrl) {
+                                  setAssessMeetUrl(a.meetUrl);
+                                } else {
+                                  // Hệ thống tự lấy link Meet hiện tại điền sẵn (HR vẫn sửa được).
+                                  setAssessMeetUrl('Đang lấy link Meet hệ thống...');
+                                  try {
+                                    const d: any = await apiRequest('/admin/system-meet-url');
+                                    setAssessMeetUrl(d?.meetUrl || SYSTEM_MEET_URL);
+                                  } catch {
+                                    setAssessMeetUrl(SYSTEM_MEET_URL);
+                                  }
+                                }
                               }}
                               title="Lên lịch kiểm tra đầu ra: vấn đáp Google Meet + giao bài trắc nghiệm, gửi thông báo cả 2 cho NV"
                             >
@@ -4428,7 +4439,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <label style={{ fontSize: '12px', fontWeight: 700 }}>Ngày vấn đáp Meet<input type="date" value={assessDate} onChange={(e) => setAssessDate(e.target.value)} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
                 <label style={{ fontSize: '12px', fontWeight: 700 }}>Giờ vấn đáp<input type="time" value={assessTime} onChange={(e) => setAssessTime(e.target.value)} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
               </div>
-              <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginTop: '10px' }}>Link Google Meet<input value={assessMeetUrl} onChange={(e) => setAssessMeetUrl(e.target.value)} placeholder="https://meet.google.com/xxx-yyyy-zzz" style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
+              <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginTop: '10px' }}>Link Google Meet (hệ thống tự điền link hiện tại — sửa được nếu cần)<input value={assessMeetUrl} onChange={(e) => setAssessMeetUrl(e.target.value)} placeholder="https://meet.google.com/xxx-yyyy-zzz" style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
               <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginTop: '10px' }}>Bài trắc nghiệm giao kèm (không bắt buộc)
                 <select value={assessQuizId} onChange={(e) => setAssessQuizId(e.target.value)} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}>
                   <option value="">— Không giao bài (HR giao sau ở tab TEST) —</option>
@@ -4442,17 +4453,19 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </div>
               <button
                 className="btn-primary"
-                disabled={assessBusy || !assessDate || !assessTime || !assessMeetUrl.trim()}
+                disabled={assessBusy || !assessDate || !assessTime || !assessMeetUrl.trim() || assessMeetUrl.startsWith('Đang lấy')}
                 onClick={async () => {
                   setAssessBusy(true);
                   try {
+                    // Đang lấy link mà HR đã bấm lưu -> gửi rỗng để server tự điền link hiện tại.
+                    const url = assessMeetUrl.startsWith('Đang lấy') ? '' : assessMeetUrl.trim();
                     const res: any = await apiRequest('/admin/probation-assessment/schedule', {
                       method: 'POST',
                       body: JSON.stringify({
                         employeeId: assessModalEmp.employee_id,
                         meetDate: assessDate,
                         meetTime: assessTime,
-                        meetUrl: assessMeetUrl.trim(),
+                        meetUrl: url,
                         ...(assessQuizId ? { quizTestId: assessQuizId } : {}),
                       }),
                     });
@@ -4466,7 +4479,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     setAssessBusy(false);
                   }
                 }}
-                style={{ width: '100%', marginTop: '14px', padding: '10px', fontWeight: 800, opacity: assessBusy || !assessDate || !assessTime || !assessMeetUrl.trim() ? 0.6 : 1 }}
+                style={{ width: '100%', marginTop: '14px', padding: '10px', fontWeight: 800, opacity: assessBusy || !assessDate || !assessTime || !assessMeetUrl.trim() || assessMeetUrl.startsWith('Đang lấy') ? 0.6 : 1 }}
               >
                 {assessBusy ? '⏳ ĐANG LƯU...' : '📩 LƯU LỊCH & GỬI THÔNG BÁO CHO NV'}
               </button>

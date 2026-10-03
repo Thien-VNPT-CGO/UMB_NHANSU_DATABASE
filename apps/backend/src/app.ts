@@ -675,10 +675,21 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     return d.toISOString().slice(0, 10);
   };
 
+  // Link Google Meet hiện tại của hệ thống (modal lên lịch tự điền sẵn).
+  app.get('/admin/system-meet-url', authMiddleware, requireRole(['ADMIN', 'HR']), async (_req, res) => {
+    try {
+      res.json({ meetUrl: defaultMeetUrl() });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Admin/HR lên lịch kiểm tra đầu ra cho 1 NV thử việc (gửi cả 2 hình thức 1 lần).
   app.post('/admin/probation-assessment/schedule', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ body: probationAssessmentBody }), async (req: AuthenticatedRequest, res) => {
     try {
-      const { employeeId, meetDate, meetTime, meetUrl, quizTestId } = req.body;
+      const { employeeId, meetDate, meetTime, quizTestId } = req.body;
+      // Để trống link -> hệ thống tự lấy link Meet hiện tại.
+      const meetUrl = String(req.body.meetUrl || '').trim() || defaultMeetUrl();
       const emp = await employeesService.getEmployee(employeeId).catch(() => null);
       if (!emp) return res.status(404).json({ error: 'Không tìm thấy hồ sơ nhân viên' });
       if ((emp as any).employment_status !== 'PROBATION') {

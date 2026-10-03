@@ -432,4 +432,8 @@ export class ZaloService {
 /** Link Google Meet mặc định HỆ THỐNG cho mọi lịch PV online — ràng buộc cứng, HR không tùy chỉnh. */
 export const SYSTEM_MEET_URL = 'https://meet.google.com/ypp-srtm-fvm';
 
-export const defaultMeetUrl = (): string => SYSTEM_MEET_URL;
+/** Link Meet hiện tại của hệ thống (đổi được qua env SYSTEM_MEET_URL mà không cần sửa code). */
+export const defaultMeetUrl = (): string => {
+  const env = String(process.env.SYSTEM_MEET_URL || '').trim();
+  return env || SYSTEM_MEET_URL;
+};
