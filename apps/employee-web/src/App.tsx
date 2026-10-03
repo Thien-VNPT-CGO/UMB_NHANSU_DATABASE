@@ -304,7 +304,7 @@ export function App() {
     for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
     return String(h);
   };
-  const checkAppVersion = async () => {
+  const checkAppVersion = async (): Promise<'new' | 'same' | 'fail'> => {
     // Giữ hiển thị bản API (thông tin).
     try {
       const v: any = await apiRequest('/version');
@@ -313,20 +313,21 @@ export function App() {
     // Tín hiệu chính: nội dung index.html đã đổi -> frontend có bản mới thật.
     try {
       const res = await fetch('index.html', { cache: 'no-store' });
-      if (!res.ok) return;
+      if (!res.ok) return 'fail';
       const text = await res.text();
       const h = hashStr(text);
       latestHashRef.current = h;
       if (!indexHashRef.current) {
         indexHashRef.current = h;
-        return;
+        return 'same';
       }
       if (h !== indexHashRef.current && updateSnoozedRef.current !== h) {
         setUpdateReady(true);
-      } else if (h === indexHashRef.current || updateSnoozedRef.current === h) {
-        setUpdateReady(false);
+        return 'new';
       }
-    } catch { /* offline: giữ trạng thái cũ */ }
+      if (h === indexHashRef.current || updateSnoozedRef.current === h) setUpdateReady(false);
+      return 'same';
+    } catch { /* offline: giữ trạng thái cũ */ return 'fail'; }
   };
   const checkAppVersionRef = useRef(checkAppVersion);
   checkAppVersionRef.current = checkAppVersion;
@@ -2331,6 +2332,17 @@ export function App() {
             {updateReady && (
               <span style={{ color: 'var(--danger)', fontWeight: 700 }}> • Có bản mới — tải lại trang để nhận!</span>
             )}
+            {' • '}
+            <button
+              onClick={async () => {
+                const r = await checkAppVersionRef.current().catch(() => 'fail' as const);
+                if (r === 'same') showToast('✓ Đang dùng bản mới nhất.');
+                else if (r === 'fail') showToast('⚠️ Không kiểm tra được (mất mạng?)!');
+              }}
+              style={{ border: 'none', background: 'none', fontSize: '10px', color: 'var(--brand)', textDecoration: 'underline', cursor: 'pointer', padding: 0, fontWeight: 700 }}
+            >
+              Kiểm tra cập nhật
+            </button>
           </div>
         </div>
       </div>
@@ -2347,6 +2359,7 @@ export function App() {
           onLogin={handlePremiumLogin}
           onCheckPhone={handleCheckPhone}
           onSuccess={handlePremiumSuccess}
+          onCheckUpdate={checkAppVersion}
         />
         {updateReady && <UpdateBanner onLater={snoozeAppUpdate} />}
       </>

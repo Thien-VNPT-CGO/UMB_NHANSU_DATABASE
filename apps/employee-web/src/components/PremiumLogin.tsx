@@ -20,6 +20,8 @@ export interface PremiumLoginProps {
   onCheckPhone?: (phone: string) => Promise<boolean>;
   /** Gọi sau khi hiện success ~1.8s (để parent chuyển hướng / setLoggedIn). */
   onSuccess?: (phone: string) => void;
+  /** Kiểm tra bản cập nhật thủ công (parent so hash index.html). Trả 'new' nếu có bản mới. */
+  onCheckUpdate?: () => Promise<'new' | 'same' | 'fail'>;
   demoPin?: string;
   pinLength?: number;
 }
@@ -42,6 +44,7 @@ export function PremiumLogin({
   onLogin,
   onCheckPhone,
   onSuccess,
+  onCheckUpdate,
   demoPin = DEMO_DEFAULT_PIN,
   pinLength = 6,
 }: PremiumLoginProps) {
@@ -488,7 +491,35 @@ export function PremiumLogin({
             </div>
           </div>
         )}
+        {onCheckUpdate && step !== 'success' && (
+          <UpdateCheckFooter onCheckUpdate={onCheckUpdate} />
+        )}
       </div>
+    </div>
+  );
+}
+
+function UpdateCheckFooter({ onCheckUpdate }: { onCheckUpdate: () => Promise<'new' | 'same' | 'fail'> }) {
+  const [st, setSt] = useState<'idle' | 'checking' | 'new' | 'same' | 'fail'>('idle');
+  return (
+    <div style={{ textAlign: 'center', marginTop: 14 }}>
+      <button
+        onClick={async () => {
+          if (st === 'checking') return;
+          setSt('checking');
+          try {
+            setSt(await onCheckUpdate());
+          } catch {
+            setSt('fail');
+          }
+        }}
+        style={{ border: 'none', background: 'none', fontSize: 11.5, color: '#9CA3AF', textDecoration: 'underline', cursor: 'pointer', padding: 0, fontWeight: 600 }}
+      >
+        {st === 'checking' ? 'Đang kiểm tra...' : '🔄 Kiểm tra bản cập nhật'}
+      </button>
+      {st === 'same' && <div style={{ fontSize: 11.5, color: '#059669', fontWeight: 700, marginTop: 4 }}>✓ Đang dùng bản mới nhất.</div>}
+      {st === 'fail' && <div style={{ fontSize: 11.5, color: '#DC2626', fontWeight: 700, marginTop: 4 }}>⚠️ Không kiểm tra được (mất mạng?).</div>}
+      {st === 'new' && <div style={{ fontSize: 11.5, color: '#D97706', fontWeight: 700, marginTop: 4 }}>🚀 Có bản mới! Tải lại trang để cập nhật.</div>}
     </div>
   );
 }
