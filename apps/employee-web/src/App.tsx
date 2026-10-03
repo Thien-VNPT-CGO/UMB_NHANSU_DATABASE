@@ -1541,6 +1541,13 @@ export function App() {
         showToast('⚠️ Không đọc được ảnh! Vui lòng chụp lại.');
         return;
       }
+      // NV thử việc miễn kiểm tra áo hồng — nhận ảnh luôn.
+      if (isProbation) {
+        setPhotoData(dataUrl);
+        setPhotoPinkRatio(null);
+        showToast('✓ Đã nhận ảnh điểm danh!');
+        return;
+      }
       showToast('⏳ Đang kiểm tra đồng phục áo hồng...');
       const { ratio, pass } = await checkPinkUniform(dataUrl);
       if (!pass) {
@@ -1556,7 +1563,8 @@ export function App() {
   };
 
   const handleSubmitAttendance = async () => {
-    if (!uniformChecked || !badgeChecked) {
+    // NV thử việc được miễn yêu cầu đồng phục (không cần tick 2 ô xác nhận).
+    if (!isProbation && (!uniformChecked || !badgeChecked)) {
       showToast('⚠️ VI PHẠM ĐỒNG PHỤC QUY CHUẨN: Vui lòng xác nhận đang mặc Áo Hồng Ụm Bò Milk và Đeo Bảng Tên hợp lệ!');
       return;
     }
@@ -3300,7 +3308,8 @@ export function App() {
                     )}
                   </div>
 
-                  {/* RÀNG BUỘC ĐẶC BIỆT: ÁO HỒNG + BẢNG TÊN */}
+                  {/* RÀNG BUỘC ĐẶC BIỆT: ÁO HỒNG + BẢNG TÊN (chỉ NV chính thức — thử việc được miễn) */}
+                  {!isProbation && (
                   <div style={{
                     backgroundColor: '#FDF2F8',
                     border: '1.5px solid #F472B6',
@@ -3340,6 +3349,7 @@ export function App() {
                       </label>
                     </div>
                   </div>
+                  )}
 
                   {/* TIẾN TRÌNH 2 BƯỚC: CHECK-IN VÀ CHECK-OUT */}
                   <div style={{
