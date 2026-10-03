@@ -1177,18 +1177,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       setBankLoading(false);
     }
   };
-  // Bài TEST: HR tạo đề + giao đúng nhân viên (NV chỉ thấy bài của mình)
+  // Bài TEST: HR giao đề random từ ngân hàng + theo dõi kết quả (NV chỉ thấy bài của mình)
   const [testPapers, setTestPapers] = useState<any[]>([]);
   const [testSubs, setTestSubs] = useState<any[]>([]);
-  const [testFormOpen, setTestFormOpen] = useState(false);
-  const [testTitle, setTestTitle] = useState('');
-  const [testDesc, setTestDesc] = useState('');
-  const [testPass, setTestPass] = useState(8);
-  const [testTime, setTestTime] = useState(480);
-  const [testQuestions, setTestQuestions] = useState<any[]>([{ content: '', options: ['', ''], correct: 0 }]);
-  const [testAssignees, setTestAssignees] = useState<string[]>([]);
-  const [testSearch, setTestSearch] = useState('');
-  const [testBusy, setTestBusy] = useState(false);
   const loadTests = async () => {
     try {
       const d = await apiRequest('/tests');
@@ -7936,24 +7927,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               Bộ đề 25 câu hỏi trắc nghiệm đánh giá đầu ra thử việc (12 ngày) & sát hạch nghiệp vụ định kỳ Ụm Bò Milk V5.1
             </p>
           </div>
-          <div style={{ display: 'flex', gap: '10px' }}>
-            <button
-              className="btn-secondary"
-              style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-              onClick={() => showToast('Mở cấu hình thời gian 480 giây & điểm đạt chuẩn')}
-            >
-              <Sliders size={16} />
-              Cấu Hình Đề Thi
-            </button>
-            <button
-              className="btn-primary"
-              style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#2563EB' }}
-              onClick={() => setTestFormOpen(v => !v)}
-            >
-              <Plus size={16} />
-              + Tạo & Giao Bài TEST
-            </button>
-          </div>
         </div>
 
         {/* THỐNG KÊ NGÂN HÀNG CÂU HỎI & QUY CHUẨN ĐỀ THI */}
@@ -8072,90 +8045,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </>
           )}
         </div>
-
-        {/* TẠO & GIAO BÀI TEST: chỉ NV được chọn mới thấy bài trên cổng của mình */}
-        {testFormOpen && (
-          <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1.5px solid #2563EB', padding: '18px 20px' }}>
-            <div style={{ fontWeight: 800, fontSize: '15px', marginBottom: '4px' }}>Tạo đề & giao bài TEST</div>
-            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>
-              HR soạn câu hỏi, chọn đúng nhân viên cần làm — bài chỉ hiển thị trên cổng của những người được giao.
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '10px', marginBottom: '10px' }}>
-              <input value={testTitle} onChange={e => setTestTitle(e.target.value)} placeholder="Tiêu đề bài test (VD: TEST nâng bậc T9)" style={{ padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '13px' }} />
-              <label style={{ fontSize: '12px' }}>Điểm đạt: <input type="number" min={0} max={10} step={0.5} value={testPass} onChange={e => setTestPass(Number(e.target.value))} style={{ width: '64px', padding: '6px', borderRadius: '6px', border: '1px solid var(--border)' }} />/10</label>
-              <label style={{ fontSize: '12px' }}>Giờ làm (giây): <input type="number" min={30} max={7200} value={testTime} onChange={e => setTestTime(Number(e.target.value))} style={{ width: '80px', padding: '6px', borderRadius: '6px', border: '1px solid var(--border)' }} /></label>
-            </div>
-            <textarea value={testDesc} onChange={e => setTestDesc(e.target.value)} placeholder="Mô tả / hướng dẫn làm bài" rows={2} style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '13px', marginBottom: '10px' }} />
-            {testQuestions.map((q, qi) => (
-              <div key={qi} style={{ border: '1px solid var(--border)', borderRadius: '8px', padding: '10px 12px', marginBottom: '8px' }}>
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <strong style={{ fontSize: '13px' }}>Câu {qi + 1}</strong>
-                  <input value={q.content} onChange={e => { const c = [...testQuestions]; c[qi] = { ...c[qi], content: e.target.value }; setTestQuestions(c); }} placeholder="Nội dung câu hỏi" style={{ flex: 1, padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '13px' }} />
-                  <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: '12px', color: '#DC2626' }} onClick={() => setTestQuestions(testQuestions.filter((_, i) => i !== qi))} disabled={testQuestions.length <= 1}>Xóa</button>
-                </div>
-                {q.options.map((op: string, oi: number) => (
-                  <div key={oi} style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '6px' }}>
-                    <input type="radio" name={`tq-correct-${qi}`} checked={q.correct === oi} onChange={() => { const c = [...testQuestions]; c[qi] = { ...c[qi], correct: oi }; setTestQuestions(c); }} title="Đáp án đúng" />
-                    <input value={op} onChange={e => { const c = [...testQuestions]; const ops = [...c[qi].options]; ops[oi] = e.target.value; c[qi] = { ...c[qi], options: ops }; setTestQuestions(c); }} placeholder={`Đáp án ${String.fromCharCode(65 + oi)}`} style={{ flex: 1, padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '13px' }} />
-                    {q.options.length > 2 && (
-                      <button className="btn-secondary" style={{ padding: '2px 8px', fontSize: '11px' }} onClick={() => { const c = [...testQuestions]; const ops = c[qi].options.filter((_: string, i: number) => i !== oi); c[qi] = { ...c[qi], options: ops, correct: Math.min(c[qi].correct, ops.length - 1) }; setTestQuestions(c); }}>−</button>
-                    )}
-                  </div>
-                ))}
-                <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: '12px', marginTop: '6px' }} onClick={() => { const c = [...testQuestions]; c[qi] = { ...c[qi], options: [...c[qi].options, ''] }; setTestQuestions(c); }}>+ Thêm đáp án</button>
-              </div>
-            ))}
-            <button className="btn-secondary" style={{ fontSize: '12px', marginBottom: '10px' }} onClick={() => setTestQuestions([...testQuestions, { content: '', options: ['', ''], correct: 0 }])}>+ Thêm câu hỏi</button>
-            <EmployeeTickPicker
-              employees={allEmployees || []}
-              selected={testAssignees}
-              onToggle={(id) => setTestAssignees(testAssignees.includes(id) ? testAssignees.filter(x => x !== id) : [...testAssignees, id])}
-              onSelectVisible={(ids) => setTestAssignees([...new Set([...testAssignees, ...ids])])}
-              onClear={() => setTestAssignees([])}
-              search={testSearch}
-              onSearchChange={setTestSearch}
-              accent="#2563EB"
-              softBg="#EFF6FF"
-            />
-            <div style={{ marginBottom: '10px' }} />
-            <button
-              className="btn-primary"
-              disabled={testBusy}
-              style={{ backgroundColor: '#2563EB', width: '100%', padding: '10px', fontWeight: 800 }}
-              onClick={async () => {
-                if (!testTitle.trim()) { showToast('Nhập tiêu đề bài test!'); return; }
-                if (testAssignees.length === 0) { showToast('Chọn ít nhất 1 nhân viên để giao bài!'); return; }
-                setTestBusy(true);
-                try {
-                  const res = await apiRequest('/tests', {
-                    method: 'POST',
-                    body: JSON.stringify({
-                      title: testTitle.trim(),
-                      description: testDesc.trim(),
-                      questions: testQuestions.map(q => ({ content: q.content, options: q.options, correct_index: q.correct })),
-                      passScore: testPass,
-                      timeLimitSeconds: testTime,
-                      employeeIds: testAssignees,
-                    }),
-                  });
-                  const n = res?.result?.assignedCount ?? res?.assignedCount ?? testAssignees.length;
-                  showToast(`Đã giao bài TEST cho ${n} nhân viên! Bài chỉ hiện trên cổng của họ.`);
-                  setTestFormOpen(false);
-                  setTestTitle(''); setTestDesc(''); setTestAssignees([]);
-                  setTestQuestions([{ content: '', options: ['', ''], correct: 0 }]);
-                  await loadTests();
-                  if (onRefreshData) await onRefreshData();
-                } catch (e: any) {
-                  showToast(e?.message || 'Lỗi khi giao bài');
-                } finally {
-                  setTestBusy(false);
-                }
-              }}
-            >
-              {testBusy ? 'Đang giao...' : `Giao bài cho ${testAssignees.length} nhân viên`}
-            </button>
-          </div>
-        )}
 
         {/* BẢNG THEO DÕI KẾT QUẢ THI TEST CỦA NHÂN VIÊN (dữ liệu thật) */}
         <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
