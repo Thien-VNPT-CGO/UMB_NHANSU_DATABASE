@@ -673,9 +673,16 @@ export function App() {
       setNotifications(notifs);
       const attEvents: any[] = Array.isArray(attRange) ? attRange : [];
 
-      const today = new Date().toISOString().split('T')[0];
-      const todayCheckIn = attEvents.find((e: any) => e.type === 'CHECK_IN' && e.client_time?.startsWith(today));
-      const todayCheckOut = attEvents.find((e: any) => e.type === 'CHECK_OUT' && e.client_time?.startsWith(today));
+      // Ngày VN (UTC+7) + so ngày VN của sự kiện (server lưu client_time UTC ISO):
+      // dùng ngày UTC sẽ lệch 00:00–07:00 VN, reload báo chưa check-in dù vừa điểm danh.
+      const vnDayOf = (iso?: string) => {
+        const t = new Date(iso || '').getTime();
+        if (!Number.isFinite(t)) return '';
+        return new Date(t + 7 * 3_600_000).toISOString().split('T')[0];
+      };
+      const today = new Date(Date.now() + 7 * 3_600_000).toISOString().split('T')[0];
+      const todayCheckIn = attEvents.find((e: any) => e.type === 'CHECK_IN' && vnDayOf(e.client_time) === today);
+      const todayCheckOut = attEvents.find((e: any) => e.type === 'CHECK_OUT' && vnDayOf(e.client_time) === today);
       const inTimeStr = todayCheckIn?.client_time ? new Date(todayCheckIn.client_time).toLocaleTimeString('vi-VN') : undefined;
       const outTimeStr = todayCheckOut?.client_time ? new Date(todayCheckOut.client_time).toLocaleTimeString('vi-VN') : undefined;
       setMyAttendanceHistory(attEvents);

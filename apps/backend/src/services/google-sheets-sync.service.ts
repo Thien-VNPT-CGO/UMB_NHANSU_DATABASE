@@ -19,7 +19,7 @@ import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { MockSheetsAdapter } from '../repositories/mock-sheets.adapter.js';
 import { hashPasswordSync, isBcryptHash, hashPin, generateAutoPin } from './password.service.js';
 import { canonicalPhone } from './employees.service.js';
-import { normSheetDate, sheetDateText } from './employees.service.js';
+import { normSheetDate, normSheetDateTime, sheetDateText, sheetDateTimeText } from './employees.service.js';
 import { evaluateCandidateAiScore } from './ai-scorer.js';
 import { buildZipStore, ZipEntry } from '../utils/zip-store.js';
 
@@ -837,8 +837,10 @@ export class GoogleSheetsSyncService {
           branch_id: r[2] || 'CN130',
           shift_code: (r[3] as any) || 'CA_1',
           date: normSheetDate(r[4]) || new Date().toISOString().split('T')[0],
-          start_at: r[5] || new Date().toISOString(),
-          end_at: r[6] || new Date().toISOString(),
+          // start_at/end_at cũng dính USER_ENTERED locale như client_time — normalize
+          // để reload không sai giờ mở cổng/khóa ca 3 tiếng.
+          start_at: normSheetDateTime(r[5]) || r[5] || new Date().toISOString(),
+          end_at: normSheetDateTime(r[6]) || r[6] || new Date().toISOString(),
           status: (r[7] as any) || 'PUBLISHED',
           schedule_version: Number(r[8]) || 1,
           created_at: new Date().toISOString(),
@@ -1003,31 +1005,48 @@ export class GoogleSheetsSyncService {
       if (keepIfEmpty('SU_KIEN_DIEM_DANH', attRows, fallback.attendanceEvents.length)) {
         counts.attendanceEvents = fallback.attendanceEvents.length;
       } else if (attRows.length > 0) {
-        const mappedEvents = attRows.map(r => ({
-          event_id: r[0] || `ATT_${uuidv4().slice(0, 8)}`,
-          request_id: r[10] || uuidv4(),
-          assignment_id: r[1] || '',
-          employee_id: r[2] || '',
-          branch_id: '',
-          type: (r[3] as any) || 'CHECK_IN',
-          // Ưu tiên giờ máy khách (kèm +07:00) để lọc đúng ngày VN; dòng cũ lấy giờ server
-          client_time: r[12] || r[4] || new Date().toISOString(),
-          server_received_at: r[4] || new Date().toISOString(),
-          gps_latitude: Number(r[5]) || 0,
-          gps_longitude: Number(r[6]) || 0,
-          distance_meters: Number(r[7]) || 0,
-          gps_status: (r[8] as any) || 'VALID',
-          drive_object_id: r[9] || undefined,
-          uniform_pink_ratio: r[11] === '' || r[11] === undefined ? undefined : Number(r[11]),
-          // Cờ trễ/sớm để tính phạt (dòng cũ chưa có cột -> undefined, payroll/popup tự tính bù từ giờ ca)
-          is_late: r[13] === 'YES' ? true : (r[13] ? false : undefined),
-          is_early: r[14] === 'YES' ? true : (r[14] ? false : undefined),
-          minutes_deviation: r[15] === '' || r[15] === undefined ? undefined : Number(r[15]),
-          fine_tier: r[16] || undefined,
-          fine_amount: r[17] === '' || r[17] === undefined ? undefined : Number(r[17]),
-          created_at: r[4] || new Date().toISOString(),
-        }));
+        // Giờ giấc normalize triệt để: Sheet USER_ENTERED parse ISO thành datetime
+        // locale ('M/D/YYYY H:mm') — đọc raw sẽ sai instant, reload mất check-in/out.
+        const memEvtBranch = new Map<string, string>(
+          (fallback.attendanceEvents || []).map((e: any) => [String(e.event_id), String(e.branch_id || '')])
+        );
+        const mappedEvents = attRows.map(r => {
+          const clientIso = normSheetDateTime(r[12]) || normSheetDateTime(r[4]);
+          const serverIso = normSheetDateTime(r[4]);
+          const fallbackIso = new Date().toISOString();
+          return {
+            event_id: r[0] || `ATT_${uuidv4().slice(0, 8)}`,
+            request_id: r[10] || uuidv4(),
+            assignment_id: r[1] || '',
+            employee_id: r[2] || '',
+            branch_id: '',
+            type: (r[3] as any) || 'CHECK_IN',
+            // Ưu tiên giờ máy khách (kèm +07:00) để lọc đúng ngày VN; dòng cũ lấy giờ server
+            client_time: clientIso || r[12] || r[4] || fallbackIso,
+            server_received_at: serverIso || r[4] || fallbackIso,
+            gps_latitude: Number(r[5]) || 0,
+            gps_longitude: Number(r[6]) || 0,
+            distance_meters: Number(r[7]) || 0,
+            gps_status: (r[8] as any) || 'VALID',
+            drive_object_id: r[9] || undefined,
+            uniform_pink_ratio: r[11] === '' || r[11] === undefined ? undefined : Number(r[11]),
+            // Cờ trễ/sớm để tính phạt (dòng cũ chưa có cột -> undefined, payroll/popup tự tính bù từ giờ ca)
+            is_late: r[13] === 'YES' ? true : (r[13] ? false : undefined),
+            is_early: r[14] === 'YES' ? true : (r[14] ? false : undefined),
+            minutes_deviation: r[15] === '' || r[15] === undefined ? undefined : Number(r[15]),
+            fine_tier: r[16] || undefined,
+            fine_amount: r[17] === '' || r[17] === undefined ? undefined : Number(r[17]),
+            created_at: serverIso || r[4] || fallbackIso,
+          };
+        });
         fallback.attendanceEvents = mergeById(fallback.attendanceEvents, mappedEvents, 'event_id', ['created_at']);
+        // Sheet không có cột chi nhánh: giữ branch_id bộ nhớ khi merge ghi đè rỗng
+        // (merge so sánh created_at chuỗi luôn hòa -> bản Sheet thắng, mất branch).
+        for (const e of fallback.attendanceEvents as any[]) {
+          if (!e.branch_id && memEvtBranch.get(String(e.event_id))) {
+            e.branch_id = memEvtBranch.get(String(e.event_id));
+          }
+        }
       } else if (fallback.attendanceEvents.length === 0) {
         fallback.attendanceEvents = [];
       }
@@ -1730,8 +1749,8 @@ export class GoogleSheetsSyncService {
         s.branch_id,
         s.shift_code,
         sheetDateText(s.date),
-        s.start_at,
-        s.end_at,
+        sheetDateTimeText(s.start_at),
+        sheetDateTimeText(s.end_at),
         s.status,
         s.schedule_version,
       ]);
@@ -2035,10 +2054,10 @@ export class GoogleSheetsSyncService {
    */
   public async pushEventsTab(repo: { getAttendanceEvents(emp?: string, date?: string): Promise<any[]> }): Promise<number> {    const events = await repo.getAttendanceEvents('*', '*').catch(() => []);
     const rows = (events || []).map((e: any) => [
-      e.event_id, e.assignment_id, e.employee_id, e.type, e.server_received_at,
+      e.event_id, e.assignment_id, e.employee_id, e.type, sheetDateTimeText(e.server_received_at),
       e.gps_latitude ?? '', e.gps_longitude ?? '', e.distance_meters ?? '', e.gps_status || '',
       e.drive_object_id || '', e.request_id || '', e.uniform_pink_ratio ?? '',
-      e.client_time || '',
+      sheetDateTimeText(e.client_time || ''),
       e.is_late ? 'YES' : '', e.is_early ? 'YES' : '', Number(e.minutes_deviation) || 0,
       e.fine_tier || 'NONE', Number(e.fine_amount) || 0,
     ]);
@@ -2327,10 +2346,10 @@ export class GoogleSheetsSyncService {
     const rows = (fallback.attendanceEvents || [])
       .filter((e: any) => inWeek(e.client_time || ''))
       .map((e: any) => [
-        e.event_id, e.assignment_id, e.employee_id, e.type, e.server_received_at,
+        e.event_id, e.assignment_id, e.employee_id, e.type, sheetDateTimeText(e.server_received_at),
         e.gps_latitude ?? '', e.gps_longitude ?? '', e.distance_meters ?? '', e.gps_status || '',
         e.drive_object_id || '', e.request_id || '', (e as any).uniform_pink_ratio ?? '',
-        e.client_time || '',
+        sheetDateTimeText(e.client_time || ''),
       ]);
     if (rows.length > 0 && this.sheetsClient) {
       try {
@@ -2349,10 +2368,10 @@ export class GoogleSheetsSyncService {
     if (this.sheetsClient) {
       try {
         const mainRows = (fallback.attendanceEvents || []).map((e: any) => [
-          e.event_id, e.assignment_id, e.employee_id, e.type, e.server_received_at,
+          e.event_id, e.assignment_id, e.employee_id, e.type, sheetDateTimeText(e.server_received_at),
           e.gps_latitude ?? '', e.gps_longitude ?? '', e.distance_meters ?? '', e.gps_status || '',
           e.drive_object_id || '', e.request_id || '', (e as any).uniform_pink_ratio ?? '',
-          e.client_time || '',
+          sheetDateTimeText(e.client_time || ''),
           e.is_late ? 'YES' : '', e.is_early ? 'YES' : '', Number(e.minutes_deviation) || 0,
           e.fine_tier || 'NONE', Number(e.fine_amount) || 0,
         ]);

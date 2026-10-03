@@ -401,4 +401,27 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   setInterval(autoBackupTick, 24 * 60 * 60_000);
 });
 
+// Tắt êm khi Render sleep/deploy (gửi SIGTERM): xả hàng đợi ghi Sheets nền
+// trước khi thoát — nếu không, check-in vừa báo "thành công" (mới nằm trong
+// bộ nhớ, append đang bay) sẽ mất vĩnh viễn, reload lại báo chưa check-in.
+let shuttingDown = false;
+const gracefulShutdown = (signal: string) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[${signal}] Đang tắt êm: xả ghi Sheets nền...`);
+  (async () => {
+    try {
+      await (adapter as any)?.flushSheetsWrites?.(20000);
+    } catch { /* cố hết sức */ }
+    try {
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    } catch { /* bỏ qua */ }
+    process.exit(0);
+  })();
+  // Lưới an toàn: quá 25s chưa xong thì thoát luôn (platform sẽ SIGKILL).
+  setTimeout(() => process.exit(0), 25000).unref();
+};
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
 export { server, io };

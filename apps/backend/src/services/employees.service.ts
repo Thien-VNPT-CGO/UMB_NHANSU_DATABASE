@@ -86,6 +86,55 @@ export function sheetDateText(input: unknown): string {
   return iso ? `'${iso}` : '';
 }
 
+/** Chuẩn hóa mọi biến thể GIỜ GIẤC về ISO instant (UTC, '...Z') — DÙNG cho mọi
+ *  cột datetime đọc từ Sheet (client_time, start_at...). Bao phủ: ISO có/không
+ *  múi giờ (kể cả prefix TEXT nháy đơn '...), serial Sheets (nguyên + thập phân),
+ *  chuỗi locale 'M/D/YYYY [H:mm:ss]' hoặc 'D/M/YYYY [...]' (ưu tiên D/M/Y theo
+ *  locale vi, giờ wall hiểu là giờ VN +07:00). Không parse được -> ''. */
+export function normSheetDateTime(input: unknown): string {
+  let s = String(input ?? '').trim().replace(/^'/, '');
+  if (!s) return '';
+  // ISO: có T + giờ là instant tuyệt đối (kể cả thiếu Z — hiểu là UTC như cũ).
+  if (/^\d{4}-\d{1,2}-\d{1,2}T/.test(s)) {
+    const t = new Date(s).getTime();
+    return Number.isFinite(t) ? new Date(t).toISOString() : '';
+  }
+  // Serial Sheets (số ngày từ 1899-12-30, phần thập phân = giờ trong ngày UTC).
+  if (/^\d{4,6}(\.\d+)?$/.test(s)) {
+    const n = Number(s);
+    if (n > 20000 && n < 80000) {
+      return new Date(Math.round((n - 25569) * 86_400_000)).toISOString();
+    }
+    return '';
+  }
+  // Locale 'a/b/yyyy[ hh:mm[:ss]]' — a>12 chắc chắn D/M/Y; b>12 chắc chắn M/D/Y;
+  // còn lại mơ hồ -> ưu tiên D/M/Y (locale vi). Giờ wall = giờ VN.
+  const sl = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+  if (sl) {
+    let y = Number(sl[3]); if (y < 100) y += 2000;
+    const a = Number(sl[1]); const b = Number(sl[2]);
+    let m: number; let d: number;
+    if (a > 12 && b <= 12) { d = a; m = b; }
+    else if (b > 12 && a <= 12) { m = a; d = b; }
+    else { d = a; m = b; }
+    const hh = Number(sl[4] ?? 0); const mm = Number(sl[5] ?? 0); const ss = Number(sl[6] ?? 0);
+    if (m >= 1 && m <= 12 && d >= 1 && d <= 31 && hh <= 23 && mm <= 59 && ss <= 59) {
+      return new Date(Date.UTC(y, m - 1, d, hh - 7, mm, ss)).toISOString();
+    }
+    return '';
+  }
+  const t = new Date(s).getTime();
+  return Number.isFinite(t) ? new Date(t).toISOString() : '';
+}
+
+/** Ép Sheets lưu datetime dạng TEXT ('iso) để USER_ENTERED không parse thành
+ *  datetime locale rồi đọc lại sai giờ sau restart (từng gây mất check-in/out
+ *  sau reload). Đọc về qua normSheetDateTime (tự strip nháy đơn). */
+export function sheetDateTimeText(input: unknown): string {
+  const iso = normSheetDateTime(input);
+  return iso ? `'${iso}` : '';
+}
+
 export interface DuplicatePhoneGroup {
   phone: string;
   employees: { employee_id: string; employee_code: string; full_name: string }[];

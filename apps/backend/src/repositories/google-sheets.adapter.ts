@@ -1,6 +1,6 @@
 import { ISheetsRepository } from './sheets.interface.js';
 import { MockSheetsAdapter } from './mock-sheets.adapter.js';
-import { sheetDateText } from '../services/employees.service.js';
+import { sheetDateText, sheetDateTimeText } from '../services/employees.service.js';
 import { GoogleSheetsSyncService } from '../services/google-sheets-sync.service.js';
 
 export class GoogleSheetsAdapter implements ISheetsRepository {
@@ -161,6 +161,20 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   /** Trạng thái ghi nền cho UI poll: còn bao nhiêu tác vụ chưa lên Sheets. */
   public getPendingSheetsWrites() {
     return { pendingWrites: this.pendingSheetsWrites, lastSheetsWriteAt: this.lastSheetsWriteAt };
+  }
+
+  /** Xả hàng đợi ghi nền (dùng khi tắt server: Render gửi SIGTERM khi sleep/deploy —
+   *  không flush thì check-in vừa "thành công" (mới nằm trong bộ nhớ) sẽ mất vĩnh viễn). */
+  public async flushSheetsWrites(timeoutMs = 20000): Promise<void> {
+    if (!this.isConfigured) return;
+    try {
+      await Promise.race([
+        this.bgWriteChain,
+        new Promise(r => setTimeout(r, timeoutMs)),
+      ]);
+    } catch (err) {
+      console.warn('[GoogleSheetsAdapter] Flush ghi nền khi tắt server lỗi:', (err as any)?.message || err);
+    }
   }
 
   // Dồn full-sync: ghi 1 dòng (append) chạy ngay; ghi nguyên 13 tab (nặng, tốn quota)
@@ -463,8 +477,9 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
         snapshot.branch_id,
         snapshot.shift_code,
         snapshot.date,
-        snapshot.start_at,
-        snapshot.end_at,
+        // Ép TEXT để USER_ENTERED không parse giờ ca thành locale (reload sai giờ mở cổng).
+        sheetDateTimeText(snapshot.start_at),
+        sheetDateTimeText(snapshot.end_at),
         snapshot.status,
         snapshot.schedule_version,
       ]), 'PHAN_CONG_CA.append');
@@ -585,7 +600,9 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
           snapshot.assignment_id,
           snapshot.employee_id,
           snapshot.type,
-          snapshot.server_received_at,
+          // Ép TEXT để USER_ENTERED không parse ISO thành datetime locale
+          // (pull đọc lại sai instant -> reload mất check-in/out sau restart).
+          sheetDateTimeText(snapshot.server_received_at),
           snapshot.gps_latitude,
           snapshot.gps_longitude,
           snapshot.distance_meters,
@@ -594,7 +611,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
           snapshot.request_id || '',
           (snapshot as any).uniform_pink_ratio ?? '',
           // Giữ giờ máy khách (kèm múi giờ +07:00) để lọc đúng ngày Việt Nam
-          (snapshot as any).client_time || '',
+          sheetDateTimeText((snapshot as any).client_time || ''),
           // Cờ trễ/sớm (phạt lương): Sheet phải lưu, pull mới khôi phục được
           (snapshot as any).is_late ? 'YES' : '',
           (snapshot as any).is_early ? 'YES' : '',

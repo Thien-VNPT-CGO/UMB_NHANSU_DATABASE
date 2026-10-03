@@ -2305,7 +2305,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       if (req.user?.role === 'EMPLOYEE' && evt.employee_id !== req.user.employeeId) {
         return res.status(403).json({ error: 'FORBIDDEN' });
       }
-      if (req.user?.role === 'STORE' && req.user.branchScope !== '*' && evt.branch_id !== req.user.branchScope) {
+      if (req.user?.role === 'STORE' && req.user.branchScope !== '*' && evt.branch_id && evt.branch_id !== req.user.branchScope) {
         return res.status(403).json({ error: 'BRANCH_SCOPE_FORBIDDEN' });
       }
       if (!evt.drive_object_id || String(evt.drive_object_id).startsWith('DRV_')) {
