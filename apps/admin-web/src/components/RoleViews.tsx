@@ -7833,36 +7833,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           </div>
         </div>
 
-        {/* 3 DANH MỤC NGÂN HÀNG CÂU HỎI CHUẨN */}
-        <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', padding: '16px 20px' }}>
-          <div style={{ fontSize: '14px', fontWeight: 800, marginBottom: '12px' }}>
-            Phân Bổ Cấu Trúc Đề Thi 25 Câu Trắc Nghiệm:
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px' }}>
-            <div style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '8px', padding: '12px 14px' }}>
-              <div style={{ fontWeight: 800, fontSize: '13px', color: '#1E40AF' }}>1. Công Thức & Pha Chế Chuẩn</div>
-              <div style={{ fontSize: '12px', color: '#1E3A8A', marginTop: '4px' }}>
-                • Số lượng: <strong>10 câu (40%)</strong> trong đề<br />
-                • Kho đề: 45 câu hỏi thực hành & định lượng
-              </div>
-            </div>
-            <div style={{ backgroundColor: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: '8px', padding: '12px 14px' }}>
-              <div style={{ fontWeight: 800, fontSize: '13px', color: '#065F46' }}>2. Vệ Sinh ATTP & Bảo Quản</div>
-              <div style={{ fontSize: '12px', color: '#047857', marginTop: '4px' }}>
-                • Số lượng: <strong>8 câu (32%)</strong> trong đề<br />
-                • Kho đề: 40 câu hỏi bảo quản & date nguyên liệu
-              </div>
-            </div>
-            <div style={{ backgroundColor: '#FDF2F8', border: '1px solid #FBCFE8', borderRadius: '8px', padding: '12px 14px' }}>
-              <div style={{ fontWeight: 800, fontSize: '13px', color: '#9D174D' }}>3. Chuẩn Dịch Vụ & Đồng Phục</div>
-              <div style={{ fontSize: '12px', color: '#831843', marginTop: '4px' }}>
-                • Số lượng: <strong>7 câu (28%)</strong> trong đề<br />
-                • Kho đề: 35 câu hỏi áo hồng, bảng tên & chào khách
-              </div>
-            </div>
-          </div>
-        </div>
-
         {/* TẠO & GIAO BÀI TEST: chỉ NV được chọn mới thấy bài trên cổng của mình */}
         {testFormOpen && (
           <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1.5px solid #2563EB', padding: '18px 20px' }}>
