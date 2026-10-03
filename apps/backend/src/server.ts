@@ -8,7 +8,7 @@ import { AuthService } from './services/auth.service.js';
 import { weeklyOffScheduler } from './services/weekly-off.service.js';
 import { pinRotationTick } from './services/pin-rotation.service.js';
 import { dedupeDuplicateInterviews, enforceScreeningOutcomes } from './services/interview-dedupe.service.js';
-import { interviewReminderTick } from './services/interview-reminders.service.js';
+import { interviewNoShowTick, interviewReminderTick } from './services/interview-reminders.service.js';
 import { autoRemindersTick } from './services/auto-reminders.service.js';
 import { buildSocketCorsOptions, getAllowedOrigins } from './config/security.js';
 
@@ -371,6 +371,45 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   };
   setTimeout(interviewReminderTickSafe, 30_000);
   setInterval(interviewReminderTickSafe, 60_000);
+
+  // Tự đánh VẮNG PV không phép (phương án A, mỗi 5 phút): INVITED quá giờ hẹn
+  // 30 phút vẫn im lặng -> NO_SHOW + xóa lịch giải phóng slot + báo HR.
+  const interviewNoShowTickSafe = () => {
+    interviewNoShowTick(
+      adapter,
+      services.notificationsService,
+      async (sid: string) => {
+        await services.employeesService.markInterviewNoShow(sid, 'SYSTEM', 'Quá giờ hẹn 30 phút không xác nhận');
+        try {
+          const syncSvc = (adapter as any)?.syncService;
+          syncSvc?.markInterviewScheduleCleared?.(sid);
+          await (adapter as any)?.pushCandidatesNow?.();
+        } catch { /* tick sau thử lại */ }
+      },
+      Date.now()
+    )
+      .then(r => {
+        for (const m of r?.marked || []) {
+          console.log(`[interview-noshow] Vắng PV: ${m.candidateName} (${m.submissionId}).`);
+          try {
+            io.emit('system:notification', {
+              id: `notif_${Date.now()}_${m.submissionId}`,
+              type: 'CANDIDATE',
+              title: `🚫 ${m.candidateName} vắng PV không phép (quá giờ 30 phút)`,
+              message: 'Lịch đã tự hủy để giải phóng slot. Muốn PV lại thì đặt lịch mới cho bạn.',
+              linkTab: 'hr-interviews',
+              origin: 'ADMIN',
+              metadata: { submissionId: m.submissionId },
+              targetRoles: ['ADMIN', 'HR'],
+              timestamp: new Date().toISOString(),
+            });
+          } catch { /* non-fatal */ }
+        }
+      })
+      .catch(err => console.warn('[interview-noshow] tick error:', err?.message || err));
+  };
+  setTimeout(interviewNoShowTickSafe, 60_000);
+  setInterval(interviewNoShowTickSafe, 5 * 60_000);
 
   // Backup snapshot tự động mỗi 24h + tự verify; fail thì báo ADMIN/HR trong app.
   const autoBackupTick = async () => {

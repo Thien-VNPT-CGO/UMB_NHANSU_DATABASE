@@ -44,7 +44,7 @@ export interface CandidateApplication {
   birth_year: number;
   apply_position: string;
   preferred_branch_id: string;
-  status: 'NEW' | 'NEED_INFO' | 'INVITED_INTERVIEW' | 'INTERVIEWED' | 'ACCEPTED' | 'REJECTED' | string;
+  status: 'NEW' | 'NEED_INFO' | 'INVITED_INTERVIEW' | 'CONFIRMED' | 'RESCHEDULE_REQUESTED' | 'INTERVIEWED' | 'ACCEPTED' | 'REJECTED' | 'NO_SHOW' | string;
   interview_date?: string;
   interview_time_slot?: string;
   interviewer_id?: string;

@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
+import jwt from 'jsonwebtoken';
 import {
   CandidateApplication,
   EmployeeMaster,
@@ -7,7 +8,7 @@ import {
 } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { singleWriterQueue } from '../repositories/single-writer-queue.js';
-import { normalizePhone } from './auth.service.js';
+import { getJwtSecret, normalizePhone } from './auth.service.js';
 import { generateAutoPin, hashPin } from './password.service.js';
 import {
   buildConflictMessage,
@@ -568,6 +569,103 @@ export class EmployeesService {
       details: `Hủy lịch PV ${cur.interview_time_slot || ''} ${String(cur.interview_date || '').slice(0, 10)} của ${(updated as any).full_name || submissionId}${reason ? ` — ${reason}` : ''}; về trạng thái chưa đăng ký lịch`,
     }).catch(() => null);
     return updated;
+  }
+
+  /** Xác nhận ứng viên SẼ tham gia PV (HR bấm tay khi UV báo qua điện thoại/Zalo,
+   *  hoặc UV tự bấm link xác nhận). Chỉ từ INVITED_INTERVIEW. Giữ nguyên lịch. */
+  async confirmInterview(submissionId: string, actorId: string, by: 'HR' | 'CANDIDATE' = 'HR') {
+    const cur = (await this.repo.listCandidates().catch(() => []))
+      .find((c: any) => c.submission_id === submissionId) as any;
+    if (!cur) throw new Error('CANDIDATE_NOT_FOUND');
+    if (cur.status !== 'INVITED_INTERVIEW') {
+      throw new Error(`Chỉ xác nhận được lịch đang chờ (hiện: ${cur.status})!`);
+    }
+    if (!cur.interview_date) throw new Error('Ứng viên chưa có lịch phỏng vấn để xác nhận!');
+    const updated = await this.repo.updateCandidate(submissionId, { status: 'CONFIRMED' } as any);
+    await this.repo.recordAuditLog({
+      log_id: `LOG_${Date.now()}`,
+      actor_id: actorId,
+      actor_role: by === 'HR' ? 'HR' : 'SYSTEM',
+      action: 'INTERVIEW_CONFIRMED',
+      target_entity: 'UNG_VIEN',
+      target_id: submissionId,
+      details: `${(updated as any).full_name || submissionId} xác nhận tham gia PV ${cur.interview_time_slot || ''} ${String(cur.interview_date || '').slice(0, 10)} (qua ${by === 'HR' ? 'HR' : 'link ứng viên'})`,
+    }).catch(() => null);
+    return updated;
+  }
+
+  /** Đánh dấu ứng viên VẮNG không phép (HR bấm tay, hoặc tick tự động khi quá giờ
+   *  30 phút vẫn im lặng): trạng thái NO_SHOW + XÓA lịch để giải phóng slot.
+   *  Muốn PV lại thì HR đặt lịch mới (lịch mới về INVITED). */
+  async markInterviewNoShow(submissionId: string, actorId: string, reason?: string) {
+    const cur = (await this.repo.listCandidates().catch(() => []))
+      .find((c: any) => c.submission_id === submissionId) as any;
+    if (!cur) throw new Error('CANDIDATE_NOT_FOUND');
+    if (!['INVITED_INTERVIEW', 'CONFIRMED'].includes(String(cur.status || ''))) {
+      throw new Error(`Chỉ đánh vắng được lịch đang chờ/đã xác nhận (hiện: ${cur.status})!`);
+    }
+    const slot = `${cur.interview_time_slot || ''} ${String(cur.interview_date || '').slice(0, 10)}`.trim();
+    const updated = await this.repo.updateCandidate(submissionId, {
+      status: 'NO_SHOW',
+      interview_date: undefined,
+      interview_time_slot: undefined,
+      interviewer_id: undefined,
+    } as any);
+    await this.repo.recordAuditLog({
+      log_id: `LOG_${Date.now()}`,
+      actor_id: actorId,
+      actor_role: actorId === 'SYSTEM' ? 'SYSTEM' : 'HR',
+      action: 'INTERVIEW_NO_SHOW',
+      target_entity: 'UNG_VIEN',
+      target_id: submissionId,
+      details: `${(updated as any).full_name || submissionId} vắng PV ${slot}${reason ? ` — ${reason}` : ''}; đã giải phóng slot, cần đặt lịch mới nếu PV lại`,
+    }).catch(() => null);
+    return updated;
+  }
+
+  /** Ứng viên bấm "Xin dời lịch" qua link RSVP: trạng thái RESCHEDULE_REQUESTED +
+   *  XÓA lịch cũ để giải phóng slot, HR đặt lịch mới cho bạn. */
+  async requestInterviewReschedule(submissionId: string) {
+    const cur = (await this.repo.listCandidates().catch(() => []))
+      .find((c: any) => c.submission_id === submissionId) as any;
+    if (!cur) throw new Error('CANDIDATE_NOT_FOUND');
+    if (!['INVITED_INTERVIEW', 'CONFIRMED'].includes(String(cur.status || ''))) {
+      throw new Error('Lịch này không còn hiệu lực để xin dời! Liên hệ HR đặt lịch mới.');
+    }
+    const updated = await this.repo.updateCandidate(submissionId, {
+      status: 'RESCHEDULE_REQUESTED',
+      interview_date: undefined,
+      interview_time_slot: undefined,
+      interviewer_id: undefined,
+    } as any);
+    await this.repo.recordAuditLog({
+      log_id: `LOG_${Date.now()}`,
+      actor_id: 'CANDIDATE',
+      actor_role: 'SYSTEM',
+      action: 'INTERVIEW_RESCHEDULE_REQUESTED',
+      target_entity: 'UNG_VIEN',
+      target_id: submissionId,
+      details: `${(updated as any).full_name || submissionId} xin dời lịch PV qua link xác nhận; chờ HR đặt lịch mới`,
+    }).catch(() => null);
+    return updated;
+  }
+
+  /** Link RSVP cho ứng viên bấm xác nhận/dời lịch (không cần đăng nhập):
+   *  JWT ký theo submission_id, hết hạn 7 ngày. Giả mạo = verify rớt. */
+  buildRsvpToken(submissionId: string): string {
+    return jwt.sign({ typ: 'interview-rsvp', sid: submissionId }, getJwtSecret(), {
+      expiresIn: '7d',
+    } as any);
+  }
+
+  verifyRsvpToken(token: string): string {
+    try {
+      const d: any = jwt.verify(String(token || ''), getJwtSecret());
+      if (!d || d.typ !== 'interview-rsvp' || !d.sid) throw new Error('BAD_TOKEN');
+      return String(d.sid);
+    } catch {
+      throw new Error('RSVP_LINK_INVALID: Link xác nhận hết hạn hoặc không hợp lệ! Liên hệ HR gửi lại thư mời.');
+    }
   }
 
   /** Đánh LOẠI: trạng thái REJECTED + xóa lịch PV + xóa thư mời Zalo (ẩn khỏi 2 danh sách). */

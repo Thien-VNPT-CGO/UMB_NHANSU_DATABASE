@@ -86,3 +86,62 @@ export async function interviewReminderTick(
   }
   return { reminded: due };
 }
+
+/**
+ * Tự đánh VẮNG không phép (phương án A): ứng viên INVITED_INTERVIEW quá giờ hẹn
+ * 30 phút vẫn im lặng (không xác nhận, không đến) -> NO_SHOW + xóa lịch giải
+ * phóng slot + báo HR. Muốn PV lại thì HR đặt lịch mới (lịch mới về INVITED).
+ * Lịch đã CONFIRMED thì không tự đánh (HR xử tay nếu UV đã xác nhận mà không đến).
+ * Chống lặp: mỗi submission chỉ xử lý 1 lần/ngày (key ngày|submission).
+ */
+export const INTERVIEW_NOSHOW_GRACE_MINUTES = 30;
+
+const noshowDone = new Set<string>();
+let noshowDay = '';
+
+export async function interviewNoShowTick(
+  repo: ISheetsRepository,
+  notifications: NotificationsService,
+  markNoShow: (submissionId: string) => Promise<any>,
+  nowMs: number = Date.now()
+): Promise<{ marked: { submissionId: string; candidateName: string }[] }> {
+  const today = vnDay(nowMs);
+  if (noshowDay !== today) {
+    noshowDay = today;
+    noshowDone.clear();
+  }
+  const marked: { submissionId: string; candidateName: string }[] = [];
+  const candidates = await repo.listCandidates().catch(() => []);
+  for (const c of candidates as any[]) {
+    if (!c || c.status !== 'INVITED_INTERVIEW') continue;
+    const st = candidateInterviewStartMs(c);
+    if (st === null) continue;
+    if (nowMs - st < INTERVIEW_NOSHOW_GRACE_MINUTES * 60_000) continue;
+    const key = `${today}|${c.submission_id}`;
+    if (noshowDone.has(key)) continue;
+    noshowDone.add(key);
+    try {
+      await markNoShow(String(c.submission_id));
+      marked.push({ submissionId: String(c.submission_id), candidateName: String(c.full_name || 'ứng viên') });
+    } catch { /* lần sau (giữ key để khỏi spam? không — xóa key để thử lại) */ noshowDone.delete(key); }
+  }
+  if (marked.length > 0) {
+    try {
+      const ids = await hrAdminIds(repo);
+      if (ids.length > 0) {
+        for (const m of marked) {
+          await notifications.sendNotification({
+            recipientIds: ids,
+            type: 'INTERVIEW_NO_SHOW',
+            severity: 'ACTION_REQUIRED',
+            title: `🚫 ${m.candidateName} vắng PV không phép (quá giờ 30 phút)`,
+            summary: 'Lịch đã tự hủy để giải phóng slot. Muốn PV lại thì đặt lịch mới cho bạn.',
+            targetPath: '/hr-interviews',
+            actorId: 'SYSTEM',
+          }).catch(() => null);
+        }
+      }
+    } catch { /* best-effort */ }
+  }
+  return { marked };
+}

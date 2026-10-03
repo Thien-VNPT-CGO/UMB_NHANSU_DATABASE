@@ -1017,6 +1017,40 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Mốc thử auto-huỷ gần nhất (thất bại mạng -> thử lại mỗi 30s thay vì spam mỗi giây).
   const pvAutoRetryRef = useRef<Map<string, number>>(new Map());
   const [pvCancelBusyId, setPvCancelBusyId] = useState<string | null>(null);
+  // Xác nhận / đánh vắng PV (HR bấm tay khi UV báo qua điện thoại/Zalo).
+  const [rsvpBusyId, setRsvpBusyId] = useState<string | null>(null);
+  const handleConfirmInterview = async (c: any) => {
+    const sid = String((c as any)?.submission_id || '');
+    if (!sid || rsvpBusyId) return;
+    if (!window.confirm(`Xác nhận ${c?.full_name || ''} SẼ tham gia PV ${String(c?.interview_time_slot || '').slice(0, 5)} ngày ${String(c?.interview_date || '').slice(0, 10)}?`)) return;
+    setRsvpBusyId(sid);
+    try {
+      await apiRequest(`/interviews/${sid}/confirm`, { method: 'POST', body: JSON.stringify({}) });
+      showToast(`Đã ghi nhận ${c?.full_name || ''} xác nhận tham gia PV!`);
+      if (onRefreshData) await onRefreshData();
+      if (onPushSheets) await onPushSheets();
+    } catch (e: any) {
+      showToast(e?.message || 'Lỗi khi xác nhận!');
+    } finally {
+      setRsvpBusyId(null);
+    }
+  };
+  const handleNoShowInterview = async (c: any) => {
+    const sid = String((c as any)?.submission_id || '');
+    if (!sid || rsvpBusyId) return;
+    if (!window.confirm(`Đánh dấu ${c?.full_name || ''} VẮNG không phép? Lịch sẽ bị hủy để giải phóng slot (muốn PV lại phải đặt lịch mới).`)) return;
+    setRsvpBusyId(sid);
+    try {
+      await apiRequest(`/interviews/${sid}/no-show`, { method: 'POST', body: JSON.stringify({ reason: 'HR đánh dấu vắng' }) });
+      showToast(`Đã đánh vắng ${c?.full_name || ''}! Lịch đã hủy, cần đặt lịch mới nếu PV lại.`);
+      if (onRefreshData) await onRefreshData();
+      if (onPushSheets) await onPushSheets();
+    } catch (e: any) {
+      showToast(e?.message || 'Lỗi khi đánh vắng!');
+    } finally {
+      setRsvpBusyId(null);
+    }
+  };
   const markPvJoined = (c: any) => {
     if (!c) return;
     pvJoinedRef.current.add(`${(c as any).submission_id}|${String((c as any).interview_date || '').slice(0, 10)}`);
@@ -3703,7 +3737,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         }
                         return (
                           <>
-                            <span style={{ backgroundColor: '#FEF3C7', color: '#92400E', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700 }}>
+                            <span style={{
+                              backgroundColor: c.status === 'CONFIRMED' ? '#DCFCE7' : c.status === 'NO_SHOW' ? '#FEE2E2' : c.status === 'RESCHEDULE_REQUESTED' ? '#FFFBEB' : '#FEF3C7',
+                              color: c.status === 'CONFIRMED' ? '#166534' : c.status === 'NO_SHOW' ? '#991B1B' : c.status === 'RESCHEDULE_REQUESTED' ? '#92400E' : '#92400E',
+                              padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700,
+                            }}>
                               {candStatusVI(c.status)}
                             </span>
                             {(() => {
@@ -3746,6 +3784,26 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             >
                               💬 Chat Zalo
                             </button>
+                            {(String(c.status || '') === 'INVITED_INTERVIEW') && !disabledForFail && (
+                              <button
+                                disabled={rsvpBusyId === c.submission_id}
+                                style={{ ...btn2, backgroundColor: '#059669', color: '#FFF', boxShadow: '0 2px 6px rgba(5,150,105,0.3)' }}
+                                onClick={() => handleConfirmInterview(c)}
+                                title="Ứng viên báo sẽ tham gia (qua điện thoại/Zalo tay) — ghi nhận để giữ lịch"
+                              >
+                                {rsvpBusyId === c.submission_id ? '⏳...' : '✓ Xác nhận tham gia'}
+                              </button>
+                            )}
+                            {(['INVITED_INTERVIEW', 'CONFIRMED'].includes(String(c.status || ''))) && !disabledForFail && (
+                              <button
+                                disabled={rsvpBusyId === c.submission_id}
+                                style={{ ...btn2, backgroundColor: '#DC2626', color: '#FFF', boxShadow: '0 2px 6px rgba(220,38,38,0.3)' }}
+                                onClick={() => handleNoShowInterview(c)}
+                                title="Ứng viên không đến — đánh vắng, hủy lịch giải phóng slot (PV lại phải đặt lịch mới)"
+                              >
+                                {rsvpBusyId === c.submission_id ? '⏳...' : '🚫 Đánh vắng'}
+                              </button>
+                            )}
                             {!isAccepted && !isScored && (
                               <button
                                 disabled={disabledForFail}

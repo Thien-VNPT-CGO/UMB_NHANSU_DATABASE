@@ -411,6 +411,8 @@ export class ZaloService {
     interviewDate: string;
     timeSlot: string;
     meetUrl?: string;
+    /** Link xác nhận tham gia/dời lịch cho ứng viên (không cần đăng nhập). */
+    rsvpUrl?: string;
   }): string {
     const lines = [
       `[ỤM BÒ MILK] THƯ MỜI PHỎNG VẤN VỊ TRÍ ${(o.position || 'NHÂN VIÊN BÁN HÀNG').toUpperCase()}`,
@@ -426,6 +428,11 @@ export class ZaloService {
       lines.push(`📌 Hình thức: Trực tiếp tại cửa hàng — bạn đến trước 5 phút nhé.`);
     }
     lines.push(`👤 Người phỏng vấn: Phòng Nhân Sự Ụm Bò Milk`);
+    if (o.rsvpUrl) {
+      lines.push(`✅ BẤM XÁC NHẬN THAM GIA / XIN DỜI LỊCH tại đây (trước giờ hẹn):`);
+      lines.push(o.rsvpUrl);
+      lines.push(`Quá giờ hẹn 30 phút không xác nhận, lịch sẽ tự hủy để nhường slot.`);
+    }
     lines.push(`📌 Lưu ý: Bạn vui lòng vào trước 5 phút và chuẩn bị trang phục lịch sự nhé.`);
     return lines.join('\n');
   }

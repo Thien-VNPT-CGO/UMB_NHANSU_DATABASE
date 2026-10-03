@@ -293,10 +293,13 @@ export function candStatusVI(s: unknown): string {
     NEW: 'Mới ứng tuyển',
     NEED_INFO: 'Cần bổ sung',
     INVITED_INTERVIEW: 'Đã mời phỏng vấn',
+    CONFIRMED: 'Đã xác nhận tham gia',
+    RESCHEDULE_REQUESTED: 'Xin dời lịch',
     INTERVIEWED: 'Đã phỏng vấn',
     SCORED: 'Chờ duyệt thử việc',
     ACCEPTED: 'Đã duyệt thử việc',
     REJECTED: 'Đã loại',
+    NO_SHOW: 'Vắng không phép',
   };
   const k = String(s || '').trim();
   return vi[k] || k || 'Mới ứng tuyển';

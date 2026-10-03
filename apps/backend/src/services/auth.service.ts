@@ -19,7 +19,7 @@ const DEFAULT_FALLBACK_JWT_SECRET =
 // hiệu lực sau mỗi lần restart — chấp nhận được so với nguy cơ giả mạo.
 let ephemeralProdSecret: string | null = null;
 
-function getJwtSecret(): string {
+export function getJwtSecret(): string {
   const secret = process.env.JWT_SECRET;
   if (secret && secret.trim().length >= 16) return secret.trim();
 
