@@ -4284,13 +4284,12 @@ export function App() {
                 {adjustmentData.type !== 'NGHI_KHAN' && (
                   <div>
                     <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>
-                      📷 Ảnh bằng chứng <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(không bắt buộc — chụp từ điện thoại để HR duyệt nhanh)</span>:
+                      📷 Ảnh bằng chứng <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(không bắt buộc — chọn ảnh có sẵn trong thư viện để HR duyệt nhanh)</span>:
                     </label>
                     <input
                       ref={evidenceInputRef}
                       type="file"
                       accept="image/*"
-                      capture="environment"
                       style={{ display: 'none' }}
                       onChange={(e) => { handleEvidenceSelected(e.target.files?.[0]); e.target.value = ''; }}
                     />
@@ -4313,7 +4312,7 @@ export function App() {
                         disabled={evidenceBusy}
                         onClick={() => evidenceInputRef.current?.click()}
                       >
-                        {evidenceBusy ? '⏳ Đang xử lý ảnh...' : '📷 Chụp / Chọn ảnh bằng chứng từ điện thoại'}
+                        {evidenceBusy ? '⏳ Đang xử lý ảnh...' : '🖼️ Chọn ảnh bằng chứng từ thư viện'}
                       </button>
                     )}
                   </div>
