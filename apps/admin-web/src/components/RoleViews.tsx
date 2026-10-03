@@ -1377,12 +1377,21 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const pickedCandidate = (candidates || []).find((c: any) => c.submission_id === inviteCandidateId);
   const pickedBranchId = resolveCandidateBranch(pickedCandidate);
 
-  // Tự nhận diện chi nhánh theo hồ sơ ứng viên khi HR chọn tên
-  // (chạy lại khi dữ liệu ứng viên/chi nhánh về sau — ràng buộc luôn đúng).
+  // Tự nhận diện chi nhánh theo hồ sơ ứng viên khi HR chọn tên.
+  // Chỉ tự điền 1 lần mỗi khi ĐỔI ứng viên (ref) để không đè lựa chọn tay của HR
+  // khi dữ liệu reload, và luôn có fallback để không kẹt lại chi nhánh của bạn
+  // đã chọn trước đó khi hồ sơ bạn mới không tra được mã chi nhánh.
+  const inviteAutoBranchForRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!inviteCandidateId || !pickedBranchId) return;
-    setInviteBranchId((cur) => (cur === pickedBranchId ? cur : pickedBranchId));
-  }, [inviteCandidateId, pickedBranchId]);
+    if (!inviteCandidateId || inviteAutoBranchForRef.current === inviteCandidateId) return;
+    inviteAutoBranchForRef.current = inviteCandidateId;
+    const cand = (candidates || []).find((c: any) => c.submission_id === inviteCandidateId);
+    const resolved = pickedBranchId
+      || String((cand as any)?.preferred_branch_id || '').trim()
+      || String((cand as any)?.branch_name || '').trim()
+      || 'CN130';
+    setInviteBranchId(resolved);
+  }, [inviteCandidateId, candidates, branches]);
 
   // Chấm điểm rubric + duyệt chính thức
   const [scoringId, setScoringId] = useState<string | null>(null);
@@ -3249,6 +3258,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       Phòng Nhân Sự Ụm Bò Milk trân trọng mời bạn tham gia buổi phỏng vấn{inviteMode === 'ONLINE' ? ' trực tuyến' : ''}:<br />
                       🕒 <strong>Thời gian:</strong> {ph(pvT?.slice(0, 5), '[Giờ phỏng vấn]')} - {ph(pvD, '[Ngày hẹn phỏng vấn]')}<br />
                       📍 <strong>Chi nhánh tuyển dụng:</strong> {pvBranch}<br />
+                      🕐 <strong>Ca làm việc đăng ký:</strong> {ph(pvCand?.registered_shift, '[Ca làm việc]')}<br />
                       {inviteMode === 'ONLINE' ? (
                         <>🔗 <strong>Link phòng họp Google Meet:</strong> <span style={{ color: '#0068FF', textDecoration: 'underline' }}>{inviteMeetUrl}</span><br /></>
                       ) : (
@@ -3257,7 +3267,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       👤 <strong>Người phỏng vấn:</strong> Phòng Nhân Sự Ụm Bò Milk<br />
                       📌 <em>Lưu ý: Bạn vui lòng vào trước 5 phút và chuẩn bị trang phục lịch sự nhé.</em><br />
                       <span style={{ fontSize: '11px', color: '#64748B', display: 'block', marginTop: '6px' }}>
-                        ✓✓ BOT lấy đúng mẫu này (tên, giờ, chi nhánh, link) bắn qua Zalo khi HR bấm "Tạo Lịch & BOT Bắn Tin"
+                        ✓✓ BOT lấy đúng mẫu này (tên, giờ, chi nhánh, ca làm việc, link) bắn qua Zalo khi HR bấm "Tạo Lịch & BOT Bắn Tin"
                       </span>
                     </>);
                   })()}

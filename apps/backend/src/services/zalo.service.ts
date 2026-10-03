@@ -407,6 +407,7 @@ export class ZaloService {
   buildInviteText(o: {    candidateName: string;
     position?: string;
     branchName?: string;
+    shift?: string;
     interviewDate: string;
     timeSlot: string;
     meetUrl?: string;
@@ -417,6 +418,7 @@ export class ZaloService {
       `Phòng Nhân Sự Ụm Bò Milk trân trọng mời bạn tham gia buổi phỏng vấn${o.meetUrl ? ' trực tuyến' : ''}:`,
       `🕒 Thời gian: ${o.timeSlot} - ${o.interviewDate}`,
       `📍 Chi nhánh tuyển dụng: ${o.branchName || 'sẽ báo khi xác nhận'}`,
+      `🕐 Ca làm việc đăng ký: ${o.shift || 'sẽ trao đổi khi xác nhận'}`,
     ];
     if (o.meetUrl) {
       lines.push(`🔗 Link phòng họp Google Meet: ${o.meetUrl}`);

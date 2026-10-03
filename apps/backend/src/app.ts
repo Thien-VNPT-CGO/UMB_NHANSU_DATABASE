@@ -1423,6 +1423,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         candidateName: (cand as any).full_name || 'bạn',
         position: (cand as any).apply_position,
         branchName,
+        shift: (cand as any).registered_shift,
         interviewDate,
         timeSlot,
         meetUrl,
