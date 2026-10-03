@@ -1451,7 +1451,7 @@ export function App() {
     }
   };
 
-  // Thử việc tự đổi ca: WORK_TO_OFF -> đơn nghỉ thật; các chiều khác chưa có nghiệp vụ server -> hướng dẫn thật
+  // Thử việc tự đổi ca: WORK_TO_OFF -> đơn nghỉ thật; OFF_TO_WORK chưa có nghiệp vụ server -> hướng dẫn báo Store
   const handleProbationSelfSwap = async () => {
     if (probationSelfSwap.direction === 'WORK_TO_OFF') {
       if (!probationSelfSwap.date) {
@@ -1477,7 +1477,7 @@ export function App() {
       }
       return;
     }
-    showToast('ℹ️ Đổi giờ ca / xin đi làm ngày OFF: vui lòng báo trực tiếp Store để xếp lịch trên hệ thống. Chức năng tự đổi các chiều này chưa hỗ trợ gửi đơn.');
+    showToast('ℹ️ Xin đi làm ngày OFF: vui lòng báo trực tiếp Store để xếp lịch trên hệ thống. Chức năng tự gửi đơn chiều này chưa hỗ trợ.');
   };
 
   const handleEmergencyLeaveSubmit = async () => {
@@ -3142,7 +3142,6 @@ export function App() {
                   >
                     <option value="WORK_TO_OFF">Chuyển từ CA LÀM ➔ sang NGHỈ OFF</option>
                     <option value="OFF_TO_WORK">Chuyển từ NGHỈ OFF ➔ sang ĐI LÀM (Ca Sáng 07:00-12:00)</option>
-                    <option value="SHIFT_TO_SHIFT">Đổi giờ ca (Ca 1 ➔ Ca 2 cùng ngày)</option>
                   </select>
                 </div>
 
