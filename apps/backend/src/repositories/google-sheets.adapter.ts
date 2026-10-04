@@ -628,38 +628,44 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
     if (this.isConfigured) {
       const snapshot = { ...res };
-      this.scheduleSheetsWrite(async () => {
-        const ok = await this.syncService.appendRow('SU_KIEN_DIEM_DANH', [
-          snapshot.event_id,
-          snapshot.assignment_id,
-          snapshot.employee_id,
-          snapshot.type,
-          // Ép TEXT để USER_ENTERED không parse ISO thành datetime locale
-          // (pull đọc lại sai instant -> reload mất check-in/out sau restart).
-          sheetDateTimeText(snapshot.server_received_at),
-          snapshot.gps_latitude,
-          snapshot.gps_longitude,
-          snapshot.distance_meters,
-          snapshot.gps_status,
-          snapshot.drive_object_id || '',
-          snapshot.request_id || '',
-          (snapshot as any).uniform_pink_ratio ?? '',
-          // Giữ giờ máy khách (kèm múi giờ +07:00) để lọc đúng ngày Việt Nam
-          sheetDateTimeText((snapshot as any).client_time || ''),
-          // Cờ trễ/sớm (phạt lương): Sheet phải lưu, pull mới khôi phục được
-          (snapshot as any).is_late ? 'YES' : '',
-          (snapshot as any).is_early ? 'YES' : '',
-          Number((snapshot as any).minutes_deviation) || 0,
-          // Phạt trễ ghi nhận ngay lúc check-in (ràng buộc chặt 5p:30k • 30p:50% • 60p:100%)
-          (snapshot as any).fine_tier || 'NONE',
-          Number((snapshot as any).fine_amount) || 0,
+      // Ghi ĐỒNG BỘ (await, timeout) như phiếu đổi ca: điểm danh "thành công"
+      // phải bền vững trên Sheet NGAY trong cùng request — ghi nền mà server
+      // sleep/restart trước khi flush là mất vĩnh viễn dù NV đã thấy CONFIRMED.
+      try {
+        const ok = await Promise.race([
+          this.syncService.appendRow('SU_KIEN_DIEM_DANH', [
+            snapshot.event_id,
+            snapshot.assignment_id,
+            snapshot.employee_id,
+            snapshot.type,
+            // Ép TEXT để USER_ENTERED không parse ISO thành datetime locale
+            // (pull đọc lại sai instant -> reload mất check-in/out sau restart).
+            sheetDateTimeText(snapshot.server_received_at),
+            snapshot.gps_latitude,
+            snapshot.gps_longitude,
+            snapshot.distance_meters,
+            snapshot.gps_status,
+            snapshot.drive_object_id || '',
+            snapshot.request_id || '',
+            (snapshot as any).uniform_pink_ratio ?? '',
+            // Giữ giờ máy khách (kèm múi giờ +07:00) để lọc đúng ngày Việt Nam
+            sheetDateTimeText((snapshot as any).client_time || ''),
+            // Cờ trễ/sớm (phạt lương): Sheet phải lưu, pull mới khôi phục được
+            (snapshot as any).is_late ? 'YES' : '',
+            (snapshot as any).is_early ? 'YES' : '',
+            Number((snapshot as any).minutes_deviation) || 0,
+            // Phạt trễ ghi nhận ngay lúc check-in (ràng buộc chặt 5p:30k • 30p:50% • 60p:100%)
+            (snapshot as any).fine_tier || 'NONE',
+            Number((snapshot as any).fine_amount) || 0,
+          ]).catch(() => false),
+          new Promise<false>(r => setTimeout(() => r(false), 12000)),
         ]);
         if (!ok) {
           // Append rớt (quota/timeout): đẩy nguyên tab để điểm danh không mất khỏi Sheet.
           console.warn('[GoogleSheetsAdapter] appendRow SU_KIEN_DIEM_DANH failed, pushing full events tab');
-          await this.syncService.pushEventsTab(this.fallbackAdapter);
+          await this.syncService.pushEventsTab(this.fallbackAdapter).catch(() => 0);
         }
-      }, 'SU_KIEN_DIEM_DANH.append');
+      } catch { /* best-effort: full-sync nền sẽ thử lại */ }
     }
 
     return res;

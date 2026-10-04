@@ -1378,8 +1378,21 @@ export function App() {
   };
   const getAttendShift = () => {
     const list = getTodayShifts();
-    return list.find((s: any) => s.assignment_id === attendShiftId) || list[0];
+    const picked = list.find((s: any) => s.assignment_id === attendShiftId);
+    if (picked) return picked;
+    // Chưa chọn ca (ngày 2 ca): mặc định ca ĐANG diễn ra thay vì ca đầu danh
+    // sách — tránh CONFIRMED nhầm ca rồi ca đúng vẫn "chưa check-in".
+    const now = Date.now();
+    const live = list.find((s: any) => {
+      const st = new Date(s.start_at || '').getTime();
+      const en = new Date(s.end_at || '').getTime();
+      return Number.isFinite(st) && Number.isFinite(en) && now >= st && now <= en;
+    });
+    return live || list[0];
   };
+  // Guard đồng bộ chống bấm đúp GHI NHẬN (setState async không kịp chặn 2 click
+  // cùng tick -> 2 POST trùng ca; server cũng chặn trùng, đây là lớp báo sớm).
+  const attendBusyRef = useRef(false);
   const shiftChecked = (assignmentId?: string) => {
     if (!assignmentId) return { in: false, out: false };
     const evts = (myAttendanceHistory || []).filter((e: any) => e.assignment_id === assignmentId);
@@ -1614,9 +1627,18 @@ export function App() {
       showToast('📸 Bắt buộc chụp ảnh xác nhận khi check-in! Vui lòng chụp ảnh thật.');
       return;
     }
+    // Chặn bấm đúp + chặn gửi khi không có ca (tránh POST vô nghĩa).
+    if (attendBusyRef.current) return;
+    const todayShiftPre = getAttendShift();
+    if (!todayShiftPre) {
+      showToast('🔒 Hôm nay bạn không có lịch ca làm việc được phân công! Chức năng điểm danh bị khóa.');
+      return;
+    }
+    attendBusyRef.current = true;
     setAttendanceStep('SUBMITTING');
     try {
       const todayShift = getAttendShift();
+      if (!todayShift) throw new Error('Hôm nay bạn không có lịch ca làm việc được phân công!');
       const targetEndpoint = attendanceActionType === 'CHECK_IN' ? '/attendance/checkin' : '/attendance/checkout';
 
       const res = await apiRequest(targetEndpoint, {
@@ -1655,6 +1677,8 @@ export function App() {
     } catch (err: any) {
       showToast(err.message || 'Lỗi khi điểm danh!');
       setAttendanceStep('READY_CAMERA');
+    } finally {
+      attendBusyRef.current = false;
     }
   };
 
@@ -4424,7 +4448,7 @@ export function App() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             <div className="card">
               <h3 style={{ fontSize: '15px', fontWeight: 800, marginBottom: '6px' }}>
-                {isProbation ? '7. Giải Trình & Bổ Sung Công' : '7. Nghỉ Khẩn Cấp & Bổ Sung Công'}
+                {isProbation ? '7. Giải Trình & Bổ Sung Công' : '7. Bổ Sung Công'}
               </h3>
               <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '14px' }}>
                 Gửi giải trình khi quên check-in/out hoặc báo nghỉ đột xuất (đồng bộ trực tiếp sang HR Tab 10 và Google Sheets). Phiếu gửi HR quá <strong>1 ngày</strong> chưa duyệt thì hệ thống <strong>tự động từ chối</strong> (giữ phiếu để đối soát, tự xóa sau 7 ngày nữa).

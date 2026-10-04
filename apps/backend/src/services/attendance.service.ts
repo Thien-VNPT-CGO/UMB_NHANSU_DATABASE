@@ -73,6 +73,14 @@ export class AttendanceService {
         if (existingEvent) {
           return existingEvent;
         }
+        // 1b. Chống gửi đúp cùng ca (bấm đúp / retry mạng lọt qua rào ngoài
+        // queue): ca đã có CHECK_IN/CHECK_OUT thì trả bản có sẵn, không tạo đôi.
+        try {
+          const mine = await this.repo.getAttendanceEvents(data.employeeId).catch(() => []);
+          const same = (mine || []).find((e: any) =>
+            (e as any).assignment_id === data.assignmentId && (e as any).type === data.type);
+          if (same) return same as any;
+        } catch { /* tiếp tục ghi mới khi đọc lỗi */ }
 
         // 2. Validate Assignment
         const shift = await this.repo.getShiftById(data.assignmentId);
