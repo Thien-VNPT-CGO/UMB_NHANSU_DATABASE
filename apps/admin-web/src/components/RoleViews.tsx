@@ -1759,173 +1759,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     }
   }, [activeTab]);
 
-  if (activeTab === 'hr-support') {
-    const allList = swapList !== null ? swapList : (swaps || []);
-    const supports = (allList || []).filter((s: any) => (s as any).swap_kind === 'HR_SUPPORT');
-    const pending = supports.filter((s: any) => s.status === 'PENDING_PARTNER');
-    const activeEmps = (allEmployees || [])
-      .filter((e: any) => (e as any).employment_status !== 'TERMINATED')
-      .sort((a: any, b: any) => String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi'));
-    const officials = activeEmps.filter((e: any) => (e as any).employment_status === 'OFFICIAL' && e.employee_id !== supportOwner);
-    const empName = (id: string) => {
-      const e = (allEmployees || []).find((x: any) => x.employee_id === id);
-      return e ? `${e.full_name} (${e.employee_code || e.employee_id})` : (id || '—');
-    };
-    const branchLabel = (bid: string) => {
-      try {
-        return getDisplayBranch(bid) || bid;
-      } catch { return bid; }
-    };
-    const shiftLabel = (code: string) =>
-      code === 'CA_1' ? 'Ca 1 (07-12)' : code === 'CA_2' ? 'Ca 2 (12-18)' : code === 'CA_3' ? 'Ca 3 (18-23)' : (code || '');
-    const statusBadge = (st: string) => {
-      const map: Record<string, { bg: string; fg: string; label: string }> = {
-        PENDING_PARTNER: { bg: '#FEF3C7', fg: '#92400E', label: 'Chờ NV B xác nhận' },
-        APPROVED: { bg: '#DCFCE7', fg: '#166534', label: 'B đã nhận — ca đã chuyển' },
-        REJECTED: { bg: '#FEE2E2', fg: '#991B1B', label: 'B từ chối' },
-        CANCELLED: { bg: '#F3F4F6', fg: '#6B7280', label: 'Đã hủy' },
-      };
-      const m = map[st] || { bg: '#F3F4F6', fg: '#6B7280', label: st };
-      return <span className="badge" style={{ backgroundColor: m.bg, color: m.fg, fontWeight: 700 }}>{m.label}</span>;
-    };
-    const submitSupport = async () => {
-      if (!supportOwner) { showToast('Vui lòng chọn nhân viên A (người nhường ca)!'); return; }
-      if (!supportAssign) { showToast('Vui lòng chọn ca A nhường!'); return; }
-      if (!supportTarget) { showToast('Vui lòng chọn nhân viên B chính thức nhận hỗ trợ!'); return; }
-      if (supportBusy) return;
-      setSupportBusy(true);
-      try {
-        const res = await apiRequest('/swap-requests/support', {
-          method: 'POST',
-          body: JSON.stringify({
-            requesterAssignmentId: supportAssign,
-            targetEmployeeId: supportTarget,
-            reason: supportReason,
-          }),
-        });
-        const sid = (res as any)?.result?.swap_id || (res as any)?.swap_id || '';
-        showToast(sid ? `Đã gửi yêu cầu hỗ trợ! Mã phiếu: ${sid}. B xác nhận trên cổng NV là ca chuyển sang B ngay.` : 'Đã gửi yêu cầu hỗ trợ!');
-        setSupportReason('');
-        await loadSwaps();
-        if (onRefreshData) await onRefreshData();
-        if (onSyncSheets) await onSyncSheets();
-      } catch (e: any) {
-        showToast(e?.message || 'Lỗi khi gửi yêu cầu hỗ trợ!');
-      } finally {
-        setSupportBusy(false);
-      }
-    };
-    return (
-      <div id="sec-support" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <div>
-          <h1 style={{ fontSize: '20px', fontWeight: 800 }}>10. Chuyển Ca Hỗ Trợ Chi Nhánh</h1>
-          <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-            A bận nhường ca cho B (nhân viên chính thức, thường khác chi nhánh) làm thay. B xác nhận trên Cổng Nhân Viên là ca chuyển sang B ngay, lịch 2 cổng đồng bộ realtime.
-          </p>
-        </div>
-
-        <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', padding: '16px 20px' }}>
-          <strong style={{ fontSize: '14px' }}>Điều ca hỗ trợ</strong>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '12px' }}>
-            <div>
-              <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>A — người nhường ca (bận việc):</label>
-              <select
-                value={supportOwner}
-                onChange={(e) => { setSupportOwner(e.target.value); setSupportTarget(''); loadSupportOwnerShifts(e.target.value); }}
-                style={{ width: '100%' }}
-              >
-                <option value="">-- Chọn nhân viên A --</option>
-                {activeEmps.map((e: any) => (
-                  <option key={e.employee_id} value={e.employee_id}>
-                    {e.full_name} ({e.employee_code || e.employee_id} • {branchLabel(e.default_branch_id || e.branch_id || '')})
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Ca A nhường (đã publish, từ tuần hiện tại):</label>
-              <select value={supportAssign} onChange={(e) => setSupportAssign(e.target.value)} style={{ width: '100%' }} disabled={!supportOwner || supportShiftsLoading}>
-                <option value="">
-                  {!supportOwner ? '-- Chọn A trước --' : supportShiftsLoading ? 'Đang tải ca...' : supportOwnerShifts.length === 0 ? 'A không có ca publish nào' : '-- Chọn ca --'}
-                </option>
-                {supportOwnerShifts.map((s: any) => (
-                  <option key={s.assignment_id} value={s.assignment_id}>
-                    {String(s.date || '').slice(0, 10)} • {shiftLabel(s.shift_code)} • {branchLabel(s.branch_id || '')}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '12px' }}>
-            <div>
-              <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>B — nhân viên chính thức nhận làm thay:</label>
-              <select value={supportTarget} onChange={(e) => setSupportTarget(e.target.value)} style={{ width: '100%' }}>
-                <option value="">-- Chọn nhân viên B --</option>
-                {officials.map((e: any) => (
-                  <option key={e.employee_id} value={e.employee_id}>
-                    {e.full_name} ({e.employee_code || e.employee_id} • {branchLabel(e.default_branch_id || e.branch_id || '')})
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Lý do điều hỗ trợ:</label>
-              <input type="text" value={supportReason} onChange={(e) => setSupportReason(e.target.value)} placeholder="VD: A bận việc gia đình, điều B (CN2) làm thay ca 1 CN130..." style={{ width: '100%' }} />
-            </div>
-          </div>
-          <button className="btn-primary" disabled={supportBusy} onClick={submitSupport} style={{ marginTop: '12px', padding: '9px 18px', fontSize: '13px', opacity: supportBusy ? 0.6 : 1 }}>
-            {supportBusy ? '⏳ ĐANG GỬI...' : 'Gửi Yêu Cầu Hỗ Trợ Cho Nhân Viên B'}
-          </button>
-        </div>
-
-        <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
-          <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <strong style={{ fontSize: '14px' }}>Phiếu hỗ trợ chi nhánh ({supports.length})</strong>
-            <span className="badge" style={{ backgroundColor: pending.length > 0 ? '#FEF3C7' : '#DCFCE7', color: pending.length > 0 ? '#92400E' : '#166534', fontWeight: 800 }}>
-              {pending.length} chờ NV xác nhận
-            </span>
-          </div>
-          {supports.length === 0 ? (
-            <div style={{ padding: '28px 20px', textAlign: 'center', fontSize: '13px', color: 'var(--text-muted)' }}>
-              Chưa có phiếu hỗ trợ nào. Gửi phiếu mới ở form trên — B xác nhận là ca chuyển sang B ngay.
-            </div>
-          ) : (
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-              <thead>
-                <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
-                  <th style={{ padding: '12px 20px' }}>A Nhường Ca</th>
-                  <th style={{ padding: '12px 20px' }}>B Nhận Làm Thay</th>
-                  <th style={{ padding: '12px 20px' }}>Lý Do</th>
-                  <th style={{ padding: '12px 20px' }}>Tình Trạng</th>
-                </tr>
-              </thead>
-              <tbody>
-                {supports.map((sw: any) => (
-                  <tr key={sw.swap_id} style={{ borderBottom: '1px solid var(--border)' }}>
-                    <td style={{ padding: '12px 20px', fontWeight: 700 }}>
-                      {empName(sw.requester_id)}
-                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }}>
-                        {branchLabel((sw as any).support_branch_id || '')} • {String((sw as any).support_date || '').slice(0, 10)} • {shiftLabel((sw as any).support_shift_code || '')}
-                      </div>
-                    </td>
-                    <td style={{ padding: '12px 20px', fontWeight: 700 }}>
-                      {empName(sw.target_employee_id)}
-                      {sw.status === 'APPROVED' && (
-                        <div style={{ fontSize: '11px', color: '#059669', fontWeight: 700 }}>Ca đã chuyển ✓</div>
-                      )}
-                    </td>
-                    <td style={{ padding: '12px 20px' }}>{sw.reason || '—'}</td>
-                    <td style={{ padding: '12px 20px' }}>{statusBadge(sw.status)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </div>
-    );
-  }
-
   useEffect(() => {
     if (activeTab !== 'hr-attendance' && activeTab !== 'operations') return;
     reloadAttEvents();
@@ -7208,6 +7041,173 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </div>
           </div>
         )}
+      </div>
+    );
+  }
+
+  if (activeTab === 'hr-support') {
+    const allList = swapList !== null ? swapList : (swaps || []);
+    const supports = (allList || []).filter((s: any) => (s as any).swap_kind === 'HR_SUPPORT');
+    const pending = supports.filter((s: any) => s.status === 'PENDING_PARTNER');
+    const activeEmps = (allEmployees || [])
+      .filter((e: any) => (e as any).employment_status !== 'TERMINATED')
+      .sort((a: any, b: any) => String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi'));
+    const officials = activeEmps.filter((e: any) => (e as any).employment_status === 'OFFICIAL' && e.employee_id !== supportOwner);
+    const empName = (id: string) => {
+      const e = (allEmployees || []).find((x: any) => x.employee_id === id);
+      return e ? `${e.full_name} (${e.employee_code || e.employee_id})` : (id || '—');
+    };
+    const branchLabel = (bid: string) => {
+      try {
+        return getDisplayBranch(bid) || bid;
+      } catch { return bid; }
+    };
+    const shiftLabel = (code: string) =>
+      code === 'CA_1' ? 'Ca 1 (07-12)' : code === 'CA_2' ? 'Ca 2 (12-18)' : code === 'CA_3' ? 'Ca 3 (18-23)' : (code || '');
+    const statusBadge = (st: string) => {
+      const map: Record<string, { bg: string; fg: string; label: string }> = {
+        PENDING_PARTNER: { bg: '#FEF3C7', fg: '#92400E', label: 'Chờ NV B xác nhận' },
+        APPROVED: { bg: '#DCFCE7', fg: '#166534', label: 'B đã nhận — ca đã chuyển' },
+        REJECTED: { bg: '#FEE2E2', fg: '#991B1B', label: 'B từ chối' },
+        CANCELLED: { bg: '#F3F4F6', fg: '#6B7280', label: 'Đã hủy' },
+      };
+      const m = map[st] || { bg: '#F3F4F6', fg: '#6B7280', label: st };
+      return <span className="badge" style={{ backgroundColor: m.bg, color: m.fg, fontWeight: 700 }}>{m.label}</span>;
+    };
+    const submitSupport = async () => {
+      if (!supportOwner) { showToast('Vui lòng chọn nhân viên A (người nhường ca)!'); return; }
+      if (!supportAssign) { showToast('Vui lòng chọn ca A nhường!'); return; }
+      if (!supportTarget) { showToast('Vui lòng chọn nhân viên B chính thức nhận hỗ trợ!'); return; }
+      if (supportBusy) return;
+      setSupportBusy(true);
+      try {
+        const res = await apiRequest('/swap-requests/support', {
+          method: 'POST',
+          body: JSON.stringify({
+            requesterAssignmentId: supportAssign,
+            targetEmployeeId: supportTarget,
+            reason: supportReason,
+          }),
+        });
+        const sid = (res as any)?.result?.swap_id || (res as any)?.swap_id || '';
+        showToast(sid ? `Đã gửi yêu cầu hỗ trợ! Mã phiếu: ${sid}. B xác nhận trên cổng NV là ca chuyển sang B ngay.` : 'Đã gửi yêu cầu hỗ trợ!');
+        setSupportReason('');
+        await loadSwaps();
+        if (onRefreshData) await onRefreshData();
+        if (onSyncSheets) await onSyncSheets();
+      } catch (e: any) {
+        showToast(e?.message || 'Lỗi khi gửi yêu cầu hỗ trợ!');
+      } finally {
+        setSupportBusy(false);
+      }
+    };
+    return (
+      <div id="sec-support" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+        <div>
+          <h1 style={{ fontSize: '20px', fontWeight: 800 }}>10. Chuyển Ca Hỗ Trợ Chi Nhánh</h1>
+          <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+            A bận nhường ca cho B (nhân viên chính thức, thường khác chi nhánh) làm thay. B xác nhận trên Cổng Nhân Viên là ca chuyển sang B ngay, lịch 2 cổng đồng bộ realtime.
+          </p>
+        </div>
+
+        <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', padding: '16px 20px' }}>
+          <strong style={{ fontSize: '14px' }}>Điều ca hỗ trợ</strong>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '12px' }}>
+            <div>
+              <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>A — người nhường ca (bận việc):</label>
+              <select
+                value={supportOwner}
+                onChange={(e) => { setSupportOwner(e.target.value); setSupportTarget(''); loadSupportOwnerShifts(e.target.value); }}
+                style={{ width: '100%' }}
+              >
+                <option value="">-- Chọn nhân viên A --</option>
+                {activeEmps.map((e: any) => (
+                  <option key={e.employee_id} value={e.employee_id}>
+                    {e.full_name} ({e.employee_code || e.employee_id} • {branchLabel(e.default_branch_id || e.branch_id || '')})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Ca A nhường (đã publish, từ tuần hiện tại):</label>
+              <select value={supportAssign} onChange={(e) => setSupportAssign(e.target.value)} style={{ width: '100%' }} disabled={!supportOwner || supportShiftsLoading}>
+                <option value="">
+                  {!supportOwner ? '-- Chọn A trước --' : supportShiftsLoading ? 'Đang tải ca...' : supportOwnerShifts.length === 0 ? 'A không có ca publish nào' : '-- Chọn ca --'}
+                </option>
+                {supportOwnerShifts.map((s: any) => (
+                  <option key={s.assignment_id} value={s.assignment_id}>
+                    {String(s.date || '').slice(0, 10)} • {shiftLabel(s.shift_code)} • {branchLabel(s.branch_id || '')}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '12px' }}>
+            <div>
+              <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>B — nhân viên chính thức nhận làm thay:</label>
+              <select value={supportTarget} onChange={(e) => setSupportTarget(e.target.value)} style={{ width: '100%' }}>
+                <option value="">-- Chọn nhân viên B --</option>
+                {officials.map((e: any) => (
+                  <option key={e.employee_id} value={e.employee_id}>
+                    {e.full_name} ({e.employee_code || e.employee_id} • {branchLabel(e.default_branch_id || e.branch_id || '')})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Lý do điều hỗ trợ:</label>
+              <input type="text" value={supportReason} onChange={(e) => setSupportReason(e.target.value)} placeholder="VD: A bận việc gia đình, điều B (CN2) làm thay ca 1 CN130..." style={{ width: '100%' }} />
+            </div>
+          </div>
+          <button className="btn-primary" disabled={supportBusy} onClick={submitSupport} style={{ marginTop: '12px', padding: '9px 18px', fontSize: '13px', opacity: supportBusy ? 0.6 : 1 }}>
+            {supportBusy ? '⏳ ĐANG GỬI...' : 'Gửi Yêu Cầu Hỗ Trợ Cho Nhân Viên B'}
+          </button>
+        </div>
+
+        <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
+          <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <strong style={{ fontSize: '14px' }}>Phiếu hỗ trợ chi nhánh ({supports.length})</strong>
+            <span className="badge" style={{ backgroundColor: pending.length > 0 ? '#FEF3C7' : '#DCFCE7', color: pending.length > 0 ? '#92400E' : '#166534', fontWeight: 800 }}>
+              {pending.length} chờ NV xác nhận
+            </span>
+          </div>
+          {supports.length === 0 ? (
+            <div style={{ padding: '28px 20px', textAlign: 'center', fontSize: '13px', color: 'var(--text-muted)' }}>
+              Chưa có phiếu hỗ trợ nào. Gửi phiếu mới ở form trên — B xác nhận là ca chuyển sang B ngay.
+            </div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+              <thead>
+                <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
+                  <th style={{ padding: '12px 20px' }}>A Nhường Ca</th>
+                  <th style={{ padding: '12px 20px' }}>B Nhận Làm Thay</th>
+                  <th style={{ padding: '12px 20px' }}>Lý Do</th>
+                  <th style={{ padding: '12px 20px' }}>Tình Trạng</th>
+                </tr>
+              </thead>
+              <tbody>
+                {supports.map((sw: any) => (
+                  <tr key={sw.swap_id} style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td style={{ padding: '12px 20px', fontWeight: 700 }}>
+                      {empName(sw.requester_id)}
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }}>
+                        {branchLabel((sw as any).support_branch_id || '')} • {String((sw as any).support_date || '').slice(0, 10)} • {shiftLabel((sw as any).support_shift_code || '')}
+                      </div>
+                    </td>
+                    <td style={{ padding: '12px 20px', fontWeight: 700 }}>
+                      {empName(sw.target_employee_id)}
+                      {sw.status === 'APPROVED' && (
+                        <div style={{ fontSize: '11px', color: '#059669', fontWeight: 700 }}>Ca đã chuyển ✓</div>
+                      )}
+                    </td>
+                    <td style={{ padding: '12px 20px' }}>{sw.reason || '—'}</td>
+                    <td style={{ padding: '12px 20px' }}>{statusBadge(sw.status)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
       </div>
     );
   }
