@@ -500,15 +500,10 @@ export function App() {
   // NV B xác nhận / từ chối phiếu tráo ca (B đồng ý là 2 ca hoán đổi ngay, không cần HR duyệt)
   const handleRespondSwap = async (swapId: string, accept: boolean) => {
     if (!window.confirm(accept ? 'Đồng ý tráo đổi ca này? Hai ca sẽ hoán đổi người trực ngay!' : 'Từ chối phiếu tráo đổi ca này?')) return;
-    // Chặn bấm đúp Đồng ý: lần 2 sẽ hoán đổi NGƯỢC lịch về chủ cũ (server cũng
-    // chặn SWAP_ALREADY_HANDLED, đây là lớp báo sớm). Phiếu phải còn chờ duyệt.
+    // Chỉ chặn bấm đúp (guard đồng bộ) — trạng thái thật do SERVER quyết định
+    // (state local có thể cũ: banner hiện PENDING nhưng phiếu đã chốt / có bản
+    // ma trùng id; chặn ở local sẽ kẹt vĩnh viễn "đã xử lý" mà phiếu không mất).
     if (swapBusyRef.current || actionBusy) return;
-    const target = (mySwaps || []).find((s: any) => s.swap_id === swapId);
-    if (target && (target as any).status !== 'PENDING_PARTNER') {
-      showToast('Phiếu này đã được xử lý rồi! Đang tải lại danh sách mới nhất.');
-      await fetchMySwaps();
-      return;
-    }
     swapBusyRef.current = true;
     setActionBusy('respond');
     try {

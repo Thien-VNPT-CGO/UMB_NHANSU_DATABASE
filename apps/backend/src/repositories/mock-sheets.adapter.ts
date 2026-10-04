@@ -507,6 +507,10 @@ export class MockSheetsAdapter implements ISheetsRepository {
 
   async createSwapRequest(request: Omit<SwapRequest, 'created_at' | 'version'>): Promise<SwapRequest> {
     this.checkErrors();
+    // Idempotent theo swap_id (2 POST cùng mili-giây từng tạo 2 dòng trùng id:
+    // 1 APPROVED + 1 PENDING ma khiến banner B kẹt vĩnh viễn) — trả bản có sẵn.
+    const existingById = this.swapRequests.find(s => s.swap_id === (request as any).swap_id);
+    if (existingById) return { ...existingById };
     const newSwap: SwapRequest = {
       ...request,
       created_at: new Date().toISOString(),
@@ -534,10 +538,14 @@ export class MockSheetsAdapter implements ISheetsRepository {
     if (this.simulatePartialWriteError) {
       throw new Error('NEEDS_RECONCILIATION: Partial write failed during multi-tab swap update');
     }
-    const swap = this.swapRequests.find(s => s.swap_id === id);
-    if (!swap) throw new Error('SWAP_REQUEST_NOT_FOUND');
-    Object.assign(swap, updates, { version: swap.version + 1 });
-    return { ...swap };
+    // Cập nhật TẤT CẢ dòng trùng id (dữ liệu cũ gửi đôi cùng mili-giây để lại
+    // 2 dòng trùng swap_id): 1 lần duyệt lật cả bản ma PENDING, banner B hết kẹt.
+    const matches = this.swapRequests.filter(s => s.swap_id === id);
+    if (matches.length === 0) throw new Error('SWAP_REQUEST_NOT_FOUND');
+    for (const swap of matches) {
+      Object.assign(swap, updates, { version: swap.version + 1 });
+    }
+    return { ...matches[0] };
   }
 
   // --- Attendance ---

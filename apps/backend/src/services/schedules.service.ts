@@ -934,14 +934,60 @@ export class SchedulesService {
     });
   }
 
+  /**
+   * Dọn phiếu trùng y hệt còn chờ sau khi 1 phiếu đã chốt (APPROVED/REJECTED):
+   * dữ liệu cũ gửi đôi để lại 2 phiếu PENDING cùng nội dung — duyệt phiếu này
+   * mà để phiếu kia lại thì B bấm tiếp sẽ hoán đổi NGƯỢC lịch về chủ cũ.
+   */
+  private async cancelSiblingPendingSwaps(keepSwapId: string, ref: any): Promise<number> {
+    try {
+      const all = await this.repo.listSwapRequests().catch(() => []);
+      let n = 0;
+      for (const s of all || []) {
+        if ((s as any).swap_id === keepSwapId) continue;
+        if ((s as any).status !== 'PENDING_PARTNER') continue;
+        if ((s as any).swap_kind !== (ref as any).swap_kind) continue;
+        if ((s as any).requester_assignment_id !== (ref as any).requester_assignment_id) continue;
+        if ((s as any).target_employee_id !== (ref as any).target_employee_id) continue;
+        if ((s as any).target_assignment_id !== (ref as any).target_assignment_id) continue;
+        await this.repo.updateSwapRequest((s as any).swap_id, {
+          status: 'CANCELLED',
+          rejection_reason: 'Tự động hủy: trùng phiếu đã xử lý',
+        } as any).catch(() => null);
+        n++;
+      }
+      return n;
+    } catch {
+      return 0;
+    }
+  }
+
   async respondSwapPartner(swapId: string, partnerId: string, accept: boolean) {
     return singleWriterQueue.enqueue({
       entityType: 'PHIEU_DOI_CA',
       entityId: swapId,
       actorId: partnerId,
       execute: async () => {
-        const swap = await this.repo.getSwapById(swapId);
+        let swap = await this.repo.getSwapById(swapId);
         if (!swap) throw new Error('SWAP_REQUEST_NOT_FOUND');
+        // Tự chữa dữ liệu cũ gửi đôi cùng mili-giây (2 dòng trùng swap_id, 1 đã
+        // xử lý + 1 PENDING ma): đồng bộ tất cả về trạng thái cao nhất để banner
+        // B hết kẹt — click tiếp theo nhận đúng trạng thái thật từ server.
+        try {
+          const allSwaps = await this.repo.listSwapRequests().catch(() => []);
+          const sameId = (allSwaps || []).filter((s: any) => (s as any).swap_id === swapId);
+          if (sameId.length > 1) {
+            const rank = (st: string) =>
+              st === 'APPROVED' ? 3 : st === 'PARTNER_ACCEPTED' ? 2
+                : (st === 'REJECTED' || st === 'CANCELLED') ? 1 : 0;
+            const best = sameId.reduce((a: any, b: any) =>
+              rank(String((b as any).status)) >= rank(String((a as any).status)) ? b : a);
+            if (String((best as any).status) !== 'PENDING_PARTNER') {
+              await this.repo.updateSwapRequest(swapId, { status: (best as any).status } as any);
+              swap = (await this.repo.getSwapById(swapId)) || swap;
+            }
+          }
+        } catch { /* best-effort: guard bên dưới vẫn quyết định đúng */ }
         // Phiếu chỉ được xử lý 1 lần khi đang chờ B xác nhận — bấm đúp Đồng ý /
         // danh sách cũ retry mà duyệt lại sẽ hoán đổi NGƯỢC lịch về chủ cũ nhưng
         // vẫn báo thành công (reload thấy phiếu/lịch như chưa đổi).
@@ -998,6 +1044,8 @@ export class SchedulesService {
               approved_at: new Date().toISOString(),
               bonus_amount: 0,
             });
+            // Phiếu chốt thì dọn phiếu trùng y hệt còn chờ (kẻo duyệt tiếp hoán ngược).
+            await this.cancelSiblingPendingSwaps(swapId, swap);
 
             const coverWarnings: string[] = [];
             try {
@@ -1038,6 +1086,8 @@ export class SchedulesService {
             approved_at: new Date().toISOString(),
             bonus_amount: 0,
           });
+          // Phiếu chốt thì dọn phiếu trùng y hệt còn chờ (kẻo duyệt tiếp hoán ngược).
+          await this.cancelSiblingPendingSwaps(swapId, swap);
 
           const warnings: string[] = [];
           try {
@@ -1067,6 +1117,10 @@ export class SchedulesService {
           status: newStatus,
           partner_responded_at: new Date().toISOString(),
         });
+        // Từ chối thì dọn luôn phiếu trùng y hệt còn chờ để banner B hết kẹt.
+        if (!accept) {
+          await this.cancelSiblingPendingSwaps(swapId, swap);
+        }
 
         if (this.io) {
           this.io.to(`user:${swap.requester_id}`).emit('swap.updated', {
@@ -1224,12 +1278,14 @@ export class SchedulesService {
         }
 
         if (!accept) {
-          return this.repo.updateSwapRequest(swapId, {
+          const rejectedSwap = await this.repo.updateSwapRequest(swapId, {
             status: 'REJECTED',
             rejection_reason: reason || 'Từ chối bởi quản lý',
             approved_by: managerId,
             approved_at: new Date().toISOString(),
           });
+          await this.cancelSiblingPendingSwaps(swapId, swap);
+          return rejectedSwap;
         }
 
         // HR điều phối nhường ca: chuyển 1 chiều ca cho người nhận + ghi +30.000đ.
@@ -1250,6 +1306,7 @@ export class SchedulesService {
             approved_at: new Date().toISOString(),
             bonus_amount: 30000,
           });
+          await this.cancelSiblingPendingSwaps(swapId, swap);
 
           const dispatchWarnings: string[] = [];
           try {
@@ -1296,6 +1353,7 @@ export class SchedulesService {
           approved_at: new Date().toISOString(),
           bonus_amount: 0,
         });
+        await this.cancelSiblingPendingSwaps(swapId, swap);
 
         // Ghi nhận ngày 2 ca: sau hoán đổi, ai có >1 ca/ngày thì cảnh báo để
         // theo dõi điểm danh từng ca (mỗi ca check-in/out độc lập).
