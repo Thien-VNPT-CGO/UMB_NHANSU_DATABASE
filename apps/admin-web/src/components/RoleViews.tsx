@@ -7362,6 +7362,50 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </tr>
               );
             });
+          // Gom phiếu theo tuần gửi (T2–CN, giờ VN): mỗi tuần 1 folder xếp gọn.
+          // Tuần hiện tại + tuần còn phiếu chờ xử lý thì mở sẵn.
+          const weekMonOf = (iso?: string) => {
+            const t = new Date(iso || '').getTime();
+            if (!Number.isFinite(t)) return '';
+            const vn = new Date(t + 7 * 3_600_000);
+            const off = (vn.getUTCDay() + 6) % 7;
+            vn.setUTCDate(vn.getUTCDate() - off);
+            return vn.toISOString().slice(0, 10);
+          };
+          const nowMon = weekMonOf(new Date().toISOString());
+          const byWeek = new Map<string, any[]>();
+          for (const sw of list) {
+            const mon = weekMonOf((sw as any).created_at) || 'old';
+            if (!byWeek.has(mon)) byWeek.set(mon, []);
+            byWeek.get(mon)!.push(sw);
+          }
+          const weekFolders = [...byWeek.entries()]
+            .sort((a, b) => b[0].localeCompare(a[0]))
+            .map(([mon, rows]) => {
+              const readyW = rows.filter((s: any) => s.status === 'PARTNER_ACCEPTED');
+              const waitingW = rows.filter((s: any) => s.status === 'PENDING_PARTNER');
+              const doneW = rows.filter((s: any) => !['PENDING_PARTNER', 'PARTNER_ACCEPTED'].includes(s.status));
+              const sun = (() => {
+                const d = new Date(`${mon}T00:00:00Z`);
+                if (Number.isNaN(d.getTime())) return '';
+                d.setUTCDate(d.getUTCDate() + 6);
+                const p = d.toISOString().slice(0, 10);
+                return `${p.slice(8, 10)}/${p.slice(5, 7)}`;
+              })();
+              const label = mon === 'old' ? 'Cũ (chưa rõ ngày)' : `${mon.slice(8, 10)}/${mon.slice(5, 7)} – ${sun}`;
+              return {
+                mon,
+                label,
+                rows,
+                ready: readyW,
+                waiting: waitingW,
+                done: doneW,
+                readyCount: readyW.length,
+                waitingCount: waitingW.length,
+                isCurrent: mon === nowMon,
+                defaultOpen: mon === nowMon || readyW.length > 0 || waitingW.length > 0,
+              };
+            });
           return (
             <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
               <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -7375,23 +7419,39 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   Chưa có yêu cầu tráo đổi ca nào từ Cổng Nhân Viên. Phiếu mới sẽ hiện realtime tại đây.
                 </div>
               ) : (
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-                  <thead>
-                    <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
-                      <th style={{ padding: '12px 20px' }}>NV A (Người đề xuất)</th>
-                      <th style={{ padding: '12px 20px' }}>NV B (Người nhận)</th>
-                      <th style={{ padding: '12px 20px' }}>Loại Phiếu</th>
-                      <th style={{ padding: '12px 20px' }}>Lý Do</th>
-                      <th style={{ padding: '12px 20px' }}>Tình Trạng</th>
-                      <th style={{ padding: '12px 20px' }}>HR Duyệt</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {renderRows(ready, true)}
-                    {renderRows(waiting, false)}
-                    {renderRows(done, false)}
-                  </tbody>
-                </table>
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  {weekFolders.map((f: any) => (
+                    <details key={f.mon} open={f.defaultOpen} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <summary style={{ padding: '12px 20px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', listStyle: 'none', backgroundColor: f.isCurrent ? '#EFF6FF' : undefined }}>
+                        <span style={{ fontWeight: 800, fontSize: '13px' }}>
+                          📁 Tuần {f.label}{f.isCurrent ? ' (tuần này)' : ''}
+                        </span>
+                        <span style={{ display: 'flex', gap: '6px', alignItems: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>
+                          {f.readyCount > 0 && <span className="badge" style={{ backgroundColor: '#DBEAFE', color: '#1D4ED8', fontWeight: 800 }}>{f.readyCount} chờ duyệt</span>}
+                          {f.waitingCount > 0 && <span className="badge" style={{ backgroundColor: '#FEF3C7', color: '#92400E', fontWeight: 800 }}>{f.waitingCount} chờ NV B</span>}
+                          <span>{f.rows.length} phiếu</span>
+                        </span>
+                      </summary>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                        <thead>
+                          <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
+                            <th style={{ padding: '12px 20px' }}>NV A (Người đề xuất)</th>
+                            <th style={{ padding: '12px 20px' }}>NV B (Người nhận)</th>
+                            <th style={{ padding: '12px 20px' }}>Loại Phiếu</th>
+                            <th style={{ padding: '12px 20px' }}>Lý Do</th>
+                            <th style={{ padding: '12px 20px' }}>Tình Trạng</th>
+                            <th style={{ padding: '12px 20px' }}>HR Duyệt</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {renderRows(f.ready, true)}
+                          {renderRows(f.waiting, false)}
+                          {renderRows(f.done, false)}
+                        </tbody>
+                      </table>
+                    </details>
+                  ))}
+                </div>
               )}
             </div>
           );
@@ -7765,7 +7825,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 const empNameOf = (id: string) => (allEmployees || []).find((e: any) => e.employee_id === id)?.full_name || id || '—';
                                 const hoverKey = `${emp.employee_id}|${day.iso}|${ii}`;
                                 const isDispatch = (relSwap?.swap_kind || 'EMPLOYEE_SWAP') === 'HR_DISPATCH';
-                                return (
+          return (
                                   <div
                                     key={ii}
                                     style={{ padding: '6px', borderRadius: '8px', backgroundColor: it.st.bg, border: it.st.border, animation: it.st.blink ? 'fx-blink 1.2s infinite' : undefined, position: 'relative', cursor: 'default' }}
