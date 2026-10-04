@@ -1381,6 +1381,27 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     return () => window.removeEventListener('ubm:swaps-reload', handler);
   }, [activeTab]);
   useEffect(() => {
+    // Realtime báo cáo HR: App.tsx phát 'ubm:reports-reload' khi mọi biến động
+    // nghiệp vụ (điểm danh/lịch/đổi ca/đơn từ...) — tổng hợp tháng tính live nên
+    // tải lại ngay (debounce, báo cáo nặng hơn các tab khác) + poll 60s dự phòng.
+    let timer: any = null;
+    const handler = () => {
+      if (activeTab !== 'hr-reports') return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { loadMonthlyReport(); }, 1200);
+    };
+    window.addEventListener('ubm:reports-reload', handler);
+    let poll: any = null;
+    if (activeTab === 'hr-reports') {
+      poll = setInterval(() => { loadMonthlyReport(); }, 60000);
+    }
+    return () => {
+      window.removeEventListener('ubm:reports-reload', handler);
+      if (timer) clearTimeout(timer);
+      if (poll) clearInterval(poll);
+    };
+  }, [activeTab, reportPeriod]);
+  useEffect(() => {
     // Phiếu quá 1 ngày chưa duyệt thì tự từ chối: refresh 15s để cập nhật trạng thái realtime
     if (activeTab !== 'hr-adjustments') return;
     const t = setInterval(() => loadAdjustments(), 15000);

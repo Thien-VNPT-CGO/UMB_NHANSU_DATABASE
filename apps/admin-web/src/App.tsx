@@ -941,9 +941,16 @@ export function App() {
       // Realtime điểm danh: báo cho lưới lịch (RoleViews.liveAttendanceEvents) tải lại
       // /attendance/events ngay — loadAllData không chứa attendance nên chỉ
       // scheduleReload thì lịch vẫn đứng yên cho tới khi đổi tab/F5.
+      // Realtime báo cáo HR: mọi biến động nghiệp vụ đều đổi số liệu tổng hợp
+      // tháng (công/giờ/lương) nên báo cho tab hr-reports tải lại ngay.
       const notifyAttendanceRealtime = () => {
         try {
           window.dispatchEvent(new CustomEvent('ubm:attendance-reload'));
+        } catch { /* non-fatal */ }
+      };
+      const notifyReportsRealtime = () => {
+        try {
+          window.dispatchEvent(new CustomEvent('ubm:reports-reload'));
         } catch { /* non-fatal */ }
       };
       socket.on('system:notification', (notif: any) => {
@@ -966,6 +973,7 @@ export function App() {
             window.dispatchEvent(new CustomEvent('ubm:swaps-reload'));
           } catch { /* non-fatal */ }
         }
+        notifyReportsRealtime();
         scheduleReload(currentUser);
       });
 
@@ -985,6 +993,7 @@ export function App() {
               window.dispatchEvent(new CustomEvent('ubm:swaps-reload'));
             } catch { /* non-fatal */ }
           }
+          notifyReportsRealtime();
           scheduleReload(currentUser);
         }
       });
