@@ -935,6 +935,125 @@ export class SchedulesService {
   }
 
   /**
+   * HR chuyển ca hỗ trợ chi nhánh: A (có ca) nhường ca cho B (NV chính thức,
+   * thường khác chi nhánh) làm thay. B xác nhận trên cổng NV là ca chuyển sang
+   * B ngay (HR đã duyệt từ lúc gửi, không cần duyệt thêm). Từ chối thì ca ở
+   * nguyên với A.
+   */
+  async createSupportRequest(data: {
+    requesterAssignmentId: string;
+    targetEmployeeId: string;
+    reason: string;
+    actorId: string;
+  }) {
+    const shift = await this.repo.getShiftById(data.requesterAssignmentId).catch(() => null);
+    if (!shift) throw new Error('SWAP_SHIFT_NOT_FOUND: Ca nhường không còn tồn tại.');
+    if ((shift as any).status === 'CANCELLED') throw new Error('SWAP_SHIFT_CANCELLED: Ca nhường đã bị hủy.');
+    // Chỉ nhường ca đã publish (NV đã thấy) từ tuần hiện tại trở đi.
+    assertShiftsPublished([shift]);
+    const day = String((shift as any).date || '').slice(0, 10);
+    const branchId = String((shift as any).branch_id || '');
+    const shiftCode = (shift as any).shift_code as ShiftCode;
+    assertSwapDatesAllowed([day]);
+    const ownerId = String((shift as any).employee_id || '');
+    if (!ownerId) throw new Error('SWAP_SHIFT_NOT_FOUND: Ca nhường chưa gán nhân viên.');
+    const owner = await this.repo.getEmployeeById(ownerId).catch(() => null);
+    if (!owner || (owner as any).employment_status === 'TERMINATED') {
+      throw new Error('SUPPORT_OWNER_INVALID: Chủ ca đã nghỉ việc, không thể nhường ca này!');
+    }
+    const target = await this.repo.getEmployeeById(data.targetEmployeeId).catch(() => null);
+    if (!target || (target as any).employment_status !== 'OFFICIAL') {
+      throw new Error('SUPPORT_NOT_OFFICIAL: Chỉ điều nhân viên CHÍNH THỨC đi hỗ trợ chi nhánh!');
+    }
+    if (data.targetEmployeeId === ownerId) {
+      throw new Error('SUPPORT_SAME_EMPLOYEE: Nhân viên nhận hỗ trợ phải khác chủ ca!');
+    }
+    // Báo sớm cho HR: B đã có đúng ca đó ngày đó thì không nhận trùng được.
+    const dayShifts = await this.repo.getShiftsForEmployee(data.targetEmployeeId, day, day).catch(() => []);
+    const clash = (dayShifts || []).find((s: any) =>
+      (s as any).shift_code === shiftCode && (s as any).status !== 'CANCELLED');
+    if (clash) {
+      throw new Error(`SUPPORT_SHIFT_CONFLICT: Nhân viên đã có ${shiftCode} ngày ${day}, không thể nhận trùng ca!`);
+    }
+    const swapId = `SUP_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
+    return singleWriterQueue.enqueue({
+      entityType: 'PHIEU_DOI_CA',
+      entityId: swapId,
+      actorId: data.actorId,
+      execute: async () => {
+        // Chống gửi đôi cùng nội dung đang chờ.
+        const existing = await this.repo.listSwapRequests().catch(() => []);
+        const dup = (existing || []).find((s: any) =>
+          (s as any).status === 'PENDING_PARTNER' &&
+          (s as any).swap_kind === 'HR_SUPPORT' &&
+          (s as any).requester_assignment_id === data.requesterAssignmentId &&
+          (s as any).target_employee_id === data.targetEmployeeId
+        );
+        if (dup) {
+          throw new Error('SWAP_DUPLICATE: Đã có phiếu hỗ trợ y hệt đang chờ nhân viên xác nhận!');
+        }
+        const swap = await this.repo.createSwapRequest({
+          swap_id: swapId,
+          swap_kind: 'HR_SUPPORT',
+          requester_id: ownerId,
+          requester_assignment_id: data.requesterAssignmentId,
+          target_employee_id: data.targetEmployeeId,
+          target_assignment_id: '',
+          reason: data.reason,
+          status: 'PENDING_PARTNER',
+          bonus_amount: 0,
+          // Snapshot ca nhường để hiển thị + rà soát (ca gốc vẫn tra được qua assignment).
+          support_branch_id: branchId,
+          support_date: day,
+          support_shift_code: shiftCode,
+        } as any);
+
+        if (this.io) {
+          this.io.to(`user:${data.targetEmployeeId}`).emit('swap.updated', {
+            swapId,
+            status: 'PENDING_PARTNER',
+            kind: 'HR_SUPPORT',
+            from: data.actorId,
+          });
+        }
+
+        return swap;
+      },
+    });
+  }
+
+  /**
+   * Nhận ca làm thay thì không thể đồng thời OFF: người nhận ca (đi làm) mà
+   * đang có đơn OFF/nghỉ (đã duyệt hoặc chờ duyệt) đúng ngày ca đó thì hệ
+   * thống TỰ ĐỘNG HỦY ngày OFF đó (ghi chú rõ, realtime + Sheets như mọi đổi
+   * trạng thái). VD: A OFF ngày X, B nhường ca ngày X cho A — A đồng ý thì ngày
+   * OFF của A mất, ca sang A, B nghỉ.
+   */
+  private async cancelReceiverLeavesOnWorkDay(employeeId: string, date: string): Promise<string[]> {
+    const notes: string[] = [];
+    try {
+      const day = String(date || '').slice(0, 10);
+      if (!employeeId || !day) return notes;
+      const leaves = await this.repo.listLeaveRequests(undefined, employeeId).catch(() => []);
+      for (const l of leaves || []) {
+        const ld = String((l as any).requested_date || '').slice(0, 10);
+        const st = String((l as any).status || '');
+        if (ld !== day) continue;
+        if (st !== 'APPROVED' && st !== 'PENDING') continue;
+        await this.repo.updateLeaveRequest(
+          (l as any).request_id,
+          'CANCELLED',
+          'SYSTEM',
+          `Tự động hủy: nhận làm thay ca ngày ${day} — đi làm thì không còn OFF.`
+        ).catch(() => null);
+        const kind = (l as any).leave_type === 'HANG_TUAN' ? 'ngày OFF' : 'đơn nghỉ';
+        notes.push(`Ngày ${kind} ${day} của bạn đã tự động hủy vì bạn nhận làm ca này.`);
+      }
+    } catch { /* best-effort: ca vẫn chuyển, OFF xử lý sau */ }
+    return [...new Set(notes)];
+  }
+
+  /**
    * Dọn phiếu trùng y hệt còn chờ sau khi 1 phiếu đã chốt (APPROVED/REJECTED):
    * dữ liệu cũ gửi đôi để lại 2 phiếu PENDING cùng nội dung — duyệt phiếu này
    * mà để phiếu kia lại thì B bấm tiếp sẽ hoán đổi NGƯỢC lịch về chủ cũ.
@@ -1027,6 +1146,62 @@ export class SchedulesService {
         // KHÔNG cần HR duyệt nữa (vẫn không phụ cấp +30k).
         // - Tráo tay đôi (A ⇄ B, đủ 2 ca): hoán đổi người trực.
         // - Nhờ làm thay 1 chiều (không có ca đối ứng): chuyển ca A sang B.
+        // HR chuyển ca hỗ trợ chi nhánh (A nhường ca cho B): B đồng ý là ca
+        // chuyển sang B ngay (HR đã duyệt từ lúc gửi, không phụ cấp).
+        if ((swap as any).swap_kind === 'HR_SUPPORT') {
+          if (!accept) {
+            const supportRejected = await this.repo.updateSwapRequest(swapId, {
+              status: 'REJECTED',
+              rejection_reason: 'Nhân viên từ chối hỗ trợ chi nhánh',
+              partner_responded_at: new Date().toISOString(),
+            } as any);
+            await this.cancelSiblingPendingSwaps(swapId, swap);
+            if (this.io) {
+              this.io.to(`user:${swap.requester_id}`).emit('swap.updated', { swapId, status: 'REJECTED' });
+            }
+            return supportRejected;
+          }
+          // Ca nhường phải còn nguyên (đã publish, vẫn thuộc A) lúc B nhận.
+          const coverShift = await this.repo.getShiftById(swap.requester_assignment_id).catch(() => null);
+          if (!coverShift) {
+            throw new Error('SHIFTS_NOT_FOUND_FOR_SWAP: Ca nhường không còn tồn tại!');
+          }
+          if ((coverShift as any).status === 'CANCELLED') {
+            throw new Error('SWAP_SHIFT_CANCELLED: Ca nhường đã bị hủy!');
+          }
+          assertShiftsPublished([coverShift]);
+          assertSwapDatesAllowed([String((coverShift as any).date || '').slice(0, 10)]);
+          if (String((coverShift as any).employee_id || '') !== String(swap.requester_id || '')) {
+            throw new Error('SWAP_SHIFT_CHANGED: Ca nhường đã đổi chủ trước khi bạn xác nhận, phiếu này không còn hiệu lực!');
+          }
+          const supDate = String((coverShift as any).date || '').slice(0, 10);
+          const supCode = (coverShift as any).shift_code as ShiftCode;
+          const empDayShifts = await this.repo.getShiftsForEmployee(partnerId, supDate, supDate).catch(() => []);
+          const empClash = (empDayShifts || []).find((s: any) =>
+            (s as any).shift_code === supCode && (s as any).status !== 'CANCELLED');
+          if (empClash) {
+            throw new Error(`SUPPORT_SHIFT_CONFLICT: Bạn đã có ${supCode} ngày ${supDate}, không thể nhận thêm ca hỗ trợ trùng ca!`);
+          }
+          await this.repo.updateShiftAssignment(coverShift.assignment_id, {
+            employee_id: partnerId,
+            schedule_version: (coverShift.schedule_version || 0) + 1,
+          });
+          // B đi làm ca này thì ngày OFF (nếu có) của B ngày đó tự hủy.
+          const supportOffNotes = await this.cancelReceiverLeavesOnWorkDay(partnerId, supDate);
+          const supportApproved = await this.repo.updateSwapRequest(swapId, {
+            status: 'APPROVED',
+            partner_responded_at: new Date().toISOString(),
+            approved_by: partnerId,
+            approved_at: new Date().toISOString(),
+            bonus_amount: 0,
+          } as any);
+          await this.cancelSiblingPendingSwaps(swapId, swap);
+          if (this.io) {
+            this.io.to(`user:${swap.requester_id}`).emit('swap.updated', { swapId, status: 'APPROVED' });
+            this.io.to(`user:${partnerId}`).emit('swap.updated', { swapId, status: 'APPROVED' });
+          }
+          return { ...supportApproved, _warnings: supportOffNotes } as any;
+        }
         if (!isOpenDispatch && accept && (swap as any).swap_kind !== 'HR_DISPATCH') {
           if (!swap.target_assignment_id) {
             const coverShift = await this.repo.getShiftById(swap.requester_assignment_id);
@@ -1037,6 +1212,9 @@ export class SchedulesService {
               employee_id: swap.target_employee_id,
               schedule_version: coverShift.schedule_version + 1,
             });
+            // Người nhận đi làm ca này thì ngày OFF (nếu có) của họ ngày đó tự hủy.
+            const coverOffNotes = await this.cancelReceiverLeavesOnWorkDay(
+              swap.target_employee_id, String((coverShift as any).date || '').slice(0, 10));
             const autoCover = await this.repo.updateSwapRequest(swapId, {
               status: 'APPROVED',
               partner_responded_at: new Date().toISOString(),
@@ -1047,7 +1225,7 @@ export class SchedulesService {
             // Phiếu chốt thì dọn phiếu trùng y hệt còn chờ (kẻo duyệt tiếp hoán ngược).
             await this.cancelSiblingPendingSwaps(swapId, swap);
 
-            const coverWarnings: string[] = [];
+            const coverWarnings: string[] = [...coverOffNotes];
             try {
               const day = (coverShift.date || '').slice(0, 10);
               const empShifts = await this.repo.getShiftsForEmployee(swap.target_employee_id, day, day).catch(() => []);
@@ -1079,6 +1257,13 @@ export class SchedulesService {
             employee_id: swap.requester_id,
             schedule_version: tgtShift.schedule_version + 1,
           });
+          // Mỗi bên nhận ca mới thì ngày OFF (nếu có) của họ ngày ca đó tự hủy.
+          const twoWayOffNotes = [
+            ...(await this.cancelReceiverLeavesOnWorkDay(
+              swap.target_employee_id, String((reqShift as any).date || '').slice(0, 10))),
+            ...(await this.cancelReceiverLeavesOnWorkDay(
+              swap.requester_id, String((tgtShift as any).date || '').slice(0, 10))),
+          ];
           const autoApproved = await this.repo.updateSwapRequest(swapId, {
             status: 'APPROVED',
             partner_responded_at: new Date().toISOString(),
@@ -1089,7 +1274,7 @@ export class SchedulesService {
           // Phiếu chốt thì dọn phiếu trùng y hệt còn chờ (kẻo duyệt tiếp hoán ngược).
           await this.cancelSiblingPendingSwaps(swapId, swap);
 
-          const warnings: string[] = [];
+          const warnings: string[] = [...twoWayOffNotes];
           try {
             for (const empId of [swap.requester_id, swap.target_employee_id]) {
               const day = (tgtShift.date || '').slice(0, 10);
@@ -1165,8 +1350,13 @@ export class SchedulesService {
         if (!sh) missing.push(id);
         else dates.push(String(sh.date || '').slice(0, 10));
       }
+      // Phiếu hỗ trợ chi nhánh không có ca gốc — kiểm tra theo ngày hỗ trợ.
+      const supportDate = String((sw as any).support_date || '').slice(0, 10);
+      if (supportDate) dates.push(supportDate);
       const bad = dates.filter(d => !d || d < createdWk.mon || d > createdWk.sun);
       if (bad.length === 0 && missing.length === 0) continue;
+      // Phiếu hỗ trợ đã chốt là lịch sử công đã làm — giữ nguyên, không hoàn lịch.
+      if ((sw as any).swap_kind === 'HR_SUPPORT' && status === 'APPROVED') continue;
 
       // --- Hoàn trả lịch về chủ ban đầu (chỉ khi phiếu đã APPROVED) ---
       const reverted: string[] = [];
@@ -1299,6 +1489,9 @@ export class SchedulesService {
             employee_id: swap.target_employee_id,
             schedule_version: coverShift.schedule_version + 1,
           });
+          // Người nhận đi làm ca này thì ngày OFF (nếu có) của họ ngày đó tự hủy.
+          const dispatchOffNotes = await this.cancelReceiverLeavesOnWorkDay(
+            swap.target_employee_id, String((coverShift as any).date || '').slice(0, 10));
 
           const updatedDispatch = await this.repo.updateSwapRequest(swapId, {
             status: 'APPROVED',
@@ -1308,7 +1501,7 @@ export class SchedulesService {
           });
           await this.cancelSiblingPendingSwaps(swapId, swap);
 
-          const dispatchWarnings: string[] = [];
+          const dispatchWarnings: string[] = [...dispatchOffNotes];
           try {
             const day = (coverShift.date || '').slice(0, 10);
             const empShifts = await this.repo.getShiftsForEmployee(swap.target_employee_id, day, day).catch(() => []);
@@ -1346,6 +1539,13 @@ export class SchedulesService {
           employee_id: swap.requester_id,
           schedule_version: tgtShift.schedule_version + 1,
         });
+        // Mỗi bên nhận ca mới thì ngày OFF (nếu có) của họ ngày ca đó tự hủy.
+        const mgrOffNotes = [
+          ...(await this.cancelReceiverLeavesOnWorkDay(
+            swap.target_employee_id, String((reqShift as any).date || '').slice(0, 10))),
+          ...(await this.cancelReceiverLeavesOnWorkDay(
+            swap.requester_id, String((tgtShift as any).date || '').slice(0, 10))),
+        ];
 
         const updatedSwap = await this.repo.updateSwapRequest(swapId, {
           status: 'APPROVED',
@@ -1357,7 +1557,7 @@ export class SchedulesService {
 
         // Ghi nhận ngày 2 ca: sau hoán đổi, ai có >1 ca/ngày thì cảnh báo để
         // theo dõi điểm danh từng ca (mỗi ca check-in/out độc lập).
-        const warnings: string[] = [];
+        const warnings: string[] = [...mgrOffNotes];
         try {
           for (const empId of [swap.requester_id, swap.target_employee_id]) {
             const day = (tgtShift.date || '').slice(0, 10);

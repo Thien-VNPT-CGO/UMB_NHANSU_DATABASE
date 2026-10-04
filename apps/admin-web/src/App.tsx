@@ -93,12 +93,13 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'hr-schedule', label: '7. Lịch làm việc', icon: Calendar },
     { id: 'hr-leave', label: '8. Nghỉ OFF', icon: Clock },
     { id: 'hr-swap', label: '9. Đổi ca', icon: RefreshCw },
-    { id: 'hr-attendance', label: '10. Chấm công', icon: CheckCircle },
-    { id: 'hr-adjustments', label: '11. Bổ sung/Điều chỉnh công', icon: FileText },
-    { id: 'hr-tests', label: '12. TEST nhân viên', icon: FileCheck },
-    { id: 'hr-reports', label: '13. Báo cáo HR', icon: FileSpreadsheet },
-    { id: 'hr-notifications', label: '14. Thông báo', icon: Bell },
-    { id: 'hr-profile', label: '15. Hồ Sơ Nhân Viên Ụm Bò Milk', icon: IdCard },
+    { id: 'hr-support', label: '10. Chuyển ca hỗ trợ CN', icon: Send },
+    { id: 'hr-attendance', label: '11. Chấm công', icon: CheckCircle },
+    { id: 'hr-adjustments', label: '12. Bổ sung/Điều chỉnh công', icon: FileText },
+    { id: 'hr-tests', label: '13. TEST nhân viên', icon: FileCheck },
+    { id: 'hr-reports', label: '14. Báo cáo HR', icon: FileSpreadsheet },
+    { id: 'hr-notifications', label: '15. Thông báo', icon: Bell },
+    { id: 'hr-profile', label: '16. Hồ Sơ Nhân Viên Ụm Bò Milk', icon: IdCard },
   ],
   STORE: [
     { id: 'store-dashboard', label: '1. Dashboard Store', icon: Store },
@@ -150,6 +151,7 @@ export const ADMIN_TAB_ALIASES: Record<string, string> = {
   'hr-schedule': 'operations',
   'hr-leave': 'operations',
   'hr-swap': 'operations',
+  'hr-support': 'operations',
   'hr-attendance': 'operations',
   notifications: 'notify',
   policies: 'system',
@@ -959,6 +961,11 @@ export function App() {
         if (notif?.type === 'CHECKIN' || notif?.type === 'CHECKOUT') {
           notifyAttendanceRealtime();
         }
+        if (notif?.type === 'SWAP') {
+          try {
+            window.dispatchEvent(new CustomEvent('ubm:swaps-reload'));
+          } catch { /* non-fatal */ }
+        }
         scheduleReload(currentUser);
       });
 
@@ -972,6 +979,11 @@ export function App() {
         } else {
           if (payload?.entity === 'attendance' || payload?.entity === 'all') {
             notifyAttendanceRealtime();
+          }
+          if (payload?.entity === 'swaps' || payload?.entity === 'schedules' || payload?.entity === 'all') {
+            try {
+              window.dispatchEvent(new CustomEvent('ubm:swaps-reload'));
+            } catch { /* non-fatal */ }
           }
           scheduleReload(currentUser);
         }

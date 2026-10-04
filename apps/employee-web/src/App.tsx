@@ -498,8 +498,13 @@ export function App() {
     } catch { /* offline: giữ danh sách cũ */ }
   };
   // NV B xác nhận / từ chối phiếu tráo ca (B đồng ý là 2 ca hoán đổi ngay, không cần HR duyệt)
+  // + xác nhận / từ chối phiếu HR hỗ trợ chi nhánh (đồng ý là ca hỗ trợ vào lịch ngay)
   const handleRespondSwap = async (swapId: string, accept: boolean) => {
-    if (!window.confirm(accept ? 'Đồng ý tráo đổi ca này? Hai ca sẽ hoán đổi người trực ngay!' : 'Từ chối phiếu tráo đổi ca này?')) return;
+    const swKind = (mySwaps || []).find((s: any) => s.swap_id === swapId)?.swap_kind;
+    const isSupportKind = swKind === 'HR_SUPPORT';
+    if (!window.confirm(accept
+      ? (isSupportKind ? 'Đồng ý làm thay ca này? Ca sẽ chuyển sang bạn ngay!' : 'Đồng ý tráo đổi ca này? Hai ca sẽ hoán đổi người trực ngay!')
+      : 'Từ chối phiếu này?')) return;
     // Chỉ chặn bấm đúp (guard đồng bộ) — trạng thái thật do SERVER quyết định
     // (state local có thể cũ: banner hiện PENDING nhưng phiếu đã chốt / có bản
     // ma trùng id; chặn ở local sẽ kẹt vĩnh viễn "đã xử lý" mà phiếu không mất).
@@ -3904,10 +3909,19 @@ export function App() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px' }}>
                   {mySwaps.filter((s: any) => s.target_employee_id === employee?.employee_id && s.status === 'PENDING_PARTNER').map((s: any) => {
                     const reqName = s.requester_name || (branchColleagues || []).find((c: any) => c.employee_id === s.requester_id)?.full_name || s.requester_id;
+                    const isSupport = (s as any).swap_kind === 'HR_SUPPORT';
+                    const supShiftLabel = (c?: string) => c === 'CA_1' ? 'Ca 1 (07-12)' : c === 'CA_2' ? 'Ca 2 (12-18)' : c === 'CA_3' ? 'Ca 3 (18-23)' : (c || '');
                     return (
-                    <div key={s.swap_id} style={{ backgroundColor: '#FFF', borderRadius: '8px', padding: '10px', fontSize: '12px' }}>
-                      <div><strong>{reqName}</strong> muốn tráo đổi ca với bạn</div>
+                    <div key={s.swap_id} style={{ backgroundColor: '#FFF', borderRadius: '8px', padding: '10px', fontSize: '12px', border: isSupport ? '1.5px solid #2563EB' : undefined }}>
+                      {isSupport ? (
+                        <div>🆘 <strong>HR điều bạn làm thay tại {s.support_branch_id || ''}</strong> — {supShiftLabel(s.support_shift_code)} ngày {String(s.support_date || '').slice(0, 10)}</div>
+                      ) : (
+                        <div><strong>{reqName}</strong> muốn tráo đổi ca với bạn</div>
+                      )}
                       <div style={{ color: 'var(--text-muted)', marginTop: '2px' }}>Lý do: {s.reason || '—'}</div>
+                      {isSupport && (
+                        <div style={{ color: '#1D4ED8', fontWeight: 700, marginTop: '2px' }}>Đồng ý là ca chuyển sang bạn ngay — từ chối thì ca ở nguyên với chủ cũ.</div>
+                      )}
                       <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
                         <button className="btn-primary" style={{ flex: 1, padding: '9px' }} disabled={actionBusy === 'respond'} onClick={() => handleRespondSwap(s.swap_id, true)}>✓ Đồng ý</button>
                         <button className="btn-secondary" style={{ flex: 1, padding: '9px', color: '#DC2626' }} disabled={actionBusy === 'respond'} onClick={() => handleRespondSwap(s.swap_id, false)}>✕ Từ chối</button>

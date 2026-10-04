@@ -61,6 +61,7 @@ import {
   colleagueShiftsQuery,
   defaultShiftBody,
   swapDispatchBody,
+  supportCreateBody,
   employeeCreateBody,
   employeeUpdateBody,
   candidateRejectBody,
@@ -588,6 +589,18 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const accounts = await adapter.listAccounts();
       // Không bao giờ lộ pin_hash qua API.
       res.json(accounts.map(({ pin_hash: _omit, ...rest }: any) => rest));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Ca của 1 NV theo khoảng ngày (cho form HR chuyển ca hỗ trợ: chọn ca của A).
+  app.get('/admin/employee-shifts/:employeeId', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ query: meScheduleQuery }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const fromDate = (req.query.fromDate as string) || new Date(Date.now() + 7 * 3_600_000).toISOString().split('T')[0];
+      const toDate = (req.query.toDate as string) || '2030-12-31';
+      const shifts = await schedulesService.getEmployeeShifts(req.params.employeeId, fromDate, toDate);
+      res.json(shifts);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -2020,6 +2033,36 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // HR chuyển ca hỗ trợ chi nhánh: A nhường ca có sẵn cho B (B chính thức,
+  // thường khác chi nhánh) làm thay. B xác nhận trên cổng NV là ca chuyển
+  // sang B ngay + cập nhật lịch 2 cổng.
+  app.post('/swap-requests/support', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ body: supportCreateBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const target = await employeesService.getEmployee(req.body.targetEmployeeId).catch(() => null);
+      if (!target) return res.status(404).json({ error: 'EMPLOYEE_NOT_FOUND' });
+      const result = await schedulesService.createSupportRequest({
+        requesterAssignmentId: req.body.requesterAssignmentId,
+        targetEmployeeId: req.body.targetEmployeeId,
+        reason: req.body.reason || 'HR điều hỗ trợ chi nhánh',
+        actorId: req.user!.id,
+      });
+      const swRes: any = (result as any)?.result ?? result;
+      const owner = await employeesService.getEmployee((swRes as any)?.requester_id).catch(() => null);
+      broadcastUpdate('swaps', { action: 'support', swap: result });
+      broadcastNotification({
+        type: 'SWAP',
+        title: '🆘 HR Điều Hỗ Trợ Chi Nhánh',
+        message: `${(owner as any)?.full_name || 'Nhân viên'} nhường ${swRes?.support_shift_code} ngày ${String(swRes?.support_date || '').slice(0, 10)} (${(swRes as any)?.support_branch_id}) — ${(target as any)?.full_name || req.body.targetEmployeeId} làm thay. Chờ xác nhận!`,
+        linkTab: 'hr-swap',
+        metadata: { swapId: (result as any)?.result?.swap_id },
+        targetRoles: ['ADMIN', 'HR', 'STORE'],
+      });
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   app.post('/swap-requests/:id/respond', authMiddleware, validate({ params: idParams, body: swapRespondBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const partnerId = req.user?.employeeId || req.body.partnerId;
@@ -2027,11 +2070,14 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       broadcastUpdate('swaps', { action: 'respond', swap: result });
       const swRes: any = (result as any)?.result ?? result;
       const autoDone = req.body.accept && swRes?.status === 'APPROVED';
+      const isSupport = (swRes as any)?.swap_kind === 'HR_SUPPORT';
       broadcastNotification({
         type: 'SWAP',
-        title: req.body.accept ? '🤝 Đồng Nghiệp Đã Nhận Đổi Ca' : '⚠️ Đồng Nghiệp Từ Chối Đổi Ca',
+        title: req.body.accept ? (isSupport ? '🆘 NV Đã Nhận Hỗ Trợ Chi Nhánh' : '🤝 Đồng Nghiệp Đã Nhận Đổi Ca') : '⚠️ Đồng Nghiệp Từ Chối Đổi Ca',
         message: autoDone
-          ? `Tráo đổi ca #${req.params.id} đã tự hoàn tất: 2 ca hoán đổi người trực ngay (không cần HR duyệt).`
+          ? (isSupport
+            ? `Hỗ trợ chi nhánh #${req.params.id} đã hoàn tất: ca ${swRes?.support_shift_code} ngày ${String(swRes?.support_date || '').slice(0, 10)} tại ${(swRes as any)?.support_branch_id} đã chuyển sang nhân viên nhận hỗ trợ.`
+            : `Tráo đổi ca #${req.params.id} đã tự hoàn tất: 2 ca hoán đổi người trực ngay (không cần HR duyệt).`)
           : `Yêu cầu đổi ca #${req.params.id} đã được phản hồi: ${req.body.accept ? 'Đồng ý, chờ Store duyệt' : 'Từ chối'}.`,
         linkTab: 'hr-schedule',
         metadata: { swapId: req.params.id },

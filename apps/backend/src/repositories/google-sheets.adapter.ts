@@ -562,6 +562,9 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
             snapshot.created_at,
             (snapshot as any).swap_kind || 'EMPLOYEE_SWAP',
             (snapshot as any).bonus_amount || 0,
+            (snapshot as any).support_branch_id || '',
+            String((snapshot as any).support_date || '').slice(0, 10),
+            (snapshot as any).support_shift_code || '',
           ]).catch(() => false),
           new Promise<false>(r => setTimeout(() => r(false), 12000)),
         ]);

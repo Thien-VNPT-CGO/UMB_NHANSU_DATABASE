@@ -265,6 +265,14 @@ export const swapDispatchBody = z.object({
   reason: optString(1000),
 }).passthrough();
 
+// HR chuyển ca hỗ trợ chi nhánh: A nhường ca có sẵn cho B (B khác CN) làm thay.
+// B xác nhận trên cổng NV là ca chuyển sang B ngay (không cần duyệt thêm).
+export const supportCreateBody = z.object({
+  requesterAssignmentId: z.string().trim().min(1).max(64),
+  targetEmployeeId: z.string().trim().min(1).max(64),
+  reason: optString(1000),
+}).passthrough();
+
 // --- Attendance ---
 const checkBody = z.object({
   employee_id: optString(64),
