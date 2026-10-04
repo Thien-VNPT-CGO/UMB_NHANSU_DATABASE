@@ -472,6 +472,25 @@ export function App() {
   } | null>(null);
   const [myAttendanceHistory, setMyAttendanceHistory] = useState<any[]>([]);
   const [branchColleagues, setBranchColleagues] = useState<any[]>([]);
+  // Ca đầu tuần->hôm qua cho tab Dữ Liệu Công tuần (myShifts chỉ từ hôm nay trở
+  // đi). Ca quá khứ là lịch sử bất biến nên chỉ tải khi mở tab công — sự kiện
+  // điểm danh vẫn realtime qua loadEmployeeData.
+  const [weekPastShifts, setWeekPastShifts] = useState<any[]>([]);
+  useEffect(() => {
+    if (activeTab !== 'timesheet') return;
+    (async () => {
+      try {
+        const nowVn = new Date(Date.now() + 7 * 3_600_000);
+        const off = (nowVn.getUTCDay() + 6) % 7;
+        const mon = new Date(nowVn);
+        mon.setUTCDate(mon.getUTCDate() - off);
+        const fromD = mon.toISOString().slice(0, 10);
+        const toD = new Date(Date.now() + 7 * 3_600_000).toISOString().split('T')[0];
+        const list = await apiRequest(`/me/schedule?fromDate=${fromD}&toDate=${toD}`);
+        setWeekPastShifts(Array.isArray(list) ? list : []);
+      } catch { /* offline: giữ danh sách cũ */ }
+    })();
+  }, [activeTab]);
 
   // Official Swap Form Type: 1 = Trao doi A <-> B, 2 = Nho lam thay B lam thay A
   const [swapFormType, setSwapFormType] = useState<1 | 2>(1);
@@ -3638,57 +3657,203 @@ export function App() {
             <div className="card">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                 <h3 style={{ fontSize: '15px', fontWeight: 800 }}>5. Dữ Liệu Công Của Tôi</h3>
-                <span className="badge badge-brand">30 ngày gần nhất</span>
+                <span className="badge badge-brand">Tuần này (T2–CN)</span>
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {(() => {
-                  const byDate = new Map<string, any[]>();
-                  for (const e of myAttendanceHistory) {
-                    const d = (e.client_time || '').slice(0, 10);
-                    if (!d) continue;
-                    if (!byDate.has(d)) byDate.set(d, []);
-                    byDate.get(d)!.push(e);
+                  // Ngày Việt Nam (UTC+7) — slice UTC sẽ lệch ngày 00:00–07:00.
+                  const vnDay = (iso?: string) => {
+                    const t = new Date(iso || '').getTime();
+                    if (!Number.isFinite(t)) return '';
+                    return new Date(t + 7 * 3_600_000).toISOString().slice(0, 10);
+                  };
+                  const todayVN = vnDay(new Date().toISOString());
+                  // 7 ngày T2–CN của tuần hiện tại (luôn hiện đủ tuần)
+                  const nowVn = new Date(Date.now() + 7 * 3_600_000);
+                  const off = (nowVn.getUTCDay() + 6) % 7;
+                  const monDt = new Date(nowVn);
+                  monDt.setUTCDate(monDt.getUTCDate() - off);
+                  const monStr = monDt.toISOString().slice(0, 10);
+                  const weekDays: string[] = [];
+                  for (let i = 0; i < 7; i++) {
+                    const d = new Date(monDt);
+                    d.setUTCDate(d.getUTCDate() + i);
+                    weekDays.push(d.toISOString().slice(0, 10));
                   }
-                  const days = [...byDate.entries()].sort((a, b) => b[0].localeCompare(a[0]));
-                  if (days.length === 0) {
-                    return (
-                      <div style={{
-                        padding: '32px 16px',
-                        textAlign: 'center',
-                        backgroundColor: '#FAFAFA',
-                        borderRadius: 'var(--radius-sm)',
-                        border: '1px dashed var(--border)',
-                        color: 'var(--text-muted)',
-                        fontSize: '13px',
-                      }}>
-                        <CheckCircle2 size={32} color="#9CA3AF" style={{ margin: '0 auto 8px' }} />
-                        <div style={{ fontWeight: 700, color: 'var(--text)', marginBottom: '4px' }}>
-                          Chưa có dữ liệu chấm công trong 30 ngày qua
-                        </div>
-                        <div>Dữ liệu sẽ tự động đồng bộ realtime từ Google Sheets khi bạn thực hiện Check-in / Check-out ca làm việc.</div>
-                      </div>
-                    );
+                  const fmtT = (t?: string) => t ? new Date(t).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '--:--';
+                  const fmtHM = (t?: string) => {
+                    const ms = t ? new Date(t).getTime() : NaN;
+                    if (!Number.isFinite(ms)) return '';
+                    return new Date(ms).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+                  };
+                  const shiftNameOf = (code?: string) => code === 'CA_1' ? 'Ca 1' : code === 'CA_2' ? 'Ca 2' : code === 'CA_3' ? 'Ca 3' : (code || 'Ca');
+                  const money = (n: number) => Number(n || 0).toLocaleString('vi-VN');
+                  const wdName = (iso: string) => {
+                    const d = new Date(`${iso}T00:00:00Z`).getUTCDay();
+                    return d === 0 ? 'CN' : `T${d + 1}`;
+                  };
+                  // Gộp ca đầu tuần + ca hiện tại/tương lai, khử trùng
+                  const seenAssign = new Set<string>();
+                  const allShifts: any[] = [];
+                  for (const s of [...(weekPastShifts || []), ...(myShifts || [])]) {
+                    const k = (s as any).assignment_id || `${(s as any).date}_${(s as any).shift_code}`;
+                    if (seenAssign.has(k)) continue;
+                    seenAssign.add(k);
+                    allShifts.push(s);
                   }
-                  return days.map(([date, evs]) => {
-                    const inEv = evs.find(e => e.type === 'CHECK_IN');
-                    const outEv = evs.find(e => e.type === 'CHECK_OUT');
-                    const fmt = (t?: string) => t ? new Date(t).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '--:--';
+                  const shiftDays = new Map<string, any[]>();
+                  for (const s of allShifts) {
+                    const d = String((s as any).date || '').slice(0, 10);
+                    if (!d || d < monStr) continue;
+                    if (!shiftDays.has(d)) shiftDays.set(d, []);
+                    shiftDays.get(d)!.push(s);
+                  }
+                  const evtDays = new Map<string, any[]>();
+                  for (const e of (myAttendanceHistory || [])) {
+                    const d = vnDay((e as any).client_time);
+                    if (!d || d < monStr) continue;
+                    if (!evtDays.has(d)) evtDays.set(d, []);
+                    evtDays.get(d)!.push(e);
+                  }
+                  // Chuẩn bị dữ liệu từng ca + tổng hợp tuần
+                  let cDone = 0, cWorking = 0, cMissingOut = 0, cAbsent = 0, cNoCheck = 0, cUpcoming = 0, cCancelled = 0;
+                  let fineTotal = 0;
+                  const fineTextOf = (ev: any) => {
+                    const tier = String(ev?.fine_tier || 'NONE');
+                    const amt = Number(ev?.fine_amount) || 0;
+                    if (tier === 'NONE' && amt <= 0) return '';
+                    if (tier === 'FULL_SHIFT') return `Phạt 100% lương ca${amt > 0 ? ` (${money(amt)}đ)` : ''}`;
+                    if (tier === 'HALF_SHIFT') return `Phạt 50% lương ca${amt > 0 ? ` (${money(amt)}đ)` : ''}`;
+                    if (tier === 'FLAT_30K' || amt === 30000) return `Phạt ${money(amt || 30000)}đ`;
+                    if (amt > 0) return `Phạt ${money(amt)}đ`;
+                    return tier !== 'NONE' ? `Phạt (${tier})` : '';
+                  };
+                  const dayBlocks = weekDays.map((date) => {
                     const [y, m, dd] = date.split('-');
-                    const complete = !!(inEv && outEv);
-                    const outOfBounds = evs.some(e => e.gps_status === 'OUT_OF_BOUNDS');
-                    return (
-                      <div key={date} style={{ padding: '10px 12px', backgroundColor: '#FAFAFA', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div>
-                          <div style={{ fontWeight: 700, fontSize: '13px' }}>{dd}/{m}/{y}</div>
-                          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Vào: {fmt(inEv?.client_time)} • Ra: {fmt(outEv?.client_time)}</div>
-                        </div>
-                        <span className={`badge ${complete ? 'badge-success' : 'badge-warning'}`}>
-                          {complete ? (outOfBounds ? 'Đủ công (ngoài GPS)' : 'Đủ công') : 'Thiếu checkout'}
-                        </span>
-                      </div>
-                    );
+                    const dShifts = (shiftDays.get(date) || []).filter((s: any) => (s as any).status !== 'CANCELLED');
+                    const cancelledShifts = (shiftDays.get(date) || []).filter((s: any) => (s as any).status === 'CANCELLED');
+                    const evs = evtDays.get(date) || [];
+                    // So khớp sự kiện theo ca: ưu tiên assignment_id; chỉ dùng ngày
+                    // làm fallback khi hôm đó đúng 1 ca (tránh lan ca sáng sang chiều).
+                    const matchEv = (sh: any, type: string) => {
+                      const byAssign = evs.find((e: any) => e.type === type && (e as any).assignment_id && (sh as any)?.assignment_id && (e as any).assignment_id === (sh as any).assignment_id);
+                      if (byAssign) return byAssign;
+                      if (dShifts.length <= 1) {
+                        const anyAssign = evs.some((e: any) => e.type === type && (e as any).assignment_id);
+                        if (!anyAssign) return evs.find((e: any) => e.type === type);
+                      }
+                      return undefined;
+                    };
+                    const rows = dShifts.map((sh: any) => {
+                      const ci = matchEv(sh, 'CHECK_IN');
+                      const co = matchEv(sh, 'CHECK_OUT');
+                      const ab = matchEv(sh, 'ABSENT');
+                      const startMs = (sh as any).start_at ? new Date((sh as any).start_at).getTime() : NaN;
+                      const endMs = (sh as any).end_at ? new Date((sh as any).end_at).getTime() : NaN;
+                      const isPastDay = date < todayVN;
+                      const isToday = date === todayVN;
+                      const locked = !ci && Number.isFinite(startMs) && Date.now() - (startMs as number) > 3 * 60 * 60 * 1000;
+                      const pastEnd = Number.isFinite(endMs) && Date.now() - (endMs as number) > 30 * 60 * 1000;
+                      const lateMin = ci?.is_late ? Number(ci.minutes_deviation) || 0 : 0;
+                      const earlyMin = co?.is_early ? Number(co.minutes_deviation) || 0 : 0;
+                      const fine = ci ? fineTextOf(ci) : '';
+                      if (fine) { fineTotal += Number(ci?.fine_amount) || 0; }
+                      const ciDist = Number(ci?.distance_meters);
+                      const gpsBad = !!ci && ((ci as any)?.gps_status === 'OUT_OF_BOUNDS' || (Number.isFinite(ciDist) && ciDist > 300));
+                      let badge: string, bg: string, fg: string, border: string;
+                      if (ci && co) {
+                        cDone++;
+                        badge = '✓ Đủ công'; bg = '#ECFDF5'; fg = '#047857'; border = '1px solid #A7F3D0';
+                      } else if (ci && !co && (pastEnd || isPastDay)) {
+                        cMissingOut++;
+                        badge = 'Thiếu check-out — không lương'; bg = '#FFF7ED'; fg = '#9A3412'; border = '1px solid #FDBA74';
+                      } else if (ci && !co) {
+                        cWorking++;
+                        badge = 'Đang làm (chờ check-out)'; bg = '#FFFBEB'; fg = '#92400E'; border = '1px solid #FCD34D';
+                      } else if (ab) {
+                        cAbsent++;
+                        badge = '🔴 Vắng — không lương'; bg = '#FEE2E2'; fg = '#991B1B'; border = '1px solid #FCA5A5';
+                      } else if (locked || isPastDay) {
+                        cNoCheck++;
+                        badge = 'Không điểm danh — nghỉ không lương'; bg = '#FEE2E2'; fg = '#991B1B'; border = '1px solid #FCA5A5';
+                      } else if (isToday) {
+                        cUpcoming++;
+                        badge = 'Chưa check-in (Chờ ca)'; bg = '#FFFBEB'; fg = '#92400E'; border = '1px solid #FCD34D';
+                      } else {
+                        cUpcoming++;
+                        badge = 'Lịch đã duyệt'; bg = '#EEF2FF'; fg = '#3730A3'; border = '1px solid #C7D2FE';
+                      }
+                      const sched = `${fmtHM((sh as any).start_at)}${(sh as any).end_at ? `–${fmtHM((sh as any).end_at)}` : ''}`;
+                      const notes: string[] = [];
+                      if (lateMin > 0) notes.push(`Trễ ${lateMin}p`);
+                      if (earlyMin > 0) notes.push(`Về sớm ${earlyMin}p`);
+                      if (fine) notes.push(fine);
+                      if (gpsBad) notes.push(`GPS vượt ${ciDist}m (quá 300m)`);
+                      if (ab && !ci) notes.push('Hệ thống tự ghi vắng');
+                      return { sh, ci, co, badge, bg, fg, border, sched, notes };
+                    });
+                    // Sự kiện lẻ không gắn ca nào (điểm danh ngoài lịch)
+                    const orphans = evs.filter((e: any) => {
+                      if ((e as any).type === 'ABSENT') return !dShifts.some((sh: any) => matchEv(sh, 'ABSENT') === e);
+                      return !dShifts.some((sh: any) => matchEv(sh, (e as any).type) === e);
+                    });
+                    for (const c of cancelledShifts) cCancelled++;
+                    return { date, y, m, dd, rows, orphans, cancelledShifts };
                   });
+                  const sumBox = (label: string, val: string, color: string) => (
+                    <div style={{ flex: 1, minWidth: '70px', backgroundColor: '#FAFAFA', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '6px 4px', textAlign: 'center' }}>
+                      <div style={{ fontSize: '15px', fontWeight: 800, color }}>{val}</div>
+                      <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{label}</div>
+                    </div>
+                  );
+                  return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                        {sumBox('Đủ công', String(cDone), '#047857')}
+                        {sumBox('Đang làm', String(cWorking), '#92400E')}
+                        {sumBox('Thiếu check-out', String(cMissingOut), '#9A3412')}
+                        {sumBox('Vắng / Không điểm danh', String(cAbsent + cNoCheck), '#991B1B')}
+                        {sumBox('Tổng phạt tuần', fineTotal > 0 ? `${money(fineTotal)}đ` : '0đ', '#991B1B')}
+                      </div>
+                      {dayBlocks.map((blk: any) => (
+                        <div key={blk.date} style={{ padding: '10px 12px', backgroundColor: blk.date === todayVN ? '#FFFBEB' : '#FAFAFA', borderRadius: 'var(--radius-sm)', border: blk.date === todayVN ? '1.5px solid #F59E0B' : '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          <div style={{ fontWeight: 800, fontSize: '13px' }}>{wdName(blk.date)} • {blk.dd}/{blk.m}/{blk.y}{blk.date === todayVN ? ' (hôm nay)' : ''}</div>
+                          {blk.rows.map((r: any, i: number) => (
+                            <div key={(r.sh as any)?.assignment_id || i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', paddingTop: i > 0 ? '8px' : 0, borderTop: i > 0 ? '1px dashed var(--border)' : 'none' }}>
+                              <div>
+                                <div style={{ fontWeight: 700, fontSize: '12px' }}>{shiftNameOf((r.sh as any)?.shift_code)}{r.sched ? ` (${r.sched})` : ''}</div>
+                                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Vào: {fmtT(r.ci?.client_time)} • Ra: {fmtT(r.co?.client_time)}</div>
+                                {r.notes.length > 0 && (
+                                  <div style={{ fontSize: '11px', marginTop: '2px', color: r.notes.some((n: string) => /Phạt|GPS vượt|không lương/i.test(n)) ? '#991B1B' : 'var(--text-muted)', fontWeight: 600 }}>
+                                    {r.notes.join(' • ')}
+                                  </div>
+                                )}
+                              </div>
+                              <span style={{ fontSize: '11px', fontWeight: 700, padding: '4px 8px', borderRadius: '999px', backgroundColor: r.bg, color: r.fg, border: r.border, whiteSpace: 'nowrap' }}>
+                                {r.badge}
+                              </span>
+                            </div>
+                          ))}
+                          {blk.cancelledShifts.map((s: any, i: number) => (
+                            <div key={`cx_${(s as any)?.assignment_id || i}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                              <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{shiftNameOf((s as any)?.shift_code)} — ca đã hủy</div>
+                              <span style={{ fontSize: '11px', fontWeight: 700, padding: '4px 8px', borderRadius: '999px', backgroundColor: '#F1F5F9', color: '#64748B', border: '1px solid #CBD5E1', whiteSpace: 'nowrap' }}>Ca hủy</span>
+                            </div>
+                          ))}
+                          {blk.orphans.map((e: any) => (
+                            <div key={(e as any)?.event_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                              <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Điểm danh ngoài lịch: {(e as any).type === 'CHECK_IN' ? 'Vào' : 'Ra'} {fmtT((e as any)?.client_time)}</div>
+                              <span style={{ fontSize: '11px', fontWeight: 700, padding: '4px 8px', borderRadius: '999px', backgroundColor: '#EEF2FF', color: '#3730A3', border: '1px solid #C7D2FE', whiteSpace: 'nowrap' }}>Ngoài lịch</span>
+                            </div>
+                          ))}
+                          {blk.rows.length === 0 && blk.cancelledShifts.length === 0 && blk.orphans.length === 0 && (
+                            <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Chưa có ca — ngày nghỉ</div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  );
                 })()}
               </div>
 
