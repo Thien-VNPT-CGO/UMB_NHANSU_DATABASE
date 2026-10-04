@@ -486,6 +486,9 @@ export function App() {
   const [targetShifts, setTargetShifts] = useState<any[]>([]);
   const [targetShiftsLoading, setTargetShiftsLoading] = useState(false);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
+  // Guard đồng bộ chống bấm đúp gửi 2 phiếu đổi ca (setState async không kịp
+  // disable nút khi 2 click cùng tick / double-tap mobile -> 2 POST trùng nội dung).
+  const swapBusyRef = useRef(false);
   // Phiếu đổi ca liên quan đến tôi (gửi đi + chờ tôi xác nhận)
   const [mySwaps, setMySwaps] = useState<any[]>([]);
   const fetchMySwaps = async () => {
@@ -497,6 +500,16 @@ export function App() {
   // NV B xác nhận / từ chối phiếu tráo ca (B đồng ý là 2 ca hoán đổi ngay, không cần HR duyệt)
   const handleRespondSwap = async (swapId: string, accept: boolean) => {
     if (!window.confirm(accept ? 'Đồng ý tráo đổi ca này? Hai ca sẽ hoán đổi người trực ngay!' : 'Từ chối phiếu tráo đổi ca này?')) return;
+    // Chặn bấm đúp Đồng ý: lần 2 sẽ hoán đổi NGƯỢC lịch về chủ cũ (server cũng
+    // chặn SWAP_ALREADY_HANDLED, đây là lớp báo sớm). Phiếu phải còn chờ duyệt.
+    if (swapBusyRef.current || actionBusy) return;
+    const target = (mySwaps || []).find((s: any) => s.swap_id === swapId);
+    if (target && (target as any).status !== 'PENDING_PARTNER') {
+      showToast('Phiếu này đã được xử lý rồi! Đang tải lại danh sách mới nhất.');
+      await fetchMySwaps();
+      return;
+    }
+    swapBusyRef.current = true;
     setActionBusy('respond');
     try {
       const res = await apiRequest(`/swap-requests/${swapId}/respond`, {
@@ -505,11 +518,15 @@ export function App() {
       });
       const warns: string[] = (res as any)?.result?._warnings || (res as any)?._warnings || [];
       showToast(accept ? `✓ Đã đồng ý! Hai ca hoán đổi ngay.${warns.length ? ` Lưu ý: ${warns.join(' ')}` : ''}` : 'Đã từ chối phiếu đổi ca.');
-      await fetchMySwaps();
+      // Tải lịch trước rồi mới tải phiếu (nối tiếp): loadEmployeeData cũng fetch
+      // phiếu ngầm — fetch song song response cũ về sau sẽ ghi đè, reload hiện sai.
       await loadEmployeeData(employee?.employee_id);
+      await fetchMySwaps();
     } catch (e: any) {
       showToast(e?.message || 'Lỗi khi phản hồi!');
+      await fetchMySwaps().catch(() => null);
     } finally {
+      swapBusyRef.current = false;
       setActionBusy(null);
     }
   };
@@ -1840,6 +1857,9 @@ export function App() {
 
   // Gửi yêu cầu đổi ca THẬT lên server (cả 2 hình thức)
   const handleSubmitSwap = async () => {
+    // Chặn bấm đúp / double-tap: 2 POST cùng tick sẽ tạo 2 phiếu trùng nội dung
+    // (server cũng chặn SWAP_DUPLICATE, đây là lớp báo sớm).
+    if (swapBusyRef.current || actionBusy === 'swap') return;
     if (!swapData.myShift) {
       showToast('⚠️ Vui lòng chọn ca làm của bạn!');
       return;
@@ -1868,6 +1888,7 @@ export function App() {
       return;
     }
     setActionBusy('swap');
+    swapBusyRef.current = true;
     try {
       const res = await apiRequest('/swap-requests', {
         method: 'POST',
@@ -1882,11 +1903,13 @@ export function App() {
       showToast(sid ? `✓ Đã gửi yêu cầu đổi ca THẬT! Mã đơn: ${sid}. B đồng ý là 2 ca hoán đổi ngay.` : '✓ Đã gửi yêu cầu đổi ca! Mở danh sách phiếu để kiểm tra trạng thái.');
       setSwapData({ myShift: '', targetEmployeeId: '', targetEmployeeName: '', targetShift: '', reason: '' });
       setTargetShifts([]);
-      await fetchMySwaps();
+      // Lịch trước, phiếu sau (nối tiếp) — tránh response cũ ghi đè danh sách mới.
       await loadEmployeeData(employee?.employee_id);
+      await fetchMySwaps();
     } catch (err: any) {
       showToast(err.message || 'Lỗi khi gửi yêu cầu đổi ca!');
     } finally {
+      swapBusyRef.current = false;
       setActionBusy(null);
     }
   };
@@ -4165,6 +4188,8 @@ export function App() {
                     style={{ backgroundColor: '#2563EB' }}
                     disabled={actionBusy === 'swap'}
                     onClick={async () => {
+                      // Chặn bấm đúp / double-tap (guard đồng bộ, disabled async không kịp).
+                      if (swapBusyRef.current || actionBusy === 'swap') return;
                       if (!swapData.myShift) {
                         showToast('⚠️ Vui lòng chọn ca của bạn cần nhờ làm thay!');
                         return;
@@ -4185,6 +4210,7 @@ export function App() {
                         }
                       }
                       setActionBusy('swap');
+                      swapBusyRef.current = true;
                       try {
                         const res = await apiRequest('/swap-requests', {
                           method: 'POST',
@@ -4199,11 +4225,12 @@ export function App() {
                         showToast(sid ? `✓ Đã gửi yêu cầu nhờ làm thay! Mã đơn: ${sid}. B đồng ý là ca chuyển ngay.` : '✓ Đã gửi yêu cầu nhờ làm thay! Mở danh sách phiếu để kiểm tra trạng thái.');
                         setSwapData({ myShift: '', targetEmployeeId: '', targetEmployeeName: '', targetShift: '', reason: '' });
                         setTargetShifts([]);
-                        await fetchMySwaps();
                         await loadEmployeeData(employee?.employee_id);
+                        await fetchMySwaps();
                       } catch (err: any) {
                         showToast(err.message || 'Lỗi khi gửi yêu cầu!');
                       } finally {
+                        swapBusyRef.current = false;
                         setActionBusy(null);
                       }
                     }}

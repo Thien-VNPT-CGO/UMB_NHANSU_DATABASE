@@ -826,7 +826,7 @@ export class SchedulesService {
     targetAssignmentId: string;
     reason: string;
   }) {
-    const swapId = `SWAP_${Date.now()}`;
+    const swapId = `SWAP_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
     // Chặn ngay từ lúc gửi: ca phải tồn tại + nằm trong tuần hiện tại.
     const reqSh = data.requesterAssignmentId
       ? await this.repo.getShiftById(data.requesterAssignmentId).catch(() => null)
@@ -848,6 +848,19 @@ export class SchedulesService {
       entityId: swapId,
       actorId: data.requesterId,
       execute: async () => {
+        // Chống trùng phiếu: bấm đúp / retry mạng gửi 2 POST cùng nội dung thì
+        // chỉ giữ 1 phiếu PENDING — phiếu sau bị từ chối rõ ràng, không tạo đôi.
+        const existing = await this.repo.listSwapRequests().catch(() => []);
+        const dup = (existing || []).find((s: any) =>
+          (s as any).status === 'PENDING_PARTNER' &&
+          (s as any).requester_id === data.requesterId &&
+          (s as any).requester_assignment_id === data.requesterAssignmentId &&
+          (s as any).target_employee_id === data.targetEmployeeId &&
+          (s as any).target_assignment_id === data.targetAssignmentId
+        );
+        if (dup) {
+          throw new Error('SWAP_DUPLICATE: Bạn đã có phiếu đổi ca cùng nội dung đang chờ duyệt, không cần gửi lại!');
+        }
         const swap = await this.repo.createSwapRequest({
           swap_id: swapId,
           swap_kind: 'EMPLOYEE_SWAP',
@@ -929,6 +942,16 @@ export class SchedulesService {
       execute: async () => {
         const swap = await this.repo.getSwapById(swapId);
         if (!swap) throw new Error('SWAP_REQUEST_NOT_FOUND');
+        // Phiếu chỉ được xử lý 1 lần khi đang chờ B xác nhận — bấm đúp Đồng ý /
+        // danh sách cũ retry mà duyệt lại sẽ hoán đổi NGƯỢC lịch về chủ cũ nhưng
+        // vẫn báo thành công (reload thấy phiếu/lịch như chưa đổi).
+        if ((swap as any).status !== 'PENDING_PARTNER') {
+          const label = (swap as any).status === 'APPROVED' ? 'đã duyệt xong'
+            : (swap as any).status === 'REJECTED' ? 'đã bị từ chối'
+            : (swap as any).status === 'CANCELLED' ? 'đã bị hủy'
+            : `đang ở trạng thái ${(swap as any).status}`;
+          throw new Error(`SWAP_ALREADY_HANDLED: Phiếu này ${label} rồi, không xử lý lại! Tải lại danh sách.`);
+        }
         const isOpenDispatch =
           (swap as any).swap_kind === 'HR_DISPATCH' && !swap.target_employee_id;
         if (!isOpenDispatch && swap.target_employee_id !== partnerId) {
