@@ -1735,6 +1735,22 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     }, 60000);
     return () => clearInterval(t);
   }, [activeTab]);
+  useEffect(() => {
+    // Realtime điểm danh 100%: App.tsx phát 'ubm:attendance-reload' khi socket báo
+    // CHECKIN/CHECKOUT | data:updated(attendance/all) | attendance.recorded.
+    // Tải lại /attendance/events ngay (debounce) để lịch tuần hiện check-in/out
+    // tức thì, không đợi đổi tab hay poll 30-60s.
+    let timer: any = null;
+    const handler = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { reloadAttEvents(); }, 400);
+    };
+    window.addEventListener('ubm:attendance-reload', handler);
+    return () => {
+      window.removeEventListener('ubm:attendance-reload', handler);
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
   // (QR Zalo thật do server sinh qua /admin/zalo/* — không còn QR giả local.)
 
   // Filter employees for Store

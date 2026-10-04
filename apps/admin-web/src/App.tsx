@@ -936,6 +936,14 @@ export function App() {
 
       // Lắng nghe thông báo nghiệp vụ trực tiếp (Check-in, đơn nghỉ, đổi ca, đổi PIN...)
       // Ràng buộc 2 chiều: cổng quản trị chỉ popup/chuông tin TỪ cổng nhân viên.
+      // Realtime điểm danh: báo cho lưới lịch (RoleViews.liveAttendanceEvents) tải lại
+      // /attendance/events ngay — loadAllData không chứa attendance nên chỉ
+      // scheduleReload thì lịch vẫn đứng yên cho tới khi đổi tab/F5.
+      const notifyAttendanceRealtime = () => {
+        try {
+          window.dispatchEvent(new CustomEvent('ubm:attendance-reload'));
+        } catch { /* non-fatal */ }
+      };
       socket.on('system:notification', (notif: any) => {
         console.log('🔔 [Socket.IO] Nhận thông báo nghiệp vụ realtime:', notif);
         const fromEmployee = !notif.origin || notif.origin === 'EMPLOYEE';
@@ -948,6 +956,9 @@ export function App() {
             linkTab: notif.linkTab,
           });
         }
+        if (notif?.type === 'CHECKIN' || notif?.type === 'CHECKOUT') {
+          notifyAttendanceRealtime();
+        }
         scheduleReload(currentUser);
       });
 
@@ -959,6 +970,9 @@ export function App() {
         if (payload?.entity === 'config') {
           loadAllData(currentUser, true);
         } else {
+          if (payload?.entity === 'attendance' || payload?.entity === 'all') {
+            notifyAttendanceRealtime();
+          }
           scheduleReload(currentUser);
         }
       });
@@ -977,7 +991,12 @@ export function App() {
       });
 
       socket.on('schedule.published', () => scheduleReload(currentUser));
-      socket.on('attendance.recorded', () => scheduleReload(currentUser));
+      socket.on('attendance.recorded', () => {
+        try {
+          window.dispatchEvent(new CustomEvent('ubm:attendance-reload'));
+        } catch { /* non-fatal */ }
+        scheduleReload(currentUser);
+      });
       socket.on('payroll.published', () => scheduleReload(currentUser));
     } catch (err) {
       console.warn('[Socket.IO] Không thể khởi tạo kết nối realtime:', err);
