@@ -1017,6 +1017,26 @@ export function App() {
       });
 
       socket.on('schedule.published', () => scheduleReload(currentUser));
+      socket.on('employees:locked', (payload: any) => {
+        const id = String(payload?.employeeId || '');
+        if (id) {
+          setAllEmployees(prev => (prev || []).map((e: any) =>
+            e?.employee_id === id ? { ...e, account_locked: true, account_status: 'LOCKED' } : e
+          ));
+          const today = new Date().toISOString().slice(0, 10);
+          setShifts(prev => (prev || []).filter((s: any) => !(String(s?.employee_id) === id && String(s?.date || '').slice(0, 10) >= today)));
+        }
+        scheduleReload(currentUser);
+      });
+      socket.on('employees:unlocked', (payload: any) => {
+        const id = String(payload?.employeeId || '');
+        if (id) {
+          setAllEmployees(prev => (prev || []).map((e: any) =>
+            e?.employee_id === id ? { ...e, account_locked: false, account_status: 'ACTIVE' } : e
+          ));
+        }
+        scheduleReload(currentUser);
+      });
       socket.on('attendance.recorded', () => {
         try {
           window.dispatchEvent(new CustomEvent('ubm:attendance-reload'));
@@ -1030,18 +1050,21 @@ export function App() {
 
     // Khóa/mở TK tức thì trên máy HR vừa bấm (không đợi vòng tải lại API):
     // đánh dấu cờ khóa trong danh sách NV -> lưới Lịch ẩn/hiện ngay lập tức.
+    // Đồng thời xóa ca làm việc của NV bị khóa ra khỏi state shifts lập tức.
     const onEmpLocked = (ev: any) => {
       const id = String(ev?.detail?.employeeId || '');
       if (!id) return;
       setAllEmployees(prev => (prev || []).map((e: any) =>
-        e?.employee_id === id ? { ...e, account_locked: true } : e
+        e?.employee_id === id ? { ...e, account_locked: true, account_status: 'LOCKED' } : e
       ));
+      const today = new Date().toISOString().slice(0, 10);
+      setShifts(prev => (prev || []).filter((s: any) => !(String(s?.employee_id) === id && String(s?.date || '').slice(0, 10) >= today)));
     };
     const onEmpUnlocked = (ev: any) => {
       const id = String(ev?.detail?.employeeId || '');
       if (!id) return;
       setAllEmployees(prev => (prev || []).map((e: any) =>
-        e?.employee_id === id ? { ...e, account_locked: false } : e
+        e?.employee_id === id ? { ...e, account_locked: false, account_status: 'ACTIVE' } : e
       ));
     };
     try {

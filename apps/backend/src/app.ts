@@ -955,21 +955,27 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         const emps = await employeesService.listEmployees(branchScope, req.query.status as string);
         // Kèm cờ khóa tài khoản để UI hiện badge + ẩn khỏi Lịch (join nhẹ từ accounts).
         const lockedIds = new Set<string>();
+        const lockedPhones = new Set<string>();
         try {
           const accs = await (adapter as any).listAccounts().catch(() => []);
           for (const a of accs || []) {
-            if ((a as any)?.account_status === 'LOCKED' && (a as any)?.employee_id) {
-              lockedIds.add(String((a as any).employee_id));
+            if ((a as any)?.account_status === 'LOCKED') {
+              if ((a as any)?.employee_id) lockedIds.add(String((a as any).employee_id));
+              if ((a as any)?.phone_normalized) lockedPhones.add(canonicalPhone((a as any).phone_normalized));
             }
           }
         } catch { /* bỏ qua: mặc định không khóa */ }
         // Cắt bytes avatar inline khỏi danh sách (nhẹ payload); ảnh xem qua /employees/:id/avatar.
         res.json((emps || []).map((e: any) => {
           const { avatar_photo: _drop, ...rest } = (e as any) || {};
-          if (lockedIds.has(String((e as any)?.employee_id))) {
-            return { ...rest, account_locked: true };
+          const isLocked = lockedIds.has(String((e as any)?.employee_id)) ||
+            (e?.phone_normalized && lockedPhones.has(canonicalPhone(e.phone_normalized))) ||
+            (e as any)?.account_locked === true ||
+            (e as any)?.account_status === 'LOCKED';
+          if (isLocked) {
+            return { ...rest, account_locked: true, account_status: 'LOCKED' };
           }
-          return (e as any)?.avatar_photo ? rest : e;
+          return { ...((e as any)?.avatar_photo ? rest : e), account_locked: false, account_status: 'ACTIVE' };
         }));
       } catch (err: any) {
         res.status(500).json({ error: err.message });
@@ -1180,11 +1186,18 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.get('/employees/:id/avatar', authMiddleware, requireRole(['ADMIN', 'HR', 'STORE']), serveEmployeeAvatar);
 
   // HR khóa tài khoản NV chính thức: LOCKED + XÓA PIN + văng phiên ngay.
-  // Hồ sơ/điểm danh/công/lương GIỮ NGUYÊN — Lịch làm việc ẩn NV này.
+  // Hồ sơ/điểm danh/công/lương GIỮ NGUYÊN — Lịch làm việc xóa ngay lập tức các ca từ hôm nay.
   app.post('/employees/:id/lock', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {
     try {
       const result = await employeesService.lockEmployeeAccount(req.params.id, req.user!.id);
       broadcastUpdate('employees', { action: 'lock', employeeId: req.params.id });
+      broadcastUpdate('accounts', { action: 'lock', employeeId: req.params.id });
+      broadcastUpdate('schedules', { action: 'delete', employeeId: req.params.id });
+      const io = app.get('io');
+      if (io) {
+        io.emit('employees:locked', { employeeId: req.params.id });
+        io.emit('schedule.published', { employeeId: req.params.id });
+      }
       res.json({ success: true, ...result });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -1196,6 +1209,11 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       const result = await employeesService.unlockEmployeeAccount(req.params.id, req.user!.id);
       broadcastUpdate('employees', { action: 'unlock', employeeId: req.params.id });
+      broadcastUpdate('accounts', { action: 'unlock', employeeId: req.params.id });
+      const io = app.get('io');
+      if (io) {
+        io.emit('employees:unlocked', { employeeId: req.params.id });
+      }
       res.json({ success: true, ...result });
     } catch (err: any) {
       res.status(400).json({ error: err.message });

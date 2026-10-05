@@ -500,6 +500,17 @@ export class MockSheetsAdapter implements ISheetsRepository {
     return { ...shift };
   }
 
+  async deleteShiftsForEmployee(employeeId: string, fromDate?: string): Promise<number> {
+    this.checkErrors();
+    const beforeCount = this.shifts.length;
+    this.shifts = this.shifts.filter(s => {
+      if (String(s.employee_id) !== String(employeeId)) return true;
+      if (fromDate && String(s.date || '').slice(0, 10) < fromDate) return true;
+      return false; // Xóa ca này
+    });
+    return beforeCount - this.shifts.length;
+  }
+
   // --- Leaves & Swaps ---
   async createLeaveRequest(request: Omit<LeaveRequest, 'created_at' | 'version'>): Promise<LeaveRequest> {
     this.checkErrors();

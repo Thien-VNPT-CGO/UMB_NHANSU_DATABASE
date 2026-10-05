@@ -474,9 +474,28 @@ export class EmployeesService {
   async lockEmployeeAccount(employeeId: string, actorId: string) {
     const emp = await this.repo.getEmployeeById(employeeId);
     if (!emp) throw new Error('EMPLOYEE_NOT_FOUND');
-    const accs = (await this.repo.listAccounts().catch(() => []))
+    let accs = (await this.repo.listAccounts().catch(() => []))
       .filter(a => a.employee_id === employeeId);
-    if (accs.length === 0) throw new Error('ACCOUNT_NOT_FOUND: NV chưa có tài khoản đăng nhập!');
+    if (accs.length === 0) {
+      // Fallback: Tìm theo SĐT chuẩn hóa
+      const normPhone = emp.phone_normalized ? canonicalPhone(emp.phone_normalized) : '';
+      if (normPhone) {
+        accs = (await this.repo.listAccounts().catch(() => []))
+          .filter(a => a.phone_normalized && canonicalPhone(a.phone_normalized) === normPhone);
+      }
+    }
+    if (accs.length === 0) {
+      // Tự động tạo tài khoản trạng thái LOCKED để đảm bảo hồ sơ luôn có tài khoản bị khóa
+      const newAcc = await this.repo.createAccount({
+        account_id: `ACC_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+        employee_id: employeeId,
+        phone_normalized: emp.phone_normalized || '',
+        account_status: 'LOCKED',
+        role: 'EMPLOYEE',
+        branch_scope: emp.default_branch_id || 'CN130',
+      });
+      accs = [newAcc];
+    }
     const locked: string[] = [];
     for (const a of accs) {
       if ((a as any).account_status === 'LOCKED' && !(a as any).pin_hash) {
@@ -488,6 +507,38 @@ export class EmployeesService {
       await this.repo.setAccountPin(a.account_id, '', false, actorId, null);
       locked.push(a.account_id);
     }
+
+    // Cập nhật trạng thái khóa trực tiếp lên hồ sơ EmployeeMaster
+    (emp as any).account_locked = true;
+    (emp as any).account_status = 'LOCKED';
+    if ((this.repo as any).updateEmployee) {
+      await (this.repo as any).updateEmployee(employeeId, {
+        account_locked: true,
+        account_status: 'LOCKED',
+      } as any, emp.version).catch(() => null);
+    }
+
+    // XÓA LỊCH LÀM VIỆC TỪ HÔM NAY TRỞ ĐI RA KHỎI LỊCH LÀM VIỆC LẬP TỨC:
+    // Ca quá khứ giữ nguyên để đối soát điểm danh/công/lương.
+    const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+    let shiftsCancelled = 0;
+    try {
+      if ((this.repo as any).deleteShiftsForEmployee) {
+        shiftsCancelled = await (this.repo as any).deleteShiftsForEmployee(employeeId, today);
+      } else {
+        const all = await this.repo.getShiftsForWeek('*', '2000-01-01').catch(() => []);
+        for (const s of all || []) {
+          if (String((s as any).employee_id) !== String(employeeId)) continue;
+          if (String((s as any).date || '').slice(0, 10) < today) continue;
+          if ((s as any).status === 'CANCELLED') continue;
+          try {
+            await this.repo.updateShiftAssignment((s as any).assignment_id, { status: 'CANCELLED' } as any);
+            shiftsCancelled++;
+          } catch { /* tiếp ca khác */ }
+        }
+      }
+    } catch { /* best-effort */ }
+
     await this.repo.recordAuditLog({
       log_id: `LOG_${Date.now()}`,
       actor_id: actorId,
@@ -495,9 +546,9 @@ export class EmployeesService {
       action: 'EMPLOYEE_LOCKED',
       target_entity: 'TAI_KHOAN_NHAN_VIEN',
       target_id: employeeId,
-      details: `HR khóa tài khoản + xóa PIN của ${(emp as any).full_name || employeeId} (giữ hồ sơ/công/lương)`,
+      details: `HR khóa tài khoản + xóa PIN của ${(emp as any).full_name || employeeId} (giữ hồ sơ/công/lương) + xóa ${shiftsCancelled} ca từ hôm nay ra khỏi lịch`,
     } as any).catch(() => null);
-    return { employeeId, locked };
+    return { employeeId, locked, shiftsCancelled };
   }
 
   /**
@@ -506,8 +557,15 @@ export class EmployeesService {
   async unlockEmployeeAccount(employeeId: string, actorId: string) {
     const emp = await this.repo.getEmployeeById(employeeId);
     if (!emp) throw new Error('EMPLOYEE_NOT_FOUND');
-    const accs = (await this.repo.listAccounts().catch(() => []))
+    let accs = (await this.repo.listAccounts().catch(() => []))
       .filter(a => a.employee_id === employeeId);
+    if (accs.length === 0) {
+      const normPhone = emp.phone_normalized ? canonicalPhone(emp.phone_normalized) : '';
+      if (normPhone) {
+        accs = (await this.repo.listAccounts().catch(() => []))
+          .filter(a => a.phone_normalized && canonicalPhone(a.phone_normalized) === normPhone);
+      }
+    }
     if (accs.length === 0) throw new Error('ACCOUNT_NOT_FOUND: NV chưa có tài khoản đăng nhập!');
     const locked = accs.filter(a => (a as any).account_status === 'LOCKED');
     if (locked.length === 0) throw new Error('ACCOUNT_NOT_LOCKED: Tài khoản đang hoạt động bình thường!');
@@ -518,6 +576,15 @@ export class EmployeesService {
       await this.repo.setAccountStatus(a.account_id, 'ACTIVE', actorId);
       await this.repo.setAccountPin(a.account_id, hash, true, actorId, freshPin);
       opened.push(a.account_id);
+    }
+    // Gỡ cờ khóa trực tiếp trên hồ sơ EmployeeMaster
+    (emp as any).account_locked = false;
+    (emp as any).account_status = 'ACTIVE';
+    if ((this.repo as any).updateEmployee) {
+      await (this.repo as any).updateEmployee(employeeId, {
+        account_locked: false,
+        account_status: 'ACTIVE',
+      } as any, emp.version).catch(() => null);
     }
     await this.repo.recordAuditLog({
       log_id: `LOG_${Date.now()}`,

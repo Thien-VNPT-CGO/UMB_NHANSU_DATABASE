@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Users,
   Calendar,
@@ -2014,6 +2014,34 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Khóa/mở tài khoản NV chính thức (HR): busy theo NV + kết quả PIN mới sau mở khóa.
   const [lockBusyId, setLockBusyId] = useState<string | null>(null);
   const [unlockPinResult, setUnlockPinResult] = useState<{ name: string; code: string; pin: string } | null>(null);
+  const [lockedEmpIds, setLockedEmpIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    const onLockedEv = (ev: any) => {
+      const id = String(ev?.detail?.employeeId || '');
+      if (id) setLockedEmpIds(prev => new Set(prev).add(id));
+    };
+    const onUnlockedEv = (ev: any) => {
+      const id = String(ev?.detail?.employeeId || '');
+      if (id) setLockedEmpIds(prev => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    };
+    window.addEventListener('ubm:employee-locked', onLockedEv as any);
+    window.addEventListener('ubm:employee-unlocked', onUnlockedEv as any);
+    return () => {
+      window.removeEventListener('ubm:employee-locked', onLockedEv as any);
+      window.removeEventListener('ubm:employee-unlocked', onUnlockedEv as any);
+    };
+  }, []);
+
+  const isEmpAccountLocked = (e: any) => {
+    if (!e) return false;
+    const id = String(e.employee_id || '');
+    return !!e.account_locked || e.account_status === 'LOCKED' || lockedEmpIds.has(id);
+  };
   // Avatar tab Hồ Sơ: ảnh mới HR vừa chọn (data URL, gửi kèm lúc lưu) + cờ xóa avatar.
   const [avatarPhoto, setAvatarPhoto] = useState<string | null>(null);
   const [avatarRemoved, setAvatarRemoved] = useState(false);
@@ -5353,21 +5381,20 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         {toISODate(emp.official_date) || toISODate(emp.start_date) || 'Đang cập nhật'}
                       </td>
                       <td style={{ padding: '14px 18px', textAlign: 'center' }}>
-                        <span className="badge badge-success" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 700, letterSpacing: '0.3px' }}>
-                          <CheckCircle size={11} />
-                          CHÍNH THỨC
-                        </span>
-                        {(emp as any)?.account_locked && (
-                          <div style={{ marginTop: '4px' }}>
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 800, backgroundColor: '#FEE2E2', color: '#991B1B', border: '1px solid #FECACA' }}>
-                              🔒 ĐÃ KHÓA TK
-                            </span>
-                          </div>
+                        {isEmpAccountLocked(emp) ? (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 800, letterSpacing: '0.3px', backgroundColor: '#FEE2E2', color: '#991B1B', border: '1px solid #FECACA' }}>
+                            🔒 TÀI KHOẢN BỊ KHÓA
+                          </span>
+                        ) : (
+                          <span className="badge badge-success" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 700, letterSpacing: '0.3px' }}>
+                            <CheckCircle size={11} />
+                            CHÍNH THỨC
+                          </span>
                         )}
                       </td>
                       <td style={{ padding: '14px 18px', textAlign: 'center' }}>
                         <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
-                          {(emp as any)?.account_locked ? (
+                          {isEmpAccountLocked(emp) ? (
                             <button
                               className="btn-secondary"
                               style={{ padding: '5px 12px', fontSize: '12px', fontWeight: 700, color: '#059669', borderColor: '#A7F3D0' }}
@@ -5379,9 +5406,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 try {
                                   const res: any = await apiRequest(`/employees/${emp.employee_id}/unlock`, { method: 'POST' });
                                   setUnlockPinResult({ name: emp.full_name, code: emp.employee_code, pin: res?.pin || '' });
+                                  setLockedEmpIds(prev => {
+                                    const next = new Set(prev);
+                                    next.delete(emp.employee_id);
+                                    return next;
+                                  });
+                                  (emp as any).account_locked = false;
+                                  (emp as any).account_status = 'ACTIVE';
                                   try { window.dispatchEvent(new CustomEvent('ubm:employee-unlocked', { detail: { employeeId: emp.employee_id } })); } catch { /* non-fatal */ }
-                                  // KHÔNG gọi onPushSheets ở đây: backend đã đẩy tab accounts ngay +
-                                  // full-sync nền đuổi theo — sync-now tay thêm ~30 writes là vượt quota Sheets.
                                   if (onRefreshData) await onRefreshData();
                                 } catch (e: any) {
                                   showToast(e?.message || 'Lỗi khi mở khóa!');
@@ -5397,17 +5429,18 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                               className="btn-secondary"
                               style={{ padding: '5px 12px', fontSize: '12px', fontWeight: 700, color: '#B45309', borderColor: '#FDE68A' }}
                               disabled={lockBusyId === emp.employee_id}
-                              title="Khóa ngay: văng phiên đăng nhập, XÓA mã PIN; giữ nguyên hồ sơ, điểm danh, công, lương; ẩn khỏi Lịch làm việc"
+                              title="Khóa ngay: văng phiên đăng nhập, XÓA mã PIN + XÓA lịch làm việc từ hôm nay; giữ nguyên hồ sơ, điểm danh, công, lương"
                               onClick={async () => {
-                                if (!window.confirm(`KHÓA tài khoản ${emp.full_name} (${emp.employee_code})?\n• Văng phiên đăng nhập + XÓA mã PIN ngay\n• GIỮ NGUYÊN hồ sơ, điểm danh, công, lương\n• Ẩn khỏi Lịch làm việc (không xếp ca mới)`)) return;
+                                if (!window.confirm(`KHÓA tài khoản ${emp.full_name} (${emp.employee_code})?\n• Văng phiên đăng nhập + XÓA mã PIN ngay\n• XÓA lịch làm việc từ HÔM NAY trở đi (ca quá khứ giữ lại đối soát)\n• GIỮ NGUYÊN hồ sơ, điểm danh, công, lương`)) return;
                                 setLockBusyId(emp.employee_id);
                                 try {
-                                  await apiRequest(`/employees/${emp.employee_id}/lock`, { method: 'POST' });
-                                  showToast(`🔒 Đã khóa tài khoản ${emp.full_name} + xóa PIN!`);
+                                  const res: any = await apiRequest(`/employees/${emp.employee_id}/lock`, { method: 'POST' });
+                                  showToast(`🔒 Đã khóa tài khoản ${emp.full_name} + xóa PIN + xóa ${res?.shiftsCancelled ?? 0} ca từ hôm nay!`);
+                                  setLockedEmpIds(prev => new Set(prev).add(emp.employee_id));
+                                  (emp as any).account_locked = true;
+                                  (emp as any).account_status = 'LOCKED';
                                   // Ẩn khỏi Lịch NGAY LẬP TỨC (kể cả ca tuần này), không đợi tải lại.
                                   try { window.dispatchEvent(new CustomEvent('ubm:employee-locked', { detail: { employeeId: emp.employee_id } })); } catch { /* non-fatal */ }
-                                  // KHÔNG gọi onPushSheets ở đây: backend đã đẩy tab accounts ngay +
-                                  // full-sync nền đuổi theo — sync-now tay thêm ~30 writes là vượt quota Sheets.
                                   if (onRefreshData) await onRefreshData();
                                 } catch (e: any) {
                                   showToast(e?.message || 'Lỗi khi khóa!');
@@ -6043,16 +6076,19 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       const extra = (archiveEvents || []).filter((e: any) => !seen.has(String(e.event_id)));
       return extra.length > 0 ? [...(liveAttendanceEvents || []), ...extra] : (liveAttendanceEvents || []);
     })();
-    // Gộp lịch ca realtime + lịch ca tuần cũ (khử trùng theo assignment_id).
+    // Gộp lịch ca realtime + lịch ca tuần cũ (khử trùng theo assignment_id) và loại bỏ ca của NV bị khóa.
     const schedAllShifts = (() => {
-      if (!archiveShifts || archiveShifts.length === 0) return shifts || [];
-      const seen = new Set<string>((shifts || []).map((s: any) => String(s.assignment_id || '')));
-      const extra = (archiveShifts || []).filter((s: any) => !s.assignment_id || !seen.has(String(s.assignment_id)));
-      return extra.length > 0 ? [...(shifts || []), ...extra] : (shifts || []);
+      const base = (() => {
+        if (!archiveShifts || archiveShifts.length === 0) return shifts || [];
+        const seen = new Set<string>((shifts || []).map((s: any) => String(s.assignment_id || '')));
+        const extra = (archiveShifts || []).filter((s: any) => !s.assignment_id || !seen.has(String(s.assignment_id)));
+        return extra.length > 0 ? [...(shifts || []), ...extra] : (shifts || []);
+      })();
+      return base.filter((s: any) => !lockedEmpIds.has(String(s.employee_id || '')));
     })();
 
     const scheduleItems = (allEmployees || [])
-      .filter((emp: any) => !(emp as any)?.account_locked)
+      .filter((emp: any) => !isEmpAccountLocked(emp))
       .map((emp, empIdx) => {
       const empShifts = (schedAllShifts || []).filter((s: any) => s.employee_id === emp.employee_id);
       const empLeaves = (leaves || []).filter((l: any) => l.employee_id === emp.employee_id && (l.status === 'APPROVED' || l.status === 'PENDING'));
@@ -6063,7 +6099,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
       weekDays.forEach((day) => {
         // Tìm ca làm việc THẬT được phân công trên hệ thống cho ngày này
-        const foundShift = empShifts.find((s: any) => s.date === day.isoDate || (s.date && s.date.startsWith(day.isoDate)));
+        // (bỏ ca CANCELLED: ca bị hủy/khóa không còn hiệu lực đi làm).
+        const foundShift = empShifts.find((s: any) => s.status !== 'CANCELLED' && (s.date === day.isoDate || (s.date && s.date.startsWith(day.isoDate))));
         // Đơn nghỉ phép đã duyệt hoặc chờ duyệt
         const foundLeave = empLeaves.find((l: any) => l.requested_date === day.isoDate || (l.requested_date && l.requested_date.startsWith(day.isoDate)));
         // Bản ghi điểm danh check-in và check-out thật từ Socket.IO / Database
@@ -6100,6 +6137,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           // Lọc trùng assignment_id để dòng trùng không hiện thành "2 ca" ma.
           const seenAssign = new Set<string>();
           const dayShifts = empShifts.filter((s: any) => {
+            if (s.status === 'CANCELLED') return false;
             if (!(s.date === day.isoDate || (s.date && s.date.startsWith(day.isoDate)))) return false;
             if (s.assignment_id && seenAssign.has(s.assignment_id)) return false;
             if (s.assignment_id) seenAssign.add(s.assignment_id);
@@ -8878,7 +8916,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }
 
   if (activeTab === 'store-schedule') {
-    const branchShifts = shifts.filter(s => branchScope === '*' || canonicalBranchId(s.branch_id) === canonicalBranchId(branchScope));
+    const branchShifts = shifts.filter(s => (branchScope === '*' || canonicalBranchId(s.branch_id) === canonicalBranchId(branchScope)) && !lockedEmpIds.has(String(s.employee_id || '')));
     const storeWeekMon = mondayIsoOfOffset(scheduleWeekOffset);
     const storeWeekSun = (() => {
       const d = new Date(`${storeWeekMon}T00:00:00`);

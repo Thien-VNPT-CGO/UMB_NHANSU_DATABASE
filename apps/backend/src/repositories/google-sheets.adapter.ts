@@ -554,6 +554,19 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     return res;
   }
 
+  async deleteShiftsForEmployee(employeeId: string, fromDate?: string): Promise<number> {
+    const deletedCount = await this.fallbackAdapter.deleteShiftsForEmployee(employeeId, fromDate);
+    if (this.isConfigured && deletedCount > 0) {
+      try {
+        await this.syncService.pushShiftsTab(this.fallbackAdapter);
+      } catch (err) {
+        console.warn('[GoogleSheetsAdapter] pushShiftsTab sau khi xóa ca thất bại:', (err as any)?.message || err);
+        this.scheduleFullSync('PHAN_CONG_CA.delete');
+      }
+    }
+    return deletedCount;
+  }
+
   // --- Leaves & Swaps ---
   async createLeaveRequest(request: any) {
     const res = await this.fallbackAdapter.createLeaveRequest(request);
