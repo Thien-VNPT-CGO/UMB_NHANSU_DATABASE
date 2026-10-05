@@ -1899,12 +1899,17 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   useEffect(() => {
     // Lịch tuần cũ: bảng realtime bị reset cuối tuần — đọc bù từ kho LUUTRU để ô ngày
     // cũ vẫn hiện đủ giờ in/out (chỉ đọc kho, không sửa realtime). Cache theo tuần.
-    if (activeTab !== 'hr-schedule' && activeTab !== 'operations') return;
+    if (activeTab !== 'hr-schedule' && activeTab !== 'operations' && activeTab !== 'hr-attendance') return;
     const vnToday = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
     const curMon = mondayIsoOfOffset(0);
     const need = new Set<string>();
     const viewMon = mondayIsoOfOffset(scheduleWeekOffset);
     if (viewMon < curMon) need.add(viewMon);
+    // Bảng Chấm Công Realtime xem theo tuần riêng (attWeekOffset).
+    try {
+      const attMon = mondayIsoOfOffset(attWeekOffset);
+      if (attMon < curMon) need.add(attMon);
+    } catch { /* bỏ qua */ }
     // Dải 12 ngày thử việc quá khứ của NV thử việc cũng cần sự kiện lưu trữ.
     try {
       for (const e of (allEmployees || [])) {
@@ -1957,7 +1962,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       }
     })();
     return () => { alive = false; };
-  }, [activeTab, scheduleWeekOffset, scheduleBranchFilter, scheduleStageFilter, allEmployees]);
+  }, [activeTab, scheduleWeekOffset, attWeekOffset, scheduleBranchFilter, scheduleStageFilter, allEmployees]);
   // (QR Zalo thật do server sinh qua /admin/zalo/* — không còn QR giả local.)
 
   // Filter employees for Store
@@ -7720,7 +7725,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     });
     const attWeekSet = new Set(attDays.map(d => d.iso));
     const attWeekShifts = (shifts || []).filter((s: any) => attWeekSet.has((s.date || '').slice(0, 10)) && s.status !== 'CANCELLED');
-    const attWeekEvts = (liveAttendanceEvents || []).filter((e: any) => attWeekSet.has(vnDayOf(e.client_time || '')));
+    // Tuần cũ: gộp thêm sự kiện từ kho lưu trữ để đủ ngày công tính lương.
+    const attAllEvts = (() => {
+      if (!archiveEvents || archiveEvents.length === 0) return liveAttendanceEvents || [];
+      const seen = new Set<string>((liveAttendanceEvents || []).map((e: any) => String(e.event_id)));
+      const extra = (archiveEvents || []).filter((e: any) => !seen.has(String(e.event_id)));
+      return extra.length > 0 ? [...(liveAttendanceEvents || []), ...extra] : (liveAttendanceEvents || []);
+    })();
+    const attWeekEvts = (attAllEvts || []).filter((e: any) => attWeekSet.has(vnDayOf(e.client_time || '')));
     const attSwapAll = ((typeof swapList !== 'undefined' && swapList !== null ? swapList : (swaps || [])) as any[]) || [];
     // Phiếu đổi ca liên quan 1 ca: bỏ phiếu chết (REJECTED/CANCELLED), ưu tiên
     // phiếu còn hiệu lực (APPROVED > PARTNER_ACCEPTED > PENDING) rồi mới nhất —
@@ -8002,14 +8014,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               onChange={(e) => setAttWeekOffset(Number(e.target.value))}
               style={{ padding: '6px 10px', fontSize: '12px', borderRadius: '6px', fontWeight: 700 }}
             >
-              {weekOptions().map(w => (
+              {weekOptions(0, 12).map(w => (
                 <option key={w.offset} value={w.offset}>{w.label}</option>
               ))}
             </select>
             <button className="btn-secondary" style={{ fontSize: '12px', padding: '6px 10px' }} onClick={() => setAttWeekOffset(o => o - 1)}>◀</button>
             <button className="btn-primary" style={{ fontSize: '12px', padding: '6px 10px' }} onClick={() => setAttWeekOffset(o => o + 1)}>▶</button>
             <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-              Tuần <strong>Thứ 2 {attDays[0] ? `${attDays[0].iso.slice(8, 10)}/${attDays[0].iso.slice(5, 7)}/${attDays[0].iso.slice(0, 4)}` : '…'} → CN {attDays[6] ? `${attDays[6].iso.slice(8, 10)}/${attDays[6].iso.slice(5, 7)}/${attDays[6].iso.slice(0, 4)}` : '…'}</strong> • 1 ô = các ca trong ngày kèm đúng trạng thái
+              Tuần <strong>Thứ 2 {attDays[0] ? `${attDays[0].iso.slice(8, 10)}/${attDays[0].iso.slice(5, 7)}/${attDays[0].iso.slice(0, 4)}` : '…'} → CN {attDays[6] ? `${attDays[6].iso.slice(8, 10)}/${attDays[6].iso.slice(5, 7)}/${attDays[6].iso.slice(0, 4)}` : '…'}</strong> • 1 ô = các ca trong ngày kèm đúng trạng thái{attWeekOffset < 0 ? (archiveLoading ? ' • ⏳ Đang tải ngày công tuần cũ từ kho lưu trữ...' : ' • Tuần cũ đọc từ kho lưu trữ (đủ ngày công tính lương).') : ''}
             </span>
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
