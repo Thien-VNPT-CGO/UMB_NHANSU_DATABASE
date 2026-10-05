@@ -1810,10 +1810,10 @@ export class GoogleSheetsSyncService {
       await this.overwriteSheetData('TAI_KHOAN_NHAN_VIEN', SHEETS_DEFINITIONS.find(d => d.title === 'TAI_KHOAN_NHAN_VIEN')!.headers, accountRows);
       details.accounts = accountRows.length;
 
-      // 5. Phân công ca — giữ 60 ngày quá khứ + toàn bộ tương lai (trước đây chỉ
-      // từ hôm nay trở đi nên ca cũ bị xóa khỏi Sheet sau mỗi full-sync).
-      const sixtyDaysAgo = new Date(Date.now() + 7 * 3_600_000 - 60 * 86_400_000).toISOString().slice(0, 10);
-      const shifts = await repo.getShiftsForWeek('*', sixtyDaysAgo);
+      // 5. Phân công ca — đẩy TOÀN BỘ lịch sử (không cắt 60 ngày): cắt là ca cũ
+      // mất khỏi Sheet sau mỗi full-sync/publish, restart là mất vĩnh viễn khỏi
+      // bộ nhớ -> tab Lịch lùi tuần trống ca cũ. '2000-01-01' = lấy tất cả.
+      const shifts = await repo.getShiftsForWeek('*', '2000-01-01');
       const shiftRows = shifts.map(s => [
         s.assignment_id,
         s.employee_id,
@@ -2156,8 +2156,9 @@ export class GoogleSheetsSyncService {
    * publish cũng không rớt về DRAFT (NV mất quyền đổi ca oan).
    */
   public async pushShiftsTab(repo: { getShiftsForWeek(branch: string, weekMon: string): Promise<any[]> }): Promise<number> {
-    const sixtyDaysAgo = new Date(Date.now() + 7 * 3_600_000 - 60 * 86_400_000).toISOString().slice(0, 10);
-    const shifts = await repo.getShiftsForWeek('*', sixtyDaysAgo).catch(() => []);
+    // Đẩy TOÀN BỘ lịch sử ca (không cắt ngày): giữ ca cũ bền vững trên Sheet để tab
+    // Lịch lùi tuần + tính lương luôn đủ dữ liệu sau restart. '2000-01-01' = lấy tất cả.
+    const shifts = await repo.getShiftsForWeek('*', '2000-01-01').catch(() => []);
     const shiftRows = (shifts || []).map((s: any) => [
       s.assignment_id,
       s.employee_id,
