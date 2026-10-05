@@ -466,6 +466,71 @@ export class EmployeesService {
     });
   }
 
+  /**
+   * HR khóa tài khoản NV (cột Thao tác tab Chính thức): LOCKED + XÓA PIN
+   * (hash + bản rõ) + văng phiên đang dùng ngay. Hồ sơ, điểm danh, công, lương
+   * GIỮ NGUYÊN tuyệt đối — chỉ chặn đăng nhập + ẩn khỏi Lịch làm việc.
+   */
+  async lockEmployeeAccount(employeeId: string, actorId: string) {
+    const emp = await this.repo.getEmployeeById(employeeId);
+    if (!emp) throw new Error('EMPLOYEE_NOT_FOUND');
+    const accs = (await this.repo.listAccounts().catch(() => []))
+      .filter(a => a.employee_id === employeeId);
+    if (accs.length === 0) throw new Error('ACCOUNT_NOT_FOUND: NV chưa có tài khoản đăng nhập!');
+    const locked: string[] = [];
+    for (const a of accs) {
+      if ((a as any).account_status === 'LOCKED' && !(a as any).pin_hash) {
+        locked.push(a.account_id);
+        continue;
+      }
+      await this.repo.setAccountStatus(a.account_id, 'LOCKED', actorId);
+      // Xóa PIN: không còn thông tin đăng nhập nào (hash rỗng + gỡ bản rõ).
+      await this.repo.setAccountPin(a.account_id, '', false, actorId, null);
+      locked.push(a.account_id);
+    }
+    await this.repo.recordAuditLog({
+      log_id: `LOG_${Date.now()}`,
+      actor_id: actorId,
+      actor_role: 'HR',
+      action: 'EMPLOYEE_LOCKED',
+      target_entity: 'TAI_KHOAN_NHAN_VIEN',
+      target_id: employeeId,
+      details: `HR khóa tài khoản + xóa PIN của ${(emp as any).full_name || employeeId} (giữ hồ sơ/công/lương)`,
+    } as any).catch(() => null);
+    return { employeeId, locked };
+  }
+
+  /**
+   * HR mở khóa lại: ACTIVE + cấp PIN 6 số mới (bắt đổi) — trả PIN để trao tay NV.
+   */
+  async unlockEmployeeAccount(employeeId: string, actorId: string) {
+    const emp = await this.repo.getEmployeeById(employeeId);
+    if (!emp) throw new Error('EMPLOYEE_NOT_FOUND');
+    const accs = (await this.repo.listAccounts().catch(() => []))
+      .filter(a => a.employee_id === employeeId);
+    if (accs.length === 0) throw new Error('ACCOUNT_NOT_FOUND: NV chưa có tài khoản đăng nhập!');
+    const locked = accs.filter(a => (a as any).account_status === 'LOCKED');
+    if (locked.length === 0) throw new Error('ACCOUNT_NOT_LOCKED: Tài khoản đang hoạt động bình thường!');
+    const freshPin = generateAutoPin();
+    const hash = await hashPin(freshPin);
+    const opened: string[] = [];
+    for (const a of locked) {
+      await this.repo.setAccountStatus(a.account_id, 'ACTIVE', actorId);
+      await this.repo.setAccountPin(a.account_id, hash, true, actorId, freshPin);
+      opened.push(a.account_id);
+    }
+    await this.repo.recordAuditLog({
+      log_id: `LOG_${Date.now()}`,
+      actor_id: actorId,
+      actor_role: 'HR',
+      action: 'EMPLOYEE_UNLOCKED',
+      target_entity: 'TAI_KHOAN_NHAN_VIEN',
+      target_id: employeeId,
+      details: `HR mở khóa + cấp PIN mới cho ${(emp as any).full_name || employeeId}`,
+    } as any).catch(() => null);
+    return { employeeId, opened, pin: freshPin };
+  }
+
   // Candidates & Recruitment
   async listCandidates() {
     return this.repo.listCandidates();

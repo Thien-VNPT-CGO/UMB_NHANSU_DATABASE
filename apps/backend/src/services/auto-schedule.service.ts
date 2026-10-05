@@ -105,9 +105,20 @@ export async function buildAutoPlan(
   for (let i = 0; i < 7; i++) dates.push(addDays(weekMon, i));
 
   const employees = (await repo.listEmployees(branchId === '*' ? undefined : { branch: branchId }).catch(() => [])) as any[];
+  // NV bị HR khóa tài khoản: BOT không xếp ca mới (Lịch ẩn NV này).
+  const lockedIds = new Set<string>();
+  try {
+    const accs = await repo.listAccounts().catch(() => []);
+    for (const a of accs || []) {
+      if ((a as any)?.account_status === 'LOCKED' && (a as any)?.employee_id) {
+        lockedIds.add(String((a as any).employee_id));
+      }
+    }
+  } catch { /* bỏ qua: mặc định không khóa */ }
   const officials = (Array.isArray(employees) ? employees : []).filter(
     (e: any) =>
       e.employment_status === 'OFFICIAL' &&
+      !lockedIds.has(String(e.employee_id)) &&
       (branchId === '*' || sameBranch(e.default_branch_id, branchId))
   );
 

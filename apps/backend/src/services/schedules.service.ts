@@ -129,10 +129,20 @@ export class SchedulesService {
       actorId,
       execute: async () => {
         const shifts = await this.repo.getShiftsForWeek(branchId, weekStartDate);
+        // Ca DRAFT của NV bị khóa: giữ nguyên (không publish) — Lịch ẩn NV này.
+        const lockedIds = new Set<string>();
+        try {
+          const accs = await this.repo.listAccounts().catch(() => []);
+          for (const a of accs || []) {
+            if ((a as any)?.account_status === 'LOCKED' && (a as any)?.employee_id) {
+              lockedIds.add(String((a as any).employee_id));
+            }
+          }
+        } catch { /* bỏ qua */ }
         const updatedShifts: ShiftAssignment[] = [];
 
         for (const shift of shifts) {
-          if (shift.status === 'DRAFT') {
+          if (shift.status === 'DRAFT' && !lockedIds.has(String((shift as any).employee_id))) {
             const updated = await this.repo.updateShiftAssignment(shift.assignment_id, {
               status: 'PUBLISHED',
               schedule_version: shift.schedule_version + 1,

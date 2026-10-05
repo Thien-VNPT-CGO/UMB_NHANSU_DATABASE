@@ -1,5 +1,5 @@
 import { SystemRole } from './roles.js';
-export type AccountStatus = 'ACTIVE';
+export type AccountStatus = 'ACTIVE' | 'LOCKED';
 export interface EmployeeAccount {
     account_id: string;
     employee_id: string;

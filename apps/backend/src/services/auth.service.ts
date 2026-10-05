@@ -175,6 +175,10 @@ export class AuthService {
     if (accounts.length === 0) {
       throw new Error(ERROR_CODES.ACCOUNT_NOT_FOUND);
     }
+    // Toàn bộ tài khoản của SĐT này bị HR khóa -> báo rõ (không báo sai PIN oan).
+    if (accounts.every(a => (a as any).account_status === 'LOCKED')) {
+      throw new Error('ACCOUNT_LOCKED');
+    }
 
     // SĐT trùng nhiều tài khoản: dùng mã PIN để phân biệt — PIN đúng của
     // tài khoản nào thì vào tài khoản đó, khỏi cần HR đối soát tay.
@@ -199,6 +203,10 @@ export class AuthService {
 
     // Không còn luồng kích hoạt/khóa: SĐT + PIN hợp lệ là đăng nhập được.
 
+    // Tài khoản bị HR khóa: chặn ngay cả khi PIN đúng (PIN đã bị xóa khi khóa).
+    if ((account as any).account_status === 'LOCKED') {
+      throw new Error('ACCOUNT_LOCKED');
+    }
     // PIN do HR cấp — chặn ké tài khoản chỉ biết SĐT.
     if (!account.pin_hash) {
       throw new Error('PIN_NOT_SET');
@@ -495,6 +503,7 @@ export class AuthService {
         throw e;
       }
       if (!account) throw new Error('ACCOUNT_REVOKED');
+      if ((account as any).account_status === 'LOCKED') throw new Error('ACCOUNT_REVOKED');
       if (typeof decoded.tv === 'number' && account.version !== decoded.tv) {
         throw new Error('TOKEN_REVOKED');
       }

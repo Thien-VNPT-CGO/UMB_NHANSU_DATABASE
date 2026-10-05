@@ -35,6 +35,8 @@ export interface ISheetsRepository {
   /** Xóa trực tiếp 1 tài khoản NV (dọn dòng mồ côi không còn hồ sơ nhân viên). */
   deleteAccount?(accountId: string): Promise<boolean>;
   setAccountPin(id: string, pinHash: string, mustChange: boolean, actorId: string, pinPlain?: string | null): Promise<EmployeeAccount>;
+  /** Khóa/mở tài khoản NV (HR khóa NV chính thức: xóa PIN + văng phiên; mở lại cấp PIN mới). */
+  setAccountStatus(id: string, status: 'ACTIVE' | 'LOCKED', actorId: string): Promise<EmployeeAccount>;
   /** Đánh dấu tới hạn đổi PIN định kỳ (giữ nguyên hash — NV tự đổi từ PIN cũ, KHÔNG reset, KHÔNG tăng version để khỏi văng phiên). */
   markAccountPinMustChange(id: string, actorId: string): Promise<EmployeeAccount>;
   getAdminByUsername(username: string): Promise<AdminAccount | null>;

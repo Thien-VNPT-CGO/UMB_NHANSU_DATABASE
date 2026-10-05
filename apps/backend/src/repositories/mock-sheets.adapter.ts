@@ -295,6 +295,27 @@ export class MockSheetsAdapter implements ISheetsRepository {
     return { ...account };
   }
 
+  async setAccountStatus(id: string, status: 'ACTIVE' | 'LOCKED', actorId: string): Promise<EmployeeAccount> {
+    this.checkErrors();
+    const account = this.accounts.find(a => a.account_id === id);
+    if (!account) throw new Error('ACCOUNT_NOT_FOUND');
+    if ((account as any).account_status === status) return { ...account };
+    (account as any).account_status = status;
+    // Tăng version để thu hồi phiên đăng nhập đang dùng (token cũ văng ngay).
+    account.version += 1;
+    account.updated_at = new Date().toISOString();
+    await this.recordAuditLog({
+      log_id: `LOG_${Date.now()}`,
+      actor_id: actorId,
+      actor_role: 'HR',
+      action: status === 'LOCKED' ? 'ACCOUNT_LOCKED' : 'ACCOUNT_UNLOCKED',
+      target_entity: 'TAI_KHOAN_NHAN_VIEN',
+      target_id: id,
+      details: `${status === 'LOCKED' ? 'HR khóa tài khoản' : 'HR mở khóa tài khoản'} ${id} (NV ${account.employee_id})`,
+    });
+    return { ...account };
+  }
+
   async createAccount(account: Omit<EmployeeAccount, 'created_at' | 'updated_at' | 'version'>): Promise<EmployeeAccount> {
     this.checkErrors();
     const existing = this.accounts.find(a => a.account_id === account.account_id || a.phone_normalized === account.phone_normalized);

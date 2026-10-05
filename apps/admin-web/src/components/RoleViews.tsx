@@ -2011,6 +2011,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [editingEmp, setEditingEmp] = useState<any>(null);
   const [editEmpForm, setEditEmpForm] = useState<any>({});
   const [editEmpBusy, setEditEmpBusy] = useState(false);
+  // Khóa/mở tài khoản NV chính thức (HR): busy theo NV + kết quả PIN mới sau mở khóa.
+  const [lockBusyId, setLockBusyId] = useState<string | null>(null);
+  const [unlockPinResult, setUnlockPinResult] = useState<{ name: string; code: string; pin: string } | null>(null);
   // Avatar tab Hồ Sơ: ảnh mới HR vừa chọn (data URL, gửi kèm lúc lưu) + cờ xóa avatar.
   const [avatarPhoto, setAvatarPhoto] = useState<string | null>(null);
   const [avatarRemoved, setAvatarRemoved] = useState(false);
@@ -5354,9 +5357,63 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           <CheckCircle size={11} />
                           CHÍNH THỨC
                         </span>
+                        {(emp as any)?.account_locked && (
+                          <div style={{ marginTop: '4px' }}>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 800, backgroundColor: '#FEE2E2', color: '#991B1B', border: '1px solid #FECACA' }}>
+                              🔒 ĐÃ KHÓA TK
+                            </span>
+                          </div>
+                        )}
                       </td>
                       <td style={{ padding: '14px 18px', textAlign: 'center' }}>
                         <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
+                          {(emp as any)?.account_locked ? (
+                            <button
+                              className="btn-secondary"
+                              style={{ padding: '5px 12px', fontSize: '12px', fontWeight: 700, color: '#059669', borderColor: '#A7F3D0' }}
+                              disabled={lockBusyId === emp.employee_id}
+                              title="Mở khóa tài khoản + cấp PIN 6 số mới cho NV đăng nhập lại"
+                              onClick={async () => {
+                                if (!window.confirm(`MỞ KHÓA tài khoản ${emp.full_name} (${emp.employee_code})?\nHệ thống cấp PIN 6 số mới — HR trao tay NV để đăng nhập lại.`)) return;
+                                setLockBusyId(emp.employee_id);
+                                try {
+                                  const res: any = await apiRequest(`/employees/${emp.employee_id}/unlock`, { method: 'POST' });
+                                  setUnlockPinResult({ name: emp.full_name, code: emp.employee_code, pin: res?.pin || '' });
+                                  if (onRefreshData) await onRefreshData();
+                                  if (onPushSheets) await onPushSheets();
+                                } catch (e: any) {
+                                  showToast(e?.message || 'Lỗi khi mở khóa!');
+                                } finally {
+                                  setLockBusyId(null);
+                                }
+                              }}
+                            >
+                              {lockBusyId === emp.employee_id ? '⏳...' : '🔓 Mở khóa'}
+                            </button>
+                          ) : (
+                            <button
+                              className="btn-secondary"
+                              style={{ padding: '5px 12px', fontSize: '12px', fontWeight: 700, color: '#B45309', borderColor: '#FDE68A' }}
+                              disabled={lockBusyId === emp.employee_id}
+                              title="Khóa ngay: văng phiên đăng nhập, XÓA mã PIN; giữ nguyên hồ sơ, điểm danh, công, lương; ẩn khỏi Lịch làm việc"
+                              onClick={async () => {
+                                if (!window.confirm(`KHÓA tài khoản ${emp.full_name} (${emp.employee_code})?\n• Văng phiên đăng nhập + XÓA mã PIN ngay\n• GIỮ NGUYÊN hồ sơ, điểm danh, công, lương\n• Ẩn khỏi Lịch làm việc (không xếp ca mới)`)) return;
+                                setLockBusyId(emp.employee_id);
+                                try {
+                                  await apiRequest(`/employees/${emp.employee_id}/lock`, { method: 'POST' });
+                                  showToast(`🔒 Đã khóa tài khoản ${emp.full_name} + xóa PIN!`);
+                                  if (onRefreshData) await onRefreshData();
+                                  if (onPushSheets) await onPushSheets();
+                                } catch (e: any) {
+                                  showToast(e?.message || 'Lỗi khi khóa!');
+                                } finally {
+                                  setLockBusyId(null);
+                                }
+                              }}
+                            >
+                              {lockBusyId === emp.employee_id ? '⏳...' : '🔒 Khóa TK'}
+                            </button>
+                          )}
                           <button
                             className="btn-secondary"
                             style={{ padding: '5px 12px', fontSize: '12px', fontWeight: 700 }}
@@ -5435,6 +5492,32 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </table>
           </div>
         </div>
+
+        {/* MODAL PIN MỚI SAU MỞ KHÓA (HR trao tay NV) */}
+        {unlockPinResult && (
+          <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000, padding: '16px' }}>
+            <div style={{ backgroundColor: 'var(--surface)', borderRadius: '12px', maxWidth: '440px', width: '100%', overflow: 'hidden' }}>
+              <div style={{ padding: '16px 20px', backgroundColor: '#059669', color: '#FFF', fontWeight: 800, fontSize: '15px' }}>
+                🔓 Mở khóa thành công!
+              </div>
+              <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '14px', textAlign: 'center' }}>
+                <div><strong>{unlockPinResult.name}</strong> ({unlockPinResult.code}) đã đăng nhập lại được.</div>
+                <div style={{ backgroundColor: '#FFFBEB', border: '1.5px solid #F59E0B', borderRadius: '8px', padding: '12px' }}>
+                  <div style={{ fontSize: '12px', color: '#92400E', fontWeight: 700 }}>Mã PIN mới (trao TRỰC TIẾP cho NV):</div>
+                  <div style={{ fontSize: '28px', fontWeight: 900, letterSpacing: '6px', color: '#92400E' }}>{unlockPinResult.pin || '—'}</div>
+                  <div style={{ fontSize: '11px', color: '#92400E' }}>NV đăng nhập SĐT + PIN này rồi đặt PIN riêng ngay.</div>
+                </div>
+                <button
+                  className="btn-primary"
+                  onClick={() => setUnlockPinResult(null)}
+                  style={{ padding: '10px', borderRadius: '8px', fontSize: '13px', fontWeight: 800, border: 'none', cursor: 'pointer' }}
+                >
+                  Đã rõ
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* MODAL SỬA HỒ SƠ NHÂN VIÊN CHÍNH THỨC (HR) */}
         {editingEmp && (
@@ -5963,7 +6046,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       return extra.length > 0 ? [...(shifts || []), ...extra] : (shifts || []);
     })();
 
-    const scheduleItems = allEmployees.map((emp, empIdx) => {
+    const scheduleItems = (allEmployees || [])
+      .filter((emp: any) => !(emp as any)?.account_locked)
+      .map((emp, empIdx) => {
       const empShifts = (schedAllShifts || []).filter((s: any) => s.employee_id === emp.employee_id);
       const empLeaves = (leaves || []).filter((l: any) => l.employee_id === emp.employee_id && (l.status === 'APPROVED' || l.status === 'PENDING'));
       const empEvents = (schedAllEvents || []).filter((e: any) => e.employee_id === emp.employee_id);

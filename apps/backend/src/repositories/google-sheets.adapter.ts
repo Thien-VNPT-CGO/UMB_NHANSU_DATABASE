@@ -329,6 +329,20 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     return updated;
   }
 
+  async setAccountStatus(id: string, status: 'ACTIVE' | 'LOCKED', actorId: string) {
+    const updated = await this.fallbackAdapter.setAccountStatus(id, status, actorId);
+    // Đẩy Sheet NGAY để trạng thái khóa bền vững (restart/pull không hồi ACTIVE).
+    if (this.isConfigured) {
+      try {
+        await this.syncService.pushAccountsTab(this.fallbackAdapter);
+      } catch (err) {
+        console.warn('[GoogleSheetsAdapter] Đẩy tab sau đổi trạng thái TK thất bại (full-sync nền sẽ thử lại):', (err as any)?.message || err);
+        this.scheduleFullSync('TAI_KHOAN_NHAN_VIEN.status');
+      }
+    }
+    return updated;
+  }
+
   async getAdminByUsername(username: string) {
     // Khi được cấu hình với Google Sheets: đảm bảo dữ liệu admin mới nhất
     if (this.isConfigured) {

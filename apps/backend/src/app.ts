@@ -953,13 +953,23 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       try {
         const branchScope = req.user?.role === 'STORE' ? req.user.branchScope : (req.query.branchId as string);
         const emps = await employeesService.listEmployees(branchScope, req.query.status as string);
+        // Kèm cờ khóa tài khoản để UI hiện badge + ẩn khỏi Lịch (join nhẹ từ accounts).
+        const lockedIds = new Set<string>();
+        try {
+          const accs = await (adapter as any).listAccounts().catch(() => []);
+          for (const a of accs || []) {
+            if ((a as any)?.account_status === 'LOCKED' && (a as any)?.employee_id) {
+              lockedIds.add(String((a as any).employee_id));
+            }
+          }
+        } catch { /* bỏ qua: mặc định không khóa */ }
         // Cắt bytes avatar inline khỏi danh sách (nhẹ payload); ảnh xem qua /employees/:id/avatar.
         res.json((emps || []).map((e: any) => {
-          if (e && (e as any).avatar_photo) {
-            const { avatar_photo: _drop, ...rest } = e as any;
-            return rest;
+          const { avatar_photo: _drop, ...rest } = (e as any) || {};
+          if (lockedIds.has(String((e as any)?.employee_id))) {
+            return { ...rest, account_locked: true };
           }
-          return e;
+          return (e as any)?.avatar_photo ? rest : e;
         }));
       } catch (err: any) {
         res.status(500).json({ error: err.message });
@@ -1168,6 +1178,29 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   };
   app.get('/employees/:id/avatar', authMiddleware, requireRole(['ADMIN', 'HR', 'STORE']), serveEmployeeAvatar);
+
+  // HR khóa tài khoản NV chính thức: LOCKED + XÓA PIN + văng phiên ngay.
+  // Hồ sơ/điểm danh/công/lương GIỮ NGUYÊN — Lịch làm việc ẩn NV này.
+  app.post('/employees/:id/lock', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await employeesService.lockEmployeeAccount(req.params.id, req.user!.id);
+      broadcastUpdate('employees', { action: 'lock', employeeId: req.params.id });
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // HR mở khóa lại: ACTIVE + cấp PIN 6 số mới (trả PIN để trao tay NV).
+  app.post('/employees/:id/unlock', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await employeesService.unlockEmployeeAccount(req.params.id, req.user!.id);
+      broadcastUpdate('employees', { action: 'unlock', employeeId: req.params.id });
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
 
   app.post('/employees/:id/transition-official', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams, body: transitionBody }), async (req: AuthenticatedRequest, res) => {    try {
       const result = await employeesService.transitionToOfficial(

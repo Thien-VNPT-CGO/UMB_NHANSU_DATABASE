@@ -693,6 +693,8 @@ export class GoogleSheetsSyncService {
         let backfilled = 0;
         let pinReset6 = 0;
         for (const acc of fallback.accounts) {
+          // Tài khoản bị HR khóa: KHÔNG tự sinh PIN lại (giữ trạng thái khóa + không PIN).
+          if ((acc as any).account_status === 'LOCKED') continue;
           if (!acc.pin_hash) {
             if (backfilled >= 20) break;
             const autoPin = generateAutoPin();
