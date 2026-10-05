@@ -9661,6 +9661,30 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <span className="badge" style={{ backgroundColor: 'rgba(255,255,255,0.2)', color: '#FFF', fontWeight: 700 }}>Vào làm: {profEmp.start_date || '—'}</span>
                 </div>
               </div>
+              <button
+                className="btn-secondary"
+                style={{ fontSize: '12px', fontWeight: 800, padding: '8px 14px', alignSelf: 'flex-start', backgroundColor: '#F59E0B', borderColor: '#F59E0B', color: '#FFF' }}
+                title="Cập nhật hồ sơ nhân viên đang xem (bổ sung các trường còn thiếu)"
+                onClick={() => {
+                  setEditingEmp(profEmp);
+                  setEditEmpForm({
+                    fullName: profEmp.full_name || '',
+                    phone: profEmp.phone_normalized || '',
+                    branchId: profEmp.default_branch_id || 'CN130',
+                    group: profEmp.group || 'STORE',
+                    rate: profEmp.current_rate_per_hour || 21000,
+                    shift: profEmp.default_shift_code || '',
+                    startDate: String(profEmp.start_date || '').slice(0, 10),
+                    officialDate: String(profEmp.official_date || '').slice(0, 10),
+                    email: profEmp.email || '',
+                    gender: profEmp.gender || '',
+                    birthDate: String(profEmp.birth_date || '').slice(0, 10),
+                    idCardNumber: profEmp.id_card_number || '',
+                  });
+                }}
+              >
+                ✏️ Cập nhật hồ sơ
+              </button>
             </div>
 
             {/* SUB-TAB THÔNG MINH */}
@@ -9775,6 +9799,91 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 </div>
               );
             })()}
+
+            {/* MODAL CẬP NHẬT HỒ SƠ NV (tab Hồ Sơ) — đủ trường, kể cả các trường đang thiếu */}
+            {editingEmp && editingEmp.employee_id === profEmp.employee_id && (
+              <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0, 0, 0, 0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '16px' }}>
+                <div style={{ backgroundColor: 'var(--surface)', borderRadius: '12px', maxWidth: '600px', width: '100%', maxHeight: '90vh', overflow: 'auto', padding: '20px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h2 style={{ fontSize: '16px', fontWeight: 800, margin: 0 }}>✏️ Cập nhật hồ sơ: {editingEmp.full_name} ({editingEmp.employee_code})</h2>
+                    <button className="btn-secondary" style={{ padding: '4px 12px' }} onClick={() => !editEmpBusy && setEditingEmp(null)}>Đóng</button>
+                  </div>
+                  {(() => {
+                    const missing: string[] = [];
+                    if (!editingEmp.birth_date) missing.push('Ngày sinh');
+                    if (!editingEmp.id_card_number) missing.push('CCCD');
+                    if (!editingEmp.email) missing.push('Email');
+                    if (!editingEmp.gender) missing.push('Giới tính');
+                    if (!editingEmp.default_shift_code) missing.push('Ca cố định');
+                    if (!editingEmp.official_date && editingEmp.employment_status === 'OFFICIAL') missing.push('Ngày chính thức');
+                    return missing.length > 0 ? (
+                      <div style={{ fontSize: '12px', color: '#92400E', backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '8px', padding: '8px 12px', marginTop: '12px', lineHeight: '1.5' }}>
+                        ⚠️ Hồ sơ đang thiếu: <strong>{missing.join(' • ')}</strong> — bổ sung ngay bên dưới.
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: '12px', color: '#065F46', backgroundColor: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: '8px', padding: '8px 12px', marginTop: '12px' }}>
+                        ✅ Hồ sơ đã đầy đủ các trường.
+                      </div>
+                    );
+                  })()}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '14px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: 700 }}>Họ và tên<input value={editEmpForm.fullName || ''} onChange={e => setEditEmpForm({ ...editEmpForm, fullName: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
+                    <label style={{ fontSize: '12px', fontWeight: 700 }}>SĐT (đổi số vẫn login được)<input value={editEmpForm.phone || ''} onChange={e => setEditEmpForm({ ...editEmpForm, phone: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
+                    <label style={{ fontSize: '12px', fontWeight: 700 }}>Giới tính<select value={['NAM', 'NU', 'KHAC'].includes(editEmpForm.gender) ? editEmpForm.gender : ''} onChange={e => setEditEmpForm({ ...editEmpForm, gender: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}><option value="">— Chưa rõ —</option><option value="NAM">Nam</option><option value="NU">Nữ</option><option value="KHAC">Khác</option></select></label>
+                    <label style={{ fontSize: '12px', fontWeight: 700 }}>Ngày sinh<input type="date" value={editEmpForm.birthDate || ''} onChange={e => setEditEmpForm({ ...editEmpForm, birthDate: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
+                    <label style={{ fontSize: '12px', fontWeight: 700, gridColumn: '1 / -1' }}>CCCD/CMND<input value={editEmpForm.idCardNumber || ''} onChange={e => setEditEmpForm({ ...editEmpForm, idCardNumber: e.target.value })} placeholder="VD: 079..." style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
+                    <label style={{ fontSize: '12px', fontWeight: 700 }}>Chi nhánh<select value={editEmpForm.branchId || 'CN130'} onChange={e => setEditEmpForm({ ...editEmpForm, branchId: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}>{(branches || []).length > 0 ? (branches || []).map((b: any) => <option key={b.branch_id || b.id} value={b.branch_id || b.id}>{b.branch_id || b.id}</option>) : (<><option value="CN130">CN130</option><option value="CN120">CN120</option><option value="CN261">CN261</option><option value="CN111">CN111</option></>)}</select></label>
+                    <label style={{ fontSize: '12px', fontWeight: 700 }}>Khối<select value={['STORE', 'XUONG', 'VAN_PHONG', 'SALE'].includes(editEmpForm.group) ? editEmpForm.group : 'STORE'} onChange={e => setEditEmpForm({ ...editEmpForm, group: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}><option value="STORE">Cửa hàng</option><option value="XUONG">Xưởng</option><option value="VAN_PHONG">Văn phòng</option><option value="SALE">Sale</option></select></label>
+                    <label style={{ fontSize: '12px', fontWeight: 700 }}>Lương giờ (đ/h)<input type="number" value={editEmpForm.rate || 21000} onChange={e => setEditEmpForm({ ...editEmpForm, rate: Number(e.target.value) })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
+                    <label style={{ fontSize: '12px', fontWeight: 700 }}>Ca cố định<select value={editEmpForm.shift || ''} onChange={e => setEditEmpForm({ ...editEmpForm, shift: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}><option value="">— Chưa gán —</option><option value="CA_1">Ca 1 (07–12)</option><option value="CA_2">Ca 2 (12–18)</option><option value="CA_3">Ca 3 (18–23)</option></select></label>
+                    <label style={{ fontSize: '12px', fontWeight: 700 }}>Ngày bắt đầu<input type="date" value={editEmpForm.startDate || ''} onChange={e => setEditEmpForm({ ...editEmpForm, startDate: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
+                    <label style={{ fontSize: '12px', fontWeight: 700 }}>Ngày chính thức<input type="date" value={editEmpForm.officialDate || ''} onChange={e => setEditEmpForm({ ...editEmpForm, officialDate: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
+                    <label style={{ fontSize: '12px', fontWeight: 700, gridColumn: '1 / -1' }}>Email<input value={editEmpForm.email || ''} onChange={e => setEditEmpForm({ ...editEmpForm, email: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
+                  </div>
+                  <button
+                    className="btn-primary"
+                    disabled={editEmpBusy}
+                    style={{ width: '100%', marginTop: '14px', padding: '10px', fontWeight: 800, backgroundColor: '#B45309' }}
+                    onClick={async () => {
+                      if (editEmpBusy) return;
+                      setEditEmpBusy(true);
+                      try {
+                        await apiRequest(`/employees/${editingEmp.employee_id}`, {
+                          method: 'PUT',
+                          body: JSON.stringify({
+                            fullName: editEmpForm.fullName,
+                            phone: editEmpForm.phone,
+                            branchId: editEmpForm.branchId,
+                            group: editEmpForm.group,
+                            currentRatePerHour: editEmpForm.rate,
+                            defaultShiftCode: editEmpForm.shift,
+                            startDate: editEmpForm.startDate || undefined,
+                            officialDate: editEmpForm.officialDate || undefined,
+                            email: editEmpForm.email || undefined,
+                            gender: editEmpForm.gender || undefined,
+                            birthDate: editEmpForm.birthDate || undefined,
+                            idCardNumber: editEmpForm.idCardNumber || undefined,
+                            expectedVersion: editingEmp.version,
+                          }),
+                        });
+                        showToast('Đã cập nhật hồ sơ nhân viên!');
+                        setEditingEmp(null);
+                        if (onRefreshData) await onRefreshData();
+                        // Đẩy bộ nhớ -> Sheets NGAY (không pull: pull lúc này đọc Sheet
+                        // cũ vì push nền ~10s, gây mất dữ liệu vừa lưu sau reload).
+                        if (onPushSheets) await onPushSheets();
+                      } catch (e: any) {
+                        showToast(e?.message || 'Lỗi khi cập nhật!');
+                      } finally {
+                        setEditEmpBusy(false);
+                      }
+                    }}
+                  >
+                    {editEmpBusy ? 'Đang lưu...' : 'Lưu thay đổi'}
+                  </button>
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>

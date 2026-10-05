@@ -31,7 +31,7 @@ export interface SheetDefinition {
 export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   {
     title: 'NHAN_VIEN_MASTER',
-    headers: ['ID Nhân Viên', 'Mã NV', 'Họ Và Tên', 'Số Điện Thoại', 'Trạng Thái', 'Nhóm', 'Chi Nhánh', 'Lương Giờ (VNĐ)', 'Ngày Bắt Đầu', 'Phiên Bản', 'Ca Cố Định', 'Ngày Chính Thức', 'Email'],
+    headers: ['ID Nhân Viên', 'Mã NV', 'Họ Và Tên', 'Số Điện Thoại', 'Trạng Thái', 'Nhóm', 'Chi Nhánh', 'Lương Giờ (VNĐ)', 'Ngày Bắt Đầu', 'Phiên Bản', 'Ca Cố Định', 'Ngày Chính Thức', 'Email', 'Giới Tính', 'Ngày Sinh', 'CCCD'],
   },
   {
     title: 'TAI_KHOAN_NHAN_VIEN',
@@ -553,6 +553,8 @@ export class GoogleSheetsSyncService {
             // merge version bên dưới sẽ giữ bản bộ nhớ khi version bộ nhớ >= sheet.
             const officialDate = normSheetDate(r[11]);
             const email = (r[12] || '').trim();
+            // Cột O/P/Q: Giới Tính + Ngày Sinh + CCCD (HR cập nhật ở tab Hồ Sơ NV) —
+            // sheet cũ thiếu thì giữ rỗng, merge bên dưới vá từ bộ nhớ.
 
             return {
               employee_id: empId,
@@ -570,6 +572,9 @@ export class GoogleSheetsSyncService {
               ...(defaultShift ? { default_shift_code: defaultShift } : {}),
               ...(officialDate ? { official_date: officialDate } : {}),
               ...(email ? { email } : {}),
+              ...((r[13] || '').trim() ? { gender: (r[13] || '').trim() } : {}),
+              ...(normSheetDate(r[14]) ? { birth_date: normSheetDate(r[14]) } : {}),
+              ...((r[15] || '').trim() ? { id_card_number: (r[15] || '').trim() } : {}),
             };
           });
         // Đọc thiếu dòng (partial/truncated) mà bộ nhớ đang nhiều hơn gấp đôi -> giữ bộ nhớ.
@@ -592,6 +597,14 @@ export class GoogleSheetsSyncService {
             if (m && Number(m.version || 0) > Number((s as any).version || 0)) {
               mergedEmps.push(m);
             } else {
+              // Sheet thắng/hòa version nhưng thiếu trường HR mới cập nhật (sheet cũ chưa
+              // có cột O/P/Q, hoặc dòng chưa kịp push) -> vá từ bộ nhớ để không mất.
+              if (m) {
+                if (!(s as any).gender && (m as any).gender) (s as any).gender = (m as any).gender;
+                if (!(s as any).birth_date && (m as any).birth_date) (s as any).birth_date = (m as any).birth_date;
+                if (!(s as any).id_card_number && (m as any).id_card_number) (s as any).id_card_number = (m as any).id_card_number;
+                if (!(s as any).email && (m as any).email) (s as any).email = (m as any).email;
+              }
               mergedEmps.push(s);
             }
             memEmpById.delete((s as any).employee_id);
@@ -1767,6 +1780,9 @@ export class GoogleSheetsSyncService {
         (e as any).default_shift_code || '',
         sheetDateText((e as any).official_date),
         (e as any).email || '',
+        (e as any).gender || '',
+        (e as any).birth_date ? sheetDateText((e as any).birth_date) : '',
+        (e as any).id_card_number || '',
       ]);
       await this.overwriteSheetData('NHAN_VIEN_MASTER', SHEETS_DEFINITIONS.find(d => d.title === 'NHAN_VIEN_MASTER')!.headers, employeeRows);
       details.employees = employeeRows.length;
@@ -2031,6 +2047,9 @@ export class GoogleSheetsSyncService {
       e.default_shift_code || '',
       sheetDateText(e.official_date),
       e.email || '',
+      e.gender || '',
+      e.birth_date ? sheetDateText(e.birth_date) : '',
+      e.id_card_number || '',
     ]));
     await this.overwriteSheetData('NHAN_VIEN_MASTER', SHEETS_DEFINITIONS.find(d => d.title === 'NHAN_VIEN_MASTER')!.headers, rows);
     return rows.length;
