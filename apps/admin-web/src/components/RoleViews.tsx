@@ -7683,7 +7683,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       if (rel && rel.status === 'PARTNER_ACCEPTED' && rel.target_employee_id) return rel.target_employee_id;
       return s.employee_id;
     };
+    // Hàng đầy đủ mọi nhân viên (kể cả NV không có ca/sự kiện tuần này — ô hiện "—"),
+    // để HR đối soát không sót ai khi tính lương.
     const attEmpIds = [...new Set([
+      ...((allEmployees || []).map((e: any) => e.employee_id)),
       ...attWeekShifts.map((s: any) => effEmpIdOf(s)),
       ...attWeekEvts.map((e: any) => e.employee_id),
     ])].filter(Boolean);
