@@ -325,6 +325,12 @@ export const attendanceEventsQuery = z.object({
   date: dateQuery,
 });
 
+// Khoảng ngày đọc sự kiện lưu trữ (tab Lịch làm việc lùi tuần): YYYY-MM-DD, tối đa 62 ngày.
+export const archiveEventsQuery = z.object({
+  from: queryString(32),
+  to: queryString(32),
+});
+
 export const adjustmentCreateBody = z
   .object({
     employeeId: optString(64),

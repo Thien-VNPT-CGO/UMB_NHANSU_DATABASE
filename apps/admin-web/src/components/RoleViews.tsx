@@ -970,6 +970,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [weeklyOffWeekFilter, setWeeklyOffWeekFilter] = useState('CURRENT');
   // Xem lịch tuần trước / hiện tại / sau (mặc định tuần hiện tại)
   const [scheduleWeekOffset, setScheduleWeekOffset] = useState(0);
+  // Sự kiện điểm danh tuần cũ từ kho LUUTRU (tab Lịch lùi tuần + dải 12 ngày thử việc
+  // quá khứ): gộp với realtime để ô ngày cũ hiện đủ giờ in/out.
+  const [archiveEvents, setArchiveEvents] = useState<any[]>([]);
+  const archiveWeeksRef = useRef<Set<string>>(new Set());
+  const [archiveLoading, setArchiveLoading] = useState(false);
   // Phiếu đổi ca: tải lại mỗi khi mở tab để không sót phiếu mới (kể cả khi socket ngủ)
   const [swapList, setSwapList] = useState<any[] | null>(null);
   const loadSwaps = async () => {
@@ -1891,6 +1896,68 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       if (timer) clearTimeout(timer);
     };
   }, []);
+  useEffect(() => {
+    // Lịch tuần cũ: bảng realtime bị reset cuối tuần — đọc bù từ kho LUUTRU để ô ngày
+    // cũ vẫn hiện đủ giờ in/out (chỉ đọc kho, không sửa realtime). Cache theo tuần.
+    if (activeTab !== 'hr-schedule' && activeTab !== 'operations') return;
+    const vnToday = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+    const curMon = mondayIsoOfOffset(0);
+    const need = new Set<string>();
+    const viewMon = mondayIsoOfOffset(scheduleWeekOffset);
+    if (viewMon < curMon) need.add(viewMon);
+    // Dải 12 ngày thử việc quá khứ của NV thử việc cũng cần sự kiện lưu trữ.
+    try {
+      for (const e of (allEmployees || [])) {
+        if ((e as any)?.employment_status !== 'PROBATION') continue;
+        if (scheduleBranchFilter !== 'ALL' && (e as any)?.default_branch_id !== scheduleBranchFilter) continue;
+        const st = String((e as any)?.start_date || '').slice(0, 10);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(st)) continue;
+        const t0 = new Date(`${st}T00:00:00Z`).getTime();
+        if (!Number.isFinite(t0)) continue;
+        for (let i = 0; i < 12; i++) {
+          const d = new Date(t0 + i * 86_400_000).toISOString().slice(0, 10);
+          if (d >= vnToday) break;
+          const dt = new Date(`${d}T00:00:00Z`);
+          const back = (dt.getUTCDay() + 6) % 7;
+          const mon = new Date(dt.getTime() - back * 86_400_000).toISOString().slice(0, 10);
+          if (mon < curMon) need.add(mon);
+        }
+      }
+    } catch { /* bỏ qua */ }
+    const missing = [...need].filter(m => !archiveWeeksRef.current.has(m));
+    if (missing.length === 0) return;
+    let alive = true;
+    (async () => {
+      setArchiveLoading(true);
+      try {
+        const parts: any[][] = await Promise.all(
+          missing.map(async (mon) => {
+            const sun = new Date(new Date(`${mon}T00:00:00Z`).getTime() + 6 * 86_400_000).toISOString().slice(0, 10);
+            try {
+              const list = await apiRequest(`/attendance/events/archive?from=${mon}&to=${sun}`);
+              if (alive) archiveWeeksRef.current.add(mon);
+              return Array.isArray(list) ? list : [];
+            } catch { return []; }
+          })
+        );
+        if (!alive) return;
+        const seen = new Set<string>((archiveEvents || []).map((e: any) => String(e.event_id)));
+        const add: any[] = [];
+        for (const arr of parts) {
+          for (const e of arr) {
+            const k = String((e as any)?.event_id || '');
+            if (!k || seen.has(k)) continue;
+            seen.add(k);
+            add.push(e);
+          }
+        }
+        if (add.length > 0) setArchiveEvents(prev => [...prev, ...add]);
+      } finally {
+        if (alive) setArchiveLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [activeTab, scheduleWeekOffset, scheduleBranchFilter, scheduleStageFilter, allEmployees]);
   // (QR Zalo thật do server sinh qua /admin/zalo/* — không còn QR giả local.)
 
   // Filter employees for Store
@@ -5961,10 +6028,18 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
     const todayItem = weekDays.find((d) => d.isToday) || weekDays[0];
 
+    // Gộp realtime + kho lưu trữ (tuần cũ): ô ngày cũ hiện đủ giờ in/out.
+    const schedAllEvents = (() => {
+      if (!archiveEvents || archiveEvents.length === 0) return liveAttendanceEvents || [];
+      const seen = new Set<string>((liveAttendanceEvents || []).map((e: any) => String(e.event_id)));
+      const extra = (archiveEvents || []).filter((e: any) => !seen.has(String(e.event_id)));
+      return extra.length > 0 ? [...(liveAttendanceEvents || []), ...extra] : (liveAttendanceEvents || []);
+    })();
+
     const scheduleItems = allEmployees.map((emp, empIdx) => {
       const empShifts = (shifts || []).filter((s: any) => s.employee_id === emp.employee_id);
       const empLeaves = (leaves || []).filter((l: any) => l.employee_id === emp.employee_id && (l.status === 'APPROVED' || l.status === 'PENDING'));
-      const empEvents = (liveAttendanceEvents || []).filter((e: any) => e.employee_id === emp.employee_id);
+      const empEvents = (schedAllEvents || []).filter((e: any) => e.employee_id === emp.employee_id);
       const dayDataMap: Record<string, any> = {};
       // Mã ca THẬT từng ngày trong tuần đang xem (để sắp xếp Ca 1 → Ca 2 → Ca 3).
       const weekShiftCodes: string[] = [];
@@ -6211,6 +6286,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               {' '}Đang xem tuần <strong>{weekDays[0]?.isoDate} → {weekDays[6]?.isoDate}</strong>
               {scheduleWeekOffset === 1 ? ' (tuần sau — gồm 2 ngày OFF NV đã đăng ký)' : scheduleWeekOffset > 1 ? ` (+${scheduleWeekOffset} tuần)` : scheduleWeekOffset < 0 ? ` (${scheduleWeekOffset} tuần)` : ' (tuần này)'}.
               Ô xám <strong>Nghỉ OFF</strong> = lịch OFF tuần tự ghi nhận / đơn đột xuất đã duyệt; ô vàng <strong>⏳ Chờ duyệt</strong> = đơn đột xuất chưa duyệt.
+              {scheduleWeekOffset < 0 && (
+                archiveLoading ? ' ⏳ Đang tải chi tiết điểm danh tuần cũ từ kho lưu trữ...' : ' Tuần cũ đọc từ kho lưu trữ (giờ in/out đầy đủ).'
+              )}
             </p>
           </div>
 
@@ -6359,7 +6437,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 onChange={(e) => setScheduleWeekOffset(Number(e.target.value))}
                 style={{ padding: '6px 10px', fontSize: '12px', minHeight: '34px', borderRadius: '6px', fontWeight: 700 }}
               >
-                {weekOptions().map(w => (
+                {weekOptions(0, 12).map(w => (
                   <option key={w.offset} value={w.offset}>{w.label}</option>
                 ))}
               </select>
@@ -6393,6 +6471,91 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </span>
           </div>
         </div>
+
+        {/* DẢI 12 NGÀY THỬ VIỆC TỪNG NV (HR đối soát OFF/làm/chấm công): mốc = ngày bắt
+            đầu thử việc — NV chọn 5 OFF, còn lại đi làm. Nhân viên chính thức giữ lưới tuần. */}
+        {scheduleStageFilter !== 'OFFICIAL' && (() => {
+          const probEmps = (allEmployees || []).filter((e: any) =>
+            (e as any)?.employment_status === 'PROBATION' &&
+            (scheduleBranchFilter === 'ALL' || (e as any)?.default_branch_id === scheduleBranchFilter)
+          );
+          if (probEmps.length === 0) return null;
+          const fmtHM = (iso: string) => {
+            const t = new Date(iso || '').getTime();
+            if (!Number.isFinite(t)) return '';
+            const d = new Date(t);
+            const p = (n: number) => String(n).padStart(2, '0');
+            return `${p(d.getHours())}:${p(d.getMinutes())}`;
+          };
+          const dowName = (iso: string) => ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'][new Date(`${iso}T00:00:00Z`).getUTCDay()];
+          const winOf = (emp: any): string[] => {
+            const st = String(emp?.start_date || '').slice(0, 10);
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(st)) return [];
+            const t0 = new Date(`${st}T00:00:00Z`).getTime();
+            if (!Number.isFinite(t0)) return [];
+            return Array.from({ length: 12 }, (_, i) => new Date(t0 + i * 86_400_000).toISOString().slice(0, 10));
+          };
+          return (
+            <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1.5px solid #F59E0B', overflow: 'hidden' }}>
+              <div style={{ padding: '12px 16px', backgroundColor: '#FFFBEB', borderBottom: '1px solid #FDE68A', fontSize: '13px', fontWeight: 800, color: '#92400E' }}>
+                🌸 Dải 12 ngày thử việc từng NV (mốc = ngày bắt đầu thử việc): 5 ngày OFF do NV chọn, các ngày còn lại hệ thống tự xếp ca làm
+              </div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', minWidth: '900px' }}>
+                  <tbody>
+                    {probEmps.map((emp: any) => {
+                      const win = winOf(emp);
+                      const empShifts = (shifts || []).filter((s: any) => s.employee_id === emp.employee_id);
+                      const empOffs = (leaves || []).filter((l: any) => l.employee_id === emp.employee_id && (l as any).leave_type === 'THU_VIEC' && l.status !== 'REJECTED' && l.status !== 'CANCELLED');
+                      const empEvts = (schedAllEvents || []).filter((e: any) => e.employee_id === emp.employee_id);
+                      const offCount = empOffs.length;
+                      return (
+                        <tr key={emp.employee_id} style={{ borderBottom: '1px solid var(--border)' }}>
+                          <td style={{ padding: '10px 14px', fontWeight: 800, minWidth: '210px', verticalAlign: 'top', backgroundColor: 'var(--bg)' }}>
+                            <div>{emp.full_name}</div>
+                            <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 400 }}>{emp.employee_code} • Mốc: {win[0] ? `${win[0].slice(8, 10)}/${win[0].slice(5, 7)}` : 'chưa có ngày bắt đầu'}</div>
+                            <div style={{ fontSize: '10px', fontWeight: 700, color: offCount >= 5 ? '#059669' : '#D97706', marginTop: '2px' }}>
+                              OFF {Math.min(offCount, 5)}/5
+                            </div>
+                          </td>
+                          {win.length === 0 ? (
+                            <td style={{ padding: '10px 14px', color: 'var(--text-muted)' }}>Hồ sơ chưa có ngày bắt đầu thử việc — HR bổ sung ở tab Hồ Sơ NV.</td>
+                          ) : (
+                            win.map((d) => {
+                              const off = empOffs.find((l: any) => String(l.requested_date || '').slice(0, 10) === d);
+                              const sh = empShifts.find((s: any) => String(s.date || '').slice(0, 10) === d);
+                              const ci = !off && sh ? empEvts.find((e: any) => e.type === 'CHECK_IN' && (e.assignment_id && sh.assignment_id ? e.assignment_id === sh.assignment_id : String(e.client_time || '').startsWith(d))) : null;
+                              const co = !off && sh ? empEvts.find((e: any) => e.type === 'CHECK_OUT' && (e.assignment_id && sh.assignment_id ? e.assignment_id === sh.assignment_id : String(e.client_time || '').startsWith(d))) : null;
+                              const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+                              const isPast = d < today;
+                              let bg = '#F8FAFC'; let label: any = <span style={{ color: '#9CA3AF' }}>—</span>;
+                              if (off) {
+                                bg = '#F1F5F9';
+                                label = <span style={{ fontWeight: 800, color: '#64748B' }}>OFF</span>;
+                              } else if (sh) {
+                                const code = String(sh.shift_code || '').replace('CA_1', 'C1').replace('CA_2', 'C2').replace('CA_3', 'C3');
+                                if (ci && co) { bg = '#DCFCE7'; label = <><div style={{ fontWeight: 800, color: '#166534' }}>{code} ✓</div><div style={{ fontSize: '10px', color: '#166534' }}>{fmtHM(ci.client_time)}-{fmtHM(co.client_time)}</div></>; }
+                                else if (ci) { bg = '#FEF3C7'; label = <><div style={{ fontWeight: 800, color: '#92400E' }}>{code} ◐</div><div style={{ fontSize: '10px', color: '#92400E' }}>{fmtHM(ci.client_time)}-?</div></>; }
+                                else if (isPast) { bg = '#FEE2E2'; label = <><div style={{ fontWeight: 800, color: '#991B1B' }}>{code} ✗</div><div style={{ fontSize: '10px', color: '#991B1B' }}>vắng</div></>; }
+                                else { bg = '#FFFBEB'; label = <span style={{ fontWeight: 800, color: '#92400E' }}>{code}</span>; }
+                              }
+                              return (
+                                <td key={d} title={`${d}${sh ? ` • ${sh.shift_code}` : ''}${ci ? ` • vào ${fmtHM(ci.client_time)}` : ''}${co ? ` • ra ${fmtHM(co.client_time)}` : ''}`} style={{ padding: '6px 4px', textAlign: 'center', backgroundColor: bg, borderLeft: '1px solid var(--border)', minWidth: '64px' }}>
+                                  <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 700 }}>{dowName(d)} {d.slice(8, 10)}/{d.slice(5, 7)}</div>
+                                  <div style={{ marginTop: '2px' }}>{label}</div>
+                                </td>
+                              );
+                            })
+                          )}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Main Weekly Schedule Grid Table */}
         <div style={{

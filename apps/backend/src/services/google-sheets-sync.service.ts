@@ -2512,6 +2512,50 @@ export class GoogleSheetsSyncService {
     return { archived: true, eventCount, driveFileId };
   }
 
+  /**
+   * Đọc sự kiện điểm danh tuần cũ từ kho LUUTRU_CHAMCONG_TUAN (tab Lịch làm việc
+   * lùi tuần + dải 12 ngày thử việc quá khứ). Chỉ đọc, không sửa — realtime giữ nguyên.
+   * client_time trả về dạng wall-clock VN (+07:00) để frontend khớp ngày như sự kiện live.
+   */
+  public async getArchivedAttendanceEvents(fromIso: string, toIso: string): Promise<any[]> {
+    const batch = await this.readTabsBatch(['LUUTRU_CHAMCONG_TUAN']).catch(() => ({ LUUTRU_CHAMCONG_TUAN: [] as string[][] }));
+    const rows = batch?.['LUUTRU_CHAMCONG_TUAN'] || [];
+    const out: any[] = [];
+    const vnDayOfInstant = (t: number) => new Date(t + 7 * 3_600_000).toISOString().slice(0, 10);
+    for (const r of rows) {
+      if (!r || !r.some(c => String(c || '').trim())) continue;
+      // Archive ghi 13 giá trị/dòng (client_time ở r[12]); bản rất cũ 12 cột (r[11]).
+      const clientRaw = (r[12] || r[11] || '').trim().replace(/^'/, '');
+      const t = new Date(clientRaw).getTime();
+      if (!Number.isFinite(t)) continue;
+      const day = vnDayOfInstant(t);
+      if (day < fromIso || day > toIso) continue;
+      const wall = new Date(t + 7 * 3_600_000).toISOString().slice(0, 19) + '+07:00';
+      const numOrUndef = (v: any) => {
+        const s = String(v ?? '').trim();
+        if (!s) return undefined;
+        const n = Number(s);
+        return Number.isFinite(n) ? n : undefined;
+      };
+      out.push({
+        event_id: (r[0] || '').trim(),
+        assignment_id: (r[1] || '').trim() || undefined,
+        employee_id: (r[2] || '').trim(),
+        type: (r[3] || '').trim(),
+        server_received_at: normSheetDateTime(r[4]) || undefined,
+        gps_latitude: numOrUndef(r[5]),
+        gps_longitude: numOrUndef(r[6]),
+        distance_meters: numOrUndef(r[7]),
+        gps_status: (r[8] || '').trim() || undefined,
+        drive_object_id: (r[9] || '').trim() || undefined,
+        request_id: (r[10] || '').trim() || undefined,
+        client_time: wall,
+        archived: true,
+      });
+    }
+    return out;
+  }
+
   /** Tải bytes ảnh từ Google Drive (để xem trực tiếp / đóng gói ZIP tải về). */
   public async downloadDriveFile(fileId: string): Promise<{ buffer: Buffer; mimeType: string }> {
     if (!this.driveClient || !fileId || fileId.startsWith('DRV_')) {

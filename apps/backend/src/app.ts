@@ -51,6 +51,7 @@ import {
   adjustmentCreateBody,
   adjustmentsQuery,
   announcementBody,
+  archiveEventsQuery,
   attendanceEventBody,
   attendanceEventsQuery,
   autoPlanBody,
@@ -2480,6 +2481,29 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const date = (req.query.date as string) || '';
       const events = await adapter.getAttendanceEvents(employeeId, date);
       res.json(events);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Sự kiện điểm danh tuần cũ từ kho LUUTRU (tab Lịch làm việc lùi tuần + dải 12 ngày
+  // thử việc quá khứ). Chỉ đọc kho lưu trữ — bảng realtime + Sheets giữ nguyên.
+  app.get('/attendance/events/archive', authMiddleware, validate({ query: archiveEventsQuery }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const ok = (s: unknown) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
+      const to = ok(req.query.to) ? String(req.query.to) : new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+      let from = ok(req.query.from) ? String(req.query.from) : to;
+      // Chặn khoảng quá rộng (kho lưu trữ phình theo tuần).
+      const days = Math.round((new Date(`${to}T00:00:00Z`).getTime() - new Date(`${from}T00:00:00Z`).getTime()) / 86_400_000);
+      if (!Number.isFinite(days) || days < 0 || days > 62) {
+        return res.status(400).json({ error: 'INVALID_RANGE: khoảng from→to tối đa 62 ngày.' });
+      }
+      const syncService = (adapter as any).syncService;
+      if (!syncService?.getArchivedAttendanceEvents) return res.json([]);
+      const role = req.user?.role;
+      const employeeId = role === 'EMPLOYEE' ? req.user!.employeeId! : undefined;
+      const list = await syncService.getArchivedAttendanceEvents(from, to);
+      res.json(employeeId ? (list || []).filter((e: any) => e.employee_id === employeeId) : (list || []));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
