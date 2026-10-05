@@ -3757,8 +3757,24 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // --- TÍCH HỢP GOOGLE SHEETS (sync-now thủ công, có cooldown chống vượt quota) ---
+  let lastSyncNowAt = 0;
   app.post('/admin/integrations/sync-now', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
     try {
+      // Chống bấm sync-now dồn dập (tay + nhiều máy + full-sync nền): full sync
+      // ~30 writes, quota Sheets chỉ 60 writes/phút — bấm 2 lần liên tiếp là vỡ quota.
+      const nowMs = Date.now();
+      if (nowMs - lastSyncNowAt < 45000) {
+        const wait = Math.ceil((45000 - (nowMs - lastSyncNowAt)) / 1000);
+        return res.json({
+          success: true,
+          message: `Vừa đồng bộ ${Math.round((nowMs - lastSyncNowAt) / 1000)}s trước — đợi thêm ${wait}s để khỏi vượt quota Google Sheets rồi bấm lại.`,
+          details: null,
+          synced_at: new Date(lastSyncNowAt).toISOString(),
+          cooldown: true,
+        });
+      }
+      lastSyncNowAt = nowMs;
       const syncService = (adapter as any).syncService;
       let syncResult = {
         success: true,

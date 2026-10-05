@@ -5380,8 +5380,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                   const res: any = await apiRequest(`/employees/${emp.employee_id}/unlock`, { method: 'POST' });
                                   setUnlockPinResult({ name: emp.full_name, code: emp.employee_code, pin: res?.pin || '' });
                                   try { window.dispatchEvent(new CustomEvent('ubm:employee-unlocked', { detail: { employeeId: emp.employee_id } })); } catch { /* non-fatal */ }
+                                  // KHÔNG gọi onPushSheets ở đây: backend đã đẩy tab accounts ngay +
+                                  // full-sync nền đuổi theo — sync-now tay thêm ~30 writes là vượt quota Sheets.
                                   if (onRefreshData) await onRefreshData();
-                                  if (onPushSheets) await onPushSheets();
                                 } catch (e: any) {
                                   showToast(e?.message || 'Lỗi khi mở khóa!');
                                 } finally {
@@ -5405,8 +5406,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                   showToast(`🔒 Đã khóa tài khoản ${emp.full_name} + xóa PIN!`);
                                   // Ẩn khỏi Lịch NGAY LẬP TỨC (kể cả ca tuần này), không đợi tải lại.
                                   try { window.dispatchEvent(new CustomEvent('ubm:employee-locked', { detail: { employeeId: emp.employee_id } })); } catch { /* non-fatal */ }
+                                  // KHÔNG gọi onPushSheets ở đây: backend đã đẩy tab accounts ngay +
+                                  // full-sync nền đuổi theo — sync-now tay thêm ~30 writes là vượt quota Sheets.
                                   if (onRefreshData) await onRefreshData();
-                                  if (onPushSheets) await onPushSheets();
                                 } catch (e: any) {
                                   showToast(e?.message || 'Lỗi khi khóa!');
                                 } finally {

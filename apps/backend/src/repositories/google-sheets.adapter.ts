@@ -319,7 +319,17 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async setAccountPin(id: string, pinHash: string, mustChange: boolean, actorId: string, pinPlain?: string | null) {
     const updated = await this.fallbackAdapter.setAccountPin(id, pinHash, mustChange, actorId, pinPlain);
-    this.scheduleFullSync('PIN.syncAll');
+    // PIN nằm cùng tab accounts: chỉ đẩy đúng tab này (2 writes) thay vì full-sync
+    // cả hệ thống (~30 writes) — đổi PIN/NV đổi PIN/khóa-mở dồn dập là vượt quota
+    // 60 writes/phút của Google Sheets.
+    if (this.isConfigured) {
+      try {
+        await this.syncService.pushAccountsTab(this.fallbackAdapter);
+      } catch (err) {
+        console.warn('[GoogleSheetsAdapter] Đẩy tab sau đổi PIN thất bại (full-sync nền sẽ thử lại):', (err as any)?.message || err);
+        this.scheduleFullSync('PIN.syncAll');
+      }
+    }
     return updated;
   }
 
