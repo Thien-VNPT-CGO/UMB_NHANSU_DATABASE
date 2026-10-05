@@ -993,6 +993,11 @@ export function App() {
               window.dispatchEvent(new CustomEvent('ubm:swaps-reload'));
             } catch { /* non-fatal */ }
           }
+          if (payload?.entity === 'adjustments' || payload?.entity === 'all') {
+            try {
+              window.dispatchEvent(new CustomEvent('ubm:adjustments-reload'));
+            } catch { /* non-fatal */ }
+          }
           notifyReportsRealtime();
           scheduleReload(currentUser);
         }

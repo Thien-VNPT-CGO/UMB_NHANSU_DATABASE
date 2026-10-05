@@ -1381,6 +1381,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     return () => window.removeEventListener('ubm:swaps-reload', handler);
   }, [activeTab]);
   useEffect(() => {
+    // Realtime phiếu bổ sung công: App.tsx phát 'ubm:adjustments-reload' khi socket báo
+    // data:updated(adjustments) — NV vừa gửi là HR thấy phiếu + ảnh ngay, không đợi poll 15s.
+    const adjHandler = () => {
+      if (activeTab === 'hr-adjustments') loadAdjustments();
+    };
+    window.addEventListener('ubm:adjustments-reload', adjHandler);
+    return () => window.removeEventListener('ubm:adjustments-reload', adjHandler);
+  }, [activeTab]);
+  useEffect(() => {
     // Realtime báo cáo HR: App.tsx phát 'ubm:reports-reload' khi mọi biến động
     // nghiệp vụ (điểm danh/lịch/đổi ca/đơn từ...) — tổng hợp tháng tính live nên
     // tải lại ngay (debounce, báo cáo nặng hơn các tab khác) + poll 60s dự phòng.

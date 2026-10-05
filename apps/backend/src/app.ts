@@ -1258,6 +1258,13 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.put('/applications/:id', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams, body: candidateUpdateBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const result = await employeesService.updateCandidateFields(req.params.id, req.body || {}, req.user!.id);
+      // Đẩy master FROM_NHAN_VIEN NGAY (await): ca/chi nhánh HR vừa chốt bền vững trên
+      // Sheet trước khi trả response — pull nền sau đó phủ lại đúng giá trị mới thay vì
+      // dựng lại từ form gốc (fix "báo thành công nhưng dữ liệu không đổi"). Pattern như
+      // hủy/xác nhận lịch PV.
+      try {
+        await (adapter as any)?.pushCandidatesNow?.();
+      } catch { /* best-effort, full-sync nền sẽ thử lại */ }
       broadcastUpdate('candidates', { action: 'update', id: req.params.id });
       res.json(result);
     } catch (err: any) {
@@ -2463,17 +2470,45 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       if (req.user?.role === 'STORE' && req.user.branchScope !== '*' && adj.branch_id && adj.branch_id !== req.user.branchScope) {
         return res.status(403).json({ error: 'BRANCH_SCOPE_FORBIDDEN' });
       }
+      const inlinePhoto: string | undefined = (adj as any).evidence_photo;
+      const driveId: string = String(adj.evidence_drive_id || '');
+      const serveInline = (dataUrl: string) => {
+        try {
+          const m = String(dataUrl).match(/^data:(image\/\w+);base64,(.*)$/);
+          const mime = m ? m[1] : 'image/jpeg';
+          const b64 = m ? m[2] : String(dataUrl).replace(/^data:image\/\w+;base64,/, '');
+          const buffer = Buffer.from(b64, 'base64');
+          if (!buffer.length) throw new Error('EMPTY_INLINE_PHOTO');
+          res.setHeader('Content-Type', mime);
+          res.setHeader('Cache-Control', 'private, max-age=3600');
+          return res.send(buffer);
+        } catch (e: any) {
+          return res.status(404).json({ error: 'PHOTO_NOT_UPLOADED: Phiếu này không có ảnh bằng chứng.' });
+        }
+      };
+      // Ưu tiên Drive khi có ID thật; mọi trường hợp còn lại (chưa upload / DRV_* /
+      // Drive lỗi) mà còn ảnh inline thì phục vụ inline để HR luôn thấy ảnh realtime.
+      if (driveId && !driveId.startsWith('DRV_') && !driveId.startsWith('INLINE_')) {
+        try {
+          const syncService = (adapter as any).syncService;
+          if (syncService?.downloadDriveFile) {
+            const { buffer, mimeType } = await syncService.downloadDriveFile(adj.evidence_drive_id);
+            res.setHeader('Content-Type', mimeType || 'image/jpeg');
+            res.setHeader('Cache-Control', 'private, max-age=3600');
+            return res.send(buffer);
+          }
+        } catch {
+          // Drive tải lỗi (quyền mạng/xóa file): rớt xuống inline nếu còn.
+          if (inlinePhoto) return serveInline(inlinePhoto);
+          return res.status(404).json({ error: 'PHOTO_NOT_UPLOADED: Phiếu này không có ảnh bằng chứng.' });
+        }
+        if (inlinePhoto) return serveInline(inlinePhoto);
+        return res.status(404).json({ error: 'PHOTO_NOT_UPLOADED: Phiếu này không có ảnh bằng chứng.' });
+      }
+      if (inlinePhoto) return serveInline(inlinePhoto);
       if (!adj.evidence_drive_id || String(adj.evidence_drive_id).startsWith('DRV_')) {
         return res.status(404).json({ error: 'PHOTO_NOT_UPLOADED: Phiếu này không có ảnh bằng chứng.' });
       }
-      const syncService = (adapter as any).syncService;
-      if (!syncService?.downloadDriveFile) {
-        return res.status(503).json({ error: 'DRIVE_NOT_CONFIGURED' });
-      }
-      const { buffer, mimeType } = await syncService.downloadDriveFile(adj.evidence_drive_id);
-      res.setHeader('Content-Type', mimeType || 'image/jpeg');
-      res.setHeader('Cache-Control', 'private, max-age=3600');
-      res.send(buffer);
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'PHOTO_DOWNLOAD_FAILED' });
     }
@@ -2926,6 +2961,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         // Client gửi snake_case photo_base64, service nhận camelCase photoBase64.
         photoBase64: req.body.photoBase64 || req.body.photo_base64,
       });
+      // Realtime 100%: HR/Store thấy phiếu + ảnh bằng chứng ngay, không đợi poll 15s.
+      broadcastUpdate('adjustments', { action: 'created', id: (result as any)?.adjustment_id, employeeId });
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -2937,7 +2974,15 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const branchId = req.user?.role === 'STORE' ? req.user.branchScope : (req.query.branchId as string);
       const employeeId = req.user?.role === 'EMPLOYEE' ? req.user.employeeId : undefined;
       const list = await attendanceService.listAdjustments(branchId, employeeId);
-      res.json(list);
+      // Cắt bytes ảnh inline khỏi danh sách (nhẹ payload); ảnh xem qua /:id/photo.
+      // evidence_drive_id (kể cả DRV_LOCAL_ fallback) vẫn giữ để UI biết mà tải ảnh.
+      res.json((list || []).map((a: any) => {
+        if (a && (a as any).evidence_photo) {
+          const { evidence_photo: _drop, ...rest } = a as any;
+          return rest;
+        }
+        return a;
+      }));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

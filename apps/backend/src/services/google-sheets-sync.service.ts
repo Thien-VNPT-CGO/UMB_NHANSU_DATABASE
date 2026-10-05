@@ -1223,7 +1223,30 @@ export class GoogleSheetsSyncService {
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         }));
-        fallback.attendanceAdjustments = mergeById(fallback.attendanceAdjustments, mappedAdj, 'adjustment_id', ['version']) as any;
+        {
+          const memBefore = new Map<string, any>(
+            ((fallback.attendanceAdjustments as any[]) || []).map((m: any) => [String((m as any).adjustment_id), m]),
+          );
+          const merged = mergeById(memBefore.size ? [...memBefore.values()] : [], mappedAdj, 'adjustment_id', ['version']) as any[];
+          for (const row of merged) {
+            const mem = memBefore.get(String((row as any).adjustment_id));
+            if (!mem) continue;
+            // Sheet chưa có ảnh (ô trống) nhưng bộ nhớ có (vừa upload/inline) -> giữ bản nhớ.
+            if (!(row as any).evidence_drive_id && (mem as any).evidence_drive_id) {
+              (row as any).evidence_drive_id = (mem as any).evidence_drive_id;
+            }
+            if (!(row as any).evidence_photo && (mem as any).evidence_photo) {
+              (row as any).evidence_photo = (mem as any).evidence_photo;
+            }
+            // Sheet không lưu ngày tạo (pull luôn gán now) -> giữ mốc gốc trong bộ nhớ
+            // để TTL tự từ chối (1 ngày) tính đúng, không gia hạn oan mỗi lần pull.
+            if ((mem as any).created_at) {
+              (row as any).created_at = (mem as any).created_at;
+              (row as any).updated_at = (mem as any).updated_at || (row as any).updated_at;
+            }
+          }
+          fallback.attendanceAdjustments = merged as any;
+        }
       } else if (fallback.attendanceAdjustments.length === 0) {
         fallback.attendanceAdjustments = [];
       }
@@ -1508,9 +1531,13 @@ export class GoogleSheetsSyncService {
               education_level: educationLevel,
               hometown,
               apply_position: 'Nhân viên Bán hàng',
-              preferred_branch_id: branchName.includes('CN') ? (branchName.match(/CN\d+/)?.[0] || 'CN130') : 'CN130',
-              branch_name: branchName,
-              registered_shift: registeredShift,
+              // Ca + chi nhánh là trường vận hành do HR chốt (Cập nhật TT): form gốc không
+              // đổi sau khi gửi, nên ưu tiên giá trị bộ nhớ (HR vừa cập nhật) — nếu không
+              // pull nền (~10s) sẽ dựng lại từ form và đè mất, HR thấy "lưu thành công
+              // nhưng dữ liệu không đổi".
+              preferred_branch_id: (prev as any).preferred_branch_id || (branchName.includes('CN') ? (branchName.match(/CN\d+/)?.[0] || 'CN130') : 'CN130'),
+              branch_name: (prev as any).branch_name || branchName,
+              registered_shift: (prev as any).registered_shift || registeredShift,
               experience,
               emergency_handling: emergencyHandling,
               facebook_url: facebookUrl,
@@ -1558,6 +1585,16 @@ export class GoogleSheetsSyncService {
                 const nz = (v: any) => (v !== undefined && String(v).trim() !== '' ? String(v).trim() : undefined);
                 const mStatus = nz(mr[15]);
                 if (mStatus && mStatus !== 'NEW') c.status = mStatus as any;
+                // Ca + chi nhánh HR đã chốt (Cập nhật TT) lưu ở master cột 7/8: phủ lại để
+                // bền vững qua restart (bộ nhớ trắng, form gốc chỉ còn giá trị ban đầu).
+                // PUT đã đẩy master đồng bộ (await) trước khi trả response nên master tươi.
+                if (nz(mr[7]) !== undefined) c.registered_shift = nz(mr[7]) as any;
+                const mBranch = nz(mr[8]);
+                if (mBranch !== undefined) {
+                  c.branch_name = mBranch as any;
+                  const mCode = String(mBranch).match(/CN\d+/i)?.[0]?.toUpperCase();
+                  if (mCode) c.preferred_branch_id = mCode as any;
+                }
                 c.interview_date = nz(mr[17]) || c.interview_date;
                 c.interview_time_slot = nz(mr[18]) || c.interview_time_slot;
                 c.interviewer_id = nz(mr[19]) || c.interviewer_id;

@@ -711,15 +711,24 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async createAttendanceAdjustment(adj: any) {
     // Ảnh bằng chứng kèm phiếu: upload Drive trước, chỉ lưu Drive file ID (mirror recordAttendanceEvent).
-    if (adj.photo_base64 && this.isConfigured) {
+    // FIX HR không thấy ảnh: trước đây chỉ upload khi Sheets configured -> Drive chưa cấu hình
+    // hoặc upload lỗi là ảnh bị `delete` mất vĩnh viễn, HR thấy "—". Nay luôn thử upload;
+    // thất bại thì giữ base64 inline (evidence_photo) để endpoint /photo phục vụ fallback.
+    if (adj.photo_base64) {
       try {
         const fileName = `ADJ_evidence_${adj.employee_id || 'unknown'}_${Date.now()}.jpg`;
         const driveResult = await this.syncService.uploadImageToDrive(fileName, 'image/jpeg', adj.photo_base64);
         if (driveResult?.fileId && !String(driveResult.fileId).startsWith('DRV_')) {
           adj.evidence_drive_id = driveResult.fileId;
+        } else {
+          // Upload chưa thành công (DRIVE_NOT_CONFIGURED / lỗi mạng -> DRV_*): giữ inline.
+          adj.evidence_drive_id = driveResult?.fileId || `DRV_LOCAL_${Date.now()}`;
+          (adj as any).evidence_photo = adj.photo_base64;
         }
       } catch (err) {
         console.error('[GoogleSheetsAdapter] Drive upload evidence error:', err);
+        adj.evidence_drive_id = `DRV_LOCAL_${Date.now()}`;
+        (adj as any).evidence_photo = adj.photo_base64;
       }
     }
     delete adj.photo_base64;
