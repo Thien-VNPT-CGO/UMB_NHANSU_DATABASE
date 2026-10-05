@@ -9644,6 +9644,66 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       URL.revokeObjectURL(url);
       showToast(`Đã xuất hồ sơ ${profEmp.full_name} (${fmt.toUpperCase()})!`);
     };
+    // In đúng hồ sơ NV đang xem (đầy đủ trường) ra cửa sổ in riêng — không in cả trang web.
+    const printProfile = () => {
+      if (!profEmp) {
+        showToast('Chưa chọn nhân viên để in hồ sơ!');
+        return;
+      }
+      const esc = (v: unknown) => String(v ?? '—').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      const statusVI = profEmp.employment_status === 'OFFICIAL' ? 'Chính thức' : profEmp.employment_status === 'PROBATION' ? 'Thử việc' : (profEmp.employment_status || '—');
+      const genderVI = profEmp.gender === 'NAM' ? 'Nam' : profEmp.gender === 'NU' ? 'Nữ' : profEmp.gender === 'KHAC' ? 'Khác' : (profEmp.gender || '—');
+      const row = (k: string, v: unknown) => `<tr><td style="padding:7px 10px;border:1px solid #999;font-weight:700;width:220px;background:#f2f2f2;">${esc(k)}</td><td style="padding:7px 10px;border:1px solid #999;">${esc(v || '—')}</td></tr>`;
+      const sec = (t: string) => `<h3 style="margin:18px 0 8px;font-size:15px;">${esc(t)}</h3>`;
+      const doc = `<!DOCTYPE html><html lang="vi"><head><meta charset="utf-8" /><title>Hồ sơ ${esc(profEmp.full_name)} (${esc(profEmp.employee_code)})</title></head>`
+        + `<body style="font-family:Arial,Helvetica,sans-serif;color:#000;padding:24px;">`
+        + `<h2 style="text-align:center;margin:0;">HỒ SƠ NHÂN VIÊN ỤM BÒ MILK</h2>`
+        + `<p style="text-align:center;margin:6px 0 0;">In lúc: ${esc(new Date().toLocaleString('vi-VN'))}</p>`
+        + sec('1. Nhân thân & Pháp lý')
+        + `<table style="border-collapse:collapse;width:100%;font-size:13px;">`
+        + row('Họ tên', profEmp.full_name)
+        + row('Mã nhân viên', profEmp.employee_code)
+        + row('Ngày sinh', profEmp.birth_date)
+        + row('CCCD/CMND', profEmp.id_card_number)
+        + row('SĐT', profEmp.phone_normalized || profEmp.phone)
+        + row('Email công ty', profEmp.email)
+        + row('Giới tính', genderVI)
+        + `</table>`
+        + sec('2. Công việc')
+        + `<table style="border-collapse:collapse;width:100%;font-size:13px;">`
+        + row('Chi nhánh', getDisplayBranch(profEmp.default_branch_id) || profEmp.default_branch_id)
+        + row('Nhóm', profEmp.group)
+        + row('Ca cố định', profEmp.default_shift_code)
+        + row('Trạng thái', statusVI)
+        + row('Ngày vào làm', profEmp.start_date)
+        + row('Ngày chính thức', profEmp.official_date)
+        + row('Lương giờ', profEmp.current_rate_per_hour ? `${Number(profEmp.current_rate_per_hour).toLocaleString('vi-VN')}đ/giờ` : '—')
+        + row('Lương tháng tạm tính (8h × 26 công)', `${Number((profEmp.current_rate_per_hour || 0) * 8 * 26).toLocaleString('vi-VN')}đ/tháng`)
+        + `</table>`
+        + sec('3. Hiệu suất chấm công (dữ liệu hệ thống)')
+        + `<table style="border-collapse:collapse;width:100%;font-size:13px;">`
+        + row('Ngày công (có mặt)', `${workDays} ngày / ${empShiftCount} ca được xếp`)
+        + row('Lượt check-in / check-out', `${empIns.length} / ${empOuts.length}`)
+        + row('Đi trễ', `${lateCount} lượt (tổng ${lateMins} phút)`)
+        + row('Về sớm', `${earlyCount} lượt`)
+        + `</table>`
+        + sec('4. Hợp đồng lao động')
+        + `<table style="border-collapse:collapse;width:100%;font-size:13px;">`
+        + row('HĐLĐ chính thức', profEmp.employment_status === 'OFFICIAL' ? 'Đã ký' : 'Chưa đến kỳ ký (đang thử việc)')
+        + row('Hiệu lực', profEmp.official_date ? `Từ ${profEmp.official_date}` : `Vào làm từ ${profEmp.start_date || '—'}`)
+        + `</table>`
+        + `<p style="margin-top:26px;font-size:13px;">Người lập phiếu (HR ký): ............................. &nbsp;&nbsp; Nhân viên (ký): .............................</p>`
+        + `<script>window.onload = function () { window.print(); };<\/script>`
+        + `</body></html>`;
+      const w = window.open('', '_blank', 'width=900,height=700');
+      if (!w) {
+        showToast('Trình duyệt chặn cửa sổ in! Hãy cho phép popup rồi bấm In lại.');
+        return;
+      }
+      w.document.write(doc);
+      w.document.close();
+      showToast(`Đã mở bản in hồ sơ ${profEmp.full_name}!`);
+    };
     const subTabs: { id: typeof profileSub; label: string }[] = [
       { id: 'overview', label: '📊 Tổng quan' },
       { id: 'identity', label: '🪪 Nhân thân & Pháp lý' },
@@ -9662,7 +9722,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </p>
           </div>
           <div style={{ display: 'flex', gap: '8px' }}>
-            <button className="btn-secondary" style={{ fontSize: '12px', padding: '7px 14px', display: 'flex', alignItems: 'center', gap: '6px' }} onClick={() => window.print()}>
+            <button className="btn-secondary" style={{ fontSize: '12px', padding: '7px 14px', display: 'flex', alignItems: 'center', gap: '6px' }} onClick={printProfile}>
               <Printer size={14} /> In hồ sơ
             </button>
             <button className="btn-secondary" style={{ fontSize: '12px', padding: '7px 14px', display: 'flex', alignItems: 'center', gap: '6px' }} onClick={() => exportProfile('json')}>
