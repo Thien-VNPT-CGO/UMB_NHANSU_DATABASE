@@ -1863,6 +1863,17 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     if (activeTab === 'hr-attendance' || activeTab === 'hr-schedule' || activeTab === 'operations') {
       reloadAttEvents();
     }
+    // Vào tab Lịch: tải mới toàn bộ ca + đơn (props có thể cũ nếu publish/xếp ca lúc
+    // đang ở tab khác mà socket ngủ) — trước đây chỉ tải sự kiện nên tuần sau có thể
+    // hiện trống dù tab Chấm Công đã thấy đủ.
+    if (activeTab === 'hr-schedule' || activeTab === 'operations') {
+      if (typeof onRefreshData === 'function') {
+        try {
+          const r = onRefreshData() as any;
+          if (r && typeof r.catch === 'function') r.catch(() => null);
+        } catch { /* bỏ qua */ }
+      }
+    }
     if (activeTab === 'hr-attendance' || activeTab === 'operations') {
       loadPhotoStats(exportAttDate);
     }
@@ -6298,6 +6309,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               {scheduleWeekOffset < 0 && (
                 archiveLoading ? ' ⏳ Đang tải chi tiết điểm danh tuần cũ từ kho lưu trữ...' : ' Tuần cũ đọc từ kho lưu trữ (giờ in/out đầy đủ).'
               )}
+              {(() => {
+                const wSet = new Set((weekDays || []).map((d: any) => d.isoDate));
+                const wShifts = (schedAllShifts || []).filter((s: any) => wSet.has(String(s.date || '').slice(0, 10)) && s.status !== 'CANCELLED').length;
+                const wOffs = (leaves || []).filter((l: any) => wSet.has(String(l.requested_date || '').slice(0, 10)) && l.status !== 'REJECTED' && l.status !== 'CANCELLED').length;
+                return ` Đã tải tuần xem: ${wShifts} ca • ${wOffs} đơn nghỉ/OFF.`;
+              })()}
             </p>
           </div>
 
