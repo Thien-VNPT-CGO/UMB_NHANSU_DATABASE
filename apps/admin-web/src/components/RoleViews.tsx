@@ -705,7 +705,7 @@ export const PublishScheduleModal: React.FC<PublishScheduleModalProps> = ({
   const [preview, setPreview] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   const branchEmps = (allEmployees || []).filter((e: any) =>
-    e.employment_status === 'OFFICIAL' && canonicalBranchId(e.default_branch_id) === canonicalBranchId(branch)
+    e.employment_status === 'OFFICIAL' && !(e as any)?.account_locked && canonicalBranchId(e.default_branch_id) === canonicalBranchId(branch)
   );
   const loadPreview = async () => {
     setBusy(true);
