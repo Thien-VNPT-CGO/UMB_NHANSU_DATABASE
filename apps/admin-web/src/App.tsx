@@ -1028,11 +1028,36 @@ export function App() {
       console.warn('[Socket.IO] Không thể khởi tạo kết nối realtime:', err);
     }
 
+    // Khóa/mở TK tức thì trên máy HR vừa bấm (không đợi vòng tải lại API):
+    // đánh dấu cờ khóa trong danh sách NV -> lưới Lịch ẩn/hiện ngay lập tức.
+    const onEmpLocked = (ev: any) => {
+      const id = String(ev?.detail?.employeeId || '');
+      if (!id) return;
+      setAllEmployees(prev => (prev || []).map((e: any) =>
+        e?.employee_id === id ? { ...e, account_locked: true } : e
+      ));
+    };
+    const onEmpUnlocked = (ev: any) => {
+      const id = String(ev?.detail?.employeeId || '');
+      if (!id) return;
+      setAllEmployees(prev => (prev || []).map((e: any) =>
+        e?.employee_id === id ? { ...e, account_locked: false } : e
+      ));
+    };
+    try {
+      window.addEventListener('ubm:employee-locked', onEmpLocked as any);
+      window.addEventListener('ubm:employee-unlocked', onEmpUnlocked as any);
+    } catch { /* non-fatal */ }
+
     return () => {
       if (reloadTimerRef.current) {
         clearTimeout(reloadTimerRef.current);
         reloadTimerRef.current = null;
       }
+      try {
+        window.removeEventListener('ubm:employee-locked', onEmpLocked as any);
+        window.removeEventListener('ubm:employee-unlocked', onEmpUnlocked as any);
+      } catch { /* non-fatal */ }
       if (socket) {
         socket.disconnect();
       }

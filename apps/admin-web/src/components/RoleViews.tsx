@@ -5379,6 +5379,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 try {
                                   const res: any = await apiRequest(`/employees/${emp.employee_id}/unlock`, { method: 'POST' });
                                   setUnlockPinResult({ name: emp.full_name, code: emp.employee_code, pin: res?.pin || '' });
+                                  try { window.dispatchEvent(new CustomEvent('ubm:employee-unlocked', { detail: { employeeId: emp.employee_id } })); } catch { /* non-fatal */ }
                                   if (onRefreshData) await onRefreshData();
                                   if (onPushSheets) await onPushSheets();
                                 } catch (e: any) {
@@ -5402,6 +5403,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 try {
                                   await apiRequest(`/employees/${emp.employee_id}/lock`, { method: 'POST' });
                                   showToast(`🔒 Đã khóa tài khoản ${emp.full_name} + xóa PIN!`);
+                                  // Ẩn khỏi Lịch NGAY LẬP TỨC (kể cả ca tuần này), không đợi tải lại.
+                                  try { window.dispatchEvent(new CustomEvent('ubm:employee-locked', { detail: { employeeId: emp.employee_id } })); } catch { /* non-fatal */ }
                                   if (onRefreshData) await onRefreshData();
                                   if (onPushSheets) await onPushSheets();
                                 } catch (e: any) {
