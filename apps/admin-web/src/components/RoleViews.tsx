@@ -4630,367 +4630,274 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           </div>
         </div>
 
-        {/* Data Table */}
-        <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-              <thead>
-                <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase', borderBottom: '1px solid var(--border)' }}>
-                  <th style={{ padding: '12px 18px', width: '110px' }}>Mã NV</th>
-                  <th style={{ padding: '12px 18px' }}>Họ Và Tên</th>
-                  <th style={{ padding: '12px 18px', width: '130px' }}>Số Điện Thoại</th>
-                  <th style={{ padding: '12px 18px' }}>Chi Nhánh Làm Việc</th>
-                  <th style={{ padding: '12px 18px', width: '130px' }}>Khối / Vị Trí</th>
-                  <th style={{ padding: '12px 18px', width: '130px' }}>Mức Lương Giờ</th>
-                  <th style={{ padding: '12px 18px', width: '130px' }}>Ngày Bắt Đầu</th>
-                  <th style={{ padding: '12px 18px', width: '120px' }}>Ngày Hoàn Thành</th>
-                  <th style={{ padding: '12px 18px', width: '170px' }}>Tiến Độ Thử Việc</th>
-                  <th style={{ padding: '12px 18px', width: '170px' }}>Mật Độ Ca</th>
-                  <th style={{ padding: '12px 18px', width: '210px' }}>Kiểm Tra Đầu Ra</th>
-                  <th style={{ padding: '12px 18px', width: '120px', textAlign: 'center' }}>Điểm Bài TEST</th>
-                  <th style={{ padding: '12px 18px', width: '130px', textAlign: 'center' }}>Trạng Thái</th>
-                  <th style={{ padding: '12px 18px', width: '220px', textAlign: 'center' }}>Thao Tác</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredProbationEmps.length > 0 ? (
-                  filteredProbationEmps.map((emp, i) => {
-                    const prog = probationProgress(emp);
-                    const best = probationBestScore(emp.employee_id);
-                    const density = probationShiftDensity(emp.employee_id);
-                    return (
-                      <tr
-                        key={emp.employee_id || i}
-                        style={{
-                          borderBottom: '1px solid var(--border)',
-                          transition: 'background-color 0.15s',
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.backgroundColor = 'var(--bg-subtle, #f9fafb)';
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.backgroundColor = 'transparent';
-                        }}
-                      >
-                        <td style={{ padding: '14px 18px', fontWeight: 800, color: 'var(--brand)', fontFamily: 'monospace', fontSize: '13px' }}>
-                          {emp.employee_code}
-                        </td>
-                        <td style={{ padding: '14px 18px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                            <div style={{
-                              width: '32px',
-                              height: '32px',
-                              borderRadius: '50%',
-                              backgroundColor: '#FEF3C7',
-                              color: '#B45309',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              fontWeight: 700,
-                              fontSize: '12px',
-                              flexShrink: 0,
-                            }}>
-                              {(emp.full_name || 'NV').charAt(0).toUpperCase()}
-                            </div>
-                            <div>
-                              <div style={{ fontWeight: 700, color: 'var(--text)' }}>{emp.full_name}</div>
-                              {emp.email && <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{emp.email}</div>}
-                            </div>
-                          </div>
-                        </td>
-                        <td style={{ padding: '14px 18px', fontFamily: 'monospace' }}>
-                          <a
-                            href={`tel:${emp.phone_normalized || emp.phone}`}
-                            style={{ color: 'var(--text)', textDecoration: 'none', fontWeight: 600 }}
-                            title="Gọi điện"
-                          >
-                            {emp.phone_normalized || emp.phone || '---'}
-                          </a>
-                        </td>
-                        <td style={{ padding: '14px 18px' }}>
-                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '3px 8px', borderRadius: '6px', backgroundColor: '#F1F5F9', fontSize: '12px', fontWeight: 600, color: '#334155' }}>
-                            <Store size={12} color="#64748B" />
-                            {getDisplayBranch(emp.default_branch_id || emp.branch_id, emp.group)}
-                          </div>
-                        </td>
-                        <td style={{ padding: '14px 18px' }}>
-                          <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>
-                            {emp.group === 'VAN_PHONG' ? 'Khối Văn Phòng' : emp.group === 'XUONG' ? 'Khối Sản Xuất' : 'Khối Cửa Hàng'}
-                          </span>
-                        </td>
-                        <td style={{ padding: '14px 18px', fontWeight: 800, color: '#059669', fontSize: '13px' }}>
-                          {emp.current_rate_per_hour
-                            ? `${Number(emp.current_rate_per_hour).toLocaleString('vi-VN')} đ/h`
-                            : '21.000 đ/h'}
-                        </td>
-                        <td style={{ padding: '14px 18px', fontSize: '12px', color: 'var(--text-muted)' }}>
-                          {toISODate(emp.start_date) || 'Đang cập nhật'}
-                        </td>
-                        <td style={{ padding: '14px 18px' }}>
-                          {(() => {
-                            const e = probationEndOf(emp);
-                            if (!e) return <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Chờ ngày bắt đầu</span>;
-                            return (
-                              <div>
-                                <div style={{ fontSize: '13px', fontWeight: 800, color: e.due ? '#DC2626' : 'var(--text)' }}>
-                                  {fmtDM(e.end)}
-                                </div>
-                                <div style={{ fontSize: '11px', fontWeight: 700, color: e.due ? '#DC2626' : e.leftDays <= 2 ? '#B45309' : 'var(--text-muted)' }}>
-                                  {e.due ? '🔔 Đến hạn xét duyệt!' : e.leftDays <= 2 ? `Còn ${e.leftDays} ngày — lên lịch kiểm tra!` : `Còn ${e.leftDays} ngày`}
-                                </div>
-                              </div>
-                            );
-                          })()}
-                        </td>
-                        <td style={{ padding: '14px 18px' }}>
-                          {prog ? (
-                            <div>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', fontWeight: 700, color: prog.left === 0 ? '#059669' : prog.left <= 3 ? '#DC2626' : 'var(--text-muted)', marginBottom: '4px' }}>
-                                <span>Ngày {prog.done}/12</span>
-                                <span>{prog.left === 0 ? 'Hết hạn — xét duyệt!' : `Còn ${prog.left} ngày`}</span>
-                              </div>
-                              <div style={{ height: '8px', borderRadius: '999px', backgroundColor: '#F1F5F9', overflow: 'hidden' }}>
-                                <div style={{ width: `${prog.pct}%`, height: '100%', borderRadius: '999px', backgroundColor: prog.left === 0 ? '#10B981' : prog.left <= 3 ? '#EF4444' : '#F59E0B' }} />
-                              </div>
-                            </div>
-                          ) : (
-                            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Chưa rõ ngày bắt đầu</span>
-                          )}
-                        </td>
-                        <td style={{ padding: '14px 18px' }}>
-                          {density.maxPerDay >= 2 ? (
-                            <div>
-                              <span title={`Các ngày làm 2+ ca:\n${density.multiDays.map((m) => `${m.date.slice(8, 10)}/${m.date.slice(5, 7)}: ${m.codes}`).join('\n')}`} style={{ display: 'inline-block', padding: '4px 10px', borderRadius: '999px', fontSize: '12px', fontWeight: 800, backgroundColor: '#FFFBEB', color: '#B45309', border: '1px solid #F59E0B', whiteSpace: 'nowrap' }}>
-                                ⚡ {density.maxPerDay} ca/ngày
-                              </span>
-                              <div style={{ fontSize: '11px', color: '#92400E', fontWeight: 600, marginTop: '4px', lineHeight: 1.5 }}>
-                                {density.multiDays.slice(0, 3).map((m) => `${m.date.slice(8, 10)}/${m.date.slice(5, 7)} (${m.codes})`).join(' • ')}
-                                {density.multiDays.length > 3 && ` +${density.multiDays.length - 3} ngày`}
-                              </div>
-                              <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                                Tổng {density.total} ca đã xếp
-                              </div>
-                            </div>
-                          ) : density.maxPerDay === 1 ? (
-                            <div>
-                              <span style={{ display: 'inline-block', padding: '4px 10px', borderRadius: '999px', fontSize: '12px', fontWeight: 700, backgroundColor: '#F1F5F9', color: '#475569' }}>
-                                1 ca/ngày
-                              </span>
-                              <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                                Tổng {density.total} ca đã xếp
-                              </div>
-                            </div>
-                          ) : (
-                            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Chưa xếp ca</span>
-                          )}
-                        </td>
-                        <td style={{ padding: '14px 18px' }}>
-                          {(() => {
-                            const a = assessByEmp.get(emp.employee_id);
-                            if (!a) {
-                              return <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Chưa lên lịch — bấm “📅 Lên lịch đầu ra” ở cột Thao tác.</span>;
-                            }
-                            const q = a.quiz;
-                            return (
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '12px' }}>
-                                <div>
-                                  {a.meetDone ? (
-                                    <span style={{ display: 'inline-block', padding: '3px 9px', borderRadius: '999px', fontWeight: 800, fontSize: '11px', backgroundColor: a.meetDone.passed ? '#ECFDF5' : '#FEF2F2', color: a.meetDone.passed ? '#059669' : '#DC2626', border: `1px solid ${a.meetDone.passed ? '#A7F3D0' : '#FECACA'}` }}>
-                                      🎥 Meet: {a.meetDone.passed ? 'ĐẠT' : 'CHƯA ĐẠT'}
-                                    </span>
-                                  ) : (
-                                    <span style={{ display: 'inline-block', padding: '3px 9px', borderRadius: '999px', fontWeight: 800, fontSize: '11px', backgroundColor: '#EFF6FF', color: '#1D4ED8', border: '1px solid #BFDBFE' }}>
-                                      🎥 Meet: {a.meetDate ? `${a.meetTime} ${fmtDM(a.meetDate)}` : 'đã lên lịch'}
-                                    </span>
-                                  )}
-                                  {a.meetDate && !a.meetDone && (
-                                    <a href={a.meetUrl} target="_blank" rel="noreferrer" style={{ marginLeft: '6px', fontSize: '11px', fontWeight: 700, color: '#0068FF' }}>Vào Meet →</a>
-                                  )}
-                                </div>
-                                <div>
-                                  {!a.quizTestId ? (
-                                    <span style={{ color: 'var(--text-muted)' }}>📝 Quiz: chưa giao</span>
-                                  ) : !q ? (
-                                    <span title="Mới lưu lịch, đề này chưa được giao cho NV — sang tab TEST giao đúng đề này cho NV" style={{ display: 'inline-block', padding: '3px 9px', borderRadius: '999px', fontWeight: 800, fontSize: '11px', backgroundColor: '#FFFBEB', color: '#92400E', border: '1px solid #FDE68A' }}>
-                                      📝 Quiz: mới lưu lịch — sang TEST giao bài!
-                                    </span>
-                                  ) : q.status === 'ASSIGNED' ? (
-                                    <span style={{ display: 'inline-block', padding: '3px 9px', borderRadius: '999px', fontWeight: 800, fontSize: '11px', backgroundColor: '#FFFBEB', color: '#92400E', border: '1px solid #FDE68A' }}>
-                                      📝 Quiz: chờ NV nộp
-                                    </span>
-                                  ) : (
-                                    <span style={{ display: 'inline-block', padding: '3px 9px', borderRadius: '999px', fontWeight: 800, fontSize: '11px', backgroundColor: q.passed ? '#ECFDF5' : '#FEF2F2', color: q.passed ? '#059669' : '#DC2626', border: `1px solid ${q.passed ? '#A7F3D0' : '#FECACA'}` }}>
-                                      📝 Quiz: {q.score ?? '—'}/10 {q.passed ? 'ĐẠT' : 'CHƯA ĐẠT'}
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })()}
-                        </td>
-                        <td style={{ padding: '14px 18px', textAlign: 'center' }}>
-                          {best !== null ? (
-                            <span style={{ display: 'inline-block', padding: '4px 10px', borderRadius: '999px', fontSize: '12px', fontWeight: 800, backgroundColor: best >= 8 ? '#ECFDF5' : '#FEF2F2', color: best >= 8 ? '#059669' : '#DC2626', border: `1px solid ${best >= 8 ? '#A7F3D0' : '#FECACA'}` }}>
-                              ⭐ {best} / 10
-                            </span>
-                          ) : (
-                            <span className="badge badge-success">Sẵn sàng TEST</span>
-                          )}
-                        </td>
-                        <td style={{ padding: '14px 18px', textAlign: 'center' }}>
-                          <span className="badge" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 700, letterSpacing: '0.3px', backgroundColor: '#FFFBEB', color: '#B45309' }}>
-                            <Clock size={11} />
-                            THỬ VIỆC
-                          </span>
-                        </td>
-                        <td style={{ padding: '14px 18px', textAlign: 'center' }}>
-                          <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', flexWrap: 'wrap' }}>
-                            <button
-                              className="btn-secondary"
-                              style={{ padding: '5px 12px', fontSize: '12px', fontWeight: 700, color: '#1D4ED8', borderColor: '#BFDBFE' }}
-                              onClick={async () => {
-                                const a = assessByEmp.get(emp.employee_id);
-                                setAssessModalEmp(emp);
-                                setAssessDate(a?.meetDate || probationEndOf(emp)?.end || '');
-                                setAssessTime(a?.meetTime || '09:00');
-                                setAssessQuizId(a?.quizTestId || '');
-                                if (a?.meetUrl) {
-                                  setAssessMeetUrl(a.meetUrl);
-                                } else {
-                                  // Hệ thống tự lấy link Meet hiện tại điền sẵn (HR vẫn sửa được).
-                                  setAssessMeetUrl('Đang lấy link Meet hệ thống...');
-                                  try {
-                                    const d: any = await apiRequest('/admin/system-meet-url');
-                                    setAssessMeetUrl(d?.meetUrl || SYSTEM_MEET_URL);
-                                  } catch {
-                                    setAssessMeetUrl(SYSTEM_MEET_URL);
-                                  }
-                                }
-                              }}
-                              title="Lên lịch kiểm tra đầu ra: vấn đáp Google Meet + giao bài trắc nghiệm, gửi thông báo cả 2 cho NV"
-                            >
-                              📅 Lên lịch đầu ra
-                            </button>
-                            {(() => {
-                              const a = assessByEmp.get(emp.employee_id);
-                              if (!a || a.meetDone) return null;
-                              const busy = meetBusyId === emp.employee_id;
-                              const mark = async (passed: boolean) => {
-                                if (!window.confirm(`Chấm vấn đáp Meet của ${emp.full_name}: ${passed ? 'ĐẠT' : 'CHƯA ĐẠT'}?`)) return;
-                                setMeetBusyId(emp.employee_id);
-                                try {
-                                  await apiRequest('/admin/probation-assessment/meet-done', {
-                                    method: 'POST',
-                                    body: JSON.stringify({ employeeId: emp.employee_id, passed }),
-                                  });
-                                  showToast(passed ? `✅ ${emp.full_name} vấn đáp Meet ĐẠT!` : `📝 Đã ghi ${emp.full_name} vấn đáp Meet CHƯA ĐẠT.`);
-                                  await loadAssessments();
-                                  if (onRefreshData) await onRefreshData();
-                                } catch (e: any) {
-                                  showToast(e?.message || 'Lỗi khi chấm Meet!');
-                                } finally {
-                                  setMeetBusyId(null);
-                                }
-                              };
-                              return (<>
-                                <button
-                                  className="btn-secondary"
-                                  disabled={busy}
-                                  style={{ padding: '5px 12px', fontSize: '12px', fontWeight: 700, color: '#059669', borderColor: '#A7F3D0' }}
-                                  onClick={() => mark(true)}
-                                  title="Chấm vấn đáp Google Meet: ĐẠT"
-                                >
-                                  ✓ Meet Đạt
-                                </button>
-                                <button
-                                  className="btn-secondary"
-                                  disabled={busy}
-                                  style={{ padding: '5px 12px', fontSize: '12px', fontWeight: 700, color: '#DC2626', borderColor: '#FECACA' }}
-                                  onClick={() => mark(false)}
-                                  title="Chấm vấn đáp Google Meet: CHƯA ĐẠT"
-                                >
-                                  ✗ Chưa đạt
-                                </button>
-                              </>);
-                            })()}
-                            <button
-                              className="btn-primary"
-                              style={{ padding: '5px 12px', fontSize: '12px', fontWeight: 700, backgroundColor: '#059669' }}
-                              onClick={async () => {
-                                if (!window.confirm(`Chuyển ${emp.full_name} (${emp.employee_code}) lên NHÂN VIÊN CHÍNH THỨC?`)) return;
-                                try {
-                                  await apiRequest(`/employees/${emp.employee_id}/transition-official`, {
-                                    method: 'POST',
-                                    body: JSON.stringify({ expectedVersion: emp.version || 1 }),
-                                  });
-                                  showToast(`✅ ${emp.full_name} đã lên chính thức!`);
-                                  if (onRefreshData) await onRefreshData();
-                                  if (onSyncSheets) await onSyncSheets();
-                                } catch (e: any) {
-                                  showToast(e?.message || 'Lỗi khi chuyển chính thức!');
-                                }
-                              }}
-                            >
-                              Đề Xuất Chính Thức
-                            </button>
-                            <button
-                              className="btn-secondary"
-                              style={{ padding: '5px 12px', fontSize: '12px', fontWeight: 700 }}
-                              onClick={() => {
-                                setEditingEmp(emp);
-                                setEditEmpForm({
-                                  fullName: emp.full_name || '',
-                                  phone: emp.phone_normalized || '',
-                                  branchId: emp.default_branch_id || 'CN130',
-                                  group: emp.group || 'STORE',
-                                  rate: emp.current_rate_per_hour || 21000,
-                                  shift: emp.default_shift_code || '',
-                                  startDate: String(emp.start_date || '').slice(0, 10),
-                                  officialDate: String(emp.official_date || '').slice(0, 10),
-                                  email: emp.email || '',
-                                });
-                              }}
-                            >
-                              Sửa
-                            </button>
-                            <button
-                              className="btn-secondary"
-                              style={{ padding: '5px 12px', fontSize: '12px', fontWeight: 700, color: '#DC2626' }}
-                              onClick={async () => {
-                                if (!window.confirm(`XÓA nhân viên ${emp.full_name} (${emp.employee_code})?\nHồ sơ + tài khoản đăng nhập sẽ bị xóa khỏi hệ thống và Google Sheets. Không thể hoàn tác!`)) return;
-                                try {
-                                  await apiRequest(`/employees/${emp.employee_id}`, { method: 'DELETE' });
-                                  showToast(`Đã xóa ${emp.full_name} khỏi hệ thống và Sheets!`);
-                                  if (onRefreshData) await onRefreshData();
-                                  if (onSyncSheets) await onSyncSheets();
-                                } catch (e: any) {
-                                  showToast(e?.message || 'Lỗi khi xóa!');
-                                }
-                              }}
-                            >
-                              Xóa
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })
-                ) : (
-                  <tr>
-                    <td colSpan={13} style={{ textAlign: 'center', padding: '48px 20px', color: 'var(--text-muted)' }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
-                        <Users size={36} color="var(--border)" />
-                        <div style={{ fontWeight: 600, fontSize: '14px' }}>Hiện chưa có nhân viên trong giai đoạn thử việc</div>
-                        <div style={{ fontSize: '12px', maxWidth: '420px', lineHeight: 1.5 }}>
-                          Dữ liệu sẽ đồng bộ từ Google Sheets, hoặc bấm nút <strong>+ Thêm NV Thử Việc</strong> phía trên để tạo hồ sơ mới.
+        {/* DANH SÁCH THẺ NV THỬ VIỆC (card từng người — dễ nhìn hơn bảng 14 cột) */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          {filteredProbationEmps.length > 0 ? (
+            filteredProbationEmps.map((emp, i) => {
+              const prog = probationProgress(emp);
+              const best = probationBestScore(emp.employee_id);
+              const density = probationShiftDensity(emp.employee_id);
+              const endInfo = probationEndOf(emp);
+              const a = assessByEmp.get(emp.employee_id);
+              const progColor = !prog || prog.left === 0 ? '#10B981' : prog.left <= 3 ? '#EF4444' : '#F59E0B';
+              return (
+                <div
+                  key={emp.employee_id || i}
+                  style={{ backgroundColor: 'var(--surface)', borderRadius: '12px', border: `1.5px solid ${endInfo?.due ? '#FECACA' : 'var(--border)'}`, overflow: 'hidden', boxShadow: '0 2px 4px rgba(0,0,0,0.03)' }}
+                >
+                  {/* Hàng 1: avatar + tên + badge trạng thái + điểm TEST */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '14px 18px 10px', flexWrap: 'wrap' }}>
+                    <div style={{ position: 'relative', width: '46px', height: '46px', flexShrink: 0 }}>
+                      <div style={{ width: '46px', height: '46px', borderRadius: '50%', background: 'linear-gradient(135deg, #F59E0B, #EC4899)', color: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '17px' }}>
+                        {(emp.full_name || 'NV').charAt(0).toUpperCase()}
+                      </div>
+                      {!!(emp as any).avatar_drive_id && (
+                        <div style={{ position: 'absolute', inset: 0 }}>
+                          <EmpAvatar employeeId={emp.employee_id} size={46} />
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ flex: '1 1 200px', minWidth: '180px' }}>
+                      <div style={{ fontWeight: 800, fontSize: '15px', color: 'var(--text)' }}>{emp.full_name}</div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                        <span style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--brand)' }}>{emp.employee_code}</span>
+                        {emp.email ? ` • ${emp.email}` : ''}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                      {endInfo?.due && (
+                        <span style={{ padding: '4px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: 800, backgroundColor: '#FEE2E2', color: '#DC2626', border: '1px solid #FECACA' }}>
+                          🔔 Đến hạn xét duyệt!
+                        </span>
+                      )}
+                      {density.maxPerDay >= 2 && (
+                        <span title={`Các ngày làm 2+ ca:\n${density.multiDays.map((m) => `${m.date.slice(8, 10)}/${m.date.slice(5, 7)}: ${m.codes}`).join('\n')}`} style={{ padding: '4px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: 800, backgroundColor: '#FFFBEB', color: '#B45309', border: '1px solid #F59E0B', whiteSpace: 'nowrap' }}>
+                          ⚡ {density.maxPerDay} ca/ngày
+                        </span>
+                      )}
+                      {best !== null ? (
+                        <span style={{ padding: '4px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: 800, backgroundColor: best >= 8 ? '#ECFDF5' : '#FEF2F2', color: best >= 8 ? '#059669' : '#DC2626', border: `1px solid ${best >= 8 ? '#A7F3D0' : '#FECACA'}` }}>
+                          ⭐ TEST {best}/10
+                        </span>
+                      ) : (
+                        <span className="badge badge-success">Sẵn sàng TEST</span>
+                      )}
+                    </div>
+                  </div>
+                  {/* Hàng 2: thanh tiến độ 12 ngày */}
+                  <div style={{ padding: '0 18px 10px' }}>
+                    {prog ? (
+                      <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', fontWeight: 700, color: prog.left === 0 ? '#059669' : prog.left <= 3 ? '#DC2626' : 'var(--text-muted)', marginBottom: '4px' }}>
+                          <span>Ngày {prog.done}/12 • {endInfo ? `Hoàn thành ${fmtDM(endInfo.end)}` : ''}</span>
+                          <span>{prog.left === 0 ? 'Hết hạn — xét duyệt!' : `Còn ${prog.left} ngày`}</span>
+                        </div>
+                        <div style={{ height: '8px', borderRadius: '999px', backgroundColor: '#F1F5F9', overflow: 'hidden' }}>
+                          <div style={{ width: `${prog.pct}%`, height: '100%', borderRadius: '999px', backgroundColor: progColor }} />
                         </div>
                       </div>
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+                    ) : (
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Chưa rõ ngày bắt đầu — HR bổ sung ở tab Hồ Sơ NV.</div>
+                    )}
+                  </div>
+                  {/* Hàng 3: ô thông tin */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '8px', padding: '0 18px 10px', fontSize: '12px' }}>
+                    <div style={{ backgroundColor: 'var(--bg)', borderRadius: '8px', padding: '8px 10px' }}>
+                      <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 700 }}>📞 SĐT</div>
+                      <div style={{ fontWeight: 700, marginTop: '2px' }}><a href={`tel:${emp.phone_normalized || emp.phone}`} style={{ color: 'var(--text)', textDecoration: 'none' }}>{emp.phone_normalized || emp.phone || '---'}</a></div>
+                    </div>
+                    <div style={{ backgroundColor: 'var(--bg)', borderRadius: '8px', padding: '8px 10px' }}>
+                      <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 700 }}>🏪 CHI NHÁNH • KHỐI</div>
+                      <div style={{ fontWeight: 700, marginTop: '2px' }}>{getDisplayBranch(emp.default_branch_id || emp.branch_id, emp.group)} • {emp.group === 'VAN_PHONG' ? 'Văn phòng' : emp.group === 'XUONG' ? 'Sản xuất' : emp.group === 'SALE' ? 'Sale' : 'Cửa hàng'}</div>
+                    </div>
+                    <div style={{ backgroundColor: 'var(--bg)', borderRadius: '8px', padding: '8px 10px' }}>
+                      <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 700 }}>💰 LƯƠNG GIỜ • BẮT ĐẦU</div>
+                      <div style={{ fontWeight: 800, marginTop: '2px', color: '#059669' }}>{emp.current_rate_per_hour ? `${Number(emp.current_rate_per_hour).toLocaleString('vi-VN')} đ/h` : '21.000 đ/h'}</div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Từ {toISODate(emp.start_date) ? fmtDM(toISODate(emp.start_date)) : 'đang cập nhật'}</div>
+                    </div>
+                    <div style={{ backgroundColor: 'var(--bg)', borderRadius: '8px', padding: '8px 10px' }}>
+                      <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 700 }}>🕒 CA ĐÃ XẾP</div>
+                      <div style={{ fontWeight: 700, marginTop: '2px' }}>{density.total > 0 ? `Tổng ${density.total} ca` : 'Chưa xếp ca'}</div>
+                      {density.multiDays.length > 0 && (
+                        <div style={{ fontSize: '11px', color: '#92400E', marginTop: '2px' }}>
+                          {density.multiDays.slice(0, 3).map((m) => `${m.date.slice(8, 10)}/${m.date.slice(5, 7)} (${m.codes})`).join(' • ')}
+                          {density.multiDays.length > 3 && ` +${density.multiDays.length - 3} ngày`}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ backgroundColor: 'var(--bg)', borderRadius: '8px', padding: '8px 10px' }}>
+                      <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 700 }}>📝 KIỂM TRA ĐẦU RA</div>
+                      <div style={{ marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        {!a ? (
+                          <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Chưa lên lịch</span>
+                        ) : (
+                          <>
+                            {a.meetDone ? (
+                              <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: '999px', fontWeight: 800, fontSize: '11px', backgroundColor: a.meetDone.passed ? '#ECFDF5' : '#FEF2F2', color: a.meetDone.passed ? '#059669' : '#DC2626' }}>
+                                🎥 Meet: {a.meetDone.passed ? 'ĐẠT' : 'CHƯA ĐẠT'}
+                              </span>
+                            ) : (
+                              <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: '999px', fontWeight: 800, fontSize: '11px', backgroundColor: '#EFF6FF', color: '#1D4ED8' }}>
+                                🎥 Meet: {a.meetDate ? `${a.meetTime} ${fmtDM(a.meetDate)}` : 'đã lên lịch'}
+                              </span>
+                            )}
+                            {!a.quizTestId ? (
+                              <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>📝 Quiz: chưa giao</span>
+                            ) : !a.quiz ? (
+                              <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: '999px', fontWeight: 800, fontSize: '11px', backgroundColor: '#FFFBEB', color: '#92400E' }}>
+                                📝 Quiz: mới lưu lịch — sang TEST giao bài!
+                              </span>
+                            ) : (
+                              <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: '999px', fontWeight: 800, fontSize: '11px', backgroundColor: a.quiz.status === 'ASSIGNED' ? '#FFFBEB' : a.quiz.passed ? '#ECFDF5' : '#FEF2F2', color: a.quiz.status === 'ASSIGNED' ? '#92400E' : a.quiz.passed ? '#059669' : '#DC2626' }}>
+                                📝 Quiz: {a.quiz.status === 'ASSIGNED' ? 'chờ NV nộp' : `${a.quiz.score ?? '—'}/10 ${a.quiz.passed ? 'ĐẠT' : 'CHƯA ĐẠT'}`}
+                              </span>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  {/* Hàng 4: thao tác (giữ nguyên mọi nút/logic cũ) */}
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', padding: '10px 18px 14px', borderTop: '1px solid var(--border)', backgroundColor: 'var(--bg)' }}>
+                    <button
+                      className="btn-secondary"
+                      style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 700, color: '#1D4ED8', borderColor: '#BFDBFE' }}
+                      onClick={async () => {
+                        const ax = assessByEmp.get(emp.employee_id);
+                        setAssessModalEmp(emp);
+                        setAssessDate(ax?.meetDate || probationEndOf(emp)?.end || '');
+                        setAssessTime(ax?.meetTime || '09:00');
+                        setAssessQuizId(ax?.quizTestId || '');
+                        if (ax?.meetUrl) {
+                          setAssessMeetUrl(ax.meetUrl);
+                        } else {
+                          // Hệ thống tự lấy link Meet hiện tại điền sẵn (HR vẫn sửa được).
+                          setAssessMeetUrl('Đang lấy link Meet hệ thống...');
+                          try {
+                            const d: any = await apiRequest('/admin/system-meet-url');
+                            setAssessMeetUrl(d?.meetUrl || SYSTEM_MEET_URL);
+                          } catch {
+                            setAssessMeetUrl(SYSTEM_MEET_URL);
+                          }
+                        }
+                      }}
+                      title="Lên lịch kiểm tra đầu ra: vấn đáp Google Meet + giao bài trắc nghiệm, gửi thông báo cả 2 cho NV"
+                    >
+                      📅 Lên lịch đầu ra
+                    </button>
+                    {(() => {
+                      if (!a || a.meetDone) return null;
+                      const busy = meetBusyId === emp.employee_id;
+                      const mark = async (passed: boolean) => {
+                        if (!window.confirm(`Chấm vấn đáp Meet của ${emp.full_name}: ${passed ? 'ĐẠT' : 'CHƯA ĐẠT'}?`)) return;
+                        setMeetBusyId(emp.employee_id);
+                        try {
+                          await apiRequest('/admin/probation-assessment/meet-done', {
+                            method: 'POST',
+                            body: JSON.stringify({ employeeId: emp.employee_id, passed }),
+                          });
+                          showToast(passed ? `✅ ${emp.full_name} vấn đáp Meet ĐẠT!` : `📝 Đã ghi ${emp.full_name} vấn đáp Meet CHƯA ĐẠT.`);
+                          await loadAssessments();
+                          if (onRefreshData) await onRefreshData();
+                        } catch (e: any) {
+                          showToast(e?.message || 'Lỗi khi chấm Meet!');
+                        } finally {
+                          setMeetBusyId(null);
+                        }
+                      };
+                      return (<>
+                        <button
+                          className="btn-secondary"
+                          disabled={busy}
+                          style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 700, color: '#059669', borderColor: '#A7F3D0' }}
+                          onClick={() => mark(true)}
+                          title="Chấm vấn đáp Google Meet: ĐẠT"
+                        >
+                          ✓ Meet Đạt
+                        </button>
+                        <button
+                          className="btn-secondary"
+                          disabled={busy}
+                          style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 700, color: '#DC2626', borderColor: '#FECACA' }}
+                          onClick={() => mark(false)}
+                          title="Chấm vấn đáp Google Meet: CHƯA ĐẠT"
+                        >
+                          ✗ Chưa đạt
+                        </button>
+                      </>);
+                    })()}
+                    <button
+                      className="btn-primary"
+                      style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 700, backgroundColor: '#059669' }}
+                      onClick={async () => {
+                        if (!window.confirm(`Chuyển ${emp.full_name} (${emp.employee_code}) lên NHÂN VIÊN CHÍNH THỨC?`)) return;
+                        try {
+                          await apiRequest(`/employees/${emp.employee_id}/transition-official`, {
+                            method: 'POST',
+                            body: JSON.stringify({ expectedVersion: emp.version || 1 }),
+                          });
+                          showToast(`✅ ${emp.full_name} đã lên chính thức!`);
+                          if (onRefreshData) await onRefreshData();
+                          if (onSyncSheets) await onSyncSheets();
+                        } catch (e: any) {
+                          showToast(e?.message || 'Lỗi khi chuyển chính thức!');
+                        }
+                      }}
+                    >
+                      Đề Xuất Chính Thức
+                    </button>
+                    <button
+                      className="btn-secondary"
+                      style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 700 }}
+                      onClick={() => {
+                        setEditingEmp(emp);
+                        setEditEmpForm({
+                          fullName: emp.full_name || '',
+                          phone: emp.phone_normalized || '',
+                          branchId: emp.default_branch_id || 'CN130',
+                          group: emp.group || 'STORE',
+                          rate: emp.current_rate_per_hour || 21000,
+                          shift: emp.default_shift_code || '',
+                          startDate: String(emp.start_date || '').slice(0, 10),
+                          officialDate: String(emp.official_date || '').slice(0, 10),
+                          email: emp.email || '',
+                        });
+                      }}
+                    >
+                      Sửa
+                    </button>
+                    <button
+                      className="btn-secondary"
+                      style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 700, color: '#DC2626' }}
+                      onClick={async () => {
+                        if (!window.confirm(`XÓA nhân viên ${emp.full_name} (${emp.employee_code})?\nHồ sơ + tài khoản đăng nhập sẽ bị xóa khỏi hệ thống và Google Sheets. Không thể hoàn tác!`)) return;
+                        try {
+                          await apiRequest(`/employees/${emp.employee_id}`, { method: 'DELETE' });
+                          showToast(`Đã xóa ${emp.full_name} khỏi hệ thống và Sheets!`);
+                          if (onRefreshData) await onRefreshData();
+                          if (onSyncSheets) await onSyncSheets();
+                        } catch (e: any) {
+                          showToast(e?.message || 'Lỗi khi xóa!');
+                        }
+                      }}
+                    >
+                      Xóa
+                    </button>
+                  </div>
+                </div>
+              );
+            })
+          ) : (
+            <div style={{ backgroundColor: 'var(--surface)', borderRadius: '12px', border: '1px solid var(--border)', textAlign: 'center', padding: '48px 20px', color: 'var(--text-muted)' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
+                <Users size={36} color="var(--border)" />
+                <div style={{ fontWeight: 600, fontSize: '14px' }}>Hiện chưa có nhân viên trong giai đoạn thử việc</div>
+                <div style={{ fontSize: '12px', maxWidth: '420px', lineHeight: 1.5 }}>
+                  Dữ liệu sẽ đồng bộ từ Google Sheets, hoặc bấm nút <strong>+ Thêm NV Thử Việc</strong> phía trên để tạo hồ sơ mới.
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* MODAL LÊN LỊCH KIỂM TRA ĐẦU RA (Meet vấn đáp + trắc nghiệm, gửi cả 2 cho NV) */}
