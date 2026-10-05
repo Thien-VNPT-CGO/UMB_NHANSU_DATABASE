@@ -146,6 +146,76 @@ export const AdjPhoto: React.FC<{ adjustmentId: string; style?: React.CSSPropert
   }
   return <img src={url} alt="Ảnh bằng chứng" style={{ width: '48px', height: '48px', objectFit: 'cover', borderRadius: '8px', border: '1px solid var(--border)', cursor: 'zoom-in', ...(style || {}) }} />;
 };
+/** Chuẩn hóa tiếng Việt bỏ dấu để tìm kiếm không dấu (gõ "nguyen" vẫn ra "Nguyễn"). */
+export function stripAccentsVI(s: unknown): string {
+  return String(s || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .toLowerCase();
+}
+/** Nén ảnh avatar HR upload ở tab Hồ Sơ về JPEG ≤512px để gửi nhẹ (mirror cổng NV). */
+export function compressAvatarImage(file: File): Promise<string | null> {
+  return new Promise((resolve) => {
+    try {
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const img = new Image();
+          img.onload = () => {
+            try {
+              const max = 512;
+              const scale = Math.min(1, max / Math.max(img.width || 1, img.height || 1));
+              const w = Math.max(1, Math.round((img.width || max) * scale));
+              const h = Math.max(1, Math.round((img.height || max) * scale));
+              const canvas = document.createElement('canvas');
+              canvas.width = w;
+              canvas.height = h;
+              const ctx = canvas.getContext('2d');
+              if (!ctx) return resolve(null);
+              ctx.drawImage(img, 0, 0, w, h);
+              resolve(canvas.toDataURL('image/jpeg', 0.82));
+            } catch { resolve(null); }
+          };
+          img.onerror = () => resolve(null);
+          img.src = String(reader.result || '');
+        } catch { resolve(null); }
+      };
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(file);
+    } catch { resolve(null); }
+  });
+}
+/** Avatar nhân viên tab Hồ Sơ: tải blob kèm token rồi hiện (thẻ <img> không gửi được Authorization). */
+export const EmpAvatar: React.FC<{ employeeId: string; size?: number }> = ({ employeeId, size }) => {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const px = size || 72;
+  useEffect(() => {
+    let alive = true;
+    let objUrl: string | null = null;
+    (async () => {
+      try {
+        const res = await fetch(`${getApiBase()}/employees/${employeeId}/avatar`, {
+          headers: { Authorization: `Bearer ${getAuthToken()}` },
+        });
+        if (!res.ok) throw new Error('no avatar');
+        const blob = await res.blob();
+        objUrl = URL.createObjectURL(blob);
+        if (alive) setUrl(objUrl);
+      } catch {
+        if (alive) setFailed(true);
+      }
+    })();
+    return () => {
+      alive = false;
+      if (objUrl) URL.revokeObjectURL(objUrl);
+    };
+  }, [employeeId]);
+  if (failed || !employeeId || !url) return null;
+  return <img src={url} alt="Avatar" style={{ width: `${px}px`, height: `${px}px`, objectFit: 'cover', borderRadius: '50%', border: '2px solid rgba(255,255,255,0.6)' }} />;
+};
 import { evaluateCandidateAiScore } from '../services/ai-scorer';
 import { candStatusVI, computeRubricClient, INTERVIEW_RUBRICS, lockedQuestionIds, parseScoreDetailClient, requiredAnswerCount } from '../services/interview-rubric';
 
@@ -1861,6 +1931,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [editingEmp, setEditingEmp] = useState<any>(null);
   const [editEmpForm, setEditEmpForm] = useState<any>({});
   const [editEmpBusy, setEditEmpBusy] = useState(false);
+  // Avatar tab Hồ Sơ: ảnh mới HR vừa chọn (data URL, gửi kèm lúc lưu) + cờ xóa avatar.
+  const [avatarPhoto, setAvatarPhoto] = useState<string | null>(null);
+  const [avatarRemoved, setAvatarRemoved] = useState(false);
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const avatarInputRef = useRef<HTMLInputElement | null>(null);
 
   // Tải file mẫu CSV với UTF-8 BOM để mở tiếng Việt không bị lỗi font trên Excel
   const handleDownloadOfficialTemplate = () => {
@@ -9500,10 +9575,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       .filter((e: any) => (profileGroup === 'ALL' ? true : (e.group || e.nhom) === profileGroup))
       .filter((e: any) => {
         if (!profileSearch.trim()) return true;
-        const q = profileSearch.trim().toLowerCase();
-        return String(e.full_name || '').toLowerCase().includes(q)
+        // Tìm không dấu: gõ "nguyen"/"van kiep" vẫn ra "Nguyễn"/"Vạn Kiếp".
+        const q = stripAccentsVI(profileSearch.trim());
+        return stripAccentsVI(e.full_name).includes(q)
           || String(e.employee_code || '').toLowerCase().includes(q)
-          || String(e.employee_id || '').toLowerCase().includes(q);
+          || String(e.employee_id || '').toLowerCase().includes(q)
+          || stripAccentsVI(e.phone_normalized || e.phone).includes(q);
       });
     const saleFirst = [...filteredEmps].sort((a: any, b: any) =>
       ((b.group === 'SALE' ? 1 : 0) - (a.group === 'SALE' ? 1 : 0)) ||
@@ -9605,7 +9682,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               <input
                 value={profileSearch}
                 onChange={e => setProfileSearch(e.target.value)}
-                placeholder="Tìm tên / mã NV..."
+                placeholder="Tìm tên / mã NV (gõ không dấu vẫn ra)..."
                 style={{ width: '100%', padding: '8px 12px 8px 32px', borderRadius: '8px', border: '1px solid var(--border)', fontSize: '13px' }}
               />
             </div>
@@ -9647,9 +9724,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           <>
             {/* HEADER HỒ SƠ */}
             <div style={{ ...card, background: 'linear-gradient(135deg, #1E1B4B 0%, #831843 100%)', color: '#FFF', border: 'none', display: 'flex', gap: '16px', alignItems: 'center', flexWrap: 'wrap' }}>
-              <div style={{ width: '72px', height: '72px', borderRadius: '50%', background: 'linear-gradient(135deg, #E85D92, #F59E0B)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px', fontWeight: 800, flexShrink: 0 }}>
-                {initials}
-              </div>
+              {profEmp.avatar_drive_id ? (
+                <EmpAvatar employeeId={profEmp.employee_id} size={72} />
+              ) : (
+                <div style={{ width: '72px', height: '72px', borderRadius: '50%', background: 'linear-gradient(135deg, #E85D92, #F59E0B)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px', fontWeight: 800, flexShrink: 0 }}>
+                  {initials}
+                </div>
+              )}
               <div style={{ flex: '1 1 220px' }}>
                 <div style={{ fontSize: '19px', fontWeight: 800 }}>{profEmp.full_name}</div>
                 <div style={{ fontSize: '12px', opacity: 0.85, marginTop: '2px' }}>{profEmp.employee_code} • {getDisplayBranch(profEmp.default_branch_id) || profEmp.default_branch_id} • {profEmp.group}</div>
@@ -9667,6 +9748,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 title="Cập nhật hồ sơ nhân viên đang xem (bổ sung các trường còn thiếu)"
                 onClick={() => {
                   setEditingEmp(profEmp);
+                  setAvatarPhoto(null);
+                  setAvatarRemoved(false);
                   setEditEmpForm({
                     fullName: profEmp.full_name || '',
                     phone: profEmp.phone_normalized || '',
@@ -9832,6 +9915,78 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     <label style={{ fontSize: '12px', fontWeight: 700 }}>Giới tính<select value={['NAM', 'NU', 'KHAC'].includes(editEmpForm.gender) ? editEmpForm.gender : ''} onChange={e => setEditEmpForm({ ...editEmpForm, gender: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}><option value="">— Chưa rõ —</option><option value="NAM">Nam</option><option value="NU">Nữ</option><option value="KHAC">Khác</option></select></label>
                     <label style={{ fontSize: '12px', fontWeight: 700 }}>Ngày sinh<input type="date" value={editEmpForm.birthDate || ''} onChange={e => setEditEmpForm({ ...editEmpForm, birthDate: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
                     <label style={{ fontSize: '12px', fontWeight: 700, gridColumn: '1 / -1' }}>CCCD/CMND<input value={editEmpForm.idCardNumber || ''} onChange={e => setEditEmpForm({ ...editEmpForm, idCardNumber: e.target.value })} placeholder="VD: 079..." style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
+                    <div style={{ gridColumn: '1 / -1', backgroundColor: 'var(--bg)', borderRadius: '8px', padding: '10px 12px' }}>
+                      <div style={{ fontSize: '12px', fontWeight: 800, marginBottom: '6px' }}>🖼 Ảnh đại diện (avatar)</div>
+                      <input
+                        ref={avatarInputRef}
+                        type="file"
+                        accept="image/*"
+                        style={{ display: 'none' }}
+                        onChange={async (e) => {
+                          const f = e.target.files?.[0];
+                          e.target.value = '';
+                          if (!f) return;
+                          setAvatarBusy(true);
+                          try {
+                            const dataUrl = await compressAvatarImage(f);
+                            if (!dataUrl) { showToast('⚠️ Không đọc được ảnh! Vui lòng chọn ảnh khác.'); return; }
+                            setAvatarPhoto(dataUrl);
+                            setAvatarRemoved(false);
+                            showToast('✓ Đã chọn avatar mới — bấm Lưu thay đổi để áp dụng.');
+                          } finally {
+                            setAvatarBusy(false);
+                          }
+                        }}
+                      />
+                      <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                        {avatarRemoved ? (
+                          <span style={{ fontSize: '12px', color: '#991B1B', fontWeight: 700 }}>🗑 Sẽ gỡ avatar hiện tại khi lưu.</span>
+                        ) : avatarPhoto ? (
+                          <img src={avatarPhoto} alt="Avatar mới" style={{ width: '64px', height: '64px', objectFit: 'cover', borderRadius: '50%', border: '2px solid #F59E0B' }} />
+                        ) : editingEmp.avatar_drive_id ? (
+                          <EmpAvatar employeeId={editingEmp.employee_id} size={64} />
+                        ) : (
+                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Chưa có avatar.</span>
+                        )}
+                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                          <button
+                            className="btn-secondary"
+                            style={{ fontSize: '11px', padding: '6px 12px', fontWeight: 800 }}
+                            disabled={avatarBusy}
+                            onClick={() => avatarInputRef.current?.click()}
+                          >
+                            {avatarBusy ? '⏳ Đang xử lý...' : '📷 Chọn ảnh mới'}
+                          </button>
+                          {avatarPhoto && (
+                            <button
+                              className="btn-secondary"
+                              style={{ fontSize: '11px', padding: '6px 12px', color: '#DC2626' }}
+                              onClick={() => setAvatarPhoto(null)}
+                            >
+                              Hủy ảnh mới
+                            </button>
+                          )}
+                          {!avatarRemoved && !avatarPhoto && editingEmp.avatar_drive_id && (
+                            <button
+                              className="btn-secondary"
+                              style={{ fontSize: '11px', padding: '6px 12px', color: '#DC2626' }}
+                              onClick={() => setAvatarRemoved(true)}
+                            >
+                              🗑 Gỡ avatar
+                            </button>
+                          )}
+                          {avatarRemoved && (
+                            <button
+                              className="btn-secondary"
+                              style={{ fontSize: '11px', padding: '6px 12px' }}
+                              onClick={() => setAvatarRemoved(false)}
+                            >
+                              Hoàn tác gỡ
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
                     <label style={{ fontSize: '12px', fontWeight: 700 }}>Chi nhánh<select value={editEmpForm.branchId || 'CN130'} onChange={e => setEditEmpForm({ ...editEmpForm, branchId: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}>{(branches || []).length > 0 ? (branches || []).map((b: any) => <option key={b.branch_id || b.id} value={b.branch_id || b.id}>{b.branch_id || b.id}</option>) : (<><option value="CN130">CN130</option><option value="CN120">CN120</option><option value="CN261">CN261</option><option value="CN111">CN111</option></>)}</select></label>
                     <label style={{ fontSize: '12px', fontWeight: 700 }}>Khối<select value={['STORE', 'XUONG', 'VAN_PHONG', 'SALE'].includes(editEmpForm.group) ? editEmpForm.group : 'STORE'} onChange={e => setEditEmpForm({ ...editEmpForm, group: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}><option value="STORE">Cửa hàng</option><option value="XUONG">Xưởng</option><option value="VAN_PHONG">Văn phòng</option><option value="SALE">Sale</option></select></label>
                     <label style={{ fontSize: '12px', fontWeight: 700 }}>Lương giờ (đ/h)<input type="number" value={editEmpForm.rate || 21000} onChange={e => setEditEmpForm({ ...editEmpForm, rate: Number(e.target.value) })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
@@ -9863,11 +10018,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             gender: editEmpForm.gender || undefined,
                             birthDate: editEmpForm.birthDate || undefined,
                             idCardNumber: editEmpForm.idCardNumber || undefined,
+                            // Avatar: '' = gỡ, data URL = up mới, undefined = giữ nguyên.
+                            avatar_base64: avatarRemoved ? '' : (avatarPhoto || undefined),
                             expectedVersion: editingEmp.version,
                           }),
                         });
                         showToast('Đã cập nhật hồ sơ nhân viên!');
                         setEditingEmp(null);
+                        setAvatarPhoto(null);
+                        setAvatarRemoved(false);
                         if (onRefreshData) await onRefreshData();
                         // Đẩy bộ nhớ -> Sheets NGAY (không pull: pull lúc này đọc Sheet
                         // cũ vì push nền ~10s, gây mất dữ liệu vừa lưu sau reload).

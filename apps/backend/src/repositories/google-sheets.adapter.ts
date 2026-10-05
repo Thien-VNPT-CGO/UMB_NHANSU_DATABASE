@@ -415,6 +415,27 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   }
 
   async updateEmployee(id: string, updates: any, expectedVersion: number) {
+    // Avatar tab Hồ Sơ: upload Drive trước, chỉ lưu Drive file ID; thất bại thì giữ
+    // inline (avatar_photo) để HR vẫn xem được realtime (mirror phiếu bù công).
+    if ((updates as any).photo_base64) {
+      try {
+        const fileName = `EMP_avatar_${id || 'unknown'}_${Date.now()}.jpg`;
+        const driveResult = await this.syncService.uploadImageToDrive(fileName, 'image/jpeg', (updates as any).photo_base64);
+        if (driveResult?.fileId && !String(driveResult.fileId).startsWith('DRV_')) {
+          (updates as any).avatar_drive_id = driveResult.fileId;
+          // Drive đã có ảnh thật -> gỡ inline cũ (đỡ tốn bộ nhớ).
+          (updates as any).avatar_photo = undefined;
+        } else {
+          (updates as any).avatar_drive_id = driveResult?.fileId || `DRV_LOCAL_${Date.now()}`;
+          (updates as any).avatar_photo = (updates as any).photo_base64;
+        }
+      } catch (err) {
+        console.error('[GoogleSheetsAdapter] Drive upload avatar error:', err);
+        (updates as any).avatar_drive_id = `DRV_LOCAL_${Date.now()}`;
+        (updates as any).avatar_photo = (updates as any).photo_base64;
+      }
+      delete (updates as any).photo_base64;
+    }
     const res = await this.fallbackAdapter.updateEmployee(id, updates, expectedVersion);
     this.scheduleFullSync('NHAN_VIEN_MASTER.update');
     return res;

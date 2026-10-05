@@ -31,7 +31,7 @@ export interface SheetDefinition {
 export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   {
     title: 'NHAN_VIEN_MASTER',
-    headers: ['ID Nhân Viên', 'Mã NV', 'Họ Và Tên', 'Số Điện Thoại', 'Trạng Thái', 'Nhóm', 'Chi Nhánh', 'Lương Giờ (VNĐ)', 'Ngày Bắt Đầu', 'Phiên Bản', 'Ca Cố Định', 'Ngày Chính Thức', 'Email', 'Giới Tính', 'Ngày Sinh', 'CCCD'],
+    headers: ['ID Nhân Viên', 'Mã NV', 'Họ Và Tên', 'Số Điện Thoại', 'Trạng Thái', 'Nhóm', 'Chi Nhánh', 'Lương Giờ (VNĐ)', 'Ngày Bắt Đầu', 'Phiên Bản', 'Ca Cố Định', 'Ngày Chính Thức', 'Email', 'Giới Tính', 'Ngày Sinh', 'CCCD', 'Avatar (Drive ID)'],
   },
   {
     title: 'TAI_KHOAN_NHAN_VIEN',
@@ -575,6 +575,8 @@ export class GoogleSheetsSyncService {
               ...((r[13] || '').trim() ? { gender: (r[13] || '').trim() } : {}),
               ...(normSheetDate(r[14]) ? { birth_date: normSheetDate(r[14]) } : {}),
               ...((r[15] || '').trim() ? { id_card_number: (r[15] || '').trim() } : {}),
+              // Cột R: Avatar HR upload ở tab Hồ Sơ (Drive file ID).
+              ...((r[16] || '').trim() ? { avatar_drive_id: (r[16] || '').trim() } : {}),
             };
           });
         // Đọc thiếu dòng (partial/truncated) mà bộ nhớ đang nhiều hơn gấp đôi -> giữ bộ nhớ.
@@ -604,6 +606,8 @@ export class GoogleSheetsSyncService {
                 if (!(s as any).birth_date && (m as any).birth_date) (s as any).birth_date = (m as any).birth_date;
                 if (!(s as any).id_card_number && (m as any).id_card_number) (s as any).id_card_number = (m as any).id_card_number;
                 if (!(s as any).email && (m as any).email) (s as any).email = (m as any).email;
+                if (!(s as any).avatar_drive_id && (m as any).avatar_drive_id) (s as any).avatar_drive_id = (m as any).avatar_drive_id;
+                if (!(s as any).avatar_photo && (m as any).avatar_photo) (s as any).avatar_photo = (m as any).avatar_photo;
               }
               mergedEmps.push(s);
             }
@@ -1783,6 +1787,7 @@ export class GoogleSheetsSyncService {
         (e as any).gender || '',
         (e as any).birth_date ? sheetDateText((e as any).birth_date) : '',
         (e as any).id_card_number || '',
+        (e as any).avatar_drive_id || '',
       ]);
       await this.overwriteSheetData('NHAN_VIEN_MASTER', SHEETS_DEFINITIONS.find(d => d.title === 'NHAN_VIEN_MASTER')!.headers, employeeRows);
       details.employees = employeeRows.length;
@@ -2050,6 +2055,7 @@ export class GoogleSheetsSyncService {
       e.gender || '',
       e.birth_date ? sheetDateText(e.birth_date) : '',
       e.id_card_number || '',
+      (e as any).avatar_drive_id || '',
     ]));
     await this.overwriteSheetData('NHAN_VIEN_MASTER', SHEETS_DEFINITIONS.find(d => d.title === 'NHAN_VIEN_MASTER')!.headers, rows);
     return rows.length;

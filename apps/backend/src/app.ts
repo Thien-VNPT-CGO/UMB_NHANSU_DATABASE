@@ -952,7 +952,14 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       try {
         const branchScope = req.user?.role === 'STORE' ? req.user.branchScope : (req.query.branchId as string);
         const emps = await employeesService.listEmployees(branchScope, req.query.status as string);
-        res.json(emps);
+        // Cắt bytes avatar inline khỏi danh sách (nhẹ payload); ảnh xem qua /employees/:id/avatar.
+        res.json((emps || []).map((e: any) => {
+          if (e && (e as any).avatar_photo) {
+            const { avatar_photo: _drop, ...rest } = e as any;
+            return rest;
+          }
+          return e;
+        }));
       } catch (err: any) {
         res.status(500).json({ error: err.message });
       }
@@ -1099,6 +1106,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           gender: b.gender,
           birthDate: b.birthDate || b.birth_date,
           idCardNumber: b.idCardNumber || b.id_card_number,
+          // Avatar HR upload ở tab Hồ Sơ (snake_case từ client).
+          avatarBase64: b.avatarBase64 || b.avatar_base64,
           expectedVersion: b.expectedVersion,
         },
         req.user!.id
@@ -1110,8 +1119,56 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/employees/:id/transition-official', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams, body: transitionBody }), async (req: AuthenticatedRequest, res) => {
+  // Ảnh avatar NV (tab Hồ Sơ): stream từ Drive, rớt xuống inline khi Drive lỗi —
+  // mirror endpoint ảnh bằng chứng bù công.
+  const serveEmployeeAvatar = async (req: AuthenticatedRequest, res: any) => {
     try {
+      const emp: any = await employeesService.getEmployee(req.params.id).catch(() => null);
+      if (!emp) return res.status(404).json({ error: 'EMPLOYEE_NOT_FOUND' });
+      if (req.user?.role === 'STORE' && req.user.branchScope !== '*' && emp.default_branch_id && emp.default_branch_id !== req.user.branchScope) {
+        return res.status(403).json({ error: 'BRANCH_SCOPE_FORBIDDEN' });
+      }
+      const inlinePhoto: string | undefined = (emp as any).avatar_photo;
+      const driveId: string = String((emp as any).avatar_drive_id || '');
+      const serveInline = (dataUrl: string) => {
+        try {
+          const m = String(dataUrl).match(/^data:(image\/\w+);base64,(.*)$/);
+          const mime = m ? m[1] : 'image/jpeg';
+          const b64 = m ? m[2] : String(dataUrl).replace(/^data:image\/\w+;base64,/, '');
+          const buffer = Buffer.from(b64, 'base64');
+          if (!buffer.length) throw new Error('EMPTY_INLINE_PHOTO');
+          res.setHeader('Content-Type', mime);
+          res.setHeader('Cache-Control', 'private, max-age=3600');
+          return res.send(buffer);
+        } catch {
+          return res.status(404).json({ error: 'AVATAR_NOT_UPLOADED' });
+        }
+      };
+      if (driveId && !driveId.startsWith('DRV_')) {
+        try {
+          const syncService = (adapter as any).syncService;
+          if (syncService?.downloadDriveFile) {
+            const { buffer, mimeType } = await syncService.downloadDriveFile((emp as any).avatar_drive_id);
+            res.setHeader('Content-Type', mimeType || 'image/jpeg');
+            res.setHeader('Cache-Control', 'private, max-age=3600');
+            return res.send(buffer);
+          }
+        } catch {
+          if (inlinePhoto) return serveInline(inlinePhoto);
+          return res.status(404).json({ error: 'AVATAR_NOT_UPLOADED' });
+        }
+        if (inlinePhoto) return serveInline(inlinePhoto);
+        return res.status(404).json({ error: 'AVATAR_NOT_UPLOADED' });
+      }
+      if (inlinePhoto) return serveInline(inlinePhoto);
+      return res.status(404).json({ error: 'AVATAR_NOT_UPLOADED' });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'AVATAR_DOWNLOAD_FAILED' });
+    }
+  };
+  app.get('/employees/:id/avatar', authMiddleware, requireRole(['ADMIN', 'HR', 'STORE']), serveEmployeeAvatar);
+
+  app.post('/employees/:id/transition-official', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams, body: transitionBody }), async (req: AuthenticatedRequest, res) => {    try {
       const result = await employeesService.transitionToOfficial(
         req.params.id,
         req.user!.id,

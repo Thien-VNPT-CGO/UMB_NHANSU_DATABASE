@@ -373,6 +373,8 @@ export class EmployeesService {
       gender?: 'NAM' | 'NU' | 'KHAC';
       birthDate?: string;
       idCardNumber?: string;
+      /** Ảnh avatar base64 (transient) — adapter upload Drive thành avatar_drive_id rồi bỏ. Chuỗi rỗng = xóa avatar. */
+      avatarBase64?: string;
       expectedVersion?: number;
     },
     actorId: string
@@ -422,6 +424,14 @@ export class EmployeesService {
     if (updates.gender !== undefined) patch.gender = updates.gender;
     if (updates.birthDate !== undefined && updates.birthDate) patch.birth_date = String(updates.birthDate);
     if (updates.idCardNumber !== undefined) patch.id_card_number = String(updates.idCardNumber).trim() || undefined;
+    // Avatar: chuỗi rỗng = HR xóa avatar; có ảnh = adapter upload Drive rồi bỏ base64.
+    if (updates.avatarBase64 !== undefined) {
+      if (String(updates.avatarBase64).trim() === '') {
+        (patch as any).clear_avatar = true;
+      } else {
+        (patch as any).photo_base64 = String(updates.avatarBase64);
+      }
+    }
 
     return singleWriterQueue.enqueue({
       entityType: 'NHAN_VIEN_MASTER',

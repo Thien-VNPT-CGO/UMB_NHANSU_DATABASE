@@ -71,6 +71,8 @@ export const employeeUpdateBody = z
     gender: looseOptString(10),
     birthDate: looseOptString(64),
     idCardNumber: looseOptString(32),
+    /** Ảnh avatar HR upload ở tab Hồ Sơ (base64 data URL) — adapter upload Drive rồi bỏ. */
+    avatar_base64: photoField,
     expectedVersion: z.coerce.number().int().min(0).optional(),
   })
   .passthrough();

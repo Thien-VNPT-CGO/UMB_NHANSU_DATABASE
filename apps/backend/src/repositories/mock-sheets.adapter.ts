@@ -356,7 +356,14 @@ export class MockSheetsAdapter implements ISheetsRepository {
     if (!emp) throw new Error('EMPLOYEE_NOT_FOUND');
     if (emp.version !== expectedVersion) throw new Error('VERSION_CONFLICT');
 
-    Object.assign(emp, updates, {
+    // photo_base64 chỉ để adapter upload Drive — không lưu vào bộ nhớ/Sheets.
+    const { photo_base64: _dropPhoto, clear_avatar: _dropClear, ...clean } = updates as any;
+    // HR xóa avatar: gỡ cả Drive ID lẫn ảnh inline.
+    if ((updates as any).clear_avatar) {
+      (emp as any).avatar_drive_id = undefined;
+      (emp as any).avatar_photo = undefined;
+    }
+    Object.assign(emp, clean, {
       version: emp.version + 1,
       updated_at: new Date().toISOString(),
     });
