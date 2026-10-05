@@ -975,6 +975,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [archiveEvents, setArchiveEvents] = useState<any[]>([]);
   const archiveWeeksRef = useRef<Set<string>>(new Set());
   const [archiveLoading, setArchiveLoading] = useState(false);
+  // Lịch ca tuần cũ: API /schedules mặc định chỉ trả từ hôm nay trở đi — lùi tuần
+  // thì tải bù từ mốc sớm nhất rồi gộp vào lưới (khử trùng theo assignment_id).
+  const [archiveShifts, setArchiveShifts] = useState<any[]>([]);
+  const archiveShiftsKeyRef = useRef<string>('');
   // Phiếu đổi ca: tải lại mỗi khi mở tab để không sót phiếu mới (kể cả khi socket ngủ)
   const [swapList, setSwapList] = useState<any[] | null>(null);
   const loadSwaps = async () => {
@@ -1931,10 +1935,22 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     } catch { /* bỏ qua */ }
     const missing = [...need].filter(m => !archiveWeeksRef.current.has(m));
     if (missing.length === 0) return;
+    // Mốc sớm nhất cần lịch ca (tuần đang xem + dải thử việc): API trả date >= week
+    // nên 1 lần tải từ mốc sớm nhất là phủ hết.
+    const earliestMon = [...need].sort()[0];
     let alive = true;
     (async () => {
       setArchiveLoading(true);
       try {
+        if (earliestMon < vnToday && archiveShiftsKeyRef.current !== earliestMon) {
+          try {
+            const sl = await apiRequest(`/schedules?week=${earliestMon}`);
+            if (alive && Array.isArray(sl)) {
+              archiveShiftsKeyRef.current = earliestMon;
+              setArchiveShifts(sl);
+            }
+          } catch { /* giữ lịch realtime */ }
+        }
         const parts: any[][] = await Promise.all(
           missing.map(async (mon) => {
             const sun = new Date(new Date(`${mon}T00:00:00Z`).getTime() + 6 * 86_400_000).toISOString().slice(0, 10);
@@ -6040,9 +6056,16 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       const extra = (archiveEvents || []).filter((e: any) => !seen.has(String(e.event_id)));
       return extra.length > 0 ? [...(liveAttendanceEvents || []), ...extra] : (liveAttendanceEvents || []);
     })();
+    // Gộp lịch ca realtime + lịch ca tuần cũ (khử trùng theo assignment_id).
+    const schedAllShifts = (() => {
+      if (!archiveShifts || archiveShifts.length === 0) return shifts || [];
+      const seen = new Set<string>((shifts || []).map((s: any) => String(s.assignment_id || '')));
+      const extra = (archiveShifts || []).filter((s: any) => !s.assignment_id || !seen.has(String(s.assignment_id)));
+      return extra.length > 0 ? [...(shifts || []), ...extra] : (shifts || []);
+    })();
 
     const scheduleItems = allEmployees.map((emp, empIdx) => {
-      const empShifts = (shifts || []).filter((s: any) => s.employee_id === emp.employee_id);
+      const empShifts = (schedAllShifts || []).filter((s: any) => s.employee_id === emp.employee_id);
       const empLeaves = (leaves || []).filter((l: any) => l.employee_id === emp.employee_id && (l.status === 'APPROVED' || l.status === 'PENDING'));
       const empEvents = (schedAllEvents || []).filter((e: any) => e.employee_id === emp.employee_id);
       const dayDataMap: Record<string, any> = {};
@@ -6510,7 +6533,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <tbody>
                     {probEmps.map((emp: any) => {
                       const win = winOf(emp);
-                      const empShifts = (shifts || []).filter((s: any) => s.employee_id === emp.employee_id);
+                      const empShifts = (schedAllShifts || []).filter((s: any) => s.employee_id === emp.employee_id);
                       const empOffs = (leaves || []).filter((l: any) => l.employee_id === emp.employee_id && (l as any).leave_type === 'THU_VIEC' && l.status !== 'REJECTED' && l.status !== 'CANCELLED');
                       const empEvts = (schedAllEvents || []).filter((e: any) => e.employee_id === emp.employee_id);
                       const offCount = empOffs.length;
@@ -7724,7 +7747,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       return { key: codes[i], code: codes[i], iso, isToday: iso === vnDayOf(new Date().toISOString()) };
     });
     const attWeekSet = new Set(attDays.map(d => d.iso));
-    const attWeekShifts = (shifts || []).filter((s: any) => attWeekSet.has((s.date || '').slice(0, 10)) && s.status !== 'CANCELLED');
+    const attBaseShifts = (() => {
+      if (!archiveShifts || archiveShifts.length === 0) return shifts || [];
+      const seen = new Set<string>((shifts || []).map((s: any) => String(s.assignment_id || '')));
+      const extra = (archiveShifts || []).filter((s: any) => !s.assignment_id || !seen.has(String(s.assignment_id)));
+      return extra.length > 0 ? [...(shifts || []), ...extra] : (shifts || []);
+    })();
+    const attWeekShifts = (attBaseShifts || []).filter((s: any) => attWeekSet.has((s.date || '').slice(0, 10)) && s.status !== 'CANCELLED');
     // Tuần cũ: gộp thêm sự kiện từ kho lưu trữ để đủ ngày công tính lương.
     const attAllEvts = (() => {
       if (!archiveEvents || archiveEvents.length === 0) return liveAttendanceEvents || [];
