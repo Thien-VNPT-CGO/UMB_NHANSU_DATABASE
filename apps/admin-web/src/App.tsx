@@ -271,6 +271,30 @@ function ZaloMobileAuthView({ hrName, sessionToken }: { hrName: string; sessionT
   );
 }
 
+/** Lưới chống trắng trang: lỗi render tab nào thì hiện lỗi rõ + nút tải lại, thay vì trắng cả app. */
+class RoleViewsErrorBoundary extends React.Component<{ tab: string; children: React.ReactNode }, { error: string | null }> {
+  state = { error: null as string | null };
+  static getDerivedStateFromError(err: any) {
+    return { error: String(err?.message || err || 'Lỗi hiển thị') };
+  }
+  componentDidCatch() { /* đã hiện UI bên dưới */ }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ backgroundColor: '#FEF2F2', border: '1.5px solid #FCA5A5', borderRadius: '12px', padding: '24px', textAlign: 'center' }}>
+          <div style={{ fontSize: '15px', fontWeight: 800, color: '#991B1B' }}>⚠️ Tab {this.props.tab} gặp lỗi hiển thị</div>
+          <div style={{ fontSize: '12px', color: '#991B1B', marginTop: '6px', wordBreak: 'break-word' }}>{this.state.error}</div>
+          <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', marginTop: '14px' }}>
+            <button className="btn-primary" style={{ fontSize: '12px', padding: '8px 16px' }} onClick={() => this.setState({ error: null })}>Thử lại</button>
+            <button className="btn-secondary" style={{ fontSize: '12px', padding: '8px 16px' }} onClick={() => window.location.reload()}>Tải lại trang</button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export function App() {
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
     try {
@@ -4097,6 +4121,7 @@ export function App() {
           )}
 
           {/* DEDICATED VIEWS FOR HR (15 TABS), STORE (10 TABS), FINANCE (11 TABS), MARKETING (9 TABS) */}
+          <RoleViewsErrorBoundary tab={activeTab} key={activeTab}>
           <RoleViews
             activeTab={activeTab}
             currentUser={currentUser}
@@ -4118,6 +4143,7 @@ export function App() {
             onPushSheets={handleForceSync}
             onRefreshData={() => loadAllData(currentUser)}
           />
+          </RoleViewsErrorBoundary>
 
         </div>
       </main>
