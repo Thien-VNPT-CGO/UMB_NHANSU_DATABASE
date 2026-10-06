@@ -27,23 +27,31 @@ function vnDateStr(d: Date): string {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
 }
 
-/** Parse giờ bắt đầu ca: ISO đầy đủ hoặc "HH:mm" ghép với ngày ca. */
-function parseShiftStart(date: string, startAt: string): number | null {
-  if (!startAt) return null;
-  try {
-    if (startAt.includes('T')) {
-      const t = new Date(startAt).getTime();
-      return Number.isFinite(t) ? t : null;
-    }
-    const m = startAt.match(/(\d{1,2}):(\d{2})/);
-    if (!m) return null;
-    // date YYYY-MM-DD + giờ VN -> epoch (trừ offset vì server tính theo UTC).
-    const t = Date.parse(`${date}T${m[1].padStart(2, '0')}:${m[2]}:00Z`);
-    if (!Number.isFinite(t)) return null;
-    return t - tzOffsetHours() * 3_600_000;
-  } catch {
-    return null;
+/** Parse giờ bắt đầu ca: ISO đầy đủ hoặc "HH:mm" ghép với ngày ca, fallback theo mã ca (CA_1/CA_2/CA_3). */
+function parseShiftStart(date: string, startAt?: string, shiftCode?: string): number | null {
+  if (startAt) {
+    try {
+      if (startAt.includes('T')) {
+        const t = new Date(startAt).getTime();
+        if (Number.isFinite(t)) return t;
+      }
+      const m = startAt.match(/(\d{1,2}):(\d{2})/);
+      if (m) {
+        // date YYYY-MM-DD + giờ VN -> epoch (trừ offset vì server tính theo UTC).
+        const t = Date.parse(`${date}T${m[1].padStart(2, '0')}:${m[2]}:00Z`);
+        if (Number.isFinite(t)) return t - tzOffsetHours() * 3_600_000;
+      }
+    } catch {}
   }
+  if (shiftCode) {
+    const hoursMap: Record<string, number> = { CA_1: 7, CA_2: 12, CA_3: 18 };
+    const h = hoursMap[shiftCode];
+    if (h !== undefined) {
+      const t = Date.parse(`${date}T${String(h).padStart(2, '0')}:00:00Z`);
+      if (Number.isFinite(t)) return t - tzOffsetHours() * 3_600_000;
+    }
+  }
+  return null;
 }
 
 const remindedCheckin = new Set<string>(); // `${date}:${assignment_id}:${employee_id}`
@@ -77,7 +85,7 @@ export async function autoRemindersTick(
   const today = vnDateStr(vn);
   resetDaily(today);
 
-  // 1. Nhắc check-in Zalo trước ca 15 phút
+  // 1. Nhắc check-in trước ca 15 phút (In-App notification + Zalo)
   try {
     const branches = await repo.getBranches();
     for (const b of branches) {
@@ -89,25 +97,46 @@ export async function autoRemindersTick(
       }
       for (const s of shifts) {
         if (s.date !== today || s.status !== 'PUBLISHED') continue;
-        const startMs = parseShiftStart(s.date, s.start_at);
+        const startMs = parseShiftStart(s.date, s.start_at, s.shift_code);
         if (startMs === null) continue;
         const minsToStart = (startMs - now) / 60_000;
-        if (minsToStart < 5 || minsToStart > 20) continue; // cửa sổ nhắc 5-20 phút
+        if (minsToStart < 5 || minsToStart > 20) continue; // cửa sổ nhắc 5-20 phút trước ca
         const key = `${today}:${s.assignment_id}:${s.employee_id}`;
         if (remindedCheckin.has(key)) continue;
         remindedCheckin.add(key);
         try {
           const emp = await repo.getEmployeeById(s.employee_id);
-          const phone = emp?.phone_normalized || '';
-          if (!phone) continue;
           const events = await repo.getAttendanceEvents(s.employee_id, today);
-          if (events.some(e => e.type === 'CHECK_IN' && e.assignment_id === s.assignment_id)) continue;
-          const found = await zalo.findUserByPhone(phone);
+          if (events.some(e => e.type === 'CHECK_IN' && (e.assignment_id === s.assignment_id || !e.assignment_id))) continue;
+
+          const shiftName = s.shift_code === 'CA_1' ? 'Ca 1 (07:00 - 12:00)'
+            : s.shift_code === 'CA_2' ? 'Ca 2 (12:00 - 18:00)'
+            : s.shift_code === 'CA_3' ? 'Ca 3 (18:00 - 23:00)'
+            : (s.shift_code || 'Ca làm việc');
           const startStr = new Date(startMs).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
-          await zalo.sendText(
-            found.uid,
-            `⏰ Nhắc check-in: ca của ${emp?.full_name || 'bạn'} bắt đầu lúc ${startStr} hôm nay. Mở Cổng Nhân Viên điểm danh trước giờ vào ca nhé!`
-          );
+
+          // Gửi thông báo trong App (Socket.IO realtime + chuông thông báo)
+          await notifications.sendNotification({
+            recipientIds: [s.employee_id],
+            type: 'CHECKIN_REMINDER',
+            severity: 'ACTION_REQUIRED',
+            title: `⏰ Nhắc Check-in ${shiftName}`,
+            summary: `Ca làm việc bắt đầu lúc ${startStr}. Cổng điểm danh đã mở, vui lòng mở Cổng Nhân Viên điểm danh (GPS + áo hồng) ngay!`,
+            targetPath: '/attendance',
+            actorId: 'SYSTEM',
+          }).catch(() => null);
+
+          // Gửi tin nhắn Zalo cá nhân nếu có số điện thoại
+          const phone = emp?.phone_normalized || '';
+          if (phone && zalo.isConnected()) {
+            const found = await zalo.findUserByPhone(phone).catch(() => null);
+            if (found?.uid) {
+              await zalo.sendText(
+                found.uid,
+                `⏰ [Ụm Bò Milk] Nhắc check-in: ${shiftName} của ${emp?.full_name || 'bạn'} bắt đầu lúc ${startStr} hôm nay.\n👉 Cổng điểm danh đã mở trước ca 30 phút. Vui lòng mở Cổng Nhân Viên chụp ảnh áo hồng + bật GPS để điểm danh trước giờ vào ca nhé!`
+              );
+            }
+          }
         } catch (e: any) {
           console.warn('[auto-reminders] Nhắc check-in thất bại:', e?.message || e);
         }
