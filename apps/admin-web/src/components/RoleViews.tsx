@@ -875,6 +875,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Filters for HR Schedule
   const [scheduleBranchFilter, setScheduleBranchFilter] = useState('ALL');
   const [scheduleStageFilter, setScheduleStageFilter] = useState('ALL');
+  const [scheduleAttFilter, setScheduleAttFilter] = useState('ALL');
+  const [scheduleSearch, setScheduleSearch] = useState('');
   const [selectedRealtimeModal, setSelectedRealtimeModal] = useState<any>(null);
 
   // Filters xem lịch OFF 2 ngày/tuần (HR/Admin + Store)
@@ -6103,13 +6105,128 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         const foundShift = empShifts.find((s: any) => s.status !== 'CANCELLED' && (s.date === day.isoDate || (s.date && s.date.startsWith(day.isoDate))));
         // Đơn nghỉ phép đã duyệt hoặc chờ duyệt
         const foundLeave = empLeaves.find((l: any) => l.requested_date === day.isoDate || (l.requested_date && l.requested_date.startsWith(day.isoDate)));
+        // Khớp ngày theo giờ Việt Nam (UTC+7) hoặc chuỗi ISO để không bị lệch múi giờ
+        const isSameDay = (timeStr: string) => {
+          if (!timeStr) return false;
+          const vn = vnDayOf(timeStr);
+          return vn === day.isoDate || timeStr.startsWith(day.isoDate);
+        };
         // Bản ghi điểm danh check-in và check-out thật từ Socket.IO / Database
-        const checkInEvent = empEvents.find((e: any) => e.type === 'CHECK_IN' && (e.assignment_id === foundShift?.assignment_id || (e.client_time && e.client_time.startsWith(day.isoDate))));
-        const checkOutEvent = empEvents.find((e: any) => e.type === 'CHECK_OUT' && (e.assignment_id === foundShift?.assignment_id || (e.client_time && e.client_time.startsWith(day.isoDate))));
+        const dayEvts = empEvents.filter((e: any) => isSameDay(e.client_time) || (foundShift?.assignment_id && e.assignment_id === foundShift.assignment_id));
+        const checkInEvent = dayEvts.find((e: any) => e.type === 'CHECK_IN');
+        const checkOutEvent = dayEvts.find((e: any) => e.type === 'CHECK_OUT');
         // Bản ghi VẮNG do hệ thống tự ghi sau khi qua ca không điểm danh (chứng cứ đồng bộ Sheets)
-        const absentEvent = empEvents.find((e: any) => e.type === 'ABSENT' && (e.assignment_id === foundShift?.assignment_id || (e.client_time && e.client_time.startsWith(day.isoDate))));
+        const absentEvent = dayEvts.find((e: any) => e.type === 'ABSENT');
 
-        if (foundLeave) {
+        const matchShift = (e: any, sh: any) => {
+          if (e.assignment_id && sh?.assignment_id) return e.assignment_id === sh.assignment_id;
+          return isSameDay(e.client_time);
+        };
+
+        const buildOne = (sh: any) => {
+          if (sh?.shift_code && !sh?.isExtra) weekShiftCodes.push(String(sh.shift_code));
+          const ci = empEvents.find((e: any) => e.type === 'CHECK_IN' && matchShift(e, sh));
+          const co = empEvents.find((e: any) => e.type === 'CHECK_OUT' && matchShift(e, sh));
+          const ab = empEvents.find((e: any) => e.type === 'ABSENT' && matchShift(e, sh));
+          // GPS vượt 300m (dữ liệu cũ từng ghi nhận): đánh dấu để báo đỏ + bắt làm lại
+          const ciDist = Number(ci?.distance_meters);
+          const gpsBad = !!ci && (ci?.gps_status === 'OUT_OF_BOUNDS' || (Number.isFinite(ciDist) && ciDist > 300));
+          // Hết giờ tan ca +30p mà chưa check-out -> chốt (hết nhấp nháy), thiếu là không lương.
+          // Chốt cứng thêm 2 trường hợp lệch dữ liệu: ngày đã qua (bất kể end_at) và
+          // check-in quá 12h chưa out (end_at lỗi) — không bao giờ kẹt "Đang làm" mãi.
+          const endMs = sh?.end_at ? new Date(sh.end_at).getTime() : NaN;
+          const ciMs = ci?.client_time ? new Date(ci.client_time).getTime() : NaN;
+          const pastEnd = Number.isFinite(endMs) && Date.now() - (endMs as number) > 30 * 60 * 1000;
+          const staleIn = Number.isFinite(ciMs) && Date.now() - (ciMs as number) > 12 * 60 * 60 * 1000;
+          const pastDay = !day.isToday && day.isPast;
+          // Quá 3h kể từ giờ vào ca mà chưa check-in -> khóa, nghỉ không lương
+          const startMs = sh?.start_at ? new Date(sh.start_at).getTime() : NaN;
+          const locked = !ci && Number.isFinite(startMs) && Date.now() - (startMs as number) > 3 * 60 * 60 * 1000;
+          let shiftName = sh?.shift_code;
+          if (shiftName === 'CA_1') shiftName = 'Ca 1 (07-12)';
+          else if (shiftName === 'CA_2') shiftName = 'Ca 2 (12-18)';
+          else if (shiftName === 'CA_3') shiftName = 'Ca 3 (18-23)';
+          else if (sh?.isExtra) shiftName = 'Ca làm (Tự điểm danh)';
+
+          if (ci) {
+            const inTime = ci.client_time
+              ? new Date(ci.client_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+              : 'Đã check-in';
+            const distText = ci.distance_meters !== undefined ? `${ci.distance_meters}m` : '< 300m';
+
+            if (!co && (pastEnd || pastDay || staleIn)) {
+              return {
+                shift: shiftName,
+                status: 'MISSING_OUT',
+                time: inTime,
+                inTime,
+                note: `Vào ${inTime} nhưng hết giờ chưa check-out — không lương`,
+                gps: gpsBad ? `GPS VƯỢT ${ciDist}m (quá 300m)` : `GPS hợp lệ (${distText})`,
+                gpsBad,
+                isToday: day.isToday,
+                event: ci,
+              };
+            }
+            if (co) {
+              const outTime = co.client_time
+                ? new Date(co.client_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+                : 'Đã check-out';
+              return {
+                shift: shiftName,
+                status: 'COMPLETED',
+                time: `${inTime} - ${outTime}`,
+                inTime,
+                outTime,
+                gps: gpsBad ? `GPS VƯỢT ${ciDist}m (quá 300m)` : `GPS hợp lệ (${distText})`,
+                gpsBad,
+                isToday: day.isToday,
+                event: ci,
+                outEvent: co,
+                note: sh?.isExtra ? 'Ca làm tự điểm danh ngoài lịch' : undefined,
+              };
+            }
+            return {
+              shift: shiftName,
+              status: 'CHECKED_IN',
+              time: inTime,
+              inTime,
+              gps: gpsBad ? `GPS VƯỢT ${ciDist}m (quá 300m)` : `GPS hợp lệ (${distText})`,
+              gpsBad,
+              isToday: day.isToday,
+              event: ci,
+              note: sh?.isExtra ? 'Ca làm tự điểm danh ngoài lịch' : undefined,
+            };
+          } else if (locked) {
+            return {
+              shift: shiftName,
+              status: 'LOCKED',
+              note: 'Quá 3h chưa check-in — khóa, nghỉ không lương',
+              isToday: day.isToday,
+            };
+          } else if (day.isToday) {
+            return {
+              shift: shiftName,
+              status: 'PENDING',
+              note: 'Chưa check-in (Chờ ca)',
+              isToday: true,
+            };
+          } else if (ab || day.isPast) {
+            return {
+              shift: shiftName,
+              status: 'ABSENT',
+              note: ab ? 'Hệ thống tự ghi vắng (chứng cứ Sheets)' : 'Không điểm danh',
+              isToday: false,
+            };
+          }
+          return {
+            shift: shiftName,
+            status: 'UPCOMING',
+            note: 'Lịch đã duyệt',
+            isToday: false,
+          };
+        };
+
+        if (foundLeave && !checkInEvent) {
           // Lịch OFF tuần (HANG_TUAN) tự động ghi nhận — kể cả bản ghi PENDING cũ
           // cũng hiển thị OFF (backend đã tự chữa thành APPROVED khi đồng bộ).
           // Ca đã xếp KHÔNG bị che: hiện kèm để phát hiện xếp trùng ngày OFF.
@@ -6125,13 +6242,28 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             isToday: day.isToday,
           };
         } else if (!foundShift) {
-          // KHÔNG CÓ CA LÀM VIỆC NÀO ĐƯỢC PHÂN CÔNG THẬT -> HIỂN THỊ KHÔNG CÓ CA, KHÔNG LẤY DỮ LIỆU ĐIỂM DANH ẢO
-          dayDataMap[day.key] = {
-            shift: '—',
-            status: 'NO_SHIFT',
-            note: 'Không có ca',
-            isToday: day.isToday,
-          };
+          if (checkInEvent) {
+            // Có điểm danh thực tế dù chưa có ca trên lịch xếp trước (tăng cường, làm thay)
+            const extraShift = {
+              shift_code: checkInEvent.shift_code || 'CA_NGOAI_LICH',
+              start_at: checkInEvent.client_time,
+              end_at: checkOutEvent?.client_time,
+              isExtra: true,
+            };
+            const res = buildOne(extraShift);
+            if (foundLeave) {
+              res.note = `Đã đi làm điểm danh (dù có đơn: ${foundLeave.reason || 'Nghỉ OFF'})`;
+            }
+            dayDataMap[day.key] = res;
+          } else {
+            // KHÔNG CÓ CA LÀM VIỆC NÀO ĐƯỢC PHÂN CÔNG THẬT -> HIỂN THỊ KHÔNG CÓ CA, KHÔNG LẤY DỮ LIỆU ĐIỂM DANH ẢO
+            dayDataMap[day.key] = {
+              shift: '—',
+              status: 'NO_SHIFT',
+              note: 'Không có ca',
+              isToday: day.isToday,
+            };
+          }
         } else {
           // Có ca làm việc thật — ngày 2 ca (do tráo đổi/nhận thay): tính từng ca riêng.
           // Lọc trùng assignment_id để dòng trùng không hiện thành "2 ca" ma.
@@ -6143,113 +6275,25 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             if (s.assignment_id) seenAssign.add(s.assignment_id);
             return true;
           });
-          // Ca nào check-in ca đó: so khớp theo assignment_id. Chỉ dùng ngày làm
-          // fallback khi sự kiện/ca thiếu assignment (dữ liệu rất cũ) — nếu không,
-          // check-in ca sáng sẽ lan sang ca chiều cùng ngày.
-          const matchShift = (e: any, sh: any) => {
-            if (e.assignment_id && sh?.assignment_id) return e.assignment_id === sh.assignment_id;
-            return !!(e.client_time && e.client_time.startsWith(day.isoDate));
-          };
-          const buildOne = (sh: any) => {
-            if (sh?.shift_code) weekShiftCodes.push(String(sh.shift_code));
-            const ci = empEvents.find((e: any) => e.type === 'CHECK_IN' && matchShift(e, sh));
-            const co = empEvents.find((e: any) => e.type === 'CHECK_OUT' && matchShift(e, sh));
-            const ab = empEvents.find((e: any) => e.type === 'ABSENT' && matchShift(e, sh));
-            // GPS vượt 300m (dữ liệu cũ từng ghi nhận): đánh dấu để báo đỏ + bắt làm lại
-            const ciDist = Number(ci?.distance_meters);
-            const gpsBad = !!ci && (ci?.gps_status === 'OUT_OF_BOUNDS' || (Number.isFinite(ciDist) && ciDist > 300));
-            // Hết giờ tan ca +30p mà chưa check-out -> chốt (hết nhấp nháy), thiếu là không lương.
-            // Chốt cứng thêm 2 trường hợp lệch dữ liệu: ngày đã qua (bất kể end_at) và
-            // check-in quá 12h chưa out (end_at lỗi) — không bao giờ kẹt "Đang làm" mãi.
-            const endMs = sh?.end_at ? new Date(sh.end_at).getTime() : NaN;
-            const ciMs = ci?.client_time ? new Date(ci.client_time).getTime() : NaN;
-            const pastEnd = Number.isFinite(endMs) && Date.now() - (endMs as number) > 30 * 60 * 1000;
-            const staleIn = Number.isFinite(ciMs) && Date.now() - (ciMs as number) > 12 * 60 * 60 * 1000;
-            const pastDay = !day.isToday && day.isPast;
-            // Quá 3h kể từ giờ vào ca mà chưa check-in -> khóa, nghỉ không lương
-            const startMs = sh?.start_at ? new Date(sh.start_at).getTime() : NaN;
-            const locked = !ci && Number.isFinite(startMs) && Date.now() - (startMs as number) > 3 * 60 * 60 * 1000;
-            let shiftName = sh.shift_code;
-            if (shiftName === 'CA_1') shiftName = 'Ca 1 (07-12)';
-            else if (shiftName === 'CA_2') shiftName = 'Ca 2 (12-18)';
-            else if (shiftName === 'CA_3') shiftName = 'Ca 3 (18-23)';
-
-            if (ci) {
-              const inTime = ci.client_time
-                ? new Date(ci.client_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
-                : 'Đã check-in';
-              const distText = ci.distance_meters !== undefined ? `${ci.distance_meters}m` : '< 300m';
-
-              if (!co && (pastEnd || pastDay || staleIn)) {
-                return {
-                  shift: shiftName,
-                  status: 'MISSING_OUT',
-                  note: `Vào ${inTime} nhưng hết giờ chưa check-out — không lương`,
-                  isToday: day.isToday,
-                  event: ci,
-                };
-              }
-              if (co) {
-                const outTime = co.client_time
-                  ? new Date(co.client_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
-                  : 'Đã check-out';
-                return {
-                  shift: shiftName,
-                  status: 'COMPLETED',
-                  time: `${inTime} - ${outTime}`,
-                  gps: gpsBad ? `GPS VƯỢT ${ciDist}m (quá 300m)` : `GPS hợp lệ (${distText})`,
-                  gpsBad,
-                  isToday: day.isToday,
-                  event: ci,
-                };
-              }
-              return {
-                shift: shiftName,
-                status: 'CHECKED_IN',
-                time: inTime,
-                gps: gpsBad ? `GPS VƯỢT ${ciDist}m (quá 300m)` : `GPS hợp lệ (${distText})`,
-                gpsBad,
-                isToday: day.isToday,
-                event: ci,
-              };
-            } else if (locked) {
-              return {
-                shift: shiftName,
-                status: 'LOCKED',
-                note: 'Quá 3h chưa check-in — khóa, nghỉ không lương',
-                isToday: day.isToday,
-              };
-            } else if (day.isToday) {
-              return {
-                shift: shiftName,
-                status: 'PENDING',
-                note: 'Chưa check-in (Chờ ca)',
-                isToday: true,
-              };
-            } else if (ab || day.isPast) {
-              return {
-                shift: shiftName,
-                status: 'ABSENT',
-                note: ab ? 'Hệ thống tự ghi vắng (chứng cứ Sheets)' : 'Không điểm danh',
-                isToday: false,
-              };
-            }
-            return {
-              shift: shiftName,
-              status: 'UPCOMING',
-              note: 'Lịch đã duyệt',
-              isToday: false,
-            };
-          };
           if (dayShifts.length > 1) {
             dayDataMap[day.key] = {
               shift: `${dayShifts.length} ca`,
               status: 'MULTI',
               isToday: day.isToday,
-              shifts: dayShifts.map(buildOne),
+              shifts: dayShifts.map((sh: any) => {
+                const res = buildOne(sh);
+                if (foundLeave && (res.status === 'COMPLETED' || res.status === 'CHECKED_IN')) {
+                  res.note = (res.note ? `${res.note} • ` : '') + `Đi làm dù có đơn nghỉ: ${foundLeave.reason || 'Nghỉ OFF'}`;
+                }
+                return res;
+              }),
             };
           } else {
-            dayDataMap[day.key] = buildOne(foundShift);
+            const res = buildOne(foundShift);
+            if (foundLeave && (res.status === 'COMPLETED' || res.status === 'CHECKED_IN')) {
+              res.note = (res.note ? `${res.note} • ` : '') + `Đi làm dù có đơn nghỉ: ${foundLeave.reason || 'Nghỉ OFF'}`;
+            }
+            dayDataMap[day.key] = res;
           }
         }
       });
@@ -6308,7 +6352,33 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const filteredSchedule = sortedSchedule.filter((item) => {
       const matchBranch = scheduleBranchFilter === 'ALL' || item.branch === scheduleBranchFilter;
       const matchStage = scheduleStageFilter === 'ALL' || item.stage === scheduleStageFilter;
-      return matchBranch && matchStage;
+      const q = scheduleSearch.trim().toLowerCase();
+      const matchSearch = !q ||
+        String(item.name || '').toLowerCase().includes(q) ||
+        String(item.empCode || '').toLowerCase().includes(q);
+
+      let matchAtt = true;
+      if (scheduleAttFilter !== 'ALL') {
+        const daysArr = Object.values(item.days || {}) as any[];
+        const hasStatus = (st: string) => daysArr.some(d => d.status === st || (d.shifts && d.shifts.some((s: any) => s.status === st)));
+        if (scheduleAttFilter === 'ATTENDED') {
+          matchAtt = hasStatus('CHECKED_IN') || hasStatus('COMPLETED');
+        } else if (scheduleAttFilter === 'WORKING') {
+          matchAtt = hasStatus('CHECKED_IN');
+        } else if (scheduleAttFilter === 'COMPLETED') {
+          matchAtt = hasStatus('COMPLETED');
+        } else if (scheduleAttFilter === 'MISSING_OUT') {
+          matchAtt = hasStatus('MISSING_OUT');
+        } else if (scheduleAttFilter === 'PENDING') {
+          matchAtt = hasStatus('PENDING');
+        } else if (scheduleAttFilter === 'OFF') {
+          matchAtt = daysArr.some(d => d.status === 'OFF' || d.status === 'PENDING_LEAVE');
+        } else if (scheduleAttFilter === 'ABSENT') {
+          matchAtt = hasStatus('ABSENT');
+        }
+      }
+
+      return matchBranch && matchStage && matchSearch && matchAtt;
     });
 
     return (
@@ -6348,7 +6418,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 const wSet = new Set((weekDays || []).map((d: any) => d.isoDate));
                 const wShifts = (schedAllShifts || []).filter((s: any) => wSet.has(String(s.date || '').slice(0, 10)) && s.status !== 'CANCELLED').length;
                 const wOffs = (leaves || []).filter((l: any) => wSet.has(String(l.requested_date || '').slice(0, 10)) && l.status !== 'REJECTED' && l.status !== 'CANCELLED').length;
-                return ` Đã tải tuần xem: ${wShifts} ca • ${wOffs} đơn nghỉ/OFF.`;
+                const wAttended = (schedAllEvents || []).filter((e: any) => e.type === 'CHECK_IN' && wSet.has(vnDayOf(e.client_time || ''))).length;
+                return ` Đã tải tuần xem: ${wShifts} ca • ${wOffs} đơn nghỉ/OFF • ${wAttended} lượt đã điểm danh.`;
               })()}
             </p>
           </div>
@@ -6460,7 +6531,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           flexWrap: 'wrap',
           gap: '12px',
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
             {/* Filter by Branch */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text)' }}>Chi nhánh:</span>
@@ -6490,6 +6561,48 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <option value="OFFICIAL">💼 Nhân Viên Chính Thức</option>
               </select>
             </div>
+
+            {/* Filter by Attendance Status */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text)' }}>Trạng thái:</span>
+              <select
+                value={scheduleAttFilter}
+                onChange={(e) => setScheduleAttFilter(e.target.value)}
+                style={{ padding: '6px 10px', fontSize: '12px', minHeight: '34px', borderRadius: '6px', fontWeight: 600 }}
+              >
+                <option value="ALL">Tất Cả Trạng Thái</option>
+                <option value="ATTENDED">🟢 Đã Điểm Danh / Hoàn Thành</option>
+                <option value="WORKING">🕒 Đang Làm (Realtime)</option>
+                <option value="COMPLETED">✓ Đã Xong Ca</option>
+                <option value="MISSING_OUT">⚠️ Thiếu Check-out</option>
+                <option value="PENDING">⏳ Chưa Check-in (Chờ ca)</option>
+                <option value="OFF">🏖️ Nghỉ OFF / Đột Xuất</option>
+                <option value="ABSENT">🔴 Vắng Ca</option>
+              </select>
+            </div>
+
+            {/* Search Employee */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text)' }}>Tìm NV:</span>
+              <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+                <input
+                  type="text"
+                  placeholder="Tên hoặc mã NV..."
+                  value={scheduleSearch}
+                  onChange={(e) => setScheduleSearch(e.target.value)}
+                  style={{
+                    padding: '6px 10px 6px 26px',
+                    fontSize: '12px',
+                    minHeight: '34px',
+                    borderRadius: '6px',
+                    width: '150px',
+                    border: '1px solid var(--border)',
+                  }}
+                />
+                <Search size={12} style={{ position: 'absolute', left: '8px', color: 'var(--text-muted)' }} />
+              </div>
+            </div>
+
             {/* Chọn tuần cố định T2–CN (mặc định tuần này, VD: 28/09/2026 - 04/10/2026) */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
               <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text)' }}>Tuần:</span>
@@ -6510,13 +6623,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           {/* Guide Legends */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', fontWeight: 700, flexWrap: 'wrap' }}>
             {[
-              { dot: '#10B981', bg: '#ECFDF5', tx: '#065F46', label: 'Đã Check-in Realtime' },
+              { dot: '#10B981', bg: '#ECFDF5', tx: '#065F46', label: '✓ Đã Điểm Danh / Xong Ca' },
+              { dot: '#F59E0B', bg: '#FEF3C7', tx: '#92400E', label: '🕒 Đang làm (vàng nhấp nháy)' },
               { dot: '#F59E0B', bg: '#FFFBEB', tx: '#92400E', label: 'Chưa Check-in (Chờ ca)' },
+              { dot: '#EA580C', bg: '#FFF7ED', tx: '#9A3412', label: '⚠️ Thiếu check-out' },
               { dot: '#2563EB', bg: '#EFF6FF', tx: '#1D4ED8', label: '🤝 Ca nhận thay (+30.000đ)' },
               { dot: '#9CA3AF', bg: '#F3F4F6', tx: '#4B5563', label: 'Nghỉ OFF' },
-              { dot: '#EF4444', bg: '#FEF2F2', tx: '#B91C1C', label: 'Vắng ca (tự ghi)' },
-              { dot: '#F59E0B', bg: '#FFFBEB', tx: '#92400E', label: 'Đang làm (vàng nhấp nháy)' },
-              { dot: '#64748B', bg: '#F1F5F9', tx: '#475569', label: 'Khóa — nghỉ không lương' },
+              { dot: '#EF4444', bg: '#FEF2F2', tx: '#B91C1C', label: '🔴 Vắng ca (tự ghi)' },
+              { dot: '#64748B', bg: '#F1F5F9', tx: '#475569', label: '🔒 Khóa — không lương' },
               { dot: '#E5E7EB', bg: '#F9FAFB', tx: '#9CA3AF', label: '— Không có ca' },
             ].map((l) => (
               <span key={l.label} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', backgroundColor: l.bg, color: l.tx, borderRadius: '999px', padding: '4px 10px', boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.04)' }}>
@@ -6631,6 +6745,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   {/* Day Columns */}
                   {weekDays.map((day) => {
                     const d = (emp.days && emp.days[day.key]) || { shift: '—', status: 'NO_SHIFT', note: 'Không có ca' };
+                    const isCompleted = d.status === 'COMPLETED';
                     const isCheckedIn = d.status === 'CHECKED_IN';
                     const isMissingOut = d.status === 'MISSING_OUT';
                     const isLocked = d.status === 'LOCKED';
@@ -6641,7 +6756,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     const isNoShift = d.status === 'NO_SHIFT';
                     const isAbsent = d.status === 'ABSENT';
                     // Vạch màu trạng thái trên cùng mỗi ô ngày.
-                    const cellAccent = d.status === 'COMPLETED' ? '#10B981'
+                    const cellAccent = isCompleted ? '#10B981'
                       : isAbsent ? '#EF4444'
                       : isCheckedIn ? '#F59E0B'
                       : isMissingOut ? '#EA580C'
@@ -6680,44 +6795,151 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             <span style={{ fontSize: '10px', color: '#9CA3AF', marginTop: '2px' }}>Không có ca</span>
                           </div>
                         ) : d.status === 'MULTI' ? (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
                             {(d.shifts || []).map((sd: any, si: number) => {
-                              const stColor = sd.status === 'COMPLETED'
+                              const sdCompleted = sd.status === 'COMPLETED';
+                              const sdCheckedIn = sd.status === 'CHECKED_IN';
+                              const sdMissingOut = sd.status === 'MISSING_OUT';
+                              const sdAbsent = sd.status === 'ABSENT';
+                              const sdLocked = sd.status === 'LOCKED';
+                              const sdPending = sd.status === 'PENDING';
+
+                              const stColor = sdCompleted
                                 ? '#047857'
-                                : sd.status === 'ABSENT'
+                                : sdAbsent
                                 ? '#DC2626'
-                                : sd.status === 'LOCKED'
+                                : sdLocked
                                 ? '#475569'
-                                : sd.status === 'MISSING_OUT'
+                                : sdMissingOut
                                 ? '#9A3412'
-                                : sd.status === 'CHECKED_IN' || sd.status === 'PENDING'
+                                : sdCheckedIn || sdPending
                                 ? '#B45309'
                                 : 'var(--text)';
-                              const stBg = sd.status === 'COMPLETED'
+                              const stBg = sdCompleted
                                 ? '#ECFDF5'
-                                : sd.status === 'ABSENT'
+                                : sdAbsent
                                 ? '#FEE2E2'
-                                : sd.status === 'LOCKED'
+                                : sdLocked
                                 ? '#F1F5F9'
-                                : sd.status === 'MISSING_OUT'
+                                : sdMissingOut
                                 ? '#FFF7ED'
-                                : sd.status === 'CHECKED_IN' || sd.status === 'PENDING'
+                                : sdCheckedIn || sdPending
                                 ? '#FEF3C7'
                                 : '#FAFAFA';
-                              const stBd = sd.status === 'ABSENT' ? '1.5px solid #EF4444' : sd.status === 'LOCKED' ? '1.5px solid #64748B' : sd.status === 'MISSING_OUT' ? '1.5px solid #EA580C' : '1px solid var(--border)';
-                              const stBlink = sd.status === 'CHECKED_IN';
+                              const stBd = sdCompleted
+                                ? '1.5px solid #10B981'
+                                : sdAbsent
+                                ? '1.5px solid #EF4444'
+                                : sdLocked
+                                ? '1.5px solid #64748B'
+                                : sdMissingOut
+                                ? '1.5px solid #EA580C'
+                                : sdCheckedIn
+                                ? '1.5px solid #F59E0B'
+                                : '1px solid var(--border)';
+                              const stBlink = sdCheckedIn;
                               return (
-                                <div key={si} style={{ padding: '7px', borderRadius: '10px', backgroundColor: stBg, border: stBd, boxShadow: '0 2px 6px rgba(15,23,42,0.07)', animation: stBlink ? 'fx-blink 1.2s infinite' : undefined }}>
-                                  <div style={{ fontWeight: 700, fontSize: '11px' }}>{sd.shift}</div>
-                                  <div style={{ fontSize: '10px', color: stColor, fontWeight: 700 }}>
-                                    {sd.status === 'COMPLETED' ? `✓ Xong${sd.time ? ` (${sd.time})` : ''}`
-                                      : sd.status === 'CHECKED_IN' ? `Đang làm${sd.time ? ` (vào ${sd.time})` : ''}`
-                                      : sd.status === 'ABSENT' ? '🔴 Vắng'
-                                      : sd.status === 'LOCKED' ? '🔒 Khóa — nghỉ không lương'
-                                      : sd.status === 'MISSING_OUT' ? 'Thiếu check-out — không lương'
-                                      : sd.status === 'PENDING' ? 'Chưa check-in'
-                                      : sd.note || sd.status}
+                                <div
+                                  key={si}
+                                  style={{
+                                    padding: '7px',
+                                    borderRadius: '10px',
+                                    backgroundColor: stBg,
+                                    border: stBd,
+                                    boxShadow: sdCompleted ? '0 2px 6px rgba(16, 185, 129, 0.12)' : '0 2px 6px rgba(15,23,42,0.07)',
+                                    animation: stBlink ? 'fx-blink 1.2s infinite' : undefined,
+                                  }}
+                                >
+                                  <div style={{ fontWeight: 700, fontSize: '11px', color: sdCompleted ? '#065F46' : 'var(--text)' }}>
+                                    {sd.shift}
                                   </div>
+                                  {sdCompleted ? (
+                                    <div style={{ marginTop: '2px' }}>
+                                      <span style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '3px',
+                                        padding: '1px 5px',
+                                        borderRadius: '4px',
+                                        backgroundColor: '#10B981',
+                                        color: '#FFF',
+                                        fontSize: '9.5px',
+                                        fontWeight: 800,
+                                      }}>
+                                        <CheckCircle size={9} /> ĐÃ ĐIỂM DANH ({sd.time})
+                                      </span>
+                                      <div style={{ fontSize: '9px', color: '#047857', fontWeight: 600, marginTop: '2px' }}>
+                                        ✓ {sd.gps || 'GPS hợp lệ'}
+                                      </div>
+                                      <button
+                                        onClick={() => setSelectedRealtimeModal({ emp, dayData: sd })}
+                                        style={{
+                                          marginTop: '3px',
+                                          fontSize: '9px',
+                                          padding: '2px 5px',
+                                          borderRadius: '4px',
+                                          backgroundColor: '#FFFFFF',
+                                          border: '1px solid #10B981',
+                                          color: '#065F46',
+                                          fontWeight: 700,
+                                          cursor: 'pointer',
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: '3px',
+                                          justifyContent: 'center',
+                                        }}
+                                      >
+                                        <Eye size={9} /> Xem GPS & Ảnh
+                                      </button>
+                                    </div>
+                                  ) : sdCheckedIn ? (
+                                    <div style={{ marginTop: '2px' }}>
+                                      <span style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '3px',
+                                        padding: '1px 5px',
+                                        borderRadius: '4px',
+                                        backgroundColor: '#F59E0B',
+                                        color: '#FFF',
+                                        fontSize: '9.5px',
+                                        fontWeight: 800,
+                                      }}>
+                                        <Clock size={9} /> ĐANG LÀM ({sd.time})
+                                      </span>
+                                      <div style={{ fontSize: '9px', color: '#92400E', fontWeight: 600, marginTop: '2px' }}>
+                                        {sd.gps || 'Chờ check-out'}
+                                      </div>
+                                      <button
+                                        onClick={() => setSelectedRealtimeModal({ emp, dayData: sd })}
+                                        style={{
+                                          marginTop: '3px',
+                                          fontSize: '9px',
+                                          padding: '2px 5px',
+                                          borderRadius: '4px',
+                                          backgroundColor: '#FFFFFF',
+                                          border: '1px solid #F59E0B',
+                                          color: '#92400E',
+                                          fontWeight: 700,
+                                          cursor: 'pointer',
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: '3px',
+                                          justifyContent: 'center',
+                                        }}
+                                      >
+                                        <Eye size={9} /> Xem GPS & Ảnh
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <div style={{ fontSize: '10px', color: stColor, fontWeight: 700, marginTop: '2px' }}>
+                                      {sdAbsent ? '🔴 Vắng'
+                                        : sdLocked ? '🔒 Khóa — nghỉ không lương'
+                                        : sdMissingOut ? 'Thiếu check-out'
+                                        : sdPending ? 'Chưa check-in'
+                                        : sd.note || sd.status}
+                                    </div>
+                                  )}
                                 </div>
                               );
                             })}
@@ -6726,7 +6948,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           <div style={{
                             padding: '9px',
                             borderRadius: '10px',
-                            backgroundColor: isCheckedIn
+                            backgroundColor: isCompleted
+                              ? '#ECFDF5'
+                              : isCheckedIn
                               ? '#FEF3C7'
                               : isMissingOut
                               ? '#FFF7ED'
@@ -6741,7 +6965,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                               : isOff
                               ? '#F3F4F6'
                               : '#FAFAFA',
-                            border: isCheckedIn
+                            border: isCompleted
+                              ? '1.5px solid #10B981'
+                              : isCheckedIn
                               ? '1.5px solid #F59E0B'
                               : isMissingOut
                               ? '1.5px solid #EA580C'
@@ -6757,14 +6983,67 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             display: 'flex',
                             flexDirection: 'column',
                             gap: '3px',
-                            boxShadow: isCheckedIn ? '0 2px 6px rgba(16, 185, 129, 0.15)' : '0 2px 6px rgba(15,23,42,0.06)',
+                            boxShadow: isCompleted
+                              ? '0 2px 8px rgba(16, 185, 129, 0.16)'
+                              : isCheckedIn
+                              ? '0 2px 6px rgba(245, 158, 11, 0.2)'
+                              : '0 2px 6px rgba(15,23,42,0.06)',
                             // Chỉ nhấp nháy ca NV đã vào (check-in rồi, chờ check-out)
                             animation: isCheckedIn ? 'fx-blink 1.2s infinite' : undefined,
                           }}>
                             {/* Shift Name */}
-                            <div style={{ fontWeight: 700, fontSize: '11px', color: isOff ? '#9CA3AF' : 'var(--text)' }}>
+                            <div style={{ fontWeight: 700, fontSize: '11px', color: isCompleted ? '#065F46' : isOff ? '#9CA3AF' : 'var(--text)' }}>
                               {d.shift}
                             </div>
+
+                            {/* Completed / Attended Shift Badge */}
+                            {isCompleted && (
+                              <div style={{ marginTop: '2px' }}>
+                                <span style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  padding: '2px 7px',
+                                  borderRadius: '4px',
+                                  backgroundColor: '#10B981',
+                                  color: '#FFF',
+                                  fontSize: '10px',
+                                  fontWeight: 800,
+                                  letterSpacing: '0.2px',
+                                }}>
+                                  <CheckCircle size={10} /> ĐÃ ĐIỂM DANH ({d.time})
+                                </span>
+                                <div style={{ fontSize: '10px', color: '#065F46', fontWeight: 700, marginTop: '3px' }}>
+                                  ✓ Hoàn thành • {d.gps || 'GPS hợp lệ'}
+                                </div>
+                                {d.note && (
+                                  <div style={{ fontSize: '9px', color: '#047857', marginTop: '1px' }}>
+                                    {d.note}
+                                  </div>
+                                )}
+                                <button
+                                  onClick={() => setSelectedRealtimeModal({ emp, dayData: d })}
+                                  style={{
+                                    marginTop: '4px',
+                                    fontSize: '9.5px',
+                                    padding: '3px 8px',
+                                    borderRadius: '4px',
+                                    backgroundColor: '#FFFFFF',
+                                    border: '1px solid #10B981',
+                                    color: '#065F46',
+                                    fontWeight: 700,
+                                    cursor: 'pointer',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    justifyContent: 'center',
+                                    boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                                  }}
+                                >
+                                  <Eye size={11} /> Xem Chi Tiết GPS & Ảnh
+                                </button>
+                              </div>
+                            )}
 
                             {/* Realtime Attendance Status Badge */}
                             {isCheckedIn && (
@@ -6843,6 +7122,27 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 <div style={{ fontSize: '10px', color: '#9A3412', fontWeight: 600, marginTop: '2px' }}>
                                   {d.note || 'Hết giờ chưa check-out'}
                                 </div>
+                                {d.event && (
+                                  <button
+                                    onClick={() => setSelectedRealtimeModal({ emp, dayData: d })}
+                                    style={{
+                                      marginTop: '4px',
+                                      fontSize: '9.5px',
+                                      padding: '2px 6px',
+                                      borderRadius: '4px',
+                                      backgroundColor: '#FFFFFF',
+                                      border: '1px solid #EA580C',
+                                      color: '#9A3412',
+                                      fontWeight: 700,
+                                      cursor: 'pointer',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '3px',
+                                    }}
+                                  >
+                                    <Eye size={10} /> Xem Giờ Vào & GPS
+                                  </button>
+                                )}
                               </div>
                             )}
 
@@ -6897,12 +7197,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             {isPendingLeave && (
                               <div style={{ fontSize: '10px', color: '#92400E', fontWeight: 700 }}>
                                 ⏳ {d.note || 'Chờ duyệt (chưa tính OFF)'}
-                              </div>
-                            )}
-
-                            {d.status === 'COMPLETED' && (
-                              <div style={{ fontSize: '10px', color: '#059669', fontWeight: 600 }}>
-                                ✓ Đã xong ca ({d.time})
                               </div>
                             )}
 
@@ -7013,12 +7307,28 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
                       <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Thời gian check-in:</span>
                       <strong style={{ fontSize: '13px', color: '#10B981' }}>
-                        {modalDayData?.time || (modalEvent?.client_time ? new Date(modalEvent.client_time).toLocaleTimeString('vi-VN') : 'Chưa ghi nhận')}
+                        {modalDayData?.inTime || (modalDayData?.status === 'CHECKED_IN' ? modalDayData?.time : null) || (modalEvent?.client_time ? new Date(modalEvent.client_time).toLocaleTimeString('vi-VN') : 'Chưa ghi nhận')}
                       </strong>
                     </div>
+                    {modalDayData?.outTime && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                        <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Thời gian check-out:</span>
+                        <strong style={{ fontSize: '13px', color: '#059669' }}>
+                          {modalDayData.outTime}
+                        </strong>
+                      </div>
+                    )}
+                    {modalDayData?.time && modalDayData?.status === 'COMPLETED' && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                        <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Tổng ca làm việc:</span>
+                        <strong style={{ fontSize: '13px', color: '#047857' }}>
+                          {modalDayData.time}
+                        </strong>
+                      </div>
+                    )}
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                       <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Tọa độ GPS & Khoảng cách:</span>
-                      <strong style={{ fontSize: '13px', color: '#10B981' }}>
+                      <strong style={{ fontSize: '13px', color: modalDayData?.gpsBad ? '#DC2626' : '#10B981' }}>
                         {modalDayData?.gps || (modalEvent?.distance_meters !== undefined ? `${modalEvent.distance_meters} mét (Bán kính hợp lệ < 300m)` : 'Khoảng cách hợp lệ < 300m')}
                       </strong>
                     </div>
@@ -7048,8 +7358,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       />
                     ) : modalEvent?.event_id ? (
                       <div style={{ marginBottom: '10px' }}>
-                        <AttPhoto eventId={modalEvent.event_id} style={{ width: '100%', maxHeight: '220px', height: 'auto' }} alt="Ảnh chụp đồng phục áo hồng" />
-                        <div style={{ fontWeight: 800, fontSize: '13px', color: '#9D174D', marginTop: '6px' }}>ẢNH CHỤP ĐỒNG PHỤC ÁO HỒNG ỤM BÒ MILK</div>
+                        <AttPhoto eventId={modalEvent.event_id} style={{ width: '100%', maxHeight: '220px', height: 'auto' }} alt="Ảnh chụp đồng phục áo hồng check-in" />
+                        <div style={{ fontWeight: 800, fontSize: '13px', color: '#9D174D', marginTop: '6px' }}>ẢNH CHỤP ĐỒNG PHỤC ÁO HỒNG ỤM BÒ MILK (CHECK-IN)</div>
                         <div style={{ fontSize: '11px', color: '#9D174D' }}>Bảng tên nhân viên: Đã xác thực hợp lệ</div>
                       </div>
                     ) : (
@@ -7069,6 +7379,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         <Camera size={32} style={{ marginBottom: '6px' }} />
                         <div style={{ fontWeight: 800, fontSize: '14px' }}>ẢNH CHỤP ĐỒNG PHỤC ÁO HỒNG ỤM BÒ MILK</div>
                         <div style={{ fontSize: '11px', opacity: 0.9 }}>Bảng tên nhân viên: Đã xác thực hợp lệ</div>
+                      </div>
+                    )}
+
+                    {modalDayData?.outEvent?.event_id && modalDayData.outEvent.event_id !== modalEvent?.event_id && (
+                      <div style={{ marginTop: '12px', borderTop: '1px dashed #F472B6', paddingTop: '10px', marginBottom: '10px' }}>
+                        <AttPhoto eventId={modalDayData.outEvent.event_id} style={{ width: '100%', maxHeight: '220px', height: 'auto' }} alt="Ảnh chụp khi tan ca" />
+                        <div style={{ fontWeight: 800, fontSize: '12px', color: '#9D174D', marginTop: '6px' }}>
+                          ẢNH CHỤP KHI TAN CA (CHECK-OUT: {modalDayData.outTime})
+                        </div>
                       </div>
                     )}
 
