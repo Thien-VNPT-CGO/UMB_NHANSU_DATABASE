@@ -160,21 +160,7 @@ export async function sendCheckinReminderForShift(
   let sentInApp = false;
   let sentZalo = false;
 
-  // Gửi thông báo trong App (Socket.IO realtime + chuông thông báo)
-  try {
-    await notifications.sendNotification({
-      recipientIds: [employee_id],
-      type: 'CHECKIN_REMINDER',
-      severity: 'ACTION_REQUIRED',
-      title: `⏰ Nhắc Check-in ${shiftName}`,
-      summary: `Ca làm việc bắt đầu lúc ${startStr}. Cổng điểm danh đã mở, vui lòng mở Cổng Nhân Viên điểm danh (GPS + áo hồng) ngay!`,
-      targetPath: '/attendance',
-      actorId: 'SYSTEM',
-    });
-    sentInApp = true;
-  } catch (err: any) {
-    console.warn('[auto-reminders] In-app notification error:', err?.message || err);
-  }
+  // Nhắc hẹn điểm danh qua Zalo cá nhân (không tạo in-app inbox notification để tránh chiếm dụng màn hình nhân viên)
 
   // Gửi tin nhắn Zalo cá nhân nếu có số điện thoại và Zalo đã kết nối
   const phone = emp.phone_normalized || '';

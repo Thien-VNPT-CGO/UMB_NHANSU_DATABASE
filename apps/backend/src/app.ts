@@ -179,6 +179,20 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   };
 
+  // Dọn dẹp/xóa mọi thông báo nhắc hẹn điểm danh khỏi bộ nhớ hệ thống
+  const purgeCheckinReminders = () => {
+    try {
+      const fallback = (adapter as any).fallbackAdapter || adapter;
+      if (Array.isArray(fallback.notificationInbox)) {
+        fallback.notificationInbox = fallback.notificationInbox.filter((n: any) =>
+          n.type !== 'CHECKIN_REMINDER' &&
+          !/nhắc.*(?:check-?in|điểm danh)/i.test(`${n.title || ''} ${n.summary || ''}`)
+        );
+      }
+    } catch {}
+  };
+  purgeCheckinReminders();
+
   // Realtime Rich Notification Dispatcher (Gửi thông báo có âm thanh + hiệu ứng cho Admin & HR)
   // Đồng thời LƯU TRỮ các sự kiện từ cổng nhân viên (điểm danh/đổi ca/nghỉ/PIN/TEST)
   // vào inbox + tab Sheets THONGBAO_NV để HR xem lại lịch sử (realtime + bền vững).
@@ -3283,8 +3297,24 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       const recipientId = req.user?.employeeId || req.user?.id || 'ALL';
       const unreadOnly = req.query.filter === 'unread';
+
+      // Tự động dọn dẹp các thông báo nhắc hẹn điểm danh khỏi bộ nhớ
+      try {
+        const fallback = (adapter as any).fallbackAdapter || adapter;
+        if (Array.isArray(fallback.notificationInbox)) {
+          fallback.notificationInbox = fallback.notificationInbox.filter((n: any) =>
+            n.type !== 'CHECKIN_REMINDER' &&
+            !/nhắc.*(?:check-?in|điểm danh)/i.test(`${n.title || ''} ${n.summary || ''}`)
+          );
+        }
+      } catch {}
+
       const items = await notificationsService.getInbox(recipientId, unreadOnly);
-      res.json(items);
+      const filtered = (items || []).filter(item =>
+        item.type !== 'CHECKIN_REMINDER' &&
+        !/nhắc.*(?:check-?in|điểm danh)/i.test(`${item.title || ''} ${item.summary || ''}`)
+      );
+      res.json(filtered);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

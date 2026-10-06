@@ -859,7 +859,11 @@ export function App() {
         refreshWeeklyOffStatus(),
       ]);
       setMyShifts(shifts);
-      setNotifications(notifs);
+      const cleanNotifs = (Array.isArray(notifs) ? notifs : []).filter((n: any) =>
+        n.type !== 'CHECKIN_REMINDER' &&
+        !/nhắc.*(?:check-?in|điểm danh)/i.test(`${n.title || ''} ${n.summary || ''}`)
+      );
+      setNotifications(cleanNotifs);
       const attEvents: any[] = Array.isArray(attRange) ? attRange : [];
 
       // Ngày VN (UTC+7) + so ngày VN của sự kiện (server lưu client_time UTC ISO):
@@ -2745,7 +2749,11 @@ export function App() {
       {/* BANNER BẮT ĐIỂM DANH LẠI (GPS vượt 300m) — hiện mọi tab đến khi xử lý */}
       {(() => {
         const redo = (Array.isArray(notifications) ? notifications : []).filter((n: any) =>
-          !n.read_at && (n.target_path === '/attendance') && /GPS|300m|phạm vi|vượt/i.test(`${n.title || ''} ${n.summary || ''}`)
+          !n.read_at &&
+          n.type !== 'CHECKIN_REMINDER' &&
+          !/nhắc.*(?:check-?in|điểm danh)/i.test(`${n.title || ''} ${n.summary || ''}`) &&
+          (n.target_path === '/attendance') &&
+          /(?:vượt|ngoài phạm vi|sai vị trí|bắt buộc điểm danh lại|300m.*vượt)/i.test(`${n.title || ''} ${n.summary || ''}`)
         );
         if (redo.length === 0) return null;
         return (

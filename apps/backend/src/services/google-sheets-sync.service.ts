@@ -1026,7 +1026,7 @@ export class GoogleSheetsSyncService {
       const notifCutoff = new Date(Date.UTC(nYY, nMM - 1, nDD) - 7 * 3_600_000).toISOString();
       if (notifRows.length > 0) {
         const mappedNotif = notifRows
-          .filter(r => r && r[0])
+          .filter(r => r && r[0] && r[3] !== 'CHECKIN_REMINDER' && !/nhắc.*(?:check-?in|điểm danh)/i.test(`${r[4] || ''} ${r[5] || ''}`))
           .map(r => ({
             inbox_id: r[0],
             notification_id: r[1] || '',
@@ -1043,7 +1043,9 @@ export class GoogleSheetsSyncService {
         fallback.notificationInbox = mergeById(fallback.notificationInbox, mappedNotif, 'inbox_id', ['version']) as any;
       }
       fallback.notificationInbox = (fallback.notificationInbox || []).filter(
-        (n: any) => (n.created_at || '') >= notifCutoff
+        (n: any) => (n.created_at || '') >= notifCutoff &&
+          n.type !== 'CHECKIN_REMINDER' &&
+          !/nhắc.*(?:check-?in|điểm danh)/i.test(`${n.title || ''} ${n.summary || ''}`)
       );
       counts.notifications = fallback.notificationInbox.length;
 
