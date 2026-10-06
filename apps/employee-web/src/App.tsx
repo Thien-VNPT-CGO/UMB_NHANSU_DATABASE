@@ -3039,36 +3039,52 @@ export function App() {
                   if (hasIn) return { key: 'DOING', label: `▶ ${fmtHM(inE?.client_time)}–...`, bg: '#FFFBEB', fg: '#92400E', bd: '1.5px solid #F59E0B' };
                   return { key: 'TODO', label: 'Chưa điểm danh', bg: '#FFFFFF', fg: 'var(--text-muted)', bd: '1px solid var(--border)' };
                 };
-                const dayCell = (d: string) => {
+                const dayCell = (d: string, vertical = false) => {
                   const offs = (schedRangeLeaves || []).filter((l: any) => toISODate(l.requested_date) === d);
                   const shs = rangeShifts.filter((s: any) => String(s.date || '').slice(0, 10) === d);
                   const isToday = d === todayStr;
                   const isMilestone = isProbation && days[0] === d;
+                  const body = (
+                    <>
+                      {offs.map((l: any, i: number) => (
+                        <div key={`off-${i}`} style={{ fontSize: '11px', fontWeight: 800, color: '#64748B', backgroundColor: '#F1F5F9', borderRadius: '6px', padding: '5px 7px' }}>
+                          {l.status === 'APPROVED' || l.leave_type === 'HANG_TUAN' || l.leave_type === 'THU_VIEC' ? '💤 OFF' : '⏳ Chờ duyệt'}
+                          <span style={{ fontWeight: 400 }}> {l.leave_type === 'THU_VIEC' ? 'thử việc' : l.leave_type === 'HANG_TUAN' ? 'tuần' : 'đột xuất'}</span>
+                        </div>
+                      ))}
+                      {shs.map((sh: any) => {
+                        const st = shiftStatusOf(sh);
+                        return (
+                          <div key={sh.assignment_id} style={{ fontSize: '11px', fontWeight: 700, borderRadius: '6px', padding: '5px 7px', backgroundColor: st.bg, color: st.fg, border: st.bd }}>
+                            <div>{sh.shift_code} ({sh.start_at ? fmtHM(sh.start_at) : ''}–{sh.end_at ? fmtHM(sh.end_at) : ''}){sh.branch_id ? ` • ${sh.branch_id}` : ''}</div>
+                            <div>{st.label}</div>
+                          </div>
+                        );
+                      })}
+                      {offs.length === 0 && shs.length === 0 && (
+                        <div style={{ fontSize: '11px', color: '#9CA3AF' }}>— Trống —</div>
+                      )}
+                    </>
+                  );
+                  if (vertical) {
+                    return (
+                      <div key={d} style={{ border: isToday ? '2px solid var(--brand)' : '1px solid var(--border)', borderRadius: '12px', overflow: 'hidden', backgroundColor: '#FFF' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '9px 12px', backgroundColor: isToday ? 'var(--brand-soft)' : 'var(--bg)' }}>
+                          <span style={{ fontSize: '13px', fontWeight: 800, color: isToday ? 'var(--brand)' : 'var(--text)' }}>
+                            {dowName(d)} • {fmtD(d)}
+                          </span>
+                          {isToday && <span className="badge badge-brand" style={{ fontSize: '10px' }}>HÔM NAY</span>}
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', padding: '10px 12px' }}>{body}</div>
+                      </div>
+                    );
+                  }
                   return (
                     <div key={d} style={{ border: isToday ? '2px solid var(--brand)' : '1px solid var(--border)', borderRadius: '10px', padding: '8px', backgroundColor: isToday ? 'var(--brand-soft)' : '#FFF', minWidth: 0 }}>
                       <div style={{ fontSize: '11px', fontWeight: 800, color: isToday ? 'var(--brand)' : 'var(--text)' }}>
                         {dowName(d)} {fmtD(d)}{isToday ? ' • HÔM NAY' : ''}{isMilestone ? ' • MỐC' : ''}
                       </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px' }}>
-                        {offs.map((l: any, i: number) => (
-                          <div key={`off-${i}`} style={{ fontSize: '11px', fontWeight: 800, color: '#64748B', backgroundColor: '#F1F5F9', borderRadius: '6px', padding: '5px 7px' }}>
-                            {l.status === 'APPROVED' || l.leave_type === 'HANG_TUAN' || l.leave_type === 'THU_VIEC' ? '💤 OFF' : '⏳ Chờ duyệt'}
-                            <span style={{ fontWeight: 400 }}> {l.leave_type === 'THU_VIEC' ? 'thử việc' : l.leave_type === 'HANG_TUAN' ? 'tuần' : 'đột xuất'}</span>
-                          </div>
-                        ))}
-                        {shs.map((sh: any) => {
-                          const st = shiftStatusOf(sh);
-                          return (
-                            <div key={sh.assignment_id} style={{ fontSize: '11px', fontWeight: 700, borderRadius: '6px', padding: '5px 7px', backgroundColor: st.bg, color: st.fg, border: st.bd }}>
-                              <div>{sh.shift_code} ({sh.start_at ? fmtHM(sh.start_at) : ''}–{sh.end_at ? fmtHM(sh.end_at) : ''})</div>
-                              <div>{st.label}</div>
-                            </div>
-                          );
-                        })}
-                        {offs.length === 0 && shs.length === 0 && (
-                          <div style={{ fontSize: '11px', color: '#9CA3AF' }}>— Trống —</div>
-                        )}
-                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px' }}>{body}</div>
                     </div>
                   );
                 };
@@ -3081,13 +3097,11 @@ export function App() {
                     </div>
                     {isProbation ? (
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '8px' }}>
-                        {days.map(dayCell)}
+                        {days.map((d) => dayCell(d))}
                       </div>
                     ) : (
-                      <div style={{ overflowX: 'auto' }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(104px, 1fr))', gap: '8px', minWidth: '760px' }}>
-                          {days.map(dayCell)}
-                        </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {days.map((d) => dayCell(d, true))}
                       </div>
                     )}
                   </div>
