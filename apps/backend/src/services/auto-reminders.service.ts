@@ -27,29 +27,77 @@ function vnDateStr(d: Date): string {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
 }
 
-/** Parse giờ bắt đầu ca: ISO đầy đủ hoặc "HH:mm" ghép với ngày ca, fallback theo mã ca (CA_1/CA_2/CA_3). */
-function parseShiftStart(date: string, startAt?: string, shiftCode?: string): number | null {
+export interface ShiftDefinition {
+  code: string;
+  name: string;
+  start: string;
+  end: string;
+  startHour: number;
+}
+
+export const SHIFT_DEFINITIONS: Record<string, ShiftDefinition> = {
+  CA_1: { code: 'CA_1', name: 'Ca 1 (07:00 - 12:00)', start: '07:00', end: '12:00', startHour: 7 },
+  CA_2: { code: 'CA_2', name: 'Ca 2 (12:00 - 18:00)', start: '12:00', end: '18:00', startHour: 12 },
+  CA_3: { code: 'CA_3', name: 'Ca 3 (18:00 - 23:00)', start: '18:00', end: '23:00', startHour: 18 },
+};
+
+/** Format giờ theo múi giờ Việt Nam (Asia/Ho_Chi_Minh, UTC+7) */
+export function formatVnTime(epochMs: number): string {
+  try {
+    return new Intl.DateTimeFormat('vi-VN', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(new Date(epochMs));
+  } catch {
+    const d = new Date(epochMs + tzOffsetHours() * 3_600_000);
+    return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+  }
+}
+
+/** Lấy thông tin hiển thị ca chuẩn xác (Tên ca, Giờ bắt đầu) */
+export function resolveShiftInfo(shiftCode?: string, startMs?: number | null): { name: string; start: string } {
+  if (shiftCode && SHIFT_DEFINITIONS[shiftCode]) {
+    return {
+      name: SHIFT_DEFINITIONS[shiftCode].name,
+      start: SHIFT_DEFINITIONS[shiftCode].start,
+    };
+  }
+  const start = startMs ? formatVnTime(startMs) : '07:00';
+  return {
+    name: shiftCode || 'Ca làm việc',
+    start,
+  };
+}
+
+/** Parse giờ bắt đầu ca: Ưu tiên mã ca chuẩn (CA_1: 07:00, CA_2: 12:00, CA_3: 18:00 VN), fallback theo startAt */
+export function parseShiftStart(date: string, startAt?: string, shiftCode?: string): number | null {
+  // Ưu tiên chuẩn hóa ca hệ thống: luôn căn chuẩn theo giờ Việt Nam (UTC+7)
+  if (shiftCode && SHIFT_DEFINITIONS[shiftCode]) {
+    const h = SHIFT_DEFINITIONS[shiftCode].startHour;
+    const t = Date.parse(`${date}T${String(h).padStart(2, '0')}:00:00Z`);
+    if (Number.isFinite(t)) return t - tzOffsetHours() * 3_600_000;
+  }
   if (startAt) {
     try {
-      if (startAt.includes('T')) {
-        const t = new Date(startAt).getTime();
+      const s = String(startAt).trim();
+      // Nếu có Z hoặc offset (+07:00, ...) -> parse tuyệt đối
+      if (s.includes('Z') || /[+-]\d{2}:\d{2}$/.test(s)) {
+        const t = new Date(s).getTime();
         if (Number.isFinite(t)) return t;
       }
-      const m = startAt.match(/(\d{1,2}):(\d{2})/);
+      // Nếu là giờ HH:mm hoặc HH:mm:ss theo giờ VN
+      const m = s.match(/(?:T|\s|^)(\d{1,2}):(\d{2})/);
       if (m) {
-        // date YYYY-MM-DD + giờ VN -> epoch (trừ offset vì server tính theo UTC).
-        const t = Date.parse(`${date}T${m[1].padStart(2, '0')}:${m[2]}:00Z`);
+        const hh = m[1].padStart(2, '0');
+        const mm = m[2];
+        const t = Date.parse(`${date}T${hh}:${mm}:00Z`);
         if (Number.isFinite(t)) return t - tzOffsetHours() * 3_600_000;
       }
+      const t = new Date(s).getTime();
+      if (Number.isFinite(t)) return t;
     } catch {}
-  }
-  if (shiftCode) {
-    const hoursMap: Record<string, number> = { CA_1: 7, CA_2: 12, CA_3: 18 };
-    const h = hoursMap[shiftCode];
-    if (h !== undefined) {
-      const t = Date.parse(`${date}T${String(h).padStart(2, '0')}:00:00Z`);
-      if (Number.isFinite(t)) return t - tzOffsetHours() * 3_600_000;
-    }
   }
   return null;
 }
@@ -75,15 +123,91 @@ async function hrAdminIds(repo: ISheetsRepository): Promise<string[]> {
   }
 }
 
+/** Gửi thông báo nhắc check-in cho 1 ca làm việc cụ thể */
+export async function sendCheckinReminderForShift(
+  repo: ISheetsRepository,
+  notifications: NotificationsService,
+  zalo: ZaloService,
+  shift: {
+    assignment_id?: string;
+    employee_id: string;
+    shift_code?: string;
+    date: string;
+    start_at?: string;
+  },
+  force = false
+): Promise<{ success: boolean; sentZalo: boolean; sentInApp: boolean; reason?: string }> {
+  const { employee_id, shift_code, date, start_at, assignment_id } = shift;
+  const startMs = parseShiftStart(date, start_at, shift_code);
+  if (startMs === null) {
+    return { success: false, sentZalo: false, sentInApp: false, reason: 'INVALID_START_TIME' };
+  }
+
+  const { name: shiftName, start: startStr } = resolveShiftInfo(shift_code, startMs);
+
+  const emp = await repo.getEmployeeById(employee_id);
+  if (!emp) {
+    return { success: false, sentZalo: false, sentInApp: false, reason: 'EMPLOYEE_NOT_FOUND' };
+  }
+
+  if (!force) {
+    const events = await repo.getAttendanceEvents(employee_id, date);
+    if (events.some(e => e.type === 'CHECK_IN' && (e.assignment_id === assignment_id || !e.assignment_id))) {
+      return { success: false, sentZalo: false, sentInApp: false, reason: 'ALREADY_CHECKED_IN' };
+    }
+  }
+
+  let sentInApp = false;
+  let sentZalo = false;
+
+  // Gửi thông báo trong App (Socket.IO realtime + chuông thông báo)
+  try {
+    await notifications.sendNotification({
+      recipientIds: [employee_id],
+      type: 'CHECKIN_REMINDER',
+      severity: 'ACTION_REQUIRED',
+      title: `⏰ Nhắc Check-in ${shiftName}`,
+      summary: `Ca làm việc bắt đầu lúc ${startStr}. Cổng điểm danh đã mở, vui lòng mở Cổng Nhân Viên điểm danh (GPS + áo hồng) ngay!`,
+      targetPath: '/attendance',
+      actorId: 'SYSTEM',
+    });
+    sentInApp = true;
+  } catch (err: any) {
+    console.warn('[auto-reminders] In-app notification error:', err?.message || err);
+  }
+
+  // Gửi tin nhắn Zalo cá nhân nếu có số điện thoại và Zalo đã kết nối
+  const phone = emp.phone_normalized || '';
+  if (phone && zalo.isConnected()) {
+    try {
+      const found = await zalo.findUserByPhone(phone).catch(() => null);
+      if (found?.uid) {
+        await zalo.sendText(
+          found.uid,
+          `⏰ [Ụm Bò Milk] Nhắc check-in: ${shiftName} của ${emp.full_name || 'bạn'} bắt đầu lúc ${startStr} hôm nay.\n👉 Cổng điểm danh đã mở trước ca 30 phút. Vui lòng mở Cổng Nhân Viên chụp ảnh áo hồng + bật GPS để điểm danh trước giờ vào ca nhé!`
+        );
+        sentZalo = true;
+      }
+    } catch (err: any) {
+      console.warn('[auto-reminders] Zalo notification error:', err?.message || err);
+    }
+  }
+
+  return { success: sentInApp || sentZalo, sentZalo, sentInApp };
+}
+
 export async function autoRemindersTick(
   repo: ISheetsRepository,
   notifications: NotificationsService,
-  zalo: ZaloService
-): Promise<void> {
+  zalo: ZaloService,
+  options?: { forceCheckin?: boolean; targetEmployeeId?: string }
+): Promise<{ checkinsSent: number }> {
   const now = Date.now();
   const vn = vnNow(new Date(now));
   const today = vnDateStr(vn);
   resetDaily(today);
+
+  let checkinsSent = 0;
 
   // 1. Nhắc check-in trước ca 15 phút (In-App notification + Zalo)
   try {
@@ -97,45 +221,24 @@ export async function autoRemindersTick(
       }
       for (const s of shifts) {
         if (s.date !== today || s.status !== 'PUBLISHED') continue;
+        if (options?.targetEmployeeId && s.employee_id !== options.targetEmployeeId) continue;
+
         const startMs = parseShiftStart(s.date, s.start_at, s.shift_code);
         if (startMs === null) continue;
+
         const minsToStart = (startMs - now) / 60_000;
-        if (minsToStart < 5 || minsToStart > 20) continue; // cửa sổ nhắc 5-20 phút trước ca
-        const key = `${today}:${s.assignment_id}:${s.employee_id}`;
-        if (remindedCheckin.has(key)) continue;
-        remindedCheckin.add(key);
+        if (!options?.forceCheckin) {
+          // Nhắc trong cửa sổ: từ trước ca 20 phút cho tới sau ca bắt đầu 5 phút (nếu chưa check-in)
+          if (minsToStart < -5 || minsToStart > 20) continue;
+          const key = `${today}:${s.assignment_id}:${s.employee_id}`;
+          if (remindedCheckin.has(key)) continue;
+          remindedCheckin.add(key);
+        }
+
         try {
-          const emp = await repo.getEmployeeById(s.employee_id);
-          const events = await repo.getAttendanceEvents(s.employee_id, today);
-          if (events.some(e => e.type === 'CHECK_IN' && (e.assignment_id === s.assignment_id || !e.assignment_id))) continue;
-
-          const shiftName = s.shift_code === 'CA_1' ? 'Ca 1 (07:00 - 12:00)'
-            : s.shift_code === 'CA_2' ? 'Ca 2 (12:00 - 18:00)'
-            : s.shift_code === 'CA_3' ? 'Ca 3 (18:00 - 23:00)'
-            : (s.shift_code || 'Ca làm việc');
-          const startStr = new Date(startMs).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
-
-          // Gửi thông báo trong App (Socket.IO realtime + chuông thông báo)
-          await notifications.sendNotification({
-            recipientIds: [s.employee_id],
-            type: 'CHECKIN_REMINDER',
-            severity: 'ACTION_REQUIRED',
-            title: `⏰ Nhắc Check-in ${shiftName}`,
-            summary: `Ca làm việc bắt đầu lúc ${startStr}. Cổng điểm danh đã mở, vui lòng mở Cổng Nhân Viên điểm danh (GPS + áo hồng) ngay!`,
-            targetPath: '/attendance',
-            actorId: 'SYSTEM',
-          }).catch(() => null);
-
-          // Gửi tin nhắn Zalo cá nhân nếu có số điện thoại
-          const phone = emp?.phone_normalized || '';
-          if (phone && zalo.isConnected()) {
-            const found = await zalo.findUserByPhone(phone).catch(() => null);
-            if (found?.uid) {
-              await zalo.sendText(
-                found.uid,
-                `⏰ [Ụm Bò Milk] Nhắc check-in: ${shiftName} của ${emp?.full_name || 'bạn'} bắt đầu lúc ${startStr} hôm nay.\n👉 Cổng điểm danh đã mở trước ca 30 phút. Vui lòng mở Cổng Nhân Viên chụp ảnh áo hồng + bật GPS để điểm danh trước giờ vào ca nhé!`
-              );
-            }
+          const res = await sendCheckinReminderForShift(repo, notifications, zalo, s, !!options?.forceCheckin);
+          if (res.success) {
+            checkinsSent++;
           }
         } catch (e: any) {
           console.warn('[auto-reminders] Nhắc check-in thất bại:', e?.message || e);
@@ -149,7 +252,7 @@ export async function autoRemindersTick(
   // 2 & 3. Nhắc HR/Admin trong app (1 lần/ngày cho mỗi loại)
   try {
     const ids = await hrAdminIds(repo);
-    if (ids.length === 0) return;
+    if (ids.length === 0) return { checkinsSent };
 
     // 2. PIN khởi tạo quá 3 ngày chưa đổi (chỉ tài khoản mới chưa từng tự đổi;
     // kỳ xoay hàng tháng đã có thông báo riêng từ pin-rotation, không nhắc lại ở đây).
@@ -262,4 +365,7 @@ export async function autoRemindersTick(
   } catch (e: any) {
     console.warn('[auto-reminders] hr tick:', e?.message || e);
   }
+
+  return { checkinsSent };
 }
+

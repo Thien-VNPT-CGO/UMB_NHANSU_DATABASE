@@ -1449,7 +1449,7 @@ export function App() {
         const shiftStart = new Date(todayShift.start_at).getTime();
         const openTime = shiftStart - 30 * 60 * 1000;
         if (Date.now() < openTime) {
-          const openStr = new Date(openTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+          const openStr = new Date(openTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' });
           showToast(`⏰ CHƯA ĐẾN GIỜ CHECK-IN: Cổng điểm danh mở trước giờ ca 30 phút (Mở lúc ${openStr}). Vui lòng quay lại sau!`);
           return;
         }
@@ -3924,11 +3924,14 @@ export function App() {
             checkInTime: shiftIn?.client_time ? new Date(shiftIn.client_time).toLocaleTimeString('vi-VN') : undefined,
             checkOutTime: shiftOut?.client_time ? new Date(shiftOut.client_time).toLocaleTimeString('vi-VN') : undefined,
           };
+          const shiftStartHour = todayShift?.shift_code === 'CA_1' ? 7 : todayShift?.shift_code === 'CA_2' ? 12 : todayShift?.shift_code === 'CA_3' ? 18 : undefined;
           const shiftStart = todayShift?.start_at ? new Date(todayShift.start_at).getTime() : 0;
           const openTime = shiftStart ? shiftStart - 30 * 60 * 1000 : 0;
           const isEarly = shiftStart > 0 && Date.now() < openTime;
-          const openTimeStr = openTime > 0 ? new Date(openTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '';
-          const shiftStartStr = shiftStart > 0 ? new Date(shiftStart).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '';
+          const openTimeStr = openTime > 0 ? new Date(openTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }) : (shiftStartHour !== undefined ? `${String(shiftStartHour === 7 ? 6 : shiftStartHour - 1).padStart(2, '0')}:30` : '');
+          const shiftStartStr = shiftStartHour !== undefined
+            ? `${String(shiftStartHour).padStart(2, '0')}:00`
+            : (shiftStart > 0 ? new Date(shiftStart).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }) : '');
 
           return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
@@ -3975,7 +3978,7 @@ export function App() {
                         4. Điểm Danh Ca Làm Hôm Nay
                       </h3>
                       <div style={{ fontSize: '12px', color: 'var(--brand)', fontWeight: 700, marginTop: '2px' }}>
-                        {todayShift.shift_code} • {todayShift.branch_id || employee?.default_branch_id} ({shiftStartStr} - {todayShift.end_at ? new Date(todayShift.end_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : ''})
+                        {todayShift.shift_code} • {todayShift.branch_id || employee?.default_branch_id} ({shiftStartStr} - {todayShift.end_at ? new Date(todayShift.end_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }) : (todayShift.shift_code === 'CA_1' ? '12:00' : todayShift.shift_code === 'CA_2' ? '18:00' : todayShift.shift_code === 'CA_3' ? '23:00' : '')})
                       </div>
                     </div>
                     <span className="badge badge-brand">GPS + Camera</span>
@@ -3994,7 +3997,7 @@ export function App() {
                       >
                         {todayShifts.map((s: any) => (
                           <option key={s.assignment_id} value={s.assignment_id}>
-                            {s.shift_code} • {s.date} ({s.start_at ? new Date(s.start_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : ''} - {s.end_at ? new Date(s.end_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : ''})
+                            {s.shift_code} • {s.date} ({s.start_at ? new Date(s.start_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }) : (s.shift_code === 'CA_1' ? '07:00' : s.shift_code === 'CA_2' ? '12:00' : s.shift_code === 'CA_3' ? '18:00' : '')} - {s.end_at ? new Date(s.end_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }) : (s.shift_code === 'CA_1' ? '12:00' : s.shift_code === 'CA_2' ? '18:00' : s.shift_code === 'CA_3' ? '23:00' : '')})
                           </option>
                         ))}
                       </select>
@@ -4360,11 +4363,11 @@ export function App() {
                     d.setUTCDate(d.getUTCDate() + i);
                     weekDays.push(d.toISOString().slice(0, 10));
                   }
-                  const fmtT = (t?: string) => t ? new Date(t).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '--:--';
+                  const fmtT = (t?: string) => t ? new Date(t).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }) : '--:--';
                   const fmtHM = (t?: string) => {
                     const ms = t ? new Date(t).getTime() : NaN;
                     if (!Number.isFinite(ms)) return '';
-                    return new Date(ms).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+                    return new Date(ms).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' });
                   };
                   const shiftNameOf = (code?: string) => code === 'CA_1' ? 'Ca 1' : code === 'CA_2' ? 'Ca 2' : code === 'CA_3' ? 'Ca 3' : (code || 'Ca');
                   const money = (n: number) => Number(n || 0).toLocaleString('vi-VN');
@@ -5145,7 +5148,7 @@ export function App() {
                       >
                         {dayShifts.map((s: any) => (
                           <option key={s.assignment_id} value={s.assignment_id}>
-                            {s.shift_code} ({s.start_at ? new Date(s.start_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : ''} - {s.end_at ? new Date(s.end_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : ''})
+                            {s.shift_code} ({s.start_at ? new Date(s.start_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }) : (s.shift_code === 'CA_1' ? '07:00' : s.shift_code === 'CA_2' ? '12:00' : s.shift_code === 'CA_3' ? '18:00' : '')} - {s.end_at ? new Date(s.end_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }) : (s.shift_code === 'CA_1' ? '12:00' : s.shift_code === 'CA_2' ? '18:00' : s.shift_code === 'CA_3' ? '23:00' : '')})
                           </option>
                         ))}
                       </select>

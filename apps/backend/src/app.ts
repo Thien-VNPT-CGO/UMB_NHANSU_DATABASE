@@ -27,6 +27,7 @@ import { TestsService } from './services/tests.service.js';
 import { AttendanceService } from './services/attendance.service.js';
 import { PayrollService } from './services/payroll.service.js';
 import { NotificationsService } from './services/notifications.service.js';
+import { autoRemindersTick, sendCheckinReminderForShift } from './services/auto-reminders.service.js';
 import {
   createAuthMiddleware,
   AuthenticatedRequest,
@@ -2310,8 +2311,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         } catch { /* giữ mặc định 30p */ }
         const gateOpenMs = checkinStartMs - gateMinutes * 60 * 1000;
         if (Date.now() < gateOpenMs) {
-          const openStr = new Date(gateOpenMs).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
-          const startStr = new Date(checkinStartMs).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+          const openStr = new Date(gateOpenMs).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' });
+          const startStr = new Date(checkinStartMs).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' });
           return res.status(403).json({
             error: 'CHECKIN_TOO_EARLY',
             message: `⏰ CHƯA ĐẾN GIỜ CHECK-IN: Cổng điểm danh mở trước giờ ca ${gateMinutes} phút (mở lúc ${openStr}, ca bắt đầu ${startStr}). Vui lòng quay lại sau!`,
@@ -3327,6 +3328,24 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
+    }
+  });
+
+  // --- TRIGGER / GỬI LẠI NHẮC CHECK-IN CHO NHÂN VIÊN ---
+  app.post('/admin/reminders/trigger-checkin', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const { employeeId, force } = req.body || {};
+      const result = await autoRemindersTick(adapter, notificationsService, zaloService, {
+        forceCheckin: force !== false,
+        targetEmployeeId: employeeId,
+      });
+      res.json({
+        success: true,
+        message: 'Đã xử lý thông báo nhắc check-in theo ca làm việc.',
+        checkinsSent: result.checkinsSent,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'FAILED_TO_TRIGGER_REMINDERS' });
     }
   });
 
