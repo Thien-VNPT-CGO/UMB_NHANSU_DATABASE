@@ -999,6 +999,7 @@ export function App() {
   const premiumResRef = useRef<any>(null);
   const premiumErrorText = (err: any, cleaned: string): string => {
     const code = String(err?.code || err?.message || '');
+    if (/ACCOUNT_LOCKED/.test(code)) return '🔒 Tài khoản này đã bị khóa! Mã PIN đã bị vô hiệu hóa trên hệ thống. Không thể đăng nhập lại.';
     if (/ACCOUNT_NOT_FOUND/.test(code)) return `Số ${cleaned} chưa tồn tại trên Master. Liên hệ HR để nộp hồ sơ.`;
     if (/PIN_NOT_SET/.test(code)) return `Tài khoản ${cleaned} chưa được cấp PIN. Liên hệ HR để nhận mã!`;
     if (/PIN_RESET_REQUIRED/.test(code)) return 'Mã PIN cũ của bạn chưa đủ 6 số nên hệ thống đã tự động reset. Hỏi HR lấy mã PIN 6 số mới rồi đăng nhập và đổi PIN riêng!';

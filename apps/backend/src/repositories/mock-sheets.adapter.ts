@@ -244,11 +244,17 @@ export class MockSheetsAdapter implements ISheetsRepository {
     this.checkErrors();
     const account = this.accounts.find(a => a.account_id === id);
     if (!account) throw new Error('ACCOUNT_NOT_FOUND');
-    account.pin_hash = pinHash;
+    account.pin_hash = pinHash || '';
     account.pin_must_change = mustChange;
-    // pinPlain === null: xóa bản rõ. pinPlain === undefined: giữ nguyên bản rõ cũ.
-    // Luồng hiện tại: cả HR cấp và NV tự đổi đều lưu bản rõ để HR dễ quản lý.
-    if (pinPlain !== undefined) account.pin_code = pinPlain || undefined;
+    // pinPlain === null/'' hoặc pinHash rỗng: xóa bản rõ. pinPlain === undefined: giữ nguyên bản rõ cũ.
+    if (pinPlain !== undefined) {
+      account.pin_code = (pinPlain && pinPlain.trim()) ? pinPlain.trim() : undefined;
+    }
+    if (!pinHash) {
+      account.pin_hash = '';
+      delete (account as any).pin_code;
+      account.pin_must_change = false;
+    }
     const nowIso = new Date().toISOString();
     // Ghi nhận lần đổi PIN (dùng cho xoay định kỳ hàng tháng 1-5).
     (account as any).pin_changed_at = nowIso;

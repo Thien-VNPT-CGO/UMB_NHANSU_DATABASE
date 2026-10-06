@@ -602,6 +602,8 @@ export class GoogleSheetsSyncService {
               // Sheet thắng/hòa version nhưng thiếu trường HR mới cập nhật (sheet cũ chưa
               // có cột O/P/Q, hoặc dòng chưa kịp push) -> vá từ bộ nhớ để không mất.
               if (m) {
+                if ((m as any).account_locked) (s as any).account_locked = true;
+                if ((m as any).account_status) (s as any).account_status = (m as any).account_status;
                 if (!(s as any).gender && (m as any).gender) (s as any).gender = (m as any).gender;
                 if (!(s as any).birth_date && (m as any).birth_date) (s as any).birth_date = (m as any).birth_date;
                 if (!(s as any).id_card_number && (m as any).id_card_number) (s as any).id_card_number = (m as any).id_card_number;
@@ -631,24 +633,27 @@ export class GoogleSheetsSyncService {
       } else if (accRows.length > 0) {
         const mappedAccs = accRows
           .filter(r => r && (r[0] || r[2]) && !this.isAccountDeletedRecently(r[0], r[1]))
-          .map(r => ({
+          .map(r => {
+            const rawSt = String(r[4] || '').trim().toUpperCase();
+            const isLocked = rawSt === 'LOCKED' || rawSt.includes('KHÓA') || rawSt.includes('KHOA');
+            return {
             account_id: r[0] || `ACC_${uuidv4().slice(0, 8)}`,
             employee_id: r[1] || '',
             phone_normalized: canonicalPhone(r[2] || ''),
             role: (r[3] as any) || 'EMPLOYEE',
-            account_status: 'ACTIVE' as any,
+            account_status: (isLocked ? 'LOCKED' : 'ACTIVE') as any,
             branch_scope: 'ALL',
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
             version: Number(r[5]) || 1,
-            pin_hash: r[6] || undefined,
-            pin_must_change: r[7] === 'YES',
+            pin_hash: isLocked ? undefined : (r[6] || undefined),
+            pin_must_change: isLocked ? false : (r[7] === 'YES'),
             // Cột Mã PIN bản rõ — chỉ hiển thị trên cổng quản trị (Admin/HR).
-            pin_code: r[8] || undefined,
+            pin_code: isLocked ? undefined : (r[8] || undefined),
             // Cột Đổi PIN Cuối (ISO) + Kỳ PIN (YYYY-MM): tự đổi định kỳ hàng tháng 1-5.
             pin_changed_at: r[9] || undefined,
             pin_rotation_cycle: r[10] || undefined,
-          }));
+          }; });
         // Đọc thiếu dòng mà bộ nhớ đang nhiều hơn gấp đôi -> giữ bộ nhớ (chống mất PIN hàng loạt).
         // Kể cả map ra rỗng (dòng lỗi/filter hết) mà bộ nhớ đang có -> giữ.
         if (fallback.accounts.length > 0 && (mappedAccs.length === 0 || (mappedAccs.length > 0 && fallback.accounts.length > 5 && mappedAccs.length * 2 < fallback.accounts.length))) {
@@ -676,6 +681,12 @@ export class GoogleSheetsSyncService {
           const merged: any[] = [];
           for (const s of deduped) {
             const m = memById.get((s as any).account_id);
+            if (m && ((m as any).account_status === 'LOCKED' || (m as any).account_locked)) {
+              (s as any).account_status = 'LOCKED';
+              delete (s as any).pin_hash;
+              delete (s as any).pin_code;
+              (s as any).pin_must_change = false;
+            }
             if (m && Number(m.version || 0) > Number((s as any).version || 0)) {
               merged.push(m);
             } else {
@@ -694,7 +705,20 @@ export class GoogleSheetsSyncService {
         let pinReset6 = 0;
         for (const acc of fallback.accounts) {
           // Tài khoản bị HR khóa: KHÔNG tự sinh PIN lại (giữ trạng thái khóa + không PIN).
-          if ((acc as any).account_status === 'LOCKED') continue;
+          const emp = fallback.employees.find((e: any) =>
+            e.employee_id === acc.employee_id ||
+            (acc.phone_normalized && canonicalPhone(e.phone_normalized || '') === canonicalPhone(acc.phone_normalized))
+          );
+          const isAccLocked = (acc as any).account_status === 'LOCKED' ||
+            (emp as any)?.account_locked === true ||
+            (emp as any)?.account_status === 'LOCKED';
+          if (isAccLocked) {
+            (acc as any).account_status = 'LOCKED';
+            delete (acc as any).pin_hash;
+            delete (acc as any).pin_code;
+            (acc as any).pin_must_change = false;
+            continue;
+          }
           if (!acc.pin_hash) {
             if (backfilled >= 20) break;
             const autoPin = generateAutoPin();
@@ -737,6 +761,7 @@ export class GoogleSheetsSyncService {
       const noPhoneSamples: string[] = [];
       for (const emp of fallback.employees) {
         if (emp.employment_status === 'TERMINATED') continue;
+        if ((emp as any).account_locked === true || (emp as any).account_status === 'LOCKED') continue;
         if (!emp.phone_normalized || emp.phone_normalized.length < 9) {
           if (noPhoneSamples.length < 8) noPhoneSamples.push(`${emp.full_name} (${emp.employee_code})`);
           continue;

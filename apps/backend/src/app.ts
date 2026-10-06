@@ -401,6 +401,12 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const exists = await authService.phoneExists(req.body.phone);
       res.json({ exists });
     } catch (err: any) {
+      if (err.message === 'ACCOUNT_LOCKED') {
+        return res.status(403).json({
+          error: 'ACCOUNT_LOCKED',
+          message: 'Tài khoản này đã bị khóa! Mã PIN đã bị vô hiệu hóa trên hệ thống. Không thể đăng nhập lại.',
+        });
+      }
       if (err.message === 'SHEETS_LOADING') {
         return res.status(503).json({
           error: 'SHEETS_LOADING',
@@ -423,6 +429,12 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const result = await authService.loginWithPhone(phone, pin);
       res.json(result);
     } catch (err: any) {
+      if (err.message === 'ACCOUNT_LOCKED') {
+        return res.status(403).json({
+          error: 'ACCOUNT_LOCKED',
+          message: 'Tài khoản này đã bị khóa! Mã PIN đã bị vô hiệu hóa trên hệ thống. Không thể đăng nhập lại.',
+        });
+      }
       if (err.message === 'SHEETS_LOADING') {
         return res.status(503).json({
           error: 'SHEETS_LOADING',

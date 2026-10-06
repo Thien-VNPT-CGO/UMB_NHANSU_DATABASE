@@ -10,6 +10,7 @@ import {
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { generateAutoPin, hashPassword, hashPin, isBcryptHash, verifyPassword, verifyPin } from './password.service.js';
 import { isPinRotationDue } from './pin-rotation.service.js';
+import { canonicalPhone } from './employees.service.js';
 
 const DEFAULT_FALLBACK_JWT_SECRET =
   'ubm-milk-hr-system-jwt-production-secret-key-2026-secure-random-token-v5';
@@ -175,6 +176,13 @@ export class AuthService {
     if (accounts.length === 0) {
       throw new Error(ERROR_CODES.ACCOUNT_NOT_FOUND);
     }
+    // Kiểm tra hồ sơ nhân viên có bị khóa không
+    const employees = await this.repo.listEmployees().catch(() => []);
+    const emp = employees.find((e: any) => canonicalPhone(e.phone_normalized || '') === canonicalPhone(normalized));
+    if (emp && ((emp as any).account_locked === true || (emp as any).account_status === 'LOCKED')) {
+      throw new Error('ACCOUNT_LOCKED');
+    }
+
     // Toàn bộ tài khoản của SĐT này bị HR khóa -> báo rõ (không báo sai PIN oan).
     if (accounts.every(a => (a as any).account_status === 'LOCKED')) {
       throw new Error('ACCOUNT_LOCKED');
@@ -203,12 +211,15 @@ export class AuthService {
 
     // Không còn luồng kích hoạt/khóa: SĐT + PIN hợp lệ là đăng nhập được.
 
-    // Tài khoản bị HR khóa: chặn ngay cả khi PIN đúng (PIN đã bị xóa khi khóa).
-    if ((account as any).account_status === 'LOCKED') {
+    // Tài khoản hoặc nhân viên bị HR khóa: chặn ngay
+    if ((account as any).account_status === 'LOCKED' || (emp as any)?.account_locked === true || (emp as any)?.account_status === 'LOCKED') {
       throw new Error('ACCOUNT_LOCKED');
     }
     // PIN do HR cấp — chặn ké tài khoản chỉ biết SĐT.
     if (!account.pin_hash) {
+      if ((account as any).account_status === 'LOCKED' || (emp as any)?.account_locked === true || (emp as any)?.account_status === 'LOCKED') {
+        throw new Error('ACCOUNT_LOCKED');
+      }
       throw new Error('PIN_NOT_SET');
     }
     // Ràng buộc 6 số (từ 2026-10): PIN hiển thị chưa đủ 6 số -> tự động reset
@@ -242,6 +253,9 @@ export class AuthService {
     const employee = await this.repo.getEmployeeById(account.employee_id);
     if (!employee || employee.employment_status === 'TERMINATED') {
       throw new Error(ERROR_CODES.EMPLOYMENT_NOT_ELIGIBLE);
+    }
+    if ((employee as any).account_locked === true || (employee as any).account_status === 'LOCKED') {
+      throw new Error('ACCOUNT_LOCKED');
     }
 
     // Tự chữa scope tài khoản lệch chi nhánh hồ sơ (VD: HR chuyển CN mà scope cũ
@@ -300,6 +314,16 @@ export class AuthService {
     const normalized = normalizePhone(phoneInput);
     if (!normalized) return false;
     const accounts = await this.repo.findAccountByPhone(normalized);
+    const employees = await this.repo.listEmployees().catch(() => []);
+    const emp = employees.find((e: any) => canonicalPhone(e.phone_normalized || '') === canonicalPhone(normalized));
+
+    // Nếu tài khoản hoặc hồ sơ bị khóa: từ chối với ACCOUNT_LOCKED
+    const isEmpLocked = !!(emp && ((emp as any).account_locked === true || (emp as any).account_status === 'LOCKED'));
+    const isAllAccsLocked = accounts.length > 0 && accounts.every(a => (a as any).account_status === 'LOCKED');
+    if (isEmpLocked || isAllAccsLocked) {
+      throw new Error('ACCOUNT_LOCKED');
+    }
+
     return accounts.length > 0;
   }
 
@@ -504,6 +528,10 @@ export class AuthService {
       }
       if (!account) throw new Error('ACCOUNT_REVOKED');
       if ((account as any).account_status === 'LOCKED') throw new Error('ACCOUNT_REVOKED');
+      const emp = await this.repo.getEmployeeById(account.employee_id).catch(() => null);
+      if (emp && ((emp as any).account_locked === true || (emp as any).account_status === 'LOCKED')) {
+        throw new Error('ACCOUNT_REVOKED');
+      }
       if (typeof decoded.tv === 'number' && account.version !== decoded.tv) {
         throw new Error('TOKEN_REVOKED');
       }

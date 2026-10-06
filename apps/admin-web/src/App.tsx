@@ -1439,6 +1439,7 @@ export function App() {
         a.account_id === emp.employee_id || 
         (cleanPhone && a.phone_normalized?.replace(/\D/g, '') === cleanPhone)
       );
+      const isLocked = !!(emp.account_locked || (emp as any).account_status === 'LOCKED' || acc?.account_status === 'LOCKED');
       return {
         id: emp.employee_id,
         accountId: acc?.account_id || `ACC_${emp.employee_id}`,
@@ -1450,10 +1451,9 @@ export function App() {
         displayBranch: getDisplayBranch(emp.default_branch_id, emp.group),
         // Khóa màu theo nhóm thật (không so chuỗi hiển thị vì không bao giờ khớp).
         branchKind: emp.group === 'VAN_PHONG' || emp.group === 'SALE' ? 'HQ' : emp.group === 'XUONG' ? 'FACTORY' : 'STORE',
-        // Dữ liệu thật: chưa có tài khoản thì báo NO_ACCOUNT, có tài khoản là ACTIVE (PIN tự sinh).
-        accountStatus: acc ? 'ACTIVE' : 'NO_ACCOUNT',
-        // Mã PIN bản rõ — hiển thị cho cả Admin lẫn HR. Mất đi khi NV tự đổi PIN riêng.
-        pinCode: (acc as any)?.pin_code || '',
+        accountStatus: isLocked ? 'LOCKED' : (acc ? 'ACTIVE' : 'NO_ACCOUNT'),
+        // Mã PIN: khi bị khóa thì mã PIN bị xóa hoàn toàn khỏi hệ thống
+        pinCode: isLocked ? '' : ((acc as any)?.pin_code || ''),
         version: acc?.version || emp.version || 1,
         hasRealAccount: !!acc,
         // Mã khởi tạo, NV chưa đổi -> hiển thị trạng thái chờ đổi PIN
@@ -1479,8 +1479,8 @@ export function App() {
           employmentStatus: 'PRE_ONBOARDING',
           displayBranch: getDisplayBranch(acc.branch_scope),
           branchKind: 'STORE',
-          accountStatus: 'ACTIVE',
-          pinCode: (acc as any)?.pin_code || '',
+          accountStatus: acc.account_status === 'LOCKED' ? 'LOCKED' : 'ACTIVE',
+          pinCode: acc.account_status === 'LOCKED' ? '' : ((acc as any)?.pin_code || ''),
           version: acc.version || 1,
           hasRealAccount: true,
           pinMustChange: acc.pin_must_change === true,
@@ -3033,6 +3033,10 @@ export function App() {
                               }}>
                                 {item.pinCode}
                               </span>
+                            ) : item.accountStatus === 'LOCKED' ? (
+                              <span style={{ fontSize: '11px', color: '#DC2626', fontWeight: 700, backgroundColor: '#FEE2E2', padding: '3px 8px', borderRadius: '4px', whiteSpace: 'nowrap' }}>
+                                Đã xóa (Bị khóa)
+                              </span>
                             ) : (
                               <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
                                 Chưa có
@@ -3046,14 +3050,16 @@ export function App() {
                               fontSize: '11px',
                               fontWeight: 700,
                               backgroundColor:
+                                item.accountStatus === 'LOCKED' ? '#FEE2E2' :
                                 item.accountStatus === 'ACTIVE' ? 'var(--success-soft)' : '#F1F5F9',
                               color:
+                                item.accountStatus === 'LOCKED' ? '#DC2626' :
                                 item.accountStatus === 'ACTIVE' ? 'var(--success)' : '#64748B',
                             }}>
-                              {item.accountStatus === 'ACTIVE' ? 'Có Tài Khoản' : 'Chưa Có TK'}
-                              {item.pinMustChange ? ' 🔒' : ''}
+                              {item.accountStatus === 'LOCKED' ? '🔒 Đã Khóa' : item.accountStatus === 'ACTIVE' ? 'Có Tài Khoản' : 'Chưa Có TK'}
+                              {item.pinMustChange && item.accountStatus !== 'LOCKED' ? ' 🔒' : ''}
                             </span>
-                            {item.pinMustChange && (
+                            {item.pinMustChange && item.accountStatus !== 'LOCKED' && (
                               <div title="NV dùng mã khởi tạo, chưa đặt PIN riêng — mọi phiên cũ đã vô hiệu" style={{ fontSize: '10px', color: '#D97706', fontWeight: 700, marginTop: '3px' }}>
                                 🔒 Chờ NV đổi PIN
                               </div>
