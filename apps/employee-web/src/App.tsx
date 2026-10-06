@@ -1848,6 +1848,51 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, isLoggedIn, (employee as any)?.employee_id]);
 
+  // Tab Lịch: dải ngày hiển thị đầy đủ (thử việc: 12 ngày từ start_date; chính
+  // thức: T2-CN tuần hiện tại) + ca + đơn OFF + sự kiện điểm danh theo ngày.
+  const [schedRange, setSchedRange] = useState<string[]>([]);
+  const [schedRangeShifts, setSchedRangeShifts] = useState<any[]>([]);
+  const [schedRangeLeaves, setSchedRangeLeaves] = useState<any[]>([]);
+  useEffect(() => {
+    if (activeTab !== 'schedule' || !isLoggedIn) return;
+    let alive = true;
+    (async () => {
+      try {
+        let days: string[] = [];
+        if (isProbation) {
+          days = probationWindowDays();
+        } else {
+          const nowVn = new Date(Date.now() + 7 * 3_600_000);
+          const off = (nowVn.getUTCDay() + 6) % 7;
+          const mon = new Date(nowVn);
+          mon.setUTCDate(mon.getUTCDate() - off);
+          for (let i = 0; i < 7; i++) {
+            const d = new Date(mon);
+            d.setUTCDate(mon.getUTCDate() + i);
+            days.push(d.toISOString().slice(0, 10));
+          }
+        }
+        if (days.length === 0) { if (alive) { setSchedRange([]); setSchedRangeShifts([]); setSchedRangeLeaves([]); } return; }
+        if (alive) setSchedRange(days);
+        const [sh, lv] = await Promise.all([
+          apiRequest(`/me/schedule?fromDate=${days[0]}&toDate=${days[days.length - 1]}`).catch(() => []),
+          apiRequest('/leave-requests').catch(() => []),
+        ]);
+        if (!alive) return;
+        setSchedRangeShifts(Array.isArray(sh) ? sh : []);
+        const leaves = Array.isArray(lv) ? lv : [];
+        setSchedRangeLeaves(leaves.filter((l: any) => {
+          const t = (l as any)?.leave_type;
+          if (t !== 'HANG_TUAN' && t !== 'THU_VIEC' && t !== 'DOT_XUAT') return false;
+          if (['REJECTED', 'CANCELLED'].includes((l as any)?.status)) return false;
+          return days.includes(toISODate((l as any)?.requested_date));
+        }));
+      } catch { /* offline: giữ dữ liệu cũ */ }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, isLoggedIn, (employee as any)?.employee_id, (employee as any)?.start_date]);
+
   // Xác nhận đăng ký 5 ngày OFF thử việc -> hệ thống TỰ XẾP 7 ca làm
   const handleSubmitProbationOff = async () => {
     const dates = [...probOffSelected].sort();
@@ -2937,93 +2982,117 @@ export function App() {
                 );
               })()}
 
-              {/* Schedule Days */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {myShifts.length === 0 ? (
-                  <div style={{ padding: '24px', textAlign: 'center', backgroundColor: '#F9FAFB', borderRadius: 'var(--radius-sm)', border: '1px dashed var(--border)', color: 'var(--text-muted)', fontSize: '13px' }}>
-                    Chưa có ca làm việc được phân công. Quản lý cửa hàng sẽ cập nhật lịch làm sớm nhất trên Google Sheets.
-                  </div>
-                ) : (
-                  myShifts.filter((s: any, i: number, arr: any[]) => !s.assignment_id || arr.findIndex((x: any) => x.assignment_id === s.assignment_id) === i).map((shift, idx) => {
-                    const todayStr = vnTodayStr();
-                    const isToday = shift.date === todayStr;
-                    // Ngày này có mấy ca (để gắn thẻ 2 ca/ngày khi đẩy nhanh thử việc).
-                    const dayShiftCount = myShifts.filter((x: any) => x?.status !== 'CANCELLED' && String(x?.date || '').slice(0, 10) === String(shift.date || '').slice(0, 10)).length;
-                    const evts = (myAttendanceHistory || []).filter((e: any) => e.assignment_id === shift.assignment_id);
-                    const hasCheckIn = evts.some((e: any) => e.type === 'CHECK_IN');
-                    const hasCheckOut = evts.some((e: any) => e.type === 'CHECK_OUT');
-                    const absentRecorded = evts.some((e: any) => e.type === 'ABSENT');
-                    const startMs = shift.start_at ? new Date(shift.start_at).getTime() : NaN;
-                    const endMs = shift.end_at ? new Date(shift.end_at).getTime() : NaN;
-                    // Quá 3h chưa check-in -> khóa, nghỉ không lương
-                    const isLocked = !hasCheckIn && Number.isFinite(startMs) && Date.now() - startMs > 3 * 60 * 60 * 1000;
-                    const isComplete = hasCheckIn && hasCheckOut;
-                    const isAbsent = !hasCheckIn && absentRecorded;
-                    // Hết giờ tan ca +30p mà chưa check-out -> chốt (hết nhấp nháy), thiếu là không lương.
-                    // Chốt cứng thêm: ngày đã qua hoặc check-in quá 12h (end_at lỗi cũng chốt).
-                    const inMs = (myAttendanceHistory || []).filter((e: any) => e.assignment_id === shift.assignment_id).find((e: any) => e.type === 'CHECK_IN')?.client_time;
-                    const inMsNum = inMs ? new Date(inMs).getTime() : NaN;
-                    const pastDay = shift.date < todayStr;
-                    const isMissingOut = hasCheckIn && !hasCheckOut && (Number.isFinite(endMs) && Date.now() - endMs > 30 * 60 * 1000 || pastDay || (Number.isFinite(inMsNum) && Date.now() - inMsNum > 12 * 60 * 60 * 1000));
-                    // Vàng khi thiếu; chỉ NHẤP NHÁY khi NV đã vào ca và ca chưa hết giờ
-                    const isWorking = !isComplete && !isAbsent && !isLocked && !isMissingOut;
-                    const isDoing = isWorking && hasCheckIn && !hasCheckOut;
-                    const cardBg = isAbsent ? '#FEF2F2' : isLocked ? '#F1F5F9' : isComplete ? '#ECFDF5' : isMissingOut ? '#FFF7ED' : isWorking ? '#FFFBEB' : isToday ? 'var(--brand-soft)' : '#FFFFFF';
-                    const cardBd = isAbsent ? '1.5px solid #EF4444' : isLocked ? '1.5px solid #64748B' : isComplete ? '1.5px solid #10B981' : isMissingOut ? '1.5px solid #EA580C' : isWorking ? '1.5px solid #F59E0B' : isToday ? '1.5px solid var(--brand)' : '1px solid var(--border)';
-                    const titleColor = isAbsent ? '#DC2626' : isLocked ? '#475569' : isComplete ? '#065F46' : isMissingOut ? '#9A3412' : isWorking ? '#92400E' : isToday ? 'var(--brand)' : 'var(--text)';
-                    return (
-                      <div
-                        key={idx}
-                        style={{
-                          padding: '10px 12px',
-                          borderRadius: 'var(--radius-sm)',
-                          backgroundColor: cardBg,
-                          border: cardBd,
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          animation: isDoing ? 'fx-blink 1.2s infinite' : undefined,
-                        }}
-                      >
-                        <div>
-                          <div style={{ fontWeight: 700, fontSize: '13px', color: titleColor }}>
-                            {shift.date} {isToday && '• HÔM NAY'}
-                            {dayShiftCount >= 2 && ' • ⚡ 2 CA/NGÀY'}
-                            {isComplete && ' • ✓ HOÀN THÀNH'}
-                            {isAbsent && ' • 🔴 VẮNG'}
-                            {isLocked && !isAbsent && ' • 🔒 KHÓA'}
-                            {isMissingOut && ' • THIẾU CHECK-OUT'}
-                            {isDoing && ' • ĐANG LÀM'}
+              {/* Lịch theo NGÀY đầy đủ trạng thái: thử việc = dải 12 ngày từ start_date,
+                  chính thức = grid T2-CN tuần hiện tại (ca + OFF + điểm danh từng ngày) */}
+              {(() => {
+                const todayStr = vnTodayStr();
+                const dowName = (s: string) => ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'][new Date(`${s}T00:00:00Z`).getUTCDay()];
+                const fmtD = (s: string) => `${s.slice(8, 10)}/${s.slice(5, 7)}`;
+                const fmtHM = (iso?: string) => {
+                  const t = new Date(iso || '').getTime();
+                  if (!Number.isFinite(t)) return '';
+                  const d = new Date(t);
+                  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+                };
+                // Ca trong dải (gộp tải theo dải + realtime), khử trùng, bỏ ca đã hủy.
+                const seenAid = new Set<string>();
+                const rangeShifts: any[] = [];
+                for (const s of [...(schedRangeShifts || []), ...(myShifts || [])]) {
+                  const k = String(s?.assignment_id || '');
+                  if (k && seenAid.has(k)) continue;
+                  if (k) seenAid.add(k);
+                  if ((s as any)?.status === 'CANCELLED') continue;
+                  rangeShifts.push(s);
+                }
+                const days = schedRange.length > 0 ? schedRange : [];
+                if (days.length === 0) {
+                  return (
+                    <div style={{ padding: '24px', textAlign: 'center', backgroundColor: '#F9FAFB', borderRadius: 'var(--radius-sm)', border: '1px dashed var(--border)', color: 'var(--text-muted)', fontSize: '13px' }}>
+                      {isProbation
+                        ? 'Hồ sơ chưa có ngày bắt đầu thử việc! Liên hệ HR bổ sung để hiện dải 12 ngày.'
+                        : 'Chưa tải được tuần hiện tại. Kiểm tra mạng rồi mở lại tab.'}
+                    </div>
+                  );
+                }
+                const offCount = (schedRangeLeaves || []).length;
+                const workCount = rangeShifts.filter((s: any) => days.includes(String(s.date || '').slice(0, 10))).length;
+                // Trạng thái 1 ca (rút gọn từ logic thẻ ca cũ).
+                const shiftStatusOf = (sh: any) => {
+                  const evts = (myAttendanceHistory || []).filter((e: any) => e.assignment_id === sh.assignment_id);
+                  const hasIn = evts.some((e: any) => e.type === 'CHECK_IN');
+                  const hasOut = evts.some((e: any) => e.type === 'CHECK_OUT');
+                  const absent = evts.some((e: any) => e.type === 'ABSENT');
+                  const inE = evts.find((e: any) => e.type === 'CHECK_IN');
+                  const outE = evts.find((e: any) => e.type === 'CHECK_OUT');
+                  const startMs = sh.start_at ? new Date(sh.start_at).getTime() : NaN;
+                  const endMs = sh.end_at ? new Date(sh.end_at).getTime() : NaN;
+                  const inMs = inE?.client_time ? new Date(inE.client_time).getTime() : NaN;
+                  const pastDay = String(sh.date || '').slice(0, 10) < todayStr;
+                  const locked = !hasIn && Number.isFinite(startMs) && Date.now() - (startMs as number) > 3 * 60 * 60 * 1000;
+                  const complete = hasIn && hasOut;
+                  const isAbsent = !hasIn && absent;
+                  const missingOut = hasIn && !hasOut && (Number.isFinite(endMs) && Date.now() - (endMs as number) > 30 * 60 * 1000 || pastDay || (Number.isFinite(inMs) && Date.now() - (inMs as number) > 12 * 60 * 60 * 1000));
+                  if (complete) return { key: 'DONE', label: `✓ ${fmtHM(inE?.client_time)}–${fmtHM(outE?.client_time)}`, bg: '#ECFDF5', fg: '#065F46', bd: '1.5px solid #10B981' };
+                  if (isAbsent) return { key: 'ABSENT', label: '🔴 Vắng', bg: '#FEF2F2', fg: '#991B1B', bd: '1.5px solid #EF4444' };
+                  if (locked) return { key: 'LOCKED', label: '🔒 Khóa', bg: '#F1F5F9', fg: '#475569', bd: '1.5px solid #64748B' };
+                  if (missingOut) return { key: 'MISSING', label: `◐ ${fmtHM(inE?.client_time)}–?`, bg: '#FFF7ED', fg: '#9A3412', bd: '1.5px solid #EA580C' };
+                  if (hasIn) return { key: 'DOING', label: `▶ ${fmtHM(inE?.client_time)}–...`, bg: '#FFFBEB', fg: '#92400E', bd: '1.5px solid #F59E0B' };
+                  return { key: 'TODO', label: 'Chưa điểm danh', bg: '#FFFFFF', fg: 'var(--text-muted)', bd: '1px solid var(--border)' };
+                };
+                const dayCell = (d: string) => {
+                  const offs = (schedRangeLeaves || []).filter((l: any) => toISODate(l.requested_date) === d);
+                  const shs = rangeShifts.filter((s: any) => String(s.date || '').slice(0, 10) === d);
+                  const isToday = d === todayStr;
+                  const isMilestone = isProbation && days[0] === d;
+                  return (
+                    <div key={d} style={{ border: isToday ? '2px solid var(--brand)' : '1px solid var(--border)', borderRadius: '10px', padding: '8px', backgroundColor: isToday ? 'var(--brand-soft)' : '#FFF', minWidth: 0 }}>
+                      <div style={{ fontSize: '11px', fontWeight: 800, color: isToday ? 'var(--brand)' : 'var(--text)' }}>
+                        {dowName(d)} {fmtD(d)}{isToday ? ' • HÔM NAY' : ''}{isMilestone ? ' • MỐC' : ''}
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px' }}>
+                        {offs.map((l: any, i: number) => (
+                          <div key={`off-${i}`} style={{ fontSize: '11px', fontWeight: 800, color: '#64748B', backgroundColor: '#F1F5F9', borderRadius: '6px', padding: '5px 7px' }}>
+                            {l.status === 'APPROVED' || l.leave_type === 'HANG_TUAN' || l.leave_type === 'THU_VIEC' ? '💤 OFF' : '⏳ Chờ duyệt'}
+                            <span style={{ fontWeight: 400 }}> {l.leave_type === 'THU_VIEC' ? 'thử việc' : l.leave_type === 'HANG_TUAN' ? 'tuần' : 'đột xuất'}</span>
                           </div>
-                          <div style={{ fontSize: '11px', color: isAbsent ? '#991B1B' : 'var(--text-muted)' }}>
-                            Chi nhánh: {shift.branch_id}
-                            {isComplete && ' • Đủ check-in + check-out'}
-                            {isAbsent && ' • Hệ thống tự ghi vắng (không check-in/check-out qua ca)'}
-                            {isLocked && !isAbsent && ' • Quá 3h chưa check-in — nghỉ không lương'}
-                            {isMissingOut && ' • Hết giờ chưa check-out — không lương'}
-                            {isWorking && !hasCheckIn && ' • Chưa check-in'}
-                            {isWorking && hasCheckIn && !hasCheckOut && ' • Chờ check-out'}
-                          </div>
-                        </div>
-                        <div>
-                          <span
-                            className={`badge ${isComplete ? 'badge-success' : isToday && !isWorking && !isLocked && !isAbsent && !isMissingOut ? 'badge-brand' : ''}`}
-                            style={
-                              isAbsent ? { backgroundColor: '#DC2626', color: '#FFF', fontWeight: 800 }
-                              : isLocked ? { backgroundColor: '#64748B', color: '#FFF', fontWeight: 800 }
-                              : isMissingOut ? { backgroundColor: '#EA580C', color: '#FFF', fontWeight: 800 }
-                              : isWorking ? { backgroundColor: '#F59E0B', color: '#FFF', fontWeight: 800 }
-                              : undefined
-                            }
-                          >
-                            {isAbsent ? 'VẮNG CA' : isLocked ? 'KHÓA' : isMissingOut ? 'THIẾU OUT' : isComplete ? 'HOÀN THÀNH' : `${shift.shift_code} (${new Date(shift.start_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} - ${new Date(shift.end_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })})`}
-                          </span>
+                        ))}
+                        {shs.map((sh: any) => {
+                          const st = shiftStatusOf(sh);
+                          return (
+                            <div key={sh.assignment_id} style={{ fontSize: '11px', fontWeight: 700, borderRadius: '6px', padding: '5px 7px', backgroundColor: st.bg, color: st.fg, border: st.bd }}>
+                              <div>{sh.shift_code} ({sh.start_at ? fmtHM(sh.start_at) : ''}–{sh.end_at ? fmtHM(sh.end_at) : ''})</div>
+                              <div>{st.label}</div>
+                            </div>
+                          );
+                        })}
+                        {offs.length === 0 && shs.length === 0 && (
+                          <div style={{ fontSize: '11px', color: '#9CA3AF' }}>— Trống —</div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                };
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <div style={{ fontSize: '12px', fontWeight: 800 }}>
+                      {isProbation
+                        ? <>Kỳ thử việc: <strong>{days[0] && fmtD(days[0])} → {fmtD(days[days.length - 1])}</strong> • <strong style={{ color: '#1D4ED8' }}>{workCount} ca</strong> • <strong style={{ color: '#64748B' }}>{offCount} OFF</strong></>
+                        : <>Tuần: <strong>{days[0] && fmtD(days[0])} → {fmtD(days[days.length - 1])}</strong> • <strong style={{ color: '#1D4ED8' }}>{workCount} ca</strong> • <strong style={{ color: '#64748B' }}>{offCount} OFF</strong></>}
+                    </div>
+                    {isProbation ? (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '8px' }}>
+                        {days.map(dayCell)}
+                      </div>
+                    ) : (
+                      <div style={{ overflowX: 'auto' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(104px, 1fr))', gap: '8px', minWidth: '760px' }}>
+                          {days.map(dayCell)}
                         </div>
                       </div>
-                    );
-                  })
-                )}
-              </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           </div>
         )}
