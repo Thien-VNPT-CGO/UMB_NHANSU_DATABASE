@@ -6508,54 +6508,49 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           </div>
 
           {/* Guide Legends */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '14px', fontSize: '11px', fontWeight: 600 }}>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#047857' }}>
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#10B981' }} /> Đã Check-in Realtime
-            </span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#B45309' }}>
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#F59E0B' }} /> Chưa Check-in (Chờ ca)
-            </span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#2563EB' }}>
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#2563EB' }} /> 🤝 Ca nhận thay (+30.000đ)
-            </span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--text-muted)' }}>
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#9CA3AF' }} /> Nghỉ OFF
-            </span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#DC2626' }}>
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#EF4444' }} /> Vắng ca (tự ghi)</span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#B45309' }}>
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#F59E0B' }} /> Đang làm (vàng nhấp nháy)</span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#475569' }}>
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#64748B' }} /> Khóa — nghỉ không lương</span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#9CA3AF' }}>
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#E5E7EB', border: '1px solid #D1D5DB' }} /> — Không có ca
-            </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', fontWeight: 700, flexWrap: 'wrap' }}>
+            {[
+              { dot: '#10B981', bg: '#ECFDF5', tx: '#065F46', label: 'Đã Check-in Realtime' },
+              { dot: '#F59E0B', bg: '#FFFBEB', tx: '#92400E', label: 'Chưa Check-in (Chờ ca)' },
+              { dot: '#2563EB', bg: '#EFF6FF', tx: '#1D4ED8', label: '🤝 Ca nhận thay (+30.000đ)' },
+              { dot: '#9CA3AF', bg: '#F3F4F6', tx: '#4B5563', label: 'Nghỉ OFF' },
+              { dot: '#EF4444', bg: '#FEF2F2', tx: '#B91C1C', label: 'Vắng ca (tự ghi)' },
+              { dot: '#F59E0B', bg: '#FFFBEB', tx: '#92400E', label: 'Đang làm (vàng nhấp nháy)' },
+              { dot: '#64748B', bg: '#F1F5F9', tx: '#475569', label: 'Khóa — nghỉ không lương' },
+              { dot: '#E5E7EB', bg: '#F9FAFB', tx: '#9CA3AF', label: '— Không có ca' },
+            ].map((l) => (
+              <span key={l.label} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', backgroundColor: l.bg, color: l.tx, borderRadius: '999px', padding: '4px 10px', boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.04)' }}>
+                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: l.dot }} /> {l.label}
+              </span>
+            ))}
           </div>
         </div>
 
         {/* Main Weekly Schedule Grid Table */}
         <div style={{
           backgroundColor: 'var(--surface)',
-          borderRadius: 'var(--radius-md)',
+          borderRadius: '16px',
           border: '1px solid var(--border)',
-          overflow: 'hidden',
-          boxShadow: 'var(--shadow-card)',
+          overflowX: 'auto',
+          boxShadow: '0 8px 24px rgba(15, 23, 42, 0.08)',
         }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+          <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '12px', minWidth: '1180px' }}>
             <thead>
-              <tr style={{ backgroundColor: 'var(--bg)', borderBottom: '1px solid var(--border)', textAlign: 'center' }}>
-                <th style={{ padding: '12px 16px', textAlign: 'left', minWidth: '190px' }}>NHÂN VIÊN / VAI TRÒ</th>
+              <tr style={{ textAlign: 'center' }}>
+                <th style={{ padding: '12px 16px', textAlign: 'left', minWidth: '200px', backgroundColor: 'var(--bg)', position: 'sticky', left: 0, zIndex: 3, boxShadow: '2px 0 6px rgba(15,23,42,0.06)', borderBottom: '1px solid var(--border)' }}>NHÂN VIÊN / VAI TRÒ</th>
                 {weekDays.map((day) => {
+                  const isWeekend = day.code === 'T7' || day.code === 'CN';
                   if (day.isToday) {
                     return (
                       <th
                         key={day.key}
                         style={{
-                          padding: '12px 10px',
-                          minWidth: '160px',
-                          backgroundColor: '#FEF2F2',
+                          padding: '10px 10px',
+                          minWidth: '164px',
+                          background: 'linear-gradient(135deg, #FEE2E2 0%, #FFFBEB 100%)',
                           borderLeft: '2px solid #F87171',
                           borderRight: '2px solid #F87171',
+                          borderBottom: '1px solid var(--border)',
                         }}
                       >
                         <div style={{ color: '#DC2626', fontWeight: 800 }}>{day.name} (HÔM NAY {day.dateStr})</div>
@@ -6576,8 +6571,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     );
                   }
                   return (
-                    <th key={day.key} style={{ padding: '12px 10px', minWidth: '140px' }}>
-                      {day.name} ({day.dateStr})
+                    <th key={day.key} style={{ padding: '10px 10px', minWidth: '144px', backgroundColor: isWeekend ? '#F8FAFC' : 'var(--bg)', borderBottom: '1px solid var(--border)' }}>
+                      <div style={{ fontWeight: 800, color: isWeekend ? '#475569' : 'var(--text)' }}>{day.name}</div>
+                      <div style={{ display: 'inline-block', marginTop: '3px', fontSize: '11px', fontWeight: 700, color: isWeekend ? '#64748B' : 'var(--brand)', backgroundColor: '#FFF', border: '1px solid var(--border)', borderRadius: '999px', padding: '1px 10px' }}>
+                        {day.dateStr}
+                      </div>
                     </th>
                   );
                 })}
@@ -6587,18 +6585,25 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               {filteredSchedule.map((emp) => (
                 <tr key={emp.empId} style={{ borderBottom: '1px solid var(--border)' }}>
                   {/* Employee Info Column */}
-                  <td style={{ padding: '12px 16px', verticalAlign: 'top', backgroundColor: '#FCFBF9' }}>
+                  <td style={{ padding: '12px 16px', verticalAlign: 'top', backgroundColor: '#FCFBF9', position: 'sticky', left: 0, zIndex: 2, boxShadow: '2px 0 6px rgba(15,23,42,0.06)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{
+                        width: '30px', height: '30px', borderRadius: '50%', flexShrink: 0,
+                        background: emp.stage === 'PROBATION' ? 'linear-gradient(135deg, #F59E0B, #EC4899)' : 'linear-gradient(135deg, #10B981, #0EA5E9)',
+                        color: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontWeight: 800, fontSize: '13px', boxShadow: '0 2px 6px rgba(15,23,42,0.18)',
+                      }}>
+                        {String(emp.name || '?').charAt(0).toUpperCase()}
+                      </span>
                       <span className={`badge ${emp.stage === 'PROBATION' ? 'badge-brand' : 'badge-success'}`} style={{ fontSize: '10px' }}>
                         {emp.stage === 'PROBATION' ? '🌸 THỬ VIỆC' : '💼 CHÍNH THỨC'}
                       </span>
-                      <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--brand)' }}>{emp.empCode}</span>
                     </div>
-                    <div style={{ fontWeight: 800, fontSize: '13px', color: 'var(--text)', marginTop: '4px' }}>
+                    <div style={{ fontWeight: 800, fontSize: '13px', color: 'var(--text)', marginTop: '6px' }}>
                       {emp.name}
                     </div>
                     <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                      {getDisplayBranch(emp.branch)}
+                      <span style={{ fontWeight: 700, color: 'var(--brand)' }}>{emp.empCode}</span> • {getDisplayBranch(emp.branch)}
                     </div>
                     {(() => {
                       const summary = weekShiftSummary(emp);
@@ -6635,6 +6640,16 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     const isBonusSwap = d.status === 'BONUS_SWAP';
                     const isNoShift = d.status === 'NO_SHIFT';
                     const isAbsent = d.status === 'ABSENT';
+                    // Vạch màu trạng thái trên cùng mỗi ô ngày.
+                    const cellAccent = d.status === 'COMPLETED' ? '#10B981'
+                      : isAbsent ? '#EF4444'
+                      : isCheckedIn ? '#F59E0B'
+                      : isMissingOut ? '#EA580C'
+                      : isLocked ? '#64748B'
+                      : isPending || isPendingLeave ? '#F59E0B'
+                      : isBonusSwap ? '#3B82F6'
+                      : isOff ? '#9CA3AF'
+                      : 'transparent';
 
                     return (
                       <td
@@ -6646,19 +6661,20 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           backgroundColor: day.isToday ? '#FFFBFB' : isAbsent ? '#FEF2F2' : isOff || isNoShift ? '#F9FAFB' : '#FFFFFF',
                           borderLeft: day.isToday ? '2px solid #FCA5A5' : undefined,
                           borderRight: day.isToday ? '2px solid #FCA5A5' : undefined,
+                          borderTop: `3px solid ${cellAccent}`,
                         }}
                       >
                         {isNoShift ? (
                           <div style={{
                             padding: '10px 6px',
-                            borderRadius: '8px',
+                            borderRadius: '10px',
                             backgroundColor: '#F9FAFB',
                             border: '1px dashed #E5E7EB',
                             display: 'flex',
                             flexDirection: 'column',
                             alignItems: 'center',
                             justifyContent: 'center',
-                            minHeight: '48px',
+                            minHeight: '52px',
                           }}>
                             <span style={{ fontSize: '13px', fontWeight: 600, color: '#9CA3AF' }}>—</span>
                             <span style={{ fontSize: '10px', color: '#9CA3AF', marginTop: '2px' }}>Không có ca</span>
@@ -6691,7 +6707,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                               const stBd = sd.status === 'ABSENT' ? '1.5px solid #EF4444' : sd.status === 'LOCKED' ? '1.5px solid #64748B' : sd.status === 'MISSING_OUT' ? '1.5px solid #EA580C' : '1px solid var(--border)';
                               const stBlink = sd.status === 'CHECKED_IN';
                               return (
-                                <div key={si} style={{ padding: '6px', borderRadius: '8px', backgroundColor: stBg, border: stBd, animation: stBlink ? 'fx-blink 1.2s infinite' : undefined }}>
+                                <div key={si} style={{ padding: '7px', borderRadius: '10px', backgroundColor: stBg, border: stBd, boxShadow: '0 2px 6px rgba(15,23,42,0.07)', animation: stBlink ? 'fx-blink 1.2s infinite' : undefined }}>
                                   <div style={{ fontWeight: 700, fontSize: '11px' }}>{sd.shift}</div>
                                   <div style={{ fontSize: '10px', color: stColor, fontWeight: 700 }}>
                                     {sd.status === 'COMPLETED' ? `✓ Xong${sd.time ? ` (${sd.time})` : ''}`
@@ -6708,8 +6724,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           </div>
                         ) : (
                           <div style={{
-                            padding: '8px',
-                            borderRadius: '8px',
+                            padding: '9px',
+                            borderRadius: '10px',
                             backgroundColor: isCheckedIn
                               ? '#FEF3C7'
                               : isMissingOut
@@ -6741,7 +6757,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             display: 'flex',
                             flexDirection: 'column',
                             gap: '3px',
-                            boxShadow: isCheckedIn ? '0 2px 6px rgba(16, 185, 129, 0.15)' : undefined,
+                            boxShadow: isCheckedIn ? '0 2px 6px rgba(16, 185, 129, 0.15)' : '0 2px 6px rgba(15,23,42,0.06)',
                             // Chỉ nhấp nháy ca NV đã vào (check-in rồi, chờ check-out)
                             animation: isCheckedIn ? 'fx-blink 1.2s infinite' : undefined,
                           }}>
