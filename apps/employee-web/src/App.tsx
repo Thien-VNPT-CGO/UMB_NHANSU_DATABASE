@@ -1833,14 +1833,16 @@ export function App() {
   // Tải trạng thái đã đăng ký 5 ngày OFF thử việc (nếu có)
   const loadProbationOff = async () => {
     try {
-      const list: any = await apiRequest('/leave-requests');
+      const myId = (employee as any)?.employee_id;
+      const list: any = await apiRequest(`/leave-requests${myId ? `?employeeId=${encodeURIComponent(myId)}` : ''}`);
       const arr = Array.isArray(list) ? list : [];
       const win = probationWindowDays();
-      const mine = arr
-        .filter((l: any) => l?.leave_type === 'THU_VIEC' && l?.status === 'APPROVED' && win.includes(toISODate(l.requested_date)))
-        .map((l: any) => toISODate(l.requested_date))
-        .filter(Boolean)
-        .sort();
+      const mine = [...new Set(
+        arr
+          .filter((l: any) => (!myId || !l?.employee_id || l.employee_id === myId) && l?.leave_type === 'THU_VIEC' && l?.status === 'APPROVED' && win.includes(toISODate(l.requested_date)))
+          .map((l: any) => toISODate(l.requested_date))
+          .filter(Boolean)
+      )].sort();
       if (mine.length >= 5) {
         const off = new Set(mine.slice(0, 5));
         setProbOffDone({ offDates: [...off].sort(), workDates: win.filter(d => !off.has(d)) });
@@ -1886,19 +1888,27 @@ export function App() {
         }
         if (days.length === 0) { if (alive) { setSchedRange([]); setSchedRangeShifts([]); setSchedRangeLeaves([]); } return; }
         if (alive) setSchedRange(days);
+        const myEmpId = (employee as any)?.employee_id;
         const [sh, lv] = await Promise.all([
           apiRequest(`/me/schedule?fromDate=${days[0]}&toDate=${days[days.length - 1]}`).catch(() => []),
-          apiRequest('/leave-requests').catch(() => []),
+          apiRequest(`/leave-requests${myEmpId ? `?employeeId=${encodeURIComponent(myEmpId)}` : ''}`).catch(() => []),
         ]);
         if (!alive) return;
         setSchedRangeShifts(Array.isArray(sh) ? sh : []);
         const leaves = Array.isArray(lv) ? lv : [];
-        setSchedRangeLeaves(leaves.filter((l: any) => {
+        const seenLeaveDates = new Set<string>();
+        const filteredLeaves = leaves.filter((l: any) => {
+          if (myEmpId && l?.employee_id && l.employee_id !== myEmpId) return false;
           const t = (l as any)?.leave_type;
           if (t !== 'HANG_TUAN' && t !== 'THU_VIEC' && t !== 'DOT_XUAT') return false;
           if (['REJECTED', 'CANCELLED'].includes((l as any)?.status)) return false;
-          return days.includes(toISODate((l as any)?.requested_date));
-        }));
+          const reqD = toISODate((l as any)?.requested_date);
+          if (!days.includes(reqD)) return false;
+          if (seenLeaveDates.has(reqD)) return false;
+          seenLeaveDates.add(reqD);
+          return true;
+        });
+        setSchedRangeLeaves(filteredLeaves);
       } catch { /* offline: giữ dữ liệu cũ */ }
     })();
     return () => { alive = false; };
@@ -3106,16 +3116,32 @@ export function App() {
                   );
                 }
 
-                const offCount = (schedRangeLeaves || []).length;
-                const workCount = rangeShifts.filter((s: any) => days.includes(String(s.date || '').slice(0, 10))).length;
+                // 1. Tập hợp ca làm việc và các ngày có ca trong dải `days`
+                const shiftsInDays = rangeShifts.filter((s: any) => days.includes(String(s.date || '').slice(0, 10)));
+                const workDaysSet = new Set(shiftsInDays.map((s: any) => String(s.date || '').slice(0, 10)));
+                const workCount = shiftsInDays.length;
+
+                // 2. Ngày có đơn nghỉ phép hợp lệ trong dải `days`
+                const leaveDatesInDays = new Set(
+                  (schedRangeLeaves || [])
+                    .map((l: any) => toISODate(l.requested_date))
+                    .filter((d: string) => days.includes(d))
+                );
+
+                // 3. Ngày Nghỉ OFF trong dải `days`:
+                // Là các ngày trong dải không có ca làm việc HOẶC có đơn nghỉ phép hợp lệ
+                const offDays = days.filter(d => !workDaysSet.has(d) || leaveDatesInDays.has(d));
+                const offDaysSet = new Set(offDays);
+                const offCount = offDays.length;
 
                 // Tóm tắt trạng thái hôm nay
                 const todayShifts = rangeShifts.filter((s: any) => String(s.date || '').slice(0, 10) === todayStr);
                 const todayOffs = (schedRangeLeaves || []).filter((l: any) => toISODate(l.requested_date) === todayStr);
+                const isTodayOff = offDaysSet.has(todayStr);
                 const todaySummary = todayShifts.length > 0
                   ? `${todayShifts.length} Ca làm việc`
-                  : todayOffs.length > 0
-                  ? 'Nghỉ OFF tuần'
+                  : (todayOffs.length > 0 || isTodayOff)
+                  ? (isProbation ? 'Nghỉ OFF thử việc' : 'Nghỉ OFF tuần')
                   : 'Không có ca';
 
                 // Trạng thái 1 ca
@@ -3208,12 +3234,10 @@ export function App() {
                 // Lọc ngày theo bộ lọc (Tất cả / Có ca / Nghỉ OFF)
                 const displayedDays = days.filter(d => {
                   if (schedFilter === 'WORK') {
-                    const hasShifts = rangeShifts.some(s => String(s.date || '').slice(0, 10) === d);
-                    return hasShifts;
+                    return workDaysSet.has(d);
                   }
                   if (schedFilter === 'OFF') {
-                    const hasOff = (schedRangeLeaves || []).some(l => toISODate(l.requested_date) === d);
-                    return hasOff;
+                    return offDaysSet.has(d);
                   }
                   return true;
                 });
@@ -3244,7 +3268,7 @@ export function App() {
                           {offCount} <span style={{ fontSize: '12px', fontWeight: 600 }}>ngày</span>
                         </div>
                         <div style={{ fontSize: '10px', color: '#10B981' }}>
-                          Theo lịch đã duyệt
+                          {isProbation ? '5 ngày OFF thử việc' : 'Theo lịch đã duyệt'}
                         </div>
                       </div>
 
@@ -3266,7 +3290,7 @@ export function App() {
                     <div style={{ backgroundColor: '#FAF8F6', border: '1px solid #EFE4DE', borderRadius: '14px', padding: '10px 8px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 4px' }}>
                         <span style={{ fontSize: '11px', fontWeight: 800, color: 'var(--text)', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
-                          📅 Toàn Cảnh Tuần ({days[0] && fmtD(days[0])} → {days[days.length - 1] && fmtD(days[days.length - 1])})
+                          📅 Toàn Cảnh {isProbation ? 'Thử Việc' : 'Tuần'} ({days[0] && fmtD(days[0])} → {days[days.length - 1] && fmtD(days[days.length - 1])})
                         </span>
                         <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Chạm để tới ngày</span>
                       </div>
@@ -3275,7 +3299,7 @@ export function App() {
                         {days.map((d) => {
                           const isToday = d === todayStr;
                           const dayShifts = rangeShifts.filter((s: any) => String(s.date || '').slice(0, 10) === d);
-                          const dayOffs = (schedRangeLeaves || []).filter((l: any) => toISODate(l.requested_date) === d);
+                          const isOffDay = offDaysSet.has(d);
                           return (
                             <div
                               key={`strip-${d}`}
@@ -3306,9 +3330,9 @@ export function App() {
                               <div style={{ minHeight: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                 {dayShifts.length > 0 ? (
                                   <span style={{ fontSize: '9px', fontWeight: 800, color: '#7C3AED', backgroundColor: '#F3E8FF', borderRadius: '4px', padding: '1px 4px' }}>
-                                    {dayShifts[0].shift_code === 'CA_1' ? 'Ca 1' : dayShifts[0].shift_code === 'CA_2' ? 'Ca 2' : dayShifts[0].shift_code === 'CA_3' ? 'Ca 3' : '1 ca'}
+                                    {dayShifts[0].shift_code === 'CA_1' ? 'Ca 1' : dayShifts[0].shift_code === 'CA_2' ? 'Ca 2' : dayShifts[0].shift_code === 'CA_3' ? 'Ca 3' : `${dayShifts.length} ca`}
                                   </span>
-                                ) : dayOffs.length > 0 ? (
+                                ) : isOffDay ? (
                                   <span style={{ fontSize: '9px', fontWeight: 800, color: '#065F46', backgroundColor: '#D1FAE5', borderRadius: '4px', padding: '1px 4px' }}>
                                     OFF
                                   </span>
@@ -3387,6 +3411,7 @@ export function App() {
                         const isMilestone = isProbation && days[0] === d;
                         const offs = (schedRangeLeaves || []).filter((l: any) => toISODate(l.requested_date) === d);
                         const shs = rangeShifts.filter((s: any) => String(s.date || '').slice(0, 10) === d);
+                        const isOffDay = offDaysSet.has(d);
 
                         return (
                           <div
@@ -3433,7 +3458,7 @@ export function App() {
                                   <span style={{ color: '#7C3AED', backgroundColor: '#F3E8FF', padding: '3px 8px', borderRadius: '6px' }}>
                                     {shs.length} Ca làm việc
                                   </span>
-                                ) : offs.length > 0 ? (
+                                ) : isOffDay ? (
                                   <span style={{ color: '#065F46', backgroundColor: '#D1FAE5', padding: '3px 8px', borderRadius: '6px' }}>
                                     Nghỉ OFF
                                   </span>
@@ -3465,7 +3490,7 @@ export function App() {
                                       <span>🌴</span>
                                       <span>
                                         {l.status === 'APPROVED' || l.leave_type === 'HANG_TUAN' || l.leave_type === 'THU_VIEC'
-                                          ? 'Nghỉ Định Kỳ Tuần (OFF)'
+                                          ? (isProbation ? 'Nghỉ Thử Việc (OFF)' : 'Nghỉ Định Kỳ Tuần (OFF)')
                                           : 'Đơn Nghỉ Phép Chờ Duyệt'}
                                       </span>
                                     </div>
@@ -3474,7 +3499,9 @@ export function App() {
                                     </span>
                                   </div>
                                   <div style={{ fontSize: '11px', color: '#047857' }}>
-                                    Lịch nghỉ định kỳ đã được duyệt hợp lệ • Bạn không cần có mặt tại cửa hàng
+                                    {isProbation
+                                      ? 'Lịch 5 ngày OFF thử việc đã được ghi nhận • Bạn không cần có mặt tại cửa hàng'
+                                      : 'Lịch nghỉ định kỳ đã được duyệt hợp lệ • Bạn không cần có mặt tại cửa hàng'}
                                   </div>
                                 </div>
                               ))}
@@ -3546,8 +3573,39 @@ export function App() {
                                 );
                               })}
 
-                              {/* 3. Empty Day */}
-                              {offs.length === 0 && shs.length === 0 && (
+                              {/* 3. Empty Day but is OFF */}
+                              {offs.length === 0 && shs.length === 0 && isOffDay && (
+                                <div
+                                  style={{
+                                    backgroundColor: '#F0FDF4',
+                                    border: '1px solid #BBF7D0',
+                                    borderLeft: '5px solid #10B981',
+                                    borderRadius: '12px',
+                                    padding: '10px 12px',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: '4px',
+                                  }}
+                                >
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: 800, color: '#065F46' }}>
+                                      <span>🌴</span>
+                                      <span>{isProbation ? 'Ngày Nghỉ Thử Việc (OFF)' : 'Nghỉ Định Kỳ (OFF)'}</span>
+                                    </div>
+                                    <span style={{ fontSize: '11px', fontWeight: 700, color: '#059669', backgroundColor: '#DCFCE7', padding: '2px 7px', borderRadius: '4px' }}>
+                                      {isProbation ? '5 ngày OFF' : 'Nghỉ tuần'}
+                                    </span>
+                                  </div>
+                                  <div style={{ fontSize: '11px', color: '#047857' }}>
+                                    {isProbation
+                                      ? 'Ngày nghỉ trong kế hoạch 5 ngày OFF thử việc • Bạn không cần có mặt tại cửa hàng'
+                                      : 'Lịch nghỉ định kỳ hợp lệ • Bạn không cần có mặt tại cửa hàng'}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* 4. Empty Day not marked as OFF */}
+                              {offs.length === 0 && shs.length === 0 && !isOffDay && (
                                 <div
                                   style={{
                                     display: 'flex',
@@ -3580,7 +3638,7 @@ export function App() {
                         style={{ flex: 1, padding: '10px', fontSize: '12px', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
                       >
                         <Palmtree size={14} color="#059669" />
-                        Đăng Ký OFF Tuần
+                        {isProbation ? 'Đăng Ký OFF Thử Việc' : 'Đăng Ký OFF Tuần'}
                       </button>
                       <button
                         type="button"
