@@ -21,6 +21,15 @@ import {
   AlertTriangle,
   Sparkles,
   Wrench,
+  Sun,
+  Moon,
+  Coffee,
+  ChevronRight,
+  CalendarDays,
+  Check,
+  Briefcase,
+  Palmtree,
+  Filter,
 } from 'lucide-react';
 
 interface EmployeeProfile {
@@ -1853,6 +1862,8 @@ export function App() {
   const [schedRange, setSchedRange] = useState<string[]>([]);
   const [schedRangeShifts, setSchedRangeShifts] = useState<any[]>([]);
   const [schedRangeLeaves, setSchedRangeLeaves] = useState<any[]>([]);
+  const [schedFilter, setSchedFilter] = useState<'ALL' | 'WORK' | 'OFF'>('ALL');
+  const [selectedSchedDate, setSelectedSchedDate] = useState<string | null>(null);
   useEffect(() => {
     if (activeTab !== 'schedule' || !isLoggedIn) return;
     let alive = true;
@@ -2941,23 +2952,34 @@ export function App() {
         {/* ========================================================= */}
         {/* TAB 2: LỊCH THỬ VIỆC / LỊCH LÀM VIỆC */}
         {/* ========================================================= */}
+        {/* ========================================================= */}
+        {/* TAB 2: LỊCH THỬ VIỆC / LỊCH LÀM VIỆC TUẦN */}
+        {/* ========================================================= */}
         {activeTab === 'schedule' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-            <div className="card">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                <h3 style={{ fontSize: '15px', fontWeight: 800 }}>
-                  {isProbation ? '2. Lịch Thử Việc Chu Kỳ 12 Ngày' : '2. Lịch Làm Việc Tuần (Grid T2 - CN)'}
-                </h3>
-                <span className="badge badge-success">Đã Phát (PUBLISHED)</span>
+            <div className="card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              {/* Header Card */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '8px' }}>
+                <div>
+                  <h3 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--text)', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <CalendarDays size={18} color="var(--brand)" />
+                    {isProbation ? '2. Lịch Thử Việc Chu Kỳ 12 Ngày' : '2. Lịch Làm Việc Tuần'}
+                  </h3>
+                  <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px', marginBottom: 0 }}>
+                    {isProbation
+                      ? 'Quy định thử việc: 12 ngày (7 ngày làm việc thực tế, 5 ngày nghỉ OFF chuẩn định biên).'
+                      : 'Lịch làm việc chính thức tuần từ Thứ Hai đến Chủ Nhật.'}
+                  </p>
+                </div>
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '4px 10px', borderRadius: '999px', backgroundColor: '#ECFDF5', border: '1px solid #A7F3D0', color: '#065F46', fontSize: '11px', fontWeight: 800 }}>
+                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#10B981', display: 'inline-block' }} />
+                  Đã Phát (PUBLISHED)
+                </div>
               </div>
-              <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>
-                {isProbation
-                  ? 'Quy định thử việc: 12 ngày (7 ngày làm việc thực tế, 5 ngày nghỉ OFF chuẩn định biên).'
-                  : 'Lịch làm việc chính thức tuần từ Thứ Hai đến Chủ Nhật.'}
-              </p>
+
               {isProbation && probationAssessment?.endDate && (
-                <div style={{ fontSize: '12px', fontWeight: 700, color: '#1E40AF', backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 'var(--radius-sm)', padding: '8px 12px', marginBottom: '12px' }}>
-                  🎓 Ngày hoàn thành thử việc của bạn: {String(probationAssessment.endDate).split('-').reverse().join('/')} — HR sẽ gửi lịch kiểm tra đầu ra (Meet + trắc nghiệm) trước ngày này.
+                <div style={{ fontSize: '12px', fontWeight: 700, color: '#1E40AF', backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 'var(--radius-sm)', padding: '10px 12px', lineHeight: 1.5 }}>
+                  🎓 <strong>Ngày hoàn thành thử việc:</strong> {String(probationAssessment.endDate).split('-').reverse().join('/')} — HR sẽ gửi lịch kiểm tra đầu ra (Meet + trắc nghiệm) trước ngày này.
                 </div>
               )}
 
@@ -2966,13 +2988,13 @@ export function App() {
                 const density = shiftDensityOf(myShifts);
                 if (density.multiDays.length === 0) {
                   return (
-                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', backgroundColor: '#F9FAFB', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '10px 12px', marginBottom: '12px', fontWeight: 600 }}>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', backgroundColor: '#F9FAFB', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '10px 12px', fontWeight: 600 }}>
                       📅 Bạn đang làm chuẩn <strong>1 ca/ngày</strong> • Tổng <strong>{density.total} ca</strong> đã xếp. Muốn đẩy nhanh 2 ca/ngày thì báo Store xếp thêm ca.
                     </div>
                   );
                 }
                 return (
-                  <div style={{ fontSize: '12px', color: '#92400E', backgroundColor: '#FFFBEB', border: '1.5px solid #F59E0B', borderRadius: 'var(--radius-sm)', padding: '10px 12px', marginBottom: '12px', lineHeight: 1.6 }}>
+                  <div style={{ fontSize: '12px', color: '#92400E', backgroundColor: '#FFFBEB', border: '1.5px solid #F59E0B', borderRadius: 'var(--radius-sm)', padding: '10px 12px', lineHeight: 1.6 }}>
                     <div style={{ fontWeight: 800, fontSize: '13px' }}>⚡ Bạn đang đẩy nhanh: {density.multiDays.length} ngày làm 2 ca!</div>
                     {density.multiDays.map(m => (
                       <div key={m.date}>• <strong>{m.date.slice(8, 10)}/{m.date.slice(5, 7)}</strong>: {m.codes} ({m.count} ca)</div>
@@ -2982,11 +3004,11 @@ export function App() {
                 );
               })()}
 
-              {/* Lịch theo NGÀY đầy đủ trạng thái: thử việc = dải 12 ngày từ start_date,
-                  chính thức = grid T2-CN tuần hiện tại (ca + OFF + điểm danh từng ngày) */}
+              {/* Lịch theo NGÀY đầy đủ trạng thái */}
               {(() => {
                 const todayStr = vnTodayStr();
                 const dowName = (s: string) => ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'][new Date(`${s}T00:00:00Z`).getUTCDay()];
+                const fullDowName = (s: string) => ['Chủ Nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'][new Date(`${s}T00:00:00Z`).getUTCDay()];
                 const fmtD = (s: string) => `${s.slice(8, 10)}/${s.slice(5, 7)}`;
                 const fmtHM = (iso?: string) => {
                   const t = new Date(iso || '').getTime();
@@ -2994,6 +3016,74 @@ export function App() {
                   const d = new Date(t);
                   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
                 };
+
+                const getBranchDisplayName = (bId?: string) => {
+                  if (!bId) return 'Chi nhánh phụ trách';
+                  const id = String(bId).toUpperCase();
+                  if (id === 'CN130' || id === 'CN1') return 'CN1: 130 Vạn Kiếp (Bình Thạnh)';
+                  if (id === 'CN261' || id === 'CN2') return 'CN2: 261 Tô Hiến Thành (Q.10)';
+                  if (id === 'CN120' || id === 'CN3') return 'CN3: 120 Hoàng Diệu 2 (Thủ Đức)';
+                  if (id === 'CN111' || id === 'CN4') return 'CN4: 111 Tôn Đản (Q.4)';
+                  if (id === 'VAN_PHONG') return 'Văn Phòng Công Ty';
+                  if (id === 'XUONG_SX' || id === 'XUONG') return 'Xưởng Sản Xuất';
+                  return bId;
+                };
+
+                const getShiftMeta = (shiftCode?: string, startAt?: string, endAt?: string) => {
+                  const code = String(shiftCode || '').toUpperCase();
+                  const timeStr = (startAt && endAt) ? `${fmtHM(startAt)} – ${fmtHM(endAt)}` : '';
+                  if (code.includes('CA_1') || code.includes('CA 1') || code.includes('SANG')) {
+                    return {
+                      title: 'Ca 1 (Ca Sáng)',
+                      time: timeStr || '07:00 – 12:00',
+                      duration: '5 giờ',
+                      icon: '☀️',
+                      accent: '#D97706',
+                      bg: '#FFFDF5',
+                      border: '#FDE68A',
+                      badgeBg: '#FEF3C7',
+                      badgeFg: '#92400E',
+                    };
+                  }
+                  if (code.includes('CA_2') || code.includes('CA 2') || code.includes('CHIEU')) {
+                    return {
+                      title: 'Ca 2 (Ca Chiều)',
+                      time: timeStr || '12:00 – 18:00',
+                      duration: '6 giờ',
+                      icon: '🌤️',
+                      accent: '#0284C7',
+                      bg: '#F8FCFF',
+                      border: '#BAE6FD',
+                      badgeBg: '#E0F2FE',
+                      badgeFg: '#075985',
+                    };
+                  }
+                  if (code.includes('CA_3') || code.includes('CA 3') || code.includes('TOI')) {
+                    return {
+                      title: 'Ca 3 (Ca Tối)',
+                      time: timeStr || '18:00 – 23:00',
+                      duration: '5 giờ',
+                      icon: '🌙',
+                      accent: '#7C3AED',
+                      bg: '#FAF8FF',
+                      border: '#DDD6FE',
+                      badgeBg: '#F3E8FF',
+                      badgeFg: '#6B21A8',
+                    };
+                  }
+                  return {
+                    title: shiftCode || 'Ca Làm Việc',
+                    time: timeStr || 'Theo phân công',
+                    duration: '',
+                    icon: '💼',
+                    accent: '#E85D92',
+                    bg: '#FFF8FA',
+                    border: '#FBCFE8',
+                    badgeBg: '#FCE7F0',
+                    badgeFg: '#9D174D',
+                  };
+                };
+
                 // Ca trong dải (gộp tải theo dải + realtime), khử trùng, bỏ ca đã hủy.
                 const seenAid = new Set<string>();
                 const rangeShifts: any[] = [];
@@ -3007,16 +3097,27 @@ export function App() {
                 const days = schedRange.length > 0 ? schedRange : [];
                 if (days.length === 0) {
                   return (
-                    <div style={{ padding: '24px', textAlign: 'center', backgroundColor: '#F9FAFB', borderRadius: 'var(--radius-sm)', border: '1px dashed var(--border)', color: 'var(--text-muted)', fontSize: '13px' }}>
+                    <div style={{ padding: '28px 20px', textAlign: 'center', backgroundColor: '#F9FAFB', borderRadius: 'var(--radius-md)', border: '1px dashed var(--border)', color: 'var(--text-muted)', fontSize: '13px' }}>
                       {isProbation
                         ? 'Hồ sơ chưa có ngày bắt đầu thử việc! Liên hệ HR bổ sung để hiện dải 12 ngày.'
-                        : 'Chưa tải được tuần hiện tại. Kiểm tra mạng rồi mở lại tab.'}
+                        : 'Chưa tải được tuần hiện tại. Vui lòng kiểm tra kết nối mạng rồi tải lại trang.'}
                     </div>
                   );
                 }
+
                 const offCount = (schedRangeLeaves || []).length;
                 const workCount = rangeShifts.filter((s: any) => days.includes(String(s.date || '').slice(0, 10))).length;
-                // Trạng thái 1 ca (rút gọn từ logic thẻ ca cũ).
+
+                // Tóm tắt trạng thái hôm nay
+                const todayShifts = rangeShifts.filter((s: any) => String(s.date || '').slice(0, 10) === todayStr);
+                const todayOffs = (schedRangeLeaves || []).filter((l: any) => toISODate(l.requested_date) === todayStr);
+                const todaySummary = todayShifts.length > 0
+                  ? `${todayShifts.length} Ca làm việc`
+                  : todayOffs.length > 0
+                  ? 'Nghỉ OFF tuần'
+                  : 'Không có ca';
+
+                // Trạng thái 1 ca
                 const shiftStatusOf = (sh: any) => {
                   const evts = (myAttendanceHistory || []).filter((e: any) => e.assignment_id === sh.assignment_id);
                   const hasIn = evts.some((e: any) => e.type === 'CHECK_IN');
@@ -3032,78 +3133,464 @@ export function App() {
                   const complete = hasIn && hasOut;
                   const isAbsent = !hasIn && absent;
                   const missingOut = hasIn && !hasOut && (Number.isFinite(endMs) && Date.now() - (endMs as number) > 30 * 60 * 1000 || pastDay || (Number.isFinite(inMs) && Date.now() - (inMs as number) > 12 * 60 * 60 * 1000));
-                  if (complete) return { key: 'DONE', label: `✓ ${fmtHM(inE?.client_time)}–${fmtHM(outE?.client_time)}`, bg: '#ECFDF5', fg: '#065F46', bd: '1.5px solid #10B981' };
-                  if (isAbsent) return { key: 'ABSENT', label: '🔴 Vắng', bg: '#FEF2F2', fg: '#991B1B', bd: '1.5px solid #EF4444' };
-                  if (locked) return { key: 'LOCKED', label: '🔒 Khóa', bg: '#F1F5F9', fg: '#475569', bd: '1.5px solid #64748B' };
-                  if (missingOut) return { key: 'MISSING', label: `◐ ${fmtHM(inE?.client_time)}–?`, bg: '#FFF7ED', fg: '#9A3412', bd: '1.5px solid #EA580C' };
-                  if (hasIn) return { key: 'DOING', label: `▶ ${fmtHM(inE?.client_time)}–...`, bg: '#FFFBEB', fg: '#92400E', bd: '1.5px solid #F59E0B' };
-                  return { key: 'TODO', label: 'Chưa điểm danh', bg: '#FFFFFF', fg: 'var(--text-muted)', bd: '1px solid var(--border)' };
+
+                  if (complete) {
+                    return {
+                      label: '✓ Đã hoàn thành',
+                      detail: `Vào ${fmtHM(inE?.client_time)} – Ra ${fmtHM(outE?.client_time)}`,
+                      bg: '#ECFDF5',
+                      fg: '#065F46',
+                      bd: '1px solid #A7F3D0',
+                      icon: '✓',
+                    };
+                  }
+                  if (isAbsent) {
+                    return {
+                      label: '🔴 Vắng không phép',
+                      detail: 'Hệ thống tự ghi vắng do không điểm danh',
+                      bg: '#FEF2F2',
+                      fg: '#991B1B',
+                      bd: '1px solid #FECACA',
+                      icon: '✕',
+                    };
+                  }
+                  if (locked) {
+                    return {
+                      label: '🔒 Đã khóa ca',
+                      detail: 'Quá 3h không điểm danh vào ca',
+                      bg: '#F1F5F9',
+                      fg: '#475569',
+                      bd: '1px solid #CBD5E1',
+                      icon: '🔒',
+                    };
+                  }
+                  if (missingOut) {
+                    return {
+                      label: '⚠️ Thiếu check-out',
+                      detail: `Vào lúc ${fmtHM(inE?.client_time)} nhưng chưa check-out`,
+                      bg: '#FFF7ED',
+                      fg: '#9A3412',
+                      bd: '1px solid #FFEDD5',
+                      icon: '◐',
+                    };
+                  }
+                  if (hasIn) {
+                    return {
+                      label: '▶ Đang làm việc',
+                      detail: `Đã check-in lúc ${fmtHM(inE?.client_time)}`,
+                      bg: '#FFFBEB',
+                      fg: '#92400E',
+                      bd: '1px solid #FDE68A',
+                      icon: '▶',
+                    };
+                  }
+                  if (String(sh.date || '').slice(0, 10) === todayStr) {
+                    return {
+                      label: '⏱️ Ca hôm nay',
+                      detail: 'Sẵn sàng điểm danh khi có mặt tại chi nhánh',
+                      bg: '#FFF0F5',
+                      fg: '#BE185D',
+                      bd: '1px solid #FBCFE8',
+                      icon: '⏱️',
+                    };
+                  }
+                  return {
+                    label: 'Chưa điểm danh',
+                    detail: 'Lịch đã duyệt • Chờ đến ngày làm việc',
+                    bg: '#FFFFFF',
+                    fg: '#64748B',
+                    bd: '1px solid #E2E8F0',
+                    icon: '📅',
+                  };
                 };
-                const dayCell = (d: string, vertical = false) => {
-                  const offs = (schedRangeLeaves || []).filter((l: any) => toISODate(l.requested_date) === d);
-                  const shs = rangeShifts.filter((s: any) => String(s.date || '').slice(0, 10) === d);
-                  const isToday = d === todayStr;
-                  const isMilestone = isProbation && days[0] === d;
-                  const body = (
-                    <>
-                      {offs.map((l: any, i: number) => (
-                        <div key={`off-${i}`} style={{ fontSize: '11px', fontWeight: 800, color: '#64748B', backgroundColor: '#F1F5F9', borderRadius: '6px', padding: '5px 7px' }}>
-                          {l.status === 'APPROVED' || l.leave_type === 'HANG_TUAN' || l.leave_type === 'THU_VIEC' ? '💤 OFF' : '⏳ Chờ duyệt'}
-                          <span style={{ fontWeight: 400 }}> {l.leave_type === 'THU_VIEC' ? 'thử việc' : l.leave_type === 'HANG_TUAN' ? 'tuần' : 'đột xuất'}</span>
+
+                // Lọc ngày theo bộ lọc (Tất cả / Có ca / Nghỉ OFF)
+                const displayedDays = days.filter(d => {
+                  if (schedFilter === 'WORK') {
+                    const hasShifts = rangeShifts.some(s => String(s.date || '').slice(0, 10) === d);
+                    return hasShifts;
+                  }
+                  if (schedFilter === 'OFF') {
+                    const hasOff = (schedRangeLeaves || []).some(l => toISODate(l.requested_date) === d);
+                    return hasOff;
+                  }
+                  return true;
+                });
+
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                    {/* KPI Summary Cards */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
+                      <div style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '12px', padding: '10px', display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11px', fontWeight: 700, color: '#1D4ED8' }}>
+                          <Briefcase size={13} />
+                          <span>Ca Làm Việc</span>
                         </div>
-                      ))}
-                      {shs.map((sh: any) => {
-                        const st = shiftStatusOf(sh);
+                        <div style={{ fontSize: '18px', fontWeight: 800, color: '#1E40AF', marginTop: '2px' }}>
+                          {workCount} <span style={{ fontSize: '12px', fontWeight: 600 }}>ca</span>
+                        </div>
+                        <div style={{ fontSize: '10px', color: '#3B82F6' }}>
+                          ~{workCount * 5} giờ dự kiến
+                        </div>
+                      </div>
+
+                      <div style={{ backgroundColor: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: '12px', padding: '10px', display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11px', fontWeight: 700, color: '#059669' }}>
+                          <Palmtree size={13} />
+                          <span>Nghỉ OFF</span>
+                        </div>
+                        <div style={{ fontSize: '18px', fontWeight: 800, color: '#065F46', marginTop: '2px' }}>
+                          {offCount} <span style={{ fontSize: '12px', fontWeight: 600 }}>ngày</span>
+                        </div>
+                        <div style={{ fontSize: '10px', color: '#10B981' }}>
+                          Theo lịch đã duyệt
+                        </div>
+                      </div>
+
+                      <div style={{ backgroundColor: '#FDF2F8', border: '1px solid #FBCFE8', borderRadius: '12px', padding: '10px', display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11px', fontWeight: 700, color: '#DB2777' }}>
+                          <Sparkles size={13} />
+                          <span>Hôm Nay</span>
+                        </div>
+                        <div style={{ fontSize: '13px', fontWeight: 800, color: '#9D174D', marginTop: '3px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {todaySummary}
+                        </div>
+                        <div style={{ fontSize: '10px', color: '#E85D92' }}>
+                          {fmtD(todayStr)} ({dowName(todayStr)})
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Interactive Week Calendar Strip */}
+                    <div style={{ backgroundColor: '#FAF8F6', border: '1px solid #EFE4DE', borderRadius: '14px', padding: '10px 8px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 4px' }}>
+                        <span style={{ fontSize: '11px', fontWeight: 800, color: 'var(--text)', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                          📅 Toàn Cảnh Tuần ({days[0] && fmtD(days[0])} → {days[days.length - 1] && fmtD(days[days.length - 1])})
+                        </span>
+                        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Chạm để tới ngày</span>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '4px', overflowX: isProbation ? 'auto' : 'visible', paddingBottom: isProbation ? '4px' : '0' }}>
+                        {days.map((d) => {
+                          const isToday = d === todayStr;
+                          const dayShifts = rangeShifts.filter((s: any) => String(s.date || '').slice(0, 10) === d);
+                          const dayOffs = (schedRangeLeaves || []).filter((l: any) => toISODate(l.requested_date) === d);
+                          return (
+                            <div
+                              key={`strip-${d}`}
+                              onClick={() => {
+                                const el = document.getElementById(`sched-day-${d}`);
+                                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                              }}
+                              style={{
+                                flex: isProbation ? '0 0 52px' : 1,
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                padding: '8px 2px',
+                                borderRadius: '10px',
+                                cursor: 'pointer',
+                                backgroundColor: isToday ? 'var(--brand-soft)' : '#FFFFFF',
+                                border: isToday ? '2px solid var(--brand)' : '1px solid var(--border)',
+                                boxShadow: isToday ? '0 3px 10px rgba(232, 93, 146, 0.2)' : 'none',
+                                transition: 'all 0.15s ease',
+                              }}
+                            >
+                              <span style={{ fontSize: '11px', fontWeight: isToday ? 800 : 700, color: isToday ? 'var(--brand)' : 'var(--text-muted)' }}>
+                                {dowName(d)}
+                              </span>
+                              <span style={{ fontSize: '14px', fontWeight: 800, color: isToday ? 'var(--brand)' : 'var(--text)', margin: '2px 0' }}>
+                                {d.slice(8, 10)}
+                              </span>
+                              <div style={{ minHeight: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                {dayShifts.length > 0 ? (
+                                  <span style={{ fontSize: '9px', fontWeight: 800, color: '#7C3AED', backgroundColor: '#F3E8FF', borderRadius: '4px', padding: '1px 4px' }}>
+                                    {dayShifts[0].shift_code === 'CA_1' ? 'Ca 1' : dayShifts[0].shift_code === 'CA_2' ? 'Ca 2' : dayShifts[0].shift_code === 'CA_3' ? 'Ca 3' : '1 ca'}
+                                  </span>
+                                ) : dayOffs.length > 0 ? (
+                                  <span style={{ fontSize: '9px', fontWeight: 800, color: '#065F46', backgroundColor: '#D1FAE5', borderRadius: '4px', padding: '1px 4px' }}>
+                                    OFF
+                                  </span>
+                                ) : (
+                                  <span style={{ fontSize: '10px', color: '#CBD5E1', fontWeight: 700 }}>•</span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Filter Pills */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <button
+                        type="button"
+                        onClick={() => setSchedFilter('ALL')}
+                        style={{
+                          flex: 1,
+                          minHeight: '34px',
+                          padding: '6px 10px',
+                          borderRadius: '8px',
+                          fontSize: '12px',
+                          fontWeight: 700,
+                          backgroundColor: schedFilter === 'ALL' ? 'var(--brand)' : '#FFFFFF',
+                          color: schedFilter === 'ALL' ? '#FFFFFF' : 'var(--text-muted)',
+                          border: schedFilter === 'ALL' ? 'none' : '1px solid var(--border)',
+                          boxShadow: schedFilter === 'ALL' ? '0 2px 8px rgba(232, 93, 146, 0.25)' : 'none',
+                        }}
+                      >
+                        Tất Cả ({days.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSchedFilter('WORK')}
+                        style={{
+                          flex: 1,
+                          minHeight: '34px',
+                          padding: '6px 10px',
+                          borderRadius: '8px',
+                          fontSize: '12px',
+                          fontWeight: 700,
+                          backgroundColor: schedFilter === 'WORK' ? '#1D4ED8' : '#FFFFFF',
+                          color: schedFilter === 'WORK' ? '#FFFFFF' : 'var(--text-muted)',
+                          border: schedFilter === 'WORK' ? 'none' : '1px solid var(--border)',
+                          boxShadow: schedFilter === 'WORK' ? '0 2px 8px rgba(29, 78, 216, 0.25)' : 'none',
+                        }}
+                      >
+                        💼 Có Ca ({workCount})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSchedFilter('OFF')}
+                        style={{
+                          flex: 1,
+                          minHeight: '34px',
+                          padding: '6px 10px',
+                          borderRadius: '8px',
+                          fontSize: '12px',
+                          fontWeight: 700,
+                          backgroundColor: schedFilter === 'OFF' ? '#059669' : '#FFFFFF',
+                          color: schedFilter === 'OFF' ? '#FFFFFF' : 'var(--text-muted)',
+                          border: schedFilter === 'OFF' ? 'none' : '1px solid var(--border)',
+                          boxShadow: schedFilter === 'OFF' ? '0 2px 8px rgba(5, 150, 105, 0.25)' : 'none',
+                        }}
+                      >
+                        🌴 Nghỉ OFF ({offCount})
+                      </button>
+                    </div>
+
+                    {/* Detailed Day Cards */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      {displayedDays.map((d) => {
+                        const isToday = d === todayStr;
+                        const isMilestone = isProbation && days[0] === d;
+                        const offs = (schedRangeLeaves || []).filter((l: any) => toISODate(l.requested_date) === d);
+                        const shs = rangeShifts.filter((s: any) => String(s.date || '').slice(0, 10) === d);
+
                         return (
-                          <div key={sh.assignment_id} style={{ fontSize: '11px', fontWeight: 700, borderRadius: '6px', padding: '5px 7px', backgroundColor: st.bg, color: st.fg, border: st.bd }}>
-                            <div>{sh.shift_code} ({sh.start_at ? fmtHM(sh.start_at) : ''}–{sh.end_at ? fmtHM(sh.end_at) : ''}){sh.branch_id ? ` • ${sh.branch_id}` : ''}</div>
-                            <div>{st.label}</div>
+                          <div
+                            key={d}
+                            id={`sched-day-${d}`}
+                            style={{
+                              backgroundColor: '#FFFFFF',
+                              borderRadius: '16px',
+                              border: isToday ? '2px solid var(--brand)' : '1px solid #EFE4DE',
+                              boxShadow: isToday ? '0 6px 20px -2px rgba(232, 93, 146, 0.16)' : '0 2px 8px rgba(39, 49, 66, 0.04)',
+                              overflow: 'hidden',
+                              transition: 'all 0.18s ease',
+                            }}
+                          >
+                            {/* Day Header */}
+                            <div
+                              style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                padding: '10px 14px',
+                                backgroundColor: isToday ? 'linear-gradient(90deg, #FDF2F8 0%, #FFFFFF 100%)' : '#FAF8F6',
+                                borderBottom: isToday ? '1px solid #FBCFE8' : '1px solid #F0E8E3',
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span style={{ fontSize: '13px', fontWeight: 800, color: isToday ? 'var(--brand)' : 'var(--text)' }}>
+                                  {fullDowName(d)} • {fmtD(d)}
+                                </span>
+                                {isToday && (
+                                  <span style={{ fontSize: '10px', fontWeight: 800, color: '#FFFFFF', backgroundColor: 'var(--brand)', padding: '2px 8px', borderRadius: '999px', letterSpacing: '0.4px', boxShadow: '0 2px 6px rgba(232, 93, 146, 0.3)' }}>
+                                    HÔM NAY
+                                  </span>
+                                )}
+                                {isMilestone && (
+                                  <span style={{ fontSize: '10px', fontWeight: 800, color: '#1E40AF', backgroundColor: '#DBEAFE', padding: '2px 8px', borderRadius: '999px' }}>
+                                    MỐC 1
+                                  </span>
+                                )}
+                              </div>
+
+                              <div style={{ fontSize: '11px', fontWeight: 700 }}>
+                                {shs.length > 0 ? (
+                                  <span style={{ color: '#7C3AED', backgroundColor: '#F3E8FF', padding: '3px 8px', borderRadius: '6px' }}>
+                                    {shs.length} Ca làm việc
+                                  </span>
+                                ) : offs.length > 0 ? (
+                                  <span style={{ color: '#065F46', backgroundColor: '#D1FAE5', padding: '3px 8px', borderRadius: '6px' }}>
+                                    Nghỉ OFF
+                                  </span>
+                                ) : (
+                                  <span style={{ color: '#94A3B8' }}>Không có ca</span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Day Body */}
+                            <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                              {/* 1. OFF Leaves */}
+                              {offs.map((l: any, i: number) => (
+                                <div
+                                  key={`off-${i}`}
+                                  style={{
+                                    backgroundColor: '#F0FDF4',
+                                    border: '1px solid #BBF7D0',
+                                    borderLeft: '5px solid #10B981',
+                                    borderRadius: '12px',
+                                    padding: '10px 12px',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: '4px',
+                                  }}
+                                >
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: 800, color: '#065F46' }}>
+                                      <span>🌴</span>
+                                      <span>
+                                        {l.status === 'APPROVED' || l.leave_type === 'HANG_TUAN' || l.leave_type === 'THU_VIEC'
+                                          ? 'Nghỉ Định Kỳ Tuần (OFF)'
+                                          : 'Đơn Nghỉ Phép Chờ Duyệt'}
+                                      </span>
+                                    </div>
+                                    <span style={{ fontSize: '11px', fontWeight: 700, color: '#059669', backgroundColor: '#DCFCE7', padding: '2px 7px', borderRadius: '4px' }}>
+                                      {l.leave_type === 'THU_VIEC' ? 'Thử việc' : l.leave_type === 'HANG_TUAN' ? 'Tuần' : 'Đột xuất'}
+                                    </span>
+                                  </div>
+                                  <div style={{ fontSize: '11px', color: '#047857' }}>
+                                    Lịch nghỉ định kỳ đã được duyệt hợp lệ • Bạn không cần có mặt tại cửa hàng
+                                  </div>
+                                </div>
+                              ))}
+
+                              {/* 2. Shifts Ticket */}
+                              {shs.map((sh: any) => {
+                                const st = shiftStatusOf(sh);
+                                const meta = getShiftMeta(sh.shift_code, sh.start_at, sh.end_at);
+
+                                return (
+                                  <div
+                                    key={sh.assignment_id}
+                                    style={{
+                                      backgroundColor: meta.bg,
+                                      border: `1px solid ${meta.border}`,
+                                      borderLeft: `5px solid ${meta.accent}`,
+                                      borderRadius: '12px',
+                                      padding: '11px 12px',
+                                      display: 'flex',
+                                      flexDirection: 'column',
+                                      gap: '8px',
+                                      boxShadow: '0 2px 6px rgba(0,0,0,0.02)',
+                                    }}
+                                  >
+                                    {/* Top row: Shift title and time */}
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '6px' }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        <span style={{ fontSize: '16px' }}>{meta.icon}</span>
+                                        <div>
+                                          <div style={{ fontSize: '13px', fontWeight: 800, color: 'var(--text)' }}>
+                                            {meta.title}
+                                          </div>
+                                          <div style={{ fontSize: '11px', color: meta.accent, fontWeight: 700 }}>
+                                            {meta.time} {meta.duration ? `(${meta.duration})` : ''}
+                                          </div>
+                                        </div>
+                                      </div>
+
+                                      <span style={{ fontSize: '11px', fontWeight: 800, color: meta.badgeFg, backgroundColor: meta.badgeBg, padding: '3px 8px', borderRadius: '6px' }}>
+                                        {sh.shift_code}
+                                      </span>
+                                    </div>
+
+                                    {/* Branch info */}
+                                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#334155', backgroundColor: '#FFFFFF', padding: '5px 9px', borderRadius: '6px', border: '1px solid #E2E8F0', width: 'fit-content' }}>
+                                      <MapPin size={13} color="var(--brand)" />
+                                      <span style={{ fontWeight: 600 }}>{getBranchDisplayName(sh.branch_id)}</span>
+                                    </div>
+
+                                    {/* Attendance Status Bar */}
+                                    <div
+                                      style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'space-between',
+                                        padding: '7px 10px',
+                                        borderRadius: '8px',
+                                        backgroundColor: st.bg,
+                                        color: st.fg,
+                                        border: st.bd,
+                                        fontSize: '11px',
+                                        fontWeight: 700,
+                                      }}
+                                    >
+                                      <span>{st.label}</span>
+                                      <span style={{ fontWeight: 500, fontSize: '10.5px', opacity: 0.9 }}>{st.detail}</span>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+
+                              {/* 3. Empty Day */}
+                              {offs.length === 0 && shs.length === 0 && (
+                                <div
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '8px',
+                                    padding: '10px 12px',
+                                    backgroundColor: '#FAF8F6',
+                                    border: '1px dashed #E5DBD5',
+                                    borderRadius: '10px',
+                                    color: '#94A3B8',
+                                    fontSize: '12px',
+                                  }}
+                                >
+                                  <Coffee size={14} color="#A8A29E" />
+                                  <span>{isToday ? 'Không có ca xếp hôm nay • Chúc bạn một ngày nghỉ ngơi vui vẻ!' : 'Không có ca làm việc xếp cho ngày này'}</span>
+                                </div>
+                              )}
+                            </div>
                           </div>
                         );
                       })}
-                      {offs.length === 0 && shs.length === 0 && (
-                        <div style={{ fontSize: '11px', color: '#9CA3AF' }}>— Trống —</div>
-                      )}
-                    </>
-                  );
-                  if (vertical) {
-                    return (
-                      <div key={d} style={{ border: isToday ? '2px solid var(--brand)' : '1px solid var(--border)', borderRadius: '12px', overflow: 'hidden', backgroundColor: '#FFF' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '9px 12px', backgroundColor: isToday ? 'var(--brand-soft)' : 'var(--bg)' }}>
-                          <span style={{ fontSize: '13px', fontWeight: 800, color: isToday ? 'var(--brand)' : 'var(--text)' }}>
-                            {dowName(d)} • {fmtD(d)}
-                          </span>
-                          {isToday && <span className="badge badge-brand" style={{ fontSize: '10px' }}>HÔM NAY</span>}
-                        </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', padding: '10px 12px' }}>{body}</div>
-                      </div>
-                    );
-                  }
-                  return (
-                    <div key={d} style={{ border: isToday ? '2px solid var(--brand)' : '1px solid var(--border)', borderRadius: '10px', padding: '8px', backgroundColor: isToday ? 'var(--brand-soft)' : '#FFF', minWidth: 0 }}>
-                      <div style={{ fontSize: '11px', fontWeight: 800, color: isToday ? 'var(--brand)' : 'var(--text)' }}>
-                        {dowName(d)} {fmtD(d)}{isToday ? ' • HÔM NAY' : ''}{isMilestone ? ' • MỐC' : ''}
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px' }}>{body}</div>
                     </div>
-                  );
-                };
-                return (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    <div style={{ fontSize: '12px', fontWeight: 800 }}>
-                      {isProbation
-                        ? <>Kỳ thử việc: <strong>{days[0] && fmtD(days[0])} → {fmtD(days[days.length - 1])}</strong> • <strong style={{ color: '#1D4ED8' }}>{workCount} ca</strong> • <strong style={{ color: '#64748B' }}>{offCount} OFF</strong></>
-                        : <>Tuần: <strong>{days[0] && fmtD(days[0])} → {fmtD(days[days.length - 1])}</strong> • <strong style={{ color: '#1D4ED8' }}>{workCount} ca</strong> • <strong style={{ color: '#64748B' }}>{offCount} OFF</strong></>}
+
+                    {/* Quick navigation actions */}
+                    <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={() => handleTabClick('leave')}
+                        style={{ flex: 1, padding: '10px', fontSize: '12px', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+                      >
+                        <Palmtree size={14} color="#059669" />
+                        Đăng Ký OFF Tuần
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={() => handleTabClick(isProbation ? 'swap_emergency' : 'swap_shift')}
+                        style={{ flex: 1, padding: '10px', fontSize: '12px', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+                      >
+                        <RefreshCw size={14} color="var(--brand)" />
+                        Yêu Cầu Đổi Ca
+                      </button>
                     </div>
-                    {isProbation ? (
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '8px' }}>
-                        {days.map((d) => dayCell(d))}
-                      </div>
-                    ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        {days.map((d) => dayCell(d, true))}
-                      </div>
-                    )}
                   </div>
                 );
               })()}
