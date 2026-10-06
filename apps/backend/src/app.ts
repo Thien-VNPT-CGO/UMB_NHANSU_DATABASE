@@ -3092,6 +3092,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         employeeId,
         // Client gửi snake_case photo_base64, service nhận camelCase photoBase64.
         photoBase64: req.body.photoBase64 || req.body.photo_base64,
+        // Ngày sự cố NV chọn — chốt đúng ca, chống gắn nhầm ca ngày khác.
+        incidentDate: req.body.incidentDate || req.body.incident_date,
       });
       // Realtime 100%: HR/Store thấy phiếu + ảnh bằng chứng ngay, không đợi poll 15s.
       broadcastUpdate('adjustments', { action: 'created', id: (result as any)?.adjustment_id, employeeId });
@@ -3148,6 +3150,19 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       );
       // Realtime: cổng NV thấy kết quả duyệt + bảng công/HR tải lại ngay.
       broadcastUpdate('adjustments', { action: 'review', id: req.params.id, status });
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Sửa phiếu APPROVED bị gắn nhầm ca/ngày (lỗi app NV cũ): gỡ lượt dựng nhầm +
+  // dựng lại đúng ngày phiếu, realtime cả 2 cổng.
+  app.post('/attendance/adjustments/:id/repair', authMiddleware, requireRole(['ADMIN', 'HR', 'STORE']), validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await attendanceService.repairAdjustment(req.params.id, req.user!.id);
+      broadcastUpdate('adjustments', { action: 'repair', id: req.params.id });
+      broadcastUpdate('attendance', { action: 'adjustment-repair', id: req.params.id });
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });

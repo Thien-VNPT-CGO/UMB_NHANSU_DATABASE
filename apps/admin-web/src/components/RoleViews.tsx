@@ -8246,12 +8246,46 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                   <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Đã xử lý</span>
                   {a.status === 'APPROVED' ? (
+                    <>
                     <span
                       title="Phiếu đã duyệt và dựng công — bị khóa cứng, không được xóa để khỏi mồ côi dữ liệu lương."
                       style={{ padding: '4px 10px', fontSize: '12px', fontWeight: 700, color: '#9CA3AF', backgroundColor: '#F3F4F6', borderRadius: '6px', border: '1px solid #E5E7EB', cursor: 'not-allowed' }}
                     >
                       🔒 Khóa
                     </span>
+                    {(() => {
+                      // Phiếu cũ gắn nhầm ca/ngày (lỗi app NV cũ): ca của phiếu khác
+                      // ngày trong lý do -> hiện nút sửa để gỡ lượt dựng nhầm + dựng lại.
+                      const reasonDate = String(a.reason || '').match(/(\d{4}-\d{2}-\d{2})/)?.[1] || '';
+                      const sh = (shifts || []).find((s: any) => s.assignment_id === a.assignment_id);
+                      const shiftDate = String(sh?.date || '').slice(0, 10);
+                      if (!reasonDate || !shiftDate || reasonDate === shiftDate) return null;
+                      return (
+                        <button
+                          className="btn-secondary"
+                          style={{ padding: '4px 10px', fontSize: '12px', fontWeight: 700, color: '#B45309', borderColor: '#FDE68A' }}
+                          disabled={adjBusy === a.adjustment_id}
+                          title={`Phiếu ngày ${reasonDate} nhưng đang gắn ca ngày ${shiftDate} — bấm để gỡ lượt dựng nhầm và dựng lại đúng ngày ${reasonDate}`}
+                          onClick={async () => {
+                            if (!window.confirm(`Chuyển phiếu về đúng ngày ${reasonDate}?\nHệ thống gỡ lượt điểm danh dựng nhầm ngày ${shiftDate} và dựng lại đúng ngày ${reasonDate}.`)) return;
+                            setAdjBusy(a.adjustment_id);
+                            try {
+                              const r: any = await apiRequest(`/attendance/adjustments/${a.adjustment_id}/repair`, { method: 'POST' });
+                              showToast(`✅ Đã chuyển về đúng ngày ${r?.date || reasonDate}! Lượt dựng nhầm đã gỡ.`);
+                              await loadAdjustments();
+                              if (onRefreshData) await onRefreshData();
+                            } catch (e: any) {
+                              showToast(e?.message || 'Lỗi khi sửa ngày!');
+                            } finally {
+                              setAdjBusy(null);
+                            }
+                          }}
+                        >
+                          {adjBusy === a.adjustment_id ? '⏳...' : '🔧 Chuyển đúng ngày'}
+                        </button>
+                      );
+                    })()}
+                    </>
                   ) : (
                   <button
                     className="btn-secondary"

@@ -281,6 +281,8 @@ export class AttendanceService {
     minutesRequested: number;
     /** Ảnh bằng chứng base64 — adapter upload lên Drive thành evidence_drive_id rồi bỏ. */
     photoBase64?: string;
+    /** Ngày sự cố NV chọn (YYYY-MM-DD) — dùng để chốt đúng ca, chống gắn nhầm ca ngày khác. */
+    incidentDate?: string;
   }) {
     // ID duy nhất tuyệt đối (trước đây chỉ Date.now() -> 2 phiếu cùng mili giây
     // sẽ trùng ID, bản ghi đè nhau, xóa/sửa chỉ trúng 1 bản).
@@ -290,13 +292,22 @@ export class AttendanceService {
       entityId: adjId,
       actorId: data.employeeId,
       execute: async () => {
+        // Chốt đúng ca theo NGÀY sự cố (không tin mù assignment client gửi):
+        // app NV cũ thiếu ca ngày đó sẽ rớt về ca đầu danh sách (sai ngày) khiến
+        // duyệt xong dựng công nhầm sang ngày khác.
+        const resolved = await this.resolveAdjustmentShift(data.employeeId, data.assignmentId, data.incidentDate || data.reason);
+        if (!resolved) {
+          const d = AttendanceService.incidentDateOf(data.incidentDate || data.reason);
+          throw new Error(`ADJUSTMENT_NO_SHIFT: Ngày ${d || '(chưa rõ)'} không có ca làm việc nào được xếp! Kiểm tra lại ngày hoặc liên hệ HR xếp ca trước.`);
+        }
+        const assignmentId = (resolved as any).assignment_id;
         // Chống trùng phiếu: cùng NV + cùng ca + cùng loại mà đã có phiếu PENDING
         // (bấm đúp, mạng retry, gửi lại) thì từ chối tạo mới.
         const kind = AttendanceService.adjustmentKindOf(data.reason);
         const existing = await this.repo.listAttendanceAdjustments(undefined, data.employeeId).catch(() => []);
         const dup = (existing || []).find((x: any) =>
           (x as any).status === 'PENDING' &&
-          (x as any).assignment_id === data.assignmentId &&
+          (x as any).assignment_id === assignmentId &&
           (kind
             ? AttendanceService.adjustmentKindOf((x as any).reason) === kind
             : (x as any).reason === data.reason)
@@ -306,7 +317,7 @@ export class AttendanceService {
         }
         return this.repo.createAttendanceAdjustment({
           adjustment_id: adjId,
-          assignment_id: data.assignmentId,
+          assignment_id: assignmentId,
           employee_id: data.employeeId,
           branch_id: data.branchId,
           reason: data.reason,
@@ -317,6 +328,30 @@ export class AttendanceService {
         });
       },
     });
+  }
+
+  /** Ngày sự cố của phiếu (từ incidentDate client gửi, rớt về ngày trong lý do). */
+  static incidentDateOf(input: string): string {
+    const m = String(input || '').match(/(\d{4}-\d{2}-\d{2})/);
+    return m ? m[1] : '';
+  }
+
+  /**
+   * Chốt ca đúng NGÀY sự cố của phiếu: ưu tiên assignment client gửi nếu cùng ngày,
+   * ngược lại lấy ca đầu (không hủy) của NV đúng ngày đó. Không có ca -> null
+   * (chặn tạo/duyệt sai ngày).
+   */
+  private async resolveAdjustmentShift(employeeId: string, assignmentId?: string, dateInput?: string): Promise<any | null> {
+    const day = AttendanceService.incidentDateOf(dateInput || '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+    if (assignmentId && !String(assignmentId).startsWith('SHIFT_UNKNOWN_')) {
+      const direct = await this.repo.getShiftById(assignmentId).catch(() => null);
+      if (direct && String((direct as any).date || '').slice(0, 10) === day) return direct;
+    }
+    const list = await this.repo.getShiftsForEmployee(employeeId, day, day).catch(() => []);
+    const same = (list || []).filter((s: any) => String((s as any).date || '').slice(0, 10) === day);
+    if (same.length === 0) return null;
+    return same.find((s: any) => (s as any).status !== 'CANCELLED') || same[0];
   }
 
   async listAdjustments(branchId?: string, employeeId?: string) {
@@ -452,6 +487,31 @@ export class AttendanceService {
     });
   }
 
+  /**
+   * HR sửa phiếu APPROVED bị gắn nhầm ca/ngày (lỗi app NV cũ): gỡ lượt dựng nhầm
+   * trên ca sai + dựng lại đúng ngày phiếu. Chỉ chạy cho phiếu đã duyệt.
+   */
+  async repairAdjustment(adjId: string, actorId: string) {
+    return singleWriterQueue.enqueue({
+      entityType: 'DIEU_CHINH_CONG',
+      entityId: adjId,
+      actorId,
+      execute: async () => {
+        const all = await this.repo.listAttendanceAdjustments().catch(() => []);
+        const adj: any = (all || []).find((x: any) => x.adjustment_id === adjId);
+        if (!adj) throw new Error('ADJUSTMENT_NOT_FOUND: Phiếu không tồn tại.');
+        if (adj.status !== 'APPROVED') throw new Error('ADJUSTMENT_NOT_APPROVED: Chỉ sửa được phiếu đã duyệt!');
+        const shift = await this.resolveAdjustmentShift(adj.employee_id, adj.assignment_id, adj.reason).catch(() => null);
+        if (!shift) throw new Error('ADJUSTMENT_NO_SHIFT: Không tìm thấy ca đúng ngày phiếu!');
+        const fixed: string[] = await this.backfillFromAdjustment(adj).catch(() => []);
+        if (this.io && fixed.length > 0) {
+          this.io.emit('data:updated', { entity: 'attendance', data: { action: 'adjustment-repair', adjId }, timestamp: new Date().toISOString() });
+        }
+        return { adjustmentId: adjId, date: (shift as any).date, fixed };
+      },
+    });
+  }
+
   async reviewAdjustment(
     adjId: string,
     status: 'APPROVED' | 'REJECTED',
@@ -484,11 +544,13 @@ export class AttendanceService {
         let violationCleared = 0;
         if (status === 'APPROVED') {
           backfilled = await this.backfillFromAdjustment(updated).catch(() => []);
-          // Duyệt = xóa vi phạm: gỡ cờ trễ + phạt trên mọi lượt IN/OUT của ca này
-          // để NV không bị tính vi phạm (lưới realtime + kỳ lương đều đọc từ đây).
+          // Duyệt = xóa vi phạm: gỡ cờ trễ + phạt trên mọi lượt IN/OUT của ca ĐÚNG
+          // NGÀY phiếu (không phải assignment cũ gắn nhầm) để NV không bị tính vi
+          // phạm (lưới realtime + kỳ lương đều đọc từ đây).
           try {
             const adjEmp = (updated as any).employee_id;
-            const adjAssign = (updated as any).assignment_id;
+            const fixedShift = await this.resolveAdjustmentShift((updated as any).employee_id, (updated as any).assignment_id, (updated as any).reason).catch(() => null);
+            const adjAssign = (fixedShift as any)?.assignment_id || (updated as any).assignment_id;
             if (adjEmp && adjAssign) {
               const evts = await this.repo.getAttendanceEvents(adjEmp).catch(() => []);
               for (const e of evts || []) {
@@ -517,18 +579,34 @@ export class AttendanceService {
   /**
    * Dựng sự kiện CHECK_IN/CHECK_OUT còn thiếu theo loại phiếu:
    * [QUEN_CHECKIN] thiếu IN, [QUEN_CHECKOUT] thiếu OUT, [LOI_GPS_CAMERA] thiếu cả hai.
-   * Giờ lấy từ ca phân công, GPS đánh dấu bổ sung tay. Idempotent theo request_id.
+   * Giờ lấy từ ca phân công ĐÚNG NGÀY phiếu (tự sửa phiếu cũ gắn nhầm ca ngày khác:
+   * gỡ event dựng nhầm trước khi dựng lại). GPS đánh dấu bổ sung tay.
+   * Idempotent theo request_id.
    */
   private async backfillFromAdjustment(adj: AttendanceAdjustment): Promise<string[]> {
     const done: string[] = [];
-    const shift = adj.assignment_id ? await this.repo.getShiftById(adj.assignment_id).catch(() => null) : null;
+    // Chốt lại ca đúng ngày (phiếu cũ có thể gắn nhầm assignment ngày khác).
+    const shift = await this.resolveAdjustmentShift(adj.employee_id, adj.assignment_id, (adj as any).reason).catch(() => null);
     if (!shift) return done;
+    const correctAssign = (shift as any).assignment_id;
+    // Gỡ các lượt dựng nhầm từ phiếu này trên ca SAI ngày (request_id ADJ_*_<adjId>).
+    try {
+      const allEvts = await this.repo.getAttendanceEvents(adj.employee_id).catch(() => []);
+      for (const e of allEvts || []) {
+        const rid = String((e as any).request_id || '');
+        if (!rid.startsWith('ADJ_') || !rid.endsWith(`_${adj.adjustment_id}`)) continue;
+        if (String((e as any).assignment_id || '') === String(correctAssign)) continue;
+        try {
+          if (await this.repo.deleteAttendanceEvent((e as any).event_id)) done.push(`removed:${(e as any).type}`);
+        } catch { /* tiếp */ }
+      }
+    } catch { /* best-effort */ }
     const reason = String((adj as any).reason || '');
     const needIn = /QUEN_CHECKIN|LOI_GPS/i.test(reason);
     const needOut = /QUEN_CHECKOUT|LOI_GPS/i.test(reason);
     // Mặc định (không rõ loại): bù phía còn thiếu.
     const events = await this.repo.getAttendanceEvents(adj.employee_id, (shift as any).date).catch(() => []);
-    const mine = (events || []).filter((e: any) => e.assignment_id === adj.assignment_id);
+    const mine = (events || []).filter((e: any) => e.assignment_id === correctAssign);
     const hasIn = mine.some((e: any) => e.type === 'CHECK_IN');
     const hasOut = mine.some((e: any) => e.type === 'CHECK_OUT');
     const nowIso = new Date().toISOString();
@@ -539,7 +617,7 @@ export class AttendanceService {
       await this.repo.recordAttendanceEvent({
         event_id: `EVT_ADJ_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
         request_id: requestId,
-        assignment_id: adj.assignment_id,
+        assignment_id: correctAssign,
         employee_id: adj.employee_id,
         branch_id: (shift as any).branch_id,
         type,

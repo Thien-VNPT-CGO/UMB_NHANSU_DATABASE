@@ -646,6 +646,26 @@ export function App() {
   });
   // Ca cần bổ sung (ngày 2 ca: phải chọn đúng ca thì HR duyệt mới cập nhật đúng)
   const [adjustShiftId, setAdjustShiftId] = useState('');
+  // Ca ĐÚNG NGÀY sự cố (tải riêng theo ngày đã chọn — myShifts chỉ từ hôm nay trở
+  // đi nên ngày cũ không có ca; dùng sai ca là duyệt nhầm sang ngày khác).
+  const [adjDayShifts, setAdjDayShifts] = useState<any[]>([]);
+  const [adjDayLoading, setAdjDayLoading] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    const d = adjustmentData.date;
+    if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d)) { setAdjDayShifts([]); return; }
+    setAdjDayLoading(true);
+    apiRequest(`/me/schedule?fromDate=${d}&toDate=${d}`)
+      .then((list: any) => {
+        if (!alive) return;
+        const arr = Array.isArray(list) ? list.filter((s: any) => String(s.date || '').slice(0, 10) === d) : [];
+        setAdjDayShifts(arr);
+        if (adjustShiftId && !arr.some((s: any) => s.assignment_id === adjustShiftId)) setAdjustShiftId('');
+      })
+      .catch(() => { if (alive) setAdjDayShifts([]); })
+      .finally(() => { if (alive) setAdjDayLoading(false); });
+    return () => { alive = false; };
+  }, [adjustmentData.date]);
   // Ảnh bằng chứng kèm phiếu bổ sung công (dataURL đã nén ≤800KB, null = chưa chọn)
   const [evidencePhoto, setEvidencePhoto] = useState<string | null>(null);
   const [evidenceBusy, setEvidenceBusy] = useState(false);
@@ -2071,13 +2091,19 @@ export function App() {
       } else {
         // Bổ sung công/quên check-in-out -> đúng queue Điều Chỉnh Công để Store/HR duyệt
         // (trước đây gửi nhầm sang /leaves loại BO_SUNG_CONG, HR không thấy để duyệt).
-        // Ngày 2 ca: ưu tiên ca đã chọn, HR duyệt sẽ cập nhật đúng check-in/out ca đó.
-        const dayShifts = (myShifts || []).filter((s: any) => s.date === adjustmentData.date);
-        const shift = dayShifts.find((s: any) => s.assignment_id === adjustShiftId) || dayShifts[0] || (myShifts || [])[0];
+        // Chốt đúng ca ĐÚNG NGÀY sự cố (tải riêng theo ngày): không bao giờ rớt về
+        // ca ngày khác — gửi sai ngày là duyệt nhầm sang ngày khác.
+        const dayShifts = (adjDayShifts || []).filter((s: any) => String(s.date || '').slice(0, 10) === adjustmentData.date);
+        if (dayShifts.length === 0) {
+          showToast(`⚠️ Ngày ${adjustmentData.date} không có ca làm việc nào được xếp! Kiểm tra lại ngày hoặc liên hệ HR xếp ca trước — hệ thống chặn gửi để khỏi duyệt nhầm ngày.`);
+          return;
+        }
+        const shift = dayShifts.find((s: any) => s.assignment_id === adjustShiftId) || dayShifts[0];
         await apiRequest('/attendance/adjustments', {
           method: 'POST',
           body: JSON.stringify({
-            assignmentId: shift?.assignment_id || `SHIFT_UNKNOWN_${adjustmentData.date}`,
+            assignmentId: shift.assignment_id,
+            incidentDate: adjustmentData.date,
             reason: `[${adjustmentData.type}] ${adjustmentData.date}: ${adjustmentData.reason.trim()}`,
             minutesRequested: 0,
             // Ảnh bằng chứng: server upload Drive rồi chỉ lưu Drive ID (không lưu base64).
@@ -4466,7 +4492,17 @@ export function App() {
                 </div>
 
                 {(() => {
-                  const dayShifts = (myShifts || []).filter((s: any) => s.date === adjustmentData.date);
+                  const dayShifts = (adjDayShifts || []).filter((s: any) => String(s.date || '').slice(0, 10) === adjustmentData.date);
+                  if (adjDayLoading) {
+                    return <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>⏳ Đang tải ca ngày {adjustmentData.date}...</div>;
+                  }
+                  if (dayShifts.length === 0) {
+                    return (
+                      <div style={{ fontSize: '12px', color: '#92400E', backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '8px', padding: '8px 12px' }}>
+                        ⚠️ Ngày {adjustmentData.date} chưa có ca nào được xếp — kiểm tra lại ngày hoặc liên hệ HR. Hệ thống chặn gửi để khỏi duyệt nhầm ngày khác.
+                      </div>
+                    );
+                  }
                   if (dayShifts.length <= 1) return null;
                   return (
                     <div>
