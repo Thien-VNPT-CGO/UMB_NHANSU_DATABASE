@@ -14,6 +14,8 @@ import {
   AttendanceAdjustment,
   PayrollRun,
   PayslipItem,
+  PayrollFormula,
+  PayrollPeriodInput,
   NotificationOutboxItem,
   NotificationInboxItem,
   OperationRecord,
@@ -48,6 +50,8 @@ export class MockSheetsAdapter implements ISheetsRepository {
   public attendanceAdjustments: AttendanceAdjustment[] = [];
   public payrollRuns: PayrollRun[] = [];
   public payslips: PayslipItem[] = [];
+  public payrollFormulas: PayrollFormula[] = [];
+  public payrollInputs: PayrollPeriodInput[] = [];
   public notificationOutbox: NotificationOutboxItem[] = [];
   public notificationInbox: NotificationInboxItem[] = [];
   public testPapers: TestPaper[] = [];
@@ -767,6 +771,37 @@ export class MockSheetsAdapter implements ISheetsRepository {
   async getPayslipsByRunId(runId: string): Promise<PayslipItem[]> {
     this.checkErrors();
     return this.payslips.filter(p => p.run_id === runId);
+  }
+
+  // --- Công thức + dữ liệu nhập tay tính lương theo file Excel (Finance) ---
+  async getPayrollFormula(period: string): Promise<PayrollFormula | null> {
+    this.checkErrors();
+    return this.payrollFormulas.find(f => f.period === period) || null;
+  }
+
+  async savePayrollFormula(formula: PayrollFormula): Promise<PayrollFormula> {
+    this.checkErrors();
+    const idx = this.payrollFormulas.findIndex(f => f.period === formula.period);
+    const saved = { ...formula, updatedAt: new Date().toISOString() };
+    if (idx >= 0) this.payrollFormulas[idx] = saved;
+    else this.payrollFormulas.push(saved);
+    return { ...saved };
+  }
+
+  async getPayrollInputs(period: string): Promise<PayrollPeriodInput[]> {
+    this.checkErrors();
+    return this.payrollInputs.filter(i => i.period === period).map(i => ({ ...i }));
+  }
+
+  async upsertPayrollInput(input: PayrollPeriodInput): Promise<PayrollPeriodInput> {
+    this.checkErrors();
+    const idx = this.payrollInputs.findIndex(
+      i => i.period === input.period && i.employee_id === input.employee_id
+    );
+    const saved = { ...input, updatedAt: new Date().toISOString() };
+    if (idx >= 0) this.payrollInputs[idx] = saved;
+    else this.payrollInputs.push(saved);
+    return { ...saved };
   }
 
   // --- Notifications ---

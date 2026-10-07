@@ -871,6 +871,27 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     return this.fallbackAdapter.getPayslipsByRunId(runId);
   }
 
+  // --- Công thức + dữ liệu nhập tay tính lương (Finance): bộ nhớ + full-sync nền ---
+  async getPayrollFormula(period: string) {
+    return this.fallbackAdapter.getPayrollFormula(period);
+  }
+
+  async savePayrollFormula(formula: any) {
+    const res = await this.fallbackAdapter.savePayrollFormula(formula);
+    this.scheduleFullSync('CONG_THUC_LUONG.save');
+    return res;
+  }
+
+  async getPayrollInputs(period: string) {
+    return this.fallbackAdapter.getPayrollInputs(period);
+  }
+
+  async upsertPayrollInput(input: any) {
+    const res = await this.fallbackAdapter.upsertPayrollInput(input);
+    this.scheduleFullSync('DULIEU_LUONG_KY.save');
+    return res;
+  }
+
   // --- Notifications ---
   async createNotification(outbox: any, inboxes: any) {
     const res = await this.fallbackAdapter.createNotification(outbox, inboxes);

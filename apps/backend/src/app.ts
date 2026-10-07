@@ -82,6 +82,8 @@ import {
   meScheduleQuery,
   notificationsQuery,
   payrollCalculateBody,
+  payrollFormulaBody,
+  payrollInputBody,
   payrollPeriodParams,
   payrollRunIdParams,
   payrollRunParams,
@@ -3209,6 +3211,56 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Tính lương theo công thức Excel cho toàn bộ NV (Finance).
+  app.post('/payroll/:period/calculate-formula', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollPeriodParams, body: payrollCalculateBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const branchScope = req.body.branchScope || '*';
+      const result = await payrollService.calculateFormulaPayroll(req.params.period, branchScope, req.user!.id);
+      broadcastUpdate('payroll', { action: 'calculate', period: req.params.period });
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Công thức lương 1 kỳ: xem + lưu (từ file Excel của Kế toán).
+  app.get('/payroll/formula/:period', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollPeriodParams }), async (req, res) => {
+    try {
+      res.json(await payrollService.getFormula(req.params.period));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put('/payroll/formula/:period', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollPeriodParams, body: payrollFormulaBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await payrollService.saveFormula(req.params.period, req.body || {}, req.user!.id);
+      broadcastUpdate('payroll', { action: 'formula', period: req.params.period });
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Dữ liệu nhập tay theo kỳ (6 cột: H/K/AW/O/N/P): xem + lưu từng NV.
+  app.get('/payroll/inputs/:period', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollPeriodParams }), async (req, res) => {
+    try {
+      res.json(await payrollService.getInputs(req.params.period));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put('/payroll/inputs/:period', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollPeriodParams, body: payrollInputBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await payrollService.upsertInput(req.params.period, req.body || {}, req.user!.id);
+      broadcastUpdate('payroll', { action: 'inputs', period: req.params.period });
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   app.get('/payroll/runs', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req, res) => {
     try {
       const runs = await payrollService.listRuns();
@@ -3264,6 +3316,24 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       const result = await payrollService.publishRun(req.params.run, req.user!.id);
       broadcastUpdate('payroll', { action: 'publish', run: req.params.run });
+      // XUẤT phiếu đến từng NV: 1 thông báo tới tất cả NV trong kỳ (mỗi người nhận
+      // inbox riêng + socket realtime) — NV mở cổng cá nhân xem đúng phiếu của mình.
+      try {
+        const det = await payrollService.getRunDetails(req.params.run).catch(() => null);
+        const empIds: string[] = [...new Set<string>(((det as any)?.slips || []).map((s: any) => String(s.employee_id || '')).filter(Boolean))];
+        if (empIds.length > 0) {
+          const period = String((det as any)?.run?.period || '');
+          await notificationsService.sendNotification({
+            recipientIds: empIds,
+            type: 'emp.payslip',
+            severity: 'SYSTEM',
+            title: `💰 Phiếu lương kỳ ${period} đã phát hành!`,
+            summary: `Kế toán đã xuất phiếu lương kỳ ${period} cho bạn. Mở Cổng Nhân Viên → Thông báo & Lương để xem chi tiết.`,
+            targetPath: '/notifs_salary',
+            actorId: req.user!.id,
+          }).catch(() => null);
+        }
+      } catch { /* best-effort */ }
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });

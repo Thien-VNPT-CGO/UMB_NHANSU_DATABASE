@@ -358,6 +358,27 @@ export const payrollCalculateBody = z.object({
   branchScope: z.string().trim().max(32).default('*'),
 });
 
+// Công thức lương 1 kỳ (lưu từ file Excel của Kế toán).
+export const payrollFormulaBody = z.object({
+  rateTV: z.coerce.number().int().min(0).max(10_000_000),
+  rateCT: z.coerce.number().int().min(0).max(10_000_000),
+  otPerSlot: z.coerce.number().int().min(0).max(10_000_000),
+  otThreshold1: z.coerce.number().min(0).max(24).default(10),
+  otThreshold2: z.coerce.number().min(0).max(24).default(15),
+}).passthrough();
+
+// Dữ liệu nhập tay theo kỳ cho 1 NV (6 cột: H/K/AW/O/N/P).
+export const payrollInputBody = z.object({
+  employeeId: shortId(64),
+  luong_cb: z.coerce.number().min(0).max(1_000_000_000).default(0),
+  ot_extra: z.coerce.number().min(0).max(1_000_000_000).default(0),
+  bonus_extra: z.coerce.number().min(0).max(1_000_000_000).default(0),
+  ung_luong: z.coerce.number().min(0).max(1_000_000_000).default(0),
+  tru_kpi: z.coerce.number().min(0).max(1_000_000_000).default(0),
+  dong_phuc: z.coerce.number().min(0).max(1_000_000_000).default(0),
+  note: optString(500),
+}).passthrough();
+
 export const payrollRunParams = z.object({
   run: shortId(128),
 });

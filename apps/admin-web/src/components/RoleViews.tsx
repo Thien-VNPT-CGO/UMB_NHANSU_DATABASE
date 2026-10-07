@@ -1022,6 +1022,36 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Tính lương + chấm công Finance
   const [payCalcPeriod, setPayCalcPeriod] = useState(() => new Date().toISOString().slice(0, 7));
   const [payCalcBusy, setPayCalcBusy] = useState(false);
+  // Công thức Excel + nhập tay theo kỳ (Finance): TỔNG CỘNG = LCB + PC_OT + giờ + OTt + Bonus;
+  // TỔNG LƯƠNG = TỔNG CỘNG − KPI − phạt; THỰC LÃNH = TỔNG LƯƠNG − Ứng − Đồng phục.
+  const [payFormula, setPayFormula] = useState<any>(null);
+  const [payFormulaBusy, setPayFormulaBusy] = useState(false);
+  const [payInputs, setPayInputs] = useState<Record<string, any>>({});
+  const [payInputsBusy, setPayInputsBusy] = useState<string | null>(null);
+  const loadPayFormula = async (period: string) => {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) return;
+    try {
+      const f = await apiRequest(`/payroll/formula/${period}`);
+      setPayFormula(f || null);
+    } catch { /* offline */ }
+  };
+  const loadPayInputs = async (period: string) => {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) return;
+    try {
+      const list = await apiRequest(`/payroll/inputs/${period}`);
+      const map: Record<string, any> = {};
+      for (const x of (Array.isArray(list) ? list : [])) map[x.employee_id] = x;
+      setPayInputs(map);
+    } catch { /* offline */ }
+  };
+  useEffect(() => {
+    if (activeTab !== 'fin-calculate') return;
+    const p = (payCalcPeriod || '').trim();
+    if (/^\d{4}-(0[1-9]|1[0-2])$/.test(p)) {
+      loadPayFormula(p);
+      loadPayInputs(p);
+    }
+  }, [activeTab, payCalcPeriod]);
   const [finMonth, setFinMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [finAttEvents, setFinAttEvents] = useState<any[]>([]);
   const loadFinAttendance = async () => {
@@ -9754,6 +9784,85 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         setPayCalcBusy(false);
       }
     };
+    const doCalculateFormula = async () => {
+      const period = (payCalcPeriod || '').trim() || new Date().toISOString().slice(0, 7);
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
+        showToast('Kỳ lương phải dạng YYYY-MM (VD: 2026-09)!');
+        return;
+      }
+      if (!window.confirm(`Tính lương tháng ${period} theo CÔNG THỨC EXCEL cho ${branchScope === '*' ? 'toàn hệ thống' : branchName}?\nTỔNG CỘNG = LCB + PC_OT + giờ + OT thêm + Bonus; THỰC LÃNH = TỔNG CỘNG − KPI − phạt − Ứng − Đồng phục.`)) return;
+      setPayCalcBusy(true);
+      try {
+        const res = await apiRequest(`/payroll/${period}/calculate-formula`, {
+          method: 'POST',
+          body: JSON.stringify({ branchScope }),
+        });
+        const r = (res as any)?.result ?? res;
+        showToast(`Đã tính theo Excel ${period}: ${r?.run?.total_employees ?? '?'} NV, thực lãnh ${Number(r?.run?.total_amount || 0).toLocaleString('vi-VN')}đ!`);
+        if (onRefreshData) await onRefreshData();
+        if (onSyncSheets) await onSyncSheets();
+      } catch (e: any) {
+        showToast(e?.message || 'Lỗi khi tính lương Excel!');
+      } finally {
+        setPayCalcBusy(false);
+      }
+    };
+    const savePayFormula = async () => {
+      const period = (payCalcPeriod || '').trim();
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
+        showToast('Kỳ lương phải dạng YYYY-MM (VD: 2026-09)!');
+        return;
+      }
+      setPayFormulaBusy(true);
+      try {
+        await apiRequest(`/payroll/formula/${period}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            rateTV: Number(payFormula?.rateTV) || 0,
+            rateCT: Number(payFormula?.rateCT) || 0,
+            otPerSlot: Number(payFormula?.otPerSlot) || 0,
+            otThreshold1: Number(payFormula?.otThreshold1 ?? 10),
+            otThreshold2: Number(payFormula?.otThreshold2 ?? 15),
+          }),
+        });
+        showToast(`Đã lưu công thức lương kỳ ${period}!`);
+        await loadPayFormula(period);
+      } catch (e: any) {
+        showToast(e?.message || 'Lỗi khi lưu công thức!');
+      } finally {
+        setPayFormulaBusy(false);
+      }
+    };
+    const savePayInput = async (empId: string) => {
+      const period = (payCalcPeriod || '').trim();
+      const v = payInputs[empId] || {};
+      setPayInputsBusy(empId);
+      try {
+        await apiRequest(`/payroll/inputs/${period}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            employeeId: empId,
+            luong_cb: Number(v.luong_cb) || 0,
+            ot_extra: Number(v.ot_extra) || 0,
+            bonus_extra: Number(v.bonus_extra) || 0,
+            ung_luong: Number(v.ung_luong) || 0,
+            tru_kpi: Number(v.tru_kpi) || 0,
+            dong_phuc: Number(v.dong_phuc) || 0,
+            note: String(v.note || '').slice(0, 500),
+          }),
+        });
+        showToast('Đã lưu dữ liệu nhập tay!');
+      } catch (e: any) {
+        showToast(e?.message || 'Lỗi khi lưu!');
+      } finally {
+        setPayInputsBusy(null);
+      }
+    };
+    const numIn = (style?: React.CSSProperties) => ({
+      width: '92px', padding: '6px 8px', borderRadius: '6px',
+      border: '1px solid var(--border)', fontSize: '12px', ...(style || {}),
+    });
+    const finEmps = (allEmployees || []).filter((e: any) => (e as any)?.employment_status !== 'TERMINATED');
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <h1 style={{ fontSize: '20px', fontWeight: 800 }}>5. Tính Toán Bảng Lương (Formula Engine)</h1>
@@ -9776,12 +9885,104 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </button>
           </div>
         </div>
+
+        {/* CÔNG THỨC EXCEL (lưu theo kỳ) */}
+        <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1.5px solid #93C5FD' }}>
+          <div style={{ fontSize: '14px', fontWeight: 800, marginBottom: '4px' }}>📐 Công thức lương theo file Excel <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(lưu theo kỳ, tính cho toàn bộ NV)</span></div>
+          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px', lineHeight: 1.6 }}>
+            TỔNG CỘNG = Lương CB (tay) + Phụ cấp OT + Lương giờ + OT thêm (tay) + Bonus • TỔNG LƯƠNG = TỔNG CỘNG − KPI (tay) − phạt trễ/vắng •
+            THỰC LÃNH = TỔNG LƯƠNG − Ứng − Đồng phục. Ngày ≥ <strong>{payFormula?.otThreshold1 ?? 10}h</strong> = 1 suất OT, ≥ <strong>{payFormula?.otThreshold2 ?? 15}h</strong> = 2 suất.
+          </div>
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            {[
+              { k: 'rateTV', label: 'Đơn giá TV (đ/h)' },
+              { k: 'rateCT', label: 'Đơn giá CT (đ/h)' },
+              { k: 'otPerSlot', label: 'Tiền 1 suất OT (đ)' },
+              { k: 'otThreshold1', label: 'Ngưỡng 1 suất (h)' },
+              { k: 'otThreshold2', label: 'Ngưỡng 2 suất (h)' },
+            ].map(f => (
+              <label key={f.k} style={{ fontSize: '12px', fontWeight: 700 }}>{f.label}
+                <input
+                  type="number"
+                  value={payFormula?.[f.k] ?? ''}
+                  onChange={e => setPayFormula({ ...(payFormula || {}), [f.k]: e.target.value })}
+                  style={{ display: 'block', marginTop: '4px', padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '13px', width: '150px' }}
+                />
+              </label>
+            ))}
+            <button className="btn-primary" disabled={payFormulaBusy} onClick={savePayFormula} style={{ backgroundColor: '#1D4ED8' }}>
+              {payFormulaBusy ? 'Đang lưu...' : '💾 Lưu công thức kỳ này'}
+            </button>
+            <button className="btn-primary" disabled={payCalcBusy} onClick={doCalculateFormula} style={{ backgroundColor: '#059669' }}>
+              {payCalcBusy ? 'Đang tính...' : `🧮 Tính theo Excel (${branchScope === '*' ? 'toàn hệ thống' : branchName})`}
+            </button>
+          </div>
+        </div>
+
+        {/* NHẬP TAY THEO KỲ (6 cột H/K/AW/O/N/P) */}
+        <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
+          <div style={{ padding: '14px 20px', fontSize: '14px', fontWeight: 800 }}>
+            📝 Dữ liệu nhập tay kỳ {(payCalcPeriod || '').trim() || '—'} <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(6 cột như file Excel — lưu từng NV)</span>
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', minWidth: '980px' }}>
+              <thead>
+                <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
+                  <th style={{ padding: '10px 14px' }}>Nhân viên</th>
+                  <th style={{ padding: '10px 14px' }}>Lương CB (H)</th>
+                  <th style={{ padding: '10px 14px' }}>OT thêm (K)</th>
+                  <th style={{ padding: '10px 14px' }}>Bonus thêm</th>
+                  <th style={{ padding: '10px 14px' }}>Ứng lương</th>
+                  <th style={{ padding: '10px 14px' }}>Trừ KPI</th>
+                  <th style={{ padding: '10px 14px' }}>Trừ ĐP</th>
+                  <th style={{ padding: '10px 14px' }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {finEmps.map((e: any) => {
+                  const v = payInputs[e.employee_id] || {};
+                  const set = (k: string, val: string) => setPayInputs({ ...payInputs, [e.employee_id]: { ...v, [k]: val } });
+                  return (
+                    <tr key={e.employee_id} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <td style={{ padding: '8px 14px', fontWeight: 700 }}>{e.full_name}<div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 400 }}>{e.employee_code}</div></td>
+                      {[['luong_cb'], ['ot_extra'], ['bonus_extra'], ['ung_luong'], ['tru_kpi'], ['dong_phuc']].map(([k]) => (
+                        <td key={k} style={{ padding: '8px 10px' }}>
+                          <input type="number" min={0} value={v[k] ?? ''} placeholder="0" onChange={ev => set(k, ev.target.value)} style={numIn()} />
+                        </td>
+                      ))}
+                      <td style={{ padding: '8px 14px' }}>
+                        <button className="btn-secondary" style={{ fontSize: '11px', padding: '5px 10px', fontWeight: 700 }} disabled={payInputsBusy === e.employee_id} onClick={() => savePayInput(e.employee_id)}>
+                          {payInputsBusy === e.employee_id ? '⏳...' : '💾 Lưu'}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
     );
   }
 
   if (activeTab === 'fin-details') {
     const slips: any[] = payRunDetail?.slips || [];
+    const vnd0 = (n: any) => `${Number(n || 0).toLocaleString('vi-VN')}đ`;
+    const detCols: [string, (p: any) => any][] = [
+      ['Giờ', (p: any) => `${p.standard_hours || 0}h / ${p.total_shifts || 0} ca${Number(p.absent_shifts) > 0 ? ` (−${p.absent_shifts} vắng)` : ''}`],
+      ['Đơn giá', (p: any) => vnd0(p.rate_snapshot)],
+      ['Lương giờ', (p: any) => vnd0(p.standard_pay)],
+      ['Lương CB', (p: any) => vnd0(p.luong_cb)],
+      ['PC-OT', (p: any) => `${vnd0(p.phu_cap_ot ?? p.allowance)}${p.ot_slots ? ` (${p.ot_slots} suất)` : ''}`],
+      ['OT+ thêm', (p: any) => vnd0(p.ot_extra)],
+      ['Bonus', (p: any) => vnd0(p.bonus)],
+      ['Tổng cộng', (p: any) => vnd0(p.tong_cong ?? ((p.luong_cb || 0) + (p.phu_cap_ot ?? p.allowance ?? 0) + (p.standard_pay || 0) + (p.ot_extra || 0) + (p.bonus || 0)))],
+      ['KPI + phạt', (p: any) => vnd0((p.tru_kpi || 0) + (p.deduction || 0))],
+      ['Ứng', (p: any) => vnd0(p.ung_luong)],
+      ['Trừ ĐP', (p: any) => vnd0(p.dong_phuc)],
+      ['Thực lãnh', (p: any) => vnd0(p.thuc_lanh ?? p.net_pay)],
+    ];
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
@@ -9801,37 +10002,29 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           </div>
         ) : (
           <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', minWidth: '1360px' }}>
               <thead>
                 <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
-                  <th style={{ padding: '12px 20px' }}>Mã NV</th>
-                  <th style={{ padding: '12px 20px' }}>Họ Và Tên</th>
-                  <th style={{ padding: '12px 20px' }}>Ca / Vắng</th>
-                  <th style={{ padding: '12px 20px' }}>Tổng Giờ</th>
-                  <th style={{ padding: '12px 20px' }}>Đơn Giá</th>
-                  <th style={{ padding: '12px 20px' }}>Thưởng +30k</th>
-                  <th style={{ padding: '12px 20px' }}>Phạt Trễ</th>
-                  <th style={{ padding: '12px 20px' }}>Thực Nhận</th>
+                  <th style={{ padding: '12px 16px' }}>Mã NV</th>
+                  <th style={{ padding: '12px 16px' }}>Họ Và Tên</th>
+                  {detCols.map(([h]) => <th key={h} style={{ padding: '12px 16px' }}>{h}</th>)}
                 </tr>
               </thead>
               <tbody>
                 {slips.length === 0 ? (
                   <tr>
-                    <td colSpan={8} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    <td colSpan={14} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
                       Kỳ này chưa có phiếu lương nào.
                     </td>
                   </tr>
                 ) : (
                   slips.map((p: any) => (
                     <tr key={p.item_id} style={{ borderBottom: '1px solid var(--border)' }}>
-                      <td style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--brand)' }}>{p.employee_code || p.employee_id}</td>
-                      <td style={{ padding: '14px 20px', fontWeight: 700 }}>{p.full_name || 'Nhân viên'}</td>
-                      <td style={{ padding: '14px 20px' }}>{p.total_shifts || 0}{Number(p.absent_shifts) > 0 ? <span style={{ color: '#DC2626', fontWeight: 700 }}> (−{p.absent_shifts} vắng)</span> : ''}</td>
-                      <td style={{ padding: '14px 20px' }}>{p.standard_hours || 0}h</td>
-                      <td style={{ padding: '14px 20px' }}>{(p.rate_snapshot || 0).toLocaleString('vi-VN')} đ/h</td>
-                      <td style={{ padding: '14px 20px', color: '#059669', fontWeight: 700 }}>{(p.bonus || 0).toLocaleString('vi-VN')} đ</td>
-                      <td style={{ padding: '14px 20px', color: Number(p.deduction) > 0 ? '#DC2626' : undefined, fontWeight: Number(p.deduction) > 0 ? 700 : 400 }}>{(p.deduction || 0).toLocaleString('vi-VN')} đ</td>
-                      <td style={{ padding: '14px 20px', fontWeight: 800, color: '#10B981' }}>{(p.net_pay || 0).toLocaleString('vi-VN')} đ</td>
+                      <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--brand)' }}>{p.employee_code || p.employee_id}</td>
+                      <td style={{ padding: '12px 16px', fontWeight: 700 }}>{p.full_name || 'Nhân viên'}</td>
+                      {detCols.map(([h, f], i) => (
+                        <td key={h} style={{ padding: '12px 16px', fontWeight: i === detCols.length - 1 ? 800 : 400, color: i === detCols.length - 1 ? '#10B981' : undefined }}>{f(p)}</td>
+                      ))}
                     </tr>
                   ))
                 )}
@@ -9846,6 +10039,20 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   if (activeTab === 'fin-payslips') {
     const pubRuns = (payrollRuns || []).filter((r: any) => r.status === 'PUBLISHED' || r.status === 'PAID');
     const slips: any[] = payRunDetail?.slips || [];
+    const vnd0 = (n: any) => `${Number(n || 0).toLocaleString('vi-VN')}đ`;
+    const finSlipCols: [string, (p: any) => any][] = [
+      ['Giờ', (p: any) => `${p.standard_hours || 0}h / ${p.total_shifts || 0} ca`],
+      ['Lương giờ', (p: any) => vnd0(p.standard_pay)],
+      ['Lương CB', (p: any) => vnd0(p.luong_cb)],
+      ['PC-OT', (p: any) => `${vnd0(p.phu_cap_ot ?? p.allowance)}${p.ot_slots ? ` (${p.ot_slots} suất)` : ''}`],
+      ['OT+ thêm', (p: any) => vnd0(p.ot_extra)],
+      ['Bonus', (p: any) => vnd0(p.bonus)],
+      ['Tổng cộng', (p: any) => vnd0(p.tong_cong ?? ((p.luong_cb || 0) + (p.phu_cap_ot ?? p.allowance ?? 0) + (p.standard_pay || 0) + (p.ot_extra || 0) + (p.bonus || 0)))],
+      ['KPI + phạt', (p: any) => vnd0((p.tru_kpi || 0) + (p.deduction || 0))],
+      ['Ứng', (p: any) => vnd0(p.ung_luong)],
+      ['Trừ ĐP', (p: any) => vnd0(p.dong_phuc)],
+      ['Thực lãnh', (p: any) => vnd0(p.thuc_lanh ?? p.net_pay)],
+    ];
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
@@ -9865,26 +10072,24 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           </div>
         ) : (
           <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', minWidth: '1280px' }}>
               <thead>
                 <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
-                  <th style={{ padding: '12px 20px' }}>Mã NV</th>
-                  <th style={{ padding: '12px 20px' }}>Họ Và Tên</th>
-                  <th style={{ padding: '12px 20px' }}>Giờ / Ca</th>
-                  <th style={{ padding: '12px 20px' }}>Thưởng-Phạt</th>
-                  <th style={{ padding: '12px 20px' }}>Thực Nhận</th>
-                  <th style={{ padding: '12px 20px' }}>Trạng Thái</th>
+                  <th style={{ padding: '12px 16px' }}>Mã NV</th>
+                  <th style={{ padding: '12px 16px' }}>Họ Và Tên</th>
+                  {finSlipCols.map(([h]) => <th key={h} style={{ padding: '12px 16px' }}>{h}</th>)}
+                  <th style={{ padding: '12px 16px' }}>Trạng Thái</th>
                 </tr>
               </thead>
               <tbody>
                 {slips.map((p: any) => (
                   <tr key={p.item_id} style={{ borderBottom: '1px solid var(--border)' }}>
-                    <td style={{ padding: '12px 20px', fontWeight: 700, color: 'var(--brand)' }}>{p.employee_code}</td>
-                    <td style={{ padding: '12px 20px', fontWeight: 700 }}>{p.full_name}</td>
-                    <td style={{ padding: '12px 20px' }}>{p.standard_hours}h / {p.total_shifts} ca</td>
-                    <td style={{ padding: '12px 20px' }}>+{(p.bonus || 0).toLocaleString('vi-VN')} / −{(p.deduction || 0).toLocaleString('vi-VN')}</td>
-                    <td style={{ padding: '12px 20px', fontWeight: 800, color: '#10B981' }}>{(p.net_pay || 0).toLocaleString('vi-VN')}đ</td>
-                    <td style={{ padding: '12px 20px' }}><span className="badge badge-success">{p.status}</span></td>
+                    <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--brand)' }}>{p.employee_code}</td>
+                    <td style={{ padding: '12px 16px', fontWeight: 700 }}>{p.full_name}</td>
+                    {finSlipCols.map(([h, f], i) => (
+                      <td key={h} style={{ padding: '12px 16px', fontWeight: i === finSlipCols.length - 1 ? 800 : 400, color: i === finSlipCols.length - 1 ? '#10B981' : undefined }}>{f(p)}</td>
+                    ))}
+                    <td style={{ padding: '12px 16px' }}><span className="badge badge-success">{p.status}</span></td>
                   </tr>
                 ))}
               </tbody>

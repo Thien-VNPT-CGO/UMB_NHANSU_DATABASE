@@ -11,6 +11,8 @@ import {
   AttendanceAdjustment,
   PayrollRun,
   PayslipItem,
+  PayrollFormula,
+  PayrollPeriodInput,
   NotificationOutboxItem,
   NotificationInboxItem,
   OperationRecord,
@@ -91,6 +93,12 @@ export interface ISheetsRepository {
   updatePayrollRunStatus(runId: string, status: PayrollRunStatus, actorId: string, updates?: Partial<PayrollRun>): Promise<PayrollRun>;
   getPayslipsForEmployee(employeeId: string): Promise<PayslipItem[]>;
   getPayslipsByRunId(runId: string): Promise<PayslipItem[]>;
+
+  // Công thức + dữ liệu nhập tay tính lương theo file Excel (Finance).
+  getPayrollFormula(period: string): Promise<PayrollFormula | null>;
+  savePayrollFormula(formula: PayrollFormula): Promise<PayrollFormula>;
+  getPayrollInputs(period: string): Promise<PayrollPeriodInput[]>;
+  upsertPayrollInput(input: PayrollPeriodInput): Promise<PayrollPeriodInput>;
 
   // Notifications
   createNotification(outbox: Omit<NotificationOutboxItem, 'created_at'>, inboxes: Omit<NotificationInboxItem, 'created_at' | 'version'>[]): Promise<{ outbox: NotificationOutboxItem; inboxes: NotificationInboxItem[] }>;

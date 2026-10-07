@@ -5475,33 +5475,39 @@ export function App() {
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  {payslips.map((slip: any, idx: number) => (
-                    <div key={slip.item_id || slip.run_id || idx} style={{ backgroundColor: '#FFFBF9', padding: '14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
-                      <div style={{ fontWeight: 800, fontSize: '14px', color: 'var(--brand)' }}>
-                        {slip.period ? `Kỳ Lương Tháng ${String(slip.period).slice(5, 7)}/${String(slip.period).slice(0, 4)}` : (slip.title || 'Phiếu lương')}
+                  {payslips.map((slip: any, idx: number) => {
+                    const vnd = (n: any) => `${Number(n || 0).toLocaleString('vi-VN')}đ`;
+                    const row = (k: string, v: string, bold = false, color?: string) => (
+                      <div key={k} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', margin: '4px 0', fontWeight: bold ? 800 : 400, color: color || 'var(--text)' }}>
+                        <span>{k}</span>
+                        <strong>{v}</strong>
                       </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', margin: '8px 0' }}>
-                        <span>Tổng giờ công:</span>
-                        <strong>{Number(slip.standard_hours || 0).toLocaleString('vi-VN')} giờ ({slip.total_shifts ?? 0} ca)</strong>
+                    );
+                    const tongCong = slip.tong_cong ?? ((slip.luong_cb || 0) + (slip.phu_cap_ot ?? slip.allowance ?? 0) + (slip.standard_pay || 0) + (slip.ot_extra || 0) + (slip.bonus || 0));
+                    return (
+                      <div key={slip.item_id || slip.run_id || idx} style={{ backgroundColor: '#FFFBF9', padding: '14px', borderRadius: 'var(--radius-sm)', border: '1.5px solid #F59E0B' }}>
+                        <div style={{ fontWeight: 800, fontSize: '14px', color: 'var(--brand)', textAlign: 'center' }}>
+                          💰 PHIẾU LƯƠNG
+                        </div>
+                        <div style={{ textAlign: 'center', fontSize: '12px', fontWeight: 700, marginBottom: '6px' }}>
+                          {slip.period ? `Kỳ ${String(slip.period).slice(5, 7)}/${String(slip.period).slice(0, 4)}` : (slip.title || '')}
+                        </div>
+                        {row(`Công: ${slip.standard_hours || 0} giờ (${slip.total_shifts ?? 0} ca${Number(slip.absent_shifts) > 0 ? `, vắng ${slip.absent_shifts}` : ''}) × ${vnd(slip.rate_snapshot).replace('đ', '')}/h`, vnd(slip.standard_pay))}
+                        {Number(slip.luong_cb) > 0 && row('Lương cơ bản', vnd(slip.luong_cb))}
+                        {row(`Phụ cấp OT${slip.ot_slots ? ` (${slip.ot_slots} suất)` : ''}`, vnd(slip.phu_cap_ot ?? slip.allowance))}
+                        {Number(slip.ot_extra) > 0 && row('OT thêm', vnd(slip.ot_extra))}
+                        {Number(slip.bonus) > 0 && row('Thưởng/Bonus', `+${vnd(slip.bonus)}`)}
+                        {row('TỔNG CỘNG', vnd(tongCong), true)}
+                        {(Number(slip.tru_kpi) > 0 || Number(slip.deduction) > 0) && row(`Trừ KPI + phạt (${vnd(slip.tru_kpi)} + ${vnd(slip.deduction)})`, `−${vnd((slip.tru_kpi || 0) + (slip.deduction || 0))}`)}
+                        {Number(slip.ung_luong) > 0 && row('Ứng lương', `−${vnd(slip.ung_luong)}`)}
+                        {Number(slip.dong_phuc) > 0 && row('Trừ đồng phục', `−${vnd(slip.dong_phuc)}`)}
+                        <div style={{ borderTop: '2px solid #F59E0B', paddingTop: '8px', marginTop: '8px', display: 'flex', justifyContent: 'space-between', fontSize: '15px', fontWeight: 800, color: '#10B981' }}>
+                          <span>THỰC LÃNH:</span>
+                          <span>{vnd(slip.thuc_lanh ?? slip.net_pay)}</span>
+                        </div>
                       </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', margin: '4px 0' }}>
-                        <span>Đơn giá:</span>
-                        <strong>{Number(slip.rate_snapshot || 0).toLocaleString('vi-VN')} đ/h</strong>
-                      </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', margin: '4px 0' }}>
-                        <span>Phụ cấp / Thưởng:</span>
-                        <strong>{Number((slip.allowance || 0) + (slip.bonus || 0)).toLocaleString('vi-VN')} đ</strong>
-                      </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', margin: '4px 0' }}>
-                        <span>Khấu trừ:</span>
-                        <strong>{Number(slip.deduction || 0).toLocaleString('vi-VN')} đ</strong>
-                      </div>
-                      <div style={{ borderTop: '1px solid var(--border)', paddingTop: '8px', marginTop: '8px', display: 'flex', justifyContent: 'space-between', fontSize: '14px', fontWeight: 800, color: '#10B981' }}>
-                        <span>THỰC NHẬN:</span>
-                        <span>{Number(slip.net_pay || 0).toLocaleString('vi-VN')} đ</span>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                   <button className="btn-secondary" onClick={() => { setPayslipUnlocked(false); setPayslips([]); }} style={{ fontSize: '12px' }}>
                     Ẩn Phiếu Lương
                   </button>

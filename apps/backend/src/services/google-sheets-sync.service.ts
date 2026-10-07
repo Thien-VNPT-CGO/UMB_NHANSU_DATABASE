@@ -124,7 +124,15 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   },
   {
     title: 'PHIEU_LUONG',
-    headers: ['ID Phiếu', 'Mã Kỳ Lương', 'ID Nhân Viên', 'Mã NV', 'Họ Và Tên', 'Kỳ Lương', 'Số Ca', 'Ca Vắng', 'Giờ Chuẩn', 'Đơn Giá', 'Lương Chuẩn', 'Phụ Cấp', 'Thưởng', 'Khấu Trừ', 'Thực Nhận', 'Trạng Thái'],
+    headers: ['ID Phiếu', 'Mã Kỳ Lương', 'ID Nhân Viên', 'Mã NV', 'Họ Và Tên', 'Kỳ Lương', 'Số Ca', 'Ca Vắng', 'Giờ Chuẩn', 'Đơn Giá', 'Lương Chuẩn', 'Phụ Cấp', 'Thưởng', 'Khấu Trừ', 'Thực Nhận', 'Trạng Thái', 'Suất OT', 'Phụ Cấp OT', 'Lương CB (tay)', 'OT Thêm (tay)', 'Bonus Thêm (tay)', 'Ứng Lương', 'Trừ KPI (tay)', 'Trừ Đồng Phục', 'Tổng Cộng', 'Tổng Lương', 'Thực Lãnh'],
+  },
+  {
+    title: 'CONG_THUC_LUONG',
+    headers: ['Kỳ Lương', 'Đơn Giá TV', 'Đơn Giá CT', 'Tiền 1 Suất OT', 'Ngưỡng OT 1 Suất (h)', 'Ngưỡng OT 2 Suất (h)', 'Người Cập Nhật', 'Cập Nhật Lúc'],
+  },
+  {
+    title: 'DULIEU_LUONG_KY',
+    headers: ['Kỳ Lương', 'ID Nhân Viên', 'Lương CB (tay)', 'OT Thêm (tay)', 'Bonus Thêm (tay)', 'Ứng Lương', 'Trừ KPI (tay)', 'Trừ Đồng Phục', 'Ghi Chú', 'Người Cập Nhật', 'Cập Nhật Lúc'],
   },
   {
     title: 'LICH_SU_GIAI_DOAN',
@@ -503,6 +511,8 @@ export class GoogleSheetsSyncService {
         'THONGBAO_NV',
         'PHIEU_LUONG',
         'LICH_SU_GIAI_DOAN',
+        'CONG_THUC_LUONG',
+        'DULIEU_LUONG_KY',
       ]);
 
       // Đọc lỗi/quota trả về toàn rỗng trong khi bộ nhớ đang có dữ liệu thật
@@ -1347,6 +1357,18 @@ export class GoogleSheetsSyncService {
             deduction: Number(r[13]) || 0,
             net_pay: Number(r[14]) || 0,
             status: (r[15] as any) || 'DRAFT',
+            // Cột mở rộng theo file Excel (phiếu cũ thiếu -> giữ rỗng).
+            ot_slots: r[16] === '' || r[16] === undefined ? undefined : Number(r[16]) || 0,
+            phu_cap_ot: r[17] === '' || r[17] === undefined ? undefined : Number(r[17]) || 0,
+            luong_cb: r[18] === '' || r[18] === undefined ? undefined : Number(r[18]) || 0,
+            ot_extra: r[19] === '' || r[19] === undefined ? undefined : Number(r[19]) || 0,
+            bonus_extra: r[20] === '' || r[20] === undefined ? undefined : Number(r[20]) || 0,
+            ung_luong: r[21] === '' || r[21] === undefined ? undefined : Number(r[21]) || 0,
+            tru_kpi: r[22] === '' || r[22] === undefined ? undefined : Number(r[22]) || 0,
+            dong_phuc: r[23] === '' || r[23] === undefined ? undefined : Number(r[23]) || 0,
+            tong_cong: r[24] === '' || r[24] === undefined ? undefined : Number(r[24]) || 0,
+            tong_luong: r[25] === '' || r[25] === undefined ? undefined : Number(r[25]) || 0,
+            thuc_lanh: r[26] === '' || r[26] === undefined ? undefined : Number(r[26]) || 0,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
             version: 1,
@@ -1355,6 +1377,53 @@ export class GoogleSheetsSyncService {
         counts.payslips = fallback.payslips.length;
       } else if ((fallback.payslips || []).length === 0) {
         fallback.payslips = [];
+      }
+
+      // 10b2. Đọc CONG_THUC_LUONG + DULIEU_LUONG_KY (công thức & nhập tay Finance).
+      const formulaRows = batch['CONG_THUC_LUONG'] || [];
+      if (formulaRows.length > 0) {
+        for (const r of formulaRows) {
+          if (!r || !r[0]) continue;
+          const fb: any = fallback as any;
+          fb.payrollFormulas = fb.payrollFormulas || [];
+          const ex = fb.payrollFormulas.find((f: any) => f.period === r[0]);
+          const row = {
+            period: r[0],
+            rateTV: Number(r[1]) || 21000,
+            rateCT: Number(r[2]) || 25500,
+            otPerSlot: Number(r[3]) || 30000,
+            otThreshold1: Number(r[4]) || 10,
+            otThreshold2: Number(r[5]) || 15,
+            updatedBy: r[6] || undefined,
+            updatedAt: r[7] || undefined,
+          };
+          if (ex) Object.assign(ex, row);
+          else fb.payrollFormulas.push(row);
+        }
+      }
+      const inputRows = batch['DULIEU_LUONG_KY'] || [];
+      if (inputRows.length > 0) {
+        const fb: any = fallback as any;
+        fb.payrollInputs = fb.payrollInputs || [];
+        for (const r of inputRows) {
+          if (!r || !r[0] || !r[1]) continue;
+          const row = {
+            period: r[0],
+            employee_id: r[1],
+            luong_cb: Number(r[2]) || 0,
+            ot_extra: Number(r[3]) || 0,
+            bonus_extra: Number(r[4]) || 0,
+            ung_luong: Number(r[5]) || 0,
+            tru_kpi: Number(r[6]) || 0,
+            dong_phuc: Number(r[7]) || 0,
+            note: r[8] || undefined,
+            updatedBy: r[9] || undefined,
+            updatedAt: r[10] || undefined,
+          };
+          const ex = fb.payrollInputs.find((x: any) => x.period === row.period && x.employee_id === row.employee_id);
+          if (ex) Object.assign(ex, row);
+          else fb.payrollInputs.push(row);
+        }
       }
 
       // 10c. Đọc LICH_SU_GIAI_DOAN (lịch sử thử việc/chính thức — merge theo ID).
@@ -1926,9 +1995,41 @@ export class GoogleSheetsSyncService {
         s.deduction ?? 0,
         s.net_pay ?? 0,
         s.status || 'DRAFT',
+        s.ot_slots ?? '',
+        s.phu_cap_ot ?? '',
+        s.luong_cb ?? '',
+        s.ot_extra ?? '',
+        s.bonus_extra ?? '',
+        s.ung_luong ?? '',
+        s.tru_kpi ?? '',
+        s.dong_phuc ?? '',
+        s.tong_cong ?? '',
+        s.tong_luong ?? '',
+        s.thuc_lanh ?? '',
       ]));
       await this.overwriteSheetData('PHIEU_LUONG', SHEETS_DEFINITIONS.find(d => d.title === 'PHIEU_LUONG')!.headers, slipPushRows);
       details.payslips = slipPushRows.length;
+
+      // 6c2. Công thức + dữ liệu nhập tay lương theo kỳ (Finance).
+      try {
+        let fb: any = null;
+        if ((repo as any).fallbackAdapter instanceof MockSheetsAdapter) fb = (repo as any).fallbackAdapter;
+        else if (repo instanceof MockSheetsAdapter) fb = repo;
+        const formulas: any[] = ((fb as any)?.payrollFormulas || []).map((f: any) => ([
+          f.period, f.rateTV ?? 21000, f.rateCT ?? 25500, f.otPerSlot ?? 30000,
+          f.otThreshold1 ?? 10, f.otThreshold2 ?? 15, f.updatedBy || '', f.updatedAt || '',
+        ]));
+        await this.overwriteSheetData('CONG_THUC_LUONG', SHEETS_DEFINITIONS.find(d => d.title === 'CONG_THUC_LUONG')!.headers, formulas);
+        details.payrollFormulas = formulas.length;
+        const inputs: any[] = ((fb as any)?.payrollInputs || []).map((x: any) => ([
+          x.period, x.employee_id, x.luong_cb ?? 0, x.ot_extra ?? 0, x.bonus_extra ?? 0,
+          x.ung_luong ?? 0, x.tru_kpi ?? 0, x.dong_phuc ?? 0, x.note || '', x.updatedBy || '', x.updatedAt || '',
+        ]));
+        await this.overwriteSheetData('DULIEU_LUONG_KY', SHEETS_DEFINITIONS.find(d => d.title === 'DULIEU_LUONG_KY')!.headers, inputs);
+        details.payrollInputs = inputs.length;
+      } catch (e: any) {
+        console.warn('[GoogleSheetsSyncService] Đẩy công thức/dữ liệu lương thất bại:', e?.message || e);
+      }
 
       // 6d. Lịch sử giai đoạn NV (thử việc/chính thức — trước đây chỉ nằm bộ nhớ).
       const stageList = await this.collectAllStageHistories(repo);

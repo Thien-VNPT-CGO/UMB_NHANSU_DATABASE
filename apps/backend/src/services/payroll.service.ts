@@ -4,6 +4,7 @@ import {
   PayrollRunStatus,
   PayslipItem,
   SHIFT_TEMPLATES,
+  DEFAULT_PAYROLL_FORMULA,
 } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { singleWriterQueue } from '../repositories/single-writer-queue.js';
@@ -176,6 +177,210 @@ export class PayrollService {
 
   async listRuns() {
     return this.repo.listPayrollRuns();
+  }
+
+  // --- Công thức lương theo file Excel (Finance) ---
+  async getFormula(period: string) {
+    const saved = await this.repo.getPayrollFormula(period).catch(() => null);
+    return { period, ...DEFAULT_PAYROLL_FORMULA, ...(saved || {}) };
+  }
+
+  async saveFormula(period: string, data: any, actorId: string) {
+    const rateTV = Math.max(0, Math.floor(Number(data.rateTV)));
+    const rateCT = Math.max(0, Math.floor(Number(data.rateCT)));
+    const otPerSlot = Math.max(0, Math.floor(Number(data.otPerSlot)));
+    const t1 = Number(data.otThreshold1);
+    const t2 = Number(data.otThreshold2);
+    if (![rateTV, rateCT, otPerSlot].every(Number.isFinite)) throw new Error('INVALID_FORMULA: đơn giá phải là số!');
+    if (!Number.isFinite(t1) || !Number.isFinite(t2) || t1 < 0 || t2 <= t1 || t2 > 24) {
+      throw new Error('INVALID_FORMULA: ngưỡng OT phải 0 ≤ T1 < T2 ≤ 24!');
+    }
+    return this.repo.savePayrollFormula({
+      period, rateTV, rateCT, otPerSlot, otThreshold1: t1, otThreshold2: t2, updatedBy: actorId,
+    });
+  }
+
+  async getInputs(period: string) {
+    return this.repo.getPayrollInputs(period).catch(() => []);
+  }
+
+  async upsertInput(period: string, data: any, actorId: string) {
+    if (!data?.employeeId) throw new Error('MISSING_EMPLOYEE: thiếu nhân viên!');
+    const num = (v: any) => Math.max(0, Math.floor(Number(v) || 0));
+    return this.repo.upsertPayrollInput({
+      period,
+      employee_id: String(data.employeeId),
+      luong_cb: num(data.luong_cb),
+      ot_extra: num(data.ot_extra),
+      bonus_extra: num(data.bonus_extra),
+      ung_luong: num(data.ung_luong),
+      tru_kpi: num(data.tru_kpi),
+      dong_phuc: num(data.dong_phuc),
+      note: String(data.note || '').slice(0, 500) || undefined,
+      updatedBy: actorId,
+    });
+  }
+
+  /**
+   * Tính lương theo công thức Excel cho toàn bộ NV:
+   * TỔNG CỘNG = LCB(tay) + PC_OT + Lương giờ + OT thêm(tay) + Bonus
+   * TỔNG LƯƠNG = TỔNG CỘNG − KPI(tay) − phạt trễ/vắng
+   * THỰC LÃNH = TỔNG LƯƠNG − Ứng − Đồng phục
+   * (PC_OT = suất OT × đơn giá; ngày ≥T1 giờ = 1 suất, ≥T2 giờ = 2 suất)
+   */
+  async calculateFormulaPayroll(period: string, branchScope = '*', creatorId: string) {
+    const runId = `PAY_${period.replace('-', '_')}_${Date.now()}`;
+    return singleWriterQueue.enqueue({
+      entityType: 'KY_LUONG',
+      entityId: runId,
+      actorId: creatorId,
+      execute: async () => {
+        const formula = await this.getFormula(period);
+        const inputsArr = await this.repo.getPayrollInputs(period).catch(() => []);
+        const inputs = new Map((inputsArr || []).map((x: any) => [x.employee_id, x]));
+        const employees = await this.repo.listEmployees({ branch: branchScope });
+        const fromDate = `${period}-01`;
+        const toDate = `${period}-31`;
+
+        const payslipItems: Omit<PayslipItem, 'created_at' | 'updated_at'>[] = [];
+        let totalHours = 0;
+        let totalAmount = 0;
+
+        for (const emp of employees) {
+          const isProb = (emp as any).employment_status === 'PROBATION';
+          const rate = isProb ? formula.rateTV : formula.rateCT;
+          const empShifts = await this.repo.getShiftsForEmployee(emp.employee_id, fromDate, toDate);
+          const publishedShifts = empShifts.filter(s => s.status === 'PUBLISHED');
+          const eventsByDate = new Map<string, any[]>();
+          const eventsOf = async (date: string) => {
+            if (!eventsByDate.has(date)) {
+              eventsByDate.set(date, await this.repo.getAttendanceEvents(emp.employee_id, date).catch(() => []));
+            }
+            return eventsByDate.get(date)!;
+          };
+          let absentShifts = 0;
+          let empHours = 0;
+          let standardPay = 0;
+          let deduction = 0;
+          const dayHours = new Map<string, number>();
+          for (const s of publishedShifts) {
+            const dayEvents = await eventsOf(s.date);
+            const inEvt = dayEvents.find(
+              (e: any) => e.type === 'CHECK_IN' && (!e.assignment_id || e.assignment_id === s.assignment_id)
+            );
+            const hasOut = dayEvents.some(
+              (e: any) => e.type === 'CHECK_OUT' && (!e.assignment_id || e.assignment_id === s.assignment_id)
+            );
+            const template = SHIFT_TEMPLATES[s.shift_code];
+            const hours = template ? template.duration_hours : 5;
+            const shiftPay = hours * rate;
+            if (!inEvt || !hasOut) {
+              absentShifts++;
+              continue;
+            }
+            const lateMin = inEvt.is_late
+              ? Number(inEvt.minutes_deviation) || 0
+              : (() => {
+                  const st = new Date(s.start_at).getTime();
+                  const ct = new Date(inEvt.client_time).getTime();
+                  if (!Number.isFinite(st) || !Number.isFinite(ct)) return 0;
+                  return Math.max(0, Math.round((ct - st) / 60000));
+                })();
+            const storedTier = (inEvt as any).fine_tier;
+            const storedAmt = Number((inEvt as any).fine_amount) || 0;
+            const useStored = !!storedTier && storedTier !== 'NONE';
+            const fine = lateFineFor(lateMin, shiftPay);
+            const unpaid = useStored ? storedTier === 'FULL_SHIFT' : fine.unpaid;
+            const deductAmt = useStored ? (storedTier === 'FULL_SHIFT' ? 0 : storedAmt) : fine.deduction;
+            if (unpaid) {
+              absentShifts++;
+              continue;
+            }
+            empHours += hours;
+            standardPay += shiftPay;
+            dayHours.set(s.date, (dayHours.get(s.date) || 0) + hours);
+            if (deductAmt > 0) deduction += deductAmt;
+          }
+          // Suất OT theo ngày (Excel COUNTIFS): >=T2 giờ = 2 suất, >=T1 giờ = 1 suất.
+          let otSlots = 0;
+          for (const h of dayHours.values()) {
+            if (h >= formula.otThreshold2) otSlots += 2;
+            else if (h >= formula.otThreshold1) otSlots += 1;
+          }
+          const phuCapOT = otSlots * formula.otPerSlot;
+          // Bonus hệ thống: nhường ca HR điều phối đã duyệt.
+          let bonusSys = 0;
+          try {
+            const swaps = await this.repo.listSwapRequests(emp.employee_id);
+            bonusSys = swaps
+              .filter(
+                s =>
+                  (s as any).swap_kind === 'HR_DISPATCH' &&
+                  s.status === 'APPROVED' &&
+                  s.target_employee_id === emp.employee_id &&
+                  (s.approved_at || '').startsWith(period)
+              )
+              .reduce((sum, s) => sum + (Number((s as any).bonus_amount) || 30000), 0);
+          } catch { /* giữ 0 */ }
+          const inp: any = inputs.get(emp.employee_id) || {};
+          const luongCB = Number(inp.luong_cb) || 0;
+          const otExtra = Number(inp.ot_extra) || 0;
+          const bonusExtra = Number(inp.bonus_extra) || 0;
+          const ung = Number(inp.ung_luong) || 0;
+          const kpi = Number(inp.tru_kpi) || 0;
+          const dp = Number(inp.dong_phuc) || 0;
+          const bonusTotal = bonusSys + bonusExtra;
+          const tongCong = luongCB + phuCapOT + standardPay + otExtra + bonusTotal;
+          const tongLuong = tongCong - kpi - deduction;
+          const thucLanh = tongLuong - ung - dp;
+
+          totalHours += empHours;
+          totalAmount += thucLanh;
+
+          payslipItems.push({
+            item_id: `SLIP_${runId}_${emp.employee_id}`,
+            run_id: runId,
+            employee_id: emp.employee_id,
+            employee_code: emp.employee_code,
+            full_name: emp.full_name,
+            period,
+            total_shifts: publishedShifts.length,
+            absent_shifts: absentShifts,
+            standard_hours: empHours,
+            rate_snapshot: rate,
+            standard_pay: standardPay,
+            allowance: phuCapOT,
+            bonus: bonusTotal,
+            deduction,
+            net_pay: thucLanh,
+            ot_slots: otSlots,
+            phu_cap_ot: phuCapOT,
+            luong_cb: luongCB,
+            ot_extra: otExtra,
+            bonus_extra: bonusExtra,
+            ung_luong: ung,
+            tru_kpi: kpi,
+            dong_phuc: dp,
+            tong_cong: tongCong,
+            tong_luong: tongLuong,
+            thuc_lanh: thucLanh,
+            status: 'DRAFT',
+          });
+        }
+
+        const runRecord: Omit<PayrollRun, 'created_at' | 'updated_at' | 'version'> = {
+          run_id: runId,
+          period,
+          branch_scope: branchScope,
+          status: 'DRAFT',
+          total_employees: employees.length,
+          total_hours: totalHours,
+          total_amount: totalAmount,
+          created_by: creatorId,
+        };
+        return this.repo.createPayrollRun(runRecord, payslipItems);
+      },
+    });
   }
 
   async getRunDetails(runId: string) {
