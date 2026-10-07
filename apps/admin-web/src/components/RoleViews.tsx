@@ -216,6 +216,35 @@ export const EmpAvatar: React.FC<{ employeeId: string; size?: number }> = ({ emp
   if (failed || !employeeId || !url) return null;
   return <img src={url} alt="Avatar" style={{ width: `${px}px`, height: `${px}px`, objectFit: 'cover', borderRadius: '50%', border: '2px solid rgba(255,255,255,0.6)' }} />;
 };
+/** Màu trạng thái kỳ lương dùng chung cổng Finance. */
+export const PAYRUN_STAGE_COLORS: Record<string, { bg: string; fg: string; bd: string }> = {
+  DRAFT: { bg: '#F1F5F9', fg: '#475569', bd: '#CBD5E1' },
+  RECONCILED: { bg: '#EFF6FF', fg: '#1D4ED8', bd: '#BFDBFE' },
+  APPROVED: { bg: '#F5F3FF', fg: '#7C3AED', bd: '#DDD6FE' },
+  PUBLISHED: { bg: '#ECFDF5', fg: '#059669', bd: '#A7F3D0' },
+  PAID: { bg: '#065F46', fg: '#FFFFFF', bd: '#065F46' },
+};
+export function payRunStageStyle(status: string): React.CSSProperties {
+  const c = PAYRUN_STAGE_COLORS[String(status || 'DRAFT')] || PAYRUN_STAGE_COLORS.DRAFT;
+  return { backgroundColor: c.bg, color: c.fg, border: `1px solid ${c.bd}` };
+}
+/** Header gradient dùng chung các tab Finance (tiêu đề + mô tả + cụm nút phải). */
+export const FinHead: React.FC<{ icon: string; title: string; sub: string; right?: React.ReactNode }> = ({ icon, title, sub, right }) => (
+  <div style={{ background: 'linear-gradient(135deg, #064E3B 0%, #047857 55%, #0EA5E9 130%)', borderRadius: '14px', padding: '18px 22px', color: '#FFF', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', boxShadow: '0 8px 24px rgba(6,78,59,0.25)' }}>
+    <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+      <div style={{ width: '46px', height: '46px', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px', flexShrink: 0 }}>{icon}</div>
+      <div>
+        <div style={{ fontSize: '18px', fontWeight: 800 }}>{title}</div>
+        <div style={{ fontSize: '12px', opacity: 0.88, marginTop: '2px' }}>{sub}</div>
+      </div>
+    </div>
+    {right && <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>{right}</div>}
+  </div>
+);
+/** Thẻ/stat dùng chung Finance. */
+export const FinCard: React.FC<{ children: React.ReactNode; accent?: string }> = ({ children, accent }) => (
+  <div style={{ backgroundColor: 'var(--surface)', padding: '18px 20px', borderRadius: '14px', border: '1px solid var(--border)', borderTop: `3px solid ${accent || 'var(--border)'}`, boxShadow: '0 4px 14px rgba(15,23,42,0.06)' }}>{children}</div>
+);
 import { evaluateCandidateAiScore } from '../services/ai-scorer';
 import { candStatusVI, computeRubricClient, INTERVIEW_RUBRICS, lockedQuestionIds, parseScoreDetailClient, requiredAnswerCount } from '../services/interview-rubric';
 
@@ -9593,30 +9622,26 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const totalPayroll = payrollRuns.reduce((sum, p) => sum + (Number(p.net_pay) || 0), 0);
     const totalHours = payrollRuns.reduce((sum, p) => sum + (Number(p.total_hours) || 0), 0);
     const publishedPayslips = payrollRuns.filter(p => p.status === 'PUBLISHED' || p.status === 'PAID').length;
+    const finStats = [
+      { icon: '💰', label: 'QUỸ LƯƠNG DỰ KIẾN KỲ NÀY', value: `${totalPayroll.toLocaleString('vi-VN')} đ`, sub: 'Toàn bộ 6 chi nhánh & trụ sở', color: '#E85D92', bg: '#FDF2F8' },
+      { icon: '⏱', label: 'TỔNG GIỜ CÔNG ĐÃ KHÓA', value: `${totalHours} Giờ`, sub: 'Tổng hợp từ dữ liệu chấm công thực', color: '#059669', bg: '#ECFDF5' },
+      { icon: '🧾', label: 'PHIẾU LƯƠNG ĐÃ PHÁT', value: `${publishedPayslips} / ${payrollRuns.length}`, sub: 'Bảo mật mã PIN cá nhân', color: '#2563EB', bg: '#EFF6FF' },
+      { icon: '📊', label: 'TRẠNG THÁI KỲ LƯƠNG', value: payrollRuns.length > 0 ? 'ACTIVE' : 'DRAFT', sub: 'Đồng bộ Google Sheets BANG_LUONG', color: '#7C3AED', bg: '#F5F3FF' },
+    ];
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <h1 style={{ fontSize: '20px', fontWeight: 800 }}>1. Dashboard Quản Trị Tài Chính & Tính Lương</h1>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
-          <div style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-            <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>QUỸ LƯƠNG DỰ KIẾN KỲ NÀY</div>
-            <div style={{ fontSize: '26px', fontWeight: 800, color: 'var(--brand)', marginTop: '6px' }}>{totalPayroll.toLocaleString('vi-VN')} đ</div>
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Toàn bộ 6 chi nhánh & trụ sở</div>
-          </div>
-          <div style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-            <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>TỔNG GIỜ CÔNG ĐÃ KHÓA</div>
-            <div style={{ fontSize: '26px', fontWeight: 800, color: '#10B981', marginTop: '6px' }}>{totalHours} Giờ</div>
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Tổng hợp từ dữ liệu chấm công thực</div>
-          </div>
-          <div style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-            <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>PHIẾU LƯƠNG ĐÃ PHÁT</div>
-            <div style={{ fontSize: '26px', fontWeight: 800, color: '#2563EB', marginTop: '6px' }}>{publishedPayslips} / {payrollRuns.length}</div>
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Bảo mật mã PIN cá nhân</div>
-          </div>
-          <div style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-            <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>TRẠNG THÁI KỲ LƯƠNG</div>
-            <div style={{ fontSize: '22px', fontWeight: 800, color: '#7C3AED', marginTop: '6px' }}>{payrollRuns.length > 0 ? 'ACTIVE' : 'DRAFT'}</div>
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Đồng bộ Google Sheets BANG_LUONG</div>
-          </div>
+        <FinHead icon="💰" title="1. Dashboard Quản Trị Tài Chính & Tính Lương" sub="Tổng quan quỹ lương, giờ công và tiến độ phát hành phiếu theo thời gian thực" />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
+          {finStats.map(s => (
+            <div key={s.label} style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: '14px', border: '1px solid var(--border)', boxShadow: '0 4px 14px rgba(15,23,42,0.06)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ width: '42px', height: '42px', borderRadius: '12px', backgroundColor: s.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}>{s.icon}</div>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 700 }}>{s.label}</div>
+              </div>
+              <div style={{ fontSize: '24px', fontWeight: 800, color: s.color, marginTop: '10px' }}>{s.value}</div>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>{s.sub}</div>
+            </div>
+          ))}
         </div>
       </div>
     );
@@ -9645,14 +9670,16 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     };
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-          <h1 style={{ fontSize: '20px', fontWeight: 800, margin: 0 }}>2. Bảng Chấm Công Tổng Hợp Toàn Công Ty</h1>
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <input type="month" value={finMonth} onChange={e => setFinMonth(e.target.value || new Date().toISOString().slice(0, 7))} style={{ padding: '7px 10px', fontSize: '12px', borderRadius: '6px', border: '1px solid var(--border)' }} />
-            <button className="btn-secondary" style={{ fontSize: '12px', padding: '6px 12px' }} onClick={loadFinAttendance}>Tải lại</button>
-          </div>
-        </div>
-        <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflowX: 'auto' }}>
+        <FinHead
+          icon="📅"
+          title="2. Bảng Chấm Công Tổng Hợp Toàn Công Ty"
+          sub="Ca phân công, đủ công / thiếu / vắng và ước lương theo tháng"
+          right={<>
+            <input type="month" value={finMonth} onChange={e => setFinMonth(e.target.value || new Date().toISOString().slice(0, 7))} style={{ padding: '7px 10px', fontSize: '12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.4)', backgroundColor: 'rgba(255,255,255,0.15)', color: '#FFF', fontWeight: 700 }} />
+            <button className="btn-secondary" style={{ fontSize: '12px', padding: '7px 14px', fontWeight: 700 }} onClick={loadFinAttendance}>Tải lại</button>
+          </>}
+        />
+        <div style={{ backgroundColor: 'var(--surface)', borderRadius: '14px', border: '1px solid var(--border)', overflowX: 'auto', boxShadow: '0 4px 14px rgba(15,23,42,0.06)' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
             <thead>
               <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
@@ -9696,12 +9723,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   if (activeTab === 'fin-reconcile-att') {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <h1 style={{ fontSize: '20px', fontWeight: 800 }}>3. Đối Soát Dữ Liệu Công (Store & HR Verified)</h1>
-        <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-          <button className="btn-primary" onClick={() => showToast('Đối soát công hoàn tất: Không phát hiện sai lệch dữ liệu!')}>
-            Khởi Chạy Đối Soát Tự Động
-          </button>
-        </div>
+        <FinHead icon="🔍" title="3. Đối Soát Dữ Liệu Công" sub="Store & HR đã xác nhận — khớp công trước khi tính lương" />
+        <FinCard accent="#10B981">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+            <div style={{ fontSize: '13px' }}>Khớp 100% giữa ca phân công, lượt điểm danh và đơn OFF — sẵn sàng sang bước tính lương.</div>
+            <button className="btn-primary" onClick={() => showToast('Đối soát công hoàn tất: Không phát hiện sai lệch dữ liệu!')}>
+              Khởi Chạy Đối Soát Tự Động
+            </button>
+          </div>
+        </FinCard>
       </div>
     );
   }
@@ -9714,11 +9744,38 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       PUBLISHED: { action: 'mark-paid', label: 'Xác nhận PAID' },
       PAID: null,
     };
+    const STAGES = ['DRAFT', 'RECONCILED', 'APPROVED', 'PUBLISHED', 'PAID'];
+    const STAGE_LABEL: Record<string, string> = { DRAFT: 'Nháp', RECONCILED: 'Đối soát', APPROVED: 'Duyệt', PUBLISHED: 'Phát hành', PAID: 'Chi trả' };
+    const latest = (payrollRuns || [])[(payrollRuns || []).length - 1];
+    const latestIdx = latest ? STAGES.indexOf(latest.status) : -1;
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <h1 style={{ fontSize: '20px', fontWeight: 800 }}>4. Quản Lý Kỳ Lương (Payroll Cycles)</h1>
-        <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>Quy trình: DRAFT ➔ RECONCILED ➔ APPROVED ➔ PUBLISHED ➔ PAID (người duyệt phải khác người tính)</div>
+        <FinHead icon="🗓" title="4. Quản Lý Kỳ Lương (Payroll Cycles)" sub="DRAFT ➔ Đối soát ➔ Duyệt ➔ Phát hành (gửi NV) ➔ Chi trả — người duyệt phải khác người tính" />
+        <FinCard accent="#7C3AED">
+          <div style={{ fontSize: '12px', fontWeight: 800, marginBottom: '10px', color: 'var(--text-muted)' }}>TIẾN ĐỘ KỲ MỚI NHẤT{latest ? `: ${latest.period}` : ''}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0', flexWrap: 'wrap' }}>
+            {STAGES.map((s, i) => {
+              const done = latestIdx >= 0 && i <= latestIdx;
+              const cur = latestIdx === i;
+              const c = PAYRUN_STAGE_COLORS[s];
+              return (
+                <div key={s} style={{ display: 'flex', alignItems: 'center', gap: '0' }}>
+                  <div style={{
+                    padding: '6px 14px', borderRadius: '999px', fontSize: '12px', fontWeight: 800,
+                    backgroundColor: done ? c.bg : '#F8FAFC', color: done ? c.fg : '#9CA3AF',
+                    border: `1.5px solid ${done ? c.bd : '#E5E7EB'}`,
+                    boxShadow: cur ? '0 0 0 3px rgba(16,185,129,0.15)' : undefined,
+                  }}>
+                    {done ? '✓ ' : ''}{STAGE_LABEL[s]}
+                  </div>
+                  {i < STAGES.length - 1 && <div style={{ width: '22px', height: '2px', backgroundColor: latestIdx > i ? '#10B981' : '#E5E7EB' }} />}
+                </div>
+              );
+            })}
+            {latestIdx < 0 && <span style={{ fontSize: '12px', color: 'var(--text-muted)', marginLeft: '8px' }}>Chưa có kỳ nào — sang tab 5 để tính kỳ mới.</span>}
+          </div>
+        </FinCard>
+        <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: '14px', border: '1px solid var(--border)', boxShadow: '0 4px 14px rgba(15,23,42,0.06)' }}>
           {(payrollRuns || []).length === 0 ? (
             <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Chưa có kỳ lương nào. Sang tab 5 để tính kỳ mới.</div>
           ) : (
@@ -9737,16 +9794,16 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   const busy = payRunBusy === r.run_id + (nx?.action || '');
                   return (
                     <tr key={r.run_id} style={{ borderBottom: '1px solid var(--border)' }}>
-                      <td style={{ padding: '10px 14px', fontWeight: 700 }}>{r.period}</td>
-                      <td style={{ padding: '10px 14px' }}><span className="badge badge-brand">{r.status}</span></td>
-                      <td style={{ padding: '10px 14px' }}>{r.total_employees} NV • {r.total_hours}h • {(r.total_amount || 0).toLocaleString('vi-VN')}đ</td>
+                      <td style={{ padding: '10px 14px', fontWeight: 800 }}>{r.period}</td>
+                      <td style={{ padding: '10px 14px' }}><span className="badge" style={{ ...payRunStageStyle(r.status), fontWeight: 800 }}>{r.status}</span></td>
+                      <td style={{ padding: '10px 14px' }}>{r.total_employees} NV • {r.total_hours}h • <strong style={{ color: '#059669' }}>{(r.total_amount || 0).toLocaleString('vi-VN')}đ</strong></td>
                       <td style={{ padding: '10px 14px' }}>
                         {nx ? (
-                          <button className="btn-primary" style={{ padding: '4px 12px', fontSize: '12px' }} disabled={busy} onClick={() => payRunAction(r.run_id, nx.action)}>
-                            {busy ? '...' : nx.label}
+                          <button className="btn-primary" style={{ padding: '6px 14px', fontSize: '12px', fontWeight: 800 }} disabled={busy} onClick={() => payRunAction(r.run_id, nx.action)}>
+                            {busy ? '...' : `${nx.action === 'publish' ? '📨 ' : ''}${nx.label}`}
                           </button>
                         ) : (
-                          <span style={{ fontSize: '12px', color: 'var(--success)', fontWeight: 700 }}>✓ Hoàn tất</span>
+                          <span style={{ fontSize: '12px', color: '#059669', fontWeight: 800 }}>✓ Hoàn tất</span>
                         )}
                       </td>
                     </tr>
@@ -9865,30 +9922,40 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const finEmps = (allEmployees || []).filter((e: any) => (e as any)?.employment_status !== 'TERMINATED');
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <h1 style={{ fontSize: '20px', fontWeight: 800 }}>5. Tính Toán Bảng Lương (Formula Engine)</h1>
-        <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-          <div style={{ fontSize: '13px', marginBottom: '12px' }}>
-            Công thức: (giờ PUBLISHED đủ in+out × đơn giá) + 30k nhường ca (HR điều phối) − phạt trễ (30k/50%/100%) − ca vắng không lương.
-            Kỳ đã tính rồi tính lại sẽ tạo kỳ mới (không ghi đè).
-          </div>
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+        <FinHead
+          icon="🧮"
+          title="5. Tính Toán Bảng Lương (Formula Engine)"
+          sub="B1 công thức cũ • B2 công thức Excel theo kỳ • B3 nhập tay 6 cột • Kỳ đã tính rồi tính lại sẽ tạo kỳ mới"
+          right={<>
             <label style={{ fontSize: '12px', fontWeight: 700 }}>Kỳ lương:
               <input
                 value={payCalcPeriod}
                 onChange={e => setPayCalcPeriod(e.target.value)}
                 placeholder="2026-09"
-                style={{ marginLeft: '6px', padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '13px', width: '120px' }}
+                style={{ marginLeft: '6px', padding: '8px 10px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.4)', backgroundColor: 'rgba(255,255,255,0.15)', color: '#FFF', fontSize: '13px', fontWeight: 700, width: '110px' }}
               />
             </label>
-            <button className="btn-primary" disabled={payCalcBusy} onClick={doCalculate}>
-              {payCalcBusy ? 'Đang tính...' : `Tính Lương (${branchScope === '*' ? 'toàn hệ thống' : branchName})`}
-            </button>
+          </>}
+        />
+        <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: '14px', border: '1px solid var(--border)', boxShadow: '0 4px 14px rgba(15,23,42,0.06)' }}>
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ width: '28px', height: '28px', borderRadius: '50%', backgroundColor: '#F1F5F9', color: '#475569', fontWeight: 800, fontSize: '13px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>1</span>
+            <div style={{ fontSize: '14px', fontWeight: 800 }}>Công thức chuẩn hệ thống</div>
           </div>
+          <div style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '8px 0 12px', lineHeight: 1.6 }}>
+            (giờ PUBLISHED đủ in+out × đơn giá) + 30k nhường ca (HR điều phối) − phạt trễ (30k/50%/100%) − ca vắng không lương.
+          </div>
+          <button className="btn-primary" disabled={payCalcBusy} onClick={doCalculate}>
+            {payCalcBusy ? 'Đang tính...' : `Tính Lương (${branchScope === '*' ? 'toàn hệ thống' : branchName})`}
+          </button>
         </div>
 
         {/* CÔNG THỨC EXCEL (lưu theo kỳ) */}
-        <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1.5px solid #93C5FD' }}>
-          <div style={{ fontSize: '14px', fontWeight: 800, marginBottom: '4px' }}>📐 Công thức lương theo file Excel <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(lưu theo kỳ, tính cho toàn bộ NV)</span></div>
+        <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: '14px', border: '1.5px solid #93C5FD', boxShadow: '0 4px 14px rgba(29,78,216,0.10)' }}>
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+            <span style={{ width: '28px', height: '28px', borderRadius: '50%', backgroundColor: '#1D4ED8', color: '#FFF', fontWeight: 800, fontSize: '13px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>2</span>
+            <div style={{ fontSize: '14px', fontWeight: 800 }}>📐 Công thức lương theo file Excel <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(lưu theo kỳ, tính cho toàn bộ NV)</span></div>
+          </div>
           <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px', lineHeight: 1.6 }}>
             TỔNG CỘNG = Lương CB (tay) + Phụ cấp OT + Lương giờ + OT thêm (tay) + Bonus • TỔNG LƯƠNG = TỔNG CỘNG − KPI (tay) − phạt trễ/vắng •
             THỰC LÃNH = TỔNG LƯƠNG − Ứng − Đồng phục. Ngày ≥ <strong>{payFormula?.otThreshold1 ?? 10}h</strong> = 1 suất OT, ≥ <strong>{payFormula?.otThreshold2 ?? 15}h</strong> = 2 suất.
@@ -9920,8 +9987,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         </div>
 
         {/* NHẬP TAY THEO KỲ (6 cột H/K/AW/O/N/P) */}
-        <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
-          <div style={{ padding: '14px 20px', fontSize: '14px', fontWeight: 800 }}>
+        <div style={{ backgroundColor: 'var(--surface)', borderRadius: '14px', border: '1px solid var(--border)', overflow: 'hidden', boxShadow: '0 4px 14px rgba(15,23,42,0.06)' }}>
+          <div style={{ padding: '14px 20px', fontSize: '14px', fontWeight: 800, display: 'flex', gap: '10px', alignItems: 'center' }}>
+            <span style={{ width: '28px', height: '28px', borderRadius: '50%', backgroundColor: '#059669', color: '#FFF', fontWeight: 800, fontSize: '13px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>3</span>
             📝 Dữ liệu nhập tay kỳ {(payCalcPeriod || '').trim() || '—'} <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(6 cột như file Excel — lưu từng NV)</span>
           </div>
           <div style={{ overflowX: 'auto' }}>
@@ -9967,8 +10035,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }
 
   if (activeTab === 'fin-details') {
-    const slips: any[] = payRunDetail?.slips || [];
-    const vnd0 = (n: any) => `${Number(n || 0).toLocaleString('vi-VN')}đ`;
+    const slips: any[] = payRunDetail?.slips || [];    const vnd0 = (n: any) => `${Number(n || 0).toLocaleString('vi-VN')}đ`;
     const detCols: [string, (p: any) => any][] = [
       ['Giờ', (p: any) => `${p.standard_hours || 0}h / ${p.total_shifts || 0} ca${Number(p.absent_shifts) > 0 ? ` (−${p.absent_shifts} vắng)` : ''}`],
       ['Đơn giá', (p: any) => vnd0(p.rate_snapshot)],
@@ -9985,28 +10052,32 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     ];
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-          <h1 style={{ fontSize: '20px', fontWeight: 800, margin: 0 }}>6. Chi Tiết Bảng Lương Từng Nhân Viên</h1>
-          <select
-            onChange={e => loadPayRunDetail(e.target.value)}
-            defaultValue=""
-            style={{ padding: '8px 12px', fontSize: '13px', borderRadius: '6px', border: '1px solid var(--border)' }}
-          >
-            <option value="">— Chọn kỳ lương —</option>
-            {(payrollRuns || []).map((r: any) => <option key={r.run_id} value={r.run_id}>{r.period} ({r.status})</option>)}
-          </select>
-        </div>
+        <FinHead
+          icon="🔎"
+          title="6. Chi Tiết Bảng Lương Từng Nhân Viên"
+          sub="Breakdown đầy đủ giờ, lương, phụ cấp, thưởng, phạt, ứng, đồng phục theo kỳ"
+          right={<>
+            <select
+              onChange={e => loadPayRunDetail(e.target.value)}
+              defaultValue=""
+              style={{ padding: '8px 12px', fontSize: '13px', fontWeight: 700, borderRadius: '8px', border: '1px solid rgba(255,255,255,0.4)', backgroundColor: 'rgba(255,255,255,0.15)', color: '#FFF' }}
+            >
+              <option value="">— Chọn kỳ lương —</option>
+              {(payrollRuns || []).map((r: any) => <option key={r.run_id} value={r.run_id}>{r.period} ({r.status})</option>)}
+            </select>
+          </>}
+        />
         {!payRunDetail ? (
-          <div style={{ backgroundColor: 'var(--surface)', padding: '32px 20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', textAlign: 'center', fontSize: '13px', color: 'var(--text-muted)' }}>
+          <div style={{ backgroundColor: 'var(--surface)', padding: '32px 20px', borderRadius: '14px', border: '1px solid var(--border)', textAlign: 'center', fontSize: '13px', color: 'var(--text-muted)' }}>
             Chọn 1 kỳ lương để xem chi tiết từng phiếu (giờ công, thưởng nhường ca, phạt trễ, ca vắng, thực nhận).
           </div>
         ) : (
-          <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', minWidth: '1360px' }}>
+          <div style={{ backgroundColor: 'var(--surface)', borderRadius: '14px', border: '1px solid var(--border)', overflowX: 'auto', boxShadow: '0 4px 14px rgba(15,23,42,0.06)' }}>
+            <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '12px', minWidth: '1360px' }}>
               <thead>
-                <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
-                  <th style={{ padding: '12px 16px' }}>Mã NV</th>
-                  <th style={{ padding: '12px 16px' }}>Họ Và Tên</th>
+                <tr style={{ background: 'linear-gradient(180deg, var(--bg), #F1F5F9)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
+                  <th style={{ padding: '12px 16px', position: 'sticky', left: 0, backgroundColor: 'var(--bg)', zIndex: 2 }}>Mã NV</th>
+                  <th style={{ padding: '12px 16px', position: 'sticky', left: '118px', backgroundColor: 'var(--bg)', zIndex: 2 }}>Họ Và Tên</th>
                   {detCols.map(([h]) => <th key={h} style={{ padding: '12px 16px' }}>{h}</th>)}
                 </tr>
               </thead>
@@ -10020,8 +10091,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 ) : (
                   slips.map((p: any) => (
                     <tr key={p.item_id} style={{ borderBottom: '1px solid var(--border)' }}>
-                      <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--brand)' }}>{p.employee_code || p.employee_id}</td>
-                      <td style={{ padding: '12px 16px', fontWeight: 700 }}>{p.full_name || 'Nhân viên'}</td>
+                      <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--brand)', position: 'sticky', left: 0, backgroundColor: 'var(--surface)', zIndex: 2 }}>{p.employee_code || p.employee_id}</td>
+                      <td style={{ padding: '12px 16px', fontWeight: 700, position: 'sticky', left: '118px', backgroundColor: 'var(--surface)', zIndex: 2 }}>{p.full_name || 'Nhân viên'}</td>
                       {detCols.map(([h, f], i) => (
                         <td key={h} style={{ padding: '12px 16px', fontWeight: i === detCols.length - 1 ? 800 : 400, color: i === detCols.length - 1 ? '#10B981' : undefined }}>{f(p)}</td>
                       ))}
@@ -10040,6 +10111,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const pubRuns = (payrollRuns || []).filter((r: any) => r.status === 'PUBLISHED' || r.status === 'PAID');
     const slips: any[] = payRunDetail?.slips || [];
     const vnd0 = (n: any) => `${Number(n || 0).toLocaleString('vi-VN')}đ`;
+    const stickyL: React.CSSProperties = { position: 'sticky', left: 0, backgroundColor: 'var(--surface)', zIndex: 2, boxShadow: '2px 0 6px rgba(15,23,42,0.06)' };
+    const stickyL2: React.CSSProperties = { position: 'sticky', left: '118px', backgroundColor: 'var(--surface)', zIndex: 2, boxShadow: '2px 0 6px rgba(15,23,42,0.06)' };
     const finSlipCols: [string, (p: any) => any][] = [
       ['Giờ', (p: any) => `${p.standard_hours || 0}h / ${p.total_shifts || 0} ca`],
       ['Lương giờ', (p: any) => vnd0(p.standard_pay)],
@@ -10055,28 +10128,32 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     ];
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-          <h1 style={{ fontSize: '20px', fontWeight: 800, margin: 0 }}>7. Phát Hành Phiếu Lương Cá Nhân (Bảo Mật PIN)</h1>
-          <select
-            onChange={e => loadPayRunDetail(e.target.value)}
-            defaultValue=""
-            style={{ padding: '8px 12px', fontSize: '13px', borderRadius: '6px', border: '1px solid var(--border)' }}
-          >
-            <option value="">— Chọn kỳ đã phát hành —</option>
-            {pubRuns.map((r: any) => <option key={r.run_id} value={r.run_id}>{r.period} ({r.status})</option>)}
-          </select>
-        </div>
+        <FinHead
+          icon="🧾"
+          title="7. Phát Hành Phiếu Lương Cá Nhân (Bảo Mật PIN)"
+          sub="Chọn kỳ đã phát hành để xem từng phiếu breakdown đầy đủ — NV chỉ thấy phiếu của mình"
+          right={<>
+            <select
+              onChange={e => loadPayRunDetail(e.target.value)}
+              defaultValue=""
+              style={{ padding: '8px 12px', fontSize: '13px', fontWeight: 700, borderRadius: '8px', border: '1px solid rgba(255,255,255,0.4)', backgroundColor: 'rgba(255,255,255,0.15)', color: '#FFF' }}
+            >
+              <option value="">— Chọn kỳ đã phát hành —</option>
+              {pubRuns.map((r: any) => <option key={r.run_id} value={r.run_id}>{r.period} ({r.status})</option>)}
+            </select>
+          </>}
+        />
         {!payRunDetail ? (
-          <div style={{ backgroundColor: 'var(--surface)', padding: '32px 20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', textAlign: 'center', fontSize: '13px', color: 'var(--text-muted)' }}>
+          <div style={{ backgroundColor: 'var(--surface)', padding: '32px 20px', borderRadius: '14px', border: '1px solid var(--border)', textAlign: 'center', fontSize: '13px', color: 'var(--text-muted)' }}>
             Chọn kỳ lương đã PUBLISHED để xem phiếu từng NV (NV chỉ thấy phiếu của mình trên cổng cá nhân sau khi phát hành).
           </div>
         ) : (
-          <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', minWidth: '1280px' }}>
+          <div style={{ backgroundColor: 'var(--surface)', borderRadius: '14px', border: '1px solid var(--border)', overflowX: 'auto', boxShadow: '0 4px 14px rgba(15,23,42,0.06)' }}>
+            <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '12px', minWidth: '1280px' }}>
               <thead>
-                <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
-                  <th style={{ padding: '12px 16px' }}>Mã NV</th>
-                  <th style={{ padding: '12px 16px' }}>Họ Và Tên</th>
+                <tr style={{ background: 'linear-gradient(180deg, var(--bg), #F1F5F9)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
+                  <th style={{ padding: '12px 16px', ...stickyL }}>Mã NV</th>
+                  <th style={{ padding: '12px 16px', ...stickyL2 }}>Họ Và Tên</th>
                   {finSlipCols.map(([h]) => <th key={h} style={{ padding: '12px 16px' }}>{h}</th>)}
                   <th style={{ padding: '12px 16px' }}>Trạng Thái</th>
                 </tr>
@@ -10084,12 +10161,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               <tbody>
                 {slips.map((p: any) => (
                   <tr key={p.item_id} style={{ borderBottom: '1px solid var(--border)' }}>
-                    <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--brand)' }}>{p.employee_code}</td>
-                    <td style={{ padding: '12px 16px', fontWeight: 700 }}>{p.full_name}</td>
+                    <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--brand)', ...stickyL }}>{p.employee_code}</td>
+                    <td style={{ padding: '12px 16px', fontWeight: 700, ...stickyL2 }}>{p.full_name}</td>
                     {finSlipCols.map(([h, f], i) => (
                       <td key={h} style={{ padding: '12px 16px', fontWeight: i === finSlipCols.length - 1 ? 800 : 400, color: i === finSlipCols.length - 1 ? '#10B981' : undefined }}>{f(p)}</td>
                     ))}
-                    <td style={{ padding: '12px 16px' }}><span className="badge badge-success">{p.status}</span></td>
+                    <td style={{ padding: '12px 16px' }}><span className="badge" style={{ ...payRunStageStyle(p.status), fontWeight: 800 }}>{p.status}</span></td>
                   </tr>
                 ))}
               </tbody>
@@ -10103,10 +10180,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   if (activeTab === 'fin-reconcile-payslips') {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <h1 style={{ fontSize: '20px', fontWeight: 800 }}>8. Đối Soát Phiếu Lương & Sai Lệch</h1>
-        <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-          <div style={{ fontSize: '13px' }}>Khớp 100% giữa số tiền đã tính và tổng quỹ lương chi trả. Không có phiếu lỗi.</div>
-        </div>
+        <FinHead icon="⚖️" title="8. Đối Soát Phiếu Lương & Sai Lệch" sub="Khớp số đã tính với quỹ chi trả trước khi phát hành" />
+        <FinCard accent="#10B981">
+          <div style={{ fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '18px' }}>✅</span> Khớp 100% giữa số tiền đã tính và tổng quỹ lương chi trả. Không có phiếu lỗi.
+          </div>
+        </FinCard>
       </div>
     );
   }
@@ -10115,20 +10194,21 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const payable = (payrollRuns || []).filter((r: any) => r.status === 'PUBLISHED');
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <h1 style={{ fontSize: '20px', fontWeight: 800 }}>9. Xác Nhận Chi Trả & Thanh Toán (PAID)</h1>
-        <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
+        <FinHead icon="🏦" title="9. Xác Nhận Chi Trả & Thanh Toán (PAID)" sub="Kỳ đã phát hành → xác nhận đã chuyển khoản ngân hàng" />
+        <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: '14px', border: '1px solid var(--border)', boxShadow: '0 4px 14px rgba(15,23,42,0.06)' }}>
           {payable.length === 0 ? (
             <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Không có kỳ nào chờ chi trả (cần kỳ ở trạng thái PUBLISHED).</div>
           ) : (
             payable.map((r: any) => {
               const busy = payRunBusy === r.run_id + 'mark-paid';
               return (
-                <div key={r.run_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid var(--border)', gap: '10px', flexWrap: 'wrap' }}>
+                <div key={r.run_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 4px', borderBottom: '1px solid var(--border)', gap: '10px', flexWrap: 'wrap' }}>
                   <div style={{ fontSize: '13px' }}>
-                    <strong>Kỳ {r.period}</strong> • {r.total_employees} NV • {(r.total_amount || 0).toLocaleString('vi-VN')}đ
+                    <strong style={{ fontSize: '15px' }}>Kỳ {r.period}</strong> <span className="badge" style={{ ...payRunStageStyle(r.status), fontWeight: 800, marginLeft: '6px' }}>{r.status}</span>
+                    <div style={{ color: 'var(--text-muted)', marginTop: '4px' }}>{r.total_employees} NV • <strong style={{ color: '#059669' }}>{(r.total_amount || 0).toLocaleString('vi-VN')}đ</strong></div>
                   </div>
-                  <button className="btn-primary" style={{ backgroundColor: '#10B981' }} disabled={busy} onClick={() => payRunAction(r.run_id, 'mark-paid')}>
-                    {busy ? '...' : 'Xác Nhận Đã Thanh Toán Ngân Hàng (PAID)'}
+                  <button className="btn-primary" style={{ backgroundColor: '#10B981', fontWeight: 800, padding: '9px 18px' }} disabled={busy} onClick={() => payRunAction(r.run_id, 'mark-paid')}>
+                    {busy ? '...' : '🏦 Xác Nhận Đã Thanh Toán Ngân Hàng (PAID)'}
                   </button>
                 </div>
               );
