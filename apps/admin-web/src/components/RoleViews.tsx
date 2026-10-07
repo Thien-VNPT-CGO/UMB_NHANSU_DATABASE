@@ -10009,22 +10009,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     );
   }
 
-  if (activeTab === 'fin-reconcile-att') {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <FinHead icon="🔍" title="3. Đối Soát Dữ Liệu Công" sub="Store & HR đã xác nhận — khớp công trước khi tính lương" />
-        <FinCard accent="#10B981">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-            <div style={{ fontSize: '13px' }}>Khớp 100% giữa ca phân công, lượt điểm danh và đơn OFF — sẵn sàng sang bước tính lương.</div>
-            <button className="btn-primary" onClick={() => showToast('Đối soát công hoàn tất: Không phát hiện sai lệch dữ liệu!')}>
-              Khởi Chạy Đối Soát Tự Động
-            </button>
-          </div>
-        </FinCard>
-      </div>
-    );
-  }
-
   if (activeTab === 'fin-payroll-periods') {
     const nextAction: Record<string, { action: 'reconcile' | 'approve' | 'publish' | 'mark-paid'; label: string } | null> = {
       DRAFT: { action: 'reconcile', label: 'Đối soát' },
@@ -10039,7 +10023,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const latestIdx = latest ? STAGES.indexOf(latest.status) : -1;
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <FinHead icon="🗓" title="4. Quản Lý Kỳ Lương (Payroll Cycles)" sub="DRAFT ➔ Đối soát ➔ Duyệt ➔ Phát hành (gửi NV) ➔ Chi trả — người duyệt phải khác người tính" />
+        <FinHead icon="🗓"           title="3. Quản Lý Kỳ Lương (Payroll Cycles)" sub="DRAFT ➔ Đối soát ➔ Duyệt ➔ Phát hành (gửi NV) ➔ Chi trả — người duyệt phải khác người tính" />
         <FinCard accent="#7C3AED">
           <div style={{ fontSize: '12px', fontWeight: 800, marginBottom: '10px', color: 'var(--text-muted)' }}>TIẾN ĐỘ KỲ MỚI NHẤT{latest ? `: ${latest.period}` : ''}</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0', flexWrap: 'wrap' }}>
@@ -10253,7 +10237,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <FinHead
           icon="🧮"
-          title="5. Tính Toán Bảng Lương (Formula Engine)"
+          title="4. Tính Toán Bảng Lương (Formula Engine)"
           sub="B1 công thức cũ • B2 công thức Excel theo kỳ • B3 nhập tay 6 cột • B4 các bước tính realtime • 🤖 00h10 mùng 1 tự tính 1 bản nháp DRAFT — kỳ đã tính rồi tính lại sẽ tạo kỳ mới"
           right={<>
             <label style={{ fontSize: '12px', fontWeight: 700 }}>Kỳ lương:
@@ -10469,7 +10453,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <FinHead
           icon="🔎"
-          title="6. Chi Tiết Bảng Lương Từng Nhân Viên"
+          title="5. Chi Tiết Bảng Lương Từng Nhân Viên"
           sub="Breakdown đầy đủ giờ, lương, phụ cấp, thưởng, phạt, ứng, đồng phục theo kỳ"
           right={<>
             <select
@@ -10545,7 +10529,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <FinHead
           icon="🧾"
-          title="7. Phát Hành Phiếu Lương Cá Nhân (Bảo Mật PIN)"
+          title="6. Phát Hành Phiếu Lương Cá Nhân (Bảo Mật PIN)"
           sub="Chọn kỳ đã phát hành để xem từng phiếu breakdown đầy đủ — NV chỉ thấy phiếu của mình"
           right={<>
             <select
@@ -10629,7 +10613,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <FinHead
           icon="🧾"
-          title="8. Phiếu Lương Mẫu (Xem Trước Theo Từng Nhân Viên)"
+          title="7. Phiếu Lương Mẫu (Xem Trước Theo Từng Nhân Viên)"
           sub="Chế độ 1 NV chi tiết (như sheet QUẢN LÝ) • chế độ Lưới tất cả (như sheet TỔNG NV CH / CH 111-261-130-120) — số theo công thức Excel + realtime"
           right={<>
             <input type="month" value={sampleMonth} onChange={e => { setSampleMonth(e.target.value || new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7)); setSampleEmpId(''); }} style={{ padding: '7px 10px', fontSize: '12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.4)', backgroundColor: 'rgba(255,255,255,0.15)', color: '#FFF', fontWeight: 700 }} />
@@ -10765,7 +10749,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               })}
             </div>
             <div style={{ backgroundColor: '#FFFBEB', padding: '10px 24px', fontSize: '11px', color: '#92400E', borderTop: '1px solid #FDE68A' }}>
-              Phiếu mẫu xem trước — số liệu realtime theo công thức Excel kỳ {sampleMonth}. Số chính thức chốt ở kỳ lương đã phát hành (tab 7).
+              Phiếu mẫu xem trước — số liệu realtime theo công thức Excel kỳ {sampleMonth}. Số chính thức chốt ở kỳ lương đã phát hành (tab 6).
             </div>
           </div>
           )
@@ -10806,7 +10790,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           <FinHead
             icon="📆"
-            title="9. BCC — Bảng Chấm Công Ngày (như sheet BCC)"
+            title="8. BCC — Bảng Chấm Công Ngày (như sheet BCC)"
             sub={`Giờ từng ngày 01→cuối tháng ${xlMonth} • AN=Σ giờ • AO/AP=số ngày công • AQ=ngày ≥${xlFormula.otThreshold1}h + ngày ≥${xlFormula.otThreshold2}h • AU=TV×${xlFormula.rateTV.toLocaleString('vi-VN')}+CT×${xlFormula.rateCT.toLocaleString('vi-VN')} • AV=AQ×${xlFormula.otPerSlot.toLocaleString('vi-VN')}`}
             right={xlControls}
           />
@@ -10876,7 +10860,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           <FinHead
             icon="💵"
-            title="10. Payment — Bảng Lương (như sheet Payment)"
+            title="9. Payment — Bảng Lương (như sheet Payment)"
             sub={`Kỳ ${xlMonth} • M=TỔNG CỘNG (LCB+PC+giờ+OT+Bonus) • Q=Tổng lương (M−KPI−phạt) • R=Thực lãnh (Q−Ứng−ĐP) • cột N gồm KPI (sheet PHẠT KPI) + phạt trễ/vắng realtime`}
             right={xlControls}
           />
@@ -10990,7 +10974,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <FinHead
           icon="⚠️"
-          title="11. KPI • Ứng • Đồng Phục (nguồn trừ của Payment)"
+          title="10. KPI • Ứng • Đồng Phục (nguồn trừ của Payment)"
           sub={`Kỳ ${xlMonth} • N (Trừ KPI như sheet PHẠT KPI) • O (Ứng lương) • P (Đồng phục như sheet DONGPHUC) — sửa và Lưu, số tự nhảy sang Payment/BCC/phiếu`}
           right={xlControls}
         />
@@ -11040,24 +11024,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     );
   }
 
-  if (activeTab === 'fin-reconcile-payslips') {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <FinHead icon="⚖️" title="12. Đối Soát Phiếu Lương & Sai Lệch" sub="Khớp số đã tính với quỹ chi trả trước khi phát hành" />
-        <FinCard accent="#10B981">
-          <div style={{ fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '18px' }}>✅</span> Khớp 100% giữa số tiền đã tính và tổng quỹ lương chi trả. Không có phiếu lỗi.
-          </div>
-        </FinCard>
-      </div>
-    );
-  }
-
   if (activeTab === 'fin-payment') {
     const payable = (payrollRuns || []).filter((r: any) => r.status === 'PUBLISHED');
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <FinHead icon="🏦" title="13. Xác Nhận Chi Trả & Thanh Toán (PAID)" sub="Kỳ đã phát hành → xác nhận đã chuyển khoản ngân hàng" />
+        <FinHead icon="🏦" title="11. Xác Nhận Chi Trả & Thanh Toán (PAID)" sub="Kỳ đã phát hành → xác nhận đã chuyển khoản ngân hàng" />
         <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: '14px', border: '1px solid var(--border)', boxShadow: '0 4px 14px rgba(15,23,42,0.06)' }}>
           {payable.length === 0 ? (
             <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Không có kỳ nào chờ chi trả (cần kỳ ở trạng thái PUBLISHED).</div>
@@ -11077,30 +11048,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               );
             })
           )}
-        </div>
-      </div>
-    );
-  }
-
-  if (activeTab === 'fin-reports') {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <h1 style={{ fontSize: '20px', fontWeight: 800 }}>14. Báo Cáo Tài Chính Chi Phí Lương (Finance Reports)</h1>
-        <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-          <div style={{ fontSize: '13px' }}>Báo cáo chi phí nhân sự theo các chi nhánh, khối sản xuất và khối văn phòng.</div>
-        </div>
-      </div>
-    );
-  }
-
-  if (activeTab === 'fin-notifications') {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <h1 style={{ fontSize: '20px', fontWeight: 800 }}>15. Thông Báo Tài Chính & Kỳ Lương</h1>
-        <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-          <div style={{ padding: '10px', backgroundColor: '#EFF6FF', borderRadius: '6px' }}>
-            Nhắc nhở: Toàn bộ bảng chấm công tháng 09 đã được Store xác nhận. Sẵn sàng khóa sổ.
-          </div>
         </div>
       </div>
     );
