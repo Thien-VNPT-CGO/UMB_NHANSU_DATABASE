@@ -1081,21 +1081,115 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       loadPayInputs(p);
     }
   }, [activeTab, payCalcPeriod]);
-  const [finMonth, setFinMonth] = useState(() => new Date().toISOString().slice(0, 7));
-  const [finAttEvents, setFinAttEvents] = useState<any[]>([]);
-  const loadFinAttendance = async () => {
+  const [finMonth, setFinMonth] = useState(() => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7));
+  // Bảng chấm công Finance cả tháng (ngày 1 -> cuối tháng) + lương ca từng NV.
+  const [finSheet, setFinSheet] = useState<any>(null);
+  const [finSheetLoading, setFinSheetLoading] = useState(false);
+  const [finSearch, setFinSearch] = useState('');
+  const [finExpandId, setFinExpandId] = useState<string | null>(null);
+  const loadFinAttendance = async (period?: string) => {
+    const p = period || finMonth;
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(p)) return;
+    setFinSheetLoading(true);
     try {
-      const data = await apiRequest('/attendance/events');
-      setFinAttEvents(Array.isArray(data) ? data : []);
-    } catch { /* offline */ }
+      const data = await apiRequest(`/admin/reports/finance-timesheet?period=${encodeURIComponent(p)}`);
+      setFinSheet(data || null);
+    } catch (e: any) {
+      showToast(e?.message || 'Không tải được bảng chấm công tháng!');
+      setFinSheet(null);
+    } finally {
+      setFinSheetLoading(false);
+    }
   };
   useEffect(() => {
-    // Dữ liệu finance lấy 100% từ cổng NV (chấm công/lịch realtime) -> tự tải lại 30s
+    // Dữ liệu finance đồng bộ cả tháng từ cổng NV (chấm công/lịch realtime) -> tự tải lại 30s
     if (activeTab !== 'fin-timesheet') return;
     loadFinAttendance();
-    const t = setInterval(loadFinAttendance, 30000);
+    const t = setInterval(() => loadFinAttendance(), 30000);
     return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, finMonth]);
+  // Kỳ lương đang tính (tab 5) + phiếu mẫu (tab 8) cũng cần số realtime cả tháng
+  // để hiện các bước tính + phiếu theo từng NV (1 state dùng chung, tab nào active thì nạp kỳ đó).
+  useEffect(() => {
+    if (activeTab !== 'fin-calculate') return;
+    const p = (payCalcPeriod || '').trim();
+    if (/^\d{4}-(0[1-9]|1[0-2])$/.test(p)) loadFinAttendance(p);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, payCalcPeriod]);
+  // Tháng + NV đang xem ở tab Phiếu lương mẫu.
+  const [sampleMonth, setSampleMonth] = useState(() => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7));
+  const [sampleEmpId, setSampleEmpId] = useState('');
+  const [sampleSearch, setSampleSearch] = useState('');
+  // Dòng đang xổ chi tiết các bước tính ở tab Tính lương.
+  const [calcExpandId, setCalcExpandId] = useState<string | null>(null);
+  useEffect(() => {
+    if (activeTab !== 'fin-payslip-sample') return;
+    const p = (sampleMonth || '').trim();
+    if (/^\d{4}-(0[1-9]|1[0-2])$/.test(p)) {
+      loadPayFormula(p);
+      loadPayInputs(p);
+      loadFinAttendance(p);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, sampleMonth]);
+  /**
+   * Các bước tính lương realtime của 1 NV theo đúng công thức Excel của Kế toán:
+   * B1 Lương giờ = giờ đủ công × đơn giá (TV/CT theo diện) • B2 PC-OT = suất OT × giá suất
+   * (ngày ≥T1 giờ = 1 suất, ≥T2 giờ = 2 suất) • B3 TỔNG CỘNG = LCB + PC-OT + lương giờ + OT thêm + Bonus
+   * B4 TỔNG LƯƠNG = TỔNG CỘNG − KPI − phạt trễ/vắng • B5 THỰC LÃNH = TỔNG LƯƠNG − Ứng − Đồng phục.
+   */
+  const calcLivePayslip = (row: any, formula: any, input: any) => {
+    const vnd = (n: any) => `${Number(n || 0).toLocaleString('vi-VN')}đ`;
+    const f = {
+      rateTV: Number(formula?.rateTV ?? 21000) || 0,
+      rateCT: Number(formula?.rateCT ?? 25500) || 0,
+      otPerSlot: Number(formula?.otPerSlot ?? 30000) || 0,
+      otThreshold1: Number(formula?.otThreshold1 ?? 10),
+      otThreshold2: Number(formula?.otThreshold2 ?? 15),
+    };
+    const isProb = String(row?.stage || '') === 'PROBATION';
+    const rate = isProb ? f.rateTV : f.rateCT;
+    const hours = Number(row?.hours) || 0;
+    const standardPay = Number(row?.standardPay ?? hours * rate) || 0;
+    // Suất OT theo ngày từ chi tiết ca realtime (mirror backend calculateFormulaPayroll).
+    const dayHours = new Map<string, number>();
+    for (const s of (row?.shifts || [])) {
+      if (String((s as any)?.status || '') !== 'DU') continue;
+      const d = String((s as any)?.date || '');
+      dayHours.set(d, (dayHours.get(d) || 0) + (Number((s as any)?.hours) || 0));
+    }
+    let otSlots = 0;
+    for (const h of dayHours.values()) {
+      if (h >= f.otThreshold2) otSlots += 2;
+      else if (h >= f.otThreshold1) otSlots += 1;
+    }
+    const phuCapOT = otSlots * f.otPerSlot;
+    const luongCB = Number(input?.luong_cb) || 0;
+    const otExtra = Number(input?.ot_extra) || 0;
+    const bonusExtra = Number(input?.bonus_extra) || 0;
+    const bonusSys = Number(row?.bonus) || 0;
+    const bonusTotal = bonusSys + bonusExtra;
+    const ung = Number(input?.ung_luong) || 0;
+    const kpi = Number(input?.tru_kpi) || 0;
+    const dp = Number(input?.dong_phuc) || 0;
+    const deduction = Number(row?.deduction) || 0;
+    const tongCong = luongCB + phuCapOT + standardPay + otExtra + bonusTotal;
+    const tongLuong = tongCong - kpi - deduction;
+    const thucLanh = tongLuong - ung - dp;
+    return {
+      rate, isProb, hours, standardPay, otSlots, phuCapOT,
+      luongCB, otExtra, bonusSys, bonusExtra, bonusTotal, ung, kpi, dp, deduction,
+      tongCong, tongLuong, thucLanh, vnd,
+      steps: [
+        { k: 'B1', label: `Lương giờ = ${hours} giờ đủ công × ${vnd(rate).replace('đ', '')}/h (${isProb ? 'thử việc' : 'chính thức'})`, value: standardPay },
+        { k: 'B2', label: `Phụ cấp OT = ${otSlots} suất × ${vnd(f.otPerSlot).replace('đ', '')} (ngày ≥${f.otThreshold1}h = 1 suất, ≥${f.otThreshold2}h = 2 suất)`, value: phuCapOT },
+        { k: 'B3', label: `TỔNG CỘNG = LCB ${vnd(luongCB)} + PC-OT ${vnd(phuCapOT)} + giờ ${vnd(standardPay)} + OT thêm ${vnd(otExtra)} + Bonus ${vnd(bonusTotal)}`, value: tongCong },
+        { k: 'B4', label: `TỔNG LƯƠNG = TỔNG CỘNG ${vnd(tongCong)} − KPI ${vnd(kpi)} − phạt trễ/vắng ${vnd(deduction)}`, value: tongLuong },
+        { k: 'B5', label: `THỰC LÃNH = TỔNG LƯƠNG ${vnd(tongLuong)} − Ứng ${vnd(ung)} − Đồng phục ${vnd(dp)}`, value: thucLanh },
+      ],
+    };
+  };
   const [payRunDetail, setPayRunDetail] = useState<any>(null);
   const [payRunBusy, setPayRunBusy] = useState<string | null>(null);
   const loadPayRunDetail = async (runId: string) => {
@@ -9648,69 +9742,147 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }
 
   if (activeTab === 'fin-timesheet') {
-    const monthShifts = (shifts || []).filter((s: any) => (s.date || '').startsWith(finMonth) && s.status !== 'CANCELLED' && (branchScope === '*' || s.branch_id === branchScope));
-    const monthEmps = [...new Set(monthShifts.map((s: any) => s.employee_id))];
-    const finEmpRow = (empId: string) => {
-      const emp = (allEmployees || []).find((e: any) => e.employee_id === empId);
-      const mine = monthShifts.filter((s: any) => s.employee_id === empId);
-      let full = 0;
-      let partial = 0;
-      let absent = 0;
-      for (const s of mine) {
-        const evs = (finAttEvents || []).filter((e: any) => e.assignment_id === s.assignment_id);
-        const hasIn = evs.some((e: any) => e.type === 'CHECK_IN');
-        const hasOut = evs.some((e: any) => e.type === 'CHECK_OUT');
-        const hasAbs = evs.some((e: any) => e.type === 'ABSENT');
-        if (hasIn && hasOut) full++;
-        else if (!hasIn && hasAbs) absent++;
-        else if (s.date < new Date().toISOString().split('T')[0]) partial++;
+    const t = finSheet?.totals || {};
+    const q = finSearch.trim().toLowerCase();
+    const allRows: any[] = finSheet?.rows || [];
+    const rows = q
+      ? allRows.filter((r: any) => `${r.fullName || ''} ${r.employeeCode || ''} ${r.branchId || ''}`.toLowerCase().includes(q))
+      : allRows;
+    const rangeLabel = finSheet ? `${String(finSheet.fromDate || '').slice(8, 10)}/${String(finSheet.fromDate || '').slice(5, 7)} → ${String(finSheet.toDate || '').slice(8, 10)}/${String(finSheet.toDate || '').slice(5, 7)}/${String(finSheet.toDate || '').slice(0, 4)}` : '';
+    const exportCsv = () => {
+      if (rows.length === 0) {
+        showToast('Chưa có dữ liệu để xuất!');
+        return;
       }
-      const rate = Number(emp?.current_rate_per_hour) || 25500;
-      return { emp, mine: mine.length, full, partial, absent, est: full * 5 * rate };
+      const head = ['MaNV', 'HoTen', 'ChiNhanh', 'Dien', 'DonGia', 'CaPhanCong', 'DuCong', 'Thieu', 'Vang', 'Gio', 'LuongCa', 'Phat', 'Thuong', 'ThucNhan'];
+      const lines = [head.join(',')];
+      for (const r of rows) {
+        lines.push([
+          r.employeeCode || r.employeeId,
+          `"${String(r.fullName || '').replace(/"/g, '""')}"`,
+          r.branchId || '',
+          r.stage === 'PROBATION' ? 'ThuViec' : 'ChinhThuc',
+          r.rate || 0,
+          r.totalShifts || 0, r.full || 0, r.partial || 0, r.absent || 0,
+          r.hours || 0, r.standardPay || 0, r.deduction || 0, r.bonus || 0, r.netPay || 0,
+        ].join(','));
+      }
+      const blob = new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `bang-cham-cong-${finMonth}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+    const statusLabel: Record<string, { t: string; c: string; bg: string }> = {
+      DU: { t: 'Đủ công', c: '#059669', bg: '#DCFCE7' },
+      THIEU: { t: 'Thiếu', c: '#B45309', bg: '#FEF3C7' },
+      VANG: { t: 'Vắng', c: '#DC2626', bg: '#FEE2E2' },
     };
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <FinHead
           icon="📅"
           title="2. Bảng Chấm Công Tổng Hợp Toàn Công Ty"
-          sub="Ca phân công, đủ công / thiếu / vắng và ước lương theo tháng"
+          sub={`Đồng bộ đủ từ ngày 1 → cuối tháng ${finMonth}${rangeLabel ? ` (${rangeLabel})` : ''} — lương ca từng NV để kế toán tính lương`}
           right={<>
-            <input type="month" value={finMonth} onChange={e => setFinMonth(e.target.value || new Date().toISOString().slice(0, 7))} style={{ padding: '7px 10px', fontSize: '12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.4)', backgroundColor: 'rgba(255,255,255,0.15)', color: '#FFF', fontWeight: 700 }} />
-            <button className="btn-secondary" style={{ fontSize: '12px', padding: '7px 14px', fontWeight: 700 }} onClick={loadFinAttendance}>Tải lại</button>
+            <input type="month" value={finMonth} onChange={e => setFinMonth(e.target.value || new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7))} style={{ padding: '7px 10px', fontSize: '12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.4)', backgroundColor: 'rgba(255,255,255,0.15)', color: '#FFF', fontWeight: 700 }} />
+            <button className="btn-secondary" style={{ fontSize: '12px', padding: '7px 14px', fontWeight: 700 }} disabled={finSheetLoading} onClick={() => loadFinAttendance()}>{finSheetLoading ? 'Đang tải...' : 'Tải lại'}</button>
+            <button className="btn-secondary" style={{ fontSize: '12px', padding: '7px 14px', fontWeight: 700 }} onClick={exportCsv}>Xuất CSV</button>
           </>}
         />
+        <FinCard accent="#059669">
+          <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', fontSize: '13px', fontWeight: 700 }}>
+            <span>👥 {t.employees ?? 0} NV</span>
+            <span>📋 {t.totalShifts ?? 0} ca ({t.full ?? 0} đủ / {t.partial ?? 0} thiếu / {t.absent ?? 0} vắng)</span>
+            <span>⏱ {t.hours ?? 0} giờ</span>
+            <span style={{ color: '#059669' }}>💰 Lương ca: {Number(t.standardPay || 0).toLocaleString('vi-VN')}đ</span>
+            <span style={{ color: '#DC2626' }}>Phạt: {Number(t.deduction || 0).toLocaleString('vi-VN')}đ</span>
+            <span style={{ color: '#1D4ED8' }}>Thực nhận: {Number(t.netPay || 0).toLocaleString('vi-VN')}đ</span>
+          </div>
+          <div style={{ marginTop: '10px', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <input value={finSearch} onChange={e => setFinSearch(e.target.value)} placeholder="Tìm tên / mã NV / chi nhánh..." style={{ padding: '7px 12px', fontSize: '12px', borderRadius: '8px', border: '1px solid var(--border)', minWidth: '260px' }} />
+            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Bấm vào 1 dòng để xem chi tiết từng ca (ngày, giờ, lương ca, trễ/phạt).</span>
+          </div>
+        </FinCard>
         <div style={{ backgroundColor: 'var(--surface)', borderRadius: '14px', border: '1px solid var(--border)', overflowX: 'auto', boxShadow: '0 4px 14px rgba(15,23,42,0.06)' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', minWidth: '1080px' }}>
             <thead>
               <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
-                <th style={{ padding: '12px 20px' }}>Nhân Viên</th>
-                <th style={{ padding: '12px 20px' }}>Ca Phân Công</th>
-                <th style={{ padding: '12px 20px' }}>Đủ Công</th>
-                <th style={{ padding: '12px 20px' }}>Thiếu (chưa chốt)</th>
-                <th style={{ padding: '12px 20px' }}>Vắng</th>
-                <th style={{ padding: '12px 20px' }}>Ước Lương</th>
+                <th style={{ padding: '12px 16px' }}>Nhân Viên</th>
+                <th style={{ padding: '12px 16px' }}>Ca (đủ/thiếu/vắng)</th>
+                <th style={{ padding: '12px 16px' }}>Giờ</th>
+                <th style={{ padding: '12px 16px' }}>Đơn Giá</th>
+                <th style={{ padding: '12px 16px' }}>Lương Ca</th>
+                <th style={{ padding: '12px 16px' }}>Phạt</th>
+                <th style={{ padding: '12px 16px' }}>Thưởng</th>
+                <th style={{ padding: '12px 16px' }}>Thực Nhận</th>
               </tr>
             </thead>
             <tbody>
-              {monthEmps.length === 0 ? (
+              {finSheetLoading ? (
+                <tr><td colSpan={8} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>Đang đồng bộ chấm công 01 → cuối tháng {finMonth}...</td></tr>
+              ) : rows.length === 0 ? (
                 <tr>
-                  <td colSpan={6} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                  <td colSpan={8} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
                     Tháng {finMonth} chưa có ca phân công nào{branchScope !== '*' ? ` tại ${branchName}` : ''}.
                   </td>
                 </tr>
               ) : (
-                monthEmps.map((id: string) => {
-                  const r = finEmpRow(id);
-                  return (
-                    <tr key={id} style={{ borderBottom: '1px solid var(--border)' }}>
-                      <td style={{ padding: '12px 20px', fontWeight: 700 }}>{r.emp?.full_name || id}<div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }}>{r.emp?.employee_code || ''}</div></td>
-                      <td style={{ padding: '12px 20px' }}>{r.mine}</td>
-                      <td style={{ padding: '12px 20px', color: '#059669', fontWeight: 700 }}>{r.full}</td>
-                      <td style={{ padding: '12px 20px', color: '#B45309', fontWeight: 700 }}>{r.partial}</td>
-                      <td style={{ padding: '12px 20px', color: '#DC2626', fontWeight: 700 }}>{r.absent}</td>
-                      <td style={{ padding: '12px 20px', fontWeight: 700 }}>{r.est.toLocaleString('vi-VN')}đ</td>
+                rows.flatMap((r: any) => {
+                  const open = finExpandId === r.employeeId;
+                  const main = (
+                    <tr key={r.employeeId} style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer', backgroundColor: open ? '#F0FDF4' : undefined }} onClick={() => setFinExpandId(open ? null : r.employeeId)}>
+                      <td style={{ padding: '12px 16px', fontWeight: 700 }}>{open ? '▼ ' : '▶ '}{r.fullName || r.employeeId}<div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }}>{r.employeeCode || ''} • {r.branchId || ''} • {r.stage === 'PROBATION' ? 'Thử việc' : 'Chính thức'}</div></td>
+                      <td style={{ padding: '12px 16px' }}><strong>{r.totalShifts}</strong> <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>(<span style={{ color: '#059669', fontWeight: 700 }}>{r.full}</span>/<span style={{ color: '#B45309', fontWeight: 700 }}>{r.partial}</span>/<span style={{ color: '#DC2626', fontWeight: 700 }}>{r.absent}</span>)</span></td>
+                      <td style={{ padding: '12px 16px', fontWeight: 700 }}>{r.hours}</td>
+                      <td style={{ padding: '12px 16px' }}>{Number(r.rate || 0).toLocaleString('vi-VN')}đ</td>
+                      <td style={{ padding: '12px 16px', fontWeight: 700 }}>{Number(r.standardPay || 0).toLocaleString('vi-VN')}đ</td>
+                      <td style={{ padding: '12px 16px', color: '#DC2626', fontWeight: 700 }}>{Number(r.deduction || 0).toLocaleString('vi-VN')}đ</td>
+                      <td style={{ padding: '12px 16px', color: '#1D4ED8', fontWeight: 700 }}>{Number(r.bonus || 0).toLocaleString('vi-VN')}đ</td>
+                      <td style={{ padding: '12px 16px', fontWeight: 800, color: '#059669' }}>{Number(r.netPay || 0).toLocaleString('vi-VN')}đ</td>
                     </tr>
                   );
+                  if (!open) return [main];
+                  const detail = (
+                    <tr key={`${r.employeeId}-detail`} style={{ borderBottom: '1px solid var(--border)', backgroundColor: '#F8FAFC' }}>
+                      <td colSpan={8} style={{ padding: '8px 16px 14px 40px' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                          <thead>
+                            <tr style={{ textAlign: 'left', color: 'var(--text-muted)' }}>
+                              <th style={{ padding: '6px 8px' }}>Ngày</th>
+                              <th style={{ padding: '6px 8px' }}>Ca</th>
+                              <th style={{ padding: '6px 8px' }}>Giờ</th>
+                              <th style={{ padding: '6px 8px' }}>Trạng Thái</th>
+                              <th style={{ padding: '6px 8px' }}>Check-in</th>
+                              <th style={{ padding: '6px 8px' }}>Trễ</th>
+                              <th style={{ padding: '6px 8px' }}>Lương Ca</th>
+                              <th style={{ padding: '6px 8px' }}>Phạt</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(r.shifts || []).map((s: any, i: number) => {
+                              const st = statusLabel[s.status] || statusLabel.THIEU;
+                              return (
+                                <tr key={`${s.assignmentId || i}`} style={{ borderTop: '1px dashed var(--border)' }}>
+                                  <td style={{ padding: '6px 8px', fontWeight: 700 }}>{String(s.date || '').slice(8, 10)}/{String(s.date || '').slice(5, 7)}</td>
+                                  <td style={{ padding: '6px 8px' }}>{s.shiftCode}</td>
+                                  <td style={{ padding: '6px 8px' }}>{s.hours}h</td>
+                                  <td style={{ padding: '6px 8px' }}><span style={{ fontSize: '11px', fontWeight: 800, padding: '2px 8px', borderRadius: '999px', backgroundColor: st.bg, color: st.c }}>{st.t}</span></td>
+                                  <td style={{ padding: '6px 8px', fontSize: '11px' }}>{s.checkIn ? String(s.checkIn).slice(11, 16) : '—'}</td>
+                                  <td style={{ padding: '6px 8px' }}>{s.lateMin > 0 ? `${s.lateMin}p` : '—'}</td>
+                                  <td style={{ padding: '6px 8px', fontWeight: 700 }}>{Number(s.shiftPay || 0).toLocaleString('vi-VN')}đ</td>
+                                  <td style={{ padding: '6px 8px', color: '#DC2626' }}>{Number(s.fineAmount || 0) > 0 ? `${Number(s.fineAmount).toLocaleString('vi-VN')}đ` : '—'}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </td>
+                    </tr>
+                  );
+                  return [main, detail];
                 })
               )}
             </tbody>
@@ -9925,7 +10097,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         <FinHead
           icon="🧮"
           title="5. Tính Toán Bảng Lương (Formula Engine)"
-          sub="B1 công thức cũ • B2 công thức Excel theo kỳ • B3 nhập tay 6 cột • Kỳ đã tính rồi tính lại sẽ tạo kỳ mới"
+          sub="B1 công thức cũ • B2 công thức Excel theo kỳ • B3 nhập tay 6 cột • B4 các bước tính realtime • Kỳ đã tính rồi tính lại sẽ tạo kỳ mới"
           right={<>
             <label style={{ fontSize: '12px', fontWeight: 700 }}>Kỳ lương:
               <input
@@ -10026,6 +10198,69 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     </tr>
                   );
                 })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* B4. CÁC BƯỚC TÍNH LƯƠNG REALTIME (công thức Excel + số chấm công thật) */}
+        <div style={{ backgroundColor: 'var(--surface)', borderRadius: '14px', border: '1.5px solid #10B981', overflow: 'hidden', boxShadow: '0 4px 14px rgba(16,185,129,0.10)' }}>
+          <div style={{ padding: '14px 20px', fontSize: '14px', fontWeight: 800, display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ width: '28px', height: '28px', borderRadius: '50%', backgroundColor: '#059669', color: '#FFF', fontWeight: 800, fontSize: '13px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>4</span>
+            🧾 Các bước tính lương realtime kỳ {(payCalcPeriod || '').trim() || '—'} <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(công thức Excel ở B2 × chấm công thật 01 → cuối tháng — bấm dòng để xem từng bước)</span>
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', minWidth: '1060px' }}>
+              <thead>
+                <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
+                  <th style={{ padding: '10px 14px' }}>Nhân viên</th>
+                  <th style={{ padding: '10px 14px' }}>B1 Lương giờ</th>
+                  <th style={{ padding: '10px 14px' }}>B2 PC-OT</th>
+                  <th style={{ padding: '10px 14px' }}>B3 Tổng cộng</th>
+                  <th style={{ padding: '10px 14px' }}>B4 Tổng lương</th>
+                  <th style={{ padding: '10px 14px' }}>B5 Thực lãnh</th>
+                </tr>
+              </thead>
+              <tbody>
+                {finSheetLoading ? (
+                  <tr><td colSpan={6} style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)' }}>Đang đồng bộ chấm công realtime...</td></tr>
+                ) : ((() => {
+                  const calcPeriod = (payCalcPeriod || '').trim();
+                  const calcRows: any[] = finSheet?.period === calcPeriod ? (finSheet?.rows || []) : [];
+                  if (calcRows.length === 0) return (
+                  <tr><td colSpan={6} style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)' }}>Kỳ này chưa có ca phân công nào — các bước tính sẽ hiện sau khi có chấm công.</td></tr>
+                  );
+                  return (
+                  calcRows.flatMap((r: any) => {
+                    const c = calcLivePayslip(r, payFormula, payInputs[r.employeeId]);
+                    const open = calcExpandId === r.employeeId;
+                    const main = (
+                      <tr key={r.employeeId} style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer', backgroundColor: open ? '#F0FDF4' : undefined }} onClick={() => setCalcExpandId(open ? null : r.employeeId)}>
+                        <td style={{ padding: '10px 14px', fontWeight: 700 }}>{open ? '▼ ' : '▶ '}{r.fullName}<div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 400 }}>{r.employeeCode} • {r.hours}h đủ công • {r.full}/{r.totalShifts} ca</div></td>
+                        <td style={{ padding: '10px 14px' }}>{c.vnd(c.standardPay)}</td>
+                        <td style={{ padding: '10px 14px' }}>{c.vnd(c.phuCapOT)}<div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{c.otSlots} suất</div></td>
+                        <td style={{ padding: '10px 14px', fontWeight: 700 }}>{c.vnd(c.tongCong)}</td>
+                        <td style={{ padding: '10px 14px', fontWeight: 700 }}>{c.vnd(c.tongLuong)}</td>
+                        <td style={{ padding: '10px 14px', fontWeight: 800, color: '#059669' }}>{c.vnd(c.thucLanh)}</td>
+                      </tr>
+                    );
+                    if (!open) return [main];
+                    return [main, (
+                      <tr key={`${r.employeeId}-steps`} style={{ borderBottom: '1px solid var(--border)', backgroundColor: '#F8FAFC' }}>
+                        <td colSpan={6} style={{ padding: '8px 14px 14px 38px' }}>
+                          {c.steps.map(s => (
+                            <div key={s.k} style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', padding: '6px 0', borderBottom: '1px dashed var(--border)', fontSize: '12px', flexWrap: 'wrap' }}>
+                              <span><strong style={{ color: '#059669' }}>{s.k}.</strong> {s.label}</span>
+                              <strong style={{ color: s.k === 'B5' ? '#059669' : undefined }}>= {c.vnd(s.value)}</strong>
+                            </div>
+                          ))}
+                          <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>Số nhập tay (LCB/OT thêm/Bonus/Ứng/KPI/Đồng phục) lấy từ B3 kỳ này • phạt trễ/vắng và giờ công từ chấm công realtime đã đối soát.</div>
+                        </td>
+                      </tr>
+                    )];
+                  })
+                  );
+                })())}
               </tbody>
             </table>
           </div>
@@ -10177,10 +10412,117 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     );
   }
 
+  if (activeTab === 'fin-payslip-sample') {
+    const vnd = (n: any) => `${Number(n || 0).toLocaleString('vi-VN')}đ`;
+    const sMonth = (sampleMonth || '').trim();
+    const sRows: any[] = finSheet?.period === sMonth ? (finSheet?.rows || []) : [];
+    const sq = sampleSearch.trim().toLowerCase();
+    const sFiltered = sq
+      ? sRows.filter((r: any) => `${r.fullName || ''} ${r.employeeCode || ''} ${r.branchId || ''}`.toLowerCase().includes(sq))
+      : sRows;
+    const selId = sampleEmpId || (sFiltered[0]?.employeeId || '');
+    const selRow = sRows.find((r: any) => r.employeeId === selId) || null;
+    const selEmp = (allEmployees || []).find((e: any) => e.employee_id === selId) || null;
+    const selInput = (payInputs || {})[selId] || {};
+    const calc = selRow ? calcLivePayslip(selRow, payFormula, selInput) : null;
+    const shiftByCode = new Map<string, { total: number; du: number }>();
+    for (const s of (selRow?.shifts || [])) {
+      const k = String((s as any)?.shiftCode || '—');
+      const e = shiftByCode.get(k) || { total: 0, du: 0 };
+      e.total++;
+      if (String((s as any)?.status) === 'DU') e.du++;
+      shiftByCode.set(k, e);
+    }
+    const periodLabel = selRow ? `${String(sampleMonth).slice(5, 7)}/${String(sampleMonth).slice(0, 4)}` : '';
+    const slipRow = (label: string, value: string, bold = false, color?: string) => (
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', padding: '7px 0', borderBottom: '1px dashed #E5E7EB', fontSize: '13px', fontWeight: bold ? 800 : 400, color: color || '#111827' }}>
+        <span>{label}</span><span>{value}</span>
+      </div>
+    );
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+        <FinHead
+          icon="🧾"
+          title="8. Phiếu Lương Mẫu (Xem Trước Theo Từng Nhân Viên)"
+          sub="Chọn tên nhân viên — số tiền trên phiếu tự nhảy theo đúng công thức Excel + chấm công realtime"
+          right={<>
+            <input type="month" value={sampleMonth} onChange={e => { setSampleMonth(e.target.value || new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7)); setSampleEmpId(''); }} style={{ padding: '7px 10px', fontSize: '12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.4)', backgroundColor: 'rgba(255,255,255,0.15)', color: '#FFF', fontWeight: 700 }} />
+            <button className="btn-secondary" style={{ fontSize: '12px', padding: '7px 14px', fontWeight: 700 }} onClick={() => window.print()}>🖨 In phiếu</button>
+          </>}
+        />
+        <FinCard accent="#F59E0B">
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+            <input value={sampleSearch} onChange={e => setSampleSearch(e.target.value)} placeholder="Tìm tên / mã NV..." style={{ padding: '8px 12px', fontSize: '13px', borderRadius: '8px', border: '1px solid var(--border)', minWidth: '220px' }} />
+            <select value={selId} onChange={e => setSampleEmpId(e.target.value)} style={{ padding: '8px 12px', fontSize: '13px', fontWeight: 700, borderRadius: '8px', border: '1px solid var(--border)', minWidth: '260px' }}>
+              <option value="">— Chọn nhân viên —</option>
+              {sFiltered.map((r: any) => <option key={r.employeeId} value={r.employeeId}>{r.fullName} ({r.employeeCode})</option>)}
+            </select>
+            {finSheetLoading && <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Đang đồng bộ...</span>}
+          </div>
+        </FinCard>
+        {!selRow || !calc ? (
+          <div style={{ backgroundColor: 'var(--surface)', padding: '32px 20px', borderRadius: '14px', border: '1px solid var(--border)', textAlign: 'center', fontSize: '13px', color: 'var(--text-muted)' }}>
+            {sRows.length === 0 ? `Tháng ${sampleMonth} chưa có ca phân công nào.` : 'Chọn 1 nhân viên để xem phiếu lương mẫu.'}
+          </div>
+        ) : (
+          <div style={{ backgroundColor: '#FFF', borderRadius: '16px', border: '2px solid #F59E0B', overflow: 'hidden', boxShadow: '0 8px 28px rgba(245,158,11,0.18)', maxWidth: '760px', margin: '0 auto', width: '100%' }}>
+            {/* Header: logo + thương hiệu + chi nhánh */}
+            <div style={{ background: 'linear-gradient(135deg, #064E3B 0%, #047857 60%, #0EA5E9 130%)', color: '#FFF', padding: '18px 24px', display: 'flex', gap: '14px', alignItems: 'center' }}>
+              <img src="/logo.jpg" alt="Um Bo Milk" style={{ width: '56px', height: '56px', borderRadius: '50%', objectFit: 'cover', border: '2px solid rgba(255,255,255,0.7)', backgroundColor: '#FFF' }} />
+              <div>
+                <div style={{ fontSize: '18px', fontWeight: 900, letterSpacing: '0.5px' }}>ỤM BÒ MILK</div>
+                <div style={{ fontSize: '12px', opacity: 0.9 }}>{getDisplayBranch(selRow.branchId, selRow.group)}</div>
+                <div style={{ fontSize: '13px', fontWeight: 800, marginTop: '4px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'inline-block', padding: '2px 12px', borderRadius: '999px' }}>PHIẾU LƯƠNG THÁNG {periodLabel}</div>
+              </div>
+            </div>
+            {/* Thông tin NV + ca làm việc */}
+            <div style={{ padding: '16px 24px 4px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '6px 20px', fontSize: '13px' }}>
+              <div><span style={{ color: '#6B7280' }}>Họ tên: </span><strong>{selRow.fullName}</strong></div>
+              <div><span style={{ color: '#6B7280' }}>Mã NV: </span><strong>{selRow.employeeCode}</strong></div>
+              <div><span style={{ color: '#6B7280' }}>Diện: </span><strong>{selRow.stage === 'PROBATION' ? 'Thử việc' : 'Chính thức'}</strong></div>
+              <div><span style={{ color: '#6B7280' }}>Ca cố định: </span><strong>{String(selEmp?.default_shift_code || '').replace('CA_', 'Ca ') || '—'}</strong></div>
+              <div style={{ gridColumn: '1 / -1' }}><span style={{ color: '#6B7280' }}>Ca làm tháng này: </span><strong>{selRow.totalShifts} ca ({selRow.full} đủ / {selRow.partial} thiếu / {selRow.absent} vắng)</strong>
+                {[...shiftByCode.entries()].map(([k, e]) => (
+                  <span key={k} style={{ display: 'inline-block', marginLeft: '8px', fontSize: '11px', fontWeight: 800, padding: '2px 10px', borderRadius: '999px', backgroundColor: '#EFF6FF', color: '#1D4ED8' }}>{String(k).replace('CA_', 'Ca ')}: {e.du}/{e.total}</span>
+                ))}
+              </div>
+            </div>
+            {/* Chi tiết lương theo công thức Excel */}
+            <div style={{ padding: '12px 24px' }}>
+              {slipRow(`B1. Lương giờ: ${calc.hours}h × ${vnd(calc.rate).replace('đ', '')}/h`, vnd(calc.standardPay))}
+              {slipRow(`B2. Phụ cấp OT (${calc.otSlots} suất)`, vnd(calc.phuCapOT))}
+              {Number(calc.luongCB) > 0 && slipRow('Lương cơ bản (nhập tay)', vnd(calc.luongCB))}
+              {Number(calc.otExtra) > 0 && slipRow('OT thêm (nhập tay)', vnd(calc.otExtra))}
+              {Number(calc.bonusTotal) > 0 && slipRow(`Thưởng (${vnd(calc.bonusSys)} nhường ca + ${vnd(calc.bonusExtra)} thêm)`, `+${vnd(calc.bonusTotal)}`)}
+              {slipRow('B3. TỔNG CỘNG', vnd(calc.tongCong), true)}
+              {(Number(calc.kpi) > 0 || Number(calc.deduction) > 0) && slipRow(`B4. Trừ KPI (${vnd(calc.kpi)}) + phạt trễ/vắng (${vnd(calc.deduction)})`, `−${vnd(calc.kpi + calc.deduction)}`)}
+              {slipRow('B4. TỔNG LƯƠNG', vnd(calc.tongLuong), true)}
+              {Number(calc.ung) > 0 && slipRow('Ứng lương', `−${vnd(calc.ung)}`)}
+              {Number(calc.dp) > 0 && slipRow('Trừ đồng phục', `−${vnd(calc.dp)}`)}
+              <div style={{ borderTop: '2px solid #F59E0B', marginTop: '10px', paddingTop: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '15px', fontWeight: 900 }}>B5. THỰC LÃNH:</span>
+                <span style={{ fontSize: '24px', fontWeight: 900, color: '#059669' }}>{vnd(calc.thucLanh)}</span>
+              </div>
+            </div>
+            {/* Footer ký tên */}
+            <div style={{ padding: '6px 24px 20px', display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', color: '#374151', textAlign: 'center', flexWrap: 'wrap' }}>
+              <div style={{ flex: 1, minWidth: '140px' }}><div style={{ fontWeight: 800 }}>Người lập phiếu</div><div style={{ color: '#9CA3AF', marginTop: '28px' }}>(Kế toán)</div></div>
+              <div style={{ flex: 1, minWidth: '140px' }}><div style={{ fontWeight: 800 }}>Quản lý chi nhánh</div><div style={{ color: '#9CA3AF', marginTop: '28px' }}>(Ký, ghi rõ họ tên)</div></div>
+              <div style={{ flex: 1, minWidth: '140px' }}><div style={{ fontWeight: 800 }}>Nhân viên</div><div style={{ color: '#9CA3AF', marginTop: '28px' }}>(Ký, ghi rõ họ tên)</div></div>
+            </div>
+            <div style={{ backgroundColor: '#FFFBEB', padding: '10px 24px', fontSize: '11px', color: '#92400E', borderTop: '1px solid #FDE68A' }}>
+              Phiếu mẫu xem trước — số liệu realtime theo công thức Excel kỳ {sampleMonth}. Số chính thức chốt ở kỳ lương đã phát hành (tab 7).
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   if (activeTab === 'fin-reconcile-payslips') {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <FinHead icon="⚖️" title="8. Đối Soát Phiếu Lương & Sai Lệch" sub="Khớp số đã tính với quỹ chi trả trước khi phát hành" />
+        <FinHead icon="⚖️" title="9. Đối Soát Phiếu Lương & Sai Lệch" sub="Khớp số đã tính với quỹ chi trả trước khi phát hành" />
         <FinCard accent="#10B981">
           <div style={{ fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={{ fontSize: '18px' }}>✅</span> Khớp 100% giữa số tiền đã tính và tổng quỹ lương chi trả. Không có phiếu lỗi.
@@ -10194,7 +10536,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const payable = (payrollRuns || []).filter((r: any) => r.status === 'PUBLISHED');
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <FinHead icon="🏦" title="9. Xác Nhận Chi Trả & Thanh Toán (PAID)" sub="Kỳ đã phát hành → xác nhận đã chuyển khoản ngân hàng" />
+        <FinHead icon="🏦" title="10. Xác Nhận Chi Trả & Thanh Toán (PAID)" sub="Kỳ đã phát hành → xác nhận đã chuyển khoản ngân hàng" />
         <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: '14px', border: '1px solid var(--border)', boxShadow: '0 4px 14px rgba(15,23,42,0.06)' }}>
           {payable.length === 0 ? (
             <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Không có kỳ nào chờ chi trả (cần kỳ ở trạng thái PUBLISHED).</div>
@@ -10222,7 +10564,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   if (activeTab === 'fin-reports') {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <h1 style={{ fontSize: '20px', fontWeight: 800 }}>10. Báo Cáo Tài Chính Chi Phí Lương (Finance Reports)</h1>
+        <h1 style={{ fontSize: '20px', fontWeight: 800 }}>11. Báo Cáo Tài Chính Chi Phí Lương (Finance Reports)</h1>
         <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
           <div style={{ fontSize: '13px' }}>Báo cáo chi phí nhân sự theo các chi nhánh, khối sản xuất và khối văn phòng.</div>
         </div>
@@ -10233,7 +10575,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   if (activeTab === 'fin-notifications') {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <h1 style={{ fontSize: '20px', fontWeight: 800 }}>11. Thông Báo Tài Chính & Kỳ Lương</h1>
+        <h1 style={{ fontSize: '20px', fontWeight: 800 }}>12. Thông Báo Tài Chính & Kỳ Lương</h1>
         <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
           <div style={{ padding: '10px', backgroundColor: '#EFF6FF', borderRadius: '6px' }}>
             Nhắc nhở: Toàn bộ bảng chấm công tháng 09 đã được Store xác nhận. Sẵn sàng khóa sổ.

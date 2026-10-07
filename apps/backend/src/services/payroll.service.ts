@@ -28,6 +28,20 @@ export function lateFineFor(minutesLate: number, shiftPay: number): { tier: stri
   return { tier: 'FULL_SHIFT', deduction: 0, unpaid: true };
 }
 
+/**
+ * Khoảng ngày chuẩn của 1 kỳ lương: ngày 1 -> ngày cuối tháng (28/29/30/31).
+ * Dùng chung cho mọi tính toán Finance để kế toán luôn thấy đủ công cả tháng.
+ */
+export function monthRange(period: string): { fromDate: string; toDate: string; daysInMonth: number } {
+  const m = String(period || '').match(/^(\d{4})-(0[1-9]|1[0-2])$/);
+  if (!m) throw new Error('Kỳ lương phải dạng YYYY-MM (VD: 2026-10)!');
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const daysInMonth = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+  const dd = String(daysInMonth).padStart(2, '0');
+  return { fromDate: `${period}-01`, toDate: `${period}-${dd}`, daysInMonth };
+}
+
 export class PayrollService {
   constructor(
     private repo: ISheetsRepository,
@@ -47,8 +61,7 @@ export class PayrollService {
       actorId: creatorId,
       execute: async () => {
         const employees = await this.repo.listEmployees({ branch: branchScope });
-        const fromDate = `${period}-01`;
-        const toDate = `${period}-31`;
+        const { fromDate, toDate } = monthRange(period);
 
         const payslipItems: Omit<PayslipItem, 'created_at' | 'updated_at'>[] = [];
         let totalHours = 0;
@@ -239,8 +252,7 @@ export class PayrollService {
         const inputsArr = await this.repo.getPayrollInputs(period).catch(() => []);
         const inputs = new Map((inputsArr || []).map((x: any) => [x.employee_id, x]));
         const employees = await this.repo.listEmployees({ branch: branchScope });
-        const fromDate = `${period}-01`;
-        const toDate = `${period}-31`;
+        const { fromDate, toDate } = monthRange(period);
 
         const payslipItems: Omit<PayslipItem, 'created_at' | 'updated_at'>[] = [];
         let totalHours = 0;
@@ -470,11 +482,7 @@ export class PayrollService {
    * Trả về tổng giờ/lương (chung + tách từng diện), NV nhiều/ít giờ nhất + chi tiết.
    */
   async summarizeOfficialMonth(period: string) {
-    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period || '')) {
-      throw new Error('Kỳ báo cáo phải dạng YYYY-MM (VD: 2026-10)!');
-    }
-    const fromDate = `${period}-01`;
-    const toDate = `${period}-31`;
+    const { fromDate, toDate } = monthRange(period);
     const employees = (await this.repo.listEmployees()).filter(
       e => ['OFFICIAL', 'PROBATION'].includes((e as any)?.employment_status)
     );
@@ -591,6 +599,189 @@ export class PayrollService {
       runStatus,
       top: worked[0] || null,
       bottom: worked[worked.length - 1] || null,
+      rows,
+    };
+  }
+
+  /**
+   * Bảng chấm công Finance theo tháng đầy đủ (ngày 1 -> cuối tháng):
+   * mỗi nhân viên có tổng ca / đủ / thiếu / vắng / giờ / đơn giá / lương ca
+   * (standardPay) / phạt / thưởng / thực nhận + chi tiết từng ca để kế toán
+   * tính lương. Đồng bộ cả ca quá khứ lẫn hiện tại, không phụ thuộc tab tuần.
+   */
+  async getFinanceTimesheet(period: string, branchScope = '*') {
+    const { fromDate, toDate, daysInMonth } = monthRange(period);
+    const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+    const all = await this.repo.listEmployees({ branch: branchScope });
+    const employees = (all || []).filter(
+      e => (e as any)?.employment_status !== 'TERMINATED'
+    );
+
+    // Đọc kho lưu trữ tuần cũ để ca đầu tháng (đã archive) vẫn lên bảng.
+    let archived: any[] = [];
+    try {
+      archived = await (this.repo as any)?.syncService?.getArchivedAttendanceEvents?.(fromDate, toDate) || [];
+    } catch { archived = []; }
+    const archivedByAssign = new Map<string, any[]>();
+    for (const e of archived || []) {
+      const k = String((e as any)?.assignment_id || '');
+      if (!k) continue;
+      if (!archivedByAssign.has(k)) archivedByAssign.set(k, []);
+      archivedByAssign.get(k)!.push(e);
+    }
+
+    const rows: any[] = [];
+    for (const emp of employees) {
+      const empId = (emp as any).employee_id;
+      const empShifts = await this.repo.getShiftsForEmployee(empId, fromDate, toDate).catch(() => []);
+      const published = (empShifts || []).filter(
+        s => (s as any).status === 'PUBLISHED' && String((s as any).date || '').slice(0, 10) >= fromDate && String((s as any).date || '').slice(0, 10) <= toDate
+      );
+      const rate = Number((emp as any).current_rate_per_hour) || 0;
+      let full = 0;
+      let partial = 0;
+      let absent = 0;
+      let hours = 0;
+      let standardPay = 0;
+      let deduction = 0;
+      const details: any[] = [];
+      for (const s of published) {
+        const date = String((s as any).date || '').slice(0, 10);
+        let dayEvents: any[] = [];
+        try {
+          dayEvents = await this.repo.getAttendanceEvents(empId, date).catch(() => []);
+        } catch { dayEvents = []; }
+        let mine = (dayEvents || []).filter(
+          (e: any) => String(e.assignment_id || '') === String((s as any).assignment_id)
+        );
+        // Gộp sự kiện kho lưu trữ (tuần cũ đã archive khỏi bảng realtime).
+        const extra = archivedByAssign.get(String((s as any).assignment_id)) || [];
+        if (extra.length > 0) {
+          const ids = new Set(mine.map((e: any) => e.event_id));
+          for (const e of extra) if (!ids.has(e.event_id)) mine.push(e);
+        }
+        const inEvt = mine.find((e: any) => e.type === 'CHECK_IN');
+        const hasOut = mine.some((e: any) => e.type === 'CHECK_OUT');
+        const hasAbs = mine.some((e: any) => e.type === 'ABSENT');
+        const template = (SHIFT_TEMPLATES as any)[(s as any).shift_code];
+        const h = template ? Number(template.duration_hours) || 5 : 5;
+        const shiftPay = h * rate;
+        let status: 'DU' | 'THIEU' | 'VANG' = 'THIEU';
+        let lateMin = 0;
+        let fineTier = 'NONE';
+        let fineAmt = 0;
+        if (inEvt && hasOut) {
+          lateMin = (inEvt as any).is_late
+            ? Number((inEvt as any).minutes_deviation) || 0
+            : (() => {
+                const st = new Date((s as any).start_at).getTime();
+                const ct = new Date((inEvt as any).client_time).getTime();
+                if (!Number.isFinite(st) || !Number.isFinite(ct)) return 0;
+                return Math.max(0, Math.round((ct - st) / 60000));
+              })();
+          const storedTier = String((inEvt as any).fine_tier || '');
+          const storedAmt = Number((inEvt as any).fine_amount) || 0;
+          const useStored = !!storedTier && storedTier !== 'NONE';
+          const fine = lateFineFor(lateMin, shiftPay);
+          const unpaid = useStored ? storedTier === 'FULL_SHIFT' : fine.unpaid;
+          if (unpaid) {
+            status = 'VANG';
+            absent++;
+            fineTier = 'FULL_SHIFT';
+            fineAmt = shiftPay;
+          } else {
+            status = 'DU';
+            full++;
+            hours += h;
+            standardPay += shiftPay;
+            fineAmt = useStored ? (storedTier === 'FULL_SHIFT' ? 0 : storedAmt) : fine.deduction;
+            fineTier = useStored ? storedTier : fine.tier;
+            deduction += fineAmt;
+          }
+        } else if (!inEvt && hasAbs) {
+          status = 'VANG';
+          absent++;
+          fineTier = 'FULL_SHIFT';
+          fineAmt = shiftPay;
+        } else if (date < today) {
+          // Ca quá khứ thiếu 1 lượt: tính thiếu (chờ bổ sung/trừ vắng ở kỳ lương).
+          status = 'THIEU';
+          partial++;
+        } else {
+          status = 'THIEU';
+          partial++;
+        }
+        details.push({
+          date,
+          assignmentId: (s as any).assignment_id,
+          shiftCode: (s as any).shift_code,
+          branchId: (s as any).branch_id,
+          hours: h,
+          rate,
+          shiftPay,
+          status,
+          lateMin,
+          fineTier,
+          fineAmount: fineAmt,
+          checkIn: inEvt ? (inEvt as any).client_time : null,
+          hasOut,
+        });
+      }
+      details.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+      // Thưởng nhường ca HR điều phối đã duyệt trong kỳ.
+      let bonus = 0;
+      try {
+        const swaps = await this.repo.listSwapRequests(empId).catch(() => []);
+        bonus = (swaps || [])
+          .filter(
+            (sw: any) =>
+              sw?.swap_kind === 'HR_DISPATCH' &&
+              sw?.status === 'APPROVED' &&
+              sw?.target_employee_id === empId &&
+              String(sw?.approved_at || '').startsWith(period)
+          )
+          .reduce((sum: number, sw: any) => sum + (Number(sw?.bonus_amount) || 30000), 0);
+      } catch { /* giữ 0 */ }
+      rows.push({
+        employeeId: empId,
+        employeeCode: (emp as any).employee_code,
+        fullName: (emp as any).full_name,
+        branchId: (emp as any).default_branch_id,
+        stage: (emp as any).employment_status,
+        group: (emp as any).group,
+        rate,
+        totalShifts: published.length,
+        full,
+        partial,
+        absent,
+        hours: Math.round(hours * 10) / 10,
+        standardPay,
+        deduction,
+        bonus,
+        netPay: standardPay + bonus - deduction,
+        shifts: details,
+      });
+    }
+    rows.sort((a, b) => String(a.fullName || '').localeCompare(String(b.fullName || ''), 'vi'));
+    const sum = (k: string) => rows.reduce((s, r) => s + (Number(r[k]) || 0), 0);
+    return {
+      period,
+      fromDate,
+      toDate,
+      daysInMonth,
+      branchScope,
+      totals: {
+        employees: rows.length,
+        totalShifts: sum('totalShifts'),
+        full: sum('full'),
+        partial: sum('partial'),
+        absent: sum('absent'),
+        hours: Math.round(sum('hours') * 10) / 10,
+        standardPay: sum('standardPay'),
+        deduction: sum('deduction'),
+        bonus: sum('bonus'),
+        netPay: sum('netPay'),
+      },
       rows,
     };
   }

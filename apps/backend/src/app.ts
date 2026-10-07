@@ -3292,6 +3292,26 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Finance: bảng chấm công cả tháng (ngày 1 -> cuối tháng) + lương ca từng NV
+  // để kế toán tính lương. Không phụ thuộc tab lịch tuần (chỉ có ca tương lai).
+  app.get('/admin/reports/finance-timesheet', authMiddleware, requireRole(['ADMIN', 'FINANCE', 'HR', 'STORE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const vn = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7);
+      const period = String((req.query as any)?.period || vn);
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
+        return res.status(400).json({ error: 'Kỳ báo cáo phải dạng YYYY-MM (VD: 2026-10)!' });
+      }
+      // STORE chỉ xem chi nhánh của mình; FINANCE/ADMIN/HR có thể lọc ?branchScope=.
+      const role = req.user?.role;
+      const scope = role === 'STORE'
+        ? (req.user!.branchScope || '*')
+        : (String((req.query as any)?.branchScope || req.user?.branchScope || '*'));
+      res.json(await payrollService.getFinanceTimesheet(period, scope));
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   app.post('/payroll/:run/reconcile', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollRunParams }), async (req: AuthenticatedRequest, res) => {
     try {
       const result = await payrollService.reconcileRun(req.params.run, req.user!.id);
