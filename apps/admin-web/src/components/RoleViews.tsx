@@ -10097,7 +10097,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         <FinHead
           icon="🧮"
           title="5. Tính Toán Bảng Lương (Formula Engine)"
-          sub="B1 công thức cũ • B2 công thức Excel theo kỳ • B3 nhập tay 6 cột • B4 các bước tính realtime • Kỳ đã tính rồi tính lại sẽ tạo kỳ mới"
+          sub="B1 công thức cũ • B2 công thức Excel theo kỳ • B3 nhập tay 6 cột • B4 các bước tính realtime • 🤖 00h10 mùng 1 tự tính 1 bản nháp DRAFT — kỳ đã tính rồi tính lại sẽ tạo kỳ mới"
           right={<>
             <label style={{ fontSize: '12px', fontWeight: 700 }}>Kỳ lương:
               <input

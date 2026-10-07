@@ -260,6 +260,60 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   };
   setInterval(attendanceWeekTick, 60_000);
 
+  // Tự tính nháp lương cuối tháng (Kế toán kiểm tra rồi duyệt tay):
+  // 00h10 ngày mùng 1 HẰNG THÁNG: tự chạy công thức Excel cho tháng vừa qua,
+  // tạo đúng 1 kỳ DRAFT (tháng đã có kỳ thì bỏ qua, không tính trùng).
+  // Kế toán vào tab 5 kiểm tra B4 → sang tab 4 Đối soát/Duyệt/Phát hành.
+  const payrollAutoDone = new Set<string>();
+  const payrollAutoTick = async () => {
+    try {
+      const now = new Date();
+      const { hh, mm, dateStr } = vnParts(now);
+      if (dateStr.slice(8, 10) !== '01') return; // chỉ mùng 1
+      if (hh !== 0 || mm < 10 || mm >= 30) return; // cửa sổ 00h10–00h30
+      const [y, m] = dateStr.split('-').map(Number);
+      const prev = new Date(Date.UTC(y, m - 1, 1) - 86_400_000);
+      const period = prev.toISOString().slice(0, 7);
+      const key = `payroll-auto:${period}`;
+      if (payrollAutoDone.has(key)) return;
+      payrollAutoDone.add(key);
+      const existing = await adapter.listPayrollRuns().catch(() => []);
+      if ((existing || []).some((r: any) => String((r as any).period) === period)) {
+        console.log(`[payroll-auto] Kỳ ${period} đã có — bỏ qua tính nháp tự động.`);
+        return;
+      }
+      const res: any = await services.payrollService
+        .calculateFormulaPayroll(period, '*', 'SYSTEM')
+        .catch((e: any) => ({ error: e?.message || String(e) }));
+      if (res?.error) {
+        console.warn(`[payroll-auto] Tính nháp kỳ ${period} thất bại:`, res.error);
+        return;
+      }
+      const run = res?.run ?? res;
+      console.log(`[payroll-auto] Đã tự tính nháp kỳ ${period}: ${run?.total_employees ?? '?'} NV, thực lãnh ${Number(run?.total_amount || 0).toLocaleString('vi-VN')}đ.`);
+      const admins = await adapter.listAdminAccounts().catch(() => []);
+      const ids = (admins || [])
+        .filter((a: any) => ['ADMIN', 'FINANCE'].includes(a.role) && a.is_active !== false)
+        .map((a: any) => a.admin_id);
+      if (ids.length > 0) {
+        await services.notificationsService.sendNotification({
+          recipientIds: ids,
+          type: 'PAYROLL_AUTO_DRAFT',
+          severity: 'ACTION_REQUIRED',
+          title: `🤖 Đã tự tính nháp lương tháng ${period.slice(5, 7)}/${period.slice(0, 4)}`,
+          summary: `Hệ thống tự chạy công thức Excel lúc 00h10 mùng 1: ${run?.total_employees ?? '?'} NV, thực lãnh ${Number(run?.total_amount || 0).toLocaleString('vi-VN')}đ. Kế toán kiểm tra tab Tính lương (B4) rồi Đối soát/Duyệt/Phát hành.`,
+          actorId: 'SYSTEM',
+        }).catch(() => null);
+      }
+      try {
+        io.emit('data:updated', { entity: 'payroll', data: { action: 'auto-draft', period, runId: run?.run_id }, timestamp: new Date().toISOString() });
+      } catch { /* non-fatal */ }
+    } catch (err: any) {
+      console.warn('[payroll-auto] tick error:', err?.message || err);
+    }
+  };
+  setInterval(payrollAutoTick, 5 * 60_000);
+
   // Reset thông báo cổng quản trị 6h00 HẰNG NGÀY (1 lần/ngày): xóa bản ghi cũ hơn
   // 00h00 cùng ngày trong bộ nhớ (tab Sheets THONGBAO_NV giữ nguyên, cập nhật liên tục).
   const notifResetDone = new Set<string>();
