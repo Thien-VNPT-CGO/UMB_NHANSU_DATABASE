@@ -3923,7 +3923,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   // --- TÍCH HỢP GOOGLE SHEETS (sync-now thủ công, có cooldown chống vượt quota) ---
   let lastSyncNowAt = 0;
-  app.post('/admin/integrations/sync-now', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
+  app.post('/admin/integrations/sync-now', authMiddleware, requireRole(['ADMIN', 'HR', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
     try {
       // Chống bấm sync-now dồn dập (tay + nhiều máy + full-sync nền): full sync
       // ~30 writes, quota Sheets chỉ 60 writes/phút — bấm 2 lần liên tiếp là vỡ quota.
@@ -3972,7 +3972,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/admin/integrations/pull-now', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
+  app.post('/admin/integrations/pull-now', authMiddleware, requireRole(['ADMIN', 'HR', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
     try {
       const syncService = (adapter as any).syncService;
       if (!syncService) {

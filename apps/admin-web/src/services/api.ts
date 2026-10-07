@@ -114,9 +114,12 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
         throw err;
       }
       const detailText = Array.isArray((data as any)?.details)
-        ? ` — ${(data as any).details.map((d: any) => `${d.path || 'field'}: ${d.message}`).join('; ')}`
+        ? ` — ${(data as any)?.details.map((d: any) => `${d.path || 'field'}: ${d.message}`).join('; ')}`
         : '';
-      const err: any = new Error(`${data.error || data.message || `Lỗi máy chủ (${res.status})`}${detailText}`);
+      // Ưu tiên message tiếng Việt của server (VD: thiếu quyền role nào) thay vì
+      // mã lỗi khô (VD: FORBIDDEN) để HR/Kế toán đọc là hiểu ngay.
+      const serverMsg = String((data as any)?.message || '').trim();
+      const err: any = new Error(`${serverMsg || data.error || `Lỗi máy chủ (${res.status})`}${detailText}`);
       err.code = data.error;
       err.details = (data as any)?.details;
       throw err;
