@@ -11324,18 +11324,26 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 ))}
                 {built.length > 0 && (
                   <tr style={{ backgroundColor: 'var(--bg)', fontWeight: 800, textAlign: 'center' }}>
-                    <td style={{ padding: '10px 14px', textAlign: 'left', position: 'sticky', left: 0, backgroundColor: 'var(--bg)' }}>TỔNG ({built.length} NV)</td>
-                    <td colSpan={daysInMonth} style={{ padding: '10px 8px' }}>{sum('AN')} giờ</td>
+                    <td style={{ padding: '10px 14px', textAlign: 'left', position: 'sticky', left: 0, backgroundColor: 'var(--bg)', zIndex: 1 }}>TỔNG ({built.length} NV)</td>
+                    {dayCols.map((_, i) => {
+                      const dh = built.reduce((acc: number, r: any) => acc + (Number(r.dayHours?.[i]) || 0), 0);
+                      return (
+                        <td key={i} style={{ padding: '10px 4px', fontWeight: dh > 0 ? 800 : 400, color: dh > 0 ? '#1D4ED8' : '#CBD5E1' }}>
+                          {dh > 0 ? dh : '·'}
+                        </td>
+                      );
+                    })}
+                    <td style={{ padding: '10px 8px', fontWeight: 800 }}>{sum('AN')}</td>
                     <td style={{ padding: '10px 8px' }}>{sum('AO')}</td>
                     <td style={{ padding: '10px 8px' }}>{sum('AP')}</td>
-                    <td style={{ padding: '10px 8px' }}>{sum('AQ')}</td>
+                    <td style={{ padding: '10px 8px', fontWeight: 700, color: '#1D4ED8' }}>{sum('AQ')}</td>
                     <td style={{ padding: '10px 8px' }}>{sum('AR')}</td>
                     <td style={{ padding: '10px 8px' }}>{sum('AS')}</td>
                     <td style={{ padding: '10px 8px' }}>{sum('AT')}</td>
-                    <td style={{ padding: '10px 8px' }}>{vnd(sum('AU'))}</td>
+                    <td style={{ padding: '10px 8px', fontWeight: 700 }}>{vnd(sum('AU'))}</td>
                     <td style={{ padding: '10px 8px' }}>{vnd(sum('AV'))}</td>
                     <td style={{ padding: '10px 8px' }}>{vnd(sum('AW'))}</td>
-                    <td style={{ padding: '10px 8px', color: '#059669' }}>{vnd(sum('AX'))}</td>
+                    <td style={{ padding: '10px 8px', fontWeight: 800, color: '#059669' }}>{vnd(sum('AX'))}</td>
                   </tr>
                 )}
               </tbody>
