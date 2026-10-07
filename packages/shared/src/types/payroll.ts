@@ -1,4 +1,4 @@
-export type PayrollRunStatus = 'DRAFT' | 'RECONCILED' | 'APPROVED' | 'PUBLISHED' | 'PAID';
+export type PayrollRunStatus = 'DRAFT' | 'RECONCILED' | 'APPROVED' | 'PUBLISHED' | 'PAID' | 'CONFIRMED';
 
 export interface PayrollRun {
   run_id: string;
@@ -21,6 +21,17 @@ export interface PayrollRun {
   created_at: string;
   updated_at: string;
 }
+
+/** Chữ ký điện tử trên phiếu lương (vẽ tay): tên + thời điểm + ảnh PNG dataURL. */
+export interface PayslipSignature {
+  name: string;
+  at: string;
+  /** Ảnh chữ ký (dataURL PNG, đã nén kích thước ký số). */
+  img?: string;
+  by?: string;
+}
+
+export type PayslipSignerRole = 'lap' | 'quanly' | 'nhanvien';
 
 export interface PayslipItem {
   item_id: string;
@@ -63,9 +74,49 @@ export interface PayslipItem {
   tong_luong?: number;
   /** THỰC LÃNH = tong_luong - ung_luong - dong_phuc (Excel R). */
   thuc_lanh?: number;
+  // --- Quy trình ký 3 bên + phát hành từng phiếu (DRAFT -> PUBLISHED -> CONFIRMED -> PAID) ---
+  /** Chữ ký người lập phiếu (Kế toán). Đủ 2 ký lập+quản lý mới hiện nút PUBLISHED. */
+  sign_lap?: PayslipSignature;
+  /** Chữ ký quản lý chi nhánh. */
+  sign_quanly?: PayslipSignature;
+  /** Chữ ký xác nhận của nhân viên (chỉ ký khi phiếu đã PUBLISHED). */
+  sign_nhanvien?: PayslipSignature;
+  /** Thời điểm gửi phiếu đến nhân viên. */
+  slip_published_at?: string;
+  /** Thời điểm nhân viên ký xác nhận. */
+  slip_confirmed_at?: string;
+  /** Thời điểm kế toán xác nhận đã chuyển khoản. */
+  slip_paid_at?: string;
+  slip_paid_by?: string;
+  bank_name?: string;
+  bank_account?: string;
+  bank_holder?: string;
   status: PayrollRunStatus;
   created_at: string;
   updated_at: string;
+}
+
+/** Cấu hình tài khoản nhận lương công ty để sinh VietQR động theo số thực lãnh từng NV. */
+export interface BankQrConfig {
+  /** Mã ngân hàng VietQR (VD: VCB, TCB, ACB...). */
+  bank: string;
+  /** Số tài khoản công ty. */
+  account: string;
+  /** Tên chủ tài khoản. */
+  holder: string;
+  updatedBy?: string;
+  updatedAt?: string;
+}
+
+/** URL ảnh VietQR động: đúng số tiền thực lãnh + nội dung = mã NV + kỳ lương. */
+export function vietQrUrl(cfg: BankQrConfig, amount: number, info: string): string {
+  const amt = Math.max(0, Math.round(Number(amount) || 0));
+  const p = new URLSearchParams({
+    amount: String(amt),
+    addInfo: info.slice(0, 50),
+    accountName: (cfg.holder || '').slice(0, 50),
+  });
+  return `https://img.vietqr.io/image/${encodeURIComponent(cfg.bank)}-${encodeURIComponent(cfg.account)}-compact2.png?${p.toString()}`;
 }
 
 /**

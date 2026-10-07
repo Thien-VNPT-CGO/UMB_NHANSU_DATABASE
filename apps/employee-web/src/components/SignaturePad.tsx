@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 
 interface SignaturePadProps {
-  /** Tiêu đề ô ký (VD: Người lập phiếu). */
+  /** Tiêu đề ô ký (VD: Người lập phiếu, Người nhận tiền). */
   label: string;
   /** Ảnh chữ ký đã lưu (dataURL) — null = chưa ký. */
   value: string | null;
@@ -56,7 +56,7 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({ label, value, signer
     setupCanvas();
     strokedRef.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open ]);
+  }, [open]);
 
   const posOf = (e: React.PointerEvent) => {
     const canvas = canvasRef.current!;
@@ -86,18 +86,20 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({ label, value, signer
       <div
         style={{
           marginTop: '6px', minHeight: '86px', borderRadius: '8px',
-          border: value ? '1px solid #A7F3D0' : '1.5px dashed #CBD5E1',
-          backgroundColor: value ? '#F0FDF4' : '#F8FAFC',
+          border: value ? '1.5px solid #10B981' : disabled ? '1.5px dashed #E2E8F0' : '1.5px dashed #3B82F6',
+          backgroundColor: value ? '#F0FDF4' : disabled ? '#F8FAFC' : '#EFF6FF',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          padding: '6px', cursor: (value || disabled) ? 'default' : 'pointer', opacity: disabled ? 0.7 : 1,
+          padding: '6px', cursor: (value || disabled) ? 'default' : 'pointer',
         }}
         onClick={() => { if (!value && !disabled) setOpen(true); }}
-        title={value ? 'Đã ký điện tử' : disabled ? 'Đã khóa' : 'Bấm để ký điện tử'}
+        title={value ? 'Đã ký điện tử' : disabled ? 'Chưa được phép ký' : 'Bấm để ký điện tử'}
       >
         {value ? (
           <img src={value} alt={`Chữ ký ${label}`} style={{ maxWidth: '100%', maxHeight: '74px', objectFit: 'contain' }} />
         ) : (
-          <span style={{ fontSize: '12px', color: '#64748B' }}>{disabled ? '🔒 Đã khóa' : '✍️ Bấm để ký điện tử'}</span>
+          <span style={{ fontSize: '12px', color: disabled ? '#94A3B8' : '#2563EB', fontWeight: 600 }}>
+            {disabled ? 'Chờ ký...' : '✍️ Bấm để ký tên'}
+          </span>
         )}
       </div>
       <div style={{ fontSize: '12px', marginTop: '4px', minHeight: '18px', fontWeight: value ? 700 : 400, color: value ? '#111827' : '#9CA3AF' }}>
@@ -111,18 +113,18 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({ label, value, signer
 
       {open && (
         <div
-          style={{ position: 'fixed', inset: 0, zIndex: 9999, backgroundColor: 'rgba(15,23,42,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}
+          style={{ position: 'fixed', inset: 0, zIndex: 9999, backgroundColor: 'rgba(15,23,42,0.65)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}
           onClick={() => setOpen(false)}
         >
           <div
-            style={{ backgroundColor: '#FFF', borderRadius: '14px', padding: '18px', width: '100%', maxWidth: '500px', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}
+            style={{ backgroundColor: '#FFF', borderRadius: '16px', padding: '20px', width: '100%', maxWidth: '480px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}
             onClick={e => e.stopPropagation()}
           >
-            <div style={{ fontSize: '14px', fontWeight: 800, marginBottom: '4px' }}>✍️ Ký điện tử — {label}</div>
-            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '10px' }}>Vẽ chữ ký trong khung (chuột hoặc ngón tay), ghi tên rồi bấm Lưu.</div>
+            <div style={{ fontSize: '15px', fontWeight: 800, marginBottom: '4px', color: '#1E293B' }}>✍️ Ký điện tử — {label}</div>
+            <div style={{ fontSize: '12px', color: '#64748B', marginBottom: '10px' }}>Vẽ chữ ký bằng ngón tay hoặc chuột vào ô trắng dưới đây, nhập họ tên rồi bấm Xác Nhận.</div>
             <canvas
               ref={canvasRef}
-              style={{ width: '100%', height: '180px', borderRadius: '8px', border: '1.5px solid #93C5FD', backgroundColor: '#FFF', touchAction: 'none', cursor: 'crosshair' }}
+              style={{ width: '100%', height: '180px', borderRadius: '8px', border: '2px solid #3B82F6', backgroundColor: '#FFF', touchAction: 'none', cursor: 'crosshair' }}
               onPointerDown={e => {
                 (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
                 drawingRef.current = true;
@@ -152,12 +154,12 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({ label, value, signer
             <input
               value={name}
               onChange={e => setName(e.target.value)}
-              placeholder="Họ tên người ký..."
-              style={{ marginTop: '10px', width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--border)', fontSize: '13px', boxSizing: 'border-box' }}
+              placeholder="Họ và tên người nhận..."
+              style={{ marginTop: '12px', width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '13px', boxSizing: 'border-box' }}
             />
-            <div style={{ display: 'flex', gap: '8px', marginTop: '12px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-              <button className="btn-secondary" style={{ fontSize: '12px', padding: '8px 14px' }} onClick={clearCanvas}>🧹 Vẽ lại</button>
-              <button className="btn-secondary" style={{ fontSize: '12px', padding: '8px 14px' }} onClick={() => setOpen(false)}>Đóng</button>
+            <div style={{ display: 'flex', gap: '8px', marginTop: '14px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              <button className="btn-secondary" style={{ fontSize: '12px', padding: '8px 14px' }} onClick={clearCanvas}>🧹 Xóa vẽ lại</button>
+              <button className="btn-secondary" style={{ fontSize: '12px', padding: '8px 14px' }} onClick={() => setOpen(false)}>Hủy</button>
               <button className="btn-primary" style={{ fontSize: '12px', padding: '8px 18px', fontWeight: 800, backgroundColor: '#059669' }} onClick={handleSave}>💾 Lưu chữ ký</button>
             </div>
           </div>

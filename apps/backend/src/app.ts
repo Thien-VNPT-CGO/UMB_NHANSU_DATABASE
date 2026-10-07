@@ -157,6 +157,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   const attendanceService = new AttendanceService(adapter);
   const payrollService = new PayrollService(adapter);
   const notificationsService = new NotificationsService(adapter);
+  payrollService.setNotificationsService(notificationsService);
   const zaloService = new ZaloService(adapter);
   // Khôi phục phiên Zalo cá nhân HR sau restart (không cần quét QR lại).
   // Chạy lần đầu sau khi pull Sheets xong + tick nền 5 phút giữ phiên tới khi HR đăng xuất.
@@ -3379,6 +3380,129 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       res.json(slips);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Nhân viên kiểm tra và ký xác nhận phiếu lương (Cổng nhân viên)
+  app.post('/me/payslips/:id/confirm', authMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const employeeId = req.user?.employeeId || req.user?.id;
+      if (!employeeId) return res.status(400).json({ error: 'NOT_AN_EMPLOYEE' });
+      const { name, img } = req.body || {};
+      const updated = await payrollService.signSlip(req.params.id, 'nhanvien', name, img, employeeId);
+      broadcastUpdate('payroll', { action: 'confirm-slip', itemId: req.params.id });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Kế toán / Quản trị viên lấy danh sách phiếu lương theo kỳ
+  app.get('/payroll/period-slips/:period', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req, res) => {
+    try {
+      const data = await payrollService.getPeriodSlips(req.params.period);
+      res.json(data);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Kế toán khởi tạo phiếu lương cho kỳ nếu chưa có
+  app.post('/payroll/period-slips/:period/ensure', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const branchScope = (req.body && req.body.branchScope) || '*';
+      const data = await payrollService.ensurePeriodSlips(req.params.period, branchScope, req.user!.id);
+      broadcastUpdate('payroll', { action: 'ensure-slips', period: req.params.period });
+      res.json(data);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Kế toán ký điện tử 1 phiếu (Người lập hoặc Quản lý chi nhánh)
+  app.post('/payroll/slips/:id/sign', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const { role, name, img } = req.body || {};
+      const updated = await payrollService.signSlip(req.params.id, role, name, img, req.user!.id);
+      broadcastUpdate('payroll', { action: 'sign-slip', itemId: req.params.id, role });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Kế toán phát hành từng phiếu (yêu cầu đủ 2 chữ ký)
+  app.post('/payroll/slips/:id/publish', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const updated = await payrollService.publishSlip(req.params.id, req.user!.id);
+      broadcastUpdate('payroll', { action: 'publish-slip', itemId: req.params.id });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Kế toán phát hành tất cả các phiếu đã đủ 2 chữ ký của kỳ
+  app.post('/payroll/runs/:id/publish-all-slips', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await payrollService.publishAllSlips(req.params.id, req.user!.id);
+      broadcastUpdate('payroll', { action: 'publish-all-slips', runId: req.params.id });
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.post('/payroll/:run/publish-all-slips', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await payrollService.publishAllSlips(req.params.run, req.user!.id);
+      broadcastUpdate('payroll', { action: 'publish-all-slips', runId: req.params.run });
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Kế toán xác nhận hoàn thành chi trả (PAID) sau khi quét QR chuyển khoản
+  app.post('/payroll/slips/:id/mark-paid', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const updated = await payrollService.markSlipPaid(req.params.id, req.user!.id);
+      broadcastUpdate('payroll', { action: 'mark-slip-paid', itemId: req.params.id });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Cập nhật thông tin ngân hàng cho phiếu lương của nhân viên
+  app.put('/payroll/slips/:id/bank', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const { bank, account, holder } = req.body || {};
+      const updated = await payrollService.updateSlipBank(req.params.id, bank, account, holder, req.user!.id);
+      broadcastUpdate('payroll', { action: 'update-bank', itemId: req.params.id });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Cấu hình VietQR công ty
+  app.get('/payroll/bank-config', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (_req, res) => {
+    try {
+      const cfg = await payrollService.getBankConfig();
+      res.json(cfg || { bank: 'MB', account: '', holder: '' });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put('/payroll/bank-config', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const cfg = await payrollService.saveBankConfig(req.body, req.user!.id);
+      broadcastUpdate('payroll', { action: 'bank-config' });
+      res.json(cfg);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
     }
   });
 

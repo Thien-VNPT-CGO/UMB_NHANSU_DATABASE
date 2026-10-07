@@ -93,6 +93,9 @@ export interface ISheetsRepository {
   updatePayrollRunStatus(runId: string, status: PayrollRunStatus, actorId: string, updates?: Partial<PayrollRun>): Promise<PayrollRun>;
   getPayslipsForEmployee(employeeId: string): Promise<PayslipItem[]>;
   getPayslipsByRunId(runId: string): Promise<PayslipItem[]>;
+  getPayslipById(itemId: string): Promise<PayslipItem | null>;
+  /** Cập nhật 1 phiếu (ký/phát hành/xác nhận/chi trả từng phiếu) + đồng bộ Sheets. */
+  updatePayslip(itemId: string, updates: Partial<PayslipItem>): Promise<PayslipItem>;
 
   // Công thức + dữ liệu nhập tay tính lương theo file Excel (Finance).
   getPayrollFormula(period: string): Promise<PayrollFormula | null>;

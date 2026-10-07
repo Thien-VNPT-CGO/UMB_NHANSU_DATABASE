@@ -1,8 +1,10 @@
 import {
+  BankQrConfig,
   ERROR_CODES,
   PayrollRun,
   PayrollRunStatus,
   PayslipItem,
+  PayslipSignerRole,
   SHIFT_TEMPLATES,
   DEFAULT_PAYROLL_FORMULA,
 } from '@ubm/shared';
@@ -50,6 +52,20 @@ export class PayrollService {
 
   public setSocketServer(io: Server) {
     this.io = io;
+  }
+
+  private notificationsService?: any;
+  public setNotificationsService(svc: any) {
+    this.notificationsService = svc;
+  }
+
+  public triggerSheetsPush() {
+    try {
+      const sync = (this.repo as any).syncService || (this.repo as any).fallbackAdapter?.syncService;
+      if (sync && typeof sync.pushPayslipsTab === 'function') {
+        sync.pushPayslipsTab(this.repo).catch((err: any) => console.warn('[PayrollService] pushPayslipsTab error:', err?.message || err));
+      }
+    } catch { /* non-fatal */ }
   }
 
   async calculateDraftPayroll(period: string, branchScope = '*', creatorId: string) {
@@ -168,6 +184,9 @@ export class PayrollService {
             bonus,
             deduction,
             net_pay: netPay,
+            bank_name: (emp as any).bank_name || '',
+            bank_account: (emp as any).bank_account || '',
+            bank_holder: (emp as any).bank_holder || emp.full_name || '',
             status: 'DRAFT',
           });
         }
@@ -376,6 +395,9 @@ export class PayrollService {
             tong_cong: tongCong,
             tong_luong: tongLuong,
             thuc_lanh: thucLanh,
+            bank_name: (emp as any).bank_name || '',
+            bank_account: (emp as any).bank_account || '',
+            bank_holder: (emp as any).bank_holder || emp.full_name || '',
             status: 'DRAFT',
           });
         }
@@ -470,6 +492,318 @@ export class PayrollService {
 
   async getEmployeePayslips(employeeId: string) {
     return this.repo.getPayslipsForEmployee(employeeId);
+  }
+
+  // --- Quy trình ký 3 bên từng phiếu: DRAFT -> (ký lập + ký QL) -> PUBLISHED -> (NV ký) CONFIRMED -> PAID ---
+  private notifySlipsChanged(action: string, extra: any = {}) {
+    if (!this.io) return;
+    try {
+      this.io.emit('data:updated', { entity: 'payslips', data: { action, ...extra }, timestamp: new Date().toISOString() });
+    } catch { /* non-fatal */ }
+  }
+
+  /**
+   * Ký 1 phiếu:
+   * - lap/quanly (Kế toán): chỉ ký khi phiếu còn DRAFT/PUBLISHED (chưa NV xác nhận/chi trả).
+   * - nhanvien (chính chủ): chỉ ký khi phiếu đã PUBLISHED -> chuyển CONFIRMED (đủ 3 chữ ký).
+   */
+  async signSlip(itemId: string, role: PayslipSignerRole, name: string, img: string | undefined, actorId: string) {
+    return singleWriterQueue.enqueue({
+      entityType: 'PHIEU_LUONG',
+      entityId: itemId,
+      actorId,
+      execute: async () => {
+        const slip = await this.repo.getPayslipById(itemId);
+        if (!slip) throw new Error('PAYSLIP_NOT_FOUND');
+        const nm = String(name || '').trim().slice(0, 80);
+        if (!nm) throw new Error('MISSING_SIGNER_NAME: thiếu tên người ký!');
+        const sig = {
+          name: nm,
+          at: new Date().toISOString(),
+          ...(img ? { img: String(img).slice(0, 45000) } : {}),
+          by: actorId,
+        };
+        let updated;
+        if (role === 'nhanvien') {
+          if (String(slip.employee_id) !== String(actorId) && String(slip.employee_code) !== String(actorId)) {
+            throw new Error(ERROR_CODES.FORBIDDEN);
+          }
+          if (slip.status !== 'PUBLISHED') throw new Error('SLIP_NOT_PUBLISHED: phiếu chưa được gửi, chưa ký xác nhận được!');
+          updated = await this.repo.updatePayslip(itemId, {
+            sign_nhanvien: sig as any,
+            status: 'CONFIRMED',
+            slip_confirmed_at: (sig as any).at,
+          });
+          // Gửi thông báo đến Kế toán & Admin
+          if (this.notificationsService) {
+            await this.notificationsService.sendNotification({
+              recipientIds: ['ALL'],
+              type: 'emp.payslip',
+              severity: 'SYSTEM',
+              title: `✍️ Nhân viên ${slip.full_name} đã xác nhận phiếu lương!`,
+              summary: `${slip.full_name} (${slip.employee_code}) đã kiểm tra và ký xác nhận phiếu lương kỳ ${slip.period}. Đã đủ 3 chữ ký, sẵn sàng quét mã QR chuyển khoản.`,
+              targetPath: '/fin_payslips',
+              actorId,
+            }).catch(() => null);
+          }
+          if (this.io) {
+            this.io.emit('payroll.confirmed', {
+              itemId,
+              period: slip.period,
+              employeeId: slip.employee_id,
+              employeeCode: slip.employee_code,
+              fullName: slip.full_name,
+            });
+            this.io.emit('system:notification', {
+              type: 'SYSTEM',
+              origin: 'EMPLOYEE',
+              title: `✍️ Nhân viên ${slip.full_name} đã xác nhận phiếu lương!`,
+              message: `${slip.full_name} (${slip.employee_code}) đã kiểm tra và ký xác nhận phiếu lương kỳ ${slip.period}. Đã đủ 3 chữ ký, sẵn sàng quét mã QR chuyển khoản.`,
+              timestamp: new Date().toISOString(),
+            });
+          }
+        } else {
+          if (slip.status === 'CONFIRMED' || slip.status === 'PAID') {
+            throw new Error('SLIP_LOCKED: phiếu đã xác nhận/chi trả, không ký lại!');
+          }
+          updated = await this.repo.updatePayslip(itemId, {
+            [role === 'lap' ? 'sign_lap' : 'sign_quanly']: sig,
+          } as any);
+        }
+        this.notifySlipsChanged('sign', { itemId, role });
+        this.triggerSheetsPush();
+        return updated;
+      },
+    });
+  }
+
+  /** Gửi 1 phiếu đến NV: yêu cầu đủ 2 chữ ký lập + quản lý, phiếu đang DRAFT. */
+  async publishSlip(itemId: string, actorId: string) {
+    return singleWriterQueue.enqueue({
+      entityType: 'PHIEU_LUONG',
+      entityId: itemId,
+      actorId,
+      execute: async () => {
+        const slip = await this.repo.getPayslipById(itemId);
+        if (!slip) throw new Error('PAYSLIP_NOT_FOUND');
+        if (slip.status !== 'DRAFT') throw new Error(`SLIP_NOT_DRAFT: phiếu đang ở trạng thái ${slip.status}, không gửi lại!`);
+        if (!(slip as any).sign_lap || !(slip as any).sign_quanly) {
+          throw new Error('MISSING_SIGNATURES: thiếu chữ ký người lập hoặc quản lý chi nhánh!');
+        }
+        const updated = await this.repo.updatePayslip(itemId, {
+          status: 'PUBLISHED',
+          slip_published_at: new Date().toISOString(),
+        });
+        if (this.notificationsService) {
+          await this.notificationsService.sendNotification({
+            recipientIds: [slip.employee_id],
+            type: 'emp.payslip',
+            severity: 'SYSTEM',
+            title: `💰 Phiếu lương kỳ ${slip.period} đã phát hành!`,
+            summary: `Kế toán đã phát hành phiếu lương kỳ ${slip.period} cho bạn. Vui lòng kiểm tra lại tiền thực lãnh và ký tên xác nhận.`,
+            targetPath: '/notifs_salary',
+            actorId,
+          }).catch(() => null);
+        }
+        this.notifySlipsChanged('publish', { itemId });
+        this.triggerSheetsPush();
+        return updated;
+      },
+    });
+  }
+
+  /** Gửi hàng loạt 1 lần: toàn bộ phiếu DRAFT đủ 2 ký của kỳ -> PUBLISHED. Thiếu ký thì liệt kê để bổ sung. */
+  async publishAllSlips(runIdOrPeriod: string, actorId: string) {
+    return singleWriterQueue.enqueue({
+      entityType: 'KY_LUONG',
+      entityId: runIdOrPeriod,
+      actorId,
+      execute: async () => {
+        let slips: any[] = [];
+        if (runIdOrPeriod.startsWith('PAY_') || runIdOrPeriod.startsWith('RUN_')) {
+          slips = await this.repo.getPayslipsByRunId(runIdOrPeriod);
+        }
+        if (!slips || slips.length === 0) {
+          const allSlips = await this.collectAllSlipsInternal();
+          slips = allSlips.filter(s => s.period === runIdOrPeriod || s.run_id === runIdOrPeriod);
+        }
+        if (!slips || slips.length === 0) throw new Error('PAYROLL_RUN_EMPTY: kỳ chưa có phiếu nào!');
+        const published: string[] = [];
+        const skipped: { itemId: string; employee: string; reason: string }[] = [];
+        for (const s of slips) {
+          if ((s as any).status !== 'DRAFT') {
+            if ((s as any).status !== 'PUBLISHED') skipped.push({ itemId: (s as any).item_id, employee: (s as any).full_name || (s as any).employee_id, reason: `đang ở trạng thái ${(s as any).status}` });
+            else published.push((s as any).item_id);
+            continue;
+          }
+          if (!(s as any).sign_lap || !(s as any).sign_quanly) {
+            skipped.push({ itemId: (s as any).item_id, employee: (s as any).full_name || (s as any).employee_id, reason: 'thiếu chữ ký lập/quản lý' });
+            continue;
+          }
+          await this.repo.updatePayslip((s as any).item_id, {
+            status: 'PUBLISHED',
+            slip_published_at: new Date().toISOString(),
+          });
+          published.push((s as any).item_id);
+        }
+        if (this.notificationsService && published.length > 0) {
+          const pubSlips = slips.filter(s => published.includes((s as any).item_id));
+          const empIds = [...new Set(pubSlips.map(s => (s as any).employee_id).filter(Boolean))];
+          if (empIds.length > 0) {
+            await this.notificationsService.sendNotification({
+              recipientIds: empIds,
+              type: 'emp.payslip',
+              severity: 'SYSTEM',
+              title: `💰 Phiếu lương đã phát hành!`,
+              summary: `Kế toán đã phát hành phiếu lương cho bạn. Vui lòng kiểm tra lại tiền thực lãnh và ký tên xác nhận.`,
+              targetPath: '/notifs_salary',
+              actorId,
+            }).catch(() => null);
+          }
+        }
+        this.notifySlipsChanged('publish-all', { runId: runIdOrPeriod, count: published.length });
+        this.triggerSheetsPush();
+        return { published, skipped };
+      },
+    });
+  }
+
+  /** Kế toán xác nhận đã chuyển khoản 1 phiếu: yêu cầu đủ 3 chữ ký + NV đã xác nhận. */
+  async markSlipPaid(itemId: string, actorId: string) {
+    return singleWriterQueue.enqueue({
+      entityType: 'PHIEU_LUONG',
+      entityId: itemId,
+      actorId,
+      execute: async () => {
+        const slip = await this.repo.getPayslipById(itemId);
+        if (!slip) throw new Error('PAYSLIP_NOT_FOUND');
+        if (slip.status !== 'CONFIRMED') throw new Error('SLIP_NOT_CONFIRMED: nhân viên chưa ký xác nhận, chưa chuyển khoản!');
+        if (!(slip as any).sign_lap || !(slip as any).sign_quanly || !(slip as any).sign_nhanvien) {
+          throw new Error('MISSING_SIGNATURES: phiếu chưa đủ 3 chữ ký!');
+        }
+        const updated = await this.repo.updatePayslip(itemId, {
+          status: 'PAID',
+          slip_paid_at: new Date().toISOString(),
+          slip_paid_by: actorId,
+        });
+        if (this.notificationsService) {
+          const amt = Number(slip.thuc_lanh ?? slip.net_pay ?? 0).toLocaleString('vi-VN');
+          await this.notificationsService.sendNotification({
+            recipientIds: [slip.employee_id],
+            type: 'emp.payslip',
+            severity: 'SYSTEM',
+            title: `✅ Đã chi trả lương kỳ ${slip.period}!`,
+            summary: `Kế toán đã chuyển khoản ${amt}đ lương kỳ ${slip.period} vào tài khoản ngân hàng của bạn.`,
+            targetPath: '/notifs_salary',
+            actorId,
+          }).catch(() => null);
+        }
+        this.notifySlipsChanged('paid', { itemId });
+        this.triggerSheetsPush();
+        return updated;
+      },
+    });
+  }
+
+  /** Cập nhật thông tin tài khoản ngân hàng cho 1 phiếu (và đồng bộ vào hồ sơ NV). */
+  async updateSlipBank(itemId: string, bankName: string, bankAccount: string, bankHolder: string, actorId: string) {
+    return singleWriterQueue.enqueue({
+      entityType: 'PHIEU_LUONG',
+      entityId: itemId,
+      actorId,
+      execute: async () => {
+        const slip = await this.repo.getPayslipById(itemId);
+        if (!slip) throw new Error('PAYSLIP_NOT_FOUND');
+        const bName = String(bankName || '').trim().toUpperCase().slice(0, 30);
+        const bAcc = String(bankAccount || '').trim().replace(/\s+/g, '').slice(0, 30);
+        const bHolder = String(bankHolder || '').trim().toUpperCase().slice(0, 80);
+        const updated = await this.repo.updatePayslip(itemId, {
+          bank_name: bName,
+          bank_account: bAcc,
+          bank_holder: bHolder,
+        });
+        if (slip.employee_id && (this.repo as any).updateEmployee) {
+          await (this.repo as any).updateEmployee(slip.employee_id, {
+            bank_name: bName,
+            bank_account: bAcc,
+            bank_holder: bHolder,
+          }).catch(() => null);
+        }
+        this.notifySlipsChanged('bank', { itemId });
+        this.triggerSheetsPush();
+        return updated;
+      },
+    });
+  }
+
+  private async collectAllSlipsInternal(): Promise<any[]> {
+    const out: any[] = [];
+    const seen = new Set<string>();
+    const fb: any = (this.repo as any).fallbackAdapter || this.repo;
+    if (Array.isArray(fb?.payslips)) {
+      for (const s of fb.payslips) {
+        if (s?.item_id && !seen.has(s.item_id)) {
+          seen.add(s.item_id);
+          out.push(s);
+        }
+      }
+    }
+    const runs = await this.repo.listPayrollRuns().catch(() => []);
+    for (const r of runs || []) {
+      const slips = await this.repo.getPayslipsByRunId((r as any).run_id).catch(() => []);
+      for (const s of slips || []) {
+        if ((s as any)?.item_id && !seen.has((s as any).item_id)) {
+          seen.add((s as any).item_id);
+          out.push(s);
+        }
+      }
+    }
+    return out;
+  }
+
+  async getPeriodSlips(period: string) {
+    const runs = await this.repo.listPayrollRuns().catch(() => []);
+    const matching = (runs || []).filter(r => r.period === period);
+    let run: any = null;
+    let slips: any[] = [];
+    if (matching.length > 0) {
+      run = matching[matching.length - 1];
+      slips = await this.repo.getPayslipsByRunId(run.run_id).catch(() => []);
+    }
+    if (slips.length === 0) {
+      const allSlips = await this.collectAllSlipsInternal();
+      slips = allSlips.filter(s => s.period === period);
+    }
+    return { run, slips };
+  }
+
+  async ensurePeriodSlips(period: string, branchScope = '*', creatorId: string) {
+    const existing = await this.getPeriodSlips(period);
+    if (existing.slips && existing.slips.length > 0) {
+      return existing;
+    }
+    const res = await this.calculateFormulaPayroll(period, branchScope, creatorId);
+    return { run: (res as any).run, slips: (res as any).slips || (res as any).payslips || [] };
+  }
+
+  // --- Cấu hình VietQR công ty (lưu trong system settings, tự đồng bộ Sheets) ---
+  async getBankConfig(): Promise<BankQrConfig | null> {
+    const all: any = await (this.repo as any).getSystemSettings?.().catch(() => null);
+    const cfg = all?.bankQr;
+    if (!cfg || !cfg.bank || !cfg.account) return null;
+    return { bank: String(cfg.bank), account: String(cfg.account), holder: String(cfg.holder || '') };
+  }
+
+  async saveBankConfig(data: any, actorId: string): Promise<BankQrConfig> {
+    const bank = String(data?.bank || '').trim().toUpperCase().slice(0, 20);
+    const account = String(data?.account || '').trim().replace(/\s+/g, '').slice(0, 30);
+    const holder = String(data?.holder || '').trim().slice(0, 80);
+    if (!bank || !account) throw new Error('INVALID_BANK_CONFIG: thiếu mã ngân hàng hoặc số tài khoản!');
+    if (!/^[0-9]{6,20}$/.test(account)) throw new Error('INVALID_BANK_CONFIG: số tài khoản phải 6-20 chữ số!');
+    const all: any = await (this.repo as any).getSystemSettings?.().catch(() => ({}));
+    const cfg: BankQrConfig = { bank, account, holder, updatedBy: actorId, updatedAt: new Date().toISOString() };
+    await (this.repo as any).updateSystemSettings?.({ ...(all || {}), bankQr: cfg });
+    return cfg;
   }
 
   /**

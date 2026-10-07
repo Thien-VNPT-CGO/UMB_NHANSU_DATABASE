@@ -4,6 +4,7 @@ import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl, on
 import { connectRealtime, stopRealtimeRevive } from './services/realtime';
 import { APP_COMMIT } from './app-version';
 import { PremiumLogin } from './components/PremiumLogin';
+import { SignaturePad } from './components/SignaturePad';
 import {
   Home,
   Calendar,
@@ -2205,6 +2206,32 @@ export function App() {
       }
     } catch (err: any) {
       showToast(err.message || 'Không tải được phiếu lương! Vui lòng thử lại.');
+    }
+  };
+
+  const [confirmSlipBusy, setConfirmSlipBusy] = useState<string | null>(null);
+  const handleConfirmPayslip = async (slipId: string, img: string, signerName: string) => {
+    if (!img) {
+      showToast('⚠️ Vui lòng vẽ chữ ký trước khi xác nhận!');
+      return;
+    }
+    setConfirmSlipBusy(slipId);
+    try {
+      const updated = await apiRequest(`/me/payslips/${slipId}/confirm`, {
+        method: 'POST',
+        body: JSON.stringify({ name: signerName || employee?.full_name || '', img }),
+      });
+      showToast('✅ Bạn đã ký xác nhận phiếu lương thành công! Kế toán đã nhận được thông báo để chuyển khoản.');
+      setPayslips(prev => prev.map(s => s.item_id === slipId ? {
+        ...s,
+        ...(updated || {}),
+        status: 'CONFIRMED',
+        sign_nhanvien: { name: signerName || employee?.full_name || '', at: new Date().toISOString(), img },
+      } : s));
+    } catch (err: any) {
+      showToast(err?.message || 'Lỗi khi ký xác nhận phiếu lương!');
+    } finally {
+      setConfirmSlipBusy(null);
     }
   };
 
@@ -5484,26 +5511,150 @@ export function App() {
                       </div>
                     );
                     const tongCong = slip.tong_cong ?? ((slip.luong_cb || 0) + (slip.phu_cap_ot ?? slip.allowance ?? 0) + (slip.standard_pay || 0) + (slip.ot_extra || 0) + (slip.bonus || 0));
+                    const netPayVal = slip.thuc_lanh ?? slip.net_pay ?? 0;
+                    const st = slip.status || 'DRAFT';
                     return (
-                      <div key={slip.item_id || slip.run_id || idx} style={{ backgroundColor: '#FFFBF9', padding: '14px', borderRadius: 'var(--radius-sm)', border: '1.5px solid #F59E0B' }}>
-                        <div style={{ fontWeight: 800, fontSize: '14px', color: 'var(--brand)', textAlign: 'center' }}>
-                          💰 PHIẾU LƯƠNG
+                      <div key={slip.item_id || slip.run_id || idx} style={{ backgroundColor: '#FFFBF9', padding: '16px', borderRadius: '12px', border: '1.5px solid #F59E0B', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
+                          <div style={{ fontWeight: 800, fontSize: '15px', color: 'var(--brand)' }}>
+                            💰 PHIẾU LƯƠNG {slip.period ? `KỲ ${String(slip.period).slice(5, 7)}/${String(slip.period).slice(0, 4)}` : (slip.title || '')}
+                          </div>
+                          <div>
+                            {st === 'PUBLISHED' && (
+                              <span style={{ fontSize: '11px', fontWeight: 800, padding: '3px 10px', borderRadius: '999px', backgroundColor: '#FEF3C7', color: '#B45309', border: '1px solid #FDE68A' }}>
+                                🔔 Chờ bạn kiểm tra & ký nhận
+                              </span>
+                            )}
+                            {st === 'CONFIRMED' && (
+                              <span style={{ fontSize: '11px', fontWeight: 800, padding: '3px 10px', borderRadius: '999px', backgroundColor: '#EFF6FF', color: '#1D4ED8', border: '1px solid #BFDBFE' }}>
+                                ✍️ Đã ký xác nhận (3/3 chữ ký) • Chờ chuyển khoản
+                              </span>
+                            )}
+                            {st === 'PAID' && (
+                              <span style={{ fontSize: '11px', fontWeight: 800, padding: '3px 10px', borderRadius: '999px', backgroundColor: '#ECFDF5', color: '#047857', border: '1px solid #A7F3D0' }}>
+                                🎉 Đã thanh toán (Hoàn thành)
+                              </span>
+                            )}
+                          </div>
                         </div>
-                        <div style={{ textAlign: 'center', fontSize: '12px', fontWeight: 700, marginBottom: '6px' }}>
-                          {slip.period ? `Kỳ ${String(slip.period).slice(5, 7)}/${String(slip.period).slice(0, 4)}` : (slip.title || '')}
+
+                        {/* Breakdown */}
+                        <div style={{ backgroundColor: '#FFF', padding: '12px', borderRadius: '8px', border: '1px solid #FDE68A' }}>
+                          {row(`Công: ${slip.standard_hours || 0} giờ (${slip.total_shifts ?? 0} ca${Number(slip.absent_shifts) > 0 ? `, vắng ${slip.absent_shifts}` : ''}) × ${vnd(slip.rate_snapshot).replace('đ', '')}/h`, vnd(slip.standard_pay))}
+                          {Number(slip.luong_cb) > 0 && row('Lương cơ bản', vnd(slip.luong_cb))}
+                          {row(`Phụ cấp OT${slip.ot_slots ? ` (${slip.ot_slots} suất)` : ''}`, vnd(slip.phu_cap_ot ?? slip.allowance))}
+                          {Number(slip.ot_extra) > 0 && row('OT thêm', vnd(slip.ot_extra))}
+                          {Number(slip.bonus) > 0 && row('Thưởng/Bonus', `+${vnd(slip.bonus)}`)}
+                          {row('TỔNG CỘNG THU NHẬP', vnd(tongCong), true)}
+                          {(Number(slip.tru_kpi) > 0 || Number(slip.deduction) > 0) && row(`Trừ KPI + phạt (${vnd(slip.tru_kpi)} + ${vnd(slip.deduction)})`, `−${vnd((slip.tru_kpi || 0) + (slip.deduction || 0))}`)}
+                          {Number(slip.ung_luong) > 0 && row('Ứng lương', `−${vnd(slip.ung_luong)}`)}
+                          {Number(slip.dong_phuc) > 0 && row('Trừ đồng phục', `−${vnd(slip.dong_phuc)}`)}
+                          <div style={{ borderTop: '2px solid #F59E0B', paddingTop: '8px', marginTop: '8px', display: 'flex', justifyContent: 'space-between', fontSize: '16px', fontWeight: 900, color: '#059669' }}>
+                            <span>THỰC LÃNH:</span>
+                            <span>{vnd(netPayVal)}</span>
+                          </div>
                         </div>
-                        {row(`Công: ${slip.standard_hours || 0} giờ (${slip.total_shifts ?? 0} ca${Number(slip.absent_shifts) > 0 ? `, vắng ${slip.absent_shifts}` : ''}) × ${vnd(slip.rate_snapshot).replace('đ', '')}/h`, vnd(slip.standard_pay))}
-                        {Number(slip.luong_cb) > 0 && row('Lương cơ bản', vnd(slip.luong_cb))}
-                        {row(`Phụ cấp OT${slip.ot_slots ? ` (${slip.ot_slots} suất)` : ''}`, vnd(slip.phu_cap_ot ?? slip.allowance))}
-                        {Number(slip.ot_extra) > 0 && row('OT thêm', vnd(slip.ot_extra))}
-                        {Number(slip.bonus) > 0 && row('Thưởng/Bonus', `+${vnd(slip.bonus)}`)}
-                        {row('TỔNG CỘNG', vnd(tongCong), true)}
-                        {(Number(slip.tru_kpi) > 0 || Number(slip.deduction) > 0) && row(`Trừ KPI + phạt (${vnd(slip.tru_kpi)} + ${vnd(slip.deduction)})`, `−${vnd((slip.tru_kpi || 0) + (slip.deduction || 0))}`)}
-                        {Number(slip.ung_luong) > 0 && row('Ứng lương', `−${vnd(slip.ung_luong)}`)}
-                        {Number(slip.dong_phuc) > 0 && row('Trừ đồng phục', `−${vnd(slip.dong_phuc)}`)}
-                        <div style={{ borderTop: '2px solid #F59E0B', paddingTop: '8px', marginTop: '8px', display: 'flex', justifyContent: 'space-between', fontSize: '15px', fontWeight: 800, color: '#10B981' }}>
-                          <span>THỰC LÃNH:</span>
-                          <span>{vnd(slip.thuc_lanh ?? slip.net_pay)}</span>
+
+                        {/* Mục kiểm tra tiền thực lãnh & Ký tên */}
+                        {st === 'PUBLISHED' && (
+                          <div style={{ backgroundColor: '#FFFBEB', border: '1.5px solid #F59E0B', borderRadius: '10px', padding: '14px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                              <span style={{ fontSize: '18px' }}>🔍</span>
+                              <strong style={{ fontSize: '14px', color: '#92400E' }}>XÁC NHẬN SỐ TIỀN THỰC LÃNH: {vnd(netPayVal)}</strong>
+                            </div>
+                            <p style={{ fontSize: '12px', color: '#78350F', margin: '0 0 12px', lineHeight: 1.5 }}>
+                              Bạn vui lòng kiểm tra lại thật kỹ số giờ công, phụ cấp, thưởng và số tiền <strong>thực lãnh</strong> ở trên.
+                              Nếu tất cả đều đúng, vui lòng vẽ chữ ký của bạn vào khung bên dưới và bấm nút <strong>Xác Nhận & Ký Tên</strong> để gửi về cho Kế toán chuẩn bị chuyển khoản.
+                            </p>
+
+                            <SignaturePad
+                              label="✍️ Chữ ký Người nhận tiền (Nhân viên)"
+                              value={null}
+                              signerName={employee?.full_name || ''}
+                              disabled={confirmSlipBusy === slip.item_id}
+                              onSave={async (img, signerName) => {
+                                await handleConfirmPayslip(slip.item_id, img, signerName);
+                              }}
+                              onClear={() => {}}
+                            />
+                            {confirmSlipBusy === slip.item_id && (
+                              <div style={{ textAlign: 'center', fontSize: '12px', color: '#B45309', marginTop: '8px', fontWeight: 700 }}>
+                                ⏳ Đang gửi xác nhận và thông báo đến Kế toán...
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {st === 'CONFIRMED' && (
+                          <div style={{ backgroundColor: '#EFF6FF', border: '1.5px solid #3B82F6', borderRadius: '10px', padding: '14px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                              <span style={{ fontSize: '18px' }}>✅</span>
+                              <strong style={{ fontSize: '14px', color: '#1D4ED8' }}>ĐÃ XÁC NHẬN ĐỦ 3 CHỮ KÝ — CHỜ CHUYỂN KHOẢN</strong>
+                            </div>
+                            <p style={{ fontSize: '12px', color: '#1E40AF', margin: 0, lineHeight: 1.5 }}>
+                              Bạn đã xác nhận đúng số tiền thực lãnh <strong>{vnd(netPayVal)}</strong>.
+                              Hệ thống đã thông báo đến Kế toán để quét mã QR ngân hàng chuyển khoản vào tài khoản của bạn.
+                            </p>
+                            {slip.sign_nhanvien?.img && (
+                              <div style={{ marginTop: '10px', textAlign: 'center' }}>
+                                <img src={slip.sign_nhanvien.img} alt="Chữ ký của bạn" style={{ maxHeight: '70px', maxWidth: '200px', backgroundColor: '#FFF', border: '1px dashed #93C5FD', borderRadius: '6px', padding: '4px' }} />
+                                <div style={{ fontSize: '11px', color: '#64748B', marginTop: '4px' }}>{slip.sign_nhanvien.name || employee?.full_name} • Ký lúc {slip.sign_nhanvien.at ? new Date(slip.sign_nhanvien.at).toLocaleString('vi-VN') : 'Vừa xong'}</div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {st === 'PAID' && (
+                          <div style={{ backgroundColor: '#ECFDF5', border: '1.5px solid #10B981', borderRadius: '10px', padding: '14px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                              <span style={{ fontSize: '18px' }}>🎉</span>
+                              <strong style={{ fontSize: '14px', color: '#065F46' }}>ĐÃ HOÀN THÀNH — ĐÃ CHUYỂN KHOẢN LƯƠNG</strong>
+                            </div>
+                            <p style={{ fontSize: '12px', color: '#047857', margin: 0, lineHeight: 1.5 }}>
+                              Kế toán đã hoàn tất chuyển khoản số tiền <strong>{vnd(netPayVal)}</strong> vào tài khoản ngân hàng của bạn.
+                              {slip.slip_paid_at && ` (Thời gian xác nhận: ${new Date(slip.slip_paid_at).toLocaleString('vi-VN')})`}
+                            </p>
+                          </div>
+                        )}
+
+                        {/* 3 Chữ ký điện tử đối soát */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '8px', borderTop: '1px dashed #CBD5E1', paddingTop: '10px', marginTop: '4px' }}>
+                          <div style={{ textAlign: 'center', fontSize: '11px', padding: '8px', backgroundColor: '#F8FAFC', borderRadius: '8px' }}>
+                            <div style={{ fontWeight: 700, color: '#475569', marginBottom: '4px' }}>1. Người Lập Phiếu</div>
+                            {slip.sign_lap?.img ? (
+                              <>
+                                <img src={slip.sign_lap.img} alt="Kế toán" style={{ height: '40px', maxWidth: '100px', objectFit: 'contain', backgroundColor: '#FFF' }} />
+                                <div style={{ fontWeight: 700, color: '#047857', marginTop: '2px' }}>{slip.sign_lap.name || 'Kế toán viên'}</div>
+                                <div style={{ fontSize: '9px', color: '#94A3B8' }}>{slip.sign_lap.at ? new Date(slip.sign_lap.at).toLocaleDateString('vi-VN') : ''}</div>
+                              </>
+                            ) : (
+                              <span style={{ color: '#94A3B8', fontStyle: 'italic' }}>Chưa ký</span>
+                            )}
+                          </div>
+                          <div style={{ textAlign: 'center', fontSize: '11px', padding: '8px', backgroundColor: '#F8FAFC', borderRadius: '8px' }}>
+                            <div style={{ fontWeight: 700, color: '#475569', marginBottom: '4px' }}>2. Quản Lý Chi Nhánh</div>
+                            {slip.sign_quanly?.img ? (
+                              <>
+                                <img src={slip.sign_quanly.img} alt="Quản lý" style={{ height: '40px', maxWidth: '100px', objectFit: 'contain', backgroundColor: '#FFF' }} />
+                                <div style={{ fontWeight: 700, color: '#047857', marginTop: '2px' }}>{slip.sign_quanly.name || 'Quản lý'}</div>
+                                <div style={{ fontSize: '9px', color: '#94A3B8' }}>{slip.sign_quanly.at ? new Date(slip.sign_quanly.at).toLocaleDateString('vi-VN') : ''}</div>
+                              </>
+                            ) : (
+                              <span style={{ color: '#94A3B8', fontStyle: 'italic' }}>Chưa ký</span>
+                            )}
+                          </div>
+                          <div style={{ textAlign: 'center', fontSize: '11px', padding: '8px', backgroundColor: '#F8FAFC', borderRadius: '8px' }}>
+                            <div style={{ fontWeight: 700, color: '#475569', marginBottom: '4px' }}>3. Người Nhận Tiền</div>
+                            {slip.sign_nhanvien?.img ? (
+                              <>
+                                <img src={slip.sign_nhanvien.img} alt="Nhân viên" style={{ height: '40px', maxWidth: '100px', objectFit: 'contain', backgroundColor: '#FFF' }} />
+                                <div style={{ fontWeight: 700, color: '#047857', marginTop: '2px' }}>{slip.sign_nhanvien.name || employee?.full_name}</div>
+                                <div style={{ fontSize: '9px', color: '#94A3B8' }}>{slip.sign_nhanvien.at ? new Date(slip.sign_nhanvien.at).toLocaleDateString('vi-VN') : ''}</div>
+                              </>
+                            ) : (
+                              <span style={{ color: '#E11D48', fontStyle: 'italic' }}>Chờ ký</span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     );

@@ -387,6 +387,23 @@ export const payrollRunIdParams = z.object({
   id: shortId(128),
 });
 
+// --- Quy trình ký 3 bên từng phiếu lương ---
+export const payslipIdParams = z.object({
+  id: shortId(160),
+});
+
+export const payslipSignBody = z.object({
+  role: z.enum(['lap', 'quanly', 'nhanvien']),
+  name: z.string().trim().min(1).max(80),
+  img: z.string().max(60000).optional(),
+}).passthrough();
+
+export const bankConfigBody = z.object({
+  bank: z.string().trim().min(2).max(20),
+  account: z.string().trim().min(6).max(30),
+  holder: z.string().trim().max(80).default(''),
+}).passthrough();
+
 // --- Notifications / Announcements ---
 export const notificationsQuery = z.object({
   filter: queryString(32),

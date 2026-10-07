@@ -124,7 +124,7 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   },
   {
     title: 'PHIEU_LUONG',
-    headers: ['ID Phiếu', 'Mã Kỳ Lương', 'ID Nhân Viên', 'Mã NV', 'Họ Và Tên', 'Kỳ Lương', 'Số Ca', 'Ca Vắng', 'Giờ Chuẩn', 'Đơn Giá', 'Lương Chuẩn', 'Phụ Cấp', 'Thưởng', 'Khấu Trừ', 'Thực Nhận', 'Trạng Thái', 'Suất OT', 'Phụ Cấp OT', 'Lương CB (tay)', 'OT Thêm (tay)', 'Bonus Thêm (tay)', 'Ứng Lương', 'Trừ KPI (tay)', 'Trừ Đồng Phục', 'Tổng Cộng', 'Tổng Lương', 'Thực Lãnh'],
+    headers: ['ID Phiếu', 'Mã Kỳ Lương', 'ID Nhân Viên', 'Mã NV', 'Họ Và Tên', 'Kỳ Lương', 'Số Ca', 'Ca Vắng', 'Giờ Chuẩn', 'Đơn Giá', 'Lương Chuẩn', 'Phụ Cấp', 'Thưởng', 'Khấu Trừ', 'Thực Nhận', 'Trạng Thái', 'Suất OT', 'Phụ Cấp OT', 'Lương CB (tay)', 'OT Thêm (tay)', 'Bonus Thêm (tay)', 'Ứng Lương', 'Trừ KPI (tay)', 'Trừ Đồng Phục', 'Tổng Cộng', 'Tổng Lương', 'Thực Lãnh', 'Ký Lập (tên)', 'Ký Lập Lúc', 'Ký QL (tên)', 'Ký QL Lúc', 'Ký NV (tên)', 'Ký NV Lúc', 'Ảnh Ký Lập', 'Ảnh Ký QL', 'Ảnh Ký NV', 'Phát Hành Lúc', 'Xác Nhận Lúc', 'Chi Trả Lúc'],
   },
   {
     title: 'CONG_THUC_LUONG',
@@ -1369,6 +1369,13 @@ export class GoogleSheetsSyncService {
             tong_cong: r[24] === '' || r[24] === undefined ? undefined : Number(r[24]) || 0,
             tong_luong: r[25] === '' || r[25] === undefined ? undefined : Number(r[25]) || 0,
             thuc_lanh: r[26] === '' || r[26] === undefined ? undefined : Number(r[26]) || 0,
+            // Quy trình ký 3 bên + phát hành từng phiếu (phiếu cũ thiếu -> giữ rỗng).
+            sign_lap: r[27] ? { name: String(r[27]), at: String(r[28] || ''), img: String(r[33] || '') || undefined } : undefined,
+            sign_quanly: r[29] ? { name: String(r[29]), at: String(r[30] || ''), img: String(r[34] || '') || undefined } : undefined,
+            sign_nhanvien: r[31] ? { name: String(r[31]), at: String(r[32] || ''), img: String(r[35] || '') || undefined } : undefined,
+            slip_published_at: String(r[36] || '') || undefined,
+            slip_confirmed_at: String(r[37] || '') || undefined,
+            slip_paid_at: String(r[38] || '') || undefined,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
             version: 1,
@@ -1976,39 +1983,8 @@ export class GoogleSheetsSyncService {
       await this.overwriteSheetData('BAI_LAM', SHEETS_DEFINITIONS.find(d => d.title === 'BAI_LAM')!.headers, subRows);
       details.testSubmissions = subRows.length;
 
-      // 6c. Phiếu lương chi tiết (trước đây chỉ nằm bộ nhớ — restart là mất).
-      const slipsForPush = await this.collectAllPayslips(repo);
-      const slipPushRows = (slipsForPush || []).map((s: any) => ([
-        s.item_id,
-        s.run_id,
-        s.employee_id,
-        s.employee_code || '',
-        s.full_name || '',
-        s.period || '',
-        s.total_shifts ?? 0,
-        s.absent_shifts ?? 0,
-        s.standard_hours ?? 0,
-        s.rate_snapshot ?? 0,
-        s.standard_pay ?? 0,
-        s.allowance ?? 0,
-        s.bonus ?? 0,
-        s.deduction ?? 0,
-        s.net_pay ?? 0,
-        s.status || 'DRAFT',
-        s.ot_slots ?? '',
-        s.phu_cap_ot ?? '',
-        s.luong_cb ?? '',
-        s.ot_extra ?? '',
-        s.bonus_extra ?? '',
-        s.ung_luong ?? '',
-        s.tru_kpi ?? '',
-        s.dong_phuc ?? '',
-        s.tong_cong ?? '',
-        s.tong_luong ?? '',
-        s.thuc_lanh ?? '',
-      ]));
-      await this.overwriteSheetData('PHIEU_LUONG', SHEETS_DEFINITIONS.find(d => d.title === 'PHIEU_LUONG')!.headers, slipPushRows);
-      details.payslips = slipPushRows.length;
+      // 6c. Phiếu lương chi tiết (tự động đồng bộ toàn bộ phiếu lên tab PHIEU_LUONG).
+      details.payslips = await this.pushPayslipsTab(repo);
 
       // 6c2. Công thức + dữ liệu nhập tay lương theo kỳ (Finance).
       try {
@@ -2230,6 +2206,58 @@ export class GoogleSheetsSyncService {
     ]));
     await this.overwriteSheetData('ADMIN_ACCOUNTS', SHEETS_DEFINITIONS.find(d => d.title === 'ADMIN_ACCOUNTS')!.headers, rows);
     return rows.length;
+  }
+
+  /**
+   * Đẩy riêng tab PHIEU_LUONG (await được): dùng sau mọi mutation phiếu lương
+   * (Ký lập/quản lý, Lưu phiếu, Phát hành, Nhân viên ký xác nhận, Hoàn thành chuyển tiền)
+   * để 3 chữ ký và toàn bộ mốc thời gian bền vững trên Google Sheet NGAY.
+   */
+  public async pushPayslipsTab(repo: ISheetsRepository): Promise<number> {
+    const slipsForPush = await this.collectAllPayslips(repo);
+    const slipPushRows = (slipsForPush || []).map((s: any) => ([
+      s.item_id,
+      s.run_id,
+      s.employee_id,
+      s.employee_code || '',
+      s.full_name || '',
+      s.period || '',
+      s.total_shifts ?? 0,
+      s.absent_shifts ?? 0,
+      s.standard_hours ?? 0,
+      s.rate_snapshot ?? 0,
+      s.standard_pay ?? 0,
+      s.allowance ?? 0,
+      s.bonus ?? 0,
+      s.deduction ?? 0,
+      s.net_pay ?? 0,
+      s.status || 'DRAFT',
+      s.ot_slots ?? '',
+      s.phu_cap_ot ?? '',
+      s.luong_cb ?? '',
+      s.ot_extra ?? '',
+      s.bonus_extra ?? '',
+      s.ung_luong ?? '',
+      s.tru_kpi ?? '',
+      s.dong_phuc ?? '',
+      s.tong_cong ?? '',
+      s.tong_luong ?? '',
+      s.thuc_lanh ?? '',
+      s.sign_lap?.name || '',
+      s.sign_lap?.at || '',
+      s.sign_quanly?.name || '',
+      s.sign_quanly?.at || '',
+      s.sign_nhanvien?.name || '',
+      s.sign_nhanvien?.at || '',
+      String(s.sign_lap?.img || '').slice(0, 45000),
+      String(s.sign_quanly?.img || '').slice(0, 45000),
+      String(s.sign_nhanvien?.img || '').slice(0, 45000),
+      s.slip_published_at || '',
+      s.slip_confirmed_at || '',
+      s.slip_paid_at || '',
+    ]));
+    await this.overwriteSheetData('PHIEU_LUONG', SHEETS_DEFINITIONS.find(d => d.title === 'PHIEU_LUONG')!.headers, slipPushRows);
+    return slipPushRows.length;
   }
 
   /**
@@ -2764,6 +2792,15 @@ export class GoogleSheetsSyncService {
         for (const s of slips || []) {
           if ((s as any)?.item_id && !seen.has((s as any).item_id)) {
             seen.add((s as any).item_id);
+            out.push(s);
+          }
+        }
+      }
+      const fb: any = (repo as any).fallbackAdapter || repo;
+      if (Array.isArray(fb?.payslips)) {
+        for (const s of fb.payslips) {
+          if (s?.item_id && !seen.has(s.item_id)) {
+            seen.add(s.item_id);
             out.push(s);
           }
         }

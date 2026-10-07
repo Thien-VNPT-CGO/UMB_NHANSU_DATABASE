@@ -18,6 +18,9 @@ export interface EmployeeMaster {
   current_rate_per_hour: number; // e.g. 21000 for probation, 25500 for official
   start_date: string;
   official_date?: string;
+  bank_name?: string;
+  bank_account?: string;
+  bank_holder?: string;
   created_at: string;
   updated_at: string;
   version: number;

@@ -764,13 +764,34 @@ export class MockSheetsAdapter implements ISheetsRepository {
 
   async getPayslipsForEmployee(employeeId: string): Promise<PayslipItem[]> {
     this.checkErrors();
-    // Only return PUBLISHED or PAID payslips to employee
-    return this.payslips.filter(p => p.employee_id === employeeId && (p.status === 'PUBLISHED' || p.status === 'PAID'));
+    // NV thấy phiếu đã gửi (PUBLISHED), đã xác nhận (CONFIRMED) và đã chi trả (PAID).
+    return this.payslips.filter(p => p.employee_id === employeeId && (p.status === 'PUBLISHED' || p.status === 'CONFIRMED' || p.status === 'PAID'));
   }
 
   async getPayslipsByRunId(runId: string): Promise<PayslipItem[]> {
     this.checkErrors();
     return this.payslips.filter(p => p.run_id === runId);
+  }
+
+  async getPayslipById(itemId: string): Promise<PayslipItem | null> {
+    this.checkErrors();
+    return this.payslips.find(p => p.item_id === itemId) || null;
+  }
+
+  async updatePayslip(itemId: string, updates: Partial<PayslipItem>): Promise<PayslipItem> {
+    this.checkErrors();
+    const slip = this.payslips.find(p => p.item_id === itemId);
+    if (!slip) throw new Error('PAYSLIP_NOT_FOUND');
+    // Ảnh chữ ký không lưu thô vào bộ nhớ: cắt ngưỡng chống phình RAM/Sheets.
+    const clean: any = { ...updates };
+    for (const k of ['sign_lap', 'sign_quanly', 'sign_nhanvien'] as const) {
+      const s: any = (clean as any)[k];
+      if (s && typeof s.img === 'string' && s.img.length > 45000) {
+        (clean as any)[k] = { ...s, img: s.img.slice(0, 45000) };
+      }
+    }
+    Object.assign(slip, clean, { updated_at: new Date().toISOString() });
+    return { ...slip };
   }
 
   // --- Công thức + dữ liệu nhập tay tính lương theo file Excel (Finance) ---
