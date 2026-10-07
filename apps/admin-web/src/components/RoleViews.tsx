@@ -56,6 +56,7 @@ import { getDisplayBranch } from '../App';
 import { apiRequest, getApiBase, getAuthToken } from '../services/api';
 import { playInterviewAlert, playFanfare } from '../utils/sound-effects';
 import { PerfectScoreCelebration } from './PerfectScoreCelebration';
+import { SignaturePad } from './SignaturePad';
 
 /** Chat Zalo với ứng viên: tự động kết bạn qua nick HR + gửi lời chào (dùng chung 2 tab). */
 export async function chatZaloWithCandidate(c: any, showToast: (msg: string) => void): Promise<void> {
@@ -1131,6 +1132,32 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [sampleMonth, setSampleMonth] = useState(() => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7));
   const [sampleEmpId, setSampleEmpId] = useState('');
   const [sampleSearch, setSampleSearch] = useState('');
+  // Chữ ký điện tử phiếu mẫu — lưu máy (localStorage) theo kỳ + NV + vai trò.
+  const [signTick, setSignTick] = useState(0);
+  void signTick; // chỉ dùng để refresh sau khi ký/xóa (dữ liệu đọc trực tiếp từ localStorage)
+  const signKeyOf = (period: string, empId: string, role: string) => `ubm_sign_${period}_${empId}_${role}`;
+  const readSign = (period: string, empId: string, role: string): { img: string | null; name: string } => {
+    try {
+      const raw = localStorage.getItem(signKeyOf(period, empId, role));
+      if (!raw) return { img: null, name: '' };
+      const o = JSON.parse(raw);
+      return { img: typeof o?.img === 'string' ? o.img : null, name: String(o?.name || '') };
+    } catch {
+      return { img: null, name: '' };
+    }
+  };
+  const saveSign = (period: string, empId: string, role: string, img: string, name: string) => {
+    try {
+      localStorage.setItem(signKeyOf(period, empId, role), JSON.stringify({ img, name, at: new Date().toISOString() }));
+    } catch { /* đầy bộ nhớ: giữ ký tạm trên màn hình */ }
+    setSignTick(t => t + 1);
+  };
+  const clearSign = (period: string, empId: string, role: string) => {
+    try {
+      localStorage.removeItem(signKeyOf(period, empId, role));
+    } catch { /* bỏ qua */ }
+    setSignTick(t => t + 1);
+  };
   // Dòng đang xổ chi tiết các bước tính ở tab Tính lương.
   const [calcExpandId, setCalcExpandId] = useState<string | null>(null);
   useEffect(() => {
@@ -10577,11 +10604,28 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <span style={{ fontSize: '24px', fontWeight: 900, color: '#059669' }}>{vnd(calc.thucLanh)}</span>
               </div>
             </div>
-            {/* Footer ký tên */}
-            <div style={{ padding: '6px 24px 20px', display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', color: '#374151', textAlign: 'center', flexWrap: 'wrap' }}>
-              <div style={{ flex: 1, minWidth: '140px' }}><div style={{ fontWeight: 800 }}>Người lập phiếu</div><div style={{ color: '#9CA3AF', marginTop: '28px' }}>(Kế toán)</div></div>
-              <div style={{ flex: 1, minWidth: '140px' }}><div style={{ fontWeight: 800 }}>Quản lý chi nhánh</div><div style={{ color: '#9CA3AF', marginTop: '28px' }}>(Ký, ghi rõ họ tên)</div></div>
-              <div style={{ flex: 1, minWidth: '140px' }}><div style={{ fontWeight: 800 }}>Nhân viên</div><div style={{ color: '#9CA3AF', marginTop: '28px' }}>(Ký, ghi rõ họ tên)</div></div>
+            {/* Footer ký điện tử */}
+            <div style={{ padding: '6px 24px 20px', display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', color: '#374151', flexWrap: 'wrap' }}>
+              {([
+                { role: 'lap', label: 'Người lập phiếu (Kế toán)', fallback: '' },
+                { role: 'quanly', label: 'Quản lý chi nhánh', fallback: '' },
+                { role: 'nhanvien', label: 'Nhân viên', fallback: selRow.fullName || '' },
+              ] as { role: string; label: string; fallback: string }[]).map(s => {
+                const cur = readSign(sMonth, selId, s.role);
+                return (
+                  <SignaturePad
+                    key={s.role}
+                    label={s.label}
+                    value={cur.img}
+                    signerName={cur.name || s.fallback}
+                    onSave={(img, name) => {
+                      saveSign(sMonth, selId, s.role, img, name || s.fallback);
+                      showToast(`Đã lưu chữ ký điện tử: ${s.label}!`);
+                    }}
+                    onClear={() => clearSign(sMonth, selId, s.role)}
+                  />
+                );
+              })}
             </div>
             <div style={{ backgroundColor: '#FFFBEB', padding: '10px 24px', fontSize: '11px', color: '#92400E', borderTop: '1px solid #FDE68A' }}>
               Phiếu mẫu xem trước — số liệu realtime theo công thức Excel kỳ {sampleMonth}. Số chính thức chốt ở kỳ lương đã phát hành (tab 7).
