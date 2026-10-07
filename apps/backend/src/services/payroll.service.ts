@@ -577,6 +577,33 @@ export class PayrollService {
     });
   }
 
+  /** Kế toán áp dụng nhanh 2 chữ ký mẫu (Người lập + Quản lý chi nhánh) */
+  async applyBothSignatures(itemId: string, lapName: string, lapImg: string, qlName: string, qlImg: string, actorId: string) {
+    return singleWriterQueue.enqueue({
+      entityType: 'PHIEU_LUONG',
+      entityId: itemId,
+      actorId,
+      execute: async () => {
+        const slip = await this.repo.getPayslipById(itemId);
+        if (!slip) throw new Error('PAYSLIP_NOT_FOUND');
+        if (slip.status === 'CONFIRMED' || slip.status === 'PAID') {
+          throw new Error('SLIP_LOCKED: phiếu đã xác nhận/chi trả, không ký lại!');
+        }
+        const updates: any = {};
+        if (lapImg) {
+          updates.sign_lap = { name: lapName || 'Kế toán viên', img: lapImg, at: new Date().toISOString() };
+        }
+        if (qlImg) {
+          updates.sign_quanly = { name: qlName || 'Quản lý chi nhánh', img: qlImg, at: new Date().toISOString() };
+        }
+        const updated = await this.repo.updatePayslip(itemId, updates);
+        this.notifySlipsChanged('sign', { itemId });
+        this.triggerSheetsPush();
+        return updated;
+      },
+    });
+  }
+
   /** Gửi 1 phiếu đến NV: yêu cầu đủ 2 chữ ký lập + quản lý, phiếu đang DRAFT. */
   async publishSlip(itemId: string, actorId: string) {
     return singleWriterQueue.enqueue({

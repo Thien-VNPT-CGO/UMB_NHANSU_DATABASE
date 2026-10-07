@@ -3431,6 +3431,42 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Kế toán áp dụng nhanh 2 chữ ký mẫu (Người lập + Quản lý chi nhánh)
+  app.post('/payroll/slips/:id/fast-sign', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const { lapName, lapImg, qlName, qlImg } = req.body || {};
+      const updated = await payrollService.applyBothSignatures(req.params.id, lapName, lapImg, qlName, qlImg, req.user!.id);
+      broadcastUpdate('payroll', { action: 'sign-slip', itemId: req.params.id });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Cấu hình chữ ký mẫu của Kế toán & Quản lý chi nhánh
+  app.get('/payroll/signature-templates', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req, res) => {
+    try {
+      const settings: any = await adapter.getSystemSettings();
+      res.json(settings?.payroll_signatures || { lap: null, quanly: null });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put('/payroll/signature-templates', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const current: any = await adapter.getSystemSettings();
+      const updated = await adapter.updateSystemSettings({
+        ...current,
+        payroll_signatures: req.body,
+      });
+      broadcastUpdate('payroll', { action: 'update-signature-templates' });
+      res.json(updated?.payroll_signatures || req.body);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   // Kế toán phát hành từng phiếu (yêu cầu đủ 2 chữ ký)
   app.post('/payroll/slips/:id/publish', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
     try {

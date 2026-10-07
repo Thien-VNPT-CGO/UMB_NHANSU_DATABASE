@@ -43,7 +43,8 @@ import {
   Radio,
   FileSpreadsheet,
   Volume2,
-  VolumeX
+  VolumeX,
+  PenTool,
 } from 'lucide-react';
 import { RoleViews } from './components/RoleViews';
 import {
@@ -125,6 +126,7 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'fin-payroll-sheet', label: '9. Payment Bảng Lương', icon: FileSpreadsheet },
     { id: 'fin-deductions', label: '10. KPI • Ứng • Đồng Phục', icon: AlertTriangle },
     { id: 'fin-payment', label: '11. Thanh toán', icon: CheckCircle },
+    { id: 'fin-signatures', label: '12. Cài đặt chữ ký', icon: PenTool },
   ],
   MARKETING: [
     { id: 'mkt-dashboard', label: '1. Dashboard MKT', icon: Megaphone },

@@ -1290,14 +1290,162 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     }
   };
 
+  // Cấu hình chữ ký mẫu mặc định của Kế toán & Quản lý chi nhánh
+  const [defaultSigs, setDefaultSigs] = useState<{
+    lap: { name: string; img: string | null };
+    quanly: { name: string; img: string | null };
+  }>(() => {
+    try {
+      const saved = localStorage.getItem('ubm_default_signatures');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return {
+      lap: { name: '', img: null },
+      quanly: { name: '', img: null },
+    };
+  });
+
+  const [viewSlipModal, setViewSlipModal] = useState<any | null>(null);
+
+  const updateSlipInState = (itemId: string, updatedData: any) => {
+    setPeriodSlips(prev => prev.map(s => s.item_id === itemId ? { ...s, ...updatedData } : s));
+    setPayRunDetail((prev: any) => {
+      if (!prev || !prev.slips) return prev;
+      return {
+        ...prev,
+        slips: prev.slips.map((s: any) => s.item_id === itemId ? { ...s, ...updatedData } : s),
+      };
+    });
+  };
+
+  const loadDefaultSigs = async () => {
+    try {
+      const data = await apiRequest('/payroll/signature-templates');
+      if (data && (data.lap || data.quanly)) {
+        const merged = {
+          lap: data.lap || { name: '', img: null },
+          quanly: data.quanly || { name: '', img: null },
+        };
+        setDefaultSigs(merged);
+        localStorage.setItem('ubm_default_signatures', JSON.stringify(merged));
+      }
+    } catch (err) {
+      console.warn('[defaultSigs] Load error:', err);
+    }
+  };
+
+  const saveDefaultSigs = async (newSigs: typeof defaultSigs) => {
+    setDefaultSigs(newSigs);
+    try {
+      localStorage.setItem('ubm_default_signatures', JSON.stringify(newSigs));
+      await apiRequest('/payroll/signature-templates', {
+        method: 'PUT',
+        body: JSON.stringify(newSigs),
+      });
+      showToast('💾 Đã lưu cấu hình chữ ký mẫu thành công! Nút "✍️ Chữ ký" đã sẵn sàng.');
+    } catch (err: any) {
+      showToast('⚠️ Đã lưu tại máy, lỗi đồng bộ máy chủ: ' + (err?.message || 'Lỗi'));
+    }
+  };
+
+  const handleFastSignSlip = async (itemId: string, period?: string, empId?: string) => {
+    const lap = defaultSigs.lap;
+    const ql = defaultSigs.quanly;
+    if (!lap?.img && !ql?.img) {
+      showToast('⚠️ Vui lòng cài đặt chữ ký mẫu tại tab "12. Cài đặt chữ ký" trước!');
+      return;
+    }
+    setSlipActionBusy(itemId + 'fast-sign');
+    try {
+      if (period && empId) {
+        if (lap?.img) saveSign(period, empId, 'lap', lap.img, lap.name);
+        if (ql?.img) saveSign(period, empId, 'quanly', ql.img, ql.name);
+      }
+      const updated = await apiRequest(`/payroll/slips/${itemId}/fast-sign`, {
+        method: 'POST',
+        body: JSON.stringify({
+          lapName: lap?.name || '',
+          lapImg: lap?.img || '',
+          qlName: ql?.name || '',
+          qlImg: ql?.img || '',
+        }),
+      });
+      showToast('✍️ Đã áp dụng cả 2 chữ ký mẫu (Kế toán & Quản lý) thành công! Tự động đồng bộ Google Sheet.');
+      updateSlipInState(itemId, updated || {});
+      if (viewSlipModal && viewSlipModal.item_id === itemId) {
+        setViewSlipModal((prev: any) => ({ ...prev, ...(updated || {}) }));
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'Lỗi khi ký nhanh!');
+    } finally {
+      setSlipActionBusy(null);
+    }
+  };
+
+  const handleFastSignAllSlips = async (slipsToSign: any[], period?: string) => {
+    const lap = defaultSigs.lap;
+    const ql = defaultSigs.quanly;
+    if (!lap?.img && !ql?.img) {
+      showToast('⚠️ Vui lòng cài đặt chữ ký mẫu tại tab "12. Cài đặt chữ ký" trước!');
+      return;
+    }
+    const uncompleted = slipsToSign.filter((s: any) => (!s.sign_lap || !s.sign_quanly) && s.status !== 'PAID');
+    if (uncompleted.length === 0) {
+      showToast('Tất cả phiếu đã được ký đủ 2 bên!');
+      return;
+    }
+    if (!window.confirm(`Bạn có chắc muốn tự động ký chữ ký mẫu cho ${uncompleted.length} phiếu lương chưa ký?`)) return;
+
+    setSlipActionBusy('fast-sign-all');
+    let successCount = 0;
+    try {
+      for (const s of uncompleted) {
+        try {
+          if (period && s.employee_id) {
+            if (lap?.img) saveSign(period, s.employee_id, 'lap', lap.img, lap.name);
+            if (ql?.img) saveSign(period, s.employee_id, 'quanly', ql.img, ql.name);
+          }
+          const updated = await apiRequest(`/payroll/slips/${s.item_id}/fast-sign`, {
+            method: 'POST',
+            body: JSON.stringify({
+              lapName: lap?.name || '',
+              lapImg: lap?.img || '',
+              qlName: ql?.name || '',
+              qlImg: ql?.img || '',
+            }),
+          });
+          updateSlipInState(s.item_id, updated || {});
+          successCount++;
+        } catch (e) {
+          console.warn('Fast sign error on slip:', s.item_id, e);
+        }
+      }
+      showToast(`✍️ Đã ký tự động thành công cho ${successCount}/${uncompleted.length} phiếu! Sẵn sàng PUBLISHED.`);
+      if (period) {
+        await loadPeriodSlips(period, false);
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'Lỗi khi ký đồng loạt!');
+    } finally {
+      setSlipActionBusy(null);
+    }
+  };
+
   useEffect(() => {
-    if (activeTab !== 'fin-payslip-sample' && activeTab !== 'fin-payment') return;
+    loadDefaultSigs();
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== 'fin-payslip-sample' && activeTab !== 'fin-payment' && activeTab !== 'fin-signatures' && activeTab !== 'fin-payslips') return;
     const p = (sampleMonth || '').trim();
     if (/^\d{4}-(0[1-9]|1[0-2])$/.test(p)) {
       loadPayFormula(p);
       loadPayInputs(p);
       loadFinAttendance(p);
       loadPeriodSlips(p, true);
+    }
+    if (activeTab === 'fin-signatures') {
+      loadDefaultSigs();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, sampleMonth]);
@@ -10635,11 +10783,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }
 
   if (activeTab === 'fin-payslips') {
-    const pubRuns = (payrollRuns || []).filter((r: any) => r.status === 'PUBLISHED' || r.status === 'PAID');
-    const slips: any[] = payRunDetail?.slips || [];
+    const allRuns = payrollRuns || [];
+    const slips: any[] = payRunDetail?.slips || (periodSlips.length > 0 ? periodSlips : []);
     const vnd0 = (n: any) => `${Number(n || 0).toLocaleString('vi-VN')}đ`;
     const stickyL: React.CSSProperties = { position: 'sticky', left: 0, backgroundColor: 'var(--surface)', zIndex: 2, boxShadow: '2px 0 6px rgba(15,23,42,0.06)' };
     const stickyL2: React.CSSProperties = { position: 'sticky', left: '118px', backgroundColor: 'var(--surface)', zIndex: 2, boxShadow: '2px 0 6px rgba(15,23,42,0.06)' };
+    const hasConfiguredSigs = !!(defaultSigs.lap?.img || defaultSigs.quanly?.img);
+    const uncompletedSigsCount = slips.filter((p: any) => (!p.sign_lap || !p.sign_quanly) && p.status !== 'PAID').length;
+    const readyToPublishCount = slips.filter((p: any) => p.status === 'DRAFT' && p.sign_lap && p.sign_quanly).length;
+
     const finSlipCols: [string, (p: any) => any][] = [
       ['Giờ', (p: any) => `${p.standard_hours || 0}h / ${p.total_shifts || 0} ca`],
       ['Lương giờ', (p: any) => vnd0(p.standard_pay)],
@@ -10653,51 +10805,391 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       ['Trừ ĐP', (p: any) => vnd0(p.dong_phuc)],
       ['Thực lãnh', (p: any) => vnd0(p.thuc_lanh ?? p.net_pay)],
     ];
+
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <FinHead
           icon="🧾"
-          title="6. Phát Hành Phiếu Lương Cá Nhân (Bảo Mật PIN)"
-          sub="Chọn kỳ đã phát hành để xem từng phiếu breakdown đầy đủ — NV chỉ thấy phiếu của mình"
+          title="6. Phiếu Lương &amp; Ký Điện Tử Phát Hành"
+          sub="Ký duyệt điện tử bằng chữ ký mẫu — Phát hành đến nhân viên và đối soát thanh toán VietQR"
           right={<>
+            {hasConfiguredSigs && uncompletedSigsCount > 0 && (
+              <button
+                className="btn-primary"
+                style={{ backgroundColor: '#059669', color: '#FFF', fontSize: '12px', padding: '7px 16px', fontWeight: 800, border: 'none', boxShadow: '0 4px 12px rgba(5,150,105,0.3)', cursor: 'pointer' }}
+                disabled={slipActionBusy === 'fast-sign-all'}
+                onClick={() => handleFastSignAllSlips(slips, payRunDetail?.period || sampleMonth)}
+              >
+                {slipActionBusy === 'fast-sign-all' ? '⏳ Đang ký...' : `✍️ Ký nhanh tất cả (${uncompletedSigsCount})`}
+              </button>
+            )}
+            {readyToPublishCount > 0 && (
+              <button
+                className="btn-primary"
+                style={{ backgroundColor: '#2563EB', fontSize: '12px', padding: '7px 16px', fontWeight: 800, border: 'none', boxShadow: '0 4px 12px rgba(37,99,235,0.3)', color: '#FFF', cursor: 'pointer' }}
+                disabled={slipActionBusy === 'publish-all'}
+                onClick={() => handlePublishAllSlips(payRunDetail?.run_id || payRunDetail?.period || sampleMonth)}
+              >
+                {slipActionBusy === 'publish-all' ? '⏳ Đang gửi...' : `🚀 GỬI TẤT CẢ PUBLISHED (${readyToPublishCount})`}
+              </button>
+            )}
             <select
-              onChange={e => loadPayRunDetail(e.target.value)}
-              defaultValue=""
+              value={payRunDetail?.run_id || ''}
+              onChange={e => {
+                if (e.target.value) loadPayRunDetail(e.target.value);
+              }}
               style={{ padding: '8px 12px', fontSize: '13px', fontWeight: 700, borderRadius: '8px', border: '1px solid rgba(255,255,255,0.4)', backgroundColor: 'rgba(255,255,255,0.15)', color: '#FFF' }}
             >
-              <option value="">— Chọn kỳ đã phát hành —</option>
-              {pubRuns.map((r: any) => <option key={r.run_id} value={r.run_id}>{r.period} ({r.status})</option>)}
+              <option value="" style={{ color: '#000' }}>— Chọn kỳ lương —</option>
+              {allRuns.map((r: any) => (
+                <option key={r.run_id} value={r.run_id} style={{ color: '#000' }}>
+                  {r.period} ({r.status})
+                </option>
+              ))}
             </select>
           </>}
         />
-        {!payRunDetail ? (
-          <div style={{ backgroundColor: 'var(--surface)', padding: '32px 20px', borderRadius: '14px', border: '1px solid var(--border)', textAlign: 'center', fontSize: '13px', color: 'var(--text-muted)' }}>
-            Chọn kỳ lương đã PUBLISHED để xem phiếu từng NV (NV chỉ thấy phiếu của mình trên cổng cá nhân sau khi phát hành).
+
+        {hasConfiguredSigs && (
+          <div style={{ backgroundColor: '#ECFDF5', border: '1.5px solid #10B981', borderRadius: '12px', padding: '12px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{ fontSize: '20px' }}>🖋️</span>
+              <div>
+                <strong style={{ fontSize: '13px', color: '#065F46' }}>Chữ ký mẫu sẵn sàng tự động ký:</strong>
+                <span style={{ fontSize: '12px', color: '#047857', marginLeft: '6px' }}>
+                  Kế toán: <strong>{defaultSigs.lap?.name || 'Đã cài'}</strong> • Quản lý chi nhánh: <strong>{defaultSigs.quanly?.name || 'Đã cài'}</strong>
+                </span>
+              </div>
+            </div>
+            <div style={{ fontSize: '12px', color: '#047857' }}>
+              💡 Bấm nút <strong>"✍️ Chữ ký"</strong> trên từng phiếu hoặc <strong>"✍️ Ký nhanh tất cả"</strong> để áp dụng ngay.
+            </div>
+          </div>
+        )}
+
+        {slips.length === 0 ? (
+          <div style={{ backgroundColor: 'var(--surface)', padding: '36px 20px', borderRadius: '14px', border: '1px solid var(--border)', textAlign: 'center', fontSize: '13px', color: 'var(--text-muted)' }}>
+            Vui lòng chọn 1 kỳ lương ở góc trên bên phải để xem danh sách phiếu lương và ký duyệt.
           </div>
         ) : (
           <div style={{ backgroundColor: 'var(--surface)', borderRadius: '14px', border: '1px solid var(--border)', overflowX: 'auto', boxShadow: '0 4px 14px rgba(15,23,42,0.06)' }}>
-            <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '12px', minWidth: '1280px' }}>
+            <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '12px', minWidth: '1360px' }}>
               <thead>
                 <tr style={{ background: 'linear-gradient(180deg, var(--bg), #F1F5F9)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
                   <th style={{ padding: '12px 16px', ...stickyL }}>Mã NV</th>
                   <th style={{ padding: '12px 16px', ...stickyL2 }}>Họ Và Tên</th>
                   {finSlipCols.map(([h]) => <th key={h} style={{ padding: '12px 16px' }}>{h}</th>)}
                   <th style={{ padding: '12px 16px' }}>Trạng Thái</th>
+                  <th style={{ padding: '12px 16px' }}>Chữ Ký</th>
+                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Thao Tác</th>
                 </tr>
               </thead>
               <tbody>
-                {slips.map((p: any) => (
-                  <tr key={p.item_id} style={{ borderBottom: '1px solid var(--border)' }}>
-                    <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--brand)', ...stickyL }}>{p.employee_code}</td>
-                    <td style={{ padding: '12px 16px', fontWeight: 700, ...stickyL2 }}>{p.full_name}</td>
-                    {finSlipCols.map(([h, f], i) => (
-                      <td key={h} style={{ padding: '12px 16px', fontWeight: i === finSlipCols.length - 1 ? 800 : 400, color: i === finSlipCols.length - 1 ? '#10B981' : undefined }}>{f(p)}</td>
-                    ))}
-                    <td style={{ padding: '12px 16px' }}><span className="badge" style={{ ...payRunStageStyle(p.status), fontWeight: 800 }}>{p.status}</span></td>
-                  </tr>
-                ))}
+                {slips.map((p: any) => {
+                  const hasLap = !!p.sign_lap?.img;
+                  const hasQl = !!p.sign_quanly?.img;
+                  const hasNv = !!p.sign_nhanvien?.img;
+                  const isBothMgmt = hasLap && hasQl;
+                  const isAll3 = isBothMgmt && hasNv;
+
+                  return (
+                    <tr key={p.item_id} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--brand)', ...stickyL }}>{p.employee_code}</td>
+                      <td style={{ padding: '12px 16px', fontWeight: 700, ...stickyL2 }}>{p.full_name}</td>
+                      {finSlipCols.map(([h, f], i) => (
+                        <td key={h} style={{ padding: '12px 16px', fontWeight: i === finSlipCols.length - 1 ? 800 : 400, color: i === finSlipCols.length - 1 ? '#10B981' : undefined }}>{f(p)}</td>
+                      ))}
+                      <td style={{ padding: '12px 16px' }}>
+                        <span className="badge" style={{ ...payRunStageStyle(p.status), fontWeight: 800 }}>{p.status}</span>
+                      </td>
+                      <td style={{ padding: '12px 16px' }}>
+                        {isAll3 ? (
+                          <span style={{ backgroundColor: '#DCFCE7', color: '#15803D', padding: '3px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: 800 }}>
+                            ✓ Đủ 3/3 chữ ký
+                          </span>
+                        ) : isBothMgmt ? (
+                          <span style={{ backgroundColor: '#DBEAFE', color: '#1D4ED8', padding: '3px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: 800 }}>
+                            ✓ Kế toán &amp; QL (2/3)
+                          </span>
+                        ) : (hasLap || hasQl) ? (
+                          <span style={{ backgroundColor: '#FEF3C7', color: '#B45309', padding: '3px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: 800 }}>
+                            {hasLap ? '1/3 (Kế toán)' : '1/3 (Quản lý)'}
+                          </span>
+                        ) : (
+                          <span style={{ backgroundColor: '#F1F5F9', color: '#64748B', padding: '3px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: 700 }}>
+                            Chưa ký
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                        <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', alignItems: 'center' }}>
+                          <button
+                            className="btn-secondary"
+                            style={{ fontSize: '11px', padding: '4px 10px', fontWeight: 700 }}
+                            onClick={() => setViewSlipModal(p)}
+                          >
+                            👁️ Xem phiếu
+                          </button>
+
+                          {hasConfiguredSigs && !isBothMgmt && p.status !== 'PAID' && (
+                            <button
+                              className="btn-primary"
+                              style={{ backgroundColor: '#059669', color: '#FFF', fontSize: '11px', padding: '4px 10px', fontWeight: 800, border: 'none', borderRadius: '6px', cursor: 'pointer' }}
+                              disabled={slipActionBusy === p.item_id + 'fast-sign'}
+                              onClick={() => handleFastSignSlip(p.item_id, p.period || payRunDetail?.period, p.employee_id)}
+                            >
+                              {slipActionBusy === p.item_id + 'fast-sign' ? '⏳...' : '✍️ Chữ ký'}
+                            </button>
+                          )}
+
+                          {isBothMgmt && p.status === 'DRAFT' && (
+                            <button
+                              className="btn-primary"
+                              style={{ backgroundColor: '#2563EB', color: '#FFF', fontSize: '11px', padding: '4px 10px', fontWeight: 800, border: 'none', borderRadius: '6px', cursor: 'pointer' }}
+                              disabled={slipActionBusy === p.item_id + 'publish'}
+                              onClick={() => handlePublishSlip(p.item_id)}
+                            >
+                              📢 Gửi NV
+                            </button>
+                          )}
+
+                          {isAll3 && p.status === 'CONFIRMED' && (
+                            <button
+                              className="btn-primary"
+                              style={{ backgroundColor: '#10B981', color: '#FFF', fontSize: '11px', padding: '4px 10px', fontWeight: 800, border: 'none', borderRadius: '6px', cursor: 'pointer' }}
+                              onClick={() => setViewSlipModal(p)}
+                            >
+                              🏦 VietQR
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* Modal Xem Phiếu Lương Chi Tiết */}
+        {viewSlipModal && (
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 9999,
+              backgroundColor: 'rgba(15,23,42,0.65)',
+              backdropFilter: 'blur(4px)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '20px',
+            }}
+            onClick={() => setViewSlipModal(null)}
+          >
+            <div
+              style={{
+                backgroundColor: '#FFF',
+                borderRadius: '16px',
+                border: '2px solid #F59E0B',
+                overflow: 'hidden',
+                boxShadow: '0 20px 60px rgba(0,0,0,0.35)',
+                maxWidth: '780px',
+                width: '100%',
+                maxHeight: '90vh',
+                display: 'flex',
+                flexDirection: 'column',
+              }}
+              onClick={e => e.stopPropagation()}
+            >
+              {/* Header modal */}
+              <div style={{ background: 'linear-gradient(135deg, #064E3B 0%, #047857 60%, #0EA5E9 130%)', color: '#FFF', padding: '16px 22px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <img src="/logo.jpg" alt="Logo" style={{ width: '46px', height: '46px', borderRadius: '50%', objectFit: 'cover', border: '2px solid rgba(255,255,255,0.8)', backgroundColor: '#FFF' }} />
+                  <div>
+                    <div style={{ fontSize: '17px', fontWeight: 900 }}>ỤM BÒ MILK — CHI TIẾT PHIẾU LƯƠNG</div>
+                    <div style={{ fontSize: '12px', opacity: 0.9 }}>
+                      {viewSlipModal.full_name} ({viewSlipModal.employee_code}) • Kỳ {viewSlipModal.period}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  style={{ background: 'rgba(255,255,255,0.2)', border: 'none', color: '#FFF', width: '32px', height: '32px', borderRadius: '50%', cursor: 'pointer', fontSize: '18px', fontWeight: 800 }}
+                  onClick={() => setViewSlipModal(null)}
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Body modal scrollable */}
+              <div style={{ padding: '18px 24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                {/* Thông tin nhân viên */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '8px 16px', fontSize: '13px', backgroundColor: '#F8FAFC', padding: '12px 16px', borderRadius: '10px', border: '1px solid #E2E8F0' }}>
+                  <div><span style={{ color: '#64748B' }}>Họ tên: </span><strong>{viewSlipModal.full_name}</strong></div>
+                  <div><span style={{ color: '#64748B' }}>Mã NV: </span><strong>{viewSlipModal.employee_code}</strong></div>
+                  <div><span style={{ color: '#64748B' }}>Giờ công: </span><strong>{viewSlipModal.standard_hours || 0}h ({viewSlipModal.total_shifts || 0} ca)</strong></div>
+                  <div><span style={{ color: '#64748B' }}>Trạng thái: </span><span className="badge" style={{ ...payRunStageStyle(viewSlipModal.status), fontWeight: 800 }}>{viewSlipModal.status}</span></div>
+                </div>
+
+                {/* Bảng chi tiết lương */}
+                <div style={{ border: '1px solid #E2E8F0', borderRadius: '10px', overflow: 'hidden' }}>
+                  {[
+                    ['Lương theo giờ', vnd0(viewSlipModal.standard_pay)],
+                    ['Lương cơ bản', vnd0(viewSlipModal.luong_cb)],
+                    ['Phụ cấp OT', `${vnd0(viewSlipModal.phu_cap_ot ?? viewSlipModal.allowance)}${viewSlipModal.ot_slots ? ` (${viewSlipModal.ot_slots} suất)` : ''}`],
+                    ['OT thêm', vnd0(viewSlipModal.ot_extra)],
+                    ['Bonus / Thưởng', vnd0(viewSlipModal.bonus)],
+                    ['Tổng cộng', vnd0(viewSlipModal.tong_cong ?? ((viewSlipModal.luong_cb || 0) + (viewSlipModal.phu_cap_ot ?? viewSlipModal.allowance ?? 0) + (viewSlipModal.standard_pay || 0) + (viewSlipModal.ot_extra || 0) + (viewSlipModal.bonus || 0)))],
+                    ['Trừ KPI / Phạt', `−${vnd0((viewSlipModal.tru_kpi || 0) + (viewSlipModal.deduction || 0))}`],
+                    ['Ứng lương', `−${vnd0(viewSlipModal.ung_luong)}`],
+                    ['Trừ đồng phục', `−${vnd0(viewSlipModal.dong_phuc)}`],
+                  ].map(([label, val], idx) => (
+                    <div key={label} style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 14px', fontSize: '13px', backgroundColor: idx % 2 === 0 ? '#FFF' : '#F8FAFC', borderBottom: '1px dashed #E2E8F0' }}>
+                      <span>{label}</span>
+                      <span>{val}</span>
+                    </div>
+                  ))}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 14px', backgroundColor: '#ECFDF5', fontWeight: 900, fontSize: '16px', borderTop: '2px solid #10B981' }}>
+                    <span>THỰC LÃNH:</span>
+                    <span style={{ color: '#059669', fontSize: '20px' }}>{vnd0(viewSlipModal.thuc_lanh ?? viewSlipModal.net_pay)}</span>
+                  </div>
+                </div>
+
+                {/* Thanh công cụ nút Chữ Ký trên phiếu */}
+                {hasConfiguredSigs && !(viewSlipModal.sign_lap && viewSlipModal.sign_quanly) && viewSlipModal.status !== 'PAID' && (
+                  <div style={{ padding: '12px 16px', backgroundColor: '#F0FDF4', borderRadius: '10px', border: '1.5px solid #10B981', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                    <div>
+                      <div style={{ fontWeight: 800, fontSize: '13px', color: '#065F46' }}>✍️ Ký Tự Động Bằng Chữ Ký Mẫu</div>
+                      <div style={{ fontSize: '12px', color: '#047857' }}>Áp dụng chữ ký của {defaultSigs.lap?.name || 'Kế toán'} &amp; {defaultSigs.quanly?.name || 'Quản lý'} vào 2 ô bên dưới</div>
+                    </div>
+                    <button
+                      className="btn-primary"
+                      style={{ backgroundColor: '#059669', color: '#FFF', fontWeight: 800, fontSize: '13px', padding: '8px 18px', border: 'none', borderRadius: '8px', cursor: 'pointer' }}
+                      disabled={slipActionBusy === viewSlipModal.item_id + 'fast-sign'}
+                      onClick={async () => {
+                        await handleFastSignSlip(viewSlipModal.item_id, viewSlipModal.period, viewSlipModal.employee_id);
+                      }}
+                    >
+                      {slipActionBusy === viewSlipModal.item_id + 'fast-sign' ? '⏳ Đang ký...' : '✍️ Chữ ký (Ký 2 ô)'}
+                    </button>
+                  </div>
+                )}
+
+                {/* Nút PUBLISHED nếu đã đủ 2 chữ ký và DRAFT */}
+                {viewSlipModal.status === 'DRAFT' && viewSlipModal.sign_lap && viewSlipModal.sign_quanly && (
+                  <div style={{ padding: '12px 16px', backgroundColor: '#EFF6FF', borderRadius: '10px', border: '1.5px solid #3B82F6', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                    <div>
+                      <div style={{ fontWeight: 800, fontSize: '13px', color: '#1D4ED8' }}>✨ Phiếu đã đủ 2 chữ ký Người lập &amp; Quản lý!</div>
+                      <div style={{ fontSize: '12px', color: '#1E40AF' }}>Bạn có thể phát hành để nhân viên kiểm tra số tiền và ký nhận trên Cổng NV</div>
+                    </div>
+                    <button
+                      className="btn-primary"
+                      style={{ backgroundColor: '#2563EB', color: '#FFF', fontWeight: 800, fontSize: '13px', padding: '8px 18px', border: 'none', borderRadius: '8px', cursor: 'pointer' }}
+                      disabled={slipActionBusy === viewSlipModal.item_id + 'publish'}
+                      onClick={async () => {
+                        await handlePublishSlip(viewSlipModal.item_id);
+                        setViewSlipModal((prev: any) => ({ ...prev, status: 'PUBLISHED' }));
+                      }}
+                    >
+                      {slipActionBusy === viewSlipModal.item_id + 'publish' ? '⏳ Đang gửi...' : '📢 PUBLISHED (GỬI PHIẾU)'}
+                    </button>
+                  </div>
+                )}
+
+                {/* Phần VietQR chuyển khoản nếu đã đủ 3 chữ ký */}
+                {(viewSlipModal.status === 'CONFIRMED' || (viewSlipModal.sign_lap && viewSlipModal.sign_quanly && viewSlipModal.sign_nhanvien)) && (
+                  <div style={{ backgroundColor: '#F0FDF4', border: '2px solid #10B981', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <div style={{ fontWeight: 800, fontSize: '15px', color: '#065F46' }}>
+                      🏦 ĐÃ ĐỦ 3 CHỮ KÝ — QUÉT MÃ QR ĐỂ CHUYỂN KHOẢN TIỀN LƯƠNG
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(160px, 190px) 1fr', gap: '16px', alignItems: 'center', backgroundColor: '#FFF', padding: '14px', borderRadius: '8px', border: '1px solid #A7F3D0' }}>
+                      <div style={{ textAlign: 'center' }}>
+                        {viewSlipModal.bank_account ? (
+                          <img
+                            src={`https://img.vietqr.io/image/${toVietQRBankCode(viewSlipModal.bank_name || 'vcb')}-${encodeURIComponent(viewSlipModal.bank_account)}-compact2.png?amount=${Number(viewSlipModal.thuc_lanh ?? viewSlipModal.net_pay)}&addInfo=${encodeURIComponent(`LUONG ${viewSlipModal.period} ${viewSlipModal.employee_code}`)}&accountName=${encodeURIComponent(viewSlipModal.bank_holder || viewSlipModal.full_name)}`}
+                            alt="VietQR"
+                            style={{ width: '100%', maxWidth: '180px', borderRadius: '8px', border: '1px solid #CBD5E1' }}
+                          />
+                        ) : (
+                          <div style={{ padding: '18px 10px', border: '1.5px dashed #F87171', borderRadius: '8px', color: '#DC2626', fontSize: '12px' }}>
+                            Chưa có STK ngân hàng
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ fontSize: '13px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <div><span style={{ color: '#64748B' }}>Ngân hàng: </span><strong>{viewSlipModal.bank_name || '(Chưa có)'}</strong></div>
+                        <div><span style={{ color: '#64748B' }}>STK: </span><strong style={{ color: '#1E3A8A' }}>{viewSlipModal.bank_account || '(Chưa có)'}</strong></div>
+                        <div><span style={{ color: '#64748B' }}>Chủ tài khoản: </span><strong>{viewSlipModal.bank_holder || viewSlipModal.full_name}</strong></div>
+                        <div><span style={{ color: '#64748B' }}>Số tiền: </span><strong style={{ color: '#059669', fontSize: '16px' }}>{vnd0(viewSlipModal.thuc_lanh ?? viewSlipModal.net_pay)}</strong></div>
+                      </div>
+                    </div>
+                    {viewSlipModal.status !== 'PAID' && (
+                      <button
+                        className="btn-primary"
+                        style={{ backgroundColor: '#10B981', color: '#FFF', fontWeight: 800, fontSize: '13px', padding: '10px 20px', borderRadius: '8px', border: 'none', cursor: 'pointer', alignSelf: 'flex-end' }}
+                        disabled={slipActionBusy === viewSlipModal.item_id + 'mark-paid'}
+                        onClick={async () => {
+                          await handleMarkSlipPaid(viewSlipModal.item_id);
+                          setViewSlipModal((prev: any) => ({ ...prev, status: 'PAID' }));
+                        }}
+                      >
+                        {slipActionBusy === viewSlipModal.item_id + 'mark-paid' ? '⏳ Đang lưu...' : '✅ HOÀN THÀNH (ĐÃ CHUYỂN TIỀN)'}
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* 3 Ô chữ ký */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', borderTop: '1px solid #E2E8F0', paddingTop: '14px' }}>
+                  {/* Ô 1: Người lập phiếu */}
+                  <div style={{ textAlign: 'center', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '10px' }}>
+                    <div style={{ fontWeight: 800, fontSize: '12px' }}>1. Người Lập Phiếu (Kế toán)</div>
+                    <div style={{ height: '70px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: '6px' }}>
+                      {viewSlipModal.sign_lap?.img ? (
+                        <img src={viewSlipModal.sign_lap.img} alt="Chữ ký kế toán" style={{ maxHeight: '60px', maxWidth: '100%', objectFit: 'contain' }} />
+                      ) : (
+                        <span style={{ fontSize: '12px', color: '#94A3B8' }}>Chưa ký</span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: '12px', fontWeight: 700, marginTop: '4px' }}>{viewSlipModal.sign_lap?.name || '(Chưa có tên)'}</div>
+                  </div>
+
+                  {/* Ô 2: Quản lý chi nhánh */}
+                  <div style={{ textAlign: 'center', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '10px' }}>
+                    <div style={{ fontWeight: 800, fontSize: '12px' }}>2. Quản Lý Chi Nhánh</div>
+                    <div style={{ height: '70px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: '6px' }}>
+                      {viewSlipModal.sign_quanly?.img ? (
+                        <img src={viewSlipModal.sign_quanly.img} alt="Chữ ký quản lý" style={{ maxHeight: '60px', maxWidth: '100%', objectFit: 'contain' }} />
+                      ) : (
+                        <span style={{ fontSize: '12px', color: '#94A3B8' }}>Chưa ký</span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: '12px', fontWeight: 700, marginTop: '4px' }}>{viewSlipModal.sign_quanly?.name || '(Chưa có tên)'}</div>
+                  </div>
+
+                  {/* Ô 3: Nhân viên nhận tiền */}
+                  <div style={{ textAlign: 'center', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '10px' }}>
+                    <div style={{ fontWeight: 800, fontSize: '12px' }}>3. Người Nhận Tiền (NV)</div>
+                    <div style={{ height: '70px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: '6px' }}>
+                      {viewSlipModal.sign_nhanvien?.img ? (
+                        <img src={viewSlipModal.sign_nhanvien.img} alt="Chữ ký nhân viên" style={{ maxHeight: '60px', maxWidth: '100%', objectFit: 'contain' }} />
+                      ) : (
+                        <span style={{ fontSize: '12px', color: '#94A3B8' }}>{viewSlipModal.status === 'PUBLISHED' ? '⏳ Chờ NV ký...' : 'Chưa ký'}</span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: '12px', fontWeight: 700, marginTop: '4px' }}>{viewSlipModal.sign_nhanvien?.name || viewSlipModal.full_name}</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer modal */}
+              <div style={{ padding: '12px 20px', backgroundColor: '#F8FAFC', borderTop: '1px solid #E2E8F0', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                <button className="btn-secondary" style={{ fontSize: '12px', padding: '6px 16px' }} onClick={() => setViewSlipModal(null)}>
+                  Đóng
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -11154,6 +11646,63 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               }
 
               return null;
+            })()}
+
+            {/* Thanh công cụ Chữ Ký Nhanh nếu kế toán đã thêm chữ ký và họ tên */}
+            {(() => {
+              const curSlip = (periodSlips || []).find((s: any) => s.employee_id === selId) || null;
+              const hasConfigured = !!(defaultSigs.lap?.img || defaultSigs.quanly?.img);
+              const isPaid = curSlip?.status === 'PAID';
+              const isSignedBoth = !!((curSlip?.sign_lap?.img || readSign(sMonth, selId, 'lap').img) && (curSlip?.sign_quanly?.img || readSign(sMonth, selId, 'quanly').img));
+              if (!hasConfigured || isPaid) return null;
+              return (
+                <div style={{ margin: '0 24px 10px', padding: '12px 18px', backgroundColor: '#F0FDF4', borderRadius: '12px', border: '1.5px solid #10B981', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', boxShadow: '0 4px 14px rgba(16,185,129,0.12)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <span style={{ fontSize: '20px' }}>🖋️</span>
+                    <div>
+                      <div style={{ fontSize: '13px', fontWeight: 800, color: '#065F46' }}>
+                        Chữ Ký Mẫu Đã Cấu Hình: Kế Toán &amp; Quản Lý Chi Nhánh
+                      </div>
+                      <div style={{ fontSize: '12px', color: '#047857' }}>
+                        {defaultSigs.lap?.name ? `Kế toán: ${defaultSigs.lap.name}` : ''}
+                        {defaultSigs.lap?.name && defaultSigs.quanly?.name ? ' • ' : ''}
+                        {defaultSigs.quanly?.name ? `Quản lý: ${defaultSigs.quanly.name}` : ''}
+                        {isSignedBoth ? ' (Phiếu hiện tại đã ký đủ 2 bên)' : ' (Bấm nút bên phải để tự động ký vào đúng 2 ô)'}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    style={{
+                      backgroundColor: '#059669',
+                      color: '#FFF',
+                      fontWeight: 800,
+                      fontSize: '13px',
+                      padding: '9px 20px',
+                      borderRadius: '8px',
+                      border: 'none',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      boxShadow: '0 4px 12px rgba(5,150,105,0.3)',
+                    }}
+                    disabled={slipActionBusy === ((curSlip?.item_id || '') + 'fast-sign')}
+                    onClick={async () => {
+                      if (curSlip) {
+                        await handleFastSignSlip(curSlip.item_id, sMonth, selId);
+                      } else {
+                        if (defaultSigs.lap?.img) saveSign(sMonth, selId, 'lap', defaultSigs.lap.img, defaultSigs.lap.name);
+                        if (defaultSigs.quanly?.img) saveSign(sMonth, selId, 'quanly', defaultSigs.quanly.img, defaultSigs.quanly.name);
+                        showToast('✍️ Đã áp dụng cả 2 chữ ký mẫu vào đúng ô Người lập phiếu & Quản lý chi nhánh!');
+                      }
+                    }}
+                  >
+                    {slipActionBusy === ((curSlip?.item_id || '') + 'fast-sign') ? '⏳ Đang ký...' : '✍️ Chữ ký (Ký tự động 2 bên)'}
+                  </button>
+                </div>
+              );
             })()}
 
             {/* Footer ký điện tử 3 bên */}
@@ -11675,6 +12224,337 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               );
             })
           )}
+        </div>
+      </div>
+    );
+  }
+
+  // =========================================================================
+  // TAB 12: CÀI ĐẶT CHỮ KÝ MẪU (KẾ TOÁN & QUẢN LÝ CHI NHÁNH)
+  // =========================================================================
+  if (activeTab === 'fin-signatures') {
+    const handleUploadSigFile = (role: 'lap' | 'quanly', file?: File) => {
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const dataUrl = e.target?.result as string;
+        if (!dataUrl) return;
+        setDefaultSigs(prev => ({
+          ...prev,
+          [role]: { ...prev[role], img: dataUrl }
+        }));
+        showToast(`📁 Đã tải ảnh chữ ký cho ${role === 'lap' ? 'Người lập phiếu (Kế toán)' : 'Quản lý chi nhánh'}! Vui lòng bấm "Lưu cấu hình chữ ký".`);
+      };
+      reader.readAsDataURL(file);
+    };
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+        <FinHead
+          icon="🖋️"
+          title="12. Cài Đặt Chữ Ký Điện Tử & Họ Tên (Kế Toán & Quản Lý)"
+          sub="Cập nhật chữ ký mẫu và Họ & Tên cho Người Lập Phiếu (Kế toán) và Quản Lý Chi Nhánh — tự động ký trên toàn bộ Phiếu Lương"
+          right={<>
+            <button
+              className="btn-primary"
+              style={{ backgroundColor: '#059669', color: '#FFF', fontWeight: 800, fontSize: '13px', padding: '9px 22px', border: 'none', borderRadius: '8px', boxShadow: '0 4px 12px rgba(5,150,105,0.3)', cursor: 'pointer' }}
+              onClick={() => saveDefaultSigs(defaultSigs)}
+            >
+              💾 LƯU CẤU HÌNH CHỮ KÝ
+            </button>
+            <button
+              className="btn-secondary"
+              style={{ fontSize: '12px', padding: '9px 16px', fontWeight: 700 }}
+              onClick={loadDefaultSigs}
+            >
+              🔄 Tải lại từ máy chủ
+            </button>
+          </>}
+        />
+
+        {/* Hướng dẫn quy trình */}
+        <div style={{ backgroundColor: '#ECFDF5', border: '1.5px solid #10B981', borderRadius: '14px', padding: '16px 20px', boxShadow: '0 4px 14px rgba(16,185,129,0.08)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+            <span style={{ fontSize: '22px' }}>✨</span>
+            <strong style={{ fontSize: '15px', color: '#065F46' }}>Hướng Dẫn Sử Dụng Tính Năng Ký Tự Động:</strong>
+          </div>
+          <div style={{ fontSize: '13px', color: '#047857', lineHeight: '1.6', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <div>1. Nhập <strong>Họ và tên</strong> và tạo chữ ký mẫu (vẽ tay hoặc tải ảnh PNG/JPG) cho cả <strong>2 vị trí</strong>: Người Lập Phiếu (Kế toán) và Quản Lý Chi Nhánh.</div>
+            <div>2. Bấm nút <strong>"💾 LƯU CẤU HÌNH CHỮ KÝ"</strong> để lưu trên máy chủ và thiết bị.</div>
+            <div>3. Khi mở tab <strong>"6. Phiếu lương"</strong> hoặc <strong>"7. Phiếu lương mẫu"</strong>, hệ thống sẽ tự động hiển thị nút <strong>"✍️ Chữ ký"</strong>. Bấm nút này sẽ tự động ký cả 2 chữ ký vào đúng 2 ô mà không cần ký tay từng phiếu!</div>
+          </div>
+        </div>
+
+        {/* 2 Cột cài đặt */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '20px' }}>
+          {/* Card 1: Người lập phiếu (Kế toán) */}
+          <div style={{ backgroundColor: '#FFF', borderRadius: '16px', border: '2px solid #10B981', overflow: 'hidden', boxShadow: '0 4px 16px rgba(16,185,129,0.1)' }}>
+            <div style={{ background: 'linear-gradient(135deg, #064E3B, #047857)', color: '#FFF', padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ fontSize: '22px' }}>👤</span>
+                <div>
+                  <div style={{ fontWeight: 800, fontSize: '15px' }}>1. NGƯỜI LẬP PHIẾU (KẾ TOÁN)</div>
+                  <div style={{ fontSize: '11px', opacity: 0.9 }}>Ô chữ ký thứ nhất trên Phiếu Lương</div>
+                </div>
+              </div>
+              <span style={{ backgroundColor: 'rgba(255,255,255,0.2)', padding: '3px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: 800 }}>Kế toán viên</span>
+            </div>
+
+            <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px', color: '#374151' }}>
+                  Họ và tên Kế toán viên:
+                </label>
+                <input
+                  type="text"
+                  placeholder="VD: Nguyễn Thị Thảo..."
+                  value={defaultSigs.lap?.name || ''}
+                  onChange={e => setDefaultSigs(prev => ({
+                    ...prev,
+                    lap: { ...prev.lap, name: e.target.value }
+                  }))}
+                  style={{ width: '100%', padding: '10px 14px', borderRadius: '8px', border: '1.5px solid #CBD5E1', fontSize: '14px', fontWeight: 600 }}
+                />
+              </div>
+
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <label style={{ fontSize: '13px', fontWeight: 700, color: '#374151' }}>
+                    Chữ ký mẫu Kế toán:
+                  </label>
+                  <label
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      fontSize: '11px',
+                      fontWeight: 800,
+                      padding: '5px 12px',
+                      borderRadius: '6px',
+                      backgroundColor: '#EFF6FF',
+                      color: '#1D4ED8',
+                      border: '1px solid #BFDBFE',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    📁 Tải ảnh chữ ký (PNG/JPG)
+                    <input
+                      type="file"
+                      accept="image/*"
+                      style={{ display: 'none' }}
+                      onChange={e => handleUploadSigFile('lap', e.target.files?.[0])}
+                    />
+                  </label>
+                </div>
+
+                <div style={{ backgroundColor: '#F8FAFC', padding: '12px', borderRadius: '10px', border: '1.5px dashed #CBD5E1', textAlign: 'center' }}>
+                  <SignaturePad
+                    label="Người Lập Phiếu (Kế toán)"
+                    value={defaultSigs.lap?.img}
+                    signerName={defaultSigs.lap?.name || ''}
+                    onSave={(img, name) => {
+                      setDefaultSigs(prev => ({
+                        ...prev,
+                        lap: { name: name || prev.lap.name, img }
+                      }));
+                      showToast('Đã lưu chữ ký Người lập phiếu! Hãy bấm "Lưu cấu hình chữ ký".');
+                    }}
+                    onClear={() => {
+                      setDefaultSigs(prev => ({
+                        ...prev,
+                        lap: { ...prev.lap, img: null }
+                      }));
+                    }}
+                  />
+                </div>
+              </div>
+
+              {defaultSigs.lap?.img && (
+                <div style={{ backgroundColor: '#F0FDF4', padding: '10px 14px', borderRadius: '8px', border: '1px solid #BBF7D0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '12px', color: '#166534', fontWeight: 700 }}>✓ Đã có ảnh chữ ký mẫu</span>
+                  <button
+                    className="btn-secondary"
+                    style={{ fontSize: '11px', padding: '3px 8px', color: '#DC2626' }}
+                    onClick={() => setDefaultSigs(prev => ({ ...prev, lap: { ...prev.lap, img: null } }))}
+                  >
+                    🗑️ Xóa chữ ký
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Card 2: Quản lý chi nhánh */}
+          <div style={{ backgroundColor: '#FFF', borderRadius: '16px', border: '2px solid #2563EB', overflow: 'hidden', boxShadow: '0 4px 16px rgba(37,99,235,0.1)' }}>
+            <div style={{ background: 'linear-gradient(135deg, #1E3A8A, #2563EB)', color: '#FFF', padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ fontSize: '22px' }}>🏢</span>
+                <div>
+                  <div style={{ fontWeight: 800, fontSize: '15px' }}>2. QUẢN LÝ CHI NHÁNH</div>
+                  <div style={{ fontSize: '11px', opacity: 0.9 }}>Ô chữ ký thứ hai trên Phiếu Lương</div>
+                </div>
+              </div>
+              <span style={{ backgroundColor: 'rgba(255,255,255,0.2)', padding: '3px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: 800 }}>Quản lý chi nhánh</span>
+            </div>
+
+            <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px', color: '#374151' }}>
+                  Họ và tên Quản Lý Chi Nhánh:
+                </label>
+                <input
+                  type="text"
+                  placeholder="VD: Trần Văn Quản Lý..."
+                  value={defaultSigs.quanly?.name || ''}
+                  onChange={e => setDefaultSigs(prev => ({
+                    ...prev,
+                    quanly: { ...prev.quanly, name: e.target.value }
+                  }))}
+                  style={{ width: '100%', padding: '10px 14px', borderRadius: '8px', border: '1.5px solid #CBD5E1', fontSize: '14px', fontWeight: 600 }}
+                />
+              </div>
+
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <label style={{ fontSize: '13px', fontWeight: 700, color: '#374151' }}>
+                    Chữ ký mẫu Quản Lý Chi Nhánh:
+                  </label>
+                  <label
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      fontSize: '11px',
+                      fontWeight: 800,
+                      padding: '5px 12px',
+                      borderRadius: '6px',
+                      backgroundColor: '#EFF6FF',
+                      color: '#1D4ED8',
+                      border: '1px solid #BFDBFE',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    📁 Tải ảnh chữ ký (PNG/JPG)
+                    <input
+                      type="file"
+                      accept="image/*"
+                      style={{ display: 'none' }}
+                      onChange={e => handleUploadSigFile('quanly', e.target.files?.[0])}
+                    />
+                  </label>
+                </div>
+
+                <div style={{ backgroundColor: '#F8FAFC', padding: '12px', borderRadius: '10px', border: '1.5px dashed #CBD5E1', textAlign: 'center' }}>
+                  <SignaturePad
+                    label="Quản Lý Chi Nhánh"
+                    value={defaultSigs.quanly?.img}
+                    signerName={defaultSigs.quanly?.name || ''}
+                    onSave={(img, name) => {
+                      setDefaultSigs(prev => ({
+                        ...prev,
+                        quanly: { name: name || prev.quanly.name, img }
+                      }));
+                      showToast('Đã lưu chữ ký Quản lý chi nhánh! Hãy bấm "Lưu cấu hình chữ ký".');
+                    }}
+                    onClear={() => {
+                      setDefaultSigs(prev => ({
+                        ...prev,
+                        quanly: { ...prev.quanly, img: null }
+                      }));
+                    }}
+                  />
+                </div>
+              </div>
+
+              {defaultSigs.quanly?.img && (
+                <div style={{ backgroundColor: '#F0FDF4', padding: '10px 14px', borderRadius: '8px', border: '1px solid #BBF7D0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '12px', color: '#166534', fontWeight: 700 }}>✓ Đã có ảnh chữ ký mẫu</span>
+                  <button
+                    className="btn-secondary"
+                    style={{ fontSize: '11px', padding: '3px 8px', color: '#DC2626' }}
+                    onClick={() => setDefaultSigs(prev => ({ ...prev, quanly: { ...prev.quanly, img: null } }))}
+                  >
+                    🗑️ Xóa chữ ký
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Xem trước chân phiếu lương mô phỏng */}
+        <div style={{ backgroundColor: '#FFF', borderRadius: '16px', border: '2px solid #F59E0B', overflow: 'hidden', padding: '20px', boxShadow: '0 4px 14px rgba(245,158,11,0.1)' }}>
+          <div style={{ fontWeight: 800, fontSize: '15px', color: '#B45309', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span>👀</span> XEM TRƯỚC HIỂN THỊ TRÊN CHÂN PHIẾU LƯƠNG
+          </div>
+          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '14px' }}>
+            Dưới đây là hình ảnh thực tế khi bấm nút "✍️ Chữ ký" trên Phiếu Lương — Cả 2 ô sẽ được tự động điền:
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px', backgroundColor: '#F8FAFC', padding: '16px', borderRadius: '12px', border: '1px solid #E2E8F0' }}>
+            {/* Ô 1 */}
+            <div style={{ textAlign: 'center', backgroundColor: '#FFF', borderRadius: '8px', padding: '12px', border: '1px solid #CBD5E1' }}>
+              <div style={{ fontWeight: 800, fontSize: '12px', color: '#065F46' }}>1. Người Lập Phiếu (Kế toán)</div>
+              <div style={{ height: '76px', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '8px 0', border: '1px dashed #E2E8F0', borderRadius: '6px' }}>
+                {defaultSigs.lap?.img ? (
+                  <img src={defaultSigs.lap.img} alt="Chữ ký kế toán" style={{ maxHeight: '68px', maxWidth: '100%', objectFit: 'contain' }} />
+                ) : (
+                  <span style={{ fontSize: '11px', color: '#94A3B8' }}>(Chưa cài chữ ký)</span>
+                )}
+              </div>
+              <div style={{ fontWeight: 700, fontSize: '12px', color: '#111827' }}>
+                {defaultSigs.lap?.name || '(Họ tên Kế toán viên)'}
+              </div>
+            </div>
+
+            {/* Ô 2 */}
+            <div style={{ textAlign: 'center', backgroundColor: '#FFF', borderRadius: '8px', padding: '12px', border: '1px solid #CBD5E1' }}>
+              <div style={{ fontWeight: 800, fontSize: '12px', color: '#1D4ED8' }}>2. Quản Lý Chi Nhánh</div>
+              <div style={{ height: '76px', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '8px 0', border: '1px dashed #E2E8F0', borderRadius: '6px' }}>
+                {defaultSigs.quanly?.img ? (
+                  <img src={defaultSigs.quanly.img} alt="Chữ ký quản lý" style={{ maxHeight: '68px', maxWidth: '100%', objectFit: 'contain' }} />
+                ) : (
+                  <span style={{ fontSize: '11px', color: '#94A3B8' }}>(Chưa cài chữ ký)</span>
+                )}
+              </div>
+              <div style={{ fontWeight: 700, fontSize: '12px', color: '#111827' }}>
+                {defaultSigs.quanly?.name || '(Họ tên Quản lý chi nhánh)'}
+              </div>
+            </div>
+
+            {/* Ô 3 */}
+            <div style={{ textAlign: 'center', backgroundColor: '#FFF', borderRadius: '8px', padding: '12px', border: '1px solid #CBD5E1' }}>
+              <div style={{ fontWeight: 800, fontSize: '12px', color: '#6B7280' }}>3. Người Nhận Tiền (Nhân viên)</div>
+              <div style={{ height: '76px', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '8px 0', border: '1px dashed #E2E8F0', borderRadius: '6px' }}>
+                <span style={{ fontSize: '11px', color: '#94A3B8' }}>NV ký khi nhận phiếu trên Cổng NV</span>
+              </div>
+              <div style={{ fontWeight: 400, fontSize: '12px', color: '#9CA3AF' }}>(Ký, ghi rõ họ tên)</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Nút lưu lớn ở dưới cùng */}
+        <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 0 20px' }}>
+          <button
+            className="btn-primary"
+            style={{
+              backgroundColor: '#059669',
+              color: '#FFF',
+              fontWeight: 900,
+              fontSize: '15px',
+              padding: '14px 36px',
+              borderRadius: '10px',
+              border: 'none',
+              cursor: 'pointer',
+              boxShadow: '0 6px 20px rgba(5,150,105,0.35)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+            }}
+            onClick={() => saveDefaultSigs(defaultSigs)}
+          >
+            💾 LƯU CẤU HÌNH VÀ KÍCH HOẠT NÚT "CHỮ KÝ" TRÊN PHIẾU LƯƠNG
+          </button>
         </div>
       </div>
     );

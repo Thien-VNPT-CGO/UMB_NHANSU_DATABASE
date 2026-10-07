@@ -72,6 +72,40 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({ label, value, signer
     strokedRef.current = false;
   };
 
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleUploadImage = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = ev.target?.result as string;
+      if (!dataUrl) return;
+      const img = new Image();
+      img.onload = () => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        const scale = Math.min((canvas.width * 0.88) / img.width, (canvas.height * 0.88) / img.height);
+        const nw = img.width * scale;
+        const nh = img.height * scale;
+        const ox = (canvas.width - nw) / 2;
+        const oy = (canvas.height - nh) / 2;
+        ctx.drawImage(img, ox, oy, nw, nh);
+        ctx.restore();
+        strokedRef.current = true;
+      };
+      img.src = dataUrl;
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleSave = () => {
     if (!strokedRef.current) return;
     const canvas = canvasRef.current;
@@ -119,7 +153,7 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({ label, value, signer
             onClick={e => e.stopPropagation()}
           >
             <div style={{ fontSize: '14px', fontWeight: 800, marginBottom: '4px' }}>✍️ Ký điện tử — {label}</div>
-            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '10px' }}>Vẽ chữ ký trong khung (chuột hoặc ngón tay), ghi tên rồi bấm Lưu.</div>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '10px' }}>Vẽ chữ ký trong khung (chuột hoặc ngón tay), hoặc tải ảnh chữ ký lên rồi bấm Lưu.</div>
             <canvas
               ref={canvasRef}
               style={{ width: '100%', height: '180px', borderRadius: '8px', border: '1.5px solid #93C5FD', backgroundColor: '#FFF', touchAction: 'none', cursor: 'crosshair' }}
@@ -155,10 +189,18 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({ label, value, signer
               placeholder="Họ tên người ký..."
               style={{ marginTop: '10px', width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--border)', fontSize: '13px', boxSizing: 'border-box' }}
             />
+            <input
+              type="file"
+              ref={fileInputRef}
+              accept="image/*"
+              style={{ display: 'none' }}
+              onChange={handleUploadImage}
+            />
             <div style={{ display: 'flex', gap: '8px', marginTop: '12px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-              <button className="btn-secondary" style={{ fontSize: '12px', padding: '8px 14px' }} onClick={clearCanvas}>🧹 Vẽ lại</button>
-              <button className="btn-secondary" style={{ fontSize: '12px', padding: '8px 14px' }} onClick={() => setOpen(false)}>Đóng</button>
-              <button className="btn-primary" style={{ fontSize: '12px', padding: '8px 18px', fontWeight: 800, backgroundColor: '#059669' }} onClick={handleSave}>💾 Lưu chữ ký</button>
+              <button type="button" className="btn-secondary" style={{ fontSize: '12px', padding: '8px 14px' }} onClick={() => fileInputRef.current?.click()}>📁 Tải ảnh chữ ký</button>
+              <button type="button" className="btn-secondary" style={{ fontSize: '12px', padding: '8px 14px' }} onClick={clearCanvas}>🧹 Vẽ lại</button>
+              <button type="button" className="btn-secondary" style={{ fontSize: '12px', padding: '8px 14px' }} onClick={() => setOpen(false)}>Đóng</button>
+              <button type="button" className="btn-primary" style={{ fontSize: '12px', padding: '8px 18px', fontWeight: 800, backgroundColor: '#059669' }} onClick={handleSave}>💾 Lưu chữ ký</button>
             </div>
           </div>
         </div>
