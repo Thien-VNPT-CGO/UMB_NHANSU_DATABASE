@@ -1057,6 +1057,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [payFormulaBusy, setPayFormulaBusy] = useState(false);
   const [payInputs, setPayInputs] = useState<Record<string, any>>({});
   const [payInputsBusy, setPayInputsBusy] = useState<string | null>(null);
+  // Dòng đã có số liệu trên server kỳ này (để hiện ✓) + dòng đang sửa dở (để Lưu tất cả).
+  const [payInputsSaved, setPayInputsSaved] = useState<Record<string, boolean>>({});
+  const [payInputsDirty, setPayInputsDirty] = useState<Record<string, boolean>>({});
+  const [payInputsBusyAll, setPayInputsBusyAll] = useState(false);
   const loadPayFormula = async (period: string) => {
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) return;
     try {
@@ -1069,8 +1073,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     try {
       const list = await apiRequest(`/payroll/inputs/${period}`);
       const map: Record<string, any> = {};
-      for (const x of (Array.isArray(list) ? list : [])) map[x.employee_id] = x;
+      const saved: Record<string, boolean> = {};
+      for (const x of (Array.isArray(list) ? list : [])) {
+        map[x.employee_id] = x;
+        saved[x.employee_id] = true;
+      }
       setPayInputs(map);
+      setPayInputsSaved(saved);
+      setPayInputsDirty({});
     } catch { /* offline */ }
   };
   useEffect(() => {
@@ -10080,12 +10090,52 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             note: String(v.note || '').slice(0, 500),
           }),
         });
+        setPayInputsSaved(prev => ({ ...prev, [empId]: true }));
+        setPayInputsDirty(prev => ({ ...prev, [empId]: false }));
         showToast('Đã lưu dữ liệu nhập tay!');
       } catch (e: any) {
         showToast(e?.message || 'Lỗi khi lưu!');
       } finally {
         setPayInputsBusy(null);
       }
+    };
+    // Lưu 1 lần toàn bộ dòng đang sửa dở (đỡ bấm Lưu từng NV).
+    const saveAllPayInputs = async (empIds: string[]) => {
+      const period = (payCalcPeriod || '').trim();
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
+        showToast('Kỳ lương phải dạng YYYY-MM (VD: 2026-10)!');
+        return;
+      }
+      const ids = empIds.filter(id => payInputsDirty[id]);
+      if (ids.length === 0) {
+        showToast('Chưa có dòng nào sửa — nhập số rồi bấm Lưu tất cả!');
+        return;
+      }
+      setPayInputsBusyAll(true);
+      let ok = 0;
+      for (const empId of ids) {
+        const v = payInputs[empId] || {};
+        try {
+          await apiRequest(`/payroll/inputs/${period}`, {
+            method: 'PUT',
+            body: JSON.stringify({
+              employeeId: empId,
+              luong_cb: Number(v.luong_cb) || 0,
+              ot_extra: Number(v.ot_extra) || 0,
+              bonus_extra: Number(v.bonus_extra) || 0,
+              ung_luong: Number(v.ung_luong) || 0,
+              tru_kpi: Number(v.tru_kpi) || 0,
+              dong_phuc: Number(v.dong_phuc) || 0,
+              note: String(v.note || '').slice(0, 500),
+            }),
+          });
+          ok++;
+          setPayInputsSaved(prev => ({ ...prev, [empId]: true }));
+          setPayInputsDirty(prev => ({ ...prev, [empId]: false }));
+        } catch { /* dòng lỗi bỏ qua, báo tổng cuối */ }
+      }
+      setPayInputsBusyAll(false);
+      showToast(ok === ids.length ? `Đã lưu ${ok}/${ids.length} dòng!` : `Đã lưu ${ok}/${ids.length} dòng — ${ids.length - ok} dòng lỗi, thử lại!`);
     };
     const numIn = (style?: React.CSSProperties) => ({
       width: '92px', padding: '6px 8px', borderRadius: '6px',
@@ -10160,10 +10210,23 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
         {/* NHẬP TAY THEO KỲ (6 cột H/K/AW/O/N/P) */}
         <div style={{ backgroundColor: 'var(--surface)', borderRadius: '14px', border: '1px solid var(--border)', overflow: 'hidden', boxShadow: '0 4px 14px rgba(15,23,42,0.06)' }}>
-          <div style={{ padding: '14px 20px', fontSize: '14px', fontWeight: 800, display: 'flex', gap: '10px', alignItems: 'center' }}>
+          <div style={{ padding: '14px 20px', fontSize: '14px', fontWeight: 800, display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
             <span style={{ width: '28px', height: '28px', borderRadius: '50%', backgroundColor: '#059669', color: '#FFF', fontWeight: 800, fontSize: '13px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>3</span>
-            📝 Dữ liệu nhập tay kỳ {(payCalcPeriod || '').trim() || '—'} <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(6 cột như file Excel — lưu từng NV)</span>
+            📝 Dữ liệu nhập tay kỳ {(payCalcPeriod || '').trim() || '—'} <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(6 cột như file Excel)</span>
+            <span style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '11px', fontWeight: 700, padding: '3px 10px', borderRadius: '999px', backgroundColor: '#ECFDF5', color: '#059669' }}>
+                ✓ {Object.keys(payInputsSaved).filter(k => payInputsSaved[k]).length}/{finEmps.length} NV đã có số liệu
+              </span>
+              <button className="btn-primary" style={{ fontSize: '12px', padding: '7px 14px', fontWeight: 800, backgroundColor: '#059669' }} disabled={payInputsBusyAll} onClick={() => saveAllPayInputs(finEmps.map((e: any) => e.employee_id))}>
+                {payInputsBusyAll ? 'Đang lưu...' : '💾 Lưu tất cả dòng đã sửa'}
+              </button>
+            </span>
           </div>
+          {Object.keys(payInputsSaved).filter(k => payInputsSaved[k]).length === 0 && (
+            <div style={{ margin: '0 20px 12px', padding: '10px 14px', borderRadius: '8px', backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', fontSize: '12px', color: '#92400E' }}>
+              Kỳ này chưa có số nhập tay nào — ô trống là bình thường. Nhập số vào từng dòng rồi bấm <strong>Lưu</strong> (hoặc <strong>Lưu tất cả</strong>). Số đã lưu sẽ dùng ở B4, phiếu mẫu và khi Tính theo Excel.
+            </div>
+          )}
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', minWidth: '980px' }}>
               <thead>
@@ -10181,10 +10244,20 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               <tbody>
                 {finEmps.map((e: any) => {
                   const v = payInputs[e.employee_id] || {};
-                  const set = (k: string, val: string) => setPayInputs({ ...payInputs, [e.employee_id]: { ...v, [k]: val } });
+                  const set = (k: string, val: string) => {
+                    setPayInputs({ ...payInputs, [e.employee_id]: { ...v, [k]: val } });
+                    setPayInputsDirty(prev => ({ ...prev, [e.employee_id]: true }));
+                  };
+                  const dirty = !!payInputsDirty[e.employee_id];
+                  const saved = !!payInputsSaved[e.employee_id];
                   return (
-                    <tr key={e.employee_id} style={{ borderBottom: '1px solid var(--border)' }}>
-                      <td style={{ padding: '8px 14px', fontWeight: 700 }}>{e.full_name}<div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 400 }}>{e.employee_code}</div></td>
+                    <tr key={e.employee_id} style={{ borderBottom: '1px solid var(--border)', backgroundColor: dirty ? '#FFFBEB' : undefined }}>
+                      <td style={{ padding: '8px 14px', fontWeight: 700 }}>
+                        {e.full_name}{' '}
+                        {saved && <span title="Đã có số liệu kỳ này" style={{ fontSize: '10px', fontWeight: 800, padding: '1px 7px', borderRadius: '999px', backgroundColor: '#DCFCE7', color: '#166534' }}>✓ ĐÃ LƯU</span>}
+                        {dirty && <span title="Đang sửa dở, chưa lưu" style={{ fontSize: '10px', fontWeight: 800, padding: '1px 7px', borderRadius: '999px', backgroundColor: '#FEF3C7', color: '#92400E', marginLeft: '4px' }}>● SỬA</span>}
+                        <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 400 }}>{e.employee_code}</div>
+                      </td>
                       {[['luong_cb'], ['ot_extra'], ['bonus_extra'], ['ung_luong'], ['tru_kpi'], ['dong_phuc']].map(([k]) => (
                         <td key={k} style={{ padding: '8px 10px' }}>
                           <input type="number" min={0} value={v[k] ?? ''} placeholder="0" onChange={ev => set(k, ev.target.value)} style={numIn()} />
