@@ -1194,15 +1194,20 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const loadPeriodSlips = async (period: string, autoEnsure = true) => {
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) return;
     setPeriodSlipsLoading(true);
+    // FIX phiếu mẫu báo "chưa được tạo trên server": server trả object
+    // { run, slips } chứ không phải mảng — chuẩn hóa trước khi xét rỗng.
+    const toSlipArr = (d: any): any[] => Array.isArray(d) ? d : (Array.isArray(d?.slips) ? d.slips : []);
     try {
-      let data = await apiRequest(`/payroll/period-slips/${period}`);
-      if ((!Array.isArray(data) || data.length === 0) && autoEnsure) {
-        data = await apiRequest(`/payroll/period-slips/${period}/ensure`, {
+      const data = await apiRequest(`/payroll/period-slips/${period}`);
+      let arr = toSlipArr(data);
+      if (arr.length === 0 && autoEnsure) {
+        const ensured = await apiRequest(`/payroll/period-slips/${period}/ensure`, {
           method: 'POST',
           body: JSON.stringify({ branchScope }),
         });
+        arr = toSlipArr(ensured);
       }
-      setPeriodSlips(Array.isArray(data) ? data : []);
+      setPeriodSlips(arr);
     } catch (err: any) {
       console.warn('[PeriodSlips] Error loading:', err);
     } finally {

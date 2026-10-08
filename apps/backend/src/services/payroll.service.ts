@@ -856,8 +856,13 @@ export class PayrollService {
     if (existing.slips && existing.slips.length > 0) {
       return existing;
     }
-    const res = await this.calculateFormulaPayroll(period, branchScope, creatorId);
-    return { run: (res as any).run, slips: (res as any).slips || (res as any).payslips || [] };
+    const res: any = await this.calculateFormulaPayroll(period, branchScope, creatorId);
+    // FIX phiếu mẫu báo "chưa được tạo trên server": calculateFormulaPayroll đi qua
+    // singleWriterQueue nên trả { operationId, result } — bóc result trước khi đọc
+    // (createPayrollRun trả { run, items }). Trước đây .run/.slips đều undefined nên
+    // ensure luôn trả slips rỗng dù vừa tạo xong.
+    const inner = res?.result ?? res;
+    return { run: inner.run, slips: inner.slips || inner.items || inner.payslips || [] };
   }
 
   // --- Cấu hình VietQR công ty (lưu trong system settings, tự đồng bộ Sheets) ---
