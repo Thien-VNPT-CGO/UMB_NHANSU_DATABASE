@@ -110,7 +110,24 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({ label, value, signer
     if (!strokedRef.current) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    onSave(canvas.toDataURL('image/png'), name.trim());
+    // Nén ảnh ký về nhỏ (JPEG ~360px) trước khi lưu: ảnh PNG gốc (nhất là ảnh
+    // tải lên) có thể hàng trăm KB, server/Sheets cắt ở 45 ký tự làm hỏng base64
+    // khiến ô chữ ký hiện icon vỡ. JPEG nhỏ hiển thị vẫn sắc nét ở 60-74px.
+    try {
+      const out = document.createElement('canvas');
+      const maxW = 360;
+      const scale = Math.min(1, maxW / canvas.width);
+      out.width = Math.max(1, Math.round(canvas.width * scale));
+      out.height = Math.max(1, Math.round(canvas.height * scale));
+      const octx = out.getContext('2d');
+      if (!octx) throw new Error('no-ctx');
+      octx.fillStyle = '#FFFFFF';
+      octx.fillRect(0, 0, out.width, out.height);
+      octx.drawImage(canvas, 0, 0, out.width, out.height);
+      onSave(out.toDataURL('image/jpeg', 0.72), name.trim());
+    } catch {
+      onSave(canvas.toDataURL('image/png'), name.trim());
+    }
     setOpen(false);
   };
 

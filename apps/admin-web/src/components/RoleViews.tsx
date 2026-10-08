@@ -11266,7 +11266,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     <div style={{ fontWeight: 800, fontSize: '12px' }}>1. Người Lập Phiếu (Kế toán)</div>
                     <div style={{ height: '70px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: '6px' }}>
                       {viewSlipModal.sign_lap?.img ? (
-                        <img src={viewSlipModal.sign_lap.img} alt="Chữ ký kế toán" style={{ maxHeight: '60px', maxWidth: '100%', objectFit: 'contain' }} />
+                        <img src={viewSlipModal.sign_lap.img} alt="Chữ ký kế toán" style={{ maxHeight: '60px', maxWidth: '100%', objectFit: 'contain' }} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                       ) : (
                         <span style={{ fontSize: '12px', color: '#94A3B8' }}>Chưa ký</span>
                       )}
@@ -11279,7 +11279,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     <div style={{ fontWeight: 800, fontSize: '12px' }}>2. Quản Lý Chi Nhánh</div>
                     <div style={{ height: '70px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: '6px' }}>
                       {viewSlipModal.sign_quanly?.img ? (
-                        <img src={viewSlipModal.sign_quanly.img} alt="Chữ ký quản lý" style={{ maxHeight: '60px', maxWidth: '100%', objectFit: 'contain' }} />
+                        <img src={viewSlipModal.sign_quanly.img} alt="Chữ ký quản lý" style={{ maxHeight: '60px', maxWidth: '100%', objectFit: 'contain' }} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                       ) : (
                         <span style={{ fontSize: '12px', color: '#94A3B8' }}>Chưa ký</span>
                       )}
@@ -11292,7 +11292,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     <div style={{ fontWeight: 800, fontSize: '12px' }}>3. Người Nhận Tiền (NV)</div>
                     <div style={{ height: '70px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: '6px' }}>
                       {viewSlipModal.sign_nhanvien?.img ? (
-                        <img src={viewSlipModal.sign_nhanvien.img} alt="Chữ ký nhân viên" style={{ maxHeight: '60px', maxWidth: '100%', objectFit: 'contain' }} />
+                        <img src={viewSlipModal.sign_nhanvien.img} alt="Chữ ký nhân viên" style={{ maxHeight: '60px', maxWidth: '100%', objectFit: 'contain' }} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                       ) : (
                         <span style={{ fontSize: '12px', color: '#94A3B8' }}>{viewSlipModal.status === 'PUBLISHED' ? '⏳ Chờ NV ký...' : 'Chưa ký'}</span>
                       )}
