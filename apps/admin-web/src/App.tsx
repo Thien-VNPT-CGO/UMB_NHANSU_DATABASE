@@ -1023,6 +1023,14 @@ export function App() {
               window.dispatchEvent(new CustomEvent('ubm:adjustments-reload'));
             } catch { /* non-fatal */ }
           }
+          // Realtime phiếu lương: backend bắn data:updated(payroll/payslips)
+          // sau mọi nút Ký/Gửi/Hoàn/Duyệt/Chi trả — báo cho RoleViews tải lại
+          // bảng phiếu chi tiết (loadAllData không chứa periodSlips).
+          if (payload?.entity === 'payroll' || payload?.entity === 'payslips' || payload?.entity === 'all') {
+            try {
+              window.dispatchEvent(new CustomEvent('ubm:payslips-reload'));
+            } catch { /* non-fatal */ }
+          }
           notifyReportsRealtime();
           scheduleReload(currentUser);
         }

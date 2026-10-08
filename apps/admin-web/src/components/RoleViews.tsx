@@ -2092,6 +2092,28 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     return () => window.removeEventListener('ubm:adjustments-reload', adjHandler);
   }, [activeTab]);
   useEffect(() => {
+    // Realtime phiếu lương: App.tsx phát 'ubm:payslips-reload' khi socket báo
+    // data:updated(payroll/payslips) — máy khác bấm Ký/Gửi/Hoàn/Duyệt/Chi trả
+    // là bảng phiếu ở máy này tải lại ngay, không cần F5 hay đổi tab.
+    let timer: any = null;
+    const handler = () => {
+      if (activeTab !== 'fin-payslips' && activeTab !== 'fin-payment' && activeTab !== 'fin-signatures') return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        const p = (sampleMonth || '').trim();
+        if (/^\d{4}-(0[1-9]|1[0-2])$/.test(p)) loadPeriodSlips(p, false);
+        if (payRunDetail?.run_id) loadPayRunDetail(payRunDetail.run_id);
+        if (activeTab === 'fin-signatures') loadDefaultSigs();
+      }, 800);
+    };
+    window.addEventListener('ubm:payslips-reload', handler);
+    return () => {
+      window.removeEventListener('ubm:payslips-reload', handler);
+      if (timer) clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, sampleMonth, payRunDetail?.run_id]);
+  useEffect(() => {
     // Realtime báo cáo HR: App.tsx phát 'ubm:reports-reload' khi mọi biến động
     // nghiệp vụ (điểm danh/lịch/đổi ca/đơn từ...) — tổng hợp tháng tính live nên
     // tải lại ngay (debounce, báo cáo nặng hơn các tab khác) + poll 60s dự phòng.
