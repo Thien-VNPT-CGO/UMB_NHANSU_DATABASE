@@ -1120,22 +1120,17 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, finMonth]);
-  // Kỳ lương đang tính (tab 5) + phiếu mẫu (tab 8) cũng cần số realtime cả tháng
-  // để hiện các bước tính + phiếu theo từng NV (1 state dùng chung, tab nào active thì nạp kỳ đó).
+  // Kỳ lương đang tính (tab Tính lương) cũng cần số realtime cả tháng
+  // để hiện các bước tính theo từng NV (tab nào active thì nạp kỳ đó).
   useEffect(() => {
     if (activeTab !== 'fin-calculate') return;
     const p = (payCalcPeriod || '').trim();
     if (/^\d{4}-(0[1-9]|1[0-2])$/.test(p)) loadFinAttendance(p);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, payCalcPeriod]);
-  // Tháng + NV đang xem ở tab Phiếu lương mẫu.
+  // Tháng kỳ lương dùng chung cho các tab Phiếu lương / Thanh toán (fallback khi chưa chọn kỳ).
   const [sampleMonth, setSampleMonth] = useState(() => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7));
-  const [sampleEmpId, setSampleEmpId] = useState('');
-  const [sampleSearch, setSampleSearch] = useState('');
-  // Chế độ xem phiếu: 1 NV chi tiết (như sheet QUẢN LÝ) hay lưới tất cả (như sheet TỔNG NV CH / CH xxx / NM+VP).
-  const [sampleView, setSampleView] = useState<'one' | 'grid'>('one');
-  const [sampleBranch, setSampleBranch] = useState('ALL');
-  // Chữ ký điện tử phiếu mẫu — lưu máy (localStorage) theo kỳ + NV + vai trò.
+  // Chữ ký điện tử phiếu lương — lưu máy (localStorage) theo kỳ + NV + vai trò.
   const [signTick, setSignTick] = useState(0);
   void signTick; // chỉ dùng để refresh sau khi ký/xóa (dữ liệu đọc trực tiếp từ localStorage)
   const signKeyOf = (period: string, empId: string, role: string) => `ubm_sign_${period}_${empId}_${role}`;
@@ -1413,7 +1408,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       if (!ql?.img && rQl.img) ql = rQl;
     }
     if (!lap?.img && !ql?.img) {
-      showToast('⚠️ Vui lòng cài đặt chữ ký mẫu tại tab "12. Cài đặt chữ ký" trước!');
+      showToast('⚠️ Vui lòng cài đặt chữ ký mẫu tại tab "11. Cài đặt chữ ký" trước!');
       return;
     }
     setSlipActionBusy(itemId + 'fast-sign');
@@ -1447,7 +1442,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const lap = defaultSigs.lap;
     const ql = defaultSigs.quanly;
     if (!lap?.img && !ql?.img) {
-      showToast('⚠️ Vui lòng cài đặt chữ ký mẫu tại tab "12. Cài đặt chữ ký" trước!');
+      showToast('⚠️ Vui lòng cài đặt chữ ký mẫu tại tab "11. Cài đặt chữ ký" trước!');
       return;
     }
     const uncompleted = slipsToSign.filter((s: any) => (!s.sign_lap || !s.sign_quanly) && s.status !== 'PAID');
@@ -1501,7 +1496,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }, []);
 
   useEffect(() => {
-    if (activeTab !== 'fin-payslip-sample' && activeTab !== 'fin-payment' && activeTab !== 'fin-signatures' && activeTab !== 'fin-payslips') return;
+    if (activeTab !== 'fin-payment' && activeTab !== 'fin-signatures' && activeTab !== 'fin-payslips') return;
     const p = (sampleMonth || '').trim();
     if (/^\d{4}-(0[1-9]|1[0-2])$/.test(p)) {
       loadPayFormula(p);
@@ -11261,661 +11256,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     );
   }
 
-  if (activeTab === 'fin-payslip-sample') {
-    const vnd = (n: any) => `${Number(n || 0).toLocaleString('vi-VN')}đ`;
-    const sMonth = (sampleMonth || '').trim();
-    const sRows: any[] = finSheet?.period === sMonth ? (finSheet?.rows || []) : [];
-    const sq = sampleSearch.trim().toLowerCase();
-    const sFiltered = sRows.filter((r: any) => {
-      if (sampleBranch !== 'ALL' && canonicalBranchId(r.branchId) !== canonicalBranchId(sampleBranch)) return false;
-      if (sq && !`${r.fullName || ''} ${r.employeeCode || ''} ${r.branchId || ''}`.toLowerCase().includes(sq)) return false;
-      return true;
-    });
-    const gridTotal = sFiltered.reduce((s, r) => {
-      const c = calcLivePayslip(r, payFormula, (payInputs || {})[r.employeeId]);
-      return s + (Number(c.thucLanh) || 0);
-    }, 0);
-    const selId = sampleEmpId || (sFiltered[0]?.employeeId || '');
-    const selRow = sRows.find((r: any) => r.employeeId === selId) || null;
-    const selEmp = (allEmployees || []).find((e: any) => e.employee_id === selId) || null;
-    const selInput = (payInputs || {})[selId] || {};
-    const calc = selRow ? calcLivePayslip(selRow, payFormula, selInput) : null;
-    const shiftByCode = new Map<string, { total: number; du: number }>();
-    for (const s of (selRow?.shifts || [])) {
-      const k = String((s as any)?.shiftCode || '—');
-      const e = shiftByCode.get(k) || { total: 0, du: 0 };
-      e.total++;
-      if (String((s as any)?.status) === 'DU') e.du++;
-      shiftByCode.set(k, e);
-    }
-    const periodLabel = selRow ? `${String(sampleMonth).slice(5, 7)}/${String(sampleMonth).slice(0, 4)}` : '';
-    const slipRow = (label: string, value: string, bold = false, color?: string) => (
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', padding: '7px 0', borderBottom: '1px dashed #E5E7EB', fontSize: '13px', fontWeight: bold ? 800 : 400, color: color || '#111827' }}>
-        <span>{label}</span><span>{value}</span>
-      </div>
-    );
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <FinHead
-          icon="🧾"
-          title="7. Phiếu Lương Mẫu (Xem Trước Theo Từng Nhân Viên)"
-          sub="Chế độ 1 NV chi tiết (như sheet QUẢN LÝ) • chế độ Lưới tất cả (như sheet TỔNG NV CH / CH 111-261-130-120) — số theo công thức Excel + realtime"
-          right={<>
-            {(() => {
-              const readyCount = (periodSlips || []).filter((s: any) => s.status === 'DRAFT' && s.sign_lap && s.sign_quanly).length;
-              if (readyCount === 0) return null;
-              return (
-                <button
-                  className="btn-primary"
-                  style={{ backgroundColor: '#2563EB', fontSize: '12px', padding: '7px 16px', fontWeight: 800, border: 'none', boxShadow: '0 4px 12px rgba(37,99,235,0.3)', color: '#FFF' }}
-                  disabled={slipActionBusy === 'publish-all'}
-                  onClick={() => handlePublishAllSlips(periodSlips[0]?.run_id || sampleMonth)}
-                >
-                  {slipActionBusy === 'publish-all' ? '⏳ Đang gửi...' : `🚀 GỬI TẤT CẢ PUBLISHED (${readyCount} ĐÃ KÝ)`}
-                </button>
-              );
-            })()}
-            <input type="month" value={sampleMonth} onChange={e => { setSampleMonth(e.target.value || new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7)); setSampleEmpId(''); }} style={{ padding: '7px 10px', fontSize: '12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.4)', backgroundColor: 'rgba(255,255,255,0.15)', color: '#FFF', fontWeight: 700 }} />
-            <button className="btn-secondary" style={{ fontSize: '12px', padding: '7px 14px', fontWeight: 700 }} onClick={() => window.print()}>🖨 In phiếu</button>
-          </>}
-        />
-        <FinCard accent="#F59E0B">
-          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
-            <div style={{ display: 'flex', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border)' }}>
-              {([['one', '👤 1 NV'], ['grid', '🔲 Lưới tất cả']] as ['one' | 'grid', string][]).map(([v, label]) => (
-                <button key={v} onClick={() => setSampleView(v)} style={{ padding: '8px 14px', fontSize: '12px', fontWeight: 800, border: 'none', cursor: 'pointer', backgroundColor: sampleView === v ? '#F59E0B' : '#F8FAFC', color: sampleView === v ? '#FFF' : '#475569' }}>{label}</button>
-              ))}
-            </div>
-            <select value={sampleBranch} onChange={e => { setSampleBranch(e.target.value); setSampleEmpId(''); }} style={{ padding: '8px 12px', fontSize: '13px', fontWeight: 700, borderRadius: '8px', border: '1px solid var(--border)' }}>
-              <option value="ALL">Tất cả (như TỔNG NV CH)</option>
-              <option value="CN130">CN1: 130 Vạn Kiếp (như CH 130)</option>
-              <option value="CN261">CN2: 261 Tô Hiến Thành (như CH 261)</option>
-              <option value="CN120">CN3: 120 Hoàng Diệu 2 (như CH 120)</option>
-              <option value="CN111">CN4: 111 Tôn Đản (như CH 111)</option>
-            </select>
-            <input value={sampleSearch} onChange={e => setSampleSearch(e.target.value)} placeholder="Tìm tên / mã NV..." style={{ padding: '8px 12px', fontSize: '13px', borderRadius: '8px', border: '1px solid var(--border)', minWidth: '200px' }} />
-            {sampleView === 'one' && (
-              <select value={selId} onChange={e => setSampleEmpId(e.target.value)} style={{ padding: '8px 12px', fontSize: '13px', fontWeight: 700, borderRadius: '8px', border: '1px solid var(--border)', minWidth: '240px' }}>
-                <option value="">— Chọn nhân viên —</option>
-                {sFiltered.map((r: any) => <option key={r.employeeId} value={r.employeeId}>{r.fullName} ({r.employeeCode})</option>)}
-              </select>
-            )}
-            {sampleView === 'grid' && sFiltered.length > 0 && (
-              <span style={{ fontSize: '13px', fontWeight: 800, color: '#059669' }}>Σ Còn lãnh: {vnd(gridTotal)}</span>
-            )}
-            {finSheetLoading && <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Đang đồng bộ...</span>}
-          </div>
-        </FinCard>
-        {sampleView === 'grid' ? (
-          sFiltered.length === 0 ? (
-            <div style={{ backgroundColor: 'var(--surface)', padding: '32px 20px', borderRadius: '14px', border: '1px solid var(--border)', textAlign: 'center', fontSize: '13px', color: 'var(--text-muted)' }}>
-              {sRows.length === 0 ? `Tháng ${sampleMonth} chưa có ca phân công nào.` : 'Không có NV nào khớp bộ lọc.'}
-            </div>
-          ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '14px' }}>
-              {sFiltered.map((r: any) => {
-                const c = calcLivePayslip(r, payFormula, (payInputs || {})[r.employeeId]);
-                return (
-                  <div key={r.employeeId} style={{ backgroundColor: '#FFF', borderRadius: '12px', border: '1.5px solid #F59E0B', overflow: 'hidden' }}>
-                    <div style={{ background: 'linear-gradient(135deg, #064E3B, #047857)', color: '#FFF', padding: '10px 14px', display: 'flex', gap: '10px', alignItems: 'center' }}>
-                      <img src="/logo.jpg" alt="" style={{ width: '34px', height: '34px', borderRadius: '50%', objectFit: 'cover', backgroundColor: '#FFF' }} />
-                      <div>
-                        <div style={{ fontSize: '13px', fontWeight: 800 }}>PHIẾU LƯƠNG {periodLabel}</div>
-                        <div style={{ fontSize: '10px', opacity: 0.85 }}>{getDisplayBranch(r.branchId, r.group)}</div>
-                      </div>
-                    </div>
-                    <div style={{ padding: '10px 14px', fontSize: '12px' }}>
-                      <div style={{ fontWeight: 800, fontSize: '13px' }}>{r.fullName}</div>
-                      <div style={{ color: 'var(--text-muted)', fontSize: '11px', marginBottom: '6px' }}>MSNV: {r.employeeCode} • {r.AN ?? r.hours}h • {r.full}/{r.totalShifts} ca</div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Ngày công (giờ)</span><strong>{r.AN ?? r.hours}</strong></div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Lương giờ</span><span>{vnd(c.standardPay)}</span></div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Phụ cấp</span><span>{vnd(c.phuCapOT)}</span></div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Tổng lương</span><span>{vnd(c.tongLuong)}</span></div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1.5px solid #F59E0B', marginTop: '6px', paddingTop: '6px', fontWeight: 800 }}><span>Còn lãnh</span><span style={{ color: '#059669' }}>{vnd(c.thucLanh)}</span></div>
-                      <button className="btn-secondary" style={{ width: '100%', marginTop: '8px', fontSize: '12px', padding: '6px', fontWeight: 700 }} onClick={() => { setSampleEmpId(r.employeeId); setSampleView('one'); }}>Xem chi tiết + ký →</button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )
-        ) : (
-        !selRow || !calc ? (
-          <div style={{ backgroundColor: 'var(--surface)', padding: '32px 20px', borderRadius: '14px', border: '1px solid var(--border)', textAlign: 'center', fontSize: '13px', color: 'var(--text-muted)' }}>
-            {sRows.length === 0 ? `Tháng ${sampleMonth} chưa có ca phân công nào.` : 'Chọn 1 nhân viên để xem phiếu lương mẫu.'}
-          </div>
-        ) : (
-          <div style={{ backgroundColor: '#FFF', borderRadius: '16px', border: '2px solid #F59E0B', overflow: 'hidden', boxShadow: '0 8px 28px rgba(245,158,11,0.18)', maxWidth: '760px', margin: '0 auto', width: '100%' }}>
-            {/* Header: logo + thương hiệu + chi nhánh */}
-            <div style={{ background: 'linear-gradient(135deg, #064E3B 0%, #047857 60%, #0EA5E9 130%)', color: '#FFF', padding: '18px 24px', display: 'flex', gap: '14px', alignItems: 'center' }}>
-              <img src="/logo.jpg" alt="Um Bo Milk" style={{ width: '56px', height: '56px', borderRadius: '50%', objectFit: 'cover', border: '2px solid rgba(255,255,255,0.7)', backgroundColor: '#FFF' }} />
-              <div>
-                <div style={{ fontSize: '18px', fontWeight: 900, letterSpacing: '0.5px' }}>ỤM BÒ MILK</div>
-                <div style={{ fontSize: '12px', opacity: 0.9 }}>{getDisplayBranch(selRow.branchId, selRow.group)}</div>
-                <div style={{ fontSize: '13px', fontWeight: 800, marginTop: '4px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'inline-block', padding: '2px 12px', borderRadius: '999px' }}>PHIẾU LƯƠNG THÁNG {periodLabel}</div>
-              </div>
-            </div>
-            {/* Thông tin NV + ca làm việc */}
-            <div style={{ padding: '16px 24px 4px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '6px 20px', fontSize: '13px' }}>
-              <div><span style={{ color: '#6B7280' }}>Họ tên: </span><strong>{selRow.fullName}</strong></div>
-              <div><span style={{ color: '#6B7280' }}>Mã NV: </span><strong>{selRow.employeeCode}</strong></div>
-              <div><span style={{ color: '#6B7280' }}>Diện: </span><strong>{selRow.stage === 'PROBATION' ? 'Thử việc' : 'Chính thức'}</strong></div>
-              <div><span style={{ color: '#6B7280' }}>Ca cố định: </span><strong>{String(selEmp?.default_shift_code || '').replace('CA_', 'Ca ') || '—'}</strong></div>
-              <div style={{ gridColumn: '1 / -1' }}><span style={{ color: '#6B7280' }}>Ca làm tháng này: </span><strong>{selRow.totalShifts} ca ({selRow.full} đủ / {selRow.partial} thiếu / {selRow.absent} vắng)</strong>
-                {[...shiftByCode.entries()].map(([k, e]) => (
-                  <span key={k} style={{ display: 'inline-block', marginLeft: '8px', fontSize: '11px', fontWeight: 800, padding: '2px 10px', borderRadius: '999px', backgroundColor: '#EFF6FF', color: '#1D4ED8' }}>{String(k).replace('CA_', 'Ca ')}: {e.du}/{e.total}</span>
-                ))}
-              </div>
-            </div>
-            {/* Chi tiết lương theo công thức Excel */}
-            <div style={{ padding: '12px 24px' }}>
-              {slipRow(`B1. Lương giờ: ${calc.hours}h × ${vnd(calc.rate).replace('đ', '')}/h`, vnd(calc.standardPay))}
-              {slipRow(`B2. Phụ cấp OT (${calc.otSlots} suất)`, vnd(calc.phuCapOT))}
-              {Number(calc.luongCB) > 0 && slipRow('Lương cơ bản (nhập tay)', vnd(calc.luongCB))}
-              {Number(calc.otExtra) > 0 && slipRow('OT thêm (nhập tay)', vnd(calc.otExtra))}
-              {Number(calc.bonusTotal) > 0 && slipRow(`Thưởng (${vnd(calc.bonusSys)} nhường ca + ${vnd(calc.bonusExtra)} thêm)`, `+${vnd(calc.bonusTotal)}`)}
-              {slipRow('B3. TỔNG CỘNG', vnd(calc.tongCong), true)}
-              {(Number(calc.kpi) > 0 || Number(calc.deduction) > 0) && slipRow(`B4. Trừ KPI (${vnd(calc.kpi)}) + phạt trễ/vắng (${vnd(calc.deduction)})`, `−${vnd(calc.kpi + calc.deduction)}`)}
-              {slipRow('B4. TỔNG LƯƠNG', vnd(calc.tongLuong), true)}
-              {Number(calc.ung) > 0 && slipRow('Ứng lương', `−${vnd(calc.ung)}`)}
-              {Number(calc.dp) > 0 && slipRow('Trừ đồng phục', `−${vnd(calc.dp)}`)}
-              <div style={{ borderTop: '2px solid #F59E0B', marginTop: '10px', paddingTop: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '15px', fontWeight: 900 }}>B5. THỰC LÃNH:</span>
-                <span style={{ fontSize: '24px', fontWeight: 900, color: '#059669' }}>{vnd(calc.thucLanh)}</span>
-              </div>
-            </div>
-            {/* Quản lý trạng thái phiếu: Đủ 2 chữ ký -> Nút PUBLISHED / Save phiếu; Đủ 3 chữ ký -> Hiện VietQR + Hoàn thành; Đã trả -> Reset/Kỳ tiếp */}
-            {(() => {
-              const curSlip = (periodSlips || []).find((s: any) => s.employee_id === selId) || null;
-              const hasLapSig = !!(curSlip?.sign_lap?.img || readSign(sMonth, selId, 'lap').img);
-              const hasQuanLySig = !!(curSlip?.sign_quanly?.img || readSign(sMonth, selId, 'quanly').img);
-              const hasBothMgmt = hasLapSig && hasQuanLySig;
-              const curSt = curSlip?.status || 'DRAFT';
-
-              // Trạng thái 1: DRAFT và đã ký đủ 2 chữ ký Kế toán & Quản lý -> Hiện 2 lựa chọn (PUBLISHED hoặc Save & tiếp)
-              if (curSt === 'DRAFT' && hasBothMgmt) {
-                return (
-                  <div style={{ backgroundColor: '#ECFDF5', border: '2px solid #10B981', borderRadius: '12px', padding: '16px', margin: '10px 24px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', boxShadow: '0 4px 14px rgba(16,185,129,0.15)' }}>
-                    <div>
-                      <div style={{ fontWeight: 800, fontSize: '15px', color: '#065F46', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <span>✨</span> ĐÃ KÝ ĐỦ 2 CHỮ KÝ: Người Lập Phiếu & Quản Lý Chi Nhánh!
-                      </div>
-                      <div style={{ fontSize: '12px', color: '#047857', marginTop: '3px' }}>
-                        Bạn có thể gửi từng phiếu hoặc lưu lại để ký hết tất cả nhân viên rồi gửi 1 lần:
-                      </div>
-                    </div>
-                    <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                      {/* Lựa chọn 1: Bấm nút PUBLISHED để gửi ngay */}
-                      <button
-                        className="btn-primary"
-                        style={{ backgroundColor: '#059669', color: '#FFF', padding: '9px 18px', fontSize: '13px', fontWeight: 800, borderRadius: '8px', border: 'none', cursor: 'pointer', boxShadow: '0 4px 12px rgba(5,150,105,0.3)' }}
-                        disabled={slipActionBusy === ((curSlip?.item_id || 'sample') + 'publish')}
-                        onClick={async () => {
-                          let targetSlip = curSlip;
-                          if (!targetSlip) {
-                            targetSlip = await ensureServerSlip(sMonth, selId);
-                          }
-                          if (!targetSlip) {
-                            showToast('⚠️ Phiếu chưa được tạo trên server!');
-                            return;
-                          }
-                          const lap = (targetSlip.sign_lap?.img ? targetSlip.sign_lap : null) || (readSign(sMonth, selId, 'lap').img ? readSign(sMonth, selId, 'lap') : null) || defaultSigs.lap;
-                          const ql = (targetSlip.sign_quanly?.img ? targetSlip.sign_quanly : null) || (readSign(sMonth, selId, 'quanly').img ? readSign(sMonth, selId, 'quanly') : null) || defaultSigs.quanly;
-                          await handlePublishSlip(targetSlip.item_id, {
-                            sign_lap: lap?.img ? { name: lap.name || defaultSigs.lap?.name || currentUser?.fullName || 'Kế toán viên', img: lap.img } : undefined,
-                            sign_quanly: ql?.img ? { name: ql.name || defaultSigs.quanly?.name || 'Quản lý chi nhánh', img: ql.img } : undefined,
-                          });
-                        }}
-                      >
-                        {slipActionBusy === ((curSlip?.item_id || 'sample') + 'publish') ? '⏳ Đang gửi...' : '📢 PUBLISHED (GỬI PHIẾU NÀY)'}
-                      </button>
-
-                      {/* Lựa chọn 2: Save phiếu lại và hoàn thành cho đến hết các nhân viên */}
-                      <button
-                        className="btn-secondary"
-                        style={{ backgroundColor: '#FFF', color: '#1E293B', padding: '9px 16px', fontSize: '13px', fontWeight: 800, borderRadius: '8px', border: '1.5px solid #CBD5E1', cursor: 'pointer' }}
-                        disabled={slipActionBusy === ((curSlip?.item_id || 'sample') + 'save-next')}
-                        onClick={async () => {
-                          setSlipActionBusy((curSlip?.item_id || 'sample') + 'save-next');
-                          try {
-                            let targetSlip = curSlip;
-                            if (!targetSlip) {
-                              targetSlip = await ensureServerSlip(sMonth, selId);
-                            }
-                            const lap = (targetSlip?.sign_lap?.img ? targetSlip.sign_lap : null) || (readSign(sMonth, selId, 'lap').img ? readSign(sMonth, selId, 'lap') : null) || defaultSigs.lap;
-                            const ql = (targetSlip?.sign_quanly?.img ? targetSlip.sign_quanly : null) || (readSign(sMonth, selId, 'quanly').img ? readSign(sMonth, selId, 'quanly') : null) || defaultSigs.quanly;
-
-                            if (targetSlip && (lap?.img || ql?.img)) {
-                              const updated = await apiRequest(`/payroll/slips/${targetSlip.item_id}/fast-sign`, {
-                                method: 'POST',
-                                body: JSON.stringify({
-                                  lapName: lap?.name || defaultSigs.lap?.name || currentUser?.fullName || 'Kế toán viên',
-                                  lapImg: lap?.img || defaultSigs.lap?.img || '',
-                                  qlName: ql?.name || defaultSigs.quanly?.name || 'Quản lý chi nhánh',
-                                  qlImg: ql?.img || defaultSigs.quanly?.img || '',
-                                }),
-                              });
-                              if (updated) updateSlipInState(targetSlip.item_id, updated);
-                            }
-                            showToast(`💾 Đã lưu 2 chữ ký của ${selRow.fullName} lên máy chủ! Chuyển sang nhân viên tiếp theo.`);
-                            const currIdx = sFiltered.findIndex((r: any) => r.employeeId === selId);
-                            if (currIdx >= 0 && currIdx < sFiltered.length - 1) {
-                              setSampleEmpId(sFiltered[currIdx + 1].employeeId);
-                            } else {
-                              showToast('🎉 Đã ký xong nhân viên cuối cùng! Bạn có thể bấm "🚀 GỬI TẤT CẢ PUBLISHED" trên thanh công cụ.');
-                            }
-                          } catch (err: any) {
-                            showToast('Lỗi khi lưu chữ ký: ' + (err?.message || ''));
-                          } finally {
-                            setSlipActionBusy(null);
-                          }
-                        }}
-                      >
-                        {slipActionBusy === ((curSlip?.item_id || 'sample') + 'save-next') ? '⏳ Đang lưu...' : '💾 Save phiếu lại & Ký NV tiếp theo →'}
-                      </button>
-                    </div>
-                  </div>
-                );
-              }
-
-              // Trạng thái 2: Đã PUBLISHED nhưng nhân viên chưa ký
-              if (curSt === 'PUBLISHED') {
-                return (
-                  <div style={{ backgroundColor: '#EFF6FF', border: '1.5px solid #3B82F6', borderRadius: '12px', padding: '12px 20px', margin: '10px 24px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <span style={{ fontSize: '20px' }}>📢</span>
-                      <div>
-                        <strong style={{ fontSize: '14px', color: '#1D4ED8' }}>PHIẾU ĐÃ PHÁT HÀNH (PUBLISHED)</strong>
-                        <div style={{ fontSize: '12px', color: '#1E40AF' }}>
-                          Đang chờ nhân viên {selRow.fullName} kiểm tra đúng số tiền thực lãnh và ký tên xác nhận trên Cổng nhân viên.
-                        </div>
-                      </div>
-                    </div>
-                    <span style={{ backgroundColor: '#DBEAFE', color: '#1E40AF', padding: '4px 12px', borderRadius: '999px', fontSize: '11px', fontWeight: 800 }}>
-                      Chờ NV xác nhận (2/3 chữ ký)
-                    </span>
-                  </div>
-                );
-              }
-
-              // Trạng thái 3: CONFIRMED (Đã đủ 3 chữ ký) -> Hiển thị mã QR ngân hàng + Nút Hoàn thành chuyển tiền
-              if (curSt === 'CONFIRMED' || (curSlip?.sign_lap && curSlip?.sign_quanly && curSlip?.sign_nhanvien)) {
-                return (
-                  <div style={{ backgroundColor: '#F0FDF4', border: '2px solid #10B981', borderRadius: '12px', padding: '18px', margin: '10px 24px 14px', boxShadow: '0 6px 20px rgba(16,185,129,0.16)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <span style={{ fontSize: '24px' }}>🏦</span>
-                        <div>
-                          <div style={{ fontWeight: 800, fontSize: '16px', color: '#065F46' }}>
-                            ĐÃ ĐỦ 3 CHỮ KÝ — QUÉT MÃ QR ĐỂ CHUYỂN KHOẢN TIỀN LƯƠNG
-                          </div>
-                          <div style={{ fontSize: '12px', color: '#047857' }}>
-                            Nhân viên {curSlip?.full_name || selRow.fullName} đã ký tên xác nhận đúng số tiền thực lãnh: <strong style={{ color: '#065F46' }}>{vnd(curSlip?.thuc_lanh ?? curSlip?.net_pay ?? calc.thucLanh)}</strong>
-                          </div>
-                        </div>
-                      </div>
-                      <span style={{ backgroundColor: '#D1FAE5', color: '#065F46', padding: '5px 14px', borderRadius: '999px', fontSize: '12px', fontWeight: 800, border: '1px solid #A7F3D0' }}>
-                        ✓ Đủ 3/3 chữ ký • Sẵn sàng chuyển khoản
-                      </span>
-                    </div>
-
-                    {/* QR Code & Thông tin chuyển khoản */}
-                    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(180px, 220px) 1fr', gap: '18px', alignItems: 'center', backgroundColor: '#FFF', padding: '16px', borderRadius: '10px', border: '1px solid #A7F3D0' }}>
-                      <div style={{ textAlign: 'center' }}>
-                        {curSlip?.bank_account ? (
-                          <>
-                            <img
-                              src={`https://img.vietqr.io/image/${toVietQRBankCode(curSlip?.bank_name || 'vcb')}-${encodeURIComponent(curSlip?.bank_account)}-compact2.png?amount=${Number(curSlip?.thuc_lanh ?? curSlip?.net_pay ?? calc.thucLanh)}&addInfo=${encodeURIComponent(`LUONG ${curSlip?.period || sMonth} ${curSlip?.employee_code || selRow.employeeCode}`)}&accountName=${encodeURIComponent(curSlip?.bank_holder || curSlip?.full_name || selRow.fullName)}`}
-                              alt="Mã QR Chuyển khoản VietQR"
-                              style={{ width: '100%', maxWidth: '200px', borderRadius: '8px', border: '1px solid #CBD5E1', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}
-                            />
-                            <div style={{ fontSize: '11px', color: '#059669', fontWeight: 700, marginTop: '6px' }}>⚡ Quét mã trên app Ngân hàng</div>
-                          </>
-                        ) : (
-                          <div style={{ padding: '24px 12px', border: '1.5px dashed #F87171', borderRadius: '8px', color: '#DC2626', fontSize: '12px', backgroundColor: '#FEF2F2' }}>
-                            ⚠️ Chưa có STK ngân hàng. Vui lòng bổ sung bên phải.
-                          </div>
-                        )}
-                      </div>
-
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '13px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', borderBottom: '1px solid #F1F5F9' }}>
-                          <span style={{ color: '#64748B' }}>Ngân hàng:</span>
-                          <strong>{curSlip?.bank_name || '(Chưa cập nhật)'}</strong>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', borderBottom: '1px solid #F1F5F9' }}>
-                          <span style={{ color: '#64748B' }}>Số tài khoản:</span>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <strong style={{ fontSize: '16px', color: '#1E3A8A' }}>{curSlip?.bank_account || '(Chưa có)'}</strong>
-                            {curSlip?.bank_account && (
-                              <button
-                                className="btn-secondary"
-                                style={{ fontSize: '11px', padding: '2px 8px' }}
-                                onClick={() => {
-                                  navigator.clipboard.writeText(curSlip.bank_account);
-                                  showToast('Đã sao chép số tài khoản!');
-                                }}
-                              >
-                                📋 Copy
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', borderBottom: '1px solid #F1F5F9' }}>
-                          <span style={{ color: '#64748B' }}>Tên thụ hưởng:</span>
-                          <strong style={{ textTransform: 'uppercase' }}>{curSlip?.bank_holder || curSlip?.full_name || selRow.fullName}</strong>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', borderBottom: '1px solid #F1F5F9' }}>
-                          <span style={{ color: '#64748B' }}>Số tiền thực lãnh:</span>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <strong style={{ fontSize: '18px', color: '#059669' }}>{vnd(curSlip?.thuc_lanh ?? curSlip?.net_pay ?? calc.thucLanh)}</strong>
-                            <button
-                              className="btn-secondary"
-                              style={{ fontSize: '11px', padding: '2px 8px' }}
-                              onClick={() => {
-                                navigator.clipboard.writeText(String(curSlip?.thuc_lanh ?? curSlip?.net_pay ?? calc.thucLanh));
-                                showToast('Đã sao chép số tiền!');
-                              }}
-                            >
-                              📋 Copy
-                            </button>
-                          </div>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0' }}>
-                          <span style={{ color: '#64748B' }}>Nội dung chuyển khoản:</span>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <strong>{`LUONG ${curSlip?.period || sMonth} ${curSlip?.employee_code || selRow.employeeCode}`}</strong>
-                            <button
-                              className="btn-secondary"
-                              style={{ fontSize: '11px', padding: '2px 8px' }}
-                              onClick={() => {
-                                navigator.clipboard.writeText(`LUONG ${curSlip?.period || sMonth} ${curSlip?.employee_code || selRow.employeeCode}`);
-                                showToast('Đã sao chép nội dung chuyển khoản!');
-                              }}
-                            >
-                              📋 Copy
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Sửa thông tin STK */}
-                        <div style={{ marginTop: '2px' }}>
-                          {editingBankSlipId === curSlip?.item_id ? (
-                            <div style={{ backgroundColor: '#F8FAFC', padding: '10px', borderRadius: '8px', border: '1px solid #CBD5E1', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                              <div style={{ fontSize: '12px', fontWeight: 700 }}>Cập nhật tài khoản nhận lương:</div>
-                              <input
-                                placeholder="Tên ngân hàng (VD: Vietcombank, MB, ACB...)"
-                                value={bankEditForm.bank_name}
-                                onChange={e => setBankEditForm(prev => ({ ...prev, bank_name: e.target.value }))}
-                                style={{ padding: '6px 10px', fontSize: '12px', borderRadius: '6px', border: '1px solid #CBD5E1' }}
-                              />
-                              <input
-                                placeholder="Số tài khoản"
-                                value={bankEditForm.bank_account}
-                                onChange={e => setBankEditForm(prev => ({ ...prev, bank_account: e.target.value }))}
-                                style={{ padding: '6px 10px', fontSize: '12px', borderRadius: '6px', border: '1px solid #CBD5E1' }}
-                              />
-                              <input
-                                placeholder="Tên chủ tài khoản"
-                                value={bankEditForm.bank_holder}
-                                onChange={e => setBankEditForm(prev => ({ ...prev, bank_holder: e.target.value }))}
-                                style={{ padding: '6px 10px', fontSize: '12px', borderRadius: '6px', border: '1px solid #CBD5E1' }}
-                              />
-                              <div style={{ display: 'flex', gap: '6px' }}>
-                                <button className="btn-primary" style={{ fontSize: '11px', padding: '4px 10px' }} onClick={() => curSlip && handleSaveBankInfo(curSlip.item_id)}>Lưu STK</button>
-                                <button className="btn-secondary" style={{ fontSize: '11px', padding: '4px 10px' }} onClick={() => setEditingBankSlipId(null)}>Hủy</button>
-                              </div>
-                            </div>
-                          ) : (
-                            <button
-                              className="btn-secondary"
-                              style={{ fontSize: '11px', padding: '3px 8px' }}
-                              onClick={() => {
-                                if (curSlip) {
-                                  setEditingBankSlipId(curSlip.item_id);
-                                  setBankEditForm({ bank_name: curSlip.bank_name || '', bank_account: curSlip.bank_account || '', bank_holder: curSlip.bank_holder || curSlip.full_name || selRow.fullName });
-                                }
-                              }}
-                            >
-                              ✏️ {curSlip?.bank_account ? 'Đổi thông tin STK' : 'Bổ sung thông tin STK ngân hàng'}
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Nút Hoàn thành sau khi kế toán chuyển khoản xong */}
-                    <div style={{ borderTop: '1.5px dashed #A7F3D0', marginTop: '14px', paddingTop: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-                      <div style={{ fontSize: '12px', color: '#047857' }}>
-                        Kế toán sau khi chuyển khoản ngân hàng xong, bấm nút bên phải để xác nhận:
-                      </div>
-                      <button
-                        className="btn-primary"
-                        style={{ backgroundColor: '#10B981', color: '#FFF', padding: '10px 24px', fontSize: '13px', fontWeight: 800, borderRadius: '8px', border: 'none', cursor: 'pointer', boxShadow: '0 4px 12px rgba(16,185,129,0.3)' }}
-                        disabled={slipActionBusy === curSlip?.item_id + 'mark-paid'}
-                        onClick={() => curSlip && handleMarkSlipPaid(curSlip.item_id)}
-                      >
-                        {slipActionBusy === curSlip?.item_id + 'mark-paid' ? '⏳ Đang lưu...' : '✅ HOÀN THÀNH (ĐÃ CHUYỂN TIỀN)'}
-                      </button>
-                    </div>
-                  </div>
-                );
-              }
-
-              // Trạng thái 4: PAID (Đã hoàn thành chi trả) -> Tự động trở về ban đầu tiếp tục cho kỳ lương tiếp theo
-              if (curSt === 'PAID') {
-                return (
-                  <div style={{ backgroundColor: '#ECFDF5', border: '2px solid #059669', borderRadius: '12px', padding: '16px', margin: '10px 24px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-                    <div>
-                      <div style={{ fontWeight: 800, fontSize: '15px', color: '#065F46' }}>
-                        🎉 ĐÃ HOÀN THÀNH CHI TRẢ TIỀN LƯƠNG CHO NHÂN VIÊN {selRow.fullName}!
-                      </div>
-                      <div style={{ fontSize: '12px', color: '#047857', marginTop: '3px' }}>
-                        Kế toán đã xác nhận chuyển khoản {vnd(curSlip?.thuc_lanh ?? curSlip?.net_pay ?? calc.thucLanh)}. Phiếu đã lưu trữ và tự động đồng bộ Google Sheet.
-                        {curSlip?.slip_paid_at && ` (Xác nhận lúc: ${new Date(curSlip.slip_paid_at).toLocaleString('vi-VN')})`}
-                      </div>
-                    </div>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <button
-                        className="btn-secondary"
-                        style={{ fontSize: '12px', padding: '8px 14px', fontWeight: 800 }}
-                        onClick={() => {
-                          const currIdx = sFiltered.findIndex((r: any) => r.employeeId === selId);
-                          if (currIdx >= 0 && currIdx < sFiltered.length - 1) {
-                            setSampleEmpId(sFiltered[currIdx + 1].employeeId);
-                          } else {
-                            showToast('Đã duyệt qua toàn bộ nhân viên của kỳ!');
-                          }
-                        }}
-                      >
-                        Sang NV tiếp theo →
-                      </button>
-                      <button
-                        className="btn-primary"
-                        style={{ fontSize: '12px', padding: '8px 16px', fontWeight: 800, backgroundColor: '#0284C7' }}
-                        onClick={() => {
-                          const [y, m] = sMonth.split('-').map(Number);
-                          const nextD = new Date(Date.UTC(y, m, 1));
-                          const nextP = nextD.toISOString().slice(0, 7);
-                          setSampleMonth(nextP);
-                          setSampleEmpId('');
-                          showToast(`Đã chuyển sang kỳ lương tiếp theo: Tháng ${nextP}!`);
-                        }}
-                      >
-                        📅 Tiếp tục kỳ lương tiếp theo →
-                      </button>
-                    </div>
-                  </div>
-                );
-              }
-
-              return null;
-            })()}
-
-            {/* Thanh công cụ Chữ Ký Nhanh nếu kế toán đã thêm chữ ký và họ tên */}
-            {(() => {
-              const curSlip = (periodSlips || []).find((s: any) => s.employee_id === selId) || null;
-              const hasConfigured = !!(defaultSigs.lap?.img || defaultSigs.quanly?.img);
-              const isPaid = curSlip?.status === 'PAID';
-              const isSignedBoth = !!((curSlip?.sign_lap?.img || readSign(sMonth, selId, 'lap').img) && (curSlip?.sign_quanly?.img || readSign(sMonth, selId, 'quanly').img));
-              if (!hasConfigured || isPaid) return null;
-              return (
-                <div style={{ margin: '0 24px 10px', padding: '12px 18px', backgroundColor: '#F0FDF4', borderRadius: '12px', border: '1.5px solid #10B981', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', boxShadow: '0 4px 14px rgba(16,185,129,0.12)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <span style={{ fontSize: '20px' }}>🖋️</span>
-                    <div>
-                      <div style={{ fontSize: '13px', fontWeight: 800, color: '#065F46' }}>
-                        Chữ Ký Mẫu Đã Cấu Hình: Kế Toán &amp; Quản Lý Chi Nhánh
-                      </div>
-                      <div style={{ fontSize: '12px', color: '#047857' }}>
-                        {defaultSigs.lap?.name ? `Kế toán: ${defaultSigs.lap.name}` : ''}
-                        {defaultSigs.lap?.name && defaultSigs.quanly?.name ? ' • ' : ''}
-                        {defaultSigs.quanly?.name ? `Quản lý: ${defaultSigs.quanly.name}` : ''}
-                        {isSignedBoth ? ' (Phiếu hiện tại đã ký đủ 2 bên)' : ' (Bấm nút bên phải để tự động ký vào đúng 2 ô)'}
-                      </div>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    className="btn-primary"
-                    style={{
-                      backgroundColor: '#059669',
-                      color: '#FFF',
-                      fontWeight: 800,
-                      fontSize: '13px',
-                      padding: '9px 20px',
-                      borderRadius: '8px',
-                      border: 'none',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      boxShadow: '0 4px 12px rgba(5,150,105,0.3)',
-                    }}
-                    disabled={slipActionBusy === ((curSlip?.item_id || '') + 'fast-sign')}
-                    onClick={async () => {
-                      if (curSlip) {
-                        await handleFastSignSlip(curSlip.item_id, sMonth, selId);
-                      } else {
-                        // FIX ký xong vẫn MISSING_SIGNATURES: phiếu server chưa có nên
-                        // chỉ lưu local là publish vỡ — tạo phiếu server rồi đẩy ký lên.
-                        if (defaultSigs.lap?.img) saveSign(sMonth, selId, 'lap', defaultSigs.lap.img, defaultSigs.lap.name);
-                        if (defaultSigs.quanly?.img) saveSign(sMonth, selId, 'quanly', defaultSigs.quanly.img, defaultSigs.quanly.name);
-                        const fresh = await ensureServerSlip(sMonth, selId);
-                        if (fresh) {
-                          await handleFastSignSlip(fresh.item_id, sMonth, selId);
-                        } else {
-                          showToast('✍️ Đã áp dụng cả 2 chữ ký mẫu vào đúng ô (phiếu server đang tạo, bấm Ký lại để đồng bộ rồi mới PUBLISHED)!');
-                        }
-                      }
-                    }}
-                  >
-                    {slipActionBusy === ((curSlip?.item_id || '') + 'fast-sign') ? '⏳ Đang ký...' : '✍️ Chữ ký (Ký tự động 2 bên)'}
-                  </button>
-                </div>
-              );
-            })()}
-
-            {/* Footer ký điện tử 3 bên */}
-            <div style={{ padding: '8px 24px 20px', display: 'flex', justifyContent: 'space-between', gap: '14px', fontSize: '12px', color: '#374151', flexWrap: 'wrap', borderTop: '1px solid #F3F4F6' }}>
-              {(() => {
-                const curSlip = (periodSlips || []).find((s: any) => s.employee_id === selId) || null;
-                const lapSig = curSlip?.sign_lap?.img || readSign(sMonth, selId, 'lap').img;
-                const lapName = curSlip?.sign_lap?.name || readSign(sMonth, selId, 'lap').name || currentUser?.fullName || 'Kế toán viên';
-                const qlSig = curSlip?.sign_quanly?.img || readSign(sMonth, selId, 'quanly').img;
-                const qlName = curSlip?.sign_quanly?.name || readSign(sMonth, selId, 'quanly').name || 'Quản lý chi nhánh';
-                const nvSig = curSlip?.sign_nhanvien?.img || readSign(sMonth, selId, 'nhanvien').img;
-                const nvName = curSlip?.sign_nhanvien?.name || readSign(sMonth, selId, 'nhanvien').name || selRow.fullName || '';
-                const isPaid = curSlip?.status === 'PAID';
-
-                return (
-                  <>
-                    <SignaturePad
-                      label="1. Người Lập Phiếu (Kế toán)"
-                      value={lapSig}
-                      signerName={lapName}
-                      disabled={isPaid}
-                      onSave={async (img, name) => {
-                        saveSign(sMonth, selId, 'lap', img, name);
-                        if (curSlip) await handleSignSlip(curSlip.item_id, 'lap', name || lapName, img);
-                        else {
-                          const fresh = await ensureServerSlip(sMonth, selId);
-                          if (fresh) await handleSignSlip(fresh.item_id, 'lap', name || lapName, img);
-                          else showToast('Đã lưu chữ ký tạm thời!');
-                        }
-                      }}
-                      onClear={() => {
-                        clearSign(sMonth, selId, 'lap');
-                        if (curSlip) handleSignSlip(curSlip.item_id, 'lap', '', '');
-                      }}
-                    />
-
-                    <SignaturePad
-                      label="2. Quản Lý Chi Nhánh"
-                      value={qlSig}
-                      signerName={qlName}
-                      disabled={isPaid}
-                      onSave={async (img, name) => {
-                        saveSign(sMonth, selId, 'quanly', img, name);
-                        if (curSlip) await handleSignSlip(curSlip.item_id, 'quanly', name || qlName, img);
-                        else {
-                          const fresh = await ensureServerSlip(sMonth, selId);
-                          if (fresh) await handleSignSlip(fresh.item_id, 'quanly', name || qlName, img);
-                          else showToast('Đã lưu chữ ký tạm thời!');
-                        }
-                      }}
-                      onClear={() => {
-                        clearSign(sMonth, selId, 'quanly');
-                        if (curSlip) handleSignSlip(curSlip.item_id, 'quanly', '', '');
-                      }}
-                    />
-
-                    <div style={{ flex: 1, minWidth: '150px', textAlign: 'center' }}>
-                      <div style={{ fontWeight: 800, fontSize: '12px' }}>3. Người Nhận Tiền (Nhân viên)</div>
-                      <div
-                        style={{
-                          marginTop: '6px', minHeight: '86px', borderRadius: '8px',
-                          border: nvSig ? '1px solid #A7F3D0' : '1.5px dashed #CBD5E1',
-                          backgroundColor: nvSig ? '#F0FDF4' : '#F8FAFC',
-                          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                          padding: '6px',
-                        }}
-                      >
-                        {nvSig ? (
-                          <>
-                            <img src={nvSig} alt="Chữ ký nhân viên" style={{ maxWidth: '100%', maxHeight: '58px', objectFit: 'contain' }} />
-                            <div style={{ fontSize: '10px', color: '#047857', fontWeight: 700, marginTop: '2px' }}>
-                              ✅ Đã ký nhận {curSlip?.sign_nhanvien?.at ? new Date(curSlip.sign_nhanvien.at).toLocaleDateString('vi-VN') : ''}
-                            </div>
-                          </>
-                        ) : curSlip?.status === 'PUBLISHED' ? (
-                          <span style={{ fontSize: '11px', color: '#D97706', fontWeight: 600, padding: '4px' }}>
-                            ⏳ Chờ nhân viên ký nhận trên Cổng NV
-                          </span>
-                        ) : (
-                          <span style={{ fontSize: '11px', color: '#94A3B8' }}>
-                            Chờ phát hành phiếu
-                          </span>
-                        )}
-                      </div>
-                      <div style={{ fontSize: '12px', marginTop: '4px', minHeight: '18px', fontWeight: nvSig ? 700 : 400, color: nvSig ? '#111827' : '#9CA3AF' }}>
-                        {nvName || '(Ký, ghi rõ họ tên)'}
-                      </div>
-                    </div>
-                  </>
-                );
-              })()}
-            </div>
-            <div style={{ backgroundColor: '#FFFBEB', padding: '10px 24px', fontSize: '11px', color: '#92400E', borderTop: '1px solid #FDE68A' }}>
-              Quy trình đối soát ký 3 bên & tự động đồng bộ Google Sheet tab PHIEU_LUONG. Sau khi hoàn thành chi trả, hệ thống tự động chuẩn bị cho kỳ tiếp theo.
-            </div>
-          </div>
-          )
-        )}
-      </div>
-    );
-  }
-
   // =========================================================================
   // NHÓM TAB MIRROR FILE EXCEL LƯƠNG (BCC + Payment + Khấu trừ)
   // Công thức giữ nguyên 100% file: AN=SUM giờ ngày, AO/AP=COUNT, AQ=COUNTIFS(>=T1)+COUNTIFS(>=T2),
@@ -12245,7 +11585,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <div style={{ textAlign: 'center', padding: '28px 16px', fontSize: '13px', color: 'var(--text-muted)', backgroundColor: '#F8FAFC', borderRadius: '10px', border: '1px dashed #CBD5E1' }}>
                   Chưa có phiếu nào ở trạng thái CONFIRMED (đủ 3 chữ ký) trong kỳ {sampleMonth}.
                   <div style={{ fontSize: '12px', marginTop: '6px' }}>
-                    Kế toán vui lòng vào <strong>Tab 7. Phiếu Lương Mẫu</strong> để hoàn tất 2 chữ ký và gửi PUBLISHED đến nhân viên.
+                    Kế toán vui lòng vào <strong>Tab 6. Phiếu Lương</strong> để hoàn tất 2 chữ ký và gửi PUBLISHED đến nhân viên.
                   </div>
                 </div>
               );
@@ -12349,7 +11689,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }
 
   // =========================================================================
-  // TAB 12: CÀI ĐẶT CHỮ KÝ MẪU (KẾ TOÁN & QUẢN LÝ CHI NHÁNH)
+  // TAB 11: CÀI ĐẶT CHỮ KÝ MẪU (KẾ TOÁN & QUẢN LÝ CHI NHÁNH)
   // =========================================================================
   if (activeTab === 'fin-signatures') {
     const handleUploadSigFile = (role: 'lap' | 'quanly', file?: File) => {
@@ -12371,7 +11711,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <FinHead
           icon="🖋️"
-          title="12. Cài Đặt Chữ Ký Điện Tử & Họ Tên (Kế Toán & Quản Lý)"
+          title="11. Cài Đặt Chữ Ký Điện Tử & Họ Tên (Kế Toán & Quản Lý)"
           sub="Cập nhật chữ ký mẫu và Họ & Tên cho Người Lập Phiếu (Kế toán) và Quản Lý Chi Nhánh — tự động ký trên toàn bộ Phiếu Lương"
           right={<>
             <button
@@ -12400,7 +11740,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           <div style={{ fontSize: '13px', color: '#047857', lineHeight: '1.6', display: 'flex', flexDirection: 'column', gap: '4px' }}>
             <div>1. Nhập <strong>Họ và tên</strong> và tạo chữ ký mẫu (vẽ tay hoặc tải ảnh PNG/JPG) cho cả <strong>2 vị trí</strong>: Người Lập Phiếu (Kế toán) và Quản Lý Chi Nhánh.</div>
             <div>2. Bấm nút <strong>"💾 LƯU CẤU HÌNH CHỮ KÝ"</strong> để lưu trên máy chủ và thiết bị.</div>
-            <div>3. Khi mở tab <strong>"6. Phiếu lương"</strong> hoặc <strong>"7. Phiếu lương mẫu"</strong>, hệ thống sẽ tự động hiển thị nút <strong>"✍️ Chữ ký"</strong>. Bấm nút này sẽ tự động ký cả 2 chữ ký vào đúng 2 ô mà không cần ký tay từng phiếu!</div>
+            <div>3. Khi mở tab <strong>"6. Phiếu lương"</strong>, hệ thống sẽ tự động hiển thị nút <strong>"✍️ Chữ ký"</strong>. Bấm nút này sẽ tự động ký cả 2 chữ ký vào đúng 2 ô mà không cần ký tay từng phiếu!</div>
           </div>
         </div>
 
