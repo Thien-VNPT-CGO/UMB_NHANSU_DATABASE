@@ -1432,7 +1432,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   };
 
   useEffect(() => {
+    // FIX 403 cho HR/STORE/MARKETING: mẫu chữ ký chỉ thuộc Finance (backend giới
+    // hạn ADMIN/FINANCE) mà effect này gọi cho mọi vai trò ngay khi mở cổng.
+    if (!['ADMIN', 'FINANCE'].includes(currentUser?.role)) return;
     loadDefaultSigs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -1444,7 +1448,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       loadFinAttendance(p);
       loadPeriodSlips(p, true);
     }
-    if (activeTab === 'fin-signatures') {
+    if (activeTab === 'fin-signatures' && ['ADMIN', 'FINANCE'].includes(currentUser?.role)) {
       loadDefaultSigs();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
