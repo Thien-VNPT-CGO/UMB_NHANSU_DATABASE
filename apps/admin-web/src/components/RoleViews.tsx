@@ -1215,6 +1215,23 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     }
   };
 
+  // Đảm bảo phiếu server tồn tại cho (kỳ, NV) rồi trả về slip tươi — dùng khi ký
+  // lúc periodSlips chưa có (tránh bẫy: ký chỉ lưu local, màn hình hiện đủ 2 chữ
+  // ký nhưng publish báo MISSING_SIGNATURES vì server trắng).
+  const ensureServerSlip = async (period: string, empId: string): Promise<any | null> => {
+    try {
+      const ensured = await apiRequest(`/payroll/period-slips/${period}/ensure`, {
+        method: 'POST',
+        body: JSON.stringify({ branchScope }),
+      });
+      const arr = Array.isArray(ensured) ? ensured : (Array.isArray((ensured as any)?.slips) ? (ensured as any).slips : []);
+      if (arr.length > 0) setPeriodSlips(arr);
+      return arr.find((s: any) => s.employee_id === empId) || null;
+    } catch {
+      return null;
+    }
+  };
+
   const handleSignSlip = async (itemId: string, role: 'lap' | 'quanly', name: string, img: string) => {
     setSlipActionBusy(itemId + role);
     try {
@@ -11709,9 +11726,16 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       if (curSlip) {
                         await handleFastSignSlip(curSlip.item_id, sMonth, selId);
                       } else {
+                        // FIX ký xong vẫn MISSING_SIGNATURES: phiếu server chưa có nên
+                        // chỉ lưu local là publish vỡ — tạo phiếu server rồi đẩy ký lên.
                         if (defaultSigs.lap?.img) saveSign(sMonth, selId, 'lap', defaultSigs.lap.img, defaultSigs.lap.name);
                         if (defaultSigs.quanly?.img) saveSign(sMonth, selId, 'quanly', defaultSigs.quanly.img, defaultSigs.quanly.name);
-                        showToast('✍️ Đã áp dụng cả 2 chữ ký mẫu vào đúng ô Người lập phiếu & Quản lý chi nhánh!');
+                        const fresh = await ensureServerSlip(sMonth, selId);
+                        if (fresh) {
+                          await handleFastSignSlip(fresh.item_id, sMonth, selId);
+                        } else {
+                          showToast('✍️ Đã áp dụng cả 2 chữ ký mẫu vào đúng ô (phiếu server đang tạo, bấm Ký lại để đồng bộ rồi mới PUBLISHED)!');
+                        }
                       }
                     }}
                   >
@@ -11743,7 +11767,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       onSave={async (img, name) => {
                         saveSign(sMonth, selId, 'lap', img, name);
                         if (curSlip) await handleSignSlip(curSlip.item_id, 'lap', name || lapName, img);
-                        else showToast('Đã lưu chữ ký tạm thời!');
+                        else {
+                          const fresh = await ensureServerSlip(sMonth, selId);
+                          if (fresh) await handleSignSlip(fresh.item_id, 'lap', name || lapName, img);
+                          else showToast('Đã lưu chữ ký tạm thời!');
+                        }
                       }}
                       onClear={() => {
                         clearSign(sMonth, selId, 'lap');
@@ -11759,7 +11787,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       onSave={async (img, name) => {
                         saveSign(sMonth, selId, 'quanly', img, name);
                         if (curSlip) await handleSignSlip(curSlip.item_id, 'quanly', name || qlName, img);
-                        else showToast('Đã lưu chữ ký tạm thời!');
+                        else {
+                          const fresh = await ensureServerSlip(sMonth, selId);
+                          if (fresh) await handleSignSlip(fresh.item_id, 'quanly', name || qlName, img);
+                          else showToast('Đã lưu chữ ký tạm thời!');
+                        }
                       }}
                       onClear={() => {
                         clearSign(sMonth, selId, 'quanly');
