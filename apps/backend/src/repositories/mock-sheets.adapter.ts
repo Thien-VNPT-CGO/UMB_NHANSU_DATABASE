@@ -712,6 +712,9 @@ export class MockSheetsAdapter implements ISheetsRepository {
 
     const createdItems: PayslipItem[] = items.map(item => ({
       ...item,
+      // Version chống pull Sheets nền ghi đè: phiếu vừa publish (memory mới)
+      // phải thắng dòng DRAFT cũ trên Sheet khi mergeById so version.
+      ...(typeof (item as any).version === 'number' ? {} : { version: 1 } as any),
       created_at: now,
       updated_at: now,
     }));
@@ -791,6 +794,10 @@ export class MockSheetsAdapter implements ISheetsRepository {
       }
     }
     Object.assign(slip, clean, { updated_at: new Date().toISOString() });
+    // FIX publish mẫu không tới NV: pull Sheets nền (10s) merge theo version,
+    // phiếu pull về luôn version=1 nên bản PUBLISHED trong memory bị ghi đè
+    // về DRAFT trước khi push kịp xong. Tăng version mỗi lần sửa để memory thắng.
+    (slip as any).version = Number((slip as any).version || 1) + 1;
     return { ...slip };
   }
 

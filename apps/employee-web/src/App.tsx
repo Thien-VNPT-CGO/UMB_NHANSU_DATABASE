@@ -383,6 +383,10 @@ export function App() {
   // Payslip privacy lock
   const [payslipUnlocked, setPayslipUnlocked] = useState(false);
   const [payslips, setPayslips] = useState<any[]>([]);
+  const payslipUnlockedRef = useRef(payslipUnlocked);
+  payslipUnlockedRef.current = payslipUnlocked;
+  const payslipsRef = useRef<any[]>([]);
+  payslipsRef.current = payslips;
 
   // Shift & Requests
   const [myShifts, setMyShifts] = useState<any[]>([]);
@@ -1170,6 +1174,21 @@ export function App() {
           // Kết quả duyệt phiếu công: tải lại ngay khi đang ở tab phiếu (khỏi chờ poll 15s).
           if (entity === 'adjustments' && (activeTabRef.current === 'adjustment' || activeTabRef.current === 'emergency_adjust')) {
             await fetchMyAdjustmentsRef.current().catch(() => null);
+          }
+          // FIX publish mẫu không tới NV: phiếu lương chỉ load khi bấm "Xem",
+          // realtime về chỉ reload lịch/thông báo nên NV đã mở khóa vẫn thấy trống.
+          // Tự tải lại phiếu khi đã mở khóa để Realtime 100% với Kế toán.
+          if (payslipUnlockedRef.current && (!entity || entity === 'payslips' || entity === 'payroll' || entity === 'notifications' || entity === 'all')) {
+            try {
+              const slips = await apiRequest('/me/payslips');
+              const arr = Array.isArray(slips) ? slips : [];
+              const prevIds = new Set((payslipsRef.current || []).map((s: any) => s.item_id));
+              const hasNew = arr.some((s: any) => !prevIds.has(s.item_id) || s.status === 'PUBLISHED');
+              setPayslips(arr);
+              if (hasNew && arr.length > (payslipsRef.current || []).length) {
+                showToastRef.current('💰 Kế toán vừa phát hành phiếu lương mới cho bạn! Mở mục Thông báo & Lương để kiểm tra.');
+              }
+            } catch { /* giữ phiếu cũ khi offline */ }
           }
         } catch { /* lần sau */ } finally {
           reloading = false;
