@@ -1238,7 +1238,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       showToast('📢 Đã phát hành phiếu lương đến nhân viên thành công! Tự động đồng bộ Google Sheet.');
       setPeriodSlips(prev => prev.map(s => s.item_id === itemId ? { ...s, ...(updated || {}), status: 'PUBLISHED' } : s));
     } catch (err: any) {
-      showToast(err?.message || 'Lỗi khi phát hành phiếu!');
+      // FIX PAYSLIP_NOT_FOUND sau restart: phiếu trên màn hình là state cũ, server
+      // không còn — tải lại danh sách (tự tạo lại nếu thiếu) để bấm lại là được.
+      if (String(err?.message || '').includes('PAYSLIP_NOT_FOUND')) {
+        showToast('⚠️ Phiếu trên màn hình đã cũ (server vừa khởi động lại). Đang tải lại phiếu, bấm PUBLISHED lại giúp!');
+        try { await loadPeriodSlips(sampleMonth, true); } catch { /* giữ state cũ */ }
+      } else {
+        showToast(err?.message || 'Lỗi khi phát hành phiếu!');
+      }
     } finally {
       setSlipActionBusy(null);
     }

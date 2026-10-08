@@ -858,7 +858,21 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   // --- Payroll ---
   async createPayrollRun(run: any, items: any) {
     const res = await this.fallbackAdapter.createPayrollRun(run, items);
-    this.scheduleFullSync('KY_LUONG.create');
+    // FIX publish báo PAYSLIP_NOT_FOUND: phiếu vừa tạo chỉ nằm ở bộ nhớ, restart
+    // trước khi full-sync nền flush là mất (dòng KY_LUONG/PHIEU_LUONG trên Sheets
+    // chưa có) — đẩy tab phiếu đồng bộ ngay trong request, như phiếu đổi ca.
+    if (this.isConfigured) {
+      try {
+        await Promise.race([
+          this.syncService.pushPayslipsTab(this.fallbackAdapter).catch(() => 0),
+          new Promise<number>(r => setTimeout(() => r(0), 15000)),
+        ]);
+      } catch {
+        this.scheduleFullSync('KY_LUONG.create-retry');
+      }
+    } else {
+      this.scheduleFullSync('KY_LUONG.create');
+    }
     return res;
   }
 
@@ -891,7 +905,21 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async updatePayslip(itemId: string, updates: any) {
     const res = await (this.fallbackAdapter as any).updatePayslip(itemId, updates);
-    this.scheduleFullSync('PHIEU_LUONG.update');
+    // FIX mất chữ ký/trạng thái phiếu sau restart: pushPayslipsTab vốn được thiết
+    // kế "dùng sau mọi mutation phiếu lương" nhưng adapter chỉ gọi full-sync nền.
+    // Đẩy đồng bộ để ký/phát hành bền vững ngay (đúng ý comment gốc của hàm push).
+    if (this.isConfigured) {
+      try {
+        await Promise.race([
+          this.syncService.pushPayslipsTab(this.fallbackAdapter).catch(() => 0),
+          new Promise<number>(r => setTimeout(() => r(0), 15000)),
+        ]);
+      } catch {
+        this.scheduleFullSync('PHIEU_LUONG.update-retry');
+      }
+    } else {
+      this.scheduleFullSync('PHIEU_LUONG.update');
+    }
     return res;
   }
 
