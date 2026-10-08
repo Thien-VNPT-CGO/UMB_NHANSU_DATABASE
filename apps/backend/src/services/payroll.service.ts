@@ -83,6 +83,21 @@ export class PayrollService {
         let totalHours = 0;
         let totalAmount = 0;
 
+        // Gộp sự kiện điểm danh tuần cũ từ kho LUUTRU (đã archive khỏi realtime) —
+        // nếu không, kỳ lương tính sau ngày archive sẽ bỏ sót công tuần cũ.
+        let archivedByEmpDay = new Map<string, any[]>();
+        try {
+          const archived = await (this.repo as any)?.syncService?.getArchivedAttendanceEvents?.(fromDate, toDate) || [];
+          for (const e of archived || []) {
+            const t = new Date((e as any)?.client_time || '').getTime();
+            if (!Number.isFinite(t)) continue;
+            const day = new Date(t + 7 * 3_600_000).toISOString().slice(0, 10);
+            const k = `${(e as any)?.employee_id}|${day}`;
+            if (!archivedByEmpDay.has(k)) archivedByEmpDay.set(k, []);
+            archivedByEmpDay.get(k)!.push(e);
+          }
+        } catch { archivedByEmpDay = new Map(); }
+
         for (const emp of employees) {
           const empShifts = await this.repo.getShiftsForEmployee(emp.employee_id, fromDate, toDate);
           const publishedShifts = empShifts.filter(s => s.status === 'PUBLISHED');
@@ -92,7 +107,15 @@ export class PayrollService {
           const eventsByDate = new Map<string, any[]>();
           const eventsOf = async (date: string) => {
             if (!eventsByDate.has(date)) {
-              eventsByDate.set(date, await this.repo.getAttendanceEvents(emp.employee_id, date).catch(() => []));
+              const live = await this.repo.getAttendanceEvents(emp.employee_id, date).catch(() => []);
+              const extra = archivedByEmpDay.get(`${emp.employee_id}|${date}`) || [];
+              let merged = live;
+              if (extra.length > 0) {
+                const ids = new Set((live || []).map((e: any) => e.event_id));
+                merged = [...(live || [])];
+                for (const e of extra) if (!ids.has((e as any).event_id)) merged.push(e);
+              }
+              eventsByDate.set(date, merged);
             }
             return eventsByDate.get(date)!;
           };
@@ -278,6 +301,21 @@ export class PayrollService {
         let totalHours = 0;
         let totalAmount = 0;
 
+        // Gộp sự kiện điểm danh tuần cũ từ kho LUUTRU (đã archive khỏi realtime) —
+        // nếu không, kỳ lương tính sau ngày archive sẽ bỏ sót công tuần cũ.
+        let archivedByEmpDay = new Map<string, any[]>();
+        try {
+          const archived = await (this.repo as any)?.syncService?.getArchivedAttendanceEvents?.(fromDate, toDate) || [];
+          for (const e of archived || []) {
+            const t = new Date((e as any)?.client_time || '').getTime();
+            if (!Number.isFinite(t)) continue;
+            const day = new Date(t + 7 * 3_600_000).toISOString().slice(0, 10);
+            const k = `${(e as any)?.employee_id}|${day}`;
+            if (!archivedByEmpDay.has(k)) archivedByEmpDay.set(k, []);
+            archivedByEmpDay.get(k)!.push(e);
+          }
+        } catch { archivedByEmpDay = new Map(); }
+
         for (const emp of employees) {
           const isProb = (emp as any).employment_status === 'PROBATION';
           const rate = isProb ? formula.rateTV : formula.rateCT;
@@ -286,7 +324,15 @@ export class PayrollService {
           const eventsByDate = new Map<string, any[]>();
           const eventsOf = async (date: string) => {
             if (!eventsByDate.has(date)) {
-              eventsByDate.set(date, await this.repo.getAttendanceEvents(emp.employee_id, date).catch(() => []));
+              const live = await this.repo.getAttendanceEvents(emp.employee_id, date).catch(() => []);
+              const extra = archivedByEmpDay.get(`${emp.employee_id}|${date}`) || [];
+              let merged = live;
+              if (extra.length > 0) {
+                const ids = new Set((live || []).map((e: any) => e.event_id));
+                merged = [...(live || [])];
+                for (const e of extra) if (!ids.has((e as any).event_id)) merged.push(e);
+              }
+              eventsByDate.set(date, merged);
             }
             return eventsByDate.get(date)!;
           };
@@ -869,6 +915,22 @@ export class PayrollService {
       }
     } catch { /* không có kỳ lương thì toàn bộ là tạm tính */ }
 
+    // FIX ca cũ hiện vắng oan: sự kiện điểm danh tuần đã qua bị archive sang kho
+    // LUUTRU (xóa khỏi bảng realtime) — Finance đã gộp kho này nhưng HR Reports
+    // thì chưa, nên NV có điểm danh vẫn 0h/0đ. Gộp sự kiện archive theo NV+ngày.
+    let archivedByEmpDay = new Map<string, any[]>();
+    try {
+      const archived = await (this.repo as any)?.syncService?.getArchivedAttendanceEvents?.(fromDate, toDate) || [];
+      for (const e of archived || []) {
+        const t = new Date((e as any)?.client_time || '').getTime();
+        if (!Number.isFinite(t)) continue;
+        const day = new Date(t + 7 * 3_600_000).toISOString().slice(0, 10);
+        const k = `${(e as any)?.employee_id}|${day}`;
+        if (!archivedByEmpDay.has(k)) archivedByEmpDay.set(k, []);
+        archivedByEmpDay.get(k)!.push(e);
+      }
+    } catch { archivedByEmpDay = new Map(); }
+
     const rows: any[] = [];
     for (const emp of employees) {
       const empShifts = await this.repo.getShiftsForEmployee(emp.employee_id, fromDate, toDate);
@@ -881,7 +943,15 @@ export class PayrollService {
       let deduction = 0;
       let bonus = 0;
       for (const s of published) {
-        const dayEvents = await this.repo.getAttendanceEvents(emp.employee_id, s.date).catch(() => []);
+        const liveEvents = await this.repo.getAttendanceEvents(emp.employee_id, s.date).catch(() => []);
+        // Gộp sự kiện kho lưu trữ (tuần cũ đã archive khỏi bảng realtime).
+        let dayEvents = liveEvents;
+        const extra = archivedByEmpDay.get(`${emp.employee_id}|${s.date}`) || [];
+        if (extra.length > 0) {
+          const ids = new Set((liveEvents || []).map((e: any) => e.event_id));
+          dayEvents = [...(liveEvents || [])];
+          for (const e of extra) if (!ids.has((e as any).event_id)) dayEvents.push(e);
+        }
         const inEvt = dayEvents.find(
           (e: any) => e.type === 'CHECK_IN' && (!e.assignment_id || e.assignment_id === s.assignment_id)
         );
