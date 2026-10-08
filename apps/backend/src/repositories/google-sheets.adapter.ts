@@ -549,8 +549,22 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async updateShiftAssignment(id: string, updates: any) {
     const res = await this.fallbackAdapter.updateShiftAssignment(id, updates);
-    // Đẩy Sheets nền để PUBLISH (DRAFT→PUBLISHED) và đổi ca không mất sau restart.
-    this.scheduleFullSync('PHAN_CONG_CA.update');
+    // FIX đổi ca mất lịch sau rebuild/restart: ca chuyển chủ (B đồng ý / HR duyệt)
+    // phải bền vững trên Sheets NGAY trong cùng request — giống phiếu (pushSwapsTab
+    // đồng bộ). Trước đây chỉ scheduleFullSync nền (debounce 10s + syncAllData nặng):
+    // rebuild/restart trước khi flush là phiếu đã APPROVED (push đồng bộ) nhưng ca
+    // vẫn chủ cũ trên Sheets → pull sau đó khôi phục ca cũ = "phiếu lưu, lịch không đổi".
+    if (this.isConfigured) {
+      try {
+        await Promise.race([
+          this.syncService.pushShiftsTab(this.fallbackAdapter).catch(() => 0),
+          new Promise<number>(r => setTimeout(() => r(0), 15000)),
+        ]);
+      } catch {
+        // Rớt mạng/quota: dồn full-sync nền thử lại, không chặn response đổi ca.
+        this.scheduleFullSync('PHAN_CONG_CA.update-retry');
+      }
+    }
     return res;
   }
 
