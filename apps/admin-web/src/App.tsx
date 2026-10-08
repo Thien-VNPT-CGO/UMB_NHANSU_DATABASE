@@ -327,6 +327,9 @@ export function App() {
     return 'dashboard';
   });
   const [loading, setLoading] = useState(false);
+  // Busy từng nút thao tác quản trị (khóa/mở TK, xóa, mở/đóng cổng, bảo trì,
+  // snapshot...): bấm là nút đó hiện ⏳ + khóa bấm đúp, các nút khác vẫn dùng được.
+  const [adminActionBusy, setAdminActionBusy] = useState<string | null>(null);
   const [errorMsg, setErrorMsgState] = useState<string | null>(null);
   const [successMsg, setSuccessMsgState] = useState<string | null>(null);
   // Bản API đang chạy (so với bản app để biết đã cập nhật chưa)
@@ -1153,6 +1156,7 @@ export function App() {
       ? `Mở bù cổng đăng ký 2 ngày OFF ${mins} phút cho tuần ${st.targetWeekMon} → ${st.targetWeekSun}?\n${st.registeredCount}/${st.totalOfficial} bạn ĐÃ đăng ký (được miễn, không cần đăng ký lại).\nChỉ ${st.unregisteredCount} bạn CHƯA đăng ký phải đăng ký bù. Hết giờ tự đóng.`
       : `Mở bù cổng đăng ký 2 ngày OFF ${mins} phút cho tuần ${manualOff?.manual?.targetWeekMon || 'sau'}?\nBạn nào đã đăng ký rồi được miễn — chỉ NV chưa đăng ký mới phải đăng ký. Hết giờ tự đóng.`;
     if (!window.confirm(confirmMsg)) return;
+    setAdminActionBusy('manual-open');
     try {
       const res = await apiRequest('/admin/weekly-off/open', { method: 'POST', body: JSON.stringify({ minutes: mins }) });
       const rst = res?.stats;
@@ -1163,15 +1167,20 @@ export function App() {
       await loadAllData();
     } catch (err: any) {
       setErrorMsg(err.message);
+    } finally {
+      setAdminActionBusy(null);
     }
   };
   const handleManualClose = async () => {
+    setAdminActionBusy('manual-close');
     try {
       await apiRequest('/admin/weekly-off/close', { method: 'POST' });
       setSuccessMsg('Đã đóng cổng đăng ký mở bù.');
       await fetchManualOff();
     } catch (err: any) {
       setErrorMsg(err.message);
+    } finally {
+      setAdminActionBusy(null);
     }
   };
 
@@ -1187,6 +1196,7 @@ export function App() {
       : `Mở khóa tài khoản ${account.username} (${account.full_name})?`)) {
       return;
     }
+    setAdminActionBusy(`toggle-${account.admin_id}`);
     try {
       await apiRequest(`/admin/internal-accounts/${account.admin_id}`, {
         method: 'PUT',
@@ -1197,6 +1207,8 @@ export function App() {
       await loadAllData();
     } catch (err: any) {
       setErrorMsg(err.message);
+    } finally {
+      setAdminActionBusy(null);
     }
   };
 
@@ -1208,6 +1220,7 @@ export function App() {
     if (!window.confirm(`Bạn có chắc chắn muốn xóa tài khoản ${username}? Dữ liệu trên Google Sheet ADMIN_ACCOUNTS cũng sẽ được xóa đồng bộ.`)) {
       return;
     }
+    setAdminActionBusy(`del-${adminId}`);
     try {
       await apiRequest(`/admin/internal-accounts/${adminId}`, { method: 'DELETE' });
       setSuccessMsg(`Đã xóa tài khoản ${username} thành công trên cả hệ thống và Google Sheets!`);
@@ -1215,6 +1228,8 @@ export function App() {
       await loadAllData();
     } catch (err: any) {
       setErrorMsg(err.message);
+    } finally {
+      setAdminActionBusy(null);
     }
   };
 
@@ -1222,6 +1237,7 @@ export function App() {
     if (!window.confirm(`Bạn có chắc chắn muốn xóa nhân viên ${fullName} (${employeeId})? Dữ liệu trên Google Sheet NHAN_VIEN_MASTER và TAI_KHOAN_NHAN_VIEN sẽ được xóa đồng bộ.`)) {
       return;
     }
+    setAdminActionBusy(`delemp-${employeeId}`);
     try {
       await apiRequest(`/employees/${employeeId}`, { method: 'DELETE' });
       setSuccessMsg(`Đã xóa hồ sơ nhân viên ${fullName} thành công!`);
@@ -1229,6 +1245,8 @@ export function App() {
       await loadAllData();
     } catch (err: any) {
       setErrorMsg(err.message);
+    } finally {
+      setAdminActionBusy(null);
     }
   };
 
@@ -1238,6 +1256,7 @@ export function App() {
     if (!window.confirm(`Kích hoạt chức năng Báo nghỉ khẩn cho ${fullName} (${employeeId})?\n\nNhân viên chỉ dùng được ĐÚNG 1 LẦN — gửi xong phiếu là hệ thống tự ẩn chức năng này đi.`)) {
       return;
     }
+    setAdminActionBusy(`grant-${employeeId}`);
     try {
       const res: any = await apiRequest('/admin/emergency-leave/grant', {
         method: 'POST',
@@ -1252,6 +1271,8 @@ export function App() {
       await loadAllData();
     } catch (err: any) {
       setErrorMsg(err.message);
+    } finally {
+      setAdminActionBusy(null);
     }
   };
 
@@ -1260,6 +1281,7 @@ export function App() {
     if (!window.confirm(`Dòng này KHÔNG còn hồ sơ nhân viên (tài khoản mồ côi ${accountId} — SĐT ${phone}). Bạn có chắc muốn xóa vĩnh viễn tài khoản này khỏi hệ thống và Google Sheet TAI_KHOAN_NHAN_VIEN?`)) {
       return;
     }
+    setAdminActionBusy(`orphan-${accountId}`);
     try {
       await apiRequest(`/employee-accounts/${accountId}`, { method: 'DELETE' });
       setSuccessMsg(`Đã xóa tài khoản mồ côi ${accountId} thành công!`);
@@ -1267,6 +1289,8 @@ export function App() {
       await loadAllData();
     } catch (err: any) {
       setErrorMsg(err.message);
+    } finally {
+      setAdminActionBusy(null);
     }
   };
 
@@ -1321,6 +1345,7 @@ export function App() {
   };
 
   const handleCreateSnapshot = async () => {
+    setAdminActionBusy('snapshot');
     try {
       await apiRequest('/admin/backup/snapshots', {
         method: 'POST',
@@ -1331,10 +1356,13 @@ export function App() {
       await loadAllData();
     } catch (err: any) {
       setErrorMsg(err.message);
+    } finally {
+      setAdminActionBusy(null);
     }
   };
 
   const handleTestRecovery = async (snapshotId: string) => {
+    setAdminActionBusy(`recovery-${snapshotId}`);
     try {
       const res = await apiRequest('/admin/backup/test-recovery', {
         method: 'POST',
@@ -1344,6 +1372,8 @@ export function App() {
       setTimeout(() => setSuccessMsg(null), 4000);
     } catch (err: any) {
       setErrorMsg(err.message);
+    } finally {
+      setAdminActionBusy(null);
     }
   };
 
@@ -1362,6 +1392,7 @@ export function App() {
   };
 
   const handleSaveMaintenance = async (updatedMaintenance: any) => {
+    setAdminActionBusy('maint');
     try {
       const saved: any = await apiRequest('/admin/maintenance', {
         method: 'POST',
@@ -1387,6 +1418,8 @@ export function App() {
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (err: any) {
       setErrorMsg(err.message);
+    } finally {
+      setAdminActionBusy(null);
     }
   };
 
@@ -2488,15 +2521,15 @@ export function App() {
                   )}
                 </div>
                 {manualOff?.active ? (
-                  <button onClick={handleManualClose} style={{ padding: '9px 18px', borderRadius: 'var(--radius-sm)', backgroundColor: '#DC2626', color: '#FFF', fontSize: '13px', fontWeight: 800, border: 'none', cursor: 'pointer' }}>
-                    ⛔ Đóng ngay
+                  <button onClick={handleManualClose} disabled={adminActionBusy === 'manual-close'} style={{ padding: '9px 18px', borderRadius: 'var(--radius-sm)', backgroundColor: '#DC2626', color: '#FFF', fontSize: '13px', fontWeight: 800, border: 'none', cursor: 'pointer' }}>
+                    {adminActionBusy === 'manual-close' ? '⏳ Đang đóng...' : '⛔ Đóng ngay'}
                   </button>
                 ) : (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)' }}>Phút:</label>
                     <input type="number" min={1} max={120} value={manualMinutes} onChange={e => setManualMinutes(Number(e.target.value))} style={{ width: '64px', padding: '8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px', fontWeight: 700 }} />
-                    <button onClick={handleManualOpen} style={{ padding: '9px 18px', borderRadius: 'var(--radius-sm)', backgroundColor: '#7C3AED', color: '#FFF', fontSize: '13px', fontWeight: 800, border: 'none', cursor: 'pointer', boxShadow: '0 4px 12px rgba(124,58,237,0.25)' }}>
-                      ⚡ Mở cổng ngay
+                    <button onClick={handleManualOpen} disabled={adminActionBusy === 'manual-open'} style={{ padding: '9px 18px', borderRadius: 'var(--radius-sm)', backgroundColor: '#7C3AED', color: '#FFF', fontSize: '13px', fontWeight: 800, border: 'none', cursor: 'pointer', boxShadow: '0 4px 12px rgba(124,58,237,0.25)' }}>
+                      {adminActionBusy === 'manual-open' ? '⏳ Đang mở...' : '⚡ Mở cổng ngay'}
                     </button>
                   </div>
                 )}
@@ -2740,6 +2773,7 @@ export function App() {
                         <td style={{ padding: '14px 20px', display: 'flex', gap: '8px', alignItems: 'center' }}>
                           <button
                             onClick={() => handleToggleInternalAccount(acc)}
+                            disabled={adminActionBusy === `toggle-${acc.admin_id}`}
                             style={{
                               padding: '6px 12px',
                               borderRadius: 'var(--radius-sm)',
@@ -2751,11 +2785,12 @@ export function App() {
                               cursor: 'pointer',
                             }}
                           >
-                            {acc.is_active === false ? 'Mở Khóa' : 'Khóa'}
+                            {adminActionBusy === `toggle-${acc.admin_id}` ? '⏳...' : (acc.is_active === false ? 'Mở Khóa' : 'Khóa')}
                           </button>
                           {acc.admin_id !== 'ADM_001' && acc.username !== 'admin' && (
                             <button
                               onClick={() => handleDeleteInternalAccount(acc.admin_id, acc.username)}
+                              disabled={adminActionBusy === `del-${acc.admin_id}`}
                               style={{
                                 padding: '6px 12px',
                                 borderRadius: 'var(--radius-sm)',
@@ -2767,7 +2802,7 @@ export function App() {
                                 cursor: 'pointer',
                               }}
                             >
-                              Xóa
+                              {adminActionBusy === `del-${acc.admin_id}` ? '⏳...' : 'Xóa'}
                             </button>
                           )}
                         </td>
@@ -3081,6 +3116,7 @@ export function App() {
                             {item.isOrphan ? (
                               <button
                                 onClick={() => handleDeleteOrphanAccount(item.accountId, item.phone)}
+                                disabled={adminActionBusy === `orphan-${item.accountId}`}
                                 title="Dòng mồ côi (không còn hồ sơ): xóa vĩnh viễn tài khoản khỏi hệ thống và Google Sheet TAI_KHOAN_NHAN_VIEN"
                                 style={{
                                   padding: '6px 12px',
@@ -3093,11 +3129,12 @@ export function App() {
                                   cursor: 'pointer',
                                 }}
                               >
-                                🗑️ Xóa rác
+                                {adminActionBusy === `orphan-${item.accountId}` ? '⏳...' : '🗑️ Xóa rác'}
                               </button>
                             ) : (
                               <button
                                 onClick={() => handleDeleteEmployee(item.id, item.fullName)}
+                                disabled={adminActionBusy === `delemp-${item.id}`}
                                 title="Xóa nhân viên khỏi hệ thống (cả Google Sheets NHAN_VIEN_MASTER và TAI_KHOAN_NHAN_VIEN)"
                                 style={{
                                   padding: '6px 12px',
@@ -3110,7 +3147,7 @@ export function App() {
                                   cursor: 'pointer',
                                 }}
                               >
-                                🗑️ Xóa
+                                {adminActionBusy === `delemp-${item.id}` ? '⏳...' : '🗑️ Xóa'}
                               </button>
                             )}
                           </td>
@@ -3375,6 +3412,7 @@ export function App() {
                               return (
                                 <button
                                   onClick={() => handleGrantEmergency(emp.employee_id, emp.full_name)}
+                                  disabled={adminActionBusy === `grant-${emp.employee_id}`}
                                   title="Mở chức năng Báo nghỉ khẩn cho NV này — chỉ dùng ĐÚNG 1 LẦN, gửi xong phiếu hệ thống tự ẩn"
                                   style={{
                                     padding: '6px 12px',
@@ -3388,12 +3426,13 @@ export function App() {
                                     whiteSpace: 'nowrap',
                                   }}
                                 >
-                                  🚨 Kích hoạt nghỉ khẩn 1 lần{g?.usedAt ? ' (cấp lại)' : ''}
+                                  {adminActionBusy === `grant-${emp.employee_id}` ? '⏳ Đang mở...' : `🚨 Kích hoạt nghỉ khẩn 1 lần${g?.usedAt ? ' (cấp lại)' : ''}`}
                                 </button>
                               );
                             })()}
                             <button
                               onClick={() => handleDeleteEmployee(emp.employee_id, emp.full_name)}
+                              disabled={adminActionBusy === `delemp-${emp.employee_id}`}
                               style={{
                                 padding: '6px 12px',
                                 borderRadius: 'var(--radius-sm)',
@@ -3405,7 +3444,7 @@ export function App() {
                                 cursor: 'pointer',
                               }}
                             >
-                              Xóa
+                              {adminActionBusy === `delemp-${emp.employee_id}` ? '⏳...' : 'Xóa'}
                             </button>
                           </div>
                         </td>
@@ -3842,6 +3881,7 @@ export function App() {
                   </div>
                   <button
                     onClick={() => handleSaveMaintenance({ ...maintenance, system_maintenance: !maintenance.system_maintenance })}
+                    disabled={adminActionBusy === 'maint'}
                     style={{
                       padding: '8px 16px',
                       borderRadius: 'var(--radius-full)',
@@ -3853,7 +3893,7 @@ export function App() {
                       color: maintenance.system_maintenance ? '#FFF' : 'var(--text)',
                     }}
                   >
-                    {maintenance.system_maintenance ? 'ĐANG BẬT BẢO TRÌ' : 'TẮT (Bình Thường)'}
+                    {adminActionBusy === 'maint' ? '⏳...' : (maintenance.system_maintenance ? 'ĐANG BẬT BẢO TRÌ' : 'TẮT (Bình Thường)')}
                   </button>
                 </div>
 
@@ -3864,6 +3904,7 @@ export function App() {
                   </div>
                   <button
                     onClick={() => handleSaveMaintenance({ ...maintenance, employee_web_maintenance: !maintenance.employee_web_maintenance })}
+                    disabled={adminActionBusy === 'maint'}
                     style={{
                       padding: '8px 16px',
                       borderRadius: 'var(--radius-full)',
@@ -3875,7 +3916,7 @@ export function App() {
                       color: maintenance.employee_web_maintenance ? '#FFF' : 'var(--text)',
                     }}
                   >
-                    {maintenance.employee_web_maintenance ? 'ĐANG BẬT' : 'TẮT'}
+                    {adminActionBusy === 'maint' ? '⏳...' : (maintenance.employee_web_maintenance ? 'ĐANG BẬT' : 'TẮT')}
                   </button>
                 </div>
 
@@ -3889,6 +3930,7 @@ export function App() {
                   />
                   <button
                     onClick={() => handleSaveMaintenance(maintenance)}
+                    disabled={adminActionBusy === 'maint'}
                     style={{
                       marginTop: '10px',
                       padding: '8px 16px',
@@ -3901,7 +3943,7 @@ export function App() {
                       cursor: 'pointer',
                     }}
                   >
-                    Cập Nhật Thông Điệp
+                    {adminActionBusy === 'maint' ? '⏳ Đang lưu...' : 'Cập Nhật Thông Điệp'}
                   </button>
                 </div>
               </div>
@@ -3964,6 +4006,7 @@ export function App() {
                 </div>
                 <button
                   onClick={handleCreateSnapshot}
+                  disabled={adminActionBusy === 'snapshot'}
                   style={{
                     padding: '8px 16px',
                     borderRadius: 'var(--radius-sm)',
@@ -3978,7 +4021,7 @@ export function App() {
                     gap: '6px',
                   }}
                 >
-                  <DownloadCloud size={16} /> Tạo Bản Sao Lưu Mới Ngay
+                  <DownloadCloud size={16} /> {adminActionBusy === 'snapshot' ? '⏳ Đang tạo...' : 'Tạo Bản Sao Lưu Mới Ngay'}
                 </button>
               </div>
 
@@ -4020,6 +4063,7 @@ export function App() {
                         <td style={{ padding: '14px 20px' }}>
                           <button
                             onClick={() => handleTestRecovery(snap.snapshot_id)}
+                            disabled={adminActionBusy === `recovery-${snap.snapshot_id}`}
                             style={{
                               padding: '6px 12px',
                               borderRadius: 'var(--radius-sm)',
@@ -4031,7 +4075,7 @@ export function App() {
                               cursor: 'pointer',
                             }}
                           >
-                            Test Recovery
+                            {adminActionBusy === `recovery-${snap.snapshot_id}` ? '⏳...' : 'Test Recovery'}
                           </button>
                         </td>
                       </tr>

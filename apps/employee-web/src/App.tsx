@@ -2216,6 +2216,8 @@ export function App() {
   // Phiếu lương: 100% dữ liệu thật từ API /me/payslips (đã lọc đúng nhân viên ở server).
   // Không dùng PIN giả hay phiếu mẫu — không có dữ liệu thì báo trống.
   const handleUnlockPayslip = async () => {
+    if (actionBusy) return;
+    setActionBusy('payslip');
     try {
       const slips = await apiRequest('/me/payslips');
       setPayslips(Array.isArray(slips) ? slips : []);
@@ -2225,6 +2227,8 @@ export function App() {
       }
     } catch (err: any) {
       showToast(err.message || 'Không tải được phiếu lương! Vui lòng thử lại.');
+    } finally {
+      setActionBusy(null);
     }
   };
 
@@ -2547,11 +2551,12 @@ export function App() {
             💡 <strong>Bảo mật đăng nhập:</strong> Nhập SĐT (0946914474, 946914474 hoặc 84946914474 đều được) + mã PIN đúng 6 số rồi bấm ĐĂNG NHẬP. Mã PIN chưa đủ 6 số sẽ bị hệ thống tự động reset — hỏi HR lấy mã 6 số mới rồi đổi PIN riêng! Tới kỳ 1-5 hàng tháng, hệ thống yêu cầu tự đổi PIN mới từ PIN cũ. Mỗi người giữ PIN riêng — không chia sẻ!
           </p>
           <button
-            onClick={handleChangeApiBase}
+            disabled={actionBusy === 'apibase'}
+            onClick={() => { if (actionBusy) return; setActionBusy('apibase'); handleChangeApiBase().finally(() => setActionBusy(null)); }}
             title="Bấm để đổi địa chỉ máy chủ nếu báo lỗi kết nối"
             style={{ marginTop: '10px', border: 'none', background: 'none', fontSize: '11px', color: 'var(--text-muted)', textDecoration: 'underline', cursor: 'pointer', padding: 0 }}
           >
-            🔌 Máy chủ: {apiBaseShown || '(chưa xác định)'} — bấm để đổi
+            {actionBusy === 'apibase' ? '⏳ Đang kiểm tra máy chủ...' : `🔌 Máy chủ: ${apiBaseShown || '(chưa xác định)'} — bấm để đổi`}
           </button>
           <div style={{ marginTop: '6px', fontSize: '10px', color: 'var(--text-muted)' }}>
             Bản app: <code>{APP_COMMIT}</code> • Bản API: <code>{apiCommit || 'đang kiểm tra...'}</code>
@@ -2560,14 +2565,21 @@ export function App() {
             )}
             {' • '}
             <button
+              disabled={actionBusy === 'appver'}
               onClick={async () => {
-                const r = await checkAppVersionRef.current().catch(() => 'fail' as const);
-                if (r === 'same') showToast('✓ Đang dùng bản mới nhất.');
-                else if (r === 'fail') showToast('⚠️ Không kiểm tra được (mất mạng?)!');
+                if (actionBusy) return;
+                setActionBusy('appver');
+                try {
+                  const r = await checkAppVersionRef.current().catch(() => 'fail' as const);
+                  if (r === 'same') showToast('✓ Đang dùng bản mới nhất.');
+                  else if (r === 'fail') showToast('⚠️ Không kiểm tra được (mất mạng?)!');
+                } finally {
+                  setActionBusy(null);
+                }
               }}
               style={{ border: 'none', background: 'none', fontSize: '10px', color: 'var(--brand)', textDecoration: 'underline', cursor: 'pointer', padding: 0, fontWeight: 700 }}
             >
-              Kiểm tra cập nhật
+              {actionBusy === 'appver' ? '⏳ Đang kiểm tra...' : 'Kiểm tra cập nhật'}
             </button>
           </div>
         </div>
@@ -2825,15 +2837,20 @@ export function App() {
                 👉 Điểm danh lại ngay
               </button>
               <button
+                disabled={actionBusy === 'notif-later'}
                 onClick={async () => {
+                  if (actionBusy) return;
+                  setActionBusy('notif-later');
                   try {
                     await apiRequest(`/me/notifications/${redo[0].inbox_id}/read`, { method: 'POST' });
                     setNotifications((prev: any[]) => prev.map(x => x.inbox_id === redo[0].inbox_id ? { ...x, read_at: new Date().toISOString() } : x));
-                  } catch {}
+                  } catch {} finally {
+                    setActionBusy(null);
+                  }
                 }}
                 style={{ backgroundColor: '#FFF', color: '#991B1B', border: '1px solid #FCA5A5', borderRadius: '6px', padding: '9px 12px', fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}
               >
-                Để sau
+                {actionBusy === 'notif-later' ? '⏳...' : 'Để sau'}
               </button>
             </div>
           </div>
@@ -5358,7 +5375,7 @@ export function App() {
                 <h3 style={{ fontSize: '15px', fontWeight: 800 }}>
                   {isProbation ? '8. Bài Thi TEST Đầu Ra Thử Việc' : '8. TEST Nâng Bậc & Đào Tạo Định Kỳ'}
                 </h3>
-                <button className="btn-secondary" style={{ fontSize: '11px', padding: '4px 10px' }} onClick={fetchMyTests}>Tải lại</button>
+                <button className="btn-secondary" style={{ fontSize: '11px', padding: '4px 10px' }} disabled={actionBusy === 'tests'} onClick={() => { if (actionBusy) return; setActionBusy('tests'); fetchMyTests().finally(() => setActionBusy(null)); }}>{actionBusy === 'tests' ? '⏳...' : 'Tải lại'}</button>
               </div>
               {myTests.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '24px 12px', color: 'var(--text-muted)' }}>
@@ -5508,16 +5525,16 @@ export function App() {
                   <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>
                     Phiếu lương do Kế toán phát hành — chỉ hiển thị đúng phiếu của bạn, không có dữ liệu mẫu.
                   </p>
-                  <button className="btn-primary" onClick={handleUnlockPayslip}>
-                    Xem Phiếu Lương Của Tôi
+                  <button className="btn-primary" onClick={handleUnlockPayslip} disabled={actionBusy === 'payslip'}>
+                    {actionBusy === 'payslip' ? '⏳ Đang tải...' : 'Xem Phiếu Lương Của Tôi'}
                   </button>
                 </div>
               ) : payslips.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '16px 0', fontSize: '13px', color: 'var(--text-muted)' }}>
                   Chưa có phiếu lương nào được phát hành cho bạn trong kỳ này.
                   <div>
-                    <button className="btn-secondary" onClick={() => handleUnlockPayslip()} style={{ fontSize: '12px', marginTop: '10px' }}>
-                      Tải Lại
+                    <button className="btn-secondary" onClick={() => handleUnlockPayslip()} disabled={actionBusy === 'payslip'} style={{ fontSize: '12px', marginTop: '10px' }}>
+                      {actionBusy === 'payslip' ? '⏳ Đang tải...' : 'Tải Lại'}
                     </button>
                   </div>
                 </div>

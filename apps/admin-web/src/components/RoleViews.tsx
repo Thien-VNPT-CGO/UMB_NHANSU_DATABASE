@@ -1412,6 +1412,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   });
 
   const [viewSlipModal, setViewSlipModal] = useState<any | null>(null);
+  // Lưu/tải cấu hình chữ ký mẫu: bấm là nút hiện ⏳ + khóa bấm đúp.
+  const [sigBusy, setSigBusy] = useState<string | null>(null);
 
   const updateSlipInState = (itemId: string, updatedData: any) => {
     setPeriodSlips(prev => prev.map(s => s.item_id === itemId ? { ...s, ...updatedData } : s));
@@ -1425,6 +1427,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   };
 
   const loadDefaultSigs = async () => {
+    if (sigBusy) return;
+    setSigBusy('load');
     try {
       const data = await apiRequest('/payroll/signature-templates');
       if (data && (data.lap || data.quanly)) {
@@ -1437,10 +1441,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       }
     } catch (err) {
       console.warn('[defaultSigs] Load error:', err);
+    } finally {
+      setSigBusy(null);
     }
   };
 
   const saveDefaultSigs = async (newSigs: typeof defaultSigs) => {
+    if (sigBusy) return;
+    setSigBusy('save');
     setDefaultSigs(newSigs);
     try {
       localStorage.setItem('ubm_default_signatures', JSON.stringify(newSigs));
@@ -1451,6 +1459,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       showToast('💾 Đã lưu cấu hình chữ ký mẫu thành công! Nút "✍️ Chữ ký" đã sẵn sàng.');
     } catch (err: any) {
       showToast('⚠️ Đã lưu tại máy, lỗi đồng bộ máy chủ: ' + (err?.message || 'Lỗi'));
+    } finally {
+      setSigBusy(null);
     }
   };
 
@@ -1819,6 +1829,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [pvCancelBusyId, setPvCancelBusyId] = useState<string | null>(null);
   // Xóa cứng ứng viên (HR bấm tay, thay cho chờ tự động).
   const [candDelBusyId, setCandDelBusyId] = useState<string | null>(null);
+  // Khôi phục / Chat Zalo ứng viên (bấm là nút đó hiện ⏳ + khóa bấm đúp).
+  const [candActionBusyId, setCandActionBusyId] = useState<string | null>(null);
   // Xác nhận / đánh vắng PV (HR bấm tay khi UV báo qua điện thoại/Zalo).
   const [rsvpBusyId, setRsvpBusyId] = useState<string | null>(null);
   const handleConfirmInterview = async (c: any) => {
@@ -2276,6 +2288,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
   const handleZaloDisconnect = async () => {
     if (!window.confirm('Ngắt kết nối Zalo cá nhân? BOT sẽ dừng gửi thư mời đến khi quét QR lại!')) return;
+    if (zaloBusy) return;
+    setZaloBusy(true);
     try {
       await apiRequest('/admin/zalo/disconnect', { method: 'POST' });
       setZaloStatus({ connected: false });
@@ -2284,6 +2298,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       showToast('Đã ngắt kết nối Zalo cá nhân!');
     } catch (err: any) {
       showToast(err.message);
+    } finally {
+      setZaloBusy(false);
     }
   };
 
@@ -2724,6 +2740,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [editingEmp, setEditingEmp] = useState<any>(null);
   const [editEmpForm, setEditEmpForm] = useState<any>({});
   const [editEmpBusy, setEditEmpBusy] = useState(false);
+  // Xóa nhân viên (thử việc + chính thức): busy theo NV + khóa bấm đúp.
+  const [empDelBusyId, setEmpDelBusyId] = useState<string | null>(null);
   // Khóa/mở tài khoản NV chính thức (HR): busy theo NV + kết quả PIN mới sau mở khóa.
   const [lockBusyId, setLockBusyId] = useState<string | null>(null);
   const [unlockPinResult, setUnlockPinResult] = useState<{ name: string; code: string; pin: string } | null>(null);
@@ -3202,12 +3220,22 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
     // Chat Zalo: tự động kết bạn qua nick HR + gửi lời chào (không cần bấm xác nhận).
     const handleChatZalo = async (c: any) => {
-      await chatZaloWithCandidate(c, showToast);
+      const sid = String(c?.submission_id || '');
+      if (candActionBusyId) return;
+      setCandActionBusyId(`zalo-${sid}`);
+      try {
+        await chatZaloWithCandidate(c, showToast);
+      } finally {
+        setCandActionBusyId(null);
+      }
     };
 
     // Khôi phục ứng viên bị loại về Mới ứng tuyển.
     const handleRestoreCandidate = async (c: any) => {
       if (!window.confirm(`Khôi phục ${c.full_name} về "Mới ứng tuyển" để xem xét lại?`)) return;
+      const sid = String(c?.submission_id || '');
+      if (candActionBusyId) return;
+      setCandActionBusyId(`restore-${sid}`);
       try {
         await apiRequest(`/applications/${c.submission_id}`, {
           method: 'PUT',
@@ -3219,6 +3247,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         }
       } catch (err: any) {
         showToast(err.message || 'Khôi phục thất bại!');
+      } finally {
+        setCandActionBusyId(null);
       }
     };
 
@@ -3730,17 +3760,19 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                   <button
                                     style={{ ...btn, backgroundColor: '#FEF3C7', color: '#92400E' }}
                                     onClick={() => handleRestoreCandidate(c)}
+                                    disabled={candActionBusyId === `restore-${c.submission_id}`}
                                     title="Khôi phục ứng viên về Mới ứng tuyển để xem xét lại"
                                   >
-                                    ♻️ Khôi Phục
+                                    {candActionBusyId === `restore-${c.submission_id}` ? '⏳...' : '♻️ Khôi Phục'}
                                   </button>
                                 ) : (
                                   <button
                                     style={{ ...btn, backgroundColor: '#10B981', color: '#FFF', boxShadow: '0 2px 6px rgba(16,185,129,0.3)' }}
                                     onClick={() => handleChatZalo(c)}
+                                    disabled={candActionBusyId === `zalo-${c.submission_id}`}
                                     title="Tự động kết bạn Zalo qua nick HR + gửi lời chào"
                                   >
-                                    💬 Chat Zalo
+                                    {candActionBusyId === `zalo-${c.submission_id}` ? '⏳...' : '💬 Chat Zalo'}
                                   </button>
                                 )}
                               </>);
@@ -4071,13 +4103,19 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           <button
             className="btn-primary"
             style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: zaloConnected ? '#0068FF' : '#475569' }}
+            disabled={zaloBusy}
             onClick={async () => {
-              await refreshZaloStatus();
-              showToast(zaloConnected ? 'Đã làm mới trạng thái Zalo!' : 'Đang kiểm tra kết nối Zalo cá nhân...');
+              setZaloBusy(true);
+              try {
+                await refreshZaloStatus();
+                showToast(zaloConnected ? 'Đã làm mới trạng thái Zalo!' : 'Đang kiểm tra kết nối Zalo cá nhân...');
+              } finally {
+                setZaloBusy(false);
+              }
             }}
           >
             <Smartphone size={16} />
-            Phiên Zalo: {zaloAccount?.displayName || currentUser?.full_name || 'HR Ụm Bò Milk'} ({zaloConnected ? '🟢 Đã Kết Nối' : 'Chờ Quét QR'})
+            {zaloBusy ? '⏳ Đang kiểm tra...' : `Phiên Zalo: ${zaloAccount?.displayName || currentUser?.full_name || 'HR Ụm Bò Milk'} (${zaloConnected ? '🟢 Đã Kết Nối' : 'Chờ Quét QR'})`}
           </button>
         </div>
 
@@ -4278,6 +4316,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     <button
                       type="button"
                       className="btn-outline"
+                      disabled={zaloBusy}
                       style={{
                         width: '100%',
                         fontSize: '11.5px',
@@ -4288,7 +4327,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       }}
                       onClick={handleZaloDisconnect}
                     >
-                      Ngắt Kết Nối Zalo
+                      {zaloBusy ? '⏳ Đang xử lý...' : 'Ngắt Kết Nối Zalo'}
                     </button>
                   )}
 
@@ -4296,9 +4335,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     <button
                       className="btn-secondary"
                       style={{ flex: 1, fontSize: '11px', padding: '6px' }}
+                      disabled={zaloBusy}
                       onClick={handleZaloCreateQr}
                     >
-                      Làm Mới QR Thật
+                      {zaloBusy ? '⏳...' : 'Làm Mới QR Thật'}
                     </button>
 
                     <button
@@ -4764,12 +4804,17 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         return (
                           <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                             <button
-                              disabled={disabledForFail}
+                              disabled={disabledForFail || candActionBusyId === `zalo-${c.submission_id}`}
                               style={{ ...btn2, backgroundColor: disabledForFail ? '#94A3B8' : '#10B981', color: '#FFF', boxShadow: disabledForFail ? 'none' : '0 2px 6px rgba(16,185,129,0.3)' }}
-                              onClick={() => !disabledForFail && chatZaloWithCandidate(c, showToast)}
+                              onClick={() => {
+                                if (disabledForFail || candActionBusyId) return;
+                                const k = `zalo-${c.submission_id}`;
+                                setCandActionBusyId(k);
+                                chatZaloWithCandidate(c, showToast).finally(() => setCandActionBusyId(cur => cur === k ? null : cur));
+                              }}
                               title={disabledForFail ? (failInfo.remainingMs <= 0 ? 'Ứng viên Chưa đạt — đã quá 24h, hệ thống sẽ tự động xoá khỏi hệ thống' : 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)') : 'Tự động kết bạn Zalo qua nick HR + gửi lời chào để chát với ứng viên'}
                             >
-                              💬 Chat Zalo
+                              {candActionBusyId === `zalo-${c.submission_id}` ? '⏳...' : '💬 Chat Zalo'}
                             </button>
                             {(String(c.status || '') === 'INVITED_INTERVIEW') && !disabledForFail && (
                               <button
@@ -5506,6 +5551,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     <button
                       className="btn-secondary"
                       style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 700, color: '#1D4ED8', borderColor: '#BFDBFE' }}
+                      disabled={meetBusyId === `meeturl-${emp.employee_id}`}
                       onClick={async () => {
                         const ax = assessByEmp.get(emp.employee_id);
                         setAssessModalEmp(emp);
@@ -5517,17 +5563,20 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         } else {
                           // Hệ thống tự lấy link Meet hiện tại điền sẵn (HR vẫn sửa được).
                           setAssessMeetUrl('Đang lấy link Meet hệ thống...');
+                          setMeetBusyId(`meeturl-${emp.employee_id}`);
                           try {
                             const d: any = await apiRequest('/admin/system-meet-url');
                             setAssessMeetUrl(d?.meetUrl || SYSTEM_MEET_URL);
                           } catch {
                             setAssessMeetUrl(SYSTEM_MEET_URL);
+                          } finally {
+                            setMeetBusyId(null);
                           }
                         }
                       }}
                       title="Lên lịch kiểm tra đầu ra: vấn đáp Google Meet + giao bài trắc nghiệm, gửi thông báo cả 2 cho NV"
                     >
-                      📅 Lên lịch đầu ra
+                      {meetBusyId === `meeturl-${emp.employee_id}` ? '⏳ Đang lấy link...' : '📅 Lên lịch đầu ra'}
                     </button>
                     {(() => {
                       if (!a || a.meetDone) return null;
@@ -5573,8 +5622,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     <button
                       className="btn-primary"
                       style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 700, backgroundColor: '#059669' }}
+                      disabled={transitionBusyId === emp.employee_id}
                       onClick={async () => {
                         if (!window.confirm(`Chuyển ${emp.full_name} (${emp.employee_code}) lên NHÂN VIÊN CHÍNH THỨC?`)) return;
+                        if (transitionBusyId) return;
+                        setTransitionBusyId(emp.employee_id);
                         try {
                           await apiRequest(`/employees/${emp.employee_id}/transition-official`, {
                             method: 'POST',
@@ -5585,10 +5637,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           if (onSyncSheets) await onSyncSheets();
                         } catch (e: any) {
                           showToast(e?.message || 'Lỗi khi chuyển chính thức!');
+                        } finally {
+                          setTransitionBusyId(null);
                         }
                       }}
                     >
-                      Đề Xuất Chính Thức
+                      {transitionBusyId === emp.employee_id ? '⏳ Đang chuyển...' : 'Đề Xuất Chính Thức'}
                     </button>
                     <button
                       className="btn-secondary"
@@ -5613,8 +5667,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     <button
                       className="btn-secondary"
                       style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 700, color: '#DC2626' }}
+                      disabled={empDelBusyId === emp.employee_id}
                       onClick={async () => {
                         if (!window.confirm(`XÓA nhân viên ${emp.full_name} (${emp.employee_code})?\nHồ sơ + tài khoản đăng nhập sẽ bị xóa khỏi hệ thống và Google Sheets. Không thể hoàn tác!`)) return;
+                        if (empDelBusyId) return;
+                        setEmpDelBusyId(emp.employee_id);
                         try {
                           await apiRequest(`/employees/${emp.employee_id}`, { method: 'DELETE' });
                           showToast(`Đã xóa ${emp.full_name} khỏi hệ thống và Sheets!`);
@@ -5622,10 +5679,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           if (onSyncSheets) await onSyncSheets();
                         } catch (e: any) {
                           showToast(e?.message || 'Lỗi khi xóa!');
+                        } finally {
+                          setEmpDelBusyId(null);
                         }
                       }}
                     >
-                      Xóa
+                      {empDelBusyId === emp.employee_id ? '⏳ Đang xóa...' : 'Xóa'}
                     </button>
                   </div>
                 </div>
@@ -6188,8 +6247,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           <button
                             className="btn-secondary"
                             style={{ padding: '5px 12px', fontSize: '12px', fontWeight: 700, color: '#DC2626' }}
+                            disabled={empDelBusyId === emp.employee_id}
                             onClick={async () => {
                               if (!window.confirm(`XÓA nhân viên ${emp.full_name} (${emp.employee_code})?\nHồ sơ + tài khoản đăng nhập sẽ bị xóa khỏi hệ thống và Google Sheets. Không thể hoàn tác!`)) return;
+                              if (empDelBusyId) return;
+                              setEmpDelBusyId(emp.employee_id);
                               try {
                                 await apiRequest(`/employees/${emp.employee_id}`, { method: 'DELETE' });
                                 showToast(`Đã xóa ${emp.full_name} khỏi hệ thống và Sheets!`);
@@ -6197,10 +6259,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 if (onSyncSheets) await onSyncSheets();
                               } catch (e: any) {
                                 showToast(e?.message || 'Lỗi khi xóa!');
+                              } finally {
+                                setEmpDelBusyId(null);
                               }
                             }}
                           >
-                            Xóa
+                            {empDelBusyId === emp.employee_id ? '⏳ Đang xóa...' : 'Xóa'}
                           </button>
                         </div>
                       </td>
@@ -8516,8 +8580,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           <button
             className="btn-secondary"
             style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}
+            disabled={swapReviewBusy === 'audit-out-of-week'}
             onClick={async () => {
               if (!window.confirm('Rà soát toàn bộ phiếu đổi/tráo ca SAI quy định (ca ngoài tuần gửi phiếu)?\nHệ thống sẽ HỦY phiếu + TRẢ lịch từng NV về chủ ban đầu. Phiếu đúng tuần (kể cả tuần cũ) được giữ nguyên.')) return;
+              if (swapReviewBusy) return;
+              setSwapReviewBusy('audit-out-of-week');
               try {
                 const r = await apiRequest('/admin/swaps/audit-out-of-week', { method: 'POST' });
                 const v = (r as any)?.violations || [];
@@ -8527,10 +8594,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 if (onSyncSheets) await onSyncSheets();
               } catch (e: any) {
                 showToast(e?.message || 'Lỗi khi rà soát!');
+              } finally {
+                setSwapReviewBusy(null);
               }
             }}
           >
-            🛡 Rà soát phiếu sai tuần
+            {swapReviewBusy === 'audit-out-of-week' ? '⏳ Đang rà soát...' : '🛡 Rà soát phiếu sai tuần'}
           </button>
           </div>
         </div>
@@ -11836,16 +11905,18 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <button
               className="btn-primary"
               style={{ backgroundColor: '#059669', color: '#FFF', fontWeight: 800, fontSize: '13px', padding: '9px 22px', border: 'none', borderRadius: '8px', boxShadow: '0 4px 12px rgba(5,150,105,0.3)', cursor: 'pointer' }}
+              disabled={sigBusy === 'save'}
               onClick={() => saveDefaultSigs(defaultSigs)}
             >
-              💾 LƯU CẤU HÌNH CHỮ KÝ
+              {sigBusy === 'save' ? '⏳ Đang lưu...' : '💾 LƯU CẤU HÌNH CHỮ KÝ'}
             </button>
             <button
               className="btn-secondary"
               style={{ fontSize: '12px', padding: '9px 16px', fontWeight: 700 }}
+              disabled={sigBusy === 'load'}
               onClick={loadDefaultSigs}
             >
-              🔄 Tải lại từ máy chủ
+              {sigBusy === 'load' ? '⏳ Đang tải...' : '🔄 Tải lại từ máy chủ'}
             </button>
           </>}
         />
@@ -12115,6 +12186,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 0 20px' }}>
           <button
             className="btn-primary"
+            disabled={sigBusy === 'save'}
             style={{
               backgroundColor: '#059669',
               color: '#FFF',
@@ -12131,7 +12203,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             }}
             onClick={() => saveDefaultSigs(defaultSigs)}
           >
-            💾 LƯU CẤU HÌNH VÀ KÍCH HOẠT NÚT "CHỮ KÝ" TRÊN PHIẾU LƯƠNG
+            {sigBusy === 'save' ? '⏳ Đang lưu...' : '💾 LƯU CẤU HÌNH VÀ KÍCH HOẠT NÚT "CHỮ KÝ" TRÊN PHIẾU LƯƠNG'}
           </button>
         </div>
       </div>
