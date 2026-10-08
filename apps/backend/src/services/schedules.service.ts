@@ -564,6 +564,20 @@ export class SchedulesService {
             })
           );
         }
+        // Tự động hủy ca làm việc trùng ngày OFF: NV đăng ký OFF thì không được
+        // xếp ca trùng ngày đó (tránh cảnh báo "đã xếp ca trùng ngày OFF" trên
+        // lịch). Hủy MỀM (CANCELLED) để NV/HR có thể khôi phục lại nếu cần.
+        let cancelledShifts = 0;
+        try {
+          const empShifts = await this.repo.getShiftsForEmployee(data.employeeId, wk1.mon, wk1.sun);
+          for (const sh of empShifts) {
+            if (sh.status === 'CANCELLED') continue;
+            const sd = normSheetDate(sh.date);
+            if (sd !== normSheetDate(data.day1) && sd !== normSheetDate(data.day2)) continue;
+            await this.repo.updateShiftAssignment(sh.assignment_id, { status: 'CANCELLED' });
+            cancelledShifts++;
+          }
+        } catch { /* best-effort: lỗi hủy ca không chặn đăng ký OFF */ }
         if (this.io) {
           for (const c of created) {
             this.io.to(`user:${c.employee_id}`).emit('leave.updated', {
@@ -571,8 +585,15 @@ export class SchedulesService {
               status: c.status,
             });
           }
+          if (cancelledShifts > 0) {
+            this.io.to(`user:${data.employeeId}`).emit('data:updated', {
+              entity: 'schedules',
+              data: { action: 'auto-cancel-shift-on-off', count: cancelledShifts },
+              timestamp: new Date().toISOString(),
+            });
+          }
         }
-        return { week: wk1, leaves: created };
+        return { week: wk1, leaves: created, cancelledShifts };
       },
     });
   }
