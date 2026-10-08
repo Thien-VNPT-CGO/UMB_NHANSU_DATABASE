@@ -1156,6 +1156,39 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     } catch { /* bỏ qua */ }
     setSignTick(t => t + 1);
   };
+  // Nén ảnh chữ ký về JPEG nhỏ (~360px): ảnh tải lên từ điện thoại có thể vài MB,
+  // server/Sheets cắt ở 45 ký tự làm hỏng base64 khiến ô ký vỡ hình. Nén ở client
+  // trước khi gửi nên phiếu nào cũng hiển thị được. Ảnh hỏng sẵn thì giữ nguyên.
+  const compressSigImg = (dataUrl: any): Promise<any> => new Promise(resolve => {
+    if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image')) return resolve(dataUrl);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const maxW = 360;
+        const scale = Math.min(1, maxW / (img.width || maxW));
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round((img.width || maxW) * scale));
+        c.height = Math.max(1, Math.round((img.height || maxW) * scale));
+        const ctx = c.getContext('2d');
+        if (!ctx) return resolve(dataUrl);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, c.width, c.height);
+        ctx.drawImage(img, 0, 0, c.width, c.height);
+        const out = c.toDataURL('image/jpeg', 0.72);
+        resolve(out && out.length < dataUrl.length ? out : dataUrl);
+      } catch { resolve(dataUrl); }
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+  // Kiểm tra ảnh chữ ký có đọc được không (phát hiện mẫu đã hỏng từ trước).
+  const isSigImgOk = (dataUrl?: string | null): Promise<boolean> => new Promise(resolve => {
+    if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image')) return resolve(false);
+    const img = new Image();
+    img.onload = () => resolve(true);
+    img.onerror = () => resolve(false);
+    img.src = dataUrl;
+  });
   // Dòng đang xổ chi tiết các bước tính ở tab Tính lương.
   const [calcExpandId, setCalcExpandId] = useState<string | null>(null);
 
@@ -1249,9 +1282,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     setSlipActionBusy(itemId + 'publish');
     try {
       let slip = (periodSlips || []).find(s => s.item_id === itemId);
-      const lapImg = extraSigs?.sign_lap?.img || slip?.sign_lap?.img || (slip ? readSign(slip.period, slip.employee_id, 'lap').img : null) || defaultSigs.lap?.img;
+      const lapImg = await compressSigImg(extraSigs?.sign_lap?.img || slip?.sign_lap?.img || (slip ? readSign(slip.period, slip.employee_id, 'lap').img : null) || defaultSigs.lap?.img);
       const lapName = extraSigs?.sign_lap?.name || slip?.sign_lap?.name || (slip ? readSign(slip.period, slip.employee_id, 'lap').name : null) || defaultSigs.lap?.name || currentUser?.fullName || 'Kế toán viên';
-      const qlImg = extraSigs?.sign_quanly?.img || slip?.sign_quanly?.img || (slip ? readSign(slip.period, slip.employee_id, 'quanly').img : null) || defaultSigs.quanly?.img;
+      const qlImg = await compressSigImg(extraSigs?.sign_quanly?.img || slip?.sign_quanly?.img || (slip ? readSign(slip.period, slip.employee_id, 'quanly').img : null) || defaultSigs.quanly?.img);
       const qlName = extraSigs?.sign_quanly?.name || slip?.sign_quanly?.name || (slip ? readSign(slip.period, slip.employee_id, 'quanly').name : null) || defaultSigs.quanly?.name || 'Quản lý chi nhánh';
 
       // Nếu phiếu trên server chưa lưu 2 chữ ký nhưng client đã có (hoặc có chữ ký mẫu), tự động đồng bộ ký trước khi gửi
@@ -1434,6 +1467,20 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       showToast('⚠️ Vui lòng cài đặt chữ ký mẫu tại tab "11. Cài đặt chữ ký" trước!');
       return;
     }
+    // Ảnh mẫu hỏng (base64 bị cắt từ lần lưu cũ) thì báo rõ để lưu lại mẫu,
+    // thay vì ký “thành công giả” mà ô ký vẫn vỡ hình.
+    if (lap?.img && !(await isSigImgOk(lap.img))) {
+      showToast('⚠️ Ảnh chữ ký Kế toán bị hỏng! Vào tab "11. Cài đặt chữ ký" tải lại ảnh và bấm Lưu.');
+      return;
+    }
+    if (ql?.img && !(await isSigImgOk(ql.img))) {
+      showToast('⚠️ Ảnh chữ ký Quản lý bị hỏng! Vào tab "11. Cài đặt chữ ký" tải lại ảnh và bấm Lưu.');
+      return;
+    }
+    // Nén ảnh trước khi gửi: mẫu tải lên từ điện thoại có thể vài MB, server
+    // cắt ở 45 ký tự làm hỏng base64. Nén rồi thì ô ký hiển thị được ngay.
+    if (lap?.img) lap = { ...lap, img: await compressSigImg(lap.img) };
+    if (ql?.img) ql = { ...ql, img: await compressSigImg(ql.img) };
     setSlipActionBusy(itemId + 'fast-sign');
     try {
       if (period && empId) {
@@ -1464,12 +1511,22 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   };
 
   const handleFastSignAllSlips = async (slipsToSign: any[], period?: string) => {
-    const lap = defaultSigs.lap;
-    const ql = defaultSigs.quanly;
+    let lap = defaultSigs.lap;
+    let ql = defaultSigs.quanly;
     if (!lap?.img && !ql?.img) {
       showToast('⚠️ Vui lòng cài đặt chữ ký mẫu tại tab "11. Cài đặt chữ ký" trước!');
       return;
     }
+    if (lap?.img && !(await isSigImgOk(lap.img))) {
+      showToast('⚠️ Ảnh chữ ký Kế toán bị hỏng! Vào tab "11. Cài đặt chữ ký" tải lại ảnh và bấm Lưu.');
+      return;
+    }
+    if (ql?.img && !(await isSigImgOk(ql.img))) {
+      showToast('⚠️ Ảnh chữ ký Quản lý bị hỏng! Vào tab "11. Cài đặt chữ ký" tải lại ảnh và bấm Lưu.');
+      return;
+    }
+    if (lap?.img) lap = { ...lap, img: await compressSigImg(lap.img) };
+    if (ql?.img) ql = { ...ql, img: await compressSigImg(ql.img) };
     const uncompleted = slipsToSign.filter((s: any) => (!s.sign_lap || !s.sign_quanly) && s.status !== 'PAID');
     if (uncompleted.length === 0) {
       showToast('Tất cả phiếu đã được ký đủ 2 bên!');
@@ -11750,18 +11807,21 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // =========================================================================
   // TAB 11: CÀI ĐẶT CHỮ KÝ MẪU (KẾ TOÁN & QUẢN LÝ CHI NHÁNH)
   // =========================================================================
-  if (activeTab === 'fin-signatures') {
+    if (activeTab === 'fin-signatures') {
     const handleUploadSigFile = (role: 'lap' | 'quanly', file?: File) => {
       if (!file) return;
       const reader = new FileReader();
       reader.onload = (e) => {
         const dataUrl = e.target?.result as string;
         if (!dataUrl) return;
-        setDefaultSigs(prev => ({
-          ...prev,
-          [role]: { ...prev[role], img: dataUrl }
-        }));
-        showToast(`📁 Đã tải ảnh chữ ký cho ${role === 'lap' ? 'Người lập phiếu (Kế toán)' : 'Quản lý chi nhánh'}! Vui lòng bấm "Lưu cấu hình chữ ký".`);
+        // Nén ngay khi tải lên: ảnh gốc điện thoại vài MB sẽ bị server cắt hỏng.
+        compressSigImg(dataUrl).then(small => {
+          setDefaultSigs(prev => ({
+            ...prev,
+            [role]: { ...prev[role], img: small }
+          }));
+          showToast(`📁 Đã tải ảnh chữ ký cho ${role === 'lap' ? 'Người lập phiếu (Kế toán)' : 'Quản lý chi nhánh'}! Vui lòng bấm "Lưu cấu hình chữ ký".`);
+        });
       };
       reader.readAsDataURL(file);
     };
