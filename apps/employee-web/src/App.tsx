@@ -5144,7 +5144,7 @@ export function App() {
                 {isProbation ? '7. Giải Trình & Bổ Sung Công' : '7. Bổ Sung Công'}
               </h3>
               <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '14px' }}>
-                Gửi giải trình khi quên check-in/out hoặc báo nghỉ đột xuất (đồng bộ trực tiếp sang HR Tab 10 và Google Sheets). Phiếu gửi HR quá <strong>1 ngày</strong> chưa duyệt thì hệ thống <strong>tự động từ chối</strong> (giữ phiếu để đối soát, tự xóa sau 7 ngày nữa).
+                Gửi giải trình khi quên check-in/out hoặc báo nghỉ đột xuất (đồng bộ trực tiếp sang HR Tab 10 và Google Sheets). Nhân viên chính thức chỉ được <strong>1 phiếu/tuần</strong> (duyệt hoặc đang chờ đều tính đã dùng; bị từ chối/hết hạn được gửi lại). Phiếu gửi HR quá <strong>30 phút</strong> chưa duyệt thì hệ thống <strong>tự động từ chối</strong> (giữ phiếu để đối soát, tự xóa sau 7 ngày nữa).
               </p>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -5266,7 +5266,7 @@ export function App() {
                 </button>
               </div>
             </div>
-                {/* PHIẾU CỦA TÔI — trạng thái realtime (quá 1 ngày HR chưa duyệt -> tự từ chối) */}
+                {/* PHIẾU CỦA TÔI — trạng thái realtime (quá 30 phút HR chưa duyệt -> tự từ chối) */}
             {myAdjustments.length > 0 && (
               <div className="card">
                 <h3 style={{ fontSize: '14px', fontWeight: 800, marginBottom: '8px' }}>
@@ -5284,7 +5284,7 @@ export function App() {
                             color: a.status === 'APPROVED' ? '#166534' : (auto ? '#6B7280' : '#991B1B'),
                             fontWeight: 800,
                           }}>
-                            {a.status === 'APPROVED' ? 'Đã duyệt' : auto ? 'Tự động từ chối (quá 1 ngày)' : a.status === 'REJECTED' ? 'Bị từ chối' : 'Chờ duyệt'}
+                            {a.status === 'APPROVED' ? 'Đã duyệt' : auto ? 'Tự động từ chối (quá 30 phút)' : a.status === 'REJECTED' ? 'Bị từ chối' : 'Chờ duyệt'}
                           </span>
                         </div>
                         {a.evidence_drive_id && (

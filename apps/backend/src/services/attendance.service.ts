@@ -11,6 +11,7 @@ import {
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { singleWriterQueue } from '../repositories/single-writer-queue.js';
 import { lateFineFor } from './payroll.service.js';
+import { weekRangeOf } from './weekly-off.service.js';
 import { Server } from 'socket.io';
 
 // Haversine formula for calculating distance in meters between two lat/lon points
@@ -315,6 +316,28 @@ export class AttendanceService {
         if (dup) {
           throw new Error('ADJUSTMENT_DUPLICATE: Bạn đã có phiếu cùng ca đang chờ duyệt, không cần gửi lại! Chờ HR xử lý phiếu hiện tại.');
         }
+        // Ràng buộc NV CHÍNH THỨC: mỗi tuần (Mon-Sun theo giờ VN, tính theo lúc gửi)
+        // chỉ được 1 phiếu bổ sung/điều chỉnh công. HR duyệt (APPROVED) hoặc đang chờ
+        // (PENDING) thì tính đã dùng quota tuần đó; HR từ chối / hết hạn 30 phút /
+        // đã xóa thì KHÔNG tính (được gửi lại trong tuần).
+        const emp = await this.repo.getEmployeeById(data.employeeId).catch(() => null);
+        if (emp && (emp as any).employment_status === 'OFFICIAL') {
+          const todayVn = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+          const wk = weekRangeOf(todayVn);
+          const used = (existing || []).filter((x: any) => {
+            const st = String((x as any).status || '');
+            if (st !== 'PENDING' && st !== 'APPROVED') return false;
+            const c = new Date((x as any).created_at).getTime();
+            if (!Number.isFinite(c)) return false;
+            const day = new Date(c + 7 * 3_600_000).toISOString().slice(0, 10);
+            return day >= wk.mon && day <= wk.sun;
+          });
+          if (used.length >= AttendanceService.ADJUSTMENT_WEEKLY_QUOTA) {
+            throw new Error(
+              `ADJUSTMENT_WEEKLY_LIMIT: Nhân viên chính thức chỉ được 1 phiếu bổ sung công/tuần (tuần ${wk.mon} → ${wk.sun} bạn đã dùng 1 phiếu ${used[0]?.status === 'APPROVED' ? 'đã được duyệt' : 'đang chờ duyệt'}). Tuần sau gửi tiếp!`
+            );
+          }
+        }
         return this.repo.createAttendanceAdjustment({
           adjustment_id: adjId,
           assignment_id: assignmentId,
@@ -358,17 +381,22 @@ export class AttendanceService {
     return this.repo.listAttendanceAdjustments(branchId, employeeId);
   }
 
+  /** NV chính thức: tối đa 1 phiếu bổ sung/điều chỉnh công mỗi tuần (Mon-Sun). */
+  static readonly ADJUSTMENT_WEEKLY_QUOTA = 1;
+  /** Hiệu lực 1 phiếu gửi HR: 30 phút tính từ lúc tạo — quá hạn tự động từ chối. */
+  static readonly ADJUSTMENT_TTL_MINUTES = 30;
+
   /**
-   * Ràng buộc hiệu lực phiếu bổ sung công (từ 2026-10):
-   *  - PENDING quá `ttlMinutes` (mặc định 1440 = 1 ngày, tính từ lúc NV gửi)
+   * Ràng buộc hiệu lực phiếu bổ sung công:
+   *  - PENDING quá `ttlMinutes` (mặc định 30 phút, tính từ lúc NV gửi)
    *    mà HR chưa duyệt -> hệ thống TỰ ĐỘNG TỪ CHỐI (REJECTED + ghi chú, NV và
    *    HR đều thấy).
    *  - Phiếu đã tự từ chối quá 7 ngày nữa -> TỰ ĐỘNG XÓA KHỎI HỆ THỐNG
    *    (bộ nhớ + Sheet), không để lại xác.
    * Idempotent (kiểm tra lại trạng thái trong queue trước khi chạm).
    */
-  static readonly AUTO_REJECT_NOTE = 'Tự động từ chối (quá 1 ngày HR chưa duyệt)';
-  async expireStaleAdjustments(now: Date = new Date(), ttlMinutes = 1440): Promise<{
+  static readonly AUTO_REJECT_NOTE = 'Tự động từ chối (quá 30 phút HR chưa duyệt)';
+  async expireStaleAdjustments(now: Date = new Date(), ttlMinutes = AttendanceService.ADJUSTMENT_TTL_MINUTES): Promise<{
     checked: number;
     expired: string[];
     rejected: { adjustmentId: string; employeeId: string }[];
@@ -535,6 +563,22 @@ export class AttendanceService {
           const label = (fresh as any).status === 'APPROVED' ? 'đã duyệt'
             : (fresh as any).status === 'REJECTED' ? 'đã từ chối' : (fresh as any).status;
           throw new Error(`ADJUSTMENT_NOT_PENDING: Phiếu này ${label} rồi, không xử lý lại! Tải lại danh sách.`);
+        }
+        // Hiệu lực 30 phút: tick nền chạy mỗi phút nhưng HR vẫn có thể bấm duyệt
+        // đúng lúc phiếu vừa hết hạn — chặn cứng tại đây: quá 30 phút thì tự từ
+        // chối phiếu và báo hết hiệu lực (NV gửi lại phiếu mới trong quota tuần).
+        const createdMs = new Date((fresh as any).created_at).getTime();
+        if (Number.isFinite(createdMs)) {
+          const ageMin = (Date.now() - createdMs) / 60000;
+          if (ageMin > AttendanceService.ADJUSTMENT_TTL_MINUTES) {
+            await this.repo.updateAttendanceAdjustment(adjId, 'REJECTED', 'SYSTEM', undefined, AttendanceService.AUTO_REJECT_NOTE).catch(() => null);
+            if (this.io) {
+              try {
+                this.io.to(`user:${(fresh as any).employee_id}`).emit('adjustment.updated', { adjustmentId: adjId, status: 'REJECTED' });
+              } catch { /* non-fatal */ }
+            }
+            throw new Error('ADJUSTMENT_EXPIRED: Phiếu đã quá 30 phút hiệu lực và tự động hết hạn! NV gửi lại phiếu mới.');
+          }
         }
         const updated = await this.repo.updateAttendanceAdjustment(adjId, status, approverId, minutesApproved, note);
         // HR DUYỆT -> dựng lại bản ghi chấm công còn thiếu để lịch + realtime + lương

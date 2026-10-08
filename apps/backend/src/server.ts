@@ -130,22 +130,22 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   setTimeout(autoRemindersTickSafe, 60_000); // đợi dữ liệu load xong lần đầu
   setInterval(autoRemindersTickSafe, 5 * 60_000);
 
-  // Phiếu bổ sung công gửi HR quá 1 ngày chưa duyệt: tự động TỪ CHỐI (giữ phiếu
+  // Phiếu bổ sung công gửi HR quá 30 phút chưa duyệt: tự động TỪ CHỐI (giữ phiếu
   // để đối soát) + báo inbox NV; phiếu đã tự từ chối quá 7 ngày nữa thì tự XÓA.
-  // Chạy mỗi 5 phút (không còn đếm ngược từng giây nên không cần mỗi phút).
+  // Chạy mỗi 1 phút để bám sát hiệu lực 30 phút của phiếu.
   const adjustmentExpiryTickSafe = async () => {
     try {
       const r = await services.attendanceService.expireStaleAdjustments(new Date());
       if (r.rejected.length > 0) {
-        console.log(`[adjustments] Tự từ chối ${r.rejected.length} phiếu quá 1 ngày HR chưa duyệt.`);
+        console.log(`[adjustments] Tự từ chối ${r.rejected.length} phiếu quá 30 phút HR chưa duyệt.`);
         for (const item of r.rejected) {
           try {
             await services.notificationsService.sendNotification({
               recipientIds: [item.employeeId],
               type: 'ADJUSTMENT_AUTO_REJECTED',
               severity: 'ACTION_REQUIRED',
-              title: '⏳ Phiếu bổ sung công quá 1 ngày chưa được duyệt',
-              summary: 'HR chưa duyệt phiếu của bạn sau 1 ngày nên hệ thống đã tự động từ chối. Cần thì gửi lại phiếu mới hoặc báo trực tiếp Store/HR!',
+              title: '⏳ Phiếu bổ sung công quá 30 phút chưa được duyệt',
+              summary: 'HR chưa duyệt phiếu của bạn sau 30 phút nên hệ thống đã tự động từ chối. Cần thì gửi lại phiếu mới hoặc báo trực tiếp Store/HR!',
               targetPath: '/adjustment',
               actorId: 'SYSTEM',
             }).catch(() => null);
@@ -165,8 +165,8 @@ server.listen(Number(PORT), '0.0.0.0', () => {
       console.warn('[adjustments] expiry tick error:', err?.message || err);
     }
   };
-  setTimeout(adjustmentExpiryTickSafe, 90_000);
-  setInterval(adjustmentExpiryTickSafe, 5 * 60_000);
+  setTimeout(adjustmentExpiryTickSafe, 60_000);
+  setInterval(adjustmentExpiryTickSafe, 60_000);
 
   // Tự ghi VẮNG: ca PUBLISHED qua giờ kết thúc 30p mà không check-in -> bản ghi
   // ABSENT làm chứng cứ (đỏ trên 2 cổng, đồng bộ Sheets). Chạy mỗi 15 phút.
