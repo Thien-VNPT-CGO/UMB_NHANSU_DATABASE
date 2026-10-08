@@ -3470,7 +3470,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   // Kế toán phát hành từng phiếu (yêu cầu đủ 2 chữ ký)
   app.post('/payroll/slips/:id/publish', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
     try {
-      const updated = await payrollService.publishSlip(req.params.id, req.user!.id);
+      const { sign_lap, sign_quanly } = req.body || {};
+      const updated = await payrollService.publishSlip(req.params.id, req.user!.id, { sign_lap, sign_quanly });
       broadcastUpdate('payroll', { action: 'publish-slip', itemId: req.params.id });
       res.json(updated);
     } catch (err: any) {

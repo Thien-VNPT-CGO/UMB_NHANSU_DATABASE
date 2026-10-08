@@ -1248,10 +1248,36 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     }
   };
 
-  const handlePublishSlip = async (itemId: string) => {
+  const handlePublishSlip = async (itemId: string, extraSigs?: { sign_lap?: any; sign_quanly?: any }) => {
     setSlipActionBusy(itemId + 'publish');
     try {
-      const updated = await apiRequest(`/payroll/slips/${itemId}/publish`, { method: 'POST', body: JSON.stringify({}) });
+      let slip = (periodSlips || []).find(s => s.item_id === itemId);
+      const lapImg = extraSigs?.sign_lap?.img || slip?.sign_lap?.img || (slip ? readSign(slip.period, slip.employee_id, 'lap').img : null) || defaultSigs.lap?.img;
+      const lapName = extraSigs?.sign_lap?.name || slip?.sign_lap?.name || (slip ? readSign(slip.period, slip.employee_id, 'lap').name : null) || defaultSigs.lap?.name || currentUser?.fullName || 'Kế toán viên';
+      const qlImg = extraSigs?.sign_quanly?.img || slip?.sign_quanly?.img || (slip ? readSign(slip.period, slip.employee_id, 'quanly').img : null) || defaultSigs.quanly?.img;
+      const qlName = extraSigs?.sign_quanly?.name || slip?.sign_quanly?.name || (slip ? readSign(slip.period, slip.employee_id, 'quanly').name : null) || defaultSigs.quanly?.name || 'Quản lý chi nhánh';
+
+      // Nếu phiếu trên server chưa lưu 2 chữ ký nhưng client đã có (hoặc có chữ ký mẫu), tự động đồng bộ ký trước khi gửi
+      if ((!slip?.sign_lap?.img || !slip?.sign_quanly?.img) && lapImg && qlImg) {
+        try {
+          const fastUpdated = await apiRequest(`/payroll/slips/${itemId}/fast-sign`, {
+            method: 'POST',
+            body: JSON.stringify({ lapName, lapImg, qlName, qlImg }),
+          });
+          if (fastUpdated) {
+            slip = { ...slip, ...fastUpdated };
+            updateSlipInState(itemId, fastUpdated);
+          }
+        } catch (fastErr) {
+          console.warn('[handlePublishSlip] fast-sign auto sync:', fastErr);
+        }
+      }
+
+      const body: any = {};
+      if (lapImg) body.sign_lap = { name: lapName, img: lapImg };
+      if (qlImg) body.sign_quanly = { name: qlName, img: qlImg };
+
+      const updated = await apiRequest(`/payroll/slips/${itemId}/publish`, { method: 'POST', body: JSON.stringify(body) });
       showToast('📢 Đã phát hành phiếu lương đến nhân viên thành công! Tự động đồng bộ Google Sheet.');
       setPeriodSlips(prev => prev.map(s => s.item_id === itemId ? { ...s, ...(updated || {}), status: 'PUBLISHED' } : s));
     } catch (err: any) {
@@ -1378,8 +1404,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   };
 
   const handleFastSignSlip = async (itemId: string, period?: string, empId?: string) => {
-    const lap = defaultSigs.lap;
-    const ql = defaultSigs.quanly;
+    let lap = defaultSigs.lap;
+    let ql = defaultSigs.quanly;
+    if (period && empId) {
+      const rLap = readSign(period, empId, 'lap');
+      const rQl = readSign(period, empId, 'quanly');
+      if (!lap?.img && rLap.img) lap = rLap;
+      if (!ql?.img && rQl.img) ql = rQl;
+    }
     if (!lap?.img && !ql?.img) {
       showToast('⚠️ Vui lòng cài đặt chữ ký mẫu tại tab "12. Cài đặt chữ ký" trước!');
       return;
@@ -1393,10 +1425,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       const updated = await apiRequest(`/payroll/slips/${itemId}/fast-sign`, {
         method: 'POST',
         body: JSON.stringify({
-          lapName: lap?.name || '',
-          lapImg: lap?.img || '',
-          qlName: ql?.name || '',
-          qlImg: ql?.img || '',
+          lapName: lap?.name || defaultSigs.lap?.name || currentUser?.fullName || 'Kế toán viên',
+          lapImg: lap?.img || defaultSigs.lap?.img || '',
+          qlName: ql?.name || defaultSigs.quanly?.name || 'Quản lý chi nhánh',
+          qlImg: ql?.img || defaultSigs.quanly?.img || '',
         }),
       });
       showToast('✍️ Đã áp dụng cả 2 chữ ký mẫu (Kế toán & Quản lý) thành công! Tự động đồng bộ Google Sheet.');
@@ -11417,30 +11449,69 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       <button
                         className="btn-primary"
                         style={{ backgroundColor: '#059669', color: '#FFF', padding: '9px 18px', fontSize: '13px', fontWeight: 800, borderRadius: '8px', border: 'none', cursor: 'pointer', boxShadow: '0 4px 12px rgba(5,150,105,0.3)' }}
-                        disabled={slipActionBusy === curSlip?.item_id + 'publish'}
+                        disabled={slipActionBusy === ((curSlip?.item_id || 'sample') + 'publish')}
                         onClick={async () => {
-                          if (curSlip) await handlePublishSlip(curSlip.item_id);
-                          else showToast('⚠️ Phiếu chưa được tạo trên server!');
+                          let targetSlip = curSlip;
+                          if (!targetSlip) {
+                            targetSlip = await ensureServerSlip(sMonth, selId);
+                          }
+                          if (!targetSlip) {
+                            showToast('⚠️ Phiếu chưa được tạo trên server!');
+                            return;
+                          }
+                          const lap = (targetSlip.sign_lap?.img ? targetSlip.sign_lap : null) || (readSign(sMonth, selId, 'lap').img ? readSign(sMonth, selId, 'lap') : null) || defaultSigs.lap;
+                          const ql = (targetSlip.sign_quanly?.img ? targetSlip.sign_quanly : null) || (readSign(sMonth, selId, 'quanly').img ? readSign(sMonth, selId, 'quanly') : null) || defaultSigs.quanly;
+                          await handlePublishSlip(targetSlip.item_id, {
+                            sign_lap: lap?.img ? { name: lap.name || defaultSigs.lap?.name || currentUser?.fullName || 'Kế toán viên', img: lap.img } : undefined,
+                            sign_quanly: ql?.img ? { name: ql.name || defaultSigs.quanly?.name || 'Quản lý chi nhánh', img: ql.img } : undefined,
+                          });
                         }}
                       >
-                        {slipActionBusy === curSlip?.item_id + 'publish' ? '⏳ Đang gửi...' : '📢 PUBLISHED (GỬI PHIẾU NÀY)'}
+                        {slipActionBusy === ((curSlip?.item_id || 'sample') + 'publish') ? '⏳ Đang gửi...' : '📢 PUBLISHED (GỬI PHIẾU NÀY)'}
                       </button>
 
                       {/* Lựa chọn 2: Save phiếu lại và hoàn thành cho đến hết các nhân viên */}
                       <button
                         className="btn-secondary"
                         style={{ backgroundColor: '#FFF', color: '#1E293B', padding: '9px 16px', fontSize: '13px', fontWeight: 800, borderRadius: '8px', border: '1.5px solid #CBD5E1', cursor: 'pointer' }}
-                        onClick={() => {
-                          showToast(`💾 Đã lưu 2 chữ ký của ${selRow.fullName}! Chuyển sang nhân viên tiếp theo.`);
-                          const currIdx = sFiltered.findIndex((r: any) => r.employeeId === selId);
-                          if (currIdx >= 0 && currIdx < sFiltered.length - 1) {
-                            setSampleEmpId(sFiltered[currIdx + 1].employeeId);
-                          } else {
-                            showToast('🎉 Đã ký xong nhân viên cuối cùng! Bạn có thể bấm "🚀 GỬI TẤT CẢ PUBLISHED" trên thanh công cụ.');
+                        disabled={slipActionBusy === ((curSlip?.item_id || 'sample') + 'save-next')}
+                        onClick={async () => {
+                          setSlipActionBusy((curSlip?.item_id || 'sample') + 'save-next');
+                          try {
+                            let targetSlip = curSlip;
+                            if (!targetSlip) {
+                              targetSlip = await ensureServerSlip(sMonth, selId);
+                            }
+                            const lap = (targetSlip?.sign_lap?.img ? targetSlip.sign_lap : null) || (readSign(sMonth, selId, 'lap').img ? readSign(sMonth, selId, 'lap') : null) || defaultSigs.lap;
+                            const ql = (targetSlip?.sign_quanly?.img ? targetSlip.sign_quanly : null) || (readSign(sMonth, selId, 'quanly').img ? readSign(sMonth, selId, 'quanly') : null) || defaultSigs.quanly;
+
+                            if (targetSlip && (lap?.img || ql?.img)) {
+                              const updated = await apiRequest(`/payroll/slips/${targetSlip.item_id}/fast-sign`, {
+                                method: 'POST',
+                                body: JSON.stringify({
+                                  lapName: lap?.name || defaultSigs.lap?.name || currentUser?.fullName || 'Kế toán viên',
+                                  lapImg: lap?.img || defaultSigs.lap?.img || '',
+                                  qlName: ql?.name || defaultSigs.quanly?.name || 'Quản lý chi nhánh',
+                                  qlImg: ql?.img || defaultSigs.quanly?.img || '',
+                                }),
+                              });
+                              if (updated) updateSlipInState(targetSlip.item_id, updated);
+                            }
+                            showToast(`💾 Đã lưu 2 chữ ký của ${selRow.fullName} lên máy chủ! Chuyển sang nhân viên tiếp theo.`);
+                            const currIdx = sFiltered.findIndex((r: any) => r.employeeId === selId);
+                            if (currIdx >= 0 && currIdx < sFiltered.length - 1) {
+                              setSampleEmpId(sFiltered[currIdx + 1].employeeId);
+                            } else {
+                              showToast('🎉 Đã ký xong nhân viên cuối cùng! Bạn có thể bấm "🚀 GỬI TẤT CẢ PUBLISHED" trên thanh công cụ.');
+                            }
+                          } catch (err: any) {
+                            showToast('Lỗi khi lưu chữ ký: ' + (err?.message || ''));
+                          } finally {
+                            setSlipActionBusy(null);
                           }
                         }}
                       >
-                        💾 Save phiếu lại & Ký NV tiếp theo →
+                        {slipActionBusy === ((curSlip?.item_id || 'sample') + 'save-next') ? '⏳ Đang lưu...' : '💾 Save phiếu lại & Ký NV tiếp theo →'}
                       </button>
                     </div>
                   </div>

@@ -636,12 +636,32 @@ export class PayrollService {
         if (slip.status === 'CONFIRMED' || slip.status === 'PAID') {
           throw new Error('SLIP_LOCKED: phiếu đã xác nhận/chi trả, không ký lại!');
         }
-        const updates: any = {};
-        if (lapImg) {
-          updates.sign_lap = { name: lapName || 'Kế toán viên', img: lapImg, at: new Date().toISOString() };
+        let finalLapImg = lapImg;
+        let finalLapName = lapName;
+        let finalQlImg = qlImg;
+        let finalQlName = qlName;
+        if (!finalLapImg || !finalQlImg) {
+          try {
+            const settings: any = await this.repo.getSystemSettings();
+            const tmpl = settings?.payroll_signatures;
+            if (tmpl) {
+              if (!finalLapImg && tmpl.lap?.img) {
+                finalLapImg = tmpl.lap.img;
+                finalLapName = finalLapName || tmpl.lap.name;
+              }
+              if (!finalQlImg && tmpl.quanly?.img) {
+                finalQlImg = tmpl.quanly.img;
+                finalQlName = finalQlName || tmpl.quanly.name;
+              }
+            }
+          } catch {}
         }
-        if (qlImg) {
-          updates.sign_quanly = { name: qlName || 'Quản lý chi nhánh', img: qlImg, at: new Date().toISOString() };
+        const updates: any = {};
+        if (finalLapImg) {
+          updates.sign_lap = { name: finalLapName || 'Kế toán viên', img: finalLapImg, at: new Date().toISOString() };
+        }
+        if (finalQlImg) {
+          updates.sign_quanly = { name: finalQlName || 'Quản lý chi nhánh', img: finalQlImg, at: new Date().toISOString() };
         }
         const updated = await this.repo.updatePayslip(itemId, updates);
         this.notifySlipsChanged('sign', { itemId });
@@ -651,16 +671,66 @@ export class PayrollService {
     });
   }
 
-  /** Gửi 1 phiếu đến NV: yêu cầu đủ 2 chữ ký lập + quản lý, phiếu đang DRAFT. */
-  async publishSlip(itemId: string, actorId: string) {
+  /** Gửi 1 phiếu đến NV: yêu cầu đủ 2 chữ ký lập + quản lý, phiếu đang DRAFT. Tự động bù chữ ký mẫu nếu có. */
+  async publishSlip(itemId: string, actorId: string, extraSignatures?: { sign_lap?: any; sign_quanly?: any }) {
     return singleWriterQueue.enqueue({
       entityType: 'PHIEU_LUONG',
       entityId: itemId,
       actorId,
       execute: async () => {
-        const slip = await this.repo.getPayslipById(itemId);
+        let slip = await this.repo.getPayslipById(itemId);
         if (!slip) throw new Error('PAYSLIP_NOT_FOUND');
         if (slip.status !== 'DRAFT') throw new Error(`SLIP_NOT_DRAFT: phiếu đang ở trạng thái ${slip.status}, không gửi lại!`);
+
+        // Tự động bổ sung chữ ký nếu body gửi lên hoặc hệ thống đã cấu hình chữ ký mẫu
+        const updates: any = {};
+        if (!(slip as any).sign_lap) {
+          if (extraSignatures?.sign_lap?.img) {
+            updates.sign_lap = {
+              name: extraSignatures.sign_lap.name || 'Kế toán viên',
+              img: extraSignatures.sign_lap.img,
+              at: extraSignatures.sign_lap.at || new Date().toISOString(),
+            };
+          }
+        }
+        if (!(slip as any).sign_quanly) {
+          if (extraSignatures?.sign_quanly?.img) {
+            updates.sign_quanly = {
+              name: extraSignatures.sign_quanly.name || 'Quản lý chi nhánh',
+              img: extraSignatures.sign_quanly.img,
+              at: extraSignatures.sign_quanly.at || new Date().toISOString(),
+            };
+          }
+        }
+
+        // Nếu vẫn còn thiếu chữ ký, tự động nạp từ cấu hình chữ ký mẫu (signature-templates)
+        if ((!updates.sign_lap && !(slip as any).sign_lap) || (!updates.sign_quanly && !(slip as any).sign_quanly)) {
+          try {
+            const settings: any = await this.repo.getSystemSettings();
+            const tmpl = settings?.payroll_signatures;
+            if (tmpl) {
+              if (!updates.sign_lap && !(slip as any).sign_lap && tmpl.lap?.img) {
+                updates.sign_lap = {
+                  name: tmpl.lap.name || 'Kế toán viên',
+                  img: tmpl.lap.img,
+                  at: new Date().toISOString(),
+                };
+              }
+              if (!updates.sign_quanly && !(slip as any).sign_quanly && tmpl.quanly?.img) {
+                updates.sign_quanly = {
+                  name: tmpl.quanly.name || 'Quản lý chi nhánh',
+                  img: tmpl.quanly.img,
+                  at: new Date().toISOString(),
+                };
+              }
+            }
+          } catch {}
+        }
+
+        if (Object.keys(updates).length > 0) {
+          slip = await this.repo.updatePayslip(itemId, updates);
+        }
+
         if (!(slip as any).sign_lap || !(slip as any).sign_quanly) {
           throw new Error('MISSING_SIGNATURES: thiếu chữ ký người lập hoặc quản lý chi nhánh!');
         }
@@ -686,7 +756,7 @@ export class PayrollService {
     });
   }
 
-  /** Gửi hàng loạt 1 lần: toàn bộ phiếu DRAFT đủ 2 ký của kỳ -> PUBLISHED. Thiếu ký thì liệt kê để bổ sung. */
+  /** Gửi hàng loạt 1 lần: toàn bộ phiếu DRAFT đủ 2 ký của kỳ -> PUBLISHED. Tự bù chữ ký mẫu nếu thiếu. */
   async publishAllSlips(runIdOrPeriod: string, actorId: string) {
     return singleWriterQueue.enqueue({
       entityType: 'KY_LUONG',
@@ -704,12 +774,36 @@ export class PayrollService {
         if (!slips || slips.length === 0) throw new Error('PAYROLL_RUN_EMPTY: kỳ chưa có phiếu nào!');
         const published: string[] = [];
         const skipped: { itemId: string; employee: string; reason: string }[] = [];
+
+        // Lấy cấu hình chữ ký mẫu nếu có
+        let tmpl: any = null;
+        try {
+          const settings: any = await this.repo.getSystemSettings();
+          tmpl = settings?.payroll_signatures;
+        } catch {}
+
         for (const s of slips) {
           if ((s as any).status !== 'DRAFT') {
             if ((s as any).status !== 'PUBLISHED') skipped.push({ itemId: (s as any).item_id, employee: (s as any).full_name || (s as any).employee_id, reason: `đang ở trạng thái ${(s as any).status}` });
             else published.push((s as any).item_id);
             continue;
           }
+
+          // Tự bù chữ ký mẫu nếu thiếu
+          if ((!(s as any).sign_lap || !(s as any).sign_quanly) && tmpl) {
+            const updates: any = {};
+            if (!(s as any).sign_lap && tmpl.lap?.img) {
+              updates.sign_lap = { name: tmpl.lap.name || 'Kế toán viên', img: tmpl.lap.img, at: new Date().toISOString() };
+            }
+            if (!(s as any).sign_quanly && tmpl.quanly?.img) {
+              updates.sign_quanly = { name: tmpl.quanly.name || 'Quản lý chi nhánh', img: tmpl.quanly.img, at: new Date().toISOString() };
+            }
+            if (Object.keys(updates).length > 0) {
+              await this.repo.updatePayslip((s as any).item_id, updates);
+              Object.assign(s, updates);
+            }
+          }
+
           if (!(s as any).sign_lap || !(s as any).sign_quanly) {
             skipped.push({ itemId: (s as any).item_id, employee: (s as any).full_name || (s as any).employee_id, reason: 'thiếu chữ ký lập/quản lý' });
             continue;
