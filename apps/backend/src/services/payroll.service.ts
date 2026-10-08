@@ -663,6 +663,11 @@ export class PayrollService {
         if (finalQlImg) {
           updates.sign_quanly = { name: finalQlName || 'Quản lý chi nhánh', img: finalQlImg, at: new Date().toISOString() };
         }
+        // Không có ảnh ký nào (client không gửi + server chưa cấu hình mẫu):
+        // báo lỗi rõ thay vì lưu rỗng khiến nút ký báo thành công giả.
+        if (Object.keys(updates).length === 0) {
+          throw new Error('MISSING_SIGNATURE_IMAGES: chưa có ảnh chữ ký mẫu (người lập + quản lý), vui lòng cài đặt chữ ký mẫu trước!');
+        }
         const updated = await this.repo.updatePayslip(itemId, updates);
         this.notifySlipsChanged('sign', { itemId });
         this.triggerSheetsPush();

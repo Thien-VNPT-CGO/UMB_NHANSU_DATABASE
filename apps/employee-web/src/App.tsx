@@ -2236,10 +2236,12 @@ export function App() {
     }
     setConfirmSlipBusy(slipId);
     try {
-      const updated = await apiRequest(`/me/payslips/${slipId}/confirm`, {
+      const confirmRaw: any = await apiRequest(`/me/payslips/${slipId}/confirm`, {
         method: 'POST',
         body: JSON.stringify({ name: signerName || employee?.full_name || '', img }),
       });
+      // Backend trả { operationId, result } qua hàng đợi ghi — bóc result.
+      const updated = confirmRaw?.result ?? confirmRaw;
       showToast('✅ Bạn đã ký xác nhận phiếu lương thành công! Kế toán đã nhận được thông báo để chuyển khoản.');
       setPayslips(prev => prev.map(s => s.item_id === slipId ? {
         ...s,

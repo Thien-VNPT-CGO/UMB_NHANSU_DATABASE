@@ -1230,10 +1230,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const handleSignSlip = async (itemId: string, role: 'lap' | 'quanly', name: string, img: string) => {
     setSlipActionBusy(itemId + role);
     try {
-      const updated = await apiRequest(`/payroll/slips/${itemId}/sign`, {
+      const signRaw: any = await apiRequest(`/payroll/slips/${itemId}/sign`, {
         method: 'POST',
         body: JSON.stringify({ role, name, img }),
       });
+      // Backend trả { operationId, result } qua hàng đợi ghi — bóc result mới có chữ ký.
+      const updated = signRaw?.result ?? signRaw;
       showToast(`Đã lưu chữ ký: ${role === 'lap' ? 'Người lập phiếu (Kế toán)' : 'Quản lý chi nhánh'}! Tự động đồng bộ Google Sheet.`);
       setPeriodSlips(prev => prev.map(s => s.item_id === itemId ? { ...s, ...(updated || {}) } : s));
     } catch (err: any) {
@@ -1255,10 +1257,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       // Nếu phiếu trên server chưa lưu 2 chữ ký nhưng client đã có (hoặc có chữ ký mẫu), tự động đồng bộ ký trước khi gửi
       if ((!slip?.sign_lap?.img || !slip?.sign_quanly?.img) && lapImg && qlImg) {
         try {
-          const fastUpdated = await apiRequest(`/payroll/slips/${itemId}/fast-sign`, {
+          const fastSyncRaw: any = await apiRequest(`/payroll/slips/${itemId}/fast-sign`, {
             method: 'POST',
             body: JSON.stringify({ lapName, lapImg, qlName, qlImg }),
           });
+          const fastUpdated = fastSyncRaw?.result ?? fastSyncRaw;
           if (fastUpdated) {
             slip = { ...slip, ...fastUpdated };
             updateSlipInState(itemId, fastUpdated);
@@ -1272,7 +1275,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       if (lapImg) body.sign_lap = { name: lapName, img: lapImg };
       if (qlImg) body.sign_quanly = { name: qlName, img: qlImg };
 
-      const updated = await apiRequest(`/payroll/slips/${itemId}/publish`, { method: 'POST', body: JSON.stringify(body) });
+      const pubRaw: any = await apiRequest(`/payroll/slips/${itemId}/publish`, { method: 'POST', body: JSON.stringify(body) });
+      const updated = pubRaw?.result ?? pubRaw;
       showToast('📢 Đã phát hành phiếu lương đến nhân viên thành công! Tự động đồng bộ Google Sheet.');
       setPeriodSlips(prev => prev.map(s => s.item_id === itemId ? { ...s, ...(updated || {}), status: 'PUBLISHED' } : s));
     } catch (err: any) {
@@ -1293,7 +1297,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     if (!window.confirm('Bạn có chắc muốn phát hành đồng loạt toàn bộ phiếu lương đã đủ chữ ký của kỳ này gửi đến nhân viên?')) return;
     setSlipActionBusy('publish-all');
     try {
-      const res = await apiRequest(`/payroll/runs/${runIdOrPeriod}/publish-all-slips`, { method: 'POST', body: JSON.stringify({}) });
+      const pubAllRaw: any = await apiRequest(`/payroll/runs/${runIdOrPeriod}/publish-all-slips`, { method: 'POST', body: JSON.stringify({}) });
+      const res = pubAllRaw?.result ?? pubAllRaw;
       const pubCount = res?.published?.length || 0;
       const skipCount = res?.skipped?.length || 0;
       showToast(`🚀 Đã phát hành ${pubCount} phiếu đến nhân viên! (Bỏ qua ${skipCount} phiếu chưa đủ 2 chữ ký). Đã đồng bộ Google Sheet.`);
@@ -1309,7 +1314,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     if (!window.confirm('Hoàn phiếu này về NHÁP (DRAFT)? Phiếu đã gửi sẽ bị thu hồi khỏi Cổng nhân viên, giữ nguyên 2 chữ ký để gửi lại.')) return;
     setSlipActionBusy(itemId + 'return');
     try {
-      const updated = await apiRequest(`/payroll/slips/${itemId}/return`, { method: 'POST', body: JSON.stringify({}) });
+      const retRaw: any = await apiRequest(`/payroll/slips/${itemId}/return`, { method: 'POST', body: JSON.stringify({}) });
+      const updated = retRaw?.result ?? retRaw;
       showToast('↩️ Đã hoàn phiếu về nháp! Phiếu đã thu hồi khỏi nhân viên và đồng bộ Google Sheet.');
       setPeriodSlips(prev => prev.map(s => s.item_id === itemId ? { ...s, ...(updated || {}), status: 'DRAFT' } : s));
       updateSlipInState(itemId, { ...(updated || {}), status: 'DRAFT' });
@@ -1324,7 +1330,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     if (!window.confirm('Xác nhận ĐÃ CHUYỂN KHOẢN tiền lương cho nhân viên này? Phiếu sẽ chuyển trạng thái HOÀN THÀNH (PAID) và lưu trữ kỳ lương.')) return;
     setSlipActionBusy(itemId + 'mark-paid');
     try {
-      const updated = await apiRequest(`/payroll/slips/${itemId}/mark-paid`, { method: 'POST', body: JSON.stringify({}) });
+      const paidRaw: any = await apiRequest(`/payroll/slips/${itemId}/mark-paid`, { method: 'POST', body: JSON.stringify({}) });
+      const updated = paidRaw?.result ?? paidRaw;
       showToast('✅ Đã xác nhận HOÀN THÀNH chuyển tiền lương! Thông báo đã gửi đến NV và đồng bộ Google Sheet.');
       setPeriodSlips(prev => prev.map(s => s.item_id === itemId ? { ...s, ...(updated || {}), status: 'PAID' } : s));
     } catch (err: any) {
@@ -1341,10 +1348,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     }
     setSlipActionBusy(itemId + 'bank');
     try {
-      const updated = await apiRequest(`/payroll/slips/${itemId}/bank`, {
+      const bankRaw: any = await apiRequest(`/payroll/slips/${itemId}/bank`, {
         method: 'PUT',
         body: JSON.stringify(bankEditForm),
       });
+      const updated = bankRaw?.result ?? bankRaw;
       showToast('Đã lưu thông tin tài khoản ngân hàng và cập nhật mã VietQR!');
       setPeriodSlips(prev => prev.map(s => s.item_id === itemId ? { ...s, ...(updated || {}), bank_name: bankEditForm.bank_name, bank_account: bankEditForm.bank_account, bank_holder: bankEditForm.bank_holder } : s));
       setEditingBankSlipId(null);
@@ -1432,7 +1440,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         if (lap?.img) saveSign(period, empId, 'lap', lap.img, lap.name);
         if (ql?.img) saveSign(period, empId, 'quanly', ql.img, ql.name);
       }
-      const updated = await apiRequest(`/payroll/slips/${itemId}/fast-sign`, {
+      const fastRaw: any = await apiRequest(`/payroll/slips/${itemId}/fast-sign`, {
         method: 'POST',
         body: JSON.stringify({
           lapName: lap?.name || defaultSigs.lap?.name || currentUser?.fullName || 'Kế toán viên',
@@ -1441,6 +1449,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           qlImg: ql?.img || defaultSigs.quanly?.img || '',
         }),
       });
+      // Backend trả { operationId, result } qua hàng đợi ghi — bóc result mới có chữ ký để hiện vào 2 ô.
+      const updated = fastRaw?.result ?? fastRaw;
       showToast('✍️ Đã áp dụng cả 2 chữ ký mẫu (Kế toán & Quản lý) thành công! Tự động đồng bộ Google Sheet.');
       updateSlipInState(itemId, updated || {});
       if (viewSlipModal && viewSlipModal.item_id === itemId) {
@@ -1476,7 +1486,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             if (lap?.img) saveSign(period, s.employee_id, 'lap', lap.img, lap.name);
             if (ql?.img) saveSign(period, s.employee_id, 'quanly', ql.img, ql.name);
           }
-          const updated = await apiRequest(`/payroll/slips/${s.item_id}/fast-sign`, {
+          const batchRaw: any = await apiRequest(`/payroll/slips/${s.item_id}/fast-sign`, {
             method: 'POST',
             body: JSON.stringify({
               lapName: lap?.name || '',
@@ -1485,6 +1495,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               qlImg: ql?.img || '',
             }),
           });
+          const updated = batchRaw?.result ?? batchRaw;
           updateSlipInState(s.item_id, updated || {});
           successCount++;
         } catch (e) {
