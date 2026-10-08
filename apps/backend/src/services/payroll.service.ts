@@ -836,6 +836,40 @@ export class PayrollService {
     });
   }
 
+  /** Hoàn phiếu: thu hồi phiếu đã gửi NV (PUBLISHED) về DRAFT khi gửi nhầm.
+   * Giữ nguyên 2 chữ ký lập + quản lý để gửi lại nhanh. Không cho hoàn khi
+   * NV đã ký (CONFIRMED) hoặc đã chi trả (PAID). */
+  async returnSlip(itemId: string, actorId: string) {
+    return singleWriterQueue.enqueue({
+      entityType: 'PHIEU_LUONG',
+      entityId: itemId,
+      actorId,
+      execute: async () => {
+        const slip = await this.repo.getPayslipById(itemId);
+        if (!slip) throw new Error('PAYSLIP_NOT_FOUND');
+        if (slip.status !== 'PUBLISHED') throw new Error(`SLIP_NOT_PUBLISHED: phiếu đang ở trạng thái ${slip.status}, chỉ hoàn được phiếu đã gửi (PUBLISHED)!`);
+        const updated = await this.repo.updatePayslip(itemId, {
+          status: 'DRAFT',
+          slip_published_at: undefined,
+        } as any);
+        if (this.notificationsService && slip.employee_id) {
+          await this.notificationsService.sendNotification({
+            recipientIds: [slip.employee_id],
+            type: 'emp.payslip',
+            severity: 'SYSTEM',
+            title: `↩️ Phiếu lương kỳ ${slip.period} đã được thu hồi!`,
+            summary: `Kế toán đã thu hồi phiếu lương kỳ ${slip.period} do gửi nhầm. Phiếu mới sẽ được gửi lại sau, bạn không cần ký phiếu cũ.`,
+            targetPath: '/notifs_salary',
+            actorId,
+          }).catch(() => null);
+        }
+        this.notifySlipsChanged('return', { itemId });
+        this.triggerSheetsPush();
+        return updated;
+      },
+    });
+  }
+
   /** Kế toán xác nhận đã chuyển khoản 1 phiếu: yêu cầu đủ 3 chữ ký + NV đã xác nhận. */
   async markSlipPaid(itemId: string, actorId: string) {
     return singleWriterQueue.enqueue({

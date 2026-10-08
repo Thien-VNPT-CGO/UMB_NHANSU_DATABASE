@@ -3479,6 +3479,17 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Kế toán hoàn phiếu: thu hồi phiếu đã gửi NV (PUBLISHED) về DRAFT khi gửi nhầm
+  app.post('/payroll/slips/:id/return', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const updated = await payrollService.returnSlip(req.params.id, req.user!.id);
+      broadcastUpdate('payroll', { action: 'return-slip', itemId: req.params.id });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   // Kế toán phát hành tất cả các phiếu đã đủ 2 chữ ký của kỳ
   app.post('/payroll/runs/:id/publish-all-slips', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
     try {

@@ -1305,6 +1305,21 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     }
   };
 
+  const handleReturnSlip = async (itemId: string) => {
+    if (!window.confirm('Hoàn phiếu này về NHÁP (DRAFT)? Phiếu đã gửi sẽ bị thu hồi khỏi Cổng nhân viên, giữ nguyên 2 chữ ký để gửi lại.')) return;
+    setSlipActionBusy(itemId + 'return');
+    try {
+      const updated = await apiRequest(`/payroll/slips/${itemId}/return`, { method: 'POST', body: JSON.stringify({}) });
+      showToast('↩️ Đã hoàn phiếu về nháp! Phiếu đã thu hồi khỏi nhân viên và đồng bộ Google Sheet.');
+      setPeriodSlips(prev => prev.map(s => s.item_id === itemId ? { ...s, ...(updated || {}), status: 'DRAFT' } : s));
+      updateSlipInState(itemId, { ...(updated || {}), status: 'DRAFT' });
+    } catch (err: any) {
+      showToast(err?.message || 'Lỗi khi hoàn phiếu!');
+    } finally {
+      setSlipActionBusy(null);
+    }
+  };
+
   const handleMarkSlipPaid = async (itemId: string) => {
     if (!window.confirm('Xác nhận ĐÃ CHUYỂN KHOẢN tiền lương cho nhân viên này? Phiếu sẽ chuyển trạng thái HOÀN THÀNH (PAID) và lưu trữ kỳ lương.')) return;
     setSlipActionBusy(itemId + 'mark-paid');
@@ -11010,6 +11025,17 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                               onClick={() => handlePublishSlip(p.item_id)}
                             >
                               📢 Gửi NV
+                            </button>
+                          )}
+
+                          {p.status === 'PUBLISHED' && (
+                            <button
+                              className="btn-secondary"
+                              style={{ fontSize: '11px', padding: '4px 10px', fontWeight: 800, border: '1px solid #F59E0B', borderRadius: '6px', cursor: 'pointer', color: '#B45309', backgroundColor: '#FFFBEB' }}
+                              disabled={slipActionBusy === p.item_id + 'return'}
+                              onClick={() => handleReturnSlip(p.item_id)}
+                            >
+                              {slipActionBusy === p.item_id + 'return' ? '⏳...' : '↩️ Hoàn'}
                             </button>
                           )}
 
