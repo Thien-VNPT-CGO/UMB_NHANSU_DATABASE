@@ -96,8 +96,9 @@ export class PayrollService {
             }
             return eventsByDate.get(date)!;
           };
-          // Use employee rate snapshot
-          const rate = emp.current_rate_per_hour;
+          // Use employee rate snapshot (guard thiếu đơn giá -> 0đ thay vì NaN
+          // lan sang standardPay/net_pay/totalAmount thành null sau JSON).
+          const rate = Number((emp as any).current_rate_per_hour) || 0;
           let absentShifts = 0;
           let empHours = 0;
           let standardPay = 0;
@@ -849,11 +850,18 @@ export class PayrollService {
     );
 
     // Phiếu kỳ đã chốt (nếu Finance đã tính lương tháng này) -> lương thực tế.
+    // FIX HR Reports đứng tiền sau khi tính lại lương: trước đây dùng .find (kỳ
+    // CŨ NHẤT của tháng) trong khi Finance dùng kỳ MỚI NHẤT -> tính lại xong báo
+    // cáo vẫn hiện số cũ. Nay lấy kỳ mới nhất theo created_at cho khớp Finance.
     let runSlips = new Map<string, any>();
     let runStatus: string | null = null;
     try {
       const runs = await this.repo.listPayrollRuns();
-      const run = runs.find(r => String((r as any).period) === period);
+      const matching = (runs || []).filter(r => String((r as any).period) === period);
+      const run = matching.length > 0
+        ? matching.reduce((a: any, b: any) =>
+          String(b.created_at || '') >= String(a.created_at || '') ? b : a)
+        : null;
       if (run) {
         runStatus = String((run as any).status || '');
         const slips = await this.repo.getPayslipsByRunId((run as any).run_id);
