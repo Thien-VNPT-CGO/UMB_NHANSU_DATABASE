@@ -2370,6 +2370,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [scoringAnswers, setScoringAnswers] = useState<Record<string, number[]>>({});
   const [scoringBusy, setScoringBusy] = useState(false);
   const [approveBusyId, setApproveBusyId] = useState<string | null>(null);
+  // Đánh dấu/bỏ ưu tiên VIP (ứng viên ưu tiên vào việc sau khi phỏng vấn).
+  const [vipBusyId, setVipBusyId] = useState<string | null>(null);
   const [approveResult, setApproveResult] = useState<any | null>(null);
   // Sửa ca đăng ký inline khi ứng viên đăng ký từ 2 ca trở lên
   const [editingShiftId, setEditingShiftId] = useState<string | null>(null);
@@ -4598,6 +4600,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
                     <td style={{ padding: '14px 20px', fontWeight: 700 }}>
                       {c.full_name}
+                      {(c as any).vip && (
+                        <span style={{ marginLeft: '6px', fontSize: '10px', fontWeight: 800, padding: '2px 8px', borderRadius: '999px', backgroundColor: '#EDE9FE', color: '#7C3AED', border: '1px solid #C4B5FD' }}>
+                          👑 VIP
+                        </span>
+                      )}
                       <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{c.phone || c.phone_normalized}</div>
                     </td>
                     <td style={{ padding: '14px 20px' }}>
@@ -4864,6 +4871,39 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 title={disabledForFail ? (failInfo.remainingMs <= 0 ? 'Ứng viên Chưa đạt — đã quá 24h, hệ thống sẽ tự động xoá khỏi hệ thống' : 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)') : `Đã PASS rubric (${d.total}/${(d as any).achievableMax ?? d.max}) — duyệt thử việc + cấp PIN`}
                               >
                                 {approveBusyId === c.submission_id ? '⏳ Đang duyệt...' : '✅ Duyệt Thử việc'}
+                              </button>
+                            )}
+                            {isScored && (
+                              <button
+                                disabled={disabledForFail || vipBusyId === c.submission_id}
+                                style={{ ...btn2, backgroundColor: (c as any).vip ? '#7C3AED' : '#F59E0B', color: '#FFF', boxShadow: '0 2px 6px rgba(124,58,237,0.3)' }}
+                                onClick={async () => {
+                                  if (disabledForFail || vipBusyId) return;
+                                  const sid = String(c?.submission_id || '');
+                                  if (!sid) return;
+                                  const nextVip = !(c as any).vip;
+                                  if (!window.confirm(nextVip
+                                    ? `Đánh dấu ${c.full_name} là ỨNG VIÊN ƯU TIÊN vào việc?`
+                                    : `Bỏ ưu tiên VIP của ${c.full_name}?`)) return;
+                                  setVipBusyId(sid);
+                                  try {
+                                    await apiRequest(`/applications/${sid}`, {
+                                      method: 'PUT',
+                                      body: JSON.stringify({ vip: nextVip }),
+                                    });
+                                    showToast(nextVip
+                                      ? `👑 ${c.full_name} đã được đánh dấu ƯU TIÊN vào việc!`
+                                      : `Đã bỏ ưu tiên VIP của ${c.full_name}.`);
+                                    if (onRefreshData) await onRefreshData();
+                                  } catch (e: any) {
+                                    showToast(e?.message || 'Lỗi khi cập nhật VIP!');
+                                  } finally {
+                                    setVipBusyId(null);
+                                  }
+                                }}
+                                title={disabledForFail ? 'Ứng viên chưa đạt — chức năng bị khoá' : ((c as any).vip ? 'Bỏ ưu tiên VIP' : 'Đánh dấu ưu tiên vào việc (HR chọn sau khi phỏng vấn xong)')}
+                              >
+                                {vipBusyId === c.submission_id ? '⏳...' : ((c as any).vip ? '👑 Bỏ VIP' : '⭐ VIP')}
                               </button>
                             )}
                             {isAccepted && (

@@ -669,6 +669,12 @@ export class EmployeesService {
     if (updates.branch_name !== undefined) {
       allowed.branch_name = String(updates.branch_name || '').trim().slice(0, 200);
     }
+    // Đánh dấu ưu tiên vào việc (HR chọn sau khi phỏng vấn xong).
+    if (updates.vip !== undefined) {
+      allowed.vip = !!updates.vip;
+      allowed.vip_at = allowed.vip ? new Date().toISOString() : undefined;
+      allowed.vip_by = allowed.vip ? actorId : undefined;
+    }
     // Khôi phục ứng viên bị loại -> về MỚI (HR xem xét lại).
     if (updates.status === 'NEW') {
       const cur = (await this.repo.listCandidates().catch(() => []))

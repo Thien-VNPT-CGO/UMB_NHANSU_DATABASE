@@ -78,4 +78,8 @@ export interface CandidateApplication {
   ai_score?: number; // Điểm AI tự động chấm
   screening_result?: string; // Kết quả sàng lọc
   source_code?: string; // Mã nguồn
+  /** Ưu tiên vào việc: HR đánh dấu sau khi phỏng vấn xong. */
+  vip?: boolean;
+  vip_at?: string;
+  vip_by?: string;
 }
