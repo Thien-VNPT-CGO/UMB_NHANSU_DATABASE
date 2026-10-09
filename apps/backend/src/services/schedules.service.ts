@@ -704,6 +704,27 @@ export class SchedulesService {
             })
           );
         }
+        // Tự động hủy ca trùng ngày OFF thử việc: NV chọn OFF ngày X mà ngày X đã
+        // có ca xếp sẵn (VD ca thử việc cũ) → hủy ca đó (CANCELLED) để không bị
+        // cảnh báo "đã xếp ca trùng ngày OFF" trên lịch.
+        let cancelledShifts = 0;
+        try {
+          const existingShifts = await this.repo.getShiftsForEmployee(data.employeeId, windowDays[0], windowDays[11]);
+          for (const s of existingShifts) {
+            if (s.status === 'CANCELLED') continue;
+            const sd = normSheetDate(s.date);
+            if (!offSet.has(sd)) continue;
+            await this.repo.updateShiftAssignment(s.assignment_id, { status: 'CANCELLED' });
+            cancelledShifts++;
+          }
+        } catch { /* best-effort: OFF vẫn đăng ký, ca xử lý sau */ }
+        if (this.io && cancelledShifts > 0) {
+          this.io.to(`user:${data.employeeId}`).emit('data:updated', {
+            entity: 'schedules',
+            data: { action: 'auto-cancel-shift-on-probation-off', count: cancelledShifts },
+            timestamp: new Date().toISOString(),
+          });
+        }
         if (this.io) {
           for (const c of leaves) {
             this.io.to(`user:${c.employee_id}`).emit('leave.updated', {
