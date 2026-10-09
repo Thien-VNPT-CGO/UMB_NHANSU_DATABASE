@@ -112,6 +112,8 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
       'Zalo Lúc Gửi',
       'Điểm PV',
       'Chi Tiết Chấm',
+      'VIP',
+      'Hạng VIP',
     ],
   },
   {
@@ -1739,6 +1741,14 @@ export class GoogleSheetsSyncService {
                     if (d?.rubricId) (c as any).interview_rubric = d.rubricId;
                   } catch { /* giữ nguyên */ }
                 }
+                // VIP (cột 24/25): Sheet có thể chưa có cột này -> chỉ đọc khi có giá trị.
+                if (nz(mr[24]) === 'VIP') {
+                  (c as any).vip = true;
+                  const r = Number(nz(mr[25]));
+                  (c as any).vip_rank = Number.isFinite(r) && r > 0 ? r : ((c as any).vip_rank || 0);
+                } else if (nz(mr[24]) === '' && (c as any).vip !== true) {
+                  (c as any).vip = false;
+                }
               }
             }
           }
@@ -2124,6 +2134,8 @@ export class GoogleSheetsSyncService {
           (c as any).zalo_invite_at || '',
           (c as any).interview_score ?? '',
           (c as any).interview_score_detail || '',
+          (c as any).vip ? 'VIP' : '',
+          (c as any).vip_rank !== undefined && (c as any).vip_rank !== null ? String((c as any).vip_rank) : '',
         ]);
         await this.overwriteSheetData('FROM_NHAN_VIEN', candHeaders, candRows);
         details.candidates = candRows.length;
@@ -2390,6 +2402,8 @@ export class GoogleSheetsSyncService {
       (c as any).zalo_invite_at || '',
       (c as any).interview_score ?? '',
       (c as any).interview_score_detail || '',
+      (c as any).vip ? 'VIP' : '',
+      (c as any).vip_rank !== undefined && (c as any).vip_rank !== null ? String((c as any).vip_rank) : '',
     ]);
     await this.overwriteSheetData('FROM_NHAN_VIEN', candHeaders, candRows);
     return candRows.length;
