@@ -2208,6 +2208,33 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     return () => window.removeEventListener('ubm:adjustments-reload', adjHandler);
   }, [activeTab]);
   useEffect(() => {
+    // Realtime lịch tuần 100%: App.tsx phát 'ubm:schedule-reload' khi socket báo
+    // schedules/swaps/leaves/attendance — máy khác bấm nút là tab Lịch ở máy này
+    // tải lại ca + điểm danh ngay tức thì.
+    let timer: any = null;
+    let loading = false;
+    const handler = () => {
+      if (activeTab !== 'hr-schedule' && activeTab !== 'operations') return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(async () => {
+        if (loading) return;
+        loading = true;
+        try {
+          await reloadAttEvents();
+          if (typeof onRefreshData === 'function') await onRefreshData();
+        } catch { /* lần sau */ } finally {
+          loading = false;
+        }
+      }, 300);
+    };
+    window.addEventListener('ubm:schedule-reload', handler);
+    return () => {
+      window.removeEventListener('ubm:schedule-reload', handler);
+      if (timer) clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+  useEffect(() => {
     // Realtime phiếu lương: App.tsx phát 'ubm:payslips-reload' khi socket báo
     // data:updated(payroll/payslips) — máy khác bấm Ký/Gửi/Hoàn/Duyệt/Chi trả
     // là bảng phiếu ở máy này tải lại ngay, không cần F5 hay đổi tab.
@@ -2662,14 +2689,30 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     return () => clearInterval(t);
   }, [activeTab]);
   useEffect(() => {
-    // Lưới lịch cũng tự refresh 60s để trạng thái ca (vắng/khóa/hoàn thành) luôn khớp server
+    // Lưới lịch tự refresh để trạng thái ca (vắng/khóa/hoàn thành) luôn khớp server
+    // NGAY LẬP TỨC: tải cả điểm danh + ca/nghỉ (poll cũ chỉ tải điểm danh nên socket
+    // ngủ là lịch đứng hình), tải ngay khi vào tab/quay lại màn hình, rồi poll 30s.
     if (activeTab !== 'hr-schedule' && activeTab !== 'operations') return;
-    const t = setInterval(() => {
+    const load = () => {
       apiRequest('/attendance/events')
         .then((data) => setLiveAttendanceEvents(Array.isArray(data) ? data : []))
         .catch(() => {});
-    }, 60000);
-    return () => clearInterval(t);
+      try {
+        const r = (typeof onRefreshData === 'function' ? onRefreshData() : null) as any;
+        if (r && typeof r.catch === 'function') r.catch(() => null);
+      } catch { /* bỏ qua */ }
+    };
+    load();
+    const t = setInterval(load, 30000);
+    const onVis = () => { if (document.visibilityState === 'visible') load(); };
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', onVis);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('focus', onVis);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
   useEffect(() => {
     // Realtime điểm danh 100%: App.tsx phát 'ubm:attendance-reload' khi socket báo

@@ -1021,6 +1021,14 @@ export function App() {
               window.dispatchEvent(new CustomEvent('ubm:swaps-reload'));
             } catch { /* non-fatal */ }
           }
+          // Realtime lịch tuần: backend bắn data:updated(schedules/swaps/leaves)
+          // sau mọi nút xếp/publish/đổi ca/duyệt OFF — báo cho tab Lịch tải lại
+          // ca + điểm danh ngay, không chờ vòng tải chung.
+          if (payload?.entity === 'schedules' || payload?.entity === 'swaps' || payload?.entity === 'leaves' || payload?.entity === 'attendance' || payload?.entity === 'all') {
+            try {
+              window.dispatchEvent(new CustomEvent('ubm:schedule-reload'));
+            } catch { /* non-fatal */ }
+          }
           if (payload?.entity === 'adjustments' || payload?.entity === 'all') {
             try {
               window.dispatchEvent(new CustomEvent('ubm:adjustments-reload'));
