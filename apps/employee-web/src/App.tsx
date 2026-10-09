@@ -3220,9 +3220,10 @@ export function App() {
                   ? (isProbation ? 'Nghỉ OFF thử việc' : 'Nghỉ OFF tuần')
                   : 'Không có ca';
 
-                // Trạng thái 1 ca
+                // Trạng thái 1 ca (điểm danh tính gộp cả ca trùng đã gộp _mergedAids)
                 const shiftStatusOf = (sh: any) => {
-                  const evts = (myAttendanceHistory || []).filter((e: any) => e.assignment_id === sh.assignment_id);
+                  const aids = [(sh as any).assignment_id, ...((sh as any)._mergedAids || [])].filter(Boolean);
+                  const evts = (myAttendanceHistory || []).filter((e: any) => aids.length > 0 ? aids.includes((e as any).assignment_id) : (e as any).assignment_id === sh.assignment_id);
                   const hasIn = evts.some((e: any) => e.type === 'CHECK_IN');
                   const hasOut = evts.some((e: any) => e.type === 'CHECK_OUT');
                   const absent = evts.some((e: any) => e.type === 'ABSENT');
@@ -3486,7 +3487,31 @@ export function App() {
                         const isToday = d === todayStr;
                         const isMilestone = isProbation && days[0] === d;
                         const offs = (schedRangeLeaves || []).filter((l: any) => toISODate(l.requested_date) === d);
-                        const shs = rangeShifts.filter((s: any) => String(s.date || '').slice(0, 10) === d);
+                        const shsRaw = rangeShifts.filter((s: any) => String(s.date || '').slice(0, 10) === d);
+                        // Gộp ca trùng cùng shift_code trong ngày (ca DRAFT ma + ca thật):
+                        // 1 thẻ duy nhất, điểm danh tính gộp — hết thẻ ma "Thiếu check-out".
+                        const shs: any[] = [];
+                        {
+                          const byCode = new Map<string, any[]>();
+                          for (const sh of shsRaw) {
+                            const k = String((sh as any).shift_code || '');
+                            if (!byCode.has(k)) byCode.set(k, []);
+                            byCode.get(k)!.push(sh);
+                          }
+                          for (const [, group] of byCode) {
+                            if (group.length === 1) { shs.push(group[0]); continue; }
+                            const hasIn = (s: any) => (myAttendanceHistory || []).some((e: any) => (e as any).assignment_id === s.assignment_id && (e as any).type === 'CHECK_IN');
+                            const ranked = [...group].sort((a: any, b: any) => {
+                              const ai = hasIn(a) ? 0 : 1;
+                              const bi = hasIn(b) ? 0 : 1;
+                              if (ai !== bi) return ai - bi;
+                              return ((a as any).status === 'PUBLISHED' ? 0 : 1) - ((b as any).status === 'PUBLISHED' ? 0 : 1);
+                            });
+                            const base = ranked[0];
+                            (base as any)._mergedAids = group.map((g: any) => g.assignment_id).filter(Boolean);
+                            shs.push(base);
+                          }
+                        }
                         const isOffDay = offDaysSet.has(d);
 
                         return (
@@ -3583,13 +3608,13 @@ export function App() {
                               ))}
 
                               {/* 2. Shifts Ticket */}
-                              {shs.map((sh: any) => {
+                              {shs.map((sh: any, si: number) => {
                                 const st = shiftStatusOf(sh);
                                 const meta = getShiftMeta(sh.shift_code, sh.start_at, sh.end_at);
 
                                 return (
                                   <div
-                                    key={sh.assignment_id}
+                                    key={`${sh.assignment_id || 'noid'}-${si}`}
                                     style={{
                                       backgroundColor: meta.bg,
                                       border: `1px solid ${meta.border}`,
