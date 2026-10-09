@@ -657,6 +657,21 @@ export class EmployeesService {
 
   /** Cập nhật thông tin ứng viên (ca đăng ký, chi nhánh...): whitelist chặt. */
   async updateCandidateFields(submissionId: string, updates: any, actorId: string) {
+    // VIP rank cần đọc snapshot cùng chi nhánh rồi tính hạng — bắt buộc đi qua
+    // hàng đợi ghi tuần tự, nếu không 2 lần bấm VIP liên tiếp sẽ đọc cùng 1
+    // snapshot → cả 2 đều ra rank 1 → VIP 2 ghi đè VIP 1 (tưởng "mất VIP").
+    if (updates.vip !== undefined) {
+      return singleWriterQueue.enqueue({
+        entityType: 'UNG_VIEN',
+        entityId: submissionId,
+        actorId,
+        execute: () => this.updateCandidateFieldsInternal(submissionId, updates, actorId),
+      }).then((r: any) => r.result);
+    }
+    return this.updateCandidateFieldsInternal(submissionId, updates, actorId);
+  }
+
+  private async updateCandidateFieldsInternal(submissionId: string, updates: any, actorId: string) {
     const allowed: any = {};
     if (updates.registered_shift !== undefined) {
       const v = String(updates.registered_shift || '').trim().slice(0, 200);
