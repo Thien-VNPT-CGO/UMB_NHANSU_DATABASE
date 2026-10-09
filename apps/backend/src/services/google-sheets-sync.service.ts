@@ -2368,6 +2368,31 @@ export class GoogleSheetsSyncService {
   }
 
   /**
+   * Đẩy riêng tab DON_NGHI_PHEP (await được): dùng sau mọi mutation OFF
+   * (đăng ký/hủy/đồng bộ) để trạng thái CANCELLED/APPROVED bền vững trên Sheet
+   * NGAY trong cùng request — pull nền sau đó không hồi sinh OFF đã hủy
+   * (lịch lại báo ca trùng OFF oan).
+   */
+  public async pushLeavesTab(repo: { listLeaveRequests(branch?: string, employee?: string): Promise<any[]> }): Promise<number> {
+    const leaves = await repo.listLeaveRequests().catch(() => []);
+    const leaveRows = (leaves || []).map((l: any) => ([
+      l.request_id,
+      l.employee_id,
+      l.branch_id,
+      l.leave_type,
+      sheetDateText(l.requested_date),
+      l.shift_code || '',
+      l.reason,
+      l.status,
+      l.reviewed_by || '',
+      l.review_note || '',
+      l.created_at,
+    ]));
+    await this.overwriteSheetData('DON_NGHI_PHEP', SHEETS_DEFINITIONS.find(d => d.title === 'DON_NGHI_PHEP')!.headers, leaveRows);
+    return leaveRows.length;
+  }
+
+  /**
    * Đẩy riêng tab SU_KIEN_DIEM_DANH (await được): dùng sau khi xóa vi phạm/phạt
    * trên lượt check-in/out để Sheet khớp ngay, pull sau không hồi sinh mức phạt cũ.
    */

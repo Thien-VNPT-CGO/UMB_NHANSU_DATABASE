@@ -399,6 +399,25 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   setTimeout(weeklyOffClampTickSafe, 150_000);
   setInterval(weeklyOffClampTickSafe, 5 * 60_000);
 
+  // Tự đồng bộ ca trùng OFF cũ: ca làm trùng ngày OFF của cùng NV (từ hôm nay)
+  // thì ngày OFF thành ca làm — chạy sau pull đầu + mỗi 60s, không cần HR bấm nút.
+  // Có thay đổi -> bắn realtime để lịch 2 cổng hết cảnh báo trùng ngay.
+  const shiftOffSyncTickSafe = () => {
+    (services.schedulesService as any).syncShiftOffOverlaps('SYSTEM', false)
+      .then((r: any) => {
+        if (r && r.cancelledCount > 0) {
+          console.log(`[shift-off-sync] Đã chuyển ${r.cancelledCount} ngày OFF trùng ca thành ca làm việc.`);
+          try {
+            io.emit('data:updated', { entity: 'leaves', data: { action: 'shift-off-overlap-sync', cancelled: r.cancelledCount }, timestamp: new Date().toISOString() });
+            io.emit('data:updated', { entity: 'schedules', data: { action: 'shift-off-overlap-sync', cancelled: r.cancelledCount }, timestamp: new Date().toISOString() });
+          } catch { /* non-fatal */ }
+        }
+      })
+      .catch((err: any) => console.warn('[shift-off-sync] tick error:', err?.message || err));
+  };
+  setTimeout(shiftOffSyncTickSafe, 150_000);
+  setInterval(shiftOffSyncTickSafe, 60_000);
+
   // Nhắc HR trước giờ PV 15 phút (mỗi 60s): inbox bền vững + popup realtime.
   const interviewReminderTickSafe = () => {
     interviewReminderTick(adapter, services.notificationsService, Date.now())

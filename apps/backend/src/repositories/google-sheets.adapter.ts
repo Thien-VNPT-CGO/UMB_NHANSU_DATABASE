@@ -610,7 +610,20 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async updateLeaveRequest(id: string, status: any, reviewerId: string, note?: string) {
     const res = await this.fallbackAdapter.updateLeaveRequest(id, status, reviewerId, note);
-    this.scheduleFullSync('DON_NGHI_PHEP.update');
+    // Đẩy tab nghỉ phép đồng bộ để CANCELLED/APPROVED bền vững ngay (đúng ý
+    // comment của pushLeavesTab): pull sau không hồi sinh OFF đã hủy.
+    if (this.isConfigured) {
+      try {
+        await Promise.race([
+          this.syncService.pushLeavesTab(this.fallbackAdapter).catch(() => 0),
+          new Promise<number>(r => setTimeout(() => r(0), 15000)),
+        ]);
+      } catch {
+        this.scheduleFullSync('DON_NGHI_PHEP.update-retry');
+      }
+    } else {
+      this.scheduleFullSync('DON_NGHI_PHEP.update');
+    }
     return res;
   }
 
