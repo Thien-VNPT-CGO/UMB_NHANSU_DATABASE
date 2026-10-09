@@ -263,6 +263,20 @@ export class GoogleSheetsSyncService {
   /** Minimum interval between write requests to stay under 60 writes/minute quota. */
   private static readonly WRITE_RATE_LIMIT_MS = 1100;
 
+  /** Số cột (1-based) -> chữ cột Sheets (1=A ... 26=Z, 27=AA, 39=AM...).
+   *  Mọi range cứng A1:Z/A2:Z cũ đều vỡ với tab >26 cột (PHIEU_LUONG 39 cột,
+   *  FROM_NHAN_VIEN 26 cột) — ghi thì 400, đọc thì mất cột AA+. */
+  public static colLetter(n: number): string {
+    let s = '';
+    let x = Math.max(1, Math.floor(n));
+    while (x > 0) {
+      const m = (x - 1) % 26;
+      s = String.fromCharCode(65 + m) + s;
+      x = Math.floor((x - 1) / 26);
+    }
+    return s;
+  }
+
   /** Bọc mọi gọi Google API bằng timeout + rate limiting cho write operations. */
   private async sheetsCall<T>(label: string, fn: () => Promise<T>, ms = 20000): Promise<T> {
     const isWrite = label.startsWith('write.') || label.startsWith('append.') || label.startsWith('clear.') || label === 'init.batchUpdate';
@@ -435,7 +449,7 @@ export class GoogleSheetsSyncService {
         await this.sheetsCall(`init.header.${def.title}`, () =>
           this.sheetsClient!.spreadsheets.values.update({
             spreadsheetId: this.spreadsheetId,
-            range: `'${def.title}'!A1:Z1`,
+            range: `'${def.title}'!A1:${GoogleSheetsSyncService.colLetter(def.headers.length)}1`,
             valueInputOption: 'USER_ENTERED',
             requestBody: {
               values: [def.headers],
@@ -1519,7 +1533,7 @@ export class GoogleSheetsSyncService {
               const candRes: any = await this.sheetsCall('read.candidates', () =>
                 this.sheetsClient!.spreadsheets.values.get({
                   spreadsheetId: this.candidateSpreadsheetId,
-                  range: `'${targetSheetTitle}'!A1:X`,
+                  range: `'${targetSheetTitle}'!A1:ZZ`,
                 }) as any, 25000);
               candRows = (candRes.data.values as string[][]) || [];
             }
@@ -1534,7 +1548,7 @@ export class GoogleSheetsSyncService {
             const candRes: any = await this.sheetsCall('read.candidatesMaster', () =>
               this.sheetsClient!.spreadsheets.values.get({
                 spreadsheetId: this.spreadsheetId,
-                range: `'FROM_NHAN_VIEN'!A1:X`,
+                range: `'FROM_NHAN_VIEN'!A1:ZZ`,
               }) as any, 25000);
             if (candRes.data.values && candRes.data.values.length > 1) {
               candRows = candRes.data.values as string[][];
@@ -1690,7 +1704,7 @@ export class GoogleSheetsSyncService {
             const mRes: any = await this.sheetsCall('read.candidatesOverlay', () =>
               this.sheetsClient!.spreadsheets.values.get({
                 spreadsheetId: this.spreadsheetId,
-                range: `'FROM_NHAN_VIEN'!A1:X`,
+                range: `'FROM_NHAN_VIEN'!A1:ZZ`,
               }) as any, 25000);
             const mRows = (mRes.data.values as string[][]) || [];
             if (mRows.length > 1) {
@@ -1791,7 +1805,7 @@ export class GoogleSheetsSyncService {
       const res = await this.sheetsCall(`read.${sheetTitle}`, () =>
         this.sheetsClient!.spreadsheets.values.get({
           spreadsheetId: this.spreadsheetId,
-          range: `'${sheetTitle}'!A2:Z`,
+          range: `'${sheetTitle}'!A2:ZZ`,
         })
       );
       return (res.data.values as string[][]) || [];
@@ -1812,7 +1826,7 @@ export class GoogleSheetsSyncService {
       const res = await this.sheetsCall('read.batchGet', () =>
         this.sheetsClient!.spreadsheets.values.batchGet({
           spreadsheetId: this.spreadsheetId,
-          ranges: sheetTitles.map(t => `'${t}'!A2:Z`),
+          ranges: sheetTitles.map(t => `'${t}'!A2:ZZ`),
         })
       );
       const groups = res.data.valueRanges || [];
@@ -2781,12 +2795,13 @@ export class GoogleSheetsSyncService {
       throw e;
     }
 
-    // Xóa đuôi thừa khi dữ liệu mới ngắn hơn cũ (tránh dòng ma).
+    // Xóa đuôi thừa khi dữ liệu mới ngắn hơn cũ (tránh dòng ma). Clear tới ZZ
+    // để tab >26 cột (PHIEU_LUONG 39 cột) cũng sạch đuôi ở cột AA+.
     try {
       await this.sheetsCall(`clear.${sheetTitle}`, () =>
         this.sheetsClient!.spreadsheets.values.clear({
           spreadsheetId: this.spreadsheetId,
-          range: `'${sheetTitle}'!A${allValues.length + 1}:Z`,
+          range: `'${sheetTitle}'!A${allValues.length + 1}:ZZ`,
         })
       );
     } catch (e) {
