@@ -2580,6 +2580,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
   // Live Attendance Events State for HR Realtime Tab 11
   const [liveAttendanceEvents, setLiveAttendanceEvents] = useState<any[]>([]);
+  // Gộp realtime + kho lưu trữ (tuần cũ): DÙNG CHUNG cho mọi tab (Lịch tuần +
+  // Bảng chấm công realtime) để 2 tab luôn giống nhau 100%. Trước đây mỗi tab
+  // tự viết 1 bản merge riêng nên lệch nhau khi archiveEvents thay đổi.
+  const mergeWithArchive = (live: any[], archive: any[]) => {
+    if (!archive || archive.length === 0) return live || [];
+    const seen = new Set<string>((live || []).map((e: any) => String(e.event_id)));
+    const extra = (archive || []).filter((e: any) => !seen.has(String(e.event_id)));
+    return extra.length > 0 ? [...(live || []), ...extra] : (live || []);
+  };
   // Lọc lịch sử thông báo HR theo nguồn
   const [notifFilter, setNotifFilter] = useState('ALL');
   // Lưới tuần cần sự kiện cả tuần -> luôn tải không lọc ngày, tự refresh 30s
@@ -6887,12 +6896,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const todayItem = weekDays.find((d) => d.isToday) || weekDays[0];
 
     // Gộp realtime + kho lưu trữ (tuần cũ): ô ngày cũ hiện đủ giờ in/out.
-    const schedAllEvents = (() => {
-      if (!archiveEvents || archiveEvents.length === 0) return liveAttendanceEvents || [];
-      const seen = new Set<string>((liveAttendanceEvents || []).map((e: any) => String(e.event_id)));
-      const extra = (archiveEvents || []).filter((e: any) => !seen.has(String(e.event_id)));
-      return extra.length > 0 ? [...(liveAttendanceEvents || []), ...extra] : (liveAttendanceEvents || []);
-    })();
+    // mergeWithArchive khai báo ở scope chung (trên) — 2 tab dùng chung 100%.
+    const schedAllEvents = mergeWithArchive(liveAttendanceEvents, archiveEvents);
     // Gộp lịch ca realtime + lịch ca tuần cũ (khử trùng theo assignment_id) và loại bỏ ca của NV bị khóa.
     const schedAllShifts = (() => {
       const base = (() => {
@@ -8858,12 +8863,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     })();
     const attWeekShifts = (attBaseShifts || []).filter((s: any) => attWeekSet.has((s.date || '').slice(0, 10)) && s.status !== 'CANCELLED');
     // Tuần cũ: gộp thêm sự kiện từ kho lưu trữ để đủ ngày công tính lương.
-    const attAllEvts = (() => {
-      if (!archiveEvents || archiveEvents.length === 0) return liveAttendanceEvents || [];
-      const seen = new Set<string>((liveAttendanceEvents || []).map((e: any) => String(e.event_id)));
-      const extra = (archiveEvents || []).filter((e: any) => !seen.has(String(e.event_id)));
-      return extra.length > 0 ? [...(liveAttendanceEvents || []), ...extra] : (liveAttendanceEvents || []);
-    })();
+    // Dùng chung hàm mergeWithArchive với tab Lịch tuần → 2 tab luôn giống nhau.
+    const attAllEvts = mergeWithArchive(liveAttendanceEvents, archiveEvents);
     const attWeekEvts = (attAllEvts || []).filter((e: any) => attWeekSet.has(vnDayOf(e.client_time || '')));
     const attSwapAll = ((typeof swapList !== 'undefined' && swapList !== null ? swapList : (swaps || [])) as any[]) || [];
     // Phiếu đổi ca liên quan 1 ca: bỏ phiếu chết (REJECTED/CANCELLED), ưu tiên
