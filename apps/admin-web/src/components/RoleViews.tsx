@@ -2688,6 +2688,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // làm chuẩn): cùng tập ca (realtime + kho lưu trữ, trừ ca NV bị khóa), cùng
   // tập sự kiện, cùng thứ tự chi nhánh + ca. Tab nào cũng thấy đúng từng NV
   // từng ca, realtime 100%.
+  // (lockedEmpIds khai báo TẠI ĐÂY — trước mọi chỗ dùng — vì khối chung chạy
+  // ngay khi render, khai báo sau sẽ gây lỗi TDZ trắng trang.)
+  const [lockedEmpIds, setLockedEmpIds] = useState<Set<string>>(new Set());
   // Thứ tự chi nhánh cố định: CN1 (130 Vạn Kiếp) → CN2 (261 Tô Hiến Thành) →
   // CN3 (120 Hoàng Diệu 2) → CN4 (111 Tôn Đản).
   const BRANCH_RANK: Record<string, number> = { CN130: 1, CN261: 2, CN120: 3, CN111: 4 };
@@ -2886,7 +2889,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Khóa/mở tài khoản NV chính thức (HR): busy theo NV + kết quả PIN mới sau mở khóa.
   const [lockBusyId, setLockBusyId] = useState<string | null>(null);
   const [unlockPinResult, setUnlockPinResult] = useState<{ name: string; code: string; pin: string } | null>(null);
-  const [lockedEmpIds, setLockedEmpIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     const onLockedEv = (ev: any) => {
