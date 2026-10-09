@@ -940,6 +940,28 @@ export class SchedulesService {
       entityId: swapId,
       actorId: data.actorId,
       execute: async () => {
+        // HR tạo phiếu hỗ trợ ca vào ngày người nhận đã đăng ký OFF → tự động
+        // hủy ngày OFF đó (đi làm thì không còn OFF), tránh cảnh báo ca trùng OFF.
+        const receiverId = String((shift as any).employee_id || '');
+        const shiftDate = String((shift as any).date || '').slice(0, 10);
+        let cancelledOffNote = '';
+        if (receiverId && shiftDate) {
+          const leaves = await this.repo.listLeaveRequests(undefined, receiverId).catch(() => []);
+          for (const l of leaves || []) {
+            const ld = String((l as any).requested_date || '').slice(0, 10);
+            const st = String((l as any).status || '');
+            if (ld !== shiftDate) continue;
+            if (st !== 'APPROVED' && st !== 'PENDING') continue;
+            await this.repo.updateLeaveRequest(
+              (l as any).request_id,
+              'CANCELLED',
+              'SYSTEM',
+              `Tự động hủy: HR hỗ trợ ca làm ngày ${shiftDate} — đi làm thì không còn OFF.`
+            ).catch(() => null);
+            const kind = (l as any).leave_type === 'HANG_TUAN' ? 'ngày OFF' : 'đơn nghỉ';
+            cancelledOffNote = `Ngày ${kind} ${shiftDate} của nhân viên đã tự động hủy vì được hỗ trợ ca làm.`;
+          }
+        }
         const swap = await this.repo.createSwapRequest({
           swap_id: swapId,
           swap_kind: 'HR_DISPATCH',
@@ -958,6 +980,15 @@ export class SchedulesService {
             status: 'PENDING_PARTNER',
             kind: 'HR_DISPATCH',
           });
+          if (cancelledOffNote) {
+            this.io.to(`user:${receiverId}`).emit('system:notification', {
+              type: 'SYSTEM',
+              origin: 'ADMIN',
+              title: '📅 Ngày OFF đã tự động hủy',
+              message: cancelledOffNote,
+              timestamp: new Date().toISOString(),
+            });
+          }
         }
 
         return swap;
