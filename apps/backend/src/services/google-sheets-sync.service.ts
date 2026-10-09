@@ -1633,6 +1633,11 @@ export class GoogleSheetsSyncService {
             const prev = prevById.get(submissionId) || {};
             // Sheet form gốc không có trạng thái -> 'NEW'/trống thì giữ trạng thái bộ nhớ (INVITED...)
             const status = (rawStatus && rawStatus !== 'NEW' ? rawStatus : (prev.status && prev.status !== 'NEW' ? prev.status : (rawStatus || 'NEW'))) as any;
+            // VIP (ưu tiên vào việc) là trường vận hành do HR đánh dấu trên hệ thống,
+            // Sheet form không có cột này -> phải overlay từ bộ nhớ, nếu không pull nền
+            // (~10s) sẽ xóa mất toàn bộ VIP/VIP rank.
+            const vip = prev.vip === true;
+            const vipRank = vip ? (Number(prev.vip_rank) || 0) : undefined;
 
             return {
               submission_id: submissionId,
@@ -1645,6 +1650,10 @@ export class GoogleSheetsSyncService {
               zalo_invite_status: getVal(colZaloStatus) || prev.zalo_invite_status || undefined,
               zalo_invite_at: getVal(colZaloAt) || prev.zalo_invite_at || undefined,
               zalo_uid: prev.zalo_uid || undefined,
+              vip,
+              vip_rank: vipRank,
+              vip_at: prev.vip_at || undefined,
+              vip_by: prev.vip_by || undefined,
               full_name: fullName,
               phone_normalized: phoneNormalized,
               phone,
