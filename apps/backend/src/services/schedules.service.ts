@@ -107,7 +107,7 @@ export class SchedulesService {
       entityId: assignmentId,
       actorId: data.actorId,
       execute: async () => {
-        return this.repo.createShiftAssignment({
+        const shift = await this.repo.createShiftAssignment({
           assignment_id: assignmentId,
           employee_id: data.employeeId,
           branch_id: data.branchId,
@@ -118,6 +118,26 @@ export class SchedulesService {
           status: 'DRAFT',
           schedule_version: 1,
         });
+        // HR/Store xếp ca vào đúng ngày NV đã đăng ký OFF → ngày OFF đó lập tức
+        // chuyển thành ca làm việc (tự hủy OFF, tránh cảnh báo ca trùng ngày OFF).
+        const offNotes = await this.cancelReceiverLeavesOnWorkDay(data.employeeId, data.date);
+        if (this.io) {
+          this.io.emit('data:updated', {
+            entity: 'schedules',
+            data: { action: 'create-shift', assignmentId },
+            timestamp: new Date().toISOString(),
+          });
+          if (offNotes.length > 0) {
+            this.io.to(`user:${data.employeeId}`).emit('system:notification', {
+              type: 'SYSTEM',
+              origin: 'ADMIN',
+              title: '📅 Ngày OFF đã chuyển thành ca làm việc',
+              message: `${offNotes.join(' ')} (HR đã xếp ${data.shiftCode} ngày ${String(data.date).slice(0, 10)} cho bạn).`,
+              timestamp: new Date().toISOString(),
+            });
+          }
+        }
+        return shift;
       },
     });
   }
@@ -148,6 +168,24 @@ export class SchedulesService {
               schedule_version: shift.schedule_version + 1,
             });
             updatedShifts.push(updated);
+            // Ca được chốt publish mà trùng ngày OFF đã duyệt → ngày OFF đó lập tức
+            // chuyển thành ca làm việc (tự hủy OFF, tránh cảnh báo ca trùng ngày OFF).
+            try {
+              const notes = await this.cancelReceiverLeavesOnWorkDay(
+                String((shift as any).employee_id || ''),
+                String((shift as any).date || '').slice(0, 10));
+              for (const n of notes) {
+                if (this.io) {
+                  this.io.to(`user:${String((shift as any).employee_id || '')}`).emit('system:notification', {
+                    type: 'SYSTEM',
+                    origin: 'ADMIN',
+                    title: '📅 Ngày OFF đã chuyển thành ca làm việc',
+                    message: `${n} (Lịch tuần đã được phát hành).`,
+                    timestamp: new Date().toISOString(),
+                  });
+                }
+              }
+            } catch { /* best-effort: ca vẫn publish, OFF xử lý sau */ }
           }
         }
 
