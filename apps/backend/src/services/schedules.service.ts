@@ -94,6 +94,13 @@ export class SchedulesService {
     date: string;
     actorId: string;
   }) {
+    // Validate cứng ngay từ đầu: mã ca phải có trong template, ngày YYYY-MM-DD.
+    if (!SHIFT_TEMPLATES[data.shiftCode]) {
+      throw new Error(`Mã ca ${data.shiftCode || '?'} không hợp lệ!`);
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(data.date || '').slice(0, 10))) {
+      throw new Error(`Ngày ${data.date || '?'} phải dạng YYYY-MM-DD!`);
+    }
     const template = SHIFT_TEMPLATES[data.shiftCode];
     const startHourStr = template.start_hour.toString().padStart(2, '0');
     const endHourStr = template.end_hour.toString().padStart(2, '0');
@@ -419,7 +426,7 @@ export class SchedulesService {
       if (!emp || emp.employment_status === 'TERMINATED') continue;
       const sh = (shifts || []).find((s: any) =>
         String((s as any).employee_id || '') === empId &&
-        String((s as any).date || '').slice(0, 10) === d &&
+        normSheetDate((s as any).date) === d &&
         (s as any).status !== 'CANCELLED');
       if (!sh) continue;
       items.push({
@@ -582,7 +589,7 @@ export class SchedulesService {
       entityId: requestId,
       actorId: data.employeeId,
       execute: async () => {
-        return this.repo.createLeaveRequest({
+        const created = await this.repo.createLeaveRequest({
           request_id: requestId,
           employee_id: data.employeeId,
           branch_id: data.branchId,
@@ -599,6 +606,18 @@ export class SchedulesService {
               }
             : {}),
         });
+        // OFF tuần tự duyệt ngay → ca trùng ngày đó (nếu có) tự hủy để lịch gọn.
+        if (created.status === 'APPROVED') {
+          const notes = await this.cancelShiftsOnLeaveDay(data.employeeId, data.requestedDate);
+          if (this.io && notes.length > 0) {
+            this.io.to(`user:${data.employeeId}`).emit('data:updated', {
+              entity: 'schedules',
+              data: { action: 'auto-cancel-shift-on-leave', notes },
+              timestamp: new Date().toISOString(),
+            });
+          }
+        }
+        return created;
       },
     });
   }
@@ -759,8 +778,8 @@ export class SchedulesService {
         (l as any).leave_type === 'THU_VIEC' &&
         l.status !== 'REJECTED' &&
         l.status !== 'CANCELLED' &&
-        l.requested_date >= windowDays[0] &&
-        l.requested_date <= windowDays[11]
+        normSheetDate(l.requested_date) >= windowDays[0] &&
+        normSheetDate(l.requested_date) <= windowDays[11]
     );
     if (already.length > 0) {
       throw new Error('Bạn đã đăng ký 5 ngày OFF thử việc rồi! Muốn đổi ngày liên hệ Store/HR.');
@@ -799,7 +818,7 @@ export class SchedulesService {
         const shifts = [];
         for (const date of workDays) {
           const dup = await this.repo.getShiftsForEmployee(data.employeeId, date, date);
-          if (dup.some(s => s.date === date)) continue;
+          if (dup.some(s => normSheetDate(s.date) === date)) continue;
           shifts.push(
             await this.repo.createShiftAssignment({
               assignment_id: `SHIFT_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
@@ -910,7 +929,7 @@ export class SchedulesService {
         if (existing.some(s => s.shift_code === data.shiftCode)) {
           throw new Error(`Ca ${data.shiftCode} ngày ${date} đã có rồi — hãy chọn ca khác!`);
         }
-        return this.repo.createShiftAssignment({
+        const created = await this.repo.createShiftAssignment({
           assignment_id: `SHIFT_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
           employee_id: data.employeeId,
           branch_id: branchId,
@@ -921,6 +940,19 @@ export class SchedulesService {
           status: 'PUBLISHED',
           schedule_version: 1,
         });
+        // NV tự nguyện thêm ca vào đúng ngày OFF của mình → ngày OFF đó tự hủy
+        // (đi làm thì không còn OFF), lịch gọn ngay.
+        const offNotes = await this.cancelReceiverLeavesOnWorkDay(data.employeeId, date);
+        if (this.io && offNotes.length > 0) {
+          this.io.to(`user:${data.employeeId}`).emit('system:notification', {
+            type: 'SYSTEM',
+            origin: 'ADMIN',
+            title: '📅 Ngày OFF đã chuyển thành ca làm việc',
+            message: `${offNotes.join(' ')} (Bạn đã tự thêm ca ${data.shiftCode} ngày ${date}).`,
+            timestamp: new Date().toISOString(),
+          });
+        }
+        return created;
       },
     });
   }
@@ -965,6 +997,21 @@ export class SchedulesService {
           return healed;
         }
         const updated = await this.repo.updateLeaveRequest(requestId, status, reviewerId, note);
+        // Duyệt NGHỈ → ca trùng ngày đó (nếu có) tự hủy để lịch gọn, realtime ngay.
+        if (status === 'APPROVED') {
+          const notes = await this.cancelShiftsOnLeaveDay(
+            String((updated as any).employee_id || ''),
+            String((updated as any).requested_date || ''));
+          if (this.io) {
+            if (notes.length > 0) {
+              this.io.emit('data:updated', {
+                entity: 'schedules',
+                data: { action: 'auto-cancel-shift-on-approve', requestId, notes },
+                timestamp: new Date().toISOString(),
+              });
+            }
+          }
+        }
 
         if (this.io) {
           this.io.to(`user:${updated.employee_id}`).emit('leave.updated', {
@@ -1200,6 +1247,27 @@ export class SchedulesService {
   }
 
   /**
+   * Ngược với cancelReceiverLeavesOnWorkDay: ngày được duyệt NGHỈ mà đang có ca
+   * làm trùng ngày đó thì TỰ ĐỘNG HỦY ca (CANCELLED) — nghỉ thì không còn ca.
+   * So ngày sau chuẩn hóa để không lọt định dạng locale/serial Sheets.
+   */
+  private async cancelShiftsOnLeaveDay(employeeId: string, date: string): Promise<string[]> {
+    const notes: string[] = [];
+    try {
+      const day = normSheetDate(date);
+      if (!employeeId || !day) return notes;
+      const shifts = await this.repo.getShiftsForEmployee(employeeId, day, day).catch(() => []);
+      for (const s of shifts || []) {
+        if (normSheetDate((s as any).date) !== day) continue;
+        if ((s as any).status === 'CANCELLED') continue;
+        await this.repo.updateShiftAssignment((s as any).assignment_id, { status: 'CANCELLED' }).catch(() => null);
+        notes.push(`Ca ${(s as any).shift_code} ngày ${day} đã tự động hủy vì bạn nghỉ.`);
+      }
+    } catch { /* best-effort: đơn nghỉ vẫn ghi nhận, ca xử lý sau */ }
+    return [...new Set(notes)];
+  }
+
+  /**
    * Nhận ca làm thay thì không thể đồng thời OFF: người nhận ca (đi làm) mà
    * đang có đơn OFF/nghỉ (đã duyệt hoặc chờ duyệt) đúng ngày ca đó thì hệ
    * thống TỰ ĐỘNG HỦY ngày OFF đó (ghi chú rõ, realtime + Sheets như mọi đổi
@@ -1209,11 +1277,11 @@ export class SchedulesService {
   private async cancelReceiverLeavesOnWorkDay(employeeId: string, date: string): Promise<string[]> {
     const notes: string[] = [];
     try {
-      const day = String(date || '').slice(0, 10);
+      const day = normSheetDate(date);
       if (!employeeId || !day) return notes;
       const leaves = await this.repo.listLeaveRequests(undefined, employeeId).catch(() => []);
       for (const l of leaves || []) {
-        const ld = String((l as any).requested_date || '').slice(0, 10);
+        const ld = normSheetDate((l as any).requested_date);
         const st = String((l as any).status || '');
         if (ld !== day) continue;
         if (st !== 'APPROVED' && st !== 'PENDING') continue;
@@ -1345,10 +1413,22 @@ export class SchedulesService {
                   this.repo.getShiftsForEmployee(rejTarget, rejDay, rejDay).catch(() => []),
                 ]);
                 const stillOff = (rejLeaves || []).some((l: any) =>
-                  String((l as any).requested_date || '').slice(0, 10) === rejDay &&
+                  normSheetDate((l as any).requested_date) === normSheetDate(rejDay) &&
                   ((l as any).status === 'APPROVED' || (l as any).status === 'PENDING'));
                 const hasShift = (rejShifts || []).some((s: any) => (s as any).status !== 'CANCELLED');
-                if (!stillOff && !hasShift) {
+                // Không khôi phục quá quota 2 OFF/tuần và không khôi phục đè ngày
+                // đã có ca (tránh tạo lại cảnh báo trùng).
+                let quotaOk = true;
+                try {
+                  const wk = weekRangeOf(rejDay);
+                  const weekOffs = (rejLeaves || []).filter((l: any) =>
+                    (l as any).leave_type === 'HANG_TUAN' &&
+                    ((l as any).status === 'APPROVED' || (l as any).status === 'PENDING') &&
+                    normSheetDate((l as any).requested_date) >= wk.mon &&
+                    normSheetDate((l as any).requested_date) <= wk.sun);
+                  quotaOk = weekOffs.length < 2;
+                } catch { quotaOk = true; }
+                if (!stillOff && !hasShift && quotaOk) {
                   const tgt = await this.repo.getEmployeeById(rejTarget).catch(() => null);
                   const nowIso = new Date().toISOString();
                   await this.repo.createLeaveRequest({
@@ -1396,6 +1476,12 @@ export class SchedulesService {
           }
           const supDate = String((coverShift as any).date || '').slice(0, 10);
           const supCode = (coverShift as any).shift_code as ShiftCode;
+          // Người nhận lúc xác nhận vẫn phải là NV chính thức (lúc tạo đã check,
+          // nhưng hồ sơ có thể đổi sang thử việc/nghỉ trong lúc chờ).
+          const partnerEmp = await this.repo.getEmployeeById(partnerId).catch(() => null);
+          if (!partnerEmp || (partnerEmp as any).employment_status !== 'OFFICIAL') {
+            throw new Error('SUPPORT_NOT_OFFICIAL: Chỉ nhân viên CHÍNH THỨC mới được nhận ca hỗ trợ!');
+          }
           const empDayShifts = await this.repo.getShiftsForEmployee(partnerId, supDate, supDate).catch(() => []);
           const empClash = (empDayShifts || []).find((s: any) =>
             (s as any).shift_code === supCode && (s as any).status !== 'CANCELLED');
@@ -1469,6 +1555,19 @@ export class SchedulesService {
           if (!reqShift || !tgtShift) {
             throw new Error('SHIFTS_NOT_FOUND_FOR_SWAP');
           }
+          // Re-check lúc chốt tráo tay đôi: 2 bên còn đi làm + không trùng đúng ca
+          // ngày nhận (hồ sơ/ca có thể đổi trong lúc chờ B xác nhận).
+          for (const [empId, sh] of [[swap.target_employee_id, reqShift], [swap.requester_id, tgtShift]] as any[]) {
+            const e = await this.repo.getEmployeeById(empId).catch(() => null);
+            if (!e || (e as any).employment_status === 'TERMINATED') {
+              throw new Error('SWAP_EMPLOYEE_INVALID: Một bên đã nghỉ việc, phiếu tráo không còn hiệu lực!');
+            }
+            const d = String((sh as any)?.date || '').slice(0, 10);
+            const dayShifts = await this.repo.getShiftsForEmployee(empId, d, d).catch(() => []);
+            if ((dayShifts || []).some((s: any) => (s as any).shift_code === (sh as any).shift_code && (s as any).status !== 'CANCELLED')) {
+              throw new Error(`SWAP_SHIFT_CONFLICT: ${(e as any).full_name || empId} đã có ${(sh as any).shift_code} ngày ${d}, không thể tráo trùng ca!`);
+            }
+          }
           await this.repo.updateShiftAssignment(reqShift.assignment_id, {
             employee_id: swap.target_employee_id,
             schedule_version: reqShift.schedule_version + 1,
@@ -1496,8 +1595,10 @@ export class SchedulesService {
 
           const warnings: string[] = [...twoWayOffNotes];
           try {
-            for (const empId of [swap.requester_id, swap.target_employee_id]) {
-              const day = (tgtShift.date || '').slice(0, 10);
+            // Mỗi bên tính đúng ngày ca mình nhận (requester nhận ca tgtShift,
+            // target nhận ca reqShift).
+            for (const [empId, sh] of [[swap.requester_id, tgtShift], [swap.target_employee_id, reqShift]] as any[]) {
+              const day = String((sh as any)?.date || '').slice(0, 10);
               const empShifts = await this.repo.getShiftsForEmployee(empId, day, day).catch(() => []);
               const dayCount = (empShifts || []).filter(
                 (s: any) => (s.date || '').slice(0, 10) === day && s.status !== 'CANCELLED'
@@ -1523,8 +1624,11 @@ export class SchedulesService {
           partner_responded_at: new Date().toISOString(),
         });
         // Từ chối thì dọn luôn phiếu trùng y hệt còn chờ để banner B hết kẹt.
+        // Đồng ý dispatch mở cũng dọn các phiếu mở trùng ca để không còn 2 phiếu cùng mở.
         if (!accept) {
           await this.cancelSiblingPendingSwaps(swapId, swap);
+        } else if (isOpenDispatch) {
+          await this.cancelSiblingPendingSwaps(swapId, { ...swap, target_employee_id: partnerId } as any);
         }
 
         if (this.io) {
@@ -1695,6 +1799,13 @@ export class SchedulesService {
             approved_at: new Date().toISOString(),
           });
           await this.cancelSiblingPendingSwaps(swapId, swap);
+          // Báo realtime cả 2 phía để cổng NV/Banner cập nhật ngay, không chờ poll.
+          if (this.io) {
+            this.io.to(`user:${swap.requester_id}`).emit('swap.updated', { swapId, status: 'REJECTED' });
+            if (swap.target_employee_id) {
+              this.io.to(`user:${swap.target_employee_id}`).emit('swap.updated', { swapId, status: 'REJECTED' });
+            }
+          }
           return rejectedSwap;
         }
 
@@ -1704,6 +1815,12 @@ export class SchedulesService {
           const coverShift = await this.repo.getShiftById(swap.requester_assignment_id);
           if (!coverShift) {
             throw new Error('SHIFTS_NOT_FOUND_FOR_SWAP');
+          }
+          // Chặn duyệt trùng: người nhận đã có đúng ca đó ngày đó thì không chuyển nữa.
+          const dispDay = String((coverShift as any).date || '').slice(0, 10);
+          const dispShifts = await this.repo.getShiftsForEmployee(swap.target_employee_id, dispDay, dispDay).catch(() => []);
+          if ((dispShifts || []).some((s: any) => (s as any).shift_code === (coverShift as any).shift_code && (s as any).status !== 'CANCELLED')) {
+            throw new Error(`SUPPORT_SHIFT_CONFLICT: Nhân viên đã có ${(coverShift as any).shift_code} ngày ${dispDay}, không thể nhận trùng ca!`);
           }
           await this.repo.updateShiftAssignment(coverShift.assignment_id, {
             employee_id: swap.target_employee_id,
@@ -1777,10 +1894,12 @@ export class SchedulesService {
 
         // Ghi nhận ngày 2 ca: sau hoán đổi, ai có >1 ca/ngày thì cảnh báo để
         // theo dõi điểm danh từng ca (mỗi ca check-in/out độc lập).
+        // Mỗi bên tính đúng ngày ca mình nhận (requester nhận ca tgtShift,
+        // target nhận ca reqShift) — trước đây dùng chung 1 ngày nên sai.
         const warnings: string[] = [...mgrOffNotes];
         try {
-          for (const empId of [swap.requester_id, swap.target_employee_id]) {
-            const day = (tgtShift.date || '').slice(0, 10);
+          for (const [empId, sh] of [[swap.requester_id, tgtShift], [swap.target_employee_id, reqShift]] as any[]) {
+            const day = String((sh as any)?.date || '').slice(0, 10);
             const empShifts = await this.repo.getShiftsForEmployee(empId, day, day).catch(() => []);
             const dayCount = (empShifts || []).filter(
               (s: any) => (s.date || '').slice(0, 10) === day && s.status !== 'CANCELLED'

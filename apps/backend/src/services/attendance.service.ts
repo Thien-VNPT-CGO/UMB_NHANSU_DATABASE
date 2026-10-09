@@ -615,6 +615,12 @@ export class AttendanceService {
         if (this.io && (backfilled.length > 0 || violationCleared > 0)) {
           this.io.emit('data:updated', { entity: 'attendance', data: { action: 'adjustment-backfill', adjId }, timestamp: new Date().toISOString() });
         }
+        // Báo realtime riêng cho NV để cổng NV cập nhật ngay, không chờ poll 15s.
+        if (this.io) {
+          try {
+            this.io.to(`user:${(updated as any).employee_id}`).emit('adjustment.updated', { adjustmentId: adjId, status });
+          } catch { /* non-fatal */ }
+        }
         return { ...updated, _backfilled: backfilled, _violationCleared: violationCleared } as any;
       },
     });

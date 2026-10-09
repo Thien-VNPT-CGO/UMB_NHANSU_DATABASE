@@ -477,10 +477,12 @@ export class PayrollService {
       entityId: runId,
       actorId,
       execute: async () => {
-        return this.repo.updatePayrollRunStatus(runId, 'RECONCILED', actorId, {
+        const updated = await this.repo.updatePayrollRunStatus(runId, 'RECONCILED', actorId, {
           reconciled_by: actorId,
           reconciled_at: new Date().toISOString(),
         });
+        this.triggerSheetsPush();
+        return updated;
       },
     });
   }
@@ -499,7 +501,9 @@ export class PayrollService {
           throw new Error(ERROR_CODES.SEPARATION_OF_DUTIES_VIOLATION);
         }
 
-        return this.repo.updatePayrollRunStatus(runId, 'APPROVED', approverId);
+        const updated = await this.repo.updatePayrollRunStatus(runId, 'APPROVED', approverId);
+        this.triggerSheetsPush();
+        return updated;
       },
     });
   }
@@ -520,6 +524,8 @@ export class PayrollService {
             title: `Phiếu lương kỳ ${updated.period} đã được công bố`,
           });
         }
+        this.notifySlipsChanged('publish-run', { runId });
+        this.triggerSheetsPush();
 
         return updated;
       },
@@ -532,7 +538,10 @@ export class PayrollService {
       entityId: runId,
       actorId,
       execute: async () => {
-        return this.repo.updatePayrollRunStatus(runId, 'PAID', actorId);
+        const updated = await this.repo.updatePayrollRunStatus(runId, 'PAID', actorId);
+        this.notifySlipsChanged('mark-paid-run', { runId });
+        this.triggerSheetsPush();
+        return updated;
       },
     });
   }
@@ -789,8 +798,9 @@ export class PayrollService {
 
         for (const s of slips) {
           if ((s as any).status !== 'DRAFT') {
+            // Phiếu đã gửi/xác nhận/chi trả thì bỏ qua (không tính vào published
+            // để số đếm + thông báo không phồng, không spam NV cũ).
             if ((s as any).status !== 'PUBLISHED') skipped.push({ itemId: (s as any).item_id, employee: (s as any).full_name || (s as any).employee_id, reason: `đang ở trạng thái ${(s as any).status}` });
-            else published.push((s as any).item_id);
             continue;
           }
 
@@ -974,7 +984,10 @@ export class PayrollService {
     let run: any = null;
     let slips: any[] = [];
     if (matching.length > 0) {
-      run = matching[matching.length - 1];
+      // Lấy kỳ MỚI NHẤT theo created_at (đúng mẫu summarizeOfficialMonth) —
+      // lấy phần tử cuối mảng có thể trúng kỳ cũ sau pull Sheets.
+      run = matching.reduce((a: any, b: any) =>
+        String(b.created_at || '') >= String(a.created_at || '') ? b : a);
       slips = await this.repo.getPayslipsByRunId(run.run_id).catch(() => []);
     }
     if (slips.length === 0) {

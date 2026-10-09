@@ -586,19 +586,40 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     const res = await this.fallbackAdapter.createLeaveRequest(request);
     if (this.isConfigured) {
       const snapshot = { ...res };
-      this.scheduleSheetsWrite(() => this.syncService.appendRow('DON_NGHI_PHEP', [
-        snapshot.request_id,
-        snapshot.employee_id,
-        snapshot.branch_id,
-        snapshot.leave_type,
-        snapshot.requested_date,
-        snapshot.shift_code || '',
-        snapshot.reason,
-        snapshot.status,
-        snapshot.reviewed_by || '',
-        snapshot.review_note || '',
-        snapshot.created_at,
-      ]), 'DON_NGHI_PHEP.append');
+      // Ghi ĐỒNG BỘ (await, timeout): phiếu nghỉ phải bền vững ngay — restart
+      // trước khi flush là mất phiếu (đúng mẫu createSwapRequest).
+      try {
+        await Promise.race([
+          this.syncService.appendRow('DON_NGHI_PHEP', [
+            snapshot.request_id,
+            snapshot.employee_id,
+            snapshot.branch_id,
+            snapshot.leave_type,
+            snapshot.requested_date,
+            snapshot.shift_code || '',
+            snapshot.reason,
+            snapshot.status,
+            snapshot.reviewed_by || '',
+            snapshot.review_note || '',
+            snapshot.created_at,
+          ]).catch(() => false),
+          new Promise<false>(r => setTimeout(() => r(false), 12000)),
+        ]);
+      } catch {
+        this.scheduleSheetsWrite(() => this.syncService.appendRow('DON_NGHI_PHEP', [
+          snapshot.request_id,
+          snapshot.employee_id,
+          snapshot.branch_id,
+          snapshot.leave_type,
+          snapshot.requested_date,
+          snapshot.shift_code || '',
+          snapshot.reason,
+          snapshot.status,
+          snapshot.reviewed_by || '',
+          snapshot.review_note || '',
+          snapshot.created_at,
+        ]), 'DON_NGHI_PHEP.append-retry');
+      }
     }
     return res;
   }
@@ -820,17 +841,36 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     const res = await this.fallbackAdapter.createAttendanceAdjustment(adj);
     if (this.isConfigured) {
       const snapshot = { ...res };
-      this.scheduleSheetsWrite(() => this.syncService.appendRow('DIEU_CHINH_CONG', [
-        snapshot.adjustment_id,
-        snapshot.assignment_id,
-        snapshot.employee_id,
-        snapshot.reason || '',
-        snapshot.minutes_approved ?? snapshot.minutes_requested ?? 0,
-        snapshot.approver_id || '',
-        snapshot.status,
-        snapshot.review_note || '',
-        (snapshot as any).evidence_drive_id || '',
-      ]), 'DIEU_CHINH_CONG.append');
+      // Ghi ĐỒNG BỘ (await, timeout): phiếu mới phải bền vững ngay — restart
+      // trước khi flush là mất phiếu (đúng mẫu createSwapRequest).
+      try {
+        await Promise.race([
+          this.syncService.appendRow('DIEU_CHINH_CONG', [
+            snapshot.adjustment_id,
+            snapshot.assignment_id,
+            snapshot.employee_id,
+            snapshot.reason || '',
+            snapshot.minutes_approved ?? snapshot.minutes_requested ?? 0,
+            snapshot.approver_id || '',
+            snapshot.status,
+            snapshot.review_note || '',
+            (snapshot as any).evidence_drive_id || '',
+          ]).catch(() => false),
+          new Promise<false>(r => setTimeout(() => r(false), 12000)),
+        ]);
+      } catch {
+        this.scheduleSheetsWrite(() => this.syncService.appendRow('DIEU_CHINH_CONG', [
+          snapshot.adjustment_id,
+          snapshot.assignment_id,
+          snapshot.employee_id,
+          snapshot.reason || '',
+          snapshot.minutes_approved ?? snapshot.minutes_requested ?? 0,
+          snapshot.approver_id || '',
+          snapshot.status,
+          snapshot.review_note || '',
+          (snapshot as any).evidence_drive_id || '',
+        ]), 'DIEU_CHINH_CONG.append-retry');
+      }
     }
     return res;
   }
@@ -841,7 +881,20 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async updateAttendanceAdjustment(id: string, status: any, approverId: string, minutesApproved?: number, note?: string) {
     const res = await this.fallbackAdapter.updateAttendanceAdjustment(id, status, approverId, minutesApproved, note);
-    this.scheduleFullSync('DIEU_CHINH_CONG.update');
+    // Đẩy tab đồng bộ để trạng thái duyệt bền vững ngay (đúng mẫu updateSwapRequest):
+    // restart trước flush là mất duyệt, pull sau hồi sinh phiếu cũ.
+    if (this.isConfigured) {
+      try {
+        await Promise.race([
+          this.syncService.pushAdjustmentsTab(this.fallbackAdapter).catch(() => 0),
+          new Promise<number>(r => setTimeout(() => r(0), 15000)),
+        ]);
+      } catch {
+        this.scheduleFullSync('DIEU_CHINH_CONG.update-retry');
+      }
+    } else {
+      this.scheduleFullSync('DIEU_CHINH_CONG.update');
+    }
     return res;
   }
 

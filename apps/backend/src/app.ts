@@ -87,6 +87,8 @@ import {
   payrollPeriodParams,
   payrollRunIdParams,
   payrollRunParams,
+  payslipIdParams,
+  payslipSignBody,
   probationOffBody,
   probationExtraShiftBody,
   publishWeekBody,
@@ -206,9 +208,10 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     SWAP: 'emp.swap',
     PIN_CHANGED: 'emp.pin',
     TEST: 'emp.test',
+    ADJUSTMENT: 'emp.adjustment',
   };
   const broadcastNotification = (notif: {
-    type: 'CHECKIN' | 'CHECKOUT' | 'LEAVE' | 'SWAP' | 'PIN_CHANGED' | 'PIN_SENT' | 'CANDIDATE' | 'SYSTEM' | 'INFO' | 'TEST';
+    type: 'CHECKIN' | 'CHECKOUT' | 'LEAVE' | 'SWAP' | 'PIN_CHANGED' | 'PIN_SENT' | 'CANDIDATE' | 'SYSTEM' | 'INFO' | 'TEST' | 'ADJUSTMENT';
     title: string;
     message: string;
     linkTab?: string;
@@ -2227,7 +2230,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           : `Yêu cầu đổi ca #${req.params.id} đã được phản hồi: ${req.body.accept ? 'Đồng ý, chờ Store duyệt' : 'Từ chối'}.`,
         linkTab: 'hr-schedule',
         metadata: { swapId: req.params.id },
-        targetRoles: ['ADMIN', 'HR', 'STORE'],
+        targetRoles: ['ADMIN', 'HR', 'STORE', 'EMPLOYEE'],
       });
       res.json(result);
     } catch (err: any) {
@@ -2266,7 +2269,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         })(),
         linkTab: 'hr-schedule',
         metadata: { swapId: req.params.id },
-        targetRoles: ['ADMIN', 'HR', 'STORE'],
+        targetRoles: ['ADMIN', 'HR', 'STORE', 'EMPLOYEE'],
       });
       res.json(result);
     } catch (err: any) {
@@ -3196,6 +3199,15 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       );
       // Realtime: cổng NV thấy kết quả duyệt + bảng công/HR tải lại ngay.
       broadcastUpdate('adjustments', { action: 'review', id: req.params.id, status });
+      // Thông báo inbox cho NV (đúng mẫu swap) để chuông/thông báo hiện ngay.
+      broadcastNotification({
+        type: 'ADJUSTMENT',
+        title: status === 'APPROVED' ? '✅ Phiếu bổ sung công đã được duyệt' : '❌ Phiếu bổ sung công bị từ chối',
+        message: `Phiếu bổ sung công #${req.params.id} đã được ${status === 'APPROVED' ? 'phê duyệt' : 'từ chối'}${note ? `: ${note}` : ''}.`,
+        linkTab: 'adjustment',
+        metadata: { adjustmentId: req.params.id },
+        targetRoles: ['ADMIN', 'HR', 'STORE', 'EMPLOYEE'],
+      });
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -3436,7 +3448,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // Kế toán ký điện tử 1 phiếu (Người lập hoặc Quản lý chi nhánh)
-  app.post('/payroll/slips/:id/sign', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
+  app.post('/payroll/slips/:id/sign', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payslipIdParams, body: payslipSignBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const { role, name, img } = req.body || {};
       const updated = await payrollService.signSlip(req.params.id, role, name, img, req.user!.id);

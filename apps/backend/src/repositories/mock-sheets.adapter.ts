@@ -794,6 +794,11 @@ export class MockSheetsAdapter implements ISheetsRepository {
       }
     }
     Object.assign(slip, clean, { updated_at: new Date().toISOString() });
+    // Gán undefined = XÓA field (VD hoàn phiếu xóa slip_published_at): Object.assign
+    // giữ key undefined gây rác + lệch so sánh, xóa hẳn cho sạch.
+    for (const k of Object.keys(clean)) {
+      if ((clean as any)[k] === undefined) delete (slip as any)[k];
+    }
     // FIX publish mẫu không tới NV: pull Sheets nền (10s) merge theo version,
     // phiếu pull về luôn version=1 nên bản PUBLISHED trong memory bị ghi đè
     // về DRAFT trước khi push kịp xong. Tăng version mỗi lần sửa để memory thắng.

@@ -524,6 +524,8 @@ export function App() {
   const swapBusyRef = useRef(false);
   // Phiếu đổi ca liên quan đến tôi (gửi đi + chờ tôi xác nhận)
   const [mySwaps, setMySwaps] = useState<any[]>([]);
+  // Phiếu dispatch mở đã ẩn trong phiên (không muốn nhận thì ẩn, không kẹt banner).
+  const [hiddenDispatchIds, setHiddenDispatchIds] = useState<string[]>([]);
   const fetchMySwaps = async () => {
     try {
       const list = await apiRequest('/swap-requests');
@@ -4854,15 +4856,16 @@ export function App() {
               </div>
             )}
             {/* CA HR ĐIỀU PHỐI CẦN NGƯỜI LÀM THAY (+30k) — mở cho cả chi nhánh */}
-            {mySwaps.some((s: any) => (s.swap_kind || 'EMPLOYEE_SWAP') === 'HR_DISPATCH' && s.status === 'PENDING_PARTNER' && !s.target_employee_id) && (
+            {mySwaps.some((s: any) => (s.swap_kind || 'EMPLOYEE_SWAP') === 'HR_DISPATCH' && s.status === 'PENDING_PARTNER' && !s.target_employee_id && !hiddenDispatchIds.includes(s.swap_id)) && (
               <div className="card" style={{ border: '2px solid #2563EB', backgroundColor: '#EFF6FF' }}>
                 <h3 style={{ fontSize: '14px', fontWeight: 800, color: '#1E40AF' }}>🚀 Ca cần người làm thay (+30.000đ/ca)</h3>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px' }}>
-                  {mySwaps.filter((s: any) => (s.swap_kind || 'EMPLOYEE_SWAP') === 'HR_DISPATCH' && s.status === 'PENDING_PARTNER' && !s.target_employee_id).map((s: any) => (
+                  {mySwaps.filter((s: any) => (s.swap_kind || 'EMPLOYEE_SWAP') === 'HR_DISPATCH' && s.status === 'PENDING_PARTNER' && !s.target_employee_id && !hiddenDispatchIds.includes(s.swap_id)).map((s: any) => (
                     <div key={s.swap_id} style={{ backgroundColor: '#FFF', borderRadius: '8px', padding: '10px', fontSize: '12px' }}>
                       <div><strong>{s.shift?.date || ''} • {s.shift?.shift_code || ''}</strong> — {s.reason || 'Cần người làm thay'}</div>
                       <div style={{ color: '#059669', fontWeight: 700, marginTop: '2px' }}>Nhận ca được +30.000đ phụ cấp (HR điều phối)</div>
                       <button className="btn-primary" style={{ width: '100%', marginTop: '8px', padding: '9px', backgroundColor: '#2563EB' }} disabled={actionBusy === 'respond'} onClick={() => handleRespondSwap(s.swap_id, true)}>Nhận ca này</button>
+                      <button className="btn-secondary" style={{ width: '100%', marginTop: '6px', padding: '7px', fontSize: '12px' }} onClick={() => setHiddenDispatchIds(prev => prev.includes(s.swap_id) ? prev : [...prev, s.swap_id])}>Ẩn (không nhận)</button>
                     </div>
                   ))}
                 </div>
@@ -4879,7 +4882,7 @@ export function App() {
                     <div key={s.swap_id} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
                       <span>→ {tgtName}: {s.reason || ''}</span>
                       <strong style={{ color: s.status === 'APPROVED' ? '#059669' : s.status === 'REJECTED' ? '#DC2626' : '#B45309' }}>
-                        {s.status === 'APPROVED' ? 'Đã duyệt' : s.status === 'REJECTED' ? 'Từ chối' : s.status === 'PARTNER_ACCEPTED' ? 'Chờ Store duyệt' : 'Chờ NV B'}
+                        {s.status === 'APPROVED' ? 'Đã duyệt' : s.status === 'REJECTED' ? 'Từ chối' : s.status === 'PARTNER_ACCEPTED' ? 'Chờ Store duyệt' : s.status === 'CANCELLED' ? 'Đã hủy' : 'Chờ NV B'}
                       </strong>
                     </div>
                     );
