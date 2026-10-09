@@ -271,6 +271,36 @@ interface RoleViewsProps {
   onRefreshData?: () => Promise<void> | void;
 }
 
+/** Lưới an toàn cho từng tab nặng (Lịch/Chấm công): lỗi render thì hiện nút thử
+ *  lại thay vì trắng trang — kèm chi tiết lỗi để dễ báo về kỹ thuật. */
+class TabErrorBoundary extends React.Component<{ tabName: string; children: React.ReactNode }, { error: any }> {
+  constructor(props: { tabName: string; children: React.ReactNode }) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error: any) {
+    return { error };
+  }
+  componentDidCatch(error: any) {
+    try { console.error(`[TabErrorBoundary:${(this.props as any).tabName}]`, error); } catch { /* bỏ qua */ }
+  }
+  render() {
+    if ((this.state as any).error) {
+      const msg = String((this.state as any).error?.message || (this.state as any).error);
+      return (
+        <div style={{ backgroundColor: '#FEF2F2', border: '1.5px solid #FCA5A5', borderRadius: '12px', padding: '24px', textAlign: 'center' }}>
+          <div style={{ fontSize: '15px', fontWeight: 800, color: '#991B1B' }}>⚠️ Tab {(this.props as any).tabName} gặp lỗi hiển thị</div>
+          <div style={{ fontSize: '12px', color: '#7F1D1D', marginTop: '6px', wordBreak: 'break-all' }}>{msg}</div>
+          <button className="btn-primary" style={{ marginTop: '12px', fontSize: '12px', padding: '8px 18px' }} onClick={() => window.location.reload()}>
+            🔄 Tải lại trang
+          </button>
+        </div>
+      );
+    }
+    return (this.props as any).children;
+  }
+}
+
 /** Các tuần cố định T2–CN quanh tuần hiện tại cho dropdown (mặc định tuần này). */
 export function weekOptions(centerOffset = 0, span = 4): { offset: number; mon: string; sun: string; label: string }[] {
   const out: { offset: number; mon: string; sun: string; label: string }[] = [];
@@ -7312,6 +7342,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     });
 
     return (
+      <TabErrorBoundary tabName="Lịch Làm Việc Tuần">
       <div id="sec-schedule" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         {/* Top Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
@@ -8354,6 +8385,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           />
         )}
       </div>
+      </TabErrorBoundary>
     );
   }
 
@@ -9082,6 +9114,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       return items;
     };
     return (
+      <TabErrorBoundary tabName="Bảng Chấm Công Thời Gian Thực">
       <div id="sec-attendance" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
@@ -9407,6 +9440,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           </table>
         </div>
       </div>
+      </TabErrorBoundary>
     );
   }
 
