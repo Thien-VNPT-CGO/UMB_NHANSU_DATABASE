@@ -1071,28 +1071,8 @@ export class SchedulesService {
       entityId: swapId,
       actorId: data.actorId,
       execute: async () => {
-        // HR tạo phiếu hỗ trợ ca vào ngày người nhận đã đăng ký OFF → tự động
-        // hủy ngày OFF đó (đi làm thì không còn OFF), tránh cảnh báo ca trùng OFF.
-        const receiverId = String((shift as any).employee_id || '');
-        const shiftDate = String((shift as any).date || '').slice(0, 10);
-        let cancelledOffNote = '';
-        if (receiverId && shiftDate) {
-          const leaves = await this.repo.listLeaveRequests(undefined, receiverId).catch(() => []);
-          for (const l of leaves || []) {
-            const ld = String((l as any).requested_date || '').slice(0, 10);
-            const st = String((l as any).status || '');
-            if (ld !== shiftDate) continue;
-            if (st !== 'APPROVED' && st !== 'PENDING') continue;
-            await this.repo.updateLeaveRequest(
-              (l as any).request_id,
-              'CANCELLED',
-              'SYSTEM',
-              `Tự động hủy: HR hỗ trợ ca làm ngày ${shiftDate} — đi làm thì không còn OFF.`
-            ).catch(() => null);
-            const kind = (l as any).leave_type === 'HANG_TUAN' ? 'ngày OFF' : 'đơn nghỉ';
-            cancelledOffNote = `Ngày ${kind} ${shiftDate} của nhân viên đã tự động hủy vì được hỗ trợ ca làm.`;
-          }
-        }
+        // HR_DISPATCH mở (chưa biết ai nhận) nên KHÔNG hủy OFF lúc tạo — người
+        // nhận ca khi xác nhận sẽ tự mất OFF trùng ngày (xem nhánh accept).
         const swap = await this.repo.createSwapRequest({
           swap_id: swapId,
           swap_kind: 'HR_DISPATCH',
@@ -1111,15 +1091,6 @@ export class SchedulesService {
             status: 'PENDING_PARTNER',
             kind: 'HR_DISPATCH',
           });
-          if (cancelledOffNote) {
-            this.io.to(`user:${receiverId}`).emit('system:notification', {
-              type: 'SYSTEM',
-              origin: 'ADMIN',
-              title: '📅 Ngày OFF đã tự động hủy',
-              message: cancelledOffNote,
-              timestamp: new Date().toISOString(),
-            });
-          }
         }
 
         return swap;
@@ -1201,6 +1172,10 @@ export class SchedulesService {
           support_shift_code: shiftCode,
         } as any);
 
+        // HR đã chỉ định B đi làm ngày này → ngày OFF của B (nếu có) mất NGAY
+        // LẬP TỨC, không chờ B xác nhận (B từ chối thì hệ thống khôi phục OFF).
+        const supportOffNotes = await this.cancelReceiverLeavesOnWorkDay(data.targetEmployeeId, day);
+
         if (this.io) {
           this.io.to(`user:${data.targetEmployeeId}`).emit('swap.updated', {
             swapId,
@@ -1208,6 +1183,15 @@ export class SchedulesService {
             kind: 'HR_SUPPORT',
             from: data.actorId,
           });
+          if (supportOffNotes.length > 0) {
+            this.io.to(`user:${data.targetEmployeeId}`).emit('system:notification', {
+              type: 'SYSTEM',
+              origin: 'ADMIN',
+              title: '📅 Ngày OFF đã chuyển thành ca làm việc',
+              message: `${supportOffNotes.join(' ')} (HR đã điều bạn hỗ trợ ${shiftCode} ngày ${day} — vào Cổng NV xác nhận ca).`,
+              timestamp: new Date().toISOString(),
+            });
+          }
         }
 
         return swap;
@@ -1348,6 +1332,49 @@ export class SchedulesService {
               rejection_reason: 'Nhân viên từ chối hỗ trợ chi nhánh',
               partner_responded_at: new Date().toISOString(),
             } as any);
+            // B từ chối → khôi phục ngày OFF đã tự hủy lúc HR tạo phiếu (nếu ngày
+            // đó hiện không còn OFF hiệu lực và B cũng không có ca nào).
+            try {
+              const rejDay = String((swap as any).support_date || '').slice(0, 10) ||
+                await this.repo.getShiftById(swap.requester_assignment_id)
+                  .then((s: any) => String(s?.date || '').slice(0, 10)).catch(() => '');
+              const rejTarget = String((swap as any).target_employee_id || '');
+              if (rejDay && rejTarget) {
+                const [rejLeaves, rejShifts] = await Promise.all([
+                  this.repo.listLeaveRequests(undefined, rejTarget).catch(() => []),
+                  this.repo.getShiftsForEmployee(rejTarget, rejDay, rejDay).catch(() => []),
+                ]);
+                const stillOff = (rejLeaves || []).some((l: any) =>
+                  String((l as any).requested_date || '').slice(0, 10) === rejDay &&
+                  ((l as any).status === 'APPROVED' || (l as any).status === 'PENDING'));
+                const hasShift = (rejShifts || []).some((s: any) => (s as any).status !== 'CANCELLED');
+                if (!stillOff && !hasShift) {
+                  const tgt = await this.repo.getEmployeeById(rejTarget).catch(() => null);
+                  const nowIso = new Date().toISOString();
+                  await this.repo.createLeaveRequest({
+                    request_id: `LEAVE_${Date.now()}_${Math.floor(Math.random() * 100000)}`,
+                    employee_id: rejTarget,
+                    branch_id: (tgt as any)?.default_branch_id || (tgt as any)?.branch_id || '',
+                    leave_type: 'HANG_TUAN',
+                    requested_date: rejDay,
+                    reason: 'Khôi phục ngày OFF do từ chối ca hỗ trợ',
+                    status: 'APPROVED',
+                    reviewed_by: 'SYSTEM',
+                    reviewed_at: nowIso,
+                    review_note: 'Tự động khôi phục OFF đã hủy khi tạo phiếu hỗ trợ',
+                  });
+                  if (this.io) {
+                    this.io.to(`user:${rejTarget}`).emit('system:notification', {
+                      type: 'SYSTEM',
+                      origin: 'ADMIN',
+                      title: '📅 Đã khôi phục ngày OFF',
+                      message: `Bạn đã từ chối ca hỗ trợ ngày ${rejDay} nên ngày OFF được khôi phục.`,
+                      timestamp: new Date().toISOString(),
+                    });
+                  }
+                }
+              }
+            } catch { /* best-effort: phiếu đã từ chối, OFF khôi phục sau */ }
             await this.cancelSiblingPendingSwaps(swapId, swap);
             if (this.io) {
               this.io.to(`user:${swap.requester_id}`).emit('swap.updated', { swapId, status: 'REJECTED' });
