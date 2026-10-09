@@ -4602,7 +4602,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       {c.full_name}
                       {(c as any).vip && (
                         <span style={{ marginLeft: '6px', fontSize: '10px', fontWeight: 800, padding: '2px 8px', borderRadius: '999px', backgroundColor: '#EDE9FE', color: '#7C3AED', border: '1px solid #C4B5FD' }}>
-                          👑 VIP
+                          👑 VIP {(c as any).vip_rank || 1}
                         </span>
                       )}
                       <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{c.phone || c.phone_normalized}</div>
@@ -4901,9 +4901,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                     setVipBusyId(null);
                                   }
                                 }}
-                                title={disabledForFail ? 'Ứng viên chưa đạt — chức năng bị khoá' : ((c as any).vip ? 'Bỏ ưu tiên VIP' : 'Đánh dấu ưu tiên vào việc (HR chọn sau khi phỏng vấn xong)')}
+                                title={disabledForFail ? 'Ứng viên chưa đạt — chức năng bị khoá' : ((c as any).vip ? `Bỏ ưu tiên VIP ${(c as any).vip_rank || 1}` : 'Đánh dấu ưu tiên vào việc (HR chọn sau khi phỏng vấn xong)')}
                               >
-                                {vipBusyId === c.submission_id ? '⏳...' : ((c as any).vip ? '👑 Bỏ VIP' : '⭐ VIP')}
+                                {vipBusyId === c.submission_id ? '⏳...' : ((c as any).vip ? `👑 Bỏ VIP ${(c as any).vip_rank || 1}` : '⭐ VIP')}
                               </button>
                             )}
                             {isAccepted && (

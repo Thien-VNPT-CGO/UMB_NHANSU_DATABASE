@@ -670,10 +670,50 @@ export class EmployeesService {
       allowed.branch_name = String(updates.branch_name || '').trim().slice(0, 200);
     }
     // Đánh dấu ưu tiên vào việc (HR chọn sau khi phỏng vấn xong).
+    // Cấp bậc VIP độc lập theo chi nhánh: cùng chi nhánh xếp hạng 1,2,3...
+    // khác chi nhánh thì không so sánh (mỗi chi nhánh có bảng xếp hạng riêng).
     if (updates.vip !== undefined) {
-      allowed.vip = !!updates.vip;
-      allowed.vip_at = allowed.vip ? new Date().toISOString() : undefined;
-      allowed.vip_by = allowed.vip ? actorId : undefined;
+      const nextVip = !!updates.vip;
+      allowed.vip = nextVip;
+      allowed.vip_at = nextVip ? new Date().toISOString() : undefined;
+      allowed.vip_by = nextVip ? actorId : undefined;
+      if (nextVip) {
+        const cur = (await this.repo.listCandidates().catch(() => []))
+          .find((c: any) => c.submission_id === submissionId) as any;
+        if (!cur) throw new Error('CANDIDATE_NOT_FOUND');
+        const branch = cur.preferred_branch_id || cur.branch_id || '';
+        const sameBranchVips = (await this.repo.listCandidates().catch(() => []))
+          .filter((c: any) => c.submission_id !== submissionId
+            && (c.preferred_branch_id || c.branch_id || '') === branch
+            && c.vip)
+          .map((c: any) => Number(c.vip_rank) || 0)
+          .filter((r: number) => r > 0)
+          .sort((a: number, b: number) => a - b);
+        let rank = 1;
+        for (const r of sameBranchVips) {
+          if (r === rank) rank++;
+          else if (r > rank) break;
+        }
+        allowed.vip_rank = rank;
+      } else {
+        // Bỏ VIP: giảm hạng các ứng viên cùng chi nhánh có rank cao hơn.
+        const cur = (await this.repo.listCandidates().catch(() => []))
+          .find((c: any) => c.submission_id === submissionId) as any;
+        if (cur) {
+          const branch = cur.preferred_branch_id || cur.branch_id || '';
+          const oldRank = Number(cur.vip_rank) || 0;
+          const others = (await this.repo.listCandidates().catch(() => []))
+            .filter((c: any) => c.submission_id !== submissionId
+              && (c.preferred_branch_id || c.branch_id || '') === branch
+              && c.vip
+              && (Number(c.vip_rank) || 0) > oldRank)
+            .sort((a: any, b: any) => (Number(a.vip_rank) || 0) - (Number(b.vip_rank) || 0));
+          for (const o of others) {
+            await this.repo.updateCandidate(o.submission_id, { vip_rank: (Number(o.vip_rank) || 0) - 1 });
+          }
+        }
+        allowed.vip_rank = undefined;
+      }
     }
     // Khôi phục ứng viên bị loại -> về MỚI (HR xem xét lại).
     if (updates.status === 'NEW') {

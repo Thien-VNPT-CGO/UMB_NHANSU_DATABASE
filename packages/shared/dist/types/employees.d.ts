@@ -73,4 +73,10 @@ export interface CandidateApplication {
     ai_score?: number;
     screening_result?: string;
     source_code?: string;
+    /** Ưu tiên vào việc: HR đánh dấu sau khi phỏng vấn xong. */
+    vip?: boolean;
+    vip_at?: string;
+    vip_by?: string;
+    /** Cấp bậc VIP trong cùng chi nhánh (1 = ưu tiên nhất). Khác chi nhánh thì độc lập. */
+    vip_rank?: number;
 }
