@@ -3201,9 +3201,10 @@ export function App() {
                     .filter((d: string) => days.includes(d))
                 );
 
-                // 3. Ngày Nghỉ OFF trong dải `days`:
-                // Là các ngày trong dải không có ca làm việc HOẶC có đơn nghỉ phép hợp lệ
-                const offDays = days.filter(d => !workDaysSet.has(d) || leaveDatesInDays.has(d));
+                // 3. Ngày Nghỉ OFF trong dải `days`: ngày KHÔNG có ca làm việc.
+                // Đi làm thì không còn OFF — ngày vừa có ca active vừa có đơn OFF
+                // chỉ hiện ca làm (không hiện thẻ OFF gây rắc rối).
+                const offDays = days.filter(d => !workDaysSet.has(d));
                 const offDaysSet = new Set(offDays);
                 const offCount = offDays.length;
 
@@ -3543,8 +3544,8 @@ export function App() {
 
                             {/* Day Body */}
                             <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                              {/* 1. OFF Leaves */}
-                              {offs.map((l: any, i: number) => (
+                              {/* 1. OFF Leaves — chỉ hiện khi ngày không có ca làm (có ca thì chỉ hiện ca) */}
+                              {shs.length === 0 && offs.map((l: any, i: number) => (
                                 <div
                                   key={`off-${i}`}
                                   style={{

@@ -7125,19 +7125,19 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           };
         };
 
-        if (foundLeave && !checkInEvent) {
+        if (foundLeave && !checkInEvent && !foundShift) {
+          // Chỉ hiện OFF khi ngày KHÔNG có ca làm (đi làm thì không còn OFF —
+          // ngày vừa có ca vừa có đơn thì hiện ca làm, không hiện OFF gây rắc rối).
           // Lịch OFF tuần (HANG_TUAN) tự động ghi nhận — kể cả bản ghi PENDING cũ
           // cũng hiển thị OFF (backend đã tự chữa thành APPROVED khi đồng bộ).
-          // Ca đã xếp KHÔNG bị che: hiện kèm để phát hiện xếp trùng ngày OFF.
           const isWeeklyOff = foundLeave.leave_type === 'HANG_TUAN';
           const isApprovedLeave = isWeeklyOff || foundLeave.status === 'APPROVED';
-          const overlapShift = foundShift ? (foundShift.shift_code === 'CA_1' ? 'Ca 1 (07-12)' : foundShift.shift_code === 'CA_2' ? 'Ca 2 (12-18)' : foundShift.shift_code === 'CA_3' ? 'Ca 3 (18-23)' : foundShift.shift_code) : null;
           dayDataMap[day.key] = {
             shift: foundLeave.leave_type === 'DOT_XUAT' ? 'Nghỉ đột xuất' : 'Nghỉ OFF',
             status: isApprovedLeave ? 'OFF' : 'PENDING_LEAVE',
             note: isApprovedLeave
-              ? ((foundLeave.reason || 'Nghỉ theo đơn đã duyệt') + (overlapShift ? ` • ⚠ đã xếp ${overlapShift} trùng ngày OFF — xóa ca hoặc hủy OFF` : ''))
-              : (`Chờ duyệt: ${foundLeave.reason || 'đơn đột xuất chưa duyệt'}` + (overlapShift ? ` • đã xếp ${overlapShift}` : '')),
+              ? (foundLeave.reason || 'Nghỉ theo đơn đã duyệt')
+              : (`Chờ duyệt: ${foundLeave.reason || 'đơn đột xuất chưa duyệt'}`),
             isToday: day.isToday,
           };
         } else if (!foundShift) {
