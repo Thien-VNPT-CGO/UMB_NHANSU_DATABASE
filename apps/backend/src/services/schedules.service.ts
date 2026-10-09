@@ -392,6 +392,78 @@ export class SchedulesService {
     return { dryRun: false, today, groups, cancelledCount, overLimit: clamp.overLimit, cancelledOverLimitCount: clamp.cancelledCount };
   }
 
+  /** Đồng bộ phiếu cũ: rà soát ca làm việc (chưa hủy, từ hôm nay) TRÙNG ngày OFF
+   *  đã duyệt/chờ duyệt của CÙNG nhân viên. dryRun=true chỉ xem trước;
+   *  dryRun=false hủy OFF trùng (ngày OFF thành ca làm, đúng luật mới) + audit.
+   *  Trả về chi tiết từng cặp để HR xác nhận trước khi chạy thật. */
+  async syncShiftOffOverlaps(actorId: string, dryRun = true): Promise<{
+    dryRun: boolean;
+    today: string;
+    items: { employee_id: string; employee: string; branch: string; date: string; shift_code: string; leave_type: string; leave_id: string }[];
+    cancelledCount: number;
+  }> {
+    const today = new Date(Date.now() + 7 * 3_600_000).toISOString().split('T')[0];
+    const [emps, leaves, shifts] = await Promise.all([
+      this.repo.listEmployees().catch(() => []),
+      this.repo.listLeaveRequests().catch(() => []),
+      this.repo.getShiftsForWeek('*', today).catch(() => []),
+    ]);
+    const empById = new Map<string, any>((emps || []).map((e: any) => [e.employee_id, e]));
+    const items: { employee_id: string; employee: string; branch: string; date: string; shift_code: string; leave_type: string; leave_id: string }[] = [];
+    for (const l of leaves || []) {
+      if (!['APPROVED', 'PENDING'].includes(String((l as any).status || ''))) continue;
+      const d = normSheetDate((l as any).requested_date);
+      if (!d || d < today) continue;
+      const empId = String((l as any).employee_id || '');
+      const emp = empById.get(empId) as any;
+      if (!emp || emp.employment_status === 'TERMINATED') continue;
+      const sh = (shifts || []).find((s: any) =>
+        String((s as any).employee_id || '') === empId &&
+        String((s as any).date || '').slice(0, 10) === d &&
+        (s as any).status !== 'CANCELLED');
+      if (!sh) continue;
+      items.push({
+        employee_id: empId,
+        employee: String(emp.full_name || empId),
+        branch: emp.default_branch_id || emp.branch_id || 'CN130',
+        date: d,
+        shift_code: String((sh as any).shift_code || ''),
+        leave_type: String((l as any).leave_type || ''),
+        leave_id: String((l as any).request_id || ''),
+      });
+    }
+    items.sort((a, b) => a.date.localeCompare(b.date) || a.branch.localeCompare(b.branch));
+    if (dryRun || items.length === 0) {
+      return { dryRun: true, today, items, cancelledCount: 0 };
+    }
+    let cancelledCount = 0;
+    const notified = new Set<string>();
+    for (const it of items) {
+      await this.repo.updateLeaveRequest(it.leave_id, 'CANCELLED', actorId, 'Đồng bộ phiếu cũ: ca làm đã xếp trùng ngày OFF — ngày OFF chuyển thành ca làm việc').catch(() => null);
+      cancelledCount++;
+      if (this.io && !notified.has(it.employee_id)) {
+        notified.add(it.employee_id);
+        this.io.to(`user:${it.employee_id}`).emit('system:notification', {
+          type: 'SYSTEM',
+          origin: 'ADMIN',
+          title: '📅 Ngày OFF đã chuyển thành ca làm việc',
+          message: 'HR vừa đồng bộ các phiếu cũ: ngày OFF trùng ca làm của bạn đã được chuyển thành ca làm việc.',
+          timestamp: new Date().toISOString(),
+        });
+      }
+    }
+    await this.repo.recordAuditLog({
+      log_id: `LOG_${Date.now()}`,
+      actor_id: actorId,
+      actor_role: 'HR',
+      action: 'SHIFT_OFF_OVERLAP_SYNC',
+      target_entity: 'PHIEU_OFF',
+      target_id: `${items.length}_pairs`,
+      details: `Đồng bộ ${cancelledCount} ngày OFF trùng ca cũ (${items.map(i => `${i.employee} ${i.date} ${i.shift_code}`).join(' | ')})`,
+    } as any).catch(() => null);
+    return { dryRun: false, today, items, cancelledCount };
+  }
+
   /** Kẹp mỗi NV mỗi tuần tối đa 2 ngày OFF HANG_TUAN (từ hôm nay trở đi). Giữ 2 phiếu
    *  MỚI NHẤT, hủy phần thừa. Dùng cho nút HR + tick tự chữa định kỳ (không cần HR bấm).
    *  Trả về doneIds để caller gộp (tránh hủy trùng với nhóm trùng ca). */

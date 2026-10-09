@@ -2968,6 +2968,22 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Đồng bộ phiếu cũ: rà soát ca làm trùng ngày OFF của cùng NV (từ hôm nay).
+  // dryRun=true xem trước; dryRun=false hủy OFF trùng (ngày OFF thành ca làm).
+  app.post('/admin/shift-off-overlaps/sync', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const dryRun = (req.body as any)?.dryRun !== false;
+      const result = await schedulesService.syncShiftOffOverlaps(req.user!.id, dryRun);
+      if (!dryRun && result.cancelledCount > 0) {
+        broadcastUpdate('leaves', { action: 'shift-off-overlap-sync', count: result.cancelledCount });
+        broadcastUpdate('schedules', { action: 'shift-off-overlap-sync', count: result.cancelledCount });
+      }
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(500).json({ error: String(err?.message || 'Lỗi đồng bộ ca trùng OFF cũ') });
+    }
+  });
+
   // Reset ALL lịch OFF tuần (pass bảo vệ, mặc định Umbomilk@999 — đổi bằng env
   // WEEKLY_OFF_RESET_PASS): hủy toàn bộ phiếu HANG_TUAN còn hiệu lực từ hôm nay để
   // NV đăng ký lại từ đầu. dryRun=true chỉ đếm trước.

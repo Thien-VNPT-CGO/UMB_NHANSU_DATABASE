@@ -913,7 +913,43 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [weeklyOffBranchFilter, setWeeklyOffBranchFilter] = useState('ALL');
   const [weeklyOffSearch, setWeeklyOffSearch] = useState('');
   // Reset lịch OFF trùng ca đã đăng ký từ trước về chưa đăng ký (NV đăng ký lại).
-  const [offOverlapBusy, setOffOverlapBusy] = useState(false);  const handleResetWeeklyOffOverlaps = async () => {
+  const [offOverlapBusy, setOffOverlapBusy] = useState(false);
+  // Đồng bộ phiếu cũ: ca làm trùng ngày OFF của cùng NV → ngày OFF thành ca làm.
+  const [shiftOffSyncBusy, setShiftOffSyncBusy] = useState(false);
+  const handleSyncShiftOffOverlaps = async () => {
+    if (shiftOffSyncBusy) return;
+    setShiftOffSyncBusy(true);
+    try {
+      const preview: any = await apiRequest('/admin/shift-off-overlaps/sync', {
+        method: 'POST',
+        body: JSON.stringify({ dryRun: true }),
+      });
+      const items = (preview?.items || []) as any[];
+      if (items.length === 0) {
+        showToast('✅ Không có ca nào trùng ngày OFF từ hôm nay trở đi — dữ liệu đã đồng bộ!');
+        return;
+      }
+      const lines = items.slice(0, 10).map((it: any) =>
+        `• ${it.employee} (${it.branch}): ${it.date} ${it.shift_code} trùng ${it.leave_type === 'HANG_TUAN' ? 'OFF tuần' : it.leave_type === 'THU_VIEC' ? 'OFF thử việc' : 'đơn nghỉ'}`
+      ).join('\n');
+      const more = items.length > 10 ? `\n… +${items.length - 10} cặp nữa` : '';
+      if (!window.confirm(
+        `Rà soát từ hôm nay: ${items.length} cặp ca trùng ngày OFF:\n${lines}${more}\n\nBấm OK để HỦY ngày OFF trùng → ngày OFF thành ca làm việc (đúng luật mới).\nKHÔNG thể hoàn tác!`
+      )) return;
+      const res: any = await apiRequest('/admin/shift-off-overlaps/sync', {
+        method: 'POST',
+        body: JSON.stringify({ dryRun: false }),
+      });
+      showToast(`🔄 Đã đồng bộ ${res?.cancelledCount || 0} ngày OFF trùng ca thành ca làm việc!`);
+      if (onRefreshData) await onRefreshData();
+      if (onPushSheets) await onPushSheets();
+    } catch (e: any) {
+      showToast(e?.message || 'Lỗi khi đồng bộ ca trùng OFF!');
+    } finally {
+      setShiftOffSyncBusy(false);
+    }
+  };
+  const handleResetWeeklyOffOverlaps = async () => {
     if (offOverlapBusy) return;
     setOffOverlapBusy(true);
     try {
@@ -8319,6 +8355,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 style={{ fontSize: '12px', padding: '6px 12px', borderRadius: '6px', border: 'none', backgroundColor: offOverlapBusy ? '#9CA3AF' : '#DC2626', color: '#FFF', fontWeight: 800, cursor: offOverlapBusy ? 'wait' : 'pointer' }}
               >
                 {offOverlapBusy ? '⏳ Đang xử lý...' : '🧹 Reset lịch OFF trùng ca'}
+              </button>
+              <button
+                disabled={shiftOffSyncBusy}
+                onClick={handleSyncShiftOffOverlaps}
+                title="Đồng bộ phiếu cũ: rà soát ca làm trùng ngày OFF của cùng NV (từ hôm nay) rồi chuyển ngày OFF thành ca làm việc"
+                style={{ fontSize: '12px', padding: '6px 12px', borderRadius: '6px', border: 'none', backgroundColor: shiftOffSyncBusy ? '#9CA3AF' : '#2563EB', color: '#FFF', fontWeight: 800, cursor: shiftOffSyncBusy ? 'wait' : 'pointer' }}
+              >
+                {shiftOffSyncBusy ? '⏳ Đang đồng bộ...' : '🔄 Đồng bộ ca trùng OFF'}
               </button>
               <button
                 onClick={openResetAllModal}
