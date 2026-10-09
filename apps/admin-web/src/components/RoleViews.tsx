@@ -7085,11 +7085,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           return isSameDay(e.client_time);
         };
 
-        const buildOne = (sh: any) => {
+        const buildOne = (sh: any, forced?: { ci: any; co: any; ab: any }) => {
           if (sh?.shift_code && !sh?.isExtra) weekShiftCodes.push(String(sh.shift_code));
-          const ci = empEvents.find((e: any) => e.type === 'CHECK_IN' && matchShift(e, sh));
-          const co = empEvents.find((e: any) => e.type === 'CHECK_OUT' && matchShift(e, sh));
-          const ab = empEvents.find((e: any) => e.type === 'ABSENT' && matchShift(e, sh));
+          // forced: nhóm điểm danh đã gom sẵn theo ca (giống tab Chấm công) — chính
+          // xác khi 1 ngày có nhiều lượt điểm danh ngoài lịch. Không forced thì
+          // tìm như cũ để giữ hành vi các chỗ gọi khác.
+          const ci = forced ? forced.ci : empEvents.find((e: any) => e.type === 'CHECK_IN' && matchShift(e, sh));
+          const co = forced ? forced.co : empEvents.find((e: any) => e.type === 'CHECK_OUT' && matchShift(e, sh));
+          const ab = forced ? forced.ab : empEvents.find((e: any) => e.type === 'ABSENT' && matchShift(e, sh));
           // GPS vượt 300m (dữ liệu cũ từng ghi nhận): đánh dấu để báo đỏ + bắt làm lại
           const ciDist = Number(ci?.distance_meters);
           const gpsBad = !!ci && (ci?.gps_status === 'OUT_OF_BOUNDS' || (Number.isFinite(ciDist) && ciDist > 300));
@@ -7203,32 +7206,18 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               : (`Chờ duyệt: ${foundLeave.reason || 'đơn đột xuất chưa duyệt'}`),
             isToday: day.isToday,
           };
-        } else if (!foundShift) {
-          if (checkInEvent) {
-            // Có điểm danh thực tế dù chưa có ca trên lịch xếp trước (tăng cường, làm thay)
-            const extraShift = {
-              shift_code: checkInEvent.shift_code || 'CA_NGOAI_LICH',
-              start_at: checkInEvent.client_time,
-              end_at: checkOutEvent?.client_time,
-              isExtra: true,
-            };
-            const res = buildOne(extraShift);
-            if (foundLeave) {
-              res.note = `Đã đi làm điểm danh (dù có đơn: ${foundLeave.reason || 'Nghỉ OFF'})`;
-            }
-            dayDataMap[day.key] = res;
-          } else {
-            // KHÔNG CÓ CA LÀM VIỆC NÀO ĐƯỢC PHÂN CÔNG THẬT -> HIỂN THỊ KHÔNG CÓ CA, KHÔNG LẤY DỮ LIỆU ĐIỂM DANH ẢO
-            dayDataMap[day.key] = {
-              shift: '—',
-              status: 'NO_SHIFT',
-              note: 'Không có ca',
-              isToday: day.isToday,
-            };
-          }
+        } else if (!foundShift && !checkInEvent) {
+          // Khong co ca lam viec nao duoc phan cong that -> hien thi khong co ca.
+          dayDataMap[day.key] = {
+            shift: '-',
+            status: 'NO_SHIFT',
+            note: 'Không có ca',
+            isToday: day.isToday,
+          };
         } else {
-          // Có ca làm việc thật — ngày 2 ca (do tráo đổi/nhận thay): tính từng ca riêng.
-          // Lọc trùng assignment_id để dòng trùng không hiện thành "2 ca" ma.
+          // Dung TUNG muc trong ngay (giong tab Cham cong de 2 tab khop 100%):
+          // moi ca 1 muc + moi nhom diem danh khong gan ca nao thanh 1 muc ngoai
+          // lich. VD ngay 2 luot diem danh ngoai lich -> hien du 2 ca.
           const seenAssign = new Set<string>();
           const dayShifts = empShifts.filter((s: any) => {
             if (s.status === 'CANCELLED') return false;
@@ -7237,25 +7226,75 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             if (s.assignment_id) seenAssign.add(s.assignment_id);
             return true;
           });
-          if (dayShifts.length > 1) {
-            dayDataMap[day.key] = {
-              shift: `${dayShifts.length} ca`,
-              status: 'MULTI',
-              isToday: day.isToday,
-              shifts: dayShifts.map((sh: any) => {
-                const res = buildOne(sh);
-                if (foundLeave && (res.status === 'COMPLETED' || res.status === 'CHECKED_IN')) {
-                  res.note = (res.note ? `${res.note} • ` : '') + `Đi làm dù có đơn nghỉ: ${foundLeave.reason || 'Nghỉ OFF'}`;
-                }
-                return res;
-              }),
-            };
-          } else {
-            const res = buildOne(foundShift);
+          const byAssign = new Map<string, any[]>();
+          for (const e of dayEvts) {
+            const k = (e as any).assignment_id || `__${(e as any).type}`;
+            if (!byAssign.has(k)) byAssign.set(k, []);
+            byAssign.get(k)!.push(e);
+          }
+          const usedAssign = new Set<string>();
+          const entries: any[] = [];
+          const entryNote = (res: any) => {
             if (foundLeave && (res.status === 'COMPLETED' || res.status === 'CHECKED_IN')) {
               res.note = (res.note ? `${res.note} • ` : '') + `Đi làm dù có đơn nghỉ: ${foundLeave.reason || 'Nghỉ OFF'}`;
             }
-            dayDataMap[day.key] = res;
+            return res;
+          };
+          for (const sh of dayShifts) {
+            const list = (sh as any).assignment_id ? (byAssign.get((sh as any).assignment_id) || []) : [];
+            if ((sh as any).assignment_id) usedAssign.add((sh as any).assignment_id);
+            entries.push(entryNote(buildOne(sh, {
+              ci: list.find((e: any) => e.type === 'CHECK_IN'),
+              co: list.find((e: any) => e.type === 'CHECK_OUT'),
+              ab: list.find((e: any) => e.type === 'ABSENT'),
+            })));
+          }
+          // Nhom thua: diem danh khong gan ca nao (ca ngoai lich, tang cuong...)
+          for (const [k, list] of byAssign) {
+            if (usedAssign.has(k)) continue;
+            const ci = list.find((e: any) => e.type === 'CHECK_IN');
+            const co = list.find((e: any) => e.type === 'CHECK_OUT');
+            const ab = list.find((e: any) => e.type === 'ABSENT');
+            if (!ci && !co && !ab) continue;
+            const pseudo = {
+              assignment_id: '',
+              date: day.isoDate,
+              shift_code: (list[0] as any)?.shift_code || 'CA_NGOAI_LICH',
+              start_at: ci?.client_time,
+              end_at: co?.client_time,
+              isExtra: true,
+            };
+            const res = entryNote(buildOne(pseudo, { ci, co, ab }));
+            if (!res.note) res.note = 'Ca làm tự điểm danh ngoài lịch';
+            entries.push(res);
+          }
+          if (entries.length > 1) {
+            dayDataMap[day.key] = {
+              shift: `${entries.length} ca`,
+              status: 'MULTI',
+              isToday: day.isToday,
+              shifts: entries,
+            };
+          } else if (entries.length === 1) {
+            dayDataMap[day.key] = entries[0];
+          } else if (foundLeave) {
+            const isWeeklyOff = foundLeave.leave_type === 'HANG_TUAN';
+            const isApprovedLeave = isWeeklyOff || foundLeave.status === 'APPROVED';
+            dayDataMap[day.key] = {
+              shift: foundLeave.leave_type === 'DOT_XUAT' ? 'Nghỉ đột xuất' : 'Nghỉ OFF',
+              status: isApprovedLeave ? 'OFF' : 'PENDING_LEAVE',
+              note: isApprovedLeave
+                ? (foundLeave.reason || 'Nghỉ theo đơn đã duyệt')
+                : (`Chờ duyệt: ${foundLeave.reason || 'đơn đột xuất chưa duyệt'}`),
+              isToday: day.isToday,
+            };
+          } else {
+            dayDataMap[day.key] = {
+              shift: '-',
+              status: 'NO_SHIFT',
+              note: 'Không có ca',
+              isToday: day.isToday,
+            };
           }
         }
       });
