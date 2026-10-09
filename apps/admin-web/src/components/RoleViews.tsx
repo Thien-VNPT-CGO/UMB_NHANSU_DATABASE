@@ -1833,8 +1833,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [exportAttDate, setExportAttDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [exportAttBusy, setExportAttBusy] = useState(false);
   const [exportWeekBusy, setExportWeekBusy] = useState(false);
-  // Tuần đang xem ở lưới tuần realtime (0 = tuần này)
-  const [attWeekOffset, setAttWeekOffset] = useState(0);
+  // Tuần đang xem ở lưới tuần realtime (0 = tuần này) — dùng chung
+  // scheduleWeekOffset với tab Lịch Làm Việc để 2 tab luôn cùng tuần.
   // Ô ca đang hover ở lưới realtime (hiện popup lương/phạt/đổi ca)
   const [attHover, setAttHover] = useState<string | null>(null);
   // Đồng hồ đếm ngược giờ PV (tab lịch phỏng vấn) — tự vào Meet khi tới giờ
@@ -2654,6 +2654,27 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   };
   // Lọc lịch sử thông báo HR theo nguồn
   const [notifFilter, setNotifFilter] = useState('ALL');
+  // NGUỒN DÙNG CHUNG 2 tab Lịch tuần + Bảng chấm công realtime (lấy tab Lịch
+  // làm chuẩn): cùng tập ca (realtime + kho lưu trữ, trừ ca NV bị khóa), cùng
+  // tập sự kiện, cùng thứ tự chi nhánh + ca. Tab nào cũng thấy đúng từng NV
+  // từng ca, realtime 100%.
+  // Thứ tự chi nhánh cố định: CN1 (130 Vạn Kiếp) → CN2 (261 Tô Hiến Thành) →
+  // CN3 (120 Hoàng Diệu 2) → CN4 (111 Tôn Đản).
+  const BRANCH_RANK: Record<string, number> = { CN130: 1, CN261: 2, CN120: 3, CN111: 4 };
+  const SHIFT_RANK: Record<string, number> = { CA_1: 1, CA_2: 2, CA_3: 3 };
+  const schedBranchRankOf = (b?: string) => BRANCH_RANK[canonicalBranchId(b)] ?? 9;
+  const schedShiftRankOf = (c?: string) => SHIFT_RANK[c || ''] ?? 9;
+  // Gộp lịch ca realtime + lịch ca tuần cũ (khử trùng theo assignment_id) và loại bỏ ca của NV bị khóa.
+  const schedAllShifts = (() => {
+    const base = (() => {
+      if (!archiveShifts || archiveShifts.length === 0) return shifts || [];
+      const seen = new Set<string>((shifts || []).map((s: any) => String(s.assignment_id || '')));
+      const extra = (archiveShifts || []).filter((s: any) => !s.assignment_id || !seen.has(String(s.assignment_id)));
+      return extra.length > 0 ? [...(shifts || []), ...extra] : (shifts || []);
+    })();
+    return base.filter((s: any) => !lockedEmpIds.has(String(s.employee_id || '')));
+  })();
+  const schedAllEvents = mergeWithArchive(liveAttendanceEvents, archiveEvents);
   // Lưới tuần cần sự kiện cả tuần -> luôn tải không lọc ngày, tự refresh 30s
   const reloadAttEvents = async () => {
     try {
@@ -2738,9 +2759,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const need = new Set<string>();
     const viewMon = mondayIsoOfOffset(scheduleWeekOffset);
     if (viewMon < curMon) need.add(viewMon);
-    // Bảng Chấm Công Realtime xem theo tuần riêng (attWeekOffset).
+    // Bảng Chấm Công dùng chung tuần với tab Lịch (scheduleWeekOffset).
     try {
-      const attMon = mondayIsoOfOffset(attWeekOffset);
+      const attMon = mondayIsoOfOffset(scheduleWeekOffset);
       if (attMon < curMon) need.add(attMon);
     } catch { /* bỏ qua */ }
     const missing = [...need].filter(m => !archiveWeeksRef.current.has(m));
@@ -2789,7 +2810,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       }
     })();
     return () => { alive = false; };
-  }, [activeTab, scheduleWeekOffset, attWeekOffset]);
+  }, [activeTab, scheduleWeekOffset]);
   // (QR Zalo thật do server sinh qua /admin/zalo/* — không còn QR giả local.)
 
   // Filter employees for Store
@@ -6974,23 +6995,33 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
     const todayItem = weekDays.find((d) => d.isToday) || weekDays[0];
 
-    // Gộp realtime + kho lưu trữ (tuần cũ): ô ngày cũ hiện đủ giờ in/out.
-    // mergeWithArchive khai báo ở scope chung (trên) — 2 tab dùng chung 100%.
-    const schedAllEvents = mergeWithArchive(liveAttendanceEvents, archiveEvents);
-    // Gộp lịch ca realtime + lịch ca tuần cũ (khử trùng theo assignment_id) và loại bỏ ca của NV bị khóa.
-    const schedAllShifts = (() => {
-      const base = (() => {
-        if (!archiveShifts || archiveShifts.length === 0) return shifts || [];
-        const seen = new Set<string>((shifts || []).map((s: any) => String(s.assignment_id || '')));
-        const extra = (archiveShifts || []).filter((s: any) => !s.assignment_id || !seen.has(String(s.assignment_id)));
-        return extra.length > 0 ? [...(shifts || []), ...extra] : (shifts || []);
-      })();
-      return base.filter((s: any) => !lockedEmpIds.has(String(s.employee_id || '')));
-    })();
+    // schedAllEvents/schedAllShifts lấy ở scope chung (trên) — dùng chung với
+    // tab Bảng chấm công để 2 tab giống nhau 100%.
 
-    const scheduleItems = (allEmployees || [])
-      .filter((emp: any) => !isEmpAccountLocked(emp))
-      .map((emp, empIdx) => {
+    const scheduleItems = (() => {
+      // Chuẩn chung 2 tab (lấy tab Lịch làm gốc): hiện mọi NV đang làm (trừ khóa
+      // tài khoản + trừ nghỉ việc) KÈM người có ca/sự kiện nhưng thiếu hồ sơ.
+      const baseEmps = (allEmployees || []).filter((emp: any) => !isEmpAccountLocked(emp) && emp.employment_status !== 'TERMINATED');
+      // NV vãng lai: có ca/sự kiện trong nguồn chung nhưng thiếu hồ sơ — thêm hàng
+      // fallback để tab Lịch thấy đúng từng người như tab Chấm công (vẫn ẩn NV khóa).
+      const knownIds = new Set(baseEmps.map((e: any) => e.employee_id));
+      const extras: any[] = [];
+      for (const s of [...(schedAllShifts || []), ...(schedAllEvents || [])] as any[]) {
+        const id = (s as any)?.employee_id;
+        if (id && !knownIds.has(id)) {
+          knownIds.add(id);
+          const firstShift = (schedAllShifts || []).find((x: any) => x.employee_id === id) as any;
+          extras.push({
+            employee_id: id,
+            employee_code: id,
+            full_name: 'Nhân Viên',
+            employment_status: 'OFFICIAL',
+            default_branch_id: firstShift?.branch_id || 'CN130',
+            default_shift_code: '',
+          });
+        }
+      }
+      return [...baseEmps, ...extras].map((emp, empIdx) => {
       const empShifts = (schedAllShifts || []).filter((s: any) => s.employee_id === emp.employee_id);
       const empLeaves = (leaves || []).filter((l: any) => l.employee_id === emp.employee_id && (l.status === 'APPROVED' || l.status === 'PENDING'));
       const empEvents = (schedAllEvents || []).filter((e: any) => e.employee_id === emp.employee_id);
@@ -7207,14 +7238,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         weekShiftCodes,
       };
     });
+    })();
 
     // Thứ tự hàng: chi nhánh CN1→CN2→CN3→CN4, rồi ca chuẩn của từng NV
     // (Ca 1 → Ca 2 → Ca 3: Ca1, Ca1, Ca2, Ca2, Ca3, Ca3...), rồi mã NV, rồi tên.
     // RÀNG BUỘC ỔN ĐỊNH BỐ CỤC: key ca là ca cố định trong hồ sơ (không đổi khi NV
     // tráo/đổi ca tuần với nhau) — ca thật trong tuần chỉ làm fallback cho NV chưa
     // gán ca cố định. Đổi ca tuần không bao giờ xáo thứ tự hàng.
-    const BRANCH_RANK: Record<string, number> = { CN130: 1, CN261: 2, CN120: 3, CN111: 4 };
-    const SHIFT_RANK: Record<string, number> = { CA_1: 1, CA_2: 2, CA_3: 3 };
+    // BRANCH_RANK/SHIFT_RANK dùng chung ở scope trên (cả tab Bảng chấm công).
     const empShiftOf = (empId: string) =>
       (allEmployees || []).find((e: any) => e.employee_id === empId)?.default_shift_code;
     const weekShiftOf = (item: any): string => {
@@ -8932,8 +8963,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }
 
   if (activeTab === 'hr-attendance' || activeTab === 'operations') {
-    // Lưới tuần Mon–CN như lịch làm việc: 1 ô = các ca trong ngày kèm đúng trạng thái
-    const attMon = mondayIsoOfOffset(attWeekOffset);
+    // Lưới tuần Mon–CN như lịch làm việc: 1 ô = các ca trong ngày kèm đúng trạng thái.
+    // Dùng CHUNG tuần với tab Lịch (scheduleWeekOffset) để 2 tab luôn cùng tuần.
+    const attMon = mondayIsoOfOffset(scheduleWeekOffset);
     const attDays = [0, 1, 2, 3, 4, 5, 6].map(i => {
       const d = new Date(`${attMon}T00:00:00Z`);
       d.setUTCDate(d.getUTCDate() + i);
@@ -8942,16 +8974,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       return { key: codes[i], code: codes[i], iso, isToday: iso === vnDayOf(new Date().toISOString()) };
     });
     const attWeekSet = new Set(attDays.map(d => d.iso));
-    const attBaseShifts = (() => {
-      if (!archiveShifts || archiveShifts.length === 0) return shifts || [];
-      const seen = new Set<string>((shifts || []).map((s: any) => String(s.assignment_id || '')));
-      const extra = (archiveShifts || []).filter((s: any) => !s.assignment_id || !seen.has(String(s.assignment_id)));
-      return extra.length > 0 ? [...(shifts || []), ...extra] : (shifts || []);
-    })();
-    const attWeekShifts = (attBaseShifts || []).filter((s: any) => attWeekSet.has((s.date || '').slice(0, 10)) && s.status !== 'CANCELLED');
-    // Tuần cũ: gộp thêm sự kiện từ kho lưu trữ để đủ ngày công tính lương.
-    // Dùng chung hàm mergeWithArchive với tab Lịch tuần → 2 tab luôn giống nhau.
-    const attAllEvts = mergeWithArchive(liveAttendanceEvents, archiveEvents);
+    // Dùng CHUNG nguồn tab Lịch (schedAllShifts/schedAllEvents ở scope trên):
+    // cùng tập ca (trừ ca NV bị khóa), cùng tập sự kiện → 2 tab giống nhau 100%.
+    const attWeekShifts = (schedAllShifts || []).filter((s: any) => attWeekSet.has((s.date || '').slice(0, 10)) && s.status !== 'CANCELLED');
+    const attAllEvts = schedAllEvents;
     const attWeekEvts = (attAllEvts || []).filter((e: any) => attWeekSet.has(vnDayOf(e.client_time || '')));
     const attSwapAll = ((typeof swapList !== 'undefined' && swapList !== null ? swapList : (swaps || [])) as any[]) || [];
     // Phiếu đổi ca liên quan 1 ca: bỏ phiếu chết (REJECTED/CANCELLED), ưu tiên
@@ -8970,60 +8996,58 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       );
       return cands[0] || null;
     };
-    // Chủ hiệu dụng của ca: B đã đồng ý nhận (PARTNER_ACCEPTED, chờ HR duyệt) thì ca
-    // đứng tên B + tính tiền theo đơn giá B. APPROVED thì dữ liệu đã chuyển chủ.
-    // PENDING (B chưa đồng ý) vẫn đứng tên chủ cũ.
-    const effEmpIdOf = (s: any) => {
-      const rel = pickSwapOf(s.assignment_id);
-      if (rel && rel.status === 'PARTNER_ACCEPTED' && rel.target_employee_id) return rel.target_employee_id;
-      return s.employee_id;
-    };
-    // Hàng đầy đủ mọi nhân viên (kể cả NV không có ca/sự kiện tuần này — ô hiện "—"),
-    // để HR đối soát không sót ai khi tính lương.
+    // Tập NV Y HỆT tab Lịch: NV đang làm (trừ khóa + trừ nghỉ việc) KÈM người có
+    // ca/sự kiện nhưng thiếu hồ sơ (hàng fallback). Ca/sự kiện theo chủ dữ liệu
+    // thô (employee_id) như tab Lịch để 2 tab thấy đúng từng người từng ca.
+    const attKnownIds = new Set(
+      ((allEmployees || []) as any[])
+        .filter((e: any) => !isEmpAccountLocked(e) && e.employment_status !== 'TERMINATED')
+        .map((e: any) => e.employee_id)
+    );
     const attEmpIds = [...new Set([
-      ...((allEmployees || []).map((e: any) => e.employee_id)),
-      ...attWeekShifts.map((s: any) => effEmpIdOf(s)),
+      ...[...attKnownIds],
+      ...attWeekShifts.map((s: any) => s.employee_id),
       ...attWeekEvts.map((e: any) => e.employee_id),
     ])].filter(Boolean);
-    // Sắp xếp Y HỆT Lịch Làm Việc: theo chi nhánh → ca cố định (CA_1→CA_2→CA_3) →
-    // thứ tự hồ sơ (allEmployees) — ca trong ô cũng theo CA_1→CA_2→CA_3.
-    // Thứ tự chi nhánh cố định: CN1 (130 Vạn Kiếp) → CN2 (261 Tô Hiến Thành) →
-    // CN3 (120 Hoàng Diệu 2) → CN4 (111 Tôn Đản).
-    const BRANCH_ORDER: Record<string, number> = { CN130: 1, CN261: 2, CN120: 3, CN111: 4 };
-    const branchRank = (b?: string) => BRANCH_ORDER[canonicalBranchId(b)] ?? 9;
-    const SHIFT_ORDER: Record<string, number> = { CA_1: 1, CA_2: 2, CA_3: 3 };
-    const empOrderIdx = new Map<string, number>(
-      (allEmployees || []).map((e: any, i: number) => [e.employee_id, i])
-    );
-    // Ca xếp hàng: ca THỰC TẾ sớm nhất của NV trong tuần đang xem (ngày rồi ca),
-    // rớt về ca cố định hồ sơ khi tuần này chưa có ca — khớp với ô ca hiển thị.
-    const firstShiftRankOf = (empId: string): [number, string] => {
-      const mine = attWeekShifts
-        .filter((s: any) => effEmpIdOf(s) === empId)
-        .sort((x: any, y: any) =>
-          String(x.date || '').localeCompare(String(y.date || '')) ||
-          ((SHIFT_ORDER[x.shift_code] || 9) - (SHIFT_ORDER[y.shift_code] || 9))
-        );
-      if (mine.length > 0) return [SHIFT_ORDER[mine[0].shift_code] || 9, String(mine[0].date || '')];
-      return [9, ''];
+    // Sắp xếp Y HỆT tab Lịch: chi nhánh (CN1→CN2→CN3→CN4) → ca cố định hồ sơ
+    // (rớt về ca thật trong tuần khi chưa gán) → mã NV → tên NV.
+    const attWeekShiftOf = (empId: string): string => {
+      const freq: Record<string, number> = {};
+      const firstIdx: Record<string, number> = {};
+      attWeekShifts
+        .filter((s: any) => s.employee_id === empId)
+        .forEach((s: any, i: number) => {
+          const c = String(s.shift_code || '');
+          freq[c] = (freq[c] || 0) + 1;
+          if (firstIdx[c] === undefined) firstIdx[c] = i;
+        });
+      let best = '';
+      for (const c of Object.keys(freq)) {
+        if (!best || freq[c] > freq[best] || (freq[c] === freq[best] && firstIdx[c] < firstIdx[best])) best = c;
+      }
+      return best;
     };
+    const attSortShiftOf = (e: any): string =>
+      (allEmployees || []).find((x: any) => x.employee_id === e.employee_id)?.default_shift_code ||
+      e.default_shift_code || attWeekShiftOf(e.employee_id) || '';
     const attEmps = attEmpIds
-      .map(id => (allEmployees || []).find((e: any) => e.employee_id === id) || { employee_id: id, full_name: 'Nhân Viên', employee_code: id, employment_status: 'OFFICIAL', default_branch_id: '' })
+      .map(id => (allEmployees || []).find((e: any) => e.employee_id === id) || {
+        employee_id: id,
+        full_name: 'Nhân Viên',
+        employee_code: id,
+        employment_status: 'OFFICIAL',
+        default_branch_id: (attWeekShifts.find((s: any) => s.employee_id === id) as any)?.branch_id || 'CN130',
+        default_shift_code: '',
+      })
       .filter((e: any) => e.employment_status !== 'TERMINATED')
-      .sort((a: any, b: any) => {
-        const fa = firstShiftRankOf(a.employee_id);
-        const fb = firstShiftRankOf(b.employee_id);
-        return (
-          (branchRank(a.default_branch_id) - branchRank(b.default_branch_id)) ||
-          (fa[0] - fb[0]) ||
-          String(fa[1] || '').localeCompare(String(fb[1] || '')) ||
-          ((SHIFT_ORDER[a.default_shift_code] || 9) - (SHIFT_ORDER[b.default_shift_code] || 9)) ||
-          ((empOrderIdx.get(a.employee_id) ?? 9999) - (empOrderIdx.get(b.employee_id) ?? 9999)) ||
-          String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi')
-        );
-      });
+      .sort((a: any, b: any) =>
+        (schedBranchRankOf(a.default_branch_id || (a as any).branch_id) - schedBranchRankOf(b.default_branch_id || (b as any).branch_id)) ||
+        (schedShiftRankOf(attSortShiftOf(a)) - schedShiftRankOf(attSortShiftOf(b))) ||
+        String(a.employee_code || '').localeCompare(String(b.employee_code || '')) ||
+        String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi')
+      );
     const attCellOf = (empId: string, iso: string) => {
-      const shs = attWeekShifts.filter((s: any) => effEmpIdOf(s) === empId && (s.date || '').slice(0, 10) === iso);
+      const shs = attWeekShifts.filter((s: any) => s.employee_id === empId && (s.date || '').slice(0, 10) === iso);
       const evs = attWeekEvts.filter((e: any) => e.employee_id === empId && vnDayOf(e.client_time || '') === iso);
       const byAssign = new Map<string, any[]>();
       for (const e of evs) {
@@ -9032,7 +9056,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         byAssign.get(k)!.push(e);
       }
       const items: any[] = shs
-        .sort((a: any, b: any) => (SHIFT_ORDER[a.shift_code] || 9) - (SHIFT_ORDER[b.shift_code] || 9))
+        .sort((a: any, b: any) => (SHIFT_RANK[a.shift_code] || 9) - (SHIFT_RANK[b.shift_code] || 9))
         .map((s: any) => {
           const list = byAssign.get(s.assignment_id) || [];
           const st = attShiftStatus(
@@ -9233,18 +9257,19 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '10px' }}>
             <span style={{ fontSize: '12px', fontWeight: 700 }}>Tuần:</span>
             <select
-              value={attWeekOffset}
-              onChange={(e) => setAttWeekOffset(Number(e.target.value))}
+              value={scheduleWeekOffset}
+              onChange={(e) => setScheduleWeekOffset(Number(e.target.value))}
+              title="Tuần xem dùng chung với tab Lịch Làm Việc (2 tab luôn cùng tuần)"
               style={{ padding: '6px 10px', fontSize: '12px', borderRadius: '6px', fontWeight: 700 }}
             >
               {weekOptions(0, 12).map(w => (
                 <option key={w.offset} value={w.offset}>{w.label}</option>
               ))}
             </select>
-            <button className="btn-secondary" style={{ fontSize: '12px', padding: '6px 10px' }} onClick={() => setAttWeekOffset(o => o - 1)}>◀</button>
-            <button className="btn-primary" style={{ fontSize: '12px', padding: '6px 10px' }} onClick={() => setAttWeekOffset(o => o + 1)}>▶</button>
+            <button className="btn-secondary" style={{ fontSize: '12px', padding: '6px 10px' }} onClick={() => setScheduleWeekOffset(o => o - 1)}>◀</button>
+            <button className="btn-primary" style={{ fontSize: '12px', padding: '6px 10px' }} onClick={() => setScheduleWeekOffset(o => o + 1)}>▶</button>
             <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-              Tuần <strong>Thứ 2 {attDays[0] ? `${attDays[0].iso.slice(8, 10)}/${attDays[0].iso.slice(5, 7)}/${attDays[0].iso.slice(0, 4)}` : '…'} → CN {attDays[6] ? `${attDays[6].iso.slice(8, 10)}/${attDays[6].iso.slice(5, 7)}/${attDays[6].iso.slice(0, 4)}` : '…'}</strong> • 1 ô = các ca trong ngày kèm đúng trạng thái{attWeekOffset < 0 ? (archiveLoading ? ' • ⏳ Đang tải ngày công tuần cũ từ kho lưu trữ...' : ' • Tuần cũ đọc từ kho lưu trữ (đủ ngày công tính lương).') : ''}
+              Tuần <strong>Thứ 2 {attDays[0] ? `${attDays[0].iso.slice(8, 10)}/${attDays[0].iso.slice(5, 7)}/${attDays[0].iso.slice(0, 4)}` : '…'} → CN {attDays[6] ? `${attDays[6].iso.slice(8, 10)}/${attDays[6].iso.slice(5, 7)}/${attDays[6].iso.slice(0, 4)}` : '…'}</strong> • 1 ô = các ca trong ngày kèm đúng trạng thái • Cùng tuần với tab Lịch Làm Việc{scheduleWeekOffset < 0 ? (archiveLoading ? ' • ⏳ Đang tải ngày công tuần cũ từ kho lưu trữ...' : ' • Tuần cũ đọc từ kho lưu trữ (đủ ngày công tính lương).') : ''}
             </span>
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
