@@ -2843,8 +2843,16 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // CN3 (120 Hoàng Diệu 2) → CN4 (111 Tôn Đản).
   const BRANCH_RANK: Record<string, number> = { CN130: 1, CN261: 2, CN120: 3, CN111: 4 };
   const SHIFT_RANK: Record<string, number> = { CA_1: 1, CA_2: 2, CA_3: 3 };
+  // Chuẩn hóa mã ca về CA_1/CA_2/CA_3 để xếp hàng đúng nhóm (chịu được biến thể
+  // Sheet tay như "CA1", "Ca 2 (12-18)"). Lạ thì giữ nguyên (rớt cuối chi nhánh).
+  const normShiftCode = (c?: string): string => {
+    const s = String(c || '').toUpperCase();
+    const m = s.match(/CA\s*[_-]?\s*([123])\b/);
+    if (m) return `CA_${m[1]}`;
+    return s.trim();
+  };
   const schedBranchRankOf = (b?: string) => BRANCH_RANK[canonicalBranchId(b)] ?? 9;
-  const schedShiftRankOf = (c?: string) => SHIFT_RANK[c || ''] ?? 9;
+  const schedShiftRankOf = (c?: string) => SHIFT_RANK[normShiftCode(c)] ?? 9;
   // Gộp lịch ca realtime + lịch ca tuần cũ (khử trùng theo assignment_id) và loại bỏ ca của NV bị khóa.
   const schedAllShifts = (() => {
     const base = (() => {
@@ -7535,36 +7543,24 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     });
     })();
 
-    // Thứ tự hàng: chi nhánh CN1→CN2→CN3→CN4, rồi ca chuẩn của từng NV
-    // (Ca 1 → Ca 2 → Ca 3: Ca1, Ca1, Ca2, Ca2, Ca3, Ca3...), rồi mã NV, rồi tên.
-    // RÀNG BUỘC ỔN ĐỊNH BỐ CỤC: key ca là ca cố định trong hồ sơ (không đổi khi NV
-    // tráo/đổi ca tuần với nhau) — ca thật trong tuần chỉ làm fallback cho NV chưa
-    // gán ca cố định. Đổi ca tuần không bao giờ xáo thứ tự hàng.
+    // Thứ tự hàng MẶC ĐỊNH (cả tab Lịch tuần + Bảng chấm công): từng chi nhánh
+    // CN1→CN2→CN3→CN4, trong mỗi chi nhánh xếp nhóm Ca 1 → Ca 2 → Ca 3
+    // (Ca1, Ca1, Ca2, Ca2, Ca3, Ca3...), rồi mã NV, rồi tên.
+    // RÀNG BUỘC ỔN ĐỊNH BỐ CỤC: key ca là ca CỐ ĐỊNH trong hồ sơ (chuẩn hóa
+    // biến thể Sheet tay) — NV chưa gán ca cố định xếp cuối chi nhánh, KHÔNG
+    // rớt theo ca thật trong tuần (tránh nhảy nhóm khi đổi/tráo ca).
     // BRANCH_RANK/SHIFT_RANK dùng chung ở scope trên (cả tab Bảng chấm công).
     const empShiftOf = (empId: string) =>
       (allEmployees || []).find((e: any) => e.employee_id === empId)?.default_shift_code;
-    const weekShiftOf = (item: any): string => {
-      const freq: Record<string, number> = {};
-      const firstIdx: Record<string, number> = {};
-      (item.weekShiftCodes || []).forEach((c: string, i: number) => {
-        freq[c] = (freq[c] || 0) + 1;
-        if (firstIdx[c] === undefined) firstIdx[c] = i;
-      });
-      let best = '';
-      for (const c of Object.keys(freq)) {
-        if (!best || freq[c] > freq[best] || (freq[c] === freq[best] && firstIdx[c] < firstIdx[best])) best = c;
-      }
-      return best;
-    };
-    // Ca sắp xếp = ca cố định (ổn định) — chỉ NV chưa gán mới dùng ca thật trong tuần.
-    const sortShiftOf = (item: any): string => empShiftOf(item.empId) || weekShiftOf(item) || '';
+    // Ca sắp xếp = ca cố định đã chuẩn hóa — NV chưa gán về '' (hạng 9, cuối CN).
+    const sortShiftOf = (item: any): string => normShiftCode(empShiftOf(item.empId));
     const SHIFT_LABEL: Record<string, string> = { CA_1: 'Ca 1 (07–12)', CA_2: 'Ca 2 (12–18)', CA_3: 'Ca 3 (18–23)' };
     // Tóm tắt ca làm trong tuần đang xem: "Ca 1 ×4 • Ca 2 ×1" (theo ca thật từng ngày).
     const weekShiftSummary = (item: any): string => {
       const counts: Record<string, number> = {};
       (item.weekShiftCodes || []).forEach((c: string) => { counts[c] = (counts[c] || 0) + 1; });
       const parts = Object.keys(counts)
-        .sort((a, b) => (SHIFT_RANK[a] ?? 9) - (SHIFT_RANK[b] ?? 9))
+        .sort((a, b) => (SHIFT_RANK[normShiftCode(a)] ?? 9) - (SHIFT_RANK[normShiftCode(b)] ?? 9))
         .map((c) => `${SHIFT_LABEL[c] || c} ×${counts[c]}`);
       return parts.join(' • ');
     };
@@ -9493,27 +9489,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     };
     // Tap NV Y HET tab Lich: chi NV trong ho so master (tru khoa + tru nghi
     // viec). Khong hien hang fallback cho ID mo coi de tranh rac "Nhan Vien".
-    // Ca xep hang cua NV: ca co dinh ho so, rot ve ca that pho bien nhat trong
-    // tuan khi chua gan (giong tieu chi sort tab Lich).
-    const attWeekShiftOf = (empId: string): string => {
-      const freq: Record<string, number> = {};
-      const firstIdx: Record<string, number> = {};
-      attWeekShifts
-        .filter((s: any) => s.employee_id === empId)
-        .forEach((s: any, i: number) => {
-          const c = String(s.shift_code || '');
-          freq[c] = (freq[c] || 0) + 1;
-          if (firstIdx[c] === undefined) firstIdx[c] = i;
-        });
-      let best = '';
-      for (const c of Object.keys(freq)) {
-        if (!best || freq[c] > freq[best] || (freq[c] === freq[best] && firstIdx[c] < firstIdx[best])) best = c;
-      }
-      return best;
-    };
+    // Ca xếp hàng của NV: ca CỐ ĐỊNH trong hồ sơ (chuẩn hóa) — NV chưa gán xếp
+    // cuối chi nhánh, không rớt theo ca thật trong tuần (giong tieu chi sort tab Lich).
     const attSortShiftOf = (e: any): string =>
-      (allEmployees || []).find((x: any) => x.employee_id === e.employee_id)?.default_shift_code ||
-      e.default_shift_code || attWeekShiftOf(e.employee_id) || '';
+      normShiftCode(
+        (allEmployees || []).find((x: any) => x.employee_id === e.employee_id)?.default_shift_code ||
+        e.default_shift_code || ''
+      );
     const attEmps = ((allEmployees || []) as any[])
       .filter((e: any) => !isEmpAccountLocked(e) && e.employment_status !== 'TERMINATED')
       .sort((a: any, b: any) =>
