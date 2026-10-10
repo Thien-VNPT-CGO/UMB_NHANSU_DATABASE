@@ -3511,6 +3511,27 @@ export function App() {
                             (base as any)._mergedAids = group.map((g: any) => g.assignment_id).filter(Boolean);
                             shs.push(base);
                           }
+                          // An the thua "Thieu check-out": the chi co check-in ma gio
+                          // check-in trung (<30p) voi 1 the DA DU cap in+out khac cung
+                          // ngay thi an (luot diem danh do da tinh o the kia).
+                          const inOutOf = (sh: any) => {
+                            const aids = [(sh as any).assignment_id, ...((sh as any)._mergedAids || [])].filter(Boolean);
+                            const evts = (myAttendanceHistory || []).filter((e: any) => aids.length > 0 ? aids.includes((e as any).assignment_id) : (e as any).assignment_id === sh.assignment_id);
+                            const ins = evts.filter((e: any) => (e as any).type === 'CHECK_IN').map((e: any) => new Date((e as any).client_time).getTime()).filter((t: number) => Number.isFinite(t));
+                            const outs = evts.filter((e: any) => (e as any).type === 'CHECK_OUT').map((e: any) => new Date((e as any).client_time).getTime()).filter((t: number) => Number.isFinite(t));
+                            return { ins, outs };
+                          };
+                          const doneIns: number[] = [];
+                          const ioList = shs.map((sh: any) => ({ sh, ...inOutOf(sh) }));
+                          for (const x of ioList) {
+                            if (x.ins.length > 0 && x.outs.length > 0) doneIns.push(...x.ins);
+                          }
+                          const keptShs = ioList.filter((x) => {
+                            if (x.ins.length === 0 || x.outs.length > 0) return true;
+                            return !x.ins.some((t: number) => doneIns.some((dt: number) => Math.abs(t - dt) < 30 * 60 * 1000));
+                          }).map((x: any) => x.sh);
+                          shs.length = 0;
+                          shs.push(...keptShs);
                         }
                         const isOffDay = offDaysSet.has(d);
 
