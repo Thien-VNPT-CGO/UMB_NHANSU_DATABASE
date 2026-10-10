@@ -4640,16 +4640,28 @@ export function App() {
                     const dShifts = (shiftDays.get(date) || []).filter((s: any) => (s as any).status !== 'CANCELLED');
                     const cancelledShifts = (shiftDays.get(date) || []).filter((s: any) => (s as any).status === 'CANCELLED');
                     const evs = evtDays.get(date) || [];
-                    // So khớp sự kiện theo ca: ưu tiên assignment_id; chỉ dùng ngày
-                    // làm fallback khi hôm đó đúng 1 ca (tránh lan ca sáng sang chiều).
+                    // So khớp sự kiện theo ca (chuẩn 2 tab admin + lương): cứng theo
+                    // assignment trước; phiếu mồ côi (chưa gắn ca / gắn ca đã hủy
+                    // hoặc ca không còn trong ngày sau khi HR xếp lại) bù cho ca
+                    // thiếu — phiếu gắn ca live khác thì giữ nguyên (không cướp,
+                    // tránh lan ca sáng sang chiều). VẮNG chỉ tính khi gắn cứng.
+                    const usedEvIds = new Set<string>();
+                    const liveIds = new Set((dShifts || []).map((x: any) => String((x as any)?.assignment_id || '')).filter(Boolean));
+                    const deadIds = new Set((cancelledShifts || []).map((x: any) => String((x as any)?.assignment_id || '')).filter(Boolean));
                     const matchEv = (sh: any, type: string) => {
-                      const byAssign = evs.find((e: any) => e.type === type && (e as any).assignment_id && (sh as any)?.assignment_id && (e as any).assignment_id === (sh as any).assignment_id);
+                      const aid = String((sh as any)?.assignment_id || '');
+                      const byAssign = evs.find((e: any) => e.type === type && (e as any).assignment_id && aid && (e as any).assignment_id === aid);
                       if (byAssign) return byAssign;
-                      if (dShifts.length <= 1) {
-                        const anyAssign = evs.some((e: any) => e.type === type && (e as any).assignment_id);
-                        if (!anyAssign) return evs.find((e: any) => e.type === type);
-                      }
-                      return undefined;
+                      if (type === 'ABSENT') return undefined;
+                      return evs.find((e: any) => {
+                        if (e.type !== type) return false;
+                        const eid = String((e as any)?.event_id || '');
+                        if (eid && usedEvIds.has(eid)) return false;
+                        const ea = String((e as any).assignment_id || '');
+                        const ok = !ea || deadIds.has(ea) || !liveIds.has(ea);
+                        if (ok && eid) usedEvIds.add(eid);
+                        return ok;
+                      });
                     };
                     const rows = dShifts.map((sh: any) => {
                       const ci = matchEv(sh, 'CHECK_IN');
@@ -4699,10 +4711,25 @@ export function App() {
                       if (ab && !ci) notes.push('Hệ thống tự ghi vắng');
                       return { sh, ci, co, badge, bg, fg, border, sched, notes };
                     });
-                    // Sự kiện lẻ không gắn ca nào (điểm danh ngoài lịch)
+                    // Sự kiện lẻ không ca nào nhận (điểm danh ngoài lịch). Vắng mồ côi
+                    // (không gắn cứng ca nào) thì ẩn — VẮNG chỉ tính khi gắn cứng.
+                    // (Dùng ID đã claim, không gọi lại matchEv — gọi lại sẽ loại
+                    // phiếu vừa nhận vì usedEvIds, khiến phiếu hiện 2 lần.)
+                    const claimedEvIds = new Set<string>([...usedEvIds]);
+                    for (const s of dShifts) {
+                      for (const t of ['CHECK_IN', 'CHECK_OUT', 'ABSENT']) {
+                        const aid = String((s as any)?.assignment_id || '');
+                        if (!aid) continue;
+                        const f = evs.find((e: any) => e.type === t && String((e as any).assignment_id || '') === aid);
+                        if (f && (f as any).event_id) claimedEvIds.add(String((f as any).event_id));
+                      }
+                    }
                     const orphans = evs.filter((e: any) => {
-                      if ((e as any).type === 'ABSENT') return !dShifts.some((sh: any) => matchEv(sh, 'ABSENT') === e);
-                      return !dShifts.some((sh: any) => matchEv(sh, (e as any).type) === e);
+                      if ((e as any).type === 'ABSENT') return false;
+                      const id = String((e as any)?.event_id || '');
+                      if (id && claimedEvIds.has(id)) return false;
+                      if (!id) return !dShifts.some((sh: any) => matchEv(sh, (e as any).type) === e);
+                      return true;
                     });
                     for (const c of cancelledShifts) cCancelled++;
                     return { date, y, m, dd, rows, orphans, cancelledShifts };
