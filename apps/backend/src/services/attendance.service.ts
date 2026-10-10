@@ -10,10 +10,11 @@ import {
 } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { singleWriterQueue } from '../repositories/single-writer-queue.js';
-import { lateFineFor } from './payroll.service.js';
+import { lateFineFor, linkDayEvents } from './payroll.service.js';
 import { weekRangeOf } from './weekly-off.service.js';
 import { Server } from 'socket.io';
 
+// Haversine formula for calculating distance in meters between two lat/lon points
 // Haversine formula for calculating distance in meters between two lat/lon points
 export function calculateDistanceMeters(
   lat1: number,
@@ -90,6 +91,11 @@ export class AttendanceService {
         }
         if (shift.employee_id !== data.employeeId) {
           throw new Error('ASSIGNMENT_NOT_OWNED');
+        }
+        // Ca đã hủy/khóa thì không điểm danh vào đó (phiếu sẽ mồ côi, lưới hiện
+        // "chưa điểm danh" dù NV đã bấm — báo HR xếp ca mới).
+        if ((shift as any).status === 'CANCELLED') {
+          throw new Error('SHIFT_CANCELLED: Ca này đã bị hủy! Báo HR xếp ca mới rồi điểm danh lại.');
         }
 
         // 3. Validate GPS
@@ -220,8 +226,40 @@ export class AttendanceService {
     const scopes = branchIds.length > 0 ? branchIds : ['*'];
     let checked = 0;
     let marked = 0;
+    // Map ca live toàn hệ thống theo NV+ngày (1 lần): NV có ca 2 chi nhánh cùng
+    // ngày thì check-in ca CN kia vẫn tính "đã gắn ca live".
+    const crossBranchLive = new Map<string, Set<string>>();
+    try {
+      const cross = await this.repo.getShiftsForWeek('*', '2000-01-01').catch(() => []);
+      for (const s of cross || []) {
+        if ((s as any)?.status === 'CANCELLED') continue;
+        const k = `${(s as any)?.employee_id}|${String((s as any)?.date || '').slice(0, 10)}`;
+        const id = String((s as any)?.assignment_id || '');
+        if (!id) continue;
+        if (!crossBranchLive.has(k)) crossBranchLive.set(k, new Set());
+        crossBranchLive.get(k)!.add(id);
+      }
+    } catch { /* thiếu thì map theo scope bên dưới vẫn đúng */ }
     for (const branchId of scopes) {
       const shifts = await this.repo.getShiftsForWeek(branchId, '2000-01-01').catch(() => []);
+      // ID ca live theo NV+ngày (tra cứu 1 lần): phiếu check-in mồ côi (gắn ca đã
+      // hủy/mất sau khi HR xếp lại) vẫn là bằng chứng có mặt — không đánh vắng
+      // oan. Phiếu gắn ca live KHÁC cùng ngày (VD ngày 2 ca) thì ca này vẫn vắng.
+      // (Map bù liên chi nhánh ngoài vòng lặp để NV 2 CN cùng ngày vẫn đúng.)
+      const liveByEmpDay = new Map<string, Set<string>>(crossBranchLive);
+      const cancelledByEmpDay = new Map<string, Set<string>>();
+      for (const s of shifts || []) {
+        const k = `${(s as any)?.employee_id}|${String((s as any)?.date || '').slice(0, 10)}`;
+        const id = String((s as any)?.assignment_id || '');
+        if (!id) continue;
+        if ((s as any)?.status === 'CANCELLED') {
+          if (!cancelledByEmpDay.has(k)) cancelledByEmpDay.set(k, new Set());
+          cancelledByEmpDay.get(k)!.add(id);
+        } else {
+          if (!liveByEmpDay.has(k)) liveByEmpDay.set(k, new Set());
+          else liveByEmpDay.set(k, new Set([...liveByEmpDay.get(k)!, id]));
+        }
+      }
       for (const s of shifts || []) {
         if ((s as any).status !== 'PUBLISHED') continue;
         if ((s as any).date >= todayStr) continue; // chỉ ngày đã qua
@@ -233,6 +271,21 @@ export class AttendanceService {
           (e: any) => e.assignment_id === (s as any).assignment_id && (e.type === 'CHECK_IN' || e.type === 'ABSENT')
         );
         if (mine.length > 0) continue;
+        // NV đã check-in cùng ngày (dù phiếu gắn ca khác do HR xếp lại lịch sau
+        // đó) thì KHÔNG đánh vắng — giữ công, HR đối soát lại liên kết sau.
+        const k = `${(s as any)?.employee_id}|${String((s as any)?.date || '').slice(0, 10)}`;
+        const liveIds = liveByEmpDay.get(k) || new Set<string>();
+        const deadIds = cancelledByEmpDay.get(k) || new Set<string>();
+        const orphanCheckIn = (events || []).some((e: any) => {
+          if (String((e as any)?.type || '') !== 'CHECK_IN') return false;
+          const aid = String((e as any)?.assignment_id || '');
+          if (!aid) return true;
+          if (aid === String((s as any)?.assignment_id || '')) return true;
+          if (deadIds.has(aid)) return true;
+          if (!liveIds.has(aid)) return true;
+          return false;
+        });
+        if (orphanCheckIn) continue;
         const requestId = `ABSENT_${(s as any).assignment_id}`;
         const dup = await this.repo.findAttendanceEventByRequestId(requestId).catch(() => null);
         if (dup) continue;
@@ -693,5 +746,211 @@ export class AttendanceService {
       await mk('CHECK_OUT', (shift as any).end_at);
     }
     return done;
+  }
+
+  /**
+   * Đối soát check-in/out theo NV+ngày (HR rà soát "đã bấm mà hiện chưa điểm
+   * danh", đối chiếu trước khi chốt lương): với mỗi ca liệt kê phiếu đã gắn
+   * cứng, phiếu mồ côi bù vào, phiếu mồ côi không dùng được, và cờ:
+   *  - UNPUBLISHED_WITH_ATTENDANCE: ca DRAFT đã có điểm danh (lương = 0 cho đến
+   *    khi HR publish — ca hiện đủ trên lưới nhưng không tính công).
+   *  - LINKED_FALLBACK: phiếu mồ côi đã bù vào ca (công hồi phục sau fix).
+   *  - ABSENT_WITH_CHECKIN: bản ghi vắng oan (cùng ngày đã có check-in).
+   *  - MISSING_IN / MISSING_OUT: ca quá khứ còn thiếu chân (cần phiếu bổ sung).
+   * Chỉ đọc, không ghi — công các báo cáo tính live nên tự đúng sau fix khớp.
+   */
+  async reconcilePeriod(fromDate: string, toDate: string, branchScope = '*'): Promise<{
+    fromDate: string;
+    toDate: string;
+    employees: {
+      employee_id: string;
+      employee: string;
+      branch: string;
+      days: {
+        date: string;
+        shifts: { assignment_id: string; shift_code: string; status: string; inTime: string | null; outTime: string | null; flags: string[]; hours: number }[];
+        orphans: { event_id: string; type: string; assignment_id: string; client_time: string; reason: string }[];
+      }[];
+      totals: { shifts: number; full: number; missing: number; unpublished: number; orphans: number; wrongfulAbsent: number; recoverableHours: number };
+    }[];
+    totals: { employees: number; shifts: number; full: number; missing: number; unpublished: number; orphans: number; wrongfulAbsent: number; recoverableHours: number };
+  }> {
+    const vnDay = (iso?: string): string => {
+      const t = new Date(iso || '').getTime();
+      if (!Number.isFinite(t)) return '';
+      return new Date(t + 7 * 3_600_000).toISOString().slice(0, 10);
+    };
+    const f = String(fromDate || '').slice(0, 10);
+    const t = String(toDate || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(f) || !/^\d{4}-\d{2}-\d{2}$/.test(t) || f > t) {
+      throw new Error('RECONCILE_BAD_RANGE: fromDate/toDate phải dạng YYYY-MM-DD và fromDate <= toDate!');
+    }
+    const days: string[] = [];
+    for (let d = new Date(`${f}T00:00:00Z`); d.toISOString().slice(0, 10) <= t && days.length < 62; d.setUTCDate(d.getUTCDate() + 1)) {
+      days.push(d.toISOString().slice(0, 10));
+    }
+    const todayVn = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+    const canon = (b?: string): string => {
+      const x = String(b || '').trim().toUpperCase();
+      if (x === 'CN1' || x === 'CN130') return 'CN130';
+      if (x === 'CN2' || x === 'CN261') return 'CN261';
+      if (x === 'CN3' || x === 'CN120') return 'CN120';
+      if (x === 'CN4' || x === 'CN111') return 'CN111';
+      return x;
+    };
+    const [employees, allShifts, allEvents] = await Promise.all([
+      this.repo.listEmployees().catch(() => []),
+      this.repo.getShiftsForWeek('*', f).catch(() => []),
+      this.repo.getAttendanceEvents().catch(() => []),
+    ]);
+    let archived: any[] = [];
+    try {
+      archived = await (this.repo as any)?.syncService?.getArchivedAttendanceEvents?.(f, t) || [];
+    } catch { archived = []; }
+    const seenArch = new Set<string>();
+    const archByEmpDay = new Map<string, any[]>();
+    for (const e of archived || []) {
+      const id = String((e as any)?.event_id || '');
+      if (id) {
+        if (seenArch.has(id)) continue;
+        seenArch.add(id);
+      }
+      const day = vnDay((e as any)?.client_time);
+      if (!day) continue;
+      const k = `${String((e as any)?.employee_id || '')}|${day}`;
+      if (!archByEmpDay.has(k)) archByEmpDay.set(k, []);
+      (archByEmpDay.get(k) as any[]).push({ ...(e as any), _source: 'ARCHIVE' });
+    }
+    const emps = (employees || []).filter(
+      (e: any) =>
+        (e as any)?.employment_status !== 'TERMINATED' &&
+        (!branchScope || branchScope === '*' || canon((e as any)?.default_branch_id || (e as any)?.branch_id) === canon(branchScope))
+    );
+    const out: any[] = [];
+    for (const emp of emps as any[]) {
+      const empId = String((emp as any)?.employee_id || '');
+      const empDays: any[] = [];
+      const totals = { shifts: 0, full: 0, missing: 0, unpublished: 0, orphans: 0, wrongfulAbsent: 0, recoverableHours: 0 };
+      for (const date of days) {
+        const dayShifts = (allShifts || []).filter(
+          (s: any) => String((s as any)?.employee_id || '') === empId && String((s as any)?.date || '').slice(0, 10) === date
+        );
+        let dayEvents: any[] = (allEvents || [])
+          .filter((e: any) => String((e as any)?.employee_id || '') === empId && vnDay((e as any)?.client_time) === date)
+          .map((e: any) => ({ ...(e as any), _source: 'LIVE' }));
+        for (const e of archByEmpDay.get(`${empId}|${date}`) || []) {
+          if (!dayEvents.some((x: any) => String(x?.event_id || '') === String((e as any)?.event_id || ''))) dayEvents.push(e);
+        }
+        if (dayShifts.length === 0 && dayEvents.length === 0) continue;
+        const linked = linkDayEvents(dayShifts, dayEvents);
+        const usedIds = new Set<string>();
+        for (const [, slot] of linked) {
+          for (const leg of ['CHECK_IN', 'CHECK_OUT', 'ABSENT']) {
+            const ev = (slot as any)?.[leg];
+            if (ev?.event_id) usedIds.add(String(ev.event_id));
+          }
+        }
+        const liveIds = new Set(
+          dayShifts.filter((s: any) => (s as any)?.status !== 'CANCELLED').map((s: any) => String((s as any)?.assignment_id || ''))
+        );
+        const shiftRows: any[] = [];
+        for (const s of dayShifts) {
+          const st = String((s as any)?.status || '');
+          if (st === 'CANCELLED') continue;
+          const m = linked.get(String((s as any)?.assignment_id || '')) || ({} as any);
+          const inEvt = (m as any).CHECK_IN;
+          const outEvt = (m as any).CHECK_OUT;
+          const tpl = (SHIFT_TEMPLATES as any)[(s as any)?.shift_code];
+          const h = tpl ? Number(tpl.duration_hours) || 5 : 5;
+          const flags: string[] = [];
+          // Chân nào bù từ pool mồ côi (không gắn cứng assignment ca này)?
+          const strictIn = dayEvents.find(
+            (e: any) => String((e as any)?.type || '') === 'CHECK_IN' && String((e as any)?.assignment_id || '') === String((s as any)?.assignment_id || '')
+          );
+          const strictOut = dayEvents.find(
+            (e: any) => String((e as any)?.type || '') === 'CHECK_OUT' && String((e as any)?.assignment_id || '') === String((s as any)?.assignment_id || '')
+          );
+          if ((inEvt || outEvt) && (!strictIn || !strictOut)) flags.push('LINKED_FALLBACK');
+          if (st === 'DRAFT' && (inEvt || outEvt)) {
+            flags.push('UNPUBLISHED_WITH_ATTENDANCE');
+            totals.unpublished++;
+            totals.recoverableHours = Math.round((totals.recoverableHours + (inEvt && outEvt ? h : 0)) * 10) / 10;
+          } else if (st === 'PUBLISHED') {
+            if (inEvt && outEvt) {
+              totals.full++;
+              if (flags.includes('LINKED_FALLBACK')) {
+                totals.recoverableHours = Math.round((totals.recoverableHours + h) * 10) / 10;
+              }
+            } else if (date < todayVn) {
+              if (!inEvt) flags.push('MISSING_IN');
+              else flags.push('MISSING_OUT');
+              totals.missing++;
+            }
+          }
+          const absStrict = dayEvents.find(
+            (e: any) => String((e as any)?.type || '') === 'ABSENT' && String((e as any)?.assignment_id || '') === String((s as any)?.assignment_id || '')
+          );
+          if (absStrict && dayEvents.some((e: any) => String((e as any)?.type || '') === 'CHECK_IN')) {
+            flags.push('ABSENT_WITH_CHECKIN');
+            totals.wrongfulAbsent++;
+          }
+          totals.shifts++;
+          shiftRows.push({
+            assignment_id: String((s as any)?.assignment_id || ''),
+            shift_code: String((s as any)?.shift_code || ''),
+            status: st,
+            inTime: inEvt ? String((inEvt as any)?.client_time || '') : null,
+            outTime: outEvt ? String((outEvt as any)?.client_time || '') : null,
+            flags,
+            hours: inEvt && outEvt ? h : 0,
+          });
+        }
+        const orphans = (dayEvents || [])
+          .filter((e: any) => {
+            const tp = String((e as any)?.type || '');
+            if (tp !== 'CHECK_IN' && tp !== 'CHECK_OUT') return false;
+            if ((e as any)?.event_id && usedIds.has(String((e as any).event_id))) return false;
+            return true;
+          })
+          .map((e: any) => {
+            const aid = String((e as any)?.assignment_id || '');
+            return {
+              event_id: String((e as any)?.event_id || ''),
+              type: String((e as any)?.type || ''),
+              assignment_id: aid,
+              client_time: String((e as any)?.client_time || ''),
+              source: (e as any)?._source || 'LIVE',
+              reason: !aid ? 'NO_LINK' : liveIds.has(aid) ? 'LINKED_ELSEWHERE' : 'DEAD_SHIFT',
+            };
+          });
+        totals.orphans += orphans.length;
+        if (shiftRows.length === 0 && orphans.length === 0) continue;
+        empDays.push({ date, shifts: shiftRows, orphans });
+      }
+      if (empDays.length === 0) continue;
+      out.push({
+        employee_id: empId,
+        employee: String((emp as any)?.full_name || empId),
+        branch: String((emp as any)?.default_branch_id || (emp as any)?.branch_id || ''),
+        days: empDays,
+        totals,
+      });
+    }
+    const sum = (k: string) => out.reduce((s: number, e: any) => s + Number(e?.totals?.[k] || 0), 0);
+    return {
+      fromDate: f,
+      toDate: t,
+      employees: out,
+      totals: {
+        employees: out.length,
+        shifts: sum('shifts'),
+        full: sum('full'),
+        missing: sum('missing'),
+        unpublished: sum('unpublished'),
+        orphans: sum('orphans'),
+        wrongfulAbsent: sum('wrongfulAbsent'),
+        recoverableHours: Math.round(sum('recoverableHours') * 10) / 10,
+      },
+    };
   }
 }

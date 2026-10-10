@@ -2366,7 +2366,9 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       // được dùng ngày UTC — 00:00–07:00 VN sẽ lookup nhầm sang ngày hôm qua.
       const today = new Date(Date.now() + 7 * 3_600_000).toISOString().split('T')[0];
       const shifts = await schedulesService.getEmployeeShifts(employeeId, today, today);
-      const assignment = shifts.find(s => s.date === today);
+      // Bỏ ca đã hủy khi đoán ca (phiếu gắn ca hủy sẽ mồ côi, lưới hiện "chưa
+      // điểm danh" dù NV đã bấm — recordAttendance cũng chặn ca hủy bên dưới).
+      const assignment = shifts.find(s => s.date === today && (s as any).status !== 'CANCELLED');
       const assignmentId = req.body.assignment_id || req.body.assignmentId || assignment?.assignment_id;
 
       if (!assignment && !assignmentId) {
@@ -3197,6 +3199,20 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // --- ATTENDANCE ---
+  // HR đối soát check-in/out theo NV+ngày (phiếu mồ côi, ca DRAFT đã điểm danh,
+  // vắng oan, thiếu chân) trước khi chốt lương — chỉ đọc, công tự đúng sau fix khớp.
+  app.get('/admin/attendance/reconcile', authMiddleware, requireRole(['ADMIN', 'HR', 'STORE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+      const fromDate = String((req.query as any)?.fromDate || (req.query as any)?.date || today).slice(0, 10);
+      const toDate = String((req.query as any)?.toDate || (req.query as any)?.date || today).slice(0, 10);
+      const branchId = req.user?.role === 'STORE' ? req.user.branchScope! : String((req.query as any)?.branchId || '*');
+      const result = await attendanceService.reconcilePeriod(fromDate, toDate, branchId);
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(400).json({ error: String(err?.message || 'Lỗi đối soát điểm danh') });
+    }
+  });
   app.post('/attendance/events', authMiddleware, validate({ body: attendanceEventBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const employeeId = req.user?.employeeId || req.body.employeeId;

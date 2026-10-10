@@ -31,6 +31,72 @@ export function lateFineFor(minutesLate: number, shiftPay: number): { tier: stri
 }
 
 /**
+ * Chia sự kiện điểm danh trong ngày cho các ca: khớp cứng assignment_id trước,
+ * phiếu sót (assignment rỗng / trỏ ca đã hủy-không tồn tại, VD sau khi HR xếp
+ * lại lịch đổi mã ca) bù cho ca còn thiếu chân theo thứ tự (ưu tiên ca đã có
+ * 1 chân để ngày nhiều ca không cướp oan). Phiếu đang gắn ca live khác KHÔNG
+ * bao giờ bị cướp (chống tính đúp công). Dùng chung payroll + đối soát.
+ */
+export function linkDayEvents(
+  dayShifts: any[],
+  dayEvents: any[]
+): Map<string, { CHECK_IN?: any; CHECK_OUT?: any; ABSENT?: any }> {
+  const liveIds = new Set(
+    (dayShifts || []).filter((s: any) => (s as any)?.status !== 'CANCELLED').map((s: any) => String((s as any)?.assignment_id || ''))
+  );
+  const cancelledIds = new Set(
+    (dayShifts || []).filter((s: any) => (s as any)?.status === 'CANCELLED').map((s: any) => String((s as any)?.assignment_id || ''))
+  );
+  const byId = new Map<string, { CHECK_IN?: any; CHECK_OUT?: any; ABSENT?: any }>();
+  const get = (id: string) => {
+    if (!byId.has(id)) byId.set(id, {});
+    return byId.get(id)!;
+  };
+  const used = new Set<string>();
+  const legOf = (e: any): string => String((e as any)?.type || '');
+  // 1. Khớp cứng assignment_id (kể cả ABSENT).
+  for (const e of dayEvents || []) {
+    const aid = String((e as any)?.assignment_id || '');
+    const t = legOf(e);
+    if (!aid || (t !== 'CHECK_IN' && t !== 'CHECK_OUT' && t !== 'ABSENT')) continue;
+    if (!liveIds.has(aid)) continue;
+    const slot = get(aid);
+    if (!(slot as any)[t]) {
+      (slot as any)[t] = e;
+      if ((e as any)?.event_id) used.add(String((e as any).event_id));
+    }
+  }
+  // 2. Pool sót: assignment rỗng hoặc trỏ ca chết/không tồn tại (chỉ IN/OUT).
+  const pool = (dayEvents || []).filter((e: any) => {
+    if ((e as any)?.event_id && used.has(String((e as any).event_id))) return false;
+    const t = legOf(e);
+    if (t !== 'CHECK_IN' && t !== 'CHECK_OUT') return false;
+    const aid = String((e as any)?.assignment_id || '');
+    if (!aid) return true;
+    if (cancelledIds.has(aid)) return true;
+    if (!liveIds.has(aid)) return true;
+    return false;
+  });
+  // 3. Bù cho ca live còn thiếu (lượt 0: ca đã có 1 chân trước; lượt 1: còn lại).
+  const liveShifts = (dayShifts || []).filter((s: any) => (s as any)?.status !== 'CANCELLED');
+  for (let pass = 0; pass < 2; pass++) {
+    for (const s of liveShifts) {
+      const slot = get(String((s as any)?.assignment_id || ''));
+      for (const t of ['CHECK_IN', 'CHECK_OUT']) {
+        if ((slot as any)[t]) continue;
+        const idx = pool.findIndex((e: any) => legOf(e) === t);
+        if (idx < 0) continue;
+        if (pass === 0 && !(slot as any)['CHECK_IN'] && !(slot as any)['CHECK_OUT']) continue;
+        (slot as any)[t] = pool[idx];
+        if ((pool[idx] as any)?.event_id) used.add(String((pool[idx] as any).event_id));
+        pool.splice(idx, 1);
+      }
+    }
+  }
+  return byId;
+}
+
+/**
  * Khoảng ngày chuẩn của 1 kỳ lương: ngày 1 -> ngày cuối tháng (28/29/30/31).
  * Dùng chung cho mọi tính toán Finance để kế toán luôn thấy đủ công cả tháng.
  */
@@ -1103,12 +1169,13 @@ export class PayrollService {
           dayEvents = [...(liveEvents || [])];
           for (const e of extra) if (!ids.has((e as any).event_id)) dayEvents.push(e);
         }
-        const inEvt = dayEvents.find(
-          (e: any) => e.type === 'CHECK_IN' && (!e.assignment_id || e.assignment_id === s.assignment_id)
-        );
-        const hasOut = dayEvents.some(
-          (e: any) => e.type === 'CHECK_OUT' && (!e.assignment_id || e.assignment_id === s.assignment_id)
-        );
+        // Khớp ca–phiếu: cứng theo assignment trước, phiếu mồ côi (HR xếp lại
+        // lịch đổi mã ca) bù cho ca thiếu — công hồi phục, không tính đúp.
+        const dayShifts = (empShifts || []).filter((x: any) => String((x as any)?.date || '').slice(0, 10) === String((s as any)?.date || '').slice(0, 10));
+        const linked = linkDayEvents(dayShifts.length > 0 ? dayShifts : [s], dayEvents || []);
+        const legs = linked.get(String((s as any)?.assignment_id || '')) || ({} as any);
+        const inEvt = (legs as any).CHECK_IN;
+        const hasOut = !!(legs as any).CHECK_OUT;
         const template = SHIFT_TEMPLATES[s.shift_code];
         const h = template ? template.duration_hours : 5;
         if (!inEvt || !hasOut) {
@@ -1219,6 +1286,16 @@ export class PayrollService {
       if (!archivedByAssign.has(k)) archivedByAssign.set(k, []);
       archivedByAssign.get(k)!.push(e);
     }
+    // Kho theo NV+ngày (giờ VN): để hứng phiếu mồ côi trỏ ca cũ đã mất.
+    const archivedByEmpDay = new Map<string, any[]>();
+    for (const e of archived || []) {
+      const t = new Date((e as any)?.client_time || '').getTime();
+      if (!Number.isFinite(t)) continue;
+      const day = new Date(t + 7 * 3_600_000).toISOString().slice(0, 10);
+      const k = `${String((e as any)?.employee_id || '')}|${day}`;
+      if (!archivedByEmpDay.has(k)) archivedByEmpDay.set(k, []);
+      archivedByEmpDay.get(k)!.push(e);
+    }
 
     const rows: any[] = [];
     for (const emp of employees) {
@@ -1241,17 +1318,28 @@ export class PayrollService {
         try {
           dayEvents = await this.repo.getAttendanceEvents(empId, date).catch(() => []);
         } catch { dayEvents = []; }
-        let mine = (dayEvents || []).filter(
+        // Gộp kho lưu trữ: theo assignment (cứng) + theo NV+ngày (hứng phiếu mồ
+        // côi trỏ ca cũ đã mất sau khi HR xếp lại lịch). Khử trùng event_id.
+        const seenEv = new Set((dayEvents || []).map((e: any) => String((e as any)?.event_id || '')));
+        const pushExtra = (e: any) => {
+          const id = String((e as any)?.event_id || '');
+          if (id && seenEv.has(id)) return;
+          if (id) seenEv.add(id);
+          dayEvents.push(e);
+        };
+        for (const e of archivedByAssign.get(String((s as any).assignment_id)) || []) pushExtra(e);
+        for (const e of archivedByEmpDay.get(`${empId}|${date}`) || []) pushExtra(e);
+        // Khớp ca–phiếu (cứng trước, mồ côi bù sau — công hồi phục, không đúp).
+        const dayShifts = (empShifts || []).filter(
+          (x: any) => String((x as any)?.date || '').slice(0, 10) === date
+        );
+        const linked = linkDayEvents(dayShifts.length > 0 ? dayShifts : [s], dayEvents);
+        const legs = linked.get(String((s as any)?.assignment_id || '')) || ({} as any);
+        const mine = dayEvents.filter(
           (e: any) => String(e.assignment_id || '') === String((s as any).assignment_id)
         );
-        // Gộp sự kiện kho lưu trữ (tuần cũ đã archive khỏi bảng realtime).
-        const extra = archivedByAssign.get(String((s as any).assignment_id)) || [];
-        if (extra.length > 0) {
-          const ids = new Set(mine.map((e: any) => e.event_id));
-          for (const e of extra) if (!ids.has(e.event_id)) mine.push(e);
-        }
-        const inEvt = mine.find((e: any) => e.type === 'CHECK_IN');
-        const hasOut = mine.some((e: any) => e.type === 'CHECK_OUT');
+        const inEvt = (legs as any).CHECK_IN;
+        const hasOut = !!(legs as any).CHECK_OUT;
         const hasAbs = mine.some((e: any) => e.type === 'ABSENT');
         const template = (SHIFT_TEMPLATES as any)[(s as any).shift_code];
         const h = template ? Number(template.duration_hours) || 5 : 5;

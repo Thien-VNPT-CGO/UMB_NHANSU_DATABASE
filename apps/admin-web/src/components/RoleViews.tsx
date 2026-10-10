@@ -1899,6 +1899,34 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [exportAttDate, setExportAttDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [exportAttBusy, setExportAttBusy] = useState(false);
   const [exportWeekBusy, setExportWeekBusy] = useState(false);
+  // Đối soát check-in/out theo NV+ngày (phiếu mồ côi, ca nháp đã điểm danh,
+  // vắng oan, thiếu chân) trước khi chốt lương.
+  const [reconOpen, setReconOpen] = useState(false);
+  const [reconBusy, setReconBusy] = useState(false);
+  const [reconFrom, setReconFrom] = useState(() => {
+    const t = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+    return `${t.slice(0, 8)}01`;
+  });
+  const [reconTo, setReconTo] = useState(() => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10));
+  const [reconData, setReconData] = useState<any>(null);
+  const runReconcile = async () => {
+    if (reconBusy) return;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(reconFrom) || !/^\d{4}-\d{2}-\d{2}$/.test(reconTo) || reconFrom > reconTo) {
+      showToast('⚠️ Khoảng ngày đối soát không hợp lệ!');
+      return;
+    }
+    setReconBusy(true);
+    try {
+      const res: any = await apiRequest(`/admin/attendance/reconcile?fromDate=${reconFrom}&toDate=${reconTo}`);
+      setReconData(res);
+      const t = res?.totals || {};
+      showToast(`🔍 Đối soát ${reconFrom} → ${reconTo}: ${t.employees || 0} NV có dữ liệu • ${t.full || 0} ca đủ • ${t.missing || 0} ca thiếu chân • ${t.unpublished || 0} ca nháp đã điểm danh • ${t.orphans || 0} phiếu mồ côi • ${t.wrongfulAbsent || 0} vắng oan • ~${t.recoverableHours || 0}h phục hồi.`);
+    } catch (e: any) {
+      showToast(e?.message || 'Lỗi khi đối soát!');
+    } finally {
+      setReconBusy(false);
+    }
+  };
   // Tuần đang xem ở lưới tuần realtime (0 = tuần này) — dùng chung
   // scheduleWeekOffset với tab Lịch Làm Việc để 2 tab luôn cùng tuần.
   // Ô ca đang hover ở lưới realtime (hiện popup lương/phạt/đổi ca)
@@ -7226,6 +7254,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       // kien mo coi (ID test tao tay, khong con ho so) KHONG hien hang rieng de
       // tranh rac "Nhan Vien" khong ro nguon goc tren luoi (2 tab giong nhau).
       const baseEmps = (allEmployees || []).filter((emp: any) => !isEmpAccountLocked(emp) && emp.employment_status !== 'TERMINATED');
+      // Trạng thái ca theo assignment_id (tra 1 lần): phiếu gắn ca đã hủy/mất
+      // sau khi HR xếp lại thì rớt về khớp cùng ngày, khỏi hiện "chưa điểm danh" oan.
+      const shiftStatusByAssign = new Map<string, string>();
+      for (const s of (schedAllShifts || [])) {
+        const id = String((s as any)?.assignment_id || '');
+        if (!id || shiftStatusByAssign.has(id)) continue;
+        shiftStatusByAssign.set(id, String((s as any)?.status || ''));
+      };
       return baseEmps
         .map((emp, empIdx) => {
       const empShifts = (schedAllShifts || []).filter((s: any) => s.employee_id === emp.employee_id);
@@ -7255,7 +7291,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         const absentEvent = dayEvts.find((e: any) => e.type === 'ABSENT');
 
         const matchShift = (e: any, sh: any) => {
-          if (e.assignment_id && sh?.assignment_id) return e.assignment_id === sh.assignment_id;
+          if (e.assignment_id && sh?.assignment_id) {
+            if (e.assignment_id === sh.assignment_id) return true;
+            // Phiếu mồ côi (ca đã hủy/mất): rớt về khớp cùng ngày. Phiếu gắn ca
+            // live khác thì giữ nguyên (không cướp sang ca này).
+            const st = shiftStatusByAssign.get(String(e.assignment_id));
+            if (!st || st === 'CANCELLED') return isSameDay(e.client_time);
+            return false;
+          }
           return isSameDay(e.client_time);
         };
 
@@ -9639,6 +9682,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               {gpsReverifyBusy ? 'Đang rà soát...' : '📡 Rà soát GPS >300m'}
             </button>
             <button
+              className="btn-primary"
+              style={{ fontSize: '12px', backgroundColor: '#7C3AED' }}
+              disabled={reconBusy}
+              onClick={() => { setReconOpen(true); if (!reconData) runReconcile(); }}
+              title="Đối soát check-in/out theo NV+ngày: phiếu mồ côi, ca nháp đã điểm danh (0 công), vắng oan, thiếu chân — trước khi chốt lương"
+            >
+              {reconBusy ? 'Đang đối soát...' : '🔍 Đối Soát Check-in/out'}
+            </button>
+            <button
               className="btn-secondary"
               onClick={async () => {
                 await reloadAttEvents();
@@ -9681,6 +9733,72 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   })}
                 </tbody>
               </table>
+            )}
+          </div>
+        )}
+
+        {reconOpen && (
+          <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1.5px solid #7C3AED', padding: '12px 16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+              <strong style={{ fontSize: '13px' }}>🔍 Đối Soát Check-in/out Theo NV + Ngày (chỉ đọc — công các báo cáo tự đúng sau fix khớp)</strong>
+              <button className="btn-secondary" style={{ fontSize: '11px', padding: '3px 10px' }} onClick={() => setReconOpen(false)}>Ẩn</button>
+            </div>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '8px', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '12px', fontWeight: 700 }}>Từ:</span>
+              <input type="date" value={reconFrom} onChange={(e) => setReconFrom(e.target.value)} style={{ fontSize: '12px', padding: '5px 8px', borderRadius: '6px', border: '1px solid var(--border)' }} />
+              <span style={{ fontSize: '12px', fontWeight: 700 }}>Đến:</span>
+              <input type="date" value={reconTo} onChange={(e) => setReconTo(e.target.value)} style={{ fontSize: '12px', padding: '5px 8px', borderRadius: '6px', border: '1px solid var(--border)' }} />
+              <button className="btn-primary" disabled={reconBusy} onClick={runReconcile} style={{ fontSize: '12px', backgroundColor: '#7C3AED' }}>
+                {reconBusy ? 'Đang đối soát...' : 'Chạy Đối Soát'}
+              </button>
+            </div>
+            {reconData && (
+              <div style={{ marginTop: '8px', fontSize: '12px' }}>
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                  <span className="badge" style={{ backgroundColor: '#DCFCE7', color: '#166534', fontWeight: 800 }}>{reconData?.totals?.full || 0} ca đủ</span>
+                  <span className="badge" style={{ backgroundColor: '#FEF3C7', color: '#92400E', fontWeight: 800 }}>{reconData?.totals?.missing || 0} ca thiếu chân</span>
+                  <span className="badge" style={{ backgroundColor: '#F3E8FF', color: '#7C3AED', fontWeight: 800 }}>{reconData?.totals?.unpublished || 0} ca nháp đã điểm danh (0 công — cần publish)</span>
+                  <span className="badge" style={{ backgroundColor: '#FFEDD5', color: '#9A3412', fontWeight: 800 }}>{reconData?.totals?.orphans || 0} phiếu mồ côi</span>
+                  <span className="badge" style={{ backgroundColor: '#FEE2E2', color: '#991B1B', fontWeight: 800 }}>{reconData?.totals?.wrongfulAbsent || 0} vắng oan</span>
+                  <span className="badge" style={{ backgroundColor: '#EFF6FF', color: '#1D4ED8', fontWeight: 800 }}>~{reconData?.totals?.recoverableHours || 0}h phục hồi</span>
+                </div>
+                {(reconData?.employees || []).length === 0 && (
+                  <div style={{ marginTop: '8px', color: 'var(--text-muted)' }}>Khoảng này không có ca/phiếu nào cần đối soát.</div>
+                )}
+                {(reconData?.employees || []).map((emp: any) => {
+                  const t = emp?.totals || {};
+                  if ((t.missing || 0) + (t.unpublished || 0) + (t.orphans || 0) + (t.wrongfulAbsent || 0) === 0) return null;
+                  return (
+                    <details key={emp.employee_id} style={{ marginTop: '6px', border: '1px solid var(--border)', borderRadius: '6px', padding: '6px 10px' }}>
+                      <summary style={{ cursor: 'pointer', fontWeight: 800, fontSize: '12px' }}>
+                        {emp.employee} ({emp.branch || '?'}) — thiếu {t.missing || 0} • nháp {t.unpublished || 0} • mồ côi {t.orphans || 0} • vắng oan {t.wrongfulAbsent || 0}
+                      </summary>
+                      {(emp.days || []).map((d: any) => {
+                        const rows: string[] = [];
+                        for (const s of (d.shifts || [])) {
+                          for (const f of (s.flags || [])) {
+                            rows.push(`${d.date} ${s.shift_code} (${s.status}): ${
+                              f === 'UNPUBLISHED_WITH_ATTENDANCE' ? 'ca nháp đã điểm danh — publish để tính công' :
+                              f === 'LINKED_FALLBACK' ? 'đã bù phiếu mồ côi — công hồi phục' :
+                              f === 'ABSENT_WITH_CHECKIN' ? 'VẮNG OAN (đã có check-in cùng ngày)' :
+                              f === 'MISSING_IN' ? 'thiếu check-in (cần phiếu bổ sung)' :
+                              f === 'MISSING_OUT' ? 'thiếu check-out (cần phiếu bổ sung)' : f} [vào ${s.inTime || '—'} / ra ${s.outTime || '—'}]`);
+                          }
+                        }
+                        for (const o of (d.orphans || [])) {
+                          rows.push(`${d.date} phiếu ${o.type} mồ côi (${o.reason === 'NO_LINK' ? 'không gắn ca' : o.reason === 'DEAD_SHIFT' ? 'gắn ca đã hủy/mất' : 'gắn ca khác'}) lúc ${o.client_time}${o.source === 'ARCHIVE' ? ' [kho]' : ''}`);
+                        }
+                        if (rows.length === 0) return null;
+                        return (
+                          <div key={d.date} style={{ fontSize: '11px', marginTop: '4px', lineHeight: 1.6 }}>
+                            {rows.map((r, i) => <div key={i}>• {r}</div>)}
+                          </div>
+                        );
+                      })}
+                    </details>
+                  );
+                })}
+              </div>
             )}
           </div>
         )}
