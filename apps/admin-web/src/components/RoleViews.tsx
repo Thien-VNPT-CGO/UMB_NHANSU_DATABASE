@@ -2458,6 +2458,35 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     return true;
   });
 
+  // Lịch PV: UV đã phỏng vấn xong (đã chấm điểm/PASS/duyệt/có điểm) hoặc đã có
+  // lịch sắp tới thì KHÔNG được đặt lịch tiếp — dropdown lập lịch loại sẵn
+  // theo dữ liệu realtime, backend chặn cứng thêm 1 lớp.
+  const pvScoredOf = (c: any): { scored: boolean; label: string } => {
+    const d = parseScoreDetailClient((c as any)?.interview_score_detail);
+    if (d) {
+      const denom = (d as any).achievableMax ?? (d as any).max;
+      const vt = (d as any).verdict === 'PASS' ? 'PASS' : (d as any).verdict === 'LOAI' ? 'LOẠI' : (d as any).verdict;
+      return { scored: true, label: `Rubric: ${(d as any).total}/${denom} — ${vt}` };
+    }
+    const st = String(c?.status || '');
+    if (st === 'SCORED' || st === 'ACCEPTED') {
+      return { scored: true, label: st === 'ACCEPTED' ? 'Đã duyệt thử việc' : 'Đã chấm điểm' };
+    }
+    const s = (c as any)?.interview_score;
+    if (s !== undefined && s !== null && String(s).trim() !== '') {
+      return { scored: true, label: `Đã có điểm PV (${s})` };
+    }
+    return { scored: false, label: '' };
+  };
+  const pvHasUpcomingOf = (c: any): { upcoming: boolean; label: string } => {
+    const day = String((c as any)?.interview_date || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return { upcoming: false, label: '' };
+    const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+    if (day < today) return { upcoming: false, label: '' };
+    if (!['INVITED_INTERVIEW', 'CONFIRMED'].includes(String(c?.status || ''))) return { upcoming: false, label: '' };
+    return { upcoming: true, label: `${String((c as any)?.interview_time_slot || '').slice(0, 5)} ngày ${day}` };
+  };
+
   // Tự nhận diện chi nhánh theo hồ sơ ứng viên khi HR chọn tên.
   // Chỉ tự điền 1 lần mỗi khi ĐỔI ứng viên (ref) để không đè lựa chọn tay của HR
   // khi dữ liệu reload, và luôn có fallback để không kẹt lại chi nhánh của bạn
@@ -2549,6 +2578,19 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     if (!inviteDateTime) {
       showToast('Vui lòng chọn thời gian phỏng vấn!');
       return;
+    }
+    // UV đã phỏng vấn xong / đã có lịch sắp tới: chặn ngay trên tab (backend chặn cứng thêm).
+    if (pickedCandidate) {
+      const sc = pvScoredOf(pickedCandidate);
+      if (sc.scored) {
+        showToast(`⛔ ${pickedCandidate.full_name} đã phỏng vấn xong (${sc.label}) — không được đặt lịch PV nữa!`);
+        return;
+      }
+      const up = pvHasUpcomingOf(pickedCandidate);
+      if (up.upcoming) {
+        showToast(`⛔ ${pickedCandidate.full_name} đã có lịch PV ${up.label} (giữ nguyên) — muốn đổi thì Hủy lịch trước!`);
+        return;
+      }
     }
     if (!zaloConnected) {
       showToast('⚠️ Chưa kết nối Zalo cá nhân! Hãy quét QR đăng nhập ở khung trên trước.');
@@ -4628,19 +4670,52 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Chọn ứng viên mới:</label>
                 <select style={{ width: '100%' }} value={inviteCandidateId} onChange={(e) => setInviteCandidateId(e.target.value)}>
                   <option value="">-- Chọn ứng viên --</option>
-                  {pvFiltered.length > 0 ? (
-                    pvFiltered.map((c, i) => (
+                  {(() => {
+                    // UV đã phỏng vấn xong / đã có lịch sắp tới: loại khỏi dropdown.
+                    const eligible = pvFiltered.filter((c: any) => !pvScoredOf(c).scored && !pvHasUpcomingOf(c).upcoming);
+                    if (pvFiltered.length === 0) return (<option value="">Chưa có ứng viên (Dữ liệu từ Google Sheets)</option>);
+                    if (eligible.length === 0) return (<option value="">Không còn ứng viên đủ điều kiện xếp lịch</option>);
+                    return eligible.map((c, i) => (
                       <option key={c.submission_id || i} value={c.submission_id}>
                         {c.full_name} ({c.phone || c.phone_normalized})
                       </option>
-                    ))
-                  ) : (
-                    <option value="">Chưa có ứng viên (Dữ liệu từ Google Sheets)</option>
-                  )}
+                    ));
+                  })()}
                 </select>
                 <div style={{ fontSize: '11px', color: '#1E40AF', marginTop: '4px' }}>
                   🤖 Chọn tên là chi nhánh tự điền đúng theo hồ sơ ứng viên.
                 </div>
+                {(() => {
+                  const hidden = pvFiltered.filter((c: any) => pvScoredOf(c).scored || pvHasUpcomingOf(c).upcoming).length;
+                  if (hidden === 0) return null;
+                  return (
+                    <div style={{ fontSize: '11px', color: '#92400E', backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '6px', padding: '6px 8px', marginTop: '6px', lineHeight: 1.5 }}>
+                      🔒 {hidden} UV đã phỏng vấn xong/đã có lịch không hiện ở đây (không được đặt lịch tiếp).
+                    </div>
+                  );
+                })()}
+                {(() => {
+                  // UV đang chọn vừa bị chấm PASS / vừa có lịch (realtime): báo ngay.
+                  const picked = (candidates || []).find((c: any) => c.submission_id === inviteCandidateId);
+                  if (!picked) return null;
+                  const sc = pvScoredOf(picked);
+                  if (sc.scored) {
+                    return (
+                      <div style={{ fontSize: '11px', color: '#991B1B', backgroundColor: '#FEF2F2', border: '1px solid #FCA5A5', borderRadius: '6px', padding: '6px 8px', marginTop: '6px', fontWeight: 700, lineHeight: 1.5 }}>
+                        ⛔ {picked.full_name} đã phỏng vấn xong ({sc.label}) — không được đặt lịch PV nữa!
+                      </div>
+                    );
+                  }
+                  const up = pvHasUpcomingOf(picked);
+                  if (up.upcoming) {
+                    return (
+                      <div style={{ fontSize: '11px', color: '#92400E', backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '6px', padding: '6px 8px', marginTop: '6px', fontWeight: 700, lineHeight: 1.5 }}>
+                        ⛔ {picked.full_name} đã có lịch PV {up.label} (giữ nguyên) — muốn đổi thì Hủy lịch trước!
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
               </div>
 
               <div>
