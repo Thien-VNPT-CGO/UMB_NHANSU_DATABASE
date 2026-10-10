@@ -7293,8 +7293,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         const matchShift = (e: any, sh: any) => {
           if (e.assignment_id && sh?.assignment_id) {
             if (e.assignment_id === sh.assignment_id) return true;
-            // Phiếu mồ côi (ca đã hủy/mất): rớt về khớp cùng ngày. Phiếu gắn ca
-            // live khác thì giữ nguyên (không cướp sang ca này).
+            // Phiếu mồ côi (ca đã hủy/mất): CHECK_IN/OUT rớt về khớp cùng ngày.
+            // VẮNG chỉ tính khi gắn cứng ca này (không suy diễn vắng sang ca khác).
+            if (String((e as any)?.type || '') === 'ABSENT') return false;
+            // Phiếu gắn ca live khác thì giữ nguyên (không cướp sang ca này).
             const st = shiftStatusByAssign.get(String(e.assignment_id));
             if (!st || st === 'CANCELLED') return isSameDay(e.client_time);
             return false;
@@ -9543,6 +9545,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           return { shift: s, list, st };
         });
       for (const [, list] of byAssign) {
+        // Chuẩn tab Lịch tuần: nhóm mồ côi chỉ hiện khi có check-in/out (thẻ
+        // "Tự điểm danh"). Nhóm chỉ có VẮNG mà không gắn ca live nào thì bỏ —
+        // nếu không ngày không có ca lại hiện "Vắng" ma. VẮNG chỉ tính khi gắn cứng.
+        if (!list.some((e: any) => e.type === 'CHECK_IN' || e.type === 'CHECK_OUT')) continue;
         const f = list[0];
         const pseudo = { assignment_id: '', date: iso, shift_code: '?', employee_id: empId, branch_id: f.branch_id };
         const st = attShiftStatus(
@@ -9882,6 +9888,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 const empNameOf = (id: string) => (allEmployees || []).find((e: any) => e.employee_id === id)?.full_name || id || '—';
                                 const hoverKey = `${emp.employee_id}|${day.iso}|${ii}`;
                                 const isDispatch = (relSwap?.swap_kind || 'EMPLOYEE_SWAP') === 'HR_DISPATCH';
+                                // Thẻ ngoài lịch (tự điểm danh, không gắn ca): hiện thông tin,
+                                // KHÔNG hiện lương (lương thực chỉ tính ca đã xếp — chuẩn tab Lịch).
+                                const isExtra = !it.shift?.assignment_id;
           return (
                                   <div
                                     key={ii}
@@ -9889,14 +9898,19 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                     onMouseEnter={() => setAttHover(hoverKey)}
                                     onMouseLeave={() => setAttHover(h => (h === hoverKey ? null : h))}
                                   >
-                                    <div style={{ fontWeight: 800, fontSize: '11px' }}>{it.shift?.shift_code || 'Không ca'}</div>
+                                    <div style={{ fontWeight: 800, fontSize: '11px' }}>{isExtra ? '➕ Ngoài lịch (tự điểm danh)' : (it.shift?.shift_code || 'Không ca')}</div>
                                     <div style={{ fontSize: '10px', color: it.st.fg, fontWeight: 700 }}>{it.st.label}{late}</div>
                                     <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
                                       {inE ? `Vào ${timeOf(inE.client_time)}` : '—'} • {outE ? `Ra ${timeOf(outE.client_time)}` : '—'}
                                     </div>
-                                    {it.st.key === 'COMPLETED' && (
+                                    {it.st.key === 'COMPLETED' && !isExtra && (
                                       <div style={{ fontSize: '10px', color: pay.unpaid ? '#991B1B' : '#065F46', fontWeight: 800 }}>
                                         💰 {fmtVnd(pay.net)}{pay.deduction > 0 ? ` (phạt ${fmtVnd(pay.deduction)})` : ''}{pay.unpaid ? ' (không lương)' : ''}
+                                      </div>
+                                    )}
+                                    {it.st.key === 'COMPLETED' && isExtra && (
+                                      <div style={{ fontSize: '10px', color: '#92400E', fontWeight: 700 }}>
+                                        Ngoài lịch — chưa tính công (HR xếp ca vào ngày này để tính)
                                       </div>
                                     )}
                                     {relSwap && (
@@ -9920,6 +9934,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                         </div>
                                         <div>🕒 Vào: <strong>{inE ? timeOf(inE.client_time) : '—'}</strong> • Ra: <strong>{outE ? timeOf(outE.client_time) : '—'}</strong></div>
                                         <div>📌 Trạng thái: <strong>{it.st.label}{late}</strong></div>
+                                        {!isExtra ? (
                                         <div style={{ borderTop: '1px dashed var(--border)', margin: '6px 0', paddingTop: '6px' }}>
                                           💵 Đơn giá: <strong>{empRate ? fmtVnd(empRate) + '/giờ' : 'chưa gán'}</strong> • Công: <strong>{pay.hours}h</strong><br />
                                           💰 Lương ca: <strong>{fmtVnd(pay.shiftPay)}</strong><br />
@@ -9927,6 +9942,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                           ✅ Thực nhận ca: <strong style={{ color: '#065F46' }}>{fmtVnd(pay.net)}</strong>
                                           <div style={{ color: 'var(--text-muted)', fontSize: '10px' }}>(Tạm tính realtime — Finance chốt số chính thức ở kỳ lương)</div>
                                         </div>
+                                        ) : (
+                                        <div style={{ borderTop: '1px dashed var(--border)', margin: '6px 0', paddingTop: '6px', color: '#92400E' }}>
+                                          Ngoài lịch — chưa tính công (HR xếp ca vào ngày này để tính).
+                                        </div>
+                                        )}
                                         <div style={{ borderTop: '1px dashed var(--border)', margin: '6px 0', paddingTop: '6px' }}>
                                           ⇄ Đổi/nhường ca: {relSwap ? (
                                             <span>
