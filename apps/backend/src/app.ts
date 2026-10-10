@@ -1833,6 +1833,25 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   );
 
+  // HR xóa 1 ca làm việc trên lưới tuần (tab Lịch tuần): ca chuyển CANCELLED,
+  // biến mất khỏi lưới + Bảng Chấm Công + Cổng NV ngay (realtime). Ca đã có
+  // điểm danh thì chặn (giữ bằng chứng công/lương).
+  app.delete(
+    '/schedules/:id',
+    authMiddleware,
+    requireRole(['ADMIN', 'HR', 'STORE']),
+    validate({ params: idParams }),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const result = await schedulesService.deleteShift(req.params.id, req.user!.id, req.user?.branchScope);
+        broadcastUpdate('schedules', { action: 'delete-shift', id: req.params.id });
+        res.json(result);
+      } catch (err: any) {
+        res.status(400).json({ error: err.message });
+      }
+    }
+  );
+
   app.post(
     '/schedules/:week/publish',
     authMiddleware,

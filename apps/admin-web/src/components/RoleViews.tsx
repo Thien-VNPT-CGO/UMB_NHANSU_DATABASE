@@ -2202,6 +2202,23 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   };
   // Modal Phát Hành Lịch: BOT tự xếp chỗ trống theo OFF đã đăng ký rồi PUBLISHED.
   const [publishOpen, setPublishOpen] = useState(false);
+  // HR xóa 1 ca trên lưới tuần (tab Lịch tuần): xác nhận rồi gọi DELETE, realtime
+  // sang Bảng Chấm Công + Cổng NV. Ca đã điểm danh thì server chặn.
+  const [schedDelBusy, setSchedDelBusy] = useState('');
+  const handleDeleteShift = async (assignmentId: string, label: string) => {
+    if (!assignmentId || schedDelBusy) return;
+    if (!window.confirm(`Xóa ca ${label} khỏi lịch? Ca biến mất khỏi lưới tuần, Bảng Chấm Công và Cổng NV ngay (realtime). Ca đã có điểm danh thì KHÔNG xóa được.`)) return;
+    setSchedDelBusy(assignmentId);
+    try {
+      await apiRequest(`/schedules/${encodeURIComponent(assignmentId)}`, { method: 'DELETE' });
+      showToast(`🗑 Đã xóa ca ${label} — đã đồng bộ realtime sang Bảng Chấm Công và Cổng NV.`);
+      if (onRefreshData) await onRefreshData();
+    } catch (e: any) {
+      showToast(e?.message || 'Lỗi khi xóa ca!');
+    } finally {
+      setSchedDelBusy('');
+    }
+  };
   // Modal HR bổ sung lịch làm việc cho NV (tab Lịch tuần): chọn NV bất kỳ +
   // xếp ca trực tiếp lên lịch (nháp), realtime sang Chấm công + Cổng NV.
   const [supShiftOpen, setSupShiftOpen] = useState(false);
@@ -7400,11 +7417,16 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           for (const sh of dayShifts) {
             const list = (sh as any).assignment_id ? (byAssign.get((sh as any).assignment_id) || []) : [];
             if ((sh as any).assignment_id) usedAssign.add((sh as any).assignment_id);
-            entries.push(entryNote(buildOne(sh, {
+            const built: any = entryNote(buildOne(sh, {
               ci: list.find((e: any) => e.type === 'CHECK_IN'),
               co: list.find((e: any) => e.type === 'CHECK_OUT'),
               ab: list.find((e: any) => e.type === 'ABSENT'),
-            })));
+            }));
+            // Giữ mã ca để nút ✕ xóa ca trên lưới (HR xóa ca thừa/trùng).
+            if ((sh as any)?.assignment_id) built.assignment_id = (sh as any).assignment_id;
+            built.shift_code = (sh as any)?.shift_code;
+            built.shift_date = day.isoDate;
+            entries.push(built);
           }
           // Nhom thua: diem danh khong gan ca nao (ca ngoai lich, tang cuong...)
           for (const [k, list] of byAssign) {
@@ -8246,6 +8268,31 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                         : sd.note || sd.status}
                                     </div>
                                   )}
+                                  {sd.assignment_id && sd.status !== 'COMPLETED' && sd.status !== 'CHECKED_IN' && (
+                                    <button
+                                      disabled={schedDelBusy === sd.assignment_id}
+                                      onClick={() => handleDeleteShift(sd.assignment_id, `${sd.shift || ''} ${sd.shift_date || ''} (${emp.name || ''})`)}
+                                      title="Xóa ca này khỏi lịch — đồng bộ realtime sang Bảng Chấm Công và Cổng NV"
+                                      style={{
+                                        marginTop: '4px',
+                                        fontSize: '9px',
+                                        padding: '2px 6px',
+                                        borderRadius: '4px',
+                                        backgroundColor: '#FFFFFF',
+                                        border: '1px solid #FCA5A5',
+                                        color: '#DC2626',
+                                        fontWeight: 800,
+                                        cursor: schedDelBusy === sd.assignment_id ? 'wait' : 'pointer',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '3px',
+                                        justifyContent: 'center',
+                                        opacity: schedDelBusy === sd.assignment_id ? 0.6 : 1,
+                                      }}
+                                    >
+                                      {schedDelBusy === sd.assignment_id ? '⏳...' : '✕ Xóa ca'}
+                                    </button>
+                                  )}
                                 </div>
                               );
                             })}
@@ -8531,6 +8578,32 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                   {d.note || 'Không điểm danh'}
                                 </div>
                               </div>
+                            )}
+
+                            {d.assignment_id && !isCompleted && !isCheckedIn && (
+                              <button
+                                disabled={schedDelBusy === d.assignment_id}
+                                onClick={() => handleDeleteShift(d.assignment_id, `${d.shift || ''} ${day.isoDate} (${emp.name || ''})`)}
+                                title="Xóa ca này khỏi lịch — đồng bộ realtime sang Bảng Chấm Công và Cổng NV"
+                                style={{
+                                  marginTop: '4px',
+                                  fontSize: '9.5px',
+                                  padding: '2px 8px',
+                                  borderRadius: '4px',
+                                  backgroundColor: '#FFFFFF',
+                                  border: '1px solid #FCA5A5',
+                                  color: '#DC2626',
+                                  fontWeight: 800,
+                                  cursor: schedDelBusy === d.assignment_id ? 'wait' : 'pointer',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '3px',
+                                  justifyContent: 'center',
+                                  opacity: schedDelBusy === d.assignment_id ? 0.6 : 1,
+                                }}
+                              >
+                                {schedDelBusy === d.assignment_id ? '⏳...' : '✕ Xóa ca'}
+                              </button>
                             )}
                           </div>
                         )}

@@ -87,6 +87,64 @@ export class SchedulesService {
     return this.repo.getShiftsForEmployee(employeeId, fromDate, toDate);
   }
 
+  /**
+   * HR xóa 1 ca làm việc trên lưới tuần (tab Lịch tuần): ca chuyển CANCELLED nên
+   * biến mất khỏi lưới + Bảng Chấm Công + Cổng NV ngay (mọi nơi đều lọc CANCELLED).
+   *  - Ca đã có điểm danh (CHECK_IN/CHECK_OUT/ABSENT gắn assignment) thì CHẶN —
+   *    giữ làm bằng chứng công/lương, không được xóa.
+   *  - STORE chỉ xóa ca đúng chi nhánh mình (chuẩn hóa CN1..CN4).
+   */
+  async deleteShift(assignmentId: string, actorId: string, branchScope?: string) {
+    return singleWriterQueue.enqueue({
+      entityType: 'PHAN_CONG_CA',
+      entityId: assignmentId,
+      actorId,
+      execute: async () => {
+        const sh = await this.repo.getShiftById(assignmentId).catch(() => null);
+        if (!sh) {
+          throw new Error('SHIFT_NOT_FOUND: Ca làm việc không tồn tại (có thể đã bị xóa). Tải lại danh sách!');
+        }
+        if ((sh as any).status === 'CANCELLED') {
+          throw new Error('SHIFT_ALREADY_CANCELLED: Ca này đã được xóa trước đó! Tải lại danh sách.');
+        }
+        if (branchScope && branchScope !== '*' && canonicalBranch((sh as any).branch_id) !== canonicalBranch(branchScope)) {
+          throw new Error('BRANCH_SCOPE_FORBIDDEN: Bạn chỉ được xóa ca thuộc chi nhánh của mình!');
+        }
+        const day = String((sh as any).date || '').slice(0, 10);
+        const empId = String((sh as any).employee_id || '');
+        const evts = await this.repo.getAttendanceEvents(empId || undefined, day || undefined).catch(() => []);
+        const linked = (evts || []).filter(
+          (e: any) =>
+            String((e as any)?.assignment_id || '') === String(assignmentId) &&
+            ['CHECK_IN', 'CHECK_OUT', 'ABSENT'].includes(String((e as any)?.type || ''))
+        );
+        if (linked.length > 0) {
+          throw new Error(
+            `SHIFT_HAS_ATTENDANCE: Ca ${String((sh as any).shift_code || '')} ngày ${day} đã có ${linked.length} bản ghi điểm danh — KHÔNG được xóa (giữ làm bằng chứng công/lương)!`
+          );
+        }
+        const updated = await this.repo.updateShiftAssignment(assignmentId, { status: 'CANCELLED' });
+        await this.repo.recordAuditLog({
+          log_id: `LOG_${Date.now()}`,
+          actor_id: actorId,
+          actor_role: 'HR',
+          action: 'SHIFT_DELETED',
+          target_entity: 'PHAN_CONG_CA',
+          target_id: assignmentId,
+          details: `Xóa ca ${String((sh as any).shift_code || '')} ngày ${day} của ${empId} (chi nhánh ${String((sh as any).branch_id || '')}) khỏi lịch tuần`,
+        } as any).catch(() => null);
+        if (this.io) {
+          this.io.emit('data:updated', {
+            entity: 'schedules',
+            data: { action: 'delete-shift', assignmentId },
+            timestamp: new Date().toISOString(),
+          });
+        }
+        return updated;
+      },
+    });
+  }
+
   async createShift(data: {
     employeeId: string;
     branchId: string;
