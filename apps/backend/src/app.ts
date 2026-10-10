@@ -1285,6 +1285,21 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Rà soát + gỡ lịch thử việc còn sót ở NV đã lên chính thức (dryRun=true xem
+  // trước; dryRun=false hủy các ca sót, giữ lịch sử đã qua). HR bấm nút trên tab thử việc.
+  app.post('/admin/employees/cleanup-probation-shifts', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const dryRun = (req.body as any)?.dryRun !== false;
+      const result = await employeesService.previewOrCleanupProbationLeftovers(req.user!.id, dryRun);
+      if (!dryRun && (result as any)?.cancelledCount > 0) {
+        broadcastUpdate('employees', { action: 'probation-cleanup', ...result });
+        broadcastUpdate('schedules', { action: 'probation-cleanup', ...result });
+      }
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(400).json({ error: String(err?.message || 'Lỗi rà soát lịch thử việc sót') });
+    }
+  });
   // Gán / đổi ca cố định cho nhân viên (BOT dựa vào đây để tự xếp lịch khi PUBLISH).
   app.put('/employees/:id/default-shift', authMiddleware, requireRole(['ADMIN', 'HR', 'STORE']), validate({ params: idParams, body: defaultShiftBody }), async (req: AuthenticatedRequest, res) => {
     try {

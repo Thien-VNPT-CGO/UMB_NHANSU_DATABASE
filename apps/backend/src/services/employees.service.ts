@@ -366,6 +366,104 @@ export class EmployeesService {
     });
   }
 
+  /**
+   * Rà soát lịch thử việc còn sót ở NV đã lên chính thức: NV OFFICIAL mà vẫn còn
+   * ca (không phải BOT xếp — SHIFT_AUTO_) nằm trong cửa sổ 12 ngày thử việc,
+   * từ hôm nay trở đi, tạo trước hôm nay. Lịch sử đã qua giữ nguyên.
+   * dryRun=true chỉ xem trước; dryRun=false hủy (CANCELLED) các ca sót + audit.
+   */
+  async previewOrCleanupProbationLeftovers(
+    actorId: string,
+    dryRun = true
+  ): Promise<{
+    dryRun: boolean;
+    today: string;
+    groups: {
+      employee_id: string;
+      employee: string;
+      branch: string;
+      official_date?: string;
+      window_end: string;
+      shifts: { assignment_id: string; date: string; shift_code: string; status: string }[];
+    }[];
+    totalShifts: number;
+    cancelledCount: number;
+  }> {
+    const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+    const addDays = (s: string, n: number): string => {
+      const d = new Date(`${s}T00:00:00Z`);
+      d.setUTCDate(d.getUTCDate() + n);
+      return d.toISOString().slice(0, 10);
+    };
+    const [employees, futureShifts] = await Promise.all([
+      this.repo.listEmployees().catch(() => []),
+      this.repo.getShiftsForWeek('*', today).catch(() => []),
+    ]);
+    const groups: {
+      employee_id: string;
+      employee: string;
+      branch: string;
+      official_date?: string;
+      window_end: string;
+      shifts: { assignment_id: string; date: string; shift_code: string; status: string }[];
+    }[] = [];
+    for (const e of (employees || []) as any[]) {
+      if ((e as any)?.employment_status !== 'OFFICIAL') continue;
+      const start = String((e as any)?.start_date || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(start)) continue;
+      const windowEnd = addDays(start, 11);
+      if (windowEnd < today) continue; // cửa sổ thử việc đã qua hết — không thể sót ca tương lai
+      const shifts = (futureShifts || []).filter((s: any) => {
+        if (String((s as any)?.employee_id || '') !== String((e as any)?.employee_id || '')) return false;
+        if ((s as any)?.status === 'CANCELLED') return false;
+        const d = String((s as any)?.date || '').slice(0, 10);
+        if (!d || d < today || d > windowEnd) return false;
+        // Ca BOT chính thức xếp (SHIFT_AUTO_) không phải ca thử việc sót.
+        if (String((s as any)?.assignment_id || '').startsWith('SHIFT_AUTO_')) return false;
+        // Ca tạo từ hôm nay (HR xếp tay/BOT chạy sau kích hoạt) không phải sót.
+        const created = String((s as any)?.created_at || '').slice(0, 10);
+        if (created && /^\d{4}-\d{2}-\d{2}$/.test(created) && created >= today) return false;
+        return true;
+      }).map((s: any) => ({
+        assignment_id: String((s as any)?.assignment_id || ''),
+        date: String((s as any)?.date || '').slice(0, 10),
+        shift_code: String((s as any)?.shift_code || ''),
+        status: String((s as any)?.status || ''),
+      })).sort((a: any, b: any) => a.date.localeCompare(b.date));
+      if (shifts.length === 0) continue;
+      groups.push({
+        employee_id: String((e as any)?.employee_id || ''),
+        employee: String((e as any)?.full_name || (e as any)?.employee_id || ''),
+        branch: String((e as any)?.default_branch_id || (e as any)?.branch_id || ''),
+        official_date: String((e as any)?.official_date || '').slice(0, 10) || undefined,
+        window_end: windowEnd,
+        shifts,
+      });
+    }
+    groups.sort((a, b) => a.employee.localeCompare(b.employee, 'vi'));
+    const totalShifts = groups.reduce((n, g) => n + g.shifts.length, 0);
+    if (dryRun || groups.length === 0) {
+      return { dryRun: true, today, groups, totalShifts, cancelledCount: 0 };
+    }
+    let cancelledCount = 0;
+    for (const g of groups) {
+      for (const s of g.shifts) {
+        await this.repo.updateShiftAssignment(s.assignment_id, { status: 'CANCELLED' }).catch(() => null);
+        cancelledCount++;
+      }
+      await this.repo.recordAuditLog({
+        log_id: `LOG_${Date.now()}_${g.employee_id}`,
+        actor_id: actorId,
+        actor_role: 'HR',
+        action: 'PROBATION_LEFTOVER_CLEANUP',
+        target_entity: 'PHAN_CONG_CA',
+        target_id: g.employee_id,
+        details: `Gỡ ${g.shifts.length} ca thử việc sót của ${g.employee} (${g.shifts.map(s => `${s.shift_code} ${s.date}`).join(', ')}) — đã lên chính thức`,
+      } as any).catch(() => null);
+    }
+    return { dryRun: false, today, groups, totalShifts, cancelledCount };
+  }
+
   /** Gán / đổi ca cố định cho nhân viên (BOT dựa vào đây để tự xếp lịch). */
   async setDefaultShift(employeeId: string, shiftCode: 'CA_1' | 'CA_2' | 'CA_3' | null, actorId: string) {
     const emp = await this.repo.getEmployeeById(employeeId);

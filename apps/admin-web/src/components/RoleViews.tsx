@@ -1017,6 +1017,42 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       setOffOverlapBusy(false);
     }
   };
+  // Rà soát lịch thử việc còn sót ở NV đã lên chính thức (xem trước + xác nhận rồi mới hủy).
+  const [probationCleanupBusy, setProbationCleanupBusy] = useState(false);
+  const handleCleanupProbationLeftovers = async () => {
+    if (probationCleanupBusy) return;
+    setProbationCleanupBusy(true);
+    try {
+      const preview: any = await apiRequest('/admin/employees/cleanup-probation-shifts', {
+        method: 'POST',
+        body: JSON.stringify({ dryRun: true }),
+      });
+      const groups = (preview?.groups || []) as any[];
+      const total = Number(preview?.totalShifts || 0);
+      if (groups.length === 0) {
+        showToast('✅ Không còn lịch thử việc sót ở NV chính thức — dữ liệu đã sạch!');
+        return;
+      }
+      const lines = groups.slice(0, 10).map((g: any) =>
+        `• ${g.employee} (${g.branch || '?'}): ${(g.shifts || []).map((s: any) => `${s.shift_code} ${s.date}`).join(', ')}`
+      ).join('\n');
+      const more = groups.length > 10 ? `\n… +${groups.length - 10} bạn nữa` : '';
+      if (!window.confirm(
+        `Rà soát từ hôm nay: ${groups.length} NV chính thức còn ${total} ca thử việc sót:\n${lines}${more}\n\nBấm OK để HỦY các ca sót (lịch sử điểm danh/lương đã qua giữ nguyên).`
+      )) return;
+      const res: any = await apiRequest('/admin/employees/cleanup-probation-shifts', {
+        method: 'POST',
+        body: JSON.stringify({ dryRun: false }),
+      });
+      showToast(`🧹 Đã hủy ${res?.cancelledCount || 0} ca thử việc sót của ${groups.length} NV chính thức!`);
+      if (onRefreshData) await onRefreshData();
+      if (onPushSheets) await onPushSheets();
+    } catch (e: any) {
+      showToast(e?.message || 'Lỗi khi rà soát lịch thử việc sót!');
+    } finally {
+      setProbationCleanupBusy(false);
+    }
+  };
   // Reset ALL lịch OFF tuần: xóa hết đăng ký để NV đăng ký lại — mở modal nhập pass mới chạy.
   const [offResetAllOpen, setOffResetAllOpen] = useState(false);
   const [offResetAllPass, setOffResetAllPass] = useState('');
@@ -5550,6 +5586,24 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
             <button className="btn-primary" onClick={openNewEmpModal}>+ Thêm NV Thử Việc</button>
+            <button
+              className="btn-outline"
+              disabled={probationCleanupBusy}
+              onClick={handleCleanupProbationLeftovers}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '9px 14px',
+                fontSize: '13px',
+                fontWeight: 600,
+                borderRadius: '8px',
+                opacity: probationCleanupBusy ? 0.6 : 1,
+              }}
+              title="Rà soát NV đã lên chính thức mà còn sót ca thử việc (từ hôm nay) rồi hủy — xem trước và xác nhận trước khi hủy"
+            >
+              {probationCleanupBusy ? '⏳ Đang quét...' : '🧹 Quét lịch sót'}
+            </button>
             {onSyncSheets && (
               <button
                 className="btn-outline"
