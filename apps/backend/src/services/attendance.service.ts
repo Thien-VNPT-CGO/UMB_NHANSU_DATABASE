@@ -215,6 +215,60 @@ export class AttendanceService {
   }
 
   /**
+   * Thử lại upload ảnh chấm công lỗi (đang giữ inline `event_photo`): Drive hồi
+   * là ảnh hiện lại trên modal/ZIP, base64 inline được dọn để nhẹ bộ nhớ + ID
+   * thật được đẩy lên Sheet ngay. Chạy nền mỗi 5 phút (tối đa `limit` lượt cũ
+   * nhất). Không cấu hình Drive thì bỏ qua.
+   */
+  async retryFailedPhotoUploads(limit = 20): Promise<{ checked: number; recovered: number }> {
+    const sync = (this.repo as any)?.syncService;
+    const fb = (this.repo as any)?.fallbackAdapter;
+    if (!sync?.uploadImageToDrive || !Array.isArray(fb?.attendanceEvents)) return { checked: 0, recovered: 0 };
+    try {
+      if (sync.getDriveUploadStatus && sync.getDriveUploadStatus()?.driveConfigured === false) {
+        return { checked: 0, recovered: 0 };
+      }
+    } catch { /* thử vẫn chạy */ }
+    const cands = (fb.attendanceEvents as any[])
+      .filter(
+        (e: any) =>
+          (e as any)?.event_photo &&
+          (!((e as any)?.drive_object_id) || String((e as any).drive_object_id).startsWith('DRV_'))
+      )
+      .slice(0, Math.max(1, Math.min(50, limit)));
+    let recovered = 0;
+    for (const e of cands) {
+      try {
+        const r = await sync.uploadImageToDrive(
+          `${(e as any)?.employee_id || 'unknown'}_${(e as any)?.type || 'CHECK'}_${Date.now()}.jpg`,
+          'image/jpeg',
+          String((e as any).event_photo)
+        );
+        if (r?.fileId && !String(r.fileId).startsWith('DRV_')) {
+          (e as any).drive_object_id = r.fileId;
+          delete (e as any).event_photo;
+          recovered++;
+        }
+      } catch { /* lần sau thử lại */ }
+    }
+    if (recovered > 0) {
+      try {
+        await sync.pushEventsTab(fb).catch(() => 0);
+      } catch { /* best-effort */ }
+      if (this.io) {
+        try {
+          this.io.emit('data:updated', {
+            entity: 'attendance',
+            data: { action: 'photo-recovered', recovered },
+            timestamp: new Date().toISOString(),
+          });
+        } catch { /* non-fatal */ }
+      }
+    }
+    return { checked: cands.length, recovered };
+  }
+
+  /**
    * Tự động ghi VẮNG: ca PUBLISHED đã kết thúc quá `graceMinutes` mà không có
    * CHECK_IN/ABSENT nào -> tạo bản ghi ABSENT làm chứng cứ (đồng bộ Sheets như
    * mọi sự kiện khác). Idempotent theo request_id nên tick chồng không dup.

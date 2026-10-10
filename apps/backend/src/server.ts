@@ -482,6 +482,20 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   setTimeout(interviewNoShowTickSafe, 60_000);
   setInterval(interviewNoShowTickSafe, 5 * 60_000);
 
+  // Thử lại upload ảnh chấm công lỗi (đang giữ inline): Drive hồi là ảnh hiện
+  // lại trên modal/ZIP ngay, không cần NV chụp lại.
+  const photoRetryTickSafe = () => {
+    services.attendanceService.retryFailedPhotoUploads(20)
+      .then(r => {
+        if (r && r.recovered > 0) {
+          console.log(`[photo-retry] Đã phục hồi ${r.recovered} ảnh chấm công lên Drive.`);
+        }
+      })
+      .catch(err => console.warn('[photo-retry] tick error:', err?.message || err));
+  };
+  setTimeout(photoRetryTickSafe, 180_000);
+  setInterval(photoRetryTickSafe, 5 * 60_000);
+
   // Backup snapshot tự động mỗi 24h + tự verify; fail thì báo ADMIN/HR trong app.
   const autoBackupTick = async () => {
     try {

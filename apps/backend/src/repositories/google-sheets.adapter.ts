@@ -719,15 +719,27 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
       this.photoStats.lastMissingAt = new Date().toISOString();
       this.photoStats.lastMissingEvent = event.event_id || null;
     }
-    // If base64 photo is provided, upload to Google Drive
-    if (event.photo_base64 && this.isConfigured) {
+    // Ảnh check-in/out: luôn thử upload Drive; thất bại thì giữ base64 inline
+    // (event_photo) để endpoint /photo phục vụ fallback (mirror phiếu bổ sung
+    // công) — trước đây upload lỗi là ảnh mất vĩnh viễn, HR thấy "Chưa có ảnh".
+    // Chỉ giữ inline khi upload lỗi (thành công thì bỏ base64 như cũ, nhẹ bộ nhớ).
+    if (event.photo_base64) {
       try {
         const fileName = `${event.employee_id}_${event.type}_${Date.now()}.jpg`;
         const driveResult = await this.syncService.uploadImageToDrive(fileName, 'image/jpeg', event.photo_base64);
-        event.drive_object_id = driveResult.fileId;
+        if (driveResult?.fileId && !String(driveResult.fileId).startsWith('DRV_')) {
+          event.drive_object_id = driveResult.fileId;
+        } else {
+          // Upload chưa thành công (DRIVE_NOT_CONFIGURED / lỗi mạng -> DRV_*): giữ inline.
+          event.drive_object_id = driveResult?.fileId || `DRV_LOCAL_${Date.now()}`;
+          (event as any).event_photo = event.photo_base64;
+        }
       } catch (err) {
         console.error('[GoogleSheetsAdapter] Drive upload error:', err);
+        event.drive_object_id = `DRV_LOCAL_${Date.now()}`;
+        (event as any).event_photo = event.photo_base64;
       }
+      delete event.photo_base64;
     }
 
     const res = await this.fallbackAdapter.recordAttendanceEvent(event);

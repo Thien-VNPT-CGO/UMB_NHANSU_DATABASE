@@ -2686,17 +2686,42 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       if (req.user?.role === 'STORE' && req.user.branchScope !== '*' && evt.branch_id && evt.branch_id !== req.user.branchScope) {
         return res.status(403).json({ error: 'BRANCH_SCOPE_FORBIDDEN' });
       }
-      if (!evt.drive_object_id || String(evt.drive_object_id).startsWith('DRV_')) {
+      const serveInline = (dataUrl: string) => {
+        try {
+          const m = String(dataUrl).match(/^data:(image\/\w+);base64,(.*)$/);
+          const mime = m ? m[1] : 'image/jpeg';
+          const b64 = m ? m[2] : String(dataUrl).replace(/^data:image\/\w+;base64,/, '');
+          const buffer = Buffer.from(b64, 'base64');
+          if (!buffer.length) throw new Error('EMPTY_INLINE_PHOTO');
+          res.setHeader('Content-Type', mime);
+          res.setHeader('Cache-Control', 'private, max-age=3600');
+          return res.send(buffer);
+        } catch (e: any) {
+          return res.status(404).json({ error: 'PHOTO_NOT_UPLOADED: Ảnh chưa được upload lên Drive.' });
+        }
+      };
+      // Ưu tiên Drive khi có ID thật; mọi trường hợp còn lại mà còn ảnh inline
+      // (upload lỗi nhưng base64 còn trong bộ nhớ) thì phục vụ inline để HR luôn
+      // thấy ảnh realtime (mirror phiếu bổ sung công).
+      const inlinePhoto: string | undefined = (evt as any).event_photo;
+      const driveId: string = String(evt.drive_object_id || '');
+      if (driveId && !driveId.startsWith('DRV_')) {
+        try {
+          const syncService = (adapter as any).syncService;
+          if (syncService?.downloadDriveFile) {
+            const { buffer, mimeType } = await syncService.downloadDriveFile(evt.drive_object_id);
+            res.setHeader('Content-Type', mimeType || 'image/jpeg');
+            res.setHeader('Cache-Control', 'private, max-age=3600');
+            return res.send(buffer);
+          }
+        } catch {
+          // Drive tải lỗi (quyền mạng/xóa file): rớt xuống inline nếu còn.
+        }
+        if (inlinePhoto) return serveInline(inlinePhoto);
         return res.status(404).json({ error: 'PHOTO_NOT_UPLOADED: Ảnh chưa được upload lên Drive.' });
       }
-      const syncService = (adapter as any).syncService;
-      if (!syncService?.downloadDriveFile) {
-        return res.status(503).json({ error: 'DRIVE_NOT_CONFIGURED' });
-      }
-      const { buffer, mimeType } = await syncService.downloadDriveFile(evt.drive_object_id);
-      res.setHeader('Content-Type', mimeType || 'image/jpeg');
-      res.setHeader('Cache-Control', 'private, max-age=3600');
-      res.send(buffer);
+      if (inlinePhoto) return serveInline(inlinePhoto);
+      return res.status(404).json({ error: 'PHOTO_NOT_UPLOADED: Ảnh chưa được upload lên Drive.' });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'PHOTO_DOWNLOAD_FAILED' });
     }
@@ -2810,16 +2835,18 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       let ok = 0;
       let uploadFailed = 0;
       let neverUploaded = 0;
+      let withInline = 0;
       for (const e of relevant) {
         const id = String(e.drive_object_id || '');
         if (id && !id.startsWith('DRV_')) ok++;
+        else if ((e as any)?.event_photo) withInline++;
         else if (id.startsWith('DRV_LOCAL_')) { uploadFailed++; missing.push(e.event_id); }
         else { neverUploaded++; missing.push(e.event_id); }
       }
       const syncService = (adapter as any).syncService;
       const drive = syncService?.getDriveUploadStatus ? syncService.getDriveUploadStatus() : null;
       const adapterPhoto = (adapter as any).getPhotoStats ? (adapter as any).getPhotoStats() : null;
-      res.json({ date, total: relevant.length, withPhoto: ok, uploadFailed, neverUploaded, missing, drive, adapterPhoto });
+      res.json({ date, total: relevant.length, withPhoto: ok, uploadFailed, neverUploaded, withInline, missing, drive, adapterPhoto });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

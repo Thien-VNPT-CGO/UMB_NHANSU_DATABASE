@@ -1085,6 +1085,12 @@ export class GoogleSheetsSyncService {
         const memEvtBranch = new Map<string, string>(
           (fallback.attendanceEvents || []).map((e: any) => [String(e.event_id), String(e.branch_id || '')])
         );
+        // Ảnh inline theo event_id (phục vụ khôi phục sau merge bên dưới).
+        const memEvtPhoto = new Map<string, string>();
+        for (const e of (fallback.attendanceEvents || []) as any[]) {
+          const ph = String((e as any)?.event_photo || '');
+          if (ph) memEvtPhoto.set(String((e as any)?.event_id || ''), ph);
+        };
         const mappedEvents = attRows.map(r => {
           const clientIso = normSheetDateTime(r[12]) || normSheetDateTime(r[4]);
           const serverIso = normSheetDateTime(r[4]);
@@ -1120,6 +1126,16 @@ export class GoogleSheetsSyncService {
         for (const e of fallback.attendanceEvents as any[]) {
           if (!e.branch_id && memEvtBranch.get(String(e.event_id))) {
             e.branch_id = memEvtBranch.get(String(e.event_id));
+          }
+        }
+        // Ảnh inline (upload Drive lỗi, giữ trong bộ nhớ): merge Sheet thắng sẽ
+        // làm mất — khôi phục lại khi bản Sheet chưa có Drive ID thật.
+        if (memEvtPhoto.size > 0) {
+          for (const e of fallback.attendanceEvents as any[]) {
+            const id = String((e as any)?.drive_object_id || '');
+            if ((id && !id.startsWith('DRV_')) || (e as any)?.event_photo) continue;
+            const ph = memEvtPhoto.get(String((e as any)?.event_id || ''));
+            if (ph) (e as any).event_photo = ph;
           }
         }
       } else if (fallback.attendanceEvents.length === 0) {
