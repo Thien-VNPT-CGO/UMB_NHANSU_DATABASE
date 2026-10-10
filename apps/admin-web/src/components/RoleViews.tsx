@@ -2440,6 +2440,23 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   };
   const pickedCandidate = (candidates || []).find((c: any) => c.submission_id === inviteCandidateId);
   const pickedBranchId = resolveCandidateBranch(pickedCandidate);
+  // Bộ lọc bảng Lịch PV theo chi nhánh + tìm kiếm (đặt sau resolveCandidateBranch
+  // để tránh lỗi TDZ — lọc ngay tại nguồn nên dropdown lập lịch + bảng cùng hưởng).
+  const [pvBranchFilter, setPvBranchFilter] = useState('ALL');
+  const [pvSearch, setPvSearch] = useState('');
+  const pvBranchOf = (c: any): string => {
+    const pref = String(c?.preferred_branch_id || '').trim();
+    if (pref) return canonicalBranchId(pref);
+    const m = `${c?.branch_name || ''}`.match(/CN\d+/i);
+    if (m) return canonicalBranchId(m[0]);
+    return '';
+  };
+  const pvFiltered = (pvCandidates || []).filter((c: any) => {
+    if (pvBranchFilter !== 'ALL' && pvBranchOf(c) !== pvBranchFilter) return false;
+    const q = pvSearch.trim().toLowerCase();
+    if (q && !`${c?.full_name || ''} ${c?.phone || ''} ${c?.phone_normalized || ''}`.toLowerCase().includes(q)) return false;
+    return true;
+  });
 
   // Tự nhận diện chi nhánh theo hồ sơ ứng viên khi HR chọn tên.
   // Chỉ tự điền 1 lần mỗi khi ĐỔI ứng viên (ref) để không đè lựa chọn tay của HR
@@ -4611,8 +4628,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Chọn ứng viên mới:</label>
                 <select style={{ width: '100%' }} value={inviteCandidateId} onChange={(e) => setInviteCandidateId(e.target.value)}>
                   <option value="">-- Chọn ứng viên --</option>
-                  {pvCandidates.length > 0 ? (
-                    pvCandidates.map((c, i) => (
+                  {pvFiltered.length > 0 ? (
+                    pvFiltered.map((c, i) => (
                       <option key={c.submission_id || i} value={c.submission_id}>
                         {c.full_name} ({c.phone || c.phone_normalized})
                       </option>
@@ -4712,8 +4729,26 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         {/* ========================================================================= */}
         <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
           <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-            <strong style={{ fontSize: '14px' }}>Lịch Phỏng Vấn Tuyển Dụng Đã Lên Lịch</strong>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <strong style={{ fontSize: '14px' }}>Lịch Phỏng Vấn Tuyển Dụng Đã Lên Lịch ({pvFiltered.length}/{pvCandidates.length})</strong>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <select
+                value={pvBranchFilter}
+                onChange={(e) => setPvBranchFilter(e.target.value)}
+                title="Lọc theo chi nhánh ứng viên đăng ký"
+                style={{ fontSize: '12px', padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--border)', fontWeight: 700 }}
+              >
+                <option value="ALL">Tất cả chi nhánh</option>
+                <option value="CN130">CN1: 130 Vạn Kiếp</option>
+                <option value="CN261">CN2: 261 Tô Hiến Thành</option>
+                <option value="CN120">CN3: 120 Hoàng Diệu 2</option>
+                <option value="CN111">CN4: 111 Tôn Đản</option>
+              </select>
+              <input
+                value={pvSearch}
+                onChange={(e) => setPvSearch(e.target.value)}
+                placeholder="Tìm tên / SĐT..."
+                style={{ fontSize: '12px', padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--border)', minWidth: '160px' }}
+              />
               <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
                 🤖 Hệ thống tự rà soát + xóa lịch trùng (&lt; 30 phút) mỗi 5 phút
               </span>
@@ -4736,8 +4771,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </tr>
             </thead>
             <tbody>
-              {pvCandidates.length > 0 ? (
-                pvCandidates.map((c, i) => (
+              {pvFiltered.length > 0 ? (
+                pvFiltered.map((c, i) => (
                   <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
                     <td style={{ padding: '14px 20px', fontWeight: 700 }}>
                       {c.full_name}
@@ -5087,7 +5122,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               ) : (
                 <tr>
                     <td colSpan={7} style={{ textAlign: 'center', padding: '36px', color: 'var(--text-muted)', fontSize: '13px' }}>
-                    Chưa có lịch phỏng vấn nào. Dữ liệu sẽ tự động xuất hiện khi tiếp nhận ứng viên từ Google Forms hoặc Google Sheets.
+                    {(pvBranchFilter !== 'ALL' || pvSearch.trim())
+                      ? 'Không có ứng viên nào khớp bộ lọc — thử đổi chi nhánh hoặc từ khóa tìm kiếm.'
+                      : 'Chưa có lịch phỏng vấn nào. Dữ liệu sẽ tự động xuất hiện khi tiếp nhận ứng viên từ Google Forms hoặc Google Sheets.'}
                   </td>
                 </tr>
               )}
