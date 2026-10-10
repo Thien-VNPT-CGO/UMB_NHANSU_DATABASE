@@ -312,6 +312,25 @@ export class EmployeesService {
       expectedVersion,
       actorId,
       execute: async () => {
+        const cur = await this.repo.getEmployeeById(employeeId).catch(() => null);
+        if (!cur) throw new Error('EMPLOYEE_NOT_FOUND');
+        const curStatus = String((cur as any).employment_status || '');
+        if (curStatus === 'OFFICIAL') {
+          throw new Error(`Ứng viên ${(cur as any).full_name || ''} đã là nhân viên chính thức rồi!`);
+        }
+        if (curStatus === 'TERMINATED') {
+          throw new Error(`Ứng viên ${(cur as any).full_name || ''} đã nghỉ việc — không thể chuyển chính thức!`);
+        }
+        if (curStatus !== 'PROBATION') {
+          throw new Error(`Chỉ chuyển chính thức được nhân viên đang thử việc (hiện: ${curStatus})!`);
+        }
+        // Kích hoạt chính thức: lập tức gỡ toàn bộ lịch làm việc thử việc từ hôm
+        // nay trở đi (lịch sử điểm danh/lương đã qua được giữ nguyên).
+        const todayVn = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+        let deletedShifts = 0;
+        try {
+          deletedShifts = (await this.repo.deleteShiftsForEmployee(employeeId, todayVn).catch(() => 0)) || 0;
+        } catch { deletedShifts = 0; }
         const updated = await this.repo.updateEmployee(
           employeeId,
           {
@@ -332,7 +351,17 @@ export class EmployeesService {
           note: 'Xét duyệt chuyển nhân viên chính thức',
         });
 
-        return updated;
+        await this.repo.recordAuditLog({
+          log_id: `LOG_${Date.now()}`,
+          actor_id: actorId,
+          actor_role: 'HR',
+          action: 'PROBATION_SCHEDULE_CLEARED',
+          target_entity: 'NHAN_VIEN_MASTER',
+          target_id: employeeId,
+          details: `Kích hoạt chính thức ${(cur as any).full_name || employeeId}: đã gỡ ${deletedShifts} ca thử việc từ ${todayVn} (giữ lịch sử đã qua); NV đăng ký 2 ngày OFF theo quy chế chính thức`,
+        } as any).catch(() => null);
+
+        return { ...(updated as any), deletedShifts };
       },
     });
   }

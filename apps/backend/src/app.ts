@@ -1261,6 +1261,24 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         req.body.expectedVersion || 1
       );
       broadcastUpdate('employees', { action: 'transition', employee: result });
+      // Lịch thử việc vừa gỡ: báo realtime để 2 cổng tải lại lịch ngay.
+      broadcastUpdate('schedules', { action: 'probation-cleared', employeeId: req.params.id });
+      // Báo inbox NV: đã chính thức + lịch thử việc đã gỡ + đăng ký 2 ngày OFF.
+      try {
+        const r = ((result as any)?.result || result || {}) as any;
+        const emp = r.employee || r;
+        const n = Number(emp?.deletedShifts || 0);
+        const name = String(emp?.full_name || '');
+        await notificationsService.sendNotification({
+          recipientIds: [req.params.id],
+          type: 'PROBATION_ACTIVATED',
+          severity: 'SYSTEM',
+          title: '🎉 Bạn đã chính thức thành nhân viên chính thức!',
+          summary: `${name} ơi, HR vừa ký quyết định chuyển chính thức cho bạn (${n} ca thử việc từ hôm nay đã được gỡ; lịch sử công đã qua vẫn giữ nguyên). Lịch chính thức do HR publish, và bạn nhớ đăng ký 2 ngày OFF tuần khi cổng mở (T6 09h00 – T7 09h00) để mở khóa đầy đủ chức năng!`,
+          targetPath: '/leave',
+          actorId: req.user!.id,
+        }).catch(() => null);
+      } catch { /* best-effort: chuyển chính thức vẫn có hiệu lực */ }
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
