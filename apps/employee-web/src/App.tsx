@@ -486,9 +486,16 @@ export function App() {
   } | null>(null);
   const [myAttendanceHistory, setMyAttendanceHistory] = useState<any[]>([]);
   const [branchColleagues, setBranchColleagues] = useState<any[]>([]);
+  // Tab Lịch: chuyển Tuần này / Tuần sau + tín hiệu tải lại lịch (khai báo sớm
+  // để socket realtime và effect ca đầu tuần bên dưới đều dùng được).
+  type SchedWeek = 'THIS' | 'NEXT';
+  const [schedWeekSel, setSchedWeekSel] = useState<SchedWeek>('THIS');
+  const schedWeekTouched = useRef(false);
+  const [schedRefresh, setSchedRefresh] = useState(0);
   // Ca đầu tuần->hôm qua cho tab Dữ Liệu Công tuần (myShifts chỉ từ hôm nay trở
-  // đi). Ca quá khứ là lịch sử bất biến nên chỉ tải khi mở tab công — sự kiện
-  // điểm danh vẫn realtime qua loadEmployeeData.
+  // đi). Ca quá khứ HR vẫn có thể xóa/sửa (không bất biến) nên tải lại theo
+  // realtime lịch (schedRefresh) chứ không chỉ khi mở tab — nếu không ca đã xóa
+  // vẫn hiện trên Công trong khi 2 tab admin đã trống.
   const [weekPastShifts, setWeekPastShifts] = useState<any[]>([]);
   useEffect(() => {
     if (activeTab !== 'timesheet') return;
@@ -504,7 +511,8 @@ export function App() {
         setWeekPastShifts(Array.isArray(list) ? list : []);
       } catch { /* offline: giữ danh sách cũ */ }
     })();
-  }, [activeTab]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, schedRefresh]);
 
   // Official Swap Form Type: 1 = Trao doi A <-> B, 2 = Nho lam thay B lam thay A
   const [swapFormType, setSwapFormType] = useState<1 | 2>(1);
@@ -1156,11 +1164,6 @@ export function App() {
   empIdRef.current = employee?.employee_id;
   const employeeRef = useRef<any>(null);
   employeeRef.current = employee;
-  // Tab Lịch: chuyển Tuần này / Tuần sau (khai báo sớm để socket realtime dùng được).
-  type SchedWeek = 'THIS' | 'NEXT';
-  const [schedWeekSel, setSchedWeekSel] = useState<SchedWeek>('THIS');
-  const schedWeekTouched = useRef(false);
-  const [schedRefresh, setSchedRefresh] = useState(0);
 
   // Realtime Socket.IO: lịch/HR đổi gì là app NV cập nhật tức thì (debounce 1s).
   useEffect(() => {
