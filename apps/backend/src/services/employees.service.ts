@@ -946,12 +946,18 @@ export class EmployeesService {
     }
     const cur = (await this.repo.listCandidates().catch(() => []))
       .find((c: any) => c.submission_id === submissionId) as any;
+    // PV xong thì gỡ lịch khỏi danh sách "Đã Lên Lịch" (giữ nguyên điểm đã chấm):
+    // lịch cũ để lại khiến tab vẫn đếm ngược + cho vào Meet dù đã xong.
+    const doneSlot = `${(cur as any)?.interview_time_slot || ''} ${String((cur as any)?.interview_date || '').slice(0, 10)}`.trim();
     const updated = await this.repo.updateCandidate(submissionId, {
       interview_score: scored.total,
       interview_rubric: rubricId,
       interview_score_detail: detail,
       // Chấm xong -> chờ HR duyệt thử việc (nút Chấm điểm ẩn đi, không chấm lại).
       ...(cur && cur.status !== 'ACCEPTED' ? { status: 'SCORED' } : {}),
+      interview_date: undefined,
+      interview_time_slot: undefined,
+      interviewer_id: undefined,
     } as any);
     await this.repo.recordAuditLog({
       log_id: `LOG_${Date.now()}`,
@@ -960,7 +966,7 @@ export class EmployeesService {
       action: 'CANDIDATE_SCORED',
       target_entity: 'UNG_VIEN',
       target_id: submissionId,
-      details: `Rubric ${rubricId}: ${scored.total}/${scored.max} (${scored.verdict})`,
+      details: `Rubric ${rubricId}: ${scored.total}/${scored.max} (${scored.verdict})${doneSlot ? `; lịch PV ${doneSlot} đã xong và được gỡ` : ''}`,
     }).catch(() => null);
     return { total: scored.total, passed: scored.passed, verdict: scored.verdict, autoRejected: false, candidate: updated };
   }

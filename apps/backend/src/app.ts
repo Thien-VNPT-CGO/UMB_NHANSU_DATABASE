@@ -1494,6 +1494,13 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.post('/applications/:id/score', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams, body: candidateScoreBody }), async (req: AuthenticatedRequest, res) => {    try {
       const { rubric, answers } = req.body as any;
       const result = await employeesService.scoreCandidate(req.params.id, rubric, answers || {}, req.user!.id);
+      // Chấm xong lịch PV được gỡ: chống hồi sinh như luồng hủy (tombstone + đẩy
+      // master NGAY) để pull nền sau đó không đọc lại dòng lịch cũ.
+      try {
+        const syncSvc = (adapter as any)?.syncService;
+        syncSvc?.markInterviewScheduleCleared?.(req.params.id);
+        await (adapter as any)?.pushCandidatesNow?.();
+      } catch { /* best-effort, tombstone đã chặn hồi sinh 120s */ }
       broadcastUpdate('candidates', { action: 'score', id: req.params.id });
       res.json({ success: true, ...result });
     } catch (err: any) {
