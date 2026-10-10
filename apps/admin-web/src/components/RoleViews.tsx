@@ -2202,6 +2202,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   };
   // Modal Phát Hành Lịch: BOT tự xếp chỗ trống theo OFF đã đăng ký rồi PUBLISHED.
   const [publishOpen, setPublishOpen] = useState(false);
+  // Modal HR bổ sung lịch làm việc cho NV (tab Lịch tuần): chọn NV bất kỳ +
+  // xếp ca trực tiếp lên lịch (nháp), realtime sang Chấm công + Cổng NV.
+  const [supShiftOpen, setSupShiftOpen] = useState(false);
+  const [supEmpId, setSupEmpId] = useState('');
+  const [supEmpSearch, setSupEmpSearch] = useState('');
+  const [supDate, setSupDate] = useState('');
+  const [supShift, setSupShift] = useState('CA_1');
+  const [supBusy, setSupBusy] = useState(false);
 
   // Filters & State for HR Candidates (17 Cột Google Forms)
   const [candidateSearch, setCandidateSearch] = useState('');
@@ -7607,8 +7615,155 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             >
               <CheckCircle size={14} /> Phát Hành Lịch (PUBLISH)
             </button>
+            <button
+              className="btn-primary"
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', fontSize: '13px', backgroundColor: '#7C3AED' }}
+              title="Chọn 1 nhân viên bất kỳ và xếp ca làm trực tiếp lên lịch (nháp) — tự đồng bộ realtime sang Bảng Chấm Công và Cổng NV"
+              onClick={() => {
+                setSupEmpId('');
+                setSupEmpSearch('');
+                setSupDate(new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10));
+                setSupShift('CA_1');
+                setSupShiftOpen(true);
+              }}
+            >
+              <Plus size={14} /> Bổ Sung Lịch NV
+            </button>
           </div>
         </div>
+
+        {/* Modal HR bổ sung lịch làm việc cho NV */}
+        {supShiftOpen && (() => {
+          const empList = (allEmployees || []).filter((e: any) =>
+            String((e as any)?.employment_status || '') !== 'TERMINATED'
+          );
+          const q = supEmpSearch.trim().toLowerCase();
+          const empOptions = empList.filter((e: any) => {
+            if (!q) return true;
+            return `${(e as any)?.full_name || ''} ${(e as any)?.employee_code || ''} ${(e as any)?.phone_normalized || (e as any)?.phone || ''}`.toLowerCase().includes(q);
+          }).slice(0, 60);
+          const picked = empList.find((e: any) => String((e as any)?.employee_id || '') === String(supEmpId || ''));
+          const pickedBranch = String((picked as any)?.default_branch_id || (picked as any)?.branch_id || 'CN130');
+          const pickedShift = ['CA_1', 'CA_2', 'CA_3'].includes(String((picked as any)?.default_shift_code || '')) ? String((picked as any)?.default_shift_code) : supShift;
+          const shiftLabel = supShift === 'CA_1' ? 'Ca 1 (07–12)' : supShift === 'CA_2' ? 'Ca 2 (12–18)' : 'Ca 3 (18–23)';
+          // Cảnh báo trước khi xếp: ngày OFF sẽ bị hủy / đã có ca cùng ngày.
+          const offThatDay = (picked && /^\d{4}-\d{2}-\d{2}$/.test(supDate || ''))
+            ? (leaves || []).filter((l: any) =>
+              String((l as any)?.employee_id || '') === String((picked as any)?.employee_id || '') &&
+              String((l as any)?.requested_date || '').slice(0, 10) === supDate &&
+              ['APPROVED', 'PENDING'].includes(String((l as any)?.status || '')))
+            : [];
+          const shiftsThatDay = (picked && /^\d{4}-\d{2}-\d{2}$/.test(supDate || ''))
+            ? (schedAllShifts || []).filter((s: any) =>
+              String((s as any)?.employee_id || '') === String((picked as any)?.employee_id || '') &&
+              String((s as any)?.date || '').slice(0, 10) === supDate &&
+              (s as any)?.status !== 'CANCELLED')
+            : [];
+          const doSupShift = async () => {
+            if (supBusy) return;
+            if (!picked) { showToast('⚠️ Vui lòng chọn nhân viên!'); return; }
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(supDate || '')) { showToast('⚠️ Vui lòng chọn ngày (YYYY-MM-DD)!'); return; }
+            if (!['CA_1', 'CA_2', 'CA_3'].includes(supShift)) { showToast('⚠️ Vui lòng chọn ca 1/2/3!'); return; }
+            if (offThatDay.length > 0) {
+              if (!window.confirm(`${(picked as any)?.full_name} đang có ngày OFF/nghỉ ${supDate} — xếp ca ${shiftLabel} thì ngày OFF đó tự chuyển thành ca làm việc (NV nhận thông báo). Tiếp tục?`)) return;
+            } else if (shiftsThatDay.length > 0) {
+              if (!window.confirm(`${(picked as any)?.full_name} đã có ca ${String(shiftsThatDay[0]?.shift_code || '')} ngày ${supDate} — tạo thêm thành 2 ca/ngày. Tiếp tục?`)) return;
+            }
+            setSupBusy(true);
+            try {
+              await apiRequest('/schedules/shifts', {
+                method: 'POST',
+                body: JSON.stringify({
+                  employeeId: (picked as any)?.employee_id,
+                  branchId: pickedBranch,
+                  shiftCode: supShift,
+                  date: supDate,
+                }),
+              });
+              showToast(`✅ Đã bổ sung ${shiftLabel} ngày ${supDate} cho ${(picked as any)?.full_name} (ca nháp — bấm Phát Hành Lịch để duyệt)! Ca đã đồng bộ realtime sang Bảng Chấm Công và Cổng NV.`);
+              setSupShiftOpen(false);
+              if (onRefreshData) await onRefreshData();
+            } catch (e: any) {
+              showToast(e?.message || 'Lỗi khi bổ sung lịch!');
+            } finally {
+              setSupBusy(false);
+            }
+          };
+          return (
+            <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+              <div style={{ backgroundColor: 'var(--surface)', borderRadius: '12px', maxWidth: '560px', width: '100%', maxHeight: '88vh', overflow: 'auto', padding: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h2 style={{ fontSize: '16px', fontWeight: 800, margin: 0 }}>➕ Bổ Sung Lịch Làm Việc Cho NV</h2>
+                  <button className="btn-secondary" style={{ padding: '4px 12px' }} onClick={() => setSupShiftOpen(false)}>Đóng</button>
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px', lineHeight: 1.6 }}>
+                  Chọn 1 nhân viên bất kỳ và xếp ca trực tiếp lên lịch (trạng thái nháp). Ca hiện ngay trên lưới tuần, Bảng Chấm Công Thời Gian Thực và Cổng NV theo realtime — bấm Phát Hành Lịch để duyệt tuần.
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '14px' }}>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Tìm nhân viên (tên / mã / SĐT):</label>
+                    <input
+                      value={supEmpSearch}
+                      onChange={(e) => setSupEmpSearch(e.target.value)}
+                      placeholder="Gõ để lọc..."
+                      style={{ width: '100%', padding: '7px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid var(--border)', marginBottom: '6px' }}
+                    />
+                    <select
+                      style={{ width: '100%', padding: '7px 10px', fontSize: '13px', borderRadius: '6px' }}
+                      value={supEmpId}
+                      onChange={(e) => {
+                        const id = e.target.value;
+                        setSupEmpId(id);
+                        const emp = empList.find((x: any) => String((x as any)?.employee_id || '') === String(id || ''));
+                        const code = String((emp as any)?.default_shift_code || '');
+                        if (['CA_1', 'CA_2', 'CA_3'].includes(code)) setSupShift(code);
+                      }}
+                    >
+                      <option value="">-- Chọn nhân viên --</option>
+                      {empOptions.map((e: any) => (
+                        <option key={(e as any)?.employee_id} value={(e as any)?.employee_id}>
+                          {(e as any)?.full_name} ({(e as any)?.employee_code}) — {getDisplayBranch((e as any)?.default_branch_id || (e as any)?.branch_id || '')}{(e as any)?.employment_status === 'PROBATION' ? ' • Thử việc' : ''}
+                        </option>
+                      ))}
+                    </select>
+                    {picked && (
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                        Chi nhánh: <strong>{getDisplayBranch(pickedBranch)}</strong>
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                    <div>
+                      <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Ngày làm:</label>
+                      <input type="date" style={{ width: '100%', padding: '7px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid var(--border)' }} value={supDate} onChange={(e) => setSupDate(e.target.value)} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Ca làm:</label>
+                      <select style={{ width: '100%', padding: '7px 10px', fontSize: '13px', borderRadius: '6px' }} value={['CA_1', 'CA_2', 'CA_3'].includes(pickedShift) ? pickedShift : supShift} onChange={(e) => setSupShift(e.target.value)}>
+                        <option value="CA_1">Ca 1 (07–12)</option>
+                        <option value="CA_2">Ca 2 (12–18)</option>
+                        <option value="CA_3">Ca 3 (18–23)</option>
+                      </select>
+                    </div>
+                  </div>
+                  {picked && offThatDay.length > 0 && (
+                    <div style={{ fontSize: '12px', color: '#92400E', backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '6px', padding: '8px 10px', lineHeight: 1.5 }}>
+                      ⚠️ {supDate} là ngày OFF/nghỉ của {(picked as any)?.full_name} — xếp ca thì ngày OFF tự chuyển thành ca làm việc (NV nhận thông báo).
+                    </div>
+                  )}
+                  {picked && shiftsThatDay.length > 0 && (
+                    <div style={{ fontSize: '12px', color: '#92400E', backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '6px', padding: '8px 10px', lineHeight: 1.5 }}>
+                      ⚠️ {(picked as any)?.full_name} đã có ca {String(shiftsThatDay.map((s: any) => s.shift_code).join(' + '))} ngày {supDate} — tạo thêm thành 2 ca/ngày.
+                    </div>
+                  )}
+                  <button className="btn-primary" disabled={supBusy} onClick={doSupShift} style={{ padding: '10px', fontWeight: 800, fontSize: '13px', backgroundColor: '#7C3AED' }}>
+                    {supBusy ? '⏳ Đang xếp...' : `Xếp ${shiftLabel} Lên Lịch`}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Realtime Socket Live Notification Banner */}
         <div style={{
