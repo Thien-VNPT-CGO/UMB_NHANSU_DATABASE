@@ -7068,29 +7068,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     // tab Bảng chấm công để 2 tab giống nhau 100%.
 
     const scheduleItems = (() => {
-      // Chuẩn chung 2 tab (lấy tab Lịch làm gốc): hiện mọi NV đang làm (trừ khóa
-      // tài khoản + trừ nghỉ việc) KÈM người có ca/sự kiện nhưng thiếu hồ sơ.
+      // Chi hien NV trong ho so master (tru khoa + tru nghi viec). Ca/nghi/su
+      // kien mo coi (ID test tao tay, khong con ho so) KHONG hien hang rieng de
+      // tranh rac "Nhan Vien" khong ro nguon goc tren luoi (2 tab giong nhau).
       const baseEmps = (allEmployees || []).filter((emp: any) => !isEmpAccountLocked(emp) && emp.employment_status !== 'TERMINATED');
-      // NV vãng lai: có ca/sự kiện trong nguồn chung nhưng thiếu hồ sơ — thêm hàng
-      // fallback để tab Lịch thấy đúng từng người như tab Chấm công (vẫn ẩn NV khóa).
-      const knownIds = new Set(baseEmps.map((e: any) => e.employee_id));
-      const extras: any[] = [];
-      for (const s of [...(schedAllShifts || []), ...(schedAllEvents || [])] as any[]) {
-        const id = (s as any)?.employee_id;
-        if (id && !knownIds.has(id)) {
-          knownIds.add(id);
-          const firstShift = (schedAllShifts || []).find((x: any) => x.employee_id === id) as any;
-          extras.push({
-            employee_id: id,
-            employee_code: id,
-            full_name: 'Nhân Viên',
-            employment_status: 'OFFICIAL',
-            default_branch_id: firstShift?.branch_id || 'CN130',
-            default_shift_code: '',
-          });
-        }
-      }
-      return [...baseEmps, ...extras].map((emp, empIdx) => {
+      return baseEmps
+        .map((emp, empIdx) => {
       const empShifts = (schedAllShifts || []).filter((s: any) => s.employee_id === emp.employee_id);
       const empLeaves = (leaves || []).filter((l: any) => l.employee_id === emp.employee_id && (l.status === 'APPROVED' || l.status === 'PENDING'));
       const empEvents = (schedAllEvents || []).filter((e: any) => e.employee_id === emp.employee_id);
@@ -9106,21 +9089,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       );
       return cands[0] || null;
     };
-    // Tập NV Y HỆT tab Lịch: NV đang làm (trừ khóa + trừ nghỉ việc) KÈM người có
-    // ca/sự kiện nhưng thiếu hồ sơ (hàng fallback). Ca/sự kiện theo chủ dữ liệu
-    // thô (employee_id) như tab Lịch để 2 tab thấy đúng từng người từng ca.
-    const attKnownIds = new Set(
-      ((allEmployees || []) as any[])
-        .filter((e: any) => !isEmpAccountLocked(e) && e.employment_status !== 'TERMINATED')
-        .map((e: any) => e.employee_id)
-    );
-    const attEmpIds = [...new Set([
-      ...[...attKnownIds],
-      ...attWeekShifts.map((s: any) => s.employee_id),
-      ...attWeekEvts.map((e: any) => e.employee_id),
-    ])].filter(Boolean);
-    // Sắp xếp Y HỆT tab Lịch: chi nhánh (CN1→CN2→CN3→CN4) → ca cố định hồ sơ
-    // (rớt về ca thật trong tuần khi chưa gán) → mã NV → tên NV.
+    // Tap NV Y HET tab Lich: chi NV trong ho so master (tru khoa + tru nghi
+    // viec). Khong hien hang fallback cho ID mo coi de tranh rac "Nhan Vien".
+    // Ca xep hang cua NV: ca co dinh ho so, rot ve ca that pho bien nhat trong
+    // tuan khi chua gan (giong tieu chi sort tab Lich).
     const attWeekShiftOf = (empId: string): string => {
       const freq: Record<string, number> = {};
       const firstIdx: Record<string, number> = {};
@@ -9140,16 +9112,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const attSortShiftOf = (e: any): string =>
       (allEmployees || []).find((x: any) => x.employee_id === e.employee_id)?.default_shift_code ||
       e.default_shift_code || attWeekShiftOf(e.employee_id) || '';
-    const attEmps = attEmpIds
-      .map(id => (allEmployees || []).find((e: any) => e.employee_id === id) || {
-        employee_id: id,
-        full_name: 'Nhân Viên',
-        employee_code: id,
-        employment_status: 'OFFICIAL',
-        default_branch_id: (attWeekShifts.find((s: any) => s.employee_id === id) as any)?.branch_id || 'CN130',
-        default_shift_code: '',
-      })
-      .filter((e: any) => e.employment_status !== 'TERMINATED')
+    const attEmps = ((allEmployees || []) as any[])
+      .filter((e: any) => !isEmpAccountLocked(e) && e.employment_status !== 'TERMINATED')
       .sort((a: any, b: any) =>
         (schedBranchRankOf(a.default_branch_id || (a as any).branch_id) - schedBranchRankOf(b.default_branch_id || (b as any).branch_id)) ||
         (schedShiftRankOf(attSortShiftOf(a)) - schedShiftRankOf(attSortShiftOf(b))) ||
