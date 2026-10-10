@@ -15,6 +15,7 @@ import {
   getWeeklyOffStats,
   getWeeklyOffWindow,
   openManualRegistration,
+  weekRangeOf,
 } from './services/weekly-off.service.js';
 import { ZaloService, defaultMeetUrl } from './services/zalo.service.js';
 import { dedupeDuplicateInterviews } from './services/interview-dedupe.service.js';
@@ -1816,6 +1817,25 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         }
         const result = await schedulesService.publishWeekSchedule(branchId, req.params.week, req.user!.id);
         broadcastUpdate('schedules', { action: 'publish', branchId, week: req.params.week });
+        // HR publish lịch tuần → báo inbox từng NV có ca trong tuần để cổng NV
+        // tự mở lịch tuần đó cho NV xem (kể cả NV mở app sau, không realtime).
+        // Chỉ báo khi có ca vừa được duyệt (count > 0) để bấm publish lặp không spam.
+        try {
+          const empIds = ((result as any)?.employeeIds || []).filter((id: any) => id && id !== 'ALL');
+          if (((result as any)?.count || 0) > 0 && empIds.length > 0) {
+            const wk = weekRangeOf(String(req.params.week || '').slice(0, 10));
+            const fmt = (s: string) => s.split('-').reverse().join('/');
+            await notificationsService.sendNotification({
+              recipientIds: empIds,
+              type: 'schedule.published',
+              severity: 'SYSTEM',
+              title: `📅 HR vừa phát hành lịch tuần ${fmt(wk.mon)} – ${fmt(wk.sun)}`,
+              summary: `Lịch làm việc tuần ${fmt(wk.mon)} – ${fmt(wk.sun)} của bạn đã được phát hành (gồm cả ngày OFF đã đăng ký). Bấm để mở lịch tuần này!`,
+              targetPath: '/schedule',
+              actorId: req.user!.id,
+            }).catch(() => null);
+          }
+        } catch { /* best-effort: lịch vẫn publish, thông báo gửi sau */ }
         // Ghi Sheet ĐỒNG BỘ để PUBLISHED bền vững ngay (restart sau publish
         // không rớt về DRAFT khiến NV mất quyền đổi ca oan). Rớt thì báo cờ để
         // HR bấm đồng bộ lại — không chặn response (bộ nhớ đã đúng).

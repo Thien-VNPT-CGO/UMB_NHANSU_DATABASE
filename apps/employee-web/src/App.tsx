@@ -1154,6 +1154,13 @@ export function App() {
   activeTabRef.current = activeTab;
   const empIdRef = useRef<string | undefined>(undefined);
   empIdRef.current = employee?.employee_id;
+  const employeeRef = useRef<any>(null);
+  employeeRef.current = employee;
+  // Tab Lịch: chuyển Tuần này / Tuần sau (khai báo sớm để socket realtime dùng được).
+  type SchedWeek = 'THIS' | 'NEXT';
+  const [schedWeekSel, setSchedWeekSel] = useState<SchedWeek>('THIS');
+  const schedWeekTouched = useRef(false);
+  const [schedRefresh, setSchedRefresh] = useState(0);
 
   // Realtime Socket.IO: lịch/HR đổi gì là app NV cập nhật tức thì (debounce 1s).
   useEffect(() => {
@@ -1213,10 +1220,43 @@ export function App() {
       });
       socket.on('data:updated', (p: any) => {
         reload(p?.entity);
+        // Lịch publish/thay đổi → tải lại dải ngày tab Lịch (kể cả tuần sau).
+        if (!p?.entity || p.entity === 'schedules' || p.entity === 'all') setSchedRefresh(k => k + 1);
         // Admin bật/tắt bảo trì -> cập nhật màn khóa cổng ngay (kể cả đang đăng nhập).
         if (p?.entity === 'config') fetchPortalMaintenanceRef.current().catch(() => null);
       });
-      socket.on('notification.created', reload);
+      socket.on('notification.created', (p: any) => {
+        reload();
+        // Thông báo inbox mới (VD HR phát hành lịch tuần) → tab Lịch tải lại dải ngày.
+        setSchedRefresh(k => k + 1);
+      });
+      // HR publish lịch tuần (kể cả tuần sau): NV cùng chi nhánh tự mở lịch tuần
+      // đó + báo rõ để thấy ngay lịch làm việc của mình.
+      socket.on('schedule.published', (p: any) => {
+        try {
+          const canon = (b?: string) => {
+            const x = String(b || '').trim().toUpperCase();
+            if (x === 'CN1' || x === 'CN130') return 'CN130';
+            if (x === 'CN2' || x === 'CN261') return 'CN261';
+            if (x === 'CN3' || x === 'CN120') return 'CN120';
+            if (x === 'CN4' || x === 'CN111') return 'CN111';
+            return x;
+          };
+          const myB = canon((employeeRef.current as any)?.default_branch_id);
+          if (p?.branchId && myB && canon(p.branchId) !== myB) return;
+          const wk = String(p?.weekStartDate || (p as any)?.week || '').slice(0, 10);
+          const thisDays = empWeekDaysOf(0);
+          if (wk && wk > thisDays[6]) {
+            schedWeekTouched.current = true;
+            setSchedWeekSel('NEXT');
+            const nd = empWeekDaysOf(1);
+            const fmt = (s: string) => s.split('-').reverse().join('/');
+            showToastRef.current(`📅 HR vừa phát hành lịch tuần ${fmt(nd[0])} – ${fmt(nd[6])}. Mở xem lịch làm việc của bạn!`);
+          }
+          setSchedRefresh(k => k + 1);
+          reload('schedules');
+        } catch { /* bỏ qua */ }
+      });
       // Phiếu đổi ca gửi tới tôi: tải ngay + popup để xác nhận/từ chối.
       socket.on('swap.updated', async (p: any) => {
         try { await fetchMySwapsRef.current(); } catch { /* bỏ qua */ }
@@ -1345,6 +1385,21 @@ export function App() {
   };
   /** Ngày hôm nay theo giờ VN (tránh lệch ngày UTC 00:00–07:00). */
   const vnTodayStr = () => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+  /** Dải T2–CN của tuần hiện tại (offset 0) hoặc tuần sau (offset 1), theo giờ VN.
+   *  Khai báo function để socket effect ở trên dùng được (hoisted). */
+  function empWeekDaysOf(offsetWeeks: number): string[] {
+    const nowVn = new Date(Date.now() + 7 * 3_600_000);
+    const off = (nowVn.getUTCDay() + 6) % 7;
+    const mon = new Date(nowVn);
+    mon.setUTCDate(mon.getUTCDate() - off + offsetWeeks * 7);
+    const days: string[] = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(mon);
+      d.setUTCDate(mon.getUTCDate() + i);
+      days.push(d.toISOString().slice(0, 10));
+    }
+    return days;
+  }
   /** Chuẩn hóa mọi biến thể ngày về YYYY-MM-DD (mirror backend normSheetDate):
    *  ISO/ISO-datetime, serial Sheets, 'M/D/YYYY'/'D/M/YYYY' (Sheets tự biến
    *  'YYYY-MM-DD' ghi bằng USER_ENTERED thành serial rồi đọc lại theo locale). */
@@ -1887,12 +1942,29 @@ export function App() {
   }, [activeTab, isLoggedIn, (employee as any)?.employee_id]);
 
   // Tab Lịch: dải ngày hiển thị đầy đủ (thử việc: 12 ngày từ start_date; chính
-  // thức: T2-CN tuần hiện tại) + ca + đơn OFF + sự kiện điểm danh theo ngày.
+  // thức: T2-CN tuần này hoặc tuần sau theo nút chuyển) + ca + đơn OFF + sự
+  // kiện điểm danh theo ngày.
   const [schedRange, setSchedRange] = useState<string[]>([]);
   const [schedRangeShifts, setSchedRangeShifts] = useState<any[]>([]);
   const [schedRangeLeaves, setSchedRangeLeaves] = useState<any[]>([]);
   const [schedFilter, setSchedFilter] = useState<'ALL' | 'WORK' | 'OFF'>('ALL');
   const [selectedSchedDate, setSelectedSchedDate] = useState<string | null>(null);
+  // HR đã phát hành lịch tuần sau (có ca PUBLISHED) mà NV chưa tự chuyển tuần
+  // thì mặc định mở tuần sau — đúng yêu cầu "publish xong NV thấy lịch tuần sau".
+  useEffect(() => {
+    if (!isLoggedIn || isProbation || schedWeekTouched.current) return;
+    let alive = true;
+    (async () => {
+      try {
+        const days = empWeekDaysOf(1);
+        const sh = await apiRequest(`/me/schedule?fromDate=${days[0]}&toDate=${days[6]}`).catch(() => []);
+        if (!alive || schedWeekTouched.current) return;
+        if (Array.isArray(sh) && sh.some((s: any) => s?.status === 'PUBLISHED')) setSchedWeekSel('NEXT');
+      } catch { /* offline: giữ tuần này */ }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoggedIn, (employee as any)?.employee_id]);
   useEffect(() => {
     if (activeTab !== 'schedule' || !isLoggedIn) return;
     let alive = true;
@@ -1902,15 +1974,7 @@ export function App() {
         if (isProbation) {
           days = probationWindowDays();
         } else {
-          const nowVn = new Date(Date.now() + 7 * 3_600_000);
-          const off = (nowVn.getUTCDay() + 6) % 7;
-          const mon = new Date(nowVn);
-          mon.setUTCDate(mon.getUTCDate() - off);
-          for (let i = 0; i < 7; i++) {
-            const d = new Date(mon);
-            d.setUTCDate(mon.getUTCDate() + i);
-            days.push(d.toISOString().slice(0, 10));
-          }
+          days = empWeekDaysOf(schedWeekSel === 'NEXT' ? 1 : 0);
         }
         if (days.length === 0) { if (alive) { setSchedRange([]); setSchedRangeShifts([]); setSchedRangeLeaves([]); } return; }
         if (alive) setSchedRange(days);
@@ -1939,7 +2003,14 @@ export function App() {
     })();
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, isLoggedIn, (employee as any)?.employee_id, (employee as any)?.start_date]);
+  }, [
+    activeTab,
+    isLoggedIn,
+    (employee as any)?.employee_id,
+    (employee as any)?.start_date,
+    schedWeekSel,
+    schedRefresh,
+  ]);
 
   // Xác nhận đăng ký 5 ngày OFF thử việc -> hệ thống TỰ XẾP 7 ca làm
   const handleSubmitProbationOff = async () => {
@@ -3054,7 +3125,11 @@ export function App() {
                   <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px', marginBottom: 0 }}>
                     {isProbation
                       ? 'Quy định thử việc: 12 ngày (7 ngày làm việc thực tế, 5 ngày nghỉ OFF chuẩn định biên).'
-                      : 'Lịch làm việc chính thức tuần từ Thứ Hai đến Chủ Nhật.'}
+                      : (() => {
+                        const d = empWeekDaysOf(schedWeekSel === 'NEXT' ? 1 : 0);
+                        const fmt = (s: string) => `${s.slice(8, 10)}/${s.slice(5, 7)}`;
+                        return `Lịch làm việc tuần ${fmt(d[0])} – ${fmt(d[6])} (Thứ Hai đến Chủ Nhật).`;
+                      })()}
                   </p>
                 </div>
                 <div style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '4px 10px', borderRadius: '999px', backgroundColor: '#ECFDF5', border: '1px solid #A7F3D0', color: '#065F46', fontSize: '11px', fontWeight: 800 }}>
@@ -3062,6 +3137,33 @@ export function App() {
                   Đã Phát (PUBLISHED)
                 </div>
               </div>
+
+              {/* Chuyển Tuần này / Tuần sau: HR publish lịch tuần sau xong NV mở xem ngay */}
+              {!isProbation && (() => {
+                const t = empWeekDaysOf(0);
+                const n = empWeekDaysOf(1);
+                const fmt = (s: string) => `${s.slice(8, 10)}/${s.slice(5, 7)}`;
+                const btn = (sel: 'THIS' | 'NEXT', label: string) => (
+                  <button
+                    key={sel}
+                    onClick={() => { schedWeekTouched.current = true; setSchedWeekSel(sel); }}
+                    style={{
+                      padding: '7px 12px', borderRadius: '999px', fontSize: '12px', fontWeight: 800, cursor: 'pointer',
+                      border: schedWeekSel === sel ? '1.5px solid var(--brand)' : '1px solid var(--border)',
+                      backgroundColor: schedWeekSel === sel ? '#FFF0F5' : '#FFFFFF',
+                      color: schedWeekSel === sel ? 'var(--brand)' : 'var(--text-muted)',
+                    }}
+                  >
+                    {label}
+                  </button>
+                );
+                return (
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    {btn('THIS', `Tuần này (${fmt(t[0])}–${fmt(t[6])})`)}
+                    {btn('NEXT', `Tuần sau (${fmt(n[0])}–${fmt(n[6])})`)}
+                  </div>
+                );
+              })()}
 
               {isProbation && probationAssessment?.endDate && (
                 <div style={{ fontSize: '12px', fontWeight: 700, color: '#1E40AF', backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 'var(--radius-sm)', padding: '10px 12px', lineHeight: 1.5 }}>
@@ -5546,7 +5648,11 @@ export function App() {
                         }
                         if (goTab === '/test_exam' || goTab === '/test_training') setActiveTab(isProbation ? 'test_exam' : 'test_training');
                         else if (goTab === '/adjustment') setActiveTab(isProbation ? 'adjustment' : 'emergency_adjust');
-                        else if (canGo) setActiveTab(goTab.slice(1));
+                        else if (canGo) {
+                          // Thông báo phát hành lịch tuần → mở tab Lịch đúng tuần sau vừa publish.
+                          if ((n as any)?.type === 'schedule.published') { schedWeekTouched.current = true; setSchedWeekSel('NEXT'); }
+                          setActiveTab(goTab.slice(1));
+                        }
                       }}
                       title={canGo ? 'Bấm để mở đúng mục liên quan' : undefined}
                       style={{ padding: '10px 12px', backgroundColor: n.read_at ? '#FAFAFA' : '#FFFBF9', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', cursor: canGo ? 'pointer' : 'default' }}

@@ -155,7 +155,28 @@ export class SchedulesService {
       entityId: `${branchId}_${weekStartDate}`,
       actorId,
       execute: async () => {
-        const shifts = await this.repo.getShiftsForWeek(branchId, weekStartDate);
+        // Lấy '*' rồi lọc canonical (CN1..CN4 ↔ CN130/261/120/111): adapter lọc
+        // strict (===) nên truyền branchId trực tiếp sẽ sót ca lưu mã CN cũ
+        // (ca đó mãi DRAFT, NV không thấy lịch publish + không đổi ca được).
+        const shiftsRaw = await this.repo.getShiftsForWeek('*', weekStartDate);
+        const inBranch = (b?: string) =>
+          !branchId || branchId === '*' || canonicalBranch(b) === canonicalBranch(branchId);
+        const shifts = (shiftsRaw || []).filter((s: any) => inBranch((s as any).branch_id));
+        // Phạm vi tuần được publish (Mon + 6): getShiftsForWeek trả từ weekStart
+        // trở đi (không chặn trên) nên phải kẹp lại khi tính NV liên quan.
+        const weekStart = String(weekStartDate || '').slice(0, 10);
+        const weekEndD = new Date(`${weekStart}T00:00:00Z`);
+        weekEndD.setUTCDate(weekEndD.getUTCDate() + 6);
+        const weekEnd = weekEndD.toISOString().slice(0, 10);
+        // NV có ca trong tuần này (chưa hủy): để route gửi thông báo inbox
+        // "lịch tuần sau đã phát hành" tới đúng người (cổng NV tự mở lịch tuần đó).
+        const inWeekEmpIds = new Set<string>();
+        for (const s of shifts || []) {
+          const d = String((s as any).date || '').slice(0, 10);
+          if ((s as any).status === 'CANCELLED') continue;
+          if (!d || d < weekStart || d > weekEnd) continue;
+          if ((s as any).employee_id) inWeekEmpIds.add(String((s as any).employee_id));
+        }
         // Ca DRAFT của NV bị khóa: giữ nguyên (không publish) — Lịch ẩn NV này.
         const lockedIds = new Set<string>();
         try {
@@ -210,6 +231,7 @@ export class SchedulesService {
           weekStartDate,
           count: updatedShifts.length,
           status: 'PUBLISHED',
+          employeeIds: [...inWeekEmpIds].sort(),
         };
       },
     });
