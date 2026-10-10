@@ -18,12 +18,18 @@ async function hrAdminIds(repo: ISheetsRepository): Promise<string[]> {
   }
 }
 
+// Chữ ký tập trùng đã báo (chống spam thông báo mỗi tick 5 phút): đổi tập mới báo lại.
+let lastConflictWarnSig = '';
+
 /**
- * Rà soát lịch PV trùng + (mặc định) TỰ ĐỘNG XÓA lịch kẹt, yêu cầu đăng ký lại:
- *  - dryRun=true: chỉ trả kế hoạch (HR xem trước, không xóa).
- *  - dryRun=false: xóa lịch trùng (đưa ứng viên về NEW/chờ xếp lịch, xóa trạng
- *    thái thư mời Zalo cũ vì giờ trong thư đã sai), ghi audit, báo HR/Admin
- *    danh sách bị xóa + khung trống gợi ý để đăng ký lại.
+ * Rà soát lịch PV trùng + (chỉ khi HR bấm tay) XÓA lịch kẹt, yêu cầu đăng ký lại:
+ *  - dryRun=true (mặc định tick tự động mỗi 5 phút): KHÔNG xóa gì — lịch HR đã
+ *    đặt được giữ nguyên, chỉ báo HR/Admin danh sách kẹt + khung trống để xử lý
+ *    tay (Hủy lịch kẹt rồi đặt lại, hoặc bấm nút Xóa lịch trùng). Báo 1 lần cho
+ *    mỗi tập trùng (đổi tập mới báo lại) để không spam mỗi tick.
+ *  - dryRun=false (HR bấm nút Xóa lịch trùng): xóa lịch trùng (đưa ứng viên về
+ *    NEW/chờ xếp lịch, xóa trạng thái thư mời Zalo cũ vì giờ trong thư đã sai),
+ *    ghi audit, báo HR/Admin danh sách bị xóa + khung trống để đăng ký lại.
  *  Lịch được giữ: giờ sớm nhất (đồng giờ thì hồ sơ tạo trước).
  */
 export async function dedupeDuplicateInterviews(
@@ -35,7 +41,36 @@ export async function dedupeDuplicateInterviews(
   const candidates = await repo.listCandidates().catch(() => []);
   const plans = planDedupe(candidates, nowMs);
   const removedCount = plans.reduce((n, p) => n + p.removed.length, 0);
-  if (dryRun || removedCount === 0) return { plans, removedCount, dryRun };
+  if (removedCount === 0) return { plans, removedCount, dryRun };
+  if (dryRun) {
+    // Tick tự động: giữ nguyên lịch HR đã đặt, chỉ báo HR xử lý tay (chống spam
+    // mỗi 5 phút bằng chữ ký tập trùng — đổi tập mới báo lại).
+    try {
+      const sig = JSON.stringify(plans.map(p => [p.date, p.removed.map(r => r.submissionId).sort()]));
+      if (sig !== lastConflictWarnSig) {
+        lastConflictWarnSig = sig;
+        const ids = await hrAdminIds(repo);
+        if (ids.length > 0) {
+          const lines = plans.flatMap(p => {
+            const sugg = suggestFreeSlots(candidates, p.date, 5);
+            return p.removed.map(r =>
+              `• ${r.candidateName} (${r.timeSlot} ${p.date}) — kẹt với ${r.keptCandidateName} (${r.keptTimeSlot})`
+            ).concat(sugg.length > 0 ? [`  ↳ Khung trống ${p.date}: ${sugg.join(', ')}`] : []);
+          });
+          await notifications.sendNotification({
+            recipientIds: ids,
+            type: 'INTERVIEW_DUPLICATES_WARN',
+            severity: 'ACTION_REQUIRED',
+            title: `⚠️ Phát hiện ${removedCount} lịch PV trùng (< 30 phút) — lịch HR đã đặt được giữ nguyên`,
+            summary: `${lines.slice(0, 12).join('\n')}${lines.length > 12 ? `\n(+${lines.length - 12} dòng khác)` : ''}\nHR vào tab Lịch PV: Hủy lịch kẹt rồi đặt lại khung trống (hoặc bấm nút Xóa lịch trùng để hệ thống dọn).`,
+            targetPath: '/hr-interviews',
+            actorId: 'SYSTEM',
+          }).catch(() => null);
+        }
+      }
+    } catch { /* best-effort */ }
+    return { plans, removedCount, dryRun };
+  }
 
   for (const plan of plans) {
     for (const r of plan.removed) {

@@ -354,17 +354,15 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   setTimeout(pinRotationTickSafe, 90_000); // sau pull đầu
   setInterval(pinRotationTickSafe, 60 * 60_000);
 
-  // Tự rà soát + xóa lịch PV trùng (< 30 phút cùng ngày) rồi yêu cầu đăng ký lại,
+  // Tự rà soát lịch PV trùng (< 30 phút cùng ngày): lịch HR đã đặt được GIỮ
+  // NGUYÊN, chỉ báo HR xử lý tay (xóa tay chỉ khi HR bấm nút Xóa lịch trùng),
   // đồng thời tự loại ứng viên Kết Quả LOẠI (ẩn khỏi danh sách).
   // Chạy sau pull đầu + mỗi 5 phút (chỉ chạm lịch sắp tới, lịch đã qua không đụng).
   const interviewDedupeTickSafe = () => {
-    dedupeDuplicateInterviews(adapter, services.notificationsService, { dryRun: false, actorId: 'SYSTEM' })
+    dedupeDuplicateInterviews(adapter, services.notificationsService, { dryRun: true, actorId: 'SYSTEM' })
       .then(r => {
         if (r && r.removedCount > 0) {
-          console.log(`[interview-dedupe] Đã xóa ${r.removedCount} lịch PV trùng, yêu cầu đăng ký lại.`);
-          try {
-            io.emit('data:updated', { entity: 'candidates', data: { action: 'interview-duplicates-removed', removed: r.removedCount }, timestamp: new Date().toISOString() });
-          } catch { /* non-fatal */ }
+          console.log(`[interview-dedupe] Phát hiện ${r.removedCount} lịch PV trùng — đã báo HR xử lý tay, giữ nguyên lịch HR đã đặt.`);
         }
         return enforceScreeningOutcomes(adapter, services.notificationsService, 'SYSTEM');
       })

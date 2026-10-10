@@ -627,6 +627,28 @@ export class EmployeesService {
     if (existing?.status === 'REJECTED') {
       throw new Error(`Ứng viên ${existing.full_name || ''} đã bị LOẠI khỏi quy trình tuyển dụng! Không thể xếp lịch phỏng vấn.`);
     }
+    // Ứng viên đã phỏng vấn xong (đã chấm điểm / đã duyệt thử việc): không sắp lịch tiếp.
+    const existStatus = String((existing as any)?.status || '');
+    const existScore = (existing as any)?.interview_score;
+    if (existStatus === 'SCORED' || existStatus === 'ACCEPTED') {
+      throw new Error(
+        `Ứng viên ${(existing as any)?.full_name || ''} đã phỏng vấn xong${existStatus === 'ACCEPTED' ? ' và đã duyệt thử việc' : ' (đã chấm điểm)'}! Không được sắp lịch tiếp.`
+      );
+    }
+    if (existScore !== undefined && existScore !== null && String(existScore).trim() !== '') {
+      throw new Error(
+        `Ứng viên ${(existing as any)?.full_name || ''} đã có điểm phỏng vấn (${existScore}) — đã phỏng vấn xong, không được sắp lịch tiếp.`
+      );
+    }
+    // Lịch HR đã đặt còn sắp tới: giữ nguyên — muốn đổi thì Hủy lịch trước rồi đặt lại.
+    const curDate = String((existing as any)?.interview_date || '').slice(0, 10);
+    const todayVn = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+    if (curDate && curDate >= todayVn && ['INVITED_INTERVIEW', 'CONFIRMED'].includes(existStatus)) {
+      const curSlot = String((existing as any)?.interview_time_slot || '').slice(0, 5);
+      throw new Error(
+        `Ứng viên ${(existing as any)?.full_name || ''} đã có lịch PV ${curSlot} ngày ${curDate} (HR đã đặt — giữ nguyên)! Muốn đổi thì bấm Hủy lịch trước rồi đặt lại khung mới.`
+      );
+    }
     try {
       const { evaluateCandidateAiScore } = await import('./ai-scorer.js');
       if (evaluateCandidateAiScore(existing || {}).result === 'Loại') {

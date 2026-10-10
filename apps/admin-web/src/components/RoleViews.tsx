@@ -4750,7 +4750,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 style={{ fontSize: '12px', padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--border)', minWidth: '160px' }}
               />
               <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                🤖 Hệ thống tự rà soát + xóa lịch trùng (&lt; 30 phút) mỗi 5 phút
+                🤖 Hệ thống tự rà soát lịch trùng (&lt; 30 phút) mỗi 5 phút + báo HR xử lý tay — lịch HR đã đặt được giữ nguyên
               </span>
               <span className="badge" style={{ backgroundColor: '#EFF6FF', color: '#0068FF', fontWeight: 800 }}>
                 ĐÃ ĐỒNG BỘ BOT ZALO CÁ NHÂN
