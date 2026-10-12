@@ -820,6 +820,15 @@ export function App() {
     }
   }, [activeTab]);
 
+  // Vào tab PV/ứng viên: lấy lại các lịch đã đăng ký để hiển thị ngay
+  // (bù khi socket ngủ — danh sách ứng viên chỉ tải ở login + realtime).
+  useEffect(() => {
+    if (!currentUser) return;
+    if (!['ADMIN', 'HR'].includes(currentUser?.role || '')) return;
+    if (activeTab !== 'hr-interviews' && activeTab !== 'hr-candidates') return;
+    apiRequest('/applications').then(cList => setCandidates(Array.isArray(cList) ? cList : [])).catch(() => null);
+  }, [activeTab]);
+
   // Tab đã lưu có thể không còn tồn tại (VD tab bị gỡ bỏ/gộp) -> về tab đầu của vai trò.
   useEffect(() => {
     const tabs = ROLE_TABS[currentUser?.role || 'ADMIN'] || [];
@@ -1032,6 +1041,15 @@ export function App() {
           if (payload?.entity === 'adjustments' || payload?.entity === 'all') {
             try {
               window.dispatchEvent(new CustomEvent('ubm:adjustments-reload'));
+            } catch { /* non-fatal */ }
+          }
+          // Realtime lịch PV đã đăng ký: backend bắn data:updated(candidates)
+          // sau mọi nút lập lịch/xác nhận/vắng/hủy/chấm — tải lại danh sách
+          // để bảng "Lịch Phỏng Vấn Đã Lên Lịch" hiện ngay, không đợi tải tay.
+          if (payload?.entity === 'candidates' || payload?.entity === 'all') {
+            apiRequest('/applications').then(cList => setCandidates(Array.isArray(cList) ? cList : [])).catch(() => null);
+            try {
+              window.dispatchEvent(new CustomEvent('ubm:candidates-reload'));
             } catch { /* non-fatal */ }
           }
           // Realtime nháp lịch mời PV: HR set giờ ở tab/máy nào thì các tab/máy
