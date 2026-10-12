@@ -13347,7 +13347,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         + row('Ngày vào làm', profEmp.start_date)
         + row('Ngày chính thức', profEmp.official_date)
         + row('Lương giờ', profEmp.current_rate_per_hour ? `${Number(profEmp.current_rate_per_hour).toLocaleString('vi-VN')}đ/giờ` : '—')
-        + row('Lương tháng tạm tính (8h × 26 công)', `${Number((profEmp.current_rate_per_hour || 0) * 8 * 26).toLocaleString('vi-VN')}đ/tháng`)
         + `</table>`
         + sec('3. Hiệu suất chấm công (dữ liệu hệ thống)')
         + `<table style="border-collapse:collapse;width:100%;font-size:13px;">`
@@ -13583,10 +13582,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                     <span>Lương giờ hiện tại</span>
                     <strong>{vnd(profEmp.current_rate_per_hour)}/giờ</strong>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span>Lương tháng tạm tính (8h × 26 công)</span>
-                    <strong>{vnd((profEmp.current_rate_per_hour || 0) * 8 * 26)}/tháng</strong>
                   </div>
                   <div style={{ borderTop: '1px dashed var(--border)', paddingTop: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><span style={{ fontWeight: 800 }}>Thu nhập tạm tính (realtime điểm danh)</span><span className="badge" style={{ backgroundColor: '#DCFCE7', color: '#065F46', fontWeight: 800 }}>● Realtime</span></div>
