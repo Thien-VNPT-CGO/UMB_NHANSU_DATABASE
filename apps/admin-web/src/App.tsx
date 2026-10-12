@@ -1034,6 +1034,13 @@ export function App() {
               window.dispatchEvent(new CustomEvent('ubm:adjustments-reload'));
             } catch { /* non-fatal */ }
           }
+          // Realtime nháp lịch mời PV: HR set giờ ở tab/máy nào thì các tab/máy
+          // của cùng HR đó cập nhật form ngay (reload không mất giờ đã setup).
+          if (payload?.entity === 'interview-draft') {
+            try {
+              window.dispatchEvent(new CustomEvent('ubm:interview-draft-reload', { detail: payload?.data }));
+            } catch { /* non-fatal */ }
+          }
           // Realtime phiếu lương: backend bắn data:updated(payroll/payslips)
           // sau mọi nút Ký/Gửi/Hoàn/Duyệt/Chi trả — báo cho RoleViews tải lại
           // bảng phiếu chi tiết (loadAllData không chứa periodSlips).

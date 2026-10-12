@@ -137,6 +137,14 @@ export const zaloSendInviteBody = z.object({
   branchName: optString(128),
 });
 
+// Nháp setup lịch mời PV của HR (tự động lưu realtime — reload không mất).
+export const interviewDraftBody = z.object({
+  candidateId: optString(128),
+  datetime: optString(32),
+  branchId: optString(32),
+  mode: optString(16),
+}).passthrough();
+
 // --- Schedules ---
 export const schedulesQuery = z.object({
   branchId: queryString(32),

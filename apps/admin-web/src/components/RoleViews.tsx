@@ -2493,6 +2493,89 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Link Meet mặc định hệ thống (không tùy chỉnh) — input hiển thị disabled.
   const inviteMeetUrl = 'https://meet.google.com/ypp-srtm-fvm';
   const [inviteBusy, setInviteBusy] = useState(false);
+  // Nhap setup lich moi PV (tu dong luu realtime — reload khong mat gio da setup).
+  const INVITE_DRAFT_KEY = 'ubm_invite_draft_v1';
+  const inviteDraftUid = () => String((currentUser as any)?.id || (currentUser as any)?.admin_id || '');
+  const inviteDraftTsRef = useRef(0);
+  const inviteDraftSavedRef = useRef('');
+  const inviteFormRef = useRef({ candidateId: '', datetime: '' });
+  const applyInviteDraft = (d: any) => {
+    if (!d) return;
+    if (d.candidateId) setInviteCandidateId(String(d.candidateId));
+    if (d.datetime) setInviteDateTime(String(d.datetime));
+    if (d.branchId) setInviteBranchId(String(d.branchId));
+    if (d.mode === 'OFFLINE' || d.mode === 'ONLINE') setInviteMode(d.mode);
+    inviteDraftSavedRef.current = JSON.stringify({ c: d.candidateId || '', d: d.datetime || '', b: d.branchId || '', m: d.mode || '' });
+  };
+  // Khoi phuc nhap khi mo (local truoc cho tuc thi, server moi hon thi thang).
+  useEffect(() => {
+    try {
+      const raw0 = localStorage.getItem(INVITE_DRAFT_KEY);
+      if (raw0) {
+        const d = JSON.parse(raw0);
+        applyInviteDraft(d);
+        const ts = new Date(d.updatedAt || 0).getTime();
+        if (Number.isFinite(ts)) inviteDraftTsRef.current = ts;
+      }
+    } catch { /* bo qua nhap hong */ }
+    apiRequest('/interviews/invite-draft').then((r: any) => {
+      const d = (r as any)?.draft;
+      if (!d) return;
+      const ts = new Date(d.updatedAt || '').getTime() || 0;
+      if (ts > inviteDraftTsRef.current) {
+        inviteDraftTsRef.current = ts;
+        applyInviteDraft(d);
+        try { localStorage.setItem(INVITE_DRAFT_KEY, JSON.stringify(d)); } catch {}
+      }
+    }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Tu dong luu nhap moi khi doi setup (debounce 600ms; local + server realtime).
+  const inviteDraftTimer = useRef<any>(null);
+  useEffect(() => {
+    if (inviteDraftTimer.current) clearTimeout(inviteDraftTimer.current);
+    inviteDraftTimer.current = setTimeout(() => {
+      const key = JSON.stringify({ c: inviteCandidateId, d: inviteDateTime, b: inviteBranchId, m: inviteMode });
+      if (key === inviteDraftSavedRef.current) return;
+      inviteDraftSavedRef.current = key;
+      inviteFormRef.current = { candidateId: inviteCandidateId, datetime: inviteDateTime };
+      const dd = { candidateId: inviteCandidateId, datetime: inviteDateTime, branchId: inviteBranchId, mode: inviteMode, updatedAt: new Date().toISOString() };
+      try { localStorage.setItem(INVITE_DRAFT_KEY, JSON.stringify(dd)); } catch {}
+      inviteDraftTsRef.current = new Date(dd.updatedAt).getTime() || 0;
+      if (!inviteCandidateId && !inviteDateTime) return;
+      apiRequest('/interviews/invite-draft', { method: 'PUT', body: JSON.stringify(dd) }).catch(() => {});
+    }, 600);
+    return () => { if (inviteDraftTimer.current) clearTimeout(inviteDraftTimer.current); };
+  }, [inviteCandidateId, inviteDateTime, inviteBranchId, inviteMode]);
+  // Nhan nhap realtime tu tab/may khac cua cung HR.
+  useEffect(() => {
+    const onDraft = (ev: any) => {
+      const pay = (ev as any)?.detail || {};
+      const uid = inviteDraftUid();
+      if (!uid || String((pay as any)?.userId || '') !== uid) return;
+      if ((pay as any)?.action === 'cleared') {
+        const cid = String((pay as any)?.candidateId || '');
+        if (cid && inviteFormRef.current.candidateId === cid) {
+          setInviteCandidateId('');
+          setInviteDateTime('');
+          try { localStorage.removeItem(INVITE_DRAFT_KEY); } catch {}
+          inviteDraftTsRef.current = 0;
+          inviteDraftSavedRef.current = '';
+        }
+        return;
+      }
+      const d = (pay as any)?.draft;
+      if (!d) return;
+      const ts = new Date(d.updatedAt || '').getTime() || 0;
+      if (ts <= inviteDraftTsRef.current) return;
+      inviteDraftTsRef.current = ts;
+      applyInviteDraft(d);
+      try { localStorage.setItem(INVITE_DRAFT_KEY, JSON.stringify(d)); } catch {}
+    };
+    window.addEventListener('ubm:interview-draft-reload', onDraft);
+    return () => window.removeEventListener('ubm:interview-draft-reload', onDraft);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // Chặn chọn quá khứ ngay ở input (lớp mềm — server vẫn validate + báo đăng ký lại).
   const pvMinDateTime = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
   // Danh sách lịch PV: ẩn đã loại + đã duyệt thử việc (thành NV, không còn là ứng viên).
@@ -2713,6 +2796,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         }),
       });
       showToast(`✅ Đã lập lịch & gửi thư mời Zalo! (msg #${res.msgId})`);
+      // Gui xong: xoa nhap setup (local + server realtime) de form sach cho luot sau.
+      try { localStorage.removeItem(INVITE_DRAFT_KEY); } catch {}
+      inviteDraftTsRef.current = 0;
+      inviteDraftSavedRef.current = '';
+      setInviteCandidateId('');
+      setInviteDateTime('');
+      apiRequest('/interviews/invite-draft', { method: 'PUT', body: JSON.stringify({ clear: true, candidateId: inviteCandidateId }) }).catch(() => {});
       if (typeof onRefreshData === 'function') {
         try { await onRefreshData(); } catch {}
       }

@@ -105,6 +105,7 @@ import {
   zaloFriendRequestBody,
   zaloLoginIdParams,
   zaloSendInviteBody,
+  interviewDraftBody,
 } from './validators/hr.validator.js';
 import {
   backupCreateBody,
@@ -1741,6 +1742,41 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         return res.status(status).json({ error: msg });
       }
       res.status(400).json({ error: msg });
+    }
+  });
+
+  // Nháp setup lịch mời PV của từng HR (tự động lưu realtime — reload web
+  // không mất giờ đã setup; mỗi HR 1 nháp riêng theo userId).
+  const interviewDrafts = new Map<string, any>();
+  app.get('/interviews/invite-draft', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
+    try {
+      res.json({ draft: interviewDrafts.get(req.user!.id) || null });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+  app.put('/interviews/invite-draft', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ body: interviewDraftBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const uid = req.user!.id;
+      const b: any = req.body || {};
+      const empty = !b.candidateId && !b.datetime && !b.branchId && !b.mode;
+      if ((b as any).clear || empty) {
+        interviewDrafts.delete(uid);
+        broadcastUpdate('interview-draft', { action: 'cleared', userId: uid, candidateId: String(b.candidateId || '') });
+        return res.json({ draft: null });
+      }
+      const draft = {
+        candidateId: String(b.candidateId || ''),
+        datetime: String(b.datetime || ''),
+        branchId: String(b.branchId || ''),
+        mode: b.mode === 'OFFLINE' ? 'OFFLINE' : 'ONLINE',
+        updatedAt: new Date().toISOString(),
+      };
+      interviewDrafts.set(uid, draft);
+      broadcastUpdate('interview-draft', { action: 'saved', userId: uid, draft });
+      res.json({ draft });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
     }
   });
 
