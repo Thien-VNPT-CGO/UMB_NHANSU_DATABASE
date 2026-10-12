@@ -12073,7 +12073,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             </button>
                           )}
 
-                          {p.status === 'PUBLISHED' && (
+                          {(p.status === 'PUBLISHED' || p.status === 'CONFIRMED') && (
                             <button
                               className="btn-secondary"
                               style={{ fontSize: '11px', padding: '4px 10px', fontWeight: 800, border: '1px solid #F59E0B', borderRadius: '6px', cursor: 'pointer', color: '#B45309', backgroundColor: '#FFFBEB' }}
