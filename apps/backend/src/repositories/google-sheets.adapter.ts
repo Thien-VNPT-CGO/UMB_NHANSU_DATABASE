@@ -2,6 +2,7 @@ import { ISheetsRepository } from './sheets.interface.js';
 import { MockSheetsAdapter } from './mock-sheets.adapter.js';
 import { sheetDateText, sheetDateTimeText } from '../services/employees.service.js';
 import { GoogleSheetsSyncService } from '../services/google-sheets-sync.service.js';
+import { saveAttendancePhotoDisk } from '../services/photo-disk.store.js';
 
 export class GoogleSheetsAdapter implements ISheetsRepository {
   private fallbackAdapter: MockSheetsAdapter;
@@ -724,6 +725,9 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     // công) — trước đây upload lỗi là ảnh mất vĩnh viễn, HR thấy "Chưa có ảnh".
     // Chỉ giữ inline khi upload lỗi (thành công thì bỏ base64 như cũ, nhẹ bộ nhớ).
     if (event.photo_base64) {
+      // Lưu đĩa trước mọi nhánh để ảnh sống sót qua restart/rebuild
+      // (Drive lỗi hay thành công đều có fallback hiển thị + retry).
+      try { saveAttendancePhotoDisk(event.event_id, event.photo_base64); } catch { /* best-effort */ }
       try {
         const fileName = `${event.employee_id}_${event.type}_${Date.now()}.jpg`;
         const driveResult = await this.syncService.uploadImageToDrive(fileName, 'image/jpeg', event.photo_base64);

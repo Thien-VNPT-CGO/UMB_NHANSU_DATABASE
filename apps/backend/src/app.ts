@@ -26,6 +26,7 @@ import { SchedulesService } from './services/schedules.service.js';
 import { AutoScheduleService } from './services/auto-schedule.service.js';
 import { TestsService } from './services/tests.service.js';
 import { AttendanceService } from './services/attendance.service.js';
+import { readAttendancePhotoDisk } from './services/photo-disk.store.js';
 import { PayrollService } from './services/payroll.service.js';
 import { NotificationsService } from './services/notifications.service.js';
 import { autoRemindersTick, sendCheckinReminderForShift } from './services/auto-reminders.service.js';
@@ -2702,9 +2703,21 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       };
       // Ưu tiên Drive khi có ID thật; mọi trường hợp còn lại mà còn ảnh inline
       // (upload lỗi nhưng base64 còn trong bộ nhớ) thì phục vụ inline để HR luôn
-      // thấy ảnh realtime (mirror phiếu bổ sung công).
+      // thấy ảnh realtime (mirror phiếu bổ sung công). Cuối cùng rớt xuống đĩa
+      // (sống sót qua restart/rebuild — trước đây restart là mất vĩnh viễn).
       const inlinePhoto: string | undefined = (evt as any).event_photo;
       const driveId: string = String(evt.drive_object_id || '');
+      const serveDisk = () => {
+        try {
+          const hit = readAttendancePhotoDisk(req.params.eventId);
+          if (hit) {
+            res.setHeader('Content-Type', hit.mimeType || 'image/jpeg');
+            res.setHeader('Cache-Control', 'private, max-age=3600');
+            return res.send(hit.buffer);
+          }
+        } catch { /* rớt xuống 404 */ }
+        return null;
+      };
       if (driveId && !driveId.startsWith('DRV_')) {
         try {
           const syncService = (adapter as any).syncService;
@@ -2718,9 +2731,13 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           // Drive tải lỗi (quyền mạng/xóa file): rớt xuống inline nếu còn.
         }
         if (inlinePhoto) return serveInline(inlinePhoto);
+        const diskHit = serveDisk();
+        if (diskHit) return diskHit;
         return res.status(404).json({ error: 'PHOTO_NOT_UPLOADED: Ảnh chưa được upload lên Drive.' });
       }
       if (inlinePhoto) return serveInline(inlinePhoto);
+      const diskHit2 = serveDisk();
+      if (diskHit2) return diskHit2;
       return res.status(404).json({ error: 'PHOTO_NOT_UPLOADED: Ảnh chưa được upload lên Drive.' });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'PHOTO_DOWNLOAD_FAILED' });

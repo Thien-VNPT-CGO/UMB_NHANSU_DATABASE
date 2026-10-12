@@ -81,7 +81,7 @@ export async function chatZaloWithCandidate(c: any, showToast: (msg: string) => 
 }
 
 /** Ảnh chấm công: tải blob kèm token rồi hiện (thẻ <img> không gửi được Authorization). */
-export const AttPhoto: React.FC<{ eventId: string; style?: React.CSSProperties; alt?: string }> = ({ eventId, style, alt }) => {
+export const AttPhoto: React.FC<{ eventId: string; style?: React.CSSProperties; alt?: string; onClick?: () => void }> = ({ eventId, style, alt, onClick }) => {
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
@@ -111,7 +111,7 @@ export const AttPhoto: React.FC<{ eventId: string; style?: React.CSSProperties; 
   if (!url) {
     return <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Đang tải ảnh...</span>;
   }
-  return <img src={url} alt={alt || 'Ảnh chấm công'} style={{ width: '72px', height: '72px', objectFit: 'cover', borderRadius: '8px', border: '1px solid var(--border)', ...(style || {}) }} />;
+  return <img src={url} alt={alt || 'Ảnh chấm công'} onClick={onClick} style={{ width: '72px', height: '72px', objectFit: 'cover', borderRadius: '8px', border: '1px solid var(--border)', ...(onClick ? { cursor: 'zoom-in' } : {}), ...(style || {}) }} />;
 };
 
 /** Ảnh bằng chứng phiếu bổ sung công: tải blob kèm token rồi hiện (thẻ <img> không gửi được Authorization). */
@@ -938,6 +938,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [scheduleAttFilter, setScheduleAttFilter] = useState('ALL');
   const [scheduleSearch, setScheduleSearch] = useState('');
   const [selectedRealtimeModal, setSelectedRealtimeModal] = useState<any>(null);
+  const [attPhotoZoom, setAttPhotoZoom] = useState<{ eventId?: string; url?: string; label: string } | null>(null);
 
   // Filters xem lịch OFF 2 ngày/tuần (HR/Admin + Store)
   const [weeklyOffBranchFilter, setWeeklyOffBranchFilter] = useState('ALL');
@@ -8762,7 +8763,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     )}
                   </div>
 
-                  {/* Uniform & Badge Visual Confirmation */}
+                  {/* Uniform & Badge Visual Confirmation — 2 ô check-in / check-out, bấm ảnh xem to */}
                   <div style={{
                     padding: '14px',
                     backgroundColor: '#FDF2F8',
@@ -8770,52 +8771,61 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     border: '1.5px solid #F472B6',
                     textAlign: 'center',
                   }}>
-                    {modalEvent?.photo_url ? (
-                      <img
-                        src={modalEvent.photo_url}
-                        alt="Bằng chứng điểm danh"
-                        style={{ width: '100%', maxHeight: '200px', objectFit: 'cover', borderRadius: '6px', marginBottom: '10px' }}
-                      />
-                    ) : modalEvent?.event_id ? (
-                      <div style={{ marginBottom: '10px' }}>
-                        <AttPhoto eventId={modalEvent.event_id} style={{ width: '100%', maxHeight: '220px', height: 'auto' }} alt="Ảnh chụp đồng phục áo hồng check-in" />
-                        <div style={{ fontWeight: 800, fontSize: '13px', color: '#9D174D', marginTop: '6px' }}>ẢNH CHỤP ĐỒNG PHỤC ÁO HỒNG ỤM BÒ MILK (CHECK-IN)</div>
-                        <div style={{ fontSize: '11px', color: '#9D174D' }}>Bảng tên nhân viên: Đã xác thực hợp lệ</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '10px' }}>
+                      <div style={{ backgroundColor: '#FFF', borderRadius: '8px', border: '1px solid #F9A8D4', padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <div style={{ fontWeight: 800, fontSize: '12px', color: '#9D174D' }}>📸 Ô 1 — ẢNH CHECK-IN</div>
+                        {modalEvent?.photo_url ? (
+                          <img
+                            src={modalEvent.photo_url}
+                            alt="Bằng chứng check-in"
+                            onClick={() => setAttPhotoZoom({ url: modalEvent.photo_url, label: 'Ảnh check-in' })}
+                            style={{ width: '100%', height: '160px', objectFit: 'cover', borderRadius: '6px', cursor: 'zoom-in' }}
+                          />
+                        ) : modalEvent?.event_id ? (
+                          <AttPhoto eventId={modalEvent.event_id} onClick={() => setAttPhotoZoom({ eventId: modalEvent.event_id, label: 'Ảnh check-in' })} style={{ width: '100%', height: '160px', maxHeight: '160px' }} alt="Ảnh chụp đồng phục áo hồng check-in" />
+                        ) : (
+                          <div style={{ width: '100%', height: '160px', borderRadius: '6px', backgroundColor: '#F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9CA3AF', fontSize: '11px', fontWeight: 700 }}>
+                            Chưa có ảnh check-in
+                          </div>
+                        )}
+                        <div style={{ fontWeight: 800, fontSize: '11px', color: '#9D174D' }}>ẢNH ÁO HỒNG ỤM BÒ MILK (CHECK-IN)</div>
+                        <div style={{ fontSize: '10px', color: '#9D174D' }}>Vào: {modalDayData?.inTime || modalDayData?.time || '—'}</div>
                       </div>
-                    ) : (
-                      <div style={{
-                        width: '100%',
-                        height: '140px',
-                        borderRadius: '6px',
-                        backgroundColor: '#E85D92',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        color: '#FFF',
-                        boxShadow: 'inset 0 0 20px rgba(0,0,0,0.1)',
-                        marginBottom: '10px',
-                      }}>
-                        <Camera size={32} style={{ marginBottom: '6px' }} />
-                        <div style={{ fontWeight: 800, fontSize: '14px' }}>ẢNH CHỤP ĐỒNG PHỤC ÁO HỒNG ỤM BÒ MILK</div>
-                        <div style={{ fontSize: '11px', opacity: 0.9 }}>Bảng tên nhân viên: Đã xác thực hợp lệ</div>
+                      <div style={{ backgroundColor: '#FFF', borderRadius: '8px', border: '1px solid #F9A8D4', padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <div style={{ fontWeight: 800, fontSize: '12px', color: '#9D174D' }}>📸 Ô 2 — ẢNH CHECK-OUT</div>
+                        {modalDayData?.outEvent?.event_id && modalDayData.outEvent.event_id !== modalEvent?.event_id ? (
+                          <AttPhoto eventId={modalDayData.outEvent.event_id} onClick={() => setAttPhotoZoom({ eventId: modalDayData.outEvent.event_id, label: 'Ảnh check-out' })} style={{ width: '100%', height: '160px', maxHeight: '160px' }} alt="Ảnh chụp khi tan ca" />
+                        ) : (
+                          <div style={{ width: '100%', height: '160px', borderRadius: '6px', backgroundColor: '#F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9CA3AF', fontSize: '11px', fontWeight: 700 }}>
+                            Chưa có ảnh check-out
+                          </div>
+                        )}
+                        <div style={{ fontWeight: 800, fontSize: '11px', color: '#9D174D' }}>ẢNH KHI TAN CA (CHECK-OUT)</div>
+                        <div style={{ fontSize: '10px', color: '#9D174D' }}>Ra: {modalDayData?.outTime || '—'}</div>
                       </div>
-                    )}
+                    </div>
+                    <div style={{ fontSize: '11px', color: '#9D174D' }}>Bảng tên nhân viên: Đã xác thực hợp lệ • Bấm vào ảnh để xem to</div>
 
-                    {modalDayData?.outEvent?.event_id && modalDayData.outEvent.event_id !== modalEvent?.event_id && (
-                      <div style={{ marginTop: '12px', borderTop: '1px dashed #F472B6', paddingTop: '10px', marginBottom: '10px' }}>
-                        <AttPhoto eventId={modalDayData.outEvent.event_id} style={{ width: '100%', maxHeight: '220px', height: 'auto' }} alt="Ảnh chụp khi tan ca" />
-                        <div style={{ fontWeight: 800, fontSize: '12px', color: '#9D174D', marginTop: '6px' }}>
-                          ẢNH CHỤP KHI TAN CA (CHECK-OUT: {modalDayData.outTime})
-                        </div>
-                      </div>
-                    )}
-
-                    <div style={{ display: 'flex', justifyContent: 'center', gap: '16px', fontSize: '12px', fontWeight: 700, color: '#9D174D' }}>
+                    <div style={{ display: 'flex', justifyContent: 'center', gap: '16px', fontSize: '12px', fontWeight: 700, color: '#9D174D', marginTop: '8px' }}>
                       <span>✓ Áo màu hồng chuẩn thương hiệu</span>
                       <span>✓ Đeo bảng tên rõ nét</span>
                     </div>
                   </div>
+                  {attPhotoZoom && (
+                    <div onClick={() => setAttPhotoZoom(null)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.75)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', cursor: 'zoom-out' }}>
+                      <div onClick={(e) => e.stopPropagation()} style={{ backgroundColor: '#FFF', borderRadius: '12px', padding: '14px', maxWidth: '560px', width: '100%', textAlign: 'center' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                          <strong style={{ fontSize: '14px' }}>{attPhotoZoom.label}</strong>
+                          <button className="btn-secondary" style={{ padding: '4px 12px', fontSize: '12px' }} onClick={() => setAttPhotoZoom(null)}>Đóng</button>
+                        </div>
+                        {attPhotoZoom.url ? (
+                          <img src={attPhotoZoom.url} alt={attPhotoZoom.label} style={{ width: '100%', maxHeight: '70vh', objectFit: 'contain', borderRadius: '8px' }} />
+                        ) : attPhotoZoom.eventId ? (
+                          <AttPhoto eventId={attPhotoZoom.eventId} style={{ width: '100%', maxHeight: '70vh', height: 'auto' }} alt={attPhotoZoom.label} />
+                        ) : null}
+                      </div>
+                    </div>
+                  )}
 
                   <button
                     className="btn-primary"

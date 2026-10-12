@@ -10,6 +10,7 @@ import {
 } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { singleWriterQueue } from '../repositories/single-writer-queue.js';
+import { readAttendancePhotoDiskAsDataUrl } from './photo-disk.store.js';
 import { lateFineFor, linkDayEvents } from './payroll.service.js';
 import { weekRangeOf } from './weekly-off.service.js';
 import { Server } from 'socket.io';
@@ -232,13 +233,18 @@ export class AttendanceService {
     const cands = (fb.attendanceEvents as any[])
       .filter(
         (e: any) =>
-          (e as any)?.event_photo &&
-          (!((e as any)?.drive_object_id) || String((e as any).drive_object_id).startsWith('DRV_'))
+          (!((e as any)?.drive_object_id) || String((e as any).drive_object_id).startsWith('DRV_')) &&
+          ((e as any)?.event_photo || readAttendancePhotoDiskAsDataUrl((e as any)?.event_id))
       )
       .slice(0, Math.max(1, Math.min(50, limit)));
     let recovered = 0;
     for (const e of cands) {
       try {
+        // Sau restart memory mất event_photo — hydrate từ đĩa để retry được.
+        if (!(e as any)?.event_photo) {
+          const fromDisk = readAttendancePhotoDiskAsDataUrl((e as any)?.event_id);
+          if (fromDisk) (e as any).event_photo = fromDisk;
+        }
         const r = await sync.uploadImageToDrive(
           `${(e as any)?.employee_id || 'unknown'}_${(e as any)?.type || 'CHECK'}_${Date.now()}.jpg`,
           'image/jpeg',

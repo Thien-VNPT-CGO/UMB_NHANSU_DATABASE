@@ -41,6 +41,9 @@ Thumbs.db
 temp/
 tmp/
 
+# Anh check-in/out luu dia (fallback khong mat khi restart) — KHONG commit anh test
+apps/backend/data/
+
 # App version bake luc build (tu sinh, khong commit)
 apps/admin-web/src/app-version.ts
 apps/employee-web/src/app-version.ts
