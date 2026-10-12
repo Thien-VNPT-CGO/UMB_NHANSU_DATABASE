@@ -1877,6 +1877,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Phiếu bổ sung/điều chỉnh công: HR duyệt phiếu NV gửi từ cổng nhân viên
   const [adjustments, setAdjustments] = useState<any[]>([]);
   const [adjBusy, setAdjBusy] = useState<string | null>(null);
+  // Folder tuần tab Bổ Sung & Điều Chỉnh Công: tuần hiện tại mở sẵn, tuần cũ gấp lại.
+  const [adjWeekOpen, setAdjWeekOpen] = useState<Record<string, boolean>>({});
   // Chống bấm đúp các nút ghi dữ liệu (server cũng chặn trùng, đây là lớp báo sớm).
   const [transitionBusyId, setTransitionBusyId] = useState<string | null>(null);
   const [swapReviewBusy, setSwapReviewBusy] = useState<string | null>(null);
@@ -10037,6 +10039,32 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           </tr>
         );
       });
+    // Gom phieu theo tuan Mon-Sun (theo ngay gui) — moi tuan 1 folder rieng.
+    const adjWeekOf = (iso?: string) => {
+      const t = new Date(iso || "").getTime();
+      if (!Number.isFinite(t)) return { key: 'unknown', label: 'Ch\u01b0a r\u00f5 tu\u1ea7n', isCurrent: false };
+      const d = new Date(t);
+      const dowMon0 = (d.getDay() + 6) % 7;
+      const mon = new Date(d); mon.setDate(d.getDate() - dowMon0);
+      const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+      const f = (x: Date) => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+      const fd = (s: string) => `${s.slice(8, 10)}/${s.slice(5, 7)}/${s.slice(0, 4)}`;
+      const key = f(mon);
+      const now = new Date(); const nd = (now.getDay() + 6) % 7;
+      const cmon = new Date(now); cmon.setDate(now.getDate() - nd);
+      return { key, label: `${fd(key)} \u2192 ${fd(f(sun))}`, isCurrent: f(cmon) === key };
+    };
+    const adjWeekGroups = (() => {
+      const map = new Map<string, any>();
+      for (const a of adjustments) {
+        const w = adjWeekOf(a.created_at);
+        if (!map.has(w.key)) map.set(w.key, { ...w, pending: [] as any[], done: [] as any[], total: 0 });
+        const g = map.get(w.key);
+        g.total++;
+        if (a.status === 'PENDING') g.pending.push(a); else g.done.push(a);
+      }
+      return [...map.values()].sort((x, y) => String(y.key).localeCompare(String(x.key)));
+    })();
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -10072,10 +10100,32 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   </td>
                 </tr>
               ) : (
-                <>
-                  {renderAdjRows(pendingAdj, true)}
-                  {renderAdjRows(doneAdj, false)}
-                </>
+                adjWeekGroups.map((g: any) => {
+                  const open = adjWeekOpen[g.key] ?? g.isCurrent;
+                  return (
+                    <React.Fragment key={g.key}>
+                      <tr>
+                        <td colSpan={7} style={{ padding: 0, borderBottom: '1px solid var(--border)' }}>
+                          <button
+                            onClick={() => setAdjWeekOpen((pr) => ({ ...pr, [g.key]: !open }))}
+                            style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 20px', border: 'none', cursor: 'pointer', backgroundColor: open ? '#EFF6FF' : '#F8FAFC', fontSize: '13px' }}
+                          >
+                            <span style={{ fontWeight: 800 }}>{open ? '\uD83D\uDCC2' : '\uD83D\uDCC1'} Tuần {g.label}</span>
+                            <span className="badge" style={{ backgroundColor: g.pending.length > 0 ? '#FEF3C7' : '#DCFCE7', color: g.pending.length > 0 ? '#92400E' : '#166534', fontWeight: 800 }}>{g.total} phiếu</span>
+                            {g.pending.length > 0 && (
+                              <span className="badge" style={{ backgroundColor: '#FEF3C7', color: '#92400E', fontWeight: 800 }}>{g.pending.length} chờ duyệt</span>
+                            )}
+                            <span style={{ marginLeft: 'auto', color: 'var(--text-muted)', fontWeight: 800 }}>{open ? '\u25BE' : '\u25B8'}</span>
+                          </button>
+                        </td>
+                      </tr>
+                      {open && (<>
+                        {renderAdjRows(g.pending, true)}
+                        {renderAdjRows(g.done, false)}
+                      </>)}
+                    </React.Fragment>
+                  );
+                })
               )}
             </tbody>
           </table>
