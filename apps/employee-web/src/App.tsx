@@ -73,43 +73,43 @@ function MyAdjPhoto({ adjustmentId, style }: { adjustmentId: string; style?: Rea
   return <img src={url} alt="Ảnh bằng chứng" style={{ width: '72px', height: '72px', objectFit: 'cover', borderRadius: '8px', border: '1px solid var(--border)', ...(style || {}) }} />;
 }
 
-/** Banner bản cập nhật mới từ IT: hiện khi index.html trên server đã đổi
- *  (frontend có bản mới thật). Bấm là tải lại trang lấy bản mới. */
-function UpdateBanner({ onLater }: { onLater: () => void }) {
+/** Màn hình khóa bắt buộc cập nhật cổng nhân viên: có bản mới là khóa toàn bộ
+ *  chức năng cho tới khi NV bấm cập nhật (reload lấy bản mới). Không có nút bỏ qua. */
+function UpdateBanner() {
   return (
     <div style={{
       position: 'fixed',
-      left: '12px',
-      right: '12px',
-      bottom: '12px',
-      zIndex: 9998,
+      inset: 0,
+      zIndex: 9999,
       display: 'flex',
       alignItems: 'center',
-      gap: '10px',
-      padding: '12px 14px',
-      borderRadius: '14px',
-      background: 'linear-gradient(135deg, #0F172A 0%, #1E1B4B 60%, #831843 100%)',
-      color: '#FFF',
-      boxShadow: '0 12px 32px rgba(0,0,0,0.35)',
-      border: '1px solid rgba(232, 93, 146, 0.5)',
+      justifyContent: 'center',
+      padding: '20px',
+      background: 'rgba(2, 6, 23, 0.85)',
     }}>
-      <span style={{ fontSize: '22px' }}>🚀</span>
-      <div style={{ flex: 1, fontSize: '12px', lineHeight: 1.5 }}>
-        <div style={{ fontWeight: 800, fontSize: '13px' }}>Có bản cập nhật mới từ IT!</div>
-        <div style={{ color: 'rgba(255,255,255,0.75)' }}>Bấm "Cập nhật ngay" để tải bản mới nhất (sửa lỗi + tính năng mới).</div>
+      <div style={{
+        maxWidth: '420px',
+        width: '100%',
+        borderRadius: '18px',
+        padding: '26px 22px',
+        textAlign: 'center',
+        background: 'linear-gradient(135deg, #0F172A 0%, #1E1B4B 60%, #831843 100%)',
+        color: '#FFF',
+        boxShadow: '0 12px 32px rgba(0,0,0,0.35)',
+        border: '1px solid rgba(232, 93, 146, 0.5)',
+      }}>
+        <div style={{ fontSize: '40px' }}>🔄</div>
+        <div style={{ fontWeight: 800, fontSize: '16px', marginTop: '8px' }}>CÓ BẢN CẬP NHẬT MỚI — BẮT BUỘC CẬP NHẬT</div>
+        <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.8)', marginTop: '8px', lineHeight: 1.6 }}>
+          IT vừa phát hành bản mới (sửa lỗi + tính năng mới). Các chức năng tạm thời bị KHÓA cho tới khi bạn cập nhật xong.
+        </div>
+        <button
+          onClick={() => window.location.reload()}
+          style={{ marginTop: '16px', width: '100%', padding: '12px', borderRadius: '999px', border: 'none', background: 'linear-gradient(135deg, #E85D92, #F59E0B)', color: '#FFF', fontSize: '14px', fontWeight: 800, cursor: 'pointer' }}
+        >
+          Cập nhật ngay
+        </button>
       </div>
-      <button
-        onClick={() => window.location.reload()}
-        style={{ padding: '9px 16px', borderRadius: '999px', border: 'none', background: 'linear-gradient(135deg, #E85D92, #F59E0B)', color: '#FFF', fontSize: '12px', fontWeight: 800, cursor: 'pointer', whiteSpace: 'nowrap' }}
-      >
-        Cập nhật ngay
-      </button>
-      <button
-        onClick={onLater}
-        style={{ padding: '9px 10px', borderRadius: '999px', border: '1px solid rgba(255,255,255,0.35)', background: 'transparent', color: 'rgba(255,255,255,0.8)', fontSize: '12px', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}
-      >
-        Để sau
-      </button>
     </div>
   );
 }
@@ -308,7 +308,6 @@ export function App() {
   const [updateReady, setUpdateReady] = useState(false);
   const indexHashRef = useRef<string | null>(null);
   const latestHashRef = useRef<string | null>(null);
-  const updateSnoozedRef = useRef<string | null>(null);
   const hashStr = (s: string): string => {
     let h = 5381;
     for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
@@ -331,11 +330,11 @@ export function App() {
         indexHashRef.current = h;
         return 'same';
       }
-      if (h !== indexHashRef.current && updateSnoozedRef.current !== h) {
+      if (h !== indexHashRef.current) {
         setUpdateReady(true);
         return 'new';
       }
-      if (h === indexHashRef.current || updateSnoozedRef.current === h) setUpdateReady(false);
+      if (h === indexHashRef.current) setUpdateReady(false);
       return 'same';
     } catch { /* offline: giữ trạng thái cũ */ return 'fail'; }
   };
@@ -351,11 +350,6 @@ export function App() {
     document.addEventListener('visibilitychange', onVis);
     return () => { clearInterval(t); document.removeEventListener('visibilitychange', onVis); };
   }, []);
-  const snoozeAppUpdate = () => {
-    // Ghi nhớ hash đang lệch để không hiện lại cho tới khi có bản mới hơn nữa.
-    updateSnoozedRef.current = latestHashRef.current;
-    setUpdateReady(false);
-  };
   const handleChangeApiBase = async () => {
     const input = window.prompt('Địa chỉ máy chủ Backend (để trống = tự động):', localStorage.getItem('ubm_custom_api_url') || '');
     if (input === null) return;
@@ -2674,7 +2668,7 @@ export function App() {
           onSuccess={handlePremiumSuccess}
           onCheckUpdate={checkAppVersion}
         />
-        {updateReady && <UpdateBanner onLater={snoozeAppUpdate} />}
+        {updateReady && <UpdateBanner />}
       </>
     );
   }
@@ -5892,7 +5886,7 @@ export function App() {
         )}
 
       </main>
-      {updateReady && <UpdateBanner onLater={snoozeAppUpdate} />}
+      {updateReady && <UpdateBanner />}
     </div>
   );
 }
