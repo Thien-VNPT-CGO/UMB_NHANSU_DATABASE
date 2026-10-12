@@ -3022,6 +3022,30 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Download 1 ngày công đầy đủ (CSV full info + ảnh check in/out theo folder
+  // ngày–ca–chi nhánh) cho nút ở tab Lịch Làm Việc Tuần & Giám Sát Điểm Danh Realtime.
+  app.get('/admin/attendance/export-day', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: any, res: any) => {
+    try {
+      const date = String(req.query.date || new Date().toISOString().split('T')[0]);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        return res.status(400).json({ error: 'INVALID_DATE: định dạng YYYY-MM-DD.' });
+      }
+      const syncService = (adapter as any).syncService;
+      if (!syncService?.buildDayWorkExport) {
+        return res.status(503).json({ error: 'SYNC_NOT_READY' });
+      }
+      const r = await syncService.buildDayWorkExport(adapter, date);
+      if (!r.shifts && !r.events) {
+        return res.status(400).json({ error: 'NO_DATA', message: `Ngày ${date} chưa có ca làm hay lượt điểm danh nào.` });
+      }
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', `attachment; filename="ngay-cong-${date}.zip"`);
+      res.send(r.zip);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'EXPORT_FAILED' });
+    }
+  });
+
   // Alias for /leaves
   app.post('/leaves', authMiddleware, validate({ body: leavesAliasBody }), async (req: AuthenticatedRequest, res) => {
     try {

@@ -1907,6 +1907,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [swapReviewBusy, setSwapReviewBusy] = useState<string | null>(null);
   const [storeReviewBusy, setStoreReviewBusy] = useState<string | null>(null);
   const [schedReloadBusy, setSchedReloadBusy] = useState(false);
+  // Download 1 ngày công (CSV full info + ảnh theo folder ngày–ca–chi nhánh).
+  const [schedExportDate, setSchedExportDate] = useState(() => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10));
+  const [schedExportBusy, setSchedExportBusy] = useState(false);
   const [storeConfirmBusy, setStoreConfirmBusy] = useState(false);
   // Phiếu đang xem chi tiết (popup: tên NV + lý do & số phút + ảnh + thời gian)
   const [selectedAdj, setSelectedAdj] = useState<any | null>(null);
@@ -7778,6 +7781,48 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               }}
             >
               <Plus size={14} /> Bổ Sung Lịch NV
+            </button>
+            <input
+              type="date"
+              value={schedExportDate}
+              onChange={(e) => setSchedExportDate(e.target.value)}
+              title="Ngày công cần tải về máy local"
+              style={{ fontSize: '13px', padding: '8px 10px', borderRadius: '8px', border: '1px solid var(--border)' }}
+            />
+            <button
+              className="btn-primary"
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', fontSize: '13px', backgroundColor: '#059669' }}
+              title="Tải check-in/out kèm đầy đủ thông tin 1 ngày công về máy: CSV + ảnh theo folder ngày–ca–chi nhánh"
+              disabled={schedExportBusy}
+              onClick={async () => {
+                if (!/^\d{4}-\d{2}-\d{2}$/.test(schedExportDate || '')) { showToast('Chọn ngày cần tải!'); return; }
+                setSchedExportBusy(true);
+                try {
+                  const res = await fetch(`${getApiBase()}/admin/attendance/export-day?date=${schedExportDate}`, {
+                    headers: { Authorization: `Bearer ${getAuthToken()}` },
+                  });
+                  if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    throw new Error((err as any)?.message || (err as any)?.error || 'Tải thất bại');
+                  }
+                  const blob = await res.blob();
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `ngay-cong-${schedExportDate}.zip`;
+                  document.body.appendChild(a);
+                  a.click();
+                  a.remove();
+                  setTimeout(() => URL.revokeObjectURL(url), 5000);
+                  showToast(`Đã tải 1 ngày công ${schedExportDate} (CSV full info + ảnh check in/out theo chi nhánh/ca) về máy!`);
+                } catch (e: any) {
+                  showToast(e?.message || 'Lỗi khi tải ngày công!');
+                } finally {
+                  setSchedExportBusy(false);
+                }
+              }}
+            >
+              {schedExportBusy ? 'Đang gói...' : '⬇ Tải check-in/out ngày'}
             </button>
           </div>
         </div>

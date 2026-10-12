@@ -22,6 +22,7 @@ import { canonicalPhone } from './employees.service.js';
 import { normSheetDate, normSheetDateTime, sheetDateText, sheetDateTimeText } from './employees.service.js';
 import { evaluateCandidateAiScore } from './ai-scorer.js';
 import { buildZipStore, ZipEntry } from '../utils/zip-store.js';
+import { readAttendancePhotoDisk } from './photo-disk.store.js';
 
 export interface SheetDefinition {
   title: string;
@@ -2634,6 +2635,129 @@ export class GoogleSheetsSyncService {
       if (outEvt) await loadPhoto(outEvt, `${folder}/check out.jpg`);
     }
     return { entries, eventCount: (events || []).length, photoCount, missing };
+  }
+
+  /**
+   * Gói 1 ngày công đầy đủ: CSV full info + ảnh check in/out theo folder
+   * {root}/{chi nhánh}/{ca}/{tên NV} — cho nút download ở tab Lịch Làm Việc
+   * Tuần & Giám Sát Điểm Danh Realtime (về máy local).
+   */
+  public async buildDayWorkExport(
+    repo: ISheetsRepository,
+    date: string
+  ): Promise<{ zip: Buffer; root: string; shifts: number; events: number; photos: number; missing: string[] }> {
+    const safe = GoogleSheetsSyncService.safeZipName;
+    const fmtD = (s: string) => `${s.slice(8, 10)}-${s.slice(5, 7)}-${s.slice(0, 4)}`;
+    const root = `Ngay cong ${fmtD(date)}`;
+    const vnDay = (iso: string) => {
+      const t = new Date(iso || '').getTime();
+      if (!Number.isFinite(t)) return '';
+      return new Date(t + 7 * 3_600_000).toISOString().slice(0, 10);
+    };
+    const fmtDT = (iso?: string) => {
+      if (!iso) return '';
+      try {
+        return new Date(iso).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' });
+      } catch { return ''; }
+    };
+    const shiftLabel = (code?: string) => {
+      const c = String(code || '');
+      if (!c) return 'Ngoai lich';
+      return safe(c.replace('CA_1', 'Ca 1 (07-12)').replace('CA_2', 'Ca 2 (12-18)').replace('CA_3', 'Ca 3 (18-23)'));
+    };
+    const [y, m, d0] = date.split('-').map(Number);
+    const base = Date.UTC(y, m - 1, d0);
+    const dowMon0 = (new Date(base).getUTCDay() + 6) % 7;
+    const mon = new Date(base - dowMon0 * 86_400_000).toISOString().slice(0, 10);
+    const weekShifts: any[] = await repo.getShiftsForWeek('*', mon).catch(() => []);
+    const dayShifts = (weekShifts || []).filter((s: any) =>
+      String((s as any)?.date || '').slice(0, 10) === date && (s as any)?.status !== 'CANCELLED');
+    const events: any[] = (await repo.getAttendanceEvents(undefined, date).catch(() => []))
+      .filter((e: any) => vnDay(e.client_time || '') === date);
+    const employees: any[] = await repo.listEmployees().catch(() => []);
+    const empOf = (id: string) => (employees as any[]).find((e: any) => e.employee_id === id);
+    const evByAssign = new Map<string, any[]>();
+    for (const e of events || []) {
+      if (e.type !== 'CHECK_IN' && e.type !== 'CHECK_OUT' && e.type !== 'ABSENT') continue;
+      const k = (e as any).assignment_id || `__${(e as any).employee_id}`;
+      if (!evByAssign.has(k)) evByAssign.set(k, []);
+      evByAssign.get(k)!.push(e);
+    }
+    const entries: ZipEntry[] = [];
+    const missing: string[] = [];
+    let photoCount = 0;
+    const rows: string[][] = [];
+    const loadPhoto = async (evt: any): Promise<Buffer | null> => {
+      if (!evt) return null;
+      const id = String(evt.drive_object_id || '');
+      if (id && !id.startsWith('DRV_')) {
+        try {
+          const dl = await this.downloadDriveFile(evt.drive_object_id);
+          if (dl?.buffer?.length) return dl.buffer;
+        } catch { missing.push(`${evt.event_id}: loi tai Drive`); }
+      }
+      const inline = (evt as any).event_photo;
+      if (inline) {
+        try {
+          const mm = String(inline).match(/^data:(image\/\w+);base64,(.*)$/s);
+          const buf = Buffer.from(mm ? mm[2] : String(inline).replace(/^data:image\/\w+;base64,/, ''), 'base64');
+          if (buf.length) return buf;
+        } catch { /* xuong dia */ }
+      }
+      try {
+        const hit = readAttendancePhotoDisk(evt.event_id);
+        if (hit?.buffer?.length) return hit.buffer;
+      } catch { /* het nguon */ }
+      missing.push(`${evt.event_id}: chua co anh`);
+      return null;
+    };
+    const seenAssign = new Set<string>();
+    const pushShiftRow = async (sh: any | null, groupKey: string, empId: string, branchHint?: string) => {
+      const list = evByAssign.get(groupKey) || [];
+      const inEvt = list.find((e: any) => e.type === 'CHECK_IN');
+      const outEvt = list.find((e: any) => e.type === 'CHECK_OUT');
+      const absEvt = list.find((e: any) => e.type === 'ABSENT');
+      const emp = empOf(empId);
+      const empName = emp?.full_name || empId;
+      const empCode = emp?.employee_code || empId;
+      const branch = (sh as any)?.branch_id || branchHint || emp?.default_branch_id || 'CN';
+      const code = (sh as any)?.shift_code || '';
+      const status = inEvt && outEvt ? 'Hoan thanh' : inEvt ? 'Dang lam (cho check-out)' : absEvt ? 'Vang' : 'Chua check-in';
+      const dist = inEvt?.distance_meters ?? outEvt?.distance_meters ?? '';
+      const lateMin = inEvt?.is_late ? Number(inEvt.minutes_deviation) || 0 : 0;
+      rows.push([
+        empName, empCode, branch,
+        code ? code.replace('CA_1', 'Ca 1').replace('CA_2', 'Ca 2').replace('CA_3', 'Ca 3') : 'Ngoai lich',
+        fmtDT(inEvt?.client_time), fmtDT(outEvt?.client_time), status,
+        inEvt ? 'GPS hop le' : '', dist === '' ? '' : `${dist}m`,
+        inEvt?.uniform_pink_ratio ?? '',
+        lateMin > 0 ? `Tre ${lateMin}p` : '',
+      ]);
+      const folder = `${root}/${safe(branch)}/${shiftLabel(code)}/${safe(empName)} (${safe(empCode)})`;
+      if (inEvt) {
+        const buf = await loadPhoto(inEvt);
+        if (buf) { entries.push({ name: `${folder}/check in.jpg`, data: buf }); photoCount++; }
+      }
+      if (outEvt) {
+        const buf = await loadPhoto(outEvt);
+        if (buf) { entries.push({ name: `${folder}/check out.jpg`, data: buf }); photoCount++; }
+      }
+    };
+    for (const s of dayShifts) {
+      const aid = String((s as any).assignment_id);
+      seenAssign.add(aid);
+      await pushShiftRow(s, aid, (s as any).employee_id);
+    }
+    for (const [k, list] of evByAssign) {
+      if (seenAssign.has(k)) continue;
+      const first = list[0];
+      await pushShiftRow(null, k, first.employee_id, first.branch_id);
+    }
+    const esc = (v: any) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const header = ['Nhan vien', 'Ma NV', 'Chi nhanh', 'Ca', 'Gio vao', 'Gio ra', 'Trang thai', 'GPS', 'Khoang cach', 'Hong dong phuc (%)', 'Ghi chu'];
+    const csv = '﻿' + [header, ...rows].map((r) => r.map(esc).join(',')).join('\r\n');
+    entries.unshift({ name: `${root}/Thong tin ngay cong ${fmtD(date)}.csv`, data: Buffer.from(csv, 'utf8') });
+    return { zip: buildZipStore(entries), root, shifts: dayShifts.length, events: events.length, photos: photoCount, missing };
   }
 
   /** Gói ZIP cả tuần (T2–CN): mỗi ngày 1 cụm folder ảnh như ngày lẻ (không CSV). */
