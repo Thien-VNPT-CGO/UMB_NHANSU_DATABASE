@@ -1351,6 +1351,9 @@ export function App() {
     if (m.includes('WEEKLY_OFF_WINDOW_CLOSED')) {
       return '⏰ Đăng ký 2 ngày nghỉ OFF chỉ mở từ 09h00 Thứ 6 đến 09h00 Thứ 7 hàng tuần!';
     }
+    if (m.includes('WEEKLY_OFF_MUST_REGISTER_2_DAYS')) {
+      return 'Bắt buộc đăng ký đủ 2 ngày OFF khác nhau trong cùng tuần (Mon-Sun) — hệ thống không cho đăng ký 1 ngày lẻ!';
+    }
     if (err?.code === 'SESSION_EXPIRED' || /unauthorized|401|hết hạn|đăng nhập lại/i.test(m)) {
       return '🔒 Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại rồi đăng ký tiếp!';
     }
@@ -1837,7 +1840,6 @@ export function App() {
     try {
       setWeeklyOffBusy(true);
       // API nguyên tử: ghi 2 ngày trong 1 request (kể cả đợt mở bù VIP + cập nhật lại).
-      try {
         await apiRequest('/leaves/weekly-off', {
           method: 'PUT',
           body: JSON.stringify({
@@ -1846,26 +1848,6 @@ export function App() {
             reason: weeklyOffData.reason,
           }),
         });
-      } catch (e: any) {
-        // Fallback máy chủ cũ chưa có API mới: gửi 2 POST rời rạc như trước.
-        if (!String(e?.message || '').includes('NOT_FOUND') && !String(e?.message || '').includes('404')) throw e;
-        await apiRequest('/leaves', {
-          method: 'POST',
-          body: JSON.stringify({
-            leaveType: 'HANG_TUAN',
-            requestedDate: weeklyOffData.day1,
-            reason: `${weeklyOffData.reason} (Ngày 1: ${weeklyOffData.day1})`,
-          }),
-        });
-        await apiRequest('/leaves', {
-          method: 'POST',
-          body: JSON.stringify({
-            leaveType: 'HANG_TUAN',
-            requestedDate: weeklyOffData.day2,
-            reason: `${weeklyOffData.reason} (Ngày 2: ${weeklyOffData.day2})`,
-          }),
-        });
-      }
 
       setHasRegisteredWeeklyOff(true);
       persistWeeklyOff(true, (weeklyOffWindow as any)?.targetWeekMon || undefined);
@@ -1882,6 +1864,10 @@ export function App() {
 
   const handleSubmitLeave = async () => {
     if (actionBusy) return;
+    if ((leaveData as any)?.leaveType === 'HANG_TUAN') {
+      showToast('Bắt buộc đăng ký đủ 2 ngày OFF khác nhau trong cùng tuần (Mon-Sun) — hệ thống không cho đăng ký 1 ngày lẻ! Vui lòng dùng cổng Đăng ký 2 ngày OFF.');
+      return;
+    }
     setActionBusy('leave-submit');
     try {
       await apiRequest('/leaves', {

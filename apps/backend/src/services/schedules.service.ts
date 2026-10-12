@@ -638,31 +638,18 @@ export class SchedulesService {
   }) {
     const requestId = `LEAVE_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
 
-    // Verify weekly OFF limits (tối đa 2 ngày/tuần HANG_TUAN, tính theo tuần Mon-Sun
-    // chứa ngày đăng ký — kể cả đợt mở bù VIP tuần sau).
-    // Đếm theo NV, KHÔNG lọc chi nhánh: phiếu cũ khác CN (NV chuyển CN, CN mặc định
-    // lệch) vẫn phải tính, nếu không sẽ lọt ngày thứ 3 như ca BẢO CHÂU.
+    // Ràng buộc đăng ký OFF 2 ngày/tuần: mỗi NV mặc định phải đăng ký đủ 2 ngày
+    // khác nhau trong cùng tuần Mon-Sun qua cổng nguyên tử PUT /leaves/weekly-off.
+    // Đăng ký lẻ 1 ngày qua cổng đơn (POST /leaves, POST /leave-requests) bị chặn
+    // cứng tại đây kèm báo lỗi, không ghi phiếu.
     if (data.leaveType === 'HANG_TUAN') {
-      const wk = weekRangeOf(data.requestedDate);
-      const existingLeaves = await this.repo.listLeaveRequests(undefined, data.employeeId);
-      const weeklyLeaves = existingLeaves.filter(l => {
-        if (l.leave_type !== 'HANG_TUAN') return false;
-        if (l.status === 'REJECTED' || l.status === 'CANCELLED') return false;
-        // So sánh sau chuẩn hóa: ngày lưu dạng locale ('10/07/2026') so thô sẽ lọt đếm.
-        const d = normSheetDate(l.requested_date);
-        return d >= wk.mon && d <= wk.sun;
-      });
-      if (weeklyLeaves.length >= 2) {
-        throw new Error('WEEKLY_OFF_LIMIT_REACHED: Tối đa 2 ngày OFF hàng tuần theo chính sách.');
-      }
-      // Cùng ca cùng chi nhánh không OFF chung ngày (ai đăng ký trước giữ ngày).
-      const clash = await this.findSameShiftOffClash(data.employeeId, data.branchId, data.requestedDate);
-      if (clash) throw this.sameShiftOffError(normSheetDate(data.requestedDate), clash);
+      throw new Error('WEEKLY_OFF_MUST_REGISTER_2_DAYS: Bắt buộc đăng ký đủ 2 ngày OFF khác nhau trong cùng tuần (Mon-Sun). Vui lòng chọn đủ cả 2 ngày rồi gửi lại — hệ thống không cho đăng ký 1 ngày lẻ.');
     }
 
     // Lịch OFF 2 ngày/tuần (HANG_TUAN): tự động ghi nhận, không cần phiếu duyệt.
     // Chỉ nghỉ đột xuất (DOT_XUAT) mới tạo phiếu PENDING chờ Store/HR duyệt.
-    const isWeeklyOff = data.leaveType === 'HANG_TUAN';
+    // (HANG_TUAN lẻ đã bị chặn cứng ở trên nên nhánh này chỉ còn DOT_XUAT/THU_VIEC.)
+    const isWeeklyOff = (data.leaveType as string) === 'HANG_TUAN';
     const nowIso = new Date().toISOString();
     return singleWriterQueue.enqueue({
       entityType: 'PHIEU_OFF',
