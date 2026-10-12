@@ -2639,8 +2639,8 @@ export class GoogleSheetsSyncService {
 
   /**
    * Gói 1 ngày công đầy đủ: CSV full info + ảnh check in/out theo folder
-   * {root}/{chi nhánh}/{ca}/{tên NV} — cho nút download ở tab Lịch Làm Việc
-   * Tuần & Giám Sát Điểm Danh Realtime (về máy local).
+   * {root}/{chi nhánh}/{tên NV}/{ca} (mỗi ca có file txt) — cho nút download
+   * ở tab Lịch Làm Việc Tuần & Giám Sát Điểm Danh Realtime (về máy local).
    */
   public async buildDayWorkExport(
     repo: ISheetsRepository,
@@ -2733,7 +2733,23 @@ export class GoogleSheetsSyncService {
         inEvt?.uniform_pink_ratio ?? '',
         lateMin > 0 ? `Tre ${lateMin}p` : '',
       ]);
-      const folder = `${root}/${safe(branch)}/${shiftLabel(code)}/${safe(empName)} (${safe(empCode)})`;
+      // Folder: chi nhánh -> tên NV -> ca làm -> ảnh + file txt.
+      const caName = code ? code.replace('CA_1', 'Ca 1').replace('CA_2', 'Ca 2').replace('CA_3', 'Ca 3') : 'Ngoai lich';
+      const folder = `${root}/${safe(branch)}/${safe(empName)} (${safe(empCode)})/${shiftLabel(code)}`;
+      const txtLines = [
+        `Nhan vien: ${empName} (${empCode})`,
+        `Chi nhanh: ${branch}`,
+        `Ca lam: ${caName}`,
+        `Ngay: ${fmtD(date)}`,
+        `Gio vao: ${fmtDT(inEvt?.client_time) || 'Chua check-in'}`,
+        `Gio ra: ${fmtDT(outEvt?.client_time) || 'Chua check-out'}`,
+        `Trang thai: ${status}`,
+        `GPS: ${inEvt ? 'hop le' : 'Chua co'}`,
+        `Khoang cach: ${dist === '' ? 'Chua co' : `${dist}m`}`,
+        `Hong dong phuc: ${inEvt?.uniform_pink_ratio ?? 'Chua co'}`,
+        `Ghi chu: ${lateMin > 0 ? `Tre ${lateMin}p` : ''}`,
+      ];
+      entries.push({ name: `${folder}/thong tin ca ${fmtD(date)}.txt`, data: Buffer.from(txtLines.join('\r\n'), 'utf8') });
       if (inEvt) {
         const buf = await loadPhoto(inEvt);
         if (buf) { entries.push({ name: `${folder}/check in.jpg`, data: buf }); photoCount++; }

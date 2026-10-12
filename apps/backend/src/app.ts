@@ -3022,8 +3022,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  // Download 1 ngày công đầy đủ (CSV full info + ảnh check in/out theo folder
-  // ngày–ca–chi nhánh) cho nút ở tab Lịch Làm Việc Tuần & Giám Sát Điểm Danh Realtime.
+  // Download 1 ngày công đầy đủ (CSV full info + ảnh + txt theo folder
+  // chi nhánh–NV–ca) cho nút ở tab Lịch Làm Việc Tuần & Giám Sát Điểm Danh Realtime.
   app.get('/admin/attendance/export-day', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: any, res: any) => {
     try {
       const date = String(req.query.date || new Date().toISOString().split('T')[0]);
