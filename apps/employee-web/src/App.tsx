@@ -1554,6 +1554,19 @@ export function App() {
       return;
     }
 
+
+    // Ràng buộc: không cho check-out trước giờ tan ca — đúng giờ mới cho check-out (server chặn cứng).
+    if (action === 'CHECK_OUT' && todayShift?.end_at) {
+      try {
+        const shiftEndMs = new Date(todayShift.end_at).getTime();
+        if (Number.isFinite(shiftEndMs) && Date.now() < shiftEndMs) {
+          const endStr = new Date(shiftEndMs).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' });
+          const minsLeft = Math.max(1, Math.ceil((shiftEndMs - Date.now()) / 60000));
+          showToast(`Chưa đến giờ tan ca (ca kết thúc lúc ${endStr})! Còn ${minsLeft} phút nữa mới được check-out — đúng giờ mới cho check-out.`);
+          return;
+        }
+      } catch {}
+    }
     setAttendanceActionType(action);
     setAttendanceStep('CHECKING_GPS');
     setGpsCoords(null);

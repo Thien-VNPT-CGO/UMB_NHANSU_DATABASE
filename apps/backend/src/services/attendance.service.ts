@@ -99,6 +99,49 @@ export class AttendanceService {
           throw new Error('SHIFT_CANCELLED: Ca này đã bị hủy! Báo HR xếp ca mới rồi điểm danh lại.');
         }
 
+        // 2b. Ràng buộc cặp check-in/out theo từng ca + cấm check-out sớm.
+        // Ngày 2 ca: mỗi ca check-in/out độc lập — không check-in ca sau trước
+        // rồi check-out ca trước, không check-out trước giờ tan ca.
+        const evtMs = new Date(data.clientTime).getTime();
+        const evtNow = Number.isFinite(evtMs) ? evtMs : Date.now();
+        if (data.type === 'CHECK_OUT') {
+          const shiftEndMs = new Date((shift as any).end_at).getTime();
+          if (Number.isFinite(shiftEndMs) && evtNow < shiftEndMs) {
+            const endStr = new Date(shiftEndMs).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+            const minsLeft = Math.max(1, Math.ceil((shiftEndMs - evtNow) / 60000));
+            throw new Error(`CHECKOUT_TOO_EARLY: Chưa đến giờ tan ca (ca kết thúc lúc ${endStr})! Còn ${minsLeft} phút nữa mới được check-out — đúng giờ mới cho check-out.`);
+          }
+          const pairEvents = await this.repo.getAttendanceEvents(data.employeeId).catch(() => []);
+          const hasPairIn = (pairEvents || []).some((e: any) =>
+            String((e as any).assignment_id) === String(data.assignmentId) && (e as any).type === 'CHECK_IN');
+          if (!hasPairIn) {
+            throw new Error('CHECKOUT_WITHOUT_CHECKIN: Ca này chưa có check-in nên không thể check-out! Ngày 2 ca thì mỗi ca check-in/out độc lập — vui lòng check-in đúng ca này trước.');
+          }
+        }
+        if (data.type === 'CHECK_IN') {
+          const shiftDay = String((shift as any).date || '').slice(0, 10);
+          const myStartMs = new Date((shift as any).start_at).getTime();
+          if (shiftDay && Number.isFinite(myStartMs)) {
+            const nowMs = Date.now();
+            const dayShifts = await this.repo.getShiftsForEmployee(data.employeeId, shiftDay, shiftDay).catch(() => []);
+            const myEvents = await this.repo.getAttendanceEvents(data.employeeId).catch(() => []);
+            for (const s of (dayShifts || [])) {
+              if ((s as any).status === 'CANCELLED') continue;
+              if (String((s as any).assignment_id) === String(data.assignmentId)) continue;
+              const sStartMs = new Date((s as any).start_at).getTime();
+              if (!Number.isFinite(sStartMs) || sStartMs >= myStartMs) continue;
+              const sId = String((s as any).assignment_id);
+              const sDone = (myEvents || []).some((e: any) =>
+                String((e as any).assignment_id) === sId && ((e as any).type === 'CHECK_IN' || (e as any).type === 'ABSENT'));
+              if (sDone) continue;
+              if (nowMs - sStartMs > 3 * 60 * 60 * 1000) continue;
+              if (nowMs < sStartMs - 30 * 60 * 1000) continue;
+              const code = String((s as any).shift_code || '').replace('CA_1', 'Ca 1').replace('CA_2', 'Ca 2').replace('CA_3', 'Ca 3');
+              throw new Error(`CHECKIN_WRONG_SHIFT_ORDER: Hôm nay bạn có 2 ca — ${code} ngày ${shiftDay} còn chờ check-in, vui lòng check-in ca trước rồi mới check-in ca này (không check-in ca sau trước)!`);
+            }
+          }
+        }
+
         // 3. Validate GPS
         // Ràng buộc: GPS không đúng (quá bán kính 300m HOẶC sóng quá yếu >150m)
         // -> TỪ CHỐI ghi nhận, ca quay về chưa điểm danh để NV làm lại.

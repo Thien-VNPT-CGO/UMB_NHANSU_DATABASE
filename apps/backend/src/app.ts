@@ -2566,6 +2566,21 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       }
 
       const actualAssignmentId = req.body.assignment_id || checkInEvent.assignment_id;
+      // Ràng buộc check-out đúng giờ: cấm check-out trước giờ tan ca của đúng ca này.
+      try {
+        const endShift: any = actualAssignmentId ? await adapter.getShiftById(actualAssignmentId).catch(() => null) : null;
+        const endMs = endShift ? new Date(endShift.end_at).getTime() : NaN;
+        if (Number.isFinite(endMs) && Date.now() < endMs) {
+          const endStr = new Date(endMs).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' });
+          const minsLeft = Math.max(1, Math.ceil((endMs - Date.now()) / 60000));
+          return res.status(403).json({
+            error: 'CHECKOUT_TOO_EARLY',
+            message: `Chưa đến giờ tan ca (ca kết thúc lúc ${endStr})! Còn ${minsLeft} phút nữa mới được check-out — đúng giờ mới cho check-out.`,
+            shiftEndAt: endShift.end_at,
+            minutesLeft: minsLeft,
+          });
+        }
+      } catch { /* lớp service chặn tiếp bên dưới */ }
       const requestId = (req.headers['idempotency-key'] as string) || req.body.requestId || `REQ_OUT_${employeeId}_${Date.now()}`;
 
       // GPS thật bắt buộc khi check-out (không dùng tọa độ mặc định).
