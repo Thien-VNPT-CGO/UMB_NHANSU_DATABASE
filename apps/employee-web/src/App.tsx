@@ -891,8 +891,8 @@ export function App() {
       const today = new Date(Date.now() + 7 * 3_600_000).toISOString().split('T')[0];
       const todayCheckIn = attEvents.find((e: any) => e.type === 'CHECK_IN' && vnDayOf(e.client_time) === today);
       const todayCheckOut = attEvents.find((e: any) => e.type === 'CHECK_OUT' && vnDayOf(e.client_time) === today);
-      const inTimeStr = todayCheckIn?.client_time ? new Date(todayCheckIn.client_time).toLocaleTimeString('vi-VN') : undefined;
-      const outTimeStr = todayCheckOut?.client_time ? new Date(todayCheckOut.client_time).toLocaleTimeString('vi-VN') : undefined;
+      const inTimeStr = todayCheckIn?.client_time ? new Date(todayCheckIn.client_time).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' }) : undefined;
+      const outTimeStr = todayCheckOut?.client_time ? new Date(todayCheckOut.client_time).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' }) : undefined;
       setMyAttendanceHistory(attEvents);
       setTodayAttendance({
         checkedIn: !!todayCheckIn,
@@ -4148,8 +4148,8 @@ export function App() {
           const tabAtt = {
             checkedIn: !!shiftIn,
             checkedOut: !!shiftOut,
-            checkInTime: shiftIn?.client_time ? new Date(shiftIn.client_time).toLocaleTimeString('vi-VN') : undefined,
-            checkOutTime: shiftOut?.client_time ? new Date(shiftOut.client_time).toLocaleTimeString('vi-VN') : undefined,
+            checkInTime: shiftIn?.client_time ? new Date(shiftIn.client_time).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' }) : undefined,
+            checkOutTime: shiftOut?.client_time ? new Date(shiftOut.client_time).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' }) : undefined,
           };
           const shiftStartHour = todayShift?.shift_code === 'CA_1' ? 7 : todayShift?.shift_code === 'CA_2' ? 12 : todayShift?.shift_code === 'CA_3' ? 18 : undefined;
           const shiftStart = todayShift?.start_at ? new Date(todayShift.start_at).getTime() : 0;

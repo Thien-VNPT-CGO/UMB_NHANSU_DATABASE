@@ -7342,7 +7342,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
           if (ci) {
             const inTime = ci.client_time
-              ? new Date(ci.client_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+              ? new Date(ci.client_time).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' })
               : 'Đã check-in';
             const distText = ci.distance_meters !== undefined ? `${ci.distance_meters}m` : '< 300m';
 
@@ -7361,7 +7361,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             }
             if (co) {
               const outTime = co.client_time
-                ? new Date(co.client_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+                ? new Date(co.client_time).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' })
                 : 'Đã check-out';
               return {
                 shift: shiftName,
@@ -8725,14 +8725,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       <strong style={{ fontSize: '13px', color: 'var(--brand)' }}>{getDisplayBranch(modalEmp.branch)}</strong>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                      <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Thời gian check-in:</span>
+                      <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Ngày + giờ check-in:</span>
                       <strong style={{ fontSize: '13px', color: '#10B981' }}>
-                        {modalDayData?.inTime || (modalDayData?.status === 'CHECKED_IN' ? modalDayData?.time : null) || (modalEvent?.client_time ? new Date(modalEvent.client_time).toLocaleTimeString('vi-VN') : 'Chưa ghi nhận')}
+                        {modalDayData?.inTime || (modalDayData?.status === 'CHECKED_IN' ? modalDayData?.time : null) || (modalEvent?.client_time ? new Date(modalEvent.client_time).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' }) : 'Chưa ghi nhận')}
                       </strong>
                     </div>
                     {modalDayData?.outTime && (
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                        <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Thời gian check-out:</span>
+                        <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Ngày + giờ check-out:</span>
                         <strong style={{ fontSize: '13px', color: '#059669' }}>
                           {modalDayData.outTime}
                         </strong>
@@ -9852,7 +9852,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                               {items.map((it: any, ii: number) => {
                                 const timeOf = (t: string) => {
-                                  try { return new Date(t).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }); } catch { return ''; }
+                                  try { return new Date(t).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' }); } catch { return ''; }
                                 };
                                 const inE = it.list.find((e: any) => e.type === 'CHECK_IN');
                                 const outE = it.list.find((e: any) => e.type === 'CHECK_OUT');
