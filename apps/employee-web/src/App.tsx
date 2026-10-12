@@ -1491,13 +1491,9 @@ export function App() {
     const list = getTodayShifts();
     const picked = list.find((s: any) => s.assignment_id === attendShiftId);
     if (picked) return picked;
-    // Ngày 2 ca: ưu tiên ca đã check-in mà chưa check-out (đang chờ tan ca) —
-    // checkout ca 1 không bị kẹt sang giờ ca 2. Lựa chọn tay (dropdown) vẫn ưu tiên nhất.
-    const awaitingOut = list.find((s: any) => {
-      const evts = (myAttendanceHistory || []).filter((e: any) => e.assignment_id === s.assignment_id);
-      return evts.some((e: any) => e.type === 'CHECK_IN') && !evts.some((e: any) => e.type === 'CHECK_OUT');
-    });
-    if (awaitingOut) return awaitingOut;
+    // Ngày 2 ca: check-in ca sau trước, rồi mới checkout ca trước (check-in gắn
+    // giờ vào ca, checkout gắn sau giờ ra ca). Mặc định ca ĐANG diễn ra; muốn
+    // checkout ca trước thì chọn ca đó ở dropdown. Lựa chọn tay vẫn ưu tiên nhất.
     // Chưa chọn ca (ngày 2 ca): mặc định ca ĐANG diễn ra thay vì ca đầu danh
     // sách — tránh CONFIRMED nhầm ca rồi ca đúng vẫn "chưa check-in".
     const now = Date.now();
