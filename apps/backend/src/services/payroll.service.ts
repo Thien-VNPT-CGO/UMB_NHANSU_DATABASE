@@ -6,6 +6,7 @@ import {
   PayslipItem,
   PayslipSignerRole,
   SHIFT_TEMPLATES,
+  STANDARD_HOURLY_RATES,
   DEFAULT_PAYROLL_FORMULA,
 } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
@@ -97,6 +98,42 @@ export function linkDayEvents(
 }
 
 /**
+ * Đơn giá + giai đoạn (TV/CT) của NV tại 1 ngày công.
+ * NV thử việc được HR chuyển chính thức giữa kỳ: ngày trước official_date
+ * tính lương thử việc, từ official_date tính lương chính thức — lương 2 giai
+ * đoạn đầy đủ từ lúc vào thử việc, không sót NV nào.
+ * Ưu tiên lịch sử giai đoạn (đơn giá ghi nhận tại thời điểm), thiếu thì
+ * official_date, cuối cùng là trạng thái hiện tại.
+ */
+export function rateOnDate(
+  emp: any,
+  dayISO: string,
+  hist: any[],
+  tvFallback: number,
+  ctFallback: number
+): { rate: number; stage: 'TV' | 'CT' } {
+  const d = String(dayISO || '').slice(0, 10);
+  const sorted = (hist || [])
+    .filter((h: any) => h && (h as any).effective_from)
+    .sort((a: any, b: any) => String(a.effective_from).localeCompare(String(b.effective_from)));
+  let cur: any = null;
+  for (const h of sorted) {
+    if (String((h as any).effective_from).slice(0, 10) <= d) cur = h;
+    else break;
+  }
+  if (cur) {
+    const st = String((cur as any).stage || '').toUpperCase();
+    const isTV = st === 'PROBATION' || st === 'TV';
+    const r = Number((cur as any).rate_per_hour);
+    return { rate: Number.isFinite(r) && r > 0 ? r : (isTV ? tvFallback : ctFallback), stage: isTV ? 'TV' : 'CT' };
+  }
+  const off = String((emp as any)?.official_date || '').slice(0, 10);
+  if (off && d < off) return { rate: tvFallback, stage: 'TV' };
+  const isProbNow = String((emp as any)?.employment_status || '').toUpperCase() === 'PROBATION';
+  return isProbNow ? { rate: tvFallback, stage: 'TV' } : { rate: ctFallback, stage: 'CT' };
+}
+
+/**
  * Khoảng ngày chuẩn của 1 kỳ lương: ngày 1 -> ngày cuối tháng (28/29/30/31).
  * Dùng chung cho mọi tính toán Finance để kế toán luôn thấy đủ công cả tháng.
  */
@@ -185,12 +222,17 @@ export class PayrollService {
             }
             return eventsByDate.get(date)!;
           };
-          // Use employee rate snapshot (guard thiếu đơn giá -> 0đ thay vì NaN
-          // lan sang standardPay/net_pay/totalAmount thành null sau JSON).
+          // Đơn giá hiện tại (giữ làm rate_snapshot tương thích) + lịch sử giai
+          // đoạn để tính đúng đơn giá từng ngày (NV chuyển TV→CT giữa kỳ).
           const rate = Number((emp as any).current_rate_per_hour) || 0;
+          const hist = await this.repo.getStageHistory(emp.employee_id).catch(() => []);
           let absentShifts = 0;
           let empHours = 0;
           let standardPay = 0;
+          let tvHours = 0;
+          let tvPay = 0;
+          let ctHours = 0;
+          let ctPay = 0;
           let deduction = 0;
           const lateCases: string[] = [];
           for (const s of publishedShifts) {
@@ -203,7 +245,9 @@ export class PayrollService {
             );
             const template = SHIFT_TEMPLATES[s.shift_code];
             const hours = template ? template.duration_hours : 5;
-            const shiftPay = hours * rate;
+            // Đơn giá đúng giai đoạn của ngày công (TV trước official_date).
+            const dayRate = rateOnDate(emp, s.date, hist, STANDARD_HOURLY_RATES.PROBATION, rate);
+            const shiftPay = hours * dayRate.rate;
             if (!inEvt || !hasOut) {
               absentShifts++;
               continue;
@@ -231,6 +275,8 @@ export class PayrollService {
             }
             empHours += hours;
             standardPay += shiftPay;
+            if (dayRate.stage === 'TV') { tvHours += hours; tvPay += shiftPay; }
+            else { ctHours += hours; ctPay += shiftPay; }
             if (deductAmt > 0) {
               deduction += deductAmt;
               lateCases.push(`${s.date} trễ ${lateMin}p: phạt ${deductAmt.toLocaleString('vi-VN')}đ`);
@@ -270,6 +316,10 @@ export class PayrollService {
             standard_hours: empHours,
             rate_snapshot: rate,
             standard_pay: standardPay,
+            tv_hours: tvHours,
+            tv_pay: tvPay,
+            ct_hours: ctHours,
+            ct_pay: ctPay,
             allowance,
             bonus,
             deduction,
@@ -383,8 +433,10 @@ export class PayrollService {
         } catch { archivedByEmpDay = new Map(); }
 
         for (const emp of employees) {
-          const isProb = (emp as any).employment_status === 'PROBATION';
-          const rate = isProb ? formula.rateTV : formula.rateCT;
+          // Đơn giá theo công thức kỳ + giai đoạn đúng của từng ngày công
+          // (NV chuyển TV→CT giữa kỳ: ngày trước official_date tính rateTV).
+          const hist = await this.repo.getStageHistory(emp.employee_id).catch(() => []);
+          const curRate = String((emp as any).employment_status) === 'PROBATION' ? formula.rateTV : formula.rateCT;
           const empShifts = await this.repo.getShiftsForEmployee(emp.employee_id, fromDate, toDate);
           const publishedShifts = empShifts.filter(s => s.status === 'PUBLISHED');
           const eventsByDate = new Map<string, any[]>();
@@ -405,6 +457,10 @@ export class PayrollService {
           let absentShifts = 0;
           let empHours = 0;
           let standardPay = 0;
+          let tvHours = 0;
+          let tvPay = 0;
+          let ctHours = 0;
+          let ctPay = 0;
           let deduction = 0;
           const dayHours = new Map<string, number>();
           for (const s of publishedShifts) {
@@ -417,7 +473,10 @@ export class PayrollService {
             );
             const template = SHIFT_TEMPLATES[s.shift_code];
             const hours = template ? template.duration_hours : 5;
-            const shiftPay = hours * rate;
+            // Giai đoạn đúng của ngày công (lịch sử/official_date), giá trị theo công thức kỳ của Finance.
+            const dayStage = rateOnDate(emp, s.date, hist, formula.rateTV, formula.rateCT).stage;
+            const dayRate = { stage: dayStage, rate: dayStage === 'TV' ? formula.rateTV : formula.rateCT };
+            const shiftPay = hours * dayRate.rate;
             if (!inEvt || !hasOut) {
               absentShifts++;
               continue;
@@ -442,6 +501,8 @@ export class PayrollService {
             }
             empHours += hours;
             standardPay += shiftPay;
+            if (dayRate.stage === 'TV') { tvHours += hours; tvPay += shiftPay; }
+            else { ctHours += hours; ctPay += shiftPay; }
             dayHours.set(s.date, (dayHours.get(s.date) || 0) + hours);
             if (deductAmt > 0) deduction += deductAmt;
           }
@@ -491,8 +552,12 @@ export class PayrollService {
             total_shifts: publishedShifts.length,
             absent_shifts: absentShifts,
             standard_hours: empHours,
-            rate_snapshot: rate,
+            rate_snapshot: curRate,
             standard_pay: standardPay,
+            tv_hours: tvHours,
+            tv_pay: tvPay,
+            ct_hours: ctHours,
+            ct_pay: ctPay,
             allowance: phuCapOT,
             bonus: bonusTotal,
             deduction,
@@ -1153,10 +1218,17 @@ export class PayrollService {
       const empShifts = await this.repo.getShiftsForEmployee(emp.employee_id, fromDate, toDate);
       const published = empShifts.filter(s => s.status === 'PUBLISHED');
       const rate = Number((emp as any).current_rate_per_hour) || 0;
+      const hist = await this.repo.getStageHistory(emp.employee_id).catch(() => []);
       let hours = 0;
       let shifts = 0;
       let absentShifts = 0;
       let standardPay = 0;
+      let tvHours = 0;
+      let tvPay = 0;
+      let tvDed = 0;
+      let ctHours = 0;
+      let ctPay = 0;
+      let ctDed = 0;
       let deduction = 0;
       let bonus = 0;
       for (const s of published) {
@@ -1193,7 +1265,10 @@ export class PayrollService {
         const storedTier = (inEvt as any).fine_tier;
         const storedAmt = Number((inEvt as any).fine_amount) || 0;
         const useStored = !!storedTier && storedTier !== 'NONE';
-        const fine = lateFineFor(lateMin, h * rate);
+        // Đơn giá đúng giai đoạn của ngày công (TV trước official_date).
+        const dayRate = rateOnDate(emp, s.date, hist, STANDARD_HOURLY_RATES.PROBATION, rate);
+        const shiftPay = h * dayRate.rate;
+        const fine = lateFineFor(lateMin, shiftPay);
         const unpaid = useStored ? storedTier === 'FULL_SHIFT' : fine.unpaid;
         if (unpaid) {
           absentShifts++;
@@ -1202,7 +1277,9 @@ export class PayrollService {
         const deductAmt = useStored ? (storedTier === 'FULL_SHIFT' ? 0 : storedAmt) : fine.deduction;
         hours += h;
         shifts++;
-        standardPay += h * rate;
+        standardPay += shiftPay;
+        if (dayRate.stage === 'TV') { tvHours += h; tvPay += shiftPay; tvDed += deductAmt; }
+        else { ctHours += h; ctPay += shiftPay; ctDed += deductAmt; }
         deduction += deductAmt;
       }
       try {
@@ -1219,6 +1296,15 @@ export class PayrollService {
       } catch { /* giữ bonus 0 */ }
       const liveNet = standardPay + bonus - deduction;
       const slip = runSlips.get(emp.employee_id);
+      // Chia lương theo giai đoạn làm việc thực tế (TV/CT), không theo
+      // trạng thái hiện tại — NV chuyển chính thức giữa kỳ vẫn đủ 2 phần.
+      const slipTv = slip ? Number((slip as any).tv_pay) : NaN;
+      const slipCt = slip ? Number((slip as any).ct_pay) : NaN;
+      const hasSlipSplit = slip && Number.isFinite(slipTv) && Number.isFinite(slipCt);
+      const tvSalaryLive = tvPay - tvDed;
+      const ctSalaryLive = ctPay - ctDed;
+      const tvSalary = hasSlipSplit ? slipTv : (slip ? (String((emp as any).employment_status) === 'PROBATION' ? Number((slip as any).net_pay) || 0 : 0) : tvSalaryLive);
+      const ctSalary = hasSlipSplit ? slipCt : (slip ? (String((emp as any).employment_status) === 'PROBATION' ? 0 : Number((slip as any).net_pay) || 0) : ctSalaryLive);
       rows.push({
         employeeId: emp.employee_id,
         employeeCode: (emp as any).employee_code,
@@ -1230,6 +1316,10 @@ export class PayrollService {
         shifts,
         absentShifts,
         hours: Math.round(hours * 10) / 10,
+        tvHours: Math.round(tvHours * 10) / 10,
+        ctHours: Math.round(ctHours * 10) / 10,
+        tvSalary,
+        ctSalary,
         salary: slip ? Number((slip as any).net_pay) || 0 : liveNet,
         salarySource: slip ? 'run' : 'live',
         deduction,
@@ -1238,8 +1328,8 @@ export class PayrollService {
     }
     rows.sort((a, b) => b.hours - a.hours || String(a.fullName).localeCompare(String(b.fullName)));
     const worked = rows.filter(r => r.hours > 0);
-    const sumBy = (stage: string, key: 'hours' | 'salary') =>
-      Math.round(rows.filter(r => r.stage === stage).reduce((s, r) => s + r[key], 0) * 10) / 10;
+    const sumNum = (key: string) =>
+      Math.round(rows.reduce((s, r) => s + (Number(r[key]) || 0), 0) * 10) / 10;
     const totalHours = Math.round(rows.reduce((s, r) => s + r.hours, 0) * 10) / 10;
     const totalSalary = rows.reduce((s, r) => s + r.salary, 0);
     return {
@@ -1249,10 +1339,10 @@ export class PayrollService {
       zeroHourCount: rows.length - worked.length,
       totalHours,
       totalSalary,
-      officialHours: sumBy('OFFICIAL', 'hours'),
-      probationHours: sumBy('PROBATION', 'hours'),
-      officialSalary: sumBy('OFFICIAL', 'salary'),
-      probationSalary: sumBy('PROBATION', 'salary'),
+      officialHours: sumNum('ctHours'),
+      probationHours: sumNum('tvHours'),
+      officialSalary: rows.reduce((s, r) => s + (Number(r.ctSalary) || 0), 0),
+      probationSalary: rows.reduce((s, r) => s + (Number(r.tvSalary) || 0), 0),
       runStatus,
       top: worked[0] || null,
       bottom: worked[worked.length - 1] || null,
@@ -1305,11 +1395,16 @@ export class PayrollService {
         s => (s as any).status === 'PUBLISHED' && String((s as any).date || '').slice(0, 10) >= fromDate && String((s as any).date || '').slice(0, 10) <= toDate
       );
       const rate = Number((emp as any).current_rate_per_hour) || 0;
+      const hist = await this.repo.getStageHistory(empId).catch(() => []);
       let full = 0;
       let partial = 0;
       let absent = 0;
       let hours = 0;
       let standardPay = 0;
+      let tvHours = 0;
+      let tvPay = 0;
+      let ctHours = 0;
+      let ctPay = 0;
       let deduction = 0;
       const details: any[] = [];
       for (const s of published) {
@@ -1343,7 +1438,9 @@ export class PayrollService {
         const hasAbs = mine.some((e: any) => e.type === 'ABSENT');
         const template = (SHIFT_TEMPLATES as any)[(s as any).shift_code];
         const h = template ? Number(template.duration_hours) || 5 : 5;
-        const shiftPay = h * rate;
+        // Đơn giá + giai đoạn đúng của ngày công (TV trước official_date).
+        const dayRate = rateOnDate(emp, date, hist, STANDARD_HOURLY_RATES.PROBATION, rate);
+        const shiftPay = h * dayRate.rate;
         let status: 'DU' | 'THIEU' | 'VANG' = 'THIEU';
         let lateMin = 0;
         let fineTier = 'NONE';
@@ -1372,6 +1469,8 @@ export class PayrollService {
             full++;
             hours += h;
             standardPay += shiftPay;
+            if (dayRate.stage === 'TV') { tvHours += h; tvPay += shiftPay; }
+            else { ctHours += h; ctPay += shiftPay; }
             fineAmt = useStored ? (storedTier === 'FULL_SHIFT' ? 0 : storedAmt) : fine.deduction;
             fineTier = useStored ? storedTier : fine.tier;
             deduction += fineAmt;
@@ -1395,7 +1494,8 @@ export class PayrollService {
           shiftCode: (s as any).shift_code,
           branchId: (s as any).branch_id,
           hours: h,
-          rate,
+          rate: dayRate.rate,
+          stage: dayRate.stage,
           shiftPay,
           status,
           lateMin,
@@ -1433,6 +1533,10 @@ export class PayrollService {
         partial,
         absent,
         hours: Math.round(hours * 10) / 10,
+        tvHours: Math.round(tvHours * 10) / 10,
+        tvPay,
+        ctHours: Math.round(ctHours * 10) / 10,
+        ctPay,
         standardPay,
         deduction,
         bonus,

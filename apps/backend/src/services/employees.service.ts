@@ -336,7 +336,8 @@ export class EmployeesService {
           {
             employment_status: 'OFFICIAL',
             current_rate_per_hour: STANDARD_HOURLY_RATES.OFFICIAL,
-            official_date: new Date().toISOString().split('T')[0],
+            // Ngày VN (UTC+7) để mốc giai đoạn tính lương khớp ngày công thực tế.
+            official_date: todayVn,
           },
           expectedVersion
         );

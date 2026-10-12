@@ -647,6 +647,15 @@ export function attShiftStatus(shift: any, inEvt: any, outEvt: any, absentEvt: a
  * trễ <5p: không phạt; 5–29p: -30k; 30–59p: -50% lương ca; ≥60p hoặc thiếu in/out: 0đ.
  */
 export const SHIFT_HOURS_MAP: Record<string, number> = { CA_1: 5, CA_2: 6, CA_3: 5 };
+/** Đơn giá thử việc chuẩn (đồng bộ STANDARD_HOURLY_RATES.PROBATION của server). */
+export const TV_RATE_VND = 21000;
+/** Đơn giá đúng giai đoạn của ngày công (mirror backend rateOnDate cho hiển thị realtime):
+ *  ngày trước official_date tính lương thử việc, từ official_date tính lương hiện tại. */
+export function rateOnDateOf(emp: any, isoDay: string): number {
+  const off = String(emp?.official_date || '').slice(0, 10);
+  if (off && isoDay < off) return TV_RATE_VND;
+  return Number(emp?.current_rate_per_hour) || 0;
+}
 /** Phút trễ: ưu tiên cờ server, mất cờ (dòng Sheet cũ) thì tính bù từ giờ vào ca. */
 export function lateMinOf(inEvt: any, shiftStartAt?: string): number {
   if (inEvt?.is_late) return Number(inEvt.minutes_deviation) || 0;
@@ -1746,10 +1755,20 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const xlBuildRow = (r: any) => {
     const daysInMonth: number = Number(xlSheet?.daysInMonth) || 31;
     const dayHours: number[] = Array.from({ length: daysInMonth }, () => 0);
+    const shiftStageOf = (s: any) => {
+      const st = String(s?.stage || '').toUpperCase();
+      if (st === 'TV' || st === 'PROBATION') return 'TV';
+      if (st === 'CT' || st === 'OFFICIAL') return 'CT';
+      return String(r?.stage) === 'PROBATION' ? 'TV' : 'CT';
+    };
+    let tvShiftH = 0;
+    let ctShiftH = 0;
     for (const s of (r?.shifts || [])) {
       if (String((s as any)?.status) !== 'DU') continue;
       const d = Number(String((s as any)?.date || '').slice(8, 10));
       if (d >= 1 && d <= daysInMonth) dayHours[d - 1] += Number((s as any)?.hours) || 0;
+      if (shiftStageOf(s) === 'TV') tvShiftH += Number((s as any)?.hours) || 0;
+      else ctShiftH += Number((s as any)?.hours) || 0;
     }
     const AN = dayHours.reduce((s, h) => s + h, 0); // tổng giờ =SUM(I:AM)
     const AO = dayHours.filter(h => h > 0).length; // ngày công =COUNT
@@ -1757,9 +1776,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const AQ = dayHours.filter(h => h >= xlFormula.otThreshold1).length // COUNTIFS(>=T1)
       + dayHours.filter(h => h >= xlFormula.otThreshold2).length; // +COUNTIFS(>=T2)
     const AR = AP + AQ; // tổng ca
-    const isProb = String(r?.stage) === 'PROBATION';
-    const AS = isProb ? AN : 0; // giờ TV 21K
-    const AT = isProb ? 0 : AN; // giờ CT
+    const AS = tvShiftH; // giờ TV (chia theo giai đoạn từng ca: trước official_date)
+    const AT = ctShiftH; // giờ CT
     const AU = AS * xlFormula.rateTV + AT * xlFormula.rateCT; // TỔNG LƯƠNG (BCC)
     const AV = AQ * xlFormula.otPerSlot; // PHỤ CẤP
     const inp = (payInputs || {})[r.employeeId] || {};
@@ -1797,10 +1815,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       otThreshold1: Number(formula?.otThreshold1 ?? 10),
       otThreshold2: Number(formula?.otThreshold2 ?? 15),
     };
+    const tvH = Number((row as any)?.tv_hours ?? (row as any)?.tvHours) || 0;
+    const ctH = Number((row as any)?.ct_hours ?? (row as any)?.ctHours) || 0;
+    const tvP = Number((row as any)?.tv_pay ?? (row as any)?.tvPay) || 0;
+    const ctP = Number((row as any)?.ct_pay ?? (row as any)?.ctPay) || 0;
+    const hasSplit = tvH + ctH + tvP + ctP > 0;
     const isProb = String(row?.stage || '') === 'PROBATION';
-    const rate = isProb ? f.rateTV : f.rateCT;
-    const hours = Number(row?.hours) || 0;
-    const standardPay = Number(row?.standardPay ?? hours * rate) || 0;
+    const rate = hasSplit ? 0 : (isProb ? f.rateTV : f.rateCT);
+    const hours = hasSplit ? tvH + ctH : (Number(row?.hours) || 0);
+    const standardPay = hasSplit ? tvP + ctP : (Number(row?.standardPay ?? hours * rate) || 0);
     // Suất OT theo ngày từ chi tiết ca realtime (mirror backend calculateFormulaPayroll).
     const dayHours = new Map<string, number>();
     for (const s of (row?.shifts || [])) {
@@ -1831,7 +1854,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       luongCB, otExtra, bonusSys, bonusExtra, bonusTotal, ung, kpi, dp, deduction,
       tongCong, tongLuong, thucLanh, vnd,
       steps: [
-        { k: 'B1', label: `Lương giờ = ${hours} giờ đủ công × ${vnd(rate).replace('đ', '')}/h (${isProb ? 'thử việc' : 'chính thức'})`, value: standardPay },
+        { k: 'B1', label: hasSplit ? `Lương giờ = TV ${tvH} giờ × ${vnd(f.rateTV).replace('đ', '')}/h + CT ${ctH} giờ × ${vnd(f.rateCT).replace('đ', '')}/h` : `Lương giờ = ${hours} giờ đủ công × ${vnd(rate).replace('đ', '')}/h (${isProb ? 'thử việc' : 'chính thức'})`, value: standardPay },
         { k: 'B2', label: `Phụ cấp OT = ${otSlots} suất × ${vnd(f.otPerSlot).replace('đ', '')} (ngày ≥${f.otThreshold1}h = 1 suất, ≥${f.otThreshold2}h = 2 suất)`, value: phuCapOT },
         { k: 'B3', label: `TỔNG CỘNG = LCB ${vnd(luongCB)} + PC-OT ${vnd(phuCapOT)} + giờ ${vnd(standardPay)} + OT thêm ${vnd(otExtra)} + Bonus ${vnd(bonusTotal)}`, value: tongCong },
         { k: 'B4', label: `TỔNG LƯƠNG = TỔNG CỘNG ${vnd(tongCong)} − KPI ${vnd(kpi)} − phạt trễ/vắng ${vnd(deduction)}`, value: tongLuong },
@@ -9756,8 +9779,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 const thumb = (e: any) => e?.drive_object_id && !String(e.drive_object_id).startsWith('DRV_')
                                   ? <AttPhoto eventId={e.event_id} style={{ width: '40px', height: '40px' }} />
                                   : null;
-                                // Lương ca + phạt (tạm tính theo đơn giá hồ sơ; Finance chốt ở kỳ lương)
-                                const empRate = Number((emp as any)?.current_rate_per_hour) || 0;
+                                // Lương ca + phạt (tạm tính theo đơn giá đúng giai đoạn của ngày công; Finance chốt ở kỳ lương)
+                                const empRate = rateOnDateOf(emp, day.iso);
                                 const pay = shiftPayInfo(it.shift?.shift_code, empRate, inE, outE, it.shift?.start_at);
                                 const fmtVnd = (n: number) => `${Math.round(n).toLocaleString('vi-VN')}đ`;
                                 // Đổi/nhường ca liên quan ca này (nếu có) — phiếu mới nhất còn hiệu lực

@@ -42,6 +42,14 @@ export interface PayslipItem {
     standard_hours: number;
     rate_snapshot: number;
     standard_pay: number;
+    /** Giờ công giai đoạn thử việc trong kỳ (NV chuyển chính thức giữa kỳ). */
+    tv_hours?: number;
+    /** Lương giờ giai đoạn thử việc trong kỳ. */
+    tv_pay?: number;
+    /** Giờ công giai đoạn chính thức trong kỳ. */
+    ct_hours?: number;
+    /** Lương giờ giai đoạn chính thức trong kỳ. */
+    ct_pay?: number;
     allowance: number;
     bonus: number;
     deduction: number;
