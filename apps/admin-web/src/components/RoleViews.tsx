@@ -1898,8 +1898,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   };
   // Xuất ZIP chứng cứ điểm danh theo ngày
   const [exportAttDate, setExportAttDate] = useState(() => new Date().toISOString().split('T')[0]);
-  const [exportAttBusy, setExportAttBusy] = useState(false);
-  const [exportWeekBusy, setExportWeekBusy] = useState(false);
   // Đối soát check-in/out theo NV+ngày (phiếu mồ côi, ca nháp đã điểm danh,
   // vắng oan, thiếu chân) trước khi chốt lương.
   const [reconOpen, setReconOpen] = useState(false);
@@ -2156,30 +2154,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Kết quả rà soát GPS mới nhất (hiện ngay trong tab)
   const [gpsReverify, setGpsReverify] = useState<any>(null);
   const [gpsReverifyBusy, setGpsReverifyBusy] = useState(false);
-  const [photoStats, setPhotoStats] = useState<any>(null);
-  const loadPhotoStats = async (date: string) => {
-    try {
-      const s = await apiRequest(`/admin/attendance/photo-stats?date=${date}`);
-      setPhotoStats(s);
-    } catch {
-      setPhotoStats(null);
-    }
-  };
-  // Tuần T2–CN đang theo dõi (bảng realtime reset khi sang tuần mới, 23h30 CN tự lưu trữ)
-  const attWeek = (() => {
-    const now = new Date();
-    const dowMon0 = (now.getDay() + 6) % 7;
-    const mon = new Date(now);
-    mon.setDate(now.getDate() - dowMon0);
-    const sun = new Date(mon);
-    sun.setDate(mon.getDate() + 6);
-    const fmt = (x: Date) => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
-    const fmtD = (s: string) => `${s.slice(8, 10)}-${s.slice(5, 7)}-${s.slice(0, 4)}`;
-    const monS = fmt(mon);
-    const sunS = fmt(sun);
-    const isSunday = now.getDay() === 0;
-    return { mon: monS, sun: sunS, label: `${fmtD(monS)} → ${fmtD(sunS)}`, isSunday };
-  })();
   // Đề random từ ngân hàng câu hỏi (Google Sheet ngoài): tick NV + gửi 1 lần.
   const [bankInfo, setBankInfo] = useState<any | null>(null);
   const [bankLoading, setBankLoading] = useState(false);
@@ -2887,9 +2861,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           if (r && typeof r.catch === 'function') r.catch(() => null);
         } catch { /* bỏ qua */ }
       }
-    }
-    if (activeTab === 'hr-attendance' || activeTab === 'operations') {
-      loadPhotoStats(exportAttDate);
     }
   }, [activeTab]);
 
@@ -9562,96 +9533,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
               Giám sát check-in, check-out, hình ảnh áo hồng + bảng tên, tọa độ GPS vệ tinh (100% Realtime)
             </p>
-            <div style={{ marginTop: '8px', backgroundColor: attWeek.isSunday ? '#FFFBEB' : '#EFF6FF', border: attWeek.isSunday ? '1.5px solid #F59E0B' : '1px solid #BFDBFE', borderRadius: 'var(--radius-md)', padding: '10px 14px', fontSize: '12px', color: attWeek.isSunday ? '#92400E' : '#1E40AF' }}>
-              📅 Dữ liệu tuần <strong>{attWeek.label}</strong> (T2 → CN).
-              {attWeek.isSunday
-                ? <> <strong>Bắt buộc tải ZIP tuần trước 23h30 tối nay!</strong> 23h30 hệ thống tự lưu trữ lên Drive + reset bảng sang tuần mới.</>
-                : <> 23h30 Chủ nhật hệ thống tự lưu trữ + reset sang tuần mới — HR nên tải ZIP tuần trước đó.</>}
-              <button
-                className="btn-primary"
-                style={{ fontSize: '12px', marginLeft: '10px', padding: '6px 12px', backgroundColor: '#7C3AED' }}
-                disabled={exportWeekBusy}
-                onClick={async () => {
-                  setExportWeekBusy(true);
-                  try {
-                    const res = await fetch(`${getApiBase()}/admin/attendance/export-week?weekMon=${attWeek.mon}`, {
-                      headers: { Authorization: `Bearer ${getAuthToken()}` },
-                    });
-                    if (!res.ok) {
-                      const err = await res.json().catch(() => ({}));
-                      throw new Error((err as any)?.message || 'Tải thất bại');
-                    }
-                    const blob = await res.blob();
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `diem-danh-tuan-${attWeek.mon}.zip`;
-                    document.body.appendChild(a);
-                    a.click();
-                    a.remove();
-                    setTimeout(() => URL.revokeObjectURL(url), 5000);
-                    showToast(`Đã tải ZIP tuần ${attWeek.label} (chỉ ảnh check in/out)!`);
-                  } catch (e: any) {
-                    showToast(e?.message || 'Lỗi khi tải ZIP tuần!');
-                  } finally {
-                    setExportWeekBusy(false);
-                  }
-                }}
-              >
-                {exportWeekBusy ? 'Đang gói...' : '⬇ Tải ZIP tuần này'}
-              </button>
-            </div>
           </div>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-            {photoStats && (
-              <span
-                className="badge"
-                title={photoStats.uploadFailed > 0 ? `Upload Drive lỗi: ${photoStats.drive?.lastError || 'không rõ'} (thử lại tự động 3 lần/lượt)` : photoStats.neverUploaded > 0 ? (photoStats.adapterPhoto ? `Server nhận ${photoStats.adapterPhoto.withPhoto} lượt CÓ ảnh, ${photoStats.adapterPhoto.withoutPhoto} lượt KHÔNG gửi ảnh (lượt ${photoStats.adapterPhoto.lastMissingEvent || '?'} lúc ${photoStats.adapterPhoto.lastMissingAt || '?'}) → app NV chưa gửi ảnh, yêu cầu NV tải lại trang/Cập nhật` : 'Lượt chấm công từ trước bản pipeline ảnh hoặc app chưa cập nhật') : 'Đủ ảnh'}
-                style={{
-                  backgroundColor: photoStats.withPhoto === photoStats.total && photoStats.total > 0 ? '#DCFCE7' : '#FEF3C7',
-                  color: photoStats.withPhoto === photoStats.total && photoStats.total > 0 ? '#166534' : '#92400E',
-                  fontWeight: 800,
-                }}
-              >
-                📸 {photoStats.withPhoto}/{photoStats.total} có ảnh
-                {photoStats.uploadFailed > 0 ? ` • ${photoStats.uploadFailed} lỗi upload` : ''}
-                {photoStats.neverUploaded > 0 ? ` • ${photoStats.neverUploaded} chưa upload` : ''}
-              </span>
-            )}
-            <button
-              className="btn-primary"
-              style={{ fontSize: '12px', backgroundColor: '#059669' }}
-              disabled={exportAttBusy}
-              onClick={async () => {
-                if (!exportAttDate) { showToast('Chọn ngày cần tải!'); return; }
-                setExportAttBusy(true);
-                try {
-                  const res = await fetch(`${getApiBase()}/admin/attendance/export?date=${exportAttDate}`, {
-                    headers: { Authorization: `Bearer ${getAuthToken()}` },
-                  });
-                    if (!res.ok) {
-                      const err = await res.json().catch(() => ({}));
-                      throw new Error((err as any)?.message || 'Tải thất bại');
-                    }
-                    const blob = await res.blob();
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `diem-danh-${exportAttDate}.zip`;
-                    document.body.appendChild(a);
-                    a.click();
-                    a.remove();
-                    setTimeout(() => URL.revokeObjectURL(url), 5000);
-                    showToast(`Đã tải ZIP điểm danh ngày ${exportAttDate} (chỉ ảnh check in/out theo CN/ca/tên NV)!`);
-                  } catch (e: any) {
-                    showToast(e?.message || 'Lỗi khi tải gói điểm danh!');
-                  } finally {
-                    setExportAttBusy(false);
-                  }
-              }}
-            >
-              {exportAttBusy ? 'Đang gói...' : '⬇ Tải ZIP theo ngày'}
-            </button>
             <button
               className="btn-primary"
               style={{ fontSize: '12px', backgroundColor: '#DC2626' }}
