@@ -1052,6 +1052,15 @@ export function App() {
               window.dispatchEvent(new CustomEvent('ubm:candidates-reload'));
             } catch { /* non-fatal */ }
           }
+          // Realtime hồ sơ NV: NV tự cập nhật / HR sửa là tab Hồ Sơ NV hiện ngay.
+          if (payload?.entity === 'employees' || payload?.entity === 'all') {
+            if (['ADMIN', 'HR', 'STORE', 'FINANCE'].includes(currentUser?.role || '')) {
+              apiRequest('/employees').then(emps => setAllEmployees(Array.isArray(emps) ? emps : [])).catch(() => null);
+            }
+            try {
+              window.dispatchEvent(new CustomEvent('ubm:employees-reload'));
+            } catch { /* non-fatal */ }
+          }
           // Realtime nháp lịch mời PV: HR set giờ ở tab/máy nào thì các tab/máy
           // của cùng HR đó cập nhật form ngay (reload không mất giờ đã setup).
           if (payload?.entity === 'interview-draft') {

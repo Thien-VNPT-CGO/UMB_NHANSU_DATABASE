@@ -68,6 +68,7 @@ import {
   supportCreateBody,
   employeeCreateBody,
   employeeUpdateBody,
+  employeeSelfUpdateBody,
   candidateRejectBody,
   candidateScoreBody,
   candidateUpdateBody,
@@ -506,6 +507,39 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     } catch (err: any) {
       const status = err.message === 'WEAK_PIN' || err.message === 'SAME_PIN' ? 400 : 401;
       res.status(status).json({ error: err.message });
+    }
+  });
+
+  // Nhân viên tự cập nhật hồ sơ của chính mình (whitelist chặt: email, giới
+  // tính, ngày sinh, CCCD, ngân hàng — realtime về tab Hồ Sơ NV cho HR).
+  app.put('/me/profile', authMiddleware, validate({ body: employeeSelfUpdateBody }), async (req: AuthenticatedRequest, res: any) => {
+    try {
+      if (req.user?.role !== 'EMPLOYEE' || !req.user.employeeId) {
+        return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
+      }
+      const b: any = req.body || {};
+      const gender = b.gender !== undefined ? String(b.gender).trim().toUpperCase() : undefined;
+      if (gender !== undefined && gender !== '' && !['NAM', 'NU', 'KHAC'].includes(gender)) {
+        return res.status(400).json({ error: 'INVALID_GENDER: giới tính phải là NAM, NU hoặc KHAC.' });
+      }
+      const result: any = await employeesService.updateEmployee(
+        req.user.employeeId,
+        {
+          email: b.email,
+          gender: (gender || undefined) as any,
+          birthDate: b.birthDate ?? b.birth_date,
+          idCardNumber: b.idCardNumber ?? b.id_card_number,
+          bankName: b.bankName ?? b.bank_name,
+          bankAccount: b.bankAccount ?? b.bank_account,
+          bankHolder: b.bankHolder ?? b.bank_holder,
+        },
+        req.user.id
+      );
+      broadcastUpdate('employees', { action: 'self-update', employeeId: req.user.employeeId, employee: result });
+      const { avatar_photo: _drop, ...rest } = result || {};
+      res.json({ success: true, employee: rest });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
     }
   });
 

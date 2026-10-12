@@ -77,6 +77,22 @@ export const employeeUpdateBody = z
   })
   .passthrough();
 
+// NV tự cập nhật hồ sơ của chính mình (whitelist chặt — KHÔNG passthrough).
+export const employeeSelfUpdateBody = z.object({
+  email: looseOptString(100),
+  gender: looseOptString(10),
+  birthDate: looseOptString(64),
+  birth_date: looseOptString(64),
+  idCardNumber: looseOptString(32),
+  id_card_number: looseOptString(32),
+  bankName: looseOptString(100),
+  bank_name: looseOptString(100),
+  bankAccount: looseOptString(64),
+  bank_account: looseOptString(64),
+  bankHolder: looseOptString(100),
+  bank_holder: looseOptString(100),
+});
+
 // --- Recruitment ---
 export const candidateImportBody = z
   .object({

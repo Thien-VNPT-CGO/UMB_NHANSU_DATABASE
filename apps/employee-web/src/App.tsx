@@ -28,6 +28,7 @@ import {
   ChevronRight,
   CalendarDays,
   Check,
+  User,
   Briefcase,
   Palmtree,
   Filter,
@@ -41,6 +42,17 @@ interface EmployeeProfile {
   employment_status: 'PRE_ONBOARDING' | 'PROBATION' | 'OFFICIAL' | 'TERMINATED';
   current_rate_per_hour: number;
   default_branch_id: string;
+  email?: string;
+  gender?: string;
+  birth_date?: string;
+  id_card_number?: string;
+  bank_name?: string;
+  bank_account?: string;
+  bank_holder?: string;
+  start_date?: string;
+  official_date?: string;
+  default_shift_code?: string;
+  group?: string;
 }
 
 /** Ảnh bằng chứng phiếu bổ sung công của tôi: tải blob kèm token rồi hiện (thẻ <img> không gửi được Authorization). */
@@ -521,6 +533,49 @@ export function App() {
   const [targetShifts, setTargetShifts] = useState<any[]>([]);
   const [targetShiftsLoading, setTargetShiftsLoading] = useState(false);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
+  // Ho So ca nhan: NV tu cap nhat (realtime ve tab Ho So NV cho HR).
+  const [profForm, setProfForm] = useState({ email: '', gender: '', birth_date: '', id_card_number: '', bank_name: '', bank_account: '', bank_holder: '' });
+  const [profBusy, setProfBusy] = useState(false);
+  useEffect(() => {
+    if (!employee?.employee_id) return;
+    setProfForm({
+      email: (employee as any)?.email || '',
+      gender: (employee as any)?.gender || '',
+      birth_date: String((employee as any)?.birth_date || '').slice(0, 10),
+      id_card_number: (employee as any)?.id_card_number || '',
+      bank_name: (employee as any)?.bank_name || '',
+      bank_account: (employee as any)?.bank_account || '',
+      bank_holder: (employee as any)?.bank_holder || '',
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [employee?.employee_id]);
+  const handleSaveProfile = async () => {
+    if (profBusy) return;
+    setProfBusy(true);
+    try {
+      const res: any = await apiRequest('/me/profile', {
+        method: 'PUT',
+        body: JSON.stringify({
+          email: profForm.email.trim(),
+          gender: profForm.gender,
+          birth_date: profForm.birth_date,
+          id_card_number: profForm.id_card_number.trim(),
+          bank_name: profForm.bank_name.trim(),
+          bank_account: profForm.bank_account.trim(),
+          bank_holder: profForm.bank_holder.trim(),
+        }),
+      });
+      if (res?.employee) {
+        setEmployee(res.employee);
+        try { localStorage.setItem('ubm_emp_data', JSON.stringify(res.employee)); } catch {}
+      }
+      showToast('Đã cập nhật hồ sơ! HR thấy ngay ở tab Hồ Sơ Nhân Viên.');
+    } catch (err: any) {
+      showToast(err?.message || 'Lỗi khi cập nhật hồ sơ!');
+    } finally {
+      setProfBusy(false);
+    }
+  };
   // Guard đồng bộ chống bấm đúp gửi 2 phiếu đổi ca (setState async không kịp
   // disable nút khi 2 click cùng tick / double-tap mobile -> 2 POST trùng nội dung).
   const swapBusyRef = useRef(false);
@@ -1217,6 +1272,15 @@ export function App() {
       });
       socket.on('data:updated', (p: any) => {
         reload(p?.entity);
+        // Ho so thay doi (toi sua o may khac / HR sua) -> tai lai ho so cua toi.
+        if (!p?.entity || p.entity === 'employees' || p.entity === 'all') {
+          apiRequest('/me').then((me: any) => {
+            if (me?.employee) {
+              setEmployee(me.employee);
+              try { localStorage.setItem('ubm_emp_data', JSON.stringify(me.employee)); } catch {}
+            }
+          }).catch(() => null);
+        }
         // Lịch publish/thay đổi → tải lại dải ngày tab Lịch (kể cả tuần sau).
         if (!p?.entity || p.entity === 'schedules' || p.entity === 'all') setSchedRefresh(k => k + 1);
         // Admin bật/tắt bảo trì -> cập nhật màn khóa cổng ngay (kể cả đang đăng nhập).
@@ -2345,6 +2409,7 @@ export function App() {
     { id: 'adjustment', label: '7. Bổ sung công', icon: FileText },
     { id: 'test_exam', label: '8. Thi TEST', icon: Award },
     { id: 'notifs_salary', label: '9. Thông báo & Lương', icon: Bell },
+    { id: 'profile', label: '10. Hồ Sơ', icon: User },
   ];
 
   const officialTabs = [
@@ -2357,6 +2422,7 @@ export function App() {
     { id: 'emergency_adjust', label: '7. Nghỉ khẩn & Bổ sung công', icon: AlertTriangle },
     { id: 'test_training', label: '8. TEST / Đào tạo', icon: Award },
     { id: 'notifs_salary', label: '9. Thông báo & Lương', icon: Bell },
+    { id: 'profile', label: '10. Hồ Sơ', icon: User },
   ];
 
   const currentTabs = isProbation ? probationTabs : officialTabs;
@@ -5889,6 +5955,58 @@ export function App() {
           </div>
         )}
 
+        {activeTab === 'profile' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div className="card">
+              <h3 style={{ fontSize: '16px', fontWeight: 800, marginBottom: '4px' }}>10. Hồ Sơ Nhân Viên Của Tôi</h3>
+              <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>Thông tin HR quản lý (chỉ xem) + thông tin bạn được tự cập nhật (lưu là HR thấy ngay ở tab Hồ Sơ Nhân Viên).</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '14px', fontSize: '12px' }}>
+                <div style={{ backgroundColor: '#FAFAFA', borderRadius: '8px', padding: '8px 10px' }}><div style={{ color: 'var(--text-muted)' }}>Họ tên</div><strong>{employee?.full_name || '—'}</strong></div>
+                <div style={{ backgroundColor: '#FAFAFA', borderRadius: '8px', padding: '8px 10px' }}><div style={{ color: 'var(--text-muted)' }}>Mã NV</div><strong>{(employee as any)?.employee_code || '—'}</strong></div>
+                <div style={{ backgroundColor: '#FAFAFA', borderRadius: '8px', padding: '8px 10px' }}><div style={{ color: 'var(--text-muted)' }}>SĐT (tài khoản)</div><strong>{(employee as any)?.phone_normalized || '—'}</strong></div>
+                <div style={{ backgroundColor: '#FAFAFA', borderRadius: '8px', padding: '8px 10px' }}><div style={{ color: 'var(--text-muted)' }}>Chi nhánh</div><strong>{employee?.default_branch_id || '—'}</strong></div>
+                <div style={{ backgroundColor: '#FAFAFA', borderRadius: '8px', padding: '8px 10px' }}><div style={{ color: 'var(--text-muted)' }}>Trạng thái</div><strong>{isProbation ? 'Thử việc' : 'Chính thức'}</strong></div>
+                <div style={{ backgroundColor: '#FAFAFA', borderRadius: '8px', padding: '8px 10px' }}><div style={{ color: 'var(--text-muted)' }}>Đơn giá</div><strong>{Number(employee?.current_rate_per_hour || 0).toLocaleString('vi-VN')} đ/h</strong></div>
+                <div style={{ backgroundColor: '#FAFAFA', borderRadius: '8px', padding: '8px 10px' }}><div style={{ color: 'var(--text-muted)' }}>Ngày vào làm</div><strong>{String((employee as any)?.start_date || '').slice(0, 10) || '—'}</strong></div>
+                <div style={{ backgroundColor: '#FAFAFA', borderRadius: '8px', padding: '8px 10px' }}><div style={{ color: 'var(--text-muted)' }}>Ngày chính thức</div><strong>{String((employee as any)?.official_date || '').slice(0, 10) || '—'}</strong></div>
+              </div>
+              <h4 style={{ fontSize: '14px', fontWeight: 800, marginBottom: '10px' }}>Tự cập nhật thông tin</h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Email</label>
+                  <input type="email" value={profForm.email} onChange={(e) => setProfForm((s) => ({ ...s, email: e.target.value }))} placeholder="VD: ban@gmail.com" style={{ width: '100%', padding: '9px 10px', fontSize: '13px', borderRadius: '8px', border: '1px solid var(--border)' }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Giới tính</label>
+                  <select value={profForm.gender} onChange={(e) => setProfForm((s) => ({ ...s, gender: e.target.value }))} style={{ width: '100%', padding: '9px 10px', fontSize: '13px', borderRadius: '8px', border: '1px solid var(--border)' }}><option value="">— Chọn —</option><option value="NAM">Nam</option><option value="NU">Nữ</option><option value="KHAC">Khác</option></select>
+                </div>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Ngày sinh</label>
+                  <input type="date" value={profForm.birth_date} onChange={(e) => setProfForm((s) => ({ ...s, birth_date: e.target.value }))} placeholder="" style={{ width: '100%', padding: '9px 10px', fontSize: '13px', borderRadius: '8px', border: '1px solid var(--border)' }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>CCCD</label>
+                  <input type="text" value={profForm.id_card_number} onChange={(e) => setProfForm((s) => ({ ...s, id_card_number: e.target.value }))} placeholder="VD: 079..." style={{ width: '100%', padding: '9px 10px', fontSize: '13px', borderRadius: '8px', border: '1px solid var(--border)' }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Ngân hàng</label>
+                  <input type="text" value={profForm.bank_name} onChange={(e) => setProfForm((s) => ({ ...s, bank_name: e.target.value }))} placeholder="VD: Vietcombank" style={{ width: '100%', padding: '9px 10px', fontSize: '13px', borderRadius: '8px', border: '1px solid var(--border)' }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Số tài khoản</label>
+                  <input type="text" value={profForm.bank_account} onChange={(e) => setProfForm((s) => ({ ...s, bank_account: e.target.value }))} placeholder="VD: 007100..." style={{ width: '100%', padding: '9px 10px', fontSize: '13px', borderRadius: '8px', border: '1px solid var(--border)' }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Chủ tài khoản</label>
+                  <input type="text" value={profForm.bank_holder} onChange={(e) => setProfForm((s) => ({ ...s, bank_holder: e.target.value }))} placeholder="VD: NGUYEN VAN A" style={{ width: '100%', padding: '9px 10px', fontSize: '13px', borderRadius: '8px', border: '1px solid var(--border)' }} />
+                </div>
+                <button className="btn-primary" disabled={profBusy} onClick={handleSaveProfile} style={{ width: '100%', padding: '11px', fontSize: '14px', fontWeight: 800 }}>
+                  {profBusy ? 'Đang lưu...' : 'Lưu Hồ Sơ'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
       {updateReady && <UpdateBanner />}
     </div>

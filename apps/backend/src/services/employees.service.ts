@@ -501,6 +501,9 @@ export class EmployeesService {
       gender?: 'NAM' | 'NU' | 'KHAC';
       birthDate?: string;
       idCardNumber?: string;
+      bankName?: string;
+      bankAccount?: string;
+      bankHolder?: string;
       /** Ảnh avatar base64 (transient) — adapter upload Drive thành avatar_drive_id rồi bỏ. Chuỗi rỗng = xóa avatar. */
       avatarBase64?: string;
       expectedVersion?: number;
@@ -552,6 +555,9 @@ export class EmployeesService {
     if (updates.gender !== undefined) patch.gender = updates.gender;
     if (updates.birthDate !== undefined && updates.birthDate) patch.birth_date = String(updates.birthDate);
     if (updates.idCardNumber !== undefined) patch.id_card_number = String(updates.idCardNumber).trim() || undefined;
+    if (updates.bankName !== undefined) patch.bank_name = String(updates.bankName).trim().slice(0, 100) || undefined;
+    if (updates.bankAccount !== undefined) patch.bank_account = String(updates.bankAccount).trim().slice(0, 64) || undefined;
+    if (updates.bankHolder !== undefined) patch.bank_holder = String(updates.bankHolder).trim().slice(0, 100) || undefined;
     // Avatar: chuỗi rỗng = HR xóa avatar; có ảnh = adapter upload Drive rồi bỏ base64.
     if (updates.avatarBase64 !== undefined) {
       if (String(updates.avatarBase64).trim() === '') {
