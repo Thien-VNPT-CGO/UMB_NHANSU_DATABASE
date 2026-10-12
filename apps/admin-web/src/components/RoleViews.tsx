@@ -2957,6 +2957,31 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     return base.filter((s: any) => !lockedEmpIds.has(String(s.employee_id || '')));
   })();
   const schedAllEvents = mergeWithArchive(liveAttendanceEvents, archiveEvents);
+  // Thu nhập tạm tính realtime theo điểm danh hằng ngày (mục Lương & Thu nhập trong Hồ Sơ).
+  const [profIncome, setProfIncome] = useState<any>(null);
+  const [profIncomeBusy, setProfIncomeBusy] = useState(false);
+  const profIncomeSeq = useRef(0);
+  const profIncomeEmpRef = useRef<string>('');
+  const loadProfIncome = async (empId: string) => {
+    if (!empId) { setProfIncome(null); return; }
+    const seq = ++profIncomeSeq.current;
+    setProfIncomeBusy(true);
+    try {
+      const r: any = await apiRequest(`/payroll/profile-income/${empId}`);
+      if (profIncomeSeq.current === seq) setProfIncome(r || null);
+    } catch {
+      if (profIncomeSeq.current === seq) setProfIncome(null);
+    } finally {
+      if (profIncomeSeq.current === seq) setProfIncomeBusy(false);
+    }
+  };
+  useEffect(() => {
+    if (activeTab !== 'hr-profile') return;
+    const id = profIncomeEmpRef.current;
+    if (!id) { setProfIncome(null); return; }
+    loadProfIncome(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, profileEmpId, liveAttendanceEvents, (schedAllShifts || []).length]);
   // Lưới tuần cần sự kiện cả tuần -> luôn tải không lọc ngày, tự refresh 30s
   const reloadAttEvents = async () => {
     try {
@@ -13207,6 +13232,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     );
     const profEmp = (allEmployees || []).find((e: any) => e.employee_id === profileEmpId)
       || saleFirst.find((e: any) => e.group === 'SALE') || saleFirst[0] || null;
+    profIncomeEmpRef.current = profEmp?.employee_id || '';
     // Hiệu suất chấm công THẬT từ sự kiện điểm danh + lịch đã tải
     const empEvts = (liveAttendanceEvents || []).filter((e: any) => e.employee_id === profEmp?.employee_id);
     const empIns = empEvts.filter((e: any) => e.type === 'CHECK_IN');
@@ -13534,6 +13560,20 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                     <span>Lương tháng tạm tính (8h × 26 công)</span>
                     <strong>{vnd((profEmp.current_rate_per_hour || 0) * 8 * 26)}/tháng</strong>
+                  </div>
+                  <div style={{ borderTop: '1px dashed var(--border)', paddingTop: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><span style={{ fontWeight: 800 }}>Thu nhập tạm tính (realtime điểm danh)</span><span className="badge" style={{ backgroundColor: '#DCFCE7', color: '#065F46', fontWeight: 800 }}>● Realtime</span></div>
+                    {profIncome ? (<>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Tháng {profIncome.period ? profIncome.period.slice(5, 7) : ''} — ca hoàn thành</span><strong>{profIncome.shiftsDone}/{profIncome.shiftsTotal} (vắng {profIncome.absent})</strong></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Giờ công</span><strong>{profIncome.hours}h (TV {profIncome.tvHours}h + CT {profIncome.ctHours}h)</strong></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Lương giờ</span><strong>{vnd(profIncome.gross)} (TV {vnd(profIncome.tvPay)} + CT {vnd(profIncome.ctPay)})</strong></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Phạt trễ/vắng</span><strong>−{vnd(profIncome.fines)}</strong></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Phụ cấp nhường ca</span><strong>+{vnd(profIncome.bonus)}</strong></div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', backgroundColor: '#ECFDF5', borderRadius: '6px', padding: '6px 10px' }}><span style={{ fontWeight: 800, color: '#065F46' }}>Thực nhận ước tính</span><strong style={{ color: '#065F46' }}>{vnd(profIncome.net)}</strong></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Hôm nay</span><strong>{profIncome.today.done}/{profIncome.today.shifts} ca • {profIncome.today.hours}h • {vnd(profIncome.today.pay)}</strong></div>
+                    </>) : (
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{profIncomeBusy ? 'Đang tải thu nhập realtime...' : 'Chưa tải được thu nhập (mất mạng?) — bấm tab khác rồi quay lại.'}</div>
+                    )}
                   </div>
                   <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Số chính thức theo phiếu lương Finance (tab lương). Chưa có chính sách phụ cấp/hoa hồng sales trên hệ thống.</div>
                 </div>

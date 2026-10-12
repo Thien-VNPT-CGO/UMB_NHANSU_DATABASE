@@ -3597,6 +3597,17 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Ho So NV: thu nhap tam tinh realtime cua 1 NV theo diem danh hang ngay.
+  app.get('/payroll/profile-income/:employeeId', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res: any) => {
+    try {
+      const period = String((req.query as any)?.period || '');
+      res.json(await payrollService.profileIncome(req.params.employeeId, period || undefined));
+    } catch (err: any) {
+      const status = String(err.message || '').startsWith('EMPLOYEE_NOT_FOUND') ? 404 : 400;
+      res.status(status).json({ error: err.message });
+    }
+  });
+
   // Finance: bảng chấm công cả tháng (ngày 1 -> cuối tháng) + lương ca từng NV
   // để kế toán tính lương. Không phụ thuộc tab lịch tuần (chỉ có ca tương lai).
   app.get('/admin/reports/finance-timesheet', authMiddleware, requireRole(['ADMIN', 'FINANCE', 'HR', 'STORE']), async (req: AuthenticatedRequest, res) => {

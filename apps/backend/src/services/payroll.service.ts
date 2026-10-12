@@ -1171,6 +1171,154 @@ export class PayrollService {
    *    phụ cấp điều phối).
    * Trả về tổng giờ/lương (chung + tách từng diện), NV nhiều/ít giờ nhất + chi tiết.
    */
+  /**
+   * Thu nhập tạm tính realtime cho 1 NV (mục Lương & Thu nhập trong Hồ Sơ):
+   * duyệt ca PUBLISHED trong tháng, khớp check-in/out (kể cả kho archive),
+   * đơn giá đúng giai đoạn từng ngày (TV trước official_date), phạt trễ theo
+   * mức đã ghi nhận + phụ cấp nhường ca HR điều phối. Không tạo kỳ lương.
+   */
+  async profileIncome(employeeId: string, period?: string) {
+    const per = period && /^\d{4}-(0[1-9]|1[0-2])$/.test(period)
+      ? period
+      : new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7);
+    const { fromDate, toDate } = monthRange(per);
+    const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+    const emp: any = await this.repo.getEmployeeById(employeeId).catch(() => null);
+    if (!emp) throw new Error('EMPLOYEE_NOT_FOUND');
+    const hist = await this.repo.getStageHistory(employeeId).catch(() => []);
+    const rateNow = Number(emp.current_rate_per_hour) || 0;
+    const empShifts = await this.repo.getShiftsForEmployee(employeeId, fromDate, toDate).catch(() => []);
+    const published = (empShifts || []).filter((s: any) => s.status === 'PUBLISHED');
+    let archivedByEmpDay = new Map<string, any[]>();
+    try {
+      const archived = await (this.repo as any)?.syncService?.getArchivedAttendanceEvents?.(fromDate, toDate) || [];
+      for (const e of archived || []) {
+        const t = new Date((e as any)?.client_time || '').getTime();
+        if (!Number.isFinite(t)) continue;
+        const day = new Date(t + 7 * 3_600_000).toISOString().slice(0, 10);
+        const k = `${(e as any)?.employee_id}|${day}`;
+        if (!archivedByEmpDay.has(k)) archivedByEmpDay.set(k, []);
+        archivedByEmpDay.get(k)!.push(e);
+      }
+    } catch { archivedByEmpDay = new Map(); }
+    const eventsByDate = new Map<string, any[]>();
+    const eventsOf = async (date: string) => {
+      if (!eventsByDate.has(date)) {
+        const live = await this.repo.getAttendanceEvents(employeeId, date).catch(() => []);
+        const extra = archivedByEmpDay.get(`${employeeId}|${date}`) || [];
+        let merged = live;
+        if (extra.length > 0) {
+          const ids = new Set((live || []).map((e: any) => e.event_id));
+          merged = [...(live || [])];
+          for (const e of extra) if (!ids.has((e as any).event_id)) merged.push(e);
+        }
+        eventsByDate.set(date, merged);
+      }
+      return eventsByDate.get(date)!;
+    };
+    let shiftsDone = 0;
+    let absent = 0;
+    let hours = 0;
+    let tvHours = 0;
+    let tvPay = 0;
+    let ctHours = 0;
+    let ctPay = 0;
+    let gross = 0;
+    let fines = 0;
+    const lateCases: string[] = [];
+    const doneDays = new Set<string>();
+    const todayStat = { shifts: 0, done: 0, hours: 0, pay: 0 };
+    for (const s of published) {
+      const day = String((s as any)?.date || '').slice(0, 10);
+      const dayEvents = await eventsOf(day);
+      const inEvt = dayEvents.find(
+        (e: any) => e.type === 'CHECK_IN' && (!(e as any).assignment_id || (e as any).assignment_id === (s as any).assignment_id)
+      );
+      const hasOut = dayEvents.some(
+        (e: any) => e.type === 'CHECK_OUT' && (!(e as any).assignment_id || (e as any).assignment_id === (s as any).assignment_id)
+      );
+      const template = (SHIFT_TEMPLATES as any)[(s as any).shift_code];
+      const h = template ? Number(template.duration_hours) || 5 : 5;
+      const dayRate = rateOnDate(emp, day, hist, STANDARD_HOURLY_RATES.PROBATION, rateNow);
+      const shiftPay = h * dayRate.rate;
+      const isToday = day === today;
+      if (isToday) todayStat.shifts++;
+      if (!inEvt || !hasOut) {
+        absent++;
+        continue;
+      }
+      const lateMin = (inEvt as any).is_late
+        ? Number((inEvt as any).minutes_deviation) || 0
+        : (() => {
+            const st = new Date((s as any).start_at).getTime();
+            const ct = new Date((inEvt as any).client_time).getTime();
+            if (!Number.isFinite(st) || !Number.isFinite(ct)) return 0;
+            return Math.max(0, Math.round((ct - st) / 60000));
+          })();
+      const storedTier = String((inEvt as any).fine_tier || '');
+      const storedAmt = Number((inEvt as any).fine_amount) || 0;
+      const useStored = !!storedTier && storedTier !== 'NONE';
+      const fine = lateFineFor(lateMin, shiftPay);
+      const unpaid = useStored ? storedTier === 'FULL_SHIFT' : fine.unpaid;
+      if (unpaid) {
+        absent++;
+        continue;
+      }
+      const deductAmt = useStored ? (storedTier === 'FULL_SHIFT' ? 0 : storedAmt) : fine.deduction;
+      shiftsDone++;
+      doneDays.add(day);
+      hours += h;
+      gross += shiftPay;
+      if (dayRate.stage === 'TV') { tvHours += h; tvPay += shiftPay; }
+      else { ctHours += h; ctPay += shiftPay; }
+      if (deductAmt > 0) {
+        fines += deductAmt;
+        lateCases.push(`${day} trễ ${lateMin}p: phạt ${deductAmt.toLocaleString('vi-VN')}đ`);
+      }
+      if (isToday) {
+        todayStat.done++;
+        todayStat.hours += h;
+        todayStat.pay += Math.max(0, shiftPay - deductAmt);
+      }
+    }
+    let bonus = 0;
+    try {
+      const swaps = await this.repo.listSwapRequests(employeeId).catch(() => []);
+      bonus = (swaps || [])
+        .filter(
+          (sw: any) =>
+            sw?.swap_kind === 'HR_DISPATCH' &&
+            sw?.status === 'APPROVED' &&
+            sw?.target_employee_id === employeeId &&
+            String(sw?.approved_at || '').startsWith(per)
+        )
+        .reduce((sum: number, sw: any) => sum + (Number(sw?.bonus_amount) || 30000), 0);
+    } catch { /* giữ bonus 0 */ }
+    return {
+      period: per,
+      employeeId,
+      rateNow,
+      officialDate: String((emp as any)?.official_date || '').slice(0, 10) || null,
+      stageNow: (emp as any)?.employment_status || null,
+      shiftsTotal: published.length,
+      shiftsDone,
+      absent,
+      days: doneDays.size,
+      hours: Math.round(hours * 10) / 10,
+      tvHours: Math.round(tvHours * 10) / 10,
+      tvPay,
+      ctHours: Math.round(ctHours * 10) / 10,
+      ctPay,
+      gross,
+      fines,
+      bonus,
+      net: gross + bonus - fines,
+      lateCases,
+      today: todayStat,
+      calculatedAt: new Date().toISOString(),
+    };
+  }
+
   async summarizeOfficialMonth(period: string) {
     const { fromDate, toDate } = monthRange(period);
     const employees = (await this.repo.listEmployees()).filter(
