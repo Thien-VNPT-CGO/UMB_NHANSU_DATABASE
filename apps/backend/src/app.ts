@@ -3046,6 +3046,34 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Download 1 tuần công đầy đủ (mỗi ngày 1 cụm CSV + ảnh + txt như ngày lẻ)
+  // cho nút "Tải tuần" ở tab Lịch Làm Việc Tuần (theo tuần đang xem).
+  app.get('/admin/attendance/export-work-week', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: any, res: any) => {
+    try {
+      const raw = String(req.query.weekMon || new Date().toISOString().split('T')[0]);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+        return res.status(400).json({ error: 'INVALID_DATE: weekMon định dạng YYYY-MM-DD.' });
+      }
+      const syncService = (adapter as any).syncService;
+      if (!syncService?.buildWorkWeekExport) {
+        return res.status(503).json({ error: 'SYNC_NOT_READY' });
+      }
+      const [yy, mm, dd] = raw.split('-').map(Number);
+      const dt = new Date(Date.UTC(yy, mm - 1, dd));
+      const dowMon0 = (dt.getUTCDay() + 6) % 7;
+      const mon = new Date(dt.getTime() - dowMon0 * 86_400_000).toISOString().slice(0, 10);
+      const r = await syncService.buildWorkWeekExport(adapter, mon);
+      if (!r.shifts && !r.events) {
+        return res.status(400).json({ error: 'NO_DATA', message: `Tuần ${mon} chưa có ca làm hay lượt điểm danh nào.` });
+      }
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', `attachment; filename="tuan-cong-${mon}.zip"`);
+      res.send(r.zip);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'EXPORT_FAILED' });
+    }
+  });
+
   // Alias for /leaves
   app.post('/leaves', authMiddleware, validate({ body: leavesAliasBody }), async (req: AuthenticatedRequest, res) => {
     try {

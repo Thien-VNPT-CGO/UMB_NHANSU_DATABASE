@@ -7824,6 +7824,42 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             >
               {schedExportBusy ? 'Đang gói...' : '⬇ Tải check-in/out ngày'}
             </button>
+            <button
+              className="btn-primary"
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', fontSize: '13px', backgroundColor: '#7C3AED' }}
+              title="Tải cả tuần đang xem (mỗi ngày 1 cụm CSV + ảnh + txt theo chi nhánh–NV–ca)"
+              disabled={schedExportBusy}
+              onClick={async () => {
+                const mon = weekDays?.[0]?.isoDate || '';
+                if (!/^\d{4}-\d{2}-\d{2}$/.test(mon)) { showToast('Chưa xác định được tuần đang xem!'); return; }
+                setSchedExportBusy(true);
+                try {
+                  const res = await fetch(`${getApiBase()}/admin/attendance/export-work-week?weekMon=${mon}`, {
+                    headers: { Authorization: `Bearer ${getAuthToken()}` },
+                  });
+                  if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    throw new Error((err as any)?.message || (err as any)?.error || 'Tải thất bại');
+                  }
+                  const blob = await res.blob();
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `tuan-cong-${mon}.zip`;
+                  document.body.appendChild(a);
+                  a.click();
+                  a.remove();
+                  setTimeout(() => URL.revokeObjectURL(url), 5000);
+                  showToast(`Đã tải tuần công từ ${mon} về máy!`);
+                } catch (e: any) {
+                  showToast(e?.message || 'Lỗi khi tải tuần công!');
+                } finally {
+                  setSchedExportBusy(false);
+                }
+              }}
+            >
+              {schedExportBusy ? 'Đang gói...' : '⬇ Tải tuần'}
+            </button>
           </div>
         </div>
 

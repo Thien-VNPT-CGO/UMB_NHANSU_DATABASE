@@ -2645,7 +2645,7 @@ export class GoogleSheetsSyncService {
   public async buildDayWorkExport(
     repo: ISheetsRepository,
     date: string
-  ): Promise<{ zip: Buffer; root: string; shifts: number; events: number; photos: number; missing: string[] }> {
+  ): Promise<{ zip: Buffer; entries: ZipEntry[]; root: string; shifts: number; events: number; photos: number; missing: string[] }> {
     const safe = GoogleSheetsSyncService.safeZipName;
     const fmtD = (s: string) => `${s.slice(8, 10)}-${s.slice(5, 7)}-${s.slice(0, 4)}`;
     const root = `Ngay cong ${fmtD(date)}`;
@@ -2773,7 +2773,44 @@ export class GoogleSheetsSyncService {
     const header = ['Nhan vien', 'Ma NV', 'Chi nhanh', 'Ca', 'Gio vao', 'Gio ra', 'Trang thai', 'GPS', 'Khoang cach', 'Hong dong phuc (%)', 'Ghi chu'];
     const csv = '﻿' + [header, ...rows].map((r) => r.map(esc).join(',')).join('\r\n');
     entries.unshift({ name: `${root}/Thong tin ngay cong ${fmtD(date)}.csv`, data: Buffer.from(csv, 'utf8') });
-    return { zip: buildZipStore(entries), root, shifts: dayShifts.length, events: events.length, photos: photoCount, missing };
+    return { zip: buildZipStore(entries), entries, root, shifts: dayShifts.length, events: events.length, photos: photoCount, missing };
+  }
+
+  /**
+   * Gói 1 tuần công đầy đủ (T2–CN): mỗi ngày 1 cụm như ngày lẻ (CSV full info
+   * + ảnh + txt theo folder chi nhánh–NV–ca) — cho nút "Tải tuần" ở tab Lịch
+   * Làm Việc Tuần. Bỏ qua ngày trắng (không ca, không lượt điểm danh).
+   */
+  public async buildWorkWeekExport(
+    repo: ISheetsRepository,
+    weekMon: string
+  ): Promise<{ zip: Buffer; root: string; dates: string[]; shifts: number; events: number; photos: number; missing: string[] }> {
+    const [y, m, d0] = weekMon.split('-').map(Number);
+    const base = Date.UTC(y, m - 1, d0);
+    const isoOf = (t: number) => new Date(t).toISOString().slice(0, 10);
+    const fmtD = (s: string) => `${s.slice(8, 10)}-${s.slice(5, 7)}-${s.slice(0, 4)}`;
+    const weekSun = isoOf(base + 6 * 86_400_000);
+    const root = `Tuan cong ${fmtD(weekMon)} den ${fmtD(weekSun)}`;
+    const entries: ZipEntry[] = [];
+    const dates: string[] = [];
+    const missing: string[] = [];
+    let shifts = 0;
+    let events = 0;
+    let photos = 0;
+    for (let i = 0; i < 7; i++) {
+      const date = isoOf(base + i * 86_400_000);
+      const r: any = await this.buildDayWorkExport(repo, date).catch(() => null);
+      if (!r || (!r.shifts && !r.events)) continue;
+      dates.push(date);
+      shifts += r.shifts || 0;
+      events += r.events || 0;
+      photos += r.photos || 0;
+      missing.push(...(r.missing || []));
+      for (const en of (r.entries || [])) {
+        entries.push({ name: `${root}/${en.name}`, data: en.data });
+      }
+    }
+    return { zip: buildZipStore(entries), root, dates, shifts, events, photos, missing };
   }
 
   /** Gói ZIP cả tuần (T2–CN): mỗi ngày 1 cụm folder ảnh như ngày lẻ (không CSV). */
