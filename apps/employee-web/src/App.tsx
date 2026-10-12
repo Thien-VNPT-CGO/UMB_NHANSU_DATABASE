@@ -1491,6 +1491,13 @@ export function App() {
     const list = getTodayShifts();
     const picked = list.find((s: any) => s.assignment_id === attendShiftId);
     if (picked) return picked;
+    // Ngày 2 ca: ưu tiên ca đã check-in mà chưa check-out (đang chờ tan ca) —
+    // checkout ca 1 không bị kẹt sang giờ ca 2. Lựa chọn tay (dropdown) vẫn ưu tiên nhất.
+    const awaitingOut = list.find((s: any) => {
+      const evts = (myAttendanceHistory || []).filter((e: any) => e.assignment_id === s.assignment_id);
+      return evts.some((e: any) => e.type === 'CHECK_IN') && !evts.some((e: any) => e.type === 'CHECK_OUT');
+    });
+    if (awaitingOut) return awaitingOut;
     // Chưa chọn ca (ngày 2 ca): mặc định ca ĐANG diễn ra thay vì ca đầu danh
     // sách — tránh CONFIRMED nhầm ca rồi ca đúng vẫn "chưa check-in".
     const now = Date.now();
@@ -4131,7 +4138,8 @@ export function App() {
           // dùng ngày VN — dùng ngày UTC sẽ lookup nhầm ca 00:00–07:00 VN.
           const today = vnTodayStr();
           const todayShifts = myShifts.filter((s: any) => s.date === today);
-          const todayShift = todayShifts.find((s: any) => s.assignment_id === attendShiftId) || todayShifts[0];
+          // Hiển thị ĐÚNG ca sẽ thao tác (trước đây tab lấy ca đầu, nút lấy ca live -> lệch giờ tan ca).
+          const todayShift = getAttendShift();
           // Trạng thái theo TỪNG ca (ngày 2 ca do tráo đổi: mỗi ca check-in/out độc lập)
           const shiftStartMs = todayShift?.start_at ? new Date(todayShift.start_at).getTime() : NaN;
           const shiftLocked = Number.isFinite(shiftStartMs) && Date.now() - shiftStartMs > 3 * 60 * 60 * 1000;
