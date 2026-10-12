@@ -1193,6 +1193,9 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           gender: b.gender,
           birthDate: b.birthDate || b.birth_date,
           idCardNumber: b.idCardNumber || b.id_card_number,
+          bankName: b.bankName ?? b.bank_name,
+          bankAccount: b.bankAccount ?? b.bank_account,
+          bankHolder: b.bankHolder ?? b.bank_holder,
           // Avatar HR upload ở tab Hồ Sơ (snake_case từ client).
           avatarBase64: b.avatarBase64 || b.avatar_base64,
           expectedVersion: b.expectedVersion,
@@ -3838,9 +3841,13 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // Cập nhật thông tin ngân hàng cho phiếu lương của nhân viên
+  // (chấp nhận cả 2 dạng field: bank/account/holder và bank_name/bank_account/bank_holder).
   app.put('/payroll/slips/:id/bank', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
     try {
-      const { bank, account, holder } = req.body || {};
+      const b: any = req.body || {};
+      const bank = b.bank ?? b.bank_name;
+      const account = b.account ?? b.bank_account;
+      const holder = b.holder ?? b.bank_holder;
       const updated = await payrollService.updateSlipBank(req.params.id, bank, account, holder, req.user!.id);
       broadcastUpdate('payroll', { action: 'update-bank', itemId: req.params.id });
       res.json(updated);

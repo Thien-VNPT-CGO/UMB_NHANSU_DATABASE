@@ -1071,13 +1071,21 @@ export class PayrollService {
           bank_holder: bHolder,
         });
         if (slip.employee_id && (this.repo as any).updateEmployee) {
-          await (this.repo as any).updateEmployee(slip.employee_id, {
-            bank_name: bName,
-            bank_account: bAcc,
-            bank_holder: bHolder,
-          }).catch(() => null);
+          // Đồng bộ vào hồ sơ NV (lấy version hiện tại để qua check conflict).
+          const emp = await this.repo.getEmployeeById(slip.employee_id).catch(() => null);
+          if (emp) {
+            await (this.repo as any).updateEmployee(slip.employee_id, {
+              bank_name: bName,
+              bank_account: bAcc,
+              bank_holder: bHolder,
+            }, (emp as any).version).catch(() => null);
+          }
         }
         this.notifySlipsChanged('bank', { itemId });
+        // Hồ sơ NV đổi -> tab Hồ Sơ + tab PAID (đọc bank từ hồ sơ) cập nhật realtime.
+        if (this.io && slip.employee_id) {
+          this.io.emit('data:updated', { entity: 'employees', data: { action: 'bank-sync', employeeId: slip.employee_id }, timestamp: new Date().toISOString() });
+        }
         this.triggerSheetsPush();
         return updated;
       },

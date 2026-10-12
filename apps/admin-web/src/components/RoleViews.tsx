@@ -6182,6 +6182,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           startDate: String(emp.start_date || '').slice(0, 10),
                           officialDate: String(emp.official_date || '').slice(0, 10),
                           email: emp.email || '',
+                          bankName: emp.bank_name || '',
+                          bankAccount: emp.bank_account || '',
+                          bankHolder: emp.bank_holder || '',
                         });
                       }}
                     >
@@ -6307,6 +6310,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <label style={{ fontSize: '12px', fontWeight: 700 }}>Ngày bắt đầu<input type="date" value={editEmpForm.startDate || ''} onChange={e => setEditEmpForm({ ...editEmpForm, startDate: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
                 <label style={{ fontSize: '12px', fontWeight: 700 }}>Ngày chính thức<input type="date" value={editEmpForm.officialDate || ''} onChange={e => setEditEmpForm({ ...editEmpForm, officialDate: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
                 <label style={{ fontSize: '12px', fontWeight: 700, gridColumn: '1 / -1' }}>Email<input value={editEmpForm.email || ''} onChange={e => setEditEmpForm({ ...editEmpForm, email: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
+                <label style={{ fontSize: '12px', fontWeight: 700 }}>Ngân hàng (QR)<input value={editEmpForm.bankName || ''} onChange={e => setEditEmpForm({ ...editEmpForm, bankName: e.target.value })} placeholder="VD: Vietcombank" style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
+                <label style={{ fontSize: '12px', fontWeight: 700 }}>Số tài khoản<input value={editEmpForm.bankAccount || ''} onChange={e => setEditEmpForm({ ...editEmpForm, bankAccount: e.target.value })} placeholder="VD: 007100..." style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
+                <label style={{ fontSize: '12px', fontWeight: 700 }}>Chủ tài khoản<input value={editEmpForm.bankHolder || ''} onChange={e => setEditEmpForm({ ...editEmpForm, bankHolder: e.target.value })} placeholder="VD: NGUYEN VAN A" style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
               </div>
               <button
                 className="btn-primary"
@@ -6327,6 +6333,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         startDate: editEmpForm.startDate || undefined,
                         officialDate: editEmpForm.officialDate || undefined,
                         email: editEmpForm.email || undefined,
+                        bankName: editEmpForm.bankName || undefined,
+                        bankAccount: editEmpForm.bankAccount || undefined,
+                        bankHolder: editEmpForm.bankHolder || undefined,
                         expectedVersion: editingEmp.version,
                       }),
                     });
@@ -6762,6 +6771,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 startDate: toISODate(emp.start_date),
                                 officialDate: toISODate(emp.official_date),
                                 email: emp.email || '',
+                                bankName: emp.bank_name || '',
+                                bankAccount: emp.bank_account || '',
+                                bankHolder: emp.bank_holder || '',
                               });
                             }}
                           >
@@ -6875,6 +6887,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <label style={{ fontSize: '12px', fontWeight: 700 }}>Ngày bắt đầu<input type="date" value={editEmpForm.startDate || ''} onChange={e => setEditEmpForm({ ...editEmpForm, startDate: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
                 <label style={{ fontSize: '12px', fontWeight: 700 }}>Ngày chính thức<input type="date" value={editEmpForm.officialDate || ''} onChange={e => setEditEmpForm({ ...editEmpForm, officialDate: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
                 <label style={{ fontSize: '12px', fontWeight: 700, gridColumn: '1 / -1' }}>Email<input value={editEmpForm.email || ''} onChange={e => setEditEmpForm({ ...editEmpForm, email: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
+                <label style={{ fontSize: '12px', fontWeight: 700 }}>Ngân hàng (QR)<input value={editEmpForm.bankName || ''} onChange={e => setEditEmpForm({ ...editEmpForm, bankName: e.target.value })} placeholder="VD: Vietcombank" style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
+                <label style={{ fontSize: '12px', fontWeight: 700 }}>Số tài khoản<input value={editEmpForm.bankAccount || ''} onChange={e => setEditEmpForm({ ...editEmpForm, bankAccount: e.target.value })} placeholder="VD: 007100..." style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
+                <label style={{ fontSize: '12px', fontWeight: 700 }}>Chủ tài khoản<input value={editEmpForm.bankHolder || ''} onChange={e => setEditEmpForm({ ...editEmpForm, bankHolder: e.target.value })} placeholder="VD: NGUYEN VAN A" style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
               </div>
               <button
                 className="btn-primary"
@@ -6895,6 +6910,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         startDate: editEmpForm.startDate || undefined,
                         officialDate: editEmpForm.officialDate || undefined,
                         email: editEmpForm.email || undefined,
+                        bankName: editEmpForm.bankName || undefined,
+                        bankAccount: editEmpForm.bankAccount || undefined,
+                        bankHolder: editEmpForm.bankHolder || undefined,
                         expectedVersion: editingEmp.version,
                       }),
                     });
@@ -12649,13 +12667,19 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 {confirmedSlips.map((s: any) => {
                   const vndStr = `${Number(s.thuc_lanh ?? s.net_pay ?? 0).toLocaleString('vi-VN')}đ`;
                   const isBusy = slipActionBusy === s.item_id + 'mark-paid';
-                  const qrUrl = `https://img.vietqr.io/image/${toVietQRBankCode(s.bank_name || 'vcb')}-${encodeURIComponent(s.bank_account || '')}-compact2.png?amount=${Number(s.thuc_lanh ?? s.net_pay ?? 0)}&addInfo=${encodeURIComponent(`LUONG ${s.period || sampleMonth} ${s.employee_code}`)}&accountName=${encodeURIComponent(s.bank_holder || s.full_name)}`;
+                  // Bank/QR theo tung NV: uu tien ho so NV realtime (NV/HR vua cap nhat),
+                  // phieu fallback — cuoi thang chuyen dung STK hien tai cua NV.
+                  const empBank = (allEmployees || []).find((e: any) => e.employee_id === s.employee_id) as any;
+                  const payBankName = empBank?.bank_name || s.bank_name || '';
+                  const payBankAccount = empBank?.bank_account || s.bank_account || '';
+                  const payBankHolder = empBank?.bank_holder || s.bank_holder || s.full_name;
+                  const qrUrl = `https://img.vietqr.io/image/${toVietQRBankCode(payBankName || 'vcb')}-${encodeURIComponent(payBankAccount || '')}-compact2.png?amount=${Number(s.thuc_lanh ?? s.net_pay ?? 0)}&addInfo=${encodeURIComponent(`LUONG ${s.period || sampleMonth} ${s.employee_code}`)}&accountName=${encodeURIComponent(payBankHolder)}`;
 
                   return (
                     <div key={s.item_id} style={{ display: 'grid', gridTemplateColumns: 'minmax(140px, 160px) 1fr auto', gap: '16px', alignItems: 'center', padding: '14px', borderRadius: '10px', border: '1.5px solid #10B981', backgroundColor: '#F0FDF4' }}>
                       {/* VietQR Thumbnail */}
                       <div style={{ textAlign: 'center' }}>
-                        {s.bank_account ? (
+                        {payBankAccount ? (
                           <img
                             src={qrUrl}
                             alt="VietQR"
@@ -12676,15 +12700,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           <span style={{ fontSize: '10px', fontWeight: 800, padding: '2px 8px', borderRadius: '999px', backgroundColor: '#D1FAE5', color: '#065F46' }}>✓ ĐỦ 3 CHỮ KÝ</span>
                         </div>
                         <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginTop: '4px' }}>
-                          <div><span style={{ color: '#64748B' }}>Ngân hàng: </span><strong>{s.bank_name || '—'}</strong></div>
+                          <div><span style={{ color: '#64748B' }}>Ngân hàng: </span><strong>{payBankName || '—'}</strong></div>
                           <div>
                             <span style={{ color: '#64748B' }}>STK: </span>
-                            <strong style={{ color: '#1E3A8A' }}>{s.bank_account || '—'}</strong>
-                            {s.bank_account && (
-                              <button className="btn-secondary" style={{ fontSize: '10px', padding: '1px 6px', marginLeft: '6px' }} onClick={() => { navigator.clipboard.writeText(s.bank_account); showToast('Đã chép STK!'); }}>📋</button>
+                            <strong style={{ color: '#1E3A8A' }}>{payBankAccount || '—'}</strong>
+                            {payBankAccount && (
+                              <button className="btn-secondary" style={{ fontSize: '10px', padding: '1px 6px', marginLeft: '6px' }} onClick={() => { navigator.clipboard.writeText(payBankAccount); showToast('Đã chép STK!'); }}>📋</button>
                             )}
                           </div>
-                          <div><span style={{ color: '#64748B' }}>Chủ TK: </span><strong style={{ textTransform: 'uppercase' }}>{s.bank_holder || s.full_name}</strong></div>
+                          <div><span style={{ color: '#64748B' }}>Chủ TK: </span><strong style={{ textTransform: 'uppercase' }}>{payBankHolder}</strong></div>
                         </div>
                         <div style={{ marginTop: '4px', display: 'flex', alignItems: 'center', gap: '10px' }}>
                           <span style={{ color: '#64748B' }}>Thực lãnh:</span>
@@ -13465,6 +13489,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     startDate: String(profEmp.start_date || '').slice(0, 10),
                     officialDate: String(profEmp.official_date || '').slice(0, 10),
                     email: profEmp.email || '',
+                    bankName: profEmp.bank_name || '',
+                    bankAccount: profEmp.bank_account || '',
+                    bankHolder: profEmp.bank_holder || '',
                     gender: profEmp.gender || '',
                     birthDate: String(profEmp.birth_date || '').slice(0, 10),
                     idCardNumber: profEmp.id_card_number || '',
@@ -13713,6 +13740,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     <label style={{ fontSize: '12px', fontWeight: 700 }}>Ngày bắt đầu<input type="date" value={editEmpForm.startDate || ''} onChange={e => setEditEmpForm({ ...editEmpForm, startDate: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
                     <label style={{ fontSize: '12px', fontWeight: 700 }}>Ngày chính thức<input type="date" value={editEmpForm.officialDate || ''} onChange={e => setEditEmpForm({ ...editEmpForm, officialDate: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
                     <label style={{ fontSize: '12px', fontWeight: 700, gridColumn: '1 / -1' }}>Email<input value={editEmpForm.email || ''} onChange={e => setEditEmpForm({ ...editEmpForm, email: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
+                    <label style={{ fontSize: '12px', fontWeight: 700 }}>Ngân hàng (QR)<input value={editEmpForm.bankName || ''} onChange={e => setEditEmpForm({ ...editEmpForm, bankName: e.target.value })} placeholder="VD: Vietcombank" style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
+                    <label style={{ fontSize: '12px', fontWeight: 700 }}>Số tài khoản<input value={editEmpForm.bankAccount || ''} onChange={e => setEditEmpForm({ ...editEmpForm, bankAccount: e.target.value })} placeholder="VD: 007100..." style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
+                    <label style={{ fontSize: '12px', fontWeight: 700 }}>Chủ tài khoản<input value={editEmpForm.bankHolder || ''} onChange={e => setEditEmpForm({ ...editEmpForm, bankHolder: e.target.value })} placeholder="VD: NGUYEN VAN A" style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
                   </div>
                   <button
                     className="btn-primary"
@@ -13734,6 +13764,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             startDate: editEmpForm.startDate || undefined,
                             officialDate: editEmpForm.officialDate || undefined,
                             email: editEmpForm.email || undefined,
+                            bankName: editEmpForm.bankName || undefined,
+                            bankAccount: editEmpForm.bankAccount || undefined,
+                            bankHolder: editEmpForm.bankHolder || undefined,
                             gender: editEmpForm.gender || undefined,
                             birthDate: editEmpForm.birthDate || undefined,
                             idCardNumber: editEmpForm.idCardNumber || undefined,
