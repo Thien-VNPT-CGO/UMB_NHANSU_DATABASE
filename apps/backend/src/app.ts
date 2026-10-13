@@ -98,6 +98,7 @@ import {
   publishWeekParams,
   schedulesQuery,
   shiftCreateBody,
+  shiftUpdateBody,
   swapApproveBody,
   swapCreateBody,
   swapRespondBody,
@@ -1910,7 +1911,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   // HR xóa 1 ca làm việc trên lưới tuần (tab Lịch tuần): ca chuyển CANCELLED,
   // biến mất khỏi lưới + Bảng Chấm Công + Cổng NV ngay (realtime). Ca đã có
-  // điểm danh thì chặn (giữ bằng chứng công/lương).
+  // điểm danh thì chặn (giữ làm bằng chứng công/lương).
   app.delete(
     '/schedules/:id',
     authMiddleware,
@@ -1920,6 +1921,34 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       try {
         const result = await schedulesService.deleteShift(req.params.id, req.user!.id, req.user?.branchScope);
         broadcastUpdate('schedules', { action: 'delete-shift', id: req.params.id });
+        res.json(result);
+      } catch (err: any) {
+        res.status(400).json({ error: err.message });
+      }
+    }
+  );
+
+  // HR cập nhật ca làm việc (KỂ CẢ ca đã điểm danh — khác nút xóa vốn chặn cứng):
+  // đổi ca/nhân viên/chi nhánh, giữ lượt điểm danh theo ca (lương tính lại realtime).
+  app.put(
+    '/schedules/shifts/:id',
+    authMiddleware,
+    requireRole(['ADMIN', 'HR', 'STORE']),
+    validate({ params: idParams, body: shiftUpdateBody }),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const result = await schedulesService.updateShift(
+          req.params.id,
+          {
+            shiftCode: (req.body as any).shiftCode,
+            date: (req.body as any).date,
+            employeeId: (req.body as any).employeeId,
+            branchId: (req.body as any).branchId,
+          },
+          req.user!.id,
+          req.user?.branchScope
+        );
+        broadcastUpdate('schedules', { action: 'update-shift', id: req.params.id });
         res.json(result);
       } catch (err: any) {
         res.status(400).json({ error: err.message });

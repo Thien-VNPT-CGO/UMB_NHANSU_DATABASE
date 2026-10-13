@@ -153,6 +153,146 @@ export class SchedulesService {
     });
   }
 
+  /**
+   * HR cập nhật ca làm việc (kể cả ca ĐÃ ĐIỂM DANH — khác nút xóa vốn chặn cứng):
+   *  - Đổi ca (CA_1/2/3): giờ vào/tan tính lại theo mẫu, lượt điểm danh giữ nguyên
+   *    theo assignment (lương tính lại realtime, Finance chốt ở kỳ lương).
+   *  - Đổi nhân viên: dời luôn lượt check-in/out gắn ca sang NV mới.
+   *  - Đổi chi nhánh: theo scope (STORE chỉ trong CN mình).
+   *  - Đổi NGÀY khi đã có điểm danh thì CHẶN (giờ check-in/out gắn ngày cũ,
+   *    dời ngày sẽ rớt khỏi lưới công); chưa điểm danh thì đổi ngày thoải mái.
+   */
+  async updateShift(
+    assignmentId: string,
+    data: { shiftCode?: string; date?: string; employeeId?: string; branchId?: string },
+    actorId: string,
+    branchScope?: string
+  ) {
+    return singleWriterQueue.enqueue({
+      entityType: 'PHAN_CONG_CA',
+      entityId: assignmentId,
+      actorId,
+      execute: async () => {
+        const sh: any = await this.repo.getShiftById(assignmentId).catch(() => null);
+        if (!sh) {
+          throw new Error('SHIFT_NOT_FOUND: Ca làm việc không tồn tại (có thể đã bị xóa). Tải lại danh sách!');
+        }
+        if (String(sh.status || '') === 'CANCELLED') {
+          throw new Error('SHIFT_CANCELLED: Ca này đã bị hủy, không cập nhật được!');
+        }
+        const need = (v?: string) => v !== undefined && String(v || '').trim() !== '';
+        const scopeOf = (b?: string) => {
+          if (branchScope && branchScope !== '*' && canonicalBranch(b || '') !== canonicalBranch(branchScope)) {
+            throw new Error('BRANCH_SCOPE_FORBIDDEN: Bạn chỉ được sửa ca thuộc chi nhánh của mình!');
+          }
+        };
+        scopeOf(sh.branch_id);
+        if (need(data.branchId)) scopeOf(data.branchId);
+
+        const newCode = need(data.shiftCode) ? String(data.shiftCode).trim().toUpperCase() : String(sh.shift_code || '');
+        if (!SHIFT_TEMPLATES[newCode as ShiftCode]) {
+          throw new Error(`Mã ca ${data.shiftCode || '?'} không hợp lệ (chỉ CA_1/CA_2/CA_3)!`);
+        }
+        const oldDay = String(sh.date || '').slice(0, 10);
+        const newDate = need(data.date) ? String(data.date).slice(0, 10) : oldDay;
+        if (need(data.date) && !/^\d{4}-\d{2}-\d{2}$/.test(newDate)) {
+          throw new Error(`Ngày ${data.date || '?'} phải dạng YYYY-MM-DD!`);
+        }
+        let newEmp = String(sh.employee_id || '');
+        if (need(data.employeeId)) {
+          newEmp = String(data.employeeId).trim();
+          const emp: any = await this.repo.getEmployeeById(newEmp).catch(() => null);
+          if (!emp) throw new Error(`EMPLOYEE_NOT_FOUND: Không tìm thấy nhân viên ${newEmp}.`);
+          if (String((emp as any).employment_status || '') === 'TERMINATED') {
+            throw new Error(`EMPLOYMENT_NOT_ELIGIBLE: ${newEmp} đã nghỉ việc, không thể gán ca!`);
+          }
+        }
+        const newBranch = need(data.branchId) ? canonicalBranch(String(data.branchId)) : String(sh.branch_id || '');
+
+        // Lượt điểm danh thật gắn cứng ca này (kể cả bản archive tuần cũ).
+        const evts = await this.repo.getAttendanceEvents(String(sh.employee_id || '') || undefined, oldDay || undefined).catch(() => []);
+        let linked = (evts || []).filter(
+          (e: any) =>
+            String((e as any)?.assignment_id || '') === String(assignmentId) &&
+            ['CHECK_IN', 'CHECK_OUT'].includes(String((e as any)?.type || ''))
+        );
+        if (linked.length === 0) {
+          try {
+            const sync = (this.repo as any)?.syncService;
+            const archived = (sync?.getArchivedAttendanceEvents ? await sync.getArchivedAttendanceEvents(oldDay, oldDay).catch(() => []) : []) || [];
+            linked = archived.filter(
+              (e: any) =>
+                String((e as any)?.employee_id || '') === String(sh.employee_id || '') &&
+                String((e as any)?.assignment_id || '') === String(assignmentId) &&
+                ['CHECK_IN', 'CHECK_OUT'].includes(String((e as any)?.type || ''))
+            );
+          } catch { /* giữ linked rỗng */ }
+        }
+        const hasAtt = linked.length > 0;
+        if (hasAtt && newDate !== oldDay) {
+          throw new Error(
+            'SHIFT_DATE_LOCKED_WITH_ATTENDANCE: Ca đã có điểm danh không đổi được ngày (giờ check-in/out gắn ngày cũ)! Chỉ đổi được ca/nhân viên/chi nhánh.'
+          );
+        }
+
+        const tpl = SHIFT_TEMPLATES[newCode as ShiftCode];
+        const pad = (n: number) => String(n).padStart(2, '0');
+        const patch: any = {
+          shift_code: newCode,
+          date: newDate,
+          start_at: `${newDate}T${pad(tpl.start_hour)}:00:00+07:00`,
+          end_at: `${newDate}T${pad(tpl.end_hour)}:00:00+07:00`,
+          employee_id: newEmp,
+          branch_id: newBranch,
+        };
+        // Dời lượt điểm danh theo ca sang NV mới (giữ nguyên giờ giấc bằng chứng).
+        let movedEvents = 0;
+        if (hasAtt && newEmp !== String(sh.employee_id || '')) {
+          for (const ev of linked) {
+            try {
+              await this.repo.updateAttendanceEvent((ev as any).event_id, { employee_id: newEmp } as any);
+              movedEvents++;
+            } catch { /* giữ bản gốc khi rớt */ }
+          }
+        }
+        const updated = await this.repo.updateShiftAssignment(assignmentId, patch);
+        // Đổi NV/ngày: ngày OFF của người nhận convert thành ca làm (như lúc xếp ca).
+        let offNotes: string[] = [];
+        if (newEmp !== String(sh.employee_id || '') || newDate !== oldDay) {
+          try {
+            offNotes = await this.cancelReceiverLeavesOnWorkDay(newEmp, newDate);
+          } catch { /* non-fatal */ }
+        }
+        await this.repo.recordAuditLog({
+          log_id: `LOG_${Date.now()}`,
+          actor_id: actorId,
+          actor_role: 'HR',
+          action: 'SHIFT_UPDATED',
+          target_entity: 'PHAN_CONG_CA',
+          target_id: assignmentId,
+          details: `Sửa ca ${String(sh.shift_code || '')} ngày ${oldDay} của ${String(sh.employee_id || '')} -> ${newCode} ngày ${newDate} của ${newEmp} (CN ${newBranch})${hasAtt ? ` — giữ ${linked.length} lượt điểm danh${movedEvents > 0 ? `, dời ${movedEvents} lượt sang NV mới` : ''}` : ''}`,
+        } as any).catch(() => null);
+        if (this.io) {
+          this.io.emit('data:updated', {
+            entity: 'schedules',
+            data: { action: 'update-shift', assignmentId },
+            timestamp: new Date().toISOString(),
+          });
+          if (newEmp !== String(sh.employee_id || '')) {
+            this.io.to(`user:${newEmp}`).emit('system:notification', {
+              type: 'SYSTEM',
+              origin: 'ADMIN',
+              title: '📅 Bạn được gán ca làm việc (HR cập nhật)',
+              message: `HR vừa chuyển ca ${newCode} ngày ${newDate} sang cho bạn. Mở lịch kiểm tra!`,
+              timestamp: new Date().toISOString(),
+            });
+          }
+        }
+        return { shift: updated, hasAttendance: hasAtt, movedEvents, offNotes };
+      },
+    });
+  }
+
   async createShift(data: {
     employeeId: string;
     branchId: string;

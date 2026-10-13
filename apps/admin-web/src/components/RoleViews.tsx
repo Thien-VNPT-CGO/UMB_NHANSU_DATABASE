@@ -2340,6 +2340,46 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [supDate, setSupDate] = useState('');
   const [supShift, setSupShift] = useState('CA_1');
   const [supBusy, setSupBusy] = useState(false);
+  // Modal HR cập nhật ca (KỂ CẢ ca đã điểm danh): đổi ca/NV/chi nhánh (+ngày nếu chưa điểm danh).
+  const [editShiftOpen, setEditShiftOpen] = useState<any>(null);
+  const [edEmpId, setEdEmpId] = useState('');
+  const [edEmpSearch, setEdEmpSearch] = useState('');
+  const [edDate, setEdDate] = useState('');
+  const [edShift, setEdShift] = useState('CA_1');
+  const [edBranch, setEdBranch] = useState('CN130');
+  const [edBusy, setEdBusy] = useState(false);
+  const openEditShift = (info: { assignmentId: string; empId: string; empName: string; branch: string; shiftCode: string; date: string; status: string }) => {
+    setEditShiftOpen(info);
+    setEdEmpId(info.empId || '');
+    setEdEmpSearch('');
+    setEdDate(info.date || '');
+    setEdShift(['CA_1', 'CA_2', 'CA_3'].includes(info.shiftCode) ? info.shiftCode : 'CA_1');
+    setEdBranch(info.branch || 'CN130');
+  };
+  const doEditShift = async () => {
+    if (!editShiftOpen || edBusy) return;
+    if (!edEmpId) { showToast('⚠️ Vui lòng chọn nhân viên!'); return; }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(edDate || '')) { showToast('⚠️ Vui lòng chọn ngày (YYYY-MM-DD)!'); return; }
+    if (!['CA_1', 'CA_2', 'CA_3'].includes(edShift)) { showToast('⚠️ Vui lòng chọn ca 1/2/3!'); return; }
+    const hadAtt = ['COMPLETED', 'CHECKED_IN', 'MISSING_OUT'].includes(String(editShiftOpen.status || ''));
+    const shiftLabel = edShift === 'CA_1' ? 'Ca 1 (07–12)' : edShift === 'CA_2' ? 'Ca 2 (12–18)' : 'Ca 3 (18–23)';
+    if (!window.confirm(`Cập nhật ca thành ${shiftLabel} ngày ${edDate} cho NV đã chọn${hadAtt ? ' (ca ĐÃ ĐIỂM DANH — lượt check-in/out giữ nguyên theo ca, lương tính lại realtime)' : ''}?\nTiếp tục?`)) return;
+    setEdBusy(true);
+    try {
+      const res: any = await apiRequest(`/schedules/shifts/${encodeURIComponent(editShiftOpen.assignmentId)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ shiftCode: edShift, date: edDate, employeeId: edEmpId, branchId: edBranch }),
+      });
+      const r = (res as any)?.result ?? res;
+      showToast(`✅ Đã cập nhật ca${r?.hasAttendance ? ' (giữ nguyên lượt điểm danh, lương tính lại realtime)' : ''}! Đã đồng bộ sang Bảng Chấm Công và Cổng NV.`);
+      setEditShiftOpen(null);
+      if (onRefreshData) await onRefreshData();
+    } catch (e: any) {
+      showToast(e?.message || 'Lỗi khi cập nhật ca!');
+    } finally {
+      setEdBusy(false);
+    }
+  };
 
   // Filters & State for HR Candidates (17 Cột Google Forms)
   const [candidateSearch, setCandidateSearch] = useState('');
@@ -8158,6 +8198,89 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           );
         })()}
 
+        {/* MODAL HR CẬP NHẬT CA (KỂ CẢ CA ĐÃ ĐIỂM DANH) */}
+        {editShiftOpen && (() => {
+          const empList = (allEmployees || []).filter((e: any) =>
+            String((e as any)?.employment_status || '') !== 'TERMINATED'
+          );
+          const q = edEmpSearch.trim().toLowerCase();
+          const empOptions = empList.filter((e: any) => {
+            if (!q) return true;
+            return `${(e as any)?.full_name || ''} ${(e as any)?.employee_code || ''} ${(e as any)?.phone_normalized || (e as any)?.phone || ''}`.toLowerCase().includes(q);
+          }).slice(0, 60);
+          const picked = empList.find((e: any) => String((e as any)?.employee_id || '') === String(edEmpId || ''));
+          const hadAtt = ['COMPLETED', 'CHECKED_IN', 'MISSING_OUT'].includes(String(editShiftOpen.status || ''));
+          return (
+            <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+              <div style={{ backgroundColor: 'var(--surface)', borderRadius: '12px', maxWidth: '560px', width: '100%', maxHeight: '88vh', overflow: 'auto', padding: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h2 style={{ fontSize: '16px', fontWeight: 800, margin: 0 }}>✎ Cập Nhật Ca Làm Việc</h2>
+                  <button className="btn-secondary" style={{ padding: '4px 12px' }} onClick={() => setEditShiftOpen(null)}>Đóng</button>
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px', lineHeight: 1.6 }}>
+                  Ca hiện tại của <strong>{editShiftOpen.empName}</strong> ({editShiftOpen.date}). Đổi ca/nhân viên/chi nhánh — lượt điểm danh giữ nguyên theo ca, lương tính lại realtime, đồng bộ sang Bảng Chấm Công và Cổng NV ngay.
+                </div>
+                {hadAtt && (
+                  <div style={{ fontSize: '12px', color: '#92400E', backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '6px', padding: '8px 10px', lineHeight: 1.5, marginTop: '10px' }}>
+                    ⚠️ Ca ĐÃ ĐIỂM DANH: được đổi ca/nhân viên/chi nhánh, <strong>KHÔNG</strong> đổi được ngày (giờ check-in/out gắn ngày cũ). Đổi nhân viên thì lượt điểm danh dời sang NV mới.
+                  </div>
+                )}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '14px' }}>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Nhân viên:</label>
+                    <input
+                      value={edEmpSearch}
+                      onChange={(e) => setEdEmpSearch(e.target.value)}
+                      placeholder="Gõ để lọc tên / mã / SĐT..."
+                      style={{ width: '100%', padding: '7px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid var(--border)', marginBottom: '6px' }}
+                    />
+                    <select
+                      style={{ width: '100%', padding: '7px 10px', fontSize: '13px', borderRadius: '6px' }}
+                      value={edEmpId}
+                      onChange={(e) => setEdEmpId(e.target.value)}
+                    >
+                      <option value="">-- Chọn nhân viên --</option>
+                      {empOptions.map((e: any) => (
+                        <option key={(e as any)?.employee_id} value={(e as any)?.employee_id}>
+                          {(e as any)?.full_name} ({(e as any)?.employee_code}) — {getDisplayBranch((e as any)?.default_branch_id || (e as any)?.branch_id || '')}{(e as any)?.employment_status === 'PROBATION' ? ' • Thử việc' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                    <div>
+                      <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Ngày làm{hadAtt ? ' (khóa — đã điểm danh)' : ':'}</label>
+                      <input type="date" disabled={hadAtt} title={hadAtt ? 'Ca đã điểm danh không đổi được ngày' : 'Ngày làm'} style={{ width: '100%', padding: '7px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid var(--border)', opacity: hadAtt ? 0.6 : 1 }} value={edDate} onChange={(e) => setEdDate(e.target.value)} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Ca làm:</label>
+                      <select style={{ width: '100%', padding: '7px 10px', fontSize: '13px', borderRadius: '6px' }} value={edShift} onChange={(e) => setEdShift(e.target.value)}>
+                        <option value="CA_1">Ca 1 (07–12)</option>
+                        <option value="CA_2">Ca 2 (12–18)</option>
+                        <option value="CA_3">Ca 3 (18–23)</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Chi nhánh:</label>
+                    <select style={{ width: '100%', padding: '7px 10px', fontSize: '13px', borderRadius: '6px' }} value={edBranch} onChange={(e) => setEdBranch(e.target.value)}>
+                      {PUBLISH_BRANCH_OPTIONS.map((b) => <option key={b} value={b}>{getDisplayBranch(b)}</option>)}
+                    </select>
+                    {picked && (
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                        CN mặc định của NV: <strong>{getDisplayBranch((picked as any)?.default_branch_id || (picked as any)?.branch_id || '')}</strong>
+                      </div>
+                    )}
+                  </div>
+                  <button className="btn-primary" disabled={edBusy} onClick={doEditShift} style={{ padding: '10px', fontWeight: 800, fontSize: '13px', backgroundColor: '#1D4ED8' }}>
+                    {edBusy ? '⏳ Đang cập nhật...' : 'Lưu Cập Nhật Ca'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Realtime Socket Live Notification Banner */}
         <div style={{
           backgroundColor: '#ECFDF5',
@@ -8676,6 +8799,30 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                       {schedDelBusy === sd.assignment_id ? '⏳...' : '✕ Xóa ca'}
                                     </button>
                                   )}
+                                  {sd.assignment_id && (
+                                    <button
+                                      onClick={() => openEditShift({ assignmentId: sd.assignment_id, empId: emp.empId, empName: emp.name, branch: emp.branch, shiftCode: sd.shift_code, date: sd.shift_date || day.isoDate, status: sd.status })}
+                                      title="Cập nhật ca này (kể cả ca đã điểm danh): đổi ca/nhân viên/chi nhánh — lượt điểm danh giữ nguyên, lương tính lại realtime"
+                                      style={{
+                                        marginTop: '4px',
+                                        marginLeft: '4px',
+                                        fontSize: '9px',
+                                        padding: '2px 6px',
+                                        borderRadius: '4px',
+                                        backgroundColor: '#FFFFFF',
+                                        border: '1px solid #93C5FD',
+                                        color: '#1D4ED8',
+                                        fontWeight: 800,
+                                        cursor: 'pointer',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '3px',
+                                        justifyContent: 'center',
+                                      }}
+                                    >
+                                      ✎ Sửa ca
+                                    </button>
+                                  )}
                                 </div>
                               );
                             })}
@@ -8986,6 +9133,30 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 }}
                               >
                                 {schedDelBusy === d.assignment_id ? '⏳...' : '✕ Xóa ca'}
+                              </button>
+                            )}
+                            {d.assignment_id && (
+                              <button
+                                onClick={() => openEditShift({ assignmentId: d.assignment_id, empId: emp.empId, empName: emp.name, branch: emp.branch, shiftCode: (d as any).shift_code, date: (d as any).shift_date || day.isoDate, status: d.status })}
+                                title="Cập nhật ca này (kể cả ca đã điểm danh): đổi ca/nhân viên/chi nhánh — lượt điểm danh giữ nguyên, lương tính lại realtime"
+                                style={{
+                                  marginTop: '4px',
+                                  marginLeft: '4px',
+                                  fontSize: '9.5px',
+                                  padding: '2px 8px',
+                                  borderRadius: '4px',
+                                  backgroundColor: '#FFFFFF',
+                                  border: '1px solid #93C5FD',
+                                  color: '#1D4ED8',
+                                  fontWeight: 800,
+                                  cursor: 'pointer',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '3px',
+                                  justifyContent: 'center',
+                                }}
+                              >
+                                ✎ Sửa ca
                               </button>
                             )}
                           </div>

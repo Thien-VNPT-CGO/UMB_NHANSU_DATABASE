@@ -197,6 +197,20 @@ export const shiftCreateBody = z
   })
   .passthrough();
 
+// HR cập nhật ca (kể cả ca ĐÃ ĐIỂM DANH): đổi ca/nhân viên/chi nhánh;
+// đổi ngày bị chặn khi đã có điểm danh (giờ check-in/out gắn ngày cũ).
+export const shiftUpdateBody = z
+  .object({
+    shiftCode: optString(16),
+    date: optString(32),
+    employeeId: optString(64),
+    branchId: optString(32),
+  })
+  .passthrough()
+  .refine((d) => d.shiftCode || d.date || d.employeeId || d.branchId, {
+    message: 'UPDATE_SHIFT_EMPTY: phải đổi ít nhất 1 trường (ca/ngày/nhân viên/chi nhánh)!',
+  });
+
 export const publishWeekParams = z.object({
   week: z.string().trim().min(1).max(32),
 });
