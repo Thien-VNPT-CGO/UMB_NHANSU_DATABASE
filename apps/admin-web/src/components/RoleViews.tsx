@@ -2412,6 +2412,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       }
       if (!window.confirm(`Tạo ca ${compModal.shiftCode} ngày ${compModal.shiftDate} cho ${compModal.name || ''} (${compModal.empCode || ''}) rồi bù giờ ra? Giờ vào mồ côi (${compModal.inText || ''}) sẽ gắn vào ca mới — tính đủ công, realtime.`)) return;
       setCompBusy(true);
+      let newAid = '';
       try {
         const createdRaw: any = await apiRequest('/schedules/shifts', {
           method: 'POST',
@@ -2419,6 +2420,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         });
         const newShift = (createdRaw as any)?.result ?? createdRaw;
         if (!newShift?.assignment_id) throw new Error('Không tạo được ca mới!');
+        newAid = newShift.assignment_id;
         const raw: any = await apiRequest('/admin/attendance/compensate', {
           method: 'POST',
           body: JSON.stringify({ assignmentId: newShift.assignment_id, ...(outIso ? { checkOutTime: outIso } : {}), reason: compModal.reason }),
@@ -2433,7 +2435,19 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           setLiveAttendanceEvents(Array.isArray(data) ? data : []);
         } catch { /* giữ lưới cũ, socket sẽ đẩy */ }
       } catch (e: any) {
-        showToast(e?.message || 'Lỗi khi bù công!');
+        // Bù lỗi sau khi đã tạo ca: tự hủy ca vừa tạo để khỏi rớt lại thẻ Khóa
+        // rỗng (hủy được vì chưa có điểm danh nào gắn vào; nếu đã gắn giờ vào
+        // thì giữ ca để bù tiếp giờ ra).
+        if (newAid) {
+          try {
+            await apiRequest(`/schedules/${encodeURIComponent(newAid)}`, { method: 'DELETE' });
+            showToast(`⚠️ Bù lỗi (${e?.message || 'lỗi'}) — đã tự hủy ca vừa tạo để không rớt thẻ thừa.`);
+          } catch {
+            showToast(e?.message || 'Lỗi khi bù công!');
+          }
+        } else {
+          showToast(e?.message || 'Lỗi khi bù công!');
+        }
       } finally {
         setCompBusy(false);
       }
