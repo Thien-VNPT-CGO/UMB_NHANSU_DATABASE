@@ -2361,48 +2361,41 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     if (!edEmpId) { showToast('⚠️ Vui lòng chọn nhân viên!'); return; }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(edDate || '')) { showToast('⚠️ Vui lòng chọn ngày (YYYY-MM-DD)!'); return; }
     if (!['CA_1', 'CA_2', 'CA_3'].includes(edShift)) { showToast('⚠️ Vui lòng chọn ca 1/2/3!'); return; }
+    // Thẻ ngoài lịch chưa có ca -> lưu là TẠO ca mới (nháp) từ lượt điểm danh.
+    const isNew = !editShiftOpen.assignmentId;
     const hadAtt = ['COMPLETED', 'CHECKED_IN', 'MISSING_OUT'].includes(String(editShiftOpen.status || ''));
     const shiftLabel = edShift === 'CA_1' ? 'Ca 1 (07–12)' : edShift === 'CA_2' ? 'Ca 2 (12–18)' : 'Ca 3 (18–23)';
-    if (!window.confirm(`Cập nhật ca thành ${shiftLabel} ngày ${edDate} cho NV đã chọn${hadAtt ? ' (ca ĐÃ ĐIỂM DANH — lượt check-in/out giữ nguyên theo ca, lương tính lại realtime)' : ''}?\nTiếp tục?`)) return;
+    if (isNew) {
+      const existing = (schedAllShifts || []).filter((s: any) =>
+        String((s as any)?.employee_id || '') === String(edEmpId || '') &&
+        String((s as any)?.date || '').slice(0, 10) === edDate &&
+        String((s as any)?.status || '') !== 'CANCELLED');
+      if (existing.length > 0) {
+        if (!window.confirm(`NV đã có ca ${existing.map((s: any) => String((s as any)?.shift_code || '')).join(' + ')} ngày ${edDate} — tạo thêm thành ${existing.length + 1} ca/ngày. Tiếp tục?`)) return;
+      } else if (!window.confirm(`Tạo ca ${shiftLabel} ngày ${edDate} từ lượt điểm danh ngoài lịch (ca nháp — cần Phát Hành để tính công chính thức)?`)) return;
+    } else if (!window.confirm(`Cập nhật ca thành ${shiftLabel} ngày ${edDate} cho NV đã chọn${hadAtt ? ' (ca ĐÃ ĐIỂM DANH — lượt check-in/out giữ nguyên theo ca, lương tính lại realtime)' : ''}?\nTiếp tục?`)) return;
     setEdBusy(true);
     try {
-      const res: any = await apiRequest(`/schedules/shifts/${encodeURIComponent(editShiftOpen.assignmentId)}`, {
-        method: 'PUT',
-        body: JSON.stringify({ shiftCode: edShift, date: edDate, employeeId: edEmpId, branchId: edBranch }),
-      });
-      const r = (res as any)?.result ?? res;
-      showToast(`✅ Đã cập nhật ca${r?.hasAttendance ? ' (giữ nguyên lượt điểm danh, lương tính lại realtime)' : ''}! Đã đồng bộ sang Bảng Chấm Công và Cổng NV.`);
+      if (isNew) {
+        await apiRequest('/schedules/shifts', {
+          method: 'POST',
+          body: JSON.stringify({ employeeId: edEmpId, branchId: edBranch || 'CN130', shiftCode: edShift, date: edDate }),
+        });
+        showToast(`✅ Đã tạo ${shiftLabel} ngày ${edDate} (nháp) — lượt điểm danh tự gộp vào ca, bấm Phát Hành Lịch để chốt công!`);
+      } else {
+        const res: any = await apiRequest(`/schedules/shifts/${encodeURIComponent(editShiftOpen.assignmentId)}`, {
+          method: 'PUT',
+          body: JSON.stringify({ shiftCode: edShift, date: edDate, employeeId: edEmpId, branchId: edBranch }),
+        });
+        const r = (res as any)?.result ?? res;
+        showToast(`✅ Đã cập nhật ca${r?.hasAttendance ? ' (giữ nguyên lượt điểm danh, lương tính lại realtime)' : ''}! Đã đồng bộ sang Bảng Chấm Công và Cổng NV.`);
+      }
       setEditShiftOpen(null);
       if (onRefreshData) await onRefreshData();
     } catch (e: any) {
-      showToast(e?.message || 'Lỗi khi cập nhật ca!');
+      showToast(e?.message || 'Lỗi khi lưu ca!');
     } finally {
       setEdBusy(false);
-    }
-  };
-  // HR biến lượt điểm danh ngoài lịch thành ca chính thức (nháp): lượt check-in/out
-  // tự gộp vào ca mới, bấm Phát Hành Lịch để chốt công — xong thẻ có nút Sửa ca.
-  const createShiftFromExtra = async (empId: string, empName: string, branch: string, dateIso: string, shiftCode: string) => {
-    const code = ['CA_1', 'CA_2', 'CA_3'].includes(shiftCode) ? shiftCode : 'CA_2';
-    const label = code === 'CA_1' ? 'Ca 1 (07–12)' : code === 'CA_2' ? 'Ca 2 (12–18)' : 'Ca 3 (18–23)';
-    const existing = (schedAllShifts || []).filter((s: any) =>
-      String((s as any)?.employee_id || '') === String(empId || '') &&
-      String((s as any)?.date || '').slice(0, 10) === dateIso &&
-      String((s as any)?.status || '') !== 'CANCELLED');
-    if (existing.length > 0) {
-      if (!window.confirm(`${empName} đã có ca ${existing.map((s: any) => String((s as any)?.shift_code || '')).join(' + ')} ngày ${dateIso} — tạo thêm thành ${existing.length + 1} ca/ngày. Tiếp tục?`)) return;
-    } else {
-      if (!window.confirm(`Tạo ca ${label} ngày ${dateIso} cho ${empName} từ lượt điểm danh ngoài lịch (ca nháp — cần Phát Hành để tính công chính thức)?`)) return;
-    }
-    try {
-      await apiRequest('/schedules/shifts', {
-        method: 'POST',
-        body: JSON.stringify({ employeeId: empId, branchId: branch || 'CN130', shiftCode: code, date: dateIso }),
-      });
-      showToast(`✅ Đã tạo ${label} ngày ${dateIso} (nháp) — lượt điểm danh tự gộp vào ca, bấm Phát Hành Lịch để chốt công!`);
-      if (onRefreshData) await onRefreshData();
-    } catch (e: any) {
-      showToast(e?.message || 'Lỗi khi tạo ca!');
     }
   };
 
@@ -7522,7 +7515,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
         <div style={{ backgroundColor: 'var(--surface)', borderRadius: '12px', maxWidth: '560px', width: '100%', maxHeight: '88vh', overflow: 'auto', padding: '20px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h2 style={{ fontSize: '16px', fontWeight: 800, margin: 0 }}>✎ Cập Nhật Ca Làm Việc</h2>
+            <h2 style={{ fontSize: '16px', fontWeight: 800, margin: 0 }}>{(editShiftOpen as any).assignmentId ? '✎ Cập Nhật Ca Làm Việc' : '➕ Tạo Ca Từ Lượt Điểm Danh'}</h2>
             <button className="btn-secondary" style={{ padding: '4px 12px' }} onClick={() => setEditShiftOpen(null)}>Đóng</button>
           </div>
           <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px', lineHeight: 1.6 }}>
@@ -7581,7 +7574,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               )}
             </div>
             <button className="btn-primary" disabled={edBusy} onClick={doEditShift} style={{ padding: '10px', fontWeight: 800, fontSize: '13px', backgroundColor: '#1D4ED8' }}>
-              {edBusy ? '⏳ Đang cập nhật...' : 'Lưu Cập Nhật Ca'}
+              {edBusy ? '⏳ Đang lưu...' : ((editShiftOpen as any).assignmentId ? 'Lưu Cập Nhật Ca' : 'Tạo Ca (Nháp)')}
             </button>
           </div>
         </div>
@@ -8828,10 +8821,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                       {schedDelBusy === sd.assignment_id ? '⏳...' : '✕ Xóa ca'}
                                     </button>
                                   )}
-                                  {sd.assignment_id && (
+                                  {(sd.assignment_id || (sd as any)?.isExtra) && (
                                     <button
-                                      onClick={() => openEditShift({ assignmentId: sd.assignment_id, empId: emp.empId, empName: emp.name, branch: emp.branch, shiftCode: sd.shift_code, date: sd.shift_date || day.isoDate, status: sd.status })}
-                                      title="Cập nhật ca này (kể cả ca đã điểm danh): đổi ca/nhân viên/chi nhánh — lượt điểm danh giữ nguyên, lương tính lại realtime"
+                                      onClick={() => openEditShift({ assignmentId: sd.assignment_id || '', empId: emp.empId, empName: emp.name, branch: emp.branch, shiftCode: sd.shift_code || inferExtraShiftCode((sd as any).event, empShiftOf(emp.empId)), date: (sd as any).shift_date || day.isoDate, status: sd.status })}
+                                      title={(sd as any)?.isExtra && !sd.assignment_id ? 'Tạo ca chính thức (nháp) từ lượt điểm danh ngoài lịch này — lượt check-in/out tự gộp vào ca, Phát Hành để chốt công' : 'Cập nhật ca này (kể cả ca đã điểm danh): đổi ca/nhân viên/chi nhánh — lượt điểm danh giữ nguyên, lương tính lại realtime'}
                                       style={{
                                         marginTop: '4px',
                                         marginLeft: '4px',
@@ -8850,30 +8843,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                       }}
                                     >
                                       ✎ Sửa ca
-                                    </button>
-                                  )}
-                                  {(sd as any)?.isExtra && (
-                                    <button
-                                      onClick={() => createShiftFromExtra(emp.empId, emp.name, emp.branch, day.isoDate, inferExtraShiftCode((sd as any).event, empShiftOf(emp.empId)))}
-                                      title="Tạo ca chính thức (nháp) từ lượt điểm danh ngoài lịch này — lượt check-in/out tự gộp vào ca, Phát Hành để chốt công"
-                                      style={{
-                                        marginTop: '4px',
-                                        marginLeft: '4px',
-                                        fontSize: '9px',
-                                        padding: '2px 6px',
-                                        borderRadius: '4px',
-                                        backgroundColor: '#ECFDF5',
-                                        border: '1px solid #6EE7B7',
-                                        color: '#065F46',
-                                        fontWeight: 800,
-                                        cursor: 'pointer',
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: '3px',
-                                        justifyContent: 'center',
-                                      }}
-                                    >
-                                      ＋ Tạo ca
                                     </button>
                                   )}
                                 </div>
@@ -9188,10 +9157,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 {schedDelBusy === d.assignment_id ? '⏳...' : '✕ Xóa ca'}
                               </button>
                             )}
-                            {d.assignment_id && (
+                            {(d.assignment_id || (d as any)?.isExtra) && (
                               <button
-                                onClick={() => openEditShift({ assignmentId: d.assignment_id, empId: emp.empId, empName: emp.name, branch: emp.branch, shiftCode: (d as any).shift_code, date: (d as any).shift_date || day.isoDate, status: d.status })}
-                                title="Cập nhật ca này (kể cả ca đã điểm danh): đổi ca/nhân viên/chi nhánh — lượt điểm danh giữ nguyên, lương tính lại realtime"
+                                onClick={() => openEditShift({ assignmentId: d.assignment_id || '', empId: emp.empId, empName: emp.name, branch: emp.branch, shiftCode: (d as any).shift_code || inferExtraShiftCode((d as any).event, empShiftOf(emp.empId)), date: (d as any).shift_date || day.isoDate, status: d.status })}
+                                title={(d as any)?.isExtra && !d.assignment_id ? 'Tạo ca chính thức (nháp) từ lượt điểm danh ngoài lịch này — lượt check-in/out tự gộp vào ca, Phát Hành để chốt công' : 'Cập nhật ca này (kể cả ca đã điểm danh): đổi ca/nhân viên/chi nhánh — lượt điểm danh giữ nguyên, lương tính lại realtime'}
                                 style={{
                                   marginTop: '4px',
                                   marginLeft: '4px',
@@ -9210,30 +9179,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 }}
                               >
                                 ✎ Sửa ca
-                              </button>
-                            )}
-                            {(d as any)?.isExtra && (
-                              <button
-                                onClick={() => createShiftFromExtra(emp.empId, emp.name, emp.branch, day.isoDate, inferExtraShiftCode((d as any).event, empShiftOf(emp.empId)))}
-                                title="Tạo ca chính thức (nháp) từ lượt điểm danh ngoài lịch này — lượt check-in/out tự gộp vào ca, Phát Hành để chốt công"
-                                style={{
-                                  marginTop: '4px',
-                                  marginLeft: '4px',
-                                  fontSize: '9.5px',
-                                  padding: '2px 8px',
-                                  borderRadius: '4px',
-                                  backgroundColor: '#ECFDF5',
-                                  border: '1px solid #6EE7B7',
-                                  color: '#065F46',
-                                  fontWeight: 800,
-                                  cursor: 'pointer',
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: '3px',
-                                  justifyContent: 'center',
-                                }}
-                              >
-                                ＋ Tạo ca
                               </button>
                             )}
                           </div>
@@ -10426,22 +10371,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                         💰 {fmtVnd(extraPay.net)}{extraPay.deduction > 0 ? ` (phạt ${fmtVnd(extraPay.deduction)})` : ''}{extraPay.unpaid ? ' (không lương)' : ''} <span style={{ fontWeight: 700 }}>(tạm tính {extraShiftCode.replace('CA_', 'Ca ')})</span>
                                       </div>
                                     )}
-                                    {!isExtra && it.shift?.assignment_id && (
+                                    {((!isExtra && it.shift?.assignment_id) || (isExtra && inE)) && (
                                       <button
-                                        onClick={() => openEditShift({ assignmentId: it.shift.assignment_id, empId: emp.employee_id, empName: emp.full_name, branch: emp.default_branch_id || emp.branch_id || '', shiftCode: it.shift.shift_code, date: day.iso, status: it.st.key })}
-                                        title="Cập nhật ca này (kể cả ca đã điểm danh): đổi ca/nhân viên/chi nhánh — lượt điểm danh giữ nguyên, lương tính lại realtime"
+                                        onClick={() => openEditShift({ assignmentId: it.shift?.assignment_id || '', empId: emp.employee_id, empName: emp.full_name, branch: emp.default_branch_id || emp.branch_id || '', shiftCode: it.shift?.shift_code || inferExtraShiftCode(inE, (emp as any)?.default_shift_code), date: day.iso, status: it.st.key })}
+                                        title={isExtra ? 'Tạo ca chính thức (nháp) từ lượt điểm danh ngoài lịch này — lượt check-in/out tự gộp vào ca, Phát Hành để chốt công' : 'Cập nhật ca này (kể cả ca đã điểm danh): đổi ca/nhân viên/chi nhánh — lượt điểm danh giữ nguyên, lương tính lại realtime'}
                                         style={{ marginTop: '4px', fontSize: '9px', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#FFFFFF', border: '1px solid #93C5FD', color: '#1D4ED8', fontWeight: 800, cursor: 'pointer' }}
                                       >
                                         ✎ Sửa ca
-                                      </button>
-                                    )}
-                                    {isExtra && inE && (
-                                      <button
-                                        onClick={() => createShiftFromExtra(emp.employee_id, emp.full_name, emp.default_branch_id || emp.branch_id || '', day.iso, inferExtraShiftCode(inE, (emp as any)?.default_shift_code))}
-                                        title="Tạo ca chính thức (nháp) từ lượt điểm danh ngoài lịch này — lượt check-in/out tự gộp vào ca, Phát Hành để chốt công"
-                                        style={{ marginTop: '4px', fontSize: '9px', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#ECFDF5', border: '1px solid #6EE7B7', color: '#065F46', fontWeight: 800, cursor: 'pointer' }}
-                                      >
-                                        ＋ Tạo ca
                                       </button>
                                     )}
                                     {relSwap && (
