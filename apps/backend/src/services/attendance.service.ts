@@ -259,11 +259,11 @@ export class AttendanceService {
   }
 
   /**
-   * Admin bù công ca làm cho NV khi hệ thống lỗi (ca bị khóa / không điểm
-   * danh): ghi trực tiếp CHECK_IN (+CHECK_OUT) gắn đúng ca, bỏ qua GPS/ảnh/
-   * khóa 3h (Admin chịu trách nhiệm giờ nhập). Không phạt trễ (tính đủ công).
-   * Bù được mọi ngày cũ: điểm danh tuần qua đã archive vẫn được tôn trọng
-   * (không đòi nhập lại giờ vào / không bù trùng). CHỈ Admin gọi.
+   * Engine bù công ca làm (DỰ PHÒNG, hiện không còn route trực tiếp nào gọi):
+   * công chỉ ghi nhận qua phiếu NV tạo → HR duyệt (reviewAdjustment dùng
+   * backfillFromAdjustment). Giữ lại để tái dùng cho luồng duyệt tự động.
+   * Ghi trực tiếp CHECK_IN (+CHECK_OUT) gắn đúng ca, không phạt trễ, tôn trọng
+   * kho archive, gắn check-in mồ côi, mặc định giờ ca khi thiếu.
    */
   async compensateShift(data: {
     assignmentId: string;

@@ -63,7 +63,6 @@ import {
   checkinBody,
   checkoutBody,
   colleagueShiftsQuery,
-  compensateShiftBody,
   defaultShiftBody,
   swapDispatchBody,
   supportCreateBody,
@@ -3414,27 +3413,9 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  // Admin bù công ca làm cho NV khi hệ thống lỗi (ca khóa/không điểm danh) —
-  // DUY NHẤT tài khoản Admin được gọi. Ghi CHECK_IN/OUT gắn đúng ca, realtime
-  // lưới tuần + Bảng Chấm Công + Cổng NV ngay, tính đủ công (không phạt trễ).
-  app.post('/admin/attendance/compensate', authMiddleware, requireRole(['ADMIN']), validate({ body: compensateShiftBody }), async (req: AuthenticatedRequest, res) => {
-    try {
-      const b: any = req.body || {};
-      const result = await attendanceService.compensateShift({
-        assignmentId: String(b.assignmentId || b.assignment_id || '').trim(),
-        checkInTime: b.checkInTime || b.check_in_time,
-        checkOutTime: b.checkOutTime || b.check_out_time,
-        reason: b.reason,
-        actorId: req.user!.id,
-      });
-      const payload = (result as any)?.result ?? result;
-      broadcastUpdate('attendance', { action: 'admin-compensate', assignmentId: payload?.checkIn?.assignment_id || payload?.checkOut?.assignment_id, by: req.user!.id });
-      broadcastUpdate('schedules', { action: 'admin-compensate' });
-      res.json(payload);
-    } catch (err: any) {
-      res.status(400).json({ error: err.message });
-    }
-  });
+  // Bù công trực tiếp đã bỏ: công chỉ ghi nhận qua phiếu NV tạo → HR duyệt
+  // (POST /attendance/adjustments + approve bên dưới). Engine compensateShift
+  // trong attendance.service giữ lại dự phòng, không còn route nào gọi trực tiếp.
 
   app.post('/attendance/adjustments', authMiddleware, validate({ body: adjustmentCreateBody }), async (req: AuthenticatedRequest, res) => {
     try {
@@ -3490,7 +3471,9 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/attendance/adjustments/:id/approve', authMiddleware, requireRole(['ADMIN', 'HR', 'STORE']), validate({ params: idParams, body: adjustmentApproveBody }), async (req: AuthenticatedRequest, res) => {
+  // Duyệt phiếu bổ sung/quên điểm danh: CHỈ HR (ADMIN giám sát) — công chỉ được
+  // công nhận khi HR duyệt, không còn đường bù trực tiếp nào khác.
+  app.post('/attendance/adjustments/:id/approve', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams, body: adjustmentApproveBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const { status, minutesApproved, note } = req.body;
       const result = await attendanceService.reviewAdjustment(
@@ -3519,7 +3502,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   // Sửa phiếu APPROVED bị gắn nhầm ca/ngày (lỗi app NV cũ): gỡ lượt dựng nhầm +
   // dựng lại đúng ngày phiếu, realtime cả 2 cổng.
-  app.post('/attendance/adjustments/:id/repair', authMiddleware, requireRole(['ADMIN', 'HR', 'STORE']), validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {
+  app.post('/attendance/adjustments/:id/repair', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {
     try {
       const result = await attendanceService.repairAdjustment(req.params.id, req.user!.id);
       broadcastUpdate('adjustments', { action: 'repair', id: req.params.id });

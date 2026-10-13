@@ -358,17 +358,6 @@ export const attendanceEventsQuery = z.object({
   date: dateQuery,
 });
 
-// Admin bù công ca làm cho NV khi hệ thống lỗi (ca khóa/không điểm danh) — ADMIN duy nhất.
-export const compensateShiftBody = z.object({
-  assignmentId: optString(64),
-  assignment_id: optString(64),
-  checkInTime: optString(64),
-  check_in_time: optString(64),
-  checkOutTime: optString(64),
-  check_out_time: optString(64),
-  reason: optString(500),
-});
-
 // Khoảng ngày đọc sự kiện lưu trữ (tab Lịch làm việc lùi tuần): YYYY-MM-DD, tối đa 62 ngày.
 export const archiveEventsQuery = z.object({
   from: queryString(32),
