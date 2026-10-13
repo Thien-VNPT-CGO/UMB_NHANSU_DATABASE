@@ -1843,23 +1843,33 @@ export function App() {
     });
   };
 
-  // Đọc payload QR từ file ảnh (thử 2 độ phân giải để ảnh mờ/cỡ lớn vẫn đọc được).
+  // Đọc payload QR từ file ảnh: thử toàn ảnh nhiều độ phân giải + cắt vùng trung
+  // tâm (QR thường nằm giữa thẻ, xung quanh là logo/chữ gây nhiễu) để QR dày,
+  // ảnh chụp màn hình hoặc hơi mờ vẫn đọc được.
   const decodeQrPayload = (file: File): Promise<string | null> => {
     return new Promise((resolve) => {
       const url = URL.createObjectURL(file);
       const img = new Image();
       img.onload = () => {
         try {
-          for (const maxPx of [1200, 600]) {
-            const scale = Math.min(1, maxPx / Math.max(img.width, img.height));
-            const w = Math.max(1, Math.round(img.width * scale));
-            const h = Math.max(1, Math.round(img.height * scale));
+          const W = img.width;
+          const H = img.height;
+          const regions: { x: number; y: number; w: number; h: number }[] = [{ x: 0, y: 0, w: W, h: H }];
+          for (const frac of [0.8, 0.62]) {
+            const rw = W * frac;
+            const rh = H * frac;
+            regions.push({ x: (W - rw) / 2, y: (H - rh) / 2, w: rw, h: rh });
+          }
+          for (const r of regions) {
+            const scale = Math.min(1, 900 / Math.max(r.w, r.h));
+            const w = Math.max(1, Math.round(r.w * scale));
+            const h = Math.max(1, Math.round(r.h * scale));
             const cv = document.createElement('canvas');
             cv.width = w;
             cv.height = h;
             const ctx = cv.getContext('2d', { willReadFrequently: true });
             if (!ctx) continue;
-            ctx.drawImage(img, 0, 0, w, h);
+            ctx.drawImage(img, r.x, r.y, r.w, r.h, 0, 0, w, h);
             const data = ctx.getImageData(0, 0, w, h);
             const code = jsQR(data.data, w, h);
             if (code?.data) {
@@ -1895,11 +1905,12 @@ export function App() {
     '970400': 'SaigonBank', '970406': 'DongA Bank',
   };
 
-  // Parse QR VietQR (EMVCo TLV): bắt buộc có BIN ngân hàng (01) + số tài khoản (02)
-  // trong trường chứa AID A000000727, và tên chủ tài khoản (59). Thiếu -> throw lý do.
-  const parseVietQR = (payload: string): { bank: string; account: string; holder: string } => {
+  // Parse QR VietQR (EMVCo TLV), bản tolerant: trả về những gì đọc được
+  // (bank/account/holder có thể rỗng) để luồng dự phòng OCR gộp tiếp.
+  const parseVietQRPartial = (payload: string): { isVietQR: boolean; bank: string; account: string; holder: string; bin: string } => {
+    const empty = { isVietQR: false, bank: '', account: '', holder: '', bin: '' };
     const s = String(payload || '').trim();
-    if (!/^000201/.test(s)) throw new Error('NOT_VIETQR');
+    if (!/^000201/.test(s)) return empty;
     const parseTLV = (src: string): { id: string; value: string }[] => {
       const out: { id: string; value: string }[] = [];
       let i = 0;
@@ -1919,17 +1930,124 @@ export function App() {
         return Number.isFinite(n) && n >= 26 && n <= 51 && f.value.includes('A000000727');
       }
     );
-    if (!acctField) throw new Error('NOT_VIETQR');
+    if (!acctField) return empty;
     const sub = parseTLV(acctField.value);
     const bin = (sub.find((x) => x.id === '01')?.value || '').trim();
     const account = (sub.find((x) => x.id === '02')?.value || '').trim();
     const holder = (top.find((f) => f.id === '59')?.value || '').trim();
-    if (!bin) throw new Error('MISSING_BANK');
-    const bank = VIETQR_BANK_BY_BIN[bin];
-    if (!bank) throw new Error(`UNKNOWN_BIN:${bin}`);
-    if (!/^[0-9]{6,19}$/.test(account)) throw new Error('MISSING_ACCOUNT');
-    if (!holder) throw new Error('MISSING_HOLDER');
+    return { isVietQR: true, bank: VIETQR_BANK_BY_BIN[bin] || '', account: /^[0-9]{6,19}$/.test(account) ? account : '', holder, bin };
+  };
+
+  // Parse nghiêm: thiếu trường nào -> throw mã lý do đó (giữ thông báo lỗi cũ).
+  const parseVietQR = (payload: string): { bank: string; account: string; holder: string } => {
+    const s = String(payload || '').trim();
+    if (!/^000201/.test(s)) throw new Error('NOT_VIETQR');
+    const p = parseVietQRPartial(s);
+    if (!p.isVietQR) throw new Error('NOT_VIETQR');
+    if (!p.bin) throw new Error('MISSING_BANK');
+    if (!p.bank) throw new Error(`UNKNOWN_BIN:${p.bin}`);
+    if (!p.account) throw new Error('MISSING_ACCOUNT');
+    if (!p.holder) throw new Error('MISSING_HOLDER');
+    return { bank: p.bank, account: p.account, holder: p.holder };
+  };
+
+  // Từ khóa tên ngân hàng -> tên hiển thị (dùng cho OCR chữ in trên thẻ).
+  const OCR_BANK_KEYWORDS: [RegExp, string][] = [
+    [/\bVIETCOMBANK\b|\bVCB\b/, 'Vietcombank'],
+    [/\bTECHCOMBANK\b|\bTCB\b/, 'Techcombank'],
+    [/\bMBBANK\b|\bMB\b/, 'MBBank'],
+    [/\bBIDV\b/, 'BIDV'],
+    [/\bVIETINBANK\b|\bCTG\b/, 'VietinBank'],
+    [/\bSACOMBANK\b|\bSTB\b/, 'Sacombank'],
+    [/\bHDBANK\b|\bHDB\b/, 'HDBank'],
+    [/\bVPBANK\b|\bVPB\b/, 'VPBank'],
+    [/\bTPBANK\b|\bTPB\b/, 'TPBank'],
+    [/\bAGRIBANK\b/, 'Agribank'],
+    [/\bEXIMBANK\b/, 'Eximbank'],
+    [/\bLPBANK\b|\bLIENVIET\b/, 'LPBank'],
+    [/\bNAM\s?A\s?BANK\b/, 'Nam A Bank'],
+    [/\bVIETBANK\b/, 'VietBank'],
+    [/\bABBANK\b|\bABB\b/, 'ABBank'],
+    [/\bBAC\s?A\s?BANK\b/, 'Bac A Bank'],
+    [/\bBAOVIET\b.*\bBANK\b/, 'BaoVietBank'],
+    [/\bPGBANK\b|\bPG\s?BANK\b/, 'PG Bank'],
+    [/\bVIET\s?A\s?BANK\b/, 'Viet A Bank'],
+    [/\bNCB\b/, 'NCB'],
+    [/\bSEABANK\b|\bSEAB\b/, 'SeABank'],
+    [/\bBVBANK\b|\bBV\s?BANK\b/, 'BVBank'],
+    [/\bKIENLONG\b|\bKLB\b/, 'KienLongBank'],
+    [/\bSAIGONBANK\b|\bSGB\b/, 'SaigonBank'],
+    [/\bDONGA\b.*\bBANK\b|\bDONG\s?A\b/, 'DongA Bank'],
+    [/\bACB\b/, 'ACB'],
+    [/\bVIB\b/, 'VIB'],
+    [/\bSHB\b/, 'SHB'],
+    [/\bOCB\b/, 'OCB'],
+    [/\bMSB\b/, 'MSB'],
+  ];
+
+  // Đọc chữ in trên thẻ QR (tên + STK + ngân hàng) khi payload QR thiếu/không đọc được.
+  const extractBankQrFromOcrText = (text: string): { bank: string; account: string; holder: string } => {
+    const upper = String(text || '').toUpperCase();
+    let bank = '';
+    for (const [re, name] of OCR_BANK_KEYWORDS) {
+      if (re.test(upper)) {
+        bank = name;
+        break;
+      }
+    }
+    const compact = upper.replace(/[\s.\-_,]/g, '');
+    const runs = compact.match(/\d{8,19}/g) || [];
+    const scoreRun = (d: string): number => {
+      let sc = d.length >= 10 && d.length <= 16 ? 100 : 0;
+      sc += d.length;
+      return sc;
+    };
+    const account = [...runs].sort((a, b) => scoreRun(b) - scoreRun(a))[0] || '';
+    const badLine = /(VIETQR|NAPAS|PAY|GLOBAL|BANK|24\/7|HOTLINE|1900|\d)/;
+    const lines = String(text || '')
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.length >= 6);
+    let holder = '';
+    for (const l of lines) {
+      const u = l.toUpperCase();
+      if (!/^[A-ZÀ-Ỹ\s]+$/.test(u)) continue;
+      if (u.split(/\s+/).length < 2) continue;
+      if (badLine.test(u)) continue;
+      if (u.length > holder.length) holder = l.trim();
+    }
     return { bank, account, holder };
+  };
+
+  // OCR ảnh thẻ QR (chỉ gọi khi QR payload thiếu — lazy load để nhẹ bundle).
+  // Lỗi mạng/CDN -> trả null để luồng chính báo lỗi như cũ.
+  const readBankCardOcrText = async (file: File): Promise<string | null> => {
+    try {
+      const { createWorker } = await import('tesseract.js');
+      const worker: any = await (createWorker as any)('eng');
+      const { data }: any = await worker.recognize(file);
+      const text = String(data?.text || '');
+      try {
+        await worker.terminate();
+      } catch { /* bỏ qua */ }
+      return text;
+    } catch {
+      return null;
+    }
+  };
+
+  const bankQrErrorToast = (reason: string) => {
+    if (reason.startsWith('UNKNOWN_BIN:')) {
+      showToast(`⚠️ Không nhận diện được ngân hàng (mã BIN ${reason.split(':')[1]})! Vui lòng dùng mã QR VietQR của ngân hàng và thử lại.`);
+    } else if (reason === 'MISSING_ACCOUNT') {
+      showToast('⚠️ Không tìm thấy số tài khoản (mã QR + chữ in trên thẻ)! Vui lòng chụp rõ thẻ QR có số tài khoản và thử lại.');
+    } else if (reason === 'MISSING_HOLDER') {
+      showToast('⚠️ Không tìm thấy tên chủ tài khoản (mã QR + chữ in trên thẻ)! Vui lòng chụp rõ thẻ QR có tên chủ tài khoản và thử lại.');
+    } else if (reason === 'MISSING_BANK') {
+      showToast('⚠️ Không nhận diện được ngân hàng (mã QR + logo/tên in trên thẻ)! Vui lòng chụp rõ thẻ QR VietQR và thử lại.');
+    } else {
+      showToast('⚠️ Không đọc được mã QR trong ảnh (mờ/cắt góc)! Vui lòng chụp rõ mã QR ngân hàng và thử lại.');
+    }
   };
 
   const handleBankQrSelected = async (file: File | undefined) => {
@@ -1942,39 +2060,64 @@ export function App() {
       showToast('⚠️ Ảnh quá lớn (>15MB)! Vui lòng chụp lại.');
       return;
     }
-    try {
-      showToast('⏳ Đang kiểm tra mã QR ngân hàng...');
-      const payload = await decodeQrPayload(file);
-      if (!payload) {
-        showToast('⚠️ Không đọc được mã QR trong ảnh (mờ/cắt góc)! Vui lòng chụp rõ mã QR ngân hàng và thử lại.');
-        return;
-      }
-      let info: { bank: string; account: string; holder: string };
-      try {
-        info = parseVietQR(payload);
-      } catch (e: any) {
-        const reason = String((e as any)?.message || '');
-        if (reason.startsWith('UNKNOWN_BIN:')) {
-          showToast(`⚠️ Không nhận diện được ngân hàng (mã BIN ${reason.split(':')[1]})! Vui lòng dùng mã QR VietQR của ngân hàng và thử lại.`);
-        } else if (reason === 'MISSING_ACCOUNT') {
-          showToast('⚠️ Mã QR thiếu số tài khoản! Vui lòng dùng mã QR chuyển khoản ngân hàng (VietQR) và thử lại.');
-        } else if (reason === 'MISSING_HOLDER') {
-          showToast('⚠️ Mã QR thiếu tên chủ tài khoản! Vui lòng dùng mã QR có tên chủ tài khoản và thử lại.');
-        } else if (reason === 'MISSING_BANK') {
-          showToast('⚠️ Mã QR thiếu thông tin ngân hàng! Vui lòng dùng mã QR VietQR ngân hàng và thử lại.');
-        } else {
-          showToast('⚠️ Đây không phải mã QR VietQR ngân hàng! Vui lòng chụp mã QR chuyển khoản của ngân hàng.');
-        }
-        return;
-      }
+    const acceptQrInfo = async (info: { bank: string; account: string; holder: string }, viaOcr: boolean) => {
       const dataUrl = await compressBankQr(file);
       if (!dataUrl) {
         showToast('⚠️ Không đọc được ảnh! Vui lòng chọn lại.');
         return;
       }
-      // QR hợp lệ đủ 3 trường -> tự điền + lưu ảnh, đồng bộ qua Kế toán khi Lưu Hồ Sơ.
+      // Đủ 3 trường -> tự điền + lưu ảnh, đồng bộ qua Kế toán khi Lưu Hồ Sơ.
       setProfForm((st) => ({ ...st, bank_qr_img: dataUrl, bank_name: info.bank, bank_account: info.account, bank_holder: info.holder }));
-      showToast(`✓ QR hợp lệ: ${info.bank} • ${info.account} • ${info.holder}. Bấm "Lưu Hồ Sơ" để đồng bộ qua Kế toán.`);
+      showToast(`✓ QR hợp lệ${viaOcr ? ' (đọc từ chữ in trên thẻ)' : ''}: ${info.bank} • ${info.account} • ${info.holder}. Bấm "Lưu Hồ Sơ" để đồng bộ qua Kế toán.`);
+    };
+    try {
+      showToast('⏳ Đang kiểm tra mã QR ngân hàng...');
+      const payload = await decodeQrPayload(file);
+      // 1. QR payload đầy đủ -> nhận ngay (nhanh, không cần OCR).
+      if (payload) {
+        try {
+          await acceptQrInfo(parseVietQR(payload), false);
+          return;
+        } catch (e: any) {
+          const reason = String((e as any)?.message || '');
+          // 2. Payload thiếu trường (VD QR không ghi tên, STK in ngoài) -> OCR chữ
+          // in trên thẻ để bù: gộp cái QR có + cái OCR đọc được.
+          if (payload && (reason === 'MISSING_ACCOUNT' || reason === 'MISSING_HOLDER' || reason === 'MISSING_BANK' || reason.startsWith('UNKNOWN_BIN'))) {
+            showToast('⏳ Mã QR thiếu thông tin, đang đọc chữ in trên thẻ...');
+            const partial = parseVietQRPartial(payload);
+            const ocrText = await readBankCardOcrText(file);
+            const ocr = extractBankQrFromOcrText(ocrText || '');
+            const merged = {
+              bank: partial.bank || ocr.bank,
+              account: partial.account || ocr.account,
+              holder: partial.holder || ocr.holder,
+            };
+            if (merged.bank && merged.account && merged.holder) {
+              await acceptQrInfo(merged, true);
+              return;
+            }
+          }
+          bankQrErrorToast(reason);
+          return;
+        }
+      }
+      // 3. Không giải mã được QR (mờ/dày/cắt góc) -> OCR toàn bộ chữ trên thẻ.
+      showToast('⏳ Không quét được mã QR, đang đọc chữ in trên thẻ...');
+      const ocrText = await readBankCardOcrText(file);
+      if (ocrText) {
+        const ocr = extractBankQrFromOcrText(ocrText);
+        if (ocr.bank && ocr.account && ocr.holder) {
+          await acceptQrInfo(ocr, true);
+          return;
+        }
+        if (!ocr.account && !ocr.holder && !ocr.bank) {
+          bankQrErrorToast('NOT_VIETQR');
+          return;
+        }
+        bankQrErrorToast(!ocr.bank ? 'MISSING_BANK' : !ocr.account ? 'MISSING_ACCOUNT' : 'MISSING_HOLDER');
+        return;
+      }
+      bankQrErrorToast('NOT_VIETQR');
     } catch {
       showToast('⚠️ Không xử lý được ảnh! Vui lòng chọn ảnh khác.');
     }
