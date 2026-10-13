@@ -8399,7 +8399,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <tr key={emp.empId} style={{ borderBottom: '1px solid var(--border)' }}>
                   {/* Employee Info Column */}
                   <td style={{ padding: '12px 16px', verticalAlign: 'top', backgroundColor: '#FCFBF9', position: 'sticky', left: 0, zIndex: 2, boxShadow: '2px 0 6px rgba(15,23,42,0.06)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                       <span style={{
                         width: '30px', height: '30px', borderRadius: '50%', flexShrink: 0,
                         background: emp.stage === 'PROBATION' ? 'linear-gradient(135deg, #F59E0B, #EC4899)' : 'linear-gradient(135deg, #10B981, #0EA5E9)',
@@ -8411,6 +8411,18 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       <span className={`badge ${emp.stage === 'PROBATION' ? 'badge-brand' : 'badge-success'}`} style={{ fontSize: '10px' }}>
                         {emp.stage === 'PROBATION' ? '🌸 THỬ VIỆC' : '💼 CHÍNH THỨC'}
                       </span>
+                      {(() => {
+                        const fixed = normShiftCode(empShiftOf(emp.empId));
+                        return fixed && SHIFT_LABEL[fixed] ? (
+                          <span className="badge" title={`Ca cố định trong hồ sơ: ${SHIFT_LABEL[fixed]}`} style={{ fontSize: '10px', backgroundColor: '#E0E7FF', color: '#3730A3', fontWeight: 800 }}>
+                            📌 {SHIFT_LABEL[fixed].split(' ')[0]} {SHIFT_LABEL[fixed].split(' ')[1]}
+                          </span>
+                        ) : (
+                          <span className="badge" title="Chưa gán ca cố định trong hồ sơ" style={{ fontSize: '10px', backgroundColor: '#F1F5F9', color: '#94A3B8', fontWeight: 700 }}>
+                            📌 Chưa gán
+                          </span>
+                        );
+                      })()}
                     </div>
                     <div style={{ fontWeight: 800, fontSize: '13px', color: 'var(--text)', marginTop: '6px' }}>
                       {emp.name}
