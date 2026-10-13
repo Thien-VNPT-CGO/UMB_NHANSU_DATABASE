@@ -1,11 +1,18 @@
 export function getApiBase(): string {
   if (typeof window === 'undefined') return 'http://localhost:4005';
   const custom = localStorage.getItem('ubm_custom_api_url');
-  if (custom) return custom.trim().replace(/\/+$/, '');
+  // Backend đã chuyển sang service mới: custom URL cũ chết thì coi như chưa set.
+  if (custom && custom.trim().replace(/\/+$/, '') !== 'https://umb-nhansu-database.onrender.com') {
+    return custom.trim().replace(/\/+$/, '');
+  }
   const envUrl = (import.meta as any).env?.VITE_API_URL;
   if (envUrl) return envUrl.trim().replace(/\/+$/, '');
   if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
     return 'http://localhost:4005';
+  }
+  // Frontend chạy trên Vercel (tách backend): mặc định trỏ backend Render đang sống.
+  if (window.location.hostname.endsWith('.vercel.app')) {
+    return 'https://umb-nhansu-database-kfh6.onrender.com';
   }
   return window.location.origin;
 }
