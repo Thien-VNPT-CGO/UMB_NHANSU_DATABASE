@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import jsQR from 'jsqr';
 import { Socket } from 'socket.io-client';
 import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl, onPinLockRequired } from './services/api';
 import { connectRealtime, stopRealtimeRevive } from './services/realtime';
@@ -1842,6 +1843,95 @@ export function App() {
     });
   };
 
+  // Đọc payload QR từ file ảnh (thử 2 độ phân giải để ảnh mờ/cỡ lớn vẫn đọc được).
+  const decodeQrPayload = (file: File): Promise<string | null> => {
+    return new Promise((resolve) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        try {
+          for (const maxPx of [1200, 600]) {
+            const scale = Math.min(1, maxPx / Math.max(img.width, img.height));
+            const w = Math.max(1, Math.round(img.width * scale));
+            const h = Math.max(1, Math.round(img.height * scale));
+            const cv = document.createElement('canvas');
+            cv.width = w;
+            cv.height = h;
+            const ctx = cv.getContext('2d', { willReadFrequently: true });
+            if (!ctx) continue;
+            ctx.drawImage(img, 0, 0, w, h);
+            const data = ctx.getImageData(0, 0, w, h);
+            const code = jsQR(data.data, w, h);
+            if (code?.data) {
+              URL.revokeObjectURL(url);
+              resolve(code.data);
+              return;
+            }
+          }
+          URL.revokeObjectURL(url);
+          resolve(null);
+        } catch {
+          URL.revokeObjectURL(url);
+          resolve(null);
+        }
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        resolve(null);
+      };
+      img.src = url;
+    });
+  };
+
+  // Mã BIN Napas (6 số trong QR VietQR) -> tên ngân hàng hiển thị.
+  const VIETQR_BANK_BY_BIN: Record<string, string> = {
+    '970436': 'Vietcombank', '970407': 'Techcombank', '970422': 'MBBank', '970418': 'BIDV',
+    '970415': 'VietinBank', '970416': 'ACB', '970432': 'VPBank', '970423': 'TPBank',
+    '970429': 'Sacombank', '970437': 'HDBank', '970441': 'VIB', '970443': 'SHB',
+    '970448': 'OCB', '970426': 'MSB', '970405': 'Agribank', '970431': 'Eximbank',
+    '970449': 'LPBank', '970428': 'Nam A Bank', '970433': 'VietBank', '970425': 'ABBank',
+    '970409': 'Bac A Bank', '970438': 'BaoVietBank', '970430': 'PG Bank', '970427': 'Viet A Bank',
+    '970419': 'NCB', '970440': 'SeABank', '970454': 'BVBank', '970452': 'KienLongBank',
+    '970400': 'SaigonBank', '970406': 'DongA Bank',
+  };
+
+  // Parse QR VietQR (EMVCo TLV): bắt buộc có BIN ngân hàng (01) + số tài khoản (02)
+  // trong trường chứa AID A000000727, và tên chủ tài khoản (59). Thiếu -> throw lý do.
+  const parseVietQR = (payload: string): { bank: string; account: string; holder: string } => {
+    const s = String(payload || '').trim();
+    if (!/^000201/.test(s)) throw new Error('NOT_VIETQR');
+    const parseTLV = (src: string): { id: string; value: string }[] => {
+      const out: { id: string; value: string }[] = [];
+      let i = 0;
+      while (i + 4 <= src.length) {
+        const id = src.slice(i, i + 2);
+        const len = parseInt(src.slice(i + 2, i + 4), 10);
+        if (!Number.isFinite(len) || len < 0 || i + 4 + len > src.length) break;
+        out.push({ id, value: src.slice(i + 4, i + 4 + len) });
+        i += 4 + len;
+      }
+      return out;
+    };
+    const top = parseTLV(s);
+    const acctField = top.find(
+      (f) => {
+        const n = Number(f.id);
+        return Number.isFinite(n) && n >= 26 && n <= 51 && f.value.includes('A000000727');
+      }
+    );
+    if (!acctField) throw new Error('NOT_VIETQR');
+    const sub = parseTLV(acctField.value);
+    const bin = (sub.find((x) => x.id === '01')?.value || '').trim();
+    const account = (sub.find((x) => x.id === '02')?.value || '').trim();
+    const holder = (top.find((f) => f.id === '59')?.value || '').trim();
+    if (!bin) throw new Error('MISSING_BANK');
+    const bank = VIETQR_BANK_BY_BIN[bin];
+    if (!bank) throw new Error(`UNKNOWN_BIN:${bin}`);
+    if (!/^[0-9]{6,19}$/.test(account)) throw new Error('MISSING_ACCOUNT');
+    if (!holder) throw new Error('MISSING_HOLDER');
+    return { bank, account, holder };
+  };
+
   const handleBankQrSelected = async (file: File | undefined) => {
     if (!file) return;
     if (!file.type.startsWith('image/')) {
@@ -1853,14 +1943,38 @@ export function App() {
       return;
     }
     try {
-      showToast('⏳ Đang xử lý ảnh QR...');
+      showToast('⏳ Đang kiểm tra mã QR ngân hàng...');
+      const payload = await decodeQrPayload(file);
+      if (!payload) {
+        showToast('⚠️ Không đọc được mã QR trong ảnh (mờ/cắt góc)! Vui lòng chụp rõ mã QR ngân hàng và thử lại.');
+        return;
+      }
+      let info: { bank: string; account: string; holder: string };
+      try {
+        info = parseVietQR(payload);
+      } catch (e: any) {
+        const reason = String((e as any)?.message || '');
+        if (reason.startsWith('UNKNOWN_BIN:')) {
+          showToast(`⚠️ Không nhận diện được ngân hàng (mã BIN ${reason.split(':')[1]})! Vui lòng dùng mã QR VietQR của ngân hàng và thử lại.`);
+        } else if (reason === 'MISSING_ACCOUNT') {
+          showToast('⚠️ Mã QR thiếu số tài khoản! Vui lòng dùng mã QR chuyển khoản ngân hàng (VietQR) và thử lại.');
+        } else if (reason === 'MISSING_HOLDER') {
+          showToast('⚠️ Mã QR thiếu tên chủ tài khoản! Vui lòng dùng mã QR có tên chủ tài khoản và thử lại.');
+        } else if (reason === 'MISSING_BANK') {
+          showToast('⚠️ Mã QR thiếu thông tin ngân hàng! Vui lòng dùng mã QR VietQR ngân hàng và thử lại.');
+        } else {
+          showToast('⚠️ Đây không phải mã QR VietQR ngân hàng! Vui lòng chụp mã QR chuyển khoản của ngân hàng.');
+        }
+        return;
+      }
       const dataUrl = await compressBankQr(file);
       if (!dataUrl) {
         showToast('⚠️ Không đọc được ảnh! Vui lòng chọn lại.');
         return;
       }
-      setProfForm((s) => ({ ...s, bank_qr_img: dataUrl }));
-      showToast('✓ Đã nhận ảnh QR! Bấm "Lưu Hồ Sơ" để đồng bộ qua Kế toán.');
+      // QR hợp lệ đủ 3 trường -> tự điền + lưu ảnh, đồng bộ qua Kế toán khi Lưu Hồ Sơ.
+      setProfForm((st) => ({ ...st, bank_qr_img: dataUrl, bank_name: info.bank, bank_account: info.account, bank_holder: info.holder }));
+      showToast(`✓ QR hợp lệ: ${info.bank} • ${info.account} • ${info.holder}. Bấm "Lưu Hồ Sơ" để đồng bộ qua Kế toán.`);
     } catch {
       showToast('⚠️ Không xử lý được ảnh! Vui lòng chọn ảnh khác.');
     }
