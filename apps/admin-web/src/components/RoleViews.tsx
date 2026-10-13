@@ -7731,7 +7731,27 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             };
             const res = entryNote(buildOne(pseudo, { ci, co, ab }));
             if (!res.note) res.note = 'Ca làm tự điểm danh ngoài lịch';
+            (res as any).isExtra = true;
             entries.push(res);
+          }
+          // Bỏ thẻ ngoài lịch thừa (giống Bảng Chấm Công): ngày không ca live mà đã
+          // có thẻ COMPLETED thì thẻ MISSING cùng ngày có giờ vào cách giờ vào thẻ
+          // hoàn thành ≤120p là lần bấm trùng (VD 17:43 rồi 18:00 cùng Ca 3) — ẩn.
+          if (dayShifts.length === 0) {
+            const doneTs = entries
+              .filter((e: any) => (e as any)?.isExtra && e.status === 'COMPLETED' && e.event?.client_time)
+              .map((e: any) => new Date(e.event.client_time).getTime())
+              .filter((t: number) => Number.isFinite(t));
+            if (doneTs.length > 0) {
+              const keep = entries.filter((e: any) => {
+                if (!(e as any)?.isExtra || e.status !== 'MISSING_OUT') return true;
+                const t = e.event?.client_time ? new Date(e.event.client_time).getTime() : NaN;
+                if (!Number.isFinite(t)) return true;
+                return !doneTs.some((ct: number) => Math.abs(t - ct) <= 120 * 60 * 1000);
+              });
+              entries.length = 0;
+              entries.push(...keep);
+            }
           }
           if (entries.length > 1) {
             dayDataMap[day.key] = {
@@ -9873,6 +9893,25 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           list.find((e: any) => e.type === 'ABSENT')
         );
         items.push({ shift: pseudo, list, st });
+      }
+      // Bỏ thẻ ngoài lịch thừa: ngày không ca live mà đã có thẻ COMPLETED thì thẻ
+      // thiếu chân cùng ngày có giờ vào cách giờ vào thẻ hoàn thành ≤120p là lần
+      // bấm trùng (VD 17:43 rồi 18:00 cùng Ca 3) — ẩn để khỏi hiện 2 ca.
+      if (shs.length === 0) {
+        const doneTs = items
+          .filter((it: any) => !it.shift?.assignment_id && it.st?.key === 'COMPLETED')
+          .map((it: any) => new Date(it.list.find((e: any) => e.type === 'CHECK_IN')?.client_time || '').getTime())
+          .filter((t: number) => Number.isFinite(t));
+        if (doneTs.length > 0) {
+          return items.filter((it: any) => {
+            if (it.shift?.assignment_id || it.st?.key === 'COMPLETED') return true;
+            const ci = it.list.find((e: any) => e.type === 'CHECK_IN');
+            if (!ci) return true;
+            const t = new Date(ci.client_time || '').getTime();
+            if (!Number.isFinite(t)) return true;
+            return !doneTs.some((ct: number) => Math.abs(t - ct) <= 120 * 60 * 1000);
+          });
+        }
       }
       return items;
     };
