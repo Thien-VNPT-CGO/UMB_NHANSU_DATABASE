@@ -16,6 +16,7 @@ import {
   suggestFreeSlots,
   validateInterviewSlot,
 } from './interview-slots.service.js';
+import { decodeQrDataUrl, parseVietQRPartial } from '../utils/vietqr.js';
 
 /** Chuẩn hóa SĐT về dạng so sánh được (10 số, đầu 0) — DÙNG DUY NHẤT ở mọi nơi.
  *  Bao phủ: '+84...'/84... (Sheet ghi quốc tế), số bị rớt số 0 đầu (ô numeric),
@@ -606,6 +607,59 @@ export class EmployeesService {
         return updated;
       },
     });
+  }
+
+  /**
+   * Rà soát QR ngân hàng đã lưu của toàn bộ NV: đọc lại payload QR trong ảnh,
+   * - QR đọc được đủ 3 trường mà thông tin chữ đang lưu SAI (VD nhầm ngân hàng
+   *   khác) -> SỬA đúng theo payload (nguồn chuẩn nhất).
+   * - QR thiếu trường mà chữ cũng thiếu -> GỠ ảnh để NV tải lại (tránh Finance
+   *   chuyển sai), bên gọi báo NV.
+   * - QR không giải mã được nhưng chữ đủ -> GIỮ NGUYÊN (không suy đoán).
+   * Trả về danh sách đã sửa/gỡ để bên gọi thông báo + realtime.
+   */
+  async auditBankQrCodes(): Promise<{
+    checked: number;
+    fixed: { employee_id: string; full_name: string; bank: string; account: string; holder: string }[];
+    cleared: { employee_id: string; full_name: string }[];
+  }> {
+    const emps = await this.repo.listEmployees().catch(() => []);
+    const fixed: { employee_id: string; full_name: string; bank: string; account: string; holder: string }[] = [];
+    const cleared: { employee_id: string; full_name: string }[] = [];
+    let checked = 0;
+    for (const e of emps || []) {
+      const qr = String((e as any)?.bank_qr_img || '').trim();
+      if (!qr) continue;
+      checked++;
+      const empId = String((e as any).employee_id || '');
+      const name = String((e as any).full_name || empId);
+      const stored = {
+        bank: String((e as any)?.bank_name || '').trim(),
+        account: String((e as any)?.bank_account || '').trim(),
+        holder: String((e as any)?.bank_holder || '').trim(),
+      };
+      const trioOk = !!stored.bank && /^[0-9]{6,19}$/.test(stored.account) && !!stored.holder;
+      let payload: string | null = null;
+      try {
+        payload = decodeQrDataUrl(qr);
+      } catch { payload = null; }
+      const p = payload ? parseVietQRPartial(payload) : null;
+      const payloadOk = !!(p && p.isVietQR && p.bank && p.account && p.holder);
+      try {
+        if (payloadOk && (stored.bank !== (p as any).bank || stored.account !== (p as any).account || stored.holder !== (p as any).holder)) {
+          await this.updateEmployee(empId, {
+            bankName: (p as any).bank,
+            bankAccount: (p as any).account,
+            bankHolder: (p as any).holder,
+          }, 'SYSTEM');
+          fixed.push({ employee_id: empId, full_name: name, bank: (p as any).bank, account: (p as any).account, holder: (p as any).holder });
+        } else if (!payloadOk && !trioOk) {
+          await this.updateEmployee(empId, { bankQrImg: '' }, 'SYSTEM');
+          cleared.push({ employee_id: empId, full_name: name });
+        }
+      } catch { /* version conflict — vòng sau rà tiếp */ }
+    }
+    return { checked, fixed, cleared };
   }
 
   /**

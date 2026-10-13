@@ -168,46 +168,43 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   setTimeout(adjustmentExpiryTickSafe, 60_000);
   setInterval(adjustmentExpiryTickSafe, 60_000);
 
-  // Tự dọn QR ngân hàng không đạt chuẩn: ảnh QR đã lưu mà thiếu 1 trong 3 trường
-  // (tên NH / STK / chủ TK) hoặc STK không hợp lệ thì tự gỡ khỏi hồ sơ NV
-  // (Sheets + realtime) + báo NV tải lại ảnh QR VietQR hợp lệ. Chạy lúc boot + mỗi giờ.
+  // Rà soát QR ngân hàng đã lưu (chạy lúc boot + mỗi giờ): đọc lại payload QR
+  // trong ảnh để SỬA đúng thông tin chữ đang sai (VD nhầm ngân hàng khác),
+  // GỠ ảnh hỏng/thiếu trường + báo NV tải lại. Sheets + realtime 2 cổng.
   const bankQrCleanupTickSafe = async () => {
     try {
-      const emps = await adapter.listEmployees().catch(() => []);
-      const bad: any[] = [];
-      for (const e of emps || []) {
-        if (!String((e as any)?.bank_qr_img || '').trim()) continue;
-        const okBank = !!String((e as any)?.bank_name || '').trim();
-        const okAcct = /^[0-9]{6,19}$/.test(String((e as any)?.bank_account || '').trim());
-        const okHolder = !!String((e as any)?.bank_holder || '').trim();
-        if (okBank && okAcct && okHolder) continue;
-        bad.push(e);
-      }
-      if (bad.length === 0) return;
-      let cleared = 0;
-      for (const e of bad) {
+      const r = await services.employeesService.auditBankQrCodes().catch(() => null);
+      if (!r || ((r.fixed || []).length === 0 && (r.cleared || []).length === 0)) return;
+      for (const f of r.fixed || []) {
         try {
-          await services.employeesService.updateEmployee((e as any).employee_id, { bankQrImg: '' }, 'SYSTEM');
-          cleared++;
-          try {
-            await services.notificationsService.sendNotification({
-              recipientIds: [(e as any).employee_id],
-              type: 'BANK_QR_INVALID',
-              severity: 'ACTION_REQUIRED',
-              title: '⚠️ Mã QR ngân hàng chưa đạt chuẩn đã được gỡ',
-              summary: 'Ảnh QR của bạn thiếu tên ngân hàng / số tài khoản / tên chủ tài khoản nên hệ thống đã tự gỡ. Mở Hồ Sơ → tải lại ảnh mã QR VietQR rõ nét để Kế toán chuyển khoản lương!',
-              targetPath: '/profile',
-              actorId: 'SYSTEM',
-            });
-          } catch { /* best-effort từng người */ }
-        } catch { /* version conflict — vòng sau dọn tiếp */ }
+          await services.notificationsService.sendNotification({
+            recipientIds: [f.employee_id],
+            type: 'BANK_QR_FIXED',
+            severity: 'SYSTEM',
+            title: 'ℹ️ Thông tin ngân hàng đã được hiệu chỉnh theo mã QR',
+            summary: `Hệ thống đọc lại mã QR của bạn và đã cập nhật đúng: ${f.bank} • ${f.account} • ${f.holder}. Mở Hồ Sơ kiểm tra lại giúp!`,
+            targetPath: '/profile',
+            actorId: 'SYSTEM',
+          });
+        } catch { /* best-effort từng người */ }
       }
-      if (cleared > 0) {
-        console.log(`[bank-qr] Tự gỡ ${cleared}/${bad.length} QR không đạt chuẩn.`);
+      for (const c of r.cleared || []) {
         try {
-          io.emit('data:updated', { entity: 'employees', data: { action: 'bank-qr-cleaned', cleared }, timestamp: new Date().toISOString() });
-        } catch { /* non-fatal */ }
+          await services.notificationsService.sendNotification({
+            recipientIds: [c.employee_id],
+            type: 'BANK_QR_INVALID',
+            severity: 'ACTION_REQUIRED',
+            title: '⚠️ Mã QR ngân hàng chưa đạt chuẩn đã được gỡ',
+            summary: 'Ảnh QR của bạn thiếu tên ngân hàng / số tài khoản / tên chủ tài khoản nên hệ thống đã tự gỡ. Mở Hồ Sơ → tải lại ảnh mã QR VietQR rõ nét để Kế toán chuyển khoản lương!',
+            targetPath: '/profile',
+            actorId: 'SYSTEM',
+          });
+        } catch { /* best-effort từng người */ }
       }
+      console.log(`[bank-qr] Rà soát ${r.checked} QR: sửa ${(r.fixed || []).length}, gỡ ${(r.cleared || []).length}.`);
+      try {
+        io.emit('data:updated', { entity: 'employees', data: { action: 'bank-qr-audit', fixed: (r.fixed || []).length, cleared: (r.cleared || []).length }, timestamp: new Date().toISOString() });
+      } catch { /* non-fatal */ }
     } catch (err: any) {
       console.warn('[bank-qr] cleanup tick error:', err?.message || err);
     }
