@@ -1977,7 +1977,7 @@ export function App() {
     [/\bBVBANK\b|\bBV\s?BANK\b/, 'BVBank'],
     [/\bKIENLONG\b|\bKLB\b/, 'KienLongBank'],
     [/\bSAIGONBANK\b|\bSGB\b/, 'SaigonBank'],
-    [/\bDONGA\b.*\bBANK\b|\bDONG\s?A\b/, 'DongA Bank'],
+    [/\bDONGA\s?BANK\b|\bDONGABANK\b/, 'DongA Bank'],
     [/\bACB\b/, 'ACB'],
     [/\bVIB\b/, 'VIB'],
     [/\bSHB\b/, 'SHB'],
@@ -1986,23 +1986,11 @@ export function App() {
   ];
 
   // Đọc chữ in trên thẻ QR (tên + STK + ngân hàng) khi payload QR thiếu/không đọc được.
+  // Chống nhận nhầm ngân hàng khác: tìm tên chủ TK trước, loại dòng tên khỏi vùng
+  // tìm logo (tên người có thể chứa chuỗi giống mã NH), rồi chọn từ khóa DÀI NHẤT
+  // khớp được (VD thẻ có cả "MB" lẻ và "SACOMBANK" thì lấy Sacombank).
   const extractBankQrFromOcrText = (text: string): { bank: string; account: string; holder: string } => {
     const upper = String(text || '').toUpperCase();
-    let bank = '';
-    for (const [re, name] of OCR_BANK_KEYWORDS) {
-      if (re.test(upper)) {
-        bank = name;
-        break;
-      }
-    }
-    const compact = upper.replace(/[\s.\-_,]/g, '');
-    const runs = compact.match(/\d{8,19}/g) || [];
-    const scoreRun = (d: string): number => {
-      let sc = d.length >= 10 && d.length <= 16 ? 100 : 0;
-      sc += d.length;
-      return sc;
-    };
-    const account = [...runs].sort((a, b) => scoreRun(b) - scoreRun(a))[0] || '';
     const badLine = /(VIETQR|NAPAS|PAY|GLOBAL|BANK|24\/7|HOTLINE|1900|\d)/;
     const lines = String(text || '')
       .split('\n')
@@ -2016,6 +2004,33 @@ export function App() {
       if (badLine.test(u)) continue;
       if (u.length > holder.length) holder = l.trim();
     }
+    // Logo ngân hàng thường in 1 dòng rất ngắn (MB, TCB, ACB...) nên quét mọi dòng
+    // (kể cả ngắn), chỉ trừ đúng dòng tên chủ TK.
+    const bankScope = holder
+      ? String(text || '')
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l && l.toUpperCase() !== holder.toUpperCase())
+        .join('\n')
+        .toUpperCase()
+      : upper;
+    let bank = '';
+    let bestLen = 0;
+    for (const [re, name] of OCR_BANK_KEYWORDS) {
+      const m = bankScope.match(re);
+      if (m && m[0].length > bestLen) {
+        bestLen = m[0].length;
+        bank = name;
+      }
+    }
+    const compact = upper.replace(/[\s.\-_,]/g, '');
+    const runs = compact.match(/\d{8,19}/g) || [];
+    const scoreRun = (d: string): number => {
+      let sc = d.length >= 10 && d.length <= 16 ? 100 : 0;
+      sc += d.length;
+      return sc;
+    };
+    const account = [...runs].sort((a, b) => scoreRun(b) - scoreRun(a))[0] || '';
     return { bank, account, holder };
   };
 
