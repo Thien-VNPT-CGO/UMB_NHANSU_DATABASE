@@ -63,6 +63,7 @@ import {
   checkinBody,
   checkoutBody,
   colleagueShiftsQuery,
+  compensateShiftBody,
   defaultShiftBody,
   swapDispatchBody,
   supportCreateBody,
@@ -3408,6 +3409,28 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         requestId,
       });
       res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Admin bù công ca làm cho NV khi hệ thống lỗi (ca khóa/không điểm danh) —
+  // DUY NHẤT tài khoản Admin được gọi. Ghi CHECK_IN/OUT gắn đúng ca, realtime
+  // lưới tuần + Bảng Chấm Công + Cổng NV ngay, tính đủ công (không phạt trễ).
+  app.post('/admin/attendance/compensate', authMiddleware, requireRole(['ADMIN']), validate({ body: compensateShiftBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const b: any = req.body || {};
+      const result = await attendanceService.compensateShift({
+        assignmentId: String(b.assignmentId || b.assignment_id || '').trim(),
+        checkInTime: b.checkInTime || b.check_in_time,
+        checkOutTime: b.checkOutTime || b.check_out_time,
+        reason: b.reason,
+        actorId: req.user!.id,
+      });
+      const payload = (result as any)?.result ?? result;
+      broadcastUpdate('attendance', { action: 'admin-compensate', assignmentId: payload?.checkIn?.assignment_id || payload?.checkOut?.assignment_id, by: req.user!.id });
+      broadcastUpdate('schedules', { action: 'admin-compensate' });
+      res.json(payload);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }

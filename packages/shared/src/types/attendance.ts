@@ -33,6 +33,12 @@ export interface AttendanceEvent {
   fine_tier?: string;
   /** Số tiền phạt (đ) đã ghi nhận — FULL_SHIFT = mất cả ca (net 0). */
   fine_amount?: number;
+  /** Admin bù công (lỗi hệ thống): id người bù. */
+  compensated_by?: string;
+  /** Thời điểm Admin bù. */
+  compensated_at?: string;
+  /** Lý do bù công. */
+  compensate_reason?: string;
   created_at: string;
 }
 

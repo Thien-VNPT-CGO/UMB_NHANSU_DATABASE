@@ -259,6 +259,122 @@ export class AttendanceService {
   }
 
   /**
+   * Admin bù công ca làm cho NV khi hệ thống lỗi (ca bị khóa / không điểm
+   * danh): ghi trực tiếp CHECK_IN (+CHECK_OUT) gắn đúng ca, bỏ qua GPS/ảnh/
+   * khóa 3h (Admin chịu trách nhiệm giờ nhập). Không phạt trễ (tính đủ công).
+   * Idempotent theo ca+loại (bù rồi thì trả bản có sẵn). CHỈ Admin gọi.
+   */
+  async compensateShift(data: {
+    assignmentId: string;
+    checkInTime?: string;
+    checkOutTime?: string;
+    reason?: string;
+    actorId: string;
+  }): Promise<{ operationId: string; result: { checkIn: any; checkOut: any; created: Array<'CHECK_IN' | 'CHECK_OUT'> } }> {
+    return singleWriterQueue.enqueue({
+      entityType: 'SU_KIEN_DIEM_DANH',
+      entityId: `${data.assignmentId}_ADMIN_COMP`,
+      actorId: data.actorId,
+      execute: async () => {
+        const shift: any = await this.repo.getShiftById(data.assignmentId);
+        if (!shift) throw new Error('SHIFT_NOT_FOUND: ca làm không còn tồn tại!');
+        if (String((shift as any).status || '') === 'CANCELLED') {
+          throw new Error('SHIFT_CANCELLED: ca này đã bị hủy, không bù công được!');
+        }
+        const employeeId = String((shift as any).employee_id || '');
+        if (!employeeId) throw new Error('SHIFT_NO_OWNER: ca chưa gán nhân viên!');
+        const reason = String(data.reason || '').trim().slice(0, 500) || 'Admin bù công do hệ thống lỗi';
+
+        const mine = await this.repo.getAttendanceEvents(employeeId).catch(() => []);
+        const hasIn = (mine || []).find((e: any) =>
+          String((e as any).assignment_id) === String(data.assignmentId) && (e as any).type === 'CHECK_IN');
+        const hasOut = (mine || []).find((e: any) =>
+          String((e as any).assignment_id) === String(data.assignmentId) && (e as any).type === 'CHECK_OUT');
+        if (hasIn && hasOut) {
+          throw new Error('SHIFT_ALREADY_COMPLETE: ca này đã đủ check-in + check-out, không cần bù!');
+        }
+
+        const needIn = !hasIn;
+        const needOut = !hasOut;
+        const inIso = String(data.checkInTime || '').trim();
+        const outIso = String(data.checkOutTime || '').trim();
+        if (needIn && !inIso) throw new Error('MISSING_CHECKIN_TIME: ca chưa có check-in, Admin phải nhập giờ vào!');
+        if (needOut && !outIso) throw new Error('MISSING_CHECKOUT_TIME: Admin phải nhập giờ ra!');
+        const inMs = needIn ? new Date(inIso).getTime() : NaN;
+        const outMs = needOut ? new Date(outIso).getTime() : NaN;
+        if (needIn && !Number.isFinite(inMs)) throw new Error('INVALID_CHECKIN_TIME: giờ vào không hợp lệ!');
+        if (needOut && !Number.isFinite(outMs)) throw new Error('INVALID_CHECKOUT_TIME: giờ ra không hợp lệ!');
+        if (needIn && needOut && outMs <= inMs) {
+          throw new Error('INVALID_RANGE: giờ ra phải sau giờ vào!');
+        }
+
+        const nowIso = new Date().toISOString();
+        const mkEvent = (type: 'CHECK_IN' | 'CHECK_OUT', clientTime: string) => {
+          const eventId = `EVT_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+          const dateObj = new Date(clientTime);
+          const yyyy = dateObj.getFullYear();
+          const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
+          const dd = String(dateObj.getDate()).padStart(2, '0');
+          return {
+            event_id: eventId,
+            request_id: `ADMIN_COMP_${data.assignmentId}_${type}`,
+            assignment_id: data.assignmentId,
+            employee_id: employeeId,
+            branch_id: (shift as any).branch_id,
+            type,
+            client_time: clientTime,
+            server_received_at: nowIso,
+            distance_meters: 0,
+            gps_status: 'UNAVAILABLE' as GPSStatus,
+            drive_object_id: `DRV_ADMIN_COMP_${Date.now()}`,
+            drive_path: `admin-compensate/${yyyy}/${mm}/${dd}/${(shift as any).branch_id}/${employeeId}/${data.assignmentId}/${eventId}${type === 'CHECK_IN' ? '_IN.jpg' : '_OUT.jpg'}`,
+            is_early: false,
+            is_late: false,
+            minutes_deviation: 0,
+            fine_tier: 'NONE',
+            fine_amount: 0,
+            compensated_by: data.actorId,
+            compensated_at: nowIso,
+            compensate_reason: reason,
+          };
+        };
+
+        let checkIn: any = hasIn || null;
+        let checkOut: any = hasOut || null;
+        const created: Array<'CHECK_IN' | 'CHECK_OUT'> = [];
+        // Idempotent: request_id ADMIN_COMP_* đã có thì dùng lại, không ghi đôi.
+        if (needIn) {
+          const dup = await this.repo.findAttendanceEventByRequestId(`ADMIN_COMP_${data.assignmentId}_CHECK_IN`).catch(() => null);
+          checkIn = dup || await this.repo.recordAttendanceEvent(mkEvent('CHECK_IN', inIso) as any);
+          if (!dup) created.push('CHECK_IN');
+        }
+        if (needOut) {
+          const dup = await this.repo.findAttendanceEventByRequestId(`ADMIN_COMP_${data.assignmentId}_CHECK_OUT`).catch(() => null);
+          checkOut = dup || await this.repo.recordAttendanceEvent(mkEvent('CHECK_OUT', outIso) as any);
+          if (!dup) created.push('CHECK_OUT');
+        }
+
+        // Realtime như điểm danh thường (đồng bộ, không await hàng đợi khác).
+        if (this.io) {
+          for (const ev of [checkIn, checkOut]) {
+            if (!ev) continue;
+            try {
+              this.io.to(`branch:${(shift as any).branch_id}`).emit('attendance.recorded', {
+                eventId: (ev as any).event_id,
+                employeeId: (ev as any).employee_id,
+                branchId: (ev as any).branch_id,
+                type: (ev as any).type,
+                gpsStatus: (ev as any).gps_status,
+              });
+            } catch { /* non-fatal */ }
+          }
+        }
+        return { checkIn, checkOut, created };
+      },
+    });
+  }
+
+  /**
    * Thử lại upload ảnh chấm công lỗi (đang giữ inline `event_photo`): Drive hồi
    * là ảnh hiện lại trên modal/ZIP, base64 inline được dọn để nhẹ bộ nhớ + ID
    * thật được đẩy lên Sheet ngay. Chạy nền mỗi 5 phút (tối đa `limit` lượt cũ
