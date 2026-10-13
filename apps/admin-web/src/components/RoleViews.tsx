@@ -7960,10 +7960,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             const co = list.find((e: any) => e.type === 'CHECK_OUT');
             const ab = list.find((e: any) => e.type === 'ABSENT');
             if (!ci && !co && !ab) continue;
-            // Nhóm chỉ có VẮNG mà ca đã mất/hủy: bỏ để khỏi hiện thẻ vắng ma.
-            if (!ci && !co && !String(k).startsWith('__')) {
+            if (!String(k).startsWith('__')) {
               const kst = shiftStatusByAssign.get(String(k));
-              if (!kst || kst === 'CANCELLED') continue;
+              // Nhóm gắn ca live (ca tồn tại, chưa hủy) nhưng ca không thuộc ngày
+              // này — VD vừa bù công xong mà danh sách ca chưa tải lại: bỏ để khỏi
+              // hiện thẻ ma kèm nút bù (thẻ của ca đó tự hiện khi danh sách ca về).
+              if (kst && kst !== 'CANCELLED') continue;
+              // Nhóm chỉ có VẮNG mà ca đã mất/hủy: bỏ để khỏi hiện thẻ vắng ma.
+              if (!ci && !co) continue;
             }
             const pseudo = {
               assignment_id: '',
@@ -10194,6 +10198,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         });
       for (const [k, list] of byAssign) {
         if (attUsed.has(String(k))) continue;
+        // Nhóm gắn ca live nhưng ca không thuộc ngày này (VD vừa bù xong mà danh
+        // sách ca chưa tải lại): bỏ để khỏi hiện thẻ ma kèm nút bù.
+        if (!String(k).startsWith('__')) {
+          const kst = attStatusByAssign.get(String(k));
+          if (kst && kst !== 'CANCELLED') continue;
+        }
         // Chuẩn tab Lịch tuần: nhóm mồ côi chỉ hiện khi có check-in/out (thẻ
         // "Tự điểm danh"). Nhóm chỉ có VẮNG mà không gắn ca live nào thì bỏ —
         // nếu không ngày không có ca lại hiện "Vắng" ma. VẮNG chỉ tính khi gắn cứng.
