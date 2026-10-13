@@ -2411,6 +2411,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     return () => window.removeEventListener('ubm:adjustments-reload', adjHandler);
   }, [activeTab]);
   useEffect(() => {
+    // Realtime điểm TEST: NV nộp bài ở cổng nhân viên là bảng điểm HR tải lại ngay.
+    const testsHandler = () => {
+      if (activeTab === 'hr-tests' || activeTab === 'hr-probation') loadTests();
+    };
+    window.addEventListener('ubm:tests-reload', testsHandler);
+    return () => window.removeEventListener('ubm:tests-reload', testsHandler);
+  }, [activeTab]);
+  useEffect(() => {
     // Realtime lịch tuần 100%: App.tsx phát 'ubm:schedule-reload' khi socket báo
     // schedules/swaps/leaves/attendance — máy khác bấm nút là tab Lịch ở máy này
     // tải lại ca + điểm danh ngay tức thì.

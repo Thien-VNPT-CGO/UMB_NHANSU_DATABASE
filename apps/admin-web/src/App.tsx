@@ -1053,6 +1053,12 @@ export function App() {
               window.dispatchEvent(new CustomEvent('ubm:adjustments-reload'));
             } catch { /* non-fatal */ }
           }
+          // Realtime điểm TEST: NV nộp bài ở cổng nhân viên là bảng điểm HR tải lại ngay.
+          if (payload?.entity === 'tests' || payload?.entity === 'all') {
+            try {
+              window.dispatchEvent(new CustomEvent('ubm:tests-reload'));
+            } catch { /* non-fatal */ }
+          }
           // Realtime lịch PV đã đăng ký: backend bắn data:updated(candidates)
           // sau mọi nút lập lịch/xác nhận/vắng/hủy/chấm — tải lại danh sách
           // để bảng "Lịch Phỏng Vấn Đã Lên Lịch" hiện ngay, không đợi tải tay.
