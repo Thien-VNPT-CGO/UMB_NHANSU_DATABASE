@@ -179,6 +179,10 @@ export class GoogleSheetsSyncService {
   /** Mốc pull gần nhất đã xử lý xong tab CAU_HINH_HE_THONG (null = chưa từng).
    *  Đọc bảo trì đợi mốc này để không trả seed OFF ngay sau boot. */
   public lastSettingsPullAt: number | null = null;
+  /** Mốc reset hộp thư 23h00 (ISO): pull chỉ giữ thông báo tạo sau mốc này trong
+   *  ngày reset, để hộp thư đã reset tối không bị dòng Sheet cũ kéo lại đầy ngay.
+   *  Qua ngày mới thì tự xả latch (mốc cũ hơn 00h00 hôm nay). */
+  public notifResetCutoffIso: string | null = null;
   /** Tombstone NV vừa xóa: pull trong ~120s sau xóa mà thấy ID này trên Sheet
    *  (push xóa chưa kịp chạy) thì bỏ qua, tránh xóa xong bị khôi phục lại. */
   private deletedEmployeeIds = new Map<string, number>();
@@ -1051,6 +1055,13 @@ export class GoogleSheetsSyncService {
       const vnToday = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
       const [nYY, nMM, nDD] = vnToday.split('-').map(Number);
       const notifCutoff = new Date(Date.UTC(nYY, nMM - 1, nDD) - 7 * 3_600_000).toISOString();
+      // Sau reset 23h00 trong ngày: chỉ giữ tin tạo sau mốc reset (chặn dòng cũ
+      // kéo lại); sang ngày mới thì xả latch để tin mới vào bình thường.
+      let notifEffCutoff = notifCutoff;
+      if (this.notifResetCutoffIso) {
+        if (this.notifResetCutoffIso <= notifCutoff) this.notifResetCutoffIso = null;
+        else notifEffCutoff = this.notifResetCutoffIso;
+      }
       if (notifRows.length > 0) {
         const mappedNotif = notifRows
           .filter(r => r && r[0] && r[3] !== 'CHECKIN_REMINDER' && !/nhắc.*(?:check-?in|điểm danh)/i.test(`${r[4] || ''} ${r[5] || ''}`))
@@ -1070,7 +1081,7 @@ export class GoogleSheetsSyncService {
         fallback.notificationInbox = mergeById(fallback.notificationInbox, mappedNotif, 'inbox_id', ['version']) as any;
       }
       fallback.notificationInbox = (fallback.notificationInbox || []).filter(
-        (n: any) => (n.created_at || '') >= notifCutoff &&
+        (n: any) => (n.created_at || '') >= notifEffCutoff &&
           n.type !== 'CHECKIN_REMINDER' &&
           !/nhắc.*(?:check-?in|điểm danh)/i.test(`${n.title || ''} ${n.summary || ''}`)
       );

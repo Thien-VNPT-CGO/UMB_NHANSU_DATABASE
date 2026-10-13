@@ -366,25 +366,47 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   };
   setInterval(payrollAutoTick, 5 * 60_000);
 
-  // Reset thông báo cổng quản trị 6h00 HẰNG NGÀY (1 lần/ngày): xóa bản ghi cũ hơn
-  // 00h00 cùng ngày trong bộ nhớ (tab Sheets THONGBAO_NV giữ nguyên, cập nhật liên tục).
+  // Reset hộp thư 23h00 HẰNG NGÀY (1 lần/ngày): xóa toàn bộ thông báo trong ngày
+  // trong bộ nhớ để 2 cổng sang trạng thái sạch (tab Sheets THONGBAO_NV giữ nguyên
+  // lịch sử; pull tối cũng chặn dòng cũ kéo lại nhờ mốc latch). Sáng sớm (00h–06h)
+  // chạy bù nếu tối qua server ngủ.
   const notifResetDone = new Set<string>();
   const notifResetTick = async () => {
     try {
       const vn = new Date(Date.now() + 7 * 3_600_000);
-      if (vn.getUTCHours() < 6) return; // chỉ sau 6h sáng
+      const hh = vn.getUTCHours();
       const today = vn.toISOString().slice(0, 10);
-      const key = `notif-reset:${today}`;
-      if (notifResetDone.has(key)) return;
-      notifResetDone.add(key);
-      // Mốc 00h00 hôm nay giờ VN (quy về UTC để so chuỗi ISO cho đúng)
-      const [yy, mm, dd] = today.split('-').map(Number);
-      const cutoff = new Date(Date.UTC(yy, mm - 1, dd) - 7 * 3_600_000).toISOString();
-      const removed = await adapter.pruneNotifications(cutoff).catch(() => 0);
-      console.log(`[notifications] Reset hằng ngày ${today}: đã xóa ${removed} thông báo cũ (Sheets giữ nguyên).`);
-      try {
-        io.emit('data:updated', { entity: 'notifications', data: { action: 'daily-reset', today, removed }, timestamp: new Date().toISOString() });
-      } catch { /* non-fatal */ }
+      const syncService = (adapter as any).syncService;
+      if (hh >= 23) {
+        const key = `notif-reset:${today}`;
+        if (notifResetDone.has(key)) return;
+        notifResetDone.add(key);
+        // Chốt mốc latch trước rồi mới xóa: pull kế tiếp không kéo lại dòng cũ,
+        // tin mới phát sinh sau 23h00 vẫn vào bình thường.
+        const at = new Date().toISOString();
+        try {
+          if (syncService) syncService.notifResetCutoffIso = at;
+        } catch { /* non-fatal */ }
+        const removed = await adapter.pruneNotifications(at).catch(() => 0);
+        console.log(`[notifications] Reset 23h00 ${today}: đã xóa ${removed} thông báo trong ngày (Sheets giữ nguyên).`);
+        try {
+          io.emit('data:updated', { entity: 'notifications', data: { action: 'daily-reset', today, removed }, timestamp: new Date().toISOString() });
+        } catch { /* non-fatal */ }
+      } else if (hh < 6) {
+        const key = `notif-reset:${today}:catchup`;
+        if (notifResetDone.has(key)) return;
+        notifResetDone.add(key);
+        // Mốc 00h00 hôm nay giờ VN (quy về UTC để so chuỗi ISO cho đúng)
+        const [yy, mm, dd] = today.split('-').map(Number);
+        const cutoff = new Date(Date.UTC(yy, mm - 1, dd) - 7 * 3_600_000).toISOString();
+        const removed = await adapter.pruneNotifications(cutoff).catch(() => 0);
+        if (removed > 0) {
+          console.log(`[notifications] Reset bù sáng sớm ${today}: đã xóa ${removed} thông báo hôm qua (Sheets giữ nguyên).`);
+          try {
+            io.emit('data:updated', { entity: 'notifications', data: { action: 'daily-reset', today, removed }, timestamp: new Date().toISOString() });
+          } catch { /* non-fatal */ }
+        }
+      }
     } catch (err: any) {
       console.warn('[notifications] reset tick error:', err?.message || err);
     }

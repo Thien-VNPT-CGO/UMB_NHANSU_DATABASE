@@ -928,10 +928,37 @@ export function App() {
         refreshWeeklyOffStatus(),
       ]);
       setMyShifts(shifts);
-      const cleanNotifs = (Array.isArray(notifs) ? notifs : []).filter((n: any) =>
-        n.type !== 'CHECKIN_REMINDER' &&
-        !/nhắc.*(?:check-?in|điểm danh)/i.test(`${n.title || ''} ${n.summary || ''}`)
-      );
+      // Hộp thư chỉ hiện thông báo liên quan NV này: giữ tin đích danh mình +
+      // tin chung (lịch, PIN, OFF, marketing); tin ALL dạng feed sự kiện của NV
+      // khác (người khác check-in/test/...) thì ẩn. Backend vẫn lưu ALL để cổng
+      // quản trị xem lịch sử; Sheets giữ nguyên.
+      let meId = String(empId || '');
+      let meCode = '';
+      let meName = '';
+      try {
+        const raw = localStorage.getItem('ubm_emp_data');
+        const me = raw ? JSON.parse(raw) : (employee || null);
+        meId = String((me as any)?.employee_id || meId || '');
+        meCode = String((me as any)?.employee_code || '');
+        meName = String((me as any)?.full_name || '');
+      } catch { /* giữ empId */ }
+      const FEED_TYPES = new Set(['emp.checkin', 'emp.checkout', 'emp.leave', 'emp.swap', 'emp.pin', 'emp.test', 'emp.adjustment', 'emp.payslip']);
+      const normTxt = (s: any) => String(s || '').toLowerCase();
+      const mentionsMe = (n: any) => {
+        const t = normTxt(`${n.title || ''} ${n.summary || ''}`);
+        return (!!meId && t.includes(normTxt(meId))) ||
+          (!!meCode && t.includes(normTxt(meCode))) ||
+          (!!meName && meName.trim().length >= 2 && t.includes(normTxt(meName)));
+      };
+      const cleanNotifs = (Array.isArray(notifs) ? notifs : []).filter((n: any) => {
+        if (!n) return false;
+        if (n.type === 'CHECKIN_REMINDER' ||
+          /nhắc.*(?:check-?in|điểm danh)/i.test(`${n.title || ''} ${n.summary || ''}`)) return false;
+        if (n.recipient_id && n.recipient_id !== 'ALL' && n.recipient_id !== meId) return false;
+        if (String(n.recipient_id || '') !== 'ALL') return true;
+        if (!FEED_TYPES.has(String(n.type || ''))) return true;
+        return mentionsMe(n);
+      });
       setNotifications(cleanNotifs);
       const attEvents: any[] = Array.isArray(attRange) ? attRange : [];
 
