@@ -715,6 +715,23 @@ export function lateMinOf(inEvt: any, shiftStartAt?: string): number {
   return 0;
 }
 
+/** Suy ca ngoài lịch từ giờ check-in VN (realtime, chỉ để tạm tính hiển thị — không đổi công/lương chính thức). */
+export function inferExtraShiftCode(inEvt: any, empDefaultShift?: string): string {
+  try {
+    const t = new Date(inEvt?.client_time || '').getTime();
+    if (Number.isFinite(t)) {
+      const vn = new Date(t + 7 * 3_600_000);
+      const h = vn.getUTCHours() + vn.getUTCMinutes() / 60;
+      if (h >= 5 && h < 11.5) return 'CA_1';
+      if (h >= 11.5 && h < 17.5) return 'CA_2';
+      return 'CA_3';
+    }
+  } catch { /* fallback bên dưới */ }
+  const d = String(empDefaultShift || '');
+  if (['CA_1', 'CA_2', 'CA_3'].includes(d)) return d;
+  return 'CA_2';
+}
+
 export function shiftPayInfo(shiftCode: string, ratePerHour: number, inEvt: any, outEvt: any, shiftStartAt?: string): {
   hours: number; rate: number; shiftPay: number; lateMin: number;
   fineLabel: string; deduction: number; net: number; unpaid: boolean;
@@ -10098,9 +10115,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 const empNameOf = (id: string) => (allEmployees || []).find((e: any) => e.employee_id === id)?.full_name || id || '—';
                                 const hoverKey = `${emp.employee_id}|${day.iso}|${ii}`;
                                 const isDispatch = (relSwap?.swap_kind || 'EMPLOYEE_SWAP') === 'HR_DISPATCH';
-                                // Thẻ ngoài lịch (tự điểm danh, không gắn ca): hiện thông tin,
-                                // KHÔNG hiện lương (lương thực chỉ tính ca đã xếp — chuẩn tab Lịch).
+                                // Thẻ ngoài lịch (tự điểm danh, không gắn ca): hiện TẠM TÍNH realtime
+                                // theo giờ check-in + đơn giá đúng giai đoạn (Finance chốt ở kỳ lương).
                                 const isExtra = !it.shift?.assignment_id;
+                                const extraShiftCode = isExtra ? inferExtraShiftCode(inE, (emp as any)?.default_shift_code) : '';
+                                const extraPay = isExtra ? shiftPayInfo(extraShiftCode, empRate, inE, outE, inE?.client_time) : null;
           return (
                                   <div
                                     key={ii}
@@ -10118,9 +10137,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                         💰 {fmtVnd(pay.net)}{pay.deduction > 0 ? ` (phạt ${fmtVnd(pay.deduction)})` : ''}{pay.unpaid ? ' (không lương)' : ''}
                                       </div>
                                     )}
-                                    {it.st.key === 'COMPLETED' && isExtra && (
-                                      <div style={{ fontSize: '10px', color: '#92400E', fontWeight: 700 }}>
-                                        Ngoài lịch — chưa tính công (HR xếp ca vào ngày này để tính)
+                                    {it.st.key === 'COMPLETED' && isExtra && extraPay && (
+                                      <div style={{ fontSize: '10px', color: extraPay.unpaid ? '#991B1B' : '#065F46', fontWeight: 800 }}>
+                                        💰 {fmtVnd(extraPay.net)}{extraPay.deduction > 0 ? ` (phạt ${fmtVnd(extraPay.deduction)})` : ''}{extraPay.unpaid ? ' (không lương)' : ''} <span style={{ fontWeight: 700 }}>(tạm tính {extraShiftCode.replace('CA_', 'Ca ')})</span>
+                                        <div style={{ fontWeight: 700, color: '#92400E' }}>Ngoài lịch — tạm tính, HR xếp ca vào ngày này để chốt chính thức</div>
                                       </div>
                                     )}
                                     {relSwap && (
@@ -10153,8 +10173,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                           <div style={{ color: 'var(--text-muted)', fontSize: '10px' }}>(Tạm tính realtime — Finance chốt số chính thức ở kỳ lương)</div>
                                         </div>
                                         ) : (
-                                        <div style={{ borderTop: '1px dashed var(--border)', margin: '6px 0', paddingTop: '6px', color: '#92400E' }}>
-                                          Ngoài lịch — chưa tính công (HR xếp ca vào ngày này để tính).
+                                        <div style={{ borderTop: '1px dashed var(--border)', margin: '6px 0', paddingTop: '6px' }}>
+                                          💵 Đơn giá: <strong>{empRate ? fmtVnd(empRate) + '/giờ' : 'chưa gán'}</strong> • Công tạm tính: <strong>{extraPay ? `${extraPay.hours}h (${extraShiftCode.replace('CA_', 'Ca ')})` : '—'}</strong><br />
+                                          💰 Lương ca: <strong>{extraPay ? fmtVnd(extraPay.shiftPay) : '—'}</strong><br />
+                                          ⚖ Phạt: <strong style={{ color: extraPay && (extraPay.deduction > 0 || extraPay.unpaid) ? '#DC2626' : '#059669' }}>{extraPay ? extraPay.fineLabel : '—'}</strong><br />
+                                          ✅ Thực nhận tạm tính: <strong style={{ color: '#065F46' }}>{extraPay ? fmtVnd(extraPay.net) : '—'}</strong>
+                                          <div style={{ color: '#92400E', fontSize: '10px' }}>Ngoài lịch — tạm tính realtime, HR xếp ca vào ngày này để chốt chính thức.</div>
                                         </div>
                                         )}
                                         <div style={{ borderTop: '1px dashed var(--border)', margin: '6px 0', paddingTop: '6px' }}>
