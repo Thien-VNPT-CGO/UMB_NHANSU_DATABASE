@@ -1898,6 +1898,21 @@ export class GoogleSheetsSyncService {
   }
 
   /**
+   * Đẩy 1 tab an toàn: tab lỗi thì ghi lỗi vào details rồi đi tiếp tab khác —
+   * không để 1 tab hỏng (VD ô QR base64 quá lớn) làm đứng cả đợt đồng bộ.
+   */
+  private async pushTabSafe(details: any, key: string, title: string, headers: string[], rows: any[][]): Promise<void> {
+    try {
+      await this.overwriteSheetData(title, headers, rows);
+      details[key] = rows.length;
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      details[key] = { error: msg };
+      console.warn(`[GoogleSheetsSyncService] Bỏ qua tab ${title} (lỗi, đợt sau thử lại):`, msg);
+    }
+  }
+
+  /**
    * ĐỒNG BỘ DỮ LIỆU LÊN GOOGLE SHEETS (GHI ĐÈ DỮ LIỆU)
    */
   public async syncAllData(repo: ISheetsRepository): Promise<{ success: boolean; message: string; details: any }> {
@@ -1925,8 +1940,7 @@ export class GoogleSheetsSyncService {
         (a as any).is_active === false ? 'LOCKED' : 'ACTIVE',
         a.created_at,
       ]);
-      await this.overwriteSheetData('ADMIN_ACCOUNTS', SHEETS_DEFINITIONS.find(d => d.title === 'ADMIN_ACCOUNTS')!.headers, adminRows);
-      details.adminAccounts = adminRows.length;
+      await this.pushTabSafe(details, 'adminAccounts', 'ADMIN_ACCOUNTS', SHEETS_DEFINITIONS.find(d => d.title === 'ADMIN_ACCOUNTS')!.headers, adminRows);
 
       // 2. Chi nhánh
       const branches = await repo.getBranches();
@@ -1939,8 +1953,7 @@ export class GoogleSheetsSyncService {
         b.radius_meters,
         b.status,
       ]);
-      await this.overwriteSheetData('DANH_SACH_CHI_NHANH', SHEETS_DEFINITIONS.find(d => d.title === 'DANH_SACH_CHI_NHANH')!.headers, branchRows);
-      details.branches = branchRows.length;
+      await this.pushTabSafe(details, 'branches', 'DANH_SACH_CHI_NHANH', SHEETS_DEFINITIONS.find(d => d.title === 'DANH_SACH_CHI_NHANH')!.headers, branchRows);
 
       // 3. Nhân viên
       const employees = await repo.listEmployees();
@@ -1969,8 +1982,7 @@ export class GoogleSheetsSyncService {
         (e as any).bank_holder || '',
         (e as any).bank_qr_img || '',
       ]);
-      await this.overwriteSheetData('NHAN_VIEN_MASTER', SHEETS_DEFINITIONS.find(d => d.title === 'NHAN_VIEN_MASTER')!.headers, employeeRows);
-      details.employees = employeeRows.length;
+      await this.pushTabSafe(details, 'employees', 'NHAN_VIEN_MASTER', SHEETS_DEFINITIONS.find(d => d.title === 'NHAN_VIEN_MASTER')!.headers, employeeRows);
 
       // 4. Tài khoản nhân viên (không còn cột Người/Ngày Kích Hoạt)
       const accounts = await repo.listAccounts();
@@ -1987,8 +1999,7 @@ export class GoogleSheetsSyncService {
         GoogleSheetsSyncService.sheetText((acc as any).pin_changed_at || ''),
         GoogleSheetsSyncService.sheetText((acc as any).pin_rotation_cycle || ''),
       ]);
-      await this.overwriteSheetData('TAI_KHOAN_NHAN_VIEN', SHEETS_DEFINITIONS.find(d => d.title === 'TAI_KHOAN_NHAN_VIEN')!.headers, accountRows);
-      details.accounts = accountRows.length;
+      await this.pushTabSafe(details, 'accounts', 'TAI_KHOAN_NHAN_VIEN', SHEETS_DEFINITIONS.find(d => d.title === 'TAI_KHOAN_NHAN_VIEN')!.headers, accountRows);
 
       // 5. Phân công ca — đẩy TOÀN BỘ lịch sử (không cắt 60 ngày): cắt là ca cũ
       // mất khỏi Sheet sau mỗi full-sync/publish, restart là mất vĩnh viễn khỏi
@@ -2005,8 +2016,7 @@ export class GoogleSheetsSyncService {
         s.status,
         s.schedule_version,
       ]);
-      await this.overwriteSheetData('PHAN_CONG_CA', SHEETS_DEFINITIONS.find(d => d.title === 'PHAN_CONG_CA')!.headers, shiftRows);
-      details.shifts = shiftRows.length;
+      await this.pushTabSafe(details, 'shifts', 'PHAN_CONG_CA', SHEETS_DEFINITIONS.find(d => d.title === 'PHAN_CONG_CA')!.headers, shiftRows);
 
       // 6. Đơn nghỉ phép
       const leaves = await repo.listLeaveRequests();
@@ -2023,8 +2033,7 @@ export class GoogleSheetsSyncService {
         l.review_note || '',
         l.created_at,
       ]);
-      await this.overwriteSheetData('DON_NGHI_PHEP', SHEETS_DEFINITIONS.find(d => d.title === 'DON_NGHI_PHEP')!.headers, leaveRows);
-      details.leaves = leaveRows.length;
+      await this.pushTabSafe(details, 'leaves', 'DON_NGHI_PHEP', SHEETS_DEFINITIONS.find(d => d.title === 'DON_NGHI_PHEP')!.headers, leaveRows);
 
       // 6b. Bài TEST + bài làm (HR giao đúng nhân viên)
       const papers = await repo.listTestPapers().catch(() => []);
@@ -2040,8 +2049,7 @@ export class GoogleSheetsSyncService {
         p.created_at,
         p.version,
       ]);
-      await this.overwriteSheetData('BAI_THI', SHEETS_DEFINITIONS.find(d => d.title === 'BAI_THI')!.headers, paperRows);
-      details.testPapers = paperRows.length;
+      await this.pushTabSafe(details, 'testPapers', 'BAI_THI', SHEETS_DEFINITIONS.find(d => d.title === 'BAI_THI')!.headers, paperRows);
       const subs = await repo.listTestSubmissions().catch(() => []);
       const subRows = (subs || []).map(s => [
         s.submission_id,
@@ -2055,11 +2063,15 @@ export class GoogleSheetsSyncService {
         s.created_at,
         s.version,
       ]);
-      await this.overwriteSheetData('BAI_LAM', SHEETS_DEFINITIONS.find(d => d.title === 'BAI_LAM')!.headers, subRows);
-      details.testSubmissions = subRows.length;
+      await this.pushTabSafe(details, 'testSubmissions', 'BAI_LAM', SHEETS_DEFINITIONS.find(d => d.title === 'BAI_LAM')!.headers, subRows);
 
       // 6c. Phiếu lương chi tiết (tự động đồng bộ toàn bộ phiếu lên tab PHIEU_LUONG).
-      details.payslips = await this.pushPayslipsTab(repo);
+      try {
+        details.payslips = await this.pushPayslipsTab(repo);
+      } catch (e: any) {
+        details.payslips = { error: e?.message || String(e) };
+        console.warn('[GoogleSheetsSyncService] Bỏ qua tab PHIEU_LUONG (lỗi, đợt sau thử lại):', (e as any)?.message || e);
+      }
 
       // 6c2. Công thức + dữ liệu nhập tay lương theo kỳ (Finance).
       try {
@@ -2095,8 +2107,7 @@ export class GoogleSheetsSyncService {
         h.version ?? 1,
         h.created_at || '',
       ]));
-      await this.overwriteSheetData('LICH_SU_GIAI_DOAN', SHEETS_DEFINITIONS.find(d => d.title === 'LICH_SU_GIAI_DOAN')!.headers, stagePushRows);
-      details.stageHistories = stagePushRows.length;
+      await this.pushTabSafe(details, 'stageHistories', 'LICH_SU_GIAI_DOAN', SHEETS_DEFINITIONS.find(d => d.title === 'LICH_SU_GIAI_DOAN')!.headers, stagePushRows);
 
       // 7. Đơn đổi ca
       const swaps = await repo.listSwapRequests();
@@ -2113,8 +2124,7 @@ export class GoogleSheetsSyncService {
         (sw as any).swap_kind || 'EMPLOYEE_SWAP',
         (sw as any).bonus_amount || 0,
       ]);
-      await this.overwriteSheetData('DON_DOI_CA', SHEETS_DEFINITIONS.find(d => d.title === 'DON_DOI_CA')!.headers, swapRows);
-      details.swaps = swapRows.length;
+      await this.pushTabSafe(details, 'swaps', 'DON_DOI_CA', SHEETS_DEFINITIONS.find(d => d.title === 'DON_DOI_CA')!.headers, swapRows);
 
       // 7b. Điều chỉnh công (trước đây chỉ pull mà không push — tạo trên web sẽ mất khi restart)
       const adjustments = await repo.listAttendanceAdjustments();
@@ -2129,8 +2139,7 @@ export class GoogleSheetsSyncService {
         a.review_note || '',
         (a as any).evidence_drive_id || '',
       ]);
-      await this.overwriteSheetData('DIEU_CHINH_CONG', SHEETS_DEFINITIONS.find(d => d.title === 'DIEU_CHINH_CONG')!.headers, adjRows);
-      details.adjustments = adjRows.length;
+      await this.pushTabSafe(details, 'adjustments', 'DIEU_CHINH_CONG', SHEETS_DEFINITIONS.find(d => d.title === 'DIEU_CHINH_CONG')!.headers, adjRows);
 
       // 8. Bảng lương
       const payrollRuns = await repo.listPayrollRuns();
@@ -2143,8 +2152,7 @@ export class GoogleSheetsSyncService {
         pr.published_at || '',
         pr.paid_at || '',
       ]);
-      await this.overwriteSheetData('KY_LUONG', SHEETS_DEFINITIONS.find(d => d.title === 'KY_LUONG')!.headers, payrollRows);
-      details.payrollRuns = payrollRows.length;
+      await this.pushTabSafe(details, 'payrollRuns', 'KY_LUONG', SHEETS_DEFINITIONS.find(d => d.title === 'KY_LUONG')!.headers, payrollRows);
 
       // 9. Nhật ký Audit Log
       const auditLogs = await repo.getAuditLogs(100);
@@ -2158,8 +2166,7 @@ export class GoogleSheetsSyncService {
         log.target_id,
         typeof log.details === 'string' ? log.details : JSON.stringify(log.details || {}),
       ]);
-      await this.overwriteSheetData('AUDIT_LOG', SHEETS_DEFINITIONS.find(d => d.title === 'AUDIT_LOG')!.headers, auditRows);
-      details.auditLogs = auditRows.length;
+      await this.pushTabSafe(details, 'auditLogs', 'AUDIT_LOG', SHEETS_DEFINITIONS.find(d => d.title === 'AUDIT_LOG')!.headers, auditRows);
 
       // 10. Ứng viên tuyển dụng (FROM_NHAN_VIEN) - 17 Cột
       const candList = await repo.listCandidates();
@@ -2193,20 +2200,30 @@ export class GoogleSheetsSyncService {
           (c as any).vip ? 'VIP' : '',
           (c as any).vip_rank !== undefined && (c as any).vip_rank !== null ? String((c as any).vip_rank) : '',
         ]);
-        await this.overwriteSheetData('FROM_NHAN_VIEN', candHeaders, candRows);
-        details.candidates = candRows.length;
+        await this.pushTabSafe(details, 'candidates', 'FROM_NHAN_VIEN', candHeaders, candRows);
       }
 
       // 18. Đồng bộ Cài đặt hệ thống (CAU_HINH_HE_THONG)
-      const sysSettings = await repo.getSystemSettings();
-      if (sysSettings) {
-        await this.syncSystemSettingsToSheet(sysSettings);
-        details.systemSettings = Object.keys(sysSettings).length;
+      try {
+        const sysSettings = await repo.getSystemSettings();
+        if (sysSettings) {
+          await this.syncSystemSettingsToSheet(sysSettings);
+          details.systemSettings = Object.keys(sysSettings).length;
+        }
+      } catch (e: any) {
+        details.systemSettings = { error: e?.message || String(e) };
+        console.warn('[GoogleSheetsSyncService] Bỏ qua tab CAU_HINH_HE_THONG (lỗi, đợt sau thử lại):', (e as any)?.message || e);
       }
 
+      const failedTabs = Object.entries(details)
+        .filter(([, v]: any) => v && typeof v === 'object' && (v as any).error)
+        .map(([k]) => k);
+      const allOk = failedTabs.length === 0;
       return {
-        success: true,
-        message: 'Đồng bộ toàn bộ dữ liệu lên Google Sheets thành công!',
+        success: allOk,
+        message: allOk
+          ? 'Đồng bộ toàn bộ dữ liệu lên Google Sheets thành công!'
+          : `Đồng bộ xong, ${failedTabs.length} tab lỗi (${failedTabs.join(', ')}) — đợt sau thử lại!`,
         details,
       };
     } catch (err: any) {
