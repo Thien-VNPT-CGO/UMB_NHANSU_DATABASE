@@ -2302,6 +2302,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Bài TEST: HR giao đề random từ ngân hàng + theo dõi kết quả (NV chỉ thấy bài của mình)
   const [testPapers, setTestPapers] = useState<any[]>([]);
   const [testSubs, setTestSubs] = useState<any[]>([]);
+  const [selectedTestSub, setSelectedTestSub] = useState<any>(null);
   const loadTests = async () => {
     try {
       const d = await apiRequest('/tests');
@@ -10724,7 +10725,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   const hasScore = s.status === 'SUBMITTED' && Number.isFinite(sc);
                   return (
                     <tr key={s.submission_id} style={{ borderBottom: '1px solid var(--border)' }}>
-                      <td style={{ padding: '12px 20px', fontWeight: 700 }}>{paper?.title || s.test_id}</td>
+                      <td
+                        style={{ padding: '12px 20px', fontWeight: 700, cursor: 'pointer', color: 'var(--brand)', textDecoration: 'underline' }}
+                        title={s.status === 'SUBMITTED' ? 'Bấm để xem đúng/sai từng câu' : 'Nhân viên chưa nộp bài'}
+                        onClick={() => setSelectedTestSub(s)}
+                      >{paper?.title || s.test_id}</td>
                       <td style={{ padding: '12px 20px' }}>{emp?.full_name || s.employee_id} <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>({emp?.employee_code || ''})</span></td>
                       <td style={{ padding: '12px 20px', fontWeight: 800 }}>{hasScore ? `${sc}/10` : '—'}</td>
                       <td style={{ padding: '12px 20px' }}>
@@ -10746,6 +10751,65 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </tbody>
           </table>
         </div>
+
+        {/* CHI TIẾT BÀI LÀM: bấm vào tên đề để xem NV trả lời đúng/sai từng câu */}
+        {selectedTestSub && (() => {
+          const sp = testPapers.find((p: any) => p.test_id === selectedTestSub.test_id);
+          const se = (allEmployees || []).find((e: any) => e.employee_id === selectedTestSub.employee_id);
+          const qs: any[] = Array.isArray(sp?.questions) ? sp.questions : [];
+          const ans: any[] = Array.isArray(selectedTestSub.answers) ? selectedTestSub.answers : [];
+          const correctCount = qs.filter((q: any, i: number) => ans[i] === q.correct_index).length;
+          return (
+            <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }} onClick={() => setSelectedTestSub(null)}>
+              <div style={{ backgroundColor: 'var(--surface)', borderRadius: '12px', maxWidth: '720px', width: '100%', maxHeight: '88vh', overflow: 'auto', padding: '20px' }} onClick={(e) => e.stopPropagation()}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h2 style={{ fontSize: '16px', fontWeight: 800, margin: 0 }}>Chi tiết bài làm</h2>
+                  <button className="btn-secondary" style={{ padding: '4px 12px' }} onClick={() => setSelectedTestSub(null)}>Đóng</button>
+                </div>
+                <div style={{ fontSize: '13px', marginTop: '8px', lineHeight: 1.7 }}>
+                  <div><strong>Đề:</strong> {sp?.title || selectedTestSub.test_id}</div>
+                  <div><strong>Nhân viên:</strong> {se?.full_name || selectedTestSub.employee_id} <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>({se?.employee_code || ''})</span></div>
+                  <div><strong>Điểm:</strong> {Number.isFinite(Number(selectedTestSub.score)) ? `${Number(selectedTestSub.score)}/10` : '—'} • <strong>Kết quả:</strong> {selectedTestSub.status === 'SUBMITTED' ? (selectedTestSub.passed ? 'Đạt' : 'Chưa đạt') : 'Chờ làm'} • <strong>Đúng:</strong> {correctCount}/{qs.length} câu{selectedTestSub.submitted_at ? <> • <strong>Nộp:</strong> {new Date(selectedTestSub.submitted_at).toLocaleString('vi-VN')}</> : null}</div>
+                </div>
+                {selectedTestSub.status !== 'SUBMITTED' ? (
+                  <div style={{ marginTop: '12px', fontSize: '13px', color: 'var(--text-muted)' }}>Nhân viên chưa nộp bài nên chưa có đúng/sai.</div>
+                ) : qs.length === 0 ? (
+                  <div style={{ marginTop: '12px', fontSize: '13px', color: 'var(--text-muted)' }}>Không còn đề gốc (đề đã xóa) nên không đối chiếu được từng câu.</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '12px' }}>
+                    {qs.map((q: any, i: number) => {
+                      const pick = ans[i];
+                      const ok = pick === q.correct_index;
+                      return (
+                        <div key={q.question_id || i} style={{ border: `1.5px solid ${ok ? '#10B981' : '#EF4444'}`, borderRadius: '10px', padding: '10px 12px', backgroundColor: ok ? '#ECFDF5' : '#FEF2F2' }}>
+                          <div style={{ fontSize: '13px', fontWeight: 800 }}>
+                            Câu {i + 1}: {q.content}
+                            <span className="badge" style={{ marginLeft: '8px', backgroundColor: ok ? '#10B981' : '#EF4444', color: '#FFF', fontWeight: 800 }}>{ok ? 'Đúng' : 'Sai'}</span>
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px' }}>
+                            {(q.options || []).map((op: string, oi: number) => {
+                              const isCorrect = oi === q.correct_index;
+                              const isPick = oi === pick;
+                              return (
+                                <div key={oi} style={{ fontSize: '12px', padding: '4px 8px', borderRadius: '6px', backgroundColor: isCorrect ? '#D1FAE5' : isPick ? '#FEE2E2' : 'transparent', fontWeight: isCorrect || isPick ? 800 : 400 }}>
+                                  {String.fromCharCode(65 + oi)}. {op}
+                                  {isCorrect ? ' ✓ (đáp án đúng)' : isPick ? ' ← NV chọn' : ''}
+                                </div>
+                              );
+                            })}
+                          </div>
+                          {pick === undefined || pick === null ? (
+                            <div style={{ fontSize: '11px', color: '#991B1B', marginTop: '4px' }}>NV không trả lời câu này.</div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
       </div>
     );
   }
