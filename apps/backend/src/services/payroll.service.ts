@@ -993,7 +993,7 @@ export class PayrollService {
       execute: async () => {
         const slip = await this.repo.getPayslipById(itemId);
         if (!slip) throw new Error('PAYSLIP_NOT_FOUND');
-        if (slip.status !== 'PUBLISHED' && (slip as any).status !== 'CONFIRMED') throw new Error(`SLIP_NOT_RETURNABLE: phiếu đang ở trạng thái ${slip.status}, chỉ hoàn được phiếu đã gửi (PUBLISHED) hoặc đã xác nhận (CONFIRMED)!`);
+        if (slip.status !== 'PUBLISHED' && slip.status !== 'CONFIRMED') throw new Error(`SLIP_NOT_RETURNABLE: phiếu đang ở trạng thái ${slip.status}, chỉ hoàn được phiếu đã gửi (PUBLISHED) hoặc đã xác nhận (CONFIRMED)!`);
         const updated = await this.repo.updatePayslip(itemId, {
           status: 'DRAFT',
           slip_published_at: undefined,

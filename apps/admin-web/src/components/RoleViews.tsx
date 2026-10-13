@@ -1465,7 +1465,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       setPeriodSlips(prev => prev.map(s => s.item_id === itemId ? { ...s, ...(updated || {}), status: 'DRAFT' } : s));
       updateSlipInState(itemId, { ...(updated || {}), status: 'DRAFT' });
     } catch (err: any) {
-      showToast(err?.message || 'Lỗi khi hoàn phiếu!');
+      const code = String((err as any)?.code || '');
+      if (code === 'FORBIDDEN' || /403/.test(String(err?.message || ''))) {
+        showToast(`Tài khoản hiện tại (vai trò ${currentUser?.role || '?'}) không có quyền hoàn phiếu — hãy đăng xuất rồi đăng nhập đúng tài khoản Kế toán (FINANCE) và thử lại!`);
+      } else {
+        showToast(err?.message || 'Lỗi khi hoàn phiếu!');
+      }
     } finally {
       setSlipActionBusy(null);
     }
@@ -12073,7 +12078,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             </button>
                           )}
 
-                          {(p.status === 'PUBLISHED' || p.status === 'CONFIRMED') && (
+                          {['ADMIN', 'FINANCE'].includes(currentUser?.role || '') && (p.status === 'PUBLISHED' || p.status === 'CONFIRMED') && (
                             <button
                               className="btn-secondary"
                               style={{ fontSize: '11px', padding: '4px 10px', fontWeight: 800, border: '1px solid #F59E0B', borderRadius: '6px', cursor: 'pointer', color: '#B45309', backgroundColor: '#FFFBEB' }}
