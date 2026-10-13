@@ -201,6 +201,56 @@ server.listen(Number(PORT), '0.0.0.0', () => {
     const back = (dt.getUTCDay() + 6) % 7;
     return new Date(t - back * 86_400_000).toISOString().slice(0, 10);
   };
+  // Reset phiếu đổi ca tuần (NV chính thức): CN 23h30 tự hủy các phiếu còn mở
+  // (PENDING_PARTNER/PARTNER_ACCEPTED) của tuần vừa hết để web app sang tuần mới
+  // sạch — NV tạo phiếu mới cho tuần mới. Phiếu APPROVED/REJECTED/CANCELLED giữ
+  // nguyên lịch sử + công/lương. Bền vững Sheets (updateSwapRequest đẩy tab ngay)
+  // + realtime 'swaps' cho 2 cổng tải lại.
+  const swapWeekReset = async (weekMon: string, tag: string) => {
+    try {
+      const key = `swap-reset:${weekMon}`;
+      if (weeklyDone.has(key)) return { total: 0, cancelled: 0 };
+      weeklyDone.add(key);
+      const all = await adapter.listSwapRequests().catch(() => []);
+      const open = (all || []).filter((s: any) =>
+        ['PENDING_PARTNER', 'PARTNER_ACCEPTED'].includes(String((s as any)?.status || '')));
+      if (open.length === 0) return { total: 0, cancelled: 0 };
+      // Thứ 2 tuần mới = thứ 2 tuần vừa hết + 7 ngày: phiếu còn mở mà ca thuộc
+      // tuần cũ (ngày ca < thứ 2 tuần mới) thì hết hiệu lực; phiếu tuần mới giữ lại.
+      const [wy, wm, wd] = weekMon.split('-').map(Number);
+      const nextMon = new Date(Date.UTC(wy, wm - 1, wd) + 7 * 86_400_000).toISOString().slice(0, 10);
+      let cancelled = 0;
+      for (const sw of open) {
+        let day = String((sw as any)?.support_date || '').slice(0, 10);
+        if (!day) {
+          const aid = (sw as any)?.requester_assignment_id || (sw as any)?.target_assignment_id;
+          if (aid) {
+            const sh: any = await adapter.getShiftById(aid).catch(() => null);
+            if (sh) day = String((sh as any)?.date || '').slice(0, 10);
+          }
+        }
+        if (!day) day = String((sw as any)?.created_at || '').slice(0, 10);
+        if (!day || day >= nextMon) continue;
+        try {
+          await adapter.updateSwapRequest((sw as any).swap_id, {
+            status: 'CANCELLED',
+            rejection_reason: 'Tự động hủy khi reset tuần (CN 23:30) — phiếu tuần cũ hết hiệu lực, NV tạo phiếu mới cho tuần mới.',
+          } as any);
+          cancelled++;
+        } catch { /* phiếu tiếp theo */ }
+      }
+      if (cancelled > 0) {
+        try {
+          io.emit('data:updated', { entity: 'swaps', data: { action: 'week-reset', weekMon, cancelled }, timestamp: new Date().toISOString() });
+        } catch { /* non-fatal */ }
+      }
+      console.log(`[swap-week-reset] ${tag} tuần ${weekMon}: hủy ${cancelled}/${open.length} phiếu mở.`);
+      return { total: open.length, cancelled };
+    } catch (err: any) {
+      console.warn('[swap-week-reset] tick error:', err?.message || err);
+      return { total: 0, cancelled: 0 };
+    }
+  };
   const attendanceWeekTick = async () => {
     try {
       const now = new Date();
@@ -227,7 +277,7 @@ server.listen(Number(PORT), '0.0.0.0', () => {
         }
         return;
       }
-      // CN 23h30: lưu trữ + reset
+      // CN 23h30: lưu trữ + reset (chấm công + phiếu đổi ca tuần)
       if (dowSun0 === 0 && hh === 23 && mm >= 30 && mm < 32) {
         const weekMon = mondayOf(vnParts(now).dateStr);
         const key = `archive:${weekMon}`;
@@ -239,6 +289,7 @@ server.listen(Number(PORT), '0.0.0.0', () => {
             io.emit('data:updated', { entity: 'attendance', data: { action: 'week-archived', weekMon, ...r }, timestamp: new Date().toISOString() });
           } catch { /* non-fatal */ }
         }
+        await swapWeekReset(weekMon, 'CN 23h30');
         return;
       }
       // T2 00h05: dự phòng nếu CN 23h30 server ngủ
@@ -253,6 +304,7 @@ server.listen(Number(PORT), '0.0.0.0', () => {
           const r = await syncService.archiveAttendanceWeek(adapter, weekMon).catch((e: any) => ({ archived: false, reason: e?.message }));
           console.log(`[attendance-week] Archive bù tuần ${weekMon}:`, JSON.stringify(r));
         }
+        await swapWeekReset(weekMon, 'T2 00h05 bù');
       }
     } catch (err: any) {
       console.warn('[attendance-week] tick error:', err?.message || err);
