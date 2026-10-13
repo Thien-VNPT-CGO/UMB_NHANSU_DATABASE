@@ -10712,16 +10712,20 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 testSubs.map((s: any) => {
                   const paper = testPapers.find((p: any) => p.test_id === s.test_id);
                   const emp = (allEmployees || []).find((e: any) => e.employee_id === s.employee_id);
+                  const sc = Number(s.score);
+                  const hasScore = s.status === 'SUBMITTED' && Number.isFinite(sc);
                   return (
                     <tr key={s.submission_id} style={{ borderBottom: '1px solid var(--border)' }}>
                       <td style={{ padding: '12px 20px', fontWeight: 700 }}>{paper?.title || s.test_id}</td>
                       <td style={{ padding: '12px 20px' }}>{emp?.full_name || s.employee_id} <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>({emp?.employee_code || ''})</span></td>
-                      <td style={{ padding: '12px 20px', fontWeight: 800 }}>{s.status === 'SUBMITTED' ? `${s.score}/10` : '—'}</td>
+                      <td style={{ padding: '12px 20px', fontWeight: 800 }}>{hasScore ? `${sc}/10` : '—'}</td>
                       <td style={{ padding: '12px 20px' }}>
-                        {s.status === 'SUBMITTED' ? (
+                        {hasScore ? (
                           <span className="badge" style={{ backgroundColor: s.passed ? '#DCFCE7' : '#FEE2E2', color: s.passed ? '#166534' : '#991B1B', fontWeight: 700 }}>
                             {s.passed ? 'Đạt' : 'Chưa đạt'}
                           </span>
+                        ) : s.status === 'SUBMITTED' ? (
+                          <span className="badge" style={{ backgroundColor: '#E0E7FF', color: '#3730A3', fontWeight: 700 }}>Chờ chấm</span>
                         ) : (
                           <span className="badge" style={{ backgroundColor: '#FEF3C7', color: '#92400E', fontWeight: 700 }}>Chờ làm</span>
                         )}

@@ -124,7 +124,25 @@ export class TestsService {
   }
 
   async listSubmissions(testId?: string, employeeId?: string) {
-    return this.repo.listTestSubmissions(testId, employeeId);
+    const subs = await this.repo.listTestSubmissions(testId, employeeId);
+    // Tự chữa điểm null realtime: bài đã nộp còn đáp án + còn đề mà thiếu điểm
+    // (dòng Sheet cũ trống / merge đè) thì chấm lại theo đề và lưu, khỏi hiện null/10.
+    for (const s of subs || []) {
+      const sc = Number((s as any)?.score);
+      if ((s as any)?.status !== 'SUBMITTED' || Number.isFinite(sc)) continue;
+      try {
+        const paper = await this.repo.getTestPaper((s as any).test_id).catch(() => null);
+        const ans = Array.isArray((s as any)?.answers) ? (s as any).answers.map(Number) : null;
+        if (!paper || !ans || ans.length !== paper.questions.length) continue;
+        const { score, passed } = gradePaper(paper, ans);
+        try {
+          await this.repo.updateTestSubmission((s as any).submission_id, { score, passed } as any);
+        } catch { /* hiển thị đúng trước, lưu sau */ }
+        (s as any).score = score;
+        (s as any).passed = passed;
+      } catch { /* giữ nguyên dòng lỗi, hiển thị '—' ở frontend */ }
+    }
+    return subs;
   }
 
   /** Bài của chính nhân viên (chỉ bài được giao cho mình mới thấy). Kèm đề đã ẩn đáp án. */
