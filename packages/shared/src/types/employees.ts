@@ -21,6 +21,8 @@ export interface EmployeeMaster {
   bank_name?: string;
   bank_account?: string;
   bank_holder?: string;
+  /** Ảnh mã QR ngân hàng do NV tự tải lên ở Hồ sơ (dataURL, ≤45KB) — Finance xem ở tab QR ngân hàng NV. */
+  bank_qr_img?: string;
   created_at: string;
   updated_at: string;
   version: number;

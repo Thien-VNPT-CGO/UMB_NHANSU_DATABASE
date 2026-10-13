@@ -504,6 +504,8 @@ export class EmployeesService {
       bankName?: string;
       bankAccount?: string;
       bankHolder?: string;
+      /** Ảnh mã QR ngân hàng NV tự tải lên (dataURL ≤45KB, lưu trực tiếp). Chuỗi rỗng = gỡ QR. */
+      bankQrImg?: string;
       /** Ảnh avatar base64 (transient) — adapter upload Drive thành avatar_drive_id rồi bỏ. Chuỗi rỗng = xóa avatar. */
       avatarBase64?: string;
       expectedVersion?: number;
@@ -558,6 +560,12 @@ export class EmployeesService {
     if (updates.bankName !== undefined) patch.bank_name = String(updates.bankName).trim().slice(0, 100) || undefined;
     if (updates.bankAccount !== undefined) patch.bank_account = String(updates.bankAccount).trim().slice(0, 64) || undefined;
     if (updates.bankHolder !== undefined) patch.bank_holder = String(updates.bankHolder).trim().slice(0, 100) || undefined;
+    // Ảnh QR ngân hàng NV tự tải lên: cắt ngưỡng như chữ ký phiếu lương để
+    // không phình RAM/payload danh sách (client đã nén nhỏ trước khi gửi).
+    if ((updates as any).bankQrImg !== undefined || (updates as any).bank_qr_img !== undefined) {
+      const qrRaw = String((updates as any).bankQrImg ?? (updates as any).bank_qr_img ?? '').trim();
+      (patch as any).bank_qr_img = qrRaw ? qrRaw.slice(0, 45000) : undefined;
+    }
     // Avatar: chuỗi rỗng = HR xóa avatar; có ảnh = adapter upload Drive rồi bỏ base64.
     if (updates.avatarBase64 !== undefined) {
       if (String(updates.avatarBase64).trim() === '') {

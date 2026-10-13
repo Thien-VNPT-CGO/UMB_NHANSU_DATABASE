@@ -97,6 +97,9 @@ export const employeeSelfUpdateBody = z.object({
   bank_account: looseOptString(64),
   bankHolder: looseOptString(100),
   bank_holder: looseOptString(100),
+  /** Ảnh mã QR ngân hàng NV tự tải lên (đồng bộ realtime qua Finance). */
+  bankQrImg: photoField,
+  bank_qr_img: photoField,
 });
 
 // --- Recruitment ---

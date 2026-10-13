@@ -532,6 +532,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           bankName: b.bankName ?? b.bank_name,
           bankAccount: b.bankAccount ?? b.bank_account,
           bankHolder: b.bankHolder ?? b.bank_holder,
+          bankQrImg: b.bankQrImg ?? b.bank_qr_img,
         },
         req.user.id
       );

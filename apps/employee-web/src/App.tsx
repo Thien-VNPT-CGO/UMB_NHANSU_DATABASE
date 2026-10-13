@@ -49,6 +49,7 @@ interface EmployeeProfile {
   bank_name?: string;
   bank_account?: string;
   bank_holder?: string;
+  bank_qr_img?: string;
   start_date?: string;
   official_date?: string;
   default_shift_code?: string;
@@ -534,7 +535,7 @@ export function App() {
   const [targetShiftsLoading, setTargetShiftsLoading] = useState(false);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   // Ho So ca nhan: NV tu cap nhat (realtime ve tab Ho So NV cho HR).
-  const [profForm, setProfForm] = useState({ email: '', gender: '', birth_date: '', id_card_number: '', bank_name: '', bank_account: '', bank_holder: '' });
+  const [profForm, setProfForm] = useState({ email: '', gender: '', birth_date: '', id_card_number: '', bank_name: '', bank_account: '', bank_holder: '', bank_qr_img: '' });
   const [profBusy, setProfBusy] = useState(false);
   useEffect(() => {
     if (!employee?.employee_id) return;
@@ -546,6 +547,7 @@ export function App() {
       bank_name: (employee as any)?.bank_name || '',
       bank_account: (employee as any)?.bank_account || '',
       bank_holder: (employee as any)?.bank_holder || '',
+      bank_qr_img: (employee as any)?.bank_qr_img || '',
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [employee?.employee_id]);
@@ -563,13 +565,16 @@ export function App() {
           bank_name: profForm.bank_name.trim(),
           bank_account: profForm.bank_account.trim(),
           bank_holder: profForm.bank_holder.trim(),
+          bank_qr_img: profForm.bank_qr_img,
         }),
       });
       if (res?.employee) {
-        setEmployee(res.employee);
-        try { localStorage.setItem('ubm_emp_data', JSON.stringify(res.employee)); } catch {}
+        const merged = { ...(employee || {}), ...(res.employee || {}) };
+        if (!(res.employee as any)?.bank_qr_img && !(profForm.bank_qr_img)) delete (merged as any).bank_qr_img;
+        setEmployee(merged as any);
+        try { localStorage.setItem('ubm_emp_data', JSON.stringify(merged)); } catch {}
       }
-      showToast('Đã cập nhật hồ sơ! HR thấy ngay ở tab Hồ Sơ Nhân Viên.');
+      showToast('Đã cập nhật hồ sơ! HR và Kế toán thấy ngay (kèm mã QR ngân hàng).');
     } catch (err: any) {
       showToast(err?.message || 'Lỗi khi cập nhật hồ sơ!');
     } finally {
@@ -1761,6 +1766,77 @@ export function App() {
       };
       img.src = url;
     });
+  };
+
+  // Nén ảnh QR ngân hàng đủ nhỏ để lưu trực tiếp (server cắt 45KB như chữ ký):
+  // QR là nét đen-trắng nên 480px + JPEG là đủ quét, dataURL thường <40KB.
+  const compressBankQr = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const trySize = (maxPx: number, q: number): void => {
+            const scale = Math.min(1, maxPx / Math.max(img.width, img.height));
+            const w = Math.max(1, Math.round(img.width * scale));
+            const h = Math.max(1, Math.round(img.height * scale));
+            const cv = document.createElement('canvas');
+            cv.width = w;
+            cv.height = h;
+            const ctx = cv.getContext('2d');
+            if (!ctx) {
+              URL.revokeObjectURL(url);
+              reject(new Error('canvas'));
+              return;
+            }
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(0, 0, w, h);
+            ctx.drawImage(img, 0, 0, w, h);
+            const out = cv.toDataURL('image/jpeg', q);
+            if (out.length > 44000 && (maxPx > 320 || q > 0.5)) {
+              if (q > 0.5) trySize(maxPx, Math.round((q - 0.15) * 100) / 100);
+              else trySize(320, 0.6);
+              return;
+            }
+            URL.revokeObjectURL(url);
+            resolve(out);
+          };
+          trySize(480, 0.7);
+        } catch (e) {
+          URL.revokeObjectURL(url);
+          reject(e);
+        }
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error('decode'));
+      };
+      img.src = url;
+    });
+  };
+
+  const handleBankQrSelected = async (file: File | undefined) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      showToast('⚠️ File không phải ảnh! Vui lòng chọn ảnh mã QR.');
+      return;
+    }
+    if (file.size > 15 * 1024 * 1024) {
+      showToast('⚠️ Ảnh quá lớn (>15MB)! Vui lòng chụp lại.');
+      return;
+    }
+    try {
+      showToast('⏳ Đang xử lý ảnh QR...');
+      const dataUrl = await compressBankQr(file);
+      if (!dataUrl) {
+        showToast('⚠️ Không đọc được ảnh! Vui lòng chọn lại.');
+        return;
+      }
+      setProfForm((s) => ({ ...s, bank_qr_img: dataUrl }));
+      showToast('✓ Đã nhận ảnh QR! Bấm "Lưu Hồ Sơ" để đồng bộ qua Kế toán.');
+    } catch {
+      showToast('⚠️ Không xử lý được ảnh! Vui lòng chọn ảnh khác.');
+    }
   };
 
   const handlePhotoSelected = async (file: File | undefined) => {
@@ -5999,6 +6075,26 @@ export function App() {
                 <div>
                   <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Chủ tài khoản</label>
                   <input type="text" value={profForm.bank_holder} onChange={(e) => setProfForm((s) => ({ ...s, bank_holder: e.target.value }))} placeholder="VD: NGUYEN VAN A" style={{ width: '100%', padding: '9px 10px', fontSize: '13px', borderRadius: '8px', border: '1px solid var(--border)' }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Mã QR ngân hàng (Kế toán dùng để chuyển khoản)</label>
+                  {profForm.bank_qr_img ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <img src={profForm.bank_qr_img} alt="QR ngân hàng" style={{ width: '96px', height: '96px', objectFit: 'contain', borderRadius: '8px', border: '1px solid var(--border)', backgroundColor: '#FFF' }} />
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <label className="btn-secondary" style={{ fontSize: '12px', padding: '7px 12px', fontWeight: 700, cursor: 'pointer', textAlign: 'center' }}>
+                          🔄 Đổi ảnh QR
+                          <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => { handleBankQrSelected(e.target.files?.[0]); e.target.value = ''; }} />
+                        </label>
+                        <button className="btn-secondary" style={{ fontSize: '12px', padding: '7px 12px' }} onClick={() => setProfForm((s) => ({ ...s, bank_qr_img: '' }))}>🗑️ Gỡ QR</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <label className="btn-secondary" style={{ display: 'block', fontSize: '13px', padding: '10px', fontWeight: 700, cursor: 'pointer', textAlign: 'center' }}>
+                      📷 Tải ảnh mã QR ngân hàng
+                      <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => { handleBankQrSelected(e.target.files?.[0]); e.target.value = ''; }} />
+                    </label>
+                  )}
                 </div>
                 <button className="btn-primary" disabled={profBusy} onClick={handleSaveProfile} style={{ width: '100%', padding: '11px', fontSize: '14px', fontWeight: 800 }}>
                   {profBusy ? 'Đang lưu...' : 'Lưu Hồ Sơ'}

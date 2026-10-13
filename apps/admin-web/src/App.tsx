@@ -45,6 +45,7 @@ import {
   Volume2,
   VolumeX,
   PenTool,
+  QrCode,
 } from 'lucide-react';
 import { RoleViews } from './components/RoleViews';
 import {
@@ -126,6 +127,7 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'fin-deductions', label: '9. KPI • Ứng • Đồng Phục', icon: AlertTriangle },
     { id: 'fin-payment', label: '10. Thanh toán', icon: CheckCircle },
     { id: 'fin-signatures', label: '11. Cài đặt chữ ký', icon: PenTool },
+    { id: 'fin-bank-qr', label: '12. QR ngân hàng NV', icon: QrCode },
   ],
   MARKETING: [
     { id: 'mkt-dashboard', label: '1. Dashboard MKT', icon: Megaphone },
@@ -4229,7 +4231,7 @@ export function App() {
             </div>
           )}
 
-          {/* DEDICATED VIEWS FOR HR (15 TABS), STORE (10 TABS), FINANCE (11 TABS), MARKETING (9 TABS) */}
+          {/* DEDICATED VIEWS FOR HR (15 TABS), STORE (10 TABS), FINANCE (12 TABS), MARKETING (9 TABS) */}
           <RoleViewsErrorBoundary tab={activeTab} key={activeTab}>
           <RoleViews
             activeTab={activeTab}
