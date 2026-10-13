@@ -32,7 +32,7 @@ export interface SheetDefinition {
 export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   {
     title: 'NHAN_VIEN_MASTER',
-    headers: ['ID Nhân Viên', 'Mã NV', 'Họ Và Tên', 'Số Điện Thoại', 'Trạng Thái', 'Nhóm', 'Chi Nhánh', 'Lương Giờ (VNĐ)', 'Ngày Bắt Đầu', 'Phiên Bản', 'Ca Cố Định', 'Ngày Chính Thức', 'Email', 'Giới Tính', 'Ngày Sinh', 'CCCD', 'Avatar (Drive ID)'],
+    headers: ['ID Nhân Viên', 'Mã NV', 'Họ Và Tên', 'Số Điện Thoại', 'Trạng Thái', 'Nhóm', 'Chi Nhánh', 'Lương Giờ (VNĐ)', 'Ngày Bắt Đầu', 'Phiên Bản', 'Ca Cố Định', 'Ngày Chính Thức', 'Email', 'Giới Tính', 'Ngày Sinh', 'CCCD', 'Avatar (Drive ID)', 'Ngân Hàng', 'Số Tài Khoản', 'Chủ Tài Khoản', 'QR Ngân Hàng (Base64)'],
   },
   {
     title: 'TAI_KHOAN_NHAN_VIEN',
@@ -608,6 +608,12 @@ export class GoogleSheetsSyncService {
               ...((r[15] || '').trim() ? { id_card_number: (r[15] || '').trim() } : {}),
               // Cột R: Avatar HR upload ở tab Hồ Sơ (Drive file ID).
               ...((r[16] || '').trim() ? { avatar_drive_id: (r[16] || '').trim() } : {}),
+              // Cột S/T/U/V: Ngân hàng + QR NV upload ở cổng nhân viên — sheet cũ
+              // thiếu thì giữ rỗng, merge bên dưới vá từ bộ nhớ.
+              ...((r[17] || '').trim() ? { bank_name: (r[17] || '').trim() } : {}),
+              ...((r[18] || '').trim() ? { bank_account: (r[18] || '').trim() } : {}),
+              ...((r[19] || '').trim() ? { bank_holder: (r[19] || '').trim() } : {}),
+              ...((r[20] || '').trim() ? { bank_qr_img: (r[20] || '').trim() } : {}),
             };
           });
         // Đọc thiếu dòng (partial/truncated) mà bộ nhớ đang nhiều hơn gấp đôi -> giữ bộ nhớ.
@@ -641,6 +647,10 @@ export class GoogleSheetsSyncService {
                 if (!(s as any).email && (m as any).email) (s as any).email = (m as any).email;
                 if (!(s as any).avatar_drive_id && (m as any).avatar_drive_id) (s as any).avatar_drive_id = (m as any).avatar_drive_id;
                 if (!(s as any).avatar_photo && (m as any).avatar_photo) (s as any).avatar_photo = (m as any).avatar_photo;
+                if (!(s as any).bank_name && (m as any).bank_name) (s as any).bank_name = (m as any).bank_name;
+                if (!(s as any).bank_account && (m as any).bank_account) (s as any).bank_account = (m as any).bank_account;
+                if (!(s as any).bank_holder && (m as any).bank_holder) (s as any).bank_holder = (m as any).bank_holder;
+                if (!(s as any).bank_qr_img && (m as any).bank_qr_img) (s as any).bank_qr_img = (m as any).bank_qr_img;
               }
               mergedEmps.push(s);
             }
@@ -1954,6 +1964,10 @@ export class GoogleSheetsSyncService {
         (e as any).birth_date ? sheetDateText((e as any).birth_date) : '',
         (e as any).id_card_number || '',
         (e as any).avatar_drive_id || '',
+        (e as any).bank_name || '',
+        GoogleSheetsSyncService.sheetText((e as any).bank_account || ''),
+        (e as any).bank_holder || '',
+        (e as any).bank_qr_img || '',
       ]);
       await this.overwriteSheetData('NHAN_VIEN_MASTER', SHEETS_DEFINITIONS.find(d => d.title === 'NHAN_VIEN_MASTER')!.headers, employeeRows);
       details.employees = employeeRows.length;
@@ -2225,6 +2239,10 @@ export class GoogleSheetsSyncService {
       e.birth_date ? sheetDateText(e.birth_date) : '',
       e.id_card_number || '',
       (e as any).avatar_drive_id || '',
+      (e as any).bank_name || '',
+      GoogleSheetsSyncService.sheetText((e as any).bank_account || ''),
+      (e as any).bank_holder || '',
+      (e as any).bank_qr_img || '',
     ]));
     await this.overwriteSheetData('NHAN_VIEN_MASTER', SHEETS_DEFINITIONS.find(d => d.title === 'NHAN_VIEN_MASTER')!.headers, rows);
     return rows.length;
