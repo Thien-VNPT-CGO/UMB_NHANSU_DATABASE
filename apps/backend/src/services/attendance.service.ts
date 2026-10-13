@@ -315,11 +315,42 @@ export class AttendanceService {
         const needOut = !hasOut;
         const inIso = String(data.checkInTime || '').trim();
         const outIso = String(data.checkOutTime || '').trim();
-        if (needIn && !inIso) throw new Error('MISSING_CHECKIN_TIME: ca chưa có check-in, Admin phải nhập giờ vào!');
+        // Thẻ "Tự điểm danh" (check-in không gắn ca): Admin bù mà không nhập giờ
+        // vào thì GẮN luôn bản ghi mồ côi cùng ngày vào ca thay vì ghi đôi.
+        let attachedIn: any = null;
+        if (needIn && !inIso) {
+          try {
+            const day = String((shift as any).date || '').slice(0, 10);
+            const orphans = (mine || []).filter((e: any) => {
+              if ((e as any)?.type !== 'CHECK_IN' || (e as any)?.assignment_id) return false;
+              if (String((e as any)?.employee_id || '') !== employeeId) return false;
+              const t = new Date((e as any)?.client_time || '').getTime();
+              if (!Number.isFinite(t)) return false;
+              return new Date(t + 7 * 3_600_000).toISOString().slice(0, 10) === day;
+            });
+            // Ưu tiên bản ghi gần giờ vào ca nhất (đúng ca cần bù).
+            const startMs = (shift as any)?.start_at ? new Date((shift as any).start_at).getTime() : NaN;
+            orphans.sort((a: any, b: any) => {
+              const base = Number.isFinite(startMs) ? startMs : 0;
+              return Math.abs(new Date((a as any).client_time).getTime() - base) - Math.abs(new Date((b as any).client_time).getTime() - base);
+            });
+            const pick = orphans[0];
+            if (pick && this.repo.updateAttendanceEvent) {
+              const stamp = new Date().toISOString();
+              attachedIn = await this.repo.updateAttendanceEvent((pick as any).event_id, {
+                assignment_id: data.assignmentId,
+                compensated_by: data.actorId,
+                compensated_at: stamp,
+                compensate_reason: reason,
+              } as any);
+            }
+          } catch { /* không gắn được thì báo nhập giờ như cũ */ }
+        }
+        if (needIn && !attachedIn && !inIso) throw new Error('MISSING_CHECKIN_TIME: ca chưa có check-in, Admin phải nhập giờ vào!');
         if (needOut && !outIso) throw new Error('MISSING_CHECKOUT_TIME: Admin phải nhập giờ ra!');
         const inMs = needIn ? new Date(inIso).getTime() : NaN;
         const outMs = needOut ? new Date(outIso).getTime() : NaN;
-        if (needIn && !Number.isFinite(inMs)) throw new Error('INVALID_CHECKIN_TIME: giờ vào không hợp lệ!');
+        if (needIn && !attachedIn && !Number.isFinite(inMs)) throw new Error('INVALID_CHECKIN_TIME: giờ vào không hợp lệ!');
         if (needOut && !Number.isFinite(outMs)) throw new Error('INVALID_CHECKOUT_TIME: giờ ra không hợp lệ!');
         if (needIn && needOut && outMs <= inMs) {
           throw new Error('INVALID_RANGE: giờ ra phải sau giờ vào!');
@@ -356,11 +387,12 @@ export class AttendanceService {
           };
         };
 
-        let checkIn: any = hasIn || null;
+        let checkIn: any = hasIn || attachedIn || null;
         let checkOut: any = hasOut || null;
         const created: Array<'CHECK_IN' | 'CHECK_OUT'> = [];
+        if (attachedIn) created.push('CHECK_IN');
         // Idempotent: request_id ADMIN_COMP_* đã có thì dùng lại, không ghi đôi.
-        if (needIn) {
+        if (needIn && !checkIn) {
           const dup = await this.repo.findAttendanceEventByRequestId(`ADMIN_COMP_${data.assignmentId}_CHECK_IN`).catch(() => null);
           checkIn = dup || await this.repo.recordAttendanceEvent(mkEvent('CHECK_IN', inIso) as any);
           if (!dup) created.push('CHECK_IN');

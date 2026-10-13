@@ -2348,6 +2348,43 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       reason: '',
     });
   };
+  // Mở bù công cho thẻ "Tự điểm danh" thiếu check-out (check-in mồ côi không
+  // gắn ca nào): tạo ca mới đúng ngày rồi gắn giờ vào mồ côi vào + bù giờ ra.
+  const guessShiftCode = (iso: any): string => {
+    const h = new Date(String(iso || '')).getHours();
+    if (!Number.isFinite(h)) return 'CA_3';
+    if (h >= 6 && h < 12) return 'CA_1';
+    if (h >= 11 && h < 18) return 'CA_2';
+    return 'CA_3';
+  };
+  const openCompensateNew = (empLike: any, info: { inIso: string; inText: string; dateStr: string }) => {
+    if (currentUser?.role !== 'ADMIN') {
+      showToast('Chỉ tài khoản Admin mới được bù công!');
+      return;
+    }
+    const empId = empLike?.empId || empLike?.employee_id;
+    if (!empId || !info.inIso || !info.dateStr) return;
+    const dayShifts = (schedAllShifts || []).filter((s: any) =>
+      String(s.employee_id) === String(empId) &&
+      String(s.date || '').slice(0, 10) === info.dateStr &&
+      (s as any).status !== 'CANCELLED');
+    setCompModal({
+      mode: 'new',
+      empId,
+      empCode: empLike?.empCode || empLike?.employee_code,
+      name: empLike?.name || empLike?.full_name,
+      branch: empLike?.branch || empLike?.default_branch_id || 'CN130',
+      shiftDate: info.dateStr,
+      hasIn: true,
+      inText: info.inText,
+      inIso: info.inIso,
+      checkIn: '',
+      checkOut: '',
+      shiftCode: guessShiftCode(info.inIso),
+      dayShifts: dayShifts.map((s: any) => ({ code: s.shift_code, status: s.status })),
+      reason: '',
+    });
+  };
   const handleCompensate = async () => {
     if (!compModal || compBusy) return;
     if (currentUser?.role !== 'ADMIN') {
@@ -2362,8 +2399,43 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       showToast('⚠️ Giờ ra không hợp lệ!');
       return;
     }
-    const inIso = compModal.hasIn ? '' : new Date(compModal.checkIn).toISOString();
+    const inIso = compModal.hasIn && !compModal.inIso ? '' : (compModal.inIso || new Date(compModal.checkIn).toISOString());
     const outIso = new Date(compModal.checkOut).toISOString();
+    // Chế độ tạo ca mới cho thẻ "Tự điểm danh" thiếu check-out.
+    if (compModal.mode === 'new') {
+      if (!['CA_1', 'CA_2', 'CA_3'].includes(compModal.shiftCode)) {
+        showToast('⚠️ Vui lòng chọn ca làm!');
+        return;
+      }
+      if (!window.confirm(`Tạo ca ${compModal.shiftCode} ngày ${compModal.shiftDate} cho ${compModal.name || ''} (${compModal.empCode || ''}) rồi bù giờ ra? Giờ vào mồ côi (${compModal.inText || ''}) sẽ gắn vào ca mới — tính đủ công, realtime.`)) return;
+      setCompBusy(true);
+      try {
+        const createdRaw: any = await apiRequest('/schedules/shifts', {
+          method: 'POST',
+          body: JSON.stringify({ employeeId: compModal.empId, branchId: compModal.branch, shiftCode: compModal.shiftCode, date: compModal.shiftDate }),
+        });
+        const newShift = (createdRaw as any)?.result ?? createdRaw;
+        if (!newShift?.assignment_id) throw new Error('Không tạo được ca mới!');
+        const raw: any = await apiRequest('/admin/attendance/compensate', {
+          method: 'POST',
+          body: JSON.stringify({ assignmentId: newShift.assignment_id, checkOutTime: outIso, reason: compModal.reason }),
+        });
+        const res = raw?.result ?? raw;
+        const made = Array.isArray(res?.created) ? res.created.join('+') : 'CHECK_OUT';
+        showToast(`🛠️ Đã tạo ca ${compModal.shiftCode} + bù công (${made}) cho ${compModal.name || ''}! Ca tính đủ công, đã đồng bộ realtime.`);
+        setCompModal(null);
+        if (onRefreshData) await onRefreshData();
+        try {
+          const data = await apiRequest('/attendance/events');
+          setLiveAttendanceEvents(Array.isArray(data) ? data : []);
+        } catch { /* giữ lưới cũ, socket sẽ đẩy */ }
+      } catch (e: any) {
+        showToast(e?.message || 'Lỗi khi bù công!');
+      } finally {
+        setCompBusy(false);
+      }
+      return;
+    }
     if (!window.confirm(`Bù công ca ${compModal.shiftLabel || ''} ngày ${compModal.shiftDate || ''} cho ${compModal.name || ''} (${compModal.empCode || ''})? Ca sẽ tính đủ công, đồng bộ realtime sang Bảng Chấm Công và Cổng NV.`)) return;
     setCompBusy(true);
     try {
@@ -2426,6 +2498,27 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <div style={{ fontSize: '12px', opacity: 0.9 }}>{compModal.name} ({compModal.empCode}) • {compModal.shiftLabel} • ngày {compModal.shiftDate}</div>
           </div>
           <div style={{ padding: '18px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {compModal.mode === 'new' && (
+              <>
+                <label style={{ fontSize: '13px', fontWeight: 700 }}>
+                  Ca làm (tạo mới đúng ngày {compModal.shiftDate})
+                  <select
+                    value={compModal.shiftCode}
+                    onChange={e => setCompModal((p: any) => ({ ...p, shiftCode: e.target.value }))}
+                    style={{ width: '100%', padding: '9px 10px', fontSize: '14px', borderRadius: '8px', border: '1px solid #D1D5DB', marginTop: '4px' }}
+                  >
+                    <option value="CA_1">Ca 1 (07–12)</option>
+                    <option value="CA_2">Ca 2 (12–18)</option>
+                    <option value="CA_3">Ca 3 (18–23)</option>
+                  </select>
+                </label>
+                {(compModal.dayShifts || []).length > 0 && (
+                  <div style={{ fontSize: '12px', backgroundColor: '#FEF2F2', border: '1px solid #FCA5A5', borderRadius: '8px', padding: '8px 12px', color: '#991B1B' }}>
+                    ⚠️ Ngày này đã có ca: {(compModal.dayShifts || []).map((s: any) => `${s.code} (${s.status})`).join(' • ')} — tạo thêm sẽ thành 2 ca/ngày, cân nhắc kỹ!
+                  </div>
+                )}
+              </>
+            )}
             <div style={{ fontSize: '12px', backgroundColor: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: '8px', padding: '8px 12px', color: '#92400E' }}>
               Dùng khi hệ thống lỗi làm NV mất công (ca khóa / vắng / thiếu check-out). Ca bù tính <strong>đủ công, không phạt trễ</strong>, đồng bộ realtime sang Bảng Chấm Công và Cổng NV.
               {compModal.hasIn && <div style={{ marginTop: '4px' }}>✅ Ca đã có giờ vào: <strong>{compModal.inText}</strong> — chỉ cần nhập giờ ra.</div>}
@@ -8792,6 +8885,30 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                       🛠️ Bù công
                                     </button>
                                   )}
+                                  {currentUser?.role === 'ADMIN' && !sd.assignment_id && sd.status === 'MISSING_OUT' && sd.event && (
+                                    <button
+                                      onClick={() => openCompensateNew(emp, { inIso: sd.event?.client_time || '', inText: sd.inTime || sd.time || '', dateStr: (sd as any)?.date || (sd as any)?.shift_date || day.isoDate })}
+                                      title="Admin tạo ca đúng ngày + gắn giờ vào mồ côi rồi bù giờ ra — tính đủ công, realtime"
+                                      style={{
+                                        marginTop: '4px',
+                                        marginLeft: '4px',
+                                        fontSize: '9px',
+                                        padding: '2px 6px',
+                                        borderRadius: '4px',
+                                        backgroundColor: '#ECFDF5',
+                                        border: '1px solid #10B981',
+                                        color: '#065F46',
+                                        fontWeight: 800,
+                                        cursor: 'pointer',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '3px',
+                                        justifyContent: 'center',
+                                      }}
+                                    >
+                                      🛠️ Bù công
+                                    </button>
+                                  )}
                                   {sd.assignment_id && sd.status !== 'COMPLETED' && sd.status !== 'CHECKED_IN' && (
                                     <button
                                       disabled={schedDelBusy === sd.assignment_id}
@@ -9104,6 +9221,29 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                               </div>
                             )}
 
+                            {currentUser?.role === 'ADMIN' && !d.assignment_id && d.status === 'MISSING_OUT' && (d as any)?.event && (
+                              <button
+                                onClick={() => openCompensateNew({ empId: emp.empId, empCode: emp.empCode, name: emp.name, branch: (emp as any)?.branch }, { inIso: (d as any)?.event?.client_time || '', inText: (d as any)?.inTime || (d as any)?.time || '', dateStr: (d as any)?.date || (d as any)?.shift_date || day.isoDate })}
+                                title="Admin tạo ca đúng ngày + gắn giờ vào mồ côi rồi bù giờ ra — tính đủ công, realtime"
+                                style={{
+                                  marginTop: '4px',
+                                  fontSize: '9.5px',
+                                  padding: '2px 8px',
+                                  borderRadius: '4px',
+                                  backgroundColor: '#ECFDF5',
+                                  border: '1px solid #10B981',
+                                  color: '#065F46',
+                                  fontWeight: 800,
+                                  cursor: 'pointer',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '3px',
+                                  justifyContent: 'center',
+                                }}
+                              >
+                                🛠️ Bù công
+                              </button>
+                            )}
                             {currentUser?.role === 'ADMIN' && d.assignment_id && ['LOCKED', 'ABSENT', 'MISSING_OUT'].includes(d.status) && (
                               <button
                                 onClick={() => openCompensate(emp, d)}
@@ -10341,6 +10481,29 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                         {thumb(inE)}
                                         {thumb(outE)}
                                       </div>
+                                    )}
+                                    {currentUser?.role === 'ADMIN' && !it.shift?.assignment_id && it.st.key === 'MISSING_OUT' && inE && (
+                                      <button
+                                        onClick={() => openCompensateNew({ empId: emp.employee_id, empCode: emp.employee_code, name: emp.full_name, branch: emp.default_branch_id }, { inIso: inE?.client_time || '', inText: inE ? timeOf(inE.client_time) : '', dateStr: it.shift?.date || day.iso })}
+                                        title="Admin tạo ca đúng ngày + gắn giờ vào mồ côi rồi bù giờ ra — tính đủ công, realtime"
+                                        style={{
+                                          marginTop: '4px',
+                                          fontSize: '10px',
+                                          padding: '3px 8px',
+                                          borderRadius: '4px',
+                                          backgroundColor: '#ECFDF5',
+                                          border: '1px solid #10B981',
+                                          color: '#065F46',
+                                          fontWeight: 800,
+                                          cursor: 'pointer',
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: '3px',
+                                          justifyContent: 'center',
+                                        }}
+                                      >
+                                        🛠️ Bù công
+                                      </button>
                                     )}
                                     {currentUser?.role === 'ADMIN' && it.shift?.assignment_id && ['LOCKED', 'ABSENT', 'MISSING_OUT'].includes(it.st.key) && (
                                       <button
