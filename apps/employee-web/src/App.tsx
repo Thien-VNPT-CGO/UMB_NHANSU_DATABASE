@@ -6092,18 +6092,6 @@ export function App() {
                   <input type="text" value={profForm.id_card_number} onChange={(e) => setProfForm((s) => ({ ...s, id_card_number: e.target.value }))} placeholder="VD: 079..." style={{ width: '100%', padding: '9px 10px', fontSize: '13px', borderRadius: '8px', border: '1px solid var(--border)' }} />
                 </div>
                 <div>
-                  <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Ngân hàng</label>
-                  <input type="text" value={profForm.bank_name} onChange={(e) => setProfForm((s) => ({ ...s, bank_name: e.target.value }))} placeholder="VD: Vietcombank" style={{ width: '100%', padding: '9px 10px', fontSize: '13px', borderRadius: '8px', border: '1px solid var(--border)' }} />
-                </div>
-                <div>
-                  <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Số tài khoản</label>
-                  <input type="text" value={profForm.bank_account} onChange={(e) => setProfForm((s) => ({ ...s, bank_account: e.target.value }))} placeholder="VD: 007100..." style={{ width: '100%', padding: '9px 10px', fontSize: '13px', borderRadius: '8px', border: '1px solid var(--border)' }} />
-                </div>
-                <div>
-                  <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Chủ tài khoản</label>
-                  <input type="text" value={profForm.bank_holder} onChange={(e) => setProfForm((s) => ({ ...s, bank_holder: e.target.value }))} placeholder="VD: NGUYEN VAN A" style={{ width: '100%', padding: '9px 10px', fontSize: '13px', borderRadius: '8px', border: '1px solid var(--border)' }} />
-                </div>
-                <div>
                   <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Mã QR ngân hàng (Kế toán dùng để chuyển khoản)</label>
                   {profForm.bank_qr_img ? (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
