@@ -2520,6 +2520,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     inviteDraftSavedRef.current = JSON.stringify({ c: d.candidateId || '', d: d.datetime || '', b: d.branchId || '', m: d.mode || '' });
   };
   // Khoi phuc nhap khi mo (local truoc cho tuc thi, server moi hon thi thang).
+  // FIX 403 triệt để: chỉ ADMIN/HR mới được gọi API nháp PV (FINANCE/Kế toán
+  // bị requireRole chặn 403, browser vẫn log "Failed to load resource" dù đã .catch).
   useEffect(() => {
     try {
       const raw0 = localStorage.getItem(INVITE_DRAFT_KEY);
@@ -2530,6 +2532,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         if (Number.isFinite(ts)) inviteDraftTsRef.current = ts;
       }
     } catch { /* bo qua nhap hong */ }
+    const canUseDraft = ['ADMIN', 'HR'].includes((currentUser as any)?.role);
+    if (!canUseDraft) return;
     apiRequest('/interviews/invite-draft').then((r: any) => {
       const d = (r as any)?.draft;
       if (!d) return;
@@ -2541,7 +2545,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       }
     }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [(currentUser as any)?.role]);
   // Tu dong luu nhap moi khi doi setup (debounce 600ms; local + server realtime).
   const inviteDraftTimer = useRef<any>(null);
   useEffect(() => {
@@ -2555,6 +2559,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       try { localStorage.setItem(INVITE_DRAFT_KEY, JSON.stringify(dd)); } catch {}
       inviteDraftTsRef.current = new Date(dd.updatedAt).getTime() || 0;
       if (!inviteCandidateId && !inviteDateTime) return;
+      if (!['ADMIN', 'HR'].includes((currentUser as any)?.role)) return;
       apiRequest('/interviews/invite-draft', { method: 'PUT', body: JSON.stringify(dd) }).catch(() => {});
     }, 600);
     return () => { if (inviteDraftTimer.current) clearTimeout(inviteDraftTimer.current); };
@@ -2814,7 +2819,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       inviteDraftSavedRef.current = '';
       setInviteCandidateId('');
       setInviteDateTime('');
-      apiRequest('/interviews/invite-draft', { method: 'PUT', body: JSON.stringify({ clear: true, candidateId: inviteCandidateId }) }).catch(() => {});
+      if (['ADMIN', 'HR'].includes((currentUser as any)?.role)) {
+        apiRequest('/interviews/invite-draft', { method: 'PUT', body: JSON.stringify({ clear: true, candidateId: inviteCandidateId }) }).catch(() => {});
+      }
       if (typeof onRefreshData === 'function') {
         try { await onRefreshData(); } catch {}
       }
