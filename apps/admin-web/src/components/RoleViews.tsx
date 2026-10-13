@@ -10140,7 +10140,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                     {it.st.key === 'COMPLETED' && isExtra && extraPay && (
                                       <div style={{ fontSize: '10px', color: extraPay.unpaid ? '#991B1B' : '#065F46', fontWeight: 800 }}>
                                         💰 {fmtVnd(extraPay.net)}{extraPay.deduction > 0 ? ` (phạt ${fmtVnd(extraPay.deduction)})` : ''}{extraPay.unpaid ? ' (không lương)' : ''} <span style={{ fontWeight: 700 }}>(tạm tính {extraShiftCode.replace('CA_', 'Ca ')})</span>
-                                        <div style={{ fontWeight: 700, color: '#92400E' }}>Ngoài lịch — tạm tính, HR xếp ca vào ngày này để chốt chính thức</div>
                                       </div>
                                     )}
                                     {relSwap && (
@@ -10178,7 +10177,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                           💰 Lương ca: <strong>{extraPay ? fmtVnd(extraPay.shiftPay) : '—'}</strong><br />
                                           ⚖ Phạt: <strong style={{ color: extraPay && (extraPay.deduction > 0 || extraPay.unpaid) ? '#DC2626' : '#059669' }}>{extraPay ? extraPay.fineLabel : '—'}</strong><br />
                                           ✅ Thực nhận tạm tính: <strong style={{ color: '#065F46' }}>{extraPay ? fmtVnd(extraPay.net) : '—'}</strong>
-                                          <div style={{ color: '#92400E', fontSize: '10px' }}>Ngoài lịch — tạm tính realtime, HR xếp ca vào ngày này để chốt chính thức.</div>
                                         </div>
                                         )}
                                         <div style={{ borderTop: '1px dashed var(--border)', margin: '6px 0', paddingTop: '6px' }}>
