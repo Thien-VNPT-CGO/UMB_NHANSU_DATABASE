@@ -313,8 +313,8 @@ export class AttendanceService {
 
         const needIn = !hasIn;
         const needOut = !hasOut;
-        const inIso = String(data.checkInTime || '').trim();
-        const outIso = String(data.checkOutTime || '').trim();
+        let inIso = String(data.checkInTime || '').trim();
+        let outIso = String(data.checkOutTime || '').trim();
         // Thẻ "Tự điểm danh" (check-in không gắn ca): Admin bù mà không nhập giờ
         // vào thì GẮN luôn bản ghi mồ côi cùng ngày vào ca thay vì ghi đôi.
         let attachedIn: any = null;
@@ -346,8 +346,22 @@ export class AttendanceService {
             }
           } catch { /* không gắn được thì báo nhập giờ như cũ */ }
         }
-        if (needIn && !attachedIn && !inIso) throw new Error('MISSING_CHECKIN_TIME: ca chưa có check-in, Admin phải nhập giờ vào!');
-        if (needOut && !outIso) throw new Error('MISSING_CHECKOUT_TIME: Admin phải nhập giờ ra!');
+        // Admin bấm bù là ca mặc định điểm danh đủ: thiếu giờ nào thì tự lấy
+        // giờ vào/tan ca (không bắt nhập). Ca legacy thiếu giờ mẫu mới báo lỗi.
+        if (needIn && !attachedIn && !inIso) {
+          const dflt = String((shift as any).start_at || '');
+          if (!dflt || !Number.isFinite(new Date(dflt).getTime())) {
+            throw new Error('MISSING_CHECKIN_TIME: ca chưa có check-in và thiếu giờ vào mẫu, Admin phải nhập giờ vào!');
+          }
+          inIso = dflt;
+        }
+        if (needOut && !outIso) {
+          const dflt = String((shift as any).end_at || '');
+          if (!dflt || !Number.isFinite(new Date(dflt).getTime())) {
+            throw new Error('MISSING_CHECKOUT_TIME: ca thiếu giờ tan mẫu, Admin phải nhập giờ ra!');
+          }
+          outIso = dflt;
+        }
         const inMs = needIn ? new Date(inIso).getTime() : NaN;
         const outMs = needOut ? new Date(outIso).getTime() : NaN;
         if (needIn && !attachedIn && !Number.isFinite(inMs)) throw new Error('INVALID_CHECKIN_TIME: giờ vào không hợp lệ!');

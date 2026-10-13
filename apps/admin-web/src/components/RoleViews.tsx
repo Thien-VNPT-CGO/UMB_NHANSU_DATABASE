@@ -2391,16 +2391,19 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       showToast('Chỉ tài khoản Admin mới được bù công!');
       return;
     }
-    if (!compModal.hasIn && !Number.isFinite(new Date(compModal.checkIn).getTime())) {
+    // Để trống giờ nào thì server tự lấy giờ vào/tan ca (bù đủ công ngay).
+    const inEmpty = !compModal.checkIn;
+    const outEmpty = !compModal.checkOut;
+    if (!compModal.hasIn && !inEmpty && !Number.isFinite(new Date(compModal.checkIn).getTime())) {
       showToast('⚠️ Giờ vào không hợp lệ!');
       return;
     }
-    if (!Number.isFinite(new Date(compModal.checkOut).getTime())) {
+    if (!outEmpty && !Number.isFinite(new Date(compModal.checkOut).getTime())) {
       showToast('⚠️ Giờ ra không hợp lệ!');
       return;
     }
-    const inIso = compModal.hasIn && !compModal.inIso ? '' : (compModal.inIso || new Date(compModal.checkIn).toISOString());
-    const outIso = new Date(compModal.checkOut).toISOString();
+    const inIso = compModal.hasIn && !compModal.inIso ? '' : (compModal.inIso || (!inEmpty ? new Date(compModal.checkIn).toISOString() : ''));
+    const outIso = outEmpty ? '' : new Date(compModal.checkOut).toISOString();
     // Chế độ tạo ca mới cho thẻ "Tự điểm danh" thiếu check-out.
     if (compModal.mode === 'new') {
       if (!['CA_1', 'CA_2', 'CA_3'].includes(compModal.shiftCode)) {
@@ -2418,7 +2421,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         if (!newShift?.assignment_id) throw new Error('Không tạo được ca mới!');
         const raw: any = await apiRequest('/admin/attendance/compensate', {
           method: 'POST',
-          body: JSON.stringify({ assignmentId: newShift.assignment_id, checkOutTime: outIso, reason: compModal.reason }),
+          body: JSON.stringify({ assignmentId: newShift.assignment_id, ...(outIso ? { checkOutTime: outIso } : {}), reason: compModal.reason }),
         });
         const res = raw?.result ?? raw;
         const made = Array.isArray(res?.created) ? res.created.join('+') : 'CHECK_OUT';
@@ -2443,8 +2446,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         method: 'POST',
         body: JSON.stringify({
           assignmentId: compModal.assignmentId,
-          ...(compModal.hasIn ? {} : { checkInTime: inIso }),
-          checkOutTime: outIso,
+          ...(compModal.hasIn || !inIso ? {} : { checkInTime: inIso }),
+          ...(outIso ? { checkOutTime: outIso } : {}),
           reason: compModal.reason,
         }),
       });
@@ -2520,7 +2523,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </>
             )}
             <div style={{ fontSize: '12px', backgroundColor: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: '8px', padding: '8px 12px', color: '#92400E' }}>
-              Dùng khi hệ thống lỗi làm NV mất công (ca khóa / vắng / thiếu check-out). Ca bù tính <strong>đủ công, không phạt trễ</strong>, đồng bộ realtime sang Bảng Chấm Công và Cổng NV.
+              Dùng khi hệ thống lỗi làm NV mất công (ca khóa / vắng / thiếu check-out). Ca bù tính <strong>đủ công, không phạt trễ</strong>, đồng bộ realtime sang Bảng Chấm Công và Cổng NV. Để trống giờ nào là tự lấy giờ vào/tan ca.
               {compModal.hasIn && <div style={{ marginTop: '4px' }}>✅ Ca đã có giờ vào: <strong>{compModal.inText}</strong> — chỉ cần nhập giờ ra.</div>}
             </div>
             {!compModal.hasIn && (
