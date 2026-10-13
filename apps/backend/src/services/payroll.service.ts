@@ -98,6 +98,50 @@ export function linkDayEvents(
 }
 
 /**
+ * Bù 1 chân điểm danh mồ côi (gắn ca đã mất/hủy/không tồn tại) cho ca còn thiếu
+ * — mirror lưới hiển thị (mergeOrphanCheckins): ca "đã điểm danh" trên lưới
+ * không còn lương 0đ. Chỉ bù khi ca thiếu chân + giờ lọt khung giờ ca (vào sớm
+ * 60p → tan +30p); phiếu đã tiêu thụ không dùng lại; phiếu gắn ca live khác
+ * không bao giờ bị cướp; phiếu không gắn ca nào giữ nguyên khớp cũ (mọi ca).
+ * Ưu tiên phiếu cùng ca chết với chân đã có để không ghép cặp lệch.
+ */
+export function orphanLegFor(
+  dayEvents: any[],
+  s: any,
+  dayLiveIds: Set<string>,
+  statusByAssign: Map<string, string>,
+  consumed: Set<string>,
+  type: 'CHECK_IN' | 'CHECK_OUT',
+  preferAid?: string,
+): any | undefined {
+  const inWindow = (iso: string) => {
+    const t = new Date(iso || '').getTime();
+    const st = (s as any)?.start_at ? new Date((s as any).start_at).getTime() : NaN;
+    const en = (s as any)?.end_at ? new Date((s as any).end_at).getTime() : NaN;
+    if (!Number.isFinite(t) || !Number.isFinite(st) || !Number.isFinite(en)) return false;
+    return t >= st - 60 * 60 * 1000 && t <= en + 30 * 60 * 1000;
+  };
+  const cands = (dayEvents || []).filter((e: any) => {
+    if ((e as any)?.type !== type) return false;
+    const aid = String((e as any)?.assignment_id || '');
+    if (!aid || aid === String((s as any)?.assignment_id)) return false;
+    if ((e as any)?.event_id && consumed.has(String((e as any).event_id))) return false;
+    if (dayLiveIds.has(aid)) return false;
+    const stt = statusByAssign.get(aid);
+    if (stt && stt !== 'CANCELLED') return false;
+    return inWindow((e as any)?.client_time);
+  });
+  cands.sort((a: any, b: any) => {
+    const ap = preferAid && String((a as any)?.assignment_id) === String(preferAid) ? 0 : 1;
+    const bp = preferAid && String((b as any)?.assignment_id) === String(preferAid) ? 0 : 1;
+    return ap - bp;
+  });
+  const pick = cands[0];
+  if (pick && (pick as any)?.event_id) consumed.add(String((pick as any).event_id));
+  return pick;
+}
+
+/**
  * Đơn giá + giai đoạn (TV/CT) của NV tại 1 ngày công.
  * NV thử việc được HR chuyển chính thức giữa kỳ: ngày trước official_date
  * tính lương thử việc, từ official_date tính lương chính thức — lương 2 giai
@@ -222,6 +266,13 @@ export class PayrollService {
             }
             return eventsByDate.get(date)!;
           };
+          // Bù chân mồ côi như lưới hiển thị (mọi NV): phiếu gắn ca chết không
+          // dùng lại 2 lần, không cướp phiếu ca live khác.
+          const consumedOrphans = new Set<string>();
+          const statusByAssign = new Map((empShifts || []).map((x: any) => [String(x.assignment_id), String(x.status || '')]));
+          const dayLiveIdsOf = (dayISO: string) => new Set((empShifts || [])
+            .filter((x: any) => String(x.date).slice(0, 10) === String(dayISO).slice(0, 10) && String(x.status) !== 'CANCELLED')
+            .map((x: any) => String(x.assignment_id)));
           // Đơn giá hiện tại (giữ làm rate_snapshot tương thích) + lịch sử giai
           // đoạn để tính đúng đơn giá từng ngày (NV chuyển TV→CT giữa kỳ).
           const rate = Number((emp as any).current_rate_per_hour) || 0;
@@ -237,12 +288,15 @@ export class PayrollService {
           const lateCases: string[] = [];
           for (const s of publishedShifts) {
             const dayEvents = await eventsOf(s.date);
-            const inEvt = dayEvents.find(
+            const dayLiveIds = dayLiveIdsOf(s.date);
+            let inEvt = dayEvents.find(
               (e: any) => e.type === 'CHECK_IN' && (!e.assignment_id || e.assignment_id === s.assignment_id)
             );
-            const hasOut = dayEvents.some(
+            if (!inEvt) inEvt = orphanLegFor(dayEvents, s, dayLiveIds, statusByAssign, consumedOrphans, 'CHECK_IN');
+            let hasOut = dayEvents.some(
               (e: any) => e.type === 'CHECK_OUT' && (!e.assignment_id || e.assignment_id === s.assignment_id)
             );
+            if (!hasOut) hasOut = !!orphanLegFor(dayEvents, s, dayLiveIds, statusByAssign, consumedOrphans, 'CHECK_OUT', (inEvt as any)?.assignment_id);
             const template = SHIFT_TEMPLATES[s.shift_code];
             const hours = template ? template.duration_hours : 5;
             // Đơn giá đúng giai đoạn của ngày công (TV trước official_date).
@@ -454,6 +508,12 @@ export class PayrollService {
             }
             return eventsByDate.get(date)!;
           };
+          // Bù chân mồ côi như lưới hiển thị (mọi NV).
+          const consumedOrphans = new Set<string>();
+          const statusByAssign = new Map((empShifts || []).map((x: any) => [String(x.assignment_id), String(x.status || '')]));
+          const dayLiveIdsOf = (dayISO: string) => new Set((empShifts || [])
+            .filter((x: any) => String(x.date).slice(0, 10) === String(dayISO).slice(0, 10) && String(x.status) !== 'CANCELLED')
+            .map((x: any) => String(x.assignment_id)));
           let absentShifts = 0;
           let empHours = 0;
           let standardPay = 0;
@@ -465,12 +525,15 @@ export class PayrollService {
           const dayHours = new Map<string, number>();
           for (const s of publishedShifts) {
             const dayEvents = await eventsOf(s.date);
-            const inEvt = dayEvents.find(
+            const dayLiveIds = dayLiveIdsOf(s.date);
+            let inEvt = dayEvents.find(
               (e: any) => e.type === 'CHECK_IN' && (!e.assignment_id || e.assignment_id === s.assignment_id)
             );
-            const hasOut = dayEvents.some(
+            if (!inEvt) inEvt = orphanLegFor(dayEvents, s, dayLiveIds, statusByAssign, consumedOrphans, 'CHECK_IN');
+            let hasOut = dayEvents.some(
               (e: any) => e.type === 'CHECK_OUT' && (!e.assignment_id || e.assignment_id === s.assignment_id)
             );
+            if (!hasOut) hasOut = !!orphanLegFor(dayEvents, s, dayLiveIds, statusByAssign, consumedOrphans, 'CHECK_OUT', (inEvt as any)?.assignment_id);
             const template = SHIFT_TEMPLATES[s.shift_code];
             const hours = template ? template.duration_hours : 5;
             // Giai đoạn đúng của ngày công (lịch sử/official_date), giá trị theo công thức kỳ của Finance.
@@ -1250,6 +1313,12 @@ export class PayrollService {
       }
       return eventsByDate.get(date)!;
     };
+    // Bù chân mồ côi như lưới hiển thị (thu nhập realtime Hồ sơ NV).
+    const consumedOrphans = new Set<string>();
+    const statusByAssign = new Map((empShifts || []).map((x: any) => [String(x.assignment_id), String(x.status || '')]));
+    const dayLiveIdsOf = (dayISO: string) => new Set((empShifts || [])
+      .filter((x: any) => String(x.date).slice(0, 10) === String(dayISO).slice(0, 10) && String(x.status) !== 'CANCELLED')
+      .map((x: any) => String(x.assignment_id)));
     let shiftsDone = 0;
     let absent = 0;
     let hours = 0;
@@ -1265,12 +1334,15 @@ export class PayrollService {
     for (const s of published) {
       const day = String((s as any)?.date || '').slice(0, 10);
       const dayEvents = await eventsOf(day);
-      const inEvt = dayEvents.find(
+      const dayLiveIds = dayLiveIdsOf(day);
+      let inEvt = dayEvents.find(
         (e: any) => e.type === 'CHECK_IN' && (!(e as any).assignment_id || (e as any).assignment_id === (s as any).assignment_id)
       );
-      const hasOut = dayEvents.some(
+      if (!inEvt) inEvt = orphanLegFor(dayEvents, s, dayLiveIds, statusByAssign, consumedOrphans, 'CHECK_IN');
+      let hasOut = dayEvents.some(
         (e: any) => e.type === 'CHECK_OUT' && (!(e as any).assignment_id || (e as any).assignment_id === (s as any).assignment_id)
       );
+      if (!hasOut) hasOut = !!orphanLegFor(dayEvents, s, dayLiveIds, statusByAssign, consumedOrphans, 'CHECK_OUT', (inEvt as any)?.assignment_id);
       const template = (SHIFT_TEMPLATES as any)[(s as any).shift_code];
       const h = template ? Number(template.duration_hours) || 5 : 5;
       const dayRate = rateOnDate(emp, day, hist, STANDARD_HOURLY_RATES.PROBATION, rateNow);
