@@ -695,7 +695,10 @@ export class PayrollService {
    * - nhanvien (chính chủ): chỉ ký khi phiếu đã PUBLISHED -> chuyển CONFIRMED (đủ 3 chữ ký).
    */
   async signSlip(itemId: string, role: PayslipSignerRole, name: string, img: string | undefined, actorId: string) {
-    return singleWriterQueue.enqueue({
+    // FIX deadlock hàng đợi đơn: sendNotification cũng enqueue cùng queue —
+    // phải gửi SAU khi task ghi commit, không await trong execute.
+    let confirmedSlip: any = null;
+    const out = await singleWriterQueue.enqueue({
       entityType: 'PHIEU_LUONG',
       entityId: itemId,
       actorId,
@@ -721,18 +724,8 @@ export class PayrollService {
             status: 'CONFIRMED',
             slip_confirmed_at: (sig as any).at,
           });
-          // Gửi thông báo đến Kế toán & Admin
-          if (this.notificationsService) {
-            await this.notificationsService.sendNotification({
-              recipientIds: ['ALL'],
-              type: 'emp.payslip',
-              severity: 'SYSTEM',
-              title: `✍️ Nhân viên ${slip.full_name} đã xác nhận phiếu lương!`,
-              summary: `${slip.full_name} (${slip.employee_code}) đã kiểm tra và ký xác nhận phiếu lương kỳ ${slip.period}. Đã đủ 3 chữ ký, sẵn sàng quét mã QR chuyển khoản.`,
-              targetPath: '/fin_payslips',
-              actorId,
-            }).catch(() => null);
-          }
+          // Gửi thông báo đến Kế toán & Admin (sau commit — xem cuối hàm).
+          confirmedSlip = slip;
           if (this.io) {
             this.io.emit('payroll.confirmed', {
               itemId,
@@ -762,6 +755,18 @@ export class PayrollService {
         return updated;
       },
     });
+    if (confirmedSlip && this.notificationsService) {
+      await this.notificationsService.sendNotification({
+        recipientIds: ['ALL'],
+        type: 'emp.payslip',
+        severity: 'SYSTEM',
+        title: `✍️ Nhân viên ${confirmedSlip.full_name} đã xác nhận phiếu lương!`,
+        summary: `${confirmedSlip.full_name} (${confirmedSlip.employee_code}) đã kiểm tra và ký xác nhận phiếu lương kỳ ${confirmedSlip.period}. Đã đủ 3 chữ ký, sẵn sàng quét mã QR chuyển khoản.`,
+        targetPath: '/fin_payslips',
+        actorId,
+      }).catch(() => null);
+    }
+    return out;
   }
 
   /** Kế toán áp dụng nhanh 2 chữ ký mẫu (Người lập + Quản lý chi nhánh) */
@@ -818,7 +823,9 @@ export class PayrollService {
 
   /** Gửi 1 phiếu đến NV: yêu cầu đủ 2 chữ ký lập + quản lý, phiếu đang DRAFT. Tự động bù chữ ký mẫu nếu có. */
   async publishSlip(itemId: string, actorId: string, extraSignatures?: { sign_lap?: any; sign_quanly?: any }) {
-    return singleWriterQueue.enqueue({
+    // FIX deadlock hàng đợi đơn: xem signSlip.
+    let publishedSlip: any = null;
+    const out = await singleWriterQueue.enqueue({
       entityType: 'PHIEU_LUONG',
       entityId: itemId,
       actorId,
@@ -883,27 +890,31 @@ export class PayrollService {
           status: 'PUBLISHED',
           slip_published_at: new Date().toISOString(),
         });
-        if (this.notificationsService) {
-          await this.notificationsService.sendNotification({
-            recipientIds: [slip.employee_id],
-            type: 'emp.payslip',
-            severity: 'SYSTEM',
-            title: `💰 Phiếu lương kỳ ${slip.period} đã phát hành!`,
-            summary: `Kế toán đã phát hành phiếu lương kỳ ${slip.period} cho bạn. Vui lòng kiểm tra lại tiền thực lãnh và ký tên xác nhận.`,
-            targetPath: '/notifs_salary',
-            actorId,
-          }).catch(() => null);
-        }
+        publishedSlip = slip;
         this.notifySlipsChanged('publish', { itemId });
         this.triggerSheetsPush();
         return updated;
       },
     });
+    if (publishedSlip && this.notificationsService) {
+      await this.notificationsService.sendNotification({
+        recipientIds: [publishedSlip.employee_id],
+        type: 'emp.payslip',
+        severity: 'SYSTEM',
+        title: `💰 Phiếu lương kỳ ${publishedSlip.period} đã phát hành!`,
+        summary: `Kế toán đã phát hành phiếu lương kỳ ${publishedSlip.period} cho bạn. Vui lòng kiểm tra lại tiền thực lãnh và ký tên xác nhận.`,
+        targetPath: '/notifs_salary',
+        actorId,
+      }).catch(() => null);
+    }
+    return out;
   }
 
   /** Gửi hàng loạt 1 lần: toàn bộ phiếu DRAFT đủ 2 ký của kỳ -> PUBLISHED. Tự bù chữ ký mẫu nếu thiếu. */
   async publishAllSlips(runIdOrPeriod: string, actorId: string) {
-    return singleWriterQueue.enqueue({
+    // FIX deadlock hàng đợi đơn: xem signSlip.
+    let publishAllEmpIds: string[] = [];
+    const out = await singleWriterQueue.enqueue({
       entityType: 'KY_LUONG',
       entityId: runIdOrPeriod,
       actorId,
@@ -960,33 +971,36 @@ export class PayrollService {
           });
           published.push((s as any).item_id);
         }
-        if (this.notificationsService && published.length > 0) {
+        if (published.length > 0) {
           const pubSlips = slips.filter(s => published.includes((s as any).item_id));
-          const empIds = [...new Set(pubSlips.map(s => (s as any).employee_id).filter(Boolean))];
-          if (empIds.length > 0) {
-            await this.notificationsService.sendNotification({
-              recipientIds: empIds,
-              type: 'emp.payslip',
-              severity: 'SYSTEM',
-              title: `💰 Phiếu lương đã phát hành!`,
-              summary: `Kế toán đã phát hành phiếu lương cho bạn. Vui lòng kiểm tra lại tiền thực lãnh và ký tên xác nhận.`,
-              targetPath: '/notifs_salary',
-              actorId,
-            }).catch(() => null);
-          }
+          publishAllEmpIds = [...new Set(pubSlips.map(s => (s as any).employee_id).filter(Boolean))];
         }
         this.notifySlipsChanged('publish-all', { runId: runIdOrPeriod, count: published.length });
         this.triggerSheetsPush();
         return { published, skipped };
       },
     });
+    if (this.notificationsService && publishAllEmpIds.length > 0) {
+      await this.notificationsService.sendNotification({
+        recipientIds: publishAllEmpIds,
+        type: 'emp.payslip',
+        severity: 'SYSTEM',
+        title: `💰 Phiếu lương đã phát hành!`,
+        summary: `Kế toán đã phát hành phiếu lương cho bạn. Vui lòng kiểm tra lại tiền thực lãnh và ký tên xác nhận.`,
+        targetPath: '/notifs_salary',
+        actorId,
+      }).catch(() => null);
+    }
+    return out;
   }
 
   /** Hoàn phiếu: thu hồi phiếu đã gửi NV (PUBLISHED/CONFIRMED) về DRAFT khi gửi nhầm.
    * Phiếu hoàn về mặc định CHƯA KÝ: xóa toàn bộ 3 chữ ký (lập/quản lý/NV)
    * + các mốc thời gian phát hành/xác nhận/chi trả để ký + phát hành lại từ đầu. */
   async returnSlip(itemId: string, actorId: string) {
-    return singleWriterQueue.enqueue({
+    // FIX deadlock hàng đợi đơn: xem signSlip.
+    let returnedSlip: any = null;
+    const out = await singleWriterQueue.enqueue({
       entityType: 'PHIEU_LUONG',
       entityId: itemId,
       actorId,
@@ -1004,27 +1018,31 @@ export class PayrollService {
           slip_paid_at: undefined,
           slip_paid_by: undefined,
         } as any);
-        if (this.notificationsService && slip.employee_id) {
-          await this.notificationsService.sendNotification({
-            recipientIds: [slip.employee_id],
-            type: 'emp.payslip',
-            severity: 'SYSTEM',
-            title: `↩️ Phiếu lương kỳ ${slip.period} đã được thu hồi!`,
-            summary: `Kế toán đã thu hồi phiếu lương kỳ ${slip.period} do gửi nhầm. Phiếu mới sẽ được gửi lại sau, bạn không cần ký phiếu cũ.`,
-            targetPath: '/notifs_salary',
-            actorId,
-          }).catch(() => null);
-        }
+        returnedSlip = slip;
         this.notifySlipsChanged('return', { itemId });
         this.triggerSheetsPush();
         return updated;
       },
     });
+    if (returnedSlip && this.notificationsService && returnedSlip.employee_id) {
+      await this.notificationsService.sendNotification({
+        recipientIds: [returnedSlip.employee_id],
+        type: 'emp.payslip',
+        severity: 'SYSTEM',
+        title: `↩️ Phiếu lương kỳ ${returnedSlip.period} đã được thu hồi!`,
+        summary: `Kế toán đã thu hồi phiếu lương kỳ ${returnedSlip.period} do gửi nhầm. Phiếu mới sẽ được gửi lại sau, bạn không cần ký phiếu cũ.`,
+        targetPath: '/notifs_salary',
+        actorId,
+      }).catch(() => null);
+    }
+    return out;
   }
 
   /** Kế toán xác nhận đã chuyển khoản 1 phiếu: yêu cầu đủ 3 chữ ký + NV đã xác nhận. */
   async markSlipPaid(itemId: string, actorId: string) {
-    return singleWriterQueue.enqueue({
+    // FIX deadlock hàng đợi đơn: xem signSlip.
+    let paidSlip: any = null;
+    const out = await singleWriterQueue.enqueue({
       entityType: 'PHIEU_LUONG',
       entityId: itemId,
       actorId,
@@ -1040,23 +1058,25 @@ export class PayrollService {
           slip_paid_at: new Date().toISOString(),
           slip_paid_by: actorId,
         });
-        if (this.notificationsService) {
-          const amt = Number(slip.thuc_lanh ?? slip.net_pay ?? 0).toLocaleString('vi-VN');
-          await this.notificationsService.sendNotification({
-            recipientIds: [slip.employee_id],
-            type: 'emp.payslip',
-            severity: 'SYSTEM',
-            title: `✅ Đã chi trả lương kỳ ${slip.period}!`,
-            summary: `Kế toán đã chuyển khoản ${amt}đ lương kỳ ${slip.period} vào tài khoản ngân hàng của bạn.`,
-            targetPath: '/notifs_salary',
-            actorId,
-          }).catch(() => null);
-        }
+        paidSlip = slip;
         this.notifySlipsChanged('paid', { itemId });
         this.triggerSheetsPush();
         return updated;
       },
     });
+    if (paidSlip && this.notificationsService) {
+      const amt = Number(paidSlip.thuc_lanh ?? paidSlip.net_pay ?? 0).toLocaleString('vi-VN');
+      await this.notificationsService.sendNotification({
+        recipientIds: [paidSlip.employee_id],
+        type: 'emp.payslip',
+        severity: 'SYSTEM',
+        title: `✅ Đã chi trả lương kỳ ${paidSlip.period}!`,
+        summary: `Kế toán đã chuyển khoản ${amt}đ lương kỳ ${paidSlip.period} vào tài khoản ngân hàng của bạn.`,
+        targetPath: '/notifs_salary',
+        actorId,
+      }).catch(() => null);
+    }
+    return out;
   }
 
   /** Cập nhật thông tin tài khoản ngân hàng cho 1 phiếu (và đồng bộ vào hồ sơ NV). */
