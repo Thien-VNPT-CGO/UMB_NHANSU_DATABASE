@@ -346,7 +346,15 @@ export function App() {
   const [showPassword, setShowPassword] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [showServerConfig, setShowServerConfig] = useState(false);
-  const [customApiUrl, setCustomApiUrlState] = useState(localStorage.getItem('ubm_custom_api_url') || '');
+  const [customApiUrl, setCustomApiUrlState] = useState(() => {
+    const saved = (localStorage.getItem('ubm_custom_api_url') || '').trim().replace(/\/+$/, '');
+    // URL backend cũ đã chết thì bỏ, hiển thị mặc định mới kfh6.
+    if (saved === 'https://umb-nhansu-database.onrender.com') {
+      try { localStorage.removeItem('ubm_custom_api_url'); } catch { /* bỏ qua */ }
+      return '';
+    }
+    return localStorage.getItem('ubm_custom_api_url') || '';
+  });
 
   // 12 Modules States
   const [dashboardStats, setDashboardStats] = useState<any>(null);
@@ -1908,7 +1916,7 @@ export function App() {
                   <div style={{ display: 'flex', gap: '6px' }}>
                     <input
                       type="url"
-                      placeholder="https://ten-backend.onrender.com"
+                      placeholder="https://umb-nhansu-database-kfh6.onrender.com"
                       value={customApiUrl}
                       onChange={(e) => setCustomApiUrlState(e.target.value)}
                       style={{

@@ -17,7 +17,7 @@
  *  - Chống dồn: tối đa 1 lần bắn/5 giây.
  */
 
-const BACKEND_URL = 'https://umb-nhansu-database.onrender.com';
+const BACKEND_URL = 'https://umb-nhansu-database-kfh6.onrender.com';
 const WEBHOOK_SECRET = 'DAN-SECRET-VAO-DAY';
 const MIN_GAP_MS = 5000;
 

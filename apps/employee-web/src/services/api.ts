@@ -1,20 +1,22 @@
+// Backend mặc định đồng bộ 2 cổng web (admin + nhân viên).
+export const DEFAULT_API_BASE = 'https://umb-nhansu-database-kfh6.onrender.com';
+// URL backend cũ đã chết (service Render cũ) — tự migrate sang mặc định mới.
+const LEGACY_API_BASE = 'https://umb-nhansu-database.onrender.com';
 export function getApiBase(): string {
   if (typeof window === 'undefined') return 'http://localhost:4005';
-  const custom = localStorage.getItem('ubm_custom_api_url');
-  // Backend đã chuyển sang service mới: custom URL cũ chết thì coi như chưa set.
-  if (custom && custom.trim().replace(/\/+$/, '') !== 'https://umb-nhansu-database.onrender.com') {
-    return custom.trim().replace(/\/+$/, '');
+  const custom = (localStorage.getItem('ubm_custom_api_url') || '').trim().replace(/\/+$/, '');
+  if (custom === LEGACY_API_BASE) {
+    try { localStorage.removeItem('ubm_custom_api_url'); } catch { /* bỏ qua */ }
+  } else if (custom) {
+    return custom;
   }
   const envUrl = (import.meta as any).env?.VITE_API_URL;
-  if (envUrl) return envUrl.trim().replace(/\/+$/, '');
+  if (envUrl) return String(envUrl).trim().replace(/\/+$/, '');
   if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
     return 'http://localhost:4005';
   }
-  // Frontend chạy trên Vercel (tách backend): mặc định trỏ backend Render đang sống.
-  if (window.location.hostname.endsWith('.vercel.app')) {
-    return 'https://umb-nhansu-database-kfh6.onrender.com';
-  }
-  return window.location.origin;
+  // Mặc định trỏ backend Render đang sống (đồng bộ admin + employee).
+  return DEFAULT_API_BASE;
 }
 
 export function setCustomApiUrl(url: string) {
