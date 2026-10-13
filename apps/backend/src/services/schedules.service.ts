@@ -90,8 +90,10 @@ export class SchedulesService {
   /**
    * HR xóa 1 ca làm việc trên lưới tuần (tab Lịch tuần): ca chuyển CANCELLED nên
    * biến mất khỏi lưới + Bảng Chấm Công + Cổng NV ngay (mọi nơi đều lọc CANCELLED).
-   *  - Ca đã có điểm danh (CHECK_IN/CHECK_OUT/ABSENT gắn assignment) thì CHẶN —
+   *  - Ca đã có điểm danh THẬT (CHECK_IN/CHECK_OUT gắn assignment) thì CHẶN —
    *    giữ làm bằng chứng công/lương, không được xóa.
+   *  - Ca chỉ có bản ghi VẮNG tự động (hệ thống tự ghi, NV chưa từng điểm danh)
+   *    thì CHO XÓA + dọn luôn bản ghi vắng mồ côi để lưới/Sheets không còn dòng vắng ma.
    *  - STORE chỉ xóa ca đúng chi nhánh mình (chuẩn hóa CN1..CN4).
    */
   async deleteShift(assignmentId: string, actorId: string, branchScope?: string) {
@@ -118,10 +120,16 @@ export class SchedulesService {
             String((e as any)?.assignment_id || '') === String(assignmentId) &&
             ['CHECK_IN', 'CHECK_OUT', 'ABSENT'].includes(String((e as any)?.type || ''))
         );
-        if (linked.length > 0) {
+        const realAtt = linked.filter((e: any) => ['CHECK_IN', 'CHECK_OUT'].includes(String((e as any)?.type || '')));
+        if (realAtt.length > 0) {
           throw new Error(
-            `SHIFT_HAS_ATTENDANCE: Ca ${String((sh as any).shift_code || '')} ngày ${day} đã có ${linked.length} bản ghi điểm danh — KHÔNG được xóa (giữ làm bằng chứng công/lương)!`
+            `SHIFT_HAS_ATTENDANCE: Ca ${String((sh as any).shift_code || '')} ngày ${day} đã có ${realAtt.length} bản ghi điểm danh — KHÔNG được xóa (giữ làm bằng chứng công/lương)!`
           );
+        }
+        // Chỉ còn vắng tự động: dọn kèm để không còn dòng vắng mồ côi.
+        const autoAbsent = linked.filter((e: any) => String((e as any)?.type || '') === 'ABSENT');
+        for (const a of autoAbsent) {
+          await this.repo.deleteAttendanceEvent((a as any).event_id).catch(() => null);
         }
         const updated = await this.repo.updateShiftAssignment(assignmentId, { status: 'CANCELLED' });
         await this.repo.recordAuditLog({
@@ -131,7 +139,7 @@ export class SchedulesService {
           action: 'SHIFT_DELETED',
           target_entity: 'PHAN_CONG_CA',
           target_id: assignmentId,
-          details: `Xóa ca ${String((sh as any).shift_code || '')} ngày ${day} của ${empId} (chi nhánh ${String((sh as any).branch_id || '')}) khỏi lịch tuần`,
+          details: `Xóa ca ${String((sh as any).shift_code || '')} ngày ${day} của ${empId} (chi nhánh ${String((sh as any).branch_id || '')}) khỏi lịch tuần${autoAbsent.length > 0 ? ` + dọn ${autoAbsent.length} bản ghi vắng tự động` : ''}`,
         } as any).catch(() => null);
         if (this.io) {
           this.io.emit('data:updated', {
