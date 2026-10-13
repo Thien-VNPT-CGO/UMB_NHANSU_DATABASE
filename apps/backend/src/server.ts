@@ -168,6 +168,53 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   setTimeout(adjustmentExpiryTickSafe, 60_000);
   setInterval(adjustmentExpiryTickSafe, 60_000);
 
+  // Tự dọn QR ngân hàng không đạt chuẩn: ảnh QR đã lưu mà thiếu 1 trong 3 trường
+  // (tên NH / STK / chủ TK) hoặc STK không hợp lệ thì tự gỡ khỏi hồ sơ NV
+  // (Sheets + realtime) + báo NV tải lại ảnh QR VietQR hợp lệ. Chạy lúc boot + mỗi giờ.
+  const bankQrCleanupTickSafe = async () => {
+    try {
+      const emps = await adapter.listEmployees().catch(() => []);
+      const bad: any[] = [];
+      for (const e of emps || []) {
+        if (!String((e as any)?.bank_qr_img || '').trim()) continue;
+        const okBank = !!String((e as any)?.bank_name || '').trim();
+        const okAcct = /^[0-9]{6,19}$/.test(String((e as any)?.bank_account || '').trim());
+        const okHolder = !!String((e as any)?.bank_holder || '').trim();
+        if (okBank && okAcct && okHolder) continue;
+        bad.push(e);
+      }
+      if (bad.length === 0) return;
+      let cleared = 0;
+      for (const e of bad) {
+        try {
+          await services.employeesService.updateEmployee((e as any).employee_id, { bankQrImg: '' }, 'SYSTEM');
+          cleared++;
+          try {
+            await services.notificationsService.sendNotification({
+              recipientIds: [(e as any).employee_id],
+              type: 'BANK_QR_INVALID',
+              severity: 'ACTION_REQUIRED',
+              title: '⚠️ Mã QR ngân hàng chưa đạt chuẩn đã được gỡ',
+              summary: 'Ảnh QR của bạn thiếu tên ngân hàng / số tài khoản / tên chủ tài khoản nên hệ thống đã tự gỡ. Mở Hồ Sơ → tải lại ảnh mã QR VietQR rõ nét để Kế toán chuyển khoản lương!',
+              targetPath: '/profile',
+              actorId: 'SYSTEM',
+            });
+          } catch { /* best-effort từng người */ }
+        } catch { /* version conflict — vòng sau dọn tiếp */ }
+      }
+      if (cleared > 0) {
+        console.log(`[bank-qr] Tự gỡ ${cleared}/${bad.length} QR không đạt chuẩn.`);
+        try {
+          io.emit('data:updated', { entity: 'employees', data: { action: 'bank-qr-cleaned', cleared }, timestamp: new Date().toISOString() });
+        } catch { /* non-fatal */ }
+      }
+    } catch (err: any) {
+      console.warn('[bank-qr] cleanup tick error:', err?.message || err);
+    }
+  };
+  setTimeout(bankQrCleanupTickSafe, 90_000);
+  setInterval(bankQrCleanupTickSafe, 60 * 60_000);
+
   // Tự ghi VẮNG: ca PUBLISHED qua giờ kết thúc 30p mà không check-in -> bản ghi
   // ABSENT làm chứng cứ (đỏ trên 2 cổng, đồng bộ Sheets). Chạy mỗi 15 phút.
   const absenteeTickSafe = async () => {
