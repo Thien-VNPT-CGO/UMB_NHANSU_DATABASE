@@ -1456,14 +1456,18 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   };
 
   const handleReturnSlip = async (itemId: string) => {
-    if (!window.confirm('Hoàn phiếu này về NHÁP (DRAFT)? Phiếu đã gửi sẽ bị thu hồi khỏi Cổng nhân viên, giữ nguyên 2 chữ ký để gửi lại.')) return;
+    if (!window.confirm('Hoàn phiếu này về NHÁP (DRAFT)? Phiếu đã gửi sẽ bị thu hồi khỏi Cổng nhân viên và reset về CHƯA KÝ (xóa toàn bộ chữ ký để ký + phát hành lại).')) return;
     setSlipActionBusy(itemId + 'return');
     try {
       const retRaw: any = await apiRequest(`/payroll/slips/${itemId}/return`, { method: 'POST', body: JSON.stringify({}) });
       const updated = retRaw?.result ?? retRaw;
-      showToast('↩️ Đã hoàn phiếu về nháp! Phiếu đã thu hồi khỏi nhân viên và đồng bộ Google Sheet.');
-      setPeriodSlips(prev => prev.map(s => s.item_id === itemId ? { ...s, ...(updated || {}), status: 'DRAFT' } : s));
-      updateSlipInState(itemId, { ...(updated || {}), status: 'DRAFT' });
+      showToast('↩️ Đã hoàn phiếu về nháp (chưa ký)! Phiếu đã thu hồi khỏi nhân viên và đồng bộ Google Sheet.');
+      const clearedReturn = { ...(updated || {}), status: 'DRAFT', sign_lap: null, sign_quanly: null, sign_nhanvien: null, slip_published_at: null, slip_confirmed_at: null, slip_paid_at: null, slip_paid_by: null };
+      setPeriodSlips(prev => prev.map(s => s.item_id === itemId ? { ...s, ...clearedReturn } : s));
+      updateSlipInState(itemId, clearedReturn);
+      if (viewSlipModal && viewSlipModal.item_id === itemId) {
+        setViewSlipModal((prev: any) => ({ ...prev, ...clearedReturn }));
+      }
     } catch (err: any) {
       const code = String((err as any)?.code || '');
       if (code === 'FORBIDDEN' || /403/.test(String(err?.message || ''))) {

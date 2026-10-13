@@ -982,9 +982,9 @@ export class PayrollService {
     });
   }
 
-  /** Hoàn phiếu: thu hồi phiếu đã gửi NV (PUBLISHED) về DRAFT khi gửi nhầm.
-   * Giữ nguyên 2 chữ ký lập + quản lý để gửi lại nhanh. Không cho hoàn khi
-   * NV đã ký (CONFIRMED) hoặc đã chi trả (PAID). */
+  /** Hoàn phiếu: thu hồi phiếu đã gửi NV (PUBLISHED/CONFIRMED) về DRAFT khi gửi nhầm.
+   * Phiếu hoàn về mặc định CHƯA KÝ: xóa toàn bộ 3 chữ ký (lập/quản lý/NV)
+   * + các mốc thời gian phát hành/xác nhận/chi trả để ký + phát hành lại từ đầu. */
   async returnSlip(itemId: string, actorId: string) {
     return singleWriterQueue.enqueue({
       entityType: 'PHIEU_LUONG',
@@ -996,7 +996,13 @@ export class PayrollService {
         if (slip.status !== 'PUBLISHED' && slip.status !== 'CONFIRMED') throw new Error(`SLIP_NOT_RETURNABLE: phiếu đang ở trạng thái ${slip.status}, chỉ hoàn được phiếu đã gửi (PUBLISHED) hoặc đã xác nhận (CONFIRMED)!`);
         const updated = await this.repo.updatePayslip(itemId, {
           status: 'DRAFT',
+          sign_lap: undefined,
+          sign_quanly: undefined,
+          sign_nhanvien: undefined,
           slip_published_at: undefined,
+          slip_confirmed_at: undefined,
+          slip_paid_at: undefined,
+          slip_paid_by: undefined,
         } as any);
         if (this.notificationsService && slip.employee_id) {
           await this.notificationsService.sendNotification({

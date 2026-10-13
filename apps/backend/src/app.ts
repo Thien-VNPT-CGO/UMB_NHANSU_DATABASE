@@ -3797,7 +3797,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  // Kế toán hoàn phiếu: thu hồi phiếu đã gửi NV (PUBLISHED) về DRAFT khi gửi nhầm
+  // Kế toán hoàn phiếu: thu hồi phiếu đã gửi NV (PUBLISHED/CONFIRMED) về DRAFT + reset chưa ký
   app.post('/payroll/slips/:id/return', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
     try {
       const updated = await payrollService.returnSlip(req.params.id, req.user!.id);
