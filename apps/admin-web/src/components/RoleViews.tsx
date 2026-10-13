@@ -2343,6 +2343,98 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       setCompBusy(false);
     }
   };
+  // Modal bù công dùng chung tab Lịch tuần + Bảng Chấm Công (chỉ Admin thấy nút mở).
+  const renderCompModal = () => {
+    if (!compModal) return null;
+    return (
+      <div
+        style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 9999,
+          backgroundColor: 'rgba(15,23,42,0.65)',
+          backdropFilter: 'blur(4px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '20px',
+        }}
+        onClick={() => !compBusy && setCompModal(null)}
+      >
+        <div
+          style={{
+            backgroundColor: '#FFF',
+            borderRadius: '16px',
+            border: '2px solid #10B981',
+            overflow: 'hidden',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.35)',
+            maxWidth: '480px',
+            width: '100%',
+          }}
+          onClick={e => e.stopPropagation()}
+        >
+          <div style={{ background: 'linear-gradient(135deg, #064E3B, #047857)', color: '#FFF', padding: '14px 18px' }}>
+            <div style={{ fontSize: '15px', fontWeight: 900 }}>🛠️ BÙ CÔNG CA LÀM (ADMIN)</div>
+            <div style={{ fontSize: '12px', opacity: 0.9 }}>{compModal.name} ({compModal.empCode}) • {compModal.shiftLabel} • ngày {compModal.shiftDate}</div>
+          </div>
+          <div style={{ padding: '18px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div style={{ fontSize: '12px', backgroundColor: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: '8px', padding: '8px 12px', color: '#92400E' }}>
+              Dùng khi hệ thống lỗi làm NV mất công (ca khóa / vắng / thiếu check-out). Ca bù tính <strong>đủ công, không phạt trễ</strong>, đồng bộ realtime sang Bảng Chấm Công và Cổng NV.
+              {compModal.hasIn && <div style={{ marginTop: '4px' }}>✅ Ca đã có giờ vào: <strong>{compModal.inText}</strong> — chỉ cần nhập giờ ra.</div>}
+            </div>
+            {!compModal.hasIn && (
+              <label style={{ fontSize: '13px', fontWeight: 700 }}>
+                Giờ vào (check-in)
+                <input
+                  type="datetime-local"
+                  value={compModal.checkIn}
+                  onChange={e => setCompModal((p: any) => ({ ...p, checkIn: e.target.value }))}
+                  style={{ width: '100%', padding: '9px 10px', fontSize: '14px', borderRadius: '8px', border: '1px solid #D1D5DB', marginTop: '4px' }}
+                />
+              </label>
+            )}
+            <label style={{ fontSize: '13px', fontWeight: 700 }}>
+              Giờ ra (check-out)
+              <input
+                type="datetime-local"
+                value={compModal.checkOut}
+                onChange={e => setCompModal((p: any) => ({ ...p, checkOut: e.target.value }))}
+                style={{ width: '100%', padding: '9px 10px', fontSize: '14px', borderRadius: '8px', border: '1px solid #D1D5DB', marginTop: '4px' }}
+              />
+            </label>
+            <label style={{ fontSize: '13px', fontWeight: 700 }}>
+              Lý do bù công
+              <input
+                type="text"
+                value={compModal.reason}
+                onChange={e => setCompModal((p: any) => ({ ...p, reason: e.target.value }))}
+                placeholder="VD: Lỗi GPS hệ thống, NV có đi làm đủ ca"
+                style={{ width: '100%', padding: '9px 10px', fontSize: '14px', borderRadius: '8px', border: '1px solid #D1D5DB', marginTop: '4px' }}
+              />
+            </label>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                className="btn-primary"
+                disabled={compBusy}
+                onClick={handleCompensate}
+                style={{ flex: 1, padding: '10px', fontWeight: 800, backgroundColor: '#059669', border: 'none', borderRadius: '8px', color: '#FFF', cursor: compBusy ? 'wait' : 'pointer' }}
+              >
+                {compBusy ? '⏳ Đang bù...' : '✅ Xác nhận bù công'}
+              </button>
+              <button
+                className="btn-secondary"
+                disabled={compBusy}
+                onClick={() => setCompModal(null)}
+                style={{ flex: 1, padding: '10px', fontWeight: 700 }}
+              >
+                Hủy
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
   // Modal HR bổ sung lịch làm việc cho NV (tab Lịch tuần): chọn NV bất kỳ +
   // xếp ca trực tiếp lên lịch (nháp), realtime sang Chấm công + Cổng NV.
   const [supShiftOpen, setSupShiftOpen] = useState(false);
@@ -9015,95 +9107,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           </table>
         </div>
 
-        {/* MODAL: ADMIN BÙ CÔNG CA LÀM (DUY NHẤT ADMIN) */}
-        {compModal && (
-          <div
-            style={{
-              position: 'fixed',
-              inset: 0,
-              zIndex: 9999,
-              backgroundColor: 'rgba(15,23,42,0.65)',
-              backdropFilter: 'blur(4px)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: '20px',
-            }}
-            onClick={() => !compBusy && setCompModal(null)}
-          >
-            <div
-              style={{
-                backgroundColor: '#FFF',
-                borderRadius: '16px',
-                border: '2px solid #10B981',
-                overflow: 'hidden',
-                boxShadow: '0 20px 60px rgba(0,0,0,0.35)',
-                maxWidth: '480px',
-                width: '100%',
-              }}
-              onClick={e => e.stopPropagation()}
-            >
-              <div style={{ background: 'linear-gradient(135deg, #064E3B, #047857)', color: '#FFF', padding: '14px 18px' }}>
-                <div style={{ fontSize: '15px', fontWeight: 900 }}>🛠️ BÙ CÔNG CA LÀM (ADMIN)</div>
-                <div style={{ fontSize: '12px', opacity: 0.9 }}>{compModal.name} ({compModal.empCode}) • {compModal.shiftLabel} • ngày {compModal.shiftDate}</div>
-              </div>
-              <div style={{ padding: '18px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div style={{ fontSize: '12px', backgroundColor: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: '8px', padding: '8px 12px', color: '#92400E' }}>
-                  Dùng khi hệ thống lỗi làm NV mất công (ca khóa / không điểm danh). Ca bù tính <strong>đủ công, không phạt trễ</strong>, đồng bộ realtime sang Bảng Chấm Công và Cổng NV.
-                  {compModal.hasIn && <div style={{ marginTop: '4px' }}>✅ Ca đã có giờ vào: <strong>{compModal.inText}</strong> — chỉ cần nhập giờ ra.</div>}
-                </div>
-                {!compModal.hasIn && (
-                  <label style={{ fontSize: '13px', fontWeight: 700 }}>
-                    Giờ vào (check-in)
-                    <input
-                      type="datetime-local"
-                      value={compModal.checkIn}
-                      onChange={e => setCompModal((p: any) => ({ ...p, checkIn: e.target.value }))}
-                      style={{ width: '100%', padding: '9px 10px', fontSize: '14px', borderRadius: '8px', border: '1px solid #D1D5DB', marginTop: '4px' }}
-                    />
-                  </label>
-                )}
-                <label style={{ fontSize: '13px', fontWeight: 700 }}>
-                  Giờ ra (check-out)
-                  <input
-                    type="datetime-local"
-                    value={compModal.checkOut}
-                    onChange={e => setCompModal((p: any) => ({ ...p, checkOut: e.target.value }))}
-                    style={{ width: '100%', padding: '9px 10px', fontSize: '14px', borderRadius: '8px', border: '1px solid #D1D5DB', marginTop: '4px' }}
-                  />
-                </label>
-                <label style={{ fontSize: '13px', fontWeight: 700 }}>
-                  Lý do bù công
-                  <input
-                    type="text"
-                    value={compModal.reason}
-                    onChange={e => setCompModal((p: any) => ({ ...p, reason: e.target.value }))}
-                    placeholder="VD: Lỗi GPS hệ thống, NV có đi làm đủ ca"
-                    style={{ width: '100%', padding: '9px 10px', fontSize: '14px', borderRadius: '8px', border: '1px solid #D1D5DB', marginTop: '4px' }}
-                  />
-                </label>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button
-                    className="btn-primary"
-                    disabled={compBusy}
-                    onClick={handleCompensate}
-                    style={{ flex: 1, padding: '10px', fontWeight: 800, backgroundColor: '#059669', border: 'none', borderRadius: '8px', color: '#FFF', cursor: compBusy ? 'wait' : 'pointer' }}
-                  >
-                    {compBusy ? '⏳ Đang bù...' : '✅ Xác nhận bù công'}
-                  </button>
-                  <button
-                    className="btn-secondary"
-                    disabled={compBusy}
-                    onClick={() => setCompModal(null)}
-                    style={{ flex: 1, padding: '10px', fontWeight: 700 }}
-                  >
-                    Hủy
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+        {renderCompModal()}
 
         {/* MODAL: XEM BẰNG CHỨNG ĐIỂM DANH REALTIME TỪ CỔNG NHÂN VIÊN */}
         {selectedRealtimeModal && (() => {
@@ -10275,6 +10279,32 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                         {thumb(outE)}
                                       </div>
                                     )}
+                                    {currentUser?.role === 'ADMIN' && it.shift?.assignment_id && ['LOCKED', 'ABSENT', 'MISSING_OUT'].includes(it.st.key) && (
+                                      <button
+                                        onClick={() => openCompensate(
+                                          { empId: emp.employee_id, empCode: emp.employee_code, name: emp.full_name },
+                                          { assignment_id: it.shift.assignment_id, status: it.st.key, shift: it.shift.shift_code, shift_date: day.iso, event: inE, inTime: inE ? timeOf(inE.client_time) : '' }
+                                        )}
+                                        title="Admin bù công ca này cho NV (hệ thống lỗi) — tính đủ công, realtime sang Bảng Chấm Công và Cổng NV"
+                                        style={{
+                                          marginTop: '4px',
+                                          fontSize: '10px',
+                                          padding: '3px 8px',
+                                          borderRadius: '4px',
+                                          backgroundColor: '#ECFDF5',
+                                          border: '1px solid #10B981',
+                                          color: '#065F46',
+                                          fontWeight: 800,
+                                          cursor: 'pointer',
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: '3px',
+                                          justifyContent: 'center',
+                                        }}
+                                      >
+                                        🛠️ Bù công
+                                      </button>
+                                    )}
                                     {it.st.key === 'COMPLETED' && inE && (
                                       <div style={{ fontSize: '10px', color: '#059669', fontWeight: 700 }}>Hồng {inE.uniform_pink_ratio ?? '?'}%</div>
                                     )}
@@ -10327,6 +10357,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </tbody>
           </table>
         </div>
+        {renderCompModal()}
       </div>
       </TabErrorBoundary>
     );
