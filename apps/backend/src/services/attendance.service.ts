@@ -262,7 +262,8 @@ export class AttendanceService {
    * Admin bù công ca làm cho NV khi hệ thống lỗi (ca bị khóa / không điểm
    * danh): ghi trực tiếp CHECK_IN (+CHECK_OUT) gắn đúng ca, bỏ qua GPS/ảnh/
    * khóa 3h (Admin chịu trách nhiệm giờ nhập). Không phạt trễ (tính đủ công).
-   * Idempotent theo ca+loại (bù rồi thì trả bản có sẵn). CHỈ Admin gọi.
+   * Bù được mọi ngày cũ: điểm danh tuần qua đã archive vẫn được tôn trọng
+   * (không đòi nhập lại giờ vào / không bù trùng). CHỈ Admin gọi.
    */
   async compensateShift(data: {
     assignmentId: string;
@@ -286,10 +287,26 @@ export class AttendanceService {
         const reason = String(data.reason || '').trim().slice(0, 500) || 'Admin bù công do hệ thống lỗi';
 
         const mine = await this.repo.getAttendanceEvents(employeeId).catch(() => []);
-        const hasIn = (mine || []).find((e: any) =>
+        let hasIn = (mine || []).find((e: any) =>
           String((e as any).assignment_id) === String(data.assignmentId) && (e as any).type === 'CHECK_IN');
-        const hasOut = (mine || []).find((e: any) =>
+        let hasOut = (mine || []).find((e: any) =>
           String((e as any).assignment_id) === String(data.assignmentId) && (e as any).type === 'CHECK_OUT');
+        // Ngày cũ: điểm danh tuần qua đã archive sang kho LUUTRU (xóa khỏi bảng
+        // realtime) — tra thêm kho để không đòi nhập lại giờ vào / bù trùng.
+        if (!hasIn || !hasOut) {
+          try {
+            const day = String((shift as any).date || '').slice(0, 10);
+            const sync = (this.repo as any)?.syncService;
+            if (day && sync?.getArchivedAttendanceEvents) {
+              const archived = await sync.getArchivedAttendanceEvents(day, day).catch(() => []);
+              const archMine = (archived || []).filter((e: any) =>
+                String((e as any)?.employee_id || '') === employeeId &&
+                String((e as any)?.assignment_id || '') === String(data.assignmentId));
+              if (!hasIn) hasIn = archMine.find((e: any) => (e as any)?.type === 'CHECK_IN');
+              if (!hasOut) hasOut = archMine.find((e: any) => (e as any)?.type === 'CHECK_OUT');
+            }
+          } catch { /* giữ kết quả bảng live */ }
+        }
         if (hasIn && hasOut) {
           throw new Error('SHIFT_ALREADY_COMPLETE: ca này đã đủ check-in + check-out, không cần bù!');
         }
