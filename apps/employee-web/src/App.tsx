@@ -5825,7 +5825,7 @@ export function App() {
                 {isProbation ? '7. Giải Trình & Bổ Sung Công' : '7. Bổ Sung Công'}
               </h3>
               <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '14px' }}>
-                Gửi giải trình khi quên check-in/out hoặc báo nghỉ đột xuất (đồng bộ trực tiếp sang HR Tab 10 và Google Sheets). Nhân viên chính thức chỉ được <strong>1 phiếu/tuần</strong> (duyệt hoặc đang chờ đều tính đã dùng; bị từ chối/hết hạn được gửi lại). Phiếu gửi HR quá <strong>30 phút</strong> chưa duyệt thì hệ thống <strong>tự động từ chối</strong> (giữ phiếu để đối soát, tự xóa sau 7 ngày nữa).
+                Gửi giải trình khi quên check-in/out hoặc báo nghỉ đột xuất (đồng bộ trực tiếp sang HR Tab 10 và Google Sheets). Không giới hạn số phiếu/tuần. Phiếu gửi HR quá <strong>30 phút</strong> chưa duyệt thì hệ thống <strong>tự động từ chối</strong> (giữ phiếu để đối soát, tự xóa sau 7 ngày nữa).
               </p>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>

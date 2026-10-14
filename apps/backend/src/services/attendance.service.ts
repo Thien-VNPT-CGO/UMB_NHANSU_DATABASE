@@ -12,7 +12,7 @@ import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { singleWriterQueue } from '../repositories/single-writer-queue.js';
 import { readAttendancePhotoDiskAsDataUrl } from './photo-disk.store.js';
 import { lateFineFor, linkDayEvents } from './payroll.service.js';
-import { weekRangeOf } from './weekly-off.service.js';
+
 import { Server } from 'socket.io';
 
 // Haversine formula for calculating distance in meters between two lat/lon points
@@ -666,28 +666,9 @@ export class AttendanceService {
         if (dup) {
           throw new Error('ADJUSTMENT_DUPLICATE: Bạn đã có phiếu cùng ca đang chờ duyệt, không cần gửi lại! Chờ HR xử lý phiếu hiện tại.');
         }
-        // Ràng buộc NV CHÍNH THỨC: mỗi tuần (Mon-Sun theo giờ VN, tính theo lúc gửi)
-        // chỉ được 1 phiếu bổ sung/điều chỉnh công. HR duyệt (APPROVED) hoặc đang chờ
-        // (PENDING) thì tính đã dùng quota tuần đó; HR từ chối / hết hạn 30 phút /
-        // đã xóa thì KHÔNG tính (được gửi lại trong tuần).
-        const emp = await this.repo.getEmployeeById(data.employeeId).catch(() => null);
-        if (emp && (emp as any).employment_status === 'OFFICIAL') {
-          const todayVn = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
-          const wk = weekRangeOf(todayVn);
-          const used = (existing || []).filter((x: any) => {
-            const st = String((x as any).status || '');
-            if (st !== 'PENDING' && st !== 'APPROVED') return false;
-            const c = new Date((x as any).created_at).getTime();
-            if (!Number.isFinite(c)) return false;
-            const day = new Date(c + 7 * 3_600_000).toISOString().slice(0, 10);
-            return day >= wk.mon && day <= wk.sun;
-          });
-          if (used.length >= AttendanceService.ADJUSTMENT_WEEKLY_QUOTA) {
-            throw new Error(
-              `ADJUSTMENT_WEEKLY_LIMIT: Nhân viên chính thức chỉ được 1 phiếu bổ sung công/tuần (tuần ${wk.mon} → ${wk.sun} bạn đã dùng 1 phiếu ${used[0]?.status === 'APPROVED' ? 'đã được duyệt' : 'đang chờ duyệt'}). Tuần sau gửi tiếp!`
-            );
-          }
-        }
+        // KHÔNG giới hạn số phiếu/tuần (kể cả NV chính thức): gửi bao nhiêu cũng
+        // được, chống trùng phiếu PENDING cùng ca ở trên đã đủ. Phiếu BU_CONG_NGAY
+        // vẫn tốn điểm theo luật riêng bên dưới.
         // Phiếu BU_CONG_NGAY: ngày bù trong tháng hiện tại + tốn 5 điểm (trừ ngay,
         // từ chối/hết hạn thì hoàn lại). Không đủ điểm -> chặn tạo.
         if (kind === 'BU_CONG_NGAY') {
@@ -746,8 +727,6 @@ export class AttendanceService {
     return this.repo.listAttendanceAdjustments(branchId, employeeId);
   }
 
-  /** NV chính thức: tối đa 1 phiếu bổ sung/điều chỉnh công mỗi tuần (Mon-Sun). */
-  static readonly ADJUSTMENT_WEEKLY_QUOTA = 1;
   /** Hiệu lực 1 phiếu gửi HR: 30 phút tính từ lúc tạo — quá hạn tự động từ chối. */
   static readonly ADJUSTMENT_TTL_MINUTES = 30;
   /** Khung giờ NV được TẠO phiếu (giờ VN): 08:00–21:00 hằng ngày, ngoài giờ báo lỗi. */
