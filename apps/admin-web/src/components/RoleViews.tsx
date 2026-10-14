@@ -2330,34 +2330,22 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     }
   };
   // Admin/HR dọn ca trùng (cùng NV + ngày + mã ca + CN còn live — VD 4 thẻ Vắng
-  // giống hệt nhau): xem trước rồi xác nhận, giữ 1 ca/nhóm + dọn vắng oan.
-  const [dedupeOpen, setDedupeOpen] = useState(false);
-  const [dedupeData, setDedupeData] = useState<any>(null);
+  // giống hệt nhau): bấm là dọn ngay, giữ 1 ca/nhóm + dọn vắng oan.
   const [dedupeBusy, setDedupeBusy] = useState(false);
-  const loadDedupePreview = async () => {
-    setDedupeBusy(true);
-    try {
-      const d: any = await apiRequest('/admin/shifts/duplicates');
-      setDedupeData(d);
-      setDedupeOpen(true);
-      if (Number(d?.total || 0) === 0) showToast('Không có ca trùng nào — lịch sạch!');
-    } catch (e: any) {
-      showToast(e?.message || 'Lỗi khi kiểm tra ca trùng!');
-    } finally {
-      setDedupeBusy(false);
-    }
-  };
-  const doDedupeDuplicates = async () => {
-    const total = Number(dedupeData?.total || 0);
-    if (total === 0) { showToast('Không có ca trùng nào để dọn!'); return; }
-    if (!window.confirm(`Dọn ${total} ca trùng (giữ 1 ca/nhóm, hủy thừa + dọn vắng oan)? Nhóm có ≥2 ca cùng điểm danh thật được GIỮ NGUYÊN để xử lý tay. Không khôi phục được!`)) return;
+  const doDedupeNow = async () => {
+    if (dedupeBusy) return;
+    if (!window.confirm('Quét + dọn ca trùng ngay? Giữ 1 ca/nhóm (ưu tiên ca có điểm danh thật) + dọn vắng oan. Nhóm có ≥2 ca cùng điểm danh thật được GIỮ NGUYÊN để xử lý tay. Không khôi phục được!')) return;
     setDedupeBusy(true);
     try {
       const r: any = await apiRequest('/admin/shifts/dedupe-duplicates', { method: 'POST' });
+      const cancelled = Number((r as any)?.cancelled ?? 0);
       const skipped = Array.isArray((r as any)?.skipped) ? (r as any).skipped : [];
-      showToast(`🧹 Đã dọn ${Number((r as any)?.cancelled ?? 0)} ca trùng!${skipped.length ? ` Bỏ qua ${skipped.length} nhóm cùng có điểm danh.` : ''}`);
-      setDedupeOpen(false);
-      setDedupeData(null);
+      const groups = Number((r as any)?.groups ?? 0);
+      if (cancelled === 0 && skipped.length === 0) {
+        showToast('✅ Không có ca trùng nào — lịch sạch!');
+      } else {
+        showToast(`🧹 Đã dọn ${cancelled} ca trùng (${groups} nhóm)!${skipped.length ? ` Bỏ qua ${skipped.length} nhóm cùng có điểm danh: ${skipped.slice(0, 3).join('; ')}${skipped.length > 3 ? '…' : ''}` : ''}`);
+      }
       if (onRefreshData) await onRefreshData();
     } catch (e: any) {
       showToast(e?.message || 'Lỗi khi dọn ca trùng!');
@@ -8127,11 +8115,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <button
               className="btn-secondary"
               style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', fontSize: '13px', fontWeight: 800, color: '#1D4ED8' }}
-              title="Kiểm tra + dọn ca trùng (cùng NV + ngày + mã ca + chi nhánh còn live). Giữ 1 ca/nhóm + dọn vắng oan; nhóm cùng có điểm danh thật được giữ nguyên."
+              title="Quét + dọn ca trùng ngay (cùng NV + ngày + mã ca + chi nhánh còn live). Giữ 1 ca/nhóm + dọn vắng oan; nhóm cùng có điểm danh thật được giữ nguyên."
               disabled={dedupeBusy}
-              onClick={loadDedupePreview}
+              onClick={doDedupeNow}
             >
-              🧬 {dedupeBusy ? 'Đang kiểm tra...' : 'Dọn Ca Trùng'}
+              🧬 {dedupeBusy ? 'Đang dọn...' : 'Dọn Ca Trùng'}
             </button>
             <input
               type="date"
@@ -8374,59 +8362,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   </div>
                   <button className="btn-primary" disabled={purgeBusy || Number(purgeData.total || 0) === 0} onClick={doPurgeNonLive} style={{ padding: '10px', fontWeight: 800, fontSize: '13px', backgroundColor: '#DC2626', marginTop: '12px', width: '100%' }}>
                     {purgeBusy ? '⏳ Đang dọn...' : `Xóa Cứng ${purgeData.total || 0} Ca (Không Khôi Phục)`}
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {dedupeOpen && (
-          <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-            <div style={{ backgroundColor: 'var(--surface)', borderRadius: '12px', maxWidth: '640px', width: '100%', maxHeight: '88vh', overflow: 'auto', padding: '20px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h2 style={{ fontSize: '16px', fontWeight: 800, margin: 0 }}>🧬 Dọn Ca Trùng</h2>
-                <button className="btn-secondary" style={{ padding: '4px 12px' }} onClick={() => { setDedupeOpen(false); setDedupeData(null); }}>Đóng</button>
-              </div>
-              {!dedupeData ? (
-                <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '10px' }}>Đang kiểm tra...</div>
-              ) : Number(dedupeData.total || 0) === 0 ? (
-                <div style={{ marginTop: '10px', fontSize: '13px', padding: '10px 12px', borderRadius: '8px', backgroundColor: '#ECFDF5', border: '1px solid #A7F3D0' }}>
-                  ✅ Không có ca trùng nào — mỗi NV + ngày + mã ca + chi nhánh chỉ còn 1 ca live.
-                </div>
-              ) : (
-                <div style={{ marginTop: '10px', fontSize: '13px', lineHeight: 1.7 }}>
-                  <div style={{ padding: '10px 12px', borderRadius: '8px', backgroundColor: '#FFFBEB', border: '1px solid #FDE68A' }}>
-                    Phát hiện <strong>{dedupeData.groups?.length || 0} nhóm</strong> • dọn được <strong>{dedupeData.total || 0} ca thừa</strong> (giữ 1 ca/nhóm + dọn vắng oan).
-                    <div style={{ fontSize: '12px', color: '#92400E' }}>Nhóm có ≥2 ca cùng điểm danh thật được giữ nguyên để xử lý tay.</div>
-                  </div>
-                  <div style={{ marginTop: '8px', maxHeight: '260px', overflow: 'auto', border: '1px solid var(--border)', borderRadius: '8px' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
-                      <thead>
-                        <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)' }}>
-                          <th style={{ padding: '8px 10px' }}>Nhân viên</th>
-                          <th style={{ padding: '8px 10px' }}>Ngày</th>
-                          <th style={{ padding: '8px 10px' }}>Ca</th>
-                          <th style={{ padding: '8px 10px' }}>Số ca</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(dedupeData.groups || []).map((g: any, i: number) => {
-                          const emp = (allEmployees || []).find((e: any) => e.employee_id === g.employee_id);
-                          return (
-                            <tr key={i} style={{ borderTop: '1px solid var(--border)' }}>
-                              <td style={{ padding: '8px 10px', fontWeight: 700 }}>{emp?.full_name || g.employee_id}<div style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: '11px' }}>{emp?.employee_code || ''}</div></td>
-                              <td style={{ padding: '8px 10px' }}>{g.date}</td>
-                              <td style={{ padding: '8px 10px' }}>{g.shift_code} • {g.branch}</td>
-                              <td style={{ padding: '8px 10px', fontWeight: 800, color: '#DC2626' }}>{g.count}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                  <button className="btn-primary" disabled={dedupeBusy} onClick={doDedupeDuplicates} style={{ padding: '10px', fontWeight: 800, fontSize: '13px', backgroundColor: '#1D4ED8', marginTop: '12px', width: '100%' }}>
-                    {dedupeBusy ? '⏳ Đang dọn...' : `Dọn ${dedupeData.total || 0} Ca Trùng (Không Khôi Phục)`}
                   </button>
                 </div>
               )}
