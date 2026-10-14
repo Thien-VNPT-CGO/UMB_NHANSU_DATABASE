@@ -4018,7 +4018,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           overflow: 'hidden',
           boxShadow: 'var(--shadow-sm)',
         }}>
-          <div style={{ overflowX: 'auto', width: '100%' }}>
+          <div className="ubm-sticky-tbl" style={{ overflowX: 'auto', width: '100%' }}>
             <table style={{
               width: '100%',
               minWidth: '2100px',
@@ -6767,7 +6767,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
         {/* Data Table */}
         <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}>
-          <div style={{ overflowX: 'auto' }}>
+          <div className="ubm-sticky-tbl" style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
               <thead>
                 <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase', borderBottom: '1px solid var(--border)' }}>
@@ -9499,7 +9499,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         <div style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 'var(--radius-md)', padding: '10px 14px', fontSize: '12px', color: '#1E40AF' }}>
           Lịch OFF 2 ngày/tuần (HANG_TUAN) <strong>tự động ghi nhận, không cần duyệt</strong> — theo dõi ở bảng bên dưới.
         </div>
-        <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
+        <div className="ubm-sticky-tbl" style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
           <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
             <div>
               <strong style={{ fontSize: '14px' }}>Lịch OFF 2 ngày/tuần đã tự động ghi nhận ({weeklyOffList.length})</strong>
@@ -9765,7 +9765,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           </button>
         </div>
 
-        <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
+        <div className="ubm-sticky-tbl" style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
           <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <strong style={{ fontSize: '14px' }}>Phiếu hỗ trợ chi nhánh ({supports.length})</strong>
             <span className="badge" style={{ backgroundColor: pending.length > 0 ? '#FEF3C7' : '#DCFCE7', color: pending.length > 0 ? '#92400E' : '#166534', fontWeight: 800 }}>
@@ -10842,7 +10842,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           </div>
         </div>
         )}
-        <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
+        <div className="ubm-sticky-tbl" style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
             <thead>
               <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
@@ -11264,7 +11264,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', fontSize: '14px', fontWeight: 800 }}>
                 Giờ làm & lương từng nhân viên ({r.rows.length})
               </div>
-              <div style={{ overflowX: 'auto' }}>
+              <div className="ubm-sticky-tbl" style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                   <thead>
                     <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>

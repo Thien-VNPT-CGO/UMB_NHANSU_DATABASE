@@ -398,3 +398,15 @@ button:active:not(:disabled) {
 @keyframes fx-pop-in { 0% { opacity: 0; transform: scale(0.7); } 60% { opacity: 1; transform: scale(1.06); } 100% { opacity: 1; transform: scale(1); } }
 /* Nút cảnh báo giờ PV */
 @keyframes fx-shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-5px); } 40% { transform: translateX(5px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(4px); } }
+
+/* Khung bang cuon + khoa hang tieu de khi cuon doc (cac tab danh sach dai).
+   Gan className="ubm-sticky-tbl" vao div boc table. */
+.ubm-sticky-tbl { overflow: auto !important; max-height: 72vh; }
+.ubm-sticky-tbl > table { border-collapse: separate !important; border-spacing: 0 !important; }
+.ubm-sticky-tbl thead th {
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 2;
+  background-color: var(--bg);
+  box-shadow: 0 1px 0 var(--border);
+}
