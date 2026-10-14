@@ -16,7 +16,7 @@ import {
   suggestFreeSlots,
   validateInterviewSlot,
 } from './interview-slots.service.js';
-import { decodeQrDataUrl, parseVietQRPartial } from '../utils/vietqr.js';
+import { decodeQrDataUrl, isPlausibleHolder, parseVietQRPartial } from '../utils/vietqr.js';
 
 /** Chuẩn hóa SĐT về dạng so sánh được (10 số, đầu 0) — DÙNG DUY NHẤT ở mọi nơi.
  *  Bao phủ: '+84...'/84... (Sheet ghi quốc tế), số bị rớt số 0 đầu (ô numeric),
@@ -611,11 +611,12 @@ export class EmployeesService {
 
   /**
    * Rà soát QR ngân hàng đã lưu của toàn bộ NV: đọc lại payload QR trong ảnh,
-   * - QR đọc được đủ 3 trường mà thông tin chữ đang lưu SAI (VD nhầm ngân hàng
-   *   khác) -> SỬA đúng theo payload (nguồn chuẩn nhất).
-   * - QR thiếu trường mà chữ cũng thiếu -> GỠ ảnh để NV tải lại (tránh Finance
-   *   chuyển sai), bên gọi báo NV.
-   * - QR không giải mã được nhưng chữ đủ -> GIỮ NGUYÊN (không suy đoán).
+   * - QR đọc được đủ 3 trường (tên chủ TK hợp lệ: có họ VN hoặc khớp tên NV)
+   *   mà thông tin chữ đang lưu SAI -> SỬA đúng theo payload (nguồn chuẩn nhất).
+   * - Tên chủ TK đang lưu là RÁC (OCR nhận nhầm, không phải tên người) -> GỠ ảnh
+   *   để NV tải lại, tránh Finance chuyển sai.
+   * - QR thiếu trường mà chữ cũng thiếu -> GỠ ảnh, bên gọi báo NV.
+   * - QR không giải mã được nhưng chữ đủ + tên hợp lệ -> GIỮ NGUYÊN.
    * Trả về danh sách đã sửa/gỡ để bên gọi thông báo + realtime.
    */
   async auditBankQrCodes(): Promise<{
@@ -638,21 +639,25 @@ export class EmployeesService {
         account: String((e as any)?.bank_account || '').trim(),
         holder: String((e as any)?.bank_holder || '').trim(),
       };
-      const trioOk = !!stored.bank && /^[0-9]{6,19}$/.test(stored.account) && !!stored.holder;
+      const storedHolderOk = isPlausibleHolder(stored.holder, name);
+      const trioOk = !!stored.bank && /^[0-9]{6,19}$/.test(stored.account) && storedHolderOk;
       let payload: string | null = null;
       try {
         payload = decodeQrDataUrl(qr);
       } catch { payload = null; }
       const p = payload ? parseVietQRPartial(payload) : null;
-      const payloadOk = !!(p && p.isVietQR && p.bank && p.account && p.holder);
+      // Tên trong payload cũng phải hợp lệ (ngân hàng không bao giờ ghi rác vào
+      // trường 59, nhưng chặn chắc để khỏi ghi đè tên đúng bằng rác).
+      const payloadHolder = p && p.holder && isPlausibleHolder(p.holder, name) ? p.holder : '';
+      const payloadOk = !!(p && p.isVietQR && p.bank && p.account && payloadHolder);
       try {
-        if (payloadOk && (stored.bank !== (p as any).bank || stored.account !== (p as any).account || stored.holder !== (p as any).holder)) {
+        if (payloadOk && (stored.bank !== (p as any).bank || stored.account !== (p as any).account || stored.holder !== payloadHolder)) {
           await this.updateEmployee(empId, {
             bankName: (p as any).bank,
             bankAccount: (p as any).account,
-            bankHolder: (p as any).holder,
+            bankHolder: payloadHolder,
           }, 'SYSTEM');
-          fixed.push({ employee_id: empId, full_name: name, bank: (p as any).bank, account: (p as any).account, holder: (p as any).holder });
+          fixed.push({ employee_id: empId, full_name: name, bank: (p as any).bank, account: (p as any).account, holder: payloadHolder });
         } else if (!payloadOk && !trioOk) {
           await this.updateEmployee(empId, { bankQrImg: '' }, 'SYSTEM');
           cleared.push({ employee_id: empId, full_name: name });

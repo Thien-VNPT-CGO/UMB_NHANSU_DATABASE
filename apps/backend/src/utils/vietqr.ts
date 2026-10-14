@@ -14,6 +14,48 @@ export const VIETQR_BANK_BY_BIN: Record<string, string> = {
   '970400': 'SaigonBank', '970406': 'DongA Bank',
 };
 
+/** Các họ phổ biến VN (so khớp theo token) — dòng rác OCR không bao giờ chứa. */
+export const VN_SURNAMES = new Set([
+  'NGUYEN', 'TRAN', 'LE', 'PHAM', 'HOANG', 'HUYNH', 'PHAN', 'VU', 'VO', 'DANG',
+  'BUI', 'DO', 'HO', 'NGO', 'DUONG', 'LY', 'CAO', 'CHU', 'LUONG', 'DINH',
+  'DOAN', 'TRUONG', 'TA', 'TRINH', 'MAI', 'LAM', 'HA', 'CHAU', 'TANG', 'TONG',
+  'DIEP', 'DANG', 'QUACH', 'THACH', 'SON', 'SAM', 'HUA', 'LA', 'BAN', 'GIA',
+]);
+
+/** Chuẩn hóa tên (hoa, bỏ dấu) để so sánh OCR với hồ sơ. */
+export function normalizeName(s: string): string {
+  return String(s || '')
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/Đ/g, 'D')
+    .replace(/[^A-Z\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Tên OCR có khớp tên NV trong hồ sơ không (trùng >= 2 token). */
+export function holderMatchesEmployee(holder: string, fullName: string): boolean {
+  const h = new Set(normalizeName(holder).split(' ').filter(Boolean));
+  const n = new Set(normalizeName(fullName).split(' ').filter(Boolean));
+  if (h.size < 2 || n.size < 2) return false;
+  let overlap = 0;
+  for (const w of h) if (n.has(w)) overlap++;
+  return overlap >= 2;
+}
+
+/** Tên chủ TK có hợp lệ không: chữ + >= 2 từ + (có họ VN hoặc khớp tên NV).
+ *  Dòng rác OCR (VD "fl ify Eg Ee") rớt ngay. */
+export function isPlausibleHolder(holder: string, employeeName?: string): boolean {
+  const t = normalizeName(holder);
+  if (t.length < 6) return false;
+  const toks = t.split(' ').filter(Boolean);
+  if (toks.length < 2) return false;
+  if (toks.some((w) => VN_SURNAMES.has(w))) return true;
+  if (employeeName && holderMatchesEmployee(holder, employeeName)) return true;
+  return false;
+}
+
 function parseTLV(src: string): { id: string; value: string }[] {
   const out: { id: string; value: string }[] = [];
   let i = 0;

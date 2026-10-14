@@ -2002,25 +2002,56 @@ export function App() {
     [/\bMSB\b/, 'MSB'],
   ];
 
+  // Các họ phổ biến VN — dòng rác OCR không bao giờ chứa (so khớp theo token).
+  const VN_SURNAMES = new Set([
+    'NGUYEN', 'TRAN', 'LE', 'PHAM', 'HOANG', 'HUYNH', 'PHAN', 'VU', 'VO', 'DANG',
+    'BUI', 'DO', 'HO', 'NGO', 'DUONG', 'LY', 'CAO', 'CHU', 'LUONG', 'DINH',
+    'DOAN', 'TRUONG', 'TA', 'TRINH', 'MAI', 'LAM', 'HA', 'CHAU', 'TANG', 'TONG',
+    'DIEP', 'QUACH', 'THACH', 'SON', 'HUA', 'LA', 'BAN', 'GIA',
+  ]);
+  const normalizeVnName = (s: string): string => String(s || '')
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/Đ/g, 'D')
+    .replace(/[^A-Z\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
   // Đọc chữ in trên thẻ QR (tên + STK + ngân hàng) khi payload QR thiếu/không đọc được.
   // Chống nhận nhầm ngân hàng khác: tìm tên chủ TK trước, loại dòng tên khỏi vùng
   // tìm logo (tên người có thể chứa chuỗi giống mã NH), rồi chọn từ khóa DÀI NHẤT
   // khớp được (VD thẻ có cả "MB" lẻ và "SACOMBANK" thì lấy Sacombank).
-  const extractBankQrFromOcrText = (text: string): { bank: string; account: string; holder: string } => {
+  // Chống rác OCR vào cột chủ TK: tên phải khớp tên NV trong hồ sơ (>=2 token)
+  // hoặc chứa họ VN — nếu không thì coi như thiếu tên, báo tải lại.
+  const extractBankQrFromOcrText = (text: string, employeeName?: string): { bank: string; account: string; holder: string } => {
     const upper = String(text || '').toUpperCase();
     const badLine = /(VIETQR|NAPAS|PAY|GLOBAL|BANK|24\/7|HOTLINE|1900|\d)/;
     const lines = String(text || '')
       .split('\n')
       .map((l) => l.trim())
       .filter((l) => l.length >= 6);
+    // Tên chủ TK: ưu tiên dòng khớp tên NV trong hồ sơ (>=2 token trùng), sau đó
+    // dòng chứa họ VN. Dòng rác OCR không bao giờ đạt 2 điều này -> loại.
+    const empToks = new Set(normalizeVnName(employeeName || '').split(' ').filter(Boolean));
     let holder = '';
+    let bestHolderScore = -1;
     for (const l of lines) {
       const u = l.toUpperCase();
       if (!/^[A-ZÀ-Ỹ\s]+$/.test(u)) continue;
       if (u.split(/\s+/).length < 2) continue;
       if (badLine.test(u)) continue;
-      if (u.length > holder.length) holder = l.trim();
+      const toks = normalizeVnName(l).split(' ').filter(Boolean);
+      let overlap = 0;
+      for (const w of toks) if (empToks.has(w)) overlap++;
+      const hasSurname = toks.some((w) => VN_SURNAMES.has(w));
+      const score = overlap >= 2 ? 100 + overlap : (hasSurname ? 10 + toks.length : -1);
+      if (score > bestHolderScore) {
+        bestHolderScore = score;
+        holder = l.trim();
+      }
     }
+    if (bestHolderScore < 0) holder = '';
     // Logo ngân hàng thường in 1 dòng rất ngắn (MB, TCB, ACB...) nên quét mọi dòng
     // (kể cả ngắn), chỉ trừ đúng dòng tên chủ TK.
     const bankScope = holder
@@ -2093,6 +2124,19 @@ export function App() {
       return;
     }
     const acceptQrInfo = async (info: { bank: string; account: string; holder: string }, viaOcr: boolean) => {
+      // Chốt chặn cuối: tên chủ TK phải hợp lệ (có họ VN hoặc khớp tên NV trong hồ
+      // sơ) — rác OCR không bao giờ lọt vào cột chủ tài khoản của Finance.
+      const ht = normalizeVnName(info.holder);
+      const htoks = ht.split(' ').filter(Boolean);
+      const empToks = new Set(normalizeVnName((employee as any)?.full_name).split(' ').filter(Boolean));
+      let hov = 0;
+      for (const w of htoks) if (empToks.has(w)) hov++;
+      const holderOk = ht.length >= 6 && htoks.length >= 2 &&
+        (htoks.some((w) => VN_SURNAMES.has(w)) || hov >= 2);
+      if (!holderOk) {
+        bankQrErrorToast('MISSING_HOLDER');
+        return;
+      }
       const dataUrl = await compressBankQr(file);
       if (!dataUrl) {
         showToast('⚠️ Không đọc được ảnh! Vui lòng chọn lại.');
@@ -2118,7 +2162,7 @@ export function App() {
             showToast('⏳ Mã QR thiếu thông tin, đang đọc chữ in trên thẻ...');
             const partial = parseVietQRPartial(payload);
             const ocrText = await readBankCardOcrText(file);
-            const ocr = extractBankQrFromOcrText(ocrText || '');
+            const ocr = extractBankQrFromOcrText(ocrText || '', (employee as any)?.full_name);
             const merged = {
               bank: partial.bank || ocr.bank,
               account: partial.account || ocr.account,
@@ -2137,7 +2181,7 @@ export function App() {
       showToast('⏳ Không quét được mã QR, đang đọc chữ in trên thẻ...');
       const ocrText = await readBankCardOcrText(file);
       if (ocrText) {
-        const ocr = extractBankQrFromOcrText(ocrText);
+        const ocr = extractBankQrFromOcrText(ocrText, (employee as any)?.full_name);
         if (ocr.bank && ocr.account && ocr.holder) {
           await acceptQrInfo(ocr, true);
           return;
