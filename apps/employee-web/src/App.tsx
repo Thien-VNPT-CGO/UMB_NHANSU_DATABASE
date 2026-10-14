@@ -5157,7 +5157,7 @@ export function App() {
                     evtDays.get(d)!.push(e);
                   }
                   // Chuẩn bị dữ liệu từng ca + tổng hợp tháng
-                  let cDone = 0, cWorking = 0, cMissingOut = 0, cAbsent = 0, cNoCheck = 0, cUpcoming = 0, cCancelled = 0;
+                  let cDone = 0, cWorking = 0, cMissingOut = 0, cAbsent = 0, cNoCheck = 0, cUpcoming = 0;
                   let fineTotal = 0;
                   let payTotal = 0;
                   const fineTextOf = (ev: any) => {
@@ -5174,7 +5174,7 @@ export function App() {
                   const dayBlocks = monthDays.map((date) => {
                     const [y, m, dd] = date.split('-');
                     const dShifts = (shiftDays.get(date) || []).filter((s: any) => (s as any).status !== 'CANCELLED');
-                    const cancelledShifts = (shiftDays.get(date) || []).filter((s: any) => (s as any).status === 'CANCELLED');
+                    // Ca đã hủy không hiển thị trên cổng nhân viên.
                     const evs = evtDays.get(date) || [];
                     // So khớp Y HỆT tab admin (Bảng Chấm Công Thời Gian Thực): cứng
                     // assignment trước, mồ côi gộp vào ca live đúng khung giờ —
@@ -5276,8 +5276,7 @@ export function App() {
                       const xcode = inferExtraShiftCode(xci, (employee as any)?.default_shift_code);
                       payTotal += shiftPayInfo(xcode, rateOnDateOf(employee, date), xci, xco, xci?.client_time).net;
                     }
-                    for (const c of cancelledShifts) cCancelled++;
-                    return { date, y, m, dd, rows, orphans: finalExtras, cancelledShifts };
+                    return { date, y, m, dd, rows, orphans: finalExtras };
                   }).filter((blk: any) => (blk.rows || []).length > 0);
                   const sumBox = (label: string, val: string, color: string) => (
                     <div style={{ flex: 1, minWidth: '70px', backgroundColor: '#FAFAFA', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '6px 4px', textAlign: 'center' }}>
@@ -5322,12 +5321,6 @@ export function App() {
                               </span>
                             </div>
                           ))}
-                          {blk.cancelledShifts.map((s: any, i: number) => (
-                            <div key={`cx_${(s as any)?.assignment_id || i}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
-                              <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{shiftNameOf((s as any)?.shift_code)} — ca đã hủy</div>
-                              <span style={{ fontSize: '11px', fontWeight: 700, padding: '4px 8px', borderRadius: '999px', backgroundColor: '#F1F5F9', color: '#64748B', border: '1px solid #CBD5E1', whiteSpace: 'nowrap' }}>Ca hủy</span>
-                            </div>
-                          ))}
                           {blk.orphans.map((x: any, xi: number) => {
                             const xci = x.list.find((e: any) => e.type === 'CHECK_IN');
                             const xco = x.list.find((e: any) => e.type === 'CHECK_OUT');
@@ -5347,7 +5340,7 @@ export function App() {
                               </div>
                             );
                           })}
-                          {blk.rows.length === 0 && blk.cancelledShifts.length === 0 && blk.orphans.length === 0 && (
+                          {blk.rows.length === 0 && blk.orphans.length === 0 && (
                             <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Chưa có ca — ngày nghỉ</div>
                           )}
                         </div>
