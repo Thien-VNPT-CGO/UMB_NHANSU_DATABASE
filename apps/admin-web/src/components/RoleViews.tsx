@@ -2265,6 +2265,27 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       setSchedDelBusy('');
     }
   };
+  // Admin/HR xóa lượt điểm danh ngoài lịch (thẻ "Ca làm tự điểm danh", không có
+  // ca để xóa): xác nhận 1 lần vì mất công/lương lượt đó. Server chặn khi lương
+  // kỳ đó đã phát hành.
+  const [extraDelBusy, setExtraDelBusy] = useState('');
+  const handleDeleteExtraEvents = async (eventIds: Array<string | undefined>, label: string) => {
+    const ids = (eventIds || []).map(x => String(x || '').trim()).filter(Boolean);
+    if (ids.length === 0 || extraDelBusy) return;
+    if (!window.confirm(`Xóa lượt điểm danh ngoài lịch ${label}? Mất công và lương lượt này, không khôi phục được. Đồng bộ realtime + Sheet ngay.`)) return;
+    setExtraDelBusy(ids[0]);
+    try {
+      for (const eid of ids) {
+        await apiRequest(`/attendance/events/${encodeURIComponent(eid)}`, { method: 'DELETE' });
+      }
+      showToast(`🗑 Đã xóa lượt điểm danh ${label} — công/lương đã trừ, đồng bộ realtime.`);
+      if (onRefreshData) await onRefreshData();
+    } catch (e: any) {
+      showToast(e?.message || 'Lỗi khi xóa lượt điểm danh!');
+    } finally {
+      setExtraDelBusy('');
+    }
+  };
   // Bù công trực tiếp đã bỏ: công chỉ ghi nhận qua phiếu NV tạo → HR duyệt
   // (tab Bổ sung/Điều chỉnh công). Xem reviewAdjustment (duyệt + dựng công).
   // Modal HR bổ sung lịch làm việc cho NV (tab Lịch tuần): chọn NV bất kỳ +
@@ -8833,6 +8854,31 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                       {schedDelBusy === sd.assignment_id ? '⏳...' : '✕ Xóa ca'}
                                     </button>
                                   )}
+                                  {!sd.assignment_id && (sd as any)?.isExtra && ((sd as any)?.event?.event_id || (sd as any)?.outEvent?.event_id) && (
+                                    <button
+                                      disabled={!!extraDelBusy}
+                                      onClick={() => handleDeleteExtraEvents([(sd as any)?.event?.event_id, (sd as any)?.outEvent?.event_id], `${sd.shift || 'ngoài lịch'} ${sd.shift_date || ''} (${emp.name || ''})`)}
+                                      title="Xóa lượt điểm danh ngoài lịch này (mất công/lương) — đồng bộ realtime + Sheet"
+                                      style={{
+                                        marginTop: '4px',
+                                        fontSize: '9px',
+                                        padding: '2px 6px',
+                                        borderRadius: '4px',
+                                        backgroundColor: '#FFFFFF',
+                                        border: '1px solid #FCA5A5',
+                                        color: '#DC2626',
+                                        fontWeight: 800,
+                                        cursor: extraDelBusy ? 'wait' : 'pointer',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '3px',
+                                        justifyContent: 'center',
+                                        opacity: extraDelBusy ? 0.6 : 1,
+                                      }}
+                                    >
+                                      {extraDelBusy ? '⏳...' : '✕ Xóa lượt'}
+                                    </button>
+                                  )}
                                   {(sd.assignment_id || (sd as any)?.isExtra) && (
                                     <button
                                       onClick={() => openEditShift({ assignmentId: sd.assignment_id || '', empId: emp.empId, empName: emp.name, branch: emp.branch, shiftCode: sd.shift_code || inferExtraShiftCode((sd as any).event, empShiftOf(emp.empId)), date: (sd as any).shift_date || day.isoDate, status: sd.status })}
@@ -9167,6 +9213,31 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 }}
                               >
                                 {schedDelBusy === d.assignment_id ? '⏳...' : '✕ Xóa ca'}
+                              </button>
+                            )}
+                            {!d.assignment_id && (d as any)?.isExtra && ((d as any)?.event?.event_id || (d as any)?.outEvent?.event_id) && (
+                              <button
+                                disabled={!!extraDelBusy}
+                                onClick={() => handleDeleteExtraEvents([(d as any)?.event?.event_id, (d as any)?.outEvent?.event_id], `${d.shift || 'ngoài lịch'} ${day.isoDate} (${emp.name || ''})`)}
+                                title="Xóa lượt điểm danh ngoài lịch này (mất công/lương) — đồng bộ realtime + Sheet"
+                                style={{
+                                  marginTop: '4px',
+                                  fontSize: '9.5px',
+                                  padding: '2px 8px',
+                                  borderRadius: '4px',
+                                  backgroundColor: '#FFFFFF',
+                                  border: '1px solid #FCA5A5',
+                                  color: '#DC2626',
+                                  fontWeight: 800,
+                                  cursor: extraDelBusy ? 'wait' : 'pointer',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '3px',
+                                  justifyContent: 'center',
+                                  opacity: extraDelBusy ? 0.6 : 1,
+                                }}
+                              >
+                                {extraDelBusy ? '⏳...' : '✕ Xóa lượt'}
                               </button>
                             )}
                             {(d.assignment_id || (d as any)?.isExtra) && (

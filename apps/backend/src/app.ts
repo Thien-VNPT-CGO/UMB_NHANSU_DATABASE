@@ -3524,6 +3524,41 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Admin/HR xóa 1 lượt điểm danh (thẻ "Ca làm tự điểm danh" ngoài lịch):
+  // mất công/lương lượt đó, realtime + Sheet. Chặn khi lương kỳ đó đã phát hành.
+  app.delete('/attendance/events/:id', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const eventId = String(req.params.id || '').trim();
+      const all = await adapter.getAttendanceEvents().catch(() => []);
+      const evt: any = (all || []).find((e: any) => String((e as any)?.event_id || '') === eventId);
+      if (!evt) return res.status(404).json({ error: 'EVENT_NOT_FOUND: bản ghi điểm danh không còn tồn tại! Tải lại danh sách.' });
+      const period = String((evt as any)?.client_time || '').slice(0, 7);
+      if (/^\d{4}-\d{2}$/.test(period)) {
+        const runs = await (adapter as any).listPayrollRuns?.().catch(() => []);
+        const locked = (runs || []).find((r: any) =>
+          String((r as any)?.period || '').slice(0, 7) === period &&
+          ['PUBLISHED', 'PAID'].includes(String((r as any)?.status || '').toUpperCase())
+        );
+        if (locked) {
+          return res.status(400).json({ error: `PAYROLL_LOCKED: Kỳ lương ${period} đã ${String((locked as any)?.status || '')} (phiếu lương đã phát hành) — không được xóa điểm danh trong kỳ này!` });
+        }
+      }
+      const ok = await adapter.deleteAttendanceEvent(eventId);
+      if (!ok) return res.status(404).json({ error: 'EVENT_NOT_FOUND: bản ghi điểm danh không còn tồn tại! Tải lại danh sách.' });
+      await adapter.recordAuditLog({
+        actor_id: req.user!.id,
+        action: 'ATTENDANCE_EVENT_DELETED',
+        target_type: 'SU_KIEN_DIEM_DANH',
+        target_id: eventId,
+      } as any).catch(() => null);
+      broadcastUpdate('attendance', { action: 'event-deleted', eventId, employeeId: (evt as any)?.employee_id });
+      broadcastUpdate('payroll', { action: 'event-deleted', eventId });
+      res.json({ success: true, eventId });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   app.get('/attendance/adjustments', authMiddleware, validate({ query: adjustmentsQuery }), async (req: AuthenticatedRequest, res) => {
     try {
       const branchId = req.user?.role === 'STORE' ? req.user.branchScope : (req.query.branchId as string);
