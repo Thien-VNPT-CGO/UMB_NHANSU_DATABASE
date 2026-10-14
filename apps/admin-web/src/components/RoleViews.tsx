@@ -8757,9 +8757,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                       }}>
                                         <CheckCircle size={9} /> ĐÃ ĐIỂM DANH ({sd.time})
                                       </span>
-                                      <div style={{ fontSize: '9px', color: '#047857', fontWeight: 600, marginTop: '2px' }}>
-                                        ✓ {sd.gps || 'GPS hợp lệ'}
+                                      <div style={{ fontSize: '9px', color: '#047857', fontWeight: 700, marginTop: '2px' }}>
+                                        ✓ Hoàn thành • {sd.gps || 'GPS hợp lệ'}
                                       </div>
+                                      {sd.note && (
+                                        <div style={{ fontSize: '9px', color: '#047857', marginTop: '1px' }}>
+                                          {sd.note}
+                                        </div>
+                                      )}
                                       <button
                                         onClick={() => setSelectedRealtimeModal({ emp, dayData: sd })}
                                         style={{
@@ -8778,7 +8783,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                           justifyContent: 'center',
                                         }}
                                       >
-                                        <Eye size={9} /> Xem GPS & Ảnh
+                                        <Eye size={9} /> Xem Chi Tiết GPS & Ảnh
                                       </button>
                                     </div>
                                   ) : sdCheckedIn ? (
