@@ -5790,7 +5790,6 @@ export function App() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   <div style={{ backgroundColor: '#EFF6FF', padding: '10px', borderRadius: '8px', fontSize: '12px', color: '#1E40AF' }}>
                     📌 <strong>Đặc điểm:</strong> Nhân viên B nhận làm thay ca cho A (B làm 2 ca/ngày). Chỉ nhờ ca <strong>từ tuần hiện tại trở đi</strong> ({swapWeekRange().mon} → …) <strong>khi tuần đó đã được HR publish</strong> — ca tuần đã qua hệ thống từ chối.<br />
-                    ⚠️ Tự thỏa thuận với nhau thì <strong>không</strong> có phụ cấp — chỉ ca do <strong>HR điều phối</strong> (mục trên) mới +30.000đ.
                     {swapDraftCount(myShifts) > 0 && swapReadyShifts(myShifts).length > 0 && (
                       <><br />⚠️ Bạn có {swapDraftCount(myShifts)} ca tuần này chưa publish — báo HR publish để nhờ được.</>
                     )}
