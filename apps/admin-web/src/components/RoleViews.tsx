@@ -8369,66 +8369,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           </div>
         )}
 
-        {/* Realtime Socket Live Notification Banner */}
-        <div style={{
-          backgroundColor: '#ECFDF5',
-          border: '1.5px solid #10B981',
-          borderRadius: 'var(--radius-md)',
-          padding: '12px 16px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          boxShadow: '0 2px 8px rgba(16, 185, 129, 0.1)',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <div style={{
-              width: '10px',
-              height: '10px',
-              borderRadius: '50%',
-              backgroundColor: '#10B981',
-              boxShadow: '0 0 0 4px rgba(16, 185, 129, 0.25)',
-              animation: 'pulse 1.2s infinite',
-            }} />
-            <div style={{ fontSize: '13px', color: '#065F46' }}>
-              <strong>TỰ ĐỘNG ĐIỂM DANH REALTIME:</strong> Giám sát trực tiếp hôm nay ({todayItem.name}, ngày {todayItem.dateStr}/{new Date().getFullYear()}). Kênh Socket.IO đang kết nối, tự động ghi nhận check-in từ Cổng Nhân Viên, xác thực GPS &lt; 300m và đồng bộ ảnh áo hồng lên Google Drive.
-            </div>
-          </div>
-
-          {filteredSchedule.length > 0 && (
-            <button
-              onClick={() => {
-                const todayEmpWithCheckIn = filteredSchedule.find((emp) => {
-                  const todayData = emp.days?.[todayItem.key];
-                  return todayData?.status === 'CHECKED_IN' || todayData?.status === 'COMPLETED';
-                });
-                if (todayEmpWithCheckIn) {
-                  setSelectedRealtimeModal({
-                    emp: todayEmpWithCheckIn,
-                    dayData: todayEmpWithCheckIn.days[todayItem.key],
-                  });
-                } else {
-                  showToast('Chưa có nhân viên nào có lịch và điểm danh hôm nay để xem bằng chứng!');
-                }
-              }}
-              style={{
-                padding: '6px 12px',
-                borderRadius: 'var(--radius-sm)',
-                backgroundColor: '#10B981',
-                color: '#FFFFFF',
-                border: 'none',
-                fontWeight: 700,
-                fontSize: '12px',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-              }}
-            >
-              <Eye size={14} /> Xem Bằng Chứng
-            </button>
-          )}
-        </div>
-
         {/* Filter Controls & Guide Bar */}
         <div style={{
           display: 'flex',
