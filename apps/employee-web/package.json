@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "prebuild": "node scripts/gen-version.cjs",
+    "prebuild": "node scripts/gen-version.cjs && npm run build --prefix ../../packages/shared",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },
