@@ -3684,11 +3684,11 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  // Admin hoàn thành ca làm cho NV (chọn ngày + nhân viên + ca): ghi CHECK_IN /
+  // Admin hoàn thành ca làm cho NV (chọn ngày + nhân viên + ca): CHỈ ADMIN.
   // CHECK_OUT còn thiếu về đúng ca qua engine compensateShift (mặc định giờ
   // vào/tan ca khi không nhập) — lương đồng bộ theo sự kiện đã đủ cặp.
   // Realtime Sheet + socket như điểm danh thường.
-  app.post('/attendance/complete-shift', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ body: completeShiftBody }), async (req: AuthenticatedRequest, res) => {
+  app.post('/attendance/complete-shift', authMiddleware, requireRole(['ADMIN']), validate({ body: completeShiftBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const b: any = req.body || {};
       const assignmentId = String(b.assignmentId || b.assignment_id || '').trim();

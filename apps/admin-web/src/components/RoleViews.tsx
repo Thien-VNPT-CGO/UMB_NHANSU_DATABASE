@@ -10289,7 +10289,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </button>
           </div>
         </div>
-        {/* Admin/HR hoàn thành ca làm: chọn ngày + nhân viên + ca -> ghi đủ CHECK_IN/OUT, đồng bộ lương */}
+        {/* Admin hoàn thành ca làm: chọn ngày + nhân viên + ca -> ghi đủ CHECK_IN/OUT, đồng bộ lương (CHỈ ADMIN) */}
+        {currentUser?.role === 'ADMIN' && (
         <div style={{ backgroundColor: '#F0FDF4', borderRadius: 'var(--radius-md)', border: '1.5px solid #86EFAC', padding: '14px 16px' }}>
           <div style={{ fontSize: '14px', fontWeight: 800, color: '#166534', marginBottom: '8px' }}>✅ Admin hoàn thành ca làm <span style={{ fontWeight: 400, fontSize: '12px', color: '#4D7C0F' }}>(ca KHÓA / thiếu check-in-out — bấm là đủ công + đồng bộ lương ngay)</span></div>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
@@ -10344,6 +10345,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </button>
           </div>
         </div>
+        )}
 
         {gpsReverify && (
           <div style={{ backgroundColor: (gpsReverify.offenders || 0) > 0 ? '#FEF2F2' : '#ECFDF5', border: (gpsReverify.offenders || 0) > 0 ? '1.5px solid #EF4444' : '1px solid #A7F3D0', borderRadius: 'var(--radius-md)', padding: '12px 16px' }}>
@@ -10853,7 +10855,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <button className="btn-secondary" style={{ fontSize: '12px', padding: '6px 12px' }} onClick={loadAdjustments}>Tải lại</button>
           </div>
         </div>
-        {/* Admin hoàn thành ca làm: chọn ngày + nhân viên + ca -> ghi đủ CHECK_IN/OUT, đồng bộ lương */}
+        {/* Admin hoàn thành ca làm: chọn ngày + nhân viên + ca -> ghi đủ CHECK_IN/OUT, đồng bộ lương (CHỈ ADMIN) */}
+        {currentUser?.role === 'ADMIN' && (
         <div style={{ backgroundColor: '#F0FDF4', borderRadius: 'var(--radius-md)', border: '1.5px solid #86EFAC', padding: '14px 16px' }}>
           <div style={{ fontSize: '14px', fontWeight: 800, color: '#166534', marginBottom: '8px' }}>✅ Admin hoàn thành ca làm <span style={{ fontWeight: 400, fontSize: '12px', color: '#4D7C0F' }}>(ca KHÓA / thiếu check-in-out — bấm là đủ công + đồng bộ lương ngay)</span></div>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
@@ -10908,6 +10911,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </button>
           </div>
         </div>
+        )}
         <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
             <thead>
