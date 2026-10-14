@@ -3535,7 +3535,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         const runs = await (adapter as any).listPayrollRuns?.().catch(() => []);
         return (runs || []).find((r: any) =>
           String((r as any)?.period || '').slice(0, 7) === period &&
-          ['PUBLISHED', 'PAID'].includes(String((r as any)?.status || '').toUpperCase())
+          ['PUBLISHED', 'PAID'].includes(String((r as any)?.status || '').toUpperCase()))
           || null;
       };
       // 1) Bảng live tuần hiện tại.
