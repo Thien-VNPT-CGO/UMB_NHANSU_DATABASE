@@ -10324,6 +10324,24 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <button className="btn-primary" style={{ fontSize: '13px', padding: '8px 18px', backgroundColor: '#16A34A' }} disabled={compBusy || !compAssignmentId} onClick={submitCompleteShift}>
               {compBusy ? '⏳ Đang ghi...' : '✅ Hoàn thành ca'}
             </button>
+            <button className="btn-secondary" style={{ fontSize: '13px', padding: '8px 14px', color: '#DC2626', fontWeight: 800 }} disabled={compBusy || !compAssignmentId} title="Xóa ca đang chọn khỏi hệ thống (kể cả ca không hiện trên lưới tuần). Ca có điểm danh thật thì server chặn." onClick={async () => {
+              if (!compAssignmentId || compBusy) return;
+              if (!window.confirm('Xóa ca này khỏi hệ thống? Ca biến mất khỏi Lịch, Chấm công và Cổng NV ngay. Ca đã có điểm danh thật thì KHÔNG xóa được.')) return;
+              setCompBusy(true);
+              try {
+                await apiRequest(`/schedules/${encodeURIComponent(compAssignmentId)}`, { method: 'DELETE' });
+                showToast('🗑 Đã xóa ca — đồng bộ realtime.');
+                setCompAssignmentId('');
+                await loadCompShifts(compEmpId, compDate);
+                if (onRefreshData) await onRefreshData();
+              } catch (e: any) {
+                showToast(e?.message || 'Lỗi khi xóa ca!');
+              } finally {
+                setCompBusy(false);
+              }
+            }}>
+              🗑 Xóa
+            </button>
           </div>
         </div>
 
@@ -10869,6 +10887,24 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </label>
             <button className="btn-primary" style={{ fontSize: '13px', padding: '8px 18px', backgroundColor: '#16A34A' }} disabled={compBusy || !compAssignmentId} onClick={submitCompleteShift}>
               {compBusy ? '⏳ Đang ghi...' : '✅ Hoàn thành ca'}
+            </button>
+            <button className="btn-secondary" style={{ fontSize: '13px', padding: '8px 14px', color: '#DC2626', fontWeight: 800 }} disabled={compBusy || !compAssignmentId} title="Xóa ca đang chọn khỏi hệ thống (kể cả ca không hiện trên lưới tuần). Ca có điểm danh thật thì server chặn." onClick={async () => {
+              if (!compAssignmentId || compBusy) return;
+              if (!window.confirm('Xóa ca này khỏi hệ thống? Ca biến mất khỏi Lịch, Chấm công và Cổng NV ngay. Ca đã có điểm danh thật thì KHÔNG xóa được.')) return;
+              setCompBusy(true);
+              try {
+                await apiRequest(`/schedules/${encodeURIComponent(compAssignmentId)}`, { method: 'DELETE' });
+                showToast('🗑 Đã xóa ca — đồng bộ realtime.');
+                setCompAssignmentId('');
+                await loadCompShifts(compEmpId, compDate);
+                if (onRefreshData) await onRefreshData();
+              } catch (e: any) {
+                showToast(e?.message || 'Lỗi khi xóa ca!');
+              } finally {
+                setCompBusy(false);
+              }
+            }}>
+              🗑 Xóa
             </button>
           </div>
         </div>
