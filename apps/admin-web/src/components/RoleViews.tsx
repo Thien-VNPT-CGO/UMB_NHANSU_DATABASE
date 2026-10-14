@@ -10047,6 +10047,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }
 
   if (activeTab === 'hr-attendance' || activeTab === 'operations') {
+    // Tab Chấm công đã khóa với tài khoản Admin (chỉ HR) — chặn cả truy cập trực tiếp.
+    if (currentUser?.role === 'ADMIN') return null;
     // Lưới tuần Mon–CN như lịch làm việc: 1 ô = các ca trong ngày kèm đúng trạng thái.
     // Dùng CHUNG tuần với tab Lịch (scheduleWeekOffset) để 2 tab luôn cùng tuần.
     const attMon = mondayIsoOfOffset(scheduleWeekOffset);

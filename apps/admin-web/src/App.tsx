@@ -85,15 +85,14 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'hr-leave', label: '6. Nghỉ OFF', icon: Clock },
     { id: 'hr-swap', label: '7. Đổi ca', icon: RefreshCw },
     { id: 'hr-support', label: '8. Chuyển ca hỗ trợ', icon: Send },
-    { id: 'hr-attendance', label: '9. Chấm công', icon: CheckCircle },
-    { id: 'hr-adjustments', label: '10. Bổ sung công', icon: FileText },
-    { id: 'notify', label: '11. Thông báo', icon: Bell },
-    { id: 'policies', label: '12. Chính sách', icon: Sliders },
-    { id: 'integrations', label: '13. Tích hợp & Đồng bộ', icon: Database },
-    { id: 'maintenance', label: '14. Bảo trì', icon: Activity },
-    { id: 'settings', label: '15. Cài đặt', icon: Settings },
-    { id: 'audit', label: '16. Nhật ký Audit', icon: FileCheck },
-    { id: 'backup', label: '17. Sao lưu & Phục hồi', icon: HardDrive },
+    { id: 'hr-adjustments', label: '9. Bổ sung công', icon: FileText },
+    { id: 'notify', label: '10. Thông báo', icon: Bell },
+    { id: 'policies', label: '11. Chính sách', icon: Sliders },
+    { id: 'integrations', label: '12. Tích hợp & Đồng bộ', icon: Database },
+    { id: 'maintenance', label: '13. Bảo trì', icon: Activity },
+    { id: 'settings', label: '14. Cài đặt', icon: Settings },
+    { id: 'audit', label: '15. Nhật ký Audit', icon: FileCheck },
+    { id: 'backup', label: '16. Sao lưu & Phục hồi', icon: HardDrive },
   ],
   HR: [
     { id: 'hr-dashboard', label: '1. Dashboard HR', icon: Building2 },
@@ -165,6 +164,8 @@ export const ADMIN_TAB_ALIASES: Record<string, string> = {
   system: 'policies',
   safety: 'audit',
   notifications: 'notify',
+  // Tab Chấm công đã khóa với Admin — tab cũ đã lưu chuyển về Bổ sung công.
+  'hr-attendance': 'hr-adjustments',
 };
 
 export function resolveAdminTab(role: string | undefined, tabId: string): string {
@@ -318,7 +319,7 @@ export function App() {
     const savedTab = localStorage.getItem('ubm_active_tab');
     // Tab gộp cũ (operations/system/safety) -> tab tách mới tương ứng.
     if (savedTab) {
-      const legacy: Record<string, string> = { operations: 'branches', system: 'policies', safety: 'audit' };
+      const legacy: Record<string, string> = { operations: 'branches', system: 'policies', safety: 'audit', 'hr-attendance': 'hr-adjustments' };
       return legacy[savedTab] || savedTab;
     }
     try {
