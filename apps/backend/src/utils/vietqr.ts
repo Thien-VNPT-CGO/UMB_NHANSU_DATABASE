@@ -54,7 +54,31 @@ export function parseVietQRPartial(payload: string): {
   };
 }
 
-/** Giải mã ảnh QR từ dataURL (jpeg) -> payload text. Không đọc được -> null. */
+/** Cắt vùng trung tâm (QR thường nằm giữa thẻ) ở độ phân giải gốc. */
+function cropCenter(
+  src: Buffer, srcW: number, srcH: number, frac: number
+): { data: Uint8ClampedArray; w: number; h: number } {
+  const w = Math.max(1, Math.floor(srcW * frac));
+  const h = Math.max(1, Math.floor(srcH * frac));
+  const x0 = Math.floor((srcW - w) / 2);
+  const y0 = Math.floor((srcH - h) / 2);
+  const out = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const si = ((y0 + y) * srcW + (x0 + x)) * 4;
+      const di = (y * w + x) * 4;
+      out[di] = src[si];
+      out[di + 1] = src[si + 1];
+      out[di + 2] = src[si + 2];
+      out[di + 3] = src[si + 3];
+    }
+  }
+  return { data: out, w, h };
+}
+
+/** Giải mã ảnh QR từ dataURL (jpeg) -> payload text. Thử toàn ảnh + nửa cỡ +
+ *  cắt vùng trung tâm (ngang khả năng đọc của app) — ngang app mới rà đúng được
+ *  QR dày. Không đọc được -> null. */
 export function decodeQrDataUrl(dataUrl: string): string | null {
   try {
     const m = String(dataUrl || '').match(/^data:image\/(jpeg|jpg|png);base64,(.+)$/);
@@ -64,7 +88,11 @@ export function decodeQrDataUrl(dataUrl: string): string | null {
     const attempts: { data: Uint8ClampedArray; w: number; h: number }[] = [];
     try {
       const full = jpeg.decode(buf, { maxMemoryUsageInMB: 512 });
-      attempts.push({ data: new Uint8ClampedArray(full.data), w: full.width, h: full.height });
+      const raw = Buffer.from(full.data);
+      attempts.push({ data: new Uint8ClampedArray(raw), w: full.width, h: full.height });
+      for (const frac of [0.8, 0.62]) {
+        attempts.push(cropCenter(raw, full.width, full.height, frac));
+      }
       // Thử thêm bản nửa cỡ cho QR dày/mờ.
       if (full.width > 500 || full.height > 500) {
         const sw = Math.max(1, Math.floor(full.width / 2));
@@ -74,10 +102,10 @@ export function decodeQrDataUrl(dataUrl: string): string | null {
           for (let x = 0; x < sw; x++) {
             const si = (y * 2 * full.width + x * 2) * 4;
             const di = (y * sw + x) * 4;
-            half[di] = full.data[si];
-            half[di + 1] = full.data[si + 1];
-            half[di + 2] = full.data[si + 2];
-            half[di + 3] = full.data[si + 3];
+            half[di] = raw[si];
+            half[di + 1] = raw[si + 1];
+            half[di + 2] = raw[si + 2];
+            half[di + 3] = raw[si + 3];
           }
         }
         attempts.push({ data: half, w: sw, h: sh });

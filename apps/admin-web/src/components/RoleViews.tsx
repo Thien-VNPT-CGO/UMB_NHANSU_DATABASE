@@ -1390,16 +1390,18 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [bankQrZoom, setBankQrZoom] = useState<any | null>(null);
 
   const toVietQRBankCode = (bankName: string): string => {
+    // 'sacombank' chứa 'mb' nên phải khớp TRƯỚC luật mb (trước đây rớt nhầm sang
+    // mbbank khiến ảnh VietQR đối chiếu sai ngân hàng).
     const s = (bankName || '').trim().toLowerCase();
     if (s.includes('vietcom') || s === 'vcb') return 'vietcombank';
     if (s.includes('techcom') || s === 'tcb') return 'techcombank';
+    if (s.includes('sacom') || s.includes('stb')) return 'sacombank';
     if (s.includes('mb') || s.includes('quân đội')) return 'mbbank';
     if (s.includes('bidv')) return 'bidv';
     if (s.includes('vietin') || s === 'ctg') return 'vietinbank';
     if (s.includes('acb') || s.includes('á châu')) return 'acb';
     if (s.includes('vp') || s.includes('vpbank')) return 'vpbank';
     if (s.includes('tp') || s.includes('tpbank') || s.includes('tiên phong')) return 'tpbank';
-    if (s.includes('sacom') || s.includes('stb')) return 'sacombank';
     if (s.includes('hdbank') || s.includes('hdb')) return 'hdbank';
     if (s.includes('vib')) return 'vib';
     if (s.includes('shb')) return 'shb';
