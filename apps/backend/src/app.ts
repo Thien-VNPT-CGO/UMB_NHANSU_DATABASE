@@ -3438,7 +3438,24 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         return res.json(events);
       }
       const settled = await Promise.all(days.map(dt => attendanceService.getEmployeeAttendance(employeeId, dt).catch(() => [])));
-      res.json(settled.flat());
+      const live = settled.flat();
+      // Gộp sự kiện tuần cũ từ kho LUUTRU (đã archive khỏi realtime): nếu không,
+      // tab Công tháng của NV thiếu check-in cũ -> ngày cũ hiện vắng oan.
+      try {
+        const syncService = (adapter as any).syncService;
+        if (syncService?.getArchivedAttendanceEvents) {
+          const archived = await syncService.getArchivedAttendanceEvents(days[0], days[days.length - 1]).catch(() => []);
+          const seen = new Set((live || []).map((e: any) => String((e as any)?.event_id || '')));
+          for (const e of archived || []) {
+            if (String((e as any)?.employee_id || '') !== String(employeeId)) continue;
+            const id = String((e as any)?.event_id || '');
+            if (id && seen.has(id)) continue;
+            if (id) seen.add(id);
+            live.push(e);
+          }
+        }
+      } catch { /* giữ dữ liệu live */ }
+      res.json(live);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

@@ -217,8 +217,8 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   const absenteeTickSafe = async () => {
     try {
       const r = await services.attendanceService.markAbsentees(new Date(), 30);
-      if (r.marked > 0) {
-        console.log(`[absentee] Đã ghi vắng ${r.marked} ca (quét ${r.checked}).`);
+      if (r.marked > 0 || (r as any).cleaned > 0) {
+        console.log(`[absentee] Đã ghi vắng ${r.marked} ca + dọn ${(r as any).cleaned || 0} vắng oan (quét ${r.checked}).`);
         try {
           io.emit('data:updated', { entity: 'attendance', data: { action: 'absent-marked', ...r }, timestamp: new Date().toISOString() });
         } catch { /* non-fatal */ }

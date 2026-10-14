@@ -511,13 +511,38 @@ export class AttendanceService {
    * CHECK_IN/ABSENT nào -> tạo bản ghi ABSENT làm chứng cứ (đồng bộ Sheets như
    * mọi sự kiện khác). Idempotent theo request_id nên tick chồng không dup.
    */
-  async markAbsentees(now: Date = new Date(), graceMinutes = 30): Promise<{ checked: number; marked: number }> {
+  async markAbsentees(now: Date = new Date(), graceMinutes = 30): Promise<{ checked: number; marked: number; cleaned: number }> {
     const todayStr = now.toISOString().split('T')[0];
     const branches = await this.repo.getBranches().catch(() => []);
     const branchIds = (branches || []).map((b: any) => b.id || b.branch_id).filter(Boolean);
     const scopes = branchIds.length > 0 ? branchIds : ['*'];
     let checked = 0;
     let marked = 0;
+    let cleaned = 0;
+    // Kho lưu trữ tuần cũ (sự kiện đã archive khỏi realtime): tra 1 lần để không
+    // đánh vắng oan ca NV đã điểm danh + dọn bản vắng oan đã ghi nhầm trước đây.
+    const archLegsByAssign = new Map<string, Set<string>>();
+    const archEvtsByEmpDay = new Map<string, any[]>();
+    try {
+      const sync = (this.repo as any)?.syncService;
+      if (sync?.getArchivedAttendanceEvents) {
+        const archived = await sync.getArchivedAttendanceEvents('2000-01-01', todayStr).catch(() => []);
+        for (const e of archived || []) {
+          const aid = String((e as any)?.assignment_id || '');
+          if (aid) {
+            if (!archLegsByAssign.has(aid)) archLegsByAssign.set(aid, new Set());
+            archLegsByAssign.get(aid)!.add(String((e as any)?.type || ''));
+          }
+          const t = new Date((e as any)?.client_time || '').getTime();
+          if (Number.isFinite(t)) {
+            const day = new Date(t + 7 * 3_600_000).toISOString().slice(0, 10);
+            const k = `${String((e as any)?.employee_id || '')}|${day}`;
+            if (!archEvtsByEmpDay.has(k)) archEvtsByEmpDay.set(k, []);
+            archEvtsByEmpDay.get(k)!.push(e);
+          }
+        }
+      }
+    } catch { /* thiếu kho thì xét live như cũ */ }
     // Map ca live toàn hệ thống theo NV+ngày (1 lần): NV có ca 2 chi nhánh cùng
     // ngày thì check-in ca CN kia vẫn tính "đã gắn ca live".
     const crossBranchLive = new Map<string, Set<string>>();
@@ -559,16 +584,39 @@ export class AttendanceService {
         if (!Number.isFinite(endMs) || now.getTime() - endMs < graceMinutes * 60000) continue;
         checked++;
         const events = await this.repo.getAttendanceEvents((s as any).employee_id, (s as any).date).catch(() => []);
-        const mine = (events || []).filter(
-          (e: any) => e.assignment_id === (s as any).assignment_id && (e.type === 'CHECK_IN' || e.type === 'ABSENT')
+        const sid = String((s as any).assignment_id || '');
+        const dayKey = `${(s as any)?.employee_id}|${String((s as any)?.date || '').slice(0, 10)}`;
+        const archLegs = archLegsByAssign.get(sid) || new Set<string>();
+        const liveIn = (events || []).some(
+          (e: any) => String((e as any)?.assignment_id || '') === sid && String((e as any)?.type || '') === 'CHECK_IN'
         );
-        if (mine.length > 0) continue;
+        const liveAbs = (events || []).filter(
+          (e: any) => String((e as any)?.assignment_id || '') === sid && String((e as any)?.type || '') === 'ABSENT'
+        );
+        // Dọn vắng oan đã ghi nhầm trước đây: ca có check-in (live/kho) mà vẫn còn
+        // bản VẮNG -> xóa để lưới + đối soát hết báo vắng oan.
+        if (liveAbs.length > 0 && (liveIn || archLegs.has('CHECK_IN'))) {
+          for (const w of liveAbs) {
+            try {
+              if (await this.repo.deleteAttendanceEvent((w as any).event_id)) {
+                cleaned++;
+                (w as any)._deleted = true;
+              }
+            } catch { /* phiếu khác xử tiếp */ }
+          }
+        }
+        // Còn chân điểm danh/vắng (live/kho) -> không đánh vắng thêm.
+        if (liveIn || archLegs.has('CHECK_IN')) continue;
+        const absLeft = liveAbs.some((w: any) => !(w as any)._deleted) || archLegs.has('ABSENT');
+        if (absLeft) continue;
         // NV đã check-in cùng ngày (dù phiếu gắn ca khác do HR xếp lại lịch sau
-        // đó) thì KHÔNG đánh vắng — giữ công, HR đối soát lại liên kết sau.
-        const k = `${(s as any)?.employee_id}|${String((s as any)?.date || '').slice(0, 10)}`;
+        // đó, kể cả bản đã archive) thì KHÔNG đánh vắng — giữ công, HR đối soát
+        // lại liên kết sau.
+        const k = dayKey;
         const liveIds = liveByEmpDay.get(k) || new Set<string>();
         const deadIds = cancelledByEmpDay.get(k) || new Set<string>();
-        const orphanCheckIn = (events || []).some((e: any) => {
+        const dayEvts = [...(events || []), ...(archEvtsByEmpDay.get(k) || [])];
+        const orphanCheckIn = dayEvts.some((e: any) => {
           if (String((e as any)?.type || '') !== 'CHECK_IN') return false;
           const aid = String((e as any)?.assignment_id || '');
           if (!aid) return true;
@@ -610,7 +658,7 @@ export class AttendanceService {
         marked++;
       }
     }
-    return { checked, marked };
+    return { checked, marked, cleaned };
   }
 
   // --- Adjustments ---
