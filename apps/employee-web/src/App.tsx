@@ -500,27 +500,38 @@ export function App() {
   const [schedWeekSel, setSchedWeekSel] = useState<SchedWeek>('THIS');
   const schedWeekTouched = useRef(false);
   const [schedRefresh, setSchedRefresh] = useState(0);
-  // Ca đầu tuần->hôm qua cho tab Dữ Liệu Công tuần (myShifts chỉ từ hôm nay trở
-  // đi). Ca quá khứ HR vẫn có thể xóa/sửa (không bất biến) nên tải lại theo
-  // realtime lịch (schedRefresh) chứ không chỉ khi mở tab — nếu không ca đã xóa
-  // vẫn hiện trên Công trong khi 2 tab admin đã trống.
-  const [weekPastShifts, setWeekPastShifts] = useState<any[]>([]);
+  // Tab Dữ Liệu Công theo THÁNG (chu kỳ lương): tải ca + sự kiện cả tháng đang xem.
+  // Ca quá khứ HR vẫn có thể xóa/sửa (không bất biến) nên tải lại theo realtime
+  // lịch (schedRefresh) chứ không chỉ khi mở tab — nếu không ca đã xóa vẫn hiện
+  // trong khi 2 tab admin đã trống.
+  const curVnMonth = () => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7);
+  const [tsMonth, setTsMonth] = useState<string>(curVnMonth());
+  const [monthShifts, setMonthShifts] = useState<any[]>([]);
+  const [monthEvents, setMonthEvents] = useState<any[]>([]);
+  const shiftTsMonth = (delta: number) => {
+    const [y, m] = tsMonth.split('-').map(Number);
+    const d = new Date(Date.UTC(y, m - 1 + delta, 1));
+    setTsMonth(d.toISOString().slice(0, 7));
+  };
   useEffect(() => {
     if (activeTab !== 'timesheet') return;
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(tsMonth)) return;
     (async () => {
       try {
-        const nowVn = new Date(Date.now() + 7 * 3_600_000);
-        const off = (nowVn.getUTCDay() + 6) % 7;
-        const mon = new Date(nowVn);
-        mon.setUTCDate(mon.getUTCDate() - off);
-        const fromD = mon.toISOString().slice(0, 10);
-        const toD = new Date(Date.now() + 7 * 3_600_000).toISOString().split('T')[0];
-        const list = await apiRequest(`/me/schedule?fromDate=${fromD}&toDate=${toD}`);
-        setWeekPastShifts(Array.isArray(list) ? list : []);
+        const [y, m] = tsMonth.split('-').map(Number);
+        const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+        const fromD = `${tsMonth}-01`;
+        const toD = `${tsMonth}-${String(lastDay).padStart(2, '0')}`;
+        const [shifts, evts] = await Promise.all([
+          apiRequest(`/me/schedule?fromDate=${fromD}&toDate=${toD}`).catch(() => []),
+          apiRequest(`/me/attendance?fromDate=${fromD}&toDate=${toD}`).catch(() => []),
+        ]);
+        if (Array.isArray(shifts)) setMonthShifts(shifts);
+        if (Array.isArray(evts)) setMonthEvents(evts);
       } catch { /* offline: giữ danh sách cũ */ }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, schedRefresh]);
+  }, [activeTab, tsMonth, schedRefresh]);
 
   // Official Swap Form Type: 1 = Trao doi A <-> B, 2 = Nho lam thay B lam thay A
   const [swapFormType, setSwapFormType] = useState<1 | 2>(1);
@@ -5025,9 +5036,16 @@ export function App() {
         {activeTab === 'timesheet' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             <div className="card">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
                 <h3 style={{ fontSize: '15px', fontWeight: 800 }}>5. Dữ Liệu Công Của Tôi</h3>
-                <span className="badge badge-brand">Tuần này (T2–CN)</span>
+                <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                  <button className="btn-secondary" style={{ fontSize: '12px', padding: '5px 10px' }} onClick={() => shiftTsMonth(-1)}>◀</button>
+                  <span className="badge badge-brand">Tháng {tsMonth.slice(5, 7)}/{tsMonth.slice(0, 4)}</span>
+                  <button className="btn-secondary" style={{ fontSize: '12px', padding: '5px 10px' }} onClick={() => shiftTsMonth(1)}>▶</button>
+                  {tsMonth !== curVnMonth() && (
+                    <button className="btn-secondary" style={{ fontSize: '12px', padding: '5px 10px' }} onClick={() => setTsMonth(curVnMonth())}>Tháng này</button>
+                  )}
+                </div>
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -5039,17 +5057,12 @@ export function App() {
                     return new Date(t + 7 * 3_600_000).toISOString().slice(0, 10);
                   };
                   const todayVN = vnDay(new Date().toISOString());
-                  // 7 ngày T2–CN của tuần hiện tại (luôn hiện đủ tuần)
-                  const nowVn = new Date(Date.now() + 7 * 3_600_000);
-                  const off = (nowVn.getUTCDay() + 6) % 7;
-                  const monDt = new Date(nowVn);
-                  monDt.setUTCDate(monDt.getUTCDate() - off);
-                  const monStr = monDt.toISOString().slice(0, 10);
-                  const weekDays: string[] = [];
-                  for (let i = 0; i < 7; i++) {
-                    const d = new Date(monDt);
-                    d.setUTCDate(d.getUTCDate() + i);
-                    weekDays.push(d.toISOString().slice(0, 10));
+                  // Mọi ngày trong tháng đang xem (chu kỳ lương tháng)
+                  const [tsY, tsM] = tsMonth.split('-').map(Number);
+                  const tsLastDay = new Date(Date.UTC(tsY, tsM, 0)).getUTCDate();
+                  const monthDays: string[] = [];
+                  for (let i = 1; i <= tsLastDay; i++) {
+                    monthDays.push(`${tsMonth}-${String(i).padStart(2, '0')}`);
                   }
                   const fmtT = (t?: string) => t ? new Date(t).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }) : '--:--';
                   const fmtHM = (t?: string) => {
@@ -5063,10 +5076,10 @@ export function App() {
                     const d = new Date(`${iso}T00:00:00Z`).getUTCDay();
                     return d === 0 ? 'CN' : `T${d + 1}`;
                   };
-                  // Gộp ca đầu tuần + ca hiện tại/tương lai, khử trùng
+                  // Gộp ca cả tháng + ca realtime mới nhất, khử trùng theo assignment
                   const seenAssign = new Set<string>();
                   const allShifts: any[] = [];
-                  for (const s of [...(weekPastShifts || []), ...(myShifts || [])]) {
+                  for (const s of [...(monthShifts || []), ...(myShifts || [])]) {
                     const k = (s as any).assignment_id || `${(s as any).date}_${(s as any).shift_code}`;
                     if (seenAssign.has(k)) continue;
                     seenAssign.add(k);
@@ -5075,20 +5088,41 @@ export function App() {
                   const shiftDays = new Map<string, any[]>();
                   for (const s of allShifts) {
                     const d = String((s as any).date || '').slice(0, 10);
-                    if (!d || d < monStr) continue;
+                    if (!d || !d.startsWith(tsMonth)) continue;
                     if (!shiftDays.has(d)) shiftDays.set(d, []);
                     shiftDays.get(d)!.push(s);
                   }
+                  // Gộp sự kiện tháng đã tải + lịch sử realtime mới nhất (realtime khi
+                  // vừa check-in/out: loadEmployeeData làm tươi myAttendanceHistory).
+                  const seenEvt = new Set<string>();
+                  const allEvts: any[] = [];
+                  for (const e of [...(monthEvents || []), ...(myAttendanceHistory || [])]) {
+                    const k = String((e as any)?.event_id || '');
+                    if (k) {
+                      if (seenEvt.has(k)) continue;
+                      seenEvt.add(k);
+                    }
+                    allEvts.push(e);
+                  }
                   const evtDays = new Map<string, any[]>();
-                  for (const e of (myAttendanceHistory || [])) {
+                  for (const e of allEvts) {
                     const d = vnDay((e as any).client_time);
-                    if (!d || d < monStr) continue;
+                    if (!d || !d.startsWith(tsMonth)) continue;
                     if (!evtDays.has(d)) evtDays.set(d, []);
                     evtDays.get(d)!.push(e);
                   }
-                  // Chuẩn bị dữ liệu từng ca + tổng hợp tuần
+                  // Chuẩn bị dữ liệu từng ca + tổng hợp tháng
                   let cDone = 0, cWorking = 0, cMissingOut = 0, cAbsent = 0, cNoCheck = 0, cUpcoming = 0, cCancelled = 0;
                   let fineTotal = 0;
+                  let payTotal = 0;
+                  const hourlyRate = Number((employee as any)?.current_rate_per_hour) || 0;
+                  const shiftHoursOf = (code?: string) => code === 'CA_2' ? 6 : 5;
+                  const shiftNetOf = (sh: any, ci: any) => {
+                    const gross = shiftHoursOf((sh as any)?.shift_code) * hourlyRate;
+                    const tier = String(ci?.fine_tier || 'NONE');
+                    if (tier === 'FULL_SHIFT') return 0;
+                    return Math.max(0, gross - (Number(ci?.fine_amount) || 0));
+                  };
                   const fineTextOf = (ev: any) => {
                     const tier = String(ev?.fine_tier || 'NONE');
                     const amt = Number(ev?.fine_amount) || 0;
@@ -5099,7 +5133,8 @@ export function App() {
                     if (amt > 0) return `Phạt ${money(amt)}đ`;
                     return tier !== 'NONE' ? `Phạt (${tier})` : '';
                   };
-                  const dayBlocks = weekDays.map((date) => {
+                  // Chỉ hiển thị những ngày CÓ ca làm việc trong tháng.
+                  const dayBlocks = monthDays.map((date) => {
                     const [y, m, dd] = date.split('-');
                     const dShifts = (shiftDays.get(date) || []).filter((s: any) => (s as any).status !== 'CANCELLED');
                     const cancelledShifts = (shiftDays.get(date) || []).filter((s: any) => (s as any).status === 'CANCELLED');
@@ -5146,6 +5181,7 @@ export function App() {
                       let badge: string, bg: string, fg: string, border: string;
                       if (ci && co) {
                         cDone++;
+                        payTotal += shiftNetOf(sh, ci);
                         badge = '✓ Đủ công'; bg = '#ECFDF5'; fg = '#047857'; border = '1px solid #A7F3D0';
                       } else if (ci && !co && (pastEnd || isPastDay)) {
                         cMissingOut++;
@@ -5197,7 +5233,7 @@ export function App() {
                     });
                     for (const c of cancelledShifts) cCancelled++;
                     return { date, y, m, dd, rows, orphans, cancelledShifts };
-                  });
+                  }).filter((blk: any) => (blk.rows || []).length > 0);
                   const sumBox = (label: string, val: string, color: string) => (
                     <div style={{ flex: 1, minWidth: '70px', backgroundColor: '#FAFAFA', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '6px 4px', textAlign: 'center' }}>
                       <div style={{ fontSize: '15px', fontWeight: 800, color }}>{val}</div>
@@ -5211,8 +5247,17 @@ export function App() {
                         {sumBox('Đang làm', String(cWorking), '#92400E')}
                         {sumBox('Thiếu check-out', String(cMissingOut), '#9A3412')}
                         {sumBox('Vắng / Không điểm danh', String(cAbsent + cNoCheck), '#991B1B')}
-                        {sumBox('Tổng phạt tuần', fineTotal > 0 ? `${money(fineTotal)}đ` : '0đ', '#991B1B')}
+                        {sumBox('Tổng phạt tháng', fineTotal > 0 ? `${money(fineTotal)}đ` : '0đ', '#991B1B')}
+                        {sumBox('Lương tạm tính', `${money(Math.round(payTotal))}đ`, '#065F46')}
                       </div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                        {dayBlocks.length} ngày có ca trong tháng {tsMonth.slice(5, 7)}/{tsMonth.slice(0, 4)} • Lương tạm tính theo đơn giá hiện tại, Finance chốt chính thức ở kỳ lương.
+                      </div>
+                      {dayBlocks.length === 0 && (
+                        <div style={{ fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center', padding: '20px' }}>
+                          Tháng này chưa có ca làm việc nào.
+                        </div>
+                      )}
                       {dayBlocks.map((blk: any) => (
                         <div key={blk.date} style={{ padding: '10px 12px', backgroundColor: blk.date === todayVN ? '#FFFBEB' : '#FAFAFA', borderRadius: 'var(--radius-sm)', border: blk.date === todayVN ? '1.5px solid #F59E0B' : '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                           <div style={{ fontWeight: 800, fontSize: '13px' }}>{wdName(blk.date)} • {blk.dd}/{blk.m}/{blk.y}{blk.date === todayVN ? ' (hôm nay)' : ''}</div>
