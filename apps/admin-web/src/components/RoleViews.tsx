@@ -8561,7 +8561,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '12px', minWidth: '1180px' }}>
             <thead>
               <tr style={{ textAlign: 'center' }}>
-                <th style={{ padding: '12px 16px', textAlign: 'left', minWidth: '200px', backgroundColor: 'var(--bg)', position: 'sticky', left: 0, zIndex: 3, boxShadow: '2px 0 6px rgba(15,23,42,0.06)', borderBottom: '1px solid var(--border)' }}>NHÂN VIÊN / VAI TRÒ</th>
+                <th style={{ padding: '12px 16px', textAlign: 'left', minWidth: '200px', backgroundColor: 'var(--bg)', position: 'sticky', left: 0, top: 0, zIndex: 4, boxShadow: '2px 2px 6px rgba(15,23,42,0.06)', borderBottom: '1px solid var(--border)' }}>NHÂN VIÊN / VAI TRÒ</th>
                 {weekDays.map((day) => {
                   const isWeekend = day.code === 'T7' || day.code === 'CN';
                   if (day.isToday) {
@@ -8575,6 +8575,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           borderLeft: '2px solid #F87171',
                           borderRight: '2px solid #F87171',
                           borderBottom: '1px solid var(--border)',
+                          position: 'sticky',
+                          top: 0,
+                          zIndex: 2,
                         }}
                       >
                         <div style={{ color: '#DC2626', fontWeight: 800 }}>{day.name} (HÔM NAY {day.dateStr})</div>
@@ -8595,7 +8598,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     );
                   }
                   return (
-                    <th key={day.key} style={{ padding: '10px 10px', minWidth: '144px', backgroundColor: isWeekend ? '#F8FAFC' : 'var(--bg)', borderBottom: '1px solid var(--border)' }}>
+                    <th key={day.key} style={{ padding: '10px 10px', minWidth: '144px', backgroundColor: isWeekend ? '#F8FAFC' : 'var(--bg)', borderBottom: '1px solid var(--border)', position: 'sticky', top: 0, zIndex: 2 }}>
                       <div style={{ fontWeight: 800, color: isWeekend ? '#475569' : 'var(--text)' }}>{day.name}</div>
                       <div style={{ display: 'inline-block', marginTop: '3px', fontSize: '11px', fontWeight: 700, color: isWeekend ? '#64748B' : 'var(--brand)', backgroundColor: '#FFF', border: '1px solid var(--border)', borderRadius: '999px', padding: '1px 10px' }}>
                         {day.dateStr}
