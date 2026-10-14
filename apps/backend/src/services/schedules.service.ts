@@ -92,11 +92,14 @@ export class SchedulesService {
    * biến mất khỏi lưới + Bảng Chấm Công + Cổng NV ngay (mọi nơi đều lọc CANCELLED).
    *  - Ca đã có điểm danh THẬT (CHECK_IN/CHECK_OUT gắn assignment) thì CHẶN —
    *    giữ làm bằng chứng công/lương, không được xóa.
+   *  - force=true (chỉ ADMIN/HR, nút "Xóa ca hoàn thành"): gỡ KÈM các bản ghi
+   *    điểm danh gắn ca (kẻo engine orphan gộp nhầm sang ca khác) + audit đầy đủ.
+   *    Chặn khi kỳ lương tháng đó đã PUBLISHED/PAID (phiếu lương đã phát hành).
    *  - Ca chỉ có bản ghi VẮNG tự động (hệ thống tự ghi, NV chưa từng điểm danh)
    *    thì CHO XÓA + dọn luôn bản ghi vắng mồ côi để lưới/Sheets không còn dòng vắng ma.
-   *  - STORE chỉ xóa ca đúng chi nhánh mình (chuẩn hóa CN1..CN4).
+   *  - STORE chỉ xóa ca đúng chi nhánh mình (chuẩn hóa CN1..CN4), không được force.
    */
-  async deleteShift(assignmentId: string, actorId: string, branchScope?: string) {
+  async deleteShift(assignmentId: string, actorId: string, branchScope?: string, force = false) {
     return singleWriterQueue.enqueue({
       entityType: 'PHAN_CONG_CA',
       entityId: assignmentId,
@@ -121,25 +124,47 @@ export class SchedulesService {
             ['CHECK_IN', 'CHECK_OUT', 'ABSENT'].includes(String((e as any)?.type || ''))
         );
         const realAtt = linked.filter((e: any) => ['CHECK_IN', 'CHECK_OUT'].includes(String((e as any)?.type || '')));
-        if (realAtt.length > 0) {
+        if (realAtt.length > 0 && !force) {
           throw new Error(
             `SHIFT_HAS_ATTENDANCE: Ca ${String((sh as any).shift_code || '')} ngày ${day} đã có ${realAtt.length} bản ghi điểm danh — KHÔNG được xóa (giữ làm bằng chứng công/lương)!`
           );
         }
+        if (realAtt.length > 0 && force) {
+          // Kỳ lương tháng của ca đã phát hành (PUBLISHED/PAID) thì khóa cứng.
+          try {
+            const runs = await (this.repo as any).listPayrollRuns?.().catch(() => []);
+            const locked = (runs || []).find((r: any) =>
+              String((r as any)?.period || '').slice(0, 7) === day.slice(0, 7) &&
+              ['PUBLISHED', 'PAID'].includes(String((r as any)?.status || '').toUpperCase())
+            );
+            if (locked) {
+              throw new Error(
+                `PAYROLL_LOCKED: Kỳ lương ${day.slice(0, 7)} đã ${String((locked as any)?.status || '')} (phiếu lương đã phát hành) — không được xóa ca hoàn thành trong kỳ này!`
+              );
+            }
+          } catch (e: any) {
+            if (String(e?.message || '').startsWith('PAYROLL_LOCKED')) throw e;
+            /* đọc kỳ lương lỗi thì bỏ qua guard, vẫn cho xóa */
+          }
+        }
         // Chỉ còn vắng tự động: dọn kèm để không còn dòng vắng mồ côi.
+        // force: dọn KÈM cả điểm danh thật (kẻo engine orphan gộp nhầm sang ca khác).
         const autoAbsent = linked.filter((e: any) => String((e as any)?.type || '') === 'ABSENT');
-        for (const a of autoAbsent) {
+        const toDelete = force ? linked : autoAbsent;
+        const deletedEventIds: string[] = [];
+        for (const a of toDelete) {
           await this.repo.deleteAttendanceEvent((a as any).event_id).catch(() => null);
+          deletedEventIds.push(String((a as any).event_id));
         }
         const updated = await this.repo.updateShiftAssignment(assignmentId, { status: 'CANCELLED' });
         await this.repo.recordAuditLog({
           log_id: `LOG_${Date.now()}`,
           actor_id: actorId,
           actor_role: 'HR',
-          action: 'SHIFT_DELETED',
+          action: force ? 'SHIFT_FORCE_DELETED' : 'SHIFT_DELETED',
           target_entity: 'PHAN_CONG_CA',
           target_id: assignmentId,
-          details: `Xóa ca ${String((sh as any).shift_code || '')} ngày ${day} của ${empId} (chi nhánh ${String((sh as any).branch_id || '')}) khỏi lịch tuần${autoAbsent.length > 0 ? ` + dọn ${autoAbsent.length} bản ghi vắng tự động` : ''}`,
+          details: `${force ? '[XÓA CƯỠNG BỨC CA HOÀN THÀNH] ' : ''}Xóa ca ${String((sh as any).shift_code || '')} ngày ${day} của ${empId} (chi nhánh ${String((sh as any).branch_id || '')}) khỏi lịch tuần${toDelete.length > 0 ? ` + dọn ${toDelete.length} bản ghi điểm danh (${deletedEventIds.join(', ')})` : ''}`,
         } as any).catch(() => null);
         if (this.io) {
           this.io.emit('data:updated', {

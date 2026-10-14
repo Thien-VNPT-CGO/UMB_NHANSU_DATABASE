@@ -1916,7 +1916,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   // HR xóa 1 ca làm việc trên lưới tuần (tab Lịch tuần): ca chuyển CANCELLED,
   // biến mất khỏi lưới + Bảng Chấm Công + Cổng NV ngay (realtime). Ca đã có
-  // điểm danh thì chặn (giữ làm bằng chứng công/lương).
+  // điểm danh thì chặn (giữ làm bằng chứng công/lương), trừ ?force=true của
+  // ADMIN/HR trên ca hoàn thành (gỡ kèm điểm danh, chặn khi lương đã phát hành).
   app.delete(
     '/schedules/:id',
     authMiddleware,
@@ -1924,7 +1925,11 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     validate({ params: idParams }),
     async (req: AuthenticatedRequest, res) => {
       try {
-        const result = await schedulesService.deleteShift(req.params.id, req.user!.id, req.user?.branchScope);
+        const force = String((req.query as any)?.force || '').toLowerCase() === 'true';
+        if (force && req.user?.role === 'STORE') {
+          return res.status(403).json({ error: 'STORE_FORCE_FORBIDDEN: Store không được xóa ca hoàn thành! Báo Admin/HR xử lý.' });
+        }
+        const result = await schedulesService.deleteShift(req.params.id, req.user!.id, req.user?.branchScope, force);
         broadcastUpdate('schedules', { action: 'delete-shift', id: req.params.id });
         res.json(result);
       } catch (err: any) {

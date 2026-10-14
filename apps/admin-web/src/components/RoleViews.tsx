@@ -2242,15 +2242,22 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Modal Phát Hành Lịch: BOT tự xếp chỗ trống theo OFF đã đăng ký rồi PUBLISHED.
   const [publishOpen, setPublishOpen] = useState(false);
   // HR xóa 1 ca trên lưới tuần (tab Lịch tuần): xác nhận rồi gọi DELETE, realtime
-  // sang Bảng Chấm Công + Cổng NV. Ca đã điểm danh thì server chặn.
+  // sang Bảng Chấm Công + Cổng NV. Ca chưa điểm danh xóa thường; ca HOÀN THÀNH
+  // (force) xác nhận 2 lần vì gỡ kèm điểm danh + mất công/lương, server chặn khi
+  // lương kỳ đó đã phát hành. Ca đã có điểm danh thì server chặn nếu không force.
   const [schedDelBusy, setSchedDelBusy] = useState('');
-  const handleDeleteShift = async (assignmentId: string, label: string) => {
+  const handleDeleteShift = async (assignmentId: string, label: string, attended = false) => {
     if (!assignmentId || schedDelBusy) return;
     if (!window.confirm(`Xóa ca ${label} khỏi lịch? Ca biến mất khỏi lưới tuần, Bảng Chấm Công và Cổng NV ngay (realtime). Ca đã có điểm danh thì KHÔNG xóa được.`)) return;
+    let force = false;
+    if (attended) {
+      if (!window.confirm(`⚠️ Ca này ĐÃ HOÀN THÀNH (có điểm danh)! Xóa sẽ GỠ KÈM bản ghi điểm danh — mất công và lương ca này, không khôi phục được. Chắc chắn xóa?`)) return;
+      force = true;
+    }
     setSchedDelBusy(assignmentId);
     try {
-      await apiRequest(`/schedules/${encodeURIComponent(assignmentId)}`, { method: 'DELETE' });
-      showToast(`🗑 Đã xóa ca ${label} — đã đồng bộ realtime sang Bảng Chấm Công và Cổng NV.`);
+      await apiRequest(`/schedules/${encodeURIComponent(assignmentId)}${force ? '?force=true' : ''}`, { method: 'DELETE' });
+      showToast(force ? `🗑 Đã xóa ca hoàn thành ${label} (kèm điểm danh) — công/lương đã trừ, đồng bộ realtime.` : `🗑 Đã xóa ca ${label} — đã đồng bộ realtime sang Bảng Chấm Công và Cổng NV.`);
       if (onRefreshData) await onRefreshData();
     } catch (e: any) {
       showToast(e?.message || 'Lỗi khi xóa ca!');
@@ -8801,11 +8808,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                         : sd.note || sd.status}
                                     </div>
                                   )}
-                                  {sd.assignment_id && sd.status !== 'COMPLETED' && sd.status !== 'CHECKED_IN' && (
+                                  {sd.assignment_id && (
                                     <button
                                       disabled={schedDelBusy === sd.assignment_id}
-                                      onClick={() => handleDeleteShift(sd.assignment_id, `${sd.shift || ''} ${sd.shift_date || ''} (${emp.name || ''})`)}
-                                      title="Xóa ca này khỏi lịch — đồng bộ realtime sang Bảng Chấm Công và Cổng NV"
+                                      onClick={() => handleDeleteShift(sd.assignment_id, `${sd.shift || ''} ${sd.shift_date || ''} (${emp.name || ''})`, sd.status === 'COMPLETED' || sd.status === 'CHECKED_IN')}
+                                      title={sd.status === 'COMPLETED' || sd.status === 'CHECKED_IN' ? 'Xóa ca HOÀN THÀNH (gỡ kèm điểm danh, mất công/lương — xác nhận 2 lần)' : 'Xóa ca này khỏi lịch — đồng bộ realtime sang Bảng Chấm Công và Cổng NV'}
                                       style={{
                                         marginTop: '4px',
                                         fontSize: '9px',
@@ -9137,11 +9144,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                               </div>
                             )}
 
-                            {d.assignment_id && !isCompleted && !isCheckedIn && (
+                            {d.assignment_id && (
                               <button
                                 disabled={schedDelBusy === d.assignment_id}
-                                onClick={() => handleDeleteShift(d.assignment_id, `${d.shift || ''} ${day.isoDate} (${emp.name || ''})`)}
-                                title="Xóa ca này khỏi lịch — đồng bộ realtime sang Bảng Chấm Công và Cổng NV"
+                                onClick={() => handleDeleteShift(d.assignment_id, `${d.shift || ''} ${day.isoDate} (${emp.name || ''})`, isCompleted || isCheckedIn)}
+                                title={isCompleted || isCheckedIn ? 'Xóa ca HOÀN THÀNH (gỡ kèm điểm danh, mất công/lương — xác nhận 2 lần)' : 'Xóa ca này khỏi lịch — đồng bộ realtime sang Bảng Chấm Công và Cổng NV'}
                                 style={{
                                   marginTop: '4px',
                                   fontSize: '9.5px',
