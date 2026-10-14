@@ -32,7 +32,7 @@ export interface SheetDefinition {
 export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   {
     title: 'NHAN_VIEN_MASTER',
-    headers: ['ID Nhân Viên', 'Mã NV', 'Họ Và Tên', 'Số Điện Thoại', 'Trạng Thái', 'Nhóm', 'Chi Nhánh', 'Lương Giờ (VNĐ)', 'Ngày Bắt Đầu', 'Phiên Bản', 'Ca Cố Định', 'Ngày Chính Thức', 'Email', 'Giới Tính', 'Ngày Sinh', 'CCCD', 'Avatar (Drive ID)', 'Ngân Hàng', 'Số Tài Khoản', 'Chủ Tài Khoản', 'QR Ngân Hàng (Base64)'],
+    headers: ['ID Nhân Viên', 'Mã NV', 'Họ Và Tên', 'Số Điện Thoại', 'Trạng Thái', 'Nhóm', 'Chi Nhánh', 'Lương Giờ (VNĐ)', 'Ngày Bắt Đầu', 'Phiên Bản', 'Ca Cố Định', 'Ngày Chính Thức', 'Email', 'Giới Tính', 'Ngày Sinh', 'CCCD', 'Avatar (Drive ID)', 'Ngân Hàng', 'Số Tài Khoản', 'Chủ Tài Khoản', 'QR Ngân Hàng (Base64)', 'Điểm Tích Lũy', 'Điểm Đã Dùng'],
   },
   {
     title: 'TAI_KHOAN_NHAN_VIEN',
@@ -614,6 +614,10 @@ export class GoogleSheetsSyncService {
               ...((r[18] || '').trim() ? { bank_account: (r[18] || '').trim() } : {}),
               ...((r[19] || '').trim() ? { bank_holder: (r[19] || '').trim() } : {}),
               ...((r[20] || '').trim() ? { bank_qr_img: (r[20] || '').trim() } : {}),
+              // Cột W/X: điểm bù công (số nguyên >= 0) — sheet cũ thiếu thì giữ rỗng,
+              // merge bên dưới vá từ bộ nhớ.
+              ...(/^-?\d+(\.\d+)?$/.test(String(r[21] ?? '').trim()) ? { adjust_points_earned: Math.max(0, Math.floor(Number(r[21]))) } : {}),
+              ...(/^-?\d+(\.\d+)?$/.test(String(r[22] ?? '').trim()) ? { adjust_points_spent: Math.max(0, Math.floor(Number(r[22]))) } : {}),
             };
           });
         // Đọc thiếu dòng (partial/truncated) mà bộ nhớ đang nhiều hơn gấp đôi -> giữ bộ nhớ.
@@ -651,6 +655,8 @@ export class GoogleSheetsSyncService {
                 if (!(s as any).bank_account && (m as any).bank_account) (s as any).bank_account = (m as any).bank_account;
                 if (!(s as any).bank_holder && (m as any).bank_holder) (s as any).bank_holder = (m as any).bank_holder;
                 if (!(s as any).bank_qr_img && (m as any).bank_qr_img) (s as any).bank_qr_img = (m as any).bank_qr_img;
+                if ((s as any).adjust_points_earned === undefined && (m as any).adjust_points_earned !== undefined) (s as any).adjust_points_earned = (m as any).adjust_points_earned;
+                if ((s as any).adjust_points_spent === undefined && (m as any).adjust_points_spent !== undefined) (s as any).adjust_points_spent = (m as any).adjust_points_spent;
               }
               mergedEmps.push(s);
             }
@@ -1981,6 +1987,8 @@ export class GoogleSheetsSyncService {
         GoogleSheetsSyncService.sheetText((e as any).bank_account || ''),
         (e as any).bank_holder || '',
         (e as any).bank_qr_img || '',
+        Number((e as any).adjust_points_earned) || 0,
+        Number((e as any).adjust_points_spent) || 0,
       ]);
       await this.pushTabSafe(details, 'employees', 'NHAN_VIEN_MASTER', SHEETS_DEFINITIONS.find(d => d.title === 'NHAN_VIEN_MASTER')!.headers, employeeRows);
 
@@ -2260,6 +2268,8 @@ export class GoogleSheetsSyncService {
       GoogleSheetsSyncService.sheetText((e as any).bank_account || ''),
       (e as any).bank_holder || '',
       (e as any).bank_qr_img || '',
+      Number((e as any).adjust_points_earned) || 0,
+      Number((e as any).adjust_points_spent) || 0,
     ]));
     await this.overwriteSheetData('NHAN_VIEN_MASTER', SHEETS_DEFINITIONS.find(d => d.title === 'NHAN_VIEN_MASTER')!.headers, rows);
     return rows.length;

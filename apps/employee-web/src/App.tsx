@@ -764,6 +764,12 @@ export function App() {
       setMyAdjustments(Array.isArray(list) ? list : []);
     } catch { /* offline */ }
   };
+  // Khung giờ tạo phiếu 08:00–21:00 hằng ngày (giờ VN) + điểm bù công.
+  const vnHourNow = () => new Date(Date.now() + 7 * 3_600_000).getUTCHours();
+  const ticketWindowOpen = vnHourNow() >= 8 && vnHourNow() < 21;
+  const myPointsEarned = Math.max(0, Math.floor(Number((employee as any)?.adjust_points_earned) || 0));
+  const myPointsSpent = Math.max(0, Math.floor(Number((employee as any)?.adjust_points_spent) || 0));
+  const myPointsBalance = Math.max(0, myPointsEarned - myPointsSpent);
 
   // Lịch kiểm tra đầu ra thử việc (Meet vấn đáp + trắc nghiệm) do HR lên lịch.
   const [probationAssessment, setProbationAssessment] = useState<any | null>(null);
@@ -2671,6 +2677,11 @@ export function App() {
     // Chống bấm đúp gửi trùng phiếu (server cũng chặn trùng, đây là lớp báo sớm).
     if (actionBusy === 'adj-submit') return;
     try {
+      // Khung giờ tạo phiếu 08:00–21:00 hằng ngày (server chặn cứng, đây là lớp báo sớm).
+      if (!ticketWindowOpen) {
+        showToast('⏰ Chỉ được tạo phiếu từ 08:00 đến 21:00 hằng ngày! Ngoài giờ hệ thống không nhận phiếu, quay lại trong khung giờ nhé.');
+        return;
+      }
       if (!adjustmentData.date) {
         showToast('⚠️ Vui lòng chọn ngày sự cố!');
         return;
@@ -2678,6 +2689,18 @@ export function App() {
       if (!adjustmentData.reason.trim()) {
         showToast('⚠️ Vui lòng nhập chi tiết lý do & bằng chứng!');
         return;
+      }
+      // Phiếu bù công ngày: ngày trong tháng hiện tại + đủ 5 điểm (server trừ/hoàn).
+      if (adjustmentData.type === 'BU_CONG_NGAY') {
+        const curYm = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7);
+        if (String(adjustmentData.date).slice(0, 7) !== curYm) {
+          showToast('⚠️ Phiếu bù công ngày chỉ chọn ngày trong tháng hiện tại!');
+          return;
+        }
+        if (myPointsBalance < 5) {
+          showToast(`⚠️ Phiếu bù công ngày tốn 5 điểm, bạn đang có ${myPointsBalance} điểm (đủ 1 ca check-in + check-out = +2 điểm). Tích thêm điểm rồi gửi lại!`);
+          return;
+        }
       }
       setActionBusy('adj-submit');
       if (adjustmentData.type === 'NGHI_KHAN') {
@@ -5849,6 +5872,11 @@ export function App() {
                   );
                 })()}
 
+                <div style={{ fontSize: '12px', lineHeight: 1.6, backgroundColor: ticketWindowOpen ? '#F0FDF4' : '#FEF2F2', border: ticketWindowOpen ? '1px solid #86EFAC' : '1px solid #FECACA', borderRadius: '8px', padding: '8px 10px' }}>
+                  <div>⭐ Điểm bù công của bạn: <strong>{myPointsBalance}</strong> <span style={{ color: 'var(--text-muted)' }}>(tích lũy {myPointsEarned} • đã dùng {myPointsSpent})</span></div>
+                  <div style={{ color: 'var(--text-muted)' }}>Đủ 1 ca (check-in + check-out) +2 điểm • 1 phiếu bù công ngày = 5 điểm • Tạo phiếu 08:00–21:00 hằng ngày{ticketWindowOpen ? '' : ' — hiện ĐANG NGOÀI GIỜ, không gửi được phiếu'}.</div>
+                </div>
+
                 <div>
                   <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Loại yêu cầu:</label>
                   <select
@@ -5863,6 +5891,7 @@ export function App() {
                     <option value="QUEN_CHECKIN">Quên Check-in khi vào ca → duyệt là ghi check-in ca đó</option>
                     <option value="QUEN_CHECKOUT">Quên Check-out khi hết ca → duyệt là ghi check-out ca đó</option>
                     <option value="LOI_GPS_CAMERA">Điện thoại bị lỗi GPS / Camera → duyệt là ghi cả in + out</option>
+                    <option value="BU_CONG_NGAY">Bù công cả ngày trong tháng (tốn 5 điểm) → duyệt là ghi cả in + out</option>
                     {!isProbation && <option value="NGHI_KHAN">Báo nghỉ đột xuất do sự cố khẩn cấp (HR Tab 10)</option>}
                   </select>
                 </div>
@@ -5916,9 +5945,10 @@ export function App() {
 
                 <button
                   className="btn-primary"
-                  disabled={actionBusy === 'adj-submit'}
+                  disabled={actionBusy === 'adj-submit' || !ticketWindowOpen}
                   onClick={handleAdjustmentSubmit}
-                  style={{ opacity: actionBusy === 'adj-submit' ? 0.6 : 1 }}
+                  title={ticketWindowOpen ? undefined : 'Ngoài khung giờ 08:00–21:00, không gửi được phiếu'}
+                  style={{ opacity: actionBusy === 'adj-submit' || !ticketWindowOpen ? 0.6 : 1 }}
                 >
                   {actionBusy === 'adj-submit' ? '⏳ ĐANG GỬI...' : (adjustmentData.type === 'NGHI_KHAN' ? 'Gửi Báo Nghỉ Khẩn Cấp Đến HR' : 'Gửi Phiếu Bổ Sung Công')}
                 </button>

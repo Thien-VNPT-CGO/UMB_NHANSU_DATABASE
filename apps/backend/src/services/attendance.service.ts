@@ -238,6 +238,12 @@ export class AttendanceService {
           minutes_deviation: minutesDeviation,
         });
 
+        // 6b. Check-out thành công (đã validated có check-in cùng ca) = ca đủ cặp
+        // -> tích điểm hoàn thành ca cho NV (chỉ ca PUBLISHED, ngoài lịch không tính).
+        if (data.type === 'CHECK_OUT') {
+          await this.creditCompletionPoints(data.employeeId, data.assignmentId);
+        }
+
         // 7. Emit socket event
         if (this.io) {
           this.io.to(`branch:${shift.branch_id}`).emit('attendance.recorded', {
@@ -415,6 +421,10 @@ export class AttendanceService {
           const dup = await this.repo.findAttendanceEventByRequestId(`ADMIN_COMP_${data.assignmentId}_CHECK_OUT`).catch(() => null);
           checkOut = dup || await this.repo.recordAttendanceEvent(mkEvent('CHECK_OUT', outIso) as any);
           if (!dup) created.push('CHECK_OUT');
+        }
+        // Vừa bù đủ cặp cho ca từng thiếu -> tích điểm hoàn thành ca cho NV.
+        if (!(hasIn && hasOut) && checkIn && checkOut && created.length > 0) {
+          await this.creditCompletionPoints(employeeId, String(data.assignmentId));
         }
 
         // Realtime như điểm danh thường (đồng bộ, không await hàng đợi khác).
@@ -628,6 +638,11 @@ export class AttendanceService {
       entityId: adjId,
       actorId: data.employeeId,
       execute: async () => {
+        // Khung giờ tạo phiếu 08:00–21:00 hằng ngày (giờ VN) — ngoài giờ chặn ngay.
+        const vnH = AttendanceService.vnHourNow();
+        if (vnH < AttendanceService.ADJUSTMENT_CREATE_OPEN_HOUR || vnH >= AttendanceService.ADJUSTMENT_CREATE_CLOSE_HOUR) {
+          throw new Error('ADJUSTMENT_WINDOW_CLOSED: Chỉ được tạo phiếu từ 08:00 đến 21:00 hằng ngày! Ngoài giờ hệ thống không nhận phiếu, quay lại trong khung giờ nhé.');
+        }
         // Chốt đúng ca theo NGÀY sự cố (không tin mù assignment client gửi):
         // app NV cũ thiếu ca ngày đó sẽ rớt về ca đầu danh sách (sai ngày) khiến
         // duyệt xong dựng công nhầm sang ngày khác.
@@ -672,6 +687,21 @@ export class AttendanceService {
               `ADJUSTMENT_WEEKLY_LIMIT: Nhân viên chính thức chỉ được 1 phiếu bổ sung công/tuần (tuần ${wk.mon} → ${wk.sun} bạn đã dùng 1 phiếu ${used[0]?.status === 'APPROVED' ? 'đã được duyệt' : 'đang chờ duyệt'}). Tuần sau gửi tiếp!`
             );
           }
+        }
+        // Phiếu BU_CONG_NGAY: ngày bù trong tháng hiện tại + tốn 5 điểm (trừ ngay,
+        // từ chối/hết hạn thì hoàn lại). Không đủ điểm -> chặn tạo.
+        if (kind === 'BU_CONG_NGAY') {
+          const todayVn = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+          const incDay = AttendanceService.incidentDateOf(data.incidentDate || data.reason);
+          if (!incDay || incDay.slice(0, 7) !== todayVn.slice(0, 7)) {
+            throw new Error('BU_CONG_NGAY_MONTH: Phiếu bù công ngày chỉ chọn ngày trong tháng hiện tại!');
+          }
+          const me: any = await this.repo.getEmployeeById(data.employeeId).catch(() => null);
+          const pts = AttendanceService.adjustPointsOf(me);
+          if (pts.balance < AttendanceService.BU_CONG_NGAY_COST) {
+            throw new Error(`ADJUSTMENT_NO_POINTS: Phiếu bù công ngày tốn ${AttendanceService.BU_CONG_NGAY_COST} điểm, bạn đang có ${pts.balance} điểm (đủ 1 ca check-in + check-out = +${AttendanceService.POINTS_PER_COMPLETE_SHIFT} điểm). Tích thêm điểm rồi gửi lại!`);
+          }
+          await this.addAdjustPoints(data.employeeId, 0, AttendanceService.BU_CONG_NGAY_COST);
         }
         return this.repo.createAttendanceAdjustment({
           adjustment_id: adjId,
@@ -720,6 +750,65 @@ export class AttendanceService {
   static readonly ADJUSTMENT_WEEKLY_QUOTA = 1;
   /** Hiệu lực 1 phiếu gửi HR: 30 phút tính từ lúc tạo — quá hạn tự động từ chối. */
   static readonly ADJUSTMENT_TTL_MINUTES = 30;
+  /** Khung giờ NV được TẠO phiếu (giờ VN): 08:00–21:00 hằng ngày, ngoài giờ báo lỗi. */
+  static readonly ADJUSTMENT_CREATE_OPEN_HOUR = 8;
+  static readonly ADJUSTMENT_CREATE_CLOSE_HOUR = 21;
+  /** Phiếu BU_CONG_NGAY tốn 5 điểm/lượt; đủ 1 ca (check-in + check-out) +2 điểm. */
+  static readonly BU_CONG_NGAY_COST = 5;
+  static readonly POINTS_PER_COMPLETE_SHIFT = 2;
+
+  /** Giờ VN hiện tại (0–23) để chốt khung giờ tạo/duyệt phiếu. */
+  static vnHourNow(d = new Date()): number {
+    return new Date(d.getTime() + 7 * 3_600_000).getUTCHours();
+  }
+
+  /** Điểm bù công của NV: tích lũy - đã dùng = khả dụng (thiếu -> 0). */
+  static adjustPointsOf(emp: any): { earned: number; spent: number; balance: number } {
+    const earned = Math.max(0, Math.floor(Number((emp as any)?.adjust_points_earned) || 0));
+    const spent = Math.max(0, Math.floor(Number((emp as any)?.adjust_points_spent) || 0));
+    return { earned, spent, balance: Math.max(0, earned - spent) };
+  }
+
+  /** Cộng/trừ điểm (1 lần retry khi đụng version) — dùng cho tích, trừ, hoàn điểm. */
+  private async addAdjustPoints(employeeId: string, dEarned: number, dSpent: number): Promise<void> {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const emp: any = await this.repo.getEmployeeById(employeeId).catch(() => null);
+        if (!emp) return;
+        const cur = AttendanceService.adjustPointsOf(emp);
+        const patch: any = {};
+        if (dEarned) patch.adjust_points_earned = Math.max(0, cur.earned + Math.floor(dEarned));
+        if (dSpent) patch.adjust_points_spent = Math.max(0, cur.spent + Math.floor(dSpent));
+        if (Object.keys(patch).length === 0) return;
+        await this.repo.updateEmployee(employeeId, patch, (emp as any).version);
+        return;
+      } catch (e: any) {
+        if (String((e as any)?.message || '').includes('VERSION_CONFLICT') && attempt === 0) continue;
+        throw e;
+      }
+    }
+  }
+
+  /** +2 điểm khi 1 ca PUBLISHED vừa đủ cặp check-in + check-out (chỉ tính ca thật,
+   *  tự điểm danh ngoài lịch không tích điểm để chống farm). Gọi đúng lúc ca
+   *  chuyển từ thiếu sang đủ (mỗi ca 1 lần). */
+  private async creditCompletionPoints(employeeId: string, assignmentId: string): Promise<void> {
+    try {
+      const sh: any = await this.repo.getShiftById(assignmentId).catch(() => null);
+      if (!sh || String((sh as any).status || '') !== 'PUBLISHED') return;
+      await this.addAdjustPoints(employeeId, AttendanceService.POINTS_PER_COMPLETE_SHIFT, 0);
+    } catch { /* thiếu điểm lẻ tẻ thì vòng sau bù, không chặn luồng chính */ }
+  }
+
+  /** Hoàn 5 điểm BU_CONG_NGAY khi phiếu bị từ chối/hết hạn (chỉ trừ lúc tạo). */
+  private async refundTicketPoints(adj: any): Promise<void> {
+    try {
+      if (AttendanceService.adjustmentKindOf((adj as any)?.reason) !== 'BU_CONG_NGAY') return;
+      const empId = String((adj as any)?.employee_id || '');
+      if (!empId) return;
+      await this.addAdjustPoints(empId, 0, -AttendanceService.BU_CONG_NGAY_COST);
+    } catch { /* best-effort */ }
+  }
 
   /**
    * Ràng buộc hiệu lực phiếu bổ sung công:
@@ -749,9 +838,16 @@ export class AttendanceService {
       if (!Number.isFinite(created)) continue;
       const ageMin = (now.getTime() - created) / 60000;
       // Pha 1: quá hạn HR duyệt -> tự từ chối (giữ phiếu để 2 bên đối soát).
+      // Phiếu cũng chỉ hiệu lực trong khung 08:00–21:00 hằng ngày: qua 21:00 mà
+      // vẫn PENDING (dù chưa đủ 30 phút) thì tự từ chối luôn.
       if (status === 'PENDING') {
         checked++;
-        if (ageMin <= ttlMinutes) continue;
+        const vnH = AttendanceService.vnHourNow(now);
+        const outsideWindow = vnH < AttendanceService.ADJUSTMENT_CREATE_OPEN_HOUR || vnH >= AttendanceService.ADJUSTMENT_CREATE_CLOSE_HOUR;
+        if (ageMin <= ttlMinutes && !outsideWindow) continue;
+        const note = outsideWindow && ageMin <= ttlMinutes
+          ? 'Tự động từ chối (hết khung giờ duyệt 08:00–21:00)'
+          : AttendanceService.AUTO_REJECT_NOTE;
         try {
           await singleWriterQueue.enqueue({
             entityType: 'DIEU_CHINH_CONG',
@@ -762,7 +858,8 @@ export class AttendanceService {
                 (x: any) => x.adjustment_id === adjId
               );
               if (!fresh || (fresh as any).status !== 'PENDING') return fresh;
-              await this.repo.updateAttendanceAdjustment(adjId, 'REJECTED', 'SYSTEM', undefined, AttendanceService.AUTO_REJECT_NOTE);
+              await this.repo.updateAttendanceAdjustment(adjId, 'REJECTED', 'SYSTEM', undefined, note);
+              await this.refundTicketPoints(fresh).catch(() => null);
               return { rejected: adjId } as any;
             },
           });
@@ -916,6 +1013,11 @@ export class AttendanceService {
           }
         }
         const updated = await this.repo.updateAttendanceAdjustment(adjId, status, approverId, minutesApproved, note);
+        // Từ chối phiếu BU_CONG_NGAY -> hoàn 5 điểm đã trừ lúc tạo (ca giữ nguyên
+        // thiếu chân = không lương).
+        if (status === 'REJECTED') {
+          await this.refundTicketPoints(updated).catch(() => null);
+        }
         // HR DUYỆT -> dựng lại bản ghi chấm công còn thiếu để lịch + realtime + lương
         // ghi nhận ca có đi làm (đồng bộ Sheets như mọi sự kiện). Từ chối -> giữ nguyên
         // vi phạm/phạt (ngược lại).
@@ -987,8 +1089,8 @@ export class AttendanceService {
       }
     } catch { /* best-effort */ }
     const reason = String((adj as any).reason || '');
-    const needIn = /QUEN_CHECKIN|LOI_GPS/i.test(reason);
-    const needOut = /QUEN_CHECKOUT|LOI_GPS/i.test(reason);
+    const needIn = /QUEN_CHECKIN|LOI_GPS|BU_CONG_NGAY/i.test(reason);
+    const needOut = /QUEN_CHECKOUT|LOI_GPS|BU_CONG_NGAY/i.test(reason);
     // Mặc định (không rõ loại): bù phía còn thiếu.
     const events = await this.repo.getAttendanceEvents(adj.employee_id, (shift as any).date).catch(() => []);
     const mine = (events || []).filter((e: any) => e.assignment_id === correctAssign);
@@ -1026,6 +1128,10 @@ export class AttendanceService {
     }
     if ((needOut || (!needIn && !needOut && !hasOut)) && !hasOut) {
       await mk('CHECK_OUT', (shift as any).end_at);
+    }
+    // Vừa dựng đủ cặp cho ca từng thiếu -> tích điểm hoàn thành ca cho NV.
+    if (done.includes('CHECK_IN') || done.includes('CHECK_OUT')) {
+      await this.creditCompletionPoints(adj.employee_id, correctAssign);
     }
     return done;
   }
