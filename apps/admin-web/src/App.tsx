@@ -3306,7 +3306,7 @@ export function App() {
           {/* ========================================================= */}
           {activeTab === 'staff' && (
             <div id="sec-staff-list" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              <SecNav items={[['sec-staff-list', 'Danh sách nhân viên'], ['sec-official', 'NV chính thức'], ['sec-probation', 'NV thử việc']]} />
+              <SecNav items={[['sec-staff-list', 'Danh sách nhân viên'], ['sec-official', 'NV chính thức']]} />
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
                   <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>4. Quản Lý Hồ Sơ & Lộ Trình Nhân Viên</h1>

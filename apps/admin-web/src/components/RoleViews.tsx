@@ -5779,7 +5779,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     );
   }
 
-  if (activeTab === 'hr-probation' || activeTab === 'staff') {
+  if (activeTab === 'hr-probation') {
     // Mật độ ca thử việc: gom ca theo ngày (loại CANCELLED, khử trùng assignment_id).
     // Bạn nào muốn đẩy nhanh (2 ca/ngày) sẽ lộ ở đây: maxPerDay >= 2 + danh sách ngày.
     const probationShiftDensity = (empId: string): { maxPerDay: number; total: number; multiDays: { date: string; count: number; codes: string }[] } => {
