@@ -2,9 +2,10 @@
   "name": "@ubm/shared",
   "version": "1.0.0",
   "main": "dist/index.js",
+  "module": "dist-esm/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && tsc --module esnext --moduleResolution bundler --outDir dist-esm --rootDir src --declaration false",
     "dev": "tsc -w"
   },
   "dependencies": {

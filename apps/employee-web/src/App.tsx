@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import jsQR from 'jsqr';
+import { attShiftStatus, inferExtraShiftCode, mergeOrphanCheckins, rateOnDateOf, shiftPayInfo } from '@ubm/shared';
 import { Socket } from 'socket.io-client';
 import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl, onPinLockRequired } from './services/api';
 import { connectRealtime, stopRealtimeRevive } from './services/realtime';
@@ -5159,14 +5160,6 @@ export function App() {
                   let cDone = 0, cWorking = 0, cMissingOut = 0, cAbsent = 0, cNoCheck = 0, cUpcoming = 0, cCancelled = 0;
                   let fineTotal = 0;
                   let payTotal = 0;
-                  const hourlyRate = Number((employee as any)?.current_rate_per_hour) || 0;
-                  const shiftHoursOf = (code?: string) => code === 'CA_2' ? 6 : 5;
-                  const shiftNetOf = (sh: any, ci: any) => {
-                    const gross = shiftHoursOf((sh as any)?.shift_code) * hourlyRate;
-                    const tier = String(ci?.fine_tier || 'NONE');
-                    if (tier === 'FULL_SHIFT') return 0;
-                    return Math.max(0, gross - (Number(ci?.fine_amount) || 0));
-                  };
                   const fineTextOf = (ev: any) => {
                     const tier = String(ev?.fine_tier || 'NONE');
                     const amt = Number(ev?.fine_amount) || 0;
@@ -5183,39 +5176,33 @@ export function App() {
                     const dShifts = (shiftDays.get(date) || []).filter((s: any) => (s as any).status !== 'CANCELLED');
                     const cancelledShifts = (shiftDays.get(date) || []).filter((s: any) => (s as any).status === 'CANCELLED');
                     const evs = evtDays.get(date) || [];
-                    // So khớp sự kiện theo ca (chuẩn 2 tab admin + lương): cứng theo
-                    // assignment trước; phiếu mồ côi (chưa gắn ca / gắn ca đã hủy
-                    // hoặc ca không còn trong ngày sau khi HR xếp lại) bù cho ca
-                    // thiếu — phiếu gắn ca live khác thì giữ nguyên (không cướp,
-                    // tránh lan ca sáng sang chiều). VẮNG chỉ tính khi gắn cứng.
-                    const usedEvIds = new Set<string>();
-                    const liveIds = new Set((dShifts || []).map((x: any) => String((x as any)?.assignment_id || '')).filter(Boolean));
-                    const deadIds = new Set((cancelledShifts || []).map((x: any) => String((x as any)?.assignment_id || '')).filter(Boolean));
-                    const matchEv = (sh: any, type: string) => {
-                      const aid = String((sh as any)?.assignment_id || '');
-                      const byAssign = evs.find((e: any) => e.type === type && (e as any).assignment_id && aid && (e as any).assignment_id === aid);
-                      if (byAssign) return byAssign;
-                      if (type === 'ABSENT') return undefined;
-                      return evs.find((e: any) => {
-                        if (e.type !== type) return false;
-                        const eid = String((e as any)?.event_id || '');
-                        if (eid && usedEvIds.has(eid)) return false;
-                        const ea = String((e as any).assignment_id || '');
-                        const ok = !ea || deadIds.has(ea) || !liveIds.has(ea);
-                        if (ok && eid) usedEvIds.add(eid);
-                        return ok;
-                      });
-                    };
+                    // So khớp Y HỆT tab admin (Bảng Chấm Công Thời Gian Thực): cứng
+                    // assignment trước, mồ côi gộp vào ca live đúng khung giờ —
+                    // cùng 1 bộ code @ubm/shared nên trạng thái + lương khớp 100%.
+                    const byAssign = new Map<string, any[]>();
+                    for (const e of evs) {
+                      const k = (e as any).assignment_id || `__${(e as any).type}`;
+                      if (!byAssign.has(k)) byAssign.set(k, []);
+                      byAssign.get(k)!.push(e);
+                    }
+                    const stByAssign = new Map<string, string>();
+                    const shByAssign = new Map<string, any>();
+                    for (const s of allShifts) {
+                      const aid = String((s as any)?.assignment_id || '');
+                      if (!aid || stByAssign.has(aid)) continue;
+                      stByAssign.set(aid, String((s as any)?.status || ''));
+                      shByAssign.set(aid, s);
+                    }
+                    const usedAssign = new Set<string>();
+                    const merged = mergeOrphanCheckins(dShifts, byAssign, usedAssign, stByAssign, shByAssign);
                     const rows = dShifts.map((sh: any) => {
-                      const ci = matchEv(sh, 'CHECK_IN');
-                      const co = matchEv(sh, 'CHECK_OUT');
-                      const ab = matchEv(sh, 'ABSENT');
-                      const startMs = (sh as any).start_at ? new Date((sh as any).start_at).getTime() : NaN;
-                      const endMs = (sh as any).end_at ? new Date((sh as any).end_at).getTime() : NaN;
-                      const isPastDay = date < todayVN;
-                      const isToday = date === todayVN;
-                      const locked = !ci && Number.isFinite(startMs) && Date.now() - (startMs as number) > 3 * 60 * 60 * 1000;
-                      const pastEnd = Number.isFinite(endMs) && Date.now() - (endMs as number) > 30 * 60 * 1000;
+                      const list = [...(byAssign.get(String((sh as any)?.assignment_id)) || []), ...(merged.get(String((sh as any)?.assignment_id)) || [])];
+                      const ci = list.find((e: any) => e.type === 'CHECK_IN');
+                      const co = list.find((e: any) => e.type === 'CHECK_OUT');
+                      const ab = list.find((e: any) => e.type === 'ABSENT');
+                      byAssign.delete(String((sh as any)?.assignment_id));
+                      // Trạng thái + lương đúng chuẩn admin (attShiftStatus/shiftPayInfo).
+                      const st = attShiftStatus(sh, ci, co, ab);
                       const lateMin = ci?.is_late ? Number(ci.minutes_deviation) || 0 : 0;
                       const earlyMin = co?.is_early ? Number(co.minutes_deviation) || 0 : 0;
                       const fine = ci ? fineTextOf(ci) : '';
@@ -5223,25 +5210,28 @@ export function App() {
                       const ciDist = Number(ci?.distance_meters);
                       const gpsBad = !!ci && ((ci as any)?.gps_status === 'OUT_OF_BOUNDS' || (Number.isFinite(ciDist) && ciDist > 300));
                       let badge: string, bg: string, fg: string, border: string;
-                      if (ci && co) {
+                      if (st.key === 'COMPLETED') {
                         cDone++;
-                        payTotal += shiftNetOf(sh, ci);
+                        payTotal += shiftPayInfo((sh as any)?.shift_code, rateOnDateOf(employee, date), ci, co, (sh as any)?.start_at).net;
                         badge = '✓ Đủ công'; bg = '#ECFDF5'; fg = '#047857'; border = '1px solid #A7F3D0';
-                      } else if (ci && !co && (pastEnd || isPastDay)) {
+                      } else if (st.key === 'MISSING_OUT') {
                         cMissingOut++;
                         badge = 'Thiếu check-out — không lương'; bg = '#FFF7ED'; fg = '#9A3412'; border = '1px solid #FDBA74';
-                      } else if (ci && !co) {
+                      } else if (st.key === 'CHECKED_IN') {
                         cWorking++;
                         badge = 'Đang làm (chờ check-out)'; bg = '#FFFBEB'; fg = '#92400E'; border = '1px solid #FCD34D';
-                      } else if (ab) {
+                      } else if (st.key === 'ABSENT') {
                         cAbsent++;
                         badge = '🔴 Vắng — không lương'; bg = '#FEE2E2'; fg = '#991B1B'; border = '1px solid #FCA5A5';
-                      } else if (locked || isPastDay) {
+                      } else if (st.key === 'LOCKED') {
                         cNoCheck++;
                         badge = 'Không điểm danh — nghỉ không lương'; bg = '#FEE2E2'; fg = '#991B1B'; border = '1px solid #FCA5A5';
-                      } else if (isToday) {
+                      } else if (st.key === 'UPCOMING') {
                         cUpcoming++;
-                        badge = 'Chưa check-in (Chờ ca)'; bg = '#FFFBEB'; fg = '#92400E'; border = '1px solid #FCD34D';
+                        badge = 'Lịch đã duyệt'; bg = '#EEF2FF'; fg = '#3730A3'; border = '1px solid #C7D2FE';
+                      } else if (st.key === 'PENDING') {
+                        cUpcoming++;
+                        badge = date <= todayVN ? 'Chưa check-in (Chờ ca)' : 'Lịch đã duyệt'; bg = date <= todayVN ? '#FFFBEB' : '#EEF2FF'; fg = date <= todayVN ? '#92400E' : '#3730A3'; border = date <= todayVN ? '1px solid #FCD34D' : '1px solid #C7D2FE';
                       } else {
                         cUpcoming++;
                         badge = 'Lịch đã duyệt'; bg = '#EEF2FF'; fg = '#3730A3'; border = '1px solid #C7D2FE';
@@ -5255,28 +5245,39 @@ export function App() {
                       if (ab && !ci) notes.push('Hệ thống tự ghi vắng');
                       return { sh, ci, co, badge, bg, fg, border, sched, notes };
                     });
-                    // Sự kiện lẻ không ca nào nhận (điểm danh ngoài lịch). Vắng mồ côi
-                    // (không gắn cứng ca nào) thì ẩn — VẮNG chỉ tính khi gắn cứng.
-                    // (Dùng ID đã claim, không gọi lại matchEv — gọi lại sẽ loại
-                    // phiếu vừa nhận vì usedEvIds, khiến phiếu hiện 2 lần.)
-                    const claimedEvIds = new Set<string>([...usedEvIds]);
-                    for (const s of dShifts) {
-                      for (const t of ['CHECK_IN', 'CHECK_OUT', 'ABSENT']) {
-                        const aid = String((s as any)?.assignment_id || '');
-                        if (!aid) continue;
-                        const f = evs.find((e: any) => e.type === t && String((e as any).assignment_id || '') === aid);
-                        if (f && (f as any).event_id) claimedEvIds.add(String((f as any).event_id));
+                    // Thẻ ngoài lịch còn lại — đúng chuẩn tab admin: ẩn nhóm chỉ có VẮNG;
+                    // ẩn thẻ thiếu chân khi đã có thẻ ngoài lịch hoàn thành cùng ngày.
+                    const extras: any[] = [];
+                    for (const [k, list] of byAssign) {
+                      if (usedAssign.has(String(k))) continue;
+                      if (!String(k).startsWith('__')) {
+                        const kst = stByAssign.get(String(k));
+                        if (kst && kst !== 'CANCELLED') continue;
                       }
+                      if (!list.some((e: any) => e.type === 'CHECK_IN' || e.type === 'CHECK_OUT')) continue;
+                      const f = list[0];
+                      const pseudo = { assignment_id: '', date, shift_code: '?', employee_id: (employee as any)?.employee_id, branch_id: (f as any)?.branch_id };
+                      const xst = attShiftStatus(
+                        pseudo,
+                        list.find((e: any) => e.type === 'CHECK_IN'),
+                        list.find((e: any) => e.type === 'CHECK_OUT'),
+                        list.find((e: any) => e.type === 'ABSENT')
+                      );
+                      extras.push({ pseudo, list, st: xst });
                     }
-                    const orphans = evs.filter((e: any) => {
-                      if ((e as any).type === 'ABSENT') return false;
-                      const id = String((e as any)?.event_id || '');
-                      if (id && claimedEvIds.has(id)) return false;
-                      if (!id) return !dShifts.some((sh: any) => matchEv(sh, (e as any).type) === e);
-                      return true;
-                    });
+                    let finalExtras = extras;
+                    if (dShifts.length === 0 && extras.some((x: any) => x.st?.key === 'COMPLETED')) {
+                      finalExtras = extras.filter((x: any) => x.st?.key === 'COMPLETED');
+                    }
+                    for (const x of finalExtras) {
+                      if (x.st?.key !== 'COMPLETED') continue;
+                      const xci = x.list.find((e: any) => e.type === 'CHECK_IN');
+                      const xco = x.list.find((e: any) => e.type === 'CHECK_OUT');
+                      const xcode = inferExtraShiftCode(xci, (employee as any)?.default_shift_code);
+                      payTotal += shiftPayInfo(xcode, rateOnDateOf(employee, date), xci, xco, xci?.client_time).net;
+                    }
                     for (const c of cancelledShifts) cCancelled++;
-                    return { date, y, m, dd, rows, orphans, cancelledShifts };
+                    return { date, y, m, dd, rows, orphans: finalExtras, cancelledShifts };
                   }).filter((blk: any) => (blk.rows || []).length > 0);
                   const sumBox = (label: string, val: string, color: string) => (
                     <div style={{ flex: 1, minWidth: '70px', backgroundColor: '#FAFAFA', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '6px 4px', textAlign: 'center' }}>
@@ -5327,12 +5328,25 @@ export function App() {
                               <span style={{ fontSize: '11px', fontWeight: 700, padding: '4px 8px', borderRadius: '999px', backgroundColor: '#F1F5F9', color: '#64748B', border: '1px solid #CBD5E1', whiteSpace: 'nowrap' }}>Ca hủy</span>
                             </div>
                           ))}
-                          {blk.orphans.map((e: any) => (
-                            <div key={(e as any)?.event_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
-                              <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Điểm danh ngoài lịch: {(e as any).type === 'CHECK_IN' ? 'Vào' : 'Ra'} {fmtT((e as any)?.client_time)}</div>
-                              <span style={{ fontSize: '11px', fontWeight: 700, padding: '4px 8px', borderRadius: '999px', backgroundColor: '#EEF2FF', color: '#3730A3', border: '1px solid #C7D2FE', whiteSpace: 'nowrap' }}>Ngoài lịch</span>
-                            </div>
-                          ))}
+                          {blk.orphans.map((x: any, xi: number) => {
+                            const xci = x.list.find((e: any) => e.type === 'CHECK_IN');
+                            const xco = x.list.find((e: any) => e.type === 'CHECK_OUT');
+                            const xcode = inferExtraShiftCode(xci, (employee as any)?.default_shift_code);
+                            const xpay = x.st?.key === 'COMPLETED'
+                              ? shiftPayInfo(xcode, rateOnDateOf(employee, blk.date), xci, xco, xci?.client_time)
+                              : null;
+                            return (
+                              <div key={`x_${xi}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                                <div>
+                                  <div style={{ fontWeight: 700, fontSize: '12px' }}>Ngoài lịch (tự điểm danh){xpay ? ` • 💰 ${money(Math.round(xpay.net))}đ (tạm tính)` : ''}</div>
+                                  <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Vào: {fmtT(xci?.client_time)} • Ra: {fmtT(xco?.client_time)}</div>
+                                </div>
+                                <span style={{ fontSize: '11px', fontWeight: 700, padding: '4px 8px', borderRadius: '999px', backgroundColor: x.st?.bg || '#EEF2FF', color: x.st?.fg || '#3730A3', border: x.st?.border || '1px solid #C7D2FE', whiteSpace: 'nowrap' }}>
+                                  {x.st?.label || 'Ngoài lịch'}
+                                </span>
+                              </div>
+                            );
+                          })}
                           {blk.rows.length === 0 && blk.cancelledShifts.length === 0 && blk.orphans.length === 0 && (
                             <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Chưa có ca — ngày nghỉ</div>
                           )}
