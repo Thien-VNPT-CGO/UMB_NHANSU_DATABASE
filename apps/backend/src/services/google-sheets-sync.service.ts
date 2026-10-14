@@ -3026,8 +3026,31 @@ export class GoogleSheetsSyncService {
     return out;
   }
 
-  /** Tải bytes ảnh từ Google Drive (để xem trực tiếp / đóng gói ZIP tải về). */
-  public async downloadDriveFile(fileId: string): Promise<{ buffer: Buffer; mimeType: string }> {
+  /**
+   * Xóa 1 sự kiện khỏi kho LUUTRU_CHAMCONG_TUAN (Admin/HR xóa lượt điểm danh
+   * tuần cũ trên lưới). Đọc tab, bỏ dòng trùng event_id, ghi đè. Trả về thông
+   * tin dòng đã xóa để audit/guard kỳ lương, null khi không thấy.
+   */
+  public async deleteArchivedAttendanceEvent(eventId: string): Promise<{ employee_id: string; client_time: string; type: string } | null> {
+    const id = String(eventId || '').trim();
+    if (!id || !this.sheetsClient) return null;
+    const batch = await this.readTabsBatch(['LUUTRU_CHAMCONG_TUAN']).catch(() => ({ LUUTRU_CHAMCONG_TUAN: [] as string[][] }));
+    const rows = batch?.['LUUTRU_CHAMCONG_TUAN'] || [];
+    const idx = rows.findIndex(r => String((r as any)?.[0] || '').trim() === id);
+    if (idx < 0) return null;
+    const gone = rows[idx] || [];
+    const kept = rows.filter((_, i) => i !== idx);
+    const def = SHEETS_DEFINITIONS.find(dd => dd.title === 'LUUTRU_CHAMCONG_TUAN')!;
+    await this.overwriteSheetData('LUUTRU_CHAMCONG_TUAN', def.headers, kept);
+    const clientRaw = String(gone[12] || gone[11] || '').trim().replace(/^'/, '');
+    return {
+      employee_id: String(gone[2] || '').trim(),
+      client_time: clientRaw,
+      type: String(gone[3] || '').trim(),
+    };
+  };
+
+  /** Tải bytes ảnh từ Google Drive (để xem trực tiếp / đóng gói ZIP tải về). */  public async downloadDriveFile(fileId: string): Promise<{ buffer: Buffer; mimeType: string }> {
     if (!this.driveClient || !fileId || fileId.startsWith('DRV_')) {
       throw new Error('DRIVE_FILE_NOT_AVAILABLE');
     }

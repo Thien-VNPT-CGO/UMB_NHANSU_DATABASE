@@ -3524,36 +3524,67 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  // Admin/HR xóa 1 lượt điểm danh (thẻ "Ca làm tự điểm danh" ngoài lịch):
-  // mất công/lương lượt đó, realtime + Sheet. Chặn khi lương kỳ đó đã phát hành.
+  // Admin/HR xóa 1 lượt điểm danh (thẻ "Ca làm tự điểm danh" ngoài lịch, cả tuần
+  // hiện tại lẫn tuần cũ đã lưu trữ): mất công/lương lượt đó, realtime + Sheet.
+  // Chặn khi lương kỳ đó đã phát hành.
   app.delete('/attendance/events/:id', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {
     try {
       const eventId = String(req.params.id || '').trim();
-      const all = await adapter.getAttendanceEvents().catch(() => []);
-      const evt: any = (all || []).find((e: any) => String((e as any)?.event_id || '') === eventId);
-      if (!evt) return res.status(404).json({ error: 'EVENT_NOT_FOUND: bản ghi điểm danh không còn tồn tại! Tải lại danh sách.' });
-      const period = String((evt as any)?.client_time || '').slice(0, 7);
-      if (/^\d{4}-\d{2}$/.test(period)) {
+      const checkPayrollLock = async (period: string) => {
+        if (!/^\d{4}-\d{2}$/.test(period)) return null;
         const runs = await (adapter as any).listPayrollRuns?.().catch(() => []);
-        const locked = (runs || []).find((r: any) =>
+        return (runs || []).find((r: any) =>
           String((r as any)?.period || '').slice(0, 7) === period &&
           ['PUBLISHED', 'PAID'].includes(String((r as any)?.status || '').toUpperCase())
-        );
+          || null;
+      };
+      // 1) Bảng live tuần hiện tại.
+      const all = await adapter.getAttendanceEvents().catch(() => []);
+      const evt: any = (all || []).find((e: any) => String((e as any)?.event_id || '') === eventId);
+      if (evt) {
+        const period = String((evt as any)?.client_time || '').slice(0, 7);
+        const locked = await checkPayrollLock(period);
         if (locked) {
           return res.status(400).json({ error: `PAYROLL_LOCKED: Kỳ lương ${period} đã ${String((locked as any)?.status || '')} (phiếu lương đã phát hành) — không được xóa điểm danh trong kỳ này!` });
         }
+        const ok = await adapter.deleteAttendanceEvent(eventId);
+        if (!ok) return res.status(404).json({ error: 'EVENT_NOT_FOUND: bản ghi điểm danh không còn tồn tại! Tải lại danh sách.' });
+        await adapter.recordAuditLog({
+          actor_id: req.user!.id,
+          action: 'ATTENDANCE_EVENT_DELETED',
+          target_type: 'SU_KIEN_DIEM_DANH',
+          target_id: eventId,
+        } as any).catch(() => null);
+        broadcastUpdate('attendance', { action: 'event-deleted', eventId, employeeId: (evt as any)?.employee_id });
+        broadcastUpdate('payroll', { action: 'event-deleted', eventId });
+        return res.json({ success: true, eventId });
       }
-      const ok = await adapter.deleteAttendanceEvent(eventId);
-      if (!ok) return res.status(404).json({ error: 'EVENT_NOT_FOUND: bản ghi điểm danh không còn tồn tại! Tải lại danh sách.' });
-      await adapter.recordAuditLog({
-        actor_id: req.user!.id,
-        action: 'ATTENDANCE_EVENT_DELETED',
-        target_type: 'SU_KIEN_DIEM_DANH',
-        target_id: eventId,
-      } as any).catch(() => null);
-      broadcastUpdate('attendance', { action: 'event-deleted', eventId, employeeId: (evt as any)?.employee_id });
-      broadcastUpdate('payroll', { action: 'event-deleted', eventId });
-      res.json({ success: true, eventId });
+      // 2) Kho lưu trữ tuần cũ (lưới lùi tuần đọc từ đây — trước đây báo 404 oan).
+      const sync = (adapter as any)?.syncService;
+      if (sync?.getArchivedAttendanceEvents && sync?.deleteArchivedAttendanceEvent) {
+        const arch = await sync.getArchivedAttendanceEvents('2000-01-01', '2100-01-01').catch(() => []);
+        const found: any = (arch || []).find((e: any) => String((e as any)?.event_id || '') === eventId);
+        if (found) {
+          // client_time kho lưu trữ là wall-clock VN (+07:00) — cắt chuỗi để đúng tháng VN.
+          const period = String((found as any)?.client_time || '').slice(0, 7);
+          const locked = await checkPayrollLock(period);
+          if (locked) {
+            return res.status(400).json({ error: `PAYROLL_LOCKED: Kỳ lương ${period} đã ${String((locked as any)?.status || '')} (phiếu lương đã phát hành) — không được xóa điểm danh trong kỳ này!` });
+          }
+          const gone = await sync.deleteArchivedAttendanceEvent(eventId).catch(() => null);
+          if (!gone) return res.status(404).json({ error: 'EVENT_NOT_FOUND: bản ghi điểm danh không còn tồn tại! Tải lại danh sách.' });
+          await adapter.recordAuditLog({
+            actor_id: req.user!.id,
+            action: 'ATTENDANCE_EVENT_DELETED_ARCHIVE',
+            target_type: 'LUUTRU_CHAMCONG_TUAN',
+            target_id: eventId,
+          } as any).catch(() => null);
+          broadcastUpdate('attendance', { action: 'event-deleted', eventId, employeeId: gone.employee_id });
+          broadcastUpdate('payroll', { action: 'event-deleted', eventId });
+          return res.json({ success: true, eventId, archived: true });
+        }
+      }
+      return res.status(404).json({ error: 'EVENT_NOT_FOUND: bản ghi điểm danh không còn tồn tại! Tải lại danh sách.' });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
