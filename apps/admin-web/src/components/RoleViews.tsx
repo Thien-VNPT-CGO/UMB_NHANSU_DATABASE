@@ -8039,22 +8039,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 Socket.IO: Tự Động Điểm Danh Realtime
               </span>
             </div>
-            <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '4px', marginBottom: 0 }}>
-              Hiển thị phân loại Nhân viên Thử việc (Chu kỳ 12 ngày) & Chính thức. Tự động cập nhật trạng thái khi nhân viên điểm danh trên Cổng Nhân Viên.
-              {' '}Đang xem tuần <strong>{weekDays[0]?.isoDate} → {weekDays[6]?.isoDate}</strong>
-              {scheduleWeekOffset === 1 ? ' (tuần sau — gồm 2 ngày OFF NV đã đăng ký)' : scheduleWeekOffset > 1 ? ` (+${scheduleWeekOffset} tuần)` : scheduleWeekOffset < 0 ? ` (${scheduleWeekOffset} tuần)` : ' (tuần này)'}.
-              Ô xám <strong>Nghỉ OFF</strong> = lịch OFF tuần tự ghi nhận / đơn đột xuất đã duyệt; ô vàng <strong>⏳ Chờ duyệt</strong> = đơn đột xuất chưa duyệt.
-              {scheduleWeekOffset < 0 && (
-                archiveLoading ? ' ⏳ Đang tải chi tiết điểm danh tuần cũ từ kho lưu trữ...' : ' Tuần cũ đọc từ kho lưu trữ (giờ in/out đầy đủ).'
-              )}
-              {(() => {
-                const wSet = new Set((weekDays || []).map((d: any) => d.isoDate));
-                const wShifts = (schedAllShifts || []).filter((s: any) => wSet.has(String(s.date || '').slice(0, 10)) && s.status !== 'CANCELLED').length;
-                const wOffs = (leaves || []).filter((l: any) => wSet.has(String(l.requested_date || '').slice(0, 10)) && l.status !== 'REJECTED' && l.status !== 'CANCELLED').length;
-                const wAttended = (schedAllEvents || []).filter((e: any) => e.type === 'CHECK_IN' && wSet.has(vnDayOf(e.client_time || ''))).length;
-                return ` Đã tải tuần xem: ${wShifts} ca • ${wOffs} đơn nghỉ/OFF • ${wAttended} lượt đã điểm danh.`;
-              })()}
-            </p>
           </div>
 
           <div style={{ display: 'flex', gap: '8px' }}>
