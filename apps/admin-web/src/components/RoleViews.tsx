@@ -2348,6 +2348,39 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [supDate, setSupDate] = useState('');
   const [supShift, setSupShift] = useState('CA_1');
   const [supBusy, setSupBusy] = useState(false);
+  // HR dọn ca không live (xem trước + xác nhận xóa cứng).
+  const [purgeOpen, setPurgeOpen] = useState(false);
+  const [purgeData, setPurgeData] = useState<any>(null);
+  const [purgeBusy, setPurgeBusy] = useState(false);
+  const loadPurgePreview = async () => {
+    setPurgeBusy(true);
+    try {
+      const d: any = await apiRequest('/admin/shifts/non-live');
+      setPurgeData(d);
+      setPurgeOpen(true);
+    } catch (e: any) {
+      showToast(e?.message || 'Lỗi khi kiểm tra ca không live!');
+    } finally {
+      setPurgeBusy(false);
+    }
+  };
+  const doPurgeNonLive = async () => {
+    const total = Number(purgeData?.total || 0);
+    if (total === 0) { showToast('Không có ca không live nào để dọn!'); return; }
+    if (!window.confirm(`Xóa cứng ${total} ca không live (CANCELLED + nháp quá khứ, 0 lượt điểm danh) khỏi hệ thống + Sheets? Ca PUBLISHED, ca nháp hiện tại/tương lai và ca còn điểm danh được GIỮ NGUYÊN. Không khôi phục được!`)) return;
+    setPurgeBusy(true);
+    try {
+      const r: any = await apiRequest('/admin/shifts/purge-non-live', { method: 'POST' });
+      showToast(`🧹 Đã dọn ${(r as any)?.removed ?? 0} ca không live khỏi hệ thống + Sheets!`);
+      setPurgeOpen(false);
+      setPurgeData(null);
+      if (onRefreshData) await onRefreshData();
+    } catch (e: any) {
+      showToast(e?.message || 'Lỗi khi dọn ca!');
+    } finally {
+      setPurgeBusy(false);
+    }
+  };
   // Modal HR cập nhật ca (KỂ CẢ ca đã điểm danh): đổi ca/NV/chi nhánh (+ngày nếu chưa điểm danh).
   const [editShiftOpen, setEditShiftOpen] = useState<any>(null);
   const [edEmpId, setEdEmpId] = useState('');
@@ -8098,6 +8131,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             >
               <Plus size={14} /> Bổ Sung Lịch NV
             </button>
+            <button
+              className="btn-secondary"
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', fontSize: '13px', fontWeight: 800, color: '#92400E' }}
+              title="Kiểm tra + dọn ca không live từ trước đến giờ (CANCELLED + nháp quá khứ, 0 lượt điểm danh). Ca PUBLISHED và ca còn điểm danh được giữ nguyên."
+              disabled={purgeBusy}
+              onClick={loadPurgePreview}
+            >
+              🧹 {purgeBusy ? 'Đang kiểm tra...' : 'Dọn Ca Không Live'}
+            </button>
             <input
               type="date"
               value={schedExportDate}
@@ -8313,6 +8355,38 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         })()}
 
         {renderEditShiftModal()}
+
+        {/* MODAL HR DỌN CA KHÔNG LIVE (xem trước từ trước đến giờ + xác nhận) */}
+        {purgeOpen && (
+          <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+            <div style={{ backgroundColor: 'var(--surface)', borderRadius: '12px', maxWidth: '560px', width: '100%', maxHeight: '88vh', overflow: 'auto', padding: '20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h2 style={{ fontSize: '16px', fontWeight: 800, margin: 0 }}>🧹 Dọn Ca Không Live</h2>
+                <button className="btn-secondary" style={{ padding: '4px 12px' }} onClick={() => { setPurgeOpen(false); setPurgeData(null); }}>Đóng</button>
+              </div>
+              {!purgeData ? (
+                <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '10px' }}>Đang kiểm tra...</div>
+              ) : (
+                <div style={{ marginTop: '10px', fontSize: '13px', lineHeight: 1.7 }}>
+                  <div>Lịch từ <strong>{purgeData.dateMin || '—'}</strong> đến <strong>{purgeData.dateMax || '—'}</strong> (hôm nay {purgeData.today || ''})</div>
+                  <div style={{ marginTop: '6px', padding: '10px 12px', borderRadius: '8px', backgroundColor: '#FFFBEB', border: '1px solid #FDE68A' }}>
+                    Xóa được: <strong>{purgeData.total || 0} ca</strong>
+                    {purgeData.byStatus && Object.keys(purgeData.byStatus).length > 0 && (
+                      <> ({Object.entries(purgeData.byStatus).map(([k, v]: any) => `${k}: ${v}`).join(' • ')})</>
+                    )}
+                    <div style={{ fontSize: '12px', color: '#92400E' }}>CANCELLED mọi ngày + nháp quá khứ, 0 lượt điểm danh.</div>
+                  </div>
+                  <div style={{ marginTop: '6px', padding: '10px 12px', borderRadius: '8px', backgroundColor: '#ECFDF5', border: '1px solid #A7F3D0' }}>
+                    Giữ lại: <strong>{Number(purgeData.kept?.withEvents || 0)} ca còn điểm danh</strong> (bằng chứng công/lương) + <strong>{Number(purgeData.kept?.draftFuture || 0)} ca nháp hiện tại/tương lai</strong>.
+                  </div>
+                  <button className="btn-primary" disabled={purgeBusy || Number(purgeData.total || 0) === 0} onClick={doPurgeNonLive} style={{ padding: '10px', fontWeight: 800, fontSize: '13px', backgroundColor: '#DC2626', marginTop: '12px', width: '100%' }}>
+                    {purgeBusy ? '⏳ Đang dọn...' : `Xóa Cứng ${purgeData.total || 0} Ca (Không Khôi Phục)`}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Realtime Socket Live Notification Banner */}
         <div style={{

@@ -1956,6 +1956,38 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   );
 
+  // HR kiểm tra ca không live từ trước đến giờ (DRAFT/CANCELLED, ca nào còn điểm
+  // danh thì giữ) — chỉ đọc, không xóa gì.
+  app.get(
+    '/admin/shifts/non-live',
+    authMiddleware,
+    requireRole(['ADMIN', 'HR']),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        res.json(await schedulesService.auditNonLiveShifts());
+      } catch (err: any) {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  );
+
+  // HR dọn ca không live KHÔNG điểm danh khỏi hệ thống (CANCELLED + DRAFT quá khứ).
+  // Ca PUBLISHED, ca nháp hiện tại/tương lai và ca còn điểm danh được giữ nguyên.
+  app.post(
+    '/admin/shifts/purge-non-live',
+    authMiddleware,
+    requireRole(['ADMIN', 'HR']),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const result = await schedulesService.purgeNonLiveShifts(req.user!.id);
+        broadcastUpdate('schedules', { action: 'purge-non-live', removed: (result as any)?.removed || 0 });
+        res.json(result);
+      } catch (err: any) {
+        res.status(400).json({ error: err.message });
+      }
+    }
+  );
+
   app.post(
     '/schedules/:week/publish',
     authMiddleware,

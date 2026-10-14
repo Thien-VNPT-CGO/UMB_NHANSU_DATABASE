@@ -510,6 +510,22 @@ export class MockSheetsAdapter implements ISheetsRepository {
     return { ...shift };
   }
 
+  async deleteShiftAssignment(id: string): Promise<boolean> {
+    this.checkErrors();
+    const idx = this.shifts.findIndex(s => String(s.assignment_id) === String(id));
+    if (idx < 0) return false;
+    this.shifts.splice(idx, 1);
+    return true;
+  }
+
+  async purgeShiftAssignments(ids: string[]): Promise<number> {
+    this.checkErrors();
+    const set = new Set((ids || []).map(String));
+    const beforeCount = this.shifts.length;
+    this.shifts = this.shifts.filter(s => !set.has(String(s.assignment_id)));
+    return beforeCount - this.shifts.length;
+  }
+
   async deleteShiftsForEmployee(employeeId: string, fromDate?: string): Promise<number> {
     this.checkErrors();
     const beforeCount = this.shifts.length;

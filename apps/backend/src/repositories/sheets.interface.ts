@@ -64,6 +64,8 @@ export interface ISheetsRepository {
   getShiftById(assignmentId: string): Promise<ShiftAssignment | null>;
   createShiftAssignment(assignment: Omit<ShiftAssignment, 'created_at' | 'updated_at'>): Promise<ShiftAssignment>;
   updateShiftAssignment(id: string, updates: Partial<ShiftAssignment>): Promise<ShiftAssignment>;
+  deleteShiftAssignment(id: string): Promise<boolean>;
+  purgeShiftAssignments(ids: string[]): Promise<number>;
   deleteShiftsForEmployee(employeeId: string, fromDate?: string): Promise<number>;
 
   // Leaves & Swaps

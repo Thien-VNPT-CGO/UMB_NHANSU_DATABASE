@@ -548,6 +548,38 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     return res;
   }
 
+  async purgeShiftAssignments(ids: string[]) {
+    const n = await this.fallbackAdapter.purgeShiftAssignments(ids);
+    // Đẩy 1 lần duy nhất sau khi dọn xong (không đẩy từng ca).
+    if (n > 0 && this.isConfigured) {
+      try {
+        await Promise.race([
+          this.syncService.pushShiftsTab(this.fallbackAdapter).catch(() => 0),
+          new Promise<number>(r => setTimeout(() => r(0), 30000)),
+        ]);
+      } catch {
+        this.scheduleFullSync('PHAN_CONG_CA.purge');
+      }
+    }
+    return n;
+  }
+
+  async deleteShiftAssignment(id: string) {
+    const ok = await this.fallbackAdapter.deleteShiftAssignment(id);
+    // Xóa cứng khỏi Sheet ngay để pull sau không hồi sinh ca đã dọn.
+    if (ok && this.isConfigured) {
+      try {
+        await Promise.race([
+          this.syncService.pushShiftsTab(this.fallbackAdapter).catch(() => 0),
+          new Promise<number>(r => setTimeout(() => r(0), 15000)),
+        ]);
+      } catch {
+        this.scheduleFullSync('PHAN_CONG_CA.delete');
+      }
+    }
+    return ok;
+  }
+
   async updateShiftAssignment(id: string, updates: any) {
     const res = await this.fallbackAdapter.updateShiftAssignment(id, updates);
     // FIX đổi ca mất lịch sau rebuild/restart: ca chuyển chủ (B đồng ý / HR duyệt)

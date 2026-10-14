@@ -306,6 +306,133 @@ export class SchedulesService {
     });
   }
 
+  /**
+   * Rà soát ca KHÔNG live (DRAFT/CANCELLED) từ trước đến giờ để dọn hệ thống:
+   *  - XÓA ĐƯỢC: CANCELLED mọi ngày + DRAFT quá khứ (< hôm nay) mà KHÔNG có bất
+   *    kỳ lượt điểm danh nào (live + kho archive). Xóa các này không ảnh hưởng
+   *    công/lương/hiển thị (CANCELLED vốn đã ẩn, DRAFT quá khứ không còn publish được).
+   *  - GIỮ LẠI: ca PUBLISHED, DRAFT hôm nay/tương lai (HR đang làm dở), và mọi ca
+   *    còn lượt điểm danh (bằng chứng công/lương, kể cả bản archive).
+   */
+  private async findNonLiveShifts(): Promise<{
+    today: string;
+    deletable: any[];
+    kept: { withEvents: number; draftFuture: number };
+    dateMin: string | null;
+    dateMax: string | null;
+  }> {
+    const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+    const all = await this.repo.getShiftsForWeek('*', '2000-01-01').catch(() => []);
+    const nonLive = (all || []).filter((s: any) => String((s as any)?.status || '') !== 'PUBLISHED');
+    const liveEvts = await this.repo.getAttendanceEvents().catch(() => []);
+    const withLive = new Set(
+      (liveEvts || []).map((e: any) => String((e as any)?.assignment_id || '')).filter(Boolean)
+    );
+    let withArch = new Set<string>();
+    try {
+      const days = nonLive.map((s: any) => String((s as any)?.date || '').slice(0, 10)).filter(Boolean).sort();
+      const sync = (this.repo as any)?.syncService;
+      if (days.length > 0 && sync?.getArchivedAttendanceEvents) {
+        const archived = await sync.getArchivedAttendanceEvents(days[0], days[days.length - 1]).catch(() => []);
+        withArch = new Set(
+          (archived || []).map((e: any) => String((e as any)?.assignment_id || '')).filter(Boolean)
+        );
+      }
+    } catch { /* chỉ xét live */ }
+    const hasEvents = (id: string) => withLive.has(id) || withArch.has(id);
+    const deletable: any[] = [];
+    let withEvents = 0;
+    let draftFuture = 0;
+    for (const s of nonLive) {
+      const id = String((s as any)?.assignment_id || '');
+      const st = String((s as any)?.status || '');
+      const day = String((s as any)?.date || '').slice(0, 10);
+      if (!id) continue;
+      if (hasEvents(id)) {
+        withEvents++;
+        continue;
+      }
+      if (st === 'CANCELLED') {
+        deletable.push(s);
+        continue;
+      }
+      if (st === 'DRAFT' && day && day < today) {
+        deletable.push(s);
+        continue;
+      }
+      draftFuture++;
+    }
+    const allDays = (all || []).map((s: any) => String((s as any)?.date || '').slice(0, 10)).filter(Boolean).sort();
+    return {
+      today,
+      deletable,
+      kept: { withEvents, draftFuture },
+      dateMin: allDays[0] || null,
+      dateMax: allDays[allDays.length - 1] || null,
+    };
+  }
+
+  /** Xem trước ca không live (không xóa gì) — HR kiểm tra lịch từ trước đến giờ. */
+  async auditNonLiveShifts() {
+    const r = await this.findNonLiveShifts();
+    const byStatus: Record<string, number> = {};
+    for (const s of r.deletable) {
+      const st = String((s as any)?.status || 'UNKNOWN');
+      byStatus[st] = (byStatus[st] || 0) + 1;
+    }
+    return {
+      today: r.today,
+      dateMin: r.dateMin,
+      dateMax: r.dateMax,
+      total: r.deletable.length,
+      byStatus,
+      kept: r.kept,
+      items: r.deletable.slice(0, 200).map((s: any) => ({
+        assignment_id: (s as any).assignment_id,
+        employee_id: (s as any).employee_id,
+        date: String((s as any)?.date || '').slice(0, 10),
+        shift_code: (s as any).shift_code,
+        status: (s as any).status,
+      })),
+    };
+  }
+
+  /** Xóa cứng ca không live KHÔNG điểm danh (an toàn công/lương). Bền vững Sheets. */
+  async purgeNonLiveShifts(actorId: string) {
+    return singleWriterQueue.enqueue({
+      entityType: 'PHAN_CONG_CA',
+      entityId: 'PURGE_NON_LIVE',
+      actorId,
+      execute: async () => {
+        const r = await this.findNonLiveShifts();
+        const ids = r.deletable.map((s: any) => String((s as any).assignment_id));
+        let removed = 0;
+        if (ids.length > 0) {
+          removed = await (this.repo as any).purgeShiftAssignments
+            ? await (this.repo as any).purgeShiftAssignments(ids)
+            : 0;
+        }
+        await this.repo.recordAuditLog({
+          log_id: `LOG_${Date.now()}`,
+          actor_id: actorId,
+          actor_role: 'HR',
+          action: 'SHIFTS_PURGED_NON_LIVE',
+          target_entity: 'PHAN_CONG_CA',
+          target_id: `PURGE_${Date.now()}`,
+          details: `Dọn ${removed} ca không live (CANCELLED + DRAFT quá khứ, 0 lượt điểm danh) từ ${r.dateMin || '?'} đến ${r.dateMax || '?'}. Giữ ${r.kept.withEvents} ca còn điểm danh + ${r.kept.draftFuture} ca nháp hiện tại/tương lai.`,
+        } as any).catch(() => null);
+        if (this.io && removed > 0) {
+          this.io.emit('data:updated', {
+            entity: 'schedules',
+            data: { action: 'purge-non-live', removed },
+            timestamp: new Date().toISOString(),
+          });
+        }
+        return { removed, kept: r.kept, dateMin: r.dateMin, dateMax: r.dateMax };
+      },
+    });
+  }
+
   async createShift(data: {
     employeeId: string;
     branchId: string;
