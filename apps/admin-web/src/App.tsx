@@ -80,10 +80,20 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'dashboard', label: '1. Dashboard', icon: Building2 },
     { id: 'staff', label: '2. Nhân sự', icon: Users },
     { id: 'accounts', label: '3. Tài khoản & PIN', icon: Shield },
-    { id: 'operations', label: '4. Vận hành ca & công', icon: Calendar },
-    { id: 'notify', label: '5. Thông báo', icon: Bell },
-    { id: 'system', label: '6. Cấu hình hệ thống', icon: Settings },
-    { id: 'safety', label: '7. Nhật ký & Sao lưu', icon: HardDrive },
+    { id: 'branches', label: '4. Chi nhánh & Ca', icon: Store },
+    { id: 'hr-schedule', label: '5. Lịch làm việc', icon: Calendar },
+    { id: 'hr-leave', label: '6. Nghỉ OFF', icon: Clock },
+    { id: 'hr-swap', label: '7. Đổi ca', icon: RefreshCw },
+    { id: 'hr-support', label: '8. Chuyển ca hỗ trợ', icon: Send },
+    { id: 'hr-attendance', label: '9. Chấm công', icon: CheckCircle },
+    { id: 'hr-adjustments', label: '10. Bổ sung công', icon: FileText },
+    { id: 'notify', label: '11. Thông báo', icon: Bell },
+    { id: 'policies', label: '12. Chính sách', icon: Sliders },
+    { id: 'integrations', label: '13. Tích hợp & Đồng bộ', icon: Database },
+    { id: 'maintenance', label: '14. Bảo trì', icon: Activity },
+    { id: 'settings', label: '15. Cài đặt', icon: Settings },
+    { id: 'audit', label: '16. Nhật ký Audit', icon: FileCheck },
+    { id: 'backup', label: '17. Sao lưu & Phục hồi', icon: HardDrive },
   ],
   HR: [
     { id: 'hr-dashboard', label: '1. Dashboard HR', icon: Building2 },
@@ -142,27 +152,19 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
   ],
 };
 
-/** Gộp tab ADMIN 18 -> 7 (giữ đủ chức năng): ánh xạ id tab cũ (thông báo/toast/
- *  tab đã lưu) về tab gộp. Vai trò khác giữ id cũ nên không ảnh hưởng. */
+/** Tab ADMIN tách đầy đủ (mỗi tab 1 chức năng, nội dung giữ nguyên từng khối):
+ *  ánh xạ id tab cũ đã lưu (tab gộp trước đây / toast từ server) về tab mới.
+ *  Vai trò khác giữ id cũ nên không ảnh hưởng. */
 export const ADMIN_TAB_ALIASES: Record<string, string> = {
   employees: 'staff',
   'hr-official': 'staff',
   'hr-probation': 'staff',
   'internal-accounts': 'accounts',
   activation: 'accounts',
-  branches: 'operations',
-  'hr-schedule': 'operations',
-  'hr-leave': 'operations',
-  'hr-swap': 'operations',
-  'hr-support': 'operations',
-  'hr-attendance': 'operations',
+  operations: 'branches',
+  system: 'policies',
+  safety: 'audit',
   notifications: 'notify',
-  policies: 'system',
-  integrations: 'system',
-  maintenance: 'system',
-  settings: 'system',
-  audit: 'safety',
-  backup: 'safety',
 };
 
 export function resolveAdminTab(role: string | undefined, tabId: string): string {
@@ -170,7 +172,7 @@ export function resolveAdminTab(role: string | undefined, tabId: string): string
   return tabId;
 }
 
-/** Nav neo trong tab gộp (ADMIN 7 tab): cuộn tới từng mục, không cần state dùng chung. */
+/** Nav neo trong tab (ADMIN tách tab): cuộn tới từng mục, không cần state dùng chung. */
 export function SecNav({ items }: { items: Array<[string, string]> }) {
   return (
     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
@@ -314,7 +316,11 @@ export function App() {
   });
   const [activeTab, setActiveTab] = useState<string>(() => {
     const savedTab = localStorage.getItem('ubm_active_tab');
-    if (savedTab) return savedTab;
+    // Tab gộp cũ (operations/system/safety) -> tab tách mới tương ứng.
+    if (savedTab) {
+      const legacy: Record<string, string> = { operations: 'branches', system: 'policies', safety: 'audit' };
+      return legacy[savedTab] || savedTab;
+    }
     try {
       const savedUser = localStorage.getItem('ubm_admin_user');
       if (savedUser) {
@@ -3532,9 +3538,9 @@ export function App() {
           {/* ========================================================= */}
           {/* MODULE 5: CHI NHÁNH & CA LÀM */}
           {/* ========================================================= */}
-          {activeTab === 'operations' && (
+          {activeTab === 'branches' && (
             <div id="sec-branches" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-              <SecNav items={[['sec-branches', 'Chi nhánh & ca'], ['sec-schedule', 'Lịch làm việc'], ['sec-leave', 'Nghỉ OFF'], ['sec-swap', 'Đổi ca'], ['sec-attendance', 'Chấm công']]} />
+              <SecNav items={[['sec-branches', 'Chi nhánh & ca']]} />
               <div>
                 <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>5. Quản Lý Chi Nhánh & Cấu Hình Ca Làm</h1>
                 <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Tọa độ GPS, bán kính quét hợp lệ (300m), định biên nhân sự và khung giờ ca 1/2/3</p>
@@ -3598,9 +3604,9 @@ export function App() {
           {/* ========================================================= */}
           {/* MODULE 6: CHÍNH SÁCH HỆ THỐNG */}
           {/* ========================================================= */}
-          {activeTab === 'system' && (
+          {activeTab === 'policies' && (
             <div id="sec-policies" style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '800px' }}>
-              <SecNav items={[['sec-policies', 'Chính sách'], ['sec-integrations', 'Tích hợp & đồng bộ'], ['sec-maintenance', 'Bảo trì'], ['sec-settings', 'Cài đặt']]} />
+              <SecNav items={[['sec-policies', 'Chính sách']]} />
               <div>
                 <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>6. Cấu Hình Chính Sách Hệ Thống</h1>
                 <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Cửa sổ điểm danh, bán kính GPS, đăng ký OFF tuần và tiêu chuẩn bài kiểm tra TEST</p>
@@ -3765,7 +3771,7 @@ export function App() {
           {/* ========================================================= */}
           {/* MODULE 8: TÍCH HỢP & ĐỒNG BỘ */}
           {/* ========================================================= */}
-          {activeTab === 'system' && (
+          {activeTab === 'integrations' && (
             <div id="sec-integrations" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
               <div>
                 <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>8. Tích Hợp & Đồng Bộ Google Sheets Master</h1>
@@ -3939,7 +3945,7 @@ export function App() {
           {/* ========================================================= */}
           {/* MODULE 9: BẢO TRÌ HỆ THỐNG */}
           {/* ========================================================= */}
-          {activeTab === 'system' && (
+          {activeTab === 'maintenance' && (
             <div id="sec-maintenance" style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '800px' }}>
               <div>
                 <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>9. Quản Lý Chế Độ Bảo Trì Kỹ Thuật</h1>
@@ -4026,9 +4032,9 @@ export function App() {
           {/* ========================================================= */}
           {/* MODULE 10: AUDIT LOG */}
           {/* ========================================================= */}
-          {activeTab === 'safety' && (
+          {activeTab === 'audit' && (
             <div id="sec-audit" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              <SecNav items={[['sec-audit', 'Audit log'], ['sec-backup', 'Backup & Recovery']]} />
+              <SecNav items={[['sec-audit', 'Audit log']]} />
               <div>
                 <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>10. Nhật Ký Hệ Thống Bất Biến (Audit Trail)</h1>
                 <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Ghi lại toàn bộ hành động: Actor ID, Hành động, Đối tượng, Thời gian và JSON Before/After</p>
@@ -4070,7 +4076,7 @@ export function App() {
           {/* ========================================================= */}
           {/* MODULE 11: BACKUP & RECOVERY */}
           {/* ========================================================= */}
-          {activeTab === 'safety' && (
+          {activeTab === 'backup' && (
             <div id="sec-backup" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
@@ -4162,7 +4168,7 @@ export function App() {
           {/* ========================================================= */}
           {/* MODULE 12: CÀI ĐẶT HỆ THỐNG */}
           {/* ========================================================= */}
-          {activeTab === 'system' && (
+          {activeTab === 'settings' && (
             <div id="sec-settings" style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '800px' }}>
               <div>
                 <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>12. Cài Đặt Tham Số Kỹ Thuật Hệ Thống</h1>
