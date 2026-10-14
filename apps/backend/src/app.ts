@@ -266,6 +266,10 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   // Ping siêu nhẹ cho UptimeRobot/monitor: KHÔNG chạm adapter/database/Sheets,
   // KHÔNG tốn quota — chỉ giữ Render không sleep.
+  // Route gốc: monitor/Uptime gõ nhầm root vẫn 200 thay vì 404 gây hiểu lầm "chết".
+  app.get('/', (req, res) => {
+    res.json({ service: 'umb-backend', status: 'ok', ping: '/ping', health: '/health', time: new Date().toISOString() });
+  });
   app.get('/ping', (req, res) => {
     res.json({ status: 'ok', time: new Date().toISOString() });
   });

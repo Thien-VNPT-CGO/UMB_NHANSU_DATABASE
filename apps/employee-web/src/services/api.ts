@@ -29,6 +29,32 @@ export function setCustomApiUrl(url: string) {
 
 let authToken = localStorage.getItem('ubm_emp_token') || '';
 
+function fetchWithTimeout(url: string, options: RequestInit = {}, ms = 25000): Promise<Response> {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  return fetch(url, { ...options, signal: ctrl.signal }).finally(() => clearTimeout(t));
+}
+
+// Render miễn phí Sleep ~15 phút không gọi: fetch đầu tiên đánh thức mất 20-50s
+// rồi mới 200. Tự gọi /ping + chờ + thử lại tối đa 3 lần trước khi báo lỗi.
+async function wakeBackend(base: string): Promise<boolean> {
+  for (let i = 0; i < 3; i++) {
+    try {
+      const r = await fetchWithTimeout(`${base}/ping`, {}, 20000);
+      if (r.ok) return true;
+    } catch { /* thử tiếp */ }
+    await new Promise(r => setTimeout(r, [2000, 5000, 10000][i] || 5000));
+  }
+  return false;
+}
+
+function isNetworkFailure(err: any): boolean {
+  const msg = String(err?.message || err?.name || '').toLowerCase();
+  return msg.includes('failed to fetch') || msg.includes('load failed') || msg.includes('networkerror')
+    || msg.includes('network request failed') || msg === 'load failed'
+    || msg.includes('abort') || msg.includes('timeout') || msg === 'aborted';
+}
+
 export function setAuthToken(token: string) {
   authToken = token;
   if (token) {
@@ -96,8 +122,9 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
 
   const url = `${base}${endpoint}`;
   const alreadyRefreshed = (options as any)._refreshed === true;
+  const woken = (options as any)._woken === true;
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       ...options,
       headers,
     });
@@ -150,10 +177,16 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
 
     return data;
   } catch (err: any) {
-    const msg = String(err?.message || '').toLowerCase();
-    // Safari iOS báo "Load failed", Chrome "Failed to fetch", Firefox "NetworkError".
-    if (msg.includes('failed to fetch') || msg.includes('load failed') || msg.includes('networkerror') || msg.includes('network request failed') || msg === 'load failed') {
-      throw new Error(`Không thể kết nối đến máy chủ Backend (${base}). Kiểm tra: 1) Backend đã chạy chưa, 2) Địa chỉ API đúng chưa, 3) Nếu dùng Render miễn phí đang Sleep thì đợi 20-30 giây rồi thử lại.`);
+    // Render free Sleep: lỗi mạng lần đầu -> tự đánh thức backend rồi thử lại 1 lần.
+    if (isNetworkFailure(err) && !woken && endpoint !== '/ping' && endpoint !== '/version') {
+      console.warn(`[API] Mất kết nối ${endpoint} — đang đánh thức backend...`);
+      const ok = await wakeBackend(base);
+      if (ok) {
+        return apiRequest<T>(endpoint, { ...options, _woken: true } as any, retries);
+      }
+    }
+    if (isNetworkFailure(err)) {
+      throw new Error(`Không thể kết nối đến máy chủ Backend (${base}) sau khi đã tự đánh thức 3 lần. Kiểm tra: 1) Địa chỉ API đúng chưa, 2) Mạng/WiFi có chặn render.com không, 3) Vào ${base}/ping bằng trình duyệt xem có hiện {"status":"ok"} không.`);
     }
     throw err;
   }

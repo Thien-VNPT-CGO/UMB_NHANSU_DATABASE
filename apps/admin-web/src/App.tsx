@@ -1939,10 +1939,25 @@ export function App() {
                     />
                     <button
                       type="button"
-                      onClick={() => {
-                        setCustomApiUrl(customApiUrl);
-                        setSuccessMsg('Đã lưu địa chỉ máy chủ API!');
-                        setTimeout(() => setSuccessMsg(null), 3000);
+                      onClick={async () => {
+                        const raw = (customApiUrl || '').trim().replace(/\/+$/, '');
+                        if (raw && !/^https?:\/\/.+\..+/.test(raw)) {
+                          setErrorMsg('Địa chỉ Backend phải dạng https://... (VD https://umb-nhansu-database-kfh6.onrender.com)!');
+                          return;
+                        }
+                        setCustomApiUrl(raw);
+                        setSuccessMsg('⏳ Đang kiểm tra kết nối máy chủ...');
+                        try {
+                          const base = raw || getApiBase();
+                          const ctrl = new AbortController();
+                          const t = setTimeout(() => ctrl.abort(), 25000);
+                          const res = await fetch(`${base}/ping`, { signal: ctrl.signal }).finally(() => clearTimeout(t));
+                          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                          setSuccessMsg(`Đã lưu + kết nối OK (${base})!`);
+                        } catch {
+                          setErrorMsg(`Đã lưu nhưng ${raw || getApiBase()} không phản hồi! Kiểm tra lại địa chỉ hoặc mạng — mọi chức năng sẽ lỗi cho tới khi đúng.`);
+                        }
+                        setTimeout(() => { setSuccessMsg(null); setErrorMsg(null); }, 5000);
                       }}
                       style={{
                         padding: '6px 12px',
