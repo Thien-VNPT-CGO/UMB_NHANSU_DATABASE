@@ -10173,6 +10173,43 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </button>
           </div>
         </div>
+        {/* Admin/HR hoàn thành ca làm: chọn ngày + nhân viên + ca -> ghi đủ CHECK_IN/OUT, đồng bộ lương */}
+        <div style={{ backgroundColor: '#F0FDF4', borderRadius: 'var(--radius-md)', border: '1.5px solid #86EFAC', padding: '14px 16px' }}>
+          <div style={{ fontSize: '14px', fontWeight: 800, color: '#166534', marginBottom: '8px' }}>✅ Admin hoàn thành ca làm <span style={{ fontWeight: 400, fontSize: '12px', color: '#4D7C0F' }}>(ca KHÓA / thiếu check-in-out — bấm là đủ công + đồng bộ lương ngay)</span></div>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <label style={{ fontSize: '12px', fontWeight: 700, color: '#166534' }}>
+              Ngày
+              <input type="date" value={compDate} onChange={(e) => { setCompDate(e.target.value); if (compEmpId) loadCompShifts(compEmpId, e.target.value); }} style={{ display: 'block', marginTop: '4px', padding: '6px 10px', fontSize: '13px', border: '1px solid #86EFAC', borderRadius: '6px', backgroundColor: '#FFF' }} />
+            </label>
+            <label style={{ fontSize: '12px', fontWeight: 700, color: '#166534' }}>
+              Nhân viên
+              <select value={compEmpId} onChange={(e) => { setCompEmpId(e.target.value); loadCompShifts(e.target.value, compDate); }} style={{ display: 'block', marginTop: '4px', padding: '6px 10px', fontSize: '13px', border: '1px solid #86EFAC', borderRadius: '6px', backgroundColor: '#FFF', maxWidth: '260px' }}>
+                <option value="">— Chọn nhân viên —</option>
+                {(allEmployees || []).filter((e: any) => (e as any)?.employment_status !== 'TERMINATED').map((e: any) => (
+                  <option key={(e as any).employee_id} value={(e as any).employee_id}>{(e as any).employee_code} — {(e as any).full_name}</option>
+                ))}
+              </select>
+            </label>
+            <label style={{ fontSize: '12px', fontWeight: 700, color: '#166534' }}>
+              Ca làm {compShiftsBusy ? '(đang tải...)' : `(${compShifts.length})`}
+              <select value={compAssignmentId} onChange={(e) => setCompAssignmentId(e.target.value)} style={{ display: 'block', marginTop: '4px', padding: '6px 10px', fontSize: '13px', border: '1px solid #86EFAC', borderRadius: '6px', backgroundColor: '#FFF', maxWidth: '300px' }}>
+                <option value="">— Chọn ca —</option>
+                {compShifts.map((s: any) => (
+                  <option key={(s as any).assignment_id} value={(s as any).assignment_id}>
+                    {(s as any).shift_code} • {(s as any).branch_id} • {String((s as any).start_at || '').slice(11, 16)}–{String((s as any).end_at || '').slice(11, 16)} • {(s as any).status}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ fontSize: '12px', fontWeight: 700, color: '#166534', flex: 1, minWidth: '180px' }}>
+              Lý do
+              <input value={compReason} onChange={(e) => setCompReason(e.target.value)} placeholder="VD: NV có đi làm, quên check-in" style={{ display: 'block', marginTop: '4px', padding: '6px 10px', fontSize: '13px', border: '1px solid #86EFAC', borderRadius: '6px', backgroundColor: '#FFF', width: '100%' }} />
+            </label>
+            <button className="btn-primary" style={{ fontSize: '13px', padding: '8px 18px', backgroundColor: '#16A34A' }} disabled={compBusy || !compAssignmentId} onClick={submitCompleteShift}>
+              {compBusy ? '⏳ Đang ghi...' : '✅ Hoàn thành ca'}
+            </button>
+          </div>
+        </div>
 
         {gpsReverify && (
           <div style={{ backgroundColor: (gpsReverify.offenders || 0) > 0 ? '#FEF2F2' : '#ECFDF5', border: (gpsReverify.offenders || 0) > 0 ? '1.5px solid #EF4444' : '1px solid #A7F3D0', borderRadius: 'var(--radius-md)', padding: '12px 16px' }}>
