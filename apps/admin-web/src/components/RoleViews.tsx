@@ -652,16 +652,24 @@ function mergeOrphanCheckins(
   byAssign: Map<string, any[]>,
   usedAssign: Set<string>,
   statusByAssign: Map<string, string>,
+  shiftByAssign?: Map<string, any>,
 ): Map<string, any[]> {
   const out = new Map<string, any[]>();
   const ordered = [...(dayShifts || [])].filter((s: any) => (s as any)?.assignment_id);
   if (ordered.length === 0) return out;
+  const dayIso = String((ordered[0] as any)?.date || '').slice(0, 10);
   const liveIds = new Set(ordered.map((s: any) => String((s as any).assignment_id)));
   const isOrphanKey = (k: string) => {
     if (!k || k.startsWith('__')) return true;
     if (liveIds.has(k)) return false;
     const st = statusByAssign.get(k);
-    return !st || st === 'CANCELLED';
+    if (!st || st === 'CANCELLED') return true;
+    // Gắn ca live nhưng KHÁC NGÀY (VD sau khi HR sửa/xếp lại lịch): vẫn là mồ côi
+    // của ngày này -> cho gộp để ca điểm danh hiện lại. Cùng ngày thì giữ nguyên
+    // (tránh thẻ ma khi danh sách ca chưa tải lại).
+    const fday = String((shiftByAssign?.get(k) as any)?.date || '').slice(0, 10);
+    if (fday && dayIso && fday !== dayIso) return true;
+    return false;
   };
   const hasIn = (list: any[]) => (list || []).some((e: any) => (e as any)?.type === 'CHECK_IN');
   const inWindow = (sh: any, iso: string) => {
@@ -7638,10 +7646,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       // Trạng thái ca theo assignment_id (tra 1 lần): phiếu gắn ca đã hủy/mất
       // sau khi HR xếp lại thì rớt về khớp cùng ngày, khỏi hiện "chưa điểm danh" oan.
       const shiftStatusByAssign = new Map<string, string>();
+      const shiftByAssign = new Map<string, any>();
       for (const s of (schedAllShifts || [])) {
         const id = String((s as any)?.assignment_id || '');
         if (!id || shiftStatusByAssign.has(id)) continue;
         shiftStatusByAssign.set(id, String((s as any)?.status || ''));
+        shiftByAssign.set(id, s);
       };
       return baseEmps
         .map((emp, empIdx) => {
@@ -7834,7 +7844,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           }
           const usedAssign = new Set<string>();
           // Gộp check-in mồ côi về đúng ca trước khi dựng thẻ (hết double 2 ca).
-          const orphanMerged = mergeOrphanCheckins(dayShifts, byAssign, usedAssign, shiftStatusByAssign);
+          const orphanMerged = mergeOrphanCheckins(dayShifts, byAssign, usedAssign, shiftStatusByAssign, shiftByAssign);
           const entries: any[] = [];
           const entryNote = (res: any) => {
             if (foundLeave && (res.status === 'COMPLETED' || res.status === 'CHECKED_IN')) {
@@ -7866,10 +7876,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             if (!ci && !co && !ab) continue;
             if (!String(k).startsWith('__')) {
               const kst = shiftStatusByAssign.get(String(k));
-              // Nhóm gắn ca live (ca tồn tại, chưa hủy) nhưng ca không thuộc ngày
-              // này — VD vừa bù công xong mà danh sách ca chưa tải lại: bỏ để khỏi
-              // hiện thẻ ma kèm nút bù (thẻ của ca đó tự hiện khi danh sách ca về).
-              if (kst && kst !== 'CANCELLED') continue;
+              // Nhóm gắn ca live CÙNG NGÀY này nhưng ca không thuộc lưới ngày này
+              // (VD vừa bù công xong mà danh sách ca chưa tải lại): bỏ để khỏi hiện
+              // thẻ ma (thẻ của ca đó tự hiện khi danh sách ca về). Gắn ca live
+              // KHÁC NGÀY (sau khi HR sửa/xếp lại) thì HIỆN như thẻ ngoài lịch để ca
+              // đã điểm danh không bị mất khỏi lưới.
+              if (kst && kst !== 'CANCELLED') {
+                const fday = String((shiftByAssign.get(String(k)) as any)?.date || '').slice(0, 10);
+                if (!fday || fday === day.isoDate) continue;
+              }
               // Nhóm chỉ có VẮNG mà ca đã mất/hủy: bỏ để khỏi hiện thẻ vắng ma.
               if (!ci && !co) continue;
             }
@@ -10061,8 +10076,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       const attStatusByAssign = new Map<string, string>(
         (schedAllShifts || []).map((s: any) => [String((s as any)?.assignment_id || ''), String((s as any)?.status || '')])
       );
+      const attShiftByAssign = new Map<string, any>(
+        (schedAllShifts || []).map((s: any) => [String((s as any)?.assignment_id || ''), s])
+      );
       const attUsed = new Set<string>();
-      const attMerged = mergeOrphanCheckins(shs, byAssign, attUsed, attStatusByAssign);
+      const attMerged = mergeOrphanCheckins(shs, byAssign, attUsed, attStatusByAssign, attShiftByAssign);
       const items: any[] = shs
         .sort((a: any, b: any) => (SHIFT_RANK[a.shift_code] || 9) - (SHIFT_RANK[b.shift_code] || 9))
         .map((s: any) => {
@@ -10078,11 +10096,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         });
       for (const [k, list] of byAssign) {
         if (attUsed.has(String(k))) continue;
-        // Nhóm gắn ca live nhưng ca không thuộc ngày này (VD vừa bù xong mà danh
-        // sách ca chưa tải lại): bỏ để khỏi hiện thẻ ma kèm nút bù.
+        // Nhóm gắn ca live CÙNG NGÀY này nhưng ca không thuộc lưới ngày này (VD vừa
+        // bù xong mà danh sách ca chưa tải lại): bỏ để khỏi hiện thẻ ma. Gắn ca
+        // live KHÁC NGÀY (sau khi HR sửa/xếp lại) thì HIỆN để ca điểm danh không mất.
         if (!String(k).startsWith('__')) {
           const kst = attStatusByAssign.get(String(k));
-          if (kst && kst !== 'CANCELLED') continue;
+          if (kst && kst !== 'CANCELLED') {
+            const fday = String((attShiftByAssign.get(String(k)) as any)?.date || '').slice(0, 10);
+            if (!fday || fday === iso) continue;
+          }
         }
         // Chuẩn tab Lịch tuần: nhóm mồ côi chỉ hiện khi có check-in/out (thẻ
         // "Tự điểm danh"). Nhóm chỉ có VẮNG mà không gắn ca live nào thì bỏ —

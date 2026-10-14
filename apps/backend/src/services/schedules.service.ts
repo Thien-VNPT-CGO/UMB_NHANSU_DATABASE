@@ -216,16 +216,21 @@ export class SchedulesService {
             String((e as any)?.assignment_id || '') === String(assignmentId) &&
             ['CHECK_IN', 'CHECK_OUT'].includes(String((e as any)?.type || ''))
         );
+        let linkedFromArchive = false;
         if (linked.length === 0) {
           try {
             const sync = (this.repo as any)?.syncService;
             const archived = (sync?.getArchivedAttendanceEvents ? await sync.getArchivedAttendanceEvents(oldDay, oldDay).catch(() => []) : []) || [];
-            linked = archived.filter(
+            const found = archived.filter(
               (e: any) =>
                 String((e as any)?.employee_id || '') === String(sh.employee_id || '') &&
                 String((e as any)?.assignment_id || '') === String(assignmentId) &&
                 ['CHECK_IN', 'CHECK_OUT'].includes(String((e as any)?.type || ''))
             );
+            if (found.length > 0) {
+              linked = found;
+              linkedFromArchive = true;
+            }
           } catch { /* giữ linked rỗng */ }
         }
         const hasAtt = linked.length > 0;
@@ -245,6 +250,14 @@ export class SchedulesService {
           employee_id: newEmp,
           branch_id: newBranch,
         };
+        // Lượt điểm danh nằm ở kho lưu trữ tuần cũ (chỉ đọc) thì KHÔNG dời NV được
+        // (kho không cho ghi, dời im lặng sẽ làm ca mất điểm danh) — báo rõ để HR
+        // xử lý bằng phiếu bù công thay vì sửa ca.
+        if (hasAtt && linkedFromArchive && newEmp !== String(sh.employee_id || '')) {
+          throw new Error(
+            'SHIFT_ARCHIVED_ATTENDANCE_LOCKED: Ca tuần cũ đã lưu trữ — lượt điểm danh nằm ở kho chỉ đọc nên không chuyển sang NV khác được! Chỉ đổi được ca/chi nhánh (giữ nguyên NV), hoặc dùng phiếu bù công.'
+          );
+        }
         // Dời lượt điểm danh theo ca sang NV mới (giữ nguyên giờ giấc bằng chứng).
         let movedEvents = 0;
         if (hasAtt && newEmp !== String(sh.employee_id || '')) {
