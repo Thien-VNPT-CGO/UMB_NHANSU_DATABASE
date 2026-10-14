@@ -10377,7 +10377,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           </div>
         )}
 
-        <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflowX: 'auto', padding: '12px 14px' }}>
+        <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'auto', maxHeight: '72vh', padding: '12px 14px' }}>
           <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '10px' }}>
             <span style={{ fontSize: '12px', fontWeight: 700 }}>Tuần:</span>
             <select
@@ -10396,12 +10396,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               Tuần <strong>Thứ 2 {attDays[0] ? `${attDays[0].iso.slice(8, 10)}/${attDays[0].iso.slice(5, 7)}/${attDays[0].iso.slice(0, 4)}` : '…'} → CN {attDays[6] ? `${attDays[6].iso.slice(8, 10)}/${attDays[6].iso.slice(5, 7)}/${attDays[6].iso.slice(0, 4)}` : '…'}</strong> • 1 ô = các ca trong ngày kèm đúng trạng thái • Cùng tuần với tab Lịch Làm Việc{scheduleWeekOffset < 0 ? (archiveLoading ? ' • ⏳ Đang tải ngày công tuần cũ từ kho lưu trữ...' : ' • Tuần cũ đọc từ kho lưu trữ (đủ ngày công tính lương).') : ''}
             </span>
           </div>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+          <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '12px' }}>
             <thead>
               <tr style={{ backgroundColor: 'var(--bg)', borderBottom: '1px solid var(--border)', textAlign: 'center' }}>
-                <th style={{ padding: '12px 16px', textAlign: 'left', minWidth: '170px' }}>NHÂN VIÊN</th>
+                <th style={{ padding: '12px 16px', textAlign: 'left', minWidth: '170px', backgroundColor: 'var(--bg)', position: 'sticky', left: 0, top: 0, zIndex: 3, borderBottom: '1px solid var(--border)' }}>NHÂN VIÊN</th>
                 {attDays.map((day: any) => (
-                  <th key={day.key} style={{ padding: '12px 8px', minWidth: '130px', backgroundColor: day.isToday ? '#FFFBEB' : undefined }}>
+                  <th key={day.key} style={{ padding: '12px 8px', minWidth: '130px', backgroundColor: day.isToday ? '#FFFBEB' : 'var(--bg)', position: 'sticky', top: 0, zIndex: 2, borderBottom: '1px solid var(--border)' }}>
                     {day.code}
                     <div style={{ fontSize: '10px', fontWeight: 400 }}>{day.iso.slice(8, 10)}/{day.iso.slice(5, 7)}</div>
                   </th>
