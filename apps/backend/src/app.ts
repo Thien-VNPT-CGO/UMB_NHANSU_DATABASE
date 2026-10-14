@@ -1998,6 +1998,36 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   );
 
+  // Admin/HR xem trước ca trùng (cùng NV + ngày + mã ca + chi nhánh còn live).
+  app.get(
+    '/admin/shifts/duplicates',
+    authMiddleware,
+    requireRole(['ADMIN', 'HR']),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        res.json(await schedulesService.auditDuplicateShifts());
+      } catch (err: any) {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  );
+
+  // Admin/HR dọn ca trùng: giữ 1 ca/nhóm, hủy thừa + dọn vắng oan (realtime).
+  app.post(
+    '/admin/shifts/dedupe-duplicates',
+    authMiddleware,
+    requireRole(['ADMIN', 'HR']),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const result = await schedulesService.dedupeDuplicateShifts(req.user!.id);
+        broadcastUpdate('schedules', { action: 'dedupe-duplicates', cancelled: (result as any)?.result?.cancelled ?? (result as any)?.cancelled ?? 0 });
+        res.json((result as any)?.result ?? result);
+      } catch (err: any) {
+        res.status(400).json({ error: err.message });
+      }
+    }
+  );
+
   app.post(
     '/schedules/:week/publish',
     authMiddleware,

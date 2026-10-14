@@ -422,8 +422,7 @@ export class SchedulesService {
     };
   }
 
-  /** Xóa cứng ca không live KHÔNG điểm danh (an toàn công/lương). Bền vững Sheets. */
-  async purgeNonLiveShifts(actorId: string) {
+  /** Xóa cứng ca không live KHÔNG điểm danh (an toàn công/lương). Bền vững Sheets. */  async purgeNonLiveShifts(actorId: string) {
     return singleWriterQueue.enqueue({
       entityType: 'PHAN_CONG_CA',
       entityId: 'PURGE_NON_LIVE',
@@ -458,6 +457,110 @@ export class SchedulesService {
     });
   }
 
+  /** Nhóm ca trùng còn live (cùng NV + ngày + mã ca + chi nhánh chuẩn hóa). */
+  private async findDuplicateShiftGroups(): Promise<Array<{ key: string; employee_id: string; date: string; shift_code: string; branch: string; shifts: any[] }>> {
+    const all = await this.repo.getShiftsForWeek('*', '2000-01-01').catch(() => []);
+    const groups = new Map<string, any[]>();
+    for (const s of all || []) {
+      if (String((s as any)?.status || '') === 'CANCELLED') continue;
+      const aid = String((s as any)?.assignment_id || '');
+      if (!aid) continue;
+      const emp = String((s as any)?.employee_id || '');
+      const day = String((s as any)?.date || '').slice(0, 10);
+      if (!emp || !/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
+      const k = `${emp}|${day}|${String((s as any)?.shift_code || '')}|${canonicalBranch((s as any)?.branch_id)}`;
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k)!.push(s);
+    }
+    const out: Array<{ key: string; employee_id: string; date: string; shift_code: string; branch: string; shifts: any[] }> = [];
+    for (const [k, g] of groups) {
+      if (g.length < 2) continue;
+      const [employee_id, date, shift_code, branch] = k.split('|');
+      out.push({ key: k, employee_id, date, shift_code, branch, shifts: g });
+    }
+    return out;
+  }
+
+  /** Xem trước ca trùng (chỉ đọc): mỗi nhóm giữ 1, còn lại là thừa. */
+  async auditDuplicateShifts() {
+    const groups = await this.findDuplicateShiftGroups();
+    return {
+      total: groups.reduce((n, g) => n + g.shifts.length - 1, 0),
+      groups: groups.slice(0, 200).map(g => ({
+        employee_id: g.employee_id,
+        date: g.date,
+        shift_code: g.shift_code,
+        branch: g.branch,
+        count: g.shifts.length,
+        assignments: g.shifts.map((s: any) => ({
+          assignment_id: (s as any).assignment_id,
+          status: (s as any).status,
+        })),
+      })),
+    };
+  }
+
+  /** Dọn ca trùng: giữ 1 ca/nhóm (ưu tiên ca có điểm danh thật), CANCELLED phần
+   *  thừa không điểm danh + dọn vắng oan của chúng. Nhóm có ≥2 ca cùng điểm danh
+   *  thật thì BỎ QUA + báo để xử lý tay (không dám tự gộp công). Bền vững Sheets. */
+  async dedupeDuplicateShifts(actorId: string) {
+    return singleWriterQueue.enqueue({
+      entityType: 'PHAN_CONG_CA',
+      entityId: `DEDUPE_${Date.now()}`,
+      actorId,
+      execute: async () => {
+        const groups = await this.findDuplicateShiftGroups();
+        let cancelled = 0;
+        let cleanedAbsents = 0;
+        const skipped: string[] = [];
+        for (const g of groups) {
+          const evts = await this.repo.getAttendanceEvents(g.employee_id, g.date).catch(() => []);
+          const legsOf = (aid: string) =>
+            (evts || []).filter(
+              (e: any) =>
+                String((e as any)?.assignment_id || '') === String(aid) &&
+                ['CHECK_IN', 'CHECK_OUT'].includes(String((e as any)?.type || ''))
+            );
+          const ranked = [...g.shifts].sort((a: any, b: any) => legsOf(String((b as any)?.assignment_id || '')).length - legsOf(String((a as any)?.assignment_id || '')).length);
+          const keepLegs = legsOf(String((ranked[0] as any)?.assignment_id || '')).length;
+          const othersAttended = ranked.slice(1).filter((s: any) => legsOf(String((s as any)?.assignment_id || '')).length > 0);
+          if (othersAttended.length > 0) {
+            skipped.push(`${g.employee_id} ${g.date} ${g.shift_code} (${(keepLegs > 0 ? 1 : 0) + othersAttended.length} ca cùng có điểm danh)`);
+            continue;
+          }
+          for (const s of ranked.slice(1)) {
+            const aid = String((s as any)?.assignment_id || '');
+            await this.repo.updateShiftAssignment(aid, { status: 'CANCELLED' });
+            const abs = (evts || []).filter(
+              (e: any) => String((e as any)?.assignment_id || '') === aid && String((e as any)?.type || '') === 'ABSENT');
+            for (const a of abs) {
+              await this.repo.deleteAttendanceEvent((a as any).event_id).catch(() => null);
+              cleanedAbsents++;
+            }
+            cancelled++;
+          }
+        }
+        await this.repo.recordAuditLog({
+          log_id: `LOG_${Date.now()}`,
+          actor_id: actorId,
+          actor_role: 'HR',
+          action: 'SHIFTS_DEDUPED',
+          target_entity: 'PHAN_CONG_CA',
+          target_id: `DEDUPE_${Date.now()}`,
+          details: `Dọn ${cancelled} ca trùng (giữ 1/nhóm) + ${cleanedAbsents} vắng oan. Bỏ qua ${skipped.length} nhóm cùng có điểm danh: ${skipped.slice(0, 5).join(' | ')}`,
+        } as any).catch(() => null);
+        if (this.io && cancelled > 0) {
+          this.io.emit('data:updated', {
+            entity: 'schedules',
+            data: { action: 'dedupe-duplicates', cancelled },
+            timestamp: new Date().toISOString(),
+          });
+        }
+        return { cancelled, cleanedAbsents, skipped, groups: groups.length };
+      },
+    });
+  }
+
   async createShift(data: {
     employeeId: string;
     branchId: string;
@@ -485,6 +588,22 @@ export class SchedulesService {
       entityId: assignmentId,
       actorId: data.actorId,
       execute: async () => {
+        // Chặn ca trùng: cùng NV + ngày + mã ca + chi nhánh (chuẩn hóa) còn live
+        // (bấm đúp/retry/BOT chạy lại trước đây đẻ "ca ma" rồi tick vắng ghi 4-5
+        // thẻ Vắng giống hệt nhau).
+        const sameDay = await this.repo.getShiftsForEmployee(data.employeeId, data.date, data.date).catch(() => []);
+        const dup = (sameDay || []).find(
+          (s: any) =>
+            String((s as any)?.status || '') !== 'CANCELLED' &&
+            String((s as any)?.date || '').slice(0, 10) === String(data.date).slice(0, 10) &&
+            String((s as any)?.shift_code || '') === String(data.shiftCode) &&
+            canonicalBranch((s as any)?.branch_id) === canonicalBranch(data.branchId)
+        );
+        if (dup) {
+          throw new Error(
+            `SHIFT_DUPLICATE: ${String(data.employeeId)} ngày ${String(data.date).slice(0, 10)} đã có ${String(data.shiftCode)} (${String((dup as any)?.assignment_id || '')})! Không tạo trùng.`
+          );
+        }
         const shift = await this.repo.createShiftAssignment({
           assignment_id: assignmentId,
           employee_id: data.employeeId,
