@@ -8555,7 +8555,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           backgroundColor: 'var(--surface)',
           borderRadius: '16px',
           border: '1px solid var(--border)',
-          overflowX: 'auto',
+          overflow: 'auto',
+          maxHeight: '72vh',
           boxShadow: '0 8px 24px rgba(15, 23, 42, 0.08)',
         }}>
           <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '12px', minWidth: '1180px' }}>
