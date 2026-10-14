@@ -7876,15 +7876,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             if (!ci && !co && !ab) continue;
             if (!String(k).startsWith('__')) {
               const kst = shiftStatusByAssign.get(String(k));
-              // Nhóm gắn ca live CÙNG NGÀY này nhưng ca không thuộc lưới ngày này
-              // (VD vừa bù công xong mà danh sách ca chưa tải lại): bỏ để khỏi hiện
-              // thẻ ma (thẻ của ca đó tự hiện khi danh sách ca về). Gắn ca live
-              // KHÁC NGÀY (sau khi HR sửa/xếp lại) thì HIỆN như thẻ ngoài lịch để ca
-              // đã điểm danh không bị mất khỏi lưới.
-              if (kst && kst !== 'CANCELLED') {
-                const fday = String((shiftByAssign.get(String(k)) as any)?.date || '').slice(0, 10);
-                if (!fday || fday === day.isoDate) continue;
-              }
+              // Nhóm gắn ca live (ca tồn tại, chưa hủy) nhưng ca không thuộc ngày
+              // này — VD vừa bù công xong mà danh sách ca chưa tải lại: bỏ để khỏi
+              // hiện thẻ ma (thẻ của ca đó tự hiện khi danh sách ca về). Lượt nào
+              // gộp được vào ca live đúng ngày thì mergeOrphanCheckins đã gộp ở trên.
+              if (kst && kst !== 'CANCELLED') continue;
               // Nhóm chỉ có VẮNG mà ca đã mất/hủy: bỏ để khỏi hiện thẻ vắng ma.
               if (!ci && !co) continue;
             }
@@ -10096,15 +10092,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         });
       for (const [k, list] of byAssign) {
         if (attUsed.has(String(k))) continue;
-        // Nhóm gắn ca live CÙNG NGÀY này nhưng ca không thuộc lưới ngày này (VD vừa
-        // bù xong mà danh sách ca chưa tải lại): bỏ để khỏi hiện thẻ ma. Gắn ca
-        // live KHÁC NGÀY (sau khi HR sửa/xếp lại) thì HIỆN để ca điểm danh không mất.
+        // Nhóm gắn ca live nhưng ca không thuộc ngày này (VD vừa bù xong mà danh
+        // sách ca chưa tải lại): bỏ để khỏi hiện thẻ ma. Lượt nào gộp được vào ca
+        // live đúng ngày thì mergeOrphanCheckins đã gộp ở trên.
         if (!String(k).startsWith('__')) {
           const kst = attStatusByAssign.get(String(k));
-          if (kst && kst !== 'CANCELLED') {
-            const fday = String((attShiftByAssign.get(String(k)) as any)?.date || '').slice(0, 10);
-            if (!fday || fday === iso) continue;
-          }
+          if (kst && kst !== 'CANCELLED') continue;
         }
         // Chuẩn tab Lịch tuần: nhóm mồ côi chỉ hiện khi có check-in/out (thẻ
         // "Tự điểm danh"). Nhóm chỉ có VẮNG mà không gắn ca live nào thì bỏ —
