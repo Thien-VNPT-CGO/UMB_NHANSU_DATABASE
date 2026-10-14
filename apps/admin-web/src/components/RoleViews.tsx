@@ -1873,6 +1873,53 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [storeConfirmBusy, setStoreConfirmBusy] = useState(false);
   // Phiếu đang xem chi tiết (popup: tên NV + lý do & số phút + ảnh + thời gian)
   const [selectedAdj, setSelectedAdj] = useState<any | null>(null);
+  // Admin hoàn thành ca làm cho NV (ngày + nhân viên + ca): ghi CHECK_IN/OUT
+  // còn thiếu về đúng ca — lương đồng bộ theo. Chỉ hiện ca chưa đủ cặp.
+  const [compDate, setCompDate] = useState(() => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10));
+  const [compEmpId, setCompEmpId] = useState('');
+  const [compShifts, setCompShifts] = useState<any[]>([]);
+  const [compShiftsBusy, setCompShiftsBusy] = useState(false);
+  const [compAssignmentId, setCompAssignmentId] = useState('');
+  const [compReason, setCompReason] = useState('');
+  const [compBusy, setCompBusy] = useState(false);
+  const loadCompShifts = async (empId: string, day: string) => {
+    setCompShifts([]); setCompAssignmentId('');
+    if (!empId || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return;
+    setCompShiftsBusy(true);
+    try {
+      const list = await apiRequest(`/admin/employee-shifts/${empId}?fromDate=${day}&toDate=${day}`);
+      const arr = Array.isArray(list) ? list : [];
+      setCompShifts(arr.filter((s: any) => String((s as any)?.status || '') !== 'CANCELLED'));
+    } catch { setCompShifts([]); }
+    finally { setCompShiftsBusy(false); }
+  };
+  const submitCompleteShift = async () => {
+    if (compBusy) return;
+    if (!compAssignmentId) { showToast('⚠️ Chọn ca cần hoàn thành!'); return; }
+    if (!window.confirm('Xác nhận hoàn thành ca này cho nhân viên? Hệ thống ghi CHECK_IN/OUT còn thiếu (giờ vào/tan ca) — công và lương đồng bộ ngay.')) return;
+    setCompBusy(true);
+    try {
+      const res: any = await apiRequest('/attendance/complete-shift', {
+        method: 'POST',
+        body: JSON.stringify({ assignmentId: compAssignmentId, reason: compReason.trim() || 'Admin hoàn thành ca làm' }),
+      });
+      const created = (res as any)?.result?.created || (res as any)?.created || [];
+      showToast(`✅ Đã hoàn thành ca! Ghi thêm: ${Array.isArray(created) && created.length ? created.join(' + ') : 'đủ cặp sẵn'} — lịch, realtime và lương đã đồng bộ.`);
+      setCompReason('');
+      await loadCompShifts(compEmpId, compDate);
+      if (onRefreshData) await onRefreshData();
+    } catch (e: any) {
+      showToast(e?.message || 'Lỗi khi hoàn thành ca!');
+    } finally {
+      setCompBusy(false);
+    }
+    if (onSyncSheets) {
+      try {
+        const r = onSyncSheets();
+        if (r && typeof (r as any).catch === 'function') (r as any).catch(() => null);
+      } catch { /* bỏ qua */ }
+    }
+  };
   // Hồ sơ nhân viên (HR): NV đang xem + sub-tab danh mục + bộ lọc tìm kiếm
   const [profileSearch, setProfileSearch] = useState('');
   const [profileGroup, setProfileGroup] = useState('SALE');
@@ -10633,6 +10680,43 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               {pendingAdj.length} phiếu chờ duyệt
             </span>
             <button className="btn-secondary" style={{ fontSize: '12px', padding: '6px 12px' }} onClick={loadAdjustments}>Tải lại</button>
+          </div>
+        </div>
+        {/* Admin hoàn thành ca làm: chọn ngày + nhân viên + ca -> ghi đủ CHECK_IN/OUT, đồng bộ lương */}
+        <div style={{ backgroundColor: '#F0FDF4', borderRadius: 'var(--radius-md)', border: '1.5px solid #86EFAC', padding: '14px 16px' }}>
+          <div style={{ fontSize: '14px', fontWeight: 800, color: '#166534', marginBottom: '8px' }}>✅ Admin hoàn thành ca làm <span style={{ fontWeight: 400, fontSize: '12px', color: '#4D7C0F' }}>(ca KHÓA / thiếu check-in-out — bấm là đủ công + đồng bộ lương ngay)</span></div>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <label style={{ fontSize: '12px', fontWeight: 700, color: '#166534' }}>
+              Ngày
+              <input type="date" value={compDate} onChange={(e) => { setCompDate(e.target.value); if (compEmpId) loadCompShifts(compEmpId, e.target.value); }} style={{ display: 'block', marginTop: '4px', padding: '6px 10px', fontSize: '13px', border: '1px solid #86EFAC', borderRadius: '6px', backgroundColor: '#FFF' }} />
+            </label>
+            <label style={{ fontSize: '12px', fontWeight: 700, color: '#166534' }}>
+              Nhân viên
+              <select value={compEmpId} onChange={(e) => { setCompEmpId(e.target.value); loadCompShifts(e.target.value, compDate); }} style={{ display: 'block', marginTop: '4px', padding: '6px 10px', fontSize: '13px', border: '1px solid #86EFAC', borderRadius: '6px', backgroundColor: '#FFF', maxWidth: '260px' }}>
+                <option value="">— Chọn nhân viên —</option>
+                {(allEmployees || []).filter((e: any) => (e as any)?.employment_status !== 'TERMINATED').map((e: any) => (
+                  <option key={(e as any).employee_id} value={(e as any).employee_id}>{(e as any).employee_code} — {(e as any).full_name}</option>
+                ))}
+              </select>
+            </label>
+            <label style={{ fontSize: '12px', fontWeight: 700, color: '#166534' }}>
+              Ca làm {compShiftsBusy ? '(đang tải...)' : `(${compShifts.length})`}
+              <select value={compAssignmentId} onChange={(e) => setCompAssignmentId(e.target.value)} style={{ display: 'block', marginTop: '4px', padding: '6px 10px', fontSize: '13px', border: '1px solid #86EFAC', borderRadius: '6px', backgroundColor: '#FFF', maxWidth: '300px' }}>
+                <option value="">— Chọn ca —</option>
+                {compShifts.map((s: any) => (
+                  <option key={(s as any).assignment_id} value={(s as any).assignment_id}>
+                    {(s as any).shift_code} • {(s as any).branch_id} • {String((s as any).start_at || '').slice(11, 16)}–{String((s as any).end_at || '').slice(11, 16)} • {(s as any).status}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ fontSize: '12px', fontWeight: 700, color: '#166534', flex: 1, minWidth: '180px' }}>
+              Lý do
+              <input value={compReason} onChange={(e) => setCompReason(e.target.value)} placeholder="VD: NV có đi làm, quên check-in" style={{ display: 'block', marginTop: '4px', padding: '6px 10px', fontSize: '13px', border: '1px solid #86EFAC', borderRadius: '6px', backgroundColor: '#FFF', width: '100%' }} />
+            </label>
+            <button className="btn-primary" style={{ fontSize: '13px', padding: '8px 18px', backgroundColor: '#16A34A' }} disabled={compBusy || !compAssignmentId} onClick={submitCompleteShift}>
+              {compBusy ? '⏳ Đang ghi...' : '✅ Hoàn thành ca'}
+            </button>
           </div>
         </div>
         <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>

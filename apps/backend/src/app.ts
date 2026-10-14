@@ -63,6 +63,7 @@ import {
   checkinBody,
   checkoutBody,
   colleagueShiftsQuery,
+  completeShiftBody,
   defaultShiftBody,
   swapDispatchBody,
   supportCreateBody,
@@ -3582,10 +3583,48 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Admin hoàn thành ca làm cho NV (chọn ngày + nhân viên + ca): ghi CHECK_IN /
+  // CHECK_OUT còn thiếu về đúng ca qua engine compensateShift (mặc định giờ
+  // vào/tan ca khi không nhập) — lương đồng bộ theo sự kiện đã đủ cặp.
+  // Realtime Sheet + socket như điểm danh thường.
+  app.post('/attendance/complete-shift', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ body: completeShiftBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const b: any = req.body || {};
+      const assignmentId = String(b.assignmentId || b.assignment_id || '').trim();
+      if (!assignmentId) return res.status(400).json({ error: 'MISSING_ASSIGNMENT: chọn ca cần hoàn thành!' });
+      const result = await attendanceService.compensateShift({
+        assignmentId,
+        checkInTime: b.checkInTime || b.check_in_time || undefined,
+        checkOutTime: b.checkOutTime || b.check_out_time || undefined,
+        reason: b.reason || 'Admin hoàn thành ca làm',
+        actorId: req.user!.id,
+      });
+      const shift: any = await adapter.getShiftById(assignmentId).catch(() => null);
+      await adapter.recordAuditLog({
+        actor_id: req.user!.id,
+        action: 'SHIFT_COMPLETED_BY_ADMIN',
+        target_type: 'SU_KIEN_DIEM_DANH',
+        target_id: assignmentId,
+      } as any).catch(() => null);
+      broadcastUpdate('attendance', { action: 'admin-complete', assignmentId, employeeId: (shift as any)?.employee_id });
+      broadcastUpdate('payroll', { action: 'admin-complete', assignmentId });
+      broadcastNotification({
+        type: 'ADJUSTMENT',
+        title: '✅ Ca làm đã được Admin hoàn thành',
+        message: `Ca ${assignmentId} đã được Admin hoàn thành thủ công — công và lương đã đồng bộ.`,
+        linkTab: 'adjustment',
+        metadata: { assignmentId },
+        targetRoles: ['ADMIN', 'HR', 'STORE', 'EMPLOYEE'],
+      });
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   // Sửa phiếu APPROVED bị gắn nhầm ca/ngày (lỗi app NV cũ): gỡ lượt dựng nhầm +
   // dựng lại đúng ngày phiếu, realtime cả 2 cổng.
-  app.post('/attendance/adjustments/:id/repair', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {
-    try {
+  app.post('/attendance/adjustments/:id/repair', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {    try {
       const result = await attendanceService.repairAdjustment(req.params.id, req.user!.id);
       broadcastUpdate('adjustments', { action: 'repair', id: req.params.id });
       broadcastUpdate('attendance', { action: 'adjustment-repair', id: req.params.id });

@@ -396,6 +396,20 @@ export const adjustmentApproveBody = z.object({
   note: optString(500),
 });
 
+// Admin hoàn thành ca làm cho NV (ngày + nhân viên + ca): ghi CHECK_IN/OUT
+// còn thiếu về đúng ca qua engine compensateShift — lương đồng bộ theo.
+export const completeShiftBody = z
+  .object({
+    assignmentId: optString(64),
+    assignment_id: optString(64),
+    checkInTime: optString(64),
+    check_in_time: optString(64),
+    checkOutTime: optString(64),
+    check_out_time: optString(64),
+    reason: optString(500),
+  })
+  .passthrough();
+
 // --- Payroll ---
 export const payrollPeriodParams = z.object({
   period: z.string().regex(PERIOD_RE, 'Kỳ lương phải dạng YYYY-MM'),
