@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import jsQR from 'jsqr';
-import { attShiftStatus, inferExtraShiftCode, mergeOrphanCheckins, rateOnDateOf, shiftPayInfo } from '@ubm/shared';
+import { attShiftStatus, inferExtraShiftCode, mergeOrphanCheckins, shiftPayInfo } from '@ubm/shared';
 import { Socket } from 'socket.io-client';
 import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl, onPinLockRequired } from './services/api';
 import { connectRealtime, stopRealtimeRevive } from './services/realtime';
@@ -5166,13 +5166,23 @@ export function App() {
                     evtDays.get(d)!.push(e);
                   }
                   // Số liệu server theo từng ca (cùng công thức kỳ với Finance):
-                  // ưu tiên lương server, thiếu mới tạm tính ở máy.
+                  // ưu tiên lương server, thiếu mới tạm tính ở máy theo đúng
+                  // đơn giá kỳ + giai đoạn TV/CT (không dùng đơn giá cứng).
                   const srvByAssign = new Map<string, any>();
                   for (const s of (((monthServerPay as any)?.shifts) || [])) {
                     const aid = String((s as any)?.assignmentId || '');
                     if (aid && !srvByAssign.has(aid)) srvByAssign.set(aid, s);
                   }
-                  const srvNetOf = (assignmentId?: string, fallbackNet = 0) => {
+                  const srvFormula = ((monthServerPay as any)?.formula) || null;
+                  const srvRateOf = (isoDay: string) => {
+                    const fTV = Number(srvFormula?.rateTV) || 21000;
+                    const fCT = Number(srvFormula?.rateCT) || Number((employee as any)?.current_rate_per_hour) || 25500;
+                    const off = String((employee as any)?.official_date || '').slice(0, 10);
+                    if (off && isoDay < off) return fTV;
+                    if (String((employee as any)?.employment_status || '') === 'PROBATION') return fTV;
+                    return fCT;
+                  };
+                  const srvNetOf = (assignmentId?: string, isoDay = '', fallbackNet = 0) => {
                     const srv = assignmentId ? srvByAssign.get(String(assignmentId)) : null;
                     if (srv && (srv as any).status === 'DU') {
                       return Math.max(0, Number((srv as any).shiftPay || 0) - Number((srv as any).fineAmount || 0));
@@ -5234,7 +5244,7 @@ export function App() {
                       let badge: string, bg: string, fg: string, border: string;
                       if (st.key === 'COMPLETED') {
                         cDone++;
-                        payTotal += srvNetOf((sh as any)?.assignment_id, shiftPayInfo((sh as any)?.shift_code, rateOnDateOf(employee, date), ci, co, (sh as any)?.start_at).net);
+                        payTotal += srvNetOf((sh as any)?.assignment_id, date, shiftPayInfo((sh as any)?.shift_code, srvRateOf(date), ci, co, (sh as any)?.start_at).net);
                         badge = '✓ Đủ công'; bg = '#ECFDF5'; fg = '#047857'; border = '1px solid #A7F3D0';
                       } else if (st.key === 'MISSING_OUT') {
                         cMissingOut++;
@@ -5265,6 +5275,11 @@ export function App() {
                       if (fine) notes.push(fine);
                       if (gpsBad) notes.push(`GPS vượt ${ciDist}m (quá 300m)`);
                       if (ab && !ci) notes.push('Hệ thống tự ghi vắng');
+                      // Tiền ca theo số liệu server (khớp Bảng Tổng Hợp Finance).
+                      const srvRow = srvByAssign.get(String((sh as any)?.assignment_id || ''));
+                      if (srvRow && (srvRow as any).status === 'DU') {
+                        notes.push(`💰 ${money(Math.max(0, Number((srvRow as any).shiftPay || 0) - Number((srvRow as any).fineAmount || 0)))}đ (${(srvRow as any).stage === 'TV' ? 'thử việc' : 'chính thức'})`);
+                      }
                       return { sh, ci, co, badge, bg, fg, border, sched, notes };
                     });
                     // Thẻ ngoài lịch còn lại — đúng chuẩn tab admin: ẩn nhóm chỉ có VẮNG;
@@ -5296,7 +5311,7 @@ export function App() {
                       const xci = x.list.find((e: any) => e.type === 'CHECK_IN');
                       const xco = x.list.find((e: any) => e.type === 'CHECK_OUT');
                       const xcode = inferExtraShiftCode(xci, (employee as any)?.default_shift_code);
-                      payTotal += srvNetOf((xci as any)?.assignment_id, shiftPayInfo(xcode, rateOnDateOf(employee, date), xci, xco, xci?.client_time).net);
+                      payTotal += srvNetOf((xci as any)?.assignment_id, date, shiftPayInfo(xcode, srvRateOf(date), xci, xco, xci?.client_time).net);
                     }
                     return { date, y, m, dd, rows, orphans: finalExtras };
                   }).filter((blk: any) => (blk.rows || []).length > 0);
@@ -5313,7 +5328,7 @@ export function App() {
                         {sumBox('Đang làm', String(cWorking), '#92400E')}
                         {sumBox('Thiếu check-out', String(cMissingOut), '#9A3412')}
                         {sumBox('Vắng / Không điểm danh', String(cAbsent + cNoCheck), '#991B1B')}
-                        {sumBox('Tổng phạt tháng', fineTotal > 0 ? `${money(fineTotal)}đ` : '0đ', '#991B1B')}
+                        {sumBox('Tổng phạt tháng', `${money(Math.round(Number((monthServerPay as any)?.totals?.deduction ?? fineTotal)))}đ`, '#991B1B')}
                         {sumBox('Lương tháng', `${money(Math.round(Number((monthServerPay as any)?.totals?.netPay ?? payTotal)))}đ`, '#065F46')}
                       </div>
                       <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
@@ -5349,7 +5364,7 @@ export function App() {
                             const xco = x.list.find((e: any) => e.type === 'CHECK_OUT');
                             const xcode = inferExtraShiftCode(xci, (employee as any)?.default_shift_code);
                             const xpay = x.st?.key === 'COMPLETED'
-                              ? shiftPayInfo(xcode, rateOnDateOf(employee, blk.date), xci, xco, xci?.client_time)
+                              ? shiftPayInfo(xcode, srvRateOf(blk.date), xci, xco, xci?.client_time)
                               : null;
                             return (
                               <div key={`x_${xi}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
