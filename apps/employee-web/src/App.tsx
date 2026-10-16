@@ -1564,7 +1564,14 @@ export function App() {
   const shiftLabelOf = (s: any) => SHIFT_HOURS_LABEL[s?.shift_code] || (s?.shift_code ? String(s.shift_code) : '');
   const getTodayShifts = () => {
     const today = vnTodayStr();
-    return myShifts.filter((s: any) => s.date === today);
+    // Chỉ ca HR đã PUBLISH mới là ca làm việc thật (DRAFT nháp chưa chốt —
+    // admin/lương chỉ tính PUBLISHED, cổng NV phải khớp).
+    return myShifts.filter((s: any) => s.date === today && s.status === 'PUBLISHED');
+  };
+  /** Ca nháp hôm nay (HR chưa phát hành) — để báo đúng thay vì "không có lịch". */
+  const getTodayDraftShifts = () => {
+    const today = vnTodayStr();
+    return myShifts.filter((s: any) => s.date === today && (s as any)?.status !== 'PUBLISHED' && (s as any)?.status !== 'CANCELLED');
   };
   /** Tuần hiện tại (Mon-Sun, giờ VN): chỉ được đổi/tráo ca trong tuần đã sắp lịch này. */
   const swapWeekRange = () => {
@@ -1595,7 +1602,7 @@ export function App() {
   const getCurrentShift = (): { shift: any; all: any[]; phase: 'LIVE' | 'UPCOMING' | 'DONE' | 'NONE' } => {
     const today = vnTodayStr();
     const list = myShifts
-      .filter((s: any) => s.date === today && s.status !== 'CANCELLED')
+      .filter((s: any) => s.date === today && s.status === 'PUBLISHED')
       .sort((a: any, b: any) => String(a.start_at || '').localeCompare(String(b.start_at || '')));
     if (list.length === 0) return { shift: null, all: [], phase: 'NONE' };
     const now = Date.now();
@@ -1646,7 +1653,11 @@ export function App() {
 
     // Ràng buộc 1: Nếu hôm nay không có ca làm thì khóa chức năng
     if (!todayShift) {
-      showToast('🔒 QUY CHẾ: Hôm nay bạn không có lịch ca làm việc được phân công! Chức năng điểm danh bị khóa.');
+      if (getTodayDraftShifts().length > 0) {
+        showToast('⛔ Ca hôm nay HR chưa phát hành (đang nháp)! Báo HR phát hành lịch rồi điểm danh.');
+      } else {
+        showToast('🔒 QUY CHẾ: Hôm nay bạn không có lịch ca làm việc được phân công! Chức năng điểm danh bị khóa.');
+      }
       return;
     }
     const st = shiftChecked(todayShift.assignment_id);
@@ -3801,13 +3812,21 @@ export function App() {
                 };
 
                 // Ca trong dải (gộp tải theo dải + realtime), khử trùng, bỏ ca đã hủy.
+                // Chỉ ca PUBLISHED mới là lịch làm việc thật — ca DRAFT (nháp,
+                // HR chưa chốt) không tính công/ngày làm, chỉ báo chờ duyệt.
                 const seenAid = new Set<string>();
                 const rangeShifts: any[] = [];
+                const draftDaySet = new Set<string>();
                 for (const s of [...(schedRangeShifts || []), ...(myShifts || [])]) {
                   const k = String(s?.assignment_id || '');
                   if (k && seenAid.has(k)) continue;
                   if (k) seenAid.add(k);
                   if ((s as any)?.status === 'CANCELLED') continue;
+                  if ((s as any)?.status !== 'PUBLISHED') {
+                    const d = String((s as any)?.date || '').slice(0, 10);
+                    if (d) draftDaySet.add(d);
+                    continue;
+                  }
                   rangeShifts.push(s);
                 }
                 const days = schedRange.length > 0 ? schedRange : [];
@@ -3836,7 +3855,9 @@ export function App() {
                 // 3. Ngày Nghỉ OFF trong dải `days`: ngày KHÔNG có ca làm việc.
                 // Đi làm thì không còn OFF — ngày vừa có ca active vừa có đơn OFF
                 // chỉ hiện ca làm (không hiện thẻ OFF gây rắc rối).
-                const offDays = days.filter(d => !workDaysSet.has(d));
+                // Ngày chỉ có ca nháp (DRAFT) không phải OFF — chờ HR phát hành.
+                const offDays = days.filter(d => !workDaysSet.has(d) && !draftDaySet.has(d));
+                const draftOnlyDays = days.filter(d => !workDaysSet.has(d) && draftDaySet.has(d));
                 const offDaysSet = new Set(offDays);
                 const offCount = offDays.length;
 
@@ -3994,6 +4015,11 @@ export function App() {
                     </div>
 
                     {/* Interactive Week Calendar Strip */}
+                    {draftOnlyDays.length > 0 && (
+                      <div style={{ fontSize: '12px', color: '#92400E', backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '10px', padding: '8px 10px', lineHeight: 1.5 }}>
+                        ⏳ {draftOnlyDays.length} ngày có ca nháp chờ HR phát hành ({draftOnlyDays.join(', ')}) — chưa tính công, báo HR phát hành lịch!
+                      </div>
+                    )}
                     <div style={{ backgroundColor: '#FAF8F6', border: '1px solid #EFE4DE', borderRadius: '14px', padding: '10px 8px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 4px' }}>
                         <span style={{ fontSize: '11px', fontWeight: 800, color: 'var(--text)', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
@@ -5141,6 +5167,9 @@ export function App() {
                   }
                   const shiftDays = new Map<string, any[]>();
                   for (const s of allShifts) {
+                    // Chỉ ca PUBLISHED mới tính công tháng (DRAFT nháp HR chưa
+                    // chốt + CANCELLED đã hủy đều không hiện công).
+                    if ((s as any)?.status !== 'PUBLISHED') continue;
                     const d = String((s as any).date || '').slice(0, 10);
                     if (!d || !d.startsWith(tsMonth)) continue;
                     if (!shiftDays.has(d)) shiftDays.set(d, []);
