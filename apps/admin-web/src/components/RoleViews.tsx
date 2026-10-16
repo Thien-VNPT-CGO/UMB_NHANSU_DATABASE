@@ -1169,11 +1169,29 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     }
   };
   useEffect(() => {
-    // Dữ liệu finance đồng bộ cả tháng từ cổng NV (chấm công/lịch realtime) -> tự tải lại 30s
-    if (activeTab !== 'fin-timesheet') return;
+    // Realtime Bảng Chấm Công Tổng Hợp: App.tsx phát 'ubm:fin-timesheet-reload'
+    // khi socket báo điểm danh/lịch/đơn từ/lương (NV check-in ở máy khác là bảng
+    // ở máy này tải lại ngay) + poll 30s dự phòng khi socket ngủ.
+    let timer: any = null;
+    const handler = () => {
+      if (activeTab !== 'fin-timesheet') return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { loadFinAttendance(); }, 800);
+    };
+    window.addEventListener('ubm:fin-timesheet-reload', handler);
+    if (activeTab !== 'fin-timesheet') {
+      return () => {
+        window.removeEventListener('ubm:fin-timesheet-reload', handler);
+        if (timer) clearTimeout(timer);
+      };
+    }
     loadFinAttendance();
     const t = setInterval(() => loadFinAttendance(), 30000);
-    return () => clearInterval(t);
+    return () => {
+      window.removeEventListener('ubm:fin-timesheet-reload', handler);
+      if (timer) clearTimeout(timer);
+      clearInterval(t);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, finMonth]);
   // Kỳ lương đang tính (tab Tính lương) cũng cần số realtime cả tháng

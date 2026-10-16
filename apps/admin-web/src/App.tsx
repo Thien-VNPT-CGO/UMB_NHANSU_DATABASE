@@ -1007,6 +1007,11 @@ export function App() {
           window.dispatchEvent(new CustomEvent('ubm:reports-reload'));
         } catch { /* non-fatal */ }
       };
+      const notifyFinTimesheetRealtime = () => {
+        try {
+          window.dispatchEvent(new CustomEvent('ubm:fin-timesheet-reload'));
+        } catch { /* non-fatal */ }
+      };
       socket.on('system:notification', (notif: any) => {
         console.log('🔔 [Socket.IO] Nhận thông báo nghiệp vụ realtime:', notif);
         const fromEmployee = !notif.origin || notif.origin === 'EMPLOYEE';
@@ -1028,6 +1033,7 @@ export function App() {
           } catch { /* non-fatal */ }
         }
         notifyReportsRealtime();
+        notifyFinTimesheetRealtime();
         scheduleReload(currentUser);
       });
 
@@ -1100,6 +1106,11 @@ export function App() {
             } catch { /* non-fatal */ }
           }
           notifyReportsRealtime();
+          // Realtime Bảng Chấm Công Tổng Hợp: mọi biến động điểm danh/lịch/đơn từ
+          // đều đổi số liệu công/giờ/lương tháng nên báo tab fin-timesheet tải lại ngay.
+          if (['attendance', 'schedules', 'swaps', 'leaves', 'adjustments', 'payroll', 'payslips', 'employees', 'me', 'notifications', 'all'].includes(payload?.entity)) {
+            notifyFinTimesheetRealtime();
+          }
           scheduleReload(currentUser);
         }
       });
