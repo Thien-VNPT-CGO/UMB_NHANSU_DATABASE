@@ -2663,31 +2663,33 @@ export function App() {
 
   // Thử việc tự đổi ca: WORK_TO_OFF -> đơn nghỉ thật; OFF_TO_WORK chưa có nghiệp vụ server -> hướng dẫn báo Store
   const handleProbationSelfSwap = async () => {
-    if (probationSelfSwap.direction === 'WORK_TO_OFF') {
-      if (!probationSelfSwap.date) {
-        showToast('⚠️ Vui lòng chọn ngày muốn nghỉ!');
-        return;
-      }
-      setActionBusy('selfswap');
-      try {
-        await apiRequest('/leaves', {
-          method: 'POST',
-          body: JSON.stringify({
-            leaveType: 'DOT_XUAT',
-            requestedDate: probationSelfSwap.date,
-            reason: `[TỰ ĐỔI CA THỬ VIỆC] ${probationSelfSwap.reason}`,
-          }),
-        });
-        showToast('✓ Đã gửi đơn xin nghỉ (tự đổi ca thử việc) THẬT! Chờ Store/HR duyệt trên hệ thống.');
-        await loadEmployeeData(employee?.employee_id);
-      } catch (err: any) {
-        showToast(err.message || 'Lỗi khi gửi đơn!');
-      } finally {
-        setActionBusy(null);
-      }
+    // Tự đổi ca thử việc (Ca làm ⇄ Nghỉ OFF): hệ thống TỰ DUYỆT NGAY,
+    // không cần HR/Store — 2 chiều đều xong trong 1 nút bấm.
+    if (!probationSelfSwap.date) {
+      showToast(probationSelfSwap.direction === 'WORK_TO_OFF' ? '⚠️ Vui lòng chọn ngày muốn nghỉ!' : '⚠️ Vui lòng chọn ngày muốn đi làm!');
       return;
     }
-    showToast('ℹ️ Xin đi làm ngày OFF: vui lòng báo trực tiếp Store để xếp lịch trên hệ thống. Chức năng tự gửi đơn chiều này chưa hỗ trợ.');
+    setActionBusy('selfswap');
+    try {
+      const res: any = await apiRequest('/me/probation-self-swap', {
+        method: 'POST',
+        body: JSON.stringify({
+          direction: probationSelfSwap.direction,
+          date: probationSelfSwap.date,
+          reason: probationSelfSwap.reason,
+          ...(probationSelfSwap.direction === 'OFF_TO_WORK' ? { shiftCode: 'CA_1' } : {}),
+        }),
+      });
+      const r = res?.result || res;
+      showToast(probationSelfSwap.direction === 'WORK_TO_OFF'
+        ? `✓ Đã tự chuyển nghỉ OFF ngày ${r?.date || probationSelfSwap.date}! Hệ thống tự duyệt — lịch và công đã cập nhật ngay.`
+        : `✓ Đã tự xếp đi làm Ca 1 ngày ${r?.date || probationSelfSwap.date}! Hệ thống tự duyệt — lịch và công đã cập nhật ngay.`);
+      await loadEmployeeData(employee?.employee_id);
+    } catch (err: any) {
+      showToast(err.message || 'Lỗi khi tự đổi ca!');
+    } finally {
+      setActionBusy(null);
+    }
   };
 
   const handleEmergencyLeaveSubmit = async () => {

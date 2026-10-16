@@ -307,6 +307,14 @@ export const probationExtraShiftBody = z.object({
   shiftCode: z.enum(['CA_1', 'CA_2', 'CA_3']),
 });
 
+// NV thử việc TỰ ĐỔI CA (Ca làm ⇄ Nghỉ OFF): hệ thống tự duyệt ngay, không cần HR.
+export const probationSelfSwapBody = z.object({
+  direction: z.enum(['WORK_TO_OFF', 'OFF_TO_WORK']),
+  date: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ngày phải dạng YYYY-MM-DD'),
+  reason: optString(500),
+  shiftCode: z.enum(['CA_1', 'CA_2', 'CA_3']).optional(),
+});
+
 // HR tạo phiếu điều phối nhường ca (+30k cho người nhận)
 export const swapDispatchBody = z.object({
   requesterId: optString(64),

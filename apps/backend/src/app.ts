@@ -95,6 +95,7 @@ import {
   payslipSignBody,
   probationOffBody,
   probationExtraShiftBody,
+  probationSelfSwapBody,
   publishWeekBody,
   publishWeekParams,
   schedulesQuery,
@@ -3489,6 +3490,38 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         return res.status(400).json({ error: 'MAX_2_SHIFTS_PER_DAY', message: msg.replace(/^MAX_2_SHIFTS_PER_DAY:\s*/, '') });
       }
       res.status(400).json({ error: msg });
+    }
+  });
+
+  // NV THỬ VIỆC tự đổi ca (Ca làm ⇄ Nghỉ OFF): HỆ THỐNG TỰ DUYỆT NGAY,
+  // không cần HR/Store — chỉ báo thông tin cho quản lý theo dõi.
+  app.post('/me/probation-self-swap', authMiddleware, requireRole(['EMPLOYEE']), validate({ body: probationSelfSwapBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const employeeId = req.user?.employeeId;
+      if (!employeeId) return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
+      const result = await schedulesService.selfSwapProbationShift({
+        employeeId,
+        direction: (req.body as any).direction,
+        date: String((req.body as any).date || '').slice(0, 10),
+        reason: String((req.body as any).reason || ''),
+        shiftCode: (req.body as any).shiftCode,
+        actorId: employeeId,
+      });
+      const r = (result as any)?.result || result;
+      const emp = await employeesService.getEmployee(employeeId).catch(() => null);
+      broadcastUpdate('leaves', { action: 'probation-self-swap', employeeId });
+      broadcastUpdate('schedules', { action: 'probation-self-swap', employeeId });
+      broadcastNotification({
+        type: 'LEAVE',
+        title: '🔄 NV Thử Việc Tự Đổi Ca (Tự Duyệt)',
+        message: `${emp?.full_name || employeeId} vừa tự đổi ca thử việc ngày ${r?.date || ''} (${r?.direction === 'WORK_TO_OFF' ? 'làm → nghỉ OFF' : 'nghỉ OFF → đi làm'}) — hệ thống đã tự duyệt, không cần xử lý.`,
+        linkTab: 'hr-probation',
+        metadata: { employeeId, ...(r || {}) },
+        targetRoles: ['ADMIN', 'HR', 'STORE'],
+      });
+      res.json({ success: true, result: r });
+    } catch (err: any) {
+      res.status(400).json({ error: String(err?.message || 'Lỗi khi tự đổi ca!') });
     }
   });
 

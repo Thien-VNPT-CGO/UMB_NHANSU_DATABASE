@@ -1468,6 +1468,128 @@ export class SchedulesService {
     });
   }
 
+  /**
+   * NV THỬ VIỆC tự đổi ca (Ca làm ⇄ Nghỉ OFF): HỆ THỐNG TỰ DUYỆT NGAY,
+   * không cần HR/Store — cùng quy chế với tự thêm ca đẩy nhanh.
+   * - WORK_TO_OFF: hủy ca live ngày đó (chưa điểm danh) + ghi nghỉ OFF duyệt sẵn.
+   * - OFF_TO_WORK: hủy ngày OFF + xếp ca PUBLISHED (ca cố định, rớt CA_1).
+   * Chỉ trong 12 ngày thử việc, từ hôm nay trở đi.
+   */
+  async selfSwapProbationShift(data: {
+    employeeId: string;
+    direction: 'WORK_TO_OFF' | 'OFF_TO_WORK';
+    date: string;
+    reason?: string;
+    shiftCode?: ShiftCode;
+    actorId: string;
+  }) {
+    const emp = await this.repo.getEmployeeById(data.employeeId);
+    if (!emp || (emp as any).employment_status !== 'PROBATION') {
+      throw new Error('Chỉ nhân viên đang thử việc mới được tự đổi ca!');
+    }
+    const start = normSheetDate((emp as any).start_date);
+    if (!start) {
+      throw new Error('Hồ sơ chưa có ngày bắt đầu thử việc! Liên hệ HR bổ sung.');
+    }
+    const windowDays: string[] = [];
+    for (let i = 0; i < 12; i++) {
+      const d = new Date(`${start}T00:00:00Z`);
+      d.setUTCDate(d.getUTCDate() + i);
+      windowDays.push(d.toISOString().slice(0, 10));
+    }
+    const date = String(data.date || '').slice(0, 10);
+    const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !windowDays.includes(date)) {
+      throw new Error(`Ngày ${date || '?'} nằm ngoài 12 ngày thử việc (${windowDays[0]} → ${windowDays[11]})!`);
+    }
+    if (date < today) {
+      throw new Error(`Ngày ${date} đã qua — chỉ được tự đổi ca từ hôm nay trở đi!`);
+    }
+    const reason = `[TỰ ĐỔI CA THỬ VIỆC] ${String(data.reason || '').trim()}`.slice(0, 500);
+    const branchId = (emp as any).default_branch_id || 'CN130';
+    return singleWriterQueue.enqueue({
+      entityType: 'PHAN_CONG_CA',
+      entityId: `${data.employeeId}_${date}_SELFSWAP`,
+      actorId: data.actorId,
+      execute: async () => {
+        const dayShifts = ((await this.repo.getShiftsForEmployee(data.employeeId, date, date)) || [])
+          .filter(s => String((s as any)?.date || '').slice(0, 10) === date && (s as any)?.status !== 'CANCELLED');
+        if (data.direction === 'WORK_TO_OFF') {
+          if (dayShifts.length === 0) {
+            throw new Error(`Ngày ${date} bạn không có ca làm nào — không có gì để chuyển nghỉ!`);
+          }
+          // Ca đã điểm danh thì khóa (giữ bằng chứng công) — liên hệ Store/HR.
+          const evts = await this.repo.getAttendanceEvents(data.employeeId, date).catch(() => []);
+          const liveIds = new Set(dayShifts.map((s: any) => String((s as any)?.assignment_id || '')));
+          const attended = (evts || []).some((e: any) =>
+            liveIds.has(String((e as any)?.assignment_id || '')) &&
+            ['CHECK_IN', 'CHECK_OUT'].includes(String((e as any)?.type || '')));
+          if (attended) {
+            throw new Error(`Ca ngày ${date} đã có điểm danh — không tự chuyển nghỉ được, liên hệ Store/HR!`);
+          }
+          for (const s of dayShifts) {
+            await this.repo.updateShiftAssignment((s as any).assignment_id, { status: 'CANCELLED' });
+          }
+          const leave = await this.repo.createLeaveRequest({
+            request_id: `LEAVE_${Date.now()}_${Math.floor(Math.random() * 100000)}`,
+            employee_id: data.employeeId,
+            branch_id: branchId,
+            leave_type: 'DOT_XUAT',
+            requested_date: date,
+            reason,
+            status: 'APPROVED',
+            reviewed_by: 'SYSTEM',
+            reviewed_at: new Date().toISOString(),
+            review_note: 'Tự đổi ca thử việc — hệ thống tự duyệt',
+          });
+          await this.repo.recordAuditLog({
+            log_id: `LOG_${Date.now()}_selfswap`,
+            actor_id: data.actorId,
+            actor_role: 'EMPLOYEE',
+            action: 'PROBATION_SELF_SWAP_TO_OFF',
+            target_entity: 'PHAN_CONG_CA',
+            target_id: data.employeeId,
+            details: `Tự đổi ca thử việc ${date}: nghỉ OFF (hủy ${dayShifts.length} ca) — tự duyệt`,
+          } as any).catch(() => null);
+          return { direction: data.direction, date, cancelledShifts: dayShifts.length, leave };
+        }
+        // OFF_TO_WORK: ngày đang OFF (không ca live) → đi làm.
+        if (dayShifts.length > 0) {
+          throw new Error(`Ngày ${date} bạn đang có ca ${dayShifts.map((s: any) => (s as any)?.shift_code).join(' + ')} — muốn nghỉ thì chọn chiều Ca làm → Nghỉ OFF!`);
+        }
+        const code: ShiftCode = (['CA_1', 'CA_2', 'CA_3'] as string[]).includes(String(data.shiftCode || ''))
+          ? (data.shiftCode as ShiftCode)
+          : (['CA_1', 'CA_2', 'CA_3'] as string[]).includes(String((emp as any)?.default_shift_code || ''))
+            ? ((emp as any).default_shift_code as ShiftCode)
+            : 'CA_1';
+        const template = SHIFT_TEMPLATES[code];
+        const created = await this.repo.createShiftAssignment({
+          assignment_id: `SHIFT_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
+          employee_id: data.employeeId,
+          branch_id: branchId,
+          shift_code: code,
+          date,
+          start_at: `${date}T${String(template.start_hour).padStart(2, '0')}:00:00+07:00`,
+          end_at: `${date}T${String(template.end_hour).padStart(2, '0')}:00:00+07:00`,
+          status: 'PUBLISHED',
+          schedule_version: 1,
+        });
+        // Đi làm thì không còn OFF: hủy ngày OFF trùng (tự duyệt chiều này).
+        const offNotes = await this.cancelReceiverLeavesOnWorkDay(data.employeeId, date);
+        await this.repo.recordAuditLog({
+          log_id: `LOG_${Date.now()}_selfswap`,
+          actor_id: data.actorId,
+          actor_role: 'EMPLOYEE',
+          action: 'PROBATION_SELF_SWAP_TO_WORK',
+          target_entity: 'PHAN_CONG_CA',
+          target_id: (created as any)?.assignment_id || data.employeeId,
+          details: `Tự đổi ca thử việc ${date}: đi làm ${code} — tự duyệt`,
+        } as any).catch(() => null);
+        return { direction: data.direction, date, shift: created, offNotes };
+      },
+    });
+  }
+
   async reviewLeave(requestId: string, status: 'APPROVED' | 'REJECTED', reviewerId: string, note?: string) {
     return singleWriterQueue.enqueue({
       entityType: 'PHIEU_OFF',
