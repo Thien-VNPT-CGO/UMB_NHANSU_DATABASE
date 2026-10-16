@@ -1,0 +1,11 @@
+# Ghi de cho ban BETA: doi cong + ten container, tranh dung ban chinh.
+services:
+  backend:
+    container_name: ubm-beta-backend
+    ports:
+      - "4006:4006"
+    environment:
+      PORT: 4006
+      NODE_ENV: production
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4006/health"]
