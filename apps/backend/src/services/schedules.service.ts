@@ -769,7 +769,9 @@ export class SchedulesService {
     ]);
     const me = (emps || []).find((e: any) => e.employee_id === employeeId) as any;
     if (!me || (me as any).employment_status === 'TERMINATED') return null;
-    const myBranch = (me as any).default_branch_id || (me as any).branch_id || branchId;
+    // Chuẩn hóa mã CN (Sheets tay có thể ghi CN4 trong khi hồ sơ ghi CN111 —
+    // cùng 1 chi nhánh 111 Tôn Dán; so strict sẽ lọt trùng OFF chung ngày).
+    const myBranch = canonicalBranch((me as any).default_branch_id || (me as any).branch_id || branchId);
     const myShifts = await this.shiftsOfDay(employeeId, d, (me as any).default_shift_code);
     if (myShifts.length === 0) return null;
     const offEmpIds = new Set<string>();
@@ -784,7 +786,7 @@ export class SchedulesService {
     for (const o of (emps || []) as any[]) {
       if (!offEmpIds.has(o.employee_id)) continue;
       if (o.employment_status === 'TERMINATED') continue;
-      if ((o.default_branch_id || o.branch_id) !== myBranch) continue;
+      if (canonicalBranch(o.default_branch_id || o.branch_id) !== myBranch) continue;
       const oShifts = await this.shiftsOfDay(o.employee_id, d, o.default_shift_code);
       const common = myShifts.find(s => oShifts.includes(s));
       if (common) return { name: String(o.full_name || o.employee_id), slot: common };
@@ -1183,6 +1185,12 @@ export class SchedulesService {
         // Hủy đăng ký cũ cùng tuần (kể cả trùng ngày mới — sẽ ghi lại bên dưới).
         for (const old of oldOnes) {
           await this.repo.updateLeaveRequest(old.request_id, 'CANCELLED', data.employeeId, 'Thay thế bằng đăng ký OFF tuần mới');
+        }
+        // Chốt trùng TRONG hàng đợi (2 NV bấm cùng lúc sẽ xếp hàng tuần tự —
+        // kiểm tra ngoài trước đó không chặn được race, bản ghi sau phải thua).
+        for (const date of [normSheetDate(data.day1), normSheetDate(data.day2)]) {
+          const clashIn = await this.findSameShiftOffClash(data.employeeId, data.branchId, date);
+          if (clashIn) throw this.sameShiftOffError(date, clashIn);
         }
         const mkId = () =>
           `LEAVE_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
