@@ -422,6 +422,37 @@ export class AttendanceService {
           checkOut = dup || await this.repo.recordAttendanceEvent(mkEvent('CHECK_OUT', outIso) as any);
           if (!dup) created.push('CHECK_OUT');
         }
+        // Quyền tối thượng của Admin hoàn thành ca: ca này tính FULL lương, KHÔNG
+        // phạt — xóa mọi phạt/trễ/sớm còn dính trên các chân có sẵn (kể cả chân
+        // mồ côi vừa gắn) để Bảng Tổng Hợp + Kỳ lương + Cổng NV đồng loạt đủ công.
+        const waiveTargets = [hasIn, hasOut, attachedIn].filter(Boolean);
+        for (const ev of waiveTargets) {
+          const dirty =
+            (String((ev as any)?.fine_tier || 'NONE') !== 'NONE') ||
+            Number((ev as any)?.fine_amount || 0) > 0 ||
+            !!(ev as any)?.is_late || !!(ev as any)?.is_early ||
+            Number((ev as any)?.minutes_deviation || 0) !== 0;
+          if (!dirty) continue;
+          try {
+            if (this.repo.updateAttendanceEvent) {
+              await this.repo.updateAttendanceEvent((ev as any).event_id, {
+                is_late: false,
+                is_early: false,
+                minutes_deviation: 0,
+                fine_tier: 'NONE',
+                fine_amount: 0,
+                compensated_by: data.actorId,
+                compensated_at: nowIso,
+                compensate_reason: `${reason} (xóa phạt — hoàn thành full lương)`,
+              } as any);
+              (ev as any).is_late = false;
+              (ev as any).is_early = false;
+              (ev as any).minutes_deviation = 0;
+              (ev as any).fine_tier = 'NONE';
+              (ev as any).fine_amount = 0;
+            }
+          } catch { /* chân tiếp theo */ }
+        }
         // Vừa bù đủ cặp cho ca từng thiếu -> tích điểm hoàn thành ca cho NV.
         if (!(hasIn && hasOut) && checkIn && checkOut && created.length > 0) {
           await this.creditCompletionPoints(employeeId, String(data.assignmentId));
