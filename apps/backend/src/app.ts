@@ -1304,7 +1304,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const result = await employeesService.transitionToOfficial(
         req.params.id,
         req.user!.id,
-        req.body.expectedVersion || 1
+        req.body.expectedVersion || 1,
+        req.body.officialDate
       );
       broadcastUpdate('employees', { action: 'transition', employee: result });
       // Lịch thử việc vừa gỡ: báo realtime để 2 cổng tải lại lịch ngay.

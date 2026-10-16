@@ -306,7 +306,7 @@ export class EmployeesService {
     });
   }
 
-  async transitionToOfficial(employeeId: string, actorId: string, expectedVersion: number) {
+  async transitionToOfficial(employeeId: string, actorId: string, expectedVersion: number, officialDate?: string) {
     return singleWriterQueue.enqueue({
       entityType: 'NHAN_VIEN_MASTER',
       entityId: employeeId,
@@ -325,9 +325,11 @@ export class EmployeesService {
         if (curStatus !== 'PROBATION') {
           throw new Error(`Chỉ chuyển chính thức được nhân viên đang thử việc (hiện: ${curStatus})!`);
         }
-        // Kích hoạt chính thức: lập tức gỡ toàn bộ lịch làm việc thử việc từ hôm
-        // nay trở đi (lịch sử điểm danh/lương đã qua được giữ nguyên).
+        // Mốc hiệu lực chính thức = ngày HR duyệt (mặc định hôm nay VN).
+        // Ví dụ: thử việc 01-09/10, HR duyệt 13/10 -> official_date=13/10:
+        // ngày < 13/10 tính lương thử việc, từ 13/10 tính lương chính thức.
         const todayVn = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+        const effDate = normSheetDate(officialDate || '') || todayVn;
         let deletedShifts = 0;
         try {
           deletedShifts = (await this.repo.deleteShiftsForEmployee(employeeId, todayVn).catch(() => 0)) || 0;
@@ -338,7 +340,7 @@ export class EmployeesService {
             employment_status: 'OFFICIAL',
             current_rate_per_hour: STANDARD_HOURLY_RATES.OFFICIAL,
             // Ngày VN (UTC+7) để mốc giai đoạn tính lương khớp ngày công thực tế.
-            official_date: todayVn,
+            official_date: effDate,
           },
           expectedVersion
         );

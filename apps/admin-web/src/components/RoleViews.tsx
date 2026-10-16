@@ -3758,7 +3758,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             try {
                               await apiRequest(`/employees/${e.employee_id}/transition-official`, {
                                 method: 'POST',
-                                body: JSON.stringify({ expectedVersion: (e as any).version || 1 }),
+                                body: JSON.stringify({ expectedVersion: (e as any).version || 1, officialDate: new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10) }),
                               });
                               showToast(`Đã ký chuyển chính thức cho ${e.full_name}! Hồ sơ, lương giờ và lịch đã cập nhật.`);
                               if (onRefreshData) await onRefreshData();
@@ -6339,7 +6339,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         try {
                           await apiRequest(`/employees/${emp.employee_id}/transition-official`, {
                             method: 'POST',
-                            body: JSON.stringify({ expectedVersion: emp.version || 1 }),
+                            body: JSON.stringify({ expectedVersion: emp.version || 1, officialDate: new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10) }),
                           });
                           showToast(`✅ ${emp.full_name} đã lên chính thức!`);
                           if (onRefreshData) await onRefreshData();

@@ -160,6 +160,28 @@ export function rateOnDate(
   const sorted = (hist || [])
     .filter((h: any) => h && (h as any).effective_from)
     .sort((a: any, b: any) => String(a.effective_from).localeCompare(String(b.effective_from)));
+  const rateOfStage = (wantTV: boolean): number => {
+    let r: number | null = null;
+    for (const h of sorted) {
+      if (String((h as any).effective_from).slice(0, 10) > d) break;
+      const st = String((h as any).stage || '').toUpperCase();
+      const isTV = st === 'PROBATION' || st === 'TV';
+      if (isTV === wantTV) {
+        const v = Number((h as any).rate_per_hour);
+        if (Number.isFinite(v) && v > 0) r = v;
+      }
+    }
+    if (r !== null) return r;
+    return wantTV ? tvFallback : ctFallback;
+  };
+  // Mốc official_date trên master là đường cắt cứng theo ngày HR duyệt:
+  // VD thử việc 01-09/10, duyệt 13/10 -> ngày < 13/10 luôn TV, từ 13/10 luôn CT
+  // (kể cả khi lịch sử giai đoạn cũ/sửa tay chưa kịp đồng bộ).
+  const off = String((emp as any)?.official_date || '').slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(off)) {
+    if (d < off) return { rate: rateOfStage(true), stage: 'TV' };
+    return { rate: rateOfStage(false), stage: 'CT' };
+  }
   let cur: any = null;
   for (const h of sorted) {
     if (String((h as any).effective_from).slice(0, 10) <= d) cur = h;
@@ -171,8 +193,8 @@ export function rateOnDate(
     const r = Number((cur as any).rate_per_hour);
     return { rate: Number.isFinite(r) && r > 0 ? r : (isTV ? tvFallback : ctFallback), stage: isTV ? 'TV' : 'CT' };
   }
-  const off = String((emp as any)?.official_date || '').slice(0, 10);
-  if (off && d < off) return { rate: tvFallback, stage: 'TV' };
+  const offFb = String((emp as any)?.official_date || '').slice(0, 10);
+  if (offFb && d < offFb) return { rate: tvFallback, stage: 'TV' };
   const isProbNow = String((emp as any)?.employment_status || '').toUpperCase() === 'PROBATION';
   return isProbNow ? { rate: tvFallback, stage: 'TV' } : { rate: ctFallback, stage: 'CT' };
 }

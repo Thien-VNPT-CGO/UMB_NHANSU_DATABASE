@@ -55,6 +55,7 @@ export const bulkImportBody = z.object({
 
 export const transitionBody = z.object({
   expectedVersion,
+  officialDate: looseOptString(32),
 });
 
 export const employeeUpdateBody = z
