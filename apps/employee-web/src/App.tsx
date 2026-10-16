@@ -1562,16 +1562,21 @@ export function App() {
     CA_3: 'Ca 3: 18:00 - 23:00',
   };
   const shiftLabelOf = (s: any) => SHIFT_HOURS_LABEL[s?.shift_code] || (s?.shift_code ? String(s.shift_code) : '');
+  // Trạng thái ca: chỉ status đúng là DRAFT mới tính là nháp (dữ liệu Sheet
+  // cũ có thể ghi hoa/thường lộn xộn hoặc trống — không gắn nháp oan ca đã làm).
+  const shiftStatusOf = (s: any) => String((s as any)?.status || '').trim().toUpperCase();
+  const isDraftShift = (s: any) => shiftStatusOf(s) === 'DRAFT';
+  const isLiveShift = (s: any) => { const st = shiftStatusOf(s); return st !== 'DRAFT' && st !== 'CANCELLED'; };
   const getTodayShifts = () => {
     const today = vnTodayStr();
-    // Chỉ ca HR đã PUBLISH mới là ca làm việc thật (DRAFT nháp chưa chốt —
-    // admin/lương chỉ tính PUBLISHED, cổng NV phải khớp).
-    return myShifts.filter((s: any) => s.date === today && s.status === 'PUBLISHED');
+    // Chỉ ca HR đã chốt mới là ca làm việc thật (DRAFT nháp chưa chốt —
+    // admin/lương chỉ tính ca chốt, cổng NV phải khớp).
+    return myShifts.filter((s: any) => s.date === today && isLiveShift(s));
   };
   /** Ca nháp hôm nay (HR chưa phát hành) — để báo đúng thay vì "không có lịch". */
   const getTodayDraftShifts = () => {
     const today = vnTodayStr();
-    return myShifts.filter((s: any) => s.date === today && (s as any)?.status !== 'PUBLISHED' && (s as any)?.status !== 'CANCELLED');
+    return myShifts.filter((s: any) => s.date === today && isDraftShift(s));
   };
   /** Tuần hiện tại (Mon-Sun, giờ VN): chỉ được đổi/tráo ca trong tuần đã sắp lịch này. */
   const swapWeekRange = () => {
@@ -1602,7 +1607,7 @@ export function App() {
   const getCurrentShift = (): { shift: any; all: any[]; phase: 'LIVE' | 'UPCOMING' | 'DONE' | 'NONE' } => {
     const today = vnTodayStr();
     const list = myShifts
-      .filter((s: any) => s.date === today && s.status === 'PUBLISHED')
+      .filter((s: any) => s.date === today && isLiveShift(s))
       .sort((a: any, b: any) => String(a.start_at || '').localeCompare(String(b.start_at || '')));
     if (list.length === 0) return { shift: null, all: [], phase: 'NONE' };
     const now = Date.now();
@@ -3819,7 +3824,6 @@ export function App() {
                 const seenAid = new Set<string>();
                 const rangeShifts: any[] = [];
                 const draftDaySet = new Set<string>();
-                const isDraftShift = (s: any) => (s as any)?.status !== 'PUBLISHED';
                 for (const s of [...(schedRangeShifts || []), ...(myShifts || [])]) {
                   const k = String(s?.assignment_id || '');
                   if (k && seenAid.has(k)) continue;
@@ -5272,13 +5276,14 @@ export function App() {
                       const lateMin = ci?.is_late ? Number(ci.minutes_deviation) || 0 : 0;
                       const earlyMin = co?.is_early ? Number(co.minutes_deviation) || 0 : 0;
                       const fine = ci ? fineTextOf(ci) : '';
-                      if (fine && (sh as any)?.status === 'PUBLISHED') { fineTotal += Number(ci?.fine_amount) || 0; }
+                      if (fine && isLiveShift(sh)) { fineTotal += Number(ci?.fine_amount) || 0; }
                       const ciDist = Number(ci?.distance_meters);
                       const gpsBad = !!ci && ((ci as any)?.gps_status === 'OUT_OF_BOUNDS' || (Number.isFinite(ciDist) && ciDist > 300));
                       let badge: string, bg: string, fg: string, border: string;
                       // Ca nháp HR chưa duyệt: hiện Y NHƯ quản trị nhưng KHÔNG
                       // tính công/lương/phạt (server Finance cũng bỏ qua).
-                      const isDraftRow = (sh as any)?.status !== 'PUBLISHED';
+                      // Chỉ status đúng DRAFT mới gắn (tránh oan ca trạng thái lệch chữ).
+                      const isDraftRow = isDraftShift(sh);
                       if (isDraftRow) {
                         cDraft++;
                         badge = '⏳ Chờ duyệt (chưa tính công)'; bg = '#F1F5F9'; fg = '#475569'; border = '1px solid #CBD5E1';
