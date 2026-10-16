@@ -3814,23 +3814,25 @@ export function App() {
                 };
 
                 // Ca trong dải (gộp tải theo dải + realtime), khử trùng, bỏ ca đã hủy.
-                // Chỉ ca PUBLISHED mới là lịch làm việc thật — ca DRAFT (nháp,
-                // HR chưa chốt) không tính công/ngày làm, chỉ báo chờ duyệt.
+                // Hiện Y NHƯ quản trị (kể cả ca nháp) để 2 bên khớp ngày/ca —
+                // ca DRAFT chỉ báo "chờ duyệt", KHÔNG tính công/ngày làm/lương.
                 const seenAid = new Set<string>();
                 const rangeShifts: any[] = [];
                 const draftDaySet = new Set<string>();
+                const isDraftShift = (s: any) => (s as any)?.status !== 'PUBLISHED';
                 for (const s of [...(schedRangeShifts || []), ...(myShifts || [])]) {
                   const k = String(s?.assignment_id || '');
                   if (k && seenAid.has(k)) continue;
                   if (k) seenAid.add(k);
                   if ((s as any)?.status === 'CANCELLED') continue;
-                  if ((s as any)?.status !== 'PUBLISHED') {
+                  if (isDraftShift(s)) {
                     const d = String((s as any)?.date || '').slice(0, 10);
                     if (d) draftDaySet.add(d);
-                    continue;
                   }
                   rangeShifts.push(s);
                 }
+                // Tập ca đã duyệt (tính công/ngày làm/lương) — khớp admin/lương.
+                const liveShifts = rangeShifts.filter((s: any) => !isDraftShift(s));
                 const days = schedRange.length > 0 ? schedRange : [];
                 if (days.length === 0) {
                   return (
@@ -3843,7 +3845,8 @@ export function App() {
                 }
 
                 // 1. Tập hợp ca làm việc và các ngày có ca trong dải `days`
-                const shiftsInDays = rangeShifts.filter((s: any) => days.includes(String(s.date || '').slice(0, 10)));
+                // (chỉ ca đã duyệt — khớp quản trị/lương; ca nháp hiện riêng).
+                const shiftsInDays = liveShifts.filter((s: any) => days.includes(String(s.date || '').slice(0, 10)));
                 const workDaysSet = new Set(shiftsInDays.map((s: any) => String(s.date || '').slice(0, 10)));
                 const workCount = shiftsInDays.length;
 
@@ -3863,8 +3866,8 @@ export function App() {
                 const offDaysSet = new Set(offDays);
                 const offCount = offDays.length;
 
-                // Tóm tắt trạng thái hôm nay
-                const todayShifts = rangeShifts.filter((s: any) => String(s.date || '').slice(0, 10) === todayStr);
+                // Tóm tắt trạng thái hôm nay (chỉ ca đã duyệt)
+                const todayShifts = liveShifts.filter((s: any) => String(s.date || '').slice(0, 10) === todayStr);
                 const todayOffs = (schedRangeLeaves || []).filter((l: any) => toISODate(l.requested_date) === todayStr);
                 const isTodayOff = offDaysSet.has(todayStr);
                 const todaySummary = todayShifts.length > 0
@@ -5169,9 +5172,9 @@ export function App() {
                   }
                   const shiftDays = new Map<string, any[]>();
                   for (const s of allShifts) {
-                    // Chỉ ca PUBLISHED mới tính công tháng (DRAFT nháp HR chưa
-                    // chốt + CANCELLED đã hủy đều không hiện công).
-                    if ((s as any)?.status !== 'PUBLISHED') continue;
+                    // Hiện Y NHƯ quản trị (kể cả ca nháp) để khớp ngày/ca —
+                    // ca DRAFT báo "chờ duyệt", KHÔNG tính công/lương (xử lý ở rows).
+                    if ((s as any)?.status === 'CANCELLED') continue;
                     const d = String((s as any).date || '').slice(0, 10);
                     if (!d || !d.startsWith(tsMonth)) continue;
                     if (!shiftDays.has(d)) shiftDays.set(d, []);
@@ -5220,7 +5223,7 @@ export function App() {
                     }
                     return fallbackNet;
                   };
-                  let cDone = 0, cWorking = 0, cMissingOut = 0, cAbsent = 0, cNoCheck = 0, cUpcoming = 0;
+                  let cDone = 0, cWorking = 0, cMissingOut = 0, cAbsent = 0, cNoCheck = 0, cUpcoming = 0, cDraft = 0;
                   let fineTotal = 0;
                   let payTotal = 0;
                   const fineTextOf = (ev: any) => {
@@ -5269,11 +5272,17 @@ export function App() {
                       const lateMin = ci?.is_late ? Number(ci.minutes_deviation) || 0 : 0;
                       const earlyMin = co?.is_early ? Number(co.minutes_deviation) || 0 : 0;
                       const fine = ci ? fineTextOf(ci) : '';
-                      if (fine) { fineTotal += Number(ci?.fine_amount) || 0; }
+                      if (fine && (sh as any)?.status === 'PUBLISHED') { fineTotal += Number(ci?.fine_amount) || 0; }
                       const ciDist = Number(ci?.distance_meters);
                       const gpsBad = !!ci && ((ci as any)?.gps_status === 'OUT_OF_BOUNDS' || (Number.isFinite(ciDist) && ciDist > 300));
                       let badge: string, bg: string, fg: string, border: string;
-                      if (st.key === 'COMPLETED') {
+                      // Ca nháp HR chưa duyệt: hiện Y NHƯ quản trị nhưng KHÔNG
+                      // tính công/lương/phạt (server Finance cũng bỏ qua).
+                      const isDraftRow = (sh as any)?.status !== 'PUBLISHED';
+                      if (isDraftRow) {
+                        cDraft++;
+                        badge = '⏳ Chờ duyệt (chưa tính công)'; bg = '#F1F5F9'; fg = '#475569'; border = '1px solid #CBD5E1';
+                      } else if (st.key === 'COMPLETED') {
                         cDone++;
                         payTotal += srvNetOf((sh as any)?.assignment_id, date, shiftPayInfo((sh as any)?.shift_code, srvRateOf(date), ci, co, (sh as any)?.start_at).net);
                         badge = '✓ Đủ công'; bg = '#ECFDF5'; fg = '#047857'; border = '1px solid #A7F3D0';
@@ -5301,11 +5310,13 @@ export function App() {
                       }
                       const sched = `${fmtHM((sh as any).start_at)}${(sh as any).end_at ? `–${fmtHM((sh as any).end_at)}` : ''}`;
                       const notes: string[] = [];
-                      if (lateMin > 0) notes.push(`Trễ ${lateMin}p`);
-                      if (earlyMin > 0) notes.push(`Về sớm ${earlyMin}p`);
-                      if (fine) notes.push(fine);
-                      if (gpsBad) notes.push(`GPS vượt ${ciDist}m (quá 300m)`);
-                      if (ab && !ci) notes.push('Hệ thống tự ghi vắng');
+                      if (!isDraftRow) {
+                        if (lateMin > 0) notes.push(`Trễ ${lateMin}p`);
+                        if (earlyMin > 0) notes.push(`Về sớm ${earlyMin}p`);
+                        if (fine) notes.push(fine);
+                        if (gpsBad) notes.push(`GPS vượt ${ciDist}m (quá 300m)`);
+                        if (ab && !ci) notes.push('Hệ thống tự ghi vắng');
+                      }
                       // Tiền ca theo số liệu server (khớp Bảng Tổng Hợp Finance).
                       const srvRow = srvByAssign.get(String((sh as any)?.assignment_id || ''));
                       if (srvRow && (srvRow as any).status === 'DU') {
@@ -5364,6 +5375,7 @@ export function App() {
                       </div>
                       <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
                         {dayBlocks.length} ngày có ca trong tháng {tsMonth.slice(5, 7)}/{tsMonth.slice(0, 4)}
+                        {cDraft > 0 ? ` • ${cDraft} ca chờ duyệt (chưa tính công)` : ''}
                         {(monthServerPay as any)?.formula ? ` • Đơn giá kỳ: TV ${money(Number((monthServerPay as any).formula.rateTV))}đ/h, CT ${money(Number((monthServerPay as any).formula.rateCT))}đ/h — khớp 100% với Kế toán` : ' • Lương theo đơn giá hiện tại, Finance chốt chính thức ở kỳ lương.'}
                       </div>
                       {dayBlocks.length === 0 && (
