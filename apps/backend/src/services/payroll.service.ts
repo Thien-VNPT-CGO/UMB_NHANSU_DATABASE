@@ -11,6 +11,7 @@ import {
 } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { singleWriterQueue } from '../repositories/single-writer-queue.js';
+import { v4 as uuidv4 } from 'uuid';
 import { Server } from 'socket.io';
 
 /**
@@ -1261,6 +1262,60 @@ export class PayrollService {
     return { run: inner.run, slips: inner.slips || inner.items || inner.payslips || [] };
   }
 
+  /**
+   * Rà soát + cập nhật đầy đủ 1 kỳ lương (VD 2026-10 từ 01/10 đến nay):
+   * - NV OFFICIAL có official_date mà thiếu dòng OFFICIAL trong lịch sử giai đoạn
+   *   (chuyển tay trên Sheet/sửa ngày sau chuyển) -> bù dòng OFFICIAL đúng mốc
+   *   để lương tách TV/CT đúng ngày HR duyệt.
+   * - Tính lại lương công thức kỳ + đảm bảo phiếu kỳ, đẩy Sheets + realtime để
+   *   2 cổng và mọi tài khoản Finance/Admin/HR/NV thấy cùng 1 số.
+   */
+  async backfillPeriodStageHistoryAndRecalc(period: string, branchScope = '*', actorId: string) {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) throw new Error('Kỳ lương phải dạng YYYY-MM (VD: 2026-10)!');
+    const employees = await this.repo.listEmployees({ branch: branchScope }).catch(() => []);
+    let backfilled = 0;
+    const backfilledIds: string[] = [];
+    for (const emp of employees || []) {
+      if (String((emp as any)?.employment_status || '').toUpperCase() !== 'OFFICIAL') continue;
+      const off = String((emp as any)?.official_date || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(off)) continue;
+      const hist = await this.repo.getStageHistory((emp as any).employee_id).catch(() => []);
+      const hasOff = (hist || []).some((h: any) =>
+        ['OFFICIAL', 'CT'].includes(String((h as any)?.stage || '').toUpperCase()) &&
+        String((h as any)?.effective_from || '').slice(0, 10) === off);
+      if (hasOff) continue;
+      try {
+        await this.repo.addStageHistory({
+          period_id: uuidv4(),
+          employee_id: (emp as any).employee_id,
+          stage: 'OFFICIAL',
+          effective_from: off,
+          rate_per_hour: Number((emp as any)?.current_rate_per_hour) || STANDARD_HOURLY_RATES.OFFICIAL,
+          approved_by: actorId,
+          note: `Bù rà soát kỳ ${period}: thiếu mốc chính thức ${off}`,
+        });
+        backfilled++;
+        backfilledIds.push(String((emp as any).employee_id));
+      } catch { /* NV tiếp theo */ }
+    }
+    const calcRes: any = await this.calculateFormulaPayroll(period, branchScope, actorId);
+    const inner = calcRes?.result ?? calcRes;
+    const ensured = await this.ensurePeriodSlips(period, branchScope, actorId).catch(() => null);
+    this.triggerSheetsPush();
+    if (this.io) {
+      try {
+        this.io.emit('data:updated', { entity: 'payroll', data: { action: 'backfill', period, backfilled }, timestamp: new Date().toISOString() });
+        this.io.emit('data:updated', { entity: 'employees', data: { action: 'backfill-stage', period, backfilled }, timestamp: new Date().toISOString() });
+      } catch { /* non-fatal */ }
+    }
+    return {
+      period,
+      backfilled,
+      backfilledIds,
+      run: inner?.run || null,
+      slips: inner?.slips || inner?.items || (ensured as any)?.slips || [],
+    };
+  }
   // --- Cấu hình VietQR công ty (lưu trong system settings, tự đồng bộ Sheets) ---
   async getBankConfig(): Promise<BankQrConfig | null> {
     const all: any = await (this.repo as any).getSystemSettings?.().catch(() => null);
@@ -1306,6 +1361,11 @@ export class PayrollService {
     if (!emp) throw new Error('EMPLOYEE_NOT_FOUND');
     const hist = await this.repo.getStageHistory(employeeId).catch(() => []);
     const rateNow = Number(emp.current_rate_per_hour) || 0;
+    // Cùng đơn giá công thức kỳ với Bảng Tổng Hợp + Tính lương để NV xem
+    // Hồ sơ khớp 100% với Finance (trước đây dùng lương hiện tại nên lệch).
+    const formula = await this.getFormula(per).catch(() => ({ ...DEFAULT_PAYROLL_FORMULA, period: per }) as any);
+    const fRateTV = Number((formula as any)?.rateTV) || STANDARD_HOURLY_RATES.PROBATION;
+    const fRateCT = Number((formula as any)?.rateCT) || rateNow || STANDARD_HOURLY_RATES.OFFICIAL;
     const empShifts = await this.repo.getShiftsForEmployee(employeeId, fromDate, toDate).catch(() => []);
     const published = (empShifts || []).filter((s: any) => s.status === 'PUBLISHED');
     let archivedByEmpDay = new Map<string, any[]>();
@@ -1367,7 +1427,8 @@ export class PayrollService {
       if (!hasOut) hasOut = !!orphanLegFor(dayEvents, s, dayLiveIds, statusByAssign, consumedOrphans, 'CHECK_OUT', (inEvt as any)?.assignment_id);
       const template = (SHIFT_TEMPLATES as any)[(s as any).shift_code];
       const h = template ? Number(template.duration_hours) || 5 : 5;
-      const dayRate = rateOnDate(emp, day, hist, STANDARD_HOURLY_RATES.PROBATION, rateNow);
+      const dayStage = rateOnDate(emp, day, hist, fRateTV, fRateCT).stage;
+      const dayRate = { stage: dayStage, rate: dayStage === 'TV' ? fRateTV : fRateCT };
       const shiftPay = h * dayRate.rate;
       const isToday = day === today;
       if (isToday) todayStat.shifts++;

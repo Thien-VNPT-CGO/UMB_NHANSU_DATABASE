@@ -3761,6 +3761,19 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Rà soát + cập nhật đầy đủ 1 kỳ (bù mốc chính thức thiếu + tính lại lương
+  // công thức + đảm bảo phiếu kỳ): dùng khi kiểm tra từ 01/10 đến hiện tại.
+  app.post('/payroll/:period/backfill', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollPeriodParams, body: payrollCalculateBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const branchScope = req.body.branchScope || '*';
+      const result = await payrollService.backfillPeriodStageHistoryAndRecalc(req.params.period, branchScope, req.user!.id);
+      broadcastUpdate('payroll', { action: 'backfill', period: req.params.period });
+      broadcastUpdate('employees', { action: 'backfill-stage', period: req.params.period });
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
   // Công thức lương 1 kỳ: xem + lưu (từ file Excel của Kế toán).
   app.get('/payroll/formula/:period', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollPeriodParams }), async (req, res) => {
     try {

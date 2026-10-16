@@ -11913,6 +11913,21 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           right={<>
             <input type="month" value={finMonth} onChange={e => setFinMonth(e.target.value || new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7))} style={{ padding: '7px 10px', fontSize: '12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.4)', backgroundColor: 'rgba(255,255,255,0.15)', color: '#FFF', fontWeight: 700 }} />
             <button className="btn-secondary" style={{ fontSize: '12px', padding: '7px 14px', fontWeight: 700 }} disabled={finSheetLoading} onClick={() => loadFinAttendance()}>{finSheetLoading ? 'Đang tải...' : 'Tải lại'}</button>
+            <button className="btn-secondary" style={{ fontSize: '12px', padding: '7px 14px', fontWeight: 700 }} disabled={finSheetLoading} onClick={async () => {
+              if (!window.confirm(`Rà soát + cập nhật đầy đủ lương tháng ${finMonth} (bù mốc chính thức thiếu, tính lại theo công thức kỳ)?`)) return;
+              setFinSheetLoading(true);
+              try {
+                const r: any = await apiRequest(`/payroll/${finMonth}/backfill`, { method: 'POST', body: JSON.stringify({ branchScope }) });
+                showToast(`Đã cập nhật đủ tháng ${finMonth}: bù ${r?.backfilled ?? 0} mốc chính thức, ${(r?.slips || []).length} phiếu. 2 cổng đã đồng bộ realtime.`);
+                await loadFinAttendance();
+                if (onRefreshData) await onRefreshData();
+                if (onSyncSheets) await onSyncSheets();
+              } catch (e: any) {
+                showToast(e?.message || 'Lỗi khi rà soát cập nhật!');
+              } finally {
+                setFinSheetLoading(false);
+              }
+            }}>{finSheetLoading ? 'Đang rà soát...' : 'Rà soát 01→nay'}</button>
             <button className="btn-secondary" style={{ fontSize: '12px', padding: '7px 14px', fontWeight: 700 }} onClick={exportCsv}>Xuất CSV</button>
           </>}
         />
