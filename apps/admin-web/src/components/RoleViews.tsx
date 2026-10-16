@@ -8117,7 +8117,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <button
               className="btn-primary"
               style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', fontSize: '13px', backgroundColor: '#059669' }}
-              title="Rà NV vừa lên chính thức bị thiếu ca CÁC TUẦN TRƯỚC — mở modal tự chọn NV + ngày + ca để bù (ngày quá khứ chốt luôn)"
+              title="Rà NV vừa lên chính thức bị thiếu ca THỬ VIỆC các tuần trước — mở modal tự chọn NV + ngày + ca để bù (Admin hoàn thành ca sau để tính lương thử việc)"
               disabled={supBusy}
               onClick={async () => {
                 if (supBusy) return;
@@ -8425,6 +8425,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             if (!picked) { showToast('⚠️ Vui lòng chọn nhân viên!'); return; }
             if (!/^\d{4}-\d{2}-\d{2}$/.test(bfDate || '')) { showToast('⚠️ Vui lòng chọn ngày (YYYY-MM-DD)!'); return; }
             if (bfDate > yesterday) { showToast('⚠️ Modal này chỉ bù tuần trước (đến hết hôm qua)! Ca hôm nay/tương lai dùng nút Bổ Sung Lịch NV.'); return; }
+            if ((picked as any)?.official_date && bfDate >= String((picked as any).official_date).slice(0, 10)) { showToast(`⚠️ Modal này chỉ bù ca THỬ VIỆC (trước ${String((picked as any).official_date).slice(0, 10)})! Từ ngày chính thức trở đi dùng nút Bổ Sung Lịch NV.`); return; }
             if (!['CA_1', 'CA_2', 'CA_3'].includes(bfShift)) { showToast('⚠️ Vui lòng chọn ca 1/2/3!'); return; }
             setSupBusy(true);
             try {
@@ -8438,7 +8439,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   publish: true,
                 }),
               });
-              showToast(`✅ Đã bù ${shiftLabel} ngày ${bfDate} cho ${(picked as any)?.full_name} (chốt luôn)! Ca đã đồng bộ realtime sang Bảng Chấm Công và Cổng NV.`);
+              showToast(`✅ Đã bù ${shiftLabel} thử việc ngày ${bfDate} cho ${(picked as any)?.full_name} (chốt luôn)! Admin sang tab Bổ sung công → Hoàn thành ca để NV hưởng lương thử việc.`);
               await refreshBfCandidates();
               if (onRefreshData) await onRefreshData();
             } catch (e: any) {
@@ -8475,7 +8476,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <button className="btn-secondary" style={{ padding: '4px 12px' }} onClick={() => setBfOpen(false)}>Đóng</button>
                 </div>
                 <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px', lineHeight: 1.6 }}>
-                  NV vừa lên chính thức thiếu ca {bfRange.fromDate}→{bfRange.toDate}. Tự chọn NV + ngày + ca để bù từng ca (ngày quá khứ chốt luôn), hoặc bù hết ngày thiếu 1 lần.
+                  Ca bù là <strong>ca thử việc</strong> các tuần trước của {bfRange.fromDate}→{bfRange.toDate} (ngày trước ngày chính thức nên tự tính lương thử việc). Sau khi bù, Admin sang tab <strong>Bổ sung công → Hoàn thành ca</strong> để NV được hưởng lương thử việc.
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '14px' }}>
                   <div>

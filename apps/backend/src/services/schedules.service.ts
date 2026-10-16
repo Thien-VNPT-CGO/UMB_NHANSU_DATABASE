@@ -2432,12 +2432,12 @@ export class SchedulesService {
   }
 
   /**
-   * NV vừa lên chính thức bị THIẾU ca CÁC TUẦN TRƯỚC (lịch thử việc từ hôm
-   * chuyển đã bị gỡ / trước đây HR chưa xếp đủ): rà từ ngày vào làm (tối đa
-   * 4 tuần trước) đến hết hôm qua, ngày nào chưa có ca live và không vướng
-   * đơn nghỉ/OFF thì đưa vào diện bù. Ca bù tạo PUBLISHED luôn (tuần đã qua
-   * không còn nháp) để đủ công tính lương. Chỉ xét NV official_date trong
-   * 30 ngày gần nhất — đã ổn định lịch thì không đụng.
+   * NV vừa lên chính thức bị THIẾU CA THỬ VIỆC các tuần trước: rà các ngày
+   * TRƯỚC official_date (từ ngày vào làm, tối đa 4 tuần trước) đến hết hôm qua,
+   * ngày nào chưa có ca live và không vướng đơn nghỉ/OFF thì đưa vào diện bù.
+   * Ca bù tạo PUBLISHED luôn để Admin hoàn thành ca (tab Bổ sung công) cho NV
+   * hưởng lương thử việc — ngày trước official_date tự tính giá TV. Chỉ xét NV
+   * official_date trong 30 ngày gần nhất — đã ổn định lịch thì không đụng.
    */
   async previewBackfillNewOfficial(branchScope?: string) {
     const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
@@ -2470,26 +2470,32 @@ export class SchedulesService {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(off) || off < sinceStr || off > today) continue;
       const branchId = String((e as any)?.default_branch_id || 'CN130');
       if (branchScope && branchScope !== '*' && canonicalBranch(branchId) !== canonicalBranch(branchScope)) continue;
-      // Chỉ bù quá khứ: từ ngày vào làm (tối đa 4 tuần trước) đến hết hôm qua.
+      // Chỉ bù ngày thử việc: trước official_date. Ngày từ official_date trở đi
+      // là ca chính thức — dùng nút Bổ Sung Lịch NV thường, không bù ở đây.
+      const offD = new Date(`${off}T00:00:00Z`);
+      offD.setUTCDate(offD.getUTCDate() - 1);
+      const probEnd = offD.toISOString().slice(0, 10);
+      const to = probEnd < yesterday ? probEnd : yesterday;
+      // Chỉ bù quá khứ: từ ngày vào làm (tối đa 4 tuần trước) đến hết ngày thử việc.
       const startDate = String((e as any)?.start_date || '').slice(0, 10);
       let from = /^\d{4}-\d{2}-\d{2}$/.test(startDate) && startDate > floorStr ? startDate : floorStr;
-      if (from > yesterday) continue;
-      const empShifts = await this.repo.getShiftsForEmployee(empId, from, yesterday).catch(() => []);
+      if (from > to) continue;
+      const empShifts = await this.repo.getShiftsForEmployee(empId, from, to).catch(() => []);
       const liveDays = new Set<string>();
       for (const s of empShifts || []) {
         if ((s as any)?.status === 'CANCELLED') continue;
         const d = String((s as any)?.date || '').slice(0, 10);
-        if (d >= from && d <= yesterday) liveDays.add(d);
+        if (d >= from && d <= to) liveDays.add(d);
       }
       const offDays = new Set<string>();
       for (const l of leaves || []) {
         if (String((l as any)?.employee_id || '') !== empId) continue;
         if (!['APPROVED', 'PENDING'].includes(String((l as any)?.status || ''))) continue;
         const d = normSheetDate((l as any)?.requested_date) || String((l as any)?.requested_date || '').slice(0, 10);
-        if (/^\d{4}-\d{2}-\d{2}$/.test(d) && d >= from && d <= yesterday) offDays.add(d);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(d) && d >= from && d <= to) offDays.add(d);
       }
       const missing: string[] = [];
-      for (let d = new Date(`${from}T00:00:00Z`); d <= new Date(`${yesterday}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1)) {
+      for (let d = new Date(`${from}T00:00:00Z`); d <= new Date(`${to}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1)) {
         const iso = d.toISOString().slice(0, 10);
         if (!liveDays.has(iso) && !offDays.has(iso)) missing.push(iso);
       }
@@ -2544,7 +2550,7 @@ export class SchedulesService {
       action: 'BACKFILL_NEW_OFFICIAL_SHIFTS',
       target_entity: 'PHAN_CONG_CA',
       target_id: preview.fromDate,
-      details: `Bù ${created} ca các tuần trước (${preview.fromDate}→${preview.toDate}) cho ${details.length} NV mới chính thức thiếu ca`,
+      details: `Bù ${created} ca thử việc các tuần trước (${preview.fromDate}→${preview.toDate}) cho ${details.length} NV mới chính thức thiếu ca`,
     } as any).catch(() => null);
     return { ...preview, created, skipped, filled: details };
   }
