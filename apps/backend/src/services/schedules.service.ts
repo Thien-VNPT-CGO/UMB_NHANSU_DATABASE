@@ -1074,6 +1074,113 @@ export class SchedulesService {
     return { overLimit, cancelledCount, doneIds };
   }
 
+  /**
+   * Tự động gỡ OFF trùng cùng ca cùng chi nhánh về chưa đăng ký: 2+ NV cùng ca
+   * OFF chung 1 ngày (ai đăng ký trước giữ ngày) — giữ phiếu tạo trước nhất,
+   * hủy các phiếu sau để 2 bạn đăng ký lại ngày khác, không trống ca chi nhánh.
+   * Chạy định kỳ cùng tick kẹp OFF (gồm cả dọn cặp trùng đã lọt trước đây).
+   */
+  async resolveSameShiftOffOverlaps(
+    actorId: string,
+    dryRun = true
+  ): Promise<{
+    clashes: { date: string; branch: string; shift: string; kept: { employee_id: string; employee: string }; cancelled: { employee_id: string; employee: string; leave_id: string }[] }[];
+    cancelledCount: number;
+  }> {
+    const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+    const [emps, leaves] = await Promise.all([
+      this.repo.listEmployees().catch(() => []),
+      this.repo.listLeaveRequests().catch(() => []),
+    ]);
+    const empById = new Map<string, any>((emps || []).map((e: any) => [e.employee_id, e]));
+    // Gom phiếu OFF tuần còn hiệu lực theo (chi nhánh, ngày).
+    const byBranchDay = new Map<string, any[]>();
+    for (const l of leaves || []) {
+      if ((l as any).leave_type !== 'HANG_TUAN') continue;
+      if (!['APPROVED', 'PENDING'].includes((l as any).status)) continue;
+      const d = normSheetDate((l as any).requested_date);
+      if (!d || d < today) continue;
+      const emp = empById.get((l as any).employee_id);
+      if (!emp || (emp as any).employment_status === 'TERMINATED') continue;
+      const b = canonicalBranch((emp as any).default_branch_id || (emp as any).branch_id || (l as any).branch_id);
+      const k = `${b}|${d}`;
+      const arr = byBranchDay.get(k) || [];
+      arr.push(l);
+      byBranchDay.set(k, arr);
+    }
+    const clashes: { date: string; branch: string; shift: string; kept: { employee_id: string; employee: string }; cancelled: { employee_id: string; employee: string; leave_id: string }[] }[] = [];
+    for (const [k, arr] of byBranchDay) {
+      if (arr.length < 2) continue;
+      const [b, d] = k.split('|');
+      // Xác định ca từng người ngày đó (ca đã xếp, rớt về ca cố định).
+      const withShift: { leave: any; shift: string }[] = [];
+      for (const l of arr) {
+        const emp = empById.get((l as any).employee_id);
+        const codes = await this.shiftsOfDay((l as any).employee_id, d, (emp as any)?.default_shift_code);
+        if (codes.length === 0) continue; // không xác định được ca thì không đụng
+        withShift.push({ leave: l, shift: codes[0] });
+      }
+      // Nhóm theo ca: cùng ca mới tính trùng.
+      const byShift = new Map<string, { leave: any; shift: string }[]>();
+      for (const w of withShift) {
+        const list = byShift.get(w.shift) || [];
+        list.push(w);
+        byShift.set(w.shift, list);
+      }
+      for (const [shift, list] of byShift) {
+        // Trừ phiếu của chính mình trùng nhau: giữ 1, còn lại cũng gỡ.
+        const seenEmp = new Set<string>();
+        const dupes: { leave: any; shift: string }[] = [];
+        const uniq: { leave: any; shift: string }[] = [];
+        for (const w of list) {
+          const id = String((w.leave as any).employee_id || '');
+          if (seenEmp.has(id)) { dupes.push(w); continue; }
+          seenEmp.add(id);
+          uniq.push(w);
+        }
+        if (uniq.length < 2 && dupes.length === 0) continue;
+        // Ai đăng ký trước (created_at/request_id nhỏ nhất) giữ ngày.
+        const sorted = [...uniq].sort((a, b) =>
+          String((a.leave as any).created_at || '').localeCompare(String((b.leave as any).created_at || '')) ||
+          String((a.leave as any).request_id || '').localeCompare(String((b.leave as any).request_id || '')));
+        const keep = sorted[0];
+        const drop = [...sorted.slice(1), ...dupes];
+        clashes.push({
+          date: d,
+          branch: b,
+          shift,
+          kept: { employee_id: String((keep.leave as any).employee_id || ''), employee: String(empById.get((keep.leave as any).employee_id)?.full_name || (keep.leave as any).employee_id) },
+          cancelled: drop.map(w => ({
+            employee_id: String((w.leave as any).employee_id || ''),
+            employee: String(empById.get((w.leave as any).employee_id)?.full_name || (w.leave as any).employee_id),
+            leave_id: String((w.leave as any).request_id || ''),
+          })),
+        });
+      }
+    }
+    clashes.sort((a, b) => a.date.localeCompare(b.date) || a.branch.localeCompare(b.branch));
+    if (dryRun) return { clashes, cancelledCount: 0 };
+    let cancelledCount = 0;
+    for (const c of clashes) {
+      for (const x of c.cancelled) {
+        await this.repo.updateLeaveRequest(x.leave_id, 'CANCELLED', actorId, `Trùng OFF ${c.shift} ngày ${c.date} với ${c.kept.employee} (đăng ký trước giữ ngày) — đăng ký lại ngày khác`).catch(() => null);
+        cancelledCount++;
+      }
+    }
+    if (cancelledCount > 0) {
+      await this.repo.recordAuditLog({
+        log_id: `LOG_${Date.now()}`,
+        actor_id: actorId,
+        actor_role: actorId === 'SYSTEM' ? 'SYSTEM' : 'HR',
+        action: 'WEEKLY_OFF_OVERLAP_RESET',
+        target_entity: 'PHIEU_OFF',
+        target_id: `${clashes.length}_clashes`,
+        details: `Gỡ ${cancelledCount} OFF trùng về chưa đăng ký (${clashes.map(c => `${c.branch} ${c.date} ${c.shift}: giữ ${c.kept.employee}, gỡ ${c.cancelled.map(x => x.employee).join(', ')}`).join(' | ')})`,
+      } as any).catch(() => null);
+    }
+    return { clashes, cancelledCount };
+  }
+
   async requestLeave(data: {
     employeeId: string;
     branchId: string;

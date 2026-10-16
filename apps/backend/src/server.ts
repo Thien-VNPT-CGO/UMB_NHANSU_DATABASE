@@ -515,6 +515,38 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   setTimeout(weeklyOffClampTickSafe, 150_000);
   setInterval(weeklyOffClampTickSafe, 5 * 60_000);
 
+  // Tự gỡ OFF trùng cùng ca cùng chi nhánh về chưa đăng ký (người đăng ký
+  // trước giữ ngày, người sau đăng ký lại) — chạy sau pull đầu + mỗi 5 phút,
+  // dọn cả các cặp trùng đã lọt trước đây. Có thay đổi -> báo NV + realtime.
+  const weeklyOffOverlapTickSafe = () => {
+    (services.schedulesService as any).resolveSameShiftOffOverlaps('SYSTEM', false)
+      .then(async (r: any) => {
+        if (r && r.cancelledCount > 0) {
+          console.log(`[weekly-off-overlap] Đã gỡ ${r.cancelledCount} OFF trùng về chưa đăng ký.`);
+          for (const c of r.clashes || []) {
+            for (const x of c.cancelled || []) {
+              try {
+                await services.notificationsService.sendNotification({
+                  recipientIds: [x.employee_id],
+                  type: 'WEEKLY_OFF_OVERLAP_RESET',
+                  severity: 'ACTION_REQUIRED',
+                  title: '⚠️ Ngày OFF của bạn bị trùng, cần đăng ký lại',
+                  summary: `Ngày ${String(c.date || '').split('-').reverse().join('/')} đã có ${c.kept?.employee || 'đồng nghiệp'} cùng ${c.shift || 'ca'} đăng ký OFF trước nên OFF của bạn đã được gỡ về chưa đăng ký. Vui lòng chọn ngày khác (cổng mở T6 09h00 – T7 09h00 hoặc chờ Admin mở bù)!`,
+                  targetPath: '/leave',
+                  actorId: 'SYSTEM',
+                });
+              } catch { /* best-effort từng người */ }
+            }
+          }
+          try {
+            io.emit('data:updated', { entity: 'leaves', data: { action: 'weekly-off-overlap-reset', cancelled: r.cancelledCount }, timestamp: new Date().toISOString() });
+          } catch { /* non-fatal */ }
+        }
+      })
+      .catch((err: any) => console.warn('[weekly-off-overlap] tick error:', err?.message || err));
+  };
+  setTimeout(weeklyOffOverlapTickSafe, 160_000);
+  setInterval(weeklyOffOverlapTickSafe, 5 * 60_000);
   // Tự đồng bộ ca trùng OFF cũ: ca làm trùng ngày OFF của cùng NV (từ hôm nay)
   // thì ngày OFF thành ca làm — chạy sau pull đầu + mỗi 60s, không cần HR bấm nút.
   // Có thay đổi -> bắn realtime để lịch 2 cổng hết cảnh báo trùng ngay.
