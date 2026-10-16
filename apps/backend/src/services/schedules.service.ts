@@ -567,6 +567,8 @@ export class SchedulesService {
     shiftCode: ShiftCode;
     date: string;
     actorId: string;
+    /** Ca quá khứ (bù tuần trước) chốt PUBLISHED luôn — tuần đã qua không còn nháp. */
+    publish?: boolean;
   }) {
     // Validate cứng ngay từ đầu: mã ca phải có trong template, ngày YYYY-MM-DD.
     if (!SHIFT_TEMPLATES[data.shiftCode]) {
@@ -615,6 +617,16 @@ export class SchedulesService {
           status: 'DRAFT',
           schedule_version: 1,
         });
+        // Bù tuần trước: chốt PUBLISHED ngay trong cùng task để đủ công tính lương.
+        let finalShift = shift;
+        if (data.publish) {
+          try {
+            finalShift = await this.repo.updateShiftAssignment(assignmentId, {
+              status: 'PUBLISHED',
+              schedule_version: 2,
+            });
+          } catch { /* giữ DRAFT, HR Phát Hành tay */ }
+        }
         // HR/Store xếp ca vào đúng ngày NV đã đăng ký OFF → ngày OFF đó lập tức
         // chuyển thành ca làm việc (tự hủy OFF, tránh cảnh báo ca trùng ngày OFF).
         const offNotes = await this.cancelReceiverLeavesOnWorkDay(data.employeeId, data.date);
@@ -634,7 +646,7 @@ export class SchedulesService {
             });
           }
         }
-        return shift;
+        return finalShift;
       },
     });
   }
@@ -2509,18 +2521,14 @@ export class SchedulesService {
       const done: string[] = [];
       for (const date of item.missingDates) {
         try {
-          const createdShift: any = await this.createShift({
+          await this.createShift({
             employeeId: item.employee_id,
             branchId: item.branch_id,
             shiftCode: item.shift_code,
             date,
             actorId,
+            publish: true,
           });
-          // Tuần đã qua không còn nháp: chốt PUBLISHED ngay để đủ công tính lương.
-          try {
-            const aid = String(createdShift?.assignment_id || createdShift?.result?.assignment_id || '');
-            if (aid) await this.repo.updateShiftAssignment(aid, { status: 'PUBLISHED', schedule_version: 2 });
-          } catch { /* giữ DRAFT nếu chốt lỗi, HR Phát Hành tay */ }
           created++;
           done.push(date);
         } catch (e: any) {

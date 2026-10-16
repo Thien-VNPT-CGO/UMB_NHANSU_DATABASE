@@ -2314,6 +2314,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [supDate, setSupDate] = useState('');
   const [supShift, setSupShift] = useState('CA_1');
   const [supBusy, setSupBusy] = useState(false);
+  // Modal bù ca tuần trước cho NV mới chính thức (tự chọn NV + ngày + ca như
+  // modal bổ sung): danh sách NV thiếu ca do server rà, ngày quá khứ chốt
+  // PUBLISHED luôn để đủ công tính lương.
+  const [bfOpen, setBfOpen] = useState(false);
+  const [bfCandidates, setBfCandidates] = useState<any[]>([]);
+  const [bfRange, setBfRange] = useState({ fromDate: '', toDate: '' });
+  const [bfEmpId, setBfEmpId] = useState('');
+  const [bfDate, setBfDate] = useState('');
+  const [bfShift, setBfShift] = useState('CA_1');
   // HR dọn ca không live (xem trước + xác nhận xóa cứng).
   const [purgeOpen, setPurgeOpen] = useState(false);
   const [purgeData, setPurgeData] = useState<any>(null);
@@ -8108,7 +8117,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <button
               className="btn-primary"
               style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', fontSize: '13px', backgroundColor: '#059669' }}
-              title="Rà NV vừa lên chính thức bị thiếu ca CÁC TUẦN TRƯỚC — bù ca chốt PUBLISHED luôn để đủ công tính lương"
+              title="Rà NV vừa lên chính thức bị thiếu ca CÁC TUẦN TRƯỚC — mở modal tự chọn NV + ngày + ca để bù (ngày quá khứ chốt luôn)"
               disabled={supBusy}
               onClick={async () => {
                 if (supBusy) return;
@@ -8120,22 +8129,21 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     showToast(`Từ ${pv?.fromDate || ''}→${pv?.toDate || ''}: không có NV mới chính thức nào thiếu ca tuần trước.`);
                     return;
                   }
-                  const lines = list.map((e: any) => `• ${e.full_name} (${e.employee_code}): thiếu ${e.missingDates.length} ca (${e.missingDates.join(', ')})`).join('\n');
-                  if (!window.confirm(`Bù ca các tuần trước (${pv?.fromDate}→${pv?.toDate}) cho ${list.length} NV mới chính thức?\n${lines}\n(Ca bù chốt PUBLISHED luôn để đủ công tính lương.)`)) return;
-                  const res: any = await apiRequest('/schedules/backfill-new-official', {
-                    method: 'POST',
-                    body: JSON.stringify({ employeeIds: list.map((e: any) => e.employee_id) }),
-                  });
-                  showToast(`Đã bù ${res?.created ?? 0} ca (PUBLISHED) cho ${((res as any)?.filled || []).length} NV mới chính thức! Realtime đã đồng bộ 2 cổng.`);
-                  if (onRefreshData) await onRefreshData();
+                  setBfCandidates(list);
+                  setBfRange({ fromDate: pv?.fromDate || '', toDate: pv?.toDate || '' });
+                  const first = list[0];
+                  setBfEmpId(String(first.employee_id));
+                  setBfDate(String((first.missingDates || [])[0] || ''));
+                  setBfShift(first.shift_code || 'CA_1');
+                  setBfOpen(true);
                 } catch (e: any) {
-                  showToast(e?.message || 'Lỗi khi bù ca!');
+                  showToast(e?.message || 'Lỗi khi rà soát!');
                 } finally {
                   setSupBusy(false);
                 }
               }}
             >
-              <Plus size={14} /> {supBusy ? 'Đang bù...' : 'Bù ca tuần trước'}
+              <Plus size={14} /> {supBusy ? 'Đang rà...' : 'Bù ca tuần trước'}
             </button>
             <button
               className="btn-secondary"
@@ -8370,6 +8378,172 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         })()}
 
         {renderEditShiftModal()}
+
+        {/* Modal bù ca tuần trước cho NV mới chính thức: tự chọn NV + ngày + ca */}
+        {bfOpen && (() => {
+          const todayVN = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+          const yd = new Date(`${todayVN}T00:00:00Z`);
+          yd.setUTCDate(yd.getUTCDate() - 1);
+          const yesterday = yd.toISOString().slice(0, 10);
+          const picked = (bfCandidates || []).find((e: any) => String((e as any)?.employee_id || '') === String(bfEmpId || ''));
+          const pickedBranch = String((picked as any)?.default_branch_id || (picked as any)?.branch_id || 'CN130');
+          const shiftLabel = bfShift === 'CA_1' ? 'Ca 1 (07–12)' : bfShift === 'CA_2' ? 'Ca 2 (12–18)' : 'Ca 3 (18–23)';
+          const bfOffThatDay = (picked && /^\d{4}-\d{2}-\d{2}$/.test(bfDate || ''))
+            ? (leaves || []).filter((l: any) =>
+              String((l as any)?.employee_id || '') === String((picked as any)?.employee_id || '') &&
+              String((l as any)?.requested_date || '').slice(0, 10) === bfDate &&
+              ['APPROVED', 'PENDING'].includes(String((l as any)?.status || '')))
+            : [];
+          const bfShiftsThatDay = (picked && /^\d{4}-\d{2}-\d{2}$/.test(bfDate || ''))
+            ? (schedAllShifts || []).filter((s: any) =>
+              String((s as any)?.employee_id || '') === String((picked as any)?.employee_id || '') &&
+              String((s as any)?.date || '').slice(0, 10) === bfDate &&
+              (s as any)?.status !== 'CANCELLED')
+            : [];
+          const refreshBfCandidates = async () => {
+            try {
+              const pv: any = await apiRequest('/schedules/backfill-new-official');
+              const list = (pv?.employees || []) as any[];
+              setBfCandidates(list);
+              if (list.length === 0) {
+                setBfOpen(false);
+                showToast('Đã bù đủ — không còn NV mới chính thức nào thiếu ca tuần trước!');
+                return;
+              }
+              const still = list.find((e: any) => String((e as any)?.employee_id || '') === String(bfEmpId || ''));
+              if (!still) {
+                setBfEmpId(String(list[0].employee_id));
+                setBfDate(String((list[0].missingDates || [])[0] || ''));
+                setBfShift(list[0].shift_code || 'CA_1');
+              } else if (!(still.missingDates || []).includes(bfDate)) {
+                setBfDate(String((still.missingDates || [])[0] || ''));
+              }
+            } catch { /* giữ danh sách cũ */ }
+          };
+          const doBfShift = async () => {
+            if (supBusy) return;
+            if (!picked) { showToast('⚠️ Vui lòng chọn nhân viên!'); return; }
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(bfDate || '')) { showToast('⚠️ Vui lòng chọn ngày (YYYY-MM-DD)!'); return; }
+            if (bfDate > yesterday) { showToast('⚠️ Modal này chỉ bù tuần trước (đến hết hôm qua)! Ca hôm nay/tương lai dùng nút Bổ Sung Lịch NV.'); return; }
+            if (!['CA_1', 'CA_2', 'CA_3'].includes(bfShift)) { showToast('⚠️ Vui lòng chọn ca 1/2/3!'); return; }
+            setSupBusy(true);
+            try {
+              await apiRequest('/schedules/shifts', {
+                method: 'POST',
+                body: JSON.stringify({
+                  employeeId: (picked as any)?.employee_id,
+                  branchId: pickedBranch,
+                  shiftCode: bfShift,
+                  date: bfDate,
+                  publish: true,
+                }),
+              });
+              showToast(`✅ Đã bù ${shiftLabel} ngày ${bfDate} cho ${(picked as any)?.full_name} (chốt luôn)! Ca đã đồng bộ realtime sang Bảng Chấm Công và Cổng NV.`);
+              await refreshBfCandidates();
+              if (onRefreshData) await onRefreshData();
+            } catch (e: any) {
+              showToast(e?.message || 'Lỗi khi bù ca!');
+            } finally {
+              setSupBusy(false);
+            }
+          };
+          const doBfAll = async () => {
+            if (supBusy || !picked) return;
+            const miss = (picked.missingDates || []) as string[];
+            if (miss.length === 0) { showToast('NV này không còn ngày thiếu!'); return; }
+            if (!window.confirm(`Tự động bù hết ${miss.length} ngày thiếu của ${(picked as any)?.full_name} (${miss.join(', ')})?`)) return;
+            setSupBusy(true);
+            try {
+              const res: any = await apiRequest('/schedules/backfill-new-official', {
+                method: 'POST',
+                body: JSON.stringify({ employeeIds: [(picked as any)?.employee_id] }),
+              });
+              showToast(`Đã bù ${res?.created ?? 0} ca cho ${(picked as any)?.full_name}!`);
+              await refreshBfCandidates();
+              if (onRefreshData) await onRefreshData();
+            } catch (e: any) {
+              showToast(e?.message || 'Lỗi khi bù hết!');
+            } finally {
+              setSupBusy(false);
+            }
+          };
+          return (
+            <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+              <div style={{ backgroundColor: 'var(--surface)', borderRadius: '12px', maxWidth: '560px', width: '100%', maxHeight: '88vh', overflow: 'auto', padding: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h2 style={{ fontSize: '16px', fontWeight: 800, margin: 0 }}>➕ Bù Ca Tuần Trước (Mới Chính Thức)</h2>
+                  <button className="btn-secondary" style={{ padding: '4px 12px' }} onClick={() => setBfOpen(false)}>Đóng</button>
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px', lineHeight: 1.6 }}>
+                  NV vừa lên chính thức thiếu ca {bfRange.fromDate}→{bfRange.toDate}. Tự chọn NV + ngày + ca để bù từng ca (ngày quá khứ chốt luôn), hoặc bù hết ngày thiếu 1 lần.
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '14px' }}>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Nhân viên mới chính thức thiếu ca:</label>
+                    <select
+                      style={{ width: '100%', padding: '7px 10px', fontSize: '13px', borderRadius: '6px' }}
+                      value={bfEmpId}
+                      onChange={(e) => {
+                        const id = e.target.value;
+                        setBfEmpId(id);
+                        const emp = (bfCandidates || []).find((x: any) => String((x as any)?.employee_id || '') === String(id || ''));
+                        if (emp) {
+                          setBfDate(String(((emp as any)?.missingDates || [])[0] || ''));
+                          const code = String((emp as any)?.shift_code || '');
+                          if (['CA_1', 'CA_2', 'CA_3'].includes(code)) setBfShift(code);
+                        }
+                      }}
+                    >
+                      <option value="">-- Chọn nhân viên --</option>
+                      {(bfCandidates || []).map((e: any) => (
+                        <option key={(e as any)?.employee_id} value={(e as any)?.employee_id}>
+                          {(e as any)?.full_name} ({(e as any)?.employee_code}) — thiếu {((e as any)?.missingDates || []).length} ca
+                        </option>
+                      ))}
+                    </select>
+                    {picked && (
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                        Chi nhánh: <strong>{getDisplayBranch(pickedBranch)}</strong> • Ngày thiếu: <strong>{((picked as any)?.missingDates || []).join(', ') || '—'}</strong>
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                    <div>
+                      <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Ngày bù (đến hết hôm qua):</label>
+                      <input type="date" max={yesterday} style={{ width: '100%', padding: '7px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid var(--border)' }} value={bfDate} onChange={(e) => setBfDate(e.target.value)} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Ca làm:</label>
+                      <select style={{ width: '100%', padding: '7px 10px', fontSize: '13px', borderRadius: '6px' }} value={bfShift} onChange={(e) => setBfShift(e.target.value)}>
+                        <option value="CA_1">Ca 1 (07–12)</option>
+                        <option value="CA_2">Ca 2 (12–18)</option>
+                        <option value="CA_3">Ca 3 (18–23)</option>
+                      </select>
+                    </div>
+                  </div>
+                  {picked && bfOffThatDay.length > 0 && (
+                    <div style={{ fontSize: '12px', color: '#92400E', backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '6px', padding: '8px 10px', lineHeight: 1.5 }}>
+                      ⚠️ {bfDate} là ngày OFF/nghỉ của {(picked as any)?.full_name} — xếp ca thì ngày OFF tự chuyển thành ca làm việc (NV nhận thông báo).
+                    </div>
+                  )}
+                  {picked && bfShiftsThatDay.length > 0 && (
+                    <div style={{ fontSize: '12px', color: '#92400E', backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '6px', padding: '8px 10px', lineHeight: 1.5 }}>
+                      ⚠️ {(picked as any)?.full_name} đã có ca {String(bfShiftsThatDay.map((s: any) => s.shift_code).join(' + '))} ngày {bfDate} — tạo thêm thành 2 ca/ngày.
+                    </div>
+                  )}
+                  <button className="btn-primary" disabled={supBusy} onClick={doBfShift} style={{ padding: '10px', fontWeight: 800, fontSize: '13px', backgroundColor: '#059669' }}>
+                    {supBusy ? '⏳ Đang bù...' : `Xếp ${shiftLabel} Ngày ${bfDate || '...'}`}
+                  </button>
+                  {picked && ((picked as any)?.missingDates || []).length > 1 && (
+                    <button className="btn-secondary" disabled={supBusy} onClick={doBfAll} style={{ padding: '10px', fontWeight: 800, fontSize: '13px' }}>
+                      Tự động bù hết {((picked as any)?.missingDates || []).length} ngày thiếu của {(picked as any)?.full_name}
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* MODAL HR DỌN CA KHÔNG LIVE (xem trước từ trước đến giờ + xác nhận) */}
         {purgeOpen && (
