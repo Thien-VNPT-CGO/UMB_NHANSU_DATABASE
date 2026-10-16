@@ -1982,6 +1982,38 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   );
 
+  // HR xem trước NV mới lên chính thức (14 ngày) bị thiếu ca tuần này.
+  app.get(
+    '/schedules/backfill-new-official',
+    authMiddleware,
+    requireRole(['ADMIN', 'HR', 'STORE']),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const scope = req.user?.role === 'STORE' ? req.user.branchScope : '*';
+        res.json(await schedulesService.previewBackfillNewOfficial(scope));
+      } catch (err: any) {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  );
+
+  // HR chốt bù ca DRAFT cho NV mới chính thức thiếu ca (Phát Hành sau như luồng tay).
+  app.post(
+    '/schedules/backfill-new-official',
+    authMiddleware,
+    requireRole(['ADMIN', 'HR', 'STORE']),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const scope = req.user?.role === 'STORE' ? req.user.branchScope : '*';
+        const ids = Array.isArray((req.body as any)?.employeeIds) ? (req.body as any).employeeIds : undefined;
+        const result = await schedulesService.backfillNewOfficialShifts(req.user!.id, ids, scope);
+        broadcastUpdate('schedules', { action: 'backfill-new-official', created: (result as any)?.created || 0 });
+        res.json(result);
+      } catch (err: any) {
+        res.status(400).json({ error: err.message });
+      }
+    }
+  );
   // HR dọn ca không live KHÔNG điểm danh khỏi hệ thống (CANCELLED + DRAFT quá khứ).
   // Ca PUBLISHED, ca nháp hiện tại/tương lai và ca còn điểm danh được giữ nguyên.
   app.post(

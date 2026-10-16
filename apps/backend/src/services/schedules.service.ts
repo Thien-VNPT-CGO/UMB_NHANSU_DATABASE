@@ -2418,4 +2418,114 @@ export class SchedulesService {
       },
     });
   }
+
+  /**
+   * NV vừa lên chính thức bị THIẾU ca (lịch thử việc từ hôm chuyển đã bị gỡ):
+   * rà từ max(hôm nay, official_date) đến hết tuần VN hiện tại, ngày nào chưa
+   * có ca live và không vướng đơn nghỉ/OFF thì đưa vào diện bù (DRAFT để HR
+   * Phát Hành như luồng bổ sung tay). Chỉ xét NV official_date trong 14 ngày
+   * gần nhất — đã ổn định lịch thì không đụng.
+   */
+  async previewBackfillNewOfficial(branchScope?: string) {
+    const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+    const wk = currentVnWeekRange(new Date());
+    const since = new Date(`${today}T00:00:00Z`);
+    since.setUTCDate(since.getUTCDate() - 14);
+    const sinceStr = since.toISOString().slice(0, 10);
+    const [employees, leaves, accounts] = await Promise.all([
+      this.repo.listEmployees().catch(() => []),
+      this.repo.listLeaveRequests().catch(() => []),
+      this.repo.listAccounts().catch(() => []),
+    ]);
+    const lockedIds = new Set<string>();
+    for (const a of accounts || []) {
+      if ((a as any)?.account_status === 'LOCKED' && (a as any)?.employee_id) {
+        lockedIds.add(String((a as any).employee_id));
+      }
+    }
+    const out: any[] = [];
+    for (const e of employees || []) {
+      if (String((e as any)?.employment_status || '') !== 'OFFICIAL') continue;
+      const empId = String((e as any)?.employee_id || '');
+      if (!empId || lockedIds.has(empId)) continue;
+      const off = String((e as any)?.official_date || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(off) || off < sinceStr || off > today) continue;
+      const branchId = String((e as any)?.default_branch_id || 'CN130');
+      if (branchScope && branchScope !== '*' && canonicalBranch(branchId) !== canonicalBranch(branchScope)) continue;
+      const start = off > today ? off : today;
+      const from = start < wk.mon ? wk.mon : start;
+      if (from > wk.sun) continue;
+      const empShifts = await this.repo.getShiftsForEmployee(empId, from, wk.sun).catch(() => []);
+      const liveDays = new Set<string>();
+      for (const s of empShifts || []) {
+        if ((s as any)?.status === 'CANCELLED') continue;
+        const d = String((s as any)?.date || '').slice(0, 10);
+        if (d >= from && d <= wk.sun) liveDays.add(d);
+      }
+      const offDays = new Set<string>();
+      for (const l of leaves || []) {
+        if (String((l as any)?.employee_id || '') !== empId) continue;
+        if (!['APPROVED', 'PENDING'].includes(String((l as any)?.status || ''))) continue;
+        const d = normSheetDate((l as any)?.requested_date) || String((l as any)?.requested_date || '').slice(0, 10);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(d) && d >= from && d <= wk.sun) offDays.add(d);
+      }
+      const missing: string[] = [];
+      for (let d = new Date(`${from}T00:00:00Z`); d <= new Date(`${wk.sun}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1)) {
+        const iso = d.toISOString().slice(0, 10);
+        if (!liveDays.has(iso) && !offDays.has(iso)) missing.push(iso);
+      }
+      if (missing.length === 0) continue;
+      const defShift = String((e as any)?.default_shift_code || '').toUpperCase();
+      out.push({
+        employee_id: empId,
+        full_name: (e as any)?.full_name || empId,
+        employee_code: (e as any)?.employee_code || '',
+        branch_id: branchId,
+        official_date: off,
+        shift_code: ['CA_1', 'CA_2', 'CA_3'].includes(defShift) ? defShift : 'CA_1',
+        missingDates: missing,
+      });
+    }
+    out.sort((a, b) => String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi'));
+    return { today, weekMon: wk.mon, weekSun: wk.sun, employees: out };
+  }
+
+  /** Chốt bù ca cho NV mới chính thức thiếu ca (tạo DRAFT từng ngày, bỏ qua trùng). */
+  async backfillNewOfficialShifts(actorId: string, employeeIds?: string[], branchScope?: string) {
+    const preview = await this.previewBackfillNewOfficial(branchScope);
+    const wanted = Array.isArray(employeeIds) && employeeIds.length > 0 ? new Set(employeeIds.map(String)) : null;
+    let created = 0;
+    const skipped: string[] = [];
+    const details: any[] = [];
+    for (const item of preview.employees) {
+      if (wanted && !wanted.has(String(item.employee_id))) continue;
+      const done: string[] = [];
+      for (const date of item.missingDates) {
+        try {
+          await this.createShift({
+            employeeId: item.employee_id,
+            branchId: item.branch_id,
+            shiftCode: item.shift_code,
+            date,
+            actorId,
+          });
+          created++;
+          done.push(date);
+        } catch (e: any) {
+          if (!String(e?.message || '').includes('SHIFT_DUPLICATE')) skipped.push(`${item.full_name} ${date}`);
+        }
+      }
+      if (done.length > 0) details.push({ ...item, createdDates: done });
+    }
+    await this.repo.recordAuditLog({
+      log_id: `LOG_${Date.now()}_backfill_official`,
+      actor_id: actorId,
+      actor_role: 'HR',
+      action: 'BACKFILL_NEW_OFFICIAL_SHIFTS',
+      target_entity: 'PHAN_CONG_CA',
+      target_id: preview.weekMon,
+      details: `Bù ${created} ca tuần ${preview.weekMon}→${preview.weekSun} cho ${details.length} NV mới chính thức thiếu ca`,
+    } as any).catch(() => null);
+    return { ...preview, created, skipped, filled: details };
+  }
 }
