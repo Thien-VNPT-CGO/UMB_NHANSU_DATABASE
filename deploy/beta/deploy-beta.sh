@@ -27,6 +27,7 @@ sudo cp -r apps/employee-web/dist/* /opt/ubm-beta/employee-web/
 
 echo "==> Build + chay backend beta (cong 4006)"
 test -f apps/backend/.env || { echo "THIEU apps/backend/.env (copy tu deploy/beta/.env.beta.example)"; exit 1; }
+export BACKEND_HOST_PORT=4006 BACKEND_PORT=4006
 docker compose -p ubm-beta -f docker-compose.yml -f deploy/beta/docker-compose.beta.yml up --build -d
 
 echo "==> Kiem tra suc khoe"
