@@ -377,6 +377,32 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // HR gỡ OFF trùng cùng ca cùng chi nhánh ngay (không đợi tick 5 phút):
+  // người đăng ký trước giữ ngày, người sau về chưa đăng ký + nhận inbox.
+  app.post('/admin/weekly-off/resolve-overlaps', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const r: any = await schedulesService.resolveSameShiftOffOverlaps(req.user!.id, false);
+      for (const c of r?.clashes || []) {
+        for (const x of c.cancelled || []) {
+          try {
+            await notificationsService.sendNotification({
+              recipientIds: [x.employee_id],
+              type: 'WEEKLY_OFF_OVERLAP_RESET',
+              severity: 'ACTION_REQUIRED',
+              title: '⚠️ Ngày OFF của bạn bị trùng, cần đăng ký lại',
+              summary: `Ngày ${String(c.date || '').split('-').reverse().join('/')} đã có ${c.kept?.employee || 'đồng nghiệp'} cùng ${c.shift || 'ca'} đăng ký OFF trước nên OFF của bạn đã được gỡ về chưa đăng ký. Vui lòng chọn ngày khác!`,
+              targetPath: '/leave',
+              actorId: req.user!.id,
+            });
+          } catch { /* best-effort từng người */ }
+        }
+      }
+      broadcastUpdate('leaves', { action: 'weekly-off-overlap-reset', cancelled: r?.cancelledCount || 0 });
+      res.json(r);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
   // VIP: Admin mở bù cổng đăng ký OFF (mặc định 30 phút, tự đóng khi hết hạn).
   // Chỉ những bạn CHƯA đăng ký tuần này mới phải đăng ký bù; bạn đã đăng ký rồi được miễn.
   app.post('/admin/weekly-off/open', authMiddleware, requireRole(['ADMIN']), async (req: AuthenticatedRequest, res) => {

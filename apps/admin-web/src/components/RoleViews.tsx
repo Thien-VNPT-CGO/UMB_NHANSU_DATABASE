@@ -8156,6 +8156,24 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </button>
             <button
               className="btn-secondary"
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', fontSize: '13px', fontWeight: 800, color: '#B45309' }}
+              title="Gỡ ngay các ngày OFF trùng cùng ca cùng chi nhánh về chưa đăng ký (người đăng ký trước giữ ngày, người sau đăng ký lại) — không cần đợi tick 5 phút"
+              onClick={async () => {
+                if (!window.confirm('Gỡ ngay các ngày OFF trùng cùng ca cùng chi nhánh về chưa đăng ký? (Người đăng ký trước giữ ngày, người sau nhận inbox đăng ký lại.)')) return;
+                try {
+                  const res: any = await apiRequest('/admin/weekly-off/resolve-overlaps', { method: 'POST', body: JSON.stringify({}) });
+                  const n = Number(res?.cancelledCount || 0);
+                  showToast(n > 0 ? `Đã gỡ ${n} OFF trùng về chưa đăng ký! NV bị gỡ đã nhận inbox đăng ký lại.` : 'Không còn ngày OFF trùng nào.');
+                  if (onRefreshData) await onRefreshData();
+                } catch (e: any) {
+                  showToast(e?.message || 'Lỗi khi gỡ OFF trùng!');
+                }
+              }}
+            >
+              ⚠️ Gỡ OFF trùng
+            </button>
+            <button
+              className="btn-secondary"
               style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', fontSize: '13px', fontWeight: 800, color: '#1D4ED8' }}
               title="Quét + dọn ca trùng ngay (cùng NV + ngày + mã ca + chi nhánh còn live). Giữ 1 ca/nhóm + dọn vắng oan; nhóm cùng có điểm danh thật được giữ nguyên."
               disabled={dedupeBusy}
