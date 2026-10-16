@@ -1634,6 +1634,10 @@ export class PayrollService {
    */
   async getFinanceTimesheet(period: string, branchScope = '*') {
     const { fromDate, toDate, daysInMonth } = monthRange(period);
+    // Cùng đơn giá với Tính lương: Bảng Tổng Hợp phải dùng công thức kỳ
+    // (Finance sửa rateTV/rateCT ở tab Tính lương) thay vì lương hiện tại,
+    // nếu không 2 bảng + phiếu NV lệch nhau sau mỗi lần sửa công thức/chuyển chính thức.
+    const formula = await this.getFormula(period).catch(() => ({ ...DEFAULT_PAYROLL_FORMULA, period }) as any);
     const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
     const all = await this.repo.listEmployees({ branch: branchScope });
     const employees = (all || []).filter(
@@ -1714,8 +1718,14 @@ export class PayrollService {
         const hasAbs = mine.some((e: any) => e.type === 'ABSENT');
         const template = (SHIFT_TEMPLATES as any)[(s as any).shift_code];
         const h = template ? Number(template.duration_hours) || 5 : 5;
-        // Đơn giá + giai đoạn đúng của ngày công (TV trước official_date).
-        const dayRate = rateOnDate(emp, date, hist, STANDARD_HOURLY_RATES.PROBATION, rate);
+        // Giai đoạn đúng của ngày công (TV trước official_date); đơn giá lấy
+        // đúng công thức kỳ như calculateFormulaPayroll để Bảng Tổng Hợp,
+        // Tính lương và Phiếu NV khớp 100% sau mỗi lần Finance sửa công thức.
+        const dayStage = rateOnDate(emp, date, hist, Number((formula as any)?.rateTV) || STANDARD_HOURLY_RATES.PROBATION, Number((formula as any)?.rateCT) || rate).stage;
+        const rateVal = dayStage === 'TV'
+          ? (Number((formula as any)?.rateTV) || STANDARD_HOURLY_RATES.PROBATION)
+          : (Number((formula as any)?.rateCT) || rate || STANDARD_HOURLY_RATES.OFFICIAL);
+        const dayRate = { stage: dayStage, rate: rateVal };
         const shiftPay = h * dayRate.rate;
         let status: 'DU' | 'THIEU' | 'VANG' = 'THIEU';
         let lateMin = 0;
@@ -1828,6 +1838,10 @@ export class PayrollService {
       toDate,
       daysInMonth,
       branchScope,
+      formula: {
+        rateTV: Number((formula as any)?.rateTV) || STANDARD_HOURLY_RATES.PROBATION,
+        rateCT: Number((formula as any)?.rateCT) || STANDARD_HOURLY_RATES.OFFICIAL,
+      },
       totals: {
         employees: rows.length,
         totalShifts: sum('totalShifts'),
