@@ -2420,17 +2420,23 @@ export class SchedulesService {
   }
 
   /**
-   * NV vừa lên chính thức bị THIẾU ca (lịch thử việc từ hôm chuyển đã bị gỡ):
-   * rà từ max(hôm nay, official_date) đến hết tuần VN hiện tại, ngày nào chưa
-   * có ca live và không vướng đơn nghỉ/OFF thì đưa vào diện bù (DRAFT để HR
-   * Phát Hành như luồng bổ sung tay). Chỉ xét NV official_date trong 14 ngày
-   * gần nhất — đã ổn định lịch thì không đụng.
+   * NV vừa lên chính thức bị THIẾU ca CÁC TUẦN TRƯỚC (lịch thử việc từ hôm
+   * chuyển đã bị gỡ / trước đây HR chưa xếp đủ): rà từ ngày vào làm (tối đa
+   * 4 tuần trước) đến hết hôm qua, ngày nào chưa có ca live và không vướng
+   * đơn nghỉ/OFF thì đưa vào diện bù. Ca bù tạo PUBLISHED luôn (tuần đã qua
+   * không còn nháp) để đủ công tính lương. Chỉ xét NV official_date trong
+   * 30 ngày gần nhất — đã ổn định lịch thì không đụng.
    */
   async previewBackfillNewOfficial(branchScope?: string) {
     const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
-    const wk = currentVnWeekRange(new Date());
+    const yest = new Date(`${today}T00:00:00Z`);
+    yest.setUTCDate(yest.getUTCDate() - 1);
+    const yesterday = yest.toISOString().slice(0, 10);
+    const floor = new Date(`${today}T00:00:00Z`);
+    floor.setUTCDate(floor.getUTCDate() - 28);
+    const floorStr = floor.toISOString().slice(0, 10);
     const since = new Date(`${today}T00:00:00Z`);
-    since.setUTCDate(since.getUTCDate() - 14);
+    since.setUTCDate(since.getUTCDate() - 30);
     const sinceStr = since.toISOString().slice(0, 10);
     const [employees, leaves, accounts] = await Promise.all([
       this.repo.listEmployees().catch(() => []),
@@ -2452,25 +2458,26 @@ export class SchedulesService {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(off) || off < sinceStr || off > today) continue;
       const branchId = String((e as any)?.default_branch_id || 'CN130');
       if (branchScope && branchScope !== '*' && canonicalBranch(branchId) !== canonicalBranch(branchScope)) continue;
-      const start = off > today ? off : today;
-      const from = start < wk.mon ? wk.mon : start;
-      if (from > wk.sun) continue;
-      const empShifts = await this.repo.getShiftsForEmployee(empId, from, wk.sun).catch(() => []);
+      // Chỉ bù quá khứ: từ ngày vào làm (tối đa 4 tuần trước) đến hết hôm qua.
+      const startDate = String((e as any)?.start_date || '').slice(0, 10);
+      let from = /^\d{4}-\d{2}-\d{2}$/.test(startDate) && startDate > floorStr ? startDate : floorStr;
+      if (from > yesterday) continue;
+      const empShifts = await this.repo.getShiftsForEmployee(empId, from, yesterday).catch(() => []);
       const liveDays = new Set<string>();
       for (const s of empShifts || []) {
         if ((s as any)?.status === 'CANCELLED') continue;
         const d = String((s as any)?.date || '').slice(0, 10);
-        if (d >= from && d <= wk.sun) liveDays.add(d);
+        if (d >= from && d <= yesterday) liveDays.add(d);
       }
       const offDays = new Set<string>();
       for (const l of leaves || []) {
         if (String((l as any)?.employee_id || '') !== empId) continue;
         if (!['APPROVED', 'PENDING'].includes(String((l as any)?.status || ''))) continue;
         const d = normSheetDate((l as any)?.requested_date) || String((l as any)?.requested_date || '').slice(0, 10);
-        if (/^\d{4}-\d{2}-\d{2}$/.test(d) && d >= from && d <= wk.sun) offDays.add(d);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(d) && d >= from && d <= yesterday) offDays.add(d);
       }
       const missing: string[] = [];
-      for (let d = new Date(`${from}T00:00:00Z`); d <= new Date(`${wk.sun}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1)) {
+      for (let d = new Date(`${from}T00:00:00Z`); d <= new Date(`${yesterday}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1)) {
         const iso = d.toISOString().slice(0, 10);
         if (!liveDays.has(iso) && !offDays.has(iso)) missing.push(iso);
       }
@@ -2487,10 +2494,10 @@ export class SchedulesService {
       });
     }
     out.sort((a, b) => String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi'));
-    return { today, weekMon: wk.mon, weekSun: wk.sun, employees: out };
+    return { today, fromDate: floorStr, toDate: yesterday, employees: out };
   }
 
-  /** Chốt bù ca cho NV mới chính thức thiếu ca (tạo DRAFT từng ngày, bỏ qua trùng). */
+  /** Chốt bù ca các tuần trước cho NV mới chính thức thiếu ca (tạo PUBLISHED luôn). */
   async backfillNewOfficialShifts(actorId: string, employeeIds?: string[], branchScope?: string) {
     const preview = await this.previewBackfillNewOfficial(branchScope);
     const wanted = Array.isArray(employeeIds) && employeeIds.length > 0 ? new Set(employeeIds.map(String)) : null;
@@ -2502,13 +2509,18 @@ export class SchedulesService {
       const done: string[] = [];
       for (const date of item.missingDates) {
         try {
-          await this.createShift({
+          const createdShift: any = await this.createShift({
             employeeId: item.employee_id,
             branchId: item.branch_id,
             shiftCode: item.shift_code,
             date,
             actorId,
           });
+          // Tuần đã qua không còn nháp: chốt PUBLISHED ngay để đủ công tính lương.
+          try {
+            const aid = String(createdShift?.assignment_id || createdShift?.result?.assignment_id || '');
+            if (aid) await this.repo.updateShiftAssignment(aid, { status: 'PUBLISHED', schedule_version: 2 });
+          } catch { /* giữ DRAFT nếu chốt lỗi, HR Phát Hành tay */ }
           created++;
           done.push(date);
         } catch (e: any) {
@@ -2523,8 +2535,8 @@ export class SchedulesService {
       actor_role: 'HR',
       action: 'BACKFILL_NEW_OFFICIAL_SHIFTS',
       target_entity: 'PHAN_CONG_CA',
-      target_id: preview.weekMon,
-      details: `Bù ${created} ca tuần ${preview.weekMon}→${preview.weekSun} cho ${details.length} NV mới chính thức thiếu ca`,
+      target_id: preview.fromDate,
+      details: `Bù ${created} ca các tuần trước (${preview.fromDate}→${preview.toDate}) cho ${details.length} NV mới chính thức thiếu ca`,
     } as any).catch(() => null);
     return { ...preview, created, skipped, filled: details };
   }

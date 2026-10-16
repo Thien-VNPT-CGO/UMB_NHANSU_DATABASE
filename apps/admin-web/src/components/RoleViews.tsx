@@ -8108,7 +8108,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <button
               className="btn-primary"
               style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', fontSize: '13px', backgroundColor: '#059669' }}
-              title="Rà NV vừa lên chính thức (14 ngày) bị thiếu ca tuần này do lịch thử việc đã gỡ — bù ca nháp (DRAFT), bấm Phát Hành để chốt"
+              title="Rà NV vừa lên chính thức bị thiếu ca CÁC TUẦN TRƯỚC — bù ca chốt PUBLISHED luôn để đủ công tính lương"
               disabled={supBusy}
               onClick={async () => {
                 if (supBusy) return;
@@ -8117,16 +8117,16 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   const pv: any = await apiRequest('/schedules/backfill-new-official');
                   const list = (pv?.employees || []) as any[];
                   if (list.length === 0) {
-                    showToast(`Tuần ${pv?.weekMon || ''}→${pv?.weekSun || ''}: không có NV mới chính thức nào thiếu ca.`);
+                    showToast(`Từ ${pv?.fromDate || ''}→${pv?.toDate || ''}: không có NV mới chính thức nào thiếu ca tuần trước.`);
                     return;
                   }
                   const lines = list.map((e: any) => `• ${e.full_name} (${e.employee_code}): thiếu ${e.missingDates.length} ca (${e.missingDates.join(', ')})`).join('\n');
-                  if (!window.confirm(`Bù ca tuần ${pv?.weekMon}→${pv?.weekSun} cho ${list.length} NV mới chính thức?\n${lines}\n(Ca bù ở trạng thái nháp — bấm Phát Hành để chốt.)`)) return;
+                  if (!window.confirm(`Bù ca các tuần trước (${pv?.fromDate}→${pv?.toDate}) cho ${list.length} NV mới chính thức?\n${lines}\n(Ca bù chốt PUBLISHED luôn để đủ công tính lương.)`)) return;
                   const res: any = await apiRequest('/schedules/backfill-new-official', {
                     method: 'POST',
                     body: JSON.stringify({ employeeIds: list.map((e: any) => e.employee_id) }),
                   });
-                  showToast(`Đã bù ${res?.created ?? 0} ca nháp cho ${((res as any)?.filled || []).length} NV mới chính thức! Bấm Phát Hành Lịch để chốt, realtime đã đồng bộ 2 cổng.`);
+                  showToast(`Đã bù ${res?.created ?? 0} ca (PUBLISHED) cho ${((res as any)?.filled || []).length} NV mới chính thức! Realtime đã đồng bộ 2 cổng.`);
                   if (onRefreshData) await onRefreshData();
                 } catch (e: any) {
                   showToast(e?.message || 'Lỗi khi bù ca!');
@@ -8135,7 +8135,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 }
               }}
             >
-              <Plus size={14} /> {supBusy ? 'Đang bù...' : 'Bù ca mới CT'}
+              <Plus size={14} /> {supBusy ? 'Đang bù...' : 'Bù ca tuần trước'}
             </button>
             <button
               className="btn-secondary"

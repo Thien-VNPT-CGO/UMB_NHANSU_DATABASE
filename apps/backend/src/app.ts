@@ -1982,7 +1982,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   );
 
-  // HR xem trước NV mới lên chính thức (14 ngày) bị thiếu ca tuần này.
+  // HR xem trước NV mới lên chính thức (30 ngày) bị thiếu ca các tuần trước.
   app.get(
     '/schedules/backfill-new-official',
     authMiddleware,
@@ -1997,7 +1997,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   );
 
-  // HR chốt bù ca DRAFT cho NV mới chính thức thiếu ca (Phát Hành sau như luồng tay).
+  // HR chốt bù ca PUBLISHED các tuần trước cho NV mới chính thức thiếu ca.
   app.post(
     '/schedules/backfill-new-official',
     authMiddleware,
