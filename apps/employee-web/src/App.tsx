@@ -509,6 +509,9 @@ export function App() {
   const [tsMonth, setTsMonth] = useState<string>(curVnMonth());
   const [monthShifts, setMonthShifts] = useState<any[]>([]);
   const [monthEvents, setMonthEvents] = useState<any[]>([]);
+  // Số liệu công tháng do server tính (cùng công thức kỳ + giai đoạn TV/CT với
+  // Bảng Tổng Hợp của Finance) để lương tạm tính khớp 100% với Kế toán.
+  const [monthServerPay, setMonthServerPay] = useState<any>(null);
   const shiftTsMonth = (delta: number) => {
     const [y, m] = tsMonth.split('-').map(Number);
     const d = new Date(Date.UTC(y, m - 1 + delta, 1));
@@ -523,12 +526,14 @@ export function App() {
         const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
         const fromD = `${tsMonth}-01`;
         const toD = `${tsMonth}-${String(lastDay).padStart(2, '0')}`;
-        const [shifts, evts] = await Promise.all([
+        const [shifts, evts, serverPay] = await Promise.all([
           apiRequest(`/me/schedule?fromDate=${fromD}&toDate=${toD}`).catch(() => []),
           apiRequest(`/me/attendance?fromDate=${fromD}&toDate=${toD}`).catch(() => []),
+          apiRequest(`/me/monthly-timesheet?period=${tsMonth}`).catch(() => null),
         ]);
         if (Array.isArray(shifts)) setMonthShifts(shifts);
         if (Array.isArray(evts)) setMonthEvents(evts);
+        if (serverPay) setMonthServerPay(serverPay);
       } catch { /* offline: giữ danh sách cũ */ }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1332,8 +1337,12 @@ export function App() {
             }
           }).catch(() => null);
         }
-        // Lịch publish/thay đổi → tải lại dải ngày tab Lịch (kể cả tuần sau).
-        if (!p?.entity || p.entity === 'schedules' || p.entity === 'all') setSchedRefresh(k => k + 1);
+        // Lịch publish/thay đổi + điểm danh mới → tải lại dải ngày tab Lịch và
+        // công tháng (kể cả tuần sau). Điểm danh realtime mà không tải lại thì
+        // Dữ Liệu Công Tháng thiếu sự kiện mới tới khi đổi tab.
+        if (!p?.entity || p.entity === 'schedules' || p.entity === 'attendance' || p.entity === 'all') setSchedRefresh(k => k + 1);
+        // Lương/phiếu đổi → tải lại số liệu công tháng theo công thức kỳ mới.
+        if (!p?.entity || p.entity === 'payroll' || p.entity === 'payslips' || p.entity === 'all') setSchedRefresh(k => k + 1);
         // Admin bật/tắt bảo trì -> cập nhật màn khóa cổng ngay (kể cả đang đăng nhập).
         if (p?.entity === 'config') fetchPortalMaintenanceRef.current().catch(() => null);
       });
@@ -5156,7 +5165,20 @@ export function App() {
                     if (!evtDays.has(d)) evtDays.set(d, []);
                     evtDays.get(d)!.push(e);
                   }
-                  // Chuẩn bị dữ liệu từng ca + tổng hợp tháng
+                  // Số liệu server theo từng ca (cùng công thức kỳ với Finance):
+                  // ưu tiên lương server, thiếu mới tạm tính ở máy.
+                  const srvByAssign = new Map<string, any>();
+                  for (const s of (((monthServerPay as any)?.shifts) || [])) {
+                    const aid = String((s as any)?.assignmentId || '');
+                    if (aid && !srvByAssign.has(aid)) srvByAssign.set(aid, s);
+                  }
+                  const srvNetOf = (assignmentId?: string, fallbackNet = 0) => {
+                    const srv = assignmentId ? srvByAssign.get(String(assignmentId)) : null;
+                    if (srv && (srv as any).status === 'DU') {
+                      return Math.max(0, Number((srv as any).shiftPay || 0) - Number((srv as any).fineAmount || 0));
+                    }
+                    return fallbackNet;
+                  };
                   let cDone = 0, cWorking = 0, cMissingOut = 0, cAbsent = 0, cNoCheck = 0, cUpcoming = 0;
                   let fineTotal = 0;
                   let payTotal = 0;
@@ -5212,7 +5234,7 @@ export function App() {
                       let badge: string, bg: string, fg: string, border: string;
                       if (st.key === 'COMPLETED') {
                         cDone++;
-                        payTotal += shiftPayInfo((sh as any)?.shift_code, rateOnDateOf(employee, date), ci, co, (sh as any)?.start_at).net;
+                        payTotal += srvNetOf((sh as any)?.assignment_id, shiftPayInfo((sh as any)?.shift_code, rateOnDateOf(employee, date), ci, co, (sh as any)?.start_at).net);
                         badge = '✓ Đủ công'; bg = '#ECFDF5'; fg = '#047857'; border = '1px solid #A7F3D0';
                       } else if (st.key === 'MISSING_OUT') {
                         cMissingOut++;
@@ -5274,7 +5296,7 @@ export function App() {
                       const xci = x.list.find((e: any) => e.type === 'CHECK_IN');
                       const xco = x.list.find((e: any) => e.type === 'CHECK_OUT');
                       const xcode = inferExtraShiftCode(xci, (employee as any)?.default_shift_code);
-                      payTotal += shiftPayInfo(xcode, rateOnDateOf(employee, date), xci, xco, xci?.client_time).net;
+                      payTotal += srvNetOf((xci as any)?.assignment_id, shiftPayInfo(xcode, rateOnDateOf(employee, date), xci, xco, xci?.client_time).net);
                     }
                     return { date, y, m, dd, rows, orphans: finalExtras };
                   }).filter((blk: any) => (blk.rows || []).length > 0);
@@ -5292,10 +5314,11 @@ export function App() {
                         {sumBox('Thiếu check-out', String(cMissingOut), '#9A3412')}
                         {sumBox('Vắng / Không điểm danh', String(cAbsent + cNoCheck), '#991B1B')}
                         {sumBox('Tổng phạt tháng', fineTotal > 0 ? `${money(fineTotal)}đ` : '0đ', '#991B1B')}
-                        {sumBox('Lương tạm tính', `${money(Math.round(payTotal))}đ`, '#065F46')}
+                        {sumBox('Lương tháng', `${money(Math.round(Number((monthServerPay as any)?.totals?.netPay ?? payTotal)))}đ`, '#065F46')}
                       </div>
                       <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                        {dayBlocks.length} ngày có ca trong tháng {tsMonth.slice(5, 7)}/{tsMonth.slice(0, 4)} • Lương tạm tính theo đơn giá hiện tại, Finance chốt chính thức ở kỳ lương.
+                        {dayBlocks.length} ngày có ca trong tháng {tsMonth.slice(5, 7)}/{tsMonth.slice(0, 4)}
+                        {(monthServerPay as any)?.formula ? ` • Đơn giá kỳ: TV ${money(Number((monthServerPay as any).formula.rateTV))}đ/h, CT ${money(Number((monthServerPay as any).formula.rateCT))}đ/h — khớp 100% với Kế toán` : ' • Lương theo đơn giá hiện tại, Finance chốt chính thức ở kỳ lương.'}
                       </div>
                       {dayBlocks.length === 0 && (
                         <div style={{ fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center', padding: '20px' }}>

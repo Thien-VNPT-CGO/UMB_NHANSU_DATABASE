@@ -1693,7 +1693,7 @@ export class PayrollService {
    * (standardPay) / phạt / thưởng / thực nhận + chi tiết từng ca để kế toán
    * tính lương. Đồng bộ cả ca quá khứ lẫn hiện tại, không phụ thuộc tab tuần.
    */
-  async getFinanceTimesheet(period: string, branchScope = '*') {
+  async getFinanceTimesheet(period: string, branchScope = '*', onlyEmployeeId?: string) {
     const { fromDate, toDate, daysInMonth } = monthRange(period);
     // Cùng đơn giá với Tính lương: Bảng Tổng Hợp phải dùng công thức kỳ
     // (Finance sửa rateTV/rateCT ở tab Tính lương) thay vì lương hiện tại,
@@ -1702,7 +1702,8 @@ export class PayrollService {
     const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
     const all = await this.repo.listEmployees({ branch: branchScope });
     const employees = (all || []).filter(
-      e => (e as any)?.employment_status !== 'TERMINATED'
+      e => (e as any)?.employment_status !== 'TERMINATED' &&
+        (!onlyEmployeeId || String((e as any)?.employee_id) === String(onlyEmployeeId))
     );
 
     // Đọc kho lưu trữ tuần cũ để ca đầu tháng (đã archive) vẫn lên bảng.

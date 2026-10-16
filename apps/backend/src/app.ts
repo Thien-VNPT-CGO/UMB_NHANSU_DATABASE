@@ -3502,6 +3502,36 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Công tháng của chính NV (tab Dữ Liệu Công Của Tôi): cùng số liệu server với
+  // Bảng Chấm Công Tổng Hợp của Finance (đơn giá công thức kỳ + giai đoạn TV/CT
+  // theo ngày HR duyệt) để 2 cổng khớp 100%, realtime qua data:updated(payroll).
+  app.get('/me/monthly-timesheet', authMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const employeeId = req.user?.employeeId;
+      if (!employeeId) return res.status(400).json({ error: 'NOT_AN_EMPLOYEE' });
+      const vn = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7);
+      const period = String((req.query as any)?.period || vn);
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
+        return res.status(400).json({ error: 'Kỳ báo cáo phải dạng YYYY-MM (VD: 2026-10)!' });
+      }
+      const sheet: any = await payrollService.getFinanceTimesheet(period, '*', employeeId);
+      const row = (sheet?.rows || [])[0] || null;
+      res.json({
+        period: sheet?.period || period,
+        fromDate: sheet?.fromDate || null,
+        toDate: sheet?.toDate || null,
+        formula: sheet?.formula || null,
+        totals: row ? {
+          totalShifts: row.totalShifts, full: row.full, partial: row.partial, absent: row.absent,
+          hours: row.hours, standardPay: row.standardPay, deduction: row.deduction,
+          bonus: row.bonus, netPay: row.netPay,
+        } : null,
+        shifts: row?.shifts || [],
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
   // --- ATTENDANCE ---
   // HR đối soát check-in/out theo NV+ngày (phiếu mồ côi, ca DRAFT đã điểm danh,
   // vắng oan, thiếu chân) trước khi chốt lương — chỉ đọc, công tự đúng sau fix khớp.
