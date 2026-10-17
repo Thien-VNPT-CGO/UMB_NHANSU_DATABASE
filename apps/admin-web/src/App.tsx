@@ -357,8 +357,8 @@ export function App() {
   const [showServerConfig, setShowServerConfig] = useState(false);
   const [customApiUrl, setCustomApiUrlState] = useState(() => {
     const saved = (localStorage.getItem('ubm_custom_api_url') || '').trim().replace(/\/+$/, '');
-    // URL backend cũ đã chết thì bỏ, hiển thị mặc định mới kfh6.
-    if (saved === 'https://umb-nhansu-database.onrender.com') {
+    // URL backend Render cũ (đã ngừng sử dụng) thì bỏ, hiển thị mặc định mới (VPS).
+    if (saved.includes('.onrender.com')) {
       try { localStorage.removeItem('ubm_custom_api_url'); } catch { /* bỏ qua */ }
       return '';
     }
@@ -1942,7 +1942,7 @@ export function App() {
                   <div style={{ display: 'flex', gap: '6px' }}>
                     <input
                       type="url"
-                      placeholder="https://umb-nhansu-database-kfh6.onrender.com"
+                      placeholder="https://umbomilk-nhansu-diemdanh.duckdns.org/api"
                       value={customApiUrl}
                       onChange={(e) => setCustomApiUrlState(e.target.value)}
                       style={{
@@ -1960,7 +1960,7 @@ export function App() {
                       onClick={async () => {
                         const raw = (customApiUrl || '').trim().replace(/\/+$/, '');
                         if (raw && !/^https?:\/\/.+\..+/.test(raw)) {
-                          setErrorMsg('Địa chỉ Backend phải dạng https://... (VD https://umb-nhansu-database-kfh6.onrender.com)!');
+                          setErrorMsg('Địa chỉ Backend phải dạng https://... (VD https://umbomilk-nhansu-diemdanh.duckdns.org)!');
                           return;
                         }
                         setCustomApiUrl(raw);

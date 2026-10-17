@@ -3,7 +3,7 @@
 ## Buoc 1: Kiem tra ket noi
 
 Sau khi deploy, goi API:
-GET https://<render-url>/health
+GET https://<backend-url>/health
 
 Ket qua mong doi:
 {
@@ -12,7 +12,7 @@ Ket qua mong doi:
   sheetsStatus.mode: GOOGLE_SHEETS_LIVE
 }
 
-## Buoc 2: Bien moi truong tren Render.com
+## Buoc 2: Bien moi truong (file .env)
 
 | Bien | Gia tri |
 |------|---------|
@@ -83,7 +83,7 @@ Moi push / pull request deu chay tren GitHub Actions (Node 20.18.0):
 1. `npm ci` -> `npm run build` (shared + backend + admin-web + employee-web)
 2. `docker build` image backend + smoke test GET /health == UP
 
-## Buoc 9: Chay bang Docker (thay the Render native)
+## Buoc 9: Chay bang Docker
 
 1. Copy `apps/backend/.env.example` -> `apps/backend/.env`, dien gia tri that
 2. `docker compose up --build -d`
