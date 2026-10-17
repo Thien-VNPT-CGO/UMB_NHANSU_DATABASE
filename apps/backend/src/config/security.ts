@@ -16,7 +16,6 @@ function isTestEnv(): boolean {
 
 const DEFAULT_ORIGIN_PATTERNS = [
   'https://*.vercel.app',
-  'https://*.onrender.com',
   'http://localhost:*',
   'http://127.0.0.1:*',
   'http://localhost:3000',
@@ -35,7 +34,7 @@ const DEFAULT_ORIGIN_PATTERNS = [
 
 /**
  * Danh sách origin được phép (HTTP + Socket dùng chung).
- * Mặc định luôn bao gồm domain Vercel, Render và Localhost để không bị chặn kết nối.
+ * Mặc định luôn bao gồm domain Vercel, VPS và Localhost để không bị chặn kết nối.
  */
 export function getAllowedOrigins(): string[] {
   const configured = parseList(process.env.CORS_ORIGINS);
@@ -46,9 +45,8 @@ export function getAllowedOrigins(): string[] {
 export function isOriginAllowed(origin: string, patterns: string[]): boolean {
   if (!origin) return true;
 
-  // Tự động cho phép mọi domain Vercel và Render của hệ thống
+  // Tự động cho phép mọi domain Vercel của hệ thống
   if (/^https:\/\/[a-zA-Z0-9_.-]+\.vercel\.app$/i.test(origin)) return true;
-  if (/^https:\/\/[a-zA-Z0-9_.-]+\.onrender\.com$/i.test(origin)) return true;
   if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) return true;
 
   for (const raw of patterns) {
@@ -111,7 +109,7 @@ export function buildSocketCorsOptions(): {
 /**
  * Helmet: bật toàn bộ header bảo mật mặc định.
  * Tắt CSP do frontend dùng nhiều inline style.
- * Tắt crossOriginResourcePolicy để frontend Vercel gọi API Render không bị chặn tài nguyên cross-origin.
+ * Tắt crossOriginResourcePolicy để frontend Vercel gọi API cross-origin (VPS) không bị chặn tài nguyên.
  */
 export function helmetMiddleware() {
   return helmet({
@@ -127,7 +125,7 @@ function readMax(envKey: string, prodDefault: number, testDefault: number): numb
   return isTestEnv() ? testDefault : prodDefault;
 }
 
-/** Trích xuất client IP thực khi chạy đằng sau reverse proxy (Render, Cloudflare, Nginx) */
+/** Trích xuất client IP thực khi chạy đằng sau reverse proxy (Cloudflare, Nginx) */
 function getClientIp(req: any): string {
   const xff = req.headers?.['x-forwarded-for'];
   if (typeof xff === 'string' && xff) {
@@ -181,7 +179,7 @@ export function generalRateLimiter() {
       if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
         return true;
       }
-      // 2. Health check & status từ Render / ping server (kể cả /ping nhẹ cho UptimeRobot)
+      // 2. Health check & ping server (kể cả /ping nhẹ cho UptimeRobot)
       const path = req.path || req.originalUrl || '';
       if (path === '/health' || path === '/' || path === '/ping' || path === '/api/weekly-off-window') {
         return true;

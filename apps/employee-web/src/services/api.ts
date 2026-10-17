@@ -1,11 +1,11 @@
-// Backend mặc định đồng bộ 2 cổng web (admin + nhân viên).
-export const DEFAULT_API_BASE = 'https://umb-nhansu-database-kfh6.onrender.com';
-// URL backend cũ đã chết (service Render cũ) — tự migrate sang mặc định mới.
-const LEGACY_API_BASE = 'https://umb-nhansu-database.onrender.com';
+// Backend VPS tự vận hành (Docker + Nginx + SSL) đồng bộ 2 cổng web (admin + nhân viên).
+export const DEFAULT_API_BASE = 'https://umbomilk-nhansu-diemdanh.duckdns.org/api';
+// Backend Render (PaaS) đã ngừng sử dụng — URL cũ lưu trong máy người dùng tự migrate về mặc định mới.
+const isLegacyApiBase = (url: string): boolean => url.includes('.onrender.com');
 export function getApiBase(): string {
   if (typeof window === 'undefined') return 'http://localhost:4005';
   const custom = (localStorage.getItem('ubm_custom_api_url') || '').trim().replace(/\/+$/, '');
-  if (custom === LEGACY_API_BASE) {
+  if (isLegacyApiBase(custom)) {
     try { localStorage.removeItem('ubm_custom_api_url'); } catch { /* bỏ qua */ }
   } else if (custom) {
     return custom;
@@ -15,7 +15,7 @@ export function getApiBase(): string {
   if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
     return 'http://localhost:4005';
   }
-  // Mặc định trỏ backend Render đang sống (đồng bộ admin + employee).
+  // Mặc định trỏ backend VPS đang sống (đồng bộ admin + employee).
   return DEFAULT_API_BASE;
 }
 
@@ -35,8 +35,8 @@ function fetchWithTimeout(url: string, options: RequestInit = {}, ms = 25000): P
   return fetch(url, { ...options, signal: ctrl.signal }).finally(() => clearTimeout(t));
 }
 
-// Render miễn phí Sleep ~15 phút không gọi: fetch đầu tiên đánh thức mất 20-50s
-// rồi mới 200. Tự gọi /ping + chờ + thử lại tối đa 3 lần trước khi báo lỗi.
+// Server có thể vừa khởi động lại (VD nhánh vps restart backend): fetch đầu tiên
+// có thể mất vài chục giây mới 200. Tự gọi /ping + chờ + thử lại tối đa 3 lần trước khi báo lỗi.
 async function wakeBackend(base: string): Promise<boolean> {
   for (let i = 0; i < 3; i++) {
     try {
@@ -177,7 +177,7 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
 
     return data;
   } catch (err: any) {
-    // Render free Sleep: lỗi mạng lần đầu -> tự đánh thức backend rồi thử lại 1 lần.
+    // Lỗi mạng lần đầu (server tạm ngắt / đang khởi động) -> tự đánh thức backend rồi thử lại 1 lần.
     if (isNetworkFailure(err) && !woken && endpoint !== '/ping' && endpoint !== '/version') {
       console.warn(`[API] Mất kết nối ${endpoint} — đang đánh thức backend...`);
       const ok = await wakeBackend(base);
@@ -186,7 +186,7 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
       }
     }
     if (isNetworkFailure(err)) {
-      throw new Error(`Không thể kết nối đến máy chủ Backend (${base}) sau khi đã tự đánh thức 3 lần. Kiểm tra: 1) Địa chỉ API đúng chưa, 2) Mạng/WiFi có chặn render.com không, 3) Vào ${base}/ping bằng trình duyệt xem có hiện {"status":"ok"} không.`);
+      throw new Error(`Không thể kết nối đến máy chủ Backend (${base}) sau khi đã tự đánh thức 3 lần. Kiểm tra: 1) Địa chỉ API đúng chưa, 2) Backend trên VPS có đang chạy không, 3) Vào ${base}/ping bằng trình duyệt xem có hiện {"status":"ok"} không.`);
     }
     throw err;
   }

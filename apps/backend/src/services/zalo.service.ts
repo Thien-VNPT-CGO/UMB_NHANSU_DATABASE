@@ -137,7 +137,7 @@ export class ZaloService {
     return null;
   }
 
-  /** Ghi phiên bền vững: file + cài đặt hệ thống (sống qua restart/deploy Render). */
+  /** Ghi phiên bền vững: file + cài đặt hệ thống (sống qua restart/deploy). */
   private async savePersistedAsync(s: PersistedSession): Promise<void> {
     savePersisted(s);
     this.savedSessionExists = true;
