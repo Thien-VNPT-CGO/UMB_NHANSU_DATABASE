@@ -80,7 +80,7 @@ npm run dev:employee
 ## 🔑 TÀI KHOẢN TRUY CẬP MẶC ĐỊNH
 
 ### 1. Cổng Quản Trị Hệ Thống (`http://localhost:3005`):
-- **Quản trị viên (Admin):** `admin` / `Master@@2027`
+- **Quản trị viên (Admin):** `admin` / `Nguyenthanhthien@9999`
 - **Nhân sự (HR):** `hr_lead` / `hr123`
 - **Cửa hàng trưởng (Store 130):** `store_130` / `store123`
 - **Kế toán lương (Finance):** `finance_lead` / `fin123`

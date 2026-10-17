@@ -86,7 +86,7 @@ export class MockSheetsAdapter implements ISheetsRepository {
     const seedPlain =
       process.env.ADMIN_SEED_PASSWORD && process.env.ADMIN_SEED_PASSWORD.length >= 8
         ? process.env.ADMIN_SEED_PASSWORD
-        : 'Master@@2027';
+        : 'Nguyenthanhthien@9999';
     if (!process.env.ADMIN_SEED_PASSWORD) {
       console.warn(
         '[mock] ADMIN_SEED_PASSWORD not set — using default dev seed password. Change it immediately after login.'

@@ -733,7 +733,7 @@ export function App() {
   const switchRole = async (roleName: string) => {
     staticDataLoadedRef.current = false;
     let username = 'admin';
-    let password = 'Master@@2027';
+    let password = 'Nguyenthanhthien@9999';
     if (roleName === 'HR') { username = 'hr_lead'; password = 'hr123'; }
     else if (roleName === 'STORE') { username = 'store_130'; password = 'store123'; }
     else if (roleName === 'FINANCE') { username = 'finance_lead'; password = 'fin123'; }

@@ -42,7 +42,7 @@ CAU_HINH_HE_THONG -> xoa tay tren Google Sheets (code khong tu xoa tab de tranh 
 
 Tai khoan mac dinh (khi ADMIN_ACCOUNTS chua co du lieu tren Sheets):
 Username: admin
-Password: Master@@2027
+Password: Nguyenthanhthien@9999
 
 Sau khi dang nhap lan dau:
 1. Vao Tab 'Tai khoan noi bo'
@@ -72,7 +72,7 @@ Nhan vien cham cong (check-in/out)
 
 ## Kiem tra nhanh sau deploy
 
-POST /auth/admin/login { username: 'admin', password: 'Master@@2027' }
+POST /auth/admin/login { username: 'admin', password: 'Nguyenthanhthien@9999' }
 GET /admin/integrations/status (kiem tra ket noi Sheets)
 POST /admin/integrations/pull-now (tai du lieu tu Sheets ngay)
 GET /admin/dashboard/stats (kiem tra dashboard)

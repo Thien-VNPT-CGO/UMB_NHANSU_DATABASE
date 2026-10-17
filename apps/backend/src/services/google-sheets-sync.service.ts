@@ -1202,7 +1202,7 @@ export class GoogleSheetsSyncService {
               passwordFromSheet ||
               existing?.password_hash ||
               (username.toLowerCase() === 'admin'
-                ? process.env.ADMIN_SEED_PASSWORD || 'Master@@2027'
+                ? process.env.ADMIN_SEED_PASSWORD || 'Nguyenthanhthien@9999'
                 : `Temp${Date.now().toString().slice(-6)}!`);
             // Không bao giờ giữ plaintext và KHÔNG BAO GIỜ rớt dòng (rớt = mất tài khoản
             // trong bộ nhớ -> INVALID_CREDENTIALS dù Sheet vẫn có dữ liệu).
