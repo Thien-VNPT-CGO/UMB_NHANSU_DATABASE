@@ -126,7 +126,7 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   // (tạo tab + ghi hàng header cột) rồi push dữ liệu đầy đủ. Mặc định 60 phút,
   // đặt SHEETS_AUTO_PUSH_MINUTES=0 để tắt.
   const rawPushMinutes = process.env.SHEETS_AUTO_PUSH_MINUTES;
-  const pushPeriodMin = rawPushMinutes && rawPushMinutes.trim() !== '' && Number(rawPushMinutes) > 0 ? Number(rawPushMinutes) : 60;
+  const pushPeriodMin = rawPushMinutes && rawPushMinutes.trim() !== '' && Number(rawPushMinutes) > 0 ? Number(rawPushMinutes) : 5;
   if (rawPushMinutes?.trim() !== '0') {
     const autoPushSheetsTick = async () => {
       try {
@@ -136,14 +136,34 @@ server.listen(Number(PORT), '0.0.0.0', () => {
           if (pushRes?.success) {
             console.log('🔁 [Sheets Auto-Push] Đã đồng bộ đầy đủ toàn bộ tabs lên Google Sheets.');
             io.emit('data:updated', { entity: 'all', data: { auto_push: true }, timestamp: new Date().toISOString() });
+            // Tự động làm đẹp & căn chỉnh lại toàn bộ bảng tính sau khi push
+            syncService.formatAndBeautifySpreadsheet().catch((err: any) => {
+              console.warn('[Sheets Auto-Push] Tự động làm đẹp sau push gặp lỗi nhẹ:', err?.message || err);
+            });
           }
         }
       } catch (err: any) {
         console.warn('[sheets-auto-push] tick error:', err?.message || err);
       }
     };
-    setTimeout(autoPushSheetsTick, 5 * 60_000); // chạy sớm 1 lần sau 5 phút khởi động
+    setTimeout(autoPushSheetsTick, 60_000); // chạy sớm 1 lần sau 1 phút khởi động
     setInterval(autoPushSheetsTick, pushPeriodMin * 60_000);
+
+    // Tự động kiểm tra và làm đẹp, căn chỉnh Google Sheets định kỳ mỗi 15 phút
+    // Giúp bảng tính luôn giữ đúng chuẩn executive, sọc xen kẽ, căn lề và status pills
+    const autoBeautifyTick = async () => {
+      try {
+        const syncService = (adapter as any).syncService;
+        if (syncService && syncService.getStatus().isConfigured) {
+          await syncService.formatAndBeautifySpreadsheet();
+          console.log('🎨 [Sheets Auto-Beautify] Đã tự động căn chỉnh & làm đẹp bảng tính Google Sheets định kỳ.');
+        }
+      } catch (e: any) {
+        console.warn('[sheets-auto-beautify] tick error:', e?.message || e);
+      }
+    };
+    setTimeout(autoBeautifyTick, 90_000); // 90s sau khởi động
+    setInterval(autoBeautifyTick, 15 * 60_000); // mỗi 15 phút
   }
 
   // Nhắc việc tự động mỗi 5 phút: check-in Zalo trước ca, PIN quá hạn, đơn tồn duyệt.

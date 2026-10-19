@@ -196,6 +196,8 @@ export class GoogleSheetsSyncService {
    *  ngày reset, để hộp thư đã reset tối không bị dòng Sheet cũ kéo lại đầy ngay.
    *  Qua ngày mới thì tự xả latch (mốc cũ hơn 00h00 hôm nay). */
   public notifResetCutoffIso: string | null = null;
+  private beautifyInFlight: Promise<{ success: boolean; message: string; formattedTabs: number }> | null = null;
+  private lastBeautifyAt = 0;
   /** Tombstone NV vừa xóa: pull trong ~120s sau xóa mà thấy ID này trên Sheet
    *  (push xóa chưa kịp chạy) thì bỏ qua, tránh xóa xong bị khôi phục lại. */
   private deletedEmployeeIds = new Map<string, number>();
@@ -519,58 +521,76 @@ export class GoogleSheetsSyncService {
     }
 
     const sId = targetSpreadsheetId || this.spreadsheetId;
-    try {
-      const res = await this.sheetsCall('beautify.get', () =>
-        this.sheetsClient!.spreadsheets.get({
-          spreadsheetId: sId,
-        })
-      );
+    const now = Date.now();
 
-      const sheets = res.data.sheets || [];
-      if (sheets.length === 0) {
-        return { success: false, message: 'Bảng tính không có sheet tab nào', formattedTabs: 0 };
-      }
+    // Chống gọi dồn dập (debounce latch 25 giây cho bảng tính chính)
+    if (!targetSpreadsheetId && this.beautifyInFlight) {
+      return this.beautifyInFlight;
+    }
+    if (!targetSpreadsheetId && now - this.lastBeautifyAt < 25_000) {
+      return { success: true, message: 'Giao diện bảng tính vừa được chuẩn hóa tự động gần đây.', formattedTabs: 23 };
+    }
 
-      let totalFormatted = 0;
-      for (const sheet of sheets) {
-        const title = sheet.properties?.title || '';
-        const sheetId = sheet.properties?.sheetId;
-        if (sheetId === undefined || sheetId === null) continue;
+    const runFormat = async () => {
+      try {
+        const res = await this.sheetsCall('beautify.get', () =>
+          this.sheetsClient!.spreadsheets.get({
+            spreadsheetId: sId,
+          })
+        );
 
-        let headers: string[] = SHEETS_DEFINITIONS.find(d => d.title === title)?.headers || [];
-        if (headers.length === 0) {
+        const sheets = res.data.sheets || [];
+        if (sheets.length === 0) {
+          return { success: false, message: 'Bảng tính không có sheet tab nào', formattedTabs: 0 };
+        }
+
+        let totalFormatted = 0;
+        for (const sheet of sheets) {
+          const title = sheet.properties?.title || '';
+          const sheetId = sheet.properties?.sheetId;
+          if (sheetId === undefined || sheetId === null) continue;
+
+          let headers: string[] = SHEETS_DEFINITIONS.find(d => d.title === title)?.headers || [];
+          let sampleRows: any[][] = [];
+
           try {
             const hRes = await this.sheetsClient!.spreadsheets.values.get({
               spreadsheetId: sId,
-              range: `'${title}'!1:1`,
+              range: `'${title}'!1:20`,
             });
-            headers = ((hRes.data.values?.[0] as string[]) || []).map(h => String(h || '').trim()).filter(Boolean);
+            const rawRows = (hRes.data.values as any[][]) || [];
+            if (rawRows.length > 0) {
+              if (headers.length === 0) {
+                headers = (rawRows[0] || []).map(h => String(h || '').trim()).filter(Boolean);
+              }
+              sampleRows = rawRows.slice(1);
+            }
           } catch {
-            headers = [];
+            sampleRows = [];
           }
-        }
-        if (headers.length === 0) continue;
 
-        const effectiveDef: SheetDefinition = {
-          title,
-          headers,
-        };
+          if (headers.length === 0) continue;
 
-        const theme = resolveTheme(title);
-        const requests = buildSheetFormattingRequests(sheetId, effectiveDef, theme);
-        if (requests.length > 0) {
-          try {
-            await this.sheetsCall(
-              `write.beautify.${title}`,
-              () =>
-                this.sheetsClient!.spreadsheets.batchUpdate({
-                  spreadsheetId: sId,
-                  requestBody: { requests },
-                }),
-              35000
-            );
-            totalFormatted++;
-          } catch (bErr: any) {
+          const effectiveDef: SheetDefinition = {
+            title,
+            headers,
+          };
+
+          const theme = resolveTheme(title);
+          const requests = buildSheetFormattingRequests(sheetId, effectiveDef, theme, sampleRows);
+          if (requests.length > 0) {
+            try {
+              await this.sheetsCall(
+                `write.beautify.${title}`,
+                () =>
+                  this.sheetsClient!.spreadsheets.batchUpdate({
+                    spreadsheetId: sId,
+                    requestBody: { requests },
+                  }),
+                35000
+              );
+              totalFormatted++;
+            } catch (bErr: any) {
             if (bErr.message && bErr.message.includes('protected')) {
               try {
                 const fallbackRequests = requests.filter(r => !r.updateSheetProperties);
@@ -597,6 +617,7 @@ export class GoogleSheetsSyncService {
       }
 
       console.log(`[GoogleSheetsSyncService] Đã làm đẹp và chuẩn hóa thành công ${totalFormatted} tabs trên Google Sheets!`);
+      this.lastBeautifyAt = Date.now();
       return {
         success: true,
         message: `Đã làm đẹp và chuẩn hóa thành công ${totalFormatted} tabs trên Google Sheets!`,
@@ -610,7 +631,17 @@ export class GoogleSheetsSyncService {
         formattedTabs: 0,
       };
     }
+  };
+
+  if (!targetSpreadsheetId) {
+    this.beautifyInFlight = runFormat().finally(() => {
+      this.beautifyInFlight = null;
+    });
+    return this.beautifyInFlight;
   }
+
+  return runFormat();
+}
 
   /**
    * ĐỌC DỮ LIỆU THỰC TẾ TỪ GOOGLE SHEETS VÀ CẬP NHẬT VÀO HỆ THỐNG (TWO-WAY SYNC)
@@ -2456,6 +2487,14 @@ export class GoogleSheetsSyncService {
         .filter(([, v]: any) => v && typeof v === 'object' && (v as any).error)
         .map(([k]) => k);
       const allOk = failedTabs.length === 0;
+
+      if (allOk) {
+        // Tự động căn chỉnh & làm đẹp toàn bộ bảng tính sau khi đồng bộ thành công
+        this.formatAndBeautifySpreadsheet().catch(err => {
+          console.warn('[GoogleSheetsSyncService] Tự động làm đẹp sau syncAllData thất bại:', err?.message || err);
+        });
+      }
+
       return {
         success: allOk,
         message: allOk
