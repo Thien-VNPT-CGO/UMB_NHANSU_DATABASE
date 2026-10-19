@@ -139,7 +139,7 @@ const SERVER_STARTED_AT = Date.now();
 
 export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   const app = express();
-  // Render/Vercel chạy sau proxy — cần để rate-limit lấy đúng IP client.
+  // Chạy sau proxy (Nginx) — cần để rate-limit lấy đúng IP client.
   // Tin toàn bộ chuỗi proxy (Render/CDN) để req.ip là IP thật của client.
   // Nếu chỉ trust 1 hop, mọi user sau proxy sẽ chung 1 IP -> dính 429 oan.
   app.set('trust proxy', true);
@@ -4868,6 +4868,38 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       });
     } catch (err: any) {
       console.error('[app.ts] Lỗi tải dữ liệu từ Google Sheets:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/admin/integrations/format-sheets', authMiddleware, requireRole(['ADMIN', 'HR', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const syncService = (adapter as any).syncService;
+      if (!syncService) {
+        return res.status(400).json({ success: false, message: 'Google Sheets sync service không khả dụng' });
+      }
+
+      const formatResult = await syncService.formatAndBeautifySpreadsheet();
+      if ((syncService as any).candidateSpreadsheetId) {
+        await syncService.formatAndBeautifySpreadsheet((syncService as any).candidateSpreadsheetId).catch(() => null);
+      }
+
+      await adapter.recordAuditLog({
+        actor_id: req.user!.id,
+        action: 'FORMAT_SHEETS_LAYOUT',
+        target_type: 'SYSTEM',
+        target_id: 'GOOGLE_SHEETS_MASTER',
+        details: formatResult,
+      });
+
+      res.json({
+        success: formatResult.success,
+        message: formatResult.message,
+        formattedTabs: formatResult.formattedTabs,
+        formatted_at: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      console.error('[app.ts] Lỗi định dạng giao diện Google Sheets:', err);
       res.status(500).json({ error: err.message });
     }
   });

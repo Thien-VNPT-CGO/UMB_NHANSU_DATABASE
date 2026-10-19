@@ -15,7 +15,6 @@ function isTestEnv(): boolean {
 }
 
 const DEFAULT_ORIGIN_PATTERNS = [
-  'https://*.vercel.app',
   'http://localhost:*',
   'http://127.0.0.1:*',
   'http://localhost:3000',
@@ -34,19 +33,17 @@ const DEFAULT_ORIGIN_PATTERNS = [
 
 /**
  * Danh sách origin được phép (HTTP + Socket dùng chung).
- * Mặc định luôn bao gồm domain Vercel, VPS và Localhost để không bị chặn kết nối.
+ * Mặc định chỉ localhost; domain production thêm qua biến CORS_ORIGINS.
  */
 export function getAllowedOrigins(): string[] {
   const configured = parseList(process.env.CORS_ORIGINS);
   return Array.from(new Set([...DEFAULT_ORIGIN_PATTERNS, ...configured]));
 }
 
-/** Hỗ trợ wildcard dạng `https://*.vercel.app` hoặc `http://localhost:*`. */
+/** Hỗ trợ wildcard dạng `http://localhost:*` hoặc pattern trong CORS_ORIGINS. */
 export function isOriginAllowed(origin: string, patterns: string[]): boolean {
   if (!origin) return true;
 
-  // Tự động cho phép mọi domain Vercel của hệ thống
-  if (/^https:\/\/[a-zA-Z0-9_.-]+\.vercel\.app$/i.test(origin)) return true;
   if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) return true;
 
   for (const raw of patterns) {
