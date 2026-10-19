@@ -23,7 +23,7 @@ import { normSheetDate, normSheetDateTime, sheetDateText, sheetDateTimeText } fr
 import { evaluateCandidateAiScore } from './ai-scorer.js';
 import { buildZipStore, ZipEntry } from '../utils/zip-store.js';
 import { readAttendancePhotoDisk } from './photo-disk.store.js';
-import { TAB_THEMES, buildSheetFormattingRequests } from './sheets-beautifier.service.js';
+import { TAB_THEMES, buildSheetFormattingRequests, resolveTheme } from './sheets-beautifier.service.js';
 
 export interface SheetDefinition {
   title: string;
@@ -341,7 +341,7 @@ export class GoogleSheetsSyncService {
   }
 
   constructor() {
-    this.spreadsheetId = process.env.SPREADSHEET_ID || process.env.GOOGLE_SPREADSHEET_ID || '17iXM0zc1m17aX9AZrFMjOkPRMy2_CwWfjTRZSUPQF2w';
+    this.spreadsheetId = process.env.SPREADSHEET_ID || process.env.GOOGLE_SPREADSHEET_ID || '1UO1UF1d7_YzaCltYt2m9pRnUauGWw873ERqAMxwL-6k';
     this.candidateSpreadsheetId = process.env.CANDIDATE_SPREADSHEET_ID || '1rcqEKraSRhr-Tn9qwlhADlkQUei8j65bXeHF_Tmkd38';
     this.driveFolderId = process.env.GOOGLE_DRIVE_FOLDER_ID || '';
 
@@ -537,28 +537,62 @@ export class GoogleSheetsSyncService {
         const sheetId = sheet.properties?.sheetId;
         if (sheetId === undefined || sheetId === null) continue;
 
-        const def = SHEETS_DEFINITIONS.find(d => d.title === title);
-        if (!def) continue;
+        let headers: string[] = SHEETS_DEFINITIONS.find(d => d.title === title)?.headers || [];
+        if (headers.length === 0) {
+          try {
+            const hRes = await this.sheetsClient!.spreadsheets.values.get({
+              spreadsheetId: sId,
+              range: `'${title}'!1:1`,
+            });
+            headers = ((hRes.data.values?.[0] as string[]) || []).map(h => String(h || '').trim()).filter(Boolean);
+          } catch {
+            headers = [];
+          }
+        }
+        if (headers.length === 0) continue;
 
-        const theme = TAB_THEMES[title] || {
-          category: 'Chung',
-          tabColor: { red: 0.3, green: 0.35, blue: 0.45 },
-          headerBg: { red: 0.1, green: 0.15, blue: 0.25 },
-          headerFg: { red: 1, green: 1, blue: 1 },
+        const effectiveDef: SheetDefinition = {
+          title,
+          headers,
         };
 
-        const requests = buildSheetFormattingRequests(sheetId, def, theme);
+        const theme = resolveTheme(title);
+        const requests = buildSheetFormattingRequests(sheetId, effectiveDef, theme);
         if (requests.length > 0) {
-          await this.sheetsCall(
-            `write.beautify.${title}`,
-            () =>
-              this.sheetsClient!.spreadsheets.batchUpdate({
-                spreadsheetId: sId,
-                requestBody: { requests },
-              }),
-            35000
-          );
-          totalFormatted++;
+          try {
+            await this.sheetsCall(
+              `write.beautify.${title}`,
+              () =>
+                this.sheetsClient!.spreadsheets.batchUpdate({
+                  spreadsheetId: sId,
+                  requestBody: { requests },
+                }),
+              35000
+            );
+            totalFormatted++;
+          } catch (bErr: any) {
+            if (bErr.message && bErr.message.includes('protected')) {
+              try {
+                const fallbackRequests = requests.filter(r => !r.updateSheetProperties);
+                if (fallbackRequests.length > 0) {
+                  await this.sheetsCall(
+                    `write.beautify.${title}.fallback`,
+                    () =>
+                      this.sheetsClient!.spreadsheets.batchUpdate({
+                        spreadsheetId: sId,
+                        requestBody: { requests: fallbackRequests },
+                      }),
+                    35000
+                  );
+                  totalFormatted++;
+                }
+              } catch (innerErr) {
+                console.warn(`[GoogleSheetsSyncService] Tab [${title}] có ô bảo vệ quyền sở hữu, bỏ qua an toàn.`);
+              }
+            } else {
+              console.error(`[GoogleSheetsSyncService] Lỗi format tab [${title}]:`, bErr.message);
+            }
+          }
         }
       }
 

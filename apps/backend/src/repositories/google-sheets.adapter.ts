@@ -32,7 +32,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
       }
     }
 
-    const spreadsheetId = process.env.SPREADSHEET_ID || process.env.GOOGLE_SPREADSHEET_ID || '17iXM0zc1m17aX9AZrFMjOkPRMy2_CwWfjTRZSUPQF2w';
+    const spreadsheetId = process.env.SPREADSHEET_ID || process.env.GOOGLE_SPREADSHEET_ID || '1UO1UF1d7_YzaCltYt2m9pRnUauGWw873ERqAMxwL-6k';
     process.env.SPREADSHEET_ID = spreadsheetId;
 
     this.syncService = new GoogleSheetsSyncService();
@@ -257,7 +257,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   }
 
   public getStatus() {
-    const spreadsheetId = process.env.SPREADSHEET_ID || process.env.GOOGLE_SPREADSHEET_ID || '17iXM0zc1m17aX9AZrFMjOkPRMy2_CwWfjTRZSUPQF2w';
+    const spreadsheetId = process.env.SPREADSHEET_ID || process.env.GOOGLE_SPREADSHEET_ID || '1UO1UF1d7_YzaCltYt2m9pRnUauGWw873ERqAMxwL-6k';
     const candidateSpreadsheetId = process.env.CANDIDATE_SPREADSHEET_ID || '1rcqEKraSRhr-Tn9qwlhADlkQUei8j65bXeHF_Tmkd38';
     const driveFolderId = process.env.GOOGLE_DRIVE_FOLDER_ID || '';
     const syncStatus = this.syncService.getStatus();

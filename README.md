@@ -94,10 +94,9 @@ npm run dev:employee
 
 ## 🌐 HƯỚNG DẪN TRIỂN KHAI ONLINE (PRODUCTION)
 
-Chi tiết quy trình triển khai online xem tại tài liệu dự án hoặc triển khai theo 2 phương thức:
-1. **Cloud PaaS (Vercel + Google Sheets Master)**: Miễn phí SSL HTTPS, tự động deploy khi push code.
-   - Backend tự host trên **VPS riêng (Docker + Nginx + PM2 + SSL)** — xem `deploy/vps/README_VPS.md` (nhánh `vps`).
-2. **Máy chủ riêng (VPS Ubuntu + Nginx + PM2 + SSL Certbot Let's Encrypt)**: Dành cho vận hành máy chủ doanh nghiệp.
+Chi tiết quy trình triển khai online xem tại tài liệu dự án. Hệ thống triển khai trên **VPS riêng**:
+1. **Production (nhánh `vps`)**: VPS Ubuntu + Docker + Nginx + SSL (domain `umbomilk-nhansu-diemdanh.duckdns.org`) — xem `deploy/vps/README_VPS.md`.
+2. **Beta (nhánh `beta`)**: bản thử chạy song song chung VPS, cổng 4006, Sheet/Drive riêng — xem `deploy/beta/`.
 
 *Lưu ý: Bắt buộc cấu hình SSL HTTPS để điện thoại nhân viên có thể sử dụng Camera và Định vị GPS khi chấm công.*
 

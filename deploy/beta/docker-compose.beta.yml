@@ -1,0 +1,4 @@
+# Ghi de cho ban BETA: ten container rieng (cong lay tu bien BACKEND_*).
+services:
+  backend:
+    container_name: ubm-beta-backend
