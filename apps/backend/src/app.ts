@@ -4872,6 +4872,38 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  app.post('/admin/integrations/format-sheets', authMiddleware, requireRole(['ADMIN', 'HR', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const syncService = (adapter as any).syncService;
+      if (!syncService) {
+        return res.status(400).json({ success: false, message: 'Google Sheets sync service không khả dụng' });
+      }
+
+      const formatResult = await syncService.formatAndBeautifySpreadsheet();
+      if ((syncService as any).candidateSpreadsheetId) {
+        await syncService.formatAndBeautifySpreadsheet((syncService as any).candidateSpreadsheetId).catch(() => null);
+      }
+
+      await adapter.recordAuditLog({
+        actor_id: req.user!.id,
+        action: 'FORMAT_SHEETS_LAYOUT',
+        target_type: 'SYSTEM',
+        target_id: 'GOOGLE_SHEETS_MASTER',
+        details: formatResult,
+      });
+
+      res.json({
+        success: formatResult.success,
+        message: formatResult.message,
+        formattedTabs: formatResult.formattedTabs,
+        formatted_at: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      console.error('[app.ts] Lỗi định dạng giao diện Google Sheets:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // --- 9. BẢO TRÌ HỆ THỐNG ---
   // Trạng thái bảo trì PUBLIC cho cổng NV (không cần đăng nhập để hiện màn bảo trì).
   // Chỉ lộ 3 trường an toàn: 2 cờ + thông điệp (không lộ cấu hình chi tiết từng phân hệ).

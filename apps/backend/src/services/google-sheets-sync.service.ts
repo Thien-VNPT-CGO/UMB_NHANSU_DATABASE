@@ -23,6 +23,7 @@ import { normSheetDate, normSheetDateTime, sheetDateText, sheetDateTimeText } fr
 import { evaluateCandidateAiScore } from './ai-scorer.js';
 import { buildZipStore, ZipEntry } from '../utils/zip-store.js';
 import { readAttendancePhotoDisk } from './photo-disk.store.js';
+import { TAB_THEMES, buildSheetFormattingRequests } from './sheets-beautifier.service.js';
 
 export interface SheetDefinition {
   title: string;
@@ -140,6 +141,18 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   {
     title: 'LICH_SU_GIAI_DOAN',
     headers: ['ID Giai Đoạn', 'ID Nhân Viên', 'Giai Đoạn', 'Hiệu Lực Từ', 'Lương Giờ', 'Người Duyệt', 'Ghi Chú', 'Phiên Bản', 'Ngày Tạo'],
+  },
+  {
+    // Thông báo đã gửi (outbox): dữ liệu gốc của tab "Thông báo" / "Tạo thông báo"
+    // / "Lịch phát thông báo" / "Nội dung đã phát" (MKT). Inbox NV nằm ở THONGBAO_NV.
+    title: 'THONGBAO_GUI',
+    headers: ['ID Thông Báo', 'ID Sự Kiện', 'Mã Chống Trùng', 'Người Nhận', 'Loại', 'Mức Độ', 'Tiêu Đề', 'Nội Dung', 'Đường Dẫn Tab', 'Kênh Gửi', 'Trạng Thái Gửi', 'Số Lần Gửi', 'Lỗi Cuối', 'Thời Gian Tạo'],
+  },
+  {
+    // Metadata snapshot Sao lưu & Phục hồi (tab 16 ADMIN) — list snapshot trước đây
+    // chỉ nằm bộ nhớ, restart là mất.
+    title: 'SNAPSHOT_SAOLUU',
+    headers: ['ID Snapshot', 'Tên', 'Thời Gian Tạo', 'Số File/Tab', 'Dung Lượng (MB)', 'Trạng Thái', 'Đã Kiểm Chứng'],
   },
 ];
 
@@ -465,6 +478,13 @@ export class GoogleSheetsSyncService {
 
       console.log(`[GoogleSheetsSyncService] Đã tạo ${createdSheets.length} sheet mới. Toàn bộ ${SHEETS_DEFINITIONS.length} tab sẵn sàng.`);
 
+      if (createdSheets.length > 0) {
+        // Tự động làm đẹp và định dạng các tab mới tạo
+        this.formatAndBeautifySpreadsheet().catch(err => {
+          console.warn('[GoogleSheetsSyncService] Tự động làm đẹp Sheets thất bại:', err?.message || err);
+        });
+      }
+
       this.initOkAt = Date.now();
       this.lastInitResult = {
         success: true,
@@ -485,6 +505,75 @@ export class GoogleSheetsSyncService {
         createdSheets: [],
         existingSheets: [],
         message: `Lỗi Google Sheets API: ${err.message}`,
+      };
+    }
+  }
+
+  /**
+   * Thiết kế lại giao diện toàn bộ các Sheet tab đẹp mắt, chuẩn hóa độ rộng cột,
+   * màu sắc nhận diện từng nhóm nghiệp vụ, font chữ và conditional formatting.
+   */
+  public async formatAndBeautifySpreadsheet(targetSpreadsheetId?: string): Promise<{ success: boolean; message: string; formattedTabs: number }> {
+    if (!this.isConfigured || !this.sheetsClient) {
+      return { success: false, message: 'Google Sheets chưa được kết nối', formattedTabs: 0 };
+    }
+
+    const sId = targetSpreadsheetId || this.spreadsheetId;
+    try {
+      const res = await this.sheetsCall('beautify.get', () =>
+        this.sheetsClient!.spreadsheets.get({
+          spreadsheetId: sId,
+        })
+      );
+
+      const sheets = res.data.sheets || [];
+      if (sheets.length === 0) {
+        return { success: false, message: 'Bảng tính không có sheet tab nào', formattedTabs: 0 };
+      }
+
+      let totalFormatted = 0;
+      for (const sheet of sheets) {
+        const title = sheet.properties?.title || '';
+        const sheetId = sheet.properties?.sheetId;
+        if (sheetId === undefined || sheetId === null) continue;
+
+        const def = SHEETS_DEFINITIONS.find(d => d.title === title);
+        if (!def) continue;
+
+        const theme = TAB_THEMES[title] || {
+          category: 'Chung',
+          tabColor: { red: 0.3, green: 0.35, blue: 0.45 },
+          headerBg: { red: 0.1, green: 0.15, blue: 0.25 },
+          headerFg: { red: 1, green: 1, blue: 1 },
+        };
+
+        const requests = buildSheetFormattingRequests(sheetId, def, theme);
+        if (requests.length > 0) {
+          await this.sheetsCall(
+            `write.beautify.${title}`,
+            () =>
+              this.sheetsClient!.spreadsheets.batchUpdate({
+                spreadsheetId: sId,
+                requestBody: { requests },
+              }),
+            35000
+          );
+          totalFormatted++;
+        }
+      }
+
+      console.log(`[GoogleSheetsSyncService] Đã làm đẹp và chuẩn hóa thành công ${totalFormatted} tabs trên Google Sheets!`);
+      return {
+        success: true,
+        message: `Đã làm đẹp và chuẩn hóa thành công ${totalFormatted} tabs trên Google Sheets!`,
+        formattedTabs: totalFormatted,
+      };
+    } catch (err: any) {
+      console.error('[GoogleSheetsSyncService] Lỗi khi làm đẹp Google Sheets:', err);
+      return {
+        success: false,
+        message: `Lỗi làm đẹp Google Sheets: ${err.message}`,
+        formattedTabs: 0,
       };
     }
   }
@@ -530,6 +619,8 @@ export class GoogleSheetsSyncService {
         'BAI_THI',
         'BAI_LAM',
         'THONGBAO_NV',
+        'THONGBAO_GUI',
+        'SNAPSHOT_SAOLUU',
         'PHIEU_LUONG',
         'LICH_SU_GIAI_DOAN',
         'CONG_THUC_LUONG',
@@ -1102,6 +1193,62 @@ export class GoogleSheetsSyncService {
           !/nhắc.*(?:check-?in|điểm danh)/i.test(`${n.title || ''} ${n.summary || ''}`)
       );
       counts.notifications = fallback.notificationInbox.length;
+
+      // 5e. Đọc THONGBAO_GUI (outbox — lịch sử thông báo đã gửi): merge, không bao giờ
+      // xóa. Áp cùng bộ lọc cutoff giờ VN/reset 23h00 như inbox để hộp thư reset xong
+      // không bị dòng Sheet cũ kéo lại đầy.
+      const outboxRows = batch['THONGBAO_GUI'] || [];
+      if (keepIfEmpty('THONGBAO_GUI', outboxRows, (fallback.notificationOutbox as any[] || []).length)) {
+        counts.notificationOutbox = (fallback.notificationOutbox as any[] || []).length;
+      } else if (outboxRows.length > 0) {
+        const mappedOutbox = outboxRows
+          .filter(r => r && r[0])
+          .map(r => ({
+            notification_id: r[0],
+            event_id: r[1] || '',
+            dedupe_key: r[2] || `NOTIF_${r[0]}`,
+            recipient_id: r[3] || 'ALL',
+            type: r[4] || 'system',
+            severity: (r[5] as any) || 'SYSTEM',
+            title: r[6] || 'Thông báo',
+            summary: r[7] || '',
+            target_path: r[8] || undefined,
+            channel: (r[9] as any) || 'IN_APP',
+            delivery_status: (r[10] as any) || 'SENT',
+            attempts: Number(r[11]) || 1,
+            last_error: r[12] || undefined,
+            created_at: r[13] || new Date().toISOString(),
+          }));
+        (fallback as any).notificationOutbox = mergeById(((fallback as any).notificationOutbox || []) as any[], mappedOutbox as any[], 'notification_id', ['attempts']);
+      }
+      // Dùng cùng mốc cutoff đã tính ở khối inbox (giờ VN hôm nay + reset 23h00).
+      (fallback as any).notificationOutbox = ((fallback as any).notificationOutbox || []).filter(
+        (o: any) => (o.created_at || '') >= notifEffCutoff
+      );
+      counts.notificationOutbox = ((fallback as any).notificationOutbox || []).length;
+
+      // 5f. Đọc SNAPSHOT_SAOLUU (metadata snapshot sao lưu): merge hợp nhất — snapshot
+      // nhớ đã có + snapshot trên Sheet (restart sau push đầy đủ).
+      const snapSheetRows = batch['SNAPSHOT_SAOLUU'] || [];
+      if (keepIfEmpty('SNAPSHOT_SAOLUU', snapSheetRows, (fallback.backupSnapshots as any[] || []).length)) {
+        counts.backupSnapshots = (fallback.backupSnapshots as any[] || []).length;
+      } else if (snapSheetRows.length > 0) {
+        const mappedSnaps = snapSheetRows
+          .filter(r => r && r[0])
+          .map(r => ({
+            snapshot_id: r[0],
+            name: r[1] || '',
+            created_at: r[2] || '',
+            file_count: Number(r[3]) || 0,
+            size_mb: Number(r[4]) || 0,
+            status: r[5] || 'SUCCESS',
+            verified: r[6] === 'YES',
+          }));
+        (fallback as any).backupSnapshots = mergeById(((fallback as any).backupSnapshots || []) as any[], mappedSnaps as any[], 'snapshot_id', ['created_at']);
+        counts.backupSnapshots = (fallback.backupSnapshots as any[]).length;
+      } else if (((fallback as any).backupSnapshots || []).length === 0) {
+        (fallback as any).backupSnapshots = [];
+      }
 
       // 6. Đọc SU_KIEN_DIEM_DANH
       const attRows = (batch['SU_KIEN_DIEM_DANH'] || []).filter(r => r && r[0] && !this.isEventDeletedRecently(r[0]));
@@ -1914,8 +2061,21 @@ export class GoogleSheetsSyncService {
     } catch (err: any) {
       const msg = err?.message || String(err);
       details[key] = { error: msg };
+      // SELF-HEAL: tab KHÔNG TỒN TẠI trên Sheet (bị xóa tay / đổi spreadsheet / tab mới
+      // thêm vào code) — hủy cache init để đợt đồng bộ kế tiếp TỰ TẠO LẠI TAB + DÒNG
+      // HEADER CỘT rồi push dữ liệu. Không hủy khi lỗi khác (403/quota/timeout).
+      if (/404|NOT_FOUND|Unable to parse range|does not exist|not found/i.test(msg)) {
+        this.invalidateInitCache();
+      }
       console.warn(`[GoogleSheetsSyncService] Bỏ qua tab ${title} (lỗi, đợt sau thử lại):`, msg);
     }
+  }
+
+  /** Hủy cache init cấu trúc sheet — buộc initSpreadsheetStructure chạy lại
+   *  (kiểm tra tab thiếu + tạo tab mới + ghi lại hàng header cột). */
+  private invalidateInitCache() {
+    this.initOkAt = 0;
+    this.lastInitResult = null;
   }
 
   /**
@@ -2175,6 +2335,41 @@ export class GoogleSheetsSyncService {
         typeof log.details === 'string' ? log.details : JSON.stringify(log.details || {}),
       ]);
       await this.pushTabSafe(details, 'auditLogs', 'AUDIT_LOG', SHEETS_DEFINITIONS.find(d => d.title === 'AUDIT_LOG')!.headers, auditRows);
+
+      // 9b. Thông báo đã gửi (outbox → tab THONGBAO_GUI): nguồn của tab "Thông báo"
+      // / "Tạo thông báo" / "Nội dung đã phát" / "Lịch phát thông báo" (MKT + ADMIN).
+      const outboxList: any[] = (await (repo as any).listNotificationOutbox?.().catch(() => [])) || [];
+      const outboxPushRows = outboxList.map(o => [
+        o.notification_id,
+        o.event_id || '',
+        o.dedupe_key || '',
+        o.recipient_id || '',
+        o.type || '',
+        o.severity || '',
+        o.title || '',
+        o.summary || '',
+        o.target_path || '',
+        o.channel || 'IN_APP',
+        o.delivery_status || 'SENT',
+        o.attempts ?? 1,
+        o.last_error || '',
+        o.created_at || '',
+      ]);
+      await this.pushTabSafe(details, 'notificationOutbox', 'THONGBAO_GUI', SHEETS_DEFINITIONS.find(d => d.title === 'THONGBAO_GUI')!.headers, outboxPushRows);
+
+      // 9c. Snapshot sao lưu & phục hồi → tab SNAPSHOT_SAOLUU (trước đây chỉ nằm bộ nhớ,
+      // restart là mất list snapshot).
+      const snapshots = (await repo.getBackupSnapshots().catch(() => [])) || [];
+      const snapshotRows = snapshots.map((s: any) => [
+        s.snapshot_id,
+        s.name || '',
+        s.created_at || '',
+        s.file_count ?? '',
+        s.size_mb ?? '',
+        s.status || 'SUCCESS',
+        s.verified === true ? 'YES' : '',
+      ]);
+      await this.pushTabSafe(details, 'backupSnapshots', 'SNAPSHOT_SAOLUU', SHEETS_DEFINITIONS.find(d => d.title === 'SNAPSHOT_SAOLUU')!.headers, snapshotRows);
 
       // 10. Ứng viên tuyển dụng (FROM_NHAN_VIEN) - 17 Cột
       const candList = await repo.listCandidates();

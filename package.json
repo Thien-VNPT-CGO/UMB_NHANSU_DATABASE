@@ -16,7 +16,8 @@
     "start": "node apps/backend/dist/server.js",
     "dev:backend": "npm run dev --workspace=apps/backend",
     "dev:admin": "npm run dev --workspace=apps/admin-web",
-    "dev:employee": "npm run dev --workspace=apps/employee-web"
+    "dev:employee": "npm run dev --workspace=apps/employee-web",
+    "format:sheets": "node scripts/format-sheets.cjs"
   },
   "engines": {
     "node": ">=20.0.0"

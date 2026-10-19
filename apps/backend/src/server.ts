@@ -121,6 +121,31 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   const syncIntervalMs = Number(process.env.SHEETS_SYNC_INTERVAL_MS) || 10_000;
   setInterval(autoPullSheetsTick, syncIntervalMs);
 
+  // PUSH ngược toàn bộ tabs lên Sheets định kỳ: không phụ thuộc thao tác mới, mọi tab
+  // của cổng quản trị luôn được đồng bộ; tab thiếu trên Sheet sẽ được tự tạo lại
+  // (tạo tab + ghi hàng header cột) rồi push dữ liệu đầy đủ. Mặc định 60 phút,
+  // đặt SHEETS_AUTO_PUSH_MINUTES=0 để tắt.
+  const rawPushMinutes = process.env.SHEETS_AUTO_PUSH_MINUTES;
+  const pushPeriodMin = rawPushMinutes && rawPushMinutes.trim() !== '' && Number(rawPushMinutes) > 0 ? Number(rawPushMinutes) : 60;
+  if (rawPushMinutes?.trim() !== '0') {
+    const autoPushSheetsTick = async () => {
+      try {
+        const syncService = (adapter as any).syncService;
+        if (syncService && syncService.getStatus().isConfigured) {
+          const pushRes = await syncService.syncAllData(adapter);
+          if (pushRes?.success) {
+            console.log('🔁 [Sheets Auto-Push] Đã đồng bộ đầy đủ toàn bộ tabs lên Google Sheets.');
+            io.emit('data:updated', { entity: 'all', data: { auto_push: true }, timestamp: new Date().toISOString() });
+          }
+        }
+      } catch (err: any) {
+        console.warn('[sheets-auto-push] tick error:', err?.message || err);
+      }
+    };
+    setTimeout(autoPushSheetsTick, 5 * 60_000); // chạy sớm 1 lần sau 5 phút khởi động
+    setInterval(autoPushSheetsTick, pushPeriodMin * 60_000);
+  }
+
   // Nhắc việc tự động mỗi 5 phút: check-in Zalo trước ca, PIN quá hạn, đơn tồn duyệt.
   const autoRemindersTickSafe = () => {
     autoRemindersTick(adapter, services.notificationsService, services.zaloService).catch(err =>

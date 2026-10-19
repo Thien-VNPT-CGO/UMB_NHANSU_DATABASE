@@ -1075,6 +1075,24 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
         inbox.created_at,
         inbox.read_at ? 'YES' : '',
       ]));
+      // Thông báo đã gửi (outbox) → tab THONGBAO_GUI (nguồn tab "Nội dung đã phát" MKT).
+      const outboxItem: any = res.outbox || {};
+      const outboxRow = [
+        outboxItem.notification_id,
+        outboxItem.event_id || '',
+        outboxItem.dedupe_key || '',
+        outboxItem.recipient_id || '',
+        outboxItem.type || '',
+        outboxItem.severity || '',
+        outboxItem.title || '',
+        outboxItem.summary || '',
+        outboxItem.target_path || '',
+        outboxItem.channel || 'IN_APP',
+        outboxItem.delivery_status || 'SENT',
+        outboxItem.attempts ?? 1,
+        outboxItem.last_error || '',
+        outboxItem.created_at || '',
+      ];
       this.scheduleSheetsWrite(async () => {
         let failed = false;
         for (const row of rows) {
@@ -1091,9 +1109,16 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
             if (!ok) break;
           }
         }
+        // Outbox append 1 dòng riêng (tab này push-đầy từ bộ nhớ trong full-sync nên
+        // hình dạng dòng khớp header, không lo trùng lặp nhiều cột).
+        await this.syncService.appendRow('THONGBAO_GUI', outboxRow);
       }, 'THONGBAO_NV.append');
     }
     return res;
+  }
+
+  async listNotificationOutbox() {
+    return this.fallbackAdapter.listNotificationOutbox();
   }
 
   async getInboxForRecipient(recipientId: string, unreadOnly?: boolean) {
@@ -1342,7 +1367,11 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   }
 
   async createBackupSnapshot(name?: string) {
-    return this.fallbackAdapter.createBackupSnapshot(name);
+    const res = await this.fallbackAdapter.createBackupSnapshot(name);
+    // Đồng bộ list snapshot lên tab SNAPSHOT_SAOLUU (sau đây tab "Sao lưu & Phục
+    // hồi" không còn mất dữ liệu khi restart).
+    this.scheduleFullSync('SNAPSHOT_SAOLUU.create');
+    return res;
   }
 
   async testRecovery(snapshotId: string) {

@@ -107,6 +107,8 @@ export interface ISheetsRepository {
 
   // Notifications
   createNotification(outbox: Omit<NotificationOutboxItem, 'created_at'>, inboxes: Omit<NotificationInboxItem, 'created_at' | 'version'>[]): Promise<{ outbox: NotificationOutboxItem; inboxes: NotificationInboxItem[] }>;
+  /** Lịch sử toàn bộ thông báo đã gửi (outbox) — nguồn đồng bộ tab THONGBAO_GUI. */
+  listNotificationOutbox(): Promise<NotificationOutboxItem[]>;
   getInboxForRecipient(recipientId: string, unreadOnly?: boolean): Promise<NotificationInboxItem[]>;
   /** Reset cổng quản trị 6h sáng Thứ 2: xóa thông báo cũ hơn mốc (Sheets giữ nguyên). */
   pruneNotifications(beforeIso: string): Promise<number>;

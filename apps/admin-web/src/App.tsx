@@ -344,7 +344,7 @@ export function App() {
   // Bản API đang chạy (so với bản app để biết đã cập nhật chưa)
   const [apiCommit, setApiCommit] = useState<string | null>(null);
   useEffect(() => {
-    apiRequest('/version').then((v: any) => {
+    apiRequest('/version', { _timeoutMs: 4000 } as any).then((v: any) => {
       if (v?.commit) setApiCommit(String(v.commit).slice(0, 7));
     }).catch(() => null);
   }, []);
@@ -1415,6 +1415,30 @@ export function App() {
       await loadAllData(currentUser, true);
     } catch (err: any) {
       setErrorMsg(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleFormatSheets = async () => {
+    if (loading) return;
+    if (!window.confirm('Hệ thống sẽ tự động thiết kế lại giao diện toàn bộ các Sheet tabs: phân nhóm màu sắc tab thương hiệu Ụm Bò Milk, hàng tiêu đề đậm thoáng, căn lề và định dạng tiền tệ/ngày tháng/trạng thái chuẩn đẹp. Bạn có muốn tiếp tục?')) {
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await apiRequest('/admin/integrations/format-sheets', { method: 'POST' });
+      playNotificationDing();
+      addRichToast({
+        title: 'Làm Đẹp Sheets Thành Công',
+        message: res.message || 'Đã định dạng toàn bộ các tab Google Sheets theo phong cách chuyên nghiệp!',
+        type: 'INFO',
+      });
+      setSuccessMsg(res.message || 'Đã định dạng toàn bộ các tab Google Sheets!');
+      setTimeout(() => setSuccessMsg(null), 4000);
+    } catch (err: any) {
+      playWarningTone();
+      setErrorMsg(err.message || 'Không thể định dạng Google Sheets');
     } finally {
       setLoading(false);
     }
@@ -3868,6 +3892,28 @@ export function App() {
                   >
                     <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
                     {loading ? 'Đang Khởi Tạo & Đồng Bộ...' : '🚀 Khởi Tạo Cấu Trúc & Đồng Bộ Lên Sheets'}
+                  </button>
+                  <button
+                    onClick={handleFormatSheets}
+                    disabled={loading}
+                    className="btn-interactive"
+                    style={{
+                      padding: '8px 18px',
+                      borderRadius: 'var(--radius-sm)',
+                      background: 'linear-gradient(135deg, #059669 0%, #10B981 100%)',
+                      color: '#FFF',
+                      fontWeight: 700,
+                      fontSize: '13px',
+                      border: 'none',
+                      cursor: loading ? 'not-allowed' : 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      boxShadow: '0 2px 6px rgba(16, 185, 129, 0.35)',
+                    }}
+                  >
+                    <Sliders size={14} className={loading ? 'animate-spin' : ''} />
+                    {loading ? 'Đang Thiết Kế...' : '✨ Làm Đẹp & Định Dạng Giao Diện Sheets'}
                   </button>
                 </div>
               </div>

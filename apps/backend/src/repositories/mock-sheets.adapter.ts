@@ -882,6 +882,11 @@ export class MockSheetsAdapter implements ISheetsRepository {
     }).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   }
 
+  async listNotificationOutbox(): Promise<NotificationOutboxItem[]> {
+    this.checkErrors();
+    return [...this.notificationOutbox];
+  }
+
   async markNotificationRead(inboxId: string, recipientId: string): Promise<NotificationInboxItem> {
     this.checkErrors();
     const item = this.notificationInbox.find(n => n.inbox_id === inboxId && (n.recipient_id === recipientId || n.recipient_id === 'ALL'));
