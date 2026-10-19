@@ -1,0 +1,65 @@
+# ==============================================================
+# (TEMPLATE — KHÔNG KÍCH HOẠT) Deploy VPS qua GitHub Actions SSH
+# --------------------------------------------------------------
+# Muốn dùng phương án này:
+#   1. Đổi tên file này thành: .github/workflows/deploy-vps.yml
+#   2. Trên GitHub repo → Settings → Secrets and variables → Actions →
+#      thêm các secrets:
+#        VPS_HOST : 221.121.x.x
+#        VPS_PORT : 22
+#        VPS_USER : root
+#        VPS_KEY  : nội dung private key SSH (openssh format)
+#        VPS_PASS : NẾU dùng mật khẩu (lúc đó VPS_KEY bỏ trống)
+#   3. Lưu ý: máy VPS phải chấp nhận key/mật khẩu trên,
+#      và trên VPS repo đã được clone tại ~/ubm-vps (prod) + ~/ubm-beta (beta).
+#
+# Ưu điểm : deploy NGAY sau khi push (nhanh hơn cron 1 phút).
+# Nhược điểm : phải quản lý secret trên GitHub.
+# Nếu đã dùng deploy/autodeploy/install-autodeploy.sh thì KHÔNG cần file này.
+# ==============================================================
+
+name: deploy-vps
+
+on:
+  push:
+    branches: [ vps, beta ]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: false
+
+jobs:
+  deploy-prod:
+    if: github.ref == 'refs/heads/vps'
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH deploy (prod, port 4005)
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          port: ${{ secrets.VPS_PORT }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_KEY }}
+          password: ${{ secrets.VPS_PASS }}
+          script: |
+            cd ~/ubm-vps
+            git pull --ff-only origin vps
+            bash deploy/vps/deploy.sh
+
+  deploy-beta:
+    if: github.ref == 'refs/heads/beta'
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH deploy (beta, port 4006)
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          port: ${{ secrets.VPS_PORT }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_KEY }}
+          password: ${{ secrets.VPS_PASS }}
+          script: |
+            cd ~/ubm-beta
+            git pull --ff-only origin beta
+            bash deploy/beta/deploy-beta.sh
