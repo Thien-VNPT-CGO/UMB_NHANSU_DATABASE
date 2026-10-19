@@ -3811,7 +3811,7 @@ export function App() {
             <div id="sec-integrations" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
               <div>
                 <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>8. Tích Hợp & Đồng Bộ Google Sheets Master</h1>
-                <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Cấu trúc 13 Tabs Google Sheets Master, Google Drive Receipts, Realtime Socket.IO & Sequential Queue</p>
+                <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Cấu trúc 23 Tabs Google Sheets Master, Google Drive Receipts, Realtime Socket.IO & Sequential Queue</p>
               </div>
 
               {/* Live Connection Banner */}
@@ -3820,17 +3820,21 @@ export function App() {
                   <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: integrationsStatus?.mode === 'GOOGLE_SHEETS_LIVE' ? 'var(--success)' : '#F59E0B' }} />
                   <div>
                     <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text)' }}>
-                      {integrationsStatus?.mode === 'GOOGLE_SHEETS_LIVE' ? 'Đã Kết Nối Google Sheets Master Trực Tiếp (Live Mode)' : 'Chế Độ Giả Lập Cục Bộ (Cần Thêm GOOGLE_SERVICE_ACCOUNT_JSON trên Render)'}
+                      {integrationsStatus?.mode === 'GOOGLE_SHEETS_LIVE' ? 'Đã Kết Nối Google Sheets Master Trực Tiếp (Live Mode)' : 'Chế Độ Giả Lập Cục Bộ (Cần Thêm GOOGLE_SERVICE_ACCOUNT_JSON trên VPS)'}
                     </div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                      Mã Bảng Tính: <code style={{ backgroundColor: 'var(--bg)', padding: '2px 6px', borderRadius: '4px' }}>{integrationsStatus?.spreadsheetId || '17iXM0zc1m17aX9AZrFMjOkPRMy2_CwWfjTRZSUPQF2w'}</code>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <span>Mã Bảng Tính: <code style={{ backgroundColor: 'var(--bg)', padding: '2px 6px', borderRadius: '4px' }}>{integrationsStatus?.spreadsheetId || '1UO1UF1d7_YzaCltYt2m9pRnUauGWw873ERqAMxwL-6k'}</code></span>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', backgroundColor: '#ECFDF5', color: '#047857', border: '1px solid #A7F3D0', padding: '1px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 700 }}>
+                        <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#10B981' }} />
+                        Auto-Update: ĐANG BẬT (Kéo 10s • Đẩy 5p • Tự căn chỉnh đẹp)
+                      </span>
                     </div>
                   </div>
                 </div>
 
                 <div style={{ display: 'flex', gap: '10px' }}>
                   <a
-                    href={`https://docs.google.com/spreadsheets/d/${integrationsStatus?.spreadsheetId || '17iXM0zc1m17aX9AZrFMjOkPRMy2_CwWfjTRZSUPQF2w'}/edit`}
+                    href={`https://docs.google.com/spreadsheets/d/${integrationsStatus?.spreadsheetId || '1UO1UF1d7_YzaCltYt2m9pRnUauGWw873ERqAMxwL-6k'}/edit`}
                     target="_blank"
                     rel="noreferrer"
                     style={{

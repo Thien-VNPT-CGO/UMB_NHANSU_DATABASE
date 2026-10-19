@@ -555,7 +555,8 @@ export function getColumnStyle(header: string, sampleValues: any[] = []): Column
 export function buildSheetFormattingRequests(
   sheetId: number,
   sheetDef: SheetDefinition,
-  theme: TabTheme
+  theme: TabTheme,
+  sampleRows: any[][] = []
 ): sheets_v4.Schema$Request[] {
   const requests: sheets_v4.Schema$Request[] = [];
   const colCount = sheetDef.headers.length;
@@ -680,7 +681,8 @@ export function buildSheetFormattingRequests(
 
   // 5. Định dạng từng cột dữ liệu + Tối ưu độ rộng chuẩn
   sheetDef.headers.forEach((header, colIdx) => {
-    const style = getColumnStyle(header);
+    const colSamples = (sampleRows || []).map(r => r[colIdx]).filter(v => v !== undefined && v !== null);
+    const style = getColumnStyle(header, colSamples);
 
     // 5a. Độ rộng chuẩn
     requests.push({
