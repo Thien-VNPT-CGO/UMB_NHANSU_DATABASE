@@ -331,7 +331,7 @@ export function App() {
   const checkAppVersion = async (): Promise<'new' | 'same' | 'fail'> => {
     // Giữ hiển thị bản API (thông tin).
     try {
-      const v: any = await apiRequest('/version');
+      const v: any = await apiRequest('/version', { _timeoutMs: 4000 } as any);
       if (v?.commit) setApiCommit(String(v.commit).slice(0, 7));
     } catch { /* offline: giữ cũ */ }
     // Tín hiệu chính: nội dung index.html đã đổi -> frontend có bản mới thật.

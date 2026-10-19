@@ -13,7 +13,7 @@ export interface RealtimeGuards {
 /**
  * Tạo Socket.IO realtime có bảo vệ:
  * - Backoff reconnect 2s -> 15s, timeout handshake 15s.
- * - Sai địa chỉ máy chủ (frontend tĩnh Vercel...), server ngủ/không tới được,
+ * - Sai địa chỉ máy chủ, server ngủ/không tới được,
  *   websocket bị chặn: thử lại `maxAttempts` lần (mặc định 8) rồi TỰ NGẮT để
  *   khỏi spam lỗi "WebSocket is closed before the connection is established"
  *   vô hạn. Đăng nhập lại / đổi máy chủ sẽ nối lại từ đầu.

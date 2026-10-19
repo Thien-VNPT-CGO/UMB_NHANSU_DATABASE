@@ -5,6 +5,14 @@
  */
 
 let audioCtx: AudioContext | null = null;
+let hasUserGesture = false;
+
+function markUserGesture(): void {
+  hasUserGesture = true;
+  if (audioCtx && audioCtx.state === 'suspended') {
+    audioCtx.resume().catch(() => {});
+  }
+}
 
 function getAudioContext(): AudioContext | null {
   if (typeof window === 'undefined') return null;
@@ -15,13 +23,29 @@ function getAudioContext(): AudioContext | null {
         audioCtx = new AudioContextClass();
       }
     }
-    if (audioCtx && audioCtx.state === 'suspended') {
+    // Chỉ resume khi đã có tương tác từ người dùng để tránh vi phạm Autoplay Policy của trình duyệt
+    if (audioCtx && audioCtx.state === 'suspended' && hasUserGesture) {
       audioCtx.resume().catch(() => {});
     }
     return audioCtx;
   } catch (e) {
     return null;
   }
+}
+
+/** Lấy AudioContext chỉ khi sẵn sàng (đã tương tác hoặc không bị suspended) */
+function getReadyAudioContext(): AudioContext | null {
+  const ctx = getAudioContext();
+  if (!ctx) return null;
+  if (ctx.state === 'suspended') {
+    if (hasUserGesture) {
+      ctx.resume().catch(() => {});
+      return ctx;
+    }
+    // Chưa có tương tác người dùng, không tạo node để tránh browser autoplay warning
+    return null;
+  }
+  return ctx;
 }
 
 /** Kiểm tra người dùng có bật âm thanh không (mặc định bật) */
@@ -36,6 +60,7 @@ let audioUnlocked = false;
 function ensureAudioUnlocked(): void {
   if (audioUnlocked || typeof window === 'undefined') return;
   audioUnlocked = true;
+  markUserGesture();
   try {
     getAudioContext();
   } catch { /* ignore */ }
@@ -44,15 +69,14 @@ function ensureAudioUnlocked(): void {
   } catch { /* ignore */ }
 }
 
-/** Tự đăng ký 1 lần: chạm/phím đầu tiên là mở khóa + preload nhạc chuông ngay. */
+/** Tự đăng ký 1 lần: tương tác đầu tiên (click, chạm, phím) mở khóa âm thanh ngay */
 if (typeof window !== 'undefined') {
+  const gestureEvents = ['click', 'touchstart', 'touchend', 'keydown', 'pointerdown'] as const;
   const unlockOnce = () => {
     ensureAudioUnlocked();
-    window.removeEventListener('pointerdown', unlockOnce);
-    window.removeEventListener('keydown', unlockOnce);
+    gestureEvents.forEach((evt) => window.removeEventListener(evt, unlockOnce));
   };
-  window.addEventListener('pointerdown', unlockOnce);
-  window.addEventListener('keydown', unlockOnce);
+  gestureEvents.forEach((evt) => window.addEventListener(evt, unlockOnce, { passive: true }));
 }
 
 /** Bật / Tắt âm thanh */
@@ -71,7 +95,7 @@ export function setSoundEnabled(enabled: boolean): void {
  */
 export function playNotificationDing(): void {
   if (!isSoundEnabled()) return;
-  const ctx = getAudioContext();
+  const ctx = getReadyAudioContext();
   if (!ctx) return;
 
   const now = ctx.currentTime;
@@ -111,7 +135,7 @@ export function playNotificationDing(): void {
  */
 export function playSuccessChime(): void {
   if (!isSoundEnabled()) return;
-  const ctx = getAudioContext();
+  const ctx = getReadyAudioContext();
   if (!ctx) return;
 
   const now = ctx.currentTime;
@@ -142,7 +166,7 @@ export function playSuccessChime(): void {
  */
 export function playWarningTone(): void {
   if (!isSoundEnabled()) return;
-  const ctx = getAudioContext();
+  const ctx = getReadyAudioContext();
   if (!ctx) return;
 
   const now = ctx.currentTime;
@@ -168,7 +192,7 @@ export function playWarningTone(): void {
  */
 export function playModernChime(): void {
   if (!isSoundEnabled()) return;
-  const ctx = getAudioContext();
+  const ctx = getReadyAudioContext();
   if (!ctx) return;
 
   const now = ctx.currentTime;
@@ -210,7 +234,7 @@ export function playModernChime(): void {
  */
 export function playInterviewAlert(): void {
   if (!isSoundEnabled()) return;
-  const ctx = getAudioContext();
+  const ctx = getReadyAudioContext();
   if (!ctx) return;
 
   const now = ctx.currentTime;
@@ -241,7 +265,7 @@ export function playInterviewAlert(): void {
  */
 export function playFanfare(): void {
   if (!isSoundEnabled()) return;
-  const ctx = getAudioContext();
+  const ctx = getReadyAudioContext();
   if (!ctx) return;
 
   const now = ctx.currentTime;
@@ -354,7 +378,7 @@ function tone(
 /** Nhẹ nhàng: marimba êm C5-E5-G5, tấn công chậm. */
 export function playGentleChime(): void {
   if (!isSoundEnabled()) return;
-  const ctx = getAudioContext();
+  const ctx = getReadyAudioContext();
   if (!ctx) return;
   const now = ctx.currentTime;
   [523.25, 659.25, 783.99].forEach((f, i) => {
@@ -366,7 +390,7 @@ export function playGentleChime(): void {
 /** Vui tươi: bong bóng bay lên, 3 nốt glide nhanh. */
 export function playBubblyChime(): void {
   if (!isSoundEnabled()) return;
-  const ctx = getAudioContext();
+  const ctx = getReadyAudioContext();
   if (!ctx) return;
   const now = ctx.currentTime;
   [420, 560, 720].forEach((f, i) => {
@@ -378,7 +402,7 @@ export function playBubblyChime(): void {
 /** Công nghệ: ping sắc + echo gọn. */
 export function playDigitalPing(): void {
   if (!isSoundEnabled()) return;
-  const ctx = getAudioContext();
+  const ctx = getReadyAudioContext();
   if (!ctx) return;
   const now = ctx.currentTime;
   tone(ctx, { freq: 1568, at: now, dur: 0.18, type: 'square', vol: 0.06 });
@@ -389,7 +413,7 @@ export function playDigitalPing(): void {
 /** Ấm áp: chuông trầm G3-C4-E4 ngân dài. */
 export function playWarmBell(): void {
   if (!isSoundEnabled()) return;
-  const ctx = getAudioContext();
+  const ctx = getReadyAudioContext();
   if (!ctx) return;
   const now = ctx.currentTime;
   [196.0, 261.63, 329.63].forEach((f, i) => {
@@ -439,11 +463,11 @@ export function playRingtoneFile(): void {
     const p = el.play();
     if (p && typeof (p as Promise<void>).catch === 'function') {
       (p as Promise<void>).catch(() => {
-        // Trình duyệt chặn autoplay (chưa tương tác): thử lại sau chạm đầu tiên.
+        // Trình duyệt chặn autoplay (chưa tương tác): thử lại sau tương tác đầu tiên.
         if (typeof window !== 'undefined') {
+          const gestureEvts = ['click', 'touchstart', 'touchend', 'keydown', 'pointerdown'] as const;
           const retry = () => {
-            window.removeEventListener('pointerdown', retry);
-            window.removeEventListener('keydown', retry);
+            gestureEvts.forEach((evt) => window.removeEventListener(evt, retry));
             try {
               const el2 = getRingtoneEl();
               if (el2) {
@@ -452,8 +476,7 @@ export function playRingtoneFile(): void {
               }
             } catch { /* ignore */ }
           };
-          window.addEventListener('pointerdown', retry);
-          window.addEventListener('keydown', retry);
+          gestureEvts.forEach((evt) => window.addEventListener(evt, retry, { passive: true }));
         }
       });
     }
@@ -489,7 +512,7 @@ export function playNotificationByStyle(style?: NotificationSoundStyle): void {
  */
 export function playButtonPop(): void {
   if (!isSoundEnabled()) return;
-  const ctx = getAudioContext();
+  const ctx = getReadyAudioContext();
   if (!ctx) return;
 
   const now = ctx.currentTime;
