@@ -96,7 +96,7 @@ npm run dev:employee
 
 Chi tiết quy trình triển khai online xem tại tài liệu dự án. Hệ thống triển khai trên **VPS riêng**:
 1. **Production (nhánh `vps`)**: VPS Ubuntu + Docker + Nginx + SSL (domain `umbomilk-nhansu-diemdanh.duckdns.org`) — xem `deploy/vps/README_VPS.md`.
-2. **Beta (nhánh `beta`)**: bản thử chạy song song chung VPS, cổng 4006, Sheet/Drive riêng — xem `deploy/beta/`.
+2. *(Đã bỏ môi trường beta từ 2026-10-20 — trước đây chạy song song cổng 4006, xem lịch sử git khi cần.)*
 
 *Lưu ý: Bắt buộc cấu hình SSL HTTPS để điện thoại nhân viên có thể sử dụng Camera và Định vị GPS khi chấm công.*
 
