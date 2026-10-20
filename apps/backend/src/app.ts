@@ -23,6 +23,7 @@ import { AccountsService } from './services/accounts.service.js';
 import { EmployeesService } from './services/employees.service.js';
 import { canonicalPhone, findDuplicatePhones } from './services/employees.service.js';
 import { SchedulesService } from './services/schedules.service.js';
+import { ScheduleExcelService, XLSX_MIME } from './services/schedule-excel.service.js';
 import { AutoScheduleService } from './services/auto-schedule.service.js';
 import { TestsService } from './services/tests.service.js';
 import { AttendanceService } from './services/attendance.service.js';
@@ -101,6 +102,8 @@ import {
   schedulesQuery,
   shiftCreateBody,
   shiftUpdateBody,
+  excelImportBody,
+  excelTemplateQuery,
   swapApproveBody,
   swapCreateBody,
   swapRespondBody,
@@ -161,6 +164,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   const accountsService = new AccountsService(adapter);
   const employeesService = new EmployeesService(adapter);
   const schedulesService = new SchedulesService(adapter);
+  // Nhập / tải mẫu lịch làm việc tuần bằng Excel (chỉ ADMIN — tab Lịch tuần).
+  const scheduleExcelService = new ScheduleExcelService(adapter, schedulesService, employeesService);
   const autoScheduleService = new AutoScheduleService(adapter);
   const testsService = new TestsService(adapter);
   const attendanceService = new AttendanceService(adapter);
@@ -1936,6 +1941,54 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           actorId: req.user!.id,
         });
         res.json(result);
+      } catch (err: any) {
+        res.status(400).json({ error: err.message });
+      }
+    }
+  );
+
+  // --- NHẬP LỊCH TUẦN BẰNG EXCEL (chỉ ADMIN — Yêu cầu của chủ dự án) ---
+
+  // Tải file mẫu .xlsx: được điền sẵn TOÀN BỘ nhân viên (Mã NV, Họ tên, Chi
+  // nhánh) + 7 cột ngày ISO T2→CN của tuần được chọn + dropdown mã ca.
+  app.get(
+    '/schedules/excel-template',
+    authMiddleware,
+    requireRole(['ADMIN']),
+    validate({ query: excelTemplateQuery }),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const week = (req.query.week as string) || undefined;
+        const tpl = await scheduleExcelService.buildTemplateBuffer(week);
+        const safeName = `Mau_lich_lam_viec_${tpl.week}.xlsx`;
+        res.setHeader('Content-Type', XLSX_MIME);
+        res.setHeader(
+          'Content-Disposition',
+          `attachment; filename="${safeName}"; filename*=UTF-8''${encodeURIComponent(safeName)}`
+        );
+        res.send(tpl.buffer);
+      } catch (err: any) {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  );
+
+  // Import .xlsx: khớp theo Mã NV; tạo ca DRAFT (như xếp tay), sửa ca tương lai
+  // khi file nêu mã khác, giữ ca trùng; trả báo cáo chi tiết từng dòng lỗi.
+  app.post(
+    '/schedules/excel-import',
+    authMiddleware,
+    requireRole(['ADMIN']),
+    validate({ body: excelImportBody }),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const report = await scheduleExcelService.importFromExcel(
+          req.body.file_base64,
+          req.body.week,
+          req.user!.id
+        );
+        broadcastUpdate('schedules', { action: 'excel-import', ...report });
+        res.json(report);
       } catch (err: any) {
         res.status(400).json({ error: err.message });
       }

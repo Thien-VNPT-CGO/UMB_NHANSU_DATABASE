@@ -2021,8 +2021,9 @@ export class SchedulesService {
    * thống TỰ ĐỘNG HỦY ngày OFF đó (ghi chú rõ, realtime + Sheets như mọi đổi
    * trạng thái). VD: A OFF ngày X, B nhường ca ngày X cho A — A đồng ý thì ngày
    * OFF của A mất, ca sang A, B nghỉ.
+   * (public cho ScheduleExcelService import lịch Excel tái dùng hành vi này.)
    */
-  private async cancelReceiverLeavesOnWorkDay(employeeId: string, date: string): Promise<string[]> {
+  async cancelReceiverLeavesOnWorkDay(employeeId: string, date: string): Promise<string[]> {
     const notes: string[] = [];
     try {
       const day = normSheetDate(date);
