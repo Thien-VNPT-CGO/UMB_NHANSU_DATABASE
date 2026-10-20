@@ -2023,6 +2023,28 @@ export class SchedulesService {
    * OFF của A mất, ca sang A, B nghỉ.
    * (public cho ScheduleExcelService import lịch Excel tái dùng hành vi này.)
    */
+  public notifyEmployeesRealtime(items: { employeeId: string; title: string; message: string }[]): number {
+    // Phát realtime thông báo cá nhân cho TỪNG nhân viên (dùng bởi nhập lịch
+    // Excel): lịch tuần mới/sửa ca — đúng pattern `system:notification` như khi
+    // xếp tay, nhân viên online thấy NGAY không cần tải lại trang.
+    if (!this.io || !Array.isArray(items)) return 0;
+    let sent = 0;
+    for (const it of items) {
+      if (!it?.employeeId) continue;
+      try {
+        this.io.to(`user:${it.employeeId}`).emit('system:notification', {
+          type: 'SYSTEM',
+          origin: 'ADMIN',
+          title: it.title,
+          message: it.message,
+          timestamp: new Date().toISOString(),
+        });
+        sent += 1;
+      } catch { /* non-fatal: thông báo cá nhân không chặn import */ }
+    }
+    return sent;
+  }
+
   async cancelReceiverLeavesOnWorkDay(employeeId: string, date: string): Promise<string[]> {
     const notes: string[] = [];
     try {

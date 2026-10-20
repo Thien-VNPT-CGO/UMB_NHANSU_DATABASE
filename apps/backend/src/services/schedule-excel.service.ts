@@ -39,6 +39,16 @@ type ImportReport = {
   kept: number;
   errors: ImportRowError[];
   warnings: string[];
+  notified: number;
+};
+
+type EmpImportSummary = {
+  employeeId: string;
+  maNV: string;
+  name: string;
+  created: string[];
+  updated: string[];
+  offNotes: string[];
 };
 
 /** "ca 1" | "CA1" | "1" → "CA_1"; ô trống → ''; khác → nguyên chuỗi (rồi báo lỗi). */
@@ -288,7 +298,24 @@ export class ScheduleExcelService {
     }
 
     const report = await this.runImportTask(ws, weekDates, monIso, actorId);
-    return { week: monIso, ...report };
+    // REALTIME: phát thông báo cá nhân cho TỪNG nhân viên bị file tác động
+    // (ca mới / ca đổi / OFF tự hủy) — nhân viên online thấy ngay, offline sẽ
+    // thấy lịch mới ngay lần mở cổng NV kế (dữ liệu đã chốt trong Sheets).
+    const perEmp: EmpImportSummary[] = (report as any).perEmp || [];
+    const items = perEmp.map((p) => {
+      const parts: string[] = [];
+      if (p.created.length) parts.push(`+${p.created.length} ca mới (${p.created.join(', ')})`);
+      if (p.updated.length) parts.push(`đổi ${p.updated.length} ca (${p.updated.join(', ')})`);
+      if (p.offNotes.length) parts.push(p.offNotes.join(' '));
+      return {
+        employeeId: p.employeeId,
+        title: `📅 Lịch tuần ${monIso} của bạn đã được cập nhật`,
+        message: `Admin vừa nhập lịch qua Excel: ${parts.join('; ') || 'không có thay đổi'}.`,
+      };
+    });
+    const notified = this.schedulesService.notifyEmployeesRealtime(items);
+    const { perEmp: _internal, ...clean } = report as any;
+    return { week: monIso, ...clean, notified };
   }
 
   /** Toàn bộ import nằm trong MỘT task hàng đợi single-writer. */
@@ -297,7 +324,7 @@ export class ScheduleExcelService {
     weekDates: string[],
     monIso: string,
     actorId: string
-  ): Promise<ImportReport> {
+  ): Promise<ImportReport & { perEmp: EmpImportSummary[] }> {
     const vnToday = this.vnToday();
     const task = await singleWriterQueue.enqueue({
       entityType: 'PHAN_CONG_CA',
@@ -309,6 +336,12 @@ export class ScheduleExcelService {
         let kept = 0;
         const errors: ImportRowError[] = [];
         const warnings: string[] = [];
+        // Tổng hợp thay đổi theo TỪNG nhân viên → phát realtime cuối import
+        const perEmp = new Map<string, EmpImportSummary>();
+        const empSummary = (id: string, code: string, name: string): EmpImportSummary => {
+          if (!perEmp.has(id)) perEmp.set(id, { employeeId: id, maNV: code, name, created: [], updated: [], offNotes: [] });
+          return perEmp.get(id)!;
+        };
 
         // (1) Nhân viên → map theo Mã NV (bỏ qua hoa/thường)
         const employees = await this.repo.listEmployees(undefined).catch(() => []);
@@ -408,6 +441,7 @@ export class ScheduleExcelService {
                 end_at: `${date}T${hours.endAt}`,
                 schedule_version: Number((cur as any).schedule_version || 1) + 1,
               });
+              empSummary(String(emp.employee_id), maNV, empName).updated.push(`${date.slice(5)} ${code}`);
               updated += 1;
               continue;
             }
@@ -428,16 +462,19 @@ export class ScheduleExcelService {
             const offNotes = await this.schedulesService
               .cancelReceiverLeavesOnWorkDay(String(emp.employee_id), date)
               .catch(() => [] as string[]);
+            const summary = empSummary(String(emp.employee_id), maNV, empName);
+            summary.created.push(`${date.slice(5)} ${code}`);
             if (offNotes.length > 0) {
+              summary.offNotes.push(...offNotes);
               warnings.push(`${maNV} ngày ${date}: ${offNotes.join(' ')}`);
             }
             created += 1;
           }
         }
 
-        return { created, updated, kept, errors, warnings };
+        return { created, updated, kept, errors, warnings, perEmp: Array.from(perEmp.values()) };
       },
     });
-    return (task as any).result as ImportReport;
+    return (task as any).result as ImportReport & { perEmp: EmpImportSummary[] };
   }
 }
