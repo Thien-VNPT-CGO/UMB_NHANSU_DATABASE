@@ -48,6 +48,7 @@ import {
   QrCode,
 } from 'lucide-react';
 import { RoleViews } from './components/RoleViews';
+import { BetaChip, BetaBanner, isBetaFeature } from './betaFeatures';
 import {
   playNotificationDing,
   playRingtoneFile,
@@ -2102,6 +2103,7 @@ export function App() {
               >
                 <Icon size={16} style={{ flexShrink: 0 }} />
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tab.label}</span>
+                {isBetaFeature(tab.id) && <BetaChip />}
               </button>
             );
           })}
@@ -2160,6 +2162,8 @@ export function App() {
 
       {/* MAIN CONTENT AREA */}
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        {/* Banner BETA: hiện khi chức năng đang mở nằm trong danh sách BetaFeatures */}
+        <BetaBanner tabId={activeTab} />
         {/* TOP BAR */}
         <header style={{
           height: '60px',
@@ -2988,6 +2992,7 @@ export function App() {
                       }}>
                         {t.count}
                       </span>
+                      {isBetaFeature((t as any).key || (t as any).id) && <BetaChip />}
                     </button>
                   );
                 })}

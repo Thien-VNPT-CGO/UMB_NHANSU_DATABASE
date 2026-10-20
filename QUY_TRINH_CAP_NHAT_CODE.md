@@ -49,6 +49,13 @@ bash deploy/vps/deploy.sh   # pull + build web + docker compose up backend + hea
 3. **Build kiểm thử trước khi push** từng chặng (backend `tsc` + admin/employee web build phải PASS).
 4. **Bỏ beta từ 2026-10-20**: khôi phục nhánh beta khi nào thì phải cấp lại domain + cert + Sheet riêng (tham khảo `deploy/beta/` trong lịch sử git).
 
+## Nhãn "BETA" trên chức năng mới (ux mẫu thử)
+
+- Khi ra tính năng mới: thêm 1 dòng vào `BETA_FEATURES` trong `apps/admin-web/src/betaFeatures.tsx` 
+  (ví dụ `'hr-schedule': { note: 'Nội dung đang chạy thử...' }`) → chip **BETA** hiện ở sidebar/top-strip 
+  và dải banner ám vàng hiện đầu trang khi click vào tab đó.
+- Khi tính năng chính thức: **xóa dòng đó** → toàn bộ nhãn BETA tự mất (không phải sửa chỗ khác).
+
 ## Lịch sử dẫn chiếu (tham khảo ứng xử đúng)
 
 - Deploy tính năng auto-sync 23 tab (lần đầu): đã đi thẳng IT → `vps` (commit `7c3ea0a`) **trước khi quy trình này được chốt**. Sau này mọi deploy đi theo chuỗi 5 chặng trên.
