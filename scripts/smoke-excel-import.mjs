@@ -150,3 +150,33 @@ console.log('IMPORT4:', JSON.stringify({ created: rep4.created, errors: rep4.err
 if ((rep4.errors || []).length !== 1 || !/CA_XYZ/.test(String(rep4.errors?.[0]?.message || ''))) fail('kỳ vọng lỗi CA_XYZ');
 
 console.log('\n*** SMOKE EXCEL PASS: template + import (tạo/giữ/đè/lỗi) + chuẩn hóa mã ca + giờ +07:00 OK ***');
+
+// 7) 2 CA CÙNG NGÀY qua ô "1+2" → tạo đủ 2 ca
+const wb5 = new ExcelJS.Workbook();
+const ws5 = wb5.addWorksheet('LICH');
+ws5.addRow(['MA_NV', 'HO_TEN', 'CHI_NHANH', ...dates]);
+for (const e of [E1, E2]) {
+  const src = sheetIn.getRow(String(e.employee_code) === E1.employee_code ? 2 : 3);
+  ws5.addRow([e.employee_code, e.full_name || '', e.default_branch_id || '', ...Array.from({ length: 7 }, (_, i) => src.getCell(4 + i).value ?? null)]);
+}
+const r5 = ws5.getRow(3); // NV2
+r5.getCell(7).value = '1+2'; // 2026-11-05 (T5): 2 ca CA_1 + CA_2
+const buf5 = Buffer.from(await wb5.xlsx.writeBuffer());
+const rep5 = await svc.importFromExcel(buf5.toString('base64'), WEEK_MON, 'smoke-admin');
+console.log('IMPORT5 (2 ca/ngày):', JSON.stringify({ created: rep5.created, updated: rep5.updated, kept: rep5.kept, warn: rep5.warnings?.length }));
+if (rep5.created !== 2) fail(`2 ca/ngày: created=${rep5.created} kỳ vọng 2`);
+const day5 = (await repo.getShiftsForWeek('*', WEEK_MON))
+  .filter((s) => String(s.employee_id) === String(E2.employee_id) && String(s.date) === '2026-11-05' && String(s.status) !== 'CANCELLED')
+  .map((s) => String(s.shift_code)).sort();
+if (day5.join(',') !== 'CA_1,CA_2') fail(`2 ca/ngày repo: ${day5.join(',')}`);
+
+// 8) Nhập lại ô "1+2" như nhau → kept +2, không đẻ ca thừa
+const rep6 = await svc.importFromExcel(buf5.toString('base64'), WEEK_MON, 'smoke-admin');
+console.log('IMPORT6 (nhập lại 2 ca):', JSON.stringify({ created: rep6.created, kept: rep6.kept }));
+if (rep6.created !== 0 || rep6.kept < 2) fail(`nhập lại 2 ca: created=${rep6.created} kept=${rep6.kept}`);
+const day5b = (await repo.getShiftsForWeek('*', WEEK_MON))
+  .filter((s) => String(s.employee_id) === String(E2.employee_id) && String(s.date) === '2026-11-05' && String(s.status) !== 'CANCELLED')
+  .map((s) => String(s.shift_code)).sort();
+if (day5b.join(',') !== 'CA_1,CA_2') fail(`nhập lại 2 ca đẻ thừa: ${day5b.join(',')}`);
+
+console.log('\n*** SMOKE PASS ĐẦY ĐỦ (kể cả 2 ca/ngày "1+2") ***');

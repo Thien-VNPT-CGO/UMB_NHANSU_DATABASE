@@ -8347,7 +8347,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <button className="btn-secondary" style={{ padding: '4px 12px' }} onClick={() => setXlOpen(false)}>Đóng</button>
                 </div>
                 <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px', lineHeight: 1.6 }}>
-                  Bước 1: tải file mẫu (điền sẵn Mã NV / Họ tên / Chi nhánh + 7 ngày ISO của tuần). Bước 2: điền ca vào từng ô — <b>CA_1 (07–12), CA_2 (12–18), CA_3 (18–23)</b>, ô trống = không xếp ca. Bước 3: chọn file .xlsx rồi "Xác nhận nhập". Ca nhập là <b>nháp (DRAFT)</b> — bấm "Phát Hành Lịch (PUBLISH)" để duyệt như xếp tay.
+                  Bước 1: tải file mẫu (điền sẵn Mã NV / Họ tên / Chi nhánh + 7 ngày ISO của tuần). Bước 2: điền ca vào từng ô — <b>CA_1 (07–12), CA_2 (12–18), CA_3 (18–23)</b>, nhân viên làm 2 ca ghi <b>CA_1+CA_2</b> (hoặc 1+2), ô trống = không xếp ca. Bước 3: chọn file .xlsx rồi "Xác nhận nhập". Ca nhập là <b>nháp (DRAFT)</b> — bấm "Phát Hành Lịch (PUBLISH)" để duyệt như xếp tay.
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '14px' }}>
                   <div>

@@ -52,7 +52,7 @@ type EmpImportSummary = {
 };
 
 /** "ca 1" | "CA1" | "1" → "CA_1"; ô trống → ''; khác → nguyên chuỗi (rồi báo lỗi). */
-function normalizeCode(v: ExcelJS.CellValue): string {
+function normalizeCode(v: string): string {
   const t = String(v ?? '')
     .trim()
     .toUpperCase()
@@ -60,6 +60,21 @@ function normalizeCode(v: ExcelJS.CellValue): string {
   if (/^CA_?[123]$/.test(t)) return `CA_${t.slice(-1)}`;
   if (t === '1' || t === '2' || t === '3') return `CA_${t}`;
   return t;
+}
+
+/**
+ * Tách 1 ô ca thành danh sách mã — hỗ trợ NHÂN VIÊN LÀM 2 CA CÙNG NGÀY:
+ *   "CA_1+CA_2" | "1+2" | "CA_1,CA_2" | "1/2" → ['CA_1','CA_2']
+ * Ô 1 mã trả mảng 1 phần tử; ô trống → [].
+ */
+function parseCellCodes(v: ExcelJS.CellValue): string[] {
+  const raw = String(v ?? '').trim();
+  if (!raw) return [];
+  const parts = raw
+    .split(/[+/,;|]+/)
+    .map((p) => normalizeCode(p))
+    .filter(Boolean);
+  return [...new Set(parts)];
 }
 
 export class ScheduleExcelService {
@@ -174,16 +189,17 @@ export class ScheduleExcelService {
       }
     }
 
-    // Dropdown CA_1/CA_2/CA_3 (kể cả dòng trống dự phòng bên dưới)
-    // (exceljs typings không khai báo dataValidations — runtime có sẵn.)
+    // Dropdown CA_1/CA_2/CA_3 (kể cả dòng trống dự phòng bên dưới).
+    // errorStyle 'warning' (không 'stop') để cho phép ghi 2 ca/ngày "CA_1+CA_2"
+    // — Excel chỉ cảnh báo rồi vẫn nhận giá trị combo.
     (ws as any).dataValidations.add('D2:J300', {
       type: 'list',
       allowBlank: true,
       formulae: ['"CA_1,CA_2,CA_3"'],
       showErrorMessage: true,
-      errorStyle: 'stop',
-      errorTitle: 'Ma ca sai',
-      error: `Chi nhap: ${VALID_CODES.join(', ')}`,
+      errorStyle: 'warning',
+      errorTitle: 'Ma ca?',
+      error: `Ma le: ${VALID_CODES.join(', ')} — 2 ca/ngày ghi "CA_1+CA_2".`,
     });
 
     // Sheet hướng dẫn
@@ -194,6 +210,7 @@ export class ScheduleExcelService {
       '1. Giữ nguyên DÒNG 1 (tiêu đề): MA_NV, HO_TEN, CHI_NHANH và 7 ngày YYYY-MM-DD từ thứ Hai tới Chủ Nhật.',
       '2. Chỉ điền ở sheet LICH, từ dòng 2 trở đi. Mỗi nhân viên 1 dòng (đã điền sẵn danh sách).',
       '3. Ô ca: gõ CA_1 (07-12) / CA_2 (12-18) / CA_3 (18-23) — có dropdown gợi ý. Ô TRỐNG = không xếp ca.',
+      '   • Nhân viên làm 2 ca cùng ngày: ghi 2 mã cách nhau dấu cộng, ví dụ CA_1+CA_2 (hoặc 1+2).',
       '4. Không đổi cột MA_NV. Nhân viên mới chưa có trong file: bổ sung dòng mới với Mã NV đúng (UBM_NVxxxxxx).',
       '5. Xuất file giữ nguyên .xlsx, rồi bấm "Nhập lịch Excel" trên cổng Admin, chọn đúng tuần rồi Xác nhận nhập.',
       '',
@@ -386,89 +403,108 @@ export class ScheduleExcelService {
 
           for (let i = 0; i < 7; i++) {
             const date = weekDates[i];
-            const code = normalizeCode(row.getCell(4 + i).value);
-            if (!code) continue; // ô trống = không xếp ca
-            if (!VALID_CODES.includes(code)) {
+            // 1 ô = 1..n mã ca ("CA_1", "CA_1+CA_2", "1+2", "1,2"...) — trống = nghỉ
+            const targets = parseCellCodes(row.getCell(4 + i).value);
+            if (targets.length === 0) continue; // ô trống = không xếp ca
+            for (const bad of targets.filter((c) => !VALID_CODES.includes(c))) {
               errors.push({
                 row: r,
                 maNV,
                 name: empName,
                 date,
-                message: `Mã ca "${code}" không hợp lệ (dùng CA_1/CA_2/CA_3)`,
+                message: `Mã ca "${bad}" không hợp lệ (dùng CA_1/CA_2/CA_3, 2 ca ghi CA_1+CA_2)`,
               });
-              continue;
             }
+            const validTargets = targets.filter((c) => VALID_CODES.includes(c));
+            if (validTargets.length === 0) continue;
 
             const sameDay = (
               byEmpDate.get(`${emp.employee_id}|${date}|${canonicalBranch(branchId)}`) || []
             ).filter((s: any) => String(s.status || '') !== 'CANCELLED');
 
-            if (sameDay.some((s: any) => String(s.shift_code) === code)) {
-              kept += 1; // đã đúng ca → giữ nguyên (bảo toàn điểm danh/byt status)
-              continue;
+            // (a) Ca đã đúng theo file → giữ nguyên (bảo toàn điểm danh/version)
+            const targetSet = new Set(validTargets);
+            for (const s of sameDay) {
+              if (targetSet.has(String(s.shift_code))) {
+                kept += 1;
+                targetSet.delete(String(s.shift_code));
+              }
             }
-            if (sameDay.length > 0) {
-              // Có ca khác mã: chỉ sửa tương lai + chưa điểm danh
-              if (date <= vnToday) {
-                errors.push({
-                  row: r,
-                  maNV,
-                  name: empName,
-                  date,
-                  message: `Ngày đã qua: hiện là ${sameDay[0].shift_code} — không sửa qua Excel`,
+            const remaining = validTargets.filter((c) => targetSet.has(c));
+            // (b) Ca hiện có KHÁC mã trong file → "tiêu hao": đè lần lượt từng ca
+            const consumable = sameDay.filter((s: any) => !validTargets.includes(String(s.shift_code)));
+            let ci = 0;
+            for (const code of remaining) {
+              const cur = consumable[ci];
+              if (cur) {
+                ci += 1;
+                if (date <= vnToday) {
+                  errors.push({
+                    row: r,
+                    maNV,
+                    name: empName,
+                    date,
+                    message: `Ngày đã qua: hiện là ${cur.shift_code} — không sửa qua Excel`,
+                  });
+                  continue;
+                }
+                const hasAttend = await this.repo
+                  .getAttendanceEvents(String(emp.employee_id), date)
+                  .then((ev) => (ev || []).length > 0)
+                  .catch(() => true);
+                if (hasAttend) {
+                  errors.push({
+                    row: r,
+                    maNV,
+                    name: empName,
+                    date,
+                    message: `Đã có điểm danh ngày ${date} — không đổi ca qua Excel`,
+                  });
+                  continue;
+                }
+                const hours = this.hoursOf(code)!;
+                await this.repo.updateShiftAssignment(String(cur.assignment_id), {
+                  shift_code: code as ShiftCode,
+                  start_at: `${date}T${hours.startAt}`,
+                  end_at: `${date}T${hours.endAt}`,
+                  schedule_version: Number((cur as any).schedule_version || 1) + 1,
                 });
+                empSummary(String(emp.employee_id), maNV, empName).updated.push(`${date.slice(5)} ${code}`);
+                updated += 1;
                 continue;
               }
-              const hasAttend = await this.repo
-                .getAttendanceEvents(String(emp.employee_id), date)
-                .then((ev) => (ev || []).length > 0)
-                .catch(() => true);
-              if (hasAttend) {
-                errors.push({
-                  row: r,
-                  maNV,
-                  name: empName,
-                  date,
-                  message: `Đã có điểm danh ngày ${date} — không đổi ca qua Excel`,
-                });
-                continue;
-              }
-              const cur = sameDay[0];
+
+              // (c) Không còn ca hiện có để đè → tạo ca mới (DRAFT, tự hủy OFF trúng ngày)
               const hours = this.hoursOf(code)!;
-              await this.repo.updateShiftAssignment(String(cur.assignment_id), {
+              await this.repo.createShiftAssignment({
+                assignment_id: `SHIFT_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+                employee_id: String(emp.employee_id),
+                branch_id: branchId,
                 shift_code: code as ShiftCode,
+                date,
                 start_at: `${date}T${hours.startAt}`,
                 end_at: `${date}T${hours.endAt}`,
-                schedule_version: Number((cur as any).schedule_version || 1) + 1,
+                status: 'DRAFT',
+                schedule_version: 1,
               });
-              empSummary(String(emp.employee_id), maNV, empName).updated.push(`${date.slice(5)} ${code}`);
-              updated += 1;
-              continue;
+              const offNotes = await this.schedulesService
+                .cancelReceiverLeavesOnWorkDay(String(emp.employee_id), date)
+                .catch(() => [] as string[]);
+              const summary = empSummary(String(emp.employee_id), maNV, empName);
+              summary.created.push(`${date.slice(5)} ${code}`);
+              if (offNotes.length > 0) {
+                summary.offNotes.push(...offNotes);
+                warnings.push(`${maNV} ngày ${date}: ${offNotes.join(' ')}`);
+              }
+              created += 1;
             }
-
-            // Tạo ca mới — hành xử như "Bổ Sung Lịch NV": DRAFT + tự hủy OFF trúng ngày
-            const hours = this.hoursOf(code)!;
-            await this.repo.createShiftAssignment({
-              assignment_id: `SHIFT_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-              employee_id: String(emp.employee_id),
-              branch_id: branchId,
-              shift_code: code as ShiftCode,
-              date,
-              start_at: `${date}T${hours.startAt}`,
-              end_at: `${date}T${hours.endAt}`,
-              status: 'DRAFT',
-              schedule_version: 1,
-            });
-            const offNotes = await this.schedulesService
-              .cancelReceiverLeavesOnWorkDay(String(emp.employee_id), date)
-              .catch(() => [] as string[]);
-            const summary = empSummary(String(emp.employee_id), maNV, empName);
-            summary.created.push(`${date.slice(5)} ${code}`);
-            if (offNotes.length > 0) {
-              summary.offNotes.push(...offNotes);
-              warnings.push(`${maNV} ngày ${date}: ${offNotes.join(' ')}`);
+            // (d) Ca hiện có thừa ra (file không nhắc tới) → giữ + cảnh báo, không tự xóa
+            const leftovers = consumable.slice(ci);
+            for (const lo of leftovers) {
+              warnings.push(
+                `${maNV} ngày ${date}: ca hiện có ${lo.shift_code} không có trong file — giữ nguyên (muốn gỡ hãy xóa ca trên lưới lịch)`
+              );
             }
-            created += 1;
           }
         }
 
