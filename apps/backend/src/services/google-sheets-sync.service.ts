@@ -208,6 +208,33 @@ export class GoogleSheetsSyncService {
   private deletedEmployeeIds = new Map<string, number>();
   /** Tombstone sự kiện điểm danh vừa xóa (GPS vượt): pull trước khi push xóa kịp
    *  mà đọc lại dòng cũ thì bỏ qua, tránh hồi sinh trong ~120s. */
+  // ===== BETA: TỰ CHIA TAB CHỐNG PHÌNH (partition) =====
+  // Tab chỉ-ghi-thêm (append-only) phình theo thời gian: chấm công, kho lưu
+  // trữ tuần, outbox thông báo, audit. Tab >VẠN dòng -> đọc (batchGet) value
+  // nặng + append chậm dần. Khi tab đủ ngưỡng -> tự tạo tab `_P2`, `_P3`...
+  // (cùng header) rồi ghi tiếp; khi đọc về bộ nhớ GỘP các part theo thứ tự
+  // nên phần còn lại của app không cần biết. 8 triệu ô/spreadsheet là giới
+  // hạn Google — ước lượng ô xem estimateCellUsage (/health + cảnh báo).
+  public static readonly PARTITION_ROW_LIMIT = 15_000;
+  public static readonly PARTITION_TABS = new Set<string>([
+    'SU_KIEN_DIEM_DANH',
+    'LUUTRU_CHAMCONG_TUAN',
+    'THONGBAO_GUI',
+    'AUDIT_LOG',
+  ]);
+
+  /** Cache số dòng dữ liệu từng tab (không đếm mỗi lần ghi; thiếu = không xoay). */
+  private partRowCounts = new Map<string, number>();
+  /** Cache danh sách tab hiện hữu của spreadsheet (10 phút). */
+  private tabListCache: { at: number; titles: string[] } | null = null;
+  /** Cache ước lượng ô đã dùng (6 giờ). */
+  private cellUsageCache: { at: number; data: { cellsUsed: number; cellsLimit: number; pct: number; level: 'OK' | 'WARN' | 'CRITICAL'; measuredTabs: number } } | null = null;
+
+  /** Health endpoint đọc giá trị đã cache (không phát API call). */
+  public getCachedCellUsage() {
+    return this.cellUsageCache?.data ?? null;
+  }
+
   private deletedEventIds = new Map<string, number>();
 
   public markAttendanceEventDeleted(eventId: string) {
@@ -736,7 +763,9 @@ export class GoogleSheetsSyncService {
       const counts: any = {};
 
       // Đọc toàn bộ các tabs dữ liệu cùng lúc trong 1 round-trip (batchGet realtime)
-      const batch = await this.readTabsBatch([
+      // BETA partition: phát hiện thêm các tab part (_P2, _P3...) rồi đọc nốt;
+      // sau batch, GỘP part về tab gốc theo thứ tự -> phần parse bên dưới không cần biết.
+      const baseTabs = [
         'NHAN_VIEN_MASTER',
         'TAI_KHOAN_NHAN_VIEN',
         'DANH_SACH_CHI_NHANH',
@@ -757,7 +786,32 @@ export class GoogleSheetsSyncService {
         'LICH_SU_GIAI_DOAN',
         'CONG_THUC_LUONG',
         'DULIEU_LUONG_KY',
-      ]);
+      ];
+      const partTitles: string[] = [];
+      try {
+        const titles = await this.listSpreadsheetTabs();
+        for (const base of GoogleSheetsSyncService.PARTITION_TABS) {
+          for (let n = 2; n < 200; n++) {
+            const t = `${base}_P${n}`;
+            if (titles.includes(t)) partTitles.push(t);
+            else break;
+          }
+        }
+      } catch { /* lỗi metadata -> không có part, hành vi cũ */ }
+      const batch = await this.readTabsBatch([...baseTabs, ...partTitles]);
+      for (const base of GoogleSheetsSyncService.PARTITION_TABS) {
+        if (!Array.isArray(batch[base])) continue; // tab không nằm trong pull (VD LUUTRU/AUDIT đọc riêng)
+        const parts: string[][][] = [];
+        for (let n = 2; n < 200; n++) {
+          const t = `${base}_P${n}`;
+          if (Array.isArray(batch[t])) parts.push(batch[t]);
+          else break;
+        }
+        if (parts.length) {
+          batch[base] = [...(batch[base] || []), ...parts.flat()];
+          console.log(`[GoogleSheetsSyncService] Pull ${base}: gộp ${parts.length} tab part`);
+        }
+      }
 
       // Đọc lỗi/quota trả về toàn rỗng trong khi bộ nhớ đang có dữ liệu thật
       // -> GIỮ NGUYÊN bộ nhớ, không ghi đè rỗng (tránh mất dữ liệu + login fail oan).
@@ -2188,7 +2242,13 @@ export class GoogleSheetsSyncService {
    */
   private async pushTabSafe(details: any, key: string, title: string, headers: string[], rows: any[][]): Promise<void> {
     try {
-      await this.overwriteSheetData(title, headers, rows);
+      // BETA partition: tab khai báo partition -> ghi đè qua các part (không
+      // xoáy toàn bộ lịch sử về 1 tab gốc phình to như cũ).
+      if (GoogleSheetsSyncService.PARTITION_TABS.has(title)) {
+        await this.rewritePartitionedTab(title, rows);
+      } else {
+        await this.overwriteSheetData(title, headers, rows);
+      }
       details[key] = rows.length;
     } catch (err: any) {
       const msg = err?.message || String(err);
@@ -2813,7 +2873,8 @@ export class GoogleSheetsSyncService {
       e.is_late ? 'YES' : '', e.is_early ? 'YES' : '', Number(e.minutes_deviation) || 0,
       e.fine_tier || 'NONE', Number(e.fine_amount) || 0,
     ]);
-    await this.overwriteSheetData('SU_KIEN_DIEM_DANH', SHEETS_DEFINITIONS.find(d => d.title === 'SU_KIEN_DIEM_DANH')!.headers, rows);
+    // BETA partition: tab SU_KIEN_DIEM_DANH có thể đã chia part -> ghi qua các part
+    await this.rewritePartitionedTab('SU_KIEN_DIEM_DANH', rows);
     return rows.length;
   }
 
@@ -3283,10 +3344,9 @@ export class GoogleSheetsSyncService {
       ]);
     if (rows.length > 0 && this.sheetsClient) {
       try {
-        const existing = await this.readTabsBatch(['LUUTRU_CHAMCONG_TUAN']).catch(() => ({ LUUTRU_CHAMCONG_TUAN: [] as string[][] }));
-        const oldRows = existing?.['LUUTRU_CHAMCONG_TUAN'] || [];
-        const def = SHEETS_DEFINITIONS.find(dd => dd.title === 'LUUTRU_CHAMCONG_TUAN')!;
-        await this.overwriteSheetData('LUUTRU_CHAMCONG_TUAN', def.headers, [...oldRows, ...rows]);
+        // BETA partition: đọc cả các tab part (_P2..) rồi ghi đè lại qua chain
+        const oldRows = await this.readPartitionedRows('LUUTRU_CHAMCONG_TUAN');
+        await this.rewritePartitionedTab('LUUTRU_CHAMCONG_TUAN', [...oldRows, ...rows]);
       } catch (e: any) {
         console.warn('[archive] Ghi tab lưu trữ thất bại:', e?.message || e);
       }
@@ -3323,8 +3383,8 @@ export class GoogleSheetsSyncService {
    * client_time trả về dạng wall-clock VN (+07:00) để frontend khớp ngày như sự kiện live.
    */
   public async getArchivedAttendanceEvents(fromIso: string, toIso: string): Promise<any[]> {
-    const batch = await this.readTabsBatch(['LUUTRU_CHAMCONG_TUAN']).catch(() => ({ LUUTRU_CHAMCONG_TUAN: [] as string[][] }));
-    const rows = batch?.['LUUTRU_CHAMCONG_TUAN'] || [];
+    // BETA partition: gộp mọi tab part của kho lưu trữ (nếu tab đã phình chia)
+    const rows = await this.readPartitionedRows('LUUTRU_CHAMCONG_TUAN').catch(() => []);
     const out: any[] = [];
     const vnDayOfInstant = (t: number) => new Date(t + 7 * 3_600_000).toISOString().slice(0, 10);
     for (const r of rows) {
@@ -3369,14 +3429,13 @@ export class GoogleSheetsSyncService {
   public async deleteArchivedAttendanceEvent(eventId: string): Promise<{ employee_id: string; client_time: string; type: string } | null> {
     const id = String(eventId || '').trim();
     if (!id || !this.sheetsClient) return null;
-    const batch = await this.readTabsBatch(['LUUTRU_CHAMCONG_TUAN']).catch(() => ({ LUUTRU_CHAMCONG_TUAN: [] as string[][] }));
-    const rows = batch?.['LUUTRU_CHAMCONG_TUAN'] || [];
+    // BETA partition: đọc gộp mọi part, xóa rồi ghi đè lại qua chain part
+    const rows = await this.readPartitionedRows('LUUTRU_CHAMCONG_TUAN').catch(() => [] as string[][]);
     const idx = rows.findIndex(r => String((r as any)?.[0] || '').trim() === id);
     if (idx < 0) return null;
     const gone = rows[idx] || [];
     const kept = rows.filter((_, i) => i !== idx);
-    const def = SHEETS_DEFINITIONS.find(dd => dd.title === 'LUUTRU_CHAMCONG_TUAN')!;
-    await this.overwriteSheetData('LUUTRU_CHAMCONG_TUAN', def.headers, kept);
+    await this.rewritePartitionedTab('LUUTRU_CHAMCONG_TUAN', kept);
     const clientRaw = String(gone[12] || gone[11] || '').trim().replace(/^'/, '');
     return {
       employee_id: String(gone[2] || '').trim(),
@@ -3590,25 +3649,203 @@ export class GoogleSheetsSyncService {
   /**
    * Thêm một dòng mới vào cuối Sheet tab (Append)
    */
+  // ================= BETA partition helpers =================
+  private invalidateTabListCache() {
+    this.tabListCache = null;
+  }
+
+  /** Danh sách title tab hiện hữu (metadata; cache 10 phút). */
+  public async listSpreadsheetTabs(): Promise<string[]> {
+    if (this.tabListCache && Date.now() - this.tabListCache.at < 600_000) return this.tabListCache.titles;
+    const res = await this.sheetsCall('meta.tabs', () =>
+      this.sheetsClient!.spreadsheets.get({
+        spreadsheetId: this.spreadsheetId,
+        fields: 'sheets.properties.title',
+      })
+    );
+    const titles = (res.data.sheets || []).map((s: any) => s.properties?.title || '').filter(Boolean);
+    this.tabListCache = { at: Date.now(), titles };
+    return titles;
+  }
+
+  /** Số dòng dữ liệu của tab (cache; -1 = không đo được -> KHÔNG xoay, an toàn). */
+  private async getDataRowCount(title: string): Promise<number> {
+    if (this.partRowCounts.has(title)) return this.partRowCounts.get(title)!;
+    try {
+      const res = await this.sheetsCall(`count.${title}`, () =>
+        this.sheetsClient!.spreadsheets.values.get({
+          spreadsheetId: this.spreadsheetId,
+          range: `'${title}'!A2:A`,
+          majorDimension: 'COLUMNS' as any,
+        })
+      );
+      const n = (res.data.values?.[0] as any[] | undefined)?.length ?? 0;
+      this.partRowCounts.set(title, n);
+      return n;
+    } catch {
+      return -1; // lỗi quota/404 -> không chắc số dòng -> giữ hành vi cũ
+    }
+  }
+
+  private bumpRowCount(title: string, delta = 1) {
+    if (this.partRowCounts.has(title)) this.partRowCounts.set(title, this.partRowCounts.get(title)! + delta);
+  }
+
+  /** Chọn tab đích khi append vào tab khai báo partition (base đủ ngưỡng -> part). */
+  private async pickPartitionTarget(base: string): Promise<string> {
+    const limit = GoogleSheetsSyncService.PARTITION_ROW_LIMIT;
+    const baseCount = await this.getDataRowCount(base);
+    if (baseCount < 0 || baseCount < limit) return base;
+    let n = 2;
+    while (n < 200) {
+      const title = `${base}_P${n}`;
+      const titles = await this.listSpreadsheetTabs();
+      if (!titles.includes(title)) {
+        await this.createPartitionTab(base, title);
+        this.partRowCounts.set(title, 0);
+        return title;
+      }
+      const c = await this.getDataRowCount(title);
+      if (c < 0) return title;
+      if (c < limit) return title;
+      n++;
+    }
+    return base; // an toàn hiếm hoi: >200 part
+  }
+
+  /** Tạo tab partition + header giống hệt tab gốc. */
+  private async createPartitionTab(base: string, title: string): Promise<void> {
+    const headers = SHEETS_DEFINITIONS.find(d => d.title === base)?.headers || [];
+    await this.sheetsCall(`part.add.${title}`, () =>
+      this.sheetsClient!.spreadsheets.batchUpdate({
+        spreadsheetId: this.spreadsheetId,
+        requestBody: { requests: [{ addSheet: { properties: { title, gridProperties: { frozenRowCount: 1 } } } }] },
+      })
+    );
+    if (headers.length) {
+      await this.sheetsCall(`part.header.${title}`, () =>
+        this.sheetsClient!.spreadsheets.values.update({
+          spreadsheetId: this.spreadsheetId,
+          range: `'${title}'!A1:${GoogleSheetsSyncService.colLetter(headers.length)}1`,
+          valueInputOption: 'USER_ENTERED',
+          requestBody: { values: [headers] },
+        })
+      );
+    }
+    this.invalidateTabListCache();
+    console.log(`[Partition] Đã tạo tab phân mảnh mới: ${title} (ngưỡng xoay ${GoogleSheetsSyncService.PARTITION_ROW_LIMIT} dòng)`);
+  }
+
+  /** Chuỗi các tab của 1 base: [base, _P2, _P3...] chỉ gồm tab đang tồn tại. */
+  private async partitionChain(base: string): Promise<string[]> {
+    const titles = await this.listSpreadsheetTabs();
+    const chain = [base];
+    for (let n = 2; n < 200; n++) {
+      const t = `${base}_P${n}`;
+      if (titles.includes(t)) chain.push(t);
+      else break;
+    }
+    return chain;
+  }
+
+  /** Đọc TOÀN BỘ dòng dữ liệu của 1 tab partition (gộp mọi part theo thứ tự, 1 batchGet). */
+  public async readPartitionedRows(base: string): Promise<string[][]> {
+    const chain = await this.partitionChain(base).catch(() => [base]);
+    const batch = await this.readTabsBatch(chain).catch(() => ({} as Record<string, string[][]>));
+    return chain.flatMap(t => batch[t] || []);
+  }
+
+  /**
+   * Ghi đè TOÀN BỘ dữ liệu của 1 tab partition: chia hàng theo ngưỡng, ghi
+   * tuần tự vào base rồi các part (thừa -> clear trống, thiếu -> tự tạo).
+   */
+  private async rewritePartitionedTab(base: string, rows: any[][]): Promise<void> {
+    const headers = SHEETS_DEFINITIONS.find(d => d.title === base)?.headers || [];
+    const limit = GoogleSheetsSyncService.PARTITION_ROW_LIMIT;
+    const chunks: any[][][] = [];
+    for (let i = 0; i < rows.length; i += limit) chunks.push(rows.slice(i, i + limit));
+    const chain = await this.partitionChain(base);
+    while (chain.length < chunks.length) {
+      const title = `${base}_P${chain.length + 1}`;
+      await this.createPartitionTab(base, title);
+      this.partRowCounts.set(title, 0);
+      chain.push(title);
+    }
+    for (let i = 0; i < chain.length; i++) {
+      const chunk = i < chunks.length ? chunks[i] : [];
+      await this.overwriteSheetData(chain[i], headers, chunk);
+      this.partRowCounts.set(chain[i], chunk.length);
+    }
+    if (chunks.length > 1) {
+      console.log(`[Partition] ${base}: ghi lại ${rows.length} dòng vào ${chunks.length} tab part`);
+    }
+  }
+
+  /**
+   * Ước lượng ô đã dùng của spreadsheet (Σ dòng dữ liệu × số cột header,
+   * 1 batchGet đo toàn bộ tab). Giới hạn Google = 10 triệu ô/spreadsheet —
+   * hệ thống cảnh báo Admin trước ở 75% (6 triệu) và 90%.
+   */
+  public async estimateCellUsage(): Promise<{ cellsUsed: number; cellsLimit: number; pct: number; level: 'OK' | 'WARN' | 'CRITICAL'; measuredTabs: number }> {
+    const limit = 10_000_000; // giới hạn Google thực tế
+    if (this.cellUsageCache && Date.now() - this.cellUsageCache.at < 21_600_000) return this.cellUsageCache.data;
+    const titles = await this.listSpreadsheetTabs().catch(() => [] as string[]);
+    const measurable = titles.filter(t => {
+      const b = t.replace(/_P\d+$/, '');
+      return GoogleSheetsSyncService.PARTITION_TABS.has(t) || GoogleSheetsSyncService.PARTITION_TABS.has(b) || SHEETS_DEFINITIONS.some(d => d.title === t);
+    });
+    let cellsUsed = 0;
+    if (measurable.length) {
+      const batch = await this.readTabsBatch(measurable).catch(() => ({} as Record<string, string[][]>));
+      for (const t of measurable) {
+        const b = t.replace(/_P\d+$/, '');
+        const cols = SHEETS_DEFINITIONS.find(d => d.title === b || d.title === t)?.headers?.length || 12;
+        cellsUsed += (batch[t]?.length || 0) * cols;
+      }
+    }
+    const pct = Math.min(100, Math.round((cellsUsed / limit) * 1000) / 10);
+    const level: 'OK' | 'WARN' | 'CRITICAL' = pct >= 90 ? 'CRITICAL' : pct >= 75 ? 'WARN' : 'OK';
+    const data = {
+      cellsUsed,
+      cellsLimit: limit,
+      pct,
+      level,
+      measuredTabs: measurable.length,
+    };
+    this.cellUsageCache = { at: Date.now(), data };
+    return data;
+  }
+
   public async appendRow(sheetTitle: string, row: any[]): Promise<boolean> {
     if (!this.isConfigured || !this.sheetsClient) return false;
 
+    // BETA partition: tab phình -> ghi sang part kế tiếp thay vì tab gốc
+    let target = sheetTitle;
+    if (GoogleSheetsSyncService.PARTITION_TABS.has(sheetTitle)) {
+      try {
+        target = await this.pickPartitionTarget(sheetTitle);
+      } catch {
+        target = sheetTitle; // lỗi metadata -> hành vi cũ
+      }
+    }
+
     try {
-      await this.sheetsCall(`append.${sheetTitle}`, () =>
+      await this.sheetsCall(`append.${target}`, () =>
         this.sheetsClient!.spreadsheets.values.append({
           spreadsheetId: this.spreadsheetId,
-          range: `'${sheetTitle}'!A:A`,
+          range: `'${target}'!A:A`,
           valueInputOption: 'USER_ENTERED',
           requestBody: {
             values: [row],
           },
         })
       );
+      this.bumpRowCount(target);
       this.markWriteOk();
       return true;
     } catch (err) {
-      this.markWriteFail(`append ${sheetTitle}`, err);
-      console.error(`[GoogleSheetsSyncService] Lỗi append row vào ${sheetTitle}:`, err);
+      this.markWriteFail(`append ${target}`, err);
+      console.error(`[GoogleSheetsSyncService] Lỗi append row vào ${target}:`, err);
       return false;
     }
   }

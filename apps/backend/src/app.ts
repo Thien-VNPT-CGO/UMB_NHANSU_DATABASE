@@ -372,12 +372,20 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         };
       }
     } catch { /* chỉ chẩn đoán, không chặn */ }
+    // BETA partition: ước lượng ô đã dùng (cache 6h, best-effort, KHÔNG chặn
+    // health) — giới hạn Google 10 triệu ô/spreadsheet; cảnh báo trước 75%/90%.
+    const syncService2 = (adapter as any).syncService;
+    let cellUsage: any = syncService2?.getCachedCellUsage?.() ?? null;
+    if (!cellUsage && syncService2?.estimateCellUsage) {
+      syncService2.estimateCellUsage().catch(() => null); // đo nền cho lần health sau
+    }
     res.json({
       status: 'UP',
       time: new Date().toISOString(),
       readiness: (adapter as any).getReadiness?.() || { ready: true },
       memory,
       sheetsStatus: adapter.getStatus(),
+      cellUsage,
     });
   });
 
@@ -4443,6 +4451,27 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           targetRoles: ['ADMIN'],
         });
       }
+      // BETA partition: kiểm tra hạn mức 10 triệu ô/spreadsheet — cảnh báo
+      // Admin trước khi đầy (Google chặn ghi khi chạm 10M ô). Tabs đã tự	chia
+      // part nên tốc độ rất chậm; nếu lặp cảnh báo thì làm bước "xoay file".
+      try {
+        const usage = await (adapter as any).syncService?.estimateCellUsage?.();
+        if (usage && usage.level !== 'OK') {
+          const crit = usage.level === 'CRITICAL';
+          broadcastNotification({
+            type: 'SYSTEM',
+            title: crit ? '🔴 Google Sheets sắp ĐẦY ô' : '🟡 Google Sheets đã dùng 75% hạn mức ô',
+            message: `Ước tính đã dùng ${Math.round(usage.cellsUsed).toLocaleString('vi-VN')}/${usage.cellsLimit.toLocaleString('vi-VN')} ô (${usage.pct}%) trên ${usage.measuredTabs} tab. ${
+              crit
+                ? 'GẦN CHẠM GIỚI HẠN 10 TRIỆU Ô — cần xoay sang file sheet mới sớm (liên hệ dev để chạy rotation).'
+                : 'Các tab lớn đã tự chia part nên tăng chậm — theo dõi thêm, chưa cần hành động.'
+            }`,
+            linkTab: 'hr-dashboard',
+            metadata: usage,
+            targetRoles: ['ADMIN'],
+          });
+        }
+      } catch { /* best-effort: không chặn backup */ }
       res.json({ ...r, vnToday, recorded: true });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
