@@ -3603,6 +3603,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         enabled: !!req.body?.enabled,
         from: req.body?.from,
         to: req.body?.to,
+        closeTime: req.body?.closeTime,
       });
       await adapter.recordAuditLog({
         actor_id: req.user!.id,

@@ -335,6 +335,7 @@ export const reRegConfigBody = z.object({
   enabled: z.boolean(),
   from: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ngày phải dạng YYYY-MM-DD').optional(),
   to: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ngày phải dạng YYYY-MM-DD').optional(),
+  closeTime: z.string().trim().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Giờ đóng phải dạng HH:mm (ví dụ 18:30)').optional(),
 });
 
 // NV thử việc TỰ ĐỔI CA (Ca làm ⇄ Nghỉ OFF): hệ thống tự duyệt ngay, không cần HR.

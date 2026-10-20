@@ -2320,6 +2320,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [rrCfg, setRrCfg] = useState<any>(null);
   const [rrFrom, setRrFrom] = useState('');
   const [rrTo, setRrTo] = useState('');
+  const [rrClose, setRrClose] = useState('23:59');
   const [rrBusy, setRrBusy] = useState(false);
   useEffect(() => {
     if (currentUser?.role !== 'ADMIN') return;
@@ -2327,6 +2328,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       setRrCfg(c);
       setRrFrom(String(c?.from || ''));
       setRrTo(String(c?.to || ''));
+      setRrClose(String(c?.closeTime || '23:59'));
     }).catch(() => null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser?.role]);
@@ -8317,10 +8319,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               )}
             </div>
             <p style={{ fontSize: '12px', color: 'var(--text-2)', margin: '8px 0', lineHeight: 1.5 }}>
-              Bật → cổng nhân viên hiện tab "Cập Nhật Ca" kèm <b>đồng hồ đếm ngược</b> đến hết ngày kết thúc
-              (23:59:59 giờ VN); tắt → tab ẩn khỏi cổng NV ngay (realtime). Nhân viên tự khai lại ca:
-              ca đã qua được bot chấm HOÀN THÀNH + cộng tiền ca, ca chưa tới chờ điểm danh; phiếu ghi tab
-              <b> PHIEU_NV_CAP_NHAT_CA</b> trên Google Sheets.
+              Bật → cổng nhân viên hiện tab "Cập Nhật Ca" kèm <b>đồng hồ đếm ngược</b> chạy đến đúng
+              <b> GIỜ ĐÓNG</b> ngày kết thúc (giờ VN); sau mốc đó server chặn gửi phiếu. Tắt → tab ẩn
+              khỏi cổng NV ngay (realtime). Nhân viên tự khai lại ca: ca đã qua được bot chấm HOÀN
+              THÀNH + cộng tiền ca, ca chưa tới chờ điểm danh; phiếu ghi tab <b>PHIEU_NV_CAP_NHAT_CA</b>
+              trên Google Sheets.
             </p>
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
               <div>
@@ -8341,6 +8344,16 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   style={{ fontSize: '13px', padding: '7px 10px', borderRadius: '8px', border: '1px solid var(--border)' }}
                 />
               </div>
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-2)', display: 'block' }}>GIỜ ĐÓNG</label>
+                <input
+                  type="time"
+                  value={rrClose}
+                  onChange={(e) => setRrClose(e.target.value)}
+                  title="Giờ đóng phiếu ngày kết thúc (giờ Việt Nam) — cổng NV đếm ngược đến đúng mốc này"
+                  style={{ fontSize: '13px', padding: '7px 10px', borderRadius: '8px', border: '1px solid var(--border)' }}
+                />
+              </div>
               <button
                 className="btn-primary"
                 disabled={rrBusy}
@@ -8352,13 +8365,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     const next = !rrCfg?.enabled;
                     const c: any = await apiRequest('/admin/shift-re-registration/config', {
                       method: 'PUT',
-                      body: JSON.stringify({ enabled: next, from: rrFrom || undefined, to: rrTo || undefined }),
+                      body: JSON.stringify({ enabled: next, from: rrFrom || undefined, to: rrTo || undefined, closeTime: rrClose || undefined }),
                     });
                     setRrCfg(c);
                     setRrFrom(String(c?.from || ''));
                     setRrTo(String(c?.to || ''));
+                    setRrClose(String(c?.closeTime || '23:59'));
                     showToast(next
-                      ? `🟢 Đã MỞ phiếu Cập Nhật Ca (${c.from} → ${c.to}) — cổng NV hiện tab + đếm ngược ngay!`
+                      ? `🟢 Đã MỞ phiếu (${c.from} → ${c.to} đóng ${c.closeTime}) — cổng NV hiện tab + đếm ngược ngay!`
                       : '⚫ Đã ĐÓNG phiếu — tab "Cập Nhật Ca" ẩn khỏi cổng nhân viên.');
                   } catch (e: any) {
                     showToast(e?.message || 'Lỗi lưu cấu hình phiếu!');

@@ -85,7 +85,7 @@ export class ShiftReRegService {
    * Cấu hình BẬT/TẮT + cửa sổ thời gian do ADMIN đặt (lưu systemSettings →
    * tự đồng bộ tab CAU_HINH_HE_THONG trên Google Sheets). Mặc định ĐÓNG.
    */
-  private async readCfg(): Promise<{ cfg: any; enabled: boolean; from: string; to: string; today: string }> {
+  private async readCfg(): Promise<{ cfg: any; enabled: boolean; from: string; to: string; closeTime: string; today: string }> {
     const envWin = this.window();
     const settings: any = await this.repo.getSystemSettings?.().catch(() => null) || {};
     const cfg = settings?.shift_re_registration || {};
@@ -94,40 +94,47 @@ export class ShiftReRegService {
       enabled: !!cfg.enabled,
       from: String(cfg.from || envWin.from).slice(0, 10),
       to: String(cfg.to || envWin.to).slice(0, 10),
+      closeTime: String(cfg.closeTime || '23:59').slice(0, 5),
       today: envWin.today,
     };
   }
 
   /** Admin xem cấu hình hiện tại (kèm ai bật + lúc nào). */
   public async getAdminConfig() {
-    const { cfg, enabled, from, to } = await this.readCfg();
+    const { cfg, enabled, from, to, closeTime } = await this.readCfg();
     return {
       enabled,
       from,
       to,
+      closeTime,
       updatedAt: (cfg as any)?.updated_at || null,
       updatedBy: (cfg as any)?.updated_by || null,
     };
   }
 
-  /** Admin bật/tắt + đặt thời gian hiển thị (đợt from → to) cho cổng NV. */
+  /** Admin bật/tắt + đặt thời gian hiển thị (đợt from → to + giờ đóng). */
   public async saveConfig(
     actorId: string,
-    patch: { enabled: boolean; from?: string; to?: string }
+    patch: { enabled: boolean; from?: string; to?: string; closeTime?: string }
   ) {
     const envWin = this.window();
     const settings: any = await this.repo.getSystemSettings?.().catch(() => null) || {};
     const cur = settings?.shift_re_registration || {};
     const from = String(patch.from || cur.from || envWin.from).slice(0, 10);
     const to = String(patch.to || cur.to || envWin.to).slice(0, 10);
+    const closeTime = String(patch.closeTime || cur.closeTime || '23:59').slice(0, 5);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
       throw new Error('BAD_DATE: ngày phải dạng YYYY-MM-DD!');
+    }
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(closeTime)) {
+      throw new Error('BAD_TIME: giờ đóng phải dạng HH:mm (ví dụ 18:30)!');
     }
     if (from > to) throw new Error('BAD_RANGE: ngày bắt đầu phải <= ngày kết thúc!');
     const cfg = {
       enabled: !!patch.enabled,
       from,
       to,
+      closeTime,
       updated_at: new Date().toISOString(),
       updated_by: String(actorId || ''),
     };
@@ -137,7 +144,7 @@ export class ShiftReRegService {
 
   /** Trạng thái tab: bật/tắt + cửa sổ + mốc ĐÓNG (endsAt) để cổng NV đếm ngược. */
   public async getStatus(employeeId: string) {
-    const { enabled, from, to, today } = await this.readCfg();
+    const { enabled, from, to, closeTime, today } = await this.readCfg();
     const emp: any = await this.employeesService.getEmployee(employeeId).catch(() => null);
     if (!emp) throw new Error('EMPLOYEE_NOT_FOUND: không tìm thấy hồ sơ nhân viên!');
     const shifts = (await this.schedulesService.getEmployeeShifts(employeeId, from, to).catch(() => [])) as any[];
@@ -145,9 +152,10 @@ export class ShiftReRegService {
       enabled,
       from,
       to,
+      closeTime,
       today,
-      // Mốc đếm ngược: hết ngày cuối cùng theo giờ Việt Nam (+07:00)
-      endsAt: `${to}T23:59:59+07:00`,
+      // Mốc đếm ngược: ngày kết thúc + GIỜ ĐÓNG Admin đặt (giờ VN, +07:00)
+      endsAt: `${to}T${closeTime}:00+07:00`,
       employee: { id: employeeId, code: (emp as any).employee_code, name: (emp as any).full_name },
       existing: (shifts || [])
         .filter((s) => String(s.status || '') !== 'CANCELLED')
@@ -165,12 +173,14 @@ export class ShiftReRegService {
     entries: Array<{ date: string; codes: ShiftCode[] }>,
     actorId: string
   ): Promise<ReRegReport> {
-    const { enabled, from, to, today } = await this.readCfg();
+    const { enabled, from, to, closeTime, today } = await this.readCfg();
     if (!enabled) {
       throw new Error('FEATURE_DISABLED: phiếu Cập Nhật Ca chưa được Quản trị viên mở!');
     }
-    if (today > to) {
-      throw new Error(`SLIP_CLOSED: đợt khai công đã kết thúc ngày ${to} — liên hệ quản lý!`);
+    // Chặn theo GIỜ ĐÓNG chính xác (không phải nửa đêm): so mốc tuyệt đối
+    const endsAtMs = new Date(`${to}T${closeTime}:00+07:00`).getTime();
+    if (!Number.isFinite(endsAtMs) || Date.now() > endsAtMs) {
+      throw new Error(`SLIP_CLOSED: phiếu đã đóng lúc ${closeTime} ngày ${to} — liên hệ quản lý!`);
     }
     const win = { from, to, today };
     const emp: any = await this.employeesService.getEmployee(employeeId).catch(() => null);

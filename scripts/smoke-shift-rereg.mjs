@@ -57,23 +57,36 @@ if (from !== '2026-10-01' || to !== '2026-10-24') fail(`cửa sổ mặc định
 const st0 = await svc.getStatus('EMP_SMOKE_REREG');
 console.log('STATUS0:', JSON.stringify({ enabled: st0.enabled, from: st0.from, to: st0.to, endsAt: st0.endsAt }));
 if (st0.enabled !== false) fail('phiếu mặc định phải ĐÓNG (chưa có Admin bật)');
-if (st0.endsAt !== `${st0.to}T23:59:59+07:00`) fail(`mốc đếm ngược endsAt sai: ${st0.endsAt}`);
+if (st0.endsAt !== `${st0.to}T23:59:00+07:00`) fail(`mốc đếm ngược endsAt sai: ${st0.endsAt}`);
 let disBlocked = false;
 try { await svc.submitForm('EMP_SMOKE_REREG', [{ date: '2026-10-10', codes: ['CA_1'] }], 'X'); }
 catch (e) { disBlocked = String(e?.message || '').startsWith('FEATURE_DISABLED'); }
 if (!disBlocked) fail('gửi phiếu khi đang ĐÓNG chưa bị chặn FEATURE_DISABLED');
-const cfg = await svc.saveConfig('ADMIN_SMOKE', { enabled: true, from: '2026-10-05', to: '2026-10-22' });
+const cfg = await svc.saveConfig('ADMIN_SMOKE', { enabled: true, from: '2026-10-05', to: '2026-10-22', closeTime: '18:00' });
 console.log('ADMIN SAVED:', JSON.stringify(cfg));
-if (!cfg.enabled || cfg.from !== '2026-10-05' || cfg.to !== '2026-10-22') fail('saveConfig không giữ đúng giá trị!');
+if (!cfg.enabled || cfg.from !== '2026-10-05' || cfg.to !== '2026-10-22' || cfg.closeTime !== '18:00') fail('saveConfig không giữ đúng giá trị (kể cả giờ đóng)!');
 const st1 = await svc.getStatus('EMP_SMOKE_REREG');
 if (st1.enabled !== true || st1.from !== '2026-10-05' || st1.to !== '2026-10-22') fail('cổng NV không thấy phiếu MỞ với thời gian Admin đặt!');
+if (st1.endsAt !== '2026-10-22T18:00:00+07:00') fail(`mốc đếm ngược theo giờ đóng sai: ${st1.endsAt}`);
 const persisted = (await repo.getSystemSettings())?.shift_re_registration;
 if (persisted?.enabled !== true || persisted?.updated_by !== 'ADMIN_SMOKE') fail('cấu hình chưa bền (systemSettings)!');
-// Lỗi cấu hình: from > to / ngày sai
+// Lỗi cấu hình: from > to / ngày sai / giờ đóng sai định dạng
 let badRange = false;
 try { await svc.saveConfig('ADMIN_SMOKE', { enabled: true, from: '2026-10-20', to: '2026-10-01' }); }
 catch (e) { badRange = String(e?.message || '').startsWith('BAD_RANGE'); }
 if (!badRange) fail('from > to chưa bị chặn BAD_RANGE');
+let badTime = false;
+try { await svc.saveConfig('ADMIN_SMOKE', { enabled: true, closeTime: '24:00' }); }
+catch (e) { badTime = String(e?.message || '').startsWith('BAD_TIME'); }
+if (!badTime) fail('giờ đóng 24:00 chưa bị chặn BAD_TIME');
+// Giờ đóng ĐÃ QUA (đến 19/10 23:59 nhưng hôm nay 20/10) → server chặn SLIP_CLOSED
+await svc.saveConfig('ADMIN_SMOKE', { enabled: true, to: '2026-10-19', closeTime: '23:59' });
+let slipClosed = false;
+try { await svc.submitForm('EMP_SMOKE_REREG', [{ date: '2026-10-10', codes: ['CA_1'] }], 'X'); }
+catch (e) { slipClosed = String(e?.message || '').startsWith('SLIP_CLOSED'); }
+if (!slipClosed) fail('hết giờ đóng (theo giờ cụ thể) chưa bị chặn SLIP_CLOSED');
+// Khôi phục đợt đúng để test các kịch bản ca
+await svc.saveConfig('ADMIN_SMOKE', { enabled: true, from: '2026-10-05', to: '2026-10-22', closeTime: '18:00' });
 
 const pastDate = '2026-10-10';
 const past2 = '2026-10-18';
