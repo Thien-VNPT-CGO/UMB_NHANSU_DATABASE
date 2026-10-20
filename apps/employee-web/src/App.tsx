@@ -90,6 +90,25 @@ function MyAdjPhoto({ adjustmentId, style }: { adjustmentId: string; style?: Rea
 
 /** Màn hình khóa bắt buộc cập nhật cổng nhân viên: có bản mới là khóa toàn bộ
  *  chức năng cho tới khi NV bấm cập nhật (reload lấy bản mới). Không có nút bỏ qua. */
+/**
+ * BETA chống điểm danh hộ: UUID bền theo máy (localStorage) — mỗi NV dùng điện
+ * thoại của riêng mình, backend so sánh "1 thiết bị 1 nhân viên" khi chấm công.
+ */
+function getOrCreateDeviceId(): string | undefined {
+  try {
+    let id = localStorage.getItem('ubm_device_id');
+    if (!id) {
+      id = (typeof crypto !== 'undefined' && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : `DEV_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+      localStorage.setItem('ubm_device_id', id);
+    }
+    return id;
+  } catch {
+    return undefined; // trình duyệt chặn localStorage -> bỏ qua kiểm tra
+  }
+}
+
 function UpdateBanner() {
   return (
     <div style={{
@@ -2414,6 +2433,7 @@ export function App() {
           lat: gpsCoords.lat,
           lng: gpsCoords.lng,
           accuracy: gpsCoords.accuracy,
+          device_id: getOrCreateDeviceId(),
           ...(photoData ? { photo_base64: photoData } : {}),
           ...(photoPinkRatio !== null ? { uniform_pink_ratio: photoPinkRatio } : {}),
         }),

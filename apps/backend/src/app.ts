@@ -2655,6 +2655,69 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // --- ATTENDANCE DEDICATED ENDPOINTS ---
+  // --- BETA: CHỐNG ĐIỂM DANH HỘ (1 thiết bị = 1 nhân viên) ---
+  // Cổng NV gửi device_id (UUID bền trong localStorage mỗi máy). Backend lưu
+  // sổ đăng ký thiết bị trong systemSettings.device_registry (LRU tối đa 500
+  // mục). Thiết bị vừa được NV KHÁC dùng trong vòng buddy_punch_block_minutes
+  // (mặc định 120p) -> CHẶN lượt chấm + cảnh báo ADMIN/HR (nghi vấn điểm danh
+  // hộ). Quá hạn -> cho phép rebind đúng nghĩa (máy chuyển NV). 0 phút = tắt.
+  // Không đổi cột Sheet (schema an toàn); fail-open nếu lỗi đọc cấu hình.
+  const BUDDY_PUNCH_DEFAULT_MINUTES = 120;
+  const buddyPunchGuard = async (
+    req: AuthenticatedRequest,
+    employeeId: string,
+    empName: string,
+  ): Promise<null | { minutes: number; otherName: string; otherId: string }> => {
+    try {
+      const deviceId = String((req.body as any)?.device_id || '').trim();
+      if (!deviceId || deviceId.length > 128) return null; // web cũ chưa có device_id
+      const settings: any = await adapter.getSystemSettings().catch(() => null) || {};
+      let blockMin = Number(settings.buddy_punch_block_minutes);
+      if (!Number.isFinite(blockMin)) {
+        blockMin = Number(process.env.BUDDY_PUNCH_BLOCK_MINUTES);
+        if (!Number.isFinite(blockMin)) blockMin = BUDDY_PUNCH_DEFAULT_MINUTES;
+      }
+      if (blockMin <= 0) return null; // 0 = tắt kiểm tra
+      const registry: any = (settings.device_registry && typeof settings.device_registry === 'object') ? settings.device_registry : {};
+      const now = Date.now();
+      const entry = registry[deviceId];
+      const sinceMs = entry ? now - new Date(entry.last_seen || 0).getTime() : NaN;
+      if (entry && entry.employee_id && entry.employee_id !== employeeId && Number.isFinite(sinceMs) && sinceMs <= blockMin * 60_000) {
+        const minutes = Math.max(0, Math.round(sinceMs / 60_000));
+        await adapter.recordAuditLog({
+          actor_id: employeeId,
+          action: 'DEVICE_CONFLICT',
+          target_type: 'SU_KIEN_DIEM_DANH',
+          target_id: deviceId,
+          detail: `${empName || employeeId} dùng thiết bị còn đậm của ${entry.employee_name || entry.employee_id} (${minutes} phút trước) — chặn lượt chấm công`,
+        } as any).catch(() => null);
+        broadcastNotification({
+          type: 'SYSTEM',
+          title: '🛡 Nghi vấn điểm danh hộ (1 máy 2 NV)',
+          message: `${empName || employeeId} bị CHẶN vì thiết bị vừa được ${entry.employee_name || entry.employee_id} dùng hơn ${minutes} phút trước. Kiểm tra ngay hai nhân viên này!`,
+          linkTab: 'hr-attendance',
+          metadata: { device_id: deviceId, employeeId, other: entry.employee_id },
+          targetRoles: ['ADMIN', 'HR', 'STORE'],
+        });
+        return { minutes, otherName: entry.employee_name || String(entry.employee_id), otherId: String(entry.employee_id) };
+      }
+      // Hợp lệ (cùng NV / máy mới / quá hạn rebind) -> cập nhật sổ + lưu
+      registry[deviceId] = { employee_id: employeeId, employee_name: empName, last_seen: new Date(now).toISOString() };
+      let entries = Object.entries(registry);
+      if (entries.length > 500) {
+        entries = entries
+          .sort((a: any, b: any) => new Date(b[1]?.last_seen || 0).getTime() - new Date(a[1]?.last_seen || 0).getTime())
+          .slice(0, 500);
+      }
+      const trimmed: any = {};
+      for (const [k, v] of entries) trimmed[k] = v;
+      await adapter.updateSystemSettings({ ...settings, device_registry: trimmed }).catch(() => null);
+      return null;
+    } catch {
+      return null; // fail-open: lỗi nội bộ thì cứ cho chấm như quy chế cũ
+    }
+  };
+
   app.post('/attendance/checkin', authMiddleware, validate({ body: checkinBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const employeeId = req.user?.employeeId || req.body.employee_id || req.body.employeeId;
@@ -2741,6 +2804,15 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         return res.status(400).json({
           error: ERROR_CODES.CAMERA_REQUIRED,
           message: 'Bắt buộc chụp ảnh xác nhận (áo hồng + bảng tên) khi check-in!',
+        });
+      }
+
+      // BETA: chốt 1 thiết bị 1 NV trước khi ghi nhận (chống điểm danh hộ)
+      const buddyCheckin = await buddyPunchGuard(req, employeeId, (await employeesService.getEmployee(employeeId).catch(() => null))?.full_name || employeeId);
+      if (buddyCheckin) {
+        return res.status(403).json({
+          error: 'DEVICE_SHARING',
+          message: `🛡 THIẾT BỊ TRÙNG NHÂN VIÊN KHÁC: máy này vừa chấm công cho ${buddyCheckin.otherName} (${buddyCheckin.minutes} phút trước). Mỗi NV dùng điện thoại của riêng mình — lượt này TỪ CHỐI và đã báo quản lý!`,
         });
       }
 
@@ -2887,6 +2959,15 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         return res.status(400).json({
           error: 'GPS_REQUIRED',
           message: 'Thiếu tọa độ GPS thật! Hãy bật định vị và thử lại — hệ thống không chấp nhận điểm danh không GPS.',
+        });
+      }
+
+      // BETA: chốt 1 thiết bị 1 NV trước khi ghi receipt (chống điểm danh hộ)
+      const buddyCheckout = await buddyPunchGuard(req, employeeId, (await employeesService.getEmployee(employeeId).catch(() => null))?.full_name || employeeId);
+      if (buddyCheckout) {
+        return res.status(403).json({
+          error: 'DEVICE_SHARING',
+          message: `🛡 THIẾT BỊ TRÙNG NHÂN VIÊN KHÁC: máy này vừa chấm công cho ${buddyCheckout.otherName} (${buddyCheckout.minutes} phút trước). Mỗi NV dùng điện thoại của riêng mình — lượt này TỪ CHỐI và đã báo quản lý!`,
         });
       }
 

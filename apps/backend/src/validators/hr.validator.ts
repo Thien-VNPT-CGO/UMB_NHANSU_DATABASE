@@ -376,6 +376,8 @@ const checkBody = z.object({
   accuracy: accuracyField,
   photo_base64: photoField,
   uniform_pink_ratio: z.coerce.number().min(0).max(100).optional(),
+  // BETA chống điểm danh hộ: máy quay Watches / UUID bền từ localStorage cổng NV
+  device_id: optString(128),
   requestId: optString(128),
 });
 
