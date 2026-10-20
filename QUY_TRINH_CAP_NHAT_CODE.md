@@ -7,9 +7,9 @@
 > trong giờ thấp điểm (tính năng nhập lịch nội bộ, chỉ ADMIN dùng)._
 
 ```
-Máy IT  ──►  GitHub  ──►  main  ──►  Vps
- (dev)   push   (kho lưu   (staging +  (PRODUCTION
-                 trung tâm)  CI kiểm thử) VPS 4005)
+Máy IT  ──►  GitHub (vps)  ──►  main
+ (dev)   push    (nhánh production     (mirror — nhận từ vps,
+                 + deploy source)       không nhánh khác)
 ```
 
 ## Ý nghĩa từng chặng
@@ -17,25 +17,25 @@ Máy IT  ──►  GitHub  ──►  main  ──►  Vps
 | Chặng | Nhánh | Vai trò | Hành động |
 |---|---|---|---|
 | 1 | **Máy IT** | Nơi phát triển + kiểm tra build cục bộ | Build/PASS trước khi push |
-| 2 | **GitHub** (`origin`) | Kho lưu trữ trung tâm duy nhất | Commit sạch, push đúng nhánh |
-| 3 | **main** (nhánh `main`) | Staging — CI build + smoke test mỗi lần push | Push `origin main` |
-| 4 | **Vps** (nhánh `vps`, domain `umbomilk-nhansu-diemdanh.duckdns.org`, cổng **4005**) | Production chạy thật, Sheet chính của VPS | Đẩy `origin HEAD:vps`, sau đó deploy trên VPS:
+| 2 | **GitHub (nhánh `vps`)** | Kho lưu trung tâm + nhánh **production** (domain `umbomilk-nhansu-diemdanh.duckdns.org`, cổng **4005**) | Commit sạch → merge vào `vps` → build PASS → push `origin/vps`; VPS deploy từ đây:
+   ```bash
+   bash deploy/vps/deploy.sh   # pull + build web + docker compose up backend + health check
+   ```
+| 3 | **main** (nhánh `main`) | Mirror — nhận đầy đủ từ `vps` sau mỗi lần (fast-forward), phục vụ tham chiếu/CI | push `origin main` (cùng SHA với `vps`) |
 
-```bash
-bash deploy/vps/deploy.sh   # pull + build web + docker compose up backend + health check
-```
+> Chỉnh 2026-10-20 (chốt bởi chủ dự án): **thứ tự là `vps` TRƯỚC `main`** — deploy source ở `vps` là đầu tiên, `main` chỉ là bản đối chiếu. Mọi merge giữ config riêng của nhánh (không chép đè file).
 
 ## Công cụ tự động hóa (khuyến nghị dùng luôn cho mọi lần cập nhật)
 
-- **Chặng 1→3 (Máy IT → GitHub → main → Vps, mã nguồn)** — chạy MỘT lệnh trong folder dự án:
+- **Chặng 1→3 (Máy IT → GitHub(vps) → main)** — chạy MỘT lệnh trong folder dự án:
 
   ```powershell
   powershell -ExecutionPolicy Bypass -File scripts\push-chain.ps1 -Message "mô tả thay đổi"
   ```
 
-  Script tự: commit → build kiểm thử → push `main` → merge `main→vps` + build + push → dọn dẹp. Tuỳ chọn: `-SkipBuild` (chỉ thay đổi tài liệu), `-DryRun` (thử nhưng không push). Có xung đột merge thì script dừng và hướng dẫn giải tay.
+  Script tự: commit → build kiểm thử → merge `main→vps` (worktree) + build + push `origin/vps` → `main` nhận từ `vps` (fast-forward) + push → dọn dẹp. Tuỳ chọn: `-SkipBuild` (chỉ thay đổi tài liệu), `-DryRun` (thử nhưng không push). Có xung đột merge thì script dừng và hướng dẫn giải tay.
 
-- **Chặng 4 (deploy trên VPS)** — chọn 1 trong 2 cách để bỏ bước SSH thủ công:
+- **Deploy trên VPS** — chọn 1 trong 2 cách để bỏ bước SSH thủ công:
 
   | Phương án | Cách bật | Đặc điểm |
   |---|---|---|
@@ -44,7 +44,7 @@ bash deploy/vps/deploy.sh   # pull + build web + docker compose up backend + hea
 
 ## Nguyên tắc bắt buộc
 
-1. **Không bỏ chặng**: code mới bắt đầu từ `main` (staging) trước khi vào `vps` (prod).
+1. **Không bỏ chặng**: thay đổi phải vào `vps` trước rồi `main` mới nhận từ `vps` (không push nhánh nào ngược chiều).
 2. **Không chép đè cấu hình riêng từng nhánh**: mỗi nhánh có ID Sheets/Drive + mật khẩu seed + domain riêng — merge phải giữ nguyên (`vps`: `Nguyenthanhthien@9999`, Sheet chính của VPS).
 3. **Build kiểm thử trước khi push** từng chặng (backend `tsc` + admin/employee web build phải PASS).
 4. **Bỏ beta từ 2026-10-20**: khôi phục nhánh beta khi nào thì phải cấp lại domain + cert + Sheet riêng (tham khảo `deploy/beta/` trong lịch sử git).
