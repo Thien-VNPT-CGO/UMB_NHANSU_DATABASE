@@ -2309,6 +2309,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Modal HR bổ sung lịch làm việc cho NV (tab Lịch tuần): chọn NV bất kỳ +
   // xếp ca trực tiếp lên lịch (nháp), realtime sang Chấm công + Cổng NV.
   const [supShiftOpen, setSupShiftOpen] = useState(false);
+  // Modal nhập lịch làm việc tuần bằng file Excel (+ tải file mẫu):
+  // Chỉ ADMIN thấy (API backend cũng khóa requireRole(['ADMIN']) — người dùng chốt).
+  const [xlOpen, setXlOpen] = useState(false);
+  const [xlWeek, setXlWeek] = useState('');
+  const [xlFile, setXlFile] = useState<File | null>(null);
+  const [xlBusy, setXlBusy] = useState(false);
+  const [xlReport, setXlReport] = useState<any>(null);
   const [supEmpId, setSupEmpId] = useState('');
   const [supEmpSearch, setSupEmpSearch] = useState('');
   const [supDate, setSupDate] = useState('');
@@ -8114,6 +8121,21 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             >
               <Plus size={14} /> Bổ Sung Lịch NV
             </button>
+            {currentUser?.role === 'ADMIN' && (
+              <button
+                className="btn-primary"
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', fontSize: '13px', backgroundColor: '#0EA5E9' }}
+                title="Nhập lịch làm việc cả tuần cho nhân viên bằng file Excel (.xlsx) — tải file mẫu đã điền sẵn nhân viên, điền ca (CA_1/CA_2/CA_3) rồi nhập. Chỉ tài khoản ADMIN."
+                onClick={() => {
+                  setXlWeek(weekDays?.[0]?.isoDate || new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10));
+                  setXlFile(null);
+                  setXlReport(null);
+                  setXlOpen(true);
+                }}
+              >
+                ⬆ Nhập Lịch Excel
+              </button>
+            )}
             <button
               className="btn-primary"
               style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', fontSize: '13px', backgroundColor: '#059669' }}
@@ -8263,6 +8285,149 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         </div>
 
         {/* Modal HR bổ sung lịch làm việc cho NV */}
+        {xlOpen && (() => {
+          // --- Modal NHẬP LỊCH LÀM VIỆC TUẦN EXCEL (chỉ ADMIN) ---
+          const doTemplate = async () => {
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(xlWeek || '')) { showToast('Chọn tuần (ngày thứ Hai) trước!'); return; }
+            setXlBusy(true);
+            try {
+              const res = await fetch(`${getApiBase()}/schedules/excel-template?week=${xlWeek}`, {
+                headers: { Authorization: `Bearer ${getAuthToken()}` },
+              });
+              if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error((err as any)?.message || (err as any)?.error || 'Tải mẫu thất bại');
+              }
+              const blob = await res.blob();
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `Mau_lich_lam_viec_${xlWeek}.xlsx`;
+              document.body.appendChild(a);
+              a.click();
+              a.remove();
+              setTimeout(() => URL.revokeObjectURL(url), 5000);
+              showToast(`✅ Đã tải file mẫu — điền sẵn toàn bộ nhân viên, tuần áp dụng: ${xlWeek}`);
+            } catch (e: any) {
+              showToast(e?.message || 'Lỗi khi tải file mẫu!');
+            } finally {
+              setXlBusy(false);
+            }
+          };
+          const doImport = async () => {
+            if (xlBusy) return;
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(xlWeek || '')) { showToast('Chọn tuần (ngày thứ Hai) trước!'); return; }
+            if (!xlFile) { showToast('Chọn file .xlsx đã điền lịch!'); return; }
+            setXlBusy(true);
+            try {
+              const file_base64 = await new Promise<string>((resolve, reject) => {
+                const fr = new FileReader();
+                fr.onload = () => resolve(String(fr.result || ''));
+                fr.onerror = () => reject(new Error('Không đọc được file.'));
+                fr.readAsDataURL(xlFile);
+              });
+              const rep: any = await apiRequest('/schedules/excel-import', {
+                method: 'POST',
+                body: JSON.stringify({ file_base64, week: xlWeek }),
+              });
+              setXlReport(rep);
+              showToast(`✅ Nhập xong tuần ${rep?.week || xlWeek}: tạo ${rep?.created || 0} • sửa ${rep?.updated || 0} • giữ ${rep?.kept || 0} • lỗi ${rep?.errors?.length || 0} (ca nháp — bấm Phát Hành Lịch để duyệt)!`);
+              if (onRefreshData) await onRefreshData();
+            } catch (e: any) {
+              showToast(e?.message || 'Lỗi khi nhập lịch Excel!');
+            } finally {
+              setXlBusy(false);
+            }
+          };
+          return (
+            <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+              <div style={{ backgroundColor: 'var(--surface)', borderRadius: '12px', maxWidth: '620px', width: '100%', maxHeight: '88vh', overflow: 'auto', padding: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h2 style={{ fontSize: '16px', fontWeight: 800, margin: 0 }}>⬆ Nhập Lịch Làm Việc Tuần bằng Excel</h2>
+                  <button className="btn-secondary" style={{ padding: '4px 12px' }} onClick={() => setXlOpen(false)}>Đóng</button>
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px', lineHeight: 1.6 }}>
+                  Bước 1: tải file mẫu (điền sẵn Mã NV / Họ tên / Chi nhánh + 7 ngày ISO của tuần). Bước 2: điền ca vào từng ô — <b>CA_1 (07–12), CA_2 (12–18), CA_3 (18–23)</b>, ô trống = không xếp ca. Bước 3: chọn file .xlsx rồi "Xác nhận nhập". Ca nhập là <b>nháp (DRAFT)</b> — bấm "Phát Hành Lịch (PUBLISH)" để duyệt như xếp tay.
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '14px' }}>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Tuần áp dụng (ngày thứ Hai):</label>
+                    <input
+                      type="date"
+                      value={xlWeek}
+                      onChange={(e) => setXlWeek(e.target.value)}
+                      style={{ padding: '7px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid var(--border)' }}
+                    />
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    <button
+                      className="btn-secondary"
+                      style={{ padding: '8px 14px', fontSize: '13px', fontWeight: 700 }}
+                      disabled={xlBusy}
+                      onClick={doTemplate}
+                    >
+                      ⬇ Tải File Mẫu (điền sẵn nhân viên)
+                    </button>
+                    <label
+                      className="btn-secondary"
+                      style={{ padding: '8px 14px', fontSize: '13px', fontWeight: 700, cursor: xlBusy ? 'wait' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                    >
+                      📄 {xlFile ? xlFile.name : 'Chọn file .xlsx...'}
+                      <input
+                        type="file"
+                        accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        style={{ display: 'none' }}
+                        onChange={(e) => {
+                          setXlReport(null);
+                          const f = (e.target as HTMLInputElement).files?.[0] || null;
+                          setXlFile(f);
+                        }}
+                      />
+                    </label>
+                    <button
+                      className="btn-primary"
+                      style={{ padding: '8px 14px', fontSize: '13px', backgroundColor: '#0EA5E9' }}
+                      disabled={xlBusy || !xlFile}
+                      onClick={doImport}
+                    >
+                      {xlBusy ? 'Đang xử lý...' : '✅ Xác Nhận Nhập'}
+                    </button>
+                  </div>
+                  {xlBusy && (
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', animation: 'pulse 1.5s infinite' }}>
+                      ⏳ Đang đọc file + xếp ca hàng đợi (file lớn gồm 30–200 ca có thể mất 10–60 giây — đừng tắt tab)...
+                    </div>
+                  )}
+                  {xlReport && (
+                    <div style={{ border: '1px solid var(--border)', borderRadius: '10px', padding: '12px', fontSize: '12px', lineHeight: 1.6 }}>
+                      <div style={{ fontWeight: 800, marginBottom: '6px' }}>Báo cáo nhập tuần {String(xlReport?.week || xlWeek)}:</div>
+                      <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                        <span style={{ color: '#16A34A', fontWeight: 700 }}>➕ Tạo mới: {xlReport?.created ?? 0}</span>
+                        <span style={{ color: '#2563EB', fontWeight: 700 }}>🔁 Ghi đè: {xlReport?.updated ?? 0}</span>
+                        <span style={{ color: 'var(--text-muted)', fontWeight: 700 }}>⏺ Giữ nguyên: {xlReport?.kept ?? 0}</span>
+                        <span style={{ color: (xlReport?.errors?.length || 0) > 0 ? '#DC2626' : 'var(--text-muted)', fontWeight: 700 }}>❌ Lỗi: {xlReport?.errors?.length ?? 0}</span>
+                      </div>
+                      {(xlReport?.errors || []).length > 0 && (
+                        <div style={{ maxHeight: '180px', overflow: 'auto', border: '1px solid #FECACA', borderRadius: '8px', padding: '8px', backgroundColor: 'rgba(239,68,68,0.05)' }}>
+                          {(xlReport.errors as any[]).map((er: any, i: number) => (
+                            <div key={i} style={{ color: '#B91C1C' }}>
+                              {`Dòng ${er.row} • ${er.maNV}${er.date ? ` • ${er.date}` : ''}: ${er.message}`}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {(xlReport?.warnings || []).length > 0 && (
+                        <div style={{ marginTop: '8px', color: '#92400E' }}>
+                          {`${(xlReport.warnings as string[]).join(' | ')}`}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
         {supShiftOpen && (() => {
           const empList = (allEmployees || []).filter((e: any) =>
             String((e as any)?.employment_status || '') !== 'TERMINATED'

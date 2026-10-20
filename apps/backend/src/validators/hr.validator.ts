@@ -216,6 +216,20 @@ export const publishWeekParams = z.object({
   week: z.string().trim().min(1).max(32),
 });
 
+// Nhập lịch làm việc tuần bằng file Excel (.xlsx) — body kiểu base64/dataURL
+// (cùng pattern ảnh avatar), kèm tuần dự phòng khi file không ghi ngày.
+export const excelImportBody = z
+  .object({
+    // .xlsx ~50-300KB → base64 phình ~33%: giới hạn 5MB cho chắc.
+    file_base64: z.string().min(50).max(5_000_000, 'EXCEL_TOO_LARGE: file Excel quá lớn (tối đa ~3.5MB).'),
+    week: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  })
+  .passthrough();
+
+export const excelTemplateQuery = z.object({
+  week: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+
 export const publishWeekBody = z.object({
   branchId: optString(32),
   // Frontend gửi auto: true (boolean) — chấp nhận cả boolean lẫn string.
