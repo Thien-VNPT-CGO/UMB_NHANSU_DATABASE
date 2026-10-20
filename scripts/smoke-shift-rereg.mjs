@@ -50,12 +50,35 @@ const svc = new ShiftReRegService(
 );
 
 const { from, to, today } = svc.window();
-console.log('ĐỢT:', from, '→', to, '| hôm nay:', today);
-if (from !== '2026-10-01' || to !== '2026-10-24') fail(`cửa sổ sai: ${from} → ${to}`);
+console.log('ĐỢT mặc định (env):', from, '→', to, '| hôm nay:', today);
+if (from !== '2026-10-01' || to !== '2026-10-24') fail(`cửa sổ mặc định sai: ${from} → ${to}`);
+
+// 0) LUỒNG ADMIN: mặc định ĐÓNG → mở phiếu + đặt thời gian riêng
+const st0 = await svc.getStatus('EMP_SMOKE_REREG');
+console.log('STATUS0:', JSON.stringify({ enabled: st0.enabled, from: st0.from, to: st0.to, endsAt: st0.endsAt }));
+if (st0.enabled !== false) fail('phiếu mặc định phải ĐÓNG (chưa có Admin bật)');
+if (st0.endsAt !== `${st0.to}T23:59:59+07:00`) fail(`mốc đếm ngược endsAt sai: ${st0.endsAt}`);
+let disBlocked = false;
+try { await svc.submitForm('EMP_SMOKE_REREG', [{ date: '2026-10-10', codes: ['CA_1'] }], 'X'); }
+catch (e) { disBlocked = String(e?.message || '').startsWith('FEATURE_DISABLED'); }
+if (!disBlocked) fail('gửi phiếu khi đang ĐÓNG chưa bị chặn FEATURE_DISABLED');
+const cfg = await svc.saveConfig('ADMIN_SMOKE', { enabled: true, from: '2026-10-05', to: '2026-10-22' });
+console.log('ADMIN SAVED:', JSON.stringify(cfg));
+if (!cfg.enabled || cfg.from !== '2026-10-05' || cfg.to !== '2026-10-22') fail('saveConfig không giữ đúng giá trị!');
+const st1 = await svc.getStatus('EMP_SMOKE_REREG');
+if (st1.enabled !== true || st1.from !== '2026-10-05' || st1.to !== '2026-10-22') fail('cổng NV không thấy phiếu MỞ với thời gian Admin đặt!');
+const persisted = (await repo.getSystemSettings())?.shift_re_registration;
+if (persisted?.enabled !== true || persisted?.updated_by !== 'ADMIN_SMOKE') fail('cấu hình chưa bền (systemSettings)!');
+// Lỗi cấu hình: from > to / ngày sai
+let badRange = false;
+try { await svc.saveConfig('ADMIN_SMOKE', { enabled: true, from: '2026-10-20', to: '2026-10-01' }); }
+catch (e) { badRange = String(e?.message || '').startsWith('BAD_RANGE'); }
+if (!badRange) fail('from > to chưa bị chặn BAD_RANGE');
+
 const pastDate = '2026-10-10';
 const past2 = '2026-10-18';
-const futureDate = to; // 2026-10-24: tương lai nếu đang chạy trước 24/10
-if (futureDate <= today) fail('máy chạy sau 24/10 — không đủ cả ca tương lai để test');
+const futureDate = st1.to; // 2026-10-22: tương lai nếu đang chạy trước 22/10
+if (futureDate <= today) fail('máy chạy sau 22/10 — không đủ cả ca tương lai để test');
 
 // 1) CA ĐÃ QUA → TẠO + BOT CHẤM HOÀN THÀNH
 const r1 = await svc.submitForm('EMP_SMOKE_REREG', [

@@ -2316,6 +2316,20 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [xlFile, setXlFile] = useState<File | null>(null);
   const [xlBusy, setXlBusy] = useState(false);
   const [xlReport, setXlReport] = useState<any>(null);
+  // BETA — điều khiển phiếu "Cập Nhật Ca" (cổng NV): bật/tắt + thời gian hiển thị
+  const [rrCfg, setRrCfg] = useState<any>(null);
+  const [rrFrom, setRrFrom] = useState('');
+  const [rrTo, setRrTo] = useState('');
+  const [rrBusy, setRrBusy] = useState(false);
+  useEffect(() => {
+    if (currentUser?.role !== 'ADMIN') return;
+    apiRequest('/admin/shift-re-registration/config').then((c: any) => {
+      setRrCfg(c);
+      setRrFrom(String(c?.from || ''));
+      setRrTo(String(c?.to || ''));
+    }).catch(() => null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.role]);
   const [supEmpId, setSupEmpId] = useState('');
   const [supEmpSearch, setSupEmpSearch] = useState('');
   const [supDate, setSupDate] = useState('');
@@ -8283,6 +8297,84 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </button>
           </div>
         </div>
+
+        {/* BETA — Card ADMIN: bật/tắt phiếu "Cập Nhật Ca" + đặt thời gian hiển thị.
+            Cổng NV nhận realtime (entity shift-rereg) → ẩn/hiện tab + đếm ngược
+            đến 23:59:59 (+07:00) của ngày kết thúc do Admin đặt. */}
+        {currentUser?.role === 'ADMIN' && (
+          <div className="card" style={{ marginTop: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <h3 style={{ fontSize: '14px', fontWeight: 800, margin: 0 }}>🛠 Quản Lý Phiếu "Cập Nhật Ca"</h3>
+              <span style={{ fontSize: '10px', fontWeight: 800, padding: '2px 8px', borderRadius: 'var(--radius-full)', backgroundColor: '#FDE68A', color: '#92400E', letterSpacing: '0.5px' }}>BETA</span>
+              {rrCfg && (
+                <span
+                  style={{
+                    fontSize: '11px', fontWeight: 800, padding: '3px 10px', borderRadius: 'var(--radius-full)',
+                    backgroundColor: rrCfg.enabled ? '#DCFCE7' : '#F1F5F9',
+                    color: rrCfg.enabled ? '#166534' : 'var(--text-muted)',
+                  }}
+                >{rrCfg.enabled ? '🟢 ĐANG MỞ' : '⚫ ĐANG ĐÓNG'}</span>
+              )}
+            </div>
+            <p style={{ fontSize: '12px', color: 'var(--text-2)', margin: '8px 0', lineHeight: 1.5 }}>
+              Bật → cổng nhân viên hiện tab "Cập Nhật Ca" kèm <b>đồng hồ đếm ngược</b> đến hết ngày kết thúc
+              (23:59:59 giờ VN); tắt → tab ẩn khỏi cổng NV ngay (realtime). Nhân viên tự khai lại ca:
+              ca đã qua được bot chấm HOÀN THÀNH + cộng tiền ca, ca chưa tới chờ điểm danh; phiếu ghi tab
+              <b> PHIEU_NV_CAP_NHAT_CA</b> trên Google Sheets.
+            </p>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-2)', display: 'block' }}>TỪ NGÀY</label>
+                <input
+                  type="date"
+                  value={rrFrom}
+                  onChange={(e) => setRrFrom(e.target.value)}
+                  style={{ fontSize: '13px', padding: '7px 10px', borderRadius: '8px', border: '1px solid var(--border)' }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-2)', display: 'block' }}>ĐẾN NGÀY</label>
+                <input
+                  type="date"
+                  value={rrTo}
+                  onChange={(e) => setRrTo(e.target.value)}
+                  style={{ fontSize: '13px', padding: '7px 10px', borderRadius: '8px', border: '1px solid var(--border)' }}
+                />
+              </div>
+              <button
+                className="btn-primary"
+                disabled={rrBusy}
+                style={{ padding: '8px 14px', fontSize: '13px', backgroundColor: rrCfg?.enabled ? '#DC2626' : '#16A34A' }}
+                onClick={async () => {
+                  if (rrBusy) return;
+                  setRrBusy(true);
+                  try {
+                    const next = !rrCfg?.enabled;
+                    const c: any = await apiRequest('/admin/shift-re-registration/config', {
+                      method: 'PUT',
+                      body: JSON.stringify({ enabled: next, from: rrFrom || undefined, to: rrTo || undefined }),
+                    });
+                    setRrCfg(c);
+                    setRrFrom(String(c?.from || ''));
+                    setRrTo(String(c?.to || ''));
+                    showToast(next
+                      ? `🟢 Đã MỞ phiếu Cập Nhật Ca (${c.from} → ${c.to}) — cổng NV hiện tab + đếm ngược ngay!`
+                      : '⚫ Đã ĐÓNG phiếu — tab "Cập Nhật Ca" ẩn khỏi cổng nhân viên.');
+                  } catch (e: any) {
+                    showToast(e?.message || 'Lỗi lưu cấu hình phiếu!');
+                  } finally {
+                    setRrBusy(false);
+                  }
+                }}
+              >{rrBusy ? 'Đang lưu...' : rrCfg?.enabled ? '⚫ ĐÓNG PHIẾU' : '🟢 MỞ PHIẾU'}</button>
+            </div>
+            {rrCfg?.updatedAt && (
+              <p style={{ fontSize: '11px', color: 'var(--text-muted)', margin: '8px 0 0' }}>
+                Cập nhật lần cuối: {new Date(rrCfg.updatedAt).toLocaleString('vi-VN')}{rrCfg.updatedBy ? ` • bởi ${String(rrCfg.updatedBy).slice(0, 18)}` : ''}
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Modal HR bổ sung lịch làm việc cho NV */}
         {xlOpen && (() => {

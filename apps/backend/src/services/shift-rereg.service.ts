@@ -73,7 +73,7 @@ export class ShiftReRegService {
     private repo: any, // ISheetsRepository (đọc/ghi ca điểm danh realtime)
   ) {}
 
-  /** Cửa sổ đợt khai công lại — chỉnh bằng env, không cần sửa code. */
+  /** Cửa sổ đợt mặc định (env) — dùng khi Admin chưa đặt thời gian riêng. */
   public window() {
     const from = (process.env.SCHEDULE_REREG_FROM || '2026-10-01').slice(0, 10);
     const to = (process.env.SCHEDULE_REREG_TO || '2026-10-24').slice(0, 10);
@@ -81,14 +81,73 @@ export class ShiftReRegService {
     return { from, to, today };
   }
 
-  /** Trạng thái tab: cửa sổ + ca hiện có của NV trong đợt (để UI hiển thị nền). */
+  /**
+   * Cấu hình BẬT/TẮT + cửa sổ thời gian do ADMIN đặt (lưu systemSettings →
+   * tự đồng bộ tab CAU_HINH_HE_THONG trên Google Sheets). Mặc định ĐÓNG.
+   */
+  private async readCfg(): Promise<{ cfg: any; enabled: boolean; from: string; to: string; today: string }> {
+    const envWin = this.window();
+    const settings: any = await this.repo.getSystemSettings?.().catch(() => null) || {};
+    const cfg = settings?.shift_re_registration || {};
+    return {
+      cfg,
+      enabled: !!cfg.enabled,
+      from: String(cfg.from || envWin.from).slice(0, 10),
+      to: String(cfg.to || envWin.to).slice(0, 10),
+      today: envWin.today,
+    };
+  }
+
+  /** Admin xem cấu hình hiện tại (kèm ai bật + lúc nào). */
+  public async getAdminConfig() {
+    const { cfg, enabled, from, to } = await this.readCfg();
+    return {
+      enabled,
+      from,
+      to,
+      updatedAt: (cfg as any)?.updated_at || null,
+      updatedBy: (cfg as any)?.updated_by || null,
+    };
+  }
+
+  /** Admin bật/tắt + đặt thời gian hiển thị (đợt from → to) cho cổng NV. */
+  public async saveConfig(
+    actorId: string,
+    patch: { enabled: boolean; from?: string; to?: string }
+  ) {
+    const envWin = this.window();
+    const settings: any = await this.repo.getSystemSettings?.().catch(() => null) || {};
+    const cur = settings?.shift_re_registration || {};
+    const from = String(patch.from || cur.from || envWin.from).slice(0, 10);
+    const to = String(patch.to || cur.to || envWin.to).slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+      throw new Error('BAD_DATE: ngày phải dạng YYYY-MM-DD!');
+    }
+    if (from > to) throw new Error('BAD_RANGE: ngày bắt đầu phải <= ngày kết thúc!');
+    const cfg = {
+      enabled: !!patch.enabled,
+      from,
+      to,
+      updated_at: new Date().toISOString(),
+      updated_by: String(actorId || ''),
+    };
+    await this.repo.updateSystemSettings({ ...settings, shift_re_registration: cfg });
+    return cfg;
+  }
+
+  /** Trạng thái tab: bật/tắt + cửa sổ + mốc ĐÓNG (endsAt) để cổng NV đếm ngược. */
   public async getStatus(employeeId: string) {
-    const win = this.window();
+    const { enabled, from, to, today } = await this.readCfg();
     const emp: any = await this.employeesService.getEmployee(employeeId).catch(() => null);
     if (!emp) throw new Error('EMPLOYEE_NOT_FOUND: không tìm thấy hồ sơ nhân viên!');
-    const shifts = (await this.schedulesService.getEmployeeShifts(employeeId, win.from, win.to).catch(() => [])) as any[];
+    const shifts = (await this.schedulesService.getEmployeeShifts(employeeId, from, to).catch(() => [])) as any[];
     return {
-      ...win,
+      enabled,
+      from,
+      to,
+      today,
+      // Mốc đếm ngược: hết ngày cuối cùng theo giờ Việt Nam (+07:00)
+      endsAt: `${to}T23:59:59+07:00`,
       employee: { id: employeeId, code: (emp as any).employee_code, name: (emp as any).full_name },
       existing: (shifts || [])
         .filter((s) => String(s.status || '') !== 'CANCELLED')
@@ -106,7 +165,14 @@ export class ShiftReRegService {
     entries: Array<{ date: string; codes: ShiftCode[] }>,
     actorId: string
   ): Promise<ReRegReport> {
-    const win = this.window();
+    const { enabled, from, to, today } = await this.readCfg();
+    if (!enabled) {
+      throw new Error('FEATURE_DISABLED: phiếu Cập Nhật Ca chưa được Quản trị viên mở!');
+    }
+    if (today > to) {
+      throw new Error(`SLIP_CLOSED: đợt khai công đã kết thúc ngày ${to} — liên hệ quản lý!`);
+    }
+    const win = { from, to, today };
     const emp: any = await this.employeesService.getEmployee(employeeId).catch(() => null);
     if (!emp) throw new Error('EMPLOYEE_NOT_FOUND: không tìm thấy hồ sơ nhân viên!');
 

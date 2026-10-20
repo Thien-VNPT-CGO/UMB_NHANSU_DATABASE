@@ -330,6 +330,13 @@ export const reRegSlipBody = z.object({
   })).min(1).max(180),
 });
 
+// BETA — ADMIN bật/tắt phiếu Cập Nhật Ca + đặt thời gian hiển thị (đợt from→to).
+export const reRegConfigBody = z.object({
+  enabled: z.boolean(),
+  from: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ngày phải dạng YYYY-MM-DD').optional(),
+  to: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ngày phải dạng YYYY-MM-DD').optional(),
+});
+
 // NV thử việc TỰ ĐỔI CA (Ca làm ⇄ Nghỉ OFF): hệ thống tự duyệt ngay, không cần HR.
 export const probationSelfSwapBody = z.object({
   direction: z.enum(['WORK_TO_OFF', 'OFF_TO_WORK']),

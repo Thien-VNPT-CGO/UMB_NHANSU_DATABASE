@@ -324,17 +324,33 @@ export function App() {
   const [reRegReport, setReRegReport] = useState<any>(null);
   const [reRegBusy, setReRegBusy] = useState(false);
   const reRegTriedRef = useRef(false);
+  // Đồng hồ đếm ngược phiếu (tick 1 giây khi mở tab)
+  const [reRegNow, setReRegNow] = useState(Date.now());
+  useEffect(() => {
+    if (activeTab !== 'rereg') return;
+    const t = setInterval(() => setReRegNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [activeTab]);
+  // Tải cấu hình ngay khi vào cổng (để ẩn/hiện tab + đếm ngược trước khi mở tab)
+  useEffect(() => {
+    if (!sessionChecked || !getAuthToken()) return;
+    apiRequest('/me/shift-re-registration').then((st: any) => setReRegStatus(st)).catch(() => null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionChecked]);
 
+  const fetchReRegStatus = async () => {
+    const st: any = await apiRequest('/me/shift-re-registration');
+    setReRegStatus(st);
+    if (st?.from) {
+      const sh: any = await apiRequest(`/me/schedule?fromDate=${st.from}&toDate=${st.to}`).catch(() => []);
+      setReRegExisting((sh || [])
+        .filter((s: any) => String(s.status || '') !== 'CANCELLED')
+        .map((s: any) => ({ date: String(s.date || '').slice(0, 10), code: String(s.shift_code) })));
+    }
+  };
   const loadReReg = async () => {
     try {
-      const st: any = await apiRequest('/me/shift-re-registration');
-      setReRegStatus(st);
-      if (st?.from) {
-        const sh: any = await apiRequest(`/me/schedule?fromDate=${st.from}&toDate=${st.to}`).catch(() => []);
-        setReRegExisting((sh || [])
-          .filter((s: any) => String(s.status || '') !== 'CANCELLED')
-          .map((s: any) => ({ date: String(s.date || '').slice(0, 10), code: String(s.shift_code) })));
-      }
+      await fetchReRegStatus();
     } catch (e: any) {
       showToast(e?.message || 'Lỗi tải phiếu Cập Nhật Ca!');
     }
@@ -1438,6 +1454,10 @@ export function App() {
         if (!p?.entity || p.entity === 'payroll' || p.entity === 'payslips' || p.entity === 'all') setSchedRefresh(k => k + 1);
         // Admin bật/tắt bảo trì -> cập nhật màn khóa cổng ngay (kể cả đang đăng nhập).
         if (p?.entity === 'config') fetchPortalMaintenanceRef.current().catch(() => null);
+        // Admin mở/đóng phiếu Cập Nhật Ca -> tải lại trạng thái (ẩn/hiện tab + đếm ngược).
+        if (p?.entity === 'shift-rereg') {
+          apiRequest('/me/shift-re-registration').then((st: any) => setReRegStatus(st)).catch(() => null);
+        }
       });
       socket.on('notification.created', (p: any) => {
         reload();
@@ -3001,7 +3021,12 @@ export function App() {
     { id: 'profile', label: '11. Hồ Sơ', icon: User },
   ];
 
-  const currentTabs = isProbation ? probationTabs : officialTabs;
+  // Tab "Cập Nhật Ca" chỉ hiện khi Admin đã MỞ phiếu (trước khi biết trạng
+  // thái thì tạm hiện — load cấu hình sớm khi đăng nhập nên gần như không nhấp nháy).
+  const reRegEnabled = reRegStatus ? !!reRegStatus.enabled : true;
+  const currentTabs = (isProbation ? probationTabs : officialTabs).filter(
+    (t) => t.id !== 'rereg' || reRegEnabled
+  );
 
   // =========================================================================
   // VIEW: PHONE LOGIN
@@ -6118,15 +6143,55 @@ export function App() {
                 tự động trong kỳ lương, ca <b>chưa tới</b> để chờ điểm danh như bình thường. Mỗi dòng
                 phiếu ghi đồng bộ cả Google Sheets.
               </p>
-              {reRegStatus && (
-                <div style={{ display: 'flex', gap: '6px', marginTop: '10px', flexWrap: 'wrap', alignItems: 'center', fontSize: '12px' }}>
-                  <span className="badge badge-brand">Đợt từ {reRegStatus.from} đến {reRegStatus.to}</span>
-                  <span style={{ color: 'var(--text-2)' }}>Ca của bạn trong đợt: {reRegExisting.length}</span>
-                  <button className="btn-secondary" style={{ fontSize: '11px', padding: '3px 10px' }} onClick={() => loadReReg()}>↻ Tải lại</button>
-                </div>
-              )}
+              {reRegStatus && (() => {
+                // ĐẾM NGƯỢC phiếu đến mốc đóng (23:59:59 +07:00 ngày kết thúc đợt)
+                const endMs = new Date(String(reRegStatus.endsAt || '')).getTime();
+                const remaining = Number.isFinite(endMs) ? endMs - reRegNow : NaN;
+                const closed = Number.isFinite(remaining) && remaining <= 0;
+                const pad = (n: number) => String(n).padStart(2, '0');
+                const dLeft = Number.isFinite(remaining) ? Math.floor(remaining / 86_400_000) : 0;
+                const hLeft = Number.isFinite(remaining) ? Math.floor((remaining % 86_400_000) / 3_600_000) : 0;
+                const mLeft = Number.isFinite(remaining) ? Math.floor((remaining % 3_600_000) / 60_000) : 0;
+                const sLeft = Number.isFinite(remaining) ? Math.floor((remaining % 60_000) / 1000) : 0;
+                return (
+                  <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{
+                      padding: '10px 12px', borderRadius: 'var(--radius-sm)', fontSize: '13px', fontWeight: 800,
+                      border: closed ? '1px solid #FECACA' : '1px solid #FDE68A',
+                      backgroundColor: closed ? '#FEF2F2' : '#FFFBEB',
+                      color: closed ? '#DC2626' : '#92400E',
+                      display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap',
+                    }}>
+                      {closed ? '🔒 Phiếu đã ĐÓNG — hết thời gian khai' : (
+                        <>
+                          <span>⏳ Phiếu đóng sau:</span>
+                          <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: '15px' }}>
+                            {dLeft > 0 ? `${dLeft} ngày ` : ''}{pad(hLeft)}:{pad(mLeft)}:{pad(sLeft)}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center', fontSize: '12px' }}>
+                      <span className="badge badge-brand">Đợt từ {reRegStatus.from} đến {reRegStatus.to}</span>
+                      <span style={{ color: 'var(--text-2)' }}>Ca của bạn trong đợt: {reRegExisting.length}</span>
+                      <button className="btn-secondary" style={{ fontSize: '11px', padding: '3px 10px' }} onClick={() => loadReReg()}>↻ Tải lại</button>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
+            {/* Admin ĐÓNG phiếu → khóa toàn bộ phần khai, chỉ hiện báo chờ mở */}
+            {reRegStatus && !reRegStatus.enabled ? (
+              <div className="card" style={{ textAlign: 'center', padding: '26px 16px' }}>
+                <div style={{ fontSize: '34px', marginBottom: '8px' }}>🔒</div>
+                <div style={{ fontSize: '14px', fontWeight: 800 }}>Phiếu Cập Nhật Ca đang ĐÓNG</div>
+                <p style={{ fontSize: '12px', color: 'var(--text-2)', margin: '8px 0 0', lineHeight: 1.55 }}>
+                  Quản trị viên chưa mở phiếu khai lại công (hoặc đợt trước đã kết thúc).
+                  Khi được mở, tab này sẽ hiện ra kèm thời gian đếm ngược — bạn không cần làm gì cả.
+                </p>
+              </div>
+            ) : (<>
             {/* Ca hiện có trong đợt (nền realtime từ /me/schedule) */}
             {reRegExisting.length > 0 && (
               <div className="card">
@@ -6225,6 +6290,7 @@ export function App() {
                 </p>
               )}
             </div>
+            </>)}
 
             {/* Kết quả lần gửi gần nhất */}
             {reRegReport && (

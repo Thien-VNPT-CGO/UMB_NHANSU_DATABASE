@@ -99,6 +99,7 @@ import {
   probationExtraShiftBody,
   probationSelfSwapBody,
   reRegSlipBody,
+  reRegConfigBody,
   publishWeekBody,
   publishWeekParams,
   schedulesQuery,
@@ -3585,6 +3586,39 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   // là bot TỰ ĐỘNG cập nhật ca: ca đã qua chấm HOÀN THÀNH + cộng tiền ca, ca
   // chưa tới để chờ điểm danh; mỗi dòng phiếu ghi đồng bộ Sheet
   // PHIEU_NV_CAP_NHAT_CA (tab thiếu → hệ thống tự tạo bảng + cột).
+  // BETA — ADMIN điều khiển phiếu "Cập Nhật Ca": bật/tắt + đặt thời gian hiển
+  // thị (đợt from → to). Cổng NV nhận realtime (data:updated shift-rereg) →
+  // hiện/ẩn tab + đếm ngược đến mốc đóng (23:59:59 +07:00 ngày kết thúc).
+  app.get('/admin/shift-re-registration/config', authMiddleware, requireRole(['ADMIN']), async (req: AuthenticatedRequest, res) => {
+    try {
+      res.json(await shiftReRegService.getAdminConfig());
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.put('/admin/shift-re-registration/config', authMiddleware, requireRole(['ADMIN']), validate({ body: reRegConfigBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const cfg = await shiftReRegService.saveConfig(req.user!.id, {
+        enabled: !!req.body?.enabled,
+        from: req.body?.from,
+        to: req.body?.to,
+      });
+      await adapter.recordAuditLog({
+        actor_id: req.user!.id,
+        action: 'REREG_CONFIG_UPDATED',
+        target_type: 'CAU_HINH_HE_THONG',
+        target_id: 'shift_re_registration',
+        detail: JSON.stringify(cfg),
+      } as any).catch(() => null);
+      // Realtime cả 2 cổng: NV thấy tab mở/ẩn + đếm ngược mới ngay lập tức
+      broadcastUpdate('shift-rereg', { action: 'config', ...cfg });
+      res.json(cfg);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   app.get('/me/shift-re-registration', authMiddleware, requireRole(['EMPLOYEE']), async (req: AuthenticatedRequest, res) => {
     try {
       const employeeId = req.user?.employeeId;
