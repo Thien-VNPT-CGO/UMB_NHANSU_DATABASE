@@ -2,8 +2,9 @@
 # ==============================================================
 # UBM AUTO-DEPLOY WATCHER (chay tren VPS, khong push di dau)
 # --------------------------------------------------------------
-# Kiem tra GitHub xem nhanh `vps` (prod) va `beta` (beta) co commit
-# moi khong -> co thi tu chay deploy tuong ung. Duoc cron goi moi 5 phut.
+# Kiem tra GitHub xem nhanh `vps` (prod, cong 4005) co commit moi
+# khong -> co thi tu chay deploy.sh. Duoc cron goi moi phut.
+# (Moi truong beta da bo ngay 2026-10-20 theo yeu cau chu du an.)
 # Cai dat (chay 1 lan trong folder repo tren VPS):
 #   sudo bash deploy/autodeploy/install-autodeploy.sh
 # Xem log:   tail -f /var/log/ubm-autodeploy.log
@@ -11,9 +12,8 @@
 # ==============================================================
 set -uo pipefail
 
-# Thu muc repo tre nhanh tung moi truong tren VPS (sua neu khac):
+# Thu muc repo nhanh prod tren VPS (sua neu khac):
 PROD_DIR="${PROD_DIR:-$HOME/ubm-vps}"
-BETA_DIR="${BETA_DIR:-$HOME/ubm-beta}"
 
 LOG() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*"; }
 
@@ -31,11 +31,10 @@ sync_branch() {
     if bash "$script" >>/var/log/ubm-autodeploy.log 2>&1; then
       LOG "[$label] DEPLOY OK ($after)"
     else
-      LOG "[$label] DEPLOY FAIL — chi tiet trong log, va he thong dang chay ban cu"
+      LOG "[$label] DEPLOY FAIL — chi tiet trong log, he thong dang chay cu"
     fi
   fi
 }
 
-sync_branch "$PROD_DIR" vps    deploy/vps/deploy.sh    "PROD(vps)"
-sync_branch "$BETA_DIR" beta   deploy/beta/deploy-beta.sh "BETA(beta)"
+sync_branch "$PROD_DIR" vps deploy/vps/deploy.sh "PROD(vps)"
 exit 0
