@@ -27,6 +27,7 @@ import { ScheduleExcelService, XLSX_MIME } from './services/schedule-excel.servi
 import { AutoScheduleService } from './services/auto-schedule.service.js';
 import { TestsService } from './services/tests.service.js';
 import { AttendanceService } from './services/attendance.service.js';
+import { ShiftReRegService } from './services/shift-rereg.service.js';
 import { readAttendancePhotoDisk } from './services/photo-disk.store.js';
 import { PayrollService } from './services/payroll.service.js';
 import { NotificationsService } from './services/notifications.service.js';
@@ -97,6 +98,7 @@ import {
   probationOffBody,
   probationExtraShiftBody,
   probationSelfSwapBody,
+  reRegSlipBody,
   publishWeekBody,
   publishWeekParams,
   schedulesQuery,
@@ -169,6 +171,12 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   const autoScheduleService = new AutoScheduleService(adapter);
   const testsService = new TestsService(adapter);
   const attendanceService = new AttendanceService(adapter);
+  // BETA — Phiếu "Cập Nhật Ca Làm" tự phục vụ của nhân viên (bot chấm tự động,
+  // đồng bộ Sheet tab PHIEU_NV_CAP_NHAT_CA tự tạo nếu thiếu).
+  const shiftReRegService = new ShiftReRegService(
+    schedulesService, employeesService, attendanceService,
+    (adapter as any).syncService, adapter,
+  );
   const payrollService = new PayrollService(adapter);
   const notificationsService = new NotificationsService(adapter);
   payrollService.setNotificationsService(notificationsService);
@@ -3569,6 +3577,49 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         return res.status(400).json({ error: 'MAX_2_SHIFTS_PER_DAY', message: msg.replace(/^MAX_2_SHIFTS_PER_DAY:\s*/, '') });
       }
       res.status(400).json({ error: msg });
+    }
+  });
+
+  // BETA — Phiếu "Cập Nhật Ca Làm" tự phục vụ: NV khai lại ca trong đợt
+  // (mặc định 01/10 → 24/10/2026 — env SCHEDULE_REREG_FROM/TO), bấm Gửi Phiếu
+  // là bot TỰ ĐỘNG cập nhật ca: ca đã qua chấm HOÀN THÀNH + cộng tiền ca, ca
+  // chưa tới để chờ điểm danh; mỗi dòng phiếu ghi đồng bộ Sheet
+  // PHIEU_NV_CAP_NHAT_CA (tab thiếu → hệ thống tự tạo bảng + cột).
+  app.get('/me/shift-re-registration', authMiddleware, requireRole(['EMPLOYEE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const employeeId = req.user?.employeeId;
+      if (!employeeId) return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
+      res.json(await shiftReRegService.getStatus(employeeId));
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.post('/me/shift-re-registration', authMiddleware, requireRole(['EMPLOYEE']), validate({ body: reRegSlipBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const employeeId = req.user?.employeeId;
+      if (!employeeId) return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
+      const entries = (req.body?.entries || []).map((e: any) => ({
+        date: String(e.date || '').slice(0, 10),
+        codes: e.codes || [],
+      }));
+      const report = await shiftReRegService.submitForm(employeeId, entries, employeeId);
+      // Realtime cả 2 cổng: lưới lịch admin/HR + Bảng chấm công nạp lại ngay
+      broadcastUpdate('schedules', { action: 'rereg-slip', employeeId, slipId: report.slipId });
+      broadcastUpdate('attendance', { action: 'rereg-bot-complete', employeeId, completed: report.completed });
+      if (report.completed > 0) broadcastUpdate('payroll', { action: 'rereg-complete', employeeId, completed: report.completed });
+      // Báo quản lý (ADMIN/HR/STORE) một thông báo tóm tắt phiếu
+      broadcastNotification({
+        type: 'ADJUSTMENT',
+        title: '📨 Phiếu Cập Nhật Ca (NV tự khai)',
+        message: `${report.entries?.length || 0} ngày trong đợt ${report.from} → ${report.to}: tạo ${report.created}, đổi ${report.updated}, giữ ${report.kept}${report.completed ? `, bot chấm hoàn thành ${report.completed} ca đã qua` : ''}.`,
+        linkTab: 'schedules',
+        metadata: { employeeId, slipId: report.slipId },
+        targetRoles: ['ADMIN', 'HR', 'STORE'],
+      });
+      res.json(report);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
     }
   });
 

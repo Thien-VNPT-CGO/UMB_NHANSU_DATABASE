@@ -321,6 +321,15 @@ export const probationExtraShiftBody = z.object({
   shiftCode: z.enum(['CA_1', 'CA_2', 'CA_3']),
 });
 
+// BETA — Phiếu "Cập Nhật Ca Làm" tự phục vụ: NV khai lại ca trong đợt
+// (mặc định 01/10 → 24/10), tối đa 2 ca/ngày, server kiểm cửa sổ tiếp.
+export const reRegSlipBody = z.object({
+  entries: z.array(z.object({
+    date: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ngày phải dạng YYYY-MM-DD'),
+    codes: z.array(z.enum(['CA_1', 'CA_2', 'CA_3'])).min(1).max(2),
+  })).min(1).max(180),
+});
+
 // NV thử việc TỰ ĐỔI CA (Ca làm ⇄ Nghỉ OFF): hệ thống tự duyệt ngay, không cần HR.
 export const probationSelfSwapBody = z.object({
   direction: z.enum(['WORK_TO_OFF', 'OFF_TO_WORK']),

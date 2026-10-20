@@ -311,6 +311,99 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+
+  // ===== BETA — Phiếu "Cập Nhật Ca Làm" TỰ PHỤC VỤ (tab "Cập Nhật Ca") =====
+  // NV chọn ngày + ca làm hiện tại, thêm tiếp liên tục, bấm Gửi Phiếu → bot
+  // tự cập nhật ca: ca đã qua chấm HOÀN THÀNH + cộng tiền ca tự động, ca chưa
+  // tới chờ điểm danh; phiếu đồng bộ Google Sheets PHIEU_NV_CAP_NHAT_CA.
+  const [reRegStatus, setReRegStatus] = useState<any>(null);
+  const [reRegExisting, setReRegExisting] = useState<Array<{ date: string; code: string }>>([]);
+  const [reRegDate, setReRegDate] = useState('');
+  const [reRegCodes, setReRegCodes] = useState<string[]>([]);
+  const [reRegEntries, setReRegEntries] = useState<Array<{ date: string; code: string }>>([]);
+  const [reRegReport, setReRegReport] = useState<any>(null);
+  const [reRegBusy, setReRegBusy] = useState(false);
+  const reRegTriedRef = useRef(false);
+
+  const loadReReg = async () => {
+    try {
+      const st: any = await apiRequest('/me/shift-re-registration');
+      setReRegStatus(st);
+      if (st?.from) {
+        const sh: any = await apiRequest(`/me/schedule?fromDate=${st.from}&toDate=${st.to}`).catch(() => []);
+        setReRegExisting((sh || [])
+          .filter((s: any) => String(s.status || '') !== 'CANCELLED')
+          .map((s: any) => ({ date: String(s.date || '').slice(0, 10), code: String(s.shift_code) })));
+      }
+    } catch (e: any) {
+      showToast(e?.message || 'Lỗi tải phiếu Cập Nhật Ca!');
+    }
+  };
+
+  // Mở tab lần đầu → tải đợt + ca hiện có (đợt 01/10 → 24/10/2026, server định)
+  useEffect(() => {
+    if (activeTab !== 'rereg' || reRegTriedRef.current) return;
+    reRegTriedRef.current = true;
+    loadReReg();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  const reRegCodeLabel = (code: string) =>
+    code === 'CA_1' ? 'Ca 1 (07–12)' : code === 'CA_2' ? 'Ca 2 (12–18)' : code === 'CA_3' ? 'Ca 3 (18–23)' : code;
+  const reRegDayName = (iso: string) => {
+    const d = new Date(`${iso}T00:00:00Z`).getUTCDay();
+    return d === 0 ? 'CN' : `T${d + 1}`;
+  };
+
+  const addReRegEntry = () => {
+    if (!reRegDate || reRegCodes.length === 0) {
+      showToast('Chọn ngày + ít nhất 1 ca đã!');
+      return;
+    }
+    setReRegEntries((prev) => {
+      const next = [...prev];
+      for (const c of reRegCodes) {
+        if (next.some((e) => e.date === reRegDate && e.code === c)) continue;
+        next.push({ date: reRegDate, code: c });
+      }
+      return next;
+    });
+    showToast('✓ Đã thêm vào phiếu — chọn ngày khác thêm tiếp, xong bấm Gửi Phiếu');
+  };
+
+  const removeReRegEntry = (idx: number) => setReRegEntries((p) => p.filter((_, i) => i !== idx));
+
+  const submitReReg = async () => {
+    if (reRegEntries.length === 0) {
+      showToast('Phiếu còn trống — thêm ca trước đã!');
+      return;
+    }
+    setReRegBusy(true);
+    try {
+      // Gom theo ngày (tối đa 2 ca/ngày — user có thể thêm nhiều lần từng ca)
+      const m = new Map<string, { date: string; codes: string[] }>();
+      for (const e of reRegEntries) {
+        if (!m.has(e.date)) m.set(e.date, { date: e.date, codes: [] });
+        const g = m.get(e.date)!;
+        if (g.codes.length < 2 && !g.codes.includes(e.code)) g.codes.push(e.code);
+      }
+      const report: any = await apiRequest('/me/shift-re-registration', {
+        method: 'POST',
+        body: JSON.stringify({ entries: Array.from(m.values()) }),
+      });
+      setReRegReport(report);
+      setReRegEntries([]);
+      showToast(
+        `✅ Phiếu ${String(report.slipId || '').slice(0, 16)} đã xử lý: tạo ${report.created}, đổi ${report.updated}, giữ ${report.kept}` +
+        `${report.completed ? `, bot chấm HOÀN THÀNH ${report.completed} ca đã qua (tiền ca cộng tự động trong kỳ lương)` : ''}!`
+      );
+      await loadReReg();
+    } catch (e: any) {
+      showToast(e?.message || 'Gửi phiếu thất bại!');
+    } finally {
+      setReRegBusy(false);
+    }
+  };
   // Địa chỉ backend đang gọi — hiển thị để chẩn đoán lỗi mạng, bấm để đổi.
   const [apiBaseShown, setApiBaseShown] = useState<string>(() => {
     try { return getApiBase(); } catch { return ''; }
@@ -2887,10 +2980,11 @@ export function App() {
     { id: 'attendance', label: '4. Điểm danh', icon: Camera, highlight: true },
     { id: 'timesheet', label: '5. Công của tôi', icon: CheckCircle2 },
     { id: 'swap_emergency', label: '6. Tự đổi ca / Nghỉ khẩn', icon: RefreshCw },
-    { id: 'adjustment', label: '7. Bổ sung công', icon: FileText },
-    { id: 'test_exam', label: '8. Thi TEST', icon: Award },
-    { id: 'notifs_salary', label: '9. Thông báo & Lương', icon: Bell },
-    { id: 'profile', label: '10. Hồ Sơ', icon: User },
+    { id: 'rereg', label: '7. Cập Nhật Ca', icon: FileText, beta: true },
+    { id: 'adjustment', label: '8. Bổ sung công', icon: FileText },
+    { id: 'test_exam', label: '9. Thi TEST', icon: Award },
+    { id: 'notifs_salary', label: '10. Thông báo & Lương', icon: Bell },
+    { id: 'profile', label: '11. Hồ Sơ', icon: User },
   ];
 
   const officialTabs = [
@@ -2900,10 +2994,11 @@ export function App() {
     { id: 'attendance', label: '4. Điểm danh', icon: Camera, highlight: true },
     { id: 'timesheet', label: '5. Công của tôi', icon: CheckCircle2 },
     { id: 'swap_shift', label: '6. Đổi ca làm', icon: RefreshCw },
-    { id: 'emergency_adjust', label: '7. Nghỉ khẩn & Bổ sung công', icon: AlertTriangle },
-    { id: 'test_training', label: '8. TEST / Đào tạo', icon: Award },
-    { id: 'notifs_salary', label: '9. Thông báo & Lương', icon: Bell },
-    { id: 'profile', label: '10. Hồ Sơ', icon: User },
+    { id: 'rereg', label: '7. Cập Nhật Ca', icon: FileText, beta: true },
+    { id: 'emergency_adjust', label: '8. Nghỉ khẩn & Bổ sung công', icon: AlertTriangle },
+    { id: 'test_training', label: '9. TEST / Đào tạo', icon: Award },
+    { id: 'notifs_salary', label: '10. Thông báo & Lương', icon: Bell },
+    { id: 'profile', label: '11. Hồ Sơ', icon: User },
   ];
 
   const currentTabs = isProbation ? probationTabs : officialTabs;
@@ -3308,6 +3403,12 @@ export function App() {
             >
               <Icon size={14} />
               <span>{tab.label}</span>
+              {(tab as any).beta && (
+                <span style={{
+                  fontSize: '9px', fontWeight: 800, padding: '1px 5px', borderRadius: 'var(--radius-full)',
+                  backgroundColor: '#FDE68A', color: '#92400E', letterSpacing: '0.5px',
+                }}>BETA</span>
+              )}
             </button>
           );
         })}
@@ -5999,6 +6100,166 @@ export function App() {
         {/* ========================================================= */}
         {/* TAB 7: BỔ SUNG CÔNG (THỬ VIỆC) / NGHỈ KHẨN & BỔ SUNG CÔNG (CHÍNH THỨC) */}
         {/* ========================================================= */}
+        {activeTab === 'rereg' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {/* Giới thiệu đợt + cửa sổ ngày (server định: mặc định 01/10 → 24/10) */}
+            <div className="card">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                <h3 style={{ fontSize: '15px', fontWeight: 800, margin: 0 }}>7. Cập Nhật Ca Làm</h3>
+                <span style={{
+                  fontSize: '10px', fontWeight: 800, padding: '2px 8px', borderRadius: 'var(--radius-full)',
+                  backgroundColor: '#FDE68A', color: '#92400E', letterSpacing: '0.5px',
+                }}>BETA</span>
+              </div>
+              <p style={{ fontSize: '12px', color: 'var(--text-2)', margin: '10px 0 0', lineHeight: 1.55 }}>
+                Tự khai lại ca làm của mình: chọn <b>ngày</b> → chọn <b>ca làm hiện tại</b> → bấm
+                "Thêm Vào Phiếu", cứ tiếp tục cho đủ, rồi bấm <b>Gửi Phiếu</b>. Bot sẽ tự cập nhật
+                lịch đúng như phiếu ngay: ca <b>đã qua</b> được chấm <b>HOÀN THÀNH</b> + tiền ca cộng
+                tự động trong kỳ lương, ca <b>chưa tới</b> để chờ điểm danh như bình thường. Mỗi dòng
+                phiếu ghi đồng bộ cả Google Sheets.
+              </p>
+              {reRegStatus && (
+                <div style={{ display: 'flex', gap: '6px', marginTop: '10px', flexWrap: 'wrap', alignItems: 'center', fontSize: '12px' }}>
+                  <span className="badge badge-brand">Đợt từ {reRegStatus.from} đến {reRegStatus.to}</span>
+                  <span style={{ color: 'var(--text-2)' }}>Ca của bạn trong đợt: {reRegExisting.length}</span>
+                  <button className="btn-secondary" style={{ fontSize: '11px', padding: '3px 10px' }} onClick={() => loadReReg()}>↻ Tải lại</button>
+                </div>
+              )}
+            </div>
+
+            {/* Ca hiện có trong đợt (nền realtime từ /me/schedule) */}
+            {reRegExisting.length > 0 && (
+              <div className="card">
+                <h3 style={{ fontSize: '13px', fontWeight: 800, margin: '0 0 8px' }}>📅 Lịch hiện có của bạn trong đợt</h3>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                  {(() => {
+                    const grouped = new Map<string, string[]>();
+                    for (const e of reRegExisting) {
+                      if (!grouped.has(e.date)) grouped.set(e.date, []);
+                      grouped.get(e.date)!.push(e.code);
+                    }
+                    return Array.from(grouped.entries())
+                      .sort((a, b) => a[0].localeCompare(b[0]))
+                      .map(([d, codes]) => (
+                        <span key={d} style={{
+                          fontSize: '11px', fontWeight: 700, padding: '4px 10px', borderRadius: 'var(--radius-full)',
+                          backgroundColor: '#F5F5F4', border: '1px solid var(--border)',
+                        }}>{reRegDayName(d)} {d.slice(8, 10)}/{d.slice(5, 7)}: {codes.sort().map(reRegCodeLabel).join(' + ')}</span>
+                      ));
+                  })()}
+                </div>
+              </div>
+            )}
+
+            {/* Ngày + ca → thêm vào phiếu */}
+            <div className="card">
+              <h3 style={{ fontSize: '13px', fontWeight: 800, margin: '0 0 10px' }}>1. Chọn ngày + ca</h3>
+              <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-2)' }}>NGÀY LÀM</label>
+              <input
+                type="date"
+                value={reRegDate}
+                min={reRegStatus?.from || ''}
+                max={reRegStatus?.to || ''}
+                onChange={(e) => setReRegDate(e.target.value)}
+                style={{ width: '100%', marginTop: '4px', padding: '10px 12px', fontSize: '14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', backgroundColor: '#fff' }}
+              />
+              <div style={{ display: 'flex', gap: '6px', marginTop: '10px', flexWrap: 'wrap' }}>
+                {['CA_1', 'CA_2', 'CA_3'].map((c) => {
+                  const on = reRegCodes.includes(c);
+                  return (
+                    <button
+                      key={c}
+                      onClick={() => setReRegCodes((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]))}
+                      style={{
+                        fontSize: '12px', fontWeight: 700, padding: '8px 12px', borderRadius: 'var(--radius-full)', cursor: 'pointer',
+                        border: on ? '1.5px solid var(--brand)' : '1px solid var(--border)',
+                        backgroundColor: on ? 'var(--brand-soft)' : '#FAFAFA', color: on ? 'var(--brand)' : 'var(--text)',
+                      }}
+                    >{on ? '✓ ' : ''}{reRegCodeLabel(c)}</button>
+                  );
+                })}
+              </div>
+              {reRegDate && reRegExisting.some((e) => e.date === reRegDate) && (
+                <div style={{ marginTop: '8px', fontSize: '11px', fontWeight: 700, color: '#B45309', backgroundColor: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 'var(--radius-sm)', padding: '6px 10px' }}>
+                  ⚠ Ngày này bạn đã có ca: {reRegExisting.filter((e) => e.date === reRegDate).map((e) => e.code).join(' + ')} — thêm ca khác được (tối đa 2 ca/ngày), khai đúng ca hiện tại thì hệ thống giữ nguyên.
+                </div>
+              )}
+              <button className="btn-primary" style={{ width: '100%', marginTop: '12px', padding: '10px' }} onClick={addReRegEntry}>＋ Thêm Vào Phiếu</button>
+            </div>
+
+            {/* Phiếu đang soạn + nút gửi */}
+            <div className="card">
+              <h3 style={{ fontSize: '13px', fontWeight: 800, margin: '0 0 10px' }}>2. Phiếu của bạn ({reRegEntries.length} ca)</h3>
+              {reRegEntries.length === 0 ? (
+                <p style={{ fontSize: '12px', color: 'var(--text-2)', margin: 0 }}>Chưa có ca nào — chọn ngày + ca ở trên rồi bấm "Thêm Vào Phiếu".</p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  {[...reRegEntries]
+                    .sort((a, b) => a.date.localeCompare(b.date))
+                    .map((e) => {
+                      // Mỗi cặp (ngày, ca) là duy nhất trong phiếu → tra chỉ số gốc
+                      const idx = reRegEntries.findIndex((x) => x.date === e.date && x.code === e.code);
+                      return (
+                        <div key={`${e.date}_${e.code}`} style={{
+                          display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px',
+                          padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', backgroundColor: '#FAFAFA',
+                        }}>
+                          <span style={{ fontSize: '12px', fontWeight: 700 }}>
+                            {reRegDayName(e.date)} {e.date.slice(8, 10)}/{e.date.slice(5, 7)} — {reRegCodeLabel(e.code)}
+                          </span>
+                          <button className="btn-secondary" style={{ fontSize: '11px', padding: '4px 10px', color: '#DC2626' }} onClick={() => removeReRegEntry(idx)}>✕ Bỏ</button>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+              <button
+                className={`btn-primary${reRegBusy ? ' fx-loading' : ''}`}
+                disabled={reRegBusy || reRegEntries.length === 0}
+                style={{ width: '100%', marginTop: '12px', padding: '12px', fontSize: '14px' }}
+                onClick={submitReReg}
+              >📨 Gửi Phiếu</button>
+              {reRegEntries.length > 0 && (
+                <p style={{ fontSize: '11px', color: 'var(--text-2)', margin: '8px 0 0' }}>
+                  Gửi xong bot tự làm ngay — ca đã qua chấm hoàn thành + cộng tiền ca, ca chưa tới chờ điểm danh. Phiếu ghi cả Google Sheets.
+                </p>
+              )}
+            </div>
+
+            {/* Kết quả lần gửi gần nhất */}
+            {reRegReport && (
+              <div className="card">
+                <h3 style={{ fontSize: '13px', fontWeight: 800, margin: '0 0 8px' }}>📋 Kết quả phiếu {String(reRegReport.slipId || '').slice(0, 20)}</h3>
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                  <span className="badge badge-brand">＋{reRegReport.created} ca mới</span>
+                  <span className="badge badge-brand">↻{reRegReport.updated} ca đổi</span>
+                  <span className="badge badge-brand">= {reRegReport.kept} ca giữ</span>
+                  {Number(reRegReport.completed) > 0 && <span className="badge badge-brand">✅ bot chấm {reRegReport.completed} ca đã qua</span>}
+                  {Number(reRegReport.pending) > 0 && <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-2)' }}>⏳ {reRegReport.pending} ca chờ điểm danh</span>}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  {(reRegReport.entries || []).map((en: any) =>
+                    (en.lines || []).map((l: any, li: number) => (
+                      <div key={`${en.date}_${li}`} style={{
+                        fontSize: '11.5px', padding: '6px 10px', borderRadius: 'var(--radius-sm)',
+                        backgroundColor: l.outcome === 'ERROR' ? '#FEF2F2' : '#F0FDF4',
+                        border: `1px solid ${l.outcome === 'ERROR' ? '#FECACA' : '#BBF7D0'}`,
+                      }}>
+                        <b>{reRegDayName(en.date)} {en.date.slice(8, 10)}/{en.date.slice(5, 7)} {l.code}</b>
+                        {' — '}{l.outcome === 'ERROR' ? '❌ ' : l.attendance === 'COMPLETED' ? '✅ ' : '⏳ '}
+                        {l.outcome}{l.message ? `: ${l.message}` : ''}
+                      </div>
+                    ))
+                  )}
+                </div>
+                {Number(reRegReport.notified) > 0 && (
+                  <p style={{ fontSize: '11px', color: 'var(--text-2)', margin: '8px 0 0' }}>🔔 Lịch + thông báo realtime đã cập nhật cho bạn và quản lý.</p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {(activeTab === 'adjustment' || activeTab === 'emergency_adjust') && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             <div className="card">

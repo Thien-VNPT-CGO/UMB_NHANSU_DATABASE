@@ -84,6 +84,11 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
     headers: ['Tham Số', 'Giá Trị', 'Mô Tả', 'Cập Nhật Lần Cuối'],
   },
   {
+    // BETA: phiếu NV tự cập nhật lại ca làm trong đợt khai công (bot chấm tự động)
+    title: 'PHIEU_NV_CAP_NHAT_CA',
+    headers: ['ID Phiếu', 'ID Nhân Viên', 'Mã NV', 'Họ Và Tên', 'Ngày (YYYY-MM-DD)', 'Ca', 'Kết Quả (MỚI/ĐỔI/GIỮ/LỖI)', 'Chấm Công (HOÀN THÀNH/CHỜ)', 'Tiền Ca Ước Tính (VNĐ)', 'Ghi Chú', 'Thời Gian Gửi'],
+  },
+  {
     title: 'THONGBAO_NV',
     headers: ['ID Inbox', 'ID Thông Báo', 'Người Nhận', 'Loại', 'Tiêu Đề', 'Nội Dung', 'Mức Độ', 'Tab Liên Quan', 'Thời Gian', 'Đã Đọc'],
   },
