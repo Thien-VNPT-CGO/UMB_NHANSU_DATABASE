@@ -2324,11 +2324,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [rrBusy, setRrBusy] = useState(false);
   // Sức khỏe máy chủ: lịch sử sự cố watchdog báo về (chỉ ADMIN)
   const [downtimes, setDowntimes] = useState<any[]>([]);
+  // Trạng thái backup hằng ngày (cùng card)
+  const [backupSt, setBackupSt] = useState<any>(null);
   useEffect(() => {
     if (currentUser?.role !== 'ADMIN') return;
     apiRequest('/admin/system-downtimes').then((d: any) => {
       if (Array.isArray(d)) setDowntimes(d);
     }).catch(() => null);
+    apiRequest('/admin/system-backup').then((b: any) => setBackupSt(b)).catch(() => null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser?.role]);  useEffect(() => {
     if (currentUser?.role !== 'ADMIN') return;
@@ -3756,6 +3759,43 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 backgroundColor: '#DCFCE7', color: '#166534',
               }}>🟢 ĐANG CHẠY (bạn đang dùng portal này)</span>
             </div>
+            {(() => {
+              // Trạng thái backup: OK hôm nay / lỗi / chưa backup bao giờ
+              const vnToday = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+              const backedToday = backupSt?.last_backup_date === vnToday;
+              const backupRow = backupSt ? (
+                <div style={{
+                  fontSize: '12px', padding: '7px 10px', borderRadius: 'var(--radius-sm)',
+                  backgroundColor: backedToday ? '#F0FDF4' : '#FFFBEB',
+                  border: `1px solid ${backedToday ? '#BBF7D0' : '#FDE68A'}`,
+                  color: backedToday ? '#166534' : '#92400E',
+                  display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center',
+                }}>
+                  {backedToday ? '💾 Đã backup hôm nay OK: ' : backupSt.last_error ? '⚠ Backup LỖI: ' : '⏳ Chưa backup hôm nay (cron sẽ thử): '}
+                  <span style={{ fontWeight: 700 }}>
+                    {backedToday
+                      ? `${backupSt.last_name || vnToday}${backupSt.last_ok_at ? ` • ${new Date(backupSt.last_ok_at).toLocaleTimeString('vi-VN')}` : ''}${backupSt.last_deleted_old ? ` • dọn ${backupSt.last_deleted_old} bản cũ` : ''}`
+                      : String(backupSt.last_error || 'đang chờ cron giờ sau')}
+                  </span>
+                  {backupSt.last_file_id && (
+                    <a
+                      href={`https://drive.google.com/file/d/${backupSt.last_file_id}/view`}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ fontSize: '11px', color: '#2563EB', fontWeight: 700, textDecoration: 'underline' }}
+                    >mở file backup trên Drive ↗</a>
+                  )}
+                </div>
+              ) : (
+                <div style={{
+                  fontSize: '12px', padding: '7px 10px', borderRadius: 'var(--radius-sm)',
+                  backgroundColor: '#F1F5F9', border: '1px solid #E2E8F0', color: 'var(--text-muted)',
+                }}>
+                  💾 Backup chưa chạy lần nào — bật bằng: <code>sudo bash deploy/vps/install-backup.sh</code> (trên VPS)
+                </div>
+              );
+              return backupRow;
+            })()}
             {downtimes.length === 0 ? (
               <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '10px 0 0' }}>
                 ✅ Không ghi nhận sự cố nào. Watchdog (nếu đã bật) sẽ tự restart server khi chết treo và báo vào đây.

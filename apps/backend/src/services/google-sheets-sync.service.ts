@@ -419,6 +419,68 @@ export class GoogleSheetsSyncService {
   }
 
   /**
+   * BACKUP HẰNG NGÀY: copy nguyên "cục" spreadsheet (mọi tab + dữ liệu) ra
+   * Drive bằng service account sẵn có — không cần đọc/ghi từng dòng, 1 call là
+   * xong. Giữ file trong folder Drive hiện có, xóa bản cũ quá hạn
+   * (BACKUP_RETENTION_DAYS, mặc định 30 ngày). Idempotent theo ngày VN do
+   * route /internal/backup-run kiểm trước khi gọi.
+   */
+  public async runDailyBackup(retentionDays = Number(process.env.BACKUP_RETENTION_DAYS) || 30): Promise<{
+    ok: boolean; name?: string; fileId?: string; createdTime?: string; deletedOld?: number; reason?: string; error?: string;
+  }> {
+    if (!this.isConfigured || !this.driveClient) {
+      return { ok: false, reason: 'DRIVE_NOT_CONFIGURED' };
+    }
+    // Ngày/giờ Việt Nam (UTC+7)
+    const stamp = new Date(Date.now() + 7 * 3_600_000);
+    const vnDate = stamp.toISOString().slice(0, 10);
+    const name = `UBM_BACKUP_${vnDate}_${String(stamp.getUTCHours()).padStart(2, '0')}${String(stamp.getUTCMinutes()).padStart(2, '0')}`;
+    try {
+      const copied: any = await this.driveClient.files.copy({
+        fileId: this.spreadsheetId,
+        requestBody: {
+          name,
+          ...(this.driveFolderId ? { parents: [this.driveFolderId] } : {}),
+        },
+        fields: 'id,name,createdTime',
+        supportsAllDrives: true,
+      } as any);
+      // Quét + xóa bản backup quá hạn (nội dung giữ 30 ngày — không phá dữ liệu live)
+      let deletedOld = 0;
+      try {
+        const q = `name contains 'UBM_BACKUP_' and trashed=false${this.driveFolderId ? ` and '${this.driveFolderId}' in parents` : ''}`;
+        const listed: any = await this.driveClient.files.list({
+          q,
+          fields: 'files(id,name,createdTime)',
+          orderBy: 'createdTime desc',
+          pageSize: 200,
+          supportsAllDrives: true,
+        } as any);
+        const cutoff = Date.now() - Math.max(7, retentionDays) * 86_400_000;
+        for (const f of (listed?.data?.files || [])) {
+          if (new Date((f as any).createdTime).getTime() < cutoff) {
+            await this.driveClient.files.delete({ fileId: (f as any).id, supportsAllDrives: true } as any);
+            deletedOld += 1;
+          }
+        }
+      } catch (e: any) {
+        console.warn('[Backup] dọn bản cũ lỗi (không chặn):', e?.message || e);
+      }
+      console.log(`[Backup] OK: ${name} (file ${copied?.data?.id}), xóa ${deletedOld} bản quá hạn`);
+      return {
+        ok: true,
+        name,
+        fileId: copied?.data?.id,
+        createdTime: copied?.data?.createdTime,
+        deletedOld,
+      };
+    } catch (e: any) {
+      console.error('[Backup] THẤT BẠI:', e?.message || e);
+      return { ok: false, reason: 'DRIVE_ERROR', error: String(e?.message || e) };
+    }
+  }
+
+  /**
    * Tạo các Sheet tab còn thiếu và khởi tạo dòng tiêu đề (Header row)
    */
   public async initSpreadsheetStructure(): Promise<{ success: boolean; createdSheets: string[]; existingSheets: string[]; message: string }> {

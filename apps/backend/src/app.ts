@@ -4308,6 +4308,76 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // --- BACKUP TỰ ĐỘNG HẰNG NGÀY (cron host gọi giờ nào cũng được) ---
+  // Copy nguyên spreadsheet ra Drive (1 call), idempotent: mỗi ngày VN chỉ
+  // chạy 1 lần thật (các tick sau bị skip). Backup THẤT BẠI → thông báo ngay
+  // cho Admin (bền dữ liệu quan trọng hơn im lặng). Cron: deploy/vps/backup.sh
+  app.post('/internal/backup-run', async (req, res) => {
+    try {
+      const secret = String(process.env.INTERNAL_ALERT_SECRET || '');
+      const given = String(req.headers['x-internal-secret'] || '');
+      if (!secret || given !== secret) return res.status(403).json({ error: 'FORBIDDEN' });
+      const syncService = (adapter as any).syncService;
+      if (!syncService) return res.status(500).json({ error: 'SYNC_SERVICE_MISSING' });
+      // Ngày VN hiện tại — khóa 1 backup/ngày (force=1 để chạy tay thử)
+      const force = Number(req.body?.force) === 1;
+      const vnToday = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+      const cur: any = await adapter.getSystemSettings().catch(() => ({})) || {};
+      const st = cur.system_backups || {};
+      if (!force && st.last_backup_date === vnToday) {
+        return res.json({ ok: true, skipped: true, reason: 'ALREADY_BACKED_UP_TODAY', last: st });
+      }
+      const r = await syncService.runDailyBackup();
+      const updated = {
+        ...cur,
+        system_backups: r.ok ? {
+          last_backup_date: vnToday,
+          last_ok_at: new Date().toISOString(),
+          last_file_id: r.fileId,
+          last_name: r.name,
+          last_deleted_old: r.deletedOld ?? 0,
+          last_error: null,
+        } : {
+          ...st,
+          last_backup_date: st.last_backup_date, // giữ mốc ngày cũ để cron thử lại giờ sau
+          last_error_at: new Date().toISOString(),
+          last_error: r.error || r.reason,
+        },
+      };
+      await adapter.updateSystemSettings(updated);
+      if (r.ok) {
+        await adapter.recordAuditLog({
+          actor_id: 'CRON_BACKUP',
+          action: 'BACKUP_OK',
+          target_type: 'CAU_HINH_HE_THONG',
+          target_id: r.fileId,
+          detail: `${r.name} — xóa ${r.deletedOld} bản quá hạn`,
+        } as any).catch(() => null);
+      } else {
+        broadcastNotification({
+          type: 'SYSTEM',
+          title: '⚠️ Backup hằng ngày THẤT BẠI',
+          message: `Backup Google Sheets lỗi (${r.error || r.reason}) — cron sẽ thử lại giờ sau. Kiểm tra Drive/quota nếu lỗi lặp.`,
+          linkTab: 'hr-dashboard',
+          targetRoles: ['ADMIN'],
+        });
+      }
+      res.json({ ...r, vnToday, recorded: true });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Trạng thái backup (card "Sức Khỏe Máy Chủ" dashboard admin)
+  app.get('/admin/system-backup', authMiddleware, requireRole(['ADMIN']), async (req, res) => {
+    try {
+      const settings: any = await adapter.getSystemSettings().catch(() => ({})) || {};
+      res.json(settings.system_backups || null);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Lịch sử sự cố server (Dashboard admin hiển thị "sức khỏe máy chủ")
   app.get('/admin/system-downtimes', authMiddleware, requireRole(['ADMIN']), async (req, res) => {
     try {
