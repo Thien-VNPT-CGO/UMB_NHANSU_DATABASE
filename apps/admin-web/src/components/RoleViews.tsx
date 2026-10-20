@@ -2322,7 +2322,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [rrTo, setRrTo] = useState('');
   const [rrClose, setRrClose] = useState('23:59');
   const [rrBusy, setRrBusy] = useState(false);
+  // Sức khỏe máy chủ: lịch sử sự cố watchdog báo về (chỉ ADMIN)
+  const [downtimes, setDowntimes] = useState<any[]>([]);
   useEffect(() => {
+    if (currentUser?.role !== 'ADMIN') return;
+    apiRequest('/admin/system-downtimes').then((d: any) => {
+      if (Array.isArray(d)) setDowntimes(d);
+    }).catch(() => null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.role]);  useEffect(() => {
     if (currentUser?.role !== 'ADMIN') return;
     apiRequest('/admin/shift-re-registration/config').then((c: any) => {
       setRrCfg(c);
@@ -3737,6 +3745,38 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Đơn OFF & Đổi ca đang chờ</div>
           </div>
         </div>
+
+        {/* Sức khỏe máy chủ: sự cố watchdog tự phát hiện + báo về (chỉ ADMIN) */}
+        {currentUser?.role === 'ADMIN' && (
+          <div style={{ backgroundColor: 'var(--surface)', padding: '16px 20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+              <div style={{ fontWeight: 700, fontSize: '14px' }}>🖥 Sức Khỏe Máy Chủ</div>
+              <span style={{
+                fontSize: '11px', fontWeight: 800, padding: '3px 10px', borderRadius: 'var(--radius-full)',
+                backgroundColor: '#DCFCE7', color: '#166534',
+              }}>🟢 ĐANG CHẠY (bạn đang dùng portal này)</span>
+            </div>
+            {downtimes.length === 0 ? (
+              <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '10px 0 0' }}>
+                ✅ Không ghi nhận sự cố nào. Watchdog (nếu đã bật) sẽ tự restart server khi chết treo và báo vào đây.
+              </p>
+            ) : (
+              <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {downtimes.slice(0, 5).map((d: any) => (
+                  <div key={d.id} style={{
+                    fontSize: '12px', padding: '7px 10px', borderRadius: 'var(--radius-sm)',
+                    backgroundColor: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C',
+                  }}>
+                    ⚠ Chết từ <b>{d.down_since}</b> → phục hồi <b>{d.recovered_at}</b> (tự restart {d.restart_attempts} lần)
+                  </div>
+                ))}
+                {downtimes.length > 5 && (
+                  <p style={{ fontSize: '11px', color: 'var(--text-muted)', margin: 0 }}>…và {downtimes.length - 5} sự cố cũ hơn</p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Action List Table */}
         <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>

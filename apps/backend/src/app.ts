@@ -4264,6 +4264,60 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // --- SỰ CỐ SERVER (watchdog trên VPS báo khi server chết treo rồi phục hồi) ---
+  // Watchdog (cron host) restart backend khi chết treo 3 phút; khi sống lại
+  // POST route này kèm INTERNAL_ALERT_SECRET (header) → lưu lịch sử system
+  // Settings + thông báo Admin/HR. Secret sai/missing → 403 (chỉ watchdog).
+  app.post('/internal/downtime-report', async (req, res) => {
+    try {
+      const secret = String(process.env.INTERNAL_ALERT_SECRET || '');
+      const given = String(req.headers['x-internal-secret'] || '');
+      if (!secret || given !== secret) return res.status(403).json({ error: 'FORBIDDEN' });
+      const b: any = req.body || {};
+      const rec = {
+        id: `DT_${Date.now()}`,
+        down_since: String(b.down_since || '').slice(0, 24),
+        recovered_at: String(b.recovered_at || new Date().toISOString()).slice(0, 24),
+        restart_attempts: Math.max(0, Number(b.restart_attempts) || 0),
+      };
+      const mins = Math.max(0, Math.round(
+        (new Date(rec.recovered_at).getTime() - new Date(rec.down_since).getTime()) / 60000
+      ));
+      const cur: any = await adapter.getSystemSettings().catch(() => ({})) || {};
+      const list: any[] = Array.isArray(cur.system_downtimes) ? cur.system_downtimes : [];
+      list.unshift(rec);
+      await adapter.updateSystemSettings({ ...cur, system_downtimes: list.slice(0, 20) });
+      await adapter.recordAuditLog({
+        actor_id: 'WATCHDOG',
+        action: 'SERVER_RECOVERED',
+        target_type: 'CAU_HINH_HE_THONG',
+        target_id: 'system_downtimes',
+        detail: `Server chết từ ${rec.down_since} (~${mins} phút), tự restart ${rec.restart_attempts} lần`,
+      } as any).catch(() => null);
+      broadcastNotification({
+        type: 'SYSTEM',
+        title: '🖥 Máy chủ vừa tự phục hồi',
+        message: `Server chết từ ${rec.down_since} (~${mins} phút) — watchdog đã tự restart ${rec.restart_attempts} lần. Kiểm tra dữ liệu/phiếu gửi trong thời gian đó nhé.`,
+        linkTab: 'hr-dashboard',
+        metadata: rec,
+        targetRoles: ['ADMIN', 'HR', 'STORE'],
+      });
+      res.json({ ok: true, recorded: list.length, minutes: mins });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Lịch sử sự cố server (Dashboard admin hiển thị "sức khỏe máy chủ")
+  app.get('/admin/system-downtimes', authMiddleware, requireRole(['ADMIN']), async (req, res) => {
+    try {
+      const settings: any = await adapter.getSystemSettings().catch(() => ({})) || {};
+      res.json(Array.isArray(settings.system_downtimes) ? settings.system_downtimes : []);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Cấu hình chữ ký mẫu của Kế toán & Quản lý chi nhánh
   app.get('/payroll/signature-templates', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req, res) => {
     try {
