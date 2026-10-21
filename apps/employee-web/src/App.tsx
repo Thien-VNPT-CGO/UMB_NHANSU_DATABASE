@@ -640,9 +640,18 @@ export function App() {
   // Số liệu công tháng do server tính (cùng công thức kỳ + giai đoạn TV/CT với
   // Bảng Tổng Hợp của Finance) để lương tạm tính khớp 100% với Kế toán.
   const [monthServerPay, setMonthServerPay] = useState<any>(null);
+  // Chu kỳ lương: các kỳ Kế toán đã thanh toán xong -> ẨN khỏi tab (dữ liệu
+  // công đã "khoá" theo phiếu lương), nút ◀/▶ không nhảy vào, tự chạy kỳ mới.
+  const [paidPeriods, setPaidPeriods] = useState<string[]>([]);
+  const paidPeriodsRef = useRef<string[]>([]);
   const shiftTsMonth = (delta: number) => {
+    const paidSet = new Set(paidPeriodsRef.current);
     const [y, m] = tsMonth.split('-').map(Number);
-    const d = new Date(Date.UTC(y, m - 1 + delta, 1));
+    let d = new Date(Date.UTC(y, m - 1 + delta, 1));
+    // Bỏ qua các kỳ đã thanh toán (tối đa 48 tháng lùi/vô hạn chi phí thấp)
+    for (let guard = 0; guard < 48 && paidSet.has(d.toISOString().slice(0, 7)); guard++) {
+      d = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + delta, 1));
+    }
     setTsMonth(d.toISOString().slice(0, 7));
   };
   useEffect(() => {
@@ -661,7 +670,21 @@ export function App() {
         ]);
         if (Array.isArray(shifts)) setMonthShifts(shifts);
         if (Array.isArray(evts)) setMonthEvents(evts);
-        if (serverPay) setMonthServerPay(serverPay);
+        if (serverPay) {
+          setMonthServerPay(serverPay);
+          // Chu kỳ lương đã thanh toán -> cập nhật cảnh bỏ kỳ cũ + nhảy kỳ mới
+          if (Array.isArray((serverPay as any)?.paidPeriods)) {
+            setPaidPeriods((serverPay as any).paidPeriods);
+            paidPeriodsRef.current = (serverPay as any).paidPeriods;
+          }
+          if ((serverPay as any)?.periodPaid) {
+            const target = (serverPay as any)?.latestUnpaidPeriod || curVnMonth();
+            if (target !== tsMonth) {
+              showToast(`🔒 Kỳ ${tsMonth.slice(5, 7)}/${tsMonth.slice(0, 4)} đã thanh toán lương xong — dữ liệu công đã đóng, chuyển sang chu kỳ ${target}.`);
+              setTsMonth(target);
+            }
+          }
+        }
       } catch { /* offline: giữ danh sách cũ */ }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -3835,11 +3835,44 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       }
       const sheet: any = await payrollService.getFinanceTimesheet(period, '*', employeeId);
       const row = (sheet?.rows || [])[0] || null;
+      // BETA chu kỳ lương: tháng nào Kế toán đã thanh toán xong (phiếu lương
+      // kỳ đó ở trạng thái PAID/CONFIRMED, đủ phạm vi chi nhánh NV) -> ẨN khỏi
+      // tab "Dữ Liệu Công Của Tôi" và chu kỳ lương tự chạy sang tháng chưa
+      // thanh toán kế tiếp. Trả luôn danh sách kỳ đã thanh toán để cổng NV
+      // chặn nút ◀/▶ nhảy vào kỳ cũ (không phải gọi thêm API).
+      let paidPeriods: string[] = [];
+      try {
+        const emp = await employeesService.getEmployee(employeeId).catch(() => null);
+        const empBranch = String((emp as any)?.default_branch_id || '');
+        const runs: any[] = await adapter.listPayrollRuns().catch(() => []);
+        const periodSet = new Set<string>();
+        for (const r of runs) {
+          if (!['PAID', 'CONFIRMED'].includes(String(r?.status || '').toUpperCase())) continue;
+          const scope = String(r?.branch_scope || '*');
+          if (scope !== '*' && empBranch && scope !== empBranch) continue; // kỳ_NV trúng scope mới tính
+          const p = String(r?.period || '');
+          if (/^\d{4}-(0[1-9]|1[0-2])$/.test(p)) periodSet.add(p);
+        }
+        paidPeriods = [...periodSet].sort();
+      } catch { /* lỗi meta -> coi như chưa có kỳ nào đóng */ }
+      // Chu kỳ hiện hành: từ tháng VN hiện tại lùi tối đa 36 tháng, tháng đầu
+      // CHƯA được thanh toán = kỳ NV đang xem mặc định (lương mới chạy tiếp).
+      const isoYM = (d: Date) => d.toISOString().slice(0, 7);
+      let cursor = new Date(Date.now() + 7 * 3_600_000);
+      let latestUnpaidPeriod = isoYM(cursor);
+      for (let i = 0; i < 36; i++) {
+        latestUnpaidPeriod = isoYM(cursor);
+        if (!paidPeriods.includes(latestUnpaidPeriod)) break;
+        cursor = new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() - 1, 1));
+      }
       res.json({
         period: sheet?.period || period,
         fromDate: sheet?.fromDate || null,
         toDate: sheet?.toDate || null,
         formula: sheet?.formula || null,
+        periodPaid: paidPeriods.includes(period),
+        paidPeriods,
+        latestUnpaidPeriod,
         totals: row ? {
           totalShifts: row.totalShifts, full: row.full, partial: row.partial, absent: row.absent,
           hours: row.hours, standardPay: row.standardPay, deduction: row.deduction,
