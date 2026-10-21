@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { google, sheets_v4, drive_v3 } from 'googleapis';
 import { Readable } from 'stream';
 import { v4 as uuidv4 } from 'uuid';
@@ -405,9 +407,33 @@ export class GoogleSheetsSyncService {
     let email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
     let key = process.env.GOOGLE_PRIVATE_KEY;
 
-    if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
+    let jsonStr = process.env.GOOGLE_SERVICE_ACCOUNT_JSON?.trim();
+    if (jsonStr && !jsonStr.startsWith('{') && /^[A-Za-z0-9+/=]+$/.test(jsonStr)) {
       try {
-        const creds = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+        jsonStr = Buffer.from(jsonStr, 'base64').toString('utf8');
+      } catch (_) {}
+    }
+
+    if (!jsonStr && (!email || !key)) {
+      const candidates = [
+        process.env.GOOGLE_SERVICE_ACCOUNT_FILE,
+        path.resolve(process.cwd(), 'data/service-account.json'),
+        '/app/data/service-account.json',
+      ].filter(Boolean) as string[];
+      for (const p of candidates) {
+        if (fs.existsSync(p)) {
+          try {
+            jsonStr = fs.readFileSync(p, 'utf8');
+            console.log(`[GoogleSheetsSyncService] Đã nạp credentials từ file: ${p}`);
+            break;
+          } catch (_) {}
+        }
+      }
+    }
+
+    if (jsonStr) {
+      try {
+        const creds = JSON.parse(jsonStr);
         if (creds.client_email && creds.private_key) {
           email = creds.client_email;
           key = creds.private_key;

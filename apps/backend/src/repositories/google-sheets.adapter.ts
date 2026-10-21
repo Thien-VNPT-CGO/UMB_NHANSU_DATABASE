@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { ISheetsRepository } from './sheets.interface.js';
 import { MockSheetsAdapter } from './mock-sheets.adapter.js';
 import { sheetDateText, sheetDateTimeText } from '../services/employees.service.js';
@@ -19,13 +21,37 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   constructor() {
     this.fallbackAdapter = new MockSheetsAdapter();
 
-    // Check if GOOGLE_SERVICE_ACCOUNT_JSON is provided
-    if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
+    // Check if GOOGLE_SERVICE_ACCOUNT_JSON / BASE64 / FILE is provided
+    let jsonStr = process.env.GOOGLE_SERVICE_ACCOUNT_JSON?.trim();
+    if (jsonStr && !jsonStr.startsWith('{') && /^[A-Za-z0-9+/=]+$/.test(jsonStr)) {
       try {
-        const creds = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+        jsonStr = Buffer.from(jsonStr, 'base64').toString('utf8');
+      } catch (_) {}
+    }
+    if (!jsonStr) {
+      const candidates = [
+        process.env.GOOGLE_SERVICE_ACCOUNT_FILE,
+        path.resolve(process.cwd(), 'data/service-account.json'),
+        '/app/data/service-account.json',
+      ].filter(Boolean) as string[];
+      for (const p of candidates) {
+        if (fs.existsSync(p)) {
+          try {
+            jsonStr = fs.readFileSync(p, 'utf8');
+            console.log(`[GoogleSheetsAdapter] Đã nạp credentials từ file: ${p}`);
+            break;
+          } catch (_) {}
+        }
+      }
+    }
+
+    if (jsonStr) {
+      try {
+        const creds = JSON.parse(jsonStr);
         if (creds.client_email && creds.private_key) {
           process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = creds.client_email;
           process.env.GOOGLE_PRIVATE_KEY = creds.private_key;
+          process.env.GOOGLE_SERVICE_ACCOUNT_JSON = JSON.stringify(creds);
         }
       } catch (e) {
         console.warn('Failed to parse GOOGLE_SERVICE_ACCOUNT_JSON from environment:', e);

@@ -40,6 +40,10 @@ sudo cp -r apps/employee-web/dist/* /opt/ubm/employee-web/
 
 echo "==> 4. Build + chay backend (Docker)"
 test -f apps/backend/.env || { echo "THIEU apps/backend/.env (copy tu deploy/vps/.env.vps.example)"; exit 1; }
+# Tu dong chuan hoa GOOGLE_SERVICE_ACCOUNT_JSON ve 1 dong tranh loi Docker Compose
+if [ -f "deploy/vps/sanitize-env.cjs" ]; then
+  node deploy/vps/sanitize-env.cjs || true
+fi
 export GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "")
 docker compose up --build -d
 
