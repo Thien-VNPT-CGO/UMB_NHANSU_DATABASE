@@ -2052,9 +2052,6 @@ export function App() {
             </div>
             <div style={{ marginTop: '14px', textAlign: 'center', fontSize: '10px', color: '#9CA3AF' }}>
               Bản app: <code>{APP_COMMIT}</code> • Bản API: <code>{apiCommit || 'đang kiểm tra...'}</code>
-              {apiCommit && !apiCommit.startsWith('local') && apiCommit !== APP_COMMIT && APP_COMMIT !== 'local' && (
-                <span style={{ color: '#DC2626', fontWeight: 700 }}> • Lệch bản — tải lại trang (Ctrl+F5) để nhận bản mới!</span>
-              )}
             </div>
           </div>
         </div>

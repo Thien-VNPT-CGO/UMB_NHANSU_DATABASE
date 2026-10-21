@@ -15,6 +15,8 @@ git checkout vps
 git pull --ff-only 2>/dev/null || true
 
 echo "==> 2. Build 2 web tro ve API VPS (${API_BASE})"
+export GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "")
+node apps/backend/scripts/gen-version.cjs 2>/dev/null || true
 VITE_API_URL="${API_BASE}" npm run build:admin
 VITE_API_URL="${API_BASE}" npm run build:employee
 
