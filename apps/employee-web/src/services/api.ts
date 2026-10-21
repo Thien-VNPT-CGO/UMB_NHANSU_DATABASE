@@ -37,14 +37,16 @@ function fetchWithTimeout(url: string, options: RequestInit = {}, ms = 25000): P
 }
 
 // Server có thể vừa khởi động lại (VD nhánh vps restart backend): fetch đầu tiên
-// có thể mất vài chục giây mới 200. Tự gọi /ping + chờ + thử lại tối đa 3 lần trước khi báo lỗi.
+// có thể mất vài chục giây mới 200. Tự gọi /ping + chờ + thử lại tối đa 5 vòng
+// (~40s) trước khi lên lớp — chết đớ với cửa sổ restart dài, nhờ watchdog VPS
+// backend nhìn chung tự phục hồi trong 3-4 phút.
 async function wakeBackend(base: string): Promise<boolean> {
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 5; i++) {
     try {
       const r = await fetchWithTimeout(`${base}/ping`, {}, 20000);
       if (r.ok) return true;
     } catch { /* thử tiếp */ }
-    await new Promise(r => setTimeout(r, [2000, 5000, 10000][i] || 5000));
+    await new Promise(r => setTimeout(r, [2000, 5000, 10000, 10000, 10000][i] || 5000));
   }
   return false;
 }
@@ -123,7 +125,6 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
 
   const url = `${base}${endpoint}`;
   const alreadyRefreshed = (options as any)._refreshed === true;
-  const woken = (options as any)._woken === true;
   try {
     const res = await fetchWithTimeout(url, {
       ...options,
@@ -178,16 +179,22 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
 
     return data;
   } catch (err: any) {
-    // Lỗi mạng lần đầu (server tạm ngắt / đang khởi động) -> tự đánh thức backend rồi thử lại 1 lần.
-    if (isNetworkFailure(err) && !woken && endpoint !== '/ping' && endpoint !== '/version') {
-      console.warn(`[API] Mất kết nối ${endpoint} — đang đánh thức backend...`);
-      const ok = await wakeBackend(base);
-      if (ok) {
-        return apiRequest<T>(endpoint, { ...options, _woken: true } as any, retries);
+    // Lỗi mạng lần đầu (server tạm ngắt / đang khởi động) -> tự đánh thức backend rồi thử lại,
+    // cho tối đa 2 vòng (~80s) thay vì 1 round — chết đớ với cửa sổ restart dài.
+    const wakeRounds = (options as any)._wakeRounds ?? 0;
+    if (isNetworkFailure(err) && wakeRounds < 2 && endpoint !== '/ping' && endpoint !== '/version') {
+      const round = wakeRounds + 1;
+      console.warn(`[API] Mất kết nối ${endpoint} — đang đánh thức backend (vòng ${round}/2)...`);
+      if (await wakeBackend(base)) {
+        return apiRequest<T>(endpoint, { ...options, _wakeRounds: round } as any, retries);
+      }
+      if (round < 2) {
+        // Vòng wake không thấy server sống — thử tiếp 1 lần nữa rồi mới báo lỗi
+        return apiRequest<T>(endpoint, { ...options, _wakeRounds: round } as any, retries);
       }
     }
     if (isNetworkFailure(err)) {
-      throw new Error(`Không thể kết nối đến máy chủ Backend (${base}) sau khi đã tự đánh thức 3 lần. Kiểm tra: 1) Địa chỉ API đúng chưa, 2) Backend trên VPS có đang chạy không, 3) Vào ${base}/ping bằng trình duyệt xem có hiện {"status":"ok"} không.`);
+      throw new Error(`Không thể kết nối đến máy chủ Backend (${base}) sau khi đã thử lại 2 vòng (~80s). Backend có thể đang khởi động lại — trên VPS đã có watchdog tự khắc phục trong 3-4 phút; HÃY THỬ LẠI SAU 2 PHÚT (F5). Mẹo kiểm nhanh: mở ${base}/ping bằng trình duyệt xem có hiện {"status":"ok"} không.`);
     }
     throw err;
   }
