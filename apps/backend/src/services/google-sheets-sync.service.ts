@@ -3973,4 +3973,37 @@ export class GoogleSheetsSyncService {
       return false;
     }
   }
+
+  public async appendRows(sheetTitle: string, rows: any[][]): Promise<boolean> {
+    if (!this.isConfigured || !this.sheetsClient || !rows || rows.length === 0) return false;
+
+    let target = sheetTitle;
+    if (GoogleSheetsSyncService.PARTITION_TABS.has(sheetTitle)) {
+      try {
+        target = await this.pickPartitionTarget(sheetTitle);
+      } catch {
+        target = sheetTitle;
+      }
+    }
+
+    try {
+      await this.sheetsCall(`append.${target}`, () =>
+        this.sheetsClient!.spreadsheets.values.append({
+          spreadsheetId: this.spreadsheetId,
+          range: `'${target}'!A:A`,
+          valueInputOption: 'USER_ENTERED',
+          requestBody: {
+            values: rows,
+          },
+        })
+      );
+      for (let i = 0; i < rows.length; i++) this.bumpRowCount(target);
+      this.markWriteOk();
+      return true;
+    } catch (err) {
+      this.markWriteFail(`append ${target}`, err);
+      console.error(`[GoogleSheetsSyncService] Lỗi append ${rows.length} rows vào ${target}:`, err);
+      return false;
+    }
+  }
 }

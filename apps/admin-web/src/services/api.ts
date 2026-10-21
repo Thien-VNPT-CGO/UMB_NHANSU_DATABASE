@@ -29,8 +29,10 @@ export function setCustomApiUrl(url: string) {
 
 let authToken = localStorage.getItem('ubm_admin_token') || '';
 
-function fetchWithTimeout(url: string, options: RequestInit = {}, ms = 25000): Promise<Response> {
-  const timeoutMs = (options as any)?._timeoutMs || ms;
+function fetchWithTimeout(url: string, options: RequestInit = {}, ms = 45000): Promise<Response> {
+  const method = String(options.method || 'GET').toUpperCase();
+  const defaultMs = (method === 'POST' || method === 'PUT' || method === 'DELETE') ? 60000 : ms;
+  const timeoutMs = (options as any)?._timeoutMs || defaultMs;
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
   return fetch(url, { ...options, signal: ctrl.signal }).finally(() => clearTimeout(t));

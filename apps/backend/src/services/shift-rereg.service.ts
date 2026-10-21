@@ -363,15 +363,15 @@ export class ShiftReRegService {
     }
 
     // Đồng bộ Google Sheets: phiếu ghi đầy đủ vào tab PHIEU_NV_CAP_NHAT_CA
-    // (tab thiếu → tự tạo bảng + header qua self-heal SHEETS_DEFINITIONS).
+    // (Ghi batch 1 phát tất cả các dòng thay vì loop N lần, không gọi initSpreadsheetStructure tốn quota).
     let sheetsSynced = false;
     try {
       if (this.syncService) {
-        await this.syncService.initSpreadsheetStructure?.();
         const stamp = new Date().toISOString();
+        const rowsToAppend: any[][] = [];
         for (const entry of r.entries as ReRegEntryReport[]) {
           for (const line of entry.lines) {
-            await this.syncService.appendRow(TAB_SLIP, [
+            rowsToAppend.push([
               r.slipId,
               empId,
               empCode,
@@ -383,10 +383,13 @@ export class ShiftReRegService {
               typeof line.payEstimate === 'number' ? Math.round(line.payEstimate) : '',
               [line.message, ...entry.offNotes].filter(Boolean).join(' | '),
               stamp,
-            ]).catch(() => false);
+            ]);
           }
         }
-        sheetsSynced = true;
+        if (rowsToAppend.length > 0) {
+          await this.syncService.appendRows(TAB_SLIP, rowsToAppend).catch(() => false);
+          sheetsSynced = true;
+        }
       }
     } catch { /* best-effort: full-sync nền sẽ thử lại */ }
 

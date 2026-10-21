@@ -873,9 +873,9 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
           new Promise<false>(r => setTimeout(() => r(false), 12000)),
         ]);
         if (!ok) {
-          // Append rớt (quota/timeout): đẩy nguyên tab để điểm danh không mất khỏi Sheet.
-          console.warn('[GoogleSheetsAdapter] appendRow SU_KIEN_DIEM_DANH failed, pushing full events tab');
-          await this.syncService.pushEventsTab(this.fallbackAdapter).catch(() => 0);
+          // Append rớt (quota/timeout): dồn full-sync nền, KHÔNG block request hiện tại
+          console.warn('[GoogleSheetsAdapter] appendRow SU_KIEN_DIEM_DANH rớt hoặc timeout, xếp lịch sync nền');
+          this.scheduleFullSync('SU_KIEN_DIEM_DANH.append-fail');
         }
       } catch { /* best-effort: full-sync nền sẽ thử lại */ }
     }
@@ -890,13 +890,9 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async updateAttendanceEvent(eventId: string, patch: any) {
     const res = await this.fallbackAdapter.updateAttendanceEvent(eventId, patch);
-    // Đẩy Sheet đồng bộ để mức phạt đã xóa không bị pull hồi sinh.
+    // Đẩy Sheet nền có debounce để không spam rewrite tab làm nghẽn quota/khóa queue
     if (this.isConfigured) {
-      try {
-        await this.syncService.pushEventsTab(this.fallbackAdapter);
-      } catch (err) {
-        console.warn('[GoogleSheetsAdapter] Đẩy SU_KIEN_DIEM_DANH sau cập nhật thất bại:', (err as any)?.message || err);
-      }
+      this.scheduleFullSync('SU_KIEN_DIEM_DANH.update');
     }
     return res;
   }
