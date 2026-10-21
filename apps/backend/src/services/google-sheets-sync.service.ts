@@ -331,7 +331,10 @@ export class GoogleSheetsSyncService {
    *  ~34-40 write dù không có gì đổi — lấp quota 60 write/phút của Google, các
    *  thao tác người dùng (check-in, duyệt phiếu) phải xếp hàng chờ slot write
    *  1.1s/write nên 2 cổng web cập nhật rất chậm. */
-  private dataDirtyAt: number = Date.now(); // mặc định dirty sau boot — push an toàn xác lập trạng thái
+  // Khởi tạo ban đầu KHÔNG dirty (0): khi mới khởi động, hệ thống PHẢI pull từ
+  // Google Sheets Master về trước. Chỉ đánh dấu dirty khi có thay đổi thực sự
+  // trong bộ nhớ chưa được lưu lên Sheet (tránh nguy cơ push đè RAM rỗng).
+  private dataDirtyAt: number = 0;
   private lastFullPushAt: number = 0;
 
   public markDataDirty(): void {

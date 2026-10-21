@@ -158,7 +158,7 @@ server.listen(Number(PORT), '0.0.0.0', () => {
         console.warn('[sheets-auto-push] tick error:', err?.message || err);
       }
     };
-    setTimeout(autoPushSheetsTick, 60_000); // chạy sớm 1 lần sau 1 phút khởi động
+    // Không chạy auto-push ngay sau khi khởi động (tránh rủi ro push trước khi hoàn thành pull)
     setInterval(autoPushSheetsTick, pushPeriodMin * 60_000);
   }
 
