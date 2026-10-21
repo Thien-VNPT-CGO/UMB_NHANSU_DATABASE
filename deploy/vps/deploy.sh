@@ -17,6 +17,18 @@ git pull --ff-only 2>/dev/null || true
 echo "==> 2. Build 2 web tro ve API VPS (${API_BASE})"
 export GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "")
 node apps/backend/scripts/gen-version.cjs 2>/dev/null || true
+
+if [ ! -d "node_modules" ] || [ ! -f "node_modules/.bin/tsc" ]; then
+  echo "==> Phat hien thieu node_modules tren VPS moi -> Dang chay npm ci..."
+  npm ci
+fi
+
+# Dam bao node_modules/.bin luon co mat trong PATH cho moi sub-script
+export PATH="$(pwd)/node_modules/.bin:$PATH"
+
+echo "==> Build @ubm/shared..."
+npm run build:shared
+
 VITE_API_URL="${API_BASE}" npm run build:admin
 VITE_API_URL="${API_BASE}" npm run build:employee
 

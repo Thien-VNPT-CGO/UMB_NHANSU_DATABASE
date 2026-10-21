@@ -31,6 +31,12 @@ fi
 echo "Node version: $(node -v)"
 echo "NPM version:  $(npm -v)"
 
+# Cai typescript toan cuc de tranh loi 'tsc: not found' tren moi sub-package
+if ! command -v tsc &> /dev/null; then
+  echo "Cài đặt TypeScript toàn cục..."
+  sudo npm install -g typescript
+fi
+
 echo "=========================================================="
 echo "==> 4. Cài đặt Docker & Docker Compose"
 echo "=========================================================="
@@ -56,6 +62,9 @@ sudo ln -sf /etc/nginx/sites-available/ubm /etc/nginx/sites-enabled/ubm
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t
 sudo systemctl reload nginx
+
+echo "==> Cài đặt dependencies dự án (npm ci)..."
+npm ci
 
 echo "=========================================================="
 echo "==> 6. Cấp chứng chỉ SSL HTTPS (Let's Encrypt)"
