@@ -1,3 +1,4 @@
+import { BACKEND_COMMIT } from './app-version.js';
 import path from 'path';
 import fs from 'fs';
 import express from 'express';
@@ -296,7 +297,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.get('/version', (req, res) => {
     res.json({
       service: 'umb-backend',
-      commit: process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || 'local-dev',
+      commit: process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || BACKEND_COMMIT || 'local-dev',
       startedAt: new Date(SERVER_STARTED_AT).toISOString(),
       time: new Date().toISOString(),
     });

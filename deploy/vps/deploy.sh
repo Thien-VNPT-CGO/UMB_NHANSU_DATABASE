@@ -26,6 +26,7 @@ sudo cp -r apps/employee-web/dist/* /opt/ubm/employee-web/
 
 echo "==> 4. Build + chay backend (Docker)"
 test -f apps/backend/.env || { echo "THIEU apps/backend/.env (copy tu deploy/vps/.env.vps.example)"; exit 1; }
+export GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "")
 docker compose up --build -d
 
 echo "==> 5. Dam bao Nginx proxy Socket.IO"

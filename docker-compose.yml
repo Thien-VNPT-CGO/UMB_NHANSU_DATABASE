@@ -16,6 +16,7 @@ services:
     environment:
       PORT: ${BACKEND_PORT:-4005}
       NODE_ENV: production
+      GIT_COMMIT: ${GIT_COMMIT:-}
     volumes:
       - ./data:/app/data
     healthcheck:
