@@ -16,10 +16,21 @@ services:
     environment:
       PORT: ${BACKEND_PORT:-4005}
       NODE_ENV: production
+    volumes:
+      - ./data:/app/data
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:${BACKEND_PORT:-4005}/health"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 20s
-    restart: unless-stopped
+    # "always" đảm bảo container ALWAYS sống lại sau khi VPS reboot/hồi phục, kể cả
+    # khi trước đó có người docker stop thủ công (unless-stopped sẽ bỏ ngang).
+    restart: always
+    # Giới hạn dung lượng log Docker (stdout/stderr) để đĩa không đầy dần theo
+    # thời gian — đĩa đầy là backend chết lặp lại + không tự sửa được.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

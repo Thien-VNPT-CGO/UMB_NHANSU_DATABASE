@@ -104,8 +104,16 @@ server.listen(Number(PORT), '0.0.0.0', () => {
         if (pullRes && pullRes.success && pullRes.counts) {
           const currentSignature = JSON.stringify(pullRes.counts);
           if (lastSyncSignature && lastSyncSignature !== currentSignature) {
-            console.log('🔄 [Sheets Auto-Sync] Dữ liệu Google Sheets có thay đổi, đã tự động nạp lên hệ thống:', pullRes.counts);
-            io.emit('data:updated', { entity: 'all', data: pullRes.counts, timestamp: new Date().toISOString() });
+            // Bắn 'all' khi pull phát hiện thay đổi. Mới có write của
+            // chính server này (<= 20s) thì middleware app.ts đã bắn data:updated
+            // theo từng entity ngay khi thao tác — bắn 'all' thừa nữa là cả 2 cổng
+            // web tải lại TOÀN BỘ lần thứ 2 cho cùng một thay đổi (web chậm).
+            if ((adapter as any).isSelfWriteRecent?.(20000)) {
+              console.log('🔄 [Sheets Auto-Sync] Counts đổi kể từ write của hệ thống (đã realtime theo entity) — bỏ emit "all" thừa.');
+            } else {
+              console.log('🔄 [Sheets Auto-Sync] Dữ liệu Google Sheets có thay đổi, đã tự động nạp lên hệ thống:', pullRes.counts);
+              io.emit('data:updated', { entity: 'all', data: pullRes.counts, timestamp: new Date().toISOString() });
+            }
           }
           lastSyncSignature = currentSignature;
         }
@@ -121,25 +129,29 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   const syncIntervalMs = Number(process.env.SHEETS_SYNC_INTERVAL_MS) || 10_000;
   setInterval(autoPullSheetsTick, syncIntervalMs);
 
-  // PUSH ngược toàn bộ tabs lên Sheets định kỳ: không phụ thuộc thao tác mới, mọi tab
-  // của cổng quản trị luôn được đồng bộ; tab thiếu trên Sheet sẽ được tự tạo lại
-  // (tạo tab + ghi hàng header cột) rồi push dữ liệu đầy đủ. Mặc định 60 phút,
-  // đặt SHEETS_AUTO_PUSH_MINUTES=0 để tắt.
+  // PUSH ngược toàn bộ tabs lên Sheets định kỳ: chỉ chạy khi bộ nhớ có thay đổi
+  // CHƯA lên Sheet (cờ dirty do adapter đặt). Hết hạn tác vụ push khi hệ thống
+  // nhàn rỗi — tab thiếu trên Sheet vẫn được tự tạo lại + push dữ liệu đầy đủ.
+  // Mặc định 60 phút (theo .env.example), đặt SHEETS_AUTO_PUSH_MINUTES=0 để tắt.
   const rawPushMinutes = process.env.SHEETS_AUTO_PUSH_MINUTES;
-  const pushPeriodMin = rawPushMinutes && rawPushMinutes.trim() !== '' && Number(rawPushMinutes) > 0 ? Number(rawPushMinutes) : 5;
+  const pushPeriodMin = rawPushMinutes && rawPushMinutes.trim() !== '' && Number(rawPushMinutes) > 0 ? Number(rawPushMinutes) : 60;
   if (rawPushMinutes?.trim() !== '0') {
     const autoPushSheetsTick = async () => {
       try {
         const syncService = (adapter as any).syncService;
         if (syncService && syncService.getStatus().isConfigured) {
+          // TRƯỚC ĐÂY: mỗi 5 phút ghi đè ~16-17 tab (~34-40 write/update+clear), lấp
+          // quota 60 write/phút khiến thao tác người dùng phải chờ slot write — 2
+          // cổng web cập nhật chậm. Chỉ push khi có thay đổi thật.
+          if (typeof syncService.hasUnpushedChanges === 'function' && !syncService.hasUnpushedChanges()) {
+            return;
+          }
           const pushRes = await syncService.syncAllData(adapter);
           if (pushRes?.success) {
             console.log('🔁 [Sheets Auto-Push] Đã đồng bộ đầy đủ toàn bộ tabs lên Google Sheets.');
-            io.emit('data:updated', { entity: 'all', data: { auto_push: true }, timestamp: new Date().toISOString() });
-            // Tự động làm đẹp & căn chỉnh lại toàn bộ bảng tính sau khi push
-            syncService.formatAndBeautifySpreadsheet().catch((err: any) => {
-              console.warn('[Sheets Auto-Push] Tự động làm đẹp sau push gặp lỗi nhẹ:', err?.message || err);
-            });
+            // KHÔNG emit 'data:updated' sau push: mọi thay đổi đã được bắn realtime
+            // theo entity ngay khi xảy ra (middleware + services) — bắn 'all' vô
+            // điều kiện là nguyên nhân 2 cổng web tự tải lại toàn bộ chu kỳ 5 phút.
           }
         }
       } catch (err: any) {
@@ -148,22 +160,30 @@ server.listen(Number(PORT), '0.0.0.0', () => {
     };
     setTimeout(autoPushSheetsTick, 60_000); // chạy sớm 1 lần sau 1 phút khởi động
     setInterval(autoPushSheetsTick, pushPeriodMin * 60_000);
+  }
 
-    // Tự động kiểm tra và làm đẹp, căn chỉnh Google Sheets định kỳ mỗi 15 phút
-    // Giúp bảng tính luôn giữ đúng chuẩn executive, sọc xen kẽ, căn lề và status pills
-    const autoBeautifyTick = async () => {
-      try {
-        const syncService = (adapter as any).syncService;
-        if (syncService && syncService.getStatus().isConfigured) {
-          await syncService.formatAndBeautifySpreadsheet();
-          console.log('🎨 [Sheets Auto-Beautify] Đã tự động căn chỉnh & làm đẹp bảng tính Google Sheets định kỳ.');
+  // Tự động kiểm tra & căn chỉnh Google Sheets: theo biến môi trường
+  // SHEETS_AUTO_BEAUTIFY (mặc định BẬT) nhưng chỉ NGÀY 1 LẦN thay vì mỗi 15 phút —
+  // mỗi lần tốn ~20-30 write + đọc 20 dòng mỗi tab, lấn quota write của thao tác
+  // thật khiến 2 cổng web chậm.
+  {
+    const beautifyFlagV = String(process.env.SHEETS_AUTO_BEAUTIFY ?? '1').trim().toLowerCase();
+    const beautifyOn = beautifyFlagV !== '0' && beautifyFlagV !== 'off' && beautifyFlagV !== 'false';
+    if (beautifyOn) {
+      const autoBeautifyTick = async () => {
+        try {
+          const syncService = (adapter as any).syncService;
+          if (syncService && syncService.getStatus().isConfigured) {
+            await syncService.formatAndBeautifySpreadsheet();
+            console.log('🎨 [Sheets Auto-Beautify] Đã tự động căn chỉnh & làm đẹp bảng tính Google Sheets định kỳ.');
+          }
+        } catch (e: any) {
+          console.warn('[sheets-auto-beautify] tick error:', e?.message || e);
         }
-      } catch (e: any) {
-        console.warn('[sheets-auto-beautify] tick error:', e?.message || e);
-      }
-    };
-    setTimeout(autoBeautifyTick, 90_000); // 90s sau khởi động
-    setInterval(autoBeautifyTick, 15 * 60_000); // mỗi 15 phút
+      };
+      setTimeout(autoBeautifyTick, 90_000); // 90s sau khởi động
+      setInterval(autoBeautifyTick, 24 * 60 * 60_000); // mỗi 24h
+    }
   }
 
   // Nhắc việc tự động mỗi 5 phút: check-in Zalo trước ca, PIN quá hạn, đơn tồn duyệt.

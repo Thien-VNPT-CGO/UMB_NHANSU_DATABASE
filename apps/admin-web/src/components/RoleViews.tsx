@@ -115,10 +115,15 @@ export const AttPhoto: React.FC<{ eventId: string; style?: React.CSSProperties; 
 };
 
 /** Ảnh bằng chứng phiếu bổ sung công: tải blob kèm token rồi hiện (thẻ <img> không gửi được Authorization). */
-export const AdjPhoto: React.FC<{ adjustmentId: string; style?: React.CSSProperties }> = ({ adjustmentId, style }) => {
+export const AdjPhoto: React.FC<{ adjustmentId: string; style?: React.CSSProperties; evidenceDriveId?: string; hasPhoto?: boolean }> = ({ adjustmentId, style, evidenceDriveId, hasPhoto }) => {
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
+    // Nếu đã biết không có ảnh (hasPhoto === false hoặc ID fallback DRV_* khi chưa có cờ has_photo), không gọi fetch để tránh 404 console
+    if (hasPhoto === false || (hasPhoto === undefined && evidenceDriveId && String(evidenceDriveId).startsWith('DRV_'))) {
+      setFailed(true);
+      return;
+    }
     let alive = true;
     let objUrl: string | null = null;
     (async () => {
@@ -138,8 +143,8 @@ export const AdjPhoto: React.FC<{ adjustmentId: string; style?: React.CSSPropert
       alive = false;
       if (objUrl) URL.revokeObjectURL(objUrl);
     };
-  }, [adjustmentId]);
-  if (failed || !adjustmentId) {
+  }, [adjustmentId, hasPhoto, evidenceDriveId]);
+  if (failed || !adjustmentId || hasPhoto === false || (hasPhoto === undefined && evidenceDriveId && String(evidenceDriveId).startsWith('DRV_'))) {
     return <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>—</span>;
   }
   if (!url) {
@@ -11210,9 +11215,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               <div>{a.reason || 'Bổ sung công'}</div>
               <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Ca: {a.assignment_id || '—'} • Xin: {a.minutes_requested ?? 0} phút{a.minutes_approved !== undefined && a.status === 'APPROVED' ? ` • Duyệt: ${a.minutes_approved} phút` : ''}</div>
             </td>
-            <td style={{ padding: '12px 20px' }} onClick={() => a.evidence_drive_id && setSelectedAdj(a)} title={a.evidence_drive_id ? 'Bấm để xem ảnh lớn' : undefined}>
-              {a.evidence_drive_id ? (
-                <AdjPhoto adjustmentId={a.adjustment_id} />
+            <td style={{ padding: '12px 20px' }} onClick={() => (a.has_photo ?? (a.evidence_drive_id && !String(a.evidence_drive_id).startsWith('DRV_'))) && setSelectedAdj(a)} title={(a.has_photo ?? (a.evidence_drive_id && !String(a.evidence_drive_id).startsWith('DRV_'))) ? 'Bấm để xem ảnh lớn' : undefined}>
+              {(a.has_photo ?? (a.evidence_drive_id && !String(a.evidence_drive_id).startsWith('DRV_'))) ? (
+                <AdjPhoto adjustmentId={a.adjustment_id} evidenceDriveId={a.evidence_drive_id} hasPhoto={a.has_photo} />
               ) : (
                 <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>—</span>
               )}
@@ -11519,8 +11524,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 </div>
                 <div style={{ fontWeight: 700, fontSize: '13px', marginBottom: '6px' }}>🖼 Hình ảnh bằng chứng:</div>
                 <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '12px', backgroundColor: '#111827', borderRadius: '8px', padding: '8px' }}>
-                  {selectedAdj.evidence_drive_id ? (
-                    <AdjPhoto adjustmentId={selectedAdj.adjustment_id} style={{ width: '100%', height: 'auto', maxHeight: '380px', objectFit: 'contain', cursor: 'default' }} />
+                  {(selectedAdj.has_photo ?? (selectedAdj.evidence_drive_id && !String(selectedAdj.evidence_drive_id).startsWith('DRV_'))) ? (
+                    <AdjPhoto adjustmentId={selectedAdj.adjustment_id} evidenceDriveId={selectedAdj.evidence_drive_id} hasPhoto={selectedAdj.has_photo} style={{ width: '100%', height: 'auto', maxHeight: '380px', objectFit: 'contain', cursor: 'default' }} />
                   ) : (
                     <span style={{ fontSize: '13px', color: '#9CA3AF', padding: '24px' }}>Phiếu này không có ảnh bằng chứng</span>
                   )}

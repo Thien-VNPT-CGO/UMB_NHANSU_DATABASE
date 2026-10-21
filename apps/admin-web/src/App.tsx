@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Socket } from 'socket.io-client';
-import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl } from './services/api';
+import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl, tryRefreshSession } from './services/api';
 import { connectRealtime } from './services/realtime';
 import { APP_COMMIT } from './app-version';
 import {
@@ -950,6 +950,10 @@ export function App() {
     if (!token) return;
 
     let socket: Socket | null = null;
+    // Chống vòng lặp refresh-reconnect: tối đa 3 lần gia hạn token cho socket,
+    // quá 3 lần là token thật sự bị thu hồi (khóa/đổi PIN) -> để logout xử lý.
+    let socketAuthRetries = 0;
+    let socketAuthRetrying = false;
     try {
       const base = getApiBase();
       // Realtime có bảo vệ: backoff reconnect + tự ngắt sau nhiều lỗi liên tiếp
@@ -975,7 +979,31 @@ export function App() {
         // Token hết hiệu lực (ví dụ vừa bị khóa tài khoản) -> văng về đăng nhập.
         const msg = String(err?.message || '');
         if (msg.includes('AUTHENTICATION_ERROR')) {
-          handleLogout();
+          // Phân biệt 2 trường hợp:
+          // 1. Access token chỉ HẾT HẠN giữa phiên (TTL 2h) — socket tự nối lại
+          //    sau mất sóng là dính lỗi này dù phiên refresh còn tốt. Gia hạn im
+          //    lặng rồi nối lại với token mới, KHÔNG văng người dùng (trước đây
+          //    bị văng giữa phiên dù phiên đăng nhập còn hạn 7 ngày).
+          // 2. Token bị thu hồi thật (khóa/đổi mật khẩu/đổi PIN) — refresh thất
+          //    bại -> mới đăng xuất.
+          if (!socketAuthRetrying && socketAuthRetries < 3) {
+            socketAuthRetries += 1;
+            socketAuthRetrying = true;
+            tryRefreshSession()
+              .then(r => {
+                socketAuthRetrying = false;
+                if (r === 'ok' && socket) {
+                  socket.auth = { token: getAuthToken() };
+                  try { socket.connect(); } catch { /* lần sau */ }
+                } else {
+                  handleLogout();
+                }
+              })
+              .catch(() => {
+                socketAuthRetrying = false;
+                handleLogout();
+              });
+          }
         }
       });
 

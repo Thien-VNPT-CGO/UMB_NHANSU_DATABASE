@@ -72,7 +72,9 @@ export function getAuthToken(): string {
 }
 
 // Tự gia hạn access token bằng refresh token khi gặp 401 (cùng lỗi cổng NV từng gặp).
-async function tryRefreshSession(): Promise<'ok' | 'none' | 'expired' | 'revoked'> {
+// Export để Socket.IO nối lại được với token mới thay vì văng người dùng khi
+// access token hết hạn giữa phiên (xem App.tsx socket connect_error).
+export async function tryRefreshSession(): Promise<'ok' | 'none' | 'expired' | 'revoked'> {
   try {
     const rt = localStorage.getItem('ubm_admin_refresh') || '';
     if (!rt) return 'none';
@@ -139,6 +141,19 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
     }
 
     const data = await res.json().catch(() => ({}));
+
+    // Backend vừa restart đang tải dữ liệu (503 SHEETS_LOADING): KHÔNG xóa phiên —
+    // tự thử lại vài lần, giữ đăng nhập của Admin/HR sau mỗi lần deploy.
+    if (res.status === 503 && ((data as any)?.code === 'SHEETS_LOADING' || (data as any)?.error === 'SHEETS_LOADING')) {
+      if (retries > 0) {
+        await new Promise(r => setTimeout(r, 4000));
+        return apiRequest<T>(endpoint, options, retries - 1);
+      }
+      const err: any = new Error('Hệ thống đang khởi động/tải dữ liệu — thử lại sau ít giây (F5 nếu kéo dài).');
+      err.code = 'SHEETS_LOADING';
+      throw err;
+    }
+
     if (!res.ok) {
       if (res.status === 401) {
         clearSession();

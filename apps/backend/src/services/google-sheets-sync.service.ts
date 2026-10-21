@@ -307,6 +307,25 @@ export class GoogleSheetsSyncService {
     }
     return true;
   }
+  /** ===== AUTO-PUSH ĐIỀU KIỆN (chỉ push khi có thay đổi thật) =====
+   *  Adapter đánh dấu dirty khi dữ liệu bộ nhớ đổi mà chưa chắc đã lên Sheet
+   *  (scheduleSheetsWrite / scheduleFullSync / backfill PIN). Auto-push định kỳ
+   *  chỉ chạy khi dirty > lần push đầy đủ trước. Trước đây mỗi 5 phút là ghi đè
+   *  ~34-40 write dù không có gì đổi — lấp quota 60 write/phút của Google, các
+   *  thao tác người dùng (check-in, duyệt phiếu) phải xếp hàng chờ slot write
+   *  1.1s/write nên 2 cổng web cập nhật rất chậm. */
+  private dataDirtyAt: number = Date.now(); // mặc định dirty sau boot — push an toàn xác lập trạng thái
+  private lastFullPushAt: number = 0;
+
+  public markDataDirty(): void {
+    this.dataDirtyAt = Date.now();
+  }
+
+  /** true = bộ nhớ có thay đổi chưa được push đầy đủ lên Sheet. */
+  public hasUnpushedChanges(): boolean {
+    return this.dataDirtyAt > this.lastFullPushAt;
+  }
+
   private lastWriteError: string | null = null;
   private lastWriteAt: number = 0;
   private initOkAt = 0;
@@ -739,8 +758,28 @@ export class GoogleSheetsSyncService {
 
   /**
    * ĐỌC DỮ LIỆU THỰC TẾ TỪ GOOGLE SHEETS VÀ CẬP NHẬT VÀO HỆ THỐNG (TWO-WAY SYNC)
+   *
+   * Chống pull chồng chéo TOÀN CỤC: tick định kỳ (server.ts) + ensureFreshData theo
+   * request (adapter) + webhook onEdit đều gọi vào đây. Nếu một pull chưa xong,
+   * các lời gọi sau DÙNG CHUNG promise pull đang bay thay vì mở pull mới — trước
+   * đây pull chồng nhau khi tab lớn/quota chậm là gọi API Google dồn dập, rơi vào
+   * rate limit và web cập nhật ngày càng muộn.
    */
-  public async pullAllDataFromGoogleSheets(repo: ISheetsRepository): Promise<{ success: boolean; message: string; counts: any }> {
+  public pullAllDataFromGoogleSheets(repo: ISheetsRepository): Promise<{ success: boolean; message: string; counts: any }> {
+    if (!this.isConfigured || !this.sheetsClient) {
+      return Promise.resolve({ success: false, message: 'Google Sheets chưa kết nối', counts: null });
+    }
+    if (this.pullInFlight) return this.pullInFlight;
+    const run = this.doPullAllDataFromGoogleSheets(repo).finally(() => {
+      this.pullInFlight = null;
+    });
+    this.pullInFlight = run;
+    return run;
+  }
+
+  private pullInFlight: Promise<{ success: boolean; message: string; counts: any }> | null = null;
+
+  private async doPullAllDataFromGoogleSheets(repo: ISheetsRepository): Promise<{ success: boolean; message: string; counts: any }> {
     if (!this.isConfigured || !this.sheetsClient) {
       return { success: false, message: 'Google Sheets chưa kết nối', counts: null };
     }
@@ -1071,6 +1110,9 @@ export class GoogleSheetsSyncService {
         }
         counts.pinBackfilled = backfilled;
         counts.pinReset6 = pinReset6;
+        // PIN tự sinh/reset chỉ mới nằm bộ nhớ — đặt cờ dirty để auto-push định kỳ
+        // chắc chắn đẩy lên Sheet (trước đây dựa full-push chạy miễn phí mỗi 5 phút).
+        if (pinDirty) this.markDataDirty();
         if (pinReset6 > 0) {
           console.log(`[GoogleSheetsSyncService] Đã auto-reset ${pinReset6} mã PIN chưa đủ 6 số sang mã 6 số mới (bắt NV đổi lại).`);
         }
@@ -2616,10 +2658,17 @@ export class GoogleSheetsSyncService {
       const allOk = failedTabs.length === 0;
 
       if (allOk) {
-        // Tự động căn chỉnh & làm đẹp toàn bộ bảng tính sau khi đồng bộ thành công
-        this.formatAndBeautifySpreadsheet().catch(err => {
-          console.warn('[GoogleSheetsSyncService] Tự động làm đẹp sau syncAllData thất bại:', err?.message || err);
-        });
+        // Push đầy đủ thành công = toàn bộ dữ liệu bộ nhớ đã lên Sheet (kể cả mọi
+        // thay đổi dirty trước mốc này) — auto-push định kỳ được phép nghỉ.
+        this.lastFullPushAt = Date.now();
+        // Tự động căn chỉnh & làm đẹp: tối đa 1 lần/6 giờ (đẹp Sheets tốn ~20-30
+        // write + đọc 20 dòng/tab, lấn quota của thao tác thật). Endpoint định dạng
+        // thủ công (/admin/integrations/format-sheets) vẫn chạy bất kỳ lúc nào.
+        if (Date.now() - this.lastBeautifyAt > 6 * 3_600_000) {
+          this.formatAndBeautifySpreadsheet().catch(err => {
+            console.warn('[GoogleSheetsSyncService] Tự động làm đẹp sau syncAllData thất bại:', err?.message || err);
+          });
+        }
       }
 
       return {

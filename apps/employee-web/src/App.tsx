@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import jsQR from 'jsqr';
 import { attShiftStatus, inferExtraShiftCode, mergeOrphanCheckins, shiftPayInfo } from '@ubm/shared';
 import { Socket } from 'socket.io-client';
-import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl, onPinLockRequired } from './services/api';
+import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl, onPinLockRequired, tryRefreshSession } from './services/api';
 import { connectRealtime, stopRealtimeRevive } from './services/realtime';
 import { APP_COMMIT } from './app-version';
 import { PremiumLogin } from './components/PremiumLogin';
@@ -59,10 +59,14 @@ interface EmployeeProfile {
 }
 
 /** Ảnh bằng chứng phiếu bổ sung công của tôi: tải blob kèm token rồi hiện (thẻ <img> không gửi được Authorization). */
-function MyAdjPhoto({ adjustmentId, style }: { adjustmentId: string; style?: React.CSSProperties }) {
+function MyAdjPhoto({ adjustmentId, style, evidenceDriveId, hasPhoto }: { adjustmentId: string; style?: React.CSSProperties; evidenceDriveId?: string; hasPhoto?: boolean }) {
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
+    if (hasPhoto === false || (hasPhoto === undefined && evidenceDriveId && String(evidenceDriveId).startsWith('DRV_'))) {
+      setFailed(true);
+      return;
+    }
     let alive = true;
     let objUrl: string | null = null;
     (async () => {
@@ -82,8 +86,8 @@ function MyAdjPhoto({ adjustmentId, style }: { adjustmentId: string; style?: Rea
       alive = false;
       if (objUrl) URL.revokeObjectURL(objUrl);
     };
-  }, [adjustmentId]);
-  if (failed) return null;
+  }, [adjustmentId, hasPhoto, evidenceDriveId]);
+  if (failed || hasPhoto === false || (hasPhoto === undefined && evidenceDriveId && String(evidenceDriveId).startsWith('DRV_'))) return null;
   if (!url) return <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Đang tải ảnh...</span>;
   return <img src={url} alt="Ảnh bằng chứng" style={{ width: '72px', height: '72px', objectFit: 'cover', borderRadius: '8px', border: '1px solid var(--border)', ...(style || {}) }} />;
 }
@@ -1427,6 +1431,9 @@ export function App() {
     const token = getAuthToken();
     if (!token) return;
     let socket: Socket | null = null;
+    // Chống vòng lặp refresh-reconnect socket khi token thật sự bị thu hồi.
+    let socketAuthRetries = 0;
+    let socketAuthRetrying = false;
     let timer: any = null;
     let reloading = false;
     let queued = false;
@@ -1469,12 +1476,36 @@ export function App() {
       // Realtime có bảo vệ: backoff reconnect + tự ngắt sau nhiều lỗi liên tiếp
       // (sai địa chỉ máy chủ / server ngủ) để khỏi spam lỗi WebSocket vô hạn.
       socket = connectRealtime(base, token, {
-        onConnect: () => reload(),
+        onConnect: () => {
+          // Nối lại thành công (kể cả sau khi tự gia hạn token) — xả bộ đếm lỗi auth.
+          socketAuthRetries = 0;
+          reload();
+        },
         onGiveUp: () => {
           console.warn(
             `[Socket.IO] Không nối được realtime tới ${base} sau nhiều lần thử (địa chỉ máy chủ sai / server đang ngủ / mạng chặn websocket). Đã tạm dừng thử lại — bấm "đổi máy chủ" dưới màn hình đăng nhập nếu cần. Dữ liệu vẫn tải được khi mở tab.`
           );
           showToastRef.current('📡 Không kết nối được realtime — app sẽ tự thử nối lại mỗi phút, dữ liệu vẫn tải khi bạn mở từng tab. Kiểm tra địa chỉ máy chủ nếu lỗi kéo dài!');
+        },
+        onAuthError: () => {
+          // Access token hết hạn khi socket tự nối lại (TTL 2h, mất sóng về lại):
+          // gia hạn im lặng rồi nối lại với token mới — giữ phiên, realtime không
+          // lặng lẽ chết đến khi F5 (trước đây không xử lý, realtime tắt ngấm).
+          if (!socketAuthRetrying && socketAuthRetries < 3) {
+            socketAuthRetries += 1;
+            socketAuthRetrying = true;
+            tryRefreshSession()
+              .then(r => {
+                socketAuthRetrying = false;
+                if (r === 'ok' && socket) {
+                  socket.auth = { token: getAuthToken() };
+                  try { socket.connect(); } catch { /* lần sau */ }
+                }
+              })
+              .catch(() => {
+                socketAuthRetrying = false;
+              });
+          }
         },
       });
       socket.on('data:updated', (p: any) => {
@@ -6524,9 +6555,9 @@ export function App() {
                             {a.status === 'APPROVED' ? 'Đã duyệt' : auto ? 'Tự động từ chối (quá 30 phút)' : a.status === 'REJECTED' ? 'Bị từ chối' : 'Chờ duyệt'}
                           </span>
                         </div>
-                        {a.evidence_drive_id && (
+                        {(a.has_photo ?? (a.evidence_drive_id && !String(a.evidence_drive_id).startsWith('DRV_'))) && (
                           <div style={{ marginTop: '6px' }}>
-                            <MyAdjPhoto adjustmentId={a.adjustment_id} />
+                            <MyAdjPhoto adjustmentId={a.adjustment_id} evidenceDriveId={a.evidence_drive_id} hasPhoto={a.has_photo} />
                           </div>
                         )}
                         {a.status === 'PENDING' && (

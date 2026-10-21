@@ -76,7 +76,9 @@ export function getAuthToken(): string {
 // thao tác (kể cả đăng ký OFF) báo lỗi thô "UNAUTHORIZED".
 // Trả về lý do để báo đúng: 'none' (chưa từng lưu mã gia hạn), 'expired'
 // (mã gia hạn hết hạn/sai), 'revoked' (tài khoản đổi PIN/quyền/khóa), 'ok'.
-async function tryRefreshSession(): Promise<'ok' | 'none' | 'expired' | 'revoked'> {
+// Export để Socket.IO nối lại được với token mới thay vì văng người dùng khi
+// access token hết hạn giữa phiên (xem App.tsx realtime onAuthError).
+export async function tryRefreshSession(): Promise<'ok' | 'none' | 'expired' | 'revoked'> {
   try {
     const rt = localStorage.getItem('ubm_emp_refresh') || '';
     if (!rt) return 'none';
@@ -151,6 +153,20 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
     }
 
     const data = await res.json().catch(() => ({}));
+
+    // Backend vừa restart đang tải dữ liệu (503 SHEETS_LOADING): KHÔNG xóa phiên
+    // (trước đây rơi vào nhánh lỗi chung, có khi kèm 401 khởi động làm văng người
+    // dùng sau mỗi deploy) — tự thử lại vài lần như lỗi mạng.
+    if (res.status === 503 && ((data as any)?.code === 'SHEETS_LOADING' || (data as any)?.error === 'SHEETS_LOADING')) {
+      if (retries > 0) {
+        await new Promise(r => setTimeout(r, 4000));
+        return apiRequest<T>(endpoint, options, retries - 1);
+      }
+      const err: any = new Error('Hệ thống đang khởi động/tải dữ liệu — thử lại sau ít giây (F5 nếu kéo dài).');
+      err.code = 'SHEETS_LOADING';
+      throw err;
+    }
+
     if (!res.ok) {
       // Chưa đổi PIN mới theo chu kỳ -> báo App khóa toàn bộ chức năng ngay.
       if (res.status === 403 && ((data as any)?.error === 'PIN_CHANGE_REQUIRED' || (data as any)?.code === 'PIN_CHANGE_REQUIRED')) {

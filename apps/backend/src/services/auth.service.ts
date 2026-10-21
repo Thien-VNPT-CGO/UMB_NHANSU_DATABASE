@@ -461,7 +461,27 @@ export class AuthService {
 
     if (decoded.role === 'EMPLOYEE') {
       const account = await this.repo.getAccountById(decoded.sub);
-      if (!account || account.version !== decoded.tv) {
+      if (!account) {
+        // Cửa sổ khởi động (kho chưa pull xong): cấp access token từ claims của
+        // refresh token (chữ ký + TTL đã verify phía trên) — phiên người dùng
+        // không gãy sau deploy. Kho sẵn sàng mà thiếu account = thu hồi thật.
+        const rd = this.repo.getReadiness?.();
+        if (rd && !rd.ready && rd.reason !== 'EMPTY_DATASET') {
+          const token = signAccess({
+            sub: decoded.sub,
+            employeeId: decoded.employeeId,
+            role: 'EMPLOYEE',
+            branchScope: decoded.branchScope || '*',
+            phone: decoded.phone || '',
+            fullName: decoded.fullName || '',
+            permissions: [],
+            tv: decoded.tv,
+          });
+          return { token };
+        }
+        throw new Error('REFRESH_REVOKED');
+      }
+      if (account.version !== decoded.tv) {
         throw new Error('REFRESH_REVOKED');
       }
       const employee = await this.repo.getEmployeeById(account.employee_id);
@@ -480,7 +500,23 @@ export class AuthService {
 
     const admins = await this.repo.listAdminAccounts();
     const admin = admins.find(a => a.admin_id === decoded.sub);
-    if (!admin || admin.is_active === false || admin.version !== decoded.tv) {
+    if (!admin) {
+      // Cửa sổ khởi động: giữ phiên admin từ claims (xem nhánh EMPLOYEE ở trên).
+      const rd = this.repo.getReadiness?.();
+      if (rd && !rd.ready && rd.reason !== 'EMPTY_DATASET') {
+        const token = signAccess({
+          sub: decoded.sub,
+          role: decoded.role,
+          branchScope: decoded.branchScope || '*',
+          fullName: decoded.fullName || '',
+          permissions: decoded.permissions || [],
+          tv: decoded.tv,
+        });
+        return { token };
+      }
+      throw new Error('REFRESH_REVOKED');
+    }
+    if (admin.is_active === false || admin.version !== decoded.tv) {
       throw new Error('REFRESH_REVOKED');
     }
     const token = signAccess({
@@ -492,6 +528,22 @@ export class AuthService {
       tv: admin.version,
     });
     return { token };
+  }
+
+  /** Người dùng suy ra từ claims trong token (degraded mode): cửa sổ khởi động /
+   *  Sheets sự cố — giữ phiên đăng nhập thay vì văng người dùng. Khi kho đã sẵn
+   *  sàng mà account/admin vẫn thiếu (đã xóa/khóa thật) thì nhánh khác thu hồi. */
+  private claimsBasedUser(decoded: any): AuthUser & { tv: number } {
+    return {
+      id: decoded.sub,
+      employeeId: decoded.employeeId,
+      role: decoded.role,
+      branchScope: decoded.branchScope || '*',
+      phone: decoded.phone || '',
+      fullName: decoded.fullName || '',
+      permissions: decoded.permissions || [],
+      tv: decoded.tv,
+    };
   }
 
   /** Xác thực access token + kiểm tra version/khóa. Dùng chung cho middleware & socket. */
@@ -513,20 +565,21 @@ export class AuthService {
         // DB/Sheets sự cố: degraded mode — tin claims trong token để route
         // handler tự trả lỗi SHEETS_UNAVAILABLE thay vì middleware chặn 401.
         if (String(e?.message || '').includes('SHEETS_')) {
-          return {
-            id: decoded.sub,
-            employeeId: decoded.employeeId,
-            role: decoded.role,
-            branchScope: decoded.branchScope || '*',
-            phone: decoded.phone || '',
-            fullName: decoded.fullName || '',
-            permissions: decoded.permissions || [],
-            tv: decoded.tv,
-          };
+          return this.claimsBasedUser(decoded);
         }
         throw e;
       }
-      if (!account) throw new Error('ACCOUNT_REVOKED');
+      if (!account) {
+        // Backend vừa deploy/restart, kho chưa kịp pull xong Sheets: đừng văng
+        // toàn bộ người dùng (trước đây 401 ACCOUNT_REVOKED làm cả 2 web cổng tự
+        // đăng xuất hàng loạt sau mỗi lần deploy). Cửa sổ khởi động -> tin claims
+        // trong token; kho đã sẵn sàng mà vẫn thiếu account thì mới là thu hồi thật.
+        const rd = this.repo.getReadiness?.();
+        if (rd && !rd.ready && rd.reason !== 'EMPTY_DATASET') {
+          return this.claimsBasedUser(decoded);
+        }
+        throw new Error('ACCOUNT_REVOKED');
+      }
       if ((account as any).account_status === 'LOCKED') throw new Error('ACCOUNT_REVOKED');
       const emp = await this.repo.getEmployeeById(account.employee_id).catch(() => null);
       if (emp && ((emp as any).account_locked === true || (emp as any).account_status === 'LOCKED')) {
@@ -555,19 +608,20 @@ export class AuthService {
     } catch (e: any) {
       // Degraded mode khi Sheets lỗi — xem employee branch ở trên.
       if (String(e?.message || '').includes('SHEETS_')) {
-        return {
-          id: decoded.sub,
-          role: decoded.role,
-          branchScope: decoded.branchScope || '*',
-          phone: decoded.phone || '',
-          fullName: decoded.fullName || '',
-          permissions: decoded.permissions || [],
-          tv: decoded.tv,
-        };
+        return this.claimsBasedUser(decoded);
       }
       throw e;
     }
-    if (!admin || admin.is_active === false) throw new Error('ACCOUNT_REVOKED');
+    if (admin && admin.is_active === false) throw new Error('ACCOUNT_REVOKED');
+    if (!admin) {
+      // Cửa sổ khởi động (kho chưa pull xong): giữ phiên từ claims thay vì 401
+      // ACCOUNT_REVOKED khiến cả cổng quản trị bị đăng xuất sau mỗi deploy.
+      const rd = this.repo.getReadiness?.();
+      if (rd && !rd.ready && rd.reason !== 'EMPTY_DATASET') {
+        return this.claimsBasedUser(decoded);
+      }
+      throw new Error('ACCOUNT_REVOKED');
+    }
     if (typeof decoded.tv === 'number' && admin.version !== decoded.tv) {
       throw new Error('TOKEN_REVOKED');
     }

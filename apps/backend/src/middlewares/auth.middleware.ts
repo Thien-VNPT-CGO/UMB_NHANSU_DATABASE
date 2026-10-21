@@ -84,6 +84,15 @@ export function createAuthMiddleware(repo: ISheetsRepository) {
           code: 'TOKEN_EXPIRED',
         });
       }
+      if (msg === 'SHEETS_LOADING' || msg === 'SHEETS_UNAVAILABLE') {
+        // Backend vừa restart đang tải dữ liệu Sheets: KHÔNG trả 401 (client sẽ
+        // xóa phiên + đăng xuất hàng loạt). 503 để web giữ phiên và tự thử lại.
+        return res.status(503).json({
+          error: 'SHEETS_LOADING',
+          message: 'Hệ thống đang khởi động/tải dữ liệu, vui lòng thử lại sau ít giây.',
+          code: 'SHEETS_LOADING',
+        });
+      }
       if (msg === 'TOKEN_REVOKED' || msg === 'ACCOUNT_REVOKED' || msg === 'REFRESH_REVOKED') {
         return res.status(401).json({
           error: ERROR_CODES.UNAUTHORIZED,

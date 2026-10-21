@@ -83,3 +83,42 @@ export function readAttendancePhotoDiskAsDataUrl(eventId: string): string | null
     return null;
   }
 }
+
+// -------------------------------------------------------------
+// Ảnh bằng chứng kèm phiếu bổ sung / điều chỉnh công
+// -------------------------------------------------------------
+export function adjustmentPhotoPath(adjustmentId: string): string {
+  return path.join(PHOTO_DIR, `adj_${safeEventId(adjustmentId)}.jpg`);
+}
+
+export function saveAdjustmentPhotoDisk(adjustmentId: string, dataUrl: string): void {
+  try {
+    const parsed = parseDataUrl(dataUrl);
+    if (!parsed || !adjustmentId) return;
+    fs.mkdirSync(PHOTO_DIR, { recursive: true });
+    fs.writeFileSync(adjustmentPhotoPath(adjustmentId), parsed.buffer);
+  } catch {
+    /* best-effort */
+  }
+}
+
+export function readAdjustmentPhotoDisk(adjustmentId: string): { buffer: Buffer; mimeType: string } | null {
+  try {
+    const p = adjustmentPhotoPath(adjustmentId);
+    if (!fs.existsSync(p)) return null;
+    const buffer = fs.readFileSync(p);
+    if (!buffer.length) return null;
+    return { buffer, mimeType: 'image/jpeg' };
+  } catch {
+    return null;
+  }
+}
+
+export function hasAdjustmentPhotoDisk(adjustmentId: string): boolean {
+  try {
+    const p = adjustmentPhotoPath(adjustmentId);
+    return fs.existsSync(p) && fs.statSync(p).size > 0;
+  } catch {
+    return false;
+  }
+}

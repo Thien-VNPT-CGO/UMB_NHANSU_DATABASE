@@ -2,7 +2,7 @@ import { ISheetsRepository } from './sheets.interface.js';
 import { MockSheetsAdapter } from './mock-sheets.adapter.js';
 import { sheetDateText, sheetDateTimeText } from '../services/employees.service.js';
 import { GoogleSheetsSyncService } from '../services/google-sheets-sync.service.js';
-import { saveAttendancePhotoDisk } from '../services/photo-disk.store.js';
+import { saveAttendancePhotoDisk, saveAdjustmentPhotoDisk } from '../services/photo-disk.store.js';
 
 export class GoogleSheetsAdapter implements ISheetsRepository {
   private fallbackAdapter: MockSheetsAdapter;
@@ -100,6 +100,20 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     }
   }
 
+  /** ===== Nhận diện write do CHÍNH hệ thống phát ra (ngăn emit "all" thừa) =====
+   *  Mọi POST/PUT/PATCH thành công middleware app.ts đã bắn data:updated theo từng
+   *  entity NGAY. Pull tick 10s thấy counts đổi (duy nhất là do các write đó) mà
+   *  bắn tiếp 'data:updated(all)' là cả 2 cổng web tải lại TOÀN BỘ lần 2 mỗi thao
+   *  tác. Có write gần đây (<= 20s) thì pull tick im lặng; thay đổi Sheets bên ngoài
+   *  im láng quá 20s vẫn được bắn đúng. */
+  private lastOwnWriteAt = 0;
+  public noteOwnWrite(): void {
+    this.lastOwnWriteAt = Date.now();
+  }
+  public isSelfWriteRecent(ms = 20000): boolean {
+    return this.lastOwnWriteAt > 0 && Date.now() - this.lastOwnWriteAt < ms;
+  }
+
   // Webhook từ Apps Script (onEdit trên Sheet): kéo ngay, không đợi nhịp 10s.
   // Chống dồn: tối đa 1 lần kích hoạt/3s; pull chồng chéo dùng chung 1 promise.
   private lastWebhookAt = 0;
@@ -147,13 +161,22 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   private scheduleSheetsWrite(task: () => Promise<unknown>, label: string) {
     if (!this.isConfigured) return;
+    // Đặt cờ dirty: bộ nhớ vừa có thay đổi chưa chắc đã lên Sheet — auto-push
+    // định kỳ (server.ts) thấy cờ là sẽ đẩy đầy đủ các tab cho chắc.
+    try { this.syncService.markDataDirty(); } catch { /* non-fatal */ }
     this.pendingSheetsWrites++;
     this.bgWriteChain = this.bgWriteChain
       .then(() => task())
       .then(() => {
         this.lastSheetsWriteAt = new Date().toISOString();
       })
-      .catch(err => console.warn(`[GoogleSheetsAdapter] Ghi Sheets nền '${label}' thất bại (sẽ thử lại ở lần sync sau):`, (err as any)?.message || err))
+      .catch(err => {
+        console.warn(`[GoogleSheetsAdapter] Ghi Sheets nền '${label}' thất bại (sẽ thử lại ở lần sync sau):`, (err as any)?.message || err);
+        // Ghi nền rớt (quota/timeout): ghi lại cờ dirty theo thời điểm hiện tại để
+        // auto-push kế tiếp chắc chắn nhảy vào sửa lại — nếu không, timestamp dirty
+        // cũ có thể nhỏ hơn mốc push đầy đủ khiến hệ thống tưởng đã sạch dữ liệu.
+        try { this.syncService.markDataDirty(); } catch { /* non-fatal */ }
+      })
       .finally(() => {
         this.pendingSheetsWrites = Math.max(0, this.pendingSheetsWrites - 1);
       });
@@ -184,6 +207,8 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   private scheduleFullSync(label: string) {
     if (!this.isConfigured) return;
+    // Đặt cờ dirty: bộ nhớ có thay đổi chưa chắc đã lên Sheet (auto-push định kỳ dựa cờ này).
+    try { this.syncService.markDataDirty(); } catch { /* non-fatal */ }
     this.pendingSheetsWrites++;
     const run = async () => {
       const wait = Math.max(0, 10000 - (Date.now() - this.lastFullSyncAt));
@@ -196,7 +221,11 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
       .then(() => {
         this.lastSheetsWriteAt = new Date().toISOString();
       })
-      .catch(err => console.warn(`[GoogleSheetsAdapter] Full-sync nền '${label}' thất bại:`, (err as any)?.message || err))
+      .catch(err => {
+        console.warn(`[GoogleSheetsAdapter] Full-sync nền '${label}' thất bại:`, (err as any)?.message || err);
+        // Full-sync nền rớt: ghi lại cờ dirty để auto-push kế tiếp thử sửa lại.
+        try { this.syncService.markDataDirty(); } catch { /* non-fatal */ }
+      })
       .finally(() => {
         this.pendingSheetsWrites = Math.max(0, this.pendingSheetsWrites - 1);
       });
@@ -471,7 +500,10 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   }
 
   async addStageHistory(entry: any) {
-    return this.fallbackAdapter.addStageHistory(entry);
+    const res = await this.fallbackAdapter.addStageHistory(entry);
+    // Lịch sử giai đoạn chỉ lên Sheet qua full-push -> đặt cờ dirty cho auto-push điều kiện.
+    try { this.syncService.markDataDirty(); } catch { /* non-fatal */ }
+    return res;
   }
 
   // --- Recruitment ---
@@ -869,6 +901,10 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     // hoặc upload lỗi là ảnh bị `delete` mất vĩnh viễn, HR thấy "—". Nay luôn thử upload;
     // thất bại thì giữ base64 inline (evidence_photo) để endpoint /photo phục vụ fallback.
     if (adj.photo_base64) {
+      // Lưu ngay xuống đĩa (bền vững qua restart/rebuild)
+      if (adj.adjustment_id) {
+        saveAdjustmentPhotoDisk(adj.adjustment_id, adj.photo_base64);
+      }
       try {
         const fileName = `ADJ_evidence_${adj.employee_id || 'unknown'}_${Date.now()}.jpg`;
         const driveResult = await this.syncService.uploadImageToDrive(fileName, 'image/jpeg', adj.photo_base64);
@@ -1126,15 +1162,24 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   }
 
   async markNotificationRead(inboxId: string, recipientId: string) {
-    return this.fallbackAdapter.markNotificationRead(inboxId, recipientId);
+    const res = await this.fallbackAdapter.markNotificationRead(inboxId, recipientId);
+    // Trạng thái đọc chỉ được đẩy Sheet qua full-push: phải đặt cờ dirty, nếu
+    // không với auto-push điều kiện (chỉ push khi có thay đổi) trạng thái đọc
+    // sẽ chỉ nằm bộ nhớ cho tới khi có thay đổi khác kích hoạt push.
+    try { this.syncService.markDataDirty(); } catch { /* non-fatal */ }
+    return res;
   }
 
   async markNotificationAcknowledged(inboxId: string, recipientId: string) {
-    return this.fallbackAdapter.markNotificationAcknowledged(inboxId, recipientId);
+    const res = await this.fallbackAdapter.markNotificationAcknowledged(inboxId, recipientId);
+    try { this.syncService.markDataDirty(); } catch { /* non-fatal */ }
+    return res;
   }
 
   async pruneNotifications(beforeIso: string) {
-    return this.fallbackAdapter.pruneNotifications(beforeIso);
+    const res = await this.fallbackAdapter.pruneNotifications(beforeIso);
+    try { this.syncService.markDataDirty(); } catch { /* non-fatal */ }
+    return res;
   }
 
   // --- Bài TEST (lưu bộ nhớ + full-sync đẩy Sheets nền như các entity khác) ---

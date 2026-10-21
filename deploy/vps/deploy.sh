@@ -28,7 +28,12 @@ echo "==> 4. Build + chay backend (Docker)"
 test -f apps/backend/.env || { echo "THIEU apps/backend/.env (copy tu deploy/vps/.env.vps.example)"; exit 1; }
 docker compose up --build -d
 
-echo "==> 5. Kiem tra suc khoe"
+echo "==> 5. Dam bao Nginx proxy Socket.IO"
+if [ -f "deploy/vps/fix-socketio-nginx.sh" ]; then
+  sudo bash deploy/vps/fix-socketio-nginx.sh || true
+fi
+
+echo "==> 6. Kiem tra suc khoe"
 sleep 8
 curl -fsS http://localhost:4005/health | head -c 300; echo
 echo "XONG:"

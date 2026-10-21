@@ -28,7 +28,7 @@ import { AutoScheduleService } from './services/auto-schedule.service.js';
 import { TestsService } from './services/tests.service.js';
 import { AttendanceService } from './services/attendance.service.js';
 import { ShiftReRegService } from './services/shift-rereg.service.js';
-import { readAttendancePhotoDisk } from './services/photo-disk.store.js';
+import { readAttendancePhotoDisk, readAdjustmentPhotoDisk, hasAdjustmentPhotoDisk } from './services/photo-disk.store.js';
 import { PayrollService } from './services/payroll.service.js';
 import { NotificationsService } from './services/notifications.service.js';
 import { autoRemindersTick, sendCheckinReminderForShift } from './services/auto-reminders.service.js';
@@ -314,10 +314,13 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const tab = (req.body?.tab as string) || '';
       const { accepted, done } = adapter.triggerSheetsPull(`webhook${tab ? ':' + tab : ''}`);
       // Trả ngay để Apps Script không timeout; pull xong thì đẩy socket cho 2 web app.
+      // Bắn entity 'all' (thay vì 'sheets' trước đây — 2 cổng web không lắng nghe entity
+      // này nên sửa tay trên Sheets không bao giờ tới người dùng): sửa Sheets bên ngoài
+      // là thay đổi thật cần reload, nhờ nhịp tự chống dồn 3s của webhook.
       done
         .then((r: any) => {
           if (r?.counts) {
-            broadcastUpdate('sheets', { source: 'webhook', tab: tab || 'all', counts: r.counts });
+            broadcastUpdate('all', { source: 'sheets-webhook', tab: tab || 'all', counts: r.counts });
           }
         })
         .catch(() => null);
@@ -352,6 +355,10 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     const origJson = res.json.bind(res);
     (res as any).json = (body: any) => {
       if (res.statusCode < 400) {
+        // Nhận diện write của chính hệ thống: pull tick 10s thấy counts đổi mà
+        // đây mới là thay đổi vừa bắn realtime theo entity thì KHÔNG bắn 'all'
+        // nữa (tránh 2 cổng web tải lại toàn bộ 2 lần / mỗi thao tác).
+        try { (adapter as any).noteOwnWrite?.(); } catch { /* non-fatal */ }
         broadcastUpdate(entity, { method: req.method, path: req.path });
       }
       return origJson(body);
@@ -3175,8 +3182,20 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           return res.status(404).json({ error: 'PHOTO_NOT_UPLOADED: Phiếu này không có ảnh bằng chứng.' });
         }
       };
-      // Ưu tiên Drive khi có ID thật; mọi trường hợp còn lại (chưa upload / DRV_* /
-      // Drive lỗi) mà còn ảnh inline thì phục vụ inline để HR luôn thấy ảnh realtime.
+      // 1. Phục vụ RAM inline nếu có
+      if (inlinePhoto) return serveInline(inlinePhoto);
+
+      // 2. Phục vụ Disk nếu có (bền vững qua restart/rebuild)
+      try {
+        const diskHit = readAdjustmentPhotoDisk(req.params.id);
+        if (diskHit) {
+          res.setHeader('Content-Type', diskHit.mimeType || 'image/jpeg');
+          res.setHeader('Cache-Control', 'private, max-age=3600');
+          return res.send(diskHit.buffer);
+        }
+      } catch { /* rớt xuống drive */ }
+
+      // 3. Phục vụ Drive khi có ID thật
       if (driveId && !driveId.startsWith('DRV_') && !driveId.startsWith('INLINE_')) {
         try {
           const syncService = (adapter as any).syncService;
@@ -3187,17 +3206,11 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
             return res.send(buffer);
           }
         } catch {
-          // Drive tải lỗi (quyền mạng/xóa file): rớt xuống inline nếu còn.
-          if (inlinePhoto) return serveInline(inlinePhoto);
           return res.status(404).json({ error: 'PHOTO_NOT_UPLOADED: Phiếu này không có ảnh bằng chứng.' });
         }
-        if (inlinePhoto) return serveInline(inlinePhoto);
-        return res.status(404).json({ error: 'PHOTO_NOT_UPLOADED: Phiếu này không có ảnh bằng chứng.' });
       }
-      if (inlinePhoto) return serveInline(inlinePhoto);
-      if (!adj.evidence_drive_id || String(adj.evidence_drive_id).startsWith('DRV_')) {
-        return res.status(404).json({ error: 'PHOTO_NOT_UPLOADED: Phiếu này không có ảnh bằng chứng.' });
-      }
+
+      return res.status(404).json({ error: 'PHOTO_NOT_UPLOADED: Phiếu này không có ảnh bằng chứng.' });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'PHOTO_DOWNLOAD_FAILED' });
     }
@@ -4009,13 +4022,18 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const employeeId = req.user?.role === 'EMPLOYEE' ? req.user.employeeId : undefined;
       const list = await attendanceService.listAdjustments(branchId, employeeId);
       // Cắt bytes ảnh inline khỏi danh sách (nhẹ payload); ảnh xem qua /:id/photo.
-      // evidence_drive_id (kể cả DRV_LOCAL_ fallback) vẫn giữ để UI biết mà tải ảnh.
+      // Gắn cờ has_photo để client biết phiếu nào THỰC SỰ có ảnh, tránh gọi /:id/photo sinh 404 trong console.
       res.json((list || []).map((a: any) => {
+        const hasPhoto = Boolean(
+          (a as any).evidence_photo ||
+          hasAdjustmentPhotoDisk(a.adjustment_id) ||
+          (a.evidence_drive_id && !String(a.evidence_drive_id).startsWith('DRV_') && !String(a.evidence_drive_id).startsWith('INLINE_'))
+        );
         if (a && (a as any).evidence_photo) {
           const { evidence_photo: _drop, ...rest } = a as any;
-          return rest;
+          return { ...rest, has_photo: hasPhoto };
         }
-        return a;
+        return { ...a, has_photo: hasPhoto };
       }));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
