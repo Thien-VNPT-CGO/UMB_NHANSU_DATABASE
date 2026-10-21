@@ -5250,7 +5250,18 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       };
 
       if (syncService) {
-        syncResult = await syncService.syncAllData(adapter);
+        const staffCount = ((adapter as any).fallbackAdapter?.employees?.length || 0) + ((adapter as any).fallbackAdapter?.accounts?.length || 0);
+        if (staffCount === 0) {
+          console.log('[/admin/integrations/sync-now] Bộ nhớ đang rỗng (0 nhân viên) -> Tự động chuyển sang PULL dữ liệu từ Sheets về!');
+          const pullRes = await syncService.pullAllDataFromGoogleSheets(adapter);
+          syncResult = {
+            success: pullRes.success,
+            message: pullRes.message || 'Đã tải thành công dữ liệu từ Google Sheets về hệ thống!',
+            details: pullRes.counts,
+          };
+        } else {
+          syncResult = await syncService.syncAllData(adapter);
+        }
       }
 
       await adapter.recordAuditLog({

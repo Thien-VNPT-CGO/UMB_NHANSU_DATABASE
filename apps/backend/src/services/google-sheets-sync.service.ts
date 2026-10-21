@@ -225,6 +225,21 @@ export class GoogleSheetsSyncService {
     'AUDIT_LOG',
   ]);
 
+  /** Các tab dữ liệu sống còn tuyệt đối không được phép ghi đè rỗng (0 dòng) làm mất data */
+  public static readonly CRITICAL_TABS = new Set<string>([
+    'NHAN_VIEN_MASTER',
+    'TAI_KHOAN_NHAN_VIEN',
+    'ADMIN_ACCOUNTS',
+    'PHAN_CONG_CA',
+    'SU_KIEN_DIEM_DANH',
+    'DON_NGHI_PHEP',
+    'DON_DOI_CA',
+    'DIEU_CHINH_CONG',
+    'KY_LUONG',
+    'PHIEU_LUONG',
+    'DANH_SACH_CHI_NHANH',
+  ]);
+
   /** Cache số dòng dữ liệu từng tab (không đếm mỗi lần ghi; thiếu = không xoay). */
   private partRowCounts = new Map<string, number>();
   /** Cache danh sách tab hiện hữu của spreadsheet (10 phút). */
@@ -2310,6 +2325,13 @@ export class GoogleSheetsSyncService {
    */
   private async pushTabSafe(details: any, key: string, title: string, headers: string[], rows: any[][]): Promise<void> {
     try {
+      // BẢO VỆ CHỐNG MẤT DỮ LIỆU: Tuyệt đối không cho phép ghi đè rỗng (0 dòng) lên các tab Master
+      if (rows.length === 0 && GoogleSheetsSyncService.CRITICAL_TABS.has(title)) {
+        console.warn(`[GoogleSheetsSyncService] CHẶN NGUY HIỂM: Tab '${title}' có 0 dòng dữ liệu để đẩy. Huỷ ghi đè tab này để bảo vệ dữ liệu Master!`);
+        details[key] = { skipped: true, reason: 'ANTI_DATA_LOSS_PREVENTED_EMPTY_OVERWRITE' };
+        return;
+      }
+
       // BETA partition: tab khai báo partition -> ghi đè qua các part (không
       // xoáy toàn bộ lịch sử về 1 tab gốc phình to như cũ).
       if (GoogleSheetsSyncService.PARTITION_TABS.has(title)) {
@@ -2342,6 +2364,24 @@ export class GoogleSheetsSyncService {
    * ĐỒNG BỘ DỮ LIỆU LÊN GOOGLE SHEETS (GHI ĐÈ DỮ LIỆU)
    */
   public async syncAllData(repo: ISheetsRepository): Promise<{ success: boolean; message: string; details: any }> {
+    // BẢO VỆ DỮ LIỆU TOÀN DIỆN (ANTI-DATA-LOSS GUARD):
+    // Nếu bộ nhớ đang rỗng (0 nhân viên), TUYỆT ĐỐI KHÔNG GHI ĐÈ lên Google Sheets!
+    let fallback: MockSheetsAdapter | null = null;
+    if ((repo as any).fallbackAdapter instanceof MockSheetsAdapter) {
+      fallback = (repo as any).fallbackAdapter as MockSheetsAdapter;
+    } else if (repo instanceof MockSheetsAdapter) {
+      fallback = repo;
+    }
+    const staffCount = (fallback?.employees?.length || 0) + (fallback?.accounts?.length || 0);
+    if (staffCount === 0) {
+      console.warn('[GoogleSheetsSyncService] CHẶN ĐỒNG BỘ NGUY HIỂM: Bộ nhớ đang có 0 nhân viên. Huỷ syncAllData để bảo vệ toàn vẹn Google Sheets Master!');
+      return {
+        success: false,
+        message: 'Bộ nhớ đang rỗng (chưa tải xong từ Google Sheets). Đã kích hoạt cơ chế bảo vệ để không làm mất dữ liệu trên Sheet!',
+        details: { blocked: true, reason: 'EMPTY_STAFF_MEMORY_PROTECTION' },
+      };
+    }
+
     const initResult = await this.initSpreadsheetStructure();
     if (!initResult.success) {
       return { success: false, message: initResult.message, details: null };
@@ -3538,8 +3578,14 @@ export class GoogleSheetsSyncService {
   /**
    * Ghi đè dữ liệu một Sheet tab (giữ nguyên tiêu đề ở dòng 1)
    */
-  public async overwriteSheetData(sheetTitle: string, headers: string[], rows: any[][]) {
+  public async overwriteSheetData(sheetTitle: string, headers: string[], rows: any[][], allowEmpty = false) {
     if (!this.sheetsClient) return;
+
+    // BẢO VỆ CHỐNG MẤT DỮ LIỆU: Tab Master không được phép xoá sạch dữ liệu (0 dòng)
+    if (rows.length === 0 && GoogleSheetsSyncService.CRITICAL_TABS.has(sheetTitle) && !allowEmpty) {
+      console.warn(`[GoogleSheetsSyncService] CHẶN GHI ĐÈ RỖNG: Tab Master '${sheetTitle}' không được phép ghi đè 0 dòng!`);
+      return;
+    }
 
     // Ghi đè AN TOÀN: ghi dữ liệu mới TRƯỚC (A1...), rồi mới xóa phần đuôi thừa.
     // (Bản cũ xóa trước-ghi sau: crash/quota ở giữa = mất trắng tab.)
