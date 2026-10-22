@@ -248,6 +248,9 @@ function MaintenanceScreen({ message, checking, onRetry }: { message: string; ch
   );
 }
 
+// Banner "DEMO chỉ xem" tự thêm vào DOM khi biên dịch biến VITE_UBM_PORTAL=demo.
+const IS_DEMO_BUILD = String((import.meta as any).env?.VITE_UBM_PORTAL || '').trim().toLowerCase() === 'demo';
+
 export function App() {
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(() => {
     return !!(localStorage.getItem('ubm_emp_token') && localStorage.getItem('ubm_emp_data'));
@@ -281,6 +284,32 @@ export function App() {
       return true;
     }
   });
+
+  // Cốt thử giao diện DEMO: gắn nhãn nổi "🧪 DEMO — chỉ xem" (cá thể biết đang ở
+  // cổng test; thao tác ghi — check-in/đăng ký OFF — bị backend chặn).
+  useEffect(() => {
+    if (!IS_DEMO_BUILD) return;
+    const el = document.createElement('div');
+    el.textContent = '🧪 DEMO — chỉ xem';
+    el.setAttribute('data-ubm-demo-badge', '1');
+    Object.assign(el.style, {
+      position: 'fixed',
+      left: '12px',
+      bottom: '12px',
+      zIndex: '99999',
+      background: 'linear-gradient(135deg, #b45309, #92400e)',
+      color: '#fff',
+      padding: '6px 14px',
+      borderRadius: '999px',
+      fontSize: '13px',
+      fontWeight: '700',
+      letterSpacing: '0.3px',
+      boxShadow: '0 4px 14px rgba(146,64,14,0.4)',
+      pointerEvents: 'none',
+    } as CSSStyleDeclaration);
+    document.body.appendChild(el);
+    return () => { el.remove(); };
+  }, []);
 
   // Boot: phiên cũ còn token thì XÁC MINH lại với server — tài khoản chưa đổi
   // PIN thì bắt đổi ngay, không cho vào cổng (reload không lách được).

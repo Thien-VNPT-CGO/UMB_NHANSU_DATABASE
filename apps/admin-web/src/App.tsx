@@ -302,6 +302,9 @@ class RoleViewsErrorBoundary extends React.Component<{ tab: string; children: Re
   }
 }
 
+// Banner "DEMO chỉ xem" tự thêm vào DOM khi biên dịch biến VITE_UBM_PORTAL=demo.
+const IS_DEMO_BUILD = String((import.meta as any).env?.VITE_UBM_PORTAL || '').trim().toLowerCase() === 'demo';
+
 export function App() {
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
     try {
@@ -348,6 +351,32 @@ export function App() {
     apiRequest('/version', { _timeoutMs: 4000 } as any).then((v: any) => {
       if (v?.commit) setApiCommit(String(v.commit).slice(0, 7));
     }).catch(() => null);
+  }, []);
+
+  // Thử nghiệm giao diện DEMO: gắn nhãn nổi "🧪 DEMO — chỉ xem" để người dùng
+  // luôn biết đang ở cổng test, thao tác ghi bị backend chặn (403 DEMO_READ_ONLY).
+  useEffect(() => {
+    if (!IS_DEMO_BUILD) return;
+    const el = document.createElement('div');
+    el.textContent = '🧪 DEMO — chỉ xem';
+    el.setAttribute('data-ubm-demo-badge', '1');
+    Object.assign(el.style, {
+      position: 'fixed',
+      left: '12px',
+      bottom: '12px',
+      zIndex: '99999',
+      background: 'linear-gradient(135deg, #b45309, #92400e)',
+      color: '#fff',
+      padding: '6px 14px',
+      borderRadius: '999px',
+      fontSize: '13px',
+      fontWeight: '700',
+      letterSpacing: '0.3px',
+      boxShadow: '0 4px 14px rgba(146,64,14,0.4)',
+      pointerEvents: 'none',
+    } as CSSStyleDeclaration);
+    document.body.appendChild(el);
+    return () => { el.remove(); };
   }, []);
 
   // Login Form State

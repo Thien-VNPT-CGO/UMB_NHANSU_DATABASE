@@ -116,12 +116,19 @@ export function onPinLockRequired(cb: (() => void) | null) {
   pinLockHandler = cb;
 }
 
+// ===== CỔNG DEMO (chỉ xem) =====
+// Biên dịch cùng file nguồn với biến VITE_UBM_PORTAL=demo: mọi fetch gắn cờ
+// X-UBM-PORTAL: demo → backend chặn mọi thao tác ghi (403 DEMO_READ_ONLY),
+// app demo check-in/đăng ký OFF sẽ không đụng dữ liệu thật.
+export const IS_DEMO_PORTAL = String((import.meta as any).env?.VITE_UBM_PORTAL || '').trim().toLowerCase() === 'demo';
+
 export async function apiRequest<T = any>(endpoint: string, options: RequestInit = {}, retries = 2): Promise<T> {
   const base = getApiBase();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options.headers as Record<string, string>),
   };
+  if (IS_DEMO_PORTAL) headers['X-UBM-PORTAL'] = 'demo';
 
   if (authToken) {
     headers['Authorization'] = `Bearer ${authToken}`;
@@ -170,6 +177,12 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
     }
 
     if (!res.ok) {
+      // Cổng DEMO chỉ xem: mọi thao tác ghi bị backend chặn về 403 DEMO_READ_ONLY.
+      if (res.status === 403 && (data as any)?.error === 'DEMO_READ_ONLY') {
+        const err: any = new Error('🧪 DEMO chỉ xem — thao tác bị chặn, dữ liệu thật không đổi. Thực hiện trên cổng chính thức.');
+        err.code = 'DEMO_READ_ONLY';
+        throw err;
+      }
       // Chưa đổi PIN mới theo chu kỳ -> báo App khóa toàn bộ chức năng ngay.
       if (res.status === 403 && ((data as any)?.error === 'PIN_CHANGE_REQUIRED' || (data as any)?.code === 'PIN_CHANGE_REQUIRED')) {
         try { pinLockHandler?.(); } catch { /* không chặn lỗi gốc */ }

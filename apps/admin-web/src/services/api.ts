@@ -104,12 +104,19 @@ function clearSession() {
   try { localStorage.removeItem('ubm_admin_refresh'); } catch {}
 }
 
+// ===== CỔNG DEMO (chỉ xem) =====
+// Biên dịch cùng file nguồn với biến VITE_UBM_PORTAL=demo: mọi fetch gắn cờ
+// X-UBM-PORTAL: demo → backend chặn mọi thao tác ghi (403 DEMO_READ_ONLY),
+// giao diện test không thể đụng dữ liệu thật.
+export const IS_DEMO_PORTAL = String((import.meta as any).env?.VITE_UBM_PORTAL || '').trim().toLowerCase() === 'demo';
+
 export async function apiRequest<T = any>(endpoint: string, options: RequestInit = {}, retries = 2): Promise<T> {
   const base = getApiBase();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options.headers as Record<string, string>),
   };
+  if (IS_DEMO_PORTAL) headers['X-UBM-PORTAL'] = 'demo';
 
   if (authToken) {
     headers['Authorization'] = `Bearer ${authToken}`;
@@ -166,6 +173,12 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
             : 'Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại!';
         const err: any = new Error(msg);
         err.code = 'SESSION_EXPIRED';
+        throw err;
+      }
+      // Cổng DEMO chỉ xem: mọi thao tác ghi bị backend chặn về 403 DEMO_READ_ONLY.
+      if (res.status === 403 && (data as any)?.error === 'DEMO_READ_ONLY') {
+        const err: any = new Error('🧪 DEMO chỉ xem — thao tác bị chặn, dữ liệu thật không đổi. Thực hiện trên cổng chính thức.');
+        err.code = 'DEMO_READ_ONLY';
         throw err;
       }
       const detailText = Array.isArray((data as any)?.details)
