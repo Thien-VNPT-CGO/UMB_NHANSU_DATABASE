@@ -997,7 +997,14 @@ export class GoogleSheetsSyncService {
           const mergedEmps: any[] = [];
           for (const s of deduped) {
             const m = memEmpById.get((s as any).employee_id);
-            if (m && Number(m.version || 0) > Number((s as any).version || 0)) {
+            // Sheet nói OFFICIAL mà bộ nhớ còn PROBATION/PRE_ONBOARDING (HR sửa
+            // trực tiếp cột Trạng thái trong Sheet — không bump version) -> Sheet
+            // THẮNG cho cặp trạng thái này, nếu không version bộ nhớ (bị bump
+            // vì các sửa phụ) sẽ lùi NV về thử việc mãi mà lương vẫn tính TV.
+            const mSt = String((m as any)?.employment_status || '').toUpperCase();
+            const sSt = String((s as any).employment_status || '').toUpperCase();
+            const sheetSaysOfficial = sSt === 'OFFICIAL' && (mSt === 'PROBATION' || mSt === 'PRE_ONBOARDING');
+            if (m && Number(m.version || 0) > Number((s as any).version || 0) && !sheetSaysOfficial) {
               mergedEmps.push(m);
             } else {
               // Sheet thắng/hòa version nhưng thiếu trường HR mới cập nhật (sheet cũ chưa
@@ -1005,6 +1012,9 @@ export class GoogleSheetsSyncService {
               if (m) {
                 if ((m as any).account_locked) (s as any).account_locked = true;
                 if ((m as any).account_status) (s as any).account_status = (m as any).account_status;
+                // Cột M: Ngày chính thức — bộ nhớ có mà sheet trống (dòng cũ/chưa
+                // push) thì vá, không để rông mốc lương TV/CT.
+                if (!(s as any).official_date && (m as any).official_date) (s as any).official_date = (m as any).official_date;
                 if (!(s as any).gender && (m as any).gender) (s as any).gender = (m as any).gender;
                 if (!(s as any).birth_date && (m as any).birth_date) (s as any).birth_date = (m as any).birth_date;
                 if (!(s as any).id_card_number && (m as any).id_card_number) (s as any).id_card_number = (m as any).id_card_number;

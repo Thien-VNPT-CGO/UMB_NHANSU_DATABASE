@@ -371,6 +371,91 @@ export class EmployeesService {
   }
 
   /**
+   * Nâng cấp nội bộ NV đang thử việc lên chính thức (dùng cả bởi HR edit Hồ Sơ
+   * lẫn tick tự heal): set status + rate chuẩn + mốc official_date + lịch sử
+   * giai đoạn + gỡ ca thử việc còn ở tương lai (giữ lịch sử đã qua lương TV).
+   * KHÔng pop nhầm NV OFFICIAL/TERMINATED/OUT.
+   */
+  private async promoteEmployeeToOfficial(
+    empId: string,
+    effDate: string,
+    actorId: string,
+    reason: string
+  ): Promise<{ ok: boolean; deletedShifts: number } | null> {
+    const cur = await this.repo.getEmployeeById(empId).catch(() => null);
+    if (!cur) return null;
+    const st = String((cur as any).employment_status || '').toUpperCase();
+    if (st !== 'PROBATION' && st !== 'PRE_ONBOARDING') return null;
+    let deletedShifts = 0;
+    try {
+      deletedShifts = (await this.repo.deleteShiftsForEmployee(empId, effDate).catch(() => 0)) || 0;
+    } catch { deletedShifts = 0; }
+    const updated = await this.repo.updateEmployee(
+      empId,
+      {
+        employment_status: 'OFFICIAL',
+        current_rate_per_hour: STANDARD_HOURLY_RATES.OFFICIAL,
+        official_date: effDate,
+      },
+      (cur as any).version
+    );
+    await this.repo.addStageHistory({
+      period_id: uuidv4(),
+      employee_id: empId,
+      stage: 'OFFICIAL',
+      effective_from: updated.official_date!,
+      rate_per_hour: STANDARD_HOURLY_RATES.OFFICIAL,
+      approved_by: actorId,
+      note: reason,
+    } as any).catch(() => null);
+    await this.repo.recordAuditLog({
+      log_id: `LOG_${Date.now()}_${empId}`,
+      actor_id: actorId,
+      actor_role: 'SYSTEM',
+      action: 'AUTO_PROMOTE_OFFICIAL',
+      target_entity: 'NHAN_VIEN_MASTER',
+      target_id: empId,
+      details: `${reason}: ${(cur as any).full_name || empId} -> OFFICIAL ngày ${effDate}, gỡ ${deletedShifts} ca thử việc từ ${effDate}`,
+    } as any).catch(() => null);
+    return { ok: true, deletedShifts };
+  }
+
+  /**
+   * Tick tự heal (chạy mỗi 5 phút): NV còn PROBATION/PRE_ONBOARDING nhưng
+   * official_date đã đến/quá hôm nay -> tự chuyển chính thức. Che 2 lỗ hổng:
+   * (1) HR sửa ngày chính thức ở tab Hồ Sơ mà quên bấm "Chuyển chính thức";
+   * (2) HR sửa trực tiếp cột Trạng thái trong Google Sheet nhưng merge pull
+   * chọn bản bộ nhớ theo version. Nhờ tick, không NV nào "dính" lương/sách
+   * thử việc khi ngày chính thức đã qua.
+   */
+  async reconcileProbationStatuses(): Promise<{ promoted: string[]; today: string }> {
+    const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+    const employees = await this.repo.listEmployees().catch(() => []);
+    const promoted: string[] = [];
+    for (const e of (employees || []) as any[]) {
+      const st = String(e?.employment_status || '').toUpperCase();
+      if (st !== 'PROBATION' && st !== 'PRE_ONBOARDING') continue;
+      const off = String(e?.official_date || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(off) || off > today) continue;
+      try {
+        const r = await this.promoteEmployeeToOfficial(
+          String(e.employee_id),
+          off,
+          'SYSTEM',
+          'Rà soát tự động: NV còn trạng thái thử việc nhưng ngày chính thức đã đến'
+        );
+        if (r?.ok) promoted.push(String(e.employee_id));
+      } catch (err: any) {
+        console.warn(`[employees-reconcile] heal ${e?.full_name || e?.employee_id} lỗi: ${err?.message || err}`);
+      }
+    }
+    if (promoted.length > 0) {
+      console.log(`[employees-reconcile] Tự chuyển chính thức ${promoted.length} NV (đến official_date): ${promoted.join(', ')}`);
+    }
+    return { promoted, today };
+  }
+
+  /**
    * Rà soát lịch thử việc còn sót ở NV đã lên chính thức: NV OFFICIAL mà vẫn còn
    * ca (không phải BOT xếp — SHIFT_AUTO_) nằm trong cửa sổ 12 ngày thử việc,
    * từ hôm nay trở đi, tạo trước hôm nay. Lịch sử đã qua giữ nguyên.
@@ -587,7 +672,49 @@ export class EmployeesService {
         if (!fresh) throw new Error('EMPLOYEE_NOT_FOUND');
         const expected = Number(updates.expectedVersion) || fresh.version;
         if (expected !== fresh.version) throw new Error('VERSION_CONFLICT: Dữ liệu vừa bị thay đổi, tải lại rồi sửa tiếp.');
+        // HR sửa "Ngày chính thức" ở tab Hồ Sơ cho NV đang thử việc mà ngày đó
+        // đã đến/quá -> coi như DUYỆT CHÍNH THỨC: tự set trạng thái + lương chuẩn
+        // + lịch sử giai đoạn + gỡ ca thử việc tương lai (trước đây chỉ sửa mốc
+        // ngày, trạng thái đứng yên PROBATION -> lương/sách cứ tính thử việc).
+        const stNow = String((fresh as any).employment_status || '').toUpperCase();
+        const patchOff = patch.official_date ? String(patch.official_date).slice(0, 10) : '';
+        const todayVn = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+        const isPromote =
+          patchOff !== '' &&
+          patchOff <= todayVn &&
+          (stNow === 'PROBATION' || stNow === 'PRE_ONBOARDING');
+        if (isPromote) {
+          patch.employment_status = 'OFFICIAL';
+          patch.current_rate_per_hour = STANDARD_HOURLY_RATES.OFFICIAL;
+        }
         const updated = await this.repo.updateEmployee(employeeId, patch, fresh.version);
+        if (isPromote) {
+          try {
+            await this.repo.addStageHistory({
+              period_id: uuidv4(),
+              employee_id: employeeId,
+              stage: 'OFFICIAL',
+              effective_from: patchOff,
+              rate_per_hour: STANDARD_HOURLY_RATES.OFFICIAL,
+              approved_by: actorId,
+              note: `HR lưu Hồ Sơ vớiNgày chính thức ${patchOff} — tự duyệt chuyển chính thức`,
+            } as any);
+          } catch { /* non-fatal */ }
+          try {
+            await this.repo.recordAuditLog({
+              log_id: `LOG_${Date.now()}_${employeeId}`,
+              actor_id: actorId,
+              actor_role: 'HR',
+              action: 'AUTO_PROMOTE_OFFICIAL',
+              target_entity: 'NHAN_VIEN_MASTER',
+              target_id: employeeId,
+              details: `Sửa Hồ Sơ đặt Ngày chính thức ${patchOff}: ${(updated as any).full_name || employeeId} tự chuyển OFFICIAL`,
+            } as any);
+          } catch { /* non-fatal */ }
+          try {
+            await this.repo.deleteShiftsForEmployee(employeeId, todayVn);
+          } catch { /* non-fatal */ }
+        }
         // Đổi SĐT / chi nhánh -> đồng bộ tài khoản đăng nhập theo để NV vẫn login
         // được số mới và không dính BRANCH_SCOPE_VIOLATION oan khi đổi ca cùng chi nhánh.
         if (patch.phone_normalized || patch.default_branch_id) {

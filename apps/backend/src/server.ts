@@ -631,6 +631,25 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   setTimeout(shiftOffSyncTickSafe, 150_000);
   setInterval(shiftOffSyncTickSafe, 60_000);
 
+  // Rà soát NV "dính" thử việc (mỗi 5 phút): NV còn PROBATION nhưng official_date
+  // đã đến/quá -> tự chuyển chính thức + gỡ ca thử việc tương lai. Che 2 lỗ:
+  // (1) HR sửa ngày chính thức tab Hồ Sơ mà quên "Chuyển chính thức";
+  // (2) sửa trực tiếp Sheet bị merge pull lùi về bản cũ. Chạy muộn (2.2 phút)
+  // để pull dữ liệu Sheet đầu tiên xong rồi mới heal — không heal khi rỗng.
+  const employeesReconcileTickSafe = () => {
+    (services.employeesService as any).reconcileProbationStatuses()
+      .then((r: any) => {
+        if (r && r.promoted && r.promoted.length > 0) {
+          try {
+            io.emit('data:updated', { entity: 'employees', data: { action: 'auto-promote-official', employees: r.promoted }, timestamp: new Date().toISOString() });
+          } catch { /* non-fatal */ }
+        }
+      })
+      .catch((err: any) => console.warn('[employees-reconcile] tick error:', err?.message || err));
+  };
+  setTimeout(employeesReconcileTickSafe, 130_000);
+  setInterval(employeesReconcileTickSafe, 5 * 60_000);
+
   // Nhắc HR trước giờ PV 15 phút (mỗi 60s): inbox bền vững + popup realtime.
   const interviewReminderTickSafe = () => {
     interviewReminderTick(adapter, services.notificationsService, Date.now())
