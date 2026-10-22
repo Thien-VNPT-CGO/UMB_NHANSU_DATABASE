@@ -1891,7 +1891,13 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     async (req: AuthenticatedRequest, res) => {
       try {
         const branchId = req.user?.role === 'STORE' ? req.user.branchScope! : (req.query.branchId as string || '*');
-        const week = (req.query.week as string) || new Date().toISOString().split('T')[0];
+        // FIX lịch tuần thiếu ca đầu tuần (VD 21/10): mặc định week là THỨ HAI
+        // của tuần hiện tại (giờ VN) thay vì hôm nay — trước đây gọi /schedules
+        // không kèm week trả ca từ hôm nay trở đi, 2 cổng render viết lịch tuần
+        // Mon-Sun nên các ô Thứ 2-3-4 trước "hôm nay" trống trơn.
+        const week =
+          (req.query.week as string) ||
+          weekRangeOf(new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10)).mon;
         const shifts = await schedulesService.getShiftsForWeek(branchId, week);
         res.json(shifts);
       } catch (err: any) {

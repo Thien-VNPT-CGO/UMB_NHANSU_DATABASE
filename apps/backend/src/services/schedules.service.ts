@@ -1742,6 +1742,19 @@ export class SchedulesService {
               status: healed.status,
             });
           }
+          // Heal xong vẫn phải tự hủy ca trùng ngày OFF (trước đây return sớm
+          // nên lịch cứ báo "đã xếp ca trùng ngày OFF" oan).
+          const healNotes = await this.cancelShiftsOnLeaveDay(
+            String((healed as any).employee_id || ''),
+            String((healed as any).requested_date || '')
+          );
+          if (this.io && healNotes.length > 0) {
+            this.io.to(`user:${healed.employee_id}`).emit('data:updated', {
+              entity: 'schedules',
+              data: { action: 'auto-cancel-shift-on-leave', notes: healNotes },
+              timestamp: new Date().toISOString(),
+            });
+          }
           return healed;
         }
         const updated = await this.repo.updateLeaveRequest(requestId, status, reviewerId, note);

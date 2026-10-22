@@ -173,14 +173,17 @@ export async function buildAutoPlan(
   // branchId trực tiếp sẽ sót ca lưu mã CN cũ, BOT tưởng trống và xếp đè).
   const existingRaw = (await repo.getShiftsForWeek('*', weekMon).catch(() => [])) as any[];
   const existing = (existingRaw || []).filter((s: any) => branchId === '*' || sameBranch((s as any).branch_id, branchId));
-  const occupiedShiftDay = new Set<string>(); // `${shift}|${date}`
+  const occupiedShiftDay = new Set<string>(); // `${canonicalBranch}|${shift}|${date}`
   const empDay = new Set<string>(); // `${emp}|${date}`
   const weeklyCount = new Map<string, number>();
   for (const s of existing || []) {
     if ((s as any).status === 'CANCELLED') continue;
     if (probationIds.has(String((s as any).employee_id))) continue;
     if ((s as any).date < weekMon || (s as any).date > weekSun) continue;
-    occupiedShiftDay.add(`${(s as any).shift_code}|${(s as any).date}`);
+    // Slot chiếm chỗ ĐÁNH THEO NHÁNH (chuẩn hóa mã CN cũ): publish '*' cho toàn
+    // công ty không được để ca chi nhánh khác chắn slot ca của chi nhánh này
+    // (trước đây key `${shift}|${date}` chéo nhánh → BOT bỏ trống ca oan).
+    occupiedShiftDay.add(`${canonicalBranch((s as any).branch_id)}|${(s as any).shift_code}|${(s as any).date}`);
     const k = `${(s as any).employee_id}|${(s as any).date}`;
     if (!empDay.has(k)) {
       empDay.add(k);
@@ -236,10 +239,29 @@ export async function buildAutoPlan(
   const monthCountOf = (empId: string, date: string): number =>
     monthDays.get(empId)?.get(date.slice(0, 7))?.size || 0;
 
+  const planBranches: string[] = branchId === '*'
+    ? [...new Set(schedulable.map((e: any) => canonicalBranch((e as any).default_branch_id)))].filter(Boolean)
+    : [canonicalBranch(branchId)];
+  // NV gán ca cố định nhưng thiếu/không rõ nhánh: BOT không xếp được — báo rõ
+  // thay vì im lặng để HR gán nhánh rồi PUBLISH lại.
+  const noBranchEmps = schedulable.filter((e: any) => !canonicalBranch((e as any).default_branch_id));
+  if (branchId === '*' && noBranchEmps.length > 0) {
+    for (const e of noBranchEmps) {
+      warnings.push({
+        employee_id: (e as any).employee_id,
+        message: `${(e as any).full_name || (e as any).employee_id} có ca cố định ${(e as any).default_shift_code} nhưng hồ sơ thiếu/gõ sai mã chi nhánh — BOT bỏ qua, HR gán chi nhánh rồi PUBLISH lại.`,
+      });
+    }
+  }
+  for (const planBranch of planBranches) {
   for (const date of dates) {
     for (const shift of ACTIVE_SHIFTS) {
-      if (occupiedShiftDay.has(`${shift}|${date}`)) continue; // đã có ca tay — giữ nguyên
-      const pool = schedulable.filter((e: any) => branchId === '*' || sameBranch(e.default_branch_id, branchId));
+      if (occupiedShiftDay.has(`${planBranch}|${shift}|${date}`)) continue; // đã có ca tay — giữ nguyên
+      const pool = schedulable.filter(
+        (e: any) =>
+          canonicalBranch((e as any).default_branch_id) === planBranch &&
+          (branchId === '*' || sameBranch(e.default_branch_id, branchId))
+      );
       const candidates = pool.filter(
         (e: any) =>
           e.default_shift_code === shift &&
@@ -272,8 +294,9 @@ export async function buildAutoPlan(
       empDay.add(`${pick.employee_id}|${date}`);
       weeklyCount.set(pick.employee_id, (weeklyCount.get(pick.employee_id) || 0) + 1);
       bumpMonth(pick.employee_id, date);
-      occupiedShiftDay.add(`${shift}|${date}`);
+      occupiedShiftDay.add(`${planBranch}|${shift}|${date}`);
     }
+  }
   }
 
   const statMonthKey = weekMon.slice(0, 7);

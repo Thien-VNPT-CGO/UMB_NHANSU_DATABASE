@@ -185,11 +185,60 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   private pendingSheetsWrites = 0;
   private lastSheetsWriteAt: string | null = null;
 
+  /**
+   * ===== SOON-PUSH: hẹn đẩy sớm thay đổi (đóng cửa sổ restart mất dữ liệu) =====
+   * Auto-push điều kiện hiện nhịp 60 phút (tránh lấp quota như trước đây 5p mỗi
+   * lần ~34-40 write). Hệ quả: ca vừa xếp (BOT/publish/xếp tay), phiếu công
+   * chấm điểm... có thể CHỈ nằm trong bộ nhớ tới 60 phút — backend restart
+   * watchdog/redeploy trong cửa sổ đó = mất ca. Giải pháp: khi có cờ dirty,
+   * hẹn 1 lượt push gộp sau 45s (debounce đủ dài để gộp đợt mutation, đủ ngắn
+   * để mất dữ liệu chỉ còn là cửa sổ ~1 phút), hệ nhàn rỗi tối đa 1 lần chạy.
+   */
+  private soonPushTimer: ReturnType<typeof setTimeout> | null = null;
+  private soonPushRunning = false;
+
+  private markDirtySoonPush(): void {
+    try { this.syncService.markDataDirty(); } catch { /* non-fatal */ }
+    this.scheduleSoonPush();
+  }
+
+  private scheduleSoonPush(delayMs = 45_000): void {
+    if (!this.isConfigured || this.soonPushTimer || this.soonPushRunning) return;
+    this.soonPushTimer = setTimeout(() => {
+      this.soonPushTimer = null;
+      void this.runSoonPush();
+    }, Math.max(10_000, delayMs));
+    (this.soonPushTimer as any)?.unref?.(); // không giữ event loop sống vì timer này
+  }
+
+  private async runSoonPush(): Promise<void> {
+    if (this.soonPushRunning || !this.isConfigured) return;
+    const ss = this.syncService;
+    if (typeof ss.hasUnpushedChanges === 'function' && !ss.hasUnpushedChanges()) return;
+    // Đang pull (tick 10s/webhook): đợi pull xong rồi đẩy cho đồng bộ tự nhiên —
+    // hẹn lại ngắn thay vì push trùng nhịp pull (tránh đua ghi/đọc tab).
+    if (this.pullInFlight) {
+      this.scheduleSoonPush(30_000);
+      return;
+    }
+    this.soonPushRunning = true;
+    try {
+      await Promise.race([
+        ss.syncAllData(this.fallbackAdapter),
+        new Promise(r => setTimeout(r, 150_000)),
+      ]);
+    } catch { /* lỗi: cờ dirty giữ nguyên, auto-push tick 60p sẽ đẩy lại */ }
+    finally {
+      this.soonPushRunning = false;
+      this.lastSheetsWriteAt = new Date().toISOString();
+    }
+  }
+
   private scheduleSheetsWrite(task: () => Promise<unknown>, label: string) {
     if (!this.isConfigured) return;
     // Đặt cờ dirty: bộ nhớ vừa có thay đổi chưa chắc đã lên Sheet — auto-push
     // định kỳ (server.ts) thấy cờ là sẽ đẩy đầy đủ các tab cho chắc.
-    try { this.syncService.markDataDirty(); } catch { /* non-fatal */ }
+    this.markDirtySoonPush();
     this.pendingSheetsWrites++;
     this.bgWriteChain = this.bgWriteChain
       .then(() => task())
@@ -234,7 +283,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   private scheduleFullSync(label: string) {
     if (!this.isConfigured) return;
     // Đặt cờ dirty: bộ nhớ có thay đổi chưa chắc đã lên Sheet (auto-push định kỳ dựa cờ này).
-    try { this.syncService.markDataDirty(); } catch { /* non-fatal */ }
+    this.markDirtySoonPush();
     this.pendingSheetsWrites++;
     const run = async () => {
       const wait = Math.max(0, 10000 - (Date.now() - this.lastFullSyncAt));
@@ -639,7 +688,20 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   }
 
   async updateShiftAssignment(id: string, updates: any) {
-    const res = await this.fallbackAdapter.updateShiftAssignment(id, updates);
+    // FIX ca "hồi sinh" sau hủy: hủy/chỉnh ca phần lớn chỉ truyền {status} KHÔNG
+    // tăng schedule_version → khi pull đua (đã đọc sheet bản PUBLISHED cũ trước
+    // thời điểm hủy) merge theo version gặp HÒA thì bản Sheet cũ thắng = ca hủy
+    // xong vài giây sau lại hiện trên lịch, tick 60s còn biến OFF thành ca làm.
+    // Nay: mọi cập nhật trạng thái tự tăng schedule_version (caller truyền sẵn
+    // version thì giữ nguyên — luồng hoán đổi ca đã bump có chủ đích).
+    let effUpdates = updates;
+    if (updates && updates.status !== undefined && updates.schedule_version === undefined) {
+      try {
+        const cur = await this.fallbackAdapter.getShiftById(id).catch(() => null);
+        effUpdates = { ...updates, schedule_version: Number((cur as any)?.schedule_version || 0) + 1 };
+      } catch { /* không đọc được version hiện tại: dùng updates gốc */ }
+    }
+    const res = await this.fallbackAdapter.updateShiftAssignment(id, effUpdates);
     // FIX đổi ca mất lịch sau rebuild/restart: ca chuyển chủ (B đồng ý / HR duyệt)
     // phải bền vững trên Sheets NGAY trong cùng request — giống phiếu (pushSwapsTab
     // đồng bộ). Trước đây chỉ scheduleFullSync nền (debounce 10s + syncAllData nặng):

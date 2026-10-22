@@ -1316,11 +1316,18 @@ export class GoogleSheetsSyncService {
         const mergedShifts: any[] = [];
         for (const s of dedupedMapped) {
           const m = memShiftById.get((s as any).assignment_id);
-          if (m && Number(m.schedule_version || 0) > Number((s as any).schedule_version || 0)) {
-            mergedShifts.push(m);
-          } else {
-            mergedShifts.push(s);
+          let winner = m && Number(m.schedule_version || 0) > Number((s as any).schedule_version || 0) ? m : s;
+          // Trạng thái hủy là TERMINAL: pull đua (đọc Sheet bản PUBLISHED cũ trước
+          // thời điểm hủy) không được hồi sinh ca đã CANCELLED trong bộ nhớ.
+          if (
+            m &&
+            String((m as any).status) === 'CANCELLED' &&
+            String((winner as any).status) !== 'CANCELLED' &&
+            Number(m.schedule_version || 0) >= Number((s as any).schedule_version || 0)
+          ) {
+            winner = m;
           }
+          mergedShifts.push(winner);
           memShiftById.delete((s as any).assignment_id);
         }
         for (const m of memShiftById.values()) mergedShifts.push(m);
@@ -2886,7 +2893,63 @@ export class GoogleSheetsSyncService {
    * (tạo/nhận/duyệt/hủy) để trạng thái bền vững trên Sheet NGAY trong cùng
    * request — restart/sleep server không mất phiếu, pull sau đó khôi phục đủ.
    */
-  public async pushSwapsTab(repo: { listSwapRequests(): Promise<any[]> }): Promise<number> {
+  /**
+   * ===== GỘP LẦN PUSH TAB (coalescing) =====
+   * 1 đợt mutation nối tiếp (publish + hủy ca theo OFF, nhập lịch Excel,
+   * đăng ký 2 ngày OFF...) trước đây gây ra BẤY NHIÊU lần ghi đè nguyên tab:
+   * mỗi update-shift/phếu đều pushShiftsTab riêng → ~34-40 write × 1.1s mỗi
+   * lần, lấp quota 60 write/phút và kéo dài request của người xếp lịch.
+   * Nay: push đang chạy thì caller sau CHỜ CHUNG kết quả; mutation xảy ra
+   * DURING push được đẩy tiếp đúng 1 lượt follow-up (gồm tất cả mutation mới).
+   */
+  private tabPushInFlight = new Map<string, Promise<number>>();
+  private tabPushFollowUp = new Set<string>();
+
+  private coalescedTabPush(key: string, pusher: () => Promise<number>): Promise<number> {
+    const existing = this.tabPushInFlight.get(key);
+    if (existing) {
+      this.tabPushFollowUp.add(key);
+      // Trả kết quả của push follow-up (gồm mutation của mình), không lọc lại push mới.
+      return existing
+        .then(() => this.tabPushInFlight.get(key) ?? 0)
+        .catch(() => 0);
+    }
+    const run = Promise.resolve()
+      .then(pusher)
+      .catch((e: any) => {
+        // Push rớt = dữ liệu bộ nhớ chưa chắc đã lên Sheet: bắt cờ dirty để
+        // auto-push điều kiện (server.ts) hoặc soon-push nhảy vào đẩy lại.
+        try { this.markDataDirty(); } catch { /* non-fatal */ }
+        throw e;
+      });
+    this.tabPushInFlight.set(key, run);
+    void run
+      .then((n: number) => {
+        if (this.tabPushInFlight.get(key) === run) this.tabPushInFlight.delete(key);
+        // Có mutation đăng ký trong lúc push chạy → đẩy tiếp đúng 1 lượt gộp.
+        if (n > 0 && this.tabPushFollowUp.has(key)) {
+          this.tabPushFollowUp.delete(key);
+          const follow = Promise.resolve()
+            .then(pusher)
+            .catch(() => 0);
+          this.tabPushInFlight.set(key, follow);
+          void follow.then((m: number) => {
+            if (m === 0) { try { this.markDataDirty(); } catch { /* non-fatal */ } }
+            if (this.tabPushInFlight.get(key) === follow) this.tabPushInFlight.delete(key);
+          });
+        }
+      })
+      .catch(() => {
+        if (this.tabPushInFlight.get(key) === run) this.tabPushInFlight.delete(key);
+      });
+    return run;
+  }
+
+  public pushSwapsTab(repo: { listSwapRequests(): Promise<any[]> }): Promise<number> {
+    return this.coalescedTabPush('swaps', () => this.doPushSwapsTab(repo));
+  }
+
+  private async doPushSwapsTab(repo: { listSwapRequests(): Promise<any[]> }): Promise<number> {
     const swaps = await repo.listSwapRequests().catch(() => []);
     const swapRows = (swaps || []).map((sw: any) => [
       sw.swap_id,
@@ -2904,6 +2967,11 @@ export class GoogleSheetsSyncService {
       String((sw as any).support_date || '').slice(0, 10),
       (sw as any).support_shift_code || '',
     ]);
+    if (swapRows.length === 0) {
+      // ANTI-WIPE: bộ nhớ 0 phiếu (boot trước khi pull xong) — không ghi đè rỗng phá DON_DOI_CA.
+      console.warn('[GoogleSheetsSyncService] pushSwapsTab bỏ qua: bộ nhớ 0 phiếu (chống ghi đè rỗng).');
+      return 0;
+    }
     await this.overwriteSheetData('DON_DOI_CA', SHEETS_DEFINITIONS.find(d => d.title === 'DON_DOI_CA')!.headers, swapRows);
     return swapRows.length;
   }
@@ -2934,7 +3002,11 @@ export class GoogleSheetsSyncService {
    * PUBLISHED bền vững trên Sheet NGAY trong cùng request — restart ngay sau
    * publish cũng không rớt về DRAFT (NV mất quyền đổi ca oan).
    */
-  public async pushShiftsTab(repo: { getShiftsForWeek(branch: string, weekMon: string): Promise<any[]> }): Promise<number> {
+  public pushShiftsTab(repo: { getShiftsForWeek(branch: string, weekMon: string): Promise<any[]> }): Promise<number> {
+    return this.coalescedTabPush('shifts', () => this.doPushShiftsTab(repo));
+  }
+
+  private async doPushShiftsTab(repo: { getShiftsForWeek(branch: string, weekMon: string): Promise<any[]> }): Promise<number> {
     // Đẩy TOÀN BỘ lịch sử ca (không cắt ngày): giữ ca cũ bền vững trên Sheet để tab
     // Lịch lùi tuần + tính lương luôn đủ dữ liệu sau restart. '2000-01-01' = lấy tất cả.
     const shifts = await repo.getShiftsForWeek('*', '2000-01-01').catch(() => []);
@@ -2949,6 +3021,14 @@ export class GoogleSheetsSyncService {
       s.status || 'DRAFT',
       Number(s.schedule_version) || 1,
     ]);
+    if (shiftRows.length === 0) {
+      // ANTI-WIPE: bộ nhớ 0 ca (boot trước khi pull xong / vừa restart) mà ghi đè
+      // là XÓA SẠCH tab PHAN_CONG_CA — sau đó restart nữa là mất lịch vĩnh viễn
+      // (hiện tượng "thiếu rất nhiều ca" trên cổng quản trị). Im lặng bỏ qua:
+      // dữ liệu trên Sheet giữ nguyên, lần push sau khi nhớ đủ sẽ ghi lại hết.
+      console.warn('[GoogleSheetsSyncService] pushShiftsTab bỏ qua: bộ nhớ 0 ca (chống ghi đè rỗng phá lịch).');
+      return 0;
+    }
     await this.overwriteSheetData('PHAN_CONG_CA', SHEETS_DEFINITIONS.find(d => d.title === 'PHAN_CONG_CA')!.headers, shiftRows);
     return shiftRows.length;
   }
@@ -2959,7 +3039,11 @@ export class GoogleSheetsSyncService {
    * NGAY trong cùng request — pull nền sau đó không hồi sinh OFF đã hủy
    * (lịch lại báo ca trùng OFF oan).
    */
-  public async pushLeavesTab(repo: { listLeaveRequests(branch?: string, employee?: string): Promise<any[]> }): Promise<number> {
+  public pushLeavesTab(repo: { listLeaveRequests(branch?: string, employee?: string): Promise<any[]> }): Promise<number> {
+    return this.coalescedTabPush('leaves', () => this.doPushLeavesTab(repo));
+  }
+
+  private async doPushLeavesTab(repo: { listLeaveRequests(branch?: string, employee?: string): Promise<any[]> }): Promise<number> {
     const leaves = await repo.listLeaveRequests().catch(() => []);
     const leaveRows = (leaves || []).map((l: any) => ([
       l.request_id,
@@ -2974,6 +3058,11 @@ export class GoogleSheetsSyncService {
       l.review_note || '',
       l.created_at,
     ]));
+    if (leaveRows.length === 0) {
+      // ANTI-WIPE: bộ nhớ 0 phiếu (boot trước khi pull xong) — không ghi đè rỗng phá DON_NGHI_PHEP.
+      console.warn('[GoogleSheetsSyncService] pushLeavesTab bỏ qua: bộ nhớ 0 phiếu (chống ghi đè rỗng).');
+      return 0;
+    }
     await this.overwriteSheetData('DON_NGHI_PHEP', SHEETS_DEFINITIONS.find(d => d.title === 'DON_NGHI_PHEP')!.headers, leaveRows);
     return leaveRows.length;
   }
