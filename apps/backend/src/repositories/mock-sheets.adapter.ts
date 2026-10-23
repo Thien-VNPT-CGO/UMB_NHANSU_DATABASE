@@ -273,10 +273,6 @@ export class MockSheetsAdapter implements ISheetsRepository {
         payroll: false,
       },
       maintenance_message: 'Hệ thống đang bảo trì kỹ thuật định kỳ. Quý khách vui lòng thử lại sau ít phút.',
-      // Hẹn giờ cập nhật giao diện/phần mềm trên cổng nhân viên.
-      ui_update_enabled: false,
-      ui_update_at: null,
-      ui_update_message: '',
       // Lịch giao diện sự kiện cho cổng nhân viên (Admin chọn + hẹn giờ).
       theme_event: null,
       theme_schedule_enabled: false,

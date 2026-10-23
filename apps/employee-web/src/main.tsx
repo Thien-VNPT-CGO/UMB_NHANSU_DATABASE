@@ -2,14 +2,12 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { App } from './App';
 import { PwaInstallPrompt } from './components/PwaInstallPrompt';
-import { UiUpdateWatcher } from './components/UiUpdateWatcher';
 import './index.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <App />
     <PwaInstallPrompt />
-    <UiUpdateWatcher />
   </React.StrictMode>
 );
 
