@@ -5,6 +5,8 @@ import { MockSheetsAdapter } from './mock-sheets.adapter.js';
 import { sheetDateText, sheetDateTimeText } from '../services/employees.service.js';
 import { GoogleSheetsSyncService } from '../services/google-sheets-sync.service.js';
 import { saveAttendancePhotoDisk, saveAdjustmentPhotoDisk } from '../services/photo-disk.store.js';
+import { DurableWriteQueue } from './durable-write-queue.js';
+import { readRuntimeSnapshot, writeRuntimeSnapshot } from './runtime-snapshot.js';
 
 export class GoogleSheetsAdapter implements ISheetsRepository {
   private fallbackAdapter: MockSheetsAdapter;
@@ -12,6 +14,13 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   private lastPullTime = 0;
   private pullInFlight: Promise<unknown> | null = null;
   public syncService: GoogleSheetsSyncService;
+  private durableWrites: DurableWriteQueue;
+  // Snapshot khởi động: có dữ liệu lần pull trước trên đĩa thì phục vụ ngay,
+  // pull nền vẫn chạy để cập nhật phần thay đổi khi downtime.
+  private snapshotLoaded = false;
+  private snapshotSavedAt: string | null = null;
+  private snapshotWriteError: string | null = null;
+  private snapshotTimer: ReturnType<typeof setTimeout> | null = null;
   // Sẵn sàng dữ liệu sau khởi động: kho rỗng + Sheets chưa đọc xong thì login phải
   // báo SHEETS_LOADING (đợi), không báo ACCOUNT_NOT_FOUND oan.
   // (needsSeed() không dùng được ở đây vì seed sẵn có admin -> luôn false.)
@@ -63,12 +72,38 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
     this.syncService = new GoogleSheetsSyncService();
 
+    // Hàng đợi append bền vững: mọi dòng ghi xuống Sheet đều vào journal trên
+    // đĩa trước, rồi retry nền nếu Google timeout/quota. Đây là lớp chống mất
+    // check-in/thông báo khi container restart đúng lúc append đang bay.
+    const maxAttempts = Math.max(1, Number(process.env.DURABLE_WRITE_MAX_ATTEMPTS) || 12);
+    this.durableWrites = new DurableWriteQueue({
+      append: (sheetTitle, rows) => this.syncService.appendRows(sheetTitle, rows),
+      filePath: process.env.PENDING_WRITES_FILE?.trim() || path.resolve(process.cwd(), 'data/pending-writes.json'),
+      maxAttempts,
+      onDeadLetter: (entry) => {
+        console.error(`[GoogleSheetsAdapter] Dead-letter ghi ${entry.sheetTitle} sau ${entry.attempts} lần — chạy full-sync bù.`);
+        this.scheduleFullSync(`durable-dead-letter:${entry.sheetTitle}`);
+      },
+    });
+
     // Check if Google credentials are provided in env
     const hasJson = !!process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
     const hasEmailKey = !!(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && process.env.GOOGLE_PRIVATE_KEY);
     if ((hasJson || hasEmailKey) && spreadsheetId) {
       this.isConfigured = true;
       console.log(`[GoogleSheetsAdapter] Khởi động với Sheets LIVE (spreadsheet: ${spreadsheetId.slice(0, 8)}..., creds: ${hasJson ? 'JSON' : 'EMAIL+KEY'})`);
+
+      // P0.2: nạp snapshot trước khi listen để web có dữ liệu ngay. Không chặn
+      // pull nền; nếu Sheet đổi trong lúc downtime, pull đầu tiên sẽ phát realtime.
+      this.restoreRuntimeSnapshot();
+
+      // P0.1: xả các append còn tồn sau 5s (đợi init client/xác thực xong).
+      const replayTimer = setTimeout(() => {
+        if (!this.isConfigured) return;
+        this.durableWrites.start();
+      }, 5000);
+      (replayTimer as any)?.unref?.();
+
       // Auto-initialize sheets structure and pull real data on startup.
       // Pull dữ liệu chạy TRƯỚC để web app có dữ liệu ngay; tạo header chạy nền song song (không chặn).
       // Kiên trì retry khi kho còn rỗng (Render rebuild xong mà SheetsAPI/creds trục trặc
@@ -111,6 +146,85 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     }
   }
 
+  /**
+   * Nạp snapshot runtime đã lưu (nếu có) và khôi phục metadata sync để lần pull
+   * đầu tiên biết nội dung nào đã thay đổi trong lúc backend downtime.
+   */
+  private restoreRuntimeSnapshot(): void {
+    const snap = readRuntimeSnapshot();
+    if (!snap) return;
+    const currentSpreadsheetId = process.env.SPREADSHEET_ID || process.env.GOOGLE_SPREADSHEET_ID || '';
+    const snapshotSpreadsheetId = snap.meta?.spreadsheetId || '';
+    if (snapshotSpreadsheetId && currentSpreadsheetId && snapshotSpreadsheetId !== currentSpreadsheetId) {
+      console.warn(
+        '[GoogleSheetsAdapter] Bỏ qua snapshot vì khác Spreadsheet ID ' +
+        `(${snapshotSpreadsheetId.slice(0, 8)}… ≠ ${currentSpreadsheetId.slice(0, 8)}…) — chờ pull Sheets.`,
+      );
+      return;
+    }
+    try {
+      if (!this.fallbackAdapter.importRuntimeState(snap.state)) return;
+      this.snapshotLoaded = true;
+      this.snapshotSavedAt = snap.meta?.savedAt || null;
+      this.startupPullDone = true;
+      this.lastPullTime = Date.now(); // tránh request đầu tiên kích hoạt pull trùng
+      this.syncService.restoreSnapshotMeta(snap.meta as any);
+      console.log(
+        `[GoogleSheetsAdapter] Đã nạp snapshot lúc ${this.snapshotSavedAt || '?'} — ` +
+        `phục vụ ngay ${this.fallbackAdapter.employees.length} NV / ${this.fallbackAdapter.attendanceEvents.length} sự kiện chấm công.`,
+      );
+    } catch (err: any) {
+      this.snapshotLoaded = false;
+      console.warn('[GoogleSheetsAdapter] Nạp snapshot lỗi (bỏ qua, chờ pull Sheets):', err?.message || err);
+    }
+  }
+
+  /**
+   * Ghi snapshot hiện tại. SyncService gọi sau mỗi pull; adapter gọi debounce
+   * sau mutation để cửa sổ mất dữ liệu khi restart chỉ còn ~1-2s.
+   */
+  public async persistRuntimeSnapshot(meta?: {
+    spreadsheetId?: string | null;
+    signature?: string | null;
+    tabSignatures?: Record<string, string>;
+    pulledAt?: string | null;
+    counts?: any;
+  }): Promise<void> {
+    if (!this.isConfigured) return;
+    try {
+      const syncMeta: any = this.syncService.getSnapshotMeta?.() || {};
+      const ok = await writeRuntimeSnapshot(this.fallbackAdapter.exportRuntimeState(), {
+        spreadsheetId: meta?.spreadsheetId
+          ?? process.env.SPREADSHEET_ID
+          ?? process.env.GOOGLE_SPREADSHEET_ID
+          ?? null,
+        signature: meta?.signature ?? syncMeta.signature ?? null,
+        tabSignatures: meta?.tabSignatures ?? syncMeta.tabSignatures,
+        pulledAt: meta?.pulledAt ?? syncMeta.pulledAt ?? null,
+        counts: meta?.counts ?? syncMeta.counts,
+      });
+      if (ok) {
+        this.snapshotLoaded = true;
+        this.snapshotSavedAt = new Date().toISOString();
+        this.snapshotWriteError = null;
+      } else {
+        this.snapshotWriteError = 'WRITE_FAILED';
+      }
+    } catch (err: any) {
+      this.snapshotWriteError = err?.message || String(err);
+      console.warn('[GoogleSheetsAdapter] persistRuntimeSnapshot lỗi:', this.snapshotWriteError);
+    }
+  }
+
+  private scheduleRuntimeSnapshot(delayMs = 1500): void {
+    if (!this.isConfigured || this.snapshotTimer) return;
+    this.snapshotTimer = setTimeout(() => {
+      this.snapshotTimer = null;
+      void this.persistRuntimeSnapshot();
+    }, Math.max(0, delayMs));
+    (this.snapshotTimer as any)?.unref?.();
+  }
+
   /** Kho đã có dữ liệu nhân sự thật (không tính seed admin). */
   private hasStaffData(): boolean {
     const f = this.fallbackAdapter;
@@ -141,12 +255,17 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   }
 
   // Webhook từ Apps Script (onEdit trên Sheet): kéo ngay, không đợi nhịp 5s.
-  // Chống dồn: tối đa 1 lần kích hoạt/3s; pull chồng chéo dùng chung 1 promise.
-  // KHÔNG bỏ mất lần sửa cuối: request trong cửa sổ 3s (hoặc khi pull đang bay)
+  // Chống dồn: tối đa 1 lần kích hoạt/1s; pull chồng chéo dùng chung 1 promise.
+  // KHÔNG bỏ mất lần sửa cuối: request trong cửa sổ 1s (hoặc khi pull đang bay)
   // được hẹn một lượt pull bù ngay sau đó để đọc đúng bản mới nhất.
   private lastWebhookAt = 0;
   private lastExternalEditAt = 0;
   private webhookRerunTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastWebhookTab = '';
+  private pendingWebhookTab = '';
+  // Webhook onEdit cần realtime 1-2s: cửa sổ chống dồn ngắn (mặc định 1s),
+  // vẫn có lượt pull bù để không nuốt lần sửa cuối.
+  private readonly webhookCoalesceMs = Math.max(500, Number(process.env.SHEETS_WEBHOOK_COALESCE_MS) || 1000);
 
   /** Sửa tay trên Sheet (webhook) — dùng để không chặn nhầm realtime vì self-write. */
   public isExternalEditRecent(ms = 8000): boolean {
@@ -163,8 +282,9 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
         this.scheduleWebhookRerun(500);
         return;
       }
+      const tab = this.pendingWebhookTab;
       this.lastWebhookAt = 0;
-      void this.triggerSheetsPull('webhook:coalesced');
+      void this.triggerSheetsPull(tab ? `webhook:${tab}` : 'webhook:coalesced');
     }, Math.max(250, delayMs));
   }
 
@@ -172,11 +292,24 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     const noop = Promise.resolve(null);
     if (!this.isConfigured) return { accepted: false, done: noop };
     const now = Date.now();
-    if (reason.startsWith('webhook')) this.lastExternalEditAt = now;
+    const isWebhook = reason.startsWith('webhook');
+    if (isWebhook) this.lastExternalEditAt = now;
 
-    if (now - this.lastWebhookAt < 3000) {
+    // `webhook:TAB` -> pull đúng tab; `webhook:coalesced` dùng tab đang chờ.
+    let tab = '';
+    if (isWebhook) {
+      const raw = reason.slice('webhook'.length).replace(/^:/, '').trim().toUpperCase();
+      if (raw && raw !== 'COALESCED') tab = raw;
+      if (!tab && this.pendingWebhookTab) tab = this.pendingWebhookTab;
+      if (tab) {
+        this.pendingWebhookTab = tab;
+        this.lastWebhookTab = tab;
+      }
+    }
+
+    if (isWebhook && now - this.lastWebhookAt < this.webhookCoalesceMs) {
       // Có sửa mới trong cửa sổ chống dồn: hẹn pull bù, không nuốt lần sửa cuối.
-      this.scheduleWebhookRerun(3000 - (now - this.lastWebhookAt) + 50);
+      this.scheduleWebhookRerun(this.webhookCoalesceMs - (now - this.lastWebhookAt) + 50);
       return { accepted: false, done: this.pullInFlight || noop };
     }
     this.lastWebhookAt = now;
@@ -186,9 +319,11 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
       this.scheduleWebhookRerun(500);
       return { accepted: true, done: this.pullInFlight };
     }
-    console.log(`[GoogleSheetsAdapter] Kích hoạt pull ngay (${reason})`);
-    this.pullInFlight = this.syncService
-      .pullAllDataFromGoogleSheets(this)
+    console.log(`[GoogleSheetsAdapter] Kích hoạt pull ngay (${reason}${tab ? ` — tab ${tab}` : ''})`);
+    const pull = tab && typeof (this.syncService as any).pullTabFromGoogleSheets === 'function'
+      ? this.syncService.pullTabFromGoogleSheets(this, tab)
+      : this.syncService.pullAllDataFromGoogleSheets(this);
+    this.pullInFlight = pull
       .then((r: any) => {
         this.markPullSettled(!!r?.counts);
         return r;
@@ -231,8 +366,14 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   private soonPushRunning = false;
 
   private markDirtySoonPush(): void {
-    try { this.syncService.markDataDirty(); } catch { /* non-fatal */ }
+    this.markMemoryDirty();
     this.scheduleSoonPush();
+  }
+
+  /** Memory vừa đổi nhưng chưa chắc cần full-push ngay (vd. đánh dấu đã đọc). */
+  private markMemoryDirty(): void {
+    try { this.syncService.markDataDirty(); } catch { /* non-fatal */ }
+    this.scheduleRuntimeSnapshot();
   }
 
   private scheduleSoonPush(delayMs = 45_000): void {
@@ -283,16 +424,65 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
         // Ghi nền rớt (quota/timeout): ghi lại cờ dirty theo thời điểm hiện tại để
         // auto-push kế tiếp chắc chắn nhảy vào sửa lại — nếu không, timestamp dirty
         // cũ có thể nhỏ hơn mốc push đầy đủ khiến hệ thống tưởng đã sạch dữ liệu.
-        try { this.syncService.markDataDirty(); } catch { /* non-fatal */ }
+        this.markMemoryDirty();
       })
       .finally(() => {
         this.pendingSheetsWrites = Math.max(0, this.pendingSheetsWrites - 1);
       });
   }
 
+  /**
+   * Append bền vững: ghi journal trước rồi mới gọi Google. Hàm trả về sau khi
+   * journal đã xuống đĩa; retry/dead-letter do DurableWriteQueue xử lý nền.
+   */
+  private async enqueueDurableWrite(sheetTitle: string, rows: any[][], label: string): Promise<boolean> {
+    if (!this.isConfigured || rows.length === 0) return false;
+    // Chỉ snapshot bộ nhớ; append đã có journal riêng nên KHÔNG kéo theo full-push
+    // (full-push định kỳ sẽ ghi đè cả tab append-only và tốn quota vô ích).
+    this.scheduleRuntimeSnapshot();
+    try {
+      await this.durableWrites.enqueue(sheetTitle, rows);
+      this.lastSheetsWriteAt = new Date().toISOString();
+      return true;
+    } catch (err: any) {
+      // Không chặn nghiệp vụ: snapshot debounce vẫn là lớp bảo hiểm thứ hai.
+      console.warn(`[GoogleSheetsAdapter] Không ghi được journal '${label}':`, err?.message || err);
+      return false;
+    }
+  }
+
   /** Trạng thái ghi nền cho UI poll: còn bao nhiêu tác vụ chưa lên Sheets. */
   public getPendingSheetsWrites() {
-    return { pendingWrites: this.pendingSheetsWrites, lastSheetsWriteAt: this.lastSheetsWriteAt };
+    const durable = this.durableWrites?.getStats?.();
+    return {
+      pendingWrites: this.pendingSheetsWrites + (durable?.pending || 0),
+      deadLetters: durable?.deadLetters || 0,
+      lastSheetsWriteAt: this.lastSheetsWriteAt,
+      durableWrites: durable,
+    };
+  }
+
+  /** Admin đối soát: đưa các append đã dead-letter trở lại hàng đợi. */
+  public async retryDurableDeadLetters(): Promise<number> {
+    return this.durableWrites?.retryDeadLetters?.() || 0;
+  }
+
+  /** Cho service khác (vd. phiếu cập nhật ca) ghi append qua journal bền vững. */
+  public async appendRowsDurable(sheetTitle: string, rows: any[][], label = 'append'): Promise<boolean> {
+    if (!this.isConfigured) return false;
+    return this.enqueueDurableWrite(sheetTitle, rows, label);
+  }
+
+  /** Full-sync chờ append đang chờ lên Sheet trước, tránh ghi trùng dòng. */
+  public async flushDurableWrites(timeoutMs = 5000): Promise<void> {
+    if (!this.isConfigured) return;
+    try {
+      await this.durableWrites.flush(timeoutMs);
+    } catch { /* best-effort */ }
+  }
+
+  public getDurableDeadLetters(limit = 50) {
+    return this.durableWrites?.getDeadLetters?.(limit) || [];
   }
 
   /** Xả hàng đợi ghi nền (dùng khi tắt server: Render gửi SIGTERM khi sleep/deploy —
@@ -300,10 +490,17 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   public async flushSheetsWrites(timeoutMs = 20000): Promise<void> {
     if (!this.isConfigured) return;
     try {
+      // Durable queue trước (append đã journal), rồi bg chain (full-sync/push tab).
+      await this.durableWrites.flush(Math.min(10_000, timeoutMs));
       await Promise.race([
         this.bgWriteChain,
-        new Promise(r => setTimeout(r, timeoutMs)),
+        new Promise(r => setTimeout(r, Math.max(250, timeoutMs - 10_000))),
       ]);
+      if (this.snapshotTimer) {
+        clearTimeout(this.snapshotTimer);
+        this.snapshotTimer = null;
+      }
+      await this.persistRuntimeSnapshot();
     } catch (err) {
       console.warn('[GoogleSheetsAdapter] Flush ghi nền khi tắt server lỗi:', (err as any)?.message || err);
     }
@@ -332,7 +529,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
       .catch(err => {
         console.warn(`[GoogleSheetsAdapter] Full-sync nền '${label}' thất bại:`, (err as any)?.message || err);
         // Full-sync nền rớt: ghi lại cờ dirty để auto-push kế tiếp thử sửa lại.
-        try { this.syncService.markDataDirty(); } catch { /* non-fatal */ }
+        this.markMemoryDirty();
       })
       .finally(() => {
         this.pendingSheetsWrites = Math.max(0, this.pendingSheetsWrites - 1);
@@ -406,6 +603,17 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
       driveFolderId,
       photoStats: this.getPhotoStats(),
       syncService: syncStatus,
+      snapshot: {
+        loaded: this.snapshotLoaded,
+        savedAt: this.snapshotSavedAt,
+        writeError: this.snapshotWriteError,
+      },
+      durableWrites: this.durableWrites?.getStats?.() || null,
+      realtime: {
+        lastWebhookAt: this.lastWebhookAt ? new Date(this.lastWebhookAt).toISOString() : null,
+        lastWebhookTab: this.lastWebhookTab || null,
+        coalesceMs: this.webhookCoalesceMs,
+      },
       message: this.isConfigured
         ? 'Connected to live Google Sheets master'
         : 'Google credentials not set in .env; running in high-fidelity mock engine with full audit & schema persistence',
@@ -432,31 +640,26 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     const res = await this.fallbackAdapter.createAccount(account);
     if (this.isConfigured) {
       const snapshot = { ...res };
-      this.scheduleSheetsWrite(async () => {
-        const ok = await this.syncService.appendRow('TAI_KHOAN_NHAN_VIEN', [
-          snapshot.account_id,
-          snapshot.employee_id,
-          GoogleSheetsSyncService.sheetText(snapshot.phone_normalized),
-          snapshot.role,
-          snapshot.account_status,
-          snapshot.version,
-          (snapshot as any).pin_hash || '',
-          (snapshot as any).pin_must_change ? 'YES' : '',
-          GoogleSheetsSyncService.sheetText((snapshot as any).pin_code || ''),
-          GoogleSheetsSyncService.sheetText((snapshot as any).pin_changed_at || ''),
-          GoogleSheetsSyncService.sheetText((snapshot as any).pin_rotation_cycle || ''),
-        ]);
-        if (!ok) {
-          console.warn('[GoogleSheetsAdapter] appendRow TAI_KHOAN_NHAN_VIEN failed, running syncAllData');
-          await this.syncService.syncAllData(this.fallbackAdapter);
-        }
-      }, 'TAI_KHOAN_NHAN_VIEN.append');
+      await this.enqueueDurableWrite('TAI_KHOAN_NHAN_VIEN', [[
+        snapshot.account_id,
+        snapshot.employee_id,
+        GoogleSheetsSyncService.sheetText(snapshot.phone_normalized),
+        snapshot.role,
+        snapshot.account_status,
+        snapshot.version,
+        (snapshot as any).pin_hash || '',
+        (snapshot as any).pin_must_change ? 'YES' : '',
+        GoogleSheetsSyncService.sheetText((snapshot as any).pin_code || ''),
+        GoogleSheetsSyncService.sheetText((snapshot as any).pin_changed_at || ''),
+        GoogleSheetsSyncService.sheetText((snapshot as any).pin_rotation_cycle || ''),
+      ]], 'TAI_KHOAN_NHAN_VIEN.append');
     }
     return res;
   }
 
   async setAccountPin(id: string, pinHash: string, mustChange: boolean, actorId: string, pinPlain?: string | null) {
     const updated = await this.fallbackAdapter.setAccountPin(id, pinHash, mustChange, actorId, pinPlain);
+    this.scheduleRuntimeSnapshot();
     // PIN nằm cùng tab accounts: chỉ đẩy đúng tab này (2 writes) thay vì full-sync
     // cả hệ thống (~30 writes) — đổi PIN/NV đổi PIN/khóa-mở dồn dập là vượt quota
     // 60 writes/phút của Google Sheets.
@@ -479,6 +682,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async setAccountStatus(id: string, status: 'ACTIVE' | 'LOCKED', actorId: string) {
     const updated = await this.fallbackAdapter.setAccountStatus(id, status, actorId);
+    this.scheduleRuntimeSnapshot();
     // Đẩy Sheet NGAY để trạng thái khóa bền vững (restart/pull không hồi ACTIVE).
     if (this.isConfigured) {
       try {
@@ -514,27 +718,21 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     const res = await this.fallbackAdapter.createEmployee(data);
     if (this.isConfigured) {
       const snapshot = { ...res };
-      this.scheduleSheetsWrite(async () => {
-        const ok = await this.syncService.appendRow('NHAN_VIEN_MASTER', [
-          snapshot.employee_id,
-          snapshot.employee_code,
-          snapshot.full_name,
-          GoogleSheetsSyncService.sheetText(snapshot.phone_normalized),
-          snapshot.employment_status,
-          snapshot.group,
-          snapshot.default_branch_id,
-          snapshot.current_rate_per_hour,
-          sheetDateText(snapshot.start_date || (snapshot as any).created_at),
-          snapshot.version,
-          (snapshot as any).default_shift_code || '',
-          sheetDateText((snapshot as any).official_date),
-          (snapshot as any).email || '',
-        ]);
-        if (!ok) {
-          console.warn('[GoogleSheetsAdapter] appendRow NHAN_VIEN_MASTER failed, running syncAllData');
-          await this.syncService.syncAllData(this.fallbackAdapter);
-        }
-      }, 'NHAN_VIEN_MASTER.append');
+      await this.enqueueDurableWrite('NHAN_VIEN_MASTER', [[
+        snapshot.employee_id,
+        snapshot.employee_code,
+        snapshot.full_name,
+        GoogleSheetsSyncService.sheetText(snapshot.phone_normalized),
+        snapshot.employment_status,
+        snapshot.group,
+        snapshot.default_branch_id,
+        snapshot.current_rate_per_hour,
+        sheetDateText(snapshot.start_date || (snapshot as any).created_at),
+        snapshot.version,
+        (snapshot as any).default_shift_code || '',
+        sheetDateText((snapshot as any).official_date),
+        (snapshot as any).email || '',
+      ]], 'NHAN_VIEN_MASTER.append');
     }
     return res;
   }
@@ -542,6 +740,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   async deleteEmployee(id: string) {
     const ok = await this.fallbackAdapter.deleteEmployee(id);
     if (ok) {
+      this.scheduleRuntimeSnapshot();
       // Đánh dấu để pull ngay sau đó không đọc lại dòng Sheet cũ.
       try { (this.syncService as any)?.markEmployeeDeleted?.(id); } catch { /* best-effort */ }
       try { (this.syncService as any)?.markAccountDeleted?.(id); } catch { /* best-effort */ }
@@ -563,6 +762,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   async deleteAccount(accountId: string) {
     const ok = await this.fallbackAdapter.deleteAccount(accountId);
     if (ok) {
+      this.scheduleRuntimeSnapshot();
       try { (this.syncService as any)?.markAccountDeleted?.(accountId); } catch { /* best-effort */ }
       if (this.isConfigured) {
         try {
@@ -610,7 +810,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   async addStageHistory(entry: any) {
     const res = await this.fallbackAdapter.addStageHistory(entry);
     // Lịch sử giai đoạn chỉ lên Sheet qua full-push -> đặt cờ dirty cho auto-push điều kiện.
-    try { this.syncService.markDataDirty(); } catch { /* non-fatal */ }
+    this.markDirtySoonPush();
     return res;
   }
 
@@ -621,7 +821,9 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   }
 
   async createCandidate(data: any) {
-    return this.fallbackAdapter.createCandidate(data);
+    const res = await this.fallbackAdapter.createCandidate(data);
+    this.scheduleRuntimeSnapshot();
+    return res;
   }
 
   async updateCandidate(submissionId: string, updates: any) {
@@ -635,6 +837,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
    *  không hồi sinh (pattern như xóa phiếu). */
   async deleteCandidate(submissionId: string): Promise<boolean> {
     const ok = await this.fallbackAdapter.deleteCandidate(submissionId);
+    if (ok) this.scheduleRuntimeSnapshot();
     if (ok && this.isConfigured) {
       try {
         await this.syncService.pushCandidatesTab(this.fallbackAdapter);
@@ -672,7 +875,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     const res = await this.fallbackAdapter.createShiftAssignment(assignment);
     if (this.isConfigured) {
       const snapshot = { ...res };
-      this.scheduleSheetsWrite(() => this.syncService.appendRow('PHAN_CONG_CA', [
+      await this.enqueueDurableWrite('PHAN_CONG_CA', [[
         snapshot.assignment_id,
         snapshot.employee_id,
         snapshot.branch_id,
@@ -683,13 +886,14 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
         sheetDateTimeText(snapshot.end_at),
         snapshot.status,
         snapshot.schedule_version,
-      ]), 'PHAN_CONG_CA.append');
+      ]], 'PHAN_CONG_CA.append');
     }
     return res;
   }
 
   async purgeShiftAssignments(ids: string[]) {
     const n = await this.fallbackAdapter.purgeShiftAssignments(ids);
+    if (n > 0) this.scheduleRuntimeSnapshot();
     // Đẩy 1 lần duy nhất sau khi dọn xong (không đẩy từng ca).
     if (n > 0 && this.isConfigured) {
       try {
@@ -706,6 +910,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async deleteShiftAssignment(id: string) {
     const ok = await this.fallbackAdapter.deleteShiftAssignment(id);
+    if (ok) this.scheduleRuntimeSnapshot();
     // Xóa cứng khỏi Sheet ngay để pull sau không hồi sinh ca đã dọn.
     if (ok && this.isConfigured) {
       try {
@@ -735,6 +940,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
       } catch { /* không đọc được version hiện tại: dùng updates gốc */ }
     }
     const res = await this.fallbackAdapter.updateShiftAssignment(id, effUpdates);
+    this.scheduleRuntimeSnapshot();
     // FIX đổi ca mất lịch sau rebuild/restart: ca chuyển chủ (B đồng ý / HR duyệt)
     // phải bền vững trên Sheets NGAY trong cùng request — giống phiếu (pushSwapsTab
     // đồng bộ). Trước đây chỉ scheduleFullSync nền (debounce 10s + syncAllData nặng):
@@ -756,6 +962,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async deleteShiftsForEmployee(employeeId: string, fromDate?: string): Promise<number> {
     const deletedCount = await this.fallbackAdapter.deleteShiftsForEmployee(employeeId, fromDate);
+    if (deletedCount > 0) this.scheduleRuntimeSnapshot();
     if (this.isConfigured && deletedCount > 0) {
       try {
         await this.syncService.pushShiftsTab(this.fallbackAdapter);
@@ -772,40 +979,20 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     const res = await this.fallbackAdapter.createLeaveRequest(request);
     if (this.isConfigured) {
       const snapshot = { ...res };
-      // Ghi ĐỒNG BỘ (await, timeout): phiếu nghỉ phải bền vững ngay — restart
-      // trước khi flush là mất phiếu (đúng mẫu createSwapRequest).
-      try {
-        await Promise.race([
-          this.syncService.appendRow('DON_NGHI_PHEP', [
-            snapshot.request_id,
-            snapshot.employee_id,
-            snapshot.branch_id,
-            snapshot.leave_type,
-            snapshot.requested_date,
-            snapshot.shift_code || '',
-            snapshot.reason,
-            snapshot.status,
-            snapshot.reviewed_by || '',
-            snapshot.review_note || '',
-            snapshot.created_at,
-          ]).catch(() => false),
-          new Promise<false>(r => setTimeout(() => r(false), 12000)),
-        ]);
-      } catch {
-        this.scheduleSheetsWrite(() => this.syncService.appendRow('DON_NGHI_PHEP', [
-          snapshot.request_id,
-          snapshot.employee_id,
-          snapshot.branch_id,
-          snapshot.leave_type,
-          snapshot.requested_date,
-          snapshot.shift_code || '',
-          snapshot.reason,
-          snapshot.status,
-          snapshot.reviewed_by || '',
-          snapshot.review_note || '',
-          snapshot.created_at,
-        ]), 'DON_NGHI_PHEP.append-retry');
-      }
+      // Journal bền vững trước khi trả response; append nền retry nếu Google chậm.
+      await this.enqueueDurableWrite('DON_NGHI_PHEP', [[
+        snapshot.request_id,
+        snapshot.employee_id,
+        snapshot.branch_id,
+        snapshot.leave_type,
+        snapshot.requested_date,
+        snapshot.shift_code || '',
+        snapshot.reason,
+        snapshot.status,
+        snapshot.reviewed_by || '',
+        snapshot.review_note || '',
+        snapshot.created_at,
+      ]], 'DON_NGHI_PHEP.append');
     }
     return res;
   }
@@ -817,6 +1004,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async updateLeaveRequest(id: string, status: any, reviewerId: string, note?: string) {
     const res = await this.fallbackAdapter.updateLeaveRequest(id, status, reviewerId, note);
+    this.scheduleRuntimeSnapshot();
     // Đẩy tab nghỉ phép đồng bộ để CANCELLED/APPROVED bền vững ngay (đúng ý
     // comment của pushLeavesTab): pull sau không hồi sinh OFF đã hủy.
     if (this.isConfigured) {
@@ -838,29 +1026,22 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     const res = await this.fallbackAdapter.createSwapRequest(request);
     if (this.isConfigured) {
       const snapshot = { ...res };
-      // Ghi ĐỒNG BỘ (await, timeout): phiếu mới phải bền vững ngay — restart
-      // trước khi flush là web mất phiếu trong khi Sheet vẫn dồn dòng mới.
-      try {
-        await Promise.race([
-          this.syncService.appendRow('DON_DOI_CA', [
-            snapshot.swap_id,
-            snapshot.requester_id,
-            snapshot.requester_assignment_id,
-            snapshot.target_employee_id,
-            snapshot.target_assignment_id,
-            snapshot.reason,
-            snapshot.status,
-            snapshot.approved_by || '',
-            snapshot.created_at,
-            (snapshot as any).swap_kind || 'EMPLOYEE_SWAP',
-            (snapshot as any).bonus_amount || 0,
-            (snapshot as any).support_branch_id || '',
-            String((snapshot as any).support_date || '').slice(0, 10),
-            (snapshot as any).support_shift_code || '',
-          ]).catch(() => false),
-          new Promise<false>(r => setTimeout(() => r(false), 12000)),
-        ]);
-      } catch { /* best-effort: full-sync nền sẽ thử lại */ }
+      await this.enqueueDurableWrite('DON_DOI_CA', [[
+        snapshot.swap_id,
+        snapshot.requester_id,
+        snapshot.requester_assignment_id,
+        snapshot.target_employee_id,
+        snapshot.target_assignment_id,
+        snapshot.reason,
+        snapshot.status,
+        snapshot.approved_by || '',
+        snapshot.created_at,
+        (snapshot as any).swap_kind || 'EMPLOYEE_SWAP',
+        (snapshot as any).bonus_amount || 0,
+        (snapshot as any).support_branch_id || '',
+        String((snapshot as any).support_date || '').slice(0, 10),
+        (snapshot as any).support_shift_code || '',
+      ]], 'DON_DOI_CA.append');
     }
     return res;
   }
@@ -876,6 +1057,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async updateSwapRequest(id: string, updates: any) {
     const res = await this.fallbackAdapter.updateSwapRequest(id, updates);
+    this.scheduleRuntimeSnapshot();
     // Đẩy TAB đồng bộ (await, timeout) thay vì full-sync debounce: mọi đổi trạng
     // thái (B nhận/duyệt/từ chối/hủy) bền vững ngay, restart không "reset" phiếu.
     if (this.isConfigured) {
@@ -935,44 +1117,33 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
     if (this.isConfigured) {
       const snapshot = { ...res };
-      // Ghi ĐỒNG BỘ (await, timeout) như phiếu đổi ca: điểm danh "thành công"
-      // phải bền vững trên Sheet NGAY trong cùng request — ghi nền mà server
-      // sleep/restart trước khi flush là mất vĩnh viễn dù NV đã thấy CONFIRMED.
-      try {
-        const ok = await Promise.race([
-          this.syncService.appendRow('SU_KIEN_DIEM_DANH', [
-            snapshot.event_id,
-            snapshot.assignment_id,
-            snapshot.employee_id,
-            snapshot.type,
-            // Ép TEXT để USER_ENTERED không parse ISO thành datetime locale
-            // (pull đọc lại sai instant -> reload mất check-in/out sau restart).
-            sheetDateTimeText(snapshot.server_received_at),
-            snapshot.gps_latitude,
-            snapshot.gps_longitude,
-            snapshot.distance_meters,
-            snapshot.gps_status,
-            snapshot.drive_object_id || '',
-            snapshot.request_id || '',
-            (snapshot as any).uniform_pink_ratio ?? '',
-            // Giữ giờ máy khách (kèm múi giờ +07:00) để lọc đúng ngày Việt Nam
-            sheetDateTimeText((snapshot as any).client_time || ''),
-            // Cờ trễ/sớm (phạt lương): Sheet phải lưu, pull mới khôi phục được
-            (snapshot as any).is_late ? 'YES' : '',
-            (snapshot as any).is_early ? 'YES' : '',
-            Number((snapshot as any).minutes_deviation) || 0,
-            // Phạt trễ ghi nhận ngay lúc check-in (ràng buộc chặt 5p:30k • 30p:50% • 60p:100%)
-            (snapshot as any).fine_tier || 'NONE',
-            Number((snapshot as any).fine_amount) || 0,
-          ]).catch(() => false),
-          new Promise<false>(r => setTimeout(() => r(false), 12000)),
-        ]);
-        if (!ok) {
-          // Append rớt (quota/timeout): dồn full-sync nền, KHÔNG block request hiện tại
-          console.warn('[GoogleSheetsAdapter] appendRow SU_KIEN_DIEM_DANH rớt hoặc timeout, xếp lịch sync nền');
-          this.scheduleFullSync('SU_KIEN_DIEM_DANH.append-fail');
-        }
-      } catch { /* best-effort: full-sync nền sẽ thử lại */ }
+      // Journal bền vững TRƯỚC khi trả CONFIRMED: dòng đã xuống đĩa, retry nền
+      // nếu Google timeout. Không còn chặn request 12s như append đồng bộ cũ.
+      await this.enqueueDurableWrite('SU_KIEN_DIEM_DANH', [[
+        snapshot.event_id,
+        snapshot.assignment_id,
+        snapshot.employee_id,
+        snapshot.type,
+        // Ép TEXT để USER_ENTERED không parse ISO thành datetime locale
+        // (pull đọc lại sai instant -> reload mất check-in/out sau restart).
+        sheetDateTimeText(snapshot.server_received_at),
+        snapshot.gps_latitude,
+        snapshot.gps_longitude,
+        snapshot.distance_meters,
+        snapshot.gps_status,
+        snapshot.drive_object_id || '',
+        snapshot.request_id || '',
+        (snapshot as any).uniform_pink_ratio ?? '',
+        // Giữ giờ máy khách (kèm múi giờ +07:00) để lọc đúng ngày Việt Nam
+        sheetDateTimeText((snapshot as any).client_time || ''),
+        // Cờ trễ/sớm (phạt lương): Sheet phải lưu, pull mới khôi phục được
+        (snapshot as any).is_late ? 'YES' : '',
+        (snapshot as any).is_early ? 'YES' : '',
+        Number((snapshot as any).minutes_deviation) || 0,
+        // Phạt trễ ghi nhận ngay lúc check-in (ràng buộc chặt 5p:30k • 30p:50% • 60p:100%)
+        (snapshot as any).fine_tier || 'NONE',
+        Number((snapshot as any).fine_amount) || 0,
+      ]], 'SU_KIEN_DIEM_DANH.append');
     }
 
     return res;
@@ -999,6 +1170,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   async deleteAttendanceEvent(eventId: string) {
     const ok = await this.fallbackAdapter.deleteAttendanceEvent(eventId);
     if (ok) {
+      this.scheduleRuntimeSnapshot();
       try { (this.syncService as any)?.markAttendanceEventDeleted?.(eventId); } catch { /* best-effort */ }
       if (this.isConfigured) {
         try {
@@ -1042,36 +1214,17 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     const res = await this.fallbackAdapter.createAttendanceAdjustment(adj);
     if (this.isConfigured) {
       const snapshot = { ...res };
-      // Ghi ĐỒNG BỘ (await, timeout): phiếu mới phải bền vững ngay — restart
-      // trước khi flush là mất phiếu (đúng mẫu createSwapRequest).
-      try {
-        await Promise.race([
-          this.syncService.appendRow('DIEU_CHINH_CONG', [
-            snapshot.adjustment_id,
-            snapshot.assignment_id,
-            snapshot.employee_id,
-            snapshot.reason || '',
-            snapshot.minutes_approved ?? snapshot.minutes_requested ?? 0,
-            snapshot.approver_id || '',
-            snapshot.status,
-            snapshot.review_note || '',
-            (snapshot as any).evidence_drive_id || '',
-          ]).catch(() => false),
-          new Promise<false>(r => setTimeout(() => r(false), 12000)),
-        ]);
-      } catch {
-        this.scheduleSheetsWrite(() => this.syncService.appendRow('DIEU_CHINH_CONG', [
-          snapshot.adjustment_id,
-          snapshot.assignment_id,
-          snapshot.employee_id,
-          snapshot.reason || '',
-          snapshot.minutes_approved ?? snapshot.minutes_requested ?? 0,
-          snapshot.approver_id || '',
-          snapshot.status,
-          snapshot.review_note || '',
-          (snapshot as any).evidence_drive_id || '',
-        ]), 'DIEU_CHINH_CONG.append-retry');
-      }
+      await this.enqueueDurableWrite('DIEU_CHINH_CONG', [[
+        snapshot.adjustment_id,
+        snapshot.assignment_id,
+        snapshot.employee_id,
+        snapshot.reason || '',
+        snapshot.minutes_approved ?? snapshot.minutes_requested ?? 0,
+        snapshot.approver_id || '',
+        snapshot.status,
+        snapshot.review_note || '',
+        (snapshot as any).evidence_drive_id || '',
+      ]], 'DIEU_CHINH_CONG.append');
     }
     return res;
   }
@@ -1082,6 +1235,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async updateAttendanceAdjustment(id: string, status: any, approverId: string, minutesApproved?: number, note?: string) {
     const res = await this.fallbackAdapter.updateAttendanceAdjustment(id, status, approverId, minutesApproved, note);
+    this.scheduleRuntimeSnapshot();
     // Đẩy tab đồng bộ để trạng thái duyệt bền vững ngay (đúng mẫu updateSwapRequest):
     // restart trước flush là mất duyệt, pull sau hồi sinh phiếu cũ.
     if (this.isConfigured) {
@@ -1101,6 +1255,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async deleteAttendanceAdjustment(id: string) {
     const res = await this.fallbackAdapter.deleteAttendanceAdjustment(id);
+    if (res) this.scheduleRuntimeSnapshot();
     if (res && this.isConfigured) {
       // Đẩy Sheet ĐỒNG BỘ (await): dòng mất khỏi Sheet trước khi trả response,
       // pull nền sau đó không thể merge hồi sinh phiếu (fix zombie).
@@ -1125,6 +1280,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   // --- Payroll ---
   async createPayrollRun(run: any, items: any) {
     const res = await this.fallbackAdapter.createPayrollRun(run, items);
+    this.scheduleRuntimeSnapshot();
     // FIX publish báo PAYSLIP_NOT_FOUND: phiếu vừa tạo chỉ nằm ở bộ nhớ, restart
     // trước khi full-sync nền flush là mất (dòng KY_LUONG/PHIEU_LUONG trên Sheets
     // chưa có) — đẩy tab phiếu đồng bộ ngay trong request, như phiếu đổi ca.
@@ -1246,26 +1402,15 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
         outboxItem.last_error || '',
         outboxItem.created_at || '',
       ];
-      this.scheduleSheetsWrite(async () => {
-        let failed = false;
-        for (const row of rows) {
-          const ok = await this.syncService.appendRow('THONGBAO_NV', row);
-          if (!ok) { failed = true; break; }
-        }
-        if (failed) {
-          // Append rớt (quota/timeout): thử lại 1 lần sau 5s. KHÔNG push nguyên tab
-          // (tab này giữ toàn bộ lịch sử — overwrite từ bộ nhớ chỉ-hôm-nay sẽ xóa lịch sử).
-          console.warn('[GoogleSheetsAdapter] appendRow THONGBAO_NV failed, retrying once in 5s');
-          await new Promise(r => setTimeout(r, 5000));
-          for (const row of rows) {
-            const ok = await this.syncService.appendRow('THONGBAO_NV', row);
-            if (!ok) break;
-          }
-        }
-        // Outbox append 1 dòng riêng (tab này push-đầy từ bộ nhớ trong full-sync nên
-        // hình dạng dòng khớp header, không lo trùng lặp nhiều cột).
-        await this.syncService.appendRow('THONGBAO_GUI', outboxRow);
-      }, 'THONGBAO_NV.append');
+      // Batch 1 lần thay vì append từng dòng (THONGBAO_NV từng timeout 20s khi
+      // gửi nhiều người). Journal ghi trước, retry nền nếu quota.
+      // KHÔNG push nguyên tab (tab giữ toàn bộ lịch sử — overwrite từ bộ nhớ
+      // chỉ-hôm-nay sẽ xóa lịch sử).
+      await Promise.all([
+        this.enqueueDurableWrite('THONGBAO_NV', rows, 'THONGBAO_NV.append'),
+        // Outbox 1 dòng riêng (tab này push-đầy từ bộ nhớ trong full-sync).
+        this.enqueueDurableWrite('THONGBAO_GUI', [outboxRow], 'THONGBAO_GUI.append'),
+      ]);
     }
     return res;
   }
@@ -1283,19 +1428,19 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     // Trạng thái đọc chỉ được đẩy Sheet qua full-push: phải đặt cờ dirty, nếu
     // không với auto-push điều kiện (chỉ push khi có thay đổi) trạng thái đọc
     // sẽ chỉ nằm bộ nhớ cho tới khi có thay đổi khác kích hoạt push.
-    try { this.syncService.markDataDirty(); } catch { /* non-fatal */ }
+    this.markMemoryDirty();
     return res;
   }
 
   async markNotificationAcknowledged(inboxId: string, recipientId: string) {
     const res = await this.fallbackAdapter.markNotificationAcknowledged(inboxId, recipientId);
-    try { this.syncService.markDataDirty(); } catch { /* non-fatal */ }
+    this.markMemoryDirty();
     return res;
   }
 
   async pruneNotifications(beforeIso: string) {
     const res = await this.fallbackAdapter.pruneNotifications(beforeIso);
-    try { this.syncService.markDataDirty(); } catch { /* non-fatal */ }
+    this.markMemoryDirty();
     return res;
   }
 
@@ -1359,7 +1504,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     const res = await this.fallbackAdapter.recordAuditLog(entry);
     if (this.isConfigured) {
       const snapshot = { ...res };
-      this.scheduleSheetsWrite(() => this.syncService.appendRow('AUDIT_LOG', [
+      await this.enqueueDurableWrite('AUDIT_LOG', [[
         snapshot.log_id,
         snapshot.timestamp,
         snapshot.actor_id,
@@ -1368,7 +1513,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
         snapshot.target_entity,
         snapshot.target_id,
         typeof snapshot.details === 'string' ? snapshot.details : JSON.stringify(snapshot.details || {}),
-      ]), 'AUDIT_LOG.append');
+      ]], 'AUDIT_LOG.append');
     }
     return res;
   }
@@ -1387,22 +1532,16 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     const res = await this.fallbackAdapter.createAdminAccount(account);
     if (this.isConfigured) {
       const snapshot = { ...res };
-      this.scheduleSheetsWrite(async () => {
-        const ok = await this.syncService.appendRow('ADMIN_ACCOUNTS', [
-          snapshot.admin_id,
-          snapshot.username,
-          snapshot.password_hash || '123456',
-          snapshot.full_name,
-          snapshot.role,
-          snapshot.branch_scope || '*',
-          (snapshot as any).is_active === false ? 'LOCKED' : 'ACTIVE',
-          snapshot.created_at,
-        ]);
-        if (!ok) {
-          console.warn('[GoogleSheetsAdapter] appendRow ADMIN_ACCOUNTS failed, running syncAllData');
-          await this.syncService.syncAllData(this.fallbackAdapter);
-        }
-      }, 'ADMIN_ACCOUNTS.append');
+      await this.enqueueDurableWrite('ADMIN_ACCOUNTS', [[
+        snapshot.admin_id,
+        snapshot.username,
+        snapshot.password_hash || '123456',
+        snapshot.full_name,
+        snapshot.role,
+        snapshot.branch_scope || '*',
+        (snapshot as any).is_active === false ? 'LOCKED' : 'ACTIVE',
+        snapshot.created_at,
+      ]], 'ADMIN_ACCOUNTS.append');
     }
     return res;
   }
@@ -1415,6 +1554,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async deleteAdminAccount(id: string) {
     const ok = await this.fallbackAdapter.deleteAdminAccount(id);
+    if (ok) this.scheduleRuntimeSnapshot();
     if (ok && this.isConfigured) {
       try {
         await this.syncService.pushAdminsTab(this.fallbackAdapter);

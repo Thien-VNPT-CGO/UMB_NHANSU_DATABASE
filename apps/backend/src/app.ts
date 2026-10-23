@@ -376,12 +376,19 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       if (!expected || got !== expected) {
         return res.status(403).json({ error: 'WEBHOOK_FORBIDDEN' });
       }
-      const tab = (req.body?.tab as string) || '';
+      const rawTab = String(req.body?.tab || '').trim().toUpperCase();
+      // Chỉ nhận tên tab an toàn; tab lạ -> full-pull (không nội suy vào A1 range).
+      const tab = /^[A-Z0-9_]{1,100}$/.test(rawTab) ? rawTab : '';
       // Trả ngay để Apps Script không timeout. Pull xong, syncService.onDataChanged
       // (server.ts) so hash nội dung và bắn data:updated('all') đúng 1 lần cho cả
       // 2 cổng web — không bắn ở đây để tránh trùng với nhịp pull định kỳ.
       const { accepted } = adapter.triggerSheetsPull(`webhook${tab ? ':' + tab : ''}`);
-      res.json({ received: true, accepted, tab: tab || null });
+      res.json({
+        received: true,
+        accepted,
+        tab: tab || null,
+        mode: tab ? 'TAB_SCOPED' : 'FULL_PULL',
+      });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -471,14 +478,21 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     const staleAfterMs = Math.max(syncIntervalMs * 6, 120_000);
     const sheetsLive = sheets.mode === 'GOOGLE_SHEETS_LIVE';
     const mockInProduction = process.env.NODE_ENV === 'production' && !sheetsLive;
+    const snapshot = (sheets as any).snapshot || { loaded: false, savedAt: null };
+    const servingSnapshot = !!snapshot.loaded;
     const syncStale = sheetsLive && (syncLagMs === null || syncLagMs > staleAfterMs);
-    const pendingWrites = singleWriterQueue.getPendingCount();
+    // Snapshot cũ vẫn phục vụ được (mục tiêu P0.2) — không trả 503 chỉ vì pull
+    // nền chưa xong; vẫn hiển thị stale để monitoring biết dữ liệu đang cũ.
+    const syncBlocksReadiness = syncStale && !servingSnapshot;
+    const durable = (sheets as any).durableWrites || null;
+    const pendingWrites = singleWriterQueue.getPendingCount() + (durable?.pending || 0);
     const queueBacklog = pendingWrites > 500;
+    const deadLetters = (singleWriterQueue.getDurabilityStatus().deadLetters || 0) + (durable?.deadLetters || 0);
 
     const reasons: string[] = [];
     if (readiness.ready === false) reasons.push(readiness.reason || 'NOT_READY');
     if (mockInProduction) reasons.push('MOCK_ENGINE_IN_PRODUCTION');
-    if (syncStale) reasons.push('SHEETS_SYNC_STALE');
+    if (syncBlocksReadiness) reasons.push('SHEETS_SYNC_STALE');
     if (queueBacklog) reasons.push('WRITE_QUEUE_BACKLOG');
 
     const ready = reasons.length === 0;
@@ -489,14 +503,35 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       time: new Date().toISOString(),
       readiness,
       sheets: { mode: sheets.mode, connected: sheets.connected },
-      sync: { lastPulledAt, lagMs: syncLagMs, staleAfterMs, stale: syncStale },
+      sync: {
+        lastPulledAt,
+        lagMs: syncLagMs,
+        staleAfterMs,
+        stale: syncStale,
+        servingSnapshot,
+      },
+      snapshot: {
+        loaded: servingSnapshot,
+        savedAt: snapshot.savedAt || null,
+        writeError: snapshot.writeError || null,
+      },
       // Chẩn đoán realtime: webhook chưa cấu hình secret thì sửa Sheet chỉ tới
       // web theo nhịp pull (tối đa ~syncIntervalMs), không phải 1-2s.
       realtime: {
         syncIntervalMs,
         webhookConfigured: !!process.env.SHEETS_WEBHOOK_SECRET,
+        coalesceMs: (sheets as any).realtime?.coalesceMs || null,
+        lastWebhookAt: (sheets as any).realtime?.lastWebhookAt || null,
+        lastWebhookTab: (sheets as any).realtime?.lastWebhookTab || null,
+        tabScopedPull: true,
       },
-      queue: { pendingWrites, backlog: queueBacklog },
+      queue: {
+        pendingWrites,
+        backlog: queueBacklog,
+        deadLetters,
+        singleWriter: singleWriterQueue.getDurabilityStatus(),
+        durableWrites: durable,
+      },
       uptimeSeconds: Math.floor((Date.now() - SERVER_STARTED_AT) / 1000),
     });
   });
@@ -5648,6 +5683,26 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       res.status(500).json({ error: err.message });
     }
   });
+
+  // Đối soát append đã dead-letter (Google timeout/quota kéo dài). Chỉ ADMIN.
+  // Các dòng vẫn nằm trong journal, không bị mất; gọi endpoint này để gửi lại.
+  app.post(
+    ['/sheets/dead-letters/retry', '/api/sheets/dead-letters/retry'],
+    authMiddleware,
+    requireRole(['ADMIN']),
+    async (_req, res) => {
+      try {
+        const retried = await (adapter as any).retryDurableDeadLetters?.() || 0;
+        res.json({
+          success: true,
+          retried,
+          queue: (adapter as any).getPendingSheetsWrites?.() || null,
+        });
+      } catch (err: any) {
+        res.status(500).json({ error: err.message });
+      }
+    },
+  );
 
   // --- TÍCH HỢP GOOGLE SHEETS (sync-now thủ công, có cooldown chống vượt quota) ---
   let lastSyncNowAt = 0;

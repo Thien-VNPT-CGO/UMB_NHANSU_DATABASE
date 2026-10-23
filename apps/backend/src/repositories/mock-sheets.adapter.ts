@@ -79,6 +79,78 @@ export class MockSheetsAdapter implements ISheetsRepository {
     this.seedInitialData();
   }
 
+  /**
+   * Xuất toàn bộ trạng thái runtime để ghi snapshot khởi động nhanh.
+   * Không xuất cờ fault-injection (chỉ dùng cho test/mock).
+   */
+  public exportRuntimeState(): any {
+    const clone = (value: any): any => {
+      try {
+        return JSON.parse(JSON.stringify(value ?? null));
+      } catch {
+        return value;
+      }
+    };
+    return {
+      accounts: clone(this.accounts),
+      adminAccounts: clone(this.adminAccounts),
+      employees: clone(this.employees),
+      stageHistories: clone(this.stageHistories),
+      candidates: clone(this.candidates),
+      shifts: clone(this.shifts),
+      leaveRequests: clone(this.leaveRequests),
+      swapRequests: clone(this.swapRequests),
+      attendanceEvents: clone(this.attendanceEvents),
+      attendanceAdjustments: clone(this.attendanceAdjustments),
+      payrollRuns: clone(this.payrollRuns),
+      payslips: clone(this.payslips),
+      payrollFormulas: clone(this.payrollFormulas),
+      payrollInputs: clone(this.payrollInputs),
+      notificationOutbox: clone(this.notificationOutbox),
+      notificationInbox: clone(this.notificationInbox),
+      testPapers: clone(this.testPapers),
+      testSubmissions: clone(this.testSubmissions),
+      operations: clone(this.operations),
+      auditLogs: clone(this.auditLogs),
+      branches: clone(this.branches),
+      shiftTemplates: clone(this.shiftTemplates),
+      policies: clone(this.policies),
+      maintenance: clone(this.maintenance),
+      backupSnapshots: clone(this.backupSnapshots),
+      systemSettings: clone(this.systemSettings),
+      terminatedRevoked: Array.from(this.terminatedRevoked),
+    };
+  }
+
+  /**
+   * Nạp snapshot đã lưu. Chỉ thay thế các khoá có mặt và đúng kiểu; khoá thiếu
+   * giữ nguyên dữ liệu seed để không làm hỏng hệ thống khi nâng cấp schema.
+   */
+  public importRuntimeState(state: any): boolean {
+    if (!state || typeof state !== 'object') return false;
+    const arrayKeys = [
+      'accounts', 'adminAccounts', 'employees', 'stageHistories', 'candidates',
+      'shifts', 'leaveRequests', 'swapRequests', 'attendanceEvents',
+      'attendanceAdjustments', 'payrollRuns', 'payslips', 'payrollFormulas',
+      'payrollInputs', 'notificationOutbox', 'notificationInbox', 'testPapers',
+      'testSubmissions', 'operations', 'auditLogs', 'branches', 'backupSnapshots',
+    ] as const;
+    for (const key of arrayKeys) {
+      if (Array.isArray(state[key])) {
+        (this as any)[key] = state[key];
+      }
+    }
+    for (const key of ['shiftTemplates', 'policies', 'maintenance', 'systemSettings'] as const) {
+      if (state[key] && typeof state[key] === 'object' && !Array.isArray(state[key])) {
+        (this as any)[key] = state[key];
+      }
+    }
+    if (Array.isArray(state.terminatedRevoked)) {
+      this.terminatedRevoked = new Set(state.terminatedRevoked.map((x: any) => String(x)));
+    }
+    return true;
+  }
+
   public seedInitialData() {
     const now = new Date().toISOString();
 

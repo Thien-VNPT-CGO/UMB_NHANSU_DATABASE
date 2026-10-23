@@ -18,6 +18,8 @@ services:
       NODE_ENV: production
       GIT_COMMIT: ${GIT_COMMIT:-}
     volumes:
+      # Snapshot + journal ghi bền vững. Trên VPS phải tạo trước và cấp quyền cho
+      # user trong container (uid 1000): mkdir -p data && chown -R 1000:1000 data
       - ./data:/app/data
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:${BACKEND_PORT:-4005}/health"]

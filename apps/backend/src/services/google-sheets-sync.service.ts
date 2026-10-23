@@ -43,6 +43,14 @@ export interface SheetsPullResult {
   changed?: boolean;
 }
 
+interface SheetsPullOptions {
+  /** Dùng bản đọc thô đã cache (webhook chỉ đọc lại 1 tab) thay vì batchGet 24 tab. */
+  prefetchedBatch?: Record<string, string[][]>;
+  /** Ép đọc lại spreadsheet ứng viên (khi tab form ứng viên vừa đổi). */
+  forceCandidates?: boolean;
+  reason?: string;
+}
+
 export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   {
     title: 'NHAN_VIEN_MASTER',
@@ -219,6 +227,11 @@ export class GoogleSheetsSyncService {
   private lastDataSignature: string | null = null;
   /** Hash từng tab lần pull trước — cho biết tab nào vừa đổi (config cần reload riêng). */
   private lastTabSignatures: Record<string, string> = {};
+  /** Counts lần pull gần nhất — lưu kèm snapshot để health hiển thị ngay sau restart. */
+  private lastSnapshotCounts: any = null;
+  /** Bản đọc thô gần nhất của tất cả tab — webhook chỉ cần đọc lại 1 tab rồi
+   *  chạy lại parser trên cache thay vì batchGet 24 tab. */
+  private lastFullBatch: Record<string, string[][]> | null = null;
   /** Callback realtime: server.ts đăng ký 1 lần để bắn socket khi nội dung đổi. */
   private dataChangeListeners: Array<(info: { signature: string; counts: any; changedTabs: string[] }) => void> = [];
   /** Mốc pull gần nhất đã xử lý xong tab CAU_HINH_HE_THONG (null = chưa từng).
@@ -554,6 +567,46 @@ export class GoogleSheetsSyncService {
       ...this.getWriteStatus(),
       sheetsCount: SHEETS_DEFINITIONS.length,
       definedTabs: SHEETS_DEFINITIONS.map(d => d.title),
+      hasFullBatchCache: !!this.lastFullBatch,
+    };
+  }
+
+  /**
+   * Khôi phục metadata lần pull trước từ snapshot. Nhờ đó lần pull đầu sau
+   * restart vẫn phát hiện đúng tab đã đổi trong lúc backend downtime, thay vì
+   * coi mọi thứ là mới và bắn realtime rỗng.
+   */
+  public restoreSnapshotMeta(meta: {
+    signature?: string | null;
+    tabSignatures?: Record<string, string>;
+    pulledAt?: string | null;
+    counts?: any;
+  } | null | undefined): void {
+    if (!meta) return;
+    if (typeof meta.signature === 'string' && meta.signature) {
+      this.lastDataSignature = meta.signature;
+    }
+    if (meta.tabSignatures && typeof meta.tabSignatures === 'object') {
+      this.lastTabSignatures = { ...meta.tabSignatures };
+    }
+    if (meta.pulledAt) {
+      const ms = Date.parse(meta.pulledAt);
+      if (Number.isFinite(ms) && ms > 0) {
+        this.lastPulledAt = ms;
+        this.lastSettingsPullAt = ms;
+      }
+    }
+    if (meta.counts && typeof meta.counts === 'object') {
+      this.lastSnapshotCounts = meta.counts;
+    }
+  }
+
+  public getSnapshotMeta() {
+    return {
+      signature: this.lastDataSignature,
+      tabSignatures: this.lastTabSignatures,
+      pulledAt: this.lastPulledAt ? new Date(this.lastPulledAt).toISOString() : null,
+      counts: this.lastSnapshotCounts,
     };
   }
 
@@ -878,6 +931,97 @@ export class GoogleSheetsSyncService {
   }
 
   /**
+   * P0.3 — Pull nhanh theo tab vừa sửa từ webhook.
+   *
+   * Chỉ đọc lại đúng 1 tab (1 request), cập nhật cache raw rows rồi chạy lại
+   * parser trên cache. Không đọc lại 24 tab nên webhook thường có dữ liệu mới
+   * trong 1-2s; nếu chưa có cache/full-pull đang chạy thì fallback full-pull.
+   */
+  public pullTabFromGoogleSheets(repo: ISheetsRepository, tab: string): Promise<SheetsPullResult> {
+    if (!this.isConfigured || !this.sheetsClient) {
+      return Promise.resolve({ success: false, message: 'Google Sheets chưa kết nối', counts: null });
+    }
+    const safeTab = String(tab || '').trim().toUpperCase();
+    const validTab = /^[A-Z0-9_]{1,100}$/.test(safeTab);
+    const isCandidateForm = safeTab === 'FROM_NHAN_VIEN';
+
+    // Nếu full-pull định kỳ đang chạy, nó có thể đã đọc tab TRƯỚC lúc onEdit.
+    // Đợi pull đó xong rồi đọc lại đúng tab, thay vì trả luôn dữ liệu cũ.
+    if (this.pullInFlight) {
+      const current = this.pullInFlight;
+      return current.then(
+        () => this.pullTabFromGoogleSheets(repo, safeTab),
+        () => this.pullTabFromGoogleSheets(repo, safeTab),
+      );
+    }
+
+    // Tab append-only có thể đã tự chia _P2/_P3. Chỉ đọc tab gốc sẽ làm mất
+    // phần dữ liệu trong các part khi parse lại cache. Vì vậy đọc cả cụm part
+    // (thường 1 tab gốc + 0-2 part) rồi gộp lại như full-pull.
+    const partitionBase = GoogleSheetsSyncService.PARTITION_TABS.has(safeTab)
+      ? safeTab
+      : (safeTab.match(/^(.+)_P\d+$/)?.[1] || '');
+    const canUseCache = validTab
+      && !!this.lastFullBatch
+      && (partitionBase
+        ? Array.isArray(this.lastFullBatch[partitionBase])
+        : (isCandidateForm || Array.isArray(this.lastFullBatch[safeTab])));
+
+    if (!canUseCache) {
+      return this.pullAllDataFromGoogleSheets(repo);
+    }
+
+    let run: Promise<SheetsPullResult>;
+    run = (async () => {
+      const nextBatch = { ...(this.lastFullBatch || {}) };
+      if (partitionBase) {
+        // Chỉ đọc đúng cụm tab append-only: tab gốc + các part đang có trong cache.
+        const partTitles = Object.keys(nextBatch).filter(
+          t => t !== partitionBase && new RegExp(`^${partitionBase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}_P\\d+$`).test(t),
+        );
+        if (safeTab !== partitionBase && !partTitles.includes(safeTab)) partTitles.push(safeTab);
+        const wanted = [partitionBase, ...partTitles];
+        const fetched: Record<string, string[][]> = {};
+        for (const title of wanted) {
+          const rows = await this.readTabRowsStrict(title, 15_000);
+          if (rows === null) {
+            // Không đọc được 1 phần của cụm: full-pull để guard dữ liệu đúng.
+            console.warn(`[GoogleSheetsSyncService] Webhook đọc tab ${title} lỗi — fallback full-pull.`);
+            return this.doPullAllDataFromGoogleSheets(repo, { reason: `webhook:${safeTab}:fallback` });
+          }
+          fetched[title] = rows;
+        }
+        const baseRows = fetched[partitionBase] || [];
+        const partRows = partTitles.flatMap(t => fetched[t] || []);
+        nextBatch[partitionBase] = [...baseRows, ...partRows];
+        for (const title of partTitles) nextBatch[title] = fetched[title] || [];
+      } else {
+        const rows = await this.readTabRowsStrict(safeTab, 15_000);
+        if (rows === null) {
+          // Đọc 1 tab lỗi: không được lấy rỗng đè cache -> full-pull để giữ guard.
+          console.warn(`[GoogleSheetsSyncService] Webhook đọc tab ${safeTab} lỗi — fallback full-pull.`);
+          return this.doPullAllDataFromGoogleSheets(repo, { reason: `webhook:${safeTab}:fallback` });
+        }
+        nextBatch[safeTab] = rows;
+      }
+      this.lastFullBatch = nextBatch;
+      return this.doPullAllDataFromGoogleSheets(repo, {
+        prefetchedBatch: nextBatch,
+        forceCandidates: isCandidateForm,
+        reason: `webhook:${safeTab}`,
+      });
+    })().finally(() => {
+      if (this.pullInFlight === run) {
+        this.pullInFlight = null;
+        this.pullStartedAt = 0;
+      }
+    });
+    this.pullStartedAt = Date.now();
+    this.pullInFlight = run;
+    return run;
+  }
+
+  /**
    * Watchdog: một request Google hiếm khi treo vô hạn (mọi sheetsCall đều có
    * timeout 20s), nhưng nếu pull kẹt quá lâu thì toàn bộ dữ liệu đứng yên và
    * endpoint /health/ready báo stale mãi. Giải phóng promise kẹt để tick sau pull lại;
@@ -896,7 +1040,10 @@ export class GoogleSheetsSyncService {
   private pullInFlight: Promise<SheetsPullResult> | null = null;
   private pullStartedAt = 0;
 
-  private async doPullAllDataFromGoogleSheets(repo: ISheetsRepository): Promise<SheetsPullResult> {
+  private async doPullAllDataFromGoogleSheets(
+    repo: ISheetsRepository,
+    opts: SheetsPullOptions = {},
+  ): Promise<SheetsPullResult> {
     if (!this.isConfigured || !this.sheetsClient) {
       return { success: false, message: 'Google Sheets chưa kết nối', counts: null };
     }
@@ -905,7 +1052,7 @@ export class GoogleSheetsSyncService {
     // (khai báo ở scope ngoài vì khối đọc ứng viên nằm trong try lồng nhau).
     // Khi bỏ qua lượt đọc ứng viên (throttle quota), dùng lại rows cũ để hash ổn định.
     let candRowsForSignature: string[][] = this.lastCandidateRows;
-    const shouldPullCandidates = Date.now() - this.lastCandidatePullAt >= 15_000;
+    const shouldPullCandidates = !!opts.forceCandidates || Date.now() - this.lastCandidatePullAt >= 15_000;
 
     try {
       // Hỗ trợ cả 2 trường hợp:
@@ -949,31 +1096,40 @@ export class GoogleSheetsSyncService {
         'CONG_THUC_LUONG',
         'DULIEU_LUONG_KY',
       ];
-      const partTitles: string[] = [];
-      try {
-        const titles = await this.listSpreadsheetTabs();
+      let batch: Record<string, string[][]>;
+      if (opts.prefetchedBatch) {
+        // Webhook đã đọc lại đúng tab vừa sửa; parse trên cache để không batchGet 24 tab.
+        batch = { ...opts.prefetchedBatch };
+        for (const t of baseTabs) {
+          if (!Array.isArray(batch[t])) batch[t] = [];
+        }
+      } else {
+        const partTitles: string[] = [];
+        try {
+          const titles = await this.listSpreadsheetTabs();
+          for (const base of GoogleSheetsSyncService.PARTITION_TABS) {
+            for (let n = 2; n < 200; n++) {
+              const t = `${base}_P${n}`;
+              if (titles.includes(t)) partTitles.push(t);
+              else break;
+            }
+          }
+        } catch { /* lỗi metadata -> không có part, hành vi cũ */ }
+        // Timeout rộng hơn cho full-pull (24 tab): Google chậm lúc cao điểm mà để
+        // 20s thì pull fail liên tục, dữ liệu đứng yên dù mạng vẫn tốt.
+        batch = await this.readTabsBatch([...baseTabs, ...partTitles], 60_000);
         for (const base of GoogleSheetsSyncService.PARTITION_TABS) {
+          if (!Array.isArray(batch[base])) continue; // tab không nằm trong pull (VD LUUTRU/AUDIT đọc riêng)
+          const parts: string[][][] = [];
           for (let n = 2; n < 200; n++) {
             const t = `${base}_P${n}`;
-            if (titles.includes(t)) partTitles.push(t);
+            if (Array.isArray(batch[t])) parts.push(batch[t]);
             else break;
           }
-        }
-      } catch { /* lỗi metadata -> không có part, hành vi cũ */ }
-      // Timeout rộng hơn cho full-pull (24 tab): Google chậm lúc cao điểm mà để
-      // 20s thì pull fail liên tục, dữ liệu đứng yên dù mạng vẫn tốt.
-      const batch = await this.readTabsBatch([...baseTabs, ...partTitles], 60_000);
-      for (const base of GoogleSheetsSyncService.PARTITION_TABS) {
-        if (!Array.isArray(batch[base])) continue; // tab không nằm trong pull (VD LUUTRU/AUDIT đọc riêng)
-        const parts: string[][][] = [];
-        for (let n = 2; n < 200; n++) {
-          const t = `${base}_P${n}`;
-          if (Array.isArray(batch[t])) parts.push(batch[t]);
-          else break;
-        }
-        if (parts.length) {
-          batch[base] = [...(batch[base] || []), ...parts.flat()];
-          console.log(`[GoogleSheetsSyncService] Pull ${base}: gộp ${parts.length} tab part`);
+          if (parts.length) {
+            batch[base] = [...(batch[base] || []), ...parts.flat()];
+            console.log(`[GoogleSheetsSyncService] Pull ${base}: gộp ${parts.length} tab part`);
+          }
         }
       }
 
@@ -985,6 +1141,9 @@ export class GoogleSheetsSyncService {
         console.warn('[GoogleSheetsSyncService] Batch read trả về rỗng (nghi lỗi API/quota) — giữ nguyên dữ liệu trong bộ nhớ.');
         return { success: false, message: 'Empty batch read — keeping in-memory data', counts: null };
       }
+      // Chỉ cache bản đọc thô sau khi đã qua guard rỗng. Nếu cache rỗng do lỗi
+      // API, webhook tab-scoped sau đó sẽ parse toàn bộ tab từ cache rỗng.
+      this.lastFullBatch = batch;
 
       // Guard từng tab: MỘT tab đọc rỗng (glitch/quota/timeout cục bộ) trong khi bộ nhớ
       // đang có dữ liệu tab đó -> GIỮ bộ nhớ, không gán rỗng (trước đây mất trắng entity
@@ -1793,7 +1952,7 @@ export class GoogleSheetsSyncService {
         // Sheets trống — giữ seed mặc định và tự động ghi lên Sheet để lưu trữ bền vững
         const seeds = fallback.adminAccounts.filter(a => ['ADM_001', 'ADM_002'].includes(a.admin_id));
         for (const seed of seeds) {
-          this.appendRow('ADMIN_ACCOUNTS', [
+          const seedRow = [
             seed.admin_id,
             seed.username,
             seed.password_hash,
@@ -1802,7 +1961,15 @@ export class GoogleSheetsSyncService {
             seed.branch_scope,
             (seed as any).is_active === false ? 'LOCKED' : 'ACTIVE',
             seed.created_at,
-          ]).catch(err => console.warn('[GoogleSheetsSyncService] Could not auto-seed default account:', err));
+          ];
+          const durable = (repo as any).appendRowsDurable;
+          if (typeof durable === 'function') {
+            await durable.call(repo, 'ADMIN_ACCOUNTS', [seedRow], 'ADMIN_ACCOUNTS.seed')
+              .catch((err: any) => console.warn('[GoogleSheetsSyncService] Could not auto-seed default account:', err));
+          } else {
+            this.appendRow('ADMIN_ACCOUNTS', seedRow)
+              .catch(err => console.warn('[GoogleSheetsSyncService] Could not auto-seed default account:', err));
+          }
         }
         counts.adminAccounts = fallback.adminAccounts.length;
       }
@@ -2379,6 +2546,27 @@ export class GoogleSheetsSyncService {
         }
       }
 
+      // P0.2: lưu snapshot sau mỗi pull để restart sau đây phục vụ ngay.
+      // Chỉ ghi khi nội dung đổi hoặc chưa từng có snapshot: pull 5s không đổi
+      // mà vẫn serialize cả kho dữ liệu sẽ tốn CPU/đĩa vô ích.
+      const shouldPersistSnapshot = changed || !this.lastSnapshotCounts;
+      this.lastSnapshotCounts = counts;
+      if (shouldPersistSnapshot) {
+        try {
+          const persist = (repo as any).persistRuntimeSnapshot?.({
+            signature,
+            tabSignatures: fingerprint.tabs,
+            pulledAt: new Date(this.lastPulledAt).toISOString(),
+            counts,
+          });
+          void Promise.resolve(persist).catch((e: any) => {
+            console.warn('[GoogleSheetsSyncService] Lưu snapshot lỗi:', e?.message || e);
+          });
+        } catch (e: any) {
+          console.warn('[GoogleSheetsSyncService] Lưu snapshot lỗi:', e?.message || e);
+        }
+      }
+
       return {
         success: !partialError,
         message: partialError
@@ -2410,6 +2598,27 @@ export class GoogleSheetsSyncService {
       return (res.data.values as string[][]) || [];
     } catch (e) {
       return [];
+    }
+  }
+
+  /**
+   * Đọc 1 tab và PHÂN BIỆT lỗi với tab rỗng (null = lỗi). Webhook dùng hàm này
+   * để không lấy [] đè cache khi Google timeout/quota.
+   */
+  public async readTabRowsStrict(sheetTitle: string, timeoutMs = 15_000): Promise<string[][] | null> {
+    if (!this.sheetsClient) return null;
+    const safe = String(sheetTitle || '').trim().toUpperCase();
+    if (!/^[A-Z0-9_]{1,100}$/.test(safe)) return null;
+    try {
+      const res = await this.sheetsCall(`read.tab.${safe}`, () =>
+        this.sheetsClient!.spreadsheets.values.get({
+          spreadsheetId: this.spreadsheetId,
+          range: `'${safe}'!A2:ZZ`,
+        }), timeoutMs);
+      return (res.data.values as string[][]) || [];
+    } catch (e: any) {
+      console.warn(`[GoogleSheetsSyncService] Đọc tab ${safe} lỗi:`, e?.message || e);
+      return null;
     }
   }
 
@@ -2529,6 +2738,12 @@ export class GoogleSheetsSyncService {
     if (!this.sheetsClient) {
       return { success: false, message: 'Google Sheets client không khả dụng', details: null };
     }
+
+    // Các append đã vào journal nhưng chưa lên Sheet phải được gửi trước khi
+    // full-sync ghi đè cả tab; nếu không, dòng đó có thể bị thêm trùng sau đó.
+    try {
+      await (repo as any).flushDurableWrites?.(5000);
+    } catch { /* best-effort, không chặn full-sync */ }
 
     try {
       const details: any = {};

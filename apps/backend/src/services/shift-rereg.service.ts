@@ -387,8 +387,13 @@ export class ShiftReRegService {
           }
         }
         if (rowsToAppend.length > 0) {
-          await this.syncService.appendRows(TAB_SLIP, rowsToAppend).catch(() => false);
-          sheetsSynced = true;
+          // Ưu tiên journal bền vững (adapter); mock/không có thì append trực tiếp.
+          const durable = (this.repo as any)?.appendRowsDurable;
+          if (typeof durable === 'function') {
+            sheetsSynced = await durable.call(this.repo, TAB_SLIP, rowsToAppend, 'PHIEU_NV_CAP_NHAT_CA.append');
+          } else {
+            sheetsSynced = await this.syncService.appendRows(TAB_SLIP, rowsToAppend).catch(() => false);
+          }
         }
       }
     } catch { /* best-effort: full-sync nền sẽ thử lại */ }

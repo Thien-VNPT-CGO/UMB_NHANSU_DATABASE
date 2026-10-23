@@ -45,6 +45,8 @@ tmp/
 
 # Anh check-in/out luu dia (fallback khong mat khi restart) — KHONG commit anh test
 apps/backend/data/
+# Snapshot/journal runtime khi chay backend tu thu muc goc (Docker/local)
+/data/
 
 # App version bake luc build (tu sinh, khong commit)
 apps/admin-web/src/app-version.ts
