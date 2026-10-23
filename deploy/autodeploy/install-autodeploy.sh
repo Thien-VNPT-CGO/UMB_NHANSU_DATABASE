@@ -20,8 +20,9 @@ BIN_DIR="/opt/ubm/bin"
 LOG_FILE="/var/log/ubm-autodeploy.log"
 CRON_FILE="/etc/cron.d/ubm-autodeploy"
 
-# Thu muc repo prod trên VPS (sua neu khac):
-PROD_DIR="${PROD_DIR:-$HOME/ubm-vps}"
+REPO_ROOT="$(cd "$SRC/../.." && pwd)"
+# Thu muc repo prod tren VPS (tu dong nhan dien thu muc goc chua script):
+PROD_DIR="${PROD_DIR:-$REPO_ROOT}"
 
 if [ "${1:-}" = "--off" ]; then
   rm -f "$CRON_FILE"
