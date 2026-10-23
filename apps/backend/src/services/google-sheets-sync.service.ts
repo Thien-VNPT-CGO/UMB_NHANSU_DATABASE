@@ -196,6 +196,9 @@ export class GoogleSheetsSyncService {
   private isConfigured = false;
   private authError: string | null = null;
   private lastPulledAt: number = 0;
+  /** Lỗi pull gần nhất (null = lần gần nhất thành công) — hiện ở /health để
+   *  chẩn đoán khi dữ liệu đứng yên mà không cần vào log container. */
+  private lastPullError: string | null = null;
   /** Mốc pull gần nhất đã xử lý xong tab CAU_HINH_HE_THONG (null = chưa từng).
    *  Đọc bảo trì đợi mốc này để không trả seed OFF ngay sau boot. */
   public lastSettingsPullAt: number | null = null;
@@ -513,6 +516,8 @@ export class GoogleSheetsSyncService {
       driveUpload: this.getDriveUploadStatus(),
       authError: this.authError,
       lastPulledAt: this.lastPulledAt ? new Date(this.lastPulledAt).toISOString() : null,
+      lastPullError: this.lastPullError,
+      pullStartedAt: this.pullStartedAt ? new Date(this.pullStartedAt).toISOString() : null,
       ...this.getWriteStatus(),
       sheetsCount: SHEETS_DEFINITIONS.length,
       definedTabs: SHEETS_DEFINITIONS.map(d => d.title),
@@ -825,14 +830,38 @@ export class GoogleSheetsSyncService {
       return Promise.resolve({ success: false, message: 'Google Sheets chưa kết nối', counts: null });
     }
     if (this.pullInFlight) return this.pullInFlight;
-    const run = this.doPullAllDataFromGoogleSheets(repo).finally(() => {
-      this.pullInFlight = null;
+    let run: Promise<{ success: boolean; message: string; counts: any }>;
+    run = this.doPullAllDataFromGoogleSheets(repo).finally(() => {
+      // Chỉ xóa khi đây vẫn là pull hiện tại (watchdog có thể đã giải phóng và
+      // một pull mới đã được tạo — không được xóa nhầm pull mới).
+      if (this.pullInFlight === run) {
+        this.pullInFlight = null;
+        this.pullStartedAt = 0;
+      }
     });
+    this.pullStartedAt = Date.now();
     this.pullInFlight = run;
     return run;
   }
 
+  /**
+   * Watchdog: một request Google hiếm khi treo vô hạn (mọi sheetsCall đều có
+   * timeout 20s), nhưng nếu pull kẹt quá lâu thì toàn bộ dữ liệu đứng yên và
+   * endpoint /health/ready báo stale mãi. Giải phóng promise kẹt để tick sau pull lại;
+   * pull cũ nếu lỡ trả về muộn cũng chỉ ghi đè dữ liệu mới hơn — vô hại.
+   */
+  public ensurePullNotStuck(maxAgeMs = 20 * 60_000): boolean {
+    if (!this.pullInFlight || !this.pullStartedAt) return false;
+    const age = Date.now() - this.pullStartedAt;
+    if (age < maxAgeMs) return false;
+    console.warn(`[GoogleSheetsSyncService] Pull treo ${Math.round(age / 60_000)} phút — giải phóng để pull lại.`);
+    this.pullInFlight = null;
+    this.pullStartedAt = 0;
+    return true;
+  }
+
   private pullInFlight: Promise<{ success: boolean; message: string; counts: any }> | null = null;
+  private pullStartedAt = 0;
 
   private async doPullAllDataFromGoogleSheets(repo: ISheetsRepository): Promise<{ success: boolean; message: string; counts: any }> {
     if (!this.isConfigured || !this.sheetsClient) {
@@ -892,7 +921,9 @@ export class GoogleSheetsSyncService {
           }
         }
       } catch { /* lỗi metadata -> không có part, hành vi cũ */ }
-      const batch = await this.readTabsBatch([...baseTabs, ...partTitles]);
+      // Timeout rộng hơn cho full-pull (24 tab): Google chậm lúc cao điểm mà để
+      // 20s thì pull fail liên tục, dữ liệu đứng yên dù mạng vẫn tốt.
+      const batch = await this.readTabsBatch([...baseTabs, ...partTitles], 60_000);
       for (const base of GoogleSheetsSyncService.PARTITION_TABS) {
         if (!Array.isArray(batch[base])) continue; // tab không nằm trong pull (VD LUUTRU/AUDIT đọc riêng)
         const parts: string[][][] = [];
@@ -2272,6 +2303,7 @@ export class GoogleSheetsSyncService {
       }
 
       this.lastPulledAt = Date.now();
+      this.lastPullError = partialError ? `PARTIAL:${partialError}` : null;
       console.log('[GoogleSheetsSyncService] Đã tải dữ liệu thực tế từ Google Sheets thành công:', counts);
 
       return {
@@ -2282,6 +2314,7 @@ export class GoogleSheetsSyncService {
         counts,
       };
     } catch (err: any) {
+      this.lastPullError = err?.message || String(err);
       console.error('[GoogleSheetsSyncService] Lỗi khi pull dữ liệu từ Sheets:', err);
       return { success: false, message: `Lỗi đọc Google Sheets: ${err.message}`, counts: null };
     }
@@ -2309,7 +2342,7 @@ export class GoogleSheetsSyncService {
    * Đọc NHIỀU tab trong 1 HTTP round-trip (batchGet) — nhanh gấp ~N lần so với
    * đọc nối tiếp từng tab. Dùng cho full-pull realtime.
    */
-  public async readTabsBatch(sheetTitles: string[]): Promise<Record<string, string[][]>> {
+  public async readTabsBatch(sheetTitles: string[], timeoutMs = 20_000): Promise<Record<string, string[][]>> {
     const out: Record<string, string[][]> = {};
     for (const t of sheetTitles) out[t] = [];
     if (!this.sheetsClient || sheetTitles.length === 0) return out;
@@ -2318,7 +2351,7 @@ export class GoogleSheetsSyncService {
         this.sheetsClient!.spreadsheets.values.batchGet({
           spreadsheetId: this.spreadsheetId,
           ranges: sheetTitles.map(t => `'${t}'!A2:ZZ`),
-        })
+        }), timeoutMs
       );
       const groups = res.data.valueRanges || [];
       for (let i = 0; i < sheetTitles.length; i++) {

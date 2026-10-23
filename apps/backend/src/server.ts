@@ -113,11 +113,28 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   // Background Auto-Sync Worker: Tự động kéo toàn bộ dữ liệu từ Google Sheets mỗi 15 giây
   // và phát tín hiệu realtime qua Socket.IO tới toàn bộ ứng dụng web khi có dữ liệu thay đổi.
   let lastSyncSignature = '';
+  // Backoff khi pull lỗi: tránh 6 lần/phút lúc Google Sheets chậm/quota, vì
+  // retry dồn dập càng làm pull kế tiếp khó thành công.
+  let pullFailStreak = 0;
+  let nextPullAllowedAt = 0;
   const autoPullSheetsTick = async () => {
+    if (Date.now() < nextPullAllowedAt) return;
     try {
       const syncService = (adapter as any).syncService;
       if (syncService && syncService.getStatus().isConfigured) {
+        // Tự chữa pull kẹt: nếu promise pull treo quá 20 phút thì giải phóng để
+        // tick này pull lại (tránh tab công tháng đứng dữ liệu vô thời hạn).
+        syncService.ensurePullNotStuck?.();
         const pullRes = await syncService.pullAllDataFromGoogleSheets(adapter);
+        if (pullRes?.success) {
+          pullFailStreak = 0;
+          nextPullAllowedAt = 0;
+        } else if (pullRes) {
+          pullFailStreak += 1;
+          const waitMs = Math.min(60_000, 10_000 * 2 ** Math.min(pullFailStreak - 1, 3));
+          nextPullAllowedAt = Date.now() + waitMs;
+          console.warn(`[sheets-auto-pull] Pull lỗi ${pullFailStreak} lần liên tiếp (${pullRes.message}) — thử lại sau ${Math.round(waitMs / 1000)}s`);
+        }
         if (pullRes && pullRes.success && pullRes.counts) {
           const currentSignature = JSON.stringify(pullRes.counts);
           if (lastSyncSignature && lastSyncSignature !== currentSignature) {
