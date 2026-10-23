@@ -95,6 +95,12 @@ server.listen(Number(PORT), '0.0.0.0', () => {
     initialDelayMs: 90_000,
   });
 
+  // Làm ấm cache kho lưu trữ chấm công (tab "Dữ Liệu Công Của Tôi" + bảng công
+  // tháng) sau khi pull đầu tiên xong — chạy nền, không chặn khởi động.
+  setTimeout(() => {
+    try { (adapter as any).syncService?.warmArchivedAttendanceCache?.(); } catch { /* non-fatal */ }
+  }, 20_000);
+
   // Scheduler nhắc mở cổng đăng ký OFF tuần (mỗi 60s + ngay khi boot).
   const weeklyOffTick = () => {
     weeklyOffScheduler

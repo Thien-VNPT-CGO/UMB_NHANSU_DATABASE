@@ -1709,7 +1709,7 @@ export class PayrollService {
     // Đọc kho lưu trữ tuần cũ để ca đầu tháng (đã archive) vẫn lên bảng.
     let archived: any[] = [];
     try {
-      archived = await (this.repo as any)?.syncService?.getArchivedAttendanceEvents?.(fromDate, toDate) || [];
+      archived = await (this.repo as any)?.syncService?.getArchivedAttendanceEvents?.(fromDate, toDate, onlyEmployeeId) || [];
     } catch { archived = []; }
     const archivedByAssign = new Map<string, any[]>();
     for (const e of archived || []) {

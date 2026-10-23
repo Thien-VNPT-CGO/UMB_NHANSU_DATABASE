@@ -304,7 +304,7 @@ export class AttendanceService {
             const day = String((shift as any).date || '').slice(0, 10);
             const sync = (this.repo as any)?.syncService;
             if (day && sync?.getArchivedAttendanceEvents) {
-              const archived = await sync.getArchivedAttendanceEvents(day, day).catch(() => []);
+              const archived = await sync.getArchivedAttendanceEvents(day, day, employeeId).catch(() => []);
               const archMine = (archived || []).filter((e: any) =>
                 String((e as any)?.employee_id || '') === employeeId &&
                 String((e as any)?.assignment_id || '') === String(data.assignmentId));

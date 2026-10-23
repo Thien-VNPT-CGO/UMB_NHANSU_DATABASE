@@ -246,6 +246,17 @@ export class GoogleSheetsSyncService {
   private tabListCache: { at: number; titles: string[] } | null = null;
   /** Cache ước lượng ô đã dùng (6 giờ). */
   private cellUsageCache: { at: number; data: { cellsUsed: number; cellsLimit: number; pct: number; level: 'OK' | 'WARN' | 'CRITICAL'; measuredTabs: number } } | null = null;
+  /**
+   * Cache dòng thô của kho lưu trữ chấm công tuần cũ (LUUTRU_CHAMCONG_TUAN).
+   * Tab này chỉ đổi khi archive tuần mới hoặc Admin xóa 1 lượt, nhưng trước đây
+   * MỖI lần đọc là 1 batchGet toàn tab. Mở tab "Dữ Liệu Công Của Tôi" gọi hàm
+   * này nhiều lượt (attendance tháng + monthly-timesheet) nên từng mất vài giây
+   * → cache + gộp request đang bay để chỉ còn tối đa 1 lượt đọc.
+   */
+  private archiveRowsCache: { at: number; rows: string[][] } | null = null;
+  private archiveRowsInFlight: Promise<string[][]> | null = null;
+  private archiveCacheEpoch = 0;
+  private static readonly ARCHIVE_CACHE_TTL_MS = 120_000;
 
   /** Health endpoint đọc giá trị đã cache (không phát API call). */
   public getCachedCellUsage() {
@@ -3564,6 +3575,7 @@ export class GoogleSheetsSyncService {
         // BETA partition: đọc cả các tab part (_P2..) rồi ghi đè lại qua chain
         const oldRows = await this.readPartitionedRows('LUUTRU_CHAMCONG_TUAN');
         await this.rewritePartitionedTab('LUUTRU_CHAMCONG_TUAN', [...oldRows, ...rows]);
+        this.invalidateArchivedAttendanceCache();
       } catch (e: any) {
         console.warn('[archive] Ghi tab lưu trữ thất bại:', e?.message || e);
       }
@@ -3599,13 +3611,19 @@ export class GoogleSheetsSyncService {
    * lùi tuần + dải 12 ngày thử việc quá khứ). Chỉ đọc, không sửa — realtime giữ nguyên.
    * client_time trả về dạng wall-clock VN (+07:00) để frontend khớp ngày như sự kiện live.
    */
-  public async getArchivedAttendanceEvents(fromIso: string, toIso: string): Promise<any[]> {
-    // BETA partition: gộp mọi tab part của kho lưu trữ (nếu tab đã phình chia)
-    const rows = await this.readPartitionedRows('LUUTRU_CHAMCONG_TUAN').catch(() => []);
+  public async getArchivedAttendanceEvents(fromIso: string, toIso: string, employeeId?: string): Promise<any[]> {
+    // BETA partition: gộp mọi tab part của kho lưu trữ (nếu tab đã phình chia).
+    // Cache 2 phút + gộp request đang bay: mở tab công tháng không còn phải chờ
+    // đọc lại toàn bộ kho nhiều lần.
+    const rows = await this.readArchivedRowsCached().catch(() => []);
+    const wantedEmp = String(employeeId || '').trim();
     const out: any[] = [];
     const vnDayOfInstant = (t: number) => new Date(t + 7 * 3_600_000).toISOString().slice(0, 10);
     for (const r of rows) {
       if (!r || !r.some(c => String(c || '').trim())) continue;
+      // Lọc sớm theo nhân viên khi caller chỉ cần 1 người (cổng NV) — tránh map
+      // vài nghìn dòng rồi mới bỏ đi ở tầng trên.
+      if (wantedEmp && (r[2] || '').trim() !== wantedEmp) continue;
       // Archive ghi 13 giá trị/dòng (client_time ở r[12]); bản rất cũ 12 cột (r[11]).
       const clientRaw = (r[12] || r[11] || '').trim().replace(/^'/, '');
       const t = new Date(clientRaw).getTime();
@@ -3653,6 +3671,7 @@ export class GoogleSheetsSyncService {
     const gone = rows[idx] || [];
     const kept = rows.filter((_, i) => i !== idx);
     await this.rewritePartitionedTab('LUUTRU_CHAMCONG_TUAN', kept);
+    this.invalidateArchivedAttendanceCache();
     const clientRaw = String(gone[12] || gone[11] || '').trim().replace(/^'/, '');
     return {
       employee_id: String(gone[2] || '').trim(),
@@ -3976,6 +3995,57 @@ export class GoogleSheetsSyncService {
     const chain = await this.partitionChain(base).catch(() => [base]);
     const batch = await this.readTabsBatch(chain).catch(() => ({} as Record<string, string[][]>));
     return chain.flatMap(t => batch[t] || []);
+  }
+
+  /**
+   * Đọc kho lưu trữ chấm công tuần cũ có cache:
+   * - Có cache còn hạn: trả ngay (không gọi Google).
+   * - Có cache nhưng hết hạn: trả bản cũ NGAY + làm mới nền (stale-while-revalidate)
+   *   để lần mở tab sau vẫn nhanh dù Google Sheets chậm.
+   * - Chưa có cache: chờ 1 lượt đọc; các request song song dùng chung promise này.
+   */
+  private readArchivedRowsCached(): Promise<string[][]> {
+    const now = Date.now();
+    if (this.archiveRowsCache) {
+      const expired = now - this.archiveRowsCache.at >= GoogleSheetsSyncService.ARCHIVE_CACHE_TTL_MS;
+      if (expired && !this.archiveRowsInFlight) {
+        this.startArchiveRefresh();
+      }
+      return Promise.resolve(this.archiveRowsCache.rows);
+    }
+    if (!this.archiveRowsInFlight) this.startArchiveRefresh();
+    return this.archiveRowsInFlight || Promise.resolve([]);
+  }
+
+  private startArchiveRefresh(): void {
+    const epoch = this.archiveCacheEpoch;
+    this.archiveRowsInFlight = this.readPartitionedRows('LUUTRU_CHAMCONG_TUAN')
+      .then(rows => {
+        // Bỏ qua kết quả đọc cũ nếu kho vừa bị ghi/xóa trong lúc đang đọc.
+        if (epoch === this.archiveCacheEpoch) {
+          this.archiveRowsCache = { at: Date.now(), rows };
+        }
+        return rows;
+      })
+      .catch(() => this.archiveRowsCache?.rows || [])
+      .finally(() => {
+        this.archiveRowsInFlight = null;
+      });
+  }
+
+  /** Kho lưu trữ vừa bị ghi (archive tuần mới / xóa lượt) -> bỏ cache ngay. */
+  public invalidateArchivedAttendanceCache(): void {
+    this.archiveRowsCache = null;
+    this.archiveCacheEpoch++;
+  }
+
+  /**
+   * Làm ấm cache kho lưu trữ ngay sau khi server lên (chạy nền, không chặn
+   * request). Nhờ vậy lần đầu NV mở tab "Dữ Liệu Công Của Tôi" không phải chờ
+   * batchGet toàn tab; các lần sau dùng stale-while-revalidate nên luôn tức thì.
+   */
+  public warmArchivedAttendanceCache(): void {
+    void this.readArchivedRowsCached().catch(() => []);
   }
 
   /**

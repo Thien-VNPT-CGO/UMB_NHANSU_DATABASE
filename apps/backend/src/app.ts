@@ -4244,7 +4244,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       try {
         const syncService = (adapter as any).syncService;
         if (syncService?.getArchivedAttendanceEvents) {
-          const archived = await syncService.getArchivedAttendanceEvents(days[0], days[days.length - 1]).catch(() => []);
+          const archived = await syncService.getArchivedAttendanceEvents(days[0], days[days.length - 1], employeeId).catch(() => []);
           const seen = new Set((live || []).map((e: any) => String((e as any)?.event_id || '')));
           for (const e of archived || []) {
             if (String((e as any)?.employee_id || '') !== String(employeeId)) continue;
