@@ -22,11 +22,22 @@ function formatRemaining(ms: number): string {
 }
 
 async function applyUpdateAndReload(): Promise<void> {
+  // Chỉ reload 1 lần, kể cả khi service worker/cache treo — tối đa chờ 6s.
+  let reloaded = false;
+  const reloadOnce = () => {
+    if (reloaded) return;
+    reloaded = true;
+    window.location.reload();
+  };
+  const hardStop = setTimeout(reloadOnce, 6000);
   try {
     if ('serviceWorker' in navigator) {
       const reg = await navigator.serviceWorker.getRegistration().catch(() => null);
       if (reg) {
-        await reg.update().catch(() => null);
+        await Promise.race([
+          reg.update().catch(() => null),
+          new Promise(r => setTimeout(r, 3000)),
+        ]);
         reg.waiting?.postMessage({ type: 'SKIP_WAITING' });
       }
     }
@@ -39,8 +50,9 @@ async function applyUpdateAndReload(): Promise<void> {
   } catch {
     /* lỗi cache/SW không được chặn reload */
   }
+  clearTimeout(hardStop);
   // Chờ 1 nhịp để service worker kịp activate + overlay hiện rõ rồi mới tải lại.
-  setTimeout(() => window.location.reload(), 1500);
+  setTimeout(reloadOnce, 1500);
 }
 
 export function UiUpdateWatcher() {
