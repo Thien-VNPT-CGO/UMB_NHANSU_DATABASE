@@ -2207,11 +2207,12 @@ export function App() {
   const VIETQR_BANK_BY_BIN: Record<string, string> = {
     '970436': 'Vietcombank', '970407': 'Techcombank', '970422': 'MBBank', '970418': 'BIDV',
     '970415': 'VietinBank', '970416': 'ACB', '970432': 'VPBank', '970423': 'TPBank',
-    '970429': 'Sacombank', '970437': 'HDBank', '970441': 'VIB', '970443': 'SHB',
-    '970448': 'OCB', '970426': 'MSB', '970405': 'Agribank', '970431': 'Eximbank',
+    '970437': 'HDBank', '970441': 'VIB', '970443': 'SHB',
+    '970448': 'OCB', '970403': 'Sacombank', '970426': 'MSB', '970405': 'Agribank', '970431': 'Eximbank',
     '970449': 'LPBank', '970428': 'Nam A Bank', '970433': 'VietBank', '970425': 'ABBank',
     '970409': 'Bac A Bank', '970438': 'BaoVietBank', '970430': 'PG Bank', '970427': 'Viet A Bank',
     '970419': 'NCB', '970440': 'SeABank', '970454': 'BVBank', '970452': 'KienLongBank',
+    '970429': 'SCB',
     '970400': 'SaigonBank', '970406': 'DongA Bank',
   };
 
@@ -2242,8 +2243,34 @@ export function App() {
     );
     if (!acctField) return empty;
     const sub = parseTLV(acctField.value);
-    const bin = (sub.find((x) => x.id === '01')?.value || '').trim();
-    const account = (sub.find((x) => x.id === '02')?.value || '').trim();
+    // Chuẩn VietQR/Napas: tag 01 trong khối tài khoản là TLV LỒNG thêm 1 tầng —
+    // 00 = mã BIN ngân hàng (6 số), 01 = số tài khoản. Trước đây code lấy nguyên
+    // chuỗi lồng làm BIN (vd '0006970422...') -> không khớp bảng ngân hàng nào
+    // và báo lỗi "mã BIN 0006970422..." cho MB/VCB... dù QR chuẩn.
+    let bin = '';
+    let account = '';
+    const cField = sub.find((x) => x.id === '01');
+    if (cField) {
+      const nested = parseTLV(cField.value);
+      const nBin = (nested.find((x) => x.id === '00')?.value || '').trim();
+      const nAcc = (nested.find((x) => x.id === '01')?.value || '').trim();
+      if (/^\d{6}$/.test(nBin)) {
+        bin = nBin;
+        account = nAcc;
+      }
+    }
+    // Biến thể QR vài ngân hàng tự sinh: BIN nằm ngay tag 01 (6 số), STK tag 02.
+    if (!bin && cField && /^\d{6}$/.test(cField.value.trim())) {
+      bin = cField.value.trim();
+      account = (sub.find((x) => x.id === '02')?.value || '').trim();
+    }
+    // Chiếm chót: parse TLV lệch độ (QR mờ/nghiêng) -> dò BIN 9704xx/9705xx
+    // sau nhãn AID (A000000727) thay vì nguyên chuỗi (tránh khớp nhầm số STK).
+    if (!/^\d{6}$/.test(bin)) {
+      const aidIdx = s.indexOf('A000000727');
+      const m = (aidIdx >= 0 ? s.slice(aidIdx) : s).match(/97(?:04|05)\d{2}/);
+      if (m) bin = m[0];
+    }
     const holder = (top.find((f) => f.id === '59')?.value || '').trim();
     return { isVietQR: true, bank: VIETQR_BANK_BY_BIN[bin] || '', account: /^[0-9]{6,19}$/.test(account) ? account : '', holder, bin };
   };
