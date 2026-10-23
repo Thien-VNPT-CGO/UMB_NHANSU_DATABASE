@@ -58,6 +58,28 @@ import {
   setSoundEnabled,
 } from './utils/sound-effects';
 
+/** ISO (server) -> chuỗi cho <input type="datetime-local"> theo giờ máy admin. */
+function toLocalDatetimeInput(iso?: string | null): string {
+  if (!iso) return '';
+  const t = Date.parse(String(iso));
+  if (!Number.isFinite(t)) return '';
+  const d = new Date(t);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** Đếm ngược dạng "2 ngày 03:12:45" / "03:12:45" (hết hạn -> "00:00:00"). */
+function formatCountdownVi(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const days = Math.floor(total / 86400);
+  const h = Math.floor((total % 86400) / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const hms = `${pad(h)}:${pad(m)}:${pad(s)}`;
+  return days > 0 ? `${days} ngày ${hms}` : hms;
+}
+
 export interface LiveToastItem {
   id: string;
   type?: 'CHECKIN' | 'CHECKOUT' | 'LEAVE' | 'SWAP' | 'PIN_CHANGED' | 'PIN_SENT' | 'BANK_CHANGE' | 'INFO' | 'WARNING';
@@ -380,6 +402,10 @@ export function App() {
   const [systemNotifications, setSystemNotifications] = useState<any[]>([]);
   const [integrationsStatus, setIntegrationsStatus] = useState<any>(null);
   const [maintenance, setMaintenance] = useState<any>({});
+  // Hẹn giờ cập nhật giao diện/phần mềm: input datetime-local + đồng hồ đếm ngược.
+  const [uiUpdateInput, setUiUpdateInput] = useState('');
+  const [uiUpdateEnabled, setUiUpdateEnabled] = useState(false);
+  const [maintNow, setMaintNow] = useState(Date.now());
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [backupSnapshots, setBackupSnapshots] = useState<any[]>([]);
   const [systemSettings, setSystemSettings] = useState<any>({});
@@ -899,6 +925,21 @@ export function App() {
   const goTab = (tabId: string) => {
     setActiveTab(resolveAdminTab(currentUser?.role, tabId));
   };
+
+  // Đồng bộ input datetime-local mỗi khi server trả mốc cập nhật giao diện mới.
+  // (Chỉ phụ thuộc ui_update_at nên đang gõ ngày giờ không bị ghi đè.)
+  useEffect(() => {
+    setUiUpdateInput(toLocalDatetimeInput(maintenance?.ui_update_at));
+    setUiUpdateEnabled(!!maintenance?.ui_update_enabled);
+  }, [maintenance?.ui_update_at, maintenance?.ui_update_enabled]);
+
+  // Đồng hồ đếm ngược chỉ chạy khi có lịch cập nhật đang bật (không tick vô ích).
+  useEffect(() => {
+    if (!maintenance?.ui_update_enabled || !maintenance?.ui_update_at) return;
+    setMaintNow(Date.now());
+    const t = setInterval(() => setMaintNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [maintenance?.ui_update_enabled, maintenance?.ui_update_at]);
 
   // Hiệu ứng âm thanh micro-click cho mọi nút bấm chức năng của Admin & HR
   useEffect(() => {
@@ -1560,7 +1601,7 @@ export function App() {
     }
   };
 
-  const handleSaveMaintenance = async (updatedMaintenance: any) => {
+  const handleSaveMaintenance = async (updatedMaintenance: any, successText = 'Đã cập nhật trạng thái bảo trì hệ thống!') => {
     setAdminActionBusy('maint');
     try {
       const saved: any = await apiRequest('/admin/maintenance', {
@@ -1582,7 +1623,7 @@ export function App() {
       if ((saved as any)?._sheetPersisted === false) {
         setSuccessMsg('Đã bật bảo trì, nhưng chưa ghi được lên Google Sheets — restart server có thể mất cờ, bấm lưu lại!');
       } else {
-        setSuccessMsg('Đã cập nhật trạng thái bảo trì hệ thống!');
+        setSuccessMsg(successText);
       }
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (err: any) {
@@ -1590,6 +1631,33 @@ export function App() {
     } finally {
       setAdminActionBusy(null);
     }
+  };
+
+  // Lưu / hủy lịch cập nhật giao diện. Thời điểm nhập theo giờ máy Admin được
+  // đổi sang ISO (UTC) trước khi gửi — cổng NV đếm ngược theo giờ server.
+  const handleSaveUiUpdate = async (enabled: boolean) => {
+    const payload: any = { ...maintenance, ui_update_enabled: enabled };
+    if (enabled) {
+      const t = uiUpdateInput ? Date.parse(uiUpdateInput) : NaN;
+      if (!Number.isFinite(t)) {
+        setErrorMsg('Vui lòng chọn ngày giờ cập nhật giao diện hợp lệ!');
+        setTimeout(() => setErrorMsg(null), 3000);
+        return;
+      }
+      if (t <= Date.now() + 5_000) {
+        setErrorMsg('Thời điểm cập nhật phải ở tương lai (sau hiện tại ít nhất vài giây)!');
+        setTimeout(() => setErrorMsg(null), 3000);
+        return;
+      }
+      payload.ui_update_at = new Date(t).toISOString();
+      payload.ui_update_message = String(maintenance?.ui_update_message || '').slice(0, 500);
+    } else {
+      payload.ui_update_at = null;
+    }
+    await handleSaveMaintenance(
+      payload,
+      enabled ? 'Đã lưu lịch cập nhật giao diện cho cổng nhân viên!' : 'Đã hủy lịch cập nhật giao diện!',
+    );
   };
 
   const handleSaveSystemSettings = async (e: React.FormEvent) => {
@@ -4109,7 +4177,7 @@ export function App() {
             <div id="sec-maintenance" style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '800px' }}>
               <div>
                 <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>9. Quản Lý Chế Độ Bảo Trì Kỹ Thuật</h1>
-                <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Bật/tắt bảo trì toàn hệ thống, Web nhân viên hoặc từng phân hệ riêng biệt</p>
+                <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Bật/tắt bảo trì toàn hệ thống, Web nhân viên, từng phân hệ — và hẹn giờ cập nhật giao diện/phần mềm cho cổng nhân viên</p>
               </div>
 
               <div style={{ backgroundColor: 'var(--surface)', padding: '24px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -4184,6 +4252,114 @@ export function App() {
                   >
                     {adminActionBusy === 'maint' ? '⏳ Đang lưu...' : 'Cập Nhật Thông Điệp'}
                   </button>
+                </div>
+
+                {/* Hẹn giờ cập nhật giao diện/phần mềm cho cổng nhân viên */}
+                <div style={{ borderTop: '1px solid var(--border)', paddingTop: '18px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
+                    <div>
+                      <div style={{ fontWeight: 800, fontSize: '14px', color: 'var(--text)' }}>Cập nhật giao diện mới (theo lịch)</div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                        Cổng nhân viên hiện đếm ngược và tự tải lại giao diện/phần mềm mới khi hết giờ — không khóa thao tác của nhân viên.
+                      </div>
+                    </div>
+                    <span style={{
+                      flexShrink: 0,
+                      padding: '4px 10px',
+                      borderRadius: 'var(--radius-full)',
+                      fontSize: '11px',
+                      fontWeight: 800,
+                      backgroundColor: maintenance?.ui_update_enabled ? 'var(--success-soft)' : 'var(--border)',
+                      color: maintenance?.ui_update_enabled ? 'var(--success)' : 'var(--text-muted)',
+                    }}>
+                      {maintenance?.ui_update_enabled ? 'ĐÃ HẸN' : 'ĐANG TẮT'}
+                    </span>
+                  </div>
+
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={uiUpdateEnabled}
+                      onChange={(e) => {
+                        const on = e.target.checked;
+                        setUiUpdateEnabled(on);
+                        if (on && !uiUpdateInput) {
+                          setUiUpdateInput(toLocalDatetimeInput(new Date(Date.now() + 5 * 60_000).toISOString()));
+                        }
+                      }}
+                      style={{ width: '16px', height: '16px', accentColor: 'var(--brand)' }}
+                    />
+                    Bật hẹn giờ cập nhật giao diện
+                  </label>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '12px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>Ngày &amp; giờ cập nhật (giờ máy bạn):</label>
+                      <input
+                        type="datetime-local"
+                        value={uiUpdateInput}
+                        min={toLocalDatetimeInput(new Date().toISOString())}
+                        onChange={(e) => setUiUpdateInput(e.target.value)}
+                        disabled={!uiUpdateEnabled}
+                        style={{ width: '100%', padding: '9px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px', opacity: uiUpdateEnabled ? 1 : 0.6 }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>Thông điệp hiển thị trên cổng NV:</label>
+                      <input
+                        type="text"
+                        value={maintenance?.ui_update_message || ''}
+                        onChange={(e) => setMaintenance({ ...maintenance, ui_update_message: e.target.value })}
+                        placeholder="VD: Giao diện mới sẽ tự cập nhật sau ít phút..."
+                        maxLength={500}
+                        disabled={!uiUpdateEnabled}
+                        style={{ width: '100%', padding: '9px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px', opacity: uiUpdateEnabled ? 1 : 0.6 }}
+                      />
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                    <button
+                      onClick={() => { void handleSaveUiUpdate(true); }}
+                      disabled={adminActionBusy === 'maint' || !uiUpdateEnabled}
+                      style={{
+                        padding: '8px 16px',
+                        borderRadius: 'var(--radius-sm)',
+                        backgroundColor: uiUpdateEnabled ? 'var(--brand)' : 'var(--border)',
+                        color: uiUpdateEnabled ? '#FFF' : 'var(--text-muted)',
+                        fontWeight: 700,
+                        fontSize: '12px',
+                        border: 'none',
+                        cursor: adminActionBusy === 'maint' || !uiUpdateEnabled ? 'not-allowed' : 'pointer',
+                      }}
+                    >
+                      {adminActionBusy === 'maint' ? '⏳ Đang lưu...' : 'Lưu Lịch Cập Nhật'}
+                    </button>
+                    <button
+                      onClick={() => { setUiUpdateEnabled(false); void handleSaveUiUpdate(false); }}
+                      disabled={adminActionBusy === 'maint' || !maintenance?.ui_update_enabled}
+                      style={{
+                        padding: '8px 16px',
+                        borderRadius: 'var(--radius-sm)',
+                        backgroundColor: 'transparent',
+                        color: 'var(--danger)',
+                        fontWeight: 700,
+                        fontSize: '12px',
+                        border: '1px solid var(--danger)',
+                        cursor: adminActionBusy === 'maint' || !maintenance?.ui_update_enabled ? 'not-allowed' : 'pointer',
+                        opacity: adminActionBusy === 'maint' || !maintenance?.ui_update_enabled ? 0.5 : 1,
+                      }}
+                    >
+                      Hủy Lịch
+                    </button>
+                    {maintenance?.ui_update_enabled && maintenance?.ui_update_at && (
+                      <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                        {Date.parse(maintenance.ui_update_at) > maintNow
+                          ? <>⏳ Cổng NV tự cập nhật sau <b style={{ color: 'var(--brand)' }}>{formatCountdownVi(Date.parse(maintenance.ui_update_at) - maintNow)}</b></>
+                          : <>⚠️ Đã đến giờ hẹn — cổng NV đang mở sẽ tự tải lại giao diện mới.</>}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

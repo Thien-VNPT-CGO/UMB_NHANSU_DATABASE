@@ -161,6 +161,7 @@ import {
 import { BRANCHES, ERROR_CODES, SHIFT_TEMPLATES } from '@ubm/shared';
 import { SHEETS_DEFINITIONS } from './services/google-sheets-sync.service.js';
 import { buildZipStore } from './utils/zip-store.js';
+import { normalizeUiUpdateSchedule } from './utils/ui-update-schedule.js';
 import { lateFineFor } from './services/payroll.service.js';
 
 // Thời điểm process khởi động — đo uptime thật (không hardcode).
@@ -5768,19 +5769,35 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   // --- 9. BẢO TRÌ HỆ THỐNG ---
   // Trạng thái bảo trì PUBLIC cho cổng NV (không cần đăng nhập để hiện màn bảo trì).
-  // Chỉ lộ 3 trường an toàn: 2 cờ + thông điệp (không lộ cấu hình chi tiết từng phân hệ).
+  // Chỉ lộ các trường an toàn: 2 cờ bảo trì + thông điệp + lịch cập nhật giao diện
+  // (không lộ cấu hình chi tiết từng phân hệ).
   app.get('/public/portal-maintenance', async (req, res) => {
     try {
       const m: any = await adapter.getMaintenance().catch(() => ({}));
+      const uiAt = m?.ui_update_at ? new Date(m.ui_update_at).getTime() : NaN;
       res.json({
         system_maintenance: !!m?.system_maintenance,
         employee_web_maintenance: !!m?.employee_web_maintenance,
         maintenance_message: String(m?.maintenance_message || ''),
         updated_at: m?.updated_at || null,
+        // Hẹn giờ cập nhật giao diện/phần mềm: cổng NV đếm ngược rồi tự tải lại.
+        ui_update_enabled: !!m?.ui_update_enabled && Number.isFinite(uiAt),
+        ui_update_at: Number.isFinite(uiAt) ? new Date(uiAt).toISOString() : null,
+        ui_update_message: String(m?.ui_update_message || ''),
+        // Giờ server để client bù lệch đồng hồ máy (đếm ngược chính xác).
+        server_time: new Date().toISOString(),
       });
     } catch {
       // Fail-open: lỗi đọc thì coi như KHÔNG bảo trì để khỏi khóa nhầm toàn bộ NV.
-      res.json({ system_maintenance: false, employee_web_maintenance: false, maintenance_message: '' });
+      res.json({
+        system_maintenance: false,
+        employee_web_maintenance: false,
+        maintenance_message: '',
+        ui_update_enabled: false,
+        ui_update_at: null,
+        ui_update_message: '',
+        server_time: new Date().toISOString(),
+      });
     }
   });
 
@@ -5880,7 +5897,15 @@ async function send(d){document.getElementById('msg').textContent='⏳ Đang g�
 
   app.post('/admin/maintenance', authMiddleware, requireRole(['ADMIN']), validate({ body: opaqueConfigBody }), async (req: AuthenticatedRequest, res) => {
     try {
-      const updated = await adapter.updateMaintenance(req.body);
+      // Chuẩn hóa lịch cập nhật giao diện trước khi lưu: chỉ nhận thời điểm hợp lệ
+      // (ISO từ client), tắt thì xóa mốc để cổng NV không đếm ngược ma.
+      const body: any = { ...(req.body || {}) };
+      const norm = normalizeUiUpdateSchedule(body);
+      if (!norm.ok) {
+        return res.status(400).json({ error: 'INVALID_UI_UPDATE_TIME', message: norm.message });
+      }
+      Object.assign(body, norm.patch);
+      const updated = await adapter.updateMaintenance(body);
       await adapter.recordAuditLog({
         actor_id: req.user!.id,
         action: 'MAINTENANCE_MODE_UPDATED',
