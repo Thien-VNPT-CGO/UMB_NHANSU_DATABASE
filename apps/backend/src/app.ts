@@ -367,23 +367,6 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     next();
   });
 
-  // ===== GATE DEMO CHỈ-XEM (kiểm soát giao diện không đụng dữ liệu thật) =====
-  // Cổng demo chỉ là cùng 1 file nguồn biên dịch thêm biến VITE_UBM_PORTAL=demo —
-  // web demo gửi header 'X-UBM-PORTAL: demo' cho mọi fetch. Backend chặn mọi
-  // phương thức ghi (POST/PUT/PATCH/DELETE) để test giao diện không thể bấm
-  // nhầm hủy ca/duyệt phiếu/check-in trên dữ liệu thật; GET đọc bình thường,
-  // đăng nhập/refresh (/auth/) cho qua để vào được demo.
-  app.use((req, res, next) => {
-    if (String(req.headers['x-ubm-portal'] || '').trim().toLowerCase() !== 'demo') return next();
-    if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
-    if (req.path.startsWith('/auth/')) return next();
-    return res.status(403).json({
-      error: 'DEMO_READ_ONLY',
-      demo: true,
-      message: '🧪 Cổng DEMO chỉ xem — mọi thao tác ghi bị chặn để không ảnh hưởng dữ liệu thật. Thực hiện thao tác trên cổng chính thức.',
-    });
-  });
-
   // Health check & status
   app.get('/health', (req, res) => {
     let memory: any = null;

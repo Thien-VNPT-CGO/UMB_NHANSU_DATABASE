@@ -302,9 +302,6 @@ class RoleViewsErrorBoundary extends React.Component<{ tab: string; children: Re
   }
 }
 
-// Banner "DEMO chỉ xem" tự thêm vào DOM khi biên dịch biến VITE_UBM_PORTAL=demo.
-const IS_DEMO_BUILD = String((import.meta as any).env?.VITE_UBM_PORTAL || '').trim().toLowerCase() === 'demo';
-
 export function App() {
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
     try {
@@ -352,84 +349,6 @@ export function App() {
       if (v?.commit) setApiCommit(String(v.commit).slice(0, 7));
     }).catch(() => null);
   }, []);
-
-  // Quản lý theme sự kiện Halloween trên cổng /demo-admin/ hoặc tham số ?theme=halloween
-  const [isHalloweenTheme, setIsHalloweenTheme] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    const q = new URLSearchParams(window.location.search);
-    if (q.has('theme')) return q.get('theme') === 'halloween';
-    if (localStorage.getItem('ubm_theme') === 'halloween') return true;
-    if (localStorage.getItem('ubm_theme') === 'normal') return false;
-    return IS_DEMO_BUILD || window.location.pathname.startsWith('/demo');
-  });
-
-  useEffect(() => {
-    if (isHalloweenTheme) {
-      document.body.classList.add('theme-halloween');
-    } else {
-      document.body.classList.remove('theme-halloween');
-    }
-  }, [isHalloweenTheme]);
-
-  // Thử nghiệm giao diện DEMO: gắn nhãn nổi "🧪 DEMO — chỉ xem" để người dùng
-  // luôn biết đang ở cổng test, thao tác ghi bị backend chặn (403 DEMO_READ_ONLY).
-  // Cho phép bấm nút chuyển đổi theme Halloween / Gốc trực tiếp trên màn hình demo!
-  useEffect(() => {
-    const isDemo = IS_DEMO_BUILD || (typeof window !== 'undefined' && window.location.pathname.startsWith('/demo'));
-    if (!isDemo && !isHalloweenTheme) return;
-
-    const el = document.createElement('div');
-    el.setAttribute('data-ubm-demo-badge', '1');
-    el.style.position = 'fixed';
-    el.style.left = '16px';
-    el.style.bottom = '16px';
-    el.style.zIndex = '99999';
-    el.style.display = 'flex';
-    el.style.alignItems = 'center';
-    el.style.gap = '8px';
-
-    const pill = document.createElement('div');
-    pill.textContent = isHalloweenTheme ? '🎃 DEMO ADMIN HALLOWEEN — chỉ xem' : '🧪 DEMO ADMIN — chỉ xem';
-    Object.assign(pill.style, {
-      background: isHalloweenTheme ? 'linear-gradient(135deg, #ff7700, #b45309)' : 'linear-gradient(135deg, #b45309, #92400e)',
-      color: '#fff',
-      padding: '7px 16px',
-      borderRadius: '999px',
-      fontSize: '12.5px',
-      fontWeight: '800',
-      letterSpacing: '0.3px',
-      boxShadow: isHalloweenTheme ? '0 4px 20px rgba(255, 119, 0, 0.5)' : '0 4px 14px rgba(146,64,14,0.4)',
-      pointerEvents: 'none',
-      border: isHalloweenTheme ? '1px solid rgba(255, 255, 255, 0.3)' : 'none',
-    } as CSSStyleDeclaration);
-
-    const toggleBtn = document.createElement('button');
-    toggleBtn.textContent = isHalloweenTheme ? '🌙 Đổi Theme' : '🎃 Theme Ma Quái';
-    Object.assign(toggleBtn.style, {
-      background: '#180c2e',
-      color: '#ff9d42',
-      border: '1px solid #ff7700',
-      padding: '6px 12px',
-      borderRadius: '999px',
-      fontSize: '11px',
-      fontWeight: '700',
-      cursor: 'pointer',
-      boxShadow: '0 2px 10px rgba(0,0,0,0.3)',
-      transition: 'all 0.2s ease',
-    } as CSSStyleDeclaration);
-    toggleBtn.onclick = () => {
-      setIsHalloweenTheme((prev) => {
-        const next = !prev;
-        localStorage.setItem('ubm_theme', next ? 'halloween' : 'normal');
-        return next;
-      });
-    };
-
-    el.appendChild(pill);
-    el.appendChild(toggleBtn);
-    document.body.appendChild(el);
-    return () => { el.remove(); };
-  }, [isHalloweenTheme]);
 
   // Login Form State
   const [loginUsername, setLoginUsername] = useState('');
@@ -2172,12 +2091,11 @@ export function App() {
             <img src="/logo.jpg" alt="Ụm Bò Milk" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
           </div>
           <div>
-            <div style={{ fontWeight: 800, fontSize: '15px', color: 'var(--brand)', letterSpacing: '-0.3px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span>ỤM BÒ MILK</span>
-              {isHalloweenTheme && <span style={{ fontSize: '15px' }}>🎃</span>}
+            <div style={{ fontWeight: 800, fontSize: '15px', color: 'var(--brand)', letterSpacing: '-0.3px' }}>
+              ỤM BÒ MILK
             </div>
-            <div style={{ fontSize: '11px', color: isHalloweenTheme ? '#ff9d42' : 'var(--text-muted)', fontWeight: isHalloweenTheme ? 800 : 600 }}>
-              {isHalloweenTheme ? 'HALLOWEEN SPECIAL 🦇' : 'HR ADMIN PORTAL V5.1'}
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600 }}>
+              HR ADMIN PORTAL V5.1
             </div>
           </div>
         </div>
@@ -2284,7 +2202,7 @@ export function App() {
           {/* Header Title & Breadcrumb */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <span style={{ fontSize: '14px', fontWeight: 800, color: 'var(--text)', letterSpacing: '-0.2px' }}>
-              {isHalloweenTheme ? '🎃 UBM HRM • HALLOWEEN SPECIAL EDITION 🦇' : 'ỤM BÒ MILK • CỔNG QUẢN TRỊ HỆ THỐNG'}
+              ỤM BÒ MILK • CỔNG QUẢN TRỊ HỆ THỐNG
             </span>
             <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>|</span>
             <span style={{
@@ -2297,19 +2215,6 @@ export function App() {
             }}>
               {currentUser?.fullName} ({currentUser?.role})
             </span>
-            {isHalloweenTheme && (
-              <span style={{
-                fontSize: '11px',
-                fontWeight: 800,
-                color: '#fff',
-                backgroundColor: '#b45309',
-                padding: '3px 10px',
-                borderRadius: 'var(--radius-full)',
-                border: '1px solid #ff7700',
-              }}>
-                DEMO ADMIN - CHỈ XEM
-              </span>
-            )}
           </div>
 
           {/* Quick status & action buttons */}
@@ -2703,110 +2608,7 @@ export function App() {
           {/* MODULE 1: DASHBOARD TỔNG THỂ */}
           {/* ========================================================= */}
           {activeTab === 'dashboard' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              {/* HALLOWEEN ADMIN EVENT BANNER */}
-              {isHalloweenTheme && (
-                <div className="halloween-admin-banner">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                    <span style={{ fontSize: '32px' }}>🎃</span>
-                    <div>
-                      <div style={{ fontSize: '15px', fontWeight: 800, color: '#ff9d42', letterSpacing: '0.3px', textShadow: '0 0 12px rgba(255,119,0,0.5)' }}>
-                        ĐÊM HỘI HALLOWEEN: Nhân viên trực ca đêm nhận x1.5 kẹo thưởng & phụ cấp đêm
-                      </div>
-                      <div style={{ fontSize: '12px', color: '#c4b5de', marginTop: '2px' }}>
-                        Cổng Demo /demo-admin/ đang chạy giao diện sự kiện lễ hội Ụm Bò Milk • Chế độ chỉ xem
-                      </div>
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <span style={{
-                      padding: '5px 12px',
-                      borderRadius: '999px',
-                      backgroundColor: 'rgba(255, 119, 0, 0.25)',
-                      border: '1px solid #ff7700',
-                      color: '#ff9d42',
-                      fontSize: '12px',
-                      fontWeight: 800,
-                    }}>
-                      🦇 31/10 FESTIVAL ACTIVE
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {/* 4 HALLOWEEN GLOWING KPI CARDS */}
-              {isHalloweenTheme && (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
-                  <div className="halloween-kpi-card">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <div>
-                        <div style={{ fontSize: '30px', fontWeight: 900, color: '#ff7700', textShadow: '0 0 14px rgba(255,119,0,0.5)' }}>
-                          30/30
-                        </div>
-                        <div style={{ fontSize: '13px', fontWeight: 700, color: '#f3effc', marginTop: '4px' }}>
-                          Nhân Sự Trực Ca
-                        </div>
-                      </div>
-                      <span style={{ fontSize: '28px' }}>👥</span>
-                    </div>
-                    <div style={{ fontSize: '11px', color: '#34d399', marginTop: '10px', fontWeight: 700 }}>
-                      ✓ 100% Barista đã sẵn sàng
-                    </div>
-                  </div>
-
-                  <div className="halloween-kpi-card">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <div>
-                        <div style={{ fontSize: '30px', fontWeight: 900, color: '#a855f7', textShadow: '0 0 14px rgba(168,85,247,0.5)' }}>
-                          6
-                        </div>
-                        <div style={{ fontSize: '13px', fontWeight: 700, color: '#f3effc', marginTop: '4px' }}>
-                          Chi Nhánh Hoạt Động
-                        </div>
-                      </div>
-                      <span style={{ fontSize: '28px' }}>📍</span>
-                    </div>
-                    <div style={{ fontSize: '11px', color: '#c4b5de', marginTop: '10px', fontWeight: 600 }}>
-                      CN130, CN261, CN120, CN111...
-                    </div>
-                  </div>
-
-                  <div className="halloween-kpi-card">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <div>
-                        <div style={{ fontSize: '30px', fontWeight: 900, color: '#38bdf8', textShadow: '0 0 14px rgba(56,189,248,0.5)' }}>
-                          100%
-                        </div>
-                        <div style={{ fontSize: '13px', fontWeight: 700, color: '#f3effc', marginTop: '4px' }}>
-                          Điểm Danh Đúng Giờ
-                        </div>
-                      </div>
-                      <span style={{ fontSize: '28px' }}>⏰</span>
-                    </div>
-                    <div style={{ fontSize: '11px', color: '#34d399', marginTop: '10px', fontWeight: 700 }}>
-                      ✓ GPS chuẩn trong bán kính
-                    </div>
-                  </div>
-
-                  <div className="halloween-kpi-card">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <div>
-                        <div style={{ fontSize: '30px', fontWeight: 900, color: '#ff7700', textShadow: '0 0 14px rgba(255,119,0,0.5)' }}>
-                          31/10
-                        </div>
-                        <div style={{ fontSize: '13px', fontWeight: 700, color: '#f3effc', marginTop: '4px' }}>
-                          Túi Thưởng Bí Ngô
-                        </div>
-                      </div>
-                      <span style={{ fontSize: '28px' }}>🎃</span>
-                    </div>
-                    <div style={{ fontSize: '11px', color: '#ff9d42', marginTop: '10px', fontWeight: 700 }}>
-                      🍬 Quỹ thưởng ca đêm đã mở
-                    </div>
-                  </div>
-                </div>
-              )}
-
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
                   <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>1. Dashboard Tổng Thể Hệ Thống Ụm Bò Milk</h1>

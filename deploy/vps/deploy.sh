@@ -1,20 +1,12 @@
 #!/usr/bin/env bash
 # Deploy ban VPS (nhanh vps). Chay tren VPS, khong push di dau.
 # Domain: https://umbomilk-nhansu-diemdanh.duckdns.org/
-#   /           -> cong nhan vien
-#   /admin/     -> cong quan tri
-#   /demo/      -> DEMO cong nhan vien (chi xem, test giao dien su kien)
-#   /demo-admin/-> DEMO cong quan tri (chi xem)
-#   /api/       -> backend API + Socket.IO
-# Dung:
-#   bash deploy/vps/deploy.sh          -> deploy tuanan (chinh thuc + demo)
-#   bash deploy/vps/deploy.sh demo     -> chi build/publish binh DEMO (cap nhat
-#                                         giao dien moi de test, khong dong
-#                                         den 2 cong chinh thuc + backend)
+#   /          -> cong nhan vien
+#   /admin/    -> cong quan tri
+#   /api/      -> backend API + Socket.IO
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-DEPLOY_MODE="${1:-all}"
 API_BASE="https://umbomilk-nhansu-diemdanh.duckdns.org/api"
 
 echo "==> 1. Lay code moi nhat nhanh vps"
@@ -41,31 +33,10 @@ VITE_API_URL="${API_BASE}" npm run build:admin
 VITE_API_URL="${API_BASE}" npm run build:employee
 
 echo "==> 3. Publish static cho Nginx"
-if [ "$DEPLOY_MODE" = "all" ]; then
-  sudo mkdir -p /opt/ubm/admin-web /opt/ubm/employee-web
-  sudo rm -rf /opt/ubm/admin-web/* /opt/ubm/employee-web/*
-  sudo cp -r apps/admin-web/dist/* /opt/ubm/admin-web/
-  sudo cp -r apps/employee-web/dist/* /opt/ubm/employee-web/
-fi
-
-echo "==> 3b. Build binh DEMO (cung nguon, VITE_UBM_PORTAL=demo -> dist-demo)"
-VITE_API_URL="${API_BASE}" VITE_UBM_PORTAL=demo npm run build:admin
-VITE_API_URL="${API_BASE}" VITE_UBM_PORTAL=demo npm run build:employee
-sudo mkdir -p /opt/ubm/admin-web-demo /opt/ubm/employee-web-demo
-sudo rm -rf /opt/ubm/admin-web-demo/* /opt/ubm/employee-web-demo/*
-sudo cp -r apps/admin-web/dist-demo/* /opt/ubm/admin-web-demo/
-sudo cp -r apps/employee-web/dist-demo/* /opt/ubm/employee-web-demo/
-
-if [ "$DEPLOY_MODE" != "all" ]; then
-  # Che do demo: khong dong bien backend roi 2 cong chinh thuc.
-  if [ -f deploy/vps/install-demo-nginx.sh ]; then
-    sudo bash deploy/vps/install-demo-nginx.sh || true
-  fi
-  echo "XONG (MODE=demo):"
-  echo "  Demo NV:    https://umbomilk-nhansu-diemdanh.duckdns.org/demo/"
-  echo "  Demo Admin: https://umbomilk-nhansu-diemdanh.duckdns.org/demo-admin/"
-  exit 0
-fi
+sudo mkdir -p /opt/ubm/admin-web /opt/ubm/employee-web
+sudo rm -rf /opt/ubm/admin-web/* /opt/ubm/employee-web/*
+sudo cp -r apps/admin-web/dist/* /opt/ubm/admin-web/
+sudo cp -r apps/employee-web/dist/* /opt/ubm/employee-web/
 
 echo "==> 4. Build + chay backend (Docker)"
 test -f apps/backend/.env || { echo "THIEU apps/backend/.env (copy tu deploy/vps/.env.vps.example)"; exit 1; }
@@ -76,12 +47,9 @@ fi
 export GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "")
 docker compose up --build -d
 
-echo "==> 5. Dam bao Nginx proxy Socket.IO + cong DEMO"
+echo "==> 5. Dam bao Nginx proxy Socket.IO"
 if [ -f "deploy/vps/fix-socketio-nginx.sh" ]; then
   sudo bash deploy/vps/fix-socketio-nginx.sh || true
-fi
-if [ -f "deploy/vps/install-demo-nginx.sh" ]; then
-  sudo bash deploy/vps/install-demo-nginx.sh || true
 fi
 
 echo "==> 6. Kiem tra suc khoe"
@@ -90,5 +58,4 @@ curl -fsS http://localhost:4005/health | head -c 300; echo
 echo "XONG:"
 echo "  NV:    https://umbomilk-nhansu-diemdanh.duckdns.org/"
 echo "  Admin: https://umbomilk-nhansu-diemdanh.duckdns.org/admin/"
-echo "  Demo:  https://umbomilk-nhansu-diemdanh.duckdns.org/demo/ + /demo-admin/ (chi xem)"
 echo "  API:   https://umbomilk-nhansu-diemdanh.duckdns.org/api/health"

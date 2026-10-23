@@ -248,8 +248,6 @@ function MaintenanceScreen({ message, checking, onRetry }: { message: string; ch
   );
 }
 
-// Banner "DEMO chỉ xem" tự thêm vào DOM khi biên dịch biến VITE_UBM_PORTAL=demo.
-const IS_DEMO_BUILD = String((import.meta as any).env?.VITE_UBM_PORTAL || '').trim().toLowerCase() === 'demo';
 
 export function App() {
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(() => {
@@ -285,83 +283,6 @@ export function App() {
     }
   });
 
-  // Quản lý theme sự kiện Halloween trên cổng /demo/ hoặc tham số ?theme=halloween
-  const [isHalloweenTheme, setIsHalloweenTheme] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    const q = new URLSearchParams(window.location.search);
-    if (q.has('theme')) return q.get('theme') === 'halloween';
-    if (localStorage.getItem('ubm_theme') === 'halloween') return true;
-    if (localStorage.getItem('ubm_theme') === 'normal') return false;
-    return IS_DEMO_BUILD || window.location.pathname.startsWith('/demo');
-  });
-
-  useEffect(() => {
-    if (isHalloweenTheme) {
-      document.body.classList.add('theme-halloween');
-    } else {
-      document.body.classList.remove('theme-halloween');
-    }
-  }, [isHalloweenTheme]);
-
-  // Cốt thử giao diện DEMO: gắn nhãn nổi "🧪 DEMO — chỉ xem" (cá thể biết đang ở
-  // cổng test; thao tác ghi — check-in/đăng ký OFF — bị backend chặn).
-  // Cho phép bấm nút chuyển đổi theme Halloween / Gốc trực tiếp trên màn hình demo!
-  useEffect(() => {
-    const isDemo = IS_DEMO_BUILD || (typeof window !== 'undefined' && window.location.pathname.startsWith('/demo'));
-    if (!isDemo && !isHalloweenTheme) return;
-
-    const el = document.createElement('div');
-    el.setAttribute('data-ubm-demo-badge', '1');
-    el.style.position = 'fixed';
-    el.style.left = '12px';
-    el.style.bottom = '12px';
-    el.style.zIndex = '99999';
-    el.style.display = 'flex';
-    el.style.alignItems = 'center';
-    el.style.gap = '8px';
-
-    const pill = document.createElement('div');
-    pill.textContent = isHalloweenTheme ? '🎃 DEMO HALLOWEEN — chỉ xem' : '🧪 DEMO — chỉ xem';
-    Object.assign(pill.style, {
-      background: isHalloweenTheme ? 'linear-gradient(135deg, #ff7700, #b45309)' : 'linear-gradient(135deg, #b45309, #92400e)',
-      color: '#fff',
-      padding: '6px 14px',
-      borderRadius: '999px',
-      fontSize: '12.5px',
-      fontWeight: '800',
-      letterSpacing: '0.3px',
-      boxShadow: isHalloweenTheme ? '0 4px 18px rgba(255, 119, 0, 0.5)' : '0 4px 14px rgba(146,64,14,0.4)',
-      pointerEvents: 'none',
-      border: isHalloweenTheme ? '1px solid rgba(255, 255, 255, 0.3)' : 'none',
-    } as CSSStyleDeclaration);
-
-    const toggleBtn = document.createElement('button');
-    toggleBtn.textContent = isHalloweenTheme ? '🌙 Đổi Theme' : '🎃 Theme Ma Quái';
-    Object.assign(toggleBtn.style, {
-      background: '#1e1338',
-      color: '#ff9d42',
-      border: '1px solid #ff7700',
-      padding: '5px 10px',
-      borderRadius: '999px',
-      fontSize: '11px',
-      fontWeight: '700',
-      cursor: 'pointer',
-      boxShadow: '0 2px 10px rgba(0,0,0,0.3)',
-      transition: 'all 0.2s ease',
-    } as CSSStyleDeclaration);
-    toggleBtn.onclick = () => {
-      setIsHalloweenTheme((prev) => {
-        const next = !prev;
-        localStorage.setItem('ubm_theme', next ? 'halloween' : 'normal');
-        return next;
-      });
-    };
-
-    el.appendChild(pill);
-    el.appendChild(toggleBtn);
-    document.body.appendChild(el);
-    return () => { el.remove(); };
-  }, [isHalloweenTheme]);
 
   // Boot: phiên cũ còn token thì XÁC MINH lại với server — tài khoản chưa đổi
   // PIN thì bắt đổi ngay, không cho vào cổng (reload không lách được).
@@ -3531,45 +3452,36 @@ export function App() {
   const { shift: currentShift, all: todayShiftList, phase: currentShiftPhase } = getCurrentShift();
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: isHalloweenTheme ? '#120b24' : '#FFF8F4' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#FFF8F4' }}>
       {/* HEADER */}
       <header style={{
         padding: '14px 16px',
-        backgroundColor: isHalloweenTheme ? 'rgba(24, 14, 46, 0.95)' : '#FFFFFF',
-        borderBottom: isHalloweenTheme ? '1px solid #38245c' : '1px solid var(--border)',
+        backgroundColor: '#FFFFFF',
+        borderBottom: '1px solid var(--border)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
         position: 'sticky',
         top: 0,
         zIndex: 50,
-        boxShadow: isHalloweenTheme ? '0 4px 16px rgba(0,0,0,0.5)' : '0 2px 8px rgba(0,0,0,0.03)',
+        boxShadow: '0 2px 8px rgba(0,0,0,0.03)',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <div style={{
             width: '38px',
             height: '38px',
             borderRadius: '10px',
-            backgroundColor: isHalloweenTheme ? '#1e1338' : '#FFFFFF',
-            border: isHalloweenTheme ? '1.5px solid #ff7700' : '1.5px solid var(--border)',
-            overflow: 'visible',
-            position: 'relative',
+            backgroundColor: '#FFFFFF',
+            border: '1.5px solid var(--border)',
+            overflow: 'hidden',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
           }}>
-            <img src="/logo.jpg" alt="Ụm Bò Milk" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '8px' }} />
-            {isHalloweenTheme && (
-              <span className="halloween-float" style={{ position: 'absolute', top: '-10px', right: '-8px', fontSize: '18px', zIndex: 2 }} title="Halloween Edition">
-                🧙‍♀️
-              </span>
-            )}
+            <img src="/logo.jpg" alt="Ụm Bò Milk" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
           </div>
           <div>
-            <div style={{ fontWeight: 800, fontSize: '14px', color: 'var(--text)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span>{employee?.full_name}</span>
-              {isHalloweenTheme && <span style={{ fontSize: '14px' }}>🎃</span>}
-            </div>
+            <div style={{ fontWeight: 800, fontSize: '14px', color: 'var(--text)' }}>{employee?.full_name}</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span className={`badge ${isProbation ? 'badge-brand' : 'badge-success'}`} style={{ fontSize: '10px', padding: '2px 6px' }}>
                 {isProbation ? 'Thử việc (12 ngày)' : 'Chính thức'}
@@ -3825,45 +3737,6 @@ export function App() {
         {/* ========================================================= */}
         {activeTab === 'home' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            {/* HALLOWEEN EVENT BANNER & QUICK ACTIONS */}
-            {isHalloweenTheme && (
-              <div className="halloween-banner halloween-glow">
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{ fontSize: '26px' }} className="halloween-float">🎃</span>
-                    <div>
-                      <div style={{ fontSize: '15px', fontWeight: 900, color: '#ff9d42', letterSpacing: '0.5px', textShadow: '0 0 12px rgba(255,119,0,0.6)' }}>
-                        HALLOWEEN NIGHT • ỤM BÒ MILK 🦇
-                      </div>
-                      <div style={{ fontSize: '11.5px', color: '#c4b5de', marginTop: '2px' }}>
-                        Check-in đêm hội nhận kẹo & thưởng x1.5 ca đêm ma quái!
-                      </div>
-                    </div>
-                  </div>
-                  <span style={{ fontSize: '22px' }} className="halloween-float">👻</span>
-                </div>
-
-                {/* 3 Thẻ hành động nhanh */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', marginTop: '8px' }}>
-                  <div className="halloween-action-card" onClick={() => setActiveTab('attendance')}>
-                    <div style={{ fontSize: '24px', marginBottom: '4px' }}>👻</div>
-                    <div style={{ fontSize: '12px', fontWeight: 800, color: '#ff9d42' }}>Điểm Danh</div>
-                    <div style={{ fontSize: '10px', color: '#c4b5de' }}>Ma quái (GPS)</div>
-                  </div>
-                  <div className="halloween-action-card" onClick={() => setActiveTab('schedule')}>
-                    <div style={{ fontSize: '24px', marginBottom: '4px' }}>🎃</div>
-                    <div style={{ fontSize: '12px', fontWeight: 800, color: '#ff9d42' }}>Lịch Ca Làm</div>
-                    <div style={{ fontSize: '10px', color: '#c4b5de' }}>Đêm hội 31/10</div>
-                  </div>
-                  <div className="halloween-action-card" onClick={() => showToast('🍬 Bạn đang có 500 Pts Kẹo Thưởng Halloween! Điểm danh đủ ca đêm để nhận thêm kẹo!')}>
-                    <div style={{ fontSize: '24px', marginBottom: '4px' }}>🍬</div>
-                    <div style={{ fontSize: '12px', fontWeight: 800, color: '#ff9d42' }}>Túi Kẹo Thưởng</div>
-                    <div style={{ fontSize: '10.5px', color: '#34d399', fontWeight: 800 }}>500 Pts</div>
-                  </div>
-                </div>
-              </div>
-            )}
-
             {/* BANNER KIỂM TRA ĐẦU RA THỬ VIỆC (Meet vấn đáp + trắc nghiệm) */}
             {isProbation && probationAssessment && !probationAssessment?.meetDone && (() => {
               const a = probationAssessment;
