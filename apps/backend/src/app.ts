@@ -490,6 +490,12 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       readiness,
       sheets: { mode: sheets.mode, connected: sheets.connected },
       sync: { lastPulledAt, lagMs: syncLagMs, staleAfterMs, stale: syncStale },
+      // Chẩn đoán realtime: webhook chưa cấu hình secret thì sửa Sheet chỉ tới
+      // web theo nhịp pull (tối đa ~syncIntervalMs), không phải 1-2s.
+      realtime: {
+        syncIntervalMs,
+        webhookConfigured: !!process.env.SHEETS_WEBHOOK_SECRET,
+      },
       queue: { pendingWrites, backlog: queueBacklog },
       uptimeSeconds: Math.floor((Date.now() - SERVER_STARTED_AT) / 1000),
     });
