@@ -44,6 +44,11 @@ test -f apps/backend/.env || { echo "THIEU apps/backend/.env (copy tu deploy/vps
 if [ -f "deploy/vps/sanitize-env.cjs" ]; then
   node deploy/vps/sanitize-env.cjs || true
 fi
+
+echo "==> 4b. Chuan bi volume du lieu ben vung (snapshot + journal)"
+mkdir -p data
+# Container backend chay user uid 1000; bind mount phai ghi duoc.
+sudo chown -R 1000:1000 data 2>/dev/null || chown -R 1000:1000 data 2>/dev/null || true
 export GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "")
 docker compose up --build -d
 
