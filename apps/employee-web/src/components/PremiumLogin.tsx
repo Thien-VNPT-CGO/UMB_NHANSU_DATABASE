@@ -1,13 +1,31 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import {
+  LoginThemeId,
+  THEME_LIST,
+  getThemeConfig,
+  getLunarZodiacInfo,
+  detectCurrentHolidayTheme,
+} from './loginThemeData';
+import { TetCountdownAndFireworks } from './TetCountdownAndFireworks';
+import { ThemeAmbientEffects } from './ThemeAmbientEffects';
 
 /**
  * PremiumLogin — Màn hình đăng nhập SĐT + PIN 6 số cho cổng nhân viên UBM.
- * Senior UI/UX: tông HỒNG ban đầu (nền kem #FFF8F4 + brand #E85D92, success Emerald),
- * card 20px bo mềm, đổ bóng đa tầng, responsive mobile -> desktop,
- * zero external dependencies (chỉ React).
+ * Hỗ trợ toàn diện 10 chủ đề sự kiện:
+ * 1. Noel (Giáng sinh)
+ * 2. Văn Hóa Việt Nam (Trống đồng, hoa sen, nón lá)
+ * 3. Tết theo từng năm (Realtime theo con giáp và Can Chi)
+ * 4. 30/4 (Giải phóng miền Nam - Thống nhất đất nước)
+ * 5. Quốc tế thiếu nhi (1/6)
+ * 6. Quốc tế phụ nữ (8/3)
+ * 7. Quốc khánh Việt Nam (2/9)
+ * 8. Phụ nữ Việt Nam (20/10)
+ * 9. Halloween (Đêm huyền bí)
+ * 10. Tiêu chuẩn (Hồng UBM nguyên bản)
+ * + Chế độ "Tự động theo lịch" (Realtime Calendar Auto Detection)
  *
  * Luồng 3 bước: phone -> pin (6 ô) -> success (SVG tick + confetti canvas).
- * Mặc định demo PIN đúng là `123456` khi không truyền `onLogin` (test ngay không cần backend).
+ * Giữ nguyên 100% logic bảo mật, tự kiểm tra SĐT, auto verify PIN, kiểm tra bản cập nhật.
  */
 
 export interface PremiumLoginProps {
@@ -24,6 +42,23 @@ export interface PremiumLoginProps {
   onCheckUpdate?: () => Promise<'new' | 'same' | 'fail'>;
   demoPin?: string;
   pinLength?: number;
+  /** 'auto' hoặc themeId cụ thể */
+  eventTheme?: LoginThemeId;
+  /**
+   * Lịch giao diện sự kiện do Admin cấu hình.
+   * Có mặt => khóa giao diện theo lịch: trong khoảng sự kiện dùng đúng theme,
+   * ngoài khoảng (trước khi bắt đầu / sau khi kết thúc) dùng giao diện mặc định.
+   */
+  scheduledTheme?: ScheduledLoginTheme | null;
+}
+
+export interface ScheduledLoginTheme {
+  enabled: boolean;
+  event: LoginThemeId;
+  startAt: number;
+  endAt: number;
+  /** Chênh lệch giờ server - giờ máy (ms) để tính mốc chính xác. */
+  serverOffsetMs: number;
 }
 
 const DEMO_DEFAULT_PIN = '123456';
@@ -33,7 +68,6 @@ function normalizePhone(raw: string): string {
 }
 
 function isValidPhone(digits: string): boolean {
-  // Cho phép 9-11 số: 9 số (thiếu 0), 10 số (0xxx), 11-12 số (84xxx)
   return digits.length >= 9 && digits.length <= 12;
 }
 
@@ -47,7 +81,71 @@ export function PremiumLogin({
   onCheckUpdate,
   demoPin = DEMO_DEFAULT_PIN,
   pinLength = 6,
+  eventTheme = 'auto',
+  scheduledTheme = null,
 }: PremiumLoginProps) {
+  // Theme state: lưu lựa chọn người dùng vào localStorage
+  const [selectedThemeId, setSelectedThemeId] = useState<LoginThemeId>(() => {
+    try {
+      const saved = localStorage.getItem('ubm_login_theme') as LoginThemeId;
+      if (saved && THEME_LIST.some((t) => t.id === saved)) return saved;
+    } catch { /* ignore */ }
+    return eventTheme;
+  });
+
+  const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
+
+  // Đồng hồ nội bộ để tự đổi giao diện đúng mốc bắt đầu/kết thúc sự kiện mà
+  // không cần tải lại trang. Chỉ tick khi Admin có bật lịch sự kiện.
+  const [scheduleNow, setScheduleNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!scheduledTheme?.enabled) return;
+    setScheduleNow(Date.now());
+    const t = setInterval(() => setScheduleNow(Date.now()), 15_000);
+    return () => clearInterval(t);
+  }, [
+    scheduledTheme?.enabled,
+    scheduledTheme?.event,
+    scheduledTheme?.startAt,
+    scheduledTheme?.endAt,
+  ]);
+
+  const scheduledWindowValid = !!scheduledTheme?.enabled
+    && Number.isFinite(scheduledTheme.startAt)
+    && Number.isFinite(scheduledTheme.endAt)
+    && scheduledTheme.endAt > scheduledTheme.startAt;
+
+  // Trong khoảng sự kiện -> ép đúng theme Admin chọn; trước/sau khoảng ->
+  // giao diện mặc định (standard). Không để localStorage ghi đè.
+  const scheduledServerNow = scheduleNow + (scheduledTheme?.serverOffsetMs || 0);
+  const adminThemeId: LoginThemeId | null = scheduledTheme?.enabled
+    ? (scheduledWindowValid
+      && scheduledServerNow >= scheduledTheme!.startAt
+      && scheduledServerNow < scheduledTheme!.endAt
+      ? scheduledTheme!.event
+      : 'standard')
+    : null;
+  const effectiveThemeId: LoginThemeId = adminThemeId ?? selectedThemeId;
+  const themeLockedByAdmin = adminThemeId !== null;
+
+  useEffect(() => {
+    if (themeLockedByAdmin) setIsThemeMenuOpen(false);
+  }, [themeLockedByAdmin]);
+
+  // Lấy cấu hình theme hiện tại (nếu chọn 'auto' thì tự động tính theo ngày hôm nay)
+  const today = new Date();
+  const zodiac = getLunarZodiacInfo(today);
+  const theme = getThemeConfig(effectiveThemeId, today);
+  const isAuto = effectiveThemeId === 'auto';
+
+  const selectTheme = (id: LoginThemeId) => {
+    setSelectedThemeId(id);
+    setIsThemeMenuOpen(false);
+    try {
+      localStorage.setItem('ubm_login_theme', id);
+    } catch { /* ignore */ }
+  };
+
   const [step, setStep] = useState<'phone' | 'pin' | 'success'>('phone');
   const [phone, setPhone] = useState(() => normalizePhone(initialPhone));
   const [phoneTouched, setPhoneTouched] = useState(false);
@@ -61,8 +159,6 @@ export function PremiumLogin({
   const confettiRef = useRef<HTMLCanvasElement | null>(null);
   const successTimer = useRef<any>(null);
   const phoneCheckSeq = useRef(0);
-  // SĐT đã kiểm tra xong / đã vào màn PIN — quay lại "Đổi số khác" thì giữ nguyên
-  // số cũ trên ô nhập và KHÔNG tự kiểm tra lại cho tới khi user sửa số.
   const checkedPhoneRef = useRef<string | null>(null);
 
   // Đồng bộ lỗi từ parent (API thật báo sai PIN...)
@@ -92,7 +188,7 @@ export function PremiumLogin({
     setTimeout(() => inputRefs.current[0]?.focus(), 80);
   }, [phone, pinLength]);
 
-  // Tự động kiểm tra SĐT trong CSDL khi nhập đủ số (không cần bấm nút).
+  // Tự động kiểm tra SĐT trong CSDL khi nhập đủ số
   const runPhoneCheck = useCallback(async () => {
     if (!isValidPhone(phone)) return;
     const seq = ++phoneCheckSeq.current;
@@ -103,7 +199,6 @@ export function PremiumLogin({
       if (onCheckPhone) {
         exists = await onCheckPhone(phone);
       } else {
-        // Demo mode: SĐT hợp lệ là tồn tại.
         await new Promise((r) => setTimeout(r, 600));
         exists = true;
       }
@@ -121,9 +216,6 @@ export function PremiumLogin({
     }
   }, [phone, onCheckPhone, goToPin]);
 
-  // Debounce: ngừng gõ 700ms mới gọi kiểm tra (tránh spam API từng ký tự).
-  // Bỏ qua khi số chưa thay đổi kể từ lần kiểm tra trước (VD: vừa bấm "Đổi số
-  // khác" quay lại — giữ số cũ trên ô nhập, không đẩy về màn PIN ngay).
   useEffect(() => {
     if (step !== 'phone' || !isValidPhone(phone)) {
       setCheckingPhone(false);
@@ -135,7 +227,7 @@ export function PremiumLogin({
     return () => clearTimeout(t);
   }, [phone, step, runPhoneCheck]);
 
-  // ---- Confetti thuần Canvas, zero lib ----
+  // Confetti động theo bảng màu của từng chủ đề
   const fireConfetti = useCallback(() => {
     const canvas = confettiRef.current;
     if (!canvas) return;
@@ -144,10 +236,10 @@ export function PremiumLogin({
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const w = (canvas.width = Math.floor(canvas.offsetWidth * dpr));
     const h = (canvas.height = Math.floor(canvas.offsetHeight * dpr));
-    const colors = ['#E85D92', '#F472B6', '#F9A8D4', '#10B981', '#34D399', '#F59E0B', '#FFFFFF'];
+    const colors = theme.confettiColors;
     const cx = w / 2;
     const cy = h * 0.38;
-    const parts = Array.from({ length: 140 }, () => {
+    const parts = Array.from({ length: 150 }, () => {
       const angle = Math.random() * Math.PI * 2;
       const speed = (4 + Math.random() * 9) * dpr;
       return {
@@ -192,7 +284,7 @@ export function PremiumLogin({
     cancelAnimationFrame(raf);
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, []);
+  }, [theme.confettiColors]);
 
   const doVerify = useCallback(async (fullPin: string) => {
     if (verifying || loading) return;
@@ -202,7 +294,6 @@ export function PremiumLogin({
       if (onLogin) {
         await onLogin(phone, fullPin);
       } else {
-        // Demo mode: PIN đúng = demoPin (mặc định 123456)
         await new Promise((r) => setTimeout(r, 650));
         if (fullPin !== demoPin) throw new Error('demo-invalid');
       }
@@ -210,13 +301,10 @@ export function PremiumLogin({
       setTimeout(fireConfetti, 60);
       successTimer.current = setTimeout(() => onSuccess?.(phone), 1900);
     } catch (e: any) {
-      // Tài khoản bắt đổi PIN (kỳ 1-5 / PIN legacy / PIN mới reset): parent chuyển
-      // sang màn đổi PIN, không hiện lỗi ở đây.
       if (e?.message === 'MUST_CHANGE_PIN' || e?.code === 'MUST_CHANGE_PIN') return;
       const msg = e?.message === 'demo-invalid'
         ? `Mã PIN chưa đúng (demo: ${demoPin}). Nhập lại nhé!`
         : (e?.message || 'Mã PIN chưa đúng. Vui lòng thử lại!');
-      // Nếu parent tự xử lý lỗi (truyền externalError), không set ở đây để tránh đúp
       if (!onLogin) setError(msg);
       else if (!externalError) setError(msg);
       setShakeKey((k) => k + 1);
@@ -227,7 +315,6 @@ export function PremiumLogin({
     }
   }, [verifying, loading, onLogin, phone, demoPin, pinLength, fireConfetti, onSuccess, externalError]);
 
-  // Tự động verify khi điền đủ ô cuối
   useEffect(() => {
     if (step !== 'pin') return;
     if (pin.every((d) => d !== '') && pin.length === pinLength) {
@@ -285,119 +372,576 @@ export function PremiumLogin({
     : phone;
 
   return (
-    <div className="pl-root">
+    <div
+      className="pl-root"
+      style={{
+        background: theme.bgGradient,
+      }}
+    >
       <style>{`
-        .pl-root { min-height: 100vh; min-height: 100dvh; display: flex; align-items: center; justify-content: center; padding: 20px 16px; position: relative; overflow: hidden;
-          background: radial-gradient(1000px 480px at 50% -8%, rgba(232,93,146,.16), transparent 60%), radial-gradient(800px 420px at 50% 115%, rgba(245,158,11,.10), transparent 60%), linear-gradient(180deg, #FFF8F4 0%, #FDF0F4 55%, #FBE7EE 100%); color: #273142;
-          font-family: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
-        .pl-bg-grid { position: absolute; inset: 0; pointer-events: none; opacity: .6;
-          background-image: linear-gradient(rgba(232,93,146,.07) 1px, transparent 1px), linear-gradient(90deg, rgba(232,93,146,.07) 1px, transparent 1px);
-          background-size: 44px 44px; mask-image: radial-gradient(ellipse 90% 70% at 50% 40%, black 30%, transparent 75%); }
-        .pl-orb { position: absolute; border-radius: 50%; filter: blur(70px); pointer-events: none; }
-        .pl-card { position: relative; width: 100%; max-width: 420px; border-radius: 20px; padding: 28px 26px 24px;
+        .pl-root {
+          min-height: 100vh;
+          min-height: 100dvh;
+          width: 100%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 24px 16px;
+          position: relative;
+          overflow: hidden;
+          font-family: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+          transition: background .4s ease;
+          box-sizing: border-box;
+        }
+
+        .pl-card {
+          position: relative;
+          width: 100%;
+          max-width: 430px;
+          border-radius: 26px;
+          padding: 26px 24px 22px;
+          transition: transform .25s ease, box-shadow .25s ease, background .25s ease;
+          z-index: 10;
+          box-sizing: border-box;
+        }
+
+        /* Floating Theme Switcher Button */
+        .pl-theme-toggle {
+          position: absolute;
+          top: 14px;
+          right: 14px;
+          z-index: 40;
+          background: rgba(255, 255, 255, 0.94);
+          border: 1px solid rgba(0, 0, 0, 0.12);
+          box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16);
+          border-radius: 999px;
+          padding: 6px 14px;
+          font-size: 12px;
+          font-weight: 800;
+          color: #1E293B;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          cursor: pointer;
+          backdrop-filter: blur(10px);
+          transition: all .18s ease;
+        }
+        .pl-theme-toggle:hover {
+          transform: translateY(-1.5px);
           background: #FFFFFF;
-          border: 1px solid #F0E2DE;
-          box-shadow: 0 1px 0 rgba(255,255,255,.9) inset, 0 20px 50px rgba(157,23,77,.12), 0 8px 20px rgba(232,93,146,.14), 0 0 0 8px rgba(232,93,146,.05); }
-        .pl-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
-        .pl-logo { width: 48px; height: 48px; border-radius: 16px; overflow: hidden; flex-shrink: 0;
-          background: linear-gradient(135deg,#E85D92,#D6457E); display: flex; align-items: center; justify-content: center;
-          font-weight: 800; font-size: 20px; color: #fff; box-shadow: 0 8px 20px rgba(232,93,146,.40); border: 2px solid #F8DDE7; }
-        .pl-logo img { width: 100%; height: 100%; object-fit: cover; }
-        .pl-steps { display: flex; gap: 6px; margin: 14px 0 18px; }
-        .pl-stepbar { height: 4px; flex: 1; border-radius: 999px; background: #F5D9E3; overflow: hidden; }
-        .pl-stepbar > i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg,#E85D92,#10B981); transition: width .45s cubic-bezier(.16,1,.3,1); }
-        .pl-title { font-size: 22px; font-weight: 800; letter-spacing: -.02em; margin: 0 0 6px; color: #273142; }
-        .pl-sub { font-size: 13px; color: #6B7280; margin: 0 0 18px; line-height: 1.55; }
-        .pl-field-label { font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #9D174D; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
-        .pl-phone-wrap { display: flex; align-items: stretch; gap: 0; border-radius: 16px; overflow: hidden; border: 1.5px solid #F0E2DE; background: #FFF8F4; transition: border-color .2s, box-shadow .2s; }
-        .pl-phone-wrap:focus-within { border-color: #E85D92; box-shadow: 0 0 0 4px rgba(232,93,146,.15); }
-        .pl-phone-wrap.pl-err { border-color: #EF4444; box-shadow: 0 0 0 4px rgba(239,68,68,.12); }
-        .pl-prefix { display: flex; align-items: center; gap: 6px; padding: 0 14px; font-weight: 800; font-size: 16px; color: #9D174D; background: #F8DDE7; border-right: 1px solid #F0E2DE; white-space: nowrap; }
-        .pl-phone-input { flex: 1; min-width: 0; border: none; outline: none; background: transparent; color: #273142; font-size: 19px; font-weight: 700; letter-spacing: .08em; padding: 15px 14px; }
-        .pl-phone-input::placeholder { color: #B6BFC9; font-weight: 500; letter-spacing: .02em; }
-        .pl-hint { font-size: 12px; margin-top: 8px; min-height: 18px; color: #DC2626; font-weight: 600; }
-        .pl-btn { width: 100%; border: none; cursor: pointer; border-radius: 16px; padding: 15px 16px; font-size: 15px; font-weight: 800; letter-spacing: .01em; color: #fff; margin-top: 14px;
-          background: linear-gradient(135deg, #E85D92 0%, #D6457E 100%);
-          box-shadow: 0 10px 24px rgba(232,93,146,.35), 0 2px 6px rgba(214,69,126,.25), 0 1px 0 rgba(255,255,255,.25) inset;
-          transition: transform .12s ease, box-shadow .2s ease, filter .2s ease; display: flex; align-items: center; justify-content: center; gap: 8px; }
-        .pl-btn:hover:not(:disabled) { filter: brightness(1.05); box-shadow: 0 14px 32px rgba(232,93,146,.45), 0 1px 0 rgba(255,255,255,.25) inset; transform: translateY(-1px); }
-        .pl-btn:active:not(:disabled) { transform: translateY(1px) scale(.99); background: #D6457E; }
-        .pl-btn:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
-        .pl-btn.pl-loading { pointer-events: none; opacity: .8; }
-        .pl-spinner { width: 17px; height: 17px; border-radius: 50%; border: 2.5px solid rgba(255,255,255,.4); border-top-color: #fff; animation: pl-spin .7s linear infinite; }
-        @keyframes pl-spin { to { transform: rotate(360deg); } }
-        .pl-pin-row { display: flex; gap: 10px; justify-content: center; margin: 6px 0 4px; }
-        .pl-pin-box { width: 48px; height: 56px; text-align: center; font-size: 24px; font-weight: 800; color: #273142; caret-color: #E85D92;
-          background: #FFF8F4; border: 1.5px solid #F0E2DE; border-radius: 16px; outline: none;
-          transition: border-color .18s, box-shadow .18s, transform .12s, background .18s; }
-        .pl-pin-box:focus { border-color: #E85D92; box-shadow: 0 0 0 4px rgba(232,93,146,.15); transform: translateY(-2px); background: #FFFFFF; }
-        .pl-pin-box.pl-filled { border-color: #10B981; background: #DFF5E8; }
-        .pl-pin-row.pl-err .pl-pin-box { border-color: #EF4444; background: #FEE2E2; }
-        @keyframes pl-shake { 0%,100% { transform: translateX(0); } 15% { transform: translateX(-9px); } 30% { transform: translateX(8px); } 45% { transform: translateX(-6px); } 60% { transform: translateX(5px); } 75% { transform: translateX(-3px); } 90% { transform: translateX(2px); } }
+          box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+        }
+
+        /* Theme Modal Backdrop & Panel */
+        .pl-theme-backdrop {
+          position: fixed;
+          inset: 0;
+          background: rgba(15, 23, 42, 0.65);
+          backdrop-filter: blur(6px);
+          z-index: 999;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 16px;
+          animation: pl-fade-in .2s ease-out;
+        }
+        @keyframes pl-fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+        .pl-theme-modal {
+          background: #FFFFFF;
+          border-radius: 24px;
+          max-width: 460px;
+          width: 100%;
+          max-height: 88vh;
+          overflow-y: auto;
+          box-shadow: 0 25px 60px rgba(0, 0, 0, 0.35);
+          padding: 22px 20px 20px;
+          position: relative;
+          animation: pl-scale-up .25s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        @keyframes pl-scale-up { from { opacity: 0; transform: scale(0.92); } to { opacity: 1; transform: scale(1); } }
+
+        .pl-theme-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+          gap: 10px;
+          margin-top: 14px;
+        }
+
+        .pl-theme-item {
+          display: flex;
+          align-items: flex-start;
+          gap: 10px;
+          padding: 12px 14px;
+          border-radius: 16px;
+          border: 1.5px solid #E2E8F0;
+          background: #F8FAFC;
+          cursor: pointer;
+          text-align: left;
+          transition: all .15s ease;
+        }
+        .pl-theme-item:hover {
+          border-color: #38BDF8;
+          background: #F0F9FF;
+          transform: translateY(-1px);
+        }
+        .pl-theme-item.active {
+          border-color: #0284C7;
+          background: #E0F2FE;
+          box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.15);
+        }
+
+        /* Ambient elements */
+        .pl-bg-stars {
+          position: absolute;
+          inset: 0;
+          pointer-events: none;
+          background-image: 
+            radial-gradient(1.5px 1.5px at 15% 12%, currentColor 100%, transparent),
+            radial-gradient(2px 2px at 85% 18%, currentColor 100%, transparent),
+            radial-gradient(1.5px 1.5px at 75% 45%, currentColor 100%, transparent),
+            radial-gradient(2px 2px at 12% 70%, currentColor 100%, transparent),
+            radial-gradient(1.5px 1.5px at 90% 82%, currentColor 100%, transparent),
+            radial-gradient(2.5px 2.5px at 28% 88%, currentColor 100%, transparent),
+            radial-gradient(1px 1px at 50% 25%, #FFFFFF 100%, transparent);
+          opacity: .85;
+          animation: pl-twinkle 4s ease-in-out infinite alternate;
+        }
+        @keyframes pl-twinkle { 0% { opacity: .5; } 100% { opacity: 1; } }
+
+        .pl-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; position: relative; }
+        .pl-logo {
+          width: 52px;
+          height: 52px;
+          border-radius: 18px;
+          overflow: hidden;
+          flex-shrink: 0;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: #FFFFFF;
+          border: 2px solid ${theme.logoBorderColor || '#F0E2DE'};
+          box-shadow: 0 8px 20px ${theme.logoGlowColor || 'rgba(0, 0, 0, 0.12)'};
+          transition: border-color .25s ease, box-shadow .25s ease;
+        }
+        .pl-logo img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+          display: block;
+        }
+
+        .pl-title {
+          font-size: 23px;
+          font-weight: 900;
+          letter-spacing: -.02em;
+          margin: 0 0 6px;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .pl-sub {
+          font-size: 13.5px;
+          color: #64748B;
+          margin: 0 0 16px;
+          line-height: 1.55;
+          font-weight: 500;
+        }
+
+        .pl-field-label {
+          font-size: 12px;
+          font-weight: 800;
+          letter-spacing: .06em;
+          text-transform: uppercase;
+          margin-bottom: 8px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+
+        .pl-phone-wrap {
+          display: flex;
+          align-items: stretch;
+          border-radius: 18px;
+          overflow: hidden;
+          background: #FFFFFF;
+          border: 2px solid #E2E8F0;
+          transition: border-color .2s, box-shadow .2s;
+          position: relative;
+        }
+        .pl-phone-wrap:focus-within {
+          border-color: ${theme.accentColor};
+          box-shadow: 0 0 0 4px rgba(0, 0, 0, 0.1);
+        }
+        .pl-phone-wrap.pl-err {
+          border-color: #EF4444;
+          box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.15);
+        }
+
+        .pl-prefix {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 0 14px;
+          font-weight: 900;
+          font-size: 16px;
+          white-space: nowrap;
+          border-right: 1.5px solid rgba(0,0,0,0.06);
+          transition: background .2s, color .2s;
+        }
+
+        .pl-phone-input {
+          flex: 1;
+          min-width: 0;
+          border: none;
+          outline: none;
+          background: transparent;
+          color: #1E293B;
+          font-size: 20px;
+          font-weight: 800;
+          letter-spacing: .08em;
+          padding: 15px 12px;
+        }
+        .pl-phone-input::placeholder {
+          color: #94A3B8;
+          font-weight: 500;
+          letter-spacing: .02em;
+        }
+
+        .pl-pin-row {
+          display: flex;
+          gap: 10px;
+          justify-content: center;
+          margin: 8px 0 6px;
+        }
+        .pl-pin-box {
+          width: 50px;
+          height: 58px;
+          text-align: center;
+          font-size: 26px;
+          font-weight: 900;
+          color: #1E293B;
+          background: #FFFFFF;
+          border: 2px solid #E2E8F0;
+          border-radius: 16px;
+          outline: none;
+          transition: border-color .18s, box-shadow .18s, transform .12s, background .18s;
+        }
+        .pl-pin-box:focus {
+          border-color: ${theme.accentColor};
+          box-shadow: 0 0 0 4px rgba(0, 0, 0, 0.12);
+          transform: translateY(-2px);
+          background: #FFFFFF;
+        }
+        .pl-pin-box.pl-filled {
+          border-color: #10B981;
+          background: #DFF5E8;
+          color: #065F46;
+        }
+        .pl-pin-row.pl-err .pl-pin-box {
+          border-color: #EF4444;
+          background: #FEE2E2;
+          color: #991B1B;
+        }
+
+        @keyframes pl-shake {
+          0%,100% { transform: translateX(0); }
+          15% { transform: translateX(-9px); }
+          30% { transform: translateX(8px); }
+          45% { transform: translateX(-6px); }
+          60% { transform: translateX(5px); }
+          75% { transform: translateX(-3px); }
+          90% { transform: translateX(2px); }
+        }
         .pl-shake { animation: pl-shake .45s ease; }
-        .pl-err-box { margin-top: 12px; font-size: 13px; font-weight: 600; color: #991B1B; background: #FEE2E2; border: 1px solid #FCA5A5; padding: 10px 12px; border-radius: 12px; line-height: 1.5; }
-        .pl-back { margin-top: 12px; width: 100%; background: transparent; border: none; color: #9D174D; font-size: 13px; font-weight: 700; cursor: pointer; padding: 10px; border-radius: 10px; transition: background .15s; }
-        .pl-back:hover { background: #F8DDE7; }
-        .pl-success { text-align: center; padding: 8px 0 4px; position: relative; }
+
+        .pl-err-box {
+          margin-top: 12px;
+          font-size: 13px;
+          font-weight: 700;
+          color: #991B1B;
+          background: #FEE2E2;
+          border: 1px solid #FCA5A5;
+          padding: 10px 14px;
+          border-radius: 14px;
+          line-height: 1.5;
+        }
+
+        .pl-back {
+          margin-top: 14px;
+          width: 100%;
+          background: transparent;
+          border: none;
+          color: ${theme.accentColor};
+          font-size: 13.5px;
+          font-weight: 800;
+          cursor: pointer;
+          padding: 10px;
+          border-radius: 12px;
+          transition: background .15s;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+        }
+        .pl-back:hover { background: rgba(0, 0, 0, 0.05); }
+
+        .pl-spinner {
+          width: 18px;
+          height: 18px;
+          border-radius: 50%;
+          border: 2.5px solid rgba(0,0,0,0.15);
+          border-top-color: ${theme.accentColor};
+          animation: pl-spin .7s linear infinite;
+        }
+        @keyframes pl-spin { to { transform: rotate(360deg); } }
+
+        .pl-success { text-align: center; padding: 12px 0 6px; position: relative; }
         .pl-confetti { position: absolute; inset: -26px; width: calc(100% + 52px); height: calc(100% + 52px); pointer-events: none; }
-        .pl-check { width: 110px; height: 110px; margin: 6px auto 14px; }
+        .pl-check { width: 105px; height: 105px; margin: 4px auto 14px; }
         .pl-check circle { stroke-dasharray: 302; stroke-dashoffset: 302; animation: pl-draw .7s cubic-bezier(.65,0,.35,1) forwards; }
         .pl-check path { stroke-dasharray: 60; stroke-dashoffset: 60; animation: pl-draw .45s .65s cubic-bezier(.65,0,.35,1) forwards; }
         @keyframes pl-draw { to { stroke-dashoffset: 0; } }
-        @keyframes pl-fadeup { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
-        .pl-fadeup { animation: pl-fadeup .6s cubic-bezier(.16,1,.3,1) both; }
-        .pl-fadeup-1 { animation-delay: .85s; } .pl-fadeup-2 { animation-delay: 1s; } .pl-fadeup-3 { animation-delay: 1.15s; }
-        .pl-secure { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 16px; font-size: 11.5px; color: #6B7280; }
-        @media (max-width: 400px) { .pl-pin-box { width: 44px; height: 52px; } .pl-pin-row { gap: 8px; } .pl-card { padding: 24px 18px 20px; } }
+
+        .pl-float { animation: pl-float-anim 3s ease-in-out infinite alternate; }
+        @keyframes pl-float-anim { 0% { transform: translateY(0); } 100% { transform: translateY(-5px); } }
+
+        @media (max-width: 400px) {
+          .pl-pin-box { width: 44px; height: 52px; font-size: 22px; }
+          .pl-pin-row { gap: 6px; }
+          .pl-card { padding: 22px 18px 18px; border-radius: 22px; }
+        }
       `}</style>
 
-      <div className="pl-bg-grid" />
-      <div className="pl-orb" style={{ width: 320, height: 320, left: -90, top: -80, background: 'rgba(232,93,146,.22)' }} />
-      <div className="pl-orb" style={{ width: 260, height: 260, right: -70, bottom: -60, background: 'rgba(16,185,129,.16)' }} />
+      {/* Floating Theme Selector Button */}
+      <button
+        className="pl-theme-toggle"
+        onClick={() => { if (!themeLockedByAdmin) setIsThemeMenuOpen(true); }}
+        disabled={themeLockedByAdmin}
+        title={themeLockedByAdmin
+          ? 'Giao diện sự kiện đang được Admin cài đặt theo lịch'
+          : 'Chọn chủ đề sự kiện (Tết, Noel, 30/4, Quốc khánh, v.v...)'}
+        style={themeLockedByAdmin ? { cursor: 'default' } : undefined}
+      >
+        <span>{theme.icon}</span>
+        <span>{themeLockedByAdmin ? `Sự kiện: ${theme.name}` : isAuto ? `Tự động: ${theme.name}` : theme.name}</span>
+        <span style={{ fontSize: 10, opacity: 0.6 }}>{themeLockedByAdmin ? '🔒' : '▼'}</span>
+      </button>
 
-      <div className="pl-card">
-        <div className="pl-brand">
-          <div className="pl-logo">
-            <img src="/logo.jpg" alt="UBM" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-            <span style={{ display: 'none' }}>U</span>
-          </div>
-          <div>
-            <div style={{ fontWeight: 800, fontSize: 16, letterSpacing: '-.01em', color: '#E85D92' }}>ỤM BÒ MILK</div>
-            <div style={{ fontSize: 11.5, color: '#6B7280', fontWeight: 600, letterSpacing: '.08em' }}>CỔNG NHÂN VIÊN • V5.1</div>
-          </div>
-          <div style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 800, color: '#065F46', background: '#DFF5E8', border: '1px solid #A7E3C5', padding: '4px 10px', borderRadius: 999 }}>
-            ● Bảo mật
-          </div>
-        </div>
-
-        <div className="pl-steps">
-          {['phone', 'pin', 'success'].map((s, i) => {
-            const order = { phone: 0, pin: 1, success: 2 } as const;
-            const activeIdx = order[step];
-            return (
-              <div key={s} className="pl-stepbar">
-                <i style={{ width: i <= activeIdx ? '100%' : '0%' }} />
+      {/* Theme Selection Modal */}
+      {isThemeMenuOpen && !themeLockedByAdmin && (
+        <div className="pl-theme-backdrop" onClick={() => setIsThemeMenuOpen(false)}>
+          <div className="pl-theme-modal" onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #E2E8F0', paddingBottom: 12 }}>
+              <div>
+                <h3 style={{ fontSize: 18, fontWeight: 900, color: '#0F172A', margin: 0 }}>
+                  🎨 Chọn Chủ Đề Sự Kiện
+                </h3>
+                <p style={{ fontSize: 12.5, color: '#64748B', margin: '3px 0 0' }}>
+                  Thiết kế theo mùa lễ hội & văn hóa Việt Nam
+                </p>
               </div>
-            );
-          })}
+              <button
+                onClick={() => setIsThemeMenuOpen(false)}
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: '50%',
+                  border: 'none',
+                  background: '#F1F5F9',
+                  color: '#475569',
+                  fontSize: 16,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="pl-theme-grid">
+              {THEME_LIST.map((t) => {
+                const isActive = selectedThemeId === t.id;
+                const isAutoOption = t.id === 'auto';
+                return (
+                  <button
+                    key={t.id}
+                    className={`pl-theme-item ${isActive ? 'active' : ''}`}
+                    onClick={() => selectTheme(t.id)}
+                  >
+                    <span style={{ fontSize: 24, lineHeight: 1 }}>{t.icon}</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13.5, fontWeight: 800, color: '#1E293B' }}>
+                        {t.name}
+                        {isAutoOption && <span style={{ fontSize: 10.5, color: '#0284C7', marginLeft: 4 }}>(Hiện tại: {theme.name})</span>}
+                      </div>
+                      <div style={{ fontSize: 11, color: '#64748B', marginTop: 2, lineHeight: 1.35 }}>
+                        {t.desc}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid #E2E8F0', textAlign: 'center', fontSize: 12, color: '#64748B' }}>
+              💡 Lựa chọn của bạn sẽ được tự động ghi nhớ cho lần đăng nhập sau.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Ambient Twinkling Stars */}
+      <div className="pl-bg-stars" style={{ color: theme.ambientStarsColor }} />
+
+      {/* Hiệu ứng hạt động 60fps cho từng sự kiện (Tuyết rơi, Sen hồng, Hoa hồng, Bong bóng, Dơi...) */}
+      <ThemeAmbientEffects themeId={theme.id} />
+
+      {/* Top-Right Background Ornament */}
+      {theme.renderTopRightOrnament?.(zodiac)}
+
+      {/* MAIN LOGIN CARD */}
+      <div
+        className="pl-card"
+        style={{
+          background: theme.cardBg,
+          border: theme.cardBorder,
+          boxShadow: theme.cardShadow,
+        }}
+      >
+        {/* BRAND HEADER */}
+        <div className="pl-brand">
+          <div style={{ position: 'relative', flexShrink: 0 }}>
+            <div className="pl-logo">
+              <img
+                src="/logo.jpg"
+                alt="UBM"
+                onError={(e) => {
+                  (e.target as HTMLElement).style.display = 'none';
+                }}
+              />
+            </div>
+            {/* Phụ kiện trang trí nhỏ theo chủ đề đặt trên vành logo */}
+            {theme.renderLogoAccessory?.(zodiac)}
+          </div>
+
+          <div>
+            <div
+              style={{
+                fontWeight: 900,
+                fontSize: 17,
+                letterSpacing: '-.01em',
+                color: theme.brandTitleColor,
+              }}
+            >
+              ỤM BÒ MILK
+            </div>
+            <div
+              style={{
+                fontSize: 12,
+                color: theme.brandSubColor,
+                fontWeight: 700,
+                letterSpacing: '.06em',
+              }}
+            >
+              CỔNG NHÂN VIÊN • V5.1
+            </div>
+          </div>
+
+          {/* Event Security Badge */}
+          <div
+            style={{
+              marginLeft: 'auto',
+              fontSize: 11.5,
+              fontWeight: 800,
+              color: theme.badgeColor,
+              background: theme.badgeBg,
+              border: `1px solid ${theme.badgeBorder}`,
+              padding: '4px 11px',
+              borderRadius: 999,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            <span>●</span> {theme.badgeLabel}
+          </div>
         </div>
 
+        {/* DIVIDER: GARLAND ICONS */}
+        <div style={{ margin: '14px 0 18px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, position: 'relative' }}>
+          <div style={{ position: 'absolute', inset: '0 6px', height: '2px', top: '50%', background: theme.garlandLineColor, zIndex: 1 }} />
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', position: 'relative', zIndex: 2, padding: '0 4px' }}>
+            {theme.garlandIcons.map((icon, idx) => (
+              <span
+                key={idx}
+                style={{
+                  fontSize: icon.length > 1 ? 16 : 13,
+                  background: theme.cardBg,
+                  padding: '2px 4px',
+                  borderRadius: '50%',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.06)',
+                }}
+              >
+                {icon}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        {/* STEP HEADER TEXT */}
         {step !== 'success' && (
           <>
-            <h2 className="pl-title">{step === 'phone' ? 'Đăng nhập' : 'Nhập mã PIN'}</h2>
+            <h2 className="pl-title" style={{ color: theme.brandTitleColor }}>
+              <span>{step === 'phone' ? 'Đăng nhập' : 'Nhập mã PIN'}</span>
+              <span>{theme.icon}</span>
+            </h2>
             <p className="pl-sub">
               {step === 'phone'
-                ? 'Nhập số điện thoại đã đăng ký với HR để nhận mã PIN và vào cổng chấm công.'
-                : <>Xác thực SĐT <b style={{ color: '#E85D92' }}>{maskedPhone}</b> bằng mã PIN 6 số được cấp.</>}
+                ? theme.subTitle
+                : <>Xác thực SĐT <b style={{ color: theme.brandTitleColor }}>{maskedPhone}</b> bằng mã PIN 6 số được cấp.</>}
             </p>
           </>
         )}
 
+        {/* ĐẾM NGƯỢC GIAO THỪA & BẮN PHÁO HOA TẾT */}
+        {(theme.id === 'tet_2027' || theme.id === 'tet') && step !== 'success' && (
+          <TetCountdownAndFireworks
+            targetYear={theme.id === 'tet_2027' ? 2027 : zodiac.year}
+            canChiName={theme.id === 'tet_2027' ? 'Đinh Mùi' : zodiac.canChiName}
+            zodiacIcon={theme.id === 'tet_2027' ? '🐐' : zodiac.icon}
+            zodiacAnimal={theme.id === 'tet_2027' ? 'Dê' : zodiac.animal}
+          />
+        )}
+
+        {/* STEP 1: PHONE INPUT */}
         {step === 'phone' && (
           <div>
-            <div className="pl-field-label"><span>Số điện thoại</span><span>{phone.length}/11</span></div>
+            <div className="pl-field-label">
+              <span style={{ color: theme.accentColor }}>
+                {theme.fieldLabel}
+              </span>
+              <span style={{ color: '#64748B', fontWeight: 800 }}>
+                {phone.length}/11
+              </span>
+            </div>
+
             <div className={`pl-phone-wrap${showPhoneError ? ' pl-err' : ''}`}>
-              <span className="pl-prefix">🇻🇳 +84</span>
+              <span
+                className="pl-prefix"
+                style={{
+                  background: theme.prefixBg,
+                  color: theme.prefixColor,
+                }}
+              >
+                VN +84
+              </span>
               <input
                 className="pl-phone-input"
                 type="tel"
@@ -410,18 +954,49 @@ export function PremiumLogin({
                 onBlur={() => setPhoneTouched(true)}
                 onKeyDown={(e) => { if (e.key === 'Enter') void runPhoneCheck(); }}
               />
+
+              {/* Theme Peekaboo Mascot/Icon */}
+              {theme.renderPeekaboo(zodiac)}
             </div>
-            <div className="pl-hint">{showPhoneError ? 'Số điện thoại cần 9–12 chữ số (VD: 0901111222).' : ''}</div>
-            {checkingPhone && phoneValid && (
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 14, fontSize: 13, fontWeight: 700, color: '#E85D92' }}>
-                <span className="pl-spinner" style={{ borderColor: 'rgba(232,93,146,.3)', borderTopColor: '#E85D92' }} /> Đang kiểm tra SĐT trong hệ thống...
+
+            <div style={{ fontSize: 12, marginTop: 7, minHeight: 18, color: '#DC2626', fontWeight: 600 }}>
+              {showPhoneError ? 'Số điện thoại cần 9–12 chữ số (VD: 0901111222).' : ''}
+            </div>
+
+            {/* Quick Demo Fill Button */}
+            {!phone && (
+              <div style={{ textAlign: 'center', margin: '4px 0 10px' }}>
+                <button
+                  type="button"
+                  onClick={() => setPhone('0901111222')}
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 700,
+                    color: theme.accentColor,
+                    background: 'rgba(0,0,0,0.04)',
+                    border: '1px dashed currentColor',
+                    borderRadius: 999,
+                    padding: '4px 12px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  ⚡ Thử nhanh: 0901 111 222
+                </button>
               </div>
             )}
+
+            {checkingPhone && phoneValid && (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 12, fontSize: 13, fontWeight: 700, color: theme.accentColor }}>
+                <span className="pl-spinner" /> Đang kiểm tra SĐT trong hệ thống...
+              </div>
+            )}
+
             {!checkingPhone && phoneCheckError && phoneValid && (
               <div className="pl-err-box">⚠️ {phoneCheckError}</div>
             )}
+
             {!checkingPhone && !phoneCheckError && (
-              <div style={{ textAlign: 'center', marginTop: 14, fontSize: 12.5, color: '#6B7280', fontWeight: 600 }}>
+              <div style={{ textAlign: 'center', marginTop: 12, fontSize: 13, color: '#475569', fontWeight: 600 }}>
                 {!phoneValid
                   ? 'Nhập đủ số, hệ thống sẽ tự kiểm tra và chuyển sang nhập PIN.'
                   : phone === checkedPhoneRef.current
@@ -429,13 +1004,35 @@ export function PremiumLogin({
                     : '✓ Đủ số — hệ thống đang tự kiểm tra...'}
               </div>
             )}
-            <div className="pl-secure">🔒 Dữ liệu được mã hóa • Không chia sẻ PIN cho bất kỳ ai</div>
+
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+              marginTop: 16,
+              fontSize: 12,
+              color: '#64748B',
+              fontWeight: 600,
+            }}>
+              <span>🔒</span>
+              <span>Dữ liệu được mã hóa • Không chia sẻ PIN cho bất kỳ ai</span>
+            </div>
           </div>
         )}
 
+        {/* STEP 2: PIN INPUT */}
         {step === 'pin' && (
           <div>
-            <div className="pl-field-label"><span>Mã PIN • 6 số</span><span>{pin.filter(Boolean).length}/6</span></div>
+            <div className="pl-field-label">
+              <span style={{ color: theme.accentColor }}>
+                MÃ PIN • 6 SỐ {theme.icon}
+              </span>
+              <span style={{ color: '#64748B', fontWeight: 800 }}>
+                {pin.filter(Boolean).length}/6
+              </span>
+            </div>
+
             <div key={shakeKey} className={`pl-pin-row${shakeKey > 0 && error ? ' pl-err pl-shake' : ''}`}>
               {pin.map((d, i) => (
                 <input
@@ -455,56 +1052,77 @@ export function PremiumLogin({
                 />
               ))}
             </div>
+
             {(verifying || loading) && (
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 12, fontSize: 13, fontWeight: 700, color: '#E85D92' }}>
-                <span className="pl-spinner" style={{ borderColor: 'rgba(232,93,146,.3)', borderTopColor: '#E85D92' }} /> Đang xác thực...
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 14, fontSize: 13.5, fontWeight: 700, color: theme.accentColor }}>
+                <span className="pl-spinner" /> Đang xác thực mã PIN bảo mật...
               </div>
             )}
+
             {error && !verifying && !loading && <div className="pl-err-box">⚠️ {error}</div>}
+
             {!error && !verifying && !loading && (
-              <div style={{ textAlign: 'center', marginTop: 12, fontSize: 12.5, color: '#6B7280', fontWeight: 600 }}>
+              <div style={{ textAlign: 'center', marginTop: 12, fontSize: 13, color: '#475569', fontWeight: 600 }}>
                 Nhập đủ 6 số là hệ thống tự kiểm tra — không cần bấm thêm nút nào.
               </div>
             )}
+
             <button className="pl-back" onClick={() => { setStep('phone'); setError(null); setPin(Array(pinLength).fill('')); }}>
-              ← Đổi số khác
+              <span>← Đổi số khác</span>
             </button>
           </div>
         )}
 
+        {/* STEP 3: SUCCESS */}
         {step === 'success' && (
           <div className="pl-success">
             <canvas ref={confettiRef} className="pl-confetti" />
             <svg className="pl-check" viewBox="0 0 110 110" fill="none">
               <circle cx="55" cy="55" r="48" stroke="#10B981" strokeWidth="6" strokeLinecap="round" />
-              <circle cx="55" cy="55" r="48" stroke="rgba(16,185,129,.25)" strokeWidth="12" />
+              <circle cx="55" cy="55" r="48" stroke="rgba(16,185,129,.22)" strokeWidth="12" />
               <path d="M36 56 L50 70 L75 42" stroke="#34D399" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
-            <div className="pl-fadeup pl-fadeup-1" style={{ fontSize: 21, fontWeight: 800, color: '#273142' }}>Xác thực thành công</div>
-            <div className="pl-fadeup pl-fadeup-2" style={{ fontSize: 13, color: '#6B7280', marginTop: 6 }}>
-              Xin chào <b style={{ color: '#E85D92' }}>{maskedPhone}</b> • Đang chuẩn bị chuyển hướng...
+            <div style={{ fontSize: 22, fontWeight: 900, color: theme.brandTitleColor }}>
+              Xác thực thành công {theme.icon}
             </div>
-            <div className="pl-fadeup pl-fadeup-3" style={{ display: 'flex', justifyContent: 'center', gap: 6, marginTop: 14 }}>
+            <div style={{ fontSize: 13.5, color: '#64748B', marginTop: 6, fontWeight: 600 }}>
+              Xin chào <b style={{ color: theme.brandTitleColor }}>{maskedPhone}</b> • Đang chuẩn bị chuyển hướng...
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'center', gap: 6, marginTop: 14 }}>
               {[0, 1, 2].map((i) => (
                 <span key={i} style={{ width: 8, height: 8, borderRadius: '50%', background: '#10B981', display: 'inline-block', animation: `pl-spin 1s ${i * 0.15}s infinite` }} />
               ))}
             </div>
           </div>
         )}
-        {onCheckUpdate && step !== 'success' && (
-          <UpdateCheckFooter onCheckUpdate={onCheckUpdate} />
-        )}
+
+        {/* Card Footer: Update checker & Bottom Ornament */}
+        <div style={{ marginTop: 14, position: 'relative' }}>
+          <UpdateCheckFooter onCheckUpdate={onCheckUpdate} theme={theme} />
+          {theme.renderBottomLeftOrnament?.(zodiac)}
+        </div>
       </div>
     </div>
   );
 }
 
-function UpdateCheckFooter({ onCheckUpdate }: { onCheckUpdate: () => Promise<'new' | 'same' | 'fail'> }) {
+function UpdateCheckFooter({
+  onCheckUpdate,
+  theme,
+}: {
+  onCheckUpdate?: () => Promise<'new' | 'same' | 'fail'>;
+  theme: any;
+}) {
   const [st, setSt] = useState<'idle' | 'checking' | 'new' | 'same' | 'fail'>('idle');
+
   return (
-    <div style={{ textAlign: 'center', marginTop: 14 }}>
+    <div style={{ textAlign: 'center' }}>
       <button
         onClick={async () => {
+          if (!onCheckUpdate) {
+            setSt('same');
+            return;
+          }
           if (st === 'checking') return;
           setSt('checking');
           try {
@@ -513,13 +1131,39 @@ function UpdateCheckFooter({ onCheckUpdate }: { onCheckUpdate: () => Promise<'ne
             setSt('fail');
           }
         }}
-        style={{ border: 'none', background: 'none', fontSize: 11.5, color: '#9CA3AF', textDecoration: 'underline', cursor: 'pointer', padding: 0, fontWeight: 600 }}
+        style={{
+          border: 'none',
+          background: 'none',
+          fontSize: 12.5,
+          color: '#64748B',
+          cursor: 'pointer',
+          padding: '4px 8px',
+          fontWeight: 700,
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+        }}
       >
-        {st === 'checking' ? 'Đang kiểm tra...' : '🔄 Kiểm tra bản cập nhật'}
+        <span style={{ fontSize: 14 }}>🔄</span>
+        <span>Kiểm tra bản cập nhật</span>
+        <span style={{ fontSize: 13 }}>{theme.icon}</span>
       </button>
-      {st === 'same' && <div style={{ fontSize: 11.5, color: '#059669', fontWeight: 700, marginTop: 4 }}>✓ Đang dùng bản mới nhất.</div>}
-      {st === 'fail' && <div style={{ fontSize: 11.5, color: '#DC2626', fontWeight: 700, marginTop: 4 }}>⚠️ Không kiểm tra được (mất mạng?).</div>}
-      {st === 'new' && <div style={{ fontSize: 11.5, color: '#D97706', fontWeight: 700, marginTop: 4 }}>🚀 Có bản mới! Tải lại trang để cập nhật.</div>}
+
+      {st === 'same' && (
+        <div style={{ fontSize: 12, color: '#059669', fontWeight: 800, marginTop: 4 }}>
+          ✓ Đang dùng bản mới nhất.
+        </div>
+      )}
+      {st === 'fail' && (
+        <div style={{ fontSize: 12, color: '#DC2626', fontWeight: 800, marginTop: 4 }}>
+          ⚠️ Không kiểm tra được (mất mạng?).
+        </div>
+      )}
+      {st === 'new' && (
+        <div style={{ fontSize: 12, color: '#D97706', fontWeight: 800, marginTop: 4 }}>
+          🚀 Có bản mới! Tải lại trang để cập nhật.
+        </div>
+      )}
     </div>
   );
 }

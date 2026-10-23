@@ -162,6 +162,7 @@ import { BRANCHES, ERROR_CODES, SHIFT_TEMPLATES } from '@ubm/shared';
 import { SHEETS_DEFINITIONS } from './services/google-sheets-sync.service.js';
 import { buildZipStore } from './utils/zip-store.js';
 import { normalizeUiUpdateSchedule } from './utils/ui-update-schedule.js';
+import { getThemeScheduleState, normalizeThemeSchedule } from './utils/theme-schedule.js';
 import { lateFineFor } from './services/payroll.service.js';
 
 // Thời điểm process khởi động — đo uptime thật (không hardcode).
@@ -5828,6 +5829,9 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       const m: any = await adapter.getMaintenance().catch(() => ({}));
       const uiAt = m?.ui_update_at ? new Date(m.ui_update_at).getTime() : NaN;
+      // Lịch giao diện sự kiện: chỉ lộ chủ đề + 2 mốc giờ an toàn (không lộ
+      // toàn bộ object maintenance). Client tự tính lại theo server_time.
+      const themeState = getThemeScheduleState(m);
       res.json({
         system_maintenance: !!m?.system_maintenance,
         employee_web_maintenance: !!m?.employee_web_maintenance,
@@ -5837,6 +5841,12 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         ui_update_enabled: !!m?.ui_update_enabled && Number.isFinite(uiAt),
         ui_update_at: Number.isFinite(uiAt) ? new Date(uiAt).toISOString() : null,
         ui_update_message: String(m?.ui_update_message || ''),
+        // Lịch giao diện sự kiện do Admin cấu hình.
+        event_theme_enabled: themeState.enabled,
+        event_theme: themeState.theme,
+        event_theme_start_at: themeState.startAt,
+        event_theme_end_at: themeState.endAt,
+        event_theme_phase: themeState.phase,
         // Giờ server để client bù lệch đồng hồ máy (đếm ngược chính xác).
         server_time: new Date().toISOString(),
       });
@@ -5849,6 +5859,11 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         ui_update_enabled: false,
         ui_update_at: null,
         ui_update_message: '',
+        event_theme_enabled: false,
+        event_theme: null,
+        event_theme_start_at: null,
+        event_theme_end_at: null,
+        event_theme_phase: 'off',
         server_time: new Date().toISOString(),
       });
     }
@@ -5958,6 +5973,19 @@ async function send(d){document.getElementById('msg').textContent='⏳ Đang g�
         return res.status(400).json({ error: 'INVALID_UI_UPDATE_TIME', message: norm.message });
       }
       Object.assign(body, norm.patch);
+
+      // Lịch giao diện sự kiện: chỉ chuẩn hóa khi request thực sự có trường
+      // theme_* (client Admin cũ không gửi -> giữ nguyên lịch đang có).
+      const hasThemeScheduleFields = ['theme_event', 'theme_schedule_enabled', 'theme_start_at', 'theme_end_at']
+        .some((k) => Object.prototype.hasOwnProperty.call(body, k));
+      if (hasThemeScheduleFields) {
+        const themeNorm = normalizeThemeSchedule(body);
+        if (!themeNorm.ok) {
+          return res.status(400).json({ error: 'INVALID_THEME_SCHEDULE', message: themeNorm.message });
+        }
+        Object.assign(body, themeNorm.patch);
+      }
+
       const updated = await adapter.updateMaintenance(body);
       await adapter.recordAuditLog({
         actor_id: req.user!.id,

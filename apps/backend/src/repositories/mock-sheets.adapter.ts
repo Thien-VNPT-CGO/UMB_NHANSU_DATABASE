@@ -277,6 +277,11 @@ export class MockSheetsAdapter implements ISheetsRepository {
       ui_update_enabled: false,
       ui_update_at: null,
       ui_update_message: '',
+      // Lịch giao diện sự kiện cho cổng nhân viên (Admin chọn + hẹn giờ).
+      theme_event: null,
+      theme_schedule_enabled: false,
+      theme_start_at: null,
+      theme_end_at: null,
     };
 
     // 10. Backup Snapshots (bắt đầu rỗng — dữ liệu thật sẽ load từ Google Sheets)

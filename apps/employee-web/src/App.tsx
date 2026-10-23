@@ -6,6 +6,8 @@ import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl, on
 import { connectRealtime, stopRealtimeRevive } from './services/realtime';
 import { APP_COMMIT } from './app-version';
 import { PremiumLogin } from './components/PremiumLogin';
+import type { ScheduledLoginTheme } from './components/PremiumLogin';
+import type { LoginThemeId } from './components/loginThemeData';
 import { SignaturePad } from './components/SignaturePad';
 import {
   Home,
@@ -905,12 +907,43 @@ export function App() {
 
   // Trạng thái bảo trì cổng NV do Admin bật (null = chưa tải xong -> fail-open, không khóa nhầm).
   const [portalMaint, setPortalMaint] = useState<{ active: boolean; message: string } | null>(null);
+  // Lịch giao diện sự kiện do Admin cấu hình (null = không khóa giao diện).
+  const [portalThemeSchedule, setPortalThemeSchedule] = useState<ScheduledLoginTheme | null>(null);
   const [maintChecking, setMaintChecking] = useState(false);
   const fetchPortalMaintenance = async (): Promise<boolean | null> => {
     try {
       const m: any = await apiRequest('/public/portal-maintenance');
       const active = !!(m?.system_maintenance || m?.employee_web_maintenance);
       setPortalMaint({ active, message: String(m?.maintenance_message || '') });
+
+      // Lịch sự kiện: bù lệch đồng hồ theo giờ server để đổi theme đúng mốc.
+      const serverNow = Date.parse(String(m?.server_time || ''));
+      const serverOffsetMs = Number.isFinite(serverNow) ? serverNow - Date.now() : 0;
+      const eventId = String(m?.event_theme || '');
+      const validEventIds = new Set<string>([
+        'noel', 'vietnam_culture', 'tet', 'tet_2027', 'unification_30_4',
+        'children_day_1_6', 'women_day_8_3', 'national_day_2_9',
+        'vietnam_women_20_10', 'halloween',
+      ]);
+      const startAt = m?.event_theme_start_at ? Date.parse(String(m.event_theme_start_at)) : NaN;
+      const endAt = m?.event_theme_end_at ? Date.parse(String(m.event_theme_end_at)) : NaN;
+      if (
+        !!m?.event_theme_enabled
+        && validEventIds.has(eventId)
+        && Number.isFinite(startAt)
+        && Number.isFinite(endAt)
+        && endAt > startAt
+      ) {
+        setPortalThemeSchedule({
+          enabled: true,
+          event: eventId as LoginThemeId,
+          startAt,
+          endAt,
+          serverOffsetMs,
+        });
+      } else {
+        setPortalThemeSchedule(null);
+      }
       return active;
     } catch { /* offline/server cũ: coi như không bảo trì */ return null; }
   };
@@ -926,11 +959,13 @@ export function App() {
     fetchPortalMaintenanceRef.current().catch(() => null);
   }, []);
   // Đang bảo trì -> tự kiểm tra lại mỗi 30s để mở cổng ngay khi Admin tắt (khỏi cần F5).
+  // Chưa đăng nhập -> thăm dò mỗi 60s để nhận lịch giao diện sự kiện mới.
   useEffect(() => {
-    if (!portalMaint?.active) return;
-    const t = setInterval(() => { fetchPortalMaintenanceRef.current().catch(() => null); }, 30000);
+    if (!portalMaint?.active && isLoggedIn) return;
+    const delay = portalMaint?.active ? 30000 : 60000;
+    const t = setInterval(() => { fetchPortalMaintenanceRef.current().catch(() => null); }, delay);
     return () => clearInterval(t);
-  }, [portalMaint?.active]);
+  }, [portalMaint?.active, isLoggedIn]);
 
   // Adjustment Request Form
   const [adjustmentData, setAdjustmentData] = useState({
@@ -3484,6 +3519,7 @@ export function App() {
           onCheckPhone={handleCheckPhone}
           onSuccess={handlePremiumSuccess}
           onCheckUpdate={checkAppVersion}
+          scheduledTheme={portalThemeSchedule}
         />
         {updateReady && <UpdateBanner />}
       </>

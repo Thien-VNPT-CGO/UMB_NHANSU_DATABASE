@@ -80,6 +80,20 @@ function formatCountdownVi(ms: number): string {
   return days > 0 ? `${days} ngày ${hms}` : hms;
 }
 
+/** Các chủ đề sự kiện Admin được phép gán cho cổng nhân viên. */
+const ADMIN_EVENT_THEMES: Array<{ id: string; name: string; icon: string }> = [
+  { id: 'noel', name: 'Giáng Sinh (Noel)', icon: '🎄' },
+  { id: 'vietnam_culture', name: 'Văn Hóa Việt Nam', icon: '🪷' },
+  { id: 'tet', name: 'Tết Nguyên Đán', icon: '🧧' },
+  { id: 'tet_2027', name: 'Tết 2027', icon: '🐐' },
+  { id: 'unification_30_4', name: 'Ngày 30/4', icon: '⭐' },
+  { id: 'children_day_1_6', name: 'Thiếu Nhi 1/6', icon: '🎈' },
+  { id: 'women_day_8_3', name: 'Phụ Nữ 8/3', icon: '🌹' },
+  { id: 'national_day_2_9', name: 'Quốc Khánh 2/9', icon: '🇻🇳' },
+  { id: 'vietnam_women_20_10', name: 'Phụ Nữ VN 20/10', icon: '👒' },
+  { id: 'halloween', name: 'Halloween', icon: '🎃' },
+];
+
 export interface LiveToastItem {
   id: string;
   type?: 'CHECKIN' | 'CHECKOUT' | 'LEAVE' | 'SWAP' | 'PIN_CHANGED' | 'PIN_SENT' | 'BANK_CHANGE' | 'INFO' | 'WARNING';
@@ -405,6 +419,11 @@ export function App() {
   // Hẹn giờ cập nhật giao diện/phần mềm: input datetime-local + đồng hồ đếm ngược.
   const [uiUpdateInput, setUiUpdateInput] = useState('');
   const [uiUpdateEnabled, setUiUpdateEnabled] = useState(false);
+  // Giao diện sự kiện cho cổng NV: chọn chủ đề + hẹn giờ bắt đầu/kết thúc.
+  const [themeEvent, setThemeEvent] = useState('noel');
+  const [themeScheduleEnabled, setThemeScheduleEnabled] = useState(false);
+  const [themeStartInput, setThemeStartInput] = useState('');
+  const [themeEndInput, setThemeEndInput] = useState('');
   const [maintNow, setMaintNow] = useState(Date.now());
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [backupSnapshots, setBackupSnapshots] = useState<any[]>([]);
@@ -933,13 +952,45 @@ export function App() {
     setUiUpdateEnabled(!!maintenance?.ui_update_enabled);
   }, [maintenance?.ui_update_at, maintenance?.ui_update_enabled]);
 
-  // Đồng hồ đếm ngược chỉ chạy khi có lịch cập nhật đang bật (không tick vô ích).
+  // Đồng bộ lựa chọn/lịch giao diện sự kiện từ server (không ghi đè khi đang gõ
+  // vì effect chỉ phụ thuộc đúng các trường lịch đã lưu).
   useEffect(() => {
-    if (!maintenance?.ui_update_enabled || !maintenance?.ui_update_at) return;
+    const savedEvent = String(maintenance?.theme_event || '');
+    setThemeEvent(ADMIN_EVENT_THEMES.some((t) => t.id === savedEvent) ? savedEvent : 'noel');
+    setThemeScheduleEnabled(!!maintenance?.theme_schedule_enabled);
+    setThemeStartInput(toLocalDatetimeInput(maintenance?.theme_start_at));
+    setThemeEndInput(toLocalDatetimeInput(maintenance?.theme_end_at));
+  }, [
+    maintenance?.theme_event,
+    maintenance?.theme_schedule_enabled,
+    maintenance?.theme_start_at,
+    maintenance?.theme_end_at,
+  ]);
+
+  // Đồng hồ đếm ngược chỉ chạy khi có lịch cập nhật/lịch sự kiện đang bật.
+  useEffect(() => {
+    const hasUiUpdate = !!maintenance?.ui_update_enabled && !!maintenance?.ui_update_at;
+    if (!hasUiUpdate && !maintenance?.theme_schedule_enabled) return;
     setMaintNow(Date.now());
     const t = setInterval(() => setMaintNow(Date.now()), 1000);
     return () => clearInterval(t);
-  }, [maintenance?.ui_update_enabled, maintenance?.ui_update_at]);
+  }, [maintenance?.ui_update_enabled, maintenance?.ui_update_at, maintenance?.theme_schedule_enabled]);
+
+  // Trạng thái lịch giao diện sự kiện đã lưu (dùng chung cho badge + đếm ngược).
+  const themeScheduleStartMs = maintenance?.theme_start_at ? Date.parse(maintenance.theme_start_at) : NaN;
+  const themeScheduleEndMs = maintenance?.theme_end_at ? Date.parse(maintenance.theme_end_at) : NaN;
+  const themeSchedulePhase: 'off' | 'upcoming' | 'active' | 'expired' =
+    !maintenance?.theme_schedule_enabled ||
+    !Number.isFinite(themeScheduleStartMs) ||
+    !Number.isFinite(themeScheduleEndMs) ||
+    themeScheduleEndMs <= themeScheduleStartMs
+      ? 'off'
+      : maintNow < themeScheduleStartMs
+        ? 'upcoming'
+        : maintNow >= themeScheduleEndMs
+          ? 'expired'
+          : 'active';
+  const selectedAdminTheme = ADMIN_EVENT_THEMES.find((t) => t.id === themeEvent) || ADMIN_EVENT_THEMES[0];
 
   // Hiệu ứng âm thanh micro-click cho mọi nút bấm chức năng của Admin & HR
   useEffect(() => {
@@ -1663,6 +1714,54 @@ export function App() {
     await handleSaveMaintenance(
       payload,
       enabled ? 'Đã lưu lịch cập nhật giao diện cho cổng nhân viên!' : 'Đã hủy lịch cập nhật giao diện!',
+    );
+  };
+
+  // Lưu lịch giao diện sự kiện. Bật lịch: bắt buộc chọn sự kiện + thời điểm
+  // bắt đầu/kết thúc (giờ máy Admin -> ISO UTC). Tắt lịch: cổng NV trở về
+  // giao diện người dùng đã chọn (mặc định).
+  const handleSaveThemeSchedule = async (enabled: boolean) => {
+    const payload: any = {
+      ...maintenance,
+      theme_event: themeEvent,
+      theme_schedule_enabled: enabled,
+    };
+
+    if (enabled) {
+      if (!ADMIN_EVENT_THEMES.some((t) => t.id === themeEvent)) {
+        setErrorMsg('Vui lòng chọn sự kiện cho giao diện cổng nhân viên!');
+        setTimeout(() => setErrorMsg(null), 3000);
+        return;
+      }
+      const start = themeStartInput ? Date.parse(themeStartInput) : NaN;
+      const end = themeEndInput ? Date.parse(themeEndInput) : NaN;
+      if (!Number.isFinite(start) || !Number.isFinite(end)) {
+        setErrorMsg('Vui lòng chọn đầy đủ ngày giờ bắt đầu và kết thúc sự kiện!');
+        setTimeout(() => setErrorMsg(null), 3000);
+        return;
+      }
+      if (end <= start) {
+        setErrorMsg('Ngày giờ kết thúc phải sau ngày giờ bắt đầu sự kiện!');
+        setTimeout(() => setErrorMsg(null), 3000);
+        return;
+      }
+      if (end <= Date.now()) {
+        setErrorMsg('Ngày giờ kết thúc sự kiện phải ở tương lai!');
+        setTimeout(() => setErrorMsg(null), 3000);
+        return;
+      }
+      payload.theme_start_at = new Date(start).toISOString();
+      payload.theme_end_at = new Date(end).toISOString();
+    } else {
+      payload.theme_start_at = null;
+      payload.theme_end_at = null;
+    }
+
+    await handleSaveMaintenance(
+      payload,
+      enabled
+        ? 'Đã lưu lịch giao diện sự kiện cho cổng nhân viên!'
+        : 'Đã tắt lịch giao diện sự kiện — cổng nhân viên dùng giao diện mặc định!',
     );
   };
 
@@ -4365,6 +4464,165 @@ export function App() {
                           : <>⚠️ Đã đến giờ hẹn — cổng NV đang mở sẽ tự tải lại giao diện mới.</>}
                       </span>
                     )}
+                  </div>
+                </div>
+
+                {/* Giao diện sự kiện theo lịch cho cổng nhân viên */}
+                <div style={{ borderTop: '1px solid var(--border)', paddingTop: '18px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
+                    <div>
+                      <div style={{ fontWeight: 800, fontSize: '14px', color: 'var(--text)' }}>🎨 Giao diện sự kiện cổng nhân viên</div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                        Chọn chủ đề + hẹn giờ bắt đầu/kết thúc. Trong thời gian diễn ra, cổng NV luôn hiển thị đúng chủ đề Admin chọn — ưu tiên hơn lựa chọn lưu trên máy nhân viên.
+                      </div>
+                    </div>
+                    <span style={{
+                      flexShrink: 0,
+                      padding: '4px 10px',
+                      borderRadius: 'var(--radius-full)',
+                      fontSize: '11px',
+                      fontWeight: 800,
+                      backgroundColor:
+                        themeSchedulePhase === 'active' ? 'var(--success-soft)'
+                          : themeSchedulePhase === 'expired' ? '#FEF3C7'
+                            : 'var(--border)',
+                      color:
+                        themeSchedulePhase === 'active' ? 'var(--success)'
+                          : themeSchedulePhase === 'expired' ? '#B45309'
+                            : 'var(--text-muted)',
+                    }}>
+                      {themeSchedulePhase === 'active' ? 'ĐANG ÁP DỤNG'
+                        : themeSchedulePhase === 'upcoming' ? 'SẮP DIỄN RA'
+                          : themeSchedulePhase === 'expired' ? 'ĐÃ HẾT'
+                            : 'ĐANG TẮT'}
+                    </span>
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '6px' }}>Chọn sự kiện:</label>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(155px, 1fr))', gap: '8px' }}>
+                      {ADMIN_EVENT_THEMES.map((t) => {
+                        const isSelected = themeEvent === t.id;
+                        return (
+                          <button
+                            key={t.id}
+                            type="button"
+                            onClick={() => setThemeEvent(t.id)}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '7px',
+                              padding: '9px 10px',
+                              borderRadius: 'var(--radius-sm)',
+                              border: isSelected ? '2px solid var(--brand)' : '1px solid var(--border)',
+                              backgroundColor: isSelected ? 'var(--brand-soft, #FDF2F8)' : 'var(--surface)',
+                              color: 'var(--text)',
+                              fontSize: '12px',
+                              fontWeight: isSelected ? 800 : 600,
+                              cursor: 'pointer',
+                              textAlign: 'left',
+                            }}
+                          >
+                            <span style={{ fontSize: '18px', lineHeight: 1 }}>{t.icon}</span>
+                            <span>{t.name}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={themeScheduleEnabled}
+                      onChange={(e) => {
+                        const on = e.target.checked;
+                        setThemeScheduleEnabled(on);
+                        if (on && !themeStartInput) {
+                          setThemeStartInput(toLocalDatetimeInput(new Date(Date.now() + 5 * 60_000).toISOString()));
+                        }
+                        if (on && !themeEndInput) {
+                          setThemeEndInput(toLocalDatetimeInput(new Date(Date.now() + 7 * 86400_000).toISOString()));
+                        }
+                      }}
+                      style={{ width: '16px', height: '16px', accentColor: 'var(--brand)' }}
+                    />
+                    Bật hẹn giờ cập nhật giao diện theo sự kiện
+                  </label>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '12px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>Ngày &amp; giờ bắt đầu sự kiện:</label>
+                      <input
+                        type="datetime-local"
+                        value={themeStartInput}
+                        min={toLocalDatetimeInput(new Date().toISOString())}
+                        onChange={(e) => setThemeStartInput(e.target.value)}
+                        disabled={!themeScheduleEnabled}
+                        style={{ width: '100%', padding: '9px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px', opacity: themeScheduleEnabled ? 1 : 0.6 }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>Ngày &amp; giờ kết thúc sự kiện:</label>
+                      <input
+                        type="datetime-local"
+                        value={themeEndInput}
+                        min={themeStartInput || toLocalDatetimeInput(new Date().toISOString())}
+                        onChange={(e) => setThemeEndInput(e.target.value)}
+                        disabled={!themeScheduleEnabled}
+                        style={{ width: '100%', padding: '9px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px', opacity: themeScheduleEnabled ? 1 : 0.6 }}
+                      />
+                    </div>
+                  </div>
+
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                    {themeSchedulePhase === 'active' && Number.isFinite(themeScheduleEndMs)
+                      ? <>✅ Đang áp dụng <b style={{ color: 'var(--brand)' }}>{ADMIN_EVENT_THEMES.find((t) => t.id === maintenance?.theme_event)?.name || selectedAdminTheme.name}</b> — tự trả giao diện mặc định sau <b style={{ color: 'var(--brand)' }}>{formatCountdownVi(themeScheduleEndMs - maintNow)}</b></>
+                      : themeSchedulePhase === 'upcoming' && Number.isFinite(themeScheduleStartMs)
+                        ? <>⏳ Giao diện sự kiện sẽ tự bật sau <b style={{ color: 'var(--brand)' }}>{formatCountdownVi(themeScheduleStartMs - maintNow)}</b> — trước đó cổng NV dùng giao diện mặc định.</>
+                        : themeSchedulePhase === 'expired'
+                          ? <>⚠️ Sự kiện đã kết thúc — cổng NV đã tự trả về giao diện mặc định.</>
+                          : <>Lịch sự kiện đang tắt — cổng NV dùng giao diện mặc định hoặc lựa chọn của nhân viên.</>}
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                    <button
+                      onClick={() => { void handleSaveThemeSchedule(themeScheduleEnabled); }}
+                      disabled={adminActionBusy === 'maint'}
+                      style={{
+                        padding: '8px 16px',
+                        borderRadius: 'var(--radius-sm)',
+                        backgroundColor: 'var(--brand)',
+                        color: '#FFF',
+                        fontWeight: 700,
+                        fontSize: '12px',
+                        border: 'none',
+                        cursor: adminActionBusy === 'maint' ? 'not-allowed' : 'pointer',
+                        opacity: adminActionBusy === 'maint' ? 0.6 : 1,
+                      }}
+                    >
+                      {adminActionBusy === 'maint' ? '⏳ Đang lưu...' : 'Lưu Lịch Sự Kiện'}
+                    </button>
+                    <button
+                      onClick={() => { setThemeScheduleEnabled(false); void handleSaveThemeSchedule(false); }}
+                      disabled={adminActionBusy === 'maint' || !maintenance?.theme_schedule_enabled}
+                      style={{
+                        padding: '8px 16px',
+                        borderRadius: 'var(--radius-sm)',
+                        backgroundColor: 'transparent',
+                        color: 'var(--danger)',
+                        fontWeight: 700,
+                        fontSize: '12px',
+                        border: '1px solid var(--danger)',
+                        cursor: adminActionBusy === 'maint' || !maintenance?.theme_schedule_enabled ? 'not-allowed' : 'pointer',
+                        opacity: adminActionBusy === 'maint' || !maintenance?.theme_schedule_enabled ? 0.5 : 1,
+                      }}
+                    >
+                      Tắt Lịch Sự Kiện
+                    </button>
+                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                      Đang chọn: <b style={{ color: 'var(--text)' }}>{selectedAdminTheme.icon} {selectedAdminTheme.name}</b>
+                    </span>
                   </div>
                 </div>
               </div>
