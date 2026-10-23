@@ -140,33 +140,66 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     return this.lastOwnWriteAt > 0 && Date.now() - this.lastOwnWriteAt < ms;
   }
 
-  // Webhook từ Apps Script (onEdit trên Sheet): kéo ngay, không đợi nhịp 10s.
+  // Webhook từ Apps Script (onEdit trên Sheet): kéo ngay, không đợi nhịp 5s.
   // Chống dồn: tối đa 1 lần kích hoạt/3s; pull chồng chéo dùng chung 1 promise.
+  // KHÔNG bỏ mất lần sửa cuối: request trong cửa sổ 3s (hoặc khi pull đang bay)
+  // được hẹn một lượt pull bù ngay sau đó để đọc đúng bản mới nhất.
   private lastWebhookAt = 0;
+  private lastExternalEditAt = 0;
+  private webhookRerunTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Sửa tay trên Sheet (webhook) — dùng để không chặn nhầm realtime vì self-write. */
+  public isExternalEditRecent(ms = 8000): boolean {
+    return this.lastExternalEditAt > 0 && Date.now() - this.lastExternalEditAt < ms;
+  }
+
+  private scheduleWebhookRerun(delayMs: number) {
+    if (this.webhookRerunTimer) return;
+    this.webhookRerunTimer = setTimeout(() => {
+      this.webhookRerunTimer = null;
+      if (!this.isConfigured) return;
+      // Pull khác vẫn đang chạy: đợi xong rồi pull tiếp để không đọc bản cũ.
+      if (this.pullInFlight) {
+        this.scheduleWebhookRerun(500);
+        return;
+      }
+      this.lastWebhookAt = 0;
+      void this.triggerSheetsPull('webhook:coalesced');
+    }, Math.max(250, delayMs));
+  }
 
   public triggerSheetsPull(reason = 'webhook'): { accepted: boolean; done: Promise<unknown> } {
     const noop = Promise.resolve(null);
     if (!this.isConfigured) return { accepted: false, done: noop };
     const now = Date.now();
-    if (now - this.lastWebhookAt < 3000) return { accepted: false, done: this.pullInFlight || noop };
+    if (reason.startsWith('webhook')) this.lastExternalEditAt = now;
+
+    if (now - this.lastWebhookAt < 3000) {
+      // Có sửa mới trong cửa sổ chống dồn: hẹn pull bù, không nuốt lần sửa cuối.
+      this.scheduleWebhookRerun(3000 - (now - this.lastWebhookAt) + 50);
+      return { accepted: false, done: this.pullInFlight || noop };
+    }
     this.lastWebhookAt = now;
     this.lastPullTime = now; // đồng bộ nhịp auto-pull, tránh pull đúp ngay sau đó
-    if (!this.pullInFlight) {
-      console.log(`[GoogleSheetsAdapter] Kích hoạt pull ngay (${reason})`);
-      this.pullInFlight = this.syncService
-        .pullAllDataFromGoogleSheets(this)
-        .then((r: any) => {
-          this.markPullSettled(!!r?.counts);
-          return r;
-        })
-        .catch(e => {
-          this.markPullSettled(false);
-          console.warn('[GoogleSheetsAdapter] Webhook pull error:', e);
-        })
-        .finally(() => {
-          this.pullInFlight = null;
-        });
+    if (this.pullInFlight) {
+      // Pull đang chạy có thể đã đọc trước lúc sửa -> đọc lại sau khi xong.
+      this.scheduleWebhookRerun(500);
+      return { accepted: true, done: this.pullInFlight };
     }
+    console.log(`[GoogleSheetsAdapter] Kích hoạt pull ngay (${reason})`);
+    this.pullInFlight = this.syncService
+      .pullAllDataFromGoogleSheets(this)
+      .then((r: any) => {
+        this.markPullSettled(!!r?.counts);
+        return r;
+      })
+      .catch(e => {
+        this.markPullSettled(false);
+        console.warn('[GoogleSheetsAdapter] Webhook pull error:', e);
+      })
+      .finally(() => {
+        this.pullInFlight = null;
+      });
     return { accepted: true, done: this.pullInFlight };
   }
 

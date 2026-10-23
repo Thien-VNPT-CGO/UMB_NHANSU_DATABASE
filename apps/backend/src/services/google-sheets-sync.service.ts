@@ -26,10 +26,21 @@ import { evaluateCandidateAiScore } from './ai-scorer.js';
 import { buildZipStore, ZipEntry } from '../utils/zip-store.js';
 import { readAttendancePhotoDisk } from './photo-disk.store.js';
 import { TAB_THEMES, buildSheetFormattingRequests, resolveTheme } from './sheets-beautifier.service.js';
+import { fingerprintSheetsContent } from '../utils/sheets-content-signature.js';
 
 export interface SheetDefinition {
   title: string;
   headers: string[];
+}
+
+export interface SheetsPullResult {
+  success: boolean;
+  message: string;
+  counts: any;
+  /** Hash nội dung các tab tại lần pull này (null nếu pull lỗi). */
+  signature?: string | null;
+  /** true khi nội dung khác lần pull trước — dùng để bắn realtime. */
+  changed?: boolean;
 }
 
 export const SHEETS_DEFINITIONS: SheetDefinition[] = [
@@ -192,6 +203,11 @@ export class GoogleSheetsSyncService {
   private driveClient: drive_v3.Drive | null = null;
   private spreadsheetId: string;
   private candidateSpreadsheetId: string;
+  /** Cache rows ứng viên: tab form đổi chậm, đọc mỗi pull 5s sẽ vượt quota
+   *  read 60/phút/service account. Đọc lại tối đa 15s/lần; vẫn giữ hash cũ
+   *  trong lúc bỏ qua để không báo "đổi" giả. */
+  private lastCandidateRows: string[][] = [];
+  private lastCandidatePullAt = 0;
   private driveFolderId: string;
   private isConfigured = false;
   private authError: string | null = null;
@@ -199,6 +215,12 @@ export class GoogleSheetsSyncService {
   /** Lỗi pull gần nhất (null = lần gần nhất thành công) — hiện ở /health để
    *  chẩn đoán khi dữ liệu đứng yên mà không cần vào log container. */
   private lastPullError: string | null = null;
+  /** Hash nội dung lần pull gần nhất — phát hiện sửa ô dù số dòng không đổi. */
+  private lastDataSignature: string | null = null;
+  /** Hash từng tab lần pull trước — cho biết tab nào vừa đổi (config cần reload riêng). */
+  private lastTabSignatures: Record<string, string> = {};
+  /** Callback realtime: server.ts đăng ký 1 lần để bắn socket khi nội dung đổi. */
+  private dataChangeListeners: Array<(info: { signature: string; counts: any; changedTabs: string[] }) => void> = [];
   /** Mốc pull gần nhất đã xử lý xong tab CAU_HINH_HE_THONG (null = chưa từng).
    *  Đọc bảo trì đợi mốc này để không trả seed OFF ngay sau boot. */
   public lastSettingsPullAt: number | null = null;
@@ -503,6 +525,17 @@ export class GoogleSheetsSyncService {
       this.authError = `Lỗi khởi tạo JWT Auth: ${err.message}`;
       console.error('[GoogleSheetsSyncService]', this.authError);
     }
+  }
+
+  /**
+   * Đăng ký nhận thông báo khi nội dung Google Sheets thay đổi (đã pull xong).
+   * Một thay đổi chỉ phát 1 lần dù nhiều nơi dùng chung một pull (tick + webhook).
+   */
+  public onDataChanged(listener: (info: { signature: string; counts: any; changedTabs: string[] }) => void): () => void {
+    this.dataChangeListeners.push(listener);
+    return () => {
+      this.dataChangeListeners = this.dataChangeListeners.filter(l => l !== listener);
+    };
   }
 
   public getStatus() {
@@ -825,12 +858,12 @@ export class GoogleSheetsSyncService {
    * đây pull chồng nhau khi tab lớn/quota chậm là gọi API Google dồn dập, rơi vào
    * rate limit và web cập nhật ngày càng muộn.
    */
-  public pullAllDataFromGoogleSheets(repo: ISheetsRepository): Promise<{ success: boolean; message: string; counts: any }> {
+  public pullAllDataFromGoogleSheets(repo: ISheetsRepository): Promise<SheetsPullResult> {
     if (!this.isConfigured || !this.sheetsClient) {
       return Promise.resolve({ success: false, message: 'Google Sheets chưa kết nối', counts: null });
     }
     if (this.pullInFlight) return this.pullInFlight;
-    let run: Promise<{ success: boolean; message: string; counts: any }>;
+    let run: Promise<SheetsPullResult>;
     run = this.doPullAllDataFromGoogleSheets(repo).finally(() => {
       // Chỉ xóa khi đây vẫn là pull hiện tại (watchdog có thể đã giải phóng và
       // một pull mới đã được tạo — không được xóa nhầm pull mới).
@@ -860,13 +893,19 @@ export class GoogleSheetsSyncService {
     return true;
   }
 
-  private pullInFlight: Promise<{ success: boolean; message: string; counts: any }> | null = null;
+  private pullInFlight: Promise<SheetsPullResult> | null = null;
   private pullStartedAt = 0;
 
-  private async doPullAllDataFromGoogleSheets(repo: ISheetsRepository): Promise<{ success: boolean; message: string; counts: any }> {
+  private async doPullAllDataFromGoogleSheets(repo: ISheetsRepository): Promise<SheetsPullResult> {
     if (!this.isConfigured || !this.sheetsClient) {
       return { success: false, message: 'Google Sheets chưa kết nối', counts: null };
     }
+
+    // Giữ bản rows ứng viên đọc được từ spreadsheet riêng để đưa vào hash nội dung
+    // (khai báo ở scope ngoài vì khối đọc ứng viên nằm trong try lồng nhau).
+    // Khi bỏ qua lượt đọc ứng viên (throttle quota), dùng lại rows cũ để hash ổn định.
+    let candRowsForSignature: string[][] = this.lastCandidateRows;
+    const shouldPullCandidates = Date.now() - this.lastCandidatePullAt >= 15_000;
 
     try {
       // Hỗ trợ cả 2 trường hợp:
@@ -2035,7 +2074,7 @@ export class GoogleSheetsSyncService {
       let candRows: string[][] = [];
       let targetSheetTitle = 'FROM_NHAN_VIEN';
 
-      if (this.sheetsClient) {
+      if (this.sheetsClient && shouldPullCandidates) {
         // A. Thử đọc từ candidateSpreadsheetId trước (bọc timeout: Google treo
         // request này là cả pull treo theo, UI chờ vô hạn).
         if (this.candidateSpreadsheetId) {
@@ -2079,6 +2118,12 @@ export class GoogleSheetsSyncService {
             // Sheet FROM_NHAN_VIEN chưa được tạo trên master
           }
         }
+      }
+
+      if (shouldPullCandidates) {
+        this.lastCandidatePullAt = Date.now();
+        this.lastCandidateRows = candRows;
+        candRowsForSignature = candRows;
       }
 
       if (candRows.length > 1) {
@@ -2302,9 +2347,37 @@ export class GoogleSheetsSyncService {
         console.error('[GoogleSheetsSyncService] Tab phụ pull lỗi (tab chính NV/tài khoản vẫn giữ):', partialError);
       }
 
+      // Hash nội dung (không phải số dòng): sửa 1 ô trên Sheet vẫn phát hiện được
+      // và bắn realtime ngay, kể cả khi counts không đổi.
+      const fingerprint = fingerprintSheetsContent(batch, candRowsForSignature);
+      const signature = fingerprint.signature;
+      const changed = this.lastDataSignature !== null && this.lastDataSignature !== signature;
+      const changedTabs = changed
+        ? Object.keys(fingerprint.tabs)
+            .filter(t => this.lastTabSignatures[t] !== fingerprint.tabs[t])
+            .map(t => (t === '__extra__' ? 'FROM_NHAN_VIEN' : t))
+        : [];
+      this.lastDataSignature = signature;
+      this.lastTabSignatures = fingerprint.tabs;
+
       this.lastPulledAt = Date.now();
       this.lastPullError = partialError ? `PARTIAL:${partialError}` : null;
-      console.log('[GoogleSheetsSyncService] Đã tải dữ liệu thực tế từ Google Sheets thành công:', counts);
+      console.log(
+        '[GoogleSheetsSyncService] Đã tải dữ liệu thực tế từ Google Sheets thành công:',
+        counts,
+        changed ? `(nội dung ĐỔI, hash ${signature.slice(0, 10)}…)` : '(không đổi)',
+      );
+
+      // Chỉ phát 1 lần cho mỗi thay đổi, dù tick định kỳ và webhook dùng chung pull.
+      if (changed) {
+        for (const listener of this.dataChangeListeners) {
+          try {
+            listener({ signature, counts, changedTabs });
+          } catch (e: any) {
+            console.warn('[GoogleSheetsSyncService] data-change listener lỗi:', e?.message || e);
+          }
+        }
+      }
 
       return {
         success: !partialError,
@@ -2312,6 +2385,8 @@ export class GoogleSheetsSyncService {
           ? `Pull một phần (tab chính OK, tab phụ lỗi: ${partialError})`
           : 'Đã tải và cập nhật toàn bộ dữ liệu thật từ Google Sheets thành công!',
         counts,
+        signature,
+        changed,
       };
     } catch (err: any) {
       this.lastPullError = err?.message || String(err);

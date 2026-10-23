@@ -55,7 +55,7 @@ export function collectSystemAlerts(adapter: any, now = Date.now()): SystemAlert
 
   const lastPulledMs = syncStatus?.lastPulledAt ? Date.parse(syncStatus.lastPulledAt) : NaN;
   const lagMs = Number.isFinite(lastPulledMs) ? Math.max(0, now - lastPulledMs) : null;
-  const syncIntervalMs = readPositiveNumber(process.env.SHEETS_SYNC_INTERVAL_MS, 10_000);
+  const syncIntervalMs = readPositiveNumber(process.env.SHEETS_SYNC_INTERVAL_MS, 5_000);
   const staleAfterMs = Math.max(syncIntervalMs * 6, 120_000);
 
   if (isProduction && !isLive) {

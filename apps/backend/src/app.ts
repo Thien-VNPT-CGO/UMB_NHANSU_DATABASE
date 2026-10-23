@@ -377,18 +377,10 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         return res.status(403).json({ error: 'WEBHOOK_FORBIDDEN' });
       }
       const tab = (req.body?.tab as string) || '';
-      const { accepted, done } = adapter.triggerSheetsPull(`webhook${tab ? ':' + tab : ''}`);
-      // Trả ngay để Apps Script không timeout; pull xong thì đẩy socket cho 2 web app.
-      // Bắn entity 'all' (thay vì 'sheets' trước đây — 2 cổng web không lắng nghe entity
-      // này nên sửa tay trên Sheets không bao giờ tới người dùng): sửa Sheets bên ngoài
-      // là thay đổi thật cần reload, nhờ nhịp tự chống dồn 3s của webhook.
-      done
-        .then((r: any) => {
-          if (r?.counts) {
-            broadcastUpdate('all', { source: 'sheets-webhook', tab: tab || 'all', counts: r.counts });
-          }
-        })
-        .catch(() => null);
+      // Trả ngay để Apps Script không timeout. Pull xong, syncService.onDataChanged
+      // (server.ts) so hash nội dung và bắn data:updated('all') đúng 1 lần cho cả
+      // 2 cổng web — không bắn ở đây để tránh trùng với nhịp pull định kỳ.
+      const { accepted } = adapter.triggerSheetsPull(`webhook${tab ? ':' + tab : ''}`);
       res.json({ received: true, accepted, tab: tab || null });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -475,7 +467,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     const lastPulledMs = syncStatus?.lastPulledAt ? Date.parse(syncStatus.lastPulledAt) : NaN;
     const lastPulledAt = Number.isFinite(lastPulledMs) ? new Date(lastPulledMs).toISOString() : null;
     const syncLagMs = Number.isFinite(lastPulledMs) ? Math.max(0, Date.now() - lastPulledMs) : null;
-    const syncIntervalMs = Number(process.env.SHEETS_SYNC_INTERVAL_MS) || 10_000;
+    const syncIntervalMs = Number(process.env.SHEETS_SYNC_INTERVAL_MS) || 5_000;
     const staleAfterMs = Math.max(syncIntervalMs * 6, 120_000);
     const sheetsLive = sheets.mode === 'GOOGLE_SHEETS_LIVE';
     const mockInProduction = process.env.NODE_ENV === 'production' && !sheetsLive;

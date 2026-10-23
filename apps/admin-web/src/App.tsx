@@ -1152,7 +1152,13 @@ export function App() {
       // nhập — có sự kiện config thì tải lại cả static để các máy đồng bộ 100%.
       socket.on('data:updated', (payload: any) => {
         console.log('⚡ [Socket.IO] Nhận tín hiệu cập nhật realtime:', payload);
-        if (payload?.entity === 'config') {
+        // Sửa tab CAU_HINH_HE_THONG trực tiếp trên Sheet (cấu hình/bảo trì) phải
+        // tải lại cả dữ liệu tĩnh, không chỉ dữ liệu động như entity 'all' thường.
+        const configChangedOnSheet =
+          payload?.entity === 'all' &&
+          Array.isArray(payload?.data?.changedTabs) &&
+          payload.data.changedTabs.includes('CAU_HINH_HE_THONG');
+        if (payload?.entity === 'config' || configChangedOnSheet) {
           loadAllData(currentUser, true);
         } else {
           if (payload?.entity === 'attendance' || payload?.entity === 'all') {

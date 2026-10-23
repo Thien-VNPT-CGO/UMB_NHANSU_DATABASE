@@ -28,6 +28,39 @@ let stopSystemAlerts: (() => void) | null = null;
 // Attach io to express app for route broadcasting
 app.set('io', io);
 
+// Realtime Sheets -> Web: nhịp pull định kỳ HOẶC webhook onEdit phát hiện nội dung
+// đổi (hash toàn bộ ô) thì bắn socket đúng 1 lần cho cả 2 cổng web. Đây là đường
+// duy nhất bắn 'all' từ pull, tránh tick + webhook cùng bắn trùng một thay đổi.
+{
+  const syncSvc: any = (adapter as any).syncService;
+  if (syncSvc && typeof syncSvc.onDataChanged === 'function') {
+    syncSvc.onDataChanged(({ counts, signature, changedTabs }: { counts: any; signature: string; changedTabs: string[] }) => {
+      // Write do chính server phát ra đã được middleware bắn realtime theo entity
+      // ngay khi thao tác; bắn thêm 'all' là 2 cổng web tải lại toàn bộ lần 2.
+      // Ngoại lệ: vừa có webhook onEdit (sửa tay trên Sheet) thì luôn bắn, trừ khi
+      // webhook đến quá sát một write của hệ thống (API write cũng có thể sinh onEdit).
+      const selfWrite = (adapter as any).isSelfWriteRecent?.(12000);
+      const selfWriteJustNow = (adapter as any).isSelfWriteRecent?.(3000);
+      const externalEdit = (adapter as any).isExternalEditRecent?.(8000);
+      if (selfWrite && (!externalEdit || selfWriteJustNow)) {
+        console.log('🔄 [Sheets Realtime] Nội dung đổi do write của hệ thống (đã realtime theo entity) — bỏ emit "all" thừa.');
+        return;
+      }
+      console.log(
+        '🔄 [Sheets Realtime] Google Sheets đổi nội dung — bắn realtime tới 2 cổng web:',
+        counts,
+        changedTabs.length ? `[${changedTabs.join(', ')}]` : '',
+        signature ? `hash ${signature.slice(0, 10)}…` : '',
+      );
+      io.emit('data:updated', {
+        entity: 'all',
+        data: { source: externalEdit ? 'sheets-webhook' : 'sheets-change', counts, signature, changedTabs },
+        timestamp: new Date().toISOString(),
+      });
+    });
+  }
+}
+
 // Pass io to services
 services.accountsService.setSocketServer(io);
 services.schedulesService.setSocketServer(io);
@@ -110,9 +143,9 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   weeklyOffTick();
   setInterval(weeklyOffTick, 60_000);
 
-  // Background Auto-Sync Worker: Tự động kéo toàn bộ dữ liệu từ Google Sheets mỗi 15 giây
-  // và phát tín hiệu realtime qua Socket.IO tới toàn bộ ứng dụng web khi có dữ liệu thay đổi.
-  let lastSyncSignature = '';
+  // Background Auto-Sync Worker: tự động kéo dữ liệu từ Google Sheets mỗi 5 giây
+  // (SHEETS_SYNC_INTERVAL_MS). Việc phát hiện thay đổi + bắn socket nằm ở
+  // syncService.onDataChanged phía trên (hash nội dung, không phải counts).
   // Backoff khi pull lỗi: tránh 6 lần/phút lúc Google Sheets chậm/quota, vì
   // retry dồn dập càng làm pull kế tiếp khó thành công.
   let pullFailStreak = 0;
@@ -135,22 +168,6 @@ server.listen(Number(PORT), '0.0.0.0', () => {
           nextPullAllowedAt = Date.now() + waitMs;
           console.warn(`[sheets-auto-pull] Pull lỗi ${pullFailStreak} lần liên tiếp (${pullRes.message}) — thử lại sau ${Math.round(waitMs / 1000)}s`);
         }
-        if (pullRes && pullRes.success && pullRes.counts) {
-          const currentSignature = JSON.stringify(pullRes.counts);
-          if (lastSyncSignature && lastSyncSignature !== currentSignature) {
-            // Bắn 'all' khi pull phát hiện thay đổi. Mới có write của
-            // chính server này (<= 20s) thì middleware app.ts đã bắn data:updated
-            // theo từng entity ngay khi thao tác — bắn 'all' thừa nữa là cả 2 cổng
-            // web tải lại TOÀN BỘ lần thứ 2 cho cùng một thay đổi (web chậm).
-            if ((adapter as any).isSelfWriteRecent?.(20000)) {
-              console.log('🔄 [Sheets Auto-Sync] Counts đổi kể từ write của hệ thống (đã realtime theo entity) — bỏ emit "all" thừa.');
-            } else {
-              console.log('🔄 [Sheets Auto-Sync] Dữ liệu Google Sheets có thay đổi, đã tự động nạp lên hệ thống:', pullRes.counts);
-              io.emit('data:updated', { entity: 'all', data: pullRes.counts, timestamp: new Date().toISOString() });
-            }
-          }
-          lastSyncSignature = currentSignature;
-        }
       }
     } catch (err: any) {
       console.warn('[sheets-auto-pull] tick error:', err?.message || err);
@@ -159,8 +176,9 @@ server.listen(Number(PORT), '0.0.0.0', () => {
 
   // Kéo dữ liệu tự động ngay sau khi khởi động 2 giây
   setTimeout(autoPullSheetsTick, 2000);
-  // Định kỳ tự động quét và kéo dữ liệu mới từ Google Sheets mỗi 10 giây
-  const syncIntervalMs = Number(process.env.SHEETS_SYNC_INTERVAL_MS) || 10_000;
+  // Định kỳ tự động quét và kéo dữ liệu mới từ Google Sheets (mặc định 5 giây).
+  // 5s ~ 12 lượt/phút × 2-3 read = an toàn quota 60 read/phút/service account.
+  const syncIntervalMs = Number(process.env.SHEETS_SYNC_INTERVAL_MS) || 5_000;
   setInterval(autoPullSheetsTick, syncIntervalMs);
 
   // PUSH ngược toàn bộ tabs lên Sheets định kỳ: chỉ chạy khi bộ nhớ có thay đổi
