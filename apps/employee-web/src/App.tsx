@@ -7,7 +7,9 @@ import { connectRealtime, stopRealtimeRevive } from './services/realtime';
 import { APP_COMMIT } from './app-version';
 import { PremiumLogin } from './components/PremiumLogin';
 import type { ScheduledLoginTheme } from './components/PremiumLogin';
+import { getThemeConfig } from './components/loginThemeData';
 import type { LoginThemeId } from './components/loginThemeData';
+import { ThemeAmbientEffects } from './components/ThemeAmbientEffects';
 import { SignaturePad } from './components/SignaturePad';
 import {
   Home,
@@ -909,6 +911,8 @@ export function App() {
   const [portalMaint, setPortalMaint] = useState<{ active: boolean; message: string } | null>(null);
   // Lịch giao diện sự kiện do Admin cấu hình (null = không khóa giao diện).
   const [portalThemeSchedule, setPortalThemeSchedule] = useState<ScheduledLoginTheme | null>(null);
+  // Đồng hồ để cổng đã đăng nhập tự đổi theme đúng mốc bắt đầu/kết thúc.
+  const [portalThemeNow, setPortalThemeNow] = useState(() => Date.now());
   const [maintChecking, setMaintChecking] = useState(false);
   const fetchPortalMaintenance = async (): Promise<boolean | null> => {
     try {
@@ -959,13 +963,26 @@ export function App() {
     fetchPortalMaintenanceRef.current().catch(() => null);
   }, []);
   // Đang bảo trì -> tự kiểm tra lại mỗi 30s để mở cổng ngay khi Admin tắt (khỏi cần F5).
-  // Chưa đăng nhập -> thăm dò mỗi 60s để nhận lịch giao diện sự kiện mới.
+  // Chưa đăng nhập hoặc đang có lịch sự kiện -> thăm dò mỗi 60s để nhận thay đổi mới.
   useEffect(() => {
-    if (!portalMaint?.active && isLoggedIn) return;
+    if (!portalMaint?.active && isLoggedIn && !portalThemeSchedule?.enabled) return;
     const delay = portalMaint?.active ? 30000 : 60000;
     const t = setInterval(() => { fetchPortalMaintenanceRef.current().catch(() => null); }, delay);
     return () => clearInterval(t);
-  }, [portalMaint?.active, isLoggedIn]);
+  }, [portalMaint?.active, isLoggedIn, portalThemeSchedule?.enabled]);
+
+  // Tick 30s để theme sự kiện trên cổng đã đăng nhập tự bật/tắt đúng giờ.
+  useEffect(() => {
+    if (!portalThemeSchedule?.enabled) return;
+    setPortalThemeNow(Date.now());
+    const t = setInterval(() => setPortalThemeNow(Date.now()), 30_000);
+    return () => clearInterval(t);
+  }, [
+    portalThemeSchedule?.enabled,
+    portalThemeSchedule?.event,
+    portalThemeSchedule?.startAt,
+    portalThemeSchedule?.endAt,
+  ]);
 
   // Adjustment Request Form
   const [adjustmentData, setAdjustmentData] = useState({
@@ -3531,13 +3548,33 @@ export function App() {
   // =========================================================================
   const { shift: currentShift, all: todayShiftList, phase: currentShiftPhase } = getCurrentShift();
 
+  // Theme sự kiện đang diễn ra áp dụng cho toàn bộ cổng đã đăng nhập.
+  const activePortalThemeId: LoginThemeId | null = (() => {
+    const s = portalThemeSchedule;
+    if (!s?.enabled || s.endAt <= s.startAt) return null;
+    const now = portalThemeNow + (s.serverOffsetMs || 0);
+    return now >= s.startAt && now < s.endAt ? s.event : null;
+  })();
+  const portalEventTheme = activePortalThemeId ? getThemeConfig(activePortalThemeId) : null;
+  const portalThemeVars = (portalEventTheme ? {
+    background: portalEventTheme.bgGradient,
+    '--brand': portalEventTheme.accentColor,
+    '--brand-hover': portalEventTheme.accentColor,
+    '--brand-soft': portalEventTheme.badgeBg,
+    '--surface': portalEventTheme.cardBg,
+    '--border': portalEventTheme.badgeBorder,
+    '--border-light': portalEventTheme.badgeBorder,
+    '--shadow-card': '0 6px 20px rgba(15, 23, 42, 0.10)',
+  } : {}) as React.CSSProperties;
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#FFF8F4' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#FFF8F4', ...portalThemeVars }}>
+      {activePortalThemeId && <ThemeAmbientEffects themeId={activePortalThemeId} />}
       {/* HEADER */}
       <header style={{
         padding: '14px 16px',
-        backgroundColor: '#FFFFFF',
-        borderBottom: '1px solid var(--border)',
+        backgroundColor: portalEventTheme ? portalEventTheme.cardBg : '#FFFFFF',
+        borderBottom: portalEventTheme ? `2px solid ${portalEventTheme.badgeBorder}` : '1px solid var(--border)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
@@ -3552,11 +3589,12 @@ export function App() {
             height: '38px',
             borderRadius: '10px',
             backgroundColor: '#FFFFFF',
-            border: '1.5px solid var(--border)',
+            border: portalEventTheme ? `2px solid ${portalEventTheme.logoBorderColor}` : '1.5px solid var(--border)',
             overflow: 'hidden',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
+            boxShadow: portalEventTheme ? `0 0 0 3px ${portalEventTheme.logoGlowColor}` : 'none',
           }}>
             <img src="/logo.jpg" alt="Ụm Bò Milk" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
           </div>
@@ -3581,8 +3619,8 @@ export function App() {
         display: 'flex',
         overflowX: 'auto',
         whiteSpace: 'nowrap',
-        backgroundColor: '#FFFFFF',
-        borderBottom: '1px solid var(--border)',
+        backgroundColor: portalEventTheme ? portalEventTheme.cardBg : '#FFFFFF',
+        borderBottom: portalEventTheme ? `2px solid ${portalEventTheme.badgeBorder}` : '1px solid var(--border)',
         padding: '6px 8px',
         gap: '6px',
         scrollbarWidth: 'none',
@@ -3603,7 +3641,7 @@ export function App() {
                 fontSize: '12px',
                 fontWeight: 700,
                 border: isActive ? '1.5px solid var(--brand)' : '1px solid var(--border)',
-                backgroundColor: isActive ? 'var(--brand-soft)' : '#FAFAFA',
+                backgroundColor: isActive ? 'var(--brand-soft)' : (portalEventTheme ? 'rgba(255,255,255,0.75)' : '#FAFAFA'),
                 color: isActive ? 'var(--brand)' : 'var(--text)',
                 cursor: 'pointer',
                 flexShrink: 0,
@@ -3621,6 +3659,31 @@ export function App() {
           );
         })}
       </div>
+
+      {/* Banner sự kiện đang áp dụng */}
+      {portalEventTheme && activePortalThemeId && (
+        <div style={{
+          margin: '12px 16px 0',
+          padding: '10px 14px',
+          borderRadius: 'var(--radius-md)',
+          backgroundColor: 'rgba(255,255,255,0.94)',
+          border: `1.5px solid ${portalEventTheme.badgeBorder}`,
+          boxShadow: '0 4px 14px rgba(15, 23, 42, 0.12)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+        }}>
+          <span style={{ fontSize: '24px', lineHeight: 1 }}>{portalEventTheme.icon}</span>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: '13px', fontWeight: 900, color: portalEventTheme.accentColor }}>
+              {portalEventTheme.name}
+            </div>
+            <div style={{ fontSize: '11px', color: '#64748B', fontWeight: 600 }}>
+              {portalEventTheme.dateRangeDesc} • Giao diện sự kiện đang áp dụng
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Cờ mất mạng: đang xem dữ liệu cũ */}
       {dataStale && (
@@ -3857,7 +3920,12 @@ export function App() {
               );
             })()}
             {/* Shift Card */}
-            <div className="card" style={{ background: 'linear-gradient(135deg, #FFFFFF 0%, #FFF8F4 100%)', border: '1px solid #F0D5DF' }}>
+            <div className="card" style={{
+              background: portalEventTheme
+                ? `linear-gradient(135deg, ${portalEventTheme.cardBg} 0%, #FFFFFF 100%)`
+                : 'linear-gradient(135deg, #FFFFFF 0%, #FFF8F4 100%)',
+              border: portalEventTheme ? `1.5px solid ${portalEventTheme.badgeBorder}` : '1px solid #F0D5DF',
+            }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                 <span className="badge badge-brand">Ca làm việc hôm nay</span>
                 <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--brand)' }}>{employee?.default_branch_id}</span>
