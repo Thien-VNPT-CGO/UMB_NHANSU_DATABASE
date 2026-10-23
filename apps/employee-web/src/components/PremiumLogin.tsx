@@ -963,28 +963,6 @@ export function PremiumLogin({
               {showPhoneError ? 'Số điện thoại cần 9–12 chữ số (VD: 0901111222).' : ''}
             </div>
 
-            {/* Quick Demo Fill Button */}
-            {!phone && (
-              <div style={{ textAlign: 'center', margin: '4px 0 10px' }}>
-                <button
-                  type="button"
-                  onClick={() => setPhone('0901111222')}
-                  style={{
-                    fontSize: 12,
-                    fontWeight: 700,
-                    color: theme.accentColor,
-                    background: 'rgba(0,0,0,0.04)',
-                    border: '1px dashed currentColor',
-                    borderRadius: 999,
-                    padding: '4px 12px',
-                    cursor: 'pointer',
-                  }}
-                >
-                  ⚡ Thử nhanh: 0901 111 222
-                </button>
-              </div>
-            )}
-
             {checkingPhone && phoneValid && (
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 12, fontSize: 13, fontWeight: 700, color: theme.accentColor }}>
                 <span className="pl-spinner" /> Đang kiểm tra SĐT trong hệ thống...
