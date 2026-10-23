@@ -975,11 +975,27 @@ export class GoogleSheetsSyncService {
     run = (async () => {
       const nextBatch = { ...(this.lastFullBatch || {}) };
       if (partitionBase) {
-        // Chỉ đọc đúng cụm tab append-only: tab gốc + các part đang có trong cache.
-        const partTitles = Object.keys(nextBatch).filter(
-          t => t !== partitionBase && new RegExp(`^${partitionBase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}_P\\d+$`).test(t),
-        );
-        if (safeTab !== partitionBase && !partTitles.includes(safeTab)) partTitles.push(safeTab);
+        // Hỏi metadata (cache 10 phút, tự xoá khi tạo part) để lấy đủ _P2/_P3
+        // hiện có, kể cả part vừa được tạo sau lần full-pull gần nhất.
+        let partTitles: string[];
+        try {
+          partTitles = (await this.partitionChain(partitionBase)).filter(t => t !== partitionBase);
+        } catch (err: any) {
+          console.warn(`[GoogleSheetsSyncService] Không đọc được danh sách part ${partitionBase} — fallback full-pull:`, err?.message || err);
+          return this.doPullAllDataFromGoogleSheets(repo, { reason: `webhook:${safeTab}:fallback` });
+        }
+        if (safeTab !== partitionBase && !partTitles.includes(safeTab)) {
+          // Tab part vừa bị xoá/đổi tên: đọc full để không giữ cache cũ.
+          console.warn(`[GoogleSheetsSyncService] Tab ${safeTab} không còn trong cụm — fallback full-pull.`);
+          return this.doPullAllDataFromGoogleSheets(repo, { reason: `webhook:${safeTab}:fallback` });
+        }
+        // Bỏ các part cũ không còn tồn tại trước khi ghi lại cụm hiện tại.
+        const partPrefix = `${partitionBase}_P`;
+        for (const key of Object.keys(nextBatch)) {
+          if (key.startsWith(partPrefix) && /^P\d+$/.test(key.slice(partPrefix.length))) {
+            delete nextBatch[key];
+          }
+        }
         const wanted = [partitionBase, ...partTitles];
         const fetched: Record<string, string[][]> = {};
         for (const title of wanted) {
