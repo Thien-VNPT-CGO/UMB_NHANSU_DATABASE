@@ -712,6 +712,19 @@ export function App() {
   // Ho So ca nhan: NV tu cap nhat (realtime ve tab Ho So NV cho HR).
   const [profForm, setProfForm] = useState({ email: '', gender: '', birth_date: '', id_card_number: '', bank_name: '', bank_account: '', bank_holder: '', bank_qr_img: '' });
   const [profBusy, setProfBusy] = useState(false);
+  // Yêu cầu đổi STK đang chờ HR/Finance duyệt (STK cũ vẫn dùng để trả lương).
+  const [bankChangeRequest, setBankChangeRequest] = useState<any | null>(null);
+  const fetchBankChangeRequest = async () => {
+    try {
+      const res: any = await apiRequest('/me/bank-change');
+      setBankChangeRequest(res?.request || null);
+    } catch { /* offline: giữ banner cũ */ }
+  };
+  useEffect(() => {
+    // Mở lại tab Hồ sơ -> kiểm tra yêu cầu vừa được duyệt/từ chối bên admin.
+    if (activeTab === 'profile' && employee?.employee_id) fetchBankChangeRequest();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
   useEffect(() => {
     if (!employee?.employee_id) return;
     setProfForm({
@@ -726,6 +739,21 @@ export function App() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [employee?.employee_id]);
+  // Khi HR/Finance duyệt đổi STK, hồ sơ NV được đẩy realtime -> đồng bộ riêng
+  // phần ngân hàng để form không còn QR/STK cũ và không vô tình gửi yêu cầu ngược.
+  useEffect(() => {
+    if (!employee?.employee_id) return;
+    setProfForm(s => ({
+      ...s,
+      bank_name: (employee as any)?.bank_name || '',
+      bank_account: (employee as any)?.bank_account || '',
+      bank_holder: (employee as any)?.bank_holder || '',
+      bank_qr_img: (employee as any)?.bank_qr_img || '',
+    }));
+    // Hồ sơ ngân hàng vừa đổi (HR duyệt) -> tải lại trạng thái chờ để ẩn banner.
+    fetchBankChangeRequest();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [employee?.employee_id, (employee as any)?.bank_name, (employee as any)?.bank_account, (employee as any)?.bank_holder, (employee as any)?.bank_qr_img]);
   const handleSaveProfile = async () => {
     if (profBusy) return;
     setProfBusy(true);
@@ -743,13 +771,27 @@ export function App() {
           bank_qr_img: profForm.bank_qr_img,
         }),
       });
+      const bankPending = res?.bank_change_pending === true;
       if (res?.employee) {
         const merged = { ...(employee || {}), ...(res.employee || {}) };
         if (!(res.employee as any)?.bank_qr_img && !(profForm.bank_qr_img)) delete (merged as any).bank_qr_img;
         setEmployee(merged as any);
         try { localStorage.setItem('ubm_emp_data', JSON.stringify(merged)); } catch {}
+        if (bankPending) {
+          // Yêu cầu đã ghi nhận nhưng STK cũ vẫn là STK đang dùng -> đưa form về STK cũ.
+          setProfForm(s => ({
+            ...s,
+            bank_name: (res.employee as any)?.bank_name || '',
+            bank_account: (res.employee as any)?.bank_account || '',
+            bank_holder: (res.employee as any)?.bank_holder || '',
+            bank_qr_img: (res.employee as any)?.bank_qr_img || '',
+          }));
+        }
       }
-      showToast('Đã cập nhật hồ sơ! HR và Kế toán thấy ngay (kèm mã QR ngân hàng).');
+      setBankChangeRequest(res?.bank_change_request || null);
+      showToast(bankPending
+        ? '⏳ Đã gửi yêu cầu đổi STK. STK cũ vẫn được dùng để trả lương; HR/Finance chỉ có thể duyệt sau 48h.'
+        : 'Đã cập nhật hồ sơ! HR và Kế toán thấy ngay (kèm mã QR ngân hàng).');
     } catch (err: any) {
       showToast(err?.message || 'Lỗi khi cập nhật hồ sơ!');
     } finally {
@@ -1538,6 +1580,8 @@ export function App() {
         reload();
         // Thông báo inbox mới (VD HR phát hành lịch tuần) → tab Lịch tải lại dải ngày.
         setSchedRefresh(k => k + 1);
+        // HR duyệt/từ chối đổi STK -> cập nhật banner "đang chờ duyệt" ngay.
+        fetchBankChangeRequest();
       });
       // HR publish lịch tuần (kể cả tuần sau): NV cùng chi nhánh tự mở lịch tuần
       // đó + báo rõ để thấy ngay lịch làm việc của mình.
@@ -6974,6 +7018,20 @@ export function App() {
             <div className="card">
               <h3 style={{ fontSize: '16px', fontWeight: 800, marginBottom: '4px' }}>10. Hồ Sơ Nhân Viên Của Tôi</h3>
               <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>Thông tin HR quản lý (chỉ xem) + thông tin bạn được tự cập nhật (lưu là HR thấy ngay ở tab Hồ Sơ Nhân Viên).</div>
+              {bankChangeRequest && (
+                <div style={{ backgroundColor: '#FFF7ED', border: '1.5px solid #FDBA74', borderRadius: '10px', padding: '11px 13px', marginBottom: '14px', fontSize: '12px', lineHeight: 1.55 }}>
+                  <div style={{ fontWeight: 900, color: '#9A3412' }}>⏳ Yêu cầu đổi số tài khoản đang chờ HR/Finance duyệt</div>
+                  <div style={{ color: '#7C2D12', marginTop: '3px' }}>
+                    STK cũ vẫn được dùng để trả lương. Yêu cầu gửi lúc {new Date(bankChangeRequest.requested_at).toLocaleString('vi-VN')}; chỉ có thể duyệt sau {new Date(bankChangeRequest.apply_after).toLocaleString('vi-VN')} (giữ STK cũ đủ 48h).
+                  </div>
+                  <div style={{ marginTop: '4px', fontWeight: 700 }}>
+                    STK xin đổi: {bankChangeRequest.requested?.bank_name || '—'} • {(() => {
+                      const acc = String(bankChangeRequest.requested?.bank_account || '').replace(/\s+/g, '');
+                      return acc.length > 4 ? `••••${acc.slice(-4)}` : '••••';
+                    })()} • {bankChangeRequest.requested?.bank_holder || ''}
+                  </div>
+                </div>
+              )}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '14px', fontSize: '12px' }}>
                 <div style={{ backgroundColor: '#FAFAFA', borderRadius: '8px', padding: '8px 10px' }}><div style={{ color: 'var(--text-muted)' }}>Họ tên</div><strong>{employee?.full_name || '—'}</strong></div>
                 <div style={{ backgroundColor: '#FAFAFA', borderRadius: '8px', padding: '8px 10px' }}><div style={{ color: 'var(--text-muted)' }}>Mã NV</div><strong>{(employee as any)?.employee_code || '—'}</strong></div>
@@ -7004,6 +7062,9 @@ export function App() {
                 </div>
                 <div>
                   <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Mã QR ngân hàng (Kế toán dùng để chuyển khoản)</label>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '6px', lineHeight: 1.5 }}>
+                    Lần đầu nhập STK được lưu ngay. Từ lần đổi thứ 2, yêu cầu cần HR/Finance duyệt và giữ STK cũ 48h — payroll vẫn dùng STK cũ đến khi duyệt.
+                  </div>
                   {profForm.bank_qr_img ? (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <img src={profForm.bank_qr_img} alt="QR ngân hàng" style={{ width: '96px', height: '96px', objectFit: 'contain', borderRadius: '8px', border: '1px solid var(--border)', backgroundColor: '#FFF' }} />

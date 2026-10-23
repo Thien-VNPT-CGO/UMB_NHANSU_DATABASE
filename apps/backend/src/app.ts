@@ -19,6 +19,20 @@ import {
   weekRangeOf,
 } from './services/weekly-off.service.js';
 import { ZaloService, defaultMeetUrl } from './services/zalo.service.js';
+import {
+  bankChangeRemainingSeconds,
+  bankInfoChanged,
+  buildBankChangeRequest,
+  canApproveBankChange,
+  deletePendingBankChangeRequest,
+  getPendingBankChangeRequest,
+  isFirstBankEntry,
+  listPendingBankChangeRequests,
+  maskBankAccount,
+  normalizeBankInfo,
+  publicBankChangeRequest,
+  savePendingBankChangeRequest,
+} from './services/bank-change.service.js';
 import { dedupeDuplicateInterviews } from './services/interview-dedupe.service.js';
 import { AccountsService } from './services/accounts.service.js';
 import { EmployeesService } from './services/employees.service.js';
@@ -41,8 +55,14 @@ import {
   authRateLimiter,
   buildCorsOptions,
   generalRateLimiter,
+  getClientIp,
   helmetMiddleware,
 } from './config/security.js';
+import {
+  buildLoginLockoutKey,
+  loginLockout,
+  type LoginLockoutResult,
+} from './services/login-lockout.service.js';
 import { validate } from './middlewares/validate.middleware.js';
 import {
   changePasswordBody,
@@ -120,6 +140,8 @@ import {
 } from './validators/hr.validator.js';
 import {
   backupCreateBody,
+  bankChangeParams,
+  bankChangeReviewBody,
   emergencyGrantBody,
   probationAssessmentBody,
   probationMeetDoneBody,
@@ -143,6 +165,47 @@ import { lateFineFor } from './services/payroll.service.js';
 
 // Thời điểm process khởi động — đo uptime thật (không hardcode).
 const SERVER_STARTED_AT = Date.now();
+
+/** Trả 429 + Retry-After thống nhất cho cả cổng nhân viên và quản trị. */
+function sendLoginLockout(res: any, lock: LoginLockoutResult) {
+  const minutes = Math.max(1, Math.ceil(lock.retryAfterSeconds / 60));
+  res.setHeader('Retry-After', String(lock.retryAfterSeconds));
+  return res.status(429).json({
+    error: 'LOGIN_TEMPORARILY_LOCKED',
+    message: `Bạn đã nhập sai quá nhiều lần. Vì an toàn, vui lòng thử lại sau ${minutes} phút.`,
+    retryAfterSeconds: lock.retryAfterSeconds,
+  });
+}
+
+/** Chỉ những lỗi do sai thông tin đăng nhập mới bị tính vào bộ đếm khóa. */
+function isCredentialFailure(scope: 'employee' | 'admin', errorCode: string): boolean {
+  if (scope === 'admin') return errorCode === 'INVALID_CREDENTIALS';
+  return ['INVALID_PIN', 'ACCOUNT_NOT_FOUND', 'PIN_NOT_SET'].includes(errorCode);
+}
+
+/** Ghi audit khi khóa (không ghi PIN/mật khẩu vào log). */
+function auditLoginLockout(
+  adapter: any,
+  scope: 'employee' | 'admin',
+  identifier: string,
+  ip: string,
+  lock: LoginLockoutResult,
+) {
+  const action = scope === 'admin' ? 'LOGIN_ADMIN_LOCKOUT' : 'LOGIN_EMPLOYEE_LOCKOUT';
+  const targetEntity = scope === 'admin' ? 'TAI_KHOAN_NOI_BO' : 'TAI_KHOAN_NHAN_VIEN';
+  adapter
+    .recordAuditLog({
+      log_id: `LOG_LOCKOUT_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      actor_id: identifier || 'UNKNOWN',
+      actor_role: 'SYSTEM',
+      action,
+      target_entity: targetEntity,
+      target_id: identifier || 'UNKNOWN',
+      details: `Tạm khóa đăng nhập sau ${lock.failures} lần sai. IP: ${ip}. Thử lại sau ${lock.retryAfterSeconds}s.`,
+      ip_address: ip,
+    })
+    .catch((err: any) => console.warn('[auth-lockout] audit failed:', err?.message || err));
+}
 
 export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   const app = express();
@@ -397,6 +460,48 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     });
   });
 
+  /**
+   * Readiness probe (dùng cho monitoring/load balancer) — KHÁC /health.
+   * /health chỉ trả lời "process còn sống"; /health/ready trả 503 khi hệ thống
+   * chưa phục vụ được: Sheets đang tải/không đọc được, chạy mock ở production,
+   * đồng bộ quá cũ hoặc hàng đợi ghi bị kẹt.
+   * Giữ /health trả "UP" để không phá healthcheck Docker/CI hiện tại.
+   */
+  app.get('/health/ready', (req, res) => {
+    const readiness = (adapter as any).getReadiness?.() || { ready: true };
+    const sheets = adapter.getStatus();
+    const syncStatus = (adapter as any).syncService?.getStatus?.() || null;
+    const lastPulledMs = syncStatus?.lastPulledAt ? Date.parse(syncStatus.lastPulledAt) : NaN;
+    const lastPulledAt = Number.isFinite(lastPulledMs) ? new Date(lastPulledMs).toISOString() : null;
+    const syncLagMs = Number.isFinite(lastPulledMs) ? Math.max(0, Date.now() - lastPulledMs) : null;
+    const syncIntervalMs = Number(process.env.SHEETS_SYNC_INTERVAL_MS) || 10_000;
+    const staleAfterMs = Math.max(syncIntervalMs * 6, 120_000);
+    const sheetsLive = sheets.mode === 'GOOGLE_SHEETS_LIVE';
+    const mockInProduction = process.env.NODE_ENV === 'production' && !sheetsLive;
+    const syncStale = sheetsLive && (syncLagMs === null || syncLagMs > staleAfterMs);
+    const pendingWrites = singleWriterQueue.getPendingCount();
+    const queueBacklog = pendingWrites > 500;
+
+    const reasons: string[] = [];
+    if (readiness.ready === false) reasons.push(readiness.reason || 'NOT_READY');
+    if (mockInProduction) reasons.push('MOCK_ENGINE_IN_PRODUCTION');
+    if (syncStale) reasons.push('SHEETS_SYNC_STALE');
+    if (queueBacklog) reasons.push('WRITE_QUEUE_BACKLOG');
+
+    const ready = reasons.length === 0;
+    res.status(ready ? 200 : 503).json({
+      status: ready ? 'READY' : 'NOT_READY',
+      ready,
+      reasons,
+      time: new Date().toISOString(),
+      readiness,
+      sheets: { mode: sheets.mode, connected: sheets.connected },
+      sync: { lastPulledAt, lagMs: syncLagMs, staleAfterMs, stale: syncStale },
+      queue: { pendingWrites, backlog: queueBacklog },
+      uptimeSeconds: Math.floor((Date.now() - SERVER_STARTED_AT) / 1000),
+    });
+  });
+
   // Cổng đăng ký 2 ngày OFF/tuần: public để app hiển thị banner/đếm ngược.
   // Bao gồm đợt mở bù VIP của Admin (manual) nếu còn hạn.
   app.get('/api/weekly-off-window', async (req, res) => {
@@ -512,11 +617,25 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   app.post('/auth/employee/phone-login', validate({ body: phoneLoginBody }), async (req, res) => {
+    const { phone, pin } = req.body;
+    const clientIp = getClientIp(req);
+    const lockKey = buildLoginLockoutKey('employee', phone, clientIp);
+    const preLock = loginLockout.check(lockKey);
+    if (preLock.locked) {
+      return sendLoginLockout(res, preLock);
+    }
     try {
-      const { phone, pin } = req.body;
       const result = await authService.loginWithPhone(phone, pin);
+      loginLockout.reset(lockKey);
       res.json(result);
     } catch (err: any) {
+      if (isCredentialFailure('employee', err.message)) {
+        const lock = loginLockout.recordFailure(lockKey);
+        if (lock.locked) {
+          auditLoginLockout(adapter, 'employee', phone, clientIp, lock);
+          return sendLoginLockout(res, lock);
+        }
+      }
       if (err.message === 'ACCOUNT_LOCKED') {
         return res.status(403).json({
           error: 'ACCOUNT_LOCKED',
@@ -585,39 +704,155 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       if (gender !== undefined && gender !== '' && !['NAM', 'NU', 'KHAC'].includes(gender)) {
         return res.status(400).json({ error: 'INVALID_GENDER: giới tính phải là NAM, NU hoặc KHAC.' });
       }
-      const result: any = await employeesService.updateEmployee(
-        req.user.employeeId,
-        {
-          email: b.email,
-          gender: (gender || undefined) as any,
-          birthDate: b.birthDate ?? b.birth_date,
-          idCardNumber: b.idCardNumber ?? b.id_card_number,
-          bankName: b.bankName ?? b.bank_name,
-          bankAccount: b.bankAccount ?? b.bank_account,
-          bankHolder: b.bankHolder ?? b.bank_holder,
-          bankQrImg: b.bankQrImg ?? b.bank_qr_img,
-        },
-        req.user.id
-      );
-      broadcastUpdate('employees', { action: 'self-update', employeeId: req.user.employeeId, employee: result });
+      const employeeId = req.user.employeeId;
+      const current = await employeesService.getEmployee(employeeId);
+      if (!current) return res.status(404).json({ error: 'EMPLOYEE_NOT_FOUND' });
+
+      const direct: any = {
+        email: b.email,
+        gender: (gender || undefined) as any,
+        birthDate: b.birthDate ?? b.birth_date,
+        idCardNumber: b.idCardNumber ?? b.id_card_number,
+      };
+
+      // STK: lần đầu lưu ngay; từ lần đổi thứ 2 tạo yêu cầu PENDING (giữ STK cũ 48h).
+      // Các trường hồ sơ khác vẫn lưu bình thường, không bị chặn bởi yêu cầu STK.
+      let bankPending = false;
+      let pendingRequest: any = null;
+      let existingPending = await getPendingBankChangeRequest(adapter, employeeId);
+      const hasBankInput = [
+        'bankName', 'bank_name',
+        'bankAccount', 'bank_account',
+        'bankHolder', 'bank_holder',
+        'bankQrImg', 'bank_qr_img',
+      ].some(k => b[k] !== undefined);
+
+      if (hasBankInput) {
+        const currentBank = normalizeBankInfo(current);
+        const requestedBank = normalizeBankInfo({
+          bankName: b.bankName ?? b.bank_name ?? currentBank.bank_name,
+          bankAccount: b.bankAccount ?? b.bank_account ?? currentBank.bank_account,
+          bankHolder: b.bankHolder ?? b.bank_holder ?? currentBank.bank_holder,
+          bankQrImg: b.bankQrImg ?? b.bank_qr_img ?? currentBank.bank_qr_img,
+        });
+
+        if (bankInfoChanged(currentBank, requestedBank)) {
+          if (isFirstBankEntry(currentBank, requestedBank)) {
+            // Chưa có STK cũ -> lưu trực tiếp.
+            direct.bankName = requestedBank.bank_name;
+            direct.bankAccount = requestedBank.bank_account;
+            direct.bankHolder = requestedBank.bank_holder;
+            direct.bankQrImg = requestedBank.bank_qr_img;
+            await deletePendingBankChangeRequest(adapter, employeeId).catch(() => false);
+            existingPending = null;
+            await adapter.recordAuditLog({
+              log_id: `LOG_${Date.now()}_${employeeId}`,
+              actor_id: req.user.id,
+              actor_role: req.user.role || 'EMPLOYEE',
+              action: 'BANK_INFO_FIRST_SET',
+              target_entity: 'NHAN_VIEN_MASTER',
+              target_id: employeeId,
+              details: `NV ${current.full_name || employeeId} nhập STK lần đầu: ${requestedBank.bank_name || '—'} ${maskBankAccount(requestedBank.bank_account)}`,
+              ip_address: getClientIp(req),
+            } as any).catch(() => null);
+          } else {
+            const existing = existingPending;
+            if (existing && !bankInfoChanged(existing.requested, requestedBank)) {
+              // Gửi lại đúng nội dung đang chờ -> giữ nguyên mốc 48h, không reset.
+              bankPending = true;
+              pendingRequest = existing;
+              existingPending = existing;
+            } else {
+              const request = buildBankChangeRequest({
+                employeeId,
+                requestedBy: req.user.id,
+                current: currentBank,
+                requested: requestedBank,
+              });
+              await savePendingBankChangeRequest(adapter, request);
+              bankPending = true;
+              pendingRequest = request;
+              existingPending = request;
+              await adapter.recordAuditLog({
+                log_id: `LOG_${Date.now()}_${employeeId}`,
+                actor_id: req.user.id,
+                actor_role: req.user.role || 'EMPLOYEE',
+                action: existing ? 'BANK_CHANGE_REQUEST_UPDATED' : 'BANK_CHANGE_REQUESTED',
+                target_entity: 'NHAN_VIEN_MASTER',
+                target_id: employeeId,
+                details: `Yêu cầu đổi STK ${maskBankAccount(currentBank.bank_account)} -> ${maskBankAccount(requestedBank.bank_account)}; duyệt được sau ${request.apply_after}`,
+                ip_address: getClientIp(req),
+              } as any).catch(() => null);
+              // Realtime-only cho ADMIN/HR/FINANCE: không dùng broadcastNotification vì
+              // hàm đó lưu inbox recipient 'ALL' (mọi NV sẽ thấy thông tin ngân hàng).
+              try {
+                const io = app.get('io');
+                if (io) {
+                  const payload = {
+                    id: `notif_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                    type: 'BANK_CHANGE',
+                    title: '🏦 Yêu cầu đổi số tài khoản ngân hàng',
+                    message: `${current.full_name || employeeId} (${(current as any).employee_code || employeeId}) vừa gửi yêu cầu đổi STK sang ${requestedBank.bank_name || '—'} ${maskBankAccount(requestedBank.bank_account)}. STK cũ vẫn dùng đến khi duyệt; chỉ duyệt được sau 48h.`,
+                    linkTab: 'bank-changes',
+                    metadata: { employeeId, requestId: request.request_id },
+                    targetRoles: ['ADMIN', 'HR', 'FINANCE'],
+                    origin: 'EMPLOYEE',
+                    timestamp: new Date().toISOString(),
+                  };
+                  io.emit('system:notification', payload);
+                  io.emit('data:updated', { entity: 'notifications', data: payload, timestamp: payload.timestamp });
+                }
+              } catch { /* realtime không chặn lưu yêu cầu */ }
+              broadcastUpdate('bank-changes', { action: 'requested', employeeId });
+            }
+          }
+        }
+      }
+
+      // Nếu NV chỉ sửa trường khác (email/CCCD...) trong lúc đang có yêu cầu chờ,
+      // vẫn trả yêu cầu đó về để banner "đang chờ duyệt" không biến mất.
+      if (!pendingRequest && existingPending) pendingRequest = existingPending;
+      const result: any = await employeesService.updateEmployee(employeeId, direct, req.user.id);
+      broadcastUpdate('employees', { action: 'self-update', employeeId, employee: result });
+      if (bankPending) broadcastUpdate('bank-changes', { action: 'pending', employeeId });
       const { avatar_photo: _drop, ...rest } = result || {};
-      res.json({ success: true, employee: rest });
+      res.setHeader('Cache-Control', 'no-store');
+      res.json({
+        success: true,
+        employee: rest,
+        bank_change_pending: bankPending,
+        bank_change_request: pendingRequest ? publicBankChangeRequest(pendingRequest) : null,
+      });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
   });
 
   app.post('/auth/admin/login', validate({ body: adminLoginBody }), async (req, res) => {
+    const { username, password } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ error: 'MISSING_CREDENTIALS' });
+    }
+    const clientIp = getClientIp(req);
+    const lockKey = buildLoginLockoutKey('admin', username, clientIp);
+    const preLock = loginLockout.check(lockKey);
+    if (preLock.locked) {
+      return sendLoginLockout(res, preLock);
+    }
     try {
-      const { username, password } = req.body;
-      if (!username || !password) {
-        return res.status(400).json({ error: 'MISSING_CREDENTIALS' });
-      }
       const result = await authService.loginAdmin(username, password);
+      loginLockout.reset(lockKey);
       // Không bao giờ trả password_hash ra ngoài
       if ((result.user as any)?.password_hash) delete (result.user as any).password_hash;
       res.json(result);
     } catch (err: any) {
+      if (isCredentialFailure('admin', err.message)) {
+        const lock = loginLockout.recordFailure(lockKey);
+        if (lock.locked) {
+          auditLoginLockout(adapter, 'admin', username, clientIp, lock);
+          return sendLoginLockout(res, lock);
+        }
+      }
       res.status(401).json({ error: err.message });
     }
   });
@@ -654,6 +889,18 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         return res.json({ user: req.user, employee: emp });
       }
       res.json({ user: req.user });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Yêu cầu đổi STK đang chờ duyệt của chính NV (cổng nhân viên hiển thị banner).
+  app.get('/me/bank-change', authMiddleware, requireRole(['EMPLOYEE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      if (!req.user?.employeeId) return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
+      const request = await getPendingBankChangeRequest(adapter, req.user.employeeId);
+      res.setHeader('Cache-Control', 'no-store');
+      res.json({ request: request ? publicBankChangeRequest(request) : null });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -722,10 +969,183 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.get('/admin/employee-accounts', authMiddleware, requireRole(['ADMIN', 'HR']), async (req, res) => {
     try {
       const accounts = await adapter.listAccounts();
-      // Không bao giờ lộ pin_hash qua API.
-      res.json(accounts.map(({ pin_hash: _omit, ...rest }: any) => rest));
+      // Không lộ pin_hash/pin_code hàng loạt: chỉ trả cờ has_pin. HR bấm "Hiện"
+      // mới gọi endpoint reveal bên dưới (có ghi audit PIN_VIEWED).
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(accounts.map(({ pin_hash: _omitHash, pin_code, ...rest }: any) => ({
+        ...rest,
+        has_pin: !!pin_code,
+      })));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // HR/Admin xem PIN hiện tại của 1 tài khoản — bắt buộc ghi audit trước khi trả.
+  app.get('/admin/employee-accounts/:id/pin', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: adminIdParams }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const account = await adapter.getAccountById(req.params.id);
+      if (!account) return res.status(404).json({ error: 'ACCOUNT_NOT_FOUND' });
+      if ((account as any).account_status === 'LOCKED' || !(account as any).pin_code) {
+        return res.status(409).json({
+          error: 'PIN_NOT_AVAILABLE',
+          message: 'Tài khoản đang bị khóa hoặc chưa có PIN để xem. Mở khóa tài khoản để cấp PIN khởi tạo mới.',
+        });
+      }
+      await adapter.recordAuditLog({
+        log_id: `LOG_${Date.now()}_${account.account_id}`,
+        actor_id: req.user!.id,
+        actor_role: req.user!.role,
+        action: 'PIN_VIEWED',
+        target_entity: 'TAI_KHOAN_NHAN_VIEN',
+        target_id: account.account_id,
+        details: `Xem PIN tài khoản ${account.account_id} của NV ${account.employee_id}`,
+        ip_address: getClientIp(req),
+      } as any);
+      res.setHeader('Cache-Control', 'no-store');
+      res.json({
+        account_id: account.account_id,
+        employee_id: account.employee_id,
+        pin_code: (account as any).pin_code,
+        pin_must_change: account.pin_must_change === true,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // --- DUYỆT ĐỔI SỐ TÀI KHOẢN NGÂN HÀNG ---
+  // NV đổi STK từ lần 2 -> chờ HR/Finance duyệt; STK cũ vẫn là STK payroll dùng.
+  app.get('/admin/bank-change-requests', authMiddleware, requireRole(['ADMIN', 'HR', 'FINANCE']), async (_req, res) => {
+    try {
+      const requests = await listPendingBankChangeRequests(adapter);
+      const now = Date.now();
+      const enriched = await Promise.all(requests.map(async (request) => {
+        const emp = await employeesService.getEmployee(request.employee_id).catch(() => null);
+        const remaining = bankChangeRemainingSeconds(request, now);
+        return {
+          ...publicBankChangeRequest(request),
+          employee: emp ? {
+            employee_id: emp.employee_id,
+            employee_code: emp.employee_code,
+            full_name: emp.full_name,
+            phone_normalized: emp.phone_normalized,
+            default_branch_id: emp.default_branch_id,
+            group: emp.group,
+            employment_status: emp.employment_status,
+          } : null,
+          current: emp ? {
+            bank_name: emp.bank_name || '',
+            bank_account: emp.bank_account || '',
+            bank_holder: emp.bank_holder || '',
+            // Không kèm QR cũ: UI duyệt chỉ cần QR mới, tránh nhân đôi payload.
+          } : null,
+          can_approve: canApproveBankChange(request, now),
+          remaining_seconds: remaining,
+        };
+      }));
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(enriched);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/admin/bank-change-requests/:employeeId/approve', authMiddleware, requireRole(['ADMIN', 'HR', 'FINANCE']), validate({ params: bankChangeParams, body: bankChangeReviewBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const employeeId = req.params.employeeId;
+      const request = await getPendingBankChangeRequest(adapter, employeeId);
+      if (!request) return res.status(404).json({ error: 'BANK_CHANGE_REQUEST_NOT_FOUND' });
+
+      const now = Date.now();
+      if (!canApproveBankChange(request, now)) {
+        const remainingSeconds = Math.max(1, bankChangeRemainingSeconds(request, now));
+        res.setHeader('Retry-After', String(remainingSeconds));
+        return res.status(409).json({
+          error: 'BANK_CHANGE_COOLING_OFF',
+          message: `Chưa đủ 48h giữ STK cũ. Vui lòng duyệt sau ${new Date(request.apply_after).toLocaleString('vi-VN')}.`,
+          apply_after: request.apply_after,
+          remaining_seconds: remainingSeconds,
+        });
+      }
+
+      const emp = await employeesService.getEmployee(employeeId);
+      if (!emp) return res.status(404).json({ error: 'EMPLOYEE_NOT_FOUND' });
+
+      const updated = await employeesService.updateEmployee(employeeId, {
+        bankName: request.requested.bank_name,
+        bankAccount: request.requested.bank_account,
+        bankHolder: request.requested.bank_holder,
+        bankQrImg: request.requested.bank_qr_img,
+      }, req.user!.id);
+      await deletePendingBankChangeRequest(adapter, employeeId).catch(() => false);
+
+      const note = String(req.body?.note || '').trim();
+      await adapter.recordAuditLog({
+        log_id: `LOG_${Date.now()}_${employeeId}_BANK_APPROVE`,
+        actor_id: req.user!.id,
+        actor_role: req.user!.role,
+        action: 'BANK_CHANGE_APPROVED',
+        target_entity: 'NHAN_VIEN_MASTER',
+        target_id: employeeId,
+        details: `Duyệt đổi STK ${maskBankAccount(request.old.bank_account)} -> ${maskBankAccount(request.requested.bank_account)} cho ${(emp as any).full_name || employeeId}${note ? `; ghi chú: ${note}` : ''}`,
+        ip_address: getClientIp(req),
+      } as any).catch(() => null);
+
+      await notificationsService.sendNotification({
+        recipientIds: [employeeId],
+        type: 'emp.bank_change',
+        severity: 'SYSTEM',
+        title: '✅ Yêu cầu đổi số tài khoản đã được duyệt',
+        summary: `STK mới ${request.requested.bank_name || ''} ${maskBankAccount(request.requested.bank_account)} đã được duyệt và sẽ dùng cho kỳ lương tới.`,
+        targetPath: '/profile',
+        actorId: req.user!.id,
+      }).catch(() => null);
+
+      // Không đẩy nguyên object employee (chứa STK/QR) qua socket cho mọi client;
+      // chỉ báo ID, cổng NV/Admin tự gọi API để tải dữ liệu đúng quyền.
+      broadcastUpdate('employees', { action: 'bank-change-approved', employeeId });
+      broadcastUpdate('bank-changes', { action: 'approved', employeeId });
+      const { avatar_photo: _drop, ...rest } = (updated as any) || {};
+      res.json({ success: true, message: 'Đã duyệt đổi STK. Payroll sẽ dùng STK mới từ kỳ tính tiếp theo.', employee: rest });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.post('/admin/bank-change-requests/:employeeId/reject', authMiddleware, requireRole(['ADMIN', 'HR', 'FINANCE']), validate({ params: bankChangeParams, body: bankChangeReviewBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const employeeId = req.params.employeeId;
+      const request = await getPendingBankChangeRequest(adapter, employeeId);
+      if (!request) return res.status(404).json({ error: 'BANK_CHANGE_REQUEST_NOT_FOUND' });
+
+      const note = String(req.body?.note || '').trim();
+      await deletePendingBankChangeRequest(adapter, employeeId).catch(() => false);
+      await adapter.recordAuditLog({
+        log_id: `LOG_${Date.now()}_${employeeId}_BANK_REJECT`,
+        actor_id: req.user!.id,
+        actor_role: req.user!.role,
+        action: 'BANK_CHANGE_REJECTED',
+        target_entity: 'NHAN_VIEN_MASTER',
+        target_id: employeeId,
+        details: `Từ chối đổi STK ${maskBankAccount(request.old.bank_account)} -> ${maskBankAccount(request.requested.bank_account)}${note ? `; lý do: ${note}` : ''}`,
+        ip_address: getClientIp(req),
+      } as any).catch(() => null);
+
+      await notificationsService.sendNotification({
+        recipientIds: [employeeId],
+        type: 'emp.bank_change',
+        severity: 'ACTION_REQUIRED',
+        title: '❌ Yêu cầu đổi số tài khoản bị từ chối',
+        summary: note ? `Lý do: ${note}. STK cũ vẫn được dùng để trả lương.` : 'Yêu cầu đổi STK bị từ chối. STK cũ vẫn được dùng để trả lương.',
+        targetPath: '/profile',
+        actorId: req.user!.id,
+      }).catch(() => null);
+
+      broadcastUpdate('bank-changes', { action: 'rejected', employeeId });
+      res.json({ success: true, message: 'Đã từ chối yêu cầu. STK cũ tiếp tục được dùng.' });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
     }
   });
 
@@ -5522,7 +5942,8 @@ async function send(d){document.getElementById('msg').textContent='⏳ Đang g�
   });
 
   // --- 12. CÀI ĐẶT HỆ THỐNG ---
-  app.get('/admin/system-settings', authMiddleware, async (req, res) => {
+  // Chỉ ADMIN: settings chứa cả yêu cầu đổi STK (thông tin ngân hàng) của NV.
+  app.get('/admin/system-settings', authMiddleware, requireRole(['ADMIN']), async (req, res) => {
     try {
       const settings = await adapter.getSystemSettings();
       res.json(settings);
@@ -5564,15 +5985,28 @@ async function send(d){document.getElementById('msg').textContent='⏳ Đang g�
   const adminDist = possibleAdminDirs.find(d => fs.existsSync(d));
   const empDist = possibleEmpDirs.find(d => fs.existsSync(d));
 
+  // Service worker/manifest/index phải được kiểm tra lại mỗi lần tải — nếu
+  // cache lâu, bản PWA cũ có thể giữ mãi cho tới khi người dùng xóa cache.
+  const frontendStaticOptions = {
+    setHeaders: (res: any, filePath: string) => {
+      const name = path.basename(filePath).toLowerCase();
+      if (name === 'sw.js' || name === 'index.html' || name.endsWith('.webmanifest')) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+      }
+    },
+  };
+
   if (adminDist) {
-    app.use('/admin', express.static(adminDist));
+    app.use('/admin', express.static(adminDist, frontendStaticOptions));
     app.get('/admin/*', (_req, res) => {
       res.sendFile(path.join(adminDist, 'index.html'));
     });
   }
 
   if (empDist) {
-    app.use(express.static(empDist));
+    app.use(express.static(empDist, frontendStaticOptions));
     app.get('*', (req, res, next) => {
       if (req.path.startsWith('/api') || req.path.startsWith('/auth') || req.path.startsWith('/admin') || req.path.startsWith('/socket.io')) {
         return next();

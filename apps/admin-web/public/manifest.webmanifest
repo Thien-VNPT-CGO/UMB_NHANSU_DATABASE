@@ -1,0 +1,36 @@
+{
+  "id": "./",
+  "name": "Ụm Bò Milk - Quản Trị Nhân Sự",
+  "short_name": "UBM Quản Trị",
+  "description": "Quản lý nhân sự, lịch làm việc, chấm công và lương trên máy tính/tablet.",
+  "lang": "vi",
+  "dir": "ltr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "any",
+  "background_color": "#FFF8F4",
+  "theme_color": "#E85D92",
+  "categories": ["business", "productivity"],
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

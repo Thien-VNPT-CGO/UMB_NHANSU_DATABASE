@@ -123,7 +123,7 @@ function readMax(envKey: string, prodDefault: number, testDefault: number): numb
 }
 
 /** Trích xuất client IP thực khi chạy đằng sau reverse proxy (Cloudflare, Nginx) */
-function getClientIp(req: any): string {
+export function getClientIp(req: any): string {
   const xff = req.headers?.['x-forwarded-for'];
   if (typeof xff === 'string' && xff) {
     const first = xff.split(',')[0].trim();

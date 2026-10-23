@@ -300,6 +300,16 @@ export class EmployeesService {
           data.actorId,
           autoPin
         );
+        // Audit việc cấp PIN khởi tạo (kể cả bulk import không trả PIN ra UI).
+        await this.repo.recordAuditLog({
+          log_id: `LOG_${Date.now()}_${newAcc.account_id}`,
+          actor_id: data.actorId,
+          actor_role: 'HR',
+          action: 'PIN_ISSUED',
+          target_entity: 'TAI_KHOAN_NHAN_VIEN',
+          target_id: newAcc.account_id,
+          details: `Cấp PIN khởi tạo cho NV ${data.fullName || employeeId} (${newAcc.account_id})`,
+        } as any).catch(() => null);
 
         return emp;
       },
@@ -928,6 +938,15 @@ export class EmployeesService {
       target_entity: 'TAI_KHOAN_NHAN_VIEN',
       target_id: employeeId,
       details: `HR mở khóa + cấp PIN mới cho ${(emp as any).full_name || employeeId}`,
+    } as any).catch(() => null);
+    await this.repo.recordAuditLog({
+      log_id: `LOG_${Date.now()}_${employeeId}_PIN`,
+      actor_id: actorId,
+      actor_role: 'HR',
+      action: 'PIN_REISSUED',
+      target_entity: 'TAI_KHOAN_NHAN_VIEN',
+      target_id: (opened[0] || employeeId),
+      details: `Cấp lại PIN khởi tạo sau mở khóa cho ${(emp as any).full_name || employeeId}`,
     } as any).catch(() => null);
     return { employeeId, opened, pin: freshPin };
   }

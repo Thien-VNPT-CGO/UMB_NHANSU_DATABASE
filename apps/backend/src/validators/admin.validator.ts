@@ -70,6 +70,16 @@ export const emergencyGrantBody = z.object({
   employeeId: z.string().trim().min(1).max(64),
 });
 
+// --- Duyệt / từ chối yêu cầu đổi số tài khoản ngân hàng ---
+export const bankChangeParams = z.object({
+  employeeId: z.string().trim().min(1).max(64),
+});
+export const bankChangeReviewBody = z
+  .object({
+    note: optString(500),
+  })
+  .passthrough();
+
 // --- Lên lịch kiểm tra đầu ra thử việc (Google Meet + bài trắc nghiệm) ---
 // meetUrl để trống -> server tự điền link Meet hiện tại của hệ thống.
 export const probationAssessmentBody = z.object({

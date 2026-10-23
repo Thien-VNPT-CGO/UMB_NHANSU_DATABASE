@@ -869,6 +869,186 @@ export const PublishScheduleModal: React.FC<PublishScheduleModalProps> = ({
   );
 };
 
+/** Màn duyệt đổi số tài khoản ngân hàng: dùng chung cho ADMIN/HR/FINANCE.
+ *  Yêu cầu chỉ duyệt được sau 48h; payroll vẫn dùng STK cũ tới lúc duyệt. */
+const BankChangeApprovals: React.FC<{
+  showToast: (msg: string, type?: 'INFO' | 'WARNING', customTitle?: string) => void;
+  onChanged?: () => Promise<void> | void;
+}> = ({ showToast, onChanged }) => {
+  const [items, setItems] = React.useState<any[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [busy, setBusy] = React.useState<string | null>(null);
+  const [zoom, setZoom] = React.useState<any | null>(null);
+  const [, setTick] = React.useState(0);
+
+  const load = async (silent = false) => {
+    if (!silent) setLoading(true);
+    try {
+      const res: any = await apiRequest('/admin/bank-change-requests');
+      setItems(Array.isArray(res) ? res : []);
+    } catch (e: any) {
+      if (!silent) showToast(e?.message || 'Không tải được yêu cầu đổi STK!', 'WARNING');
+    } finally {
+      if (!silent) setLoading(false);
+    }
+  };
+
+  React.useEffect(() => {
+    load();
+    // Tự cập nhật mỗi phút: mốc 48h trôi qua + yêu cầu mới từ cổng NV.
+    const t = setInterval(() => {
+      setTick(x => x + 1);
+      load(true);
+    }, 60_000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const review = async (item: any, action: 'approve' | 'reject') => {
+    const name = item?.employee?.full_name || item?.employee_id || 'nhân viên';
+    const newAcc = `${item?.requested?.bank_name || '—'} • ${item?.requested?.bank_account || '—'}`;
+    if (action === 'approve') {
+      if (!window.confirm(`Duyệt đổi STK cho ${name}?\nSTK mới: ${newAcc}\n\nSau khi duyệt, payroll sẽ dùng STK mới từ kỳ tính tiếp theo.`)) return;
+    }
+    let note = '';
+    if (action === 'reject') {
+      const input = window.prompt(`Lý do từ chối yêu cầu đổi STK của ${name} (không bắt buộc):`, '');
+      if (input === null) return;
+      note = input.trim();
+    }
+    setBusy(`${item.employee_id}:${action}`);
+    try {
+      const res: any = await apiRequest(`/admin/bank-change-requests/${encodeURIComponent(item.employee_id)}/${action}`, {
+        method: 'POST',
+        body: JSON.stringify({ note }),
+      });
+      showToast(res?.message || (action === 'approve' ? 'Đã duyệt đổi STK!' : 'Đã từ chối yêu cầu!'));
+      await load(true);
+      if (onChanged) await onChanged();
+    } catch (e: any) {
+      showToast(e?.message || 'Không xử lý được yêu cầu đổi STK!', 'WARNING');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const fmt = (s: string) => {
+    try { return new Date(s).toLocaleString('vi-VN'); } catch { return s || '—'; }
+  };
+
+  return (
+    <div style={{ backgroundColor: 'var(--surface)', borderRadius: '14px', border: '1px solid var(--border)', padding: '18px 20px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' }}>
+        <div style={{ fontWeight: 900, fontSize: '15px' }}>🏦 Yêu cầu đổi số tài khoản ngân hàng</div>
+        <span style={{ fontSize: '11px', fontWeight: 800, color: '#92400E', backgroundColor: '#FEF3C7', border: '1px solid #FCD34D', padding: '4px 10px', borderRadius: '999px' }}>
+          Chờ duyệt: {items.length}
+        </span>
+        <span style={{ fontSize: '11px', color: '#64748B', flex: '1 1 260px' }}>
+          Giữ STK cũ 48h để chống chiếm đoạt tài khoản. Payroll chỉ dùng STK mới sau khi duyệt.
+        </span>
+        <button className="btn-secondary" style={{ fontSize: '12px', padding: '7px 12px', fontWeight: 700 }} onClick={() => load()}>
+          🔄 Tải lại
+        </button>
+      </div>
+
+      {loading && items.length === 0 ? (
+        <div style={{ padding: '20px', textAlign: 'center', color: '#64748B', fontSize: '13px' }}>Đang tải yêu cầu...</div>
+      ) : items.length === 0 ? (
+        <div style={{ padding: '22px', textAlign: 'center', color: '#64748B', fontSize: '13px', backgroundColor: '#F8FAFC', borderRadius: '10px' }}>
+          ✅ Không có yêu cầu đổi STK nào đang chờ duyệt.
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          {items.map((item: any) => {
+            const applyAt = new Date(item.apply_after).getTime();
+            const canApprove = !Number.isFinite(applyAt) || Date.now() >= applyAt;
+            const remainH = Number.isFinite(applyAt) ? Math.max(0, Math.ceil((applyAt - Date.now()) / 3_600_000)) : 0;
+            const emp = item.employee || {};
+            const currentAcc = item.current?.bank_account || item.old?.bank_account || '—';
+            const requestedAcc = item.requested?.bank_account || '—';
+            const approvedBusy = busy === `${item.employee_id}:approve`;
+            const rejectedBusy = busy === `${item.employee_id}:reject`;
+            return (
+              <div key={item.request_id || item.employee_id} style={{ border: '1px solid #E2E8F0', borderRadius: '12px', padding: '14px', backgroundColor: '#FFF' }}>
+                <div style={{ display: 'flex', gap: '10px', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+                  <div>
+                    <div style={{ fontWeight: 800, fontSize: '14px' }}>{emp.full_name || item.employee_id}</div>
+                    <div style={{ fontSize: '11px', color: '#64748B' }}>
+                      {emp.employee_code || item.employee_id} • {getDisplayBranch(emp.default_branch_id)} • {emp.employment_status === 'OFFICIAL' ? 'Chính thức' : emp.employment_status === 'PROBATION' ? 'Thử việc' : (emp.employment_status || '')}
+                    </div>
+                    <div style={{ fontSize: '11px', color: '#94A3B8', marginTop: '2px' }}>Gửi lúc: {fmt(item.requested_at)}</div>
+                  </div>
+                  <span style={{ alignSelf: 'flex-start', fontSize: '11px', fontWeight: 800, padding: '4px 10px', borderRadius: '999px', backgroundColor: canApprove ? '#DCFCE7' : '#FEF3C7', color: canApprove ? '#166534' : '#92400E' }}>
+                    {canApprove ? '✅ Đủ 48h — có thể duyệt' : `⏳ Còn ${remainH} giờ`}
+                  </span>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '8px', marginTop: '10px' }}>
+                  <div style={{ backgroundColor: '#F8FAFC', borderRadius: '8px', padding: '9px 11px', fontSize: '12px' }}>
+                    <div style={{ color: '#64748B', fontWeight: 700, marginBottom: '2px' }}>STK đang dùng (payroll)</div>
+                    <div style={{ fontWeight: 800 }}>{item.current?.bank_name || item.old?.bank_name || '—'}</div>
+                    <div style={{ fontFamily: 'monospace', fontWeight: 800 }}>{currentAcc}</div>
+                    <div>{item.current?.bank_holder || item.old?.bank_holder || ''}</div>
+                  </div>
+                  <div style={{ backgroundColor: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: '8px', padding: '9px 11px', fontSize: '12px' }}>
+                    <div style={{ color: '#9A3412', fontWeight: 800, marginBottom: '2px' }}>STK xin đổi</div>
+                    <div style={{ fontWeight: 800 }}>{item.requested?.bank_name || '—'}</div>
+                    <div style={{ fontFamily: 'monospace', fontWeight: 900, color: '#9A3412' }}>{requestedAcc}</div>
+                    <div>{item.requested?.bank_holder || ''}</div>
+                  </div>
+                </div>
+
+                {item.requested?.bank_qr_img && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px' }}>
+                    <img src={item.requested.bank_qr_img} alt="QR mới" onClick={() => setZoom(item)} style={{ width: '54px', height: '54px', objectFit: 'contain', borderRadius: '8px', border: '1px solid #FED7AA', backgroundColor: '#FFF', cursor: 'zoom-in' }} />
+                    <span style={{ fontSize: '11px', color: '#9A3412', fontWeight: 700 }}>QR mới — bấm để xem lớn và đối chiếu chủ tài khoản</span>
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', gap: '8px', marginTop: '12px', flexWrap: 'wrap' }}>
+                  <button
+                    className="btn-primary"
+                    disabled={!canApprove || !!busy}
+                    title={canApprove ? 'Duyệt đổi STK' : `Chỉ duyệt được sau ${fmt(item.apply_after)}`}
+                    style={{ fontSize: '12px', padding: '8px 16px', fontWeight: 800, opacity: canApprove ? 1 : 0.5, cursor: canApprove ? 'pointer' : 'not-allowed' }}
+                    onClick={() => review(item, 'approve')}
+                  >
+                    {approvedBusy ? 'Đang duyệt...' : '✅ Duyệt đổi STK'}
+                  </button>
+                  <button
+                    className="btn-secondary"
+                    disabled={!!busy}
+                    style={{ fontSize: '12px', padding: '8px 16px', fontWeight: 700, color: '#B91C1C', borderColor: '#FCA5A5' }}
+                    onClick={() => review(item, 'reject')}
+                  >
+                    {rejectedBusy ? 'Đang xử lý...' : '❌ Từ chối'}
+                  </button>
+                  {!canApprove && (
+                    <span style={{ fontSize: '11px', color: '#92400E', alignSelf: 'center' }}>
+                      Chỉ duyệt được sau {fmt(item.apply_after)} (giữ STK cũ đủ 48h).
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {zoom && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 9999, backgroundColor: 'rgba(15,23,42,0.65)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }} onClick={() => setZoom(null)}>
+          <div style={{ backgroundColor: '#FFF', borderRadius: '16px', padding: '20px', maxWidth: '420px', width: '100%', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+            <div style={{ fontWeight: 900, fontSize: '15px', marginBottom: '4px' }}>QR ngân hàng mới — {zoom.employee?.full_name || zoom.employee_id}</div>
+            <div style={{ fontSize: '12px', color: '#64748B', marginBottom: '10px' }}>{zoom.requested?.bank_name} • {zoom.requested?.bank_account} • {zoom.requested?.bank_holder}</div>
+            <img src={zoom.requested?.bank_qr_img} alt="QR ngân hàng mới" style={{ width: '100%', maxWidth: '320px', objectFit: 'contain', borderRadius: '12px', border: '1px solid #E5E7EB', backgroundColor: '#FFF' }} />
+            <button className="btn-secondary" style={{ width: '100%', marginTop: '12px', padding: '9px', fontWeight: 700 }} onClick={() => setZoom(null)}>Đóng</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const RoleViews: React.FC<RoleViewsProps> = ({
   activeTab,
   currentUser,
@@ -15128,6 +15308,20 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </div>
           </div>
         )}
+      </div>
+    );
+  }
+
+  if (activeTab === 'bank-changes') {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <div>
+          <h1 style={{ fontSize: '20px', fontWeight: 800, margin: 0 }}>Duyệt đổi số tài khoản ngân hàng</h1>
+          <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '4px 0 0' }}>
+            Nhân viên đổi STK từ lần thứ 2 cần HR/Finance duyệt. Hệ thống giữ STK cũ 48h và payroll tiếp tục dùng STK cũ cho tới khi được duyệt.
+          </p>
+        </div>
+        <BankChangeApprovals showToast={showToast} onChanged={onRefreshData} />
       </div>
     );
   }

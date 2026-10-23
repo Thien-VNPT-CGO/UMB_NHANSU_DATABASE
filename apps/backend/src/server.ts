@@ -10,6 +10,7 @@ import { pinRotationTick } from './services/pin-rotation.service.js';
 import { dedupeDuplicateInterviews, enforceScreeningOutcomes } from './services/interview-dedupe.service.js';
 import { interviewNoShowTick, interviewReminderTick } from './services/interview-reminders.service.js';
 import { autoRemindersTick } from './services/auto-reminders.service.js';
+import { notifySystemAlert, startSystemAlertMonitor } from './services/system-alert.service.js';
 import { buildSocketCorsOptions, getAllowedOrigins } from './config/security.js';
 
 const PORT = process.env.PORT || 4005;
@@ -20,6 +21,9 @@ const server = http.createServer(app);
 const io = new Server(server, {
   cors: buildSocketCorsOptions(),
 });
+
+// Giám sát nền: Sheets mock/stale, hàng đợi ghi kẹt... (xem system-alert.service)
+let stopSystemAlerts: (() => void) | null = null;
 
 // Attach io to express app for route broadcasting
 app.set('io', io);
@@ -82,7 +86,14 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   console.log(`Google Sheets Mode: ${adapter.getStatus().mode}`);
   console.log(`Realtime Socket.IO: Ready`);
   console.log(`Weekly-OFF gate: Fri 09:00 -> Sat 09:00 (VN) + reminder 5 min before`);
+  console.log(`System alerts: ${process.env.ALERT_WEBHOOK_URL ? 'webhook configured' : 'log only (set ALERT_WEBHOOK_URL to send externally)'}`);
   console.log(`====================================================`);
+
+  // Cảnh báo vận hành: chờ pull Sheets đầu tiên rồi mới kiểm tra (90s), sau đó 5 phút/lần.
+  stopSystemAlerts = startSystemAlertMonitor(adapter, {
+    intervalMs: 5 * 60_000,
+    initialDelayMs: 90_000,
+  });
 
   // Scheduler nhắc mở cổng đăng ký OFF tuần (mỗi 60s + ngay khi boot).
   const weeklyOffTick = () => {
@@ -739,6 +750,13 @@ server.listen(Number(PORT), '0.0.0.0', () => {
       console.log(`[auto-backup] Snapshot ${snap.snapshot_id} OK (${snap.size_mb}MB)`);
     } catch (err: any) {
       console.error('[auto-backup] FAILED:', err?.message || err);
+      void notifySystemAlert({
+        code: 'BACKUP_FAILED',
+        severity: 'URGENT',
+        title: '🚨 Backup tự động thất bại',
+        message: `Snapshot định kỳ lỗi: ${err?.message || err}. Kiểm tra Google Drive/Sheets và dung lượng lưu trữ.`,
+        details: { host: process.env.HOSTNAME || 'ubm-server' },
+      });
       try {
         const admins = await adapter.listAdminAccounts();
         const ids = admins.filter(a => (a.role === 'ADMIN' || a.role === 'HR') && a.is_active !== false).map(a => a.admin_id);
@@ -768,6 +786,9 @@ const gracefulShutdown = (signal: string) => {
   shuttingDown = true;
   console.log(`[${signal}] Đang tắt êm: xả ghi Sheets nền...`);
   (async () => {
+    try {
+      stopSystemAlerts?.();
+    } catch { /* non-fatal */ }
     try {
       await (adapter as any)?.flushSheetsWrites?.(20000);
     } catch { /* cố hết sức */ }

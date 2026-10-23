@@ -13,6 +13,7 @@
     "build:admin": "npm run build --workspace=@ubm/admin-web",
     "build:employee": "npm run build --workspace=@ubm/employee-web",
     "build": "npm run build:shared && npm run build:backend && npm run build:admin && npm run build:employee",
+    "test": "npm run test --workspace=@ubm/backend",
     "start": "node apps/backend/dist/server.js",
     "dev:backend": "npm run dev --workspace=apps/backend",
     "dev:admin": "npm run dev --workspace=apps/admin-web",

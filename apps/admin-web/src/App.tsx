@@ -60,7 +60,7 @@ import {
 
 export interface LiveToastItem {
   id: string;
-  type?: 'CHECKIN' | 'CHECKOUT' | 'LEAVE' | 'SWAP' | 'PIN_CHANGED' | 'PIN_SENT' | 'INFO' | 'WARNING';
+  type?: 'CHECKIN' | 'CHECKOUT' | 'LEAVE' | 'SWAP' | 'PIN_CHANGED' | 'PIN_SENT' | 'BANK_CHANGE' | 'INFO' | 'WARNING';
   title: string;
   message: string;
   linkTab?: string;
@@ -94,6 +94,7 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'settings', label: '14. Cài đặt', icon: Settings },
     { id: 'audit', label: '15. Nhật ký Audit', icon: FileCheck },
     { id: 'backup', label: '16. Sao lưu & Phục hồi', icon: HardDrive },
+    { id: 'bank-changes', label: '17. Duyệt đổi STK', icon: CreditCard },
   ],
   HR: [
     { id: 'hr-dashboard', label: '1. Dashboard HR', icon: Building2 },
@@ -112,6 +113,7 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'hr-reports', label: '14. Báo cáo HR', icon: FileSpreadsheet },
     { id: 'hr-notifications', label: '15. Thông báo', icon: Bell },
     { id: 'hr-profile', label: '16. Hồ Sơ Nhân Viên Ụm Bò Milk', icon: IdCard },
+    { id: 'bank-changes', label: '17. Duyệt đổi STK', icon: CreditCard },
   ],
   STORE: [
     { id: 'store-dashboard', label: '1. Dashboard Store', icon: Store },
@@ -138,6 +140,7 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'fin-payment', label: '10. Thanh toán', icon: CheckCircle },
     { id: 'fin-signatures', label: '11. Cài đặt chữ ký', icon: PenTool },
     { id: 'fin-bank-qr', label: '12. QR ngân hàng NV', icon: QrCode },
+    { id: 'bank-changes', label: '13. Duyệt đổi STK', icon: CreditCard },
   ],
   MARKETING: [
     { id: 'mkt-dashboard', label: '1. Dashboard MKT', icon: Megaphone },
@@ -509,15 +512,50 @@ export function App() {
     } catch { /* không phải ADMIN hoặc offline */ }
   };
 
-  // ĐÃ BỎ reset PIN (vận hành 2026-10): NV tự đổi từ PIN cũ trong kỳ 1-5.
-  // HR quên PIN -> xem cột Mã PIN (bản rõ hiện tại) để nhắc lại, không cấp mới.
-  const handleResetPin = async (item: any) => {
+  // PIN được che mặc định ở danh sách; HR bấm "Hiện" mới gọi endpoint reveal
+  // (backend ghi audit PIN_VIEWED). Chỉ lưu PIN đã xem trong state phiên này.
+  const [revealedPins, setRevealedPins] = useState<Record<string, string>>({});
+  const [pinRevealBusy, setPinRevealBusy] = useState<string | null>(null);
+  const handleRevealPin = async (item: any) => {
     if (item?.pinCode) {
       setSuccessMsg(`PIN hiện tại của ${item.fullName} (${item.phone}): ${item.pinCode} — đọc cho NV để NV đăng nhập bằng PIN này rồi tự đổi PIN mới (không reset).`);
-    } else {
-      setErrorMsg('Đã bỏ reset PIN: NV tự đổi PIN mới từ PIN cũ (hạn 1-5 hàng tháng). Tài khoản này chưa có mã PIN để nhắc.');
+      return;
     }
-    return;
+    const accountId = String(item?.accountId || '');
+    if (!accountId || !item?.hasRealAccount) {
+      setErrorMsg('Tài khoản này chưa có mã PIN để xem.');
+      return;
+    }
+    if (revealedPins[accountId]) {
+      setSuccessMsg(`PIN hiện tại của ${item.fullName} (${item.phone}): ${revealedPins[accountId]} — đọc cho NV để NV tự đổi PIN mới (không reset).`);
+      return;
+    }
+    setPinRevealBusy(accountId);
+    try {
+      const res: any = await apiRequest(`/admin/employee-accounts/${encodeURIComponent(accountId)}/pin`);
+      const pin = String(res?.pin_code || '');
+      if (!pin) throw new Error('Tài khoản chưa có PIN để xem.');
+      setRevealedPins(prev => ({ ...prev, [accountId]: pin }));
+      setSuccessMsg(`PIN hiện tại của ${item.fullName} (${item.phone}): ${pin} — đọc cho NV để NV đăng nhập bằng PIN này rồi tự đổi PIN mới (không reset).`);
+    } catch (err: any) {
+      setErrorMsg(err?.message === 'PIN_NOT_AVAILABLE'
+        ? 'Tài khoản đang bị khóa hoặc chưa có PIN. Mở khóa tài khoản để cấp PIN khởi tạo mới.'
+        : (err?.message || 'Không xem được PIN. Vui lòng thử lại.'));
+    } finally {
+      setPinRevealBusy(null);
+    }
+  };
+  const handleHidePin = (accountId: string) => {
+    setRevealedPins(prev => {
+      const next = { ...prev };
+      delete next[accountId];
+      return next;
+    });
+  };
+  // ĐÃ BỎ reset PIN (vận hành 2026-10): NV tự đổi từ PIN cũ trong kỳ 1-5.
+  // HR quên PIN -> bấm "Hiện" để xem PIN hiện tại (ghi audit), không cấp mới.
+  const handleResetPin = async (item: any) => {
+    await handleRevealPin(item);
   };
 
   // Modals
@@ -637,7 +675,7 @@ export function App() {
   const handleBulkSendPin = async (accountIds?: string[]) => {
     const targets = accountIds && accountIds.length > 0
       ? accountIds
-      : activationDataList.filter(i => i.pinMustChange && i.pinCode && i.hasRealAccount).map(i => i.accountId);
+      : activationDataList.filter(i => i.pinMustChange && i.hasPin && i.hasRealAccount).map(i => i.accountId);
     if (targets.length === 0) {
       setErrorMsg('Không có nhân viên nào còn PIN khởi tạo chưa gửi!');
       return;
@@ -687,6 +725,7 @@ export function App() {
 
       setAuthToken(res.token);
       setCurrentUser(res.user);
+      setRevealedPins({});
       localStorage.setItem('ubm_admin_token', res.token);
       localStorage.setItem('ubm_admin_user', JSON.stringify(res.user));
       if (res.refreshToken) {
@@ -722,6 +761,7 @@ export function App() {
     staticDataLoadedRef.current = false;
     setAuthToken('');
     setCurrentUser(null);
+    setRevealedPins({});
     localStorage.removeItem('ubm_admin_token');
     localStorage.removeItem('ubm_admin_refresh');
     localStorage.removeItem('ubm_admin_user');
@@ -1623,8 +1663,10 @@ export function App() {
         // Khóa màu theo nhóm thật (không so chuỗi hiển thị vì không bao giờ khớp).
         branchKind: emp.group === 'VAN_PHONG' || emp.group === 'SALE' ? 'HQ' : emp.group === 'XUONG' ? 'FACTORY' : 'STORE',
         accountStatus: isLocked ? 'LOCKED' : (acc ? 'ACTIVE' : 'NO_ACCOUNT'),
-        // Mã PIN: khi bị khóa thì mã PIN bị xóa hoàn toàn khỏi hệ thống
+        // Mã PIN: danh sách chỉ trả has_pin; pin_code chỉ còn ở response tạo tài khoản
+        // (hiển thị một lần). Khi bị khóa thì PIN bị xóa hoàn toàn.
         pinCode: isLocked ? '' : ((acc as any)?.pin_code || ''),
+        hasPin: isLocked ? false : (!!((acc as any)?.pin_code) || !!(acc as any)?.has_pin),
         version: acc?.version || emp.version || 1,
         hasRealAccount: !!acc,
         // Mã khởi tạo, NV chưa đổi -> hiển thị trạng thái chờ đổi PIN
@@ -1652,6 +1694,7 @@ export function App() {
           branchKind: 'STORE',
           accountStatus: acc.account_status === 'LOCKED' ? 'LOCKED' : 'ACTIVE',
           pinCode: acc.account_status === 'LOCKED' ? '' : ((acc as any)?.pin_code || ''),
+          hasPin: acc.account_status === 'LOCKED' ? false : (!!((acc as any)?.pin_code) || !!(acc as any)?.has_pin),
           version: acc.version || 1,
           hasRealAccount: true,
           pinMustChange: acc.pin_must_change === true,
@@ -1711,7 +1754,7 @@ export function App() {
   const countOffice = activationDataList.filter(i => i.group === 'VAN_PHONG').length;
   const countFactory = activationDataList.filter(i => i.group === 'XUONG').length;
   const countSales = activationDataList.filter(i => i.group === 'SALE').length;
-  const pendingPinCount = activationDataList.filter(i => i.pinMustChange && i.pinCode && i.hasRealAccount).length;
+  const pendingPinCount = activationDataList.filter(i => i.pinMustChange && i.hasPin && i.hasRealAccount).length;
 
   // Tổng quan PIN tháng hiện tại cho Admin/HR quan sát (kỳ xoay 1-5 hàng tháng).
   const pinMonthStats = (() => {
@@ -3052,7 +3095,7 @@ export function App() {
                   <Search size={16} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
                 </div>
                 <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>
-                  Mã PIN 6 số ở cột Mã PIN bên dưới — nhân viên dùng để đăng nhập lần đầu rồi đặt PIN riêng ngay.
+                  Mã PIN được che mặc định ở cột Mã PIN — bấm <strong>👁 Hiện</strong> để xem (hệ thống ghi audit). NV dùng PIN để đăng nhập rồi tự đặt PIN riêng.
                 </div>
                 <button
                   onClick={() => handleBulkSendPin()}
@@ -3079,7 +3122,7 @@ export function App() {
                 <span style={{ fontWeight: 800, color: '#92400E' }}>🔑 PIN tháng {pinMonthStats.key} (hạn 1-5):</span>
                 <span style={{ padding: '4px 12px', borderRadius: '999px', backgroundColor: '#DCFCE7', color: '#166534', fontWeight: 800, fontSize: '12px' }}>✅ Đã đổi riêng: {pinMonthStats.changed}/{pinMonthStats.total}</span>
                 <span style={{ padding: '4px 12px', borderRadius: '999px', backgroundColor: '#FEE2E2', color: '#991B1B', fontWeight: 800, fontSize: '12px' }}>🔒 Chờ đổi: {pinMonthStats.pending}</span>
-                <span style={{ color: '#92400E', fontSize: '12px' }}>NV tự đổi PIN mới từ PIN cũ (hạn 1-5) — không reset. NV quên PIN cũ → bấm "👁 Nhắc PIN" để xem mã hiện tại.</span>
+                <span style={{ color: '#92400E', fontSize: '12px' }}>NV tự đổi PIN mới từ PIN cũ (hạn 1-5) — không reset. NV quên PIN cũ → bấm "👁 Hiện" ở cột Mã PIN để xem mã hiện tại (có ghi audit).</span>
               </div>
 
               {/* Unified PIN & Account Table */}
@@ -3206,26 +3249,51 @@ export function App() {
                                item.employmentStatus === 'PROBATION' ? 'Thử Việc' : 'Nhân Viên Mới'}
                             </span>
                           </td>
-                          {/* Cột Mã PIN khởi tạo — hiển thị cho cả Admin lẫn HR */}
+                          {/* Cột Mã PIN — che mặc định, bấm Hiện để xem (backend ghi audit) */}
                           <td style={{ padding: '14px 20px' }}>
-                            {item.pinCode ? (
-                              <span style={{
-                                fontFamily: 'monospace',
-                                fontWeight: 800,
-                                fontSize: '14px',
-                                letterSpacing: '2px',
-                                color: 'var(--brand)',
-                                backgroundColor: 'var(--brand-soft)',
-                                padding: '4px 10px',
-                                borderRadius: '4px',
-                                whiteSpace: 'nowrap',
-                              }}>
-                                {item.pinCode}
-                              </span>
+                            {(item.pinCode || revealedPins[item.accountId]) ? (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                <span style={{
+                                  fontFamily: 'monospace',
+                                  fontWeight: 800,
+                                  fontSize: '14px',
+                                  letterSpacing: '2px',
+                                  color: 'var(--brand)',
+                                  backgroundColor: 'var(--brand-soft)',
+                                  padding: '4px 10px',
+                                  borderRadius: '4px',
+                                  whiteSpace: 'nowrap',
+                                }}>
+                                  {item.pinCode || revealedPins[item.accountId]}
+                                </span>
+                                {!item.pinCode && (
+                                  <button
+                                    onClick={() => handleHidePin(item.accountId)}
+                                    title="Ẩn PIN"
+                                    style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', border: '1px solid var(--border)', background: '#FFF', borderRadius: '6px', padding: '3px 7px', fontSize: '10px', fontWeight: 700, cursor: 'pointer', color: 'var(--text-muted)' }}
+                                  >
+                                    <EyeOff size={11} /> Ẩn
+                                  </button>
+                                )}
+                              </div>
                             ) : item.accountStatus === 'LOCKED' ? (
                               <span style={{ fontSize: '11px', color: '#DC2626', fontWeight: 700, backgroundColor: '#FEE2E2', padding: '3px 8px', borderRadius: '4px', whiteSpace: 'nowrap' }}>
                                 Đã xóa (Bị khóa)
                               </span>
+                            ) : item.hasPin ? (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                <span style={{ fontFamily: 'monospace', fontWeight: 800, fontSize: '13px', letterSpacing: '2px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                                  ••••••
+                                </span>
+                                <button
+                                  onClick={() => handleRevealPin(item)}
+                                  disabled={pinRevealBusy === item.accountId}
+                                  title="Xem PIN hiện tại (hệ thống ghi audit)"
+                                  style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', border: '1px solid #BFDBFE', background: '#EFF6FF', borderRadius: '6px', padding: '3px 8px', fontSize: '10px', fontWeight: 800, cursor: pinRevealBusy === item.accountId ? 'wait' : 'pointer', color: '#1D4ED8' }}
+                                >
+                                  <Eye size={11} /> {pinRevealBusy === item.accountId ? '...' : 'Hiện'}
+                                </button>
+                              </div>
                             ) : (
                               <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
                                 Chưa có

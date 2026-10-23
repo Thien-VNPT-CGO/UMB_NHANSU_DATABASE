@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#E85D92" />
+    <title>Mất kết nối — Ụm Bò Milk Quản Trị</title>
+    <style>
+      :root { color-scheme: light; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        font-family: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #FFF8F4;
+        color: #1F2937;
+      }
+      .card {
+        width: min(460px, 100%);
+        background: #fff;
+        border: 1px solid #F3D9E3;
+        border-radius: 20px;
+        padding: 28px 24px;
+        text-align: center;
+        box-shadow: 0 12px 32px rgba(232, 93, 146, 0.12);
+      }
+      .logo {
+        width: 72px;
+        height: 72px;
+        border-radius: 18px;
+        object-fit: cover;
+        border: 1px solid #F3D9E3;
+        margin-bottom: 14px;
+      }
+      h1 { margin: 0 0 8px; font-size: 20px; }
+      p { margin: 0 0 18px; font-size: 14px; line-height: 1.55; color: #6B7280; }
+      button {
+        appearance: none;
+        border: 0;
+        border-radius: 12px;
+        padding: 12px 18px;
+        font: inherit;
+        font-weight: 700;
+        color: #fff;
+        background: #E85D92;
+        cursor: pointer;
+      }
+      .hint { margin: 16px 0 0; font-size: 12px; color: #9CA3AF; }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <img class="logo" src="./logo.jpg" alt="Ụm Bò Milk" />
+      <h1>Đang không có kết nối mạng</h1>
+      <p>
+        Cổng quản trị cần mạng để tải dữ liệu nhân sự, chấm công và lương mới nhất.
+        Kiểm tra kết nối rồi thử lại.
+      </p>
+      <button type="button" onclick="location.reload()">Thử lại</button>
+      <p class="hint">Nếu máy chủ gặp sự cố, kiểm tra trạng thái dịch vụ trước khi thao tác.</p>
+    </main>
+  </body>
+</html>
