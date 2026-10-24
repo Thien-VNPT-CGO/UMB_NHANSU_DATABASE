@@ -873,20 +873,39 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async createShiftAssignment(assignment: any) {
     const res = await this.fallbackAdapter.createShiftAssignment(assignment);
+    // Ghi snapshot NGAY (không chờ debounce 1.5s): ca vừa tạo vẫn sống sót nếu
+    // ngay sau đó deploy/restart, kể cả khi Google Sheets đang lỗi tạm thời.
+    this.scheduleRuntimeSnapshot(0);
     if (this.isConfigured) {
-      const snapshot = { ...res };
-      await this.enqueueDurableWrite('PHAN_CONG_CA', [[
-        snapshot.assignment_id,
-        snapshot.employee_id,
-        snapshot.branch_id,
-        snapshot.shift_code,
-        snapshot.date,
-        // Ép TEXT để USER_ENTERED không parse giờ ca thành locale (reload sai giờ mở cổng).
-        sheetDateTimeText(snapshot.start_at),
-        sheetDateTimeText(snapshot.end_at),
-        snapshot.status,
-        snapshot.schedule_version,
-      ]], 'PHAN_CONG_CA.append');
+      try {
+        // FIX mất ca sau rebuild: trước đây ca mới chỉ append 1 dòng, trong khi
+        // full-sync/publish ghi đè cả tab PHAN_CONG_CA. Hai đường ghi đua nhau
+        // có thể xoá dòng vừa append hoặc để lại 2 dòng trùng. Nay mọi mutation
+        // ca đi qua CÙNG một coalesced tab push: nếu full-sync đang chạy, request
+        // này chờ và kích hoạt đúng 1 lượt push tiếp theo với dữ liệu mới nhất.
+        const pushed = await Promise.race([
+          this.syncService.pushShiftsTab(this.fallbackAdapter),
+          new Promise<number>(r => setTimeout(() => r(0), 15000)),
+        ]);
+        if (!pushed) throw new Error('PUSH_SHIFTS_FAILED');
+      } catch {
+        // Rớt mạng/quota: vẫn ghi append bền vững để không mất ca, đồng thời dồn
+        // full-sync nền. Pull/push sau đó khử trùng theo NV+ngày+mã.
+        const snapshot = { ...res };
+        await this.enqueueDurableWrite('PHAN_CONG_CA', [[
+          snapshot.assignment_id,
+          snapshot.employee_id,
+          snapshot.branch_id,
+          snapshot.shift_code,
+          snapshot.date,
+          // Ép TEXT để USER_ENTERED không parse giờ ca thành locale (reload sai giờ mở cổng).
+          sheetDateTimeText(snapshot.start_at),
+          sheetDateTimeText(snapshot.end_at),
+          snapshot.status,
+          snapshot.schedule_version,
+        ]], 'PHAN_CONG_CA.append-fallback');
+        this.scheduleFullSync('PHAN_CONG_CA.create-retry');
+      }
     }
     return res;
   }

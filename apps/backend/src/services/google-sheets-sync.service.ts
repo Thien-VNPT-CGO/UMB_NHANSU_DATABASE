@@ -19,6 +19,7 @@ import {
 } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { MockSheetsAdapter } from '../repositories/mock-sheets.adapter.js';
+import { dedupeShiftAssignments } from '../repositories/shift-dedupe.js';
 import { hashPasswordSync, isBcryptHash, hashPin, generateAutoPin } from './password.service.js';
 import { canonicalPhone } from './employees.service.js';
 import { normSheetDate, normSheetDateTime, sheetDateText, sheetDateTimeText } from './employees.service.js';
@@ -1601,6 +1602,17 @@ export class GoogleSheetsSyncService {
       } else if (fallback.shifts.length === 0) {
         fallback.shifts = [];
       }
+      // Dọn dòng trùng NGHIỆP VỤ (cùng NV + ngày + mã ca nhưng khác
+      // assignment_id) do append và full-sync từng ghi đua nhau. Giữ bản
+      // PUBLISHED/version cao nhất; sự kiện của bản bị bỏ sẽ được logic orphan
+      // gộp sang ca giữ lại, nên không mất công/lương.
+      {
+        const beforeDedupe = fallback.shifts.length;
+        fallback.shifts = dedupeShiftAssignments(fallback.shifts as any[]) as any;
+        if (fallback.shifts.length !== beforeDedupe) {
+          console.warn(`[GoogleSheetsSyncService] PHAN_CONG_CA loại ${beforeDedupe - fallback.shifts.length} ca trùng ngày/mã.`);
+        }
+      }
       counts.shifts = fallback.shifts.length;
 
       // 5. Đọc DON_NGHI_PHEP
@@ -2842,19 +2854,15 @@ export class GoogleSheetsSyncService {
       // 5. Phân công ca — đẩy TOÀN BỘ lịch sử (không cắt 60 ngày): cắt là ca cũ
       // mất khỏi Sheet sau mỗi full-sync/publish, restart là mất vĩnh viễn khỏi
       // bộ nhớ -> tab Lịch lùi tuần trống ca cũ. '2000-01-01' = lấy tất cả.
-      const shifts = await repo.getShiftsForWeek('*', '2000-01-01');
-      const shiftRows = shifts.map(s => [
-        s.assignment_id,
-        s.employee_id,
-        s.branch_id,
-        s.shift_code,
-        sheetDateText(s.date),
-        sheetDateTimeText(s.start_at),
-        sheetDateTimeText(s.end_at),
-        s.status,
-        s.schedule_version,
-      ]);
-      await this.pushTabSafe(details, 'shifts', 'PHAN_CONG_CA', SHEETS_DEFINITIONS.find(d => d.title === 'PHAN_CONG_CA')!.headers, shiftRows);
+      // Dùng CÙNG coalescedTabPush với create/update ca để full-sync không ghi đè
+      // dữ liệu mới hơn đang được một request khác thêm vào.
+      try {
+        details.shifts = await this.pushShiftsTab(repo);
+      } catch (err: any) {
+        details.shifts = { error: err?.message || String(err) };
+        this.markDataDirty();
+        console.warn('[GoogleSheetsSyncService] Bỏ qua tab PHAN_CONG_CA (lỗi, đợt sau thử lại):', err?.message || err);
+      }
 
       // 6. Đơn nghỉ phép
       const leaves = await repo.listLeaveRequests();
@@ -3369,7 +3377,7 @@ export class GoogleSheetsSyncService {
   private async doPushShiftsTab(repo: { getShiftsForWeek(branch: string, weekMon: string): Promise<any[]> }): Promise<number> {
     // Đẩy TOÀN BỘ lịch sử ca (không cắt ngày): giữ ca cũ bền vững trên Sheet để tab
     // Lịch lùi tuần + tính lương luôn đủ dữ liệu sau restart. '2000-01-01' = lấy tất cả.
-    const shifts = await repo.getShiftsForWeek('*', '2000-01-01').catch(() => []);
+    const shifts = dedupeShiftAssignments(await repo.getShiftsForWeek('*', '2000-01-01').catch(() => []));
     const shiftRows = (shifts || []).map((s: any) => [
       s.assignment_id,
       s.employee_id,

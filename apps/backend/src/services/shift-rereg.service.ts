@@ -247,13 +247,41 @@ export class ShiftReRegService {
 
             const mine = sameDay.find((s) => !usedIds.has(String(s.assignment_id)) && String(s.shift_code) === String(code));
             if (mine) {
-              // Đã đúng ca đó rồi → giữ nguyên; ca đã qua đảm bảo bot chấm đủ
+              const mineId = String(mine.assignment_id);
+              // FIX: ca đã KEPT cũng phải đánh dấu "đã dùng", nếu không một mã ca
+              // phía sau có thể đè chính ca vừa giữ (mất ca, kết quả phiếu sai).
+              usedIds.add(mineId);
+              const mineStatus = String((mine as any).status || '').toUpperCase();
+              if (mineStatus !== 'PUBLISHED') {
+                // Ca DRAFT/trạng thái cũ: duyệt PUBLISHED ngay. Trước đây KEPT
+                // nguyên DRAFT nên payroll bỏ qua => NV khai ca mà "không + lương".
+                const upd = await this.repo.updateShiftAssignment(mineId, {
+                  shift_code: code,
+                  start_at: startAt,
+                  end_at: endAt,
+                  status: 'PUBLISHED',
+                  schedule_version: Number((mine as any).schedule_version || 1) + 1,
+                });
+                const updId = String(upd?.assignment_id || mineId);
+                usedIds.add(updId);
+                updated += 1;
+                if (past) completeIds.push({ assignmentId: updId, code });
+                entry.lines.push({
+                  code, outcome: 'UPDATED',
+                  attendance: past ? 'COMPLETED' : 'PENDING',
+                  assignmentId: updId,
+                  payEstimate: past ? payEst : undefined,
+                  message: `Duyệt PUBLISHED ca ${code} (trước đó ${mineStatus || 'chưa duyệt'})`,
+                });
+                continue;
+              }
+              // Đã đúng ca PUBLISHED → giữ nguyên; ca đã qua đảm bảo bot chấm đủ
               kept += 1;
-              if (past) completeIds.push({ assignmentId: String(mine.assignment_id), code });
+              if (past) completeIds.push({ assignmentId: mineId, code });
               entry.lines.push({
                 code, outcome: 'KEPT',
                 attendance: past ? 'COMPLETED' : 'PENDING',
-                assignmentId: String(mine.assignment_id),
+                assignmentId: mineId,
                 payEstimate: past ? payEst : undefined,
               });
               continue;
@@ -316,13 +344,21 @@ export class ShiftReRegService {
               .cancelReceiverLeavesOnWorkDay(empId, date)
               .catch(() => [] as string[]);
             if (offNotes.length > 0) entry.offNotes.push(...offNotes);
-            created += 1;
             const aid = String(createdShift?.assignment_id || '');
-            sameDay.push(createdShift as any);
+            // Adapter chống trùng theo NV+ngày+mã: nếu request lặp/đua nhau, nó
+            // trả ca đã có thay vì tạo dòng thứ 2. Khi đó đây là KEPT, không
+            // được cộng "created" (tránh báo +2 ca ảo).
+            const wasAlreadyInDay = sameDay.some((s) => String(s.assignment_id) === aid);
+            if (wasAlreadyInDay) {
+              kept += 1;
+            } else {
+              created += 1;
+              sameDay.push(createdShift as any);
+            }
             usedIds.add(aid); // ca mới của mục tiêu này — không để dòng sau "đè" nó
             if (past) completeIds.push({ assignmentId: aid, code });
             entry.lines.push({
-              code, outcome: 'CREATED',
+              code, outcome: wasAlreadyInDay ? 'KEPT' : 'CREATED',
               attendance: past ? 'COMPLETED' : 'PENDING',
               assignmentId: aid,
               payEstimate: past ? payEst : undefined,
@@ -360,6 +396,41 @@ export class ShiftReRegService {
           }
         }
       }
+    }
+
+    // BỀN VỮNG TRƯỚC KHI TRẢ RESPONSE:
+    // 1) Xả các append điểm danh đang chờ trong journal (CHECK_IN/OUT của ca quá khứ).
+    // 2) Push lại tab PHAN_CONG_CA + SU_KIEN_DIEM_DANH bằng dữ liệu bộ nhớ mới nhất.
+    // 3) Ghi snapshot runtime ngay — kể cả Google lỗi tạm thời, rebuild/restart vẫn
+    //    khôi phục đúng ca NV vừa cập nhật (trước đây snapshot debounce 1.5s nên
+    //    deploy ngay sau khi gửi phiếu có thể mất ca + mất lương).
+    try {
+      if (typeof (this.repo as any)?.flushDurableWrites === 'function') {
+        await (this.repo as any).flushDurableWrites(8000);
+      }
+    } catch { /* hàng đợi sẽ tự retry */ }
+    try {
+      if (this.syncService && (r.created + r.updated > 0) && typeof this.syncService.pushShiftsTab === 'function') {
+        await Promise.race([
+          this.syncService.pushShiftsTab(this.repo),
+          new Promise((resolve) => setTimeout(resolve, 20000)),
+        ]);
+      }
+      if (this.syncService && (r.completeIds?.length || 0) > 0 && typeof this.syncService.pushEventsTab === 'function') {
+        await Promise.race([
+          this.syncService.pushEventsTab(this.repo),
+          new Promise((resolve) => setTimeout(resolve, 20000)),
+        ]);
+      }
+    } catch (err: any) {
+      console.warn('[ShiftReRegService] Push ca/điểm danh sau phiếu lỗi (snapshot + full-sync sẽ retry):', err?.message || err);
+    }
+    try {
+      if (typeof (this.repo as any)?.persistRuntimeSnapshot === 'function') {
+        await (this.repo as any).persistRuntimeSnapshot();
+      }
+    } catch (err: any) {
+      console.warn('[ShiftReRegService] Ghi snapshot sau phiếu lỗi:', err?.message || err);
     }
 
     // Đồng bộ Google Sheets: phiếu ghi đầy đủ vào tab PHIEU_NV_CAP_NHAT_CA

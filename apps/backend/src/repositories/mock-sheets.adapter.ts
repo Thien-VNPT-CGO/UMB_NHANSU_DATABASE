@@ -31,6 +31,7 @@ import {
   TestSubmission,
 } from '@ubm/shared';
 import { ISheetsRepository } from './sheets.interface.js';
+import { dedupeShiftAssignments, findLiveShift } from './shift-dedupe.js';
 
 export class MockSheetsAdapter implements ISheetsRepository {
   public accounts: EmployeeAccount[] = [];
@@ -554,12 +555,14 @@ export class MockSheetsAdapter implements ISheetsRepository {
   // --- Schedules ---
   async getShiftsForWeek(branchId: string, weekStartDate: string): Promise<ShiftAssignment[]> {
     this.checkErrors();
-    return this.shifts.filter(s => (branchId === '*' || s.branch_id === branchId) && s.date >= weekStartDate);
+    // Luôn trả 1 ca live/ngày/mã: Sheet cũ có thể còn dòng trùng do append +
+    // full-sync đua nhau. Nhờ vậy lịch, chấm công và payroll cùng thấy 1 ca.
+    return dedupeShiftAssignments(this.shifts.filter(s => (branchId === '*' || s.branch_id === branchId) && s.date >= weekStartDate));
   }
 
   async getShiftsForEmployee(employeeId: string, fromDate: string, toDate: string): Promise<ShiftAssignment[]> {
     this.checkErrors();
-    return this.shifts.filter(s => s.employee_id === employeeId && s.date >= fromDate && s.date <= toDate);
+    return dedupeShiftAssignments(this.shifts.filter(s => s.employee_id === employeeId && s.date >= fromDate && s.date <= toDate));
   }
 
   async getShiftById(assignmentId: string): Promise<ShiftAssignment | null> {
@@ -569,6 +572,15 @@ export class MockSheetsAdapter implements ISheetsRepository {
 
   async createShiftAssignment(assignment: Omit<ShiftAssignment, 'created_at' | 'updated_at'>): Promise<ShiftAssignment> {
     this.checkErrors();
+    // Idempotent: request gửi lặp / 2 luồng đua nhau không được sinh 2 ca giống
+    // nhau (cùng NV + ngày + mã). Trả ca đã có để caller dùng đúng assignment_id.
+    if (assignment.assignment_id) {
+      const sameId = this.shifts.find(s => String(s.assignment_id) === String(assignment.assignment_id));
+      if (sameId) return { ...sameId };
+    }
+    const duplicate = findLiveShift(this.shifts, assignment.employee_id, assignment.date, assignment.shift_code);
+    if (duplicate) return { ...duplicate };
+
     const now = new Date().toISOString();
     const newShift: ShiftAssignment = {
       ...assignment,

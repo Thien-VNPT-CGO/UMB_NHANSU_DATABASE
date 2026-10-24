@@ -5542,15 +5542,38 @@ export function App() {
                     const d = new Date(`${iso}T00:00:00Z`).getUTCDay();
                     return d === 0 ? 'CN' : `T${d + 1}`;
                   };
-                  // Gộp ca cả tháng + ca realtime mới nhất, khử trùng theo assignment
-                  const seenAssign = new Set<string>();
-                  const allShifts: any[] = [];
+                  // Gộp ca cả tháng + ca realtime mới nhất. Khử trùng theo CẢ
+                  // assignment_id lẫn khoá nghiệp vụ NV+ngày+mã ca: Sheet từng bị
+                  // append + full-sync đua nhau tạo 2 ca giống nhau khác id.
+                  const shiftHasEvidence = (s: any) => (myAttendanceHistory || []).some((e: any) =>
+                    String((e as any)?.assignment_id || '') === String((s as any)?.assignment_id || '')
+                    && ['CHECK_IN', 'CHECK_OUT'].includes(String((e as any)?.type || ''))
+                  );
+                  const shiftRank = (s: any): number[] => [
+                    shiftHasEvidence(s) ? 1 : 0,
+                    String((s as any)?.status || '').toUpperCase() === 'PUBLISHED' ? 1 : 0,
+                    Number((s as any)?.schedule_version) || 0,
+                    new Date(String((s as any)?.updated_at || '')).getTime() || 0,
+                  ];
+                  const shiftIsBetter = (a: any, b: any) => {
+                    const ra = shiftRank(a), rb = shiftRank(b);
+                    for (let i = 0; i < ra.length; i++) {
+                      if (ra[i] !== rb[i]) return ra[i] > rb[i];
+                    }
+                    return false;
+                  };
+                  const shiftByLogical = new Map<string, any>();
                   for (const s of [...(monthShifts || []), ...(myShifts || [])]) {
-                    const k = (s as any).assignment_id || `${(s as any).date}_${(s as any).shift_code}`;
-                    if (seenAssign.has(k)) continue;
-                    seenAssign.add(k);
-                    allShifts.push(s);
+                    if (!s || String((s as any)?.status || '') === 'CANCELLED') continue;
+                    const logical = [
+                      String((s as any)?.employee_id || (employee as any)?.employee_id || ''),
+                      String((s as any)?.date || '').slice(0, 10),
+                      String((s as any)?.shift_code || ''),
+                    ].join('|');
+                    const cur = shiftByLogical.get(logical);
+                    if (!cur || shiftIsBetter(s, cur)) shiftByLogical.set(logical, s);
                   }
+                  const allShifts: any[] = [...shiftByLogical.values()];
                   const shiftDays = new Map<string, any[]>();
                   for (const s of allShifts) {
                     // Hiện Y NHƯ quản trị (kể cả ca nháp) để khớp ngày/ca —
