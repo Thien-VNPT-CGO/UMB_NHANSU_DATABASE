@@ -50,17 +50,18 @@ function assertSwapDatesAllowed(dates: string[], now: Date = new Date()): { mon:
 }
 
 /**
- * Ràng buộc đổi/tráo ca theo publish: chỉ ca đã được HR PUBLISH (NV đã thấy
- * trên lịch) mới được đổi — ca DRAFT (nháp, HR chưa chốt) thì chặn cả 2 chiều.
- * Ngược lại: tuần nào HR chưa publish thì tuần đó không đổi ca được.
+ * Ràng buộc đổi/tráo ca: chỉ chặn các ca đã bị hủy (CANCELLED).
+ * Mọi ca làm việc đang hoạt động được phân công cho nhân viên (kể cả vừa xếp)
+ * đều hợp lệ để đổi ca, đảm bảo đồng bộ 100% với lịch tuần nhân viên thấy trên cổng.
  */
 function assertShiftsPublished(shifts: (any | null | undefined)[]): void {
   for (const s of shifts) {
     if (!s) continue;
-    if ((s as any).status !== 'PUBLISHED') {
+    const st = String((s as any).status || '').trim().toUpperCase();
+    if (st === 'CANCELLED') {
       const day = String((s as any).date || '').slice(0, 10) || '?';
       throw new Error(
-        `SWAP_SHIFT_NOT_PUBLISHED: Ca ngày ${day} chưa được HR publish (đang nháp) — chỉ đổi/tráo ca đã publish mà bạn đã thấy trên lịch. Báo HR publish lịch tuần này để mở đổi ca.`
+        `SWAP_SHIFT_CANCELLED: Ca ngày ${day} đã bị hủy trên hệ thống, không thể đổi/tráo ca.`
       );
     }
   }
@@ -2608,6 +2609,7 @@ export class SchedulesService {
           }
           await this.repo.updateShiftAssignment(coverShift.assignment_id, {
             employee_id: swap.target_employee_id,
+            status: 'PUBLISHED',
             schedule_version: coverShift.schedule_version + 1,
           });
           // Người nhận đi làm ca này thì ngày OFF (nếu có) của họ ngày đó tự hủy.
@@ -2653,11 +2655,13 @@ export class SchedulesService {
         // Multi-tab atomic update check: if partial fails, singleWriterQueue handles reconciliation
         await this.repo.updateShiftAssignment(reqShift.assignment_id, {
           employee_id: swap.target_employee_id,
+          status: 'PUBLISHED',
           schedule_version: reqShift.schedule_version + 1,
         });
 
         await this.repo.updateShiftAssignment(tgtShift.assignment_id, {
           employee_id: swap.requester_id,
+          status: 'PUBLISHED',
           schedule_version: tgtShift.schedule_version + 1,
         });
         // Mỗi bên nhận ca mới thì ngày OFF (nếu có) của họ ngày ca đó tự hủy.
