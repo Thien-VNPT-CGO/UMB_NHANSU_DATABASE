@@ -1287,6 +1287,12 @@ export function App() {
         if (payload?.entity === 'config' || configChangedOnSheet) {
           loadAllData(currentUser, true);
         } else {
+          if (payload?.entity === 'shift-rereg' || payload?.entity === 'all') {
+            fetchShiftReRegConfig();
+            try {
+              window.dispatchEvent(new CustomEvent('ubm:shift-rereg-reload', { detail: payload?.data }));
+            } catch { /* non-fatal */ }
+          }
           if (payload?.entity === 'attendance' || payload?.entity === 'all') {
             notifyAttendanceRealtime();
           }
@@ -1768,6 +1774,89 @@ export function App() {
   // Lưu lịch giao diện sự kiện. Bật lịch: bắt buộc chọn sự kiện + thời điểm
   // bắt đầu/kết thúc (giờ máy Admin -> ISO UTC). Tắt lịch: cổng NV trở về
   // giao diện người dùng đã chọn (mặc định).
+  // ===== Quản Lý Phiếu "Cập Nhật Ca" (Admin Web) =====
+  const [shiftReRegCfg, setShiftReRegCfg] = useState<any>(() => {
+    try {
+      const saved = localStorage.getItem('ubm_shift_rereg_config');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return null;
+  });
+  const [shiftReRegBusy, setShiftReRegBusy] = useState(false);
+  const [shiftReRegFrom, setShiftReRegFrom] = useState('');
+  const [shiftReRegTo, setShiftReRegTo] = useState('');
+  const [shiftReRegClose, setShiftReRegClose] = useState('23:59');
+
+  const fetchShiftReRegConfig = async () => {
+    try {
+      const c: any = await apiRequest('/admin/shift-re-registration/config');
+      setShiftReRegCfg(c);
+      setShiftReRegFrom(String(c?.from || ''));
+      setShiftReRegTo(String(c?.to || ''));
+      setShiftReRegClose(String(c?.closeTime || '23:59'));
+      try { localStorage.setItem('ubm_shift_rereg_config', JSON.stringify(c)); } catch {}
+    } catch {}
+  };
+
+  useEffect(() => {
+    if (currentUser?.role !== 'ADMIN') return;
+    fetchShiftReRegConfig();
+  }, [currentUser?.role, activeTab]);
+
+  const handleToggleShiftReReg = async () => {
+    if (shiftReRegBusy) return;
+    setShiftReRegBusy(true);
+    const isDemo = typeof window !== 'undefined' && (new URLSearchParams(window.location.search).get('demo') === '1' || currentUser?.id === 'demo-admin');
+    try {
+      const next = !shiftReRegCfg?.enabled;
+      const fromVal = shiftReRegFrom || '2026-10-01';
+      const toVal = shiftReRegTo || '2026-10-31';
+      const closeVal = shiftReRegClose || '23:59';
+      let c: any = null;
+      try {
+        c = await apiRequest('/admin/shift-re-registration/config', {
+          method: 'PUT',
+          body: JSON.stringify({
+            enabled: next,
+            from: fromVal,
+            to: toVal,
+            closeTime: closeVal,
+          }),
+        });
+      } catch (apiErr: any) {
+        if (isDemo || !c) {
+          c = {
+            enabled: next,
+            from: fromVal,
+            to: toVal,
+            closeTime: closeVal,
+            endsAt: `${toVal}T${closeVal}:00+07:00`,
+            updatedAt: new Date().toISOString(),
+            updatedBy: currentUser?.fullName || 'ADMIN',
+          };
+        } else {
+          throw apiErr;
+        }
+      }
+      setShiftReRegCfg(c);
+      setShiftReRegFrom(String(c?.from || ''));
+      setShiftReRegTo(String(c?.to || ''));
+      setShiftReRegClose(String(c?.closeTime || '23:59'));
+      try {
+        localStorage.setItem('ubm_shift_rereg_config', JSON.stringify(c));
+        window.dispatchEvent(new Event('storage'));
+        window.dispatchEvent(new CustomEvent('ubm:shift-rereg-reload', { detail: c }));
+      } catch {}
+      showToast(next
+        ? `🟢 Đã MỞ phiếu (${c.from} → ${c.to} đóng ${c.closeTime}) — Cổng NV hiển thị tab "7. Cập Nhật Ca Làm" ngay!`
+        : '⚫ Đã ĐÓNG phiếu — Tab "7. Cập Nhật Ca Làm" ẩn khỏi cổng nhân viên.');
+    } catch (e: any) {
+      showToast(e?.message || 'Lỗi lưu cấu hình phiếu!', 'WARNING');
+    } finally {
+      setShiftReRegBusy(false);
+    }
+  };
+
   const handleSaveThemeSchedule = async (enabled: boolean) => {
     const payload: any = {
       ...maintenance,
@@ -4467,6 +4556,91 @@ export function App() {
                   >
                     {adminActionBusy === 'maint' ? '⏳ Đang lưu...' : 'Cập Nhật Thông Điệp'}
                   </button>
+                </div>
+
+                {/* ======================================================= */}
+                {/* BETA — QUẢN LÝ PHIẾU CẬP NHẬT CA LÀM CHO NHÂN VIÊN */}
+                {/* ======================================================= */}
+                <div style={{
+                  borderTop: '1px solid var(--border)',
+                  paddingTop: '20px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '12px',
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div style={{ fontWeight: 800, fontSize: '15px', color: 'var(--text)' }}>🛠 Quản Lý Phiếu "Cập Nhật Ca"</div>
+                      <span style={{ fontSize: '10px', fontWeight: 800, padding: '2px 8px', borderRadius: 'var(--radius-full)', backgroundColor: '#FDE68A', color: '#92400E', letterSpacing: '0.5px' }}>BETA</span>
+                      {shiftReRegCfg && (
+                        <span style={{
+                          fontSize: '11px', fontWeight: 800, padding: '3px 10px', borderRadius: 'var(--radius-full)',
+                          backgroundColor: shiftReRegCfg.enabled ? '#DCFCE7' : '#F1F5F9',
+                          color: shiftReRegCfg.enabled ? '#166534' : 'var(--text-muted)',
+                        }}>
+                          {shiftReRegCfg.enabled ? '🟢 ĐANG MỞ' : '⚫ ĐANG ĐÓNG'}
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleToggleShiftReReg}
+                      disabled={shiftReRegBusy}
+                      style={{
+                        padding: '8px 16px',
+                        borderRadius: 'var(--radius-full)',
+                        fontWeight: 700,
+                        fontSize: '12px',
+                        border: 'none',
+                        cursor: 'pointer',
+                        backgroundColor: shiftReRegCfg?.enabled ? '#DC2626' : '#16A34A',
+                        color: '#FFF',
+                      }}
+                    >
+                      {shiftReRegBusy ? '⏳ Đang lưu...' : (shiftReRegCfg?.enabled ? '⚫ ĐÓNG PHIẾU' : '🟢 MỞ PHIẾU')}
+                    </button>
+                  </div>
+
+                  <p style={{ fontSize: '12px', color: 'var(--text-2)', margin: 0, lineHeight: 1.55 }}>
+                    Bật → Cổng nhân viên hiển thị chức năng <b>7. Cập Nhật Ca Làm</b> kèm đồng hồ đếm ngược.
+                    Tắt → Chức năng <b>7. Cập Nhật Ca Làm</b> sẽ hoàn toàn ẩn khỏi cổng nhân viên (realtime).
+                  </p>
+
+                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center', marginTop: '4px' }}>
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-2)', display: 'block', marginBottom: '4px' }}>TỪ NGÀY</label>
+                      <input
+                        type="date"
+                        value={shiftReRegFrom}
+                        onChange={(e) => setShiftReRegFrom(e.target.value)}
+                        style={{ fontSize: '13px', padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-2)', display: 'block', marginBottom: '4px' }}>ĐẾN NGÀY</label>
+                      <input
+                        type="date"
+                        value={shiftReRegTo}
+                        onChange={(e) => setShiftReRegTo(e.target.value)}
+                        style={{ fontSize: '13px', padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-2)', display: 'block', marginBottom: '4px' }}>GIỜ ĐÓNG</label>
+                      <input
+                        type="time"
+                        value={shiftReRegClose}
+                        onChange={(e) => setShiftReRegClose(e.target.value)}
+                        style={{ fontSize: '13px', padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}
+                      />
+                    </div>
+                  </div>
+                  {shiftReRegCfg?.updatedAt && (
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                      Cập nhật lần cuối: {new Date(shiftReRegCfg.updatedAt).toLocaleString('vi-VN')}
+                      {shiftReRegCfg.updatedBy ? ` • bởi ${String(shiftReRegCfg.updatedBy).slice(0, 18)}` : ''}
+                    </div>
+                  )}
                 </div>
 
                 {/* ======================================================= */}

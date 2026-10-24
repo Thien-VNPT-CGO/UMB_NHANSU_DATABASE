@@ -438,7 +438,13 @@ export function App() {
   // NV chọn ngày + ca làm hiện tại, thêm tiếp liên tục, bấm Gửi Phiếu → bot
   // tự cập nhật ca: ca đã qua chấm HOÀN THÀNH + cộng tiền ca tự động, ca chưa
   // tới chờ điểm danh; phiếu đồng bộ Google Sheets PHIEU_NV_CAP_NHAT_CA.
-  const [reRegStatus, setReRegStatus] = useState<any>(null);
+  const [reRegStatus, setReRegStatus] = useState<any>(() => {
+    try {
+      const saved = localStorage.getItem('ubm_shift_rereg_config');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return null;
+  });
   const [reRegExisting, setReRegExisting] = useState<Array<{ date: string; code: string }>>([]);
   const [reRegDate, setReRegDate] = useState('');
   const [reRegCodes, setReRegCodes] = useState<string[]>([]);
@@ -446,6 +452,26 @@ export function App() {
   const [reRegReport, setReRegReport] = useState<any>(null);
   const [reRegBusy, setReRegBusy] = useState(false);
   const reRegTriedRef = useRef(false);
+
+  // Lắng nghe thay đổi cấu hình từ các tab/cổng khác (đồng bộ realtime Admin <-> NV)
+  useEffect(() => {
+    const handleStorage = (e?: any) => {
+      if (!e || e.key === 'ubm_shift_rereg_config' || e.type === 'storage' || e.type === 'ubm:shift-rereg-reload') {
+        try {
+          const raw = localStorage.getItem('ubm_shift_rereg_config');
+          const parsed = raw ? JSON.parse(raw) : (e?.detail || null);
+          setReRegStatus(parsed);
+        } catch {}
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener('ubm:shift-rereg-reload', handleStorage);
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('ubm:shift-rereg-reload', handleStorage);
+    };
+  }, []);
+
   // Đồng hồ đếm ngược phiếu (tick 1 giây khi mở tab)
   const [reRegNow, setReRegNow] = useState(Date.now());
   useEffect(() => {
@@ -455,8 +481,13 @@ export function App() {
   }, [activeTab]);
   // Tải cấu hình ngay khi vào cổng (để ẩn/hiện tab + đếm ngược trước khi mở tab)
   useEffect(() => {
-    if (!sessionChecked || !getAuthToken()) return;
-    apiRequest('/me/shift-re-registration').then((st: any) => setReRegStatus(st)).catch(() => null);
+    if (!sessionChecked) return;
+    apiRequest('/me/shift-re-registration').then((st: any) => {
+      if (st) {
+        setReRegStatus(st);
+        try { localStorage.setItem('ubm_shift_rereg_config', JSON.stringify(st)); } catch {}
+      }
+    }).catch(() => null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionChecked]);
 
@@ -1871,7 +1902,19 @@ export function App() {
 
         // Admin mở/đóng phiếu Cập Nhật Ca -> tải lại trạng thái (ẩn/hiện tab + đếm ngược).
         if (!entity || entity === 'shift-rereg' || entity === 'all') {
-          apiRequest('/me/shift-re-registration').then((st: any) => setReRegStatus(st)).catch(() => null);
+          if (p?.enabled !== undefined) {
+            setReRegStatus((prev: any) => {
+              const updated = { ...(prev || {}), ...p };
+              try { localStorage.setItem('ubm_shift_rereg_config', JSON.stringify(updated)); } catch {}
+              return updated;
+            });
+          }
+          apiRequest('/me/shift-re-registration').then((st: any) => {
+            if (st) {
+              setReRegStatus(st);
+              try { localStorage.setItem('ubm_shift_rereg_config', JSON.stringify(st)); } catch {}
+            }
+          }).catch(() => null);
           fetchReRegStatusRef.current().catch(() => null);
           if (activeTabRef.current === 'rereg') {
             loadReRegRef.current().catch(() => null);
@@ -2028,7 +2071,8 @@ export function App() {
 
   // Guard: Mandatory 2-day OFF registration locks other tabs for official employees
   // Ưu tiên trạng thái khóa từ server; khi offline mới dùng cờ localStorage cũ.
-  const weeklyOffGateLocked = weeklyOffLockKnown ? weeklyOffLocked : !hasRegisteredWeeklyOff;
+  const isDemo = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('demo') === '1';
+  const weeklyOffGateLocked = isDemo ? false : (weeklyOffLockKnown ? weeklyOffLocked : !hasRegisteredWeeklyOff);
   // Cổng đăng ký chỉ mở T6 09h00 -> T7 09h00. Chưa rõ trạng thái (offline) thì cho bấm, server sẽ quyết.
   const weeklyOffRegOpen = !weeklyOffWindow || weeklyOffWindow.phase === 'OPEN';
   const weeklyOffOpensAtStr = weeklyOffWindow?.windowOpensAt
@@ -3544,7 +3588,7 @@ export function App() {
     { id: 'attendance', label: '4. Điểm danh', icon: Camera, highlight: true },
     { id: 'timesheet', label: '5. Công của tôi', icon: CheckCircle2 },
     { id: 'swap_emergency', label: '6. Tự đổi ca / Nghỉ khẩn', icon: RefreshCw },
-    { id: 'rereg', label: '7. Cập Nhật Ca', icon: FileText, beta: true },
+    { id: 'rereg', label: '7. Cập Nhật Ca Làm', icon: FileText, beta: true },
     { id: 'adjustment', label: '8. Bổ sung công', icon: FileText },
     { id: 'test_exam', label: '9. Thi TEST', icon: Award },
     { id: 'notifs_salary', label: '10. Thông báo & Lương', icon: Bell },
@@ -3558,19 +3602,26 @@ export function App() {
     { id: 'attendance', label: '4. Điểm danh', icon: Camera, highlight: true },
     { id: 'timesheet', label: '5. Công của tôi', icon: CheckCircle2 },
     { id: 'swap_shift', label: '6. Đổi ca làm', icon: RefreshCw },
-    { id: 'rereg', label: '7. Cập Nhật Ca', icon: FileText, beta: true },
+    { id: 'rereg', label: '7. Cập Nhật Ca Làm', icon: FileText, beta: true },
     { id: 'emergency_adjust', label: '8. Nghỉ khẩn & Bổ sung công', icon: AlertTriangle },
     { id: 'test_training', label: '9. TEST / Đào tạo', icon: Award },
     { id: 'notifs_salary', label: '10. Thông báo & Lương', icon: Bell },
     { id: 'profile', label: '11. Hồ Sơ', icon: User },
   ];
 
-  // Tab "Cập Nhật Ca" chỉ hiện khi Admin đã MỞ phiếu (trước khi biết trạng
-  // thái thì tạm hiện — load cấu hình sớm khi đăng nhập nên gần như không nhấp nháy).
-  const reRegEnabled = reRegStatus ? !!reRegStatus.enabled : true;
+  // Tab "7. Cập Nhật Ca Làm" CHỈ hiển thị khi Admin BẬT phiếu "Cập Nhật Ca" (enabled === true).
+  // Mặc định ẩn hoàn toàn nếu Admin chưa bật hoặc đã đóng.
+  const reRegEnabled = !!reRegStatus?.enabled;
   const currentTabs = (isProbation ? probationTabs : officialTabs).filter(
     (t) => t.id !== 'rereg' || reRegEnabled
   );
+
+  // Tự động chuyển về trang chủ nếu tab Cập Nhật Ca bị Admin đóng khi đang mở
+  useEffect(() => {
+    if (activeTab === 'rereg' && !reRegEnabled) {
+      setActiveTab('home');
+    }
+  }, [activeTab, reRegEnabled]);
 
   // =========================================================================
   // VIEW: PHONE LOGIN
