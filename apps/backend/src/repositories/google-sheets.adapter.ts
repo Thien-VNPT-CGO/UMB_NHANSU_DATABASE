@@ -967,10 +967,11 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     // vẫn chủ cũ trên Sheets → pull sau đó khôi phục ca cũ = "phiếu lưu, lịch không đổi".
     if (this.isConfigured) {
       try {
-        await Promise.race([
-          this.syncService.pushShiftsTab(this.fallbackAdapter).catch(() => 0),
+        const pushed = await Promise.race([
+          this.syncService.pushShiftsTab(this.fallbackAdapter),
           new Promise<number>(r => setTimeout(() => r(0), 15000)),
         ]);
+        if (!pushed) throw new Error('PUSH_SHIFTS_FAILED');
       } catch {
         // Rớt mạng/quota: dồn full-sync nền thử lại, không chặn response đổi ca.
         this.scheduleFullSync('PHAN_CONG_CA.update-retry');

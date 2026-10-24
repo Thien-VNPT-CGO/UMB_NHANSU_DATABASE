@@ -1611,6 +1611,9 @@ export class GoogleSheetsSyncService {
         fallback.shifts = dedupeShiftAssignments(fallback.shifts as any[]) as any;
         if (fallback.shifts.length !== beforeDedupe) {
           console.warn(`[GoogleSheetsSyncService] PHAN_CONG_CA loại ${beforeDedupe - fallback.shifts.length} ca trùng ngày/mã.`);
+          // Đánh dấu bẩn để auto-push dọn luôn các dòng trùng còn trên Sheet,
+          // không chỉ ẩn trong bộ nhớ/UI.
+          this.markDataDirty();
         }
       }
       counts.shifts = fallback.shifts.length;
