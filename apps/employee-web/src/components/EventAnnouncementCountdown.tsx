@@ -28,11 +28,8 @@ export function EventAnnouncementCountdown({
   currentThemeId = 'standard',
   onAutoUpdateTheme,
   variant = 'card',
-  allowCollapse = true,
 }: EventAnnouncementProps) {
-  const [isCollapsed, setIsCollapsed] = useState(false);
   const [now, setNow] = useState(() => Date.now());
-  const [isDismissed, setIsDismissed] = useState(false);
 
   // Cập nhật đồng hồ mỗi giây 1 lần để đếm ngược chính xác từng giây
   useEffect(() => {
@@ -61,7 +58,6 @@ export function EventAnnouncementCountdown({
 
   // Nếu sự kiện đã hết hạn thì không hiển thị thông báo đếm ngược nữa
   if (isExpired) return null;
-  if (isDismissed) return null;
 
   // Lấy metadata chủ đề sự kiện Admin đã chọn (Noel, Halloween, 30/4, Tết...)
   const eventId = scheduledTheme.event;
@@ -124,7 +120,7 @@ export function EventAnnouncementCountdown({
           padding: '8px 14px',
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'space-between',
+          justifyContent: 'center',
           gap: 10,
           fontSize: 12.5,
           zIndex: 40,
@@ -132,7 +128,7 @@ export function EventAnnouncementCountdown({
           boxShadow: isUpcoming ? '0 4px 15px rgba(99, 102, 241, 0.35)' : '0 4px 15px rgba(16, 185, 129, 0.35)',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 16 }}>{eventMeta.icon}</span>
           <span
             style={{
@@ -169,22 +165,6 @@ export function EventAnnouncementCountdown({
             {String(hours).padStart(2, '0')}:{String(minutes).padStart(2, '0')}:{String(seconds).padStart(2, '0')}
           </span>
         </div>
-
-        <button
-          onClick={() => setIsDismissed(true)}
-          style={{
-            background: 'none',
-            border: 'none',
-            color: '#CBD5E1',
-            fontSize: 14,
-            cursor: 'pointer',
-            padding: '2px 6px',
-            borderRadius: 4,
-          }}
-          title="Tạm ẩn thông báo"
-        >
-          ✕
-        </button>
       </div>
     );
   }
