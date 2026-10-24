@@ -4243,9 +4243,9 @@ export function App() {
 
                 // Ca trong dải (gộp tải theo dải + realtime), khử trùng, bỏ ca đã hủy.
                 // Hiện Y NHƯ quản trị (kể cả ca nháp) để 2 bên khớp ngày/ca —
-                // ca DRAFT chỉ báo "chờ duyệt", KHÔNG tính công/ngày làm/lương.
+                // 1. Thu thập ca, loại bỏ ca đã hủy (CANCELLED) và khử trùng theo assignment_id
                 const seenAid = new Set<string>();
-                const rangeShifts: any[] = [];
+                const rawShifts: any[] = [];
                 const draftDaySet = new Set<string>();
                 for (const s of [...(schedRangeShifts || []), ...(myShifts || [])]) {
                   const k = String(s?.assignment_id || '');
@@ -4256,8 +4256,35 @@ export function App() {
                     const d = String((s as any)?.date || '').slice(0, 10);
                     if (d) draftDaySet.add(d);
                   }
-                  rangeShifts.push(s);
+                  rawShifts.push(s);
                 }
+
+                // 2. Khử trùng ca theo khóa nghiệp vụ (ngày + mã ca shift_code)
+                // Tránh ca trùng DRAFT/PUBLISHED làm đội số ca (VD 5 ngày làm mà đếm thành 6 ca)
+                const bySlot = new Map<string, any>();
+                for (const s of rawShifts) {
+                  const d = String(s?.date || '').slice(0, 10);
+                  const code = String(s?.shift_code || '').trim().toUpperCase();
+                  const slotKey = `${d}|${code}`;
+                  const existing = bySlot.get(slotKey);
+                  if (!existing) {
+                    bySlot.set(slotKey, s);
+                  } else {
+                    const isPubExisting = String(existing?.status || '').toUpperCase() === 'PUBLISHED';
+                    const isPubNew = String(s?.status || '').toUpperCase() === 'PUBLISHED';
+                    if (!isPubExisting && isPubNew) {
+                      bySlot.set(slotKey, s);
+                    } else if (isPubExisting === isPubNew) {
+                      const vExist = Number(existing?.schedule_version) || 0;
+                      const vNew = Number(s?.schedule_version) || 0;
+                      if (vNew > vExist) {
+                        bySlot.set(slotKey, s);
+                      }
+                    }
+                  }
+                }
+                const rangeShifts = Array.from(bySlot.values());
+
                 // Tập ca trong dải (gộp cả ca đã duyệt và ca được phân công để khớp Toàn Cảnh Tuần)
                 const liveShifts = rangeShifts;
                 const days = schedRange.length > 0 ? schedRange : [];
@@ -4275,6 +4302,7 @@ export function App() {
                 // Tính toàn bộ ca hiển thị trên lịch để nút "Có Ca" và Toàn Cảnh Tuần luôn khớp nhau 100%.
                 const shiftsInDays = rangeShifts.filter((s: any) => days.includes(String(s.date || '').slice(0, 10)));
                 const workDaysSet = new Set(shiftsInDays.map((s: any) => String(s.date || '').slice(0, 10)));
+                const workDaysCount = workDaysSet.size;
                 const workCount = shiftsInDays.length;
 
                 // 2. Ngày có đơn nghỉ phép hợp lệ trong dải `days`
@@ -4545,7 +4573,7 @@ export function App() {
                           boxShadow: schedFilter === 'WORK' ? '0 2px 8px rgba(29, 78, 216, 0.25)' : 'none',
                         }}
                       >
-                        💼 Có Ca ({workCount})
+                        💼 Có Ca ({workDaysCount})
                       </button>
                       <button
                         type="button"
