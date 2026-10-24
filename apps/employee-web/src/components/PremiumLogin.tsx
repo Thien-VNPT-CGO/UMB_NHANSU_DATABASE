@@ -8,6 +8,7 @@ import {
 } from './loginThemeData';
 import { TetCountdownAndFireworks } from './TetCountdownAndFireworks';
 import { ThemeAmbientEffects } from './ThemeAmbientEffects';
+import { EventAnnouncementCountdown, ScheduledThemeProp } from './EventAnnouncementCountdown';
 
 /**
  * PremiumLogin — Màn hình đăng nhập SĐT + PIN 6 số cho cổng nhân viên UBM.
@@ -95,34 +96,46 @@ export function PremiumLogin({
 
   const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
 
+  // Lịch sự kiện do Admin cấu hình (nhận qua prop từ server hoặc qua storage mô phỏng)
+  const effectiveSchedule = scheduledTheme || (() => {
+    try {
+      const s = localStorage.getItem('ubm_mock_admin_schedule');
+      if (s) {
+        const p = JSON.parse(s);
+        if (p?.enabled) return p as ScheduledThemeProp;
+      }
+    } catch {}
+    return null;
+  })();
+
   // Đồng hồ nội bộ để tự đổi giao diện đúng mốc bắt đầu/kết thúc sự kiện mà
   // không cần tải lại trang. Chỉ tick khi Admin có bật lịch sự kiện.
   const [scheduleNow, setScheduleNow] = useState(() => Date.now());
   useEffect(() => {
-    if (!scheduledTheme?.enabled) return;
+    if (!effectiveSchedule?.enabled) return;
     setScheduleNow(Date.now());
-    const t = setInterval(() => setScheduleNow(Date.now()), 15_000);
+    const t = setInterval(() => setScheduleNow(Date.now()), 1_000);
     return () => clearInterval(t);
   }, [
-    scheduledTheme?.enabled,
-    scheduledTheme?.event,
-    scheduledTheme?.startAt,
-    scheduledTheme?.endAt,
+    effectiveSchedule?.enabled,
+    effectiveSchedule?.event,
+    effectiveSchedule?.startAt,
+    effectiveSchedule?.endAt,
   ]);
 
-  const scheduledWindowValid = !!scheduledTheme?.enabled
-    && Number.isFinite(scheduledTheme.startAt)
-    && Number.isFinite(scheduledTheme.endAt)
-    && scheduledTheme.endAt > scheduledTheme.startAt;
+  const scheduledWindowValid = !!effectiveSchedule?.enabled
+    && Number.isFinite(effectiveSchedule.startAt)
+    && Number.isFinite(effectiveSchedule.endAt)
+    && effectiveSchedule.endAt > effectiveSchedule.startAt;
 
   // Trong khoảng sự kiện -> ép đúng theme Admin chọn; trước/sau khoảng ->
   // giao diện mặc định (standard). Không để localStorage ghi đè.
-  const scheduledServerNow = scheduleNow + (scheduledTheme?.serverOffsetMs || 0);
-  const adminThemeId: LoginThemeId | null = scheduledTheme?.enabled
+  const scheduledServerNow = scheduleNow + (effectiveSchedule?.serverOffsetMs || 0);
+  const adminThemeId: LoginThemeId | null = effectiveSchedule?.enabled
     ? (scheduledWindowValid
-      && scheduledServerNow >= scheduledTheme!.startAt
-      && scheduledServerNow < scheduledTheme!.endAt
-      ? scheduledTheme!.event
+      && scheduledServerNow >= effectiveSchedule!.startAt
+      && scheduledServerNow < effectiveSchedule!.endAt
+      ? effectiveSchedule!.event
       : 'standard')
     : null;
   const effectiveThemeId: LoginThemeId = adminThemeId ?? selectedThemeId;
@@ -910,14 +923,25 @@ export function PremiumLogin({
           </>
         )}
 
-        {/* ĐẾM NGƯỢC GIAO THỪA & BẮN PHÁO HOA TẾT */}
-        {(theme.id === 'tet_2027' || theme.id === 'tet') && step !== 'success' && (
-          <TetCountdownAndFireworks
-            targetYear={theme.id === 'tet_2027' ? 2027 : zodiac.year}
-            canChiName={theme.id === 'tet_2027' ? 'Đinh Mùi' : zodiac.canChiName}
-            zodiacIcon={theme.id === 'tet_2027' ? '🐐' : zodiac.icon}
-            zodiacAnimal={theme.id === 'tet_2027' ? 'Dê' : zodiac.animal}
-          />
+        {/* THÔNG BÁO SỰ KIỆN CÓ THỜI GIAN ĐẾM NGƯỢC CẬP NHẬT GIAO DIỆN */}
+        {step !== 'success' && (
+          (theme.id === 'tet_2027' && !effectiveSchedule?.enabled) ? (
+            <TetCountdownAndFireworks
+              targetYear={2027}
+              canChiName="Đinh Mùi"
+              zodiacIcon="🐐"
+              zodiacAnimal="Dê"
+            />
+          ) : (
+            <EventAnnouncementCountdown
+              scheduledTheme={effectiveSchedule}
+              currentThemeId={effectiveThemeId}
+              onAutoUpdateTheme={(newThemeId) => {
+                setScheduleNow(Date.now());
+              }}
+              variant="card"
+            />
+          )
         )}
 
         {/* STEP 1: PHONE INPUT */}

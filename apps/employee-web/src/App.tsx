@@ -7,7 +7,8 @@ import { connectRealtime, stopRealtimeRevive } from './services/realtime';
 import { APP_COMMIT } from './app-version';
 import { PremiumLogin } from './components/PremiumLogin';
 import type { ScheduledLoginTheme } from './components/PremiumLogin';
-import { getThemeConfig } from './components/loginThemeData';
+import { getThemeConfig, detectCurrentHolidayTheme } from './components/loginThemeData';
+import { EventAnnouncementCountdown } from './components/EventAnnouncementCountdown';
 import type { LoginThemeId } from './components/loginThemeData';
 import { ThemeAmbientEffects } from './components/ThemeAmbientEffects';
 import { SignaturePad } from './components/SignaturePad';
@@ -910,7 +911,22 @@ export function App() {
   // Trạng thái bảo trì cổng NV do Admin bật (null = chưa tải xong -> fail-open, không khóa nhầm).
   const [portalMaint, setPortalMaint] = useState<{ active: boolean; message: string } | null>(null);
   // Lịch giao diện sự kiện do Admin cấu hình (null = không khóa giao diện).
-  const [portalThemeSchedule, setPortalThemeSchedule] = useState<ScheduledLoginTheme | null>(null);
+  const [portalThemeSchedule, setPortalThemeSchedule] = useState<ScheduledLoginTheme | null>(() => {
+    try {
+      const localSched = localStorage.getItem('ubm_mock_admin_schedule');
+      if (localSched) {
+        const parsed = JSON.parse(localSched);
+        if (parsed && typeof parsed.enabled === 'boolean') return parsed.enabled ? parsed : null;
+      }
+    } catch {}
+    return {
+      enabled: true,
+      event: 'halloween',
+      startAt: new Date('2026-10-26T01:00:00+07:00').getTime(),
+      endAt: new Date('2026-10-31T23:59:00+07:00').getTime(),
+      serverOffsetMs: 0,
+    };
+  });
   // Đồng hồ để cổng đã đăng nhập tự đổi theme đúng mốc bắt đầu/kết thúc.
   const [portalThemeNow, setPortalThemeNow] = useState(() => Date.now());
   const [maintChecking, setMaintChecking] = useState(false);
@@ -949,7 +965,27 @@ export function App() {
         setPortalThemeSchedule(null);
       }
       return active;
-    } catch { /* offline/server cũ: coi như không bảo trì */ return null; }
+    } catch {
+      // Khi offline / local dev: đồng bộ theo lịch Admin đã thiết lập (Halloween 26/10 -> 31/10)
+      try {
+        const localSched = localStorage.getItem('ubm_mock_admin_schedule');
+        if (localSched) {
+          const parsed = JSON.parse(localSched);
+          if (parsed && typeof parsed.enabled === 'boolean') {
+            setPortalThemeSchedule(parsed.enabled ? parsed : null);
+            return null;
+          }
+        }
+      } catch {}
+      setPortalThemeSchedule({
+        enabled: true,
+        event: 'halloween',
+        startAt: new Date('2026-10-26T01:00:00+07:00').getTime(),
+        endAt: new Date('2026-10-31T23:59:00+07:00').getTime(),
+        serverOffsetMs: 0,
+      });
+      return null;
+    }
   };
   const fetchPortalMaintenanceRef = useRef(fetchPortalMaintenance);
   fetchPortalMaintenanceRef.current = fetchPortalMaintenance;
@@ -975,7 +1011,7 @@ export function App() {
   useEffect(() => {
     if (!portalThemeSchedule?.enabled) return;
     setPortalThemeNow(Date.now());
-    const t = setInterval(() => setPortalThemeNow(Date.now()), 30_000);
+    const t = setInterval(() => setPortalThemeNow(Date.now()), 1_000);
     return () => clearInterval(t);
   }, [
     portalThemeSchedule?.enabled,
@@ -3613,6 +3649,16 @@ export function App() {
           <LogOut size={18} />
         </button>
       </header>
+
+      {/* THÔNG BÁO SỰ KIỆN CÓ ĐẾM NGƯỢC CẬP NHẬT GIAO DIỆN */}
+      <EventAnnouncementCountdown
+        scheduledTheme={portalThemeSchedule}
+        currentThemeId={activePortalThemeId || detectCurrentHolidayTheme()}
+        onAutoUpdateTheme={() => {
+          fetchPortalMaintenanceRef.current().catch(() => null);
+        }}
+        variant="bar"
+      />
 
       {/* DYNAMIC TOP SUB-BAR: FULL 9 TABS FOR PROBATION / OFFICIAL */}
       <div style={{

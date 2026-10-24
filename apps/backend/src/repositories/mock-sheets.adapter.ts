@@ -275,10 +275,10 @@ export class MockSheetsAdapter implements ISheetsRepository {
       },
       maintenance_message: 'Hệ thống đang bảo trì kỹ thuật định kỳ. Quý khách vui lòng thử lại sau ít phút.',
       // Lịch giao diện sự kiện cho cổng nhân viên (Admin chọn + hẹn giờ).
-      theme_event: null,
-      theme_schedule_enabled: false,
-      theme_start_at: null,
-      theme_end_at: null,
+      theme_event: 'halloween',
+      theme_schedule_enabled: true,
+      theme_start_at: '2026-10-25T18:00:00.000Z',
+      theme_end_at: '2026-10-31T16:59:00.000Z',
     };
 
     // 10. Backup Snapshots (bắt đầu rỗng — dữ liệu thật sẽ load từ Google Sheets)
