@@ -4258,8 +4258,8 @@ export function App() {
                   }
                   rangeShifts.push(s);
                 }
-                // Tập ca đã duyệt (tính công/ngày làm/lương) — khớp admin/lương.
-                const liveShifts = rangeShifts.filter((s: any) => !isDraftShift(s));
+                // Tập ca trong dải (gộp cả ca đã duyệt và ca được phân công để khớp Toàn Cảnh Tuần)
+                const liveShifts = rangeShifts;
                 const days = schedRange.length > 0 ? schedRange : [];
                 if (days.length === 0) {
                   return (
@@ -4272,8 +4272,8 @@ export function App() {
                 }
 
                 // 1. Tập hợp ca làm việc và các ngày có ca trong dải `days`
-                // (chỉ ca đã duyệt — khớp quản trị/lương; ca nháp hiện riêng).
-                const shiftsInDays = liveShifts.filter((s: any) => days.includes(String(s.date || '').slice(0, 10)));
+                // Tính toàn bộ ca hiển thị trên lịch để nút "Có Ca" và Toàn Cảnh Tuần luôn khớp nhau 100%.
+                const shiftsInDays = rangeShifts.filter((s: any) => days.includes(String(s.date || '').slice(0, 10)));
                 const workDaysSet = new Set(shiftsInDays.map((s: any) => String(s.date || '').slice(0, 10)));
                 const workCount = shiftsInDays.length;
 
@@ -4285,16 +4285,14 @@ export function App() {
                 );
 
                 // 3. Ngày Nghỉ OFF trong dải `days`: ngày KHÔNG có ca làm việc.
-                // Đi làm thì không còn OFF — ngày vừa có ca active vừa có đơn OFF
-                // chỉ hiện ca làm (không hiện thẻ OFF gây rắc rối).
-                // Ngày chỉ có ca nháp (DRAFT) không phải OFF — chờ HR phát hành.
-                const offDays = days.filter(d => !workDaysSet.has(d) && !draftDaySet.has(d));
+                // Đi làm thì không còn OFF — ngày có ca làm việc thì tính vào Có Ca.
+                const offDays = days.filter(d => !workDaysSet.has(d));
                 const draftOnlyDays = days.filter(d => !workDaysSet.has(d) && draftDaySet.has(d));
                 const offDaysSet = new Set(offDays);
                 const offCount = offDays.length;
 
-                // Tóm tắt trạng thái hôm nay (chỉ ca đã duyệt)
-                const todayShifts = liveShifts.filter((s: any) => String(s.date || '').slice(0, 10) === todayStr);
+                // Tóm tắt trạng thái hôm nay
+                const todayShifts = rangeShifts.filter((s: any) => String(s.date || '').slice(0, 10) === todayStr);
                 const todayOffs = (schedRangeLeaves || []).filter((l: any) => toISODate(l.requested_date) === todayStr);
                 const isTodayOff = offDaysSet.has(todayStr);
                 const todaySummary = todayShifts.length > 0
