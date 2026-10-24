@@ -41,13 +41,15 @@ import {
   Filter,
 } from 'lucide-react';
 import {
+  EmployeeEventLogoAccessory,
+  EmployeeHeaderDivider,
+  EmployeeTitleOrnament,
+  CuteGhostAccent,
   WitchHatBadge,
   MiniPumpkinBadge,
-  HalloweenHeaderDivider,
-  HangingSpiderDangler,
   CuteTitleBat,
-  CuteGhostAccent,
-} from './components/HalloweenDecorations';
+  HangingSpiderDangler,
+} from './components/EmployeeEventThemes';
 
 interface EmployeeProfile {
   employee_id: string;
@@ -372,41 +374,12 @@ export function App() {
     }
   });
 
-  // Spooky-Cute Halloween Theme (Tự động kích hoạt hoặc lưu tuỳ chọn người dùng)
-  const [halloweenTheme, setHalloweenThemeState] = useState<boolean>(() => {
-    try {
-      const saved = localStorage.getItem('ubm_halloween_theme');
-      if (saved !== null) return saved === 'true';
-      const now = new Date();
-      return (now.getMonth() === 9 && now.getDate() >= 20) || (now.getMonth() === 10 && now.getDate() <= 3);
-    } catch {
-      return true;
-    }
-  });
-
-  const setHalloweenTheme = (val: boolean) => {
-    setHalloweenThemeState(val);
-    try {
-      localStorage.setItem('ubm_halloween_theme', String(val));
-      if (val) {
-        document.documentElement.setAttribute('data-theme', 'halloween');
-        document.body.classList.add('theme-halloween');
-      } else {
-        document.documentElement.removeAttribute('data-theme');
-        document.body.classList.remove('theme-halloween');
-      }
-    } catch {}
-  };
-
+  // Dọn dẹp cờ theme cũ trong localStorage để tuân thủ 100% theo lịch sự kiện tự động
   useEffect(() => {
-    if (halloweenTheme) {
-      document.documentElement.setAttribute('data-theme', 'halloween');
-      document.body.classList.add('theme-halloween');
-    } else {
-      document.documentElement.removeAttribute('data-theme');
-      document.body.classList.remove('theme-halloween');
-    }
-  }, [halloweenTheme]);
+    try {
+      localStorage.removeItem('ubm_halloween_theme');
+    } catch {}
+  }, []);
 
   // Boot: phiên cũ còn token thì XÁC MINH lại với server — tài khoản chưa đổi
   // PIN thì bắt đổi ngay, không cho vào cổng (reload không lách được).
@@ -1054,6 +1027,33 @@ export function App() {
   });
   // Đồng hồ để cổng đã đăng nhập tự đổi theme đúng mốc bắt đầu/kết thúc.
   const [portalThemeNow, setPortalThemeNow] = useState(() => Date.now());
+
+  // Theme sự kiện đang diễn ra áp dụng cho toàn bộ cổng nhân viên khi đến giờ sự kiện.
+  // Nếu trước giờ bắt đầu (sắp diễn ra / đếm ngược) hoặc sau giờ kết thúc -> null (giao diện chuẩn).
+  const activePortalThemeId: LoginThemeId | null = (() => {
+    const s = portalThemeSchedule;
+    if (!s?.enabled || s.endAt <= s.startAt) return null;
+    const now = portalThemeNow + (s.serverOffsetMs || 0);
+    return now >= s.startAt && now < s.endAt ? s.event : null;
+  })();
+  const halloweenTheme = activePortalThemeId === 'halloween';
+
+  // Tự động cập nhật data-theme và class CSS khi sự kiện bắt đầu hoặc kết thúc
+  useEffect(() => {
+    const themeClasses = [
+      'theme-halloween', 'theme-noel', 'theme-tet', 'theme-tet_2027',
+      'theme-vietnam_culture', 'theme-unification_30_4', 'theme-children_day_1_6',
+      'theme-women_day_8_3', 'theme-national_day_2_9', 'theme-vietnam_women_20_10',
+    ];
+    if (activePortalThemeId) {
+      document.documentElement.setAttribute('data-theme', activePortalThemeId);
+      themeClasses.forEach((cls) => document.body.classList.remove(cls));
+      document.body.classList.add(`theme-${activePortalThemeId}`);
+    } else {
+      document.documentElement.removeAttribute('data-theme');
+      themeClasses.forEach((cls) => document.body.classList.remove(cls));
+    }
+  }, [activePortalThemeId]);
   const [maintChecking, setMaintChecking] = useState(false);
   const fetchPortalMaintenance = async (): Promise<boolean | null> => {
     try {
@@ -3633,19 +3633,14 @@ export function App() {
             boxShadow: halloweenTheme ? '0 8px 24px rgba(255, 117, 24, 0.25)' : '0 8px 24px rgba(232, 93, 146, 0.18)',
             border: halloweenTheme ? '2px solid #FF7518' : '2px solid #F8DDE7',
           }}>
-            {halloweenTheme && (
-              <>
-                <WitchHatBadge />
-                <MiniPumpkinBadge />
-              </>
-            )}
+            <EmployeeEventLogoAccessory themeId={activePortalThemeId} />
             <div style={{ width: '100%', height: '100%', borderRadius: '18px', overflow: 'hidden' }}>
               <img src="/logo.jpg" alt="Ụm Bò Milk" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
             </div>
           </div>
           <h1 style={{ fontSize: '24px', fontWeight: 800, color: 'var(--brand)', marginBottom: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
             ỤM BÒ MILK
-            {halloweenTheme && <CuteTitleBat />}
+            <EmployeeTitleOrnament themeId={activePortalThemeId} />
           </h1>
           <p style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: 600 }}>
             CỔNG NHÂN VIÊN V5.1 (THỬ VIỆC & CHÍNH THỨC)
@@ -3902,13 +3897,7 @@ export function App() {
   // =========================================================================
   const { shift: currentShift, all: todayShiftList, phase: currentShiftPhase } = getCurrentShift();
 
-  // Theme sự kiện đang diễn ra áp dụng cho toàn bộ cổng đã đăng nhập.
-  const activePortalThemeId: LoginThemeId | null = (() => {
-    const s = portalThemeSchedule;
-    if (!s?.enabled || s.endAt <= s.startAt) return null;
-    const now = portalThemeNow + (s.serverOffsetMs || 0);
-    return now >= s.startAt && now < s.endAt ? s.event : null;
-  })();
+  // Theme sự kiện đang diễn ra áp dụng cho toàn bộ cổng đã đăng nhập (sử dụng activePortalThemeId tự động theo lịch).
   const portalEventTheme = activePortalThemeId ? getThemeConfig(activePortalThemeId) : null;
   const portalThemeVars = (portalEventTheme ? {
     background: portalEventTheme.bgGradient,
@@ -3927,8 +3916,8 @@ export function App() {
       {/* HEADER */}
       <header style={{
         padding: '14px 16px',
-        backgroundColor: halloweenTheme ? '#FFFFFF' : (portalEventTheme ? portalEventTheme.cardBg : '#FFFFFF'),
-        borderBottom: halloweenTheme ? 'none' : (portalEventTheme ? `2px solid ${portalEventTheme.badgeBorder}` : '1px solid var(--border)'),
+        backgroundColor: portalEventTheme ? portalEventTheme.cardBg : '#FFFFFF',
+        borderBottom: portalEventTheme ? `2px solid ${portalEventTheme.badgeBorder}` : '1px solid var(--border)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
@@ -3944,18 +3933,13 @@ export function App() {
             height: '38px',
             borderRadius: '10px',
             backgroundColor: '#FFFFFF',
-            border: halloweenTheme ? '1.5px solid #FF7518' : (portalEventTheme ? `2px solid ${portalEventTheme.logoBorderColor}` : '1.5px solid var(--border)'),
+            border: portalEventTheme ? `2px solid ${portalEventTheme.logoBorderColor}` : '1.5px solid var(--border)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            boxShadow: halloweenTheme ? '0 0 0 2px rgba(255,117,24,0.2)' : (portalEventTheme ? `0 0 0 3px ${portalEventTheme.logoGlowColor}` : 'none'),
+            boxShadow: portalEventTheme ? `0 0 0 3px ${portalEventTheme.logoGlowColor}` : 'none',
           }}>
-            {halloweenTheme && (
-              <>
-                <WitchHatBadge />
-                <MiniPumpkinBadge />
-              </>
-            )}
+            <EmployeeEventLogoAccessory themeId={activePortalThemeId} />
             <div style={{ width: '100%', height: '100%', borderRadius: '8px', overflow: 'hidden' }}>
               <img src="/logo.jpg" alt="Ụm Bò Milk" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
             </div>
@@ -3963,7 +3947,7 @@ export function App() {
           <div>
             <div style={{ fontWeight: 800, fontSize: '14px', color: 'var(--text)', display: 'flex', alignItems: 'center', gap: '6px' }}>
               {employee?.full_name}
-              {halloweenTheme && <CuteTitleBat />}
+              <EmployeeTitleOrnament themeId={activePortalThemeId} />
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span className={`badge ${isProbation ? 'badge-brand' : 'badge-success'}`} style={{ fontSize: '10px', padding: '2px 6px' }}>
@@ -3981,8 +3965,8 @@ export function App() {
         </div>
       </header>
 
-      {/* SPOOKY-CUTE HALLOWEEN CANDY & PUMPKIN DIVIDER */}
-      {halloweenTheme && <HalloweenHeaderDivider />}
+      {/* DẢI HOA VĂN PHÂN CÁCH SỰ KIỆN TỰ ĐỘNG THEO LỊCH */}
+      <EmployeeHeaderDivider themeId={activePortalThemeId} />
 
       {/* THÔNG BÁO SỰ KIỆN CÓ ĐẾM NGƯỢC CẬP NHẬT GIAO DIỆN */}
       <EventAnnouncementCountdown
