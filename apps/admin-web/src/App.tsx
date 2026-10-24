@@ -394,7 +394,7 @@ export function App() {
       if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('demo') === '1') {
         return {
           id: 'demo-admin',
-          fullName: 'Quản Trị Viên (Demo Halloween)',
+          fullName: 'Quản Trị Viên (Demo)',
           role: 'ADMIN',
           branchScope: 'ALL',
           permissions: ['ALL'],
@@ -2369,32 +2369,6 @@ export function App() {
             </div>
             <div style={{ marginTop: '14px', textAlign: 'center', fontSize: '10px', color: '#9CA3AF' }}>
               Bản app: <code>{APP_COMMIT}</code> • Bản API: <code>{apiCommit || 'đang kiểm tra...'}</code>
-            </div>
-            <div style={{ marginTop: '10px', textAlign: 'center' }}>
-              <button
-                type="button"
-                onClick={() => {
-                  setCurrentUser({
-                    id: 'demo-admin',
-                    fullName: 'Quản Trị Viên (Demo Halloween)',
-                    role: 'ADMIN',
-                    branchScope: 'ALL',
-                    permissions: ['ALL'],
-                  });
-                }}
-                style={{
-                  background: 'rgba(255, 117, 24, 0.08)',
-                  border: '1px dashed #FF7518',
-                  borderRadius: '6px',
-                  color: '#FF7518',
-                  fontSize: '11px',
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                  padding: '6px 14px',
-                }}
-              >
-                🎃 Xem trước giao diện Admin Halloween (Demo)
-              </button>
             </div>
           </div>
         </div>
