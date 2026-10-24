@@ -2570,12 +2570,6 @@ export function App() {
 
           {/* Quick status & action buttons */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            {/* ADMIN EVENT THEME TOGGLE BUTTON */}
-            <AdminThemeToggle
-              active={adminThemeEnabled}
-              themeId={adminThemeEvent}
-              onToggle={(next) => void handleToggleAdminTheme(next)}
-            />
             {currentUser?.role === 'ADMIN' && (
               <button
                 onClick={handleForceSync}

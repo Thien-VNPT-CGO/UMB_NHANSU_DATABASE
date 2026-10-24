@@ -143,68 +143,17 @@ export const AdminTitleOrnament: React.FC<{ themeId: string }> = ({ themeId }) =
 };
 
 /**
- * Nút bật/tắt nhanh chủ đề sự kiện trên Header Cổng Admin
+ * Nút bật/tắt nhanh chủ đề sự kiện trên Header Cổng Admin (đã gỡ bỏ theo yêu cầu người dùng)
  */
 export const AdminThemeToggle: React.FC<{
-  active: boolean;
-  themeId: string;
-  onToggle: (next: boolean) => void;
-}> = ({ active, themeId, onToggle }) => {
-  const meta = ADMIN_EVENT_THEMES.find((t) => t.id === themeId) || {
-    id: themeId,
-    name: 'Sự kiện',
-    icon: '🎨',
-  };
-
-  const themeConfig = getThemeConfig(themeId as LoginThemeId);
-  const accentColor = themeConfig?.accentColor || '#FF7518';
-
-  return (
-    <button
-      onClick={() => onToggle(!active)}
-      title={active ? `Đang bật giao diện ${meta.name} (Nhấp để về giao diện chuẩn)` : `Bật giao diện ${meta.name}`}
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: '6px',
-        padding: '5px 12px',
-        borderRadius: '999px',
-        fontSize: '12px',
-        fontWeight: 700,
-        cursor: 'pointer',
-        transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-        backgroundColor: active ? '#FFFFFF' : 'var(--surface)',
-        border: active ? `1.5px solid ${accentColor}` : '1px solid var(--border)',
-        color: active ? accentColor : 'var(--text-muted)',
-        boxShadow: active ? `0 2px 8px ${accentColor}33` : 'none',
-      }}
-    >
-      <span style={{ fontSize: '13px' }}>{meta.icon}</span>
-      <span style={{ fontWeight: 800 }}>{meta.name}</span>
-      <span
-        style={{
-          display: 'inline-block',
-          padding: '1px 6px',
-          borderRadius: '999px',
-          fontSize: '10px',
-          fontWeight: 800,
-          backgroundColor: active ? accentColor : '#E5E7EB',
-          color: active ? '#FFFFFF' : '#4B5563',
-          letterSpacing: '0.2px',
-          transition: 'all 0.2s ease',
-        }}
-      >
-        {active ? 'BẬT' : 'TẮT'}
-      </span>
-    </button>
-  );
-};
+  active?: boolean;
+  themeId?: string;
+  onToggle?: (next: boolean) => void;
+}> = () => null;
 
 export const CuteTitleBat: React.FC = () => <AdminTitleOrnament themeId="halloween" />;
 export const HalloweenHeaderDivider: React.FC = () => <AdminHeaderDivider themeId="halloween" />;
-export const HalloweenThemeToggle: React.FC<{ active: boolean; onToggle: (next: boolean) => void }> = ({ active, onToggle }) => (
-  <AdminThemeToggle active={active} themeId="halloween" onToggle={onToggle} />
-);
+export const HalloweenThemeToggle: React.FC<{ active?: boolean; onToggle?: (next: boolean) => void }> = () => null;
 
 export {
   WitchHatBadge,
