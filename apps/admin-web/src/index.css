@@ -410,3 +410,170 @@ button:active:not(:disabled) {
   background-color: var(--bg);
   box-shadow: 0 1px 0 var(--border);
 }
+
+/* ========================================================================= */
+/* SPOOKY-CUTE HALLOWEEN THEME (HR ADMIN PORTAL V5.1)                        */
+/* ========================================================================= */
+:root[data-theme="halloween"],
+body.theme-halloween,
+.theme-halloween {
+  /* Bảng màu chuẩn yêu cầu */
+  --bg: #FFF8F3;          /* Kem bí ngô nhạt */
+  --surface: #FFFFFF;     /* Trắng kem */
+  --border: #F5D0C5;      /* Viền thẻ: Cam hồng nhạt */
+  --border-light: #FBECE7;
+
+  /* Màu nhấn (Accent) */
+  --brand: #FF7518;       /* Cam bí ngô */
+  --brand-hover: #E06010;
+  --brand-soft: #FFEAD9;
+  --brand-purple: #4A2574; /* Tím phù thủy */
+  --brand-pink: #E14D77;   /* Hồng thương hiệu */
+
+  /* Giữ nguyên màu ngữ nghĩa của các badge trạng thái */
+  --success-soft: #DFF5E8;
+  --success: #10B981;     /* Realtime Master Online, Chính thức */
+  --warning-soft: #FEF3C7;
+  --warning: #F59E0B;     /* Chờ duyệt */
+  --danger-soft: #FEE2E2;
+  --danger: #EF4444;      /* Khóa / Xóa */
+}
+
+/* Tinh chỉnh thẻ card & bảng khi theme Halloween bật */
+:root[data-theme="halloween"] .card,
+body.theme-halloween .card {
+  position: relative;
+  background-color: #FFFFFF;
+  border-color: #F5D0C5;
+  box-shadow: 0 4px 18px rgba(255, 117, 24, 0.05);
+}
+
+/* Mạng nhện SVG mờ ở góc trên bên trái và dưới bên phải của thẻ chính */
+:root[data-theme="halloween"] .card::before,
+body.theme-halloween .card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 58px;
+  height: 58px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' fill='none'%3E%3Cpath d='M0 0L100 0M0 0L92 38M0 0L70 70M0 0L38 92M0 0L0 100' stroke='%234A2574' stroke-width='1.5' stroke-opacity='0.22'/%3E%3Cpath d='M0 25C10 24 24 10 25 0M0 50C20 48 48 20 50 0M0 75C30 72 72 30 75 0M0 100C40 96 96 40 100 0' stroke='%234A2574' stroke-width='1.2' stroke-opacity='0.22' fill='none'/%3E%3C/svg%3E");
+  background-size: contain;
+  background-repeat: no-repeat;
+  pointer-events: none !important;
+  opacity: 0.85;
+  z-index: 1;
+}
+
+:root[data-theme="halloween"] .card::after,
+body.theme-halloween .card::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 58px;
+  height: 58px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' fill='none'%3E%3Cpath d='M0 0L100 0M0 0L92 38M0 0L70 70M0 0L38 92M0 0L0 100' stroke='%23FF7518' stroke-width='1.5' stroke-opacity='0.22'/%3E%3Cpath d='M0 25C10 24 24 10 25 0M0 50C20 48 48 20 50 0M0 75C30 72 72 30 75 0M0 100C40 96 96 40 100 0' stroke='%23FF7518' stroke-width='1.2' stroke-opacity='0.22' fill='none'/%3E%3C/svg%3E");
+  background-size: contain;
+  background-repeat: no-repeat;
+  transform: rotate(180deg);
+  pointer-events: none !important;
+  opacity: 0.85;
+  z-index: 1;
+}
+
+/* Đảm bảo nội dung trong card luôn nổi trên mạng nhện */
+:root[data-theme="halloween"] .card > *,
+body.theme-halloween .card > * {
+  position: relative;
+  z-index: 2;
+}
+
+/* Bảng dữ liệu rõ nét với sắc tím phù thủy & cam bí ngô */
+:root[data-theme="halloween"] th,
+body.theme-halloween th {
+  background: #FFF5EE;
+  color: #4A2574;
+  border-bottom: 1.5px solid #F5D0C5;
+  font-weight: 700;
+}
+
+:root[data-theme="halloween"] td,
+body.theme-halloween td {
+  border-bottom: 1px solid #FBECE7;
+}
+
+:root[data-theme="halloween"] tr:hover td,
+body.theme-halloween tr:hover td {
+  background: #FFF8F3;
+}
+
+:root[data-theme="halloween"] input:focus,
+:root[data-theme="halloween"] select:focus,
+:root[data-theme="halloween"] textarea:focus,
+body.theme-halloween input:focus,
+body.theme-halloween select:focus,
+body.theme-halloween textarea:focus {
+  border-color: #FF7518;
+  outline-color: #FF7518;
+}
+
+/* Nút bấm chủ đạo Halloween */
+:root[data-theme="halloween"] .btn-primary,
+body.theme-halloween .btn-primary {
+  background: linear-gradient(135deg, #FF7518 0%, #E14D77 100%);
+  color: #FFFFFF;
+  box-shadow: 0 4px 12px rgba(255, 117, 24, 0.28);
+}
+
+:root[data-theme="halloween"] .btn-primary:hover,
+body.theme-halloween .btn-primary:hover {
+  background: linear-gradient(135deg, #E06010 0%, #CF3B64 100%);
+}
+
+/* Micro-animations Halloween */
+@keyframes spiderBob {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(10px);
+  }
+}
+
+@keyframes ghostFloat {
+  0%, 100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-7px) rotate(4deg);
+  }
+}
+
+@keyframes batFlutter {
+  0%, 100% {
+    transform: translateY(0) rotate(0deg) scale(1);
+  }
+  25% {
+    transform: translateY(-2.5px) rotate(-6deg) scale(1.05);
+  }
+  75% {
+    transform: translateY(2px) rotate(6deg) scale(0.98);
+  }
+}
+
+.halloween-spider-dangler {
+  animation: spiderBob 3.6s ease-in-out infinite;
+  pointer-events: none !important;
+}
+
+.halloween-ghost-float {
+  animation: ghostFloat 3.8s ease-in-out infinite;
+  pointer-events: none !important;
+}
+
+.halloween-bat-flutter {
+  animation: batFlutter 2.2s ease-in-out infinite;
+  pointer-events: none !important;
+}
+

@@ -50,6 +50,15 @@ import {
 import { RoleViews } from './components/RoleViews';
 import { BetaChip, BetaBanner, isBetaFeature } from './betaFeatures';
 import {
+  WitchHatBadge,
+  MiniPumpkinBadge,
+  HalloweenHeaderDivider,
+  HangingSpiderDangler,
+  CuteTitleBat,
+  CuteGhostAccent,
+  HalloweenThemeToggle,
+} from './components/HalloweenDecorations';
+import {
   playNotificationDing,
   playRingtoneFile,
   playWarningTone,
@@ -342,8 +351,50 @@ class RoleViewsErrorBoundary extends React.Component<{ tab: string; children: Re
 }
 
 export function App() {
+  const [halloweenTheme, setHalloweenThemeState] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('ubm_halloween_theme');
+      return saved === null ? true : saved !== 'false';
+    } catch {
+      return true;
+    }
+  });
+
+  const setHalloweenTheme = (val: boolean) => {
+    setHalloweenThemeState(val);
+    try {
+      localStorage.setItem('ubm_halloween_theme', String(val));
+      if (val) {
+        document.documentElement.setAttribute('data-theme', 'halloween');
+        document.body.classList.add('theme-halloween');
+      } else {
+        document.documentElement.removeAttribute('data-theme');
+        document.body.classList.remove('theme-halloween');
+      }
+    } catch {}
+  };
+
+  useEffect(() => {
+    if (halloweenTheme) {
+      document.documentElement.setAttribute('data-theme', 'halloween');
+      document.body.classList.add('theme-halloween');
+    } else {
+      document.documentElement.removeAttribute('data-theme');
+      document.body.classList.remove('theme-halloween');
+    }
+  }, [halloweenTheme]);
+
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
     try {
+      if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('demo') === '1') {
+        return {
+          id: 'demo-admin',
+          fullName: 'Quản Trị Viên (Demo Halloween)',
+          role: 'ADMIN',
+          branchScope: 'ALL',
+          permissions: ['ALL'],
+        };
+      }
       const savedUser = localStorage.getItem('ubm_admin_user');
       const savedToken = localStorage.getItem('ubm_admin_token');
       if (savedUser && savedToken) {
@@ -1951,6 +2002,7 @@ export function App() {
             backgroundColor: '#FFFBF9',
           }}>
             <div style={{
+              position: 'relative',
               width: '76px',
               height: '76px',
               borderRadius: '16px',
@@ -1960,10 +2012,18 @@ export function App() {
               justifyContent: 'center',
               margin: '0 auto 14px',
               boxShadow: '0 4px 14px rgba(232, 93, 146, 0.16)',
-              overflow: 'hidden',
+              overflow: 'visible',
               border: '2px solid #F8DDE7',
             }}>
-              <img src="/logo.jpg" alt="Ụm Bò Milk" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              <div style={{ width: '100%', height: '100%', borderRadius: '14px', overflow: 'hidden' }}>
+                <img src="/logo.jpg" alt="Ụm Bò Milk" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              </div>
+              {halloweenTheme && (
+                <>
+                  <WitchHatBadge />
+                  <MiniPumpkinBadge />
+                </>
+              )}
             </div>
             <h1 style={{
               fontSize: '22px',
@@ -2231,6 +2291,32 @@ export function App() {
             <div style={{ marginTop: '14px', textAlign: 'center', fontSize: '10px', color: '#9CA3AF' }}>
               Bản app: <code>{APP_COMMIT}</code> • Bản API: <code>{apiCommit || 'đang kiểm tra...'}</code>
             </div>
+            <div style={{ marginTop: '10px', textAlign: 'center' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setCurrentUser({
+                    id: 'demo-admin',
+                    fullName: 'Quản Trị Viên (Demo Halloween)',
+                    role: 'ADMIN',
+                    branchScope: 'ALL',
+                    permissions: ['ALL'],
+                  });
+                }}
+                style={{
+                  background: 'rgba(255, 117, 24, 0.08)',
+                  border: '1px dashed #FF7518',
+                  borderRadius: '6px',
+                  color: '#FF7518',
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  padding: '6px 14px',
+                }}
+              >
+                🎃 Xem trước giao diện Admin Halloween (Demo)
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -2254,6 +2340,7 @@ export function App() {
         {/* Brand Header */}
         <div style={{ padding: '20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: '12px' }}>
           <div style={{
+            position: 'relative',
             width: '42px',
             height: '42px',
             borderRadius: '10px',
@@ -2261,16 +2348,25 @@ export function App() {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            overflow: 'hidden',
+            overflow: 'visible',
             border: '1.5px solid var(--border)',
             boxShadow: '0 2px 6px rgba(0,0,0,0.06)',
             flexShrink: 0,
           }}>
-            <img src="/logo.jpg" alt="Ụm Bò Milk" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            <div style={{ width: '100%', height: '100%', borderRadius: '8px', overflow: 'hidden' }}>
+              <img src="/logo.jpg" alt="Ụm Bò Milk" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            </div>
+            {halloweenTheme && (
+              <>
+                <WitchHatBadge />
+                <MiniPumpkinBadge />
+              </>
+            )}
           </div>
           <div>
-            <div style={{ fontWeight: 800, fontSize: '15px', color: 'var(--brand)', letterSpacing: '-0.3px' }}>
+            <div style={{ fontWeight: 800, fontSize: '15px', color: 'var(--brand)', letterSpacing: '-0.3px', display: 'flex', alignItems: 'center' }}>
               ỤM BÒ MILK
+              {halloweenTheme && <CuteTitleBat />}
             </div>
             <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600 }}>
               HR ADMIN PORTAL V5.1
@@ -2371,16 +2467,18 @@ export function App() {
         <header style={{
           height: '60px',
           backgroundColor: 'var(--surface)',
-          borderBottom: '1px solid var(--border)',
+          borderBottom: halloweenTheme ? 'none' : '1px solid var(--border)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '0 24px',
+          position: 'relative',
         }}>
           {/* Header Title & Breadcrumb */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <span style={{ fontSize: '14px', fontWeight: 800, color: 'var(--text)', letterSpacing: '-0.2px' }}>
+            <span style={{ fontSize: '14px', fontWeight: 800, color: 'var(--text)', letterSpacing: '-0.2px', display: 'flex', alignItems: 'center' }}>
               ỤM BÒ MILK • CỔNG QUẢN TRỊ HỆ THỐNG
+              {halloweenTheme && <CuteTitleBat />}
             </span>
             <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>|</span>
             <span style={{
@@ -2397,6 +2495,8 @@ export function App() {
 
           {/* Quick status & action buttons */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            {/* HALLOWEEN THEME TOGGLE BUTTON */}
+            <HalloweenThemeToggle active={halloweenTheme} onToggle={setHalloweenTheme} />
             {currentUser?.role === 'ADMIN' && (
               <button
                 onClick={handleForceSync}
@@ -2638,6 +2738,7 @@ export function App() {
             </button>
           </div>
         </header>
+        {halloweenTheme && <HalloweenHeaderDivider />}
 
         {/* FLOATING RICH TOAST STACK (HIỂN THỊ THÔNG BÁO SỐNG ĐỘNG GÓC PHẢI MÀN HÌNH) */}
         <div style={{
@@ -5106,6 +5207,9 @@ export function App() {
           </div>
         </div>
       )}
+      {/* SPOOKY-CUTE HALLOWEEN ACCENTS (POINTER-EVENTS: NONE) */}
+      {halloweenTheme && <HangingSpiderDangler />}
+      {halloweenTheme && <CuteGhostAccent />}
     </div>
   );
 }

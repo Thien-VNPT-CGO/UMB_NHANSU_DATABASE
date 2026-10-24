@@ -40,6 +40,15 @@ import {
   Palmtree,
   Filter,
 } from 'lucide-react';
+import {
+  WitchHatBadge,
+  MiniPumpkinBadge,
+  HalloweenHeaderDivider,
+  HangingSpiderDangler,
+  CuteTitleBat,
+  CuteGhostAccent,
+  HalloweenThemeToggle,
+} from './components/HalloweenDecorations';
 
 interface EmployeeProfile {
   employee_id: string;
@@ -320,10 +329,22 @@ function formatShiftOption(s: any): string {
 
 export function App() {
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(() => {
+    if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('demo') === '1') return true;
     return !!(localStorage.getItem('ubm_emp_token') && localStorage.getItem('ubm_emp_data'));
   });
   const [employee, setEmployee] = useState<EmployeeProfile | null>(() => {
     try {
+      if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('demo') === '1') {
+        return {
+          employee_id: 'DEMO01',
+          employee_code: 'UBM-888',
+          full_name: 'Nguyễn Thị Bò Sữa (Demo)',
+          phone_normalized: '0901111222',
+          employment_status: 'OFFICIAL',
+          current_rate_per_hour: 25000,
+          default_branch_id: 'UBM-01 (Đặng Thai Mai)',
+        };
+      }
       const saved = localStorage.getItem('ubm_emp_data');
       return saved ? JSON.parse(saved) : null;
     } catch {
@@ -352,6 +373,41 @@ export function App() {
     }
   });
 
+  // Spooky-Cute Halloween Theme (Tự động kích hoạt hoặc lưu tuỳ chọn người dùng)
+  const [halloweenTheme, setHalloweenThemeState] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('ubm_halloween_theme');
+      if (saved !== null) return saved === 'true';
+      const now = new Date();
+      return (now.getMonth() === 9 && now.getDate() >= 20) || (now.getMonth() === 10 && now.getDate() <= 3);
+    } catch {
+      return true;
+    }
+  });
+
+  const setHalloweenTheme = (val: boolean) => {
+    setHalloweenThemeState(val);
+    try {
+      localStorage.setItem('ubm_halloween_theme', String(val));
+      if (val) {
+        document.documentElement.setAttribute('data-theme', 'halloween');
+        document.body.classList.add('theme-halloween');
+      } else {
+        document.documentElement.removeAttribute('data-theme');
+        document.body.classList.remove('theme-halloween');
+      }
+    } catch {}
+  };
+
+  useEffect(() => {
+    if (halloweenTheme) {
+      document.documentElement.setAttribute('data-theme', 'halloween');
+      document.body.classList.add('theme-halloween');
+    } else {
+      document.documentElement.removeAttribute('data-theme');
+      document.body.classList.remove('theme-halloween');
+    }
+  }, [halloweenTheme]);
 
   // Boot: phiên cũ còn token thì XÁC MINH lại với server — tài khoản chưa đổi
   // PIN thì bắt đổi ngay, không cho vào cổng (reload không lách được).
@@ -3566,6 +3622,7 @@ export function App() {
         {/* Header Logo */}
         <div style={{ textAlign: 'center', marginBottom: '28px' }}>
           <div style={{
+            position: 'relative',
             width: '84px',
             height: '84px',
             borderRadius: '20px',
@@ -3574,14 +3631,22 @@ export function App() {
             alignItems: 'center',
             justifyContent: 'center',
             margin: '0 auto 12px',
-            boxShadow: '0 8px 24px rgba(232, 93, 146, 0.18)',
-            overflow: 'hidden',
-            border: '2px solid #F8DDE7',
+            boxShadow: halloweenTheme ? '0 8px 24px rgba(255, 117, 24, 0.25)' : '0 8px 24px rgba(232, 93, 146, 0.18)',
+            border: halloweenTheme ? '2px solid #FF7518' : '2px solid #F8DDE7',
           }}>
-            <img src="/logo.jpg" alt="Ụm Bò Milk" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            {halloweenTheme && (
+              <>
+                <WitchHatBadge />
+                <MiniPumpkinBadge />
+              </>
+            )}
+            <div style={{ width: '100%', height: '100%', borderRadius: '18px', overflow: 'hidden' }}>
+              <img src="/logo.jpg" alt="Ụm Bò Milk" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            </div>
           </div>
-          <h1 style={{ fontSize: '24px', fontWeight: 800, color: 'var(--brand)', marginBottom: '4px' }}>
+          <h1 style={{ fontSize: '24px', fontWeight: 800, color: 'var(--brand)', marginBottom: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
             ỤM BÒ MILK
+            {halloweenTheme && <CuteTitleBat />}
           </h1>
           <p style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: 600 }}>
             CỔNG NHÂN VIÊN V5.1 (THỬ VIỆC & CHÍNH THỨC)
@@ -3863,8 +3928,8 @@ export function App() {
       {/* HEADER */}
       <header style={{
         padding: '14px 16px',
-        backgroundColor: portalEventTheme ? portalEventTheme.cardBg : '#FFFFFF',
-        borderBottom: portalEventTheme ? `2px solid ${portalEventTheme.badgeBorder}` : '1px solid var(--border)',
+        backgroundColor: halloweenTheme ? '#FFFFFF' : (portalEventTheme ? portalEventTheme.cardBg : '#FFFFFF'),
+        borderBottom: halloweenTheme ? 'none' : (portalEventTheme ? `2px solid ${portalEventTheme.badgeBorder}` : '1px solid var(--border)'),
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
@@ -3875,21 +3940,32 @@ export function App() {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <div style={{
+            position: 'relative',
             width: '38px',
             height: '38px',
             borderRadius: '10px',
             backgroundColor: '#FFFFFF',
-            border: portalEventTheme ? `2px solid ${portalEventTheme.logoBorderColor}` : '1.5px solid var(--border)',
-            overflow: 'hidden',
+            border: halloweenTheme ? '1.5px solid #FF7518' : (portalEventTheme ? `2px solid ${portalEventTheme.logoBorderColor}` : '1.5px solid var(--border)'),
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            boxShadow: portalEventTheme ? `0 0 0 3px ${portalEventTheme.logoGlowColor}` : 'none',
+            boxShadow: halloweenTheme ? '0 0 0 2px rgba(255,117,24,0.2)' : (portalEventTheme ? `0 0 0 3px ${portalEventTheme.logoGlowColor}` : 'none'),
           }}>
-            <img src="/logo.jpg" alt="Ụm Bò Milk" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            {halloweenTheme && (
+              <>
+                <WitchHatBadge />
+                <MiniPumpkinBadge />
+              </>
+            )}
+            <div style={{ width: '100%', height: '100%', borderRadius: '8px', overflow: 'hidden' }}>
+              <img src="/logo.jpg" alt="Ụm Bò Milk" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            </div>
           </div>
           <div>
-            <div style={{ fontWeight: 800, fontSize: '14px', color: 'var(--text)' }}>{employee?.full_name}</div>
+            <div style={{ fontWeight: 800, fontSize: '14px', color: 'var(--text)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              {employee?.full_name}
+              {halloweenTheme && <CuteTitleBat />}
+            </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span className={`badge ${isProbation ? 'badge-brand' : 'badge-success'}`} style={{ fontSize: '10px', padding: '2px 6px' }}>
                 {isProbation ? 'Thử việc (12 ngày)' : 'Chính thức'}
@@ -3899,10 +3975,18 @@ export function App() {
           </div>
         </div>
 
-        <button onClick={handleLogout} style={{ color: 'var(--text-muted)', padding: '6px' }} title="Đăng xuất">
-          <LogOut size={18} />
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {/* HALLOWEEN THEME TOGGLE BUTTON */}
+          <HalloweenThemeToggle active={halloweenTheme} onToggle={setHalloweenTheme} />
+
+          <button onClick={handleLogout} style={{ color: 'var(--text-muted)', padding: '6px' }} title="Đăng xuất">
+            <LogOut size={18} />
+          </button>
+        </div>
       </header>
+
+      {/* SPOOKY-CUTE HALLOWEEN CANDY & PUMPKIN DIVIDER */}
+      {halloweenTheme && <HalloweenHeaderDivider />}
 
       {/* THÔNG BÁO SỰ KIỆN CÓ ĐẾM NGƯỢC CẬP NHẬT GIAO DIỆN */}
       <EventAnnouncementCountdown
@@ -7540,6 +7624,10 @@ export function App() {
         )}
       </main>
       {updateReady && <UpdateBanner />}
+
+      {/* SPOOKY-CUTE HALLOWEEN ACCENTS (POINTER-EVENTS: NONE) */}
+      {halloweenTheme && <HangingSpiderDangler />}
+      {halloweenTheme && <CuteGhostAccent />}
     </div>
   );
 }
