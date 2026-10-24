@@ -11,8 +11,17 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   </React.StrictMode>
 );
 
-// PWA: chỉ đăng ký ở bản build production để không ảnh hưởng HMR khi dev.
-if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+// Tự động hủy đăng ký service worker và xóa cache cũ khi đang chạy trên localhost
+if ('serviceWorker' in navigator && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+  navigator.serviceWorker.getRegistrations().then(regs => {
+    for (const reg of regs) reg.unregister();
+  });
+  if ('caches' in window) {
+    caches.keys().then(keys => {
+      for (const key of keys) caches.delete(key);
+    });
+  }
+} else if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker
       .register(`${import.meta.env.BASE_URL}sw.js`, { scope: import.meta.env.BASE_URL })

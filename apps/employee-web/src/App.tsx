@@ -47,7 +47,6 @@ import {
   HangingSpiderDangler,
   CuteTitleBat,
   CuteGhostAccent,
-  HalloweenThemeToggle,
 } from './components/HalloweenDecorations';
 
 interface EmployeeProfile {
@@ -3976,9 +3975,6 @@ export function App() {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          {/* HALLOWEEN THEME TOGGLE BUTTON */}
-          <HalloweenThemeToggle active={halloweenTheme} onToggle={setHalloweenTheme} />
-
           <button onClick={handleLogout} style={{ color: 'var(--text-muted)', padding: '6px' }} title="Đăng xuất">
             <LogOut size={18} />
           </button>

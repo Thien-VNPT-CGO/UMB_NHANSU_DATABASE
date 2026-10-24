@@ -5,7 +5,7 @@
  * - Asset tĩnh: stale-while-revalidate.
  * - Không cache API/auth/socket để tránh dữ liệu cũ.
  */
-const VERSION = 'v1';
+const VERSION = 'v2';
 const CORE_CACHE = `ubm-employee-core-${VERSION}`;
 const RUNTIME_CACHE = `ubm-employee-runtime-${VERSION}`;
 const PRECACHE_URLS = [

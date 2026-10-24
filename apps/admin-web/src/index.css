@@ -577,3 +577,224 @@ body.theme-halloween .btn-primary:hover {
   pointer-events: none !important;
 }
 
+/* ========================================================================= */
+/* ALL 10 EVENT THEMES FOR HR ADMIN PORTAL V5.1                             */
+/* ========================================================================= */
+
+/* 1. GIÁNG SINH (NOEL) */
+:root[data-theme="noel"], body.theme-noel, .theme-noel {
+  --bg: #F0FDF4;
+  --surface: #FFFFFF;
+  --border: #BBF7D0;
+  --border-light: #DCFCE7;
+  --brand: #DC2626;
+  --brand-hover: #B91C1C;
+  --brand-soft: #FEE2E2;
+  --success: #10B981;
+  --warning: #F59E0B;
+  --danger: #EF4444;
+}
+:root[data-theme="noel"] th, body.theme-noel th {
+  background: #F0FDF4;
+  color: #166534;
+  border-bottom: 1.5px solid #BBF7D0;
+}
+:root[data-theme="noel"] .btn-primary, body.theme-noel .btn-primary {
+  background: linear-gradient(135deg, #DC2626 0%, #15803D 100%);
+  color: #FFF;
+  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.25);
+}
+
+/* 2. TẾT NGUYÊN ĐÁN */
+:root[data-theme="tet"], body.theme-tet, .theme-tet {
+  --bg: #FFFBEB;
+  --surface: #FFFFFF;
+  --border: #FDE68A;
+  --border-light: #FEF3C7;
+  --brand: #DC2626;
+  --brand-hover: #B91C1C;
+  --brand-soft: #FEF3C7;
+  --success: #10B981;
+  --warning: #F59E0B;
+  --danger: #EF4444;
+}
+:root[data-theme="tet"] th, body.theme-tet th {
+  background: #FFFBEB;
+  color: #991B1B;
+  border-bottom: 1.5px solid #FDE68A;
+}
+:root[data-theme="tet"] .btn-primary, body.theme-tet .btn-primary {
+  background: linear-gradient(135deg, #DC2626 0%, #D97706 100%);
+  color: #FFF;
+  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.25);
+}
+
+/* 3. TẾT 2027 ĐINH MÙI */
+:root[data-theme="tet_2027"], body.theme-tet_2027, .theme-tet_2027 {
+  --bg: #FFFDF0;
+  --surface: #FFFFFF;
+  --border: #FCD34D;
+  --border-light: #FEF3C7;
+  --brand: #D97706;
+  --brand-hover: #B45309;
+  --brand-soft: #FEF3C7;
+  --success: #10B981;
+  --warning: #F59E0B;
+  --danger: #EF4444;
+}
+:root[data-theme="tet_2027"] th, body.theme-tet_2027 th {
+  background: #FFFDF0;
+  color: #92400E;
+  border-bottom: 1.5px solid #FCD34D;
+}
+:root[data-theme="tet_2027"] .btn-primary, body.theme-tet_2027 .btn-primary {
+  background: linear-gradient(135deg, #D97706 0%, #DC2626 100%);
+  color: #FFF;
+  box-shadow: 0 4px 12px rgba(217, 119, 6, 0.25);
+}
+
+/* 4. VĂN HÓA VIỆT NAM */
+:root[data-theme="vietnam_culture"], body.theme-vietnam_culture, .theme-vietnam_culture {
+  --bg: #FFF8F6;
+  --surface: #FFFFFF;
+  --border: #FED7AA;
+  --border-light: #FFEDD5;
+  --brand: #EA580C;
+  --brand-hover: #C2410C;
+  --brand-soft: #FFEDD5;
+  --success: #10B981;
+  --warning: #F59E0B;
+  --danger: #EF4444;
+}
+:root[data-theme="vietnam_culture"] th, body.theme-vietnam_culture th {
+  background: #FFF8F6;
+  color: #9A3412;
+  border-bottom: 1.5px solid #FED7AA;
+}
+:root[data-theme="vietnam_culture"] .btn-primary, body.theme-vietnam_culture .btn-primary {
+  background: linear-gradient(135deg, #EA580C 0%, #DB2777 100%);
+  color: #FFF;
+  box-shadow: 0 4px 12px rgba(234, 88, 12, 0.25);
+}
+
+/* 5. NGÀY 30/4 */
+:root[data-theme="unification_30_4"], body.theme-unification_30_4, .theme-unification_30_4 {
+  --bg: #FEF2F2;
+  --surface: #FFFFFF;
+  --border: #FECACA;
+  --border-light: #FEE2E2;
+  --brand: #DC2626;
+  --brand-hover: #B91C1C;
+  --brand-soft: #FEE2E2;
+  --success: #10B981;
+  --warning: #F59E0B;
+  --danger: #EF4444;
+}
+:root[data-theme="unification_30_4"] th, body.theme-unification_30_4 th {
+  background: #FEF2F2;
+  color: #991B1B;
+  border-bottom: 1.5px solid #FECACA;
+}
+:root[data-theme="unification_30_4"] .btn-primary, body.theme-unification_30_4 .btn-primary {
+  background: linear-gradient(135deg, #DC2626 0%, #F59E0B 100%);
+  color: #FFF;
+  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.25);
+}
+
+/* 6. QUỐC TẾ THIẾU NHI 1/6 */
+:root[data-theme="children_day_1_6"], body.theme-children_day_1_6, .theme-children_day_1_6 {
+  --bg: #F0F9FF;
+  --surface: #FFFFFF;
+  --border: #BAE6FD;
+  --border-light: #E0F2FE;
+  --brand: #0284C7;
+  --brand-hover: #0369A1;
+  --brand-soft: #E0F2FE;
+  --success: #10B981;
+  --warning: #F59E0B;
+  --danger: #EF4444;
+}
+:root[data-theme="children_day_1_6"] th, body.theme-children_day_1_6 th {
+  background: #F0F9FF;
+  color: #0369A1;
+  border-bottom: 1.5px solid #BAE6FD;
+}
+:root[data-theme="children_day_1_6"] .btn-primary, body.theme-children_day_1_6 .btn-primary {
+  background: linear-gradient(135deg, #0284C7 0%, #EC4899 100%);
+  color: #FFF;
+  box-shadow: 0 4px 12px rgba(2, 132, 199, 0.25);
+}
+
+/* 7. PHỤ NỮ 8/3 */
+:root[data-theme="women_day_8_3"], body.theme-women_day_8_3, .theme-women_day_8_3 {
+  --bg: #FFF1F2;
+  --surface: #FFFFFF;
+  --border: #FECDD3;
+  --border-light: #FFE4E6;
+  --brand: #E11D48;
+  --brand-hover: #BE123C;
+  --brand-soft: #FFE4E6;
+  --success: #10B981;
+  --warning: #F59E0B;
+  --danger: #EF4444;
+}
+:root[data-theme="women_day_8_3"] th, body.theme-women_day_8_3 th {
+  background: #FFF1F2;
+  color: #9F1239;
+  border-bottom: 1.5px solid #FECDD3;
+}
+:root[data-theme="women_day_8_3"] .btn-primary, body.theme-women_day_8_3 .btn-primary {
+  background: linear-gradient(135deg, #E11D48 0%, #F43F5E 100%);
+  color: #FFF;
+  box-shadow: 0 4px 12px rgba(225, 29, 72, 0.25);
+}
+
+/* 8. QUỐC KHÁNH 2/9 */
+:root[data-theme="national_day_2_9"], body.theme-national_day_2_9, .theme-national_day_2_9 {
+  --bg: #FEF2F2;
+  --surface: #FFFFFF;
+  --border: #FCA5A5;
+  --border-light: #FEE2E2;
+  --brand: #DC2626;
+  --brand-hover: #B91C1C;
+  --brand-soft: #FEE2E2;
+  --success: #10B981;
+  --warning: #F59E0B;
+  --danger: #EF4444;
+}
+:root[data-theme="national_day_2_9"] th, body.theme-national_day_2_9 th {
+  background: #FEF2F2;
+  color: #991B1B;
+  border-bottom: 1.5px solid #FCA5A5;
+}
+:root[data-theme="national_day_2_9"] .btn-primary, body.theme-national_day_2_9 .btn-primary {
+  background: linear-gradient(135deg, #DC2626 0%, #EAB308 100%);
+  color: #FFF;
+  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.25);
+}
+
+/* 9. PHỤ NỮ VN 20/10 */
+:root[data-theme="vietnam_women_20_10"], body.theme-vietnam_women_20_10, .theme-vietnam_women_20_10 {
+  --bg: #FDF2F8;
+  --surface: #FFFFFF;
+  --border: #FBCFE8;
+  --border-light: #FCE7F3;
+  --brand: #DB2777;
+  --brand-hover: #BE185D;
+  --brand-soft: #FCE7F3;
+  --success: #10B981;
+  --warning: #F59E0B;
+  --danger: #EF4444;
+}
+:root[data-theme="vietnam_women_20_10"] th, body.theme-vietnam_women_20_10 th {
+  background: #FDF2F8;
+  color: #9D174D;
+  border-bottom: 1.5px solid #FBCFE8;
+}
+:root[data-theme="vietnam_women_20_10"] .btn-primary, body.theme-vietnam_women_20_10 .btn-primary {
+  background: linear-gradient(135deg, #DB2777 0%, #E11D48 100%);
+  color: #FFF;
+  box-shadow: 0 4px 12px rgba(219, 39, 119, 0.25);
+}
+
+

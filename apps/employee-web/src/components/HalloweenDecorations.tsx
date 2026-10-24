@@ -214,47 +214,6 @@ export const CuteGhostAccent: React.FC<{ inline?: boolean }> = ({ inline = false
  * Nút bật/tắt nhanh chế độ Spooky-Cute Halloween trên Header
  */
 export const HalloweenThemeToggle: React.FC<{
-  active: boolean;
-  onToggle: (next: boolean) => void;
-}> = ({ active, onToggle }) => {
-  return (
-    <button
-      onClick={() => onToggle(!active)}
-      title={active ? 'Đang bật Spooky Halloween (Nhấp để về giao diện chuẩn)' : 'Bật giao diện Spooky-Cute Halloween'}
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: '4px',
-        padding: '4px 10px',
-        borderRadius: '999px',
-        fontSize: '11px',
-        fontWeight: 700,
-        cursor: 'pointer',
-        transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-        backgroundColor: active ? '#FFF4EC' : 'var(--surface)',
-        border: active ? '1.5px solid #FF7518' : '1px solid var(--border)',
-        color: active ? '#FF7518' : 'var(--text-muted)',
-        boxShadow: active ? '0 2px 8px rgba(255, 117, 24, 0.25)' : 'none',
-        minHeight: '32px',
-      }}
-    >
-      <span style={{ fontSize: '13px' }}>🎃</span>
-      <span style={{ fontWeight: 800 }}>Halloween</span>
-      <span
-        style={{
-          display: 'inline-block',
-          padding: '1px 5px',
-          borderRadius: '999px',
-          fontSize: '9.5px',
-          fontWeight: 800,
-          backgroundColor: active ? '#FF7518' : '#E5E7EB',
-          color: active ? '#FFFFFF' : '#4B5563',
-          letterSpacing: '0.2px',
-          transition: 'all 0.2s ease',
-        }}
-      >
-        {active ? 'BẬT' : 'TẮT'}
-      </span>
-    </button>
-  );
-};
+  active?: boolean;
+  onToggle?: (next: boolean) => void;
+}> = () => null;
