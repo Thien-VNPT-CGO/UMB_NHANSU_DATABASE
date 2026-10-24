@@ -1008,6 +1008,24 @@ export function App() {
     maintenance?.theme_end_at,
   ]);
 
+  // Đồng bộ trạng thái giao diện sự kiện Admin từ cấu hình server nếu có lưu
+  useEffect(() => {
+    if (maintenance?.admin_halloween_theme !== undefined) {
+      const serverTheme = !!maintenance.admin_halloween_theme;
+      setHalloweenThemeState(serverTheme);
+      try {
+        localStorage.setItem('ubm_halloween_theme', String(serverTheme));
+        if (serverTheme) {
+          document.documentElement.setAttribute('data-theme', 'halloween');
+          document.body.classList.add('theme-halloween');
+        } else {
+          document.documentElement.removeAttribute('data-theme');
+          document.body.classList.remove('theme-halloween');
+        }
+      } catch {}
+    }
+  }, [maintenance?.admin_halloween_theme]);
+
   // Đồng hồ đếm ngược chỉ chạy khi có lịch sự kiện đang bật.
   useEffect(() => {
     if (!maintenance?.theme_schedule_enabled) return;
@@ -1778,6 +1796,19 @@ export function App() {
     );
   };
 
+  // Bật/tắt và đồng bộ giao diện sự kiện cho Cổng Admin
+  const handleToggleAdminEventTheme = async (nextVal: boolean) => {
+    setHalloweenTheme(nextVal);
+    if (currentUser?.role === 'ADMIN') {
+      await handleSaveMaintenance(
+        { ...maintenance, admin_halloween_theme: nextVal },
+        nextVal
+          ? 'Đã BẬT giao diện sự kiện Halloween cho Cổng Admin!'
+          : 'Đã TẮT giao diện sự kiện, trở về giao diện Chuẩn!',
+      ).catch(() => null);
+    }
+  };
+
   const handleSaveSystemSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -2496,7 +2527,7 @@ export function App() {
           {/* Quick status & action buttons */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             {/* HALLOWEEN THEME TOGGLE BUTTON */}
-            <HalloweenThemeToggle active={halloweenTheme} onToggle={setHalloweenTheme} />
+            <HalloweenThemeToggle active={halloweenTheme} onToggle={(next) => void handleToggleAdminEventTheme(next)} />
             {currentUser?.role === 'ADMIN' && (
               <button
                 onClick={handleForceSync}
@@ -4420,6 +4451,119 @@ export function App() {
                   >
                     {adminActionBusy === 'maint' ? '⏳ Đang lưu...' : 'Cập Nhật Thông Điệp'}
                   </button>
+                </div>
+
+                {/* ======================================================= */}
+                {/* GIAO DIỆN SỰ KIỆN CỔNG QUẢN TRỊ ADMIN */}
+                {/* ======================================================= */}
+                <div style={{
+                  borderTop: '1px solid var(--border)',
+                  paddingTop: '20px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '14px',
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
+                    <div>
+                      <div style={{ fontWeight: 800, fontSize: '15px', color: 'var(--text)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        🎨 Giao diện sự kiện Cổng Quản Trị (Admin Portal Theme)
+                        {halloweenTheme && <span style={{ fontSize: '14px' }}>🎃 🦇</span>}
+                      </div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '3px', lineHeight: 1.5 }}>
+                        Bật / Tắt chế độ giao diện sự kiện (Spooky-Cute Halloween) trên tài khoản Admin. Khi Admin bật lên, toàn bộ giao diện Cổng Quản Trị Hệ Thống (Dashboard, Nhân sự, Chi nhánh, Ca làm, Lịch làm việc...) sẽ lập tức được cập nhật trực tiếp mà không làm cản trở thao tác quản trị.
+                      </div>
+                    </div>
+                    <span style={{
+                      flexShrink: 0,
+                      padding: '4px 12px',
+                      borderRadius: 'var(--radius-full)',
+                      fontSize: '11px',
+                      fontWeight: 800,
+                      backgroundColor: halloweenTheme ? 'rgba(255, 117, 24, 0.15)' : 'var(--border)',
+                      color: halloweenTheme ? '#FF7518' : 'var(--text-muted)',
+                      border: halloweenTheme ? '1px solid #FF7518' : '1px solid transparent',
+                    }}>
+                      {halloweenTheme ? '🎃 ĐANG BẬT GIAO DIỆN' : '⚪ ĐANG TẮT (CHUẨN)'}
+                    </span>
+                  </div>
+
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    flexWrap: 'wrap',
+                    gap: '12px',
+                    padding: '14px 16px',
+                    borderRadius: 'var(--radius-sm)',
+                    backgroundColor: halloweenTheme ? '#FFF8F3' : 'var(--bg)',
+                    border: halloweenTheme ? '1.5px solid #F5D0C5' : '1px solid var(--border)',
+                    boxShadow: halloweenTheme ? '0 3px 12px rgba(255, 117, 24, 0.12)' : 'none',
+                    transition: 'all 0.25s ease',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <div style={{
+                        width: '42px',
+                        height: '42px',
+                        borderRadius: '12px',
+                        backgroundColor: halloweenTheme ? '#FF7518' : 'var(--border)',
+                        color: '#FFF',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '22px',
+                        boxShadow: halloweenTheme ? '0 4px 10px rgba(255, 117, 24, 0.35)' : 'none',
+                      }}>
+                        {halloweenTheme ? '🎃' : '🎨'}
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: 800, fontSize: '13px', color: 'var(--text)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          Chủ đề Halloween Spooky-Cute
+                          {halloweenTheme && <span style={{ fontSize: '11px', color: '#FF7518', fontWeight: 700 }}>• Đang hiển thị trực tiếp</span>}
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                          {halloweenTheme
+                            ? 'Bảng màu kem bí ngô (#FFF8F3), viền cam đào (#F5D0C5), nón phù thủy, kẹo bí ngô & mạng nhện.'
+                            : 'Giao diện gốc: Nền hồng phấn tiêu chuẩn, bảng biểu sạch sẽ tối giản. Bấm nút bên phải để bật.'}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <button
+                        type="button"
+                        onClick={() => void handleToggleAdminEventTheme(!halloweenTheme)}
+                        disabled={adminActionBusy === 'maint'}
+                        style={{
+                          padding: '10px 20px',
+                          borderRadius: 'var(--radius-full)',
+                          fontWeight: 800,
+                          fontSize: '13px',
+                          border: 'none',
+                          cursor: adminActionBusy === 'maint' ? 'not-allowed' : 'pointer',
+                          backgroundColor: halloweenTheme ? '#FF7518' : 'var(--brand)',
+                          color: '#FFFFFF',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '7px',
+                          boxShadow: halloweenTheme ? '0 4px 12px rgba(255, 117, 24, 0.4)' : '0 2px 8px rgba(0,0,0,0.12)',
+                          transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                        }}
+                      >
+                        {adminActionBusy === 'maint' ? (
+                          '⏳ Đang cập nhật...'
+                        ) : halloweenTheme ? (
+                          <>
+                            <span>🎃 ĐANG BẬT</span>
+                            <span style={{ fontSize: '11px', opacity: 0.85, fontWeight: 600 }}>(Nhấp để Tắt)</span>
+                          </>
+                        ) : (
+                          <>
+                            <span>✨ BẬT GIAO DIỆN SỰ KIỆN ADMIN</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Giao diện sự kiện theo lịch cho cổng nhân viên */}
