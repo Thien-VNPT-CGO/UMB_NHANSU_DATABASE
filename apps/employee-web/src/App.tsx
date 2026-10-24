@@ -1550,6 +1550,22 @@ export function App() {
   fetchMySwapsRef.current = fetchMySwaps;
   const fetchMyAdjustmentsRef = useRef(fetchMyAdjustments);
   fetchMyAdjustmentsRef.current = fetchMyAdjustments;
+  const fetchBankChangeRequestRef = useRef(fetchBankChangeRequest);
+  fetchBankChangeRequestRef.current = fetchBankChangeRequest;
+  const fetchMyTestsRef = useRef(fetchMyTests);
+  fetchMyTestsRef.current = fetchMyTests;
+  const fetchProbationAssessmentRef = useRef(fetchProbationAssessment);
+  fetchProbationAssessmentRef.current = fetchProbationAssessment;
+  const fetchEmergencyStatusRef = useRef(fetchEmergencyStatus);
+  fetchEmergencyStatusRef.current = fetchEmergencyStatus;
+  const fetchReRegStatusRef = useRef(fetchReRegStatus);
+  fetchReRegStatusRef.current = fetchReRegStatus;
+  const loadReRegRef = useRef(loadReReg);
+  loadReRegRef.current = loadReReg;
+  const refreshWeeklyOffStatusRef = useRef<(() => Promise<any>) | null>(null);
+  const loadProbationOffRef = useRef<(() => Promise<any>) | null>(null);
+  const handleLogoutRef = useRef(handleLogout);
+  handleLogoutRef.current = handleLogout;
   const activeTabRef = useRef(activeTab);
   activeTabRef.current = activeTab;
   const empIdRef = useRef<string | undefined>(undefined);
@@ -1578,9 +1594,23 @@ export function App() {
         try {
           await loadEmployeeDataRef.current(empIdRef.current);
           await fetchMySwapsRef.current().catch(() => null);
-          // Kết quả duyệt phiếu công: tải lại ngay khi đang ở tab phiếu (khỏi chờ poll 15s).
-          if (entity === 'adjustments' && (activeTabRef.current === 'adjustment' || activeTabRef.current === 'emergency_adjust')) {
+          // Kết quả duyệt phiếu công: tải lại ngay
+          if (!entity || entity === 'adjustments' || entity === 'attendance' || entity === 'all' || activeTabRef.current === 'adjustment' || activeTabRef.current === 'emergency_adjust') {
             await fetchMyAdjustmentsRef.current().catch(() => null);
+          }
+          // Bài test / Đào tạo: tải lại ngay
+          if (!entity || entity === 'tests' || entity === 'all' || activeTabRef.current === 'test_exam' || activeTabRef.current === 'test_training') {
+            await fetchMyTestsRef.current().catch(() => null);
+            await fetchProbationAssessmentRef.current().catch(() => null);
+          }
+          // Lịch nghỉ / OFF tuần / OFF thử việc
+          if (!entity || entity === 'leaves' || entity === 'all' || activeTabRef.current === 'leave') {
+            await refreshWeeklyOffStatusRef.current?.().catch(() => null);
+            await loadProbationOffRef.current?.().catch(() => null);
+          }
+          // Yêu cầu đổi STK ngân hàng
+          if (!entity || entity === 'bank_change' || entity === 'employees' || entity === 'all' || activeTabRef.current === 'profile') {
+            await fetchBankChangeRequestRef.current().catch(() => null);
           }
           // FIX publish mẫu không tới NV: phiếu lương chỉ load khi bấm "Xem",
           // realtime về chỉ reload lịch/thông báo nên NV đã mở khóa vẫn thấy trống.
@@ -1640,10 +1670,14 @@ export function App() {
           }
         },
       });
+
+      // 1. Phổ quát các thay đổi dữ liệu theo entity
       socket.on('data:updated', (p: any) => {
         reload(p?.entity);
-        // Ho so thay doi (toi sua o may khac / HR sua) -> tai lai ho so cua toi.
-        if (!p?.entity || p.entity === 'employees' || p.entity === 'all') {
+        const entity = p?.entity;
+
+        // Hồ sơ thay đổi (tôi sửa ở máy khác / HR sửa) -> tải lại hồ sơ của tôi.
+        if (!entity || entity === 'employees' || entity === 'accounts' || entity === 'all') {
           apiRequest('/me').then((me: any) => {
             if (me?.employee) {
               setEmployee(me.employee);
@@ -1651,27 +1685,73 @@ export function App() {
             }
           }).catch(() => null);
         }
-        // Lịch publish/thay đổi + điểm danh mới → tải lại dải ngày tab Lịch và
-        // công tháng (kể cả tuần sau). Điểm danh realtime mà không tải lại thì
-        // Dữ Liệu Công Tháng thiếu sự kiện mới tới khi đổi tab.
-        if (!p?.entity || p.entity === 'schedules' || p.entity === 'attendance' || p.entity === 'all') setSchedRefresh(k => k + 1);
+
+        // Lịch publish/thay đổi + điểm danh mới → tải lại dải ngày tab Lịch và công tháng (kể cả tuần sau).
+        if (!entity || entity === 'schedules' || entity === 'attendance' || entity === 'all') {
+          setSchedRefresh(k => k + 1);
+        }
+
+        // Đơn xin nghỉ / 2 ngày OFF tuần / 5 ngày OFF thử việc
+        if (!entity || entity === 'leaves' || entity === 'all') {
+          refreshWeeklyOffStatusRef.current?.().catch(() => null);
+          loadProbationOffRef.current?.().catch(() => null);
+          setSchedRefresh(k => k + 1);
+        }
+
+        // Đổi ca / tráo ca
+        if (!entity || entity === 'swaps' || entity === 'all') {
+          fetchMySwapsRef.current().catch(() => null);
+          setSchedRefresh(k => k + 1);
+        }
+
+        // Khiếu nại công & Báo nghỉ khẩn
+        if (!entity || entity === 'adjustments' || entity === 'emergency_leave' || entity === 'all') {
+          fetchMyAdjustmentsRef.current().catch(() => null);
+          fetchEmergencyStatusRef.current().catch(() => null);
+          setSchedRefresh(k => k + 1);
+        }
+
+        // Bài kiểm tra / Đào tạo / Đánh giá thử việc
+        if (!entity || entity === 'tests' || entity === 'all') {
+          fetchMyTestsRef.current().catch(() => null);
+          fetchProbationAssessmentRef.current().catch(() => null);
+        }
+
         // Lương/phiếu đổi → tải lại số liệu công tháng theo công thức kỳ mới.
-        if (!p?.entity || p.entity === 'payroll' || p.entity === 'payslips' || p.entity === 'all') setSchedRefresh(k => k + 1);
-        // Admin bật/tắt bảo trì -> cập nhật màn khóa cổng ngay (kể cả đang đăng nhập).
-        if (p?.entity === 'config') fetchPortalMaintenanceRef.current().catch(() => null);
+        if (!entity || entity === 'payroll' || entity === 'payslips' || entity === 'all') {
+          setSchedRefresh(k => k + 1);
+        }
+
+        // Ngân hàng / STK
+        if (!entity || entity === 'bank_change' || entity === 'employees' || entity === 'all') {
+          fetchBankChangeRequestRef.current().catch(() => null);
+        }
+
+        // Admin bật/tắt bảo trì hoặc lịch sự kiện theme -> cập nhật ngay (kể cả đang đăng nhập).
+        if (!entity || entity === 'config' || entity === 'theme_schedule' || entity === 'all') {
+          fetchPortalMaintenanceRef.current().catch(() => null);
+        }
+
         // Admin mở/đóng phiếu Cập Nhật Ca -> tải lại trạng thái (ẩn/hiện tab + đếm ngược).
-        if (p?.entity === 'shift-rereg') {
+        if (!entity || entity === 'shift-rereg' || entity === 'all') {
           apiRequest('/me/shift-re-registration').then((st: any) => setReRegStatus(st)).catch(() => null);
+          fetchReRegStatusRef.current().catch(() => null);
+          if (activeTabRef.current === 'rereg') {
+            loadReRegRef.current().catch(() => null);
+          }
         }
       });
+
+      // 2. Thông báo mới trong hộp thư
       socket.on('notification.created', (p: any) => {
-        reload();
+        reload('notifications');
         // Thông báo inbox mới (VD HR phát hành lịch tuần) → tab Lịch tải lại dải ngày.
         setSchedRefresh(k => k + 1);
         // HR duyệt/từ chối đổi STK -> cập nhật banner "đang chờ duyệt" ngay.
-        fetchBankChangeRequest();
+        fetchBankChangeRequestRef.current().catch(() => null);
       });
-      // HR publish lịch tuần (kể cả tuần sau): NV cùng chi nhánh tự mở lịch tuần
+
+      // 3. HR phát hành lịch tuần (kể cả tuần sau): NV cùng chi nhánh tự mở lịch tuần
       // đó + báo rõ để thấy ngay lịch làm việc của mình.
       socket.on('schedule.published', (p: any) => {
         try {
@@ -1698,20 +1778,103 @@ export function App() {
           reload('schedules');
         } catch { /* bỏ qua */ }
       });
-      // Phiếu đổi ca gửi tới tôi: tải ngay + popup để xác nhận/từ chối.
+
+      // 4. Phiếu đổi ca gửi tới tôi hoặc cập nhật trạng thái
       socket.on('swap.updated', async (p: any) => {
         try { await fetchMySwapsRef.current(); } catch { /* bỏ qua */ }
+        setSchedRefresh(k => k + 1);
         if (p?.status === 'PENDING_PARTNER') {
           showToastRef.current('🔔 Có phiếu đổi ca mới chờ bạn xác nhận! Mở tab Đổi ca để Đồng ý / Từ chối.');
         } else if (p?.status === 'PARTNER_ACCEPTED') {
           showToastRef.current('✓ Đồng nghiệp đã xác nhận đổi ca! Chờ Store duyệt.');
         } else if (p?.status === 'APPROVED') {
           showToastRef.current('✓ Store đã duyệt tráo ca! Lịch làm việc đã cập nhật.');
+        } else if (p?.status === 'REJECTED') {
+          showToastRef.current('Phiếu đổi ca đã bị từ chối.');
+        } else if (p?.status === 'CANCELLED') {
+          showToastRef.current('Phiếu đổi ca đã bị thu hồi / hủy.');
         }
-        reload();
+        reload('swaps');
       });
+
+      // 5. Nghỉ phép / Ngày OFF tuần cập nhật (HR duyệt / từ chối / thu hồi)
+      socket.on('leave.updated', (p: any) => {
+        refreshWeeklyOffStatusRef.current?.().catch(() => null);
+        loadProbationOffRef.current?.().catch(() => null);
+        setSchedRefresh(k => k + 1);
+        if (p?.status === 'APPROVED') {
+          showToastRef.current('✓ Đơn xin nghỉ phép của bạn đã được duyệt!');
+        } else if (p?.status === 'REJECTED') {
+          showToastRef.current('Đơn xin nghỉ phép của bạn đã bị từ chối.');
+        } else if (p?.status === 'CANCELLED') {
+          showToastRef.current('Đơn nghỉ phép của bạn đã được hủy / thu hồi.');
+        }
+        reload('leaves');
+      });
+
+      // 6. Khiếu nại công cập nhật (HR duyệt / từ chối bù công / khiếu nại)
+      socket.on('adjustment.updated', (p: any) => {
+        fetchMyAdjustmentsRef.current().catch(() => null);
+        setSchedRefresh(k => k + 1);
+        if (p?.status === 'APPROVED') {
+          showToastRef.current('✓ Đơn khiếu nại công của bạn đã được duyệt thành công!');
+        } else if (p?.status === 'REJECTED') {
+          showToastRef.current('Đơn khiếu nại công của bạn đã bị từ chối.');
+        }
+        reload('adjustments');
+      });
+
+      // 7. Giao bài kiểm tra mới (HR giao bài quiz / test đầu ra thử việc)
+      socket.on('test.assigned', (p: any) => {
+        fetchMyTestsRef.current().catch(() => null);
+        fetchProbationAssessmentRef.current().catch(() => null);
+        showToastRef.current(`📝 Bạn có bài kiểm tra mới: ${p?.title || 'Đào tạo & Kiểm tra'}! Mở tab Đào tạo & Kiểm tra để làm bài.`);
+        reload('tests');
+      });
+
+      // 8. Chấm điểm bài kiểm tra
+      socket.on('test.graded', (p: any) => {
+        fetchMyTestsRef.current().catch(() => null);
+        fetchProbationAssessmentRef.current().catch(() => null);
+        const scoreStr = Number.isFinite(Number(p?.score)) ? `${p.score}/10` : '';
+        const passStr = p?.passed ? 'ĐẠT' : 'CHƯA ĐẠT';
+        showToastRef.current(`🎯 Bài kiểm tra đã được chấm: ${scoreStr ? `${scoreStr} (${passStr})` : passStr}!`);
+        reload('tests');
+      });
+
+      // 9. Bảng lương phát hành / xác nhận hoàn tất
+      socket.on('payroll.published', (p: any) => {
+        setSchedRefresh(k => k + 1);
+        showToastRef.current(`💰 Kế toán vừa phát hành bảng lương kỳ ${p?.period || ''}! Mở mục Thông báo & Lương để kiểm tra.`);
+        reload('payslips');
+      });
+      socket.on('payroll.confirmed', (p: any) => {
+        setSchedRefresh(k => k + 1);
+        showToastRef.current(`🔒 Bảng lương kỳ ${p?.period || ''} đã được xác nhận hoàn tất.`);
+        reload('payroll');
+      });
+
+      // 10. Khóa / Mở khóa tài khoản & buộc đăng xuất từ Admin
+      socket.on('employees:locked', (p: any) => {
+        if (p?.employeeId && p.employeeId === empIdRef.current) {
+          alert('Tài khoản của bạn đã bị tạm khóa bởi Quản trị viên.');
+          handleLogoutRef.current();
+        }
+      });
+      socket.on('employees:unlocked', (p: any) => {
+        if (p?.employeeId && p.employeeId === empIdRef.current) {
+          reload('employees');
+        }
+      });
+      socket.on('admin:forceLogout', (p: any) => {
+        if (p?.adminId === empIdRef.current) {
+          alert(p?.reason || 'Phiên làm việc của bạn đã kết thúc bởi Quản trị viên.');
+          handleLogoutRef.current();
+        }
+      });
+
+      // 11. Thông báo hệ thống có ràng buộc 2 chiều (chỉ nhận từ Admin/HR)
       socket.on('system:notification', (n: any) => {
-        // Ràng buộc 2 chiều: cổng nhân viên chỉ popup tin TỪ phía quản trị (HR).
         const fromAdmin = !n?.origin || n.origin === 'ADMIN';
         if (fromAdmin && (n?.message || n?.title)) showToastRef.current(`🔔 ${n.title || ''}${n.title && n.message ? ': ' : ''}${n.message || ''}`.trim());
         reload();
@@ -1778,6 +1941,7 @@ export function App() {
       }
     } catch {}
   };
+  refreshWeeklyOffStatusRef.current = refreshWeeklyOffStatus;
 
   // Dịch mã lỗi cổng đăng ký thành thông báo thân thiện
   const weeklyOffErrMsg = (err: any, fallback: string) => {
@@ -2806,6 +2970,7 @@ export function App() {
       }
     } catch { /* offline — giữ trạng thái cũ */ }
   };
+  loadProbationOffRef.current = loadProbationOff;
 
   useEffect(() => {
     if (activeTab === 'leave' && isLoggedIn && (employee as any)?.employment_status === 'PROBATION') {
