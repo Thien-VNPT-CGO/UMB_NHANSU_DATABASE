@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import type { LoginThemeId } from './loginThemeData';
-import { THEME_LIST, getThemeConfig } from './loginThemeData';
+import { THEME_LIST } from './loginThemeData';
 
 export interface ScheduledThemeProp {
   enabled: boolean;
@@ -31,7 +31,8 @@ export function EventAnnouncementCountdown({
 }: EventAnnouncementProps) {
   const [now, setNow] = useState(() => Date.now());
 
-  // Cập nhật đồng hồ mỗi giây 1 lần để đếm ngược chính xác từng giây
+  // Cập nhật đồng hồ mỗi giây 1 lần để đếm ngược chính xác từng giây.
+  // Tick cả trước giờ bắt đầu (đang đếm ngược) lẫn trong lúc diễn ra.
   useEffect(() => {
     if (!scheduledTheme?.enabled) return;
     setNow(Date.now());
@@ -39,40 +40,31 @@ export function EventAnnouncementCountdown({
       setNow(Date.now());
     }, 1000);
     return () => clearInterval(timer);
-  }, [scheduledTheme?.enabled]);
+  }, [scheduledTheme?.enabled, scheduledTheme?.startAt, scheduledTheme?.endAt]);
 
-  // NẾU ADMIN CHƯA KÍCH HOẠT HẸN GIỜ SỰ KIỆN: Không hiển thị khung đếm ngược
-  if (
-    !scheduledTheme?.enabled ||
-    !Number.isFinite(scheduledTheme.startAt) ||
-    !Number.isFinite(scheduledTheme.endAt) ||
-    scheduledTheme.endAt <= scheduledTheme.startAt
-  ) {
-    return null;
-  }
+  // Lịch hợp lệ? (Admin chưa kích hoạt hẹn giờ -> không hiển thị khung đếm ngược)
+  const validSchedule = !!scheduledTheme?.enabled
+    && Number.isFinite(scheduledTheme.startAt)
+    && Number.isFinite(scheduledTheme.endAt)
+    && scheduledTheme.endAt > scheduledTheme.startAt;
 
-  const serverNow = now + (scheduledTheme.serverOffsetMs || 0);
-  const isUpcoming = serverNow < scheduledTheme.startAt;
-  const isActive = serverNow >= scheduledTheme.startAt && serverNow < scheduledTheme.endAt;
-  const isExpired = serverNow >= scheduledTheme.endAt;
-
-  // Nếu sự kiện đã hết hạn thì không hiển thị thông báo đếm ngược nữa
-  if (isExpired) return null;
+  const serverNow = now + (scheduledTheme?.serverOffsetMs || 0);
+  const isUpcoming = validSchedule && serverNow < (scheduledTheme?.startAt ?? 0);
+  const isExpired = validSchedule && serverNow >= (scheduledTheme?.endAt ?? 0);
 
   // Lấy metadata chủ đề sự kiện Admin đã chọn (Noel, Halloween, 30/4, Tết...)
-  const eventId = scheduledTheme.event;
+  const eventId = (scheduledTheme?.event || 'standard') as LoginThemeId;
   const eventMeta = THEME_LIST.find((t) => t.id === eventId) || {
     id: eventId,
     name: 'Sự kiện Đặc Biệt',
     icon: '🎉',
     desc: '',
   };
-  const eventThemeConfig = getThemeConfig(eventId);
 
   // Mốc thời gian mục tiêu đếm ngược:
   // - Nếu sắp diễn ra (upcoming): Đếm ngược đến ngày & giờ bắt đầu (startAt) để CẬP NHẬT giao diện
   // - Nếu đang diễn ra (active): Đếm ngược đến ngày & giờ kết thúc (endAt)
-  const targetTimestamp = isUpcoming ? scheduledTheme.startAt : scheduledTheme.endAt;
+  const targetTimestamp = isUpcoming ? (scheduledTheme?.startAt ?? 0) : (scheduledTheme?.endAt ?? 0);
   const diffMs = Math.max(0, targetTimestamp - serverNow);
 
   const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
@@ -82,11 +74,15 @@ export function EventAnnouncementCountdown({
 
   // KHI THỜI GIAN ĐẾM NGƯỢC KẾT THÚC (chạm 00:00:00):
   // Tự động gọi callback để cập nhật ngay giao diện vào cổng nhân viên!
+  // Hook phải nằm TRƯỚC mọi early-return để không vi phạm Rules of Hooks.
   useEffect(() => {
-    if (diffMs <= 0 && isUpcoming && onAutoUpdateTheme) {
+    if (validSchedule && !isExpired && diffMs <= 0 && isUpcoming && onAutoUpdateTheme) {
       onAutoUpdateTheme(eventId);
     }
-  }, [diffMs, isUpcoming, eventId, onAutoUpdateTheme]);
+  }, [validSchedule, isExpired, diffMs, isUpcoming, eventId, onAutoUpdateTheme]);
+
+  // Lịch chưa bật / không hợp lệ / đã kết thúc -> ẩn thông báo.
+  if (!validSchedule || isExpired) return null;
 
   // Định dạng ngày giờ bắt đầu để hiển thị rõ ràng cho nhân viên biết mốc giờ Admin đã setup
   const startDateStr = new Date(scheduledTheme.startAt).toLocaleString('vi-VN', {
@@ -95,6 +91,7 @@ export function EventAnnouncementCountdown({
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
+    timeZone: 'Asia/Ho_Chi_Minh',
   });
 
   const endDateStr = new Date(scheduledTheme.endAt).toLocaleString('vi-VN', {
@@ -103,6 +100,7 @@ export function EventAnnouncementCountdown({
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
+    timeZone: 'Asia/Ho_Chi_Minh',
   });
 
   // =========================================================================

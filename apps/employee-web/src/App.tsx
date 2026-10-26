@@ -264,23 +264,61 @@ function MaintenanceScreen({ message, checking, onRetry }: { message: string; ch
 }
 
 /**
+ * Chuẩn hóa mọi biến thể ngày về YYYY-MM-DD (mirror backend normSheetDate):
+ * ISO/ISO-datetime, serial Sheets, 'M/D/YYYY'/'D/M/YYYY'. Nhờ vậy mọi phép so
+ * sánh ngày trong cổng NV không còn lệch kiểu "2026-10-26T00:00:00" !== "2026-10-26".
+ */
+function toISODate(input: unknown): string {
+  const s = String(input ?? '').trim().replace(/^'/, '');
+  if (!s) return '';
+  if (/^\d{4,6}$/.test(s)) {
+    const n = Number(s);
+    if (n > 20000 && n < 80000) return new Date(Math.round((n - 25569) * 86_400_000)).toISOString().slice(0, 10);
+    return '';
+  }
+  const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (iso) {
+    const m = Number(iso[2]); const d = Number(iso[3]);
+    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) return `${iso[1]}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    return '';
+  }
+  const sl = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+  if (sl) {
+    let y = Number(sl[3]); if (y < 100) y += 2000;
+    const a = Number(sl[1]); const b = Number(sl[2]);
+    let m: number; let dd: number;
+    if (a > 12 && b <= 12) { dd = a; m = b; }
+    else if (b > 12 && a <= 12) { m = a; dd = b; }
+    else { dd = a; m = b; }
+    if (m >= 1 && m <= 12 && dd >= 1 && dd <= 31) return `${y}-${String(m).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+    return '';
+  }
+  const t = new Date(s).getTime();
+  if (Number.isFinite(t)) return new Date(t).toISOString().slice(0, 10);
+  return '';
+}
+
+/**
  * Khử trùng ca theo khoá nghiệp vụ: employee_id + date + shift_code.
  * - Ưu tiên ca PUBLISHED hơn DRAFT.
  * - Ưu tiên schedule_version cao hơn.
  * - Bỏ qua ca CANCELLED.
+ * - Chuẩn hóa `date` về YYYY-MM-DD để so sánh/khử trùng đúng.
  */
 function dedupeShifts(list: any[]): any[] {
   if (!Array.isArray(list)) return [];
   const byKey = new Map<string, any>();
-  for (const s of list) {
-    if (!s) continue;
-    const st = String(s.status || '').trim().toUpperCase();
+  for (const raw of list) {
+    if (!raw) continue;
+    const st = String(raw.status || '').trim().toUpperCase();
     if (st === 'CANCELLED') continue;
-    const empId = String(s.employee_id || '').trim();
-    const d = String(s.date || '').slice(0, 10);
-    const code = String(s.shift_code || '').trim().toUpperCase();
+    const d = toISODate(raw.date);
+    const code = String(raw.shift_code || '').trim().toUpperCase();
     if (!d || !code) continue;
-    const key = empId ? `${empId}|${d}|${code}` : `${d}|${code}`;
+    const s = { ...raw, date: d };
+    // Danh sách luôn của MỘT nhân viên (mình hoặc đồng nghiệp đang chọn) nên
+    // khóa ngày + mã ca là đủ; không phụ thuộc employee_id có/không từ 2 nguồn.
+    const key = `${d}|${code}`;
     const existing = byKey.get(key);
     if (!existing) {
       byKey.set(key, s);
@@ -308,7 +346,7 @@ function dedupeShifts(list: any[]): any[] {
 
 function formatShiftOption(s: any): string {
   if (!s) return '';
-  const dStr = String(s.date || '').slice(0, 10);
+  const dStr = toISODate(s.date);
   const code = String(s.shift_code || '').trim().toUpperCase();
   const shiftName = code === 'CA_1' ? 'Ca 1 (07:00 - 12:00)'
     : code === 'CA_2' ? 'Ca 2 (12:00 - 18:00)'
@@ -329,6 +367,34 @@ function formatShiftOption(s: any): string {
 }
 
 export function App() {
+  // =========================================================================
+  // ĐỒNG HỒ CHUẨN GIỜ VIỆT NAM
+  // Lệch đồng hồ máy khách (nhanh/chậm vài giờ hoặc sai múi giờ) từng làm cổng
+  // NV báo "hôm nay không có ca" dù lịch tuần có ca. Mọi mốc thời gian nghiệp vụ
+  // (ngày VN, ca hiện tại, điểm danh, đổi ca, đếm ngược sự kiện) đều đi qua
+  // serverClockOffsetMs được đo từ /public/portal-maintenance.
+  // =========================================================================
+  const [serverClockOffsetMs, setServerClockOffsetMs] = useState(0);
+  const serverClockOffsetRef = useRef(0);
+  const serverClockMeasuredRef = useRef(false);
+  /** Mốc milliseconds hiện tại đã bù lệch đồng hồ server. */
+  const vnNowMs = () => Date.now() + serverClockOffsetMs;
+  /** Date mà các trường UTC chính là giờ Việt Nam (UTC+7). */
+  const vnNow = () => new Date(vnNowMs() + 7 * 3_600_000);
+  /** Ngày hôm nay theo giờ VN (YYYY-MM-DD). */
+  const vnTodayStr = () => vnNow().toISOString().slice(0, 10);
+  /** Giờ hiện tại (0-23) theo giờ VN. */
+  const vnHourNow = () => vnNow().getUTCHours();
+  /** Tháng hiện tại theo giờ VN (YYYY-MM). */
+  const vnMonthStr = () => vnNow().toISOString().slice(0, 7);
+  /** Cộng/trừ ngày trên lịch VN, trả YYYY-MM-DD. */
+  const vnDateAdd = (days: number, base?: string) => {
+    const start = base || vnTodayStr();
+    const d = new Date(`${start}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + days);
+    return d.toISOString().slice(0, 10);
+  };
+
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(() => {
     if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('demo') === '1') return true;
     return !!(localStorage.getItem('ubm_emp_token') && localStorage.getItem('ubm_emp_data'));
@@ -476,7 +542,7 @@ export function App() {
   const [reRegNow, setReRegNow] = useState(Date.now());
   useEffect(() => {
     if (activeTab !== 'rereg') return;
-    const t = setInterval(() => setReRegNow(Date.now()), 1000);
+    const t = setInterval(() => setReRegNow(vnNowMs()), 1000);
     return () => clearInterval(t);
   }, [activeTab]);
   // Tải cấu hình ngay khi vào cổng (để ẩn/hiện tab + đếm ngược trước khi mở tab)
@@ -498,7 +564,7 @@ export function App() {
       const sh: any = await apiRequest(`/me/schedule?fromDate=${st.from}&toDate=${st.to}`).catch(() => []);
       setReRegExisting((sh || [])
         .filter((s: any) => String(s.status || '') !== 'CANCELLED')
-        .map((s: any) => ({ date: String(s.date || '').slice(0, 10), code: String(s.shift_code) })));
+        .map((s: any) => ({ date: toISODate(s.date), code: String(s.shift_code) })));
     }
   };
   const loadReReg = async () => {
@@ -664,7 +730,8 @@ export function App() {
   const [schedRangeShifts, setSchedRangeShifts] = useState<any[]>([]);
   const [notifications, setNotifications] = useState<any[]>([]);
 
-  // Đồng bộ nguồn ca làm việc đầy đủ giữa Lịch làm việc (Tab 2) và Đổi ca (Tab 6)
+  // Nguồn ca làm việc CHUẨN dùng chung cho Trang chủ, Điểm danh, Lịch tuần và
+  // Đổi ca (Tab 6). dedupeShifts chuẩn hóa date về YYYY-MM-DD + khử trùng.
   const getAllEmployeeShifts = () => {
     return dedupeShifts([...(schedRangeShifts || []), ...(myShifts || [])]);
   };
@@ -734,7 +801,7 @@ export function App() {
 
   const [leaveData, setLeaveData] = useState({
     leaveType: 'HANG_TUAN',
-    requestedDate: new Date().toISOString().split('T')[0],
+    requestedDate: vnTodayStr(),
     reason: 'Đăng ký ngày nghỉ theo quy định',
   });
 
@@ -773,7 +840,7 @@ export function App() {
   // Ca quá khứ HR vẫn có thể xóa/sửa (không bất biến) nên tải lại theo realtime
   // lịch (schedRefresh) chứ không chỉ khi mở tab — nếu không ca đã xóa vẫn hiện
   // trong khi 2 tab admin đã trống.
-  const curVnMonth = () => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7);
+  const curVnMonth = () => vnMonthStr();
   const [tsMonth, setTsMonth] = useState<string>(curVnMonth());
   const [monthShifts, setMonthShifts] = useState<any[]>([]);
   const [monthEvents, setMonthEvents] = useState<any[]>([]);
@@ -983,7 +1050,7 @@ export function App() {
 
   // Probation Self-Swap State: Tu do doi Ca lam <-> Nghi
   const [probationSelfSwap, setProbationSelfSwap] = useState({
-    date: new Date().toISOString().split('T')[0],
+    date: vnTodayStr(),
     direction: 'WORK_TO_OFF',
     shiftName: 'Ca 1 (07:00 - 12:00)',
     reason: 'Đổi lịch cá nhân trong chu kỳ 12 ngày thử việc',
@@ -1023,7 +1090,7 @@ export function App() {
 
   // Emergency Leave Form
   const [emergencyData, setEmergencyData] = useState({
-    date: new Date().toISOString().split('T')[0],
+    date: vnTodayStr(),
     reason: 'Sốt cao đột xuất / Việc gia đình khẩn cấp',
     shift: 'Ca Sáng (07:00 - 12:00)',
   });
@@ -1095,6 +1162,17 @@ export function App() {
       // Lịch sự kiện: bù lệch đồng hồ theo giờ server để đổi theme đúng mốc.
       const serverNow = Date.parse(String(m?.server_time || ''));
       const serverOffsetMs = Number.isFinite(serverNow) ? serverNow - Date.now() : 0;
+      // Áp cho TOÀN BỘ cổng NV, không chỉ riêng theme sự kiện.
+      // Lần đo đầu luôn áp; các lần sau chỉ cập nhật khi lệch > 1 phút để tránh
+      // reload dữ liệu liên tục vì jitter mạng vài trăm ms mỗi lần poll.
+      if (Number.isFinite(serverNow)) {
+        const firstMeasure = !serverClockMeasuredRef.current;
+        const drift = Math.abs(serverOffsetMs - serverClockOffsetRef.current);
+        serverClockOffsetRef.current = serverOffsetMs;
+        serverClockMeasuredRef.current = true;
+        if (firstMeasure || drift > 60_000) setServerClockOffsetMs(serverOffsetMs);
+      }
+      setPortalThemeNow(Date.now());
       const eventId = String(m?.event_theme || '');
       const validEventIds = new Set<string>([
         'noel', 'vietnam_culture', 'tet', 'tet_2027', 'unification_30_4',
@@ -1109,6 +1187,8 @@ export function App() {
         && Number.isFinite(startAt)
         && Number.isFinite(endAt)
         && endAt > startAt
+        // Đã qua giờ kết thúc -> bỏ lịch để không tick/đếm ngược vô ích.
+        && (!Number.isFinite(serverNow) || serverNow < endAt)
       ) {
         setPortalThemeSchedule({
           enabled: true,
@@ -1178,7 +1258,7 @@ export function App() {
 
   // Adjustment Request Form
   const [adjustmentData, setAdjustmentData] = useState({
-    date: new Date().toISOString().split('T')[0],
+    date: vnTodayStr(),
     shift: 'Ca Sáng (07:00 - 12:00)',
     type: 'QUEN_CHECKIN',
     reason: 'Quên bấm điểm danh khi vào ca do tiếp nhận hàng hóa gấp',
@@ -1197,7 +1277,7 @@ export function App() {
     apiRequest(`/me/schedule?fromDate=${d}&toDate=${d}`)
       .then((list: any) => {
         if (!alive) return;
-        const arr = Array.isArray(list) ? list.filter((s: any) => String(s.date || '').slice(0, 10) === d) : [];
+        const arr = Array.isArray(list) ? list.filter((s: any) => toISODate(s.date) === d) : [];
         setAdjDayShifts(arr);
         if (adjustShiftId && !arr.some((s: any) => s.assignment_id === adjustShiftId)) setAdjustShiftId('');
       })
@@ -1224,8 +1304,7 @@ export function App() {
       setMyAdjustments(Array.isArray(list) ? list : []);
     } catch { /* offline */ }
   };
-  // Khung giờ tạo phiếu 08:00–21:00 hằng ngày (giờ VN) + điểm bù công.
-  const vnHourNow = () => new Date(Date.now() + 7 * 3_600_000).getUTCHours();
+  // Khung giờ tạo phiếu 08:00–21:00 hằng ngày (giờ VN, đã bù lệch đồng hồ server).
   const ticketWindowOpen = vnHourNow() >= 8 && vnHourNow() < 21;
   const myPointsEarned = Math.max(0, Math.floor(Number((employee as any)?.adjust_points_earned) || 0));
   const myPointsSpent = Math.max(0, Math.floor(Number((employee as any)?.adjust_points_spent) || 0));
@@ -1391,14 +1470,10 @@ export function App() {
     try {
       let fails = 0;
       // 4 nhóm độc lập bắn SONG SONG (trước await nối tiếp + 30 request attendance).
-      // Dùng ngày VN để toDate bao trọn sự kiện hôm nay (backend lọc theo ngày VN).
-      const toDate = new Date(Date.now() + 7 * 3_600_000).toISOString().split('T')[0];
-      const fromDt = new Date(Date.now() + 7 * 3_600_000);
-      fromDt.setDate(fromDt.getDate() - 29);
-      const fromDate = fromDt.toISOString().split('T')[0];
-      const futureDt = new Date(Date.now() + 7 * 3_600_000);
-      futureDt.setDate(futureDt.getDate() + 60);
-      const toFuture = futureDt.toISOString().split('T')[0];
+      // Dùng ngày VN (đã bù lệch đồng hồ server) để bao trọn ca hôm nay và 60 ngày tới.
+      const toDate = vnTodayStr();
+      const fromDate = vnDateAdd(-29, toDate);
+      const toFuture = vnDateAdd(60, toDate);
       const [shifts, notifs, attRange, colleagues] = await Promise.all([
         apiRequest(`/me/schedule?fromDate=${fromDate}&toDate=${toFuture}`).catch(() => { fails++; return []; }),
         apiRequest('/me/notifications').catch(() => { fails++; return []; }),
@@ -1448,7 +1523,7 @@ export function App() {
         if (!Number.isFinite(t)) return '';
         return new Date(t + 7 * 3_600_000).toISOString().split('T')[0];
       };
-      const today = new Date(Date.now() + 7 * 3_600_000).toISOString().split('T')[0];
+      const today = vnTodayStr();
       const todayCheckIn = attEvents.find((e: any) => e.type === 'CHECK_IN' && vnDayOf(e.client_time) === today);
       const todayCheckOut = attEvents.find((e: any) => e.type === 'CHECK_OUT' && vnDayOf(e.client_time) === today);
       const inTimeStr = todayCheckIn?.client_time ? new Date(todayCheckIn.client_time).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' }) : undefined;
@@ -1712,6 +1787,19 @@ export function App() {
   // Refs chống stale-closure cho socket realtime (đặt sau loadEmployeeData).
   const loadEmployeeDataRef = useRef(loadEmployeeData);
   loadEmployeeDataRef.current = loadEmployeeData;
+
+  // Khi vừa đo được lệch đồng hồ server (VD máy khách sai ngày), tải lại lịch
+  // theo đúng ngày VN + làm mới tab Lịch tuần — tránh giữ dải ngày đã tải sai.
+  const clockReloadedRef = useRef(false);
+  useEffect(() => {
+    if (!serverClockOffsetMs) return;
+    if (clockReloadedRef.current) return;
+    clockReloadedRef.current = true;
+    if (isLoggedIn && employee?.employee_id) {
+      loadEmployeeDataRef.current(employee.employee_id).catch(() => null);
+      setSchedRefresh(k => k + 1);
+    }
+  }, [serverClockOffsetMs]);
   const showToastRef = useRef(showToast);
   showToastRef.current = showToast;
   const fetchMySwapsRef = useRef(fetchMySwaps);
@@ -2158,7 +2246,7 @@ export function App() {
       const key = s.assignment_id || `${s.date}|${s.shift_code}|${s.start_at}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      const d = String(s.date || '').slice(0, 10);
+      const d = toISODate(s.date);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) continue;
       if (!byDate.has(d)) byDate.set(d, []);
       byDate.get(d)!.push(s);
@@ -2172,12 +2260,10 @@ export function App() {
     multiDays.sort((a, b) => a.date.localeCompare(b.date));
     return { total: seen.size, multiDays };
   };
-  /** Ngày hôm nay theo giờ VN (tránh lệch ngày UTC 00:00–07:00). */
-  const vnTodayStr = () => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
-  /** Dải T2–CN của tuần hiện tại (offset 0) hoặc tuần sau (offset 1), theo giờ VN.
-   *  Khai báo function để socket effect ở trên dùng được (hoisted). */
+  /** Dải T2–CN của tuần hiện tại (offset 0) hoặc tuần sau (offset 1), theo giờ VN
+   *  đã bù lệch đồng hồ server. Khai báo function để effect phía trên dùng được. */
   function empWeekDaysOf(offsetWeeks: number): string[] {
-    const nowVn = new Date(Date.now() + 7 * 3_600_000);
+    const nowVn = vnNow();
     const off = (nowVn.getUTCDay() + 6) % 7;
     const mon = new Date(nowVn);
     mon.setUTCDate(mon.getUTCDate() - off + offsetWeeks * 7);
@@ -2189,38 +2275,6 @@ export function App() {
     }
     return days;
   }
-  /** Chuẩn hóa mọi biến thể ngày về YYYY-MM-DD (mirror backend normSheetDate):
-   *  ISO/ISO-datetime, serial Sheets, 'M/D/YYYY'/'D/M/YYYY' (Sheets tự biến
-   *  'YYYY-MM-DD' ghi bằng USER_ENTERED thành serial rồi đọc lại theo locale). */
-  const toISODate = (input: unknown): string => {
-    let s = String(input ?? '').trim().replace(/^'/, '');
-    if (!s) return '';
-    if (/^\d{4,6}$/.test(s)) {
-      const n = Number(s);
-      if (n > 20000 && n < 80000) return new Date(Math.round((n - 25569) * 86_400_000)).toISOString().slice(0, 10);
-      return '';
-    }
-    const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-    if (iso) {
-      const m = Number(iso[2]); const d = Number(iso[3]);
-      if (m >= 1 && m <= 12 && d >= 1 && d <= 31) return `${iso[1]}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-      return '';
-    }
-    const sl = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
-    if (sl) {
-      let y = Number(sl[3]); if (y < 100) y += 2000;
-      const a = Number(sl[1]); const b = Number(sl[2]);
-      let m: number; let dd: number;
-      if (a > 12 && b <= 12) { dd = a; m = b; }
-      else if (b > 12 && a <= 12) { m = a; dd = b; }
-      else { dd = a; m = b; }
-      if (m >= 1 && m <= 12 && dd >= 1 && dd <= 31) return `${y}-${String(m).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
-      return '';
-    }
-    const t = new Date(s).getTime();
-    if (Number.isFinite(t)) return new Date(t).toISOString().slice(0, 10);
-    return '';
-  };
   const SHIFT_HOURS_LABEL: Record<string, string> = {
     CA_1: 'Ca 1: 07:00 - 12:00',
     CA_2: 'Ca 2: 12:00 - 18:00',
@@ -2234,18 +2288,18 @@ export function App() {
   const isLiveShift = (s: any) => { const st = shiftStatusOf(s); return st !== 'DRAFT' && st !== 'CANCELLED'; };
   const getTodayShifts = () => {
     const today = vnTodayStr();
-    // Chỉ ca HR đã chốt mới là ca làm việc thật (DRAFT nháp chưa chốt —
-    // admin/lương chỉ tính ca chốt, cổng NV phải khớp).
-    return myShifts.filter((s: any) => s.date === today && isLiveShift(s));
+    // Dùng nguồn ca chuẩn (Lịch tuần + dữ liệu realtime) và chuẩn hóa ngày để
+    // không báo "không có ca" khi Sheet trả ngày dạng datetime/serial.
+    return getAllEmployeeShifts().filter((s: any) => toISODate(s.date) === today && isLiveShift(s));
   };
   /** Ca nháp hôm nay (HR chưa phát hành) — để báo đúng thay vì "không có lịch". */
   const getTodayDraftShifts = () => {
     const today = vnTodayStr();
-    return myShifts.filter((s: any) => s.date === today && isDraftShift(s));
+    return getAllEmployeeShifts().filter((s: any) => toISODate(s.date) === today && isDraftShift(s));
   };
   /** Tuần hiện tại (Mon-Sun, giờ VN): tham khảo mốc ngày. */
   const swapWeekRange = () => {
-    const vn = new Date(Date.now() + 7 * 3_600_000);
+    const vn = vnNow();
     const dowMon0 = (vn.getUTCDay() + 6) % 7;
     const monMs = Date.UTC(vn.getUTCFullYear(), vn.getUTCMonth(), vn.getUTCDate()) - dowMon0 * 86_400_000;
     const fmt = (ms: number) => new Date(ms).toISOString().slice(0, 10);
@@ -2253,37 +2307,46 @@ export function App() {
   };
   /** Ca từ hôm nay trở đi (giờ VN) mới được đổi/nhờ làm thay — ca trong quá khứ đã kết thúc. */
   const isUpcomingSwapDate = (dateStr?: string) => {
-    const d = String(dateStr || '').slice(0, 10);
+    const d = toISODate(dateStr);
     const today = vnTodayStr();
     return !!d && d >= today;
   };
   const inSwapWeek = (dateStr?: string) => isUpcomingSwapDate(dateStr);
-  /** Mọi ca làm việc hợp lệ (không bị CANCELLED) của nhân viên đã hiển thị trên lịch
-   *  đều đủ điều kiện đổi ca / nhờ làm thay để đồng bộ 100% với Lịch làm việc (Tab 2). */
+  /** Ca hợp lệ để đổi/nhờ làm thay: đã phát hành (hoặc dữ liệu cũ để trống status)
+   *  và KHÔNG bị hủy/nháp — khớp đúng danh sách ca đang hiển thị trên Lịch tuần. */
   const isSwapReadyShift = (s: any) => {
     if (!s) return false;
-    const st = String(s.status || '').trim().toUpperCase();
-    return st !== 'CANCELLED';
+    const st = shiftStatusOf(s);
+    return st !== 'CANCELLED' && st !== 'DRAFT';
+  };
+  /** Ca còn hiệu lực để đổi: ngày từ hôm nay trở đi; ca hôm nay đã qua giờ
+   *  kết thúc thì không còn "sắp tới" nên loại khỏi danh sách. */
+  const isUpcomingSwapShift = (s: any) => {
+    const d = toISODate(s?.date);
+    if (!d || !isUpcomingSwapDate(d)) return false;
+    if (d > vnTodayStr()) return true;
+    const endMs = new Date(s?.end_at || `${d}T23:59:59+07:00`).getTime();
+    return !Number.isFinite(endMs) || endMs >= vnNowMs();
   };
   const swapReadyShifts = (list?: any[]) => {
     const src = Array.isArray(list) && list.length > 0 ? list : getAllEmployeeShifts();
-    return dedupeShifts(src).filter((s: any) => isUpcomingSwapDate(s.date) && isSwapReadyShift(s));
+    return dedupeShifts(src).filter((s: any) => isUpcomingSwapShift(s) && isSwapReadyShift(s));
   };
   const swapDraftCount = (_list?: any[]) => 0;
-  const swapNotReadyMsg = (label: string) => `⛔ ${label} đã bị hủy trên hệ thống — vui lòng chọn ca làm việc khác.`;
+  const swapNotReadyMsg = (label: string) => `⛔ ${label} đang nháp hoặc đã bị hủy trên hệ thống — vui lòng chọn ca làm việc đã phát hành khác.`;
   /**
    * Ca hiển thị realtime ở trang chủ: đang diễn ra > sắp tới hôm nay > ca cuối hôm nay.
    * Không có ca nào -> shift null (hiện trạng thái nghỉ).
    */
   const getCurrentShift = (): { shift: any; all: any[]; phase: 'LIVE' | 'UPCOMING' | 'DONE' | 'NONE' } => {
     const today = vnTodayStr();
-    const list = myShifts
-      .filter((s: any) => s.date === today && isLiveShift(s))
+    const list = getAllEmployeeShifts()
+      .filter((s: any) => toISODate(s.date) === today && isLiveShift(s))
       .sort((a: any, b: any) => String(a.start_at || '').localeCompare(String(b.start_at || '')));
     if (list.length === 0) return { shift: null, all: [], phase: 'NONE' };
-    const now = Date.now();
-    const startOf = (s: any) => new Date(s.start_at || `${s.date}T00:00:00+07:00`).getTime();
-    const endOf = (s: any) => new Date(s.end_at || `${s.date}T23:59:59+07:00`).getTime();
+    const now = vnNowMs();
+    const startOf = (s: any) => new Date(s.start_at || `${toISODate(s.date)}T00:00:00+07:00`).getTime();
+    const endOf = (s: any) => new Date(s.end_at || `${toISODate(s.date)}T23:59:59+07:00`).getTime();
     const live = list.find((s: any) => {
       const st = startOf(s);
       const en = endOf(s);
@@ -2303,10 +2366,10 @@ export function App() {
     // checkout ca trước thì chọn ca đó ở dropdown. Lựa chọn tay vẫn ưu tiên nhất.
     // Chưa chọn ca (ngày 2 ca): mặc định ca ĐANG diễn ra thay vì ca đầu danh
     // sách — tránh CONFIRMED nhầm ca rồi ca đúng vẫn "chưa check-in".
-    const now = Date.now();
+    const now = vnNowMs();
     const live = list.find((s: any) => {
-      const st = new Date(s.start_at || '').getTime();
-      const en = new Date(s.end_at || '').getTime();
+      const st = new Date(s.start_at || `${toISODate(s.date)}T00:00:00+07:00`).getTime();
+      const en = new Date(s.end_at || `${toISODate(s.date)}T23:59:59+07:00`).getTime();
       return Number.isFinite(st) && Number.isFinite(en) && now >= st && now <= en;
     });
     return live || list[0];
@@ -2343,7 +2406,7 @@ export function App() {
       try {
         const shiftStart = new Date(todayShift.start_at).getTime();
         const openTime = shiftStart - 30 * 60 * 1000;
-        if (Date.now() < openTime) {
+        if (vnNowMs() < openTime) {
           const openStr = new Date(openTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' });
           showToast(`⏰ CHƯA ĐẾN GIỜ CHECK-IN: Cổng điểm danh mở trước giờ ca 30 phút (Mở lúc ${openStr}). Vui lòng quay lại sau!`);
           return;
@@ -2367,9 +2430,9 @@ export function App() {
     if (action === 'CHECK_OUT' && todayShift?.end_at) {
       try {
         const shiftEndMs = new Date(todayShift.end_at).getTime();
-        if (Number.isFinite(shiftEndMs) && Date.now() < shiftEndMs) {
+        if (Number.isFinite(shiftEndMs) && vnNowMs() < shiftEndMs) {
           const endStr = new Date(shiftEndMs).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' });
-          const minsLeft = Math.max(1, Math.ceil((shiftEndMs - Date.now()) / 60000));
+          const minsLeft = Math.max(1, Math.ceil((shiftEndMs - vnNowMs()) / 60000));
           showToast(`Chưa đến giờ tan ca (ca kết thúc lúc ${endStr})! Còn ${minsLeft} phút nữa mới được check-out — đúng giờ mới cho check-out.`);
           return;
         }
@@ -3120,7 +3183,7 @@ export function App() {
   };
 
   // Ngày VN hiện tại (YYYY-MM-DD) cho lưới OFF thử việc
-  const probVnToday = () => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+  const probVnToday = () => vnTodayStr();
 
   // 12 ngày thử việc tính từ ngày bắt đầu (start_date → +11)
   const probationWindowDays = (): string[] => {
@@ -3208,7 +3271,7 @@ export function App() {
           apiRequest(`/leave-requests${myEmpId ? `?employeeId=${encodeURIComponent(myEmpId)}` : ''}`).catch(() => []),
         ]);
         if (!alive) return;
-        setSchedRangeShifts(Array.isArray(sh) ? sh : []);
+        setSchedRangeShifts(dedupeShifts(Array.isArray(sh) ? sh : []));
         const leaves = Array.isArray(lv) ? lv : [];
         const seenLeaveDates = new Set<string>();
         const filteredLeaves = leaves.filter((l: any) => {
@@ -3476,7 +3539,7 @@ export function App() {
       }
       // Phiếu bù công ngày: ngày trong tháng hiện tại + đủ 5 điểm (server trừ/hoàn).
       if (adjustmentData.type === 'BU_CONG_NGAY') {
-        const curYm = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7);
+        const curYm = vnMonthStr();
         if (String(adjustmentData.date).slice(0, 7) !== curYm) {
           showToast('⚠️ Phiếu bù công ngày chỉ chọn ngày trong tháng hiện tại!');
           return;
@@ -3502,7 +3565,7 @@ export function App() {
         // (trước đây gửi nhầm sang /leaves loại BO_SUNG_CONG, HR không thấy để duyệt).
         // Chốt đúng ca ĐÚNG NGÀY sự cố (tải riêng theo ngày): không bao giờ rớt về
         // ca ngày khác — gửi sai ngày là duyệt nhầm sang ngày khác.
-        const dayShifts = (adjDayShifts || []).filter((s: any) => String(s.date || '').slice(0, 10) === adjustmentData.date);
+        const dayShifts = (adjDayShifts || []).filter((s: any) => toISODate(s.date) === adjustmentData.date);
         if (dayShifts.length === 0) {
           showToast(`⚠️ Ngày ${adjustmentData.date} không có ca làm việc nào được xếp! Kiểm tra lại ngày hoặc liên hệ HR xếp ca trước — hệ thống chặn gửi để khỏi duyệt nhầm ngày.`);
           return;
@@ -4299,7 +4362,7 @@ export function App() {
             {isProbation && probationAssessment && !probationAssessment?.meetDone && (() => {
               const a = probationAssessment;
               const meetMs = new Date(`${a.meetDate}T${String(a.meetTime || '09:00').slice(0, 5)}:00+07:00`).getTime();
-              const diffMs = Number.isFinite(meetMs) ? meetMs - Date.now() : NaN;
+              const diffMs = Number.isFinite(meetMs) ? meetMs - vnNowMs() : NaN;
               const diffTxt = !Number.isFinite(diffMs) ? '' : diffMs <= 0 ? 'ĐÃ ĐẾN GIỜ — vào ngay!' : (() => {
                 const m = Math.floor(diffMs / 60000);
                 const d = Math.floor(m / 1440);
@@ -4613,46 +4676,15 @@ export function App() {
                 // Ca trong dải (gộp tải theo dải + realtime), khử trùng, bỏ ca đã hủy.
                 // Hiện Y NHƯ quản trị (kể cả ca nháp) để 2 bên khớp ngày/ca —
                 // 1. Thu thập ca, loại bỏ ca đã hủy (CANCELLED) và khử trùng theo assignment_id
-                const seenAid = new Set<string>();
-                const rawShifts: any[] = [];
                 const draftDaySet = new Set<string>();
                 for (const s of [...(schedRangeShifts || []), ...(myShifts || [])]) {
-                  const k = String(s?.assignment_id || '');
-                  if (k && seenAid.has(k)) continue;
-                  if (k) seenAid.add(k);
-                  if ((s as any)?.status === 'CANCELLED') continue;
-                  if (isDraftShift(s)) {
-                    const d = String((s as any)?.date || '').slice(0, 10);
-                    if (d) draftDaySet.add(d);
-                  }
-                  rawShifts.push(s);
+                  if (!isDraftShift(s)) continue;
+                  const d = toISODate(s?.date);
+                  if (d) draftDaySet.add(d);
                 }
-
-                // 2. Khử trùng ca theo khóa nghiệp vụ (ngày + mã ca shift_code)
-                // Tránh ca trùng DRAFT/PUBLISHED làm đội số ca (VD 5 ngày làm mà đếm thành 6 ca)
-                const bySlot = new Map<string, any>();
-                for (const s of rawShifts) {
-                  const d = String(s?.date || '').slice(0, 10);
-                  const code = String(s?.shift_code || '').trim().toUpperCase();
-                  const slotKey = `${d}|${code}`;
-                  const existing = bySlot.get(slotKey);
-                  if (!existing) {
-                    bySlot.set(slotKey, s);
-                  } else {
-                    const isPubExisting = String(existing?.status || '').toUpperCase() === 'PUBLISHED';
-                    const isPubNew = String(s?.status || '').toUpperCase() === 'PUBLISHED';
-                    if (!isPubExisting && isPubNew) {
-                      bySlot.set(slotKey, s);
-                    } else if (isPubExisting === isPubNew) {
-                      const vExist = Number(existing?.schedule_version) || 0;
-                      const vNew = Number(s?.schedule_version) || 0;
-                      if (vNew > vExist) {
-                        bySlot.set(slotKey, s);
-                      }
-                    }
-                  }
-                }
-                const rangeShifts = Array.from(bySlot.values());
+                // Dùng chung đúng bộ khử trùng/chuẩn hóa ngày với Trang chủ & Đổi ca
+                // để cả 3 nơi luôn hiển thị cùng một tập ca (không lệch ngày/ca).
+                const rangeShifts = dedupeShifts([...(schedRangeShifts || []), ...(myShifts || [])]);
 
                 // Tập ca trong dải (gộp cả ca đã duyệt và ca được phân công để khớp Toàn Cảnh Tuần)
                 const liveShifts = rangeShifts;
@@ -4669,8 +4701,8 @@ export function App() {
 
                 // 1. Tập hợp ca làm việc và các ngày có ca trong dải `days`
                 // Tính toàn bộ ca hiển thị trên lịch để nút "Có Ca" và Toàn Cảnh Tuần luôn khớp nhau 100%.
-                const shiftsInDays = rangeShifts.filter((s: any) => days.includes(String(s.date || '').slice(0, 10)));
-                const workDaysSet = new Set(shiftsInDays.map((s: any) => String(s.date || '').slice(0, 10)));
+                const shiftsInDays = rangeShifts.filter((s: any) => days.includes(toISODate(s.date)));
+                const workDaysSet = new Set(shiftsInDays.map((s: any) => toISODate(s.date)));
                 const workDaysCount = workDaysSet.size;
                 const workCount = shiftsInDays.length;
 
@@ -4689,7 +4721,7 @@ export function App() {
                 const offCount = offDays.length;
 
                 // Tóm tắt trạng thái hôm nay
-                const todayShifts = rangeShifts.filter((s: any) => String(s.date || '').slice(0, 10) === todayStr);
+                const todayShifts = rangeShifts.filter((s: any) => toISODate(s.date) === todayStr);
                 const todayOffs = (schedRangeLeaves || []).filter((l: any) => toISODate(l.requested_date) === todayStr);
                 const isTodayOff = offDaysSet.has(todayStr);
                 const todaySummary = todayShifts.length > 0
@@ -4710,11 +4742,11 @@ export function App() {
                   const startMs = sh.start_at ? new Date(sh.start_at).getTime() : NaN;
                   const endMs = sh.end_at ? new Date(sh.end_at).getTime() : NaN;
                   const inMs = inE?.client_time ? new Date(inE.client_time).getTime() : NaN;
-                  const pastDay = String(sh.date || '').slice(0, 10) < todayStr;
-                  const locked = !hasIn && Number.isFinite(startMs) && Date.now() - (startMs as number) > 3 * 60 * 60 * 1000;
+                  const pastDay = toISODate(sh.date) < todayStr;
+                  const locked = !hasIn && Number.isFinite(startMs) && vnNowMs() - (startMs as number) > 3 * 60 * 60 * 1000;
                   const complete = hasIn && hasOut;
                   const isAbsent = !hasIn && absent;
-                  const missingOut = hasIn && !hasOut && (Number.isFinite(endMs) && Date.now() - (endMs as number) > 30 * 60 * 1000 || pastDay || (Number.isFinite(inMs) && Date.now() - (inMs as number) > 12 * 60 * 60 * 1000));
+                  const missingOut = hasIn && !hasOut && (Number.isFinite(endMs) && vnNowMs() - (endMs as number) > 30 * 60 * 1000 || pastDay || (Number.isFinite(inMs) && vnNowMs() - (inMs as number) > 12 * 60 * 60 * 1000));
 
                   if (complete) {
                     return {
@@ -4766,7 +4798,7 @@ export function App() {
                       icon: '▶',
                     };
                   }
-                  if (String(sh.date || '').slice(0, 10) === todayStr) {
+                  if (toISODate(sh.date) === todayStr) {
                     return {
                       label: '⏱️ Ca hôm nay',
                       detail: 'Sẵn sàng điểm danh khi có mặt tại chi nhánh',
@@ -4858,7 +4890,7 @@ export function App() {
                       <div style={{ display: 'flex', gap: '4px', overflowX: isProbation ? 'auto' : 'visible', paddingBottom: isProbation ? '4px' : '0' }}>
                         {days.map((d) => {
                           const isToday = d === todayStr;
-                          const dayShifts = rangeShifts.filter((s: any) => String(s.date || '').slice(0, 10) === d);
+                          const dayShifts = rangeShifts.filter((s: any) => toISODate(s.date) === d);
                           const isOffDay = offDaysSet.has(d);
                           return (
                             <div
@@ -4970,7 +5002,7 @@ export function App() {
                         const isToday = d === todayStr;
                         const isMilestone = isProbation && days[0] === d;
                         const offs = (schedRangeLeaves || []).filter((l: any) => toISODate(l.requested_date) === d);
-                        const shsRaw = rangeShifts.filter((s: any) => String(s.date || '').slice(0, 10) === d);
+                        const shsRaw = rangeShifts.filter((s: any) => toISODate(s.date) === d);
                         // Gộp ca trùng cùng shift_code trong ngày (ca DRAFT ma + ca thật):
                         // 1 thẻ duy nhất, điểm danh tính gộp — hết thẻ ma "Thiếu check-out".
                         const shs: any[] = [];
@@ -5515,12 +5547,12 @@ export function App() {
           // Ngày VN (UTC+7): cổng CA_1 mở 06:30 VN (= 23:30 UTC hôm trước) nên phải
           // dùng ngày VN — dùng ngày UTC sẽ lookup nhầm ca 00:00–07:00 VN.
           const today = vnTodayStr();
-          const todayShifts = myShifts.filter((s: any) => s.date === today);
+          const todayShifts = getAllEmployeeShifts().filter((s: any) => toISODate(s.date) === today && isLiveShift(s));
           // Hiển thị ĐÚNG ca sẽ thao tác (trước đây tab lấy ca đầu, nút lấy ca live -> lệch giờ tan ca).
           const todayShift = getAttendShift();
           // Trạng thái theo TỪNG ca (ngày 2 ca do tráo đổi: mỗi ca check-in/out độc lập)
           const shiftStartMs = todayShift?.start_at ? new Date(todayShift.start_at).getTime() : NaN;
-          const shiftLocked = Number.isFinite(shiftStartMs) && Date.now() - shiftStartMs > 3 * 60 * 60 * 1000;
+          const shiftLocked = Number.isFinite(shiftStartMs) && vnNowMs() - shiftStartMs > 3 * 60 * 60 * 1000;
           const shiftEvts = (myAttendanceHistory || []).filter((e: any) => e.assignment_id === todayShift?.assignment_id);
           const shiftIn = shiftEvts.find((e: any) => e.type === 'CHECK_IN');
           const shiftOut = shiftEvts.find((e: any) => e.type === 'CHECK_OUT');
@@ -5533,7 +5565,7 @@ export function App() {
           const shiftStartHour = todayShift?.shift_code === 'CA_1' ? 7 : todayShift?.shift_code === 'CA_2' ? 12 : todayShift?.shift_code === 'CA_3' ? 18 : undefined;
           const shiftStart = todayShift?.start_at ? new Date(todayShift.start_at).getTime() : 0;
           const openTime = shiftStart ? shiftStart - 30 * 60 * 1000 : 0;
-          const isEarly = shiftStart > 0 && Date.now() < openTime;
+          const isEarly = shiftStart > 0 && vnNowMs() < openTime;
           const openTimeStr = openTime > 0 ? new Date(openTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }) : (shiftStartHour !== undefined ? `${String(shiftStartHour === 7 ? 6 : shiftStartHour - 1).padStart(2, '0')}:30` : '');
           const shiftStartStr = shiftStartHour !== undefined
             ? `${String(shiftStartHour).padStart(2, '0')}:00`
@@ -5564,7 +5596,7 @@ export function App() {
                     CHỨC NĂNG ĐIỂM DANH HIỆN ĐANG KHÓA
                   </h3>
                   <p style={{ fontSize: '13px', color: '#64748B', lineHeight: '1.5', maxWidth: '340px', margin: '0 auto 20px' }}>
-                    Hôm nay ({new Date().toLocaleDateString('vi-VN')}) bạn không có ca làm việc được phân công tại chi nhánh {employee?.default_branch_id || 'hệ thống'}. Chức năng điểm danh chỉ tự động mở khi bạn có ca làm việc chính thức trong ngày.
+                    Hôm nay ({today.slice(8, 10)}/{today.slice(5, 7)}/{today.slice(0, 4)}) bạn không có ca làm việc được phân công tại chi nhánh {employee?.default_branch_id || 'hệ thống'}. Chức năng điểm danh chỉ tự động mở khi bạn có ca làm việc chính thức trong ngày.
                   </p>
                   <button
                     className="btn-secondary"
@@ -5963,7 +5995,7 @@ export function App() {
                     if (!Number.isFinite(t)) return '';
                     return new Date(t + 7 * 3_600_000).toISOString().slice(0, 10);
                   };
-                  const todayVN = vnDay(new Date().toISOString());
+                  const todayVN = vnTodayStr();
                   // Mọi ngày trong tháng đang xem (chu kỳ lương tháng)
                   const [tsY, tsM] = tsMonth.split('-').map(Number);
                   const tsLastDay = new Date(Date.UTC(tsY, tsM, 0)).getUTCDate();
@@ -6008,7 +6040,7 @@ export function App() {
                     if (!s || String((s as any)?.status || '') === 'CANCELLED') continue;
                     const logical = [
                       String((s as any)?.employee_id || (employee as any)?.employee_id || ''),
-                      String((s as any)?.date || '').slice(0, 10),
+                      toISODate((s as any)?.date),
                       String((s as any)?.shift_code || ''),
                     ].join('|');
                     const cur = shiftByLogical.get(logical);
@@ -6020,7 +6052,7 @@ export function App() {
                     // Hiện Y NHƯ quản trị (kể cả ca nháp) để khớp ngày/ca —
                     // ca DRAFT báo "chờ duyệt", KHÔNG tính công/lương (xử lý ở rows).
                     if ((s as any)?.status === 'CANCELLED') continue;
-                    const d = String((s as any).date || '').slice(0, 10);
+                    const d = toISODate((s as any).date);
                     if (!d || !d.startsWith(tsMonth)) continue;
                     if (!shiftDays.has(d)) shiftDays.set(d, []);
                     shiftDays.get(d)!.push(s);
@@ -6391,7 +6423,7 @@ export function App() {
                 const win = probationWindowDays();
                 const today = probVnToday();
                 const dayShifts = extraShift.date
-                  ? myShifts.filter((s: any) => s?.status !== 'CANCELLED' && String(s?.date || '').slice(0, 10) === extraShift.date)
+                  ? myShifts.filter((s: any) => s?.status !== 'CANCELLED' && toISODate(s?.date) === extraShift.date)
                   : [];
                 const full = dayShifts.length >= 2;
                 return (
@@ -6623,7 +6655,7 @@ export function App() {
                             </option>
                           ));
                         }
-                        const hasAnyUpcoming = dedupeShifts(getAllEmployeeShifts()).some((s: any) => isUpcomingSwapDate(s.date));
+                        const hasAnyUpcoming = dedupeShifts(getAllEmployeeShifts()).some((s: any) => isUpcomingSwapShift(s));
                         return (
                           <option value="">
                             {hasAnyUpcoming
@@ -6727,7 +6759,7 @@ export function App() {
                             </option>
                           ));
                         }
-                        const hasAnyUpcoming = dedupeShifts(getAllEmployeeShifts()).some((s: any) => isUpcomingSwapDate(s.date));
+                        const hasAnyUpcoming = dedupeShifts(getAllEmployeeShifts()).some((s: any) => isUpcomingSwapShift(s));
                         return (
                           <option value="">
                             {hasAnyUpcoming
@@ -7058,7 +7090,7 @@ export function App() {
                 </div>
 
                 {(() => {
-                  const dayShifts = (adjDayShifts || []).filter((s: any) => String(s.date || '').slice(0, 10) === adjustmentData.date);
+                  const dayShifts = (adjDayShifts || []).filter((s: any) => toISODate(s.date) === adjustmentData.date);
                   if (adjDayLoading) {
                     return <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>⏳ Đang tải ca ngày {adjustmentData.date}...</div>;
                   }

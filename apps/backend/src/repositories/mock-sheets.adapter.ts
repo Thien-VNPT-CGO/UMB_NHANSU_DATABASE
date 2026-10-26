@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { hashPasswordSync } from '../services/password.service.js';
-import { canonicalPhone } from '../services/employees.service.js';
+import { canonicalPhone, normSheetDate } from '../services/employees.service.js';
 import {
   EmployeeAccount,
   AdminAccount,
@@ -562,7 +562,19 @@ export class MockSheetsAdapter implements ISheetsRepository {
 
   async getShiftsForEmployee(employeeId: string, fromDate: string, toDate: string): Promise<ShiftAssignment[]> {
     this.checkErrors();
-    return dedupeShiftAssignments(this.shifts.filter(s => s.employee_id === employeeId && s.date >= fromDate && s.date <= toDate));
+    // Chuẩn hóa ngày trước khi lọc: Sheet có thể trả 'YYYY-MM-DDT00:00:00',
+    // serial hoặc 'D/M/YYYY' — so sánh chuỗi thô làm ca hôm nay bị rơi khỏi
+    // khoảng [fromDate, toDate] (cổng NV báo "không có ca" oan).
+    const from = normSheetDate(fromDate);
+    const to = normSheetDate(toDate);
+    return dedupeShiftAssignments(this.shifts.filter(s => {
+      if (s.employee_id !== employeeId) return false;
+      const d = normSheetDate(s.date) || String(s.date || '').slice(0, 10);
+      if (!d) return false;
+      if (from && d < from) return false;
+      if (to && d > to) return false;
+      return true;
+    }));
   }
 
   async getShiftById(assignmentId: string): Promise<ShiftAssignment | null> {

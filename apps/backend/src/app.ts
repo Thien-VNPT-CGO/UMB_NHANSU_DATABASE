@@ -167,6 +167,12 @@ import { lateFineFor } from './services/payroll.service.js';
 // Thời điểm process khởi động — đo uptime thật (không hardcode).
 const SERVER_STARTED_AT = Date.now();
 
+/** Ngày hôm nay theo giờ Việt Nam (YYYY-MM-DD) — dùng cho mọi mốc mặc định
+ *  của API nhân viên, tránh lệch ngày khi server chạy UTC (00:00–07:00 VN). */
+function vnTodayISO(): string {
+  return new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+}
+
 /** Trả 429 + Retry-After thống nhất cho cả cổng nhân viên và quản trị. */
 function sendLoginLockout(res: any, lock: LoginLockoutResult) {
   const minutes = Math.max(1, Math.ceil(lock.retryAfterSeconds / 60));
@@ -2364,7 +2370,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       const employeeId = req.user?.employeeId;
       if (!employeeId) return res.status(400).json({ error: 'NOT_AN_EMPLOYEE' });
-      const fromDate = (req.query.fromDate as string) || new Date().toISOString().split('T')[0];
+      const fromDate = (req.query.fromDate as string) || vnTodayISO();
       const toDate = (req.query.toDate as string) || '2030-12-31';
       const shifts = await schedulesService.getEmployeeShifts(employeeId, fromDate, toDate);
       res.json(shifts);
@@ -2404,7 +2410,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           message: 'Chỉ được đổi ca với đồng nghiệp cùng chi nhánh.',
         });
       }
-      const fromDate = (req.query.fromDate as string) || new Date().toISOString().split('T')[0];
+      const fromDate = (req.query.fromDate as string) || vnTodayISO();
       const toDate = (req.query.toDate as string) || '2030-12-31';
       const shifts = await schedulesService.getEmployeeShifts(targetId, fromDate, toDate);
       res.json(shifts);

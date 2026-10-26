@@ -53,6 +53,21 @@ test('adapter trả 1 ca/ngày/mã và create lặp không sinh dòng thứ 2', 
   assert.equal(repo.shifts.length, 2, 'không được push thêm dòng trùng');
 });
 
+test('lọc ca theo ngày chuẩn hóa mọi định dạng Sheet (datetime/serial/slash)', async () => {
+  const repo = new MockSheetsAdapter();
+  repo.shifts.push(
+    shift({ assignment_id: 'ISO_DATETIME', date: '2026-10-26T00:00:00.000Z', start_at: '2026-10-26T07:00:00+07:00', end_at: '2026-10-26T12:00:00+07:00' }),
+    shift({ assignment_id: 'SERIAL', date: '46321' as any, shift_code: 'CA_2', start_at: '2026-10-26T12:00:00+07:00', end_at: '2026-10-26T18:00:00+07:00' }),
+    shift({ assignment_id: 'SLASH', date: '26/10/2026' as any, shift_code: 'CA_3', start_at: '2026-10-26T18:00:00+07:00', end_at: '2026-10-26T23:00:00+07:00' }),
+    shift({ assignment_id: 'NEXT_DAY', date: '2026-10-27', shift_code: 'CA_1', start_at: '2026-10-27T07:00:00+07:00', end_at: '2026-10-27T12:00:00+07:00' }),
+  );
+  // Serial 46321 = 2026-10-26 (số ngày kể từ 1899-12-30).
+  const today = await repo.getShiftsForEmployee('EMP_1', '2026-10-26', '2026-10-26');
+  assert.deepEqual(today.map(s => s.assignment_id).sort(), ['ISO_DATETIME', 'SERIAL', 'SLASH']);
+  const range = await repo.getShiftsForEmployee('EMP_1', '2026-10-26', '2026-10-27');
+  assert.equal(range.length, 4);
+});
+
 test('gửi lại phiếu cập nhật ca không đẻ ca trùng; DRAFT được duyệt PUBLISHED và snapshot ngay', async () => {
   const repo = new MockSheetsAdapter();
   await repo.createEmployee({
