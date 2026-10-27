@@ -37,6 +37,8 @@ export interface DurableWriteStats {
   batchMaxEntries: number;
   /** Đang tạm nghỉ (chống bão lỗi/quota) tới thời điểm này. */
   pausedUntil: string | null;
+  /** Phân bố dead-letter theo tab (chẩn đoán nhanh tab nào ghi hỏng). */
+  deadLetterTabs: Record<string, number>;
 }
 
 export interface DurableWriteQueueOptions {
@@ -417,6 +419,10 @@ export class DurableWriteQueue {
       maxAttempts: this.maxAttempts,
       batchMaxEntries: this.batchMaxEntries,
       pausedUntil: this.pausedUntil > this.now() ? new Date(this.pausedUntil).toISOString() : null,
+      deadLetterTabs: this.deadLetters.reduce<Record<string, number>>((acc, e) => {
+        acc[e.sheetTitle] = (acc[e.sheetTitle] || 0) + 1;
+        return acc;
+      }, {}),
     };
   }
 

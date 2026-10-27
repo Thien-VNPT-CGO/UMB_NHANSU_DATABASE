@@ -184,17 +184,23 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   // Chẩn đoán đường GHI Google: khi hàng đợi append báo timeout, /health cần
   // phân biệt "Google chặn POST" hay "Sheet/quota" — probe chạy nền, POST no-op.
   {
-    const probe = () => {
+    const probe = async () => {
       const syncService = (adapter as any).syncService;
-      if (!syncService?.getStatus?.().isConfigured || typeof syncService.runWriteProbe !== 'function') return;
-      // Chỉ ghi thử 1 dòng AUDIT_LOG khi đường ghi đang có lỗi (tránh rác nhật ký
-      // lúc mọi thứ bình thường).
-      const includeAppend = !!syncService.getWriteStatus?.().lastWriteError;
-      syncService.runWriteProbe({ includeAppend })
-        .catch((err: any) => console.warn('[write-probe] error:', err?.message || err));
+      try {
+        if (syncService?.getStatus?.().isConfigured && typeof syncService.runWriteProbe === 'function') {
+          // Chỉ ghi thử 1 dòng AUDIT_LOG khi đường ghi đang có lỗi (tránh rác
+          // nhật ký lúc mọi thứ bình thường).
+          const includeAppend = !!syncService.getWriteStatus?.().lastWriteError;
+          await syncService.runWriteProbe({ includeAppend });
+        }
+      } catch (err: any) {
+        console.warn('[write-probe] error:', err?.message || err);
+      }
+      // Lỗi ghi đang diễn ra → đo lại mỗi 3 phút để bắt đúng lúc; bình thường 15 phút.
+      const failing = !!syncService?.getWriteStatus?.().lastWriteError;
+      setTimeout(probe, failing ? 3 * 60_000 : 15 * 60_000).unref?.();
     };
-    setTimeout(probe, 45_000);
-    setInterval(probe, 15 * 60_000);
+    setTimeout(probe, 45_000).unref?.();
   }
 
   // PUSH ngược toàn bộ tabs lên Sheets định kỳ: chỉ chạy khi bộ nhớ có thay đổi

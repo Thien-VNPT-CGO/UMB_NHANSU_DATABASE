@@ -281,6 +281,13 @@ export class GoogleSheetsSyncService {
 
   /** Cache số dòng dữ liệu từng tab (không đếm mỗi lần ghi; thiếu = không xoay). */
   private partRowCounts = new Map<string, number>();
+  /**
+   * Cache số dòng LƯỚI (gridProperties.rowCount) theo tab, lấy từ metadata.
+   * Metadata nhanh và ổn định hơn `values.get A2:A` — trước đây mỗi lần append
+   * vào tab partition lại đọc cả cột A; khi tab lớn, lệnh đọc treo 20–30s nên
+   * không bao giờ xoay được part và append dồn mãi vào tab khổng lồ.
+   */
+  private tabGridCache = new Map<string, { at: number; rows: number }>();
   /** Cache danh sách tab hiện hữu của spreadsheet (10 phút). */
   private tabListCache: { at: number; titles: string[] } | null = null;
   /** Cache ước lượng ô đã dùng (6 giờ). */
@@ -580,6 +587,10 @@ export class GoogleSheetsSyncService {
     valuesGet: { ok: boolean; ms: number; error: string | null };
     post: { ok: boolean; ms: number; error: string | null };
     append: { ok: boolean; ms: number; error: string | null } | null;
+    /** Kích thước lưới từng tab (metadata) — phát hiện tab phình/stray rows. */
+    tabs: Array<{ title: string; rows: number; cols: number }>;
+    /** Đọc thử đúng tab đang lỗi ghi: số dòng dữ liệu thật + thời gian đọc. */
+    hotTab: { title: string; ok: boolean; ms: number; dataRows: number | null; error: string | null } | null;
   } | null = null;
 
   public getWriteProbe() {
@@ -622,18 +633,22 @@ export class GoogleSheetsSyncService {
       spreadsheetId: this.spreadsheetId,
       range: `'AUDIT_LOG'!A1:A3`,
     }), 'probe.valuesGet');
-    // batchUpdate BẮT BUỘC có ≥1 request (rỗng bị Google trả 400 "Must specify
-    // at least one request"), nên dùng 1 request không thay đổi gì: đặt lại
-    // frozenRowCount = 1 cho tab AUDIT_LOG (đúng như hiện trạng).
+    // Metadata 1 lần: sheetId của AUDIT_LOG (cho batchUpdate no-op) + kích thước
+    // lưới toàn bộ tab (gridProperties.rowCount) để thấy tab nào phình bất thường.
     let auditSheetId: number | null = null;
+    const tabs: Array<{ title: string; rows: number; cols: number }> = [];
     try {
       const meta: any = await this.sheetsClient!.spreadsheets.get({
         spreadsheetId: this.spreadsheetId,
-        fields: 'sheets.properties(sheetId,title)',
+        fields: 'sheets.properties(sheetId,title,gridProperties(rowCount,columnCount))',
       });
-      const found = (meta?.data?.sheets || []).find((s: any) => s?.properties?.title === 'AUDIT_LOG');
-      auditSheetId = found?.properties?.sheetId ?? null;
-    } catch { /* metadata lỗi: bỏ qua post probe */ }
+      for (const s of meta?.data?.sheets || []) {
+        const p = s?.properties;
+        if (!p?.title) continue;
+        tabs.push({ title: p.title, rows: p.gridProperties?.rowCount ?? 0, cols: p.gridProperties?.columnCount ?? 0 });
+        if (p.title === 'AUDIT_LOG') auditSheetId = p.sheetId ?? null;
+      }
+    } catch { /* metadata lỗi: bỏ qua phần phụ thuộc */ }
     const post = auditSheetId === null
       ? { ok: false, ms: 0, error: 'AUDIT_LOG_SHEET_ID_NOT_FOUND' }
       : await time(() => this.sheetsClient!.spreadsheets.batchUpdate({
@@ -647,6 +662,33 @@ export class GoogleSheetsSyncService {
           }],
         },
       }), 'probe.noopBatchUpdate');
+
+    // Đọc thử đúng tab đang lỗi ghi (lấy từ lastWriteError) để biết append chậm
+    // do tab quá lớn / có dòng lạ ở xa hay do đường mạng.
+    let hotTab: { title: string; ok: boolean; ms: number; dataRows: number | null; error: string | null } | null = null;
+    const hotTitle = /append\.([A-Z0-9_]+)/i.exec(String(this.lastWriteError || ''))?.[1]
+      || /^([A-Z0-9_]+):/i.exec(String(this.lastWriteError || ''))?.[1]
+      || null;
+    if (hotTitle) {
+      const start = Date.now();
+      try {
+        const res: any = await this.sheetsCall(`probe.hotTab.${hotTitle}`, () =>
+          this.sheetsClient!.spreadsheets.values.get({
+            spreadsheetId: this.spreadsheetId,
+            range: `'${hotTitle}'!A2:A`,
+            majorDimension: 'COLUMNS' as any,
+          }), 30000);
+        hotTab = {
+          title: hotTitle,
+          ok: true,
+          ms: Date.now() - start,
+          dataRows: (res?.data?.values?.[0] as any[] | undefined)?.length ?? 0,
+          error: null,
+        };
+      } catch (e: any) {
+        hotTab = { title: hotTitle, ok: false, ms: Date.now() - start, dataRows: null, error: label(e) };
+      }
+    }
 
     let append: { ok: boolean; ms: number; error: string | null } | null = null;
     if (opts.includeAppend) {
@@ -670,12 +712,13 @@ export class GoogleSheetsSyncService {
       }), 'probe.append.AUDIT_LOG');
     }
 
-    this.writeProbeResult = { at: new Date().toISOString(), get: sheetMeta, valuesGet, post, append };
+    this.writeProbeResult = { at: new Date().toISOString(), get: sheetMeta, valuesGet, post, append, tabs, hotTab };
     console.log(
       `[write-probe] meta ${sheetMeta.ok ? 'OK' : 'FAIL'} ${sheetMeta.ms}ms` +
       ` | values.get ${valuesGet.ok ? 'OK' : 'FAIL'} ${valuesGet.ms}ms` +
       ` | batchUpdate ${post.ok ? 'OK' : 'FAIL'} ${post.ms}ms` +
       (append ? ` | append ${append.ok ? 'OK' : 'FAIL'} ${append.ms}ms` : '') +
+      (hotTab ? ` | hotTab ${hotTab.title} ${hotTab.ok ? `${hotTab.dataRows} dòng` : 'FAIL'} ${hotTab.ms}ms` : '') +
       (append?.error ? ` | appendErr=${append.error}` : ''),
     );
     return this.writeProbeResult;
@@ -4393,12 +4436,41 @@ export class GoogleSheetsSyncService {
 
   private bumpRowCount(title: string, delta = 1) {
     if (this.partRowCounts.has(title)) this.partRowCounts.set(title, this.partRowCounts.get(title)! + delta);
+    const grid = this.tabGridCache.get(title);
+    if (grid) this.tabGridCache.set(title, { at: grid.at, rows: grid.rows + delta });
+  }
+
+  /**
+   * Số dòng lưới của tab theo metadata (cache 5 phút). KHÔNG đọc dữ liệu.
+   * Trả -1 nếu không đo được (lỗi mạng/quota) — nơi gọi xử lý an toàn.
+   */
+  private async getTabGridRows(title: string): Promise<number> {
+    const cached = this.tabGridCache.get(title);
+    if (cached && Date.now() - cached.at < 5 * 60_000) return cached.rows;
+    try {
+      const meta: any = await this.sheetsCall(`grid.${title}`, () =>
+        this.sheetsClient!.spreadsheets.get({
+          spreadsheetId: this.spreadsheetId,
+          fields: 'sheets.properties(title,gridProperties.rowCount)',
+        }), 15000);
+      const at = Date.now();
+      for (const s of meta?.data?.sheets || []) {
+        const t = s?.properties?.title;
+        if (!t) continue;
+        this.tabGridCache.set(t, { at, rows: s.properties?.gridProperties?.rowCount ?? 0 });
+      }
+      return this.tabGridCache.get(title)?.rows ?? -1;
+    } catch {
+      return -1;
+    }
   }
 
   /** Chọn tab đích khi append vào tab khai báo partition (base đủ ngưỡng -> part). */
   private async pickPartitionTarget(base: string): Promise<string> {
     const limit = GoogleSheetsSyncService.PARTITION_ROW_LIMIT;
-    const baseCount = await this.getDataRowCount(base);
+    // Dùng số dòng lưới từ metadata: đọc nhanh, không phụ thuộc `values.get`
+    // toàn cột A (từng treo 30s khi tab lớn → append timeout vô hạn).
+    const baseCount = await this.getTabGridRows(base);
     if (baseCount < 0 || baseCount < limit) return base;
     let n = 2;
     while (n < 200) {
@@ -4407,9 +4479,10 @@ export class GoogleSheetsSyncService {
       if (!titles.includes(title)) {
         await this.createPartitionTab(base, title);
         this.partRowCounts.set(title, 0);
+        this.tabGridCache.set(title, { at: Date.now(), rows: 0 });
         return title;
       }
-      const c = await this.getDataRowCount(title);
+      const c = await this.getTabGridRows(title);
       if (c < 0) return title;
       if (c < limit) return title;
       n++;
@@ -4637,10 +4710,12 @@ export class GoogleSheetsSyncService {
       for (let i = 0; i < rows.length; i++) this.bumpRowCount(target);
       this.markWriteOk();
       return true;
-    } catch (err) {
+    } catch (err: any) {
       this.markWriteFail(`append ${target}`, err);
-      console.error(`[GoogleSheetsSyncService] Lỗi append ${rows.length} rows vào ${target}:`, err);
-      return false;
+      console.error(`[GoogleSheetsSyncService] Lỗi append ${rows.length} rows vào ${target}:`, err?.message || err);
+      // Ném lỗi để hàng đợi bền vững ghi lại ĐÚNG nguyên nhân (SHEETS_TIMEOUT,
+      // 429 quota, 403 quyền...) thay vì chỉ thấy APPEND_FAILED chung chung.
+      throw new Error(`APPEND_FAILED:${target}: ${err?.message || err}`);
     }
   }
 }
