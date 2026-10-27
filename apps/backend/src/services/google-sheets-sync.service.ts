@@ -493,7 +493,7 @@ export class GoogleSheetsSyncService {
 
     if (!isWrite) return this.withDeadline(label, fn, ms);
 
-    const high = label.startsWith('append.') || label.startsWith('part.header.') || label.startsWith('probe.writeTiny');
+    const high = label.startsWith('append.') || label.startsWith('part.header.');
     await this.acquireWrite(high);
     try {
       const now = Date.now();
@@ -663,6 +663,8 @@ export class GoogleSheetsSyncService {
     valuesGet: { ok: boolean; ms: number; error: string | null };
     /** GET công khai tới Google API (không auth) — đo đường mạng VPS→Google. */
     rawGetPublic: { ok: boolean; ms: number; error: string | null } | null;
+    /** POST công khai tới Google API (không auth) — kiểm tra riêng phương thức POST. */
+    rawPostPublic: { ok: boolean; ms: number; status: number | null; error: string | null } | null;
     /** GET có auth tới spreadsheet, dùng fetch trực tiếp (không googleapis). */
     rawGetSheet: { ok: boolean; ms: number; status: number | null; error: string | null } | null;
     post: { ok: boolean; ms: number; error: string | null };
@@ -728,6 +730,24 @@ export class GoogleSheetsSyncService {
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
     }, 'probe.rawGetPublic', 16000);
+
+    // POST công khai (không auth) tới googleapis.com: endpoint này trả 4xx ngay,
+    // nên nếu POST treo thì lỗi ở đường POST/mạng chứ không phải tài liệu.
+    let rawPostPublic: { ok: boolean; ms: number; status: number | null; error: string | null } | null = null;
+    {
+      const start = Date.now();
+      try {
+        const res = await fetch('https://www.googleapis.com/discovery/v1/apis', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ probe: true }),
+          signal: AbortSignal.timeout(15000),
+        });
+        rawPostPublic = { ok: true, ms: Date.now() - start, status: res.status, error: null };
+      } catch (e: any) {
+        rawPostPublic = { ok: false, ms: Date.now() - start, status: null, error: this.describeGoogleError(e) };
+      }
+    }
 
     let rawGetSheet: { ok: boolean; ms: number; status: number | null; error: string | null } | null = null;
     {
@@ -919,7 +939,7 @@ export class GoogleSheetsSyncService {
       }
     }
 
-    this.writeProbeResult = { at: new Date().toISOString(), get: sheetMeta, valuesGet, rawGetPublic, rawGetSheet, post, append, writeTiny, otherDoc, rawWrite, tabs, hotTab };
+    this.writeProbeResult = { at: new Date().toISOString(), get: sheetMeta, valuesGet, rawGetPublic, rawPostPublic, rawGetSheet, post, append, writeTiny, otherDoc, rawWrite, tabs, hotTab };
     console.log(
       `[write-probe] meta ${sheetMeta.ok ? 'OK' : 'FAIL'} ${sheetMeta.ms}ms` +
       ` | values.get ${valuesGet.ok ? 'OK' : 'FAIL'} ${valuesGet.ms}ms` +
@@ -1056,9 +1076,11 @@ export class GoogleSheetsSyncService {
     }
 
     try {
+      // Chỉ lấy tiêu đề tab (không kéo toàn bộ metadata) — request nhẹ, nhanh.
       const res = await this.sheetsCall('init.get', () =>
         this.sheetsClient!.spreadsheets.get({
           spreadsheetId: this.spreadsheetId,
+          fields: 'sheets.properties.title',
         })
       );
 
@@ -1089,7 +1111,49 @@ export class GoogleSheetsSyncService {
         createdSheets.push(...sheetsToCreate.map(s => s.title));
       }
 
+      // CHỈ ghi header cho tab MỚI TẠO hoặc tab có header lệch/thiếu.
+      // Trước đây mỗi lượt init (10 phút/lần) ghi lại header của cả 24 tab =
+      // 24 lệnh GHI, chiếm khoá ghi spreadsheet và làm append của hàng đợi
+      // timeout. Nay đọc 1 lần bằng batchGet rồi so sánh.
+      const needHeaderWrite: Array<{ def: typeof SHEETS_DEFINITIONS[number]; existingRows: string[][]; force: boolean }> = [];
+      const createdSet = new Set(createdSheets);
+      const toCheck = SHEETS_DEFINITIONS.filter(def => existingSheets.includes(def.title));
+
+      let headerRowsByTitle = new Map<string, string[]>();
+      if (toCheck.length > 0) {
+        try {
+          const batch: any = await this.sheetsCall('init.batchGetHeaders', () =>
+            this.sheetsClient!.spreadsheets.values.batchGet({
+              spreadsheetId: this.spreadsheetId,
+              ranges: toCheck.map(def => `'${def.title}'!A1:${GoogleSheetsSyncService.colLetter(def.headers.length)}1`),
+            })
+          );
+          const valueRanges: any[] = batch?.data?.valueRanges || [];
+          toCheck.forEach((def, i) => {
+            headerRowsByTitle.set(def.title, (valueRanges[i]?.values?.[0] as string[] | undefined) || []);
+          });
+        } catch (e: any) {
+          // Không đọc được header: bỏ qua so sánh, KHÔNG ghi (tránh đập khoá ghi).
+          console.warn('[GoogleSheetsSyncService] Không đọc được header để so sánh:', e?.message || e);
+        }
+      }
+
       for (const def of SHEETS_DEFINITIONS) {
+        if (createdSet.has(def.title)) continue; // header ghi ở vòng dưới (tab mới)
+        const current = headerRowsByTitle.get(def.title);
+        if (current === undefined) continue;
+        const same = def.headers.length === current.length
+          && def.headers.every((h, i) => String(h) === String(current[i] ?? ''));
+        if (!same) needHeaderWrite.push({ def, existingRows: [current], force: false });
+      }
+
+      const headersToWrite = [
+        ...SHEETS_DEFINITIONS.filter(def => createdSet.has(def.title)).map(def => ({ def, force: true })),
+        ...needHeaderWrite,
+      ];
+
+      for (const item of headersToWrite) {
+        const def = item.def;
         await this.sheetsCall(`init.header.${def.title}`, () =>
           this.sheetsClient!.spreadsheets.values.update({
             spreadsheetId: this.spreadsheetId,
@@ -1100,6 +1164,9 @@ export class GoogleSheetsSyncService {
             },
           })
         );
+      }
+      if (headersToWrite.length > 0) {
+        console.log(`[GoogleSheetsSyncService] Ghi header cho ${headersToWrite.length}/${SHEETS_DEFINITIONS.length} tab (còn lại đã đúng).`);
       }
 
       console.log(`[GoogleSheetsSyncService] Đã tạo ${createdSheets.length} sheet mới. Toàn bộ ${SHEETS_DEFINITIONS.length} tab sẵn sàng.`);

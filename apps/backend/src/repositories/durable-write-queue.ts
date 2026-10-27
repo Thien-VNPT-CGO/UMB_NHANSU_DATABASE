@@ -325,7 +325,14 @@ export class DurableWriteQueue {
             const deadIds = new Set(deadLettered.map(e => e.id));
             this.pending = this.pending.filter(e => !deadIds.has(e.id));
             this.deadLetters.push(...deadLettered);
-            if (this.deadLetters.length > 500) this.deadLetters = this.deadLetters.slice(-500);
+            // Trần dead-letter: đủ lớn để không mất dữ liệu nghiệp vụ khi Google
+            // chặn ghi kéo dài (trước đây 500 → vài giờ là tràn và mất bản ghi cũ).
+            const deadCap = Math.max(500, Number(process.env.DURABLE_DEAD_LETTER_MAX) || 5000);
+            if (this.deadLetters.length > deadCap) {
+              const dropped = this.deadLetters.length - deadCap;
+              this.deadLetters = this.deadLetters.slice(-deadCap);
+              this.logger.warn(`[durable-writes] Vượt trần dead-letter (${deadCap}) — bỏ ${dropped} bản ghi CŨ NHẤT. Tăng DURABLE_DEAD_LETTER_MAX nếu Google còn lỗi kéo dài.`);
+            }
             this.logger.error(
               `[durable-writes] Dead-letter ${deadLettered.length} bản ghi ${sheetTitle} sau ${this.maxAttempts} lần: ${error}`,
             );

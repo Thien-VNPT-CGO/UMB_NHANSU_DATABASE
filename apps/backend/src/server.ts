@@ -191,8 +191,14 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   {
     const probe = async () => {
       const syncService = (adapter as any).syncService;
+      // KHÔNG probe khi hàng đợi đang tạm nghỉ: probe cũng là lệnh GHI, bắn thêm
+      // lúc Google đang khoá chỉ làm khoá kéo dài và cạnh tranh với append thật.
+      const queue = (adapter as any).getPendingSheetsWrites?.() || null;
+      const paused = !!queue?.pausedUntil && new Date(queue.pausedUntil).getTime() > Date.now();
+      const backlog = Number(queue?.pending || 0);
       try {
-        if (syncService?.getStatus?.().isConfigured && typeof syncService.runWriteProbe === 'function') {
+        if (!paused && backlog < 200
+          && syncService?.getStatus?.().isConfigured && typeof syncService.runWriteProbe === 'function') {
           // Chỉ ghi thử 1 dòng AUDIT_LOG khi đường ghi đang có lỗi (tránh rác
           // nhật ký lúc mọi thứ bình thường).
           const includeAppend = !!syncService.getWriteStatus?.().lastWriteError;
@@ -201,9 +207,9 @@ server.listen(Number(PORT), '0.0.0.0', () => {
       } catch (err: any) {
         console.warn('[write-probe] error:', err?.message || err);
       }
-      // Lỗi ghi đang diễn ra → đo lại mỗi 3 phút để bắt đúng lúc; bình thường 15 phút.
+      // Lỗi ghi đang diễn ra → đo lại mỗi 5 phút; bình thường 15 phút.
       const failing = !!syncService?.getWriteStatus?.().lastWriteError;
-      setTimeout(probe, failing ? 3 * 60_000 : 15 * 60_000).unref?.();
+      setTimeout(probe, failing ? 5 * 60_000 : 15 * 60_000).unref?.();
     };
     setTimeout(probe, 45_000).unref?.();
   }
