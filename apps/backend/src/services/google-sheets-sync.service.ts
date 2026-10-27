@@ -4462,6 +4462,12 @@ export class GoogleSheetsSyncService {
     return data;
   }
 
+  /** Timeout riêng cho append: ghi theo lô (hàng trăm dòng) cần lâu hơn 20s mặc định. */
+  private appendTimeoutMs(): number {
+    const raw = Number(process.env.SHEETS_APPEND_TIMEOUT_MS);
+    return Number.isFinite(raw) && raw >= 2_000 ? raw : 30_000;
+  }
+
   public async appendRow(sheetTitle: string, row: any[]): Promise<boolean> {
     if (!this.isConfigured || !this.sheetsClient) return false;
 
@@ -4484,7 +4490,7 @@ export class GoogleSheetsSyncService {
           requestBody: {
             values: [row],
           },
-        })
+        }), this.appendTimeoutMs()
       );
       this.bumpRowCount(target);
       this.markWriteOk();
@@ -4517,7 +4523,7 @@ export class GoogleSheetsSyncService {
           requestBody: {
             values: rows,
           },
-        })
+        }), this.appendTimeoutMs()
       );
       for (let i = 0; i < rows.length; i++) this.bumpRowCount(target);
       this.markWriteOk();

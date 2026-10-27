@@ -33,6 +33,10 @@ export interface DurableWriteStats {
   lastError: string | null;
   lastSuccessAt: string | null;
   maxAttempts: number;
+  /** Số bản ghi tối đa gộp vào 1 lần append. */
+  batchMaxEntries: number;
+  /** Đang tạm nghỉ (chống bão lỗi/quota) tới thời điểm này. */
+  pausedUntil: string | null;
 }
 
 export interface DurableWriteQueueOptions {
@@ -45,6 +49,20 @@ export interface DurableWriteQueueOptions {
   now?: () => number;
   onDeadLetter?: (entry: DurableWriteEntry) => void;
   logger?: Pick<Console, 'log' | 'warn' | 'error'>;
+  /**
+   * Gộp tối đa bao nhiêu bản ghi CÙNG TAB vào 1 lần append (mặc định 100).
+   * Trước đây mỗi bản ghi = 1 request Google → hàng nghìn request dồn ứ, vượt
+   * quota 60 write/phút và timeout 20s khiến hàng đợi không bao giờ đuổi kịp.
+   */
+  batchMaxEntries?: number;
+  /** Số dòng tối đa trong 1 lần append (mặc định 500). */
+  batchMaxRows?: number;
+  /** Số lần gọi Google lỗi LIÊN TIẾP trước khi tạm nghỉ (mặc định 3). */
+  failureStreakLimit?: number;
+  /** Thời gian tạm nghỉ sau chuỗi lỗi liên tiếp (mặc định 60s). */
+  pauseMs?: number;
+  /** Ngưỡng tồn đọng để bắt đầu ưu tiên dữ liệu nghiệp vụ (mặc định 300). */
+  priorityThreshold?: number;
 }
 
 interface JournalFile {
@@ -60,6 +78,11 @@ export class DurableWriteQueue {
   private readonly intervalMs: number;
   private readonly maxAttempts: number;
   private readonly retryBaseMs: number;
+  private readonly batchMaxEntries: number;
+  private readonly batchMaxRows: number;
+  private readonly failureStreakLimit: number;
+  private readonly pauseMs: number;
+  private readonly priorityThreshold: number;
   private readonly now: () => number;
   private readonly onDeadLetter?: DurableWriteQueueOptions['onDeadLetter'];
   private readonly logger: Pick<Console, 'log' | 'warn' | 'error'>;
@@ -73,6 +96,18 @@ export class DurableWriteQueue {
   private persistChain: Promise<void> = Promise.resolve();
   private lastError: string | null = null;
   private lastSuccessAt: string | null = null;
+  /** Số lần gọi Google lỗi liên tiếp (không tính các lần đã có bản ghi khác thành công). */
+  private failureStreak = 0;
+  /** Nghỉ tới thời điểm này rồi mới gọi Google lại (chống bão timeout/quota). */
+  private pausedUntil = 0;
+  private wakeTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * Tab thông báo: giá trị thấp hơn dữ liệu nghiệp vụ (điểm danh, phiếu cập nhật
+   * ca, điều chỉnh công...). Khi hàng đợi đang tồn đọng, các tab này xếp sau để
+   * dữ liệu công/lịch lên Sheet trước.
+   */
+  private static readonly LOW_PRIORITY_TABS = new Set(['THONGBAO_NV', 'THONGBAO_GUI']);
 
   constructor(opts: DurableWriteQueueOptions) {
     this.append = opts.append;
@@ -80,6 +115,11 @@ export class DurableWriteQueue {
     this.intervalMs = Math.max(1_000, opts.intervalMs ?? 10_000);
     this.maxAttempts = Math.max(1, opts.maxAttempts ?? 12);
     this.retryBaseMs = Math.max(25, opts.retryBaseMs ?? 5_000);
+    this.batchMaxEntries = Math.max(1, opts.batchMaxEntries ?? 100);
+    this.batchMaxRows = Math.max(1, opts.batchMaxRows ?? 500);
+    this.failureStreakLimit = Math.max(1, opts.failureStreakLimit ?? 3);
+    this.pauseMs = Math.max(1_000, opts.pauseMs ?? 60_000);
+    this.priorityThreshold = Math.max(0, opts.priorityThreshold ?? 300);
     this.now = opts.now || (() => Date.now());
     this.onDeadLetter = opts.onDeadLetter;
     this.logger = opts.logger || console;
@@ -182,6 +222,10 @@ export class DurableWriteQueue {
       clearInterval(this.timer);
       this.timer = null;
     }
+    if (this.wakeTimer) {
+      clearTimeout(this.wakeTimer);
+      this.wakeTimer = null;
+    }
   }
 
   private backoffMs(attempts: number): number {
@@ -195,47 +239,112 @@ export class DurableWriteQueue {
     void this.processLoop();
   }
 
+  /**
+   * Chọn lô bản ghi đến hạn CÙNG TAB để gửi trong 1 request Google.
+   *
+   * - Chỉ gộp cùng `sheetTitle` (append vào tab khác nhau không gộp được).
+   * - Giữ nguyên thứ tự createdAt trong tab → dữ liệu lên Sheet đúng thứ tự.
+   * - Khi tồn đọng nhiều, tab thông báo bị xếp sau để điểm danh/phiếu ca/công
+   *   lên trước (không để 2.000 dòng thông báo chặn dữ liệu nghiệp vụ).
+   */
+  private takeBatch(now: number): { sheetTitle: string; entries: DurableWriteEntry[]; rows: any[][] } | null {
+    const due = this.pending
+      .filter(e => (e.nextAttemptAt || 0) <= now)
+      .sort((a, b) => {
+        if (this.pending.length > this.priorityThreshold) {
+          const aLow = DurableWriteQueue.LOW_PRIORITY_TABS.has(a.sheetTitle) ? 1 : 0;
+          const bLow = DurableWriteQueue.LOW_PRIORITY_TABS.has(b.sheetTitle) ? 1 : 0;
+          if (aLow !== bLow) return aLow - bLow;
+        }
+        const byTime = a.createdAt.localeCompare(b.createdAt);
+        return byTime !== 0 ? byTime : a.id.localeCompare(b.id);
+      });
+    const first = due[0];
+    if (!first) return null;
+
+    const entries: DurableWriteEntry[] = [];
+    const rows: any[][] = [];
+    for (const e of due) {
+      if (e.sheetTitle !== first.sheetTitle) continue;
+      if (entries.length >= this.batchMaxEntries) break;
+      if (entries.length > 0 && rows.length + e.rows.length > this.batchMaxRows) break;
+      entries.push(e);
+      for (const r of e.rows) rows.push(r);
+    }
+    return { sheetTitle: first.sheetTitle, entries, rows };
+  }
+
   private async processLoop(): Promise<void> {
     if (this.processing) return;
     this.processing = true;
     try {
       while (!this.stopped) {
         const now = this.now();
-        const entry = this.pending
-          .filter(e => (e.nextAttemptAt || 0) <= now)
-          .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
-        if (!entry) return;
+        if (this.pausedUntil > now) return; // đang nghỉ chống bão lỗi; finally sẽ hẹn giờ đánh thức
+        const batch = this.takeBatch(now);
+        if (!batch) return;
 
+        const { sheetTitle, entries, rows } = batch;
         let ok = false;
         let error: string | null = null;
         try {
-          ok = await this.append(entry.sheetTitle, entry.rows);
-          if (!ok) error = `APPEND_FAILED:${entry.sheetTitle}`;
+          ok = await this.append(sheetTitle, rows);
+          if (!ok) error = `APPEND_FAILED:${sheetTitle}`;
         } catch (err: any) {
-          error = `${entry.sheetTitle}: ${err?.message || err}`;
+          error = `${sheetTitle}: ${err?.message || err}`;
         }
 
         if (ok) {
-          this.pending = this.pending.filter(e => e.id !== entry.id);
+          const doneIds = new Set(entries.map(e => e.id));
+          this.pending = this.pending.filter(e => !doneIds.has(e.id));
           this.lastSuccessAt = new Date(this.now()).toISOString();
           this.lastError = null;
+          this.failureStreak = 0;
+          if (entries.length > 1) {
+            this.logger.log(
+              `[durable-writes] Đã gộp ${entries.length} lượt ghi (${rows.length} dòng) vào 1 lần append ${sheetTitle}.`,
+            );
+          }
         } else {
-          entry.attempts += 1;
-          entry.lastError = error || 'UNKNOWN_ERROR';
-          this.lastError = `${entry.sheetTitle}: ${entry.lastError}`;
-          if (entry.attempts >= this.maxAttempts) {
-            entry.deadLetteredAt = new Date(this.now()).toISOString();
-            this.pending = this.pending.filter(e => e.id !== entry.id);
-            this.deadLetters.push(entry);
+          this.failureStreak += 1;
+          this.lastError = `${sheetTitle}: ${error}`;
+          const deadLettered: DurableWriteEntry[] = [];
+          for (const entry of entries) {
+            entry.attempts += 1;
+            entry.lastError = error || 'UNKNOWN_ERROR';
+            if (entry.attempts >= this.maxAttempts) {
+              entry.deadLetteredAt = new Date(this.now()).toISOString();
+              deadLettered.push(entry);
+            } else {
+              entry.nextAttemptAt = this.now() + this.backoffMs(entry.attempts);
+            }
+          }
+          if (deadLettered.length) {
+            const deadIds = new Set(deadLettered.map(e => e.id));
+            this.pending = this.pending.filter(e => !deadIds.has(e.id));
+            this.deadLetters.push(...deadLettered);
             if (this.deadLetters.length > 500) this.deadLetters = this.deadLetters.slice(-500);
-            this.logger.error(`[durable-writes] Dead-letter ${entry.sheetTitle} sau ${entry.attempts} lần: ${entry.lastError}`);
-            try { this.onDeadLetter?.(entry); } catch (e: any) {
-              this.logger.warn('[durable-writes] onDeadLetter lỗi:', e?.message || e);
+            this.logger.error(
+              `[durable-writes] Dead-letter ${deadLettered.length} bản ghi ${sheetTitle} sau ${this.maxAttempts} lần: ${error}`,
+            );
+            for (const entry of deadLettered) {
+              try { this.onDeadLetter?.(entry); } catch (e: any) {
+                this.logger.warn('[durable-writes] onDeadLetter lỗi:', e?.message || e);
+              }
             }
           } else {
-            entry.nextAttemptAt = this.now() + this.backoffMs(entry.attempts);
             this.logger.warn(
-              `[durable-writes] Ghi ${entry.sheetTitle} lỗi lần ${entry.attempts}/${this.maxAttempts}, thử lại sau ${Math.round((entry.nextAttemptAt - this.now()) / 1000)}s: ${entry.lastError}`,
+              `[durable-writes] Ghi ${entries.length} bản ghi ${sheetTitle} lỗi (liên tiếp ${this.failureStreak}/${this.failureStreakLimit}), thử lại sau ${Math.max(1, Math.round((entries[0].nextAttemptAt - this.now()) / 1000))}s: ${error}`,
+            );
+          }
+          // Google timeout/quota kéo dài: nghỉ một nhịp thay vì bắn tiếp từng lô
+          // 20-30s/lần (vừa tốn quota vừa không bao giờ hồi).
+          if (this.failureStreak >= this.failureStreakLimit) {
+            const streak = this.failureStreak;
+            this.pausedUntil = this.now() + this.pauseMs;
+            this.failureStreak = 0;
+            this.logger.warn(
+              `[durable-writes] Lỗi liên tiếp ${streak} lần — tạm nghỉ ${Math.round(this.pauseMs / 1000)}s (còn ${this.pending.length} bản ghi chờ).`,
             );
           }
         }
@@ -244,14 +353,26 @@ export class DurableWriteQueue {
     } finally {
       this.processing = false;
       if (this.stopped) return;
-      // Có task mới được thêm trong lúc đang xử lý hoặc đang chờ backoff.
-      if (this.pending.length) {
-        const nextAt = Math.min(...this.pending.map(e => e.nextAttemptAt || 0));
-        const wait = Math.max(25, nextAt - this.now());
-        const wake = setTimeout(() => this.kick(), wait);
-        (wake as any)?.unref?.();
-      }
+      this.scheduleWake();
     }
+  }
+
+  /** Hẹn lần chạy kế tiếp: sớm nhất giữa backoff của bản ghi và thời gian tạm nghỉ. */
+  private scheduleWake(): void {
+    if (this.wakeTimer) {
+      clearTimeout(this.wakeTimer);
+      this.wakeTimer = null;
+    }
+    if (!this.pending.length) return;
+    const now = this.now();
+    const nextDue = Math.min(...this.pending.map(e => e.nextAttemptAt || 0));
+    const target = Math.max(nextDue, this.pausedUntil || 0);
+    const wait = Math.max(25, target - now);
+    this.wakeTimer = setTimeout(() => {
+      this.wakeTimer = null;
+      this.kick();
+    }, wait);
+    (this.wakeTimer as any)?.unref?.();
   }
 
   /** Xả tối đa các task đến hạn (dùng khi SIGTERM hoặc test). */
@@ -294,6 +415,8 @@ export class DurableWriteQueue {
       lastError: this.lastError,
       lastSuccessAt: this.lastSuccessAt,
       maxAttempts: this.maxAttempts,
+      batchMaxEntries: this.batchMaxEntries,
+      pausedUntil: this.pausedUntil > this.now() ? new Date(this.pausedUntil).toISOString() : null,
     };
   }
 
@@ -305,6 +428,10 @@ export class DurableWriteQueue {
   public async retryDeadLetters(): Promise<number> {
     if (!this.deadLetters.length) return 0;
     const count = this.deadLetters.length;
+    // Thao tác tay = người vận hành đã xử lý nguyên nhân (quota/mạng): bỏ nghỉ
+    // và thử lại ngay thay vì chờ hết cooldown.
+    this.pausedUntil = 0;
+    this.failureStreak = 0;
     for (const entry of this.deadLetters) {
       entry.attempts = 0;
       entry.nextAttemptAt = 0;

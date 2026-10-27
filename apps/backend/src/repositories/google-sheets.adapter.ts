@@ -80,9 +80,23 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
       append: (sheetTitle, rows) => this.syncService.appendRows(sheetTitle, rows),
       filePath: process.env.PENDING_WRITES_FILE?.trim() || path.resolve(process.cwd(), 'data/pending-writes.json'),
       maxAttempts,
+      // Gộp nhiều bản ghi CÙNG TAB vào 1 request (mặc định 100 bản ghi/500 dòng).
+      // Trước đây 1 bản ghi = 1 request → 2.600 bản ghi tồn đọng không bao giờ
+      // đuổi kịp quota ghi của Google.
+      batchMaxEntries: Math.max(1, Number(process.env.DURABLE_APPEND_BATCH_ENTRIES) || 100),
+      batchMaxRows: Math.max(1, Number(process.env.DURABLE_APPEND_BATCH_ROWS) || 500),
+      failureStreakLimit: Math.max(1, Number(process.env.DURABLE_WRITE_FAILURE_STREAK) || 3),
+      pauseMs: Math.max(1_000, Number(process.env.DURABLE_WRITE_PAUSE_MS) || 60_000),
+      priorityThreshold: Number.isFinite(Number(process.env.DURABLE_WRITE_PRIORITY_THRESHOLD))
+        ? Math.max(0, Number(process.env.DURABLE_WRITE_PRIORITY_THRESHOLD))
+        : 300,
       onDeadLetter: (entry) => {
         console.error(`[GoogleSheetsAdapter] Dead-letter ghi ${entry.sheetTitle} sau ${entry.attempts} lần — chạy full-sync bù.`);
-        this.scheduleFullSync(`durable-dead-letter:${entry.sheetTitle}`);
+        // Thông báo không đáng đẩy cả 24 tab (dễ dội quota); dữ liệu nghiệp vụ
+        // (điểm danh, phiếu ca, công...) thì cần full-sync bù ngay.
+        if (!/^THONGBAO_/i.test(String(entry.sheetTitle || ''))) {
+          this.scheduleFullSync(`durable-dead-letter:${entry.sheetTitle}`);
+        }
       },
     });
 
@@ -509,11 +523,23 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   // Dồn full-sync: ghi 1 dòng (append) chạy ngay; ghi nguyên 13 tab (nặng, tốn quota)
   // thì dồn tối đa 1 lần/10s — memory + socket đã tức thì cho UI, Sheet đuổi theo sau.
   private lastFullSyncAt = 0;
+  // Chống "bão full-sync": trước đây mỗi mutation/dead-letter đẩy 1 lượt (24 tab)
+  // vào chuỗi nền → hàng trăm lượt xếp hàng, đốt hết quota ghi khiến append của
+  // hàng đợi bền vững timeout liên tục. Nay chỉ 1 lượt chạy, các yêu cầu phát
+  // sinh trong lúc chạy gộp thành 1 lượt bù (full sync luôn đọc bộ nhớ hiện tại).
+  private fullSyncInFlight = false;
+  private fullSyncDirty = false;
 
   private scheduleFullSync(label: string) {
     if (!this.isConfigured) return;
     // Đặt cờ dirty: bộ nhớ có thay đổi chưa chắc đã lên Sheet (auto-push định kỳ dựa cờ này).
     this.markDirtySoonPush();
+    if (this.fullSyncInFlight) {
+      this.fullSyncDirty = true;
+      return;
+    }
+    this.fullSyncInFlight = true;
+    this.fullSyncDirty = false;
     this.pendingSheetsWrites++;
     const run = async () => {
       const wait = Math.max(0, 10000 - (Date.now() - this.lastFullSyncAt));
@@ -533,6 +559,11 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
       })
       .finally(() => {
         this.pendingSheetsWrites = Math.max(0, this.pendingSheetsWrites - 1);
+        this.fullSyncInFlight = false;
+        if (this.fullSyncDirty) {
+          this.fullSyncDirty = false;
+          this.scheduleFullSync('coalesced');
+        }
       });
   }
 
