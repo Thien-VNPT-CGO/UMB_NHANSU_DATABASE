@@ -566,10 +566,67 @@ export class GoogleSheetsSyncService {
       lastPullError: this.lastPullError,
       pullStartedAt: this.pullStartedAt ? new Date(this.pullStartedAt).toISOString() : null,
       ...this.getWriteStatus(),
+      // Chẩn đoán "append treo 30s": đo riêng GET và POST (no-op) tới Google API.
+      writeProbe: this.writeProbeResult,
       sheetsCount: SHEETS_DEFINITIONS.length,
       definedTabs: SHEETS_DEFINITIONS.map(d => d.title),
       hasFullBatchCache: !!this.lastFullBatch,
     };
+  }
+
+  private writeProbeResult: {
+    at: string;
+    get: { ok: boolean; ms: number; error: string | null };
+    post: { ok: boolean; ms: number; error: string | null };
+  } | null = null;
+
+  public getWriteProbe() {
+    return this.writeProbeResult;
+  }
+
+  /**
+   * Đo nhanh khả năng ĐỌC và GHI tới Google Sheets API.
+   *
+   * Lý do: hàng đợi append báo `SHEETS_TIMEOUT:append.X (30000ms)` liên tục
+   * trong khi pull (đọc) vẫn chạy → cần biết POST có tới được Google không.
+   * Lượt POST dùng `batchUpdate` với `requests: []` (no-op, KHÔNG sửa dữ liệu).
+   */
+  public async runWriteProbe(): Promise<typeof this.writeProbeResult> {
+    if (!this.isConfigured || !this.sheetsClient) return null;
+    const label = (e: any) => String(e?.message || e || 'UNKNOWN').slice(0, 300);
+
+    const getStart = Date.now();
+    let getRes: { ok: boolean; ms: number; error: string | null } = { ok: false, ms: 0, error: null };
+    try {
+      await this.sheetsCall('probe.get', () => this.sheetsClient!.spreadsheets.get({
+        spreadsheetId: this.spreadsheetId,
+        fields: 'properties.title',
+      }), 15000);
+      getRes = { ok: true, ms: Date.now() - getStart, error: null };
+    } catch (e: any) {
+      getRes = { ok: false, ms: Date.now() - getStart, error: label(e) };
+    }
+
+    const postStart = Date.now();
+    let postRes: { ok: boolean; ms: number; error: string | null } = { ok: false, ms: 0, error: null };
+    try {
+      await this.sheetsCall('probe.noopBatchUpdate', () => this.sheetsClient!.spreadsheets.batchUpdate({
+        spreadsheetId: this.spreadsheetId,
+        requestBody: { requests: [] },
+      }), 15000);
+      postRes = { ok: true, ms: Date.now() - postStart, error: null };
+    } catch (e: any) {
+      postRes = { ok: false, ms: Date.now() - postStart, error: label(e) };
+    }
+
+    this.writeProbeResult = { at: new Date().toISOString(), get: getRes, post: postRes };
+    console.log(
+      `[write-probe] GET ${getRes.ok ? 'OK' : 'FAIL'} ${getRes.ms}ms` +
+      ` | POST ${postRes.ok ? 'OK' : 'FAIL'} ${postRes.ms}ms` +
+      (getRes.error ? ` | getErr=${getRes.error}` : '') +
+      (postRes.error ? ` | postErr=${postRes.error}` : ''),
+    );
+    return this.writeProbeResult;
   }
 
   /**

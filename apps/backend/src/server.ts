@@ -181,6 +181,18 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   const syncIntervalMs = Number(process.env.SHEETS_SYNC_INTERVAL_MS) || 5_000;
   setInterval(autoPullSheetsTick, syncIntervalMs);
 
+  // Chẩn đoán đường GHI Google: khi hàng đợi append báo timeout, /health cần
+  // phân biệt "Google chặn POST" hay "Sheet/quota" — probe chạy nền, POST no-op.
+  {
+    const probe = () => {
+      const syncService = (adapter as any).syncService;
+      if (!syncService?.getStatus?.().isConfigured || typeof syncService.runWriteProbe !== 'function') return;
+      syncService.runWriteProbe().catch((err: any) => console.warn('[write-probe] error:', err?.message || err));
+    };
+    setTimeout(probe, 45_000);
+    setInterval(probe, 15 * 60_000);
+  }
+
   // PUSH ngược toàn bộ tabs lên Sheets định kỳ: chỉ chạy khi bộ nhớ có thay đổi
   // CHƯA lên Sheet (cờ dirty do adapter đặt). Hết hạn tác vụ push khi hệ thống
   // nhàn rỗi — tab thiếu trên Sheet vẫn được tự tạo lại + push dữ liệu đầy đủ.

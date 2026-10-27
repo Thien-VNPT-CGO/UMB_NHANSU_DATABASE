@@ -5736,6 +5736,20 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   // --- TÍCH HỢP GOOGLE SHEETS (sync-now thủ công, có cooldown chống vượt quota) ---
   let lastSyncNowAt = 0;
+
+  // Chẩn đoán đường ghi: đo GET + POST (no-op batchUpdate) tới Google Sheets API.
+  // Dùng khi log báo SHEETS_TIMEOUT:append.X để biết Google có nhận POST không.
+  app.post('/admin/integrations/probe-write', authMiddleware, requireRole(['ADMIN', 'HR']), async (_req, res) => {
+    try {
+      const syncService = (adapter as any).syncService;
+      const probe = await syncService?.runWriteProbe?.();
+      if (!probe) return res.status(503).json({ error: 'SHEETS_NOT_CONFIGURED' });
+      res.json(probe);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post('/admin/integrations/sync-now', authMiddleware, requireRole(['ADMIN', 'HR', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
     try {
       // Chống bấm sync-now dồn dập (tay + nhiều máy + full-sync nền): full sync
