@@ -1,1 +1,0 @@
-export const HR_DISPATCH_BONUS_VND = 30000;

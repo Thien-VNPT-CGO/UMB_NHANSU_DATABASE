@@ -27,7 +27,12 @@ sync_branch() {
   after="$(git rev-parse "origin/$branch" 2>/dev/null || echo '')"
   if [ -n "$after" ] && [ "$before" != "$after" ]; then
     LOG "[$label] Phat hien commit moi ($before .. ${after:0:7}) — chay deploy..."
-    git pull --ff-only origin "$branch" >>/var/log/ubm-autodeploy.log 2>&1 || { LOG "[$label] git pull FAIL"; return 1; }
+    # Dong bo CUNG theo origin: file build (packages/shared/dist) tung lam cay git
+    # "dirty" khien `git pull --ff-only` fail moi phut -> prod ket o commit cu.
+    # checkout -f + reset --hard bo qua thay doi do build sinh ra; .env (untracked)
+    # va data/ van duoc giu nguyen.
+    git checkout -f "$branch" >>/var/log/ubm-autodeploy.log 2>&1 || git checkout -f -B "$branch" "origin/$branch" >>/var/log/ubm-autodeploy.log 2>&1 || { LOG "[$label] checkout FAIL"; return 1; }
+    git reset --hard "origin/$branch" >>/var/log/ubm-autodeploy.log 2>&1 || { LOG "[$label] reset FAIL"; return 1; }
     if bash "$script" >>/var/log/ubm-autodeploy.log 2>&1; then
       LOG "[$label] DEPLOY OK ($after)"
     else

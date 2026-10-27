@@ -9,10 +9,14 @@ cd "$(dirname "$0")/../.."
 
 API_BASE="https://umbomilk-nhansu-diemdanh.duckdns.org/api"
 
-echo "==> 1. Lay code moi nhat nhanh vps"
+echo "==> 1. Dong bo code moi nhat nhanh vps"
 git fetch origin vps 2>/dev/null || true
-git checkout vps
-git pull --ff-only 2>/dev/null || true
+git checkout -f vps 2>/dev/null || git checkout -f -B vps origin/vps
+# reset --hard: bo thay doi do build sinh ra trong thu muc deploy (VD
+# packages/shared/dist bi `npm run build:shared` ghi lai) de khong bi chan
+# "local changes would be overwritten" -> prod ket o commit cu.
+# File untracked nhu apps/backend/.env, data/ van duoc giu nguyen.
+git reset --hard origin/vps
 
 echo "==> 2. Build 2 web tro ve API VPS (${API_BASE})"
 export GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "")

@@ -7,7 +7,11 @@ node_modules/
 dist/
 build/
 *.tsbuildinfo
-!packages/shared/dist/**
+# packages/shared/dist + dist-esm la SAN PHAM BUILD (Docker/CI tu build tu src).
+# Truoc day chung duoc commit khien moi lan `npm run build:shared` tren VPS lam
+# cay git "dirty" -> `git pull --ff-only` fail -> autodeploy ket o commit cu.
+packages/shared/dist/
+packages/shared/dist-esm/
 
 # Environment variables & secrets
 .env
