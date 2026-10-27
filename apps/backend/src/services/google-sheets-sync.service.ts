@@ -210,6 +210,8 @@ function mergeById<T extends Record<string, any>>(memory: T[], sheets: T[], idKe
 export class GoogleSheetsSyncService {
   private sheetsClient: sheets_v4.Sheets | null = null;
   private driveClient: drive_v3.Drive | null = null;
+  /** JWT auth gốc — dùng cho probe raw fetch (không qua googleapis) để loại trừ lỗi client. */
+  private authClient: any = null;
   private spreadsheetId: string;
   private candidateSpreadsheetId: string;
   /** Cache rows ứng viên: tab form đổi chậm, đọc mỗi pull 5s sẽ vượt quota
@@ -603,6 +605,7 @@ export class GoogleSheetsSyncService {
           'https://www.googleapis.com/auth/drive',
         ],
       });
+      this.authClient = auth;
 
       // Chống request ghi "zombie" giữ khoá spreadsheet: đặt timeout HTTP thật
       // (huỷ socket) + tắt retry ẩn của gaxios (retry ẩn nhân bản lệnh ghi và
@@ -664,6 +667,8 @@ export class GoogleSheetsSyncService {
     writeTiny: { ok: boolean; ms: number; status: number | null; error: string | null } | null;
     /** Ghi vào spreadsheet TẠM (tự xoá): tách lỗi do tài khoản/quota khỏi lỗi do tài liệu chính. */
     otherDoc: { ok: boolean; ms: number; status: number | null; error: string | null } | null;
+    /** Ghi 1 ô bằng fetch RAW (không qua googleapis) — loại trừ lỗi thư viện/client. */
+    rawWrite: { ok: boolean; ms: number; status: number | null; error: string | null } | null;
     /** Kích thước lưới từng tab (metadata) — phát hiện tab phình/stray rows. */
     tabs: Array<{ title: string; rows: number; cols: number }>;
     /** Đọc thử đúng tab đang lỗi ghi: số dòng dữ liệu thật + thời gian đọc. */
@@ -770,6 +775,7 @@ export class GoogleSheetsSyncService {
     let append: { ok: boolean; ms: number; error: string | null } | null = null;
     let writeTiny: { ok: boolean; ms: number; status: number | null; error: string | null } | null = null;
     let otherDoc: { ok: boolean; ms: number; status: number | null; error: string | null } | null = null;
+    let rawWrite: { ok: boolean; ms: number; status: number | null; error: string | null } | null = null;
     if (opts.includeAppend) {
       // Ghi lại đúng giá trị header A1 của AUDIT_LOG (không đổi dữ liệu) với
       // timeout 60s: nếu thành công thì Google chỉ CHẬM; nếu trả 429/403 thì rõ
@@ -823,6 +829,42 @@ export class GoogleSheetsSyncService {
         }
       }
 
+      // Ghi RAW bằng fetch (không qua googleapis): nếu cách này nhanh/khác kết quả
+      // thì lỗi nằm ở client/thư viện chứ không phải Google.
+      const rawStart = Date.now();
+      try {
+        const tokenRes: any = await this.authClient?.getAccessToken?.();
+        const token = tokenRes?.token;
+        if (!token) throw new Error('NO_ACCESS_TOKEN');
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 45_000);
+        try {
+          const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(this.spreadsheetId)}/values/${encodeURIComponent("AUDIT_LOG!A1")}?valueInputOption=RAW`;
+          const res = await fetch(url, {
+            method: 'PUT',
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ values: [['Mã Nhật Ký']] }),
+            signal: controller.signal,
+          });
+          const text = await res.text();
+          rawWrite = {
+            ok: res.ok,
+            ms: Date.now() - rawStart,
+            status: res.status,
+            error: res.ok ? null : text.slice(0, 300),
+          };
+        } finally {
+          clearTimeout(timer);
+        }
+      } catch (e: any) {
+        rawWrite = {
+          ok: false,
+          ms: Date.now() - rawStart,
+          status: e?.response?.status ?? null,
+          error: this.describeGoogleError(e),
+        };
+      }
+
       // Append chỉ có ý nghĩa khi ghi cơ bản đã thông.
       if (writeTiny.ok) {
         const nowIso = new Date().toISOString();
@@ -846,13 +888,14 @@ export class GoogleSheetsSyncService {
       }
     }
 
-    this.writeProbeResult = { at: new Date().toISOString(), get: sheetMeta, valuesGet, post, append, writeTiny, otherDoc, tabs, hotTab };
+    this.writeProbeResult = { at: new Date().toISOString(), get: sheetMeta, valuesGet, post, append, writeTiny, otherDoc, rawWrite, tabs, hotTab };
     console.log(
       `[write-probe] meta ${sheetMeta.ok ? 'OK' : 'FAIL'} ${sheetMeta.ms}ms` +
       ` | values.get ${valuesGet.ok ? 'OK' : 'FAIL'} ${valuesGet.ms}ms` +
       ` | batchUpdate ${post.ok ? 'OK' : 'FAIL'} ${post.ms}ms` +
       (writeTiny ? ` | writeTiny ${writeTiny.ok ? 'OK' : 'FAIL'} ${writeTiny.ms}ms${writeTiny.status ? ` HTTP${writeTiny.status}` : ''}` : '') +
       (otherDoc ? ` | otherDoc ${otherDoc.ok ? 'OK' : 'FAIL'} ${otherDoc.ms}ms${otherDoc.status ? ` HTTP${otherDoc.status}` : ''}` : '') +
+      (rawWrite ? ` | rawWrite ${rawWrite.ok ? 'OK' : 'FAIL'} ${rawWrite.ms}ms${rawWrite.status ? ` HTTP${rawWrite.status}` : ''}` : '') +
       (append ? ` | append ${append.ok ? 'OK' : 'FAIL'} ${append.ms}ms` : '') +
       (hotTab ? ` | hotTab ${hotTab.title} ${hotTab.ok ? `${hotTab.dataRows} dòng` : 'FAIL'} ${hotTab.ms}ms` : '') +
       (append?.error ? ` | appendErr=${append.error}` : ''),
