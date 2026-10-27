@@ -661,6 +661,10 @@ export class GoogleSheetsSyncService {
     at: string;
     get: { ok: boolean; ms: number; error: string | null };
     valuesGet: { ok: boolean; ms: number; error: string | null };
+    /** GET công khai tới Google API (không auth) — đo đường mạng VPS→Google. */
+    rawGetPublic: { ok: boolean; ms: number; error: string | null } | null;
+    /** GET có auth tới spreadsheet, dùng fetch trực tiếp (không googleapis). */
+    rawGetSheet: { ok: boolean; ms: number; status: number | null; error: string | null } | null;
     post: { ok: boolean; ms: number; error: string | null };
     append: { ok: boolean; ms: number; error: string | null } | null;
     /** Ghi 1 ô với timeout dài (120s) — phân biệt "chậm" với "quota/403". */
@@ -715,6 +719,33 @@ export class GoogleSheetsSyncService {
       spreadsheetId: this.spreadsheetId,
       range: `'AUDIT_LOG'!A1:A3`,
     }), 'probe.valuesGet');
+
+    // Đo đường mạng thuần (không auth) và GET có auth bằng fetch trực tiếp:
+    // nếu cả hai đều chậm/treo thì lỗi ở mạng VPS→Google, không phải tài liệu.
+    const rawGetPublic = await time(async () => {
+      const res = await fetch('https://www.googleapis.com/discovery/v1/apis?preferred=true', {
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    }, 'probe.rawGetPublic', 16000);
+
+    let rawGetSheet: { ok: boolean; ms: number; status: number | null; error: string | null } | null = null;
+    {
+      const start = Date.now();
+      try {
+        const tokenRes: any = await this.authClient?.getAccessToken?.();
+        const token = tokenRes?.token;
+        if (!token) throw new Error('NO_ACCESS_TOKEN');
+        const res = await fetch(
+          `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(this.spreadsheetId)}?fields=properties.title`,
+          { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(20000) },
+        );
+        const text = res.ok ? '' : (await res.text()).slice(0, 200);
+        rawGetSheet = { ok: res.ok, ms: Date.now() - start, status: res.status, error: res.ok ? null : text };
+      } catch (e: any) {
+        rawGetSheet = { ok: false, ms: Date.now() - start, status: null, error: this.describeGoogleError(e) };
+      }
+    }
     // Metadata 1 lần: sheetId của AUDIT_LOG (cho batchUpdate no-op) + kích thước
     // lưới toàn bộ tab (gridProperties.rowCount) để thấy tab nào phình bất thường.
     let auditSheetId: number | null = null;
@@ -751,7 +782,7 @@ export class GoogleSheetsSyncService {
     const hotTitle = /append\.([A-Z0-9_]+)/i.exec(String(this.lastWriteError || ''))?.[1]
       || /^([A-Z0-9_]+):/i.exec(String(this.lastWriteError || ''))?.[1]
       || null;
-    if (hotTitle) {
+    if (hotTitle && valuesGet.ok) {
       const start = Date.now();
       try {
         const res: any = await this.sheetsCall(`probe.hotTab.${hotTitle}`, () =>
@@ -787,7 +818,7 @@ export class GoogleSheetsSyncService {
           range: `'AUDIT_LOG'!A1`,
           valueInputOption: 'RAW',
           requestBody: { values: [['Mã Nhật Ký']] },
-        }, { timeout: 60_000 } as any), 65_000);
+        }, { timeout: 30_000 } as any), 35_000);
         writeTiny = { ok: true, ms: Date.now() - tinyStart, status: 200, error: null };
       } catch (e: any) {
         writeTiny = {
@@ -837,7 +868,7 @@ export class GoogleSheetsSyncService {
         const token = tokenRes?.token;
         if (!token) throw new Error('NO_ACCESS_TOKEN');
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 45_000);
+        const timer = setTimeout(() => controller.abort(), 30_000);
         try {
           const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(this.spreadsheetId)}/values/${encodeURIComponent("AUDIT_LOG!A1")}?valueInputOption=RAW`;
           const res = await fetch(url, {
@@ -888,10 +919,12 @@ export class GoogleSheetsSyncService {
       }
     }
 
-    this.writeProbeResult = { at: new Date().toISOString(), get: sheetMeta, valuesGet, post, append, writeTiny, otherDoc, rawWrite, tabs, hotTab };
+    this.writeProbeResult = { at: new Date().toISOString(), get: sheetMeta, valuesGet, rawGetPublic, rawGetSheet, post, append, writeTiny, otherDoc, rawWrite, tabs, hotTab };
     console.log(
       `[write-probe] meta ${sheetMeta.ok ? 'OK' : 'FAIL'} ${sheetMeta.ms}ms` +
       ` | values.get ${valuesGet.ok ? 'OK' : 'FAIL'} ${valuesGet.ms}ms` +
+      ` | net ${rawGetPublic.ok ? 'OK' : 'FAIL'} ${rawGetPublic.ms}ms` +
+      ` | rawGetSheet ${rawGetSheet ? (rawGetSheet.ok ? 'OK' : 'FAIL') + ' ' + rawGetSheet.ms + 'ms' : 'n/a'}` +
       ` | batchUpdate ${post.ok ? 'OK' : 'FAIL'} ${post.ms}ms` +
       (writeTiny ? ` | writeTiny ${writeTiny.ok ? 'OK' : 'FAIL'} ${writeTiny.ms}ms${writeTiny.status ? ` HTTP${writeTiny.status}` : ''}` : '') +
       (otherDoc ? ` | otherDoc ${otherDoc.ok ? 'OK' : 'FAIL'} ${otherDoc.ms}ms${otherDoc.status ? ` HTTP${otherDoc.status}` : ''}` : '') +

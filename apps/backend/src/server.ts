@@ -1,6 +1,11 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+import dns from 'dns';
+// VPS có thể có IPv6 "nửa vời" (SYN rơi): Node 18+ ưu tiên IPv6 nên kết nối tới
+// Google API treo tới khi timeout trong khi IPv4 vẫn tốt. Ép IPv4 cho outbound.
+try { dns.setDefaultResultOrder((process.env.GOOGLE_DNS_ORDER as any) || 'ipv4first'); } catch { /* Node cũ: bỏ qua */ }
+
 import http from 'http';
 import { Server } from 'socket.io';
 import { createApp } from './app.js';
