@@ -33,7 +33,7 @@ function dayOf(value: unknown): string {
 
 function shiftKey(shift: ShiftLike): string {
   return [
-    String(shift.employee_id || ''),
+    String(shift.employee_id ?? '').trim(),
     dayOf(shift.date),
     String(shift.shift_code || '').trim().toUpperCase(),
   ].join('|');
@@ -106,14 +106,14 @@ export function findLiveShift<T extends ShiftLike>(
   shiftCode: string,
   excludeAssignmentId?: string,
 ): T | undefined {
-  const wantEmp = String(employeeId || '');
+  const wantEmp = String(employeeId ?? '').trim();
   const wantDay = dayOf(date);
   const wantCode = String(shiftCode || '').trim().toUpperCase();
   const exclude = String(excludeAssignmentId || '');
   return (shifts || []).find((s) => {
     if (!s || String(s.status || '').toUpperCase() === 'CANCELLED') return false;
     if (exclude && String(s.assignment_id || '') === exclude) return false;
-    return String(s.employee_id || '') === wantEmp
+    return String(s.employee_id ?? '').trim() === wantEmp
       && dayOf(s.date) === wantDay
       && String(s.shift_code || '').trim().toUpperCase() === wantCode;
   });

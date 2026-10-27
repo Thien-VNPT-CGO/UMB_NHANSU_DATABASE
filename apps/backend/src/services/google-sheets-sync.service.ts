@@ -1311,8 +1311,8 @@ export class GoogleSheetsSyncService {
             const rawSt = String(r[4] || '').trim().toUpperCase();
             const isLocked = rawSt === 'LOCKED' || rawSt.includes('KHÓA') || rawSt.includes('KHOA');
             return {
-            account_id: r[0] || `ACC_${uuidv4().slice(0, 8)}`,
-            employee_id: r[1] || '',
+            account_id: String(r[0] ?? '').trim() || `ACC_${uuidv4().slice(0, 8)}`,
+            employee_id: String(r[1] ?? '').trim(),
             phone_normalized: canonicalPhone(r[2] || ''),
             role: (r[3] as any) || 'EMPLOYEE',
             account_status: (isLocked ? 'LOCKED' : 'ACTIVE') as any,
@@ -1556,16 +1556,19 @@ export class GoogleSheetsSyncService {
         counts.shifts = fallback.shifts.length;
       } else if (shiftRows.length > 0) {
         const mappedShifts = shiftRows.map(r => ({
-          assignment_id: r[0] || `SHF_${uuidv4().slice(0, 8)}`,
-          employee_id: r[1],
-          branch_id: r[2] || 'CN130',
-          shift_code: (r[3] as any) || 'CA_1',
+          assignment_id: String(r[0] ?? '').trim() || `SHF_${uuidv4().slice(0, 8)}`,
+          // Mã NV phải trim về đúng chuẩn NHAN_VIEN_MASTER (cũng đã trim). Ô Sheet
+          // dán tay hay bị dính khoảng trắng/số -> trước đây ca vẫn nằm trên lưới
+          // chi nhánh nhưng /me/schedule so khớp tuyệt đối nên NV báo "không có ca".
+          employee_id: String(r[1] ?? '').trim(),
+          branch_id: String(r[2] ?? '').trim() || 'CN130',
+          shift_code: String(r[3] ?? '').trim().toUpperCase() || 'CA_1',
           date: normSheetDate(r[4]) || new Date().toISOString().split('T')[0],
           // start_at/end_at cũng dính USER_ENTERED locale như client_time — normalize
           // để reload không sai giờ mở cổng/khóa ca 3 tiếng.
           start_at: normSheetDateTime(r[5]) || r[5] || new Date().toISOString(),
           end_at: normSheetDateTime(r[6]) || r[6] || new Date().toISOString(),
-          status: (r[7] as any) || 'PUBLISHED',
+          status: String(r[7] ?? '').trim().toUpperCase() || 'PUBLISHED',
           schedule_version: Number(r[8]) || 1,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -1630,12 +1633,12 @@ export class GoogleSheetsSyncService {
           // bản ghi PENDING từ trước thời điểm auto-approve được chữa thành APPROVED.
           if (leaveType === 'HANG_TUAN' && status === 'PENDING') status = 'APPROVED';
           return {
-            request_id: r[0] || `LV_${uuidv4().slice(0, 8)}`,
-            employee_id: r[1],
-            branch_id: r[2] || 'CN130',
+            request_id: String(r[0] ?? '').trim() || `LV_${uuidv4().slice(0, 8)}`,
+            employee_id: String(r[1] ?? '').trim(),
+            branch_id: String(r[2] ?? '').trim() || 'CN130',
             leave_type: leaveType,
             requested_date: normSheetDate(r[4]) || new Date().toISOString().split('T')[0],
-            shift_code: (r[5] as any) || undefined,
+            shift_code: (String(r[5] ?? '').trim() || undefined) as any,
             reason: r[6] || '',
             status,
             reviewed_by: r[8] || (status === 'APPROVED' && leaveType === 'HANG_TUAN' ? 'SYSTEM' : undefined),
@@ -1831,10 +1834,10 @@ export class GoogleSheetsSyncService {
           const serverIso = normSheetDateTime(r[4]);
           const fallbackIso = new Date().toISOString();
           return {
-            event_id: r[0] || `ATT_${uuidv4().slice(0, 8)}`,
-            request_id: r[10] || uuidv4(),
-            assignment_id: r[1] || '',
-            employee_id: r[2] || '',
+            event_id: String(r[0] ?? '').trim() || `ATT_${uuidv4().slice(0, 8)}`,
+            request_id: String(r[10] ?? '').trim() || uuidv4(),
+            assignment_id: String(r[1] ?? '').trim(),
+            employee_id: String(r[2] ?? '').trim(),
             branch_id: '',
             type: (r[3] as any) || 'CHECK_IN',
             // Ưu tiên giờ máy khách (kèm +07:00) để lọc đúng ngày VN; dòng cũ lấy giờ server

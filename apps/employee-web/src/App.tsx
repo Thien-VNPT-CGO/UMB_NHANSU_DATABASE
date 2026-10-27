@@ -299,6 +299,26 @@ function toISODate(input: unknown): string {
 }
 
 /**
+ * Chữ ký danh sách ca (assignment + ngày + mã + trạng thái + giờ) để chỉ cập
+ * nhật state/tải lại các tab khi dữ liệu THẬT SỰ đổi — tránh re-render vô ích
+ * mỗi 45 giây và tránh vòng tải lại không cần thiết.
+ */
+function shiftListSignature(list: any[]): string {
+  if (!Array.isArray(list)) return '';
+  return list
+    .map((s: any) => [
+      String(s?.assignment_id || ''),
+      toISODate(s?.date),
+      String(s?.shift_code || '').trim().toUpperCase(),
+      String(s?.status || '').trim().toUpperCase(),
+      String(s?.start_at || ''),
+      String(s?.end_at || ''),
+    ].join(':'))
+    .sort()
+    .join('|');
+}
+
+/**
  * Khử trùng ca theo khoá nghiệp vụ: employee_id + date + shift_code.
  * - Ưu tiên ca PUBLISHED hơn DRAFT.
  * - Ưu tiên schedule_version cao hơn.
@@ -727,6 +747,7 @@ export function App() {
 
   // Shift & Requests
   const [myShifts, setMyShifts] = useState<any[]>([]);
+  const myShiftsSigRef = useRef('');
   const [schedRangeShifts, setSchedRangeShifts] = useState<any[]>([]);
   const [notifications, setNotifications] = useState<any[]>([]);
 
@@ -734,6 +755,24 @@ export function App() {
   // Đổi ca (Tab 6). dedupeShifts chuẩn hóa date về YYYY-MM-DD + khử trùng.
   const getAllEmployeeShifts = () => {
     return dedupeShifts([...(schedRangeShifts || []), ...(myShifts || [])]);
+  };
+
+  /**
+   * Áp danh sách ca tươi từ server vào đúng MỘT nguồn chuẩn (myShifts) + đồng bộ
+   * tab Lịch, chỉ khi nội dung thật sự đổi. Trả về true nếu có thay đổi.
+   */
+  const applyShiftsFromServer = (list: any[]): boolean => {
+    if (!Array.isArray(list)) return false;
+    const fresh = dedupeShifts(list);
+    const sig = shiftListSignature(fresh);
+    if (sig === myShiftsSigRef.current) return false;
+    myShiftsSigRef.current = sig;
+    setMyShifts(fresh);
+    setSchedRangeShifts(fresh);
+    // Báo các tab phụ (Dữ Liệu Công tháng, Lịch tuần) tải lại theo ca mới —
+    // hữu ích cả khi socket bị lỡ sự kiện.
+    setSchedRefresh(k => k + 1);
+    return true;
   };
 
   // 2-Day Weekly OFF Registration State (Official Employees)
@@ -1475,13 +1514,19 @@ export function App() {
       const fromDate = vnDateAdd(-29, toDate);
       const toFuture = vnDateAdd(60, toDate);
       const [shifts, notifs, attRange, colleagues] = await Promise.all([
-        apiRequest(`/me/schedule?fromDate=${fromDate}&toDate=${toFuture}`).catch(() => { fails++; return []; }),
+        apiRequest(`/me/schedule?fromDate=${fromDate}&toDate=${toFuture}`).catch(() => { fails++; return null; }),
         apiRequest('/me/notifications').catch(() => { fails++; return []; }),
         apiRequest(`/me/attendance?fromDate=${fromDate}&toDate=${toDate}`).catch(() => { fails++; return null; }),
         apiRequest('/me/colleagues').catch(() => { fails++; return []; }),
         refreshWeeklyOffStatus(),
       ]);
-      setMyShifts(dedupeShifts(shifts));
+      // CHỈ thay danh sách ca khi server trả mảng hợp lệ. Trước đây lỗi mạng /
+      // backend restart giữa phiên trả [] -> xóa sạch ca đang có -> trang chủ báo
+      // "không có ca" oan cho tới lần tải sau. Giữ dữ liệu cũ khi lỗi.
+      // applyShiftsFromServer đồng bộ cả tab Lịch (dải -29..+60 ngày bao trùm mọi
+      // tuần đang xem) để ca vừa xóa/đổi từ Admin không còn "bóng ma" ở nơi khác,
+      // kể cả khi NV đang đứng ở tab khác chứ không mở tab Lịch.
+      if (Array.isArray(shifts)) applyShiftsFromServer(shifts);
       // Hộp thư chỉ hiện thông báo liên quan NV này: giữ tin đích danh mình +
       // tin chung (lịch, PIN, OFF, marketing); tin ALL dạng feed sự kiện của NV
       // khác (người khác check-in/test/...) thì ẩn. Backend vẫn lưu ALL để cổng
@@ -1802,6 +1847,51 @@ export function App() {
   }, [serverClockOffsetMs]);
   const showToastRef = useRef(showToast);
   showToastRef.current = showToast;
+
+  // =========================================================================
+  // LƯỚI AN TOÀN CHO LỊCH: ngoài socket, tự đồng bộ ca định kỳ + khi điện thoại
+  // mở lại màn hình / có mạng lại / chuyển tab. Socket có thể chết khi khóa máy,
+  // mạng 4G chập chờn hoặc backend restart — không được để cổng NV hiển thị lịch
+  // cũ (ca vừa xếp không thấy / ca đã xóa vẫn còn) tới khi người dùng F5.
+  // Chỉ 1 request nhẹ /me/schedule, lỗi thì GIỮ dữ liệu cũ (không xóa ca).
+  // =========================================================================
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    let stopped = false;
+    let inFlight = false;
+    const refreshShifts = async () => {
+      if (stopped || inFlight || !getAuthToken()) return;
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      inFlight = true;
+      try {
+        const res = await apiRequest(
+          `/me/schedule?fromDate=${vnDateAdd(-29)}&toDate=${vnDateAdd(60)}`
+        );
+        if (stopped || !Array.isArray(res)) return;
+        applyShiftsFromServer(res);
+      } catch { /* mất mạng: giữ nguyên lịch đang hiển thị */ } finally {
+        inFlight = false;
+      }
+    };
+    const onWake = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      refreshShifts();
+    };
+    const timer = setInterval(refreshShifts, 45_000);
+    document.addEventListener('visibilitychange', onWake);
+    window.addEventListener('focus', onWake);
+    window.addEventListener('online', onWake);
+    refreshShifts();
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onWake);
+      window.removeEventListener('focus', onWake);
+      window.removeEventListener('online', onWake);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoggedIn, serverClockOffsetMs]);
+
   const fetchMySwapsRef = useRef(fetchMySwaps);
   fetchMySwapsRef.current = fetchMySwaps;
   const fetchMyAdjustmentsRef = useRef(fetchMyAdjustments);
@@ -2336,14 +2426,22 @@ export function App() {
   const swapNotReadyMsg = (label: string) => `⛔ ${label} đang nháp hoặc đã bị hủy trên hệ thống — vui lòng chọn ca làm việc đã phát hành khác.`;
   /**
    * Ca hiển thị realtime ở trang chủ: đang diễn ra > sắp tới hôm nay > ca cuối hôm nay.
-   * Không có ca nào -> shift null (hiện trạng thái nghỉ).
+   * Không có ca live nhưng có ca NHÁP (HR đã xếp, chưa phát hành) -> trả phase DRAFT
+   * để cổng NV báo đúng "ca chờ phát hành" thay vì "hôm nay không có ca làm".
    */
-  const getCurrentShift = (): { shift: any; all: any[]; phase: 'LIVE' | 'UPCOMING' | 'DONE' | 'NONE' } => {
+  const getCurrentShift = (): { shift: any; all: any[]; phase: 'LIVE' | 'UPCOMING' | 'DONE' | 'DRAFT' | 'NONE' } => {
     const today = vnTodayStr();
+    const byStart = (a: any, b: any) => String(a.start_at || '').localeCompare(String(b.start_at || ''));
     const list = getAllEmployeeShifts()
       .filter((s: any) => toISODate(s.date) === today && isLiveShift(s))
-      .sort((a: any, b: any) => String(a.start_at || '').localeCompare(String(b.start_at || '')));
-    if (list.length === 0) return { shift: null, all: [], phase: 'NONE' };
+      .sort(byStart);
+    if (list.length === 0) {
+      const drafts = getAllEmployeeShifts()
+        .filter((s: any) => toISODate(s.date) === today && isDraftShift(s))
+        .sort(byStart);
+      if (drafts.length > 0) return { shift: drafts[0], all: drafts, phase: 'DRAFT' };
+      return { shift: null, all: [], phase: 'NONE' };
+    }
     const now = vnNowMs();
     const startOf = (s: any) => new Date(s.start_at || `${toISODate(s.date)}T00:00:00+07:00`).getTime();
     const endOf = (s: any) => new Date(s.end_at || `${toISODate(s.date)}T23:59:59+07:00`).getTime();
@@ -4414,11 +4512,11 @@ export function App() {
               {currentShift && (
                 <div style={{ marginBottom: '8px' }}>
                   <span className="badge" style={{
-                    backgroundColor: currentShiftPhase === 'LIVE' ? '#DCFCE7' : currentShiftPhase === 'UPCOMING' ? '#FEF3C7' : '#F3F4F6',
-                    color: currentShiftPhase === 'LIVE' ? '#166534' : currentShiftPhase === 'UPCOMING' ? '#92400E' : '#6B7280',
+                    backgroundColor: currentShiftPhase === 'LIVE' ? '#DCFCE7' : currentShiftPhase === 'DRAFT' ? '#FEF3C7' : currentShiftPhase === 'UPCOMING' ? '#FEF3C7' : '#F3F4F6',
+                    color: currentShiftPhase === 'LIVE' ? '#166534' : currentShiftPhase === 'DRAFT' ? '#92400E' : currentShiftPhase === 'UPCOMING' ? '#92400E' : '#6B7280',
                     fontWeight: 800,
                   }}>
-                    {currentShiftPhase === 'LIVE' ? '● Đang trong ca' : currentShiftPhase === 'UPCOMING' ? '⏳ Ca sắp tới' : '✓ Ca đã xong'}
+                    {currentShiftPhase === 'LIVE' ? '● Đang trong ca' : currentShiftPhase === 'DRAFT' ? '⏳ Ca nháp — HR chưa phát hành' : currentShiftPhase === 'UPCOMING' ? '⏳ Ca sắp tới' : '✓ Ca đã xong'}
                   </span>
                   {todayShiftList.length > 1 && (
                     <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>
@@ -4429,7 +4527,9 @@ export function App() {
               )}
               <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '14px' }}>
                 {currentShift
-                  ? '* Yêu cầu: Mặc áo màu hồng Ụm Bò Milk + đeo bảng tên, có mặt trước 15 phút.'
+                  ? currentShiftPhase === 'DRAFT'
+                    ? '⏳ Ca này đã được HR xếp nhưng CHƯA phát hành lịch — chưa tính công và chưa mở điểm danh. Nhờ HR bấm "Phát Hành Lịch" để chốt ca!'
+                    : '* Yêu cầu: Mặc áo màu hồng Ụm Bò Milk + đeo bảng tên, có mặt trước 15 phút.'
                   : 'Hôm nay bạn không có lịch làm — nghỉ ngơi nhé! Muốn nhận ca thay, qua tab Đổi ca.'}
               </p>
 
@@ -5548,6 +5648,9 @@ export function App() {
           // dùng ngày VN — dùng ngày UTC sẽ lookup nhầm ca 00:00–07:00 VN.
           const today = vnTodayStr();
           const todayShifts = getAllEmployeeShifts().filter((s: any) => toISODate(s.date) === today && isLiveShift(s));
+          // Ca nháp hôm nay (HR xếp nhưng chưa phát hành) — báo đúng lý do thay vì
+          // "không có ca" để NV biết cần nhờ HR phát hành lịch.
+          const todayDraftShifts = getAllEmployeeShifts().filter((s: any) => toISODate(s.date) === today && isDraftShift(s));
           // Hiển thị ĐÚNG ca sẽ thao tác (trước đây tab lấy ca đầu, nút lấy ca live -> lệch giờ tan ca).
           const todayShift = getAttendShift();
           // Trạng thái theo TỪNG ca (ngày 2 ca do tráo đổi: mỗi ca check-in/out độc lập)
@@ -5590,13 +5693,15 @@ export function App() {
                     <Lock size={32} color="#64748B" />
                   </div>
                   <span className="badge badge-secondary" style={{ marginBottom: '8px' }}>
-                    HÔM NAY KHÔNG CÓ CA LÀM
+                    {todayDraftShifts.length > 0 ? 'CA CHƯA PHÁT HÀNH' : 'HÔM NAY KHÔNG CÓ CA LÀM'}
                   </span>
                   <h3 style={{ fontSize: '17px', fontWeight: 800, color: '#1E293B', marginBottom: '8px' }}>
-                    CHỨC NĂNG ĐIỂM DANH HIỆN ĐANG KHÓA
+                    {todayDraftShifts.length > 0 ? 'CA ĐÃ XẾP — CHỜ HR PHÁT HÀNH' : 'CHỨC NĂNG ĐIỂM DANH HIỆN ĐANG KHÓA'}
                   </h3>
                   <p style={{ fontSize: '13px', color: '#64748B', lineHeight: '1.5', maxWidth: '340px', margin: '0 auto 20px' }}>
-                    Hôm nay ({today.slice(8, 10)}/{today.slice(5, 7)}/{today.slice(0, 4)}) bạn không có ca làm việc được phân công tại chi nhánh {employee?.default_branch_id || 'hệ thống'}. Chức năng điểm danh chỉ tự động mở khi bạn có ca làm việc chính thức trong ngày.
+                    {todayDraftShifts.length > 0
+                      ? `Hôm nay (${today.slice(8, 10)}/${today.slice(5, 7)}/${today.slice(0, 4)}) bạn có ca ${todayDraftShifts.map((s: any) => shiftLabelOf(s)).join(' + ')} nhưng HR CHƯA phát hành lịch. Ca nháp chưa tính công và chưa mở điểm danh — nhờ HR bấm "Phát Hành Lịch" rồi tải lại trang!`
+                      : `Hôm nay (${today.slice(8, 10)}/${today.slice(5, 7)}/${today.slice(0, 4)}) bạn không có ca làm việc được phân công tại chi nhánh ${employee?.default_branch_id || 'hệ thống'}. Chức năng điểm danh chỉ tự động mở khi bạn có ca làm việc chính thức trong ngày.`}
                   </p>
                   <button
                     className="btn-secondary"

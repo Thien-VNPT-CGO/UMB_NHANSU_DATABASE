@@ -68,6 +68,42 @@ test('lọc ca theo ngày chuẩn hóa mọi định dạng Sheet (datetime/seri
   assert.equal(range.length, 4);
 });
 
+test('khớp mã NV có khoảng trắng/kiểu số + chuẩn hóa ngày trả về (không báo "không có ca")', async () => {
+  const repo = new MockSheetsAdapter();
+  repo.shifts.push(
+    shift({ assignment_id: 'PADDED', employee_id: '  EMP_1  ' as any, date: '2026-10-27T00:00:00.000Z' }),
+    shift({
+      assignment_id: 'NUMERIC', employee_id: '1001', shift_code: 'CA_2',
+      date: '27/10/2026' as any,
+      start_at: '2026-10-27T12:00:00+07:00', end_at: '2026-10-27T18:00:00+07:00',
+    }),
+  );
+  const mine = await repo.getShiftsForEmployee('EMP_1', '2026-10-27', '2026-10-27');
+  assert.deepEqual(mine.map(s => s.assignment_id), ['PADDED']);
+  assert.equal(mine[0].date, '2026-10-27', 'ngày trả về phải là YYYY-MM-DD để cổng NV so khớp');
+  assert.equal((mine[0] as any).employee_id, 'EMP_1');
+
+  const numeric = await repo.getShiftsForEmployee('1001', '2026-10-27', '2026-10-27');
+  assert.deepEqual(numeric.map(s => s.assignment_id), ['NUMERIC']);
+  assert.equal(numeric[0].date, '2026-10-27');
+
+  // Chống tạo ca trùng khi dòng cũ có mã NV dính khoảng trắng.
+  const created = await repo.createShiftAssignment(shift({ assignment_id: 'SHOULD_NOT_EXIST', date: '2026-10-27' }));
+  assert.equal(created.assignment_id, 'PADDED');
+  assert.equal(repo.shifts.filter(s => s.assignment_id === 'SHOULD_NOT_EXIST').length, 0);
+});
+
+test('lịch tuần khớp chi nhánh theo mã chuẩn (CN1 ↔ CN130)', async () => {
+  const repo = new MockSheetsAdapter();
+  repo.shifts.push(
+    shift({ assignment_id: 'OLD_BRANCH_CODE', branch_id: 'CN1', date: '2026-10-27' }),
+    shift({ assignment_id: 'OTHER_BRANCH', branch_id: 'CN261', date: '2026-10-27' }),
+    shift({ assignment_id: 'PREV_WEEK', branch_id: 'CN130', date: '2026-10-19' }),
+  );
+  const week = await repo.getShiftsForWeek('CN130', '2026-10-26');
+  assert.deepEqual(week.map(s => s.assignment_id), ['OLD_BRANCH_CODE']);
+});
+
 test('gửi lại phiếu cập nhật ca không đẻ ca trùng; DRAFT được duyệt PUBLISHED và snapshot ngay', async () => {
   const repo = new MockSheetsAdapter();
   await repo.createEmployee({

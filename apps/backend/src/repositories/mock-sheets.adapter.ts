@@ -33,6 +33,36 @@ import {
 import { ISheetsRepository } from './sheets.interface.js';
 import { dedupeShiftAssignments, findLiveShift } from './shift-dedupe.js';
 
+/** So khớp chi nhánh theo mã chuẩn (Sheet có thể ghi CN1/CN2/CN3/CN4). */
+function sameBranchId(a?: unknown, b?: unknown): boolean {
+  const canon = (v: unknown): string => {
+    const x = String(v ?? '').trim().toUpperCase();
+    if (x === 'CN1' || x === 'CN130') return 'CN130';
+    if (x === 'CN2' || x === 'CN261') return 'CN261';
+    if (x === 'CN3' || x === 'CN120') return 'CN120';
+    if (x === 'CN4' || x === 'CN111') return 'CN111';
+    return x;
+  };
+  const x = canon(a);
+  const y = canon(b);
+  return x === '*' || y === '*' || x === y;
+}
+
+/**
+ * Chuẩn hóa 1 dòng ca trước khi trả ra ngoài: mã NV trim, mã ca/chi nhánh chuẩn,
+ * ngày về YYYY-MM-DD. Nhờ vậy mọi API (lịch NV, chấm công, lương, đổi ca) so
+ * khớp trên cùng một biểu diễn dù Sheet lưu ngày/ID kiểu gì.
+ */
+function normalizeShiftRow<T extends ShiftAssignment>(s: T): T {
+  return {
+    ...s,
+    employee_id: String((s as any).employee_id ?? '').trim(),
+    branch_id: String((s as any).branch_id ?? '').trim(),
+    shift_code: String((s as any).shift_code ?? '').trim().toUpperCase() as any,
+    date: (normSheetDate((s as any).date) || String((s as any).date ?? '').slice(0, 10)) as any,
+  } as T;
+}
+
 export class MockSheetsAdapter implements ISheetsRepository {
   public accounts: EmployeeAccount[] = [];
   public adminAccounts: AdminAccount[] = [];
@@ -557,7 +587,18 @@ export class MockSheetsAdapter implements ISheetsRepository {
     this.checkErrors();
     // Luôn trả 1 ca live/ngày/mã: Sheet cũ có thể còn dòng trùng do append +
     // full-sync đua nhau. Nhờ vậy lịch, chấm công và payroll cùng thấy 1 ca.
-    return dedupeShiftAssignments(this.shifts.filter(s => (branchId === '*' || s.branch_id === branchId) && s.date >= weekStartDate));
+    // So khớp chi nhánh theo mã chuẩn (CN1 ↔ CN130...) + chuẩn hóa ngày: Sheet
+    // có thể lưu '2026-10-26T00:00:00'/serial nên so chuỗi thô làm ca biến mất.
+    const start = normSheetDate(weekStartDate) || String(weekStartDate || '').slice(0, 10);
+    const rows = this.shifts
+      .filter(s => sameBranchId(s.branch_id, branchId))
+      .map(s => normalizeShiftRow(s))
+      .filter(s => {
+        const d = normSheetDate(s.date);
+        if (!d) return false;
+        return !start || d >= start;
+      });
+    return dedupeShiftAssignments(rows);
   }
 
   async getShiftsForEmployee(employeeId: string, fromDate: string, toDate: string): Promise<ShiftAssignment[]> {
@@ -565,21 +606,25 @@ export class MockSheetsAdapter implements ISheetsRepository {
     // Chuẩn hóa ngày trước khi lọc: Sheet có thể trả 'YYYY-MM-DDT00:00:00',
     // serial hoặc 'D/M/YYYY' — so sánh chuỗi thô làm ca hôm nay bị rơi khỏi
     // khoảng [fromDate, toDate] (cổng NV báo "không có ca" oan).
+    // Mã NV cũng trim 2 phía: ô Sheet dán tay có thể dính khoảng trắng / lưu số
+    // nên so khớp tuyệt đối trước đây bỏ sót ca của đúng 1 vài nhân viên.
     const from = normSheetDate(fromDate);
     const to = normSheetDate(toDate);
+    const wantEmp = String(employeeId ?? '').trim();
     return dedupeShiftAssignments(this.shifts.filter(s => {
-      if (s.employee_id !== employeeId) return false;
+      if (String(s.employee_id ?? '').trim() !== wantEmp) return false;
       const d = normSheetDate(s.date) || String(s.date || '').slice(0, 10);
       if (!d) return false;
       if (from && d < from) return false;
       if (to && d > to) return false;
       return true;
-    }));
+    }).map(s => normalizeShiftRow(s)));
   }
 
   async getShiftById(assignmentId: string): Promise<ShiftAssignment | null> {
     this.checkErrors();
-    return this.shifts.find(s => s.assignment_id === assignmentId) || null;
+    const found = this.shifts.find(s => s.assignment_id === assignmentId) || null;
+    return found ? normalizeShiftRow(found) : null;
   }
 
   async createShiftAssignment(assignment: Omit<ShiftAssignment, 'created_at' | 'updated_at'>): Promise<ShiftAssignment> {
