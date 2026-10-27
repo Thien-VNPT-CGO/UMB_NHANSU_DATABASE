@@ -558,7 +558,10 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     this.fullSyncDirty = false;
     this.pendingSheetsWrites++;
     const run = async () => {
-      const wait = Math.max(0, 10000 - (Date.now() - this.lastFullSyncAt));
+      // Full-sync ghi ~14 tab (mỗi tab 1-2 request): dồn tối thiểu 60s/lượt
+      // (trước đây 10s → gần như chạy liên tục, chiếm hết khoá ghi của Sheets).
+      const minGap = Math.max(10_000, Number(process.env.SHEETS_FULL_SYNC_MIN_INTERVAL_MS) || 60_000);
+      const wait = Math.max(0, minGap - (Date.now() - this.lastFullSyncAt));
       if (wait > 0) await new Promise(r => setTimeout(r, wait));
       await this.syncService.syncAllData(this.fallbackAdapter);
       this.lastFullSyncAt = Date.now();

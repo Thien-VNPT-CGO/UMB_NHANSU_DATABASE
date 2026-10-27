@@ -2953,12 +2953,29 @@ export class GoogleSheetsSyncService {
    * Đẩy 1 tab an toàn: tab lỗi thì ghi lỗi vào details rồi đi tiếp tab khác —
    * không để 1 tab hỏng (VD ô QR base64 quá lớn) làm đứng cả đợt đồng bộ.
    */
+  /** Các tab CHỈ ghi nối (nhật ký/thông báo): full-sync KHÔNG ghi đè toàn tab.
+   *  Lý do: mỗi lượt ghi đè hàng nghìn dòng giữ khoá spreadsheet rất lâu, khiến
+   *  append của hàng đợi bền vững timeout; đồng thời dễ tạo dòng trùng với các
+   *  bản ghi append đang chờ. Tab vẫn được init (tạo + header) và ghi qua append. */
+  public static readonly APPEND_ONLY_TABS = new Set<string>([
+    'AUDIT_LOG',
+    'THONGBAO_GUI',
+    'THONGBAO_NV',
+    'SU_KIEN_DIEM_DANH',
+  ]);
+
   private async pushTabSafe(details: any, key: string, title: string, headers: string[], rows: any[][]): Promise<void> {
     try {
       // BẢO VỆ CHỐNG MẤT DỮ LIỆU: Tuyệt đối không cho phép ghi đè rỗng (0 dòng) lên các tab Master
       if (rows.length === 0 && GoogleSheetsSyncService.CRITICAL_TABS.has(title)) {
         console.warn(`[GoogleSheetsSyncService] CHẶN NGUY HIỂM: Tab '${title}' có 0 dòng dữ liệu để đẩy. Huỷ ghi đè tab này để bảo vệ dữ liệu Master!`);
         details[key] = { skipped: true, reason: 'ANTI_DATA_LOSS_PREVENTED_EMPTY_OVERWRITE' };
+        return;
+      }
+
+      // Tab chỉ-ghi-nối: không ghi đè toàn tab (xem APPEND_ONLY_TABS).
+      if (GoogleSheetsSyncService.APPEND_ONLY_TABS.has(title)) {
+        details[key] = { skipped: true, reason: 'APPEND_ONLY_TAB' };
         return;
       }
 

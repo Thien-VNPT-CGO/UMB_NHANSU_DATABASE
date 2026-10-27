@@ -343,10 +343,15 @@ export class DurableWriteQueue {
           // 20-30s/lần (vừa tốn quota vừa không bao giờ hồi).
           if (this.failureStreak >= this.failureStreakLimit) {
             const streak = this.failureStreak;
-            this.pausedUntil = this.now() + this.pauseMs;
+            // Timeout/abort = Google đang chậm hoặc spreadsheet đang bị khoá ghi;
+            // nghỉ dài hơn hẳn (5 phút) thay vì 60s để không bắn thêm request
+            // càng làm khoá kéo dài. Lỗi quota/4xx thì nghỉ ngắn như cấu hình.
+            const timeoutLike = /aborted|SHEETS_TIMEOUT|ETIMEDOUT|timed out|socket hang up/i.test(String(error || ''));
+            const pause = timeoutLike ? Math.max(this.pauseMs, 5 * 60_000) : this.pauseMs;
+            this.pausedUntil = this.now() + pause;
             this.failureStreak = 0;
             this.logger.warn(
-              `[durable-writes] Lỗi liên tiếp ${streak} lần — tạm nghỉ ${Math.round(this.pauseMs / 1000)}s (còn ${this.pending.length} bản ghi chờ).`,
+              `[durable-writes] Lỗi liên tiếp ${streak} lần — tạm nghỉ ${Math.round(pause / 1000)}s (còn ${this.pending.length} bản ghi chờ).`,
             );
           }
         }
