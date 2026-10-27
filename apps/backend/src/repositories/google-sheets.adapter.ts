@@ -532,6 +532,16 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   /** Hẹn chạy lại full-sync khi hàng đợi append đang tồn đọng (tránh tranh quota). */
   private fullSyncDeferTimer: ReturnType<typeof setTimeout> | null = null;
 
+  /** Hoãn full-sync (gộp 1 hẹn duy nhất) — tránh xếp hàng nhiều lượt. */
+  private deferFullSync(ms: number) {
+    if (this.fullSyncDeferTimer) return;
+    this.fullSyncDeferTimer = setTimeout(() => {
+      this.fullSyncDeferTimer = null;
+      this.scheduleFullSync('deferred');
+    }, ms);
+    (this.fullSyncDeferTimer as any)?.unref?.();
+  }
+
   private scheduleFullSync(label: string) {
     if (!this.isConfigured) return;
     // Đặt cờ dirty: bộ nhớ có thay đổi chưa chắc đã lên Sheet (auto-push định kỳ dựa cờ này).
@@ -545,13 +555,15 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     // dùng vừa tạo. Bộ nhớ + snapshot vẫn giữ đủ, không mất dữ liệu.
     const pending = this.durableWrites?.getStats?.().pending ?? 0;
     if (pending > 150) {
-      if (!this.fullSyncDeferTimer) {
-        this.fullSyncDeferTimer = setTimeout(() => {
-          this.fullSyncDeferTimer = null;
-          this.scheduleFullSync('deferred');
-        }, 3 * 60_000);
-        (this.fullSyncDeferTimer as any)?.unref?.();
-      }
+      this.deferFullSync(3 * 60_000);
+      return;
+    }
+    // NGẮT MẠCH: Google đang chặn ghi (timeout/abort) → mỗi lượt full-sync là
+    // ~14 lệnh ghi treo 25–30s, chỉ làm khoá ghi kéo dài và cạnh tranh với
+    // append thật. Hoãn hẳn 5 phút; dữ liệu vẫn ở bộ nhớ + journal trên đĩa.
+    const writeErr = String(this.syncService.getWriteStatus?.().lastWriteError || '');
+    if (/aborted|SHEETS_TIMEOUT|timed out|socket hang up|ETIMEDOUT|ECONNRESET/i.test(writeErr)) {
+      this.deferFullSync(5 * 60_000);
       return;
     }
     this.fullSyncInFlight = true;
