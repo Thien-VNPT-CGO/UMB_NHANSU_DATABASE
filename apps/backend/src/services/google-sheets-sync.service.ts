@@ -663,6 +663,10 @@ export class GoogleSheetsSyncService {
     valuesGet: { ok: boolean; ms: number; error: string | null };
     /** GET công khai tới Google API (không auth) — đo đường mạng VPS→Google. */
     rawGetPublic: { ok: boolean; ms: number; error: string | null } | null;
+    /** GET KHÔNG auth tới riêng host sheets.googleapis.com (kỳ vọng 401 nhanh). */
+    rawGetSheetsHost: { ok: boolean; ms: number; status: number | null; error: string | null } | null;
+    /** GET có auth tới Drive API (www.googleapis.com) — tách "auth" khỏi "host sheets". */
+    rawGetDrive: { ok: boolean; ms: number; status: number | null; error: string | null } | null;
     /** POST công khai tới Google API (không auth) — kiểm tra riêng phương thức POST. */
     rawPostPublic: { ok: boolean; ms: number; status: number | null; error: string | null } | null;
     /** GET có auth tới spreadsheet, dùng fetch trực tiếp (không googleapis). */
@@ -730,6 +734,41 @@ export class GoogleSheetsSyncService {
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
     }, 'probe.rawGetPublic', 16000);
+
+    // Tách 2 biến còn lại: "host sheets.googleapis.com" và "có Authorization".
+    // - rawGetSheetsHost: KHÔNG auth, host sheets → nếu treo thì lỗi host/đường mạng.
+    // - rawGetDrive: CÓ auth, host www.googleapis.com → nếu OK thì auth vẫn tốt,
+    //   lỗi nằm ở host sheets (hoặc riêng Sheets API).
+    const rawGetSheetsHost = await (async () => {
+      const start = Date.now();
+      try {
+        const res = await fetch(
+          `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(this.spreadsheetId)}?fields=properties.title`,
+          { signal: AbortSignal.timeout(12000) },
+        );
+        await res.text().catch(() => '');
+        return { ok: true, ms: Date.now() - start, status: res.status, error: null as string | null };
+      } catch (e: any) {
+        return { ok: false, ms: Date.now() - start, status: null, error: this.describeGoogleError(e) };
+      }
+    })();
+
+    const rawGetDrive = await (async () => {
+      const start = Date.now();
+      try {
+        const tokenRes: any = await this.authClient?.getAccessToken?.();
+        const token = tokenRes?.token;
+        if (!token) throw new Error('NO_ACCESS_TOKEN');
+        const res = await fetch('https://www.googleapis.com/drive/v3/about?fields=user', {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(12000),
+        });
+        const text = res.ok ? '' : (await res.text()).slice(0, 200);
+        return { ok: res.ok, ms: Date.now() - start, status: res.status, error: res.ok ? null as string | null : text };
+      } catch (e: any) {
+        return { ok: false, ms: Date.now() - start, status: null, error: this.describeGoogleError(e) };
+      }
+    })();
 
     // POST công khai (không auth) tới googleapis.com: endpoint này trả 4xx ngay,
     // nên nếu POST treo thì lỗi ở đường POST/mạng chứ không phải tài liệu.
@@ -939,11 +978,13 @@ export class GoogleSheetsSyncService {
       }
     }
 
-    this.writeProbeResult = { at: new Date().toISOString(), get: sheetMeta, valuesGet, rawGetPublic, rawPostPublic, rawGetSheet, post, append, writeTiny, otherDoc, rawWrite, tabs, hotTab };
+    this.writeProbeResult = { at: new Date().toISOString(), get: sheetMeta, valuesGet, rawGetPublic, rawGetSheetsHost, rawGetDrive, rawPostPublic, rawGetSheet, post, append, writeTiny, otherDoc, rawWrite, tabs, hotTab };
     console.log(
       `[write-probe] meta ${sheetMeta.ok ? 'OK' : 'FAIL'} ${sheetMeta.ms}ms` +
       ` | values.get ${valuesGet.ok ? 'OK' : 'FAIL'} ${valuesGet.ms}ms` +
       ` | net ${rawGetPublic.ok ? 'OK' : 'FAIL'} ${rawGetPublic.ms}ms` +
+      ` | sheetsHost ${rawGetSheetsHost.ok ? 'OK' : 'FAIL'} ${rawGetSheetsHost.ms}ms${rawGetSheetsHost.status ? ` HTTP${rawGetSheetsHost.status}` : ''}` +
+      ` | driveAuth ${rawGetDrive.ok ? 'OK' : 'FAIL'} ${rawGetDrive.ms}ms${rawGetDrive.status ? ` HTTP${rawGetDrive.status}` : ''}` +
       ` | rawGetSheet ${rawGetSheet ? (rawGetSheet.ok ? 'OK' : 'FAIL') + ' ' + rawGetSheet.ms + 'ms' : 'n/a'}` +
       ` | batchUpdate ${post.ok ? 'OK' : 'FAIL'} ${post.ms}ms` +
       (writeTiny ? ` | writeTiny ${writeTiny.ok ? 'OK' : 'FAIL'} ${writeTiny.ms}ms${writeTiny.status ? ` HTTP${writeTiny.status}` : ''}` : '') +
