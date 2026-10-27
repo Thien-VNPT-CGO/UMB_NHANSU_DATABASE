@@ -5739,10 +5739,11 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   // Chẩn đoán đường ghi: đo GET + POST (no-op batchUpdate) tới Google Sheets API.
   // Dùng khi log báo SHEETS_TIMEOUT:append.X để biết Google có nhận POST không.
-  app.post('/admin/integrations/probe-write', authMiddleware, requireRole(['ADMIN', 'HR']), async (_req, res) => {
+  app.post('/admin/integrations/probe-write', authMiddleware, requireRole(['ADMIN', 'HR']), async (req, res) => {
     try {
       const syncService = (adapter as any).syncService;
-      const probe = await syncService?.runWriteProbe?.();
+      const wantAppend = req.body?.append === true || req.query?.append === '1' || req.query?.append === 'true';
+      const probe = await syncService?.runWriteProbe?.({ includeAppend: wantAppend });
       if (!probe) return res.status(503).json({ error: 'SHEETS_NOT_CONFIGURED' });
       res.json(probe);
     } catch (err: any) {

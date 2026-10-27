@@ -187,7 +187,11 @@ server.listen(Number(PORT), '0.0.0.0', () => {
     const probe = () => {
       const syncService = (adapter as any).syncService;
       if (!syncService?.getStatus?.().isConfigured || typeof syncService.runWriteProbe !== 'function') return;
-      syncService.runWriteProbe().catch((err: any) => console.warn('[write-probe] error:', err?.message || err));
+      // Chỉ ghi thử 1 dòng AUDIT_LOG khi đường ghi đang có lỗi (tránh rác nhật ký
+      // lúc mọi thứ bình thường).
+      const includeAppend = !!syncService.getWriteStatus?.().lastWriteError;
+      syncService.runWriteProbe({ includeAppend })
+        .catch((err: any) => console.warn('[write-probe] error:', err?.message || err));
     };
     setTimeout(probe, 45_000);
     setInterval(probe, 15 * 60_000);

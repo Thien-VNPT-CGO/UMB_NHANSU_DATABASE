@@ -577,7 +577,9 @@ export class GoogleSheetsSyncService {
   private writeProbeResult: {
     at: string;
     get: { ok: boolean; ms: number; error: string | null };
+    valuesGet: { ok: boolean; ms: number; error: string | null };
     post: { ok: boolean; ms: number; error: string | null };
+    append: { ok: boolean; ms: number; error: string | null } | null;
   } | null = null;
 
   public getWriteProbe() {
@@ -588,43 +590,93 @@ export class GoogleSheetsSyncService {
    * Đo nhanh khả năng ĐỌC và GHI tới Google Sheets API.
    *
    * Lý do: hàng đợi append báo `SHEETS_TIMEOUT:append.X (30000ms)` liên tục
-   * trong khi pull (đọc) vẫn chạy → cần biết POST có tới được Google không.
-   * Lượt POST dùng `batchUpdate` với `requests: []` (no-op, KHÔNG sửa dữ liệu).
+   * trong khi pull (đọc) vẫn chạy → cần biết chính xác request nào treo.
+   * - `get`: metadata spreadsheet (đọc nhẹ).
+   * - `valuesGet`: đọc 3 ô AUDIT_LOG (đường đọc dữ liệu).
+   * - `post`: batchUpdate no-op với 1 request không đổi dữ liệu (đường POST).
+   * - `append`: CHỈ chạy khi được yêu cầu (writes đang lỗi / admin bấm) — ghi
+   *   đúng 1 dòng nhật ký `WRITE_PROBE` vào AUDIT_LOG, tái hiện lỗi thật.
    */
-  public async runWriteProbe(): Promise<typeof this.writeProbeResult> {
+  public async runWriteProbe(opts: { includeAppend?: boolean } = {}): Promise<typeof this.writeProbeResult> {
     if (!this.isConfigured || !this.sheetsClient) return null;
     const label = (e: any) => String(e?.message || e || 'UNKNOWN').slice(0, 300);
+    const time = async (
+      fn: () => Promise<unknown>,
+      name: string,
+      ms = 15000,
+    ): Promise<{ ok: boolean; ms: number; error: string | null }> => {
+      const start = Date.now();
+      try {
+        await this.sheetsCall(name, fn, ms);
+        return { ok: true, ms: Date.now() - start, error: null };
+      } catch (e: any) {
+        return { ok: false, ms: Date.now() - start, error: label(e) };
+      }
+    };
 
-    const getStart = Date.now();
-    let getRes: { ok: boolean; ms: number; error: string | null } = { ok: false, ms: 0, error: null };
+    const sheetMeta = await time(() => this.sheetsClient!.spreadsheets.get({
+      spreadsheetId: this.spreadsheetId,
+      fields: 'properties.title',
+    }), 'probe.get');
+    const valuesGet = await time(() => this.sheetsClient!.spreadsheets.values.get({
+      spreadsheetId: this.spreadsheetId,
+      range: `'AUDIT_LOG'!A1:A3`,
+    }), 'probe.valuesGet');
+    // batchUpdate BẮT BUỘC có ≥1 request (rỗng bị Google trả 400 "Must specify
+    // at least one request"), nên dùng 1 request không thay đổi gì: đặt lại
+    // frozenRowCount = 1 cho tab AUDIT_LOG (đúng như hiện trạng).
+    let auditSheetId: number | null = null;
     try {
-      await this.sheetsCall('probe.get', () => this.sheetsClient!.spreadsheets.get({
+      const meta: any = await this.sheetsClient!.spreadsheets.get({
         spreadsheetId: this.spreadsheetId,
-        fields: 'properties.title',
-      }), 15000);
-      getRes = { ok: true, ms: Date.now() - getStart, error: null };
-    } catch (e: any) {
-      getRes = { ok: false, ms: Date.now() - getStart, error: label(e) };
+        fields: 'sheets.properties(sheetId,title)',
+      });
+      const found = (meta?.data?.sheets || []).find((s: any) => s?.properties?.title === 'AUDIT_LOG');
+      auditSheetId = found?.properties?.sheetId ?? null;
+    } catch { /* metadata lỗi: bỏ qua post probe */ }
+    const post = auditSheetId === null
+      ? { ok: false, ms: 0, error: 'AUDIT_LOG_SHEET_ID_NOT_FOUND' }
+      : await time(() => this.sheetsClient!.spreadsheets.batchUpdate({
+        spreadsheetId: this.spreadsheetId,
+        requestBody: {
+          requests: [{
+            updateSheetProperties: {
+              properties: { sheetId: auditSheetId, gridProperties: { frozenRowCount: 1 } },
+              fields: 'gridProperties.frozenRowCount',
+            },
+          }],
+        },
+      }), 'probe.noopBatchUpdate');
+
+    let append: { ok: boolean; ms: number; error: string | null } | null = null;
+    if (opts.includeAppend) {
+      const nowIso = new Date().toISOString();
+      append = await time(() => this.sheetsClient!.spreadsheets.values.append({
+        spreadsheetId: this.spreadsheetId,
+        range: `'AUDIT_LOG'!A:A`,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: {
+          values: [[
+            `PROBE_${Date.now()}`,
+            nowIso,
+            'SYSTEM',
+            'SYSTEM',
+            'WRITE_PROBE',
+            'SYSTEM',
+            'GOOGLE_SHEETS',
+            JSON.stringify({ note: 'Chẩn đoán đường ghi Google Sheets — có thể xoá dòng này.' }),
+          ]],
+        },
+      }), 'probe.append.AUDIT_LOG');
     }
 
-    const postStart = Date.now();
-    let postRes: { ok: boolean; ms: number; error: string | null } = { ok: false, ms: 0, error: null };
-    try {
-      await this.sheetsCall('probe.noopBatchUpdate', () => this.sheetsClient!.spreadsheets.batchUpdate({
-        spreadsheetId: this.spreadsheetId,
-        requestBody: { requests: [] },
-      }), 15000);
-      postRes = { ok: true, ms: Date.now() - postStart, error: null };
-    } catch (e: any) {
-      postRes = { ok: false, ms: Date.now() - postStart, error: label(e) };
-    }
-
-    this.writeProbeResult = { at: new Date().toISOString(), get: getRes, post: postRes };
+    this.writeProbeResult = { at: new Date().toISOString(), get: sheetMeta, valuesGet, post, append };
     console.log(
-      `[write-probe] GET ${getRes.ok ? 'OK' : 'FAIL'} ${getRes.ms}ms` +
-      ` | POST ${postRes.ok ? 'OK' : 'FAIL'} ${postRes.ms}ms` +
-      (getRes.error ? ` | getErr=${getRes.error}` : '') +
-      (postRes.error ? ` | postErr=${postRes.error}` : ''),
+      `[write-probe] meta ${sheetMeta.ok ? 'OK' : 'FAIL'} ${sheetMeta.ms}ms` +
+      ` | values.get ${valuesGet.ok ? 'OK' : 'FAIL'} ${valuesGet.ms}ms` +
+      ` | batchUpdate ${post.ok ? 'OK' : 'FAIL'} ${post.ms}ms` +
+      (append ? ` | append ${append.ok ? 'OK' : 'FAIL'} ${append.ms}ms` : '') +
+      (append?.error ? ` | appendErr=${append.error}` : ''),
     );
     return this.writeProbeResult;
   }
