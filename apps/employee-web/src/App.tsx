@@ -4816,7 +4816,12 @@ export function App() {
                 // 3. Ngày Nghỉ OFF trong dải `days`: ngày KHÔNG có ca làm việc.
                 // Đi làm thì không còn OFF — ngày có ca làm việc thì tính vào Có Ca.
                 const offDays = days.filter(d => !workDaysSet.has(d));
-                const draftOnlyDays = days.filter(d => !workDaysSet.has(d) && draftDaySet.has(d));
+                // Ngày CHỈ có ca nháp (không có ca đã phát hành nào) — cảnh báo rõ
+                // để NV không tưởng đây là ca đã chốt/điểm danh được.
+                const draftOnlyDays = days.filter(
+                  d => draftDaySet.has(d)
+                    && !rangeShifts.some((s: any) => toISODate(s.date) === d && !isDraftShift(s))
+                );
                 const offDaysSet = new Set(offDays);
                 const offCount = offDays.length;
 
@@ -4896,6 +4901,19 @@ export function App() {
                       fg: '#92400E',
                       bd: '1px solid #FDE68A',
                       icon: '▶',
+                    };
+                  }
+                  // Ca NHÁP: HR đã xếp nhưng CHƯA phát hành lịch → không được ghi
+                  // "Lịch đã duyệt / sẵn sàng điểm danh" (trước đây gây hiểu nhầm
+                  // là có ca nhưng Điểm danh lại báo "chưa phát hành").
+                  if (isDraftShift(sh)) {
+                    return {
+                      label: '⏳ Ca nháp — chờ HR phát hành',
+                      detail: 'Chưa tính công • Chưa mở điểm danh',
+                      bg: '#FEF3C7',
+                      fg: '#92400E',
+                      bd: '1px solid #FDE68A',
+                      icon: '⏳',
                     };
                   }
                   if (toISODate(sh.date) === todayStr) {
@@ -4992,6 +5010,7 @@ export function App() {
                           const isToday = d === todayStr;
                           const dayShifts = rangeShifts.filter((s: any) => toISODate(s.date) === d);
                           const isOffDay = offDaysSet.has(d);
+                          const dayDraftOnly = dayShifts.length > 0 && dayShifts.every((s: any) => isDraftShift(s));
                           return (
                             <div
                               key={`strip-${d}`}
@@ -5021,8 +5040,9 @@ export function App() {
                               </span>
                               <div style={{ minHeight: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                 {dayShifts.length > 0 ? (
-                                  <span style={{ fontSize: '9px', fontWeight: 800, color: '#7C3AED', backgroundColor: '#F3E8FF', borderRadius: '4px', padding: '1px 4px' }}>
+                                  <span style={{ fontSize: '9px', fontWeight: 800, color: dayDraftOnly ? '#92400E' : '#7C3AED', backgroundColor: dayDraftOnly ? '#FEF3C7' : '#F3E8FF', borderRadius: '4px', padding: '1px 4px' }}>
                                     {dayShifts[0].shift_code === 'CA_1' ? 'Ca 1' : dayShifts[0].shift_code === 'CA_2' ? 'Ca 2' : dayShifts[0].shift_code === 'CA_3' ? 'Ca 3' : `${dayShifts.length} ca`}
+                                    {dayDraftOnly ? ' • Nháp' : ''}
                                   </span>
                                 ) : isOffDay ? (
                                   <span style={{ fontSize: '9px', fontWeight: 800, color: '#065F46', backgroundColor: '#D1FAE5', borderRadius: '4px', padding: '1px 4px' }}>

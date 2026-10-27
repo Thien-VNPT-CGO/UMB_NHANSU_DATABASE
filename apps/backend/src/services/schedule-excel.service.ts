@@ -508,6 +508,13 @@ export class ScheduleExcelService {
           }
         }
 
+        // Ca tạo/đổi bằng Excel trong tuần ĐÃ phát hành phải là PUBLISHED ngay;
+        // nếu không NV thấy ca trên lịch nhưng Điểm danh báo "chưa phát hành"
+        // và Dữ liệu công gắn "Chờ duyệt (chưa tính công)".
+        try {
+          await this.schedulesService.healDraftsInPublishedWeeksNow({ weekStart: monIso, actorId });
+        } catch { /* best-effort: import vẫn thành công */ }
+
         return { created, updated, kept, errors, warnings, perEmp: Array.from(perEmp.values()) };
       },
     });

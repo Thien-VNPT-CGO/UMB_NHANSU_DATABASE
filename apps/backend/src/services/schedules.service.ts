@@ -607,6 +607,9 @@ export class SchedulesService {
             `SHIFT_DUPLICATE: ${String(data.employeeId)} ngày ${String(data.date).slice(0, 10)} đã có ${String(data.shiftCode)} (${String((dup as any)?.assignment_id || '')})! Không tạo trùng.`
           );
         }
+        // Tuần đã phát hành (có ca PUBLISHED) hoặc HR bù ca tuần trước → PUBLISHED.
+        const publishNow = data.publish === true
+          || (await this.isWeekPublished(data.branchId, data.date).catch(() => false));
         const shift = await this.repo.createShiftAssignment({
           assignment_id: assignmentId,
           employee_id: data.employeeId,
@@ -615,19 +618,18 @@ export class SchedulesService {
           date: data.date,
           start_at: startAt,
           end_at: endAt,
-          status: 'DRAFT',
+          // Tuần đã publish (hoặc bù tuần trước) → vào thẳng PUBLISHED. Ca DRAFT
+          // tạo sau khi publish sẽ khiến NV thấy ca trên lịch nhưng Điểm danh báo
+          // "chưa phát hành" và "Chờ duyệt (chưa tính công)".
+          status: publishNow ? 'PUBLISHED' : 'DRAFT',
           schedule_version: 1,
         });
-        // Bù tuần trước: chốt PUBLISHED ngay trong cùng task để đủ công tính lương.
-        let finalShift = shift;
-        if (data.publish) {
-          try {
-            finalShift = await this.repo.updateShiftAssignment(assignmentId, {
-              status: 'PUBLISHED',
-              schedule_version: 2,
-            });
-          } catch { /* giữ DRAFT, HR Phát Hành tay */ }
-        }
+        const finalShift = shift;
+        // Dọn luôn các ca nháp cũ cùng tuần (nếu tuần đã publish) để cả tuần
+        // đồng nhất PUBLISHED — NV thấy gì thì Điểm danh/công/đổi ca hiểu đúng đó.
+        try {
+          await this.healDraftsInPublishedWeeksNow({ branchId: data.branchId, weekStart: data.date });
+        } catch { /* best-effort: ca mới vẫn đã đúng trạng thái */ }
         // HR/Store xếp ca vào đúng ngày NV đã đăng ký OFF → ngày OFF đó lập tức
         // chuyển thành ca làm việc (tự hủy OFF, tránh cảnh báo ca trùng ngày OFF).
         const offNotes = await this.cancelReceiverLeavesOnWorkDay(data.employeeId, data.date);
@@ -676,7 +678,7 @@ export class SchedulesService {
         const inWeekEmpIds = new Set<string>();
         for (const s of shifts || []) {
           const d = String((s as any).date || '').slice(0, 10);
-          if ((s as any).status === 'CANCELLED') continue;
+          if (String((s as any).status || '').trim().toUpperCase() === 'CANCELLED') continue;
           if (!d || d < weekStart || d > weekEnd) continue;
           if ((s as any).employee_id) inWeekEmpIds.add(String((s as any).employee_id));
         }
@@ -693,7 +695,8 @@ export class SchedulesService {
         const updatedShifts: ShiftAssignment[] = [];
 
         for (const shift of shifts) {
-          if (shift.status === 'DRAFT' && !lockedIds.has(String((shift as any).employee_id))) {
+          const shiftStatus = String((shift as any).status || '').trim().toUpperCase();
+          if (shiftStatus === 'DRAFT' && !lockedIds.has(String((shift as any).employee_id))) {
             const updated = await this.repo.updateShiftAssignment(shift.assignment_id, {
               status: 'PUBLISHED',
               schedule_version: shift.schedule_version + 1,
@@ -741,6 +744,171 @@ export class SchedulesService {
   }
 
   // --- Leaves ---
+  /** Ngày của ca đã chuẩn hóa (Sheet có thể lưu ISO datetime/serial/D-M-Y). */
+  private shiftDayOf(s: any): string {
+    return normSheetDate(String((s as any)?.date ?? '')) || String((s as any)?.date || '').slice(0, 10);
+  }
+
+  /**
+   * Tuần (Mon–Sun, chuẩn hóa chi nhánh) đã được HR phát hành chưa?
+   * Đã phát hành = có ít nhất 1 ca PUBLISHED chưa hủy trong tuần đó.
+   * Dùng để quyết định ca tạo mới phải vào thẳng PUBLISHED (không để DRAFT
+   * lọt vào tuần NV đã thấy lịch — sẽ bị Điểm danh báo "chưa phát hành").
+   */
+  async isWeekPublished(branchId: string, date: string): Promise<boolean> {
+    const day = normSheetDate(String(date || '')) || String(date || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return false;
+    const wk = weekRangeOf(day);
+    const rows = await this.repo.getShiftsForWeek('*', wk.mon).catch(() => []);
+    const wantBranch = String(branchId || '').trim();
+    return (rows || []).some((s: any) => {
+      const d = this.shiftDayOf(s);
+      if (!d || d < wk.mon || d > wk.sun) return false;
+      if (String((s as any)?.status || '').trim().toUpperCase() !== 'PUBLISHED') return false;
+      if (wantBranch && wantBranch !== '*' && canonicalBranch((s as any)?.branch_id) !== canonicalBranch(wantBranch)) return false;
+      return true;
+    });
+  }
+
+  /**
+   * Tự chữa ca DRAFT lọt vào tuần ĐÃ phát hành.
+   *
+   * Quy ước nghiệp vụ: HR publish là publish CẢ TUẦN của chi nhánh. Vì vậy nếu
+   * trong tuần đó đã có ≥1 ca PUBLISHED thì mọi ca DRAFT còn lại (tạo tay sau
+   * publish, nhập Excel muộn, BOT chạy lại, dữ liệu cũ lưu mã CN khác...) đều
+   * phải là PUBLISHED. Nếu không, nhân viên rơi vào trạng thái vô lý:
+   *   - Lịch tuần hiện ca làm việc;
+   *   - Điểm danh báo "CA CHƯA PHÁT HÀNH / không có ca";
+   *   - Dữ liệu công gắn "⏳ Chờ duyệt (chưa tính công)";
+   *   - Không đổi ca được (assertShiftsPublished).
+   *
+   * Bỏ qua tài khoản LOCKED (HR khóa NV thì ca vẫn nháp) và ca CANCELLED.
+   * Chạy trong 1 lần push Sheet duy nhất (publishShiftAssignments) khi có thay đổi.
+   */
+  async healDraftsInPublishedWeeks(opts: {
+    branchId?: string;
+    weekStart?: string;
+    actorId?: string;
+  } = {}): Promise<{ operationId: string; result: { healed: number; weeks: string[] } }> {
+    return singleWriterQueue.enqueue({
+      entityType: 'PHAN_CONG_CA',
+      entityId: `HEAL_DRAFT_${String(opts.weekStart || 'ALL').slice(0, 10)}_${Date.now()}`,
+      actorId: opts.actorId || 'SYSTEM',
+      execute: () => this.healDraftsInPublishedWeeksNow(opts),
+    });
+  }
+
+  /**
+   * Phần thực thi của {@link healDraftsInPublishedWeeks}, KHÔNG enqueue.
+   * Chỉ gọi trực tiếp khi đang ở TRONG một task single-writer khác (publish,
+   * tạo ca, nhập Excel) để tránh tự khóa hàng đợi (nested enqueue = deadlock).
+   */
+  async healDraftsInPublishedWeeksNow(opts: {
+    branchId?: string;
+    weekStart?: string;
+    actorId?: string;
+  } = {}): Promise<{ healed: number; weeks: string[] }> {
+    const weekStart = normSheetDate(String(opts.weekStart || '')) || String(opts.weekStart || '').slice(0, 10);
+    const weekLimit = weekStart ? weekRangeOf(weekStart) : null;
+    const rows = await this.repo
+      .getShiftsForWeek('*', weekLimit ? weekLimit.mon : '2000-01-01')
+      .catch(() => []);
+    const wantBranch = String(opts.branchId || '').trim();
+    const branchOk = (b: any) =>
+      !wantBranch || wantBranch === '*' || canonicalBranch(b) === canonicalBranch(wantBranch);
+
+    type Group = { published: boolean; drafts: Array<{ id: string; employeeId: string; date: string }>; week: string };
+    const groups = new Map<string, Group>();
+    for (const s of rows || []) {
+      const st = String((s as any)?.status || '').trim().toUpperCase();
+      if (st === 'CANCELLED') continue;
+      if (!branchOk((s as any)?.branch_id)) continue;
+      const day = this.shiftDayOf(s);
+      if (!day) continue;
+      if (weekLimit && (day < weekLimit.mon || day > weekLimit.sun)) continue;
+      const wk = weekRangeOf(day);
+      const key = `${canonicalBranch((s as any)?.branch_id)}|${wk.mon}`;
+      let g = groups.get(key);
+      if (!g) {
+        g = { published: false, drafts: [], week: wk.mon };
+        groups.set(key, g);
+      }
+      if (st === 'PUBLISHED') {
+        g.published = true;
+      } else if (st === 'DRAFT' && (s as any)?.assignment_id) {
+        g.drafts.push({
+          id: String((s as any).assignment_id),
+          employeeId: String((s as any)?.employee_id || '').trim(),
+          date: day,
+        });
+      }
+    }
+
+    const locked = new Set<string>();
+    try {
+      const accs = await this.repo.listAccounts().catch(() => []);
+      for (const a of accs || []) {
+        if ((a as any)?.account_status === 'LOCKED' && (a as any)?.employee_id) {
+          locked.add(String((a as any).employee_id).trim());
+        }
+      }
+    } catch { /* không đọc được tài khoản: vẫn heal, chỉ bỏ qua bước khóa */ }
+
+    const toPublish: Array<{ id: string; employeeId: string; date: string }> = [];
+    const weeks = new Set<string>();
+    for (const g of groups.values()) {
+      if (!g.published || g.drafts.length === 0) continue;
+      for (const d of g.drafts) {
+        if (d.employeeId && locked.has(d.employeeId)) continue;
+        toPublish.push(d);
+        weeks.add(g.week);
+      }
+    }
+    if (toPublish.length === 0) return { healed: 0, weeks: [] };
+
+    const ids = toPublish.map(d => d.id);
+    let healed = 0;
+    const bulk = (this.repo as any).publishShiftAssignments;
+    if (typeof bulk === 'function') {
+      healed = Number(await bulk.call(this.repo, ids)) || 0;
+    } else {
+      for (const id of ids) {
+        const cur: any = await this.repo.getShiftById(id).catch(() => null);
+        if (!cur) continue;
+        if (String(cur?.status || '').trim().toUpperCase() === 'PUBLISHED') continue;
+        await this.repo.updateShiftAssignment(id, {
+          status: 'PUBLISHED',
+          schedule_version: Number(cur?.schedule_version || 1) + 1,
+        });
+        healed++;
+      }
+    }
+
+    if (healed > 0) {
+      // Ca vừa chốt trùng ngày OFF đã duyệt → OFF chuyển thành ca làm việc.
+      for (const d of toPublish) {
+        if (!d.employeeId || !d.date) continue;
+        try {
+          await this.cancelReceiverLeavesOnWorkDay(d.employeeId, d.date);
+        } catch { /* ca vẫn đã publish; OFF xử lý ở lượt sau */ }
+      }
+      if (this.io) {
+        this.io.emit('data:updated', {
+          entity: 'schedules',
+          data: { action: 'heal-draft-in-published-week', healed, weeks: [...weeks].sort() },
+          timestamp: new Date().toISOString(),
+        });
+        this.io.emit('data:updated', {
+          entity: 'attendance',
+          data: { action: 'heal-draft-in-published-week', healed },
+          timestamp: new Date().toISOString(),
+        });
+      }
+      console.log(`[schedule-heal] Đã chốt PUBLISHED ${healed} ca nháp lọt vào tuần đã phát hành (${[...weeks].sort().join(', ')}).`);
+    }
+    return { healed, weeks: [...weeks].sort() };
+  }
+
   /** Ca làm của NV vào 1 ngày: ca đã xếp lịch (ưu tiên) rớt về ca cố định. */
   private async shiftsOfDay(employeeId: string, date: string, fallbackShift?: string): Promise<string[]> {
     try {
@@ -2275,6 +2443,9 @@ export class SchedulesService {
           }
           await this.repo.updateShiftAssignment(coverShift.assignment_id, {
             employee_id: partnerId,
+            // Ca đã publish rồi chuyển chủ: phải giữ PUBLISHED, nếu rơi về
+            // DRAFT thì NV nhận ca thấy "chờ duyệt (chưa tính công)" oan.
+            status: 'PUBLISHED',
             schedule_version: (coverShift.schedule_version || 0) + 1,
           });
           // B đi làm ca này thì ngày OFF (nếu có) của B ngày đó tự hủy.
@@ -2301,6 +2472,7 @@ export class SchedulesService {
             }
             await this.repo.updateShiftAssignment(coverShift.assignment_id, {
               employee_id: swap.target_employee_id,
+              status: 'PUBLISHED',
               schedule_version: coverShift.schedule_version + 1,
             });
             // Người nhận đi làm ca này thì ngày OFF (nếu có) của họ ngày đó tự hủy.
@@ -2355,10 +2527,12 @@ export class SchedulesService {
           }
           await this.repo.updateShiftAssignment(reqShift.assignment_id, {
             employee_id: swap.target_employee_id,
+            status: 'PUBLISHED',
             schedule_version: reqShift.schedule_version + 1,
           });
           await this.repo.updateShiftAssignment(tgtShift.assignment_id, {
             employee_id: swap.requester_id,
+            status: 'PUBLISHED',
             schedule_version: tgtShift.schedule_version + 1,
           });
           // Mỗi bên nhận ca mới thì ngày OFF (nếu có) của họ ngày ca đó tự hủy.
@@ -2486,6 +2660,7 @@ export class SchedulesService {
           }
           await this.repo.updateShiftAssignment(aid, {
             employee_id: originalHolder,
+            status: 'PUBLISHED',
             schedule_version: (sh.schedule_version || 0) + 1,
           });
           reverted.push(`${aid}: trả về ${originalHolder}`);

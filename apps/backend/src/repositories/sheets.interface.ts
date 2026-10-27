@@ -64,6 +64,12 @@ export interface ISheetsRepository {
   getShiftById(assignmentId: string): Promise<ShiftAssignment | null>;
   createShiftAssignment(assignment: Omit<ShiftAssignment, 'created_at' | 'updated_at'>): Promise<ShiftAssignment>;
   updateShiftAssignment(id: string, updates: Partial<ShiftAssignment>): Promise<ShiftAssignment>;
+  /**
+   * Đánh dấu PUBLISHED hàng loạt (self-heal ca nháp lọt vào tuần đã phát hành).
+   * Tùy chọn: adapter không hỗ trợ thì service tự lặp updateShiftAssignment.
+   * Trả về số ca thực sự đổi trạng thái.
+   */
+  publishShiftAssignments?(ids: string[]): Promise<number>;
   deleteShiftAssignment(id: string): Promise<boolean>;
   purgeShiftAssignments(ids: string[]): Promise<number>;
   deleteShiftsForEmployee(employeeId: string, fromDate?: string): Promise<number>;

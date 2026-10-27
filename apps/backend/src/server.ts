@@ -683,6 +683,24 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   setTimeout(shiftOffSyncTickSafe, 150_000);
   setInterval(shiftOffSyncTickSafe, 60_000);
 
+  // Tự chữa ca DRAFT lọt vào tuần ĐÃ phát hành (dữ liệu cũ, nhập Excel muộn,
+  // BOT xếp lại, ca tạo tay sau publish): cả tuần đã publish thì mọi ca phải
+  // PUBLISHED — tránh NV thấy ca trên lịch nhưng Điểm danh báo "chưa phát hành"
+  // và Dữ liệu công gắn "Chờ duyệt (chưa tính công)". Chạy sau pull đầu + 10 phút.
+  const healDraftShiftsTickSafe = () => {
+    services.schedulesService
+      .healDraftsInPublishedWeeks({ actorId: 'SYSTEM' })
+      .then((r: any) => {
+        const out = r?.result ?? r;
+        if ((out?.healed || 0) > 0) {
+          console.log(`[schedule-heal] Tự chốt ${out.healed} ca nháp trong tuần đã phát hành (${(out.weeks || []).join(', ')}).`);
+        }
+      })
+      .catch((err: any) => console.warn('[schedule-heal] tick error:', err?.message || err));
+  };
+  setTimeout(healDraftShiftsTickSafe, 110_000);
+  setInterval(healDraftShiftsTickSafe, 10 * 60_000);
+
   // Rà soát NV "dính" thử việc (mỗi 5 phút): NV còn PROBATION nhưng official_date
   // đã đến/quá -> tự chuyển chính thức + gỡ ca thử việc tương lai. Che 2 lỗ:
   // (1) HR sửa ngày chính thức tab Hồ Sơ mà quên "Chuyển chính thức";

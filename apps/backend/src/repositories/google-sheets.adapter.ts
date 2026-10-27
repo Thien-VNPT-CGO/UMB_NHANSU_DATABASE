@@ -980,6 +980,29 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     return res;
   }
 
+  /**
+   * Self-heal hàng loạt ca DRAFT lọt vào tuần đã phát hành: đổi trạng thái ở bộ
+   * nhớ rồi đẩy Sheet ĐÚNG 1 lần (không gọi update từng ca để tránh N lần push
+   * cả tab PHAN_CONG_CA làm nghẽn quota write).
+   */
+  async publishShiftAssignments(ids: string[]) {
+    const changed = await this.fallbackAdapter.publishShiftAssignments?.(ids) ?? 0;
+    if (changed <= 0) return 0;
+    this.scheduleRuntimeSnapshot();
+    if (this.isConfigured) {
+      try {
+        const pushed = await Promise.race([
+          this.syncService.pushShiftsTab(this.fallbackAdapter),
+          new Promise<number>(r => setTimeout(() => r(0), 20000)),
+        ]);
+        if (!pushed) throw new Error('PUSH_SHIFTS_FAILED');
+      } catch {
+        this.scheduleFullSync('PHAN_CONG_CA.bulk-publish');
+      }
+    }
+    return changed;
+  }
+
   async deleteShiftsForEmployee(employeeId: string, fromDate?: string): Promise<number> {
     const deletedCount = await this.fallbackAdapter.deleteShiftsForEmployee(employeeId, fromDate);
     if (deletedCount > 0) this.scheduleRuntimeSnapshot();

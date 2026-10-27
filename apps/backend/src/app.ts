@@ -2632,6 +2632,30 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   );
 
+  // Tự chữa ca nháp lọt vào tuần đã phát hành (Admin/HR chạy tay sau khi nhập
+  // Excel / sửa tay trên Sheet / BOT xếp ca muộn). Trả về số ca đã chốt.
+  app.post(
+    '/admin/shifts/heal-drafts',
+    authMiddleware,
+    requireRole(['ADMIN', 'HR', 'STORE']),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const result = await schedulesService.healDraftsInPublishedWeeks({
+          branchId: req.body?.branchId || req.user?.branchScope || '*',
+          weekStart: req.body?.weekStart,
+          actorId: req.user!.id,
+        });
+        const out = (result as any)?.result ?? result;
+        if ((out?.healed || 0) > 0) {
+          broadcastUpdate('schedules', { action: 'heal-drafts', weekStart: out?.weeks, healed: out?.healed });
+        }
+        res.json(out);
+      } catch (err: any) {
+        res.status(400).json({ error: err.message });
+      }
+    }
+  );
+
   app.post(
     '/schedules/:week/publish',
     authMiddleware,

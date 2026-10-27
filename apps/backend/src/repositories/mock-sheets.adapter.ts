@@ -656,6 +656,27 @@ export class MockSheetsAdapter implements ISheetsRepository {
     return { ...shift };
   }
 
+  /**
+   * Self-heal: chốt PUBLISHED hàng loạt ca nháp lọt vào tuần đã phát hành
+   * (NV thấy ca trên lịch nhưng Điểm danh báo "chưa phát hành").
+   */
+  async publishShiftAssignments(ids: string[]): Promise<number> {
+    this.checkErrors();
+    const set = new Set((ids || []).map(id => String(id)));
+    if (set.size === 0) return 0;
+    const now = new Date().toISOString();
+    let changed = 0;
+    for (const s of this.shifts) {
+      if (!set.has(String(s.assignment_id))) continue;
+      if (String(s.status || '').toUpperCase() === 'PUBLISHED') continue;
+      s.status = 'PUBLISHED';
+      s.schedule_version = (Number(s.schedule_version) || 1) + 1;
+      s.updated_at = now;
+      changed++;
+    }
+    return changed;
+  }
+
   async deleteShiftAssignment(id: string): Promise<boolean> {
     this.checkErrors();
     const idx = this.shifts.findIndex(s => String(s.assignment_id) === String(id));
