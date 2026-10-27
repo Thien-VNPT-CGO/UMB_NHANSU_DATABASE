@@ -439,15 +439,42 @@ export class GoogleSheetsSyncService {
   }
 
   /**
-   * Xếp hàng TUẦN TỰ cho mọi lệnh GHI Google Sheets.
+   * Xếp hàng TUẦN TỰ cho mọi lệnh GHI Google Sheets, CÓ ƯU TIÊN.
    *
    * Google khoá ghi theo từng spreadsheet: nhiều request ghi cùng lúc thì các
    * request sau phải chờ và dễ vượt timeout. Tệ hơn, timeout bằng `Promise.race`
    * chỉ bỏ qua kết quả chứ KHÔNG huỷ request HTTP — request "zombie" vẫn giữ
    * khoá ghi, khiến lần ghi kế tiếp lại timeout, tạo vòng xoáy không lối thoát.
-   * Vì vậy: chỉ 1 lệnh ghi in-flight, kèm timeout HTTP thật (google.options).
+   *
+   * Vì vậy: chỉ 1 lệnh ghi in-flight. Lệnh append (điểm danh/thông báo/phiếu —
+   * dữ liệu người dùng vừa tạo) được chen trước full-sync (24 tab), tránh việc
+   * một lượt full-sync chậm chặn toàn bộ hàng đợi.
    */
-  private writeChain: Promise<void> = Promise.resolve();
+  private writeBusy = false;
+  private writeWaiters: Array<{ high: boolean; resolve: () => void }> = [];
+
+  private acquireWrite(high: boolean): Promise<void> {
+    if (!this.writeBusy) {
+      this.writeBusy = true;
+      return Promise.resolve();
+    }
+    return new Promise<void>(resolve => {
+      const waiter = { high, resolve };
+      if (high) {
+        const idx = this.writeWaiters.findIndex(w => !w.high);
+        if (idx === -1) this.writeWaiters.push(waiter);
+        else this.writeWaiters.splice(idx, 0, waiter);
+      } else {
+        this.writeWaiters.push(waiter);
+      }
+    });
+  }
+
+  private releaseWrite(): void {
+    const next = this.writeWaiters.shift();
+    if (next) next.resolve();
+    else this.writeBusy = false;
+  }
 
   private async sheetsCall<T>(label: string, fn: () => Promise<T>, ms = 20000): Promise<T> {
     const isWrite = label.startsWith('write.')
@@ -456,16 +483,15 @@ export class GoogleSheetsSyncService {
       || label.startsWith('part.add.')
       || label.startsWith('part.header.')
       || label.startsWith('probe.append.')
+      || label.startsWith('probe.writeTiny')
       || label === 'init.batchUpdate'
       || label === 'probe.noopBatchUpdate';
 
     if (!isWrite) return this.withDeadline(label, fn, ms);
 
-    const previous = this.writeChain;
-    let release: () => void = () => undefined;
-    this.writeChain = new Promise<void>(resolve => { release = resolve; });
+    const high = label.startsWith('append.') || label.startsWith('part.header.') || label.startsWith('probe.writeTiny');
+    await this.acquireWrite(high);
     try {
-      await previous.catch(() => undefined);
       const now = Date.now();
       const wait = Math.max(0, GoogleSheetsSyncService.WRITE_RATE_LIMIT_MS - (now - this.lastWriteAt));
       if (wait > 0) {
@@ -474,7 +500,7 @@ export class GoogleSheetsSyncService {
       this.lastWriteAt = Date.now();
       return await this.withDeadline(label, fn, ms);
     } finally {
-      release();
+      this.releaseWrite();
     }
   }
 
@@ -492,9 +518,21 @@ export class GoogleSheetsSyncService {
   }
 
   private markWriteFail(where: string, err: any) {
-    const msg = `${where}: ${err?.message || err}`;
+    const msg = `${where}: ${this.describeGoogleError(err)}`;
     this.lastWriteError = msg;
     console.warn(`[GoogleSheetsSyncService] ${msg}`);
+  }
+
+  /** Mô tả lỗi Google kèm mã HTTP + body để /health chẩn đoán được (429? 403?). */
+  private describeGoogleError(err: any): string {
+    const base = String(err?.message || err || 'UNKNOWN');
+    const status = err?.response?.status ?? err?.code ?? null;
+    let body = err?.response?.data;
+    if (body && typeof body !== 'string') {
+      try { body = JSON.stringify(body); } catch { body = String(body); }
+    }
+    const detail = typeof body === 'string' ? body.slice(0, 300) : '';
+    return `${base}${status ? ` [HTTP ${status}]` : ''}${detail ? ` ${detail}` : ''}`;
   }
 
   constructor() {
@@ -620,6 +658,8 @@ export class GoogleSheetsSyncService {
     valuesGet: { ok: boolean; ms: number; error: string | null };
     post: { ok: boolean; ms: number; error: string | null };
     append: { ok: boolean; ms: number; error: string | null } | null;
+    /** Ghi 1 ô với timeout dài (120s) — phân biệt "chậm" với "quota/403". */
+    writeTiny: { ok: boolean; ms: number; status: number | null; error: string | null } | null;
     /** Kích thước lưới từng tab (metadata) — phát hiện tab phình/stray rows. */
     tabs: Array<{ title: string; rows: number; cols: number }>;
     /** Đọc thử đúng tab đang lỗi ghi: số dòng dữ liệu thật + thời gian đọc. */
@@ -724,7 +764,29 @@ export class GoogleSheetsSyncService {
     }
 
     let append: { ok: boolean; ms: number; error: string | null } | null = null;
+    let writeTiny: { ok: boolean; ms: number; status: number | null; error: string | null } | null = null;
     if (opts.includeAppend) {
+      // Ghi lại đúng giá trị header A1 của AUDIT_LOG (không đổi dữ liệu) với
+      // timeout 120s: nếu thành công sau 30–90s thì Google chỉ CHẬM; nếu trả
+      // 429/403 thì rõ nguyên nhân; nếu treo tới 120s thì đường ghi bị chặn.
+      const tinyStart = Date.now();
+      try {
+        await this.withDeadline('probe.writeTiny', () => this.sheetsClient!.spreadsheets.values.update({
+          spreadsheetId: this.spreadsheetId,
+          range: `'AUDIT_LOG'!A1`,
+          valueInputOption: 'RAW',
+          requestBody: { values: [['Mã Nhật Ký']] },
+        }, { timeout: 120_000 } as any), 125_000);
+        writeTiny = { ok: true, ms: Date.now() - tinyStart, status: 200, error: null };
+      } catch (e: any) {
+        writeTiny = {
+          ok: false,
+          ms: Date.now() - tinyStart,
+          status: e?.response?.status ?? (typeof e?.code === 'number' ? e.code : null),
+          error: this.describeGoogleError(e),
+        };
+      }
+
       const nowIso = new Date().toISOString();
       append = await time(() => this.sheetsClient!.spreadsheets.values.append({
         spreadsheetId: this.spreadsheetId,
@@ -742,14 +804,15 @@ export class GoogleSheetsSyncService {
             JSON.stringify({ note: 'Chẩn đoán đường ghi Google Sheets — có thể xoá dòng này.' }),
           ]],
         },
-      }), 'probe.append.AUDIT_LOG');
+      }, { timeout: 60_000 } as any), 'probe.append.AUDIT_LOG', 65_000);
     }
 
-    this.writeProbeResult = { at: new Date().toISOString(), get: sheetMeta, valuesGet, post, append, tabs, hotTab };
+    this.writeProbeResult = { at: new Date().toISOString(), get: sheetMeta, valuesGet, post, append, writeTiny, tabs, hotTab };
     console.log(
       `[write-probe] meta ${sheetMeta.ok ? 'OK' : 'FAIL'} ${sheetMeta.ms}ms` +
       ` | values.get ${valuesGet.ok ? 'OK' : 'FAIL'} ${valuesGet.ms}ms` +
       ` | batchUpdate ${post.ok ? 'OK' : 'FAIL'} ${post.ms}ms` +
+      (writeTiny ? ` | writeTiny ${writeTiny.ok ? 'OK' : 'FAIL'} ${writeTiny.ms}ms${writeTiny.status ? ` HTTP${writeTiny.status}` : ''}` : '') +
       (append ? ` | append ${append.ok ? 'OK' : 'FAIL'} ${append.ms}ms` : '') +
       (hotTab ? ` | hotTab ${hotTab.title} ${hotTab.ok ? `${hotTab.dataRows} dòng` : 'FAIL'} ${hotTab.ms}ms` : '') +
       (append?.error ? ` | appendErr=${append.error}` : ''),
@@ -4748,7 +4811,7 @@ export class GoogleSheetsSyncService {
       console.error(`[GoogleSheetsSyncService] Lỗi append ${rows.length} rows vào ${target}:`, err?.message || err);
       // Ném lỗi để hàng đợi bền vững ghi lại ĐÚNG nguyên nhân (SHEETS_TIMEOUT,
       // 429 quota, 403 quyền...) thay vì chỉ thấy APPEND_FAILED chung chung.
-      throw new Error(`APPEND_FAILED:${target}: ${err?.message || err}`);
+      throw new Error(`APPEND_FAILED:${target}: ${this.describeGoogleError(err)}`);
     }
   }
 }

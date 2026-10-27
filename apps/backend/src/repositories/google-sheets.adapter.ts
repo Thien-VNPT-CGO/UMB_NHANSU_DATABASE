@@ -529,6 +529,8 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   // sinh trong lúc chạy gộp thành 1 lượt bù (full sync luôn đọc bộ nhớ hiện tại).
   private fullSyncInFlight = false;
   private fullSyncDirty = false;
+  /** Hẹn chạy lại full-sync khi hàng đợi append đang tồn đọng (tránh tranh quota). */
+  private fullSyncDeferTimer: ReturnType<typeof setTimeout> | null = null;
 
   private scheduleFullSync(label: string) {
     if (!this.isConfigured) return;
@@ -536,6 +538,20 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     this.markDirtySoonPush();
     if (this.fullSyncInFlight) {
       this.fullSyncDirty = true;
+      return;
+    }
+    // Hàng đợi append đang tồn đọng: full-sync (24 tab, mỗi tab 1 request) sẽ
+    // cạnh tranh khoá ghi/quota với append — hoãn lại, ưu tiên dữ liệu người
+    // dùng vừa tạo. Bộ nhớ + snapshot vẫn giữ đủ, không mất dữ liệu.
+    const pending = this.durableWrites?.getStats?.().pending ?? 0;
+    if (pending > 150) {
+      if (!this.fullSyncDeferTimer) {
+        this.fullSyncDeferTimer = setTimeout(() => {
+          this.fullSyncDeferTimer = null;
+          this.scheduleFullSync('deferred');
+        }, 3 * 60_000);
+        (this.fullSyncDeferTimer as any)?.unref?.();
+      }
       return;
     }
     this.fullSyncInFlight = true;
