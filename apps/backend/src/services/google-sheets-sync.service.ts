@@ -426,28 +426,55 @@ export class GoogleSheetsSyncService {
   }
 
   /** Bọc mọi gọi Google API bằng timeout + rate limiting cho write operations. */
+  private withDeadline<T>(label: string, fn: () => Promise<T>, ms: number): Promise<T> {
+    let timer: any = null;
+    return Promise.race([
+      fn(),
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`SHEETS_TIMEOUT:${label} (${ms}ms)`)), ms);
+      }),
+    ]).finally(() => {
+      if (timer) clearTimeout(timer);
+    });
+  }
+
+  /**
+   * Xếp hàng TUẦN TỰ cho mọi lệnh GHI Google Sheets.
+   *
+   * Google khoá ghi theo từng spreadsheet: nhiều request ghi cùng lúc thì các
+   * request sau phải chờ và dễ vượt timeout. Tệ hơn, timeout bằng `Promise.race`
+   * chỉ bỏ qua kết quả chứ KHÔNG huỷ request HTTP — request "zombie" vẫn giữ
+   * khoá ghi, khiến lần ghi kế tiếp lại timeout, tạo vòng xoáy không lối thoát.
+   * Vì vậy: chỉ 1 lệnh ghi in-flight, kèm timeout HTTP thật (google.options).
+   */
+  private writeChain: Promise<void> = Promise.resolve();
+
   private async sheetsCall<T>(label: string, fn: () => Promise<T>, ms = 20000): Promise<T> {
-    const isWrite = label.startsWith('write.') || label.startsWith('append.') || label.startsWith('clear.') || label === 'init.batchUpdate';
-    
-    if (isWrite) {
+    const isWrite = label.startsWith('write.')
+      || label.startsWith('append.')
+      || label.startsWith('clear.')
+      || label.startsWith('part.add.')
+      || label.startsWith('part.header.')
+      || label.startsWith('probe.append.')
+      || label === 'init.batchUpdate'
+      || label === 'probe.noopBatchUpdate';
+
+    if (!isWrite) return this.withDeadline(label, fn, ms);
+
+    const previous = this.writeChain;
+    let release: () => void = () => undefined;
+    this.writeChain = new Promise<void>(resolve => { release = resolve; });
+    try {
+      await previous.catch(() => undefined);
       const now = Date.now();
       const wait = Math.max(0, GoogleSheetsSyncService.WRITE_RATE_LIMIT_MS - (now - this.lastWriteAt));
       if (wait > 0) {
         await new Promise(r => setTimeout(r, wait));
       }
       this.lastWriteAt = Date.now();
-    }
-
-    let timer: any = null;
-    try {
-      return await Promise.race([
-        fn(),
-        new Promise<T>((_, reject) => {
-          timer = setTimeout(() => reject(new Error(`SHEETS_TIMEOUT:${label} (${ms}ms)`)), ms);
-        }),
-      ]);
+      return await this.withDeadline(label, fn, ms);
     } finally {
-      if (timer) clearTimeout(timer);
+      release();
     }
   }
 
@@ -536,6 +563,12 @@ export class GoogleSheetsSyncService {
           'https://www.googleapis.com/auth/drive',
         ],
       });
+
+      // Chống request ghi "zombie" giữ khoá spreadsheet: đặt timeout HTTP thật
+      // (huỷ socket) + tắt retry ẩn của gaxios (retry ẩn nhân bản lệnh ghi và
+      // làm timeout của ta không còn ý nghĩa). SHEETS_HTTP_TIMEOUT_MS cấu hình.
+      const httpTimeoutMs = Math.max(5_000, Number(process.env.SHEETS_HTTP_TIMEOUT_MS) || 25_000);
+      (google as any).options?.({ timeout: httpTimeoutMs, retry: false });
 
       this.sheetsClient = google.sheets({ version: 'v4', auth });
       this.driveClient = google.drive({ version: 'v3', auth });
