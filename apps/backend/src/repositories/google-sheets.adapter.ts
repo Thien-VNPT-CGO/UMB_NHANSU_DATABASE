@@ -90,6 +90,9 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
       priorityThreshold: Number.isFinite(Number(process.env.DURABLE_WRITE_PRIORITY_THRESHOLD))
         ? Math.max(0, Number(process.env.DURABLE_WRITE_PRIORITY_THRESHOLD))
         : 300,
+      // Tab lỗi liên tiếp bị hoãn riêng (mặc định 10 phút) — 1 tab hỏng không
+      // được chặn điểm danh/phiếu ca của các tab khác.
+      tabBackoffMs: Math.max(30_000, Number(process.env.DURABLE_TAB_BACKOFF_MS) || 600_000),
       onDeadLetter: (entry) => {
         console.error(`[GoogleSheetsAdapter] Dead-letter ghi ${entry.sheetTitle} sau ${entry.attempts} lần — chạy full-sync bù.`);
         // Thông báo không đáng đẩy cả 24 tab (dễ dội quota); dữ liệu nghiệp vụ
@@ -477,8 +480,8 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   }
 
   /** Admin đối soát: đưa các append đã dead-letter trở lại hàng đợi. */
-  public async retryDurableDeadLetters(): Promise<number> {
-    return this.durableWrites?.retryDeadLetters?.() || 0;
+  public async retryDurableDeadLetters(opts: { tabs?: string[] } = {}): Promise<number> {
+    return this.durableWrites?.retryDeadLetters?.(opts) || 0;
   }
 
   /** Cho service khác (vd. phiếu cập nhật ca) ghi append qua journal bền vững. */

@@ -5720,9 +5720,16 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     ['/sheets/dead-letters/retry', '/api/sheets/dead-letters/retry'],
     authMiddleware,
     requireRole(['ADMIN']),
-    async (_req, res) => {
+    async (req, res) => {
       try {
-        const retried = await (adapter as any).retryDurableDeadLetters?.() || 0;
+        // ?tabs=A,B : chỉ thử lại các tab này (ưu tiên dữ liệu nghiệp vụ trước
+        // tab thông báo — tránh tạo dòng trùng khi lần ghi trước đã thành công
+        // một phần nhưng bị timeout).
+        const rawTabs = String((req.query as any)?.tabs || '').trim();
+        const tabs = rawTabs
+          ? rawTabs.split(',').map(t => t.trim().toUpperCase()).filter(Boolean)
+          : undefined;
+        const retried = await (adapter as any).retryDurableDeadLetters?.({ tabs }) || 0;
         res.json({
           success: true,
           retried,

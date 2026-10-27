@@ -143,7 +143,7 @@ test('durable queue ưu tiên dữ liệu nghiệp vụ trước tab thông báo
   }
 });
 
-test('durable queue tạm nghỉ sau chuỗi lỗi liên tiếp (chống bão timeout/quota)', async () => {
+test('durable queue tạm nghỉ toàn cục khi NHIỀU tab cùng lỗi liên tiếp', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ubm-durable-pause-'));
   const file = path.join(dir, 'pending-writes.json');
   let calls = 0;
@@ -159,13 +159,52 @@ test('durable queue tạm nghỉ sau chuỗi lỗi liên tiếp (chống bão ti
     pauseMs: 60_000,
   });
   try {
+    // Hai tab cùng hỏng = sự cố diện rộng → nghỉ toàn hàng đợi.
     await queue.enqueue('THONGBAO_NV', [['inbox-1']]);
+    await queue.enqueue('SU_KIEN_DIEM_DANH', [['event-1']]);
     await waitFor(() => queue.getStats().pausedUntil !== null && queue.getStats().processing === false);
-    assert.equal(calls, 2, 'chỉ gọi 2 lần rồi tạm nghỉ, không bắn liên tục');
+    assert.ok(calls >= 3, 'phải thử cả 2 tab trước khi nghỉ toàn cục');
     const before = calls;
-    await new Promise(r => setTimeout(r, 200));
+    await new Promise(r => setTimeout(r, 300));
     assert.equal(calls, before, 'trong thời gian nghỉ không gọi Google thêm');
     assert.ok(queue.getStats().pausedUntil);
+  } finally {
+    queue.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('durable queue hoãn RIÊNG tab lỗi, tab khác vẫn ghi được', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ubm-durable-tabiso-'));
+  const file = path.join(dir, 'pending-writes.json');
+  const okTabs: string[] = [];
+  let badCalls = 0;
+  const queue = new DurableWriteQueue({
+    append: async (tab) => {
+      if (tab === 'THONGBAO_NV') {
+        badCalls += 1;
+        throw new Error('The operation was aborted.');
+      }
+      okTabs.push(tab);
+      return true;
+    },
+    filePath: file,
+    maxAttempts: 50,
+    retryBaseMs: 25,
+    failureStreakLimit: 2,
+    tabBackoffMs: 60_000,
+  });
+  try {
+    await queue.enqueue('THONGBAO_NV', [['inbox-1']]);
+    await queue.enqueue('SU_KIEN_DIEM_DANH', [['event-1']]);
+    await waitFor(() => okTabs.length === 1 && !!queue.getStats().tabBackoffs.THONGBAO_NV, 5000);
+    // Tab hỏng bị hoãn riêng, KHÔNG nghỉ toàn hàng đợi.
+    assert.equal(queue.getStats().pausedUntil, null);
+    assert.ok(queue.getStats().tabBackoffs.THONGBAO_NV, 'tab lỗi phải có mốc thử lại riêng');
+    assert.ok(badCalls >= 1);
+    const before = badCalls;
+    await new Promise(r => setTimeout(r, 300));
+    assert.equal(badCalls, before, 'tab đang bị hoãn không được gọi lại liên tục');
   } finally {
     queue.stop();
     fs.rmSync(dir, { recursive: true, force: true });

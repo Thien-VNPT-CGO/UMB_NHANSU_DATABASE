@@ -39,6 +39,8 @@ export interface DurableWriteStats {
   pausedUntil: string | null;
   /** Phân bố dead-letter theo tab (chẩn đoán nhanh tab nào ghi hỏng). */
   deadLetterTabs: Record<string, number>;
+  /** Tab đang bị hoãn riêng (lỗi liên tiếp) và thời điểm thử lại. */
+  tabBackoffs: Record<string, string>;
 }
 
 export interface DurableWriteQueueOptions {
@@ -65,6 +67,8 @@ export interface DurableWriteQueueOptions {
   pauseMs?: number;
   /** Ngưỡng tồn đọng để bắt đầu ưu tiên dữ liệu nghiệp vụ (mặc định 300). */
   priorityThreshold?: number;
+  /** Thời gian hoãn RIÊNG một tab sau khi tab đó lỗi liên tiếp (mặc định 600s). */
+  tabBackoffMs?: number;
 }
 
 interface JournalFile {
@@ -85,6 +89,7 @@ export class DurableWriteQueue {
   private readonly failureStreakLimit: number;
   private readonly pauseMs: number;
   private readonly priorityThreshold: number;
+  private readonly tabBackoffMs: number;
   private readonly now: () => number;
   private readonly onDeadLetter?: DurableWriteQueueOptions['onDeadLetter'];
   private readonly logger: Pick<Console, 'log' | 'warn' | 'error'>;
@@ -103,6 +108,8 @@ export class DurableWriteQueue {
   /** Nghỉ tới thời điểm này rồi mới gọi Google lại (chống bão timeout/quota). */
   private pausedUntil = 0;
   private wakeTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Lỗi liên tiếp theo TỪNG tab: tab hỏng không được chặn các tab còn lại. */
+  private tabFailures = new Map<string, { streak: number; until: number }>();
 
   /**
    * Tab thông báo: giá trị thấp hơn dữ liệu nghiệp vụ (điểm danh, phiếu cập nhật
@@ -122,6 +129,7 @@ export class DurableWriteQueue {
     this.failureStreakLimit = Math.max(1, opts.failureStreakLimit ?? 3);
     this.pauseMs = Math.max(1_000, opts.pauseMs ?? 60_000);
     this.priorityThreshold = Math.max(0, opts.priorityThreshold ?? 300);
+    this.tabBackoffMs = Math.max(30_000, opts.tabBackoffMs ?? 600_000);
     this.now = opts.now || (() => Date.now());
     this.onDeadLetter = opts.onDeadLetter;
     this.logger = opts.logger || console;
@@ -252,6 +260,8 @@ export class DurableWriteQueue {
   private takeBatch(now: number): { sheetTitle: string; entries: DurableWriteEntry[]; rows: any[][] } | null {
     const due = this.pending
       .filter(e => (e.nextAttemptAt || 0) <= now)
+      // Bỏ qua tab đang bị hoãn riêng (lỗi liên tiếp) — tab khác vẫn chạy.
+      .filter(e => (this.tabFailures.get(e.sheetTitle)?.until || 0) <= now)
       .sort((a, b) => {
         if (this.pending.length > this.priorityThreshold) {
           const aLow = DurableWriteQueue.LOW_PRIORITY_TABS.has(a.sheetTitle) ? 1 : 0;
@@ -302,6 +312,7 @@ export class DurableWriteQueue {
           this.lastSuccessAt = new Date(this.now()).toISOString();
           this.lastError = null;
           this.failureStreak = 0;
+          this.tabFailures.delete(sheetTitle);
           if (entries.length > 1) {
             this.logger.log(
               `[durable-writes] Đã gộp ${entries.length} lượt ghi (${rows.length} dòng) vào 1 lần append ${sheetTitle}.`,
@@ -310,6 +321,20 @@ export class DurableWriteQueue {
         } else {
           this.failureStreak += 1;
           this.lastError = `${sheetTitle}: ${error}`;
+          // Tab này lỗi liên tiếp: hoãn RIÊNG nó (không chặn tab khác). Trước đây
+          // 1 tab hỏng (vd THONGBAO_NV bị Apps Script giữ khoá) làm cả hàng đợi
+          // nghỉ 5 phút → điểm danh/phiếu ca cũng bị trễ theo.
+          const tf = this.tabFailures.get(sheetTitle) || { streak: 0, until: 0 };
+          tf.streak += 1;
+          if (tf.streak >= this.failureStreakLimit) {
+            tf.streak = 0;
+            tf.until = this.now() + this.tabBackoffMs;
+            this.logger.warn(
+              `[durable-writes] Tab ${sheetTitle} lỗi liên tiếp — hoãn riêng tab này ${Math.round(this.tabBackoffMs / 1000)}s (các tab khác vẫn ghi tiếp).`,
+            );
+          }
+          this.tabFailures.set(sheetTitle, tf);
+
           const deadLettered: DurableWriteEntry[] = [];
           for (const entry of entries) {
             entry.attempts += 1;
@@ -348,7 +373,10 @@ export class DurableWriteQueue {
           }
           // Google timeout/quota kéo dài: nghỉ một nhịp thay vì bắn tiếp từng lô
           // 20-30s/lần (vừa tốn quota vừa không bao giờ hồi).
-          if (this.failureStreak >= this.failureStreakLimit) {
+          // CHỈ nghỉ toàn hàng đợi khi nhiều tab cùng lỗi (sự cố diện rộng);
+          // 1 tab hỏng thì đã được hoãn riêng ở trên nên không chặn tab khác.
+          const activeTabBackoffs = [...this.tabFailures.values()].filter(t => t.until > this.now()).length;
+          if (this.failureStreak >= this.failureStreakLimit && activeTabBackoffs >= 2) {
             const streak = this.failureStreak;
             // Timeout/abort = Google đang chậm hoặc spreadsheet đang bị khoá ghi;
             // nghỉ dài hơn hẳn (5 phút) thay vì 60s để không bắn thêm request
@@ -379,9 +407,10 @@ export class DurableWriteQueue {
     }
     if (!this.pending.length) return;
     const now = this.now();
-    const nextDue = Math.min(...this.pending.map(e => e.nextAttemptAt || 0));
+    const nextDue = Math.min(...this.pending.map(e =>
+      Math.max(e.nextAttemptAt || 0, this.tabFailures.get(e.sheetTitle)?.until || 0)));
     const target = Math.max(nextDue, this.pausedUntil || 0);
-    const wait = Math.max(25, target - now);
+    const wait = Math.max(250, target - now);
     this.wakeTimer = setTimeout(() => {
       this.wakeTimer = null;
       this.kick();
@@ -435,6 +464,12 @@ export class DurableWriteQueue {
         acc[e.sheetTitle] = (acc[e.sheetTitle] || 0) + 1;
         return acc;
       }, {}),
+      tabBackoffs: [...this.tabFailures.entries()]
+        .filter(([, v]) => v.until > this.now())
+        .reduce<Record<string, string>>((acc, [tab, v]) => {
+          acc[tab] = new Date(v.until).toISOString();
+          return acc;
+        }, {}),
     };
   }
 
@@ -442,22 +477,35 @@ export class DurableWriteQueue {
     return this.deadLetters.slice(-Math.max(1, Math.min(500, limit)));
   }
 
-  /** Đưa dead-letter trở lại hàng đợi để thử lại (admin thao tác tay). */
-  public async retryDeadLetters(): Promise<number> {
+  /**
+   * Đưa dead-letter trở lại hàng đợi để thử lại (admin thao tác tay).
+   *
+   * `tabs`: chỉ thử lại các tab này (mặc định tất cả). Dùng để ưu tiên dữ liệu
+   * nghiệp vụ (chấm công/phiếu/điều chỉnh công) trước tab thông báo — append
+   * thông báo có thể đã ghi thành công một phần khi Google timeout, thử lại sẽ
+   * tạo dòng trùng.
+   */
+  public async retryDeadLetters(opts: { tabs?: string[] } = {}): Promise<number> {
     if (!this.deadLetters.length) return 0;
-    const count = this.deadLetters.length;
+    const wanted = opts.tabs && opts.tabs.length
+      ? new Set(opts.tabs.map(t => String(t).trim().toUpperCase()))
+      : null;
+    const retry = wanted ? this.deadLetters.filter(e => wanted.has(e.sheetTitle)) : this.deadLetters;
+    if (!retry.length) return 0;
+    const count = retry.length;
     // Thao tác tay = người vận hành đã xử lý nguyên nhân (quota/mạng): bỏ nghỉ
     // và thử lại ngay thay vì chờ hết cooldown.
     this.pausedUntil = 0;
     this.failureStreak = 0;
-    for (const entry of this.deadLetters) {
+    for (const entry of retry) {
       entry.attempts = 0;
       entry.nextAttemptAt = 0;
       delete entry.deadLetteredAt;
       delete entry.lastError;
       this.pending.push(entry);
     }
-    this.deadLetters = [];
+    const retryIds = new Set(retry.map(e => e.id));
+    this.deadLetters = this.deadLetters.filter(e => !retryIds.has(e.id));
     await this.persist();
     this.kick();
     return count;
