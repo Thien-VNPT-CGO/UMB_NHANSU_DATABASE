@@ -484,6 +484,8 @@ export class GoogleSheetsSyncService {
       || label.startsWith('part.header.')
       || label.startsWith('probe.append.')
       || label.startsWith('probe.writeTiny')
+      || label.startsWith('probe.createTemp')
+      || label.startsWith('probe.writeTemp')
       || label === 'init.batchUpdate'
       || label === 'probe.noopBatchUpdate';
 
@@ -660,6 +662,8 @@ export class GoogleSheetsSyncService {
     append: { ok: boolean; ms: number; error: string | null } | null;
     /** Ghi 1 ô với timeout dài (120s) — phân biệt "chậm" với "quota/403". */
     writeTiny: { ok: boolean; ms: number; status: number | null; error: string | null } | null;
+    /** Ghi vào spreadsheet TẠM (tự xoá): tách lỗi do tài khoản/quota khỏi lỗi do tài liệu chính. */
+    otherDoc: { ok: boolean; ms: number; status: number | null; error: string | null } | null;
     /** Kích thước lưới từng tab (metadata) — phát hiện tab phình/stray rows. */
     tabs: Array<{ title: string; rows: number; cols: number }>;
     /** Đọc thử đúng tab đang lỗi ghi: số dòng dữ liệu thật + thời gian đọc. */
@@ -765,10 +769,11 @@ export class GoogleSheetsSyncService {
 
     let append: { ok: boolean; ms: number; error: string | null } | null = null;
     let writeTiny: { ok: boolean; ms: number; status: number | null; error: string | null } | null = null;
+    let otherDoc: { ok: boolean; ms: number; status: number | null; error: string | null } | null = null;
     if (opts.includeAppend) {
       // Ghi lại đúng giá trị header A1 của AUDIT_LOG (không đổi dữ liệu) với
-      // timeout 120s: nếu thành công sau 30–90s thì Google chỉ CHẬM; nếu trả
-      // 429/403 thì rõ nguyên nhân; nếu treo tới 120s thì đường ghi bị chặn.
+      // timeout 60s: nếu thành công thì Google chỉ CHẬM; nếu trả 429/403 thì rõ
+      // nguyên nhân; nếu treo tới 60s thì đường ghi vào tài liệu này bị chặn.
       const tinyStart = Date.now();
       try {
         await this.withDeadline('probe.writeTiny', () => this.sheetsClient!.spreadsheets.values.update({
@@ -776,7 +781,7 @@ export class GoogleSheetsSyncService {
           range: `'AUDIT_LOG'!A1`,
           valueInputOption: 'RAW',
           requestBody: { values: [['Mã Nhật Ký']] },
-        }, { timeout: 120_000 } as any), 125_000);
+        }, { timeout: 60_000 } as any), 65_000);
         writeTiny = { ok: true, ms: Date.now() - tinyStart, status: 200, error: null };
       } catch (e: any) {
         writeTiny = {
@@ -787,32 +792,67 @@ export class GoogleSheetsSyncService {
         };
       }
 
-      const nowIso = new Date().toISOString();
-      append = await time(() => this.sheetsClient!.spreadsheets.values.append({
-        spreadsheetId: this.spreadsheetId,
-        range: `'AUDIT_LOG'!A:A`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: {
-          values: [[
-            `PROBE_${Date.now()}`,
-            nowIso,
-            'SYSTEM',
-            'SYSTEM',
-            'WRITE_PROBE',
-            'SYSTEM',
-            'GOOGLE_SHEETS',
-            JSON.stringify({ note: 'Chẩn đoán đường ghi Google Sheets — có thể xoá dòng này.' }),
-          ]],
-        },
-      }, { timeout: 60_000 } as any), 'probe.append.AUDIT_LOG', 65_000);
+      // Tạo spreadsheet tạm + ghi 1 ô rồi xoá: nếu việc này OK thì tài khoản
+      // dịch vụ vẫn ghi được, lỗi nằm ở RIÊNG tài liệu chính (bị khoá/đang xử lý).
+      const otherStart = Date.now();
+      let tempId: string | null = null;
+      try {
+        const created: any = await this.withDeadline('probe.createTemp', () =>
+          this.sheetsClient!.spreadsheets.create({
+            requestBody: { properties: { title: `UBM WRITE PROBE ${Date.now()}` } },
+          }), 60_000);
+        tempId = created?.data?.spreadsheetId ?? null;
+        if (!tempId) throw new Error('CREATE_TEMP_NO_ID');
+        await this.withDeadline('probe.writeTemp', () => this.sheetsClient!.spreadsheets.values.update({
+          spreadsheetId: tempId!,
+          range: 'A1',
+          valueInputOption: 'RAW',
+          requestBody: { values: [['probe']] },
+        }, { timeout: 60_000 } as any), 65_000);
+        otherDoc = { ok: true, ms: Date.now() - otherStart, status: 200, error: null };
+      } catch (e: any) {
+        otherDoc = {
+          ok: false,
+          ms: Date.now() - otherStart,
+          status: e?.response?.status ?? (typeof e?.code === 'number' ? e.code : null),
+          error: this.describeGoogleError(e),
+        };
+      } finally {
+        if (tempId && this.driveClient) {
+          await this.driveClient.files.delete({ fileId: tempId }).catch(() => undefined);
+        }
+      }
+
+      // Append chỉ có ý nghĩa khi ghi cơ bản đã thông.
+      if (writeTiny.ok) {
+        const nowIso = new Date().toISOString();
+        append = await time(() => this.sheetsClient!.spreadsheets.values.append({
+          spreadsheetId: this.spreadsheetId,
+          range: `'AUDIT_LOG'!A:A`,
+          valueInputOption: 'USER_ENTERED',
+          requestBody: {
+            values: [[
+              `PROBE_${Date.now()}`,
+              nowIso,
+              'SYSTEM',
+              'SYSTEM',
+              'WRITE_PROBE',
+              'SYSTEM',
+              'GOOGLE_SHEETS',
+              JSON.stringify({ note: 'Chẩn đoán đường ghi Google Sheets — có thể xoá dòng này.' }),
+            ]],
+          },
+        }, { timeout: 60_000 } as any), 'probe.append.AUDIT_LOG', 65_000);
+      }
     }
 
-    this.writeProbeResult = { at: new Date().toISOString(), get: sheetMeta, valuesGet, post, append, writeTiny, tabs, hotTab };
+    this.writeProbeResult = { at: new Date().toISOString(), get: sheetMeta, valuesGet, post, append, writeTiny, otherDoc, tabs, hotTab };
     console.log(
       `[write-probe] meta ${sheetMeta.ok ? 'OK' : 'FAIL'} ${sheetMeta.ms}ms` +
       ` | values.get ${valuesGet.ok ? 'OK' : 'FAIL'} ${valuesGet.ms}ms` +
       ` | batchUpdate ${post.ok ? 'OK' : 'FAIL'} ${post.ms}ms` +
       (writeTiny ? ` | writeTiny ${writeTiny.ok ? 'OK' : 'FAIL'} ${writeTiny.ms}ms${writeTiny.status ? ` HTTP${writeTiny.status}` : ''}` : '') +
+      (otherDoc ? ` | otherDoc ${otherDoc.ok ? 'OK' : 'FAIL'} ${otherDoc.ms}ms${otherDoc.status ? ` HTTP${otherDoc.status}` : ''}` : '') +
       (append ? ` | append ${append.ok ? 'OK' : 'FAIL'} ${append.ms}ms` : '') +
       (hotTab ? ` | hotTab ${hotTab.title} ${hotTab.ok ? `${hotTab.dataRows} dòng` : 'FAIL'} ${hotTab.ms}ms` : '') +
       (append?.error ? ` | appendErr=${append.error}` : ''),
