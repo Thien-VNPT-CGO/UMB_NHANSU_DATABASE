@@ -56,6 +56,10 @@ sudo chown -R 1000:1000 data 2>/dev/null || chown -R 1000:1000 data 2>/dev/null 
 export GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "")
 docker compose up --build -d
 
+echo "==> 4c. Don dep Docker image cu va build cache de giai phong o cung"
+docker image prune -f >/dev/null 2>&1 || true
+docker builder prune -f --keep-storage 1GB >/dev/null 2>&1 || true
+
 echo "==> 5. Dam bao Nginx proxy Socket.IO"
 if [ -f "deploy/vps/fix-socketio-nginx.sh" ]; then
   sudo bash deploy/vps/fix-socketio-nginx.sh || true

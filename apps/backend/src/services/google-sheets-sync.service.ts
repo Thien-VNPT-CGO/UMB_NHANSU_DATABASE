@@ -679,6 +679,12 @@ export class GoogleSheetsSyncService {
     otherDoc: { ok: boolean; ms: number; status: number | null; error: string | null } | null;
     /** Ghi 1 ô bằng fetch RAW (không qua googleapis) — loại trừ lỗi thư viện/client. */
     rawWrite: { ok: boolean; ms: number; status: number | null; error: string | null } | null;
+    /**
+     * Số quy tắc ĐỊNH DẠNG CÓ ĐIỀU KIỆN theo tab (metadata).
+     * Tab bị phủ hàng chục nghìn ô CF sẽ rất chậm mỗi lần ghi (Google phải tính
+     * lại định dạng) — đây là nguyên nhân phổ biến của "append treo 30s".
+     */
+    conditionalFormats: Array<{ title: string; rules: number }>; 
     /** Kích thước lưới từng tab (metadata) — phát hiện tab phình/stray rows. */
     tabs: Array<{ title: string; rows: number; cols: number }>;
     /** Đọc thử đúng tab đang lỗi ghi: số dòng dữ liệu thật + thời gian đọc. */
@@ -809,17 +815,21 @@ export class GoogleSheetsSyncService {
     // lưới toàn bộ tab (gridProperties.rowCount) để thấy tab nào phình bất thường.
     let auditSheetId: number | null = null;
     const tabs: Array<{ title: string; rows: number; cols: number }> = [];
+    const conditionalFormats: Array<{ title: string; rules: number }> = [];
     try {
       const meta: any = await this.sheetsClient!.spreadsheets.get({
         spreadsheetId: this.spreadsheetId,
-        fields: 'sheets.properties(sheetId,title,gridProperties(rowCount,columnCount))',
+        fields: 'sheets.properties(sheetId,title,gridProperties(rowCount,columnCount)),sheets.conditionalFormats',
       });
       for (const s of meta?.data?.sheets || []) {
         const p = s?.properties;
         if (!p?.title) continue;
         tabs.push({ title: p.title, rows: p.gridProperties?.rowCount ?? 0, cols: p.gridProperties?.columnCount ?? 0 });
         if (p.title === 'AUDIT_LOG') auditSheetId = p.sheetId ?? null;
+        const cfCount = Array.isArray(s?.conditionalFormats) ? s.conditionalFormats.length : 0;
+        if (cfCount > 0) conditionalFormats.push({ title: p.title, rules: cfCount });
       }
+      conditionalFormats.sort((a, b) => b.rules - a.rules);
     } catch { /* metadata lỗi: bỏ qua phần phụ thuộc */ }
     const post = auditSheetId === null
       ? { ok: false, ms: 0, error: 'AUDIT_LOG_SHEET_ID_NOT_FOUND' }
@@ -978,7 +988,7 @@ export class GoogleSheetsSyncService {
       }
     }
 
-    this.writeProbeResult = { at: new Date().toISOString(), get: sheetMeta, valuesGet, rawGetPublic, rawGetSheetsHost, rawGetDrive, rawPostPublic, rawGetSheet, post, append, writeTiny, otherDoc, rawWrite, tabs, hotTab };
+    this.writeProbeResult = { at: new Date().toISOString(), get: sheetMeta, valuesGet, rawGetPublic, rawGetSheetsHost, rawGetDrive, rawPostPublic, rawGetSheet, post, append, writeTiny, otherDoc, rawWrite, tabs, conditionalFormats, hotTab };
     console.log(
       `[write-probe] meta ${sheetMeta.ok ? 'OK' : 'FAIL'} ${sheetMeta.ms}ms` +
       ` | values.get ${valuesGet.ok ? 'OK' : 'FAIL'} ${valuesGet.ms}ms` +
