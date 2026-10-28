@@ -6,11 +6,10 @@ set -uo pipefail
 
 export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
 
-# Tìm thư mục chứa mã nguồn repo
 POSSIBLE_DIRS=(
+  "/ubm-vps"
   "$HOME/ubm-vps"
   "/root/ubm-vps"
-  "/home/ubuntu/ubm-vps"
   "$(pwd)"
   "$(dirname "$0")/.."
 )
@@ -24,21 +23,22 @@ for dir in "${POSSIBLE_DIRS[@]}"; do
 done
 
 if [ -z "$PROJECT_DIR" ]; then
-  echo "$(date '+%Y-%m-%d %H:%M:%S') [Backup] LỖI: Không tìm thấy thư mục dự án UBM!" >> /var/log/ubm-backup.log 2>&1
+  echo "[Backup] LỖI: Không tìm thấy thư mục dự án UBM!" | tee -a /var/log/ubm-backup.log
   exit 1
 fi
 
 cd "$PROJECT_DIR"
 
-echo "$(date '+%Y-%m-%d %H:%M:%S') [Backup] Bắt đầu chạy sao lưu từ thư mục $PROJECT_DIR..." >> /var/log/ubm-backup.log 2>&1
+echo "--------------------------------------------------------" | tee -a /var/log/ubm-backup.log
+echo "$(date '+%Y-%m-%d %H:%M:%S') [Backup] Bắt đầu chạy sao lưu từ thư mục $PROJECT_DIR..." | tee -a /var/log/ubm-backup.log
 
-node scripts/backup-system-to-drive.cjs >> /var/log/ubm-backup.log 2>&1
+node scripts/backup-system-to-drive.cjs 2>&1 | tee -a /var/log/ubm-backup.log
 
-EXIT_CODE=$?
+EXIT_CODE=${PIPESTATUS[0]}
 if [ $EXIT_CODE -eq 0 ]; then
-  echo "$(date '+%Y-%m-%d %H:%M:%S') [Backup] Sao lưu thành công!" >> /var/log/ubm-backup.log 2>&1
+  echo "$(date '+%Y-%m-%d %H:%M:%S') [Backup] Sao lưu thành công!" | tee -a /var/log/ubm-backup.log
 else
-  echo "$(date '+%Y-%m-%d %H:%M:%S') [Backup] Sao lưu THẤT BẠI (exit code: $EXIT_CODE)!" >> /var/log/ubm-backup.log 2>&1
+  echo "$(date '+%Y-%m-%d %H:%M:%S') [Backup] Sao lưu THẤT BẠI (exit code: $EXIT_CODE)!" | tee -a /var/log/ubm-backup.log
 fi
 
 exit $EXIT_CODE

@@ -16,10 +16,11 @@ const { execSync } = require('child_process');
 const TARGET_FOLDER_ID = process.env.BACKUP_DRIVE_FOLDER_ID || '15eQ7vLbnhwt5YVrnsOaKi-1jfAENesxR';
 const REPO_ROOT = path.resolve(__dirname, '..');
 
-// 1. Nạp biến môi trường từ apps/backend/.env hoặc .env
+// 1. Nạp biến môi trường từ apps/backend/.env hoặc các vị trí trên VPS
 const envPaths = [
   path.join(REPO_ROOT, 'apps/backend/.env'),
   path.join(REPO_ROOT, '.env'),
+  '/ubm-vps/apps/backend/.env',
   '/root/ubm-vps/apps/backend/.env',
   path.join(process.env.HOME || '', 'ubm-vps/apps/backend/.env'),
 ];
@@ -54,6 +55,8 @@ if (!serviceAccountJson) {
     path.join(REPO_ROOT, 'key.json'),
     path.join(REPO_ROOT, 'data/service-account.json'),
     path.join(REPO_ROOT, 'apps/backend/key.json'),
+    '/ubm-vps/key.json',
+    '/ubm-vps/data/service-account.json',
     '/root/ubm-vps/key.json',
   ];
   for (const kp of keyCandidates) {
@@ -83,7 +86,9 @@ try {
 const { google } = googleapis;
 
 async function getDriveClient() {
-  let auth;
+  let email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  let privateKey = process.env.GOOGLE_PRIVATE_KEY;
+
   if (serviceAccountJson) {
     let credentials;
     try {
@@ -91,26 +96,31 @@ async function getDriveClient() {
     } catch {
       credentials = JSON.parse(Buffer.from(serviceAccountJson, 'base64').toString('utf8'));
     }
-    auth = new google.auth.GoogleAuth({
-      credentials,
-      scopes: ['https://www.googleapis.com/auth/drive'],
-    });
-  } else if (process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && process.env.GOOGLE_PRIVATE_KEY) {
-    auth = new google.auth.JWT({
-      email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-      key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-      scopes: ['https://www.googleapis.com/auth/drive'],
-    });
-  } else {
-    throw new Error('Thiếu thông tin xác thực Google Service Account (GOOGLE_SERVICE_ACCOUNT_JSON).');
+    email = credentials.client_email;
+    privateKey = credentials.private_key;
   }
+
+  if (!email || !privateKey) {
+    throw new Error('Thiếu thông tin xác thực Google Service Account (client_email / private_key).');
+  }
+
+  const formattedKey = privateKey.includes('\\n') ? privateKey.replace(/\\n/g, '\n') : privateKey;
+
+  const auth = new google.auth.JWT({
+    email,
+    key: formattedKey,
+    scopes: [
+      'https://www.googleapis.com/auth/drive',
+      'https://www.googleapis.com/auth/spreadsheets',
+    ],
+  });
 
   return google.drive({ version: 'v3', auth });
 }
 
 async function main() {
   console.log(`====================================================`);
-  console.log(`[Backup] BẮT ĐẦU BACKUP HỆ THỐNG VPS UBM`);
+  console.log(`[Backup] BẮT ĐẦU SAO LƯU HỆ THỐNG VPS UBM`);
   console.log(`Thời gian: ${new Date().toISOString()}`);
   console.log(`Target Drive Folder ID: ${TARGET_FOLDER_ID}`);
   console.log(`====================================================`);
@@ -121,8 +131,8 @@ async function main() {
   const nowVN = new Date(Date.now() + 7 * 3600 * 1000);
   const stamp = nowVN.toISOString().replace(/T/, '_').replace(/:/g, '-').slice(0, 19);
 
-  // A. BACKUP DỮ LIỆU GOOGLE SHEETS MASTER (NẾU CÓ SPREADSHEET_ID)
-  const spreadsheetId = process.env.SPREADSHEET_ID;
+  // A. BACKUP DỮ LIỆU GOOGLE SHEETS MASTER
+  const spreadsheetId = process.env.SPREADSHEET_ID || '17iXM0zc1m17aX9AZrFMjOkPRMy2_CwWfjTRZSUPQF2w';
   if (spreadsheetId) {
     try {
       console.log(`[Backup] Đang sao chép bản snapshot Google Sheets Master (${spreadsheetId})...`);
@@ -136,9 +146,9 @@ async function main() {
         fields: 'id, name, createdTime',
         supportsAllDrives: true,
       });
-      console.log(`[Backup] ✅ Đã lưu bản sao Sheets: ${copyRes.data.name} (ID: ${copyRes.data.id})`);
+      console.log(`[Backup] ✅ Đã lưu bản sao Sheets thành công: ${copyRes.data.name} (ID: ${copyRes.data.id})`);
     } catch (err) {
-      console.warn(`[Backup] ⚠️ Không thể copy Sheets trực tiếp: ${err.message}`);
+      console.warn(`[Backup] ⚠️ Lỗi copy Sheets: ${err.message}`);
     }
   }
 
@@ -149,10 +159,6 @@ async function main() {
 
   console.log(`[Backup] Đang nén các thành phần cốt lõi của VPS vào: ${tempArchive}...`);
   try {
-    // Thu thập thêm cấu hình Nginx nếu có
-    const nginxConfDir = '/etc/nginx/sites-available';
-    const hasNginx = fs.existsSync(nginxConfDir);
-
     const tarCmd = [
       'tar',
       '-czf',
@@ -205,7 +211,7 @@ async function main() {
 
   // C. DỌN DẸP BẢN SAO LƯU CŨ QUÁ HẠN (MẶC ĐỊNH GIỮ 30 NGÀY TRÊN DRIVE)
   try {
-    console.log(`[Backup] Đang quét và xóa các bản sao lưu cũ quá 30 ngày trong thư mục Drive...`);
+    console.log(`[Backup] Đang quét các bản sao lưu cũ trong thư mục Drive...`);
     const cutoffMs = Date.now() - 30 * 86400 * 1000;
     const listRes = await drive.files.list({
       q: `'${TARGET_FOLDER_ID}' in parents and trashed = false and (name contains 'UBM_VPS_SYSTEM_BACKUP_' or name contains 'UBM_SHEETS_MASTER_')`,
@@ -221,18 +227,22 @@ async function main() {
       if (new Date(f.createdTime).getTime() < cutoffMs) {
         try {
           await drive.files.delete({ fileId: f.id, supportsAllDrives: true });
-          console.log(`[Backup] Đã xóa bản sao lưu cũ: ${f.name} (${f.createdTime})`);
+          console.log(`[Backup] Đã xóa bản sao lưu cũ quá hạn: ${f.name}`);
           deletedCount++;
         } catch {}
       }
     }
-    console.log(`[Backup] Dọn dẹp hoàn tất: đã xóa ${deletedCount} bản sao lưu cũ quá 30 ngày.`);
+    if (deletedCount > 0) {
+      console.log(`[Backup] Đã xóa ${deletedCount} bản sao lưu cũ quá 30 ngày.`);
+    } else {
+      console.log(`[Backup] Không có bản sao lưu nào quá hạn 30 ngày.`);
+    }
   } catch (err) {
     console.warn(`[Backup] Cảnh báo dọn dẹp Drive cũ:`, err.message);
   }
 
   console.log(`====================================================`);
-  console.log(`[Backup] HOÀN TẤT SAO LƯU HỆ THỐNG VPS THÀNH CÔNG!`);
+  console.log(`[Backup] HOÀN TẤT SAO LƯU HỆ THỐNG LÊN GOOGLE DRIVE!`);
   console.log(`====================================================`);
 }
 
