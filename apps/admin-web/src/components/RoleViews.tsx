@@ -3444,13 +3444,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   };
 
   // Chốt an toàn: dù request chưa về (Sheets đang dọn định dạng/pull chậm), sau 2,5s
-  // vẫn mở lưới. Nhờ vậy tab 7 không bao giờ kẹt ở "⏳ Đang đồng bộ…".
+  // vẫn mở lưới. Nhờ vậy tab 7 không bao giờ kẹt ở "⏳ Đang đồng bộ…". Chỉ khi
+  // request THỰC SỰ lỗi mới hiện dải nhắc vàng (tránh nhấp nháy cảnh báo mỗi lần
+  // máy chủ chậm vài giây).
   useEffect(() => {
     if (attEventsLoaded) return;
-    const t = setTimeout(() => {
-      setAttEventsLoaded(true);
-      setAttSyncNotice('Chưa tải xong điểm danh (máy chủ/Google Sheets đang chậm) — lưới tạm hiển thị theo lịch ca, chưa khóa/vắng ai.');
-    }, 2500);
+    const t = setTimeout(() => setAttEventsLoaded(true), 2500);
     return () => clearTimeout(t);
   }, [attEventsLoaded]);
 
