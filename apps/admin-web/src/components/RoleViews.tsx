@@ -3347,7 +3347,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Lần đầu vào tab Lịch: chưa có sự kiện chấm công → nếu render ngay, mọi ca
   // hiện xám "Lịch đã duyệt"/"chưa điểm danh" rồi mới chuyển xanh sau ~1-2s.
   // Chờ /attendance/events xong (thành công hay lỗi) mới vẽ lưới để hết nhấp nháy.
+  // NHƯNG có chặn trên: mạng/Sheets chậm thì tối đa ~2,5s là vẽ lưới bằng dữ liệu ca
+  // đang có + hiện dải nhắc "đang đồng bộ chậm", tuyệt đối không treo loading vô hạn.
   const [attEventsLoaded, setAttEventsLoaded] = useState(false);
+  // Thông báo nhỏ khi lần tải điểm danh đầu bị chậm/lỗi (lưới vẫn hiển thị bình thường).
+  const [attSyncNotice, setAttSyncNotice] = useState('');
   // Gộp realtime + kho lưu trữ (tuần cũ): DÙNG CHUNG cho mọi tab (Lịch tuần +
   // Bảng chấm công realtime) để 2 tab luôn giống nhau 100%. Trước đây mỗi tab
   // tự viết 1 bản merge riêng nên lệch nhau khi archiveEvents thay đổi.
@@ -3417,20 +3421,36 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, profileEmpId, liveAttendanceEvents, (schedAllShifts || []).length]);
   // Lưới tuần cần sự kiện cả tuần -> luôn tải không lọc ngày, tự refresh 30s
-  const reloadAttEvents = async () => {
+  const reloadAttEvents = async (opts: { quick?: boolean } = {}) => {
     try {
-      const data = await apiRequest('/attendance/events');
+      // quick: dùng cho tab Lịch. Giới hạn 15s + tắt vòng "đánh thức backend" của
+      // apiRequest (mỗi vòng chờ thêm ~40s) để lưới không bị treo khi Sheets chậm.
+      const reqOpts = opts.quick ? ({ _timeoutMs: 15000, _wakeRounds: 2 } as any) : undefined;
+      const data = await apiRequest('/attendance/events', reqOpts);
       setLiveAttendanceEvents(Array.isArray(data) ? data : []);
-    } catch {
-      // Lỗi mạng: vẫn cho vẽ lưới (dùng ca + trạng thái đã có) thay vì treo loading.
+      setAttSyncNotice('');
+    } catch (e: any) {
+      // Lỗi mạng/chậm: vẫn cho vẽ lưới (dùng ca + trạng thái đã có) thay vì treo loading.
+      setAttSyncNotice(String(e?.message || 'Không tải được điểm danh — đang hiển thị theo dữ liệu ca.'));
     } finally {
       setAttEventsLoaded(true);
     }
   };
 
+  // Chốt an toàn: dù request chưa về (Sheets đang dọn định dạng/pull chậm), sau 2,5s
+  // vẫn mở lưới. Nhờ vậy tab 7 không bao giờ kẹt ở "⏳ Đang đồng bộ…".
+  useEffect(() => {
+    if (attEventsLoaded) return;
+    const t = setTimeout(() => {
+      setAttEventsLoaded(true);
+      setAttSyncNotice('Đang đồng bộ điểm danh chậm hơn bình thường — lưới tạm hiển thị theo dữ liệu ca.');
+    }, 2500);
+    return () => clearTimeout(t);
+  }, [attEventsLoaded]);
+
   useEffect(() => {
     if (activeTab === 'hr-attendance' || activeTab === 'hr-schedule' || activeTab === 'operations') {
-      reloadAttEvents();
+      reloadAttEvents({ quick: activeTab !== 'hr-attendance' });
     }
     // Vào tab Lịch: tải mới toàn bộ ca + đơn (props có thể cũ nếu publish/xếp ca lúc
     // đang ở tab khác mà socket ngủ) — trước đây chỉ tải sự kiện nên tuần sau có thể
@@ -3457,9 +3477,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     // ngủ là lịch đứng hình), tải ngay khi vào tab/quay lại màn hình, rồi poll 30s.
     if (activeTab !== 'hr-schedule' && activeTab !== 'operations') return;
     const load = () => {
-      apiRequest('/attendance/events')
-        .then((data) => setLiveAttendanceEvents(Array.isArray(data) ? data : []))
-        .catch(() => {});
+      // Dùng chung reloadAttEvents để mọi đường tải (vào tab, poll 30s, socket) đều
+      // có timeout ngắn + cập nhật dải nhắc, không bao giờ treo lưới.
+      reloadAttEvents({ quick: true });
       try {
         const r = (typeof onRefreshData === 'function' ? onRefreshData() : null) as any;
         if (r && typeof r.catch === 'function') r.catch(() => null);
@@ -3485,7 +3505,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     let timer: any = null;
     const handler = () => {
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => { reloadAttEvents(); }, 400);
+      timer = setTimeout(() => { reloadAttEvents({ quick: true }); }, 400);
     };
     window.addEventListener('ubm:attendance-reload', handler);
     return () => {
@@ -9302,6 +9322,29 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             ))}
           </div>
         </div>
+
+        {/* Dải nhắc khi lần tải điểm danh đầu bị chậm/lỗi — lưới vẫn dùng được,
+            bấm "Tải lại" để thử lại ngay thay vì F5 cả trang. */}
+        {attEventsLoaded && attSyncNotice ? (
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px',
+            flexWrap: 'wrap', padding: '10px 14px', borderRadius: '12px',
+            backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', color: '#92400E',
+            fontSize: '12px', fontWeight: 600,
+          }}>
+            <span>⏳ {attSyncNotice}</span>
+            <button
+              type="button"
+              onClick={() => { setAttSyncNotice(''); reloadAttEvents({ quick: true }); }}
+              style={{
+                padding: '6px 12px', borderRadius: '999px', border: '1px solid #F59E0B',
+                backgroundColor: '#fff', color: '#92400E', fontWeight: 700, fontSize: '12px', cursor: 'pointer',
+              }}
+            >
+              Tải lại điểm danh
+            </button>
+          </div>
+        ) : null}
 
         {/* Main Weekly Schedule Grid Table — chỉ vẽ khi đã có điểm danh, tránh
             nhấp nháy xám "Lịch đã duyệt" trong lúc /attendance/events đang tải. */}

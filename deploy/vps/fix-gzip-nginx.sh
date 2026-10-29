@@ -26,10 +26,11 @@ if grep -qE '^[[:space:]]*gzip[[:space:]]+on;' "$CONF"; then
   exit 0
 fi
 
-# Chèn vào đầu server block đầu tiên (gzip hợp lệ ở http/server/location).
+# Chèn vào MỌI server block (sau certbot có 2 block: 80 redirect + 443).
+# gzip hợp lệ ở http/server/location; chèn cả 2 để chắc chắn block HTTPS có.
 TMP="$(mktemp)"
 awk -v mark="$MARK" '
-  /^[[:space:]]*server[[:space:]]*\{/ && !inserted {
+  /^[[:space:]]*server[[:space:]]*\{/ {
     print
     print "  " mark " > Bắt đầu: nén gzip cho static/API"
     print "  gzip on;"

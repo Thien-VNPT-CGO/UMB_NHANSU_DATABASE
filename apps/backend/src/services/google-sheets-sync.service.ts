@@ -1771,10 +1771,7 @@ export class GoogleSheetsSyncService {
       // Tab nhật ký (thông báo/inbox/outbox/snapshot) đọc nhịp chậm hơn hẳn:
       // đây là các tab phình to nhất nhưng KHÔNG cần realtime từng 5 giây.
       const historyPullMs = Math.max(30_000, Number(process.env.SHEETS_HISTORY_PULL_MS) || 120_000);
-      // Trong lúc dọn conditional-format (ghi nặng), tạm hoãn đọc tab nhật ký để
-      // không cộng dồn tải lên Google Sheets; xong job sẽ đọc bù ngay nhịp sau.
-      const historyDue = !this.cfCleanupState.running
-        && (!this.lastHistoryPullAt || Date.now() - this.lastHistoryPullAt >= historyPullMs);
+      const historyDue = !this.lastHistoryPullAt || Date.now() - this.lastHistoryPullAt >= historyPullMs;
       // Chỉ parse lại tab nhật ký khi vừa đọc theo nhịp lịch sử (hoặc webhook vừa
       // sửa đúng tab đó). Parse 56k dòng mỗi 5 giây là lãng phí CPU nghiêm trọng.
       const shouldReparseHistory = historyDue || (!!opts.prefetchedBatch
