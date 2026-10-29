@@ -2986,6 +2986,10 @@ export class GoogleSheetsSyncService {
             const meta: any = await this.sheetsCall('read.candidateMeta', () =>
               this.sheetsClient!.spreadsheets.get({
                 spreadsheetId: this.candidateSpreadsheetId,
+                // Chỉ lấy title: KHÔNG kéo conditionalFormats/chart/protectedRanges.
+                // Bản không giới hạn fields từng trả hàng chục MB mỗi 15s khi sheet
+                // ứng viên có nhiều rule định dạng -> pull 5-8s, có lúc 60s+.
+                fields: 'sheets.properties.title',
               }) as any, 25000);
             const sheets = meta.data.sheets || [];
             const found = sheets.find((s: any) => {
