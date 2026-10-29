@@ -556,7 +556,8 @@ export function buildSheetFormattingRequests(
   sheetId: number,
   sheetDef: SheetDefinition,
   theme: TabTheme,
-  sampleRows: any[][] = []
+  sampleRows: any[][] = [],
+  opts: { skipConditionalRules?: boolean } = {}
 ): sheets_v4.Schema$Request[] {
   const requests: sheets_v4.Schema$Request[] = [];
   const colCount = sheetDef.headers.length;
@@ -735,7 +736,7 @@ export function buildSheetFormattingRequests(
     });
 
     // 5c. Định dạng có điều kiện (Status Pills) cho các cột Trạng thái
-    if (style.isStatus) {
+    if (style.isStatus && !opts.skipConditionalRules) {
       // Màu XANH LÁ (Thành công / Hoạt động / Đạt / Check-in)
       const greenKeywords = [
         'ACTIVE', 'OFFICIAL', 'CHÍNH THỨC', 'APPROVED', 'DUYỆT', 'ĐÃ DUYỆT',

@@ -299,7 +299,9 @@ server.listen(Number(PORT), '0.0.0.0', () => {
         try {
           const syncService = (adapter as any).syncService;
           if (syncService && syncService.getStatus().isConfigured) {
-            await syncService.formatAndBeautifySpreadsheet();
+            // applyConditionalRules=false: chỉ căn chữ/độ rộng. Add rule status
+            // mỗi ngày là nguyên nhân bảng tính phình ~430.000 conditional rule.
+            await syncService.formatAndBeautifySpreadsheet(undefined, { applyConditionalRules: false });
             console.log('🎨 [Sheets Auto-Beautify] Đã tự động căn chỉnh & làm đẹp bảng tính Google Sheets định kỳ.');
           }
         } catch (e: any) {
@@ -308,6 +310,41 @@ server.listen(Number(PORT), '0.0.0.0', () => {
       };
       setTimeout(autoBeautifyTick, 90_000); // 90s sau khởi động
       setInterval(autoBeautifyTick, 24 * 60 * 60_000); // mỗi 24h
+    }
+  }
+
+  // Dọn conditional-format rule trùng vô hạn (beautify cũ add mỗi lần chạy mà
+  // không xoá -> ~430.000 rule khiến mọi thao tác Sheets chậm 2-3s). Job chạy
+  // nền, xoá theo lô và nhường ngay khi có ghi thật của người dùng.
+  {
+    const cfFlag = String(process.env.SHEETS_CF_CLEANUP ?? '1').trim().toLowerCase();
+    const cfOn = cfFlag !== '0' && cfFlag !== 'off' && cfFlag !== 'false';
+    if (cfOn) {
+      const cfTick = async () => {
+        try {
+          const syncService = (adapter as any).syncService;
+          if (!syncService?.getStatus?.().isConfigured) return;
+          const r = await syncService.cleanupConditionalFormats();
+          if (r?.deleted > 0) {
+            console.log(`🧹 [sheets-cf-cleanup] Đã dọn ${r.deleted} rule trùng (${r.tabs} tab).`);
+            // Còn rule -> chạy tiếp sau 2 phút; dọn xong -> kiểm tra lại mỗi 6 giờ.
+            setTimeout(cfTick, 2 * 60_000).unref?.();
+          } else {
+            // Đã dọn sạch: add lại đúng bộ rule chuẩn (1 lần) để status pill có màu.
+            if (syncService.needsCfReapply) {
+              syncService.needsCfReapply = false;
+              await syncService.formatAndBeautifySpreadsheet(undefined, { applyConditionalRules: true })
+                .catch((e: any) => console.warn('[sheets-cf-cleanup] add lại rule lỗi:', e?.message || e));
+              console.log('🎨 [sheets-cf-cleanup] Đã add lại bộ conditional-format chuẩn sau khi dọn.');
+            }
+            setTimeout(cfTick, 6 * 60 * 60_000).unref?.();
+          }
+        } catch (e: any) {
+          console.warn('[sheets-cf-cleanup] tick error:', e?.message || e);
+          setTimeout(cfTick, 30 * 60_000).unref?.();
+        }
+      };
+      setTimeout(cfTick, 120_000).unref?.();
     }
   }
 

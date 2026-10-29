@@ -256,6 +256,8 @@ export class GoogleSheetsSyncService {
     'SNAPSHOT_SAOLUU',
   ]);
   private lastHistoryBatch: Record<string, string[][]> = {};
+  /** Dòng cuối đã đọc của tab nhật ký (để lượt sau chỉ đọc đuôi). */
+  private historyLastRow = new Map<string, number>();
   private lastHistoryPullAt = 0;
   private lastHistoryTabSignatures: Record<string, string> = {};
   private lastHistorySignature = '';
@@ -528,6 +530,8 @@ export class GoogleSheetsSyncService {
         await new Promise(r => setTimeout(r, wait));
       }
       this.lastWriteAt = Date.now();
+      // Ghi thật (duyệt phiếu, điểm danh, đẩy tab...) — job dọn rule sẽ nhường.
+      if (!label.startsWith('write.beautify.')) this.lastUserWriteAt = Date.now();
       return await this.withDeadline(label, fn, ms);
     } finally {
       this.releaseWrite();
@@ -681,6 +685,8 @@ export class GoogleSheetsSyncService {
       lastPullError: this.lastPullError,
       /** Thời gian pull gần nhất — >5000ms là pull đang chậm hơn nhịp tick. */
       lastPullDurationMs: this.lastPullDurationMs || null,
+      /** Tiến độ dọn conditional-format rule trùng (job nền). */
+      cfCleanup: this.getCfCleanupStatus(),
       pullStartedAt: this.pullStartedAt ? new Date(this.pullStartedAt).toISOString() : null,
       ...this.getWriteStatus(),
       // Chẩn đoán "append treo 30s": đo riêng GET và POST (no-op) tới Google API.
@@ -847,23 +853,24 @@ export class GoogleSheetsSyncService {
     }
     // Metadata 1 lần: sheetId của AUDIT_LOG (cho batchUpdate no-op) + kích thước
     // lưới toàn bộ tab (gridProperties.rowCount) để thấy tab nào phình bất thường.
+    // TUYỆT ĐỐI KHÔNG kéo `sheets.conditionalFormats` ở đây: bảng tính đang có
+    // ~430.000 rule (hàng trăm MB JSON), mỗi lần probe sẽ block event loop hàng
+    // chục giây và làm cả 2 cổng web đứng. Số rule được theo dõi ở
+    // `cfCleanup` (chỉ đếm phần đã xoá, không tải toàn bộ rule).
     let auditSheetId: number | null = null;
     const tabs: Array<{ title: string; rows: number; cols: number }> = [];
     const conditionalFormats: Array<{ title: string; rules: number }> = [];
     try {
       const meta: any = await this.sheetsClient!.spreadsheets.get({
         spreadsheetId: this.spreadsheetId,
-        fields: 'sheets.properties(sheetId,title,gridProperties(rowCount,columnCount)),sheets.conditionalFormats',
+        fields: 'sheets.properties(sheetId,title,gridProperties(rowCount,columnCount))',
       });
       for (const s of meta?.data?.sheets || []) {
         const p = s?.properties;
         if (!p?.title) continue;
         tabs.push({ title: p.title, rows: p.gridProperties?.rowCount ?? 0, cols: p.gridProperties?.columnCount ?? 0 });
         if (p.title === 'AUDIT_LOG') auditSheetId = p.sheetId ?? null;
-        const cfCount = Array.isArray(s?.conditionalFormats) ? s.conditionalFormats.length : 0;
-        if (cfCount > 0) conditionalFormats.push({ title: p.title, rules: cfCount });
       }
-      conditionalFormats.sort((a, b) => b.rules - a.rules);
     } catch { /* metadata lỗi: bỏ qua phần phụ thuộc */ }
     const post = auditSheetId === null
       ? { ok: false, ms: 0, error: 'AUDIT_LOG_SHEET_ID_NOT_FOUND' }
@@ -1288,46 +1295,125 @@ export class GoogleSheetsSyncService {
   }
 
   /**
-   * Xoá bớt conditional-format rules cũ trước khi beautify thêm rules mới.
+   * Trạng thái job dọn conditional-format rule trùng vô hạn.
    *
    * Trước đây mỗi lượt beautify chỉ `addConditionalFormatRule` mà không dọn
-   * rules cũ. Chạy hằng ngày (và mỗi lần restart) trong nhiều tháng khiến các
-   * tab phình tới hàng chục nghìn rule (FROM_NHAN_VIEN ~50.000, PHIẾU LƯƠNG
-   * ~9.500...). Google Sheets phải đánh giá lại toàn bộ rule mỗi lần đọc/ghi
-   * → API write 5-6 giây/lần, cả bảng tính cuộn rất chậm. Dọn về ngưỡng nhỏ
-   * để tốc độ trở lại bình thường.
+   * rules cũ. Beautify từng chạy 15 phút/lần trong nhiều tháng nên các tab phình
+   * tới hàng chục nghìn rule (đo được ~430.000 rule toàn bảng tính), khiến mọi
+   * lần đọc/ghi Google Sheets chậm 2-3 giây và event loop bị block.
    */
-  private async purgeConditionalFormats(spreadsheetId: string, sheetId: number, count: number, title: string): Promise<number> {
-    const chunkSize = 2000;
-    let deleted = 0;
-    while (deleted < count) {
-      const n = Math.min(chunkSize, count - deleted);
-      const requests = Array.from({ length: n }, () => ({
-        deleteConditionalFormatRule: { sheetId, index: 0 },
-      }));
-      try {
-        await this.sheetsCall(
-          `write.beautify.cfPurge.${title}`,
-          () => this.sheetsClient!.spreadsheets.batchUpdate({
-            spreadsheetId,
-            requestBody: { requests },
-          }),
-          60_000,
-        );
-        deleted += n;
-      } catch (e: any) {
-        console.warn(`[sheets-cf-cleanup] Dừng dọn rule tab ${title} sau ${deleted} rule:`, e?.message || e);
-        break;
+  private cfCleanupState = {
+    running: false,
+    totalDeleted: 0,
+    lastRunDeleted: 0,
+    lastTab: null as string | null,
+    lastError: null as string | null,
+    startedAt: null as string | null,
+    finishedAt: null as string | null,
+  };
+  /** Mốc ghi THẬT của người dùng (append/duyệt phiếu...) để job dọn rule nhường. */
+  private lastUserWriteAt = 0;
+  /** Đã dọn rule xong nhưng chưa add lại bộ rule chuẩn -> cần beautify 1 lần. */
+  public needsCfReapply = false;
+
+  public getCfCleanupStatus() {
+    return { ...this.cfCleanupState };
+  }
+
+  /**
+   * Dọn conditional-format rule trùng vô hạn (job chạy nền).
+   *
+   * Không đọc metadata rule (hàng trăm MB) để đếm — chỉ xoá dần rule index 0
+   * theo lô và dừng khi tab hết rule. Giữa các lô, nếu người dùng vừa ghi
+   * (duyệt phiếu/điểm danh) thì nhường 3 giây để thao tác thật không phải chờ
+   * quá 1 lô.
+   */
+  public async cleanupConditionalFormats(maxDeletes = Number(process.env.SHEETS_CF_CLEANUP_BUDGET) || 40_000): Promise<{ deleted: number; tabs: number; errors: string[] }> {
+    const result = { deleted: 0, tabs: 0, errors: [] as string[] };
+    if (!this.isConfigured || !this.sheetsClient || this.cfCleanupState.running) return result;
+    this.cfCleanupState.running = true;
+    this.cfCleanupState.lastError = null;
+    this.cfCleanupState.lastRunDeleted = 0;
+    this.cfCleanupState.startedAt = new Date().toISOString();
+    try {
+      const res = await this.sheetsCall('cf.list', () =>
+        this.sheetsClient!.spreadsheets.get({
+          spreadsheetId: this.spreadsheetId,
+          fields: 'sheets.properties(sheetId,title)',
+        }), 30_000);
+      const sheets = (res.data.sheets || []).filter(s => s.properties?.sheetId !== undefined);
+      const chunk = Math.max(50, Math.min(1000, Number(process.env.SHEETS_CF_CLEANUP_CHUNK) || 500));
+      for (const sheet of sheets) {
+        const sheetId = sheet.properties!.sheetId!;
+        const title = sheet.properties?.title || String(sheetId);
+        let progressHere = 0;
+        let n = Math.min(chunk, maxDeletes);
+        while (result.deleted < maxDeletes && n >= 1) {
+          // Nhường người dùng: có ghi thật trong 3s qua thì chờ 1 nhịp.
+          if (Date.now() - this.lastUserWriteAt < 3_000) {
+            await new Promise(r => setTimeout(r, 3_000));
+          }
+          const requests = Array.from({ length: n }, () => ({
+            deleteConditionalFormatRule: { sheetId, index: 0 },
+          }));
+          try {
+            await this.sheetsCall(
+              `write.beautify.cfPurge.${title}`,
+              () => this.sheetsClient!.spreadsheets.batchUpdate({
+                spreadsheetId: this.spreadsheetId,
+                requestBody: { requests },
+              }),
+              60_000,
+            );
+            result.deleted += n;
+            progressHere += n;
+            this.cfCleanupState.totalDeleted += n;
+            this.cfCleanupState.lastTab = title;
+            // Lô đầy thành công -> thử lại lô đầy cho tới hết ngân sách.
+            n = Math.min(chunk, maxDeletes - result.deleted);
+          } catch (e: any) {
+            const msg = this.describeGoogleError(e);
+            if (n > 1) {
+              // Tab còn ít rule hơn lô hiện tại -> thử lô nhỏ hơn thay vì bỏ
+              // lại vài trăm rule cuối (batchUpdate nguyên lô fail toàn bộ).
+              n = Math.max(1, Math.floor(n / 10));
+              continue;
+            }
+            if (!/index|range|not found|Invalid requests/i.test(msg)) {
+              result.errors.push(`${title}: ${msg}`);
+              this.cfCleanupState.lastError = `${title}: ${msg}`;
+            }
+            break; // tab đã sạch (hoặc lỗi thật): sang tab kế
+          }
+        }
+        if (progressHere > 0) result.tabs += 1;
+        if (result.deleted >= maxDeletes) break;
       }
+      this.cfCleanupState.lastRunDeleted = result.deleted;
+      if (result.deleted > 0) {
+        this.needsCfReapply = true;
+        console.log(`[sheets-cf-cleanup] Đã xoá ${result.deleted} conditional-format rule trên ${result.tabs} tab (tổng ${this.cfCleanupState.totalDeleted}).`);
+      }
+      return result;
+    } catch (e: any) {
+      const msg = this.describeGoogleError(e);
+      this.cfCleanupState.lastError = msg;
+      result.errors.push(msg);
+      return result;
+    } finally {
+      this.cfCleanupState.running = false;
+      this.cfCleanupState.finishedAt = new Date().toISOString();
     }
-    return deleted;
   }
 
   /**
    * Thiết kế lại giao diện toàn bộ các Sheet tab đẹp mắt, chuẩn hóa độ rộng cột,
    * màu sắc nhận diện từng nhóm nghiệp vụ, font chữ và conditional formatting.
    */
-  public async formatAndBeautifySpreadsheet(targetSpreadsheetId?: string): Promise<{ success: boolean; message: string; formattedTabs: number }> {
+  public async formatAndBeautifySpreadsheet(
+    targetSpreadsheetId?: string,
+    opts: { applyConditionalRules?: boolean } = {},
+  ): Promise<{ success: boolean; message: string; formattedTabs: number }> {
     if (!this.isConfigured || !this.sheetsClient) {
       return { success: false, message: 'Google Sheets chưa được kết nối', formattedTabs: 0 };
     }
@@ -1348,11 +1434,11 @@ export class GoogleSheetsSyncService {
         const res = await this.sheetsCall('beautify.get', () =>
           this.sheetsClient!.spreadsheets.get({
             spreadsheetId: sId,
-            // Chỉ lấy metadata cần dùng; tránh tải toàn bộ grid data (rất nặng).
-            fields: 'sheets(properties(sheetId,title),conditionalFormats)',
+            // Chỉ lấy properties: KHÔNG kéo conditionalFormats (hàng trăm MB khi
+            // rule phình to) — việc dọn rule do job nền riêng đảm nhiệm.
+            fields: 'sheets.properties(sheetId,title)',
           }),
-          // Spreadsheet đang có hàng trăm nghìn rule: metadata có thể >20s.
-          60_000,
+          30_000,
         );
 
         const sheets = res.data.sheets || [];
@@ -1365,17 +1451,6 @@ export class GoogleSheetsSyncService {
           const title = sheet.properties?.title || '';
           const sheetId = sheet.properties?.sheetId;
           if (sheetId === undefined || sheetId === null) continue;
-
-          // Dọn rules cũ nếu phình bất thường (dấu hiệu beautify chạy lặp vô hạn).
-          const existingCf = Array.isArray((sheet as any).conditionalFormats)
-            ? (sheet as any).conditionalFormats.length : 0;
-          const cfLimit = Math.max(200, Number(process.env.SHEETS_CF_MAX_RULES) || 600);
-          if (existingCf > cfLimit) {
-            const purged = await this.purgeConditionalFormats(sId, sheetId, existingCf, title);
-            if (purged > 0) {
-              console.log(`[sheets-cf-cleanup] Tab ${title}: đã xoá ${purged}/${existingCf} conditional-format rule trùng.`);
-            }
-          }
 
           let headers: string[] = SHEETS_DEFINITIONS.find(d => d.title === title)?.headers || [];
           let sampleRows: any[][] = [];
@@ -1404,7 +1479,11 @@ export class GoogleSheetsSyncService {
           };
 
           const theme = resolveTheme(title);
-          const requests = buildSheetFormattingRequests(sheetId, effectiveDef, theme, sampleRows);
+          const requests = buildSheetFormattingRequests(sheetId, effectiveDef, theme, sampleRows, {
+            // Tự động chạy hằng ngày chỉ cần căn chữ/độ rộng; KHÔNG add lại rule
+            // status mỗi ngày (nguồn gốc làm phình ~430.000 rule).
+            skipConditionalRules: opts.applyConditionalRules === false,
+          });
           if (requests.length > 0) {
             try {
               await this.sheetsCall(
@@ -1718,14 +1797,24 @@ export class GoogleSheetsSyncService {
             }
           }
         } catch { /* lỗi metadata -> không có part, hành vi cũ */ }
-        const tabsToRead = [...baseTabs, ...partTitles, ...(historyDue ? historyTabs : [])];
+        const tabsToRead = [...baseTabs, ...partTitles];
         // Timeout rộng hơn cho full-pull: Google chậm lúc cao điểm mà để
         // 20s thì pull fail liên tục, dữ liệu đứng yên dù mạng vẫn tốt.
         batch = await this.readTabsBatch(tabsToRead, 60_000);
-        if (!historyDue) {
+        // Tab nhật ký đọc riêng: chỉ lấy các cột thực dùng và (với THONGBAO_NV)
+        // chỉ lấy đuôi ~4.000 dòng thay vì 56.000 dòng mỗi 2 phút.
+        if (historyDue) {
+          const historyRead = await this.readHistoryTabs();
+          for (const t of historyTabs) {
+            batch[t] = Array.isArray(historyRead[t])
+              ? historyRead[t]
+              : (this.lastHistoryBatch[t] || []);
+          }
+        } else {
           for (const t of historyTabs) batch[t] = this.lastHistoryBatch[t] || [];
         }
         for (const base of GoogleSheetsSyncService.PARTITION_TABS) {
+          if (GoogleSheetsSyncService.HISTORY_TABS.has(base)) continue; // đã gộp trong readHistoryTabs
           if (!Array.isArray(batch[base])) continue; // tab không nằm trong pull (VD LUUTRU/AUDIT đọc riêng)
           const parts: string[][][] = [];
           for (let n = 2; n < 200; n++) {
@@ -3301,6 +3390,91 @@ export class GoogleSheetsSyncService {
       console.warn(`[GoogleSheetsSyncService] Đọc tab ${safe} lỗi:`, e?.message || e);
       return null;
     }
+  }
+
+  /** Đọc 1 range bất kỳ; null = lỗi/timeout (caller giữ cache cũ). */
+  private async readTabRange(sheetTitle: string, range: string, timeoutMs = 30_000): Promise<string[][] | null> {
+    if (!this.sheetsClient) return null;
+    try {
+      const res = await this.sheetsCall(`read.range.${sheetTitle}`, () =>
+        this.sheetsClient!.spreadsheets.values.get({
+          spreadsheetId: this.spreadsheetId,
+          range,
+        }), timeoutMs);
+      return (res.data.values as string[][]) || [];
+    } catch (e: any) {
+      console.warn(`[GoogleSheetsSyncService] Đọc ${sheetTitle} (${range}) lỗi:`, e?.message || e);
+      return null;
+    }
+  }
+
+  /**
+   * Đọc các tab NHẬT KÝ theo nhịp chậm (mặc định 120s).
+   *
+   * Tối ưu quan trọng: THONGBAO_NV từng có 56.000+ dòng; đọc cả tab mỗi 2 phút
+   * làm pull mất 15-17 giây, chặn nhịp realtime 5 giây. Nay chỉ đọc đuôi
+   * SHEETS_HISTORY_TAIL_ROWS dòng (mặc định 4.000) + đúng số cột đang dùng.
+   */
+  private async readHistoryTabs(): Promise<Record<string, string[][]>> {
+    const out: Record<string, string[][]> = {};
+    const tailRows = Math.max(500, Number(process.env.SHEETS_HISTORY_TAIL_ROWS) || 4_000);
+    for (const title of GoogleSheetsSyncService.HISTORY_TABS) {
+      if (title === 'SNAPSHOT_SAOLUU') {
+        const rows = await this.readTabRange(title, `'${title}'!A2:G`, 30_000);
+        if (rows) out[title] = rows;
+        continue;
+      }
+      if (title === 'THONGBAO_GUI') {
+        // Tab này có thể đã chia _P2/_P3: đọc lần lượt từng tab trong cụm.
+        let chain: string[] = [title];
+        try { chain = await this.partitionChain(title); } catch { /* dùng tab gốc */ }
+        const all: string[][] = [];
+        for (const t of chain) {
+          const rows = await this.readTabTail(t, 'N', tailRows);
+          if (rows) all.push(...rows);
+        }
+        if (all.length > 0) out[title] = all;
+        continue;
+      }
+      // THONGBAO_NV: chỉ đọc đuôi (10 cột đang dùng thay vì A:ZZ).
+      const rows = await this.readTabTail(title, 'J', tailRows);
+      if (rows) out[title] = rows;
+    }
+    return out;
+  }
+
+  /**
+   * Đọc ĐUÔI một tab nhật ký: chỉ N dòng cuối + đúng số cột dùng.
+   *
+   * Lần đầu (chưa biết dòng cuối) đọc toàn bộ để không bỏ sót. Các lượt sau chỉ
+   * đọc từ `dòng cuối đã biết - N`. Nếu range rỗng (không có dòng mới) thì kiểm
+   * tra rẻ bằng 1 cột A: tab bị ghi đè ngắn đi thì đọc lại toàn bộ, bình thường
+   * thì giữ cache — tránh đọc 56k dòng mỗi 2 phút.
+   */
+  private async readTabTail(title: string, lastCol: string, tailRows: number): Promise<string[][] | null> {
+    let knownLast = this.historyLastRow.get(title) || 0;
+    if (knownLast === 0) {
+      // Chưa biết dòng cuối: đếm RẺ bằng 1 cột A thay vì đọc cả tab (56k dòng
+      // x 10 cột) ngay sau mỗi lần restart backend.
+      const colA = await this.readTabRange(title, `'${title}'!A2:A`, 30_000);
+      if (colA) knownLast = colA.length + 1;
+      if (knownLast > 0) this.historyLastRow.set(title, knownLast);
+    }
+    const start = knownLast > tailRows ? Math.max(2, knownLast - tailRows + 1) : 2;
+    let rows = await this.readTabRange(title, `'${title}'!A${start}:${lastCol}`, 30_000);
+    if (rows && rows.length === 0 && start > 2) {
+      const colA = await this.readTabRange(title, `'${title}'!A2:A`, 20_000);
+      const actualLast = colA ? colA.length + 1 : 0;
+      if (colA && actualLast + 1 < start) {
+        rows = await this.readTabRange(title, `'${title}'!A2:${lastCol}`, 45_000);
+        if (rows) this.historyLastRow.set(title, rows.length + 1);
+      } else if (colA) {
+        this.historyLastRow.set(title, actualLast);
+      }
+    } else if (rows && rows.length > 0) {
+      this.historyLastRow.set(title, start + rows.length - 1);
+    }
+    return rows;
   }
 
   /**
