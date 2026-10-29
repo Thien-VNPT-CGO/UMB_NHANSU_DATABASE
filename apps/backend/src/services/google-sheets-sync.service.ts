@@ -19,7 +19,7 @@ import {
 } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { MockSheetsAdapter } from '../repositories/mock-sheets.adapter.js';
-import { dedupeShiftAssignments } from '../repositories/shift-dedupe.js';
+import { dedupeShiftAssignments, pickPulledShift } from '../repositories/shift-dedupe.js';
 import { hashPasswordSync, isBcryptHash, hashPin, generateAutoPin } from './password.service.js';
 import { canonicalPhone } from './employees.service.js';
 import { normSheetDate, normSheetDateTime, sheetDateText, sheetDateTimeText } from './employees.service.js';
@@ -42,6 +42,8 @@ export interface SheetsPullResult {
   signature?: string | null;
   /** true khi nội dung khác lần pull trước — dùng để bắn realtime. */
   changed?: boolean;
+  /** Các tab vừa đổi nội dung trong lần pull này (rỗng nếu không đổi). */
+  changedTabs?: string[];
 }
 
 interface SheetsPullOptions {
@@ -215,14 +217,20 @@ export class GoogleSheetsSyncService {
   private spreadsheetId: string;
   private candidateSpreadsheetId: string;
   /** Cache rows ứng viên: tab form đổi chậm, đọc mỗi pull 5s sẽ vượt quota
-   *  read 60/phút/service account. Đọc lại tối đa 15s/lần; vẫn giữ hash cũ
-   *  trong lúc bỏ qua để không báo "đổi" giả. */
+   *  read 60/phút/service account. Đọc lại tối đa 5s/lần (SHEETS_CANDIDATE_PULL_MS);
+   *  vẫn giữ hash cũ trong lúc bỏ qua để không báo "đổi" giả. */
   private lastCandidateRows: string[][] = [];
   private lastCandidatePullAt = 0;
+  /** Bản đọc tab FROM_NHAN_VIEN (master) dùng để phủ lịch PV/Zalo — đưa vào
+   *  hash nội dung để sửa tay lịch PV trên master cũng bắn realtime. */
+  private lastMasterCandidateRows: string[][] = [];
   private driveFolderId: string;
   private isConfigured = false;
   private authError: string | null = null;
   private lastPulledAt: number = 0;
+  /** Mốc pull TOÀN BỘ (không phải webhook 1 tab) gần nhất — adapter dùng để biết
+   *  snapshot khởi động đã được thay bằng dữ liệu tươi hay chưa. */
+  private lastFullPullAt: number = 0;
   /** Lỗi pull gần nhất (null = lần gần nhất thành công) — hiện ở /health để
    *  chẩn đoán khi dữ liệu đứng yên mà không cần vào log container. */
   private lastPullError: string | null = null;
@@ -635,6 +643,11 @@ export class GoogleSheetsSyncService {
     };
   }
 
+  /** Mốc pull toàn bộ gần nhất (ms) — adapter dùng để đánh giá snapshot khởi động. */
+  public getLastFullPullAtMs(): number {
+    return this.lastFullPullAt;
+  }
+
   public getStatus() {
     return {
       isConfigured: this.isConfigured,
@@ -646,6 +659,7 @@ export class GoogleSheetsSyncService {
       driveUpload: this.getDriveUploadStatus(),
       authError: this.authError,
       lastPulledAt: this.lastPulledAt ? new Date(this.lastPulledAt).toISOString() : null,
+      lastFullPulledAt: this.lastFullPullAt ? new Date(this.lastFullPullAt).toISOString() : null,
       lastPullError: this.lastPullError,
       pullStartedAt: this.pullStartedAt ? new Date(this.pullStartedAt).toISOString() : null,
       ...this.getWriteStatus(),
@@ -1551,7 +1565,12 @@ export class GoogleSheetsSyncService {
     // (khai báo ở scope ngoài vì khối đọc ứng viên nằm trong try lồng nhau).
     // Khi bỏ qua lượt đọc ứng viên (throttle quota), dùng lại rows cũ để hash ổn định.
     let candRowsForSignature: string[][] = this.lastCandidateRows;
-    const shouldPullCandidates = !!opts.forceCandidates || Date.now() - this.lastCandidatePullAt >= 15_000;
+    let masterCandRowsForSignature: string[][] = this.lastMasterCandidateRows;
+    // Ứng viên đọc từ spreadsheet riêng: 5s/lần để lịch PV cập nhật gần như tức
+    // thì. Vẫn dưới quota đọc (batch 12 + candidate ~36 = ~48 lượt/phút); có thể
+    // giãn bằng SHEETS_CANDIDATE_PULL_MS khi Google chậm.
+    const candidatePullMs = Math.max(2_000, Number(process.env.SHEETS_CANDIDATE_PULL_MS) || 5_000);
+    const shouldPullCandidates = !!opts.forceCandidates || Date.now() - this.lastCandidatePullAt >= candidatePullMs;
 
     try {
       // Hỗ trợ cả 2 trường hợp:
@@ -2068,7 +2087,9 @@ export class GoogleSheetsSyncService {
         const mergedShifts: any[] = [];
         for (const s of dedupedMapped) {
           const m = memShiftById.get((s as any).assignment_id);
-          let winner = m && Number(m.schedule_version || 0) > Number((s as any).schedule_version || 0) ? m : s;
+          // Version bằng nhau + trạng thái mạnh hơn trong bộ nhớ (PUBLISHED so với
+          // DRAFT trên Sheet) thì GIỮ bộ nhớ — tránh pull hạ ca đã publish về nháp.
+          let winner = pickPulledShift(m, s);
           // Trạng thái hủy là TERMINAL: pull đua (đọc Sheet bản PUBLISHED cũ trước
           // thời điểm hủy) không được hồi sinh ca đã CANCELLED trong bộ nhớ.
           if (
@@ -2954,13 +2975,20 @@ export class GoogleSheetsSyncService {
             const mRes: any = await this.sheetsCall('read.candidatesOverlay', () =>
               this.sheetsClient!.spreadsheets.values.get({
                 spreadsheetId: this.spreadsheetId,
-                range: `'FROM_NHAN_VIEN'!A1:ZZ`,
+                // A2:ZZ (không lấy tiêu đề) để cùng biểu diễn với batchGet dùng
+                // cho hash nội dung — tránh mỗi lần webhook/pull lại báo "đổi" giả.
+                range: `'FROM_NHAN_VIEN'!A2:ZZ`,
               }) as any, 25000);
             const mRows = (mRes.data.values as string[][]) || [];
-            if (mRows.length > 1) {
+            masterCandRowsForSignature = mRows;
+            // Cache ngay sau lần đọc THÀNH CÔNG (không đợi lượt sau) để nếu lần
+            // đọc kế tiếp lỗi/quota, hash vẫn dùng đúng bản gần nhất — không báo
+            // "đổi" giả rồi bắn realtime thừa.
+            if (mRows.length > 0) this.lastMasterCandidateRows = mRows;
+            if (mRows.length > 0) {
               const byId = new Map<string, string[]>();
               const byPhoneName = new Map<string, string[]>();
-              mRows.slice(1).forEach((r, i) => {
+              mRows.forEach((r, i) => {
                 if (!r || !r.some(c => String(c || '').trim())) return;
                 byId.set(`CAND_${String(i + 1).padStart(4, '0')}`, r);
                 const ph = canonicalPhone(String(r[6] || ''));
@@ -3031,19 +3059,28 @@ export class GoogleSheetsSyncService {
       }
 
       // Hash nội dung (không phải số dòng): sửa 1 ô trên Sheet vẫn phát hiện được
-      // và bắn realtime ngay, kể cả khi counts không đổi.
-      const fingerprint = fingerprintSheetsContent(batch, candRowsForSignature);
+      // và bắn realtime ngay, kể cả khi counts không đổi. Tab FROM_NHAN_VIEN của
+      // master chứa lịch PV/Zalo do HR cập nhật (form ứng viên không có các cột
+      // này) nên PHẢI nằm trong hash — nếu không sửa tay trên Sheet sẽ không bắn
+      // realtime và tab Lịch Phỏng Vấn đứng dữ liệu.
+      const tabsForSignature: Record<string, string[][] | undefined> = { ...batch };
+      if (masterCandRowsForSignature.length > 0 || this.lastMasterCandidateRows.length > 0) {
+        tabsForSignature.FROM_NHAN_VIEN = masterCandRowsForSignature;
+      }
+      const fingerprint = fingerprintSheetsContent(tabsForSignature, candRowsForSignature);
       const signature = fingerprint.signature;
       const changed = this.lastDataSignature !== null && this.lastDataSignature !== signature;
       const changedTabs = changed
-        ? Object.keys(fingerprint.tabs)
+        ? [...new Set(Object.keys(fingerprint.tabs)
             .filter(t => this.lastTabSignatures[t] !== fingerprint.tabs[t])
-            .map(t => (t === '__extra__' ? 'FROM_NHAN_VIEN' : t))
+            .map(t => (t === '__extra__' ? 'FROM_NHAN_VIEN' : t)))]
         : [];
       this.lastDataSignature = signature;
       this.lastTabSignatures = fingerprint.tabs;
 
       this.lastPulledAt = Date.now();
+      // Webhook chỉ đọc 1 tab (prefetchedBatch) -> không tính là pull toàn bộ.
+      if (!opts.prefetchedBatch) this.lastFullPullAt = this.lastPulledAt;
       this.lastPullError = partialError ? `PARTIAL:${partialError}` : null;
       console.log(
         '[GoogleSheetsSyncService] Đã tải dữ liệu thực tế từ Google Sheets thành công:',
@@ -3091,6 +3128,7 @@ export class GoogleSheetsSyncService {
         counts,
         signature,
         changed,
+        changedTabs,
       };
     } catch (err: any) {
       this.lastPullError = err?.message || String(err);

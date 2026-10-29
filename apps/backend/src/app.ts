@@ -405,7 +405,11 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   const entityForPath = (p: string): string | null => {
     if (p === '/ping' || p === '/health') return null;
     if (p.startsWith('/auth/')) return null; // login đã có broadcast riêng khi cần
-    if (p.startsWith('/employees') || p.startsWith('/applications') || p.startsWith('/interviews')) return 'employees';
+    if (p.startsWith('/employees')) return 'employees';
+    // Ứng viên/lịch PV: tách khỏi 'employees' để bắn data:updated(candidates) —
+    // tab "Quản Lý Lịch Phỏng Vấn & BOT Zalo Cá Nhân" tải lại ngay khi HR lập
+    // lịch/chấm/xác nhận/vắng/hủy (trước đây gộp 'employees' nên tab PV đứng dữ liệu).
+    if (p.startsWith('/applications') || p.startsWith('/interviews')) return 'candidates';
     if (p.startsWith('/admin/employee-accounts') || p.startsWith('/admin/internal-accounts')) return 'accounts';
     if (p.startsWith('/schedules') || p.startsWith('/leave-requests') || p.startsWith('/leaves') || p.startsWith('/swap-requests')) return 'schedules';
     if (p.startsWith('/attendance')) return 'attendance';
@@ -428,7 +432,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         // Nhận diện write của chính hệ thống: pull tick 10s thấy counts đổi mà
         // đây mới là thay đổi vừa bắn realtime theo entity thì KHÔNG bắn 'all'
         // nữa (tránh 2 cổng web tải lại toàn bộ 2 lần / mỗi thao tác).
-        try { (adapter as any).noteOwnWrite?.(); } catch { /* non-fatal */ }
+        try { (adapter as any).noteOwnWrite?.(entity); } catch { /* non-fatal */ }
         broadcastUpdate(entity, { method: req.method, path: req.path });
       }
       return origJson(body);

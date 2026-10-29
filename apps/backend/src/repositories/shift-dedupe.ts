@@ -41,9 +41,34 @@ function shiftKey(shift: ShiftLike): string {
 
 function statusRank(status: unknown): number {
   const s = String(status || '').trim().toUpperCase();
+  if (s === 'CANCELLED') return 3;
   if (s === 'PUBLISHED') return 2;
   if (s === 'DRAFT') return 1;
   return 1;
+}
+
+/**
+ * Chọn bản thắng khi PULL một ca từ Google Sheets về bộ nhớ.
+ *
+ * Trước đây version bằng nhau thì luôn lấy bản Sheet. Hệ quả: ca vừa được
+ * PUBLISHED trong bộ nhớ nhưng dòng Sheet còn DRAFT cùng `schedule_version`
+ * (push đang xếp hàng/lỗi mạng) sẽ bị pull hạ ngược về DRAFT -> lịch tuần hiện
+ * "ca nháp" vài giây rồi mới xanh lại, cổng NV báo chưa phát hành oan.
+ *
+ * Quy tắc:
+ *  - Version khác nhau: bản version cao thắng (như cũ).
+ *  - Version bằng nhau: trạng thái "mạnh" hơn thắng (CANCELLED > PUBLISHED > DRAFT);
+ *    cùng trạng thái thì bản Sheet thắng để sửa tay trên Sheet vẫn có hiệu lực.
+ */
+export function pickPulledShift<T extends ShiftLike>(memory: T | null | undefined, pulled: T): T {
+  if (!memory) return pulled;
+  const memVersion = Number(memory.schedule_version) || 0;
+  const pullVersion = Number(pulled.schedule_version) || 0;
+  if (memVersion !== pullVersion) return memVersion > pullVersion ? memory : pulled;
+  const memRank = statusRank(memory.status);
+  const pullRank = statusRank(pulled.status);
+  if (memRank !== pullRank) return memRank > pullRank ? memory : pulled;
+  return pulled;
 }
 
 function timeOf(value: unknown): number {

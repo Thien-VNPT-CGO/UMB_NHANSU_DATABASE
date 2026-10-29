@@ -26,6 +26,15 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   // (needsSeed() không dùng được ở đây vì seed sẵn có admin -> luôn false.)
   private startupPullDone = false;
   private consecPullFails = 0;
+  // Snapshot khởi động có thể CŨ hơn Sheet (backend downtime): ngay sau khi nạp
+  // snapshot, các lượt đọc LỊCH/CÔNG/ỨNG VIÊN phải đợi pull đầu tiên (có giới
+  // hạn) thay vì trả dữ liệu cũ — trước đây web hiện ca DRAFT/vắng oan vài giây
+  // rồi mới "xanh" lại. Pull lỗi/timeout thì đánh dấu xong để không chặn lặp lại.
+  private restoredFromSnapshot = false;
+  private firstPullAfterRestoreDone = false;
+  /** Mốc nạp snapshot — chỉ pull TOÀN BỘ hoàn tất SAU mốc này mới được coi là tươi. */
+  private snapshotRestoredAtMs = 0;
+  private readonly firstPullWaitMs = Math.max(2_000, Number(process.env.SHEETS_FIRST_PULL_WAIT_MS) || 12_000);
 
   constructor() {
     this.fallbackAdapter = new MockSheetsAdapter();
@@ -131,11 +140,16 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
             console.warn('[GoogleSheetsAdapter] initSpreadsheetStructure (nền):', err?.message || err)
           );
           for (let attempt = 1; attempt <= 8; attempt++) {
-            const pullResult = await this.syncService.pullAllDataFromGoogleSheets(this).catch(err => {
-              console.warn(`[GoogleSheetsAdapter] Startup pull lần ${attempt} lỗi:`, err?.message || err);
-              return null;
-            });
-            this.markPullSettled(!!pullResult?.counts);
+            // Nếu một request đọc (lịch/công/ứng viên) đã kích hoạt pull đầu qua
+            // ensureFreshData thì DÙNG CHUNG promise đó — tránh 2 full-pull song
+            // song ngay sau boot (dội quota đọc Google).
+            const pullResult: any = this.pullInFlight
+              ? await this.pullInFlight
+              : await this.syncService.pullAllDataFromGoogleSheets(this).catch(err => {
+                  console.warn(`[GoogleSheetsAdapter] Startup pull lần ${attempt} lỗi:`, err?.message || err);
+                  return null;
+                });
+            this.markPullSettled(!!(pullResult as any)?.counts);
             if (pullResult) {
               console.log('[GoogleSheetsAdapter] Startup pull completed:', pullResult.message, pullResult.counts);
             }
@@ -184,7 +198,10 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
       this.snapshotLoaded = true;
       this.snapshotSavedAt = snap.meta?.savedAt || null;
       this.startupPullDone = true;
-      this.lastPullTime = Date.now(); // tránh request đầu tiên kích hoạt pull trùng
+      this.restoredFromSnapshot = true;
+      this.firstPullAfterRestoreDone = false;
+      this.snapshotRestoredAtMs = Date.now();
+      this.lastPullTime = 0; // đọc lịch/công/ứng viên sẽ ép pull đầu ngay (xem ensureFreshData)
       this.syncService.restoreSnapshotMeta(snap.meta as any);
       console.log(
         `[GoogleSheetsAdapter] Đã nạp snapshot lúc ${this.snapshotSavedAt || '?'} — ` +
@@ -248,8 +265,12 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     return f.employees.length + f.accounts.length > 0;
   }
 
-  private markPullSettled(ok: boolean) {
+  private markPullSettled(ok: boolean, fullPull = true) {
     this.startupPullDone = true;
+    // Đã có ít nhất 1 lần pull TOÀN BỘ kể từ khi nạp snapshot: các lượt đọc không
+    // cần chờ nữa (kể cả pull lỗi — phục vụ snapshot còn hơn treo request).
+    // Pull webhook chỉ đọc 1 tab nên KHÔNG tính là đã tươi toàn bộ.
+    if (fullPull) this.firstPullAfterRestoreDone = true;
     if (ok) {
       this.consecPullFails = 0;
     } else {
@@ -259,16 +280,78 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   /** ===== Nhận diện write do CHÍNH hệ thống phát ra (ngăn emit "all" thừa) =====
    *  Mọi POST/PUT/PATCH thành công middleware app.ts đã bắn data:updated theo từng
-   *  entity NGAY. Pull tick 10s thấy counts đổi (duy nhất là do các write đó) mà
-   *  bắn tiếp 'data:updated(all)' là cả 2 cổng web tải lại TOÀN BỘ lần 2 mỗi thao
-   *  tác. Có write gần đây (<= 20s) thì pull tick im lặng; thay đổi Sheets bên ngoài
-   *  im láng quá 20s vẫn được bắn đúng. */
+   *  entity NGAY. Pull thấy nội dung đổi (duy nhất là do các write đó) mà bắn
+   *  tiếp 'data:updated(all)' là cả 2 cổng web tải lại TOÀN BỘ lần 2 mỗi thao tác.
+   *
+   *  Bản cũ chặn theo 1 mốc thời gian TOÀN CỤC: hễ có write API trong 12s là bỏ
+   *  emit mọi thay đổi — kể cả sửa tay trên 1 tab KHÁC (mất realtime lịch PV).
+   *  Nay theo dõi mốc riêng từng tab và chỉ bỏ emit khi MỌI tab vừa đổi đều do
+   *  hệ thống vừa ghi.
+   */
   private lastOwnWriteAt = 0;
-  public noteOwnWrite(): void {
-    this.lastOwnWriteAt = Date.now();
+  private lastOwnWriteWildcardAt = 0;
+  private lastOwnWriteByTab = new Map<string, number>();
+
+  /** entity API -> các tab Sheets mà write của entity đó có thể chạm tới. */
+  private static readonly ENTITY_TABS: Record<string, string[]> = {
+    employees: ['NHAN_VIEN_MASTER', 'LICH_SU_GIAI_DOAN', 'FROM_NHAN_VIEN', 'UNG_VIEN'],
+    accounts: ['TAI_KHOAN_NHAN_VIEN', 'ADMIN_ACCOUNTS'],
+    schedules: ['PHAN_CONG_CA', 'DON_NGHI_PHEP', 'DON_DOI_CA', 'PHIEU_NV_CAP_NHAT_CA'],
+    attendance: ['SU_KIEN_DIEM_DANH', 'DIEU_CHINH_CONG', 'LUUTRU_CHAMCONG_TUAN'],
+    payroll: ['KY_LUONG', 'PHIEU_LUONG', 'CONG_THUC_LUONG', 'DULIEU_LUONG_KY'],
+    notifications: ['THONGBAO_NV', 'THONGBAO_GUI', 'THONGBAO_'],
+    tests: ['BAI_THI', 'BAI_LAM'],
+    branches: ['DANH_SACH_CHI_NHANH'],
+    zalo: ['FROM_NHAN_VIEN', 'UNG_VIEN'],
+    candidates: ['FROM_NHAN_VIEN', 'UNG_VIEN'],
+    settings: ['CAU_HINH_HE_THONG', 'AUDIT_LOG', 'SNAPSHOT_SAOLUU'],
+    me: [
+      'THONGBAO_NV', 'PHAN_CONG_CA', 'DON_NGHI_PHEP', 'DON_DOI_CA',
+      'SU_KIEN_DIEM_DANH', 'DIEU_CHINH_CONG', 'PHIEU_LUONG',
+    ],
+  };
+
+  /** Tab đã đổi có khớp tab của entity không (xử lý tab part `_P2`, prefix `THONGBAO_`). */
+  private static tabMatches(candidate: string, mapped: string): boolean {
+    const c = String(candidate || '').toUpperCase();
+    const m = String(mapped || '').toUpperCase();
+    if (!c || !m) return false;
+    if (c === m) return true;
+    if (m.endsWith('_')) return c.startsWith(m);
+    return c.startsWith(`${m}_P`) || m.startsWith(`${c}_P`);
   }
-  public isSelfWriteRecent(ms = 20000): boolean {
-    return this.lastOwnWriteAt > 0 && Date.now() - this.lastOwnWriteAt < ms;
+
+  public noteOwnWrite(entity?: string | null): void {
+    const now = Date.now();
+    this.lastOwnWriteAt = now;
+    const tabs = entity ? GoogleSheetsAdapter.ENTITY_TABS[String(entity)] : undefined;
+    if (!tabs) {
+      // Không rõ entity (vd. 'all'): giữ hành vi cũ — chặn mọi tab.
+      this.lastOwnWriteWildcardAt = now;
+      return;
+    }
+    for (const tab of tabs) this.lastOwnWriteByTab.set(tab, now);
+  }
+
+  /**
+   * Có phải thay đổi vừa phát hiện là do chính hệ thống vừa ghi?
+   * - Không truyền `changedTabs`: xét mốc toàn cục (tương thích chỗ gọi cũ).
+   * - Có `changedTabs`: chỉ coi là self-write khi TẤT CẢ tab đều đã được ghi.
+   */
+  public isSelfWriteRecent(ms = 20000, changedTabs?: string[] | null): boolean {
+    if (this.lastOwnWriteAt === 0) return false;
+    const now = Date.now();
+    const tabs = Array.isArray(changedTabs) ? changedTabs.filter(Boolean) : [];
+    if (tabs.length === 0) return now - this.lastOwnWriteAt < ms;
+    if (now - this.lastOwnWriteWildcardAt < ms) return true;
+    for (const tab of tabs) {
+      let stamp = 0;
+      for (const [mapped, at] of this.lastOwnWriteByTab) {
+        if (GoogleSheetsAdapter.tabMatches(tab, mapped) && at > stamp) stamp = at;
+      }
+      if (now - stamp >= ms) return false;
+    }
+    return true;
   }
 
   // Webhook từ Apps Script (onEdit trên Sheet): kéo ngay, không đợi nhịp 5s.
@@ -342,11 +425,12 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
       : this.syncService.pullAllDataFromGoogleSheets(this);
     this.pullInFlight = pull
       .then((r: any) => {
-        this.markPullSettled(!!r?.counts);
+        // Pull webhook chỉ đọc 1 tab -> chưa đủ tươi để bỏ chế độ chờ snapshot.
+        this.markPullSettled(!!r?.counts, !tab);
         return r;
       })
       .catch(e => {
-        this.markPullSettled(false);
+        this.markPullSettled(false, !tab);
         console.warn('[GoogleSheetsAdapter] Webhook pull error:', e);
       })
       .finally(() => {
@@ -615,12 +699,30 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     ]);
   }
 
-  private async ensureFreshData() {
+  /**
+   * Lượt đọc LỊCH/CÔNG/ỨNG VIÊN ngay sau khi nạp snapshot có phải chờ pull đầu?
+   *
+   * Snapshot có thể cũ hơn Sheet (backend downtime) nên trả dữ liệu cũ sẽ làm
+   * web hiện ca DRAFT/vắng oan vài giây. Chỉ chờ khi CHƯA có pull TOÀN BỘ nào
+   * hoàn tất sau lúc nạp snapshot (pull do tick nền cũng tính — tránh pull đúp).
+   */
+  private shouldWaitFirstPull(): boolean {
+    if (!this.restoredFromSnapshot || this.firstPullAfterRestoreDone) return false;
+    const lastFullPull = Number((this.syncService as any).getLastFullPullAtMs?.() || 0);
+    if (lastFullPull > this.snapshotRestoredAtMs) {
+      this.firstPullAfterRestoreDone = true;
+      return false;
+    }
+    return true;
+  }
+
+  private async ensureFreshData(opts: { waitFirstPull?: boolean } = {}) {
     if (!this.isConfigured) return;
+    const mustWaitFirstPull = !!opts.waitFirstPull && this.shouldWaitFirstPull();
     const now = Date.now();
-    if (now - this.lastPullTime <= 10000) { // 10s mới pull nền 1 lần — dữ liệu tươi trong 5-10s, trả lời tức thì
+    if (!mustWaitFirstPull && now - this.lastPullTime <= 10000) { // 10s mới pull nền 1 lần — dữ liệu tươi trong 5-10s, trả lời tức thì
       if (this.pullInFlight && this.needsSeed()) {
-        try { await this.withTimeout(this.pullInFlight, 25000); } catch { /* dùng tạm bộ nhớ */ }
+        try { await this.withTimeout(this.pullInFlight, this.firstPullWaitMs); } catch { /* dùng tạm bộ nhớ */ }
       }
       return;
     }
@@ -642,11 +744,14 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
         });
     }
     // Kho đã có dữ liệu -> KHÔNG đợi, trả bộ nhớ ngay; pull nền xong client nhận socket data:updated.
-    if (this.needsSeed()) {
+    // Ngoại lệ: lần đọc đầu sau snapshot (dữ liệu có thể cũ) -> đợi pull xong (có timeout).
+    if (this.needsSeed() || mustWaitFirstPull) {
       try {
-        await this.withTimeout(this.pullInFlight, 25000);
+        await this.withTimeout(this.pullInFlight, mustWaitFirstPull ? this.firstPullWaitMs : 25000);
       } catch (e) {
         // Hết timeout vẫn phục vụ bằng bộ nhớ hiện có (kể cả rỗng) thay vì treo request.
+        // Đánh dấu để các request sau không phải chờ lại (pull vẫn chạy nền).
+        if (mustWaitFirstPull) this.firstPullAfterRestoreDone = true;
       }
     }
   }
@@ -775,7 +880,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   }
 
   async listEmployees(filter?: any) {
-    await this.ensureFreshData();
+    await this.ensureFreshData({ waitFirstPull: true });
     return this.fallbackAdapter.listEmployees(filter);
   }
 
@@ -881,7 +986,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   // --- Recruitment ---
   async listCandidates() {
-    await this.ensureFreshData();
+    await this.ensureFreshData({ waitFirstPull: true });
     return this.fallbackAdapter.listCandidates();
   }
 
@@ -923,12 +1028,12 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   // --- Schedules ---
   async getShiftsForWeek(branchId: string, weekStartDate: string) {
-    await this.ensureFreshData();
+    await this.ensureFreshData({ waitFirstPull: true });
     return this.fallbackAdapter.getShiftsForWeek(branchId, weekStartDate);
   }
 
   async getShiftsForEmployee(employeeId: string, fromDate: string, toDate: string) {
-    await this.ensureFreshData();
+    await this.ensureFreshData({ waitFirstPull: true });
     return this.fallbackAdapter.getShiftsForEmployee(employeeId, fromDate, toDate);
   }
 
@@ -1258,7 +1363,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   }
 
   async getAttendanceEvents(employeeId?: string, date?: string) {
-    await this.ensureFreshData();
+    await this.ensureFreshData({ waitFirstPull: true });
     return this.fallbackAdapter.getAttendanceEvents(employeeId, date);
   }
 

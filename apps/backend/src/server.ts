@@ -33,6 +33,39 @@ let stopSystemAlerts: (() => void) | null = null;
 // Attach io to express app for route broadcasting
 app.set('io', io);
 
+// Tự chữa ca DRAFT lọt vào tuần ĐÃ phát hành (dữ liệu cũ, nhập Excel muộn, BOT xếp
+// lại, ca tạo tay sau publish): cả tuần đã publish thì mọi ca phải PUBLISHED —
+// tránh NV thấy ca trên lịch nhưng Điểm danh báo "chưa phát hành" và Dữ liệu công
+// gắn "Chờ duyệt (chưa tính công)". Chạy ngay sau pull đầu (khi tab PHAN_CONG_CA
+// vừa đổi) + định kỳ 60s; throttle 20s để không dội single-writer.
+let healDraftRunning = false;
+let healDraftLastAt = 0;
+let healDraftSoonTimer: ReturnType<typeof setTimeout> | null = null;
+const runHealDraftShifts = () => {
+  if (healDraftRunning) return;
+  healDraftRunning = true;
+  healDraftLastAt = Date.now();
+  services.schedulesService
+    .healDraftsInPublishedWeeks({ actorId: 'SYSTEM' })
+    .then((r: any) => {
+      const out = r?.result ?? r;
+      if ((out?.healed || 0) > 0) {
+        console.log(`[schedule-heal] Tự chốt ${out.healed} ca nháp trong tuần đã phát hành (${(out.weeks || []).join(', ')}).`);
+      }
+    })
+    .catch((err: any) => console.warn('[schedule-heal] tick error:', err?.message || err))
+    .finally(() => { healDraftRunning = false; });
+};
+const healDraftShiftsSoon = (delayMs = 1500) => {
+  if (healDraftSoonTimer) return;
+  const wait = Math.max(delayMs, 20_000 - (Date.now() - healDraftLastAt));
+  healDraftSoonTimer = setTimeout(() => {
+    healDraftSoonTimer = null;
+    runHealDraftShifts();
+  }, Math.max(0, wait));
+  (healDraftSoonTimer as any)?.unref?.();
+};
+
 // Realtime Sheets -> Web: nhịp pull định kỳ HOẶC webhook onEdit phát hiện nội dung
 // đổi (hash toàn bộ ô) thì bắn socket đúng 1 lần cho cả 2 cổng web. Đây là đường
 // duy nhất bắn 'all' từ pull, tránh tick + webhook cùng bắn trùng một thay đổi.
@@ -40,12 +73,19 @@ app.set('io', io);
   const syncSvc: any = (adapter as any).syncService;
   if (syncSvc && typeof syncSvc.onDataChanged === 'function') {
     syncSvc.onDataChanged(({ counts, signature, changedTabs }: { counts: any; signature: string; changedTabs: string[] }) => {
+      // Tab lịch vừa đổi (webhook sửa tay / pull sau downtime): chốt ca nháp lọt
+      // vào tuần đã phát hành ngay, không đợi tick 60s.
+      try {
+        if ((changedTabs || []).some(t => /^PHAN_CONG_CA(_P\d+)?$/i.test(String(t)))) healDraftShiftsSoon(2500);
+      } catch { /* non-fatal */ }
       // Write do chính server phát ra đã được middleware bắn realtime theo entity
       // ngay khi thao tác; bắn thêm 'all' là 2 cổng web tải lại toàn bộ lần 2.
       // Ngoại lệ: vừa có webhook onEdit (sửa tay trên Sheet) thì luôn bắn, trừ khi
       // webhook đến quá sát một write của hệ thống (API write cũng có thể sinh onEdit).
-      const selfWrite = (adapter as any).isSelfWriteRecent?.(12000);
-      const selfWriteJustNow = (adapter as any).isSelfWriteRecent?.(3000);
+      // Chỉ bỏ emit khi MỌI tab vừa đổi đều do hệ thống vừa ghi (trước đây chặn
+      // toàn cục 12s nên sửa tay 1 tab khác bị nuốt mất realtime).
+      const selfWrite = (adapter as any).isSelfWriteRecent?.(12000, changedTabs);
+      const selfWriteJustNow = (adapter as any).isSelfWriteRecent?.(3000, changedTabs);
       const externalEdit = (adapter as any).isExternalEditRecent?.(8000);
       if (selfWrite && (!externalEdit || selfWriteJustNow)) {
         console.log('🔄 [Sheets Realtime] Nội dung đổi do write của hệ thống (đã realtime theo entity) — bỏ emit "all" thừa.');
@@ -716,23 +756,11 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   setTimeout(shiftOffSyncTickSafe, 150_000);
   setInterval(shiftOffSyncTickSafe, 60_000);
 
-  // Tự chữa ca DRAFT lọt vào tuần ĐÃ phát hành (dữ liệu cũ, nhập Excel muộn,
-  // BOT xếp lại, ca tạo tay sau publish): cả tuần đã publish thì mọi ca phải
-  // PUBLISHED — tránh NV thấy ca trên lịch nhưng Điểm danh báo "chưa phát hành"
-  // và Dữ liệu công gắn "Chờ duyệt (chưa tính công)". Chạy sau pull đầu + 10 phút.
-  const healDraftShiftsTickSafe = () => {
-    services.schedulesService
-      .healDraftsInPublishedWeeks({ actorId: 'SYSTEM' })
-      .then((r: any) => {
-        const out = r?.result ?? r;
-        if ((out?.healed || 0) > 0) {
-          console.log(`[schedule-heal] Tự chốt ${out.healed} ca nháp trong tuần đã phát hành (${(out.weeks || []).join(', ')}).`);
-        }
-      })
-      .catch((err: any) => console.warn('[schedule-heal] tick error:', err?.message || err));
-  };
-  setTimeout(healDraftShiftsTickSafe, 110_000);
-  setInterval(healDraftShiftsTickSafe, 10 * 60_000);
+  // Tự chữa ca DRAFT lọt vào tuần ĐÃ phát hành: dùng chung runHealDraftShifts
+  // (định nghĩa đầu file, cũng được kích hoạt ngay khi pull thấy PHAN_CONG_CA đổi).
+  // Chạy sớm (15s sau boot) để lịch hết "nháp" trước khi HR/NV kịp nhìn.
+  setTimeout(runHealDraftShifts, 15_000);
+  setInterval(runHealDraftShifts, 60_000);
 
   // Rà soát NV "dính" thử việc (mỗi 5 phút): NV còn PROBATION nhưng official_date
   // đã đến/quá -> tự chuyển chính thức + gỡ ca thử việc tương lai. Che 2 lỗ:

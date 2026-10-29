@@ -3344,6 +3344,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
   // Live Attendance Events State for HR Realtime Tab 11
   const [liveAttendanceEvents, setLiveAttendanceEvents] = useState<any[]>([]);
+  // Lần đầu vào tab Lịch: chưa có sự kiện chấm công → nếu render ngay, mọi ca
+  // hiện xám "Lịch đã duyệt"/"chưa điểm danh" rồi mới chuyển xanh sau ~1-2s.
+  // Chờ /attendance/events xong (thành công hay lỗi) mới vẽ lưới để hết nhấp nháy.
+  const [attEventsLoaded, setAttEventsLoaded] = useState(false);
   // Gộp realtime + kho lưu trữ (tuần cũ): DÙNG CHUNG cho mọi tab (Lịch tuần +
   // Bảng chấm công realtime) để 2 tab luôn giống nhau 100%. Trước đây mỗi tab
   // tự viết 1 bản merge riêng nên lệch nhau khi archiveEvents thay đổi.
@@ -3417,7 +3421,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     try {
       const data = await apiRequest('/attendance/events');
       setLiveAttendanceEvents(Array.isArray(data) ? data : []);
-    } catch {}
+    } catch {
+      // Lỗi mạng: vẫn cho vẽ lưới (dùng ca + trạng thái đã có) thay vì treo loading.
+    } finally {
+      setAttEventsLoaded(true);
+    }
   };
 
   useEffect(() => {
@@ -9295,7 +9303,22 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           </div>
         </div>
 
-        {/* Main Weekly Schedule Grid Table */}
+        {/* Main Weekly Schedule Grid Table — chỉ vẽ khi đã có điểm danh, tránh
+            nhấp nháy xám "Lịch đã duyệt" trong lúc /attendance/events đang tải. */}
+        {!attEventsLoaded ? (
+          <div style={{
+            backgroundColor: 'var(--surface)',
+            borderRadius: '16px',
+            border: '1px solid var(--border)',
+            padding: '48px 24px',
+            textAlign: 'center',
+            color: 'var(--text-muted)',
+            fontWeight: 700,
+            boxShadow: '0 8px 24px rgba(15, 23, 42, 0.08)',
+          }}>
+            ⏳ Đang đồng bộ lịch làm việc và điểm danh…
+          </div>
+        ) : (
         <div style={{
           backgroundColor: 'var(--surface)',
           borderRadius: '16px',
@@ -10061,6 +10084,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </tbody>
           </table>
         </div>
+        )}
 
         {/* MODAL: XEM BẰNG CHỨNG ĐIỂM DANH REALTIME TỪ CỔNG NHÂN VIÊN */}
         {selectedRealtimeModal && (() => {

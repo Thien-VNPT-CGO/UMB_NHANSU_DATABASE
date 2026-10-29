@@ -64,3 +64,24 @@ test('thêm/xoá dòng và đổi tab ứng viên đều đổi hash', () => {
   const candidateChanged2 = computeSheetsContentSignature(tabs, [['UV01', 'Nguyễn Văn D']]);
   assert.notEqual(candidateChanged, candidateChanged2);
 });
+
+test('sửa tay lịch PV trên tab FROM_NHAN_VIEN (master) cũng đổi hash + báo đúng tab', () => {
+  const beforeTabs = {
+    ...tabs,
+    FROM_NHAN_VIEN: [
+      ['Họ Và Tên', 'Số Điện Thoại', 'Ngày PV', 'Khung Giờ PV'],
+      ['Nguyễn Văn C', '0901234567', '2026-10-30', '09:00'],
+    ],
+  };
+  const before = fingerprintSheetsContent(beforeTabs);
+  const after = fingerprintSheetsContent({
+    ...beforeTabs,
+    FROM_NHAN_VIEN: [
+      ['Họ Và Tên', 'Số Điện Thoại', 'Ngày PV', 'Khung Giờ PV'],
+      ['Nguyễn Văn C', '0901234567', '2026-10-30', '14:00'],
+    ],
+  });
+  assert.notEqual(before.signature, after.signature);
+  const changedTabs = Object.keys(after.tabs).filter(t => before.tabs[t] !== after.tabs[t]);
+  assert.deepEqual(changedTabs, ['FROM_NHAN_VIEN']);
+});
