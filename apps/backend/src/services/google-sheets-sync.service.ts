@@ -1350,7 +1350,9 @@ export class GoogleSheetsSyncService {
             spreadsheetId: sId,
             // Chỉ lấy metadata cần dùng; tránh tải toàn bộ grid data (rất nặng).
             fields: 'sheets(properties(sheetId,title),conditionalFormats)',
-          })
+          }),
+          // Spreadsheet đang có hàng trăm nghìn rule: metadata có thể >20s.
+          60_000,
         );
 
         const sheets = res.data.sheets || [];
