@@ -230,6 +230,24 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.use(generalRateLimiter());
   app.use('/auth/', authRateLimiter());
 
+  // Chẩn đoán VPS chậm: chỉ log tên route + thời gian (không log body/PII).
+  // Đặt SLOW_REQUEST_LOG_MS=0 để tắt.
+  {
+    const slowMs = Math.max(0, Number(process.env.SLOW_REQUEST_LOG_MS ?? 2000));
+    if (slowMs > 0) {
+      app.use((req, res, next) => {
+        const t0 = Date.now();
+        res.on('finish', () => {
+          const ms = Date.now() - t0;
+          if (ms >= slowMs) {
+            console.warn(`[slow-request] ${req.method} ${String(req.originalUrl || '').split('?')[0]} ${res.statusCode} ${ms}ms`);
+          }
+        });
+        next();
+      });
+    }
+  }
+
   const adapter = sheetsAdapter || new GoogleSheetsAdapter();
   singleWriterQueue.setRepository(adapter);
 
