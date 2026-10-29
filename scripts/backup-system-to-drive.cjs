@@ -131,8 +131,8 @@ async function main() {
   const nowVN = new Date(Date.now() + 7 * 3600 * 1000);
   const stamp = nowVN.toISOString().replace(/T/, '_').replace(/:/g, '-').slice(0, 19);
 
-  // A. BACKUP DỮ LIỆU GOOGLE SHEETS MASTER
-  const spreadsheetId = process.env.SPREADSHEET_ID || '17iXM0zc1m17aX9AZrFMjOkPRMy2_CwWfjTRZSUPQF2w';
+  // A. BACKUP DỮ LIỆU GOOGLE SHEETS MASTER (Bản mới UMB_NHANSU_DATABASE)
+  const spreadsheetId = process.env.SPREADSHEET_ID || '1UO1UF1d7_YzaCltYt2m9pRnUauGWw873ERqAMxwL-6k';
   if (spreadsheetId) {
     try {
       console.log(`[Backup] Đang sao chép bản snapshot Google Sheets Master (${spreadsheetId})...`);
