@@ -1342,8 +1342,10 @@ export class GoogleSheetsSyncService {
           fields: 'sheets.properties(sheetId,title)',
         }), 30_000);
       const sheets = (res.data.sheets || []).filter(s => s.properties?.sheetId !== undefined);
-      const chunk = Math.max(50, Math.min(1000, Number(process.env.SHEETS_CF_CLEANUP_CHUNK) || 250));
+      const chunk = Math.max(10, Math.min(1000, Number(process.env.SHEETS_CF_CLEANUP_CHUNK) || 40));
+      let stopAll = false;
       for (const sheet of sheets) {
+        if (stopAll) break;
         const sheetId = sheet.properties!.sheetId!;
         const title = sheet.properties?.title || String(sheetId);
         let progressHere = 0;
@@ -1363,9 +1365,9 @@ export class GoogleSheetsSyncService {
                 spreadsheetId: this.spreadsheetId,
                 requestBody: { requests },
               }),
-              // Tab nhiều rule (50k) cần lâu hơn 60s; 120s đủ mà không giữ khoá
-              // ghi quá lâu (chunk 250 ~ vài giây/lô).
-              120_000,
+              // Lô nhỏ (mặc định 40) nên khoá ghi chỉ bị giữ ~vài giây; 30s là hạn
+              // cứng để một lô treo không chặn duyệt phiếu/điểm danh quá lâu.
+              30_000,
             );
             result.deleted += n;
             progressHere += n;
@@ -1374,6 +1376,8 @@ export class GoogleSheetsSyncService {
             // Lô đầy thành công -> thử lại lô đầy; lô đã co (tab gần hết rule)
             // thì giữ lô nhỏ để không lặp lại chuỗi lỗi.
             n = n >= chunk ? Math.min(chunk, maxDeletes - result.deleted) : Math.min(n, maxDeletes - result.deleted);
+            // Nhả khoá ghi một nhịp để thao tác thật của người dùng chen vào.
+            await new Promise(r => setTimeout(r, 800));
           } catch (e: any) {
             const msg = this.describeGoogleError(e);
             // Chỉ coi là "tab còn ít rule hơn lô" khi Google báo rõ index rule
@@ -1387,6 +1391,9 @@ export class GoogleSheetsSyncService {
             if (!noRuleAtIndex) {
               result.errors.push(`${title}: ${msg}`);
               this.cfCleanupState.lastError = `${title}: ${msg}`;
+              // Lỗi timeout/abort/quota: Google đang bận -> dừng cả lượt, không thử
+              // tiếp tab khác (mỗi tab lại giữ khoá ghi 30s, càng làm chậm hệ thống).
+              if (/abort|timeout|deadline|quota|rate limit|429|503/i.test(msg)) stopAll = true;
             }
             break; // tab đã sạch (hoặc lỗi thật): sang tab kế
           }

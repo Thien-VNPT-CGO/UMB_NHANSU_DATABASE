@@ -314,14 +314,31 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   }
 
   // Dọn conditional-format rule trùng vô hạn (beautify cũ add mỗi lần chạy mà
-  // không xoá -> ~430.000 rule khiến mọi thao tác Sheets chậm 2-3s). Job chạy
-  // nền, xoá theo lô và nhường ngay khi có ghi thật của người dùng.
+  // không xoá -> ~430.000 rule khiến mọi thao tác Sheets chậm 2-3s). Job chạy nền,
+  // xoá theo lô và nhường ngay khi có ghi thật của người dùng — nhưng chỉ khi rảnh.
   {
-    const cfFlag = String(process.env.SHEETS_CF_CLEANUP ?? '1').trim().toLowerCase();
-    const cfOn = cfFlag !== '0' && cfFlag !== 'off' && cfFlag !== 'false';
+    // Opt-in: xoá rule theo index rất tốn thời gian (~180ms/rule) và phải giữ khoá
+    // ghi Sheets, nên mặc định TẮT. Chỉ bật khi rảnh và luôn giới hạn khung giờ.
+    const cfFlag = String(process.env.SHEETS_CF_CLEANUP ?? '0').trim().toLowerCase();
+    const cfOn = cfFlag === '1' || cfFlag === 'on' || cfFlag === 'true';
     if (cfOn) {
+      const rawWindow = String(process.env.SHEETS_CF_CLEANUP_WINDOW || '0-5');
+      const [wsRaw, weRaw] = rawWindow.split('-');
+      const wStart = Math.min(23, Math.max(0, Number(wsRaw) || 0));
+      const wEnd = Math.min(24, Math.max(1, Number(weRaw) || 5));
+      // Giờ VN = UTC+7.
+      const inCleanupWindow = () => {
+        const h = new Date(Date.now() + 7 * 3_600_000).getUTCHours();
+        return wStart <= wEnd ? (h >= wStart && h < wEnd) : (h >= wStart || h < wEnd);
+      };
       const cfTick = async () => {
         try {
+          // Ngoài khung giờ rảnh: không đụng Sheets (tránh làm chậm duyệt phiếu/
+          // điểm danh), kiểm tra lại sau 15 phút.
+          if (!inCleanupWindow()) {
+            setTimeout(cfTick, 15 * 60_000).unref?.();
+            return;
+          }
           const syncService = (adapter as any).syncService;
           if (!syncService?.getStatus?.().isConfigured) return;
           const r = await syncService.cleanupConditionalFormats();
