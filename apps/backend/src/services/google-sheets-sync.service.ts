@@ -1369,17 +1369,20 @@ export class GoogleSheetsSyncService {
             progressHere += n;
             this.cfCleanupState.totalDeleted += n;
             this.cfCleanupState.lastTab = title;
-            // Lô đầy thành công -> thử lại lô đầy cho tới hết ngân sách.
-            n = Math.min(chunk, maxDeletes - result.deleted);
+            // Lô đầy thành công -> thử lại lô đầy; lô đã co (tab gần hết rule)
+            // thì giữ lô nhỏ để không lặp lại chuỗi lỗi.
+            n = n >= chunk ? Math.min(chunk, maxDeletes - result.deleted) : Math.min(n, maxDeletes - result.deleted);
           } catch (e: any) {
             const msg = this.describeGoogleError(e);
-            if (n > 1) {
-              // Tab còn ít rule hơn lô hiện tại -> thử lô nhỏ hơn thay vì bỏ
-              // lại vài trăm rule cuối (batchUpdate nguyên lô fail toàn bộ).
-              n = Math.max(1, Math.floor(n / 10));
+            // Chỉ coi là "tab còn ít rule hơn lô" khi Google báo rõ index rule
+            // không tồn tại. Lỗi khác (payload quá lớn, quyền, quota) thì DỪNG
+            // hẳn — nếu thu nhỏ lô vô tội vạ sẽ thành xoá 1 rule/lần.
+            const noRuleAtIndex = /conditional format/i.test(msg) && /index/i.test(msg);
+            if (noRuleAtIndex && n > 1) {
+              n = Math.max(1, Math.floor(n / 5));
               continue;
             }
-            if (!/index|range|not found|Invalid requests/i.test(msg)) {
+            if (!noRuleAtIndex) {
               result.errors.push(`${title}: ${msg}`);
               this.cfCleanupState.lastError = `${title}: ${msg}`;
             }
