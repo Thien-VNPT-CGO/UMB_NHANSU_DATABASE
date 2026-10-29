@@ -27,7 +27,7 @@ import { evaluateCandidateAiScore } from './ai-scorer.js';
 import { buildZipStore, ZipEntry } from '../utils/zip-store.js';
 import { readAttendancePhotoDisk } from './photo-disk.store.js';
 import { TAB_THEMES, buildSheetFormattingRequests, resolveTheme } from './sheets-beautifier.service.js';
-import { fingerprintSheetsContent } from '../utils/sheets-content-signature.js';
+import { computeSheetsContentSignature, fingerprintSheetsContent } from '../utils/sheets-content-signature.js';
 
 export interface SheetDefinition {
   title: string;
@@ -243,6 +243,24 @@ export class GoogleSheetsSyncService {
   /** Bản đọc thô gần nhất của tất cả tab — webhook chỉ cần đọc lại 1 tab rồi
    *  chạy lại parser trên cache thay vì batchGet 24 tab. */
   private lastFullBatch: Record<string, string[][]> | null = null;
+  /**
+   * Tab NHẬT KÝ phình rất nhanh (THONGBAO_NV từng >56.000 dòng, THONGBAO_GUI
+   * >15.000). Chúng không cần realtime 5 giây nhưng lại chiếm ~80% số ô mỗi lần
+   * batchGet → pull bị chậm, CPU hash/parse bị block, request khác xếp hàng.
+   * Vì vậy chỉ đọc theo nhịp riêng (SHEETS_HISTORY_PULL_MS, mặc định 120s) và
+   * dùng lại bản đọc gần nhất cho các nhịp còn lại.
+   */
+  public static readonly HISTORY_TABS = new Set<string>([
+    'THONGBAO_NV',
+    'THONGBAO_GUI',
+    'SNAPSHOT_SAOLUU',
+  ]);
+  private lastHistoryBatch: Record<string, string[][]> = {};
+  private lastHistoryPullAt = 0;
+  private lastHistoryTabSignatures: Record<string, string> = {};
+  private lastHistorySignature = '';
+  /** Thời gian pull gần nhất (ms) — hiển thị ở /health để phát hiện pull chậm. */
+  private lastPullDurationMs = 0;
   /** Callback realtime: server.ts đăng ký 1 lần để bắn socket khi nội dung đổi. */
   private dataChangeListeners: Array<(info: { signature: string; counts: any; changedTabs: string[] }) => void> = [];
   /** Mốc pull gần nhất đã xử lý xong tab CAU_HINH_HE_THONG (null = chưa từng).
@@ -661,6 +679,8 @@ export class GoogleSheetsSyncService {
       lastPulledAt: this.lastPulledAt ? new Date(this.lastPulledAt).toISOString() : null,
       lastFullPulledAt: this.lastFullPullAt ? new Date(this.lastFullPullAt).toISOString() : null,
       lastPullError: this.lastPullError,
+      /** Thời gian pull gần nhất — >5000ms là pull đang chậm hơn nhịp tick. */
+      lastPullDurationMs: this.lastPullDurationMs || null,
       pullStartedAt: this.pullStartedAt ? new Date(this.pullStartedAt).toISOString() : null,
       ...this.getWriteStatus(),
       // Chẩn đoán "append treo 30s": đo riêng GET và POST (no-op) tới Google API.
@@ -1268,6 +1288,42 @@ export class GoogleSheetsSyncService {
   }
 
   /**
+   * Xoá bớt conditional-format rules cũ trước khi beautify thêm rules mới.
+   *
+   * Trước đây mỗi lượt beautify chỉ `addConditionalFormatRule` mà không dọn
+   * rules cũ. Chạy hằng ngày (và mỗi lần restart) trong nhiều tháng khiến các
+   * tab phình tới hàng chục nghìn rule (FROM_NHAN_VIEN ~50.000, PHIẾU LƯƠNG
+   * ~9.500...). Google Sheets phải đánh giá lại toàn bộ rule mỗi lần đọc/ghi
+   * → API write 5-6 giây/lần, cả bảng tính cuộn rất chậm. Dọn về ngưỡng nhỏ
+   * để tốc độ trở lại bình thường.
+   */
+  private async purgeConditionalFormats(spreadsheetId: string, sheetId: number, count: number, title: string): Promise<number> {
+    const chunkSize = 2000;
+    let deleted = 0;
+    while (deleted < count) {
+      const n = Math.min(chunkSize, count - deleted);
+      const requests = Array.from({ length: n }, () => ({
+        deleteConditionalFormatRule: { sheetId, index: 0 },
+      }));
+      try {
+        await this.sheetsCall(
+          `write.beautify.cfPurge.${title}`,
+          () => this.sheetsClient!.spreadsheets.batchUpdate({
+            spreadsheetId,
+            requestBody: { requests },
+          }),
+          60_000,
+        );
+        deleted += n;
+      } catch (e: any) {
+        console.warn(`[sheets-cf-cleanup] Dừng dọn rule tab ${title} sau ${deleted} rule:`, e?.message || e);
+        break;
+      }
+    }
+    return deleted;
+  }
+
+  /**
    * Thiết kế lại giao diện toàn bộ các Sheet tab đẹp mắt, chuẩn hóa độ rộng cột,
    * màu sắc nhận diện từng nhóm nghiệp vụ, font chữ và conditional formatting.
    */
@@ -1292,6 +1348,8 @@ export class GoogleSheetsSyncService {
         const res = await this.sheetsCall('beautify.get', () =>
           this.sheetsClient!.spreadsheets.get({
             spreadsheetId: sId,
+            // Chỉ lấy metadata cần dùng; tránh tải toàn bộ grid data (rất nặng).
+            fields: 'sheets(properties(sheetId,title),conditionalFormats)',
           })
         );
 
@@ -1305,6 +1363,17 @@ export class GoogleSheetsSyncService {
           const title = sheet.properties?.title || '';
           const sheetId = sheet.properties?.sheetId;
           if (sheetId === undefined || sheetId === null) continue;
+
+          // Dọn rules cũ nếu phình bất thường (dấu hiệu beautify chạy lặp vô hạn).
+          const existingCf = Array.isArray((sheet as any).conditionalFormats)
+            ? (sheet as any).conditionalFormats.length : 0;
+          const cfLimit = Math.max(200, Number(process.env.SHEETS_CF_MAX_RULES) || 600);
+          if (existingCf > cfLimit) {
+            const purged = await this.purgeConditionalFormats(sId, sheetId, existingCf, title);
+            if (purged > 0) {
+              console.log(`[sheets-cf-cleanup] Tab ${title}: đã xoá ${purged}/${existingCf} conditional-format rule trùng.`);
+            }
+          }
 
           let headers: string[] = SHEETS_DEFINITIONS.find(d => d.title === title)?.headers || [];
           let sampleRows: any[][] = [];
@@ -1561,6 +1630,7 @@ export class GoogleSheetsSyncService {
       return { success: false, message: 'Google Sheets chưa kết nối', counts: null };
     }
 
+    const pullT0 = Date.now();
     // Giữ bản rows ứng viên đọc được từ spreadsheet riêng để đưa vào hash nội dung
     // (khai báo ở scope ngoài vì khối đọc ứng viên nằm trong try lồng nhau).
     // Khi bỏ qua lượt đọc ứng viên (throttle quota), dùng lại rows cũ để hash ổn định.
@@ -1606,20 +1676,33 @@ export class GoogleSheetsSyncService {
         'CAU_HINH_HE_THONG',
         'BAI_THI',
         'BAI_LAM',
-        'THONGBAO_NV',
-        'THONGBAO_GUI',
-        'SNAPSHOT_SAOLUU',
         'PHIEU_LUONG',
         'LICH_SU_GIAI_DOAN',
         'CONG_THUC_LUONG',
         'DULIEU_LUONG_KY',
       ];
+      const historyTabs = [...GoogleSheetsSyncService.HISTORY_TABS];
+      // Tab nhật ký (thông báo/inbox/outbox/snapshot) đọc nhịp chậm hơn hẳn:
+      // đây là các tab phình to nhất nhưng KHÔNG cần realtime từng 5 giây.
+      const historyPullMs = Math.max(30_000, Number(process.env.SHEETS_HISTORY_PULL_MS) || 120_000);
+      const historyDue = !this.lastHistoryPullAt || Date.now() - this.lastHistoryPullAt >= historyPullMs;
+      // Chỉ parse lại tab nhật ký khi vừa đọc theo nhịp lịch sử (hoặc webhook vừa
+      // sửa đúng tab đó). Parse 56k dòng mỗi 5 giây là lãng phí CPU nghiêm trọng.
+      const shouldReparseHistory = historyDue || (!!opts.prefetchedBatch
+        && Object.keys(opts.prefetchedBatch).some(k =>
+          GoogleSheetsSyncService.HISTORY_TABS.has(k)
+          || [...GoogleSheetsSyncService.HISTORY_TABS].some(base => k.startsWith(`${base}_P`))));
       let batch: Record<string, string[][]>;
       if (opts.prefetchedBatch) {
         // Webhook đã đọc lại đúng tab vừa sửa; parse trên cache để không batchGet 24 tab.
         batch = { ...opts.prefetchedBatch };
         for (const t of baseTabs) {
           if (!Array.isArray(batch[t])) batch[t] = [];
+        }
+        // Webhook sửa đúng tab nhật ký: cập nhật cache lịch sử bằng bản vừa đọc.
+        for (const t of historyTabs) {
+          if (Array.isArray(batch[t]) && batch[t].length > 0) this.lastHistoryBatch[t] = batch[t];
+          else batch[t] = this.lastHistoryBatch[t] || [];
         }
       } else {
         const partTitles: string[] = [];
@@ -1633,9 +1716,13 @@ export class GoogleSheetsSyncService {
             }
           }
         } catch { /* lỗi metadata -> không có part, hành vi cũ */ }
-        // Timeout rộng hơn cho full-pull (24 tab): Google chậm lúc cao điểm mà để
+        const tabsToRead = [...baseTabs, ...partTitles, ...(historyDue ? historyTabs : [])];
+        // Timeout rộng hơn cho full-pull: Google chậm lúc cao điểm mà để
         // 20s thì pull fail liên tục, dữ liệu đứng yên dù mạng vẫn tốt.
-        batch = await this.readTabsBatch([...baseTabs, ...partTitles], 60_000);
+        batch = await this.readTabsBatch(tabsToRead, 60_000);
+        if (!historyDue) {
+          for (const t of historyTabs) batch[t] = this.lastHistoryBatch[t] || [];
+        }
         for (const base of GoogleSheetsSyncService.PARTITION_TABS) {
           if (!Array.isArray(batch[base])) continue; // tab không nằm trong pull (VD LUUTRU/AUDIT đọc riêng)
           const parts: string[][][] = [];
@@ -1648,6 +1735,11 @@ export class GoogleSheetsSyncService {
             batch[base] = [...(batch[base] || []), ...parts.flat()];
             console.log(`[GoogleSheetsSyncService] Pull ${base}: gộp ${parts.length} tab part`);
           }
+        }
+        if (historyDue) {
+          // Lưu SAU khi gộp part để cache nhật ký cũng có đủ các tab _P2/_P3.
+          for (const t of historyTabs) this.lastHistoryBatch[t] = batch[t] || [];
+          this.lastHistoryPullAt = Date.now();
         }
       }
 
@@ -2235,7 +2327,7 @@ export class GoogleSheetsSyncService {
         if (this.notifResetCutoffIso <= notifCutoff) this.notifResetCutoffIso = null;
         else notifEffCutoff = this.notifResetCutoffIso;
       }
-      if (notifRows.length > 0) {
+      if (shouldReparseHistory && notifRows.length > 0) {
         const mappedNotif = notifRows
           .filter(r => r && r[0] && r[3] !== 'CHECKIN_REMINDER' && !/nhắc.*(?:check-?in|điểm danh)/i.test(`${r[4] || ''} ${r[5] || ''}`))
           .map(r => ({
@@ -2264,7 +2356,10 @@ export class GoogleSheetsSyncService {
       // xóa. Áp cùng bộ lọc cutoff giờ VN/reset 23h00 như inbox để hộp thư reset xong
       // không bị dòng Sheet cũ kéo lại đầy.
       const outboxRows = batch['THONGBAO_GUI'] || [];
-      if (keepIfEmpty('THONGBAO_GUI', outboxRows, (fallback.notificationOutbox as any[] || []).length)) {
+      if (!shouldReparseHistory) {
+        // Nhịp 5s: chỉ lọc lại bộ nhớ (rất nhỏ), không map lại 15k dòng Sheet.
+        counts.notificationOutbox = ((fallback as any).notificationOutbox || []).length;
+      } else if (keepIfEmpty('THONGBAO_GUI', outboxRows, (fallback.notificationOutbox as any[] || []).length)) {
         counts.notificationOutbox = (fallback.notificationOutbox as any[] || []).length;
       } else if (outboxRows.length > 0) {
         const mappedOutbox = outboxRows
@@ -2296,7 +2391,9 @@ export class GoogleSheetsSyncService {
       // 5f. Đọc SNAPSHOT_SAOLUU (metadata snapshot sao lưu): merge hợp nhất — snapshot
       // nhớ đã có + snapshot trên Sheet (restart sau push đầy đủ).
       const snapSheetRows = batch['SNAPSHOT_SAOLUU'] || [];
-      if (keepIfEmpty('SNAPSHOT_SAOLUU', snapSheetRows, (fallback.backupSnapshots as any[] || []).length)) {
+      if (!shouldReparseHistory) {
+        counts.backupSnapshots = (fallback.backupSnapshots as any[] || []).length;
+      } else if (keepIfEmpty('SNAPSHOT_SAOLUU', snapSheetRows, (fallback.backupSnapshots as any[] || []).length)) {
         counts.backupSnapshots = (fallback.backupSnapshots as any[] || []).length;
       } else if (snapSheetRows.length > 0) {
         const mappedSnaps = snapSheetRows
@@ -3067,18 +3164,45 @@ export class GoogleSheetsSyncService {
       if (masterCandRowsForSignature.length > 0 || this.lastMasterCandidateRows.length > 0) {
         tabsForSignature.FROM_NHAN_VIEN = masterCandRowsForSignature;
       }
-      const fingerprint = fingerprintSheetsContent(tabsForSignature, candRowsForSignature);
-      const signature = fingerprint.signature;
+      // Tab nhật ký không nằm trong hash mỗi 5 giây (hash ~800k ô mỗi lượt là
+      // tác nhân block event loop). Chỉ hash lại khi vừa đọc theo nhịp lịch sử.
+      const hotTabsForSignature = { ...tabsForSignature };
+      for (const t of historyTabs) delete hotTabsForSignature[t];
+      for (const key of Object.keys(hotTabsForSignature)) {
+        for (const base of historyTabs) {
+          if (key.startsWith(`${base}_P`)) delete hotTabsForSignature[key];
+        }
+      }
+      const fingerprint = fingerprintSheetsContent(hotTabsForSignature, candRowsForSignature);
+
+      if (historyDue || !this.lastHistorySignature) {
+        const historyBatch: Record<string, string[][] | undefined> = {};
+        for (const key of Object.keys(batch)) {
+          if (GoogleSheetsSyncService.HISTORY_TABS.has(key)
+            || [...GoogleSheetsSyncService.HISTORY_TABS].some(base => key.startsWith(`${base}_P`))) {
+            historyBatch[key] = batch[key];
+          }
+        }
+        const historyFp = fingerprintSheetsContent(historyBatch);
+        this.lastHistorySignature = historyFp.signature;
+        this.lastHistoryTabSignatures = { ...historyFp.tabs };
+      }
+      const tabSignatures = { ...fingerprint.tabs, ...this.lastHistoryTabSignatures };
+      const signature = computeSheetsContentSignature({
+        __hot__: [[fingerprint.signature]],
+        __history__: [[this.lastHistorySignature || '']],
+      });
       const changed = this.lastDataSignature !== null && this.lastDataSignature !== signature;
       const changedTabs = changed
-        ? [...new Set(Object.keys(fingerprint.tabs)
-            .filter(t => this.lastTabSignatures[t] !== fingerprint.tabs[t])
+        ? [...new Set(Object.keys(tabSignatures)
+            .filter(t => this.lastTabSignatures[t] !== tabSignatures[t])
             .map(t => (t === '__extra__' ? 'FROM_NHAN_VIEN' : t)))]
         : [];
       this.lastDataSignature = signature;
-      this.lastTabSignatures = fingerprint.tabs;
+      this.lastTabSignatures = tabSignatures;
 
       this.lastPulledAt = Date.now();
+      this.lastPullDurationMs = this.lastPulledAt - pullT0;
       // Webhook chỉ đọc 1 tab (prefetchedBatch) -> không tính là pull toàn bộ.
       if (!opts.prefetchedBatch) this.lastFullPullAt = this.lastPulledAt;
       this.lastPullError = partialError ? `PARTIAL:${partialError}` : null;
@@ -3086,6 +3210,7 @@ export class GoogleSheetsSyncService {
         '[GoogleSheetsSyncService] Đã tải dữ liệu thực tế từ Google Sheets thành công:',
         counts,
         changed ? `(nội dung ĐỔI, hash ${signature.slice(0, 10)}…)` : '(không đổi)',
+        `(${this.lastPullDurationMs}ms)`,
       );
 
       // Chỉ phát 1 lần cho mỗi thay đổi, dù tick định kỳ và webhook dùng chung pull.

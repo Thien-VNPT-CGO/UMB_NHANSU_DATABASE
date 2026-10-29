@@ -35,6 +35,12 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   /** Mốc nạp snapshot — chỉ pull TOÀN BỘ hoàn tất SAU mốc này mới được coi là tươi. */
   private snapshotRestoredAtMs = 0;
   private readonly firstPullWaitMs = Math.max(2_000, Number(process.env.SHEETS_FIRST_PULL_WAIT_MS) || 12_000);
+  /**
+   * Thời gian TỐI ĐA chờ push tab khi DUYỆT phiếu (nghỉ phép / đổi ca).
+   * Bộ nhớ + snapshot đã cập nhật ngay; push tiếp tục chạy nền. Trước đây chờ
+   * tới 15s nên khi Google Sheets chậm, thao tác duyệt treo rất lâu.
+   */
+  private readonly approvalPushWaitMs = Math.max(1_000, Number(process.env.SHEETS_APPROVAL_PUSH_WAIT_MS) || 3_000);
 
   constructor() {
     this.fallbackAdapter = new MockSheetsAdapter();
@@ -488,6 +494,12 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   private async runSoonPush(): Promise<void> {
     if (this.soonPushRunning || !this.isConfigured) return;
+    // Một full-sync khác đang chạy: để lượt đó gom luôn thay đổi, tránh 2 lượt
+    // syncAllData chồng nhau (mỗi lượt ~35-40 write, vượt quota 60/phút).
+    if (this.fullSyncInFlight) {
+      this.scheduleSoonPush(60_000);
+      return;
+    }
     const ss = this.syncService;
     if (typeof ss.hasUnpushedChanges === 'function' && !ss.hasUnpushedChanges()) return;
     // Đang pull (tick 10s/webhook): đợi pull xong rồi đẩy cho đồng bộ tự nhiên —
@@ -631,10 +643,18 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   private scheduleFullSync(label: string) {
     if (!this.isConfigured) return;
-    // Đặt cờ dirty: bộ nhớ có thay đổi chưa chắc đã lên Sheet (auto-push định kỳ dựa cờ này).
-    this.markDirtySoonPush();
+    // Đặt cờ dirty để auto-push biết bộ nhớ chưa chắc đã lên Sheet.
+    // KHÔNG hẹn thêm soon-push ở đây: trước đây vừa soon-push 45s vừa full-sync
+    // 60s khiến 2 lượt syncAllData (~35-40 write mỗi lượt) chồng nhau, đốt hết
+    // quota 60 write/phút và làm thao tác người dùng phải chờ.
+    this.markMemoryDirty();
     if (this.fullSyncInFlight) {
       this.fullSyncDirty = true;
+      return;
+    }
+    // Soon-push đang ghi toàn bộ tab: hoãn lượt này để không chồng 2 full-sync.
+    if (this.soonPushRunning) {
+      this.deferFullSync(60_000);
       return;
     }
     // Hàng đợi append đang tồn đọng: full-sync (24 tab, mỗi tab 1 request) sẽ
@@ -657,9 +677,10 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     this.fullSyncDirty = false;
     this.pendingSheetsWrites++;
     const run = async () => {
-      // Full-sync ghi ~14 tab (mỗi tab 1-2 request): dồn tối thiểu 60s/lượt
-      // (trước đây 10s → gần như chạy liên tục, chiếm hết khoá ghi của Sheets).
-      const minGap = Math.max(10_000, Number(process.env.SHEETS_FULL_SYNC_MIN_INTERVAL_MS) || 60_000);
+      // Full-sync ghi ~14 tab (mỗi tab 1-2 request): dồn tối thiểu 180s/lượt.
+      // Các tab nóng (ca, nghỉ phép, đổi ca) đã push riêng ngay trong request nên
+      // full-sync chỉ là lưới an toàn; chạy dày sẽ chiếm hết quota 60 write/phút.
+      const minGap = Math.max(10_000, Number(process.env.SHEETS_FULL_SYNC_MIN_INTERVAL_MS) || 180_000);
       const wait = Math.max(0, minGap - (Date.now() - this.lastFullSyncAt));
       if (wait > 0) await new Promise(r => setTimeout(r, wait));
       await this.syncService.syncAllData(this.fallbackAdapter);
@@ -1222,10 +1243,13 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     // comment của pushLeavesTab): pull sau không hồi sinh OFF đã hủy.
     if (this.isConfigured) {
       try {
-        await Promise.race([
+        const pushed = await Promise.race([
           this.syncService.pushLeavesTab(this.fallbackAdapter).catch(() => 0),
-          new Promise<number>(r => setTimeout(() => r(0), 15000)),
+          new Promise<number>(r => setTimeout(() => r(0), this.approvalPushWaitMs)),
         ]);
+        // Hết thời gian chờ: push vẫn chạy nền (coalesced). Đặt cờ dirty để
+        // auto-push/full-sync sau đó đẩy lại nếu lần nền thất bại.
+        if (!pushed) this.scheduleFullSync('DON_NGHI_PHEP.update-timeout');
       } catch {
         this.scheduleFullSync('DON_NGHI_PHEP.update-retry');
       }
@@ -1275,10 +1299,11 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     // thái (B nhận/duyệt/từ chối/hủy) bền vững ngay, restart không "reset" phiếu.
     if (this.isConfigured) {
       try {
-        await Promise.race([
+        const pushed = await Promise.race([
           this.syncService.pushSwapsTab(this.fallbackAdapter).catch(() => 0),
-          new Promise<number>(r => setTimeout(() => r(0), 15000)),
+          new Promise<number>(r => setTimeout(() => r(0), this.approvalPushWaitMs)),
         ]);
+        if (!pushed) this.scheduleFullSync('DON_DOI_CA.update-timeout');
       } catch { /* best-effort */ }
     }
     return res;
