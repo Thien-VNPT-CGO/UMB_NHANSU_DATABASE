@@ -1,4 +1,4 @@
-﻿# HUONG DAN TRIEN KHAI DU LIEU THAT - V5.1
+# HUONG DAN TRIEN KHAI DU LIEU THAT - V5.1
 
 ## Buoc 1: Kiem tra ket noi
 
@@ -17,7 +17,7 @@ Ket qua mong doi:
 | Bien | Gia tri |
 |------|---------|
 | GOOGLE_SERVICE_ACCOUNT_JSON | Noi dung JSON Service Account key |
-| SPREADSHEET_ID | 17iXM0zc1m17aX9AZrFMjOkPRMy2_CwWfjTRZSUPQF2w |
+| SPREADSHEET_ID | 1UO1UF1d7_YzaCltYt2m9pRnUauGWw873ERqAMxwL-6k |
 | CANDIDATE_SPREADSHEET_ID | 1rcqEKraSRhr-Tn9qwlhADlkQUei8j65bXeHF_Tmkd38 |
 | GOOGLE_DRIVE_FOLDER_ID | ID thu muc Drive |
 | JWT_SECRET | Chuoi bi mat manh (openssl rand -hex 32) |
