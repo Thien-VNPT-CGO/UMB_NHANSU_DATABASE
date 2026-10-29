@@ -3352,6 +3352,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [attEventsLoaded, setAttEventsLoaded] = useState(false);
   // Thông báo nhỏ khi lần tải điểm danh đầu bị chậm/lỗi (lưới vẫn hiển thị bình thường).
   const [attSyncNotice, setAttSyncNotice] = useState('');
+  // Chỉ khi ĐÃ tải thành công /attendance/events mới được kết luận "KHÓA — không lương"
+  // hay "Vắng". Nếu request lỗi/chậm mà vẫn suy luận từ danh sách rỗng thì mọi ca
+  // đều bị gắn khóa/vắng oan (sai lương) — lúc đó hiển thị trạng thái trung tính.
+  const [attEventsSynced, setAttEventsSynced] = useState(false);
   // Gộp realtime + kho lưu trữ (tuần cũ): DÙNG CHUNG cho mọi tab (Lịch tuần +
   // Bảng chấm công realtime) để 2 tab luôn giống nhau 100%. Trước đây mỗi tab
   // tự viết 1 bản merge riêng nên lệch nhau khi archiveEvents thay đổi.
@@ -3428,9 +3432,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       const reqOpts = opts.quick ? ({ _timeoutMs: 15000, _wakeRounds: 2 } as any) : undefined;
       const data = await apiRequest('/attendance/events', reqOpts);
       setLiveAttendanceEvents(Array.isArray(data) ? data : []);
+      setAttEventsSynced(true);
       setAttSyncNotice('');
     } catch (e: any) {
       // Lỗi mạng/chậm: vẫn cho vẽ lưới (dùng ca + trạng thái đã có) thay vì treo loading.
+      setAttEventsSynced(false);
       setAttSyncNotice(String(e?.message || 'Không tải được điểm danh — đang hiển thị theo dữ liệu ca.'));
     } finally {
       setAttEventsLoaded(true);
@@ -3443,7 +3449,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     if (attEventsLoaded) return;
     const t = setTimeout(() => {
       setAttEventsLoaded(true);
-      setAttSyncNotice('Đang đồng bộ điểm danh chậm hơn bình thường — lưới tạm hiển thị theo dữ liệu ca.');
+      setAttSyncNotice('Chưa tải xong điểm danh (máy chủ/Google Sheets đang chậm) — lưới tạm hiển thị theo lịch ca, chưa khóa/vắng ai.');
     }, 2500);
     return () => clearTimeout(t);
   }, [attEventsLoaded]);
@@ -8078,9 +8084,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           const pastEnd = Number.isFinite(endMs) && Date.now() - (endMs as number) > 30 * 60 * 1000;
           const staleIn = Number.isFinite(ciMs) && Date.now() - (ciMs as number) > 12 * 60 * 60 * 1000;
           const pastDay = !day.isToday && day.isPast;
-          // Quá 3h kể từ giờ vào ca mà chưa check-in -> khóa, nghỉ không lương
+          // Quá 3h kể từ giờ vào ca mà chưa check-in -> khóa, nghỉ không lương.
+          // CHỈ kết luận khi danh sách điểm danh đã tải thành công; nếu request lỗi
+          // (danh sách rỗng giả) thì để trạng thái trung tính, tránh khóa oan.
           const startMs = sh?.start_at ? new Date(sh.start_at).getTime() : NaN;
-          const locked = !ci && Number.isFinite(startMs) && Date.now() - (startMs as number) > 3 * 60 * 60 * 1000;
+          const locked = attEventsSynced && !ci && Number.isFinite(startMs) && Date.now() - (startMs as number) > 3 * 60 * 60 * 1000;
           let shiftName = sh?.shift_code;
           if (shiftName === 'CA_1') shiftName = 'Ca 1 (07-12)';
           else if (shiftName === 'CA_2') shiftName = 'Ca 2 (12-18)';
@@ -8148,6 +8156,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               status: 'PENDING',
               note: 'Chưa check-in (Chờ ca)',
               isToday: true,
+            };
+          } else if (!attEventsSynced) {
+            // Điểm danh chưa tải được: KHÔNG gắn "vắng/khóa" oan (sai lương).
+            return {
+              shift: shiftName,
+              status: 'PENDING',
+              note: 'Chưa đồng bộ điểm danh — đang tải lại',
+              isToday: false,
+              notSynced: true,
             };
           } else if (ab || day.isPast) {
             return {
@@ -9678,6 +9695,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                       {sdAbsent ? '🔴 Vắng'
                                         : sdLocked ? '🔒 Khóa — nghỉ không lương'
                                         : sdMissingOut ? 'Thiếu check-out'
+                                        : (sd as any).notSynced ? '⏳ Chưa đồng bộ điểm danh'
                                         : sdPending ? 'Chưa check-in'
                                         : sd.note || sd.status}
                                     </div>
@@ -9811,6 +9829,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             <div style={{ fontWeight: 700, fontSize: '11px', color: isCompleted ? '#065F46' : isOff ? '#9CA3AF' : 'var(--text)' }}>
                               {d.shift}
                             </div>
+
+                            {/* Điểm danh chưa tải được: nói rõ thay vì để ô trống gây hiểu nhầm */}
+                            {(d as any).notSynced && (
+                              <div style={{ fontSize: '9.5px', color: '#64748B', fontWeight: 600 }}>
+                                ⏳ Chưa đồng bộ điểm danh
+                              </div>
+                            )}
 
                             {/* Completed / Attended Shift Badge */}
                             {isCompleted && (

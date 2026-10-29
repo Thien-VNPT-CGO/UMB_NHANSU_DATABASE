@@ -741,7 +741,14 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     if (!this.isConfigured) return;
     const mustWaitFirstPull = !!opts.waitFirstPull && this.shouldWaitFirstPull();
     const now = Date.now();
-    if (!mustWaitFirstPull && now - this.lastPullTime <= 10000) { // 10s mới pull nền 1 lần — dữ liệu tươi trong 5-10s, trả lời tức thì
+    // Đã có pull (từ ticker nền hoặc request khác) trong ~12s qua -> trả bộ nhớ
+    // ngay, không tạo thêm lượt đọc Google (mỗi lượt tốn ~5 request, dễ chạm hạn
+    // mức 60 request phút khi nhiều Admin/HR cùng mở web).
+    const lastPullAt = Math.max(
+      this.lastPullTime,
+      Number((this.syncService as any).getLastFullPullAtMs?.() || 0),
+    );
+    if (!mustWaitFirstPull && now - lastPullAt <= 12000) {
       if (this.pullInFlight && this.needsSeed()) {
         try { await this.withTimeout(this.pullInFlight, this.firstPullWaitMs); } catch { /* dùng tạm bộ nhớ */ }
       }

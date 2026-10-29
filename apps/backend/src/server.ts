@@ -221,9 +221,12 @@ server.listen(Number(PORT), '0.0.0.0', () => {
 
   // Kéo dữ liệu tự động ngay sau khi khởi động 2 giây
   setTimeout(autoPullSheetsTick, 2000);
-  // Định kỳ tự động quét và kéo dữ liệu mới từ Google Sheets (mặc định 5 giây).
-  // 5s ~ 12 lượt/phút × 2-3 read = an toàn quota 60 read/phút/service account.
-  const syncIntervalMs = Number(process.env.SHEETS_SYNC_INTERVAL_MS) || 5_000;
+  // Định kỳ tự động quét và kéo dữ liệu mới từ Google Sheets (mặc định 15 giây).
+  // Mỗi lượt pull tốn ~5 request đọc (1 batchGet 24 tab + 3-4 request ứng viên).
+  // 5s = ~60 request/phút, đúng hạn mức 60/phút của service account -> Google trả
+  // 429, pull phình 30-60s và mọi tab chậm theo. 15s vẫn gần realtime vì sửa tay
+  // trên Sheet đã có webhook onEdit pull riêng đúng tab.
+  const syncIntervalMs = Number(process.env.SHEETS_SYNC_INTERVAL_MS) || 15_000;
   setInterval(autoPullSheetsTick, syncIntervalMs);
 
   // Chẩn đoán đường GHI Google: khi hàng đợi append báo timeout, /health cần
