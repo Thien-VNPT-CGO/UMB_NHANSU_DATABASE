@@ -65,6 +65,11 @@ if [ -f "deploy/vps/fix-socketio-nginx.sh" ]; then
   sudo bash deploy/vps/fix-socketio-nginx.sh || true
 fi
 
+echo "==> 5b. Bat gzip cho Nginx (bundle JS ~1MB -> ~250KB)"
+if [ -f "deploy/vps/fix-gzip-nginx.sh" ]; then
+  sudo bash deploy/vps/fix-gzip-nginx.sh || true
+fi
+
 echo "==> 6. Kiem tra suc khoe"
 sleep 8
 curl -fsS http://localhost:4005/health | head -c 300; echo

@@ -1342,7 +1342,7 @@ export class GoogleSheetsSyncService {
           fields: 'sheets.properties(sheetId,title)',
         }), 30_000);
       const sheets = (res.data.sheets || []).filter(s => s.properties?.sheetId !== undefined);
-      const chunk = Math.max(50, Math.min(1000, Number(process.env.SHEETS_CF_CLEANUP_CHUNK) || 500));
+      const chunk = Math.max(50, Math.min(1000, Number(process.env.SHEETS_CF_CLEANUP_CHUNK) || 250));
       for (const sheet of sheets) {
         const sheetId = sheet.properties!.sheetId!;
         const title = sheet.properties?.title || String(sheetId);
@@ -1363,7 +1363,9 @@ export class GoogleSheetsSyncService {
                 spreadsheetId: this.spreadsheetId,
                 requestBody: { requests },
               }),
-              60_000,
+              // Tab nhiều rule (50k) cần lâu hơn 60s; 120s đủ mà không giữ khoá
+              // ghi quá lâu (chunk 250 ~ vài giây/lô).
+              120_000,
             );
             result.deleted += n;
             progressHere += n;
@@ -1769,7 +1771,10 @@ export class GoogleSheetsSyncService {
       // Tab nhật ký (thông báo/inbox/outbox/snapshot) đọc nhịp chậm hơn hẳn:
       // đây là các tab phình to nhất nhưng KHÔNG cần realtime từng 5 giây.
       const historyPullMs = Math.max(30_000, Number(process.env.SHEETS_HISTORY_PULL_MS) || 120_000);
-      const historyDue = !this.lastHistoryPullAt || Date.now() - this.lastHistoryPullAt >= historyPullMs;
+      // Trong lúc dọn conditional-format (ghi nặng), tạm hoãn đọc tab nhật ký để
+      // không cộng dồn tải lên Google Sheets; xong job sẽ đọc bù ngay nhịp sau.
+      const historyDue = !this.cfCleanupState.running
+        && (!this.lastHistoryPullAt || Date.now() - this.lastHistoryPullAt >= historyPullMs);
       // Chỉ parse lại tab nhật ký khi vừa đọc theo nhịp lịch sử (hoặc webhook vừa
       // sửa đúng tab đó). Parse 56k dòng mỗi 5 giây là lãng phí CPU nghiêm trọng.
       const shouldReparseHistory = historyDue || (!!opts.prefetchedBatch
