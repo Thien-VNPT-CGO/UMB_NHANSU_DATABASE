@@ -23,9 +23,32 @@ export interface EmployeeMaster {
   bank_holder?: string;
   /** Ảnh mã QR ngân hàng do NV tự tải lên ở Hồ sơ (dataURL, ≤45KB) — Finance xem ở tab QR ngân hàng NV. */
   bank_qr_img?: string;
+  /**
+   * File Hợp đồng lao động (Thử việc / Chính thức) do HR upload ở tab Hồ Sơ.
+   * Metadata lưu 1 ô JSON trên NHAN_VIEN_MASTER; file thật nằm trên Google Drive
+   * (chính) + đĩa VPS (dự phòng) — KHÔNG nhét base64 vào Sheet.
+   */
+  contract_docs?: EmployeeContractDocs;
   created_at: string;
   updated_at: string;
   version: number;
+}
+
+export interface EmployeeContractDocMeta {
+  /** Drive file ID (rỗng nếu chỉ lưu được trên đĩa VPS). */
+  drive_id: string;
+  file_name: string;
+  mime_type: string;
+  size: number;
+  uploaded_at: string;
+  uploaded_by: string;
+  /** DRIVE = đã lên Drive, DISK = chỉ có bản trên VPS (chờ retry). */
+  storage?: 'DRIVE' | 'DISK';
+}
+
+export interface EmployeeContractDocs {
+  probation?: EmployeeContractDocMeta;
+  official?: EmployeeContractDocMeta;
 }
 
 export interface EmployeeStageHistory {

@@ -22,6 +22,46 @@ function resolvePhotoDir(): string {
 
 const PHOTO_DIR = resolvePhotoDir();
 
+/** Thư mục ảnh đệm trên VPS (dùng cho job dọn dung lượng hằng tháng). */
+export function attendancePhotoDir(): string {
+  return PHOTO_DIR;
+}
+
+/**
+ * Xóa ảnh đệm trên VPS có mtime TRƯỚC mốc ngày (YYYY-MM-DD, giờ VN).
+ * Chạy sau khi tháng cũ đã backup lên Google Drive: giải phóng dung lượng VPS,
+ * tháng mới tiếp tục lưu ảnh đệm. Best-effort, không bao giờ throw.
+ */
+export function cleanupAttendancePhotoDiskBefore(
+  cutoffDate: string,
+  keep?: (fileName: string) => boolean,
+): { scanned: number; removed: number; bytes: number } {
+  const cutoff = Date.parse(`${String(cutoffDate || '').slice(0, 10)}T00:00:00+07:00`);
+  if (!Number.isFinite(cutoff)) return { scanned: 0, removed: 0, bytes: 0 };
+  let scanned = 0;
+  let removed = 0;
+  let bytes = 0;
+  try {
+    if (!fs.existsSync(PHOTO_DIR)) return { scanned, removed, bytes };
+    for (const name of fs.readdirSync(PHOTO_DIR)) {
+      const p = path.join(PHOTO_DIR, name);
+      try {
+        const st = fs.statSync(p);
+        if (!st.isFile()) continue;
+        scanned++;
+        if (keep && keep(name)) continue;
+        if (st.mtimeMs < cutoff) {
+          fs.unlinkSync(p);
+          removed++;
+          bytes += st.size;
+        }
+      } catch { /* file đang đọc: bỏ qua */ }
+    }
+  } catch { /* best-effort */ }
+  return { scanned, removed, bytes };
+}
+
+
 function safeEventId(eventId: string): string {
   return String(eventId || '').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80) || 'unknown';
 }
@@ -73,6 +113,18 @@ export function readAttendancePhotoDisk(eventId: string): { buffer: Buffer; mime
   }
 }
 
+/** Xóa ảnh đệm 1 sự kiện sau khi đã upload Google Drive thành công. */
+export function deleteAttendancePhotoDisk(eventId: string): boolean {
+  try {
+    const p = attendancePhotoPath(eventId);
+    if (!fs.existsSync(p)) return false;
+    fs.unlinkSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** File data:URL để retry upload Drive sau restart (mất event_photo memory). */
 export function readAttendancePhotoDiskAsDataUrl(eventId: string): string | null {
   try {
@@ -118,6 +170,18 @@ export function hasAdjustmentPhotoDisk(adjustmentId: string): boolean {
   try {
     const p = adjustmentPhotoPath(adjustmentId);
     return fs.existsSync(p) && fs.statSync(p).size > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Xóa ảnh bằng chứng đệm sau khi đã upload Google Drive thành công. */
+export function deleteAdjustmentPhotoDisk(adjustmentId: string): boolean {
+  try {
+    const p = adjustmentPhotoPath(adjustmentId);
+    if (!fs.existsSync(p)) return false;
+    fs.unlinkSync(p);
+    return true;
   } catch {
     return false;
   }

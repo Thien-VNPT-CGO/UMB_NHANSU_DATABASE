@@ -91,6 +91,7 @@ import {
   swapDispatchBody,
   supportCreateBody,
   employeeCreateBody,
+  employeeContractBody,
   employeeUpdateBody,
   employeeSelfUpdateBody,
   candidateRejectBody,
@@ -160,6 +161,15 @@ import {
 } from './middlewares/rbac.middleware.js';
 import { BRANCHES, ERROR_CODES, SHIFT_TEMPLATES } from '@ubm/shared';
 import { SHEETS_DEFINITIONS } from './services/google-sheets-sync.service.js';
+import {
+  addDaysIso,
+  runMonthlyBackup,
+  syncDayPhotosToDrive,
+  syncPhotoBacklog,
+  vnToday as backupVnToday,
+  previousMonthOf as backupPreviousMonthOf,
+} from './services/monthly-backup.service.js';
+import { decodeQrDataUrl, parseVietQRPartial } from './utils/vietqr.js';
 import { buildZipStore } from './utils/zip-store.js';
 import { getThemeScheduleState, normalizeThemeSchedule } from './utils/theme-schedule.js';
 import { lateFineFor } from './services/payroll.service.js';
@@ -887,6 +897,33 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Giải mã QR ngân hàng ở SERVER (fallback khi trình duyệt/NV tải ảnh lớn, QR
+  // dày/mờ mà jsQR trên máy không đọc được). Trả đủ 3 trường để app tự điền.
+  app.post('/me/bank-qr/decode', authMiddleware, requireRole(['EMPLOYEE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const image = String((req.body || {}).image || '');
+      if (!image) return res.status(400).json({ error: 'MISSING_IMAGE' });
+      if (image.length > 8 * 1024 * 1024) return res.status(413).json({ error: 'IMAGE_TOO_LARGE' });
+      const payload = decodeQrDataUrl(image);
+      if (!payload) return res.status(422).json({ error: 'QR_NOT_DECODED' });
+      const info = parseVietQRPartial(payload);
+      if (!info.isVietQR) {
+        return res.status(422).json({ error: 'NOT_VIETQR', payload });
+      }
+      return res.json({
+        ok: true,
+        payload,
+        bank: info.bank,
+        account: info.account,
+        holder: info.holder,
+        bin: info.bin,
+        complete: Boolean(info.bank && info.account && info.holder),
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'DECODE_FAILED' });
     }
   });
 
@@ -1803,6 +1840,73 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   };
   app.get('/employees/:id/avatar', authMiddleware, requireRole(['ADMIN', 'HR', 'STORE']), serveEmployeeAvatar);
+
+  // --- HỢP ĐỒNG LAO ĐỘNG (Thử việc / Chính thức) ---
+  // Upload file lên Drive + đĩa VPS, metadata lưu trên NHAN_VIEN_MASTER.
+  app.post(
+    '/employees/:id/contract',
+    authMiddleware,
+    requireRole(['ADMIN', 'HR']),
+    validate({ params: idParams, body: employeeContractBody }),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const r = await employeesService.saveContract(
+          req.params.id,
+          {
+            kind: String(req.body.kind || ''),
+            fileName: String(req.body.fileName || ''),
+            mimeType: String(req.body.mimeType || ''),
+            base64: String(req.body.base64 || ''),
+          },
+          req.user!.id,
+        );
+        broadcastUpdate('employees', { action: 'update', employee: r.employee });
+        res.json({ success: true, contract: r.meta, employee: r.employee });
+      } catch (err: any) {
+        res.status(400).json({ error: err.message });
+      }
+    },
+  );
+
+  // Xem/tải hợp đồng: stream từ Drive, rớt xuống bản đĩa VPS (giống avatar).
+  app.get(
+    '/employees/:id/contract/:kind',
+    authMiddleware,
+    requireRole(['ADMIN', 'HR', 'STORE']),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const emp: any = await employeesService.getEmployee(req.params.id).catch(() => null);
+        if (!emp) return res.status(404).json({ error: 'EMPLOYEE_NOT_FOUND' });
+        if (req.user?.role === 'STORE' && req.user.branchScope !== '*' && emp.default_branch_id && emp.default_branch_id !== req.user.branchScope) {
+          return res.status(403).json({ error: 'BRANCH_SCOPE_FORBIDDEN' });
+        }
+        const file = await employeesService.getContractFile(req.params.id, req.params.kind);
+        if (!file) return res.status(404).json({ error: 'CONTRACT_NOT_UPLOADED' });
+        res.setHeader('Content-Type', file.mimeType || 'application/octet-stream');
+        res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(file.fileName || 'hop-dong')}`);
+        res.setHeader('Cache-Control', 'private, max-age=300');
+        res.send(file.buffer);
+      } catch (err: any) {
+        res.status(500).json({ error: err.message || 'CONTRACT_DOWNLOAD_FAILED' });
+      }
+    },
+  );
+
+  // Gỡ hợp đồng đã upload (xóa metadata + file Drive/đĩa).
+  app.delete(
+    '/employees/:id/contract/:kind',
+    authMiddleware,
+    requireRole(['ADMIN', 'HR']),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const employee = await employeesService.removeContract(req.params.id, req.params.kind, req.user!.id);
+        broadcastUpdate('employees', { action: 'update', employee });
+        res.json({ success: true, employee });
+      } catch (err: any) {
+        res.status(400).json({ error: err.message });
+      }
+    },
+  );
 
   // HR khóa tài khoản NV chính thức: LOCKED + XÓA PIN + văng phiên ngay.
   // Hồ sơ/điểm danh/công/lương GIỮ NGUYÊN — Lịch làm việc xóa ngay lập tức các ca từ hôm nay.
@@ -4553,6 +4657,78 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Quota phiếu BÙ CÔNG NGÀY (tab Bổ Sung Công cổng NV): 1 phiếu/tuần, tối đa
+  // 4 phiếu/tháng, tuần không dùng cộng dồn trong tháng, sang tháng reset.
+  // Trả realtime để cổng NV hiện số phiếu còn lại + chặn gửi sớm (server vẫn
+  // là nơi chốt cứng).
+  app.get('/me/bu-cong-quota', authMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const employeeId = String(req.user?.employeeId || '');
+      if (!employeeId) {
+        return res.json({
+          month: AttendanceService.vnDateStr().slice(0, 7),
+          monthUsed: 0, monthLimit: AttendanceService.BU_CONG_NGAY_MONTH_LIMIT,
+          monthRemaining: AttendanceService.BU_CONG_NGAY_MONTH_LIMIT,
+          weekUsed: 0, weekLimit: 1, weekRemaining: AttendanceService.BU_CONG_NGAY_MONTH_LIMIT,
+          availableNow: 0, weeksElapsed: 0,
+          points: { earned: 0, spent: 0, balance: 0 },
+          cost: AttendanceService.BU_CONG_NGAY_COST,
+          monthLimitTotal: AttendanceService.BU_CONG_NGAY_MONTH_LIMIT,
+        });
+      }
+      const list = await attendanceService.listAdjustments(undefined, employeeId).catch(() => []);
+      const quota = AttendanceService.buCongNgayQuotaOf(list, employeeId, new Date());
+      const emp: any = await adapter.getEmployeeById(employeeId).catch(() => null);
+      res.json({
+        ...quota,
+        points: AttendanceService.adjustPointsOf(emp),
+        cost: AttendanceService.BU_CONG_NGAY_COST,
+        monthLimitTotal: AttendanceService.BU_CONG_NGAY_MONTH_LIMIT,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Bảng quota bù công ngày THEO TỪNG NHÂN VIÊN (HR/Admin): tháng này đã dùng
+  // bao nhiêu, tuần này đã dùng bao nhiêu, còn gửi được bao nhiêu — đúng quy
+  // định 1 phiếu/tuần, tối đa 4 phiếu/tháng, tuần trống cộng dồn trong tháng.
+  app.get('/admin/bu-cong-quota', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const list = await attendanceService.listAdjustments(undefined, undefined).catch(() => []);
+      const scope = String(req.user?.branchScope || '*');
+      const emps = await employeesService.listEmployees().catch(() => []);
+      const now = new Date();
+      const rows = (emps || [])
+        .filter((e: any) => String(e?.employment_status || '').toUpperCase() !== 'TERMINATED')
+        .filter((e: any) => scope === '*' || !e?.branch_id || String(e.branch_id) === scope)
+        .map((e: any) => {
+          const q = AttendanceService.buCongNgayQuotaOf(list, e.employee_id, now);
+          return {
+            employee_id: e.employee_id,
+            employee_code: e.employee_code,
+            full_name: e.full_name,
+            branch_id: e.branch_id,
+            ...q,
+            monthLimitTotal: AttendanceService.BU_CONG_NGAY_MONTH_LIMIT,
+          };
+        })
+        .sort((a: any, b: any) =>
+          (b.monthUsed - a.monthUsed) ||
+          String(a.full_name || a.employee_id).localeCompare(String(b.full_name || b.employee_id), 'vi'),
+        );
+      res.json({
+        month: AttendanceService.vnDateStr(now).slice(0, 7),
+        weekStart: rows[0]?.weekStart || '',
+        weekEnd: rows[0]?.weekEnd || '',
+        monthLimitTotal: AttendanceService.BU_CONG_NGAY_MONTH_LIMIT,
+        rows,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Xóa cứng phiếu khỏi hệ thống (NV: hủy phiếu PENDING của mình; HR/QL: dọn phiếu chưa duyệt).
   // APPROVED khóa cứng. Xóa xong full-sync gỡ dòng khỏi Sheet DIEU_CHINH_CONG luôn.
   app.delete('/attendance/adjustments/:id', authMiddleware, validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {
@@ -5039,6 +5215,144 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       res.json({ ...r, vnToday, recorded: true });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
+    }
+  });
+
+  // --- BACKUP THÁNG (09:00 ngày 5 hằng tháng) + ĐỒNG BỘ ẢNH HẰNG NGÀY ---
+  // Cron host gọi giờ nào cũng được; backend tự dedupe theo tháng/ngày.
+  app.post('/internal/monthly-backup-run', async (req, res) => {
+    try {
+      const secret = String(process.env.INTERNAL_ALERT_SECRET || '');
+      const given = String(req.headers['x-internal-secret'] || '');
+      if (!secret || given !== secret) return res.status(403).json({ error: 'FORBIDDEN' });
+      const syncService = (adapter as any).syncService;
+      if (!syncService) return res.status(500).json({ error: 'SYNC_SERVICE_MISSING' });
+
+      const force = Number(req.body?.force) === 1;
+      const month = String(req.body?.month || '').trim() || backupPreviousMonthOf(backupVnToday());
+      if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'INVALID_MONTH' });
+
+      // Chỉ tự chạy từ 09:00 ngày 5 (hoặc bù sang ngày 6+). Trước mốc đó mà
+      // không force thì bỏ qua — tránh lưu tháng chưa kết thúc.
+      if (!force) {
+        const vnNow = new Date(Date.now() + 7 * 3_600_000);
+        const vnDay = vnNow.getUTCDate();
+        const vnHour = vnNow.getUTCHours();
+        if (!(vnDay > 5 || (vnDay === 5 && vnHour >= 9))) {
+          return res.json({ ok: true, skipped: true, reason: 'NOT_DUE_YET', month });
+        }
+      }
+
+      const cur: any = await adapter.getSystemSettings().catch(() => ({})) || {};
+      const st = cur.monthly_backup || {};
+      if (!force && st.last_month === month) {
+        return res.json({ ok: true, skipped: true, reason: 'ALREADY_BACKED_UP_MONTH', month, last: st });
+      }
+
+      const r = await runMonthlyBackup(syncService, adapter, month);
+      const updated = {
+        ...cur,
+        monthly_backup: r.ok ? {
+          last_month: month,
+          last_ok_at: new Date().toISOString(),
+          last_result: r,
+          last_error: null,
+        } : {
+          ...st,
+          last_error_at: new Date().toISOString(),
+          last_error: r.error || r.reason || 'UNKNOWN',
+          last_result: r,
+        },
+      };
+      await adapter.updateSystemSettings(updated).catch(() => null);
+
+      if (r.ok) {
+        await adapter.recordAuditLog({
+          actor_id: 'CRON_MONTHLY_BACKUP',
+          action: 'MONTHLY_BACKUP_OK',
+          target_type: 'CAU_HINH_HE_THONG',
+          target_id: `backup_${month}`,
+          detail: `${r.tabFiles} file dữ liệu • ${r.photosUploaded} ảnh mới • ${r.localDeleted} ảnh đệm đã dọn`,
+        } as any).catch(() => null);
+      } else {
+        broadcastNotification({
+          type: 'SYSTEM',
+          title: '⚠️ Backup tháng THẤT BẠI',
+          message: `Backup tháng ${month} lỗi (${r.error || r.reason}) — cron sẽ thử lại giờ sau. Kiểm tra Drive/quota.`,
+          linkTab: 'hr-dashboard',
+          targetRoles: ['ADMIN'],
+        });
+      }
+      return res.json({ ...r, recorded: true });
+    } catch (err: any) {
+      return res.status(400).json({ error: err?.message || String(err) });
+    }
+  });
+
+  app.post('/internal/photos-backup-run', async (req, res) => {
+    try {
+      const secret = String(process.env.INTERNAL_ALERT_SECRET || '');
+      const given = String(req.headers['x-internal-secret'] || '');
+      if (!secret || given !== secret) return res.status(403).json({ error: 'FORBIDDEN' });
+      const syncService = (adapter as any).syncService;
+      if (!syncService) return res.status(500).json({ error: 'SYNC_SERVICE_MISSING' });
+
+      const requested = String(req.body?.date || '').trim();
+      const vnToday = backupVnToday();
+      const yesterday = new Date(Date.parse(`${vnToday}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+      if (requested && !/^\d{4}-\d{2}-\d{2}$/.test(requested)) {
+        return res.status(400).json({ error: 'INVALID_DATE' });
+      }
+
+      const cur: any = await adapter.getSystemSettings().catch(() => ({})) || {};
+      const st = cur.photos_backup || {};
+
+      // Có ngày cụ thể -> chỉ đồng bộ ngày đó (Admin chạy bù tay).
+      // Không truyền ngày -> bù mọi ngày bị lỡ từ lần trước tới hôm qua.
+      let r: any;
+      if (requested) {
+        r = await syncDayPhotosToDrive(syncService, adapter, requested);
+      } else {
+        const last = /^\d{4}-\d{2}-\d{2}$/.test(String(st.last_date || '')) ? String(st.last_date) : '';
+        const fromDate = last ? addDaysIso(last, 1) : yesterday;
+        if (!fromDate || fromDate > yesterday) {
+          return res.json({ ok: true, skipped: true, reason: 'ALREADY_UP_TO_DATE', last_date: last || null });
+        }
+        r = await syncPhotoBacklog(syncService, adapter, { fromDate, toDate: yesterday, maxDays: 31 });
+      }
+
+      const doneDate = requested || r.to || yesterday;
+      await adapter.updateSystemSettings({
+        ...cur,
+        photos_backup: r.ok ? {
+          last_date: doneDate,
+          last_ok_at: new Date().toISOString(),
+          last_result: r,
+          last_error: null,
+        } : {
+          ...st,
+          last_error_at: new Date().toISOString(),
+          last_error: r.reason || 'UNKNOWN',
+          last_result: r,
+        },
+      }).catch(() => null);
+      return res.json(r);
+    } catch (err: any) {
+      return res.status(400).json({ error: err?.message || String(err) });
+    }
+  });
+
+  // Trạng thái backup tháng + ảnh (dashboard Admin).
+  app.get('/admin/monthly-backup', authMiddleware, requireRole(['ADMIN']), async (_req, res) => {
+    try {
+      const settings: any = await adapter.getSystemSettings().catch(() => ({})) || {};
+      res.json({
+        monthly: settings.monthly_backup || null,
+        photos: settings.photos_backup || null,
+        drive: (adapter as any).syncService?.getDriveUploadStatus?.() || null,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || String(err) });
     }
   });
 

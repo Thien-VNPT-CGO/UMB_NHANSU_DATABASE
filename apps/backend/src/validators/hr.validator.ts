@@ -53,6 +53,15 @@ export const bulkImportBody = z.object({
   employees: z.array(z.object({}).passthrough()).min(1).max(500),
 });
 
+// Upload Hợp đồng lao động (Thử việc / Chính thức). Base64 tối đa ~9MB
+// (file 6MB) — khớp giới hạn express.json 10MB.
+export const employeeContractBody = z.object({
+  kind: z.string().min(1).max(20),
+  fileName: z.string().min(1).max(240),
+  mimeType: z.string().max(120).optional(),
+  base64: z.string().min(16).max(9_000_000),
+});
+
 export const transitionBody = z.object({
   expectedVersion,
   officialDate: looseOptString(32),

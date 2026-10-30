@@ -8,6 +8,22 @@ import { saveAttendancePhotoDisk, saveAdjustmentPhotoDisk } from '../services/ph
 import { DurableWriteQueue } from './durable-write-queue.js';
 import { readRuntimeSnapshot, writeRuntimeSnapshot } from './runtime-snapshot.js';
 
+/** Ngày VN (YYYY-MM-DD) của 1 mốc ISO — dùng đặt folder ảnh theo ngày. */
+function vnDayOfIso(input: unknown): string {
+  const t = Date.parse(String(input || ''));
+  if (!Number.isFinite(t)) return '';
+  return new Date(t + 7 * 3_600_000).toISOString().slice(0, 10);
+}
+
+/** Tên folder Drive an toàn (bỏ ký tự cấm, giới hạn độ dài). */
+function safeDriveSeg(v: unknown): string {
+  return String(v ?? '')
+    .replace(/[\\/:*?"<>|]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80) || 'KHONG_XAC_DINH';
+}
+
 export class GoogleSheetsAdapter implements ISheetsRepository {
   private fallbackAdapter: MockSheetsAdapter;
   private isConfigured = false;
@@ -1341,8 +1357,29 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
       // (Drive lỗi hay thành công đều có fallback hiển thị + retry).
       try { saveAttendancePhotoDisk(event.event_id, event.photo_base64); } catch { /* best-effort */ }
       try {
-        const fileName = `${event.employee_id}_${event.type}_${Date.now()}.jpg`;
-        const driveResult = await this.syncService.uploadImageToDrive(fileName, 'image/jpeg', event.photo_base64);
+        // Ảnh đi thẳng vào cấu trúc tháng/ngày/chi nhánh/NV/ca trên Drive:
+        //   backup_YYYY-MM/SU_KIEN_DIEM_DANH/YYYY-MM-DD/<CN>/<NV>/<Ca>/check in|out.jpg
+        const day = vnDayOfIso(event.client_time) || vnDayOfIso(event.server_received_at)
+          || vnDayOfIso(new Date().toISOString());
+        const month = day.slice(0, 7);
+        const fileName = event.type === 'CHECK_IN'
+          ? 'check in.jpg'
+          : event.type === 'CHECK_OUT'
+            ? 'check out.jpg'
+            : `${safeDriveSeg(event.type || 'photo')}.jpg`;
+        const segments = [
+          `backup_${month}`,
+          'SU_KIEN_DIEM_DANH',
+          day,
+          safeDriveSeg(event.branch_id || 'KHONG_CHI_NHANH'),
+          safeDriveSeg(event.employee_id || 'KHONG_NV'),
+          safeDriveSeg(event.assignment_id || event.event_id || 'KHONG_CA'),
+        ];
+        const base64 = String(event.photo_base64).replace(/^data:image\/\w+;base64,/, '');
+        const buffer = Buffer.from(base64, 'base64');
+        const driveResult = typeof (this.syncService as any).uploadBufferToDrivePath === 'function'
+          ? await this.syncService.uploadBufferToDrivePath(fileName, 'image/jpeg', buffer, segments)
+          : await this.syncService.uploadImageToDrive(fileName, 'image/jpeg', event.photo_base64);
         if (driveResult?.fileId && !String(driveResult.fileId).startsWith('DRV_')) {
           event.drive_object_id = driveResult.fileId;
         } else {
@@ -1440,8 +1477,21 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
         saveAdjustmentPhotoDisk(adj.adjustment_id, adj.photo_base64);
       }
       try {
-        const fileName = `ADJ_evidence_${adj.employee_id || 'unknown'}_${Date.now()}.jpg`;
-        const driveResult = await this.syncService.uploadImageToDrive(fileName, 'image/jpeg', adj.photo_base64);
+        const day = String(adj.reason || '').match(/(\d{4}-\d{2}-\d{2})/)?.[1]
+          || vnDayOfIso(new Date().toISOString());
+        const month = day.slice(0, 7);
+        const fileName = `ADJ_${safeDriveSeg(adj.adjustment_id || Date.now())}.jpg`;
+        const segments = [
+          `backup_${month}`,
+          'DIEU_CHINH_CONG',
+          day,
+          safeDriveSeg(adj.employee_id || 'KHONG_NV'),
+        ];
+        const base64 = String(adj.photo_base64).replace(/^data:image\/\w+;base64,/, '');
+        const buffer = Buffer.from(base64, 'base64');
+        const driveResult = typeof (this.syncService as any).uploadBufferToDrivePath === 'function'
+          ? await this.syncService.uploadBufferToDrivePath(fileName, 'image/jpeg', buffer, segments)
+          : await this.syncService.uploadImageToDrive(fileName, 'image/jpeg', adj.photo_base64);
         if (driveResult?.fileId && !String(driveResult.fileId).startsWith('DRV_')) {
           adj.evidence_drive_id = driveResult.fileId;
         } else {

@@ -10,7 +10,7 @@ import {
 } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { singleWriterQueue } from '../repositories/single-writer-queue.js';
-import { readAttendancePhotoDiskAsDataUrl } from './photo-disk.store.js';
+import { deleteAttendancePhotoDisk, readAttendancePhotoDiskAsDataUrl } from './photo-disk.store.js';
 import { lateFineFor, linkDayEvents } from './payroll.service.js';
 
 import { Server } from 'socket.io';
@@ -508,14 +508,36 @@ export class AttendanceService {
           const fromDisk = readAttendancePhotoDiskAsDataUrl((e as any)?.event_id);
           if (fromDisk) (e as any).event_photo = fromDisk;
         }
-        const r = await sync.uploadImageToDrive(
-          `${(e as any)?.employee_id || 'unknown'}_${(e as any)?.type || 'CHECK'}_${Date.now()}.jpg`,
-          'image/jpeg',
-          String((e as any).event_photo)
-        );
+        const evt: any = e as any;
+        const day = AttendanceService.vnDateStr(new Date(evt.client_time || evt.server_received_at || Date.now()));
+        const month = day.slice(0, 7);
+        const safe = (v: unknown) => String(v ?? '').replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, ' ').trim().slice(0, 80) || 'KHONG_XAC_DINH';
+        const fileName = evt.type === 'CHECK_IN' ? 'check in.jpg' : evt.type === 'CHECK_OUT' ? 'check out.jpg' : `${safe(evt.type || 'photo')}.jpg`;
+        const segments = [
+          `backup_${month}`,
+          'SU_KIEN_DIEM_DANH',
+          day,
+          safe(evt.branch_id || 'KHONG_CHI_NHANH'),
+          safe(evt.employee_id || 'KHONG_NV'),
+          safe(evt.assignment_id || evt.event_id || 'KHONG_CA'),
+        ];
+        const r = typeof (sync as any).uploadBufferToDrivePath === 'function'
+          ? await sync.uploadBufferToDrivePath(
+              fileName,
+              'image/jpeg',
+              Buffer.from(String(evt.event_photo).replace(/^data:image\/\w+;base64,/, ''), 'base64'),
+              segments,
+            )
+          : await sync.uploadImageToDrive(
+              `${evt.employee_id || 'unknown'}_${evt.type || 'CHECK'}_${Date.now()}.jpg`,
+              'image/jpeg',
+              String(evt.event_photo),
+            );
         if (r?.fileId && !String(r.fileId).startsWith('DRV_')) {
           (e as any).drive_object_id = r.fileId;
           delete (e as any).event_photo;
+          // Đã chắc chắn có trên Drive -> dọn bản đệm VPS ngay.
+          deleteAttendancePhotoDisk(String((e as any).event_id || ''));
           recovered++;
         }
       } catch { /* lần sau thử lại */ }
@@ -745,12 +767,25 @@ export class AttendanceService {
         if (dup) {
           throw new Error('ADJUSTMENT_DUPLICATE: Bạn đã có phiếu cùng ca đang chờ duyệt, không cần gửi lại! Chờ HR xử lý phiếu hiện tại.');
         }
-        // KHÔNG giới hạn số phiếu/tuần (kể cả NV chính thức): gửi bao nhiêu cũng
-        // được, chống trùng phiếu PENDING cùng ca ở trên đã đủ. Phiếu BU_CONG_NGAY
-        // vẫn tốn điểm theo luật riêng bên dưới.
+        // Phiếu quên check-in/out: KHÔNG giới hạn số phiếu/tuần (chống trùng PENDING
+        // cùng ca ở trên đã đủ).
         // Phiếu BU_CONG_NGAY: ngày bù trong tháng hiện tại + tốn 5 điểm (trừ ngay,
-        // từ chối/hết hạn thì hoàn lại). Không đủ điểm -> chặn tạo.
+        // từ chối/hết hạn thì hoàn lại) + QUOTA 1 phiếu/tuần, tối đa 4 phiếu/tháng.
+        // Tuần không dùng được cộng dồn trong cùng tháng; qua tháng mới reset về
+        // đúng số tuần đã bắt đầu của tháng đó (không mang phiếu tháng cũ sang).
         if (kind === 'BU_CONG_NGAY') {
+          const quota = AttendanceService.buCongNgayQuotaOf(existing, data.employeeId, new Date());
+          // Kiểm tra TUẦN trước: tuần này đã dùng 1 phiếu thì chặn ngay (kể cả
+          // tháng còn phiếu cộng dồn) — thông báo đúng lý do cho NV.
+          if (quota.availableNow <= 0) {
+            if (quota.weekUsed >= 1) {
+              throw new Error(`BU_CONG_NGAY_WEEK_LIMIT: Tuần này (${quota.weekStart} → ${quota.weekEnd}) bạn đã dùng ${quota.weekUsed} phiếu. Mỗi tuần được 1 phiếu, tuần chưa dùng được cộng dồn trong tháng — hiện còn ${quota.monthRemaining}/${AttendanceService.BU_CONG_NGAY_MONTH_LIMIT} phiếu cả tháng, vui lòng chờ tuần sau.`);
+            }
+            throw new Error(`BU_CONG_NGAY_MONTH_LIMIT: Tháng ${quota.month} bạn đã dùng đủ ${quota.monthLimit}/${AttendanceService.BU_CONG_NGAY_MONTH_LIMIT} phiếu bù công ngày. Qua tháng mới hệ thống mới mở lại (không cộng dồn phiếu tháng cũ).`);
+          }
+          if (quota.monthUsed >= AttendanceService.BU_CONG_NGAY_MONTH_LIMIT) {
+            throw new Error(`BU_CONG_NGAY_MONTH_LIMIT: Tháng ${quota.month} bạn đã dùng đủ ${AttendanceService.BU_CONG_NGAY_MONTH_LIMIT}/${AttendanceService.BU_CONG_NGAY_MONTH_LIMIT} phiếu bù công ngày. Qua tháng mới hệ thống mới mở lại (không cộng dồn phiếu tháng cũ).`);
+          }
           const todayVn = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
           const incDay = AttendanceService.incidentDateOf(data.incidentDate || data.reason);
           if (!incDay || incDay.slice(0, 7) !== todayVn.slice(0, 7)) {
@@ -814,6 +849,105 @@ export class AttendanceService {
   /** Phiếu BU_CONG_NGAY tốn 5 điểm/lượt; đủ 1 ca (check-in + check-out) +2 điểm. */
   static readonly BU_CONG_NGAY_COST = 5;
   static readonly POINTS_PER_COMPLETE_SHIFT = 2;
+  /** Quota phiếu bù công ngày: 1 phiếu/tuần, tối đa 4 phiếu/tháng. */
+  static readonly BU_CONG_NGAY_MONTH_LIMIT = 4;
+
+  /** Ngày VN (YYYY-MM-DD) của một mốc thời gian. */
+  static vnDateStr(d: Date = new Date()): string {
+    return new Date(d.getTime() + 7 * 3_600_000).toISOString().slice(0, 10);
+  }
+
+  /** Thứ Hai đầu tuần (giờ VN) của ngày YYYY-MM-DD. */
+  static mondayOf(dateStr: string): string {
+    const t = Date.parse(`${String(dateStr || '').slice(0, 10)}T00:00:00Z`);
+    if (!Number.isFinite(t)) return String(dateStr || '').slice(0, 10);
+    const dow = new Date(t).getUTCDay(); // 0 = CN
+    const delta = (dow + 6) % 7; // Thứ Hai = 0
+    return new Date(t - delta * 86_400_000).toISOString().slice(0, 10);
+  }
+
+  /** Khoảng tuần Thứ Hai → Chủ Nhật của 1 ngày. */
+  static weekBoundsOf(dateStr: string): { start: string; end: string } {
+    const start = AttendanceService.mondayOf(dateStr);
+    const endT = Date.parse(`${start}T00:00:00Z`) + 6 * 86_400_000;
+    return { start, end: Number.isFinite(endT) ? new Date(endT).toISOString().slice(0, 10) : start };
+  }
+
+  /** Ngày dùng phiếu: ưu tiên created_at (lúc NV dùng quota), rớt về ngày sự cố. */
+  static adjustmentUsedDate(adj: any): string {
+    const created = String((adj as any)?.created_at || '');
+    const t = Date.parse(created);
+    if (Number.isFinite(t)) return AttendanceService.vnDateStr(new Date(t));
+    return AttendanceService.incidentDateOf(String((adj as any)?.reason || '')) || created.slice(0, 10);
+  }
+
+  /**
+   * Quota phiếu BU_CONG_NGAY tính đến hiện tại.
+   *  - Mỗi tuần (Thứ Hai–CN) có 1 phiếu; tuần đã qua mà chưa dùng thì cộng dồn.
+   *  - Tối đa 4 phiếu/tháng; sang tháng mới reset, không mang phiếu cũ theo.
+   *  - Chỉ PENDING + APPROVED mới chiếm quota (REJECTED được hoàn điểm/hoàn phiếu).
+   */
+  static buCongNgayQuotaOf(list: any[], employeeId: string, now: Date = new Date()): {
+    month: string;
+    monthUsed: number;
+    monthLimit: number;
+    monthRemaining: number;
+    weekStart: string;
+    weekEnd: string;
+    weekUsed: number;
+    weekLimit: number;
+    weekRemaining: number;
+    weeksElapsed: number;
+    availableNow: number;
+  } {
+    const today = AttendanceService.vnDateStr(now);
+    const month = today.slice(0, 7);
+    const week = AttendanceService.weekBoundsOf(today);
+    // Số "tuần lịch (Thứ Hai–CN) đã bắt đầu" trong tháng. Tuần chứa ngày 1 là
+    // tuần 1; mỗi lần sang một Thứ Hai mới trong tháng thì +1. Đếm theo tuần
+    // lịch (không phải khối 7 ngày từ ngày 1) để đầu tháng rơi giữa tuần không
+    // bị chặn oan và khớp với cách xác định "tuần này" khi chặn phiếu.
+    const firstDay = `${month}-01`;
+    const weeksElapsed = (() => {
+      const curMonday = Date.parse(`${AttendanceService.mondayOf(today)}T00:00:00Z`);
+      const firstMonday = Date.parse(`${AttendanceService.mondayOf(firstDay)}T00:00:00Z`);
+      if (!Number.isFinite(curMonday) || !Number.isFinite(firstMonday)) return 1;
+      return Math.max(1, Math.floor((curMonday - firstMonday) / (7 * 86_400_000)) + 1);
+    })();
+    let monthUsed = 0;
+    let weekUsed = 0;
+    for (const a of list || []) {
+      if (String((a as any)?.employee_id || '') !== String(employeeId || '')) continue;
+      if (AttendanceService.adjustmentKindOf((a as any)?.reason) !== 'BU_CONG_NGAY') continue;
+      const st = String((a as any)?.status || '').toUpperCase();
+      if (st !== 'PENDING' && st !== 'APPROVED') continue;
+      const usedDay = AttendanceService.adjustmentUsedDate(a);
+      if (usedDay.slice(0, 7) === month) monthUsed += 1;
+      if (usedDay >= week.start && usedDay <= week.end) weekUsed += 1;
+    }
+    const monthLimit = Math.min(
+      AttendanceService.BU_CONG_NGAY_MONTH_LIMIT,
+      Math.max(1, weeksElapsed),
+    );
+    const monthRemaining = Math.max(0, AttendanceService.BU_CONG_NGAY_MONTH_LIMIT - monthUsed);
+    // Ràng buộc REALTIME: tuần này đã dùng 1 phiếu thì KHÔNG được dùng tiếp, dù
+    // tháng còn phiếu cộng dồn (tuần sau mới mở lại). Tuần chưa dùng thì số phiếu
+    // dùng được = số phiếu còn lại của tháng (đã cộng dồn các tuần trước).
+    const availableNow = weekUsed >= 1 ? 0 : Math.max(0, monthLimit - monthUsed);
+    return {
+      month,
+      monthUsed,
+      monthLimit,
+      monthRemaining,
+      weekStart: week.start,
+      weekEnd: week.end,
+      weekUsed,
+      weekLimit: 1,
+      weekRemaining: weekUsed >= 1 ? 0 : 1,
+      weeksElapsed,
+      availableNow,
+    };
+  }
 
   /** Giờ VN hiện tại (0–23) để chốt khung giờ tạo/duyệt phiếu. */
   static vnHourNow(d = new Date()): number {

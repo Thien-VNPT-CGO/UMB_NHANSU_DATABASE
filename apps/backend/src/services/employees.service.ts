@@ -17,6 +17,16 @@ import {
   validateInterviewSlot,
 } from './interview-slots.service.js';
 import { decodeQrDataUrl, isPlausibleHolder, parseVietQRPartial } from '../utils/vietqr.js';
+import {
+  CONTRACT_MAX_BYTES,
+  ContractDocMeta,
+  contractBufferLooksValid,
+  contractFileInfo,
+  contractKeyOf,
+  contractKindOfKey,
+  parseContractDocs,
+} from '../utils/contracts.js';
+import { readContractDisk, removeContractDisk, saveContractDisk } from './contract-disk.store.js';
 
 /** Chuẩn hóa SĐT về dạng so sánh được (10 số, đầu 0) — DÙNG DUY NHẤT ở mọi nơi.
  *  Bao phủ: '+84...'/84... (Sheet ghi quốc tế), số bị rớt số 0 đầu (ô numeric),
@@ -749,6 +759,171 @@ export class EmployeesService {
   }
 
   /**
+   * Lưu file Hợp đồng lao động (Thử việc / Chính thức) cho 1 NV.
+   *
+   * - File lưu trên Google Drive (chính) + đĩa VPS (fallback khi Drive lỗi).
+   * - Metadata (Drive ID, tên file, MIME, thời điểm upload) lưu 1 ô JSON trên
+   *   NHAN_VIEN_MASTER, KHÔNG nhét base64 vào Sheet.
+   * - Upload file mới cùng loại sẽ thay thế bản cũ (xóa file Drive cũ best-effort).
+   */
+  async saveContract(
+    employeeId: string,
+    input: { kind: string; fileName: string; mimeType: string; base64: string },
+    actorId: string,
+  ): Promise<{ employee: EmployeeMaster; meta: ContractDocMeta }> {
+    const key = contractKeyOf(input.kind);
+    if (!key) throw new Error('INVALID_CONTRACT_KIND: Loại hợp đồng phải là PROBATION hoặc OFFICIAL.');
+    const emp = await this.repo.getEmployeeById(employeeId);
+    if (!emp) throw new Error('EMPLOYEE_NOT_FOUND');
+
+    const info = contractFileInfo(input.mimeType, input.fileName);
+    if (!info) throw new Error('CONTRACT_FILE_TYPE: Chỉ nhận file PDF, JPG, PNG, WEBP, DOC hoặc DOCX.');
+    const raw = String(input.base64 || '').replace(/^data:[^;,]+;base64,/, '');
+    const buffer = Buffer.from(raw, 'base64');
+    if (!buffer.length) throw new Error('CONTRACT_FILE_INVALID: File rỗng hoặc không đọc được.');
+    if (buffer.length > CONTRACT_MAX_BYTES) {
+      throw new Error(`CONTRACT_FILE_TOO_LARGE: File tối đa ${Math.round(CONTRACT_MAX_BYTES / 1024 / 1024)}MB.`);
+    }
+    if (!contractBufferLooksValid(buffer, info.mime)) {
+      throw new Error('CONTRACT_FILE_INVALID: Nội dung file không khớp định dạng (PDF/ảnh/Word).');
+    }
+
+    const kind = contractKindOfKey(key);
+    const empCode = String((emp as any).employee_code || employeeId).replace(/[^a-zA-Z0-9_-]/g, '-');
+    const kindTag = key === 'probation' ? 'ThuViec' : 'ChinhThuc';
+    const stamp = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    const driveName = `HDLD_${kindTag}_${empCode}_${stamp}.${info.ext}`;
+
+    // Luôn ghi bản đĩa VPS trước (mở được ngay cả khi Drive chưa cấu hình).
+    saveContractDisk(employeeId, kind, info.ext, buffer);
+    let driveId = '';
+    let storage: 'DRIVE' | 'DISK' = 'DISK';
+    try {
+      const sync = (this.repo as any).syncService;
+      if (sync?.uploadFileToDrive) {
+        const up = await sync.uploadFileToDrive(driveName, info.mime, buffer.toString('base64'));
+        if (up?.fileId && !String(up.fileId).startsWith('DRV_')) {
+          driveId = String(up.fileId);
+          storage = 'DRIVE';
+        }
+      }
+    } catch (err: any) {
+      console.warn('[EmployeesService] Upload hợp đồng lên Drive thất bại (giữ bản VPS):', err?.message || err);
+    }
+
+    const meta: ContractDocMeta = {
+      drive_id: driveId,
+      file_name: input.fileName ? String(input.fileName).slice(0, 240) : driveName,
+      mime_type: info.mime,
+      size: buffer.length,
+      uploaded_at: new Date().toISOString(),
+      uploaded_by: String(actorId || ''),
+      storage,
+    };
+
+    const { result } = await singleWriterQueue.enqueue({
+      entityType: 'NHAN_VIEN_MASTER',
+      entityId: employeeId,
+      actorId,
+      execute: async () => {
+        const fresh = await this.repo.getEmployeeById(employeeId);
+        if (!fresh) throw new Error('EMPLOYEE_NOT_FOUND');
+        const docs = parseContractDocs((fresh as any).contract_docs);
+        const oldDriveId = docs[key]?.drive_id || '';
+        docs[key] = meta;
+        const updated = await this.repo.updateEmployee(employeeId, { contract_docs: docs } as any, fresh.version);
+        // Thay hợp đồng -> xóa file Drive cũ để không phình dung lượng.
+        if (oldDriveId && oldDriveId !== driveId) {
+          try { await (this.repo as any).syncService?.deleteDriveFile?.(oldDriveId); } catch { /* best-effort */ }
+        }
+        try {
+          await this.repo.recordAuditLog({
+            log_id: `LOG_${Date.now()}_${employeeId}`,
+            actor_id: actorId,
+            actor_role: 'HR',
+            action: 'UPLOAD_CONTRACT',
+            target_entity: 'NHAN_VIEN_MASTER',
+            target_id: employeeId,
+            details: `Upload ${key === 'probation' ? 'hợp đồng thử việc' : 'hợp đồng chính thức'}: ${meta.file_name} (${Math.round(meta.size / 1024)}KB, ${storage})`,
+          } as any);
+        } catch { /* non-fatal */ }
+        return { employee: updated as EmployeeMaster, meta };
+      },
+    });
+    return result;
+  }
+
+  /** Gỡ file hợp đồng (Thử việc / Chính thức): xóa metadata + file Drive/đĩa. */
+  async removeContract(employeeId: string, kindRaw: string, actorId: string): Promise<EmployeeMaster> {
+    const key = contractKeyOf(kindRaw);
+    if (!key) throw new Error('INVALID_CONTRACT_KIND: Loại hợp đồng phải là PROBATION hoặc OFFICIAL.');
+    const { result } = await singleWriterQueue.enqueue({
+      entityType: 'NHAN_VIEN_MASTER',
+      entityId: employeeId,
+      actorId,
+      execute: async () => {
+        const fresh = await this.repo.getEmployeeById(employeeId);
+        if (!fresh) throw new Error('EMPLOYEE_NOT_FOUND');
+        const docs = parseContractDocs((fresh as any).contract_docs);
+        const old = docs[key];
+        if (!old) return fresh as EmployeeMaster;
+        delete docs[key];
+        const updated = await this.repo.updateEmployee(
+          employeeId,
+          { contract_docs: docs.probation || docs.official ? docs : undefined } as any,
+          fresh.version,
+        );
+        removeContractDisk(employeeId, contractKindOfKey(key));
+        if (old.drive_id) {
+          try { await (this.repo as any).syncService?.deleteDriveFile?.(old.drive_id); } catch { /* best-effort */ }
+        }
+        try {
+          await this.repo.recordAuditLog({
+            log_id: `LOG_${Date.now()}_${employeeId}`,
+            actor_id: actorId,
+            actor_role: 'HR',
+            action: 'REMOVE_CONTRACT',
+            target_entity: 'NHAN_VIEN_MASTER',
+            target_id: employeeId,
+            details: `Gỡ ${key === 'probation' ? 'hợp đồng thử việc' : 'hợp đồng chính thức'}: ${old.file_name}`,
+          } as any);
+        } catch { /* non-fatal */ }
+        return updated as EmployeeMaster;
+      },
+    });
+    return result;
+  }
+
+  /** Đọc file hợp đồng: ưu tiên Drive, rớt xuống bản lưu trên đĩa VPS. */
+  async getContractFile(
+    employeeId: string,
+    kindRaw: string,
+  ): Promise<{ buffer: Buffer; mimeType: string; fileName: string } | null> {
+    const key = contractKeyOf(kindRaw);
+    if (!key) return null;
+    const emp = await this.repo.getEmployeeById(employeeId).catch(() => null);
+    if (!emp) return null;
+    const meta = parseContractDocs((emp as any).contract_docs)[key];
+    if (!meta) return null;
+    if (meta.drive_id && !meta.drive_id.startsWith('DRV_')) {
+      try {
+        const sync = (this.repo as any).syncService;
+        if (sync?.downloadDriveFile) {
+          const dl = await sync.downloadDriveFile(meta.drive_id);
+          if (dl?.buffer?.length) {
+            return { buffer: dl.buffer, mimeType: meta.mime_type || dl.mimeType || 'application/octet-stream', fileName: meta.file_name };
+          }
+        }
+      } catch { /* rớt xuống bản đĩa */ }
+    }
+    const disk = readContractDisk(employeeId, contractKindOfKey(key));
+    if (disk) {
+      return { buffer: disk.buffer, mimeType: meta.mime_type || 'application/octet-stream', fileName: meta.file_name || disk.fileName };
+    }
+    return null;
+  }
+
+  /**
    * Rà soát QR ngân hàng đã lưu của toàn bộ NV: đọc lại payload QR trong ảnh,
    * - QR đọc được đủ 3 trường (tên chủ TK hợp lệ: có họ VN hoặc khớp tên NV)
    *   mà thông tin chữ đang lưu SAI -> SỬA đúng theo payload (nguồn chuẩn nhất).
@@ -775,7 +950,8 @@ export class EmployeesService {
       const name = String((e as any).full_name || empId);
       const stored = {
         bank: String((e as any)?.bank_name || '').trim(),
-        account: String((e as any)?.bank_account || '').trim(),
+        // NV có thể nhập tay "0123 456 789" — so khớp trên phần số.
+        account: String((e as any)?.bank_account || '').replace(/[^0-9]/g, ''),
         holder: String((e as any)?.bank_holder || '').trim(),
       };
       const storedHolderOk = isPlausibleHolder(stored.holder, name);
@@ -787,7 +963,12 @@ export class EmployeesService {
       const p = payload ? parseVietQRPartial(payload) : null;
       // Tên trong payload cũng phải hợp lệ (ngân hàng không bao giờ ghi rác vào
       // trường 59, nhưng chặn chắc để khỏi ghi đè tên đúng bằng rác).
-      const payloadHolder = p && p.holder && isPlausibleHolder(p.holder, name) ? p.holder : '';
+      // QR nhiều ngân hàng KHÔNG ghi tên chủ TK → lấy tên hồ sơ NV làm mặc định
+      // thay vì coi là "không đọc được" rồi xóa ảnh của NV.
+      const nameAsHolderOk = isPlausibleHolder(name, name);
+      const payloadHolder = p && p.holder && isPlausibleHolder(p.holder, name)
+        ? p.holder
+        : (p?.isVietQR && p.bank && p.account && nameAsHolderOk ? name : '');
       const payloadOk = !!(p && p.isVietQR && p.bank && p.account && payloadHolder);
       try {
         if (payloadOk && (stored.bank !== (p as any).bank || stored.account !== (p as any).account || stored.holder !== payloadHolder)) {

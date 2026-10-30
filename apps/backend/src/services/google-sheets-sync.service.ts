@@ -25,6 +25,7 @@ import { canonicalPhone } from './employees.service.js';
 import { normSheetDate, normSheetDateTime, sheetDateText, sheetDateTimeText } from './employees.service.js';
 import { evaluateCandidateAiScore } from './ai-scorer.js';
 import { buildZipStore, ZipEntry } from '../utils/zip-store.js';
+import { contractDocsCell, parseContractDocs } from '../utils/contracts.js';
 import { readAttendancePhotoDisk } from './photo-disk.store.js';
 import { TAB_THEMES, buildSheetFormattingRequests, resolveTheme } from './sheets-beautifier.service.js';
 import { computeSheetsContentSignature, fingerprintSheetsContent } from '../utils/sheets-content-signature.js';
@@ -57,7 +58,7 @@ interface SheetsPullOptions {
 export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   {
     title: 'NHAN_VIEN_MASTER',
-    headers: ['ID Nhân Viên', 'Mã NV', 'Họ Và Tên', 'Số Điện Thoại', 'Trạng Thái', 'Nhóm', 'Chi Nhánh', 'Lương Giờ (VNĐ)', 'Ngày Bắt Đầu', 'Phiên Bản', 'Ca Cố Định', 'Ngày Chính Thức', 'Email', 'Giới Tính', 'Ngày Sinh', 'CCCD', 'Avatar (Drive ID)', 'Ngân Hàng', 'Số Tài Khoản', 'Chủ Tài Khoản', 'QR Ngân Hàng (Base64)', 'Điểm Tích Lũy', 'Điểm Đã Dùng'],
+    headers: ['ID Nhân Viên', 'Mã NV', 'Họ Và Tên', 'Số Điện Thoại', 'Trạng Thái', 'Nhóm', 'Chi Nhánh', 'Lương Giờ (VNĐ)', 'Ngày Bắt Đầu', 'Phiên Bản', 'Ca Cố Định', 'Ngày Chính Thức', 'Email', 'Giới Tính', 'Ngày Sinh', 'CCCD', 'Avatar (Drive ID)', 'Ngân Hàng', 'Số Tài Khoản', 'Chủ Tài Khoản', 'QR Ngân Hàng (Base64)', 'Điểm Tích Lũy', 'Điểm Đã Dùng', 'Hợp Đồng Lao Động (JSON)'],
   },
   {
     title: 'TAI_KHOAN_NHAN_VIEN',
@@ -1931,6 +1932,12 @@ export class GoogleSheetsSyncService {
               // merge bên dưới vá từ bộ nhớ.
               ...(/^-?\d+(\.\d+)?$/.test(String(r[21] ?? '').trim()) ? { adjust_points_earned: Math.max(0, Math.floor(Number(r[21]))) } : {}),
               ...(/^-?\d+(\.\d+)?$/.test(String(r[22] ?? '').trim()) ? { adjust_points_spent: Math.max(0, Math.floor(Number(r[22]))) } : {}),
+              // Cột X: hợp đồng lao động (JSON: probation/official + Drive ID/tên file).
+              // Sheet cũ thiếu cột -> giữ rỗng, merge bên dưới vá từ bộ nhớ.
+              ...(() => {
+                const docs = parseContractDocs(r[23]);
+                return docs.probation || docs.official ? { contract_docs: docs } : {};
+              })(),
             };
           });
         // Đọc thiếu dòng (partial/truncated) mà bộ nhớ đang nhiều hơn gấp đôi -> giữ bộ nhớ.
@@ -1980,6 +1987,9 @@ export class GoogleSheetsSyncService {
                 if (!(s as any).bank_qr_img && (m as any).bank_qr_img) (s as any).bank_qr_img = (m as any).bank_qr_img;
                 if ((s as any).adjust_points_earned === undefined && (m as any).adjust_points_earned !== undefined) (s as any).adjust_points_earned = (m as any).adjust_points_earned;
                 if ((s as any).adjust_points_spent === undefined && (m as any).adjust_points_spent !== undefined) (s as any).adjust_points_spent = (m as any).adjust_points_spent;
+                // Cột X: hợp đồng lao động — sheet cũ chưa có cột thì vá từ bộ nhớ,
+                // tránh pull xóa mất metadata hợp đồng vừa upload.
+                if (!(s as any).contract_docs && (m as any).contract_docs) (s as any).contract_docs = (m as any).contract_docs;
               }
               mergedEmps.push(s);
             }
@@ -3691,6 +3701,7 @@ export class GoogleSheetsSyncService {
         (e as any).bank_qr_img || '',
         Number((e as any).adjust_points_earned) || 0,
         Number((e as any).adjust_points_spent) || 0,
+        contractDocsCell((e as any).contract_docs),
       ]);
       await this.pushTabSafe(details, 'employees', 'NHAN_VIEN_MASTER', SHEETS_DEFINITIONS.find(d => d.title === 'NHAN_VIEN_MASTER')!.headers, employeeRows);
 
@@ -4018,6 +4029,7 @@ export class GoogleSheetsSyncService {
       (e as any).bank_qr_img || '',
       Number((e as any).adjust_points_earned) || 0,
       Number((e as any).adjust_points_spent) || 0,
+      contractDocsCell((e as any).contract_docs),
     ]));
     await this.overwriteSheetData('NHAN_VIEN_MASTER', SHEETS_DEFINITIONS.find(d => d.title === 'NHAN_VIEN_MASTER')!.headers, rows);
     return rows.length;
@@ -4385,6 +4397,194 @@ export class GoogleSheetsSyncService {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Drive folder helpers — dùng cho backup tháng/ngày theo cấu trúc
+  // backup_YYYY-MM/<TAB>/<YYYY-MM-DD>/... (xem services/monthly-backup.service.ts)
+  // ---------------------------------------------------------------------------
+  private driveFolderCache = new Map<string, string>();
+
+  /** Drive đã cấu hình service account chưa (job backup dùng để bỏ qua sớm). */
+  public isDriveReady(): boolean {
+    return !!this.driveClient;
+  }
+
+  /** Tìm hoặc tạo 1 folder theo tên trong parentId (cache trong RAM 1 phiên). */
+  public async ensureDriveFolder(name: string, parentId?: string): Promise<string> {
+    const clean = String(name || '').trim();
+    if (!clean || !this.driveClient) return '';
+    const parent = String(parentId || '');
+    const cacheKey = `${parent}|${clean}`;
+    const cached = this.driveFolderCache.get(cacheKey);
+    if (cached) return cached;
+    const escaped = clean.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const q = `name = '${escaped}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false${parent ? ` and '${parent}' in parents` : ''}`;
+    try {
+      const listed: any = await this.sheetsCall(
+        'drive.findFolder',
+        () => this.driveClient!.files.list({
+          q,
+          fields: 'files(id,name)',
+          pageSize: 10,
+          supportsAllDrives: true,
+          includeItemsFromAllDrives: true,
+        } as any),
+        30000
+      );
+      const hit = listed?.data?.files?.[0]?.id;
+      if (hit) {
+        this.driveFolderCache.set(cacheKey, hit);
+        return hit;
+      }
+      const created: any = await this.sheetsCall(
+        'drive.createFolder',
+        () => this.driveClient!.files.create({
+          requestBody: {
+            name: clean,
+            mimeType: 'application/vnd.google-apps.folder',
+            parents: parent ? [parent] : undefined,
+          },
+          fields: 'id',
+          supportsAllDrives: true,
+        } as any),
+        30000
+      );
+      const id = created?.data?.id || '';
+      if (id) this.driveFolderCache.set(cacheKey, id);
+      return id;
+    } catch (err: any) {
+      console.warn(`[GoogleSheetsSyncService] Không tạo được folder Drive "${clean}":`, err?.message || err);
+      return '';
+    }
+  }
+
+  /** Tạo/tìm chuỗi folder lồng nhau; trả ID folder cuối cùng ('' nếu lỗi). */
+  public async ensureDriveFolderPath(segments: string[], rootId?: string): Promise<string> {
+    let parent = String(rootId || this.driveFolderId || '');
+    for (const seg of segments || []) {
+      const s = String(seg || '').trim();
+      if (!s) continue;
+      const id = await this.ensureDriveFolder(s, parent || undefined);
+      if (!id) return '';
+      parent = id;
+    }
+    return parent;
+  }
+
+  /** Upload/ghi đè 1 file vào đường dẫn folder (idempotent theo tên file). */
+  public async upsertBufferToDrivePath(
+    fileName: string,
+    mimeType: string,
+    buffer: Buffer,
+    segments: string[],
+  ): Promise<{ fileId: string; webViewLink?: string }> {
+    if (!this.driveClient) return { fileId: `DRV_${Date.now()}` };
+    const parent = await this.ensureDriveFolderPath(segments);
+    if (!parent) return { fileId: `DRV_LOCAL_${Date.now()}` };
+    const safeName = String(fileName || 'file').replace(/[\\/:*?"<>|]/g, '-').trim() || 'file';
+    const escaped = safeName.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const q = `name = '${escaped}' and trashed = false and '${parent}' in parents`;
+    try {
+      const listed: any = await this.sheetsCall(
+        'drive.findFile',
+        () => this.driveClient!.files.list({
+          q,
+          fields: 'files(id,name)',
+          pageSize: 5,
+          supportsAllDrives: true,
+          includeItemsFromAllDrives: true,
+        } as any),
+        30000
+      );
+      const existingId = listed?.data?.files?.[0]?.id;
+      if (existingId) {
+        await this.sheetsCall(
+          'drive.updateFile',
+          () => this.driveClient!.files.update({
+            fileId: existingId,
+            media: { mimeType, body: Readable.from(buffer) },
+            fields: 'id, webViewLink',
+            supportsAllDrives: true,
+          } as any),
+          120000
+        );
+        return { fileId: existingId };
+      }
+      const created: any = await this.sheetsCall(
+        'drive.createFile',
+        () => this.driveClient!.files.create({
+          requestBody: { name: safeName, parents: [parent] },
+          media: { mimeType, body: Readable.from(buffer) },
+          fields: 'id, webViewLink',
+          supportsAllDrives: true,
+        } as any),
+        120000
+      );
+      return {
+        fileId: created?.data?.id || `DRV_${Date.now()}`,
+        webViewLink: created?.data?.webViewLink || undefined,
+      };
+    } catch (err: any) {
+      console.warn(`[GoogleSheetsSyncService] Upload Drive "${safeName}" lỗi:`, err?.message || err);
+      return { fileId: `DRV_LOCAL_${Date.now()}` };
+    }
+  }
+
+  /** Upload 1 file MỚI vào đường dẫn folder (không dò trùng — dùng lúc chấm công). */
+  public async uploadBufferToDrivePath(
+    fileName: string,
+    mimeType: string,
+    buffer: Buffer,
+    segments: string[],
+  ): Promise<{ fileId: string; webViewLink?: string }> {
+    if (!this.driveClient) return { fileId: `DRV_${Date.now()}` };
+    const parent = await this.ensureDriveFolderPath(segments);
+    if (!parent) return { fileId: `DRV_LOCAL_${Date.now()}` };
+    const safeName = String(fileName || 'file').replace(/[\\/:*?"<>|]/g, '-').trim() || 'file';
+    try {
+      const created: any = await this.sheetsCall(
+        'drive.createFilePath',
+        () => this.driveClient!.files.create({
+          requestBody: { name: safeName, parents: [parent] },
+          media: { mimeType, body: Readable.from(buffer) },
+          fields: 'id, webViewLink',
+          supportsAllDrives: true,
+        } as any),
+        120000
+      );
+      return {
+        fileId: created?.data?.id || `DRV_${Date.now()}`,
+        webViewLink: created?.data?.webViewLink || undefined,
+      };
+    } catch (err: any) {
+      console.warn(`[GoogleSheetsSyncService] Upload Drive "${safeName}" lỗi:`, err?.message || err);
+      return { fileId: `DRV_LOCAL_${Date.now()}` };
+    }
+  }
+
+  /** Đọc toàn bộ dòng (kể cả header) của 1 tab, gộp mọi part nếu tab partition. */
+  public async readTabRows(title: string): Promise<string[][]> {
+    const t = String(title || '').trim();
+    if (!t) return [];
+    if (GoogleSheetsSyncService.PARTITION_TABS.has(t)) {
+      return this.readPartitionedRows(t).catch(() => [] as string[][]);
+    }
+    if (!this.sheetsClient) return [];
+    try {
+      const res = await this.sheetsCall(
+        `read.${t}`,
+        () => this.sheetsClient!.spreadsheets.values.get({
+          spreadsheetId: this.spreadsheetId,
+          range: `'${t}'!A:ZZ`,
+        }),
+        60000
+      );
+      return (res?.data?.values || []) as string[][];
+    } catch (err: any) {
+      console.warn(`[GoogleSheetsSyncService] Đọc tab ${t} lỗi:`, err?.message || err);
+      return [];
+    }
+  }
+
   /**
    * Tải ảnh chấm công lên Google Drive thật
    */
@@ -4403,13 +4603,26 @@ export class GoogleSheetsSyncService {
   }
 
   public async uploadImageToDrive(fileName: string, mimeType: string, base64Data: string): Promise<{ fileId: string; webViewLink?: string }> {
+    return this.uploadFileToDrive(fileName, mimeType, base64Data);
+  }
+
+  /**
+   * Upload 1 file bất kỳ (ảnh, PDF, DOCX...) lên Drive. Nhận base64 thuần hoặc
+   * data URL (`data:application/pdf;base64,...`) — trước đây chỉ bóc prefix
+   * `data:image/*` nên hợp đồng PDF sẽ bị hỏng base64.
+   */
+  public async uploadFileToDrive(fileName: string, mimeType: string, base64Data: string): Promise<{ fileId: string; webViewLink?: string }> {
     if (!this.driveClient) {
       this.lastDriveUploadError = 'DRIVE_NOT_CONFIGURED: chưa cấu hình service account Drive';
       return { fileId: `DRV_${Date.now()}` };
     }
 
-    const cleanBase64 = base64Data.replace(/^data:image\/\w+;base64,/, '');
+    const cleanBase64 = String(base64Data || '').replace(/^data:[^;,]+;base64,/, '');
     const buffer = Buffer.from(cleanBase64, 'base64');
+    if (!buffer.length) {
+      this.lastDriveUploadError = 'EMPTY_FILE: file rỗng, không thể upload Drive';
+      return { fileId: `DRV_LOCAL_${Date.now()}` };
+    }
     // Thử lại 3 lần (mạng Render free chập chờn, file 5MB) trước khi bỏ cuộc.
     let lastErr: any = null;
     for (let attempt = 1; attempt <= 3; attempt++) {
@@ -4452,6 +4665,23 @@ export class GoogleSheetsSyncService {
     this.lastDriveUploadAt = new Date().toISOString();
     console.error('[GoogleSheetsSyncService] Upload Drive thất bại sau 3 lần:', msg);
     return { fileId: `DRV_LOCAL_${Date.now()}` };
+  }
+
+  /** Xóa file trên Drive (best-effort, dùng khi thay/gỡ hợp đồng). */
+  public async deleteDriveFile(fileId: string): Promise<boolean> {
+    const id = String(fileId || '').trim();
+    if (!this.driveClient || !id || id.startsWith('DRV_')) return false;
+    try {
+      await this.sheetsCall(
+        'drive.delete',
+        () => this.driveClient!.files.delete({ fileId: id, supportsAllDrives: true } as any),
+        30000,
+      );
+      return true;
+    } catch (err: any) {
+      console.warn('[GoogleSheetsSyncService] Xóa file Drive thất bại:', err?.message || err);
+      return false;
+    }
   }
 
   private static safeZipName(s: string): string {

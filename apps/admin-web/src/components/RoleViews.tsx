@@ -2062,6 +2062,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   };
   // Phiếu bổ sung/điều chỉnh công: HR duyệt phiếu NV gửi từ cổng nhân viên
   const [adjustments, setAdjustments] = useState<any[]>([]);
+  // Quota bù công ngày theo từng NV (tháng + tuần) — HR nhìn nhanh ai đã dùng
+  // bao nhiêu phiếu, còn gửi được bao nhiêu (server chốt cứng khi NV gửi).
+  const [buCongQuotaRows, setBuCongQuotaRows] = useState<any[]>([]);
+  const [buCongQuotaMeta, setBuCongQuotaMeta] = useState<any>(null);
+  const [buCongQuotaOpen, setBuCongQuotaOpen] = useState(true);
   const [adjBusy, setAdjBusy] = useState<string | null>(null);
   // Folder tuần tab Bổ Sung & Điều Chỉnh Công: tuần hiện tại mở sẵn, tuần cũ gấp lại.
   const [adjWeekOpen, setAdjWeekOpen] = useState<Record<string, boolean>>({});
@@ -2132,6 +2137,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     try {
       const list = await apiRequest('/attendance/adjustments');
       setAdjustments(Array.isArray(list) ? list : []);
+    } catch { /* không quyền / offline */ }
+    // Quota bù công ngày theo NV (tháng hiện tại + tuần hiện tại). Lỗi quyền
+    // (STORE...) thì bỏ qua, bảng phiếu vẫn chạy bình thường.
+    try {
+      const q: any = await apiRequest('/admin/bu-cong-quota');
+      setBuCongQuotaRows(Array.isArray(q?.rows) ? q.rows : []);
+      setBuCongQuotaMeta(q || null);
     } catch { /* không quyền / offline */ }
   };
   // Xuất ZIP chứng cứ điểm danh theo ngày
@@ -2511,12 +2523,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [downtimes, setDowntimes] = useState<any[]>([]);
   // Trạng thái backup hằng ngày (cùng card)
   const [backupSt, setBackupSt] = useState<any>(null);
+  // Trạng thái backup THÁNG + đồng bộ ảnh hằng ngày (Drive structured)
+  const [monthlyBackupSt, setMonthlyBackupSt] = useState<any>(null);
   useEffect(() => {
     if (currentUser?.role !== 'ADMIN') return;
     apiRequest('/admin/system-downtimes').then((d: any) => {
       if (Array.isArray(d)) setDowntimes(d);
     }).catch(() => null);
     apiRequest('/admin/system-backup').then((b: any) => setBackupSt(b)).catch(() => null);
+    apiRequest('/admin/monthly-backup').then((b: any) => setMonthlyBackupSt(b)).catch(() => null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser?.role]);  useEffect(() => {
     if (currentUser?.role !== 'ADMIN') return;
@@ -3399,6 +3414,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     return base.filter((s: any) => !lockedEmpIds.has(String(s.employee_id || '')));
   })();
   const schedAllEvents = mergeWithArchive(liveAttendanceEvents, archiveEvents);
+  // Hợp đồng lao động (Thử việc / Chính thức): upload file lên Drive, metadata
+  // lưu trên hồ sơ NV. Busy theo từng loại để nút không bấm đúp.
+  const [contractBusy, setContractBusy] = useState<'' | 'probation' | 'official'>('');
+  const contractInputRef = useRef<HTMLInputElement | null>(null);
+  const contractKindRef = useRef<'probation' | 'official'>('probation');
   // Thu nhập tạm tính realtime theo điểm danh hằng ngày (mục Lương & Thu nhập trong Hồ Sơ).
   const [profIncome, setProfIncome] = useState<any>(null);
   const [profIncomeBusy, setProfIncomeBusy] = useState(false);
@@ -3442,6 +3462,43 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       setAttEventsLoaded(true);
     }
   };
+
+  // Hồ Sơ NV: nạp điểm danh + lịch ngay khi mở tab để 4 thẻ hiệu suất có SỐ LIỆU
+  // THẬT (trước đây chỉ tải khi ghé tab Lịch -> Hồ Sơ hiện 0 oan). Dùng cùng
+  // nguồn realtime + kho lưu trữ với tab Lịch/Chấm công (phạm vi 62 ngày gần
+  // nhất — giới hạn API lưu trữ), tự cập nhật khi có check-in/out mới.
+  useEffect(() => {
+    if (activeTab !== 'hr-profile') return;
+    let alive = true;
+    reloadAttEvents({ quick: true });
+    (async () => {
+      const to = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+      const from = new Date(Date.parse(`${to}T00:00:00Z`) - 61 * 86_400_000).toISOString().slice(0, 10);
+      try {
+        const [archEvts, archShifts] = await Promise.all([
+          apiRequest(`/attendance/events/archive?from=${from}&to=${to}`).catch(() => []),
+          apiRequest(`/schedules?week=${from}`).catch(() => []),
+        ]);
+        if (!alive) return;
+        if (Array.isArray(archEvts) && archEvts.length > 0) {
+          setArchiveEvents(prev => {
+            const seen = new Set((prev || []).map((e: any) => String(e.event_id)));
+            const add = archEvts.filter((e: any) => e?.event_id && !seen.has(String(e.event_id)));
+            return add.length > 0 ? [...(prev || []), ...add] : prev;
+          });
+        }
+        if (Array.isArray(archShifts) && archShifts.length > 0) {
+          setArchiveShifts(prev => {
+            const seen = new Set((prev || []).map((s: any) => String(s.assignment_id || '')));
+            const add = archShifts.filter((s: any) => s?.assignment_id && !seen.has(String(s.assignment_id)));
+            return add.length > 0 ? [...(prev || []), ...add] : prev;
+          });
+        }
+      } catch { /* giữ dữ liệu đang có */ }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
 
   // Chốt an toàn: dù request chưa về (Sheets đang dọn định dạng/pull chậm), sau 2,5s
   // vẫn mở lưới. Nhờ vậy tab 7 không bao giờ kẹt ở "⏳ Đang đồng bộ…". Chỉ khi
@@ -4029,6 +4086,48 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 </div>
               );
               return backupRow;
+            })()}
+            {/* Backup THÁNG (ngày 5, 09:00) + đồng bộ ảnh hằng ngày lên Drive */}
+            {(() => {
+              const m = monthlyBackupSt?.monthly;
+              const p = monthlyBackupSt?.photos;
+              const driveOk = monthlyBackupSt?.drive?.driveConfigured !== false;
+              const fmtAt = (s?: string) => (s ? new Date(s).toLocaleString('vi-VN') : '');
+              return (
+                <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  {!driveOk && (
+                    <div style={{ fontSize: '12px', padding: '7px 10px', borderRadius: 'var(--radius-sm)', backgroundColor: '#F1F5F9', border: '1px solid #E2E8F0', color: 'var(--text-muted)' }}>
+                      ☁️ Drive chưa cấu hình — backup tháng/ảnh chưa chạy được. Thêm <code>GOOGLE_SERVICE_ACCOUNT_JSON</code> + <code>GOOGLE_DRIVE_FOLDER_ID</code>.
+                    </div>
+                  )}
+                  <div style={{
+                    fontSize: '12px', padding: '7px 10px', borderRadius: 'var(--radius-sm)',
+                    backgroundColor: m?.last_error ? '#FEF2F2' : m?.last_month ? '#F0FDF4' : '#FFFBEB',
+                    border: `1px solid ${m?.last_error ? '#FECACA' : m?.last_month ? '#BBF7D0' : '#FDE68A'}`,
+                    color: m?.last_error ? '#B91C1C' : m?.last_month ? '#166534' : '#92400E',
+                  }}>
+                    🗂 <b>Backup tháng</b> (09:00 ngày 5):{' '}
+                    {m?.last_error
+                      ? `LỖI tháng ${m?.last_result?.month || ''}: ${m.last_error}`
+                      : m?.last_month
+                        ? `đã lưu backup_${m.last_month} • ${fmtAt(m.last_ok_at)}${m.last_result?.tabFiles != null ? ` • ${m.last_result.tabFiles} file dữ liệu` : ''}${m.last_result?.imagesUploaded ? ` • ${m.last_result.imagesUploaded} ảnh trong tab` : ''}${m.last_result?.photosUploaded != null ? ` • ${m.last_result.photosUploaded} ảnh mới` : ''}${m.last_result?.localDeleted != null ? ` • dọn ${m.last_result.localDeleted} ảnh đệm` : ''}`
+                        : 'chưa chạy lần nào (cron sẽ chạy từ 09:00 ngày 5, hoặc chạy bù ngày 6+)'}
+                  </div>
+                  <div style={{
+                    fontSize: '12px', padding: '7px 10px', borderRadius: 'var(--radius-sm)',
+                    backgroundColor: p?.last_error ? '#FEF2F2' : p?.last_date ? '#F0FDF4' : '#FFFBEB',
+                    border: `1px solid ${p?.last_error ? '#FECACA' : p?.last_date ? '#BBF7D0' : '#FDE68A'}`,
+                    color: p?.last_error ? '#B91C1C' : p?.last_date ? '#166534' : '#92400E',
+                  }}>
+                    📸 <b>Đồng bộ ảnh hằng ngày</b> (sau 02:00):{' '}
+                    {p?.last_error
+                      ? `LỖI: ${p.last_error}`
+                      : p?.last_date
+                        ? `đã đồng bộ ${p.last_date} • ${fmtAt(p.last_ok_at)}${p.last_result?.uploaded != null ? ` • ${p.last_result.uploaded} ảnh mới` : ''}${p.last_result?.missing != null ? ` • thiếu ${p.last_result.missing}` : ''}${p.last_result?.localDeleted != null ? ` • dọn ${p.last_result.localDeleted} ảnh đệm` : ''}`
+                        : 'chưa chạy lần nào (cron sẽ chạy sau 02:00)'}
+                  </div>
+                </div>
+              );
             })()}
             {downtimes.length === 0 ? (
               <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '10px 0 0' }}>
@@ -11688,7 +11787,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <h1 style={{ fontSize: '20px', fontWeight: 800, margin: 0 }}>11. Bổ Sung & Điều Chỉnh Dữ Liệu Công</h1>
-            <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '4px 0 0' }}>Xử lý quên check-in/out hoặc sự cố GPS/Camera gửi từ Cổng Nhân Viên (có audit trail). NV chính thức <strong>1 phiếu/tuần</strong>; phiếu quá <strong>30 phút</strong> chưa duyệt thì hệ thống <strong>tự động từ chối</strong> (giữ phiếu để đối soát, tự xóa sau 7 ngày nữa).</p>
+            <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '4px 0 0' }}>Xử lý quên check-in/out hoặc sự cố GPS/Camera gửi từ Cổng Nhân Viên (có audit trail). NV chính thức <strong>1 phiếu/tuần, tối đa 4 phiếu/tháng</strong> (tuần không dùng cộng dồn trong tháng, qua tháng reset); phiếu quá <strong>30 phút</strong> chưa duyệt thì hệ thống <strong>tự động từ chối</strong> (giữ phiếu để đối soát, tự xóa sau 7 ngày nữa).</p>
           </div>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <span className="badge" style={{ backgroundColor: pendingAdj.length > 0 ? '#FEF3C7' : '#DCFCE7', color: pendingAdj.length > 0 ? '#92400E' : '#166534', fontWeight: 800 }}>
@@ -11697,6 +11796,88 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <button className="btn-secondary" style={{ fontSize: '12px', padding: '6px 12px' }} onClick={loadAdjustments}>Tải lại</button>
           </div>
         </div>
+        {/* QUOTA BÙ CÔNG NGÀY THEO TỪNG NHÂN VIÊN: tháng + tuần hiện tại.
+            NV gửi phiếu vượt quota bị server chặn ngay; bảng này để HR đối soát. */}
+        {(() => {
+          const meta = buCongQuotaMeta || {};
+          const rows = buCongQuotaRows || [];
+          const month = String(meta.month || '');
+          const fmt = (s?: string) => (s ? `${s.slice(8, 10)}/${s.slice(5, 7)}` : '—');
+          const totalMonth = rows.reduce((n: number, r: any) => n + Number(r.monthUsed || 0), 0);
+          const overWeek = rows.filter((r: any) => Number(r.weekUsed || 0) >= 1).length;
+          return (
+            <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
+              <button
+                onClick={() => setBuCongQuotaOpen((o) => !o)}
+                style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 16px', border: 'none', cursor: 'pointer', backgroundColor: buCongQuotaOpen ? '#EFF6FF' : '#F8FAFC', fontSize: '13px', textAlign: 'left' }}
+              >
+                <span style={{ fontWeight: 800 }}>🎫 Quota bù công ngày theo nhân viên</span>
+                <span className="badge" style={{ backgroundColor: '#DBEAFE', color: '#1E40AF', fontWeight: 800 }}>
+                  Tháng {month ? `${month.slice(5, 7)}/${month.slice(0, 4)}` : '—'}
+                </span>
+                <span className="badge" style={{ backgroundColor: '#F1F5F9', color: '#475569', fontWeight: 700 }}>
+                  Tuần {fmt(meta.weekStart)}–{fmt(meta.weekEnd)}
+                </span>
+                <span style={{ color: 'var(--text-muted)', fontWeight: 700 }}>
+                  {totalMonth} phiếu đã dùng • {overWeek} NV đã dùng lượt tuần
+                </span>
+                <span style={{ marginLeft: 'auto', color: 'var(--text-muted)', fontWeight: 800 }}>{buCongQuotaOpen ? '▾' : '▸'}</span>
+              </button>
+              {buCongQuotaOpen && (
+                <div style={{ maxHeight: '340px', overflowY: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                    <thead>
+                      <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
+                        <th style={{ padding: '8px 16px' }}>Nhân Viên</th>
+                        <th style={{ padding: '8px 16px' }}>Chi Nhánh</th>
+                        <th style={{ padding: '8px 16px' }}>Tháng này</th>
+                        <th style={{ padding: '8px 16px' }}>Tuần này</th>
+                        <th style={{ padding: '8px 16px' }}>Gửi được ngay</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} style={{ padding: '20px 16px', textAlign: 'center', color: 'var(--text-muted)' }}>Chưa có dữ liệu quota (chưa tải xong hoặc không có nhân viên).</td>
+                        </tr>
+                      ) : rows.map((r: any) => {
+                        const used = Number(r.monthUsed || 0);
+                        const rem = Number(r.monthRemaining || 0);
+                        const wUsed = Number(r.weekUsed || 0);
+                        const avail = Number(r.availableNow || 0);
+                        return (
+                          <tr key={r.employee_id} style={{ borderBottom: '1px solid var(--border)' }}>
+                            <td style={{ padding: '8px 16px', fontWeight: 700 }}>
+                              {r.full_name || r.employee_id}
+                              <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }}>{r.employee_code || ''}</div>
+                            </td>
+                            <td style={{ padding: '8px 16px' }}>{getDisplayBranch(r.branch_id) || r.branch_id || '—'}</td>
+                            <td style={{ padding: '8px 16px' }}>
+                              <b style={{ color: used >= 4 ? '#DC2626' : undefined }}>{used}/4</b>
+                              <span style={{ color: 'var(--text-muted)' }}> • còn {rem}</span>
+                            </td>
+                            <td style={{ padding: '8px 16px' }}>
+                              <b style={{ color: wUsed >= 1 ? '#B45309' : '#166534' }}>{wUsed}/1</b>
+                              <span style={{ color: 'var(--text-muted)' }}>{wUsed >= 1 ? ' • hết lượt tuần' : ' • còn lượt'}</span>
+                            </td>
+                            <td style={{ padding: '8px 16px' }}>
+                              <span className="badge" style={{ backgroundColor: avail > 0 ? '#DCFCE7' : '#FEE2E2', color: avail > 0 ? '#166534' : '#991B1B', fontWeight: 800 }}>
+                                {avail > 0 ? `Còn ${avail} phiếu` : 'Đã khóa'}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <div style={{ padding: '8px 16px', fontSize: '11px', color: 'var(--text-muted)', borderTop: '1px solid var(--border)' }}>
+                Quy định: 1 phiếu/tuần, tối đa 4 phiếu/tháng. Tuần không dùng được cộng dồn trong tháng; qua tháng mới <b>không</b> cộng dồn.
+              </div>
+            </div>
+          );
+        })()}
         {/* Admin hoàn thành ca làm: chọn ngày + nhân viên + ca -> ghi đủ CHECK_IN/OUT, đồng bộ lương (CHỈ ADMIN) */}
         {currentUser?.role === 'ADMIN' && (
         <div style={{ backgroundColor: '#F0FDF4', borderRadius: 'var(--radius-md)', border: '1.5px solid #86EFAC', padding: '14px 16px' }}>
@@ -14777,15 +14958,103 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const profEmp = (allEmployees || []).find((e: any) => e.employee_id === profileEmpId)
       || saleFirst.find((e: any) => e.group === 'SALE') || saleFirst[0] || null;
     profIncomeEmpRef.current = profEmp?.employee_id || '';
-    // Hiệu suất chấm công THẬT từ sự kiện điểm danh + lịch đã tải
-    const empEvts = (liveAttendanceEvents || []).filter((e: any) => e.employee_id === profEmp?.employee_id);
+    // Hiệu suất chấm công THẬT từ sự kiện điểm danh + lịch đã tải trên hệ thống.
+    // Gộp realtime + kho lưu trữ (schedAllEvents/schedAllShifts) — đúng phạm vi
+    // dữ liệu đang hiển thị ở tab Lịch, không đếm ca tương lai chưa làm.
+    const empEvts = (schedAllEvents || []).filter((e: any) => e.employee_id === profEmp?.employee_id);
     const empIns = empEvts.filter((e: any) => e.type === 'CHECK_IN');
     const empOuts = empEvts.filter((e: any) => e.type === 'CHECK_OUT');
-    const workDays = new Set(empIns.map((e: any) => vnDayOf(e.client_time || ''))).size;
+    const empEvtDays = [...new Set(empEvts.map((e: any) => vnDayOf(e.client_time || '')).filter(Boolean))].sort();
+    const workDays = new Set(empIns.map((e: any) => vnDayOf(e.client_time || '')).filter(Boolean)).size;
     const lateCount = empIns.filter((e: any) => e.is_late).length;
     const lateMins = empIns.reduce((s: number, e: any) => s + (e.is_late ? Number(e.minutes_deviation) || 0 : 0), 0);
     const earlyCount = empOuts.filter((e: any) => e.is_early).length;
-    const empShiftCount = (shifts || []).filter((s: any) => s.employee_id === profEmp?.employee_id && s.status !== 'CANCELLED').length;
+    const todayVn = vnDayOf(new Date().toISOString());
+    const empShifts = (schedAllShifts || []).filter((s: any) =>
+      s.employee_id === profEmp?.employee_id &&
+      s.status !== 'CANCELLED' &&
+      (!s.date || String(s.date).slice(0, 10) <= todayVn)
+    );
+    const empShiftCount = empShifts.length;
+    const scopeFrom = empEvtDays[0] || '';
+    const scopeTo = empEvtDays[empEvtDays.length - 1] || '';
+    const fmtScopeDay = (d: string) => (d ? d.split('-').reverse().join('/') : '—');
+
+    // --- HỢP ĐỒNG LAO ĐỘNG: upload / xem / gỡ file Thử việc + Chính thức ---
+    const contractDocs: any = (() => {
+      const raw = (profEmp as any)?.contract_docs;
+      if (!raw) return {};
+      if (typeof raw === 'string') {
+        try { return JSON.parse(raw); } catch { return {}; }
+      }
+      return raw;
+    })();
+    const contractLabel = (kind: 'probation' | 'official') => (kind === 'probation' ? 'hợp đồng thử việc' : 'hợp đồng chính thức');
+    const readFileDataUrl = (file: File): Promise<string> => new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('READ_FAILED: Không đọc được file trên máy.'));
+      reader.readAsDataURL(file);
+    });
+    const uploadContract = async (kind: 'probation' | 'official', file: File) => {
+      if (!profEmp) return;
+      if (file.size > 6 * 1024 * 1024) {
+        showToast('⚠️ File hợp đồng tối đa 6MB! Nén hoặc chụp lại giúp HR.');
+        return;
+      }
+      setContractBusy(kind);
+      try {
+        const dataUrl = await readFileDataUrl(file);
+        const base64 = dataUrl.includes(',') ? dataUrl.slice(dataUrl.indexOf(',') + 1) : dataUrl;
+        await apiRequest(`/employees/${profEmp.employee_id}/contract`, {
+          method: 'POST',
+          body: JSON.stringify({
+            kind: kind === 'probation' ? 'PROBATION' : 'OFFICIAL',
+            fileName: file.name,
+            mimeType: file.type || '',
+            base64,
+          }),
+        });
+        showToast(`✓ Đã lưu ${contractLabel(kind)} của ${profEmp.full_name}!`);
+        if (onRefreshData) await onRefreshData();
+        if (onPushSheets) await onPushSheets();
+      } catch (e: any) {
+        showToast(e?.message || 'Upload hợp đồng thất bại!');
+      } finally {
+        setContractBusy('');
+      }
+    };
+    const openContract = async (kind: 'probation' | 'official') => {
+      if (!profEmp) return;
+      try {
+        const res = await fetch(`${getApiBase()}/employees/${profEmp.employee_id}/contract/${kind}`, {
+          headers: { Authorization: `Bearer ${getAuthToken()}` },
+        });
+        if (!res.ok) throw new Error(res.status === 404 ? 'Hợp đồng chưa được upload.' : 'Không tải được hợp đồng.');
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const w = window.open(url, '_blank');
+        if (!w) showToast('Trình duyệt chặn cửa sổ xem hợp đồng! Hãy cho phép popup rồi thử lại.');
+        setTimeout(() => URL.revokeObjectURL(url), 120000);
+      } catch (e: any) {
+        showToast(e?.message || 'Không mở được hợp đồng!');
+      }
+    };
+    const removeContract = async (kind: 'probation' | 'official') => {
+      if (!profEmp) return;
+      if (!window.confirm(`Gỡ ${contractLabel(kind)} của ${profEmp.full_name}? File trên Drive/đĩa VPS cũng sẽ bị xóa.`)) return;
+      setContractBusy(kind);
+      try {
+        await apiRequest(`/employees/${profEmp.employee_id}/contract/${kind}`, { method: 'DELETE' });
+        showToast(`Đã gỡ ${contractLabel(kind)}.`);
+        if (onRefreshData) await onRefreshData();
+        if (onPushSheets) await onPushSheets();
+      } catch (e: any) {
+        showToast(e?.message || 'Gỡ hợp đồng thất bại!');
+      } finally {
+        setContractBusy('');
+      }
+    };
     const initials = String(profEmp?.full_name || '?').split(' ').map((w: string) => w[0]).slice(-2).join('').toUpperCase();
     const exportProfile = (fmt: 'json' | 'csv') => {
       if (!profEmp) {
@@ -14879,6 +15148,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         + `<table style="border-collapse:collapse;width:100%;font-size:13px;">`
         + row('HĐLĐ chính thức', profEmp.employment_status === 'OFFICIAL' ? 'Đã ký' : 'Chưa đến kỳ ký (đang thử việc)')
         + row('Hiệu lực', profEmp.official_date ? `Từ ${profEmp.official_date}` : `Vào làm từ ${profEmp.start_date || '—'}`)
+        + row('File hợp đồng thử việc', contractDocs?.probation?.file_name || 'Chưa upload')
+        + row('File hợp đồng chính thức', contractDocs?.official?.file_name || 'Chưa upload')
         + `</table>`
         + `<p style="margin-top:26px;font-size:13px;">Người lập phiếu (HR ký): ............................. &nbsp;&nbsp; Nhân viên (ký): .............................</p>`
         + `<script>window.onload = function () { window.print(); };<\/script>`
@@ -15063,7 +15334,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   </div>
                 </div>
                 <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                  Số liệu thật từ lượt điểm danh và lịch đã tải trên hệ thống (phạm vi dữ liệu đang hiển thị).
+                  Số liệu thật từ <b>{empEvts.length}</b> lượt điểm danh và <b>{empShiftCount}</b> ca đã xếp trong dữ liệu đang tải
+                  {scopeFrom ? ` (${fmtScopeDay(scopeFrom)} → ${fmtScopeDay(scopeTo)})` : ''} • tự cập nhật realtime khi có check-in/out hoặc lịch mới.
                 </div>
               </div>
             )}
@@ -15124,21 +15396,133 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
             {(profileSub === 'overview' || profileSub === 'legal') && (() => {
               const isOff = profEmp.employment_status === 'OFFICIAL';
+              const fmtSize = (n: number) => {
+                const b = Number(n) || 0;
+                if (!b) return '—';
+                if (b >= 1024 * 1024) return `${(b / 1024 / 1024).toFixed(1)}MB`;
+                return `${Math.max(1, Math.round(b / 1024))}KB`;
+              };
+              const fmtAt = (iso: string) => {
+                const t = new Date(iso || '').getTime();
+                if (!Number.isFinite(t)) return '';
+                return new Date(t + 7 * 3_600_000).toLocaleString('vi-VN', { hour12: false }).slice(0, 16);
+              };
+              const blocks: { kind: 'probation' | 'official'; title: string; icon: string; hint: string }[] = [
+                {
+                  kind: 'probation',
+                  title: 'Hợp đồng thử việc',
+                  icon: '📝',
+                  hint: profEmp.start_date ? `Ký khi vào làm • từ ${profEmp.start_date}` : 'Chưa có ngày vào làm',
+                },
+                {
+                  kind: 'official',
+                  title: 'Hợp đồng chính thức',
+                  icon: '📄',
+                  hint: profEmp.official_date
+                    ? `Hiệu lực từ ${profEmp.official_date}`
+                    : (isOff ? 'Đã chuyển chính thức' : 'Chưa đến kỳ ký (đang thử việc)'),
+                },
+              ];
               return (
                 <div style={card}>
-                  <div style={{ fontWeight: 800, fontSize: '14px', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div style={{ fontWeight: 800, fontSize: '14px', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <ShieldCheck size={16} color="var(--brand)" /> Hợp đồng lao động
+                    <span style={{ fontSize: '11px', fontWeight: 700, color: '#065F46', backgroundColor: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: '999px', padding: '2px 8px' }}>
+                      {[contractDocs?.probation, contractDocs?.official].filter(Boolean).length}/2 file
+                    </span>
                   </div>
-                  <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', backgroundColor: 'var(--bg)', borderRadius: '8px', padding: '10px 12px' }}>
-                    <span style={{ fontSize: '18px' }}>{isOff ? '✅' : '⏳'}</span>
-                    <div>
-                      <div style={{ fontWeight: 800, fontSize: '13px' }}>
-                        HĐLĐ chính thức — <span style={{ color: isOff ? '#059669' : '#D97706' }}>{isOff ? 'Đã ký' : 'Chưa đến kỳ ký (đang thử việc)'}</span>
-                      </div>
-                      <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                        {profEmp.official_date ? `Hiệu lực từ ${profEmp.official_date}` : `Vào làm từ ${profEmp.start_date || '—'}`}
-                      </div>
-                    </div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '12px' }}>
+                    Upload file scan/PDF đã ký — lưu Google Drive (chính) + đĩa máy chủ (dự phòng).
+                  </div>
+
+                  {/* Input file ẩn dùng chung cho cả 2 loại hợp đồng */}
+                  <input
+                    ref={contractInputRef}
+                    type="file"
+                    accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,application/pdf,image/jpeg,image/png,image/webp,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    style={{ display: 'none' }}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      const kind = contractKindRef.current;
+                      try { e.currentTarget.value = ''; } catch { /* Safari */ }
+                      if (f) void uploadContract(kind, f);
+                    }}
+                  />
+
+                  <div style={{ display: 'grid', gap: '10px' }}>
+                    {blocks.map((b) => {
+                      const doc = contractDocs?.[b.kind];
+                      const busy = contractBusy === b.kind;
+                      const otherBusy = !!contractBusy && !busy;
+                      return (
+                        <div
+                          key={b.kind}
+                          style={{
+                            backgroundColor: 'var(--bg)', borderRadius: '8px', padding: '10px 12px',
+                            border: doc ? '1px solid #A7F3D0' : '1px dashed var(--border)',
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '16px' }}>{doc ? '✅' : b.icon}</span>
+                            <div style={{ flex: '1 1 180px', minWidth: 0 }}>
+                              <div style={{ fontWeight: 800, fontSize: '13px' }}>
+                                {b.title}
+                                <span style={{ marginLeft: '6px', fontSize: '11px', fontWeight: 700, color: doc ? '#059669' : '#D97706' }}>
+                                  {doc ? 'Đã upload' : 'Chưa upload'}
+                                </span>
+                              </div>
+                              <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{b.hint}</div>
+                            </div>
+                            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                              <button
+                                className="btn-primary"
+                                style={{ padding: '5px 10px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                disabled={!!contractBusy}
+                                onClick={() => {
+                                  contractKindRef.current = b.kind;
+                                  contractInputRef.current?.click();
+                                }}
+                              >
+                                <Upload size={13} /> {busy ? 'Đang lưu…' : (doc ? 'Thay file' : 'Upload')}
+                              </button>
+                              {doc && (
+                                <>
+                                  <button
+                                    className="btn-secondary"
+                                    style={{ padding: '5px 10px', fontSize: '12px' }}
+                                    onClick={() => void openContract(b.kind)}
+                                  >
+                                    Xem
+                                  </button>
+                                  <button
+                                    className="btn-secondary"
+                                    style={{ padding: '5px 10px', fontSize: '12px', color: '#B91C1C', borderColor: '#FCA5A5' }}
+                                    disabled={!!contractBusy || otherBusy}
+                                    onClick={() => void removeContract(b.kind)}
+                                  >
+                                    Gỡ
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                          {doc && (
+                            <div style={{ marginTop: '8px', fontSize: '11px', color: 'var(--text-muted)', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                              <span title={doc.file_name} style={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                📎 {doc.file_name}
+                              </span>
+                              <span>{fmtSize(doc.size)}</span>
+                              {fmtAt(doc.uploaded_at) && <span>• {fmtAt(doc.uploaded_at)}</span>}
+                              <span>• {doc.storage === 'DISK' ? 'Đĩa VPS (chờ Drive)' : 'Google Drive'}</span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div style={{ marginTop: '10px', fontSize: '11px', color: 'var(--text-muted)' }}>
+                    Định dạng: PDF, JPG, PNG, WEBP, DOC, DOCX • tối đa 6MB/file. Upload file mới cùng loại sẽ thay bản cũ.
                   </div>
                 </div>
               );

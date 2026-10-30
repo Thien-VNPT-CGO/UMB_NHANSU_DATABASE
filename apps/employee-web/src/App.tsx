@@ -1330,6 +1330,8 @@ export function App() {
   const evidenceInputRef = useRef<HTMLInputElement | null>(null);
   // Phiếu bổ sung công của tôi (trạng thái realtime)
   const [myAdjustments, setMyAdjustments] = useState<any[]>([]);
+  // Quota phiếu BÙ CÔNG NGÀY (1/tuần, tối đa 4/tháng, tuần trống cộng dồn).
+  const [buCongQuota, setBuCongQuota] = useState<any | null>(null);
   // Nhịp realtime trang chủ: tự nhảy trạng thái ca (sắp tới -> đang diễn ra -> đã xong)
   const [homeNow, setHomeNow] = useState(() => Date.now());
   useEffect(() => {
@@ -1342,6 +1344,10 @@ export function App() {
       const list = await apiRequest('/attendance/adjustments');
       setMyAdjustments(Array.isArray(list) ? list : []);
     } catch { /* offline */ }
+    try {
+      const q: any = await apiRequest('/me/bu-cong-quota');
+      if (q && typeof q === 'object') setBuCongQuota(q);
+    } catch { /* offline: giữ quota cũ */ }
   };
   // Khung giờ tạo phiếu 08:00–21:00 hằng ngày (giờ VN, đã bù lệch đồng hồ server).
   const ticketWindowOpen = vnHourNow() >= 8 && vnHourNow() < 21;
@@ -2673,14 +2679,22 @@ export function App() {
 
   // Nén ảnh QR ngân hàng đủ nhỏ để lưu trực tiếp (server cắt 45KB như chữ ký):
   // QR là nét đen-trắng nên 480px + JPEG là đủ quét, dataURL thường <40KB.
-  const compressBankQr = (file: File): Promise<string> => {
+  // Nén ảnh QR. Mặc định nhỏ (<=44KB) để lưu vào ô Sheets; khi gửi SERVER giải mã
+  // thì dùng độ phân giải cao hơn để QR dày/mờ vẫn đọc được.
+  const compressBankQr = (
+    file: File,
+    opts?: { maxPx?: number; quality?: number; maxChars?: number },
+  ): Promise<string> => {
+    const maxPx = opts?.maxPx ?? 480;
+    const startQ = opts?.quality ?? 0.7;
+    const maxChars = opts?.maxChars ?? 44000;
     return new Promise((resolve, reject) => {
       const url = URL.createObjectURL(file);
       const img = new Image();
       img.onload = () => {
         try {
-          const trySize = (maxPx: number, q: number): void => {
-            const scale = Math.min(1, maxPx / Math.max(img.width, img.height));
+          const trySize = (px: number, q: number): void => {
+            const scale = Math.min(1, px / Math.max(img.width, img.height));
             const w = Math.max(1, Math.round(img.width * scale));
             const h = Math.max(1, Math.round(img.height * scale));
             const cv = document.createElement('canvas');
@@ -2696,15 +2710,15 @@ export function App() {
             ctx.fillRect(0, 0, w, h);
             ctx.drawImage(img, 0, 0, w, h);
             const out = cv.toDataURL('image/jpeg', q);
-            if (out.length > 44000 && (maxPx > 320 || q > 0.5)) {
-              if (q > 0.5) trySize(maxPx, Math.round((q - 0.15) * 100) / 100);
-              else trySize(320, 0.6);
+            if (out.length > maxChars && (px > 320 || q > 0.5)) {
+              if (q > 0.5) trySize(px, Math.round((q - 0.15) * 100) / 100);
+              else trySize(Math.max(320, Math.round(px / 2)), 0.6);
               return;
             }
             URL.revokeObjectURL(url);
             resolve(out);
           };
-          trySize(480, 0.7);
+          trySize(maxPx, startQ);
         } catch (e) {
           URL.revokeObjectURL(url);
           reject(e);
@@ -2769,17 +2783,33 @@ export function App() {
   };
 
   // Mã BIN Napas (6 số trong QR VietQR) -> tên ngân hàng hiển thị.
+  // Đồng bộ với backend (apps/backend/src/utils/vietqr.ts), lấy theo API chính
+  // thức https://api.vietqr.io/v2/banks. Trước đây thiếu nhiều BIN phổ biến
+  // (CAKE/Ubank by VPBank, Timo, CIMB, HSBC, Kookmin, IBK, MoMo/ZaloPay...) nên
+  // QR hợp lệ vẫn bị báo "không nhận diện được ngân hàng".
   const VIETQR_BANK_BY_BIN: Record<string, string> = {
-    '970436': 'Vietcombank', '970407': 'Techcombank', '970422': 'MBBank', '970418': 'BIDV',
-    '970415': 'VietinBank', '970416': 'ACB', '970432': 'VPBank', '970423': 'TPBank',
-    '970437': 'HDBank', '970441': 'VIB', '970443': 'SHB',
-    '970448': 'OCB', '970403': 'Sacombank', '970426': 'MSB', '970405': 'Agribank', '970431': 'Eximbank',
-    '970449': 'LPBank', '970428': 'Nam A Bank', '970433': 'VietBank', '970425': 'ABBank',
-    '970409': 'Bac A Bank', '970438': 'BaoVietBank', '970430': 'PG Bank', '970427': 'Viet A Bank',
-    '970419': 'NCB', '970440': 'SeABank', '970454': 'BVBank', '970452': 'KienLongBank',
-    '970429': 'SCB',
-    '970400': 'SaigonBank', '970406': 'DongA Bank',
+    '970400': 'SaigonBank', '970403': 'Sacombank', '970405': 'Agribank', '970406': 'Vikki',
+    '970407': 'Techcombank', '970408': 'GPBank', '970409': 'BacABank', '970410': 'Standard Chartered',
+    '970412': 'PVcomBank', '970414': 'MBV', '970415': 'VietinBank', '970416': 'ACB',
+    '970418': 'BIDV', '970419': 'NCB', '970421': 'VRB', '970422': 'MBBank',
+    '970423': 'TPBank', '970424': 'Shinhan Bank', '970425': 'ABBANK', '970426': 'MSB',
+    '970427': 'VietABank', '970428': 'NamABank', '970429': 'SCB', '970430': 'PGBank',
+    '970431': 'Eximbank', '970432': 'VPBank', '970433': 'VietBank', '970434': 'IndovinaBank',
+    '970436': 'Vietcombank', '970437': 'HDBank', '970438': 'BaoVietBank', '970439': 'PublicBank',
+    '970440': 'SeABank', '970441': 'VIB', '970442': 'HongLeong', '970443': 'SHB',
+    '970444': 'CBBank', '970446': 'COOPBANK', '970448': 'OCB', '970449': 'LPBank',
+    '970452': 'KienLongBank', '970454': 'BVBank', '970455': 'IBKHN', '970456': 'IBKHCM',
+    '970457': 'Woori', '970458': 'UOB', '970462': 'KookminHN', '970463': 'KookminHCM',
+    '970465': 'BSP', '970466': 'KEBHanaHCM', '970467': 'KEBHanaHN',
+    '422589': 'CIMB', '458761': 'HSBC', '546034': 'CAKE', '546035': 'Ubank',
+    '555666': 'BIDC', '668888': 'KBank', '796500': 'DBSBank', '801011': 'Nonghyup',
+    '963326': 'TNEX', '963388': 'Timo', '963666': 'BNP HCM', '963668': 'BNP HN',
+    '963669': 'ICBC', '963686': 'ESUN', '963688': 'BOCHK', '971005': 'ViettelMoney',
+    '971011': 'VNPTMoney', '971025': 'MoMo', '971032': 'MVAS', '971101': 'ZaloPay',
+    '971133': 'PVcomBank Pay', '977777': 'MAFC', '999888': 'VBSP', '168999': 'CUBHCM',
+    '533948': 'Citibank',
   };
+  const VIETQR_KNOWN_BIN_RE = new RegExp(Object.keys(VIETQR_BANK_BY_BIN).join('|'));
 
   // Parse QR VietQR (EMVCo TLV), bản tolerant: trả về những gì đọc được
   // (bank/account/holder có thể rỗng) để luồng dự phòng OCR gộp tiếp.
@@ -2829,28 +2859,16 @@ export function App() {
       bin = cField.value.trim();
       account = (sub.find((x) => x.id === '02')?.value || '').trim();
     }
-    // Chiếm chót: parse TLV lệch độ (QR mờ/nghiêng) -> dò BIN 9704xx/9705xx
-    // sau nhãn AID (A000000727) thay vì nguyên chuỗi (tránh khớp nhầm số STK).
+    // Chốt hạ: parse TLV lệch độ (QR mờ/nghiêng) -> dò BIN đã biết sau nhãn AID
+    // (A000000727) thay vì nguyên chuỗi (tránh khớp nhầm số STK). Dùng đủ danh
+    // sách BIN để nhận cả CAKE/Ubank (546034/546035), Timo (963388)...
     if (!/^\d{6}$/.test(bin)) {
       const aidIdx = s.indexOf('A000000727');
-      const m = (aidIdx >= 0 ? s.slice(aidIdx) : s).match(/97(?:04|05)\d{2}/);
+      const m = (aidIdx >= 0 ? s.slice(aidIdx) : s).match(VIETQR_KNOWN_BIN_RE);
       if (m) bin = m[0];
     }
     const holder = (top.find((f) => f.id === '59')?.value || '').trim();
     return { isVietQR: true, bank: VIETQR_BANK_BY_BIN[bin] || '', account: /^[0-9]{6,19}$/.test(account) ? account : '', holder, bin };
-  };
-
-  // Parse nghiêm: thiếu trường nào -> throw mã lý do đó (giữ thông báo lỗi cũ).
-  const parseVietQR = (payload: string): { bank: string; account: string; holder: string } => {
-    const s = String(payload || '').trim();
-    if (!/^000201/.test(s)) throw new Error('NOT_VIETQR');
-    const p = parseVietQRPartial(s);
-    if (!p.isVietQR) throw new Error('NOT_VIETQR');
-    if (!p.bin) throw new Error('MISSING_BANK');
-    if (!p.bank) throw new Error(`UNKNOWN_BIN:${p.bin}`);
-    if (!p.account) throw new Error('MISSING_ACCOUNT');
-    if (!p.holder) throw new Error('MISSING_HOLDER');
-    return { bank: p.bank, account: p.account, holder: p.holder };
   };
 
   // Từ khóa tên ngân hàng -> tên hiển thị (dùng cho OCR chữ in trên thẻ).
@@ -2984,20 +3002,6 @@ export function App() {
     }
   };
 
-  const bankQrErrorToast = (reason: string) => {
-    if (reason.startsWith('UNKNOWN_BIN:')) {
-      showToast(`⚠️ Không nhận diện được ngân hàng (mã BIN ${reason.split(':')[1]})! Vui lòng dùng mã QR VietQR của ngân hàng và thử lại.`);
-    } else if (reason === 'MISSING_ACCOUNT') {
-      showToast('⚠️ Không tìm thấy số tài khoản (mã QR + chữ in trên thẻ)! Vui lòng chụp rõ thẻ QR có số tài khoản và thử lại.');
-    } else if (reason === 'MISSING_HOLDER') {
-      showToast('⚠️ Không tìm thấy tên chủ tài khoản (mã QR + chữ in trên thẻ)! Vui lòng chụp rõ thẻ QR có tên chủ tài khoản và thử lại.');
-    } else if (reason === 'MISSING_BANK') {
-      showToast('⚠️ Không nhận diện được ngân hàng (mã QR + logo/tên in trên thẻ)! Vui lòng chụp rõ thẻ QR VietQR và thử lại.');
-    } else {
-      showToast('⚠️ Không đọc được mã QR trong ảnh (mờ/cắt góc)! Vui lòng chụp rõ mã QR ngân hàng và thử lại.');
-    }
-  };
-
   const handleBankQrSelected = async (file: File | undefined) => {
     if (!file) return;
     if (!file.type.startsWith('image/')) {
@@ -3008,81 +3012,128 @@ export function App() {
       showToast('⚠️ Ảnh quá lớn (>15MB)! Vui lòng chụp lại.');
       return;
     }
-    const acceptQrInfo = async (info: { bank: string; account: string; holder: string }, viaOcr: boolean) => {
-      // Chốt chặn cuối: tên chủ TK phải hợp lệ (có họ VN hoặc khớp tên NV trong hồ
-      // sơ) — rác OCR không bao giờ lọt vào cột chủ tài khoản của Finance.
-      const ht = normalizeVnName(info.holder);
+    // Tên chủ TK hợp lệ? (có họ VN hoặc khớp tên NV trong hồ sơ) — dùng để phát
+    // hiện OCR đọc rác; KHÔNG còn chặn lưu ảnh nữa.
+    const isPlausibleHolder = (name: string): boolean => {
+      const ht = normalizeVnName(name);
       const htoks = ht.split(' ').filter(Boolean);
       const empToks = new Set(normalizeVnName((employee as any)?.full_name).split(' ').filter(Boolean));
       let hov = 0;
       for (const w of htoks) if (empToks.has(w)) hov++;
-      const holderOk = ht.length >= 6 && htoks.length >= 2 &&
+      return ht.length >= 6 && htoks.length >= 2 &&
         (htoks.some((w) => VN_SURNAMES.has(w)) || hov >= 2);
-      if (!holderOk) {
-        bankQrErrorToast('MISSING_HOLDER');
-        return;
-      }
+    };
+    // Lưu ảnh QR + điền những gì đọc được. Thiếu trường nào thì để NV nhập tay
+    // (trước đây thiếu 1 trường là chặn luôn, không lưu được ảnh).
+    const acceptQrInfo = async (
+      info: { bank: string; account: string; holder: string },
+      viaOcr: boolean,
+    ): Promise<boolean> => {
       const dataUrl = await compressBankQr(file);
       if (!dataUrl) {
         showToast('⚠️ Không đọc được ảnh! Vui lòng chọn lại.');
-        return;
+        return false;
       }
-      // Đủ 3 trường -> tự điền + lưu ảnh, đồng bộ qua Kế toán khi Lưu Hồ Sơ.
-      setProfForm((st) => ({ ...st, bank_qr_img: dataUrl, bank_name: info.bank, bank_account: info.account, bank_holder: info.holder }));
-      showToast(`✓ QR hợp lệ${viaOcr ? ' (đọc từ chữ in trên thẻ)' : ''}: ${info.bank} • ${info.account} • ${info.holder}. Bấm "Lưu Hồ Sơ" để đồng bộ qua Kế toán.`);
+      const profileName = String((employee as any)?.full_name || '').trim();
+      // QR nhiều ngân hàng KHÔNG ghi tên chủ TK (tag 59 trống) → lấy tên trong hồ
+      // sơ làm mặc định, NV vẫn sửa được ở ô nhập tay bên dưới.
+      const holder = isPlausibleHolder(info.holder) ? info.holder.trim()
+        : (profileName || info.holder.trim());
+      const bank = String(info.bank || '').trim();
+      const account = String(info.account || '').trim();
+      setProfForm((st) => ({
+        ...st,
+        bank_qr_img: dataUrl,
+        bank_name: bank || st.bank_name,
+        bank_account: account || st.bank_account,
+        bank_holder: holder || st.bank_holder,
+      }));
+      const missing = [
+        !bank ? 'tên ngân hàng' : '',
+        !account ? 'số tài khoản' : '',
+        !holder ? 'tên chủ tài khoản' : '',
+      ].filter(Boolean);
+      if (missing.length) {
+        showToast(`⚠️ Đã lưu ảnh QR nhưng chưa đọc được ${missing.join(', ')}. Vui lòng nhập tay bên dưới rồi bấm "Lưu Hồ Sơ".`);
+      } else {
+        showToast(`✓ QR hợp lệ${viaOcr ? ' (đọc từ chữ in trên thẻ)' : ''}: ${bank} • ${account} • ${holder}. Bấm "Lưu Hồ Sơ" để đồng bộ qua Kế toán.`);
+      }
+      return true;
+    };
+    // OCR có thể tải worker từ CDN rất chậm — chặn 12s để không treo nút.
+    const ocrWithTimeout = async (): Promise<string | null> => {
+      try {
+        return await Promise.race([
+          readBankCardOcrText(file),
+          new Promise<null>((resolve) => { setTimeout(() => resolve(null), 12000); }),
+        ]);
+      } catch { return null; }
+    };
+    // Giải mã QR ở SERVER (fallback): trình duyệt/NV có thể tải ảnh lớn, QR dày
+    // hoặc jsQR trên máy không đọc được — server dùng jsQR + jpeg-js thử nhiều
+    // vùng cắt. Chỉ gửi ảnh đã nén (JPEG) để nhẹ và đúng định dạng server đọc.
+    const decodeOnServer = async (): Promise<{ bank: string; account: string; holder: string } | null> => {
+      try {
+        // Ảnh gửi server: giữ độ phân giải cao (QR dày cần điểm ảnh), tối đa ~900KB.
+        const dataUrl = await compressBankQr(file, { maxPx: 1280, quality: 0.9, maxChars: 900000 });
+        if (!dataUrl) return null;
+        const res: any = await apiRequest('/me/bank-qr/decode', {
+          method: 'POST',
+          body: JSON.stringify({ image: dataUrl }),
+        });
+        if (!res?.ok) return null;
+        return { bank: String(res.bank || ''), account: String(res.account || ''), holder: String(res.holder || '') };
+      } catch { return null; }
     };
     try {
       showToast('⏳ Đang kiểm tra mã QR ngân hàng...');
       const payload = await decodeQrPayload(file);
-      // 1. QR payload đầy đủ -> nhận ngay (nhanh, không cần OCR).
-      if (payload) {
-        try {
-          await acceptQrInfo(parseVietQR(payload), false);
-          return;
-        } catch (e: any) {
-          const reason = String((e as any)?.message || '');
-          // 2. Payload thiếu trường (VD QR không ghi tên, STK in ngoài) -> OCR chữ
-          // in trên thẻ để bù: gộp cái QR có + cái OCR đọc được.
-          if (payload && (reason === 'MISSING_ACCOUNT' || reason === 'MISSING_HOLDER' || reason === 'MISSING_BANK' || reason.startsWith('UNKNOWN_BIN'))) {
-            showToast('⏳ Mã QR thiếu thông tin, đang đọc chữ in trên thẻ...');
-            const partial = parseVietQRPartial(payload);
-            const ocrText = await readBankCardOcrText(file);
-            const ocr = extractBankQrFromOcrText(ocrText || '', (employee as any)?.full_name);
-            const merged = {
-              bank: partial.bank || ocr.bank,
-              account: partial.account || ocr.account,
-              holder: partial.holder || ocr.holder,
-            };
-            if (merged.bank && merged.account && merged.holder) {
-              await acceptQrInfo(merged, true);
-              return;
-            }
-          }
-          bankQrErrorToast(reason);
-          return;
-        }
-      }
-      // 3. Không giải mã được QR (mờ/dày/cắt góc) -> OCR toàn bộ chữ trên thẻ.
-      showToast('⏳ Không quét được mã QR, đang đọc chữ in trên thẻ...');
-      const ocrText = await readBankCardOcrText(file);
-      if (ocrText) {
-        const ocr = extractBankQrFromOcrText(ocrText, (employee as any)?.full_name);
-        if (ocr.bank && ocr.account && ocr.holder) {
-          await acceptQrInfo(ocr, true);
-          return;
-        }
-        if (!ocr.account && !ocr.holder && !ocr.bank) {
-          bankQrErrorToast('NOT_VIETQR');
-          return;
-        }
-        bankQrErrorToast(!ocr.bank ? 'MISSING_BANK' : !ocr.account ? 'MISSING_ACCOUNT' : 'MISSING_HOLDER');
+      const partial = payload ? parseVietQRPartial(payload) : null;
+      // Thiếu ngân hàng/STK (hoặc máy không đọc được QR) -> nhờ server đọc lại.
+      const needsServer = !partial?.isVietQR || !partial.bank || !partial.account;
+      const serverInfo = needsServer ? await decodeOnServer() : null;
+      const merged = {
+        bank: partial?.bank || serverInfo?.bank || '',
+        account: partial?.account || serverInfo?.account || '',
+        holder: partial?.holder || serverInfo?.holder || '',
+      };
+      if (merged.bank && merged.account) {
+        // 1. Đọc được bank + STK (máy hoặc server): nhận ngay, thiếu tên chủ TK
+        //    thì acceptQrInfo lấy tên hồ sơ.
+        await acceptQrInfo(merged, false);
         return;
       }
-      bankQrErrorToast('NOT_VIETQR');
+      if (partial?.isVietQR || serverInfo) {
+        showToast('⏳ Mã QR thiếu thông tin, đang đọc chữ in trên thẻ...');
+        const ocrText = await ocrWithTimeout();
+        const ocr = extractBankQrFromOcrText(ocrText || '', (employee as any)?.full_name);
+        await acceptQrInfo({
+          bank: merged.bank || ocr.bank,
+          account: merged.account || ocr.account,
+          holder: merged.holder || ocr.holder,
+        }, true);
+        return;
+      }
+      // 2. Không giải mã được QR (ảnh mờ/cắt góc/QR không chuẩn) -> OCR toàn bộ
+      //    chữ trên thẻ; dù OCR thất bại vẫn LƯU ẢNH để NV nhập tay.
+      showToast('⏳ Không quét được mã QR, đang đọc chữ in trên thẻ...');
+      const ocrText = await ocrWithTimeout();
+      const ocr = extractBankQrFromOcrText(ocrText || '', (employee as any)?.full_name);
+      await acceptQrInfo({ bank: ocr.bank, account: ocr.account, holder: ocr.holder }, true);
     } catch {
+      // Lỗi bất ngờ: vẫn cố lưu ảnh để NV không phải chụp lại.
+      try {
+        const dataUrl = await compressBankQr(file);
+        if (dataUrl) {
+          setProfForm((st) => ({ ...st, bank_qr_img: dataUrl }));
+          showToast('⚠️ Chưa đọc được thông tin trên QR. Ảnh đã được lưu — vui lòng nhập tay ngân hàng/số tài khoản/chủ tài khoản rồi bấm "Lưu Hồ Sơ".');
+          return;
+        }
+      } catch { /* ignore */ }
       showToast('⚠️ Không xử lý được ảnh! Vui lòng chọn ảnh khác.');
     }
   };
+
 
   const handlePhotoSelected = async (file: File | undefined) => {
     if (!file) return;
@@ -3645,6 +3696,18 @@ export function App() {
         if (myPointsBalance < 5) {
           showToast(`⚠️ Phiếu bù công ngày tốn 5 điểm, bạn đang có ${myPointsBalance} điểm (đủ 1 ca check-in + check-out = +2 điểm). Tích thêm điểm rồi gửi lại!`);
           return;
+        }
+        // Quota realtime: 1 phiếu/tuần, tối đa 4 phiếu/tháng (server chốt cứng).
+        if (buCongQuota) {
+          const total = Number(buCongQuota.monthLimitTotal ?? 4);
+          if (Number(buCongQuota.monthUsed) >= total) {
+            showToast(`⚠️ Tháng này bạn đã dùng đủ ${total}/${total} phiếu bù công ngày. Qua tháng mới hệ thống mới mở lại (không cộng dồn phiếu tháng cũ).`);
+            return;
+          }
+          if (Number(buCongQuota.availableNow) <= 0) {
+            showToast(`⚠️ Tuần này bạn đã dùng phiếu bù công (${buCongQuota.weekStart} → ${buCongQuota.weekEnd}). Mỗi tuần được 1 phiếu, tuần chưa dùng cộng dồn trong tháng — vui lòng chờ tuần sau.`);
+            return;
+          }
         }
       }
       setActionBusy('adj-submit');
@@ -7200,7 +7263,7 @@ export function App() {
                 {isProbation ? '7. Giải Trình & Bổ Sung Công' : '7. Bổ Sung Công'}
               </h3>
               <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '14px' }}>
-                Gửi giải trình khi quên check-in/out (đồng bộ trực tiếp sang HR Tab 10 và Google Sheets). Không giới hạn số phiếu/tuần. Phiếu gửi HR quá <strong>30 phút</strong> chưa duyệt thì hệ thống <strong>tự động từ chối</strong> (giữ phiếu để đối soát, tự xóa sau 7 ngày nữa).
+                Gửi giải trình khi quên check-in/out (đồng bộ trực tiếp sang HR Tab 10 và Google Sheets); phiếu quên check-in/out không giới hạn số lượt. Riêng phiếu <strong>bù công cả ngày</strong> tốn 5 điểm và bị giới hạn <strong>1 phiếu/tuần, tối đa 4 phiếu/tháng</strong> (tuần không dùng cộng dồn trong tháng, qua tháng mới không cộng dồn). Phiếu gửi HR quá <strong>30 phút</strong> chưa duyệt thì hệ thống <strong>tự động từ chối</strong> (giữ phiếu để đối soát, tự xóa sau 7 ngày nữa).
               </p>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -7250,6 +7313,40 @@ export function App() {
                 <div style={{ fontSize: '12px', lineHeight: 1.6, backgroundColor: ticketWindowOpen ? '#F0FDF4' : '#FEF2F2', border: ticketWindowOpen ? '1px solid #86EFAC' : '1px solid #FECACA', borderRadius: '8px', padding: '8px 10px' }}>
                   <div>⭐ Điểm bù công của bạn: <strong>{myPointsBalance}</strong> <span style={{ color: 'var(--text-muted)' }}>(tích lũy {myPointsEarned} • đã dùng {myPointsSpent})</span></div>
                   <div style={{ color: 'var(--text-muted)' }}>Đủ 1 ca (check-in + check-out) +2 điểm • 1 phiếu bù công ngày = 5 điểm • Tạo phiếu 08:00–21:00 hằng ngày{ticketWindowOpen ? '' : ' — hiện ĐANG NGOÀI GIỜ, không gửi được phiếu'}.</div>
+                </div>
+
+                {/* QUOTA BÙ CÔNG NGÀY: 1 phiếu/tuần, tối đa 4 phiếu/tháng.
+                    Tuần không dùng cộng dồn trong tháng, qua tháng reset. */}
+                <div style={{
+                  fontSize: '12px', lineHeight: 1.6, borderRadius: '8px', padding: '8px 10px',
+                  backgroundColor: ((!buCongQuota || Number(buCongQuota.availableNow) > 0) ? '#EFF6FF' : '#FEF2F2'),
+                  border: ((!buCongQuota || Number(buCongQuota.availableNow) > 0) ? '1px solid #BFDBFE' : '1px solid #FECACA'),
+                }}>
+                  {(() => {
+                    const total = Number(buCongQuota?.monthLimitTotal ?? 4);
+                    const used = Number(buCongQuota?.monthUsed ?? 0);
+                    // Chưa tải xong quota -> hiển thị tạm "còn 4" thay vì "còn 0" gây hiểu nhầm.
+                    const avail = buCongQuota ? Number(buCongQuota.availableNow ?? 0) : total;
+                    const weekUsed = Number(buCongQuota?.weekUsed ?? 0);
+                    const monthRemaining = Number(buCongQuota?.monthRemaining ?? Math.max(0, total - used));
+                    const fmt = (d?: string) => d ? `${d.slice(8, 10)}/${d.slice(5, 7)}` : '—';
+                    return (
+                      <>
+                        <div style={{ fontWeight: 800 }}>
+                          🎫 Phiếu bù công ngày tháng {String(buCongQuota?.month || vnMonthStr()).slice(5, 7)}/{String(buCongQuota?.month || vnMonthStr()).slice(0, 4)}:
+                          {' '}gửi được ngay <span style={{ color: avail > 0 ? '#1D4ED8' : '#DC2626' }}>{avail}</span> phiếu
+                        </div>
+                        <div style={{ color: 'var(--text-muted)' }}>
+                          Tháng: đã dùng <b>{used}/{total}</b> • còn <b>{monthRemaining}</b> phiếu.
+                          {' '}Tuần {fmt(buCongQuota?.weekStart)}–{fmt(buCongQuota?.weekEnd)}: đã dùng <b>{weekUsed}/1</b>
+                          {weekUsed >= 1 ? ' (hết lượt tuần này — chờ tuần sau)' : ' (còn 1 lượt tuần này)'}.
+                        </div>
+                        <div style={{ color: 'var(--text-muted)' }}>
+                          Quy định: 1 phiếu/tuần, tối đa 4 phiếu/tháng. Tuần không dùng được cộng dồn trong tháng; qua tháng mới <b>không</b> cộng dồn.
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
 
                 <div>
@@ -7802,6 +7899,45 @@ export function App() {
                       <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => { handleBankQrSelected(e.target.files?.[0]); e.target.value = ''; }} />
                     </label>
                   )}
+
+                  {/* Nhập tay: QR nhiều ngân hàng không ghi tên chủ TK / ảnh mờ không
+                      đọc được BIN. Cho phép sửa trực tiếp để không bị chặn lưu. */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginTop: '10px' }}>
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: 700, display: 'block', marginBottom: '3px' }}>Ngân hàng</label>
+                      <input
+                        type="text"
+                        value={profForm.bank_name}
+                        onChange={(e) => setProfForm((s) => ({ ...s, bank_name: e.target.value }))}
+                        placeholder="VD: Vietcombank"
+                        style={{ width: '100%', padding: '8px 10px', fontSize: '12.5px', borderRadius: '8px', border: '1px solid var(--border)' }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: 700, display: 'block', marginBottom: '3px' }}>Số tài khoản</label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={profForm.bank_account}
+                        onChange={(e) => setProfForm((s) => ({ ...s, bank_account: e.target.value }))}
+                        placeholder="VD: 0123456789"
+                        style={{ width: '100%', padding: '8px 10px', fontSize: '12.5px', borderRadius: '8px', border: '1px solid var(--border)' }}
+                      />
+                    </div>
+                  </div>
+                  <div style={{ marginTop: '8px' }}>
+                    <label style={{ fontSize: '11px', fontWeight: 700, display: 'block', marginBottom: '3px' }}>Chủ tài khoản (viết không dấu)</label>
+                    <input
+                      type="text"
+                      value={profForm.bank_holder}
+                      onChange={(e) => setProfForm((s) => ({ ...s, bank_holder: e.target.value }))}
+                      placeholder="VD: NGUYEN VAN A"
+                      style={{ width: '100%', padding: '8px 10px', fontSize: '12.5px', borderRadius: '8px', border: '1px solid var(--border)' }}
+                    />
+                  </div>
+                  <div style={{ fontSize: '10.5px', color: 'var(--text-muted)', marginTop: '6px', lineHeight: 1.5 }}>
+                    Hệ thống tự đọc từ QR; nếu ngân hàng không ghi tên chủ tài khoản, hệ thống dùng tên trong hồ sơ. Bạn có thể sửa tay 3 ô trên rồi bấm <b>Lưu Hồ Sơ</b>.
+                  </div>
                 </div>
                 <button className="btn-primary" disabled={profBusy} onClick={handleSaveProfile} style={{ width: '100%', padding: '11px', fontSize: '14px', fontWeight: 800 }}>
                   {profBusy ? 'Đang lưu...' : 'Lưu Hồ Sơ'}

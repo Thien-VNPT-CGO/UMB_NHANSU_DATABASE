@@ -16,6 +16,13 @@ import { dedupeDuplicateInterviews, enforceScreeningOutcomes } from './services/
 import { interviewNoShowTick, interviewReminderTick } from './services/interview-reminders.service.js';
 import { autoRemindersTick } from './services/auto-reminders.service.js';
 import { notifySystemAlert, startSystemAlertMonitor } from './services/system-alert.service.js';
+import {
+  addDaysIso,
+  runMonthlyBackup,
+  syncPhotoBacklog,
+  vnToday as backupVnToday,
+  previousMonthOf as backupPreviousMonthOf,
+} from './services/monthly-backup.service.js';
 import { buildSocketCorsOptions, getAllowedOrigins } from './config/security.js';
 
 const PORT = process.env.PORT || 4005;
@@ -917,6 +924,102 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   };
   setTimeout(photoRetryTickSafe, 180_000);
   setInterval(photoRetryTickSafe, 5 * 60_000);
+
+  // ĐỒNG BỘ ẢNH CHẤM CÔNG HẰNG NGÀY lên Drive (sau 02:00 VN) — ảnh đã có trên
+  // Drive thì xóa bản đệm trên VPS để không đầy đĩa. Idempotent theo ngày.
+  const dailyPhotoSyncTick = async () => {
+    try {
+      const syncSvc = (adapter as any)?.syncService;
+      if (!syncSvc?.isDriveReady?.()) return;
+      const vnNow = new Date(Date.now() + 7 * 3_600_000);
+      const hour = vnNow.getUTCHours();
+      if (hour < 2) return; // chờ qua 02:00 VN
+      const today = backupVnToday();
+      const yesterday = new Date(Date.parse(`${today}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+      const cur: any = await adapter.getSystemSettings().catch(() => ({})) || {};
+      const st = cur.photos_backup || {};
+      if (st.last_date === yesterday) return;
+      // Bù MỌI ngày bị lỡ kể từ lần đồng bộ trước (VPS tắt / Drive lỗi nhiều
+      // ngày), không chỉ "hôm qua" — tránh ảnh cũ dồn đĩa tới kỳ backup tháng.
+      const last = /^\d{4}-\d{2}-\d{2}$/.test(String(st.last_date || '')) ? String(st.last_date) : '';
+      const fromDate = last ? addDaysIso(last, 1) : yesterday;
+      if (!fromDate || fromDate > yesterday) return;
+      const r = await syncPhotoBacklog(syncSvc, adapter, { fromDate, toDate: yesterday, maxDays: 31 });
+      if (!r.ok) {
+        console.warn(`[photo-sync] ${r.from}→${r.to} lỗi: ${r.reason || 'PARTIAL'}`);
+        return;
+      }
+      await adapter.updateSystemSettings({
+        ...cur,
+        photos_backup: {
+          last_date: r.to,
+          last_ok_at: new Date().toISOString(),
+          last_result: r,
+          last_error: null,
+        },
+      }).catch(() => null);
+      if (r.uploaded > 0 || r.localDeleted > 0) {
+        console.log(`[photo-sync] ${r.from}→${r.to} (${r.days.length} ngày): ${r.uploaded} ảnh mới, dọn ${r.localDeleted} ảnh đệm, thiếu ${r.missing}.`);
+      }
+    } catch (err: any) {
+      console.warn('[photo-sync] tick error:', err?.message || err);
+    }
+  };
+  setTimeout(dailyPhotoSyncTick, 150_000);
+  setInterval(dailyPhotoSyncTick, 60 * 60_000);
+
+  // BACKUP THÁNG: 09:00 ngày 5 hằng tháng lưu THÁNG TRƯỚC lên Drive theo cấu
+  // trúc backup_YYYY-MM/<TAB>/<ngày>/...; nếu server downtime thì bù khi chạy lại.
+  const monthlyBackupTick = async () => {
+    try {
+      const syncSvc = (adapter as any)?.syncService;
+      if (!syncSvc?.isDriveReady?.()) return;
+      const vnNow = new Date(Date.now() + 7 * 3_600_000);
+      const day = vnNow.getUTCDate();
+      const hour = vnNow.getUTCHours();
+      // Chỉ chạy từ 09:00 ngày 5; sang ngày 6+ thì chạy bù bất kể giờ.
+      if (!(day > 5 || (day === 5 && hour >= 9))) return;
+      const month = backupVnToday().slice(0, 7);
+      const target = backupPreviousMonthOf(month);
+      if (!target) return;
+      const cur: any = await adapter.getSystemSettings().catch(() => ({})) || {};
+      const st = cur.monthly_backup || {};
+      if (st.last_month === target) return;
+
+      const r = await runMonthlyBackup(syncSvc, adapter, target);
+      await adapter.updateSystemSettings({
+        ...cur,
+        monthly_backup: r.ok ? {
+          last_month: target,
+          last_ok_at: new Date().toISOString(),
+          last_result: r,
+          last_error: null,
+        } : {
+          ...st,
+          last_error_at: new Date().toISOString(),
+          last_error: r.error || r.reason || 'UNKNOWN',
+          last_result: r,
+        },
+      }).catch(() => null);
+
+      if (r.ok) {
+        console.log(`[monthly-backup] ${target}: ${r.tabFiles} file tab, ${r.photosUploaded} ảnh mới, dọn ${r.localDeleted} ảnh đệm.`);
+      } else {
+        console.warn(`[monthly-backup] ${target} lỗi: ${r.error || r.reason}`);
+        void notifySystemAlert({
+          code: 'MONTHLY_BACKUP_FAILED',
+          severity: 'URGENT',
+          title: '🚨 Backup tháng thất bại',
+          message: `Backup tháng ${target} lỗi: ${r.error || r.reason}. Kiểm tra Google Drive/quota — hệ thống sẽ thử lại giờ sau.`,
+          details: { month: target, result: r },
+        });
+      }
+    } catch (err: any) {
+      console.warn('[monthly-backup] tick error:', err?.message || err);
+    }
+  };
+  setTimeout(monthlyBackupTick, 180_000);
+  setInterval(monthlyBackupTick, 60 * 60_000);
 
   // Backup snapshot tự động mỗi 24h + tự verify; fail thì báo ADMIN/HR trong app.
   const autoBackupTick = async () => {
