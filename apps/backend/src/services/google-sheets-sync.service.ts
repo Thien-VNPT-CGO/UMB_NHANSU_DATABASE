@@ -2659,20 +2659,26 @@ export class GoogleSheetsSyncService {
               }
             }
 
-            sheetsAdmins.push({
-              admin_id: adminId,
-              username,
-              password_hash: passwordHash,
-              full_name: fullName,
-              role: role || 'HR',
-              branch_scope: branchScope || '*',
-              is_active: statusStr.toUpperCase() !== 'LOCKED',
-              // Giữ version trong bộ nhớ (Sheet không có cột version) — reset về 1
-              // mỗi lần pull sẽ đá văng mọi phiên đang đăng nhập.
-              version: existing?.version ?? 1,
-              created_at: createdAt || new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            });
+            // Chống trùng lặp: nếu username hoặc admin_id đã được nạp ở dòng trên thì bỏ qua dòng trùng
+            const alreadyLoaded = sheetsAdmins.some(
+              a => a.admin_id === adminId || a.username.toLowerCase() === username.toLowerCase()
+            );
+            if (!alreadyLoaded) {
+              sheetsAdmins.push({
+                admin_id: adminId,
+                username,
+                password_hash: passwordHash,
+                full_name: fullName,
+                role: role || 'HR',
+                branch_scope: branchScope || '*',
+                is_active: statusStr.toUpperCase() !== 'LOCKED',
+                // Giữ version trong bộ nhớ (Sheet không có cột version) — reset về 1
+                // mỗi lần pull sẽ đá văng mọi phiên đang đăng nhập.
+                version: existing?.version ?? 1,
+                created_at: createdAt || new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+              });
+            }
           } catch (e: any) {
             console.warn(`[GoogleSheetsSyncService] Bỏ qua dòng ADMIN_ACCOUNTS lỗi (${r?.[1] || '?'}): ${e?.message || e}`);
           }
