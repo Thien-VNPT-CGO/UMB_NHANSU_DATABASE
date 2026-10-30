@@ -1908,6 +1908,24 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     },
   );
 
+  // Kích hoạt đồng bộ hợp đồng lao động lên Drive thủ công / on-demand
+  app.post(
+    '/employees/contracts/sync-drive',
+    authMiddleware,
+    requireRole(['ADMIN', 'HR']),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const result = await employeesService.syncPendingContractsToDrive(req.user!.id);
+        if (result.synced > 0) {
+          broadcastUpdate('employees', { action: 'contracts-synced', count: result.synced });
+        }
+        res.json({ success: true, ...result });
+      } catch (err: any) {
+        res.status(500).json({ error: err.message || 'CONTRACT_SYNC_FAILED' });
+      }
+    },
+  );
+
   // HR khóa tài khoản NV chính thức: LOCKED + XÓA PIN + văng phiên ngay.
   // Hồ sơ/điểm danh/công/lương GIỮ NGUYÊN — Lịch làm việc xóa ngay lập tức các ca từ hôm nay.
   app.post('/employees/:id/lock', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {

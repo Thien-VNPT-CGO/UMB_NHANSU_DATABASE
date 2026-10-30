@@ -15425,14 +15425,30 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               ];
               return (
                 <div style={card}>
-                  <div style={{ fontWeight: 800, fontSize: '14px', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div style={{ fontWeight: 800, fontSize: '14px', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                     <ShieldCheck size={16} color="var(--brand)" /> Hợp đồng lao động
                     <span style={{ fontSize: '11px', fontWeight: 700, color: '#065F46', backgroundColor: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: '999px', padding: '2px 8px' }}>
                       {[contractDocs?.probation, contractDocs?.official].filter(Boolean).length}/2 file
                     </span>
+                    <button
+                      className="btn-secondary"
+                      style={{ fontSize: '11px', padding: '3px 8px', marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '4px' }}
+                      onClick={async () => {
+                        try {
+                          showToast('⏳ Đang kiểm tra và đồng bộ hợp đồng lên Google Drive...');
+                          const r = await apiRequest('/employees/contracts/sync-drive', { method: 'POST' });
+                          showToast(`✓ Đã đồng bộ Google Drive: ${r?.synced ?? 0} file mới.`);
+                          if (onRefreshData) await onRefreshData();
+                        } catch (err: any) {
+                          showToast(err?.message || 'Đồng bộ hợp đồng thất bại!');
+                        }
+                      }}
+                    >
+                      ☁️ Đồng bộ Drive ngay
+                    </button>
                   </div>
                   <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '12px' }}>
-                    Upload file scan/PDF đã ký — lưu Google Drive (chính) + đĩa máy chủ (dự phòng).
+                    Upload file scan/PDF đã ký — hệ thống tự động đồng bộ vào thư mục HOP_DONG_LAO_DONG trên Google Drive + lưu đĩa máy chủ dự phòng.
                   </div>
 
                   {/* Input file ẩn dùng chung cho cả 2 loại hợp đồng */}
@@ -15513,7 +15529,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                               </span>
                               <span>{fmtSize(doc.size)}</span>
                               {fmtAt(doc.uploaded_at) && <span>• {fmtAt(doc.uploaded_at)}</span>}
-                              <span>• {doc.storage === 'DISK' ? 'Đĩa VPS (chờ Drive)' : 'Google Drive'}</span>
+                              <span>• {doc.storage === 'DISK' ? 'Đĩa VPS (đang đợi tự động đồng bộ Drive)' : '☁️ Google Drive'}</span>
                             </div>
                           )}
                         </div>

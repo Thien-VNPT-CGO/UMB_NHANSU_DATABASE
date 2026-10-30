@@ -4608,6 +4608,33 @@ export class GoogleSheetsSyncService {
     };
   }
 
+  /**
+   * Upload hợp đồng lao động lên Google Drive trong thư mục chuyên biệt HOP_DONG_LAO_DONG.
+   * Tự động tạo thư mục HOP_DONG_LAO_DONG bên dưới driveFolderId nếu chưa có.
+   */
+  public async uploadContractToDrive(
+    fileName: string,
+    mimeType: string,
+    bufferOrBase64: Buffer | string,
+  ): Promise<{ fileId: string; webViewLink?: string }> {
+    const buffer = Buffer.isBuffer(bufferOrBase64)
+      ? bufferOrBase64
+      : Buffer.from(String(bufferOrBase64 || '').replace(/^data:[^;,]+;base64,/, ''), 'base64');
+    if (!buffer.length) {
+      return { fileId: `DRV_LOCAL_${Date.now()}` };
+    }
+    try {
+      const res = await this.upsertBufferToDrivePath(fileName, mimeType, buffer, ['HOP_DONG_LAO_DONG']);
+      if (res?.fileId && !res.fileId.startsWith('DRV_')) {
+        return res;
+      }
+    } catch (err: any) {
+      console.warn('[GoogleSheetsSyncService] uploadContractToDrive qua upsertBufferToDrivePath lỗi, thử fallback:', err?.message || err);
+    }
+    // Fallback: upload thẳng vào root driveFolderId
+    return this.uploadFileToDrive(fileName, mimeType, buffer.toString('base64'));
+  }
+
   public async uploadImageToDrive(fileName: string, mimeType: string, base64Data: string): Promise<{ fileId: string; webViewLink?: string }> {
     return this.uploadFileToDrive(fileName, mimeType, base64Data);
   }

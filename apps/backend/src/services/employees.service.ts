@@ -20,6 +20,7 @@ import { decodeQrDataUrl, isPlausibleHolder, parseVietQRPartial } from '../utils
 import {
   CONTRACT_MAX_BYTES,
   ContractDocMeta,
+  ContractKey,
   contractBufferLooksValid,
   contractFileInfo,
   contractKeyOf,
@@ -800,7 +801,13 @@ export class EmployeesService {
     let storage: 'DRIVE' | 'DISK' = 'DISK';
     try {
       const sync = (this.repo as any).syncService;
-      if (sync?.uploadFileToDrive) {
+      if (sync?.uploadContractToDrive) {
+        const up = await sync.uploadContractToDrive(driveName, info.mime, buffer);
+        if (up?.fileId && !String(up.fileId).startsWith('DRV_')) {
+          driveId = String(up.fileId);
+          storage = 'DRIVE';
+        }
+      } else if (sync?.uploadFileToDrive) {
         const up = await sync.uploadFileToDrive(driveName, info.mime, buffer.toString('base64'));
         if (up?.fileId && !String(up.fileId).startsWith('DRV_')) {
           driveId = String(up.fileId);
@@ -921,6 +928,171 @@ export class EmployeesService {
       return { buffer: disk.buffer, mimeType: meta.mime_type || 'application/octet-stream', fileName: meta.file_name || disk.fileName };
     }
     return null;
+  }
+
+  /**
+   * Tự động đồng bộ toàn bộ Hợp đồng lao động lưu trên đĩa VPS lên Google Drive.
+   *
+   * - Quét danh sách nhân viên có hợp đồng ở trạng thái DISK hoặc chưa có drive_id hợp lệ.
+   * - Đọc file từ đĩa VPS và upload lên Google Drive vào thư mục chuyên biệt HOP_DONG_LAO_DONG.
+   * - Cập nhật metadata `storage: 'DRIVE'`, `drive_id: ...` và lưu vào NHAN_VIEN_MASTER (Google Sheets).
+   * - Idempotent, an toàn khi chạy định kỳ trong background hoặc kích hoạt thủ công.
+   */
+  async syncPendingContractsToDrive(actorId = 'SYSTEM'): Promise<{
+    checked: number;
+    synced: number;
+    failed: number;
+    skipped: number;
+    details: Array<{ employeeId: string; employeeName: string; kind: string; driveId?: string; error?: string }>;
+  }> {
+    const sync = (this.repo as any).syncService;
+    if (!sync?.isDriveReady?.()) {
+      return { checked: 0, synced: 0, failed: 0, skipped: 0, details: [] };
+    }
+    const employees = await this.repo.listEmployees().catch(() => []);
+    const keys: ContractKey[] = ['probation', 'official'];
+    let checked = 0;
+    let synced = 0;
+    let failed = 0;
+    let skipped = 0;
+    const details: Array<{ employeeId: string; employeeName: string; kind: string; driveId?: string; error?: string }> = [];
+
+    for (const emp of (employees || []) as EmployeeMaster[]) {
+      const empId = emp.employee_id;
+      const docs = parseContractDocs((emp as any).contract_docs);
+      let changed = false;
+
+      for (const k of keys) {
+        const meta = docs[k];
+        const kind = contractKindOfKey(k);
+        const disk = readContractDisk(empId, kind);
+
+        // TH1: Đã có metadata trong contract_docs
+        if (meta) {
+          checked++;
+          const hasRealDriveId = meta.drive_id && !meta.drive_id.startsWith('DRV_');
+          if (hasRealDriveId && meta.storage === 'DRIVE') {
+            skipped++;
+            continue;
+          }
+
+          let buffer: Buffer | null = disk?.buffer || null;
+          let mime = meta.mime_type || 'application/octet-stream';
+          let fileName = meta.file_name || disk?.fileName || `HDLD_${k}_${empId}.pdf`;
+
+          if (!buffer) {
+            if (hasRealDriveId) {
+              meta.storage = 'DRIVE';
+              changed = true;
+              synced++;
+              details.push({ employeeId: empId, employeeName: emp.full_name || empId, kind: k, driveId: meta.drive_id });
+            } else {
+              skipped++;
+            }
+            continue;
+          }
+
+          try {
+            const empCode = String((emp as any).employee_code || empId).replace(/[^a-zA-Z0-9_-]/g, '-');
+            const kindTag = k === 'probation' ? 'ThuViec' : 'ChinhThuc';
+            const stamp = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 19).replace(/[:T]/g, '-');
+            const ext = fileName.includes('.') ? fileName.split('.').pop() : 'pdf';
+            const driveName = `HDLD_${kindTag}_${empCode}_${stamp}.${ext}`;
+
+            const up = await (sync.uploadContractToDrive
+              ? sync.uploadContractToDrive(driveName, mime, buffer)
+              : sync.uploadFileToDrive(driveName, mime, buffer.toString('base64')));
+
+            if (up?.fileId && !String(up.fileId).startsWith('DRV_')) {
+              meta.drive_id = String(up.fileId);
+              meta.storage = 'DRIVE';
+              meta.size = buffer.length;
+              changed = true;
+              synced++;
+              details.push({ employeeId: empId, employeeName: emp.full_name || empId, kind: k, driveId: up.fileId });
+            } else {
+              failed++;
+              details.push({ employeeId: empId, employeeName: emp.full_name || empId, kind: k, error: 'DRIVE_RETURNED_MOCK_ID' });
+            }
+          } catch (err: any) {
+            failed++;
+            details.push({ employeeId: empId, employeeName: emp.full_name || empId, kind: k, error: err?.message || String(err) });
+            console.warn(`[syncContractsToDrive] Lỗi đồng bộ hợp đồng ${k} của ${emp.full_name || empId}:`, err?.message || err);
+          }
+        } else if (disk?.buffer?.length) {
+          // TH2: Có file trên đĩa VPS nhưng chưa gắn metadata
+          checked++;
+          try {
+            const empCode = String((emp as any).employee_code || empId).replace(/[^a-zA-Z0-9_-]/g, '-');
+            const kindTag = k === 'probation' ? 'ThuViec' : 'ChinhThuc';
+            const stamp = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 19).replace(/[:T]/g, '-');
+            const ext = disk.fileName.includes('.') ? disk.fileName.split('.').pop() : 'pdf';
+            const driveName = `HDLD_${kindTag}_${empCode}_${stamp}.${ext}`;
+            const info = contractFileInfo('', disk.fileName);
+            const mime = info?.mime || 'application/octet-stream';
+
+            const up = await (sync.uploadContractToDrive
+              ? sync.uploadContractToDrive(driveName, mime, disk.buffer)
+              : sync.uploadFileToDrive(driveName, mime, disk.buffer.toString('base64')));
+
+            if (up?.fileId && !String(up.fileId).startsWith('DRV_')) {
+              docs[k] = {
+                drive_id: String(up.fileId),
+                file_name: disk.fileName,
+                mime_type: mime,
+                size: disk.buffer.length,
+                uploaded_at: new Date().toISOString(),
+                uploaded_by: actorId,
+                storage: 'DRIVE',
+              };
+              changed = true;
+              synced++;
+              details.push({ employeeId: empId, employeeName: emp.full_name || empId, kind: k, driveId: up.fileId });
+            } else {
+              failed++;
+            }
+          } catch (err: any) {
+            failed++;
+            console.warn(`[syncContractsToDrive] Lỗi upload file đĩa ${disk.fileName}:`, err?.message || err);
+          }
+        }
+      }
+
+      if (changed) {
+        try {
+          await singleWriterQueue.enqueue({
+            entityType: 'NHAN_VIEN_MASTER',
+            entityId: empId,
+            actorId,
+            execute: async () => {
+              const fresh = await this.repo.getEmployeeById(empId);
+              if (!fresh) return;
+              const currentDocs = parseContractDocs((fresh as any).contract_docs);
+              for (const k of keys) {
+                if (docs[k]) currentDocs[k] = docs[k];
+              }
+              await this.repo.updateEmployee(empId, { contract_docs: currentDocs } as any, fresh.version);
+              await this.repo.recordAuditLog({
+                log_id: `LOG_${Date.now()}_${empId}`,
+                actor_id: actorId,
+                actor_role: 'SYSTEM',
+                action: 'AUTO_SYNC_CONTRACT_DRIVE',
+                target_entity: 'NHAN_VIEN_MASTER',
+                target_id: empId,
+                details: `Tự động đồng bộ hợp đồng lao động lên Google Drive: ${JSON.stringify(currentDocs)}`,
+              } as any);
+            },
+          });
+        } catch (err: any) {
+          console.warn(`[syncContractsToDrive] Cập nhật contract_docs cho ${empId} thất bại:`, err?.message || err);
+        }
+      }
+    }
+
+    if (synced > 0) {
+      console.log(`[syncContractsToDrive] Đã tự động đồng bộ thành công ${synced} hợp đồng lao động lên Google Drive.`);
+    }
+    return { checked, synced, failed, skipped, details };
   }
 
   /**

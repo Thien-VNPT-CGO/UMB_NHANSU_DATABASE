@@ -112,3 +112,64 @@ test('contractBufferLooksValid chặn file đổi đuôi giả mạo', () => {
 test('giới hạn dung lượng hợp đồng là 6MB', () => {
   assert.equal(CONTRACT_MAX_BYTES, 6 * 1024 * 1024);
 });
+
+test('syncPendingContractsToDrive tự động upload hợp đồng DISK lên Drive và cập nhật metadata', async () => {
+  const { EmployeesService } = await import('../src/services/employees.service.js');
+  const { saveContractDisk, removeContractDisk } = await import('../src/services/contract-disk.store.js');
+
+  const empId = `TEST_SYNC_EMP_${Date.now()}`;
+  const pdfBuffer = Buffer.concat([Buffer.from('%PDF-1.7\n'), Buffer.alloc(100)]);
+  saveContractDisk(empId, 'PROBATION', 'pdf', pdfBuffer);
+
+  const mockEmployee = {
+    employee_id: empId,
+    employee_code: 'NV_TEST',
+    full_name: 'Nguyễn Văn Test',
+    employment_status: 'PROBATION',
+    contract_docs: {
+      probation: {
+        drive_id: '',
+        file_name: 'HDLD_ThuViec.pdf',
+        mime_type: 'application/pdf',
+        size: pdfBuffer.length,
+        uploaded_at: new Date().toISOString(),
+        uploaded_by: 'HR',
+        storage: 'DISK',
+      },
+    },
+    version: 1,
+  };
+
+  let uploadedToDrive = false;
+  let updatedDocs: any = null;
+
+  const mockSync = {
+    isDriveReady: () => true,
+    uploadContractToDrive: async (fileName: string, mime: string, buffer: Buffer) => {
+      uploadedToDrive = true;
+      return { fileId: 'DRIVE_FILE_ID_12345', webViewLink: 'https://drive.google.com/test' };
+    },
+  };
+
+  const mockRepo = {
+    syncService: mockSync,
+    listEmployees: async () => [mockEmployee],
+    getEmployeeById: async () => mockEmployee,
+    updateEmployee: async (id: string, patch: any) => {
+      updatedDocs = patch.contract_docs;
+      return { ...mockEmployee, ...patch };
+    },
+    recordAuditLog: async () => {},
+  };
+
+  const svc = new EmployeesService(mockRepo as any);
+  const res = await svc.syncPendingContractsToDrive('SYSTEM');
+
+  assert.equal(res.synced, 1);
+  assert.equal(uploadedToDrive, true);
+  assert.equal(updatedDocs?.probation?.drive_id, 'DRIVE_FILE_ID_12345');
+  assert.equal(updatedDocs?.probation?.storage, 'DRIVE');
+
+  // Dọn dẹp file test
+  removeContractDisk(empId, 'PROBATION');
+});

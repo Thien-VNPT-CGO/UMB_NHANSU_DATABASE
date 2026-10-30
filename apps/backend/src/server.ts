@@ -925,6 +925,24 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   setTimeout(photoRetryTickSafe, 180_000);
   setInterval(photoRetryTickSafe, 5 * 60_000);
 
+  // TỰ ĐỘNG ĐỒNG BỘ HỢP ĐỒNG LAO ĐỘNG LÊN GOOGLE DRIVE (thư mục HOP_DONG_LAO_DONG):
+  // Rà soát các hợp đồng đang lưu trên đĩa VPS (storage: 'DISK') hoặc chưa có
+  // drive_id và tự động đẩy lên Google Drive, cập nhật ô contract_docs trên Sheets.
+  const contractsAutoSyncTickSafe = () => {
+    (services.employeesService as any).syncPendingContractsToDrive('SYSTEM')
+      .then((r: any) => {
+        if (r && r.synced > 0) {
+          console.log(`[contracts-sync] Đã tự động đồng bộ ${r.synced} hợp đồng lao động lên Google Drive.`);
+          try {
+            io.emit('data:updated', { entity: 'employees', data: { action: 'contracts-synced', count: r.synced }, timestamp: new Date().toISOString() });
+          } catch { /* non-fatal */ }
+        }
+      })
+      .catch((err: any) => console.warn('[contracts-sync] tick error:', err?.message || err));
+  };
+  setTimeout(contractsAutoSyncTickSafe, 75_000); // 75s sau boot, sau khi pull Sheets xong
+  setInterval(contractsAutoSyncTickSafe, 10 * 60_000); // mỗi 10 phút tự kiểm tra và đồng bộ
+
   // ĐỒNG BỘ ẢNH CHẤM CÔNG HẰNG NGÀY lên Drive (sau 02:00 VN) — ảnh đã có trên
   // Drive thì xóa bản đệm trên VPS để không đầy đĩa. Idempotent theo ngày.
   const dailyPhotoSyncTick = async () => {
