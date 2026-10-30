@@ -386,6 +386,97 @@ function formatShiftOption(s: any): string {
   return `${dStr} • ${shiftName}`;
 }
 
+function EmployeeCccdViewer({
+  previewUrl,
+  kind,
+  hasServerDoc,
+}: {
+  previewUrl?: string;
+  kind: 'id_card_front' | 'id_card_back';
+  hasServerDoc?: boolean;
+}) {
+  const [blobUrl, setBlobUrl] = useState<string>('');
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (previewUrl) {
+      setBlobUrl('');
+      return;
+    }
+    if (!hasServerDoc) {
+      setBlobUrl('');
+      return;
+    }
+    let active = true;
+    let createdUrl = '';
+    const loadImg = async () => {
+      try {
+        setLoading(true);
+        const token = getAuthToken();
+        const res = await fetch(`${getApiBase()}/me/contract/${kind}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (!res.ok) throw new Error('NOT_FOUND');
+        const blob = await res.blob();
+        createdUrl = URL.createObjectURL(blob);
+        if (active) setBlobUrl(createdUrl);
+      } catch {
+        // non-fatal
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    loadImg();
+    return () => {
+      active = false;
+      if (createdUrl) URL.revokeObjectURL(createdUrl);
+    };
+  }, [previewUrl, kind, hasServerDoc]);
+
+  const displayUrl = previewUrl || blobUrl;
+
+  if (displayUrl) {
+    return (
+      <div style={{ position: 'relative', width: '100%', height: '120px', borderRadius: '8px', overflow: 'hidden', border: '1px solid #CBD5E1', backgroundColor: '#F8FAFC' }}>
+        <img
+          src={displayUrl}
+          alt={kind}
+          style={{ width: '100%', height: '100%', objectFit: 'contain', cursor: 'pointer' }}
+          onClick={() => {
+            const w = window.open(displayUrl, '_blank');
+            if (!w) window.location.href = displayUrl;
+          }}
+          title="Bấm để xem ảnh phóng to"
+        />
+        {previewUrl ? (
+          <span style={{ position: 'absolute', top: '4px', right: '4px', fontSize: '9px', fontWeight: 800, backgroundColor: '#FEF3C7', color: '#92400E', border: '1px solid #FCD34D', borderRadius: '4px', padding: '2px 6px' }}>
+            Ảnh mới chọn
+          </span>
+        ) : (
+          <span style={{ position: 'absolute', top: '4px', right: '4px', fontSize: '9px', fontWeight: 800, backgroundColor: '#ECFDF5', color: '#065F46', border: '1px solid #A7F3D0', borderRadius: '4px', padding: '2px 6px' }}>
+            ☁️ Đã lưu Drive
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div style={{ width: '100%', height: '120px', borderRadius: '8px', border: '1px dashed #CBD5E1', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', color: '#64748B', backgroundColor: '#F8FAFC' }}>
+        ⏳ Đang tải ảnh...
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ width: '100%', height: '120px', borderRadius: '8px', border: '1.5px dashed #CBD5E1', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', fontSize: '11px', color: '#94A3B8', backgroundColor: '#F8FAFC', gap: '4px' }}>
+      <span style={{ fontSize: '26px' }}>📷</span>
+      <span>Chưa có ảnh CCCD</span>
+    </div>
+  );
+}
+
 export function App() {
   // =========================================================================
   // ĐỒNG HỒ CHUẨN GIỜ VIỆT NAM
@@ -950,8 +1041,30 @@ export function App() {
   const [targetShiftsLoading, setTargetShiftsLoading] = useState(false);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   // Ho So ca nhan: NV tu cap nhat (realtime ve tab Ho So NV cho HR).
-  const [profForm, setProfForm] = useState({ email: '', gender: '', birth_date: '', id_card_number: '', bank_name: '', bank_account: '', bank_holder: '', bank_qr_img: '' });
+  const [profForm, setProfForm] = useState({
+    email: '',
+    gender: '',
+    birth_date: '',
+    id_card_number: '',
+    bank_name: '',
+    bank_account: '',
+    bank_holder: '',
+    bank_qr_img: '',
+    id_card_front_img: '',
+    id_card_back_img: '',
+  });
   const [profBusy, setProfBusy] = useState(false);
+  const [idCardBusy, setIdCardBusy] = useState<'' | 'front' | 'back'>('');
+
+  const myContractDocs: any = (() => {
+    const raw = (employee as any)?.contract_docs;
+    if (!raw) return {};
+    if (typeof raw === 'string') {
+      try { return JSON.parse(raw); } catch { return {}; }
+    }
+    return raw;
+  })();
+
   // Yêu cầu đổi STK đang chờ HR/Finance duyệt (STK cũ vẫn dùng để trả lương).
   const [bankChangeRequest, setBankChangeRequest] = useState<any | null>(null);
   const fetchBankChangeRequest = async () => {
@@ -976,6 +1089,8 @@ export function App() {
       bank_account: (employee as any)?.bank_account || '',
       bank_holder: (employee as any)?.bank_holder || '',
       bank_qr_img: (employee as any)?.bank_qr_img || '',
+      id_card_front_img: '',
+      id_card_back_img: '',
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [employee?.employee_id]);
@@ -994,6 +1109,42 @@ export function App() {
     fetchBankChangeRequest();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [employee?.employee_id, (employee as any)?.bank_name, (employee as any)?.bank_account, (employee as any)?.bank_holder, (employee as any)?.bank_qr_img]);
+
+  const uploadSingleCccd = async (side: 'front' | 'back') => {
+    const dataUrl = side === 'front' ? profForm.id_card_front_img : profForm.id_card_back_img;
+    if (!dataUrl) {
+      showToast('⚠️ Bạn chưa chụp hoặc chọn ảnh mới.');
+      return;
+    }
+    setIdCardBusy(side);
+    try {
+      showToast(`⏳ Đang tải ảnh ${side === 'front' ? 'mặt trước' : 'mặt sau'} CCCD lên Google Drive...`);
+      const res: any = await apiRequest('/me/id-card-photo', {
+        method: 'POST',
+        body: JSON.stringify({
+          kind: side === 'front' ? 'ID_CARD_FRONT' : 'ID_CARD_BACK',
+          base64: dataUrl,
+          fileName: side === 'front' ? 'cccd_mat_truoc.jpg' : 'cccd_mat_sau.jpg',
+          mimeType: 'image/jpeg',
+        }),
+      });
+      if (res?.employee) {
+        const merged = { ...(employee || {}), ...(res.employee || {}) };
+        setEmployee(merged as any);
+        try { localStorage.setItem('ubm_emp_data', JSON.stringify(merged)); } catch {}
+      }
+      setProfForm(s => ({
+        ...s,
+        [side === 'front' ? 'id_card_front_img' : 'id_card_back_img']: '',
+      }));
+      showToast(`✓ Đã lưu và đồng bộ ${side === 'front' ? 'mặt trước' : 'mặt sau'} CCCD lên Google Drive!`);
+    } catch (err: any) {
+      showToast(err?.message || 'Upload ảnh CCCD thất bại!');
+    } finally {
+      setIdCardBusy('');
+    }
+  };
+
   const handleSaveProfile = async () => {
     if (profBusy) return;
     setProfBusy(true);
@@ -1009,6 +1160,8 @@ export function App() {
           bank_account: profForm.bank_account.trim(),
           bank_holder: profForm.bank_holder.trim(),
           bank_qr_img: profForm.bank_qr_img,
+          id_card_front_img: profForm.id_card_front_img || undefined,
+          id_card_back_img: profForm.id_card_back_img || undefined,
         }),
       });
       const bankPending = res?.bank_change_pending === true;
@@ -1028,10 +1181,15 @@ export function App() {
           }));
         }
       }
+      setProfForm(s => ({
+        ...s,
+        id_card_front_img: '',
+        id_card_back_img: '',
+      }));
       setBankChangeRequest(res?.bank_change_request || null);
       showToast(bankPending
-        ? '⏳ Đã gửi yêu cầu đổi STK. STK cũ vẫn được dùng để trả lương; HR/Finance chỉ có thể duyệt sau 48h.'
-        : 'Đã cập nhật hồ sơ! HR và Kế toán thấy ngay (kèm mã QR ngân hàng).');
+        ? '⏳ Đã gửi yêu cầu đổi STK. Hồ sơ & ảnh CCCD đã được lưu, đồng bộ lên Google Drive!'
+        : '✓ Đã cập nhật hồ sơ & ảnh CCCD! Hệ thống đã đồng bộ lên Google Drive và hiển thị về cổng Admin.');
     } catch (err: any) {
       showToast(err?.message || 'Lỗi khi cập nhật hồ sơ!');
     } finally {
@@ -2675,6 +2833,68 @@ export function App() {
       };
       img.src = url;
     });
+  };
+
+  // Nén ảnh CCCD rõ nét, tối ưu đọc số CCCD/họ tên (1600px, JPEG 0.85):
+  const compressIdCardPhoto = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const maxPx = 1600;
+          const scale = Math.min(1, maxPx / Math.max(img.width, img.height));
+          const w = Math.max(1, Math.round(img.width * scale));
+          const h = Math.max(1, Math.round(img.height * scale));
+          const cv = document.createElement('canvas');
+          cv.width = w;
+          cv.height = h;
+          const ctx = cv.getContext('2d');
+          if (!ctx) {
+            URL.revokeObjectURL(url);
+            reject(new Error('canvas'));
+            return;
+          }
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(0, 0, w, h);
+          ctx.drawImage(img, 0, 0, w, h);
+          const out = cv.toDataURL('image/jpeg', 0.85);
+          URL.revokeObjectURL(url);
+          resolve(out);
+        } catch (e) {
+          URL.revokeObjectURL(url);
+          reject(e);
+        }
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error('decode'));
+      };
+      img.src = url;
+    });
+  };
+
+  const handleIdCardPhotoSelected = async (side: 'front' | 'back', file: File | undefined) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      showToast('⚠️ Vui lòng chọn file hình ảnh (JPG, PNG, WEBP).');
+      return;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      showToast('⚠️ File ảnh quá lớn (>20MB)! Vui lòng chụp lại.');
+      return;
+    }
+    try {
+      showToast(side === 'front' ? '⏳ Đang xử lý ảnh mặt trước CCCD...' : '⏳ Đang xử lý ảnh mặt sau CCCD...');
+      const dataUrl = await compressIdCardPhoto(file);
+      setProfForm(s => ({
+        ...s,
+        [side === 'front' ? 'id_card_front_img' : 'id_card_back_img']: dataUrl,
+      }));
+      showToast(side === 'front' ? '✓ Đã nạp ảnh mặt trước CCCD! Bấm "Lưu Hồ Sơ" để cập nhật.' : '✓ Đã nạp ảnh mặt sau CCCD! Bấm "Lưu Hồ Sơ" để cập nhật.');
+    } catch {
+      showToast('⚠️ Không thể đọc ảnh. Vui lòng thử lại!');
+    }
   };
 
   // Nén ảnh QR ngân hàng đủ nhỏ để lưu trực tiếp (server cắt 45KB như chữ ký):
@@ -7874,8 +8094,155 @@ export function App() {
                   <input type="date" value={profForm.birth_date} onChange={(e) => setProfForm((s) => ({ ...s, birth_date: e.target.value }))} placeholder="" style={{ width: '100%', padding: '9px 10px', fontSize: '13px', borderRadius: '8px', border: '1px solid var(--border)' }} />
                 </div>
                 <div>
-                  <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>CCCD</label>
+                  <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Số Căn cước công dân (CCCD)</label>
                   <input type="text" value={profForm.id_card_number} onChange={(e) => setProfForm((s) => ({ ...s, id_card_number: e.target.value }))} placeholder="VD: 079..." style={{ width: '100%', padding: '9px 10px', fontSize: '13px', borderRadius: '8px', border: '1px solid var(--border)' }} />
+                </div>
+
+                {/* Chụp hình & Tải ảnh CCCD Mặt trước & Mặt sau */}
+                <div style={{ backgroundColor: '#F8FAFC', border: '1.5px solid #E2E8F0', borderRadius: '12px', padding: '14px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px', flexWrap: 'wrap', gap: '6px' }}>
+                    <div style={{ fontWeight: 800, fontSize: '13.5px', display: 'flex', alignItems: 'center', gap: '6px', color: '#1E293B' }}>
+                      <span>🪪</span> Ảnh Chụp Căn Cước Công Dân (2 Mặt)
+                    </div>
+                    <span style={{ fontSize: '10.5px', fontWeight: 700, color: '#047857', backgroundColor: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: '999px', padding: '2px 8px' }}>
+                      ☁️ Tự động đồng bộ Google Drive
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '12px', lineHeight: 1.5 }}>
+                    Chụp rõ nét mặt trước và mặt sau CCCD để HR làm hợp đồng lao động. File sẽ được lưu vào Google Drive theo tên bạn và hiển thị ngay trên cổng Admin.
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
+                    {/* Mặt trước CCCD */}
+                    <div style={{ backgroundColor: '#FFF', borderRadius: '10px', border: '1px solid var(--border)', padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', fontWeight: 700 }}>
+                        <span style={{ color: '#0F172A' }}>Mặt trước CCCD</span>
+                        <span style={{ fontSize: '11px', fontWeight: 700, color: (profForm.id_card_front_img || myContractDocs?.id_card_front) ? '#059669' : '#D97706' }}>
+                          {(profForm.id_card_front_img || myContractDocs?.id_card_front) ? '✅ Đã có ảnh' : '⚠️ Chưa có'}
+                        </span>
+                      </div>
+
+                      <EmployeeCccdViewer
+                        previewUrl={profForm.id_card_front_img}
+                        kind="id_card_front"
+                        hasServerDoc={!!myContractDocs?.id_card_front}
+                      />
+
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '2px' }}>
+                        <label className="btn-secondary" style={{ flex: '1 1 100px', fontSize: '11.5px', padding: '7px 8px', fontWeight: 700, cursor: 'pointer', textAlign: 'center', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                          📷 Chụp ảnh
+                          <input
+                            type="file"
+                            accept="image/*"
+                            capture="environment"
+                            style={{ display: 'none' }}
+                            onChange={(e) => {
+                              handleIdCardPhotoSelected('front', e.target.files?.[0]);
+                              e.target.value = '';
+                            }}
+                          />
+                        </label>
+                        <label className="btn-secondary" style={{ flex: '1 1 100px', fontSize: '11.5px', padding: '7px 8px', fontWeight: 700, cursor: 'pointer', textAlign: 'center', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                          📁 Chọn file
+                          <input
+                            type="file"
+                            accept="image/*"
+                            style={{ display: 'none' }}
+                            onChange={(e) => {
+                              handleIdCardPhotoSelected('front', e.target.files?.[0]);
+                              e.target.value = '';
+                            }}
+                          />
+                        </label>
+                      </div>
+
+                      {profForm.id_card_front_img && (
+                        <div style={{ display: 'flex', gap: '6px', marginTop: '2px' }}>
+                          <button
+                            className="btn-primary"
+                            disabled={idCardBusy === 'front'}
+                            onClick={() => uploadSingleCccd('front')}
+                            style={{ flex: 1, fontSize: '11.5px', padding: '6px 8px', fontWeight: 800 }}
+                          >
+                            {idCardBusy === 'front' ? '⏳ Đang lưu...' : '⚡ Lưu ảnh này ngay'}
+                          </button>
+                          <button
+                            className="btn-secondary"
+                            onClick={() => setProfForm(s => ({ ...s, id_card_front_img: '' }))}
+                            style={{ fontSize: '11.5px', padding: '6px 10px', color: '#B91C1C' }}
+                            title="Hủy ảnh mới chọn"
+                          >
+                            ✖ Hủy
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Mặt sau CCCD */}
+                    <div style={{ backgroundColor: '#FFF', borderRadius: '10px', border: '1px solid var(--border)', padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', fontWeight: 700 }}>
+                        <span style={{ color: '#0F172A' }}>Mặt sau CCCD</span>
+                        <span style={{ fontSize: '11px', fontWeight: 700, color: (profForm.id_card_back_img || myContractDocs?.id_card_back) ? '#059669' : '#D97706' }}>
+                          {(profForm.id_card_back_img || myContractDocs?.id_card_back) ? '✅ Đã có ảnh' : '⚠️ Chưa có'}
+                        </span>
+                      </div>
+
+                      <EmployeeCccdViewer
+                        previewUrl={profForm.id_card_back_img}
+                        kind="id_card_back"
+                        hasServerDoc={!!myContractDocs?.id_card_back}
+                      />
+
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '2px' }}>
+                        <label className="btn-secondary" style={{ flex: '1 1 100px', fontSize: '11.5px', padding: '7px 8px', fontWeight: 700, cursor: 'pointer', textAlign: 'center', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                          📷 Chụp ảnh
+                          <input
+                            type="file"
+                            accept="image/*"
+                            capture="environment"
+                            style={{ display: 'none' }}
+                            onChange={(e) => {
+                              handleIdCardPhotoSelected('back', e.target.files?.[0]);
+                              e.target.value = '';
+                            }}
+                          />
+                        </label>
+                        <label className="btn-secondary" style={{ flex: '1 1 100px', fontSize: '11.5px', padding: '7px 8px', fontWeight: 700, cursor: 'pointer', textAlign: 'center', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                          📁 Chọn file
+                          <input
+                            type="file"
+                            accept="image/*"
+                            style={{ display: 'none' }}
+                            onChange={(e) => {
+                              handleIdCardPhotoSelected('back', e.target.files?.[0]);
+                              e.target.value = '';
+                            }}
+                          />
+                        </label>
+                      </div>
+
+                      {profForm.id_card_back_img && (
+                        <div style={{ display: 'flex', gap: '6px', marginTop: '2px' }}>
+                          <button
+                            className="btn-primary"
+                            disabled={idCardBusy === 'back'}
+                            onClick={() => uploadSingleCccd('back')}
+                            style={{ flex: 1, fontSize: '11.5px', padding: '6px 8px', fontWeight: 800 }}
+                          >
+                            {idCardBusy === 'back' ? '⏳ Đang lưu...' : '⚡ Lưu ảnh này ngay'}
+                          </button>
+                          <button
+                            className="btn-secondary"
+                            onClick={() => setProfForm(s => ({ ...s, id_card_back_img: '' }))}
+                            style={{ fontSize: '11.5px', padding: '6px 10px', color: '#B91C1C' }}
+                            title="Hủy ảnh mới chọn"
+                          >
+                            ✖ Hủy
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
                 <div>
                   <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Mã QR ngân hàng (Kế toán dùng để chuyển khoản)</label>

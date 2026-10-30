@@ -49,6 +49,8 @@ export interface EmployeeContractDocMeta {
 export interface EmployeeContractDocs {
   probation?: EmployeeContractDocMeta;
   official?: EmployeeContractDocMeta;
+  id_card_front?: EmployeeContractDocMeta;
+  id_card_back?: EmployeeContractDocMeta;
 }
 
 export interface EmployeeStageHistory {

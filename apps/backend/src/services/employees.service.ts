@@ -773,7 +773,7 @@ export class EmployeesService {
     actorId: string,
   ): Promise<{ employee: EmployeeMaster; meta: ContractDocMeta }> {
     const key = contractKeyOf(input.kind);
-    if (!key) throw new Error('INVALID_CONTRACT_KIND: Loại hợp đồng phải là PROBATION hoặc OFFICIAL.');
+    if (!key) throw new Error('INVALID_CONTRACT_KIND: Loại tài liệu phải là PROBATION, OFFICIAL, ID_CARD_FRONT hoặc ID_CARD_BACK.');
     const emp = await this.repo.getEmployeeById(employeeId);
     if (!emp) throw new Error('EMPLOYEE_NOT_FOUND');
 
@@ -791,9 +791,24 @@ export class EmployeesService {
 
     const kind = contractKindOfKey(key);
     const empCode = String((emp as any).employee_code || employeeId).replace(/[^a-zA-Z0-9_-]/g, '-');
-    const kindTag = key === 'probation' ? 'ThuViec' : 'ChinhThuc';
+    const safeEmpName = String(emp.full_name || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/đ/g, 'd')
+      .replace(/Đ/g, 'D')
+      .replace(/[^a-zA-Z0-9_-]+/g, '_')
+      .replace(/^_+|_+$/g, '') || empCode;
     const stamp = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 19).replace(/[:T]/g, '-');
-    const driveName = `HDLD_${kindTag}_${empCode}_${stamp}.${info.ext}`;
+
+    let driveName: string;
+    if (key === 'id_card_front') {
+      driveName = `CCCD_MatTruoc_${empCode}_${safeEmpName}_${stamp}.${info.ext}`;
+    } else if (key === 'id_card_back') {
+      driveName = `CCCD_MatSau_${empCode}_${safeEmpName}_${stamp}.${info.ext}`;
+    } else {
+      const kindTag = key === 'probation' ? 'ThuViec' : 'ChinhThuc';
+      driveName = `HDLD_${kindTag}_${empCode}_${safeEmpName}_${stamp}.${info.ext}`;
+    }
 
     // Luôn ghi bản đĩa VPS trước (mở được ngay cả khi Drive chưa cấu hình).
     saveContractDisk(employeeId, kind, info.ext, buffer);
@@ -815,7 +830,7 @@ export class EmployeesService {
         }
       }
     } catch (err: any) {
-      console.warn('[EmployeesService] Upload hợp đồng lên Drive thất bại (giữ bản VPS):', err?.message || err);
+      console.warn('[EmployeesService] Upload hợp đồng/CCCD lên Drive thất bại (giữ bản VPS):', err?.message || err);
     }
 
     const meta: ContractDocMeta = {
@@ -839,19 +854,27 @@ export class EmployeesService {
         const oldDriveId = docs[key]?.drive_id || '';
         docs[key] = meta;
         const updated = await this.repo.updateEmployee(employeeId, { contract_docs: docs } as any, fresh.version);
-        // Thay hợp đồng -> xóa file Drive cũ để không phình dung lượng.
+        // Thay tài liệu -> xóa file Drive cũ để không phình dung lượng.
         if (oldDriveId && oldDriveId !== driveId) {
           try { await (this.repo as any).syncService?.deleteDriveFile?.(oldDriveId); } catch { /* best-effort */ }
         }
+        const docLabel =
+          key === 'id_card_front'
+            ? 'ảnh CCCD mặt trước'
+            : key === 'id_card_back'
+              ? 'ảnh CCCD mặt sau'
+              : key === 'probation'
+                ? 'hợp đồng thử việc'
+                : 'hợp đồng chính thức';
         try {
           await this.repo.recordAuditLog({
             log_id: `LOG_${Date.now()}_${employeeId}`,
             actor_id: actorId,
-            actor_role: 'HR',
-            action: 'UPLOAD_CONTRACT',
+            actor_role: actorId === employeeId ? 'EMPLOYEE' : 'HR',
+            action: key.startsWith('id_card') ? 'UPLOAD_ID_CARD' : 'UPLOAD_CONTRACT',
             target_entity: 'NHAN_VIEN_MASTER',
             target_id: employeeId,
-            details: `Upload ${key === 'probation' ? 'hợp đồng thử việc' : 'hợp đồng chính thức'}: ${meta.file_name} (${Math.round(meta.size / 1024)}KB, ${storage})`,
+            details: `Upload ${docLabel}: ${meta.file_name} (${Math.round(meta.size / 1024)}KB, ${storage})`,
           } as any);
         } catch { /* non-fatal */ }
         return { employee: updated as EmployeeMaster, meta };
@@ -860,10 +883,10 @@ export class EmployeesService {
     return result;
   }
 
-  /** Gỡ file hợp đồng (Thử việc / Chính thức): xóa metadata + file Drive/đĩa. */
+  /** Gỡ file hợp đồng / CCCD: xóa metadata + file Drive/đĩa. */
   async removeContract(employeeId: string, kindRaw: string, actorId: string): Promise<EmployeeMaster> {
     const key = contractKeyOf(kindRaw);
-    if (!key) throw new Error('INVALID_CONTRACT_KIND: Loại hợp đồng phải là PROBATION hoặc OFFICIAL.');
+    if (!key) throw new Error('INVALID_CONTRACT_KIND: Loại tài liệu phải là PROBATION, OFFICIAL, ID_CARD_FRONT hoặc ID_CARD_BACK.');
     const { result } = await singleWriterQueue.enqueue({
       entityType: 'NHAN_VIEN_MASTER',
       entityId: employeeId,
@@ -875,24 +898,33 @@ export class EmployeesService {
         const old = docs[key];
         if (!old) return fresh as EmployeeMaster;
         delete docs[key];
+        const hasAnyDoc = Boolean(docs.probation || docs.official || docs.id_card_front || docs.id_card_back);
         const updated = await this.repo.updateEmployee(
           employeeId,
-          { contract_docs: docs.probation || docs.official ? docs : undefined } as any,
+          { contract_docs: hasAnyDoc ? docs : undefined } as any,
           fresh.version,
         );
         removeContractDisk(employeeId, contractKindOfKey(key));
         if (old.drive_id) {
           try { await (this.repo as any).syncService?.deleteDriveFile?.(old.drive_id); } catch { /* best-effort */ }
         }
+        const docLabel =
+          key === 'id_card_front'
+            ? 'ảnh CCCD mặt trước'
+            : key === 'id_card_back'
+              ? 'ảnh CCCD mặt sau'
+              : key === 'probation'
+                ? 'hợp đồng thử việc'
+                : 'hợp đồng chính thức';
         try {
           await this.repo.recordAuditLog({
             log_id: `LOG_${Date.now()}_${employeeId}`,
             actor_id: actorId,
-            actor_role: 'HR',
-            action: 'REMOVE_CONTRACT',
+            actor_role: actorId === employeeId ? 'EMPLOYEE' : 'HR',
+            action: key.startsWith('id_card') ? 'REMOVE_ID_CARD' : 'REMOVE_CONTRACT',
             target_entity: 'NHAN_VIEN_MASTER',
             target_id: employeeId,
-            details: `Gỡ ${key === 'probation' ? 'hợp đồng thử việc' : 'hợp đồng chính thức'}: ${old.file_name}`,
+            details: `Gỡ ${docLabel}: ${old.file_name}`,
           } as any);
         } catch { /* non-fatal */ }
         return updated as EmployeeMaster;
@@ -950,7 +982,7 @@ export class EmployeesService {
       return { checked: 0, synced: 0, failed: 0, skipped: 0, details: [] };
     }
     const employees = await this.repo.listEmployees().catch(() => []);
-    const keys: ContractKey[] = ['probation', 'official'];
+    const keys: ContractKey[] = ['probation', 'official', 'id_card_front', 'id_card_back'];
     let checked = 0;
     let synced = 0;
     let failed = 0;
@@ -978,7 +1010,7 @@ export class EmployeesService {
 
           let buffer: Buffer | null = disk?.buffer || null;
           let mime = meta.mime_type || 'application/octet-stream';
-          let fileName = meta.file_name || disk?.fileName || `HDLD_${k}_${empId}.pdf`;
+          let fileName = meta.file_name || disk?.fileName || `${k}_${empId}.jpg`;
 
           if (!buffer) {
             if (hasRealDriveId) {
@@ -994,10 +1026,25 @@ export class EmployeesService {
 
           try {
             const empCode = String((emp as any).employee_code || empId).replace(/[^a-zA-Z0-9_-]/g, '-');
-            const kindTag = k === 'probation' ? 'ThuViec' : 'ChinhThuc';
+            const safeEmpName = String(emp.full_name || '')
+              .normalize('NFD')
+              .replace(/[\u0300-\u036f]/g, '')
+              .replace(/đ/g, 'd')
+              .replace(/Đ/g, 'D')
+              .replace(/[^a-zA-Z0-9_-]+/g, '_')
+              .replace(/^_+|_+$/g, '') || empCode;
             const stamp = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 19).replace(/[:T]/g, '-');
-            const ext = fileName.includes('.') ? fileName.split('.').pop() : 'pdf';
-            const driveName = `HDLD_${kindTag}_${empCode}_${stamp}.${ext}`;
+            const ext = fileName.includes('.') ? fileName.split('.').pop() : (k.startsWith('id_card') ? 'jpg' : 'pdf');
+
+            let driveName: string;
+            if (k === 'id_card_front') {
+              driveName = `CCCD_MatTruoc_${empCode}_${safeEmpName}_${stamp}.${ext}`;
+            } else if (k === 'id_card_back') {
+              driveName = `CCCD_MatSau_${empCode}_${safeEmpName}_${stamp}.${ext}`;
+            } else {
+              const kindTag = k === 'probation' ? 'ThuViec' : 'ChinhThuc';
+              driveName = `HDLD_${kindTag}_${empCode}_${safeEmpName}_${stamp}.${ext}`;
+            }
 
             const up = await (sync.uploadContractToDrive
               ? sync.uploadContractToDrive(driveName, mime, buffer)
@@ -1017,19 +1064,35 @@ export class EmployeesService {
           } catch (err: any) {
             failed++;
             details.push({ employeeId: empId, employeeName: emp.full_name || empId, kind: k, error: err?.message || String(err) });
-            console.warn(`[syncContractsToDrive] Lỗi đồng bộ hợp đồng ${k} của ${emp.full_name || empId}:`, err?.message || err);
+            console.warn(`[syncContractsToDrive] Lỗi đồng bộ tài liệu ${k} của ${emp.full_name || empId}:`, err?.message || err);
           }
         } else if (disk?.buffer?.length) {
           // TH2: Có file trên đĩa VPS nhưng chưa gắn metadata
           checked++;
           try {
             const empCode = String((emp as any).employee_code || empId).replace(/[^a-zA-Z0-9_-]/g, '-');
-            const kindTag = k === 'probation' ? 'ThuViec' : 'ChinhThuc';
+            const safeEmpName = String(emp.full_name || '')
+              .normalize('NFD')
+              .replace(/[\u0300-\u036f]/g, '')
+              .replace(/đ/g, 'd')
+              .replace(/Đ/g, 'D')
+              .replace(/[^a-zA-Z0-9_-]+/g, '_')
+              .replace(/^_+|_+$/g, '') || empCode;
             const stamp = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 19).replace(/[:T]/g, '-');
-            const ext = disk.fileName.includes('.') ? disk.fileName.split('.').pop() : 'pdf';
-            const driveName = `HDLD_${kindTag}_${empCode}_${stamp}.${ext}`;
+            const ext = disk.fileName.includes('.') ? disk.fileName.split('.').pop() : (k.startsWith('id_card') ? 'jpg' : 'pdf');
+
+            let driveName: string;
+            if (k === 'id_card_front') {
+              driveName = `CCCD_MatTruoc_${empCode}_${safeEmpName}_${stamp}.${ext}`;
+            } else if (k === 'id_card_back') {
+              driveName = `CCCD_MatSau_${empCode}_${safeEmpName}_${stamp}.${ext}`;
+            } else {
+              const kindTag = k === 'probation' ? 'ThuViec' : 'ChinhThuc';
+              driveName = `HDLD_${kindTag}_${empCode}_${safeEmpName}_${stamp}.${ext}`;
+            }
+
             const info = contractFileInfo('', disk.fileName);
-            const mime = info?.mime || 'application/octet-stream';
+            const mime = info?.mime || (k.startsWith('id_card') ? 'image/jpeg' : 'application/octet-stream');
 
             const up = await (sync.uploadContractToDrive
               ? sync.uploadContractToDrive(driveName, mime, disk.buffer)

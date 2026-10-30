@@ -3414,11 +3414,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     return base.filter((s: any) => !lockedEmpIds.has(String(s.employee_id || '')));
   })();
   const schedAllEvents = mergeWithArchive(liveAttendanceEvents, archiveEvents);
-  // Hợp đồng lao động (Thử việc / Chính thức): upload file lên Drive, metadata
+  // Hợp đồng lao động & CCCD 2 mặt: upload file lên Drive, metadata
   // lưu trên hồ sơ NV. Busy theo từng loại để nút không bấm đúp.
-  const [contractBusy, setContractBusy] = useState<'' | 'probation' | 'official'>('');
+  type AdminContractKind = 'probation' | 'official' | 'id_card_front' | 'id_card_back';
+  const [contractBusy, setContractBusy] = useState<'' | AdminContractKind>('');
   const contractInputRef = useRef<HTMLInputElement | null>(null);
-  const contractKindRef = useRef<'probation' | 'official'>('probation');
+  const contractKindRef = useRef<AdminContractKind>('probation');
   // Thu nhập tạm tính realtime theo điểm danh hằng ngày (mục Lương & Thu nhập trong Hồ Sơ).
   const [profIncome, setProfIncome] = useState<any>(null);
   const [profIncomeBusy, setProfIncomeBusy] = useState(false);
@@ -14980,7 +14981,78 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const scopeTo = empEvtDays[empEvtDays.length - 1] || '';
     const fmtScopeDay = (d: string) => (d ? d.split('-').reverse().join('/') : '—');
 
-    // --- HỢP ĐỒNG LAO ĐỘNG: upload / xem / gỡ file Thử việc + Chính thức ---
+    // Thumbnail xem trước ảnh tài liệu (CCCD / HĐLĐ ảnh) trong cổng Admin
+    const AdminDocThumbnail = ({
+      empId,
+      kind,
+      fileName,
+      onClick,
+    }: {
+      empId: string;
+      kind: string;
+      fileName?: string;
+      onClick?: () => void;
+    }) => {
+      const [url, setUrl] = useState<string>('');
+      const [loading, setLoading] = useState(false);
+      const isImg = (fileName && /\.(jpe?g|png|webp|gif)$/i.test(fileName)) || kind.startsWith('id_card');
+
+      useEffect(() => {
+        let active = true;
+        let objUrl = '';
+        const load = async () => {
+          if (!isImg) return;
+          try {
+            setLoading(true);
+            const res = await fetch(`${getApiBase()}/employees/${empId}/contract/${kind}`, {
+              headers: { Authorization: `Bearer ${getAuthToken()}` },
+            });
+            if (!res.ok) return;
+            const blob = await res.blob();
+            objUrl = URL.createObjectURL(blob);
+            if (active) setUrl(objUrl);
+          } catch {
+            // non-fatal
+          } finally {
+            if (active) setLoading(false);
+          }
+        };
+        load();
+        return () => {
+          active = false;
+          if (objUrl) URL.revokeObjectURL(objUrl);
+        };
+      }, [empId, kind, isImg]);
+
+      if (!isImg) return null;
+
+      if (loading) {
+        return (
+          <div style={{ marginTop: '8px', padding: '10px', fontSize: '11px', color: 'var(--text-muted)', backgroundColor: 'var(--bg)', borderRadius: '6px', textAlign: 'center', border: '1px dashed var(--border)' }}>
+            ⏳ Đang tải ảnh xem trước...
+          </div>
+        );
+      }
+
+      if (!url) return null;
+
+      return (
+        <div style={{ marginTop: '8px', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border)', backgroundColor: '#F8FAFC', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <img
+            src={url}
+            alt={kind}
+            style={{ width: '100%', maxHeight: '180px', objectFit: 'contain', cursor: 'pointer', backgroundColor: '#FFFFFF' }}
+            onClick={onClick}
+            title="Bấm để xem ảnh kích thước gốc"
+          />
+          <div style={{ fontSize: '10.5px', color: 'var(--text-muted)', padding: '4px 8px', width: '100%', textAlign: 'center', backgroundColor: '#F1F5F9', borderTop: '1px solid var(--border)' }}>
+            🔍 Bấm vào hình để mở phóng to xem chi tiết
+          </div>
+        </div>
+      );
+    };
+
+    // --- HỢP ĐỒNG LAO ĐỘNG & CCCD: upload / xem / gỡ file CCCD 2 mặt + Thử việc + Chính thức ---
     const contractDocs: any = (() => {
       const raw = (profEmp as any)?.contract_docs;
       if (!raw) return {};
@@ -14989,27 +15061,36 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       }
       return raw;
     })();
-    const contractLabel = (kind: 'probation' | 'official') => (kind === 'probation' ? 'hợp đồng thử việc' : 'hợp đồng chính thức');
+    const contractLabel = (kind: AdminContractKind) => {
+      if (kind === 'id_card_front') return 'CCCD (Mặt trước)';
+      if (kind === 'id_card_back') return 'CCCD (Mặt sau)';
+      if (kind === 'probation') return 'hợp đồng thử việc';
+      return 'hợp đồng chính thức';
+    };
     const readFileDataUrl = (file: File): Promise<string> => new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(String(reader.result || ''));
       reader.onerror = () => reject(new Error('READ_FAILED: Không đọc được file trên máy.'));
       reader.readAsDataURL(file);
     });
-    const uploadContract = async (kind: 'probation' | 'official', file: File) => {
+    const uploadContract = async (kind: AdminContractKind, file: File) => {
       if (!profEmp) return;
-      if (file.size > 6 * 1024 * 1024) {
-        showToast('⚠️ File hợp đồng tối đa 6MB! Nén hoặc chụp lại giúp HR.');
+      if (file.size > 8 * 1024 * 1024) {
+        showToast('⚠️ File tài liệu tối đa 8MB! Nén hoặc chụp lại giúp HR.');
         return;
       }
       setContractBusy(kind);
       try {
         const dataUrl = await readFileDataUrl(file);
         const base64 = dataUrl.includes(',') ? dataUrl.slice(dataUrl.indexOf(',') + 1) : dataUrl;
+        const kindTag =
+          kind === 'id_card_front' ? 'ID_CARD_FRONT' :
+          kind === 'id_card_back' ? 'ID_CARD_BACK' :
+          kind === 'probation' ? 'PROBATION' : 'OFFICIAL';
         await apiRequest(`/employees/${profEmp.employee_id}/contract`, {
           method: 'POST',
           body: JSON.stringify({
-            kind: kind === 'probation' ? 'PROBATION' : 'OFFICIAL',
+            kind: kindTag,
             fileName: file.name,
             mimeType: file.type || '',
             base64,
@@ -15019,28 +15100,28 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         if (onRefreshData) await onRefreshData();
         if (onPushSheets) await onPushSheets();
       } catch (e: any) {
-        showToast(e?.message || 'Upload hợp đồng thất bại!');
+        showToast(e?.message || 'Upload tài liệu thất bại!');
       } finally {
         setContractBusy('');
       }
     };
-    const openContract = async (kind: 'probation' | 'official') => {
+    const openContract = async (kind: AdminContractKind) => {
       if (!profEmp) return;
       try {
         const res = await fetch(`${getApiBase()}/employees/${profEmp.employee_id}/contract/${kind}`, {
           headers: { Authorization: `Bearer ${getAuthToken()}` },
         });
-        if (!res.ok) throw new Error(res.status === 404 ? 'Hợp đồng chưa được upload.' : 'Không tải được hợp đồng.');
+        if (!res.ok) throw new Error(res.status === 404 ? 'Tài liệu chưa được upload.' : 'Không tải được tài liệu.');
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
         const w = window.open(url, '_blank');
-        if (!w) showToast('Trình duyệt chặn cửa sổ xem hợp đồng! Hãy cho phép popup rồi thử lại.');
+        if (!w) showToast('Trình duyệt chặn cửa sổ xem tài liệu! Hãy cho phép popup rồi thử lại.');
         setTimeout(() => URL.revokeObjectURL(url), 120000);
       } catch (e: any) {
-        showToast(e?.message || 'Không mở được hợp đồng!');
+        showToast(e?.message || 'Không mở được tài liệu!');
       }
     };
-    const removeContract = async (kind: 'probation' | 'official') => {
+    const removeContract = async (kind: AdminContractKind) => {
       if (!profEmp) return;
       if (!window.confirm(`Gỡ ${contractLabel(kind)} của ${profEmp.full_name}? File trên Drive/đĩa VPS cũng sẽ bị xóa.`)) return;
       setContractBusy(kind);
@@ -15050,7 +15131,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         if (onRefreshData) await onRefreshData();
         if (onPushSheets) await onPushSheets();
       } catch (e: any) {
-        showToast(e?.message || 'Gỡ hợp đồng thất bại!');
+        showToast(e?.message || 'Gỡ tài liệu thất bại!');
       } finally {
         setContractBusy('');
       }
@@ -15144,8 +15225,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         + row('Đi trễ', `${lateCount} lượt (tổng ${lateMins} phút)`)
         + row('Về sớm', `${earlyCount} lượt`)
         + `</table>`
-        + sec('4. Hợp đồng lao động')
+        + sec('4. Hợp đồng lao động & CCCD')
         + `<table style="border-collapse:collapse;width:100%;font-size:13px;">`
+        + row('CCCD (Mặt trước)', contractDocs?.id_card_front?.file_name || 'Chưa chụp')
+        + row('CCCD (Mặt sau)', contractDocs?.id_card_back?.file_name || 'Chưa chụp')
         + row('HĐLĐ chính thức', profEmp.employment_status === 'OFFICIAL' ? 'Đã ký' : 'Chưa đến kỳ ký (đang thử việc)')
         + row('Hiệu lực', profEmp.official_date ? `Từ ${profEmp.official_date}` : `Vào làm từ ${profEmp.start_date || '—'}`)
         + row('File hợp đồng thử việc', contractDocs?.probation?.file_name || 'Chưa upload')
@@ -15407,7 +15490,19 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 if (!Number.isFinite(t)) return '';
                 return new Date(t + 7 * 3_600_000).toLocaleString('vi-VN', { hour12: false }).slice(0, 16);
               };
-              const blocks: { kind: 'probation' | 'official'; title: string; icon: string; hint: string }[] = [
+              const blocks: { kind: AdminContractKind; title: string; icon: string; hint: string }[] = [
+                {
+                  kind: 'id_card_front',
+                  title: 'Căn cước công dân (Mặt trước)',
+                  icon: '🪪',
+                  hint: profEmp.id_card_number ? `Số CCCD: ${profEmp.id_card_number}` : 'Ảnh chụp CCCD mặt trước',
+                },
+                {
+                  kind: 'id_card_back',
+                  title: 'Căn cước công dân (Mặt sau)',
+                  icon: '🪪',
+                  hint: 'Ảnh chụp CCCD mặt sau (chip điện tử / nơi cấp)',
+                },
                 {
                   kind: 'probation',
                   title: 'Hợp đồng thử việc',
@@ -15426,21 +15521,21 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               return (
                 <div style={card}>
                   <div style={{ fontWeight: 800, fontSize: '14px', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                    <ShieldCheck size={16} color="var(--brand)" /> Hợp đồng lao động
+                    <ShieldCheck size={16} color="var(--brand)" /> Hợp đồng lao động & Căn cước công dân (CCCD)
                     <span style={{ fontSize: '11px', fontWeight: 700, color: '#065F46', backgroundColor: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: '999px', padding: '2px 8px' }}>
-                      {[contractDocs?.probation, contractDocs?.official].filter(Boolean).length}/2 file
+                      {[contractDocs?.id_card_front, contractDocs?.id_card_back, contractDocs?.probation, contractDocs?.official].filter(Boolean).length}/4 tài liệu
                     </span>
                     <button
                       className="btn-secondary"
                       style={{ fontSize: '11px', padding: '3px 8px', marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '4px' }}
                       onClick={async () => {
                         try {
-                          showToast('⏳ Đang kiểm tra và đồng bộ hợp đồng lên Google Drive...');
+                          showToast('⏳ Đang kiểm tra và đồng bộ tài liệu lên Google Drive...');
                           const r = await apiRequest('/employees/contracts/sync-drive', { method: 'POST' });
                           showToast(`✓ Đã đồng bộ Google Drive: ${r?.synced ?? 0} file mới.`);
                           if (onRefreshData) await onRefreshData();
                         } catch (err: any) {
-                          showToast(err?.message || 'Đồng bộ hợp đồng thất bại!');
+                          showToast(err?.message || 'Đồng bộ tài liệu thất bại!');
                         }
                       }}
                     >
@@ -15448,10 +15543,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     </button>
                   </div>
                   <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '12px' }}>
-                    Upload file scan/PDF đã ký — hệ thống tự động đồng bộ vào thư mục HOP_DONG_LAO_DONG trên Google Drive + lưu đĩa máy chủ dự phòng.
+                    Ảnh 2 mặt CCCD và Hợp đồng lao động — tự động lưu vào Google Drive theo tên từng nhân viên và lưu bản dự phòng trên máy chủ VPS.
                   </div>
 
-                  {/* Input file ẩn dùng chung cho cả 2 loại hợp đồng */}
+                  {/* Input file ẩn dùng chung cho các loại tài liệu */}
                   <input
                     ref={contractInputRef}
                     type="file"
@@ -15484,7 +15579,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                               <div style={{ fontWeight: 800, fontSize: '13px' }}>
                                 {b.title}
                                 <span style={{ marginLeft: '6px', fontSize: '11px', fontWeight: 700, color: doc ? '#059669' : '#D97706' }}>
-                                  {doc ? 'Đã upload' : 'Chưa upload'}
+                                  {doc ? 'Đã có' : 'Chưa có'}
                                 </span>
                               </div>
                               <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{b.hint}</div>
@@ -15522,8 +15617,19 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                               )}
                             </div>
                           </div>
+
+                          {/* Hiển thị hình ảnh xem trước sắc nét cho ảnh CCCD / HĐLĐ */}
                           {doc && (
-                            <div style={{ marginTop: '8px', fontSize: '11px', color: 'var(--text-muted)', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                            <AdminDocThumbnail
+                              empId={profEmp.employee_id}
+                              kind={b.kind}
+                              fileName={doc.file_name}
+                              onClick={() => void openContract(b.kind)}
+                            />
+                          )}
+
+                          {doc && (
+                            <div style={{ marginTop: '8px', fontSize: '11px', color: 'var(--text-muted)', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
                               <span title={doc.file_name} style={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                 📎 {doc.file_name}
                               </span>
@@ -15538,7 +15644,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   </div>
 
                   <div style={{ marginTop: '10px', fontSize: '11px', color: 'var(--text-muted)' }}>
-                    Định dạng: PDF, JPG, PNG, WEBP, DOC, DOCX • tối đa 6MB/file. Upload file mới cùng loại sẽ thay bản cũ.
+                    Định dạng: PDF, JPG, PNG, WEBP, DOC, DOCX • File được lưu vào Google Drive theo tên từng nhân viên và đồng bộ realtime.
                   </div>
                 </div>
               );

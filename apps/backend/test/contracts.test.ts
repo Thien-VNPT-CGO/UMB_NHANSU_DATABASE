@@ -10,18 +10,26 @@ import {
   parseContractDocs,
 } from '../src/utils/contracts.js';
 
-test('contractKeyOf nhận cả PROBATION/OFFICIAL và tiếng Việt, chặn loại lạ', () => {
+test('contractKeyOf nhận cả PROBATION/OFFICIAL, ID_CARD_FRONT/BACK và tiếng Việt, chặn loại lạ', () => {
   assert.equal(contractKeyOf('PROBATION'), 'probation');
   assert.equal(contractKeyOf('probation'), 'probation');
   assert.equal(contractKeyOf('THU_VIEC'), 'probation');
   assert.equal(contractKeyOf('OFFICIAL'), 'official');
   assert.equal(contractKeyOf('CHINH_THUC'), 'official');
   assert.equal(contractKeyOf('THỬ VIỆC'), 'probation');
+  assert.equal(contractKeyOf('ID_CARD_FRONT'), 'id_card_front');
+  assert.equal(contractKeyOf('CCCD_TRUOC'), 'id_card_front');
+  assert.equal(contractKeyOf('MAT_TRUOC'), 'id_card_front');
+  assert.equal(contractKeyOf('ID_CARD_BACK'), 'id_card_back');
+  assert.equal(contractKeyOf('CCCD_SAU'), 'id_card_back');
+  assert.equal(contractKeyOf('MAT_SAU'), 'id_card_back');
   assert.equal(contractKeyOf('hop-dong-khac'), null);
   assert.equal(contractKeyOf(''), null);
   assert.equal(contractKeyOf(null), null);
   assert.equal(contractKindOfKey('probation'), 'PROBATION');
   assert.equal(contractKindOfKey('official'), 'OFFICIAL');
+  assert.equal(contractKindOfKey('id_card_front'), 'ID_CARD_FRONT');
+  assert.equal(contractKindOfKey('id_card_back'), 'ID_CARD_BACK');
 });
 
 test('parseContractDocs đọc object, chuỗi JSON và dữ liệu hỏng an toàn', () => {

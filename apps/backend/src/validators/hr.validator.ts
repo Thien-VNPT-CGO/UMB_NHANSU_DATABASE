@@ -110,6 +110,18 @@ export const employeeSelfUpdateBody = z.object({
   /** Ảnh mã QR ngân hàng NV tự tải lên (đồng bộ realtime qua Finance). */
   bankQrImg: photoField,
   bank_qr_img: photoField,
+  /** Ảnh chụp CCCD mặt trước & mặt sau */
+  id_card_front_img: photoField,
+  idCardFrontImg: photoField,
+  id_card_back_img: photoField,
+  idCardBackImg: photoField,
+});
+
+export const idCardPhotoBody = z.object({
+  kind: z.string().min(1).max(30),
+  base64: z.string().min(16).max(9_000_000),
+  fileName: looseOptString(240),
+  mimeType: looseOptString(120),
 });
 
 // --- Recruitment ---

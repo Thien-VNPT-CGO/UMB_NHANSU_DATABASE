@@ -44,6 +44,7 @@ import { TestsService } from './services/tests.service.js';
 import { AttendanceService } from './services/attendance.service.js';
 import { ShiftReRegService } from './services/shift-rereg.service.js';
 import { readAttendancePhotoDisk, readAdjustmentPhotoDisk, hasAdjustmentPhotoDisk } from './services/photo-disk.store.js';
+import { contractKeyOf } from './utils/contracts.js';
 import { PayrollService } from './services/payroll.service.js';
 import { NotificationsService } from './services/notifications.service.js';
 import { autoRemindersTick, sendCheckinReminderForShift } from './services/auto-reminders.service.js';
@@ -94,6 +95,7 @@ import {
   employeeContractBody,
   employeeUpdateBody,
   employeeSelfUpdateBody,
+  idCardPhotoBody,
   candidateRejectBody,
   candidateScoreBody,
   candidateUpdateBody,
@@ -881,10 +883,48 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         }
       }
 
+      // Cập nhật ảnh CCCD mặt trước / mặt sau (nếu NV tải lên)
+      if (b.id_card_front_img || b.idCardFrontImg) {
+        const frontBase64 = String(b.id_card_front_img || b.idCardFrontImg);
+        try {
+          await employeesService.saveContract(
+            employeeId,
+            {
+              kind: 'ID_CARD_FRONT',
+              fileName: 'cccd_mat_truoc.jpg',
+              mimeType: 'image/jpeg',
+              base64: frontBase64,
+            },
+            req.user.id,
+          );
+        } catch (err: any) {
+          console.warn('[ProfileUpdate] Không lưu được ảnh CCCD mặt trước:', err?.message || err);
+        }
+      }
+      if (b.id_card_back_img || b.idCardBackImg) {
+        const backBase64 = String(b.id_card_back_img || b.idCardBackImg);
+        try {
+          await employeesService.saveContract(
+            employeeId,
+            {
+              kind: 'ID_CARD_BACK',
+              fileName: 'cccd_mat_sau.jpg',
+              mimeType: 'image/jpeg',
+              base64: backBase64,
+            },
+            req.user.id,
+          );
+        } catch (err: any) {
+          console.warn('[ProfileUpdate] Không lưu được ảnh CCCD mặt sau:', err?.message || err);
+        }
+      }
+
       // Nếu NV chỉ sửa trường khác (email/CCCD...) trong lúc đang có yêu cầu chờ,
       // vẫn trả yêu cầu đó về để banner "đang chờ duyệt" không biến mất.
       if (!pendingRequest && existingPending) pendingRequest = existingPending;
-      const result: any = await employeesService.updateEmployee(employeeId, direct, req.user.id);
+      let result: any = await employeesService.updateEmployee(employeeId, direct, req.user.id);
+      const freshEmp = await employeesService.getEmployee(employeeId);
+      if (freshEmp) result = freshEmp;
       broadcastUpdate('employees', { action: 'self-update', employeeId, employee: result });
       if (bankPending) broadcastUpdate('bank-changes', { action: 'pending', employeeId });
       const { avatar_photo: _drop, ...rest } = result || {};
@@ -897,6 +937,56 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
+    }
+  });
+
+  // NV tải ảnh CCCD (mặt trước / mặt sau): lưu đĩa VPS + đồng bộ Google Drive theo tên NV
+  app.post(
+    '/me/id-card-photo',
+    authMiddleware,
+    requireRole(['EMPLOYEE']),
+    validate({ body: idCardPhotoBody }),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const employeeId = req.user?.employeeId;
+        if (!employeeId) return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
+        const { kind, base64, fileName, mimeType } = req.body || {};
+        const key = contractKeyOf(kind);
+        if (key !== 'id_card_front' && key !== 'id_card_back') {
+          return res.status(400).json({ error: 'INVALID_KIND: Loại ảnh CCCD phải là ID_CARD_FRONT hoặc ID_CARD_BACK' });
+        }
+        const defaultName = key === 'id_card_front' ? 'cccd_mat_truoc.jpg' : 'cccd_mat_sau.jpg';
+        const r = await employeesService.saveContract(
+          employeeId,
+          {
+            kind,
+            fileName: String(fileName || defaultName),
+            mimeType: String(mimeType || 'image/jpeg'),
+            base64: String(base64),
+          },
+          req.user!.id,
+        );
+        broadcastUpdate('employees', { action: 'update', employee: r.employee });
+        res.json({ success: true, contract: r.meta, employee: r.employee });
+      } catch (err: any) {
+        res.status(400).json({ error: err.message || 'UPLOAD_FAILED' });
+      }
+    },
+  );
+
+  // NV xem/tải ảnh CCCD hoặc HĐLĐ của chính mình
+  app.get('/me/contract/:kind', authMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const employeeId = req.user?.employeeId;
+      if (!employeeId) return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
+      const file = await employeesService.getContractFile(employeeId, req.params.kind);
+      if (!file) return res.status(404).json({ error: 'CONTRACT_NOT_UPLOADED' });
+      res.setHeader('Content-Type', file.mimeType || 'application/octet-stream');
+      res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(file.fileName || 'tai-lieu')}`);
+      res.setHeader('Cache-Control', 'private, max-age=300');
+      res.send(file.buffer);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'DOWNLOAD_FAILED' });
     }
   });
 
@@ -1868,22 +1958,27 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     },
   );
 
-  // Xem/tải hợp đồng: stream từ Drive, rớt xuống bản đĩa VPS (giống avatar).
+  // Xem/tải hợp đồng hoặc CCCD: stream từ Drive, rớt xuống bản đĩa VPS.
   app.get(
     '/employees/:id/contract/:kind',
     authMiddleware,
-    requireRole(['ADMIN', 'HR', 'STORE']),
     async (req: AuthenticatedRequest, res) => {
       try {
+        const isSelf = req.user?.role === 'EMPLOYEE' && req.user.employeeId === req.params.id;
+        const isAdminHr = ['ADMIN', 'HR'].includes(req.user?.role || '');
+        const isStore = req.user?.role === 'STORE';
+        if (!isSelf && !isAdminHr && !isStore) {
+          return res.status(403).json({ error: 'FORBIDDEN' });
+        }
         const emp: any = await employeesService.getEmployee(req.params.id).catch(() => null);
         if (!emp) return res.status(404).json({ error: 'EMPLOYEE_NOT_FOUND' });
-        if (req.user?.role === 'STORE' && req.user.branchScope !== '*' && emp.default_branch_id && emp.default_branch_id !== req.user.branchScope) {
+        if (isStore && req.user?.branchScope !== '*' && emp.default_branch_id && emp.default_branch_id !== req.user?.branchScope) {
           return res.status(403).json({ error: 'BRANCH_SCOPE_FORBIDDEN' });
         }
         const file = await employeesService.getContractFile(req.params.id, req.params.kind);
         if (!file) return res.status(404).json({ error: 'CONTRACT_NOT_UPLOADED' });
         res.setHeader('Content-Type', file.mimeType || 'application/octet-stream');
-        res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(file.fileName || 'hop-dong')}`);
+        res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(file.fileName || 'tai-lieu')}`);
         res.setHeader('Cache-Control', 'private, max-age=300');
         res.send(file.buffer);
       } catch (err: any) {
