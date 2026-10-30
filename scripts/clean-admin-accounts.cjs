@@ -12,9 +12,9 @@ const sheets = google.sheets({ version: 'v4', auth });
 const spreadsheetId = '1UO1UF1d7_YzaCltYt2m9pRnUauGWw873ERqAMxwL-6k';
 
 async function main() {
-  const adminHash = bcrypt.hashSync('Nguyenthanhthien@9999', 10);
-  const hrHash = bcrypt.hashSync('Umbomilk@2027', 10);
-  const finHash = bcrypt.hashSync('Umbomilk@2027', 10);
+  const adminHash = bcrypt.hashSync('Master@@2027', 12);
+  const hrHash = bcrypt.hashSync('Umbomilk@2027', 12);
+  const finHash = bcrypt.hashSync('Umbomilk@2027', 12);
 
   const cleanRows = [
     [
@@ -49,6 +49,12 @@ async function main() {
     ]
   ];
 
+  console.log('Clearing old rows...');
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId,
+    range: 'ADMIN_ACCOUNTS!A2:H50'
+  });
+
   console.log('Writing clean accounts...');
   await sheets.spreadsheets.values.update({
     spreadsheetId,
@@ -59,7 +65,7 @@ async function main() {
 
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: 'ADMIN_ACCOUNTS!A1:H4'
+    range: 'ADMIN_ACCOUNTS!A1:H10'
   });
   console.log('Updated rows:', res.data.values);
 }

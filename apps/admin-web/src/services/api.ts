@@ -134,9 +134,10 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
       return apiRequest<T>(endpoint, options, retries - 1);
     }
 
-    // 401 hết hạn token -> thử gia hạn 1 lần rồi gọi lại (trừ chính API refresh).
+    // 401 hết hạn token -> thử gia hạn 1 lần rồi gọi lại (trừ API login và chính API refresh).
+    const isLoginEndpoint = endpoint.startsWith('/auth/admin/login') || endpoint.startsWith('/auth/login') || endpoint.startsWith('/auth/employee/login');
     let refreshWhy: string | null = null;
-    if (res.status === 401 && !alreadyRefreshed && endpoint !== '/auth/refresh' && retries > 0) {
+    if (res.status === 401 && !alreadyRefreshed && !isLoginEndpoint && endpoint !== '/auth/refresh' && retries > 0) {
       const r = await tryRefreshSession();
       if (r === 'ok') {
         return apiRequest<T>(endpoint, { ...options, _refreshed: true } as any, retries - 1);
@@ -159,7 +160,7 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
     }
 
     if (!res.ok) {
-      if (res.status === 401) {
+      if (res.status === 401 && !isLoginEndpoint) {
         clearSession();
         const msg = refreshWhy === 'revoked'
           ? 'Tài khoản có thay đổi (đổi mật khẩu, phân quyền hoặc bị khóa), vui lòng đăng nhập lại!'
