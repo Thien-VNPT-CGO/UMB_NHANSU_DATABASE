@@ -2780,12 +2780,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         if (loading) return;
         loading = true;
         try {
-          await reloadAttEvents();
-          if (typeof onRefreshData === 'function') await onRefreshData();
+          await reloadAttEvents({ quick: true });
         } catch { /* lần sau */ } finally {
           loading = false;
         }
-      }, 300);
+      }, 50);
     };
     window.addEventListener('ubm:schedule-reload', handler);
     return () => {
@@ -3563,12 +3562,31 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   useEffect(() => {
     // Realtime điểm danh 100%: App.tsx phát 'ubm:attendance-reload' khi socket báo
     // CHECKIN/CHECKOUT | data:updated(attendance/all) | attendance.recorded.
-    // Tải lại /attendance/events ngay (debounce) để lịch tuần hiện check-in/out
-    // tức thì, không đợi đổi tab hay poll 30-60s.
+    // Nạp sự kiện điểm danh trực tiếp vào liveAttendanceEvents (0ms) để hiển thị NGAY LẬP TỨC!
     let timer: any = null;
-    const handler = () => {
+    const handler = (e: any) => {
+      const incomingEvent = e?.detail?.event;
+      const action = e?.detail?.action;
+      if (incomingEvent && incomingEvent.event_id) {
+        // CẬP NHẬT TỨC THÌ TRONG 0ms!
+        setLiveAttendanceEvents(prev => {
+          const list = Array.isArray(prev) ? prev : [];
+          const idx = list.findIndex((x: any) => String(x.event_id) === String(incomingEvent.event_id));
+          if (idx >= 0) {
+            const next = [...list];
+            next[idx] = { ...next[idx], ...incomingEvent };
+            return next;
+          }
+          return [incomingEvent, ...list];
+        });
+        setAttEventsSynced(true);
+        setAttEventsLoaded(true);
+      } else if (action === 'event-deleted' && e?.detail?.eventId) {
+        setLiveAttendanceEvents(prev => (prev || []).filter((x: any) => String(x.event_id) !== String(e.detail.eventId)));
+      }
+      // Tải lại nền để đồng bộ hoàn toàn với server
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => { reloadAttEvents({ quick: true }); }, 400);
+      timer = setTimeout(() => { reloadAttEvents({ quick: true }); }, incomingEvent ? 1200 : 50);
     };
     window.addEventListener('ubm:attendance-reload', handler);
     return () => {

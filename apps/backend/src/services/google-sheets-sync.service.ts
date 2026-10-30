@@ -1803,6 +1803,12 @@ export class GoogleSheetsSyncService {
         try {
           const titles = await this.listSpreadsheetTabs();
           for (const base of GoogleSheetsSyncService.PARTITION_TABS) {
+            // QUAN TRỌNG: Chỉ đọc part của các tab thuộc chu kỳ pull realtime (baseTabs).
+            // Các tab thuộc HISTORY_TABS (THONGBAO_GUI, THONGBAO_NV, SNAPSHOT_SAOLUU)
+            // hoặc LUUTRU_CHAMCONG_TUAN, AUDIT_LOG được đọc riêng theo nhịp lịch sử
+            // hoặc khi cần — tuyệt đối KHÔNG đưa vào tabsToRead của batch realtime,
+            // tránh nuốt cả chục nghìn dòng mỗi vòng làm nghẽn 26.5s!
+            if (!baseTabs.includes(base)) continue;
             for (let n = 2; n < 200; n++) {
               const t = `${base}_P${n}`;
               if (titles.includes(t)) partTitles.push(t);

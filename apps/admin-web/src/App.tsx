@@ -1233,9 +1233,11 @@ export function App() {
       // scheduleReload thì lịch vẫn đứng yên cho tới khi đổi tab/F5.
       // Realtime báo cáo HR: mọi biến động nghiệp vụ đều đổi số liệu tổng hợp
       // tháng (công/giờ/lương) nên báo cho tab hr-reports tải lại ngay.
-      const notifyAttendanceRealtime = () => {
+      const notifyAttendanceRealtime = (incomingEvent?: any, action?: string) => {
         try {
-          window.dispatchEvent(new CustomEvent('ubm:attendance-reload'));
+          window.dispatchEvent(new CustomEvent('ubm:attendance-reload', {
+            detail: { event: incomingEvent, action }
+          }));
         } catch { /* non-fatal */ }
       };
       const notifyReportsRealtime = () => {
@@ -1261,7 +1263,7 @@ export function App() {
           });
         }
         if (notif?.type === 'CHECKIN' || notif?.type === 'CHECKOUT') {
-          notifyAttendanceRealtime();
+          notifyAttendanceRealtime(notif?.metadata?.event, notif?.type?.toLowerCase());
         }
         if (notif?.type === 'SWAP') {
           try {
@@ -1270,7 +1272,9 @@ export function App() {
         }
         notifyReportsRealtime();
         notifyFinTimesheetRealtime();
-        scheduleReload(currentUser);
+        if (notif?.type !== 'CHECKIN' && notif?.type !== 'CHECKOUT') {
+          scheduleReload(currentUser);
+        }
       });
 
       // Lắng nghe sự kiện dữ liệu thay đổi trên toàn hệ thống.
@@ -1294,7 +1298,30 @@ export function App() {
             } catch { /* non-fatal */ }
           }
           if (payload?.entity === 'attendance' || payload?.entity === 'all') {
-            notifyAttendanceRealtime();
+            notifyAttendanceRealtime(payload?.data?.event, payload?.data?.action);
+          }
+          if (payload?.entity === 'schedules') {
+            const d = payload?.data;
+            if (d?.action === 'create-shift' && d?.shift) {
+              setShifts(prev => {
+                const arr = Array.isArray(prev) ? prev : [];
+                if (arr.some((s: any) => s.assignment_id === d.shift.assignment_id)) return arr;
+                return [...arr, d.shift];
+              });
+            } else if (d?.action === 'update-shift' && d?.shift) {
+              setShifts(prev => {
+                const arr = Array.isArray(prev) ? prev : [];
+                return arr.map((s: any) => s.assignment_id === d.shift.assignment_id ? { ...s, ...d.shift } : s);
+              });
+            } else if (d?.action === 'delete-shift' && (d?.assignmentId || d?.id)) {
+              const delId = d.assignmentId || d.id;
+              setShifts(prev => {
+                const arr = Array.isArray(prev) ? prev : [];
+                return arr.filter((s: any) => s.assignment_id !== delId);
+              });
+            }
+            // Tải lại /schedules riêng (1 API nhẹ < 100ms) tức thì thay vì gọi full loadAllData 10 API
+            apiRequest('/schedules').then(sList => { if (Array.isArray(sList)) setShifts(sList); }).catch(() => null);
           }
           if (payload?.entity === 'swaps' || payload?.entity === 'schedules' || payload?.entity === 'all') {
             try {
@@ -1305,8 +1332,11 @@ export function App() {
           // sau mọi nút xếp/publish/đổi ca/duyệt OFF — báo cho tab Lịch tải lại
           // ca + điểm danh ngay, không chờ vòng tải chung.
           if (payload?.entity === 'schedules' || payload?.entity === 'swaps' || payload?.entity === 'leaves' || payload?.entity === 'attendance' || payload?.entity === 'all') {
+            if (payload?.entity === 'all' && Array.isArray(payload?.data?.changedTabs) && payload.data.changedTabs.some((t: string) => /^PHAN_CONG_CA(_P\d+)?$/i.test(t))) {
+              apiRequest('/schedules').then(sList => { if (Array.isArray(sList)) setShifts(sList); }).catch(() => null);
+            }
             try {
-              window.dispatchEvent(new CustomEvent('ubm:schedule-reload'));
+              window.dispatchEvent(new CustomEvent('ubm:schedule-reload', { detail: payload?.data }));
             } catch { /* non-fatal */ }
           }
           if (payload?.entity === 'adjustments' || payload?.entity === 'all') {
@@ -1359,7 +1389,11 @@ export function App() {
           if (['attendance', 'schedules', 'swaps', 'leaves', 'adjustments', 'payroll', 'payslips', 'employees', 'me', 'notifications', 'all'].includes(payload?.entity)) {
             notifyFinTimesheetRealtime();
           }
-          scheduleReload(currentUser);
+          // Bỏ qua loadAllData (10 API) khi sự kiện chỉ là điểm danh hoặc xếp ca
+          // vì cả 2 đã được cập nhật trực tiếp tức thì phía trên
+          if (!['attendance', 'schedules'].includes(payload?.entity)) {
+            scheduleReload(currentUser);
+          }
         }
       });
 

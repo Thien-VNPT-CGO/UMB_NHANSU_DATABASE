@@ -2670,6 +2670,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           ...req.body,
           actorId: req.user!.id,
         });
+        broadcastUpdate('schedules', { action: 'create-shift', assignmentId: (result as any)?.assignment_id, shift: result });
         res.json(result);
       } catch (err: any) {
         res.status(400).json({ error: err.message });
@@ -2741,7 +2742,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           return res.status(403).json({ error: 'STORE_FORCE_FORBIDDEN: Store không được xóa ca hoàn thành! Báo Admin/HR xử lý.' });
         }
         const result = await schedulesService.deleteShift(req.params.id, req.user!.id, req.user?.branchScope, force);
-        broadcastUpdate('schedules', { action: 'delete-shift', id: req.params.id });
+        broadcastUpdate('schedules', { action: 'delete-shift', id: req.params.id, assignmentId: req.params.id });
         res.json(result);
       } catch (err: any) {
         res.status(400).json({ error: err.message });
@@ -2769,7 +2770,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           req.user!.id,
           req.user?.branchScope
         );
-        broadcastUpdate('schedules', { action: 'update-shift', id: req.params.id });
+        broadcastUpdate('schedules', { action: 'update-shift', id: req.params.id, assignmentId: req.params.id, shift: result });
         res.json(result);
       } catch (err: any) {
         res.status(400).json({ error: err.message });

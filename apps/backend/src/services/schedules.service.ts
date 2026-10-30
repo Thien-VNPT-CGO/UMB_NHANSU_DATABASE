@@ -314,7 +314,7 @@ export class SchedulesService {
         if (this.io) {
           this.io.emit('data:updated', {
             entity: 'schedules',
-            data: { action: 'update-shift', assignmentId },
+            data: { action: 'update-shift', assignmentId, shift: updated },
             timestamp: new Date().toISOString(),
           });
           if (newEmp !== String(sh.employee_id || '')) {
@@ -636,7 +636,7 @@ export class SchedulesService {
         if (this.io) {
           this.io.emit('data:updated', {
             entity: 'schedules',
-            data: { action: 'create-shift', assignmentId },
+            data: { action: 'create-shift', assignmentId, shift: finalShift },
             timestamp: new Date().toISOString(),
           });
           if (offNotes.length > 0) {
