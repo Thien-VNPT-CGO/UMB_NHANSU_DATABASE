@@ -56,3 +56,10 @@ apps/backend/data/
 apps/admin-web/src/app-version.ts
 apps/employee-web/src/app-version.ts
 apps/backend/src/app-version.ts
+
+# User test uploads & local agent files
+DONG_PHUC.jpg
+*.xlsx
+.agents/
+skills-lock.json
+

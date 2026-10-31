@@ -1076,7 +1076,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [scheduleAttFilter, setScheduleAttFilter] = useState('ALL');
   const [scheduleSearch, setScheduleSearch] = useState('');
   const [selectedRealtimeModal, setSelectedRealtimeModal] = useState<any>(null);
-  const [attPhotoZoom, setAttPhotoZoom] = useState<{ eventId?: string; url?: string; label: string } | null>(null);
+  const [attPhotoZoom, setAttPhotoZoom] = useState<{ eventId?: string; url?: string; label: string; driveId?: string } | null>(null);
 
   // Filters xem lịch OFF 2 ngày/tuần (HR/Admin + Store)
   const [weeklyOffBranchFilter, setWeeklyOffBranchFilter] = useState('ALL');
@@ -3358,6 +3358,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
   // Live Attendance Events State for HR Realtime Tab 11
   const [liveAttendanceEvents, setLiveAttendanceEvents] = useState<any[]>([]);
+  const liveAttendanceEventsRef = useRef<any[]>([]);
+  useEffect(() => {
+    liveAttendanceEventsRef.current = liveAttendanceEvents;
+  }, [liveAttendanceEvents]);
   // Lần đầu vào tab Lịch: chưa có sự kiện chấm công → nếu render ngay, mọi ca
   // hiện xám "Lịch đã duyệt"/"chưa điểm danh" rồi mới chuyển xanh sau ~1-2s.
   // Chờ /attendance/events xong (thành công hay lỗi) mới vẽ lưới để hết nhấp nháy.
@@ -3444,20 +3448,30 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     loadProfIncome(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, profileEmpId, liveAttendanceEvents, (schedAllShifts || []).length]);
-  // Lưới tuần cần sự kiện cả tuần -> luôn tải không lọc ngày, tự refresh 30s
-  const reloadAttEvents = async (opts: { quick?: boolean } = {}) => {
+  // Lưới tuần cần sự kiện cả tuần -> luôn tải không lọc ngày, giữ dữ liệu realtime 100%
+  const reloadAttEvents = async (opts: { quick?: boolean; silent?: boolean } = {}) => {
     try {
-      // quick: dùng cho tab Lịch. Giới hạn 15s + tắt vòng "đánh thức backend" của
-      // apiRequest (mỗi vòng chờ thêm ~40s) để lưới không bị treo khi Sheets chậm.
-      const reqOpts = opts.quick ? ({ _timeoutMs: 15000, _wakeRounds: 2 } as any) : undefined;
+      // quick: dùng cho tab Lịch. Giới hạn 12s, tắt vòng đánh thức backend dài
+      const reqOpts = opts.quick ? ({ _timeoutMs: 12000, _wakeRounds: 0 } as any) : undefined;
       const data = await apiRequest('/attendance/events', reqOpts);
-      setLiveAttendanceEvents(Array.isArray(data) ? data : []);
+      if (Array.isArray(data)) {
+        setLiveAttendanceEvents(data);
+        liveAttendanceEventsRef.current = data;
+      }
       setAttEventsSynced(true);
       setAttSyncNotice('');
     } catch (e: any) {
-      // Lỗi mạng/chậm: vẫn cho vẽ lưới (dùng ca + trạng thái đã có) thay vì treo loading.
-      setAttEventsSynced(false);
-      setAttSyncNotice(String(e?.message || 'Không tải được điểm danh — đang hiển thị theo dữ liệu ca.'));
+      console.warn('[Attendance] Background reload skipped/failed:', e?.message);
+      // NGUYÊN TẮC BẢO VỆ DỮ LIỆU REALTIME 100%:
+      // Nếu trong bộ nhớ ĐÃ CÓ dữ liệu (liveAttendanceEvents có phần tử):
+      // TUYỆT ĐỐI KHÔNG setAttEventsSynced(false) và KHÔNG hiện banner lỗi làm mất lịch!
+      // Dữ liệu đã tải sẽ được giữ nguyên 100% hiển thị trên lưới.
+      if (!liveAttendanceEventsRef.current || liveAttendanceEventsRef.current.length === 0) {
+        setAttEventsSynced(false);
+        if (!opts.silent) {
+          setAttSyncNotice(String(e?.message || 'Không tải được điểm danh — đang hiển thị theo dữ liệu ca.'));
+        }
+      }
     } finally {
       setAttEventsLoaded(true);
     }
@@ -3529,35 +3543,20 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
   useEffect(() => {
     if (activeTab !== 'hr-attendance' && activeTab !== 'operations') return;
-    reloadAttEvents();
-    const t = setInterval(() => reloadAttEvents(), 30000);
+    reloadAttEvents({ silent: true });
+    // Heartbeat nền nhẹ (5 phút) hoàn toàn im lặng, không giật màn hình
+    const t = setInterval(() => reloadAttEvents({ quick: true, silent: true }), 300000);
     return () => clearInterval(t);
   }, [activeTab]);
   useEffect(() => {
-    // Lưới lịch tự refresh để trạng thái ca (vắng/khóa/hoàn thành) luôn khớp server
-    // NGAY LẬP TỨC: tải cả điểm danh + ca/nghỉ (poll cũ chỉ tải điểm danh nên socket
-    // ngủ là lịch đứng hình), tải ngay khi vào tab/quay lại màn hình, rồi poll 30s.
+    // Tab Lịch làm việc tuần & giám sát realtime:
+    // Dữ liệu cập nhật 100% realtime qua WebSocket (Socket.IO):
+    // - Khi có check-in/out: 'ubm:attendance-reload' cập nhật liveAttendanceEvents trong 0ms!
+    // - Khi có xếp ca/đổi ca/duyệt đơn: 'ubm:schedule-reload' cập nhật ca ngay lập tức!
+    // -> TUYỆT ĐỐI KHÔNG tự động reload (bỏ setInterval 30s và bỏ focus listener)
+    // để giao diện luôn tĩnh, không bị giật lag, không làm mất lịch của người dùng.
     if (activeTab !== 'hr-schedule' && activeTab !== 'operations') return;
-    const load = () => {
-      // Dùng chung reloadAttEvents để mọi đường tải (vào tab, poll 30s, socket) đều
-      // có timeout ngắn + cập nhật dải nhắc, không bao giờ treo lưới.
-      reloadAttEvents({ quick: true });
-      try {
-        const r = (typeof onRefreshData === 'function' ? onRefreshData() : null) as any;
-        if (r && typeof r.catch === 'function') r.catch(() => null);
-      } catch { /* bỏ qua */ }
-    };
-    load();
-    const t = setInterval(load, 30000);
-    const onVis = () => { if (document.visibilityState === 'visible') load(); };
-    document.addEventListener('visibilitychange', onVis);
-    window.addEventListener('focus', onVis);
-    return () => {
-      clearInterval(t);
-      document.removeEventListener('visibilitychange', onVis);
-      window.removeEventListener('focus', onVis);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    reloadAttEvents({ quick: true, silent: true });
   }, [activeTab]);
   useEffect(() => {
     // Realtime điểm danh 100%: App.tsx phát 'ubm:attendance-reload' khi socket báo
@@ -3584,9 +3583,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       } else if (action === 'event-deleted' && e?.detail?.eventId) {
         setLiveAttendanceEvents(prev => (prev || []).filter((x: any) => String(x.event_id) !== String(e.detail.eventId)));
       }
-      // Tải lại nền để đồng bộ hoàn toàn với server
+      // Tải lại nền để đồng bộ hoàn toàn với server một cách im lặng
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => { reloadAttEvents({ quick: true }); }, incomingEvent ? 1200 : 50);
+      timer = setTimeout(() => { reloadAttEvents({ quick: true, silent: true }); }, incomingEvent ? 1200 : 50);
     };
     window.addEventListener('ubm:attendance-reload', handler);
     return () => {
@@ -4111,12 +4110,23 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               const m = monthlyBackupSt?.monthly;
               const p = monthlyBackupSt?.photos;
               const driveOk = monthlyBackupSt?.drive?.driveConfigured !== false;
+              const driveErr = String(monthlyBackupSt?.drive?.lastError || '').trim();
+              const driveAuth = String(monthlyBackupSt?.drive?.authLabel || '').trim();
               const fmtAt = (s?: string) => (s ? new Date(s).toLocaleString('vi-VN') : '');
               return (
                 <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   {!driveOk && (
                     <div style={{ fontSize: '12px', padding: '7px 10px', borderRadius: 'var(--radius-sm)', backgroundColor: '#F1F5F9', border: '1px solid #E2E8F0', color: 'var(--text-muted)' }}>
-                      ☁️ Drive chưa cấu hình — backup tháng/ảnh chưa chạy được. Thêm <code>GOOGLE_SERVICE_ACCOUNT_JSON</code> + <code>GOOGLE_DRIVE_FOLDER_ID</code>.
+                      ☁️ Drive chưa cấu hình — backup tháng/ảnh chưa chạy được. Thêm <code>GOOGLE_SERVICE_ACCOUNT_JSON</code> + <code>GOOGLE_DRIVE_FOLDER_ID</code>, hoặc OAuth2 Gmail (<code>GOOGLE_OAUTH_REFRESH_TOKEN</code>) nếu dùng Drive cá nhân.
+                    </div>
+                  )}
+                  {driveErr && (
+                    <div style={{ fontSize: '12px', padding: '7px 10px', borderRadius: 'var(--radius-sm)', backgroundColor: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C' }}>
+                      ⚠️ Upload Drive lỗi: {driveErr.slice(0, 300)}
+                      {driveAuth ? ` • đang dùng: ${driveAuth}` : ''}
+                      <div style={{ marginTop: '3px', color: '#991B1B' }}>
+                        Ảnh vẫn được giữ trên đĩa VPS và tự thử lại mỗi 5 phút. Xem <code>docs/GOOGLE_DRIVE_ANH_DIEM_DANH.md</code>.
+                      </div>
                     </div>
                   )}
                   <div style={{
@@ -8205,7 +8215,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           // CHỈ kết luận khi danh sách điểm danh đã tải thành công; nếu request lỗi
           // (danh sách rỗng giả) thì để trạng thái trung tính, tránh khóa oan.
           const startMs = sh?.start_at ? new Date(sh.start_at).getTime() : NaN;
-          const locked = attEventsSynced && !ci && Number.isFinite(startMs) && Date.now() - (startMs as number) > 3 * 60 * 60 * 1000;
+          const locked = (attEventsSynced || schedAllEvents.length > 0) && !ci && Number.isFinite(startMs) && Date.now() - (startMs as number) > 3 * 60 * 60 * 1000;
           let shiftName = sh?.shift_code;
           if (shiftName === 'CA_1') shiftName = 'Ca 1 (07-12)';
           else if (shiftName === 'CA_2') shiftName = 'Ca 2 (12-18)';
@@ -8274,7 +8284,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               note: 'Chưa check-in (Chờ ca)',
               isToday: true,
             };
-          } else if (!attEventsSynced) {
+          } else if (!attEventsSynced && schedAllEvents.length === 0) {
             // Điểm danh chưa tải được: KHÔNG gắn "vắng/khóa" oan (sai lương).
             return {
               shift: shiftName,
@@ -10391,11 +10401,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           <img
                             src={modalEvent.photo_url}
                             alt="Bằng chứng check-in"
-                            onClick={() => setAttPhotoZoom({ url: modalEvent.photo_url, label: 'Ảnh check-in' })}
+                            onClick={() => setAttPhotoZoom({ url: modalEvent.photo_url, label: 'Ảnh check-in', driveId: modalEvent?.drive_object_id })}
                             style={{ width: '100%', height: '160px', objectFit: 'cover', borderRadius: '6px', cursor: 'zoom-in' }}
                           />
                         ) : modalEvent?.event_id ? (
-                          <AttPhoto eventId={modalEvent.event_id} onClick={() => setAttPhotoZoom({ eventId: modalEvent.event_id, label: 'Ảnh check-in' })} style={{ width: '100%', height: '160px', maxHeight: '160px' }} alt="Ảnh chụp đồng phục áo hồng check-in" />
+                          <AttPhoto eventId={modalEvent.event_id} onClick={() => setAttPhotoZoom({ eventId: modalEvent.event_id, label: 'Ảnh check-in', driveId: modalEvent?.drive_object_id })} style={{ width: '100%', height: '160px', maxHeight: '160px' }} alt="Ảnh chụp đồng phục áo hồng check-in" />
                         ) : (
                           <div style={{ width: '100%', height: '160px', borderRadius: '6px', backgroundColor: '#F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9CA3AF', fontSize: '11px', fontWeight: 700 }}>
                             Chưa có ảnh check-in
@@ -10403,11 +10413,21 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         )}
                         <div style={{ fontWeight: 800, fontSize: '11px', color: '#9D174D' }}>ẢNH ÁO HỒNG ỤM BÒ MILK (CHECK-IN)</div>
                         <div style={{ fontSize: '10px', color: '#9D174D' }}>Vào: {modalDayData?.inTime || modalDayData?.time || '—'}</div>
+                        {modalEvent?.drive_object_id && !String(modalEvent.drive_object_id).startsWith('DRV_') && (
+                          <a
+                            href={`https://drive.google.com/file/d/${encodeURIComponent(modalEvent.drive_object_id)}/view`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{ fontSize: '11px', color: '#2563EB', textDecoration: 'underline', marginTop: '2px', display: 'inline-block', fontWeight: 600 }}
+                          >
+                            ☁ Mở ảnh trên Google Drive ↗
+                          </a>
+                        )}
                       </div>
                       <div style={{ backgroundColor: '#FFF', borderRadius: '8px', border: '1px solid #F9A8D4', padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                         <div style={{ fontWeight: 800, fontSize: '12px', color: '#9D174D' }}>📸 Ô 2 — ẢNH CHECK-OUT</div>
                         {modalDayData?.outEvent?.event_id && modalDayData.outEvent.event_id !== modalEvent?.event_id ? (
-                          <AttPhoto eventId={modalDayData.outEvent.event_id} onClick={() => setAttPhotoZoom({ eventId: modalDayData.outEvent.event_id, label: 'Ảnh check-out' })} style={{ width: '100%', height: '160px', maxHeight: '160px' }} alt="Ảnh chụp khi tan ca" />
+                          <AttPhoto eventId={modalDayData.outEvent.event_id} onClick={() => setAttPhotoZoom({ eventId: modalDayData.outEvent.event_id, label: 'Ảnh check-out', driveId: modalDayData.outEvent.drive_object_id })} style={{ width: '100%', height: '160px', maxHeight: '160px' }} alt="Ảnh chụp khi tan ca" />
                         ) : (
                           <div style={{ width: '100%', height: '160px', borderRadius: '6px', backgroundColor: '#F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9CA3AF', fontSize: '11px', fontWeight: 700 }}>
                             Chưa có ảnh check-out
@@ -10415,6 +10435,16 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         )}
                         <div style={{ fontWeight: 800, fontSize: '11px', color: '#9D174D' }}>ẢNH KHI TAN CA (CHECK-OUT)</div>
                         <div style={{ fontSize: '10px', color: '#9D174D' }}>Ra: {modalDayData?.outTime || '—'}</div>
+                        {modalDayData?.outEvent?.drive_object_id && !String(modalDayData.outEvent.drive_object_id).startsWith('DRV_') && (
+                          <a
+                            href={`https://drive.google.com/file/d/${encodeURIComponent(modalDayData.outEvent.drive_object_id)}/view`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{ fontSize: '11px', color: '#2563EB', textDecoration: 'underline', marginTop: '2px', display: 'inline-block', fontWeight: 600 }}
+                          >
+                            ☁ Mở ảnh trên Google Drive ↗
+                          </a>
+                        )}
                       </div>
                     </div>
                     <div style={{ fontSize: '11px', color: '#9D174D' }}>Bảng tên nhân viên: Đã xác thực hợp lệ • Bấm vào ảnh để xem to</div>
@@ -10429,7 +10459,20 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       <div onClick={(e) => e.stopPropagation()} style={{ backgroundColor: '#FFF', borderRadius: '12px', padding: '14px', maxWidth: '560px', width: '100%', textAlign: 'center' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                           <strong style={{ fontSize: '14px' }}>{attPhotoZoom.label}</strong>
-                          <button className="btn-secondary" style={{ padding: '4px 12px', fontSize: '12px' }} onClick={() => setAttPhotoZoom(null)}>Đóng</button>
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            {attPhotoZoom.driveId && !String(attPhotoZoom.driveId).startsWith('DRV_') && (
+                              <a
+                                href={`https://drive.google.com/file/d/${encodeURIComponent(attPhotoZoom.driveId)}/view`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="btn-secondary"
+                                style={{ padding: '4px 10px', fontSize: '12px', display: 'inline-flex', alignItems: 'center', gap: '4px', textDecoration: 'none' }}
+                              >
+                                ☁ Mở trên Drive ↗
+                              </a>
+                            )}
+                            <button className="btn-secondary" style={{ padding: '4px 12px', fontSize: '12px' }} onClick={() => setAttPhotoZoom(null)}>Đóng</button>
+                          </div>
                         </div>
                         {attPhotoZoom.url ? (
                           <img src={attPhotoZoom.url} alt={attPhotoZoom.label} style={{ width: '100%', maxHeight: '70vh', objectFit: 'contain', borderRadius: '8px' }} />
@@ -11474,9 +11517,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 const outE = it.list.find((e: any) => e.type === 'CHECK_OUT');
                                 const lateMinCell = lateMinOf(inE, it.shift?.start_at);
                                 const late = lateMinCell > 0 ? ` trễ ${lateMinCell}p` : '';
-                                const thumb = (e: any) => e?.drive_object_id && !String(e.drive_object_id).startsWith('DRV_')
-                                  ? <AttPhoto eventId={e.event_id} style={{ width: '40px', height: '40px' }} />
-                                  : null;
+                                const thumb = (e: any) => {
+                                  const drv = String(e?.drive_object_id || '');
+                                  if (!e?.event_id) return null;
+                                  if (drv.startsWith('DRV_ADMIN_')) return null;
+                                  if (drv || (e as any)?.event_photo || (e as any)?.has_photo) {
+                                    return <AttPhoto eventId={e.event_id} style={{ width: '40px', height: '40px' }} />;
+                                  }
+                                  return null;
+                                };
                                 // Lương ca + phạt (tạm tính theo đơn giá đúng giai đoạn của ngày công; Finance chốt ở kỳ lương)
                                 const empRate = rateOnDateOf(emp, day.iso);
                                 const pay = shiftPayInfo(it.shift?.shift_code, empRate, inE, outE, it.shift?.start_at);

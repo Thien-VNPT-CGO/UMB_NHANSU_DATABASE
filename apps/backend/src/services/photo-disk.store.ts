@@ -9,15 +9,20 @@ import path from 'path';
  */
 
 function resolvePhotoDir(): string {
-  if (process.env.ATTENDANCE_PHOTO_DIR) return process.env.ATTENDANCE_PHOTO_DIR;
+  if (process.env.ATTENDANCE_PHOTO_DIR) {
+    try { fs.mkdirSync(process.env.ATTENDANCE_PHOTO_DIR, { recursive: true }); } catch { /* ignore */ }
+    return process.env.ATTENDANCE_PHOTO_DIR;
+  }
   const cwd = process.cwd();
-  // npm --workspace chạy cwd=apps/backend; docker/prod chạy cwd=/app (repo root).
-  try {
-    if (fs.existsSync(path.join(cwd, 'apps', 'backend', 'package.json'))) {
-      return path.join(cwd, 'apps', 'backend', 'data', 'attendance-photos');
-    }
-  } catch { /* fallthrough */ }
-  return path.join(cwd, 'data', 'attendance-photos');
+  // 1. Docker / VPS: thư mục data/ mount tại root (ví dụ /app/data hoặc ./data)
+  const rootData = path.join(cwd, 'data', 'attendance-photos');
+  const backendData = path.join(cwd, 'apps', 'backend', 'data', 'attendance-photos');
+  let selected = rootData;
+  if (!fs.existsSync(path.join(cwd, 'data')) && fs.existsSync(path.join(cwd, 'apps', 'backend', 'data'))) {
+    selected = backendData;
+  }
+  try { fs.mkdirSync(selected, { recursive: true }); } catch { /* ignore */ }
+  return selected;
 }
 
 const PHOTO_DIR = resolvePhotoDir();

@@ -1370,7 +1370,11 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
         // 1. Xác định chi nhánh của nhân viên và lấy đúng folder ID chi nhánh trong 04. ĐIỂM DANH
         const emp = await this.fallbackAdapter.getEmployeeById(event.employee_id).catch(() => null);
         const branchId = event.branch_id || emp?.default_branch_id || 'CN130';
-        const branchFolderId = getAttendanceFolderForBranch(branchId);
+        // Folder chi nhánh thực sự ghi được (tự tạo dưới 04. ĐIỂM DANH nếu ID
+        // cấu hình không truy cập được) — tránh ảnh rơi về DRV_LOCAL.
+        const branchFolderId = typeof (this.syncService as any)?.resolveAttendanceFolderId === 'function'
+          ? await (this.syncService as any).resolveAttendanceFolderId(branchId)
+          : getAttendanceFolderForBranch(branchId);
 
         // 2. Tên folder nhân viên: ưu tiên tên đầy đủ của nhân viên
         const empName = safeDriveSeg(emp?.full_name || event.employee_id || 'KHONG_NV');

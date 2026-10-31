@@ -394,7 +394,9 @@ export async function syncDayPhotosToDrive(
     const day = dayOfValue((evt as any)?.client_time) || dayOfValue((evt as any)?.server_received_at) || date;
     const emp = await repo.getEmployeeById(String(evt?.employee_id || '')).catch(() => null);
     const branchId = evt?.branch_id || emp?.default_branch_id || 'CN130';
-    const branchFolderId = getAttendanceFolderForBranch(branchId);
+    const branchFolderId = typeof (sync as any).resolveAttendanceFolderId === 'function'
+      ? await (sync as any).resolveAttendanceFolderId(branchId)
+      : getAttendanceFolderForBranch(branchId);
     const employeeName = safeSeg(emp?.full_name || evt?.employee_id || 'KHONG_NV');
     const segments = [day, employeeName];
     const fileName = photoFileName(evt);

@@ -490,7 +490,9 @@ export class AttendanceService {
     const fb = (this.repo as any)?.fallbackAdapter;
     if (!sync?.uploadImageToDrive || !Array.isArray(fb?.attendanceEvents)) return { checked: 0, recovered: 0 };
     try {
-      if (sync.getDriveUploadStatus && sync.getDriveUploadStatus()?.driveConfigured === false) {
+      const st = sync.getDriveUploadStatus ? sync.getDriveUploadStatus() : null;
+      // Chỉ bỏ qua khi KHÔNG có cả Drive API lẫn webhook dự phòng.
+      if (st && st.driveConfigured === false && !st.webhookConfigured) {
         return { checked: 0, recovered: 0 };
       }
     } catch { /* thử vẫn chạy */ }
@@ -514,7 +516,9 @@ export class AttendanceService {
         const safe = (v: unknown) => String(v ?? '').replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, ' ').trim().slice(0, 80) || 'KHONG_XAC_DINH';
         const emp = await this.repo.getEmployeeById(evt.employee_id).catch(() => null);
         const branchId = evt.branch_id || (emp as any)?.default_branch_id || 'CN130';
-        const branchFolderId = getAttendanceFolderForBranch(branchId);
+        const branchFolderId = typeof (sync as any).resolveAttendanceFolderId === 'function'
+          ? await (sync as any).resolveAttendanceFolderId(branchId)
+          : getAttendanceFolderForBranch(branchId);
         const employeeName = safe(emp?.full_name || evt.employee_id || 'KHONG_NV');
         const fileName = evt.type === 'CHECK_IN' ? 'check in.jpg' : evt.type === 'CHECK_OUT' ? 'check out.jpg' : `${safe(evt.type || 'photo')}.jpg`;
         const segments = [day, employeeName];

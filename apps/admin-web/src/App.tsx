@@ -892,8 +892,8 @@ export function App() {
       // 1. Nhóm dữ liệu động vận hành (luôn đồng bộ khi có event nghiệp vụ)
       const tasks: Promise<any>[] = [
         apiRequest('/admin/dashboard/stats').then(stats => { if (stats) setDashboardStats(stats); }).catch(() => null),
-        apiRequest('/schedules').then(sList => setShifts(sList || [])).catch(() => null),
-        apiRequest('/leave-requests').then(lList => setLeaves(lList || [])).catch(() => null),
+        apiRequest('/schedules').then(sList => { if (Array.isArray(sList)) setShifts(sList); }).catch(() => null),
+        apiRequest('/leave-requests').then(lList => { if (Array.isArray(lList)) setLeaves(lList); }).catch(() => null),
       ];
 
       // Thông báo hệ thống: backend chỉ cho ADMIN/HR/MARKETING -> không gọi cho STORE/FINANCE (tránh 403).

@@ -27,6 +27,13 @@ import { evaluateCandidateAiScore } from './ai-scorer.js';
 import { buildZipStore, ZipEntry } from '../utils/zip-store.js';
 import { contractDocsCell, parseContractDocs } from '../utils/contracts.js';
 import { readAttendancePhotoDisk } from './photo-disk.store.js';
+import { createDriveOAuthClient, describeDriveAuth, describeGoogleApiError, type GoogleDriveAuthMode } from './google-drive-auth.js';
+import { uploadBufferViaDriveWebhook, downloadBufferViaDriveWebhook } from './drive-upload-webhook.js';
+import {
+  getAttendanceBranchLabel,
+  getAttendanceFolderForBranch,
+  getAttendanceRootFolder,
+} from '../config/drive-folders.js';
 import { TAB_THEMES, buildSheetFormattingRequests, resolveTheme } from './sheets-beautifier.service.js';
 import { computeSheetsContentSignature, fingerprintSheetsContent } from '../utils/sheets-content-signature.js';
 import { getSpreadsheetIdForTab } from '../config/sheets-mapping.js';
@@ -227,6 +234,8 @@ export class GoogleSheetsSyncService {
    *  hash nội dung để sửa tay lịch PV trên master cũng bắn realtime. */
   private lastMasterCandidateRows: string[][] = [];
   private driveFolderId: string;
+  private driveAuthMode: GoogleDriveAuthMode = 'none';
+  private driveAuthAccount = '';
   private isConfigured = false;
   private authError: string | null = null;
   private lastPulledAt: number = 0;
@@ -625,6 +634,8 @@ export class GoogleSheetsSyncService {
 
     if (!email || !key) {
       this.authError = 'Chưa thiết lập GOOGLE_SERVICE_ACCOUNT_JSON hoặc GOOGLE_SERVICE_ACCOUNT_EMAIL / GOOGLE_PRIVATE_KEY trong biến môi trường';
+      // Vẫn cho phép Drive chạy bằng OAuth2 (Sheets có thể dùng kênh khác).
+      this.initDriveClientOAuthOnly();
       return;
     }
 
@@ -648,14 +659,37 @@ export class GoogleSheetsSyncService {
       (google as any).options?.({ timeout: httpTimeoutMs, retry: false });
 
       this.sheetsClient = google.sheets({ version: 'v4', auth });
-      this.driveClient = google.drive({ version: 'v3', auth });
+
+      // Drive: ưu tiên OAuth2 (Gmail sở hữu thư mục) — Service Account không có
+      // quota trên My Drive nên ảnh sẽ luôn rơi về DRV_LOCAL nếu chỉ dùng SA.
+      const oauth = createDriveOAuthClient(['https://www.googleapis.com/auth/drive']);
+      if (oauth) {
+        this.driveClient = google.drive({ version: 'v3', auth: oauth });
+        this.driveAuthMode = 'oauth';
+        this.driveAuthAccount = String(process.env.GOOGLE_OAUTH_ACCOUNT_EMAIL || 'OAuth2 Gmail');
+      } else {
+        this.driveClient = google.drive({ version: 'v3', auth });
+        this.driveAuthMode = 'service-account';
+        this.driveAuthAccount = email;
+      }
+
       this.isConfigured = true;
       this.authError = null;
-      console.log(`[GoogleSheetsSyncService] Đã kích hoạt Google Sheets API & Google Drive API thành công cho: ${email}`);
+      console.log(`[GoogleSheetsSyncService] Đã kích hoạt Google Sheets API & Google Drive API thành công cho: ${email} • Drive auth: ${describeDriveAuth(this.driveAuthMode, this.driveAuthAccount)}`);
     } catch (err: any) {
       this.authError = `Lỗi khởi tạo JWT Auth: ${err.message}`;
       console.error('[GoogleSheetsSyncService]', this.authError);
     }
+  }
+
+  /** Chỉ khởi tạo Drive bằng OAuth2 khi không có Service Account (Postgres + Drive riêng). */
+  private initDriveClientOAuthOnly() {
+    const oauth = createDriveOAuthClient(['https://www.googleapis.com/auth/drive']);
+    if (!oauth) return;
+    this.driveClient = google.drive({ version: 'v3', auth: oauth });
+    this.driveAuthMode = 'oauth';
+    this.driveAuthAccount = String(process.env.GOOGLE_OAUTH_ACCOUNT_EMAIL || 'OAuth2 Gmail');
+    console.log(`[GoogleSheetsSyncService] Drive API qua OAuth2 sẵn sàng (${this.driveAuthAccount}) — Sheets chưa cấu hình Service Account.`);
   }
 
   /**
@@ -4440,10 +4474,12 @@ export class GoogleSheetsSyncService {
   // backup_YYYY-MM/<TAB>/<YYYY-MM-DD>/... (xem services/monthly-backup.service.ts)
   // ---------------------------------------------------------------------------
   private driveFolderCache = new Map<string, string>();
+  /** Cache folder chi nhánh đã xác minh quyền ghi (tránh gọi capabilities mỗi ảnh). */
+  private attendanceFolderCache = new Map<string, string>();
 
-  /** Drive đã cấu hình service account chưa (job backup dùng để bỏ qua sớm). */
+  /** Drive đã sẵn sàng ghi chưa (Drive API hoặc webhook chạy dưới quyền chủ thư mục). */
   public isDriveReady(): boolean {
-    return !!this.driveClient;
+    return !!this.driveClient || !!String(process.env.GOOGLE_DRIVE_UPLOAD_WEBHOOK_URL || '').trim();
   }
 
   /** Tìm hoặc tạo 1 folder theo tên trong parentId (cache trong RAM 1 phiên). */
@@ -4508,6 +4544,57 @@ export class GoogleSheetsSyncService {
     return parent;
   }
 
+  /** Kiểm tra tài khoản Drive hiện tại có quyền thêm file/folder con. */
+  private async canAddChildren(folderId: string): Promise<boolean | null> {
+    if (!this.driveClient || !folderId) return false;
+    try {
+      const meta: any = await this.sheetsCall(
+        'drive.folderCapabilities',
+        () => this.driveClient!.files.get({
+          fileId: folderId,
+          fields: 'id, capabilities(canAddChildren)',
+          supportsAllDrives: true,
+        } as any),
+        20000,
+      );
+      const can = meta?.data?.capabilities?.canAddChildren;
+      return typeof can === 'boolean' ? can : null;
+    } catch (err: any) {
+      const status = Number(err?.response?.status ?? err?.code);
+      if (status === 404) return false;
+      return null;
+    }
+  }
+
+  /**
+   * Folder chi nhánh thực sự ghi được trong "04. ĐIỂM DANH".
+   * Nếu ID cấu hình không truy cập/ghi được (Drive khác, chưa share) thì tự tạo
+   * thư mục chi nhánh dưới thư mục gốc để ảnh vẫn lên Drive thay vì DRV_LOCAL.
+   */
+  public async resolveAttendanceFolderId(branchId?: string): Promise<string> {
+    const cacheKey = String(branchId || 'DEFAULT').trim().toUpperCase() || 'DEFAULT';
+    const cached = this.attendanceFolderCache.get(cacheKey);
+    if (cached) return cached;
+
+    const configured = getAttendanceFolderForBranch(branchId);
+    const root = getAttendanceRootFolder();
+    for (const id of Array.from(new Set([configured, root].filter(Boolean)))) {
+      if (await this.canAddChildren(id) === true) {
+        this.attendanceFolderCache.set(cacheKey, id);
+        return id;
+      }
+    }
+
+    if (root && await this.canAddChildren(root) !== false) {
+      const created = await this.ensureDriveFolder(getAttendanceBranchLabel(branchId), root).catch(() => '');
+      if (created) {
+        this.attendanceFolderCache.set(cacheKey, created);
+        return created;
+      }
+    }
+    return configured || root;
+  }
+
   /** Upload/ghi đè 1 file vào đường dẫn folder (idempotent theo tên file). */
   public async upsertBufferToDrivePath(
     fileName: string,
@@ -4516,10 +4603,34 @@ export class GoogleSheetsSyncService {
     segments: string[],
     rootId?: string,
   ): Promise<{ fileId: string; webViewLink?: string }> {
-    if (!this.driveClient) return { fileId: `DRV_${Date.now()}` };
-    const parent = await this.ensureDriveFolderPath(segments, rootId);
-    if (!parent) return { fileId: `DRV_LOCAL_${Date.now()}` };
     const safeName = String(fileName || 'file').replace(/[\\/:*?"<>|]/g, '-').trim() || 'file';
+
+    // Webhook (nếu cấu hình) chạy dưới quyền CHỦ thư mục: tự tạo cây thư mục
+    // con + ghi file, không phụ thuộc quota của Service Account.
+    const webhookRoot = String(rootId || this.driveFolderId || '').trim();
+    if (webhookRoot) {
+      const webhook = await uploadBufferViaDriveWebhook({
+        folderId: webhookRoot,
+        segments,
+        fileName: safeName,
+        mimeType,
+        buffer,
+      });
+      if (webhook?.fileId) {
+        this.markDriveUploadOk();
+        return { fileId: webhook.fileId, webViewLink: webhook.webViewLink };
+      }
+    }
+
+    if (!this.driveClient) {
+      this.markDriveUploadError('DRIVE_NOT_CONFIGURED');
+      return { fileId: `DRV_${Date.now()}` };
+    }
+    const parent = await this.ensureDriveFolderPath(segments, rootId);
+    if (!parent) {
+      this.markDriveUploadError('DRIVE_FOLDER_NOT_FOUND');
+      return { fileId: `DRV_LOCAL_${Date.now()}` };
+    }
 
     const escaped = safeName.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     const q = `name = '${escaped}' and trashed = false and '${parent}' in parents`;
@@ -4547,6 +4658,7 @@ export class GoogleSheetsSyncService {
           } as any),
           120000
         );
+        this.markDriveUploadOk();
         return { fileId: existingId };
       }
       const created: any = await this.sheetsCall(
@@ -4559,6 +4671,7 @@ export class GoogleSheetsSyncService {
         } as any),
         120000
       );
+      this.markDriveUploadOk();
       return {
         fileId: created?.data?.id || `DRV_${Date.now()}`,
         webViewLink: created?.data?.webViewLink || undefined,
@@ -4566,10 +4679,11 @@ export class GoogleSheetsSyncService {
     } catch (err: any) {
       const errMsg = String(err?.message || err);
       if (errMsg.includes('storage quota') || errMsg.includes('Service Accounts do not have storage quota')) {
-        console.warn(`[GoogleSheetsSyncService] Service Account có quota 0 byte trên Drive cá nhân. Hãy dùng Shared Drive (thêm Service Account làm Content Manager) hoặc OAuth2 refresh token. Ảnh vẫn được lưu đệm đĩa VPS an toàn.`);
+        console.warn(`[GoogleSheetsSyncService] Service Account có quota 0 byte trên Drive cá nhân. Đặt GOOGLE_OAUTH_CLIENT_ID/SECRET/REFRESH_TOKEN hoặc GOOGLE_DRIVE_UPLOAD_WEBHOOK_URL để ảnh lên Drive. Ảnh vẫn được lưu đệm đĩa VPS an toàn.`);
       } else {
         console.warn(`[GoogleSheetsSyncService] Upload Drive "${safeName}" lỗi:`, err?.message || err);
       }
+      this.markDriveUploadError(err);
       return { fileId: `DRV_LOCAL_${Date.now()}` };
     }
   }
@@ -4582,10 +4696,33 @@ export class GoogleSheetsSyncService {
     segments: string[],
     rootId?: string,
   ): Promise<{ fileId: string; webViewLink?: string }> {
-    if (!this.driveClient) return { fileId: `DRV_${Date.now()}` };
-    const parent = await this.ensureDriveFolderPath(segments, rootId);
-    if (!parent) return { fileId: `DRV_LOCAL_${Date.now()}` };
     const safeName = String(fileName || 'file').replace(/[\\/:*?"<>|]/g, '-').trim() || 'file';
+
+    const webhookRoot = String(rootId || this.driveFolderId || '').trim();
+    if (webhookRoot) {
+      const webhook = await uploadBufferViaDriveWebhook({
+        folderId: webhookRoot,
+        segments,
+        fileName: safeName,
+        mimeType,
+        buffer,
+      });
+      if (webhook?.fileId) {
+        this.markDriveUploadOk();
+        return { fileId: webhook.fileId, webViewLink: webhook.webViewLink };
+      }
+    }
+
+    if (!this.driveClient) {
+      this.markDriveUploadError('DRIVE_NOT_CONFIGURED');
+      return { fileId: `DRV_${Date.now()}` };
+    }
+    const parent = await this.ensureDriveFolderPath(segments, rootId);
+    if (!parent) {
+      this.markDriveUploadError('DRIVE_FOLDER_NOT_FOUND');
+      return { fileId: `DRV_LOCAL_${Date.now()}` };
+    }
+
     try {
       const created: any = await this.sheetsCall(
         'drive.createFilePath',
@@ -4597,12 +4734,14 @@ export class GoogleSheetsSyncService {
         } as any),
         120000
       );
+      this.markDriveUploadOk();
       return {
         fileId: created?.data?.id || `DRV_${Date.now()}`,
         webViewLink: created?.data?.webViewLink || undefined,
       };
     } catch (err: any) {
       console.warn(`[GoogleSheetsSyncService] Upload Drive "${safeName}" lỗi:`, err?.message || err);
+      this.markDriveUploadError(err);
       return { fileId: `DRV_LOCAL_${Date.now()}` };
     }
   }
@@ -4641,11 +4780,28 @@ export class GoogleSheetsSyncService {
   public getDriveUploadStatus() {
     return {
       driveFolderId: this.driveFolderId || null,
+      attendanceRootFolderId: getAttendanceRootFolder() || null,
       driveConfigured: !!this.driveClient,
+      authMode: this.driveAuthMode,
+      authAccount: this.driveAuthAccount || null,
+      authLabel: describeDriveAuth(this.driveAuthMode, this.driveAuthAccount),
+      webhookConfigured: !!String(process.env.GOOGLE_DRIVE_UPLOAD_WEBHOOK_URL || '').trim(),
       lastError: this.lastDriveUploadError,
       lastAttemptAt: this.lastDriveUploadAt,
       lastOkAt: this.lastDriveUploadOkAt,
     };
+  }
+
+  /** Ghi nhận lỗi/thành công gần nhất để hiện ở /health + tab chẩn đoán. */
+  private markDriveUploadError(err: any) {
+    this.lastDriveUploadError = describeGoogleApiError(err);
+    this.lastDriveUploadAt = new Date().toISOString();
+  }
+
+  private markDriveUploadOk() {
+    this.lastDriveUploadError = null;
+    this.lastDriveUploadAt = new Date().toISOString();
+    this.lastDriveUploadOkAt = this.lastDriveUploadAt;
   }
 
   /**
@@ -4685,16 +4841,30 @@ export class GoogleSheetsSyncService {
    * `data:image/*` nên hợp đồng PDF sẽ bị hỏng base64.
    */
   public async uploadFileToDrive(fileName: string, mimeType: string, base64Data: string): Promise<{ fileId: string; webViewLink?: string }> {
-    if (!this.driveClient) {
-      this.lastDriveUploadError = 'DRIVE_NOT_CONFIGURED: chưa cấu hình service account Drive';
-      return { fileId: `DRV_${Date.now()}` };
-    }
-
     const cleanBase64 = String(base64Data || '').replace(/^data:[^;,]+;base64,/, '');
     const buffer = Buffer.from(cleanBase64, 'base64');
     if (!buffer.length) {
       this.lastDriveUploadError = 'EMPTY_FILE: file rỗng, không thể upload Drive';
       return { fileId: `DRV_LOCAL_${Date.now()}` };
+    }
+
+    // Webhook chạy dưới quyền chủ thư mục — dùng được cả khi SA hết quota.
+    if (this.driveFolderId) {
+      const webhook = await uploadBufferViaDriveWebhook({
+        folderId: this.driveFolderId,
+        fileName,
+        mimeType,
+        buffer,
+      });
+      if (webhook?.fileId) {
+        this.markDriveUploadOk();
+        return { fileId: webhook.fileId, webViewLink: webhook.webViewLink };
+      }
+    }
+
+    if (!this.driveClient) {
+      this.lastDriveUploadError = 'DRIVE_NOT_CONFIGURED: chưa cấu hình service account Drive hoặc OAuth2';
+      return { fileId: `DRV_${Date.now()}` };
     }
     // Thử lại 3 lần (mạng Render free chập chờn, file 5MB) trước khi bỏ cuộc.
     let lastErr: any = null;
@@ -4720,8 +4890,7 @@ export class GoogleSheetsSyncService {
         );
 
         console.log(`[GoogleSheetsSyncService] Đã upload ảnh lên Google Drive thành công: ID = ${res.data.id}`);
-        this.lastDriveUploadError = null;
-        this.lastDriveUploadOkAt = new Date().toISOString();
+        this.markDriveUploadOk();
 
         return {
           fileId: res.data.id || `DRV_${Date.now()}`,
@@ -4733,10 +4902,8 @@ export class GoogleSheetsSyncService {
         if (attempt < 3) await new Promise(r => setTimeout(r, attempt * 2000));
       }
     }
-    const msg = String(lastErr?.message || lastErr);
-    this.lastDriveUploadError = msg;
-    this.lastDriveUploadAt = new Date().toISOString();
-    console.error('[GoogleSheetsSyncService] Upload Drive thất bại sau 3 lần:', msg);
+    this.markDriveUploadError(lastErr);
+    console.error('[GoogleSheetsSyncService] Upload Drive thất bại sau 3 lần:', this.lastDriveUploadError);
     return { fileId: `DRV_LOCAL_${Date.now()}` };
   }
 
@@ -5190,20 +5357,40 @@ export class GoogleSheetsSyncService {
     };
   };
 
-  /** Tải bytes ảnh từ Google Drive (để xem trực tiếp / đóng gói ZIP tải về). */  public async downloadDriveFile(fileId: string): Promise<{ buffer: Buffer; mimeType: string }> {
-    if (!this.driveClient || !fileId || fileId.startsWith('DRV_')) {
+  /** Tải bytes ảnh từ Google Drive (để xem trực tiếp / đóng gói ZIP tải về). */
+  public async downloadDriveFile(fileId: string): Promise<{ buffer: Buffer; mimeType: string }> {
+    if (!fileId || fileId.startsWith('DRV_')) {
       throw new Error('DRIVE_FILE_NOT_AVAILABLE');
     }
-    const res: any = await this.sheetsCall(
-      'drive.download',
-      () =>
-        this.driveClient!.files.get({ fileId, alt: 'media', supportsAllDrives: true } as any, { responseType: 'arraybuffer' }) as any,
-      45000
-    );
-    const data = res?.data;
-    const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
-    const meta: any = await this.sheetsCall('drive.get', () => this.driveClient!.files.get({ fileId, fields: 'mimeType', supportsAllDrives: true } as any) as any).catch(() => null);
-    return { buffer, mimeType: meta?.data?.mimeType || 'image/jpeg' };
+
+    // Webhook (nếu cấu hình) đọc được cả file do chính nó tạo — hữu ích khi
+    // backend chỉ có Service Account hết quota, không có quyền đọc file.
+    const viaWebhook = async () => {
+      const dl = await downloadBufferViaDriveWebhook(fileId);
+      if (!dl) throw new Error('DRIVE_FILE_NOT_AVAILABLE');
+      return dl;
+    };
+
+    if (!this.driveClient) return viaWebhook();
+
+    try {
+      const res: any = await this.sheetsCall(
+        'drive.download',
+        () =>
+          this.driveClient!.files.get({ fileId, alt: 'media', supportsAllDrives: true } as any, { responseType: 'arraybuffer' }) as any,
+        45000
+      );
+      const data = res?.data;
+      const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
+      const headerMime = res?.headers?.['content-type'];
+      const mimeType = headerMime && !headerMime.includes('octet-stream')
+        ? headerMime
+        : 'image/jpeg';
+      return { buffer, mimeType };
+    } catch (err) {
+      // Drive API không đọc được (file thuộc tài khoản khác/quyền hạn) -> webhook.
+      return viaWebhook();
+    }
   }
 
   /**

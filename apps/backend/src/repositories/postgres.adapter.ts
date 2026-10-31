@@ -347,13 +347,18 @@ export class PostgresAdapter {
         };
       },
 
-      isDriveReady: () => self.drive.isConfigured() || (() => {
-        try { return !!real.isDriveReady?.(); } catch { return false; }
-      })(),
+      isDriveReady: () => self.drive.isConfigured()
+        || !!String(process.env.GOOGLE_DRIVE_UPLOAD_WEBHOOK_URL || '').trim()
+        || (() => {
+          try { return !!real.isDriveReady?.(); } catch { return false; }
+        })(),
 
       downloadDriveFile: async (fileId: string) => {
-        if (self.drive.isConfigured()) return self.drive.downloadFile(fileId);
-        return real.downloadDriveFile(fileId);
+        try {
+          return await self.drive.downloadFile(fileId);
+        } catch {
+          return real.downloadDriveFile(fileId);
+        }
       },
 
       uploadImageToDrive: async (fileName: string, _mimeType: string, base64Data: string) => {
@@ -375,11 +380,19 @@ export class PostgresAdapter {
         return { fileId: ref.fileId, webViewLink: ref.viewUrl };
       },
 
+      /** Folder điểm danh ghi được thật (PostgreSQL dùng DriveStorageService). */
+      resolveAttendanceFolderId: async (branchId?: string) => self.drive.resolveAttendanceBranchFolder(branchId),
+
       getDriveUploadStatus: () => {
         const base: any = (() => {
           try { return real.getDriveUploadStatus?.() || {}; } catch { return {}; }
         })();
-        return { ...base, driveConfigured: self.drive.isConfigured(), mode: 'POSTGRES' };
+        return {
+          ...base,
+          ...self.drive.getStatus(),
+          driveConfigured: self.drive.isConfigured(),
+          mode: 'POSTGRES',
+        };
       },
     };
 

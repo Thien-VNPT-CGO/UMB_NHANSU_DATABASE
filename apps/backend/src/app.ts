@@ -504,6 +504,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       readiness: (adapter as any).getReadiness?.() || { ready: true },
       memory,
       sheetsStatus: adapter.getStatus(),
+      drive: syncService2?.getDriveUploadStatus?.() || (adapter as any).drive?.getStatus?.() || null,
       cellUsage,
     });
   });
@@ -1956,8 +1957,14 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       if (driveId && !driveId.startsWith('DRV_')) {
         try {
           const syncService = (adapter as any).syncService;
+          const driveService = (adapter as any).drive;
           if (syncService?.downloadDriveFile) {
             const { buffer, mimeType } = await syncService.downloadDriveFile((emp as any).avatar_drive_id);
+            res.setHeader('Content-Type', mimeType || 'image/jpeg');
+            res.setHeader('Cache-Control', 'private, max-age=3600');
+            return res.send(buffer);
+          } else if (driveService?.downloadFile) {
+            const { buffer, mimeType } = await driveService.downloadFile((emp as any).avatar_drive_id);
             res.setHeader('Content-Type', mimeType || 'image/jpeg');
             res.setHeader('Cache-Control', 'private, max-age=3600');
             return res.send(buffer);
@@ -3882,8 +3889,27 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   const serveAttendancePhoto = async (req: AuthenticatedRequest, res: any) => {
     try {
       const events = await adapter.getAttendanceEvents(undefined, '');
-      const evt: any = (events || []).find((e: any) => e.event_id === req.params.eventId);
-      if (!evt) return res.status(404).json({ error: 'PHOTO_NOT_FOUND' });
+      let evt: any = (events || []).find((e: any) => e.event_id === req.params.eventId);
+      if (!evt) {
+        const syncService = (adapter as any).syncService;
+        if (typeof syncService?.getArchivedAttendanceEvents === 'function') {
+          try {
+            const archived = await syncService.getArchivedAttendanceEvents('2020-01-01', '2099-12-31', req.user?.role === 'EMPLOYEE' ? req.user.employeeId : undefined);
+            evt = (archived || []).find((e: any) => e.event_id === req.params.eventId);
+          } catch { /* ignore */ }
+        }
+      }
+      if (!evt) {
+        try {
+          const hit = readAttendancePhotoDisk(req.params.eventId);
+          if (hit?.buffer?.length) {
+            res.setHeader('Content-Type', hit.mimeType || 'image/jpeg');
+            res.setHeader('Cache-Control', 'private, max-age=3600');
+            return res.send(hit.buffer);
+          }
+        } catch { /* ignore */ }
+        return res.status(404).json({ error: 'PHOTO_NOT_FOUND' });
+      }
       if (req.user?.role === 'EMPLOYEE' && evt.employee_id !== req.user.employeeId) {
         return res.status(403).json({ error: 'FORBIDDEN' });
       }
@@ -3924,8 +3950,14 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       if (driveId && !driveId.startsWith('DRV_')) {
         try {
           const syncService = (adapter as any).syncService;
+          const driveService = (adapter as any).drive;
           if (syncService?.downloadDriveFile) {
             const { buffer, mimeType } = await syncService.downloadDriveFile(evt.drive_object_id);
+            res.setHeader('Content-Type', mimeType || 'image/jpeg');
+            res.setHeader('Cache-Control', 'private, max-age=3600');
+            return res.send(buffer);
+          } else if (driveService?.downloadFile) {
+            const { buffer, mimeType } = await driveService.downloadFile(evt.drive_object_id);
             res.setHeader('Content-Type', mimeType || 'image/jpeg');
             res.setHeader('Cache-Control', 'private, max-age=3600');
             return res.send(buffer);
@@ -3994,8 +4026,14 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       if (driveId && !driveId.startsWith('DRV_') && !driveId.startsWith('INLINE_')) {
         try {
           const syncService = (adapter as any).syncService;
+          const driveService = (adapter as any).drive;
           if (syncService?.downloadDriveFile) {
             const { buffer, mimeType } = await syncService.downloadDriveFile(adj.evidence_drive_id);
+            res.setHeader('Content-Type', mimeType || 'image/jpeg');
+            res.setHeader('Cache-Control', 'private, max-age=3600');
+            return res.send(buffer);
+          } else if (driveService?.downloadFile) {
+            const { buffer, mimeType } = await driveService.downloadFile(adj.evidence_drive_id);
             res.setHeader('Content-Type', mimeType || 'image/jpeg');
             res.setHeader('Cache-Control', 'private, max-age=3600');
             return res.send(buffer);
@@ -4075,6 +4113,59 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       res.json({ date, total: relevant.length, withPhoto: ok, uploadFailed, neverUploaded, withInline, missing, drive, adapterPhoto });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Chạy bù NGAY việc upload ảnh điểm danh còn kẹt (DRV_LOCAL / chưa có Drive ID).
+  // Dùng sau khi cấu hình OAuth2/webhook để phục hồi ảnh cũ mà không chờ cron 5 phút.
+  app.post('/admin/attendance/photos-retry', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const batch = Math.max(1, Math.min(50, Number(req.body?.limit) || 50));
+      let checked = 0;
+      let recovered = 0;
+      // Lặp tối đa 20 lượt × 50 ảnh = 1000 ảnh mỗi lần bấm.
+      for (let i = 0; i < 20; i++) {
+        const r = await attendanceService.retryFailedPhotoUploads(batch);
+        checked += r.checked;
+        recovered += r.recovered;
+        if (!r.checked || !r.recovered) break;
+      }
+      const syncService = (adapter as any).syncService;
+      const drive = syncService?.getDriveUploadStatus?.()
+        || (adapter as any).drive?.getStatus?.()
+        || null;
+      return res.json({ checked, recovered, drive });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || String(err) });
+    }
+  });
+
+  // Đồng bộ ảnh cũ lên Drive theo ngày/khoảng ngày (dùng đĩa đệm + kho lưu trữ).
+  // Dành cho Admin sau khi cấu hình OAuth2/webhook: phục hồi ảnh DRV_LOCAL cũ.
+  app.post('/admin/attendance/photos-sync', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const syncService = (adapter as any).syncService;
+      if (!syncService?.upsertBufferToDrivePath) return res.status(500).json({ error: 'SYNC_SERVICE_MISSING' });
+      const date = String(req.body?.date || '').trim();
+      if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        return res.status(400).json({ error: 'INVALID_DATE' });
+      }
+      let result: any;
+      if (date) {
+        result = await syncDayPhotosToDrive(syncService, adapter, date);
+      } else {
+        const days = Math.max(1, Math.min(31, Number(req.body?.days) || 7));
+        const to = backupVnToday();
+        result = await syncPhotoBacklog(syncService, adapter, {
+          fromDate: addDaysIso(to, -(days - 1)),
+          toDate: to,
+          maxDays: days,
+        });
+      }
+      const drive = syncService?.getDriveUploadStatus?.() || (adapter as any).drive?.getStatus?.() || null;
+      return res.json({ ...result, drive });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || String(err) });
     }
   });
 

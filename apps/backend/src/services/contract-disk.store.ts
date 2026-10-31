@@ -12,15 +12,19 @@ import path from 'path';
 export type ContractKind = 'PROBATION' | 'OFFICIAL' | 'ID_CARD_FRONT' | 'ID_CARD_BACK';
 
 function resolveContractDir(): string {
-  if (process.env.CONTRACT_FILE_DIR) return process.env.CONTRACT_FILE_DIR;
+  if (process.env.CONTRACT_FILE_DIR) {
+    try { fs.mkdirSync(process.env.CONTRACT_FILE_DIR, { recursive: true }); } catch { /* ignore */ }
+    return process.env.CONTRACT_FILE_DIR;
+  }
   const cwd = process.cwd();
-  // npm --workspace chạy cwd=apps/backend; docker/prod chạy cwd=/app (repo root).
-  try {
-    if (fs.existsSync(path.join(cwd, 'apps', 'backend', 'package.json'))) {
-      return path.join(cwd, 'apps', 'backend', 'data', 'contracts');
-    }
-  } catch { /* fallthrough */ }
-  return path.join(cwd, 'data', 'contracts');
+  const rootData = path.join(cwd, 'data', 'contracts');
+  const backendData = path.join(cwd, 'apps', 'backend', 'data', 'contracts');
+  let selected = rootData;
+  if (!fs.existsSync(path.join(cwd, 'data')) && fs.existsSync(path.join(cwd, 'apps', 'backend', 'data'))) {
+    selected = backendData;
+  }
+  try { fs.mkdirSync(selected, { recursive: true }); } catch { /* ignore */ }
+  return selected;
 }
 
 const CONTRACT_DIR = resolveContractDir();

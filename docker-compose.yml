@@ -51,6 +51,8 @@ services:
       # PostgreSQL là nguồn sự thật. DATABASE_URL lấy từ apps/backend/.env
       # (ví dụ: postgresql://ubm:matkhau@postgres:5432/ubm_hr).
       DATA_STORE: ${DATA_STORE:-postgres}
+      ATTENDANCE_PHOTO_DIR: /app/data/attendance-photos
+      CONTRACT_FILE_DIR: /app/data/contracts
     volumes:
       # Snapshot/journal + ảnh đệm chờ upload Google Drive.
       # Trên VPS phải tạo trước và cấp quyền cho user trong container (uid 1000):

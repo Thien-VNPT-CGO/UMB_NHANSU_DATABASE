@@ -107,6 +107,69 @@ function MyAdjPhoto({ adjustmentId, style, evidenceDriveId, hasPhoto }: { adjust
   return <img src={url} alt="Ảnh bằng chứng" style={{ width: '72px', height: '72px', objectFit: 'cover', borderRadius: '8px', border: '1px solid var(--border)', ...(style || {}) }} />;
 }
 
+/** Ảnh điểm danh check-in/out của tôi (kèm token Authorization). */
+function MyAttPhoto({ eventId, style, alt }: { eventId: string; style?: React.CSSProperties; alt?: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [zoom, setZoom] = useState(false);
+  useEffect(() => {
+    if (!eventId) {
+      setFailed(true);
+      return;
+    }
+    let alive = true;
+    let objUrl: string | null = null;
+    (async () => {
+      try {
+        const res = await fetch(`${getApiBase()}/me/attendance/photo/${eventId}`, {
+          headers: { Authorization: `Bearer ${getAuthToken()}` },
+        });
+        if (!res.ok) throw new Error('no photo');
+        const blob = await res.blob();
+        objUrl = URL.createObjectURL(blob);
+        if (alive) setUrl(objUrl);
+      } catch {
+        if (alive) setFailed(true);
+      }
+    })();
+    return () => {
+      alive = false;
+      if (objUrl) URL.revokeObjectURL(objUrl);
+    };
+  }, [eventId]);
+  if (failed || !eventId) return null;
+  if (!url) return <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>...</span>;
+  return (
+    <>
+      <img
+        src={url}
+        alt={alt || 'Ảnh điểm danh'}
+        onClick={() => setZoom(true)}
+        style={{
+          width: '36px',
+          height: '36px',
+          objectFit: 'cover',
+          borderRadius: '6px',
+          border: '1px solid var(--border)',
+          cursor: 'zoom-in',
+          ...(style || {}),
+        }}
+      />
+      {zoom && (
+        <div onClick={() => setZoom(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.75)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', cursor: 'zoom-out' }}>
+          <div onClick={e => e.stopPropagation()} style={{ backgroundColor: '#fff', borderRadius: '12px', padding: '12px', maxWidth: '480px', width: '100%', textAlign: 'center' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <span style={{ fontSize: '13px', fontWeight: 800 }}>{alt || 'Ảnh điểm danh'}</span>
+              <button className="btn-secondary" style={{ padding: '2px 10px', fontSize: '12px' }} onClick={() => setZoom(false)}>Đóng</button>
+            </div>
+            <img src={url} alt={alt || 'Ảnh điểm danh'} style={{ width: '100%', maxHeight: '70vh', objectFit: 'contain', borderRadius: '8px' }} />
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 /** Màn hình khóa bắt buộc cập nhật cổng nhân viên: có bản mới là khóa toàn bộ
  *  chức năng cho tới khi NV bấm cập nhật (reload lấy bản mới). Không có nút bỏ qua. */
 /**
@@ -6677,6 +6740,12 @@ export function App() {
                               <div>
                                 <div style={{ fontWeight: 700, fontSize: '12px' }}>{shiftNameOf((r.sh as any)?.shift_code)}{r.sched ? ` (${r.sched})` : ''}</div>
                                 <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Vào: {fmtT(r.ci?.client_time)} • Ra: {fmtT(r.co?.client_time)}</div>
+                                {(r.ci?.event_id || r.co?.event_id) && (
+                                  <div style={{ display: 'flex', gap: '6px', marginTop: '4px' }}>
+                                    {r.ci?.event_id && <MyAttPhoto eventId={r.ci.event_id} alt="Ảnh vào ca (check-in)" />}
+                                    {r.co?.event_id && <MyAttPhoto eventId={r.co.event_id} alt="Ảnh ra ca (check-out)" />}
+                                  </div>
+                                )}
                                 {r.notes.length > 0 && (
                                   <div style={{ fontSize: '11px', marginTop: '2px', color: r.notes.some((n: string) => /Phạt|GPS vượt|không lương/i.test(n)) ? '#991B1B' : 'var(--text-muted)', fontWeight: 600 }}>
                                     {r.notes.join(' • ')}
@@ -6700,6 +6769,12 @@ export function App() {
                                 <div>
                                   <div style={{ fontWeight: 700, fontSize: '12px' }}>Ngoài lịch (tự điểm danh){xpay ? ` • 💰 ${money(Math.round(xpay.net))}đ (tạm tính)` : ''}</div>
                                   <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Vào: {fmtT(xci?.client_time)} • Ra: {fmtT(xco?.client_time)}</div>
+                                  {(xci?.event_id || xco?.event_id) && (
+                                    <div style={{ display: 'flex', gap: '6px', marginTop: '4px' }}>
+                                      {xci?.event_id && <MyAttPhoto eventId={xci.event_id} alt="Ảnh vào ca (check-in)" />}
+                                      {xco?.event_id && <MyAttPhoto eventId={xco.event_id} alt="Ảnh ra ca (check-out)" />}
+                                    </div>
+                                  )}
                                 </div>
                                 <span style={{ fontSize: '11px', fontWeight: 700, padding: '4px 8px', borderRadius: '999px', backgroundColor: x.st?.bg || '#EEF2FF', color: x.st?.fg || '#3730A3', border: x.st?.border || '1px solid #C7D2FE', whiteSpace: 'nowrap' }}>
                                   {x.st?.label || 'Ngoài lịch'}

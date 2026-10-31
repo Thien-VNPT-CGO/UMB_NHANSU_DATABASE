@@ -1,5 +1,21 @@
 import dotenv from 'dotenv';
+import fs from 'fs';
+import path from 'path';
+
 dotenv.config();
+try {
+  const candidateEnvs = [
+    path.resolve(process.cwd(), '.env'),
+    path.resolve(process.cwd(), 'apps/backend/.env'),
+    path.resolve(__dirname, '../../.env'),
+    path.resolve(__dirname, '../.env'),
+  ];
+  for (const p of candidateEnvs) {
+    if (fs.existsSync(p)) {
+      dotenv.config({ path: p, override: false });
+    }
+  }
+} catch { /* ignore */ }
 
 import dns from 'dns';
 // VPS có thể có IPv6 "nửa vời" (SYN rơi): Node 18+ ưu tiên IPv6 nên kết nối tới

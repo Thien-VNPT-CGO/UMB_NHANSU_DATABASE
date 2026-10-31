@@ -2,7 +2,17 @@ import fs from 'fs';
 import path from 'path';
 import { Readable } from 'stream';
 import { google, drive_v3 } from 'googleapis';
-import { getAttendanceFolderForBranch } from '../config/drive-folders.js';
+import {
+  getAttendanceBranchLabel,
+  getAttendanceFolderForBranch,
+  getAttendanceRootFolder,
+} from '../config/drive-folders.js';
+import {
+  createDriveOAuthClient,
+  describeDriveAuth,
+  type GoogleDriveAuthMode,
+} from './google-drive-auth.js';
+import { uploadBufferViaDriveWebhook, downloadBufferViaDriveWebhook } from './drive-upload-webhook.js';
 
 /**
  * Dịch vụ lưu ảnh trên Google Drive — thay thế hoàn toàn Apps Script.
@@ -63,6 +73,7 @@ function loadServiceAccount(): { email: string; key: string } | null {
     const candidates = [
       process.env.GOOGLE_SERVICE_ACCOUNT_FILE,
       path.resolve(process.cwd(), 'key.json'),
+      path.resolve(__dirname, '../../../../key.json'),
       path.resolve(process.cwd(), 'data/service-account.json'),
       '/app/data/service-account.json',
     ].filter(Boolean) as string[];
@@ -97,15 +108,29 @@ function loadServiceAccount(): { email: string; key: string } | null {
 export class DriveStorageService {
   private drive: drive_v3.Drive | null = null;
   private authError: string | null = null;
+  private authMode: GoogleDriveAuthMode = 'none';
+  private authAccount = '';
   private folderCache = new Map<string, string>();
+  private branchFolderCache = new Map<string, string>();
   private readonly rootFolderId = String(process.env.GOOGLE_DRIVE_FOLDER_ID || '');
   private readonly maxDownloadBytes = Math.max(1, Number(process.env.DRIVE_MAX_DOWNLOAD_MB) || 20) * 1024 * 1024;
 
   constructor() {
+    // Ưu tiên OAuth2 (Gmail sở hữu thư mục) vì Service Account không có quota
+    // trên My Drive. Chưa cấu hình OAuth thì giữ nguyên Service Account.
+    const oauth = createDriveOAuthClient(['https://www.googleapis.com/auth/drive']);
+    if (oauth) {
+      this.drive = google.drive({ version: 'v3', auth: oauth });
+      this.authMode = 'oauth';
+      this.authAccount = String(process.env.GOOGLE_OAUTH_ACCOUNT_EMAIL || 'OAuth2 Gmail');
+      console.log(`[DriveStorage] Drive API qua OAuth2 sẵn sàng (${this.authAccount})`);
+      return;
+    }
+
     const creds = loadServiceAccount();
     if (!creds) {
-      this.authError = 'Chưa cấu hình GOOGLE_SERVICE_ACCOUNT_JSON / GOOGLE_SERVICE_ACCOUNT_EMAIL + GOOGLE_PRIVATE_KEY';
-      console.warn('[DriveStorage]', this.authError, '— ảnh sẽ chỉ lưu tạm trên đĩa VPS.');
+      this.authError = 'Chưa cấu hình GOOGLE_SERVICE_ACCOUNT_JSON / GOOGLE_SERVICE_ACCOUNT_EMAIL + GOOGLE_PRIVATE_KEY (hoặc GOOGLE_OAUTH_*). Ảnh sẽ chỉ lưu tạm trên đĩa VPS.';
+      console.warn('[DriveStorage]', this.authError);
       return;
     }
     try {
@@ -115,6 +140,8 @@ export class DriveStorageService {
         scopes: ['https://www.googleapis.com/auth/drive'],
       });
       this.drive = google.drive({ version: 'v3', auth });
+      this.authMode = 'service-account';
+      this.authAccount = creds.email;
       console.log(`[DriveStorage] Drive API sẵn sàng cho: ${creds.email}`);
     } catch (err: any) {
       this.authError = `Lỗi khởi tạo JWT: ${err?.message || err}`;
@@ -130,8 +157,17 @@ export class DriveStorageService {
     return {
       configured: this.isConfigured(),
       authError: this.authError,
+      authMode: this.authMode,
+      authAccount: this.authAccount || null,
+      authLabel: describeDriveAuth(this.authMode, this.authAccount),
       rootFolderId: this.rootFolderId || null,
-      mode: this.isConfigured() ? (process.env.GOOGLE_DRIVE_SHARED_DRIVE ? 'shared-drive' : 'drive') : 'disabled',
+      attendanceRootFolderId: getAttendanceRootFolder() || null,
+      webhookConfigured: !!String(process.env.GOOGLE_DRIVE_UPLOAD_WEBHOOK_URL || '').trim(),
+      mode: this.isConfigured()
+        ? (this.authMode === 'oauth'
+          ? 'oauth'
+          : (process.env.GOOGLE_DRIVE_SHARED_DRIVE ? 'shared-drive' : 'drive'))
+        : 'disabled',
     };
   }
 
@@ -194,6 +230,66 @@ export class DriveStorageService {
     return parent;
   }
 
+  /** Kiểm tra tài khoản hiện tại có quyền thêm file/folder con vào folder không. */
+  private async canAddChildren(folderId: string): Promise<boolean | null> {
+    if (!this.drive || !folderId) return false;
+    try {
+      const meta = await this.drive.files.get({
+        fileId: folderId,
+        fields: 'id, capabilities(canAddChildren)',
+        supportsAllDrives: true,
+      } as any);
+      const can = (meta.data as any)?.capabilities?.canAddChildren;
+      return typeof can === 'boolean' ? can : null;
+    } catch (err: any) {
+      const status = Number(err?.response?.status ?? err?.code);
+      // 404: folder không tồn tại / không được chia sẻ -> chắc chắn không dùng được.
+      if (status === 404) return false;
+      // 403 có thể do chỉ có quyền đọc; để null = "không rõ", vẫn thử upload.
+      return null;
+    }
+  }
+
+  /**
+   * Xác định folder chi nhánh thực sự ghi được.
+   *
+   * Thứ tự: folder chi nhánh đã cấu hình (env/mã nguồn) -> nếu không ghi được
+   * thì tạo thư mục chi nhánh dưới "04. ĐIỂM DANH". Tránh trường hợp ID cấu
+   * hình thuộc Drive khác khiến mọi ảnh rơi về DRV_LOCAL.
+   */
+  public async resolveAttendanceBranchFolder(branchId?: string): Promise<string> {
+    const cacheKey = String(branchId || 'DEFAULT').trim().toUpperCase() || 'DEFAULT';
+    const cached = this.branchFolderCache.get(cacheKey);
+    if (cached) return cached;
+
+    const configured = getAttendanceFolderForBranch(branchId);
+    const root = getAttendanceRootFolder();
+    const candidates = Array.from(new Set([configured, root].filter(Boolean)));
+
+    for (const id of candidates) {
+      const can = await this.canAddChildren(id);
+      if (can === true) {
+        this.branchFolderCache.set(cacheKey, id);
+        return id;
+      }
+    }
+
+    // Không ghi được vào ID cấu hình -> tạo thư mục chi nhánh dưới thư mục gốc.
+    if (root && await this.canAddChildren(root) !== false) {
+      try {
+        const branchFolder = await this.ensureFolder(getAttendanceBranchLabel(branchId), root);
+        if (branchFolder) {
+          this.branchFolderCache.set(cacheKey, branchFolder);
+          return branchFolder;
+        }
+      } catch (err: any) {
+        console.warn('[DriveStorage] Không tạo được thư mục chi nhánh:', err?.message || err);
+      }
+    }
+
+    return configured || root;
+  }
+
   public async findFileByName(name: string, parentId: string): Promise<string | null> {
     if (!this.drive) return null;
     const escaped = safeSegment(name).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
@@ -220,35 +316,29 @@ export class DriveStorageService {
     rootId?: string,
     opts: { upsert?: boolean; appProperties?: Record<string, string> } = {},
   ): Promise<DriveFileRef> {
+    const name = safeSegment(fileName, `file_${Date.now()}.jpg`);
+
+    // Webhook (nếu cấu hình) chạy dưới quyền CHỦ thư mục: tự tạo cây thư mục
+    // con và ghi file — dùng được cả khi Service Account hết quota.
+    const webhookRoot = String(rootId || this.rootFolderId || '').trim();
+    if (webhookRoot) {
+      const webhook = await uploadBufferViaDriveWebhook({
+        folderId: webhookRoot,
+        segments,
+        fileName: name,
+        mimeType,
+        buffer,
+      });
+      if (webhook?.fileId) {
+        return { fileId: webhook.fileId, viewUrl: webhook.webViewLink || this.getViewUrl(webhook.fileId), name };
+      }
+    }
+
     if (!this.drive) throw new Error('DRIVE_NOT_CONFIGURED');
     const parent = await this.ensureFolderPath(segments, rootId);
     if (!parent) throw new Error('DRIVE_FOLDER_NOT_FOUND');
-    const name = safeSegment(fileName, `file_${Date.now()}.jpg`);
 
     let fileId = '';
-    // Hỗ trợ upload qua GAS Webhook nếu được cấu hình (chạy dưới quyền sở hữu của umbomilk@gmail.com)
-    if (process.env.GOOGLE_DRIVE_UPLOAD_WEBHOOK_URL) {
-      try {
-        const res = await fetch(process.env.GOOGLE_DRIVE_UPLOAD_WEBHOOK_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            folderId: parent,
-            fileName: name,
-            mimeType,
-            base64: buffer.toString('base64'),
-          }),
-        });
-        if (res.ok) {
-          const data: any = await res.json();
-          if (data?.fileId) {
-            return { fileId: data.fileId, viewUrl: data.webViewLink || data.url || this.getViewUrl(data.fileId), name };
-          }
-        }
-      } catch (err: any) {
-        console.warn('[DriveStorageService] Upload qua GAS Webhook lỗi:', err?.message || err);
-      }
-    }
 
     if (opts.upsert) {
       const existing = await this.findFileByName(name, parent).catch(() => null);
@@ -306,14 +396,18 @@ export class DriveStorageService {
   ): Promise<DriveFileRef> {
     const day = vnDayOfIso(event.client_time) || vnDayOfIso(event.server_received_at) || vnDayOfIso(new Date().toISOString());
     const branchId = String(event.branch_id || 'CN130');
-    const rootId = getAttendanceFolderForBranch(branchId);
+    const rootId = await this.resolveAttendanceBranchFolder(branchId);
     const type = String(event.type || 'PHOTO');
-    const fileName = `${type === 'CHECK_IN' ? 'check-in' : type === 'CHECK_OUT' ? 'check-out' : type.toLowerCase()}_${safeSegment(event.event_id, 'event')}.jpg`;
+    const fileName = type === 'CHECK_IN'
+      ? 'check in.jpg'
+      : type === 'CHECK_OUT'
+        ? 'check out.jpg'
+        : `${safeSegment(type.toLowerCase(), 'photo')}.jpg`;
     const segments = [day, safeSegment(employeeName, safeSegment(event.employee_id, 'KHONG_NV'))];
     const parsed = parseDataUrl(event.photo_base64);
     if (!parsed) throw new Error('INVALID_IMAGE_DATA');
     return this.uploadBuffer(fileName, parsed.mime, parsed.buffer, segments, rootId, {
-      upsert: false,
+      upsert: true,
       appProperties: { event_id: String(event.event_id || ''), employee_id: String(event.employee_id || '') },
     });
   }
@@ -342,35 +436,50 @@ export class DriveStorageService {
 
   /** Tải file Drive về buffer (dùng cho proxy ảnh có xác thực). */
   public async downloadFile(fileId: string): Promise<{ buffer: Buffer; mimeType: string }> {
-    if (!this.drive) throw new Error('DRIVE_NOT_CONFIGURED');
-    const meta = await this.drive.files.get({
-      fileId,
-      fields: 'id,name,mimeType,size',
-      supportsAllDrives: true,
-    } as any);
-    const size = Number(meta.data.size || 0);
-    if (size > this.maxDownloadBytes) {
-      throw new Error(`DRIVE_FILE_TOO_LARGE:${size}`);
+    if (!fileId) throw new Error('DRIVE_FILE_NOT_AVAILABLE');
+    if (!this.drive) {
+      // Chỉ có webhook: nhờ chính GAS đọc file (chạy dưới quyền chủ thư mục).
+      const dl = await downloadBufferViaDriveWebhook(fileId);
+      if (dl) return dl;
+      throw new Error('DRIVE_NOT_CONFIGURED');
     }
-    const res = await this.drive.files.get({
-      fileId,
-      alt: 'media',
-      supportsAllDrives: true,
-    } as any, { responseType: 'stream' } as any);
+    try {
+      const meta = await this.drive.files.get({
+        fileId,
+        fields: 'id,name,mimeType,size',
+        supportsAllDrives: true,
+      } as any);
+      const size = Number(meta.data.size || 0);
+      if (size > this.maxDownloadBytes) {
+        throw new Error(`DRIVE_FILE_TOO_LARGE:${size}`);
+      }
+      const res = await this.drive.files.get({
+        fileId,
+        alt: 'media',
+        supportsAllDrives: true,
+      } as any, { responseType: 'stream' } as any);
 
-    const stream = res.data as unknown as Readable;
-    const chunks: Buffer[] = [];
-    let total = 0;
-    for await (const chunk of stream) {
-      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      total += buf.length;
-      if (total > this.maxDownloadBytes) throw new Error('DRIVE_FILE_TOO_LARGE');
-      chunks.push(buf);
+      const stream = res.data as unknown as Readable;
+      const chunks: Buffer[] = [];
+      let total = 0;
+      for await (const chunk of stream) {
+        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        total += buf.length;
+        if (total > this.maxDownloadBytes) throw new Error('DRIVE_FILE_TOO_LARGE');
+        chunks.push(buf);
+      }
+      return {
+        buffer: Buffer.concat(chunks),
+        mimeType: String(meta.data.mimeType || 'image/jpeg'),
+      };
+    } catch (err: any) {
+      const msg = String(err?.message || '');
+      if (msg.startsWith('DRIVE_FILE_TOO_LARGE')) throw err;
+      // Drive API không đọc được (file thuộc tài khoản khác) -> thử webhook.
+      const dl = await downloadBufferViaDriveWebhook(fileId);
+      if (dl) return dl;
+      throw err;
     }
-    return {
-      buffer: Buffer.concat(chunks),
-      mimeType: String(meta.data.mimeType || 'image/jpeg'),
-    };
   }
 
   public async deleteFile(fileId: string): Promise<boolean> {

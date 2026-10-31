@@ -62,15 +62,38 @@ export const DRIVE_ATTENDANCE_BRANCH_FOLDERS: Record<string, string> = {
   'Văn Phòng Trụ Sở Chính': '1RytLiwJSwrIHPu4Gn49a6_6qyEiIM__Z',
 };
 
+/** Tên thư mục chi nhánh dùng khi phải tạo mới dưới thư mục 04. ĐIỂM DANH. */
+const BRANCH_FOLDER_LABELS: Record<string, string> = {
+  CN1: 'CN1 - 130 Vạn Kiếp',
+  CN2: 'CN2 - 261 Tô Hiến Thành',
+  CN3: 'CN3 - 120 Hoàng Diệu 2',
+  CN4: 'CN4 - 111 Tôn Đản',
+  XUONG: 'Xưởng Sản Xuất (Củ Chi)',
+  VANPHONG: 'Văn Phòng Trụ Sở Chính',
+};
+
 /**
- * Lấy Folder ID điểm danh tương ứng theo chi nhánh
+ * Thư mục gốc "04. ĐIỂM DANH (CHECK-IN + CHECK-OUT)".
+ * Cho phép ghi đè bằng env để dùng đúng Drive của từng môi trường (VPS/cloud).
  */
-export function getAttendanceFolderForBranch(branchId?: string): string {
-  if (!branchId) return DRIVE_SUBFOLDERS.ATTENDANCE_ROOT;
-  const raw = String(branchId).trim();
+export function getAttendanceRootFolder(): string {
+  return String(process.env.GOOGLE_DRIVE_ATTENDANCE_FOLDER_ID || '').trim()
+    || DRIVE_SUBFOLDERS.ATTENDANCE_ROOT;
+}
+
+/** Khóa chi nhánh chuẩn (CN1/CN2/...) từ id hoặc tên chi nhánh. */
+export function resolveAttendanceBranchKey(branchId?: string): string {
+  const raw = String(branchId || '').trim();
+  if (!raw) return '';
   const upper = raw.toUpperCase();
-  if (DRIVE_ATTENDANCE_BRANCH_FOLDERS[upper]) return DRIVE_ATTENDANCE_BRANCH_FOLDERS[upper];
-  if (DRIVE_ATTENDANCE_BRANCH_FOLDERS[raw]) return DRIVE_ATTENDANCE_BRANCH_FOLDERS[raw];
+  if (DRIVE_ATTENDANCE_BRANCH_FOLDERS[upper]) {
+    const hit = Object.keys(DRIVE_ATTENDANCE_BRANCH_FOLDERS).find(k => DRIVE_ATTENDANCE_BRANCH_FOLDERS[k] === DRIVE_ATTENDANCE_BRANCH_FOLDERS[upper]);
+    return (hit || upper).toUpperCase();
+  }
+  if (DRIVE_ATTENDANCE_BRANCH_FOLDERS[raw]) {
+    const hit = Object.keys(DRIVE_ATTENDANCE_BRANCH_FOLDERS).find(k => DRIVE_ATTENDANCE_BRANCH_FOLDERS[k] === DRIVE_ATTENDANCE_BRANCH_FOLDERS[raw]);
+    return (hit || raw).toUpperCase();
+  }
 
   // Chuẩn hóa không dấu để so khớp linh hoạt
   const normalized = upper
@@ -78,24 +101,50 @@ export function getAttendanceFolderForBranch(branchId?: string): string {
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/Đ/g, 'D');
 
-  if (normalized.includes('130') || normalized.includes('CN1') || normalized.includes('VAN KIEP')) {
-    return DRIVE_ATTENDANCE_BRANCH_FOLDERS.CN1;
-  }
-  if (normalized.includes('261') || normalized.includes('CN2') || normalized.includes('TO HIEN THANH')) {
-    return DRIVE_ATTENDANCE_BRANCH_FOLDERS.CN2;
-  }
-  if (normalized.includes('120') || normalized.includes('CN3') || normalized.includes('HOANG DIEU')) {
-    return DRIVE_ATTENDANCE_BRANCH_FOLDERS.CN3;
-  }
-  if (normalized.includes('111') || normalized.includes('CN4') || normalized.includes('TON DAN')) {
-    return DRIVE_ATTENDANCE_BRANCH_FOLDERS.CN4;
-  }
-  if (normalized.includes('XUONG') || normalized.includes('CU CHI')) {
-    return DRIVE_ATTENDANCE_BRANCH_FOLDERS.XUONG;
-  }
-  if (normalized.includes('VAN PHONG') || normalized.includes('VANPHONG') || normalized.includes('TRU SO')) {
-    return DRIVE_ATTENDANCE_BRANCH_FOLDERS.VANPHONG;
+  if (normalized.includes('130') || normalized.includes('CN1') || normalized.includes('VAN KIEP')) return 'CN1';
+  if (normalized.includes('261') || normalized.includes('CN2') || normalized.includes('TO HIEN THANH')) return 'CN2';
+  if (normalized.includes('120') || normalized.includes('CN3') || normalized.includes('HOANG DIEU')) return 'CN3';
+  if (normalized.includes('111') || normalized.includes('CN4') || normalized.includes('TON DAN')) return 'CN4';
+  if (normalized.includes('XUONG') || normalized.includes('CU CHI')) return 'XUONG';
+  if (normalized.includes('VAN PHONG') || normalized.includes('VANPHONG') || normalized.includes('TRU SO')) return 'VANPHONG';
+  return '';
+}
+
+/** Tên hiển thị của thư mục chi nhánh (để tạo folder khi chưa có ID). */
+export function getAttendanceBranchLabel(branchId?: string): string {
+  const key = resolveAttendanceBranchKey(branchId);
+  if (key && BRANCH_FOLDER_LABELS[key]) return BRANCH_FOLDER_LABELS[key];
+  return String(branchId || 'KHONG_XAC_DINH').trim() || 'KHONG_XAC_DINH';
+}
+
+/**
+ * Lấy Folder ID điểm danh tương ứng theo chi nhánh.
+ *
+ * Thứ tự ưu tiên:
+ *  1. GOOGLE_DRIVE_ATTENDANCE_FOLDER_<CHI NHÁNH> (ví dụ ..._CN130, ..._CN1)
+ *  2. ID cấu hình sẵn trong mã nguồn
+ *  3. GOOGLE_DRIVE_ATTENDANCE_FOLDER_ID (thư mục 04. ĐIỂM DANH)
+ *
+ * Env được đọc tại thời điểm gọi (không cache lúc import) để đổi cấu hình chỉ
+ * cần restart, không phải sửa mã nguồn.
+ */
+export function getAttendanceFolderForBranch(branchId?: string): string {
+  const rootId = getAttendanceRootFolder();
+  if (!branchId) return rootId;
+
+  const raw = String(branchId).trim();
+  const upper = raw.toUpperCase();
+
+  // Cho phép đặt ID trực tiếp theo mã chi nhánh thô (CN130, CN261, ...).
+  const rawEnv = String(process.env[`GOOGLE_DRIVE_ATTENDANCE_FOLDER_${upper}`] || '').trim();
+  if (rawEnv) return rawEnv;
+
+  const key = resolveAttendanceBranchKey(branchId);
+  if (key) {
+    const keyEnv = String(process.env[`GOOGLE_DRIVE_ATTENDANCE_FOLDER_${key}`] || '').trim();
+    if (keyEnv) return keyEnv;
+    if (DRIVE_ATTENDANCE_BRANCH_FOLDERS[key]) return DRIVE_ATTENDANCE_BRANCH_FOLDERS[key];
   }
 
-  return DRIVE_SUBFOLDERS.ATTENDANCE_ROOT;
+  return rootId;
 }

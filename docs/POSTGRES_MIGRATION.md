@@ -43,6 +43,17 @@ GOOGLE_SERVICE_ACCOUNT_JSON={...}
 GOOGLE_DRIVE_FOLDER_ID=...
 GOOGLE_DRIVE_ATTENDANCE_FOLDER_ID=...
 
+# Gmail cá nhân: Service Account KHÔNG có quota trên My Drive -> bắt buộc OAuth2.
+# Lấy refresh token: node scripts/get-google-oauth-refresh-token.cjs
+GOOGLE_OAUTH_CLIENT_ID=...
+GOOGLE_OAUTH_CLIENT_SECRET=...
+GOOGLE_OAUTH_REFRESH_TOKEN=...
+GOOGLE_OAUTH_ACCOUNT_EMAIL=umbomilk@gmail.com
+
+# Hoặc dự phòng bằng Apps Script webhook (apps/backend/drive-upload-webhook.gs):
+# GOOGLE_DRIVE_UPLOAD_WEBHOOK_URL=https://script.google.com/macros/s/.../exec
+# GOOGLE_DRIVE_WEBHOOK_SECRET=...
+
 # Chờ tối đa 4s cho upload ảnh; quá hạn trả kết quả điểm danh ngay và upload nền.
 DRIVE_UPLOAD_BLOCK_MS=4000
 ```
@@ -66,7 +77,15 @@ khoản dịch vụ không có quota trên My Drive cá nhân. Cách làm:
    hoặc biến môi trường tương ứng.
 4. Kiểm tra: `GET /health` → `drive.configured = true`.
 
-Nếu dùng Gmail cá nhân, cần OAuth2 refresh token thay cho Service Account.
+Nếu dùng Gmail cá nhân, cần OAuth2 refresh token thay cho Service Account
+(xem chi tiết: `docs/GOOGLE_DRIVE_ANH_DIEM_DANH.md`). Codepath ưu tiên OAuth2,
+sau đó Service Account, và luôn thử GAS webhook nếu có cấu hình.
+
+### Ảnh điểm danh
+
+Ảnh check-in/out được ghi vào `04. ĐIỂM DANH (CHECK-IN + CHECK-OUT)/<Chi nhánh>/<Ngày>/<Tên NV>/`.
+Nếu ảnh cũ còn `DRV_LOCAL_`, chạy `POST /admin/attendance/photos-retry` hoặc
+`POST /admin/attendance/photos-sync` để phục hồi từ đĩa đệm/kho lưu trữ.
 
 ## 3. Khởi động
 
