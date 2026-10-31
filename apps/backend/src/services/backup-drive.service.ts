@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import zlib from 'zlib';
 import { DRIVE_SUBFOLDERS } from '../config/drive-folders.js';
-import type { DriveStorageService } from './drive-storage.service.js';
+import { getDriveStorage, type DriveStorageService } from './drive-storage.service.js';
 import type { BackupExportResult, PostgresStore } from '../repositories/postgres-store.js';
 import { notifySystemAlert } from './system-alert.service.js';
 
@@ -308,28 +308,22 @@ export class DriveBackupScheduler {
   constructor(adapter: any, cfg: BackupScheduleConfig = backupConfigFromEnv()) {
     this.adapter = adapter;
     this.store = (adapter?.store as PostgresStore) || null;
-    this.drive = (adapter?.drive as DriveStorageService) || null;
+    this.drive = (adapter?.drive as DriveStorageService) || getDriveStorage();
     this.cfg = cfg;
   }
 
   public isEnabled(): boolean {
-    return !!this.store?.configured;
+    return !!this.store?.configured || !!this.adapter;
   }
 
   public async start(): Promise<boolean> {
     if (this.started) return true;
     if (!this.isEnabled()) {
-      console.log('[backup-drive] Bỏ qua: chưa cấu hình PostgreSQL (backup chỉ chạy khi DATA_STORE=postgres).');
+      console.log('[backup-drive] Bỏ qua: chưa cấu hình adapter hoặc store.');
       return false;
     }
     this.started = true;
-    try {
-      this.state = (await this.store!.getSetting<BackupScheduleState>(STATE_KEY)) || {};
-    } catch (err: any) {
-      console.warn('[backup-drive] Không đọc được mốc backup cũ:', err?.message || err);
-      this.state = {};
-    }
-    this.stateLoaded = true;
+    await this.loadState();
     // Chờ hệ thống ổn định sau boot rồi mới chạy kỳ đến hạn.
     setTimeout(() => void this.tick(), 20_000);
     this.timer = setInterval(() => void this.tick(), 30_000);
@@ -466,11 +460,38 @@ export class DriveBackupScheduler {
     };
 
     try {
-      const exclude = due.kind === 'hourly' ? this.cfg.hourlyExcludeTables : [];
-      const data: BackupExportResult = await this.store!.exportBackupJsonl({ excludeTables: exclude });
-      const gz = zlib.gzipSync(Buffer.from(data.jsonl, 'utf8'), { level: 6 });
-      result.counts = data.counts;
-      result.rows = data.total;
+      let jsonlContent = '';
+      let counts: Record<string, number> = {};
+      let total = 0;
+
+      if (this.store?.configured) {
+        const exclude = due.kind === 'hourly' ? this.cfg.hourlyExcludeTables : [];
+        const data: BackupExportResult = await this.store.exportBackupJsonl({ excludeTables: exclude });
+        jsonlContent = data.jsonl;
+        counts = data.counts;
+        total = data.total;
+      } else {
+        const rawState = typeof this.adapter?.exportRuntimeState === 'function'
+          ? this.adapter.exportRuntimeState()
+          : (this.adapter?.fallbackAdapter?.exportRuntimeState?.() || {});
+        const createdAt = new Date().toISOString();
+        const lines: string[] = [];
+        for (const [key, rows] of Object.entries(rawState)) {
+          if (!Array.isArray(rows)) continue;
+          if (due.kind === 'hourly' && this.cfg.hourlyExcludeTables.includes(key)) continue;
+          counts[key] = rows.length;
+          total += rows.length;
+          for (const item of rows) {
+            lines.push(JSON.stringify({ t: key, d: item }));
+          }
+        }
+        const header = JSON.stringify({ _ubm_backup: 1, created_at: createdAt, counts, mode: 'sheets_runtime' });
+        jsonlContent = [header, ...lines].join('\n');
+      }
+
+      const gz = zlib.gzipSync(Buffer.from(jsonlContent, 'utf8'), { level: 6 });
+      result.counts = counts;
+      result.rows = total;
       result.sizeKb = Math.round((gz.length / 1024) * 10) / 10;
       result.sha256 = crypto.createHash('sha256').update(gz).digest('hex');
       result.localPath = this.writeLocal(due, gz);
@@ -555,7 +576,17 @@ export class DriveBackupScheduler {
       st.retry_after = { ...(st.retry_after || {}), [result.kind]: Date.now() + delay };
     }
     st.last_result = { ...(st.last_result || {}), [result.kind]: result };
-    await this.store!.saveSetting(STATE_KEY, st);
+    try {
+      if (this.store?.configured) {
+        await this.store.saveSetting(STATE_KEY, st);
+      } else {
+        const stateFile = path.resolve(this.localRoot(), 'backup_state.json');
+        fs.mkdirSync(path.dirname(stateFile), { recursive: true });
+        fs.writeFileSync(stateFile, JSON.stringify(st, null, 2), 'utf8');
+      }
+    } catch (err: any) {
+      console.warn('[backup-drive] Không lưu được mốc backup:', err?.message || err);
+    }
   }
 
   private localRoot(): string {

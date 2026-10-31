@@ -273,6 +273,10 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     }
   }
 
+  public exportRuntimeState(): any {
+    return this.fallbackAdapter.exportRuntimeState();
+  }
+
   private scheduleRuntimeSnapshot(delayMs = 1500): void {
     if (!this.isConfigured || this.snapshotTimer) return;
     this.snapshotTimer = setTimeout(() => {

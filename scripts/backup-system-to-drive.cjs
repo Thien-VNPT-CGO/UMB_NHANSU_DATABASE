@@ -13,8 +13,22 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 
-// Mặc định lưu vào thư mục 01. BACKUP_DATA_DAY thuộc UMBOMILK_DATABASE
-const TARGET_FOLDER_ID = process.env.BACKUP_DRIVE_FOLDER_ID || '1GaPSvNcbINMtG90aQ-KzL2SPLxUG9JkG';
+// 4 Thư mục Backup tương ứng trên Google Drive (UMBOMILK_DATABASE)
+const BACKUP_FOLDERS = {
+  hour: '1D4GXSI1P_MUGugrsNJuphYP_VlGylYW6',    // BACKUP_DATA_HOUR (15 phút/lần)
+  hourly: '1D4GXSI1P_MUGugrsNJuphYP_VlGylYW6',
+  day: '1GaPSvNcbINMtG90aQ-KzL2SPLxUG9JkG',     // 01. BACKUP_DATA_DAY (2h00 sáng mỗi ngày)
+  daily: '1GaPSvNcbINMtG90aQ-KzL2SPLxUG9JkG',
+  week: '1MoVP66cmDcFLg5Du0WhoQwF9rECqr8z0',    // 02. BACKUP_DATA_WEEK (2h00 sáng Chủ Nhật)
+  weekly: '1MoVP66cmDcFLg5Du0WhoQwF9rECqr8z0',
+  month: '1fBz9Szu6qCiV086YyxNBSGcjRPXKFddJ',   // 03. BACKUP_DATA_MONTH (2h00 sáng ngày cuối tháng)
+  monthly: '1fBz9Szu6qCiV086YyxNBSGcjRPXKFddJ',
+};
+
+// Đọc tham số dòng lệnh --type=hour|day|week|month (mặc định là day)
+const typeArg = (process.argv.find(a => a.startsWith('--type=')) || '').replace('--type=', '').toLowerCase() || 'day';
+const selectedTier = BACKUP_FOLDERS[typeArg] ? typeArg : 'day';
+const TARGET_FOLDER_ID = process.env.BACKUP_DRIVE_FOLDER_ID || BACKUP_FOLDERS[selectedTier];
 const REPO_ROOT = path.resolve(__dirname, '..');
 
 // 1. Nạp biến môi trường từ apps/backend/.env hoặc các vị trí trên VPS
