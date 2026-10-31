@@ -1,13 +1,44 @@
 # Chạy backend UBM HR bằng Docker Compose.
 # 1. Copy apps/backend/.env.example -> apps/backend/.env, điền giá trị thật
-#    (JWT_SECRET, CORS_ORIGINS, GOOGLE_SERVICE_ACCOUNT_JSON, SPREADSHEET_ID...)
-# 2. docker compose up --build -d
-# 3. Kiểm tra: curl http://localhost:4005/health
+#    (JWT_SECRET, CORS_ORIGINS, DATABASE_URL, GOOGLE_SERVICE_ACCOUNT_JSON...).
+# 2. Tạo mật khẩu PostgreSQL mạnh trong file .env cùng thư mục này:
+#      POSTGRES_PASSWORD=...
+#    hoặc sửa trực tiếp default bên dưới (KHÔNG dùng default ở production).
+# 3. docker compose up --build -d
+# 4. Kiểm tra: curl http://localhost:4005/health
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ubm_hr}
+      POSTGRES_USER: ${POSTGRES_USER:-ubm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-doi-mat-khau-manh}
+      TZ: Asia/Ho_Chi_Minh
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      # Mặc định chỉ mở localhost; bỏ "127.0.0.1:" nếu cần truy cập từ máy khác.
+      - "${POSTGRES_HOST_PORT:-127.0.0.1:5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ubm} -d ${POSTGRES_DB:-ubm_hr}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
   backend:
     build:
       context: .
       dockerfile: apps/backend/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "${BACKEND_HOST_PORT:-4005}:${BACKEND_PORT:-4005}"
     env_file:
@@ -17,9 +48,13 @@ services:
       PORT: ${BACKEND_PORT:-4005}
       NODE_ENV: production
       GIT_COMMIT: ${GIT_COMMIT:-}
+      # PostgreSQL là nguồn sự thật. DATABASE_URL lấy từ apps/backend/.env
+      # (ví dụ: postgresql://ubm:matkhau@postgres:5432/ubm_hr).
+      DATA_STORE: ${DATA_STORE:-postgres}
     volumes:
-      # Snapshot + journal ghi bền vững. Trên VPS phải tạo trước và cấp quyền cho
-      # user trong container (uid 1000): mkdir -p data && chown -R 1000:1000 data
+      # Snapshot/journal + ảnh đệm chờ upload Google Drive.
+      # Trên VPS phải tạo trước và cấp quyền cho user trong container (uid 1000):
+      # mkdir -p data && chown -R 1000:1000 data
       - ./data:/app/data
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:${BACKEND_PORT:-4005}/health"]
@@ -27,13 +62,16 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
-    # "always" đảm bảo container ALWAYS sống lại sau khi VPS reboot/hồi phục, kể cả
-    # khi trước đó có người docker stop thủ công (unless-stopped sẽ bỏ ngang).
+    # "always" đảm bảo container ALWAYS sống lại sau khi VPS reboot/hỏi phục, kể cả
+    # khi trước đó có người docker stop thủ công (unless-stopped sẽ bị ngang).
     restart: always
     # Giới hạn dung lượng log Docker (stdout/stderr) để đĩa không đầy dần theo
-    # thời gian — đĩa đầy là backend chết lặp lại + không tự sửa được.
+    # thời gian — đầy là backend chết lặp lại + không tự sửa được.
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "5"
+
+volumes:
+  postgres-data:

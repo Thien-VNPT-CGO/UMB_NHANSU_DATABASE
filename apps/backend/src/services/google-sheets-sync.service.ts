@@ -29,6 +29,7 @@ import { contractDocsCell, parseContractDocs } from '../utils/contracts.js';
 import { readAttendancePhotoDisk } from './photo-disk.store.js';
 import { TAB_THEMES, buildSheetFormattingRequests, resolveTheme } from './sheets-beautifier.service.js';
 import { computeSheetsContentSignature, fingerprintSheetsContent } from '../utils/sheets-content-signature.js';
+import { getSpreadsheetIdForTab } from '../config/sheets-mapping.js';
 
 export interface SheetDefinition {
   title: string;
@@ -592,6 +593,8 @@ export class GoogleSheetsSyncService {
     if (!jsonStr && (!email || !key)) {
       const candidates = [
         process.env.GOOGLE_SERVICE_ACCOUNT_FILE,
+        path.resolve(process.cwd(), 'key.json'),
+        path.resolve(__dirname, '../../../../key.json'),
         path.resolve(process.cwd(), 'data/service-account.json'),
         '/app/data/service-account.json',
       ].filter(Boolean) as string[];
@@ -3523,20 +3526,43 @@ export class GoogleSheetsSyncService {
     const out: Record<string, string[][]> = {};
     for (const t of sheetTitles) out[t] = [];
     if (!this.sheetsClient || sheetTitles.length === 0) return out;
-    try {
-      const res = await this.sheetsCall('read.batchGet', () =>
-        this.sheetsClient!.spreadsheets.values.batchGet({
-          spreadsheetId: this.spreadsheetId,
-          ranges: sheetTitles.map(t => `'${t}'!A2:ZZ`),
-        }), timeoutMs
-      );
-      const groups = res.data.valueRanges || [];
-      for (let i = 0; i < sheetTitles.length; i++) {
-        out[sheetTitles[i]] = (groups[i]?.values as string[][]) || [];
-      }
-    } catch (e) {
-      // Giữ nguyên hành vi cũ: lỗi -> tab rỗng (caller tự fallback).
+
+    // Nhóm các tab theo spreadsheetId (hỗ trợ 25 sheet riêng biệt)
+    const bySpreadsheet = new Map<string, string[]>();
+    for (const t of sheetTitles) {
+      const sid = getSpreadsheetIdForTab(t, this.spreadsheetId);
+      if (!bySpreadsheet.has(sid)) bySpreadsheet.set(sid, []);
+      bySpreadsheet.get(sid)!.push(t);
     }
+
+    await Promise.all(Array.from(bySpreadsheet.entries()).map(async ([sid, tabs]) => {
+      try {
+        const res = await this.sheetsCall(`read.batchGet.${tabs[0]}`, () =>
+          this.sheetsClient!.spreadsheets.values.batchGet({
+            spreadsheetId: sid,
+            ranges: tabs.map(t => `'${t}'!A2:AZ`),
+          }), timeoutMs
+        );
+        const groups = res.data.valueRanges || [];
+        for (let i = 0; i < tabs.length; i++) {
+          out[tabs[i]] = (groups[i]?.values as string[][]) || [];
+        }
+      } catch (e) {
+        // Fallback đọc từng tab nếu batch lỗi
+        for (const t of tabs) {
+          try {
+            const single = await this.sheetsClient!.spreadsheets.values.get({
+              spreadsheetId: sid,
+              range: `'${t}'!A2:AZ`,
+            });
+            out[t] = (single.data.values as string[][]) || [];
+          } catch {
+            out[t] = [];
+          }
+        }
+      }
+    }));
+
     return out;
   }
 
@@ -4488,11 +4514,13 @@ export class GoogleSheetsSyncService {
     mimeType: string,
     buffer: Buffer,
     segments: string[],
+    rootId?: string,
   ): Promise<{ fileId: string; webViewLink?: string }> {
     if (!this.driveClient) return { fileId: `DRV_${Date.now()}` };
-    const parent = await this.ensureDriveFolderPath(segments);
+    const parent = await this.ensureDriveFolderPath(segments, rootId);
     if (!parent) return { fileId: `DRV_LOCAL_${Date.now()}` };
     const safeName = String(fileName || 'file').replace(/[\\/:*?"<>|]/g, '-').trim() || 'file';
+
     const escaped = safeName.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     const q = `name = '${escaped}' and trashed = false and '${parent}' in parents`;
     try {
@@ -4536,7 +4564,12 @@ export class GoogleSheetsSyncService {
         webViewLink: created?.data?.webViewLink || undefined,
       };
     } catch (err: any) {
-      console.warn(`[GoogleSheetsSyncService] Upload Drive "${safeName}" lỗi:`, err?.message || err);
+      const errMsg = String(err?.message || err);
+      if (errMsg.includes('storage quota') || errMsg.includes('Service Accounts do not have storage quota')) {
+        console.warn(`[GoogleSheetsSyncService] Service Account có quota 0 byte trên Drive cá nhân. Hãy dùng Shared Drive (thêm Service Account làm Content Manager) hoặc OAuth2 refresh token. Ảnh vẫn được lưu đệm đĩa VPS an toàn.`);
+      } else {
+        console.warn(`[GoogleSheetsSyncService] Upload Drive "${safeName}" lỗi:`, err?.message || err);
+      }
       return { fileId: `DRV_LOCAL_${Date.now()}` };
     }
   }
@@ -4547,9 +4580,10 @@ export class GoogleSheetsSyncService {
     mimeType: string,
     buffer: Buffer,
     segments: string[],
+    rootId?: string,
   ): Promise<{ fileId: string; webViewLink?: string }> {
     if (!this.driveClient) return { fileId: `DRV_${Date.now()}` };
-    const parent = await this.ensureDriveFolderPath(segments);
+    const parent = await this.ensureDriveFolderPath(segments, rootId);
     if (!parent) return { fileId: `DRV_LOCAL_${Date.now()}` };
     const safeName = String(fileName || 'file').replace(/[\\/:*?"<>|]/g, '-').trim() || 'file';
     try {
@@ -4585,8 +4619,8 @@ export class GoogleSheetsSyncService {
       const res = await this.sheetsCall(
         `read.${t}`,
         () => this.sheetsClient!.spreadsheets.values.get({
-          spreadsheetId: this.spreadsheetId,
-          range: `'${t}'!A:ZZ`,
+          spreadsheetId: getSpreadsheetIdForTab(t, this.spreadsheetId),
+          range: `'${t}'!A:AZ`,
         }),
         60000
       );
@@ -5187,10 +5221,11 @@ export class GoogleSheetsSyncService {
     // Ghi đè AN TOÀN: ghi dữ liệu mới TRƯỚC (A1...), rồi mới xóa phần đuôi thừa.
     // (Bản cũ xóa trước-ghi sau: crash/quota ở giữa = mất trắng tab.)
     const allValues = [headers, ...rows];
+    const targetSpreadsheetId = getSpreadsheetIdForTab(sheetTitle, this.spreadsheetId);
     try {
       await this.sheetsCall(`write.${sheetTitle}`, () =>
         this.sheetsClient!.spreadsheets.values.update({
-          spreadsheetId: this.spreadsheetId,
+          spreadsheetId: targetSpreadsheetId,
           range: `'${sheetTitle}'!A1`,
           valueInputOption: 'USER_ENTERED',
           requestBody: {
@@ -5209,7 +5244,7 @@ export class GoogleSheetsSyncService {
     try {
       await this.sheetsCall(`clear.${sheetTitle}`, () =>
         this.sheetsClient!.spreadsheets.values.clear({
-          spreadsheetId: this.spreadsheetId,
+          spreadsheetId: targetSpreadsheetId,
           range: `'${sheetTitle}'!A${allValues.length + 1}:ZZ`,
         })
       );
@@ -5635,9 +5670,10 @@ export class GoogleSheetsSyncService {
     }
 
     try {
+      const targetSpreadsheetId = getSpreadsheetIdForTab(target, this.spreadsheetId);
       await this.sheetsCall(`append.${target}`, () =>
         this.sheetsClient!.spreadsheets.values.append({
-          spreadsheetId: this.spreadsheetId,
+          spreadsheetId: targetSpreadsheetId,
           range: `'${target}'!A:A`,
           valueInputOption: 'USER_ENTERED',
           requestBody: {
@@ -5668,9 +5704,10 @@ export class GoogleSheetsSyncService {
     }
 
     try {
+      const targetSpreadsheetId = getSpreadsheetIdForTab(target, this.spreadsheetId);
       await this.sheetsCall(`append.${target}`, () =>
         this.sheetsClient!.spreadsheets.values.append({
-          spreadsheetId: this.spreadsheetId,
+          spreadsheetId: targetSpreadsheetId,
           range: `'${target}'!A:A`,
           valueInputOption: 'USER_ENTERED',
           requestBody: {

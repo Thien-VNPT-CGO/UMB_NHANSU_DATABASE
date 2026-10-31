@@ -7,6 +7,7 @@ import { GoogleSheetsSyncService } from '../services/google-sheets-sync.service.
 import { saveAttendancePhotoDisk, saveAdjustmentPhotoDisk } from '../services/photo-disk.store.js';
 import { DurableWriteQueue } from './durable-write-queue.js';
 import { readRuntimeSnapshot, writeRuntimeSnapshot } from './runtime-snapshot.js';
+import { getAttendanceFolderForBranch } from '../config/drive-folders.js';
 
 /** Ngày VN (YYYY-MM-DD) của 1 mốc ISO — dùng đặt folder ảnh theo ngày. */
 function vnDayOfIso(input: unknown): string {
@@ -1357,29 +1358,35 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
       // (Drive lỗi hay thành công đều có fallback hiển thị + retry).
       try { saveAttendancePhotoDisk(event.event_id, event.photo_base64); } catch { /* best-effort */ }
       try {
-        // Ảnh đi thẳng vào cấu trúc tháng/ngày/chi nhánh/NV/ca trên Drive:
-        //   backup_YYYY-MM/SU_KIEN_DIEM_DANH/YYYY-MM-DD/<CN>/<NV>/<Ca>/check in|out.jpg
+        // Cấu trúc Drive chuẩn theo yêu cầu:
+        // 04. ĐIỂM DANH (CHECK-IN + CHECK-OUT) / <Chi nhánh của NV> / YYYY-MM-DD / <Tên nhân viên> / check in.jpg | check out.jpg
         const day = vnDayOfIso(event.client_time) || vnDayOfIso(event.server_received_at)
           || vnDayOfIso(new Date().toISOString());
-        const month = day.slice(0, 7);
+
+        // 1. Xác định chi nhánh của nhân viên và lấy đúng folder ID chi nhánh trong 04. ĐIỂM DANH
+        const emp = await this.fallbackAdapter.getEmployeeById(event.employee_id).catch(() => null);
+        const branchId = event.branch_id || emp?.default_branch_id || 'CN130';
+        const branchFolderId = getAttendanceFolderForBranch(branchId);
+
+        // 2. Tên folder nhân viên: ưu tiên tên đầy đủ của nhân viên
+        const empName = safeDriveSeg(emp?.full_name || event.employee_id || 'KHONG_NV');
+        const segments = [day, empName];
+
+        // 3. Tên 2 hình ảnh tương ứng check-in / check-out
         const fileName = event.type === 'CHECK_IN'
           ? 'check in.jpg'
           : event.type === 'CHECK_OUT'
             ? 'check out.jpg'
             : `${safeDriveSeg(event.type || 'photo')}.jpg`;
-        const segments = [
-          `backup_${month}`,
-          'SU_KIEN_DIEM_DANH',
-          day,
-          safeDriveSeg(event.branch_id || 'KHONG_CHI_NHANH'),
-          safeDriveSeg(event.employee_id || 'KHONG_NV'),
-          safeDriveSeg(event.assignment_id || event.event_id || 'KHONG_CA'),
-        ];
+
         const base64 = String(event.photo_base64).replace(/^data:image\/\w+;base64,/, '');
         const buffer = Buffer.from(base64, 'base64');
-        const driveResult = typeof (this.syncService as any).uploadBufferToDrivePath === 'function'
-          ? await this.syncService.uploadBufferToDrivePath(fileName, 'image/jpeg', buffer, segments)
-          : await this.syncService.uploadImageToDrive(fileName, 'image/jpeg', event.photo_base64);
+
+        // 4. Upload/cập nhật vào đúng thư mục chi nhánh (upsert để đảm bảo đúng 2 ảnh check in + check out)
+        const driveResult = typeof (this.syncService as any).upsertBufferToDrivePath === 'function'
+          ? await (this.syncService as any).upsertBufferToDrivePath(fileName, 'image/jpeg', buffer, segments, branchFolderId)
+          : await (this.syncService as any).uploadBufferToDrivePath(fileName, 'image/jpeg', buffer, segments, branchFolderId);
+
         if (driveResult?.fileId && !String(driveResult.fileId).startsWith('DRV_')) {
           event.drive_object_id = driveResult.fileId;
         } else {

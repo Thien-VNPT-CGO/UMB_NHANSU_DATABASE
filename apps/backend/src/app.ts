@@ -4,6 +4,7 @@ import fs from 'fs';
 import express from 'express';
 import cors from 'cors';
 import { GoogleSheetsAdapter } from './repositories/google-sheets.adapter.js';
+import { createRepository, isPostgresMode } from './repositories/repository.factory.js';
 import { singleWriterQueue } from './repositories/single-writer-queue.js';
 import { AuthService, sanitizeAdmin } from './services/auth.service.js';
 import { hashPassword } from './services/password.service.js';
@@ -43,7 +44,7 @@ import { AutoScheduleService } from './services/auto-schedule.service.js';
 import { TestsService } from './services/tests.service.js';
 import { AttendanceService } from './services/attendance.service.js';
 import { ShiftReRegService } from './services/shift-rereg.service.js';
-import { readAttendancePhotoDisk, readAdjustmentPhotoDisk, hasAdjustmentPhotoDisk } from './services/photo-disk.store.js';
+import { readAttendancePhotoDisk, readAdjustmentPhotoDisk, readAvatarPhotoDisk, hasAdjustmentPhotoDisk } from './services/photo-disk.store.js';
 import { contractKeyOf } from './utils/contracts.js';
 import { PayrollService } from './services/payroll.service.js';
 import { NotificationsService } from './services/notifications.service.js';
@@ -260,7 +261,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   }
 
-  const adapter = sheetsAdapter || new GoogleSheetsAdapter();
+  const adapter = (sheetsAdapter || createRepository()) as GoogleSheetsAdapter;
   singleWriterQueue.setRepository(adapter);
 
   const authMiddleware = createAuthMiddleware(adapter);
@@ -407,6 +408,12 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   // không đợi nhịp pull 10s. Xác thực bằng secret header (fail-closed).
   app.post('/hooks/sheets-edit', validate({ body: webhookBody }), async (req, res) => {
     try {
+      if (isPostgresMode(adapter)) {
+        return res.status(410).json({
+          error: 'SHEETS_WEBHOOK_DISABLED',
+          message: 'PostgreSQL là nguồn sự thật — webhook Apps Script đã bị tắt.',
+        });
+      }
       const expected = process.env.SHEETS_WEBHOOK_SECRET || '';
       const got = (req.headers['x-webhook-secret'] as string) || '';
       if (!expected || got !== expected) {
@@ -510,6 +517,44 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.get('/health/ready', (req, res) => {
     const readiness = (adapter as any).getReadiness?.() || { ready: true };
     const sheets = adapter.getStatus();
+
+    // PostgreSQL là nguồn sự thật: readiness chỉ phụ thuộc DB nạp xong + hàng đợi
+    // ghi. Không lấy "pull Sheets cũ" hay "mock ở production" làm điều kiện —
+    // ở chế độ này Sheets chỉ còn export một chiều và mode=POSTGRES là hợp lệ.
+    if (isPostgresMode(adapter)) {
+      const pg = (sheets as any).postgres || {};
+      const durable = (sheets as any).durableWrites || null;
+      const pendingWrites = singleWriterQueue.getPendingCount() + (durable?.pending || 0);
+      const queueBacklog = pendingWrites > 500;
+      const reasons: string[] = [];
+      if (readiness.ready === false) reasons.push(readiness.reason || 'POSTGRES_NOT_READY');
+      if (queueBacklog) reasons.push('WRITE_QUEUE_BACKLOG');
+      const ready = reasons.length === 0;
+      return res.status(ready ? 200 : 503).json({
+        status: ready ? 'READY' : 'NOT_READY',
+        ready,
+        reasons,
+        time: new Date().toISOString(),
+        readiness,
+        dataStore: {
+          mode: sheets.mode,
+          primary: 'POSTGRES',
+          counts: pg.counts || {},
+          lastWriteAt: pg.lastWriteAt || null,
+          error: pg.error || null,
+        },
+        sheets: { mode: sheets.mode, role: 'EXPORT_ONLY', connected: sheets.connected },
+        drive: (sheets as any).drive || null,
+        queue: {
+          pendingWrites,
+          backlog: queueBacklog,
+          singleWriter: singleWriterQueue.getDurabilityStatus(),
+          durableWrites: durable,
+        },
+        uptimeSeconds: Math.floor((Date.now() - SERVER_STARTED_AT) / 1000),
+      });
+    }
+
     const syncStatus = (adapter as any).syncService?.getStatus?.() || null;
     const lastPulledMs = syncStatus?.lastPulledAt ? Date.parse(syncStatus.lastPulledAt) : NaN;
     const lastPulledAt = Number.isFinite(lastPulledMs) ? new Date(lastPulledMs).toISOString() : null;
@@ -1918,12 +1963,30 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           }
         } catch {
           if (inlinePhoto) return serveInline(inlinePhoto);
+          const disk = readAvatarPhotoDisk(req.params.id);
+          if (disk) {
+            res.setHeader('Content-Type', disk.mimeType || 'image/jpeg');
+            res.setHeader('Cache-Control', 'private, max-age=3600');
+            return res.send(disk.buffer);
+          }
           return res.status(404).json({ error: 'AVATAR_NOT_UPLOADED' });
         }
         if (inlinePhoto) return serveInline(inlinePhoto);
+        const disk = readAvatarPhotoDisk(req.params.id);
+        if (disk) {
+          res.setHeader('Content-Type', disk.mimeType || 'image/jpeg');
+          res.setHeader('Cache-Control', 'private, max-age=3600');
+          return res.send(disk.buffer);
+        }
         return res.status(404).json({ error: 'AVATAR_NOT_UPLOADED' });
       }
       if (inlinePhoto) return serveInline(inlinePhoto);
+      const disk = readAvatarPhotoDisk(req.params.id);
+      if (disk) {
+        res.setHeader('Content-Type', disk.mimeType || 'image/jpeg');
+        res.setHeader('Cache-Control', 'private, max-age=3600');
+        return res.send(disk.buffer);
+      }
       return res.status(404).json({ error: 'AVATAR_NOT_UPLOADED' });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'AVATAR_DOWNLOAD_FAILED' });
@@ -5767,12 +5830,16 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         typeof ioServer?.engine?.clientsCount === 'number' ? ioServer.engine.clientsCount : 0;
       const systemHealth = {
         sheets: {
-          status: sheetsStatus.mode === 'GOOGLE_SHEETS_LIVE' ? 'CONNECTED' : 'MOCK_ENGINE',
+          status: sheetsStatus.mode === 'POSTGRES'
+            ? 'EXPORT_ONLY'
+            : (sheetsStatus.mode === 'GOOGLE_SHEETS_LIVE' ? 'CONNECTED' : 'MOCK_ENGINE'),
           mode: sheetsStatus.mode,
           tabs_verified: SHEETS_DEFINITIONS.length,
         },
         drive: {
-          status: sheetsStatus.mode === 'GOOGLE_SHEETS_LIVE' ? 'CONNECTED' : 'MOCK_ENGINE',
+          status: (sheetsStatus as any).drive?.configured || sheetsStatus.mode === 'GOOGLE_SHEETS_LIVE'
+            ? 'CONNECTED'
+            : 'MOCK_ENGINE',
         },
         socket: { status: 'ONLINE', connected_clients: connectedClients },
         queue: { status: 'IDLE', pending_jobs: singleWriterQueue.getPendingCount() },
@@ -6225,15 +6292,18 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       }
       lastSyncNowAt = nowMs;
       const syncService = (adapter as any).syncService;
+      const pgMode = isPostgresMode(adapter);
       let syncResult = {
         success: true,
-        message: 'Đã hoàn tất đồng bộ với Google Sheets Master.',
+        message: pgMode
+          ? 'Đã xuất dữ liệu PostgreSQL sang Google Sheets (một chiều — Sheets chỉ để báo cáo).'
+          : 'Đã hoàn tất đồng bộ với Google Sheets Master.',
         details: null as any,
       };
 
       if (syncService) {
         const staffCount = ((adapter as any).fallbackAdapter?.employees?.length || 0) + ((adapter as any).fallbackAdapter?.accounts?.length || 0);
-        if (staffCount === 0) {
+        if (!pgMode && staffCount === 0) {
           console.log('[/admin/integrations/sync-now] Bộ nhớ đang rỗng (0 nhân viên) -> Tự động chuyển sang PULL dữ liệu từ Sheets về!');
           const pullRes = await syncService.pullAllDataFromGoogleSheets(adapter);
           syncResult = {
@@ -6270,6 +6340,12 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   app.post('/admin/integrations/pull-now', authMiddleware, requireRole(['ADMIN', 'HR', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
     try {
+      if (isPostgresMode(adapter)) {
+        return res.status(409).json({
+          success: false,
+          message: 'PostgreSQL là nguồn sự thật — không kéo dữ liệu từ Google Sheets. Dùng "Xuất sang Sheets" nếu cần báo cáo.',
+        });
+      }
       const syncService = (adapter as any).syncService;
       if (!syncService) {
         return res.status(400).json({ success: false, message: 'Google Sheets sync service không khả dụng' });

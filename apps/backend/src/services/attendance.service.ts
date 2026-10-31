@@ -12,6 +12,7 @@ import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { singleWriterQueue } from '../repositories/single-writer-queue.js';
 import { deleteAttendancePhotoDisk, readAttendancePhotoDiskAsDataUrl } from './photo-disk.store.js';
 import { lateFineFor, linkDayEvents } from './payroll.service.js';
+import { getAttendanceFolderForBranch } from '../config/drive-folders.js';
 
 import { Server } from 'socket.io';
 
@@ -510,34 +511,48 @@ export class AttendanceService {
         }
         const evt: any = e as any;
         const day = AttendanceService.vnDateStr(new Date(evt.client_time || evt.server_received_at || Date.now()));
-        const month = day.slice(0, 7);
         const safe = (v: unknown) => String(v ?? '').replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, ' ').trim().slice(0, 80) || 'KHONG_XAC_DINH';
+        const emp = await this.repo.getEmployeeById(evt.employee_id).catch(() => null);
+        const branchId = evt.branch_id || (emp as any)?.default_branch_id || 'CN130';
+        const branchFolderId = getAttendanceFolderForBranch(branchId);
+        const employeeName = safe(emp?.full_name || evt.employee_id || 'KHONG_NV');
         const fileName = evt.type === 'CHECK_IN' ? 'check in.jpg' : evt.type === 'CHECK_OUT' ? 'check out.jpg' : `${safe(evt.type || 'photo')}.jpg`;
-        const segments = [
-          `backup_${month}`,
-          'SU_KIEN_DIEM_DANH',
-          day,
-          safe(evt.branch_id || 'KHONG_CHI_NHANH'),
-          safe(evt.employee_id || 'KHONG_NV'),
-          safe(evt.assignment_id || evt.event_id || 'KHONG_CA'),
-        ];
-        const r = typeof (sync as any).uploadBufferToDrivePath === 'function'
-          ? await sync.uploadBufferToDrivePath(
+        const segments = [day, employeeName];
+
+        const r = typeof (sync as any).upsertBufferToDrivePath === 'function'
+          ? await (sync as any).upsertBufferToDrivePath(
               fileName,
               'image/jpeg',
               Buffer.from(String(evt.event_photo).replace(/^data:image\/\w+;base64,/, ''), 'base64'),
               segments,
+              branchFolderId,
             )
-          : await sync.uploadImageToDrive(
-              `${evt.employee_id || 'unknown'}_${evt.type || 'CHECK'}_${Date.now()}.jpg`,
-              'image/jpeg',
-              String(evt.event_photo),
-            );
+          : typeof (sync as any).uploadBufferToDrivePath === 'function'
+            ? await sync.uploadBufferToDrivePath(
+                fileName,
+                'image/jpeg',
+                Buffer.from(String(evt.event_photo).replace(/^data:image\/\w+;base64,/, ''), 'base64'),
+                segments,
+                branchFolderId,
+              )
+            : await sync.uploadImageToDrive(
+                `${evt.employee_id || 'unknown'}_${evt.type || 'CHECK'}_${Date.now()}.jpg`,
+                'image/jpeg',
+                String(evt.event_photo),
+              );
         if (r?.fileId && !String(r.fileId).startsWith('DRV_')) {
           (e as any).drive_object_id = r.fileId;
           delete (e as any).event_photo;
           // Đã chắc chắn có trên Drive -> dọn bản đệm VPS ngay.
           deleteAttendancePhotoDisk(String((e as any).event_id || ''));
+          // PostgreSQL là nguồn sự thật: persist ngay drive id mới để restart
+          // không quay lại trạng thái DRV_LOCAL.
+          try {
+            await this.repo.updateAttendanceEvent(String((e as any).event_id || ''), {
+              drive_object_id: r.fileId,
+              event_photo: undefined,
+            } as any);
+          } catch { /* ảnh vẫn hiển thị từ Drive; lần sau cập nhật lại */ }
           recovered++;
         }
       } catch { /* lần sau thử lại */ }

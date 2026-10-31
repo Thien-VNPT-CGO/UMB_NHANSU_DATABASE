@@ -24,10 +24,12 @@ import {
   previousMonthOf as backupPreviousMonthOf,
 } from './services/monthly-backup.service.js';
 import { buildSocketCorsOptions, getAllowedOrigins } from './config/security.js';
+import { isPostgresMode } from './repositories/repository.factory.js';
 
 const PORT = process.env.PORT || 4005;
 
 const { app, services, adapter } = createApp();
+const postgresMode = isPostgresMode(adapter);
 const server = http.createServer(app);
 
 const io = new Server(server, {
@@ -77,7 +79,7 @@ const healDraftShiftsSoon = (delayMs = 1500) => {
 // đổi (hash toàn bộ ô) thì bắn socket đúng 1 lần cho cả 2 cổng web. Đây là đường
 // duy nhất bắn 'all' từ pull, tránh tick + webhook cùng bắn trùng một thay đổi.
 {
-  const syncSvc: any = (adapter as any).syncService;
+  const syncSvc: any = postgresMode ? null : (adapter as any).syncService;
   if (syncSvc && typeof syncSvc.onDataChanged === 'function') {
     syncSvc.onDataChanged(({ counts, signature, changedTabs }: { counts: any; signature: string; changedTabs: string[] }) => {
       // Tab lịch vừa đổi (webhook sửa tay / pull sau downtime): chốt ca nháp lọt
@@ -168,7 +170,9 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   console.log(`ỤM BÒ MILK HR SYSTEM V5.1 - BACKEND SERVER STARTED`);
   console.log(`Port: ${PORT}`);
   console.log(`CORS origins: ${getAllowedOrigins().join(', ') || '(none — set CORS_ORIGINS in production)'}`);
+  console.log(`Data store: ${adapter.getStatus().mode}`);
   console.log(`Google Sheets Mode: ${adapter.getStatus().mode}`);
+  console.log(`Photo storage: ${postgresMode ? 'Google Drive (metadata trong PostgreSQL)' : 'Drive + inline fallback'}`);
   console.log(`Realtime Socket.IO: Ready`);
   console.log(`Weekly-OFF gate: Fri 09:00 -> Sat 09:00 (VN) + reminder 5 min before`);
   console.log(`System alerts: ${process.env.ALERT_WEBHOOK_URL ? 'webhook configured' : 'log only (set ALERT_WEBHOOK_URL to send externally)'}`);
@@ -183,6 +187,7 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   // Làm ấm cache kho lưu trữ chấm công (tab "Dữ Liệu Công Của Tôi" + bảng công
   // tháng) sau khi pull đầu tiên xong — chạy nền, không chặn khởi động.
   setTimeout(() => {
+    if (postgresMode) return; // dữ liệu công nằm trong PostgreSQL, không cần cache Sheets
     try { (adapter as any).syncService?.warmArchivedAttendanceCache?.(); } catch { /* non-fatal */ }
   }, 20_000);
 
@@ -203,6 +208,7 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   let pullFailStreak = 0;
   let nextPullAllowedAt = 0;
   const autoPullSheetsTick = async () => {
+    if (postgresMode) return;
     if (Date.now() < nextPullAllowedAt) return;
     try {
       const syncService = (adapter as any).syncService;
@@ -240,6 +246,7 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   // phân biệt "Google chặn POST" hay "Sheet/quota" — probe chạy nền, POST no-op.
   {
     const probe = async () => {
+      if (postgresMode) return;
       const syncService = (adapter as any).syncService;
       // KHÔNG probe khi hàng đợi đang tạm nghỉ: probe cũng là lệnh GHI, bắn thêm
       // lúc Google đang khoá chỉ làm khoá kéo dài và cạnh tranh với append thật.
@@ -270,7 +277,7 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   // Mặc định 60 phút (theo .env.example), đặt SHEETS_AUTO_PUSH_MINUTES=0 để tắt.
   const rawPushMinutes = process.env.SHEETS_AUTO_PUSH_MINUTES;
   const pushPeriodMin = rawPushMinutes && rawPushMinutes.trim() !== '' && Number(rawPushMinutes) > 0 ? Number(rawPushMinutes) : 60;
-  if (rawPushMinutes?.trim() !== '0') {
+  if (rawPushMinutes?.trim() !== '0' && !postgresMode) {
     const autoPushSheetsTick = async () => {
       try {
         const syncService = (adapter as any).syncService;
@@ -304,7 +311,7 @@ server.listen(Number(PORT), '0.0.0.0', () => {
   {
     const beautifyFlagV = String(process.env.SHEETS_AUTO_BEAUTIFY ?? '1').trim().toLowerCase();
     const beautifyOn = beautifyFlagV !== '0' && beautifyFlagV !== 'off' && beautifyFlagV !== 'false';
-    if (beautifyOn) {
+    if (beautifyOn && !postgresMode) {
       const autoBeautifyTick = async () => {
         try {
           const syncService = (adapter as any).syncService;
@@ -581,7 +588,9 @@ server.listen(Number(PORT), '0.0.0.0', () => {
         const key = `archive:${weekMon}`;
         if (!weeklyDone.has(key)) {
           weeklyDone.add(key);
-          const r = await syncService.archiveAttendanceWeek(adapter, weekMon).catch((e: any) => ({ archived: false, reason: e?.message }));
+          const r = postgresMode
+            ? { archived: false, reason: 'POSTGRES_NO_WEEKLY_ARCHIVE' }
+            : await syncService.archiveAttendanceWeek(adapter, weekMon).catch((e: any) => ({ archived: false, reason: e?.message }));
           console.log(`[attendance-week] Archive tuần ${weekMon}:`, JSON.stringify(r));
           try {
             io.emit('data:updated', { entity: 'attendance', data: { action: 'week-archived', weekMon, ...r }, timestamp: new Date().toISOString() });
@@ -599,7 +608,9 @@ server.listen(Number(PORT), '0.0.0.0', () => {
         const key = `archive:${weekMon}`;
         if (!weeklyDone.has(key)) {
           weeklyDone.add(key);
-          const r = await syncService.archiveAttendanceWeek(adapter, weekMon).catch((e: any) => ({ archived: false, reason: e?.message }));
+          const r = postgresMode
+            ? { archived: false, reason: 'POSTGRES_NO_WEEKLY_ARCHIVE' }
+            : await syncService.archiveAttendanceWeek(adapter, weekMon).catch((e: any) => ({ archived: false, reason: e?.message }));
           console.log(`[attendance-week] Archive bù tuần ${weekMon}:`, JSON.stringify(r));
         }
         await swapWeekReset(weekMon, 'T2 00h05 bù');
@@ -1003,6 +1014,19 @@ server.listen(Number(PORT), '0.0.0.0', () => {
       const cur: any = await adapter.getSystemSettings().catch(() => ({})) || {};
       const st = cur.monthly_backup || {};
       if (st.last_month === target) return;
+
+      // PostgreSQL là nguồn sự thật: xuất một chiều DB -> Sheets trước khi lưu
+      // CSV tháng để bản backup phản ánh đúng dữ liệu hiện tại.
+      if (postgresMode) {
+        try {
+          const ex = await syncSvc.syncAllData(adapter);
+          if (!ex?.success) {
+            console.warn(`[monthly-backup] Xuất Sheets trước backup lỗi: ${ex?.message || 'UNKNOWN'}`);
+          }
+        } catch (e: any) {
+          console.warn('[monthly-backup] Xuất Sheets trước backup lỗi:', e?.message || e);
+        }
+      }
 
       const r = await runMonthlyBackup(syncSvc, adapter, target);
       await adapter.updateSystemSettings({

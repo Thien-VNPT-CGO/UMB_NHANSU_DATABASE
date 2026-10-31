@@ -137,6 +137,47 @@ export function readAttendancePhotoDiskAsDataUrl(eventId: string): string | null
 }
 
 // -------------------------------------------------------------
+// Avatar nhân viên (fallback khi Drive lỗi)
+// -------------------------------------------------------------
+export function avatarPhotoPath(employeeId: string): string {
+  return path.join(PHOTO_DIR, `avatar_${safeEventId(employeeId)}.jpg`);
+}
+
+export function saveAvatarPhotoDisk(employeeId: string, dataUrl: string): void {
+  try {
+    const parsed = parseDataUrl(dataUrl);
+    if (!parsed || !employeeId) return;
+    fs.mkdirSync(PHOTO_DIR, { recursive: true });
+    fs.writeFileSync(avatarPhotoPath(employeeId), parsed.buffer);
+  } catch {
+    /* best-effort */
+  }
+}
+
+export function readAvatarPhotoDisk(employeeId: string): { buffer: Buffer; mimeType: string } | null {
+  try {
+    const p = avatarPhotoPath(employeeId);
+    if (!fs.existsSync(p)) return null;
+    const buffer = fs.readFileSync(p);
+    if (!buffer.length) return null;
+    return { buffer, mimeType: 'image/jpeg' };
+  } catch {
+    return null;
+  }
+}
+
+export function deleteAvatarPhotoDisk(employeeId: string): boolean {
+  try {
+    const p = avatarPhotoPath(employeeId);
+    if (!fs.existsSync(p)) return false;
+    fs.unlinkSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// -------------------------------------------------------------
 // Ảnh bằng chứng kèm phiếu bổ sung / điều chỉnh công
 // -------------------------------------------------------------
 export function adjustmentPhotoPath(adjustmentId: string): string {

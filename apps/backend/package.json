@@ -7,6 +7,9 @@
     "build": "tsc",
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
+    "migrate:postgres": "tsx scripts/migrate-sheets-to-postgres.ts",
+    "archive:postgres": "tsx scripts/archive-postgres.ts",
+    "smoke:postgres": "tsx scripts/smoke-postgres.ts",
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
@@ -28,6 +31,7 @@
     "jpeg-js": "^0.4.4",
     "jsonwebtoken": "^9.0.2",
     "jsqr": "^1.4.0",
+    "pg": "^8.23.1",
     "socket.io": "^4.8.1",
     "typescript": "^5.6.3",
     "uuid": "^10.0.0",
@@ -36,6 +40,7 @@
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
+    "@types/pg": "^8.23.1",
     "tsx": "^4.19.1"
   }
 }

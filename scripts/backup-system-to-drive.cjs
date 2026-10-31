@@ -5,7 +5,7 @@
  * Tự động đóng gói cấu hình, biến môi trường, dữ liệu snapshot,
  * mã nguồn và sao chép Google Sheets Master lên thư mục Google Drive.
  * 
- * Target Drive Folder ID mặc định: 15eQ7vLbnhwt5YVrnsOaKi-1jfAENesxR
+ * Target Drive Folder ID mặc định: 1GaPSvNcbINMtG90aQ-KzL2SPLxUG9JkG (01. BACKUP_DATA_DAY bên trong UMBOMILK_DATABASE)
  * ==============================================================
  */
 
@@ -13,7 +13,8 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 
-const TARGET_FOLDER_ID = process.env.BACKUP_DRIVE_FOLDER_ID || '15eQ7vLbnhwt5YVrnsOaKi-1jfAENesxR';
+// Mặc định lưu vào thư mục 01. BACKUP_DATA_DAY thuộc UMBOMILK_DATABASE
+const TARGET_FOLDER_ID = process.env.BACKUP_DRIVE_FOLDER_ID || '1GaPSvNcbINMtG90aQ-KzL2SPLxUG9JkG';
 const REPO_ROOT = path.resolve(__dirname, '..');
 
 // 1. Nạp biến môi trường từ apps/backend/.env hoặc các vị trí trên VPS

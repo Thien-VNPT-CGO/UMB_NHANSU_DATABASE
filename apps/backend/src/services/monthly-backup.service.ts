@@ -12,6 +12,7 @@ import {
   readAttendancePhotoDisk,
 } from './photo-disk.store.js';
 import type { ISheetsRepository } from '../repositories/sheets.interface.js';
+import { getAttendanceFolderForBranch } from '../config/drive-folders.js';
 
 /**
  * BACKUP THÁNG + ĐỒNG BỘ ẢNH HẰNG NGÀY LÊN GOOGLE DRIVE
@@ -391,7 +392,11 @@ export async function syncDayPhotosToDrive(
     if (type !== 'CHECK_IN' && type !== 'CHECK_OUT') continue;
     result.checked++;
     const day = dayOfValue((evt as any)?.client_time) || dayOfValue((evt as any)?.server_received_at) || date;
-    const segments = attendanceSegments(evt, day);
+    const emp = await repo.getEmployeeById(String(evt?.employee_id || '')).catch(() => null);
+    const branchId = evt?.branch_id || emp?.default_branch_id || 'CN130';
+    const branchFolderId = getAttendanceFolderForBranch(branchId);
+    const employeeName = safeSeg(emp?.full_name || evt?.employee_id || 'KHONG_NV');
+    const segments = [day, employeeName];
     const fileName = photoFileName(evt);
 
     // Đã có trên Drive từ lúc chấm công: chỉ cần dọn bản đệm.
@@ -410,7 +415,7 @@ export async function syncDayPhotosToDrive(
       continue;
     }
 
-    const up = await sync.upsertBufferToDrivePath(fileName, 'image/jpeg', buffer, segments);
+    const up = await sync.upsertBufferToDrivePath(fileName, 'image/jpeg', buffer, segments, branchFolderId);
     if (up?.fileId && isRealDriveId(up.fileId)) {
       result.uploaded++;
       try {

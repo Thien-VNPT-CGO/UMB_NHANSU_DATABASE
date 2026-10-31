@@ -51,7 +51,8 @@ export function collectSystemAlerts(adapter: any, now = Date.now()): SystemAlert
   const syncStatus = adapter?.syncService?.getStatus?.() || status.syncService || {};
   const mode = String(status.mode || 'UNKNOWN');
   const isProduction = process.env.NODE_ENV === 'production';
-  const isLive = mode === 'GOOGLE_SHEETS_LIVE';
+  const isPostgres = mode === 'POSTGRES';
+  const isLive = mode === 'GOOGLE_SHEETS_LIVE' || isPostgres;
 
   const lastPulledMs = syncStatus?.lastPulledAt ? Date.parse(syncStatus.lastPulledAt) : NaN;
   const lagMs = Number.isFinite(lastPulledMs) ? Math.max(0, now - lastPulledMs) : null;
@@ -73,13 +74,15 @@ export function collectSystemAlerts(adapter: any, now = Date.now()): SystemAlert
     alerts.push({
       code: readiness.reason || 'SHEETS_NOT_READY',
       severity: 'URGENT',
-      title: '🚨 Google Sheets chưa sẵn sàng',
-      message: `Hệ thống chưa đọc được dữ liệu Google Sheets (${readiness.reason || 'NOT_READY'}). Đăng nhập và đồng bộ có thể bị ảnh hưởng.`,
+      title: isPostgres ? '🚨 PostgreSQL chưa sẵn sàng' : '🚨 Google Sheets chưa sẵn sàng',
+      message: isPostgres
+        ? `Hệ thống chưa nạp được dữ liệu PostgreSQL (${readiness.reason || 'NOT_READY'}). Đăng nhập và ghi dữ liệu có thể bị ảnh hưởng.`
+        : `Hệ thống chưa đọc được dữ liệu Google Sheets (${readiness.reason || 'NOT_READY'}). Đăng nhập và đồng bộ có thể bị ảnh hưởng.`,
       details: { reason: readiness.reason || null, host: hostLabel() },
     });
   }
 
-  if (isLive && (lagMs === null || lagMs > staleAfterMs)) {
+  if (!isPostgres && isLive && (lagMs === null || lagMs > staleAfterMs)) {
     alerts.push({
       code: 'SHEETS_SYNC_STALE',
       severity: 'WARNING',
@@ -97,8 +100,10 @@ export function collectSystemAlerts(adapter: any, now = Date.now()): SystemAlert
     alerts.push({
       code: 'WRITE_QUEUE_BACKLOG',
       severity: 'URGENT',
-      title: '🚨 Hàng đợi ghi Google Sheets bị kẹt',
-      message: `Có ${pendingWrites} thao tác đang chờ ghi lên Google Sheets. Kiểm tra quota/API hoặc lỗi mạng.`,
+      title: isPostgres ? '🚨 Hàng đợi ghi bị kẹt' : '🚨 Hàng đợi ghi Google Sheets bị kẹt',
+      message: isPostgres
+        ? `Có ${pendingWrites} thao tác đang chờ ghi xuống PostgreSQL. Kiểm tra kết nối DB/tải hệ thống.`
+        : `Có ${pendingWrites} thao tác đang chờ ghi lên Google Sheets. Kiểm tra quota/API hoặc lỗi mạng.`,
       details: { pendingWrites, host: hostLabel() },
     });
   }
