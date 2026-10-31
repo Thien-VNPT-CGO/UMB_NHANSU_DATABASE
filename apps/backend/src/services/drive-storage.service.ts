@@ -226,6 +226,30 @@ export class DriveStorageService {
     const name = safeSegment(fileName, `file_${Date.now()}.jpg`);
 
     let fileId = '';
+    // Hỗ trợ upload qua GAS Webhook nếu được cấu hình (chạy dưới quyền sở hữu của umbomilk@gmail.com)
+    if (process.env.GOOGLE_DRIVE_UPLOAD_WEBHOOK_URL) {
+      try {
+        const res = await fetch(process.env.GOOGLE_DRIVE_UPLOAD_WEBHOOK_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            folderId: parent,
+            fileName: name,
+            mimeType,
+            base64: buffer.toString('base64'),
+          }),
+        });
+        if (res.ok) {
+          const data: any = await res.json();
+          if (data?.fileId) {
+            return { fileId: data.fileId, viewUrl: data.webViewLink || data.url || this.getViewUrl(data.fileId), name };
+          }
+        }
+      } catch (err: any) {
+        console.warn('[DriveStorageService] Upload qua GAS Webhook lỗi:', err?.message || err);
+      }
+    }
+
     if (opts.upsert) {
       const existing = await this.findFileByName(name, parent).catch(() => null);
       if (existing) {
@@ -240,19 +264,27 @@ export class DriveStorageService {
       }
     }
 
-    const created = await this.drive.files.create({
-      requestBody: {
-        name,
-        parents: [parent],
-        ...(opts.appProperties ? { appProperties: opts.appProperties } : {}),
-      },
-      media: { mimeType, body: Readable.from(buffer) },
-      fields: 'id, webViewLink',
-      supportsAllDrives: true,
-    } as any);
-    fileId = String(created.data.id || '');
-    if (!fileId) throw new Error('DRIVE_UPLOAD_FAILED');
-    return { fileId, viewUrl: created.data.webViewLink || this.getViewUrl(fileId), name };
+    try {
+      const created = await this.drive.files.create({
+        requestBody: {
+          name,
+          parents: [parent],
+          ...(opts.appProperties ? { appProperties: opts.appProperties } : {}),
+        },
+        media: { mimeType, body: Readable.from(buffer) },
+        fields: 'id, webViewLink',
+        supportsAllDrives: true,
+      } as any);
+      fileId = String(created.data.id || '');
+      if (!fileId) throw new Error('DRIVE_UPLOAD_FAILED');
+      return { fileId, viewUrl: created.data.webViewLink || this.getViewUrl(fileId), name };
+    } catch (err: any) {
+      const errMsg = String(err?.message || err);
+      if (errMsg.includes('storage quota') || errMsg.includes('Service Accounts do not have storage quota')) {
+        console.warn(`[DriveStorageService] Service Account có quota 0 byte trên Drive cá nhân. Hãy thêm GOOGLE_DRIVE_UPLOAD_WEBHOOK_URL hoặc dùng Bộ nhớ dùng chung (Shared Drive).`);
+      }
+      throw err;
+    }
   }
 
   public async uploadDataUrl(
@@ -349,6 +381,63 @@ export class DriveStorageService {
     } catch {
       return false;
     }
+  }
+
+  /** Liệt kê toàn bộ file/folder con trực tiếp của 1 thư mục (có phân trang). */
+  public async listChildren(parentId: string): Promise<Array<{ id: string; name: string; mimeType: string }>> {
+    if (!this.drive || !parentId) return [];
+    const out: Array<{ id: string; name: string; mimeType: string }> = [];
+    let pageToken: string | undefined;
+    do {
+      const res: any = await this.drive.files.list({
+        q: `'${parentId}' in parents and trashed = false`,
+        fields: 'nextPageToken, files(id,name,mimeType)',
+        pageSize: 1000,
+        pageToken,
+        supportsAllDrives: true,
+        includeItemsFromAllDrives: true,
+      } as any);
+      for (const f of res.data.files || []) {
+        out.push({ id: String(f.id), name: String(f.name || ''), mimeType: String(f.mimeType || '') });
+      }
+      pageToken = res.data.nextPageToken || undefined;
+    } while (pageToken);
+    return out;
+  }
+
+  /** Xóa đệ quy 1 thư mục (Drive yêu cầu folder rỗng trước khi xóa). */
+  public async deleteFolderRecursive(folderId: string): Promise<boolean> {
+    if (!this.drive || !folderId) return false;
+    try {
+      const children = await this.listChildren(folderId);
+      for (const child of children) {
+        if (child.mimeType === 'application/vnd.google-apps.folder') {
+          await this.deleteFolderRecursive(child.id);
+        } else {
+          await this.deleteFile(child.id);
+        }
+      }
+      return await this.deleteFile(folderId);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Giữ lại `keep` mục mới nhất (theo tên) trong 1 thư mục, xóa phần cũ hơn.
+   * Tên folder backup là ngày/tuần/tháng dạng YYYY-... nên thứ tự tên = thời gian.
+   */
+  public async pruneKeepNewest(parentId: string, keep: number): Promise<number> {
+    if (!this.drive || !parentId) return 0;
+    const children = (await this.listChildren(parentId))
+      .filter(c => c.mimeType === 'application/vnd.google-apps.folder')
+      .sort((a, b) => a.name.localeCompare(b.name));
+    const excess = Math.max(0, children.length - Math.max(1, keep));
+    let removed = 0;
+    for (const folder of children.slice(0, excess)) {
+      if (await this.deleteFolderRecursive(folder.id)) removed++;
+    }
+    return removed;
   }
 }
 

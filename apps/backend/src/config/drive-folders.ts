@@ -11,6 +11,9 @@ export const DRIVE_SUBFOLDERS = {
   /** 00. DATABASE: Chứa 25 file Google Sheets nghiệp vụ */
   DATABASE: '1SFYEOgjsZyC23OWGXMZDFMGemsdcVeSJ',
 
+  /** BACKUP_DATA_HOUR: Sao lưu dữ liệu theo giờ (15 phút/lần) */
+  BACKUP_HOUR: '1D4GXSI1P_MUGugrsNJuphYP_VlGylYW6',
+
   /** 01. BACKUP_DATA_DAY: Sao lưu dữ liệu theo ngày */
   BACKUP_DAY: '1GaPSvNcbINMtG90aQ-KzL2SPLxUG9JkG',
 

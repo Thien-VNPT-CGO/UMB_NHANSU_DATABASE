@@ -25,6 +25,7 @@ import {
 } from './services/monthly-backup.service.js';
 import { buildSocketCorsOptions, getAllowedOrigins } from './config/security.js';
 import { isPostgresMode } from './repositories/repository.factory.js';
+import { getDriveBackupScheduler } from './services/backup-drive.service.js';
 
 const PORT = process.env.PORT || 4005;
 
@@ -38,6 +39,8 @@ const io = new Server(server, {
 
 // Giám sát nền: Sheets mock/stale, hàng đợi ghi kẹt... (xem system-alert.service)
 let stopSystemAlerts: (() => void) | null = null;
+// Backup 4 tầng lên Drive (giờ/ngày/tuần/tháng) — chỉ bật khi PostgreSQL.
+let backupScheduler: ReturnType<typeof getDriveBackupScheduler> | null = null;
 
 // Attach io to express app for route broadcasting
 app.set('io', io);
@@ -183,6 +186,15 @@ server.listen(Number(PORT), '0.0.0.0', () => {
     intervalMs: 5 * 60_000,
     initialDelayMs: 90_000,
   });
+
+  // BACKUP 4 TẦNG LÊN GOOGLE DRIVE (chỉ PostgreSQL):
+  //   giờ (15 phút) / ngày 02:00 / tuần 02:00 Chủ Nhật / tháng 02:00 ngày cuối tháng.
+  if (postgresMode) {
+    backupScheduler = getDriveBackupScheduler(adapter);
+    void backupScheduler.start().catch((err: any) => {
+      console.warn('[backup-drive] Không bật được scheduler:', err?.message || err);
+    });
+  }
 
   // Làm ấm cache kho lưu trữ chấm công (tab "Dữ Liệu Công Của Tôi" + bảng công
   // tháng) sau khi pull đầu tiên xong — chạy nền, không chặn khởi động.
@@ -1110,6 +1122,9 @@ const gracefulShutdown = (signal: string) => {
   (async () => {
     try {
       stopSystemAlerts?.();
+    } catch { /* non-fatal */ }
+    try {
+      backupScheduler?.stop();
     } catch { /* non-fatal */ }
     try {
       await (adapter as any)?.flushSheetsWrites?.(20000);

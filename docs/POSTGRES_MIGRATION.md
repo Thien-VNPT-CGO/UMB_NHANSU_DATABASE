@@ -108,22 +108,92 @@ curl http://localhost:4005/health
 Kiểm tra các mục: `postgres.ready`, `postgres.counts`, `drive.configured`,
 `mode = POSTGRES`.
 
-## 5. Sao lưu
+## 5. Sao lưu 4 tầng lên Google Drive
 
-### PostgreSQL
+Khi chạy PostgreSQL, backend tự backup dữ liệu lên Google Drive theo 4 lịch
+(giờ Việt Nam, UTC+7). Lịch đã chạy được lưu trong `app_settings` nên restart
+không chạy trùng; VPS tắt lâu thì lần bật lại sẽ chạy bù đúng 1 lần cho kỳ gần
+nhất.
+
+| Tầng | Thời điểm | Thư mục Drive |
+|---|---|---|
+| Giờ | mỗi 15 phút | `BACKUP_DATA_HOUR/HOURLY/YYYY-MM-DD/` |
+| Ngày | 02:00 hằng ngày | `01. BACKUP_DATA_DAY/DAILY/YYYY-MM-DD/` |
+| Tuần | 02:00 Chủ Nhật | `02. BACKUP_DATA_WEEK/WEEKLY/YYYY-Www/` |
+| Tháng | 02:00 ngày cuối tháng | `03. BACKUP_DATA_MONTH/MONTHLY/YYYY-MM/` |
+
+Mỗi bản là 1 file `postgres_<kỳ>.jsonl.gz` (JSON Lines nén): dòng đầu là header
+(thời điểm + số dòng từng bảng), các dòng sau là từng bản ghi kèm id/created_at
+để phục hồi nguyên trạng. Bản theo giờ bỏ các bảng nặng
+(`audit_logs`, `notification_*`, `backup_snapshots`) để file nhỏ; bản ngày/tuần/
+tháng là đầy đủ.
+
+File luôn ghi đĩa VPS trước (`data/backups/<tầng>/...`), sau đó mới upload Drive.
+Drive lỗi thì bản local vẫn còn và hệ thống thử lại sau 5 phút; bản local được
+dọn theo thời gian giữ cấu hình bên dưới.
+
+### Cấu hình
 
 ```bash
-# Backup nén
-docker compose exec -T postgres \
-  pg_dump -U ubm -d ubm_hr -Fc > backup_ubm_$(date +%F).dump
+BACKUP_HOURLY_ENABLED=1
+BACKUP_HOURLY_MINUTES=15
+BACKUP_DAILY_ENABLED=1
+BACKUP_DAILY_HOUR=2
+BACKUP_WEEKLY_ENABLED=1
+BACKUP_WEEKLY_WEEKDAY=0        # 0 = Chủ Nhật
+BACKUP_MONTHLY_ENABLED=1
+BACKUP_AT_MINUTE=0
 
-# Phục hồi
-docker compose exec -T postgres \
-  pg_restore -U ubm -d ubm_hr --clean --if-exists < backup_ubm_2026-10-31.dump
+BACKUP_HOURLY_EXCLUDE_TABLES=audit_logs,notification_inbox,notification_outbox,backup_snapshots
+
+BACKUP_KEEP_HOURLY_HOURS=48
+BACKUP_KEEP_DAILY_DAYS=30
+BACKUP_KEEP_WEEKLY_WEEKS=12
+BACKUP_KEEP_MONTHLY_MONTHS=36
+BACKUP_RETRY_MINUTES=5
+# BACKUP_LOCAL_DIR=/app/data/backups
 ```
 
-Nên chạy `pg_dump` hằng ngày bằng cron và giữ 30 bản gần nhất. Ảnh đã nằm trên
-Google Drive nên không cần backup ảnh trong PostgreSQL.
+### Phục hồi
+
+```bash
+# 1. DỪNG backend trước khi phục hồi
+docker compose stop backend
+
+# 2. Xem trước file (không ghi DB)
+docker compose run --rm backend npm run restore:postgres -- \
+  --file=/app/data/backups/daily/DAILY/2026-10-31/postgres_2026-10-31.jsonl.gz
+
+# 3. Phục hồi thật (TRUNCATE đúng các bảng có trong file)
+docker compose run --rm backend npm run restore:postgres -- \
+  --file=/app/data/backups/daily/DAILY/2026-10-31/postgres_2026-10-31.jsonl.gz --force
+
+# 4. Bật lại và kiểm tra
+docker compose start backend
+curl -s https://<domain>/api/health/ready
+```
+
+Nếu file chỉ có trên Drive, tải về VPS trước rồi trỏ `--file=` vào đường dẫn
+local. Bản theo giờ có thể thiếu bảng audit/thông báo — nếu cần đầy đủ, dùng bản
+ngày/tuần/tháng gần nhất.
+
+### Kiểm tra & chạy tay
+
+```bash
+# Trạng thái 4 tầng + lần chạy gần nhất (ADMIN/HR)
+curl -H "Authorization: Bearer <token>" https://<domain>/api/admin/backups/status
+
+# Chạy tay 1 tầng (ADMIN): kind = hourly|daily|weekly|monthly
+curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"kind":"daily"}' https://<domain>/api/admin/backups/run
+```
+
+Ngoài ra vẫn có thể `pg_dump` thủ công như phương án phụ:
+
+```bash
+docker compose exec -T postgres \
+  pg_dump -U ubm -d ubm_hr -Fc > backup_ubm_$(date +%F).dump
+```
 
 ### Google Sheets
 

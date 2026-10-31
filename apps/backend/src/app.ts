@@ -45,6 +45,7 @@ import { TestsService } from './services/tests.service.js';
 import { AttendanceService } from './services/attendance.service.js';
 import { ShiftReRegService } from './services/shift-rereg.service.js';
 import { readAttendancePhotoDisk, readAdjustmentPhotoDisk, readAvatarPhotoDisk, hasAdjustmentPhotoDisk } from './services/photo-disk.store.js';
+import { getDriveBackupScheduler, type BackupKind } from './services/backup-drive.service.js';
 import { contractKeyOf } from './utils/contracts.js';
 import { PayrollService } from './services/payroll.service.js';
 import { NotificationsService } from './services/notifications.service.js';
@@ -5540,6 +5541,35 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       res.json(settings.system_backups || null);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // --- BACKUP 4 TẦNG LÊN GOOGLE DRIVE (giờ / ngày / tuần / tháng) ---
+  app.get('/admin/backups/status', authMiddleware, requireRole(['ADMIN', 'HR']), async (_req, res) => {
+    try {
+      res.json(await getDriveBackupScheduler(adapter).getStatus());
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || String(err) });
+    }
+  });
+
+  app.post('/admin/backups/run', authMiddleware, requireRole(['ADMIN']), async (req, res) => {
+    try {
+      if (!isPostgresMode(adapter)) {
+        return res.status(409).json({
+          error: 'POSTGRES_REQUIRED',
+          message: 'Backup lên Google Drive chỉ chạy khi DATA_STORE=postgres (nguồn sự thật là PostgreSQL).',
+        });
+      }
+      const kind = String(req.body?.kind || 'daily') as BackupKind;
+      if (!['hourly', 'daily', 'weekly', 'monthly'].includes(kind)) {
+        return res.status(400).json({ error: 'INVALID_KIND', message: 'kind phải là hourly|daily|weekly|monthly' });
+      }
+      const result = await getDriveBackupScheduler(adapter).runNow(kind);
+      try { broadcastUpdate('config', { area: 'backups', kind, ok: result.ok }); } catch { /* non-fatal */ }
+      res.status(result.ok ? 200 : 500).json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || String(err) });
     }
   });
 

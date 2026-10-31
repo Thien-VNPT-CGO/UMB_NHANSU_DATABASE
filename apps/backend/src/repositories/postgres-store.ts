@@ -182,6 +182,24 @@ function serializeRow(row: any): string {
   ));
 }
 
+/** Dòng backup có thể phục hồi: giữ id + data + mốc thời gian gốc. */
+export interface BackupLineRecord {
+  t: string;
+  i: string;
+  b?: string | null;
+  c?: string | null;
+  u?: string | null;
+  d: any;
+}
+
+export interface BackupExportResult {
+  jsonl: string;
+  counts: Record<string, number>;
+  total: number;
+  tables: string[];
+  createdAt: string;
+}
+
 const INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_attendance_employee ON attendance_events ((data->>'employee_id'))`,
   `CREATE INDEX IF NOT EXISTS idx_attendance_request ON attendance_events ((data->>'request_id'))`,
@@ -521,6 +539,153 @@ export class PostgresStore {
 
       await this.persistNewAuditLogs(inner, client);
     });
+  }
+
+  /**
+   * Xuất toàn bộ dữ liệu nghiệp vụ ra JSONL (mỗi dòng 1 bản ghi) để backup.
+   * Không chứa ảnh/base64 vì DB vốn đã chỉ lưu metadata.
+   *
+   * Có thể loại trừ bảng nặng (audit/notification...) cho backup theo giờ để
+   * file nhỏ; các kỳ daily/weekly/monthly vẫn full.
+   */
+  public async exportBackupJsonl(opts: { excludeTables?: string[] } = {}): Promise<BackupExportResult> {
+    if (!this.configured) throw new Error('POSTGRES_NOT_CONFIGURED');
+    const exclude = new Set((opts.excludeTables || []).map(x => str(x)).filter(Boolean));
+    const createdAt = new Date().toISOString();
+    const counts: Record<string, number> = {};
+    const tables: string[] = [];
+    const lines: string[] = [];
+
+    for (const def of COLLECTIONS) {
+      if (exclude.has(def.table) || exclude.has(def.key)) continue;
+      const res = await pgQuery(
+        `SELECT id, data, bucket_month::text AS bucket_month, created_at, updated_at
+           FROM ${def.table} ORDER BY id ASC`,
+      );
+      counts[def.key] = res.rows.length;
+      tables.push(def.table);
+      for (const row of res.rows) {
+        lines.push(JSON.stringify({
+          t: def.key,
+          i: String(row.id || ''),
+          b: row.bucket_month || null,
+          c: row.created_at instanceof Date ? row.created_at.toISOString() : (row.created_at || null),
+          u: row.updated_at instanceof Date ? row.updated_at.toISOString() : (row.updated_at || null),
+          d: row.data,
+        }));
+      }
+    }
+
+    const settings = await pgQuery(`SELECT key, data FROM app_settings ORDER BY key ASC`);
+    counts.settings = settings.rows.length;
+    for (const row of settings.rows) {
+      lines.push(JSON.stringify({ t: '@settings', i: String(row.key), d: row.data }));
+    }
+
+    const header = JSON.stringify({ _ubm_backup: 1, created_at: createdAt, counts });
+    return {
+      jsonl: [header, ...lines].join('\n'),
+      counts,
+      total: lines.length,
+      tables,
+      createdAt,
+    };
+  }
+
+  /**
+   * Phục hồi từ JSONL do `exportBackupJsonl` tạo ra.
+   *
+   * CHỈ dùng khi backend đã dừng. Chỉ TRUNCATE đúng các bảng có trong file
+   * (backup theo giờ có thể thiếu bảng nặng), nên có thể phục hồi từng phần.
+   */
+  public async restoreBackupJsonl(jsonl: string): Promise<{ counts: Record<string, number>; total: number }> {
+    if (!this.configured) throw new Error('POSTGRES_NOT_CONFIGURED');
+    const rowsByKey = new Map<string, BackupLineRecord[]>();
+    const settings: Array<{ key: string; data: any }> = [];
+
+    for (const raw of String(jsonl || '').split('\n')) {
+      const line = raw.trim();
+      if (!line) continue;
+      let rec: any;
+      try { rec = JSON.parse(line); } catch { continue; }
+      if (rec?._ubm_backup) continue;
+      if (rec?.t === '@settings') {
+        if (rec.i) settings.push({ key: String(rec.i), data: rec.d ?? {} });
+        continue;
+      }
+      const def = COLLECTIONS.find(c => c.key === rec?.t);
+      if (!def) continue;
+      const arr = rowsByKey.get(def.key) || [];
+      arr.push(rec as BackupLineRecord);
+      rowsByKey.set(def.key, arr);
+    }
+
+    if (rowsByKey.size === 0 && settings.length === 0) {
+      throw new Error('BACKUP_FILE_EMPTY');
+    }
+
+    const counts: Record<string, number> = {};
+    let total = 0;
+    await withTransaction(async client => {
+      const tables = [...rowsByKey.keys()].map(k => COLLECTIONS.find(c => c.key === k)!.table);
+      if (tables.length) await client.query(`TRUNCATE TABLE ${tables.join(', ')}`);
+      if (settings.length) await client.query(`TRUNCATE TABLE app_settings`);
+
+      for (const [key, records] of rowsByKey) {
+        const def = COLLECTIONS.find(c => c.key === key)!;
+        await this.restoreRows(def, records, client);
+        counts[key] = records.length;
+        total += records.length;
+      }
+      for (const s of settings) await this.upsertSetting(s.key, s.data, client);
+    });
+
+    this.persistedAuditIds.clear();
+    console.log(`[PostgresStore] Đã phục hồi ${total} bản ghi + ${settings.length} cấu hình từ backup.`);
+    return { counts, total };
+  }
+
+  /** Đọc 1 cấu hình đơn lẻ từ app_settings (không đụng systemSettings). */
+  public async getSetting<T = any>(key: string): Promise<T | null> {
+    if (!this.configured) return null;
+    const res = await pgQuery(`SELECT data FROM app_settings WHERE key = $1`, [key]);
+    return (res.rows[0]?.data as T) ?? null;
+  }
+
+  /** Ghi 1 cấu hình đơn lẻ, không ghi đè các key khác. */
+  public async saveSetting(key: string, value: any): Promise<void> {
+    if (!this.configured) return;
+    await this.upsertSetting(key, value);
+  }
+
+  private async restoreRows(def: CollectionDef, records: BackupLineRecord[], client: PoolClient): Promise<void> {
+    const maxParams = 6000;
+    const perRow = 5;
+    const chunkSize = Math.max(1, Math.floor(maxParams / perRow));
+    for (let i = 0; i < records.length; i += chunkSize) {
+      const chunk = records.slice(i, i + chunkSize).filter(r => str(r.i) && r.d && typeof r.d === 'object');
+      if (!chunk.length) continue;
+      const values: any[] = [];
+      const placeholders: string[] = [];
+      chunk.forEach((rec, idx) => {
+        const base = idx * perRow;
+        const row = rec.d || {};
+        const bucket = rec.b || (def.bucketMonth ? def.bucketMonth(row) : null);
+        const created = rec.c || tsOf(row.created_at || row.timestamp) || new Date().toISOString();
+        const updated = rec.u || rec.c || tsOf(row.updated_at || row.created_at || row.timestamp) || created;
+        values.push(String(rec.i), JSON.stringify(row), bucket || null, created, updated);
+        placeholders.push(`($${base + 1}, $${base + 2}::jsonb, $${base + 3}::date, $${base + 4}::timestamptz, $${base + 5}::timestamptz)`);
+      });
+      await client.query(
+        `INSERT INTO ${def.table} (id, data, bucket_month, created_at, updated_at)
+         VALUES ${placeholders.join(',')}
+         ON CONFLICT (id) DO UPDATE SET
+           data = EXCLUDED.data,
+           bucket_month = EXCLUDED.bucket_month,
+           updated_at = EXCLUDED.updated_at`,
+        values,
+      );
+    }
   }
 
   private async upsertRecord(def: CollectionDef, row: any, client?: PoolClient): Promise<void> {

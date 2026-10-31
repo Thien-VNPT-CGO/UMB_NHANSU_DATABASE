@@ -19,6 +19,7 @@ import path from 'path';
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ubm-pgdb-'));
 process.chdir(tmp); // để DriveStorage không đọc key.json thật & đĩa ảnh nằm trong temp
 process.env.ATTENDANCE_PHOTO_DIR = path.join(tmp, 'photos');
+process.env.BACKUP_LOCAL_DIR = path.join(tmp, 'backups');
 process.env.NODE_ENV = 'test';
 
 const PNG_1PX = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl9sAAAAASUVORK5CYII=';
@@ -162,6 +163,51 @@ async function main() {
   assert(employees2.length >= 1, 'nhân viên sống sót qua restart');
   const events2 = await adapter2.asRepository().getAttendanceEvents('*', '*');
   assert(events2.some((e: any) => e.event_id === 'EVT_DB_3'), 'sự kiện chấm công sống sót qua restart');
+
+  console.log('\n[5] Backup JSONL + phục hồi');
+  const exported = await store.exportBackupJsonl();
+  assert(exported.total > 0, 'export có dữ liệu');
+  assert(!!exported.counts.employees, 'header có counts nhân viên');
+  assert(exported.jsonl.split('\n')[0].includes('_ubm_backup'), 'dòng đầu là header backup');
+
+  // Xóa 1 nhân viên rồi phục hồi: nhân viên phải quay lại.
+  const beforeRestore = await pgQuery(`SELECT count(*)::int AS n FROM employees`);
+  await pgQuery(`DELETE FROM employees WHERE id = $1`, ['NV_DB_1']);
+  const afterDelete = await pgQuery(`SELECT count(*)::int AS n FROM employees`);
+  assert(afterDelete.rows[0].n === beforeRestore.rows[0].n - 1, 'xóa tạm 1 nhân viên trước khi phục hồi');
+
+  const restored = await store.restoreBackupJsonl(exported.jsonl);
+  assert(restored.total > 0, 'phục hồi báo có dữ liệu');
+  const afterRestore = await pgQuery<{ data: any }>(`SELECT data FROM employees WHERE id = $1`, ['NV_DB_1']);
+  assert(!!afterRestore.rows[0], 'nhân viên đã quay lại sau phục hồi');
+  assert(String(afterRestore.rows[0].data.full_name || '').includes('DB'), 'nội dung nhân viên đúng');
+  const evtRestored = await pgQuery(`SELECT 1 FROM attendance_events WHERE id = $1`, ['EVT_DB_3']);
+  assert((evtRestored.rowCount || 0) === 1, 'sự kiện chấm công quay lại sau phục hồi');
+
+  const settingsRow = await pgQuery<{ data: any }>(`SELECT data FROM app_settings WHERE key = $1`, ['systemSettings']);
+  assert(!!settingsRow.rows[0], 'app_settings được phục hồi');
+
+  console.log('\n[6] Scheduler backup 4 tầng (Drive tắt -> vẫn ghi bản local)');
+  const { getDriveBackupScheduler, resetDriveBackupSchedulerForTests } = await import('../src/services/backup-drive.service.js');
+  const scheduler = getDriveBackupScheduler(adapter2);
+  const run = await scheduler.runNow('hourly');
+  assert(run.kind === 'hourly', 'runNow chạy đúng tầng giờ');
+  assert(!!run.localPath && fs.existsSync(run.localPath), 'đã ghi file backup local trên VPS');
+  assert(run.file.endsWith('_manual.jsonl.gz'), 'bản chạy tay có hậu tố _manual (không đè bản theo lịch)');
+  assert(run.rows > 0, 'file backup có dữ liệu');
+  assert(run.ok === false && run.error === 'DRIVE_NOT_CONFIGURED', 'Drive chưa cấu hình -> báo lỗi nhưng giữ bản local');
+  const rawGz = fs.readFileSync(run.localPath!, );
+  assert(rawGz[0] === 0x1f && rawGz[1] === 0x8b, 'file backup là gzip hợp lệ');
+  const state = await store.getSetting<any>('backup_schedule_v1');
+  assert(!!state?.last_result?.hourly, 'đã lưu trạng thái lần backup vào app_settings');
+  assert(!state?.last_hourly_slot, 'chạy tay KHÔNG đánh dấu mốc kỳ đã chạy');
+
+  // Chạy tay tầng tuần/tháng phải được bất kể hôm nay có đúng lịch hay không.
+  const weekly = await scheduler.runNow('weekly');
+  assert(/^postgres_\d{4}-W\d{2}_manual\.jsonl\.gz$/.test(weekly.file), 'tuần chạy tay đúng tên file');
+  const monthly = await scheduler.runNow('monthly');
+  assert(/^postgres_\d{4}-\d{2}_manual\.jsonl\.gz$/.test(monthly.file), 'tháng chạy tay đúng tên file');
+  resetDriveBackupSchedulerForTests();
 
   await closePool();
   console.log(`\n✅ Integration PostgreSQL PASS — cluster test, thư mục tạm: ${tmp}`);
