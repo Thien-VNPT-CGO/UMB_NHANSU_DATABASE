@@ -72,17 +72,22 @@ export function writeRuntimeSnapshot(
   const run = writeChain.then(async () => {
     await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
     const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-    await fs.promises.writeFile(tmp, payload, { encoding: 'utf8', mode: 0o600 });
     try {
-      await fs.promises.rename(tmp, filePath);
-    } catch {
-      // Windows đôi khi không rename đè file đang tồn tại.
-      await fs.promises.rm(filePath, { force: true }).catch(() => undefined);
-      await fs.promises.rename(tmp, filePath);
+      await fs.promises.writeFile(tmp, payload, { encoding: 'utf8', mode: 0o600 });
+      try {
+        await fs.promises.rename(tmp, filePath);
+      } catch {
+        // Windows đôi khi không rename đè file đang tồn tại.
+        await fs.promises.rm(filePath, { force: true }).catch(() => undefined);
+        await fs.promises.rename(tmp, filePath);
+      }
+      // Snapshot có PII (lương, tài khoản ngân hàng); cố gắng giới hạn quyền đọc.
+      await fs.promises.chmod(filePath, 0o600).catch(() => undefined);
+      return true;
+    } finally {
+      // Luôn dọn file tạm nếu còn sót lại để không tích tụ làm đầy dung lượng đĩa
+      await fs.promises.rm(tmp, { force: true }).catch(() => undefined);
     }
-    // Snapshot có PII (lương, tài khoản ngân hàng); cố gắng giới hạn quyền đọc.
-    await fs.promises.chmod(filePath, 0o600).catch(() => undefined);
-    return true;
   }).catch((err: any) => {
     console.warn(`[runtime-snapshot] Ghi snapshot lỗi (${filePath}):`, err?.message || err);
     return false;

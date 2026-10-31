@@ -33,3 +33,28 @@ Thumbs.db
 temp/
 tmp/
 coverage/
+
+# Runtime data & persistent storage (mount runtime bằng volume, KHÔNG copy vào image)
+data/
+/data/
+apps/backend/data/
+*.tmp
+*.tmp.*
+*.bak
+*.snapshot*
+runtime-snapshot*
+
+# Media, documents, archives & test files
+docs/
+deploy/
+scripts/
+*.jpg
+*.jpeg
+*.png
+*.zip
+*.tar.gz
+*.xlsx
+*.csv
+.agents/
+skills-lock.json
+
