@@ -5674,409 +5674,425 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         {/* ========================================================================= */}
         {/* DANH SÁCH LỊCH PHỎNG VẤN & TRẠNG THÁI GỬI QUA ZALO CÁ NHÂN */}
         {/* ========================================================================= */}
-        <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
-          <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-            <strong style={{ fontSize: '14px' }}>Lịch Phỏng Vấn Tuyển Dụng Đã Lên Lịch ({pvFiltered.length}/{pvCandidates.length})</strong>
+        {/* ========================================================================= */}
+        {/* DANH SÁCH LỊCH PHỎNG VẤN & TRẠNG THÁI GỬI QUA ZALO CÁ NHÂN */}
+        {/* ========================================================================= */}
+        <div style={{ backgroundColor: '#FFFFFF', borderRadius: '12px', border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.04)', overflow: 'hidden' }}>
+          <div style={{ padding: '12px 18px', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', backgroundColor: '#FAFAFA' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <strong style={{ fontSize: '14px', color: '#1E293B' }}>Lịch Phỏng Vấn Tuyển Dụng</strong>
+              <span style={{ backgroundColor: '#EEF2FF', color: '#4F46E5', fontSize: '11.5px', fontWeight: 700, padding: '2px 9px', borderRadius: '999px', border: '1px solid #E0E7FF' }}>
+                {pvFiltered.length}/{pvCandidates.length}
+              </span>
+            </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
               <select
                 value={pvBranchFilter}
                 onChange={(e) => setPvBranchFilter(e.target.value)}
                 title="Lọc theo chi nhánh ứng viên đăng ký"
-                style={{ fontSize: '12px', padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--border)', fontWeight: 700 }}
+                style={{ fontSize: '12px', padding: '5px 10px', borderRadius: '6px', border: '1px solid #CBD5E1', backgroundColor: '#FFF', fontWeight: 600, color: '#334155' }}
               >
-                <option value="ALL">Tất cả chi nhánh</option>
+                <option value="ALL">🏢 Tất cả chi nhánh</option>
                 <option value="CN130">CN1: 130 Vạn Kiếp</option>
                 <option value="CN261">CN2: 261 Tô Hiến Thành</option>
                 <option value="CN120">CN3: 120 Hoàng Diệu 2</option>
                 <option value="CN111">CN4: 111 Tôn Đản</option>
               </select>
-              <input
-                value={pvSearch}
-                onChange={(e) => setPvSearch(e.target.value)}
-                placeholder="Tìm tên / SĐT..."
-                style={{ fontSize: '12px', padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--border)', minWidth: '160px' }}
-              />
-              <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                🤖 Hệ thống tự rà soát lịch trùng (&lt; 30 phút) mỗi 5 phút + báo HR xử lý tay — lịch HR đã đặt được giữ nguyên
+              <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                <span style={{ position: 'absolute', left: '9px', fontSize: '11px', color: '#94A3B8', pointerEvents: 'none' }}>🔍</span>
+                <input
+                  value={pvSearch}
+                  onChange={(e) => setPvSearch(e.target.value)}
+                  placeholder="Tìm tên / SĐT..."
+                  style={{ fontSize: '12px', padding: '5px 10px 5px 28px', borderRadius: '6px', border: '1px solid #CBD5E1', backgroundColor: '#FFF', minWidth: '150px' }}
+                />
+              </div>
+              <span
+                title="Hệ thống tự rà soát lịch trùng (< 30 phút) mỗi 5 phút + báo HR xử lý tay — lịch HR đã đặt được giữ nguyên"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#64748B', backgroundColor: '#F1F5F9', border: '1px solid #E2E8F0', padding: '4px 8px', borderRadius: '6px', cursor: 'help' }}
+              >
+                ℹ️ Rà trùng tự động
               </span>
-              <span className="badge" style={{ backgroundColor: '#EFF6FF', color: '#0068FF', fontWeight: 800 }}>
-                ĐÃ ĐỒNG BỘ BOT ZALO CÁ NHÂN
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', backgroundColor: '#ECFDF5', color: '#059669', border: '1px solid #A7F3D0', padding: '4px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: 700 }}>
+                <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#10B981', display: 'inline-block' }}></span>
+                ĐỒNG BỘ BOT ZALO
               </span>
             </div>
           </div>
 
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-            <thead>
-              <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
-                <th style={{ padding: '12px 20px' }}>Ứng Viên</th>
-                <th style={{ padding: '12px 20px' }}>Vị Trí & Chi Nhánh</th>
-                <th style={{ padding: '12px 20px' }}>Ca Làm Việc ĐK</th>
-                <th style={{ padding: '12px 20px' }}>Thời Gian</th>
-                <th style={{ padding: '12px 20px' }}>Google Meet Sinh Tự Động</th>
-                <th style={{ padding: '12px 20px' }}>Trạng Thái</th>
-                <th style={{ padding: '12px 20px' }}>Thao Tác</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pvFiltered.length > 0 ? (
-                pvFiltered.map((c, i) => (
-                  <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
-                    <td style={{ padding: '14px 20px', fontWeight: 700 }}>
-                      {c.full_name}
-                      {(c as any).vip && (
-                        <span style={{ marginLeft: '6px', fontSize: '10px', fontWeight: 800, padding: '2px 8px', borderRadius: '999px', backgroundColor: '#EDE9FE', color: '#7C3AED', border: '1px solid #C4B5FD' }}>
-                          👑 VIP {(c as any).vip_rank || 1}
-                        </span>
-                      )}
-                      <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{c.phone || c.phone_normalized}</div>
-                    </td>
-                    <td style={{ padding: '14px 20px' }}>
-                      <strong>{c.apply_position || c.position || 'Nhân viên Bán hàng'}</strong>
-                      <div style={{ fontSize: '11px', color: '#2563EB' }}>{c.branch_name || getDisplayBranch(c.preferred_branch_id || c.branch_id || 'CN130')}</div>
-                    </td>
-                    <td style={{ padding: '14px 20px' }}>
-                      {(() => {
-                        const shift = String(c.registered_shift || 'Ca sáng / Ca chiều');
-                        const parts = shift.split(/[,/+;|]/).map((s: string) => s.trim()).filter(Boolean);
-                        const multi = parts.length >= 2;
-                        if (editingShiftId === c.submission_id) {
-                          return (
-                            <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                              <select
-                                value={SHIFT_OPTIONS.includes(editingShiftVal) ? editingShiftVal : SHIFT_OPTIONS[0]}
-                                onChange={(e) => setEditingShiftVal(e.target.value)}
-                                style={{ width: '140px', fontSize: '12px', padding: '5px 8px', borderRadius: '6px', border: '1px solid var(--border)' }}
-                              >
-                                {SHIFT_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
-                              </select>
-                              <button
-                                onClick={() => handleSaveShift(c)}
-                                disabled={shiftBusy}
-                                title="Lưu ca làm việc mới"
-                                style={{ padding: '5px 10px', borderRadius: '6px', backgroundColor: '#10B981', color: '#FFF', fontSize: '11px', fontWeight: 800, border: 'none', cursor: 'pointer' }}
-                              >
-                                Lưu
-                              </button>
-                              <button
-                                onClick={() => setEditingShiftId(null)}
-                                title="Hủy"
-                                style={{ padding: '5px 10px', borderRadius: '6px', backgroundColor: '#F1F5F9', color: '#475569', fontSize: '11px', fontWeight: 800, border: 'none', cursor: 'pointer' }}
-                              >
-                                Hủy
-                              </button>
-                            </div>
-                          );
-                        }
-                        return (
-                          <div>
-                            <span style={{ display: 'inline-block', padding: '4px 10px', borderRadius: '6px', backgroundColor: multi ? '#FEF3C7' : '#F1F5F9', color: multi ? '#92400E' : '#334155', fontSize: '12px', fontWeight: 700 }}>
-                              {shift}
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12.5px' }}>
+              <thead>
+                <tr style={{ backgroundColor: '#F8FAFC', textAlign: 'left', color: '#64748B', fontSize: '11px', fontWeight: 700, letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>
+                  <th style={{ padding: '10px 14px' }}>ỨNG VIÊN</th>
+                  <th style={{ padding: '10px 14px' }}>VỊ TRÍ & CHI NHÁNH</th>
+                  <th style={{ padding: '10px 14px' }}>CA LÀM VIỆC ĐK</th>
+                  <th style={{ padding: '10px 14px' }}>THỜI GIAN</th>
+                  <th style={{ padding: '10px 14px' }}>GOOGLE MEET SINH TỰ ĐỘNG</th>
+                  <th style={{ padding: '10px 14px' }}>TRẠNG THÁI</th>
+                  <th style={{ padding: '10px 14px', textAlign: 'right' }}>THAO TÁC</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pvFiltered.length > 0 ? (
+                  pvFiltered.map((c, i) => (
+                    <tr key={i} style={{ borderBottom: '1px solid #F1F5F9', transition: 'background-color 0.15s ease' }} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F8FAFC'} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}>
+                      <td style={{ padding: '10px 14px', verticalAlign: 'middle' }}>
+                        <div style={{ fontWeight: 700, color: '#1E293B', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span>{c.full_name}</span>
+                          {(c as any).vip && (
+                            <span style={{ fontSize: '10px', fontWeight: 800, padding: '1px 6px', borderRadius: '4px', backgroundColor: '#EDE9FE', color: '#7C3AED', border: '1px solid #DDD6FE' }}>
+                              👑 VIP {(c as any).vip_rank || 1}
                             </span>
-                            {multi && (
-                              <div>
-                                <button
-                                  onClick={() => { setEditingShiftId(c.submission_id); setEditingShiftVal(shift); }}
-                                  title="Ứng viên đăng ký từ 2 ca trở lên — bấm để cập nhật lại"
-                                  style={{ marginTop: '4px', padding: '4px 10px', borderRadius: '6px', backgroundColor: '#F59E0B', color: '#FFF', fontSize: '11px', fontWeight: 800, border: 'none', cursor: 'pointer' }}
+                          )}
+                        </div>
+                        <div style={{ fontSize: '11px', color: '#64748B', fontFamily: 'monospace', marginTop: '2px' }}>{c.phone || c.phone_normalized}</div>
+                      </td>
+                      <td style={{ padding: '10px 14px', verticalAlign: 'middle' }}>
+                        <div style={{ fontWeight: 600, color: '#1E293B' }}>{c.apply_position || c.position || 'Nhân viên Bán hàng'}</div>
+                        <div style={{ fontSize: '11px', color: '#0284C7', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                          📍 {c.branch_name || getDisplayBranch(c.preferred_branch_id || c.branch_id || 'CN130')}
+                        </div>
+                      </td>
+                      <td style={{ padding: '10px 14px', verticalAlign: 'middle' }}>
+                        {(() => {
+                          const shift = String(c.registered_shift || 'Ca sáng / Ca chiều');
+                          const parts = shift.split(/[,/+;|]/).map((s: string) => s.trim()).filter(Boolean);
+                          const multi = parts.length >= 2;
+                          if (editingShiftId === c.submission_id) {
+                            return (
+                              <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                                <select
+                                  value={SHIFT_OPTIONS.includes(editingShiftVal) ? editingShiftVal : SHIFT_OPTIONS[0]}
+                                  onChange={(e) => setEditingShiftVal(e.target.value)}
+                                  style={{ width: '130px', fontSize: '11.5px', padding: '4px 6px', borderRadius: '5px', border: '1px solid #CBD5E1' }}
                                 >
-                                  ✏️ Cập nhật ca
+                                  {SHIFT_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                                </select>
+                                <button
+                                  onClick={() => handleSaveShift(c)}
+                                  disabled={shiftBusy}
+                                  title="Lưu ca làm việc mới"
+                                  style={{ padding: '4px 8px', borderRadius: '5px', backgroundColor: '#10B981', color: '#FFF', fontSize: '11px', fontWeight: 700, border: 'none', cursor: 'pointer' }}
+                                >
+                                  Lưu
+                                </button>
+                                <button
+                                  onClick={() => setEditingShiftId(null)}
+                                  title="Hủy"
+                                  style={{ padding: '4px 8px', borderRadius: '5px', backgroundColor: '#F1F5F9', color: '#475569', fontSize: '11px', fontWeight: 700, border: 'none', cursor: 'pointer' }}
+                                >
+                                  Hủy
                                 </button>
                               </div>
-                            )}
-                          </div>
-                        );
-                      })()}
-                    </td>
-                    <td style={{ padding: '14px 20px', fontWeight: 700 }}>
-                      {fmtPvTime(c) || (c.interview_time || 'Chờ xếp lịch')}
-                    </td>
-                    <td style={{ padding: '14px 20px' }}>
-                      {(() => {
-                        const st = interviewStartMs(c);
-                        if (!st) return <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Chờ xếp lịch Meet</span>;
-                        const diff = st - meetNow;
-                        const elapsed = meetNow - st;
-                        const endMs = st + PV_SLOT_MINUTES * 60_000;
-                        const pad = (n: number) => String(n).padStart(2, '0');
-                        const fmtLeft = (ms: number) => {
-                          const s = Math.floor(ms / 1000);
-                          const h = Math.floor(s / 3600);
-                          const m = Math.floor((s % 3600) / 60);
-                          const ss = s % 60;
-                          return h > 0 ? `${h}h ${pad(m)}p ${pad(ss)}s` : `${m}p ${pad(ss)}s`;
-                        };
-                        const fmtHM = (ms: number) => {
-                          const vn = new Date(ms + 7 * 3_600_000);
-                          return `${pad(vn.getUTCHours())}:${pad(vn.getUTCMinutes())}`;
-                        };
-                        // Quá 5 phút không ai vào Meet (chưa bấm Vào Meet, chưa chấm điểm):
-                        // hiện nút Huỷ Phỏng vấn + đếm ngược 20s. HR bấm Huỷ -> xóa lịch
-                        // ngay; hết 20s -> hệ thống tự hủy. Có người vào -> giữ lịch.
-                        const pvKey = `${(c as any).submission_id}|${String((c as any).interview_date || '').slice(0, 10)}`;
-                        const pvJoined = pvJoinedRef.current.has(pvKey);
-                        const pvScored = !!parseScoreDetailClient((c as any)?.interview_score_detail);
-                        const noJoinMs = PV_NOJOIN_CANCEL_MIN * 60_000;
-                        if (elapsed >= noJoinMs && !pvJoined && !pvScored) {
-                          const remainSec = Math.max(0, PV_CANCEL_COUNTDOWN_SEC - Math.floor((elapsed - noJoinMs) / 1000));
-                          const busy = pvCancelBusyId === (c as any).submission_id;
-                          return (
-                            <div style={{ backgroundColor: '#FEF2F2', border: '1.5px solid #FCA5A5', borderRadius: '8px', padding: '8px 10px' }}>
-                              <div style={{ fontSize: '12px', fontWeight: 800, color: '#991B1B' }}>
-                                ⚠️ Quá {PV_NOJOIN_CANCEL_MIN} phút chưa vào Meet
-                              </div>
-                              <div style={{ fontSize: '12px', fontWeight: 800, color: '#DC2626', margin: '4px 0', fontVariantNumeric: 'tabular-nums' }}>
-                                ⏳ Tự hủy sau: 00:{String(remainSec).padStart(2, '0')}
-                              </div>
-                              <button
-                                disabled={busy}
-                                onClick={() => handleCancelInterview(c, false)}
-                                style={{ display: 'inline-block', backgroundColor: busy ? '#9CA3AF' : '#DC2626', color: '#FFF', fontWeight: 800, fontSize: '12px', padding: '8px 14px', borderRadius: '8px', border: 'none', cursor: busy ? 'wait' : 'pointer', width: '100%' }}
-                              >
-                                {busy ? '⏳ Đang hủy...' : '✖ Huỷ Phỏng vấn'}
-                              </button>
-                              <a href={SYSTEM_MEET_URL} target="_blank" rel="noreferrer" data-meet-open="1" onClick={() => markPvJoined(c)}
-                                style={{ display: 'block', fontSize: '11px', color: '#0068FF', fontWeight: 700, marginTop: '4px', textAlign: 'center' }}>
-                                Vào Meet ngay để giữ lịch →
-                              </a>
-                            </div>
-                          );
-                        }
-                        // Đang trong khung 30 phút PV: nút đỏ nhấp nháy để vào Meet.
-                        if (diff <= 0 && elapsed < PV_SLOT_MINUTES * 60_000) {
+                            );
+                          }
                           return (
                             <div>
-                              <a href={SYSTEM_MEET_URL} target="_blank" rel="noreferrer" data-meet-open="1" onClick={() => markPvJoined(c)}
-                                style={{ display: 'inline-block', backgroundColor: '#DC2626', color: '#FFF', fontWeight: 800, fontSize: '12px', padding: '8px 14px', borderRadius: '8px', textDecoration: 'none', animation: 'fx-blink 1.2s infinite' }}>
-                                🔴 ĐANG PV — Vào Meet
-                              </a>
-                              <div style={{ fontSize: '11px', color: '#DC2626', fontWeight: 700, marginTop: '4px' }}>
-                                Còn {fmtLeft(endMs - meetNow)} là hết 30 phút
-                              </div>
-                            </div>
-                          );
-                        }
-                        // Hết 30 phút PV: cập nhật trạng thái để HR biết ca PV đã xong.
-                        if (diff <= 0) return (
-                          <div>
-                            <div style={{ display: 'inline-block', fontSize: '12px', fontWeight: 800, color: '#065F46', backgroundColor: '#D1FAE5', padding: '6px 12px', borderRadius: '8px' }}>
-                              ✅ Hết giờ PV ({fmtHM(endMs)})
-                            </div>
-                            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                              Đủ 30 phút — chờ HR đánh giá →
-                            </div>
-                          </div>
-                        );
-                        return (
-                          <div>
-                            <div style={{ fontSize: '12px', fontWeight: 800, color: '#1D4ED8' }}>⏳ Còn {fmtLeft(diff)}</div>
-                            <a href={SYSTEM_MEET_URL} target="_blank" rel="noreferrer" data-meet-open="1" onClick={() => markPvJoined(c)} style={{ fontSize: '11px', color: '#0068FF', fontWeight: 700 }}>Vào trước qua Meet →</a>
-                          </div>
-                        );
-                      })()}
-                    </td>
-                    <td style={{ padding: '14px 20px' }}>
-                      {(() => {
-                        const failInfo = getFailVerdictInfo(c);
-                        if (failInfo.isFail) {
-                          const isExpired = failInfo.remainingMs <= 0;
-                          return (
-                            <div>
-                              <span style={{ backgroundColor: isExpired ? '#FEE2E2' : '#FEF2F2', color: '#DC2626', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700, border: '1px solid #FCA5A5' }}>
-                                {isExpired ? '⛔ Chưa đạt — Đã quá hạn 24h' : `⚠️ Chưa đạt — Tự xoá sau: ${formatCountdown(failInfo.remainingMs)}`}
+                              <span style={{ display: 'inline-block', padding: '3px 8px', borderRadius: '5px', backgroundColor: multi ? '#FEF3C7' : '#F1F5F9', color: multi ? '#92400E' : '#334155', fontSize: '11.5px', fontWeight: 600, border: multi ? '1px solid #FDE68A' : '1px solid #E2E8F0' }}>
+                                {shift}
                               </span>
-                              {!isExpired && (
-                                <div style={{ fontSize: '11px', color: '#DC2626', fontWeight: 700, marginTop: '4px', fontVariantNumeric: 'tabular-nums' }}>
-                                  {`⏳ Hệ thống sẽ tự động xoá ứng viên này ra khỏi hệ thống sau 24h kể từ lúc chấm điểm (${new Date(failInfo.scoredAt + 24*60*60*1000).toLocaleString('vi-VN')})`}
+                              {multi && (
+                                <div style={{ marginTop: '2px' }}>
+                                  <button
+                                    onClick={() => { setEditingShiftId(c.submission_id); setEditingShiftVal(shift); }}
+                                    title="Ứng viên đăng ký từ 2 ca trở lên — bấm để cập nhật lại"
+                                    style={{ padding: '2px 6px', borderRadius: '4px', backgroundColor: '#FFFBEB', color: '#D97706', border: '1px solid #FCD34D', fontSize: '10.5px', fontWeight: 700, cursor: 'pointer' }}
+                                  >
+                                    ✏️ Cập nhật ca
+                                  </button>
                                 </div>
                               )}
                             </div>
                           );
-                        }
-                        return (
-                          <>
-                            <span style={{
-                              backgroundColor: c.status === 'CONFIRMED' ? '#DCFCE7' : c.status === 'NO_SHOW' ? '#FEE2E2' : c.status === 'RESCHEDULE_REQUESTED' ? '#FFFBEB' : '#FEF3C7',
-                              color: c.status === 'CONFIRMED' ? '#166534' : c.status === 'NO_SHOW' ? '#991B1B' : c.status === 'RESCHEDULE_REQUESTED' ? '#92400E' : '#92400E',
-                              padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700,
-                            }}>
-                              {candStatusVI(c.status)}
-                            </span>
-                            {(() => {
-                              const d = parseScoreDetailClient((c as any)?.interview_score_detail);
-                              if (!d) return null;
-                              const vc = d.verdict === 'PASS' ? '#059669' : d.verdict === 'LOAI' ? '#DC2626' : '#B45309';
-                              const vt = d.verdict === 'PASS' ? 'PASS' : d.verdict === 'LOAI' ? 'LOẠI thẳng' : d.verdict === 'CONSIDER' ? 'Cân nhắc' : 'Chưa đạt';
-                              const denom = (d as any).achievableMax ?? d.max;
-                              return (
-                                <div style={{ fontSize: '11px', color: vc, fontWeight: 800, marginTop: '4px' }}>
-                                  📝 Rubric: {d.total}/{denom} — {vt}
+                        })()}
+                      </td>
+                      <td style={{ padding: '10px 14px', verticalAlign: 'middle', fontWeight: 600, color: '#1E293B' }}>
+                        {fmtPvTime(c) || (c.interview_time || 'Chờ xếp lịch')}
+                      </td>
+                      <td style={{ padding: '10px 14px', verticalAlign: 'middle' }}>
+                        {(() => {
+                          const st = interviewStartMs(c);
+                          if (!st) return <span style={{ fontSize: '12px', color: '#94A3B8' }}>Chờ xếp lịch Meet</span>;
+                          const diff = st - meetNow;
+                          const elapsed = meetNow - st;
+                          const endMs = st + PV_SLOT_MINUTES * 60_000;
+                          const pad = (n: number) => String(n).padStart(2, '0');
+                          const fmtLeft = (ms: number) => {
+                            const s = Math.floor(ms / 1000);
+                            const h = Math.floor(s / 3600);
+                            const m = Math.floor((s % 3600) / 60);
+                            const ss = s % 60;
+                            return h > 0 ? `${h}h ${pad(m)}p ${pad(ss)}s` : `${m}p ${pad(ss)}s`;
+                          };
+                          const fmtHM = (ms: number) => {
+                            const vn = new Date(ms + 7 * 3_600_000);
+                            return `${pad(vn.getUTCHours())}:${pad(vn.getUTCMinutes())}`;
+                          };
+                          const pvKey = `${(c as any).submission_id}|${String((c as any).interview_date || '').slice(0, 10)}`;
+                          const pvJoined = pvJoinedRef.current.has(pvKey);
+                          const pvScored = !!parseScoreDetailClient((c as any)?.interview_score_detail);
+                          const noJoinMs = PV_NOJOIN_CANCEL_MIN * 60_000;
+                          if (elapsed >= noJoinMs && !pvJoined && !pvScored) {
+                            const remainSec = Math.max(0, PV_CANCEL_COUNTDOWN_SEC - Math.floor((elapsed - noJoinMs) / 1000));
+                            const busy = pvCancelBusyId === (c as any).submission_id;
+                            return (
+                              <div style={{ backgroundColor: '#FEF2F2', border: '1px solid #FCA5A5', borderRadius: '6px', padding: '6px 8px' }}>
+                                <div style={{ fontSize: '11.5px', fontWeight: 700, color: '#991B1B' }}>
+                                  ⚠️ Quá {PV_NOJOIN_CANCEL_MIN}p chưa vào Meet
                                 </div>
-                              );
-                            })()}
-                          </>
-                        );
-                      })()}
-                    </td>
-                    <td style={{ padding: '14px 20px' }}>
-                      {(() => {
-                        const failInfo = getFailVerdictInfo(c);
-                        const btn2: React.CSSProperties = {
-                          padding: '6px 12px', fontSize: '11px', fontWeight: 800, borderRadius: '8px',
-                          border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px',
-                          whiteSpace: 'nowrap',
-                        };
-                        const d = parseScoreDetailClient((c as any)?.interview_score_detail);
-                        const canApprove = !!d && d.passed && String(c.status || '') !== 'ACCEPTED';
-                        const isAccepted = String(c.status || '') === 'ACCEPTED';
-                        const isScored = !!d;
-                        const disabledForFail = failInfo.isFail;
-                        const disabledStyle = { opacity: 0.5, cursor: 'not-allowed', backgroundColor: '#94A3B8' };
-                        return (
-                          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                            <button
-                              disabled={disabledForFail || candActionBusyId === `zalo-${c.submission_id}`}
-                              style={{ ...btn2, backgroundColor: disabledForFail ? '#94A3B8' : '#10B981', color: '#FFF', boxShadow: disabledForFail ? 'none' : '0 2px 6px rgba(16,185,129,0.3)' }}
-                              onClick={() => {
-                                if (disabledForFail || candActionBusyId) return;
-                                const k = `zalo-${c.submission_id}`;
-                                setCandActionBusyId(k);
-                                chatZaloWithCandidate(c, showToast).finally(() => setCandActionBusyId(cur => cur === k ? null : cur));
-                              }}
-                              title={disabledForFail ? (failInfo.remainingMs <= 0 ? 'Ứng viên Chưa đạt — đã quá 24h, hệ thống sẽ tự động xoá khỏi hệ thống' : 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)') : 'Tự động kết bạn Zalo qua nick HR + gửi lời chào để chát với ứng viên'}
-                            >
-                              {candActionBusyId === `zalo-${c.submission_id}` ? '⏳...' : '💬 Chat Zalo'}
-                            </button>
-                            {(String(c.status || '') === 'INVITED_INTERVIEW') && !disabledForFail && (
+                                <div style={{ fontSize: '11px', fontWeight: 700, color: '#DC2626', margin: '2px 0', fontVariantNumeric: 'tabular-nums' }}>
+                                  ⏳ Tự hủy sau: 00:{String(remainSec).padStart(2, '0')}
+                                </div>
+                                <button
+                                  disabled={busy}
+                                  onClick={() => handleCancelInterview(c, false)}
+                                  style={{ display: 'inline-block', backgroundColor: busy ? '#9CA3AF' : '#DC2626', color: '#FFF', fontWeight: 700, fontSize: '11px', padding: '5px 10px', borderRadius: '5px', border: 'none', cursor: busy ? 'wait' : 'pointer', width: '100%' }}
+                                >
+                                  {busy ? '⏳ Đang hủy...' : '✖ Huỷ Phỏng vấn'}
+                                </button>
+                                <a href={SYSTEM_MEET_URL} target="_blank" rel="noreferrer" data-meet-open="1" onClick={() => markPvJoined(c)}
+                                  style={{ display: 'block', fontSize: '10.5px', color: '#0068FF', fontWeight: 700, marginTop: '3px', textAlign: 'center' }}>
+                                  Vào Meet để giữ lịch →
+                                </a>
+                              </div>
+                            );
+                          }
+                          if (diff <= 0 && elapsed < PV_SLOT_MINUTES * 60_000) {
+                            return (
+                              <div>
+                                <a href={SYSTEM_MEET_URL} target="_blank" rel="noreferrer" data-meet-open="1" onClick={() => markPvJoined(c)}
+                                  style={{ display: 'inline-block', backgroundColor: '#DC2626', color: '#FFF', fontWeight: 700, fontSize: '11.5px', padding: '5px 10px', borderRadius: '6px', textDecoration: 'none', animation: 'fx-blink 1.2s infinite' }}>
+                                  🔴 ĐANG PV — Vào Meet
+                                </a>
+                                <div style={{ fontSize: '10.5px', color: '#DC2626', fontWeight: 600, marginTop: '3px' }}>
+                                  Còn {fmtLeft(endMs - meetNow)}
+                                </div>
+                              </div>
+                            );
+                          }
+                          if (diff <= 0) return (
+                            <div>
+                              <div style={{ display: 'inline-block', fontSize: '11.5px', fontWeight: 700, color: '#065F46', backgroundColor: '#D1FAE5', padding: '4px 8px', borderRadius: '5px' }}>
+                                ✅ Hết giờ PV ({fmtHM(endMs)})
+                              </div>
+                              <div style={{ fontSize: '10.5px', color: '#64748B', marginTop: '2px' }}>
+                                Đủ 30 phút — chờ HR chấm →
+                              </div>
+                            </div>
+                          );
+                          return (
+                            <div>
+                              <div style={{ fontSize: '11.5px', fontWeight: 700, color: '#1D4ED8' }}>⏳ Còn {fmtLeft(diff)}</div>
+                              <a href={SYSTEM_MEET_URL} target="_blank" rel="noreferrer" data-meet-open="1" onClick={() => markPvJoined(c)} style={{ fontSize: '11px', color: '#0068FF', fontWeight: 600 }}>Vào trước qua Meet →</a>
+                            </div>
+                          );
+                        })()}
+                      </td>
+                      <td style={{ padding: '10px 14px', verticalAlign: 'middle' }}>
+                        {(() => {
+                          const failInfo = getFailVerdictInfo(c);
+                          if (failInfo.isFail) {
+                            const isExpired = failInfo.remainingMs <= 0;
+                            return (
+                              <div>
+                                <span style={{ backgroundColor: isExpired ? '#FEE2E2' : '#FEF2F2', color: '#DC2626', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700, border: '1px solid #FCA5A5', display: 'inline-block' }}>
+                                  {isExpired ? '⛔ Chưa đạt — Quá 24h' : `⚠️ Chưa đạt (${formatCountdown(failInfo.remainingMs)})`}
+                                </span>
+                                {!isExpired && (
+                                  <div style={{ fontSize: '10.5px', color: '#DC2626', fontWeight: 600, marginTop: '2px', fontVariantNumeric: 'tabular-nums' }}>
+                                    Tự xoá sau 24h
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          }
+                          return (
+                            <>
+                              <span style={{
+                                backgroundColor: c.status === 'CONFIRMED' ? '#DCFCE7' : c.status === 'NO_SHOW' ? '#FEE2E2' : c.status === 'RESCHEDULE_REQUESTED' ? '#FEF3C7' : '#FEF3C7',
+                                color: c.status === 'CONFIRMED' ? '#166534' : c.status === 'NO_SHOW' ? '#991B1B' : c.status === 'RESCHEDULE_REQUESTED' ? '#92400E' : '#92400E',
+                                padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700, display: 'inline-block',
+                                border: c.status === 'CONFIRMED' ? '1px solid #BBF7D0' : c.status === 'NO_SHOW' ? '1px solid #FECACA' : '1px solid #FDE68A'
+                              }}>
+                                {candStatusVI(c.status)}
+                              </span>
+                              {(() => {
+                                const d = parseScoreDetailClient((c as any)?.interview_score_detail);
+                                if (!d) return null;
+                                const vc = d.verdict === 'PASS' ? '#059669' : d.verdict === 'LOAI' ? '#DC2626' : '#B45309';
+                                const vt = d.verdict === 'PASS' ? 'PASS' : d.verdict === 'LOAI' ? 'LOẠI thẳng' : d.verdict === 'CONSIDER' ? 'Cân nhắc' : 'Chưa đạt';
+                                const denom = (d as any).achievableMax ?? d.max;
+                                return (
+                                  <div style={{ fontSize: '10.5px', color: vc, fontWeight: 700, marginTop: '3px' }}>
+                                    📝 Rubric: {d.total}/{denom} — {vt}
+                                  </div>
+                                );
+                              })()}
+                            </>
+                          );
+                        })()}
+                      </td>
+                      <td style={{ padding: '10px 14px', verticalAlign: 'middle', textAlign: 'right' }}>
+                        {(() => {
+                          const failInfo = getFailVerdictInfo(c);
+                          const btn2: React.CSSProperties = {
+                            padding: '4px 8px', fontSize: '11px', fontWeight: 600, borderRadius: '5px',
+                            border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '3px',
+                            whiteSpace: 'nowrap', transition: 'all 0.15s ease',
+                          };
+                          const d = parseScoreDetailClient((c as any)?.interview_score_detail);
+                          const canApprove = !!d && d.passed && String(c.status || '') !== 'ACCEPTED';
+                          const isAccepted = String(c.status || '') === 'ACCEPTED';
+                          const isScored = !!d;
+                          const disabledForFail = failInfo.isFail;
+                          return (
+                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center' }}>
                               <button
-                                disabled={rsvpBusyId === c.submission_id}
-                                style={{ ...btn2, backgroundColor: '#059669', color: '#FFF', boxShadow: '0 2px 6px rgba(5,150,105,0.3)' }}
-                                onClick={() => handleConfirmInterview(c)}
-                                title="Ứng viên báo sẽ tham gia (qua điện thoại/Zalo tay) — ghi nhận để giữ lịch"
+                                disabled={disabledForFail || candActionBusyId === `zalo-${c.submission_id}`}
+                                style={{ ...btn2, backgroundColor: disabledForFail ? '#94A3B8' : '#10B981', color: '#FFF' }}
+                                onClick={() => {
+                                  if (disabledForFail || candActionBusyId) return;
+                                  const k = `zalo-${c.submission_id}`;
+                                  setCandActionBusyId(k);
+                                  chatZaloWithCandidate(c, showToast).finally(() => setCandActionBusyId(cur => cur === k ? null : cur));
+                                }}
+                                title={disabledForFail ? (failInfo.remainingMs <= 0 ? 'Ứng viên Chưa đạt — đã quá 24h, hệ thống sẽ tự động xoá khỏi hệ thống' : 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)') : 'Tự động kết bạn Zalo qua nick HR + gửi lời chào để chát với ứng viên'}
                               >
-                                {rsvpBusyId === c.submission_id ? '⏳...' : '✓ Xác nhận tham gia'}
+                                {candActionBusyId === `zalo-${c.submission_id}` ? '⏳...' : '💬 Chat Zalo'}
                               </button>
-                            )}
-                            {(['INVITED_INTERVIEW', 'CONFIRMED'].includes(String(c.status || ''))) && !disabledForFail && (
+                              {(String(c.status || '') === 'INVITED_INTERVIEW') && !disabledForFail && (
+                                <button
+                                  disabled={rsvpBusyId === c.submission_id}
+                                  style={{ ...btn2, backgroundColor: '#059669', color: '#FFF' }}
+                                  onClick={() => handleConfirmInterview(c)}
+                                  title="Ứng viên báo sẽ tham gia (qua điện thoại/Zalo tay) — ghi nhận để giữ lịch"
+                                >
+                                  {rsvpBusyId === c.submission_id ? '⏳...' : '✓ Xác nhận'}
+                                </button>
+                              )}
+                              {(['INVITED_INTERVIEW', 'CONFIRMED'].includes(String(c.status || ''))) && !disabledForFail && (
+                                <button
+                                  disabled={rsvpBusyId === c.submission_id}
+                                  style={{ ...btn2, backgroundColor: '#EF4444', color: '#FFF' }}
+                                  onClick={() => handleNoShowInterview(c)}
+                                  title="Ứng viên không đến — đánh vắng, hủy lịch giải phóng slot (PV lại phải đặt lịch mới)"
+                                >
+                                  {rsvpBusyId === c.submission_id ? '⏳...' : '🚫 Vắng'}
+                                </button>
+                              )}
+                              {!isAccepted && !isScored && (
+                                <button
+                                  disabled={disabledForFail}
+                                  style={{ ...btn2, backgroundColor: disabledForFail ? '#94A3B8' : '#8B5CF6', color: '#FFF' }}
+                                  onClick={() => !disabledForFail && openScoring(c)}
+                                  title={disabledForFail ? (failInfo.remainingMs <= 0 ? 'Ứng viên Chưa đạt — đã quá 24h, hệ thống sẽ tự động xoá khỏi hệ thống' : 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)') : 'Chấm điểm theo TIÊU CHÍ LỌC HỒ SƠ (chấm xong nút này ẩn đi)'}
+                                >
+                                  📝 Chấm điểm
+                                </button>
+                              )}
+                              {!isAccepted && (
+                                <button
+                                  disabled={disabledForFail}
+                                  style={{ ...btn2, backgroundColor: disabledForFail ? '#94A3B8' : '#F59E0B', color: '#FFF' }}
+                                  onClick={() => !disabledForFail && openUpdating(c)}
+                                  title={disabledForFail ? (failInfo.remainingMs <= 0 ? 'Ứng viên Chưa đạt — đã quá 24h, hệ thống sẽ tự động xoá khỏi hệ thống' : 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)') : 'Cập nhật ca làm việc + chi nhánh (bắt buộc chốt 1 ca / 1 chi nhánh trước khi duyệt)'}
+                                >
+                                  ✏️ Cập nhật TT
+                                </button>
+                              )}
+                              {canApprove && (
+                                <button
+                                  disabled={disabledForFail || approveBusyId === c.submission_id}
+                                  style={{ ...btn2, backgroundColor: disabledForFail ? '#94A3B8' : '#059669', color: '#FFF' }}
+                                  onClick={() => !disabledForFail && handleApproveCandidate(c)}
+                                  title={disabledForFail ? (failInfo.remainingMs <= 0 ? 'Ứng viên Chưa đạt — đã quá 24h, hệ thống sẽ tự động xoá khỏi hệ thống' : 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)') : `Đã PASS rubric (${d.total}/${(d as any).achievableMax ?? d.max}) — duyệt thử việc + cấp PIN`}
+                                >
+                                  {approveBusyId === c.submission_id ? '⏳...' : '✅ Duyệt NV'}
+                                </button>
+                              )}
+                              {isScored && (
+                                <button
+                                  disabled={disabledForFail || vipBusyId === c.submission_id}
+                                  style={{ ...btn2, backgroundColor: (c as any).vip ? '#7C3AED' : '#F59E0B', color: '#FFF' }}
+                                  onClick={async () => {
+                                    if (disabledForFail || vipBusyId) return;
+                                    const sid = String(c?.submission_id || '');
+                                    if (!sid) return;
+                                    const nextVip = !(c as any).vip;
+                                    if (!window.confirm(nextVip
+                                      ? `Đánh dấu ${c.full_name} là ỨNG VIÊN ƯU TIÊN vào việc?`
+                                      : `Bỏ ưu tiên VIP của ${c.full_name}?`)) return;
+                                    setVipBusyId(sid);
+                                    try {
+                                      await apiRequest(`/applications/${sid}`, {
+                                        method: 'PUT',
+                                        body: JSON.stringify({ vip: nextVip }),
+                                      });
+                                      showToast(nextVip
+                                        ? `👑 ${c.full_name} đã được đánh dấu ƯU TIÊN vào việc!`
+                                        : `Đã bỏ ưu tiên VIP của ${c.full_name}.`);
+                                      if (onRefreshData) await onRefreshData();
+                                    } catch (e: any) {
+                                      showToast(e?.message || 'Lỗi khi cập nhật VIP!');
+                                    } finally {
+                                      setVipBusyId(null);
+                                    }
+                                  }}
+                                  title={disabledForFail ? 'Ứng viên chưa đạt — chức năng bị khoá' : ((c as any).vip ? `Bỏ ưu tiên VIP ${(c as any).vip_rank || 1}` : 'Đánh dấu ưu tiên vào việc (HR chọn sau khi phỏng vấn xong)')}
+                                >
+                                  {vipBusyId === c.submission_id ? '⏳...' : ((c as any).vip ? `👑 Bỏ VIP` : '⭐ VIP')}
+                                </button>
+                              )}
+                              {isAccepted && (
+                                <span style={{ fontSize: '11px', color: '#059669', fontWeight: 700 }}>✅ Đã duyệt NV</span>
+                              )}
                               <button
-                                disabled={rsvpBusyId === c.submission_id}
-                                style={{ ...btn2, backgroundColor: '#DC2626', color: '#FFF', boxShadow: '0 2px 6px rgba(220,38,38,0.3)' }}
-                                onClick={() => handleNoShowInterview(c)}
-                                title="Ứng viên không đến — đánh vắng, hủy lịch giải phóng slot (PV lại phải đặt lịch mới)"
-                              >
-                                {rsvpBusyId === c.submission_id ? '⏳...' : '🚫 Đánh vắng'}
-                              </button>
-                            )}
-                            {!isAccepted && !isScored && (
-                              <button
-                                disabled={disabledForFail}
-                                style={{ ...btn2, backgroundColor: disabledForFail ? '#94A3B8' : '#8B5CF6', color: '#FFF', boxShadow: disabledForFail ? 'none' : '0 2px 6px rgba(139,92,246,0.3)' }}
-                                onClick={() => !disabledForFail && openScoring(c)}
-                                title={disabledForFail ? (failInfo.remainingMs <= 0 ? 'Ứng viên Chưa đạt — đã quá 24h, hệ thống sẽ tự động xoá khỏi hệ thống' : 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)') : 'Chấm điểm theo TIÊU CHÍ LỌC HỒ SƠ (chấm xong nút này ẩn đi)'}
-                              >
-                                📝 Chấm điểm
-                              </button>
-                            )}
-                            {!isAccepted && (
-                              <button
-                                disabled={disabledForFail}
-                                style={{ ...btn2, backgroundColor: disabledForFail ? '#94A3B8' : '#F59E0B', color: '#FFF', boxShadow: disabledForFail ? 'none' : '0 2px 6px rgba(245,158,11,0.3)' }}
-                                onClick={() => !disabledForFail && openUpdating(c)}
-                                title={disabledForFail ? (failInfo.remainingMs <= 0 ? 'Ứng viên Chưa đạt — đã quá 24h, hệ thống sẽ tự động xoá khỏi hệ thống' : 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)') : 'Cập nhật ca làm việc + chi nhánh (bắt buộc chốt 1 ca / 1 chi nhánh trước khi duyệt)'}
-                              >
-                                ✏️ Cập nhật TT
-                              </button>
-                            )}
-                            {canApprove && (
-                              <button
-                                disabled={disabledForFail || approveBusyId === c.submission_id}
-                                style={{ ...btn2, backgroundColor: disabledForFail ? '#94A3B8' : '#10B981', color: '#FFF', boxShadow: disabledForFail ? 'none' : '0 2px 6px rgba(16,185,129,0.35)' }}
-                                onClick={() => !disabledForFail && handleApproveCandidate(c)}
-                                title={disabledForFail ? (failInfo.remainingMs <= 0 ? 'Ứng viên Chưa đạt — đã quá 24h, hệ thống sẽ tự động xoá khỏi hệ thống' : 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)') : `Đã PASS rubric (${d.total}/${(d as any).achievableMax ?? d.max}) — duyệt thử việc + cấp PIN`}
-                              >
-                                {approveBusyId === c.submission_id ? '⏳ Đang duyệt...' : '✅ Duyệt Thử việc'}
-                              </button>
-                            )}
-                            {isScored && (
-                              <button
-                                disabled={disabledForFail || vipBusyId === c.submission_id}
-                                style={{ ...btn2, backgroundColor: (c as any).vip ? '#7C3AED' : '#F59E0B', color: '#FFF', boxShadow: '0 2px 6px rgba(124,58,237,0.3)' }}
+                                disabled={candDelBusyId === c.submission_id}
+                                style={{ ...btn2, backgroundColor: '#EF4444', color: '#FFF' }}
                                 onClick={async () => {
-                                  if (disabledForFail || vipBusyId) return;
                                   const sid = String(c?.submission_id || '');
-                                  if (!sid) return;
-                                  const nextVip = !(c as any).vip;
-                                  if (!window.confirm(nextVip
-                                    ? `Đánh dấu ${c.full_name} là ỨNG VIÊN ƯU TIÊN vào việc?`
-                                    : `Bỏ ưu tiên VIP của ${c.full_name}?`)) return;
-                                  setVipBusyId(sid);
+                                  if (!sid || candDelBusyId) return;
+                                  if (!window.confirm(`Xóa cứng ứng viên ${c?.full_name || sid} khỏi hệ thống + Google Sheet? Không khôi phục được!`)) return;
+                                  setCandDelBusyId(sid);
                                   try {
-                                    await apiRequest(`/applications/${sid}`, {
-                                      method: 'PUT',
-                                      body: JSON.stringify({ vip: nextVip }),
-                                    });
-                                    showToast(nextVip
-                                      ? `👑 ${c.full_name} đã được đánh dấu ƯU TIÊN vào việc!`
-                                      : `Đã bỏ ưu tiên VIP của ${c.full_name}.`);
+                                    await apiRequest(`/applications/${sid}`, { method: 'DELETE' });
+                                    showToast(`Đã xóa ${c?.full_name || sid} khỏi hệ thống + Sheet!`);
                                     if (onRefreshData) await onRefreshData();
+                                    if (onPushSheets) await onPushSheets();
                                   } catch (e: any) {
-                                    showToast(e?.message || 'Lỗi khi cập nhật VIP!');
+                                    showToast(e?.message || 'Lỗi khi xóa ứng viên!');
                                   } finally {
-                                    setVipBusyId(null);
+                                    setCandDelBusyId(null);
                                   }
                                 }}
-                                title={disabledForFail ? 'Ứng viên chưa đạt — chức năng bị khoá' : ((c as any).vip ? `Bỏ ưu tiên VIP ${(c as any).vip_rank || 1}` : 'Đánh dấu ưu tiên vào việc (HR chọn sau khi phỏng vấn xong)')}
+                                title="Xóa cứng khỏi hệ thống + Google Sheet ngay (không khôi phục)"
                               >
-                                {vipBusyId === c.submission_id ? '⏳...' : ((c as any).vip ? `👑 Bỏ VIP ${(c as any).vip_rank || 1}` : '⭐ VIP')}
+                                {candDelBusyId === c.submission_id ? '⏳...' : '🗑 Xóa'}
                               </button>
-                            )}
-                            {isAccepted && (
-                              <span style={{ fontSize: '11px', color: '#059669', fontWeight: 800 }}>✅ Đã duyệt NV</span>
-                            )}
-                            <button
-                              disabled={candDelBusyId === c.submission_id}
-                              style={{ ...btn2, backgroundColor: '#DC2626', color: '#FFF', boxShadow: '0 2px 6px rgba(220,38,38,0.3)' }}
-                              onClick={async () => {
-                                const sid = String(c?.submission_id || '');
-                                if (!sid || candDelBusyId) return;
-                                if (!window.confirm(`Xóa cứng ứng viên ${c?.full_name || sid} khỏi hệ thống + Google Sheet? Không khôi phục được!`)) return;
-                                setCandDelBusyId(sid);
-                                try {
-                                  await apiRequest(`/applications/${sid}`, { method: 'DELETE' });
-                                  showToast(`Đã xóa ${c?.full_name || sid} khỏi hệ thống + Sheet!`);
-                                  if (onRefreshData) await onRefreshData();
-                                  if (onPushSheets) await onPushSheets();
-                                } catch (e: any) {
-                                  showToast(e?.message || 'Lỗi khi xóa ứng viên!');
-                                } finally {
-                                  setCandDelBusyId(null);
-                                }
-                              }}
-                              title="Xóa cứng khỏi hệ thống + Google Sheet ngay (không khôi phục)"
-                            >
-                              {candDelBusyId === c.submission_id ? '⏳ Đang xóa...' : '🗑 Xóa'}
-                            </button>
-                            {disabledForFail && (
-                              <span style={{ fontSize: '11px', color: '#DC2626', fontWeight: 800, alignSelf: 'center' }}>
-                                {failInfo.remainingMs <= 0 ? '🔒 Đã quá 24h — tự xoá khỏi hệ thống' : '🔒 Khoá (tự xoá 24h)'}
-                              </span>
-                            )}
-                          </div>
-                        );
-                      })()}
+                              {disabledForFail && (
+                                <span style={{ fontSize: '10.5px', color: '#DC2626', fontWeight: 700, alignSelf: 'center' }}>
+                                  {failInfo.remainingMs <= 0 ? '🔒 Đã quá 24h' : '🔒 Đã khoá'}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={7} style={{ textAlign: 'center', padding: '36px', color: 'var(--text-muted)', fontSize: '13px' }}>
+                      {(pvBranchFilter !== 'ALL' || pvSearch.trim())
+                        ? 'Không có ứng viên nào khớp bộ lọc — thử đổi chi nhánh hoặc từ khóa tìm kiếm.'
+                        : 'Chưa có lịch phỏng vấn nào. Dữ liệu sẽ tự động xuất hiện khi tiếp nhận ứng viên từ Google Forms hoặc Google Sheets.'}
                     </td>
                   </tr>
-                ))
-              ) : (
-                <tr>
-                    <td colSpan={7} style={{ textAlign: 'center', padding: '36px', color: 'var(--text-muted)', fontSize: '13px' }}>
-                    {(pvBranchFilter !== 'ALL' || pvSearch.trim())
-                      ? 'Không có ứng viên nào khớp bộ lọc — thử đổi chi nhánh hoặc từ khóa tìm kiếm.'
-                      : 'Chưa có lịch phỏng vấn nào. Dữ liệu sẽ tự động xuất hiện khi tiếp nhận ứng viên từ Google Forms hoặc Google Sheets.'}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
 
         {/* MODAL CHẤM ĐIỂM RUBRIC TIÊU CHÍ LỌC HỒ SƠ */}
