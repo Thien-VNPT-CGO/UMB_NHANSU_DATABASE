@@ -66,7 +66,29 @@ GOOGLE_OAUTH_ACCOUNT_EMAIL=umbomilk@gmail.com
 GOOGLE_DRIVE_ATTENDANCE_FOLDER_ID=1vql_oCLqsyDdvMlh_XIIhPhLuFWq387G
 ```
 
-Restart backend. Kiểm tra:
+Có thể dán tay, hoặc dùng script cập nhật `.env` an toàn (tự sao lưu file cũ,
+nhập Secret/Refresh Token ẩn để không lọt vào lịch sử shell). Chạy trên VPS tại
+thư mục gốc dự án:
+
+```bash
+node deploy/vps/set-google-oauth.cjs
+```
+
+Trên máy cá nhân, dùng lệnh sau để in lại 4 dòng cấu hình từ
+`apps/backend/.env` cho dễ copy:
+
+```bash
+node scripts/print-google-oauth-env.cjs
+```
+
+Restart backend bằng Docker (không dùng `pm2`, backend chạy trong container nên
+phải tạo lại container mới nạp `.env`):
+
+```bash
+docker compose up -d --force-recreate backend
+```
+
+Kiểm tra:
 
 ```bash
 curl -s https://<domain>/api/health | grep -A12 '"drive"'
@@ -84,6 +106,20 @@ Kết quả đúng phải có:
   "lastError": null
 }
 ```
+
+### 2.4. Đưa OAuth app sang “In production” (bắt buộc để token không hết hạn)
+
+Nếu OAuth consent screen còn ở trạng thái **Testing**, refresh token chỉ sống
+**7 ngày** rồi backend sẽ mất quyền ghi Drive. Vì vậy sau khi chạy được:
+
+1. Mở <https://console.cloud.google.com/apis/credentials/consent>
+2. Bấm **Publish app** → xác nhận để trạng thái thành **In production**.
+3. Nếu Google yêu cầu xác minh (do dùng scope `drive`), có thể chọn
+   **Continue / xác nhận**; với tài khoản nội bộ, app vẫn dùng được ngay sau khi
+   Publish, chỉ hiện cảnh báo “chưa xác minh” khi cấp quyền lại.
+
+Sau khi Publish, refresh token không còn hạn 7 ngày. Nếu lỡ để hết hạn, chỉ cần
+chạy lại `scripts/get-google-oauth-refresh-token.cjs` và cập nhật lại `.env`.
 
 ## 3. Cách 2 — GAS Webhook (không cần OAuth)
 

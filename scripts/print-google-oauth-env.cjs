@@ -54,4 +54,5 @@ if (attendanceFolder) {
 }
 
 console.log('');
-console.log('# Sau khi dán: pm2 restart ubm-backend --update-env');
+console.log('# Sau khi dán, tạo lại container backend để nạp .env:');
+console.log('#   docker compose up -d --force-recreate backend');

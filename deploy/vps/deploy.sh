@@ -70,9 +70,22 @@ if [ -f "deploy/vps/fix-gzip-nginx.sh" ]; then
   sudo bash deploy/vps/fix-gzip-nginx.sh || true
 fi
 
-echo "==> 6. Kiem tra suc khoe"
-sleep 8
-curl -fsS http://localhost:4005/health | head -c 300; echo
+echo "==> 6. Kiem tra suc khoe (cho backend san sang)..."
+READY=0
+for i in $(seq 1 15); do
+  if curl -fsS http://localhost:4005/health >/dev/null 2>&1; then
+    READY=1
+    break
+  fi
+  sleep 2
+done
+
+if [ "$READY" -eq 1 ]; then
+  curl -fsS http://localhost:4005/health | head -c 300; echo
+else
+  echo "[CANH BAO] Backend chua phan hoi sau 30s. Xem log chi tiet ben duoi:"
+  docker compose logs --tail 30 backend || true
+fi
 echo "XONG:"
 echo "  NV:    https://umbomilk-nhansu-diemdanh.duckdns.org/"
 echo "  Admin: https://umbomilk-nhansu-diemdanh.duckdns.org/admin/"
