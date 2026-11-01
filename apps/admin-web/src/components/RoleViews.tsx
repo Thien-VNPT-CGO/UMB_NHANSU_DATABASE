@@ -8520,17 +8520,17 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       <TabErrorBoundary tabName="Lịch Làm Việc Tuần">
       <div id="sec-schedule" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         {/* Top Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <h1 style={{ fontSize: '20px', fontWeight: 800, margin: 0, color: 'var(--text)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <h1 style={{ fontSize: '18px', fontWeight: 800, margin: 0, color: 'var(--text)' }}>
                 7. Lịch Làm Việc Tuần & Giám Sát Điểm Danh Realtime
               </h1>
               <span style={{
                 display: 'inline-flex',
                 alignItems: 'center',
-                gap: '6px',
-                padding: '4px 10px',
+                gap: '5px',
+                padding: '3px 8px',
                 borderRadius: 'var(--radius-full)',
                 backgroundColor: '#DFF5E8',
                 color: '#065F46',
@@ -8538,23 +8538,23 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 fontWeight: 700,
                 border: '1px solid #A7F3D0',
               }}>
-                <RadioTower size={14} style={{ animation: 'pulse 1.5s infinite' }} />
+                <RadioTower size={13} style={{ animation: 'pulse 1.5s infinite' }} />
                 Socket.IO: Tự Động Điểm Danh Realtime
               </span>
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: '8px' }}>
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
             <button
               className="btn-primary"
-              style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', fontSize: '13px' }}
+              style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 12px', fontSize: '12.5px', fontWeight: 700, borderRadius: '6px', minHeight: '32px' }}
               onClick={() => setPublishOpen(true)}
             >
               <CheckCircle size={14} /> Phát Hành Lịch (PUBLISH)
             </button>
             <button
               className="btn-primary"
-              style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', fontSize: '13px', backgroundColor: '#7C3AED' }}
+              style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 12px', fontSize: '12.5px', fontWeight: 700, borderRadius: '6px', minHeight: '32px', backgroundColor: '#7C3AED' }}
               title="Chọn 1 nhân viên bất kỳ và xếp ca làm trực tiếp lên lịch (nháp) — tự đồng bộ realtime sang Bảng Chấm Công và Cổng NV"
               onClick={() => {
                 setSupEmpId('');
@@ -8569,7 +8569,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             {currentUser?.role === 'ADMIN' && (
               <button
                 className="btn-primary"
-                style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', fontSize: '13px', backgroundColor: '#0EA5E9' }}
+                style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 12px', fontSize: '12.5px', fontWeight: 700, borderRadius: '6px', minHeight: '32px', backgroundColor: '#0EA5E9' }}
                 title="Nhập lịch làm việc cả tuần cho nhân viên bằng file Excel (.xlsx) — tải file mẫu đã điền sẵn nhân viên, điền ca (CA_1/CA_2/CA_3) rồi nhập. Chỉ tài khoản ADMIN."
                 onClick={() => {
                   setXlWeek(weekDays?.[0]?.isoDate || new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10));
@@ -8583,7 +8583,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             )}
             <button
               className="btn-primary"
-              style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', fontSize: '13px', backgroundColor: '#059669' }}
+              style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 12px', fontSize: '12.5px', fontWeight: 700, borderRadius: '6px', minHeight: '32px', backgroundColor: '#059669' }}
               title="Rà NV vừa lên chính thức bị thiếu ca THỬ VIỆC các tuần trước — mở modal tự chọn NV + ngày + ca để bù (Admin hoàn thành ca sau để tính lương thử việc)"
               disabled={supBusy}
               onClick={async () => {
@@ -8615,64 +8615,114 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           </div>
         </div>
 
-        {/* BETA — Card ADMIN: bật/tắt phiếu "Cập Nhật Ca" + đặt thời gian hiển thị.
-            Cổng NV nhận realtime (entity shift-rereg) → ẩn/hiện tab + đếm ngược
-            đến 23:59:59 (+07:00) của ngày kết thúc do Admin đặt. */}
+        {/* BETA — Card ADMIN: bật/tắt phiếu "Cập Nhật Ca" + đặt thời gian hiển thị */}
         {currentUser?.role === 'ADMIN' && (
-          <div className="card" style={{ marginTop: '12px' }}>
+          <div style={{
+            marginTop: '4px',
+            padding: '10px 14px',
+            borderRadius: '10px',
+            backgroundColor: 'var(--surface, #FFFFFF)',
+            border: '1px solid var(--border, #E2E8F0)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '12px',
+            flexWrap: 'wrap',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.03)',
+          }}>
+            {/* Left: Title + Badges + Info Tooltip */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-              <h3 style={{ fontSize: '14px', fontWeight: 800, margin: 0 }}>🛠 Quản Lý Phiếu "Cập Nhật Ca"</h3>
-              <span style={{ fontSize: '10px', fontWeight: 800, padding: '2px 8px', borderRadius: 'var(--radius-full)', backgroundColor: '#FDE68A', color: '#92400E', letterSpacing: '0.5px' }}>BETA</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ fontSize: '14px' }}>🛠</span>
+                <span style={{ fontSize: '13px', fontWeight: 800, color: 'var(--text)' }}>Phiếu "Cập Nhật Ca"</span>
+                <span style={{ fontSize: '10px', fontWeight: 800, padding: '1px 6px', borderRadius: '4px', backgroundColor: '#FEF3C7', color: '#92400E' }}>BETA</span>
+              </div>
               {rrCfg && (
-                <span
-                  style={{
-                    fontSize: '11px', fontWeight: 800, padding: '3px 10px', borderRadius: 'var(--radius-full)',
-                    backgroundColor: rrCfg.enabled ? '#DCFCE7' : '#F1F5F9',
-                    color: rrCfg.enabled ? '#166534' : 'var(--text-muted)',
-                  }}
-                >{rrCfg.enabled ? '🟢 ĐANG MỞ' : '⚫ ĐANG ĐÓNG'}</span>
+                <span style={{
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  padding: '2px 8px',
+                  borderRadius: '12px',
+                  backgroundColor: rrCfg.enabled ? '#DCFCE7' : '#F1F5F9',
+                  color: rrCfg.enabled ? '#166534' : 'var(--text-muted)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                }}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: rrCfg.enabled ? '#16A34A' : '#94A3B8' }} />
+                  {rrCfg.enabled ? 'ĐANG MỞ' : 'ĐANG ĐÓNG'}
+                </span>
               )}
+              {rrCfg?.updatedAt && (
+                <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                  • Cập nhật: {new Date(rrCfg.updatedAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}{' '}
+                  {new Date(rrCfg.updatedAt).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })}
+                  {rrCfg.updatedBy ? ` (${String(rrCfg.updatedBy).slice(0, 15)})` : ''}
+                </span>
+              )}
+              <span
+                title="Bật: cổng NV hiện tab 'Cập Nhật Ca' kèm đếm ngược chạy đến đúng giờ đóng ngày kết thúc (giờ VN). Tắt: tab ẩn khỏi cổng NV ngay (realtime). Ghi tab PHIEU_NV_CAP_NHAT_CA."
+                style={{
+                  cursor: 'help',
+                  fontSize: '11px',
+                  color: 'var(--text-muted)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '2px',
+                  padding: '2px 6px',
+                  borderRadius: '4px',
+                  backgroundColor: 'var(--bg, #F8FAFC)',
+                  border: '1px solid var(--border)',
+                }}
+              >
+                ℹ️ Hướng dẫn
+              </span>
             </div>
-            <p style={{ fontSize: '12px', color: 'var(--text-2)', margin: '8px 0', lineHeight: 1.5 }}>
-              Bật → cổng nhân viên hiện tab "Cập Nhật Ca" kèm <b>đồng hồ đếm ngược</b> chạy đến đúng
-              <b> GIỜ ĐÓNG</b> ngày kết thúc (giờ VN); sau mốc đó server chặn gửi phiếu. Tắt → tab ẩn
-              khỏi cổng NV ngay (realtime). Nhân viên tự khai lại ca: ca đã qua được bot chấm HOÀN
-              THÀNH + cộng tiền ca, ca chưa tới chờ điểm danh; phiếu ghi tab <b>PHIEU_NV_CAP_NHAT_CA</b>
-              trên Google Sheets.
-            </p>
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-              <div>
-                <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-2)', display: 'block' }}>TỪ NGÀY</label>
+
+            {/* Right: Inline inputs and action button */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: 'var(--text-muted)' }}>
+                <span style={{ fontWeight: 600 }}>Từ:</span>
                 <input
                   type="date"
                   value={rrFrom}
                   onChange={(e) => setRrFrom(e.target.value)}
-                  style={{ fontSize: '13px', padding: '7px 10px', borderRadius: '8px', border: '1px solid var(--border)' }}
+                  style={{ fontSize: '12px', padding: '4px 8px', borderRadius: '6px', border: '1px solid var(--border)', minHeight: '30px', backgroundColor: 'var(--surface)' }}
                 />
               </div>
-              <div>
-                <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-2)', display: 'block' }}>ĐẾN NGÀY</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: 'var(--text-muted)' }}>
+                <span style={{ fontWeight: 600 }}>Đến:</span>
                 <input
                   type="date"
                   value={rrTo}
                   onChange={(e) => setRrTo(e.target.value)}
-                  style={{ fontSize: '13px', padding: '7px 10px', borderRadius: '8px', border: '1px solid var(--border)' }}
+                  style={{ fontSize: '12px', padding: '4px 8px', borderRadius: '6px', border: '1px solid var(--border)', minHeight: '30px', backgroundColor: 'var(--surface)' }}
                 />
               </div>
-              <div>
-                <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-2)', display: 'block' }}>GIỜ ĐÓNG</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: 'var(--text-muted)' }}>
+                <span style={{ fontWeight: 600 }}>Đóng lúc:</span>
                 <input
                   type="time"
                   value={rrClose}
                   onChange={(e) => setRrClose(e.target.value)}
-                  title="Giờ đóng phiếu ngày kết thúc (giờ Việt Nam) — cổng NV đếm ngược đến đúng mốc này"
-                  style={{ fontSize: '13px', padding: '7px 10px', borderRadius: '8px', border: '1px solid var(--border)' }}
+                  title="Giờ đóng phiếu ngày kết thúc (giờ Việt Nam)"
+                  style={{ fontSize: '12px', padding: '4px 8px', borderRadius: '6px', border: '1px solid var(--border)', minHeight: '30px', backgroundColor: 'var(--surface)' }}
                 />
               </div>
               <button
                 className="btn-primary"
                 disabled={rrBusy}
-                style={{ padding: '8px 14px', fontSize: '13px', backgroundColor: rrCfg?.enabled ? '#DC2626' : '#16A34A' }}
+                style={{
+                  padding: '5px 12px',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  minHeight: '30px',
+                  borderRadius: '6px',
+                  backgroundColor: rrCfg?.enabled ? '#DC2626' : '#16A34A',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                }}
                 onClick={async () => {
                   if (rrBusy) return;
                   setRrBusy(true);
@@ -8721,13 +8771,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     setRrBusy(false);
                   }
                 }}
-              >{rrBusy ? 'Đang lưu...' : rrCfg?.enabled ? '⚫ ĐÓNG PHIẾU' : '🟢 MỞ PHIẾU'}</button>
+              >
+                {rrBusy ? 'Đang lưu...' : rrCfg?.enabled ? '⚫ Đóng Phiếu' : '🟢 Mở Phiếu'}
+              </button>
             </div>
-            {rrCfg?.updatedAt && (
-              <p style={{ fontSize: '11px', color: 'var(--text-muted)', margin: '8px 0 0' }}>
-                Cập nhật lần cuối: {new Date(rrCfg.updatedAt).toLocaleString('vi-VN')}{rrCfg.updatedBy ? ` • bởi ${String(rrCfg.updatedBy).slice(0, 18)}` : ''}
-              </p>
-            )}
           </div>
         )}
 
