@@ -128,10 +128,9 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'policies', label: '11. Chính sách', icon: Sliders },
     { id: 'integrations', label: '12. Tích hợp & Đồng bộ', icon: Database },
     { id: 'maintenance', label: '13. Bảo trì', icon: Activity },
-    { id: 'settings', label: '14. Cài đặt', icon: Settings },
-    { id: 'audit', label: '15. Nhật ký Audit', icon: FileCheck },
-    { id: 'backup', label: '16. Sao lưu & Phục hồi', icon: HardDrive },
-    { id: 'bank-changes', label: '17. Duyệt đổi STK', icon: CreditCard },
+    { id: 'audit', label: '14. Nhật ký Audit', icon: FileCheck },
+    { id: 'backup', label: '15. Sao lưu & Phục hồi', icon: HardDrive },
+    { id: 'bank-changes', label: '16. Duyệt đổi STK', icon: CreditCard },
   ],
   HR: [
     { id: 'hr-dashboard', label: '1. Dashboard HR', icon: Building2 },
@@ -5127,98 +5126,7 @@ export function App() {
             </div>
           )}
 
-          {/* ========================================================= */}
-          {/* MODULE 12: CÀI ĐẶT HỆ THỐNG */}
-          {/* ========================================================= */}
-          {activeTab === 'settings' && (
-            <div id="sec-settings" style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '800px' }}>
-              <div>
-                <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>12. Cài Đặt Tham Số Kỹ Thuật Hệ Thống</h1>
-                <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Logo, tên hệ thống, định dạng ngày giờ, múi giờ và thời gian hết hạn phiên làm việc</p>
-              </div>
 
-              <form onSubmit={handleSaveSystemSettings} style={{ backgroundColor: 'var(--surface)', padding: '24px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Biểu tượng thương hiệu (Logo Emoji):</label>
-                  <input
-                    type="text"
-                    value={systemSettings.logo || '🥛'}
-                    onChange={(e) => setSystemSettings({ ...systemSettings, logo: e.target.value })}
-                    style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Tên hệ thống:</label>
-                  <input
-                    type="text"
-                    value={systemSettings.system_name || 'Hệ Thống Quản Lý Nhân Sự Ụm Bò Milk'}
-                    onChange={(e) => setSystemSettings({ ...systemSettings, system_name: e.target.value })}
-                    style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}
-                  />
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Định dạng ngày giờ:</label>
-                    <input
-                      type="text"
-                      value={systemSettings.time_format || 'DD/MM/YYYY HH:mm'}
-                      onChange={(e) => setSystemSettings({ ...systemSettings, time_format: e.target.value })}
-                      style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Múi giờ (Timezone):</label>
-                    <input
-                      type="text"
-                      value={systemSettings.timezone || 'Asia/Ho_Chi_Minh'}
-                      onChange={(e) => setSystemSettings({ ...systemSettings, timezone: e.target.value })}
-                      style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}
-                    />
-                  </div>
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Session Timeout (Phút):</label>
-                    <input
-                      type="number"
-                      value={systemSettings.session_timeout_minutes || 1440}
-                      onChange={(e) => setSystemSettings({ ...systemSettings, session_timeout_minutes: parseInt(e.target.value) })}
-                      style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Chu kỳ đồng bộ nền (Giây):</label>
-                    <input
-                      type="number"
-                      value={systemSettings.sync_interval_seconds || 15}
-                      onChange={(e) => setSystemSettings({ ...systemSettings, sync_interval_seconds: parseInt(e.target.value) })}
-                      style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}
-                    />
-                  </div>
-                </div>
-
-                <button
-                  type="submit"
-                  style={{
-                    marginTop: '10px',
-                    padding: '10px 20px',
-                    borderRadius: 'var(--radius-sm)',
-                    backgroundColor: 'var(--brand)',
-                    color: '#FFF',
-                    fontWeight: 700,
-                    border: 'none',
-                    cursor: 'pointer',
-                    width: 'fit-content',
-                  }}
-                >
-                  Lưu Cài Đặt Hệ Thống
-                </button>
-              </form>
-            </div>
-          )}
 
           {/* DEDICATED VIEWS FOR HR (15 TABS), STORE (10 TABS), FINANCE (12 TABS), MARKETING (9 TABS) */}
           <RoleViewsErrorBoundary tab={activeTab} key={activeTab}>

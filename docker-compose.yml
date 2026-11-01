@@ -59,7 +59,9 @@ services:
       # mkdir -p data && chown -R 1000:1000 data
       - ./data:/app/data
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:${BACKEND_PORT:-4005}/health"]
+      # Dùng 127.0.0.1 thay vì localhost: trong container localhost phân giải ra ::1 (IPv6)
+      # trước, còn node chỉ listen IPv4 nên healthcheck sẽ luôn "Connection refused".
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:${BACKEND_PORT:-4005}/health"]
       interval: 30s
       timeout: 5s
       retries: 3
