@@ -110,8 +110,8 @@ Kết quả đúng phải có:
 ### 2.4. Đưa OAuth app sang “In production” (bỏ mốc hết hạn 7 ngày)
 
 Theo tài liệu Google: project có OAuth consent screen kiểu **External** và trạng
-thái **Testing** sẽ cấp refresh token **hết hạn sau 7 ngày**. Đây là lý do token
-hiện tại sẽ chết vào khoảng 07/11/2026 nếu không Publish.
+thái **Testing** sẽ cấp refresh token **hết hạn sau 7 ngày**. Đó là lý do token
+cấp trước 01/11/2026 sẽ chết vào khoảng 07/11/2026 nếu không Publish.
 
 Cách bỏ mốc 7 ngày:
 
@@ -140,6 +140,11 @@ node scripts/check-google-oauth-token.cjs
 # ✓ Refresh token HOẠT ĐỘNG  -> ok
 # ✗ ... invalid_grant        -> token đã chết, phải lấy lại
 ```
+
+> **Đã làm trên production 01/11/2026:** app `814803414391-...` đã Publish sang
+> **In production**, refresh token mới (cấp sau khi Publish, 102 ký tự) đã ghi vào
+> `.env` và `check-google-oauth-token.cjs` báo `✓ HOẠT ĐỘNG`. Mốc chết 07/11/2026
+> đã được loại bỏ. Chỉ cần chạy lại script kiểm tra nếu nghi ngờ token bị thu hồi.
 
 **Sau khi Publish, token còn có thể mất trong các trường hợp** (theo chính sách
 Google, không phải lỗi hệ thống):
@@ -382,7 +387,7 @@ curl -s -o /tmp/a.jpg -w '%{http_code} %{content_type} %{size_download}\n' \
   https://<domain>/api/attendance/photo/<event_id>
 ```
 
-Lưu ý: token đang dùng được cấp khi app còn *Testing* nên sẽ hết hạn khoảng
-07/11/2026. Publish app chỉ bỏ hạn 7 ngày cho **token cấp sau đó** — phải chạy
-lại `get-google-oauth-refresh-token.cjs` rồi cập nhật `.env` (mục 2.4). Muốn
-không phụ thuộc token, bật thêm GAS Webhook (mục 2.5).
+Lưu ý: token OAuth đã được cấp lại sau khi Publish app (01/11/2026) nên **không
+còn mốc chết 07/11/2026**. Nếu nghi ngờ, chạy `node scripts/check-google-oauth-token.cjs`;
+nếu ra `invalid_grant` thì lấy token mới (mục 2.4). Đường chính hiện là GAS Webhook
+(mục 2.5) — không dùng token nên không có gì hết hạn.
