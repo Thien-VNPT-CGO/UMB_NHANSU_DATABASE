@@ -17,6 +17,10 @@ packages/shared/dist-esm/
 .env
 .env.local
 .env.*.local
+# Ban sao luu .env (do set-google-oauth.cjs / set-drive-webhook.cjs tao ra) cung chua secret
+.env.bak
+.env.bak-*
+.env.bak.*
 service-account*.json
 credentials*.json
 key.json

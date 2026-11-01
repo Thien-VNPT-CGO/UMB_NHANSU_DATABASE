@@ -3056,11 +3056,15 @@ export function App() {
           {/* MODULE 1: DASHBOARD TỔNG THỂ */}
           {/* ========================================================= */}
           {activeTab === 'dashboard' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
                 <div>
-                  <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>1. Dashboard Tổng Thể Hệ Thống Ụm Bò Milk</h1>
-                  <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Cập nhật theo thời gian thực từ Google Sheets Master và Socket.IO</p>
+                  <h1 style={{ fontSize: '18px', fontWeight: 800, margin: 0, color: 'var(--text)' }}>
+                    1. Dashboard Tổng Thể Hệ Thống Ụm Bò Milk
+                  </h1>
+                  <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '2px 0 0' }}>
+                    Cập nhật theo thời gian thực từ Google Sheets Master và Socket.IO
+                  </p>
                 </div>
                 <button
                   onClick={async () => {
@@ -3070,130 +3074,223 @@ export function App() {
                   disabled={loading}
                   className="btn-interactive"
                   style={{
-                    padding: '8px 16px',
-                    borderRadius: 'var(--radius-sm)',
+                    padding: '6px 14px',
+                    minHeight: '32px',
+                    borderRadius: '6px',
                     backgroundColor: 'var(--brand)',
                     color: '#FFF',
-                    fontWeight: 600,
-                    fontSize: '13px',
+                    fontWeight: 700,
+                    fontSize: '12.5px',
                     border: 'none',
                     cursor: loading ? 'not-allowed' : 'pointer',
                     display: 'flex',
                     alignItems: 'center',
                     gap: '6px',
-                    boxShadow: '0 2px 6px rgba(232, 93, 146, 0.25)',
+                    boxShadow: '0 2px 6px rgba(232, 93, 146, 0.2)',
                   }}
                 >
-                  <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-                  {loading ? 'Đang Tải Lại...' : 'Tải Lại Số Liệu'}
+                  <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+                  {loading ? 'Đang Tải...' : 'Tải Lại Số Liệu'}
                 </button>
               </div>
 
               {/* VIP: Admin mở bù cổng đăng ký OFF 2 ngày/tuần (30 phút, tự đóng) */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', backgroundColor: manualOff?.active ? '#ECFDF5' : '#FFFBEB', border: manualOff?.active ? '1.5px solid #10B981' : '1.5px solid #F59E0B', borderRadius: 'var(--radius-md)', padding: '14px 18px' }}>
-                <span style={{ fontSize: '22px' }}>{manualOff?.active ? '🟢' : '⭐'}</span>
-                <div style={{ flex: 1, minWidth: '220px' }}>
-                  <div style={{ fontWeight: 800, fontSize: '14px', color: 'var(--text)' }}>
-                    VIP: Mở bù đăng ký 2 ngày OFF tuần cho nhân viên
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '12px',
+                flexWrap: 'wrap',
+                backgroundColor: manualOff?.active ? '#ECFDF5' : 'var(--surface, #FFFFFF)',
+                border: manualOff?.active ? '1px solid #10B981' : '1px solid rgba(245, 158, 11, 0.35)',
+                borderRadius: '10px',
+                padding: '10px 14px',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.03)',
+              }}>
+                {/* Left: Title + Badges + Stats + Tooltip */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ fontSize: '14px' }}>{manualOff?.active ? '🟢' : '⭐'}</span>
+                    <span style={{ fontWeight: 800, fontSize: '13px', color: 'var(--text)' }}>
+                      Mở Bù Đăng Ký OFF Tuần
+                    </span>
+                    <span style={{ fontSize: '10px', fontWeight: 800, padding: '1px 6px', borderRadius: '4px', backgroundColor: '#FEF3C7', color: '#92400E' }}>
+                      VIP
+                    </span>
                   </div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                    {manualOff?.active && manualOff?.manual
-                      ? <>Đang mở cho tuần <strong>{manualOff.manual.targetWeekMon} → {manualOff.manual.targetWeekSun}</strong> • Tự đóng sau <strong style={{ color: '#059669', fontSize: '14px' }}>{manualRemaining}</strong></>
-                      : 'Khi hết khung T6–T7, Admin mở bù để NV đăng ký (mặc định 30 phút, tự đóng).'}
-                  </div>
+
+                  <span style={{
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    padding: '2px 8px',
+                    borderRadius: '12px',
+                    backgroundColor: manualOff?.active ? '#DCFCE7' : '#F1F5F9',
+                    color: manualOff?.active ? '#166534' : 'var(--text-muted)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                  }}>
+                    <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: manualOff?.active ? '#16A34A' : '#94A3B8' }} />
+                    {manualOff?.active ? `ĐANG MỞ (${manualRemaining})` : 'ĐANG ĐÓNG'}
+                  </span>
+
                   {manualOff?.stats && (
-                    <div style={{ fontSize: '12px', color: 'var(--text)', marginTop: '6px', backgroundColor: 'var(--bg)', borderRadius: '6px', padding: '8px 10px' }}>
-                      <strong>{manualOff.stats.registeredCount}/{manualOff.stats.totalOfficial}</strong> đã đăng ký (được miễn) • <strong style={{ color: '#DC2626' }}>{manualOff.stats.unregisteredCount} chưa đăng ký</strong>
-                      {(manualOff.stats.unregistered || []).length > 0 && (
-                        <div style={{ marginTop: '4px', color: 'var(--text-muted)' }}>
-                          Cần đăng ký bù: {(manualOff.stats.unregistered || []).slice(0, 8).map((u: any) => u.full_name).join(', ')}{(manualOff.stats.unregistered || []).length > 8 ? ` +${(manualOff.stats.unregistered || []).length - 8} bạn` : ''}
-                        </div>
-                      )}
-                    </div>
+                    <span style={{ fontSize: '12px', color: 'var(--text)' }}>
+                      • <strong>{manualOff.stats.registeredCount}/{manualOff.stats.totalOfficial}</strong> đã đăng ký • <strong style={{ color: '#DC2626' }}>{manualOff.stats.unregisteredCount} chưa ĐK</strong>
+                    </span>
                   )}
+
+                  <span
+                    title={
+                      manualOff?.active && manualOff?.manual
+                        ? `Đang mở cho tuần ${manualOff.manual.targetWeekMon} → ${manualOff.manual.targetWeekSun} (tự đóng sau ${manualRemaining})`
+                        : ((manualOff?.stats?.unregistered || []).length > 0
+                            ? `Cần đăng ký bù: ${(manualOff?.stats?.unregistered || []).map((u: any) => u.full_name).join(', ')}`
+                            : 'Khi hết khung T6–T7, Admin mở bù để NV đăng ký (mặc định 30 phút, tự đóng).')
+                    }
+                    style={{
+                      cursor: 'help',
+                      fontSize: '11px',
+                      color: 'var(--text-muted)',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '2px',
+                      padding: '2px 6px',
+                      borderRadius: '4px',
+                      backgroundColor: 'var(--bg, #F8FAFC)',
+                      border: '1px solid var(--border)',
+                    }}
+                  >
+                    ℹ️ Chi tiết
+                  </span>
                 </div>
+
+                {/* Right: Controls */}
                 {manualOff?.active ? (
-                  <button onClick={handleManualClose} disabled={adminActionBusy === 'manual-close'} style={{ padding: '9px 18px', borderRadius: 'var(--radius-sm)', backgroundColor: '#DC2626', color: '#FFF', fontSize: '13px', fontWeight: 800, border: 'none', cursor: 'pointer' }}>
+                  <button
+                    onClick={handleManualClose}
+                    disabled={adminActionBusy === 'manual-close'}
+                    style={{
+                      padding: '5px 12px',
+                      borderRadius: '6px',
+                      backgroundColor: '#DC2626',
+                      color: '#FFF',
+                      fontSize: '12px',
+                      fontWeight: 700,
+                      minHeight: '30px',
+                      border: 'none',
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                    }}
+                  >
                     {adminActionBusy === 'manual-close' ? '⏳ Đang đóng...' : '⛔ Đóng ngay'}
                   </button>
                 ) : (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)' }}>Phút:</label>
-                    <input type="number" min={1} max={120} value={manualMinutes} onChange={e => setManualMinutes(Number(e.target.value))} style={{ width: '64px', padding: '8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px', fontWeight: 700 }} />
-                    <button onClick={handleManualOpen} disabled={adminActionBusy === 'manual-open'} style={{ padding: '9px 18px', borderRadius: 'var(--radius-sm)', backgroundColor: '#7C3AED', color: '#FFF', fontSize: '13px', fontWeight: 800, border: 'none', cursor: 'pointer', boxShadow: '0 4px 12px rgba(124,58,237,0.25)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>Thời gian:</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={120}
+                      value={manualMinutes}
+                      onChange={e => setManualMinutes(Number(e.target.value))}
+                      style={{ width: '50px', padding: '4px 6px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '12px', fontWeight: 700, minHeight: '30px', textAlign: 'center', backgroundColor: 'var(--surface)' }}
+                    />
+                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>phút</span>
+                    <button
+                      onClick={handleManualOpen}
+                      disabled={adminActionBusy === 'manual-open'}
+                      style={{
+                        padding: '5px 12px',
+                        borderRadius: '6px',
+                        backgroundColor: '#7C3AED',
+                        color: '#FFF',
+                        fontSize: '12px',
+                        fontWeight: 700,
+                        minHeight: '30px',
+                        border: 'none',
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        boxShadow: '0 2px 6px rgba(124,58,237,0.2)',
+                      }}
+                    >
                       {adminActionBusy === 'manual-open' ? '⏳ Đang mở...' : '⚡ Mở cổng ngay'}
                     </button>
                   </div>
                 )}
               </div>
 
-              {/* 8 KPI Cards */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
-                <div style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', boxShadow: 'var(--shadow-soft)' }}>
-                  <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>TỔNG NHÂN SỰ</div>
-                  <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--brand)', marginTop: '6px' }}>{dashboardStats?.kpis?.totalEmployees ?? 0}</div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Toàn bộ 6 chi nhánh & trụ sở</div>
+              {/* Row 1: Primary 4 KPI Cards */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px' }}>
+                <div style={{ backgroundColor: 'var(--surface)', padding: '12px 16px', borderRadius: '10px', border: '1px solid var(--border)', boxShadow: '0 1px 2px rgba(0,0,0,0.03)' }}>
+                  <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.3px' }}>TỔNG NHÂN SỰ</div>
+                  <div style={{ fontSize: '24px', fontWeight: 800, color: 'var(--brand)', marginTop: '4px', lineHeight: 1.2 }}>{dashboardStats?.kpis?.totalEmployees ?? 0}</div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '3px' }}>Toàn bộ 6 chi nhánh & trụ sở</div>
                 </div>
 
-                <div style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', boxShadow: 'var(--shadow-soft)' }}>
-                  <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>NV MỚI / THỬ VIỆC</div>
-                  <div style={{ fontSize: '28px', fontWeight: 800, color: '#2563EB', marginTop: '6px' }}>
+                <div style={{ backgroundColor: 'var(--surface)', padding: '12px 16px', borderRadius: '10px', border: '1px solid var(--border)', boxShadow: '0 1px 2px rgba(0,0,0,0.03)' }}>
+                  <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.3px' }}>NV MỚI / THỬ VIỆC</div>
+                  <div style={{ fontSize: '24px', fontWeight: 800, color: '#2563EB', marginTop: '4px', lineHeight: 1.2 }}>
                     {dashboardStats?.kpis?.newEmployees ?? 0} / {dashboardStats?.kpis?.probationEmployees ?? 0}
                   </div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Tiếp nhận & đang thử việc</div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '3px' }}>Tiếp nhận & đang thử việc</div>
                 </div>
 
-                <div style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', boxShadow: 'var(--shadow-soft)' }}>
-                  <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>NV CHÍNH THỨC</div>
-                  <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--success)', marginTop: '6px' }}>{dashboardStats?.kpis?.officialEmployees ?? 0}</div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Đã hoàn tất đánh giá thử việc</div>
+                <div style={{ backgroundColor: 'var(--surface)', padding: '12px 16px', borderRadius: '10px', border: '1px solid var(--border)', boxShadow: '0 1px 2px rgba(0,0,0,0.03)' }}>
+                  <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.3px' }}>NV CHÍNH THỨC</div>
+                  <div style={{ fontSize: '24px', fontWeight: 800, color: 'var(--success)', marginTop: '4px', lineHeight: 1.2 }}>{dashboardStats?.kpis?.officialEmployees ?? 0}</div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '3px' }}>Đã hoàn tất đánh giá thử việc</div>
                 </div>
 
-                <div style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', boxShadow: 'var(--shadow-soft)' }}>
-                  <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>ĐANG LÀM / VẮNG HÔM NAY</div>
-                  <div style={{ fontSize: '28px', fontWeight: 800, color: '#D97706', marginTop: '6px' }}>
+                <div style={{ backgroundColor: 'var(--surface)', padding: '12px 16px', borderRadius: '10px', border: '1px solid var(--border)', boxShadow: '0 1px 2px rgba(0,0,0,0.03)' }}>
+                  <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.3px' }}>ĐANG LÀM / VẮNG HÔM NAY</div>
+                  <div style={{ fontSize: '24px', fontWeight: 800, color: '#D97706', marginTop: '4px', lineHeight: 1.2 }}>
                     {dashboardStats?.kpis?.activeWorkingNow ?? 0} / {dashboardStats?.kpis?.absentToday ?? 0}
                   </div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Theo ca làm việc được duyệt</div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '3px' }}>Theo ca làm việc được duyệt</div>
                 </div>
               </div>
 
               {/* Row 2: Secondary KPIs & System Health */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
-                <div style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', boxShadow: 'var(--shadow-soft)' }}>
-                  <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>CHỜ NV ĐỔI PIN</div>
-                  <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--success)', marginTop: '6px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px' }}>
+                <div style={{ backgroundColor: 'var(--surface)', padding: '12px 16px', borderRadius: '10px', border: '1px solid var(--border)', boxShadow: '0 1px 2px rgba(0,0,0,0.03)' }}>
+                  <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.3px' }}>CHỜ NV ĐỔI PIN</div>
+                  <div style={{ fontSize: '24px', fontWeight: 800, color: 'var(--success)', marginTop: '4px', lineHeight: 1.2 }}>
                     {employeeAccounts.filter((a: any) => a.pin_must_change).length}
                   </div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>PIN khởi tạo, NV chưa đổi</div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '3px' }}>PIN khởi tạo, NV chưa đổi</div>
                 </div>
 
-                <div style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', boxShadow: 'var(--shadow-soft)' }}>
-                  <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>YÊU CẦU ĐANG CHỜ DUYỆT</div>
-                  <div style={{ fontSize: '28px', fontWeight: 800, color: '#7C3AED', marginTop: '6px' }}>
+                <div style={{ backgroundColor: 'var(--surface)', padding: '12px 16px', borderRadius: '10px', border: '1px solid var(--border)', boxShadow: '0 1px 2px rgba(0,0,0,0.03)' }}>
+                  <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.3px' }}>YÊU CẦU ĐANG CHỜ DUYỆT</div>
+                  <div style={{ fontSize: '24px', fontWeight: 800, color: '#7C3AED', marginTop: '4px', lineHeight: 1.2 }}>
                     {dashboardStats?.kpis?.pendingRequestsCount ?? 0}
                   </div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Đơn nghỉ / đổi ca / công</div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '3px' }}>Đơn nghỉ / đổi ca / công</div>
                 </div>
 
-                <div style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', boxShadow: 'var(--shadow-soft)', gridColumn: 'span 2' }}>
-                  <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>TRẠNG THÁI HẠ TẦNG KỸ THUẬT (HEALTH CHECK)</div>
-                  <div style={{ display: 'flex', gap: '16px', marginTop: '12px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: 'var(--success)' }}></span>
-                      <span style={{ fontSize: '12px', fontWeight: 600 }}>Sheets (23 Tabs OK)</span>
+                <div style={{ backgroundColor: 'var(--surface)', padding: '12px 16px', borderRadius: '10px', border: '1px solid var(--border)', boxShadow: '0 1px 2px rgba(0,0,0,0.03)', gridColumn: 'span 2', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                  <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.3px' }}>TRẠNG THÁI HẠ TẦNG KỸ THUẬT (HEALTH CHECK)</div>
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '3px 8px', borderRadius: '6px', backgroundColor: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.25)', fontSize: '11.5px', fontWeight: 700, color: '#065F46' }}>
+                      <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: '#10B981' }} />
+                      Sheets (23 Tabs OK)
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: 'var(--success)' }}></span>
-                      <span style={{ fontSize: '12px', fontWeight: 600 }}>Drive (Receipts OK)</span>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '3px 8px', borderRadius: '6px', backgroundColor: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.25)', fontSize: '11.5px', fontWeight: 700, color: '#065F46' }}>
+                      <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: '#10B981' }} />
+                      Drive (Receipts OK)
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: 'var(--success)' }}></span>
-                      <span style={{ fontSize: '12px', fontWeight: 600 }}>Socket.IO (Live)</span>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '3px 8px', borderRadius: '6px', backgroundColor: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.25)', fontSize: '11.5px', fontWeight: 700, color: '#065F46' }}>
+                      <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: '#10B981' }} />
+                      Socket.IO (Live)
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: 'var(--success)' }}></span>
-                      <span style={{ fontSize: '12px', fontWeight: 600 }}>Queue (Idle 0 Pending)</span>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '3px 8px', borderRadius: '6px', backgroundColor: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.25)', fontSize: '11.5px', fontWeight: 700, color: '#065F46' }}>
+                      <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: '#10B981' }} />
+                      Queue (Idle 0 Pending)
                     </div>
                   </div>
                 </div>

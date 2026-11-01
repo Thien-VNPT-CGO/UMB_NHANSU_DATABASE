@@ -44,13 +44,16 @@ if (!url) {
 }
 
 async function post(body, withSecret) {
+  // Gửi secret trong BODY giống backend: Google chuyển POST sang domain
+  // script.googleusercontent.com nên header tự thêm có thể bị rơi mất.
+  const payload = withSecret && secret ? { ...body, secret } : body;
   const res = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       ...(withSecret && secret ? { 'X-Webhook-Secret': secret } : {}),
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify(payload),
   });
   const text = await res.text();
   let json = null;

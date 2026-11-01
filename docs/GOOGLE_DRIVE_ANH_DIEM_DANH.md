@@ -133,6 +133,14 @@ docker compose up -d --force-recreate backend
 > đang dùng được cấp khi app còn Testing nên vẫn hết hạn đúng ngày cũ, dù sau đó
 > đã Publish. Token cấp sau khi Publish mới là token dài hạn.
 
+Kiểm tra token đang dùng có còn sống không (không in token ra màn hình):
+
+```bash
+node scripts/check-google-oauth-token.cjs
+# ✓ Refresh token HOẠT ĐỘNG  -> ok
+# ✗ ... invalid_grant        -> token đã chết, phải lấy lại
+```
+
 **Sau khi Publish, token còn có thể mất trong các trường hợp** (theo chính sách
 Google, không phải lỗi hệ thống):
 
@@ -179,6 +187,19 @@ docker compose up -d --force-recreate backend
 
 `/api/health` phải hiện `"webhookConfigured": true`. Từ lúc đó ảnh mới được đẩy
 qua webhook trước, OAuth chỉ là đường dự phòng.
+
+**Lưu ý khi vận hành webhook (đã đo trên production 01/11/2026):**
+
+- Upload qua Apps Script ~**4,7 s** cho lần đầu (cold start), ~1–3 s các lần sau.
+  Backend đặt `GOOGLE_DRIVE_WEBHOOK_TIMEOUT_MS=20000`: quá 20 s sẽ tự chuyển sang
+  OAuth để không treo màn hình check-in.
+- Apps Script **bỏ header tự thêm** khi redirect sang `script.googleusercontent.com`,
+  nên secret phải gửi trong **body** (`secret`) — backend đã gửi cả header lẫn body,
+  script kiểm tra cả hai.
+- Nhiều nhân viên check-in cùng lúc có thể bị Apps Script xử lý tuần tự; ảnh vẫn
+  lên đủ nhưng chậm hơn vài giây.
+- Hạn mức Apps Script: ~20.000 lượt gọi URL/ngày — với ~100 lượt chấm công/ngày
+  thì không đáng lo.
 
 ## 3. Cách 2 — GAS Webhook (không cần OAuth)
 
