@@ -16,24 +16,25 @@ import {
 import { notifySystemAlert } from './system-alert.service.js';
 
 /**
- * BACKUP DỮ LIỆU HỆ THỐNG LÊN GOOGLE DRIVE — CHẾ ĐỘ GOOGLE SHEETS
+ * BACKUP DỮ LIỆU HỆ THỐNG LÊN GOOGLE DRIVE — CHẾ ĐỘ 25 GOOGLE SHEET RIÊNG
  * ------------------------------------------------------------------
  * Khi nguồn sự thật là Google Sheets (DATA_STORE=sheets — cấu hình đang chạy
- * trên VPS), mỗi kỳ backup sẽ COPY NGUYÊN spreadsheet live sang đúng thư mục:
+ * trên VPS), dữ liệu nghiệp vụ nằm rải trong 25 spreadsheet độc lập. Mỗi kỳ
+ * backup sẽ export đủ 25 bảng thành 1 file ZIP (mỗi bảng 1 XLSX) trong đúng
+ * thư mục:
  *
- *   01. BACKUP_DATA_DAY/YYYY-MM-DD/UMB_NHANSU_DATABASE_YYYY-MM-DD
- *   02. BACKUP_DATA_WEEK/YYYY-Www/UMB_NHANSU_DATABASE_YYYY-Www
- *   03. BACKUP_DATA_MONTH/YYYY-MM/UMB_NHANSU_DATABASE_YYYY-MM
+ *   01. BACKUP_DATA_DAY/YYYY-MM-DD/UMB_NHANSU_DATABASE_YYYY-MM-DD.zip
+ *   02. BACKUP_DATA_WEEK/YYYY-Www/UMB_NHANSU_DATABASE_YYYY-Www.zip
+ *   03. BACKUP_DATA_MONTH/YYYY-MM/UMB_NHANSU_DATABASE_YYYY-MM.zip
  *
  * Lịch chạy (giờ Việt Nam, UTC+7 — không phụ thuộc TZ của container):
  *   - NGÀY   : 02:00 sáng hôm sau  → dữ liệu của NGÀY HÔM TRƯỚC.
  *   - TUẦN   : 02:00 Chủ Nhật      → dữ liệu TUẦN HIỆN TẠI (lỡ thì bù Thứ Hai).
  *   - THÁNG  : 02:00 ngày 1        → dữ liệu THÁNG TRƯỚC (lỡ thì bù các ngày sau).
  *
- * "Realtime": bản backup là bản sao spreadsheet tại đúng thời điểm chạy, nên
+ * "Realtime": ZIP được export từ chính 25 file live tại thời điểm chạy, nên
  * phản ánh toàn bộ dữ liệu mới nhất (kể cả sửa tay trên Sheet) — không dùng
- * snapshot cũ trong RAM. Bản sao do Google tạo server-side, không tải dữ liệu
- * qua VPS.
+ * snapshot cũ trong RAM.
  *
  * Mốc đã chạy lưu ở data/backups/sheets-backup-state.json (volume Docker) để
  * restart không chạy trùng; lỗi sẽ thử lại sau BACKUP_RETRY_MINUTES phút.

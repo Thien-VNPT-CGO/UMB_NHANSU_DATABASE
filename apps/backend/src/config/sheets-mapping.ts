@@ -34,10 +34,29 @@ export const SEPARATED_SHEETS_MAP: Record<string, string> = {
 };
 
 /**
- * Lấy Spreadsheet ID cho 1 tab cụ thể, fallback về ID mặc định
+ * Lấy Spreadsheet ID cho 1 tab cụ thể, fallback về ID mặc định.
+ *
+ * Tab phân mảnh (`<BASE>_P2`, `<BASE>_P3`...) dùng chung spreadsheet của bảng
+ * gốc — nhờ vậy append/đọc part không rơi về spreadsheet tổng hợp cũ.
  */
 export function getSpreadsheetIdForTab(tabName: string, defaultSpreadsheetId: string): string {
-  return SEPARATED_SHEETS_MAP[tabName] || defaultSpreadsheetId;
+  const raw = String(tabName || '').trim();
+  if (!raw) return defaultSpreadsheetId;
+  if (SEPARATED_SHEETS_MAP[raw]) return SEPARATED_SHEETS_MAP[raw];
+  const base = raw.toUpperCase().replace(/_P\d+$/, '');
+  return SEPARATED_SHEETS_MAP[base] || defaultSpreadsheetId;
+}
+
+/** true nếu tab (hoặc part của tab) có spreadsheet riêng trong bộ 25 sheet. */
+export function isSeparatedSheetTab(tabName: string): boolean {
+  const raw = String(tabName || '').trim().toUpperCase();
+  if (!raw) return false;
+  return !!(SEPARATED_SHEETS_MAP[raw] || SEPARATED_SHEETS_MAP[raw.replace(/_P\d+$/, '')]);
+}
+
+/** Toàn bộ spreadsheet ID của bộ 25 bảng riêng (đã loại trùng). */
+export function listSeparatedSpreadsheetIds(): string[] {
+  return [...new Set(Object.values(SEPARATED_SHEETS_MAP))];
 }
 
 export interface SeparatedSheetSource {

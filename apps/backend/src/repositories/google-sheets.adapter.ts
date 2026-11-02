@@ -817,6 +817,11 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     return {
       connected: this.isConfigured,
       mode: this.isConfigured ? 'GOOGLE_SHEETS_LIVE' : 'MOCK_ENGINE_ACTIVE',
+      storageMode: syncStatus?.storageMode || 'SEPARATED_25_SHEETS',
+      separatedSheets: syncStatus?.separatedSheets ?? true,
+      separatedSheetCount: syncStatus?.separatedSheetCount ?? null,
+      /** File tổng hợp cũ — chỉ còn là fallback, KHÔNG chứa dữ liệu nghiệp vụ. */
+      legacySpreadsheetId: spreadsheetId,
       spreadsheetId,
       candidateSpreadsheetId,
       driveFolderId,
@@ -834,7 +839,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
         coalesceMs: this.webhookCoalesceMs,
       },
       message: this.isConfigured
-        ? 'Connected to live Google Sheets master'
+        ? 'Connected to live Google Sheets — dữ liệu lưu trong bộ 25 spreadsheet riêng'
         : 'Google credentials not set in .env; running in high-fidelity mock engine with full audit & schema persistence',
     };
   }

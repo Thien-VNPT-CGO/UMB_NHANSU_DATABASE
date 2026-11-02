@@ -5436,7 +5436,25 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       if (!force && st.last_backup_date === vnToday) {
         return res.json({ ok: true, skipped: true, reason: 'ALREADY_BACKED_UP_TODAY', last: st });
       }
-      const r = await syncService.runDailyBackup();
+      // CHẾ ĐỘ 25 SHEET RIÊNG: KHÔNG copy file tổng hợp cũ nữa (file đó không
+      // còn là nguồn dữ liệu). Dùng scheduler Google Sheets: export đủ 25 bảng
+      // thành 1 ZIP trong "01. BACKUP_DATA_DAY" — idempotent theo ngày.
+      const backupSched = getSheetsBackupScheduler(adapter);
+      let r: { ok: boolean; fileId?: string; name?: string; deletedOld?: number; createdTime?: string; error?: string; reason?: string };
+      try {
+        const out = await backupSched.runNow('daily');
+        r = {
+          ok: !!out.ok,
+          fileId: out.fileId || undefined,
+          name: out.name,
+          deletedOld: out.deletedOld ?? 0,
+          createdTime: out.at,
+          error: out.ok ? undefined : (out.error || 'BACKUP_FAILED'),
+          reason: out.ok ? undefined : 'BACKUP_FAILED',
+        };
+      } catch (e: any) {
+        r = { ok: false, error: String(e?.message || e), reason: 'BACKUP_EXCEPTION' };
+      }
       const updated = {
         ...cur,
         system_backups: r.ok ? {

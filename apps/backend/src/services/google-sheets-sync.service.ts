@@ -31,6 +31,7 @@ import { createDriveOAuthClient, describeDriveAuth, describeGoogleApiError, type
 import { uploadBufferViaDriveWebhook, downloadBufferViaDriveWebhook } from './drive-upload-webhook.js';
 import {
   DRIVE_EMPLOYEE_PROFILES_FOLDER_NAME,
+  DRIVE_SUBFOLDERS,
   getAdjustmentRequestsFolder,
   getAttendanceBranchLabel,
   getAttendanceFolderForBranch,
@@ -40,7 +41,7 @@ import {
 } from '../config/drive-folders.js';
 import { TAB_THEMES, buildSheetFormattingRequests, resolveTheme } from './sheets-beautifier.service.js';
 import { computeSheetsContentSignature, fingerprintSheetsContent } from '../utils/sheets-content-signature.js';
-import { getSpreadsheetIdForTab } from '../config/sheets-mapping.js';
+import { getSpreadsheetIdForTab, listSeparatedSheetSources, listSeparatedSpreadsheetIds } from '../config/sheets-mapping.js';
 
 /** Tên segment Drive an toàn cho cây thư mục phiếu bù công. */
 function adjSafeSeg(value: unknown, fallback = 'KHONG_XAC_DINH'): string {
@@ -443,8 +444,8 @@ export class GoogleSheetsSyncService {
    * không bao giờ xoay được part và append dồn mãi vào tab khổng lồ.
    */
   private tabGridCache = new Map<string, { at: number; rows: number }>();
-  /** Cache danh sách tab hiện hữu của spreadsheet (10 phút). */
-  private tabListCache: { at: number; titles: string[] } | null = null;
+  /** Cache danh sách tab hiện hữu theo từng spreadsheet (10 phút). */
+  private tabListCache = new Map<string, { at: number; titles: string[] }>();
   /** Cache ước lượng ô đã dùng (6 giờ). */
   private cellUsageCache: { at: number; data: { cellsUsed: number; cellsLimit: number; pct: number; level: 'OK' | 'WARN' | 'CRITICAL'; measuredTabs: number } } | null = null;
   /**
@@ -702,6 +703,15 @@ export class GoogleSheetsSyncService {
     this.initClient();
   }
 
+  /**
+   * Spreadsheet đích của 1 tab: mỗi bảng nghiệp vụ nằm trong 1 file Google
+   * Sheets RIÊNG (bộ 25 sheet). Chỉ tab không có trong bản đồ mới rớt về file
+   * tổng hợp cũ.
+   */
+  private spreadsheetIdOf(tabTitle: string): string {
+    return getSpreadsheetIdForTab(tabTitle, this.spreadsheetId);
+  }
+
   private initClient() {
     let email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
     let key = process.env.GOOGLE_PRIVATE_KEY;
@@ -825,6 +835,15 @@ export class GoogleSheetsSyncService {
   public getStatus() {
     return {
       isConfigured: this.isConfigured,
+      /**
+       * Chế độ lưu trữ: dữ liệu nghiệp vụ realtime nằm trong bộ 25 Google
+       * Spreadsheet riêng (mỗi bảng 1 file). `spreadsheetId` bên dưới chỉ còn
+       * là file tổng hợp cũ, giữ lại làm fallback cho tab không có trong map.
+       */
+      storageMode: 'SEPARATED_25_SHEETS' as const,
+      separatedSheets: true,
+      separatedSheetCount: listSeparatedSpreadsheetIds().length,
+      separatedSpreadsheetIds: listSeparatedSpreadsheetIds(),
       spreadsheetId: this.spreadsheetId,
       spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${this.spreadsheetId}/edit`,
       candidateSpreadsheetId: this.candidateSpreadsheetId,
@@ -900,6 +919,8 @@ export class GoogleSheetsSyncService {
    */
   public async runWriteProbe(opts: { includeAppend?: boolean } = {}): Promise<typeof this.writeProbeResult> {
     if (!this.isConfigured || !this.sheetsClient) return null;
+    // Probe đúng file đang chứa AUDIT_LOG (bộ 25 sheet) thay vì file tổng hợp cũ.
+    const auditDocId = this.spreadsheetIdOf('AUDIT_LOG');
     const label = (e: any) => String(e?.message || e || 'UNKNOWN').slice(0, 300);
     const time = async (
       fn: () => Promise<unknown>,
@@ -916,11 +937,11 @@ export class GoogleSheetsSyncService {
     };
 
     const sheetMeta = await time(() => this.sheetsClient!.spreadsheets.get({
-      spreadsheetId: this.spreadsheetId,
+      spreadsheetId: auditDocId,
       fields: 'properties.title',
     }), 'probe.get');
     const valuesGet = await time(() => this.sheetsClient!.spreadsheets.values.get({
-      spreadsheetId: this.spreadsheetId,
+      spreadsheetId: auditDocId,
       range: `'AUDIT_LOG'!A1:A3`,
     }), 'probe.valuesGet');
 
@@ -941,7 +962,7 @@ export class GoogleSheetsSyncService {
       const start = Date.now();
       try {
         const res = await fetch(
-          `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(this.spreadsheetId)}?fields=properties.title`,
+          `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(auditDocId)}?fields=properties.title`,
           { signal: AbortSignal.timeout(12000) },
         );
         await res.text().catch(() => '');
@@ -994,7 +1015,7 @@ export class GoogleSheetsSyncService {
         const token = tokenRes?.token;
         if (!token) throw new Error('NO_ACCESS_TOKEN');
         const res = await fetch(
-          `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(this.spreadsheetId)}?fields=properties.title`,
+          `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(auditDocId)}?fields=properties.title`,
           { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(20000) },
         );
         const text = res.ok ? '' : (await res.text()).slice(0, 200);
@@ -1014,7 +1035,7 @@ export class GoogleSheetsSyncService {
     const conditionalFormats: Array<{ title: string; rules: number }> = [];
     try {
       const meta: any = await this.sheetsClient!.spreadsheets.get({
-        spreadsheetId: this.spreadsheetId,
+        spreadsheetId: auditDocId,
         fields: 'sheets.properties(sheetId,title,gridProperties(rowCount,columnCount))',
       });
       for (const s of meta?.data?.sheets || []) {
@@ -1027,7 +1048,7 @@ export class GoogleSheetsSyncService {
     const post = auditSheetId === null
       ? { ok: false, ms: 0, error: 'AUDIT_LOG_SHEET_ID_NOT_FOUND' }
       : await time(() => this.sheetsClient!.spreadsheets.batchUpdate({
-        spreadsheetId: this.spreadsheetId,
+        spreadsheetId: auditDocId,
         requestBody: {
           requests: [{
             updateSheetProperties: {
@@ -1049,7 +1070,7 @@ export class GoogleSheetsSyncService {
       try {
         const res: any = await this.sheetsCall(`probe.hotTab.${hotTitle}`, () =>
           this.sheetsClient!.spreadsheets.values.get({
-            spreadsheetId: this.spreadsheetId,
+            spreadsheetId: this.spreadsheetIdOf(hotTitle),
             range: `'${hotTitle}'!A2:A`,
             majorDimension: 'COLUMNS' as any,
           }), 30000);
@@ -1076,7 +1097,7 @@ export class GoogleSheetsSyncService {
       const tinyStart = Date.now();
       try {
         await this.withDeadline('probe.writeTiny', () => this.sheetsClient!.spreadsheets.values.update({
-          spreadsheetId: this.spreadsheetId,
+          spreadsheetId: auditDocId,
           range: `'AUDIT_LOG'!A1`,
           valueInputOption: 'RAW',
           requestBody: { values: [['Mã Nhật Ký']] },
@@ -1132,7 +1153,7 @@ export class GoogleSheetsSyncService {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 30_000);
         try {
-          const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(this.spreadsheetId)}/values/${encodeURIComponent("AUDIT_LOG!A1")}?valueInputOption=RAW`;
+          const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(auditDocId)}/values/${encodeURIComponent("AUDIT_LOG!A1")}?valueInputOption=RAW`;
           const res = await fetch(url, {
             method: 'PUT',
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -1162,7 +1183,7 @@ export class GoogleSheetsSyncService {
       if (writeTiny.ok) {
         const nowIso = new Date().toISOString();
         append = await time(() => this.sheetsClient!.spreadsheets.values.append({
-          spreadsheetId: this.spreadsheetId,
+          spreadsheetId: auditDocId,
           range: `'AUDIT_LOG'!A:A`,
           valueInputOption: 'USER_ENTERED',
           requestBody: {
@@ -1240,11 +1261,11 @@ export class GoogleSheetsSyncService {
   }
 
   /**
-   * BACKUP HẰNG NGÀY: copy nguyên "cục" spreadsheet (mọi tab + dữ liệu) ra
-   * Drive bằng service account sẵn có — không cần đọc/ghi từng dòng, 1 call là
-   * xong. Giữ file trong folder Drive hiện có, xóa bản cũ quá hạn
-   * (BACKUP_RETENTION_DAYS, mặc định 30 ngày). Idempotent theo ngày VN do
-   * route /internal/backup-run kiểm trước khi gọi.
+   * BACKUP HẰNG NGÀY (chế độ 25 SHEET RIÊNG): export đủ 25 bảng nghiệp vụ
+   * thành 1 file ZIP (mỗi bảng 1 XLSX) trong folder `BACKUP_DATA_DAY/<ngày>`.
+   * Không còn copy file spreadsheet tổng hợp cũ vì dữ liệu live đã nằm rải
+   * trong 25 file. Xoá các kỳ quá hạn theo BACKUP_RETENTION_DAYS (mặc định 30).
+   * Idempotent theo ngày VN do route /internal/backup-run kiểm trước khi gọi.
    */
   public async runDailyBackup(retentionDays = Number(process.env.BACKUP_RETENTION_DAYS) || 30): Promise<{
     ok: boolean; name?: string; fileId?: string; createdTime?: string; deletedOld?: number; reason?: string; error?: string;
@@ -1252,53 +1273,40 @@ export class GoogleSheetsSyncService {
     if (!this.isConfigured || !this.driveClient) {
       return { ok: false, reason: 'DRIVE_NOT_CONFIGURED' };
     }
-    // Ngày/giờ Việt Nam (UTC+7)
+    // Ngày Việt Nam (UTC+7)
     const stamp = new Date(Date.now() + 7 * 3_600_000);
     const vnDate = stamp.toISOString().slice(0, 10);
-    const name = `UBM_BACKUP_${vnDate}_${String(stamp.getUTCHours()).padStart(2, '0')}${String(stamp.getUTCMinutes()).padStart(2, '0')}`;
-    try {
-      const copied: any = await this.driveClient.files.copy({
-        fileId: this.spreadsheetId,
-        requestBody: {
-          name,
-          ...(this.driveFolderId ? { parents: [this.driveFolderId] } : {}),
-        },
-        fields: 'id,name,createdTime',
-        supportsAllDrives: true,
-      } as any);
-      // Quét + xóa bản backup quá hạn (nội dung giữ 30 ngày — không phá dữ liệu live)
-      let deletedOld = 0;
-      try {
-        const q = `name contains 'UBM_BACKUP_' and trashed=false${this.driveFolderId ? ` and '${this.driveFolderId}' in parents` : ''}`;
-        const listed: any = await this.driveClient.files.list({
-          q,
-          fields: 'files(id,name,createdTime)',
-          orderBy: 'createdTime desc',
-          pageSize: 200,
-          supportsAllDrives: true,
-        } as any);
-        const cutoff = Date.now() - Math.max(7, retentionDays) * 86_400_000;
-        for (const f of (listed?.data?.files || [])) {
-          if (new Date((f as any).createdTime).getTime() < cutoff) {
-            await this.driveClient.files.delete({ fileId: (f as any).id, supportsAllDrives: true } as any);
-            deletedOld += 1;
-          }
-        }
-      } catch (e: any) {
-        console.warn('[Backup] dọn bản cũ lỗi (không chặn):', e?.message || e);
-      }
-      console.log(`[Backup] OK: ${name} (file ${copied?.data?.id}), xóa ${deletedOld} bản quá hạn`);
+    // CHẾ ĐỘ 25 SHEET RIÊNG: dữ liệu live nằm rải trong 25 spreadsheet, nên
+    // backup = export đủ 25 bảng thành 1 ZIP trong folder BACKUP_DATA_DAY.
+    // Không copy file tổng hợp cũ nữa (file đó không còn dữ liệu nghiệp vụ).
+    const rootId = String(
+      process.env.GOOGLE_DRIVE_BACKUP_DAY_FOLDER_ID || DRIVE_SUBFOLDERS.BACKUP_DAY,
+    ).trim();
+    if (!rootId) return { ok: false, reason: 'BACKUP_FOLDER_NOT_CONFIGURED' };
+    const res = await this.backupSpreadsheetSetZipTo({
+      rootId,
+      segments: [vnDate],
+      periodKey: vnDate,
+      sources: listSeparatedSheetSources(),
+      keep: Math.max(2, retentionDays),
+    });
+    if (!res.ok) {
       return {
-        ok: true,
-        name,
-        fileId: copied?.data?.id,
-        createdTime: copied?.data?.createdTime,
-        deletedOld,
+        ok: false,
+        name: res.name,
+        reason: res.reason || 'BACKUP_FAILED',
+        error: res.error,
+        deletedOld: res.deletedOld ?? 0,
       };
-    } catch (e: any) {
-      console.error('[Backup] THẤT BẠI:', e?.message || e);
-      return { ok: false, reason: 'DRIVE_ERROR', error: String(e?.message || e) };
     }
+    console.log(`[Backup] OK: ${res.name} (file ${res.fileId}), dọn ${res.deletedOld || 0} kỳ quá hạn`);
+    return {
+      ok: true,
+      name: res.name,
+      fileId: res.fileId,
+      createdTime: new Date().toISOString(),
+      deletedOld: res.deletedOld ?? 0,
+    };
   }
 
   /**
@@ -1627,120 +1635,151 @@ export class GoogleSheetsSyncService {
     }
 
     try {
-      // Chỉ lấy tiêu đề tab (không kéo toàn bộ metadata) — request nhẹ, nhanh.
-      const res = await this.sheetsCall('init.get', () =>
-        this.sheetsClient!.spreadsheets.get({
-          spreadsheetId: this.spreadsheetId,
-          fields: 'sheets.properties.title',
-        })
-      );
-
-      const existingSheets = res.data.sheets?.map(s => s.properties?.title || '').filter(Boolean) || [];
-      const sheetsToCreate = SHEETS_DEFINITIONS.filter(def => !existingSheets.includes(def.title));
-
-      const createdSheets: string[] = [];
-
-      if (sheetsToCreate.length > 0) {
-        const requests = sheetsToCreate.map(def => ({
-          addSheet: {
-            properties: {
-              title: def.title,
-              gridProperties: {
-                frozenRowCount: 1,
-              },
-            },
-          },
-        }));
-
-        await this.sheetsCall('init.batchUpdate', () =>
-          this.sheetsClient!.spreadsheets.batchUpdate({
-            spreadsheetId: this.spreadsheetId,
-            requestBody: { requests },
-          })
-        );
-
-        createdSheets.push(...sheetsToCreate.map(s => s.title));
+      // Mỗi bảng nghiệp vụ nằm trong 1 file Google Sheets RIÊNG (bộ 25 sheet):
+      // nhóm các tab theo spreadsheet đích rồi khởi tạo từng file.
+      const groups = new Map<string, Array<typeof SHEETS_DEFINITIONS[number]>>();
+      for (const def of SHEETS_DEFINITIONS) {
+        const sid = this.spreadsheetIdOf(def.title);
+        if (!groups.has(sid)) groups.set(sid, []);
+        groups.get(sid)!.push(def);
       }
 
-      // CHỈ ghi header cho tab MỚI TẠO hoặc tab có header lệch/thiếu.
-      // Trước đây mỗi lượt init (10 phút/lần) ghi lại header của cả 24 tab =
-      // 24 lệnh GHI, chiếm khoá ghi spreadsheet và làm append của hàng đợi
-      // timeout. Nay đọc 1 lần bằng batchGet rồi so sánh.
-      const needHeaderWrite: Array<{ def: typeof SHEETS_DEFINITIONS[number]; existingRows: string[][]; force: boolean }> = [];
-      const createdSet = new Set(createdSheets);
-      const toCheck = SHEETS_DEFINITIONS.filter(def => existingSheets.includes(def.title));
+      const createdSheets: string[] = [];
+      const existingSheets: string[] = [];
+      const touchedSpreadsheets = new Set<string>();
+      const failures: string[] = [];
 
-      let headerRowsByTitle = new Map<string, string[]>();
-      if (toCheck.length > 0) {
+      for (const [sid, defs] of groups) {
         try {
-          const batch: any = await this.sheetsCall('init.batchGetHeaders', () =>
-            this.sheetsClient!.spreadsheets.values.batchGet({
-              spreadsheetId: this.spreadsheetId,
-              ranges: toCheck.map(def => `'${def.title}'!A1:${GoogleSheetsSyncService.colLetter(def.headers.length)}1`),
+          // Chỉ lấy tiêu đề tab (không kéo toàn bộ metadata) — request nhẹ, nhanh.
+          const res = await this.sheetsCall(`init.get.${sid.slice(0, 8)}`, () =>
+            this.sheetsClient!.spreadsheets.get({
+              spreadsheetId: sid,
+              fields: 'sheets.properties.title',
             })
           );
-          const valueRanges: any[] = batch?.data?.valueRanges || [];
-          toCheck.forEach((def, i) => {
-            headerRowsByTitle.set(def.title, (valueRanges[i]?.values?.[0] as string[] | undefined) || []);
-          });
-        } catch (e: any) {
-          // Không đọc được header: bỏ qua so sánh, KHÔNG ghi (tránh đập khoá ghi).
-          console.warn('[GoogleSheetsSyncService] Không đọc được header để so sánh:', e?.message || e);
+
+          const existingHere = res.data.sheets?.map(s => s.properties?.title || '').filter(Boolean) || [];
+          existingSheets.push(...existingHere);
+          const sheetsToCreate = defs.filter(def => !existingHere.includes(def.title));
+
+          if (sheetsToCreate.length > 0) {
+            const requests = sheetsToCreate.map(def => ({
+              addSheet: {
+                properties: {
+                  title: def.title,
+                  gridProperties: {
+                    frozenRowCount: 1,
+                  },
+                },
+              },
+            }));
+
+            await this.sheetsCall(`init.batchUpdate.${sid.slice(0, 8)}`, () =>
+              this.sheetsClient!.spreadsheets.batchUpdate({
+                spreadsheetId: sid,
+                requestBody: { requests },
+              })
+            );
+
+            createdSheets.push(...sheetsToCreate.map(s => s.title));
+            touchedSpreadsheets.add(sid);
+          }
+
+          // CHỈ ghi header cho tab MỚI TẠO hoặc tab có header lệch/thiếu.
+          // Trước đây mỗi lượt init (10 phút/lần) ghi lại header của cả 24 tab =
+          // 24 lệnh GHI, chiếm khoá ghi spreadsheet và làm append của hàng đợi
+          // timeout. Nay đọc 1 lần bằng batchGet rồi so sánh.
+          const needHeaderWrite: Array<{ def: typeof SHEETS_DEFINITIONS[number]; force: boolean }> = [];
+          const createdSet = new Set(createdSheets);
+          const toCheck = defs.filter(def => existingHere.includes(def.title));
+
+          const headerRowsByTitle = new Map<string, string[]>();
+          if (toCheck.length > 0) {
+            try {
+              const batch: any = await this.sheetsCall(`init.batchGetHeaders.${sid.slice(0, 8)}`, () =>
+                this.sheetsClient!.spreadsheets.values.batchGet({
+                  spreadsheetId: sid,
+                  ranges: toCheck.map(def => `'${def.title}'!A1:${GoogleSheetsSyncService.colLetter(def.headers.length)}1`),
+                })
+              );
+              const valueRanges: any[] = batch?.data?.valueRanges || [];
+              toCheck.forEach((def, i) => {
+                headerRowsByTitle.set(def.title, (valueRanges[i]?.values?.[0] as string[] | undefined) || []);
+              });
+            } catch (e: any) {
+              // Không đọc được header: bỏ qua so sánh, KHÔNG ghi (tránh đập khoá ghi).
+              console.warn(`[GoogleSheetsSyncService] Không đọc được header (${sid.slice(0, 8)}…):`, e?.message || e);
+            }
+          }
+
+          for (const def of defs) {
+            if (createdSet.has(def.title)) continue; // header ghi ở vòng dưới (tab mới)
+            const current = headerRowsByTitle.get(def.title);
+            if (current === undefined) continue;
+            const same = def.headers.length === current.length
+              && def.headers.every((h, i) => String(h) === String(current[i] ?? ''));
+            if (!same) needHeaderWrite.push({ def, force: false });
+          }
+
+          const headersToWrite = [
+            ...defs.filter(def => createdSet.has(def.title)).map(def => ({ def, force: true })),
+            ...needHeaderWrite,
+          ];
+
+          for (const item of headersToWrite) {
+            const def = item.def;
+            await this.sheetsCall(`init.header.${def.title}`, () =>
+              this.sheetsClient!.spreadsheets.values.update({
+                spreadsheetId: sid,
+                range: `'${def.title}'!A1:${GoogleSheetsSyncService.colLetter(def.headers.length)}1`,
+                valueInputOption: 'USER_ENTERED',
+                requestBody: {
+                  values: [def.headers],
+                },
+              })
+            );
+          }
+          if (headersToWrite.length > 0) {
+            console.log(`[GoogleSheetsSyncService] Ghi header cho ${headersToWrite.length} tab trong file ${sid.slice(0, 8)}…`);
+          }
+        } catch (err: any) {
+          const msg = `${sid.slice(0, 8)}…: ${err?.message || err}`;
+          failures.push(msg);
+          console.warn('[GoogleSheetsSyncService] Khởi tạo cấu trúc file riêng lỗi:', msg);
         }
       }
 
-      for (const def of SHEETS_DEFINITIONS) {
-        if (createdSet.has(def.title)) continue; // header ghi ở vòng dưới (tab mới)
-        const current = headerRowsByTitle.get(def.title);
-        if (current === undefined) continue;
-        const same = def.headers.length === current.length
-          && def.headers.every((h, i) => String(h) === String(current[i] ?? ''));
-        if (!same) needHeaderWrite.push({ def, existingRows: [current], force: false });
+      if (existingSheets.length === 0 && createdSheets.length === 0) {
+        const message = failures.length
+          ? `Lỗi Google Sheets API: ${failures.join('; ')}`
+          : this.authError || 'Không đọc được cấu trúc 25 file Google Sheets';
+        return { success: false, createdSheets, existingSheets, message };
       }
 
-      const headersToWrite = [
-        ...SHEETS_DEFINITIONS.filter(def => createdSet.has(def.title)).map(def => ({ def, force: true })),
-        ...needHeaderWrite,
-      ];
+      console.log(`[GoogleSheetsSyncService] Đã tạo ${createdSheets.length} sheet mới trên ${groups.size} file riêng. Toàn bộ ${SHEETS_DEFINITIONS.length} tab sẵn sàng.`);
 
-      for (const item of headersToWrite) {
-        const def = item.def;
-        await this.sheetsCall(`init.header.${def.title}`, () =>
-          this.sheetsClient!.spreadsheets.values.update({
-            spreadsheetId: this.spreadsheetId,
-            range: `'${def.title}'!A1:${GoogleSheetsSyncService.colLetter(def.headers.length)}1`,
-            valueInputOption: 'USER_ENTERED',
-            requestBody: {
-              values: [def.headers],
-            },
-          })
-        );
-      }
-      if (headersToWrite.length > 0) {
-        console.log(`[GoogleSheetsSyncService] Ghi header cho ${headersToWrite.length}/${SHEETS_DEFINITIONS.length} tab (còn lại đã đúng).`);
-      }
-
-      console.log(`[GoogleSheetsSyncService] Đã tạo ${createdSheets.length} sheet mới. Toàn bộ ${SHEETS_DEFINITIONS.length} tab sẵn sàng.`);
-
-      if (createdSheets.length > 0) {
-        // Tự động làm đẹp và định dạng các tab mới tạo
-        this.formatAndBeautifySpreadsheet().catch(err => {
+      for (const sid of touchedSpreadsheets) {
+        // Tự động làm đẹp và định dạng các tab mới tạo (đúng file vừa tạo tab).
+        this.formatAndBeautifySpreadsheet(sid).catch(err => {
           console.warn('[GoogleSheetsSyncService] Tự động làm đẹp Sheets thất bại:', err?.message || err);
         });
       }
 
+      const message = `Đã khởi tạo thành công cấu trúc ${SHEETS_DEFINITIONS.length} sheet tabs trên ${groups.size} file Google Sheets riêng!`
+        + (failures.length ? ` (lỗi ${failures.length} file: ${failures.join('; ')})` : '');
       this.initOkAt = Date.now();
       this.lastInitResult = {
         success: true,
         createdSheets,
         existingSheets,
-        message: `Đã khởi tạo thành công cấu trúc ${SHEETS_DEFINITIONS.length} sheet tabs trên Google Sheets!`,
+        message,
       };
       return {
         success: true,
         createdSheets,
         existingSheets,
-        message: `Đã khởi tạo thành công cấu trúc ${SHEETS_DEFINITIONS.length} sheet tabs trên Google Sheets!`,
+        message,
       };
     } catch (err: any) {
       console.error('[GoogleSheetsSyncService] Lỗi khi tạo cấu trúc Sheets:', err);
@@ -1889,7 +1928,7 @@ export class GoogleSheetsSyncService {
       return { success: false, message: 'Google Sheets chưa được kết nối', formattedTabs: 0 };
     }
 
-    const sId = targetSpreadsheetId || this.spreadsheetId;
+    const sId = targetSpreadsheetId;
     const now = Date.now();
 
     // Chống gọi dồn dập (debounce latch 25 giây cho bảng tính chính)
@@ -1898,6 +1937,36 @@ export class GoogleSheetsSyncService {
     }
     if (!targetSpreadsheetId && now - this.lastBeautifyAt < 25_000) {
       return { success: true, message: 'Giao diện bảng tính vừa được chuẩn hóa tự động gần đây.', formattedTabs: 23 };
+    }
+
+    // CHẾ ĐỘ 25 SHEET RIÊNG: không truyền file đích nghĩa là làm đẹp TOÀN BỘ
+    // 25 spreadsheet nghiệp vụ (không đụng file tổng hợp cũ nữa).
+    if (!targetSpreadsheetId) {
+      const ids = listSeparatedSpreadsheetIds();
+      this.beautifyInFlight = (async () => {
+        let total = 0;
+        const failures: string[] = [];
+        for (const sid of ids) {
+          try {
+            const r = await this.formatAndBeautifySpreadsheet(sid, opts);
+            total += r.formattedTabs;
+            if (!r.success) failures.push(`${sid.slice(0, 8)}…: ${r.message}`);
+          } catch (e: any) {
+            failures.push(`${sid.slice(0, 8)}…: ${e?.message || e}`);
+          }
+        }
+        this.lastBeautifyAt = Date.now();
+        return {
+          success: failures.length === 0,
+          message: failures.length
+            ? `Đã làm đẹp ${total} tab; lỗi ${failures.length} file (${failures.join('; ')})`
+            : `Đã làm đẹp và chuẩn hóa thành công ${total} tabs trên ${ids.length} file Google Sheets!`,
+          formattedTabs: total,
+        };
+      })().finally(() => {
+        this.beautifyInFlight = null;
+      });
+      return this.beautifyInFlight;
     }
 
     const runFormat = async () => {
@@ -2011,10 +2080,9 @@ export class GoogleSheetsSyncService {
   };
 
   if (!targetSpreadsheetId) {
-    this.beautifyInFlight = runFormat().finally(() => {
-      this.beautifyInFlight = null;
-    });
-    return this.beautifyInFlight;
+    // Nhánh này không còn dùng: trường hợp không truyền file đích đã được xử
+    // lý phía trên (làm đẹp toàn bộ 25 sheet riêng).
+    return { success: false, message: 'FORMAT_TARGET_REQUIRED', formattedTabs: 0 };
   }
 
   return runFormat();
@@ -2259,7 +2327,6 @@ export class GoogleSheetsSyncService {
       } else {
         const partTitles: string[] = [];
         try {
-          const titles = await this.listSpreadsheetTabs();
           for (const base of GoogleSheetsSyncService.PARTITION_TABS) {
             // QUAN TRỌNG: Chỉ đọc part của các tab thuộc chu kỳ pull realtime (baseTabs).
             // Các tab thuộc HISTORY_TABS (THONGBAO_GUI, THONGBAO_NV, SNAPSHOT_SAOLUU)
@@ -2267,6 +2334,8 @@ export class GoogleSheetsSyncService {
             // hoặc khi cần — tuyệt đối KHÔNG đưa vào tabsToRead của batch realtime,
             // tránh nuốt cả chục nghìn dòng mỗi vòng làm nghẽn 26.5s!
             if (!baseTabs.includes(base)) continue;
+            // Mỗi bảng có spreadsheet riêng: hỏi metadata đúng file của bảng đó.
+            const titles = await this.listSpreadsheetTabs(this.spreadsheetIdOf(base));
             for (let n = 2; n < 200; n++) {
               const t = `${base}_P${n}`;
               if (titles.includes(t)) partTitles.push(t);
@@ -3491,12 +3560,13 @@ export class GoogleSheetsSyncService {
           }
         }
 
-        // B. Nếu chưa có dữ liệu từ candidateSpreadsheetId, thử đọc từ Master spreadsheet
-        if (candRows.length <= 1 && this.spreadsheetId) {
+        // B. Nếu chưa có dữ liệu từ candidateSpreadsheetId, thử đọc từ file
+        // FROM_NHAN_VIEN riêng (bộ 25 sheet) — không đọc file tổng hợp cũ.
+        if (candRows.length <= 1) {
           try {
             const candRes: any = await this.sheetsCall('read.candidatesMaster', () =>
               this.sheetsClient!.spreadsheets.values.get({
-                spreadsheetId: this.spreadsheetId,
+                spreadsheetId: this.spreadsheetIdOf('FROM_NHAN_VIEN'),
                 range: `'FROM_NHAN_VIEN'!A1:ZZ`,
               }) as any, 25000);
             if (candRes.data.values && candRes.data.values.length > 1) {
@@ -3655,10 +3725,10 @@ export class GoogleSheetsSyncService {
         // restart/sửa code làm bộ nhớ trắng, Sheet form gốc không có các cột này —
         // không phủ thì reload là mất. Khớp theo submission_id, rớt về SĐT+tên.
         try {
-          if (this.sheetsClient && this.spreadsheetId) {
+          if (this.sheetsClient) {
             const mRes: any = await this.sheetsCall('read.candidatesOverlay', () =>
               this.sheetsClient!.spreadsheets.values.get({
-                spreadsheetId: this.spreadsheetId,
+                spreadsheetId: this.spreadsheetIdOf('FROM_NHAN_VIEN'),
                 // A2:ZZ (không lấy tiêu đề) để cùng biểu diễn với batchGet dùng
                 // cho hash nội dung — tránh mỗi lần webhook/pull lại báo "đổi" giả.
                 range: `'FROM_NHAN_VIEN'!A2:ZZ`,
@@ -3857,7 +3927,7 @@ export class GoogleSheetsSyncService {
     try {
       const res = await this.sheetsCall(`read.${sheetTitle}`, () =>
         this.sheetsClient!.spreadsheets.values.get({
-          spreadsheetId: this.spreadsheetId,
+          spreadsheetId: this.spreadsheetIdOf(sheetTitle),
           range: `'${sheetTitle}'!A2:ZZ`,
         })
       );
@@ -3878,7 +3948,7 @@ export class GoogleSheetsSyncService {
     try {
       const res = await this.sheetsCall(`read.tab.${safe}`, () =>
         this.sheetsClient!.spreadsheets.values.get({
-          spreadsheetId: this.spreadsheetId,
+          spreadsheetId: this.spreadsheetIdOf(safe),
           range: `'${safe}'!A2:ZZ`,
         }), timeoutMs);
       return (res.data.values as string[][]) || [];
@@ -3894,7 +3964,7 @@ export class GoogleSheetsSyncService {
     try {
       const res = await this.sheetsCall(`read.range.${sheetTitle}`, () =>
         this.sheetsClient!.spreadsheets.values.get({
-          spreadsheetId: this.spreadsheetId,
+          spreadsheetId: this.spreadsheetIdOf(sheetTitle),
           range,
         }), timeoutMs);
       return (res.data.values as string[][]) || [];
@@ -6190,20 +6260,25 @@ export class GoogleSheetsSyncService {
    */
   // ================= BETA partition helpers =================
   private invalidateTabListCache() {
-    this.tabListCache = null;
+    this.tabListCache.clear();
   }
 
-  /** Danh sách title tab hiện hữu (metadata; cache 10 phút). */
-  public async listSpreadsheetTabs(): Promise<string[]> {
-    if (this.tabListCache && Date.now() - this.tabListCache.at < 600_000) return this.tabListCache.titles;
+  /**
+   * Danh sách title tab hiện hữu của 1 spreadsheet (mặc định: file tổng hợp cũ).
+   * Cache 10 phút theo từng spreadsheet — bộ 25 sheet có 25 danh sách khác nhau.
+   */
+  public async listSpreadsheetTabs(spreadsheetId: string = this.spreadsheetId): Promise<string[]> {
+    const sid = String(spreadsheetId || this.spreadsheetId);
+    const cached = this.tabListCache.get(sid);
+    if (cached && Date.now() - cached.at < 600_000) return cached.titles;
     const res = await this.sheetsCall('meta.tabs', () =>
       this.sheetsClient!.spreadsheets.get({
-        spreadsheetId: this.spreadsheetId,
+        spreadsheetId: sid,
         fields: 'sheets.properties.title',
       })
     );
     const titles = (res.data.sheets || []).map((s: any) => s.properties?.title || '').filter(Boolean);
-    this.tabListCache = { at: Date.now(), titles };
+    this.tabListCache.set(sid, { at: Date.now(), titles });
     return titles;
   }
 
@@ -6213,7 +6288,7 @@ export class GoogleSheetsSyncService {
     try {
       const res = await this.sheetsCall(`count.${title}`, () =>
         this.sheetsClient!.spreadsheets.values.get({
-          spreadsheetId: this.spreadsheetId,
+          spreadsheetId: this.spreadsheetIdOf(title),
           range: `'${title}'!A2:A`,
           majorDimension: 'COLUMNS' as any,
         })
@@ -6242,7 +6317,7 @@ export class GoogleSheetsSyncService {
     try {
       const meta: any = await this.sheetsCall(`grid.${title}`, () =>
         this.sheetsClient!.spreadsheets.get({
-          spreadsheetId: this.spreadsheetId,
+          spreadsheetId: this.spreadsheetIdOf(title),
           fields: 'sheets.properties(title,gridProperties.rowCount)',
         }), 15000);
       const at = Date.now();
@@ -6264,10 +6339,11 @@ export class GoogleSheetsSyncService {
     // toàn cột A (từng treo 30s khi tab lớn → append timeout vô hạn).
     const baseCount = await this.getTabGridRows(base);
     if (baseCount < 0 || baseCount < limit) return base;
+    const sid = this.spreadsheetIdOf(base);
     let n = 2;
     while (n < 200) {
       const title = `${base}_P${n}`;
-      const titles = await this.listSpreadsheetTabs();
+      const titles = await this.listSpreadsheetTabs(sid);
       if (!titles.includes(title)) {
         await this.createPartitionTab(base, title);
         this.partRowCounts.set(title, 0);
@@ -6282,19 +6358,20 @@ export class GoogleSheetsSyncService {
     return base; // an toàn hiếm hoi: >200 part
   }
 
-  /** Tạo tab partition + header giống hệt tab gốc. */
+  /** Tạo tab partition + header giống hệt tab gốc (cùng spreadsheet với tab gốc). */
   private async createPartitionTab(base: string, title: string): Promise<void> {
     const headers = SHEETS_DEFINITIONS.find(d => d.title === base)?.headers || [];
+    const sid = this.spreadsheetIdOf(base);
     await this.sheetsCall(`part.add.${title}`, () =>
       this.sheetsClient!.spreadsheets.batchUpdate({
-        spreadsheetId: this.spreadsheetId,
+        spreadsheetId: sid,
         requestBody: { requests: [{ addSheet: { properties: { title, gridProperties: { frozenRowCount: 1 } } } }] },
       })
     );
     if (headers.length) {
       await this.sheetsCall(`part.header.${title}`, () =>
         this.sheetsClient!.spreadsheets.values.update({
-          spreadsheetId: this.spreadsheetId,
+          spreadsheetId: sid,
           range: `'${title}'!A1:${GoogleSheetsSyncService.colLetter(headers.length)}1`,
           valueInputOption: 'USER_ENTERED',
           requestBody: { values: [headers] },
@@ -6307,7 +6384,7 @@ export class GoogleSheetsSyncService {
 
   /** Chuỗi các tab của 1 base: [base, _P2, _P3...] chỉ gồm tab đang tồn tại. */
   private async partitionChain(base: string): Promise<string[]> {
-    const titles = await this.listSpreadsheetTabs();
+    const titles = await this.listSpreadsheetTabs(this.spreadsheetIdOf(base));
     const chain = [base];
     for (let n = 2; n < 200; n++) {
       const t = `${base}_P${n}`;
@@ -6407,30 +6484,41 @@ export class GoogleSheetsSyncService {
    * hệ thống cảnh báo Admin trước ở 75% (6 triệu) và 90%.
    */
   public async estimateCellUsage(): Promise<{ cellsUsed: number; cellsLimit: number; pct: number; level: 'OK' | 'WARN' | 'CRITICAL'; measuredTabs: number }> {
-    const limit = 10_000_000; // giới hạn Google thực tế
+    const limitPerDoc = 10_000_000; // giới hạn Google thực tế cho MỖI spreadsheet
     if (this.cellUsageCache && Date.now() - this.cellUsageCache.at < 21_600_000) return this.cellUsageCache.data;
-    const titles = await this.listSpreadsheetTabs().catch(() => [] as string[]);
-    const measurable = titles.filter(t => {
-      const b = t.replace(/_P\d+$/, '');
-      return GoogleSheetsSyncService.PARTITION_TABS.has(t) || GoogleSheetsSyncService.PARTITION_TABS.has(b) || SHEETS_DEFINITIONS.some(d => d.title === t);
-    });
-    let cellsUsed = 0;
-    if (measurable.length) {
-      const batch = await this.readTabsBatch(measurable).catch(() => ({} as Record<string, string[][]>));
-      for (const t of measurable) {
-        const b = t.replace(/_P\d+$/, '');
-        const cols = SHEETS_DEFINITIONS.find(d => d.title === b || d.title === t)?.headers?.length || 12;
-        cellsUsed += (batch[t]?.length || 0) * cols;
-      }
+
+    // Bộ 25 sheet: mỗi bảng 1 file riêng -> đo theo từng file, cảnh báo theo
+    // file đầy nhất (không cộng dồn vì mỗi file có hạn mức 10 triệu ô riêng).
+    const groups = new Map<string, Array<typeof SHEETS_DEFINITIONS[number]>>();
+    for (const def of SHEETS_DEFINITIONS) {
+      const sid = this.spreadsheetIdOf(def.title);
+      if (!groups.has(sid)) groups.set(sid, []);
+      groups.get(sid)!.push(def);
     }
-    const pct = Math.min(100, Math.round((cellsUsed / limit) * 1000) / 10);
+
+    let cellsUsed = 0;
+    let measuredTabs = 0;
+    let maxPct = 0;
+    for (const defs of groups.values()) {
+      const titles = defs.map(d => d.title);
+      const batch = await this.readTabsBatch(titles).catch(() => ({} as Record<string, string[][]>));
+      let cellsHere = 0;
+      for (const def of defs) {
+        cellsHere += (batch[def.title]?.length || 0) * def.headers.length;
+        measuredTabs += 1;
+      }
+      cellsUsed += cellsHere;
+      maxPct = Math.max(maxPct, (cellsHere / limitPerDoc) * 100);
+    }
+
+    const pct = Math.min(100, Math.round(maxPct * 10) / 10);
     const level: 'OK' | 'WARN' | 'CRITICAL' = pct >= 90 ? 'CRITICAL' : pct >= 75 ? 'WARN' : 'OK';
     const data = {
       cellsUsed,
-      cellsLimit: limit,
+      cellsLimit: limitPerDoc * Math.max(1, groups.size),
       pct,
       level,
-      measuredTabs: measurable.length,
+      measuredTabs,
     };
     this.cellUsageCache = { at: Date.now(), data };
     return data;
