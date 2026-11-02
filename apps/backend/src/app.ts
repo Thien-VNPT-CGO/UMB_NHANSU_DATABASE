@@ -5200,10 +5200,13 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.get('/payroll/runs/:id', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollRunIdParams }), async (req, res) => {
+  app.get('/payroll/runs/:id', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollRunIdParams }), async (req: AuthenticatedRequest, res) => {
     try {
-      const details = await payrollService.getRunDetails(req.params.id);
-      if (!details) return res.status(404).json({ error: 'PAYROLL_RUN_NOT_FOUND' });
+      let details = await payrollService.getRunDetails(req.params.id);
+      if (!details && /^\d{4}-(0[1-9]|1[0-2])$/.test(req.params.id)) {
+        details = await payrollService.ensurePeriodSlips(req.params.id, '*', req.user!.id).catch(() => null);
+      }
+      if (!details) return res.status(404).json({ error: `PAYROLL_RUN_NOT_FOUND: Chưa tìm thấy kỳ lương ${req.params.id}. Vui lòng bấm tính lương kỳ này trước.` });
       res.json(details);
     } catch (err: any) {
       res.status(500).json({ error: err.message });

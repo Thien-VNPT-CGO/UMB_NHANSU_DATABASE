@@ -3338,9 +3338,11 @@ export class GoogleSheetsSyncService {
       }
       counts.attendanceAdjustments = fallback.attendanceAdjustments.length;
 
-      // 10. Đọc KY_LUONG (kỳ lương)
-      const payrollRows = batch['KY_LUONG'];
-      if (payrollRows && payrollRows.length > 0) {
+      // 10. Đọc KY_LUONG (kỳ lương) — giữ bộ nhớ nếu Sheet rỗng (chống mất kỳ lương sau restart/pull)
+      const payrollRows = batch['KY_LUONG'] || [];
+      if (keepIfEmpty('KY_LUONG', payrollRows, (fallback.payrollRuns || []).length)) {
+        counts.payrollRuns = (fallback.payrollRuns || []).length;
+      } else if (payrollRows && payrollRows.length > 0) {
         fallback.payrollRuns = payrollRows
           .filter(r => r && (r[0] || r[1]))
           .map(r => ({
@@ -3358,7 +3360,7 @@ export class GoogleSheetsSyncService {
             paid_at: r[6] || undefined,
             version: 1,
           }));
-      } else {
+      } else if (fallback.payrollRuns.length === 0) {
         fallback.payrollRuns = [];
       }
       counts.payrollRuns = fallback.payrollRuns.length;

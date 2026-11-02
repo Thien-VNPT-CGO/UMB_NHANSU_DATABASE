@@ -2243,7 +2243,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       const d = await apiRequest(`/payroll/runs/${runId}`);
       setPayRunDetail(d);
     } catch (e: any) {
-      showToast(e?.message || 'Lỗi khi tải chi tiết kỳ lương!');
+      const msg = String(e?.message || '');
+      if (msg.includes('PAYROLL_RUN_NOT_FOUND')) {
+        showToast(`ℹ️ Kỳ lương ${runId} chưa được tính nháp. Vui lòng bấm "Tính Lương" ở mục 1 trước.`);
+      } else {
+        showToast(e?.message || 'Lỗi khi tải chi tiết kỳ lương!');
+      }
     }
   };
   const payRunAction = async (runId: string, action: 'reconcile' | 'approve' | 'publish' | 'mark-paid') => {
@@ -2262,7 +2267,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       if (onRefreshData) await onRefreshData();
       if (onSyncSheets) await onSyncSheets();
     } catch (e: any) {
-      showToast(e?.message || 'Lỗi!');
+      const msg = String(e?.message || '');
+      if (msg.includes('PAYROLL_RUN_NOT_FOUND')) {
+        showToast(`⚠️ Không tìm thấy kỳ lương ${runId}. Đang làm mới danh sách kỳ lương...`);
+        if (onRefreshData) await onRefreshData();
+      } else if (msg.includes('SEPARATION_OF_DUTIES_VIOLATION')) {
+        showToast('⚠️ Quy tắc phân quyền: Người tính lương không được tự duyệt kỳ lương của mình!');
+      } else {
+        showToast(e?.message || 'Lỗi!');
+      }
     } finally {
       setPayRunBusy(null);
     }
