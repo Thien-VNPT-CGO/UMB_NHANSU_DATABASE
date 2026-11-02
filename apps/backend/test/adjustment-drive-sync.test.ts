@@ -5,6 +5,7 @@ import {
   adjustmentRequestStatusLabel,
   buildAdjustmentRequestTxt,
   hhmmFromAdjustmentFileName,
+  shouldSyncAdjustmentToDrive,
 } from '../src/services/google-sheets-sync.service.js';
 
 const EMP = { full_name: 'Nguyễn Văn A', employee_code: 'EMP001' };
@@ -98,4 +99,12 @@ test('adjustment drive: giữ đúng HH-mm của file txt cũ khi cập nhật t
   assert.equal(hhmmFromAdjustmentFileName('ANH_11-53_ADJ_1.jpg'), '');
   assert.equal(hhmmFromAdjustmentFileName(''), '');
   assert.equal(hhmmFromAdjustmentFileName(undefined), '');
+});
+
+test('adjustment drive: chỉ đồng bộ phiếu đã duyệt', () => {
+  assert.equal(shouldSyncAdjustmentToDrive(adj({ status: 'APPROVED' })), true);
+  assert.equal(shouldSyncAdjustmentToDrive(adj({ status: 'approved' })), true);
+  assert.equal(shouldSyncAdjustmentToDrive(adj({ status: 'PENDING' })), false);
+  assert.equal(shouldSyncAdjustmentToDrive(adj({ status: 'REJECTED', review_note: 'Tự động từ chối' })), false);
+  assert.equal(shouldSyncAdjustmentToDrive(null), false);
 });

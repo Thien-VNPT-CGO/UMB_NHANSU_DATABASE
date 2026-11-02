@@ -4,7 +4,7 @@ import { ISheetsRepository } from './sheets.interface.js';
 import { MockSheetsAdapter } from './mock-sheets.adapter.js';
 import { sheetDateText, sheetDateTimeText } from '../services/employees.service.js';
 import { GoogleSheetsSyncService } from '../services/google-sheets-sync.service.js';
-import { saveAttendancePhotoDisk, saveAdjustmentPhotoDisk } from '../services/photo-disk.store.js';
+import { saveAttendancePhotoDisk, saveAdjustmentPhotoDisk, readAdjustmentPhotoDisk } from '../services/photo-disk.store.js';
 import { DurableWriteQueue } from './durable-write-queue.js';
 import { readRuntimeSnapshot, writeRuntimeSnapshot } from './runtime-snapshot.js';
 import { getAttendanceFolderForBranch } from '../config/drive-folders.js';
@@ -1482,50 +1482,17 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   }
 
   async createAttendanceAdjustment(adj: any) {
-    // PHIẾU BỔ SUNG CÔNG -> Drive realtime (folder 06. PHIẾU BỔ SUNG CÔNG):
-    //   <ngày gửi>/<Tên NV - Mã NV>/PHIEU_<giờ>_<id>.txt + ANH_<giờ>_<id>.jpg
-    // Ảnh Upload Drive trước, chỉ lưu Drive file ID (mirror recordAttendanceEvent).
-    // Ảnh vẫn lưu xuống đĩa để endpoint /photo phục vụ fallback khi Drive lỗi.
-    const employee = adj.employee_id
-      ? await this.fallbackAdapter.getEmployeeById(adj.employee_id).catch(() => null)
-      : null;
-    if (adj.photo_base64 && adj.adjustment_id) {
-      saveAdjustmentPhotoDisk(adj.adjustment_id, adj.photo_base64);
-    }
-    const syncSvc: any = this.syncService;
-    let firstDriveOk = false;
-    if (typeof syncSvc?.syncAdjustmentRequestToDrive === 'function') {
-      try {
-        const r = await syncSvc.syncAdjustmentRequestToDrive({
-          adjustment: { ...adj, created_at: adj.created_at || new Date().toISOString() },
-          employee,
-          photoBase64: adj.photo_base64,
-        });
-        firstDriveOk = !!r?.ok;
-        if (r?.imageFileId && !String(r.imageFileId).startsWith('DRV_')) {
-          adj.evidence_drive_id = r.imageFileId;
-        }
-      } catch (err) {
-        console.warn('[GoogleSheetsAdapter] Đồng bộ phiếu bù công lên Drive lỗi:', (err as any)?.message || err);
+    // Phiếu CHỜ DUYỆT: chỉ lưu ảnh bằng chứng xuống đĩa (HR xem + làm nguồn
+    // upload khi duyệt). KHÔNG đẩy lên "06. PHIẾU BỔ SUNG CÔNG" — folder này
+    // chỉ chứa phiếu ĐÃ DUYỆT (xem updateAttendanceAdjustment).
+    if (adj.photo_base64) {
+      if (adj.adjustment_id) {
+        try { saveAdjustmentPhotoDisk(adj.adjustment_id, adj.photo_base64); } catch { /* best-effort */ }
       }
+      if (!adj.evidence_drive_id) adj.evidence_drive_id = `DRV_LOCAL_${Date.now()}`;
     }
-    // Upload ảnh không thành công -> giữ base64 inline để HR vẫn xem được ảnh.
-    if (adj.photo_base64 && !adj.evidence_drive_id) {
-      adj.evidence_drive_id = `DRV_LOCAL_${Date.now()}`;
-      (adj as any).evidence_photo = adj.photo_base64;
-    }
-    const hadPhoto = !!adj.photo_base64;
     delete adj.photo_base64;
     const res = await this.fallbackAdapter.createAttendanceAdjustment(adj);
-    // Có ảnh + lần đầu đã ghi đủ (ảnh + txt) -> không cần ghi lại.
-    // Còn lại (phiếu không ảnh, hoặc lần đầu Drive lỗi) -> ghi txt theo bản ghi đã tạo.
-    if (typeof syncSvc?.syncAdjustmentRequestToDrive === 'function' && !(hadPhoto && firstDriveOk)) {
-      try {
-        await syncSvc.syncAdjustmentRequestToDrive({ adjustment: res, employee });
-      } catch (err) {
-        console.warn('[GoogleSheetsAdapter] Ghi file txt phiếu bù công lỗi:', (err as any)?.message || err);
-      }
-    }
     if (this.isConfigured) {
       const snapshot = { ...res };
       await this.enqueueDurableWrite('DIEU_CHINH_CONG', [[
@@ -1550,6 +1517,35 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   async updateAttendanceAdjustment(id: string, status: any, approverId: string, minutesApproved?: number, note?: string) {
     const res = await this.fallbackAdapter.updateAttendanceAdjustment(id, status, approverId, minutesApproved, note);
     this.scheduleRuntimeSnapshot();
+    // CHỈ phiếu ĐÃ DUYỆT mới đẩy lên Drive "06. PHIẾU BỔ SUNG CÔNG" (ảnh + txt).
+    // Chạy trước push tab để evidence_drive_id mới được ghi bền vào Sheets.
+    if (res && String(res.status) === 'APPROVED') {
+      try {
+        const syncSvc: any = this.syncService;
+        if (typeof syncSvc?.syncAdjustmentRequestToDrive === 'function') {
+          const employee = res.employee_id
+            ? await this.fallbackAdapter.getEmployeeById(res.employee_id).catch(() => null)
+            : null;
+          let photoBase64: string | undefined;
+          try {
+            const disk = readAdjustmentPhotoDisk(res.adjustment_id);
+            if (disk?.buffer?.length) {
+              photoBase64 = `data:${disk.mimeType || 'image/jpeg'};base64,${disk.buffer.toString('base64')}`;
+            }
+          } catch { /* ảnh đệm có thể đã bị dọn dung lượng */ }
+          const r = await syncSvc.syncAdjustmentRequestToDrive({ adjustment: res, employee, photoBase64 });
+          if (r?.imageFileId && !String(r.imageFileId).startsWith('DRV_')) {
+            res.evidence_drive_id = r.imageFileId;
+            // Cập nhật cả bản trong bộ nhớ để pushAdjustmentsTab ghi đúng cột ảnh.
+            const mem = ((this.fallbackAdapter as any).attendanceAdjustments || [])
+              .find((a: any) => a && a.adjustment_id === res.adjustment_id);
+            if (mem) mem.evidence_drive_id = r.imageFileId;
+          }
+        }
+      } catch (err) {
+        console.warn('[GoogleSheetsAdapter] Đồng bộ phiếu đã duyệt lên Drive lỗi:', (err as any)?.message || err);
+      }
+    }
     // Đẩy tab đồng bộ để trạng thái duyệt bền vững ngay (đúng mẫu updateSwapRequest):
     // restart trước flush là mất duyệt, pull sau hồi sinh phiếu cũ.
     if (this.isConfigured) {
@@ -1563,19 +1559,6 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
       }
     } else {
       this.scheduleFullSync('DIEU_CHINH_CONG.update');
-    }
-    // Realtime Drive: ghi đè file txt trong "06. PHIẾU BỔ SUNG CÔNG" để trạng
-    // thái mới (Đã duyệt / Từ chối / Tự động từ chối) hiện ngay trên Drive.
-    try {
-      const syncSvc: any = this.syncService;
-      if (typeof syncSvc?.syncAdjustmentRequestToDrive === 'function' && res) {
-        const employee = res.employee_id
-          ? await this.fallbackAdapter.getEmployeeById(res.employee_id).catch(() => null)
-          : null;
-        await syncSvc.syncAdjustmentRequestToDrive({ adjustment: res, employee });
-      }
-    } catch (err) {
-      console.warn('[GoogleSheetsAdapter] Cập nhật txt phiếu bù công trên Drive lỗi:', (err as any)?.message || err);
     }
     return res;
   }

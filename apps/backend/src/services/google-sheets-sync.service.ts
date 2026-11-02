@@ -73,6 +73,11 @@ export function adjustmentRequestStatusLabel(adj: any): string {
   return 'Chờ duyệt';
 }
 
+/** Chỉ phiếu ĐÃ DUYỆT mới được đồng bộ lên Drive (folder 06). */
+export function shouldSyncAdjustmentToDrive(adj: any): boolean {
+  return String(adj?.status || '').toUpperCase() === 'APPROVED';
+}
+
 /**
  * Cây thư mục Drive của 1 phiếu: <ngày gửi VN>/<Tên NV - Mã NV>.
  * VD: 2026-11-02/Nguyễn Văn A - EMP001
@@ -5191,8 +5196,8 @@ export class GoogleSheetsSyncService {
    *     PHIEU_<HH-mm>_<adjustment_id>.txt   (Lý do & số phút + trạng thái + link ảnh)
    *     ANH_<HH-mm>_<adjustment_id>.jpg     (ảnh bằng chứng, nếu có)
    *
-   * Gọi ngay khi NV tạo phiếu (ghi ảnh + txt "Chờ duyệt") và mỗi lần phiếu đổi
-   * trạng thái (duyệt / từ chối / tự từ chối do hết hạn) -> txt được ghi đè.
+   * Gọi khi HR DUYỆT phiếu (ảnh bằng chứng + file txt trạng thái "Đã duyệt").
+   * Phiếu chờ duyệt / bị từ chối / tự động từ chối (hết hạn) KHÔNG đẩy lên Drive.
    * Không ném lỗi ra ngoài: Drive chậm/hỏng không được làm hỏng luồng phiếu.
    */
   public async syncAdjustmentRequestToDrive(opts: {
@@ -5201,6 +5206,7 @@ export class GoogleSheetsSyncService {
     photoBase64?: string;
   }): Promise<{
     ok: boolean;
+    skipped?: boolean;
     folderId?: string;
     imageFileId?: string;
     txtFileId?: string;
@@ -5209,6 +5215,9 @@ export class GoogleSheetsSyncService {
     const adj = opts.adjustment || {};
     const adjId = String(adj.adjustment_id || '').trim();
     if (!adjId) return { ok: false, error: 'ADJUSTMENT_ID_REQUIRED' };
+    // Chỉ phiếu ĐÃ DUYỆT mới hiển thị trên Drive; phiếu chờ duyệt / từ chối /
+    // tự động từ chối (hết hạn) bỏ qua hoàn toàn.
+    if (!shouldSyncAdjustmentToDrive(adj)) return { ok: true, skipped: true };
     const rootId = getAdjustmentRequestsFolder();
     if (!rootId || !this.driveClient) return { ok: false, error: 'DRIVE_NOT_CONFIGURED' };
 
