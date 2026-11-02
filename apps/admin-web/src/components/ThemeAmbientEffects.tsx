@@ -199,6 +199,10 @@ export function ThemeAmbientEffects({ themeId }: ThemeAmbientEffectsProps) {
     // MAIN RENDER LOOP (60 FPS)
     // =========================================================================
     const render = () => {
+      if (document.hidden) {
+        animationFrameId = requestAnimationFrame(render);
+        return;
+      }
       ctx.clearRect(0, 0, width, height);
       tickCount++;
 
@@ -217,10 +221,7 @@ export function ThemeAmbientEffects({ themeId }: ThemeAmbientEffectsProps) {
           ctx.arc(o.x, o.y, o.r, 0, Math.PI * 2);
           ctx.fillStyle = o.color;
           ctx.globalAlpha = o.alpha * (0.6 + Math.sin(tickCount * 0.06) * 0.4);
-          ctx.shadowBlur = 12;
-          ctx.shadowColor = o.color;
           ctx.fill();
-          ctx.shadowBlur = 0;
           ctx.globalAlpha = 1;
         }
 
@@ -241,8 +242,6 @@ export function ThemeAmbientEffects({ themeId }: ThemeAmbientEffectsProps) {
 
           // Thân ma trắng
           ctx.fillStyle = '#FFFFFF';
-          ctx.shadowBlur = 10;
-          ctx.shadowColor = 'rgba(168, 85, 247, 0.4)';
           ctx.beginPath();
           const w = g.size * 0.75;
           const h = g.size;
@@ -252,7 +251,6 @@ export function ThemeAmbientEffects({ themeId }: ThemeAmbientEffectsProps) {
           ctx.quadraticCurveTo(w / 4, h * 0.35, 0, h / 2);
           ctx.quadraticCurveTo(-w / 4, h * 0.35, -w / 2, h / 2);
           ctx.fill();
-          ctx.shadowBlur = 0;
 
           // Mắt đen & má hồng
           ctx.fillStyle = '#1E1B4B';
@@ -344,8 +342,6 @@ export function ThemeAmbientEffects({ themeId }: ThemeAmbientEffectsProps) {
           ctx.save();
           ctx.globalAlpha = s.alpha;
           ctx.fillStyle = s.color;
-          ctx.shadowBlur = 6;
-          ctx.shadowColor = s.color;
           ctx.beginPath();
           ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
           ctx.fill();
@@ -368,8 +364,6 @@ export function ThemeAmbientEffects({ themeId }: ThemeAmbientEffectsProps) {
           ctx.rotate(st.rot);
           ctx.globalAlpha = st.alpha;
           ctx.fillStyle = '#FBBF24';
-          ctx.shadowBlur = 8;
-          ctx.shadowColor = '#F59E0B';
 
           // Vẽ sao 5 cánh
           ctx.beginPath();
@@ -405,10 +399,7 @@ export function ThemeAmbientEffects({ themeId }: ThemeAmbientEffectsProps) {
           ctx.beginPath();
           ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
           ctx.fillStyle = `rgba(255, 255, 255, ${p.alpha})`;
-          ctx.shadowBlur = 4;
-          ctx.shadowColor = '#FFFFFF';
           ctx.fill();
-          ctx.shadowBlur = 0;
         }
       }
 
@@ -435,8 +426,6 @@ export function ThemeAmbientEffects({ themeId }: ThemeAmbientEffectsProps) {
           ctx.bezierCurveTo(p.size * 0.6, -p.size * 0.4, p.size * 0.6, p.size * 0.6, 0, p.size);
           ctx.bezierCurveTo(-p.size * 0.6, p.size * 0.6, -p.size * 0.6, -p.size * 0.4, 0, -p.size);
           ctx.fillStyle = '#FB7185';
-          ctx.shadowBlur = 4;
-          ctx.shadowColor = '#FDA4AF';
           ctx.fill();
           ctx.restore();
         }
@@ -470,8 +459,6 @@ export function ThemeAmbientEffects({ themeId }: ThemeAmbientEffectsProps) {
             ctx.bezierCurveTo(0, (p.size + topCurveHeight) / 2, p.size / 2, (p.size + topCurveHeight) / 2, p.size / 2, topCurveHeight);
             ctx.bezierCurveTo(p.size / 2, 0, 0, 0, 0, topCurveHeight);
             ctx.fillStyle = '#F43F5E';
-            ctx.shadowBlur = 6;
-            ctx.shadowColor = '#FB7185';
             ctx.fill();
           } else {
             ctx.beginPath();
@@ -535,8 +522,6 @@ export function ThemeAmbientEffects({ themeId }: ThemeAmbientEffectsProps) {
           ctx.translate(d.x, d.y);
           ctx.scale(d.scale, d.scale);
           ctx.fillStyle = '#FFFFFF';
-          ctx.shadowBlur = 6;
-          ctx.shadowColor = 'rgba(255, 255, 255, 0.6)';
           ctx.beginPath();
           ctx.ellipse(0, 0, 16, 7, 0.2, 0, Math.PI * 2);
           ctx.fill();
@@ -608,7 +593,7 @@ export function ThemeAmbientEffects({ themeId }: ThemeAmbientEffectsProps) {
         width: '100vw',
         height: '100vh',
         pointerEvents: 'none',
-        zIndex: 5,
+        zIndex: 0,
       }}
     />
   );

@@ -346,22 +346,35 @@ export function App() {
   const [adminThemeEvent, setAdminThemeEvent] = useState<string>(() => {
     try {
       const saved = localStorage.getItem('ubm_admin_theme_event');
-      return saved || 'halloween';
+      return saved && saved !== 'halloween' ? saved : 'standard';
     } catch {
-      return 'halloween';
+      return 'standard';
     }
   });
 
   const [adminThemeEnabled, setAdminThemeEnabled] = useState<boolean>(() => {
     try {
       const saved = localStorage.getItem('ubm_admin_theme_enabled');
-      if (saved !== null) return saved !== 'false';
-      const legacySaved = localStorage.getItem('ubm_halloween_theme');
-      return legacySaved === null ? true : legacySaved !== 'false';
+      // Mặc định tắt hiệu ứng chuyển động lơ lửng để hệ thống mượt mà, chuyên nghiệp, không giật lag
+      return saved === 'true';
     } catch {
-      return true;
+      return false;
     }
   });
+
+  // Tự động dọn dẹp cấu hình Halloween cũ lưu trong trình duyệt tránh bóng ma bay lơ lửng gây giật lag
+  useEffect(() => {
+    try {
+      localStorage.removeItem('ubm_halloween_theme');
+      const savedEvent = localStorage.getItem('ubm_admin_theme_event');
+      if (savedEvent === 'halloween') {
+        localStorage.setItem('ubm_admin_theme_event', 'standard');
+        setAdminThemeEvent('standard');
+        setAdminThemeEnabled(false);
+        localStorage.setItem('ubm_admin_theme_enabled', 'false');
+      }
+    } catch {}
+  }, []);
 
   const applyThemeToDOM = (themeId: string, enabled: boolean) => {
     if (typeof document === 'undefined') return;
@@ -2631,7 +2644,7 @@ export function App() {
       </aside>
 
       {/* MAIN CONTENT AREA */}
-      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative', zIndex: 2 }}>
         {/* Banner BETA: hiện khi chức năng đang mở nằm trong danh sách BetaFeatures */}
         <BetaBanner tabId={activeTab} />
         {/* TOP BAR */}

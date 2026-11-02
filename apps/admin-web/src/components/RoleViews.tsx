@@ -222,6 +222,188 @@ export const EmpAvatar: React.FC<{ employeeId: string; size?: number }> = ({ emp
   if (failed || !employeeId || !url) return null;
   return <img src={url} alt="Avatar" style={{ width: `${px}px`, height: `${px}px`, objectFit: 'cover', borderRadius: '50%', border: '2px solid rgba(255,255,255,0.6)' }} />;
 };
+
+/** Cache blob URL xem trước tài liệu (CCCD / HĐLĐ) chống tải lại và giật lag */
+export const adminDocBlobCache = new Map<string, string>();
+
+export const clearAdminDocCache = (empId?: string, kind?: string) => {
+  if (!empId) {
+    adminDocBlobCache.forEach((u) => { try { URL.revokeObjectURL(u); } catch {} });
+    adminDocBlobCache.clear();
+    return;
+  }
+  for (const k of Array.from(adminDocBlobCache.keys())) {
+    if (kind ? k.startsWith(`${empId}:${kind}:`) : k.startsWith(`${empId}:`)) {
+      const u = adminDocBlobCache.get(k);
+      if (u) { try { URL.revokeObjectURL(u); } catch {} }
+      adminDocBlobCache.delete(k);
+    }
+  }
+};
+
+/** Thumbnail xem trước ảnh tài liệu (CCCD / HĐLĐ ảnh) trong cổng Admin (memoized + cached + zero layout shift) */
+export const AdminDocThumbnail: React.FC<{
+  empId: string;
+  kind: string;
+  fileName?: string;
+  uploadedAt?: string;
+  onClick?: () => void;
+}> = React.memo(({
+  empId,
+  kind,
+  fileName,
+  uploadedAt,
+  onClick,
+}) => {
+  const isImg = (fileName && /\.(jpe?g|png|webp|gif)$/i.test(fileName)) || kind.startsWith('id_card');
+  const cacheKey = `${empId}:${kind}:${fileName || ''}:${uploadedAt || ''}`;
+  const initialUrl = adminDocBlobCache.get(cacheKey) || '';
+
+  const [url, setUrl] = useState<string>(initialUrl);
+  const [loading, setLoading] = useState<boolean>(!initialUrl && isImg);
+  const onClickRef = useRef(onClick);
+  onClickRef.current = onClick;
+
+  useEffect(() => {
+    if (!isImg) return;
+    const existing = adminDocBlobCache.get(cacheKey);
+    if (existing) {
+      setUrl(existing);
+      setLoading(false);
+      return;
+    }
+
+    let active = true;
+    const load = async () => {
+      try {
+        setLoading(true);
+        const res = await fetch(`${getApiBase()}/employees/${empId}/contract/${kind}`, {
+          headers: { Authorization: `Bearer ${getAuthToken()}` },
+        });
+        if (!res.ok) return;
+        const blob = await res.blob();
+        const objUrl = URL.createObjectURL(blob);
+        adminDocBlobCache.set(cacheKey, objUrl);
+        if (active) {
+          setUrl(objUrl);
+        }
+      } catch {
+        // non-fatal
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    load();
+    return () => {
+      active = false;
+    };
+  }, [cacheKey, empId, kind, isImg]);
+
+  if (!isImg) return null;
+
+  const handleClick = () => {
+    if (onClickRef.current) {
+      onClickRef.current();
+    } else if (url) {
+      window.open(url, '_blank');
+    }
+  };
+
+  return (
+    <div
+      style={{
+        marginTop: '8px',
+        borderRadius: '8px',
+        overflow: 'hidden',
+        border: '1px solid var(--border)',
+        backgroundColor: '#F8FAFC',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        minHeight: '215px',
+        position: 'relative',
+        boxSizing: 'border-box',
+      }}
+    >
+      <div
+        style={{
+          width: '100%',
+          height: '180px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: '#FFFFFF',
+          position: 'relative',
+          overflow: 'hidden',
+        }}
+      >
+        {url ? (
+          <img
+            src={url}
+            alt={kind}
+            draggable={false}
+            loading="eager"
+            decoding="async"
+            style={{
+              maxHeight: '180px',
+              maxWidth: '100%',
+              width: 'auto',
+              height: 'auto',
+              objectFit: 'contain',
+              cursor: 'zoom-in',
+              display: 'block',
+              transform: 'translateZ(0)',
+              backfaceVisibility: 'hidden',
+              userSelect: 'none',
+              transition: 'none',
+            }}
+            onClick={handleClick}
+            title="Bấm để xem ảnh kích thước gốc"
+          />
+        ) : (
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+              color: 'var(--text-muted)',
+              fontSize: '11.5px',
+              fontWeight: 600,
+            }}
+          >
+            <span style={{ fontSize: '18px' }}>⏳</span>
+            <span>{loading ? 'Đang tải ảnh xem trước CCCD...' : 'Chưa tải được ảnh'}</span>
+          </div>
+        )}
+      </div>
+      <div
+        style={{
+          fontSize: '10.5px',
+          color: 'var(--text-muted)',
+          padding: '6px 8px',
+          width: '100%',
+          textAlign: 'center',
+          backgroundColor: '#F1F5F9',
+          borderTop: '1px solid var(--border)',
+          fontWeight: 600,
+          cursor: 'pointer',
+          userSelect: 'none',
+        }}
+        onClick={handleClick}
+      >
+        🔍 Bấm vào hình để mở phóng to xem chi tiết
+      </div>
+    </div>
+  );
+}, (prev, next) => (
+  prev.empId === next.empId &&
+  prev.kind === next.kind &&
+  prev.fileName === next.fileName &&
+  prev.uploadedAt === next.uploadedAt
+));
+
 /** Màu trạng thái kỳ lương dùng chung cổng Finance. */
 export const PAYRUN_STAGE_COLORS: Record<string, { bg: string; fg: string; bd: string }> = {
   DRAFT: { bg: '#F1F5F9', fg: '#475569', bd: '#CBD5E1' },
@@ -3139,12 +3321,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [updatingBranch, setUpdatingBranch] = useState('');
   const [updatingBusy, setUpdatingBusy] = useState(false);
 
-  // Real-time clock for countdown timers (FAIL verdict = 24h auto-delete)
-  const [nowMs, setNowMs] = useState(Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNowMs(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, []);
 
   const openUpdating = (candidate: any) => {
     setUpdatingId(candidate.submission_id);
@@ -14973,77 +15149,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const scopeTo = empEvtDays[empEvtDays.length - 1] || '';
     const fmtScopeDay = (d: string) => (d ? d.split('-').reverse().join('/') : '—');
 
-    // Thumbnail xem trước ảnh tài liệu (CCCD / HĐLĐ ảnh) trong cổng Admin
-    const AdminDocThumbnail = ({
-      empId,
-      kind,
-      fileName,
-      onClick,
-    }: {
-      empId: string;
-      kind: string;
-      fileName?: string;
-      onClick?: () => void;
-    }) => {
-      const [url, setUrl] = useState<string>('');
-      const [loading, setLoading] = useState(false);
-      const isImg = (fileName && /\.(jpe?g|png|webp|gif)$/i.test(fileName)) || kind.startsWith('id_card');
-
-      useEffect(() => {
-        let active = true;
-        let objUrl = '';
-        const load = async () => {
-          if (!isImg) return;
-          try {
-            setLoading(true);
-            const res = await fetch(`${getApiBase()}/employees/${empId}/contract/${kind}`, {
-              headers: { Authorization: `Bearer ${getAuthToken()}` },
-            });
-            if (!res.ok) return;
-            const blob = await res.blob();
-            objUrl = URL.createObjectURL(blob);
-            if (active) setUrl(objUrl);
-          } catch {
-            // non-fatal
-          } finally {
-            if (active) setLoading(false);
-          }
-        };
-        load();
-        return () => {
-          active = false;
-          if (objUrl) URL.revokeObjectURL(objUrl);
-        };
-      }, [empId, kind, isImg]);
-
-      if (!isImg) return null;
-
-      if (loading) {
-        return (
-          <div style={{ marginTop: '8px', padding: '10px', fontSize: '11px', color: 'var(--text-muted)', backgroundColor: 'var(--bg)', borderRadius: '6px', textAlign: 'center', border: '1px dashed var(--border)' }}>
-            ⏳ Đang tải ảnh xem trước...
-          </div>
-        );
-      }
-
-      if (!url) return null;
-
-      return (
-        <div style={{ marginTop: '8px', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border)', backgroundColor: '#F8FAFC', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-          <img
-            src={url}
-            alt={kind}
-            style={{ width: '100%', maxHeight: '180px', objectFit: 'contain', cursor: 'pointer', backgroundColor: '#FFFFFF' }}
-            onClick={onClick}
-            title="Bấm để xem ảnh kích thước gốc"
-          />
-          <div style={{ fontSize: '10.5px', color: 'var(--text-muted)', padding: '4px 8px', width: '100%', textAlign: 'center', backgroundColor: '#F1F5F9', borderTop: '1px solid var(--border)' }}>
-            🔍 Bấm vào hình để mở phóng to xem chi tiết
-          </div>
-        </div>
-      );
-    };
-
     // --- HỢP ĐỒNG LAO ĐỘNG & CCCD: upload / xem / gỡ file CCCD 2 mặt + Thử việc + Chính thức ---
     const contractDocs: any = (() => {
       const raw = (profEmp as any)?.contract_docs;
@@ -15088,6 +15193,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             base64,
           }),
         });
+        clearAdminDocCache(profEmp.employee_id, kind);
         showToast(`✓ Đã lưu ${contractLabel(kind)} của ${profEmp.full_name}!`);
         if (onRefreshData) await onRefreshData();
         if (onPushSheets) await onPushSheets();
@@ -15119,6 +15225,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       setContractBusy(kind);
       try {
         await apiRequest(`/employees/${profEmp.employee_id}/contract/${kind}`, { method: 'DELETE' });
+        clearAdminDocCache(profEmp.employee_id, kind);
         showToast(`Đã gỡ ${contractLabel(kind)}.`);
         if (onRefreshData) await onRefreshData();
         if (onPushSheets) await onPushSheets();
@@ -15616,6 +15723,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                               empId={profEmp.employee_id}
                               kind={b.kind}
                               fileName={doc.file_name}
+                              uploadedAt={doc.uploaded_at}
                               onClick={() => void openContract(b.kind)}
                             />
                           )}
