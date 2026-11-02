@@ -55,6 +55,12 @@ function pad2(n: number): string {
   return String(n).padStart(2, '0');
 }
 
+/** Lấy lại mốc HH-mm từ tên file txt đã ghi trước đó (giữ nguyên tên khi cập nhật). */
+export function hhmmFromAdjustmentFileName(name: unknown): string {
+  const m = String(name || '').match(/^PHIEU_(\d{2}-\d{2})_/);
+  return m ? m[1] : '';
+}
+
 /** Nhãn trạng thái hiển thị trong file txt (phân biệt tự từ chối do hết hạn). */
 export function adjustmentRequestStatusLabel(adj: any): string {
   const st = String(adj?.status || 'PENDING');
@@ -5147,6 +5153,37 @@ export class GoogleSheetsSyncService {
   }
 
   /**
+   * Tìm các file Drive của 1 phiếu bù công theo mã phiếu (mọi ngày/thư mục).
+   * Dùng khi cập nhật trạng thái để ghi đè đúng file txt cũ, không tạo file trùng
+   * khi `created_at` bị lệch sau restart/pull.
+   */
+  private async findAdjustmentDriveFiles(adjId: string, ext: string): Promise<Array<{ id: string; name: string; parentId: string }>> {
+    if (!this.driveClient || !adjId) return [];
+    const escaped = adjId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    try {
+      const listed: any = await this.sheetsCall(
+        'drive.findAdjustmentFiles',
+        () => this.driveClient!.files.list({
+          q: `name contains '${escaped}' and trashed = false`,
+          fields: 'files(id,name,parents)',
+          pageSize: 50,
+          supportsAllDrives: true,
+          includeItemsFromAllDrives: true,
+          corpora: 'allDrives',
+        } as any),
+        30000,
+      );
+      const files = listed?.data?.files || [];
+      return files
+        .filter((f: any) => f?.id && (f?.parents || [])[0] && (!ext || String(f.name || '').endsWith(ext)))
+        .map((f: any) => ({ id: String(f.id), name: String(f.name || ''), parentId: String(f.parents[0]) }));
+    } catch (err: any) {
+      console.warn('[AdjustmentDrive] Tìm file phiếu cũ lỗi:', err?.message || err);
+      return [];
+    }
+  }
+
+  /**
    * ĐỒNG BỘ REALTIME PHIẾU BỔ SUNG CÔNG LÊN DRIVE (folder 06. PHIẾU BỔ SUNG CÔNG).
    *
    * Cấu trúc:
@@ -5176,11 +5213,18 @@ export class GoogleSheetsSyncService {
     if (!rootId || !this.driveClient) return { ok: false, error: 'DRIVE_NOT_CONFIGURED' };
 
     const loc = adjustmentDriveLocation(adj, opts.employee, Date.now());
-    const { day, empFolder, hhmm, segments } = loc;
+    const { hhmm: locHhmm, segments } = loc;
+
+    // Ưu tiên ghi đè file txt đã có của đúng phiếu (tránh sinh file trùng khi
+    // created_at lệch sau restart/pull), giữ nguyên thư mục ngày ban đầu.
+    const existingTxtFiles = await this.findAdjustmentDriveFiles(adjId, '.txt');
+    const existingTxt = existingTxtFiles[0] || null;
+    const hhmm = hhmmFromAdjustmentFileName(existingTxt?.name) || locHhmm;
 
     let folderId = '';
     try {
-      folderId = await this.ensureDriveFolderPath(segments, rootId);
+      folderId = existingTxt?.parentId
+        || await this.ensureDriveFolderPath(segments, rootId);
     } catch (err: any) {
       return { ok: false, error: String(err?.message || err) };
     }
@@ -5199,8 +5243,8 @@ export class GoogleSheetsSyncService {
             `ANH_${hhmm}_${adjSafeSeg(adjId, 'PHIEU')}.${ext}`,
             mime,
             buf,
-            segments,
-            rootId,
+            [],
+            folderId,
           );
           if (up?.fileId && !String(up.fileId).startsWith('DRV_')) imageFileId = String(up.fileId);
         }
@@ -5209,19 +5253,27 @@ export class GoogleSheetsSyncService {
       }
     }
 
-    const txtName = `PHIEU_${hhmm}_${adjSafeSeg(adjId, 'PHIEU')}.txt`;
+    const txtName = existingTxt?.name || `PHIEU_${hhmm}_${adjSafeSeg(adjId, 'PHIEU')}.txt`;
 
     try {
       const up = await this.upsertBufferToDrivePath(
         txtName,
         'text/plain; charset=utf-8',
         Buffer.from(buildAdjustmentRequestTxt(adj, opts.employee, imageFileId, Date.now()), 'utf8'),
-        segments,
-        rootId,
+        [],
+        folderId,
       );
       const txtFileId = String(up?.fileId || '');
       const ok = !!txtFileId && !txtFileId.startsWith('DRV_');
       if (!ok) return { ok: false, folderId, imageFileId: imageFileId || undefined, error: 'DRIVE_UPLOAD_FAILED' };
+      // Dọn file txt trùng của cùng phiếu (bản cũ trước khi fix) để chỉ còn
+      // đúng 1 file trạng thái mới nhất.
+      for (const f of existingTxtFiles.slice(1)) {
+        if (f.id === txtFileId) continue;
+        try {
+          await this.driveClient!.files.delete({ fileId: f.id, supportsAllDrives: true } as any);
+        } catch { /* best-effort */ }
+      }
       this.markDriveUploadOk?.();
       return { ok: true, folderId, imageFileId: imageFileId || undefined, txtFileId };
     } catch (err: any) {

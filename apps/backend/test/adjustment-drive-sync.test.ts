@@ -4,6 +4,7 @@ import {
   adjustmentDriveLocation,
   adjustmentRequestStatusLabel,
   buildAdjustmentRequestTxt,
+  hhmmFromAdjustmentFileName,
 } from '../src/services/google-sheets-sync.service.js';
 
 const EMP = { full_name: 'Nguyễn Văn A', employee_code: 'EMP001' };
@@ -90,4 +91,11 @@ test('adjustment txt: đã duyệt có số phút duyệt + link ảnh', () => {
   assert.match(txt, /Ghi chú {9}: OK/);
   assert.match(txt, /https:\/\/drive\.google\.com\/file\/d\/FILE_IMG_123\/view/);
   assert.match(txt, /Cập nhật lúc {4}: 02\/11\/2026 12:00 \(giờ VN\)/);
+});
+
+test('adjustment drive: giữ đúng HH-mm của file txt cũ khi cập nhật trạng thái', () => {
+  assert.equal(hhmmFromAdjustmentFileName('PHIEU_11-53_ADJ_1793595222829_691988.txt'), '11-53');
+  assert.equal(hhmmFromAdjustmentFileName('ANH_11-53_ADJ_1.jpg'), '');
+  assert.equal(hhmmFromAdjustmentFileName(''), '');
+  assert.equal(hhmmFromAdjustmentFileName(undefined), '');
 });
