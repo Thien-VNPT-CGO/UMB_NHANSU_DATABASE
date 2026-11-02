@@ -141,13 +141,14 @@ Nội dung bản backup tuỳ nguồn dữ liệu:
 
 - **`DATA_STORE=sheets`** (cấu hình đang chạy trên VPS): database đã tách thành
   **25 Google Spreadsheet riêng** (`apps/backend/src/config/sheets-mapping.ts`).
-  Mỗi kỳ COPY từng file riêng vào folder kỳ, tên `<TÊN_BẢNG>_<kỳ>` — mở trực tiếp
-  bằng Google Sheets, luôn là dữ liệu mới nhất tại thời điểm chạy. Ví dụ:
+  Mỗi kỳ export 25 bảng ra XLSX rồi đóng thành **1 file ZIP duy nhất** trong
+  folder kỳ — mở/tải trực tiếp bằng Google Drive, dữ liệu đúng thời điểm chạy.
+  Ví dụ:
 
   ```
-  01. BACKUP_DATA_DAY/2026-11-01/
-    NHAN_VIEN_MASTER_2026-11-01
-    PHAN_CONG_CA_2026-11-01
+  01. BACKUP_DATA_DAY/2026-11-01/UMB_NHANSU_2026-11-01.zip
+    NHAN_VIEN_MASTER_2026-11-01.xlsx
+    PHAN_CONG_CA_2026-11-01.xlsx
     ... (đủ 25 bảng)
   ```
 

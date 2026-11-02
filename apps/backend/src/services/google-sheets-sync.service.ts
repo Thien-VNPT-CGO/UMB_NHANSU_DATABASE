@@ -1297,20 +1297,25 @@ export class GoogleSheetsSyncService {
   }
 
   /**
-   * COPY TOÀN BỘ file Google Sheets riêng (25 bảng nghiệp vụ) vào 1 kỳ backup.
+   * BACKUP 25 bảng Google Sheets riêng thành 1 FILE ZIP cho mỗi kỳ.
    *
-   * Hệ thống đã tách database thành từng spreadsheet riêng
-   * (xem config/sheets-mapping.ts) — file tổng hợp UMB_NHANSU_DATABASE chỉ còn
-   * là dữ liệu cũ, không dùng nữa. Mỗi kỳ sẽ tạo 1 folder chứa 25 bản copy:
+   * Database đã tách thành từng spreadsheet riêng (config/sheets-mapping.ts);
+   * file tổng hợp UMB_NHANSU_DATABASE không còn dùng làm nguồn backup.
    *
-   *   01. BACKUP_DATA_DAY/2026-11-01/NHAN_VIEN_MASTER_2026-11-01
-   *   01. BACKUP_DATA_DAY/2026-11-01/CHAM_CONG_... (đủ 25 bảng)
+   * Mỗi kỳ tạo đúng 1 file:
+   *   01. BACKUP_DATA_DAY/2026-11-01/UMB_NHANSU_2026-11-01.zip
+   *   └── NHAN_VIEN_MASTER_2026-11-01.xlsx
+   *   └── PHAN_CONG_CA_2026-11-01.xlsx
+   *   └── ... (đủ 25 bảng)
    *
-   * - Google copy server-side nên dữ liệu đúng thời điểm chạy.
-   * - Idempotent theo tên file: chạy lại chỉ bù file còn thiếu, không nhân bản.
+   * - Export XLSX do Google thực hiện server-side → dữ liệu đúng thời điểm chạy.
+   * - ZIP dùng phương thức STORE (XLSX đã nén sẵn bên trong) — không cần thêm
+   *   dependency, tương thích Windows Explorer / 7-Zip / macOS.
+   * - Idempotent theo tên file: kỳ đã có ZIP thì dùng lại, không tạo bản trùng.
+   * - Chỉ upload khi export đủ 25/25 bảng (tránh lưu bản thiếu rồi báo OK).
    * - Tự dọn kỳ cũ quá `keep` (chỉ xóa folder đúng định dạng kỳ).
    */
-  public async backupSpreadsheetSetTo(opts: {
+  public async backupSpreadsheetSetZipTo(opts: {
     rootId: string;
     segments: string[];
     periodKey: string;
@@ -1321,12 +1326,13 @@ export class GoogleSheetsSyncService {
     folderId?: string;
     folderUrl?: string;
     name?: string;
+    fileId?: string;
     url?: string;
     total?: number;
-    copied?: number;
-    existing?: number;
+    exported?: number;
+    existing?: boolean;
+    sizeBytes?: number;
     deletedOld?: number;
-    files?: Array<{ title: string; fileId: string; name: string; url?: string }>;
     errors?: Array<{ title: string; error: string }>;
     reason?: string;
     error?: string;
@@ -1344,59 +1350,51 @@ export class GoogleSheetsSyncService {
     try {
       const folderId = await this.ensureDriveFolderPath(opts.segments || [], rootId);
       if (!folderId) return { ok: false, reason: 'BACKUP_FOLDER_UNAVAILABLE' };
+      const folderUrl = `https://drive.google.com/drive/folders/${folderId}`;
+      const zipName = `UMB_NHANSU_${periodKey}.zip`;
 
-      // Danh sách file đã có trong kỳ (1 lần gọi) để chạy lại không tạo bản trùng.
-      const existingByName = new Map<string, { id: string; url?: string }>();
+      // Kỳ đã có ZIP → dùng lại (idempotent, không upload trùng).
       try {
-        const listed: any = await this.driveClient.files.list({
-          q: `'${folderId}' in parents and trashed = false`,
-          fields: 'files(id,name,webViewLink)',
-          pageSize: 1000,
+        const dup: any = await this.driveClient.files.list({
+          q: `name = '${zipName.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}' and '${folderId}' in parents and trashed = false`,
+          fields: 'files(id,name,webViewLink,size)',
+          pageSize: 1,
           supportsAllDrives: true,
           includeItemsFromAllDrives: true,
         } as any);
-        for (const f of listed?.data?.files || []) {
-          if (f?.name) existingByName.set(String(f.name), { id: String(f.id), url: f.webViewLink ? String(f.webViewLink) : undefined });
+        const found = dup?.data?.files?.[0];
+        if (found?.id) {
+          const deletedOld = await this.pruneBackupPeriods(rootId, periodKey, Number(opts.keep || 30));
+          return {
+            ok: true,
+            folderId,
+            folderUrl,
+            name: zipName,
+            fileId: String(found.id),
+            url: found.webViewLink || folderUrl,
+            total: sources.length,
+            exported: 0,
+            existing: true,
+            sizeBytes: Number(found.size || 0),
+            deletedOld,
+            errors: [],
+          };
         }
-      } catch { /* chưa đọc được: vẫn copy, tên trùng sẽ do Drive xử lý */ }
+      } catch { /* chưa đọc được danh sách: vẫn export + upload bình thường */ }
 
-      const files: Array<{ title: string; fileId: string; name: string; url?: string }> = [];
+      const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      const entries: ZipEntry[] = [];
       const errors: Array<{ title: string; error: string }> = [];
-      let copied = 0;
-      let existing = 0;
 
       for (const src of sources) {
-        const fileName = `${src.title}_${periodKey}`;
-        const hit = existingByName.get(fileName);
-        if (hit?.id) {
-          existing += 1;
-          files.push({ title: src.title, fileId: hit.id, name: fileName, url: hit.url });
-          continue;
-        }
         try {
-          const dup: any = await this.driveClient.files.list({
-            q: `name = '${fileName.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}' and '${folderId}' in parents and trashed = false`,
-            fields: 'files(id,name,webViewLink)',
-            pageSize: 1,
-            supportsAllDrives: true,
-            includeItemsFromAllDrives: true,
-          } as any);
-          const found = dup?.data?.files?.[0];
-          if (found?.id) {
-            existing += 1;
-            files.push({ title: src.title, fileId: String(found.id), name: fileName, url: found.webViewLink });
-            continue;
-          }
-          const result: any = await this.driveClient.files.copy({
-            fileId: src.spreadsheetId,
-            requestBody: { name: fileName, parents: [folderId] },
-            fields: 'id,name,webViewLink',
-            supportsAllDrives: true,
-          } as any);
-          const fileId = String(result?.data?.id || '');
-          if (!fileId) throw new Error('DRIVE_COPY_RETURNED_NO_ID');
-          copied += 1;
-          files.push({ title: src.title, fileId, name: fileName, url: result?.data?.webViewLink });
+          const resp: any = await this.driveClient.files.export(
+            { fileId: src.spreadsheetId, mimeType: XLSX_MIME },
+            { responseType: 'arraybuffer' } as any,
+          );
+          const buf = Buffer.isBuffer(resp?.data) ? resp.data : Buffer.from(resp?.data || []);
+          if (buf.length === 0) throw new Error('EXPORT_EMPTY');
+          entries.push({ name: `${src.title}_${periodKey}.xlsx`, data: buf });
         } catch (err: any) {
           errors.push({ title: src.title, error: String(err?.message || err) });
         }
@@ -1404,30 +1402,63 @@ export class GoogleSheetsSyncService {
 
       const deletedOld = await this.pruneBackupPeriods(rootId, periodKey, Number(opts.keep || 30));
 
-      if (copied > 0) {
-        console.log(
-          `[BackupSheets] Đã copy ${copied} bảng (${existing} đã có) vào ${opts.segments?.join('/') || periodKey}`
-          + ` | lỗi ${errors.length}`,
+      if (errors.length > 0) {
+        console.warn(
+          `[BackupSheets] Export lỗi ${errors.length}/${sources.length} bảng — KHÔNG upload ZIP ${zipName}`
+          + ` (${errors.map(e => e.title).join(', ')})`,
         );
+        return {
+          ok: false,
+          folderId,
+          folderUrl,
+          name: zipName,
+          total: sources.length,
+          exported: entries.length,
+          deletedOld,
+          errors,
+          reason: 'DRIVE_EXPORT_PARTIAL',
+          error: errors.map(e => `${e.title}: ${e.error}`).join('; '),
+        };
       }
 
-      const ok = errors.length === 0 && files.length > 0;
+      const zipBuf = buildZipStore(entries);
+      const uploaded: any = await this.driveClient.files.create({
+        requestBody: {
+          name: zipName,
+          parents: [folderId],
+          mimeType: 'application/zip',
+        },
+        media: {
+          mimeType: 'application/zip',
+          body: Readable.from(zipBuf),
+        },
+        fields: 'id,name,webViewLink,size',
+        supportsAllDrives: true,
+      } as any);
+      const fileId = String(uploaded?.data?.id || '');
+      if (!fileId) throw new Error('DRIVE_UPLOAD_RETURNED_NO_ID');
+
+      console.log(
+        `[BackupSheets] Đã tạo ${zipName}: ${entries.length} bảng,`
+        + ` ${(zipBuf.length / 1024 / 1024).toFixed(2)} MB → ${opts.segments?.join('/') || periodKey}`,
+      );
+
       return {
-        ok,
+        ok: true,
         folderId,
-        folderUrl: `https://drive.google.com/drive/folders/${folderId}`,
-        name: `UMB_NHANSU_${periodKey}`,
-        url: `https://drive.google.com/drive/folders/${folderId}`,
+        folderUrl,
+        name: zipName,
+        fileId,
+        url: uploaded?.data?.webViewLink || folderUrl,
         total: sources.length,
-        copied,
-        existing,
+        exported: entries.length,
+        existing: false,
+        sizeBytes: zipBuf.length,
         deletedOld,
-        files,
-        errors,
-        ...(ok ? {} : { reason: errors.length ? 'DRIVE_COPY_PARTIAL' : 'BACKUP_FAILED' }),
+        errors: [],
       };
     } catch (err: any) {
-      console.warn(`[BackupSheets] Lỗi copy bộ bảng (${periodKey}):`, err?.message || err);
+      console.warn(`[BackupSheets] Lỗi tạo ZIP backup (${periodKey}):`, err?.message || err);
       return { ok: false, reason: 'DRIVE_ERROR', error: String(err?.message || err) };
     }
   }

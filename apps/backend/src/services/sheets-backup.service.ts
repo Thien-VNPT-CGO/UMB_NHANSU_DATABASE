@@ -72,15 +72,19 @@ export interface SheetsBackupResult {
   slotKey: string;
   at: string;
   name: string;
-  /** Folder kỳ chứa các bản copy (01/02/03/<kỳ>). */
+  /** Folder kỳ chứa file ZIP (01/02/03/<kỳ>). */
   folderId: string | null;
   folderUrl: string | null;
-  /** Giữ để tương thích UI cũ: link tới folder kỳ. */
+  /** ID file ZIP của kỳ (link tải trực tiếp). */
   fileId: string | null;
   url: string | null;
+  /** Số bảng nghiệp vụ đóng trong ZIP. */
   total: number;
-  copied: number;
-  existing: number;
+  /** Số bảng export XLSX thành công trong lần chạy này. */
+  exported: number;
+  /** Kỳ đã có ZIP từ trước (không upload trùng). */
+  existing: boolean;
+  sizeBytes: number;
   deletedOld: number;
   errors: Array<{ title: string; error: string }>;
   error: string | null;
@@ -206,12 +210,13 @@ export function dashboardSnapshotFromState(state: SheetsBackupState): any | null
     last_ok_at: daily.ok ? daily.at : (state.last_ok_at || null),
     last_error: daily.ok ? null : daily.error,
     last_error_at: daily.ok ? null : daily.at,
-    last_file_id: daily.folderId || daily.fileId || null,
+    last_file_id: daily.fileId || daily.folderId || null,
     last_folder_id: daily.folderId || null,
-    last_url: daily.folderUrl || daily.url || null,
+    last_url: daily.url || daily.folderUrl || null,
     last_name: daily.name || null,
     last_slot: daily.slotKey || null,
     last_files: Number(daily.total || 0),
+    last_size_bytes: Number((daily as any).sizeBytes || 0),
     last_deleted_old: Number(daily.deletedOld || 0),
     mode: 'SHEETS',
   };
@@ -370,7 +375,7 @@ export class SheetsDriveBackupScheduler {
   private async run(period: { kind: SheetsBackupKind; slotKey: string }, manual = false): Promise<SheetsBackupResult> {
     const startedAt = Date.now();
     const at = new Date().toISOString();
-    const name = `UMB_NHANSU_${period.slotKey}${manual ? '_manual' : ''}`;
+    const name = `UMB_NHANSU_${period.slotKey}.zip`;
     const result: SheetsBackupResult = {
       kind: period.kind,
       ok: false,
@@ -382,8 +387,9 @@ export class SheetsDriveBackupScheduler {
       folderId: null,
       folderUrl: null,
       total: 0,
-      copied: 0,
-      existing: 0,
+      exported: 0,
+      existing: false,
+      sizeBytes: 0,
       deletedOld: 0,
       errors: [],
       error: null,
@@ -392,10 +398,10 @@ export class SheetsDriveBackupScheduler {
 
     try {
       const sync = this.syncService;
-      if (!sync?.backupSpreadsheetSetTo) throw new Error('SYNC_SERVICE_NOT_READY');
+      if (!sync?.backupSpreadsheetSetZipTo) throw new Error('SYNC_SERVICE_NOT_READY');
       const sources = listSeparatedSheetSources();
       if (sources.length === 0) throw new Error('BACKUP_NO_SOURCES');
-      const res = await sync.backupSpreadsheetSetTo({
+      const res = await sync.backupSpreadsheetSetZipTo({
         rootId: sheetsBackupRootId(period.kind),
         segments: [period.slotKey],
         periodKey: period.slotKey,
@@ -404,11 +410,12 @@ export class SheetsDriveBackupScheduler {
       });
       result.folderId = res.folderId || null;
       result.folderUrl = res.folderUrl || null;
-      result.url = res.folderUrl || res.url || null;
-      result.fileId = res.folderId || null;
+      result.fileId = res.fileId || null;
+      result.url = res.url || res.folderUrl || null;
       result.total = Number(res.total || sources.length);
-      result.copied = Number(res.copied || 0);
-      result.existing = Number(res.existing || 0);
+      result.exported = Number(res.exported || 0);
+      result.existing = !!res.existing;
+      result.sizeBytes = Number(res.sizeBytes || 0);
       result.deletedOld = Number(res.deletedOld || 0);
       result.errors = Array.isArray(res.errors) ? res.errors : [];
       if (!res?.ok) {
@@ -430,8 +437,10 @@ export class SheetsDriveBackupScheduler {
     if (result.ok) {
       console.log(
         `[backup-sheets] ${period.kind}${manual ? ' (chạy tay)' : ''} OK ${result.name}`
-        + ` | ${result.copied} bảng copy mới + ${result.existing}/${result.total} đã có`
-        + ` | ${result.url || result.folderId} | dọn ${result.deletedOld} kỳ cũ (${result.durationMs}ms)`,
+        + ` | ${result.exported}/${result.total} bảng`
+        + ` | ${(result.sizeBytes / 1024 / 1024).toFixed(2)} MB`
+        + (result.existing ? ' (đã có, dùng lại)' : '')
+        + ` | ${result.url || result.folderUrl} | dọn ${result.deletedOld} kỳ cũ (${result.durationMs}ms)`,
       );
     } else {
       console.warn(`[backup-sheets] ${period.kind}${manual ? ' (chạy tay)' : ''} LỖI ${result.name}: ${result.error}`);
@@ -480,11 +489,12 @@ export class SheetsDriveBackupScheduler {
         ? {
           last_backup_date: vnToday,
           last_ok_at: result.at,
-          last_file_id: result.folderId,
+          last_file_id: result.fileId,
           last_folder_id: result.folderId,
-          last_url: result.folderUrl,
+          last_url: result.url || result.folderUrl,
           last_name: result.name,
           last_files: result.total,
+          last_size_bytes: result.sizeBytes,
           last_deleted_old: result.deletedOld,
           last_slot: result.slotKey,
           last_error: null,

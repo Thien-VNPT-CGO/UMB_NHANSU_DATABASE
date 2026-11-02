@@ -94,14 +94,15 @@ test('sheets: tóm tắt dashboard lấy từ state file (giờ VN)', () => {
         ok: true,
         slotKey: '2026-11-01',
         at: '2026-11-01T19:00:30.000Z',
-        name: 'UMB_NHANSU_2026-11-01',
-        fileId: 'FOLDER1',
+        name: 'UMB_NHANSU_2026-11-01.zip',
+        fileId: 'ZIP1',
         folderId: 'FOLDER1',
         folderUrl: 'https://drive.google.com/drive/folders/FOLDER1',
-        url: 'https://drive.google.com/drive/folders/FOLDER1',
+        url: 'https://drive.google.com/file/d/ZIP1/view',
         total: 25,
-        copied: 25,
-        existing: 0,
+        exported: 25,
+        existing: false,
+        sizeBytes: 8388608,
         errors: [],
         deletedOld: 2,
         error: null,
@@ -112,10 +113,11 @@ test('sheets: tóm tắt dashboard lấy từ state file (giờ VN)', () => {
   const s = dashboardSnapshotFromState(state);
   assert.equal(s.last_backup_date, '2026-11-02');
   assert.equal(s.last_slot, '2026-11-01');
-  assert.equal(s.last_file_id, 'FOLDER1');
+  assert.equal(s.last_file_id, 'ZIP1');
   assert.equal(s.last_folder_id, 'FOLDER1');
-  assert.equal(s.last_url, 'https://drive.google.com/drive/folders/FOLDER1');
+  assert.equal(s.last_url, 'https://drive.google.com/file/d/ZIP1/view');
   assert.equal(s.last_files, 25);
+  assert.equal(s.last_size_bytes, 8388608);
   assert.equal(s.last_deleted_old, 2);
   assert.equal(s.last_error, null);
 

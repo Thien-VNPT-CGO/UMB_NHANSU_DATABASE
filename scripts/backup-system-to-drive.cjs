@@ -8,8 +8,9 @@
  * KHÔNG còn dùng file tổng hợp UMB_NHANSU_DATABASE
  * (1UO1UF1d7_YzaCltYt2m9pRnUauGWw873ERqAMxwL-6k) làm nguồn backup.
  *
- * Cấu trúc mỗi kỳ: <thư mục gốc>/<kỳ>/<TÊN_BẢNG>_<kỳ>
- *   VD: 01. BACKUP_DATA_DAY/2026-11-01/NHAN_VIEN_MASTER_2026-11-01
+ * Cấu trúc mỗi kỳ: <thư mục gốc>/<kỳ>/UMB_NHANSU_<kỳ>.zip
+ *   Bên trong ZIP: <TÊN_BẢNG>_<kỳ>.xlsx (đủ 25 bảng)
+ *   VD: 01. BACKUP_DATA_DAY/2026-11-01/UMB_NHANSU_2026-11-01.zip
  *
  * Target Drive Folder ID mặc định: 1GaPSvNcbINMtG90aQ-KzL2SPLxUG9JkG
  * (01. BACKUP_DATA_DAY bên trong UMBOMILK_DATABASE)
@@ -223,46 +224,143 @@ async function ensureFolder(drive, parentId, name) {
   return created.data.id;
 }
 
-/** Copy 25 bảng riêng vào folder kỳ. Idempotent theo tên file. */
-async function backupSeparatedSheets(drive, folderId, slotKey, sources) {
-  const existing = new Set();
-  let pageToken;
-  do {
-    const res = await drive.files.list({
-      q: `'${folderId}' in parents and trashed = false`,
-      fields: 'nextPageToken, files(id,name)',
-      pageSize: 1000,
-      pageToken,
-      supportsAllDrives: true,
-      includeItemsFromAllDrives: true,
-    });
-    for (const f of res.data.files || []) existing.add(f.name);
-    pageToken = res.data.nextPageToken;
-  } while (pageToken);
+// ---------------------------------------------------------------------------
+// ZIP builder tối giản (STORE) — XLSX đã nén sẵn bên trong nên không cần DEFLATE.
+// ---------------------------------------------------------------------------
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
 
-  let copied = 0;
-  let skipped = 0;
-  const errors = [];
-  for (const src of sources) {
-    const name = `${src.title}_${slotKey}`;
-    if (existing.has(name)) { skipped += 1; continue; }
-    try {
-      await drive.files.copy({
-        fileId: src.spreadsheetId,
-        requestBody: { name, parents: [folderId] },
-        fields: 'id,name',
-        supportsAllDrives: true,
-      });
-      copied += 1;
-      console.log(`[Backup]   + ${name}`);
-    } catch (err) {
-      errors.push({ title: src.title, error: err.message });
-      console.warn(`[Backup]   ⚠ ${name}: ${err.message}`);
-    }
+function crc32(buf) {
+  let c = 0xffffffff;
+  for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+function buildZipStore(entries) {
+  const chunks = [];
+  const central = [];
+  let offset = 0;
+  const now = new Date();
+  const time = ((now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1)) & 0xffff;
+  const date = ((((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate())) & 0xffff;
+  for (const entry of entries) {
+    const nameBuf = Buffer.from(entry.name, 'utf8');
+    const crc = crc32(entry.data);
+    const size = entry.data.length;
+    const local = Buffer.alloc(30 + nameBuf.length);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0x0800, 6);
+    local.writeUInt16LE(0, 8);
+    local.writeUInt16LE(time, 10);
+    local.writeUInt16LE(date, 12);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(size, 18);
+    local.writeUInt32LE(size, 22);
+    local.writeUInt16LE(nameBuf.length, 26);
+    local.writeUInt16LE(0, 28);
+    nameBuf.copy(local, 30);
+    chunks.push(local, entry.data);
+
+    const cd = Buffer.alloc(46 + nameBuf.length);
+    cd.writeUInt32LE(0x02014b50, 0);
+    cd.writeUInt16LE(20, 4);
+    cd.writeUInt16LE(20, 6);
+    cd.writeUInt16LE(0x0800, 8);
+    cd.writeUInt16LE(0, 10);
+    cd.writeUInt16LE(time, 12);
+    cd.writeUInt16LE(date, 14);
+    cd.writeUInt32LE(crc, 16);
+    cd.writeUInt32LE(size, 20);
+    cd.writeUInt32LE(size, 24);
+    cd.writeUInt16LE(nameBuf.length, 28);
+    cd.writeUInt16LE(0, 30);
+    cd.writeUInt16LE(0, 32);
+    cd.writeUInt16LE(0, 34);
+    cd.writeUInt16LE(0, 36);
+    cd.writeUInt32LE(0, 38);
+    cd.writeUInt32LE(offset, 42);
+    nameBuf.copy(cd, 46);
+    central.push(cd);
+    offset += local.length + size;
+  }
+  const centralSize = central.reduce((s, b) => s + b.length, 0);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(0, 4);
+  end.writeUInt16LE(0, 6);
+  end.writeUInt16LE(central.length, 8);
+  end.writeUInt16LE(central.length, 10);
+  end.writeUInt32LE(centralSize, 12);
+  end.writeUInt32LE(offset, 16);
+  end.writeUInt16LE(0, 20);
+  return Buffer.concat([...chunks, ...central, end]);
+}
+
+/**
+ * Export 25 bảng riêng ra XLSX rồi đóng thành 1 file ZIP cho mỗi kỳ.
+ * Idempotent theo tên ZIP: kỳ đã có file thì bỏ qua.
+ */
+async function backupSeparatedSheetsZip(drive, folderId, slotKey, sources) {
+  const zipName = `UMB_NHANSU_${slotKey}.zip`;
+  const dup = await drive.files.list({
+    q: `name = '${zipName.replace(/'/g, "\\'")}' and '${folderId}' in parents and trashed = false`,
+    fields: 'files(id,name,webViewLink)',
+    pageSize: 1,
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
+  });
+  const found = dup.data.files?.[0];
+  if (found?.id) {
+    console.log(`[Backup] ZIP kỳ này đã có, dùng lại: ${found.name} (${found.id})`);
+    return;
   }
 
-  console.log(`[Backup] Bảng: ${copied} copy mới, ${skipped} đã có, ${errors.length} lỗi / ${sources.length} tổng.`);
-  if (errors.length > 0) throw new Error(`Copy lỗi ${errors.length}/${sources.length} bảng`);
+  const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  const entries = [];
+  const errors = [];
+  for (const src of sources) {
+    try {
+      const res = await drive.files.export(
+        { fileId: src.spreadsheetId, mimeType: XLSX },
+        { responseType: 'arraybuffer' },
+      );
+      const buf = Buffer.from(res.data);
+      if (!buf.length) throw new Error('EXPORT_EMPTY');
+      entries.push({ name: `${src.title}_${slotKey}.xlsx`, data: buf });
+      console.log(`[Backup]   + ${src.title}_${slotKey}.xlsx (${(buf.length / 1024 / 1024).toFixed(2)} MB)`);
+    } catch (err) {
+      errors.push({ title: src.title, error: err.message });
+      console.warn(`[Backup]   ⚠ Export lỗi ${src.title}: ${err.message}`);
+    }
+  }
+  if (errors.length > 0) {
+    throw new Error(`Export lỗi ${errors.length}/${sources.length} bảng — không upload ZIP thiếu`);
+  }
+
+  const zipBuf = buildZipStore(entries);
+  console.log(`[Backup] Đang upload ZIP ${(zipBuf.length / 1024 / 1024).toFixed(2)} MB (${entries.length} bảng)...`);
+  const upload = await drive.files.create({
+    requestBody: {
+      name: zipName,
+      parents: [folderId],
+      mimeType: 'application/zip',
+    },
+    media: {
+      mimeType: 'application/zip',
+      body: require('stream').Readable.from(zipBuf),
+    },
+    fields: 'id,name,webViewLink,size',
+    supportsAllDrives: true,
+  });
+  console.log(`[Backup] ✅ Đã tạo ZIP: ${zipName} (ID: ${upload.data.id})`);
 }
 
 async function main() {
@@ -279,17 +377,17 @@ async function main() {
   const stamp = nowVN.toISOString().replace(/T/, '_').replace(/:/g, '-').slice(0, 19);
   const slotKey = resolveSlotKey(selectedTier, nowVN);
 
-  // A. BACKUP 25 GOOGLE SHEETS RIÊNG (database đã tách bảng)
+  // A. BACKUP 25 GOOGLE SHEETS RIÊNG → 1 FILE ZIP (database đã tách bảng)
   //    KHÔNG copy file tổng hợp UMB_NHANSU_DATABASE nữa.
   try {
     const sources = loadSeparatedSheets();
     console.log(`[Backup] Kỳ ${slotKey}: tạo/kiểm tra folder trên Drive...`);
     const folderId = await ensureFolder(drive, TARGET_FOLDER_ID, slotKey);
     console.log(`[Backup] Folder kỳ: https://drive.google.com/drive/folders/${folderId}`);
-    await backupSeparatedSheets(drive, folderId, slotKey, sources);
-    console.log(`[Backup] ✅ Đã backup ${sources.length} bảng vào kỳ ${slotKey}.`);
+    await backupSeparatedSheetsZip(drive, folderId, slotKey, sources);
+    console.log(`[Backup] ✅ Đã backup ${sources.length} bảng vào ZIP kỳ ${slotKey}.`);
   } catch (err) {
-    console.error(`[Backup] ❌ Lỗi backup 25 bảng: ${err.message}`);
+    console.error(`[Backup] ❌ Lỗi backup ZIP 25 bảng: ${err.message}`);
     throw err;
   }
 
