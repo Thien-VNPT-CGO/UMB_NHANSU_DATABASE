@@ -37,3 +37,28 @@ test('tháng VN: sang tháng mới danh sách tháng cũ tự rỗng', () => {
     ['moi'],
   );
 });
+
+test('tháng phiếu: ưu tiên epoch trong mã phiếu hơn created_at bị gán lại', () => {
+  const epochThang10 = Date.parse('2026-10-31T10:00:00.000Z'); // 17:00 VN 31/10
+  const phieu = {
+    id: 'x',
+    adjustment_id: `ADJ_${epochThang10}_654321`,
+    // created_at bị gán lại thành thời điểm pull trong tháng 11.
+    created_at: '2026-11-02T03:00:00.000Z',
+  };
+  assert.equal(AttendanceService.adjustmentMonthKeyOf(phieu), '2026-10');
+  // Phiếu tháng 10 không được lọt vào danh sách tháng 11.
+  assert.deepEqual(
+    AttendanceService.filterAdjustmentsByVnMonth([phieu], new Date('2026-11-15T05:00:00.000Z')),
+    [],
+  );
+});
+
+test('tháng phiếu: mã legacy/không đúng mẫu rớt về created_at', () => {
+  assert.equal(
+    AttendanceService.adjustmentMonthKeyOf({ adjustment_id: 'ADJ_001', created_at: '2026-10-31T17:00:00.000Z' }),
+    '2026-11',
+  );
+  assert.equal(AttendanceService.adjustmentMonthKeyOf({ adjustment_id: 'ADJ_abc', created_at: '' }), '');
+  assert.equal(AttendanceService.adjustmentMonthKeyOf(null), '');
+});

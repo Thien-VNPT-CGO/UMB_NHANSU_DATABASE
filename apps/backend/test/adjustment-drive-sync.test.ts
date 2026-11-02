@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  adjustmentCreatedMs,
   adjustmentDriveLocation,
   adjustmentRequestStatusLabel,
   buildAdjustmentRequestTxt,
@@ -107,4 +108,25 @@ test('adjustment drive: chỉ đồng bộ phiếu đã duyệt', () => {
   assert.equal(shouldSyncAdjustmentToDrive(adj({ status: 'PENDING' })), false);
   assert.equal(shouldSyncAdjustmentToDrive(adj({ status: 'REJECTED', review_note: 'Tự động từ chối' })), false);
   assert.equal(shouldSyncAdjustmentToDrive(null), false);
+});
+
+test('adjustment drive: mốc tạo ưu tiên epoch trong mã phiếu (created_at lệch sau restart)', () => {
+  const epoch = Date.parse('2026-10-31T10:00:00.000Z'); // 17:00 VN ngày 31/10
+  // created_at bị gán lại thành thời điểm pull (tháng 11) nhưng mã phiếu vẫn là 31/10.
+  const a = adj({ adjustment_id: `ADJ_${epoch}_123456`, created_at: '2026-11-02T04:43:00.000Z' });
+  assert.equal(adjustmentCreatedMs(a, Date.now()), epoch);
+  // Ngày gửi trên Drive phải theo epoch -> 31/10, không nhảy sang 02/11.
+  assert.equal(adjustmentDriveLocation(a, EMP).day, '2026-10-31');
+  assert.match(buildAdjustmentRequestTxt(a, EMP), /Ngày gửi {8}: 31\/10\/2026 17:00 \(giờ VN\)/);
+});
+
+test('adjustment drive: mã phiếu legacy/hỏng rớt về created_at rồi now', () => {
+  assert.equal(
+    adjustmentCreatedMs(adj({ adjustment_id: 'ADJ_001' }), 1),
+    Date.parse('2026-11-02T04:43:00.000Z'),
+  );
+  assert.equal(adjustmentCreatedMs(adj({ adjustment_id: 'ADJ_123', created_at: '' }), 777), 777);
+  assert.equal(adjustmentCreatedMs({ adjustment_id: 'ADJ_1793595222829_691988', created_at: '' }, 1), 1793595222829);
+  // Mã phiếu không có hậu tố random (chỉ ADJ_<epoch>) vẫn lấy được epoch.
+  assert.equal(adjustmentCreatedMs({ adjustment_id: 'ADJ_1793595222829', created_at: '' }, 1), 1793595222829);
 });

@@ -78,6 +78,17 @@ export function shouldSyncAdjustmentToDrive(adj: any): boolean {
   return String(adj?.status || '').toUpperCase() === 'APPROVED';
 }
 
+/** Mốc tạo phiếu: ưu tiên epoch nhúng trong mã phiếu, rớt về created_at/now. */
+export function adjustmentCreatedMs(adj: any, nowMs: number = Date.now()): number {
+  const m = String(adj?.adjustment_id || '').match(/^ADJ_(\d{12,13})(?:_|$)/);
+  if (m) {
+    const t = Number(m[1]);
+    if (Number.isFinite(t) && t > 0) return t;
+  }
+  const parsed = Date.parse(String(adj?.created_at || ''));
+  return Number.isFinite(parsed) ? parsed : nowMs;
+}
+
 /**
  * Cây thư mục Drive của 1 phiếu: <ngày gửi VN>/<Tên NV - Mã NV>.
  * VD: 2026-11-02/Nguyễn Văn A - EMP001
@@ -87,7 +98,7 @@ export function adjustmentDriveLocation(
   employee?: { full_name?: string; employee_code?: string } | null,
   nowMs: number = Date.now(),
 ): { day: string; empFolder: string; hhmm: string; segments: string[] } {
-  const createdMs = Date.parse(String(adj?.created_at || '')) || nowMs;
+  const createdMs = adjustmentCreatedMs(adj, nowMs);
   const vn = new Date(createdMs + 7 * 3_600_000);
   const day = vn.toISOString().slice(0, 10);
   const hhmm = `${pad2(vn.getUTCHours())}-${pad2(vn.getUTCMinutes())}`;
@@ -104,8 +115,7 @@ export function buildAdjustmentRequestTxt(
   imageFileId?: string,
   nowMs: number = Date.now(),
 ): string {
-  const loc = adjustmentDriveLocation(adj, employee, nowMs);
-  const createdMs = Date.parse(String(adj?.created_at || '')) || nowMs;
+  const createdMs = adjustmentCreatedMs(adj, nowMs);
   const vn = new Date(createdMs + 7 * 3_600_000);
   const fmtVn = (ms: number) => {
     const d = new Date(ms + 7 * 3_600_000);

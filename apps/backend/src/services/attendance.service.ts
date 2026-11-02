@@ -884,13 +884,27 @@ export class AttendanceService {
   }
 
   /**
+   * Khóa tháng VN của 1 phiếu: ưu tiên epoch nhúng trong mã phiếu
+   * (`ADJ_<epoch-ms>_<rand>`) vì `created_at` có thể bị gán lại sau restart/pull.
+   */
+  static adjustmentMonthKeyOf(adj: any): string {
+    const id = String((adj as any)?.adjustment_id || '');
+    const m = id.match(/^ADJ_(\d{12,13})(?:_|$)/);
+    if (m) {
+      const t = Number(m[1]);
+      if (Number.isFinite(t) && t > 0) return AttendanceService.vnDateStr(new Date(t)).slice(0, 7);
+    }
+    return AttendanceService.vnMonthKeyOf((adj as any)?.created_at);
+  }
+
+  /**
    * Cổng admin chỉ hiển thị phiếu của THÁNG hiện tại (giờ VN): hết tháng thì
    * phiếu tháng cũ tự ẩn khỏi màn hình (dữ liệu vẫn còn trong Sheets/Drive để
    * đối soát — KHÔNG xóa). Sang tháng mới tự hiển thị phiếu tháng mới.
    */
   static filterAdjustmentsByVnMonth(list: any[], now: Date = new Date()): any[] {
     const month = AttendanceService.vnDateStr(now).slice(0, 7);
-    return (list || []).filter((a: any) => AttendanceService.vnMonthKeyOf((a as any)?.created_at) === month);
+    return (list || []).filter((a: any) => AttendanceService.adjustmentMonthKeyOf(a) === month);
   }
 
   /** Thứ Hai đầu tuần (giờ VN) của ngày YYYY-MM-DD. */

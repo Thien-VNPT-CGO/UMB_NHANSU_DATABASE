@@ -11796,7 +11796,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   if (activeTab === 'hr-adjustments') {
     // Chỉ phiếu thuộc THÁNG hiện tại (giờ VN) — hết tháng tự ẩn khỏi cổng admin,
     // sang tháng mới hiển thị phiếu tháng mới; lịch sử vẫn đủ trên Drive.
+    // Ưu tiên epoch trong mã phiếu (ADJ_<epoch>_...) vì created_at có thể bị
+    // gán lại sau restart/pull khiến phiếu tháng cũ lọt sang tháng mới.
     const adjMonthOf = (a: any) => {
+      const id = String(a?.adjustment_id || '');
+      const m = id.match(/^ADJ_(\d{12,13})(?:_|$)/);
+      if (m) {
+        const t = Number(m[1]);
+        if (Number.isFinite(t) && t > 0) return new Date(t + 7 * 3_600_000).toISOString().slice(0, 7);
+      }
       const t = Date.parse(String(a?.created_at || ''));
       return Number.isFinite(t) ? new Date(t + 7 * 3_600_000).toISOString().slice(0, 7) : '';
     };
