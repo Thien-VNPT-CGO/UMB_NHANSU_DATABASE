@@ -1482,46 +1482,50 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   }
 
   async createAttendanceAdjustment(adj: any) {
-    // Ảnh bằng chứng kèm phiếu: upload Drive trước, chỉ lưu Drive file ID (mirror recordAttendanceEvent).
-    // FIX HR không thấy ảnh: trước đây chỉ upload khi Sheets configured -> Drive chưa cấu hình
-    // hoặc upload lỗi là ảnh bị `delete` mất vĩnh viễn, HR thấy "—". Nay luôn thử upload;
-    // thất bại thì giữ base64 inline (evidence_photo) để endpoint /photo phục vụ fallback.
-    if (adj.photo_base64) {
-      // Lưu ngay xuống đĩa (bền vững qua restart/rebuild)
-      if (adj.adjustment_id) {
-        saveAdjustmentPhotoDisk(adj.adjustment_id, adj.photo_base64);
-      }
+    // PHIẾU BỔ SUNG CÔNG -> Drive realtime (folder 06. PHIẾU BỔ SUNG CÔNG):
+    //   <ngày gửi>/<Tên NV - Mã NV>/PHIEU_<giờ>_<id>.txt + ANH_<giờ>_<id>.jpg
+    // Ảnh Upload Drive trước, chỉ lưu Drive file ID (mirror recordAttendanceEvent).
+    // Ảnh vẫn lưu xuống đĩa để endpoint /photo phục vụ fallback khi Drive lỗi.
+    const employee = adj.employee_id
+      ? await this.fallbackAdapter.getEmployeeById(adj.employee_id).catch(() => null)
+      : null;
+    if (adj.photo_base64 && adj.adjustment_id) {
+      saveAdjustmentPhotoDisk(adj.adjustment_id, adj.photo_base64);
+    }
+    const syncSvc: any = this.syncService;
+    let firstDriveOk = false;
+    if (typeof syncSvc?.syncAdjustmentRequestToDrive === 'function') {
       try {
-        const day = String(adj.reason || '').match(/(\d{4}-\d{2}-\d{2})/)?.[1]
-          || vnDayOfIso(new Date().toISOString());
-        const month = day.slice(0, 7);
-        const fileName = `ADJ_${safeDriveSeg(adj.adjustment_id || Date.now())}.jpg`;
-        const segments = [
-          `backup_${month}`,
-          'DIEU_CHINH_CONG',
-          day,
-          safeDriveSeg(adj.employee_id || 'KHONG_NV'),
-        ];
-        const base64 = String(adj.photo_base64).replace(/^data:image\/\w+;base64,/, '');
-        const buffer = Buffer.from(base64, 'base64');
-        const driveResult = typeof (this.syncService as any).uploadBufferToDrivePath === 'function'
-          ? await this.syncService.uploadBufferToDrivePath(fileName, 'image/jpeg', buffer, segments)
-          : await this.syncService.uploadImageToDrive(fileName, 'image/jpeg', adj.photo_base64);
-        if (driveResult?.fileId && !String(driveResult.fileId).startsWith('DRV_')) {
-          adj.evidence_drive_id = driveResult.fileId;
-        } else {
-          // Upload chưa thành công (DRIVE_NOT_CONFIGURED / lỗi mạng -> DRV_*): giữ inline.
-          adj.evidence_drive_id = driveResult?.fileId || `DRV_LOCAL_${Date.now()}`;
-          (adj as any).evidence_photo = adj.photo_base64;
+        const r = await syncSvc.syncAdjustmentRequestToDrive({
+          adjustment: { ...adj, created_at: adj.created_at || new Date().toISOString() },
+          employee,
+          photoBase64: adj.photo_base64,
+        });
+        firstDriveOk = !!r?.ok;
+        if (r?.imageFileId && !String(r.imageFileId).startsWith('DRV_')) {
+          adj.evidence_drive_id = r.imageFileId;
         }
       } catch (err) {
-        console.error('[GoogleSheetsAdapter] Drive upload evidence error:', err);
-        adj.evidence_drive_id = `DRV_LOCAL_${Date.now()}`;
-        (adj as any).evidence_photo = adj.photo_base64;
+        console.warn('[GoogleSheetsAdapter] Đồng bộ phiếu bù công lên Drive lỗi:', (err as any)?.message || err);
       }
     }
+    // Upload ảnh không thành công -> giữ base64 inline để HR vẫn xem được ảnh.
+    if (adj.photo_base64 && !adj.evidence_drive_id) {
+      adj.evidence_drive_id = `DRV_LOCAL_${Date.now()}`;
+      (adj as any).evidence_photo = adj.photo_base64;
+    }
+    const hadPhoto = !!adj.photo_base64;
     delete adj.photo_base64;
     const res = await this.fallbackAdapter.createAttendanceAdjustment(adj);
+    // Có ảnh + lần đầu đã ghi đủ (ảnh + txt) -> không cần ghi lại.
+    // Còn lại (phiếu không ảnh, hoặc lần đầu Drive lỗi) -> ghi txt theo bản ghi đã tạo.
+    if (typeof syncSvc?.syncAdjustmentRequestToDrive === 'function' && !(hadPhoto && firstDriveOk)) {
+      try {
+        await syncSvc.syncAdjustmentRequestToDrive({ adjustment: res, employee });
+      } catch (err) {
+        console.warn('[GoogleSheetsAdapter] Ghi file txt phiếu bù công lỗi:', (err as any)?.message || err);
+      }
+    }
     if (this.isConfigured) {
       const snapshot = { ...res };
       await this.enqueueDurableWrite('DIEU_CHINH_CONG', [[
@@ -1559,6 +1563,19 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
       }
     } else {
       this.scheduleFullSync('DIEU_CHINH_CONG.update');
+    }
+    // Realtime Drive: ghi đè file txt trong "06. PHIẾU BỔ SUNG CÔNG" để trạng
+    // thái mới (Đã duyệt / Từ chối / Tự động từ chối) hiện ngay trên Drive.
+    try {
+      const syncSvc: any = this.syncService;
+      if (typeof syncSvc?.syncAdjustmentRequestToDrive === 'function' && res) {
+        const employee = res.employee_id
+          ? await this.fallbackAdapter.getEmployeeById(res.employee_id).catch(() => null)
+          : null;
+        await syncSvc.syncAdjustmentRequestToDrive({ adjustment: res, employee });
+      }
+    } catch (err) {
+      console.warn('[GoogleSheetsAdapter] Cập nhật txt phiếu bù công trên Drive lỗi:', (err as any)?.message || err);
     }
     return res;
   }

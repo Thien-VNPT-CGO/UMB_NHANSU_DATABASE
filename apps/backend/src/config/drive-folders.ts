@@ -28,6 +28,9 @@ export const DRIVE_SUBFOLDERS = {
 
   /** 05. HỒ SƠ NHÂN VIÊN: Hợp đồng thử việc/chính thức + ảnh CCCD 2 mặt */
   EMPLOYEE_PROFILES: '1islQ2aS_ptHiqmA-A3ekRB9nyoycjajM',
+
+  /** 06. PHIẾU BỔ SUNG CÔNG: phiếu NV gửi (txt trạng thái + ảnh bằng chứng) */
+  ADJUSTMENT_REQUESTS: '1mBMaJnW3IBSYBCIqNgANETN4ZX45cKSe',
 };
 
 /** Tên thư mục gốc hồ sơ nhân viên trên Google Drive. */
@@ -45,6 +48,16 @@ export function getEmployeeProfilesFolder(): string {
 /** Thư mục gốc UMBOMILK_DATABASE (dùng làm fallback khi chưa cấu hình thư mục 05). */
 export function getDriveDatabaseRootFolder(): string {
   return String(process.env.GOOGLE_DRIVE_FOLDER_ID || '').trim() || DRIVE_ROOT_FOLDER_ID;
+}
+
+/**
+ * Thư mục "06. PHIẾU BỔ SUNG CÔNG" — nơi lưu phiếu bù công realtime:
+ *   <ngày gửi>/<Tên nhân viên - Mã NV>/<file .txt trạng thái> + <ảnh bằng chứng>
+ * Có thể ghi đè bằng env khi chạy ở Drive khác (VPS/cloud).
+ */
+export function getAdjustmentRequestsFolder(): string {
+  return String(process.env.GOOGLE_DRIVE_ADJUSTMENT_REQUESTS_FOLDER_ID || '').trim()
+    || DRIVE_SUBFOLDERS.ADJUSTMENT_REQUESTS;
 }
 
 /**

@@ -31,6 +31,7 @@ import { createDriveOAuthClient, describeDriveAuth, describeGoogleApiError, type
 import { uploadBufferViaDriveWebhook, downloadBufferViaDriveWebhook } from './drive-upload-webhook.js';
 import {
   DRIVE_EMPLOYEE_PROFILES_FOLDER_NAME,
+  getAdjustmentRequestsFolder,
   getAttendanceBranchLabel,
   getAttendanceFolderForBranch,
   getAttendanceRootFolder,
@@ -40,6 +41,95 @@ import {
 import { TAB_THEMES, buildSheetFormattingRequests, resolveTheme } from './sheets-beautifier.service.js';
 import { computeSheetsContentSignature, fingerprintSheetsContent } from '../utils/sheets-content-signature.js';
 import { getSpreadsheetIdForTab } from '../config/sheets-mapping.js';
+
+/** Tên segment Drive an toàn cho cây thư mục phiếu bù công. */
+function adjSafeSeg(value: unknown, fallback = 'KHONG_XAC_DINH'): string {
+  return String(value ?? '')
+    .replace(/[\\/:*?"<>|]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80) || fallback;
+}
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+/** Nhãn trạng thái hiển thị trong file txt (phân biệt tự từ chối do hết hạn). */
+export function adjustmentRequestStatusLabel(adj: any): string {
+  const st = String(adj?.status || 'PENDING');
+  if (st === 'APPROVED') return 'Đã duyệt';
+  if (st === 'REJECTED') {
+    return String(adj?.review_note || '').startsWith('Tự động từ chối')
+      ? 'Tự động từ chối (hết hạn)'
+      : 'Đã từ chối';
+  }
+  return 'Chờ duyệt';
+}
+
+/**
+ * Cây thư mục Drive của 1 phiếu: <ngày gửi VN>/<Tên NV - Mã NV>.
+ * VD: 2026-11-02/Nguyễn Văn A - EMP001
+ */
+export function adjustmentDriveLocation(
+  adj: any,
+  employee?: { full_name?: string; employee_code?: string } | null,
+  nowMs: number = Date.now(),
+): { day: string; empFolder: string; hhmm: string; segments: string[] } {
+  const createdMs = Date.parse(String(adj?.created_at || '')) || nowMs;
+  const vn = new Date(createdMs + 7 * 3_600_000);
+  const day = vn.toISOString().slice(0, 10);
+  const hhmm = `${pad2(vn.getUTCHours())}-${pad2(vn.getUTCMinutes())}`;
+  const empName = String(employee?.full_name || adj?.employee_id || 'KHONG_NV').trim();
+  const empCode = String(employee?.employee_code || adj?.employee_id || '').trim();
+  const empFolder = adjSafeSeg(empCode ? `${empName} - ${empCode}` : empName, 'KHONG_NV');
+  return { day, empFolder, hhmm, segments: [day, empFolder] };
+}
+
+/** Nội dung file txt mô tả phiếu — Lý do & số phút, trạng thái, ảnh, hạn duyệt. */
+export function buildAdjustmentRequestTxt(
+  adj: any,
+  employee?: { full_name?: string; employee_code?: string } | null,
+  imageFileId?: string,
+  nowMs: number = Date.now(),
+): string {
+  const loc = adjustmentDriveLocation(adj, employee, nowMs);
+  const createdMs = Date.parse(String(adj?.created_at || '')) || nowMs;
+  const vn = new Date(createdMs + 7 * 3_600_000);
+  const fmtVn = (ms: number) => {
+    const d = new Date(ms + 7 * 3_600_000);
+    return `${pad2(d.getUTCDate())}/${pad2(d.getUTCMonth() + 1)}/${d.getUTCFullYear()} `
+      + `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`;
+  };
+  const closeMs = Date.UTC(vn.getUTCFullYear(), vn.getUTCMonth(), vn.getUTCDate(), 21, 0, 0) - 7 * 3_600_000;
+  const deadlineMs = Math.min(createdMs + 30 * 60 * 1000, closeMs);
+  const empName = String(employee?.full_name || adj?.employee_id || 'KHONG_NV').trim();
+  const empCode = String(employee?.employee_code || adj?.employee_id || '').trim();
+  const approvedMinutes = adj?.status === 'APPROVED' && adj?.minutes_approved !== undefined
+    ? Number(adj.minutes_approved || 0)
+    : null;
+  return [
+    'PHIẾU BỔ SUNG CÔNG',
+    '==================================================',
+    `Mã phiếu        : ${adj?.adjustment_id || '—'}`,
+    `Nhân viên       : ${empName}`,
+    `Mã nhân viên    : ${empCode || '—'}`,
+    `Chi nhánh       : ${adj?.branch_id || '—'}`,
+    `Ca làm          : ${adj?.assignment_id || '—'}`,
+    `Ngày gửi        : ${fmtVn(createdMs)} (giờ VN)`,
+    `Hạn duyệt       : ${fmtVn(deadlineMs)} (giờ VN)`,
+    '--------------------------------------------------',
+    `LÝ DO & SỐ PHÚT : ${adj?.reason || 'Bổ sung công'} — ${Number(adj?.minutes_requested || 0)} phút`,
+    ...(approvedMinutes !== null ? [`SỐ PHÚT DUYỆT   : ${approvedMinutes} phút`] : []),
+    '--------------------------------------------------',
+    `TRẠNG THÁI      : ${adjustmentRequestStatusLabel(adj)}`,
+    `Ghi chú         : ${adj?.review_note || '—'}`,
+    `Hình ảnh        : ${imageFileId ? `https://drive.google.com/file/d/${imageFileId}/view` : 'Không có ảnh'}`,
+    '==================================================',
+    `Cập nhật lúc    : ${fmtVn(nowMs)} (giờ VN)`,
+    '',
+  ].join('\n');
+}
 
 export interface SheetDefinition {
   title: string;
@@ -5055,6 +5145,91 @@ export class GoogleSheetsSyncService {
       return { fileId: `DRV_LOCAL_${Date.now()}` };
     }
   }
+
+  /**
+   * ĐỒNG BỘ REALTIME PHIẾU BỔ SUNG CÔNG LÊN DRIVE (folder 06. PHIẾU BỔ SUNG CÔNG).
+   *
+   * Cấu trúc:
+   *   06. PHIẾU BỔ SUNG CÔNG/<YYYY-MM-DD ngày gửi>/<Tên NV - Mã NV>/
+   *     PHIEU_<HH-mm>_<adjustment_id>.txt   (Lý do & số phút + trạng thái + link ảnh)
+   *     ANH_<HH-mm>_<adjustment_id>.jpg     (ảnh bằng chứng, nếu có)
+   *
+   * Gọi ngay khi NV tạo phiếu (ghi ảnh + txt "Chờ duyệt") và mỗi lần phiếu đổi
+   * trạng thái (duyệt / từ chối / tự từ chối do hết hạn) -> txt được ghi đè.
+   * Không ném lỗi ra ngoài: Drive chậm/hỏng không được làm hỏng luồng phiếu.
+   */
+  public async syncAdjustmentRequestToDrive(opts: {
+    adjustment: any;
+    employee?: { full_name?: string; employee_code?: string } | null;
+    photoBase64?: string;
+  }): Promise<{
+    ok: boolean;
+    folderId?: string;
+    imageFileId?: string;
+    txtFileId?: string;
+    error?: string;
+  }> {
+    const adj = opts.adjustment || {};
+    const adjId = String(adj.adjustment_id || '').trim();
+    if (!adjId) return { ok: false, error: 'ADJUSTMENT_ID_REQUIRED' };
+    const rootId = getAdjustmentRequestsFolder();
+    if (!rootId || !this.driveClient) return { ok: false, error: 'DRIVE_NOT_CONFIGURED' };
+
+    const loc = adjustmentDriveLocation(adj, opts.employee, Date.now());
+    const { day, empFolder, hhmm, segments } = loc;
+
+    let folderId = '';
+    try {
+      folderId = await this.ensureDriveFolderPath(segments, rootId);
+    } catch (err: any) {
+      return { ok: false, error: String(err?.message || err) };
+    }
+    if (!folderId) return { ok: false, error: 'DRIVE_FOLDER_NOT_FOUND' };
+
+    let imageFileId = String(adj.evidence_drive_id || '').trim();
+    if (opts.photoBase64) {
+      try {
+        const raw = String(opts.photoBase64);
+        const m = raw.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.*)$/s);
+        const mime = m ? m[1] : 'image/jpeg';
+        const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg';
+        const buf = Buffer.from(m ? m[2] : raw.replace(/^data:[^;,]+;base64,/, ''), 'base64');
+        if (buf.length > 0) {
+          const up = await this.upsertBufferToDrivePath(
+            `ANH_${hhmm}_${adjSafeSeg(adjId, 'PHIEU')}.${ext}`,
+            mime,
+            buf,
+            segments,
+            rootId,
+          );
+          if (up?.fileId && !String(up.fileId).startsWith('DRV_')) imageFileId = String(up.fileId);
+        }
+      } catch (err: any) {
+        console.warn('[AdjustmentDrive] Upload ảnh bằng chứng lỗi:', err?.message || err);
+      }
+    }
+
+    const txtName = `PHIEU_${hhmm}_${adjSafeSeg(adjId, 'PHIEU')}.txt`;
+
+    try {
+      const up = await this.upsertBufferToDrivePath(
+        txtName,
+        'text/plain; charset=utf-8',
+        Buffer.from(buildAdjustmentRequestTxt(adj, opts.employee, imageFileId, Date.now()), 'utf8'),
+        segments,
+        rootId,
+      );
+      const txtFileId = String(up?.fileId || '');
+      const ok = !!txtFileId && !txtFileId.startsWith('DRV_');
+      if (!ok) return { ok: false, folderId, imageFileId: imageFileId || undefined, error: 'DRIVE_UPLOAD_FAILED' };
+      this.markDriveUploadOk?.();
+      return { ok: true, folderId, imageFileId: imageFileId || undefined, txtFileId };
+    } catch (err: any) {
+      this.markDriveUploadError?.(err);
+      return { ok: false, folderId, imageFileId: imageFileId || undefined, error: String(err?.message || err) };
+    }
+  }
+
 
   /** Đọc toàn bộ dòng (kể cả header) của 1 tab, gộp mọi part nếu tab partition. */
   public async readTabRows(title: string): Promise<string[][]> {
