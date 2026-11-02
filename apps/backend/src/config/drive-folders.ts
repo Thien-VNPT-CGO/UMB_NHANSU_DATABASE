@@ -25,7 +25,27 @@ export const DRIVE_SUBFOLDERS = {
 
   /** 04. ĐIỂM DANH (CHECK-IN + CHECK-OUT): Lưu ảnh điểm danh theo chi nhánh */
   ATTENDANCE_ROOT: '1vql_oCLqsyDdvMlh_XIIhPhLuFWq387G',
+
+  /** 05. HỒ SƠ NHÂN VIÊN: Hợp đồng thử việc/chính thức + ảnh CCCD 2 mặt */
+  EMPLOYEE_PROFILES: '1islQ2aS_ptHiqmA-A3ekRB9nyoycjajM',
 };
+
+/** Tên thư mục gốc hồ sơ nhân viên trên Google Drive. */
+export const DRIVE_EMPLOYEE_PROFILES_FOLDER_NAME = '05. HỒ SƠ NHÂN VIÊN';
+
+/**
+ * Thư mục "05. HỒ SƠ NHÂN VIÊN" — nơi lưu hồ sơ nhân viên.
+ * Có thể ghi đè bằng env khi chạy ở Drive khác (VPS/cloud).
+ */
+export function getEmployeeProfilesFolder(): string {
+  return String(process.env.GOOGLE_DRIVE_EMPLOYEE_PROFILES_FOLDER_ID || '').trim()
+    || DRIVE_SUBFOLDERS.EMPLOYEE_PROFILES;
+}
+
+/** Thư mục gốc UMBOMILK_DATABASE (dùng làm fallback khi chưa cấu hình thư mục 05). */
+export function getDriveDatabaseRootFolder(): string {
+  return String(process.env.GOOGLE_DRIVE_FOLDER_ID || '').trim() || DRIVE_ROOT_FOLDER_ID;
+}
 
 /**
  * Thư mục ảnh điểm danh chi tiết theo từng Chi nhánh / Đơn vị
@@ -111,10 +131,14 @@ export function resolveAttendanceBranchKey(branchId?: string): string {
 }
 
 /** Tên hiển thị của thư mục chi nhánh (để tạo folder khi chưa có ID). */
-export function getAttendanceBranchLabel(branchId?: string): string {
+export function getBranchFolderLabel(branchId?: string, fallback = 'Chưa xác định chi nhánh'): string {
   const key = resolveAttendanceBranchKey(branchId);
   if (key && BRANCH_FOLDER_LABELS[key]) return BRANCH_FOLDER_LABELS[key];
-  return String(branchId || 'KHONG_XAC_DINH').trim() || 'KHONG_XAC_DINH';
+  return String(branchId || fallback).trim() || fallback;
+}
+
+export function getAttendanceBranchLabel(branchId?: string): string {
+  return getBranchFolderLabel(branchId, 'KHONG_XAC_DINH');
 }
 
 /**

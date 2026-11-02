@@ -22,12 +22,69 @@ import {
   ContractDocMeta,
   ContractKey,
   contractBufferLooksValid,
+  contractDriveFileName,
   contractFileInfo,
   contractKeyOf,
   contractKindOfKey,
   parseContractDocs,
 } from '../utils/contracts.js';
 import { readContractDisk, removeContractDisk, saveContractDisk } from './contract-disk.store.js';
+import {
+  getBranchFolderLabel,
+  getEmployeeProfilesFolder,
+} from '../config/drive-folders.js';
+
+/** Làm sạch 1 cấp tên thư mục Drive (bỏ ký tự cấm, giới hạn độ dài). */
+function safeDriveSegment(value: unknown, fallback: string): string {
+  const clean = String(value ?? '')
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 120);
+  return clean || fallback;
+}
+
+/**
+ * Cây thư mục hồ sơ nhân viên:
+ *   <Chi nhánh> / <Tên nhân viên - Mã NV>
+ * (đặt bên trong "05. HỒ SƠ NHÂN VIÊN").
+ */
+function employeeProfileDriveSegments(emp: any): string[] {
+  const code = String(emp?.employee_code || emp?.employee_id || 'KHONG_MA').trim() || 'KHONG_MA';
+  const name = String(emp?.full_name || '').trim() || code;
+  return [
+    getBranchFolderLabel(emp?.default_branch_id || emp?.branch_id),
+    safeDriveSegment(`${name} - ${code}`, code),
+  ];
+}
+
+/**
+ * Upload 1 tài liệu hồ sơ (hợp đồng/CCCD) lên Drive theo đúng cấu trúc.
+ * Ưu tiên API mới; giữ fallback cho adapter/mock cũ để không vỡ luồng.
+ */
+async function uploadEmployeeProfileDocument(
+  sync: any,
+  fileName: string,
+  mimeType: string,
+  buffer: Buffer,
+  emp: any,
+): Promise<{ fileId: string; webViewLink?: string } | null> {
+  if (!sync) return null;
+  const segments = employeeProfileDriveSegments(emp);
+  if (sync.uploadEmployeeProfileToDrive) {
+    return sync.uploadEmployeeProfileToDrive(fileName, mimeType, buffer, segments);
+  }
+  if (sync.uploadContractToDrive) {
+    return sync.uploadContractToDrive(fileName, mimeType, buffer, {
+      segments,
+      rootId: getEmployeeProfilesFolder(),
+    });
+  }
+  if (sync.uploadFileToDrive) {
+    return sync.uploadFileToDrive(fileName, mimeType, buffer.toString('base64'));
+  }
+  return null;
+}
 
 /** Chuẩn hóa SĐT về dạng so sánh được (10 số, đầu 0) — DÙNG DUY NHẤT ở mọi nơi.
  *  Bao phủ: '+84...'/84... (Sheet ghi quốc tế), số bị rớt số 0 đầu (ô numeric),
@@ -790,44 +847,24 @@ export class EmployeesService {
     }
 
     const kind = contractKindOfKey(key);
-    const empCode = String((emp as any).employee_code || employeeId).replace(/[^a-zA-Z0-9_-]/g, '-');
-    const safeEmpName = String(emp.full_name || '')
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/đ/g, 'd')
-      .replace(/Đ/g, 'D')
-      .replace(/[^a-zA-Z0-9_-]+/g, '_')
-      .replace(/^_+|_+$/g, '') || empCode;
-    const stamp = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 19).replace(/[:T]/g, '-');
-
-    let driveName: string;
-    if (key === 'id_card_front') {
-      driveName = `CCCD_MatTruoc_${empCode}_${safeEmpName}_${stamp}.${info.ext}`;
-    } else if (key === 'id_card_back') {
-      driveName = `CCCD_MatSau_${empCode}_${safeEmpName}_${stamp}.${info.ext}`;
-    } else {
-      const kindTag = key === 'probation' ? 'ThuViec' : 'ChinhThuc';
-      driveName = `HDLD_${kindTag}_${empCode}_${safeEmpName}_${stamp}.${info.ext}`;
-    }
+    // Tên file cố định để mỗi nhân viên chỉ có đúng 4 tài liệu trên Drive.
+    const driveName = contractDriveFileName(key, info.ext);
 
     // Luôn ghi bản đĩa VPS trước (mở được ngay cả khi Drive chưa cấu hình).
     saveContractDisk(employeeId, kind, info.ext, buffer);
     let driveId = '';
     let storage: 'DRIVE' | 'DISK' = 'DISK';
     try {
-      const sync = (this.repo as any).syncService;
-      if (sync?.uploadContractToDrive) {
-        const up = await sync.uploadContractToDrive(driveName, info.mime, buffer);
-        if (up?.fileId && !String(up.fileId).startsWith('DRV_')) {
-          driveId = String(up.fileId);
-          storage = 'DRIVE';
-        }
-      } else if (sync?.uploadFileToDrive) {
-        const up = await sync.uploadFileToDrive(driveName, info.mime, buffer.toString('base64'));
-        if (up?.fileId && !String(up.fileId).startsWith('DRV_')) {
-          driveId = String(up.fileId);
-          storage = 'DRIVE';
-        }
+      const up = await uploadEmployeeProfileDocument(
+        (this.repo as any).syncService,
+        driveName,
+        info.mime,
+        buffer,
+        emp,
+      );
+      if (up?.fileId && !String(up.fileId).startsWith('DRV_')) {
+        driveId = String(up.fileId);
+        storage = 'DRIVE';
       }
     } catch (err: any) {
       console.warn('[EmployeesService] Upload hợp đồng/CCCD lên Drive thất bại (giữ bản VPS):', err?.message || err);
@@ -1025,30 +1062,9 @@ export class EmployeesService {
           }
 
           try {
-            const empCode = String((emp as any).employee_code || empId).replace(/[^a-zA-Z0-9_-]/g, '-');
-            const safeEmpName = String(emp.full_name || '')
-              .normalize('NFD')
-              .replace(/[\u0300-\u036f]/g, '')
-              .replace(/đ/g, 'd')
-              .replace(/Đ/g, 'D')
-              .replace(/[^a-zA-Z0-9_-]+/g, '_')
-              .replace(/^_+|_+$/g, '') || empCode;
-            const stamp = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 19).replace(/[:T]/g, '-');
             const ext = fileName.includes('.') ? fileName.split('.').pop() : (k.startsWith('id_card') ? 'jpg' : 'pdf');
-
-            let driveName: string;
-            if (k === 'id_card_front') {
-              driveName = `CCCD_MatTruoc_${empCode}_${safeEmpName}_${stamp}.${ext}`;
-            } else if (k === 'id_card_back') {
-              driveName = `CCCD_MatSau_${empCode}_${safeEmpName}_${stamp}.${ext}`;
-            } else {
-              const kindTag = k === 'probation' ? 'ThuViec' : 'ChinhThuc';
-              driveName = `HDLD_${kindTag}_${empCode}_${safeEmpName}_${stamp}.${ext}`;
-            }
-
-            const up = await (sync.uploadContractToDrive
-              ? sync.uploadContractToDrive(driveName, mime, buffer)
-              : sync.uploadFileToDrive(driveName, mime, buffer.toString('base64')));
+            const driveName = contractDriveFileName(k, String(ext || (k.startsWith('id_card') ? 'jpg' : 'pdf')));
+            const up = await uploadEmployeeProfileDocument(sync, driveName, mime, buffer, emp);
 
             if (up?.fileId && !String(up.fileId).startsWith('DRV_')) {
               meta.drive_id = String(up.fileId);
@@ -1070,33 +1086,13 @@ export class EmployeesService {
           // TH2: Có file trên đĩa VPS nhưng chưa gắn metadata
           checked++;
           try {
-            const empCode = String((emp as any).employee_code || empId).replace(/[^a-zA-Z0-9_-]/g, '-');
-            const safeEmpName = String(emp.full_name || '')
-              .normalize('NFD')
-              .replace(/[\u0300-\u036f]/g, '')
-              .replace(/đ/g, 'd')
-              .replace(/Đ/g, 'D')
-              .replace(/[^a-zA-Z0-9_-]+/g, '_')
-              .replace(/^_+|_+$/g, '') || empCode;
-            const stamp = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 19).replace(/[:T]/g, '-');
             const ext = disk.fileName.includes('.') ? disk.fileName.split('.').pop() : (k.startsWith('id_card') ? 'jpg' : 'pdf');
-
-            let driveName: string;
-            if (k === 'id_card_front') {
-              driveName = `CCCD_MatTruoc_${empCode}_${safeEmpName}_${stamp}.${ext}`;
-            } else if (k === 'id_card_back') {
-              driveName = `CCCD_MatSau_${empCode}_${safeEmpName}_${stamp}.${ext}`;
-            } else {
-              const kindTag = k === 'probation' ? 'ThuViec' : 'ChinhThuc';
-              driveName = `HDLD_${kindTag}_${empCode}_${safeEmpName}_${stamp}.${ext}`;
-            }
+            const driveName = contractDriveFileName(k, String(ext || (k.startsWith('id_card') ? 'jpg' : 'pdf')));
 
             const info = contractFileInfo('', disk.fileName);
             const mime = info?.mime || (k.startsWith('id_card') ? 'image/jpeg' : 'application/octet-stream');
 
-            const up = await (sync.uploadContractToDrive
-              ? sync.uploadContractToDrive(driveName, mime, disk.buffer)
-              : sync.uploadFileToDrive(driveName, mime, disk.buffer.toString('base64')));
+            const up = await uploadEmployeeProfileDocument(sync, driveName, mime, disk.buffer, emp);
 
             if (up?.fileId && !String(up.fileId).startsWith('DRV_')) {
               docs[k] = {

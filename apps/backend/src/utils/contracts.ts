@@ -25,6 +25,22 @@ export const CONTRACT_KIND_LABEL: Record<ContractKey, string> = {
   id_card_back: 'Mặt sau CCCD',
 };
 
+/**
+ * Tên file cố định trên Drive cho từng loại tài liệu.
+ * Dùng upsert theo tên nên mỗi nhân viên chỉ có đúng 4 file:
+ * 2 hợp đồng (thử việc/chính thức) + 2 ảnh CCCD (trước/sau).
+ */
+export const CONTRACT_DRIVE_BASE_NAME: Record<ContractKey, string> = {
+  probation: 'Hợp đồng thử việc',
+  official: 'Hợp đồng chính thức',
+  id_card_front: 'CCCD mặt trước',
+  id_card_back: 'CCCD mặt sau',
+};
+
+export function contractDriveFileName(key: ContractKey, ext: string): string {
+  return `${CONTRACT_DRIVE_BASE_NAME[key]}.${String(ext || '').replace(/^\./, '') || 'bin'}`;
+}
+
 export function contractKeyOf(kind: unknown): ContractKey | null {
   const k = String(kind || '').trim().toUpperCase();
   if (k === 'PROBATION' || k === 'THU_VIEC' || k === 'THỬ VIỆC') return 'probation';

@@ -20,6 +20,7 @@ Ket qua mong doi:
 | SPREADSHEET_ID | 1UO1UF1d7_YzaCltYt2m9pRnUauGWw873ERqAMxwL-6k |
 | CANDIDATE_SPREADSHEET_ID | 1rcqEKraSRhr-Tn9qwlhADlkQUei8j65bXeHF_Tmkd38 |
 | GOOGLE_DRIVE_FOLDER_ID | ID thu muc Drive |
+| GOOGLE_DRIVE_EMPLOYEE_PROFILES_FOLDER_ID | (Tuy chon) ID thu muc "05. HO SO NHAN VIEN" |
 | JWT_SECRET | Chuoi bi mat manh (openssl rand -hex 32) |
 
 ## Buoc 3: Quyen Service Account

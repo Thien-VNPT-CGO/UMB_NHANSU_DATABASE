@@ -30,9 +30,12 @@ import { readAttendancePhotoDisk } from './photo-disk.store.js';
 import { createDriveOAuthClient, describeDriveAuth, describeGoogleApiError, type GoogleDriveAuthMode } from './google-drive-auth.js';
 import { uploadBufferViaDriveWebhook, downloadBufferViaDriveWebhook } from './drive-upload-webhook.js';
 import {
+  DRIVE_EMPLOYEE_PROFILES_FOLDER_NAME,
   getAttendanceBranchLabel,
   getAttendanceFolderForBranch,
   getAttendanceRootFolder,
+  getDriveDatabaseRootFolder,
+  getEmployeeProfilesFolder,
 } from '../config/drive-folders.js';
 import { TAB_THEMES, buildSheetFormattingRequests, resolveTheme } from './sheets-beautifier.service.js';
 import { computeSheetsContentSignature, fingerprintSheetsContent } from '../utils/sheets-content-signature.js';
@@ -4805,13 +4808,17 @@ export class GoogleSheetsSyncService {
   }
 
   /**
-   * Upload hợp đồng lao động lên Google Drive trong thư mục chuyên biệt HOP_DONG_LAO_DONG.
-   * Tự động tạo thư mục HOP_DONG_LAO_DONG bên dưới driveFolderId nếu chưa có.
+   * Upload hợp đồng lao động lên Google Drive.
+   *
+   * Mặc định giữ tương thích cũ: ghi vào HOP_DONG_LAO_DONG. Khi truyền opts,
+   * caller có thể chỉ định đúng cây thư mục (05. HỒ SƠ NHÂN VIÊN/<Chi nhánh>/
+   * <Tên NV - Mã NV>) để hồ sơ nằm đúng cấu trúc.
    */
   public async uploadContractToDrive(
     fileName: string,
     mimeType: string,
     bufferOrBase64: Buffer | string,
+    opts?: { segments?: string[]; rootId?: string },
   ): Promise<{ fileId: string; webViewLink?: string }> {
     const buffer = Buffer.isBuffer(bufferOrBase64)
       ? bufferOrBase64
@@ -4819,8 +4826,9 @@ export class GoogleSheetsSyncService {
     if (!buffer.length) {
       return { fileId: `DRV_LOCAL_${Date.now()}` };
     }
+    const segments = opts?.segments?.length ? opts.segments : ['HOP_DONG_LAO_DONG'];
     try {
-      const res = await this.upsertBufferToDrivePath(fileName, mimeType, buffer, ['HOP_DONG_LAO_DONG']);
+      const res = await this.upsertBufferToDrivePath(fileName, mimeType, buffer, segments, opts?.rootId);
       if (res?.fileId && !res.fileId.startsWith('DRV_')) {
         return res;
       }
@@ -4829,6 +4837,44 @@ export class GoogleSheetsSyncService {
     }
     // Fallback: upload thẳng vào root driveFolderId
     return this.uploadFileToDrive(fileName, mimeType, buffer.toString('base64'));
+  }
+
+  /**
+   * Upload hồ sơ nhân viên (hợp đồng/CCCD) vào đúng cấu trúc:
+   *   05. HỒ SƠ NHÂN VIÊN / <Chi nhánh> / <Tên NV - Mã NV> / <file>
+   *
+   * Ưu tiên thư mục 05 đã cấu hình. Nếu Drive hiện tại không truy cập được
+   * thư mục đó (môi trường khác), tự tạo "05. HỒ SƠ NHÂN VIÊN" dưới thư mục
+   * gốc Drive để không rơi về đĩa VPS.
+   */
+  public async uploadEmployeeProfileToDrive(
+    fileName: string,
+    mimeType: string,
+    buffer: Buffer,
+    segments: string[],
+  ): Promise<{ fileId: string; webViewLink?: string }> {
+    if (!buffer?.length) return { fileId: `DRV_LOCAL_${Date.now()}` };
+
+    const configured = getEmployeeProfilesFolder();
+    if (configured) {
+      const res = await this.upsertBufferToDrivePath(fileName, mimeType, buffer, segments, configured);
+      if (res?.fileId && !res.fileId.startsWith('DRV_')) return res;
+    }
+
+    // Fallback: tìm/tạo "05. HỒ SƠ NHÂN VIÊN" dưới thư mục gốc Drive hiện tại.
+    const fallbackRoot = String(this.driveFolderId || getDriveDatabaseRootFolder()).trim();
+    if (fallbackRoot && fallbackRoot !== configured) {
+      const res = await this.upsertBufferToDrivePath(
+        fileName,
+        mimeType,
+        buffer,
+        [DRIVE_EMPLOYEE_PROFILES_FOLDER_NAME, ...segments],
+        fallbackRoot,
+      );
+      if (res?.fileId && !res.fileId.startsWith('DRV_')) return res;
+    }
+
+    return { fileId: `DRV_LOCAL_${Date.now()}` };
   }
 
   public async uploadImageToDrive(fileName: string, mimeType: string, base64Data: string): Promise<{ fileId: string; webViewLink?: string }> {

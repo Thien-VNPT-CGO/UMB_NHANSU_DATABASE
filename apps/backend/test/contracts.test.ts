@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  CONTRACT_DRIVE_BASE_NAME,
   CONTRACT_MAX_BYTES,
   contractBufferLooksValid,
   contractDocsCell,
+  contractDriveFileName,
   contractFileInfo,
   contractKeyOf,
   contractKindOfKey,
@@ -119,6 +121,19 @@ test('contractBufferLooksValid chặn file đổi đuôi giả mạo', () => {
 
 test('giới hạn dung lượng hợp đồng là 6MB', () => {
   assert.equal(CONTRACT_MAX_BYTES, 6 * 1024 * 1024);
+});
+
+test('tên file trên Drive cố định đúng 4 tài liệu hồ sơ nhân viên', () => {
+  assert.deepEqual(CONTRACT_DRIVE_BASE_NAME, {
+    probation: 'Hợp đồng thử việc',
+    official: 'Hợp đồng chính thức',
+    id_card_front: 'CCCD mặt trước',
+    id_card_back: 'CCCD mặt sau',
+  });
+  assert.equal(contractDriveFileName('probation', 'pdf'), 'Hợp đồng thử việc.pdf');
+  assert.equal(contractDriveFileName('official', '.docx'), 'Hợp đồng chính thức.docx');
+  assert.equal(contractDriveFileName('id_card_front', 'jpg'), 'CCCD mặt trước.jpg');
+  assert.equal(contractDriveFileName('id_card_back', ''), 'CCCD mặt sau.bin');
 });
 
 test('syncPendingContractsToDrive tự động upload hợp đồng DISK lên Drive và cập nhật metadata', async () => {

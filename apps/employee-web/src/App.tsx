@@ -8184,7 +8184,7 @@ export function App() {
                     </span>
                   </div>
                   <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '12px', lineHeight: 1.5 }}>
-                    Chụp rõ nét mặt trước và mặt sau CCCD để HR làm hợp đồng lao động. File sẽ được lưu vào Google Drive theo tên bạn và hiển thị ngay trên cổng Admin.
+                    Chụp rõ nét mặt trước và mặt sau CCCD để HR làm hợp đồng lao động. Ảnh sẽ được lưu vào Google Drive theo cấu trúc <strong>05. HỒ SƠ NHÂN VIÊN / Chi nhánh / Tên bạn - Mã NV</strong> và hiển thị ngay trên cổng Admin.
                   </div>
 
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>

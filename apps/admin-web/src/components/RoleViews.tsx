@@ -15535,7 +15535,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     </button>
                   </div>
                   <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '12px' }}>
-                    Ảnh 2 mặt CCCD và Hợp đồng lao động — tự động lưu vào Google Drive theo tên từng nhân viên và lưu bản dự phòng trên máy chủ VPS.
+                    Ảnh 2 mặt CCCD và Hợp đồng lao động — tự động lưu vào Google Drive theo cấu trúc <strong>05. HỒ SƠ NHÂN VIÊN / Chi nhánh / Tên NV - Mã NV</strong> và lưu bản dự phòng trên máy chủ VPS.
                   </div>
 
                   {/* Input file ẩn dùng chung cho các loại tài liệu */}
