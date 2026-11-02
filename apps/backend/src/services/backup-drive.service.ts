@@ -11,9 +11,9 @@ import { notifySystemAlert } from './system-alert.service.js';
  * BACKUP 4 TẦNG LÊN GOOGLE DRIVE (PostgreSQL là nguồn sự thật)
  * -------------------------------------------------------------
  *  - Theo giờ  : mỗi 15 phút (mặc định), file nhỏ (bỏ bảng audit/thông báo).
- *  - Theo ngày : 02:00 mỗi ngày, full dữ liệu.
- *  - Theo tuần : 02:00 Chủ Nhật, full dữ liệu.
- *  - Theo tháng: 02:00 ngày cuối tháng, full dữ liệu.
+ *  - Theo ngày : 02:00 sáng hôm sau, lưu dữ liệu NGÀY HÔM TRƯỚC.
+ *  - Theo tuần : 02:00 Chủ Nhật, lưu TUẦN HIỆN TẠI (lỡ thì bù Thứ Hai).
+ *  - Theo tháng: 02:00 ngày 1, lưu THÁNG TRƯỚC (lỡ thì bù các ngày sau).
  *
  * Cấu trúc Drive (dưới UMBOMILK_DATABASE):
  *   BACKUP_DATA_HOUR/HOURLY/YYYY-MM-DD/postgres_YYYY-MM-DD_HHmm.jsonl.gz
@@ -134,12 +134,12 @@ export function backupConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Backu
   };
 }
 
-function pad2(n: number): string {
+export function pad2(n: number): string {
   return String(n).padStart(2, '0');
 }
 
 /** Các thành phần thời gian theo giờ Việt Nam, đọc qua getUTC*. */
-function vnParts(nowMs: number) {
+export function vnParts(nowMs: number) {
   const d = new Date(nowMs + VN_OFFSET_MS);
   return {
     year: d.getUTCFullYear(),
@@ -151,8 +151,20 @@ function vnParts(nowMs: number) {
   };
 }
 
-function ymdOf(p: { year: number; month: number; day: number }): string {
+export function ymdOf(p: { year: number; month: number; day: number }): string {
   return `${p.year}-${pad2(p.month + 1)}-${pad2(p.day)}`;
+}
+
+/** Cộng/trừ ngày theo lịch Việt Nam, trả về các thành phần ngày. */
+export function addDaysVn(p: { year: number; month: number; day: number }, delta: number) {
+  const d = new Date(Date.UTC(p.year, p.month, p.day + delta));
+  return { year: d.getUTCFullYear(), month: d.getUTCMonth(), day: d.getUTCDate() };
+}
+
+/** Khóa tháng trước (YYYY-MM) theo lịch Việt Nam. */
+export function previousMonthKey(p: { year: number; month: number }): string {
+  const d = new Date(Date.UTC(p.year, p.month - 1, 1));
+  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}`;
 }
 
 /** Tuần ISO 8601 (thứ Hai là đầu tuần). */
@@ -166,10 +178,6 @@ export function isoWeekOf(p: { year: number; month: number; day: number }): { ye
   firstThu.setUTCDate(firstThu.getUTCDate() - firstDayNum + 3);
   const week = 1 + Math.round((t.getTime() - firstThu.getTime()) / (7 * 86_400_000));
   return { year: isoYear, week };
-}
-
-function lastDayOfMonth(year: number, month: number): number {
-  return new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
 }
 
 function targetFor(kind: BackupKind, slotKey: string): BackupTarget {
@@ -235,33 +243,38 @@ export function resolveDueBackups(
     }
   }
 
+  // NGÀY: 02:00 sáng hôm sau → lưu dữ liệu của NGÀY HÔM TRƯỚC (nhãn = hôm qua).
+  // Nhờ mốc giờ, khoảng 00:00-01:59 không tạo nhầm bản cho ngày cũ.
   if (cfg.dailyEnabled) {
-    if (minutesNow >= atMinutes(cfg.dailyHour) && state.last_daily_date !== today) {
-      due.push({ kind: 'daily', slotKey: today, target: targetFor('daily', today) });
+    const yesterday = ymdOf(addDaysVn(now, -1));
+    if (minutesNow >= atMinutes(cfg.dailyHour) && state.last_daily_date !== yesterday) {
+      due.push({ kind: 'daily', slotKey: yesterday, target: targetFor('daily', yesterday) });
     }
   }
 
   if (cfg.weeklyEnabled) {
-    // Chỉ chạy đúng ngày (mặc định Chủ Nhật) từ 02:00. Lỡ ngày thì bỏ kỳ đó —
-    // backup giờ/ngày vẫn phủ dữ liệu, tránh tạo file tuần cũ chứa dữ liệu mới.
-    const isWeeklyDay = now.weekday === cfg.weeklyWeekday;
-    if (isWeeklyDay && minutesNow >= atMinutes(cfg.dailyHour)) {
+    // TUẦN: 02:00 Chủ Nhật → lưu TUẦN HIỆN TẠI (ISO week đang chứa Chủ Nhật).
+    // Nếu lỡ Chủ Nhật (VPS tắt), chạy bù vào Thứ Hai với đúng tuần vừa kết thúc.
+    const atTime = minutesNow >= atMinutes(cfg.dailyHour);
+    let weekKey = '';
+    if (now.weekday === cfg.weeklyWeekday) {
       const iso = isoWeekOf(now);
-      const key = `${iso.year}-W${pad2(iso.week)}`;
-      if (state.last_weekly_key !== key) {
-        due.push({ kind: 'weekly', slotKey: key, target: targetFor('weekly', key) });
-      }
+      weekKey = `${iso.year}-W${pad2(iso.week)}`;
+    } else if (now.weekday === (cfg.weeklyWeekday + 1) % 7) {
+      const iso = isoWeekOf(addDaysVn(now, -1));
+      weekKey = `${iso.year}-W${pad2(iso.week)}`;
+    }
+    if (atTime && weekKey && state.last_weekly_key !== weekKey) {
+      due.push({ kind: 'weekly', slotKey: weekKey, target: targetFor('weekly', weekKey) });
     }
   }
 
   if (cfg.monthlyEnabled) {
-    // Chỉ chạy đúng ngày cuối tháng từ 02:00.
-    const isMonthEnd = now.day === lastDayOfMonth(now.year, now.month);
-    if (isMonthEnd && minutesNow >= atMinutes(cfg.dailyHour)) {
-      const key = `${now.year}-${pad2(now.month + 1)}`;
-      if (state.last_monthly_key !== key) {
-        due.push({ kind: 'monthly', slotKey: key, target: targetFor('monthly', key) });
-      }
+    // THÁNG: 02:00 ngày 1 → lưu THÁNG TRƯỚC. Nếu lỡ ngày 1, chạy bù ngay khi
+    // hệ thống sống lại (vẫn nhãn tháng trước) — không bỏ mất kỳ tháng.
+    const prevMonth = previousMonthKey(now);
+    if (minutesNow >= atMinutes(cfg.dailyHour) && state.last_monthly_key !== prevMonth) {
+      due.push({ kind: 'monthly', slotKey: prevMonth, target: targetFor('monthly', prevMonth) });
     }
   }
 
@@ -328,8 +341,8 @@ export class DriveBackupScheduler {
     setTimeout(() => void this.tick(), 20_000);
     this.timer = setInterval(() => void this.tick(), 30_000);
     console.log(
-      `[backup-drive] Đã bật: giờ ${this.cfg.hourlyMinutes} phút | ngày ${pad2(this.cfg.dailyHour)}:${pad2(this.cfg.atMinute)}`
-      + ` | tuần CN ${pad2(this.cfg.dailyHour)}:${pad2(this.cfg.atMinute)} | tháng cuối tháng ${pad2(this.cfg.dailyHour)}:${pad2(this.cfg.atMinute)}`
+      `[backup-drive] Đã bật: giờ ${this.cfg.hourlyMinutes} phút | ngày ${pad2(this.cfg.dailyHour)}:${pad2(this.cfg.atMinute)} (hôm trước)`
+      + ` | tuần CN ${pad2(this.cfg.dailyHour)}:${pad2(this.cfg.atMinute)} | tháng ngày 1 ${pad2(this.cfg.dailyHour)}:${pad2(this.cfg.atMinute)} (tháng trước)`
       + ` | Drive ${this.drive?.isConfigured() ? 'OK' : 'CHƯA CẤU HÌNH'}`,
     );
     return true;
@@ -355,9 +368,9 @@ export class DriveBackupScheduler {
       localDir: this.localRoot(),
       schedule: {
         hourly: this.cfg.hourlyEnabled ? `mỗi ${this.cfg.hourlyMinutes} phút` : 'tắt',
-        daily: this.cfg.dailyEnabled ? `${pad2(this.cfg.dailyHour)}:${pad2(this.cfg.atMinute)} hằng ngày` : 'tắt',
-        weekly: this.cfg.weeklyEnabled ? `${pad2(this.cfg.dailyHour)}:${pad2(this.cfg.atMinute)} Chủ Nhật` : 'tắt',
-        monthly: this.cfg.monthlyEnabled ? `${pad2(this.cfg.dailyHour)}:${pad2(this.cfg.atMinute)} ngày cuối tháng` : 'tắt',
+        daily: this.cfg.dailyEnabled ? `${pad2(this.cfg.dailyHour)}:${pad2(this.cfg.atMinute)} hằng ngày (dữ liệu hôm trước)` : 'tắt',
+        weekly: this.cfg.weeklyEnabled ? `${pad2(this.cfg.dailyHour)}:${pad2(this.cfg.atMinute)} Chủ Nhật (tuần hiện tại)` : 'tắt',
+        monthly: this.cfg.monthlyEnabled ? `${pad2(this.cfg.dailyHour)}:${pad2(this.cfg.atMinute)} ngày 1 (tháng trước)` : 'tắt',
         timezone: 'Asia/Ho_Chi_Minh (UTC+7)',
       },
       retention: {

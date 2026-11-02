@@ -1191,6 +1191,112 @@ export class GoogleSheetsSyncService {
   }
 
   /**
+   * COPY NGUYÊN spreadsheet hiện tại vào đúng thư mục backup trên Drive.
+   *
+   * Dùng cho lịch backup chế độ Google Sheets (services/sheets-backup.service.ts):
+   *   01. BACKUP_DATA_DAY/YYYY-MM-DD/UMB_NHANSU_DATABASE_YYYY-MM-DD
+   *   02. BACKUP_DATA_WEEK/YYYY-Www/UMB_NHANSU_DATABASE_YYYY-Www
+   *   03. BACKUP_DATA_MONTH/YYYY-MM/UMB_NHANSU_DATABASE_YYYY-MM
+   *
+   * - Bản sao do Google tạo server-side (1 API call) nên luôn là dữ liệu mới nhất
+   *   tại thời điểm chạy, không phụ thuộc snapshot RAM.
+   * - Idempotent: file cùng tên trong kỳ đã có thì dùng lại, không tạo bản trùng.
+   * - Tự dọn các kỳ cũ quá `keep` (mặc định 30) — chỉ xóa thư mục đúng định dạng
+   *   kỳ backup, không đụng dữ liệu khác trong thư mục gốc.
+   */
+  public async backupSpreadsheetTo(opts: {
+    rootId: string;
+    segments: string[];
+    name: string;
+    keep?: number;
+  }): Promise<{
+    ok: boolean;
+    fileId?: string;
+    folderId?: string;
+    name?: string;
+    url?: string;
+    deletedOld?: number;
+    reason?: string;
+    error?: string;
+  }> {
+    if (!this.isConfigured || !this.driveClient) {
+      return { ok: false, reason: 'DRIVE_NOT_CONFIGURED' };
+    }
+    const rootId = String(opts.rootId || '').trim();
+    if (!rootId) return { ok: false, reason: 'BACKUP_FOLDER_NOT_CONFIGURED' };
+    const name = String(opts.name || '').trim();
+    if (!name) return { ok: false, reason: 'BACKUP_NAME_REQUIRED' };
+
+    try {
+      const folderId = await this.ensureDriveFolderPath(opts.segments || [], rootId);
+      if (!folderId) return { ok: false, reason: 'BACKUP_FOLDER_UNAVAILABLE' };
+
+      // Đã có bản cùng tên trong kỳ -> dùng lại (retry không tạo file trùng).
+      const escaped = name.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      const existing: any = await this.driveClient.files.list({
+        q: `name = '${escaped}' and '${folderId}' in parents and trashed = false`,
+        fields: 'files(id,name,webViewLink)',
+        pageSize: 5,
+        supportsAllDrives: true,
+        includeItemsFromAllDrives: true,
+      } as any);
+      const found = existing?.data?.files?.[0];
+      let fileId = String(found?.id || '');
+      let url = String(found?.webViewLink || '');
+
+      if (!fileId) {
+        const copied: any = await this.driveClient.files.copy({
+          fileId: this.spreadsheetId,
+          requestBody: { name, parents: [folderId] },
+          fields: 'id,name,webViewLink,createdTime',
+          supportsAllDrives: true,
+        } as any);
+        fileId = String(copied?.data?.id || '');
+        url = String(copied?.data?.webViewLink || '');
+        if (!fileId) throw new Error('DRIVE_COPY_RETURNED_NO_ID');
+        console.log(`[BackupSheets] Đã copy ${this.spreadsheetId} -> ${name} (${fileId})`);
+      }
+
+      // Dọn kỳ cũ: chỉ xóa thư mục con đúng định dạng kỳ (YYYY-MM-DD / YYYY-Www / YYYY-MM).
+      let deletedOld = 0;
+      const slot = String(opts.segments?.[0] || '').trim();
+      const slotRe = /^\d{4}-\d{2}-\d{2}$/.test(slot)
+        ? /^\d{4}-\d{2}-\d{2}$/
+        : /^\d{4}-W\d{2}$/.test(slot)
+          ? /^\d{4}-W\d{2}$/
+          : /^\d{4}-\d{2}$/.test(slot)
+            ? /^\d{4}-\d{2}$/
+            : null;
+      const keep = Math.max(2, Number(opts.keep || 30));
+      if (slotRe) {
+        try {
+          const children: any = await this.driveClient.files.list({
+            q: `'${rootId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+            fields: 'files(id,name)',
+            pageSize: 1000,
+            supportsAllDrives: true,
+            includeItemsFromAllDrives: true,
+          } as any);
+          const periods = (children?.data?.files || [])
+            .filter((f: any) => slotRe.test(String(f?.name || '')))
+            .sort((a: any, b: any) => String(b.name).localeCompare(String(a.name)));
+          for (const old of periods.slice(keep)) {
+            try {
+              await this.driveClient.files.delete({ fileId: old.id, supportsAllDrives: true } as any);
+              deletedOld += 1;
+            } catch { /* best-effort */ }
+          }
+        } catch { /* best-effort */ }
+      }
+
+      return { ok: true, fileId, folderId, name, url, deletedOld };
+    } catch (err: any) {
+      console.warn(`[BackupSheets] Lỗi copy spreadsheet (${name}):`, err?.message || err);
+      return { ok: false, reason: 'DRIVE_ERROR', error: String(err?.message || err) };
+    }
+  }
+
+  /**
    * Tạo các Sheet tab còn thiếu và khởi tạo dòng tiêu đề (Header row)
    */
   public async initSpreadsheetStructure(): Promise<{ success: boolean; createdSheets: string[]; existingSheets: string[]; message: string }> {

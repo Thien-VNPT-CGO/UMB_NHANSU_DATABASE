@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   backupConfigFromEnv,
   isoWeekOf,
+  previousMonthKey,
   resolveDueBackups,
   type BackupScheduleConfig,
   type BackupScheduleState,
@@ -64,19 +65,23 @@ test('giờ: đổi số phút qua env, kẹp trong khoảng 5..60', () => {
   assert.equal(backupConfigFromEnv({ BACKUP_HOURLY_ENABLED: '0' } as any).hourlyEnabled, false);
 });
 
-test('ngày: chỉ chạy từ 02:00 và đúng 1 lần/ngày', () => {
+test('ngày: 02:00 sáng hôm sau lưu dữ liệu NGÀY HÔM TRƯỚC, đúng 1 lần/ngày', () => {
   const c = cfg();
   assert.equal(kinds({}, vnMs(2026, 10, 15, 1, 59), c).includes('daily'), false);
   const at2 = resolveDueBackups({}, vnMs(2026, 10, 15, 2, 0), c).find(d => d.kind === 'daily');
-  assert.equal(at2?.slotKey, '2026-10-15');
-  assert.equal(at2?.target.fileName, 'postgres_2026-10-15.jsonl.gz');
-  assert.deepEqual(at2?.target.segments, ['DAILY', '2026-10-15']);
+  assert.equal(at2?.slotKey, '2026-10-14');
+  assert.equal(at2?.target.fileName, 'postgres_2026-10-14.jsonl.gz');
+  assert.deepEqual(at2?.target.segments, ['DAILY', '2026-10-14']);
 
-  assert.equal(kinds({ last_daily_date: '2026-10-15' }, vnMs(2026, 10, 15, 23, 59), c).includes('daily'), false);
-  assert.equal(kinds({ last_daily_date: '2026-10-15' }, vnMs(2026, 10, 16, 2, 1), c).includes('daily'), true);
+  // Đã lưu ngày 14 -> trong ngày 15 không chạy lại (kể cả 23:59).
+  assert.equal(kinds({ last_daily_date: '2026-10-14' }, vnMs(2026, 10, 15, 23, 59), c).includes('daily'), false);
+  // Sang ngày 16 sau 02:00 -> lưu ngày 15.
+  const next = resolveDueBackups({ last_daily_date: '2026-10-14' }, vnMs(2026, 10, 16, 2, 1), c)
+    .find(d => d.kind === 'daily');
+  assert.equal(next?.slotKey, '2026-10-15');
 });
 
-test('tuần: chỉ chạy đúng Chủ Nhật từ 02:00', () => {
+test('tuần: 02:00 Chủ Nhật lưu TUẦN HIỆN TẠI, lỡ thì bù Thứ Hai', () => {
   const c = cfg();
   // 2026-11-01 là Chủ Nhật. 01:00 chưa tới mốc -> chưa chạy.
   assert.equal(kinds({}, vnMs(2026, 11, 1, 1, 0), c).includes('weekly'), false);
@@ -86,9 +91,15 @@ test('tuần: chỉ chạy đúng Chủ Nhật từ 02:00', () => {
   assert.deepEqual(at2?.target.segments, ['WEEKLY', '2026-W44']);
   assert.equal(at2?.target.rootId, '1MoVP66cmDcFLg5Du0WhoQwF9rECqr8z0');
 
-  // Đã chạy W44 thì thứ Hai không chạy lại; thứ Hai cũng không phải ngày chạy.
+  // Đã chạy W44 thì thứ Hai không chạy lại.
   assert.equal(kinds({ last_weekly_key: '2026-W44' }, vnMs(2026, 11, 2, 10, 0), c).includes('weekly'), false);
-  assert.equal(kinds({}, vnMs(2026, 11, 2, 10, 0), c).includes('weekly'), false);
+
+  // VPS tắt cả Chủ Nhật: Thứ Hai chạy bù đúng tuần vừa kết thúc (W44).
+  const catchup = resolveDueBackups({}, vnMs(2026, 11, 2, 10, 0), c).find(d => d.kind === 'weekly');
+  assert.equal(catchup?.slotKey, '2026-W44');
+
+  // Thứ Ba thì không còn bù nữa (backup ngày đã phủ dữ liệu).
+  assert.equal(kinds({}, vnMs(2026, 11, 3, 10, 0), c).includes('weekly'), false);
 
   // Chủ Nhật chạy muộn trong ngày (VPS bật lại 10:00) vẫn chạy bù đúng tuần.
   const late = resolveDueBackups({}, vnMs(2026, 11, 1, 10, 0), c).find(d => d.kind === 'weekly');
@@ -102,25 +113,32 @@ test('tuần: isoWeekOf xử lý đúng ranh giới năm', () => {
   assert.deepEqual(isoWeekOf({ year: 2026, month: 11, day: 31 }), { year: 2026, week: 53 });
 });
 
-test('tháng: chỉ chạy ngày cuối tháng từ 02:00', () => {
+test('tháng: 02:00 ngày 1 lưu THÁNG TRƯỚC, lỡ thì bù các ngày sau', () => {
   const c = cfg();
-  assert.equal(kinds({}, vnMs(2026, 10, 31, 1, 59), c).includes('monthly'), false);
+  // 01:59 ngày 1 chưa tới mốc.
+  assert.equal(kinds({}, vnMs(2026, 11, 1, 1, 59), c).includes('monthly'), false);
 
-  const at2 = resolveDueBackups({}, vnMs(2026, 10, 31, 2, 0), c).find(d => d.kind === 'monthly');
+  const at2 = resolveDueBackups({}, vnMs(2026, 11, 1, 2, 0), c).find(d => d.kind === 'monthly');
   assert.equal(at2?.slotKey, '2026-10');
   assert.equal(at2?.target.fileName, 'postgres_2026-10.jsonl.gz');
   assert.deepEqual(at2?.target.segments, ['MONTHLY', '2026-10']);
   assert.equal(at2?.target.rootId, '1fBz9Szu6qCiV086YyxNBSGcjRPXKFddJ');
 
-  // Ngày 30 chưa phải cuối tháng -> không chạy.
-  assert.equal(kinds({}, vnMs(2026, 10, 30, 10, 0), c).includes('monthly'), false);
+  // Đã lưu tháng 9 (chạy ngày 01/10) -> 31/10 không chạy lại.
+  assert.equal(kinds({ last_monthly_key: '2026-09' }, vnMs(2026, 10, 31, 23, 0), c).includes('monthly'), false);
 
-  // Tháng 2 năm nhuận: 29/02 là cuối tháng.
-  const leap = resolveDueBackups({}, vnMs(2028, 2, 29, 2, 0), c).find(d => d.kind === 'monthly');
+  // Lỡ ngày 1 (VPS tắt) -> ngày 4 vẫn bù đúng tháng trước.
+  const catchup = resolveDueBackups({}, vnMs(2026, 11, 4, 10, 0), c).find(d => d.kind === 'monthly');
+  assert.equal(catchup?.slotKey, '2026-10');
+
+  // Năm nhuận: 01/03/2028 lưu tháng 02/2028.
+  const leap = resolveDueBackups({}, vnMs(2028, 3, 1, 2, 0), c).find(d => d.kind === 'monthly');
   assert.equal(leap?.slotKey, '2028-02');
+});
 
-  // Đã chạy tháng 10 thì 31/10 23:00 không chạy lại.
-  assert.equal(kinds({ last_monthly_key: '2026-10' }, vnMs(2026, 10, 31, 23, 0), c).includes('monthly'), false);
+test('tháng: previousMonthKey đúng ranh giới năm', () => {
+  assert.equal(previousMonthKey({ year: 2026, month: 0 }), '2025-12');
+  assert.equal(previousMonthKey({ year: 2026, month: 10 }), '2026-10');
 });
 
 test('ưu tiên tháng > tuần > ngày > giờ khi cùng tới hạn', () => {

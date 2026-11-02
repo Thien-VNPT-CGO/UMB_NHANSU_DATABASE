@@ -42,6 +42,7 @@ import {
 import { buildSocketCorsOptions, getAllowedOrigins } from './config/security.js';
 import { isPostgresMode } from './repositories/repository.factory.js';
 import { getDriveBackupScheduler } from './services/backup-drive.service.js';
+import { getSheetsBackupScheduler } from './services/sheets-backup.service.js';
 
 const PORT = process.env.PORT || 4005;
 
@@ -55,8 +56,10 @@ const io = new Server(server, {
 
 // Giám sát nền: Sheets mock/stale, hàng đợi ghi kẹt... (xem system-alert.service)
 let stopSystemAlerts: (() => void) | null = null;
-// Backup 4 tầng lên Drive (giờ/ngày/tuần/tháng) — chỉ bật khi PostgreSQL.
+// Backup 4 tầng lên Drive (giờ/ngày/tuần/tháng) — PostgreSQL dùng dump JSONL,
+// Google Sheets dùng bản copy spreadsheet (xem services/sheets-backup.service).
 let backupScheduler: ReturnType<typeof getDriveBackupScheduler> | null = null;
+let sheetsBackupScheduler: ReturnType<typeof getSheetsBackupScheduler> | null = null;
 
 // Attach io to express app for route broadcasting
 app.set('io', io);
@@ -203,12 +206,20 @@ server.listen(Number(PORT), '0.0.0.0', () => {
     initialDelayMs: 90_000,
   });
 
-  // BACKUP 4 TẦNG LÊN GOOGLE DRIVE (chỉ PostgreSQL):
-  //   giờ (15 phút) / ngày 02:00 / tuần 02:00 Chủ Nhật / tháng 02:00 ngày cuối tháng.
+  // BACKUP DỮ LIỆU HỆ THỐNG LÊN GOOGLE DRIVE:
+  //   - PostgreSQL: dump JSONL (giờ/ngày/tuần/tháng).
+  //   - Google Sheets: copy spreadsheet live vào 01/02/03. BACKUP_DATA_*.
+  // Lịch dùng giờ Việt Nam (UTC+7):
+  //   ngày 02:00 (dữ liệu HÔM TRƯỚC) | tuần 02:00 Chủ Nhật | tháng 02:00 ngày 1.
   if (postgresMode) {
     backupScheduler = getDriveBackupScheduler(adapter);
     void backupScheduler.start().catch((err: any) => {
       console.warn('[backup-drive] Không bật được scheduler:', err?.message || err);
+    });
+  } else {
+    sheetsBackupScheduler = getSheetsBackupScheduler(adapter);
+    void sheetsBackupScheduler.start().catch((err: any) => {
+      console.warn('[backup-sheets] Không bật được scheduler:', err?.message || err);
     });
   }
 
@@ -1141,6 +1152,9 @@ const gracefulShutdown = (signal: string) => {
     } catch { /* non-fatal */ }
     try {
       backupScheduler?.stop();
+    } catch { /* non-fatal */ }
+    try {
+      sheetsBackupScheduler?.stop();
     } catch { /* non-fatal */ }
     try {
       await (adapter as any)?.flushSheetsWrites?.(20000);

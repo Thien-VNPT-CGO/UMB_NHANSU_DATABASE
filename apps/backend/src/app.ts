@@ -46,6 +46,7 @@ import { AttendanceService } from './services/attendance.service.js';
 import { ShiftReRegService } from './services/shift-rereg.service.js';
 import { readAttendancePhotoDisk, readAdjustmentPhotoDisk, readAvatarPhotoDisk, hasAdjustmentPhotoDisk } from './services/photo-disk.store.js';
 import { getDriveBackupScheduler, type BackupKind } from './services/backup-drive.service.js';
+import { getSheetsBackupScheduler, type SheetsBackupKind } from './services/sheets-backup.service.js';
 import { contractKeyOf } from './utils/contracts.js';
 import { PayrollService } from './services/payroll.service.js';
 import { NotificationsService } from './services/notifications.service.js';
@@ -5635,10 +5636,15 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  // --- BACKUP 4 TẦNG LÊN GOOGLE DRIVE (giờ / ngày / tuần / tháng) ---
+  // --- BACKUP DỮ LIỆU HỆ THỐNG LÊN GOOGLE DRIVE (ngày / tuần / tháng) ---
+  // PostgreSQL: dump JSONL 4 tầng; Google Sheets: copy spreadsheet vào 01/02/03.
+  const activeBackupScheduler = () => (
+    isPostgresMode(adapter) ? getDriveBackupScheduler(adapter) : getSheetsBackupScheduler(adapter)
+  );
+
   app.get('/admin/backups/status', authMiddleware, requireRole(['ADMIN', 'HR']), async (_req, res) => {
     try {
-      res.json(await getDriveBackupScheduler(adapter).getStatus());
+      res.json(await activeBackupScheduler().getStatus());
     } catch (err: any) {
       res.status(500).json({ error: err?.message || String(err) });
     }
@@ -5646,17 +5652,20 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   app.post('/admin/backups/run', authMiddleware, requireRole(['ADMIN']), async (req, res) => {
     try {
-      if (!isPostgresMode(adapter)) {
-        return res.status(409).json({
-          error: 'POSTGRES_REQUIRED',
-          message: 'Backup lên Google Drive chỉ chạy khi DATA_STORE=postgres (nguồn sự thật là PostgreSQL).',
-        });
-      }
       const kind = String(req.body?.kind || 'daily') as BackupKind;
       if (!['hourly', 'daily', 'weekly', 'monthly'].includes(kind)) {
         return res.status(400).json({ error: 'INVALID_KIND', message: 'kind phải là hourly|daily|weekly|monthly' });
       }
-      const result = await getDriveBackupScheduler(adapter).runNow(kind);
+      const postgresMode = isPostgresMode(adapter);
+      if (!postgresMode && kind === 'hourly') {
+        return res.status(400).json({
+          error: 'INVALID_KIND',
+          message: 'Chế độ Google Sheets chỉ hỗ trợ backup ngày/tuần/tháng (không có tầng giờ).',
+        });
+      }
+      const result = postgresMode
+        ? await getDriveBackupScheduler(adapter).runNow(kind)
+        : await getSheetsBackupScheduler(adapter).runNow(kind as SheetsBackupKind);
       try { broadcastUpdate('config', { area: 'backups', kind, ok: result.ok }); } catch { /* non-fatal */ }
       res.status(result.ok ? 200 : 500).json(result);
     } catch (err: any) {
