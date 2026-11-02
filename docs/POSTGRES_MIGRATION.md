@@ -127,35 +127,37 @@ curl http://localhost:4005/health
 Kiểm tra các mục: `postgres.ready`, `postgres.counts`, `drive.configured`,
 `mode = POSTGRES`.
 
-## 5. Sao lưu 4 tầng lên Google Drive
+## 5. Sao lưu dữ liệu lên Google Drive (01 / 02 / 03)
 
-Khi chạy PostgreSQL, backend tự backup dữ liệu lên Google Drive theo 4 lịch
-(giờ Việt Nam, UTC+7). Lịch đã chạy được lưu trong `app_settings` nên restart
-không chạy trùng; VPS tắt lâu thì lần bật lại sẽ chạy bù đúng 1 lần cho kỳ gần
-nhất.
+Lịch chạy luôn dùng **giờ Việt Nam (UTC+7)**, không phụ thuộc TZ của VPS/container:
 
-| Tầng | Thời điểm | Thư mục Drive |
-|---|---|---|
-| Giờ | mỗi 15 phút | `BACKUP_DATA_HOUR/HOURLY/YYYY-MM-DD/` |
-| Ngày | 02:00 hằng ngày | `01. BACKUP_DATA_DAY/DAILY/YYYY-MM-DD/` |
-| Tuần | 02:00 Chủ Nhật | `02. BACKUP_DATA_WEEK/WEEKLY/YYYY-Www/` |
-| Tháng | 02:00 ngày cuối tháng | `03. BACKUP_DATA_MONTH/MONTHLY/YYYY-MM/` |
+| Tầng | Thời điểm | Dữ liệu được lưu | Thư mục Drive |
+|---|---|---|---|
+| Ngày | 02:00 sáng hôm sau | **Ngày hôm trước** | `01. BACKUP_DATA_DAY/YYYY-MM-DD/` |
+| Tuần | 02:00 Chủ Nhật | **Tuần hiện tại** (lỡ thì bù Thứ Hai) | `02. BACKUP_DATA_WEEK/YYYY-Www/` |
+| Tháng | 02:00 ngày 1 | **Tháng trước** (lỡ thì bù các ngày sau) | `03. BACKUP_DATA_MONTH/YYYY-MM/` |
 
-Mỗi bản là 1 file `postgres_<kỳ>.jsonl.gz` (JSON Lines nén): dòng đầu là header
-(thời điểm + số dòng từng bảng), các dòng sau là từng bản ghi kèm id/created_at
-để phục hồi nguyên trạng. Bản theo giờ bỏ các bảng nặng
-(`audit_logs`, `notification_*`, `backup_snapshots`) để file nhỏ; bản ngày/tuần/
-tháng là đầy đủ.
+Nội dung bản backup tuỳ nguồn dữ liệu:
 
-File luôn ghi đĩa VPS trước (`data/backups/<tầng>/...`), sau đó mới upload Drive.
-Drive lỗi thì bản local vẫn còn và hệ thống thử lại sau 5 phút; bản local được
-dọn theo thời gian giữ cấu hình bên dưới.
+- **`DATA_STORE=sheets`** (cấu hình đang chạy trên VPS): mỗi kỳ COPY NGUYÊN
+  spreadsheet live do Google thực hiện server-side, tên
+  `UMB_NHANSU_DATABASE_<kỳ>` — mở trực tiếp bằng Google Sheets, luôn là dữ liệu
+  mới nhất tại thời điểm chạy. Mốc đã chạy lưu ở
+  `data/backups/sheets-backup-state.json`.
+- **`DATA_STORE=postgres`**: file `postgres_<kỳ>.jsonl.gz` (JSON Lines nén), dòng
+  đầu là header (thời điểm + số dòng từng bảng), các dòng sau là từng bản ghi
+  kèm id/created_at để phục hồi nguyên trạng. Lịch đã chạy lưu trong
+  `app_settings` nên restart không chạy trùng. Bản theo giờ bỏ các bảng nặng
+  (`audit_logs`, `notification_*`, `backup_snapshots`) để file nhỏ; bản
+  ngày/tuần/tháng là đầy đủ.
+
+Cả 2 chế độ đều idempotent: chạy lại trong cùng kỳ không tạo bản trùng; lỗi sẽ
+thử lại sau `BACKUP_RETRY_MINUTES` phút và báo Admin. Kỳ cũ hơn số lượng giữ
+cấu hình sẽ bị dọn tự động.
 
 ### Cấu hình
 
 ```bash
-BACKUP_HOURLY_ENABLED=1
-BACKUP_HOURLY_MINUTES=15
 BACKUP_DAILY_ENABLED=1
 BACKUP_DAILY_HOUR=2
 BACKUP_WEEKLY_ENABLED=1
@@ -163,6 +165,9 @@ BACKUP_WEEKLY_WEEKDAY=0        # 0 = Chủ Nhật
 BACKUP_MONTHLY_ENABLED=1
 BACKUP_AT_MINUTE=0
 
+# Chế độ PostgreSQL: backup theo giờ (không dùng ở chế độ Sheets)
+BACKUP_HOURLY_ENABLED=1
+BACKUP_HOURLY_MINUTES=15
 BACKUP_HOURLY_EXCLUDE_TABLES=audit_logs,notification_inbox,notification_outbox,backup_snapshots
 
 BACKUP_KEEP_HOURLY_HOURS=48
@@ -171,6 +176,11 @@ BACKUP_KEEP_WEEKLY_WEEKS=12
 BACKUP_KEEP_MONTHLY_MONTHS=36
 BACKUP_RETRY_MINUTES=5
 # BACKUP_LOCAL_DIR=/app/data/backups
+
+# Ghi đè thư mục 01/02/03 khi chạy Drive khác (tùy chọn)
+# GOOGLE_DRIVE_BACKUP_DAY_FOLDER_ID=...
+# GOOGLE_DRIVE_BACKUP_WEEK_FOLDER_ID=...
+# GOOGLE_DRIVE_BACKUP_MONTH_FOLDER_ID=...
 ```
 
 ### Phục hồi
@@ -199,10 +209,11 @@ ngày/tuần/tháng gần nhất.
 ### Kiểm tra & chạy tay
 
 ```bash
-# Trạng thái 4 tầng + lần chạy gần nhất (ADMIN/HR)
+# Trạng thái lịch backup + lần chạy gần nhất (ADMIN/HR)
 curl -H "Authorization: Bearer <token>" https://<domain>/api/admin/backups/status
 
-# Chạy tay 1 tầng (ADMIN): kind = hourly|daily|weekly|monthly
+# Chạy tay 1 kỳ (ADMIN): kind = daily|weekly|monthly
+# (chế độ Google Sheets không có tầng hourly)
 curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
   -d '{"kind":"daily"}' https://<domain>/api/admin/backups/run
 ```
