@@ -2291,9 +2291,23 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Đồng hồ đếm ngược hạn duyệt phiếu bù công (30 phút / chốt 21:00 VN):
   // bảng + popup cập nhật mỗi giây để HR thấy chính xác còn bao lâu thì tự hủy.
   const [adjNow, setAdjNow] = useState(() => Date.now());
+  // Tháng VN đang hiển thị ở tab Bổ Sung Công: CHỈ phiếu trong tháng này.
+  // Hết tháng -> tự bỏ tháng cũ khỏi cổng admin và tải tháng mới (Drive vẫn giữ đủ).
+  const [adjMonth, setAdjMonth] = useState(() => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7));
+  const adjMonthRef = useRef(adjMonth);
   useEffect(() => {
     if (activeTab !== 'hr-adjustments') return;
-    const t = setInterval(() => setAdjNow(Date.now()), 1000);
+    const t = setInterval(() => {
+      setAdjNow(Date.now());
+      const m = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7);
+      if (adjMonthRef.current !== m) {
+        // Sang tháng mới: xoá ngay dữ liệu tháng cũ khỏi màn hình rồi tải tháng mới.
+        adjMonthRef.current = m;
+        setAdjMonth(m);
+        setAdjustments([]);
+        void loadAdjustments();
+      }
+    }, 1000);
     return () => clearInterval(t);
   }, [activeTab]);
   // Admin hoàn thành ca làm cho NV (ngày + nhân viên + ca): ghi CHECK_IN/OUT
@@ -11780,8 +11794,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }
 
   if (activeTab === 'hr-adjustments') {
-    const pendingAdj = adjustments.filter((a: any) => a.status === 'PENDING');
-    const doneAdj = adjustments.filter((a: any) => a.status !== 'PENDING');
+    // Chỉ phiếu thuộc THÁNG hiện tại (giờ VN) — hết tháng tự ẩn khỏi cổng admin,
+    // sang tháng mới hiển thị phiếu tháng mới; lịch sử vẫn đủ trên Drive.
+    const adjMonthOf = (a: any) => {
+      const t = Date.parse(String(a?.created_at || ''));
+      return Number.isFinite(t) ? new Date(t + 7 * 3_600_000).toISOString().slice(0, 7) : '';
+    };
+    const monthAdjustments = adjustments.filter((a: any) => adjMonthOf(a) === adjMonth);
+    const pendingAdj = monthAdjustments.filter((a: any) => a.status === 'PENDING');
+    const doneAdj = monthAdjustments.filter((a: any) => a.status !== 'PENDING');
     const reviewAdj = async (adj: any, status: 'APPROVED' | 'REJECTED') => {
       if (!window.confirm(status === 'APPROVED' ? `Duyệt bổ sung ${adj.minutes_requested || ''} phút công cho ${adj.employee_id}?` : `Từ chối phiếu của ${adj.employee_id}?`)) return;
       setAdjBusy(adj.adjustment_id);
@@ -12028,7 +12049,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     };
     const adjWeekGroups = (() => {
       const map = new Map<string, any>();
-      for (const a of adjustments) {
+      for (const a of monthAdjustments) {
         const w = adjWeekOf(a.created_at);
         if (!map.has(w.key)) map.set(w.key, { ...w, pending: [] as any[], done: [] as any[], total: 0 });
         const g = map.get(w.key);
@@ -12050,9 +12071,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <h1 style={{ fontSize: '20px', fontWeight: 800, margin: 0 }}>11. Bổ Sung & Điều Chỉnh Dữ Liệu Công</h1>
-            <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '4px 0 0' }}>Xử lý quên check-in/out hoặc sự cố GPS/Camera gửi từ Cổng Nhân Viên (có audit trail). NV chính thức <strong>1 phiếu/tuần, tối đa 4 phiếu/tháng</strong> (tuần không dùng cộng dồn trong tháng, qua tháng reset); phiếu quá <strong>30 phút</strong> chưa duyệt thì hệ thống <strong>tự động từ chối</strong> (giữ phiếu để đối soát, tự xóa sau 7 ngày nữa).</p>
+            <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '4px 0 0' }}>Xử lý quên check-in/out hoặc sự cố GPS/Camera gửi từ Cổng Nhân Viên (có audit trail). NV chính thức <strong>1 phiếu/tuần, tối đa 4 phiếu/tháng</strong> (tuần không dùng cộng dồn trong tháng, qua tháng reset); phiếu quá <strong>30 phút</strong> chưa duyệt thì hệ thống <strong>tự động từ chối</strong> (giữ phiếu để đối soát, tự xóa sau 7 ngày nữa). <strong>Chỉ hiển thị phiếu tháng này</strong> và chia theo tuần — hết tháng tự ẩn khỏi cổng admin (Drive vẫn lưu đủ các tháng).</p>
           </div>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <span className="badge" style={{ backgroundColor: '#E0E7FF', color: '#3730A3', fontWeight: 800 }}>
+              Tháng {adjMonth.slice(5, 7)}/{adjMonth.slice(0, 4)}
+            </span>
             <span className="badge" style={{ backgroundColor: pendingAdj.length > 0 ? '#FEF3C7' : '#DCFCE7', color: pendingAdj.length > 0 ? '#92400E' : '#166534', fontWeight: 800 }}>
               {pendingAdj.length} phiếu chờ duyệt
             </span>
@@ -12226,10 +12250,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </tr>
             </thead>
             <tbody>
-              {adjustments.length === 0 ? (
+              {monthAdjustments.length === 0 ? (
                 <tr>
                   <td colSpan={7} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                    Hiện không có yêu cầu bổ sung hay điều chỉnh dữ liệu công nào. Phiếu NV gửi từ Cổng Nhân Viên sẽ hiện realtime tại đây.
+                    Tháng {adjMonth.slice(5, 7)}/{adjMonth.slice(0, 4)} chưa có yêu cầu bổ sung hay điều chỉnh dữ liệu công nào. Phiếu NV gửi từ Cổng Nhân Viên sẽ hiện realtime tại đây.
                   </td>
                 </tr>
               ) : (

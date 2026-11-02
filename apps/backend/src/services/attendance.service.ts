@@ -876,6 +876,23 @@ export class AttendanceService {
     return new Date(d.getTime() + 7 * 3_600_000).toISOString().slice(0, 10);
   }
 
+  /** Khóa tháng VN (YYYY-MM) của một mốc thời gian (ISO hoặc Date). */
+  static vnMonthKeyOf(input: unknown): string {
+    const t = Date.parse(String(input || ''));
+    if (!Number.isFinite(t)) return '';
+    return AttendanceService.vnDateStr(new Date(t)).slice(0, 7);
+  }
+
+  /**
+   * Cổng admin chỉ hiển thị phiếu của THÁNG hiện tại (giờ VN): hết tháng thì
+   * phiếu tháng cũ tự ẩn khỏi màn hình (dữ liệu vẫn còn trong Sheets/Drive để
+   * đối soát — KHÔNG xóa). Sang tháng mới tự hiển thị phiếu tháng mới.
+   */
+  static filterAdjustmentsByVnMonth(list: any[], now: Date = new Date()): any[] {
+    const month = AttendanceService.vnDateStr(now).slice(0, 7);
+    return (list || []).filter((a: any) => AttendanceService.vnMonthKeyOf((a as any)?.created_at) === month);
+  }
+
   /** Thứ Hai đầu tuần (giờ VN) của ngày YYYY-MM-DD. */
   static mondayOf(dateStr: string): string {
     const t = Date.parse(`${String(dateStr || '').slice(0, 10)}T00:00:00Z`);
