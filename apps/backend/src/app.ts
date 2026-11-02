@@ -46,7 +46,11 @@ import { AttendanceService } from './services/attendance.service.js';
 import { ShiftReRegService } from './services/shift-rereg.service.js';
 import { readAttendancePhotoDisk, readAdjustmentPhotoDisk, readAvatarPhotoDisk, hasAdjustmentPhotoDisk } from './services/photo-disk.store.js';
 import { getDriveBackupScheduler, type BackupKind } from './services/backup-drive.service.js';
-import { getSheetsBackupScheduler, type SheetsBackupKind } from './services/sheets-backup.service.js';
+import {
+  dashboardSnapshotFromState,
+  getSheetsBackupScheduler,
+  type SheetsBackupKind,
+} from './services/sheets-backup.service.js';
 import { contractKeyOf } from './utils/contracts.js';
 import { PayrollService } from './services/payroll.service.js';
 import { NotificationsService } from './services/notifications.service.js';
@@ -5627,10 +5631,20 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // Trạng thái backup (card "Sức Khỏe Máy Chủ" dashboard admin)
-  app.get('/admin/system-backup', authMiddleware, requireRole(['ADMIN']), async (req, res) => {
+  app.get('/admin/system-backup', authMiddleware, requireRole(['ADMIN']), async (_req, res) => {
     try {
       const settings: any = await adapter.getSystemSettings().catch(() => ({})) || {};
-      res.json(settings.system_backups || null);
+      let summary: any = settings.system_backups || null;
+      // Chế độ Google Sheets: state file là nguồn chính xác nhất (tab
+      // CAU_HINH_HE_THONG có thể bị full-push ghi đè bằng snapshot RAM cũ).
+      if (!isPostgresMode(adapter)) {
+        try {
+          const st = await getSheetsBackupScheduler(adapter).getStatus();
+          const fromState = dashboardSnapshotFromState(st?.state || {});
+          if (fromState) summary = { ...(summary || {}), ...fromState };
+        } catch { /* fallback: dùng settings */ }
+      }
+      res.json(summary);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

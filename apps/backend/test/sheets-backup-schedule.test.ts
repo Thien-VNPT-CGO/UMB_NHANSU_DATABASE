@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  dashboardSnapshotFromState,
   resolveDueSheetsBackups,
   sheetsBackupConfigFromEnv,
   sheetsBackupKeep,
@@ -80,6 +81,51 @@ test('sheets: cấu hình env + giữ đúng số kỳ', () => {
   assert.equal(sheetsBackupKeep('daily', c), 10);
   assert.equal(sheetsBackupKeep('weekly', c), 12);
   assert.equal(sheetsBackupKeep('monthly', c), 36);
+});
+
+test('sheets: tóm tắt dashboard lấy từ state file (giờ VN)', () => {
+  // Chạy 02:00 ngày 02/11 VN (= 19:00Z ngày 01/11) cho dữ liệu ngày 01/11.
+  const state: any = {
+    last_daily_date: '2026-11-01',
+    last_ok_at: '2026-11-01T19:00:30.000Z',
+    last_result: {
+      daily: {
+        kind: 'daily',
+        ok: true,
+        slotKey: '2026-11-01',
+        at: '2026-11-01T19:00:30.000Z',
+        name: 'UMB_NHANSU_DATABASE_2026-11-01',
+        fileId: 'FILE1',
+        folderId: 'FOLDER1',
+        deletedOld: 2,
+        error: null,
+        durationMs: 5000,
+      },
+    },
+  };
+  const s = dashboardSnapshotFromState(state);
+  assert.equal(s.last_backup_date, '2026-11-02');
+  assert.equal(s.last_slot, '2026-11-01');
+  assert.equal(s.last_file_id, 'FILE1');
+  assert.equal(s.last_deleted_old, 2);
+  assert.equal(s.last_error, null);
+
+  // Chưa có bản ngày -> không bịa trạng thái.
+  assert.equal(dashboardSnapshotFromState({}), null);
+
+  // Lỗi -> giữ mốc lần chạy cuối + ghi lỗi.
+  const failed = dashboardSnapshotFromState({
+    last_ok_at: '2026-11-01T19:00:30.000Z',
+    last_result: {
+      daily: {
+        kind: 'daily', ok: false, slotKey: '2026-11-02', at: '2026-11-02T19:00:00.000Z',
+        name: 'UMB_NHANSU_DATABASE_2026-11-02', fileId: null, folderId: null,
+        deletedOld: 0, error: 'DRIVE_ERROR', durationMs: 100,
+      },
+    },
+  });
+  assert.equal(failed.last_ok_at, '2026-11-01T19:00:30.000Z');
+  assert.equal(failed.last_error, 'DRIVE_ERROR');
 });
 
 test('sheets: thư mục gốc trỏ đúng 01/02/03', () => {

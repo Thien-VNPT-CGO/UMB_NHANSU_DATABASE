@@ -173,6 +173,36 @@ const KIND_LABEL: Record<SheetsBackupKind, string> = {
   monthly: 'tháng',
 };
 
+/** Ngày (YYYY-MM-DD) theo giờ Việt Nam của 1 mốc ISO. */
+function vnDateOfIso(iso: string | null | undefined): string | null {
+  const ms = iso ? Date.parse(iso) : NaN;
+  if (!Number.isFinite(ms)) return null;
+  return new Date(ms + 7 * 3_600_000).toISOString().slice(0, 10);
+}
+
+/**
+ * Tóm tắt trạng thái backup cho card "Sức khỏe máy chủ" (Admin).
+ *
+ * Đọc thẳng từ state file (volume Docker) thay vì chỉ dựa vào
+ * `system_backups` trong CAU_HINH_HE_THONG — tab cấu hình có thể bị lượt
+ * full-push sau ghi đè bằng snapshot RAM cũ, làm mất dòng trạng thái.
+ */
+export function dashboardSnapshotFromState(state: SheetsBackupState): any | null {
+  const daily = state.last_result?.daily;
+  if (!daily) return null;
+  return {
+    last_backup_date: vnDateOfIso(daily.at) || vnDateOfIso(state.last_ok_at),
+    last_ok_at: daily.ok ? daily.at : (state.last_ok_at || null),
+    last_error: daily.ok ? null : daily.error,
+    last_error_at: daily.ok ? null : daily.at,
+    last_file_id: daily.fileId || null,
+    last_name: daily.name || null,
+    last_slot: daily.slotKey || null,
+    last_deleted_old: Number(daily.deletedOld || 0),
+    mode: 'SHEETS',
+  };
+}
+
 export class SheetsDriveBackupScheduler {
   private timer: NodeJS.Timeout | null = null;
   private bootTimer: NodeJS.Timeout | null = null;
@@ -231,6 +261,7 @@ export class SheetsDriveBackupScheduler {
   }
 
   public async getStatus(): Promise<any> {
+    await this.loadState();
     return {
       enabled: this.isEnabled(),
       running: this.started,
