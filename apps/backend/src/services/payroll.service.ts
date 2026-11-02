@@ -738,7 +738,27 @@ export class PayrollService {
   }
 
   async getEmployeePayslips(employeeId: string) {
-    return this.repo.getPayslipsForEmployee(employeeId);
+    const slips = await this.repo.getPayslipsForEmployee(employeeId);
+    return this.latestSlipsPerPeriod(slips);
+  }
+
+  /** Mỗi NV chỉ giữ 1 phiếu mới nhất cho mỗi kỳ (tránh phiếu trùng do tính lại
+   * tạo run mới nhưng tab KY_LUONG chưa có để lọc theo run). */
+  private latestSlipsPerPeriod(slips: any[]) {
+    const recency = (s: any) => {
+      const t = Date.parse(String(s?.updated_at || s?.created_at || ''));
+      if (Number.isFinite(t)) return t;
+      const m = String(s?.run_id || '').match(/_(\d{10,})$/);
+      return m ? Number(m[1]) : 0;
+    };
+    const best = new Map<string, any>();
+    for (const s of slips || []) {
+      const key = `${s?.employee_id || s?.employee_code || ''}|${s?.period || ''}`;
+      if (!s?.employee_id && !s?.employee_code) continue;
+      const cur = best.get(key);
+      if (!cur || recency(s) >= recency(cur)) best.set(key, s);
+    }
+    return Array.from(best.values());
   }
 
   // --- Quy trình ký 3 bên từng phiếu: DRAFT -> (ký lập + ký QL) -> PUBLISHED -> (NV ký) CONFIRMED -> PAID ---
@@ -1268,6 +1288,9 @@ export class PayrollService {
       const allSlips = await this.collectAllSlipsInternal();
       slips = allSlips.filter(s => s.period === period);
     }
+    // Tab KY_LUONG có thể rỗng sau khi restart (chỉ còn PHIEU_LUONG): nhiều lần
+    // tính lại tạo nhiều run, mỗi run 1 bộ phiếu. Chỉ trả phiếu mới nhất/NV/kỳ.
+    slips = this.latestSlipsPerPeriod(slips);
     return { run, slips };
   }
 
