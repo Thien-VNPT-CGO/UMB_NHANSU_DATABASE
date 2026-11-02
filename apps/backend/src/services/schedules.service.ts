@@ -1957,7 +1957,7 @@ export class SchedulesService {
   }
 
   // --- Shift Swap ---
-  // NV tự tráo đổi với nhau: KHÔNG có phụ cấp +30k (chỉ HR điều phối mới có).
+  // NV tự tráo đổi với nhau: KHÔNG có phụ cấp (HR điều phối cũng không còn phụ cấp).
   async requestSwap(data: {
     requesterId: string;
     requesterAssignmentId: string;
@@ -2027,7 +2027,7 @@ export class SchedulesService {
   }
 
   /**
-   * HR tạo phiếu điều phối nhường ca (mở cho cả chi nhánh nhận, +30.000đ cho
+   * HR tạo phiếu điều phối nhường ca (mở cho cả chi nhánh nhận, không phụ cấp
    * người nhận làm thay khi duyệt). requester = chủ ca cần người làm thay.
    */
   async createDispatch(data: {
@@ -2341,7 +2341,7 @@ export class SchedulesService {
         }
 
         // NV tự thỏa thuận với nhau: B bấm Đồng ý là chuyển ca ngay,
-        // KHÔNG cần HR duyệt nữa (vẫn không phụ cấp +30k).
+        // KHÔNG cần HR duyệt nữa (không phụ cấp).
         // - Tráo tay đôi (A ⇄ B, đủ 2 ca): hoán đổi người trực.
         // - Nhờ làm thay 1 chiều (không có ca đối ứng): chuyển ca A sang B.
         // HR chuyển ca hỗ trợ chi nhánh (A nhường ca cho B): B đồng ý là ca
@@ -2769,7 +2769,7 @@ export class SchedulesService {
           return rejectedSwap;
         }
 
-        // HR điều phối nhường ca: chuyển 1 chiều ca cho người nhận + ghi +30.000đ.
+        // HR điều phối nhường ca: chuyển 1 chiều ca cho người nhận (không phụ cấp).
         // NV tự tráo (EMPLOYEE_SWAP): hoán đổi 2 ca, KHÔNG phụ cấp.
         if ((swap as any).swap_kind === 'HR_DISPATCH') {
           const coverShift = await this.repo.getShiftById(swap.requester_assignment_id);
@@ -2795,7 +2795,7 @@ export class SchedulesService {
             status: 'APPROVED',
             approved_by: managerId,
             approved_at: new Date().toISOString(),
-            bonus_amount: 30000,
+            bonus_amount: 0,
           });
           await this.cancelSiblingPendingSwaps(swapId, swap);
 
@@ -2807,7 +2807,7 @@ export class SchedulesService {
               (s: any) => (s.date || '').slice(0, 10) === day && s.status !== 'CANCELLED'
             ).length;
             if (dayCount > 1) {
-              dispatchWarnings.push(`${swap.target_employee_id} làm ${dayCount} ca ngày ${day} (mỗi ca điểm danh độc lập, +30.000đ ca nhận thay).`);
+              dispatchWarnings.push(`${swap.target_employee_id} làm ${dayCount} ca ngày ${day} (mỗi ca điểm danh độc lập).`);
             }
           } catch { /* best-effort */ }
 

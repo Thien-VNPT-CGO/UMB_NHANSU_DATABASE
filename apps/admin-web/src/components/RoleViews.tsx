@@ -9604,7 +9604,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               { dot: '#F59E0B', bg: '#FEF3C7', tx: '#92400E', label: '🕒 Đang làm (vàng nhấp nháy)' },
               { dot: '#F59E0B', bg: '#FFFBEB', tx: '#92400E', label: 'Chưa Check-in (Chờ ca)' },
               { dot: '#EA580C', bg: '#FFF7ED', tx: '#9A3412', label: '⚠️ Thiếu check-out' },
-              { dot: '#2563EB', bg: '#EFF6FF', tx: '#1D4ED8', label: '🤝 Ca nhận thay (+30.000đ)' },
+              { dot: '#2563EB', bg: '#EFF6FF', tx: '#1D4ED8', label: '🤝 Ca nhận thay' },
               { dot: '#9CA3AF', bg: '#F3F4F6', tx: '#4B5563', label: 'Nghỉ OFF' },
               { dot: '#EF4444', bg: '#FEF2F2', tx: '#B91C1C', label: '🔴 Vắng ca (tự ghi)' },
               { dot: '#64748B', bg: '#F1F5F9', tx: '#475569', label: '🔒 Khóa — không lương' },
@@ -10298,7 +10298,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                   fontSize: '10px',
                                   fontWeight: 800,
                                 }}>
-                                  🤝 +30.000đ PHỤ CẤP
+                                  🤝 CA NHẬN THAY
                                 </span>
                                 <div style={{ fontSize: '9.5px', color: '#1E40AF', marginTop: '2px' }}>
                                   {d.note}
@@ -11043,7 +11043,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           <div>
             <h1 style={{ fontSize: '20px', fontWeight: 800 }}>9. Giám Sát & Điều Phối Đổi Ca / Nhường Ca</h1>
             <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-              Theo dõi quy trình Tráo đổi ca (A ⇄ B) & Điều phối Nhường ca (+30.000đ/ca phụ cấp hỗ trợ) khi NV không tìm được người thay
+              Theo dõi quy trình Tráo đổi ca (A ⇄ B) & Điều phối Nhường ca khi NV không tìm được người thay
             </p>
           </div>
           <div style={{ display: 'flex', gap: '8px' }}>
@@ -11107,7 +11107,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             const isDispatch = (sw.swap_kind || 'EMPLOYEE_SWAP') === 'HR_DISPATCH';
             const isSupport = (sw.swap_kind || '') === 'HR_SUPPORT';
             if (isSupport) { showToast('Phiếu hỗ trợ chi nhánh do nhân viên xác nhận trên cổng NV (không cần HR duyệt thêm). Theo dõi trạng thái tại tab Chuyển ca hỗ trợ!'); return; }
-            if (!window.confirm(accept ? (isDispatch ? `Duyệt nhường ca ${sw.swap_id}? Ca chuyển cho người nhận + 30.000đ.` : `Duyệt tráo ca ${sw.swap_id}? Hai ca sẽ hoán đổi người trực.`) : `Từ chối phiếu ${sw.swap_id}?`)) return;
+            if (!window.confirm(accept ? (isDispatch ? `Duyệt nhường ca ${sw.swap_id}? Ca chuyển cho người nhận.` : `Duyệt tráo ca ${sw.swap_id}? Hai ca sẽ hoán đổi người trực.`) : `Từ chối phiếu ${sw.swap_id}?`)) return;
             if (swapReviewBusy) return;
             setSwapReviewBusy(sw.swap_id);
             try {
@@ -11146,10 +11146,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 </td>
                 <td style={{ padding: '12px 20px' }}>
                   <span className="badge" style={{ backgroundColor: isDispatch ? '#EDE9FE' : isSupport ? '#DBEAFE' : '#F3F4F6', color: isDispatch ? '#6D28D9' : isSupport ? '#1D4ED8' : '#4B5563', fontWeight: 700 }}>
-                    {isDispatch ? 'HR điều phối +30k' : isSupport ? 'Hỗ trợ chi nhánh' : 'NV tự tráo'}
+                    {isDispatch ? 'HR điều phối' : isSupport ? 'Hỗ trợ chi nhánh' : 'NV tự tráo'}
                   </span>
                   {isDispatch && sw.status === 'APPROVED' && (
-                    <div style={{ fontSize: '11px', color: '#059669', fontWeight: 700, marginTop: '2px' }}>+30.000đ</div>
+                    <div style={{ fontSize: '11px', color: '#059669', fontWeight: 700, marginTop: '2px' }}>Ca đã chuyển ✓</div>
                   )}
                   {isSupport && sw.status === 'APPROVED' && (
                     <div style={{ fontSize: '11px', color: '#059669', fontWeight: 700, marginTop: '2px' }}>Ca đã chuyển ✓</div>
@@ -11164,7 +11164,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: '12px', color: '#DC2626' }} disabled={swapReviewBusy === sw.swap_id} onClick={() => reviewSwap(sw, false)}>{swapReviewBusy === sw.swap_id ? '⏳...' : 'Từ chối'}</button>
                     </div>
                   ) : (
-                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{sw.status === 'APPROVED' ? (isDispatch ? 'Đã giao ca +30k' : isSupport ? 'Đã tạo ca hỗ trợ' : 'Đã hoán đổi ca') : (isSupport && sw.status === 'PENDING_PARTNER' ? 'Chờ NV xác nhận' : '—')}</span>
+                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{sw.status === 'APPROVED' ? (isDispatch ? 'Đã giao ca' : isSupport ? 'Đã tạo ca hỗ trợ' : 'Đã hoán đổi ca') : (isSupport && sw.status === 'PENDING_PARTNER' ? 'Chờ NV xác nhận' : '—')}</span>
                   )}
                 </td>
               </tr>
@@ -11723,7 +11723,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                     )}
                                     {relSwap && (
                                       <div style={{ fontSize: '10px', color: '#6D28D9', fontWeight: 700 }} title={`Phiếu ${relSwap.swap_id} • ${relSwap.status} • gửi ${relSwap.created_at ? new Date(relSwap.created_at).toLocaleString('vi-VN') : '?'}`}>
-                                        ⇄ {empNameOf(relSwap.requester_id)} → {relSwap.target_employee_id ? empNameOf(relSwap.target_employee_id) : 'mở CN'}{isDispatch ? ' +30k' : ''}{relSwap.status === 'PARTNER_ACCEPTED' ? ' • B đã nhận (chờ HR duyệt)' : relSwap.status === 'PENDING_PARTNER' ? ' • chờ B đồng ý' : ''}
+                                        ⇄ {empNameOf(relSwap.requester_id)} → {relSwap.target_employee_id ? empNameOf(relSwap.target_employee_id) : 'mở CN'}{relSwap.status === 'PARTNER_ACCEPTED' ? ' • B đã nhận (chờ HR duyệt)' : relSwap.status === 'PENDING_PARTNER' ? ' • chờ B đồng ý' : ''}
                                       </div>
                                     )}
                                     {(thumb(inE) || thumb(outE)) && (
@@ -11762,7 +11762,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                           ⇄ Đổi/nhường ca: {relSwap ? (
                                             <span>
                                               <strong>{empNameOf(relSwap.requester_id)} → {relSwap.target_employee_id ? empNameOf(relSwap.target_employee_id) : 'mở cả chi nhánh'}</strong><br />
-                                              Loại: {isDispatch ? 'HR điều phối (+30k người nhận)' : 'NV tự tráo (không phụ cấp)'} • Trạng thái: <strong>{relSwap.status}</strong><br />
+                                              Loại: {isDispatch ? 'HR điều phối' : 'NV tự tráo (không phụ cấp)'} • Trạng thái: <strong>{relSwap.status}</strong><br />
                                               <span style={{ color: 'var(--text-muted)' }}>Phiếu {relSwap.swap_id} • gửi {relSwap.created_at ? new Date(relSwap.created_at).toLocaleString('vi-VN') : '?'}</span>
                                             </span>
                                           ) : 'Không có'}
@@ -13531,7 +13531,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         showToast('Kỳ lương phải dạng YYYY-MM (VD: 2026-09)!');
         return;
       }
-      if (!window.confirm(`Tính lương tháng ${period} cho ${branchScope === '*' ? 'toàn hệ thống' : branchName}?\nCông thức: giờ PUBLISHED đủ in+out × đơn giá + 30k nhường ca − phạt trễ/vắng.`)) return;
+      if (!window.confirm(`Tính lương tháng ${period} cho ${branchScope === '*' ? 'toàn hệ thống' : branchName}?\nCông thức: giờ PUBLISHED đủ in+out × đơn giá + PC-OT + bonus nhập tay − phạt trễ/vắng.`)) return;
       setPayCalcBusy(true);
       try {
         const res = await apiRequest(`/payroll/${period}/calculate`, {
@@ -13690,7 +13690,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <div style={{ fontSize: '14px', fontWeight: 800 }}>Công thức chuẩn hệ thống</div>
           </div>
           <div style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '8px 0 12px', lineHeight: 1.6 }}>
-            (giờ PUBLISHED đủ in+out × đơn giá) + 30k nhường ca (HR điều phối) − phạt trễ (30k/50%/100%) − ca vắng không lương.
+            (giờ PUBLISHED đủ in+out × đơn giá) + PC-OT + bonus nhập tay − phạt trễ (30k/50%/100%) − ca vắng không lương.
           </div>
           <button className="btn-primary" disabled={payCalcBusy} onClick={doCalculate}>
             {payCalcBusy ? 'Đang tính...' : `Tính Lương (${branchScope === '*' ? 'toàn hệ thống' : branchName})`}
@@ -13902,7 +13902,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         />
         {!payRunDetail ? (
           <div style={{ backgroundColor: 'var(--surface)', padding: '32px 20px', borderRadius: '14px', border: '1px solid var(--border)', textAlign: 'center', fontSize: '13px', color: 'var(--text-muted)' }}>
-            Chọn 1 kỳ lương để xem chi tiết từng phiếu (giờ công, thưởng nhường ca, phạt trễ, ca vắng, thực nhận).
+            Chọn 1 kỳ lương để xem chi tiết từng phiếu (giờ công, bonus nhập tay, phạt trễ, ca vắng, thực nhận).
           </div>
         ) : (
           <div style={{ backgroundColor: 'var(--surface)', borderRadius: '14px', border: '1px solid var(--border)', overflowX: 'auto', boxShadow: '0 4px 14px rgba(15,23,42,0.06)' }}>
@@ -15732,7 +15732,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Giờ công</span><strong>{profIncome.hours}h (TV {profIncome.tvHours}h + CT {profIncome.ctHours}h)</strong></div>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Lương giờ</span><strong>{vnd(profIncome.gross)} (TV {vnd(profIncome.tvPay)} + CT {vnd(profIncome.ctPay)})</strong></div>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Phạt trễ/vắng</span><strong>−{vnd(profIncome.fines)}</strong></div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Phụ cấp nhường ca</span><strong>+{vnd(profIncome.bonus)}</strong></div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', backgroundColor: '#ECFDF5', borderRadius: '6px', padding: '6px 10px' }}><span style={{ fontWeight: 800, color: '#065F46' }}>Thực nhận ước tính</span><strong style={{ color: '#065F46' }}>{vnd(profIncome.net)}</strong></div>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Hôm nay</span><strong>{profIncome.today.done}/{profIncome.today.shifts} ca • {profIncome.today.hours}h • {vnd(profIncome.today.pay)}</strong></div>
                     </>) : (

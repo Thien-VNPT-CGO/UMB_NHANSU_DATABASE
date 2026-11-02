@@ -11,7 +11,7 @@ Hệ thống Quản lý Nhân sự Ụm Bò Milk V5.1 được xây dựng theo 
 1. **Cổng Quản Trị Hệ Thống (Admin Web Portal - `apps/admin-web`):**
    - Phân quyền nghiêm ngặt theo 5 vai trò tài khoản:
      - **ADMIN (12 Tabs):** Quản trị tài khoản, phân quyền, cấu hình chi nhánh, audit log, backup & recovery, cài đặt hệ thống.
-     - **HR (15 Tabs):** Quản lý ứng viên, phỏng vấn tích hợp Zalo cá nhân & Google Meet, nhân viên thử việc (12 ngày), chính thức, lịch làm việc tuần, đổi ca & điều phối nhường ca (+30.000đ/ca phụ cấp), nghỉ khẩn cấp, chấm công realtime, ngân hàng câu hỏi & bài thi TEST 25 câu.
+     - **HR (15 Tabs):** Quản lý ứng viên, phỏng vấn tích hợp Zalo cá nhân & Google Meet, nhân viên thử việc (12 ngày), chính thức, lịch làm việc tuần, đổi ca & điều phối nhường ca (không phụ cấp), nghỉ khẩn cấp, chấm công realtime, ngân hàng câu hỏi & bài thi TEST 25 câu.
      - **STORE (10 Tabs):** Giám sát vận hành cửa hàng theo chi nhánh cụ thể (CN130, CN120, CN261, CN111), điểm danh realtime, duyệt ca làm.
      - **FINANCE (11 Tabs):** Bảng chấm công, đối soát công, kỳ lương, tính lương tự động, phiếu lương nhân viên.
      - **MARKETING (9 Tabs):** Tạo và phát thông báo truyền thông, campaign, quản lý media.
@@ -19,7 +19,7 @@ Hệ thống Quản lý Nhân sự Ụm Bò Milk V5.1 được xây dựng theo 
 2. **Cổng Nhân Viên (Employee Web App - `apps/employee-web`):**
    - Thiết kế tối ưu cho điện thoại di động (PWA Mobile First).
    - **Nhân viên Thử việc (9 Tabs):** Chu kỳ 12 ngày (7 làm / 5 nghỉ), tự đổi ca tự do (Ca làm ⇄ Nghỉ OFF), làm bài thi TEST 25 câu.
-   - **Nhân viên Chính thức (9 Tabs):** Lịch làm việc tuần, đăng ký OFF tuần, đổi ca 2 hình thức (Tráo ca A ⇄ B và Nhờ làm thay 2 ca/ngày nhận +30.000đ phụ cấp), xem Lương AI.
+   - **Nhân viên Chính thức (9 Tabs):** Lịch làm việc tuần, đăng ký OFF tuần, đổi ca 2 hình thức (Tráo ca A ⇄ B và Nhờ làm thay 2 ca/ngày, hưởng lương theo ca), xem Lương AI.
    - **Điểm danh Realtime:** Tự động quét GPS bán kính < 300m + Chụp ảnh xác nhận diện mạo bắt buộc mặc áo đồng phục màu hồng thương hiệu & đeo bảng tên nhân viên.
 
 3. **Máy Chủ & Hàng Đợi (Backend Server - `apps/backend`):**

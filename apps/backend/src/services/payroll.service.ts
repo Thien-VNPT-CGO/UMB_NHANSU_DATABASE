@@ -361,22 +361,9 @@ export class PayrollService {
           }
 
           const allowance = 0;
-          // Phụ cấp nhường ca +30.000đ/ca: CHỈ khi HR điều phối (HR_DISPATCH đã
-          // APPROVED, người nhận = target). NV tự tráo với nhau: 0đ.
-          let bonus = 0;
-          try {
-            const swaps = await this.repo.listSwapRequests(emp.employee_id);
-            bonus = swaps
-              .filter(
-                s =>
-                  (s as any).swap_kind === 'HR_DISPATCH' &&
-                  s.status === 'APPROVED' &&
-                  s.target_employee_id === emp.employee_id &&
-                  (s.approved_at || '').startsWith(period)
-              )
-              .reduce((sum, s) => sum + (Number((s as any).bonus_amount) || 30000), 0);
-          } catch { /* giữ bonus 0 khi đọc lỗi */ }
-          const netPay = standardPay + allowance + bonus - deduction;
+          // Đã bỏ phụ cấp HR điều phối nhường ca: ca nhận thay chỉ hưởng lương ca.
+          const bonus = 0;
+          const netPay = standardPay + allowance - deduction;
 
           totalHours += empHours;
           totalAmount += netPay;
@@ -599,20 +586,7 @@ export class PayrollService {
             else if (h >= formula.otThreshold1) otSlots += 1;
           }
           const phuCapOT = otSlots * formula.otPerSlot;
-          // Bonus hệ thống: nhường ca HR điều phối đã duyệt.
-          let bonusSys = 0;
-          try {
-            const swaps = await this.repo.listSwapRequests(emp.employee_id);
-            bonusSys = swaps
-              .filter(
-                s =>
-                  (s as any).swap_kind === 'HR_DISPATCH' &&
-                  s.status === 'APPROVED' &&
-                  s.target_employee_id === emp.employee_id &&
-                  (s.approved_at || '').startsWith(period)
-              )
-              .reduce((sum, s) => sum + (Number((s as any).bonus_amount) || 30000), 0);
-          } catch { /* giữ 0 */ }
+          // Đã bỏ phụ cấp HR điều phối nhường ca — bonus chỉ còn phần nhập tay.
           const inp: any = inputs.get(emp.employee_id) || {};
           const luongCB = Number(inp.luong_cb) || 0;
           const otExtra = Number(inp.ot_extra) || 0;
@@ -620,7 +594,7 @@ export class PayrollService {
           const ung = Number(inp.ung_luong) || 0;
           const kpi = Number(inp.tru_kpi) || 0;
           const dp = Number(inp.dong_phuc) || 0;
-          const bonusTotal = bonusSys + bonusExtra;
+          const bonusTotal = bonusExtra;
           const tongCong = luongCB + phuCapOT + standardPay + otExtra + bonusTotal;
           const tongLuong = tongCong - kpi - deduction;
           const thucLanh = tongLuong - ung - dp;
@@ -1204,6 +1178,55 @@ export class PayrollService {
     });
   }
 
+  /**
+   * Bỏ phụ cấp HR điều phối nhường ca (30.000đ) còn sót trên phiếu DRAFT tạo
+   * trước khi bỏ tính năng. Idempotent: chỉ trừ phần `bonus` vượt `bonus_extra`
+   * (phần bonus nhập tay được giữ nguyên), đồng thời trừ đúng khoản đó khỏi các
+   * tổng tiền liên quan. Không tạo kỳ/phiếu mới.
+   */
+  async purgeLegacyDispatchBonus(period?: string) {
+    const all = await this.collectAllSlipsInternal();
+    const targets = (all || []).filter(s => {
+      if (String((s as any)?.status || '').toUpperCase() !== 'DRAFT') return false;
+      if (period && String((s as any)?.period || '') !== period) return false;
+      const bonus = Number((s as any)?.bonus) || 0;
+      const extra = Number((s as any)?.bonus_extra) || 0;
+      return bonus - extra > 0;
+    });
+    let updated = 0;
+    let totalRemoved = 0;
+    for (const s of targets) {
+      const bonus = Number((s as any)?.bonus) || 0;
+      const extra = Number((s as any)?.bonus_extra) || 0;
+      const legacy = bonus - extra;
+      const sub = (key: string) => {
+        const v = (s as any)?.[key];
+        return Number.isFinite(Number(v)) ? Number(v) - legacy : v;
+      };
+      try {
+        await this.repo.updatePayslip((s as any).item_id, {
+          bonus: extra,
+          tong_cong: sub('tong_cong'),
+          tong_luong: sub('tong_luong'),
+          thuc_lanh: sub('thuc_lanh'),
+          net_pay: sub('net_pay'),
+        } as any);
+        updated++;
+        totalRemoved += legacy;
+      } catch { /* phiếu lỗi -> bỏ qua, lần chạy sau xử lý tiếp */ }
+    }
+    if (updated > 0) {
+      this.notifySlipsChanged('purge-legacy-dispatch-bonus', { period: period || '*', updated });
+      this.triggerSheetsPush();
+    }
+    return {
+      period: period || '*',
+      scanned: (all || []).length,
+      updated,
+      totalRemoved,
+    };
+  }
+
   private async collectAllSlipsInternal(): Promise<any[]> {
     const out: any[] = [];
     const seen = new Set<string>();
@@ -1349,7 +1372,7 @@ export class PayrollService {
    * Thu nhập tạm tính realtime cho 1 NV (mục Lương & Thu nhập trong Hồ Sơ):
    * duyệt ca PUBLISHED trong tháng, khớp check-in/out (kể cả kho archive),
    * đơn giá đúng giai đoạn từng ngày (TV trước official_date), phạt trễ theo
-   * mức đã ghi nhận + phụ cấp nhường ca HR điều phối. Không tạo kỳ lương.
+   * mức đã ghi nhận (không còn phụ cấp nhường ca). Không tạo kỳ lương.
    */
   async profileIncome(employeeId: string, period?: string) {
     const per = period && /^\d{4}-(0[1-9]|1[0-2])$/.test(period)
@@ -1470,19 +1493,8 @@ export class PayrollService {
         todayStat.pay += Math.max(0, shiftPay - deductAmt);
       }
     }
-    let bonus = 0;
-    try {
-      const swaps = await this.repo.listSwapRequests(employeeId).catch(() => []);
-      bonus = (swaps || [])
-        .filter(
-          (sw: any) =>
-            sw?.swap_kind === 'HR_DISPATCH' &&
-            sw?.status === 'APPROVED' &&
-            sw?.target_employee_id === employeeId &&
-            String(sw?.approved_at || '').startsWith(per)
-        )
-        .reduce((sum: number, sw: any) => sum + (Number(sw?.bonus_amount) || 30000), 0);
-    } catch { /* giữ bonus 0 */ }
+    // Đã bỏ phụ cấp HR điều phối nhường ca — thu nhập chỉ gồm lương ca trừ phạt.
+    const bonus = 0;
     return {
       period: per,
       employeeId,
@@ -1567,7 +1579,7 @@ export class PayrollService {
       let ctPay = 0;
       let ctDed = 0;
       let deduction = 0;
-      let bonus = 0;
+      const bonus = 0;
       for (const s of published) {
         const liveEvents = await this.repo.getAttendanceEvents(emp.employee_id, s.date).catch(() => []);
         // Gộp sự kiện kho lưu trữ (tuần cũ đã archive khỏi bảng realtime).
@@ -1619,19 +1631,8 @@ export class PayrollService {
         else { ctHours += h; ctPay += shiftPay; ctDed += deductAmt; }
         deduction += deductAmt;
       }
-      try {
-        const swaps = await this.repo.listSwapRequests(emp.employee_id);
-        bonus = swaps
-          .filter(
-            s =>
-              (s as any).swap_kind === 'HR_DISPATCH' &&
-              s.status === 'APPROVED' &&
-              s.target_employee_id === emp.employee_id &&
-              ((s as any).approved_at || '').startsWith(period)
-          )
-          .reduce((sum, s) => sum + (Number((s as any).bonus_amount) || 30000), 0);
-      } catch { /* giữ bonus 0 */ }
-      const liveNet = standardPay + bonus - deduction;
+      // Đã bỏ phụ cấp HR điều phối nhường ca — chỉ còn lương ca trừ phạt.
+      const liveNet = standardPay - deduction;
       const slip = runSlips.get(emp.employee_id);
       // Chia lương theo giai đoạn làm việc thực tế (TV/CT), không theo
       // trạng thái hiện tại — NV chuyển chính thức giữa kỳ vẫn đủ 2 phần.
@@ -1855,19 +1856,7 @@ export class PayrollService {
       }
       details.sort((a, b) => String(a.date).localeCompare(String(b.date)));
       // Thưởng nhường ca HR điều phối đã duyệt trong kỳ.
-      let bonus = 0;
-      try {
-        const swaps = await this.repo.listSwapRequests(empId).catch(() => []);
-        bonus = (swaps || [])
-          .filter(
-            (sw: any) =>
-              sw?.swap_kind === 'HR_DISPATCH' &&
-              sw?.status === 'APPROVED' &&
-              sw?.target_employee_id === empId &&
-              String(sw?.approved_at || '').startsWith(period)
-          )
-          .reduce((sum: number, sw: any) => sum + (Number(sw?.bonus_amount) || 30000), 0);
-      } catch { /* giữ 0 */ }
+      const bonus = 0;
       rows.push({
         employeeId: empId,
         employeeCode: (emp as any).employee_code,
@@ -1888,7 +1877,7 @@ export class PayrollService {
         standardPay,
         deduction,
         bonus,
-        netPay: standardPay + bonus - deduction,
+        netPay: standardPay - deduction,
         shifts: details,
       });
     }

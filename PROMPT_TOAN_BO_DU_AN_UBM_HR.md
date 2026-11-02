@@ -123,7 +123,7 @@ Chuẩn thực thể: `id` bất biến, `version` tăng (optimistic lock), `cre
 - **AttendanceEvent:** `event_id, request_id (idempotency), assignment_id, employee_id, branch_id, type (CHECK_IN|CHECK_OUT|ABSENT), client_time, server_received_at, gps_latitude/longitude/accuracy?, distance_meters?, gps_status (VALID|OUT_OF_BOUNDS|LOW_ACCURACY|MOCK_DETECTED|UNAVAILABLE), drive_object_id?, drive_path, uniform_pink_ratio? (% hồng — chặn <10%), is_early/is_late?, minutes_deviation?, fine_tier (NONE|FLAT_30K|HALF_SHIFT|FULL_SHIFT), fine_amount?, compensated_by/at/reason?, created_at`. **Event gốc bất biến — sai công chỉ sửa qua DIEU_CHINH_CONG.**
 - **AttendanceAdjustment:** `adjustment_id, assignment_id, employee_id, branch_id, reason, minutes_requested, minutes_approved?, approver_id?, status (PENDING|APPROVED|REJECTED), review_note?, evidence_drive_id?, version, …`
 - **LeaveRequest:** `request_id, employee_id, branch_id, leave_type (DOT_XUAT|HANG_TUAN|THU_VIEC), requested_date, shift_code?, reason, status (PENDING|APPROVED|REJECTED|CANCELLED), reviewed_by/at/note?, version, …`
-- **SwapRequest:** `swap_id, swap_kind (EMPLOYEE_SWAP | HR_DISPATCH (+30.000đ phụ cấp) | HR_SUPPORT), requester_id, requester_assignment_id, target_employee_id, target_assignment_id, reason, status (PENDING_PARTNER|PARTNER_ACCEPTED|APPROVED|REJECTED|CANCELLED), bonus_amount?, support_branch_id/date/shift_code?, version, …`
+- **SwapRequest:** `swap_id, swap_kind (EMPLOYEE_SWAP | HR_DISPATCH (không phụ cấp) | HR_SUPPORT), requester_id, requester_assignment_id, target_employee_id, target_assignment_id, reason, status (PENDING_PARTNER|PARTNER_ACCEPTED|APPROVED|REJECTED|CANCELLED), bonus_amount? (legacy, luôn 0), support_branch_id/date/shift_code?, version, …`
 - **PayrollRun:** `run_id, period (YYYY-MM), branch_scope, status (DRAFT|RECONCILED|APPROVED|PUBLISHED|PAID), total_employees/hours/amount, created_by, reconciled_by/at?, approved_by/at? (≠ người lập), published_by/at?, paid_by/at?, version`.
 - **PayslipItem:** `item_id, run_id, employee_id, employee_code, full_name, period, total_shifts, absent_shifts?, standard_hours, rate_snapshot, standard_pay, tv_hours/tv_pay?, ct_hours/ct_pay?, allowance, bonus, deduction, net_pay` + mở rộng Excel: `ot_slots, phu_cap_ot, luong_cb, ot_extra, bonus_extra, ung_luong, tru_kpi, dong_phuc, tong_cong, tong_luong, thuc_lanh` + `sign_lap/sign_quanly/sign_nhanvien (PayslipSignature: name, at, img PNG dataURL), slip_published_at/confirmed_at/paid_at/by, bank_name/account/holder, status`.
 - **CandidateApplication** (ứng viên từ Google Form): `submission_id, full_name, phone_normalized, birth_year, apply_position, preferred_branch_id, status (NEW→NEED_INFO→INVITED_INTERVIEW→CONFIRMED→RESCHEDULE_REQUESTED→INTERVIEWED→ACCEPTED/REJECTED/NO_SHOW), interview_date, interview_time_slot, interviewer_id, interview_score, interview_rubric (store 9 câu | office 7 câu), interview_score_detail, zalo_invite_status (SENT|NOT_FRIEND|FAILED), zalo_uid, …` + 17 cột biểu mẫu: gender, education_level, hometown, registered_shift, branch_name, experience, emergency_handling, facebook_url, referral_source, ai_score, screening_result, source_code, **vip / vip_at / vip_by, vip_rank** (1 = ưu tiên nhất, độc lập theo chi nhánh).
@@ -304,7 +304,7 @@ Chuẩn thực thể: `id` bất biến, `version` tăng (optimistic lock), `cre
 | `POST /admin/weekly-off/open` / `/close`, `GET /manual-status` | **MỞ BÙ VIP** cổng ngoài khung (30–120 phút) |
 | `POST /admin/shift-off-overlaps/sync` | Ca trùng ngày OFF → chuyển thành ca làm việc |
 | `POST /swap-requests` | NV gửi tráo ca (`EMPLOYEE_SWAP`): B đồng ý là đổi ngay, không phụ cấp |
-| `POST /swap-requests/dispatch` | HR điều phối (`HR_DISPATCH`, +30.000đ) |
+| `POST /swap-requests/dispatch` | HR điều phối (`HR_DISPATCH`, không phụ cấp) |
 | `POST /swap-requests/support` | HR chuyển NV hỗ trợ CN khác (`HR_SUPPORT`) |
 | `POST /swap-requests/:id/respond` / `/approve` | B xác nhận (đổi ngay) / HR duyệt |
 | `POST /admin/swaps/audit-out-of-week` | Hủy phiếu đổi ca ngoài tuần gửi + hoàn lịch về chủ cũ |
@@ -479,7 +479,7 @@ Tab active lưu `localStorage["ubm_active_tab"]`. Lưu ý: tab `attendance` (Đi
 - Sửa / Xóa như trên.
 
 ### 6.3.4. Lịch & Điểm Danh (`operations` — HR/ADMIN)
-- **Lưới tuần T2→CN**, sort CN1→CN4 theo ca cố định trong hồ sơ; chip trạng thái: `COMPLETED`, `CHECKED_IN` (nhấp nháy `fx-blink`), `MISSING_OUT`, `LOCKED`, `PENDING`, `OFF`, `PENDING_LEAVE`, `BONUS_SWAP` (+30k), `ABSENT`, `MULTI`, `NO_SHIFT`.
+- **Lưới tuần T2→CN**, sort CN1→CN4 theo ca cố định trong hồ sơ; chip trạng thái: `COMPLETED`, `CHECKED_IN` (nhấp nháy `fx-blink`), `MISSING_OUT`, `LOCKED`, `PENDING`, `OFF`, `PENDING_LEAVE`, `BONUS_SWAP` (ca nhận thay), `ABSENT`, `MULTI`, `NO_SHIFT`.
 - **Nút:** Tải Lại Realtime (`GET /attendance/events`) · **Publish** (PublishScheduleModal — chỉ ca DRAFT mới publish) · **Bổ Sung Lịch NV** (`POST /schedules/shifts`) · **Bù ca tuần trước** (`GET`+`POST /schedules/backfill-new-official?publish=true` — chỉ ngày ≤ hôm qua và < official_date) · **Dọn Ca Không Live** (preview + xóa) · **Gỡ OFF trùng** (`POST /admin/weekly-off/resolve-overlaps`) · **Dọn Ca Trùng** (`/admin/shifts/dedupe-duplicates`).
 - **Export ZIP:** `GET /admin/attendance/export-day?date=` / `GET /admin/attendance/export-work-week?weekMon=`.
 - **Modal Sửa ca:** khóa ngày khi đã điểm danh. **Modal Bằng chứng:** GPS (bán kính 300m), tỷ lệ đồng phục hồng `uniform_pink_ratio` %, ảnh check-in/out (AttPhoto) + zoom.
@@ -492,7 +492,7 @@ Tab active lưu `localStorage["ubm_active_tab"]`. Lưu ý: tab `attendance` (Đi
 - Loại `HR_SUPPORT`: `POST /swap-requests/support` `{requesterAssignmentId, targetEmployeeId, reason}` — NV B xác nhận trên cổng nhân viên là ca tạo ngay ở chi nhánh hỗ trợ.
 
 ### 6.3.7. Đổi/Nhường Ca (`swap` — HR/ADMIN)
-- 2 loại: `EMPLOYEE_SWAP` (NV tự tráo) / `HR_DISPATCH` (HR điều phối, **+30.000đ thưởng**); nhóm theo tuần.
+- 2 loại: `EMPLOYEE_SWAP` (NV tự tráo) / `HR_DISPATCH` (HR điều phối, không phụ cấp); nhóm theo tuần.
 - Duyệt: `POST /swap-requests/{id}/approve` `{accept: true|false, reason}`.
 - **Audit:** `POST /admin/swaps/audit-out-of-week` — tự hủy phiếu đổi ca sai tuần.
 
@@ -636,7 +636,7 @@ Header sticky: logo, họ tên, badge "Thử việc (12 ngày)"/"Chính thức",
 
 **Chính thức (`swap_shift`) — 4 khối:**
 1. **Phiếu chờ TÔI xác nhận** (banner vàng mọi tab + thẻ): đồng nghiệp tráo ca hoặc **HR điều phối làm thay** → ✓ Đồng ý / ✕ Từ chối → `POST /swap-requests/:swapId/respond` `{accept}`; **B đồng ý là 2 ca hoán đổi ngay (không cần HR duyệt)**; với `HR_SUPPORT` đồng ý là ca tạo ngay ở CN hỗ trợ.
-2. **🚀 Ca cần người làm thay (+30.000đ — `HR_DISPATCH`):** mở cho cả chi nhánh, nút "Nhận ca này" / "Ẩn (không nhận)".
+2. **🚀 Ca cần người làm thay (`HR_DISPATCH`):** mở cho cả chi nhánh, nút "Nhận ca này" / "Ẩn (không nhận)".
 3. **Phiếu tôi đã gửi:** Chờ NV B / Chờ Store duyệt / Đã duyệt / Từ chối / Đã hủy.
 4. **Form gửi 2 hình thức:** (1) **Tráo đổi ca A ⇄ B** — chọn ca của mình → chọn đồng nghiệp cùng chi nhánh (`GET /me/colleagues`) → tải ca thật của B `GET /me/colleague-shifts?employeeId=&fromDate=` (fallback `/schedules?branchId=&week=`) → chọn ca B + lý do; (2) **Nhờ làm thay / Nhường ca** (B làm 2 ca/ngày, `targetAssignmentId: ''`). Chỉ chọn được ca **PUBLISHED** từ tuần hiện tại trở đi (DRAFT/quá tuần bị chặn — cảnh báo đếm ca chưa publish). Gửi: `POST /swap-requests` `{requesterAssignmentId, targetEmployeeId, targetAssignmentId, reason}`. Realtime `swap.updated` báo từng trạng thái.
 
@@ -715,7 +715,7 @@ QR ngân hàng NV gửi ở Hồ sơ → hiện ngay tab `fin-bank-qr` kế toá
 2. **Điểm danh:** GPS thật + ảnh camera thật + đồng phục hồng ≥10% + bảng tên; check-in mở trước ca 30 phút; khóa ca sau 3h; phạt trễ theo tier (0 / 30k / 50% / 100%); GPS ngoài bán kính vẫn ghi nhận nhưng đánh dấu `OUT_OF_BOUNDS` + bắt NV điểm danh lại; event gốc bất biến.
 3. **Thử việc 12 ngày:** NV tự chọn 5 ngày OFF **một lần duy nhất**, hệ thống tự xếp 7 ca; tự đổi ca + tự thêm ca (≤2 ca/ngày) không cần HR duyệt.
 4. **Chính thức:** 2 ngày OFF/tuần đăng ký trong cổng T6 09:00 → T7 09:00 (1 lần/tuần, khóa app đến khi đăng ký); 2 bạn cùng ca cùng chi nhánh không OFF chung ngày; có đợt mở bù của Admin.
-5. **Đổi ca:** A gửi → B xác nhận = hoán đổi ngay; `HR_DISPATCH` +30.000đ; `HR_SUPPORT` tạo ca ngay ở CN hỗ trợ; phiếu sai tuần tự hủy (`audit-out-of-week`).
+5. **Đổi ca:** A gửi → B xác nhận = hoán đổi ngay; `HR_DISPATCH` (không phụ cấp); `HR_SUPPORT` tạo ca ngay ở CN hỗ trợ; phiếu sai tuần tự hủy (`audit-out-of-week`).
 6. **Điều chỉnh công:** 1 phiếu/tuần, tự từ chối sau 30 phút, tự xóa sau 7 ngày, `BU_CONG_NGAY` tốn 5 điểm bù công; duyệt → backfill công + xóa vi phạm trễ.
 7. **Lương:** stage `DRAFT → RECONCILED → APPROVED → PUBLISHED → PAID`; **tách biệt người tính/người duyệt**; công thức Excel hóa (rateTV/rateCT/otPerSlot/otThreshold 10h–15h) + 6 cột nhập tay + live payslip; phiếu PUBLISHED đủ **3 chữ ký** (lap/quanly/nhanvien) mới thành `CONFIRMED` → chi trả (`PAID`) qua **VietQR** (nội dung CK = "LUONG {period} {mã NV}"); phiếu đã phát không sửa đè — sai thì revision/adjustment.
 8. **Optimistic locking:** mọi PUT employee/chuyển trạng thái gửi `expectedVersion`; xung đột → `VERSION_CONFLICT`.

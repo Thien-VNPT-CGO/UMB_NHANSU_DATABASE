@@ -3332,7 +3332,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       const employeeId = req.user?.role === 'EMPLOYEE' ? req.user.employeeId : undefined;
       const list = await (adapter.getMockAdapter() as any).listSwapRequests(employeeId);
-      // NV: kèm phiếu điều phối mở của chi nhánh mình để nhận ca (+30k).
+      // NV: kèm phiếu điều phối mở của chi nhánh mình để nhận ca.
       if (req.user?.role === 'EMPLOYEE' && req.user.employeeId) {
         const me = await employeesService.getEmployee(req.user.employeeId).catch(() => null);
         const branchId = (me as any)?.default_branch_id || req.user.branchScope;
@@ -3350,7 +3350,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  // HR tạo phiếu điều phối nhường ca (+30.000đ cho người nhận khi duyệt).
+  // HR tạo phiếu điều phối nhường ca (người nhận hưởng lương ca, không phụ cấp).
   app.post('/swap-requests/dispatch', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ body: swapDispatchBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const requesterId = req.body.requesterId;
@@ -3363,14 +3363,14 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         requesterId,
         requesterAssignmentId: req.body.requesterAssignmentId,
         branchId,
-        reason: req.body.reason || 'HR điều phối nhường ca (+30.000đ hỗ trợ)',
+        reason: req.body.reason || 'HR điều phối nhường ca',
         actorId: req.user!.id,
       });
       broadcastUpdate('swaps', { action: 'dispatch', swap: result });
       broadcastNotification({
         type: 'SWAP',
-        title: '🚀 HR Cần Người Làm Thay Ca (+30.000đ)',
-        message: `${(requester as any)?.full_name || 'Nhân viên'} cần người làm thay ca. Nhận ca được +30.000đ phụ cấp!`,
+        title: '🚀 HR Cần Người Làm Thay Ca',
+        message: `${(requester as any)?.full_name || 'Nhân viên'} cần người làm thay ca. Nhận ca hưởng lương theo ca!`,
         linkTab: 'hr-schedule',
         metadata: { swapId: (result as any)?.result?.swap_id, branchId },
         targetRoles: ['ADMIN', 'HR', 'STORE', 'EMPLOYEE'],
@@ -3461,11 +3461,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       broadcastNotification({
         type: 'SWAP',
         title: req.body.accept ? '🎉 Đã Duyệt Đổi Ca Thành Công' : '❌ Đã Bác Bỏ Yêu Cầu Đổi Ca',
-        message: (() => {
-          const sw: any = (result as any)?.result ?? result;
-          const bonusTxt = req.body.accept && sw?.swap_kind === 'HR_DISPATCH' ? ' Người nhận ca được +30.000đ phụ cấp.' : '';
-          return `Quản lý đã ${req.body.accept ? 'phê duyệt' : 'từ chối'} đổi ca #${req.params.id}.${bonusTxt}`;
-        })(),
+        message: `Quản lý đã ${req.body.accept ? 'phê duyệt' : 'từ chối'} đổi ca #${req.params.id}.`,
         linkTab: 'hr-schedule',
         metadata: { swapId: req.params.id },
         targetRoles: ['ADMIN', 'HR', 'STORE', 'EMPLOYEE'],
@@ -5178,6 +5174,20 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Bỏ phụ cấp HR điều phối 30k còn sót trên phiếu DRAFT cũ (idempotent).
+  app.post('/payroll/purge-legacy-dispatch-bonus', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req, res) => {
+    try {
+      const period = String((req.query as any)?.period || (req.body as any)?.period || '').trim();
+      if (period && !/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
+        return res.status(400).json({ error: 'INVALID_PERIOD: kỳ lương phải dạng YYYY-MM (VD: 2026-10).' });
+      }
+      const result = await payrollService.purgeLegacyDispatchBonus(period || undefined);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 

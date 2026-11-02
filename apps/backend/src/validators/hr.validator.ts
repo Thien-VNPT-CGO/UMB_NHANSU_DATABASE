@@ -367,7 +367,7 @@ export const probationSelfSwapBody = z.object({
   shiftCode: z.enum(['CA_1', 'CA_2', 'CA_3']).optional(),
 });
 
-// HR tạo phiếu điều phối nhường ca (+30k cho người nhận)
+// HR tạo phiếu điều phối nhường ca (người nhận hưởng lương ca, không phụ cấp)
 export const swapDispatchBody = z.object({
   requesterId: optString(64),
   requesterAssignmentId: optString(64),

@@ -45,11 +45,9 @@ export interface LeaveRequest {
   version: number;
 }
 
-/** Loại phiếu đổi ca: NV tự tráo với nhau (không phụ cấp), HR điều phối nhường ca (+30k),
+/** Loại phiếu đổi ca: NV tự tráo với nhau (không phụ cấp), HR điều phối nhường ca (không phụ cấp),
  *  HR chuyển ca hỗ trợ chi nhánh (chỉ định NV chính thức sang CN khác, NV xác nhận là tạo ca ngay). */
 export type SwapKind = 'EMPLOYEE_SWAP' | 'HR_DISPATCH' | 'HR_SUPPORT';
-
-export const HR_DISPATCH_BONUS_VND = 30000;
 
 export interface SwapRequest {
   swap_id: string;
@@ -64,7 +62,7 @@ export interface SwapRequest {
   approved_by?: string;
   approved_at?: string;
   rejection_reason?: string;
-  /** Phụ cấp nhường ca (đ): chỉ HR_DISPATCH đã APPROVED mới có 30.000. */
+  /** Trường legacy: phụ cấp nhường ca đã bỏ, luôn ghi 0 (giữ để đọc dữ liệu cũ). */
   bonus_amount?: number;
   /** HR chuyển ca hỗ trợ chi nhánh: CN cần hỗ trợ (ca tạo tại CN này khi NV đồng ý). */
   support_branch_id?: string;
