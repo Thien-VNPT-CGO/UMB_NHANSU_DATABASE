@@ -4,7 +4,7 @@
  * - Precache app shell + offline fallback.
  * - Navigation: network-first; asset tĩnh: stale-while-revalidate.
  */
-const VERSION = 'v1';
+const VERSION = 'v2';
 const CORE_CACHE = `ubm-admin-core-${VERSION}`;
 const RUNTIME_CACHE = `ubm-admin-runtime-${VERSION}`;
 const PRECACHE_URLS = [
@@ -12,10 +12,14 @@ const PRECACHE_URLS = [
   './index.html',
   './offline.html',
   './manifest.webmanifest',
+  './manifest.json',
+  './favicon.ico',
+  './logo.jpg',
   './icon-192.png',
   './icon-512.png',
   './icon-maskable-512.png',
   './apple-touch-icon.png',
+  './apple-touch-icon-precomposed.png',
 ];
 
 const scopeUrl = new URL(self.registration.scope);

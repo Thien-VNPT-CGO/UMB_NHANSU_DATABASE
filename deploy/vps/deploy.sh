@@ -70,6 +70,11 @@ if [ -f "deploy/vps/fix-gzip-nginx.sh" ]; then
   sudo bash deploy/vps/fix-gzip-nginx.sh || true
 fi
 
+echo "==> 5c. Dam bao Nginx phuc vu PWA va icon dung chuan"
+if [ -f "deploy/vps/fix-pwa-nginx.sh" ]; then
+  sudo bash deploy/vps/fix-pwa-nginx.sh || true
+fi
+
 echo "==> 6. Kiem tra suc khoe (cho backend san sang)..."
 READY=0
 for i in $(seq 1 15); do
