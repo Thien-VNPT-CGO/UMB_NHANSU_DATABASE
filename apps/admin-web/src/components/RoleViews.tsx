@@ -771,6 +771,31 @@ export function formatCountdown(ms: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
+/**
+ * Hạn hiệu lực của phiếu bù công: 30 phút kể từ lúc NV gửi, nhưng chốt muộn
+ * nhất là 21:00 (giờ VN) cùng ngày vì quá khung duyệt 08:00–21:00 hệ thống tự
+ * từ chối (xem AttendanceService.expireStaleAdjustments bên backend).
+ */
+export function adjDeadlineInfo(createdAt?: string, nowMs: number = Date.now()): {
+  deadlineMs: number;
+  remainingMs: number;
+  expired: boolean;
+  deadlineText: string;
+  cappedByWindow: boolean;
+} | null {
+  const createdMs = Date.parse(String(createdAt || ''));
+  if (!Number.isFinite(createdMs)) return null;
+  const ttlDeadline = createdMs + 30 * 60 * 1000;
+  // 21:00 giờ VN của đúng ngày tạo phiếu.
+  const vn = new Date(createdMs + 7 * 3_600_000);
+  const closeMs = Date.UTC(vn.getUTCFullYear(), vn.getUTCMonth(), vn.getUTCDate(), 21, 0, 0) - 7 * 3_600_000;
+  const deadlineMs = Math.min(ttlDeadline, closeMs);
+  const remainingMs = Math.max(0, deadlineMs - nowMs);
+  const vnDeadline = new Date(deadlineMs + 7 * 3_600_000);
+  const deadlineText = `${String(vnDeadline.getUTCHours()).padStart(2, '0')}:${String(vnDeadline.getUTCMinutes()).padStart(2, '0')}`;
+  return { deadlineMs, remainingMs, expired: remainingMs <= 0, deadlineText, cappedByWindow: closeMs < ttlDeadline };
+}
+
 /** Chuẩn hiển thị cột Thời Gian lịch PV: dd/MM/yyyy - HH:mm. */
 export function fmtPvTime(c: any): string {
   const d = toISODate((c as any)?.interview_date);
@@ -2263,6 +2288,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [storeConfirmBusy, setStoreConfirmBusy] = useState(false);
   // Phiếu đang xem chi tiết (popup: tên NV + lý do & số phút + ảnh + thời gian)
   const [selectedAdj, setSelectedAdj] = useState<any | null>(null);
+  // Đồng hồ đếm ngược hạn duyệt phiếu bù công (30 phút / chốt 21:00 VN):
+  // bảng + popup cập nhật mỗi giây để HR thấy chính xác còn bao lâu thì tự hủy.
+  const [adjNow, setAdjNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (activeTab !== 'hr-adjustments') return;
+    const t = setInterval(() => setAdjNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [activeTab]);
   // Admin hoàn thành ca làm cho NV (ngày + nhân viên + ca): ghi CHECK_IN/OUT
   // còn thiếu về đúng ca — lương đồng bộ theo. Chỉ hiện ca chưa đủ cặp.
   const [compDate, setCompDate] = useState(() => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10));
@@ -11783,6 +11816,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const renderAdjRows = (list: any[], isPending: boolean) =>
       list.map((a: any) => {
         const emp = (allEmployees || []).find((e: any) => e.employee_id === a.employee_id);
+        const adjDl = adjDeadlineInfo(a.created_at, adjNow);
+        // Quá hạn duyệt: backend đã/đang tự từ chối -> khóa nút Duyệt/Từ chối,
+        // tránh HR bấm rồi nhận lỗi "phiếu hết hiệu lực".
+        const adjExpired = isPending && !!adjDl?.expired;
         return (
           <tr key={a.adjustment_id} style={{ borderBottom: '1px solid var(--border)', backgroundColor: isPending ? '#FFFBEB' : undefined }}>
             <td
@@ -11805,7 +11842,38 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>—</span>
               )}
             </td>
-            <td style={{ padding: '12px 20px', fontSize: '12px', color: 'var(--text-muted)' }}>{a.created_at ? new Date(a.created_at).toLocaleString('vi-VN') : '—'}</td>
+            <td style={{ padding: '12px 20px', fontSize: '12px', color: 'var(--text-muted)' }}>
+              <div>{a.created_at ? new Date(a.created_at).toLocaleString('vi-VN') : '—'}</div>
+              {(() => {
+                const dl = adjDeadlineInfo(a.created_at, adjNow);
+                if (!dl) return null;
+                if (isPending) {
+                  const urgent = !dl.expired && dl.remainingMs <= 5 * 60 * 1000;
+                  return (
+                    <div
+                      style={{
+                        marginTop: '4px',
+                        fontSize: '11px',
+                        fontWeight: 700,
+                        color: dl.expired ? '#991B1B' : urgent ? '#B45309' : '#166534',
+                      }}
+                    >
+                      ⏳ Hạn hủy {dl.deadlineText} •{' '}
+                      {dl.expired
+                        ? 'đã hết hạn — hệ thống sẽ tự từ chối'
+                        : `còn ${formatCountdown(dl.remainingMs)}`}
+                      {dl.cappedByWindow ? ' (chốt khung 21:00)' : ''}
+                    </div>
+                  );
+                }
+                return (
+                  <div style={{ marginTop: '4px', fontSize: '11px' }}>
+                    ⏰ Hạn duyệt: {dl.deadlineText}
+                    {dl.cappedByWindow ? ' (chốt khung 21:00)' : ''}
+                  </div>
+                );
+              })()}
+            </td>
             <td style={{ padding: '12px 20px' }}>
               <span className="badge" style={{ backgroundColor: a.status === 'APPROVED' ? '#DCFCE7' : a.status === 'REJECTED' ? '#FEE2E2' : '#FEF3C7', color: a.status === 'APPROVED' ? '#166534' : a.status === 'REJECTED' ? '#991B1B' : '#92400E', fontWeight: 700 }}>
                 {a.status === 'APPROVED' ? 'Đã duyệt' : a.status === 'REJECTED' ? (String(a.review_note || '').startsWith('Tự động từ chối') ? 'Tự từ chối (hết hạn)' : 'Đã từ chối') : 'Chờ duyệt'}
@@ -11814,8 +11882,24 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <td style={{ padding: '12px 20px' }}>
               {isPending ? (
                 <div style={{ display: 'flex', gap: '6px' }}>
-                  <button className="btn-primary" style={{ padding: '4px 10px', fontSize: '12px' }} disabled={adjBusy === a.adjustment_id} onClick={() => reviewAdj(a, 'APPROVED')}>{adjBusy === a.adjustment_id ? '⏳...' : 'Duyệt'}</button>
-                  <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: '12px', color: '#DC2626' }} disabled={adjBusy === a.adjustment_id} onClick={() => reviewAdj(a, 'REJECTED')}>{adjBusy === a.adjustment_id ? '⏳...' : 'Từ chối'}</button>
+                  <button
+                    className="btn-primary"
+                    style={{ padding: '4px 10px', fontSize: '12px' }}
+                    disabled={adjBusy === a.adjustment_id || adjExpired}
+                    title={adjExpired ? `Phiếu đã quá hạn duyệt (${adjDl?.deadlineText}) — hệ thống tự từ chối, không duyệt được nữa` : undefined}
+                    onClick={() => reviewAdj(a, 'APPROVED')}
+                  >
+                    {adjBusy === a.adjustment_id ? '⏳...' : adjExpired ? '⏰ Hết hạn' : 'Duyệt'}
+                  </button>
+                  <button
+                    className="btn-secondary"
+                    style={{ padding: '4px 10px', fontSize: '12px', color: '#DC2626' }}
+                    disabled={adjBusy === a.adjustment_id || adjExpired}
+                    title={adjExpired ? `Phiếu đã quá hạn duyệt (${adjDl?.deadlineText}) — đang chờ hệ thống tự từ chối` : undefined}
+                    onClick={() => reviewAdj(a, 'REJECTED')}
+                  >
+                    {adjBusy === a.adjustment_id ? '⏳...' : 'Từ chối'}
+                  </button>
                   <button
                     className="btn-secondary"
                     style={{ padding: '4px 10px', fontSize: '12px', color: '#DC2626' }}
@@ -11951,7 +12035,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         g.total++;
         if (a.status === 'PENDING') g.pending.push(a); else g.done.push(a);
       }
-      return [...map.values()].sort((x, y) => String(y.key).localeCompare(String(x.key)));
+      // Trong mỗi tuần: phiếu chờ duyệt xếp cũ nhất trước (gấp nhất vì sắp hết hạn),
+      // phiếu đã xử lý xếp mới nhất trước để HR đối soát nhanh.
+      return [...map.values()]
+        .sort((x, y) => String(y.key).localeCompare(String(x.key)))
+        .map((g: any) => ({
+          ...g,
+          pending: [...g.pending].sort((x: any, y: any) => Date.parse(x.created_at) - Date.parse(y.created_at)),
+          done: [...g.done].sort((x: any, y: any) => Date.parse(y.created_at) - Date.parse(x.created_at)),
+        }));
     })();
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -11967,6 +12059,20 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <button className="btn-secondary" style={{ fontSize: '12px', padding: '6px 12px' }} onClick={loadAdjustments}>Tải lại</button>
           </div>
         </div>
+        {/* CẢNH BÁO PHIẾU SẮP HẾT HẠN: hiện rõ hạn tự hủy để HR duyệt kịp. */}
+        {(() => {
+          const soon = pendingAdj
+            .map((a: any) => ({ a, dl: adjDeadlineInfo(a.created_at, adjNow) }))
+            .filter((x: any) => x.dl && !x.dl.expired && x.dl.remainingMs <= 5 * 60 * 1000)
+            .sort((x: any, y: any) => x.dl.remainingMs - y.dl.remainingMs);
+          if (soon.length === 0) return null;
+          return (
+            <div style={{ backgroundColor: '#FEF2F2', border: '1.5px solid #FCA5A5', borderRadius: '10px', padding: '10px 14px', fontSize: '13px', color: '#991B1B', fontWeight: 700 }}>
+              ⚠️ {soon.length} phiếu sắp hết hạn tự hủy (dưới 5 phút):{' '}
+              {soon.map((x: any) => `${x.a.employee_id} (còn ${formatCountdown(x.dl.remainingMs)})`).join(' • ')}
+            </div>
+          );
+        })()}
         {/* QUOTA BÙ CÔNG NGÀY THEO TỪNG NHÂN VIÊN: tháng + tuần hiện tại.
             NV gửi phiếu vượt quota bị server chặn ngay; bảng này để HR đối soát. */}
         {(() => {
@@ -12201,9 +12307,37 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     className="badge"
                     style={{ backgroundColor: selectedAdj.status === 'APPROVED' ? '#DCFCE7' : selectedAdj.status === 'REJECTED' ? '#FEE2E2' : '#FEF3C7', color: selectedAdj.status === 'APPROVED' ? '#166534' : selectedAdj.status === 'REJECTED' ? '#991B1B' : '#92400E', fontWeight: 700 }}
                   >
-                    {selectedAdj.status === 'APPROVED' ? 'Đã duyệt' : selectedAdj.status === 'REJECTED' ? 'Đã từ chối' : 'Chờ duyệt'}
+                    {selectedAdj.status === 'APPROVED' ? 'Đã duyệt' : selectedAdj.status === 'REJECTED' ? (String(selectedAdj.review_note || '').startsWith('Tự động từ chối') ? 'Tự từ chối (hết hạn)' : 'Đã từ chối') : 'Chờ duyệt'}
                   </span>
                 </div>
+                {(() => {
+                  const dl = adjDeadlineInfo(selectedAdj.created_at, adjNow);
+                  if (!dl) return null;
+                  const pending = selectedAdj.status === 'PENDING';
+                  const urgent = pending && !dl.expired && dl.remainingMs <= 5 * 60 * 1000;
+                  return (
+                    <div
+                      style={{
+                        marginTop: '8px',
+                        fontSize: '12px',
+                        fontWeight: 700,
+                        color: pending ? (dl.expired ? '#991B1B' : urgent ? '#B45309' : '#166534') : 'var(--text-muted)',
+                      }}
+                    >
+                      {pending
+                        ? (dl.expired
+                          ? `⏰ Đã quá hạn duyệt (hạn ${dl.deadlineText}) — hệ thống sẽ tự từ chối phiếu.`
+                          : `⏳ Hạn tự hủy: ${dl.deadlineText} • còn ${formatCountdown(dl.remainingMs)}`)
+                        : `⏰ Hạn duyệt phiếu: ${dl.deadlineText}`}
+                      {dl.cappedByWindow ? ' • chốt khung duyệt 21:00' : ''}
+                    </div>
+                  );
+                })()}
+                {selectedAdj.review_note && (
+                  <div style={{ marginTop: '6px', fontSize: '12px', color: 'var(--text-muted)' }}>
+                    📝 Ghi chú: {String(selectedAdj.review_note)}
+                  </div>
+                )}
               </div>
             </div>
           );
