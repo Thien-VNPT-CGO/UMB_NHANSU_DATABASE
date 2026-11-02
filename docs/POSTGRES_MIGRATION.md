@@ -139,10 +139,20 @@ Lịch chạy luôn dùng **giờ Việt Nam (UTC+7)**, không phụ thuộc TZ 
 
 Nội dung bản backup tuỳ nguồn dữ liệu:
 
-- **`DATA_STORE=sheets`** (cấu hình đang chạy trên VPS): mỗi kỳ COPY NGUYÊN
-  spreadsheet live do Google thực hiện server-side, tên
-  `UMB_NHANSU_DATABASE_<kỳ>` — mở trực tiếp bằng Google Sheets, luôn là dữ liệu
-  mới nhất tại thời điểm chạy. Mốc đã chạy lưu ở
+- **`DATA_STORE=sheets`** (cấu hình đang chạy trên VPS): database đã tách thành
+  **25 Google Spreadsheet riêng** (`apps/backend/src/config/sheets-mapping.ts`).
+  Mỗi kỳ COPY từng file riêng vào folder kỳ, tên `<TÊN_BẢNG>_<kỳ>` — mở trực tiếp
+  bằng Google Sheets, luôn là dữ liệu mới nhất tại thời điểm chạy. Ví dụ:
+
+  ```
+  01. BACKUP_DATA_DAY/2026-11-01/
+    NHAN_VIEN_MASTER_2026-11-01
+    PHAN_CONG_CA_2026-11-01
+    ... (đủ 25 bảng)
+  ```
+
+  File tổng hợp `UMB_NHANSU_DATABASE` **không còn được dùng làm nguồn backup**
+  (dữ liệu live đã chuyển hẳn sang 25 sheet riêng). Mốc đã chạy lưu ở
   `data/backups/sheets-backup-state.json`.
 - **`DATA_STORE=postgres`**: file `postgres_<kỳ>.jsonl.gz` (JSON Lines nén), dòng
   đầu là header (thời điểm + số dòng từng bảng), các dòng sau là từng bản ghi

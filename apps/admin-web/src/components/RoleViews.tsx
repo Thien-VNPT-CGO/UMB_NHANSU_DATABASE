@@ -4259,16 +4259,18 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   {backedToday ? '💾 Đã backup hôm nay OK: ' : backupSt.last_error ? '⚠ Backup LỖI: ' : '⏳ Chưa backup hôm nay (cron sẽ thử): '}
                   <span style={{ fontWeight: 700 }}>
                     {backedToday
-                      ? `${backupSt.last_name || vnToday}${backupSt.last_ok_at ? ` • ${new Date(backupSt.last_ok_at).toLocaleTimeString('vi-VN')}` : ''}${backupSt.last_deleted_old ? ` • dọn ${backupSt.last_deleted_old} bản cũ` : ''}`
+                      ? `${backupSt.last_name || vnToday}${backupSt.last_files ? ` (${backupSt.last_files} bảng)` : ''}${backupSt.last_ok_at ? ` • ${new Date(backupSt.last_ok_at).toLocaleTimeString('vi-VN')}` : ''}${backupSt.last_deleted_old ? ` • dọn ${backupSt.last_deleted_old} bản cũ` : ''}`
                       : String(backupSt.last_error || 'đang chờ cron giờ sau')}
                   </span>
-                  {backupSt.last_file_id && (
+                  {(backupSt.last_url || backupSt.last_folder_id || backupSt.last_file_id) && (
                     <a
-                      href={`https://drive.google.com/file/d/${backupSt.last_file_id}/view`}
+                      href={backupSt.last_url || (backupSt.last_folder_id
+                        ? `https://drive.google.com/drive/folders/${backupSt.last_folder_id}`
+                        : `https://drive.google.com/file/d/${backupSt.last_file_id}/view`)}
                       target="_blank"
                       rel="noreferrer"
                       style={{ fontSize: '11px', color: '#2563EB', fontWeight: 700, textDecoration: 'underline' }}
-                    >mở file backup trên Drive ↗</a>
+                    >mở thư mục backup trên Drive ↗</a>
                   )}
                 </div>
               ) : (

@@ -39,3 +39,18 @@ export const SEPARATED_SHEETS_MAP: Record<string, string> = {
 export function getSpreadsheetIdForTab(tabName: string, defaultSpreadsheetId: string): string {
   return SEPARATED_SHEETS_MAP[tabName] || defaultSpreadsheetId;
 }
+
+export interface SeparatedSheetSource {
+  /** Tên bảng nghiệp vụ (VD: NHAN_VIEN_MASTER). */
+  title: string;
+  /** ID Google Spreadsheet riêng của bảng đó. */
+  spreadsheetId: string;
+}
+
+/**
+ * Danh sách file Google Sheets thật sự đang chứa dữ liệu (25 bảng riêng).
+ * Dùng cho backup: copy từng file riêng thay vì file tổng hợp cũ.
+ */
+export function listSeparatedSheetSources(): SeparatedSheetSource[] {
+  return Object.entries(SEPARATED_SHEETS_MAP).map(([title, spreadsheetId]) => ({ title, spreadsheetId }));
+}

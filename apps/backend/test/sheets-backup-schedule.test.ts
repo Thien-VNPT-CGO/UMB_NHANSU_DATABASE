@@ -94,9 +94,15 @@ test('sheets: tóm tắt dashboard lấy từ state file (giờ VN)', () => {
         ok: true,
         slotKey: '2026-11-01',
         at: '2026-11-01T19:00:30.000Z',
-        name: 'UMB_NHANSU_DATABASE_2026-11-01',
-        fileId: 'FILE1',
+        name: 'UMB_NHANSU_2026-11-01',
+        fileId: 'FOLDER1',
         folderId: 'FOLDER1',
+        folderUrl: 'https://drive.google.com/drive/folders/FOLDER1',
+        url: 'https://drive.google.com/drive/folders/FOLDER1',
+        total: 25,
+        copied: 25,
+        existing: 0,
+        errors: [],
         deletedOld: 2,
         error: null,
         durationMs: 5000,
@@ -106,7 +112,10 @@ test('sheets: tóm tắt dashboard lấy từ state file (giờ VN)', () => {
   const s = dashboardSnapshotFromState(state);
   assert.equal(s.last_backup_date, '2026-11-02');
   assert.equal(s.last_slot, '2026-11-01');
-  assert.equal(s.last_file_id, 'FILE1');
+  assert.equal(s.last_file_id, 'FOLDER1');
+  assert.equal(s.last_folder_id, 'FOLDER1');
+  assert.equal(s.last_url, 'https://drive.google.com/drive/folders/FOLDER1');
+  assert.equal(s.last_files, 25);
   assert.equal(s.last_deleted_old, 2);
   assert.equal(s.last_error, null);
 

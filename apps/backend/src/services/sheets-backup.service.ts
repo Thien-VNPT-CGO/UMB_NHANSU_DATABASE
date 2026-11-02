@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { DRIVE_SUBFOLDERS } from '../config/drive-folders.js';
+import { listSeparatedSheetSources } from '../config/sheets-mapping.js';
 import {
   addDaysVn,
   isoWeekOf,
@@ -71,10 +72,17 @@ export interface SheetsBackupResult {
   slotKey: string;
   at: string;
   name: string;
+  /** Folder kỳ chứa các bản copy (01/02/03/<kỳ>). */
+  folderId: string | null;
+  folderUrl: string | null;
+  /** Giữ để tương thích UI cũ: link tới folder kỳ. */
   fileId: string | null;
   url: string | null;
-  folderId: string | null;
+  total: number;
+  copied: number;
+  existing: number;
   deletedOld: number;
+  errors: Array<{ title: string; error: string }>;
   error: string | null;
   durationMs: number;
 }
@@ -159,11 +167,14 @@ export function resolveDueSheetsBackups(
     .map(d => ({ kind: d.kind as SheetsBackupKind, slotKey: d.slotKey }));
 }
 
-function slotForRunNow(kind: SheetsBackupKind, nowMs: number): string {
+function slotForRunNow(kind: SheetsBackupKind, nowMs: number, weeklyWeekday = 0): string {
   const now = vnParts(nowMs);
   if (kind === 'daily') return ymdOf(addDaysVn(now, -1));
   if (kind === 'monthly') return previousMonthKey(now);
-  const iso = isoWeekOf(now);
+  // Tuần: CN lưu tuần hiện tại; Thứ Hai chạy bù thì lấy tuần vừa kết thúc
+  // (giống resolveDueBackups), tránh tạo nhầm tuần mới còn đang dang dở.
+  const ref = now.weekday === (weeklyWeekday + 1) % 7 ? addDaysVn(now, -1) : now;
+  const iso = isoWeekOf(ref);
   return `${iso.year}-W${pad2(iso.week)}`;
 }
 
@@ -195,9 +206,12 @@ export function dashboardSnapshotFromState(state: SheetsBackupState): any | null
     last_ok_at: daily.ok ? daily.at : (state.last_ok_at || null),
     last_error: daily.ok ? null : daily.error,
     last_error_at: daily.ok ? null : daily.at,
-    last_file_id: daily.fileId || null,
+    last_file_id: daily.folderId || daily.fileId || null,
+    last_folder_id: daily.folderId || null,
+    last_url: daily.folderUrl || daily.url || null,
     last_name: daily.name || null,
     last_slot: daily.slotKey || null,
+    last_files: Number(daily.total || 0),
     last_deleted_old: Number(daily.deletedOld || 0),
     mode: 'SHEETS',
   };
@@ -305,7 +319,7 @@ export class SheetsDriveBackupScheduler {
       throw new Error(`INVALID_BACKUP_KIND:${kind}`);
     }
     await this.loadState();
-    return this.run({ kind, slotKey: slotForRunNow(kind, Date.now()) }, true);
+    return this.run({ kind, slotKey: slotForRunNow(kind, Date.now(), this.cfg.weeklyWeekday) }, true);
   }
 
   private localRoot(): string {
@@ -356,7 +370,7 @@ export class SheetsDriveBackupScheduler {
   private async run(period: { kind: SheetsBackupKind; slotKey: string }, manual = false): Promise<SheetsBackupResult> {
     const startedAt = Date.now();
     const at = new Date().toISOString();
-    const name = `UMB_NHANSU_DATABASE_${period.slotKey}${manual ? '_manual' : ''}`;
+    const name = `UMB_NHANSU_${period.slotKey}${manual ? '_manual' : ''}`;
     const result: SheetsBackupResult = {
       kind: period.kind,
       ok: false,
@@ -366,25 +380,43 @@ export class SheetsDriveBackupScheduler {
       fileId: null,
       url: null,
       folderId: null,
+      folderUrl: null,
+      total: 0,
+      copied: 0,
+      existing: 0,
       deletedOld: 0,
+      errors: [],
       error: null,
       durationMs: 0,
     };
 
     try {
       const sync = this.syncService;
-      if (!sync?.backupSpreadsheetTo) throw new Error('SYNC_SERVICE_NOT_READY');
-      const res = await sync.backupSpreadsheetTo({
+      if (!sync?.backupSpreadsheetSetTo) throw new Error('SYNC_SERVICE_NOT_READY');
+      const sources = listSeparatedSheetSources();
+      if (sources.length === 0) throw new Error('BACKUP_NO_SOURCES');
+      const res = await sync.backupSpreadsheetSetTo({
         rootId: sheetsBackupRootId(period.kind),
         segments: [period.slotKey],
-        name,
+        periodKey: period.slotKey,
+        sources,
         keep: sheetsBackupKeep(period.kind, this.cfg),
       });
-      if (!res?.ok) throw new Error(res?.error || res?.reason || 'BACKUP_FAILED');
-      result.fileId = res.fileId || null;
-      result.url = res.url || null;
       result.folderId = res.folderId || null;
+      result.folderUrl = res.folderUrl || null;
+      result.url = res.folderUrl || res.url || null;
+      result.fileId = res.folderId || null;
+      result.total = Number(res.total || sources.length);
+      result.copied = Number(res.copied || 0);
+      result.existing = Number(res.existing || 0);
       result.deletedOld = Number(res.deletedOld || 0);
+      result.errors = Array.isArray(res.errors) ? res.errors : [];
+      if (!res?.ok) {
+        const detail = result.errors.length
+          ? result.errors.map(e => `${e.title}: ${e.error}`).join('; ')
+          : '';
+        throw new Error([res?.error || res?.reason || 'BACKUP_FAILED', detail].filter(Boolean).join(' — '));
+      }
       result.ok = true;
     } catch (err: any) {
       result.error = err?.message || String(err);
@@ -398,7 +430,8 @@ export class SheetsDriveBackupScheduler {
     if (result.ok) {
       console.log(
         `[backup-sheets] ${period.kind}${manual ? ' (chạy tay)' : ''} OK ${result.name}`
-        + ` | ${result.url || result.fileId} | dọn ${result.deletedOld} kỳ cũ (${result.durationMs}ms)`,
+        + ` | ${result.copied} bảng copy mới + ${result.existing}/${result.total} đã có`
+        + ` | ${result.url || result.folderId} | dọn ${result.deletedOld} kỳ cũ (${result.durationMs}ms)`,
       );
     } else {
       console.warn(`[backup-sheets] ${period.kind}${manual ? ' (chạy tay)' : ''} LỖI ${result.name}: ${result.error}`);
@@ -447,8 +480,11 @@ export class SheetsDriveBackupScheduler {
         ? {
           last_backup_date: vnToday,
           last_ok_at: result.at,
-          last_file_id: result.fileId,
+          last_file_id: result.folderId,
+          last_folder_id: result.folderId,
+          last_url: result.folderUrl,
           last_name: result.name,
+          last_files: result.total,
           last_deleted_old: result.deletedOld,
           last_slot: result.slotKey,
           last_error: null,

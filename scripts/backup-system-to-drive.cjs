@@ -2,10 +2,17 @@
 /**
  * UBM HR SYSTEM - BACKUP TOÀN BỘ HỆ THỐNG VPS LÊN GOOGLE DRIVE
  * ==============================================================
- * Tự động đóng gói cấu hình, biến môi trường, dữ liệu snapshot,
- * mã nguồn và sao chép Google Sheets Master lên thư mục Google Drive.
- * 
- * Target Drive Folder ID mặc định: 1GaPSvNcbINMtG90aQ-KzL2SPLxUG9JkG (01. BACKUP_DATA_DAY bên trong UMBOMILK_DATABASE)
+ * Tự động đóng gói cấu hình, biến môi trường, dữ liệu snapshot, mã nguồn
+ * và sao chép TOÀN BỘ 25 Google Sheets riêng (database đã tách bảng) lên Drive.
+ *
+ * KHÔNG còn dùng file tổng hợp UMB_NHANSU_DATABASE
+ * (1UO1UF1d7_YzaCltYt2m9pRnUauGWw873ERqAMxwL-6k) làm nguồn backup.
+ *
+ * Cấu trúc mỗi kỳ: <thư mục gốc>/<kỳ>/<TÊN_BẢNG>_<kỳ>
+ *   VD: 01. BACKUP_DATA_DAY/2026-11-01/NHAN_VIEN_MASTER_2026-11-01
+ *
+ * Target Drive Folder ID mặc định: 1GaPSvNcbINMtG90aQ-KzL2SPLxUG9JkG
+ * (01. BACKUP_DATA_DAY bên trong UMBOMILK_DATABASE)
  * ==============================================================
  */
 
@@ -30,6 +37,35 @@ const typeArg = (process.argv.find(a => a.startsWith('--type=')) || '').replace(
 const selectedTier = BACKUP_FOLDERS[typeArg] ? typeArg : 'day';
 const TARGET_FOLDER_ID = process.env.BACKUP_DRIVE_FOLDER_ID || BACKUP_FOLDERS[selectedTier];
 const REPO_ROOT = path.resolve(__dirname, '..');
+
+/**
+ * Đọc danh sách 25 bảng riêng từ config/sheets-mapping.ts.
+ * Database đã tách thành từng spreadsheet riêng — file tổng hợp không còn dùng.
+ */
+function loadSeparatedSheets() {
+  const candidates = [
+    path.join(REPO_ROOT, 'apps/backend/src/config/sheets-mapping.ts'),
+    '/ubm-vps/apps/backend/src/config/sheets-mapping.ts',
+    '/root/ubm-vps/apps/backend/src/config/sheets-mapping.ts',
+  ];
+  const file = candidates.find(p => fs.existsSync(p));
+  if (!file) {
+    console.error('[Backup] LỖI: Không tìm thấy apps/backend/src/config/sheets-mapping.ts');
+    process.exit(1);
+  }
+  const src = fs.readFileSync(file, 'utf8');
+  const map = {};
+  const re = /^\s{2}([A-Z0-9_]+):\s*'([A-Za-z0-9_-]+)'\s*,?\s*$/gm;
+  let m;
+  while ((m = re.exec(src)) !== null) map[m[1]] = m[2];
+  const sources = Object.entries(map).map(([title, spreadsheetId]) => ({ title, spreadsheetId }));
+  if (sources.length === 0) {
+    console.error(`[Backup] LỖI: Không đọc được danh sách bảng từ ${file}`);
+    process.exit(1);
+  }
+  console.log(`[Backup] Đã nạp ${sources.length} bảng riêng từ: ${file}`);
+  return sources;
+}
 
 // 1. Nạp biến môi trường từ apps/backend/.env hoặc các vị trí trên VPS
 const envPaths = [
@@ -101,6 +137,16 @@ try {
 const { google } = googleapis;
 
 async function getDriveClient() {
+  // Ưu tiên OAuth (giống backend): file/thư mục Drive thuộc tài khoản umbomilk@gmail.com.
+  const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+  const refreshToken = process.env.GOOGLE_OAUTH_REFRESH_TOKEN;
+  if (clientId && clientSecret && refreshToken) {
+    const auth = new google.auth.OAuth2(clientId, clientSecret);
+    auth.setCredentials({ refresh_token: refreshToken });
+    return google.drive({ version: 'v3', auth });
+  }
+
   let email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   let privateKey = process.env.GOOGLE_PRIVATE_KEY;
 
@@ -116,7 +162,7 @@ async function getDriveClient() {
   }
 
   if (!email || !privateKey) {
-    throw new Error('Thiếu thông tin xác thực Google Service Account (client_email / private_key).');
+    throw new Error('Thiếu thông tin xác thực Google (OAuth refresh token hoặc Service Account).');
   }
 
   const formattedKey = privateKey.includes('\\n') ? privateKey.replace(/\\n/g, '\n') : privateKey;
@@ -133,6 +179,92 @@ async function getDriveClient() {
   return google.drive({ version: 'v3', auth });
 }
 
+/** Kỳ backup theo giờ Việt Nam — khớp lịch của backend. */
+function resolveSlotKey(tier, vnDate) {
+  const pad = n => String(n).padStart(2, '0');
+  const d = vnDate;
+  if (tier === 'week' || tier === 'weekly') {
+    const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+    const dayNum = t.getUTCDay() || 7;
+    t.setUTCDate(t.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
+    const week = Math.ceil(((t.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+    return `${t.getUTCFullYear()}-W${pad(week)}`;
+  }
+  if (tier === 'month' || tier === 'monthly') {
+    const prev = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, 1));
+    return `${prev.getUTCFullYear()}-${pad(prev.getUTCMonth() + 1)}`;
+  }
+  const yest = new Date(d.getTime() - 86400000);
+  return `${yest.getUTCFullYear()}-${pad(yest.getUTCMonth() + 1)}-${pad(yest.getUTCDate())}`;
+}
+
+async function ensureFolder(drive, parentId, name) {
+  const q = `name = '${name.replace(/'/g, "\\'")}' and '${parentId}' in parents`
+    + ` and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+  const res = await drive.files.list({
+    q,
+    fields: 'files(id,name)',
+    pageSize: 10,
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
+  });
+  const found = res.data.files?.[0];
+  if (found?.id) return found.id;
+  const created = await drive.files.create({
+    requestBody: {
+      name,
+      mimeType: 'application/vnd.google-apps.folder',
+      parents: [parentId],
+    },
+    fields: 'id',
+    supportsAllDrives: true,
+  });
+  return created.data.id;
+}
+
+/** Copy 25 bảng riêng vào folder kỳ. Idempotent theo tên file. */
+async function backupSeparatedSheets(drive, folderId, slotKey, sources) {
+  const existing = new Set();
+  let pageToken;
+  do {
+    const res = await drive.files.list({
+      q: `'${folderId}' in parents and trashed = false`,
+      fields: 'nextPageToken, files(id,name)',
+      pageSize: 1000,
+      pageToken,
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
+    });
+    for (const f of res.data.files || []) existing.add(f.name);
+    pageToken = res.data.nextPageToken;
+  } while (pageToken);
+
+  let copied = 0;
+  let skipped = 0;
+  const errors = [];
+  for (const src of sources) {
+    const name = `${src.title}_${slotKey}`;
+    if (existing.has(name)) { skipped += 1; continue; }
+    try {
+      await drive.files.copy({
+        fileId: src.spreadsheetId,
+        requestBody: { name, parents: [folderId] },
+        fields: 'id,name',
+        supportsAllDrives: true,
+      });
+      copied += 1;
+      console.log(`[Backup]   + ${name}`);
+    } catch (err) {
+      errors.push({ title: src.title, error: err.message });
+      console.warn(`[Backup]   ⚠ ${name}: ${err.message}`);
+    }
+  }
+
+  console.log(`[Backup] Bảng: ${copied} copy mới, ${skipped} đã có, ${errors.length} lỗi / ${sources.length} tổng.`);
+  if (errors.length > 0) throw new Error(`Copy lỗi ${errors.length}/${sources.length} bảng`);
+}
+
 async function main() {
   console.log(`====================================================`);
   console.log(`[Backup] BẮT ĐẦU SAO LƯU HỆ THỐNG VPS UBM`);
@@ -145,26 +277,20 @@ async function main() {
   // Tạo định danh timestamp theo giờ Việt Nam (UTC+7)
   const nowVN = new Date(Date.now() + 7 * 3600 * 1000);
   const stamp = nowVN.toISOString().replace(/T/, '_').replace(/:/g, '-').slice(0, 19);
+  const slotKey = resolveSlotKey(selectedTier, nowVN);
 
-  // A. BACKUP DỮ LIỆU GOOGLE SHEETS MASTER (Bản mới UMB_NHANSU_DATABASE)
-  const spreadsheetId = process.env.SPREADSHEET_ID || '1UO1UF1d7_YzaCltYt2m9pRnUauGWw873ERqAMxwL-6k';
-  if (spreadsheetId) {
-    try {
-      console.log(`[Backup] Đang sao chép bản snapshot Google Sheets Master (${spreadsheetId})...`);
-      const sheetBackupName = `UBM_SHEETS_MASTER_${stamp}`;
-      const copyRes = await drive.files.copy({
-        fileId: spreadsheetId,
-        requestBody: {
-          name: sheetBackupName,
-          parents: [TARGET_FOLDER_ID],
-        },
-        fields: 'id, name, createdTime',
-        supportsAllDrives: true,
-      });
-      console.log(`[Backup] ✅ Đã lưu bản sao Sheets thành công: ${copyRes.data.name} (ID: ${copyRes.data.id})`);
-    } catch (err) {
-      console.warn(`[Backup] ⚠️ Lỗi copy Sheets: ${err.message}`);
-    }
+  // A. BACKUP 25 GOOGLE SHEETS RIÊNG (database đã tách bảng)
+  //    KHÔNG copy file tổng hợp UMB_NHANSU_DATABASE nữa.
+  try {
+    const sources = loadSeparatedSheets();
+    console.log(`[Backup] Kỳ ${slotKey}: tạo/kiểm tra folder trên Drive...`);
+    const folderId = await ensureFolder(drive, TARGET_FOLDER_ID, slotKey);
+    console.log(`[Backup] Folder kỳ: https://drive.google.com/drive/folders/${folderId}`);
+    await backupSeparatedSheets(drive, folderId, slotKey, sources);
+    console.log(`[Backup] ✅ Đã backup ${sources.length} bảng vào kỳ ${slotKey}.`);
+  } catch (err) {
+    console.error(`[Backup] ❌ Lỗi backup 25 bảng: ${err.message}`);
+    throw err;
   }
 
   // B. ĐÓNG GÓI TOÀN BỘ CẤU HÌNH VÀ DỮ LIỆU VPS THÀNH FILE .TAR.GZ
