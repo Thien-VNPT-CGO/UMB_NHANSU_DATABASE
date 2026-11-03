@@ -56,6 +56,33 @@ function pad2(n: number): string {
   return String(n).padStart(2, '0');
 }
 
+/**
+ * Đọc số từ ô Google Sheets có thể ở định dạng Việt Nam ("10,79782", "1.234,5",
+ * "10.79782") hoặc số chuẩn. Trả undefined khi ô trống/không phải số.
+ *
+ * Sheet do người dùng nhập tay thường lưu toạ độ dạng text với dấu phẩy thập
+ * phân — `Number()` thuần sẽ trả NaN và bản đồ rơi về toạ độ mặc định.
+ */
+export function parseSheetNumber(value: unknown): number | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+  let s = String(value).trim().replace(/\u00a0/g, '').replace(/\s/g, '');
+  if (!s || s === '-') return undefined;
+  const hasDot = s.includes('.');
+  const hasComma = s.includes(',');
+  if (hasDot && hasComma) {
+    // "1.234,56" (VN) → bỏ dấu phân cách nghìn, đổi phẩy thành chấm.
+    // "1,234.56" (EN) → bỏ phẩy, giữ chấm.
+    s = s.lastIndexOf(',') > s.lastIndexOf('.')
+      ? s.replace(/\./g, '').replace(',', '.')
+      : s.replace(/,/g, '');
+  } else if (hasComma) {
+    s = s.replace(/,/g, '.');
+  }
+  const n = Number(s);
+  return Number.isFinite(n) ? n : undefined;
+}
+
 /** Lấy lại mốc HH-mm từ tên file txt đã ghi trước đó (giữ nguyên tên khi cập nhật). */
 export function hhmmFromAdjustmentFileName(name: unknown): string {
   const m = String(name || '').match(/^PHIEU_(\d{2}-\d{2})_/);
@@ -2762,9 +2789,9 @@ export class GoogleSheetsSyncService {
           id: r[0],
           name: r[1],
           address: r[2],
-          latitude: Number(r[3]) || 10.776889,
-          longitude: Number(r[4]) || 106.700806,
-          radius_meters: Number(r[5]) || 300,
+          latitude: parseSheetNumber(r[3]) ?? 10.776889,
+          longitude: parseSheetNumber(r[4]) ?? 106.700806,
+          radius_meters: parseSheetNumber(r[5]) ?? 300,
           min_staff: 2,
           max_staff: 10,
           status: (r[6] as any) || 'ACTIVE',

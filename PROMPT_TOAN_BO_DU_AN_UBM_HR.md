@@ -564,6 +564,8 @@ Tab active lưu `localStorage["ubm_active_tab"]`. Lưu ý: tab `attendance` (Đi
 - **Bộ lọc:** theo chi nhánh + theo trạng thái (bấm huy hiệu màu); **tự làm mới 30 giây** và tải lại ngay khi socket báo `attendance`/`schedules`/`config` (event nội bộ `ubm:live-map-reload`).
 - **Cấu hình toạ độ:** tab **Chi nhánh & Ca** (ADMIN) có nút **⚙️ Sửa toạ độ GPS** (vĩ độ/kinh độ/bán kính) → `PUT /admin/branches/{id}`; lưu xong ghi riêng tab `DANH_SACH_CHI_NHANH` ngay (`syncBranchesToSheet`) và bản đồ cập nhật tức thì.
 - **Nền bản đồ:** Google Maps tile (không cần API key) trong Leaflet; nếu Google chặn tile thì tự chuyển sang OpenStreetMap. Thư viện: `leaflet`, `@types/leaflet` trong `@ubm/admin-web`.
+- **Toạ độ chuẩn (Google Maps place, hotline 0708 880 404):** CN1 130 Vạn Kiếp `10.799831, 106.693370` · CN2 261 Tô Hiến Thành `10.778639, 106.666665` · CN3 120 Hoàng Diệu 2 `10.856457, 106.765621` · CN4 111 Tôn Đản `10.759223, 106.706995`.
+- **Đọc toạ độ từ Sheet:** ô nhập tay thường ở dạng `"10,799831"` (phẩy thập phân) — dùng `parseSheetNumber()` khi đọc `DANH_SACH_CHI_NHANH`; nếu dùng `Number()` thuần sẽ ra `NaN` và bản đồ rơi về toạ độ mặc định.
 
 ## 6.4. Header / Topbar & tiện ích chung
 
