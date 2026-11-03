@@ -3156,7 +3156,7 @@ export class GoogleSheetsSyncService {
             const fullName = String(r[3] || '').trim() || 'Quản trị viên';
             // Chuẩn hóa role (hoa/thường, khoảng trắng) để 'finance'/'Finance'/'FINANCE '
             // không bị requireRole chặn oan với FORBIDDEN. Lạ -> rớt về HR an toàn.
-            const VALID_ROLES = ['ADMIN', 'HR', 'STORE', 'FINANCE', 'MARKETING', 'EMPLOYEE'];
+            const VALID_ROLES = ['DIRECTOR', 'ADMIN', 'HR', 'STORE', 'FINANCE', 'MARKETING', 'IT', 'EMPLOYEE'];
             const rawRole = String(r[4] || '').trim().toUpperCase();
             const role = ((VALID_ROLES.includes(rawRole) ? rawRole : 'HR') as any);
             const branchScope = String(r[5] || '').trim() || '*';

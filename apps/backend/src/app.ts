@@ -6231,7 +6231,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // --- 1. ADMIN DASHBOARD STATS ---
-  app.get('/admin/dashboard/stats', authMiddleware, requireRole(['ADMIN', 'HR', 'STORE', 'FINANCE', 'MARKETING']), async (req: AuthenticatedRequest, res) => {
+  app.get('/admin/dashboard/stats', authMiddleware, requireRole(['DIRECTOR', 'ADMIN', 'HR', 'STORE', 'FINANCE', 'MARKETING']), async (req: AuthenticatedRequest, res) => {
     try {
       const employees = await adapter.listEmployees();
       const branches = await adapter.getBranches();
