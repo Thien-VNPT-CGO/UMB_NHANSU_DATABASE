@@ -3892,6 +3892,44 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Bản đồ thu gọn trên CỔNG NHÂN VIÊN: chỉ đồng nghiệp cùng chi nhánh, tài khoản
+  // bị khóa không xuất hiện. Ẩn bớt thông tin nhạy cảm (khoảng cách/sai số GPS).
+  app.get('/employee/live-map', authMiddleware, requireRole(['EMPLOYEE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const employeeId = req.user?.employeeId;
+      if (!employeeId) return res.status(401).json({ error: 'UNAUTHORIZED' });
+      const me = await adapter.getEmployeeById(employeeId).catch(() => null);
+      if (!me) return res.status(404).json({ error: 'EMPLOYEE_NOT_FOUND' });
+      if ((me as any)?.account_locked === true || String((me as any)?.account_status || '').toUpperCase() === 'LOCKED') {
+        return res.status(403).json({ error: 'ACCOUNT_LOCKED' });
+      }
+      const branchId = String((me as any)?.default_branch_id || '').trim();
+      const snapshot = await liveMapService.getBranchSnapshot(branchId);
+      res.json({
+        ...snapshot,
+        me: employeeId,
+        employees: snapshot.employees.map(e => ({
+          employee_id: e.employee_id,
+          employee_code: e.employee_code,
+          full_name: e.full_name,
+          branch_id: e.branch_id,
+          branch_name: e.branch_name,
+          status: e.status,
+          status_label: e.status_label,
+          shifts: e.shifts,
+          primary_shift: e.primary_shift,
+          latitude: e.latitude,
+          longitude: e.longitude,
+          gps_source: e.gps_source,
+          last_gps_at: e.last_gps_at,
+          note: e.note,
+        })),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'LIVE_MAP_FAILED' });
+    }
+  });
+
   // Cổng nhân viên gửi GPS trực tiếp (watchPosition) khi đang trong ca — bản đồ
   // admin cập nhật vị trí realtime qua Socket.IO, không ghi Google Sheets.
   app.post('/attendance/live-location', authMiddleware, requireRole(['EMPLOYEE']), async (req: AuthenticatedRequest, res) => {
@@ -3915,14 +3953,29 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       });
       try {
         const io = app.get('io');
-        io?.emit('live-location:update', {
+        const payload = {
           employee_id: ping.employee_id,
           latitude: ping.latitude,
           longitude: ping.longitude,
           accuracy: ping.accuracy,
           assignment_id: ping.assignment_id,
           at: ping.at,
-        });
+        };
+        // Chỉ phát cho đồng nghiệp CÙNG CHI NHÁNH (room branch) + khối giám sát
+        // (ADMIN/HR/FINANCE). Không broadcast toàn hệ thống để tránh lộ vị trí
+        // của nhân viên chi nhánh khác trên cổng nhân viên.
+        const branchScope = String(req.user?.branchScope || '*').trim();
+        if (io) {
+          if (!branchScope || branchScope === '*') {
+            io.emit('live-location:update', payload);
+          } else {
+            io.to(`branch:${branchScope}`)
+              .to('role:ADMIN')
+              .to('role:HR')
+              .to('role:FINANCE')
+              .emit('live-location:update', payload);
+          }
+        }
       } catch { /* realtime lỗi không ảnh hưởng việc lưu vị trí */ }
       res.json({ ok: true, at: ping.at });
     } catch (err: any) {

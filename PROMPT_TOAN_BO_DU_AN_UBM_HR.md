@@ -63,7 +63,7 @@ Cửa check-in mở **trước giờ ca 30 phút**; check-out chỉ được **t
 ## 1.5. Hai web app + backend (không tạo app thứ ba)
 
 1. **WEB QUẢN TRỊ** (`apps/admin-web`, cổng 3005 dev) — 5 vai trò nội bộ: ADMIN 16 tab / HR 16 tab / STORE 10 tab / FINANCE 12 tab / MARKETING 9 tab.
-2. **WEB NHÂN VIÊN** (`apps/employee-web`, cổng 3006 dev, mobile-first 480px) — NV Thử việc 10 tab / NV Chính thức 10 tab; đăng nhập **SĐT + PIN 6 số**.
+2. **WEB NHÂN VIÊN** (`apps/employee-web`, cổng 3006 dev, mobile-first 480px) — NV Thử việc 12 tab / NV Chính thức 12 tab; đăng nhập **SĐT + PIN 6 số**.
 3. **BACKEND** (`apps/backend`, cổng 4005) — Node.js + Express + TypeScript + Socket.IO, dữ liệu gốc là **Google Sheets Master**, ảnh lưu **Google Drive**, ghi qua **Single-Writer Queue** chống xung đột, kèm **Zalo Personal Bot** tự sinh link Google Meet + gửi thư mời phỏng vấn từ Zalo cá nhân của HR.
 
 ---
@@ -564,6 +564,8 @@ Tab active lưu `localStorage["ubm_active_tab"]`. Lưu ý: tab `attendance` (Đi
 - **Bộ lọc:** theo chi nhánh + theo trạng thái (bấm huy hiệu màu); **tự làm mới 30 giây** và tải lại ngay khi socket báo `attendance`/`schedules`/`config` (event nội bộ `ubm:live-map-reload`).
 - **Cấu hình toạ độ:** tab **Chi nhánh & Ca** (ADMIN) có nút **⚙️ Sửa toạ độ GPS** (vĩ độ/kinh độ/bán kính) → `PUT /admin/branches/{id}`; lưu xong ghi riêng tab `DANH_SACH_CHI_NHANH` ngay (`syncBranchesToSheet`) và bản đồ cập nhật tức thì.
 - **Nền bản đồ:** Google Maps tile (không cần API key) trong Leaflet; nếu Google chặn tile thì tự chuyển sang OpenStreetMap. Thư viện: `leaflet`, `@types/leaflet` trong `@ubm/admin-web`.
+- **Tài khoản bị khóa:** nhân viên có `account_locked = true` hoặc `account_status = 'LOCKED'` bị loại khỏi mọi bản đồ (admin + cổng NV) ngay từ `LiveMapService`; khi Admin khóa/mở khóa, socket `employees:locked`/`employees:unlocked` kích hoạt vẽ lại bản đồ tức thì.
+- **Bản đồ trên CỔNG NHÂN VIÊN:** `GET /employee/live-map` (EMPLOYEE) trả đồng nghiệp **cùng chi nhánh** (kèm chính mình), ẩn khoảng cách/sai số GPS. Tab 5 "Bản đồ chi nhánh" vẽ Google Maps tile + marker realtime (event nội bộ `ubm:team-location`), tự làm mới 30s, có nút "về vị trí của tôi" và nút bật/tắt tự làm mới. Tài khoản bị khóa không xuất hiện.
 - **Toạ độ chuẩn (Google Maps place, hotline 0708 880 404):** CN1 130 Vạn Kiếp `10.799831, 106.693370` · CN2 261 Tô Hiến Thành `10.778639, 106.666665` · CN3 120 Hoàng Diệu 2 `10.856457, 106.765621` · CN4 111 Tôn Đản `10.759223, 106.706995`.
 - **Đọc toạ độ từ Sheet:** ô nhập tay thường ở dạng `"10,799831"` (phẩy thập phân) — dùng `parseSheetNumber()` khi đọc `DANH_SACH_CHI_NHANH`; nếu dùng `Number()` thuần sẽ ra `NaN` và bản đồ rơi về toạ độ mặc định.
 
@@ -594,11 +596,11 @@ Tab active lưu `localStorage["ubm_active_tab"]`. Lưu ý: tab `attendance` (Đi
 - **Cờ mất mạng:** 4 nhóm API tải dữ liệu fail → banner đỏ "📡 Mất kết nối máy chủ — đang hiển thị dữ liệu cũ".
 - Token: `ubm_emp_token`, `ubm_emp_refresh`; hồ sơ `ubm_emp_data`; tab `ubm_emp_active_tab`.
 
-## 7.2. Cấu trúc 10 tab (khác nhau theo giai đoạn)
+## 7.2. Cấu trúc 12 tab (khác nhau theo giai đoạn)
 
-**NV THỬ VIỆC (PROBATION):** 1. Trang chủ · 2. Lịch thử việc · 3. Đăng ký OFF thử việc · 4. Điểm danh · 5. Công của tôi · 6. Tự đổi ca / Nghỉ khẩn · 7. Bổ sung công · 8. Thi TEST · 9. Thông báo & Lương · 10. Hồ Sơ
+**NV THỬ VIỆC (PROBATION):** 1. Trang chủ · 2. Lịch thử việc · 3. Đăng ký OFF thử việc · 4. Điểm danh · 5. Bản đồ chi nhánh · 6. Công của tôi · 7. Tự đổi ca / Nghỉ khẩn · 8. Cập Nhật Ca Làm · 9. Bổ sung công · 10. Thi TEST · 11. Thông báo & Lương · 12. Hồ Sơ
 
-**NV CHÍNH THỨC:** 1. Trang chủ · 2. Lịch làm việc · 3. Đăng ký OFF tuần · 4. Điểm danh · 5. Công của tôi · 6. Đổi ca làm · 7. Nghỉ khẩn & Bổ sung công · 8. TEST / Đào tạo · 9. Thông báo & Lương · 10. Hồ Sơ
+**NV CHÍNH THỨC:** 1. Trang chủ · 2. Lịch làm việc · 3. Đăng ký OFF tuần · 4. Điểm danh · 5. Bản đồ chi nhánh · 6. Công của tôi · 7. Đổi ca làm · 8. Cập Nhật Ca Làm · 9. Nghỉ khẩn & Bổ sung công · 10. TEST / Đào tạo · 11. Thông báo & Lương · 12. Hồ Sơ
 
 Header sticky: logo, họ tên, badge "Thử việc (12 ngày)"/"Chính thức", mã NV + chi nhánh, nút đăng xuất. Sub-bar tab cuộn ngang.
 
@@ -607,7 +609,7 @@ Header sticky: logo, họ tên, badge "Thử việc (12 ngày)"/"Chính thức",
 ## 7.3. Chi tiết từng tab
 
 ### Tab 1 — TRANG CHỦ (`home`)
-- **Banner kiểm tra đầu ra thử việc** (NV thử việc khi HR đã lên lịch): đếm ngược tới buổi vấn đáp Google Meet (ngày + giờ + URL → nút "🎥 Vào Meet vấn đáp"), trạng thái bài trắc nghiệm (chưa làm → "📝 Làm bài trắc nghiệm" nhảy tab 8; đã nộp → điểm /10), ngày hoàn thành thử việc. API `GET /me/probation-assessment`.
+- **Banner kiểm tra đầu ra thử việc** (NV thử việc khi HR đã lên lịch): đếm ngược tới buổi vấn đáp Google Meet (ngày + giờ + URL → nút "🎥 Vào Meet vấn đáp"), trạng thái bài trắc nghiệm (chưa làm → "📝 Làm bài trắc nghiệm" nhảy tab 10; đã nộp → điểm /10), ngày hoàn thành thử việc. API `GET /me/probation-assessment`.
 - **Card ca hôm nay:** chỉ ca PUBLISHED (ca DRAFT báo riêng); trạng thái realtime cập nhật mỗi 30s: `● Đang trong ca` / `⏳ Ca sắp tới` / `✓ Ca đã xong` / "😴 Hôm nay không có ca"; nhiều ca hiển thị "(hôm nay bạn có N ca)"; yêu cầu đồng phục áo hồng + bảng tên, có mặt trước 15 phút. 2 nút: "ĐIỂM DANH NGAY" (→ tab 4) và "Xem Lịch" (→ tab 2).
 - **2 card tóm tắt:** Giai đoạn (Thử Việc ngày X/12 / Chính thức) + **Đơn giá lương đ/h** (`current_rate_per_hour`, fallback 23k TV / 25k CT).
 - **3 nút nhanh:** Đăng ký OFF / Đổi Ca Làm / Thi TEST (điều hướng theo loại NV). API `GET /me/schedule`.
@@ -635,13 +637,20 @@ Header sticky: logo, họ tên, badge "Thử việc (12 ngày)"/"Chính thức",
   5. **Màn xác nhận:** thời gian, `receipt.distance_meters`, cảnh báo `OUT_OF_BOUNDS` nếu GPS ngoài 300m (vẫn ghi nhận để đối soát); sau check-in lại do GPS vượt 300m → banner "bắt điểm danh lại" tự tắt (POST read).
 - Nút bấm đúp chặn bằng guard đồng bộ (`attendBusyRef`).
 
-### Tab 5 — CÔNG CỦA TÔI (`timesheet`)
+### Tab 5 — BẢN ĐỒ CHI NHÁNH (`team_map`)
+- Bản đồ Google Maps (fallback OpenStreetMap) hiển thị **đồng nghiệp cùng chi nhánh** + chính mình; marker tự di chuyển khi đồng nghiệp mở cổng NV trong khung ca (Socket.IO `live-location:update` → event `ubm:team-location`).
+- Chấm màu giống bản đồ admin: ⚪ bình thường · 🟡 đang làm (nhấp nháy) · 🟢 xong ca · 🔴 thiếu chấm. Chấm của mình có viền xanh + nhãn "Bạn".
+- Chạm vào chấm để xem tên, mã NV, ca, giờ check-in/check-out, nguồn GPS + thời điểm cập nhật.
+- Nút "về vị trí của tôi", nút tải lại, bật/tắt tự làm mới 30 giây.
+- **Tài khoản bị khóa không xuất hiện** trên bản đồ (server lọc từ `account_locked`/`account_status = LOCKED`).
+
+### Tab 6 — CÔNG CỦA TÔI (`timesheet`)
 - Chọn tháng (chu kỳ lương, ◀ ▶ + "Tháng này") — tải `GET /me/schedule?fromDate=&toDate=`, `GET /me/attendance?fromDate=&toDate=`, `GET /me/monthly-timesheet?period=YYYY-MM`.
 - **6 thẻ tổng hợp:** Đủ công / Đang làm / Thiếu check-out / Vắng–Không điểm danh / **Tổng phạt tháng** / **Lương tháng** (ưu tiên số server `totals.deduction`, `totals.netPay` — **khớp 100% công thức Bảng Tổng Hợp Finance**).
 - **Thẻ từng ngày có ca:** mỗi ca 1 dòng — tên ca + khung giờ, Vào/Ra (giờ VN), badge theo `attShiftStatus` của `@ubm/shared`: ⏳ Chờ duyệt (DRAFT — không tính công) / ✓ Đủ công (+ tiền ca server) / Đang làm / Thiếu check-out — không lương / 🔴 Vắng / Không điểm danh — nghỉ không lương / Lịch đã duyệt. Ghi chú: Trễ Xp / Về sớm Xp / mức phạt (`FLAT_30K|HALF_SHIFT|FULL_SHIFT`) / GPS vượt 300m / tự ghi vắng / tiền ca theo giai đoạn TV/CT.
-- **Thẻ "Ngoài lịch (tự điểm danh)":** gộp check-in mồ côi (`mergeOrphanCheckins`), suy mã ca từ giờ vào (`inferExtraShiftCode`), tạm tính tiền (`shiftPayInfo`). Nút "YÊU CẦU BỔ SUNG CÔNG KHI SAI SÓT" → tab 7. Ca CANCELLED bị ẩn.
+- **Thẻ "Ngoài lịch (tự điểm danh)":** gộp check-in mồ côi (`mergeOrphanCheckins`), suy mã ca từ giờ vào (`inferExtraShiftCode`), tạm tính tiền (`shiftPayInfo`). Nút "YÊU CẦU BỔ SUNG CÔNG KHI SAI SÓT" → tab 9. Ca CANCELLED bị ẩn.
 
-### Tab 6 — ĐỔI CA
+### Tab 7 — ĐỔI CA
 **Thử việc (`swap_emergency`) — 3 khối:**
 1. **Tự đổi ca cá nhân (tự duyệt ngay, không cần HR):** chọn ngày + chiều chuyển (`CA LÀM ➔ NGHỈ OFF` / `NGHỈ OFF ➔ ĐI LÀM Ca Sáng 07:00–12:00`) + lý do → `POST /me/probation-self-swap` `{direction, date, reason, shiftCode?}` — lịch + công cập nhật ngay.
 2. **⚡ Tự thêm ca đẩy nhanh:** chọn ngày (min hôm nay, max cuối kỳ thử việc) + ca (CA_1/2/3); ngày đã đủ 2 ca thì chặn; **hiệu lực ngay, không HR duyệt, tối đa 2 ca/ngày** (quá → `MAX_2_SHIFTS_PER_DAY` + báo HR) → `POST /me/probation-extra-shift` `{date, shiftCode}`.
@@ -653,22 +662,27 @@ Header sticky: logo, họ tên, badge "Thử việc (12 ngày)"/"Chính thức",
 3. **Phiếu tôi đã gửi:** Chờ NV B / Chờ Store duyệt / Đã duyệt / Từ chối / Đã hủy.
 4. **Form gửi 2 hình thức:** (1) **Tráo đổi ca A ⇄ B** — chọn ca của mình → chọn đồng nghiệp cùng chi nhánh (`GET /me/colleagues`) → tải ca thật của B `GET /me/colleague-shifts?employeeId=&fromDate=` (fallback `/schedules?branchId=&week=`) → chọn ca B + lý do; (2) **Nhờ làm thay / Nhường ca** (B làm 2 ca/ngày, `targetAssignmentId: ''`). Chỉ chọn được ca **PUBLISHED** từ tuần hiện tại trở đi (DRAFT/quá tuần bị chặn — cảnh báo đếm ca chưa publish). Gửi: `POST /swap-requests` `{requesterAssignmentId, targetEmployeeId, targetAssignmentId, reason}`. Realtime `swap.updated` báo từng trạng thái.
 
-### Tab 7 — BỔ SUNG CÔNG / NGHỈ KHẨN (`adjustment` | `emergency_adjust`)
+### Tab 8 — CẬP NHẬT CA LÀM (`rereg` — BETA)
+- Tự khai lại ca làm trong **đợt mở phiếu** do Admin cấu hình (mặc định 01/10 → 24/10, có đếm ngược tới mốc đóng); ngoài đợt hoặc Admin đóng phiếu → màn khóa "chờ mở".
+- Chọn **ngày** → chọn **ca hiện có** → "Thêm Vào Phiếu" (có thể nhiều dòng) → **Gửi Phiếu**: server cập nhật lịch đúng như phiếu, ca **đã qua** được chấm **HOÀN THÀNH** + cộng tiền ca vào kỳ lương, ca **chưa tới** vẫn chờ điểm danh bình thường; mỗi dòng ghi đồng bộ Google Sheets.
+- API: `GET /me/shift-rereg-status`, `GET /me/shift-rereg`, `POST /me/shift-rereg`; realtime `ubm:shift-rereg-reload`.
+
+### Tab 9 — BỔ SUNG CÔNG / NGHỈ KHẨN (`adjustment` | `emergency_adjust`)
 - Form: **Ngày sự cố** (tải riêng ca đúng ngày `GET /me/schedule?fromDate=d&toDate=d` — ngày không có ca **chặn gửi**; ngày 2 ca phải chọn đúng ca), **Loại:** `QUEN_CHECKIN` (duyệt = ghi check-in), `QUEN_CHECKOUT`, `BU_CONG_NGAY` (bù cả ngày, **tốn 5 điểm bù công** — hiện số dư: tích 1 ca check-in+out = +2 điểm từ `adjust_points_earned/spent`), lý do + **ảnh bằng chứng** (không bắt buộc, nén ≤800KB, upload Drive — chỉ lưu Drive ID).
 - **Khung giờ tạo phiếu: 08:00–21:00 hằng ngày** (giờ VN) — ngoài giờ khóa nút.
 - Gửi: `POST /attendance/adjustments` `{assignmentId, incidentDate, reason: '[TYPE] date: reason', minutesRequested: 0, photo_base64?}`; chọn NGHỈ KHẨN → `POST /leaves` loại `DOT_XUAT`.
 - **Phiếu của tôi** (`GET /attendance/adjustments`, poll 15s + realtime): Chờ duyệt / Đã duyệt / Bị từ chối / **Tự động từ chối (HR quá 30 phút chưa duyệt)**; xem ảnh bằng chứng (`MyAdjPhoto` fetch blob + Bearer: `GET /attendance/adjustments/:id/photo`); phiếu PENDING được **🗑 Hủy** → `DELETE /attendance/adjustments/:id`. Quy định: quá 30 phút tự từ chối, giữ 7 ngày rồi xóa.
 
-### Tab 8 — THI TEST / ĐÀO TẠO (`test_exam` | `test_training`)
+### Tab 10 — THI TEST / ĐÀO TẠO (`test_exam` | `test_training`)
 - Danh sách bài TEST **HR giao riêng** (`GET /me/tests`): tiêu đề, mô tả, số câu, trạng thái (Chờ làm / điểm X/10 Đạt–Chưa đạt theo `pass_score` mặc định 8).
 - **Làm bài:** "Bắt đầu làm bài (time_limit 480s mặc định)" → đếm ngược từng giây (đỏ <60s, **hết giờ tự nộp đúng 1 lần** — chống spam), radio A/B/C/D từng câu, nộp có confirm nếu còn câu bỏ trống → `POST /me/tests/:submissionId/submit` `{answers: number[]}` → server chấm /10, Đạt/Chưa đạt, toast điểm.
 
-### Tab 9 — THÔNG BÁO & LƯƠNG (`notifs_salary`)
+### Tab 11 — THÔNG BÁO & LƯƠNG (`notifs_salary`)
 - **Hộp thư:** tối đa 20 tin mới (`GET /me/notifications`); lọc client: ẩn tin nhắc check-in lặp, ẩn tin feed ALL của NV khác (giữ tin đích danh mình hoặc tin chung lịch/PIN/OFF/marketing); bấm tin = **đã đọc** `POST /me/notifications/:inboxId/read` + **deep-link tới đúng tab** (`target_path`: /schedule, /home, /attendance, /leave, /test_exam, /test_training, /adjustment; tin `schedule.published` tự mở đúng tuần mới publish).
 - **Phiếu lương bảo mật:** màn khóa ban đầu → "Xem Phiếu Lương Của Tôi" → `GET /me/payslips` (server lọc đúng NV). Badge: 🔔 Chờ ký nhận (PUBLISHED) / ✍️ Đã ký (CONFIRMED) / 🎉 Đã thanh toán (PAID). Breakdown: công (giờ, số ca, ca vắng × đơn giá snapshot), Lương cơ bản, OT thêm, Bonus, **TỔNG CỘNG**, Trừ KPI + phạt, Ứng lương, Trừ đồng phục, **THỰC LÃNH** to đùng (đã bỏ phụ cấp OT).
 - **Ký nhận chữ ký tay:** khi PUBLISHED → khối "XÁC NHẬN SỐ TIỀN THỰC LÃNH" → **SignaturePad** (vẽ ngón tay/chuột canvas 440×180, retina-aware, PNG dataURL + họ tên) → `POST /me/payslips/:slipId/confirm` `{name, img}` → CONFIRMED + thông báo Kế toán chuyển khoản; hiển thị đủ **3 chữ ký điện tử đối soát** (Người Lập Phiếu / Quản Lý Chi Nhánh / Người Nhận Tiền). PAID → hiện thời gian xác nhận chuyển khoản. Realtime: Kế toán phát hành phiếu mới → tự tải + toast "💰 Kế toán vừa phát hành phiếu lương mới!". Nút "Ẩn Phiếu Lương".
 
-### Tab 10 — HỒ SƠ CÁ NHÂN (`profile`)
+### Tab 12 — HỒ SƠ CÁ NHÂN (`profile`)
 - **Khối chỉ xem (HR quản lý):** Họ tên, Mã NV, SĐT (tài khoản), Chi nhánh, Trạng thái (Thử việc/Chính thức), Đơn giá đ/h, Ngày vào làm, Ngày chính thức.
 - **Khối tự cập nhật** (lưu là HR/Kế toán thấy ngay realtime): Email, Giới tính (NAM/NU/KHAC), Ngày sinh, **CCCD**, **Mã QR ngân hàng** — tính năng đặc biệt: tải ảnh QR → **giải mã QR VietQR (EMVCo TLV) bằng `jsqr`** (thử toàn ảnh + cắt vùng trung tâm nhiều độ phân giải) → tự điền `bank_name` (tra mã BIN 6 số → 30 ngân hàng VN), `bank_account`, `bank_holder`; QR thiếu trường → **OCR fallback `tesseract.js`** đọc thẻ (nhận diện 27 ngân hàng + STK 8–19 chữ + chủ TK khớp tên NV/họ VN, chống rác OCR); đủ 3 trường + ảnh nén ≤45KB (480px) → `PUT /me/profile` `{email, gender, birth_date, id_card_number, bank_name, bank_account, bank_holder, bank_qr_img}`. Nút Đổi ảnh QR / Gỡ QR.
 

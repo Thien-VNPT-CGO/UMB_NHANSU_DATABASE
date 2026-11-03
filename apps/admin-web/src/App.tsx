@@ -1515,6 +1515,8 @@ export function App() {
           const today = new Date().toISOString().slice(0, 10);
           setShifts(prev => (prev || []).filter((s: any) => !(String(s?.employee_id) === id && String(s?.date || '').slice(0, 10) >= today)));
         }
+        // Người bị khóa phải biến mất khỏi bản đồ giám sát ngay lập tức.
+        try { window.dispatchEvent(new CustomEvent('ubm:live-map-reload')); } catch { /* non-fatal */ }
         scheduleReload(currentUser, 'employees');
       });
       socket.on('employees:unlocked', (payload: any) => {
@@ -1524,6 +1526,7 @@ export function App() {
             e?.employee_id === id ? { ...e, account_locked: false, account_status: 'ACTIVE' } : e
           ));
         }
+        try { window.dispatchEvent(new CustomEvent('ubm:live-map-reload')); } catch { /* non-fatal */ }
         scheduleReload(currentUser, 'employees');
       });
       socket.on('attendance.recorded', () => {

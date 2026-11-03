@@ -226,3 +226,35 @@ test('kho GPS realtime: lưu, đọc và tự dọn theo TTL', () => {
   store.prune(1_200_000);
   assert.equal(store.list(1_200_000).length, 0);
 });
+
+test('map: tài khoản bị khóa không xuất hiện trên bản đồ', async () => {
+  const lockedFlag = { ...EMP, employee_id: 'E2', employee_code: 'UBM_NV0002', account_locked: true };
+  const lockedStatus = { ...EMP, employee_id: 'E3', employee_code: 'UBM_NV0003', account_status: 'LOCKED' };
+  const svc = new LiveMapService(makeRepo({
+    employees: [EMP, lockedFlag, lockedStatus],
+    branches: [BRANCH],
+    shifts: [],
+    events: [],
+  }));
+  const snap = await svc.getSnapshot(NOW);
+  assert.deepEqual(snap.employees.map(e => e.employee_id), ['E1']);
+  assert.equal(snap.summary.total, 1);
+});
+
+test('map chi nhánh cho cổng NV: chỉ đồng nghiệp cùng chi nhánh, loại người đã khóa', async () => {
+  const other = { ...EMP, employee_id: 'E9', employee_code: 'UBM_NV0009', default_branch_id: 'CN261' };
+  const locked = { ...EMP, employee_id: 'E8', employee_code: 'UBM_NV0008', account_locked: true };
+  const branch2 = { ...BRANCH, id: 'CN261', name: 'Ụm Bò Milk - CN2', latitude: 10.778639, longitude: 106.666665 };
+  const svc = new LiveMapService(makeRepo({
+    employees: [EMP, other, locked],
+    branches: [BRANCH, branch2],
+    shifts: [],
+    events: [],
+  }));
+  const snap = await svc.getBranchSnapshot('CN130', NOW);
+  assert.deepEqual(snap.employees.map(e => e.employee_id), ['E1']);
+  assert.equal(snap.branches.length, 1);
+  assert.equal(snap.branches[0].id, 'CN130');
+  assert.equal(snap.summary.total, 1);
+});
+

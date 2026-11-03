@@ -12,6 +12,7 @@ import { EventAnnouncementCountdown } from './components/EventAnnouncementCountd
 import type { LoginThemeId } from './components/loginThemeData';
 import { ThemeAmbientEffects } from './components/ThemeAmbientEffects';
 import { SignaturePad } from './components/SignaturePad';
+import { TeamMapView } from './components/TeamMapView';
 import {
   Home,
   Calendar,
@@ -2449,11 +2450,18 @@ export function App() {
           alert('Tài khoản của bạn đã bị tạm khóa bởi Quản trị viên.');
           handleLogoutRef.current();
         }
+        // Đồng nghiệp bị khóa thì biến mất khỏi bản đồ chi nhánh ngay.
+        try { window.dispatchEvent(new CustomEvent('ubm:team-map-reload')); } catch { /* non-fatal */ }
       });
       socket.on('employees:unlocked', (p: any) => {
         if (p?.employeeId && p.employeeId === empIdRef.current) {
           reload('employees');
         }
+        try { window.dispatchEvent(new CustomEvent('ubm:team-map-reload')); } catch { /* non-fatal */ }
+      });
+      // GPS realtime của đồng nghiệp cùng chi nhánh → bản đồ cổng NV cập nhật marker.
+      socket.on('live-location:update', (p: any) => {
+        try { window.dispatchEvent(new CustomEvent('ubm:team-location', { detail: p })); } catch { /* non-fatal */ }
       });
       socket.on('admin:forceLogout', (p: any) => {
         if (p?.adminId === empIdRef.current) {
@@ -4193,13 +4201,14 @@ export function App() {
     { id: 'schedule', label: '2. Lịch thử việc', icon: Calendar },
     { id: 'leave', label: '3. Đăng ký OFF thử việc', icon: Clock },
     { id: 'attendance', label: '4. Điểm danh', icon: Camera, highlight: true },
-    { id: 'timesheet', label: '5. Công của tôi', icon: CheckCircle2 },
-    { id: 'swap_emergency', label: '6. Tự đổi ca / Nghỉ khẩn', icon: RefreshCw },
-    { id: 'rereg', label: '7. Cập Nhật Ca Làm', icon: FileText, beta: true },
-    { id: 'adjustment', label: '8. Bổ sung công', icon: FileText },
-    { id: 'test_exam', label: '9. Thi TEST', icon: Award },
-    { id: 'notifs_salary', label: '10. Thông báo & Lương', icon: Bell },
-    { id: 'profile', label: '11. Hồ Sơ', icon: User },
+    { id: 'team_map', label: '5. Bản đồ chi nhánh', icon: MapPin },
+    { id: 'timesheet', label: '6. Công của tôi', icon: CheckCircle2 },
+    { id: 'swap_emergency', label: '7. Tự đổi ca / Nghỉ khẩn', icon: RefreshCw },
+    { id: 'rereg', label: '8. Cập Nhật Ca Làm', icon: FileText, beta: true },
+    { id: 'adjustment', label: '9. Bổ sung công', icon: FileText },
+    { id: 'test_exam', label: '10. Thi TEST', icon: Award },
+    { id: 'notifs_salary', label: '11. Thông báo & Lương', icon: Bell },
+    { id: 'profile', label: '12. Hồ Sơ', icon: User },
   ];
 
   const officialTabs = [
@@ -4207,13 +4216,14 @@ export function App() {
     { id: 'schedule', label: '2. Lịch làm việc', icon: Calendar },
     { id: 'leave', label: '3. Đăng ký OFF tuần', icon: Clock },
     { id: 'attendance', label: '4. Điểm danh', icon: Camera, highlight: true },
-    { id: 'timesheet', label: '5. Công của tôi', icon: CheckCircle2 },
-    { id: 'swap_shift', label: '6. Đổi ca làm', icon: RefreshCw },
-    { id: 'rereg', label: '7. Cập Nhật Ca Làm', icon: FileText, beta: true },
-    { id: 'emergency_adjust', label: '8. Nghỉ khẩn & Bổ sung công', icon: AlertTriangle },
-    { id: 'test_training', label: '9. TEST / Đào tạo', icon: Award },
-    { id: 'notifs_salary', label: '10. Thông báo & Lương', icon: Bell },
-    { id: 'profile', label: '11. Hồ Sơ', icon: User },
+    { id: 'team_map', label: '5. Bản đồ chi nhánh', icon: MapPin },
+    { id: 'timesheet', label: '6. Công của tôi', icon: CheckCircle2 },
+    { id: 'swap_shift', label: '7. Đổi ca làm', icon: RefreshCw },
+    { id: 'rereg', label: '8. Cập Nhật Ca Làm', icon: FileText, beta: true },
+    { id: 'emergency_adjust', label: '9. Nghỉ khẩn & Bổ sung công', icon: AlertTriangle },
+    { id: 'test_training', label: '10. TEST / Đào tạo', icon: Award },
+    { id: 'notifs_salary', label: '11. Thông báo & Lương', icon: Bell },
+    { id: 'profile', label: '12. Hồ Sơ', icon: User },
   ];
 
   // Tab "7. Cập Nhật Ca Làm" CHỈ hiển thị khi Admin BẬT phiếu "Cập Nhật Ca" (enabled === true).
@@ -6541,13 +6551,18 @@ export function App() {
         })()}
 
         {/* ========================================================= */}
-        {/* TAB 5: CÔNG CỦA TÔI (DỮ LIỆU THẬT 100%, XÓA SẠCH DỮ LIỆU TEST) */}
+        {/* TAB 5: BẢN ĐỒ CHI NHÁNH (GPS REALTIME, CÙNG CHI NHÁNH) */}
+        {/* ========================================================= */}
+        {activeTab === 'team_map' && <TeamMapView />}
+
+        {/* ========================================================= */}
+        {/* TAB 6: CÔNG CỦA TÔI (DỮ LIỆU THẬT 100%, XÓA SẠCH DỮ LIỆU TEST) */}
         {/* ========================================================= */}
         {activeTab === 'timesheet' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             <div className="card">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
-                <h3 style={{ fontSize: '15px', fontWeight: 800 }}>5. Dữ Liệu Công Của Tôi</h3>
+                <h3 style={{ fontSize: '15px', fontWeight: 800 }}>6. Dữ Liệu Công Của Tôi</h3>
                 <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                   <button className="btn-secondary" style={{ fontSize: '12px', padding: '5px 10px' }} onClick={() => shiftTsMonth(-1)}>◀</button>
                   <span className="badge badge-brand">Tháng {tsMonth.slice(5, 7)}/{tsMonth.slice(0, 4)}</span>
@@ -7455,7 +7470,7 @@ export function App() {
             {/* Giới thiệu đợt + cửa sổ ngày (server định: mặc định 01/10 → 24/10) */}
             <div className="card">
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                <h3 style={{ fontSize: '15px', fontWeight: 800, margin: 0 }}>7. Cập Nhật Ca Làm</h3>
+                <h3 style={{ fontSize: '15px', fontWeight: 800, margin: 0 }}>8. Cập Nhật Ca Làm</h3>
                 <span style={{
                   fontSize: '10px', fontWeight: 800, padding: '2px 8px', borderRadius: 'var(--radius-full)',
                   backgroundColor: '#FDE68A', color: '#92400E', letterSpacing: '0.5px',
@@ -8227,7 +8242,7 @@ export function App() {
         {activeTab === 'profile' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             <div className="card">
-              <h3 style={{ fontSize: '16px', fontWeight: 800, marginBottom: '4px' }}>10. Hồ Sơ Nhân Viên Của Tôi</h3>
+              <h3 style={{ fontSize: '16px', fontWeight: 800, marginBottom: '4px' }}>12. Hồ Sơ Nhân Viên Của Tôi</h3>
               <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>Thông tin HR quản lý (chỉ xem) + thông tin bạn được tự cập nhật (lưu là HR thấy ngay ở tab Hồ Sơ Nhân Viên).</div>
               {bankChangeRequest && (
                 <div style={{ backgroundColor: '#FFF7ED', border: '1.5px solid #FDBA74', borderRadius: '10px', padding: '11px 13px', marginBottom: '14px', fontSize: '12px', lineHeight: 1.55 }}>

@@ -175,6 +175,9 @@ export class LiveMapService {
 
     const activeEmployees = (employees || []).filter(e =>
       String((e as any)?.employment_status || '').toUpperCase() !== 'TERMINATED'
+      // Tài khoản bị khóa thì biến mất khỏi bản đồ (cả bản đồ admin lẫn cổng NV).
+      && (e as any)?.account_locked !== true
+      && String((e as any)?.account_status || '').toUpperCase() !== 'LOCKED'
     );
     const shiftsToday = (shifts || []).filter(s =>
       s && String((s as any).status || '').toUpperCase() === 'PUBLISHED'
@@ -310,6 +313,32 @@ export class LiveMapService {
       branches: branchesOut,
       employees: out,
       summary,
+    };
+  }
+
+  /**
+   * Bản đồ thu gọn cho CỔNG NHÂN VIÊN: chỉ đồng nghiệp cùng chi nhánh với người
+   * đang đăng nhập (kèm chính họ). Tài khoản bị khóa đã bị loại từ getSnapshot.
+   */
+  async getBranchSnapshot(branchId: string, nowInput?: Date): Promise<LiveMapSnapshot> {
+    const snap = await this.getSnapshot(nowInput);
+    const target = canonicalBranchId(branchId);
+    if (!target) return { ...snap, branches: [], employees: [], summary: { total: 0, normal: 0, working: 0, completed: 0, missing: 0, with_gps: 0 } };
+
+    const employees = snap.employees.filter(e => canonicalBranchId(e.branch_id) === target);
+    const branches = snap.branches.filter(b => canonicalBranchId((b as any)?.id || (b as any)?.branch_id) === target);
+    return {
+      ...snap,
+      branches,
+      employees,
+      summary: {
+        total: employees.length,
+        normal: employees.filter(e => e.status === 'NORMAL').length,
+        working: employees.filter(e => e.status === 'WORKING').length,
+        completed: employees.filter(e => e.status === 'COMPLETED').length,
+        missing: employees.filter(e => e.status === 'MISSING').length,
+        with_gps: employees.filter(e => e.gps_source !== 'BRANCH').length,
+      },
     };
   }
 
