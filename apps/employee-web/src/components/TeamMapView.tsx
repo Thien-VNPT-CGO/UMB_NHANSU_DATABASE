@@ -348,7 +348,7 @@ export const TeamMapView: React.FC = () => {
             <Users size={16} /> Bản đồ chi nhánh
           </div>
           <div className="ubm-team-map-sub">
-            {data?.branches?.[0]?.name || 'Đang tải chi nhánh…'} • {summary?.total ?? 0} nhân viên
+            {data?.branches?.[0]?.name || (data ? 'Chưa gán chi nhánh' : 'Đang tải chi nhánh…')} • {summary?.total ?? 0} nhân viên
             {meDistance != null && me && me.gps_source !== 'BRANCH' ? ` • bạn cách cửa hàng ${meDistance.toLocaleString('vi-VN')} m` : ''}
           </div>
         </div>
@@ -373,6 +373,11 @@ export const TeamMapView: React.FC = () => {
 
       {error && <div className="ubm-team-map-error">{error}</div>}
       {loading && !data && <div className="ubm-team-map-loading">Đang tải bản đồ…</div>}
+      {data && (data.branches?.length || 0) === 0 && (
+        <div className="ubm-team-map-loading">
+          Tài khoản của bạn chưa được gán chi nhánh nên chưa có dữ liệu bản đồ. Vui lòng liên hệ HR/Quản lý cửa hàng.
+        </div>
+      )}
 
       <div className="ubm-team-map-foot">
         Chấm màu = trạng thái ca hôm nay. Chạm vào chấm để xem tên, mã NV, ca và giờ check-in/check-out.
