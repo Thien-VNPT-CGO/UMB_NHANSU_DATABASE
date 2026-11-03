@@ -1898,7 +1898,15 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async updateBranch(id: string, updates: any) {
     const res = await this.fallbackAdapter.updateBranch(id, updates);
-    this.scheduleFullSync('BRANCH.update');
+    // Toạ độ GPS cửa hàng là dữ liệu cấu hình quan trọng của bản đồ giám sát:
+    // ghi riêng tab DANH_SACH_CHI_NHANH ngay (1 request) thay vì chờ full-sync
+    // 24 tab có thể bị hoãn — restart giữa chừng sẽ mất toạ độ vừa lưu.
+    if (this.isConfigured) {
+      this.scheduleSheetsWrite(async () => {
+        const branches = await this.fallbackAdapter.getBranches();
+        await this.syncService.syncBranchesToSheet(branches);
+      }, 'BRANCH.update');
+    }
     return res;
   }
 

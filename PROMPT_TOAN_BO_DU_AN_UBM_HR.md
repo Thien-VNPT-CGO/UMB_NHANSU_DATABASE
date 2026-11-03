@@ -526,7 +526,7 @@ Tab active lưu `localStorage["ubm_active_tab"]`. Lưu ý: tab `attendance` (Đi
 - `dashboard` 4 stats chi nhánh; `employees` bảng NV chi nhánh; `schedule` lưới lịch + PublishScheduleModal + điều hướng tuần; `off` duyệt `DOT_XUAT` (`POST /leave-requests/{id}/review`), `HANG_TUAN` tự ghi nhận; `swap` / `emergency` / `realtime-att` — chờ realtime; `confirm-att` — đối soát hôm nay qua `GET /attendance/events`; `reports` + `notifications`.
 - **Mọi tab STORE chỉ thao tác trong `branchScope`.**
 
-### 6.3.15. Nhóm tab FINANCE (12 tab)
+### 6.3.15. Nhóm tab FINANCE (14 tab)
 - **`fin-timesheet` Chấm Công Lương:** chọn `finMonth`, expand từng ca (ngày, ca, giờ, trạng thái, check-in, trễ, lương ca, phạt); **Backfill:** `POST /payroll/{period}/backfill`; **Xuất CSV UTF-8 BOM**.
 - **`fin-payroll-periods` Kỳ Lương:** stage machine `DRAFT → RECONCILED → APPROVED → PUBLISHED → PAID`, action `reconcile/approve/publish/mark-paid`; nguyên tắc **người duyệt ≠ người tính** (`SEPARATION_OF_DUTIES_VIOLATION`).
 - **`fin-calculate` Tính Lương (4 bước):** B1 `POST /payroll/{period}/calculate`; B2 công thức kiểu Excel `PUT /payroll/formula/{period}` `{rateTV, rateCT, otThreshold1, otThreshold2}` (đã bỏ phụ cấp OT) + `POST /payroll/{period}/calculate-formula`; B3 nhập tay 6 cột `PUT /payroll/inputs/{period}` `{luong_cb, ot_extra, bonus_extra, ung_luong, tru_kpi, dong_phuc, note}` + **Lưu tất cả**; B4 `calcLivePayslip` xem trước từng bước B1–B4.
@@ -553,6 +553,16 @@ Tab active lưu `localStorage["ubm_active_tab"]`. Lưu ý: tab `attendance` (Đi
   - File lưu **Google Drive** (chính) + **đĩa VPS** (dự phòng `data/contracts`); metadata (Drive ID, tên file, MIME, size, thời điểm, người upload) lưu **1 ô JSON** `contract_docs` trên `NHAN_VIEN_MASTER` — **không** nhét base64 vào Sheet.
   - API: `POST /employees/{id}/contract` `{kind: PROBATION|OFFICIAL, fileName, mimeType, base64}` · `GET /employees/{id}/contract/{kind}` (stream, rớt xuống bản đĩa) · `DELETE /employees/{id}/contract/{kind}`; kiểm tra chữ ký file (`%PDF`, JPEG/PNG/WEBP, ZIP/OLE của DOC/DOCX) chặn file đổi đuôi. Sau khi lưu → refresh + **push Sheets NGAY**.
 - **Số liệu hiệu suất realtime:** 4 thẻ + bảng "Hiệu suất chấm công" tính từ **lượt điểm danh thật** (`/attendance/events` + `/attendance/events/archive`, gộp 62 ngày gần nhất) và **lịch đã tải** (`schedAllShifts`); chỉ đếm ca có `date ≤ hôm nay`, tự tải lại khi mở tab và khi socket báo check-in/out. Dòng ghi chú hiển thị **số lượt điểm danh + số ca** và khoảng ngày thực tế đang tính.
+
+### 6.3.18. Bản Đồ GPS Nhân Viên (`live-map` — ADMIN / HR / FINANCE)
+- **Mục đích:** giám sát realtime nhân viên tại các cửa hàng đã cấu hình toạ độ; dữ liệu lấy từ GPS cổng nhân viên lúc chấm công.
+- **API:** `GET /admin/live-map` (ADMIN/HR/FINANCE) → `LiveMapService.getSnapshot()` trả `branches`, `employees`, `summary`, `date` (múi giờ VN).
+- **Màu chấm:** 🩶 xám = bình thường (không có ca / chưa vào ca); 🟢 xanh lá = hoàn thành ca (đủ check-in + check-out); 🟡 vàng (nhấp nháy nhẹ) = đang làm việc (đã check-in, chưa check-out); 🔴 đỏ = thiếu check-in hoặc check-out (quá 15 phút sau giờ vào ca chưa check-in / quá 30 phút sau giờ tan chưa check-out).
+- **Tooltip khi rê chuột:** Tên NV + mã NV + chi nhánh + ca làm + khung giờ ca + giờ check-in + giờ check-out + nguồn GPS (check-in/check-out) + khoảng cách tới cửa hàng + sai số GPS, cập nhật realtime.
+- **Vị trí:** GPS của sự kiện chấm công gần nhất trong ngày; nếu chưa có GPS thì hiển thị tại toạ độ cửa hàng. NV trùng toạ độ được tách thành vòng nhỏ để không chồng marker.
+- **Bộ lọc:** theo chi nhánh + theo trạng thái (bấm huy hiệu màu); **tự làm mới 30 giây** và tải lại ngay khi socket báo `attendance`/`schedules`/`config` (event nội bộ `ubm:live-map-reload`).
+- **Cấu hình toạ độ:** tab **Chi nhánh & Ca** (ADMIN) có nút **⚙️ Sửa toạ độ GPS** (vĩ độ/kinh độ/bán kính) → `PUT /admin/branches/{id}`; lưu xong ghi riêng tab `DANH_SACH_CHI_NHANH` ngay (`syncBranchesToSheet`) và bản đồ cập nhật tức thì.
+- **Thư viện:** Leaflet + tile OpenStreetMap (`leaflet`, `@types/leaflet` trong `@ubm/admin-web`).
 
 ## 6.4. Header / Topbar & tiện ích chung
 
@@ -701,7 +711,7 @@ Banner REMINDER (sắp mở cổng OFF) · banner đang trong thời gian đăng
 
 ## 10.3. Window events nội bộ (đồng bộ giữa các tab component admin)
 
-`ubm:attendance-reload, ubm:reports-reload, ubm:fin-timesheet-reload, ubm:swaps-reload, ubm:schedule-reload, ubm:adjustments-reload, ubm:tests-reload, ubm:candidates-reload, ubm:employees-reload, ubm:interview-draft-reload, ubm:payslips-reload, ubm:employee-locked, ubm:employee-unlocked`.
+`ubm:attendance-reload, ubm:reports-reload, ubm:fin-timesheet-reload, ubm:swaps-reload, ubm:schedule-reload, ubm:adjustments-reload, ubm:tests-reload, ubm:candidates-reload, ubm:employees-reload, ubm:interview-draft-reload, ubm:payslips-reload, ubm:employee-locked, ubm:employee-unlocked, ubm:live-map-reload`.
 
 ## 10.4. Đồng bộ chéo 2 cổng (tính năng độc đáo)
 

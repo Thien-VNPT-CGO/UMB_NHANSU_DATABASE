@@ -4120,6 +4120,33 @@ export class GoogleSheetsSyncService {
   }
 
   /**
+   * Ghi riêng tab DANH_SACH_CHI_NHANH (toạ độ GPS cửa hàng). Dùng khi Admin sửa
+   * toạ độ ở tab Chi nhánh: chỉ 1 request thay vì đợi full-sync 24 tab (full-sync
+   * có thể bị hoãn rồi restart làm mất toạ độ vừa sửa).
+   */
+  public async syncBranchesToSheet(branches: any[]): Promise<boolean> {
+    if (!this.sheetsClient) return false;
+    try {
+      const rows = (branches || []).map(b => [
+        b.id,
+        b.name,
+        b.address,
+        b.latitude,
+        b.longitude,
+        b.radius_meters,
+        b.status,
+      ]);
+      if (rows.length === 0) return false;
+      const def = SHEETS_DEFINITIONS.find(d => d.title === 'DANH_SACH_CHI_NHANH')!;
+      await this.overwriteSheetData('DANH_SACH_CHI_NHANH', def.headers, rows);
+      return true;
+    } catch (err: any) {
+      console.warn('[GoogleSheetsSyncService] Lỗi ghi DANH_SACH_CHI_NHANH:', err?.message || err);
+      return false;
+    }
+  }
+
+  /**
    * Đẩy 1 tab an toàn: tab lỗi thì ghi lỗi vào details rồi đi tiếp tab khác —
    * không để 1 tab hỏng (VD ô QR base64 quá lớn) làm đứng cả đợt đồng bộ.
    */

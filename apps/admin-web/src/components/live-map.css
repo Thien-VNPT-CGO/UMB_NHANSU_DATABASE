@@ -1,0 +1,295 @@
+/* Bản đồ GPS nhân viên realtime (Admin / HR / Kế toán) */
+.ubm-map-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.ubm-map-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.ubm-map-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.ubm-map-sub {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.ubm-map-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ubm-map-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.ubm-map-switch input { accent-color: var(--brand); }
+
+.ubm-map-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--brand);
+  background: var(--surface);
+  border: 1px solid var(--brand);
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.ubm-map-btn:disabled { opacity: 0.6; cursor: progress; }
+
+.ubm-map-stats {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ubm-map-stat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+}
+.ubm-map-stat b { margin-left: auto; font-size: 16px; color: var(--text); }
+.ubm-map-stat--working b { color: #B45309; }
+.ubm-map-stat--completed b { color: #047857; }
+.ubm-map-stat--missing b { color: #B91C1C; }
+.ubm-map-stat--normal b { color: #475569; }
+
+.ubm-map-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.ubm-map-legend { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+.ubm-map-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+.ubm-map-legend-item.is-active {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 2px var(--brand-soft);
+}
+
+.ubm-map-clear {
+  border: none;
+  background: transparent;
+  color: var(--brand);
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.ubm-map-toolbar-right { display: flex; align-items: center; gap: 10px; }
+
+.ubm-map-select {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  max-width: 280px;
+}
+
+.ubm-map-updated { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; }
+
+.ubm-map-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: #B91C1C;
+  background: #FEE2E2;
+  border: 1px solid #FCA5A5;
+  border-radius: 10px;
+  padding: 8px 12px;
+}
+
+.ubm-map-canvas-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 520px;
+  height: calc(100vh - 330px);
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.08);
+  background: #E2E8F0;
+}
+
+.ubm-map-canvas { position: absolute; inset: 0; }
+
+.ubm-map-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.78);
+  z-index: 500;
+  pointer-events: none;
+}
+.ubm-map-overlay--soft {
+  inset: auto 12px 12px 12px;
+  padding: 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.94);
+  font-weight: 600;
+}
+
+.ubm-map-foot { font-size: 11.5px; color: var(--text-muted); }
+
+/* --- Điểm nhân viên --- */
+.ubm-map-marker { background: transparent; border: none; }
+
+.ubm-map-dot {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--dot-color, #94A3B8);
+  border: 2px solid #FFFFFF;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.18), 0 2px 6px rgba(15, 23, 42, 0.28);
+}
+
+.ubm-map-marker .ubm-map-dot { width: 15px; height: 15px; }
+
+.ubm-map-dot--normal { background: #94A3B8; }
+.ubm-map-dot--completed { background: #22C55E; }
+.ubm-map-dot--missing { background: #EF4444; }
+.ubm-map-dot--working {
+  background: #F59E0B;
+  animation: ubm-map-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes ubm-map-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.55), 0 2px 6px rgba(15, 23, 42, 0.28); }
+  70% { box-shadow: 0 0 0 9px rgba(245, 158, 11, 0), 0 2px 6px rgba(15, 23, 42, 0.28); }
+  100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0), 0 2px 6px rgba(15, 23, 42, 0.28); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ubm-map-dot--working { animation: none; box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.35); }
+}
+
+/* --- Cửa hàng --- */
+.ubm-map-branch-icon { background: transparent; border: none; }
+.ubm-map-branch-pin {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  background: #FFFFFF;
+  border: 2px solid #7C3AED;
+  box-shadow: 0 2px 8px rgba(124, 58, 237, 0.35);
+}
+
+/* --- Tooltip --- */
+.leaflet-tooltip.ubm-map-tooltip {
+  background: #0F172A;
+  color: #F8FAFC;
+  border: none;
+  border-radius: 12px;
+  padding: 10px 12px;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.3);
+  font-size: 12px;
+  line-height: 1.45;
+  max-width: 320px;
+  white-space: normal;
+  z-index: 900;
+}
+.leaflet-tooltip.ubm-map-tooltip::before { border-top-color: #0F172A; }
+
+.ubm-map-tt-title { font-size: 13.5px; font-weight: 800; color: #FFFFFF; }
+.ubm-map-tt-sub { font-size: 11.5px; color: #CBD5E1; margin-bottom: 6px; }
+.ubm-map-tt-status {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 800;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 2px 8px;
+  margin-bottom: 8px;
+}
+.ubm-map-tt-shift {
+  border-top: 1px dashed rgba(148, 163, 184, 0.35);
+  padding-top: 6px;
+  margin-top: 6px;
+}
+.ubm-map-tt-shift-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 800;
+  color: #E2E8F0;
+}
+.ubm-map-tt-chip {
+  font-size: 10px;
+  font-weight: 800;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+.ubm-map-tt-line { color: #E2E8F0; margin-top: 2px; }
+.ubm-map-tt-line b { color: #FFFFFF; }
+.ubm-map-tt-note { color: #FCA5A5; margin-top: 3px; font-weight: 700; }

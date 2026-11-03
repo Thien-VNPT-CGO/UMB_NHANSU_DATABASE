@@ -43,6 +43,7 @@ import { ScheduleExcelService, XLSX_MIME } from './services/schedule-excel.servi
 import { AutoScheduleService } from './services/auto-schedule.service.js';
 import { TestsService } from './services/tests.service.js';
 import { AttendanceService } from './services/attendance.service.js';
+import { LiveMapService } from './services/live-map.service.js';
 import { ShiftReRegService } from './services/shift-rereg.service.js';
 import { readAttendancePhotoDisk, readAdjustmentPhotoDisk, readAvatarPhotoDisk, hasAdjustmentPhotoDisk } from './services/photo-disk.store.js';
 import { getDriveBackupScheduler, type BackupKind } from './services/backup-drive.service.js';
@@ -280,6 +281,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   const autoScheduleService = new AutoScheduleService(adapter);
   const testsService = new TestsService(adapter);
   const attendanceService = new AttendanceService(adapter);
+  const liveMapService = new LiveMapService(adapter);
   // BETA — Phiếu "Cập Nhật Ca Làm" tự phục vụ của nhân viên (bot chấm tự động,
   // đồng bộ Sheet tab PHIEU_NV_CAP_NHAT_CA tự tạo nếu thiếu).
   const shiftReRegService = new ShiftReRegService(
@@ -3877,6 +3879,17 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Bản đồ giám sát nhân viên realtime (Admin/HR/Kế toán): trạng thái ca + GPS
+  // lần chấm công gần nhất + toạ độ cửa hàng đã cấu hình ở tab Chi nhánh.
+  app.get('/admin/live-map', authMiddleware, requireRole(['ADMIN', 'HR', 'FINANCE']), async (_req, res) => {
+    try {
+      const snapshot = await liveMapService.getSnapshot();
+      res.json(snapshot);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Gộp 2 route trùng: EMPLOYEE chỉ xem công của mình, nội bộ xem theo query (mặc định tất cả).
   app.get('/attendance/events', authMiddleware, validate({ query: attendanceEventsQuery }), async (req: AuthenticatedRequest, res) => {
     try {
@@ -6932,6 +6945,7 @@ async function send(d){document.getElementById('msg').textContent='⏳ Đang g�
       autoScheduleService,
       testsService,
       attendanceService,
+      liveMapService,
       payrollService,
       notificationsService,
       zaloService,

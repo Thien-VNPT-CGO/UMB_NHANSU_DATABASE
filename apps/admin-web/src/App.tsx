@@ -46,8 +46,10 @@ import {
   VolumeX,
   PenTool,
   QrCode,
+  MapPin,
 } from 'lucide-react';
 import { RoleViews } from './components/RoleViews';
+import { LiveMapView } from './components/LiveMapView';
 import { BetaChip, BetaBanner, isBetaFeature } from './betaFeatures';
 import {
   ADMIN_EVENT_THEMES,
@@ -131,6 +133,7 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'audit', label: '14. Nhật ký Audit', icon: FileCheck },
     { id: 'backup', label: '15. Sao lưu & Phục hồi', icon: HardDrive },
     { id: 'bank-changes', label: '16. Duyệt đổi STK', icon: CreditCard },
+    { id: 'live-map', label: '17. Bản đồ GPS', icon: MapPin },
   ],
   HR: [
     { id: 'hr-dashboard', label: '1. Dashboard HR', icon: Building2 },
@@ -150,6 +153,7 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'hr-notifications', label: '15. Thông báo', icon: Bell },
     { id: 'hr-profile', label: '16. Hồ Sơ Nhân Viên Ụm Bò Milk', icon: IdCard },
     { id: 'bank-changes', label: '17. Duyệt đổi STK', icon: CreditCard },
+    { id: 'live-map', label: '18. Bản đồ GPS', icon: MapPin },
   ],
   STORE: [
     { id: 'store-dashboard', label: '1. Dashboard Store', icon: Store },
@@ -177,6 +181,7 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'fin-signatures', label: '11. Cài đặt chữ ký', icon: PenTool },
     { id: 'fin-bank-qr', label: '12. QR ngân hàng NV', icon: QrCode },
     { id: 'bank-changes', label: '13. Duyệt đổi STK', icon: CreditCard },
+    { id: 'live-map', label: '14. Bản đồ GPS', icon: MapPin },
   ],
   MARKETING: [
     { id: 'mkt-dashboard', label: '1. Dashboard MKT', icon: Megaphone },
@@ -479,6 +484,10 @@ export function App() {
   const [employeeAccounts, setEmployeeAccounts] = useState<any[]>([]);
   const [allEmployees, setAllEmployees] = useState<any[]>([]);
   const [branches, setBranches] = useState<any[]>([]);
+  // Sửa toạ độ GPS cửa hàng ngay trên tab Chi nhánh (ADMIN) — bản đồ GPS dùng trực tiếp.
+  const [branchEditId, setBranchEditId] = useState<string | null>(null);
+  const [branchEditForm, setBranchEditForm] = useState<{ latitude: string; longitude: string; radius_meters: string }>({ latitude: '', longitude: '', radius_meters: '300' });
+  const [branchEditBusy, setBranchEditBusy] = useState(false);
   const [shiftTemplates, setShiftTemplates] = useState<any>({});
   const [policies, setPolicies] = useState<any>({});
   const [systemNotifications, setSystemNotifications] = useState<any[]>([]);
@@ -1366,6 +1375,10 @@ export function App() {
           payload.data.changedTabs.includes('CAU_HINH_HE_THONG');
         if (payload?.entity === 'config' || configChangedOnSheet) {
           loadAllData(currentUser, true);
+          // Toạ độ cửa hàng/bán kính vừa đổi -> bản đồ GPS vẽ lại ngay.
+          try {
+            window.dispatchEvent(new CustomEvent('ubm:live-map-reload', { detail: payload?.data }));
+          } catch { /* non-fatal */ }
         } else {
           if (payload?.entity === 'shift-rereg' || payload?.entity === 'all') {
             fetchShiftReRegConfig();
@@ -1413,6 +1426,12 @@ export function App() {
             }
             try {
               window.dispatchEvent(new CustomEvent('ubm:schedule-reload', { detail: payload?.data }));
+            } catch { /* non-fatal */ }
+          }
+          // Bản đồ GPS: chấm công / xếp ca / bù công đổi là marker cập nhật ngay.
+          if (payload?.entity === 'attendance' || payload?.entity === 'schedules' || payload?.entity === 'all') {
+            try {
+              window.dispatchEvent(new CustomEvent('ubm:live-map-reload', { detail: payload?.data }));
             } catch { /* non-fatal */ }
           }
           if (payload?.entity === 'adjustments' || payload?.entity === 'all') {
@@ -1846,6 +1865,39 @@ export function App() {
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (err: any) {
       setErrorMsg(err.message);
+    }
+  };
+
+  const handleSaveBranchCoords = async (branchId: string) => {
+    const lat = Number(branchEditForm.latitude.replace(',', '.'));
+    const lng = Number(branchEditForm.longitude.replace(',', '.'));
+    const radius = Number(branchEditForm.radius_meters) || 300;
+    if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
+      setErrorMsg('Vĩ độ (latitude) phải là số trong khoảng -90 → 90.');
+      return;
+    }
+    if (!Number.isFinite(lng) || lng < -180 || lng > 180) {
+      setErrorMsg('Kinh độ (longitude) phải là số trong khoảng -180 → 180.');
+      return;
+    }
+    if (!Number.isFinite(radius) || radius < 10 || radius > 5000) {
+      setErrorMsg('Bán kính hợp lệ phải từ 10 → 5000 mét.');
+      return;
+    }
+    setBranchEditBusy(true);
+    try {
+      const updated: any = await apiRequest(`/admin/branches/${encodeURIComponent(branchId)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ latitude: lat, longitude: lng, radius_meters: radius }),
+      });
+      setBranches(prev => prev.map((b: any) => ((b.id || b.branch_id) === branchId ? { ...b, ...(updated || {}), latitude: lat, longitude: lng, radius_meters: radius } : b)));
+      setBranchEditId(null);
+      setSuccessMsg('Đã lưu toạ độ GPS cửa hàng — bản đồ giám sát cập nhật ngay.');
+      setTimeout(() => setSuccessMsg(null), 3000);
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Không lưu được toạ độ cửa hàng.');
+    } finally {
+      setBranchEditBusy(false);
     }
   };
 
@@ -4282,9 +4334,59 @@ export function App() {
 
                     <div style={{ marginTop: '12px', fontSize: '12px', color: 'var(--text-muted)' }}>
                       <div>📍 {b.address}</div>
-                      <div style={{ marginTop: '6px' }}>🌐 GPS: {b.latitude.toFixed(6)}, {b.longitude.toFixed(6)}</div>
-                      <div style={{ marginTop: '4px' }}>🎯 Bán kính cho phép: <strong>{b.radius_meters}m</strong></div>
-                      <div style={{ marginTop: '4px' }}>👥 Định biên ca: <strong>{b.min_staff} - {b.max_staff} NV</strong></div>
+                      {branchEditId === b.id ? (
+                        <div style={{ marginTop: '8px', padding: '10px', borderRadius: '8px', border: '1px dashed var(--brand)', backgroundColor: 'var(--brand-soft)' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                            <label style={{ fontSize: '11px', fontWeight: 700 }}>Vĩ độ (lat)
+                              <input type="text" value={branchEditForm.latitude}
+                                onChange={e => setBranchEditForm({ ...branchEditForm, latitude: e.target.value })}
+                                style={{ width: '100%', marginTop: '3px', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border)' }} />
+                            </label>
+                            <label style={{ fontSize: '11px', fontWeight: 700 }}>Kinh độ (lng)
+                              <input type="text" value={branchEditForm.longitude}
+                                onChange={e => setBranchEditForm({ ...branchEditForm, longitude: e.target.value })}
+                                style={{ width: '100%', marginTop: '3px', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border)' }} />
+                            </label>
+                          </div>
+                          <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, marginTop: '8px' }}>Bán kính GPS (m)
+                            <input type="number" min={10} max={5000} value={branchEditForm.radius_meters}
+                              onChange={e => setBranchEditForm({ ...branchEditForm, radius_meters: e.target.value })}
+                              style={{ width: '100%', marginTop: '3px', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border)' }} />
+                          </label>
+                          <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+                            <button type="button" className="btn-primary" disabled={branchEditBusy}
+                              onClick={() => handleSaveBranchCoords(b.id)}
+                              style={{ fontSize: '11.5px', padding: '6px 12px', fontWeight: 800 }}>
+                              {branchEditBusy ? '⏳ Đang lưu...' : '💾 Lưu toạ độ'}
+                            </button>
+                            <button type="button" className="btn-secondary" disabled={branchEditBusy}
+                              onClick={() => setBranchEditId(null)}
+                              style={{ fontSize: '11.5px', padding: '6px 12px', fontWeight: 700 }}>
+                              Hủy
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div style={{ marginTop: '6px' }}>🌐 GPS: {Number(b.latitude).toFixed(6)}, {Number(b.longitude).toFixed(6)}</div>
+                          <div style={{ marginTop: '4px' }}>🎯 Bán kính cho phép: <strong>{b.radius_meters}m</strong></div>
+                          <div style={{ marginTop: '4px' }}>👥 Định biên ca: <strong>{b.min_staff} - {b.max_staff} NV</strong></div>
+                          {currentUser?.role === 'ADMIN' && (
+                            <button type="button" className="btn-secondary"
+                              onClick={() => {
+                                setBranchEditId(b.id);
+                                setBranchEditForm({
+                                  latitude: String(b.latitude ?? ''),
+                                  longitude: String(b.longitude ?? ''),
+                                  radius_meters: String(b.radius_meters ?? 300),
+                                });
+                              }}
+                              style={{ marginTop: '10px', fontSize: '11.5px', padding: '5px 10px', fontWeight: 700 }}>
+                              ⚙️ Sửa toạ độ GPS
+                            </button>
+                          )}
+                        </>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -5301,6 +5403,11 @@ export function App() {
           )}
 
 
+
+          {/* BẢN ĐỒ GPS NHÂN VIÊN REALTIME (ADMIN / HR / KẾ TOÁN) */}
+          {activeTab === 'live-map' && (
+            <LiveMapView currentUserRole={currentUser?.role} />
+          )}
 
           {/* DEDICATED VIEWS FOR HR (15 TABS), STORE (10 TABS), FINANCE (12 TABS), MARKETING (9 TABS) */}
           <RoleViewsErrorBoundary tab={activeTab} key={activeTab}>
