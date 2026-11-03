@@ -900,7 +900,17 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async markAccountPinMustChange(id: string, actorId: string) {
     const updated = await this.fallbackAdapter.markAccountPinMustChange(id, actorId);
-    this.scheduleFullSync('PIN_ROTATION.syncAll');
+    this.scheduleRuntimeSnapshot();
+    // Đẩy ngay cột PIN (cùng tab accounts) để cờ bắt đổi PIN bền vững, không
+    // chờ full-sync nền — tránh pull sau restart ghi đè mất cờ.
+    if (this.isConfigured) {
+      try {
+        await this.syncService.pushAccountsTab(this.fallbackAdapter);
+      } catch (err) {
+        console.warn('[GoogleSheetsAdapter] Đẩy tab sau gắn cờ đổi PIN thất bại (full-sync nền sẽ thử lại):', (err as any)?.message || err);
+        this.scheduleFullSync('PIN_ROTATION.syncAll');
+      }
+    }
     return updated;
   }
 
@@ -1442,7 +1452,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
         (snapshot as any).is_late ? 'YES' : '',
         (snapshot as any).is_early ? 'YES' : '',
         Number((snapshot as any).minutes_deviation) || 0,
-        // Phạt trễ ghi nhận ngay lúc check-in (ràng buộc chặt 5p:30k • 30p:50% • 60p:100%)
+        // Phạt trễ ghi nhận ngay lúc check-in (ràng buộc chặt 10p:30k • 30p:50% • 60p:100%)
         (snapshot as any).fine_tier || 'NONE',
         Number((snapshot as any).fine_amount) || 0,
       ]], 'SU_KIEN_DIEM_DANH.append');

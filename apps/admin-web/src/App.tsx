@@ -981,6 +981,68 @@ export function App() {
     }
   };
 
+  // Tải lại ĐÚNG nhóm dữ liệu vừa đổi (thay vì gọi cả loadAllData 10 API):
+  // giữ realtime nhanh như socket, không giật toàn bộ dashboard mỗi sự kiện.
+  const reloadEntity = async (entity?: string, user = currentUser) => {
+    if (!user) return;
+    const tasks: Promise<any>[] = [];
+    const add = (p: Promise<any>) => { tasks.push(p.catch(() => null)); };
+    const wantEmployees = ['ADMIN', 'HR', 'STORE', 'FINANCE'].includes(user.role);
+    const wantAccounts = ['ADMIN', 'HR'].includes(user.role);
+    switch (entity) {
+      case 'employees':
+        if (wantEmployees) add(apiRequest('/employees').then(emps => setAllEmployees(Array.isArray(emps) ? emps : [])).catch(() => null));
+        if (wantAccounts) add(apiRequest('/admin/employee-accounts').then(eAccs => setEmployeeAccounts(eAccs || [])).catch(() => null));
+        add(apiRequest('/admin/dashboard/stats').then(stats => { if (stats) setDashboardStats(stats); }).catch(() => null));
+        break;
+      case 'accounts':
+        if (wantAccounts) add(apiRequest('/admin/employee-accounts').then(eAccs => setEmployeeAccounts(eAccs || [])).catch(() => null));
+        if (user.role === 'ADMIN') add(apiRequest('/admin/internal-accounts').then(iAccs => setInternalAccounts(iAccs || [])).catch(() => null));
+        break;
+      case 'schedules':
+        add(apiRequest('/schedules').then(sList => { if (Array.isArray(sList)) setShifts(sList); }).catch(() => null));
+        if (['ADMIN', 'HR', 'STORE'].includes(user.role)) add(apiRequest('/swap-requests').then(sList => setSwaps(sList || [])).catch(() => null));
+        break;
+      case 'leaves':
+        add(apiRequest('/leave-requests').then(lList => { if (Array.isArray(lList)) setLeaves(lList); }).catch(() => null));
+        break;
+      case 'swaps':
+        if (['ADMIN', 'HR', 'STORE'].includes(user.role)) add(apiRequest('/swap-requests').then(sList => setSwaps(sList || [])).catch(() => null));
+        break;
+      case 'candidates':
+        if (wantAccounts) add(apiRequest('/applications').then(cList => setCandidates(cList || [])).catch(() => null));
+        break;
+      case 'payroll':
+      case 'payslips':
+        if (['ADMIN', 'FINANCE'].includes(user.role)) add(apiRequest('/payroll/runs').then(pList => setPayrollRuns(pList || [])).catch(() => null));
+        break;
+      case 'notifications':
+        if (['ADMIN', 'HR', 'MARKETING'].includes(user.role)) add(apiRequest('/admin/notifications').then(notifs => setSystemNotifications(notifs || [])).catch(() => null));
+        break;
+      case 'attendance':
+      case 'adjustments':
+      case 'tests':
+      case 'me':
+      case 'emergency_leave':
+      case 'shift-rereg':
+      case 'bank_change':
+      case 'theme_schedule':
+      case 'interview-draft':
+      case 'config-static':
+        // Các tab tự tải qua CustomEvent tương ứng (ubm:*-reload) — không cần
+        // gọi lại toàn bộ dashboard.
+        break;
+      case 'config':
+        await loadAllData(user, true);
+        return;
+      default:
+        // entity 'all'/không rõ (Sheets đổi tay): tải đầy đủ để chắc chắn đồng bộ.
+        await loadAllData(user);
+        return;
+    }
+    await Promise.allSettled(tasks);
+  };
+
   // Synchronize active tab to localStorage whenever it changes
   useEffect(() => {
     if (activeTab) {
@@ -1139,8 +1201,10 @@ export function App() {
   const reloadTimerRef = useRef<any>(null);
   const reloadingRef = useRef(false);
   const needReloadAgainRef = useRef(false);
+  const lastReloadEntityRef = useRef<string>('all');
 
-  const scheduleReload = (user = currentUser) => {
+  const scheduleReload = (user = currentUser, entity?: string) => {
+    lastReloadEntityRef.current = entity || 'all';
     if (reloadingRef.current) {
       needReloadAgainRef.current = true;
       return;
@@ -1152,15 +1216,15 @@ export function App() {
       reloadTimerRef.current = null;
       reloadingRef.current = true;
       try {
-        await loadAllData(user);
+        await reloadEntity(lastReloadEntityRef.current, user);
       } finally {
         reloadingRef.current = false;
         if (needReloadAgainRef.current) {
           needReloadAgainRef.current = false;
-          scheduleReload(user);
+          scheduleReload(user, lastReloadEntityRef.current);
         }
       }
-    }, 600);
+    }, 150);
   };
 
   useEffect(() => {
@@ -1285,7 +1349,7 @@ export function App() {
         notifyReportsRealtime();
         notifyFinTimesheetRealtime();
         if (notif?.type !== 'CHECKIN' && notif?.type !== 'CHECKOUT') {
-          scheduleReload(currentUser);
+          scheduleReload(currentUser, notif?.type === 'SWAP' ? 'swaps' : 'notifications');
         }
       });
 
@@ -1404,25 +1468,25 @@ export function App() {
           // Bỏ qua loadAllData (10 API) khi sự kiện chỉ là điểm danh hoặc xếp ca
           // vì cả 2 đã được cập nhật trực tiếp tức thì phía trên
           if (!['attendance', 'schedules'].includes(payload?.entity)) {
-            scheduleReload(currentUser);
+            scheduleReload(currentUser, payload?.entity);
           }
         }
       });
 
       socket.on('employees', () => {
         console.log('⚡ [Socket.IO] Nhận tín hiệu cập nhật danh sách nhân viên');
-        scheduleReload(currentUser);
+        scheduleReload(currentUser, 'employees');
       });
       socket.on('accounts', () => {
         console.log('⚡ [Socket.IO] Nhận tín hiệu cập nhật tài khoản nhân viên');
-        scheduleReload(currentUser);
+        scheduleReload(currentUser, 'accounts');
       });
       socket.on('candidates', () => {
         console.log('⚡ [Socket.IO] Nhận tín hiệu ứng viên Google Forms mới');
-        scheduleReload(currentUser);
+        scheduleReload(currentUser, 'candidates');
       });
 
-      socket.on('schedule.published', () => scheduleReload(currentUser));
+      socket.on('schedule.published', () => scheduleReload(currentUser, 'schedules'));
       socket.on('employees:locked', (payload: any) => {
         const id = String(payload?.employeeId || '');
         if (id) {
@@ -1432,7 +1496,7 @@ export function App() {
           const today = new Date().toISOString().slice(0, 10);
           setShifts(prev => (prev || []).filter((s: any) => !(String(s?.employee_id) === id && String(s?.date || '').slice(0, 10) >= today)));
         }
-        scheduleReload(currentUser);
+        scheduleReload(currentUser, 'employees');
       });
       socket.on('employees:unlocked', (payload: any) => {
         const id = String(payload?.employeeId || '');
@@ -1441,15 +1505,15 @@ export function App() {
             e?.employee_id === id ? { ...e, account_locked: false, account_status: 'ACTIVE' } : e
           ));
         }
-        scheduleReload(currentUser);
+        scheduleReload(currentUser, 'employees');
       });
       socket.on('attendance.recorded', () => {
         try {
           window.dispatchEvent(new CustomEvent('ubm:attendance-reload'));
         } catch { /* non-fatal */ }
-        scheduleReload(currentUser);
+        scheduleReload(currentUser, 'attendance');
       });
-      socket.on('payroll.published', () => scheduleReload(currentUser));
+      socket.on('payroll.published', () => scheduleReload(currentUser, 'payslips'));
     } catch (err) {
       console.warn('[Socket.IO] Không thể khởi tạo kết nối realtime:', err);
     }
@@ -3523,7 +3587,7 @@ export function App() {
             <div id="sec-accounts-pin" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               <div>
                 <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>3. PIN & Quản Lý Tài Khoản Nhân Viên</h1>
-                  <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Phân nhóm theo 6 tab nghiệp vụ: Tất cả, Thử việc, Chính thức, Văn Phòng, Xưởng, Sales. Nhân viên đăng nhập trên Cổng Employee Web bằng SĐT + mã PIN 6 số (tự sinh), rồi đặt PIN riêng ngay lần đầu. PIN chưa đủ 6 số sẽ bị hệ thống tự động reset và bắt NV đổi lại.</p>
+                  <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Phân nhóm theo 6 tab nghiệp vụ: Tất cả, Thử việc, Chính thức, Văn Phòng, Xưởng, Sales. Nhân viên đăng nhập trên Cổng Employee Web bằng SĐT + mã PIN 6 số, rồi đặt PIN riêng ngay lần đầu. Hệ thống KHÔNG tự reset PIN: quên PIN thì HR xem lại mã hiện tại; tới hạn đổi PIN, NV nhập PIN cũ rồi đặt PIN mới.</p>
               </div>
 
               {/* 6 Sub-Tabs for PIN & Account Management */}

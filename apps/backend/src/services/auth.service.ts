@@ -8,7 +8,7 @@ import {
   EmployeeMaster,
 } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
-import { generateAutoPin, hashPassword, hashPin, isBcryptHash, verifyPassword, verifyPin } from './password.service.js';
+import { hashPassword, hashPin, isBcryptHash, verifyPassword, verifyPin } from './password.service.js';
 import { isPinRotationDue } from './pin-rotation.service.js';
 import { canonicalPhone } from './employees.service.js';
 
@@ -222,18 +222,8 @@ export class AuthService {
       }
       throw new Error('PIN_NOT_SET');
     }
-    // Ràng buộc 6 số (từ 2026-10): PIN hiển thị chưa đủ 6 số -> tự động reset
-    // sang mã 6 số mới + bắt đổi, PIN cũ hết hiệu lực ngay. NV hỏi HR lấy mã mới.
-    const shownPin = String((account as any).pin_code || '');
-    if (shownPin && !/^\d{6}$/.test(shownPin)) {
-      try {
-        const freshPin = generateAutoPin();
-        await this.repo.setAccountPin(account.account_id, await hashPin(freshPin), true, account.employee_id, freshPin);
-      } catch (e) {
-        console.warn('[auth] auto-reset legacy PIN failed:', (e as Error)?.message || e);
-      }
-      throw new Error('PIN_RESET_REQUIRED');
-    }
+    // KHÔNG tự reset PIN: PIN cũ vẫn giữ nguyên hiệu lực. Khi tới hạn đổi PIN,
+    // NV đăng nhập bằng PIN cũ rồi hệ thống buộc đặt PIN mới (PIN_CHANGE_REQUIRED).
     if (!pinInput || !(await verifyPin(pinInput, account.pin_hash))) {
       throw new Error('INVALID_PIN');
     }

@@ -16,20 +16,32 @@ import { Server } from 'socket.io';
 
 /**
  * Nấc phạt đi trễ (NV chính thức), tính trên lương 1 ca:
- * - Đến sớm/trong 4 phút đầu: không vi phạm.
- * - Trễ 5–29 phút: phạt 30.000đ.
+ * - Đến sớm/trễ dưới 10 phút: không vi phạm.
+ * - Trễ 10–29 phút: phạt 30.000đ.
  * - Trễ 30–59 phút: phạt 50% lương ca.
  * - Trễ từ 60 phút: phạt 100% lương ca (ca không lương).
  * - Thiếu check-in hoặc check-out: vắng 100% lương ca.
  */
 export const LATE_FINE_FLAT_VND = 30000;
+/** Mốc trễ tối thiểu bắt đầu bị phạt (phút). */
+export const LATE_FINE_GRACE_MINUTES = 10;
 
 export function lateFineFor(minutesLate: number, shiftPay: number): { tier: string; deduction: number; unpaid: boolean } {
   const m = Math.floor(Number(minutesLate) || 0);
-  if (m < 5) return { tier: 'NONE', deduction: 0, unpaid: false };
+  if (m < LATE_FINE_GRACE_MINUTES) return { tier: 'NONE', deduction: 0, unpaid: false };
   if (m < 30) return { tier: 'FLAT_30K', deduction: LATE_FINE_FLAT_VND, unpaid: false };
   if (m < 60) return { tier: 'HALF_SHIFT', deduction: Math.round(shiftPay * 0.5), unpaid: false };
   return { tier: 'FULL_SHIFT', deduction: 0, unpaid: true };
+}
+
+/**
+ * Mức phạt đã ghi lúc check-in vẫn được ưu tiên (chống mất cờ khi pull Sheets),
+ * nhưng KHÔNG dùng lại khoản 30k cũ cho ca trễ dưới 10 phút — quy tắc mới không phạt.
+ */
+export function isStoredFineStillValid(storedTier: string | undefined, lateMin: number): boolean {
+  if (!storedTier || storedTier === 'NONE') return false;
+  if (storedTier === 'FLAT_30K' && Number(lateMin) < LATE_FINE_GRACE_MINUTES) return false;
+  return true;
 }
 
 /**
@@ -341,7 +353,7 @@ export class PayrollService {
             // Ưu tiên mức phạt đã ghi nhận lúc check-in (ràng buộc chặt, không tính lại).
             const storedTier = (inEvt as any).fine_tier;
             const storedAmt = Number((inEvt as any).fine_amount) || 0;
-            const useStored = !!storedTier && storedTier !== 'NONE';
+            const useStored = isStoredFineStillValid(storedTier, lateMin);
             const fine = lateFineFor(lateMin, shiftPay);
             const unpaid = useStored ? storedTier === 'FULL_SHIFT' : fine.unpaid;
             const deductAmt = useStored ? (storedTier === 'FULL_SHIFT' ? 0 : storedAmt) : fine.deduction;
@@ -564,7 +576,7 @@ export class PayrollService {
                 })();
             const storedTier = (inEvt as any).fine_tier;
             const storedAmt = Number((inEvt as any).fine_amount) || 0;
-            const useStored = !!storedTier && storedTier !== 'NONE';
+            const useStored = isStoredFineStillValid(storedTier, lateMin);
             const fine = lateFineFor(lateMin, shiftPay);
             const unpaid = useStored ? storedTier === 'FULL_SHIFT' : fine.unpaid;
             const deductAmt = useStored ? (storedTier === 'FULL_SHIFT' ? 0 : storedAmt) : fine.deduction;
@@ -650,7 +662,10 @@ export class PayrollService {
           total_amount: totalAmount,
           created_by: creatorId,
         };
-        return this.repo.createPayrollRun(runRecord, payslipItems);
+        const created = await this.repo.createPayrollRun(runRecord, payslipItems);
+        this.notifySlipsChanged('calculate-draft', { runId, period });
+        this.triggerSheetsPush();
+        return created;
       },
     });
   }
@@ -709,6 +724,7 @@ export class PayrollService {
           reconciled_by: actorId,
           reconciled_at: new Date().toISOString(),
         });
+        this.notifySlipsChanged('reconcile-run', { runId });
         this.triggerSheetsPush();
         return updated;
       },
@@ -734,6 +750,7 @@ export class PayrollService {
         }
 
         const updated = await this.repo.updatePayrollRunStatus(runId, 'APPROVED', approverId);
+        this.notifySlipsChanged('approve-run', { runId });
         this.triggerSheetsPush();
         return updated;
       },
@@ -1240,15 +1257,17 @@ export class PayrollService {
   }
 
   /**
-   * Bỏ phụ cấp HR điều phối nhường ca (30.000đ) còn sót trên phiếu DRAFT tạo
-   * trước khi bỏ tính năng. Idempotent: chỉ trừ phần `bonus` vượt `bonus_extra`
-   * (phần bonus nhập tay được giữ nguyên), đồng thời trừ đúng khoản đó khỏi các
-   * tổng tiền liên quan. Không tạo kỳ/phiếu mới.
+   * Bỏ phụ cấp HR điều phối nhường ca (30.000đ) còn sót trên phiếu tạo trước khi
+   * bỏ tính năng. Chỉ bỏ trên phiếu CHƯA chi trả/chốt (DRAFT/RECONCILED/APPROVED/
+   * PUBLISHED) để không sửa lịch sử đã trả lương. Idempotent: chỉ trừ phần `bonus`
+   * vượt `bonus_extra` (bonus nhập tay giữ nguyên), đồng thời trừ đúng khoản đó
+   * khỏi các tổng tiền liên quan. Không tạo kỳ/phiếu mới.
    */
   async purgeLegacyDispatchBonus(period?: string) {
     const all = await this.collectAllSlipsInternal();
+    const FINAL = new Set(['PAID', 'CONFIRMED']);
     const targets = (all || []).filter(s => {
-      if (String((s as any)?.status || '').toUpperCase() !== 'DRAFT') return false;
+      if (FINAL.has(String((s as any)?.status || '').toUpperCase())) return false;
       if (period && String((s as any)?.period || '') !== period) return false;
       const bonus = Number((s as any)?.bonus) || 0;
       const extra = Number((s as any)?.bonus_extra) || 0;
@@ -1533,7 +1552,7 @@ export class PayrollService {
           })();
       const storedTier = String((inEvt as any).fine_tier || '');
       const storedAmt = Number((inEvt as any).fine_amount) || 0;
-      const useStored = !!storedTier && storedTier !== 'NONE';
+      const useStored = isStoredFineStillValid(storedTier, lateMin);
       const fine = lateFineFor(lateMin, shiftPay);
       const unpaid = useStored ? storedTier === 'FULL_SHIFT' : fine.unpaid;
       if (unpaid) {
@@ -1677,7 +1696,7 @@ export class PayrollService {
             })();
         const storedTier = (inEvt as any).fine_tier;
         const storedAmt = Number((inEvt as any).fine_amount) || 0;
-        const useStored = !!storedTier && storedTier !== 'NONE';
+        const useStored = isStoredFineStillValid(storedTier, lateMin);
         // Đơn giá đúng giai đoạn của ngày công (TV trước official_date).
         const dayRate = rateOnDate(emp, s.date, hist, STANDARD_HOURLY_RATES.PROBATION, rate);
         const shiftPay = h * dayRate.rate;
@@ -1869,7 +1888,7 @@ export class PayrollService {
               })();
           const storedTier = String((inEvt as any).fine_tier || '');
           const storedAmt = Number((inEvt as any).fine_amount) || 0;
-          const useStored = !!storedTier && storedTier !== 'NONE';
+          const useStored = isStoredFineStillValid(storedTier, lateMin);
           const fine = lateFineFor(lateMin, shiftPay);
           const unpaid = useStored ? storedTier === 'FULL_SHIFT' : fine.unpaid;
           if (unpaid) {

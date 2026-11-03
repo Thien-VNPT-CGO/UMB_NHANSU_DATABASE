@@ -93,7 +93,7 @@ export function mergeOrphanCheckins(
 /**
  * Lương + phạt 1 ca (mirror payroll.service lateFineFor để lưới realtime hiện ngay,
  * Finance chốt số chính thức ở kỳ lương):
- * trễ <5p: không phạt; 5–29p: -30k; 30–59p: -50% lương ca; ≥60p hoặc thiếu in/out: 0đ.
+ * trễ <10p: không phạt; 10–29p: -30k; 30–59p: -50% lương ca; ≥60p hoặc thiếu in/out: 0đ.
  */
 export const SHIFT_HOURS_MAP: Record<string, number> = { CA_1: 5, CA_2: 6, CA_3: 5 };
 /** Đơn giá thử việc chuẩn (đồng bộ STANDARD_HOURLY_RATES.PROBATION của server). */
@@ -144,17 +144,19 @@ export function shiftPayInfo(shiftCode: string, ratePerHour: number, inEvt: any,
   if (!inEvt || !outEvt) {
     return { hours, rate, shiftPay, lateMin, fineLabel: 'Thiếu check-in/out — không lương', deduction: 0, net: 0, unpaid: true };
   }
+  const m = Math.floor(lateMin);
   // Ưu tiên mức phạt server đã ghi nhận lúc check-in (ràng buộc chặt, không tính lại).
+  // Ngoại lệ: khoản 30k cũ ghi cho ca trễ dưới 10 phút không còn hiệu lực (quy tắc mới miễn phạt).
   const storedTier = inEvt?.fine_tier;
-  if (storedTier && storedTier !== 'NONE') {
+  const storedValid = !!storedTier && storedTier !== 'NONE' && !(storedTier === 'FLAT_30K' && m < 10);
+  if (storedValid) {
     const amt = Number(inEvt.fine_amount) || 0;
     if (storedTier === 'FULL_SHIFT') {
-      return { hours, rate, shiftPay, lateMin, fineLabel: `Trễ ${Math.floor(lateMin)}p — phạt 100% (không lương, đã ghi nhận)`, deduction: 0, net: 0, unpaid: true };
+      return { hours, rate, shiftPay, lateMin, fineLabel: `Trễ ${m}p — phạt 100% (không lương, đã ghi nhận)`, deduction: 0, net: 0, unpaid: true };
     }
-    return { hours, rate, shiftPay, lateMin, fineLabel: `Trễ ${Math.floor(lateMin)}p — phạt ${amt.toLocaleString('vi-VN')}đ (đã ghi nhận)`, deduction: amt, net: Math.max(0, shiftPay - amt), unpaid: false };
+    return { hours, rate, shiftPay, lateMin, fineLabel: `Trễ ${m}p — phạt ${amt.toLocaleString('vi-VN')}đ (đã ghi nhận)`, deduction: amt, net: Math.max(0, shiftPay - amt), unpaid: false };
   }
-  const m = Math.floor(lateMin);
-  if (m < 5) return { hours, rate, shiftPay, lateMin, fineLabel: 'Đúng giờ — không phạt', deduction: 0, net: shiftPay, unpaid: false };
+  if (m < 10) return { hours, rate, shiftPay, lateMin, fineLabel: 'Đúng giờ — không phạt', deduction: 0, net: shiftPay, unpaid: false };
   if (m < 30) return { hours, rate, shiftPay, lateMin, fineLabel: `Trễ ${m}p — phạt 30.000đ`, deduction: 30000, net: Math.max(0, shiftPay - 30000), unpaid: false };
   if (m < 60) {
     const d = Math.round(shiftPay * 0.5);

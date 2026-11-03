@@ -11,7 +11,7 @@ import {
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { singleWriterQueue } from '../repositories/single-writer-queue.js';
 import { deleteAttendancePhotoDisk, readAttendancePhotoDiskAsDataUrl } from './photo-disk.store.js';
-import { lateFineFor, linkDayEvents } from './payroll.service.js';
+import { lateFineFor, linkDayEvents, LATE_FINE_GRACE_MINUTES } from './payroll.service.js';
 import { getAttendanceFolderForBranch } from '../config/drive-folders.js';
 
 import { Server } from 'socket.io';
@@ -199,10 +199,10 @@ export class AttendanceService {
         }
 
         // 5b. Ghi nhận phạt trễ NGAY lúc check-in (ràng buộc chặt):
-        // trễ 5-29p: 30k; 30-59p: 50% lương ca; ≥60p: 100% lương ca.
+        // trễ <10p: không phạt; 10-29p: 30k; 30-59p: 50% lương ca; ≥60p: 100% lương ca.
         let fineTier = 'NONE';
         let fineAmount = 0;
-        if (data.type === 'CHECK_IN' && isLate && minutesDeviation >= 5) {
+        if (data.type === 'CHECK_IN' && isLate && minutesDeviation >= LATE_FINE_GRACE_MINUTES) {
           try {
             const emp = await this.repo.getEmployeeById(data.employeeId).catch(() => null);
             const rate = Number((emp as any)?.current_rate_per_hour) || 0;

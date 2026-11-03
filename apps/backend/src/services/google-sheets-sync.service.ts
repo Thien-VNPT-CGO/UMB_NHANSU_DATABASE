@@ -2610,12 +2610,10 @@ export class GoogleSheetsSyncService {
           for (const m of memById.values()) merged.push(m);
           fallback.accounts = merged as any;
         }
-        // Backfill: tài khoản cũ chưa có PIN -> tự sinh ngay (giới hạn 20/pull
-        // để bcrypt không chặn event-loop hàng chục giây khi dữ liệu phình).
-        // Ràng buộc 6 số (từ 2026-10): PIN hiển thị chưa đủ 6 số -> tự động
-        // reset sang mã 6 số mới + bắt đổi, PIN cũ hết hiệu lực ngay.
+        // Backfill: tài khoản cũ CHƯA CÓ pin_hash -> tự sinh PIN khởi tạo (giới hạn
+        // 20/pull để bcrypt không chặn event-loop). KHÔNG reset PIN đã có (dù hiển
+        // thị chưa đủ 6 số) — NV đăng nhập bằng PIN cũ rồi tự đổi PIN mới khi tới hạn.
         let backfilled = 0;
-        let pinReset6 = 0;
         for (const acc of fallback.accounts) {
           // Tài khoản bị HR khóa: KHÔNG tự sinh PIN lại (giữ trạng thái khóa + không PIN).
           const emp = fallback.employees.find((e: any) =>
@@ -2643,29 +2641,16 @@ export class GoogleSheetsSyncService {
             backfilled++;
             continue;
           }
-          const shown = String((acc as any).pin_code || '');
-          if (shown && !/^\d{6}$/.test(shown)) {
-            if (backfilled + pinReset6 >= 20) break;
-            const freshPin = generateAutoPin();
-            acc.pin_hash = await hashPin(freshPin);
-            acc.pin_code = freshPin;
-            acc.pin_must_change = true;
-            acc.updated_at = new Date().toISOString();
-            pinDirty = true;
-            pinReset6++;
-          }
+          // KHÔNG reset PIN đã có (dù cột bản rõ chưa đủ 6 số): NV đăng nhập bằng
+          // PIN cũ rồi tự đổi PIN mới khi tới hạn — tránh vô hiệu PIN đang dùng.
           // Chuẩn hóa lần đầu cho cột mới (không ghi đè dữ liệu đã có).
           if ((acc as any).pin_changed_at === undefined) (acc as any).pin_changed_at = '';
           if ((acc as any).pin_rotation_cycle === undefined) (acc as any).pin_rotation_cycle = '';
         }
         counts.pinBackfilled = backfilled;
-        counts.pinReset6 = pinReset6;
-        // PIN tự sinh/reset chỉ mới nằm bộ nhớ — đặt cờ dirty để auto-push định kỳ
+        // PIN tự sinh chỉ mới nằm bộ nhớ — đặt cờ dirty để auto-push định kỳ
         // chắc chắn đẩy lên Sheet (trước đây dựa full-push chạy miễn phí mỗi 5 phút).
         if (pinDirty) this.markDataDirty();
-        if (pinReset6 > 0) {
-          console.log(`[GoogleSheetsSyncService] Đã auto-reset ${pinReset6} mã PIN chưa đủ 6 số sang mã 6 số mới (bắt NV đổi lại).`);
-        }
       } else if (fallback.accounts.length === 0) {
         fallback.accounts = [];
       }

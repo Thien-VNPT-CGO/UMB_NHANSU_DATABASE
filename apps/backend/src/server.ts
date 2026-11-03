@@ -146,6 +146,19 @@ services.attendanceService.setSocketServer(io);
 services.payrollService.setSocketServer(io);
 services.notificationsService.setSocketServer(io);
 
+// Tự dọn phụ cấp HR điều phối 30k còn sót trong dữ liệu cũ mỗi lần khởi động
+// (idempotent, chỉ chạy trên phiếu chưa PAID/CONFIRMED). Trễ 20s để dữ liệu
+// Sheets/pull khởi động xong, tránh đua với lần đọc đầu.
+setTimeout(() => {
+  (services.payrollService as any).purgeLegacyDispatchBonus?.()
+    .then((r: any) => {
+      if (r?.updated > 0) {
+        console.log(`[Payroll] Đã bỏ phụ cấp HR 30k khỏi ${r.updated} phiếu cũ (tổng ${r.totalRemoved}đ).`);
+      }
+    })
+    .catch((e: any) => console.warn('[Payroll] purge legacy dispatch bonus skipped:', e?.message || e));
+}, 20_000);
+
 // Socket.IO authentication and room management (có kiểm tra revoke qua DB)
 const socketAuth = new AuthService(adapter);
 io.use((socket, next) => {

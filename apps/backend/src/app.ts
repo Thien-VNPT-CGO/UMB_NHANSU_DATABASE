@@ -781,12 +781,6 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         });
       }
       const status = err.message === ERROR_CODES.ACCOUNT_NOT_FOUND ? 404 : 400;
-      if (err.message === 'PIN_RESET_REQUIRED') {
-        return res.status(400).json({
-          error: 'PIN_RESET_REQUIRED',
-          message: 'Mã PIN cũ của bạn chưa đủ 6 số nên hệ thống đã tự động reset. Vui lòng hỏi HR lấy mã PIN 6 số mới rồi đăng nhập và đổi PIN riêng!',
-        });
-      }
       res.status(status).json({ error: err.message });
     }
   });
@@ -3688,7 +3682,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       broadcastUpdate('attendance', { action: 'checkin', employeeId, event: result.result });
       const checkinEmp = await employeesService.getEmployee(employeeId).catch(() => null);
       const dist = Math.round(result.result.distance_meters || 45);
-      // Báo nấc phạt trễ ngay khi check-in để NV/HR biết (5p:30k • 30p:50% • 60p:100% ca).
+      // Báo nấc phạt trễ ngay khi check-in để NV/HR biết (10p:30k • 30p:50% • 60p:100% ca).
       let lateNote = '';
       if ((result.result as any).is_late) {
         const mins = Number((result.result as any).minutes_deviation) || 0;
@@ -5210,7 +5204,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  // Bỏ phụ cấp HR điều phối 30k còn sót trên phiếu DRAFT cũ (idempotent).
+  // Bỏ phụ cấp HR điều phối 30k còn sót trên phiếu chưa chi trả (idempotent).
   app.post('/payroll/purge-legacy-dispatch-bonus', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req, res) => {
     try {
       const period = String((req.query as any)?.period || (req.body as any)?.period || '').trim();

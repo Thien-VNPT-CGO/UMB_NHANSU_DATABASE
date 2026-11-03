@@ -44,7 +44,7 @@ export const PIN_RE = /^\d{6}$/;
 /**
  * Đầu vào khi đăng nhập: chấp nhận 4-8 chữ số để tài khoản legacy (PIN cũ
  * chưa đủ 6 số) vẫn đăng nhập được 1 lần — server sẽ gắn cờ bắt đổi PIN 6 số
- * mới ngay (hoặc auto-reset nếu phát hiện qua cột pin_code).
+ * mới ngay (KHÔNG tự reset PIN).
  */
 export const PIN_INPUT_RE = /^\d{4,8}$/;
 

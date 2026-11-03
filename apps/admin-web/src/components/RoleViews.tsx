@@ -1567,7 +1567,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const handler = () => {
       if (activeTab !== 'fin-timesheet') return;
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => { loadFinAttendance(); }, 800);
+      timer = setTimeout(() => { loadFinAttendance(); }, 150);
     };
     window.addEventListener('ubm:fin-timesheet-reload', handler);
     if (activeTab !== 'fin-timesheet') {
@@ -3047,7 +3047,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         if (/^\d{4}-(0[1-9]|1[0-2])$/.test(p)) loadPeriodSlips(p, false);
         if (payRunDetail?.run_id) loadPayRunDetail(payRunDetail.run_id);
         if (activeTab === 'fin-signatures') loadDefaultSigs();
-      }, 800);
+      }, 150);
     };
     window.addEventListener('ubm:payslips-reload', handler);
     return () => {
@@ -11885,35 +11885,33 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </td>
             <td style={{ padding: '12px 20px', fontSize: '12px', color: 'var(--text-muted)' }}>
               <div>{a.created_at ? new Date(a.created_at).toLocaleString('vi-VN') : '—'}</div>
-              {(() => {
-                const dl = adjDeadlineInfo(a.created_at, adjNow);
-                if (!dl) return null;
-                if (isPending) {
-                  const urgent = !dl.expired && dl.remainingMs <= 5 * 60 * 1000;
-                  return (
-                    <div
-                      style={{
-                        marginTop: '4px',
-                        fontSize: '11px',
-                        fontWeight: 700,
-                        color: dl.expired ? '#991B1B' : urgent ? '#B45309' : '#166534',
-                      }}
-                    >
-                      ⏳ Hạn hủy {dl.deadlineText} •{' '}
-                      {dl.expired
-                        ? 'đã hết hạn — hệ thống sẽ tự từ chối'
-                        : `còn ${formatCountdown(dl.remainingMs)}`}
-                      {dl.cappedByWindow ? ' (chốt khung 21:00)' : ''}
+            </td>
+            <td style={{ padding: '12px 20px', fontSize: '12px' }}>
+              {adjDl ? (
+                isPending ? (
+                  <div
+                    style={{
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      color: adjDl.expired ? '#991B1B' : adjDl.remainingMs <= 5 * 60 * 1000 ? '#B45309' : '#166534',
+                    }}
+                  >
+                    <div>⏰ {adjDl.deadlineText}{adjDl.cappedByWindow ? ' (chốt 21:00)' : ''}</div>
+                    <div style={{ marginTop: '2px' }}>
+                      {adjDl.expired
+                        ? 'Đã hết hạn — hệ thống tự từ chối'
+                        : `Còn ${formatCountdown(adjDl.remainingMs)}`}
                     </div>
-                  );
-                }
-                return (
-                  <div style={{ marginTop: '4px', fontSize: '11px' }}>
-                    ⏰ Hạn duyệt: {dl.deadlineText}
-                    {dl.cappedByWindow ? ' (chốt khung 21:00)' : ''}
                   </div>
-                );
-              })()}
+                ) : (
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                    ⏰ {adjDl.deadlineText}{adjDl.cappedByWindow ? ' (chốt 21:00)' : ''}
+                    <div style={{ marginTop: '2px' }}>{adjDl.expired ? 'Đã hết hạn duyệt' : 'Trong hạn duyệt'}</div>
+                  </div>
+                )
+              ) : (
+                <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>—</span>
+              )}
             </td>
             <td style={{ padding: '12px 20px' }}>
               <span className="badge" style={{ backgroundColor: a.status === 'APPROVED' ? '#DCFCE7' : a.status === 'REJECTED' ? '#FEE2E2' : '#FEF3C7', color: a.status === 'APPROVED' ? '#166534' : a.status === 'REJECTED' ? '#991B1B' : '#92400E', fontWeight: 700 }}>
@@ -12265,6 +12263,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <th style={{ padding: '12px 20px' }}>Lý Do & Số Phút</th>
                 <th style={{ padding: '12px 20px' }}>Hình Ảnh</th>
                 <th style={{ padding: '12px 20px' }}>Gửi Lúc</th>
+                <th style={{ padding: '12px 20px' }}>Hạn Duyệt</th>
                 <th style={{ padding: '12px 20px' }}>Trạng Thái</th>
                 <th style={{ padding: '12px 20px' }}>Thao Tác</th>
               </tr>
@@ -12272,7 +12271,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <tbody>
               {monthAdjustments.length === 0 ? (
                 <tr>
-                  <td colSpan={7} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                  <td colSpan={8} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
                     Tháng {adjMonth.slice(5, 7)}/{adjMonth.slice(0, 4)} chưa có yêu cầu bổ sung hay điều chỉnh dữ liệu công nào. Phiếu NV gửi từ Cổng Nhân Viên sẽ hiện realtime tại đây.
                   </td>
                 </tr>
@@ -12282,7 +12281,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   return (
                     <React.Fragment key={g.key}>
                       <tr>
-                        <td colSpan={7} style={{ padding: 0, borderBottom: '1px solid var(--border)' }}>
+                        <td colSpan={8} style={{ padding: 0, borderBottom: '1px solid var(--border)' }}>
                           <button
                             onClick={() => setAdjWeekOpen((pr) => ({ ...pr, [g.key]: !open }))}
                             style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 20px', border: 'none', cursor: 'pointer', backgroundColor: open ? '#EFF6FF' : '#F8FAFC', fontSize: '13px' }}

@@ -45,7 +45,7 @@
 - **Nhóm (`EmployeeGroup`):** `STORE` (cửa hàng) / `XUONG` (xưởng) / `VAN_PHONG` (văn phòng) / `SALE`.
 - **Mã nhân viên:** phát hành qua writer kiểm soát, dạng `UBM_NV000001…` (UI hiển thị `UBM_NV0000` random khi tạo mới).
 - **Đơn giá lương theo giờ (snapshot từng ca):** Thử việc/SV (`TV`) **21.000đ/h**; Chính thức (`CT`) **25.500đ/h**; phụ cấp **OT 30.000đ/suất** (làm ≥10h/ngày = 1 suất, ≥15h = 2 suất).
-- **Phạt đi trễ theo tier:** trễ 5–29 phút = **30.000đ (FLAT_30K)**; 30–59 phút = **50% lương ca (HALF_SHIFT)**; ≥60 phút = **100% lương ca, không lương (FULL_SHIFT)**; trễ <5 phút không phạt. Ưu tiên mức phạt server ghi nhận lúc check-in (`fine_tier`/`fine_amount`).
+- **Phạt đi trễ theo tier:** trễ 10–29 phút = **30.000đ (FLAT_30K)**; 30–59 phút = **50% lương ca (HALF_SHIFT)**; ≥60 phút = **100% lương ca, không lương (FULL_SHIFT)**; trễ <10 phút không phạt. Ưu tiên mức phạt server ghi nhận lúc check-in (`fine_tier`/`fine_amount`).
 - **Thử việc 12 ngày:** 7 ngày làm + 5 ngày OFF, kết thúc bằng buổi vấn đáp Google Meet + đề thi đầu ra.
 - **Nhân viên chính thức:** bắt buộc đăng ký **2 ngày OFF/tuần** trong cổng mở **Thứ 6 09:00 → Thứ 7 09:00**; đăng ký xong mới mở khóa toàn bộ app.
 - **Điều chỉnh công:** 1 phiếu/tuần; tự động từ chối sau **30 phút** HR chưa duyệt; tự xóa sau **7 ngày**; bù công cả ngày (`BU_CONG_NGAY`) tốn **5 điểm bù công** (tích 1 ca check-in+out = +2 điểm).
@@ -135,7 +135,7 @@ Chuẩn thực thể: `id` bất biến, `version` tăng (optimistic lock), `cre
 
 ## 3.3. Mã lỗi chuẩn (ERROR_CODES — trả đúng mã cho client xử lý)
 
-`ACCOUNT_NOT_FOUND, DUPLICATE_PHONE_NEEDS_HR, EMPLOYMENT_NOT_ELIGIBLE, UNAUTHORIZED, FORBIDDEN, BRANCH_SCOPE_VIOLATION, VERSION_CONFLICT, NEEDS_RECONCILIATION, SHEETS_UNAVAILABLE, GPS_OUT_OF_BOUNDS, GPS_ACCURACY_LOW, CAMERA_REQUIRED, SHIFT_NOT_FOUND, ATTENDANCE_ALREADY_RECORDED, SEPARATION_OF_DUTIES_VIOLATION, WEEKLY_OFF_REGISTRATION_REQUIRED, WEEKLY_OFF_WINDOW_CLOSED` + các mã runtime: `ACCOUNT_LOCKED, PIN_NOT_SET, PIN_RESET_REQUIRED, INVALID_PIN, PIN_CHANGE_REQUIRED, SHEETS_LOADING, EMERGENCY_LEAVE_NOT_GRANTED, MAX_2_SHIFTS_PER_DAY, WEAK_PASSWORD, INVALID_CREDENTIALS, ADMIN_NOT_FOUND, INVALID_REFRESH_TOKEN, WEEKLY_OFF_MUST_REGISTER_2_DAYS`.
+`ACCOUNT_NOT_FOUND, DUPLICATE_PHONE_NEEDS_HR, EMPLOYMENT_NOT_ELIGIBLE, UNAUTHORIZED, FORBIDDEN, BRANCH_SCOPE_VIOLATION, VERSION_CONFLICT, NEEDS_RECONCILIATION, SHEETS_UNAVAILABLE, GPS_OUT_OF_BOUNDS, GPS_ACCURACY_LOW, CAMERA_REQUIRED, SHIFT_NOT_FOUND, ATTENDANCE_ALREADY_RECORDED, SEPARATION_OF_DUTIES_VIOLATION, WEEKLY_OFF_REGISTRATION_REQUIRED, WEEKLY_OFF_WINDOW_CLOSED` + các mã runtime: `ACCOUNT_LOCKED, PIN_NOT_SET, INVALID_PIN, PIN_CHANGE_REQUIRED, SHEETS_LOADING, EMERGENCY_LEAVE_NOT_GRANTED, MAX_2_SHIFTS_PER_DAY, WEAK_PASSWORD, INVALID_CREDENTIALS, ADMIN_NOT_FOUND, INVALID_REFRESH_TOKEN, WEEKLY_OFF_MUST_REGISTER_2_DAYS`.
 
 ---
 
@@ -489,7 +489,7 @@ Tab active lưu `localStorage["ubm_active_tab"]`. Lưu ý: tab `attendance` (Đi
 - Nút: **Reset lịch OFF trùng ca** · **Đồng bộ ca trùng OFF** (`POST /admin/shift-off-overlaps/sync`) · **Reset ALL** (modal xác nhận nhập pass — hủy toàn bộ phiếu từ hôm nay).
 
 ### 6.3.6. Hỗ Trợ Trực Ca (`support` — HR)
-- Loại `HR_SUPPORT`: `POST /swap-requests/support` `{requesterAssignmentId, targetEmployeeId, reason}` — NV B xác nhận trên cổng nhân viên là ca tạo ngay ở chi nhánh hỗ trợ.
+- Loại `HR_SUPPORT`: `POST /swap-requests/support` `{requesterAssignmentId, targetEmployeeId, reason}` — NV B xác nhận trên cổng nhân viên là ca tạo ngay ở chi nhánh hỗ trợ (KHÔNG còn phụ cấp 30.000đ; người nhận chỉ hưởng lương ca).
 
 ### 6.3.7. Đổi/Nhường Ca (`swap` — HR/ADMIN)
 - 2 loại: `EMPLOYEE_SWAP` (NV tự tráo) / `HR_DISPATCH` (HR điều phối, không phụ cấp); nhóm theo tuần.
@@ -570,7 +570,7 @@ Tab active lưu `localStorage["ubm_active_tab"]`. Lưu ý: tab `attendance` (Đi
 ## 7.1. Màn đăng nhập 3 bước (PremiumLogin)
 
 1. **Bước 1 — SĐT:** ô nhập `+84`; **tự kiểm tra SĐT tồn tại** (debounce 700ms khi đủ 9–12 số) → `POST /auth/employee/check-phone` `{phone} → {exists}`; số không tồn tại báo "liên hệ HR nộp hồ sơ"; nút "Đổi số khác".
-2. **Bước 2 — PIN 6 ô:** 6 ô password 1 số/ô (auto-focus, backspace lùi, paste 6 số, phím mũi tên); đủ 6 ô **tự xác thực sau 180ms** → `POST /auth/employee/phone-login` `{phone, pin}`. Sai → ô rung + đỏ + xóa; xử lý đúng mã: `ACCOUNT_LOCKED, ACCOUNT_NOT_FOUND, PIN_NOT_SET, PIN_RESET_REQUIRED, INVALID_PIN, DUPLICATE_PHONE_NEEDS_HR, SHEETS_LOADING (server mới boot ~30s), SHEETS_UNAVAILABLE`.
+2. **Bước 2 — PIN 6 ô:** 6 ô password 1 số/ô (auto-focus, backspace lùi, paste 6 số, phím mũi tên); đủ 6 ô **tự xác thực sau 180ms** → `POST /auth/employee/phone-login` `{phone, pin}`. Sai → ô rung + đỏ + xóa; xử lý đúng mã: `ACCOUNT_LOCKED, ACCOUNT_NOT_FOUND, PIN_NOT_SET, INVALID_PIN, DUPLICATE_PHONE_NEEDS_HR, SHEETS_LOADING (server mới boot ~30s), SHEETS_UNAVAILABLE`. Không có cơ chế tự reset PIN.
 3. **Bước 3 — Success:** SVG tick vẽ animation + **confetti canvas 140 hạt** → ~1.9s vào cổng.
 
 **Đổi PIN bắt buộc (2 tầng):** server trả `mustChangePin: true` khi (a) PIN do HR cấp lần đầu, hoặc (b) **tới chu kỳ đổi PIN 1–5 hàng tháng** (`pin_rotation_cycle`). App treo ở màn đổi PIN: PIN cũ (4–8 số cho legacy) + PIN mới (đúng 6 số, khác cũ) + xác nhận → `POST /auth/employee/change-pin` `{oldPin, newPin}`; token cũ thu hồi → tự login lại bằng PIN mới. **Chống lách bằng reload:** khi mở web luôn `GET /me` xác minh phiên; nếu `mustChangePin` → treo lại màn đổi PIN; giữa phiên gặp `403 PIN_CHANGE_REQUIRED` → khóa toàn bộ cổng (banner "🔒 Tài khoản chưa đổi mã PIN mới theo chu kỳ!").
@@ -674,7 +674,7 @@ Banner REMINDER (sắp mở cổng OFF) · banner đang trong thời gian đăng
   - `SHIFT_HOURS_MAP = {CA_1:5, CA_2:6, CA_3:5}`; `TV_RATE_VND = 21000`; `rateOnDateOf(emp, day)` — đúng giai đoạn (ngày trước `official_date` tính giá thử việc).
   - `lateMinOf(inEvt, shiftStartAt)` — phút trễ (ưu tiên cờ server).
   - `inferExtraShiftCode(inEvt, defaultShift)` — suy ca ngoài lịch: 5–11h30 → CA_1, 11h30–17h30 → CA_2, còn lại CA_3.
-  - `shiftPayInfo(shiftCode, rate, inEvt, outEvt, shiftStartAt)` — lương + phạt 1 ca: thiếu in/out → 0đ; trễ <5p không phạt; 5–29p → 30.000đ; 30–59p → 50% lương ca; ≥60p → 100% (không lương). Trả `{hours, rate, shiftPay, lateMin, fineLabel, deduction, net, unpaid}`.
+  - `shiftPayInfo(shiftCode, rate, inEvt, outEvt, shiftStartAt)` — lương + phạt 1 ca: thiếu in/out → 0đ; trễ <10p không phạt; 10–29p → 30.000đ; 30–59p → 50% lương ca; ≥60p → 100% (không lương). Trả `{hours, rate, shiftPay, lateMin, fineLabel, deduction, net, unpaid}`.
 - **DESIGN_TOKENS:** bảng màu/radius/shadow/transition dùng chung 2 cổng (hồng `#E85D92`).
 
 ---

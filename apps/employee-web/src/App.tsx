@@ -1879,9 +1879,6 @@ export function App() {
       } else if (err.message === 'PIN_NOT_SET') {
         setCheckingStatus('ERROR');
         setLoginError(`Tài khoản ${cleaned} chưa được cấp mã PIN. Vui lòng liên hệ HR để nhận mã PIN đăng nhập!`);
-      } else if (err.message === 'PIN_RESET_REQUIRED') {
-        setCheckingStatus('ERROR');
-        setLoginError('Mã PIN cũ của bạn chưa đủ 6 số nên hệ thống đã tự động reset. Vui lòng hỏi HR lấy mã PIN 6 số mới rồi đăng nhập và đổi PIN riêng!');
       } else if (err.message === 'INVALID_PIN') {
         setCheckingStatus('ERROR');
         setLoginError('Mã PIN không đúng! Nhập lại mã PIN 6 số của bạn. Nếu quên, hỏi HR xem lại mã PIN hiện tại.');
@@ -1936,7 +1933,6 @@ export function App() {
     if (/ACCOUNT_LOCKED/.test(code)) return '🔒 Tài khoản này đã bị khóa! Mã PIN đã bị vô hiệu hóa trên hệ thống. Không thể đăng nhập lại.';
     if (/ACCOUNT_NOT_FOUND/.test(code)) return `Số ${cleaned} chưa tồn tại trên Master. Liên hệ HR để nộp hồ sơ.`;
     if (/PIN_NOT_SET/.test(code)) return `Tài khoản ${cleaned} chưa được cấp PIN. Liên hệ HR để nhận mã!`;
-    if (/PIN_RESET_REQUIRED/.test(code)) return 'Mã PIN cũ của bạn chưa đủ 6 số nên hệ thống đã tự động reset. Hỏi HR lấy mã PIN 6 số mới rồi đăng nhập và đổi PIN riêng!';
     if (/INVALID_PIN/.test(code)) return 'Mã PIN chưa đúng! Kiểm tra lại hoặc hỏi HR xem lại mã hiện tại.';
     if (/DUPLICATE_PHONE_NEEDS_HR/.test(code)) return `SĐT ${cleaned} bị trùng 2 hồ sơ. Gặp HR để đối soát.`;
     if (/SHEETS_LOADING/.test(code)) return '⏳ Hệ thống vừa khởi động, đang tải dữ liệu (~30s). Đợi rồi thử lại!';
@@ -2212,7 +2208,7 @@ export function App() {
           reloading = false;
           if (queued) { queued = false; reload(); }
         }
-      }, 1000);
+      }, 150);
     };
     try {
       const base = getApiBase();
@@ -4302,7 +4298,7 @@ export function App() {
                 🔑 TỚI KỲ ĐỔI PIN ĐỊNH KỲ (HẠN 1-5 HÀNG THÁNG)
               </div>
               <div style={{ fontSize: '12px', color: '#92400E', marginBottom: '12px', lineHeight: '1.5' }}>
-                Bạn đang dùng PIN cũ. Hãy tự đặt mã PIN mới (đúng 6 chữ số, khác PIN cũ, không chia sẻ cho ai) để mở khóa hệ thống! Mã PIN chưa đủ 6 số đã bị hệ thống tự động reset — hỏi HR lấy mã 6 số mới nếu chưa có. Quên PIN cũ thì hỏi HR xem lại mã hiện tại.
+                Bạn đang dùng PIN cũ. Hãy tự đặt mã PIN mới (đúng 6 chữ số, khác PIN cũ, không chia sẻ cho ai) để mở khóa hệ thống! Quên PIN cũ thì hỏi HR xem lại mã hiện tại (hệ thống không tự reset PIN).
               </div>
               {!loginPin && (
                 <>
@@ -4401,7 +4397,7 @@ export function App() {
           )}
 
           <p style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.4' }}>
-            💡 <strong>Bảo mật đăng nhập:</strong> Nhập SĐT (0946914474, 946914474 hoặc 84946914474 đều được) + mã PIN đúng 6 số rồi bấm ĐĂNG NHẬP. Mã PIN chưa đủ 6 số sẽ bị hệ thống tự động reset — hỏi HR lấy mã 6 số mới rồi đổi PIN riêng! Tới kỳ 1-5 hàng tháng, hệ thống yêu cầu tự đổi PIN mới từ PIN cũ. Mỗi người giữ PIN riêng — không chia sẻ!
+            💡 <strong>Bảo mật đăng nhập:</strong> Nhập SĐT (0946914474, 946914474 hoặc 84946914474 đều được) + mã PIN đúng 6 số rồi bấm ĐĂNG NHẬP. Hệ thống KHÔNG tự reset PIN — quên PIN thì hỏi HR xem lại mã hiện tại rồi tự đổi PIN riêng! Tới kỳ 1-5 hàng tháng, hệ thống yêu cầu tự đổi PIN mới từ PIN cũ. Mỗi người giữ PIN riêng — không chia sẻ!
           </p>
           <button
             disabled={actionBusy === 'apibase'}
