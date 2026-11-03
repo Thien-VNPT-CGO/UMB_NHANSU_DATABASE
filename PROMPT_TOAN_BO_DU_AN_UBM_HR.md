@@ -62,7 +62,7 @@ Cửa check-in mở **trước giờ ca 30 phút**; check-out chỉ được **t
 
 ## 1.5. Hai web app + backend (không tạo app thứ ba)
 
-1. **WEB QUẢN TRỊ** (`apps/admin-web`, cổng 3005 dev) — 5 vai trò nội bộ: ADMIN 16 tab / HR 16 tab / STORE 10 tab / FINANCE 12 tab / MARKETING 9 tab.
+1. **WEB QUẢN TRỊ** (`apps/admin-web`, cổng 3005 dev) — 7 vai trò nội bộ: DIRECTOR 10 tab / ADMIN 16 tab / HR 16 tab / STORE 10 tab / FINANCE 12 tab / MARKETING 9 tab / IT 2 tab.
 2. **WEB NHÂN VIÊN** (`apps/employee-web`, cổng 3006 dev, mobile-first 480px) — NV Thử việc 12 tab / NV Chính thức 12 tab; đăng nhập **SĐT + PIN 6 số**.
 3. **BACKEND** (`apps/backend`, cổng 4005) — Node.js + Express + TypeScript + Socket.IO, dữ liệu gốc là **Google Sheets Master**, ảnh lưu **Google Drive**, ghi qua **Single-Writer Queue** chống xung đột, kèm **Zalo Personal Bot** tự sinh link Google Meet + gửi thư mời phỏng vấn từ Zalo cá nhân của HR.
 
@@ -143,7 +143,11 @@ Chuẩn thực thể: `id` bất biến, `version` tăng (optimistic lock), `cre
 
 ## 4.1. SystemRole
 
-`ADMIN | HR | STORE | FINANCE | MARKETING | EMPLOYEE`
+`DIRECTOR | ADMIN | HR | STORE | FINANCE | MARKETING | IT | EMPLOYEE`
+
+- **DIRECTOR** (Giám đốc, tài khoản `umbomilk`, `branch_scope: '*'`): 10 chức năng — ký phiếu lương (trước Quản lý chi nhánh), quản lý & giám sát nhân sự toàn hệ thống, bản đồ GPS, soạn thông báo, duyệt phiếu bù công cả ngày (48h), cấu hình quy chế công ty theo đối tượng, hồ sơ nhân viên, lịch làm việc, đổi mật khẩu, quy trình công việc nội bộ.
+- **IT** (phòng IT): tham gia quy trình yêu cầu công việc nội bộ + đổi mật khẩu.
+- Tài khoản DIRECTOR được **bootstrap tự động** khi backend khởi động nếu chưa tồn tại (mật khẩu hash bcrypt; override qua env `DIRECTOR_USERNAME` / `DIRECTOR_PASSWORD` / `DIRECTOR_FULL_NAME`).
 
 ## 4.2. UserPermission (11 quyền)
 
@@ -448,6 +452,8 @@ Tắt êm (SIGTERM/SIGINT): `gracefulShutdown` — `flushSheetsWrites(20s)`, `se
 
 | Vai trò | Số tab | Danh sách (key — tên hiển thị) |
 |---|---|---|
+| **DIRECTOR** | 10 | `director-payroll` Duyệt phiếu lương · `staff` Nhân sự toàn hệ thống · `live-map` Bản đồ GPS · `notify` Thông báo · `hr-adjustments` Duyệt bổ sung công · `company-policies` Quy chế công ty · `hr-profile` Hồ sơ nhân viên · `hr-schedule` Lịch làm việc · `internal-workflow` Yêu cầu công việc nội bộ · `change-password` Đổi mật khẩu |
+| **IT** | 2 | `internal-workflow` Yêu cầu công việc nội bộ · `change-password` Đổi mật khẩu |
 | **ADMIN** | 16 | `admin` Dashboard · `operations` Điểm Danh · `staff` Nhân Viên · `schedule` Lịch Làm · `off` Xin OFF · `swap` Đổi/Nhường Ca · `adjustments` Điều Chỉnh Công · `tests` Đề Thi Định Kỳ · `candidates` Ứng Viên · `probation` Thử Việc · `reports` Báo Cáo · `payroll` Bảng Lương · `bank-qr` QR Ngân Hàng · `notifications` Thông Báo · `hr-profile` Hồ Sơ NV · `settings` Cài Đặt |
 | **HR** | 16 | `dashboard` Dashboard · `probation` Thử Việc · `staff` Nhân Viên Chính Thức · `operations` Lịch & Điểm Danh · `off` Xin OFF Hàng Tuần · `support` Hỗ Trợ Trực Ca · `swap` Đổi/Nhường Ca · `attendance` Điểm Danh & Sửa Công · `adjustments` Điều Chỉnh Công · `tests` Đề Thi Định Kỳ · `reports` Báo Cáo · `fin-timesheet` Chấm Công Lương · `payroll` Bảng Lương · `hr-profile` Hồ Sơ NV · `notifications` Thông Báo · `settings` Cài Đặt |
 | **STORE** | 10 | `dashboard` Tổng Quan · `employees` Nhân Viên · `schedule` Lịch Làm Việc · `off` Xin OFF · `swap` Đổi Ca · `emergency` Gấp · `realtime-att` Điểm Danh RT · `confirm-att` Xác Nhận Công · `reports` Báo Cáo · `notifications` Thông Báo |
@@ -568,6 +574,17 @@ Tab active lưu `localStorage["ubm_active_tab"]`. Lưu ý: tab `attendance` (Đi
 - **Bản đồ trên CỔNG NHÂN VIÊN:** `GET /employee/live-map` (EMPLOYEE) trả đồng nghiệp **cùng chi nhánh** (kèm chính mình), ẩn khoảng cách/sai số GPS. Tab 5 "Bản đồ chi nhánh" vẽ Google Maps tile + marker realtime (event nội bộ `ubm:team-location`), tự làm mới 60s, có nút "về vị trí của tôi" và nút bật/tắt tự làm mới. Tài khoản bị khóa không xuất hiện.
 - **Toạ độ chuẩn (Google Maps place, hotline 0708 880 404):** CN1 130 Vạn Kiếp `10.799831, 106.693370` · CN2 261 Tô Hiến Thành `10.778639, 106.666665` · CN3 120 Hoàng Diệu 2 `10.856457, 106.765621` · CN4 111 Tôn Đản `10.759223, 106.706995`.
 - **Đọc toạ độ từ Sheet:** ô nhập tay thường ở dạng `"10,799831"` (phẩy thập phân) — dùng `parseSheetNumber()` khi đọc `DANH_SACH_CHI_NHANH`; nếu dùng `Number()` thuần sẽ ra `NaN` và bản đồ rơi về toạ độ mặc định.
+
+### 6.3.19. Nhóm chức năng GIÁM ĐỐC (`DIRECTOR`, 10 tab) & phòng IT (`IT`)
+
+**Menu DIRECTOR (`ROLE_TABS.DIRECTOR`):** 1. `director-payroll` Duyệt phiếu lương · 2. `staff` Nhân sự toàn hệ thống · 3. `live-map` Bản đồ GPS · 4. `notify` Thông báo · 5. `hr-adjustments` Duyệt bổ sung công · 6. `company-policies` Quy chế công ty · 7. `hr-profile` Hồ sơ nhân viên · 8. `hr-schedule` Lịch làm việc · 9. `internal-workflow` Yêu cầu công việc nội bộ · 10. `change-password` Đổi mật khẩu. **Menu IT:** 1. `internal-workflow` · 2. `change-password`.
+
+1. **Ký phiếu lương (`DirectorPayrollView`)** — Quy trình: Kế toán lập (DRAFT) → **Giám đốc ký** (`sign_giamdoc`) → Quản lý chi nhánh (STORE) ký (`sign_quanly`) → Kế toán phát hành (PUBLISHED) → NV ký (`CONFIRMED`) → chi trả (`PAID`). API `GET /payroll/period-slips/:period` (DIRECTOR) + `POST /payroll/slips/:id/sign` với `role: 'giamdoc'`. Publish **bắt buộc đủ 3 chữ ký** `sign_giamdoc + sign_lap + sign_quanly`; backend chặn ký vượt cấp (mỗi vai trò chỉ ký đúng ô của mình: DIRECTOR→giamdoc, STORE→quanly, FINANCE→lap/quanly). Realtime qua `data:updated(payroll/payslips)` → `ubm:payslips-reload`.
+2. **Nhân sự toàn hệ thống / Hồ sơ / Lịch làm việc / Bản đồ GPS / Thông báo** — tái dùng nguyên module ADMIN/HR với `branch_scope: '*'` (DIRECTOR được thêm vào `requireRole` của `/employees`, `/admin/live-map`, `/admin/notifications`, `/announcements`) và `enforceBranchScope` cho phép xem mọi chi nhánh.
+3. **Duyệt phiếu bù công cả ngày (48h)** — Phiếu loại `BU_CONG_NGAY` tốn 5 điểm, tối đa 4/tháng, 1/tuần. **Hạn 48 giờ** (`AttendanceService.BU_CONG_NGAY_TTL_MINUTES = 2880`, không áp khung 08:00–21:00); quá 48h không duyệt hệ thống **tự hủy** (REJECTED, ghi chú "Tự động hủy sau 48 giờ…") và **hoàn 5 điểm**. Người duyệt là **Giám đốc/ADMIN** (`APPROVER_FORBIDDEN` nếu cấp khác bấm Duyệt); UI `RoleViews` khóa nút Duyệt với HR và hiện "🔒 Giám đốc duyệt".
+4. **Quy chế công ty (`CompanyPolicyView`)** — Tạo quy chế và chọn **đối tượng áp dụng**: `ALL` (tất cả nhân viên) / `BRANCH` (nhiều chi nhánh) / `EMPLOYEE` (nhiều nhân viên, có ô tìm kiếm). API `GET/POST/DELETE /company-policies` (ghi `POST`/`DELETE` = DIRECTOR/ADMIN), lưu trong system settings khóa `companyRegulations`; realtime `data:updated(company-policies)` → `ubm:company-policies-reload`.
+5. **Quy trình yêu cầu công việc nội bộ (`InternalWorkflowView`)** — Phòng ban GĐ – Kế toán – HR – IT tạo & xử lý yêu cầu chung. Luồng: `PENDING` (bộ phận đích tiếp nhận) → `IN_PROGRESS` / chuyển tiếp bộ phận → bộ phận xong (`DEPT_DONE` → `AWAITING_DIRECTOR`) → **Giám đốc ký duyệt** (`DIRECTOR_APPROVED` → `APPROVED`, mới được triển khai) / `REJECTED`. Mọi tài khoản nội bộ xem được công việc đang tới bộ phận nào (timeline realtime). API `/internal-requests` (`GET/POST`, `POST /:id/done|forward|approve|reject`), lưu system settings khóa `internalRequest:<id>`; realtime `data:updated(internal-requests)` → `ubm:internal-workflow-reload`.
+6. **Đổi mật khẩu (`ChangePasswordView`)** — `POST /auth/admin/change-password` (bắt buộc mật khẩu cũ, tối thiểu 6 ký tự).
 
 ## 6.4. Header / Topbar & tiện ích chung
 
