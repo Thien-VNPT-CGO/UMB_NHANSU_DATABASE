@@ -26,6 +26,7 @@ import http from 'http';
 import { Server } from 'socket.io';
 import { createApp } from './app.js';
 import { AuthService } from './services/auth.service.js';
+import { hashPassword } from './services/password.service.js';
 import { weeklyOffScheduler } from './services/weekly-off.service.js';
 import { pinRotationTick } from './services/pin-rotation.service.js';
 import { dedupeDuplicateInterviews, enforceScreeningOutcomes } from './services/interview-dedupe.service.js';
@@ -49,6 +50,24 @@ const PORT = process.env.PORT || 4005;
 const { app, services, adapter } = createApp();
 const postgresMode = isPostgresMode(adapter);
 const server = http.createServer(app);
+
+/** Bảo đảm tài khoản Giám đốc tồn tại ở cả mock/Sheets và PostgreSQL adapter. */
+async function bootstrapDirectorAccount() {
+  const username = process.env.DIRECTOR_USERNAME || 'umbomilk';
+  const password = process.env.DIRECTOR_PASSWORD || 'UmBoMilk@@686868';
+  const accounts = await adapter.listAdminAccounts().catch(() => [] as any[]);
+  if (accounts.some((account: any) => String(account.username).toLowerCase() === username.toLowerCase())) return;
+  await adapter.createAdminAccount({
+    admin_id: `director-${Date.now()}`,
+    username,
+    password_hash: await hashPassword(password),
+    full_name: process.env.DIRECTOR_FULL_NAME || 'Giám Đốc',
+    role: 'DIRECTOR',
+    branch_scope: '*',
+    is_active: true,
+  });
+  console.log(`[bootstrap] Created DIRECTOR account: ${username}`);
+}
 
 const io = new Server(server, {
   cors: buildSocketCorsOptions(),
@@ -212,7 +231,8 @@ io.on('connection', socket => {
   });
 });
 
-server.listen(Number(PORT), '0.0.0.0', () => {
+server.listen(Number(PORT), '0.0.0.0', async () => {
+  try { await bootstrapDirectorAccount(); } catch (error) { console.error('[bootstrap] DIRECTOR account failed:', error); }
   console.log(`====================================================`);
   console.log(`ỤM BÒ MILK HR SYSTEM V5.1 - BACKEND SERVER STARTED`);
   console.log(`Port: ${PORT}`);

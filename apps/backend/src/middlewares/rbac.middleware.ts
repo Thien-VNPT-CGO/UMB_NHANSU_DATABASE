@@ -64,7 +64,7 @@ export function enforceBranchScope(getBranchId: (req: AuthenticatedRequest) => s
     }
 
     // Wildcard scope can access all branches
-    if (req.user.branchScope === '*' || req.user.role === 'ADMIN' || req.user.role === 'HR' || req.user.role === 'FINANCE') {
+    if (req.user.branchScope === '*' || req.user.role === 'DIRECTOR' || req.user.role === 'ADMIN' || req.user.role === 'HR' || req.user.role === 'FINANCE') {
       return next();
     }
 

@@ -47,9 +47,11 @@ import {
   PenTool,
   QrCode,
   MapPin,
+  KeyRound,
 } from 'lucide-react';
 import { RoleViews } from './components/RoleViews';
 import { LiveMapView } from './components/LiveMapView';
+import { ChangePasswordView } from './components/ChangePasswordView';
 import { BetaChip, BetaBanner, isBetaFeature } from './betaFeatures';
 import {
   ADMIN_EVENT_THEMES,
@@ -110,12 +112,25 @@ export interface LiveToastItem {
 interface UserProfile {
   id: string;
   fullName: string;
-  role: 'ADMIN' | 'HR' | 'STORE' | 'FINANCE' | 'MARKETING';
+  role: 'DIRECTOR' | 'ADMIN' | 'HR' | 'STORE' | 'FINANCE' | 'MARKETING' | 'IT';
   branchScope: string;
   permissions: string[];
 }
 
 export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: any }>> = {
+  DIRECTOR: [
+    { id: 'staff', label: '1. Nhân sự toàn hệ thống', icon: Users },
+    { id: 'live-map', label: '2. Bản đồ GPS', icon: MapPin },
+    { id: 'notify', label: '3. Thông báo', icon: Bell },
+    { id: 'hr-adjustments', label: '4. Duyệt bổ sung công', icon: FileText },
+    { id: 'policies', label: '5. Quy chế công ty', icon: Sliders },
+    { id: 'hr-profile', label: '6. Hồ sơ nhân viên', icon: IdCard },
+    { id: 'hr-schedule', label: '7. Lịch làm việc', icon: Calendar },
+    { id: 'change-password', label: '8. Đổi mật khẩu', icon: KeyRound },
+  ],
+  IT: [
+    { id: 'change-password', label: '1. Đổi mật khẩu', icon: KeyRound },
+  ],
   ADMIN: [
     { id: 'dashboard', label: '1. Dashboard', icon: Building2 },
     { id: 'staff', label: '2. Nhân sự', icon: Users },
@@ -439,6 +454,8 @@ export function App() {
       const savedUser = localStorage.getItem('ubm_admin_user');
       if (savedUser) {
         const u = JSON.parse(savedUser);
+        if (u.role === 'DIRECTOR') return 'staff';
+        if (u.role === 'IT') return 'change-password';
         if (u.role === 'ADMIN') return 'dashboard';
         if (u.role === 'HR') return 'hr-dashboard';
         if (u.role === 'STORE') return 'store-dashboard';
@@ -853,7 +870,9 @@ export function App() {
 
       // Reset active tab to default for role
       let initialTab = 'dashboard';
-      if (res.user.role === 'ADMIN') initialTab = 'dashboard';
+      if (res.user.role === 'DIRECTOR') initialTab = 'staff';
+      else if (res.user.role === 'IT') initialTab = 'change-password';
+      else if (res.user.role === 'ADMIN') initialTab = 'dashboard';
       else if (res.user.role === 'HR') initialTab = 'hr-dashboard';
       else if (res.user.role === 'STORE') initialTab = 'store-dashboard';
       else if (res.user.role === 'FINANCE') initialTab = 'fin-dashboard';
@@ -918,7 +937,7 @@ export function App() {
       ];
 
       // Thông báo hệ thống: backend chỉ cho ADMIN/HR/MARKETING -> không gọi cho STORE/FINANCE (tránh 403).
-      if (['ADMIN', 'HR', 'MARKETING'].includes(user.role)) {
+      if (['DIRECTOR', 'ADMIN', 'HR', 'MARKETING'].includes(user.role)) {
         tasks.push(
           apiRequest('/admin/notifications').then(notifs => setSystemNotifications(notifs || [])).catch(() => null),
         );
@@ -933,7 +952,7 @@ export function App() {
         );
       }
 
-      if (['ADMIN', 'HR', 'STORE', 'FINANCE'].includes(user.role)) {
+      if (['DIRECTOR', 'ADMIN', 'HR', 'STORE', 'FINANCE'].includes(user.role)) {
         tasks.push(
           apiRequest('/employees').then(emps => setAllEmployees(emps || [])).catch(() => null),
         );
@@ -996,7 +1015,7 @@ export function App() {
     if (!user) return;
     const tasks: Promise<any>[] = [];
     const add = (p: Promise<any>) => { tasks.push(p.catch(() => null)); };
-    const wantEmployees = ['ADMIN', 'HR', 'STORE', 'FINANCE'].includes(user.role);
+    const wantEmployees = ['DIRECTOR', 'ADMIN', 'HR', 'STORE', 'FINANCE'].includes(user.role);
     const wantAccounts = ['ADMIN', 'HR'].includes(user.role);
     switch (entity) {
       case 'employees':
@@ -1026,7 +1045,7 @@ export function App() {
         if (['ADMIN', 'FINANCE'].includes(user.role)) add(apiRequest('/payroll/runs').then(pList => setPayrollRuns(pList || [])).catch(() => null));
         break;
       case 'notifications':
-        if (['ADMIN', 'HR', 'MARKETING'].includes(user.role)) add(apiRequest('/admin/notifications').then(notifs => setSystemNotifications(notifs || [])).catch(() => null));
+        if (['DIRECTOR', 'ADMIN', 'HR', 'MARKETING'].includes(user.role)) add(apiRequest('/admin/notifications').then(notifs => setSystemNotifications(notifs || [])).catch(() => null));
         break;
       case 'attendance':
       case 'adjustments':
@@ -5414,10 +5433,13 @@ export function App() {
 
 
 
-          {/* BẢN ĐỒ GPS NHÂN VIÊN REALTIME (ADMIN / HR / KẾ TOÁN) */}
+          {/* BẢN ĐỒ GPS NHÂN VIÊN REALTIME (ADMIN / HR / KẾ TOÁN / GIÁM ĐỐC) */}
           {activeTab === 'live-map' && (
             <LiveMapView currentUserRole={currentUser?.role} />
           )}
+
+          {/* ĐỔI MẬT KHẨU TÀI KHOẢN NỘI BỘ (GIÁM ĐỐC / IT) */}
+          {activeTab === 'change-password' && <ChangePasswordView />}
 
           {/* DEDICATED VIEWS FOR HR (15 TABS), STORE (10 TABS), FINANCE (12 TABS), MARKETING (9 TABS) */}
           <RoleViewsErrorBoundary tab={activeTab} key={activeTab}>

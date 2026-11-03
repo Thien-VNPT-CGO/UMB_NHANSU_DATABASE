@@ -1773,7 +1773,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.get(
     '/employees',
     authMiddleware,
-    requireRole(['ADMIN', 'HR', 'STORE', 'FINANCE']),
+    requireRole(['DIRECTOR', 'ADMIN', 'HR', 'STORE', 'FINANCE']),
     enforceBranchScope(req => req.query.branchId as string),
     async (req: AuthenticatedRequest, res) => {
       try {
@@ -2036,7 +2036,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       res.status(500).json({ error: err.message || 'AVATAR_DOWNLOAD_FAILED' });
     }
   };
-  app.get('/employees/:id/avatar', authMiddleware, requireRole(['ADMIN', 'HR', 'STORE']), serveEmployeeAvatar);
+  app.get('/employees/:id/avatar', authMiddleware, requireRole(['DIRECTOR', 'ADMIN', 'HR', 'STORE']), serveEmployeeAvatar);
 
   // --- HỢP ĐỒNG LAO ĐỘNG (Thử việc / Chính thức) ---
   // Upload file lên Drive + đĩa VPS, metadata lưu trên NHAN_VIEN_MASTER.
@@ -3883,7 +3883,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   // Bản đồ giám sát nhân viên realtime (Admin/HR/Kế toán): trạng thái ca + GPS
   // lần chấm công gần nhất + toạ độ cửa hàng đã cấu hình ở tab Chi nhánh.
-  app.get('/admin/live-map', authMiddleware, requireRole(['ADMIN', 'HR', 'FINANCE']), async (_req, res) => {
+  app.get('/admin/live-map', authMiddleware, requireRole(['DIRECTOR', 'ADMIN', 'HR', 'FINANCE']), async (_req, res) => {
     try {
       const snapshot = await liveMapService.getSnapshot();
       res.json(snapshot);
@@ -4182,7 +4182,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       res.status(500).json({ error: err.message || 'PHOTO_DOWNLOAD_FAILED' });
     }
   };
-  app.get('/attendance/adjustments/:id/photo', authMiddleware, requireRole(['ADMIN', 'HR', 'STORE']), serveAdjustmentPhoto);
+  app.get('/attendance/adjustments/:id/photo', authMiddleware, requireRole(['DIRECTOR', 'ADMIN', 'HR', 'STORE']), serveAdjustmentPhoto);
   app.get('/me/attendance/adjustments/:id/photo', authMiddleware, serveAdjustmentPhoto);
 
   // Tải gói chứng cứ điểm danh theo ngày:
@@ -5156,7 +5156,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   // Duyệt phiếu bổ sung/quên điểm danh: CHỈ HR (ADMIN giám sát) — công chỉ được
   // công nhận khi HR duyệt, không còn đường bù trực tiếp nào khác.
-  app.post('/attendance/adjustments/:id/approve', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams, body: adjustmentApproveBody }), async (req: AuthenticatedRequest, res) => {
+  app.post('/attendance/adjustments/:id/approve', authMiddleware, requireRole(['DIRECTOR', 'ADMIN', 'HR']), validate({ params: idParams, body: adjustmentApproveBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const { status, minutesApproved, note } = req.body;
       const result = await attendanceService.reviewAdjustment(
@@ -6048,7 +6048,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.post('/announcements', authMiddleware, requireRole(['ADMIN', 'MARKETING']), validate({ body: announcementBody }), async (req: AuthenticatedRequest, res) => {
+  app.post('/announcements', authMiddleware, requireRole(['DIRECTOR', 'ADMIN', 'MARKETING']), validate({ body: announcementBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const { title, summary, recipientIds, severity, targetPath } = req.body;
       const result = await notificationsService.sendNotification({
@@ -6375,7 +6375,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.put('/admin/policies', authMiddleware, requireRole(['ADMIN']), validate({ body: opaqueConfigBody }), async (req: AuthenticatedRequest, res) => {
+  app.put('/admin/policies', authMiddleware, requireRole(['DIRECTOR', 'ADMIN']), validate({ body: opaqueConfigBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const updated = await adapter.updatePolicies(req.body);
       await adapter.recordAuditLog({
@@ -6393,7 +6393,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // --- 7. NOTIFICATION CENTER (Admin view) ---
-  app.get('/admin/notifications', authMiddleware, requireRole(['ADMIN', 'HR', 'MARKETING']), async (req, res) => {
+  app.get('/admin/notifications', authMiddleware, requireRole(['DIRECTOR', 'ADMIN', 'HR', 'MARKETING']), async (req, res) => {
     try {
       const inboxes = await adapter.getInboxForRecipient('ALL');
       res.json(inboxes);

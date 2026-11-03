@@ -1,4 +1,4 @@
-export type SystemRole = 'ADMIN' | 'HR' | 'STORE' | 'FINANCE' | 'MARKETING' | 'EMPLOYEE';
+export type SystemRole = 'DIRECTOR' | 'ADMIN' | 'HR' | 'STORE' | 'FINANCE' | 'MARKETING' | 'IT' | 'EMPLOYEE';
 
 export type UserPermission =
   | 'ACCOUNTS_MANAGE'      // Kích hoạt/khóa tài khoản, cấp vai trò
