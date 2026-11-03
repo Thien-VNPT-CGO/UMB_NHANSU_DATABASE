@@ -1499,7 +1499,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // Tính lương + chấm công Finance
   const [payCalcPeriod, setPayCalcPeriod] = useState(() => new Date().toISOString().slice(0, 7));
   const [payCalcBusy, setPayCalcBusy] = useState(false);
-  // Công thức Excel + nhập tay theo kỳ (Finance): TỔNG CỘNG = LCB + PC_OT + giờ + OTt + Bonus;
+  // Công thức Excel + nhập tay theo kỳ (Finance): TỔNG CỘNG = LCB + giờ + OTt + Bonus (đã bỏ phụ cấp);
   // TỔNG LƯƠNG = TỔNG CỘNG − KPI − phạt; THỰC LÃNH = TỔNG LƯƠNG − Ứng − Đồng phục.
   const [payFormula, setPayFormula] = useState<any>(null);
   const [payFormulaBusy, setPayFormulaBusy] = useState(false);
