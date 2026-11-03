@@ -209,7 +209,7 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   },
   {
     title: 'DON_DOI_CA',
-    headers: ['ID Đổi Ca', 'Người Yêu Cầu', 'Ca Yêu Cầu', 'Người Nhận', 'Ca Đổi', 'Lý Do', 'Trạng Thái', 'Người Duyệt', 'Ngày Tạo', 'Loại Phiếu', 'Phụ Cấp (đ)', 'CN Hỗ Trợ', 'Ngày Hỗ Trợ', 'Ca Hỗ Trợ'],
+    headers: ['ID Đổi Ca', 'Người Yêu Cầu', 'Ca Yêu Cầu', 'Người Nhận', 'Ca Đổi', 'Lý Do', 'Trạng Thái', 'Người Duyệt', 'Ngày Tạo', 'Loại Phiếu', 'Không Dùng', 'CN Hỗ Trợ', 'Ngày Hỗ Trợ', 'Ca Hỗ Trợ'],
   },
   {
     title: 'DIEU_CHINH_CONG',
@@ -281,11 +281,11 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   },
   {
     title: 'PHIEU_LUONG',
-    headers: ['ID Phiếu', 'Mã Kỳ Lương', 'ID Nhân Viên', 'Mã NV', 'Họ Và Tên', 'Kỳ Lương', 'Số Ca', 'Ca Vắng', 'Giờ Chuẩn', 'Đơn Giá', 'Lương Chuẩn', 'Phụ Cấp', 'Thưởng', 'Khấu Trừ', 'Thực Nhận', 'Trạng Thái', 'Suất OT', 'Phụ Cấp OT', 'Lương CB (tay)', 'OT Thêm (tay)', 'Bonus Thêm (tay)', 'Ứng Lương', 'Trừ KPI (tay)', 'Trừ Đồng Phục', 'Tổng Cộng', 'Tổng Lương', 'Thực Lãnh', 'Ký Lập (tên)', 'Ký Lập Lúc', 'Ký QL (tên)', 'Ký QL Lúc', 'Ký NV (tên)', 'Ký NV Lúc', 'Ảnh Ký Lập', 'Ảnh Ký QL', 'Ảnh Ký NV', 'Phát Hành Lúc', 'Xác Nhận Lúc', 'Chi Trả Lúc'],
+    headers: ['ID Phiếu', 'Mã Kỳ Lương', 'ID Nhân Viên', 'Mã NV', 'Họ Và Tên', 'Kỳ Lương', 'Số Ca', 'Ca Vắng', 'Giờ Chuẩn', 'Đơn Giá', 'Lương Chuẩn', 'Không Dùng', 'Thưởng', 'Khấu Trừ', 'Thực Nhận', 'Trạng Thái', 'Không Dùng', 'Không Dùng', 'Lương CB (tay)', 'OT Thêm (tay)', 'Bonus Thêm (tay)', 'Ứng Lương', 'Trừ KPI (tay)', 'Trừ Đồng Phục', 'Tổng Cộng', 'Tổng Lương', 'Thực Lãnh', 'Ký Lập (tên)', 'Ký Lập Lúc', 'Ký QL (tên)', 'Ký QL Lúc', 'Ký NV (tên)', 'Ký NV Lúc', 'Ảnh Ký Lập', 'Ảnh Ký QL', 'Ảnh Ký NV', 'Phát Hành Lúc', 'Xác Nhận Lúc', 'Chi Trả Lúc'],
   },
   {
     title: 'CONG_THUC_LUONG',
-    headers: ['Kỳ Lương', 'Đơn Giá TV', 'Đơn Giá CT', 'Tiền 1 Suất OT', 'Ngưỡng OT 1 Suất (h)', 'Ngưỡng OT 2 Suất (h)', 'Người Cập Nhật', 'Cập Nhật Lúc'],
+    headers: ['Kỳ Lương', 'Đơn Giá TV', 'Đơn Giá CT', 'Không Dùng', 'Ngưỡng Tăng Ca 1 (h)', 'Ngưỡng Tăng Ca 2 (h)', 'Người Cập Nhật', 'Cập Nhật Lúc'],
   },
   {
     title: 'DULIEU_LUONG_KY',
@@ -3355,9 +3355,24 @@ export class GoogleSheetsSyncService {
       if (keepIfEmpty('PHIEU_LUONG', slipRows, (fallback.payslips || []).length)) {
         counts.payslips = (fallback.payslips || []).length;
       } else if (slipRows.length > 0) {
-        const mappedSlips = slipRows
-          .filter(r => r && r[0])
-          .map(r => ({
+        const numOr = (v: any) => (v === '' || v === undefined || v === null ? undefined : Number(v) || 0);
+        const mapSlipRow = (r: any) => {
+          const status: any = r[15] || 'DRAFT';
+          const isFinal = ['PAID', 'CONFIRMED'].includes(String(status).toUpperCase());
+          const luong_cb = numOr(r[18]);
+          const standard_pay = Number(r[10]) || 0;
+          const ot_extra = numOr(r[19]);
+          const bonus = Number(r[12]) || 0;
+          const tru_kpi = numOr(r[22]);
+          const deduction = Number(r[13]) || 0;
+          const ung_luong = numOr(r[21]);
+          const dong_phuc = numOr(r[23]);
+          // Phụ cấp OT đã bỏ: luôn đọc/ghi 0. Phiếu chưa chốt được tính lại tổng
+          // từ breakdown để không còn cộng khoản phụ cấp cũ trong Sheet.
+          const tongCong = isFinal ? numOr(r[24]) : (luong_cb || 0) + standard_pay + (ot_extra || 0) + bonus;
+          const tongLuong = isFinal ? numOr(r[25]) : (tongCong || 0) - (tru_kpi || 0) - deduction;
+          const thucLanh = isFinal ? numOr(r[26]) : (tongLuong || 0) - (ung_luong || 0) - (dong_phuc || 0);
+          return {
             item_id: r[0],
             run_id: r[1] || '',
             employee_id: r[2] || '',
@@ -3368,24 +3383,25 @@ export class GoogleSheetsSyncService {
             absent_shifts: Number(r[7]) || 0,
             standard_hours: Number(r[8]) || 0,
             rate_snapshot: Number(r[9]) || 0,
-            standard_pay: Number(r[10]) || 0,
-            allowance: Number(r[11]) || 0,
-            bonus: Number(r[12]) || 0,
-            deduction: Number(r[13]) || 0,
-            net_pay: Number(r[14]) || 0,
-            status: (r[15] as any) || 'DRAFT',
+            standard_pay,
+            // Legacy: luôn 0, không đọc lại phụ cấp từ Sheet.
+            allowance: 0,
+            bonus,
+            deduction,
+            net_pay: isFinal ? (numOr(r[14]) || 0) : (thucLanh || 0),
+            status,
             // Cột mở rộng theo file Excel (phiếu cũ thiếu -> giữ rỗng).
-            ot_slots: r[16] === '' || r[16] === undefined ? undefined : Number(r[16]) || 0,
-            phu_cap_ot: r[17] === '' || r[17] === undefined ? undefined : Number(r[17]) || 0,
-            luong_cb: r[18] === '' || r[18] === undefined ? undefined : Number(r[18]) || 0,
-            ot_extra: r[19] === '' || r[19] === undefined ? undefined : Number(r[19]) || 0,
-            bonus_extra: r[20] === '' || r[20] === undefined ? undefined : Number(r[20]) || 0,
-            ung_luong: r[21] === '' || r[21] === undefined ? undefined : Number(r[21]) || 0,
-            tru_kpi: r[22] === '' || r[22] === undefined ? undefined : Number(r[22]) || 0,
-            dong_phuc: r[23] === '' || r[23] === undefined ? undefined : Number(r[23]) || 0,
-            tong_cong: r[24] === '' || r[24] === undefined ? undefined : Number(r[24]) || 0,
-            tong_luong: r[25] === '' || r[25] === undefined ? undefined : Number(r[25]) || 0,
-            thuc_lanh: r[26] === '' || r[26] === undefined ? undefined : Number(r[26]) || 0,
+            ot_slots: 0,
+            phu_cap_ot: 0,
+            luong_cb,
+            ot_extra,
+            bonus_extra: numOr(r[20]),
+            ung_luong,
+            tru_kpi,
+            dong_phuc,
+            tong_cong: tongCong,
+            tong_luong: tongLuong,
+            thuc_lanh: thucLanh,
             // Quy trình ký 3 bên + phát hành từng phiếu (phiếu cũ thiếu -> giữ rỗng).
             sign_lap: r[27] ? { name: String(r[27]), at: String(r[28] || ''), img: String(r[33] || '') || undefined } : undefined,
             sign_quanly: r[29] ? { name: String(r[29]), at: String(r[30] || ''), img: String(r[34] || '') || undefined } : undefined,
@@ -3396,7 +3412,11 @@ export class GoogleSheetsSyncService {
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
             version: 1,
-          }));
+          };
+        };
+        const mappedSlips = slipRows
+          .filter(r => r && r[0])
+          .map(mapSlipRow);
         fallback.payslips = mergeById(fallback.payslips || [], mappedSlips, 'item_id', ['version']) as any;
         counts.payslips = fallback.payslips.length;
       } else if ((fallback.payslips || []).length === 0) {
@@ -3415,7 +3435,8 @@ export class GoogleSheetsSyncService {
             period: r[0],
             rateTV: Number(r[1]) || 21000,
             rateCT: Number(r[2]) || 25500,
-            otPerSlot: Number(r[3]) || 30000,
+            // Legacy: đã bỏ phụ cấp OT, luôn 0 (không đọc lại đơn giá suất cũ).
+            otPerSlot: 0,
             otThreshold1: Number(r[4]) || 10,
             otThreshold2: Number(r[5]) || 15,
             updatedBy: r[6] || undefined,
@@ -4346,7 +4367,7 @@ export class GoogleSheetsSyncService {
         if ((repo as any).fallbackAdapter instanceof MockSheetsAdapter) fb = (repo as any).fallbackAdapter;
         else if (repo instanceof MockSheetsAdapter) fb = repo;
         const formulas: any[] = ((fb as any)?.payrollFormulas || []).map((f: any) => ([
-          f.period, f.rateTV ?? 21000, f.rateCT ?? 25500, f.otPerSlot ?? 30000,
+          f.period, f.rateTV ?? 21000, f.rateCT ?? 25500, 0,
           f.otThreshold1 ?? 10, f.otThreshold2 ?? 15, f.updatedBy || '', f.updatedAt || '',
         ]));
         await this.overwriteSheetData('CONG_THUC_LUONG', SHEETS_DEFINITIONS.find(d => d.title === 'CONG_THUC_LUONG')!.headers, formulas);
@@ -4645,13 +4666,14 @@ export class GoogleSheetsSyncService {
       s.standard_hours ?? 0,
       s.rate_snapshot ?? 0,
       s.standard_pay ?? 0,
-      s.allowance ?? 0,
+      // Phụ cấp OT đã bỏ: luôn ghi 0 để Sheet không lưu/khôi phục khoản cũ.
+      0,
       s.bonus ?? 0,
       s.deduction ?? 0,
       s.net_pay ?? 0,
       s.status || 'DRAFT',
-      s.ot_slots ?? '',
-      s.phu_cap_ot ?? '',
+      0,
+      0,
       s.luong_cb ?? '',
       s.ot_extra ?? '',
       s.bonus_extra ?? '',

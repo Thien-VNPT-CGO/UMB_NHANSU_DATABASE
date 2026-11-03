@@ -5218,6 +5218,21 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Bỏ toàn bộ phụ cấp OT còn sót trên phiếu chưa chi trả và tính lại tổng (idempotent).
+  app.post('/payroll/purge-legacy-allowance', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req, res) => {
+    try {
+      const period = String((req.query as any)?.period || (req.body as any)?.period || '').trim();
+      if (period && !/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
+        return res.status(400).json({ error: 'INVALID_PERIOD: kỳ lương phải dạng YYYY-MM (VD: 2026-10).' });
+      }
+      const result = await payrollService.purgeLegacyAllowance(period || undefined);
+      broadcastUpdate('payroll', { action: 'purge-legacy-allowance', period: period || '*' });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/payroll/runs', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req, res) => {
     try {
       const runs = await payrollService.listRuns();

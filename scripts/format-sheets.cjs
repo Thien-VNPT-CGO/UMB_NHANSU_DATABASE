@@ -405,7 +405,7 @@ function analyzeColumn(header, sampleValues = []) {
     };
   }
 
-  // 5. Tiền tệ (VNĐ, Lương, Phụ cấp, Thưởng, Khấu trừ, v.v.)
+  // 5. Tiền tệ (VNĐ, Lương, Thưởng, Khấu trừ, v.v.)
   // LƯU Ý QUAN TRỌNG: Loại trừ 'Mã Kỳ Lương' và 'Kỳ Lương' (đây là ID/tháng, không phải số tiền!)
   const isExcludedFromCurrency = lower.includes('mã kỳ lương') || lower === 'kỳ lương';
   if (
@@ -415,7 +415,6 @@ function analyzeColumn(header, sampleValues = []) {
       lower.includes('lương chuẩn') ||
       lower.includes('lương cơ bản') ||
       lower.includes('lương giờ') ||
-      lower.includes('phụ cấp') ||
       lower.includes('thưởng') ||
       lower.includes('khấu trừ') ||
       lower.includes('thực nhận') ||

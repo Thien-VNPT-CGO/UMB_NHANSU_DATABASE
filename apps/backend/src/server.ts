@@ -146,17 +146,29 @@ services.attendanceService.setSocketServer(io);
 services.payrollService.setSocketServer(io);
 services.notificationsService.setSocketServer(io);
 
-// Tự dọn phụ cấp HR điều phối 30k còn sót trong dữ liệu cũ mỗi lần khởi động
+// Tự dọn phụ cấp còn sót trong dữ liệu cũ mỗi lần khởi động
 // (idempotent, chỉ chạy trên phiếu chưa PAID/CONFIRMED). Trễ 20s để dữ liệu
-// Sheets/pull khởi động xong, tránh đua với lần đọc đầu.
+// Sheets/pull khởi động xong, tránh đua với lần đọc đầu. Chạy lần lượt:
+// bỏ bonus HR 30k trước, rồi bỏ toàn bộ allowance/phu_cap_ot và tính lại tổng.
 setTimeout(() => {
-  (services.payrollService as any).purgeLegacyDispatchBonus?.()
-    .then((r: any) => {
-      if (r?.updated > 0) {
-        console.log(`[Payroll] Đã bỏ phụ cấp HR 30k khỏi ${r.updated} phiếu cũ (tổng ${r.totalRemoved}đ).`);
+  (async () => {
+    try {
+      const bonusRes: any = await (services.payrollService as any).purgeLegacyDispatchBonus?.();
+      if (bonusRes?.updated > 0) {
+        console.log(`[Payroll] Đã bỏ phụ cấp HR 30k khỏi ${bonusRes.updated} phiếu cũ (tổng ${bonusRes.totalRemoved}đ).`);
       }
-    })
-    .catch((e: any) => console.warn('[Payroll] purge legacy dispatch bonus skipped:', e?.message || e));
+    } catch (e: any) {
+      console.warn('[Payroll] purge legacy dispatch bonus skipped:', e?.message || e);
+    }
+    try {
+      const allowanceRes: any = await (services.payrollService as any).purgeLegacyAllowance?.();
+      if (allowanceRes?.updated > 0) {
+        console.log(`[Payroll] Đã bỏ phụ cấp OT khỏi ${allowanceRes.updated} phiếu cũ và tính lại tổng (tổng bỏ ${allowanceRes.totalRemoved}đ).`);
+      }
+    } catch (e: any) {
+      console.warn('[Payroll] purge legacy allowance skipped:', e?.message || e);
+    }
+  })();
 }, 20_000);
 
 // Socket.IO authentication and room management (có kiểm tra revoke qua DB)

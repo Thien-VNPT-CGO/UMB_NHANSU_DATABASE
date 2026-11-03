@@ -54,15 +54,16 @@ export interface PayslipItem {
   ct_hours?: number;
   /** Lương giờ giai đoạn chính thức trong kỳ. */
   ct_pay?: number;
+  /** Legacy: đã bỏ phụ cấp, luôn ghi 0 (giữ trường để đọc phiếu cũ). */
   allowance: number;
   bonus: number;
   deduction: number;
   net_pay: number;
   // --- Mở rộng theo file Excel lương (Payment/BCC): các trường optional để
   // phiếu cũ vẫn đọc được, phiếu mới tính theo công thức có đủ breakdown.
-  /** Số suất tăng ca (ngày >=10h: 1 suất, >=15h: 2 suất). */
+  /** Legacy: đã bỏ phụ cấp OT, luôn ghi 0. */
   ot_slots?: number;
-  /** Phụ cấp tăng ca = ot_slots × đơn giá suất (Excel: AQ*30000). */
+  /** Legacy: đã bỏ phụ cấp tăng ca, luôn ghi 0. */
   phu_cap_ot?: number;
   /** Lương CB nhập tay theo kỳ (Excel cột H). */
   luong_cb?: number;
@@ -76,7 +77,7 @@ export interface PayslipItem {
   tru_kpi?: number;
   /** Trừ đồng phục nhập tay theo kỳ (Excel cột P). */
   dong_phuc?: number;
-  /** TỔNG CỘNG = luong_cb + allowance + standard_pay + ot_extra + bonus (Excel M). */
+  /** TỔNG CỘNG = luong_cb + standard_pay + ot_extra + bonus (Excel M, đã bỏ phụ cấp). */
   tong_cong?: number;
   /** TỔNG LƯƠNG = tong_cong - tru_kpi - deduction (Excel Q). */
   tong_luong?: number;
@@ -129,7 +130,7 @@ export function vietQrUrl(cfg: BankQrConfig, amount: number, info: string): stri
 
 /**
  * Công thức tính lương 1 kỳ (lưu từ file Excel lương của Kế toán):
- * TỔNG CỘNG = luong_cb + phu_cap_ot + luong_gio + ot_extra + bonus
+ * TỔNG CỘNG = luong_cb + luong_gio + ot_extra + bonus (đã bỏ phụ cấp)
  * TỔNG LƯƠNG = TỔNG CỘNG − tru_kpi − phạt trễ/vắng
  * THỰC LÃNH = TỔNG LƯƠNG − ung_luong − dong_phuc
  */
@@ -139,11 +140,11 @@ export interface PayrollFormula {
   rateTV: number;
   /** Đơn giá giờ chính thức (Excel CT 25.5K/30K, mặc định 25500). */
   rateCT: number;
-  /** Tiền 1 suất tăng ca (Excel 30000). */
+  /** Legacy: đã bỏ phụ cấp OT, luôn 0. */
   otPerSlot: number;
-  /** Ngưỡng giờ/ngày tính 1 suất OT (Excel 10). */
+  /** Ngưỡng giờ/ngày để đếm ngày tăng ca 1 (Excel 10). */
   otThreshold1: number;
-  /** Ngưỡng giờ/ngày tính 2 suất OT (Excel 15). */
+  /** Ngưỡng giờ/ngày để đếm ngày tăng ca 2 (Excel 15). */
   otThreshold2: number;
   updatedBy?: string;
   updatedAt?: string;
@@ -167,7 +168,7 @@ export interface PayrollPeriodInput {
 export const DEFAULT_PAYROLL_FORMULA: Omit<PayrollFormula, 'period'> = {
   rateTV: 21000,
   rateCT: 25500,
-  otPerSlot: 30000,
+  otPerSlot: 0,
   otThreshold1: 10,
   otThreshold2: 15,
 };

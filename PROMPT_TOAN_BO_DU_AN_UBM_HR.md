@@ -125,13 +125,13 @@ Chuẩn thực thể: `id` bất biến, `version` tăng (optimistic lock), `cre
 - **LeaveRequest:** `request_id, employee_id, branch_id, leave_type (DOT_XUAT|HANG_TUAN|THU_VIEC), requested_date, shift_code?, reason, status (PENDING|APPROVED|REJECTED|CANCELLED), reviewed_by/at/note?, version, …`
 - **SwapRequest:** `swap_id, swap_kind (EMPLOYEE_SWAP | HR_DISPATCH (không phụ cấp) | HR_SUPPORT), requester_id, requester_assignment_id, target_employee_id, target_assignment_id, reason, status (PENDING_PARTNER|PARTNER_ACCEPTED|APPROVED|REJECTED|CANCELLED), bonus_amount? (legacy, luôn 0), support_branch_id/date/shift_code?, version, …`
 - **PayrollRun:** `run_id, period (YYYY-MM), branch_scope, status (DRAFT|RECONCILED|APPROVED|PUBLISHED|PAID), total_employees/hours/amount, created_by, reconciled_by/at?, approved_by/at? (≠ người lập), published_by/at?, paid_by/at?, version`.
-- **PayslipItem:** `item_id, run_id, employee_id, employee_code, full_name, period, total_shifts, absent_shifts?, standard_hours, rate_snapshot, standard_pay, tv_hours/tv_pay?, ct_hours/ct_pay?, allowance, bonus, deduction, net_pay` + mở rộng Excel: `ot_slots, phu_cap_ot, luong_cb, ot_extra, bonus_extra, ung_luong, tru_kpi, dong_phuc, tong_cong, tong_luong, thuc_lanh` + `sign_lap/sign_quanly/sign_nhanvien (PayslipSignature: name, at, img PNG dataURL), slip_published_at/confirmed_at/paid_at/by, bank_name/account/holder, status`.
+- **PayslipItem:** `item_id, run_id, employee_id, employee_code, full_name, period, total_shifts, absent_shifts?, standard_hours, rate_snapshot, standard_pay, tv_hours/tv_pay?, ct_hours/ct_pay?, allowance (legacy = 0), bonus, deduction, net_pay` + mở rộng Excel: `ot_slots (legacy = 0), phu_cap_ot (legacy = 0), luong_cb, ot_extra, bonus_extra, ung_luong, tru_kpi, dong_phuc, tong_cong, tong_luong, thuc_lanh` + `sign_lap/sign_quanly/sign_nhanvien (PayslipSignature: name, at, img PNG dataURL), slip_published_at/confirmed_at/paid_at/by, bank_name/account/holder, status`.
 - **CandidateApplication** (ứng viên từ Google Form): `submission_id, full_name, phone_normalized, birth_year, apply_position, preferred_branch_id, status (NEW→NEED_INFO→INVITED_INTERVIEW→CONFIRMED→RESCHEDULE_REQUESTED→INTERVIEWED→ACCEPTED/REJECTED/NO_SHOW), interview_date, interview_time_slot, interviewer_id, interview_score, interview_rubric (store 9 câu | office 7 câu), interview_score_detail, zalo_invite_status (SENT|NOT_FRIEND|FAILED), zalo_uid, …` + 17 cột biểu mẫu: gender, education_level, hometown, registered_shift, branch_name, experience, emergency_handling, facebook_url, referral_source, ai_score, screening_result, source_code, **vip / vip_at / vip_by, vip_rank** (1 = ưu tiên nhất, độc lập theo chi nhánh).
 - **TestPaper / TestSubmission:** đề gồm `questions[] (options ≥2, correct_index, points)`, `pass_score` (thang 10, mặc định **8**), `time_limit_seconds` (mặc định **480**), status DRAFT|ASSIGNED|CLOSED; submission `answers[], score?, passed?`.
 - **NotificationOutboxItem / NotificationInboxItem:** outbox phát đi (dedupe_key, severity SUCCESS|ACTION_REQUIRED|URGENT|SYSTEM, target_path, delivery_status QUEUED|SENT|FAILED, attempts); inbox từng người (type `emp.checkin/emp.checkout/emp.leave/emp.swap/emp.test/emp.pin/system…`, read_at, acknowledged_at, dismissed_at).
 - **OperationRecord:** `operation_id, idempotency_key, entity_type, entity_id, expected_version, operation_state (PENDING|IN_PROGRESS|COMPLETED|NEEDS_RECONCILIATION|FAILED), actor_id, outcome?, error?`.
 - **AuditLogEntry:** `log_id, timestamp, actor_id, actor_role, action, target_entity, target_id, details, ip_address?`.
-- **BankQrConfig + PayrollFormula + PayrollPeriodInput:** cấu hình QR VietQR; công thức lương `{rateTV, rateCT, otPerSlot, otThreshold1, otThreshold2}`; 6 cột Kế toán nhập tay `{luong_cb, ot_extra, bonus_extra, ung_luong, tru_kpi, dong_phuc, note}`.
+- **BankQrConfig + PayrollFormula + PayrollPeriodInput:** cấu hình QR VietQR; công thức lương `{rateTV, rateCT, otPerSlot (legacy = 0), otThreshold1, otThreshold2}` (đã bỏ phụ cấp OT); 6 cột Kế toán nhập tay `{luong_cb, ot_extra, bonus_extra, ung_luong, tru_kpi, dong_phuc, note}`.
 
 ## 3.3. Mã lỗi chuẩn (ERROR_CODES — trả đúng mã cho client xử lý)
 
@@ -387,7 +387,7 @@ Tắt êm (SIGTERM/SIGINT): `gracefulShutdown` — `flushSheetsWrites(20s)`, `se
 | 5 | `SU_KIEN_DIEM_DANH` | ID SK/ID Ca/ID NV/Loại IN-OUT/Thời Gian/GPS lat-lng/Khoảng cách/Trạng Thái GPS/Ảnh Drive/ID Request/**% Hồng Đồng Phục**/Trễ/Sớm/Lệch/Phạt nấc/Phạt tiền |
 | 6 | `LUUTRU_CHAMCONG_TUAN` | Cùng cấu trúc + "Tuần Lưu Trữ" (hồ sơ tuần cũ) |
 | 7 | `DON_NGHI_PHEP` | ID/ID NV/CN/Loại/Ngày/Ca/Lý Do/Trạng Thái/Người Duyệt/Ghi Chú/Ngày Tạo |
-| 8 | `DON_DOI_CA` | ID/Người YC/Ca YC/Người Nhận/Ca Đổi/Lý Do/Trạng Thái/Người Duyệt/**LOẠI PHIẾU/Phụ Cấp/CN Hỗ Trợ/Ngày Hỗ Trợ/Ca Hỗ Trợ** |
+| 8 | `DON_DOI_CA` | ID/Người YC/Ca YC/Người Nhận/Ca Đổi/Lý Do/Trạng Thái/Người Duyệt/**LOẠI PHIẾU/Không Dùng/CN Hỗ Trợ/Ngày Hỗ Trợ/Ca Hỗ Trợ** |
 | 9 | `DIEU_CHINH_CONG` | ID/ID Ca/ID NV/Lý Do/Phút Được Duyệt/Người Duyệt/Trạng Thái/Ghi Chú/Ảnh Drive |
 | 10 | `KY_LUONG` | Mã Kỳ/Tháng Năm/Trạng Thái/Tổng Tiền/Ngày Tạo/Ngày Chốt/Ngày Chi Trả |
 | 11 | `AUDIT_LOG` | Mã Log/Thời Gian/Người/Vai Trò/Hành Động/Đối Tượng/ID/Chi Tiết |
@@ -397,8 +397,8 @@ Tắt êm (SIGTERM/SIGINT): `gracefulShutdown` — `flushSheetsWrites(20s)`, `se
 | 15 | `FROM_NHAN_VIEN` (sheet riêng `CANDIDATE_SPREADSHEET_ID`) | 26 cột: Ngày ĐK → … → Điểm AI (thang 14)/Kết Quả/Trạng Thái/Mã Nguồn/Ngày PV/Khung Giờ PV/Người PV/Zalo Thư Mời/Điểm PV/Chi Tiết Chấm/**VIP/Hạng VIP** |
 | 16 | `BAI_THI` | ID/Tiêu Đề/Mô Tả/Câu Hỏi (JSON)/Điểm Đạt/Giới Hạn Giây/Trạng Thái/Người Tạo/Phiên Bản |
 | 17 | `BAI_LAM` | ID/ID Bài/ID NV/Trạng Thái/Đáp Án (JSON)/Điểm/Đạt/Ngày Nộp/Phiên Bản |
-| 18 | `PHIEU_LUONG` | 39 cột: ID Phiếu → LCB/Thưởng/Khấu Trừ/Thực Nhận/Suất OT/OT Thêm/6 cột tay/Tổng/**Ký Lập/Ql/NV (tên + thời gian + ảnh chữ ký)**/Phát Hành/Xác Nhận/Chi Trả Lúc |
-| 19 | `CONG_THUC_LUONG` | Kỳ/Đơn Giá TV/CT/Tiền 1 Suất OT/Ngưỡng OT 1-2 (h)/Người CN/CN Lúc |
+| 18 | `PHIEU_LUONG` | 39 cột: ID Phiếu → LCB/Thưởng/Khấu Trừ/Thực Nhận/OT Thêm/6 cột tay/Tổng/**Ký Lập/Ql/NV (tên + thời gian + ảnh chữ ký)**/Phát Hành/Xác Nhận/Chi Trả Lúc (các cột phụ cấp cũ để "Không Dùng", luôn 0) |
+| 19 | `CONG_THUC_LUONG` | Kỳ/Đơn Giá TV/CT/Ngưỡng Tăng Ca 1-2 (h)/Người CN/CN Lúc |
 | 20 | `DULIEU_LUONG_KY` | Kỳ/ID NV/LCB (tay)/OT Thêm/Bonus Thêm/Ứng Lương/Trừ KPI/Trừ Đồng Phục/Ghi Chú |
 | 21 | `LICH_SU_GIAI_DOAN` | ID/ID NV/Giai Đoạn/Hiệu Lực Từ/Lương Giờ/Người Duyệt/Ghi Chú/Phiên Bản |
 
@@ -529,7 +529,7 @@ Tab active lưu `localStorage["ubm_active_tab"]`. Lưu ý: tab `attendance` (Đi
 ### 6.3.15. Nhóm tab FINANCE (12 tab)
 - **`fin-timesheet` Chấm Công Lương:** chọn `finMonth`, expand từng ca (ngày, ca, giờ, trạng thái, check-in, trễ, lương ca, phạt); **Backfill:** `POST /payroll/{period}/backfill`; **Xuất CSV UTF-8 BOM**.
 - **`fin-payroll-periods` Kỳ Lương:** stage machine `DRAFT → RECONCILED → APPROVED → PUBLISHED → PAID`, action `reconcile/approve/publish/mark-paid`; nguyên tắc **người duyệt ≠ người tính** (`SEPARATION_OF_DUTIES_VIOLATION`).
-- **`fin-calculate` Tính Lương (4 bước):** B1 `POST /payroll/{period}/calculate`; B2 công thức kiểu Excel `PUT /payroll/formula/{period}` `{rateTV, rateCT, otPerSlot, otThreshold1, otThreshold2}` + `POST /payroll/{period}/calculate-formula`; B3 nhập tay 6 cột `PUT /payroll/inputs/{period}` `{luong_cb, ot_extra, bonus_extra, ung_luong, tru_kpi, dong_phuc, note}` + **Lưu tất cả**; B4 `calcLivePayslip` xem trước từng bước B1–B5.
+- **`fin-calculate` Tính Lương (4 bước):** B1 `POST /payroll/{period}/calculate`; B2 công thức kiểu Excel `PUT /payroll/formula/{period}` `{rateTV, rateCT, otThreshold1, otThreshold2}` (đã bỏ phụ cấp OT) + `POST /payroll/{period}/calculate-formula`; B3 nhập tay 6 cột `PUT /payroll/inputs/{period}` `{luong_cb, ot_extra, bonus_extra, ung_luong, tru_kpi, dong_phuc, note}` + **Lưu tất cả**; B4 `calcLivePayslip` xem trước từng bước B1–B4.
 - **`fin-details`:** bảng breakdown 12 cột.
 - **`fin-payslips` Phiếu Lương:** **Ký nhanh tất cả**, **Gửi tất cả** phiếu PUBLISHED; từng phiếu: modal xem với **3 ô chữ ký** (Người Lập Phiếu `lap` / Quản Lý `quanly` / Người Nhận Tiền `nhanvien`); ảnh **VietQR** `https://img.vietqr.io/image/{bank}-{STK}-compact2.png?amount=&addInfo=LUONG {period} {code}`; nút ✍️ Chữ ký / 📢 Gửi NV / ↩️ Hoàn / 🏦 VietQR / ✅ mark-paid.
 - **`fin-bcc`:** mirror sheet BCC (cột AN–AX, từng ngày 01→cuối tháng).
@@ -652,7 +652,7 @@ Header sticky: logo, họ tên, badge "Thử việc (12 ngày)"/"Chính thức",
 
 ### Tab 9 — THÔNG BÁO & LƯƠNG (`notifs_salary`)
 - **Hộp thư:** tối đa 20 tin mới (`GET /me/notifications`); lọc client: ẩn tin nhắc check-in lặp, ẩn tin feed ALL của NV khác (giữ tin đích danh mình hoặc tin chung lịch/PIN/OFF/marketing); bấm tin = **đã đọc** `POST /me/notifications/:inboxId/read` + **deep-link tới đúng tab** (`target_path`: /schedule, /home, /attendance, /leave, /test_exam, /test_training, /adjustment; tin `schedule.published` tự mở đúng tuần mới publish).
-- **Phiếu lương bảo mật:** màn khóa ban đầu → "Xem Phiếu Lương Của Tôi" → `GET /me/payslips` (server lọc đúng NV). Badge: 🔔 Chờ ký nhận (PUBLISHED) / ✍️ Đã ký (CONFIRMED) / 🎉 Đã thanh toán (PAID). Breakdown: công (giờ, số ca, ca vắng × đơn giá snapshot), Lương cơ bản, Phụ cấp OT (số suất), OT thêm, Bonus, **TỔNG CỘNG**, Trừ KPI + phạt, Ứng lương, Trừ đồng phục, **THỰC LÃNH** to đùng.
+- **Phiếu lương bảo mật:** màn khóa ban đầu → "Xem Phiếu Lương Của Tôi" → `GET /me/payslips` (server lọc đúng NV). Badge: 🔔 Chờ ký nhận (PUBLISHED) / ✍️ Đã ký (CONFIRMED) / 🎉 Đã thanh toán (PAID). Breakdown: công (giờ, số ca, ca vắng × đơn giá snapshot), Lương cơ bản, OT thêm, Bonus, **TỔNG CỘNG**, Trừ KPI + phạt, Ứng lương, Trừ đồng phục, **THỰC LÃNH** to đùng (đã bỏ phụ cấp OT).
 - **Ký nhận chữ ký tay:** khi PUBLISHED → khối "XÁC NHẬN SỐ TIỀN THỰC LÃNH" → **SignaturePad** (vẽ ngón tay/chuột canvas 440×180, retina-aware, PNG dataURL + họ tên) → `POST /me/payslips/:slipId/confirm` `{name, img}` → CONFIRMED + thông báo Kế toán chuyển khoản; hiển thị đủ **3 chữ ký điện tử đối soát** (Người Lập Phiếu / Quản Lý Chi Nhánh / Người Nhận Tiền). PAID → hiện thời gian xác nhận chuyển khoản. Realtime: Kế toán phát hành phiếu mới → tự tải + toast "💰 Kế toán vừa phát hành phiếu lương mới!". Nút "Ẩn Phiếu Lương".
 
 ### Tab 10 — HỒ SƠ CÁ NHÂN (`profile`)
@@ -717,7 +717,7 @@ QR ngân hàng NV gửi ở Hồ sơ → hiện ngay tab `fin-bank-qr` kế toá
 4. **Chính thức:** 2 ngày OFF/tuần đăng ký trong cổng T6 09:00 → T7 09:00 (1 lần/tuần, khóa app đến khi đăng ký); 2 bạn cùng ca cùng chi nhánh không OFF chung ngày; có đợt mở bù của Admin.
 5. **Đổi ca:** A gửi → B xác nhận = hoán đổi ngay; `HR_DISPATCH` (không phụ cấp); `HR_SUPPORT` tạo ca ngay ở CN hỗ trợ; phiếu sai tuần tự hủy (`audit-out-of-week`).
 6. **Điều chỉnh công:** 1 phiếu/tuần, tự từ chối sau 30 phút, tự xóa sau 7 ngày, `BU_CONG_NGAY` tốn 5 điểm bù công; duyệt → backfill công + xóa vi phạm trễ.
-7. **Lương:** stage `DRAFT → RECONCILED → APPROVED → PUBLISHED → PAID`; **tách biệt người tính/người duyệt**; công thức Excel hóa (rateTV/rateCT/otPerSlot/otThreshold 10h–15h) + 6 cột nhập tay + live payslip; phiếu PUBLISHED đủ **3 chữ ký** (lap/quanly/nhanvien) mới thành `CONFIRMED` → chi trả (`PAID`) qua **VietQR** (nội dung CK = "LUONG {period} {mã NV}"); phiếu đã phát không sửa đè — sai thì revision/adjustment.
+7. **Lương:** stage `DRAFT → RECONCILED → APPROVED → PUBLISHED → PAID`; **tách biệt người tính/người duyệt**; công thức Excel hóa (rateTV/rateCT/otThreshold 10h–15h, đã bỏ phụ cấp OT) + 6 cột nhập tay + live payslip; phiếu PUBLISHED đủ **3 chữ ký** (lap/quanly/nhanvien) mới thành `CONFIRMED` → chi trả (`PAID`) qua **VietQR** (nội dung CK = "LUONG {period} {mã NV}"); phiếu đã phát không sửa đè — sai thì revision/adjustment.
 8. **Optimistic locking:** mọi PUT employee/chuyển trạng thái gửi `expectedVersion`; xung đột → `VERSION_CONFLICT`.
 9. **Bảo mật:** JWT access 8h + refresh 7d; forceLogout từ xa; khóa TK → văng phiên + xóa PIN + xóa ca; mật khẩu/PIN bcrypt, không lưu thô; SĐT + PIN 6 số bắt đổi theo chu kỳ 1–5 hàng tháng; rate limit auth + chung.
 10. **Tuyển dụng:** không tự loại ứng viên theo năm sinh/quê/Facebook; AI score thang 14 (đạt ≥8) chỉ tham khảo; rubric PASS ≥12/13; mời qua Zalo cá nhân HR + Meet.

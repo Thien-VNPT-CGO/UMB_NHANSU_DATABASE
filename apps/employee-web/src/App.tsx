@@ -7971,7 +7971,7 @@ export function App() {
                         <strong>{v}</strong>
                       </div>
                     );
-                    const tongCong = slip.tong_cong ?? ((slip.luong_cb || 0) + (slip.phu_cap_ot ?? slip.allowance ?? 0) + (slip.standard_pay || 0) + (slip.ot_extra || 0) + (slip.bonus || 0));
+                    const tongCong = slip.tong_cong ?? ((slip.luong_cb || 0) + (slip.standard_pay || 0) + (slip.ot_extra || 0) + (slip.bonus || 0));
                     const netPayVal = slip.thuc_lanh ?? slip.net_pay ?? 0;
                     const st = slip.status || 'DRAFT';
                     return (
@@ -8003,7 +8003,6 @@ export function App() {
                         <div style={{ backgroundColor: '#FFF', padding: '12px', borderRadius: '8px', border: '1px solid #FDE68A' }}>
                           {row(`Công: ${slip.standard_hours || 0} giờ (${slip.total_shifts ?? 0} ca${Number(slip.absent_shifts) > 0 ? `, vắng ${slip.absent_shifts}` : ''}) × ${vnd(slip.rate_snapshot).replace('đ', '')}/h`, vnd(slip.standard_pay))}
                           {Number(slip.luong_cb) > 0 && row('Lương cơ bản', vnd(slip.luong_cb))}
-                          {row(`Phụ cấp OT${slip.ot_slots ? ` (${slip.ot_slots} suất)` : ''}`, vnd(slip.phu_cap_ot ?? slip.allowance))}
                           {Number(slip.ot_extra) > 0 && row('OT thêm', vnd(slip.ot_extra))}
                           {Number(slip.bonus) > 0 && row('Thưởng/Bonus', `+${vnd(slip.bonus)}`)}
                           {row('TỔNG CỘNG THU NHẬP', vnd(tongCong), true)}
@@ -8024,7 +8023,7 @@ export function App() {
                               <strong style={{ fontSize: '14px', color: '#92400E' }}>XÁC NHẬN SỐ TIỀN THỰC LÃNH: {vnd(netPayVal)}</strong>
                             </div>
                             <p style={{ fontSize: '12px', color: '#78350F', margin: '0 0 12px', lineHeight: 1.5 }}>
-                              Bạn vui lòng kiểm tra lại thật kỹ số giờ công, phụ cấp, thưởng và số tiền <strong>thực lãnh</strong> ở trên.
+                              Bạn vui lòng kiểm tra lại thật kỹ số giờ công, thưởng và số tiền <strong>thực lãnh</strong> ở trên.
                               Nếu tất cả đều đúng, vui lòng vẽ chữ ký của bạn vào khung bên dưới và bấm nút <strong>Xác Nhận & Ký Tên</strong> để gửi về cho Kế toán chuẩn bị chuyển khoản.
                             </p>
 

@@ -2102,7 +2102,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const xlFormula = {
     rateTV: Number(payFormula?.rateTV ?? 21000) || 0,
     rateCT: Number(payFormula?.rateCT ?? 25500) || 0,
-    otPerSlot: Number(payFormula?.otPerSlot ?? 30000) || 0,
     otThreshold1: Number(payFormula?.otThreshold1 ?? 10),
     otThreshold2: Number(payFormula?.otThreshold2 ?? 15),
   };
@@ -2118,7 +2117,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     });
   };
   /**
-   * Dựng 1 dòng đúng công thức file Excel (BCC: I→AM, AN, AO, AP, AQ, AR, AS, AT, AU, AV, AW, AX;
+   * Dựng 1 dòng đúng công thức file Excel (BCC: I→AM, AN, AO, AP, AQ, AR, AS, AT, AU, AW, AX;
    * Payment: G, I, J, K, L, M=SUM(H:L), Q=M−N, R=Q−O−P).
    */
   const xlBuildRow = (r: any) => {
@@ -2148,15 +2147,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const AS = tvShiftH; // giờ TV (chia theo giai đoạn từng ca: trước official_date)
     const AT = ctShiftH; // giờ CT
     const AU = AS * xlFormula.rateTV + AT * xlFormula.rateCT; // TỔNG LƯƠNG (BCC)
-    const AV = AQ * xlFormula.otPerSlot; // PHỤ CẤP
     const inp = (payInputs || {})[r.employeeId] || {};
     const bonusExtra = Number(inp.bonus_extra) || 0;
     const AW = (Number(r?.bonus) || 0) + bonusExtra; // BONUS
-    const AX = AU + AV + AW; // TỔNG NHẬN (BCC)
+    const AX = AU + AW; // TỔNG NHẬN (BCC, đã bỏ phụ cấp)
     // Payment
     const luongCB = Number(inp.luong_cb) || 0;
     const otExtra = Number(inp.ot_extra) || 0;
-    const tongCong = luongCB + AV + AU + otExtra + AW; // M=SUM(H:L)
+    const tongCong = luongCB + AU + otExtra + AW; // M=SUM(H:L), đã bỏ phụ cấp
     const truKpi = Number(inp.tru_kpi) || 0;
     const deduction = Number(r?.deduction) || 0; // phạt trễ/vắng realtime (web cộng thêm so với Excel)
     const tongLuong = tongCong - truKpi - deduction; // Q=M−N
@@ -2164,25 +2162,24 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const dp = Number(inp.dong_phuc) || 0;
     const thucLanh = tongLuong - ung - dp; // R=Q−O−P
     return {
-      ...r, dayHours, AN, AO, AP, AQ, AR, AS, AT, AU, AV, AW, AX,
+      ...r, dayHours, AN, AO, AP, AQ, AR, AS, AT, AU, AW, AX,
       luongCB, otExtra, bonusExtra, tongCong, truKpi, deduction, tongLuong, ung, dp, thucLanh,
       note: String(inp.note || ''),
     };
   };
   /**
-   * Các bước tính lương realtime của 1 NV theo đúng công thức Excel của Kế toán:
-   * B1 Lương giờ = giờ đủ công × đơn giá (TV/CT theo diện) • B2 PC-OT = suất OT × giá suất
-   * (ngày ≥T1 giờ = 1 suất, ≥T2 giờ = 2 suất) • B3 TỔNG CỘNG = LCB + PC-OT + lương giờ + OT thêm + Bonus
-   * B4 TỔNG LƯƠNG = TỔNG CỘNG − KPI − phạt trễ/vắng • B5 THỰC LÃNH = TỔNG LƯƠNG − Ứng − Đồng phục.
+   * Các bước tính lương realtime của 1 NV theo đúng công thức Excel của Kế toán
+   * (đã bỏ hoàn toàn phụ cấp OT):
+   * B1 Lương giờ = giờ đủ công × đơn giá (TV/CT theo diện)
+   * B2 TỔNG CỘNG = LCB + lương giờ + OT thêm + Bonus
+   * B3 TỔNG LƯƠNG = TỔNG CỘNG − KPI − phạt trễ/vắng
+   * B4 THỰC LÃNH = TỔNG LƯƠNG − Ứng − Đồng phục.
    */
   const calcLivePayslip = (row: any, formula: any, input: any) => {
     const vnd = (n: any) => `${Number(n || 0).toLocaleString('vi-VN')}đ`;
     const f = {
       rateTV: Number(formula?.rateTV ?? 21000) || 0,
       rateCT: Number(formula?.rateCT ?? 25500) || 0,
-      otPerSlot: Number(formula?.otPerSlot ?? 30000) || 0,
-      otThreshold1: Number(formula?.otThreshold1 ?? 10),
-      otThreshold2: Number(formula?.otThreshold2 ?? 15),
     };
     const tvH = Number((row as any)?.tv_hours ?? (row as any)?.tvHours) || 0;
     const ctH = Number((row as any)?.ct_hours ?? (row as any)?.ctHours) || 0;
@@ -2193,19 +2190,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const rate = hasSplit ? 0 : (isProb ? f.rateTV : f.rateCT);
     const hours = hasSplit ? tvH + ctH : (Number(row?.hours) || 0);
     const standardPay = hasSplit ? tvP + ctP : (Number(row?.standardPay ?? hours * rate) || 0);
-    // Suất OT theo ngày từ chi tiết ca realtime (mirror backend calculateFormulaPayroll).
-    const dayHours = new Map<string, number>();
-    for (const s of (row?.shifts || [])) {
-      if (String((s as any)?.status || '') !== 'DU') continue;
-      const d = String((s as any)?.date || '');
-      dayHours.set(d, (dayHours.get(d) || 0) + (Number((s as any)?.hours) || 0));
-    }
-    let otSlots = 0;
-    for (const h of dayHours.values()) {
-      if (h >= f.otThreshold2) otSlots += 2;
-      else if (h >= f.otThreshold1) otSlots += 1;
-    }
-    const phuCapOT = otSlots * f.otPerSlot;
     const luongCB = Number(input?.luong_cb) || 0;
     const otExtra = Number(input?.ot_extra) || 0;
     const bonusExtra = Number(input?.bonus_extra) || 0;
@@ -2215,19 +2199,18 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const kpi = Number(input?.tru_kpi) || 0;
     const dp = Number(input?.dong_phuc) || 0;
     const deduction = Number(row?.deduction) || 0;
-    const tongCong = luongCB + phuCapOT + standardPay + otExtra + bonusTotal;
+    const tongCong = luongCB + standardPay + otExtra + bonusTotal;
     const tongLuong = tongCong - kpi - deduction;
     const thucLanh = tongLuong - ung - dp;
     return {
-      rate, isProb, hours, standardPay, otSlots, phuCapOT,
+      rate, isProb, hours, standardPay,
       luongCB, otExtra, bonusSys, bonusExtra, bonusTotal, ung, kpi, dp, deduction,
       tongCong, tongLuong, thucLanh, vnd,
       steps: [
         { k: 'B1', label: hasSplit ? `Lương giờ = TV ${tvH} giờ × ${vnd(f.rateTV).replace('đ', '')}/h + CT ${ctH} giờ × ${vnd(f.rateCT).replace('đ', '')}/h` : `Lương giờ = ${hours} giờ đủ công × ${vnd(rate).replace('đ', '')}/h (${isProb ? 'thử việc' : 'chính thức'})`, value: standardPay },
-        { k: 'B2', label: `Phụ cấp OT = ${otSlots} suất × ${vnd(f.otPerSlot).replace('đ', '')} (ngày ≥${f.otThreshold1}h = 1 suất, ≥${f.otThreshold2}h = 2 suất)`, value: phuCapOT },
-        { k: 'B3', label: `TỔNG CỘNG = LCB ${vnd(luongCB)} + PC-OT ${vnd(phuCapOT)} + giờ ${vnd(standardPay)} + OT thêm ${vnd(otExtra)} + Bonus ${vnd(bonusTotal)}`, value: tongCong },
-        { k: 'B4', label: `TỔNG LƯƠNG = TỔNG CỘNG ${vnd(tongCong)} − KPI ${vnd(kpi)} − phạt trễ/vắng ${vnd(deduction)}`, value: tongLuong },
-        { k: 'B5', label: `THỰC LÃNH = TỔNG LƯƠNG ${vnd(tongLuong)} − Ứng ${vnd(ung)} − Đồng phục ${vnd(dp)}`, value: thucLanh },
+        { k: 'B2', label: `TỔNG CỘNG = LCB ${vnd(luongCB)} + giờ ${vnd(standardPay)} + OT thêm ${vnd(otExtra)} + Bonus ${vnd(bonusTotal)}`, value: tongCong },
+        { k: 'B3', label: `TỔNG LƯƠNG = TỔNG CỘNG ${vnd(tongCong)} − KPI ${vnd(kpi)} − phạt trễ/vắng ${vnd(deduction)}`, value: tongLuong },
+        { k: 'B4', label: `THỰC LÃNH = TỔNG LƯƠNG ${vnd(tongLuong)} − Ứng ${vnd(ung)} − Đồng phục ${vnd(dp)}`, value: thucLanh },
       ],
     };
   };
@@ -11774,7 +11757,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                           ⇄ Đổi/nhường ca: {relSwap ? (
                                             <span>
                                               <strong>{empNameOf(relSwap.requester_id)} → {relSwap.target_employee_id ? empNameOf(relSwap.target_employee_id) : 'mở cả chi nhánh'}</strong><br />
-                                              Loại: {isDispatch ? 'HR điều phối' : 'NV tự tráo (không phụ cấp)'} • Trạng thái: <strong>{relSwap.status}</strong><br />
+                                              Loại: {isDispatch ? 'HR điều phối' : 'NV tự tráo'} • Trạng thái: <strong>{relSwap.status}</strong><br />
                                               <span style={{ color: 'var(--text-muted)' }}>Phiếu {relSwap.swap_id} • gửi {relSwap.created_at ? new Date(relSwap.created_at).toLocaleString('vi-VN') : '?'}</span>
                                             </span>
                                           ) : 'Không có'}
@@ -13542,7 +13525,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         showToast('Kỳ lương phải dạng YYYY-MM (VD: 2026-09)!');
         return;
       }
-      if (!window.confirm(`Tính lương tháng ${period} cho ${branchScope === '*' ? 'toàn hệ thống' : branchName}?\nCông thức: giờ PUBLISHED đủ in+out × đơn giá + PC-OT + bonus nhập tay − phạt trễ/vắng.`)) return;
+      if (!window.confirm(`Tính lương tháng ${period} cho ${branchScope === '*' ? 'toàn hệ thống' : branchName}?\nCông thức: giờ PUBLISHED đủ in+out × đơn giá + bonus nhập tay − phạt trễ/vắng.`)) return;
       setPayCalcBusy(true);
       try {
         const res = await apiRequest(`/payroll/${period}/calculate`, {
@@ -13565,7 +13548,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         showToast('Kỳ lương phải dạng YYYY-MM (VD: 2026-09)!');
         return;
       }
-      if (!window.confirm(`Tính lương tháng ${period} theo CÔNG THỨC EXCEL cho ${branchScope === '*' ? 'toàn hệ thống' : branchName}?\nTỔNG CỘNG = LCB + PC_OT + giờ + OT thêm + Bonus; THỰC LÃNH = TỔNG CỘNG − KPI − phạt − Ứng − Đồng phục.`)) return;
+      if (!window.confirm(`Tính lương tháng ${period} theo CÔNG THỨC EXCEL cho ${branchScope === '*' ? 'toàn hệ thống' : branchName}?\nTỔNG CỘNG = LCB + giờ + OT thêm + Bonus; THỰC LÃNH = TỔNG CỘNG − KPI − phạt − Ứng − Đồng phục.`)) return;
       setPayCalcBusy(true);
       try {
         const res = await apiRequest(`/payroll/${period}/calculate-formula`, {
@@ -13595,7 +13578,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           body: JSON.stringify({
             rateTV: Number(payFormula?.rateTV) || 0,
             rateCT: Number(payFormula?.rateCT) || 0,
-            otPerSlot: Number(payFormula?.otPerSlot) || 0,
             otThreshold1: Number(payFormula?.otThreshold1 ?? 10),
             otThreshold2: Number(payFormula?.otThreshold2 ?? 15),
           }),
@@ -13701,7 +13683,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <div style={{ fontSize: '14px', fontWeight: 800 }}>Công thức chuẩn hệ thống</div>
           </div>
           <div style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '8px 0 12px', lineHeight: 1.6 }}>
-            (giờ PUBLISHED đủ in+out × đơn giá) + PC-OT + bonus nhập tay − phạt trễ (30k/50%/100%) − ca vắng không lương.
+            (giờ PUBLISHED đủ in+out × đơn giá) + bonus nhập tay − phạt trễ (30k/50%/100%) − ca vắng không lương.
           </div>
           <button className="btn-primary" disabled={payCalcBusy} onClick={doCalculate}>
             {payCalcBusy ? 'Đang tính...' : `Tính Lương (${branchScope === '*' ? 'toàn hệ thống' : branchName})`}
@@ -13715,16 +13697,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <div style={{ fontSize: '14px', fontWeight: 800 }}>📐 Công thức lương theo file Excel <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(lưu theo kỳ, tính cho toàn bộ NV)</span></div>
           </div>
           <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px', lineHeight: 1.6 }}>
-            TỔNG CỘNG = Lương CB (tay) + Phụ cấp OT + Lương giờ + OT thêm (tay) + Bonus • TỔNG LƯƠNG = TỔNG CỘNG − KPI (tay) − phạt trễ/vắng •
-            THỰC LÃNH = TỔNG LƯƠNG − Ứng − Đồng phục. Ngày ≥ <strong>{payFormula?.otThreshold1 ?? 10}h</strong> = 1 suất OT, ≥ <strong>{payFormula?.otThreshold2 ?? 15}h</strong> = 2 suất.
+            TỔNG CỘNG = Lương CB (tay) + Lương giờ + OT thêm (tay) + Bonus • TỔNG LƯƠNG = TỔNG CỘNG − KPI (tay) − phạt trễ/vắng •
+            THỰC LÃNH = TỔNG LƯƠNG − Ứng − Đồng phục. Ngày ≥ <strong>{payFormula?.otThreshold1 ?? 10}h</strong> là ngày tăng ca 1, ≥ <strong>{payFormula?.otThreshold2 ?? 15}h</strong> là ngày tăng ca 2 (chỉ để thống kê).
           </div>
           <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
             {[
               { k: 'rateTV', label: 'Đơn giá TV (đ/h)' },
               { k: 'rateCT', label: 'Đơn giá CT (đ/h)' },
-              { k: 'otPerSlot', label: 'Tiền 1 suất OT (đ)' },
-              { k: 'otThreshold1', label: 'Ngưỡng 1 suất (h)' },
-              { k: 'otThreshold2', label: 'Ngưỡng 2 suất (h)' },
+              { k: 'otThreshold1', label: 'Ngưỡng tăng ca 1 (h)' },
+              { k: 'otThreshold2', label: 'Ngưỡng tăng ca 2 (h)' },
             ].map(f => (
               <label key={f.k} style={{ fontSize: '12px', fontWeight: 700 }}>{f.label}
                 <input
@@ -13824,20 +13805,19 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
                   <th style={{ padding: '10px 14px' }}>Nhân viên</th>
                   <th style={{ padding: '10px 14px' }}>B1 Lương giờ</th>
-                  <th style={{ padding: '10px 14px' }}>B2 PC-OT</th>
-                  <th style={{ padding: '10px 14px' }}>B3 Tổng cộng</th>
-                  <th style={{ padding: '10px 14px' }}>B4 Tổng lương</th>
-                  <th style={{ padding: '10px 14px' }}>B5 Thực lãnh</th>
+                  <th style={{ padding: '10px 14px' }}>B2 Tổng cộng</th>
+                  <th style={{ padding: '10px 14px' }}>B3 Tổng lương</th>
+                  <th style={{ padding: '10px 14px' }}>B4 Thực lãnh</th>
                 </tr>
               </thead>
               <tbody>
                 {finSheetLoading ? (
-                  <tr><td colSpan={6} style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)' }}>Đang đồng bộ chấm công realtime...</td></tr>
+                  <tr><td colSpan={5} style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)' }}>Đang đồng bộ chấm công realtime...</td></tr>
                 ) : ((() => {
                   const calcPeriod = (payCalcPeriod || '').trim();
                   const calcRows: any[] = finSheet?.period === calcPeriod ? (finSheet?.rows || []) : [];
                   if (calcRows.length === 0) return (
-                  <tr><td colSpan={6} style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)' }}>Kỳ này chưa có ca phân công nào — các bước tính sẽ hiện sau khi có chấm công.</td></tr>
+                  <tr><td colSpan={5} style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)' }}>Kỳ này chưa có ca phân công nào — các bước tính sẽ hiện sau khi có chấm công.</td></tr>
                   );
                   return (
                   calcRows.flatMap((r: any) => {
@@ -13847,7 +13827,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       <tr key={r.employeeId} style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer', backgroundColor: open ? '#F0FDF4' : undefined }} onClick={() => setCalcExpandId(open ? null : r.employeeId)}>
                         <td style={{ padding: '10px 14px', fontWeight: 700 }}>{open ? '▼ ' : '▶ '}{r.fullName}<div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 400 }}>{r.employeeCode} • {r.hours}h đủ công • {r.full}/{r.totalShifts} ca</div></td>
                         <td style={{ padding: '10px 14px' }}>{c.vnd(c.standardPay)}</td>
-                        <td style={{ padding: '10px 14px' }}>{c.vnd(c.phuCapOT)}<div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{c.otSlots} suất</div></td>
                         <td style={{ padding: '10px 14px', fontWeight: 700 }}>{c.vnd(c.tongCong)}</td>
                         <td style={{ padding: '10px 14px', fontWeight: 700 }}>{c.vnd(c.tongLuong)}</td>
                         <td style={{ padding: '10px 14px', fontWeight: 800, color: '#059669' }}>{c.vnd(c.thucLanh)}</td>
@@ -13856,11 +13835,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     if (!open) return [main];
                     return [main, (
                       <tr key={`${r.employeeId}-steps`} style={{ borderBottom: '1px solid var(--border)', backgroundColor: '#F8FAFC' }}>
-                        <td colSpan={6} style={{ padding: '8px 14px 14px 38px' }}>
+                        <td colSpan={5} style={{ padding: '8px 14px 14px 38px' }}>
                           {c.steps.map(s => (
                             <div key={s.k} style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', padding: '6px 0', borderBottom: '1px dashed var(--border)', fontSize: '12px', flexWrap: 'wrap' }}>
                               <span><strong style={{ color: '#059669' }}>{s.k}.</strong> {s.label}</span>
-                              <strong style={{ color: s.k === 'B5' ? '#059669' : undefined }}>= {c.vnd(s.value)}</strong>
+                              <strong style={{ color: s.k === 'B4' ? '#059669' : undefined }}>= {c.vnd(s.value)}</strong>
                             </div>
                           ))}
                           <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>Số nhập tay (LCB/OT thêm/Bonus/Ứng/KPI/Đồng phục) lấy từ B3 kỳ này • phạt trễ/vắng và giờ công từ chấm công realtime đã đối soát.</div>
@@ -13885,10 +13864,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       ['Đơn giá', (p: any) => vnd0(p.rate_snapshot)],
       ['Lương giờ', (p: any) => vnd0(p.standard_pay)],
       ['Lương CB', (p: any) => vnd0(p.luong_cb)],
-      ['PC-OT', (p: any) => `${vnd0(p.phu_cap_ot ?? p.allowance)}${p.ot_slots ? ` (${p.ot_slots} suất)` : ''}`],
       ['OT+ thêm', (p: any) => vnd0(p.ot_extra)],
       ['Bonus', (p: any) => vnd0(p.bonus)],
-      ['Tổng cộng', (p: any) => vnd0(p.tong_cong ?? ((p.luong_cb || 0) + (p.phu_cap_ot ?? p.allowance ?? 0) + (p.standard_pay || 0) + (p.ot_extra || 0) + (p.bonus || 0)))],
+      ['Tổng cộng', (p: any) => vnd0(p.tong_cong ?? ((p.luong_cb || 0) + (p.standard_pay || 0) + (p.ot_extra || 0) + (p.bonus || 0)))],
       ['KPI + phạt', (p: any) => vnd0((p.tru_kpi || 0) + (p.deduction || 0))],
       ['Ứng', (p: any) => vnd0(p.ung_luong)],
       ['Trừ ĐP', (p: any) => vnd0(p.dong_phuc)],
@@ -13899,7 +13877,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         <FinHead
           icon="🔎"
           title="5. Chi Tiết Bảng Lương Từng Nhân Viên"
-          sub="Breakdown đầy đủ giờ, lương, phụ cấp, thưởng, phạt, ứng, đồng phục theo kỳ"
+          sub="Breakdown đầy đủ giờ, lương, thưởng, phạt, ứng, đồng phục theo kỳ"
           right={<>
             <select
               onChange={e => loadPayRunDetail(e.target.value)}
@@ -13928,7 +13906,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               <tbody>
                 {slips.length === 0 ? (
                   <tr>
-                    <td colSpan={14} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    <td colSpan={13} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
                       Kỳ này chưa có phiếu lương nào.
                     </td>
                   </tr>
@@ -13965,10 +13943,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       ['Giờ', (p: any) => `${p.standard_hours || 0}h / ${p.total_shifts || 0} ca`],
       ['Lương giờ', (p: any) => vnd0(p.standard_pay)],
       ['Lương CB', (p: any) => vnd0(p.luong_cb)],
-      ['PC-OT', (p: any) => `${vnd0(p.phu_cap_ot ?? p.allowance)}${p.ot_slots ? ` (${p.ot_slots} suất)` : ''}`],
       ['OT+ thêm', (p: any) => vnd0(p.ot_extra)],
       ['Bonus', (p: any) => vnd0(p.bonus)],
-      ['Tổng cộng', (p: any) => vnd0(p.tong_cong ?? ((p.luong_cb || 0) + (p.phu_cap_ot ?? p.allowance ?? 0) + (p.standard_pay || 0) + (p.ot_extra || 0) + (p.bonus || 0)))],
+      ['Tổng cộng', (p: any) => vnd0(p.tong_cong ?? ((p.luong_cb || 0) + (p.standard_pay || 0) + (p.ot_extra || 0) + (p.bonus || 0)))],
       ['KPI + phạt', (p: any) => vnd0((p.tru_kpi || 0) + (p.deduction || 0))],
       ['Ứng', (p: any) => vnd0(p.ung_luong)],
       ['Trừ ĐP', (p: any) => vnd0(p.dong_phuc)],
@@ -14217,10 +14194,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   {[
                     ['Lương theo giờ', vnd0(viewSlipModal.standard_pay)],
                     ['Lương cơ bản', vnd0(viewSlipModal.luong_cb)],
-                    ['Phụ cấp OT', `${vnd0(viewSlipModal.phu_cap_ot ?? viewSlipModal.allowance)}${viewSlipModal.ot_slots ? ` (${viewSlipModal.ot_slots} suất)` : ''}`],
                     ['OT thêm', vnd0(viewSlipModal.ot_extra)],
                     ['Bonus / Thưởng', vnd0(viewSlipModal.bonus)],
-                    ['Tổng cộng', vnd0(viewSlipModal.tong_cong ?? ((viewSlipModal.luong_cb || 0) + (viewSlipModal.phu_cap_ot ?? viewSlipModal.allowance ?? 0) + (viewSlipModal.standard_pay || 0) + (viewSlipModal.ot_extra || 0) + (viewSlipModal.bonus || 0)))],
+                    ['Tổng cộng', vnd0(viewSlipModal.tong_cong ?? ((viewSlipModal.luong_cb || 0) + (viewSlipModal.standard_pay || 0) + (viewSlipModal.ot_extra || 0) + (viewSlipModal.bonus || 0)))],
                     ['Trừ KPI / Phạt', `−${vnd0((viewSlipModal.tru_kpi || 0) + (viewSlipModal.deduction || 0))}`],
                     ['Ứng lương', `−${vnd0(viewSlipModal.ung_luong)}`],
                     ['Trừ đồng phục', `−${vnd0(viewSlipModal.dong_phuc)}`],
@@ -14378,8 +14354,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
   // =========================================================================
   // NHÓM TAB MIRROR FILE EXCEL LƯƠNG (BCC + Payment + Khấu trừ)
-  // Công thức giữ nguyên 100% file: AN=SUM giờ ngày, AO/AP=COUNT, AQ=COUNTIFS(>=T1)+COUNTIFS(>=T2),
-  // AU=TV*rateTV+CT*rateCT, AV=AQ*giá suất, M=SUM(H:L), Q=M−N, R=Q−O−P.
+  // Công thức giữ nguyên file (đã bỏ phụ cấp OT): AN=SUM giờ ngày, AO/AP=COUNT,
+  // AQ=COUNTIFS(>=T1)+COUNTIFS(>=T2), AU=TV*rateTV+CT*rateCT, M=LCB+giờ+OT+Bonus,
+  // Q=M−N, R=Q−O−P.
   // =========================================================================
   if (activeTab === 'fin-bcc' || activeTab === 'fin-payroll-sheet' || activeTab === 'fin-deductions') {
     const vnd = (n: any) => `${Number(n || 0).toLocaleString('vi-VN')}đ`;
@@ -14409,7 +14386,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           <FinHead
             icon="📆"
             title="8. BCC — Bảng Chấm Công Ngày (như sheet BCC)"
-            sub={`Giờ từng ngày 01→cuối tháng ${xlMonth} • AN=Σ giờ • AO/AP=số ngày công • AQ=ngày ≥${xlFormula.otThreshold1}h + ngày ≥${xlFormula.otThreshold2}h • AU=TV×${xlFormula.rateTV.toLocaleString('vi-VN')}+CT×${xlFormula.rateCT.toLocaleString('vi-VN')} • AV=AQ×${xlFormula.otPerSlot.toLocaleString('vi-VN')}`}
+            sub={`Giờ từng ngày 01→cuối tháng ${xlMonth} • AN=Σ giờ • AO/AP=số ngày công • AQ=ngày ≥${xlFormula.otThreshold1}h + ngày ≥${xlFormula.otThreshold2}h • AU=TV×${xlFormula.rateTV.toLocaleString('vi-VN')}+CT×${xlFormula.rateCT.toLocaleString('vi-VN')}`}
             right={xlControls}
           />
           <div style={{ backgroundColor: 'var(--surface)', borderRadius: '14px', border: '1px solid var(--border)', overflowX: 'auto', boxShadow: '0 4px 14px rgba(15,23,42,0.06)' }}>
@@ -14419,7 +14396,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <th style={{ padding: '10px 14px', position: 'sticky', left: 0, backgroundColor: 'var(--bg)', zIndex: 2, textAlign: 'left' }}>Nhân viên</th>
                   {dayCols.map(d => <th key={d} style={{ padding: '10px 4px', minWidth: '44px' }}>{d}</th>)}
                   {th('AN', 'tổng giờ')}{th('AO', 'ngày công')}{th('AP', 'số ca')}{th('AQ', 'tăng ca')}{th('AR', 'tổng ca')}
-                  {th('AS', `TV ${xlFormula.rateTV / 1000}K`)}{th('AT', 'CT 25.5K')}{th('AU', 'lương giờ')}{th('AV', 'phụ cấp')}{th('AW', 'bonus')}{th('AX', 'tổng nhận')}
+                  {th('AS', `TV ${xlFormula.rateTV / 1000}K`)}{th('AT', 'CT 25.5K')}{th('AU', 'lương giờ')}{th('AW', 'bonus')}{th('AX', 'tổng nhận')}
                 </tr>
               </thead>
               <tbody>
@@ -14445,7 +14422,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     <td style={{ padding: '8px' }}>{r.AS}</td>
                     <td style={{ padding: '8px' }}>{r.AT}</td>
                     <td style={{ padding: '8px', fontWeight: 700 }}>{vnd(r.AU)}</td>
-                    <td style={{ padding: '8px' }}>{vnd(r.AV)}</td>
                     <td style={{ padding: '8px' }}>{vnd(r.AW)}</td>
                     <td style={{ padding: '8px', fontWeight: 800, color: '#059669' }}>{vnd(r.AX)}</td>
                   </tr>
@@ -14469,7 +14445,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     <td style={{ padding: '10px 8px' }}>{sum('AS')}</td>
                     <td style={{ padding: '10px 8px' }}>{sum('AT')}</td>
                     <td style={{ padding: '10px 8px', fontWeight: 700 }}>{vnd(sum('AU'))}</td>
-                    <td style={{ padding: '10px 8px' }}>{vnd(sum('AV'))}</td>
                     <td style={{ padding: '10px 8px' }}>{vnd(sum('AW'))}</td>
                     <td style={{ padding: '10px 8px', fontWeight: 800, color: '#059669' }}>{vnd(sum('AX'))}</td>
                   </tr>
@@ -14487,7 +14462,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           <FinHead
             icon="💵"
             title="9. Payment — Bảng Lương (như sheet Payment)"
-            sub={`Kỳ ${xlMonth} • M=TỔNG CỘNG (LCB+PC+giờ+OT+Bonus) • Q=Tổng lương (M−KPI−phạt) • R=Thực lãnh (Q−Ứng−ĐP) • cột N gồm KPI (sheet PHẠT KPI) + phạt trễ/vắng realtime`}
+            sub={`Kỳ ${xlMonth} • M=TỔNG CỘNG (LCB+giờ+OT+Bonus) • Q=Tổng lương (M−KPI−phạt) • R=Thực lãnh (Q−Ứng−ĐP) • cột N gồm KPI (sheet PHẠT KPI) + phạt trễ/vắng realtime`}
             right={xlControls}
           />
           <div style={{ backgroundColor: 'var(--surface)', borderRadius: '14px', border: '1px solid var(--border)', overflowX: 'auto', boxShadow: '0 4px 14px rgba(15,23,42,0.06)' }}>
@@ -14502,7 +14477,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <th style={{ padding: '10px 12px' }}>F. Mức lương</th>
                   <th style={{ padding: '10px 12px' }}>G. Công (giờ)</th>
                   <th style={{ padding: '10px 12px' }}>H. Lương CB</th>
-                  <th style={{ padding: '10px 12px' }}>I. Phụ cấp</th>
                   <th style={{ padding: '10px 12px' }}>J. Lương giờ</th>
                   <th style={{ padding: '10px 12px' }}>K. OT</th>
                   <th style={{ padding: '10px 12px' }}>L. Bonus</th>
@@ -14516,9 +14490,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </thead>
               <tbody>
                 {finSheetLoading ? (
-                  <tr><td colSpan={18} style={{ padding: '28px', textAlign: 'center', color: 'var(--text-muted)' }}>Đang đồng bộ...</td></tr>
+                  <tr><td colSpan={17} style={{ padding: '28px', textAlign: 'center', color: 'var(--text-muted)' }}>Đang đồng bộ...</td></tr>
                 ) : built.length === 0 ? (
-                  <tr><td colSpan={18} style={{ padding: '28px', textAlign: 'center', color: 'var(--text-muted)' }}>Kỳ {xlMonth} chưa có ca phân công nào.</td></tr>
+                  <tr><td colSpan={17} style={{ padding: '28px', textAlign: 'center', color: 'var(--text-muted)' }}>Kỳ {xlMonth} chưa có ca phân công nào.</td></tr>
                 ) : built.map((r: any) => (
                   <tr key={r.employeeId} style={{ borderBottom: '1px solid var(--border)' }}>
                     <td style={{ padding: '9px 12px', fontSize: '11px' }}>{getDisplayBranch(r.branchId, r.group)}</td>
@@ -14529,7 +14503,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     <td style={{ padding: '9px 12px' }}>{vnd(r.rate).replace('đ', '')}/h</td>
                     <td style={{ padding: '9px 12px', fontWeight: 700 }}>{r.AN}</td>
                     <td style={{ padding: '9px 12px' }}>{vnd(r.luongCB)}</td>
-                    <td style={{ padding: '9px 12px' }}>{vnd(r.AV)}</td>
                     <td style={{ padding: '9px 12px' }}>{vnd(r.AU)}</td>
                     <td style={{ padding: '9px 12px' }}>{vnd(r.otExtra)}</td>
                     <td style={{ padding: '9px 12px' }}>{vnd(r.AW)}</td>
@@ -14548,7 +14521,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     <td style={{ padding: '10px 12px' }}></td>
                     <td style={{ padding: '10px 12px' }}>{sum('AN')}h</td>
                     <td style={{ padding: '10px 12px' }}>{vnd(sum('luongCB'))}</td>
-                    <td style={{ padding: '10px 12px' }}>{vnd(sum('AV'))}</td>
                     <td style={{ padding: '10px 12px' }}>{vnd(sum('AU'))}</td>
                     <td style={{ padding: '10px 12px' }}>{vnd(sum('otExtra'))}</td>
                     <td style={{ padding: '10px 12px' }}>{vnd(sum('AW'))}</td>
@@ -15749,7 +15721,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{profIncomeBusy ? 'Đang tải thu nhập realtime...' : 'Chưa tải được thu nhập (mất mạng?) — bấm tab khác rồi quay lại.'}</div>
                     )}
                   </div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Số chính thức theo phiếu lương Finance (tab lương). Chưa có chính sách phụ cấp/hoa hồng sales trên hệ thống.</div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Số chính thức theo phiếu lương Finance (tab lương). Chưa có chính sách hoa hồng sales trên hệ thống.</div>
                 </div>
               </div>
             )}

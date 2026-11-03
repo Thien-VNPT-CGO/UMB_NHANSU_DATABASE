@@ -483,10 +483,12 @@ export const payrollCalculateBody = z.object({
 });
 
 // Công thức lương 1 kỳ (lưu từ file Excel của Kế toán).
+// otPerSlot là trường legacy đã bỏ phụ cấp OT — vẫn nhận (mặc định 0) để không
+// làm hỏng client cũ, nhưng service luôn lưu 0 và không dùng để tính lương.
 export const payrollFormulaBody = z.object({
   rateTV: z.coerce.number().int().min(0).max(10_000_000),
   rateCT: z.coerce.number().int().min(0).max(10_000_000),
-  otPerSlot: z.coerce.number().int().min(0).max(10_000_000),
+  otPerSlot: z.coerce.number().int().min(0).max(10_000_000).default(0),
   otThreshold1: z.coerce.number().min(0).max(24).default(10),
   otThreshold2: z.coerce.number().min(0).max(24).default(15),
 }).passthrough();

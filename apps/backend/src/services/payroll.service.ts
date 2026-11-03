@@ -430,21 +430,22 @@ export class PayrollService {
   // --- Công thức lương theo file Excel (Finance) ---
   async getFormula(period: string) {
     const saved = await this.repo.getPayrollFormula(period).catch(() => null);
-    return { period, ...DEFAULT_PAYROLL_FORMULA, ...(saved || {}) };
+    // otPerSlot là trường legacy (đã bỏ phụ cấp OT) — luôn trả 0 để không
+    // nơi nào đọc lại đơn giá suất cũ và vô tình tính phụ cấp.
+    return { period, ...DEFAULT_PAYROLL_FORMULA, ...(saved || {}), otPerSlot: 0 };
   }
 
   async saveFormula(period: string, data: any, actorId: string) {
     const rateTV = Math.max(0, Math.floor(Number(data.rateTV)));
     const rateCT = Math.max(0, Math.floor(Number(data.rateCT)));
-    const otPerSlot = Math.max(0, Math.floor(Number(data.otPerSlot)));
     const t1 = Number(data.otThreshold1);
     const t2 = Number(data.otThreshold2);
-    if (![rateTV, rateCT, otPerSlot].every(Number.isFinite)) throw new Error('INVALID_FORMULA: đơn giá phải là số!');
+    if (![rateTV, rateCT].every(Number.isFinite)) throw new Error('INVALID_FORMULA: đơn giá phải là số!');
     if (!Number.isFinite(t1) || !Number.isFinite(t2) || t1 < 0 || t2 <= t1 || t2 > 24) {
-      throw new Error('INVALID_FORMULA: ngưỡng OT phải 0 ≤ T1 < T2 ≤ 24!');
+      throw new Error('INVALID_FORMULA: ngưỡng tăng ca phải 0 ≤ T1 < T2 ≤ 24!');
     }
     return this.repo.savePayrollFormula({
-      period, rateTV, rateCT, otPerSlot, otThreshold1: t1, otThreshold2: t2, updatedBy: actorId,
+      period, rateTV, rateCT, otPerSlot: 0, otThreshold1: t1, otThreshold2: t2, updatedBy: actorId,
     });
   }
 
@@ -470,11 +471,10 @@ export class PayrollService {
   }
 
   /**
-   * Tính lương theo công thức Excel cho toàn bộ NV:
-   * TỔNG CỘNG = LCB(tay) + PC_OT + Lương giờ + OT thêm(tay) + Bonus
+   * Tính lương theo công thức Excel cho toàn bộ NV (đã bỏ hoàn toàn phụ cấp OT):
+   * TỔNG CỘNG = LCB(tay) + Lương giờ + OT thêm(tay) + Bonus
    * TỔNG LƯƠNG = TỔNG CỘNG − KPI(tay) − phạt trễ/vắng
    * THỰC LÃNH = TỔNG LƯƠNG − Ứng − Đồng phục
-   * (PC_OT = suất OT × đơn giá; ngày ≥T1 giờ = 1 suất, ≥T2 giờ = 2 suất)
    */
   async calculateFormulaPayroll(period: string, branchScope = '*', creatorId: string) {
     const runId = `PAY_${period.replace('-', '_')}_${Date.now()}`;
@@ -544,7 +544,6 @@ export class PayrollService {
           let ctHours = 0;
           let ctPay = 0;
           let deduction = 0;
-          const dayHours = new Map<string, number>();
           for (const s of publishedShifts) {
             const dayEvents = await eventsOf(s.date);
             const dayLiveIds = dayLiveIdsOf(s.date);
@@ -588,17 +587,9 @@ export class PayrollService {
             standardPay += shiftPay;
             if (dayRate.stage === 'TV') { tvHours += hours; tvPay += shiftPay; }
             else { ctHours += hours; ctPay += shiftPay; }
-            dayHours.set(s.date, (dayHours.get(s.date) || 0) + hours);
             if (deductAmt > 0) deduction += deductAmt;
           }
-          // Suất OT theo ngày (Excel COUNTIFS): >=T2 giờ = 2 suất, >=T1 giờ = 1 suất.
-          let otSlots = 0;
-          for (const h of dayHours.values()) {
-            if (h >= formula.otThreshold2) otSlots += 2;
-            else if (h >= formula.otThreshold1) otSlots += 1;
-          }
-          const phuCapOT = otSlots * formula.otPerSlot;
-          // Đã bỏ phụ cấp HR điều phối nhường ca — bonus chỉ còn phần nhập tay.
+          // Đã bỏ hoàn toàn phụ cấp OT và phụ cấp HR điều phối — bonus chỉ còn phần nhập tay.
           const inp: any = inputs.get(emp.employee_id) || {};
           const luongCB = Number(inp.luong_cb) || 0;
           const otExtra = Number(inp.ot_extra) || 0;
@@ -607,7 +598,7 @@ export class PayrollService {
           const kpi = Number(inp.tru_kpi) || 0;
           const dp = Number(inp.dong_phuc) || 0;
           const bonusTotal = bonusExtra;
-          const tongCong = luongCB + phuCapOT + standardPay + otExtra + bonusTotal;
+          const tongCong = luongCB + standardPay + otExtra + bonusTotal;
           const tongLuong = tongCong - kpi - deduction;
           const thucLanh = tongLuong - ung - dp;
 
@@ -630,12 +621,13 @@ export class PayrollService {
             tv_pay: tvPay,
             ct_hours: ctHours,
             ct_pay: ctPay,
-            allowance: phuCapOT,
+            // Legacy: giữ trường để phiếu cũ đọc được, nhưng luôn ghi 0.
+            allowance: 0,
             bonus: bonusTotal,
             deduction,
             net_pay: thucLanh,
-            ot_slots: otSlots,
-            phu_cap_ot: phuCapOT,
+            ot_slots: 0,
+            phu_cap_ot: 0,
             luong_cb: luongCB,
             ot_extra: otExtra,
             bonus_extra: bonusExtra,
@@ -1297,6 +1289,61 @@ export class PayrollService {
     }
     if (updated > 0) {
       this.notifySlipsChanged('purge-legacy-dispatch-bonus', { period: period || '*', updated });
+      this.triggerSheetsPush();
+    }
+    return {
+      period: period || '*',
+      scanned: (all || []).length,
+      updated,
+      totalRemoved,
+    };
+  }
+
+  /**
+   * Bỏ hoàn toàn phụ cấp (allowance / phu_cap_ot / ot_slots) còn sót trên phiếu
+   * CHƯA chi trả/chốt (DRAFT/RECONCILED/APPROVED/PUBLISHED). Tính lại các tổng
+   * tiền từ breakdown hiện có để khớp công thức mới:
+   *   TỔNG CỘNG = luong_cb + standard_pay + ot_extra + bonus
+   *   TỔNG LƯƠNG = TỔNG CỘNG − tru_kpi − deduction
+   *   THỰC LÃNH = TỔNG LƯƠNG − ung_luong − dong_phuc
+   * Idempotent: phiếu đã sạch (allowance/phu_cap_ot/ot_slots = 0) được bỏ qua.
+   */
+  async purgeLegacyAllowance(period?: string) {
+    const all = await this.collectAllSlipsInternal();
+    const FINAL = new Set(['PAID', 'CONFIRMED']);
+    const targets = (all || []).filter(s => {
+      if (FINAL.has(String((s as any)?.status || '').toUpperCase())) return false;
+      if (period && String((s as any)?.period || '') !== period) return false;
+      return (Number((s as any)?.allowance) || 0) > 0 ||
+        (Number((s as any)?.phu_cap_ot) || 0) > 0 ||
+        (Number((s as any)?.ot_slots) || 0) > 0;
+    });
+    let updated = 0;
+    let totalRemoved = 0;
+    for (const s of targets) {
+      const num = (v: any) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+      // allowance và phu_cap_ot từng được ghi cùng 1 giá trị -> chỉ trừ 1 lần.
+      const legacyAllowance = Math.max(num((s as any)?.allowance), num((s as any)?.phu_cap_ot));
+      const tongCong = num((s as any)?.luong_cb) + num((s as any)?.standard_pay)
+        + num((s as any)?.ot_extra) + num((s as any)?.bonus);
+      const tongLuong = tongCong - num((s as any)?.tru_kpi) - num((s as any)?.deduction);
+      const thucLanh = tongLuong - num((s as any)?.ung_luong) - num((s as any)?.dong_phuc);
+      try {
+        await this.repo.updatePayslip((s as any).item_id, {
+          allowance: 0,
+          phu_cap_ot: 0,
+          ot_slots: 0,
+          tong_cong: tongCong,
+          tong_luong: tongLuong,
+          thuc_lanh: thucLanh,
+          net_pay: thucLanh,
+        } as any);
+        updated++;
+        totalRemoved += legacyAllowance;
+      } catch { /* phiếu lỗi -> bỏ qua, lần chạy sau xử lý tiếp */ }
+    }
+    if (updated > 0) {
+      this.notifySlipsChanged('purge-legacy-allowance', { period: period || '*', updated });
       this.triggerSheetsPush();
     }
     return {
