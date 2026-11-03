@@ -1228,13 +1228,15 @@ export function App() {
         }),
       });
       const bankPending = res?.bank_change_pending === true;
+      const bankReview = res?.bank_change_review;
       if (res?.employee) {
         const merged = { ...(employee || {}), ...(res.employee || {}) };
         if (!(res.employee as any)?.bank_qr_img && !(profForm.bank_qr_img)) delete (merged as any).bank_qr_img;
         setEmployee(merged as any);
         try { localStorage.setItem('ubm_emp_data', JSON.stringify(merged)); } catch {}
-        if (bankPending) {
-          // Yêu cầu đã ghi nhận nhưng STK cũ vẫn là STK đang dùng -> đưa form về STK cũ.
+        // Tự từ chối (STK trùng) hoặc còn yêu cầu cũ đang chờ -> đưa form về STK
+        // đang dùng để NV không tưởng nhầm STK mới đã được lưu.
+        if (bankPending || bankReview?.action === 'rejected') {
           setProfForm(s => ({
             ...s,
             bank_name: (res.employee as any)?.bank_name || '',
@@ -1250,9 +1252,15 @@ export function App() {
         id_card_back_img: '',
       }));
       setBankChangeRequest(res?.bank_change_request || null);
-      showToast(bankPending
-        ? '⏳ Đã gửi yêu cầu đổi STK. Hồ sơ & ảnh CCCD đã được lưu, đồng bộ lên Google Drive!'
-        : '✓ Đã cập nhật hồ sơ & ảnh CCCD! Hệ thống đã đồng bộ lên Google Drive và hiển thị về cổng Admin.');
+      if (bankReview?.action === 'rejected') {
+        showToast(`❌ ${bankReview.message || 'STK bị từ chối tự động do trùng với tài khoản khác.'}`);
+      } else if (bankReview?.action === 'approved') {
+        showToast(`✅ ${bankReview.message || 'Đã tự động duyệt STK mới!'}`);
+      } else {
+        showToast(bankPending
+          ? '⏳ Đã gửi yêu cầu đổi STK. Hồ sơ & ảnh CCCD đã được lưu, đồng bộ lên Google Drive!'
+          : '✓ Đã cập nhật hồ sơ & ảnh CCCD! Hệ thống đã đồng bộ lên Google Drive và hiển thị về cổng Admin.');
+      }
     } catch (err: any) {
       showToast(err?.message || 'Lỗi khi cập nhật hồ sơ!');
     } finally {
@@ -8134,7 +8142,7 @@ export function App() {
                 <div style={{ backgroundColor: '#FFF7ED', border: '1.5px solid #FDBA74', borderRadius: '10px', padding: '11px 13px', marginBottom: '14px', fontSize: '12px', lineHeight: 1.55 }}>
                   <div style={{ fontWeight: 900, color: '#9A3412' }}>⏳ Yêu cầu đổi số tài khoản đang chờ HR/Finance duyệt</div>
                   <div style={{ color: '#7C2D12', marginTop: '3px' }}>
-                    STK cũ vẫn được dùng để trả lương. Yêu cầu gửi lúc {new Date(bankChangeRequest.requested_at).toLocaleString('vi-VN')}; chỉ có thể duyệt sau {new Date(bankChangeRequest.apply_after).toLocaleString('vi-VN')} (giữ STK cũ đủ 48h).
+                    STK cũ vẫn được dùng để trả lương. Yêu cầu gửi lúc {new Date(bankChangeRequest.requested_at).toLocaleString('vi-VN')}; HR/Finance có thể duyệt ngay.
                   </div>
                   <div style={{ marginTop: '4px', fontWeight: 700 }}>
                     STK xin đổi: {bankChangeRequest.requested?.bank_name || '—'} • {(() => {
@@ -8322,7 +8330,7 @@ export function App() {
                 <div>
                   <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Mã QR ngân hàng (Kế toán dùng để chuyển khoản)</label>
                   <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '6px', lineHeight: 1.5 }}>
-                    Lần đầu nhập STK được lưu ngay. Từ lần đổi thứ 2, yêu cầu cần HR/Finance duyệt và giữ STK cũ 48h — payroll vẫn dùng STK cũ đến khi duyệt.
+                    STK hợp lệ được hệ thống tự duyệt ngay khi lưu. Yêu cầu đổi sang STK đã thuộc về nhân viên khác (hoặc trùng STK hiện tại) sẽ bị từ chối tự động.
                   </div>
                   {profForm.bank_qr_img ? (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>

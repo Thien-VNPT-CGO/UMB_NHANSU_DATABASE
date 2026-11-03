@@ -4,11 +4,13 @@ import { MockSheetsAdapter } from '../src/repositories/mock-sheets.adapter.js';
 import {
   BANK_CHANGE_COOLDOWN_MS,
   BANK_CHANGE_KEY_PREFIX,
+  bankAccountKey,
   bankChangeRemainingSeconds,
   bankInfoChanged,
   buildBankChangeRequest,
   canApproveBankChange,
   deletePendingBankChangeRequest,
+  findBankAccountConflict,
   getPendingBankChangeRequest,
   isFirstBankEntry,
   listPendingBankChangeRequests,
@@ -38,7 +40,7 @@ test('so sánh STK bỏ khoảng trắng/gạch/dấu chấm, QR phải giống 
   assert.equal(bankInfoChanged(a, c), true);
 });
 
-test('yêu cầu đổi STK có mốc 48h và không lưu QR cũ', () => {
+test('yêu cầu đổi STK được duyệt ngay (không còn chờ 48h) và không lưu QR cũ', () => {
   const now = Date.UTC(2026, 9, 23, 0, 0, 0);
   const request = buildBankChangeRequest({
     employeeId: 'EMP_001',
@@ -48,13 +50,14 @@ test('yêu cầu đổi STK có mốc 48h và không lưu QR cũ', () => {
     now,
   });
   assert.equal(request.status, 'PENDING');
-  assert.equal(new Date(request.apply_after).getTime() - now, BANK_CHANGE_COOLDOWN_MS);
+  assert.equal(BANK_CHANGE_COOLDOWN_MS, 0);
+  assert.equal(new Date(request.apply_after).getTime(), now);
   assert.equal(request.old.bank_qr_img, undefined, 'không nhân đôi QR cũ trong system settings');
   assert.equal(request.requested.bank_qr_img, 'new-qr');
   assert.match(request.request_id, /^BCR_/);
 });
 
-test('chỉ duyệt được sau đủ 48h, trước đó trả số giây còn lại', () => {
+test('duyệt được ngay, không còn số giây chờ', () => {
   const now = Date.UTC(2026, 9, 23, 0, 0, 0);
   const request = buildBankChangeRequest({
     employeeId: 'EMP_003',
@@ -63,10 +66,22 @@ test('chỉ duyệt được sau đủ 48h, trước đó trả số giây còn 
     requested: { bank_account: '2222' },
     now,
   });
-  assert.equal(canApproveBankChange(request, now + BANK_CHANGE_COOLDOWN_MS - 1), false);
-  assert.equal(canApproveBankChange(request, now + BANK_CHANGE_COOLDOWN_MS), true);
-  assert.equal(bankChangeRemainingSeconds(request, now), 48 * 60 * 60);
-  assert.equal(bankChangeRemainingSeconds(request, now + BANK_CHANGE_COOLDOWN_MS), 0);
+  assert.equal(canApproveBankChange(request, now), true);
+  assert.equal(bankChangeRemainingSeconds(request, now), 0);
+});
+
+test('phát hiện STK trùng sau chuẩn hóa, bỏ qua chính nhân viên đang đổi', () => {
+  assert.equal(bankAccountKey('0123 456-789'), '0123456789');
+  const employees = [
+    { employee_id: 'EMP_A', employee_code: 'A01', full_name: 'Nguyễn A', bank_account: '0123 456 789' },
+    { employee_id: 'EMP_B', employee_code: 'B02', full_name: 'Trần B', bank_account: '999999999' },
+  ];
+  const clash = findBankAccountConflict(employees, 'EMP_B', '0123456789');
+  assert.equal(clash?.employee_id, 'EMP_A');
+  assert.equal(clash?.full_name, 'Nguyễn A');
+  assert.equal(findBankAccountConflict(employees, 'EMP_A', '0123456789'), null);
+  assert.equal(findBankAccountConflict(employees, 'EMP_B', '999999999'), null);
+  assert.equal(findBankAccountConflict(employees, 'EMP_B', ''), null);
 });
 
 test('che STK trong audit/UI cũ', () => {

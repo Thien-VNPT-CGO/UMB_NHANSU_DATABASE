@@ -17,6 +17,7 @@ import {
   validateInterviewSlot,
 } from './interview-slots.service.js';
 import { decodeQrDataUrl, isPlausibleHolder, parseVietQRPartial } from '../utils/vietqr.js';
+import { bankAccountKey } from './bank-change.service.js';
 import {
   CONTRACT_MAX_BYTES,
   ContractDocMeta,
@@ -724,7 +725,22 @@ export class EmployeesService {
     if (updates.birthDate !== undefined && updates.birthDate) patch.birth_date = String(updates.birthDate);
     if (updates.idCardNumber !== undefined) patch.id_card_number = String(updates.idCardNumber).trim() || undefined;
     if (updates.bankName !== undefined) patch.bank_name = String(updates.bankName).trim().slice(0, 100) || undefined;
-    if (updates.bankAccount !== undefined) patch.bank_account = String(updates.bankAccount).trim().slice(0, 64) || undefined;
+    if (updates.bankAccount !== undefined) {
+      // Chặn trùng STK ở tầng ghi cuối: áp dụng cho cả NV tự đổi, HR sửa hồ sơ
+      // và duyệt yêu cầu cũ. STK rỗng (xóa STK) hoặc giữ nguyên STK cũ không kiểm tra.
+      const nextBankKey = bankAccountKey(updates.bankAccount);
+      const prevBankKey = bankAccountKey(emp.bank_account);
+      if (nextBankKey && nextBankKey !== prevBankKey) {
+        const existingEmps = await this.repo.listEmployees();
+        const clash = existingEmps.find(
+          e => e.employee_id !== employeeId && bankAccountKey(e.bank_account) === nextBankKey
+        );
+        if (clash) {
+          throw new Error(`DUPLICATE_BANK_ACCOUNT: STK đã thuộc về ${clash.full_name} (${clash.employee_code})! Không thể dùng trùng STK.`);
+        }
+      }
+      patch.bank_account = String(updates.bankAccount).trim().slice(0, 64) || undefined;
+    }
     if (updates.bankHolder !== undefined) patch.bank_holder = String(updates.bankHolder).trim().slice(0, 100) || undefined;
     // Ảnh QR ngân hàng NV tự tải lên: cắt ngưỡng như chữ ký phiếu lương để
     // không phình RAM/payload danh sách (client đã nén nhỏ trước khi gửi).

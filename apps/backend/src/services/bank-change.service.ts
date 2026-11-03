@@ -3,16 +3,14 @@ import { ISheetsRepository } from '../repositories/sheets.interface.js';
 
 /**
  * Đổi số tài khoản ngân hàng của nhân viên:
- * - Lần đầu nhập STK: lưu trực tiếp (chưa có STK cũ để bảo vệ).
- * - Từ lần đổi thứ 2: tạo yêu cầu PENDING, giữ STK cũ đang hoạt động.
- * - Yêu cầu chỉ được duyệt sau 48h kể từ lúc gửi (hoặc gửi lại) để chống
- *   chiếm đoạt tài khoản; payroll tiếp tục dùng STK cũ tới khi duyệt.
+ * - STK hợp lệ được TỰ DUYỆT ngay khi nhận yêu cầu (không còn chờ 48h).
+ * - STK trùng với STK đang dùng hoặc trùng STK của nhân viên khác bị TỪ CHỐI ngay.
+ * - Payroll luôn dùng STK mới nhất đã được duyệt.
  *
- * Lưu yêu cầu trong system settings (key riêng từng NV) để KHÔNG đổi schema
- * tab NHAN_VIEN_MASTER. Mỗi key là 1 row trên tab CAU_HINH_HE_THONG, tránh
- * gom nhiều QR base64 vào cùng 1 ô (giới hạn 50.000 ký tự của Google Sheets).
+ * Vẫn giữ các helper PENDING để đọc / xử lý các yêu cầu cũ còn sót trong
+ * system settings (không đổi schema tab NHAN_VIEN_MASTER).
  */
-export const BANK_CHANGE_COOLDOWN_MS = 48 * 60 * 60 * 1000;
+export const BANK_CHANGE_COOLDOWN_MS = 0;
 export const BANK_CHANGE_KEY_PREFIX = 'bankChangeRequest:';
 
 export interface BankInfo {
@@ -60,7 +58,27 @@ export function normalizeBankInfo(raw: any): BankInfo {
 
 const bankNameKey = (v?: string) => String(v || '').trim().toLowerCase().replace(/\s+/g, ' ');
 const bankHolderKey = (v?: string) => String(v || '').trim().toLowerCase().replace(/\s+/g, ' ');
-const bankAccountKey = (v?: string) => String(v || '').replace(/[\s.-]/g, '').toLowerCase();
+/** Khóa so sánh STK: bỏ khoảng trắng/gạch/dấu chấm, giữ nguyên số 0 đầu. */
+export const bankAccountKey = (v?: string) => String(v || '').replace(/[\s.-]/g, '').toLowerCase();
+
+/** Tìm nhân viên khác đang dùng cùng STK (so sánh sau chuẩn hóa). */
+export function findBankAccountConflict(
+  employees: Array<{ employee_id?: string; employee_code?: string; full_name?: string; bank_account?: string }>,
+  employeeId: string,
+  requestedAccount?: string
+): { employee_id: string; employee_code?: string; full_name?: string } | null {
+  const key = bankAccountKey(requestedAccount);
+  if (!key) return null;
+  const clash = employees.find(
+    e => !!e?.employee_id && e.employee_id !== employeeId && bankAccountKey(e.bank_account) === key
+  );
+  if (!clash) return null;
+  return {
+    employee_id: clash.employee_id as string,
+    employee_code: clash.employee_code,
+    full_name: clash.full_name,
+  };
+}
 
 export function bankInfoChanged(current: BankInfo, requested: BankInfo): boolean {
   return (
@@ -121,12 +139,13 @@ export function bankChangeApplyAtMs(request: BankChangeRequest): number {
   return Number.isFinite(t) ? t : 0;
 }
 
-export function canApproveBankChange(request: BankChangeRequest, now = Date.now()): boolean {
-  return now >= bankChangeApplyAtMs(request);
+/** Không còn chặn 48h: yêu cầu cũ (nếu có) được duyệt ngay khi HR/Finance xử lý. */
+export function canApproveBankChange(_request: BankChangeRequest, _now = Date.now()): boolean {
+  return true;
 }
 
-export function bankChangeRemainingSeconds(request: BankChangeRequest, now = Date.now()): number {
-  return Math.max(0, Math.ceil((bankChangeApplyAtMs(request) - now) / 1000));
+export function bankChangeRemainingSeconds(_request: BankChangeRequest, _now = Date.now()): number {
+  return 0;
 }
 
 function isRequest(value: any, employeeId?: string): value is BankChangeRequest {

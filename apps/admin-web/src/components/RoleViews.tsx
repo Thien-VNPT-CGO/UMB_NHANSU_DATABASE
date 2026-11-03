@@ -1077,7 +1077,8 @@ export const PublishScheduleModal: React.FC<PublishScheduleModalProps> = ({
 };
 
 /** Màn duyệt đổi số tài khoản ngân hàng: dùng chung cho ADMIN/HR/FINANCE.
- *  Yêu cầu chỉ duyệt được sau 48h; payroll vẫn dùng STK cũ tới lúc duyệt. */
+ *  Yêu cầu hợp lệ được backend tự duyệt ngay; màn này chỉ còn yêu cầu cũ
+ *  (nếu có) và luôn cho duyệt ngay, không chặn 48h. */
 const BankChangeApprovals: React.FC<{
   showToast: (msg: string, type?: 'INFO' | 'WARNING', customTitle?: string) => void;
   onChanged?: () => Promise<void> | void;
@@ -1102,7 +1103,7 @@ const BankChangeApprovals: React.FC<{
 
   React.useEffect(() => {
     load();
-    // Tự cập nhật mỗi phút: mốc 48h trôi qua + yêu cầu mới từ cổng NV.
+    // Tự cập nhật mỗi phút: yêu cầu cũ còn sót + trạng thái realtime từ cổng NV.
     const t = setInterval(() => {
       setTick(x => x + 1);
       load(true);
@@ -1151,7 +1152,7 @@ const BankChangeApprovals: React.FC<{
           Chờ duyệt: {items.length}
         </span>
         <span style={{ fontSize: '11px', color: '#64748B', flex: '1 1 260px' }}>
-          Giữ STK cũ 48h để chống chiếm đoạt tài khoản. Payroll chỉ dùng STK mới sau khi duyệt.
+          STK hợp lệ được tự duyệt ngay khi NV gửi; STK trùng bị tự động từ chối. Danh sách này chỉ còn yêu cầu cũ (nếu có).
         </span>
         <button className="btn-secondary" style={{ fontSize: '12px', padding: '7px 12px', fontWeight: 700 }} onClick={() => load()}>
           🔄 Tải lại
@@ -1167,9 +1168,7 @@ const BankChangeApprovals: React.FC<{
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           {items.map((item: any) => {
-            const applyAt = new Date(item.apply_after).getTime();
-            const canApprove = !Number.isFinite(applyAt) || Date.now() >= applyAt;
-            const remainH = Number.isFinite(applyAt) ? Math.max(0, Math.ceil((applyAt - Date.now()) / 3_600_000)) : 0;
+            const canApprove = item.can_approve !== false;
             const emp = item.employee || {};
             const currentAcc = item.current?.bank_account || item.old?.bank_account || '—';
             const requestedAcc = item.requested?.bank_account || '—';
@@ -1186,7 +1185,7 @@ const BankChangeApprovals: React.FC<{
                     <div style={{ fontSize: '11px', color: '#94A3B8', marginTop: '2px' }}>Gửi lúc: {fmt(item.requested_at)}</div>
                   </div>
                   <span style={{ alignSelf: 'flex-start', fontSize: '11px', fontWeight: 800, padding: '4px 10px', borderRadius: '999px', backgroundColor: canApprove ? '#DCFCE7' : '#FEF3C7', color: canApprove ? '#166534' : '#92400E' }}>
-                    {canApprove ? '✅ Đủ 48h — có thể duyệt' : `⏳ Còn ${remainH} giờ`}
+                    {canApprove ? '✅ Có thể duyệt ngay' : '⏳ Chờ xử lý'}
                   </span>
                 </div>
 
@@ -1216,7 +1215,7 @@ const BankChangeApprovals: React.FC<{
                   <button
                     className="btn-primary"
                     disabled={!canApprove || !!busy}
-                    title={canApprove ? 'Duyệt đổi STK' : `Chỉ duyệt được sau ${fmt(item.apply_after)}`}
+                    title={canApprove ? 'Duyệt đổi STK' : 'Yêu cầu đang chờ xử lý'}
                     style={{ fontSize: '12px', padding: '8px 16px', fontWeight: 800, opacity: canApprove ? 1 : 0.5, cursor: canApprove ? 'pointer' : 'not-allowed' }}
                     onClick={() => review(item, 'approve')}
                   >
@@ -1232,7 +1231,7 @@ const BankChangeApprovals: React.FC<{
                   </button>
                   {!canApprove && (
                     <span style={{ fontSize: '11px', color: '#92400E', alignSelf: 'center' }}>
-                      Chỉ duyệt được sau {fmt(item.apply_after)} (giữ STK cũ đủ 48h).
+                      Yêu cầu cũ đang chờ xử lý.
                     </span>
                   )}
                 </div>
@@ -16237,7 +16236,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         <div>
           <h1 style={{ fontSize: '20px', fontWeight: 800, margin: 0 }}>Duyệt đổi số tài khoản ngân hàng</h1>
           <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '4px 0 0' }}>
-            Nhân viên đổi STK từ lần thứ 2 cần HR/Finance duyệt. Hệ thống giữ STK cũ 48h và payroll tiếp tục dùng STK cũ cho tới khi được duyệt.
+            STK hợp lệ được tự động duyệt ngay khi nhân viên gửi; STK trùng với nhân viên khác hoặc trùng STK hiện tại bị tự động từ chối. Tab này chỉ còn yêu cầu cũ (nếu có) và cho duyệt ngay.
           </p>
         </div>
         <BankChangeApprovals showToast={showToast} onChanged={onRefreshData} />

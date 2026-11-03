@@ -21,18 +21,18 @@ import {
 } from './services/weekly-off.service.js';
 import { ZaloService, defaultMeetUrl } from './services/zalo.service.js';
 import {
+  bankAccountKey,
   bankChangeRemainingSeconds,
   bankInfoChanged,
-  buildBankChangeRequest,
   canApproveBankChange,
   deletePendingBankChangeRequest,
+  findBankAccountConflict,
   getPendingBankChangeRequest,
   isFirstBankEntry,
   listPendingBankChangeRequests,
   maskBankAccount,
   normalizeBankInfo,
   publicBankChangeRequest,
-  savePendingBankChangeRequest,
 } from './services/bank-change.service.js';
 import { dedupeDuplicateInterviews } from './services/interview-dedupe.service.js';
 import { AccountsService } from './services/accounts.service.js';
@@ -841,10 +841,16 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         idCardNumber: b.idCardNumber ?? b.id_card_number,
       };
 
-      // STK: lần đầu lưu ngay; từ lần đổi thứ 2 tạo yêu cầu PENDING (giữ STK cũ 48h).
-      // Các trường hồ sơ khác vẫn lưu bình thường, không bị chặn bởi yêu cầu STK.
+      // STK: tự duyệt ngay khi hợp lệ; từ chối ngay nếu trùng STK đang dùng
+      // hoặc trùng STK của nhân viên khác. Không còn yêu cầu PENDING/48h.
+      // Các trường hồ sơ khác vẫn lưu bình thường, không bị chặn bởi STK.
       let bankPending = false;
       let pendingRequest: any = null;
+      let bankReview: {
+        action: 'approved' | 'rejected';
+        code: string;
+        message: string;
+      } | null = null;
       let existingPending = await getPendingBankChangeRequest(adapter, employeeId);
       const hasBankInput = [
         'bankName', 'bank_name',
@@ -863,74 +869,62 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         });
 
         if (bankInfoChanged(currentBank, requestedBank)) {
-          if (isFirstBankEntry(currentBank, requestedBank)) {
-            // Chưa có STK cũ -> lưu trực tiếp.
+          const currentKey = bankAccountKey(currentBank.bank_account);
+          const requestedKey = bankAccountKey(requestedBank.bank_account);
+          const accountChanging = requestedKey !== currentKey;
+          // Chỉ tra trùng khi STK thực sự đổi; đổi tên NH/chủ TK/QR giữ nguyên STK
+          // vẫn được lưu ngay (không phải thay đổi tài khoản nhận lương).
+          const allEmployees = accountChanging
+            ? await employeesService.listEmployees().catch(() => [])
+            : [];
+          const conflict = accountChanging
+            ? findBankAccountConflict(allEmployees, employeeId, requestedBank.bank_account)
+            : null;
+
+          if (conflict) {
+            const otherName = conflict.full_name || conflict.employee_code || conflict.employee_id;
+            const message = `STK ${maskBankAccount(requestedBank.bank_account)} đã thuộc về ${otherName}. Yêu cầu đổi STK bị từ chối tự động; STK cũ vẫn được dùng để trả lương.`;
+            bankReview = { action: 'rejected', code: 'DUPLICATE_BANK_ACCOUNT', message };
+            await deletePendingBankChangeRequest(adapter, employeeId).catch(() => false);
+            existingPending = null;
+            await adapter.recordAuditLog({
+              log_id: `LOG_${Date.now()}_${employeeId}_BANK_AUTO_REJECT`,
+              actor_id: req.user.id,
+              actor_role: req.user.role || 'EMPLOYEE',
+              action: 'BANK_CHANGE_AUTO_REJECTED',
+              target_entity: 'NHAN_VIEN_MASTER',
+              target_id: employeeId,
+              details: `Tự động từ chối đổi STK ${maskBankAccount(currentBank.bank_account)} -> ${maskBankAccount(requestedBank.bank_account)} vì trùng STK của ${otherName} (${conflict.employee_id})`,
+              ip_address: getClientIp(req),
+            } as any).catch(() => null);
+            broadcastUpdate('bank-changes', { action: 'auto-rejected', employeeId, reason: 'DUPLICATE_BANK_ACCOUNT' });
+          } else {
+            // Hợp lệ -> tự duyệt ngay, cập nhật trực tiếp hồ sơ.
+            const firstEntry = isFirstBankEntry(currentBank, requestedBank);
             direct.bankName = requestedBank.bank_name;
             direct.bankAccount = requestedBank.bank_account;
             direct.bankHolder = requestedBank.bank_holder;
             direct.bankQrImg = requestedBank.bank_qr_img;
             await deletePendingBankChangeRequest(adapter, employeeId).catch(() => false);
             existingPending = null;
+            bankReview = {
+              action: 'approved',
+              code: 'BANK_CHANGE_AUTO_APPROVED',
+              message: `Đã tự động duyệt STK mới ${requestedBank.bank_name || ''} ${maskBankAccount(requestedBank.bank_account)}. Payroll sẽ dùng STK này từ kỳ tính tiếp theo.`,
+            };
             await adapter.recordAuditLog({
-              log_id: `LOG_${Date.now()}_${employeeId}`,
+              log_id: `LOG_${Date.now()}_${employeeId}_BANK_AUTO_APPROVE`,
               actor_id: req.user.id,
               actor_role: req.user.role || 'EMPLOYEE',
-              action: 'BANK_INFO_FIRST_SET',
+              action: firstEntry ? 'BANK_INFO_FIRST_SET' : 'BANK_CHANGE_AUTO_APPROVED',
               target_entity: 'NHAN_VIEN_MASTER',
               target_id: employeeId,
-              details: `NV ${current.full_name || employeeId} nhập STK lần đầu: ${requestedBank.bank_name || '—'} ${maskBankAccount(requestedBank.bank_account)}`,
+              details: firstEntry
+                ? `NV ${current.full_name || employeeId} nhập STK lần đầu: ${requestedBank.bank_name || '—'} ${maskBankAccount(requestedBank.bank_account)}`
+                : `Tự động duyệt đổi STK ${maskBankAccount(currentBank.bank_account)} -> ${maskBankAccount(requestedBank.bank_account)} cho ${current.full_name || employeeId}`,
               ip_address: getClientIp(req),
             } as any).catch(() => null);
-          } else {
-            const existing = existingPending;
-            if (existing && !bankInfoChanged(existing.requested, requestedBank)) {
-              // Gửi lại đúng nội dung đang chờ -> giữ nguyên mốc 48h, không reset.
-              bankPending = true;
-              pendingRequest = existing;
-              existingPending = existing;
-            } else {
-              const request = buildBankChangeRequest({
-                employeeId,
-                requestedBy: req.user.id,
-                current: currentBank,
-                requested: requestedBank,
-              });
-              await savePendingBankChangeRequest(adapter, request);
-              bankPending = true;
-              pendingRequest = request;
-              existingPending = request;
-              await adapter.recordAuditLog({
-                log_id: `LOG_${Date.now()}_${employeeId}`,
-                actor_id: req.user.id,
-                actor_role: req.user.role || 'EMPLOYEE',
-                action: existing ? 'BANK_CHANGE_REQUEST_UPDATED' : 'BANK_CHANGE_REQUESTED',
-                target_entity: 'NHAN_VIEN_MASTER',
-                target_id: employeeId,
-                details: `Yêu cầu đổi STK ${maskBankAccount(currentBank.bank_account)} -> ${maskBankAccount(requestedBank.bank_account)}; duyệt được sau ${request.apply_after}`,
-                ip_address: getClientIp(req),
-              } as any).catch(() => null);
-              // Realtime-only cho ADMIN/HR/FINANCE: không dùng broadcastNotification vì
-              // hàm đó lưu inbox recipient 'ALL' (mọi NV sẽ thấy thông tin ngân hàng).
-              try {
-                const io = app.get('io');
-                if (io) {
-                  const payload = {
-                    id: `notif_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-                    type: 'BANK_CHANGE',
-                    title: '🏦 Yêu cầu đổi số tài khoản ngân hàng',
-                    message: `${current.full_name || employeeId} (${(current as any).employee_code || employeeId}) vừa gửi yêu cầu đổi STK sang ${requestedBank.bank_name || '—'} ${maskBankAccount(requestedBank.bank_account)}. STK cũ vẫn dùng đến khi duyệt; chỉ duyệt được sau 48h.`,
-                    linkTab: 'bank-changes',
-                    metadata: { employeeId, requestId: request.request_id },
-                    targetRoles: ['ADMIN', 'HR', 'FINANCE'],
-                    origin: 'EMPLOYEE',
-                    timestamp: new Date().toISOString(),
-                  };
-                  io.emit('system:notification', payload);
-                  io.emit('data:updated', { entity: 'notifications', data: payload, timestamp: payload.timestamp });
-                }
-              } catch { /* realtime không chặn lưu yêu cầu */ }
-              broadcastUpdate('bank-changes', { action: 'requested', employeeId });
-            }
+            broadcastUpdate('bank-changes', { action: 'auto-approved', employeeId });
           }
         }
       }
@@ -974,9 +968,24 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       // Nếu NV chỉ sửa trường khác (email/CCCD...) trong lúc đang có yêu cầu chờ,
       // vẫn trả yêu cầu đó về để banner "đang chờ duyệt" không biến mất.
       if (!pendingRequest && existingPending) pendingRequest = existingPending;
+      bankPending = !!pendingRequest;
       let result: any = await employeesService.updateEmployee(employeeId, direct, req.user.id);
       const freshEmp = await employeesService.getEmployee(employeeId);
       if (freshEmp) result = freshEmp;
+      // Chỉ báo kết quả tự duyệt/từ chối sau khi đã ghi hồ sơ thành công.
+      if (bankReview) {
+        await notificationsService.sendNotification({
+          recipientIds: [employeeId],
+          type: 'emp.bank_change',
+          severity: bankReview.action === 'approved' ? 'SYSTEM' : 'ACTION_REQUIRED',
+          title: bankReview.action === 'approved'
+            ? '✅ Đã tự động duyệt đổi số tài khoản'
+            : '❌ Yêu cầu đổi số tài khoản bị từ chối tự động',
+          summary: bankReview.message,
+          targetPath: '/profile',
+          actorId: req.user.id,
+        }).catch(() => null);
+      }
       broadcastUpdate('employees', { action: 'self-update', employeeId, employee: result });
       if (bankPending) broadcastUpdate('bank-changes', { action: 'pending', employeeId });
       const { avatar_photo: _drop, ...rest } = result || {};
@@ -986,6 +995,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         employee: rest,
         bank_change_pending: bankPending,
         bank_change_request: pendingRequest ? publicBankChangeRequest(pendingRequest) : null,
+        // Kết quả tự duyệt/tự từ chối ngay khi nhận yêu cầu đổi STK.
+        bank_change_review: bankReview,
       });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -1298,20 +1309,42 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const request = await getPendingBankChangeRequest(adapter, employeeId);
       if (!request) return res.status(404).json({ error: 'BANK_CHANGE_REQUEST_NOT_FOUND' });
 
-      const now = Date.now();
-      if (!canApproveBankChange(request, now)) {
-        const remainingSeconds = Math.max(1, bankChangeRemainingSeconds(request, now));
-        res.setHeader('Retry-After', String(remainingSeconds));
-        return res.status(409).json({
-          error: 'BANK_CHANGE_COOLING_OFF',
-          message: `Chưa đủ 48h giữ STK cũ. Vui lòng duyệt sau ${new Date(request.apply_after).toLocaleString('vi-VN')}.`,
-          apply_after: request.apply_after,
-          remaining_seconds: remainingSeconds,
-        });
-      }
-
       const emp = await employeesService.getEmployee(employeeId);
       if (!emp) return res.status(404).json({ error: 'EMPLOYEE_NOT_FOUND' });
+
+      // Yêu cầu cũ còn sót: nếu STK xin đổi đã trùng NV khác thì từ chối tự động
+      // luôn, không để HR/Finance duyệt nhầm tài khoản trùng.
+      const conflict = findBankAccountConflict(
+        await employeesService.listEmployees().catch(() => []),
+        employeeId,
+        request.requested.bank_account
+      );
+      if (conflict) {
+        const otherName = conflict.full_name || conflict.employee_code || conflict.employee_id;
+        const message = `STK ${maskBankAccount(request.requested.bank_account)} đã thuộc về ${otherName}. Yêu cầu bị từ chối tự động.`;
+        await deletePendingBankChangeRequest(adapter, employeeId).catch(() => false);
+        await adapter.recordAuditLog({
+          log_id: `LOG_${Date.now()}_${employeeId}_BANK_AUTO_REJECT`,
+          actor_id: req.user!.id,
+          actor_role: req.user!.role,
+          action: 'BANK_CHANGE_AUTO_REJECTED',
+          target_entity: 'NHAN_VIEN_MASTER',
+          target_id: employeeId,
+          details: `Tự động từ chối yêu cầu cũ đổi STK ${maskBankAccount(request.old.bank_account)} -> ${maskBankAccount(request.requested.bank_account)} vì trùng STK của ${otherName} (${conflict.employee_id})`,
+          ip_address: getClientIp(req),
+        } as any).catch(() => null);
+        await notificationsService.sendNotification({
+          recipientIds: [employeeId],
+          type: 'emp.bank_change',
+          severity: 'ACTION_REQUIRED',
+          title: '❌ Yêu cầu đổi số tài khoản bị từ chối tự động',
+          summary: message,
+          targetPath: '/profile',
+          actorId: req.user!.id,
+        }).catch(() => null);
+        broadcastUpdate('bank-changes', { action: 'auto-rejected', employeeId, reason: 'DUPLICATE_BANK_ACCOUNT' });
+        return res.status(409).json({ error: 'DUPLICATE_BANK_ACCOUNT', message });
+      }
 
       const updated = await employeesService.updateEmployee(employeeId, {
         bankName: request.requested.bank_name,
