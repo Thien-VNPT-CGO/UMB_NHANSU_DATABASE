@@ -2463,6 +2463,12 @@ export function App() {
       socket.on('live-location:update', (p: any) => {
         try { window.dispatchEvent(new CustomEvent('ubm:team-location', { detail: p })); } catch { /* non-fatal */ }
       });
+      // Đồng nghiệp vừa check-in/check-out → đổi màu chấm + giờ vào/ra trên bản đồ ngay.
+      socket.on('attendance.recorded', (p: any) => {
+        const b = p?.branchId || p?.branch_id;
+        if (b && employee?.default_branch_id && b !== employee.default_branch_id) return;
+        try { window.dispatchEvent(new CustomEvent('ubm:team-map-reload')); } catch { /* non-fatal */ }
+      });
       socket.on('admin:forceLogout', (p: any) => {
         if (p?.adminId === empIdRef.current) {
           alert(p?.reason || 'Phiên làm việc của bạn đã kết thúc bởi Quản trị viên.');

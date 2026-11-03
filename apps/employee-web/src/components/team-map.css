@@ -4,7 +4,7 @@
   border: 1px solid var(--border, #E2E8F0);
   border-radius: 16px;
   padding: 12px;
-  margin: 12px;
+  margin: 0;
   box-shadow: 0 6px 20px rgba(15, 23, 42, 0.06);
 }
 
