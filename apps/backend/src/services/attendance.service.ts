@@ -862,6 +862,11 @@ export class AttendanceService {
 
   /** Hiệu lực 1 phiếu gửi HR: 30 phút tính từ lúc tạo — quá hạn tự động từ chối. */
   static readonly ADJUSTMENT_TTL_MINUTES = 30;
+  /**
+   * Phiếu "Bù công cả ngày trong tháng" (BU_CONG_NGAY) do GIÁM ĐỐC duyệt, có hạn
+   * 48 giờ kể từ lúc gửi; quá 48h không duyệt hệ thống tự hủy và HOÀN 5 điểm.
+   */
+  static readonly BU_CONG_NGAY_TTL_MINUTES = 48 * 60;
   /** Khung giờ NV được TẠO phiếu (giờ VN): 08:00–21:00 hằng ngày, ngoài giờ báo lỗi. */
   static readonly ADJUSTMENT_CREATE_OPEN_HOUR = 8;
   static readonly ADJUSTMENT_CREATE_CLOSE_HOUR = 21;
@@ -1084,12 +1089,19 @@ export class AttendanceService {
       // vẫn PENDING (dù chưa đủ 30 phút) thì tự từ chối luôn.
       if (status === 'PENDING') {
         checked++;
+        const kind = AttendanceService.adjustmentKindOf((a as any)?.reason);
+        // BU_CONG_NGAY: hạn 48h do Giám đốc duyệt — KHÔNG áp khung 08:00–21:00.
+        const isBuCongNgay = kind === 'BU_CONG_NGAY';
+        const effTtl = isBuCongNgay ? AttendanceService.BU_CONG_NGAY_TTL_MINUTES : ttlMinutes;
         const vnH = AttendanceService.vnHourNow(now);
-        const outsideWindow = vnH < AttendanceService.ADJUSTMENT_CREATE_OPEN_HOUR || vnH >= AttendanceService.ADJUSTMENT_CREATE_CLOSE_HOUR;
-        if (ageMin <= ttlMinutes && !outsideWindow) continue;
-        const note = outsideWindow && ageMin <= ttlMinutes
+        const outsideWindow = !isBuCongNgay
+          && (vnH < AttendanceService.ADJUSTMENT_CREATE_OPEN_HOUR || vnH >= AttendanceService.ADJUSTMENT_CREATE_CLOSE_HOUR);
+        if (ageMin <= effTtl && !outsideWindow) continue;
+        const note = outsideWindow && ageMin <= effTtl
           ? 'Tự động từ chối (hết khung giờ duyệt 08:00–21:00)'
-          : AttendanceService.AUTO_REJECT_NOTE;
+          : isBuCongNgay
+            ? 'Tự động hủy sau 48 giờ Giám đốc không duyệt (đã hoàn 5 điểm)'
+            : AttendanceService.AUTO_REJECT_NOTE;
         try {
           await singleWriterQueue.enqueue({
             entityType: 'DIEU_CHINH_CONG',
@@ -1219,7 +1231,8 @@ export class AttendanceService {
     status: 'APPROVED' | 'REJECTED',
     approverId: string,
     minutesApproved?: number,
-    note?: string
+    note?: string,
+    approverRole?: string
   ) {
     return singleWriterQueue.enqueue({
       entityType: 'DIEU_CHINH_CONG',
@@ -1241,17 +1254,31 @@ export class AttendanceService {
         // Hiệu lực 30 phút: tick nền chạy mỗi phút nhưng HR vẫn có thể bấm duyệt
         // đúng lúc phiếu vừa hết hạn — chặn cứng tại đây: quá 30 phút thì tự từ
         // chối phiếu và báo hết hiệu lực (NV gửi lại phiếu mới trong quota tuần).
+        const kind = AttendanceService.adjustmentKindOf((fresh as any)?.reason);
+        const isBuCongNgay = kind === 'BU_CONG_NGAY';
+        // Phiếu "Bù công cả ngày" chỉ GIÁM ĐỐC (hoặc ADMIN) được duyệt.
+        if (isBuCongNgay && status === 'APPROVED'
+          && !['DIRECTOR', 'ADMIN'].includes(String(approverRole || '').toUpperCase())) {
+          throw new Error('APPROVER_FORBIDDEN: Phiếu bù công cả ngày do Giám đốc duyệt, không phải cấp này!');
+        }
         const createdMs = new Date((fresh as any).created_at).getTime();
         if (Number.isFinite(createdMs)) {
           const ageMin = (Date.now() - createdMs) / 60000;
-          if (ageMin > AttendanceService.ADJUSTMENT_TTL_MINUTES) {
-            await this.repo.updateAttendanceAdjustment(adjId, 'REJECTED', 'SYSTEM', undefined, AttendanceService.AUTO_REJECT_NOTE).catch(() => null);
+          const effTtl = isBuCongNgay ? AttendanceService.BU_CONG_NGAY_TTL_MINUTES : AttendanceService.ADJUSTMENT_TTL_MINUTES;
+          if (ageMin > effTtl) {
+            const expireNote = isBuCongNgay
+              ? 'Tự động hủy sau 48 giờ Giám đốc không duyệt (đã hoàn 5 điểm)'
+              : AttendanceService.AUTO_REJECT_NOTE;
+            const rejected = await this.repo.updateAttendanceAdjustment(adjId, 'REJECTED', 'SYSTEM', undefined, expireNote).catch(() => null);
+            await this.refundTicketPoints(rejected || fresh).catch(() => null);
             if (this.io) {
               try {
                 this.io.to(`user:${(fresh as any).employee_id}`).emit('adjustment.updated', { adjustmentId: adjId, status: 'REJECTED' });
               } catch { /* non-fatal */ }
             }
-            throw new Error('ADJUSTMENT_EXPIRED: Phiếu đã quá 30 phút hiệu lực và tự động hết hạn! NV gửi lại phiếu mới.');
+            throw new Error(isBuCongNgay
+              ? 'ADJUSTMENT_EXPIRED: Phiếu bù công cả ngày đã quá hạn 48 giờ và tự động hủy (đã hoàn 5 điểm)! NV gửi lại phiếu mới.'
+              : 'ADJUSTMENT_EXPIRED: Phiếu đã quá 30 phút hiệu lực và tự động hết hạn! NV gửi lại phiếu mới.');
           }
         }
         const updated = await this.repo.updateAttendanceAdjustment(adjId, status, approverId, minutesApproved, note);

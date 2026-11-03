@@ -776,24 +776,32 @@ export function formatCountdown(ms: number): string {
  * nhất là 21:00 (giờ VN) cùng ngày vì quá khung duyệt 08:00–21:00 hệ thống tự
  * từ chối (xem AttendanceService.expireStaleAdjustments bên backend).
  */
-export function adjDeadlineInfo(createdAt?: string, nowMs: number = Date.now()): {
+export function adjDeadlineInfo(createdAt?: string, nowMs: number = Date.now(), reason?: string): {
   deadlineMs: number;
   remainingMs: number;
   expired: boolean;
   deadlineText: string;
   cappedByWindow: boolean;
+  isBuCongNgay: boolean;
 } | null {
   const createdMs = Date.parse(String(createdAt || ''));
   if (!Number.isFinite(createdMs)) return null;
-  const ttlDeadline = createdMs + 30 * 60 * 1000;
+  // Phiếu "Bù công cả ngày" (BU_CONG_NGAY) do Giám đốc duyệt, hạn 48 giờ và
+  // KHÔNG bị chốt bởi khung 08:00–21:00; các loại khác giữ hạn 30 phút.
+  const isBuCongNgay = /BU_CONG_NGAY/i.test(String(reason || ''));
+  const ttlDeadline = createdMs + (isBuCongNgay ? 48 * 60 : 30) * 60 * 1000;
   // 21:00 giờ VN của đúng ngày tạo phiếu.
   const vn = new Date(createdMs + 7 * 3_600_000);
   const closeMs = Date.UTC(vn.getUTCFullYear(), vn.getUTCMonth(), vn.getUTCDate(), 21, 0, 0) - 7 * 3_600_000;
-  const deadlineMs = Math.min(ttlDeadline, closeMs);
+  const deadlineMs = isBuCongNgay ? ttlDeadline : Math.min(ttlDeadline, closeMs);
   const remainingMs = Math.max(0, deadlineMs - nowMs);
   const vnDeadline = new Date(deadlineMs + 7 * 3_600_000);
-  const deadlineText = `${String(vnDeadline.getUTCHours()).padStart(2, '0')}:${String(vnDeadline.getUTCMinutes()).padStart(2, '0')}`;
-  return { deadlineMs, remainingMs, expired: remainingMs <= 0, deadlineText, cappedByWindow: closeMs < ttlDeadline };
+  const dd = String(vnDeadline.getUTCDate()).padStart(2, '0');
+  const mo = String(vnDeadline.getUTCMonth() + 1).padStart(2, '0');
+  const hh = String(vnDeadline.getUTCHours()).padStart(2, '0');
+  const mi = String(vnDeadline.getUTCMinutes()).padStart(2, '0');
+  const deadlineText = isBuCongNgay ? `${dd}/${mo} ${hh}:${mi}` : `${hh}:${mi}`;
+  return { deadlineMs, remainingMs, expired: remainingMs <= 0, deadlineText, cappedByWindow: !isBuCongNgay && closeMs < ttlDeadline, isBuCongNgay };
 }
 
 /** Chuẩn hiển thị cột Thời Gian lịch PV: dd/MM/yyyy - HH:mm. */
@@ -11840,10 +11848,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const renderAdjRows = (list: any[], isPending: boolean) =>
       list.map((a: any) => {
         const emp = (allEmployees || []).find((e: any) => e.employee_id === a.employee_id);
-        const adjDl = adjDeadlineInfo(a.created_at, adjNow);
+        const adjDl = adjDeadlineInfo(a.created_at, adjNow, a.reason);
         // Quá hạn duyệt: backend đã/đang tự từ chối -> khóa nút Duyệt/Từ chối,
         // tránh HR bấm rồi nhận lỗi "phiếu hết hiệu lực".
         const adjExpired = isPending && !!adjDl?.expired;
+        // Phiếu "Bù công cả ngày" (BU_CONG_NGAY) chỉ Giám đốc/ADMIN được DUYỆT.
+        const isBuCongNgaySlip = /BU_CONG_NGAY/i.test(String(a.reason || ''));
+        const canDirectorApprove = ['DIRECTOR', 'ADMIN'].includes(String((currentUser as any)?.role || ''));
+        const approveDisabled = adjBusy === a.adjustment_id || adjExpired || (isBuCongNgaySlip && !canDirectorApprove);
         return (
           <tr key={a.adjustment_id} style={{ borderBottom: '1px solid var(--border)', backgroundColor: isPending ? '#FFFBEB' : undefined }}>
             <td
@@ -11879,16 +11891,16 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       color: adjDl.expired ? '#991B1B' : adjDl.remainingMs <= 5 * 60 * 1000 ? '#B45309' : '#166534',
                     }}
                   >
-                    <div>⏰ {adjDl.deadlineText}{adjDl.cappedByWindow ? ' (chốt 21:00)' : ''}</div>
+                    <div>⏰ {adjDl.deadlineText}{adjDl.isBuCongNgay ? ' (hạn 48h — Giám đốc duyệt)' : adjDl.cappedByWindow ? ' (chốt 21:00)' : ''}</div>
                     <div style={{ marginTop: '2px' }}>
                       {adjDl.expired
-                        ? 'Đã hết hạn — hệ thống tự từ chối'
+                        ? (adjDl.isBuCongNgay ? 'Đã hết hạn 48h — hệ thống tự hủy, hoàn 5 điểm' : 'Đã hết hạn — hệ thống tự từ chối')
                         : `Còn ${formatCountdown(adjDl.remainingMs)}`}
                     </div>
                   </div>
                 ) : (
                   <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                    ⏰ {adjDl.deadlineText}{adjDl.cappedByWindow ? ' (chốt 21:00)' : ''}
+                    ⏰ {adjDl.deadlineText}{adjDl.isBuCongNgay ? ' (hạn 48h — Giám đốc duyệt)' : adjDl.cappedByWindow ? ' (chốt 21:00)' : ''}
                     <div style={{ marginTop: '2px' }}>{adjDl.expired ? 'Đã hết hạn duyệt' : 'Trong hạn duyệt'}</div>
                   </div>
                 )
@@ -11898,7 +11910,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </td>
             <td style={{ padding: '12px 20px' }}>
               <span className="badge" style={{ backgroundColor: a.status === 'APPROVED' ? '#DCFCE7' : a.status === 'REJECTED' ? '#FEE2E2' : '#FEF3C7', color: a.status === 'APPROVED' ? '#166534' : a.status === 'REJECTED' ? '#991B1B' : '#92400E', fontWeight: 700 }}>
-                {a.status === 'APPROVED' ? 'Đã duyệt' : a.status === 'REJECTED' ? (String(a.review_note || '').startsWith('Tự động từ chối') ? 'Tự từ chối (hết hạn)' : 'Đã từ chối') : 'Chờ duyệt'}
+                {a.status === 'APPROVED' ? 'Đã duyệt' : a.status === 'REJECTED' ? (String(a.review_note || '').startsWith('Tự động hủy')
+                  ? 'Tự động hủy (48h)'
+                  : String(a.review_note || '').startsWith('Tự động từ chối') ? 'Tự từ chối (hết hạn)' : 'Đã từ chối') : 'Chờ duyệt'}
               </span>
             </td>
             <td style={{ padding: '12px 20px' }}>
@@ -11907,11 +11921,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <button
                     className="btn-primary"
                     style={{ padding: '4px 10px', fontSize: '12px' }}
-                    disabled={adjBusy === a.adjustment_id || adjExpired}
-                    title={adjExpired ? `Phiếu đã quá hạn duyệt (${adjDl?.deadlineText}) — hệ thống tự từ chối, không duyệt được nữa` : undefined}
+                    disabled={approveDisabled}
+                    title={adjExpired
+                      ? `Phiếu đã quá hạn duyệt (${adjDl?.deadlineText}) — hệ thống tự hủy, không duyệt được nữa`
+                      : (isBuCongNgaySlip && !canDirectorApprove)
+                        ? 'Phiếu bù công cả ngày do Giám đốc duyệt — cấp này không có quyền duyệt.'
+                        : undefined}
                     onClick={() => reviewAdj(a, 'APPROVED')}
                   >
-                    {adjBusy === a.adjustment_id ? '⏳...' : adjExpired ? '⏰ Hết hạn' : 'Duyệt'}
+                    {adjBusy === a.adjustment_id ? '⏳...' : adjExpired ? '⏰ Hết hạn' : (isBuCongNgaySlip && !canDirectorApprove) ? '🔒 Giám đốc duyệt' : 'Duyệt'}
                   </button>
                   <button
                     className="btn-secondary"
@@ -12087,7 +12105,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         {/* CẢNH BÁO PHIẾU SẮP HẾT HẠN: hiện rõ hạn tự hủy để HR duyệt kịp. */}
         {(() => {
           const soon = pendingAdj
-            .map((a: any) => ({ a, dl: adjDeadlineInfo(a.created_at, adjNow) }))
+            .map((a: any) => ({ a, dl: adjDeadlineInfo(a.created_at, adjNow, a.reason) }))
             .filter((x: any) => x.dl && !x.dl.expired && x.dl.remainingMs <= 5 * 60 * 1000)
             .sort((x: any, y: any) => x.dl.remainingMs - y.dl.remainingMs);
           if (soon.length === 0) return null;
@@ -12337,7 +12355,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   </span>
                 </div>
                 {(() => {
-                  const dl = adjDeadlineInfo(selectedAdj.created_at, adjNow);
+                  const dl = adjDeadlineInfo(selectedAdj.created_at, adjNow, selectedAdj.reason);
                   if (!dl) return null;
                   const pending = selectedAdj.status === 'PENDING';
                   const urgent = pending && !dl.expired && dl.remainingMs <= 5 * 60 * 1000;

@@ -519,7 +519,7 @@ export const payslipIdParams = z.object({
 });
 
 export const payslipSignBody = z.object({
-  role: z.enum(['lap', 'quanly', 'nhanvien']),
+  role: z.enum(['giamdoc', 'lap', 'quanly', 'nhanvien']),
   name: z.string().trim().min(1).max(80),
   img: z.string().max(60000).optional(),
 }).passthrough();

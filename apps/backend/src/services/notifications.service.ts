@@ -79,7 +79,7 @@ export class NotificationsService {
           });
           for (const inbox of result.inboxes) {
             if (inbox.recipient_id === 'ALL') {
-              for (const r of ['ADMIN', 'HR', 'STORE', 'FINANCE', 'MARKETING', 'EMPLOYEE']) {
+              for (const r of ['DIRECTOR', 'ADMIN', 'HR', 'STORE', 'FINANCE', 'MARKETING', 'IT', 'EMPLOYEE']) {
                 this.io.to(`role:${r}`).emit('notification.created', payload(inbox));
               }
             } else {

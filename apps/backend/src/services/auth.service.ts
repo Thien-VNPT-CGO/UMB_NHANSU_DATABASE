@@ -96,6 +96,20 @@ export function normalizePhone(phone: string): string {
 
 export function getPermissionsForRole(role: SystemRole): UserPermission[] {
   switch (role) {
+    case 'DIRECTOR':
+      return [
+        'EMPLOYEES_MANAGE',
+        'SCHEDULE_MANAGE',
+        'LEAVE_APPROVE',
+        'ATTENDANCE_VIEW',
+        'ATTENDANCE_VERIFY',
+        'PAYROLL_APPROVER',
+        'ANNOUNCEMENTS_MANAGE',
+        'AUDIT_VIEW',
+        'READ_ONLY',
+      ];
+    case 'IT':
+      return ['READ_ONLY'];
     case 'ADMIN':
       return [
         'ACCOUNTS_MANAGE',

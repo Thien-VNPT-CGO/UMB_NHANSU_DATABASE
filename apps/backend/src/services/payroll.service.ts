@@ -811,7 +811,7 @@ export class PayrollService {
     return Array.from(best.values());
   }
 
-  // --- Quy trình ký 3 bên từng phiếu: DRAFT -> (ký lập + ký QL) -> PUBLISHED -> (NV ký) CONFIRMED -> PAID ---
+  // --- Quy trình ký: DRAFT -> GĐ ký -> QL ký -> PUBLISHED -> NV ký -> CONFIRMED -> PAID ---
   private notifySlipsChanged(action: string, extra: any = {}) {
     if (!this.io) return;
     try {
@@ -876,8 +876,10 @@ export class PayrollService {
           if (slip.status === 'CONFIRMED' || slip.status === 'PAID') {
             throw new Error('SLIP_LOCKED: phiếu đã xác nhận/chi trả, không ký lại!');
           }
+          if (role === 'giamdoc' && slip.sign_giamdoc) throw new Error('ALREADY_SIGNED: Giám đốc đã ký phiếu này!');
+          if (role === 'quanly' && !slip.sign_giamdoc) throw new Error('DIRECTOR_SIGNATURE_REQUIRED: phiếu phải được Giám đốc ký trước!');
           updated = await this.repo.updatePayslip(itemId, {
-            [role === 'lap' ? 'sign_lap' : 'sign_quanly']: sig,
+            [role === 'giamdoc' ? 'sign_giamdoc' : role === 'lap' ? 'sign_lap' : 'sign_quanly']: sig,
           } as any);
         }
         this.notifySlipsChanged('sign', { itemId, role });
@@ -1013,8 +1015,8 @@ export class PayrollService {
           slip = await this.repo.updatePayslip(itemId, updates);
         }
 
-        if (!(slip as any).sign_lap || !(slip as any).sign_quanly) {
-          throw new Error('MISSING_SIGNATURES: thiếu chữ ký người lập hoặc quản lý chi nhánh!');
+        if (!(slip as any).sign_giamdoc || !(slip as any).sign_lap || !(slip as any).sign_quanly) {
+          throw new Error('MISSING_SIGNATURES: thiếu chữ ký Giám đốc / người lập / quản lý chi nhánh! Quy trình: Giám đốc ký trước, rồi Quản lý chi nhánh ký.');
         }
         const updated = await this.repo.updatePayslip(itemId, {
           status: 'PUBLISHED',
@@ -1091,8 +1093,8 @@ export class PayrollService {
             }
           }
 
-          if (!(s as any).sign_lap || !(s as any).sign_quanly) {
-            skipped.push({ itemId: (s as any).item_id, employee: (s as any).full_name || (s as any).employee_id, reason: 'thiếu chữ ký lập/quản lý' });
+          if (!(s as any).sign_giamdoc || !(s as any).sign_lap || !(s as any).sign_quanly) {
+            skipped.push({ itemId: (s as any).item_id, employee: (s as any).full_name || (s as any).employee_id, reason: 'thiếu chữ ký Giám đốc/lập/quản lý' });
             continue;
           }
           await this.repo.updatePayslip((s as any).item_id, {

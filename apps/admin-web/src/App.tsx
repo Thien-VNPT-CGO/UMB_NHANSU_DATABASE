@@ -52,6 +52,9 @@ import {
 import { RoleViews } from './components/RoleViews';
 import { LiveMapView } from './components/LiveMapView';
 import { ChangePasswordView } from './components/ChangePasswordView';
+import { DirectorPayrollView } from './components/DirectorPayrollView';
+import { InternalWorkflowView } from './components/InternalWorkflowView';
+import { CompanyPolicyView } from './components/CompanyPolicyView';
 import { BetaChip, BetaBanner, isBetaFeature } from './betaFeatures';
 import {
   ADMIN_EVENT_THEMES,
@@ -119,17 +122,20 @@ interface UserProfile {
 
 export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: any }>> = {
   DIRECTOR: [
-    { id: 'staff', label: '1. Nhân sự toàn hệ thống', icon: Users },
-    { id: 'live-map', label: '2. Bản đồ GPS', icon: MapPin },
-    { id: 'notify', label: '3. Thông báo', icon: Bell },
-    { id: 'hr-adjustments', label: '4. Duyệt bổ sung công', icon: FileText },
-    { id: 'policies', label: '5. Quy chế công ty', icon: Sliders },
-    { id: 'hr-profile', label: '6. Hồ sơ nhân viên', icon: IdCard },
-    { id: 'hr-schedule', label: '7. Lịch làm việc', icon: Calendar },
-    { id: 'change-password', label: '8. Đổi mật khẩu', icon: KeyRound },
+    { id: 'director-payroll', label: '1. Duyệt phiếu lương', icon: FileSpreadsheet },
+    { id: 'staff', label: '2. Nhân sự toàn hệ thống', icon: Users },
+    { id: 'live-map', label: '3. Bản đồ GPS', icon: MapPin },
+    { id: 'notify', label: '4. Thông báo', icon: Bell },
+    { id: 'hr-adjustments', label: '5. Duyệt bổ sung công', icon: FileText },
+    { id: 'company-policies', label: '6. Quy chế công ty', icon: Sliders },
+    { id: 'hr-profile', label: '7. Hồ sơ nhân viên', icon: IdCard },
+    { id: 'hr-schedule', label: '8. Lịch làm việc', icon: Calendar },
+    { id: 'internal-workflow', label: '9. Yêu cầu công việc nội bộ', icon: Send },
+    { id: 'change-password', label: '10. Đổi mật khẩu', icon: KeyRound },
   ],
   IT: [
-    { id: 'change-password', label: '1. Đổi mật khẩu', icon: KeyRound },
+    { id: 'internal-workflow', label: '1. Yêu cầu công việc nội bộ', icon: Send },
+    { id: 'change-password', label: '2. Đổi mật khẩu', icon: KeyRound },
   ],
   ADMIN: [
     { id: 'dashboard', label: '1. Dashboard', icon: Building2 },
@@ -454,8 +460,8 @@ export function App() {
       const savedUser = localStorage.getItem('ubm_admin_user');
       if (savedUser) {
         const u = JSON.parse(savedUser);
-        if (u.role === 'DIRECTOR') return 'staff';
-        if (u.role === 'IT') return 'change-password';
+        if (u.role === 'DIRECTOR') return 'director-payroll';
+        if (u.role === 'IT') return 'internal-workflow';
         if (u.role === 'ADMIN') return 'dashboard';
         if (u.role === 'HR') return 'hr-dashboard';
         if (u.role === 'STORE') return 'store-dashboard';
@@ -870,8 +876,8 @@ export function App() {
 
       // Reset active tab to default for role
       let initialTab = 'dashboard';
-      if (res.user.role === 'DIRECTOR') initialTab = 'staff';
-      else if (res.user.role === 'IT') initialTab = 'change-password';
+      if (res.user.role === 'DIRECTOR') initialTab = 'director-payroll';
+      else if (res.user.role === 'IT') initialTab = 'internal-workflow';
       else if (res.user.role === 'ADMIN') initialTab = 'dashboard';
       else if (res.user.role === 'HR') initialTab = 'hr-dashboard';
       else if (res.user.role === 'STORE') initialTab = 'store-dashboard';
@@ -1495,6 +1501,19 @@ export function App() {
           if (payload?.entity === 'payroll' || payload?.entity === 'payslips' || payload?.entity === 'all') {
             try {
               window.dispatchEvent(new CustomEvent('ubm:payslips-reload'));
+            } catch { /* non-fatal */ }
+          }
+          // Realtime yêu cầu công việc nội bộ (GĐ - KT - HR - IT): mọi máy thấy
+          // công việc đang tới bộ phận nào xử lý ngay lập tức.
+          if (payload?.entity === 'internal-requests' || payload?.entity === 'all') {
+            try {
+              window.dispatchEvent(new CustomEvent('ubm:internal-workflow-reload'));
+            } catch { /* non-fatal */ }
+          }
+          // Realtime quy chế công ty (áp dụng theo đối tượng).
+          if (payload?.entity === 'company-policies' || payload?.entity === 'all') {
+            try {
+              window.dispatchEvent(new CustomEvent('ubm:company-policies-reload'));
             } catch { /* non-fatal */ }
           }
           notifyReportsRealtime();
@@ -5440,6 +5459,15 @@ export function App() {
 
           {/* ĐỔI MẬT KHẨU TÀI KHOẢN NỘI BỘ (GIÁM ĐỐC / IT) */}
           {activeTab === 'change-password' && <ChangePasswordView />}
+
+          {/* GIÁM ĐỐC KÝ PHIẾU LƯƠNG (trước Quản lý chi nhánh) */}
+          {activeTab === 'director-payroll' && <DirectorPayrollView currentUser={currentUser} />}
+
+          {/* QUY TRÌNH YÊU CẦU CÔNG VIỆC NỘI BỘ (GĐ - KT - HR - IT) */}
+          {activeTab === 'internal-workflow' && <InternalWorkflowView currentUser={currentUser} />}
+
+          {/* QUY CHẾ CÔNG TY THEO ĐỐI TƯỢNG (từng NV / từng chi nhánh / tất cả) */}
+          {activeTab === 'company-policies' && <CompanyPolicyView currentUser={currentUser} />}
 
           {/* DEDICATED VIEWS FOR HR (15 TABS), STORE (10 TABS), FINANCE (12 TABS), MARKETING (9 TABS) */}
           <RoleViewsErrorBoundary tab={activeTab} key={activeTab}>

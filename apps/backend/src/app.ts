@@ -35,6 +35,21 @@ import {
   publicBankChangeRequest,
 } from './services/bank-change.service.js';
 import { dedupeDuplicateInterviews } from './services/interview-dedupe.service.js';
+import {
+  approveInternalRequest,
+  createInternalRequest,
+  forwardInternalRequest,
+  isDepartment,
+  listInternalRequests,
+  markInternalRequestDone,
+  rejectInternalRequest,
+  roleToDepartment,
+} from './services/internal-workflow.service.js';
+import {
+  deleteCompanyPolicy,
+  listCompanyPolicies,
+  upsertCompanyPolicy,
+} from './services/company-policy.service.js';
 import { AccountsService } from './services/accounts.service.js';
 import { EmployeesService } from './services/employees.service.js';
 import { canonicalPhone, findDuplicatePhones } from './services/employees.service.js';
@@ -5164,7 +5179,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         status,
         req.user!.id,
         minutesApproved,
-        note
+        note,
+        req.user!.role
       );
       // Realtime: cổng NV thấy kết quả duyệt + bảng công/HR tải lại ngay.
       broadcastUpdate('adjustments', { action: 'review', id: req.params.id, status });
@@ -5339,7 +5355,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.get('/payroll/runs', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req, res) => {
+  app.get('/payroll/runs', authMiddleware, requireRole(['DIRECTOR', 'ADMIN', 'FINANCE']), async (req, res) => {
     try {
       const runs = await payrollService.listRuns();
       res.json(runs);
@@ -5348,7 +5364,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  app.get('/payroll/runs/:id', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollRunIdParams }), async (req: AuthenticatedRequest, res) => {
+  app.get('/payroll/runs/:id', authMiddleware, requireRole(['DIRECTOR', 'ADMIN', 'FINANCE']), validate({ params: payrollRunIdParams }), async (req: AuthenticatedRequest, res) => {
     try {
       let details = await payrollService.getRunDetails(req.params.id);
       if (!details && /^\d{4}-(0[1-9]|1[0-2])$/.test(req.params.id)) {
@@ -5489,7 +5505,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // Kế toán / Quản trị viên lấy danh sách phiếu lương theo kỳ
-  app.get('/payroll/period-slips/:period', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req, res) => {
+  app.get('/payroll/period-slips/:period', authMiddleware, requireRole(['DIRECTOR', 'ADMIN', 'FINANCE']), async (req, res) => {
     try {
       const data = await payrollService.getPeriodSlips(req.params.period);
       res.json(data);
@@ -5511,9 +5527,19 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // Kế toán ký điện tử 1 phiếu (Người lập hoặc Quản lý chi nhánh)
-  app.post('/payroll/slips/:id/sign', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payslipIdParams, body: payslipSignBody }), async (req: AuthenticatedRequest, res) => {
+  app.post('/payroll/slips/:id/sign', authMiddleware, requireRole(['DIRECTOR', 'ADMIN', 'FINANCE', 'STORE']), validate({ params: payslipIdParams, body: payslipSignBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const { role, name, img } = req.body || {};
+      // Chặn ký "vượt cấp": mỗi vai trò chỉ ký đúng ô chữ ký của mình.
+      const allowedSignerRoles: Record<string, string[]> = {
+        DIRECTOR: ['giamdoc'],
+        ADMIN: ['giamdoc', 'lap', 'quanly'],
+        FINANCE: ['lap', 'quanly'],
+        STORE: ['quanly'],
+      };
+      if (!(allowedSignerRoles[req.user!.role] || []).includes(role)) {
+        return res.status(403).json({ error: 'SIGNER_ROLE_FORBIDDEN: vai trò của bạn không được ký ô chữ ký này!' });
+      }
       const updated = await payrollService.signSlip(req.params.id, role, name, img, req.user!.id);
       broadcastUpdate('payroll', { action: 'sign-slip', itemId: req.params.id, role });
       res.json(updated);
@@ -6061,6 +6087,126 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         actorId: req.user!.id,
       });
       res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // --- QUY TRÌNH YÊU CẦU CÔNG VIỆC NỘI BỘ (GĐ - KT - HR - IT) ---
+  const INTERNAL_ROLES = ['DIRECTOR', 'ADMIN', 'FINANCE', 'HR', 'IT'];
+
+  app.get('/internal-requests', authMiddleware, requireRole(INTERNAL_ROLES as any), async (_req, res) => {
+    try {
+      const list = await listInternalRequests(adapter);
+      res.json(list);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/internal-requests', authMiddleware, requireRole(INTERNAL_ROLES as any), async (req: AuthenticatedRequest, res) => {
+    try {
+      const { title, description, to_dept, priority } = req.body || {};
+      if (!title || !String(title).trim()) return res.status(400).json({ error: 'MISSING_TITLE' });
+      if (!isDepartment(to_dept)) return res.status(400).json({ error: 'INVALID_DEPARTMENT' });
+      const fromDept = roleToDepartment(req.user!.role);
+      const created = await createInternalRequest(adapter, {
+        title, description, to_dept, priority,
+        from_dept: fromDept,
+        created_by: req.user!.id,
+        created_by_name: req.user!.fullName,
+      });
+      broadcastUpdate('internal-requests', { action: 'created', id: created.request_id });
+      broadcastNotification({
+        title: `🧾 Yêu cầu công việc nội bộ mới: ${created.title}`,
+        message: `${req.user!.fullName || fromDept} (${fromDept}) gửi tới bộ phận ${to_dept}.`,
+        type: 'SYSTEM',
+      });
+      res.json(created);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.post('/internal-requests/:id/done', authMiddleware, requireRole(INTERNAL_ROLES as any), async (req: AuthenticatedRequest, res) => {
+    try {
+      const { note } = req.body || {};
+      const updated = await markInternalRequestDone(adapter, req.params.id, { id: req.user!.id, name: req.user!.fullName, role: req.user!.role }, note);
+      broadcastUpdate('internal-requests', { action: 'done', id: updated.request_id });
+      broadcastNotification({
+        title: `⏳ Yêu cầu "${updated.title}" chờ Giám đốc ký duyệt`,
+        message: 'Các bộ phận đã hoàn tất, chờ Giám đốc ký duyệt để triển khai.',
+        type: 'SYSTEM',
+      });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.post('/internal-requests/:id/forward', authMiddleware, requireRole(INTERNAL_ROLES as any), async (req: AuthenticatedRequest, res) => {
+    try {
+      const { to_dept, note } = req.body || {};
+      if (!isDepartment(to_dept)) return res.status(400).json({ error: 'INVALID_DEPARTMENT' });
+      const updated = await forwardInternalRequest(adapter, req.params.id, to_dept, { id: req.user!.id, name: req.user!.fullName, role: req.user!.role }, note);
+      broadcastUpdate('internal-requests', { action: 'forwarded', id: updated.request_id, to: to_dept });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.post('/internal-requests/:id/approve', authMiddleware, requireRole(['DIRECTOR', 'ADMIN']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const { note } = req.body || {};
+      const updated = await approveInternalRequest(adapter, req.params.id, { id: req.user!.id, name: req.user!.fullName, role: req.user!.role }, note);
+      broadcastUpdate('internal-requests', { action: 'approved', id: updated.request_id });
+      broadcastNotification({
+        title: `✅ Giám đốc đã ký duyệt yêu cầu "${updated.title}"`,
+        message: 'Yêu cầu đã được duyệt — triển khai dự án.',
+        type: 'SYSTEM',
+      });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.post('/internal-requests/:id/reject', authMiddleware, requireRole(INTERNAL_ROLES as any), async (req: AuthenticatedRequest, res) => {
+    try {
+      const { reason } = req.body || {};
+      const updated = await rejectInternalRequest(adapter, req.params.id, { id: req.user!.id, name: req.user!.fullName, role: req.user!.role }, reason);
+      broadcastUpdate('internal-requests', { action: 'rejected', id: updated.request_id });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // --- QUY CHẾ CÔNG TY THEO ĐỐI TƯỢNG (từng NV / từng chi nhánh / tất cả) ---
+  app.get('/company-policies', authMiddleware, async (_req, res) => {
+    try {
+      res.json(await listCompanyPolicies(adapter));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/company-policies', authMiddleware, requireRole(['DIRECTOR', 'ADMIN']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const saved = await upsertCompanyPolicy(adapter, req.body || {}, { id: req.user!.id, name: req.user!.fullName });
+      broadcastUpdate('company-policies', { action: 'upsert', id: saved.policy_id });
+      res.json(saved);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.delete('/company-policies/:id', authMiddleware, requireRole(['DIRECTOR', 'ADMIN']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const ok = await deleteCompanyPolicy(adapter, req.params.id);
+      broadcastUpdate('company-policies', { action: 'delete', id: req.params.id });
+      res.json({ ok });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }

@@ -1068,7 +1068,7 @@ export class MockSheetsAdapter implements ISheetsRepository {
     if (!slip) throw new Error('PAYSLIP_NOT_FOUND');
     // Ảnh chữ ký không lưu thô vào bộ nhớ: cắt ngưỡng chống phình RAM/Sheets.
     const clean: any = { ...updates };
-    for (const k of ['sign_lap', 'sign_quanly', 'sign_nhanvien'] as const) {
+    for (const k of ['sign_giamdoc', 'sign_lap', 'sign_quanly', 'sign_nhanvien'] as const) {
       const s: any = (clean as any)[k];
       if (s && typeof s.img === 'string' && s.img.length > 45000) {
         (clean as any)[k] = { ...s, img: s.img.slice(0, 45000) };

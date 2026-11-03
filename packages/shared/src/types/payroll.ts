@@ -31,7 +31,7 @@ export interface PayslipSignature {
   by?: string;
 }
 
-export type PayslipSignerRole = 'lap' | 'quanly' | 'nhanvien';
+export type PayslipSignerRole = 'giamdoc' | 'lap' | 'quanly' | 'nhanvien';
 
 export interface PayslipItem {
   item_id: string;
@@ -86,6 +86,8 @@ export interface PayslipItem {
   // --- Quy trình ký 3 bên + phát hành từng phiếu (DRAFT -> PUBLISHED -> CONFIRMED -> PAID) ---
   /** Chữ ký người lập phiếu (Kế toán). Đủ 2 ký lập+quản lý mới hiện nút PUBLISHED. */
   sign_lap?: PayslipSignature;
+  /** Chữ ký Giám đốc — bắt buộc trước chữ ký quản lý chi nhánh với phiếu mới. */
+  sign_giamdoc?: PayslipSignature;
   /** Chữ ký quản lý chi nhánh. */
   sign_quanly?: PayslipSignature;
   /** Chữ ký xác nhận của nhân viên (chỉ ký khi phiếu đã PUBLISHED). */
