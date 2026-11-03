@@ -67,3 +67,6 @@ DONG_PHUC.jpg
 .agents/
 skills-lock.json
 
+
+# Hash package-lock da cai node_modules tren VPS (deploy/vps/deploy.sh)
+.deploy-lock-hash

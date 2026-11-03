@@ -25,6 +25,19 @@ node apps/backend/scripts/gen-version.cjs 2>/dev/null || true
 if [ ! -d "node_modules" ] || [ ! -f "node_modules/.bin/tsc" ]; then
   echo "==> Phat hien thieu node_modules tren VPS moi -> Dang chay npm ci..."
   npm ci
+  LOCK_HASH_FILE=".deploy-lock-hash"
+  sha1sum package-lock.json | cut -d' ' -f1 > "$LOCK_HASH_FILE" 2>/dev/null || true
+else
+  # package-lock.json doi (them/bot dependency) => node_modules dang cu, phai
+  # npm ci lai; neu khong build se fail kieu "Cannot find module 'leaflet'".
+  LOCK_HASH_FILE=".deploy-lock-hash"
+  CURRENT_HASH=$(sha1sum package-lock.json | cut -d' ' -f1)
+  LAST_HASH=$(cat "$LOCK_HASH_FILE" 2>/dev/null || echo "")
+  if [ "$CURRENT_HASH" != "$LAST_HASH" ]; then
+    echo "==> package-lock.json da thay doi -> Dang chay npm ci..."
+    npm ci
+    echo "$CURRENT_HASH" > "$LOCK_HASH_FILE"
+  fi
 fi
 
 # Dam bao node_modules/.bin luon co mat trong PATH cho moi sub-script
