@@ -772,9 +772,8 @@ export function formatCountdown(ms: number): string {
 }
 
 /**
- * Hạn hiệu lực của phiếu bù công: 30 phút kể từ lúc NV gửi, nhưng chốt muộn
- * nhất là 21:00 (giờ VN) cùng ngày vì quá khung duyệt 08:00–21:00 hệ thống tự
- * từ chối (xem AttendanceService.expireStaleAdjustments bên backend).
+ * Hạn hiệu lực của phiếu bù công: DUY NHẤT 72 giờ kể từ lúc NV gửi (nhận phiếu);
+ * quá 72h hệ thống tự hủy (xem AttendanceService.expireStaleAdjustments backend).
  */
 export function adjDeadlineInfo(createdAt?: string, nowMs: number = Date.now(), reason?: string): {
   deadlineMs: number;
@@ -786,22 +785,19 @@ export function adjDeadlineInfo(createdAt?: string, nowMs: number = Date.now(), 
 } | null {
   const createdMs = Date.parse(String(createdAt || ''));
   if (!Number.isFinite(createdMs)) return null;
-  // Phiếu "Bù công cả ngày" (BU_CONG_NGAY) do Giám đốc duyệt, hạn 48 giờ và
-  // KHÔNG bị chốt bởi khung 08:00–21:00; các loại khác giữ hạn 30 phút.
+  // Mọi phiếu bù công (mọi loại) có hạn DUY NHẤT 72 giờ kể từ lúc nhận phiếu;
+  // quá 72h hệ thống tự hủy (không còn chốt 21:00). isBuCongNgay chỉ còn dùng để
+  // phân biệt loại phiếu do Giám đốc duyệt (Bù công cả ngày).
   const isBuCongNgay = /BU_CONG_NGAY/i.test(String(reason || ''));
-  const ttlDeadline = createdMs + (isBuCongNgay ? 48 * 60 : 30) * 60 * 1000;
-  // 21:00 giờ VN của đúng ngày tạo phiếu.
-  const vn = new Date(createdMs + 7 * 3_600_000);
-  const closeMs = Date.UTC(vn.getUTCFullYear(), vn.getUTCMonth(), vn.getUTCDate(), 21, 0, 0) - 7 * 3_600_000;
-  const deadlineMs = isBuCongNgay ? ttlDeadline : Math.min(ttlDeadline, closeMs);
+  const deadlineMs = createdMs + 72 * 60 * 60 * 1000;
   const remainingMs = Math.max(0, deadlineMs - nowMs);
   const vnDeadline = new Date(deadlineMs + 7 * 3_600_000);
   const dd = String(vnDeadline.getUTCDate()).padStart(2, '0');
   const mo = String(vnDeadline.getUTCMonth() + 1).padStart(2, '0');
   const hh = String(vnDeadline.getUTCHours()).padStart(2, '0');
   const mi = String(vnDeadline.getUTCMinutes()).padStart(2, '0');
-  const deadlineText = isBuCongNgay ? `${dd}/${mo} ${hh}:${mi}` : `${hh}:${mi}`;
-  return { deadlineMs, remainingMs, expired: remainingMs <= 0, deadlineText, cappedByWindow: !isBuCongNgay && closeMs < ttlDeadline, isBuCongNgay };
+  const deadlineText = `${dd}/${mo} ${hh}:${mi}`;
+  return { deadlineMs, remainingMs, expired: remainingMs <= 0, deadlineText, cappedByWindow: false, isBuCongNgay };
 }
 
 /** Chuẩn hiển thị cột Thời Gian lịch PV: dd/MM/yyyy - HH:mm. */
@@ -11891,16 +11887,16 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       color: adjDl.expired ? '#991B1B' : adjDl.remainingMs <= 5 * 60 * 1000 ? '#B45309' : '#166534',
                     }}
                   >
-                    <div>⏰ {adjDl.deadlineText}{adjDl.isBuCongNgay ? ' (hạn 48h — Giám đốc duyệt)' : adjDl.cappedByWindow ? ' (chốt 21:00)' : ''}</div>
+                    <div>⏰ {adjDl.deadlineText} (hạn 72h{adjDl.isBuCongNgay ? ' — Giám đốc duyệt' : ''})</div>
                     <div style={{ marginTop: '2px' }}>
                       {adjDl.expired
-                        ? (adjDl.isBuCongNgay ? 'Đã hết hạn 48h — hệ thống tự hủy, hoàn 5 điểm' : 'Đã hết hạn — hệ thống tự từ chối')
+                        ? (adjDl.isBuCongNgay ? 'Đã hết hạn 72h — hệ thống tự hủy, hoàn 5 điểm' : 'Đã hết hạn 72h — hệ thống tự hủy')
                         : `Còn ${formatCountdown(adjDl.remainingMs)}`}
                     </div>
                   </div>
                 ) : (
                   <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                    ⏰ {adjDl.deadlineText}{adjDl.isBuCongNgay ? ' (hạn 48h — Giám đốc duyệt)' : adjDl.cappedByWindow ? ' (chốt 21:00)' : ''}
+                    ⏰ {adjDl.deadlineText} (hạn 72h{adjDl.isBuCongNgay ? ' — Giám đốc duyệt' : ''})
                     <div style={{ marginTop: '2px' }}>{adjDl.expired ? 'Đã hết hạn duyệt' : 'Trong hạn duyệt'}</div>
                   </div>
                 )
@@ -11911,7 +11907,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <td style={{ padding: '12px 20px' }}>
               <span className="badge" style={{ backgroundColor: a.status === 'APPROVED' ? '#DCFCE7' : a.status === 'REJECTED' ? '#FEE2E2' : '#FEF3C7', color: a.status === 'APPROVED' ? '#166534' : a.status === 'REJECTED' ? '#991B1B' : '#92400E', fontWeight: 700 }}>
                 {a.status === 'APPROVED' ? 'Đã duyệt' : a.status === 'REJECTED' ? (String(a.review_note || '').startsWith('Tự động hủy')
-                  ? 'Tự động hủy (48h)'
+                  ? 'Tự động hủy (72h)'
                   : String(a.review_note || '').startsWith('Tự động từ chối') ? 'Tự từ chối (hết hạn)' : 'Đã từ chối') : 'Chờ duyệt'}
               </span>
             </td>
@@ -12090,7 +12086,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <h1 style={{ fontSize: '20px', fontWeight: 800, margin: 0 }}>11. Bổ Sung & Điều Chỉnh Dữ Liệu Công</h1>
-            <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '4px 0 0' }}>Xử lý quên check-in/out hoặc sự cố GPS/Camera gửi từ Cổng Nhân Viên (có audit trail). NV chính thức <strong>1 phiếu/tuần, tối đa 4 phiếu/tháng</strong> (tuần không dùng cộng dồn trong tháng, qua tháng reset); phiếu quá <strong>30 phút</strong> chưa duyệt thì hệ thống <strong>tự động từ chối</strong> (giữ phiếu để đối soát, tự xóa sau 7 ngày nữa). <strong>Chỉ hiển thị phiếu tháng này</strong> và chia theo tuần — hết tháng tự ẩn khỏi cổng admin (Drive vẫn lưu đủ các tháng).</p>
+            <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '4px 0 0' }}>Xử lý quên check-in/out hoặc sự cố GPS/Camera gửi từ Cổng Nhân Viên (có audit trail). NV chính thức <strong>1 phiếu/tuần, tối đa 4 phiếu/tháng</strong> (tuần không dùng cộng dồn trong tháng, qua tháng reset); phiếu quá <strong>72 giờ</strong> kể từ lúc nhận phiếu chưa duyệt thì hệ thống <strong>tự động hủy</strong> (giữ phiếu để đối soát, tự xóa sau 7 ngày nữa). <strong>Chỉ hiển thị phiếu tháng này</strong> và chia theo tuần — hết tháng tự ẩn khỏi cổng admin (Drive vẫn lưu đủ các tháng).</p>
           </div>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <span className="badge" style={{ backgroundColor: '#E0E7FF', color: '#3730A3', fontWeight: 800 }}>
@@ -12106,12 +12102,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         {(() => {
           const soon = pendingAdj
             .map((a: any) => ({ a, dl: adjDeadlineInfo(a.created_at, adjNow, a.reason) }))
-            .filter((x: any) => x.dl && !x.dl.expired && x.dl.remainingMs <= 5 * 60 * 1000)
+            .filter((x: any) => x.dl && !x.dl.expired && x.dl.remainingMs <= 12 * 60 * 60 * 1000)
             .sort((x: any, y: any) => x.dl.remainingMs - y.dl.remainingMs);
           if (soon.length === 0) return null;
           return (
             <div style={{ backgroundColor: '#FEF2F2', border: '1.5px solid #FCA5A5', borderRadius: '10px', padding: '10px 14px', fontSize: '13px', color: '#991B1B', fontWeight: 700 }}>
-              ⚠️ {soon.length} phiếu sắp hết hạn tự hủy (dưới 5 phút):{' '}
+              ⚠️ {soon.length} phiếu sắp hết hạn tự hủy (dưới 12 giờ):{' '}
               {soon.map((x: any) => `${x.a.employee_id} (còn ${formatCountdown(x.dl.remainingMs)})`).join(' • ')}
             </div>
           );
@@ -12370,10 +12366,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     >
                       {pending
                         ? (dl.expired
-                          ? `⏰ Đã quá hạn duyệt (hạn ${dl.deadlineText}) — hệ thống sẽ tự từ chối phiếu.`
-                          : `⏳ Hạn tự hủy: ${dl.deadlineText} • còn ${formatCountdown(dl.remainingMs)}`)
-                        : `⏰ Hạn duyệt phiếu: ${dl.deadlineText}`}
-                      {dl.cappedByWindow ? ' • chốt khung duyệt 21:00' : ''}
+                          ? `⏰ Đã quá hạn duyệt (hạn ${dl.deadlineText}) — hệ thống sẽ tự hủy phiếu.`
+                          : `⏳ Hạn tự hủy (72h): ${dl.deadlineText} • còn ${formatCountdown(dl.remainingMs)}`)
+                        : `⏰ Hạn duyệt phiếu (72h): ${dl.deadlineText}`}
                     </div>
                   );
                 })()}

@@ -60,25 +60,26 @@ test('adjustment drive: nhãn trạng thái', () => {
   );
 });
 
-test('adjustment txt: lý do, số phút, hạn duyệt 30 phút', () => {
+test('adjustment txt: lý do, số phút, hạn duyệt 72 giờ', () => {
   const txt = buildAdjustmentRequestTxt(adj(), EMP, undefined, Date.parse('2026-11-02T04:45:00.000Z'));
   assert.match(txt, /LÝ DO & SỐ PHÚT : Quên check-in — 45 phút/);
   assert.match(txt, /Ngày gửi {8}: 02\/11\/2026 11:43 \(giờ VN\)/);
-  assert.match(txt, /Hạn duyệt {7}: 02\/11\/2026 12:13 \(giờ VN\)/);
+  // 11:43 VN + 72 giờ = 05/11/2026 11:43 VN
+  assert.match(txt, /Hạn duyệt {7}: 05\/11\/2026 11:43 \(giờ VN\)/);
   assert.match(txt, /TRẠNG THÁI {6}: Chờ duyệt/);
   assert.match(txt, /Hình ảnh {8}: Không có ảnh/);
   assert.doesNotMatch(txt, /SỐ PHÚT DUYỆT/);
 });
 
-test('adjustment txt: hạn duyệt chốt muộn nhất 21:00 VN cùng ngày', () => {
-  // 20:50 VN + 30 phút = 21:20 nhưng bị chốt ở 21:00.
+test('adjustment txt: hạn duyệt 72 giờ, không còn chốt 21:00', () => {
+  // 20:50 VN + 72 giờ = 05/11/2026 20:50 VN (không bị chốt ở 21:00).
   const txt = buildAdjustmentRequestTxt(
     adj({ created_at: '2026-11-02T13:50:00.000Z' }),
     EMP,
     undefined,
     Date.parse('2026-11-02T13:50:00.000Z'),
   );
-  assert.match(txt, /Hạn duyệt {7}: 02\/11\/2026 21:00 \(giờ VN\)/);
+  assert.match(txt, /Hạn duyệt {7}: 05\/11\/2026 20:50 \(giờ VN\)/);
 });
 
 test('adjustment txt: đã duyệt có số phút duyệt + link ảnh', () => {

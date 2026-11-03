@@ -475,22 +475,22 @@ server.listen(Number(PORT), '0.0.0.0', async () => {
   setTimeout(autoRemindersTickSafe, 60_000); // đợi dữ liệu load xong lần đầu
   setInterval(autoRemindersTickSafe, 5 * 60_000);
 
-  // Phiếu bổ sung công gửi HR quá 30 phút chưa duyệt: tự động TỪ CHỐI (giữ phiếu
-  // để đối soát) + báo inbox NV; phiếu đã tự từ chối quá 7 ngày nữa thì tự XÓA.
-  // Chạy mỗi 1 phút để bám sát hiệu lực 30 phút của phiếu.
+  // Phiếu bổ sung công quá 72 giờ chưa duyệt: tự động HỦY (giữ phiếu để đối soát)
+  // + báo inbox NV; phiếu đã tự hủy quá 7 ngày nữa thì tự XÓA.
+  // Chạy mỗi 1 phút để bám sát hạn 72 giờ của phiếu.
   const adjustmentExpiryTickSafe = async () => {
     try {
       const r = await services.attendanceService.expireStaleAdjustments(new Date());
       if (r.rejected.length > 0) {
-        console.log(`[adjustments] Tự từ chối ${r.rejected.length} phiếu quá 30 phút HR chưa duyệt.`);
+        console.log(`[adjustments] Tự hủy ${r.rejected.length} phiếu quá 72 giờ chưa duyệt.`);
         for (const item of r.rejected) {
           try {
             await services.notificationsService.sendNotification({
               recipientIds: [item.employeeId],
               type: 'ADJUSTMENT_AUTO_REJECTED',
               severity: 'ACTION_REQUIRED',
-              title: '⏳ Phiếu bổ sung công quá 30 phút chưa được duyệt',
-              summary: 'HR chưa duyệt phiếu của bạn sau 30 phút nên hệ thống đã tự động từ chối. Cần thì gửi lại phiếu mới hoặc báo trực tiếp Store/HR!',
+              title: '⏳ Phiếu bổ sung công quá 72 giờ chưa được duyệt',
+              summary: 'Phiếu của bạn chưa được duyệt trong 72 giờ nên hệ thống đã tự động hủy. Cần thì gửi lại phiếu mới hoặc báo trực tiếp Store/HR/Giám đốc!',
               targetPath: '/adjustment',
               actorId: 'SYSTEM',
             }).catch(() => null);
@@ -501,7 +501,7 @@ server.listen(Number(PORT), '0.0.0.0', async () => {
         } catch { /* non-fatal */ }
       }
       if (r.deleted.length > 0) {
-        console.log(`[adjustments] Tự xóa ${r.deleted.length} phiếu đã tự từ chối quá 7 ngày.`);
+        console.log(`[adjustments] Tự xóa ${r.deleted.length} phiếu đã tự hủy quá 7 ngày.`);
         try {
           io.emit('data:updated', { entity: 'adjustments', data: { action: 'auto-deleted', ids: r.deleted }, timestamp: new Date().toISOString() });
         } catch { /* non-fatal */ }

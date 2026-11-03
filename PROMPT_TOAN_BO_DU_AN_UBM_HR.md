@@ -48,7 +48,7 @@
 - **Phạt đi trễ theo tier:** trễ 10–29 phút = **30.000đ (FLAT_30K)**; 30–59 phút = **50% lương ca (HALF_SHIFT)**; ≥60 phút = **100% lương ca, không lương (FULL_SHIFT)**; trễ <10 phút không phạt. Ưu tiên mức phạt server ghi nhận lúc check-in (`fine_tier`/`fine_amount`).
 - **Thử việc 12 ngày:** 7 ngày làm + 5 ngày OFF, kết thúc bằng buổi vấn đáp Google Meet + đề thi đầu ra.
 - **Nhân viên chính thức:** bắt buộc đăng ký **2 ngày OFF/tuần** trong cổng mở **Thứ 6 09:00 → Thứ 7 09:00**; đăng ký xong mới mở khóa toàn bộ app.
-- **Điều chỉnh công:** 1 phiếu/tuần; tự động từ chối sau **30 phút** HR chưa duyệt; tự xóa sau **7 ngày**; bù công cả ngày (`BU_CONG_NGAY`) tốn **5 điểm bù công** (tích 1 ca check-in+out = +2 điểm).
+- **Điều chỉnh công:** 1 phiếu/tuần; hạn duyệt **72 giờ** kể từ lúc nhận phiếu, quá hạn **tự động hủy**; tự xóa sau **7 ngày**; bù công cả ngày (`BU_CONG_NGAY`) tốn **5 điểm bù công** (tích 1 ca check-in+out = +2 điểm) và do **Giám đốc** duyệt.
 
 ## 1.4. Ca làm việc chuẩn (Asia/Ho_Chi_Minh, GMT+7)
 
@@ -145,7 +145,7 @@ Chuẩn thực thể: `id` bất biến, `version` tăng (optimistic lock), `cre
 
 `DIRECTOR | ADMIN | HR | STORE | FINANCE | MARKETING | IT | EMPLOYEE`
 
-- **DIRECTOR** (Giám đốc, tài khoản `umbomilk`, `branch_scope: '*'`): 10 chức năng — ký phiếu lương (trước Quản lý chi nhánh), quản lý & giám sát nhân sự toàn hệ thống, bản đồ GPS, soạn thông báo, duyệt phiếu bù công cả ngày (48h), cấu hình quy chế công ty theo đối tượng, hồ sơ nhân viên, lịch làm việc, đổi mật khẩu, quy trình công việc nội bộ.
+- **DIRECTOR** (Giám đốc, tài khoản `umbomilk`, `branch_scope: '*'`): 10 chức năng — ký phiếu lương (trước Quản lý chi nhánh), quản lý & giám sát nhân sự toàn hệ thống, bản đồ GPS, soạn thông báo, duyệt phiếu bù công (hạn 72h), cấu hình quy chế công ty theo đối tượng, hồ sơ nhân viên, lịch làm việc, đổi mật khẩu, quy trình công việc nội bộ.
 - **IT** (phòng IT): tham gia quy trình yêu cầu công việc nội bộ + đổi mật khẩu.
 - Tài khoản DIRECTOR được **bootstrap tự động** khi backend khởi động nếu chưa tồn tại (mật khẩu hash bcrypt; override qua env `DIRECTOR_USERNAME` / `DIRECTOR_PASSWORD` / `DIRECTOR_FULL_NAME`).
 
@@ -292,7 +292,7 @@ Chuẩn thực thể: `id` bất biến, `version` tăng (optimistic lock), `cre
 | `POST /attendance/events`, `GET /attendance/events`, `GET /attendance/events/archive` | Sự kiện / lọc theo NV-ngày / archive tuần cũ |
 | `GET /attendance/photo/:eventId`, `GET /attendance/adjustments/:id/photo` | Xem ảnh (Drive → đĩa → inline RAM) |
 | `DELETE /attendance/events/:id` | Xóa sự kiện (GPS vượt; tombstone 120s) |
-| `POST /attendance/adjustments`, `GET`, `DELETE :id`, `POST :id/approve`, `POST :id/repair` | Phiếu bổ sung công (TTL 30 phút duyệt, 23:00–08:00 cấm tạo, BU_CONG_NGAY trừ 5 điểm) / duyệt / sửa phiếu lỗi |
+| `POST /attendance/adjustments`, `GET`, `DELETE :id`, `POST :id/approve`, `POST :id/repair` | Phiếu bổ sung công (hạn duyệt **72 giờ** kể từ lúc nhận, 23:00–08:00 cấm tạo, BU_CONG_NGAY trừ 5 điểm — Giám đốc duyệt) / duyệt / sửa phiếu lỗi |
 | `POST /attendance/complete-shift` | (ADMIN) Buộc ca COMPLETED khi NV quên checkout (+2 điểm bù công) |
 | `GET /admin/attendance/photo-stats`, `POST /admin/attendance/reverify-gps` | Thống kê ảnh / rà GPS lại tất cả sự kiện + xóa vượt bán kính |
 | `GET /admin/attendance/export-day|export-week|export-day|export-work-week` | Export Excel công ngày/tuần/tuần toàn chi nhánh (ZIP) |
@@ -363,7 +363,7 @@ Chuẩn thực thể: `id` bất biến, `version` tăng (optimistic lock), `cre
 | Tick | Chu kỳ | Việc |
 |---|---|---|
 | `autoPullSheetsTick` | 10s | Pull toàn bộ Sheets; counts đổi → `data:updated entity:all` |
-| `adjustmentExpiryTickSafe` | 60s | Phiếu bổ sung công >30 phút chưa duyệt → tự REJECT + inbox NV; REJECT >7 ngày → tự DELETE |
+| `adjustmentExpiryTickSafe` | 60s | Phiếu bổ sung công quá **72 giờ** chưa duyệt → tự HỦY + inbox NV; đã hủy >7 ngày → tự DELETE |
 | `absenteeTickSafe` | 15 phút | Ca PUBLISHED quá giờ kết thúc 30p không check-in → ghi ABSENT |
 | `attendanceWeekTick` | 60s | CN 20:00 nhắc HR tải ZIP; CN 23:30 lưu trữ tuần (ZIP Drive + chuyển `LUUTRU_CHAMCONG_TUAN`) + reset phiếu đổi ca; T2 00:05 chạy bù |
 | `payrollAutoTick` | 5 phút | Ngày 1 lúc 00:10–00:30 tự tính nháp lương kỳ trước (nếu chưa có) + thông báo ADMIN/FINANCE (`PAYROLL_AUTO_DRAFT`) |
@@ -508,7 +508,7 @@ Tab active lưu `localStorage["ubm_active_tab"]`. Lưu ý: tab `attendance` (Đi
 - Hover popup **lương tạm tính** (`shiftPayInfo`: đơn giá, giờ, phạt, net), thumbnail ảnh, tra phiếu đổi/nhường ca liên quan (`pickSwapOf`).
 
 ### 6.3.9. Điều Chỉnh Công (`adjustments` — HR/ADMIN)
-- **Quy tắc:** 1 phiếu/tuần; tự từ chối sau 30 phút; tự xóa sau 7 ngày.
+- **Quy tắc:** 1 phiếu/tuần; hạn duyệt **72 giờ** (quá hạn tự hủy); tự xóa sau 7 ngày.
 - **Duyệt/Từ chối:** `POST /attendance/adjustments/{id}/approve` `{status, minutesApproved}` — backfill công + xóa vi phạm trễ.
 - **Xóa cứng:** `DELETE /attendance/adjustments/{id}` · 🔧 **Chuyển đúng ngày** (`POST .../repair`) · 🔒 **Khóa phiếu đã duyệt**.
 - Gom phiếu theo folder tuần; modal chi tiết + ảnh bằng chứng `AdjPhoto`.
@@ -581,7 +581,7 @@ Tab active lưu `localStorage["ubm_active_tab"]`. Lưu ý: tab `attendance` (Đi
 
 1. **Ký phiếu lương (`DirectorPayrollView`)** — Quy trình: Kế toán lập (DRAFT) → **Giám đốc ký** (`sign_giamdoc`) → Quản lý chi nhánh (STORE) ký (`sign_quanly`) → Kế toán phát hành (PUBLISHED) → NV ký (`CONFIRMED`) → chi trả (`PAID`). API `GET /payroll/period-slips/:period` (DIRECTOR) + `POST /payroll/slips/:id/sign` với `role: 'giamdoc'`. Publish **bắt buộc đủ 3 chữ ký** `sign_giamdoc + sign_lap + sign_quanly`; backend chặn ký vượt cấp (mỗi vai trò chỉ ký đúng ô của mình: DIRECTOR→giamdoc, STORE→quanly, FINANCE→lap/quanly). Realtime qua `data:updated(payroll/payslips)` → `ubm:payslips-reload`.
 2. **Nhân sự toàn hệ thống / Hồ sơ / Lịch làm việc / Bản đồ GPS / Thông báo** — tái dùng nguyên module ADMIN/HR với `branch_scope: '*'` (DIRECTOR được thêm vào `requireRole` của `/employees`, `/admin/live-map`, `/admin/notifications`, `/announcements`) và `enforceBranchScope` cho phép xem mọi chi nhánh.
-3. **Duyệt phiếu bù công cả ngày (48h)** — Phiếu loại `BU_CONG_NGAY` tốn 5 điểm, tối đa 4/tháng, 1/tuần. **Hạn 48 giờ** (`AttendanceService.BU_CONG_NGAY_TTL_MINUTES = 2880`, không áp khung 08:00–21:00); quá 48h không duyệt hệ thống **tự hủy** (REJECTED, ghi chú "Tự động hủy sau 48 giờ…") và **hoàn 5 điểm**. Người duyệt là **Giám đốc/ADMIN** (`APPROVER_FORBIDDEN` nếu cấp khác bấm Duyệt); UI `RoleViews` khóa nút Duyệt với HR và hiện "🔒 Giám đốc duyệt".
+3. **Duyệt phiếu bù công (hạn 72 giờ)** — Phiếu loại `BU_CONG_NGAY` tốn 5 điểm, tối đa 4/tháng, 1/tuần. **Mọi phiếu bù công có hạn duy nhất 72 giờ** kể từ lúc nhận phiếu (`AttendanceService.ADJUSTMENT_TTL_MINUTES = 4320`, không còn chốt 21:00); quá 72h chưa duyệt hệ thống **tự hủy** (REJECTED, ghi chú "Tự động hủy…") và **hoàn 5 điểm** nếu là phiếu bù công cả ngày. Riêng phiếu bù công cả ngày do **Giám đốc/ADMIN** duyệt (`APPROVER_FORBIDDEN` nếu cấp khác bấm Duyệt); UI `RoleViews` khóa nút Duyệt với HR và hiện "🔒 Giám đốc duyệt".
 4. **Quy chế công ty (`CompanyPolicyView`)** — Tạo quy chế và chọn **đối tượng áp dụng**: `ALL` (tất cả nhân viên) / `BRANCH` (nhiều chi nhánh) / `EMPLOYEE` (nhiều nhân viên, có ô tìm kiếm). API `GET/POST/DELETE /company-policies` (ghi `POST`/`DELETE` = DIRECTOR/ADMIN), lưu trong system settings khóa `companyRegulations`; realtime `data:updated(company-policies)` → `ubm:company-policies-reload`.
 5. **Quy trình yêu cầu công việc nội bộ (`InternalWorkflowView`)** — Phòng ban GĐ – Kế toán – HR – IT tạo & xử lý yêu cầu chung. Luồng: `PENDING` (bộ phận đích tiếp nhận) → `IN_PROGRESS` / chuyển tiếp bộ phận → bộ phận xong (`DEPT_DONE` → `AWAITING_DIRECTOR`) → **Giám đốc ký duyệt** (`DIRECTOR_APPROVED` → `APPROVED`, mới được triển khai) / `REJECTED`. Mọi tài khoản nội bộ xem được công việc đang tới bộ phận nào (timeline realtime). API `/internal-requests` (`GET/POST`, `POST /:id/done|forward|approve|reject`), lưu system settings khóa `internalRequest:<id>`; realtime `data:updated(internal-requests)` → `ubm:internal-workflow-reload`.
 6. **Đổi mật khẩu (`ChangePasswordView`)** — `POST /auth/admin/change-password` (bắt buộc mật khẩu cũ, tối thiểu 6 ký tự).
@@ -688,7 +688,7 @@ Header sticky: logo, họ tên, badge "Thử việc (12 ngày)"/"Chính thức",
 - Form: **Ngày sự cố** (tải riêng ca đúng ngày `GET /me/schedule?fromDate=d&toDate=d` — ngày không có ca **chặn gửi**; ngày 2 ca phải chọn đúng ca), **Loại:** `QUEN_CHECKIN` (duyệt = ghi check-in), `QUEN_CHECKOUT`, `BU_CONG_NGAY` (bù cả ngày, **tốn 5 điểm bù công** — hiện số dư: tích 1 ca check-in+out = +2 điểm từ `adjust_points_earned/spent`), lý do + **ảnh bằng chứng** (không bắt buộc, nén ≤800KB, upload Drive — chỉ lưu Drive ID).
 - **Khung giờ tạo phiếu: 08:00–21:00 hằng ngày** (giờ VN) — ngoài giờ khóa nút.
 - Gửi: `POST /attendance/adjustments` `{assignmentId, incidentDate, reason: '[TYPE] date: reason', minutesRequested: 0, photo_base64?}`; chọn NGHỈ KHẨN → `POST /leaves` loại `DOT_XUAT`.
-- **Phiếu của tôi** (`GET /attendance/adjustments`, poll 15s + realtime): Chờ duyệt / Đã duyệt / Bị từ chối / **Tự động từ chối (HR quá 30 phút chưa duyệt)**; xem ảnh bằng chứng (`MyAdjPhoto` fetch blob + Bearer: `GET /attendance/adjustments/:id/photo`); phiếu PENDING được **🗑 Hủy** → `DELETE /attendance/adjustments/:id`. Quy định: quá 30 phút tự từ chối, giữ 7 ngày rồi xóa.
+- **Phiếu của tôi** (`GET /attendance/adjustments`, poll 15s + realtime): Chờ duyệt / Đã duyệt / Bị từ chối / **Tự động hủy (quá 72 giờ chưa duyệt)**; xem ảnh bằng chứng (`MyAdjPhoto` fetch blob + Bearer: `GET /attendance/adjustments/:id/photo`); phiếu PENDING được **🗑 Hủy** → `DELETE /attendance/adjustments/:id`. Quy định: quá 72 giờ tự hủy, giữ 7 ngày rồi xóa.
 
 ### Tab 10 — THI TEST / ĐÀO TẠO (`test_exam` | `test_training`)
 - Danh sách bài TEST **HR giao riêng** (`GET /me/tests`): tiêu đề, mô tả, số câu, trạng thái (Chờ làm / điểm X/10 Đạt–Chưa đạt theo `pass_score` mặc định 8).
@@ -760,7 +760,7 @@ QR ngân hàng NV gửi ở Hồ sơ → hiện ngay tab `fin-bank-qr` kế toá
 3. **Thử việc 12 ngày:** NV tự chọn 5 ngày OFF **một lần duy nhất**, hệ thống tự xếp 7 ca; tự đổi ca + tự thêm ca (≤2 ca/ngày) không cần HR duyệt.
 4. **Chính thức:** 2 ngày OFF/tuần đăng ký trong cổng T6 09:00 → T7 09:00 (1 lần/tuần, khóa app đến khi đăng ký); 2 bạn cùng ca cùng chi nhánh không OFF chung ngày; có đợt mở bù của Admin.
 5. **Đổi ca:** A gửi → B xác nhận = hoán đổi ngay; `HR_DISPATCH` (không phụ cấp); `HR_SUPPORT` tạo ca ngay ở CN hỗ trợ; phiếu sai tuần tự hủy (`audit-out-of-week`).
-6. **Điều chỉnh công:** 1 phiếu/tuần, tự từ chối sau 30 phút, tự xóa sau 7 ngày, `BU_CONG_NGAY` tốn 5 điểm bù công; duyệt → backfill công + xóa vi phạm trễ.
+6. **Điều chỉnh công:** 1 phiếu/tuần, hạn duyệt 72 giờ (quá hạn tự hủy), tự xóa sau 7 ngày, `BU_CONG_NGAY` tốn 5 điểm bù công (Giám đốc duyệt); duyệt → backfill công + xóa vi phạm trễ.
 7. **Lương:** stage `DRAFT → RECONCILED → APPROVED → PUBLISHED → PAID`; **tách biệt người tính/người duyệt**; công thức Excel hóa (rateTV/rateCT/otThreshold 10h–15h, đã bỏ phụ cấp OT) + 6 cột nhập tay + live payslip; phiếu PUBLISHED đủ **3 chữ ký** (lap/quanly/nhanvien) mới thành `CONFIRMED` → chi trả (`PAID`) qua **VietQR** (nội dung CK = "LUONG {period} {mã NV}"); phiếu đã phát không sửa đè — sai thì revision/adjustment.
 8. **Optimistic locking:** mọi PUT employee/chuyển trạng thái gửi `expectedVersion`; xung đột → `VERSION_CONFLICT`.
 9. **Bảo mật:** JWT access 8h + refresh 7d; forceLogout từ xa; khóa TK → văng phiên + xóa PIN + xóa ca; mật khẩu/PIN bcrypt, không lưu thô; SĐT + PIN 6 số bắt đổi theo chu kỳ 1–5 hàng tháng; rate limit auth + chung.

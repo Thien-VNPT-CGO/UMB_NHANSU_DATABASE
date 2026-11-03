@@ -860,13 +860,14 @@ export class AttendanceService {
     return this.repo.listAttendanceAdjustments(branchId, employeeId);
   }
 
-  /** Hiệu lực 1 phiếu gửi HR: 30 phút tính từ lúc tạo — quá hạn tự động từ chối. */
-  static readonly ADJUSTMENT_TTL_MINUTES = 30;
   /**
-   * Phiếu "Bù công cả ngày trong tháng" (BU_CONG_NGAY) do GIÁM ĐỐC duyệt, có hạn
-   * 48 giờ kể từ lúc gửi; quá 48h không duyệt hệ thống tự hủy và HOÀN 5 điểm.
+   * Hiệu lực duyệt phiếu bổ sung công: **72 giờ** tính từ lúc nhận phiếu (tạo).
+   * Quá 72h chưa duyệt, hệ thống tự động HỦY phiếu (giữ phiếu để đối soát,
+   * hoàn 5 điểm nếu là phiếu Bù công cả ngày).
    */
-  static readonly BU_CONG_NGAY_TTL_MINUTES = 48 * 60;
+  static readonly ADJUSTMENT_TTL_MINUTES = 72 * 60;
+  /** Giữ alias cho tương thích — cùng mốc 72 giờ với mọi loại phiếu bù công. */
+  static readonly BU_CONG_NGAY_TTL_MINUTES = 72 * 60;
   /** Khung giờ NV được TẠO phiếu (giờ VN): 08:00–21:00 hằng ngày, ngoài giờ báo lỗi. */
   static readonly ADJUSTMENT_CREATE_OPEN_HOUR = 8;
   static readonly ADJUSTMENT_CREATE_CLOSE_HOUR = 21;
@@ -1058,15 +1059,15 @@ export class AttendanceService {
   }
 
   /**
-   * Ràng buộc hiệu lực phiếu bổ sung công:
-   *  - PENDING quá `ttlMinutes` (mặc định 30 phút, tính từ lúc NV gửi)
-   *    mà HR chưa duyệt -> hệ thống TỰ ĐỘNG TỪ CHỐI (REJECTED + ghi chú, NV và
-   *    HR đều thấy).
-   *  - Phiếu đã tự từ chối quá 7 ngày nữa -> TỰ ĐỘNG XÓA KHỎI HỆ THỐNG
+   * Ràng buộc hiệu lực phiếu bổ sung công (mọi loại):
+   *  - PENDING quá `ttlMinutes` (mặc định 72 giờ = 4320 phút, tính từ lúc nhận
+   *    phiếu) mà chưa duyệt -> hệ thống TỰ ĐỘNG HỦY (REJECTED + ghi chú, NV và
+   *    HR/Giám đốc đều thấy), hoàn 5 điểm nếu là phiếu Bù công cả ngày.
+   *  - Phiếu đã tự hủy quá 7 ngày nữa -> TỰ ĐỘNG XÓA KHỎI HỆ THỐNG
    *    (bộ nhớ + Sheet), không để lại xác.
    * Idempotent (kiểm tra lại trạng thái trong queue trước khi chạm).
    */
-  static readonly AUTO_REJECT_NOTE = 'Tự động từ chối (quá 30 phút HR chưa duyệt)';
+  static readonly AUTO_REJECT_NOTE = 'Tự động hủy (quá 72 giờ chưa duyệt)';
   async expireStaleAdjustments(now: Date = new Date(), ttlMinutes = AttendanceService.ADJUSTMENT_TTL_MINUTES): Promise<{
     checked: number;
     expired: string[];
@@ -1084,24 +1085,16 @@ export class AttendanceService {
       const created = new Date((a as any).created_at).getTime();
       if (!Number.isFinite(created)) continue;
       const ageMin = (now.getTime() - created) / 60000;
-      // Pha 1: quá hạn HR duyệt -> tự từ chối (giữ phiếu để 2 bên đối soát).
-      // Phiếu cũng chỉ hiệu lực trong khung 08:00–21:00 hằng ngày: qua 21:00 mà
-      // vẫn PENDING (dù chưa đủ 30 phút) thì tự từ chối luôn.
+      // Pha 1: quá hạn 72 giờ chưa duyệt -> tự hủy (giữ phiếu để 2 bên đối soát).
+      // Mọi loại phiếu bù công dùng CHUNG mốc 72 giờ kể từ lúc nhận phiếu; đã bỏ
+      // chốt 21:00 (chỉ còn duy nhất hạn 72h).
       if (status === 'PENDING') {
         checked++;
-        const kind = AttendanceService.adjustmentKindOf((a as any)?.reason);
-        // BU_CONG_NGAY: hạn 48h do Giám đốc duyệt — KHÔNG áp khung 08:00–21:00.
-        const isBuCongNgay = kind === 'BU_CONG_NGAY';
-        const effTtl = isBuCongNgay ? AttendanceService.BU_CONG_NGAY_TTL_MINUTES : ttlMinutes;
-        const vnH = AttendanceService.vnHourNow(now);
-        const outsideWindow = !isBuCongNgay
-          && (vnH < AttendanceService.ADJUSTMENT_CREATE_OPEN_HOUR || vnH >= AttendanceService.ADJUSTMENT_CREATE_CLOSE_HOUR);
-        if (ageMin <= effTtl && !outsideWindow) continue;
-        const note = outsideWindow && ageMin <= effTtl
-          ? 'Tự động từ chối (hết khung giờ duyệt 08:00–21:00)'
-          : isBuCongNgay
-            ? 'Tự động hủy sau 48 giờ Giám đốc không duyệt (đã hoàn 5 điểm)'
-            : AttendanceService.AUTO_REJECT_NOTE;
+        const isBuCongNgay = AttendanceService.adjustmentKindOf((a as any)?.reason) === 'BU_CONG_NGAY';
+        if (ageMin <= ttlMinutes) continue;
+        const note = isBuCongNgay
+          ? 'Tự động hủy sau 72 giờ Giám đốc không duyệt (đã hoàn 5 điểm)'
+          : AttendanceService.AUTO_REJECT_NOTE;
         try {
           await singleWriterQueue.enqueue({
             entityType: 'DIEU_CHINH_CONG',
@@ -1127,10 +1120,10 @@ export class AttendanceService {
         } catch { /* phiếu khác xử tiếp */ }
         continue;
       }
-      // Pha 2: phiếu đã tự từ chối quá 7 ngày -> xóa cứng khỏi hệ thống.
+      // Pha 2: phiếu đã tự hủy/từ chối quá 7 ngày -> xóa cứng khỏi hệ thống.
       if (
         status === 'REJECTED' &&
-        String((a as any).review_note || '').startsWith('Tự động từ chối') &&
+        /^Tự động (hủy|từ chối)/.test(String((a as any).review_note || '')) &&
         ageMin > RETAIN_DAYS * 1440
       ) {
         checked++;
@@ -1251,9 +1244,9 @@ export class AttendanceService {
             : (fresh as any).status === 'REJECTED' ? 'đã từ chối' : (fresh as any).status;
           throw new Error(`ADJUSTMENT_NOT_PENDING: Phiếu này ${label} rồi, không xử lý lại! Tải lại danh sách.`);
         }
-        // Hiệu lực 30 phút: tick nền chạy mỗi phút nhưng HR vẫn có thể bấm duyệt
-        // đúng lúc phiếu vừa hết hạn — chặn cứng tại đây: quá 30 phút thì tự từ
-        // chối phiếu và báo hết hiệu lực (NV gửi lại phiếu mới trong quota tuần).
+        // Hiệu lực 72 giờ: tick nền chạy mỗi phút nhưng vẫn có thể bấm duyệt đúng
+        // lúc phiếu vừa hết hạn — chặn cứng tại đây: quá 72 giờ thì tự hủy phiếu
+        // và báo hết hiệu lực (NV gửi lại phiếu mới trong quota tuần).
         const kind = AttendanceService.adjustmentKindOf((fresh as any)?.reason);
         const isBuCongNgay = kind === 'BU_CONG_NGAY';
         // Phiếu "Bù công cả ngày" chỉ GIÁM ĐỐC (hoặc ADMIN) được duyệt.
@@ -1264,10 +1257,9 @@ export class AttendanceService {
         const createdMs = new Date((fresh as any).created_at).getTime();
         if (Number.isFinite(createdMs)) {
           const ageMin = (Date.now() - createdMs) / 60000;
-          const effTtl = isBuCongNgay ? AttendanceService.BU_CONG_NGAY_TTL_MINUTES : AttendanceService.ADJUSTMENT_TTL_MINUTES;
-          if (ageMin > effTtl) {
+          if (ageMin > AttendanceService.ADJUSTMENT_TTL_MINUTES) {
             const expireNote = isBuCongNgay
-              ? 'Tự động hủy sau 48 giờ Giám đốc không duyệt (đã hoàn 5 điểm)'
+              ? 'Tự động hủy sau 72 giờ Giám đốc không duyệt (đã hoàn 5 điểm)'
               : AttendanceService.AUTO_REJECT_NOTE;
             const rejected = await this.repo.updateAttendanceAdjustment(adjId, 'REJECTED', 'SYSTEM', undefined, expireNote).catch(() => null);
             await this.refundTicketPoints(rejected || fresh).catch(() => null);
@@ -1277,8 +1269,8 @@ export class AttendanceService {
               } catch { /* non-fatal */ }
             }
             throw new Error(isBuCongNgay
-              ? 'ADJUSTMENT_EXPIRED: Phiếu bù công cả ngày đã quá hạn 48 giờ và tự động hủy (đã hoàn 5 điểm)! NV gửi lại phiếu mới.'
-              : 'ADJUSTMENT_EXPIRED: Phiếu đã quá 30 phút hiệu lực và tự động hết hạn! NV gửi lại phiếu mới.');
+              ? 'ADJUSTMENT_EXPIRED: Phiếu bù công cả ngày đã quá hạn 72 giờ và tự động hủy (đã hoàn 5 điểm)! NV gửi lại phiếu mới.'
+              : 'ADJUSTMENT_EXPIRED: Phiếu đã quá hạn 72 giờ và tự động hủy! NV gửi lại phiếu mới.');
           }
         }
         const updated = await this.repo.updateAttendanceAdjustment(adjId, status, approverId, minutesApproved, note);

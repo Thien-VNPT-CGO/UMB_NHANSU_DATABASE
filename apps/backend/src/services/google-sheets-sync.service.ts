@@ -94,9 +94,9 @@ export function adjustmentRequestStatusLabel(adj: any): string {
   const st = String(adj?.status || 'PENDING');
   if (st === 'APPROVED') return 'Đã duyệt';
   if (st === 'REJECTED') {
-    return String(adj?.review_note || '').startsWith('Tự động từ chối')
-      ? 'Tự động từ chối (hết hạn)'
-      : 'Đã từ chối';
+    const note = String(adj?.review_note || '');
+    if (/^Tự động hủy/.test(note)) return 'Tự động hủy (quá 72h)';
+    return note.startsWith('Tự động từ chối') ? 'Tự động từ chối (hết hạn)' : 'Đã từ chối';
   }
   return 'Chờ duyệt';
 }
@@ -144,14 +144,13 @@ export function buildAdjustmentRequestTxt(
   nowMs: number = Date.now(),
 ): string {
   const createdMs = adjustmentCreatedMs(adj, nowMs);
-  const vn = new Date(createdMs + 7 * 3_600_000);
   const fmtVn = (ms: number) => {
     const d = new Date(ms + 7 * 3_600_000);
     return `${pad2(d.getUTCDate())}/${pad2(d.getUTCMonth() + 1)}/${d.getUTCFullYear()} `
       + `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`;
   };
-  const closeMs = Date.UTC(vn.getUTCFullYear(), vn.getUTCMonth(), vn.getUTCDate(), 21, 0, 0) - 7 * 3_600_000;
-  const deadlineMs = Math.min(createdMs + 30 * 60 * 1000, closeMs);
+  // Hạn duyệt phiếu bù công: 72 giờ kể từ lúc nhận phiếu (không còn chốt 21:00).
+  const deadlineMs = createdMs + 72 * 60 * 60 * 1000;
   const empName = String(employee?.full_name || adj?.employee_id || 'KHONG_NV').trim();
   const empCode = String(employee?.employee_code || adj?.employee_id || '').trim();
   const approvedMinutes = adj?.status === 'APPROVED' && adj?.minutes_approved !== undefined
@@ -3337,7 +3336,7 @@ export class GoogleSheetsSyncService {
               (row as any).evidence_photo = (mem as any).evidence_photo;
             }
             // Sheet không lưu ngày tạo (pull luôn gán now) -> giữ mốc gốc trong bộ nhớ
-            // để TTL tự từ chối (1 ngày) tính đúng, không gia hạn oan mỗi lần pull.
+            // để hạn duyệt 72 giờ tính đúng, không gia hạn oan mỗi lần pull.
             if ((mem as any).created_at) {
               (row as any).created_at = (mem as any).created_at;
               (row as any).updated_at = (mem as any).updated_at || (row as any).updated_at;
