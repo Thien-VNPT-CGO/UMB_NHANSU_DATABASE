@@ -160,7 +160,7 @@ export const TeamMapView: React.FC = () => {
     const timer = window.setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
       load({ silent: true });
-    }, 30_000);
+    }, 60_000);
     return () => window.clearInterval(timer);
   }, [autoRefresh, load]);
 

@@ -565,7 +565,7 @@ Tab active lưu `localStorage["ubm_active_tab"]`. Lưu ý: tab `attendance` (Đi
 - **Cấu hình toạ độ:** tab **Chi nhánh & Ca** (ADMIN) có nút **⚙️ Sửa toạ độ GPS** (vĩ độ/kinh độ/bán kính) → `PUT /admin/branches/{id}`; lưu xong ghi riêng tab `DANH_SACH_CHI_NHANH` ngay (`syncBranchesToSheet`) và bản đồ cập nhật tức thì.
 - **Nền bản đồ:** Google Maps tile (không cần API key) trong Leaflet; nếu Google chặn tile thì tự chuyển sang OpenStreetMap. Thư viện: `leaflet`, `@types/leaflet` trong `@ubm/admin-web`.
 - **Tài khoản bị khóa:** nhân viên có `account_locked = true` hoặc `account_status = 'LOCKED'` bị loại khỏi mọi bản đồ (admin + cổng NV) ngay từ `LiveMapService`; khi Admin khóa/mở khóa, socket `employees:locked`/`employees:unlocked` kích hoạt vẽ lại bản đồ tức thì.
-- **Bản đồ trên CỔNG NHÂN VIÊN:** `GET /employee/live-map` (EMPLOYEE) trả đồng nghiệp **cùng chi nhánh** (kèm chính mình), ẩn khoảng cách/sai số GPS. Tab 5 "Bản đồ chi nhánh" vẽ Google Maps tile + marker realtime (event nội bộ `ubm:team-location`), tự làm mới 30s, có nút "về vị trí của tôi" và nút bật/tắt tự làm mới. Tài khoản bị khóa không xuất hiện.
+- **Bản đồ trên CỔNG NHÂN VIÊN:** `GET /employee/live-map` (EMPLOYEE) trả đồng nghiệp **cùng chi nhánh** (kèm chính mình), ẩn khoảng cách/sai số GPS. Tab 5 "Bản đồ chi nhánh" vẽ Google Maps tile + marker realtime (event nội bộ `ubm:team-location`), tự làm mới 60s, có nút "về vị trí của tôi" và nút bật/tắt tự làm mới. Tài khoản bị khóa không xuất hiện.
 - **Toạ độ chuẩn (Google Maps place, hotline 0708 880 404):** CN1 130 Vạn Kiếp `10.799831, 106.693370` · CN2 261 Tô Hiến Thành `10.778639, 106.666665` · CN3 120 Hoàng Diệu 2 `10.856457, 106.765621` · CN4 111 Tôn Đản `10.759223, 106.706995`.
 - **Đọc toạ độ từ Sheet:** ô nhập tay thường ở dạng `"10,799831"` (phẩy thập phân) — dùng `parseSheetNumber()` khi đọc `DANH_SACH_CHI_NHANH`; nếu dùng `Number()` thuần sẽ ra `NaN` và bản đồ rơi về toạ độ mặc định.
 
@@ -641,7 +641,7 @@ Header sticky: logo, họ tên, badge "Thử việc (12 ngày)"/"Chính thức",
 - Bản đồ Google Maps (fallback OpenStreetMap) hiển thị **đồng nghiệp cùng chi nhánh** + chính mình; marker tự di chuyển khi đồng nghiệp mở cổng NV trong khung ca (Socket.IO `live-location:update` → event `ubm:team-location`).
 - Chấm màu giống bản đồ admin: ⚪ bình thường · 🟡 đang làm (nhấp nháy) · 🟢 xong ca · 🔴 thiếu chấm. Chấm của mình có viền xanh + nhãn "Bạn".
 - Chạm vào chấm để xem tên, mã NV, ca, giờ check-in/check-out, nguồn GPS + thời điểm cập nhật.
-- Nút "về vị trí của tôi", nút tải lại, bật/tắt tự làm mới 30 giây.
+- Nút "về vị trí của tôi", nút tải lại, bật/tắt tự làm mới 60 giây (vị trí vẫn cập nhật tức thì qua Socket.IO).
 - **Tài khoản bị khóa không xuất hiện** trên bản đồ (server lọc từ `account_locked`/`account_status = LOCKED`).
 
 ### Tab 6 — CÔNG CỦA TÔI (`timesheet`)
