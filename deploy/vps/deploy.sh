@@ -99,7 +99,9 @@ for i in $(seq 1 15); do
 done
 
 if [ "$READY" -eq 1 ]; then
-  curl -fsS http://localhost:4005/health | head -c 300; echo
+  # Không pipe curl vào head: pipefail sẽ báo exit 23 (SIGPIPE) dù deploy OK.
+  HEALTH_JSON=$(curl -fsS http://localhost:4005/health || true)
+  printf '%s\n' "${HEALTH_JSON:0:300}"
 else
   echo "[CANH BAO] Backend chua phan hoi sau 30s. Xem log chi tiet ben duoi:"
   docker compose logs --tail 30 backend || true
