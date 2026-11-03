@@ -555,14 +555,15 @@ Tab active lưu `localStorage["ubm_active_tab"]`. Lưu ý: tab `attendance` (Đi
 - **Số liệu hiệu suất realtime:** 4 thẻ + bảng "Hiệu suất chấm công" tính từ **lượt điểm danh thật** (`/attendance/events` + `/attendance/events/archive`, gộp 62 ngày gần nhất) và **lịch đã tải** (`schedAllShifts`); chỉ đếm ca có `date ≤ hôm nay`, tự tải lại khi mở tab và khi socket báo check-in/out. Dòng ghi chú hiển thị **số lượt điểm danh + số ca** và khoảng ngày thực tế đang tính.
 
 ### 6.3.18. Bản Đồ GPS Nhân Viên (`live-map` — ADMIN / HR / FINANCE)
-- **Mục đích:** giám sát realtime nhân viên tại các cửa hàng đã cấu hình toạ độ; dữ liệu lấy từ GPS cổng nhân viên lúc chấm công.
+- **Mục đích:** giám sát realtime nhân viên tại các cửa hàng đã cấu hình toạ độ; dữ liệu lấy từ GPS thật của cổng nhân viên (`watchPosition`) + GPS lúc chấm công.
 - **API:** `GET /admin/live-map` (ADMIN/HR/FINANCE) → `LiveMapService.getSnapshot()` trả `branches`, `employees`, `summary`, `date` (múi giờ VN).
 - **Màu chấm:** 🩶 xám = bình thường (không có ca / chưa vào ca); 🟢 xanh lá = hoàn thành ca (đủ check-in + check-out); 🟡 vàng (nhấp nháy nhẹ) = đang làm việc (đã check-in, chưa check-out); 🔴 đỏ = thiếu check-in hoặc check-out (quá 15 phút sau giờ vào ca chưa check-in / quá 30 phút sau giờ tan chưa check-out).
-- **Tooltip khi rê chuột:** Tên NV + mã NV + chi nhánh + ca làm + khung giờ ca + giờ check-in + giờ check-out + nguồn GPS (check-in/check-out) + khoảng cách tới cửa hàng + sai số GPS, cập nhật realtime.
-- **Vị trí:** GPS của sự kiện chấm công gần nhất trong ngày; nếu chưa có GPS thì hiển thị tại toạ độ cửa hàng. NV trùng toạ độ được tách thành vòng nhỏ để không chồng marker.
+- **Tooltip khi rê chuột:** Tên NV + mã NV + chi nhánh + ca làm + khung giờ ca + giờ check-in + giờ check-out + nguồn GPS + khoảng cách tới cửa hàng + sai số GPS, cập nhật realtime.
+- **Vị trí (ưu tiên giảm dần):** GPS trực tiếp từ cổng NV → GPS sự kiện chấm công gần nhất trong ngày → toạ độ cửa hàng. NV trùng toạ độ được tách thành vòng nhỏ để không chồng marker.
+- **GPS thật từ cổng NV:** khi NV đang trong khung ca (từ 30 phút trước giờ vào đến 30 phút sau giờ tan), cổng NV bật `navigator.geolocation.watchPosition` và gửi `POST /attendance/live-location` ~30 giây/lần (hoặc khi di chuyển >15m). Backend giữ vị trí trong bộ nhớ (`LiveLocationStore`, TTL 3 phút, **không ghi Google Sheets**) và bắn Socket.IO `live-location:update` → marker admin di chuyển ngay, không tải lại toàn bộ dữ liệu.
 - **Bộ lọc:** theo chi nhánh + theo trạng thái (bấm huy hiệu màu); **tự làm mới 30 giây** và tải lại ngay khi socket báo `attendance`/`schedules`/`config` (event nội bộ `ubm:live-map-reload`).
 - **Cấu hình toạ độ:** tab **Chi nhánh & Ca** (ADMIN) có nút **⚙️ Sửa toạ độ GPS** (vĩ độ/kinh độ/bán kính) → `PUT /admin/branches/{id}`; lưu xong ghi riêng tab `DANH_SACH_CHI_NHANH` ngay (`syncBranchesToSheet`) và bản đồ cập nhật tức thì.
-- **Thư viện:** Leaflet + tile OpenStreetMap (`leaflet`, `@types/leaflet` trong `@ubm/admin-web`).
+- **Nền bản đồ:** Google Maps tile (không cần API key) trong Leaflet; nếu Google chặn tile thì tự chuyển sang OpenStreetMap. Thư viện: `leaflet`, `@types/leaflet` trong `@ubm/admin-web`.
 
 ## 6.4. Header / Topbar & tiện ích chung
 
@@ -707,11 +708,11 @@ Banner REMINDER (sắp mở cổng OFF) · banner đang trong thời gian đăng
 
 ## 10.2. Event client lắng nghe
 
-`data:updated(entity)` (reload debounce 1s theo entity: schedules/attendance/payslips/employees/all/config) · `notification.created` · `system:notification` (chỉ popup tin từ phía ADMIN/HR) · `schedule.published` (tự chuyển tuần mới + toast) · `swap.updated` (phiếu đổi ca qua từng trạng thái) · `attendance.recorded` · `payroll.published` · `admin:forceLogout` · `config` (bảo trì) · `employees / accounts / candidates / employees:locked / employees:unlocked` (admin-web).
+`data:updated(entity)` (reload debounce 1s theo entity: schedules/attendance/payslips/employees/all/config) · `notification.created` · `system:notification` (chỉ popup tin từ phía ADMIN/HR) · `schedule.published` (tự chuyển tuần mới + toast) · `swap.updated` (phiếu đổi ca qua từng trạng thái) · `attendance.recorded` · `live-location:update` (GPS trực tiếp cổng NV → cập nhật marker bản đồ) · `payroll.published` · `admin:forceLogout` · `config` (bảo trì) · `employees / accounts / candidates / employees:locked / employees:unlocked` (admin-web).
 
 ## 10.3. Window events nội bộ (đồng bộ giữa các tab component admin)
 
-`ubm:attendance-reload, ubm:reports-reload, ubm:fin-timesheet-reload, ubm:swaps-reload, ubm:schedule-reload, ubm:adjustments-reload, ubm:tests-reload, ubm:candidates-reload, ubm:employees-reload, ubm:interview-draft-reload, ubm:payslips-reload, ubm:employee-locked, ubm:employee-unlocked, ubm:live-map-reload`.
+`ubm:attendance-reload, ubm:reports-reload, ubm:fin-timesheet-reload, ubm:swaps-reload, ubm:schedule-reload, ubm:adjustments-reload, ubm:tests-reload, ubm:candidates-reload, ubm:employees-reload, ubm:interview-draft-reload, ubm:payslips-reload, ubm:employee-locked, ubm:employee-unlocked, ubm:live-map-reload, ubm:live-location`.
 
 ## 10.4. Đồng bộ chéo 2 cổng (tính năng độc đáo)
 

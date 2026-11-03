@@ -2703,6 +2703,102 @@ export function App() {
     });
     return live || list[0];
   };
+
+  // ===== GPS REALTIME: cổng NV hoạt động như thiết bị định vị thật =====
+  // watchPosition liên tục khi NV đang trong khung ca (từ 30 phút trước giờ vào
+  // đến 30 phút sau giờ tan). Toạ độ gửi lên backend ~30s/lần (hoặc khi di
+  // chuyển >15m) để bản đồ Admin/HR/Kế toán cập nhật realtime. Không ghi Sheets.
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    if (typeof navigator === 'undefined' || !('geolocation' in navigator)) return;
+
+    let stopped = false;
+    let watchId: number | null = null;
+    let lastSentAt = 0;
+    let lastLat: number | null = null;
+    let lastLng: number | null = null;
+
+    const distanceM = (lat1: number, lng1: number, lat2: number, lng2: number) => {
+      const R = 6_371_000;
+      const rad = (v: number) => (v * Math.PI) / 180;
+      const dLat = rad(lat2 - lat1);
+      const dLng = rad(lng2 - lng1);
+      const a = Math.sin(dLat / 2) ** 2 + Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(dLng / 2) ** 2;
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    };
+
+    /** Ca đang trong khung chia sẻ GPS (trước vào ca 30p → sau tan ca 30p). */
+    const activeShift = () => {
+      const now = vnNowMs();
+      return getTodayShifts()
+        .slice()
+        .sort((a: any, b: any) => String(a.start_at || '').localeCompare(String(b.start_at || '')))
+        .find((s: any) => {
+          const st = new Date(s.start_at || `${toISODate(s.date)}T00:00:00+07:00`).getTime();
+          const en = new Date(s.end_at || `${toISODate(s.date)}T23:59:59+07:00`).getTime();
+          return Number.isFinite(st) && Number.isFinite(en)
+            && now >= st - 30 * 60_000 && now <= en + 30 * 60_000;
+        }) || null;
+    };
+
+    const send = (pos: GeolocationPosition) => {
+      if (stopped) return;
+      const shift = activeShift();
+      if (!shift) return;
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+      const at = Date.now();
+      const moved = lastLat == null || lastLng == null || distanceM(lastLat, lastLng, lat, lng) >= 15;
+      // Đứng yên vẫn gửi nhịp tim 60s để bản đồ biết máy còn online.
+      if (!moved && at - lastSentAt < 60_000) return;
+      lastSentAt = at;
+      lastLat = lat;
+      lastLng = lng;
+      apiRequest('/attendance/live-location', {
+        method: 'POST',
+        body: JSON.stringify({
+          latitude: lat,
+          longitude: lng,
+          accuracy: Math.round(pos.coords.accuracy || 0),
+          assignment_id: shift.assignment_id || undefined,
+        }),
+      }).catch(() => null);
+    };
+
+    const opts: PositionOptions = { enableHighAccuracy: true, maximumAge: 15_000, timeout: 30_000 };
+    const startWatch = () => {
+      if (stopped || watchId != null) return;
+      try {
+        watchId = navigator.geolocation.watchPosition(send, () => null, opts);
+      } catch { /* thiết bị không cho phép định vị */ }
+    };
+    const stopWatch = () => {
+      if (watchId == null) return;
+      try { navigator.geolocation.clearWatch(watchId); } catch { /* bỏ qua */ }
+      watchId = null;
+    };
+    // Chỉ bật định vị khi thật sự trong khung ca (tránh xin quyền + hao pin
+    // ngoài giờ làm). Kiểm tra lại mỗi 30s để tự bật/tắt đúng giờ vào/tan ca.
+    const tick = () => {
+      if (stopped) return;
+      if (!activeShift()) {
+        stopWatch();
+        return;
+      }
+      startWatch();
+      navigator.geolocation.getCurrentPosition(send, () => null, opts);
+    };
+    tick();
+    const timer = window.setInterval(tick, 30_000);
+
+    return () => {
+      stopped = true;
+      stopWatch();
+      window.clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoggedIn, myShifts, schedRangeShifts, serverClockOffsetMs]);
+
   // Guard đồng bộ chống bấm đúp GHI NHẬN (setState async không kịp chặn 2 click
   // cùng tick -> 2 POST trùng ca; server cũng chặn trùng, đây là lớp báo sớm).
   const attendBusyRef = useRef(false);

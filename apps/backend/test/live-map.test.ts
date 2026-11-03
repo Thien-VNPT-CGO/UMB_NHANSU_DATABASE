@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { LiveMapService, vnDateOf, canonicalBranchId, distanceMeters } from '../src/services/live-map.service.js';
+import { LiveLocationStore } from '../src/services/live-location.store.js';
 
 /** Repo giả: chỉ cần các hàm LiveMapService dùng tới. */
 function makeRepo(opts: { employees: any[]; branches: any[]; shifts?: any[]; events?: any[] }) {
@@ -173,4 +174,55 @@ test('map: helper ngày VN + chuẩn hoá chi nhánh + khoảng cách', () => {
   const d = distanceMeters(10.79782, 106.69345, 10.79782, 106.69345);
   assert.equal(d, 0);
   assert.ok(distanceMeters(10.79782, 106.69345, 10.79882, 106.69345) > 100);
+});
+
+test('map: GPS trực tiếp realtime ưu tiên hơn GPS chấm công', async () => {
+  const store = new LiveLocationStore();
+  store.upsert({
+    employee_id: 'E1',
+    latitude: 10.79850,
+    longitude: 106.69400,
+    accuracy: 8,
+  }, NOW.getTime());
+  const svc = new LiveMapService(makeRepo({
+    employees: [EMP],
+    branches: [BRANCH],
+    shifts: [shift()],
+    events: [event('CHECK_IN', `${TODAY}T00:05:00.000Z`)],
+  }), store);
+  const snap = await svc.getSnapshot(NOW);
+  const e = snap.employees[0];
+  assert.equal(e.gps_source, 'LIVE');
+  assert.equal(e.latitude, 10.79850);
+  assert.equal(e.longitude, 106.69400);
+  assert.equal(e.gps_accuracy, 8);
+  assert.equal(snap.summary.with_gps, 1);
+});
+
+test('map: ping GPS cũ quá TTL bị bỏ qua, rơi về GPS chấm công', async () => {
+  const store = new LiveLocationStore(60_000);
+  store.upsert({
+    employee_id: 'E1',
+    latitude: 10.79850,
+    longitude: 106.69400,
+  }, NOW.getTime() - 120_000);
+  const svc = new LiveMapService(makeRepo({
+    employees: [EMP],
+    branches: [BRANCH],
+    shifts: [shift()],
+    events: [event('CHECK_IN', `${TODAY}T00:05:00.000Z`)],
+  }), store);
+  const snap = await svc.getSnapshot(NOW);
+  assert.equal(snap.employees[0].gps_source, 'CHECK_IN');
+});
+
+test('kho GPS realtime: lưu, đọc và tự dọn theo TTL', () => {
+  const store = new LiveLocationStore(60_000);
+  store.upsert({ employee_id: 'E1', latitude: 10.1, longitude: 106.1 }, 1_000_000);
+  store.upsert({ employee_id: 'E2', latitude: 10.2, longitude: 106.2 }, 1_000_000);
+  assert.equal(store.list(1_030_000).length, 2);
+  assert.equal(store.get('E1', 1_030_000)?.latitude, 10.1);
+  assert.equal(store.get('E1', 1_120_000), null);
+  store.prune(1_200_000);
+  assert.equal(store.list(1_200_000).length, 0);
 });

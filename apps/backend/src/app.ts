@@ -44,6 +44,7 @@ import { AutoScheduleService } from './services/auto-schedule.service.js';
 import { TestsService } from './services/tests.service.js';
 import { AttendanceService } from './services/attendance.service.js';
 import { LiveMapService } from './services/live-map.service.js';
+import { LiveLocationStore } from './services/live-location.store.js';
 import { ShiftReRegService } from './services/shift-rereg.service.js';
 import { readAttendancePhotoDisk, readAdjustmentPhotoDisk, readAvatarPhotoDisk, hasAdjustmentPhotoDisk } from './services/photo-disk.store.js';
 import { getDriveBackupScheduler, type BackupKind } from './services/backup-drive.service.js';
@@ -281,7 +282,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   const autoScheduleService = new AutoScheduleService(adapter);
   const testsService = new TestsService(adapter);
   const attendanceService = new AttendanceService(adapter);
-  const liveMapService = new LiveMapService(adapter);
+  const liveLocationStore = new LiveLocationStore();
+  const liveMapService = new LiveMapService(adapter, liveLocationStore);
   // BETA — Phiếu "Cập Nhật Ca Làm" tự phục vụ của nhân viên (bot chấm tự động,
   // đồng bộ Sheet tab PHIEU_NV_CAP_NHAT_CA tự tạo nếu thiếu).
   const shiftReRegService = new ShiftReRegService(
@@ -3890,7 +3892,45 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  // Gộp 2 route trùng: EMPLOYEE chỉ xem công của mình, nội bộ xem theo query (mặc định tất cả).
+  // Cổng nhân viên gửi GPS trực tiếp (watchPosition) khi đang trong ca — bản đồ
+  // admin cập nhật vị trí realtime qua Socket.IO, không ghi Google Sheets.
+  app.post('/attendance/live-location', authMiddleware, requireRole(['EMPLOYEE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const employeeId = req.user?.employeeId;
+      if (!employeeId) return res.status(401).json({ error: 'UNAUTHORIZED' });
+      const body = req.body || {};
+      const latitude = Number(body.latitude);
+      const longitude = Number(body.longitude);
+      if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90
+        || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+        return res.status(400).json({ error: 'INVALID_GPS_COORDINATES' });
+      }
+      const accuracy = Number(body.accuracy);
+      const ping = liveLocationStore.upsert({
+        employee_id: employeeId,
+        latitude,
+        longitude,
+        accuracy: Number.isFinite(accuracy) && accuracy >= 0 ? Math.round(accuracy) : undefined,
+        assignment_id: body.assignment_id ? String(body.assignment_id) : undefined,
+      });
+      try {
+        const io = app.get('io');
+        io?.emit('live-location:update', {
+          employee_id: ping.employee_id,
+          latitude: ping.latitude,
+          longitude: ping.longitude,
+          accuracy: ping.accuracy,
+          assignment_id: ping.assignment_id,
+          at: ping.at,
+        });
+      } catch { /* realtime lỗi không ảnh hưởng việc lưu vị trí */ }
+      res.json({ ok: true, at: ping.at });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'LIVE_LOCATION_FAILED' });
+    }
+  });
+
+
   app.get('/attendance/events', authMiddleware, validate({ query: attendanceEventsQuery }), async (req: AuthenticatedRequest, res) => {
     try {
       const role = req.user?.role;
@@ -6946,6 +6986,7 @@ async function send(d){document.getElementById('msg').textContent='⏳ Đang g�
       testsService,
       attendanceService,
       liveMapService,
+      liveLocationStore,
       payrollService,
       notificationsService,
       zaloService,

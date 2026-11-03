@@ -1,5 +1,6 @@
 import { AttendanceEvent, BranchInfo, EmployeeMaster, ShiftAssignment } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
+import { LiveLocationStore } from './live-location.store.js';
 
 /**
  * Bản đồ giám sát nhân viên realtime (Admin / HR / Kế toán).
@@ -54,8 +55,8 @@ export interface LiveMapEmployee {
   primary_shift?: LiveMapShift;
   latitude: number;
   longitude: number;
-  /** CHECK_IN | CHECK_OUT | BRANCH — nguồn toạ độ đang hiển thị. */
-  gps_source: 'CHECK_IN' | 'CHECK_OUT' | 'BRANCH';
+  /** LIVE = GPS trực tiếp từ cổng NV (watchPosition), CHECK_IN/CHECK_OUT = GPS lúc chấm công, BRANCH = toạ độ cửa hàng. */
+  gps_source: 'LIVE' | 'CHECK_IN' | 'CHECK_OUT' | 'BRANCH';
   gps_status?: string;
   gps_accuracy?: number;
   distance_meters?: number;
@@ -158,7 +159,7 @@ function gpsOf(ev?: AttendanceEvent | null): LiveMapGps | undefined {
 }
 
 export class LiveMapService {
-  constructor(private repo: ISheetsRepository) {}
+  constructor(private repo: ISheetsRepository, private liveLocations?: LiveLocationStore) {}
 
   async getSnapshot(nowInput?: Date): Promise<LiveMapSnapshot> {
     const now = nowInput instanceof Date ? nowInput : new Date();
@@ -233,14 +234,18 @@ export class LiveMapService {
         note = primary.note;
       }
 
-      // Toạ độ: ưu tiên GPS của lần chấm công gần nhất, rơi về toạ độ cửa hàng.
+      // Toạ độ: ưu tiên GPS trực tiếp (cổng NV gửi định kỳ), sau đó GPS của lần
+      // chấm công gần nhất, cuối cùng rơi về toạ độ cửa hàng.
       const gpsEvents = empEvents
         .filter(e => gpsOf(e))
         .sort((a, b) => parseMs((b as any).client_time) - parseMs((a as any).client_time));
       const latestGpsEv = gpsEvents[0];
       const gps = gpsOf(latestGpsEv);
+      const live = this.liveLocations?.get(empId, nowMs) || null;
       const branchLat = Number((branch as any).latitude);
       const branchLng = Number((branch as any).longitude);
+      const shownLat = live ? live.latitude : (gps?.latitude ?? branchLat);
+      const shownLng = live ? live.longitude : (gps?.longitude ?? branchLng);
 
       out.push({
         employee_id: empId,
@@ -253,17 +258,21 @@ export class LiveMapService {
         status_label: STATUS_LABELS[status],
         shifts: builtShifts,
         primary_shift: primary,
-        latitude: gps?.latitude ?? branchLat,
-        longitude: gps?.longitude ?? branchLng,
-        gps_source: gps
-          ? (String((latestGpsEv as any)?.type || '').toUpperCase() === 'CHECK_OUT' ? 'CHECK_OUT' : 'CHECK_IN')
-          : 'BRANCH',
-        gps_status: gps?.gps_status,
-        gps_accuracy: gps?.accuracy,
-        distance_meters: gps
-          ? (gps.distance_meters ?? distanceMeters(gps.latitude, gps.longitude, branchLat, branchLng))
-          : 0,
-        last_gps_at: gps?.at,
+        latitude: shownLat,
+        longitude: shownLng,
+        gps_source: live
+          ? 'LIVE'
+          : (gps
+            ? (String((latestGpsEv as any)?.type || '').toUpperCase() === 'CHECK_OUT' ? 'CHECK_OUT' : 'CHECK_IN')
+            : 'BRANCH'),
+        gps_status: live ? 'VALID' : gps?.gps_status,
+        gps_accuracy: live?.accuracy ?? gps?.accuracy,
+        distance_meters: live
+          ? distanceMeters(shownLat, shownLng, branchLat, branchLng)
+          : (gps
+            ? (gps.distance_meters ?? distanceMeters(gps.latitude, gps.longitude, branchLat, branchLng))
+            : 0),
+        last_gps_at: live?.at ?? gps?.at,
         note,
       });
     }

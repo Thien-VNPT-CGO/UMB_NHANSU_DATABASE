@@ -1532,6 +1532,13 @@ export function App() {
         } catch { /* non-fatal */ }
         scheduleReload(currentUser, 'attendance');
       });
+      // GPS trực tiếp từ cổng NV: chỉ đẩy toạ độ cho bản đồ, KHÔNG tải lại toàn
+      // bộ dữ liệu (tránh reload storm khi nhiều NV cùng gửi vị trí).
+      socket.on('live-location:update', (payload: any) => {
+        try {
+          window.dispatchEvent(new CustomEvent('ubm:live-location', { detail: payload }));
+        } catch { /* non-fatal */ }
+      });
       socket.on('payroll.published', () => scheduleReload(currentUser, 'payslips'));
     } catch (err) {
       console.warn('[Socket.IO] Không thể khởi tạo kết nối realtime:', err);

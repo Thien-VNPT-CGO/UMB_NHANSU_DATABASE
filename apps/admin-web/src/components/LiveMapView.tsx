@@ -43,7 +43,7 @@ interface LiveMapEmployee {
   primary_shift?: LiveMapShift;
   latitude: number;
   longitude: number;
-  gps_source: 'CHECK_IN' | 'CHECK_OUT' | 'BRANCH';
+  gps_source: 'LIVE' | 'CHECK_IN' | 'CHECK_OUT' | 'BRANCH';
   gps_status?: string;
   gps_accuracy?: number;
   distance_meters?: number;
@@ -108,6 +108,16 @@ function fmtRange(start?: string, end?: string): string {
   return `${fmtTime(start)} – ${fmtTime(end)}`;
 }
 
+/** Khoảng cách (m) giữa 2 toạ độ — dùng khi cập nhật GPS realtime phía client. */
+function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6_371_000;
+  const rad = (v: number) => (v * Math.PI) / 180;
+  const dLat = rad(lat2 - lat1);
+  const dLng = rad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+}
+
 function timeAgo(iso?: string): string {
   if (!iso) return '—';
   const t = new Date(iso).getTime();
@@ -140,7 +150,7 @@ function tooltipHtml(emp: LiveMapEmployee): string {
 
   const gpsLine = emp.gps_source === 'BRANCH'
     ? '<div class="ubm-map-tt-line">📍 Vị trí: <b>toạ độ cửa hàng</b> (chưa có GPS chấm công)</div>'
-    : `<div class="ubm-map-tt-line">📍 GPS ${emp.gps_source === 'CHECK_OUT' ? 'check-out' : 'check-in'}:
+    : `<div class="ubm-map-tt-line">📍 GPS ${emp.gps_source === 'LIVE' ? 'trực tiếp (realtime)' : emp.gps_source === 'CHECK_OUT' ? 'check-out' : 'check-in'}:
         <b>${Number(emp.latitude).toFixed(6)}, ${Number(emp.longitude).toFixed(6)}</b></div>
        <div class="ubm-map-tt-line">🎯 Cách cửa hàng: <b>${Number(emp.distance_meters || 0).toLocaleString('vi-VN')} m</b>
         ${emp.gps_accuracy ? ` • sai số ±${Math.round(Number(emp.gps_accuracy))} m` : ''}
@@ -220,6 +230,44 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
     };
   }, [load]);
 
+  // GPS trực tiếp từ cổng NV (Socket.IO -> App phát event): cập nhật toạ độ
+  // marker ngay, không cần tải lại toàn bộ snapshot.
+  useEffect(() => {
+    const onLive = (ev: Event) => {
+      const p: any = (ev as CustomEvent).detail;
+      const id = String(p?.employee_id || '');
+      const lat = Number(p?.latitude);
+      const lng = Number(p?.longitude);
+      if (!id || !Number.isFinite(lat) || !Number.isFinite(lng)) return;
+      setData(prev => {
+        if (!prev) return prev;
+        let changed = false;
+        const employees = prev.employees.map(e => {
+          if (e.employee_id !== id) return e;
+          changed = true;
+          const branch = prev.branches.find(b => b.id === e.branch_id);
+          const distance = branch
+            ? haversineMeters(lat, lng, Number(branch.latitude), Number(branch.longitude))
+            : e.distance_meters;
+          return {
+            ...e,
+            latitude: lat,
+            longitude: lng,
+            gps_source: 'LIVE' as const,
+            gps_status: 'VALID',
+            gps_accuracy: Number.isFinite(Number(p?.accuracy)) ? Number(p.accuracy) : e.gps_accuracy,
+            distance_meters: distance,
+            last_gps_at: String(p?.at || new Date().toISOString()),
+          };
+        });
+        return changed ? { ...prev, employees } : prev;
+      });
+      setLastUpdated(Date.now());
+    };
+    window.addEventListener('ubm:live-location', onLive);
+    return () => window.removeEventListener('ubm:live-location', onLive);
+  }, []);
+
   const employees = useMemo(() => {
     const list = data?.employees || [];
     return list.filter(e =>
@@ -237,10 +285,25 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
       zoomControl: true,
       preferCanvas: false,
     });
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    // Nền bản đồ Google Maps (không cần API key). Nếu Google chặn tile, tự
+    // chuyển sang OpenStreetMap để bản đồ không bao giờ trắng.
+    let usingGoogle = true;
+    const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       attribution: '&copy; OpenStreetMap',
-    }).addTo(map);
+    });
+    const googleLayer = L.tileLayer('https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+      subdomains: ['0', '1', '2', '3'],
+      maxZoom: 20,
+      attribution: '&copy; Google Maps',
+    });
+    googleLayer.once('tileerror', () => {
+      if (!usingGoogle) return;
+      usingGoogle = false;
+      try { map.removeLayer(googleLayer); } catch { /* non-fatal */ }
+      osmLayer.addTo(map);
+    });
+    googleLayer.addTo(map);
     layerRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
     // iOS/Chrome đôi khi render sai kích thước khi tab vừa hiện.
@@ -442,7 +505,8 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
       </div>
       <div className="ubm-map-foot">
         Rê chuột vào điểm màu để xem <b>Tên NV + Mã NV + ca làm + giờ check-in/out</b> theo thời gian thực.
-        Điểm vàng nhấp nháy = đang trong ca. Vị trí là GPS lần chấm công gần nhất; nếu chưa có GPS sẽ hiển thị tại cửa hàng.
+        Điểm vàng nhấp nháy = đang trong ca. Vị trí ưu tiên GPS trực tiếp từ cổng NV (cập nhật ~30 giây/lần),
+        sau đó GPS lần chấm công gần nhất; nếu chưa có GPS sẽ hiển thị tại cửa hàng.
       </div>
     </div>
   );
