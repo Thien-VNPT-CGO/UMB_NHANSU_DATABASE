@@ -241,7 +241,7 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
   const [lastUpdated, setLastUpdated] = useState<number>(0);
   const [branchFilter, setBranchFilter] = useState<string>('*');
   const [statusFilter, setStatusFilter] = useState<'ALL' | LiveMapStatus>('ALL');
-  const [placeFilter, setPlaceFilter] = useState<'ALL' | 'AT_STORE' | 'OUTSIDE' | 'STALE'>('ALL');
+  const [placeFilter, setPlaceFilter] = useState<'ALL' | 'HAS_GPS' | 'AT_STORE' | 'OUTSIDE' | 'STALE'>('ALL');
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [searchText, setSearchText] = useState('');
   const [alerts, setAlerts] = useState<LiveMapAlert[]>([]);
@@ -375,8 +375,9 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
     return list.filter(e =>
       (branchFilter === '*' || e.branch_id === branchFilter)
       && (statusFilter === 'ALL' || e.status === statusFilter)
-      // Lọc theo vị trí: đang ở cửa hàng / ở ngoài / mất tín hiệu.
+      // Lọc theo vị trí: chỉ NV có GPS thật / đang ở cửa hàng / ở ngoài / mất tín hiệu.
       && (placeFilter === 'ALL'
+        || (placeFilter === 'HAS_GPS' && e.gps_source !== 'BRANCH')
         || (placeFilter === 'AT_STORE' && e.gps_source !== 'BRANCH' && e.at_branch === true)
         || (placeFilter === 'OUTSIDE' && e.gps_source !== 'BRANCH' && e.at_branch !== true)
         || (placeFilter === 'STALE' && e.gps_stale === true))
@@ -696,11 +697,12 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
           </label>
           <select
             value={placeFilter}
-            onChange={e => setPlaceFilter(e.target.value as 'ALL' | 'AT_STORE' | 'OUTSIDE' | 'STALE')}
+            onChange={e => setPlaceFilter(e.target.value as 'ALL' | 'HAS_GPS' | 'AT_STORE' | 'OUTSIDE' | 'STALE')}
             className="ubm-map-select"
             title="Lọc theo vị trí so với cửa hàng"
           >
             <option value="ALL">Mọi vị trí</option>
+            <option value="HAS_GPS">📱 Chỉ NV có GPS thật</option>
             <option value="AT_STORE">🏬 Đang ở cửa hàng</option>
             <option value="OUTSIDE">🚶 Ngoài cửa hàng</option>
             <option value="STALE">📵 Mất tín hiệu GPS</option>

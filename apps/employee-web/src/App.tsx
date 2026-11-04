@@ -2718,10 +2718,12 @@ export function App() {
     return live || list[0];
   };
 
-  // ===== GPS REALTIME: cổng NV hoạt động như thiết bị định vị thật =====
-  // watchPosition liên tục khi NV đang trong khung ca (từ 30 phút trước giờ vào
-  // đến 30 phút sau giờ tan). Toạ độ gửi lên backend ~30s/lần (hoặc khi di
-  // chuyển >15m) để bản đồ Admin/HR/Kế toán cập nhật realtime. Không ghi Sheets.
+  // ===== GPS REALTIME: cổng NV là thiết bị định vị thật =====
+  // Chia sẻ vị trí NGAY khi đăng nhập (không chờ tới ca) để bản đồ Admin/HR/
+  // Kế toán/Giám đốc giám sát nhân viên theo ĐÚNG điện thoại của họ, marker di
+  // chuyển theo thiết bị. Toạ độ gửi ~30s/lần (hoặc khi di chuyển >15m).
+  // Chỉ chạy khi tab còn mở / màn hình còn bật (giới hạn của nền tảng web —
+  // theo dõi khi KHÓA màn hình cần app native).
   useEffect(() => {
     if (!isLoggedIn) return;
     if (typeof navigator === 'undefined' || !('geolocation' in navigator)) return;
@@ -2760,8 +2762,6 @@ export function App() {
 
     const send = (pos: GeolocationPosition) => {
       if (stopped) return;
-      const shift = activeShift();
-      if (!shift) return;
       const lat = pos.coords.latitude;
       const lng = pos.coords.longitude;
       const at = Date.now();
@@ -2771,13 +2771,15 @@ export function App() {
       lastSentAt = at;
       lastLat = lat;
       lastLng = lng;
+      // Gắn ca (nếu có) chỉ để đối chiếu; KHÔNG bắt buộc phải có ca mới gửi.
+      const shift = activeShift();
       apiRequest('/attendance/live-location', {
         method: 'POST',
         body: JSON.stringify({
           latitude: lat,
           longitude: lng,
           accuracy: Math.round(pos.coords.accuracy || 0),
-          assignment_id: shift.assignment_id || undefined,
+          assignment_id: shift?.assignment_id || undefined,
         }),
       }).catch(() => null);
     };
@@ -2794,12 +2796,11 @@ export function App() {
       try { navigator.geolocation.clearWatch(watchId); } catch { /* bỏ qua */ }
       watchId = null;
     };
-    // C1: xin/giữ Wake Lock (chỉ khi đang trong ca và tab đang hiển thị).
+    // C1: Wake Lock giữ màn hình sáng để GPS chạy liên tục khi cổng NV đang mở.
     const requestWakeLock = async () => {
       try {
         const wl = (navigator as any).wakeLock;
         if (!wl || wakeLock || document.visibilityState !== 'visible') return;
-        if (!activeShift()) return;
         wakeLock = await wl.request('screen');
         wakeLock?.addEventListener?.('release', () => { wakeLock = null; });
       } catch { /* trình duyệt không hỗ trợ / người dùng từ chối: bỏ qua */ }
@@ -2810,23 +2811,29 @@ export function App() {
     };
     const onVisible = () => {
       if (stopped) return;
-      if (document.visibilityState === 'visible' && activeShift()) void requestWakeLock();
-      else releaseWakeLock();
+      if (document.visibilityState === 'visible') {
+        startWatch();
+        navigator.geolocation.getCurrentPosition(send, () => null, opts);
+        void requestWakeLock();
+      } else {
+        stopWatch();
+        releaseWakeLock();
+      }
     };
     document.addEventListener('visibilitychange', onVisible);
 
-    // Chỉ bật định vị khi thật sự trong khung ca (tránh xin quyền + hao pin
-    // ngoài giờ làm). Kiểm tra lại mỗi 30s để tự bật/tắt đúng giờ vào/tan ca.
+    // Chia sẻ vị trí liên tục trong khi cổng NV đang mở (không phụ thuộc ca).
+    // Kiểm tra lại mỗi 30s để tự bật lại watch nếu trình duyệt tạm dừng.
     const tick = () => {
       if (stopped) return;
-      if (!activeShift()) {
+      if (document.visibilityState === 'visible') {
+        startWatch();
+        navigator.geolocation.getCurrentPosition(send, () => null, opts);
+        void requestWakeLock();
+      } else {
         stopWatch();
         releaseWakeLock();
-        return;
       }
-      startWatch();
-      navigator.geolocation.getCurrentPosition(send, () => null, opts);
-      void requestWakeLock();
     };
     tick();
     const timer = window.setInterval(tick, 30_000);
