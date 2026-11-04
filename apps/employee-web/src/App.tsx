@@ -2731,6 +2731,9 @@ export function App() {
     let lastSentAt = 0;
     let lastLat: number | null = null;
     let lastLng: number | null = null;
+    // C1: Wake Lock giữ màn hình sáng để GPS chạy liên tục trong ca (web không
+    // thể định vị khi màn hình tắt — cần app native cho trường hợp đó).
+    let wakeLock: any = null;
 
     const distanceM = (lat1: number, lng1: number, lat2: number, lng2: number) => {
       const R = 6_371_000;
@@ -2791,16 +2794,39 @@ export function App() {
       try { navigator.geolocation.clearWatch(watchId); } catch { /* bỏ qua */ }
       watchId = null;
     };
+    // C1: xin/giữ Wake Lock (chỉ khi đang trong ca và tab đang hiển thị).
+    const requestWakeLock = async () => {
+      try {
+        const wl = (navigator as any).wakeLock;
+        if (!wl || wakeLock || document.visibilityState !== 'visible') return;
+        if (!activeShift()) return;
+        wakeLock = await wl.request('screen');
+        wakeLock?.addEventListener?.('release', () => { wakeLock = null; });
+      } catch { /* trình duyệt không hỗ trợ / người dùng từ chối: bỏ qua */ }
+    };
+    const releaseWakeLock = () => {
+      try { wakeLock?.release?.(); } catch { /* ignore */ }
+      wakeLock = null;
+    };
+    const onVisible = () => {
+      if (stopped) return;
+      if (document.visibilityState === 'visible' && activeShift()) void requestWakeLock();
+      else releaseWakeLock();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+
     // Chỉ bật định vị khi thật sự trong khung ca (tránh xin quyền + hao pin
     // ngoài giờ làm). Kiểm tra lại mỗi 30s để tự bật/tắt đúng giờ vào/tan ca.
     const tick = () => {
       if (stopped) return;
       if (!activeShift()) {
         stopWatch();
+        releaseWakeLock();
         return;
       }
       startWatch();
       navigator.geolocation.getCurrentPosition(send, () => null, opts);
+      void requestWakeLock();
     };
     tick();
     const timer = window.setInterval(tick, 30_000);
@@ -2808,6 +2834,8 @@ export function App() {
     return () => {
       stopped = true;
       stopWatch();
+      releaseWakeLock();
+      document.removeEventListener('visibilitychange', onVisible);
       window.clearInterval(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

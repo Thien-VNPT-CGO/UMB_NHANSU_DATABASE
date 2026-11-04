@@ -60,7 +60,7 @@ interface LiveMapEmployee {
   note?: string;
 }
 
-type LiveMapAlertType = 'GEOFENCE_EXIT' | 'GEOFENCE_RETURN' | 'GPS_STALE' | 'GPS_RESTORED';
+type LiveMapAlertType = 'GEOFENCE_EXIT' | 'GEOFENCE_RETURN' | 'GPS_STALE' | 'GPS_RESTORED' | 'GPS_SUSPICIOUS';
 
 interface LiveMapAlert {
   type: LiveMapAlertType;
@@ -114,6 +114,7 @@ const ALERT_META: Record<LiveMapAlertType, { label: string; icon: string; color:
   GEOFENCE_RETURN: { label: 'Đã quay lại', icon: '🏬', color: '#047857' },
   GPS_STALE: { label: 'Mất tín hiệu GPS', icon: '📵', color: '#B91C1C' },
   GPS_RESTORED: { label: 'Có tín hiệu lại', icon: '📶', color: '#047857' },
+  GPS_SUSPICIOUS: { label: 'Nghi vấn GPS', icon: '🛑', color: '#B91C1C' },
 };
 
 const STATUS_META: Record<LiveMapStatus, { label: string; color: string; bg: string; border: string }> = {
@@ -251,6 +252,13 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selectedIdRef = useRef<string | null>(null);
   selectedIdRef.current = selectedId;
+  // B1/B2: lịch sử hành trình + báo cáo trong/ngoài cửa hàng.
+  const [historyDate, setHistoryDate] = useState<string>(() => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10));
+  const [trail, setTrail] = useState<any | null>(null);
+  const [trailBusy, setTrailBusy] = useState(false);
+  const [reportRows, setReportRows] = useState<any[] | null>(null);
+  const [reportOpen, setReportOpen] = useState(false);
+  const trailLayerRef = useRef<L.LayerGroup | null>(null);
 
   const mapElRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
@@ -532,6 +540,73 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
     } catch { /* non-fatal */ }
   }, []);
 
+  // B1: tải vết hành trình 1 NV trong ngày.
+  const loadTrail = useCallback(async (employeeId: string | null) => {
+    if (!employeeId) { setError('Chọn 1 nhân viên ở danh sách bên trái để xem hành trình.'); return; }
+    setTrailBusy(true);
+    try {
+      const res = await apiRequest<any>(`/admin/live-map/trail?employeeId=${encodeURIComponent(employeeId)}&date=${encodeURIComponent(historyDate)}`);
+      setTrail(res);
+      setError(null);
+    } catch (e: any) {
+      setError(e?.message || 'Không tải được hành trình');
+    } finally {
+      setTrailBusy(false);
+    }
+  }, [historyDate]);
+
+  // B2: tải báo cáo thời gian trong/ngoài cửa hàng theo ngày.
+  const loadReport = useCallback(async () => {
+    setTrailBusy(true);
+    try {
+      const res = await apiRequest<any>(`/admin/live-map/location-report?date=${encodeURIComponent(historyDate)}`);
+      setReportRows(Array.isArray(res?.rows) ? res.rows : []);
+      setReportOpen(true);
+      setError(null);
+    } catch (e: any) {
+      setError(e?.message || 'Không tải được báo cáo');
+    } finally {
+      setTrailBusy(false);
+    }
+  }, [historyDate]);
+
+  // Vẽ đường hành trình lên lớp riêng (không bị xoá khi marker realtime vẽ lại).
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (!trailLayerRef.current) trailLayerRef.current = L.layerGroup().addTo(map);
+    const layer = trailLayerRef.current;
+    layer.clearLayers();
+    const pts: any[] = Array.isArray(trail?.points) ? trail.points : [];
+    if (pts.length === 0) return;
+    const latlngs = pts
+      .map(p => [Number(p.latitude), Number(p.longitude)] as [number, number])
+      .filter(([a, b]) => Number.isFinite(a) && Number.isFinite(b));
+    if (latlngs.length === 0) return;
+    if (trail?.center) {
+      L.circle([Number(trail.center.lat), Number(trail.center.lng)], {
+        radius: Number(trail.center.radius) || 300,
+        color: '#2563EB', weight: 1.5, opacity: 0.6, fillColor: '#2563EB', fillOpacity: 0.05,
+        interactive: false,
+      }).addTo(layer);
+    }
+    if (latlngs.length > 1) {
+      L.polyline(latlngs, { color: '#2563EB', weight: 4, opacity: 0.85 }).addTo(layer);
+    }
+    const pin = (label: string, cls: string) => L.divIcon({
+      className: 'ubm-trail-pin-icon',
+      html: `<div class="ubm-trail-pin ${cls}">${label}</div>`,
+      iconSize: [22, 22], iconAnchor: [11, 11],
+    });
+    L.marker(latlngs[0], { icon: pin('A', 'ubm-trail-pin--start'), keyboard: false }).addTo(layer)
+      .bindTooltip(`Bắt đầu • ${fmtTime(trail?.summary?.first_at)}`, { direction: 'top', offset: [0, -10], opacity: 1, className: 'ubm-map-tooltip' });
+    L.marker(latlngs[latlngs.length - 1], { icon: pin('B', 'ubm-trail-pin--end'), keyboard: false }).addTo(layer)
+      .bindTooltip(`Kết thúc • ${fmtTime(trail?.summary?.last_at)}`, { direction: 'top', offset: [0, -10], opacity: 1, className: 'ubm-map-tooltip' });
+    try {
+      map.fitBounds(L.latLngBounds(latlngs).pad(0.2), { maxZoom: 17 });
+    } catch { /* non-fatal */ }
+  }, [trail]);
+
   const summary = data?.summary;
   const roleLabel = currentUserRole === 'FINANCE' ? 'Kế toán' : currentUserRole === 'HR' ? 'HR' : 'Giám đốc';
 
@@ -641,6 +716,75 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
           </span>
         </div>
       </div>
+
+      {/* B1/B2: hành trình + báo cáo vị trí theo ngày */}
+      <div className="ubm-map-history">
+        <label className="ubm-map-history-date">
+          Ngày
+          <input
+            type="date"
+            value={historyDate}
+            max={new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10)}
+            onChange={e => { setHistoryDate(e.target.value); setTrail(null); setReportRows(null); setReportOpen(false); }}
+          />
+        </label>
+        <button type="button" className="ubm-map-btn" disabled={trailBusy}
+          onClick={() => loadTrail(selectedId)} title="Xem đường đi của NV đang chọn trong ngày">
+          🧭 Hành trình NV đang chọn
+        </button>
+        <button type="button" className="ubm-map-btn" disabled={trailBusy} onClick={loadReport}>
+          📊 Báo cáo trong/ngoài cửa hàng
+        </button>
+        {trail && (
+          <button type="button" className="ubm-map-clear" onClick={() => setTrail(null)}>Ẩn hành trình</button>
+        )}
+        {trail && trail.summary && (
+          <span className="ubm-map-history-sum">
+            <b>{trail.full_name || trail.employee_id}</b> • {trail.summary.points} điểm
+            • 🚗 {Number(trail.summary.distance_meters || 0).toLocaleString('vi-VN')} m
+            • 🏬 {trail.summary.inside_minutes} phút trong
+            • 🚶 {trail.summary.outside_minutes} phút ngoài
+            {trail.summary.first_at ? ` • ${fmtTime(trail.summary.first_at)}–${fmtTime(trail.summary.last_at)}` : ''}
+          </span>
+        )}
+      </div>
+
+      {reportOpen && reportRows && (
+        <div className="ubm-map-report">
+          <div className="ubm-map-report-head">
+            <b>Báo cáo vị trí ngày {historyDate}</b> — {reportRows.length} NV có dữ liệu
+            <button type="button" className="ubm-map-alerts-clear" onClick={() => { setReportOpen(false); setReportRows(null); }}>Đóng</button>
+          </div>
+          {reportRows.length === 0
+            ? <div className="ubm-map-report-empty">Chưa có vết GPS cho ngày này.</div>
+            : (
+              <div className="ubm-map-report-scroll">
+                <table className="ubm-map-report-table">
+                  <thead>
+                    <tr>
+                      <th>Nhân viên</th><th>Chi nhánh</th><th>Điểm</th><th>Trong CH</th>
+                      <th>Ngoài CH</th><th>Quãng đường</th><th>Bắt đầu</th><th>Kết thúc</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reportRows.map(r => (
+                      <tr key={r.employee_id}>
+                        <td>{r.full_name || r.employee_id}<small> {r.employee_code}</small></td>
+                        <td>{r.branch_name}</td>
+                        <td>{r.points}</td>
+                        <td className="is-in">{r.inside_minutes} phút</td>
+                        <td className="is-out">{r.outside_minutes} phút</td>
+                        <td>{Number(r.distance_meters || 0).toLocaleString('vi-VN')} m</td>
+                        <td>{fmtTime(r.first_at)}</td>
+                        <td>{fmtTime(r.last_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+        </div>
+      )}
 
       {error && (
         <div className="ubm-map-error">

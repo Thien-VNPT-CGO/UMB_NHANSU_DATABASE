@@ -75,7 +75,7 @@ export interface LiveMapEmployee {
 }
 
 /** Cảnh báo realtime từ bản đồ: rời cửa hàng, quay lại, mất/hồi tín hiệu GPS. */
-export type LiveMapAlertType = 'GEOFENCE_EXIT' | 'GEOFENCE_RETURN' | 'GPS_STALE' | 'GPS_RESTORED';
+export type LiveMapAlertType = 'GEOFENCE_EXIT' | 'GEOFENCE_RETURN' | 'GPS_STALE' | 'GPS_RESTORED' | 'GPS_SUSPICIOUS';
 
 export interface LiveMapAlert {
   type: LiveMapAlertType;

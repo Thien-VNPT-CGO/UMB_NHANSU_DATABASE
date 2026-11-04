@@ -33,6 +33,7 @@ import { dedupeDuplicateInterviews, enforceScreeningOutcomes } from './services/
 import { interviewNoShowTick, interviewReminderTick } from './services/interview-reminders.service.js';
 import { autoRemindersTick } from './services/auto-reminders.service.js';
 import { notifySystemAlert, startSystemAlertMonitor } from './services/system-alert.service.js';
+import { pruneGpsTrail } from './services/gps-trail.store.js';
 import {
   addDaysIso,
   runMonthlyBackup,
@@ -296,6 +297,14 @@ server.listen(Number(PORT), '0.0.0.0', async () => {
 
   // Cảnh báo bản đồ GPS (rời cửa hàng / mất tín hiệu): quét mỗi 60s.
   stopLiveMapMonitor = startLiveMapMonitor();
+
+  // Dọn vết GPS cũ hơn 60 ngày (chạy nền 6 giờ/lần, không giữ process sống).
+  {
+    const trailPruneTimer = setInterval(() => {
+      try { pruneGpsTrail(); } catch { /* best-effort */ }
+    }, 6 * 3_600_000);
+    trailPruneTimer.unref?.();
+  }
 
   // BACKUP DỮ LIỆU HỆ THỐNG LÊN GOOGLE DRIVE:
   //   - PostgreSQL: dump JSONL (giờ/ngày/tuần/tháng).
