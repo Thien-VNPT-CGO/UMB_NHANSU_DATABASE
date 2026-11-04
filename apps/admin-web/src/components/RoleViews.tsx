@@ -14025,13 +14025,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         </td>
                       ))}
                       <td style={{ padding: '6px 8px' }}>
-                        <input
+                        <textarea
                           value={v.note ?? ''}
-                          placeholder="VD: đi trễ 3 lần..."
+                          placeholder={'VD:\n- đi trễ 3 lần\n- thưởng 500k'}
                           maxLength={500}
-                          title={v.note || 'Ghi chú sẽ hiện trên phiếu lương (bản in)'}
+                          rows={2}
+                          title={v.note || 'Ghi chú sẽ hiện trên phiếu lương (bản in) — Enter xuống dòng'}
                           onChange={ev => set('note', ev.target.value)}
-                          style={{ width: '230px', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '12px' }}
+                          style={{ width: '240px', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '12px', lineHeight: 1.4, fontFamily: 'inherit', resize: 'vertical' }}
                         />
                       </td>
                       <td style={{ padding: '8px 14px' }}>
