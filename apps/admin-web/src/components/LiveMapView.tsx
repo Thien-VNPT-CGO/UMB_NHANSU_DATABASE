@@ -250,6 +250,25 @@ function tooltipHtml(emp: LiveMapEmployee): string {
     </div>`;
 }
 
+/** Tooltip ghim cửa hàng: tên + địa chỉ + thống kê NV (gọn, đủ). */
+function branchTooltipHtml(b: LiveMapBranch): string {
+  return `
+    <div class="ubm-map-btt">
+      <div class="ubm-map-btt-head">
+        <span class="ubm-map-btt-pin">🏬</span>
+        <div class="ubm-map-btt-ident">
+          <div class="ubm-map-btt-name">${escapeHtml(b.name)}</div>
+          <div class="ubm-map-btt-addr">${escapeHtml(b.address || '')}</div>
+        </div>
+      </div>
+      <div class="ubm-map-btt-stats">
+        <div class="ubm-map-btt-stat"><b>${Number(b.employees_total) || 0}</b><span>Nhân viên</span></div>
+        <div class="ubm-map-btt-stat ubm-map-btt-stat--ok"><b>${Number(b.employees_working) || 0}</b><span>Đang làm</span></div>
+        <div class="ubm-map-btt-stat ubm-map-btt-stat--danger"><b>${Number(b.employees_missing) || 0}</b><span>Thiếu chấm</span></div>
+      </div>
+    </div>`;
+}
+
 export interface LiveMapViewProps {
   currentUserRole?: string;
 }
@@ -482,8 +501,7 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
         keyboard: false,
       })
         .bindTooltip(
-          `<b>${escapeHtml(b.name)}</b><br/>${escapeHtml(b.address)}<br/>` +
-          `👥 ${b.employees_total} NV • 🟡 ${b.employees_working} đang làm • 🔴 ${b.employees_missing} thiếu chấm`,
+          branchTooltipHtml(b),
           { direction: 'top', offset: [0, -10], opacity: 1, className: 'ubm-map-tooltip ubm-map-tooltip--branch' }
         )
         .addTo(layer);
