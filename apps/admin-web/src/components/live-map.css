@@ -302,3 +302,144 @@
 .ubm-map-tt-line { color: #E2E8F0; margin-top: 2px; }
 .ubm-map-tt-line b { color: #FFFFFF; }
 .ubm-map-tt-note { color: #FCA5A5; margin-top: 3px; font-weight: 700; }
+
+/* --- Cảnh báo GPS (rời cửa hàng / mất tín hiệu) --- */
+.ubm-map-alerts {
+  border: 1px solid #FCD34D;
+  background: #FFFBEB;
+  border-radius: 12px;
+  overflow: hidden;
+}
+.ubm-map-alerts-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+}
+.ubm-map-alerts-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  font-size: 12.5px;
+  font-weight: 800;
+  color: #92400E;
+  cursor: pointer;
+}
+.ubm-map-alerts-clear {
+  border: none;
+  background: transparent;
+  color: #B45309;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.ubm-map-alerts-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 190px;
+  overflow-y: auto;
+}
+.ubm-map-alert {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: #FEF9C3;
+}
+.ubm-map-alert--warning { background: #FEE2E2; }
+.ubm-map-alert--info { background: #DCFCE7; }
+.ubm-map-alert-ico { flex: 0 0 auto; font-size: 14px; }
+.ubm-map-alert-txt { flex: 1; color: #1F2937; }
+.ubm-map-alert-time { flex: 0 0 auto; font-size: 10.5px; font-weight: 700; color: #6B7280; white-space: nowrap; }
+
+/* --- Bố cục 2 cột: danh sách NV + bản đồ (A4) --- */
+.ubm-map-body {
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+  min-height: 520px;
+}
+.ubm-map-list {
+  flex: 0 0 320px;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.ubm-map-list-head {
+  padding: 8px 12px;
+  font-size: 11.5px;
+  font-weight: 800;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+.ubm-map-list ul { list-style: none; margin: 0; padding: 0; overflow-y: auto; }
+.ubm-map-list-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+.ubm-map-list-item:hover { background: var(--brand-soft, #F1F5F9); }
+.ubm-map-list-item.is-selected { background: var(--brand-soft, #E0E7FF); box-shadow: inset 3px 0 0 var(--brand); }
+.ubm-map-list-name { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.ubm-map-list-name b { font-size: 12.5px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ubm-map-list-name small { font-size: 10.5px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ubm-map-list-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; flex: 0 0 auto; }
+.ubm-map-list-meta em { font-size: 10.5px; font-style: normal; font-weight: 800; }
+.ubm-map-list-meta small { font-size: 10px; color: var(--text-muted); }
+.ubm-map-list-meta small.is-stale { color: #B91C1C; font-weight: 700; }
+.ubm-map-list-empty { padding: 14px 12px; font-size: 12px; color: var(--text-muted); }
+
+/* --- Tìm kiếm NV --- */
+.ubm-map-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 4px 8px;
+  color: var(--text-muted);
+}
+.ubm-map-search input {
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 12px;
+  color: var(--text);
+  width: 150px;
+}
+.ubm-map-search button { border: none; background: transparent; cursor: pointer; color: var(--text-muted); display: inline-flex; }
+
+/* --- Điểm mất tín hiệu / đang chọn --- */
+.ubm-map-stat--stale b { color: #B91C1C; }
+.ubm-map-dot--stale {
+  border-color: #FFFFFF;
+  outline: 2px dashed #94A3B8;
+  outline-offset: 2px;
+  opacity: 0.75;
+}
+.ubm-map-dot--selected {
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.55), 0 2px 6px rgba(15, 23, 42, 0.28);
+}
+
+@media (max-width: 900px) {
+  .ubm-map-body { flex-direction: column; }
+  .ubm-map-list { flex: 0 0 auto; max-width: none; max-height: 260px; }
+}

@@ -311,3 +311,68 @@ test('map: chưa có GPS thật (rơi về toạ độ cửa hàng) -> không t�
   assert.equal(snap.summary.outside, 0);
 });
 
+test('map: đang trong ca mà mất tín hiệu GPS -> gps_stale + summary.stale', async () => {
+  const svc = new LiveMapService(makeRepo({
+    employees: [EMP],
+    branches: [BRANCH],
+    shifts: [shift()],
+    events: [],
+  }));
+  const snap = await svc.getSnapshot(NOW); // 10:00 VN, ca 1 đang chạy, không có ping
+  const e = snap.employees[0];
+  assert.equal(e.sharing_now, true);
+  assert.equal(e.live_online, false);
+  assert.equal(e.gps_stale, true);
+  assert.equal(snap.summary.stale, 1);
+});
+
+test('cảnh báo: trong ca mà mất tín hiệu phát GPS_STALE', async () => {
+  const svc = new LiveMapService(makeRepo({
+    employees: [EMP],
+    branches: [BRANCH],
+    shifts: [shift()],
+    events: [],
+  }));
+  const alerts = await svc.evaluateAlerts(NOW);
+  assert.equal(alerts.some(a => a.type === 'GPS_STALE'), true);
+});
+
+test('cảnh báo: rời cửa hàng trong ca phát GEOFENCE_EXIT (có khoảng đệm chống nhiễu)', async () => {
+  const store = new LiveLocationStore();
+  const svc = new LiveMapService(makeRepo({
+    employees: [EMP],
+    branches: [BRANCH],
+    shifts: [shift()],
+    events: [],
+  }), store);
+
+  // Lần quét 1: đang ở cửa hàng -> chỉ ghi nhận trạng thái, chưa cảnh báo.
+  store.upsert({ employee_id: 'E1', latitude: 10.79850, longitude: 106.69400 }, NOW.getTime());
+  const first = await svc.evaluateAlerts(NOW);
+  assert.equal(first.some(a => a.type === 'GEOFENCE_EXIT'), false);
+
+  // Lần quét 2: đã ra ngoài bán kính (> radius + 50m) -> cảnh báo rời cửa hàng.
+  store.upsert({ employee_id: 'E1', latitude: 10.80150, longitude: 106.69345 }, NOW.getTime() + 1000);
+  const second = await svc.evaluateAlerts(new Date(NOW.getTime() + 1000));
+  assert.equal(second.some(a => a.type === 'GEOFENCE_EXIT'), true);
+});
+
+test('cảnh báo: chỉ sát mép bán kính (trong khoảng đệm) thì KHÔNG báo rời cửa hàng', async () => {
+  const store = new LiveLocationStore();
+  const svc = new LiveMapService(makeRepo({
+    employees: [EMP],
+    branches: [BRANCH],
+    shifts: [shift()],
+    events: [],
+  }), store);
+
+  store.upsert({ employee_id: 'E1', latitude: 10.79850, longitude: 106.69400 }, NOW.getTime());
+  await svc.evaluateAlerts(NOW);
+  // ~310m > 300m nhưng < 300+50 => còn trong khoảng đệm, không cảnh báo.
+  store.upsert({ employee_id: 'E1', latitude: 10.80060, longitude: 106.69345 }, NOW.getTime() + 1000);
+  const snap = await svc.getSnapshot(new Date(NOW.getTime() + 1000));
+  assert.equal(snap.employees[0].at_branch, false); // hiển thị là ngoài cửa hàng
+  const alerts = await svc.evaluateAlerts(new Date(NOW.getTime() + 1000));
+  assert.equal(alerts.some(a => a.type === 'GEOFENCE_EXIT'), false); // nhưng chưa cảnh báo
+});
+

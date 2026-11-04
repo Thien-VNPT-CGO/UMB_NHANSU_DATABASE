@@ -64,8 +64,33 @@ export interface LiveMapEmployee {
   radius_meters: number;
   /** Có GPS thật và đang nằm trong bán kính cửa hàng (đang làm việc tại cửa hàng). */
   at_branch: boolean;
+  /** Đang trong khung giờ chia sẻ GPS (trước vào ca 30p → sau tan ca 30p). */
+  sharing_now: boolean;
+  /** Có ping GPS trực tiếp còn hiệu lực (thiết bị còn online). */
+  live_online: boolean;
+  /** Đang trong ca nhưng mất tín hiệu GPS quá lâu (chưa gửi ping). */
+  gps_stale: boolean;
   last_gps_at?: string;
   note?: string;
+}
+
+/** Cảnh báo realtime từ bản đồ: rời cửa hàng, quay lại, mất/hồi tín hiệu GPS. */
+export type LiveMapAlertType = 'GEOFENCE_EXIT' | 'GEOFENCE_RETURN' | 'GPS_STALE' | 'GPS_RESTORED';
+
+export interface LiveMapAlert {
+  type: LiveMapAlertType;
+  severity: 'INFO' | 'WARNING';
+  employee_id: string;
+  employee_code: string;
+  full_name: string;
+  branch_id: string;
+  branch_name: string;
+  latitude: number;
+  longitude: number;
+  distance_meters?: number;
+  radius_meters?: number;
+  at: string;
+  message: string;
 }
 
 export interface LiveMapBranch extends BranchInfo {
@@ -93,6 +118,8 @@ export interface LiveMapSummary {
   at_store: number;
   /** Có GPS thật nhưng đang ở ngoài bán kính cửa hàng. */
   outside: number;
+  /** Đang trong ca nhưng mất tín hiệu GPS. */
+  stale: number;
 }
 
 const VN_OFFSET_MS = 7 * 3_600_000;
@@ -100,6 +127,15 @@ const VN_OFFSET_MS = 7 * 3_600_000;
 const CHECKIN_GRACE_MINUTES = 15;
 /** Chờ tối đa 30 phút sau giờ tan ca trước khi coi là "thiếu check-out". */
 const CHECKOUT_GRACE_MINUTES = 30;
+/** Cổng NV bật chia sẻ GPS từ trước giờ vào ca 30 phút tới sau giờ tan ca 30 phút. */
+const SHARE_BEFORE_MS = 30 * 60_000;
+const SHARE_AFTER_MS = 30 * 60_000;
+/** Trong khung ca mà quá số phút này không có ping GPS → coi là "mất tín hiệu". */
+const LIVE_STALE_GRACE_MINUTES = 5;
+/** Ra khỏi bán kính thêm khoảng này mới báo rời cửa hàng (chống nhiễu GPS). */
+export const GEOFENCE_MARGIN_METERS = 50;
+/** Không báo lặp cùng 1 loại cảnh báo cho 1 NV trong khoảng này. */
+const ALERT_COOLDOWN_MS = 10 * 60_000;
 
 const SHIFT_LABELS: Record<string, string> = {
   CA_1: 'Ca 1 (Sáng)',
@@ -153,6 +189,14 @@ function parseMs(v?: unknown): number {
   return Number.isFinite(t) ? t : 0;
 }
 
+/** Khung giờ chia sẻ GPS của 1 ca: [vào ca −30p, tan ca +30p]. */
+function shareWindowOf(startAt?: unknown, endAt?: unknown): { start: number; end: number } | null {
+  const s = parseMs(startAt);
+  const e = parseMs(endAt);
+  if (!s || !e) return null;
+  return { start: s - SHARE_BEFORE_MS, end: e + SHARE_AFTER_MS };
+}
+
 function gpsOf(ev?: AttendanceEvent | null): LiveMapGps | undefined {
   if (!ev) return undefined;
   const lat = Number((ev as any).gps_latitude);
@@ -170,6 +214,13 @@ function gpsOf(ev?: AttendanceEvent | null): LiveMapGps | undefined {
 
 export class LiveMapService {
   constructor(private repo: ISheetsRepository, private liveLocations?: LiveLocationStore) {}
+
+  /** Trạng thái geofence lần trước (trong/ngoài cửa hàng) để phát hiện chuyển tiếp. */
+  private geofenceInside = new Map<string, boolean>();
+  /** Trạng thái mất tín hiệu lần trước để phát hiện hồi/mất. */
+  private staleFlag = new Map<string, boolean>();
+  /** Mốc thời gian đã báo gần nhất theo `employeeId:type` (chống spam). */
+  private alertCooldown = new Map<string, number>();
 
   async getSnapshot(nowInput?: Date): Promise<LiveMapSnapshot> {
     const now = nowInput instanceof Date ? nowInput : new Date();
@@ -274,6 +325,17 @@ export class LiveMapService {
       // trong bán kính. Không có GPS thật (rơi về toạ độ cửa hàng) ⇒ false.
       const atBranch = gpsSource !== 'BRANCH' && distance <= radiusMeters;
 
+      // Khung chia sẻ GPS đang bật + tình trạng tín hiệu (A2).
+      const liveOnline = !!live;
+      const activeWindows = builtShifts
+        .map(s => shareWindowOf((s as any).start_at, (s as any).end_at))
+        .filter((w): w is { start: number; end: number } =>
+          !!w && nowMs >= w.start && nowMs <= w.end);
+      const sharingNow = activeWindows.length > 0;
+      const earliestStart = activeWindows.length ? Math.min(...activeWindows.map(w => w.start)) : 0;
+      const gpsStale = sharingNow && !liveOnline
+        && earliestStart > 0 && nowMs > earliestStart + LIVE_STALE_GRACE_MINUTES * 60_000;
+
       out.push({
         employee_id: empId,
         employee_code: String((emp as any)?.employee_code || empId),
@@ -293,6 +355,9 @@ export class LiveMapService {
         distance_meters: distance,
         radius_meters: radiusMeters,
         at_branch: atBranch,
+        sharing_now: sharingNow,
+        live_online: liveOnline,
+        gps_stale: gpsStale,
         last_gps_at: live?.at ?? gps?.at,
         note,
       });
@@ -337,6 +402,7 @@ export class LiveMapService {
       with_gps: withRealGps.length,
       at_store: withRealGps.filter(e => e.at_branch).length,
       outside: withRealGps.filter(e => !e.at_branch).length,
+      stale: list.filter(e => e.gps_stale).length,
     };
   }
 
@@ -357,6 +423,86 @@ export class LiveMapService {
       employees,
       summary: this.summarize(employees),
     };
+  }
+
+  /**
+   * Quét trạng thái hiện tại và trả về các cảnh báo MỚI (đã lọc cooldown):
+   *  - GEOFENCE_EXIT  : đang trong ca mà rời khỏi bán kính cửa hàng.
+   *  - GEOFENCE_RETURN: đã quay lại cửa hàng.
+   *  - GPS_STALE      : đang trong ca mà mất tín hiệu GPS.
+   *  - GPS_RESTORED   : đã có tín hiệu trở lại.
+   * Không phụ thuộc socket — server gọi định kỳ rồi tự phát đi (xem server.ts).
+   */
+  async evaluateAlerts(nowInput?: Date): Promise<LiveMapAlert[]> {
+    const now = nowInput instanceof Date ? nowInput : new Date();
+    const nowMs = now.getTime();
+    const snap = await this.getSnapshot(now);
+    const out: LiveMapAlert[] = [];
+
+    const emit = (
+      type: LiveMapAlertType,
+      severity: LiveMapAlert['severity'],
+      e: LiveMapEmployee,
+      message: string,
+    ) => {
+      const key = `${e.employee_id}:${type}`;
+      if (nowMs - (this.alertCooldown.get(key) || 0) < ALERT_COOLDOWN_MS) return;
+      this.alertCooldown.set(key, nowMs);
+      out.push({
+        type,
+        severity,
+        employee_id: e.employee_id,
+        employee_code: e.employee_code,
+        full_name: e.full_name,
+        branch_id: e.branch_id,
+        branch_name: e.branch_name,
+        latitude: e.latitude,
+        longitude: e.longitude,
+        distance_meters: e.distance_meters,
+        radius_meters: e.radius_meters,
+        at: now.toISOString(),
+        message,
+      });
+    };
+
+    const present = new Set<string>();
+    for (const e of snap.employees) {
+      present.add(e.employee_id);
+
+      // Geofence chỉ xét khi có GPS thật (live/chấm công).
+      if (e.gps_source !== 'BRANCH') {
+        const radius = Number(e.radius_meters) || 300;
+        const outside = Number(e.distance_meters || 0) > radius + GEOFENCE_MARGIN_METERS;
+        const inside = !outside;
+        const prev = this.geofenceInside.get(e.employee_id);
+        if (e.sharing_now) {
+          if (prev === true && outside) {
+            emit('GEOFENCE_EXIT', 'WARNING', e,
+              `${e.full_name} (${e.employee_code}) đã rời khỏi ${e.branch_name} — cách ${Number(e.distance_meters || 0).toLocaleString('vi-VN')} m (bán kính ${radius} m).`);
+          } else if (prev === false && inside) {
+            emit('GEOFENCE_RETURN', 'INFO', e,
+              `${e.full_name} (${e.employee_code}) đã quay lại ${e.branch_name}.`);
+          }
+        }
+        this.geofenceInside.set(e.employee_id, inside);
+      }
+
+      const prevStale = this.staleFlag.get(e.employee_id) === true;
+      if (e.gps_stale && !prevStale) {
+        emit('GPS_STALE', 'WARNING', e,
+          `${e.full_name} (${e.employee_code}) đang trong ca nhưng MẤT TÍN HIỆU GPS (không gửi vị trí).`);
+      } else if (!e.gps_stale && prevStale) {
+        emit('GPS_RESTORED', 'INFO', e,
+          `${e.full_name} (${e.employee_code}) đã có tín hiệu GPS trở lại.`);
+      }
+      this.staleFlag.set(e.employee_id, e.gps_stale);
+    }
+
+    // Dọn trạng thái của NV không còn xuất hiện (bị khóa/nghỉ việc).
+    for (const id of Array.from(this.geofenceInside.keys())) if (!present.has(id)) this.geofenceInside.delete(id);
+    for (const id of Array.from(this.staleFlag.keys())) if (!present.has(id)) this.staleFlag.delete(id);
+
+    return out;
   }
 
   private buildShift(shift: ShiftAssignment, events: AttendanceEvent[], nowMs: number): LiveMapShift {

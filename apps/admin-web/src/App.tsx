@@ -1580,6 +1580,12 @@ export function App() {
           window.dispatchEvent(new CustomEvent('ubm:live-location', { detail: payload }));
         } catch { /* non-fatal */ }
       });
+      // Cảnh báo bản đồ GPS (rời cửa hàng / mất tín hiệu) → bản đồ hiện banner + toast.
+      socket.on('live-map:alert', (payload: any) => {
+        try {
+          window.dispatchEvent(new CustomEvent('ubm:live-map-alert', { detail: payload }));
+        } catch { /* non-fatal */ }
+      });
       socket.on('payroll.published', () => scheduleReload(currentUser, 'payslips'));
     } catch (err) {
       console.warn('[Socket.IO] Không thể khởi tạo kết nối realtime:', err);

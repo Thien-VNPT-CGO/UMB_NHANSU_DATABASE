@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { MapPin, RefreshCw, Users, AlertTriangle, CheckCircle2, Clock, Wifi, WifiOff } from 'lucide-react';
+import { MapPin, RefreshCw, Users, AlertTriangle, CheckCircle2, Clock, Wifi, WifiOff, Bell, X, Search } from 'lucide-react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { apiRequest } from '../services/api';
@@ -50,8 +50,32 @@ interface LiveMapEmployee {
   radius_meters?: number;
   /** Có GPS thật và đang nằm trong bán kính cửa hàng (đang làm việc tại cửa hàng). */
   at_branch?: boolean;
+  /** Đang trong khung giờ chia sẻ GPS (trước vào ca 30p → sau tan ca 30p). */
+  sharing_now?: boolean;
+  /** Có ping GPS trực tiếp còn hiệu lực (thiết bị còn online). */
+  live_online?: boolean;
+  /** Đang trong ca nhưng mất tín hiệu GPS quá lâu. */
+  gps_stale?: boolean;
   last_gps_at?: string;
   note?: string;
+}
+
+type LiveMapAlertType = 'GEOFENCE_EXIT' | 'GEOFENCE_RETURN' | 'GPS_STALE' | 'GPS_RESTORED';
+
+interface LiveMapAlert {
+  type: LiveMapAlertType;
+  severity: 'INFO' | 'WARNING';
+  employee_id: string;
+  employee_code: string;
+  full_name: string;
+  branch_id: string;
+  branch_name: string;
+  latitude: number;
+  longitude: number;
+  distance_meters?: number;
+  radius_meters?: number;
+  at: string;
+  message: string;
 }
 
 interface LiveMapBranch {
@@ -81,8 +105,16 @@ interface LiveMapSnapshot {
     with_gps: number;
     at_store: number;
     outside: number;
+    stale: number;
   };
 }
+
+const ALERT_META: Record<LiveMapAlertType, { label: string; icon: string; color: string }> = {
+  GEOFENCE_EXIT: { label: 'Rời cửa hàng', icon: '🚶', color: '#B45309' },
+  GEOFENCE_RETURN: { label: 'Đã quay lại', icon: '🏬', color: '#047857' },
+  GPS_STALE: { label: 'Mất tín hiệu GPS', icon: '📵', color: '#B91C1C' },
+  GPS_RESTORED: { label: 'Có tín hiệu lại', icon: '📶', color: '#047857' },
+};
 
 const STATUS_META: Record<LiveMapStatus, { label: string; color: string; bg: string; border: string }> = {
   NORMAL: { label: 'Bình thường', color: '#475569', bg: '#F1F5F9', border: '#CBD5E1' },
@@ -123,6 +155,19 @@ function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number)
   return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
 }
 
+/** Độ tươi vị trí dạng "vừa xong / 12s trước" — cập nhật mỗi giây (A3). */
+function ageLabel(iso: string | undefined, nowMs: number): string {
+  if (!iso) return '—';
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return '—';
+  const s = Math.max(0, Math.round((nowMs - t) / 1000));
+  if (s < 5) return 'vừa xong';
+  if (s < 60) return `${s}s trước`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} phút trước`;
+  return `${Math.floor(m / 60)} giờ trước`;
+}
+
 function timeAgo(iso?: string): string {
   if (!iso) return '—';
   const t = new Date(iso).getTime();
@@ -153,11 +198,13 @@ function tooltipHtml(emp: LiveMapEmployee): string {
       </div>`;
   }).join('');
 
-  const placeLine = emp.gps_source === 'BRANCH'
-    ? '<div class="ubm-map-tt-line">🏬 Vị trí: <b>chưa có GPS thiết bị</b> — hiển thị tại toạ độ cửa hàng</div>'
-    : (emp.at_branch
-      ? '<div class="ubm-map-tt-line">🏬 Vị trí: <b style="color:#6EE7B7">Đang ở cửa hàng</b> (trong bán kính cho phép)</div>'
-      : '<div class="ubm-map-tt-line">🚶 Vị trí: <b style="color:#FCA5A5">Ngoài cửa hàng</b> — không có mặt tại điểm làm việc</div>');
+  const placeLine = emp.gps_stale
+    ? '<div class="ubm-map-tt-line">📵 Tín hiệu: <b style="color:#FCA5A5">Mất tín hiệu GPS</b> — thiết bị đang không gửi vị trí</div>'
+    : emp.gps_source === 'BRANCH'
+      ? '<div class="ubm-map-tt-line">🏬 Vị trí: <b>chưa có GPS thiết bị</b> — hiển thị tại toạ độ cửa hàng</div>'
+      : (emp.at_branch
+        ? '<div class="ubm-map-tt-line">🏬 Vị trí: <b style="color:#6EE7B7">Đang ở cửa hàng</b> (trong bán kính cho phép)</div>'
+        : '<div class="ubm-map-tt-line">🚶 Vị trí: <b style="color:#FCA5A5">Ngoài cửa hàng</b> — không có mặt tại điểm làm việc</div>');
 
   const gpsLine = emp.gps_source === 'BRANCH'
     ? '<div class="ubm-map-tt-line">📍 Toạ độ: <b>toạ độ cửa hàng</b> (chưa có GPS chấm công)</div>'
@@ -193,8 +240,17 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
   const [lastUpdated, setLastUpdated] = useState<number>(0);
   const [branchFilter, setBranchFilter] = useState<string>('*');
   const [statusFilter, setStatusFilter] = useState<'ALL' | LiveMapStatus>('ALL');
-  const [placeFilter, setPlaceFilter] = useState<'ALL' | 'AT_STORE' | 'OUTSIDE'>('ALL');
+  const [placeFilter, setPlaceFilter] = useState<'ALL' | 'AT_STORE' | 'OUTSIDE' | 'STALE'>('ALL');
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [searchText, setSearchText] = useState('');
+  const [alerts, setAlerts] = useState<LiveMapAlert[]>([]);
+  const [alertsOpen, setAlertsOpen] = useState(true);
+  // Nhịp 1 giây để đồng hồ "cập nhật cách đây Ns" chạy mượt (A3).
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  // NV đang được chọn (bấm từ danh sách/marker) để tô sáng + zoom (A4).
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectedIdRef = useRef<string | null>(null);
+  selectedIdRef.current = selectedId;
 
   const mapElRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
@@ -229,6 +285,12 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
     const timer = window.setInterval(() => load({ silent: true }), 30_000);
     return () => window.clearInterval(timer);
   }, [autoRefresh, load]);
+
+  // A3: nhịp 1 giây cho đồng hồ độ tươi vị trí.
+  useEffect(() => {
+    const t = window.setInterval(() => setNowTick(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, []);
 
   // Realtime: backend bắn data:updated(attendance/schedules/config) → App phát event này.
   useEffect(() => {
@@ -274,6 +336,8 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
             distance_meters: distance,
             radius_meters: radius,
             at_branch: Number(distance) <= radius,
+            live_online: true,
+            gps_stale: false,
             last_gps_at: String(p?.at || new Date().toISOString()),
           };
         });
@@ -285,17 +349,34 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
     return () => window.removeEventListener('ubm:live-location', onLive);
   }, []);
 
+  // A1/A2: cảnh báo realtime (rời cửa hàng / mất tín hiệu) → banner + danh sách.
+  useEffect(() => {
+    const onAlert = (ev: Event) => {
+      const a = (ev as CustomEvent).detail as LiveMapAlert;
+      if (!a || !a.type) return;
+      setAlerts(prev => [a, ...prev].slice(0, 40));
+      setAlertsOpen(true);
+    };
+    window.addEventListener('ubm:live-map-alert', onAlert);
+    return () => window.removeEventListener('ubm:live-map-alert', onAlert);
+  }, []);
+
   const employees = useMemo(() => {
     const list = data?.employees || [];
+    const q = searchText.trim().toLowerCase();
     return list.filter(e =>
       (branchFilter === '*' || e.branch_id === branchFilter)
       && (statusFilter === 'ALL' || e.status === statusFilter)
-      // Lọc theo vị trí: chỉ NV có GPS thật (đang ở cửa hàng / ở ngoài).
+      // Lọc theo vị trí: đang ở cửa hàng / ở ngoài / mất tín hiệu.
       && (placeFilter === 'ALL'
         || (placeFilter === 'AT_STORE' && e.gps_source !== 'BRANCH' && e.at_branch === true)
-        || (placeFilter === 'OUTSIDE' && e.gps_source !== 'BRANCH' && e.at_branch !== true))
+        || (placeFilter === 'OUTSIDE' && e.gps_source !== 'BRANCH' && e.at_branch !== true)
+        || (placeFilter === 'STALE' && e.gps_stale === true))
+      && (!q
+        || String(e.full_name || '').toLowerCase().includes(q)
+        || String(e.employee_code || '').toLowerCase().includes(q))
     );
-  }, [data, branchFilter, statusFilter, placeFilter]);
+  }, [data, branchFilter, statusFilter, placeFilter, searchText]);
 
   // Khởi tạo bản đồ 1 lần.
   useEffect(() => {
@@ -401,10 +482,12 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
         points.push([lat, lng]);
         const meta = STATUS_META[emp.status];
         const outside = emp.gps_source !== 'BRANCH' && emp.at_branch !== true;
+        const stale = emp.gps_stale === true;
+        const selected = emp.employee_id === selectedIdRef.current;
         const marker = L.marker([lat, lng], {
           icon: L.divIcon({
             className: 'ubm-map-marker',
-            html: `<div class="ubm-map-dot ubm-map-dot--${emp.status.toLowerCase()}${outside ? ' ubm-map-dot--outside' : ''}" style="--dot-color:${meta.color}"></div>`,
+            html: `<div class="ubm-map-dot ubm-map-dot--${emp.status.toLowerCase()}${outside ? ' ubm-map-dot--outside' : ''}${stale ? ' ubm-map-dot--stale' : ''}${selected ? ' ubm-map-dot--selected' : ''}" style="--dot-color:${meta.color}"></div>`,
             iconSize: [18, 18],
             iconAnchor: [9, 9],
           }),
@@ -418,6 +501,7 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
           className: 'ubm-map-tooltip',
           sticky: false,
         });
+        marker.on('click', () => setSelectedId(emp.employee_id));
         marker.addTo(layer);
       });
     }
@@ -433,7 +517,20 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
       }, 60);
     }
     map.invalidateSize();
-  }, [data, employees, branchFilter]);
+  }, [data, employees, branchFilter, selectedId]);
+
+  // A4: zoom tới NV được chọn từ danh sách bên trái.
+  const focusEmployee = useCallback((emp: LiveMapEmployee) => {
+    setSelectedId(emp.employee_id);
+    const map = mapRef.current;
+    if (!map) return;
+    const lat = Number(emp.latitude);
+    const lng = Number(emp.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    try {
+      map.flyTo([lat, lng], Math.max(map.getZoom(), 16), { duration: 0.6 });
+    } catch { /* non-fatal */ }
+  }, []);
 
   const summary = data?.summary;
   const roleLabel = currentUserRole === 'FINANCE' ? 'Kế toán' : currentUserRole === 'HR' ? 'HR' : 'Giám đốc';
@@ -486,6 +583,9 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
         <div className="ubm-map-stat ubm-map-stat--outside">
           <span aria-hidden>🚶</span> <span>Ngoài cửa hàng</span> <b>{summary?.outside ?? 0}</b>
         </div>
+        <div className="ubm-map-stat ubm-map-stat--stale">
+          <span aria-hidden>📵</span> <span>Mất tín hiệu</span> <b>{summary?.stale ?? 0}</b>
+        </div>
       </div>
 
       <div className="ubm-map-toolbar">
@@ -507,15 +607,28 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
           )}
         </div>
         <div className="ubm-map-toolbar-right">
+          <label className="ubm-map-search">
+            <Search size={14} />
+            <input
+              type="text"
+              value={searchText}
+              onChange={e => setSearchText(e.target.value)}
+              placeholder="Tìm tên / mã NV…"
+            />
+            {searchText && (
+              <button type="button" onClick={() => setSearchText('')} title="Xóa tìm kiếm"><X size={13} /></button>
+            )}
+          </label>
           <select
             value={placeFilter}
-            onChange={e => setPlaceFilter(e.target.value as 'ALL' | 'AT_STORE' | 'OUTSIDE')}
+            onChange={e => setPlaceFilter(e.target.value as 'ALL' | 'AT_STORE' | 'OUTSIDE' | 'STALE')}
             className="ubm-map-select"
             title="Lọc theo vị trí so với cửa hàng"
           >
             <option value="ALL">Mọi vị trí</option>
             <option value="AT_STORE">🏬 Đang ở cửa hàng</option>
             <option value="OUTSIDE">🚶 Ngoài cửa hàng</option>
+            <option value="STALE">📵 Mất tín hiệu GPS</option>
           </select>
           <select value={branchFilter} onChange={e => setBranchFilter(e.target.value)} className="ubm-map-select">
             <option value="*">Tất cả cửa hàng</option>
@@ -523,7 +636,9 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
               <option key={b.id} value={b.id}>{b.name} ({b.id})</option>
             ))}
           </select>
-          <span className="ubm-map-updated">Cập nhật: {lastUpdated ? fmtTime(new Date(lastUpdated).toISOString()) : '—'}</span>
+          <span className="ubm-map-updated">
+            Cập nhật: <b>{lastUpdated ? ageLabel(new Date(lastUpdated).toISOString(), nowTick) : '—'}</b>
+          </span>
         </div>
       </div>
 
@@ -534,19 +649,74 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
         </div>
       )}
 
-      <div className="ubm-map-canvas-wrap">
-        <div ref={mapElRef} className="ubm-map-canvas" />
-        {loading && !data && <div className="ubm-map-overlay">Đang tải bản đồ...</div>}
-        {!loading && data && employees.length === 0 && (
-          <div className="ubm-map-overlay ubm-map-overlay--soft">Không có nhân viên phù hợp bộ lọc.</div>
-        )}
+      {alerts.length > 0 && (
+        <div className="ubm-map-alerts">
+          <div className="ubm-map-alerts-head">
+            <button type="button" className="ubm-map-alerts-toggle" onClick={() => setAlertsOpen(v => !v)}>
+              <Bell size={15} /> {alerts.length} cảnh báo bản đồ {alertsOpen ? '▾' : '▸'}
+            </button>
+            <button type="button" className="ubm-map-alerts-clear" onClick={() => setAlerts([])}>Xóa hết</button>
+          </div>
+          {alertsOpen && (
+            <ul className="ubm-map-alerts-list">
+              {alerts.slice(0, 8).map((a, i) => (
+                <li key={`${a.employee_id}-${a.type}-${a.at}-${i}`} className={`ubm-map-alert ubm-map-alert--${a.severity.toLowerCase()}`}>
+                  <span className="ubm-map-alert-ico" style={{ color: ALERT_META[a.type]?.color }}>{ALERT_META[a.type]?.icon || '⚠️'}</span>
+                  <span className="ubm-map-alert-txt">{a.message}</span>
+                  <span className="ubm-map-alert-time">{ageLabel(a.at, nowTick)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      <div className="ubm-map-body">
+        <aside className="ubm-map-list">
+          <div className="ubm-map-list-head">{employees.length} NV hiển thị</div>
+          <ul>
+            {employees.map(e => (
+              <li
+                key={e.employee_id}
+                className={`ubm-map-list-item${e.employee_id === selectedId ? ' is-selected' : ''}`}
+                onClick={() => focusEmployee(e)}
+              >
+                <span
+                  className={`ubm-map-dot ubm-map-dot--${e.status.toLowerCase()}${e.gps_source !== 'BRANCH' && e.at_branch !== true ? ' ubm-map-dot--outside' : ''}${e.gps_stale ? ' ubm-map-dot--stale' : ''}`}
+                  style={{ '--dot-color': STATUS_META[e.status].color } as React.CSSProperties}
+                />
+                <span className="ubm-map-list-name">
+                  <b>{e.full_name}</b>
+                  <small>{e.employee_code} • {e.branch_name}</small>
+                </span>
+                <span className="ubm-map-list-meta">
+                  <em style={{ color: STATUS_META[e.status].color }}>{STATUS_META[e.status].label}</em>
+                  {e.gps_stale
+                    ? <small className="is-stale">📵 mất tín hiệu</small>
+                    : e.gps_source !== 'BRANCH'
+                      ? <small>{e.at_branch ? '🏬 tại cửa hàng' : `🚶 ${Number(e.distance_meters || 0).toLocaleString('vi-VN')} m`}</small>
+                      : <small>chưa có GPS</small>}
+                </span>
+              </li>
+            ))}
+            {employees.length === 0 && <li className="ubm-map-list-empty">Không có NV phù hợp bộ lọc.</li>}
+          </ul>
+        </aside>
+
+        <div className="ubm-map-canvas-wrap">
+          <div ref={mapElRef} className="ubm-map-canvas" />
+          {loading && !data && <div className="ubm-map-overlay">Đang tải bản đồ...</div>}
+          {!loading && data && employees.length === 0 && (
+            <div className="ubm-map-overlay ubm-map-overlay--soft">Không có nhân viên phù hợp bộ lọc.</div>
+          )}
+        </div>
       </div>
       <div className="ubm-map-foot">
         Rê chuột vào điểm màu để xem <b>Tên NV + Mã NV + ca làm + giờ check-in/out</b> theo thời gian thực.
         Điểm vàng nhấp nháy = đang trong ca. Vị trí ưu tiên GPS trực tiếp từ cổng NV (cập nhật ~30 giây/lần),
         sau đó GPS lần chấm công gần nhất; nếu chưa có GPS sẽ hiển thị tại cửa hàng.
-        Điểm có <b>viền cam nét đứt</b> = NV đang ở <b>ngoài cửa hàng</b> (ngoài bán kính cho phép);
-        dùng ô <b>“Đang ở cửa hàng / Ngoài cửa hàng”</b> để lọc nhanh.
+        Điểm có <b>viền cam nét đứt</b> = đang ở <b>ngoài cửa hàng</b>; <b>viền xám nét đứt</b> = <b>mất tín hiệu GPS</b>.
+        Bấm vào NV ở <b>danh sách bên trái</b> để zoom tới vị trí.
       </div>
     </div>
   );
