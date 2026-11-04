@@ -241,7 +241,7 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
   const [lastUpdated, setLastUpdated] = useState<number>(0);
   const [branchFilter, setBranchFilter] = useState<string>('*');
   const [statusFilter, setStatusFilter] = useState<'ALL' | LiveMapStatus>('ALL');
-  const [placeFilter, setPlaceFilter] = useState<'ALL' | 'HAS_GPS' | 'AT_STORE' | 'OUTSIDE' | 'STALE'>('ALL');
+  const [placeFilter, setPlaceFilter] = useState<'ALL' | 'AT_STORE' | 'OUTSIDE' | 'STALE'>('ALL');
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [searchText, setSearchText] = useState('');
   const [alerts, setAlerts] = useState<LiveMapAlert[]>([]);
@@ -373,13 +373,15 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
     const list = data?.employees || [];
     const q = searchText.trim().toLowerCase();
     return list.filter(e =>
-      (branchFilter === '*' || e.branch_id === branchFilter)
+      // KHÔNG hiển thị NV chỉ có "toạ độ cửa hàng" (GPS gán cứng) — bản đồ chỉ
+      // vẽ NV thực sự có GPS thật (live hoặc từ phiên chấm công).
+      e.gps_source !== 'BRANCH'
+      && (branchFilter === '*' || e.branch_id === branchFilter)
       && (statusFilter === 'ALL' || e.status === statusFilter)
-      // Lọc theo vị trí: chỉ NV có GPS thật / đang ở cửa hàng / ở ngoài / mất tín hiệu.
+      // Lọc theo vị trí: đang ở cửa hàng / ở ngoài / mất tín hiệu.
       && (placeFilter === 'ALL'
-        || (placeFilter === 'HAS_GPS' && e.gps_source !== 'BRANCH')
-        || (placeFilter === 'AT_STORE' && e.gps_source !== 'BRANCH' && e.at_branch === true)
-        || (placeFilter === 'OUTSIDE' && e.gps_source !== 'BRANCH' && e.at_branch !== true)
+        || (placeFilter === 'AT_STORE' && e.at_branch === true)
+        || (placeFilter === 'OUTSIDE' && e.at_branch !== true)
         || (placeFilter === 'STALE' && e.gps_stale === true))
       && (!q
         || String(e.full_name || '').toLowerCase().includes(q)
@@ -651,7 +653,11 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
           <MapPin size={16} /> <span>Bình thường</span> <b>{summary?.normal ?? 0}</b>
         </div>
         <div className="ubm-map-stat">
-          <Wifi size={16} /> <span>Có GPS</span> <b>{summary?.with_gps ?? 0}</b>
+          <Wifi size={16} /> <span>Có GPS thật</span> <b>{summary?.with_gps ?? 0}</b>
+        </div>
+        <div className="ubm-map-stat ubm-map-stat--normal">
+          <span aria-hidden>🛰️</span> <span>Chưa gửi GPS</span>{' '}
+          <b>{Math.max(0, (summary?.total ?? 0) - (summary?.with_gps ?? 0))}</b>
         </div>
         <div className="ubm-map-stat ubm-map-stat--at-store">
           <span aria-hidden>🏬</span> <span>Tại cửa hàng</span> <b>{summary?.at_store ?? 0}</b>
@@ -697,12 +703,11 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
           </label>
           <select
             value={placeFilter}
-            onChange={e => setPlaceFilter(e.target.value as 'ALL' | 'HAS_GPS' | 'AT_STORE' | 'OUTSIDE' | 'STALE')}
+            onChange={e => setPlaceFilter(e.target.value as 'ALL' | 'AT_STORE' | 'OUTSIDE' | 'STALE')}
             className="ubm-map-select"
             title="Lọc theo vị trí so với cửa hàng"
           >
             <option value="ALL">Mọi vị trí</option>
-            <option value="HAS_GPS">📱 Chỉ NV có GPS thật</option>
             <option value="AT_STORE">🏬 Đang ở cửa hàng</option>
             <option value="OUTSIDE">🚶 Ngoài cửa hàng</option>
             <option value="STALE">📵 Mất tín hiệu GPS</option>
@@ -859,8 +864,9 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
       </div>
       <div className="ubm-map-foot">
         Rê chuột vào điểm màu để xem <b>Tên NV + Mã NV + ca làm + giờ check-in/out</b> theo thời gian thực.
-        Điểm vàng nhấp nháy = đang trong ca. Vị trí ưu tiên GPS trực tiếp từ cổng NV (cập nhật ~30 giây/lần),
-        sau đó GPS lần chấm công gần nhất; nếu chưa có GPS sẽ hiển thị tại cửa hàng.
+        Điểm vàng nhấp nháy = đang trong ca. Bản đồ <b>chỉ vẽ vị trí GPS thật</b> của nhân viên (từ cổng NV
+        hoặc lần chấm công gần nhất); <b>không còn hiển thị toạ độ cửa hàng thay thế</b> — NV chưa gửi GPS
+        chỉ được đếm ở ô <b>“Chưa gửi GPS”</b> và không vẽ lên bản đồ.
         Điểm có <b>viền cam nét đứt</b> = đang ở <b>ngoài cửa hàng</b>; <b>viền xám nét đứt</b> = <b>mất tín hiệu GPS</b>.
         Bấm vào NV ở <b>danh sách bên trái</b> để zoom tới vị trí.
       </div>
