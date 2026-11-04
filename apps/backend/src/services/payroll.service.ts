@@ -212,6 +212,13 @@ export function rateOnDate(
   return isProbNow ? { rate: tvFallback, stage: 'TV' } : { rate: ctFallback, stage: 'CT' };
 }
 
+/** Trạng thái đồng bộ Sheets của các thao tác kế toán (hiển thị ở Dashboard Tài chính). */
+export const financeSheetsSyncState: { at: string; ok: boolean | null; error: string } = {
+  at: '',
+  ok: null,
+  error: '',
+};
+
 /**
  * Khoảng ngày chuẩn của 1 kỳ lương: ngày 1 -> ngày cuối tháng (28/29/30/31).
  * Dùng chung cho mọi tính toán Finance để kế toán luôn thấy đủ công cả tháng.
@@ -241,13 +248,48 @@ export class PayrollService {
     this.notificationsService = svc;
   }
 
-  public triggerSheetsPush() {
+  /**
+   * Đẩy NGAY (await) các tab kế toán lên Google Sheets sau mỗi thao tác tài
+   * chính. Best-effort: lỗi Sheets không làm hỏng nghiệp vụ (dữ liệu vẫn an
+   * toàn trên PostgreSQL/bộ nhớ) nhưng luôn ghi lại trạng thái để UI hiển thị
+   * và báo rõ thay vì giả vờ "đã đồng bộ".
+   */
+  public async syncFinanceToSheets(): Promise<{ ok: boolean; error?: string }> {
+    financeSheetsSyncState.at = new Date(Date.now() + 7 * 3_600_000).toISOString();
     try {
-      const sync = (this.repo as any).syncService || (this.repo as any).fallbackAdapter?.syncService;
-      if (sync && typeof sync.pushPayslipsTab === 'function') {
-        sync.pushPayslipsTab(this.repo).catch((err: any) => console.warn('[PayrollService] pushPayslipsTab error:', err?.message || err));
+      const sync = (this.repo as any)?.syncService || (this.repo as any)?.fallbackAdapter?.syncService;
+      if (!sync || typeof sync.pushFinanceTabsNow !== 'function') {
+        financeSheetsSyncState.ok = true; // môi trường không có Sheets: coi như đã lưu chắc ở DB
+        financeSheetsSyncState.error = '';
+        return { ok: true };
       }
-    } catch { /* non-fatal */ }
+      const res = await sync.pushFinanceTabsNow(this.repo);
+      if (res?.skipped) {
+        financeSheetsSyncState.ok = true;
+        financeSheetsSyncState.error = '';
+        return { ok: true };
+      }
+      const errs: string[] = res?.errors || [];
+      if (errs.length > 0) {
+        financeSheetsSyncState.ok = false;
+        financeSheetsSyncState.error = errs.join('; ').slice(0, 300);
+        console.warn('[PayrollService] Đồng bộ tài chính lên Sheets có lỗi:', financeSheetsSyncState.error);
+        return { ok: false, error: financeSheetsSyncState.error };
+      }
+      financeSheetsSyncState.ok = true;
+      financeSheetsSyncState.error = '';
+      return { ok: true };
+    } catch (e: any) {
+      financeSheetsSyncState.ok = false;
+      financeSheetsSyncState.error = String(e?.message || e).slice(0, 300);
+      console.warn('[PayrollService] Đồng bộ tài chính lên Sheets thất bại:', financeSheetsSyncState.error);
+      return { ok: false, error: financeSheetsSyncState.error };
+    }
+  }
+
+  public triggerSheetsPush(): void {
+    // Giữ nguyên chữ ký gọi fire-and-forget cho các caller chưa kịp await.
+    void this.syncFinanceToSheets();
   }
 
   async calculateDraftPayroll(period: string, branchScope = '*', creatorId: string) {
@@ -444,9 +486,11 @@ export class PayrollService {
     if (!Number.isFinite(t1) || !Number.isFinite(t2) || t1 < 0 || t2 <= t1 || t2 > 24) {
       throw new Error('INVALID_FORMULA: ngưỡng tăng ca phải 0 ≤ T1 < T2 ≤ 24!');
     }
-    return this.repo.savePayrollFormula({
+    const res = await this.repo.savePayrollFormula({
       period, rateTV, rateCT, otPerSlot: 0, otThreshold1: t1, otThreshold2: t2, updatedBy: actorId,
     });
+    await this.syncFinanceToSheets();
+    return res;
   }
 
   async getInputs(period: string) {
@@ -456,7 +500,7 @@ export class PayrollService {
   async upsertInput(period: string, data: any, actorId: string) {
     if (!data?.employeeId) throw new Error('MISSING_EMPLOYEE: thiếu nhân viên!');
     const num = (v: any) => Math.max(0, Math.floor(Number(v) || 0));
-    return this.repo.upsertPayrollInput({
+    const res = await this.repo.upsertPayrollInput({
       period,
       employee_id: String(data.employeeId),
       luong_cb: num(data.luong_cb),
@@ -468,6 +512,8 @@ export class PayrollService {
       note: String(data.note || '').slice(0, 500) || undefined,
       updatedBy: actorId,
     });
+    await this.syncFinanceToSheets();
+    return res;
   }
 
   /**
@@ -656,7 +702,7 @@ export class PayrollService {
         };
         const created = await this.repo.createPayrollRun(runRecord, payslipItems);
         this.notifySlipsChanged('calculate-draft', { runId, period });
-        this.triggerSheetsPush();
+        await this.syncFinanceToSheets();
         return created;
       },
     });
@@ -717,7 +763,7 @@ export class PayrollService {
           reconciled_at: new Date().toISOString(),
         });
         this.notifySlipsChanged('reconcile-run', { runId });
-        this.triggerSheetsPush();
+        await this.syncFinanceToSheets();
         return updated;
       },
     });
@@ -743,7 +789,7 @@ export class PayrollService {
 
         const updated = await this.repo.updatePayrollRunStatus(runId, 'APPROVED', approverId);
         this.notifySlipsChanged('approve-run', { runId });
-        this.triggerSheetsPush();
+        await this.syncFinanceToSheets();
         return updated;
       },
     });
@@ -766,7 +812,7 @@ export class PayrollService {
           });
         }
         this.notifySlipsChanged('publish-run', { runId });
-        this.triggerSheetsPush();
+        await this.syncFinanceToSheets();
 
         return updated;
       },
@@ -781,7 +827,7 @@ export class PayrollService {
       execute: async () => {
         const updated = await this.repo.updatePayrollRunStatus(runId, 'PAID', actorId);
         this.notifySlipsChanged('mark-paid-run', { runId });
-        this.triggerSheetsPush();
+        await this.syncFinanceToSheets();
         return updated;
       },
     });
@@ -883,7 +929,7 @@ export class PayrollService {
           } as any);
         }
         this.notifySlipsChanged('sign', { itemId, role });
-        this.triggerSheetsPush();
+        await this.syncFinanceToSheets();
         return updated;
       },
     });
@@ -947,7 +993,7 @@ export class PayrollService {
         }
         const updated = await this.repo.updatePayslip(itemId, updates);
         this.notifySlipsChanged('sign', { itemId });
-        this.triggerSheetsPush();
+        await this.syncFinanceToSheets();
         return updated;
       },
     });
@@ -1024,7 +1070,7 @@ export class PayrollService {
         });
         publishedSlip = slip;
         this.notifySlipsChanged('publish', { itemId });
-        this.triggerSheetsPush();
+        await this.syncFinanceToSheets();
         return updated;
       },
     });
@@ -1108,7 +1154,7 @@ export class PayrollService {
           publishAllEmpIds = [...new Set(pubSlips.map(s => (s as any).employee_id).filter(Boolean))];
         }
         this.notifySlipsChanged('publish-all', { runId: runIdOrPeriod, count: published.length });
-        this.triggerSheetsPush();
+        await this.syncFinanceToSheets();
         return { published, skipped };
       },
     });
@@ -1152,7 +1198,7 @@ export class PayrollService {
         } as any);
         returnedSlip = slip;
         this.notifySlipsChanged('return', { itemId });
-        this.triggerSheetsPush();
+        await this.syncFinanceToSheets();
         return updated;
       },
     });
@@ -1192,7 +1238,7 @@ export class PayrollService {
         });
         paidSlip = slip;
         this.notifySlipsChanged('paid', { itemId });
-        this.triggerSheetsPush();
+        await this.syncFinanceToSheets();
         return updated;
       },
     });
@@ -1244,7 +1290,7 @@ export class PayrollService {
         if (this.io && slip.employee_id) {
           this.io.emit('data:updated', { entity: 'employees', data: { action: 'bank-sync', employeeId: slip.employee_id }, timestamp: new Date().toISOString() });
         }
-        this.triggerSheetsPush();
+        await this.syncFinanceToSheets();
         return updated;
       },
     });
@@ -1291,7 +1337,7 @@ export class PayrollService {
     }
     if (updated > 0) {
       this.notifySlipsChanged('purge-legacy-dispatch-bonus', { period: period || '*', updated });
-      this.triggerSheetsPush();
+      await this.syncFinanceToSheets();
     }
     return {
       period: period || '*',
@@ -1346,7 +1392,7 @@ export class PayrollService {
     }
     if (updated > 0) {
       this.notifySlipsChanged('purge-legacy-allowance', { period: period || '*', updated });
-      this.triggerSheetsPush();
+      await this.syncFinanceToSheets();
     }
     return {
       period: period || '*',
@@ -1456,7 +1502,7 @@ export class PayrollService {
     const calcRes: any = await this.calculateFormulaPayroll(period, branchScope, actorId);
     const inner = calcRes?.result ?? calcRes;
     const ensured = await this.ensurePeriodSlips(period, branchScope, actorId).catch(() => null);
-    this.triggerSheetsPush();
+    await this.syncFinanceToSheets();
     if (this.io) {
       try {
         this.io.emit('data:updated', { entity: 'payroll', data: { action: 'backfill', period, backfilled }, timestamp: new Date().toISOString() });

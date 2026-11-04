@@ -13,6 +13,13 @@ import type { LoginThemeId } from './components/loginThemeData';
 import { ThemeAmbientEffects } from './components/ThemeAmbientEffects';
 import { SignaturePad } from './components/SignaturePad';
 import {
+  OfficeScheduleView,
+  OfficeLeaveView,
+  OfficeAttendanceView,
+  OfficeTimesheetView,
+  OfficeAdjustmentView,
+} from './components/OfficePortal';
+import {
   Home,
   Calendar,
   Clock,
@@ -2505,7 +2512,7 @@ export function App() {
       showToast(`⏰ CHƯA ĐẾN GIỜ MỞ ĐĂNG KÝ! Cổng đăng ký 2 ngày nghỉ OFF mở lúc ${weeklyOffOpensAtStr} đến 09h00 Thứ 7. Hệ thống sẽ tự gửi thông báo trước 5 phút!`);
   };
   const handleTabClick = (tabId: string) => {
-    if (!isProbation && weeklyOffGateLocked && tabId !== 'leave') {
+    if (!isProbation && !isOffice && weeklyOffGateLocked && tabId !== 'leave') {
       showToast('🔒 QUY CHẾ BẮT BUỘC: Đang trong chu kỳ mở đăng ký 2 ngày nghỉ/tuần! Bạn bắt buộc phải hoàn thành đăng ký 2 ngày nghỉ để mở khóa các chức năng khác.');
       setActiveTab('leave');
       return;
@@ -4236,6 +4243,25 @@ export function App() {
   // Determine tabs for role
   const isProbation = employee?.employment_status === 'PROBATION';
 
+  // NHÂN VIÊN KHỐI VĂN PHÒNG (group = VAN_PHONG): bộ 8 tab riêng — lịch hành chính,
+  // nghỉ phép 1 ngày/tháng (duyệt Nhân sự → Kế toán → Giám đốc), điểm danh 08:00–08:30
+  // + GPS 300m, bổ sung công 4 phiếu/tháng. Nhân viên cửa hàng/xưởng giữ nguyên bộ tab cũ.
+  const isOffice = (() => {
+    const g = String((employee as any)?.group ?? '').trim().toUpperCase();
+    return g === 'VAN_PHONG' || g === 'VANPHONG' || g === 'OFFICE' || g.includes('VĂN PHÒNG') || g.includes('VAN PHONG');
+  })();
+
+  const officeTabs = [
+    { id: 'home', label: '1. Trang chủ', icon: Home },
+    { id: 'schedule', label: '2. Lịch làm việc', icon: Calendar },
+    { id: 'leave', label: '3. Đăng ký nghỉ phép', icon: Clock },
+    { id: 'attendance', label: '4. Điểm danh', icon: Camera, highlight: true },
+    { id: 'timesheet', label: '5. Công của tôi', icon: CheckCircle2 },
+    { id: 'adjustment', label: '6. Bổ sung công', icon: FileText },
+    { id: 'notifs_salary', label: '7. Thông báo & Lương', icon: Bell },
+    { id: 'profile', label: '8. Hồ Sơ', icon: User },
+  ];
+
   const probationTabs = [
     { id: 'home', label: '1. Trang chủ', icon: Home },
     { id: 'schedule', label: '2. Lịch thử việc', icon: Calendar },
@@ -4267,7 +4293,7 @@ export function App() {
   // Tab "7. Cập Nhật Ca Làm" CHỈ hiển thị khi Admin BẬT phiếu "Cập Nhật Ca" (enabled === true).
   // Mặc định ẩn hoàn toàn nếu Admin chưa bật hoặc đã đóng.
   const reRegEnabled = !!reRegStatus?.enabled;
-  const currentTabs = (isProbation ? probationTabs : officialTabs).filter(
+  const currentTabs = (isOffice ? officeTabs : isProbation ? probationTabs : officialTabs).filter(
     (t) => t.id !== 'rereg' || reRegEnabled
   );
 
@@ -5111,7 +5137,10 @@ export function App() {
         {/* ========================================================= */}
         {/* TAB 2: LỊCH THỬ VIỆC / LỊCH LÀM VIỆC TUẦN */}
         {/* ========================================================= */}
-        {activeTab === 'schedule' && (
+        {isOffice && activeTab === 'schedule' && (
+          <OfficeScheduleView employee={employee} showToast={showToast} />
+        )}
+        {!isOffice && activeTab === 'schedule' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             <div className="card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
               {/* Header Card */}
@@ -5915,7 +5944,10 @@ export function App() {
         {/* ========================================================= */}
         {/* TAB 3: ĐĂNG KÝ OFF (THỬ VIỆC: 1 NGÀY / CHÍNH THỨC: 2 NGÀY/TUẦN) */}
         {/* ========================================================= */}
-        {activeTab === 'leave' && (
+        {isOffice && activeTab === 'leave' && (
+          <OfficeLeaveView employee={employee} showToast={showToast} />
+        )}
+        {!isOffice && activeTab === 'leave' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             <div className="card">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
@@ -6161,7 +6193,10 @@ export function App() {
         {/* ========================================================= */}
         {/* TAB 4: ĐIỂM DANH (GPS 300M + CAMERA ÁO HỒNG + BẢNG TÊN) */}
         {/* ========================================================= */}
-        {activeTab === 'attendance' && (() => {
+        {isOffice && activeTab === 'attendance' && (
+          <OfficeAttendanceView employee={employee} showToast={showToast} />
+        )}
+        {!isOffice && activeTab === 'attendance' && (() => {
           // Ngày VN (UTC+7): cổng CA_1 mở 06:30 VN (= 23:30 UTC hôm trước) nên phải
           // dùng ngày VN — dùng ngày UTC sẽ lookup nhầm ca 00:00–07:00 VN.
           const today = vnTodayStr();
@@ -6595,7 +6630,10 @@ export function App() {
         {/* ========================================================= */}
         {/* TAB: CÔNG CỦA TÔI (DỮ LIỆU THẬT 100%, XÓA SẠCH DỮ LIỆU TEST) */}
         {/* ========================================================= */}
-        {activeTab === 'timesheet' && (
+        {isOffice && activeTab === 'timesheet' && (
+          <OfficeTimesheetView employee={employee} showToast={showToast} />
+        )}
+        {!isOffice && activeTab === 'timesheet' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             <div className="card">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
@@ -7703,7 +7741,10 @@ export function App() {
           </div>
         )}
 
-        {(activeTab === 'adjustment' || activeTab === 'emergency_adjust') && (
+        {isOffice && activeTab === 'adjustment' && (
+          <OfficeAdjustmentView employee={employee} showToast={showToast} />
+        )}
+        {!isOffice && (activeTab === 'adjustment' || activeTab === 'emergency_adjust') && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             <div className="card">
               <h3 style={{ fontSize: '15px', fontWeight: 800, marginBottom: '6px' }}>

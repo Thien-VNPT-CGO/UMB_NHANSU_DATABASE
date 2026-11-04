@@ -54,6 +54,7 @@ import { LiveMapView } from './components/LiveMapView';
 import { ChangePasswordView } from './components/ChangePasswordView';
 import { DirectorPayrollView } from './components/DirectorPayrollView';
 import { InternalWorkflowView } from './components/InternalWorkflowView';
+import { OfficeApprovalsView } from './components/OfficeApprovalsView';
 import { CompanyPolicyView } from './components/CompanyPolicyView';
 import { BetaChip, BetaBanner, isBetaFeature } from './betaFeatures';
 import {
@@ -131,7 +132,8 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'hr-profile', label: '7. Hồ sơ nhân viên', icon: IdCard },
     { id: 'hr-schedule', label: '8. Lịch làm việc', icon: Calendar },
     { id: 'internal-workflow', label: '9. Yêu cầu công việc nội bộ', icon: Send },
-    { id: 'change-password', label: '10. Đổi mật khẩu', icon: KeyRound },
+    { id: 'office-approvals', label: '10. Duyệt Văn Phòng', icon: FileText },
+    { id: 'change-password', label: '11. Đổi mật khẩu', icon: KeyRound },
   ],
   IT: [
     { id: 'internal-workflow', label: '1. Yêu cầu công việc nội bộ', icon: Send },
@@ -155,6 +157,7 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'backup', label: '15. Sao lưu & Phục hồi', icon: HardDrive },
     { id: 'bank-changes', label: '16. Duyệt đổi STK', icon: CreditCard },
     { id: 'live-map', label: '17. Bản đồ GPS', icon: MapPin },
+    { id: 'office-approvals', label: '18. Duyệt Văn Phòng', icon: FileText },
   ],
   HR: [
     { id: 'hr-dashboard', label: '1. Dashboard HR', icon: Building2 },
@@ -175,6 +178,7 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'hr-profile', label: '16. Hồ Sơ Nhân Viên Ụm Bò Milk', icon: IdCard },
     { id: 'bank-changes', label: '17. Duyệt đổi STK', icon: CreditCard },
     { id: 'live-map', label: '18. Bản đồ GPS', icon: MapPin },
+    { id: 'office-approvals', label: '19. Duyệt Văn Phòng', icon: FileText },
   ],
   STORE: [
     { id: 'store-dashboard', label: '1. Dashboard Store', icon: Store },
@@ -188,21 +192,24 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'store-reports', label: '9. Báo cáo chi nhánh', icon: FileSpreadsheet },
     { id: 'store-notifications', label: '10. Thông báo', icon: Bell },
   ],
+  /** Kế toán (Finance) — xếp theo ĐÚNG QUY TRÌNH tính lương → in phiếu lương:
+   *  Đối soát công (2 tab) → Tính lương & bảng tháng (2 tab) → Kỳ lương →
+   *  Phiếu lương (ký • gửi • IN) → Thanh toán; cuối là cài đặt (chữ ký / QR ngân hàng / duyệt STK / duyệt Văn Phòng).
+   *  Đã gỡ tab trùng lắp: fin-details (gộp vào Phiếu lương), fin-deductions
+   *  (gộp vào Tính lương B3), live-map (không thuộc quy trình lương kế toán). */
   FINANCE: [
-    { id: 'fin-dashboard', label: '1. Dashboard Finance', icon: DollarSign },
-    { id: 'fin-timesheet', label: '2. Bảng chấm công', icon: FileSpreadsheet },
-    { id: 'fin-payroll-periods', label: '3. Kỳ lương', icon: Calendar },
-    { id: 'fin-calculate', label: '4. Tính lương', icon: DollarSign },
-    { id: 'fin-details', label: '5. Chi tiết lương NV', icon: Users },
-    { id: 'fin-payslips', label: '6. Phiếu lương', icon: CreditCard },
-    { id: 'fin-bcc', label: '7. BCC Chấm Công Ngày', icon: Calendar },
-    { id: 'fin-payroll-sheet', label: '8. Payment Bảng Lương', icon: FileSpreadsheet },
-    { id: 'fin-deductions', label: '9. KPI • Ứng • Đồng Phục', icon: AlertTriangle },
-    { id: 'fin-payment', label: '10. Thanh toán', icon: CheckCircle },
-    { id: 'fin-signatures', label: '11. Cài đặt chữ ký', icon: PenTool },
-    { id: 'fin-bank-qr', label: '12. QR ngân hàng NV', icon: QrCode },
-    { id: 'bank-changes', label: '13. Duyệt đổi STK', icon: CreditCard },
-    { id: 'live-map', label: '14. Bản đồ GPS', icon: MapPin },
+    { id: 'fin-dashboard', label: '1. Dashboard Tài Chính', icon: DollarSign },
+    { id: 'fin-timesheet', label: '2. Đối Soát Công & Bảng Chấm Công', icon: FileSpreadsheet },
+    { id: 'fin-bcc', label: '3. Bảng Công Từng Ngày (BCC)', icon: Calendar },
+    { id: 'fin-calculate', label: '4. Tính Lương (Công Thức & Nhập Tay)', icon: DollarSign },
+    { id: 'fin-payroll-sheet', label: '5. Payment — Bảng Lương Tháng', icon: FileSpreadsheet },
+    { id: 'fin-payroll-periods', label: '6. Kỳ Lương (DRAFT → PAID)', icon: Calendar },
+    { id: 'fin-payslips', label: '7. Phiếu Lương (Ký • Gửi • In)', icon: CreditCard },
+    { id: 'fin-payment', label: '8. Thanh Toán (VietQR)', icon: CheckCircle },
+    { id: 'fin-signatures', label: '9. Chữ Ký Mẫu', icon: PenTool },
+    { id: 'fin-bank-qr', label: '10. QR Ngân Hàng NV', icon: QrCode },
+    { id: 'bank-changes', label: '11. Duyệt Đổi STK', icon: CreditCard },
+    { id: 'office-approvals', label: '12. Duyệt Văn Phòng', icon: FileText },
   ],
   MARKETING: [
     { id: 'mkt-dashboard', label: '1. Dashboard MKT', icon: Megaphone },
@@ -215,6 +222,14 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'mkt-tracking', label: '8. Theo dõi gửi', icon: Activity },
     { id: 'mkt-notifications', label: '9. Thông báo hệ thống', icon: Bell },
   ],
+};
+
+/** Tab FINANCE (Kế toán) tách/đổi tên theo quy trình lương:
+ *  ánh xạ id cũ → tab mới để tab đã lưu trong trình duyệt / deep-link không gãy. */
+export const FINANCE_TAB_ALIASES: Record<string, string> = {
+  'fin-details': 'fin-payslips',       // Chi tiết lương NV đã gộp vào Phiếu lương
+  'fin-deductions': 'fin-calculate',   // KPI/Ứng/ĐP nhập tay đã gộp vào Tính lương (B3)
+  'live-map': 'fin-dashboard',         // Bản đồ GPS không thuộc quy trình lương của Kế toán
 };
 
 /** Tab ADMIN tách đầy đủ (mỗi tab 1 chức năng, nội dung giữ nguyên từng khối):
@@ -236,6 +251,7 @@ export const ADMIN_TAB_ALIASES: Record<string, string> = {
 
 export function resolveAdminTab(role: string | undefined, tabId: string): string {
   if (role === 'ADMIN' && ADMIN_TAB_ALIASES[tabId]) return ADMIN_TAB_ALIASES[tabId];
+  if (role === 'FINANCE' && FINANCE_TAB_ALIASES[tabId]) return FINANCE_TAB_ALIASES[tabId];
   return tabId;
 }
 
@@ -454,7 +470,7 @@ export function App() {
     // Tab gộp cũ (operations/system/safety) -> tab tách mới tương ứng.
     if (savedTab) {
       const legacy: Record<string, string> = { operations: 'branches', system: 'policies', safety: 'audit', 'hr-attendance': 'hr-adjustments' };
-      return legacy[savedTab] || savedTab;
+      return legacy[savedTab] || FINANCE_TAB_ALIASES[savedTab] || savedTab;
     }
     try {
       const savedUser = localStorage.getItem('ubm_admin_user');
@@ -5471,6 +5487,7 @@ export function App() {
 
           {/* QUY TRÌNH YÊU CẦU CÔNG VIỆC NỘI BỘ (GĐ - KT - HR - IT) */}
           {activeTab === 'internal-workflow' && <InternalWorkflowView currentUser={currentUser} />}
+          {activeTab === 'office-approvals' && <OfficeApprovalsView currentUser={currentUser} />}
 
           {/* QUY CHẾ CÔNG TY THEO ĐỐI TƯỢNG (từng NV / từng chi nhánh / tất cả) */}
           {activeTab === 'company-policies' && <CompanyPolicyView currentUser={currentUser} />}

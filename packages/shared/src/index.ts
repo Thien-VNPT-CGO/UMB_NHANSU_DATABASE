@@ -8,4 +8,5 @@ export * from './types/notifications.js';
 export * from './types/operations.js';
 export * from './types/tests.js';
 export * from './constants/index.js';
+export * from './constants/office.js';
 export * from './attendance-grid.js';

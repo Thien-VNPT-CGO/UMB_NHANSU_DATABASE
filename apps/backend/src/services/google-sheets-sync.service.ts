@@ -4808,6 +4808,90 @@ export class GoogleSheetsSyncService {
   }
 
   /**
+   * Đẩy RIÊNG các tab kế toán (nhỏ, ít ghi): KY_LUONG + CONG_THUC_LUONG +
+   * DULIEU_LUONG_KY + PHIEU_LUONG. Dùng sau mọi thao tác kế toán (tính/duyệt/
+   * phát hành/PAID/nhập tay) để Sheet khớp hệ thống NGAY trong cùng request,
+   * KHÔNG đợi full-sync nền (vốn tối thiểu 180s và hay bị hoãn do quota).
+   * Best-effort: 0 dòng (chưa có dữ liệu) thì bỏ qua, không ghi đè rỗng tab.
+   */
+  public async pushFinanceTabsNow(repo: ISheetsRepository): Promise<{ skipped?: string; errors: string[]; tabs: Record<string, number> }> {
+    const errors: string[] = [];
+    const tabs: Record<string, number> = {};
+    // Không có client Sheets (chưa cấu hình/môi trường dev) => bỏ qua, không báo lỗi.
+    if (!(this as any).sheetsClient) return { skipped: 'SHEETS_NOT_CONFIGURED', errors, tabs };
+
+    const headers = (title: string) => (SHEETS_DEFINITIONS.find(d => d.title === title)!).headers;
+
+    // Nguồn bộ nhớ (MockSheetsAdapter) — Postgres mode vẫn giữ bản mirror trong RAM.
+    let fb: any = null;
+    if ((repo as any).fallbackAdapter) fb = (repo as any).fallbackAdapter;
+    else if (repo) fb = repo;
+
+    // 1) KY_LUONG — các kỳ lương
+    try {
+      const payrollRuns = await repo.listPayrollRuns().catch(() => []);
+      const payrollRows = (payrollRuns || []).map((pr: any) => ([
+        pr.run_id,
+        pr.period,
+        pr.status,
+        pr.total_amount,
+        pr.created_at,
+        pr.published_at || '',
+        pr.paid_at || '',
+      ]));
+      if (payrollRows.length > 0) {
+        await this.overwriteSheetData('KY_LUONG', headers('KY_LUONG'), payrollRows);
+        tabs.KY_LUONG = payrollRows.length;
+      } else {
+        tabs.KY_LUONG = 0;
+      }
+    } catch (e: any) {
+      errors.push(`KY_LUONG: ${e?.message || String(e)}`);
+    }
+
+    // 2) CONG_THUC_LUONG — công thức theo kỳ
+    try {
+      const formulas: any[] = ((fb as any)?.payrollFormulas || []).map((f: any) => ([
+        f.period, f.rateTV ?? 21000, f.rateCT ?? 25500, 0,
+        f.otThreshold1 ?? 10, f.otThreshold2 ?? 15, f.updatedBy || '', f.updatedAt || '',
+      ]));
+      if (formulas.length > 0) {
+        await this.overwriteSheetData('CONG_THUC_LUONG', headers('CONG_THUC_LUONG'), formulas);
+        tabs.CONG_THUC_LUONG = formulas.length;
+      } else {
+        tabs.CONG_THUC_LUONG = 0;
+      }
+    } catch (e: any) {
+      errors.push(`CONG_THUC_LUONG: ${e?.message || String(e)}`);
+    }
+
+    // 3) DULIEU_LUONG_KY — nhập tay theo kỳ
+    try {
+      const inputs: any[] = ((fb as any)?.payrollInputs || []).map((x: any) => ([
+        x.period, x.employee_id, x.luong_cb ?? 0, x.ot_extra ?? 0, x.bonus_extra ?? 0,
+        x.ung_luong ?? 0, x.tru_kpi ?? 0, x.dong_phuc ?? 0, x.note || '', x.updatedBy || '', x.updatedAt || '',
+      ]));
+      if (inputs.length > 0) {
+        await this.overwriteSheetData('DULIEU_LUONG_KY', headers('DULIEU_LUONG_KY'), inputs);
+        tabs.DULIEU_LUONG_KY = inputs.length;
+      } else {
+        tabs.DULIEU_LUONG_KY = 0;
+      }
+    } catch (e: any) {
+      errors.push(`DULIEU_LUONG_KY: ${e?.message || String(e)}`);
+    }
+
+    // 4) PHIEU_LUONG — phiếu lương (đã có sẵn hàm push, gồm ký/trạng thái).
+    try {
+      tabs.PHIEU_LUONG = await this.pushPayslipsTab(repo);
+    } catch (e: any) {
+      errors.push(`PHIEU_LUONG: ${e?.message || String(e)}`);
+    }
+
+    return { errors, tabs };
+  }
+
+  /**
    * Đẩy riêng tab DON_DOI_CA (await được): dùng sau mọi mutation phiếu
    * (tạo/nhận/duyệt/hủy) để trạng thái bền vững trên Sheet NGAY trong cùng
    * request — restart/sleep server không mất phiếu, pull sau đó khôi phục đủ.

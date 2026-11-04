@@ -53,7 +53,17 @@ import {
   IdCard,
 } from 'lucide-react';
 import { getDisplayBranch } from '../App';
+import {
+  FINANCE_BLOCK_OPTIONS,
+  FINANCE_BLOCK_SHORT,
+  FINANCE_BLOCK_STYLE,
+  financeBlockOf,
+  filterByFinanceBlock,
+  summarizeFinanceBlocks,
+  type FinanceBlock,
+} from '../utils/financeBlocks';
 import { apiRequest, getApiBase, getAuthToken } from '../services/api';
+import { printPayslips } from '../utils/payslipPrint';
 import { playInterviewAlert, playFanfare } from '../utils/sound-effects';
 import { PerfectScoreCelebration } from './PerfectScoreCelebration';
 import { SignaturePad } from './SignaturePad';
@@ -432,6 +442,55 @@ export const FinHead: React.FC<{ icon: string; title: string; sub: string; right
 /** Thẻ/stat dùng chung Finance. */
 export const FinCard: React.FC<{ children: React.ReactNode; accent?: string }> = ({ children, accent }) => (
   <div style={{ backgroundColor: 'var(--surface)', padding: '18px 20px', borderRadius: '14px', border: '1px solid var(--border)', borderTop: `3px solid ${accent || 'var(--border)'}`, boxShadow: '0 4px 14px rgba(15,23,42,0.06)' }}>{children}</div>
+);
+
+/** Chip "Khối" dùng trong các bảng lương. */
+export const FinBlockChip: React.FC<{ block: FinanceBlock | string; title?: string }> = ({ block, title }) => {
+  const b = (block || '') as Exclude<FinanceBlock, 'ALL'>;
+  const st = FINANCE_BLOCK_STYLE[b] || { c: '#334155', bg: '#F1F5F9' };
+  const label = (FINANCE_BLOCK_SHORT as any)[b] || '—';
+  return (
+    <span
+      title={title || `Khối: ${label}`}
+      style={{ fontSize: '10px', fontWeight: 800, padding: '2px 8px', borderRadius: '999px', backgroundColor: st.bg, color: st.c, whiteSpace: 'nowrap' }}
+    >
+      {label}
+    </span>
+  );
+};
+
+/** Bộ lọc Khối (Văn Phòng / Xưởng / Sales / Cửa Hàng) dùng chung mọi tab kế toán. */
+export const FinBlockChips: React.FC<{ value: FinanceBlock; onChange: (b: FinanceBlock) => void; counts?: Partial<Record<FinanceBlock, number>> }> = ({ value, onChange, counts }) => (
+  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }} role="tablist" aria-label="Lọc theo Khối">
+    <span style={{ fontSize: '11px', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', marginRight: '2px' }}>Khối:</span>
+    {FINANCE_BLOCK_OPTIONS.map(o => {
+      const active = value === o.id;
+      const count = counts?.[o.id];
+      return (
+        <button
+          key={o.id}
+          role="tab"
+          aria-selected={active}
+          onClick={() => onChange(o.id)}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: '6px',
+            padding: '6px 12px', borderRadius: '999px', cursor: 'pointer',
+            fontSize: '12px', fontWeight: 800,
+            border: active ? '1.5px solid var(--brand)' : '1px solid var(--border)',
+            backgroundColor: active ? 'var(--brand-soft, #FCE7F3)' : 'var(--surface)',
+            color: active ? 'var(--brand)' : 'var(--text)',
+            boxShadow: active ? '0 0 0 3px rgba(232,93,146,0.15)' : undefined,
+            transition: 'all 0.15s ease',
+          }}
+        >
+          <span aria-hidden="true">{o.icon}</span>{o.short}
+          {typeof count === 'number' && (
+            <span style={{ fontSize: '10px', fontWeight: 800, backgroundColor: 'var(--bg)', color: 'var(--text-muted)', borderRadius: '999px', padding: '1px 7px' }}>{count}</span>
+          )}
+        </button>
+      );
+    })}
+  </div>
 );
 import { evaluateCandidateAiScore } from '../services/ai-scorer';
 import { candStatusVI, computeRubricClient, INTERVIEW_RUBRICS, lockedQuestionIds, parseScoreDetailClient, requiredAnswerCount } from '../services/interview-rubric';
@@ -1513,6 +1572,32 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [payInputsSaved, setPayInputsSaved] = useState<Record<string, boolean>>({});
   const [payInputsDirty, setPayInputsDirty] = useState<Record<string, boolean>>({});
   const [payInputsBusyAll, setPayInputsBusyAll] = useState(false);
+  // Bộ lọc Khối (Văn Phòng / Xưởng / Sales / Cửa Hàng) dùng chung mọi tab kế toán.
+  const [finBlock, setFinBlock] = useState<FinanceBlock>('ALL');
+  // Trạng thái đồng bộ Sheets của thao tác kế toán gần nhất (poll 30s).
+  const [finSheetSync, setFinSheetSync] = useState<{ at: string; ok: boolean | null; error: string } | null>(null);
+  useEffect(() => {
+    if (!['fin-dashboard', 'fin-timesheet', 'fin-bcc', 'fin-payroll-sheet', 'fin-calculate', 'fin-payment', 'fin-payslips'].includes(activeTab)) return;
+    let cancelled = false;
+    const load = () => apiRequest('/payroll/sync-status')
+      .then((d: any) => { if (!cancelled) setFinSheetSync(d || null); })
+      .catch(() => { /* giữ trạng thái cũ */ });
+    load();
+    const t = setInterval(load, 30000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [activeTab]);
+  /** Bảng map NV theo id (để join Khối cho dòng lương không có group). */
+  const empById = React.useMemo(() => {
+    const m = new Map<string, any>();
+    for (const e of allEmployees || []) m.set(String((e as any)?.employee_id || ''), e);
+    return m;
+  }, [allEmployees]);
+  /** Khối của 1 dòng lương: ưu tiên group trên dòng, fallback join danh sách NV. */
+  const blockOfRow = (row?: any): Exclude<FinanceBlock, 'ALL'> => {
+    if (row?.group) return financeBlockOf(row);
+    const e = empById.get(String(row?.employeeId || row?.employee_id || ''));
+    return financeBlockOf(e || row);
+  };
   const loadPayFormula = async (period: string) => {
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) return;
     try {
@@ -1597,6 +1682,22 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     if (/^\d{4}-(0[1-9]|1[0-2])$/.test(p)) loadFinAttendance(p);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, payCalcPeriod]);
+  // Dashboard Tài chính: tự nạp số liệu tháng hiện tại để hiện tổng hợp theo Khối.
+  useEffect(() => {
+    if (activeTab !== 'fin-dashboard') return;
+    if (finSheet) return; // đã có dữ liệu
+    const p = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7);
+    loadFinAttendance(p);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, finSheet]);
+  // Cảnh báo rời trang khi còn dòng nhập tay lương chưa lưu (tránh mất dữ liệu khi F5).
+  useEffect(() => {
+    const anyDirty = Object.values(payInputsDirty).some(Boolean);
+    if (!anyDirty) return;
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [payInputsDirty]);
   // Tháng kỳ lương dùng chung cho các tab Phiếu lương / Thanh toán (fallback khi chưa chọn kỳ).
   const [sampleMonth, setSampleMonth] = useState(() => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7));
   // Chữ ký điện tử phiếu lương — lưu máy (localStorage) theo kỳ + NV + vai trò.
@@ -2092,7 +2193,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [xlBranch, setXlBranch] = useState('ALL');
   const [xlSearch, setXlSearch] = useState('');
   useEffect(() => {
-    if (!['fin-bcc', 'fin-payroll-sheet', 'fin-deductions'].includes(activeTab)) return;
+    if (!['fin-bcc', 'fin-payroll-sheet'].includes(activeTab)) return;
     const p = (xlMonth || '').trim();
     if (/^\d{4}-(0[1-9]|1[0-2])$/.test(p)) {
       loadPayFormula(p);
@@ -2111,14 +2212,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   };
   const xlGroupName = (g?: string) =>
     g === 'VAN_PHONG' ? 'Văn phòng' : g === 'XUONG' ? 'Sản xuất' : g === 'SALE' ? 'Sale' : 'Bán hàng';
-  /** Lọc NV theo chi nhánh chi tiết (như các sheet CH 111/261/130/120) + tìm kiếm. */
+  /** Lọc NV theo Khối + chi nhánh chi tiết (như các sheet CH 111/261/130/120) + tìm kiếm. */
   const xlRowsFiltered = (): any[] => {
     const q = xlSearch.trim().toLowerCase();
-    return ((xlSheet?.rows || []) as any[]).filter((r: any) => {
+    const base = ((xlSheet?.rows || []) as any[]).filter((r: any) => {
       if (xlBranch !== 'ALL' && canonicalBranchId(r.branchId) !== canonicalBranchId(xlBranch)) return false;
       if (q && !`${r.fullName || ''} ${r.employeeCode || ''}`.toLowerCase().includes(q)) return false;
       return true;
     });
+    return finBlock === 'ALL' ? base : base.filter((r: any) => financeBlockOf(r) === finBlock);
   };
   /**
    * Dựng 1 dòng đúng công thức file Excel (BCC: I→AM, AN, AO, AP, AQ, AR, AS, AT, AU, AW, AX;
@@ -13259,15 +13361,63 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const totalPayroll = payrollRuns.reduce((sum, p) => sum + (Number(p.net_pay) || 0), 0);
     const totalHours = payrollRuns.reduce((sum, p) => sum + (Number(p.total_hours) || 0), 0);
     const publishedPayslips = payrollRuns.filter(p => p.status === 'PUBLISHED' || p.status === 'PAID').length;
+    const latestRun = [...(payrollRuns || [])].sort((a: any, b: any) => String(b.created_at || '').localeCompare(String(a.created_at || '')))[0];
     const finStats = [
-      { icon: '💰', label: 'QUỸ LƯƠNG DỰ KIẾN KỲ NÀY', value: `${totalPayroll.toLocaleString('vi-VN')} đ`, sub: 'Toàn bộ 6 chi nhánh & trụ sở', color: '#E85D92', bg: '#FDF2F8' },
+      { icon: '💰', label: 'QUỸ LƯƠNG DỰ KIẾN KỲ NÀY', value: `${totalPayroll.toLocaleString('vi-VN')} đ`, sub: 'Toàn bộ cửa hàng, văn phòng, xưởng, sales', color: '#E85D92', bg: '#FDF2F8' },
       { icon: '⏱', label: 'TỔNG GIỜ CÔNG ĐÃ KHÓA', value: `${totalHours} Giờ`, sub: 'Tổng hợp từ dữ liệu chấm công thực', color: '#059669', bg: '#ECFDF5' },
-      { icon: '🧾', label: 'PHIẾU LƯƠNG ĐÃ PHÁT', value: `${publishedPayslips} / ${payrollRuns.length}`, sub: 'Bảo mật mã PIN cá nhân', color: '#2563EB', bg: '#EFF6FF' },
-      { icon: '📊', label: 'TRẠNG THÁI KỲ LƯƠNG', value: payrollRuns.length > 0 ? 'ACTIVE' : 'DRAFT', sub: 'Đồng bộ Google Sheets BANG_LUONG', color: '#7C3AED', bg: '#F5F3FF' },
+      { icon: '🧾', label: 'PHIẾU LƯƠNG ĐÃ PHÁT', value: `${publishedPayslips} / ${payrollRuns.length}`, sub: 'Bảo mật bằng PIN + chữ ký 3 bên', color: '#2563EB', bg: '#EFF6FF' },
+      { icon: '📊', label: 'TRẠNG THÁI KỲ LƯƠNG', value: latestRun?.status || 'DRAFT', sub: 'Kỳ mới nhất • Đồng bộ KY_LUONG / PHIEU_LUONG lên Sheets', color: '#7C3AED', bg: '#F5F3FF' },
     ];
+    // ---- Tổng hợp theo Khối (lấy từ bảng chấm công realtime) ----
+    const blockSummary = finSheet?.rows?.length
+      ? summarizeFinanceBlocks(finSheet.rows as any[], (r: any) => Number(r?.netPay) || 0).map(b => ({
+          ...b,
+          hours: b.rows.reduce((s, r: any) => s + (Number(r?.hours) || 0), 0),
+          shifts: b.rows.reduce((s, r: any) => s + (Number(r?.totalShifts) || 0), 0),
+          pay: b.rows.reduce((s, r: any) => s + (Number(r?.standardPay) || 0), 0),
+          deduction: b.rows.reduce((s, r: any) => s + (Number(r?.deduction) || 0), 0),
+        }))
+      : [];
+    const syncCard = !finSheetSync
+      ? { label: 'ĐANG KIỂM TRA…', sub: 'Chưa đọc được trạng thái đồng bộ', c: '#64748B', bg: '#F1F5F9', icon: '⏳' }
+      : finSheetSync.ok === true
+        ? { label: 'ĐÃ ĐỒNG BỘ GOOGLE SHEETS', sub: finSheetSync.at ? `Lần gần nhất: ${new Date(finSheetSync.at).toLocaleString('vi-VN')}` : 'Cập nhật realtime sau mỗi thao tác', c: '#047857', bg: '#ECFDF5', icon: '✅' }
+        : { label: 'SHEETS ĐỒNG BỘ LỖI', sub: `${finSheetSync.error || 'Không gửi được dữ liệu lên Sheets'} — dữ liệu vẫn an toàn trên hệ thống, sẽ tự đẩy lại ở lần Tích hợp & Đồng bộ.`, c: '#991B1B', bg: '#FEF2F2', icon: '⚠️' };
+    const exportBlocksCsv = () => {
+      if (!blockSummary.length) { showToast('Chưa có dữ liệu khối để xuất!'); return; }
+      const head = ['Khoi', 'SoNV', 'TongGio', 'TongCa', 'LuongCa', 'Phat', 'ThucNhanUocTinh'];
+      const lines = [head.join(',')];
+      for (const b of blockSummary) {
+        lines.push([
+          FINANCE_BLOCK_SHORT[b.key as FinanceBlock],
+          b.employees,
+          Math.round(b.hours * 10) / 10,
+          b.shifts,
+          b.pay,
+          b.deduction,
+          b.value,
+        ].join(','));
+      }
+      const blob = new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `tong-hop-khoi-${finMonth || (payCalcPeriod || '')}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    };
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <FinHead icon="💰" title="1. Dashboard Quản Trị Tài Chính & Tính Lương" sub="Tổng quan quỹ lương, giờ công và tiến độ phát hành phiếu theo thời gian thực" />
+        <FinHead
+          icon="💰"
+          title="1. Dashboard Tài Chính & Tính Lương"
+          sub="Tổng quan quỹ lương toàn công ty theo từng Khối — quy trình: Đối soát công → Tính lương → Kỳ lương → Phiếu lương → Thanh toán"
+          right={
+            <span style={{ fontSize: '12px', fontWeight: 800, padding: '6px 14px', borderRadius: '999px', color: syncCard.c, backgroundColor: syncCard.bg, border: `1px solid ${syncCard.c}33` }}>
+              {syncCard.icon} {syncCard.label}
+            </span>
+          }
+        />
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
           {finStats.map(s => (
             <div key={s.label} style={{ backgroundColor: 'var(--surface)', padding: '18px', borderRadius: '14px', border: '1px solid var(--border)', boxShadow: '0 4px 14px rgba(15,23,42,0.06)' }}>
@@ -13280,6 +13430,68 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </div>
           ))}
         </div>
+
+        {/* Trạng thái đồng bộ Sheets */}
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center', backgroundColor: syncCard.bg, border: `1.5px solid ${syncCard.c}33`, borderRadius: '14px', padding: '12px 16px' }}>
+          <span style={{ fontSize: '22px' }}>{syncCard.icon}</span>
+          <div style={{ fontSize: '12px', color: syncCard.c, lineHeight: 1.5 }}>
+            <strong>{syncCard.label}</strong><br />{syncCard.sub}
+          </div>
+        </div>
+
+        {/* Tổng hợp theo Khối */}
+        <FinCard accent="#E85D92">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' }}>
+            <div>
+              <div style={{ fontSize: '15px', fontWeight: 800 }}>📦 Lương theo từng Khối — Kỳ {finMonth}</div>
+              <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Văn Phòng • Xưởng SX • Sales/Marketing • Cửa Hàng (CN1–CN4)</div>
+            </div>
+            <button className="btn-secondary" style={{ fontSize: '12px', fontWeight: 700, padding: '7px 14px' }} onClick={exportBlocksCsv}>⬇️ Xuất CSV theo Khối</button>
+          </div>
+          {finSheetLoading && blockSummary.length === 0 ? (
+            <div style={{ padding: '18px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>Đang đồng bộ dữ liệu khối…</div>
+          ) : blockSummary.length === 0 ? (
+            <div style={{ padding: '18px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>Chưa có dữ liệu chấm công kỳ này — số liệu sẽ hiện sau khi có ca phân công hoặc mở tab Đối Soát Công.</div>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', minWidth: '760px' }}>
+                <thead>
+                  <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
+                    <th style={{ padding: '10px 12px' }}>Khối</th>
+                    <th style={{ padding: '10px 12px' }}>NV</th>
+                    <th style={{ padding: '10px 12px' }}>Giờ</th>
+                    <th style={{ padding: '10px 12px' }}>Ca</th>
+                    <th style={{ padding: '10px 12px' }}>Lương ca</th>
+                    <th style={{ padding: '10px 12px' }}>Phạt</th>
+                    <th style={{ padding: '10px 12px' }}>Thực nhận (ước tính)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {blockSummary.map(b => (
+                    <tr key={b.key} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <td style={{ padding: '10px 12px', fontWeight: 800 }}>{b.icon} {b.label}</td>
+                      <td style={{ padding: '10px 12px' }}><strong>{b.employees}</strong></td>
+                      <td style={{ padding: '10px 12px' }}>{Math.round(b.hours * 10) / 10}h</td>
+                      <td style={{ padding: '10px 12px' }}>{b.shifts}</td>
+                      <td style={{ padding: '10px 12px' }}>{Math.round(b.pay).toLocaleString('vi-VN')}đ</td>
+                      <td style={{ padding: '10px 12px', color: '#DC2626' }}>{Math.round(b.deduction).toLocaleString('vi-VN')}đ</td>
+                      <td style={{ padding: '10px 12px', fontWeight: 800, color: '#059669' }}>{Math.round(b.value).toLocaleString('vi-VN')}đ</td>
+                    </tr>
+                  ))}
+                  <tr style={{ backgroundColor: 'var(--bg)', fontWeight: 800 }}>
+                    <td style={{ padding: '10px 12px' }}>TỔNG CỘNG</td>
+                    <td style={{ padding: '10px 12px' }}>{blockSummary.reduce((s, b) => s + b.employees, 0)}</td>
+                    <td style={{ padding: '10px 12px' }}>{Math.round(blockSummary.reduce((s, b) => s + b.hours, 0) * 10) / 10}h</td>
+                    <td style={{ padding: '10px 12px' }}>{blockSummary.reduce((s, b) => s + b.shifts, 0)}</td>
+                    <td style={{ padding: '10px 12px' }}>{Math.round(blockSummary.reduce((s, b) => s + b.pay, 0)).toLocaleString('vi-VN')}đ</td>
+                    <td style={{ padding: '10px 12px', color: '#DC2626' }}>{Math.round(blockSummary.reduce((s, b) => s + b.deduction, 0)).toLocaleString('vi-VN')}đ</td>
+                    <td style={{ padding: '10px 12px', color: '#059669' }}>{Math.round(blockSummary.reduce((s, b) => s + b.value, 0)).toLocaleString('vi-VN')}đ</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
+        </FinCard>
       </div>
     );
   }
@@ -13288,21 +13500,25 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const t = finSheet?.totals || {};
     const q = finSearch.trim().toLowerCase();
     const allRows: any[] = finSheet?.rows || [];
-    const rows = q
+    const rows = filterByFinanceBlock(q
       ? allRows.filter((r: any) => `${r.fullName || ''} ${r.employeeCode || ''} ${r.branchId || ''}`.toLowerCase().includes(q))
-      : allRows;
+      : allRows, finBlock);
+    const blockCounts = summarizeFinanceBlocks(allRows, () => 1);
+    const blockCountMap = Object.fromEntries(blockCounts.map(b => [b.key, b.employees])) as Record<FinanceBlock, number>;
+    blockCountMap.ALL = allRows.length;
     const rangeLabel = finSheet ? `${String(finSheet.fromDate || '').slice(8, 10)}/${String(finSheet.fromDate || '').slice(5, 7)} → ${String(finSheet.toDate || '').slice(8, 10)}/${String(finSheet.toDate || '').slice(5, 7)}/${String(finSheet.toDate || '').slice(0, 4)}` : '';
     const exportCsv = () => {
       if (rows.length === 0) {
         showToast('Chưa có dữ liệu để xuất!');
         return;
       }
-      const head = ['MaNV', 'HoTen', 'ChiNhanh', 'Dien', 'DonGia', 'CaPhanCong', 'DuCong', 'Thieu', 'Vang', 'Gio', 'LuongCa', 'Phat', 'Thuong', 'ThucNhan'];
+      const head = ['MaNV', 'HoTen', 'Khoi', 'ChiNhanh', 'Dien', 'DonGia', 'CaPhanCong', 'DuCong', 'Thieu', 'Vang', 'Gio', 'LuongCa', 'Phat', 'Thuong', 'ThucNhan'];
       const lines = [head.join(',')];
       for (const r of rows) {
         lines.push([
           r.employeeCode || r.employeeId,
           `"${String(r.fullName || '').replace(/"/g, '""')}"`,
+          FINANCE_BLOCK_SHORT[financeBlockOf(r)],
           r.branchId || '',
           r.stage === 'PROBATION' ? 'ThuViec' : 'ChinhThuc',
           r.rate || 0,
@@ -13314,7 +13530,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `bang-cham-cong-${finMonth}.csv`;
+      a.download = `bang-cham-cong-${finMonth}${finBlock === 'ALL' ? '' : `-${finBlock.toLowerCase()}`}.csv`;
       a.click();
       URL.revokeObjectURL(url);
     };
@@ -13363,12 +13579,16 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <input value={finSearch} onChange={e => setFinSearch(e.target.value)} placeholder="Tìm tên / mã NV / chi nhánh..." style={{ padding: '7px 12px', fontSize: '12px', borderRadius: '8px', border: '1px solid var(--border)', minWidth: '260px' }} />
             <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Bấm vào 1 dòng để xem chi tiết từng ca (ngày, giờ, lương ca, trễ/phạt).</span>
           </div>
+          <div style={{ marginTop: '12px', borderTop: '1px dashed var(--border)', paddingTop: '12px' }}>
+            <FinBlockChips value={finBlock} onChange={setFinBlock} counts={blockCountMap} />
+          </div>
         </FinCard>
         <div style={{ backgroundColor: 'var(--surface)', borderRadius: '14px', border: '1px solid var(--border)', overflowX: 'auto', boxShadow: '0 4px 14px rgba(15,23,42,0.06)' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', minWidth: '1080px' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', minWidth: '1220px' }}>
             <thead>
               <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
                 <th style={{ padding: '12px 16px' }}>Nhân Viên</th>
+                <th style={{ padding: '12px 16px' }}>Khối</th>
                 <th style={{ padding: '12px 16px' }}>Ca (đủ/thiếu/vắng)</th>
                 <th style={{ padding: '12px 16px' }}>Giờ</th>
                 <th style={{ padding: '12px 16px' }}>Đơn Giá</th>
@@ -13380,11 +13600,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </thead>
             <tbody>
               {finSheetLoading ? (
-                <tr><td colSpan={8} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>Đang đồng bộ chấm công 01 → cuối tháng {finMonth}...</td></tr>
+                <tr><td colSpan={9} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>Đang đồng bộ chấm công 01 → cuối tháng {finMonth}...</td></tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <td colSpan={8} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                    Tháng {finMonth} chưa có ca phân công nào{branchScope !== '*' ? ` tại ${branchName}` : ''}.
+                  <td colSpan={9} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    Tháng {finMonth} chưa có ca phân công nào{branchScope !== '*' ? ` tại ${branchName}` : ''}{finBlock !== 'ALL' ? ` thuộc ${FINANCE_BLOCK_SHORT[finBlock]}` : ''}.
                   </td>
                 </tr>
               ) : (
@@ -13393,6 +13613,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   const main = (
                     <tr key={r.employeeId} style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer', backgroundColor: open ? '#F0FDF4' : undefined }} onClick={() => setFinExpandId(open ? null : r.employeeId)}>
                       <td style={{ padding: '12px 16px', fontWeight: 700 }}>{open ? '▼ ' : '▶ '}{r.fullName || r.employeeId}<div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }}>{r.employeeCode || ''} • {r.branchId || ''} • {r.stage === 'PROBATION' ? 'Thử việc' : 'Chính thức'}</div></td>
+                      <td style={{ padding: '12px 16px' }}><FinBlockChip block={financeBlockOf(r)} /></td>
                       <td style={{ padding: '12px 16px' }}><strong>{r.totalShifts}</strong> <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>(<span style={{ color: '#059669', fontWeight: 700 }}>{r.full}</span>/<span style={{ color: '#B45309', fontWeight: 700 }}>{r.partial}</span>/<span style={{ color: '#DC2626', fontWeight: 700 }}>{r.absent}</span>)</span></td>
                       <td style={{ padding: '12px 16px', fontWeight: 700 }}>{r.hours}</td>
                       <td style={{ padding: '12px 16px' }}>{Number(r.rate || 0).toLocaleString('vi-VN')}đ</td>
@@ -13405,7 +13626,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   if (!open) return [main];
                   const detail = (
                     <tr key={`${r.employeeId}-detail`} style={{ borderBottom: '1px solid var(--border)', backgroundColor: '#F8FAFC' }}>
-                      <td colSpan={8} style={{ padding: '8px 16px 14px 40px' }}>
+                      <td colSpan={9} style={{ padding: '8px 16px 14px 40px' }}>
                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
                           <thead>
                             <tr style={{ textAlign: 'left', color: 'var(--text-muted)' }}>
@@ -13672,7 +13893,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       width: '92px', padding: '6px 8px', borderRadius: '6px',
       border: '1px solid var(--border)', fontSize: '12px', ...(style || {}),
     });
-    const finEmps = (allEmployees || []).filter((e: any) => (e as any)?.employment_status !== 'TERMINATED');
+    const finEmpsAll = (allEmployees || []).filter((e: any) => (e as any)?.employment_status !== 'TERMINATED');
+    const finEmps = filterByFinanceBlock(finEmpsAll, finBlock);
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <FinHead
@@ -13690,6 +13912,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </label>
           </>}
         />
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', padding: '0 4px' }}>
+          <FinBlockChips value={finBlock} onChange={setFinBlock} />
+          <span style={{ fontSize: '11px', color: finSheetSync ? (finSheetSync.ok === true ? '#047857' : finSheetSync.ok === false ? '#991B1B' : '#64748B') : '#64748B', fontWeight: 700 }}>
+            {finSheetSync ? (finSheetSync.ok === true ? `✅ Sheets đồng bộ${finSheetSync.at ? ' • ' + new Date(finSheetSync.at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : ''}` : finSheetSync.ok === false ? '⚠️ Sheets lỗi đồng bộ' : '⏳ Đang đồng bộ…') : '⏳ Đang kiểm tra đồng bộ…'}
+          </span>
+        </div>
         <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: '14px', border: '1px solid var(--border)', boxShadow: '0 4px 14px rgba(15,23,42,0.06)' }}>
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
             <span style={{ width: '28px', height: '28px', borderRadius: '50%', backgroundColor: '#F1F5F9', color: '#475569', fontWeight: 800, fontSize: '13px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>1</span>
@@ -13762,6 +13990,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               <thead>
                 <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
                   <th style={{ padding: '10px 14px' }}>Nhân viên</th>
+                  <th style={{ padding: '10px 10px' }}>Khối</th>
                   <th style={{ padding: '10px 14px' }}>Lương CB (H)</th>
                   <th style={{ padding: '10px 14px' }}>OT thêm (K)</th>
                   <th style={{ padding: '10px 14px' }}>Bonus thêm</th>
@@ -13788,6 +14017,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         {dirty && <span title="Đang sửa dở, chưa lưu" style={{ fontSize: '10px', fontWeight: 800, padding: '1px 7px', borderRadius: '999px', backgroundColor: '#FEF3C7', color: '#92400E', marginLeft: '4px' }}>● SỬA</span>}
                         <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 400 }}>{e.employee_code}</div>
                       </td>
+                      <td style={{ padding: '8px 10px' }}><FinBlockChip block={financeBlockOf(e)} /></td>
                       {[['luong_cb'], ['ot_extra'], ['bonus_extra'], ['ung_luong'], ['tru_kpi'], ['dong_phuc']].map(([k]) => (
                         <td key={k} style={{ padding: '8px 10px' }}>
                           <input type="number" min={0} value={v[k] ?? ''} placeholder="0" onChange={ev => set(k, ev.target.value)} style={numIn()} />
@@ -13817,6 +14047,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               <thead>
                 <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
                   <th style={{ padding: '10px 14px' }}>Nhân viên</th>
+                  <th style={{ padding: '10px 10px' }}>Khối</th>
                   <th style={{ padding: '10px 14px' }}>B1 Lương giờ</th>
                   <th style={{ padding: '10px 14px' }}>B2 Tổng cộng</th>
                   <th style={{ padding: '10px 14px' }}>B3 Tổng lương</th>
@@ -13825,13 +14056,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </thead>
               <tbody>
                 {finSheetLoading ? (
-                  <tr><td colSpan={5} style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)' }}>Đang đồng bộ chấm công realtime...</td></tr>
+                  <tr><td colSpan={6} style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)' }}>Đang đồng bộ chấm công realtime...</td></tr>
                 ) : ((() => {
                   const calcPeriod = (payCalcPeriod || '').trim();
-                  const calcRows: any[] = finSheet?.period === calcPeriod ? (finSheet?.rows || []) : [];
+                  const calcRows: any[] = filterByFinanceBlock((finSheet?.period === calcPeriod ? (finSheet?.rows || []) : []) as any[], finBlock);
                   if (calcRows.length === 0) return (
-                  <tr><td colSpan={5} style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)' }}>Kỳ này chưa có ca phân công nào — các bước tính sẽ hiện sau khi có chấm công.</td></tr>
-                  );
+                  <tr><td colSpan={6} style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)' }}>{finBlock !== 'ALL' ? `Khối ${FINANCE_BLOCK_SHORT[finBlock]} chưa có ca phân công nào trong kỳ — các bước tính sẽ hiện sau khi có chấm công.` : 'Kỳ này chưa có ca phân công nào — các bước tính sẽ hiện sau khi có chấm công.'}</td></tr>);
                   return (
                   calcRows.flatMap((r: any) => {
                     const c = calcLivePayslip(r, payFormula, payInputs[r.employeeId]);
@@ -13839,6 +14069,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     const main = (
                       <tr key={r.employeeId} style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer', backgroundColor: open ? '#F0FDF4' : undefined }} onClick={() => setCalcExpandId(open ? null : r.employeeId)}>
                         <td style={{ padding: '10px 14px', fontWeight: 700 }}>{open ? '▼ ' : '▶ '}{r.fullName}<div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 400 }}>{r.employeeCode} • {r.hours}h đủ công • {r.full}/{r.totalShifts} ca</div></td>
+                        <td style={{ padding: '10px 10px' }}><FinBlockChip block={financeBlockOf(r)} /></td>
                         <td style={{ padding: '10px 14px' }}>{c.vnd(c.standardPay)}</td>
                         <td style={{ padding: '10px 14px', fontWeight: 700 }}>{c.vnd(c.tongCong)}</td>
                         <td style={{ padding: '10px 14px', fontWeight: 700 }}>{c.vnd(c.tongLuong)}</td>
@@ -13848,7 +14079,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     if (!open) return [main];
                     return [main, (
                       <tr key={`${r.employeeId}-steps`} style={{ borderBottom: '1px solid var(--border)', backgroundColor: '#F8FAFC' }}>
-                        <td colSpan={5} style={{ padding: '8px 14px 14px 38px' }}>
+                        <td colSpan={6} style={{ padding: '8px 14px 14px 38px' }}>
                           {c.steps.map(s => (
                             <div key={s.k} style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', padding: '6px 0', borderBottom: '1px dashed var(--border)', fontSize: '12px', flexWrap: 'wrap' }}>
                               <span><strong style={{ color: '#059669' }}>{s.k}.</strong> {s.label}</span>
@@ -13870,81 +14101,29 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     );
   }
 
-  if (activeTab === 'fin-details') {
-    const slips: any[] = payRunDetail?.slips || [];    const vnd0 = (n: any) => `${Number(n || 0).toLocaleString('vi-VN')}đ`;
-    const detCols: [string, (p: any) => any][] = [
-      ['Giờ', (p: any) => `${p.standard_hours || 0}h / ${p.total_shifts || 0} ca${Number(p.absent_shifts) > 0 ? ` (−${p.absent_shifts} vắng)` : ''}`],
-      ['Đơn giá', (p: any) => vnd0(p.rate_snapshot)],
-      ['Lương giờ', (p: any) => vnd0(p.standard_pay)],
-      ['Lương CB', (p: any) => vnd0(p.luong_cb)],
-      ['OT+ thêm', (p: any) => vnd0(p.ot_extra)],
-      ['Bonus', (p: any) => vnd0(p.bonus)],
-      ['Tổng cộng', (p: any) => vnd0(p.tong_cong ?? ((p.luong_cb || 0) + (p.standard_pay || 0) + (p.ot_extra || 0) + (p.bonus || 0)))],
-      ['KPI + phạt', (p: any) => vnd0((p.tru_kpi || 0) + (p.deduction || 0))],
-      ['Ứng', (p: any) => vnd0(p.ung_luong)],
-      ['Trừ ĐP', (p: any) => vnd0(p.dong_phuc)],
-      ['Thực lãnh', (p: any) => vnd0(p.thuc_lanh ?? p.net_pay)],
-    ];
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <FinHead
-          icon="🔎"
-          title="5. Chi Tiết Bảng Lương Từng Nhân Viên"
-          sub="Breakdown đầy đủ giờ, lương, thưởng, phạt, ứng, đồng phục theo kỳ"
-          right={<>
-            <select
-              onChange={e => loadPayRunDetail(e.target.value)}
-              defaultValue=""
-              style={{ padding: '8px 12px', fontSize: '13px', fontWeight: 700, borderRadius: '8px', border: '1px solid rgba(255,255,255,0.4)', backgroundColor: 'rgba(255,255,255,0.15)', color: '#FFF' }}
-            >
-              <option value="">— Chọn kỳ lương —</option>
-              {(payrollRuns || []).map((r: any) => <option key={r.run_id} value={r.run_id}>{r.period} ({r.status})</option>)}
-            </select>
-          </>}
-        />
-        {!payRunDetail ? (
-          <div style={{ backgroundColor: 'var(--surface)', padding: '32px 20px', borderRadius: '14px', border: '1px solid var(--border)', textAlign: 'center', fontSize: '13px', color: 'var(--text-muted)' }}>
-            Chọn 1 kỳ lương để xem chi tiết từng phiếu (giờ công, bonus nhập tay, phạt trễ, ca vắng, thực nhận).
-          </div>
-        ) : (
-          <div style={{ backgroundColor: 'var(--surface)', borderRadius: '14px', border: '1px solid var(--border)', overflowX: 'auto', boxShadow: '0 4px 14px rgba(15,23,42,0.06)' }}>
-            <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '12px', minWidth: '1360px' }}>
-              <thead>
-                <tr style={{ background: 'linear-gradient(180deg, var(--bg), #F1F5F9)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
-                  <th style={{ padding: '12px 16px', position: 'sticky', left: 0, backgroundColor: 'var(--bg)', zIndex: 2 }}>Mã NV</th>
-                  <th style={{ padding: '12px 16px', position: 'sticky', left: '118px', backgroundColor: 'var(--bg)', zIndex: 2 }}>Họ Và Tên</th>
-                  {detCols.map(([h]) => <th key={h} style={{ padding: '12px 16px' }}>{h}</th>)}
-                </tr>
-              </thead>
-              <tbody>
-                {slips.length === 0 ? (
-                  <tr>
-                    <td colSpan={13} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                      Kỳ này chưa có phiếu lương nào.
-                    </td>
-                  </tr>
-                ) : (
-                  slips.map((p: any) => (
-                    <tr key={p.item_id} style={{ borderBottom: '1px solid var(--border)' }}>
-                      <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--brand)', position: 'sticky', left: 0, backgroundColor: 'var(--surface)', zIndex: 2 }}>{p.employee_code || p.employee_id}</td>
-                      <td style={{ padding: '12px 16px', fontWeight: 700, position: 'sticky', left: '118px', backgroundColor: 'var(--surface)', zIndex: 2 }}>{p.full_name || 'Nhân viên'}</td>
-                      {detCols.map(([h, f], i) => (
-                        <td key={h} style={{ padding: '12px 16px', fontWeight: i === detCols.length - 1 ? 800 : 400, color: i === detCols.length - 1 ? '#10B981' : undefined }}>{f(p)}</td>
-                      ))}
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    );
-  }
-
   if (activeTab === 'fin-payslips') {
     const allRuns = payrollRuns || [];
-    const slips: any[] = payRunDetail?.slips || (periodSlips.length > 0 ? periodSlips : []);
+    const slipsRaw: any[] = payRunDetail?.slips || (periodSlips.length > 0 ? periodSlips : []);
+    // Join Khối từ danh sách NV để lọc + in theo khối (slip không có sẵn group).
+    const enrichForPrint = (p: any) => {
+      const e = empById.get(String(p?.employee_id || ''));
+      return { ...p, __group: e?.group || '', __branch: e?.default_branch_id || p?.branch_id || '' };
+    };
+    const blockOfSlip = (p: any): Exclude<FinanceBlock, 'ALL'> => {
+      // Ưu tiên group đã lưu trong slip (nếu backend trả), fallback join NV.
+      if (p?.group) return financeBlockOf(p);
+      const e = empById.get(String(p?.employee_id || ''));
+      return financeBlockOf(e || p);
+    };
+    const slips: any[] = finBlock === 'ALL' ? slipsRaw : slipsRaw.filter(p => blockOfSlip(p) === finBlock);
+    const slipBlockCounts = summarizeFinanceBlocks(slipsRaw, () => 1);
+    const slipBlockCountMap = Object.fromEntries(slipBlockCounts.map(b => [b.key, b.employees])) as Record<FinanceBlock, number>;
+    slipBlockCountMap.ALL = slipsRaw.length;
+    const printCurrentSlips = () => {
+      const list = slips.map(enrichForPrint);
+      const ok = printPayslips(list, { title: `Phiếu lương ${payRunDetail?.period || periodSlips?.[0]?.period || sampleMonth}${finBlock !== 'ALL' ? ` — ${FINANCE_BLOCK_SHORT[finBlock]}` : ''}` });
+      if (!ok) showToast('Trình duyệt chặn cửa sổ in! Hãy cho phép popup rồi bấm In lại.');
+    };
     const vnd0 = (n: any) => `${Number(n || 0).toLocaleString('vi-VN')}đ`;
     const stickyL: React.CSSProperties = { position: 'sticky', left: 0, backgroundColor: 'var(--surface)', zIndex: 2, boxShadow: '2px 0 6px rgba(15,23,42,0.06)' };
     const stickyL2: React.CSSProperties = { position: 'sticky', left: '118px', backgroundColor: 'var(--surface)', zIndex: 2, boxShadow: '2px 0 6px rgba(15,23,42,0.06)' };
@@ -13992,6 +14171,15 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 {slipActionBusy === 'publish-all' ? '⏳ Đang gửi...' : `🚀 GỬI TẤT CẢ PUBLISHED (${readyToPublishCount})`}
               </button>
             )}
+            <button
+              className="btn-secondary"
+              style={{ fontSize: '12px', padding: '7px 14px', fontWeight: 800, backgroundColor: '#FFFBEB', color: '#92400E', border: '1px solid #FCD34D', cursor: 'pointer', whiteSpace: 'nowrap' }}
+              disabled={slips.length === 0}
+              onClick={printCurrentSlips}
+              title={finBlock === 'ALL' ? `In toàn bộ ${slips.length} phiếu đang xem` : `Chỉ in ${slips.length} phiếu thuộc ${FINANCE_BLOCK_SHORT[finBlock]}`}
+            >
+              🖨️ In {finBlock === 'ALL' ? `cả kỳ (${slips.length})` : `${FINANCE_BLOCK_SHORT[finBlock]} (${slips.length})`}
+            </button>
             <select
               value={payRunDetail?.run_id || ''}
               onChange={e => {
@@ -14008,6 +14196,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </select>
           </>}
         />
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', padding: '0 4px' }}>
+          <FinBlockChips value={finBlock} onChange={setFinBlock} counts={slipBlockCountMap} />
+          {finBlock !== 'ALL' && (
+            <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 700 }}>
+              Đang lọc <strong>{FINANCE_BLOCK_SHORT[finBlock]}</strong> — {slips.length}/{slipsRaw.length} phiếu hiển thị
+            </span>
+          )}
+        </div>
 
         {hasConfiguredSigs && (
           <div style={{ backgroundColor: '#ECFDF5', border: '1.5px solid #10B981', borderRadius: '12px', padding: '12px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
@@ -14028,15 +14224,18 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
         {slips.length === 0 ? (
           <div style={{ backgroundColor: 'var(--surface)', padding: '36px 20px', borderRadius: '14px', border: '1px solid var(--border)', textAlign: 'center', fontSize: '13px', color: 'var(--text-muted)' }}>
-            Vui lòng chọn 1 kỳ lương ở góc trên bên phải để xem danh sách phiếu lương và ký duyệt.
+            {finBlock !== 'ALL'
+              ? `Không có phiếu lương nào thuộc ${FINANCE_BLOCK_SHORT[finBlock]} trong kỳ đã chọn. Đổi bộ lọc Khối ở trên hoặc chọn kỳ khác.`
+              : 'Vui lòng chọn 1 kỳ lương ở góc trên bên phải để xem danh sách phiếu lương và ký duyệt.'}
           </div>
         ) : (
           <div style={{ backgroundColor: 'var(--surface)', borderRadius: '14px', border: '1px solid var(--border)', overflowX: 'auto', boxShadow: '0 4px 14px rgba(15,23,42,0.06)' }}>
-            <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '12px', minWidth: '1360px' }}>
+            <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '12px', minWidth: '1500px' }}>
               <thead>
                 <tr style={{ background: 'linear-gradient(180deg, var(--bg), #F1F5F9)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
                   <th style={{ padding: '12px 16px', ...stickyL }}>Mã NV</th>
                   <th style={{ padding: '12px 16px', ...stickyL2 }}>Họ Và Tên</th>
+                  <th style={{ padding: '12px 10px' }}>Khối</th>
                   {finSlipCols.map(([h]) => <th key={h} style={{ padding: '12px 16px' }}>{h}</th>)}
                   <th style={{ padding: '12px 16px' }}>Trạng Thái</th>
                   <th style={{ padding: '12px 16px' }}>Chữ Ký</th>
@@ -14055,6 +14254,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     <tr key={p.item_id} style={{ borderBottom: '1px solid var(--border)' }}>
                       <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--brand)', ...stickyL }}>{p.employee_code}</td>
                       <td style={{ padding: '12px 16px', fontWeight: 700, ...stickyL2 }}>{p.full_name}</td>
+                      <td style={{ padding: '12px 10px' }}><FinBlockChip block={blockOfSlip(p)} /></td>
                       {finSlipCols.map(([h, f], i) => (
                         <td key={h} style={{ padding: '12px 16px', fontWeight: i === finSlipCols.length - 1 ? 800 : 400, color: i === finSlipCols.length - 1 ? '#10B981' : undefined }}>{f(p)}</td>
                       ))}
@@ -14082,6 +14282,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       </td>
                       <td style={{ padding: '12px 16px', textAlign: 'center' }}>
                         <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', alignItems: 'center' }}>
+                          <button
+                            className="btn-secondary"
+                            style={{ fontSize: '11px', padding: '4px 8px', fontWeight: 700, border: '1px solid #FCD34D', backgroundColor: '#FFFBEB', color: '#92400E', borderRadius: '6px', cursor: 'pointer' }}
+                            title="In phiếu lương này (cửa sổ in riêng)"
+                            onClick={() => { if (!printPayslips([enrichForPrint(p)], { title: `Phiếu lương ${p?.period || ''} — ${p?.full_name || ''}` })) showToast('Trình duyệt chặn cửa sổ in! Cho phép popup rồi In lại.'); }}
+                          >
+                            🖨️ In
+                          </button>
                           <button
                             className="btn-secondary"
                             style={{ fontSize: '11px', padding: '4px 10px', fontWeight: 700 }}
@@ -14353,7 +14561,18 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </div>
 
               {/* Footer modal */}
-              <div style={{ padding: '12px 20px', backgroundColor: '#F8FAFC', borderTop: '1px solid #E2E8F0', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+              <div style={{ padding: '12px 20px', backgroundColor: '#F8FAFC', borderTop: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
+                <button
+                  className="btn-primary"
+                  style={{ backgroundColor: '#F59E0B', border: 'none', color: '#FFF', fontSize: '12px', padding: '6px 18px', fontWeight: 800 }}
+                  onClick={() => {
+                    const e2 = empById.get(String(viewSlipModal.employee_id || ''));
+                    const ok = printPayslips([{ ...viewSlipModal, __group: e2?.group || '', __branch: e2?.default_branch_id || '' }], { title: `Phiếu lương ${viewSlipModal?.period || ''} — ${viewSlipModal?.full_name || ''}` });
+                    if (!ok) showToast('Trình duyệt chặn cửa sổ in! Cho phép popup rồi bấm In lại.');
+                  }}
+                >
+                  🖨️ In phiếu
+                </button>
                 <button className="btn-secondary" style={{ fontSize: '12px', padding: '6px 16px' }} onClick={() => setViewSlipModal(null)}>
                   Đóng
                 </button>
@@ -14371,7 +14590,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // AQ=COUNTIFS(>=T1)+COUNTIFS(>=T2), AU=TV*rateTV+CT*rateCT, M=LCB+giờ+OT+Bonus,
   // Q=M−N, R=Q−O−P.
   // =========================================================================
-  if (activeTab === 'fin-bcc' || activeTab === 'fin-payroll-sheet' || activeTab === 'fin-deductions') {
+  if (activeTab === 'fin-bcc' || activeTab === 'fin-payroll-sheet') {
     const vnd = (n: any) => `${Number(n || 0).toLocaleString('vi-VN')}đ`;
     const daysInMonth: number = Number(xlSheet?.daysInMonth) || 31;
     const dayCols = Array.from({ length: daysInMonth }, (_, i) => i + 1);
@@ -14380,15 +14599,23 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const xlControls = (<>
       <input type="month" value={xlMonth} onChange={e => setXlMonth(e.target.value || new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7))} style={{ padding: '7px 10px', fontSize: '12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.4)', backgroundColor: 'rgba(255,255,255,0.15)', color: '#FFF', fontWeight: 700 }} />
       <select value={xlBranch} onChange={e => setXlBranch(e.target.value)} style={{ padding: '7px 10px', fontSize: '12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.4)', backgroundColor: 'rgba(255,255,255,0.15)', color: '#FFF', fontWeight: 700 }}>
-        <option value="ALL">Tất cả chi nhánh</option>
+        <option value="ALL">Tất cả cửa hàng / toàn hệ thống</option>
         <option value="CN130">CN1: 130 Vạn Kiếp</option>
         <option value="CN261">CN2: 261 Tô Hiến Thành</option>
         <option value="CN120">CN3: 120 Hoàng Diệu 2</option>
         <option value="CN111">CN4: 111 Tôn Đản</option>
+        <option value="VAN_PHONG">Văn Phòng (Trụ sở)</option>
+        <option value="XUONG_SX">Xưởng SX (Củ Chi)</option>
       </select>
       <input value={xlSearch} onChange={e => setXlSearch(e.target.value)} placeholder="Tìm tên / mã NV..." style={{ padding: '7px 12px', fontSize: '12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.4)', backgroundColor: 'rgba(255,255,255,0.15)', color: '#FFF', minWidth: '170px' }} />
       <button className="btn-secondary" style={{ fontSize: '12px', padding: '7px 14px', fontWeight: 700 }} disabled={finSheetLoading} onClick={() => { const p = (xlMonth || '').trim(); loadPayFormula(p); loadPayInputs(p); loadFinAttendance(p); }}>{finSheetLoading ? 'Đang tải...' : 'Tải lại'}</button>
     </>);
+    // Thanh lọc Khối (dùng chung BCC + Payment — lọc trước khi dựng bảng).
+    const xlBlockBar = (
+      <div style={{ padding: '0 4px' }}>
+        <FinBlockChips value={finBlock} onChange={setFinBlock} />
+      </div>
+    );
     const th = (label: string, sub?: string, extra?: React.CSSProperties): React.ReactNode => (
       <th style={{ padding: '10px 8px', whiteSpace: 'nowrap', ...extra }}>{label}{sub && <div style={{ fontWeight: 400, textTransform: 'none', fontSize: '10px' }}>{sub}</div>}</th>
     );
@@ -14402,6 +14629,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             sub={`Giờ từng ngày 01→cuối tháng ${xlMonth} • AN=Σ giờ • AO/AP=số ngày công • AQ=ngày ≥${xlFormula.otThreshold1}h + ngày ≥${xlFormula.otThreshold2}h • AU=TV×${xlFormula.rateTV.toLocaleString('vi-VN')}+CT×${xlFormula.rateCT.toLocaleString('vi-VN')}`}
             right={xlControls}
           />
+          {xlBlockBar}
           <div style={{ backgroundColor: 'var(--surface)', borderRadius: '14px', border: '1px solid var(--border)', overflowX: 'auto', boxShadow: '0 4px 14px rgba(15,23,42,0.06)' }}>
             <table style={{ borderCollapse: 'separate', borderSpacing: 0, fontSize: '12px', minWidth: `${260 + daysInMonth * 44 + 11 * 90}px` }}>
               <thead>
@@ -14420,7 +14648,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 ) : built.map((r: any) => (
                   <tr key={r.employeeId} style={{ borderBottom: '1px solid var(--border)', textAlign: 'center' }}>
                     <td style={{ padding: '8px 14px', fontWeight: 700, textAlign: 'left', position: 'sticky', left: 0, backgroundColor: 'var(--surface)', zIndex: 1, whiteSpace: 'nowrap' }}>
-                      {r.fullName}<div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 400 }}>{r.employeeCode} • {getDisplayBranch(r.branchId, r.group)}</div>
+                      {r.fullName}<div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 400 }}>{r.employeeCode} • {getDisplayBranch(r.branchId, r.group)}</div><div style={{ marginTop: '3px' }}><FinBlockChip block={financeBlockOf(r)} /></div>
                     </td>
                     {r.dayHours.map((h: number, i: number) => (
                       <td key={i} style={{ padding: '8px 4px', fontWeight: h > 0 ? 700 : 400, color: h >= xlFormula.otThreshold1 ? '#1D4ED8' : h > 0 ? '#059669' : '#CBD5E1' }}>
@@ -14478,6 +14706,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             sub={`Kỳ ${xlMonth} • M=TỔNG CỘNG (LCB+giờ+OT+Bonus) • Q=Tổng lương (M−KPI−phạt) • R=Thực lãnh (Q−Ứng−ĐP) • cột N gồm KPI (sheet PHẠT KPI) + phạt trễ/vắng realtime`}
             right={xlControls}
           />
+          {xlBlockBar}
           <div style={{ backgroundColor: 'var(--surface)', borderRadius: '14px', border: '1px solid var(--border)', overflowX: 'auto', boxShadow: '0 4px 14px rgba(15,23,42,0.06)' }}>
             <table style={{ borderCollapse: 'separate', borderSpacing: 0, fontSize: '12px', minWidth: '1720px', width: '100%' }}>
               <thead>
@@ -14512,7 +14741,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     <td style={{ padding: '9px 12px', fontWeight: 700, color: 'var(--brand)' }}>{r.employeeCode}</td>
                     <td style={{ padding: '9px 12px' }}>{r.branchId || '—'}</td>
                     <td style={{ padding: '9px 12px', fontWeight: 700, position: 'sticky', left: 0, backgroundColor: 'var(--surface)', zIndex: 1 }}>{r.fullName}</td>
-                    <td style={{ padding: '9px 12px' }}>{xlGroupName(r.group)}</td>
+                    <td style={{ padding: '9px 12px' }}><FinBlockChip block={financeBlockOf(r)} title={`Vị trí: ${xlGroupName(r.group)}`} /></td>
                     <td style={{ padding: '9px 12px' }}>{vnd(r.rate).replace('đ', '')}/h</td>
                     <td style={{ padding: '9px 12px', fontWeight: 700 }}>{r.AN}</td>
                     <td style={{ padding: '9px 12px' }}>{vnd(r.luongCB)}</td>
@@ -14552,91 +14781,17 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       );
     }
 
-    // fin-deductions: mirror nguồn trừ của Payment (N=PHẠT KPI, O=Ứng, P=Đồng phục) — sửa trực tiếp tại đây.
-    const dedEmps = (allEmployees || []).filter((e: any) => (e as any)?.employment_status !== 'TERMINATED');
-    const dedSave = async (empId: string) => {
-      const period = (xlMonth || '').trim();
-      const v = payInputs[empId] || {};
-      setPayInputsBusy(empId);
-      try {
-        await apiRequest(`/payroll/inputs/${period}`, {
-          method: 'PUT',
-          body: JSON.stringify({
-            employeeId: empId,
-            luong_cb: Number(v.luong_cb) || 0,
-            ot_extra: Number(v.ot_extra) || 0,
-            bonus_extra: Number(v.bonus_extra) || 0,
-            ung_luong: Number(v.ung_luong) || 0,
-            tru_kpi: Number(v.tru_kpi) || 0,
-            dong_phuc: Number(v.dong_phuc) || 0,
-            note: String(v.note || '').slice(0, 500),
-          }),
-        });
-        setPayInputsSaved(prev => ({ ...prev, [empId]: true }));
-        setPayInputsDirty(prev => ({ ...prev, [empId]: false }));
-        showToast('Đã lưu khấu trừ!');
-      } catch (e: any) {
-        showToast(e?.message || 'Lỗi khi lưu!');
-      } finally {
-        setPayInputsBusy(null);
-      }
-    };
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <FinHead
-          icon="⚠️"
-          title="10. KPI • Ứng • Đồng Phục (nguồn trừ của Payment)"
-          sub={`Kỳ ${xlMonth} • N (Trừ KPI như sheet PHẠT KPI) • O (Ứng lương) • P (Đồng phục như sheet DONGPHUC) — sửa và Lưu, số tự nhảy sang Payment/BCC/phiếu`}
-          right={xlControls}
-        />
-        <div style={{ backgroundColor: 'var(--surface)', borderRadius: '14px', border: '1px solid var(--border)', overflowX: 'auto', boxShadow: '0 4px 14px rgba(15,23,42,0.06)' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', minWidth: '860px' }}>
-            <thead>
-              <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
-                <th style={{ padding: '10px 14px' }}>Nhân viên</th>
-                <th style={{ padding: '10px 14px' }}>N. Trừ KPI (đ)</th>
-                <th style={{ padding: '10px 14px' }}>Lý do KPI / ghi chú</th>
-                <th style={{ padding: '10px 14px' }}>O. Ứng lương (đ)</th>
-                <th style={{ padding: '10px 14px' }}>P. Đồng phục (đ)</th>
-                <th style={{ padding: '10px 14px' }}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {dedEmps.map((e: any) => {
-                const v = payInputs[e.employee_id] || {};
-                const set = (k: string, val: string) => {
-                  setPayInputs({ ...payInputs, [e.employee_id]: { ...v, [k]: val } });
-                  setPayInputsDirty(prev => ({ ...prev, [e.employee_id]: true }));
-                };
-                const numBox: React.CSSProperties = { width: '110px', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '12px' };
-                return (
-                  <tr key={e.employee_id} style={{ borderBottom: '1px solid var(--border)', backgroundColor: payInputsDirty[e.employee_id] ? '#FFFBEB' : undefined }}>
-                    <td style={{ padding: '8px 14px', fontWeight: 700 }}>
-                      {e.full_name}{' '}
-                      {payInputsSaved[e.employee_id] && <span style={{ fontSize: '10px', fontWeight: 800, padding: '1px 7px', borderRadius: '999px', backgroundColor: '#DCFCE7', color: '#166534' }}>✓ ĐÃ LƯU</span>}
-                      <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 400 }}>{e.employee_code} • {getDisplayBranch(e.default_branch_id, e.group)}</div>
-                    </td>
-                    <td style={{ padding: '8px 10px' }}><input type="number" min={0} value={v.tru_kpi ?? ''} placeholder="0" onChange={ev => set('tru_kpi', ev.target.value)} style={numBox} /></td>
-                    <td style={{ padding: '8px 10px' }}><input value={v.note ?? ''} placeholder="VD: đi trễ 3 lần..." onChange={ev => set('note', ev.target.value)} style={{ width: '200px', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '12px' }} /></td>
-                    <td style={{ padding: '8px 10px' }}><input type="number" min={0} value={v.ung_luong ?? ''} placeholder="0" onChange={ev => set('ung_luong', ev.target.value)} style={numBox} /></td>
-                    <td style={{ padding: '8px 10px' }}><input type="number" min={0} value={v.dong_phuc ?? ''} placeholder="0" onChange={ev => set('dong_phuc', ev.target.value)} style={numBox} /></td>
-                    <td style={{ padding: '8px 14px' }}>
-                      <button className="btn-secondary" style={{ fontSize: '11px', padding: '5px 10px', fontWeight: 700 }} disabled={payInputsBusy === e.employee_id} onClick={() => dedSave(e.employee_id)}>
-                        {payInputsBusy === e.employee_id ? '⏳...' : '💾 Lưu'}
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    );
   }
 
   if (activeTab === 'fin-payment') {
     const payable = (payrollRuns || []).filter((r: any) => r.status === 'PUBLISHED');
+    // Khối của phiếu: slip không có group → join danh sách NV
+    const payBlockOf = (s: any): Exclude<FinanceBlock, 'ALL'> => {
+      if (s?.group) return financeBlockOf(s);
+      const e = empById.get(String(s?.employee_id || ''));
+      return financeBlockOf(e || s);
+    };
+    const applyBlock = (list: any[]) => finBlock === 'ALL' ? list : list.filter(s => payBlockOf(s) === finBlock);
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <FinHead
@@ -14661,6 +14816,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </button>
           </>}
         />
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', padding: '0 4px' }}>
+          <FinBlockChips value={finBlock} onChange={setFinBlock} />
+          {finBlock !== 'ALL' && (
+            <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 700 }}>
+              Đang lọc <strong>{FINANCE_BLOCK_SHORT[finBlock]}</strong> — chỉ hiện phiếu thuộc khối này
+            </span>
+          )}
+        </div>
 
         {/* PHẦN 1: TỪNG PHIẾU ĐỦ 3 CHỮ KÝ CHỜ CHUYỂN KHOẢN (CONFIRMED) */}
         <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: '14px', border: '1px solid var(--border)', boxShadow: '0 4px 14px rgba(15,23,42,0.06)' }}>
@@ -14674,7 +14837,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </p>
             </div>
             {(() => {
-              const cfCount = (periodSlips || []).filter((s: any) => s.status === 'CONFIRMED' || (s.sign_lap && s.sign_quanly && s.sign_nhanvien && s.status !== 'PAID')).length;
+              const cfCount = applyBlock((periodSlips || []).filter((s: any) => s.status === 'CONFIRMED' || (s.sign_lap && s.sign_quanly && s.sign_nhanvien && s.status !== 'PAID'))).length;
               return (
                 <span style={{ fontSize: '12px', fontWeight: 800, padding: '4px 12px', borderRadius: '999px', backgroundColor: cfCount > 0 ? '#ECFDF5' : '#F1F5F9', color: cfCount > 0 ? '#047857' : '#64748B', border: `1px solid ${cfCount > 0 ? '#A7F3D0' : '#E2E8F0'}` }}>
                   {cfCount} phiếu đủ 3 chữ ký
@@ -14684,7 +14847,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           </div>
 
           {(() => {
-            const confirmedSlips = (periodSlips || []).filter((s: any) => s.status === 'CONFIRMED' || (s.sign_lap && s.sign_quanly && s.sign_nhanvien && s.status !== 'PAID'));
+            const confirmedSlips = applyBlock((periodSlips || []).filter((s: any) => s.status === 'CONFIRMED' || (s.sign_lap && s.sign_quanly && s.sign_nhanvien && s.status !== 'PAID')));
             if (confirmedSlips.length === 0) {
               return (
                 <div style={{ textAlign: 'center', padding: '28px 16px', fontSize: '13px', color: 'var(--text-muted)', backgroundColor: '#F8FAFC', borderRadius: '10px', border: '1px dashed #CBD5E1' }}>
@@ -14732,6 +14895,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           <strong style={{ fontSize: '15px', color: '#111827' }}>{s.full_name}</strong>
                           <span style={{ fontSize: '11px', color: 'var(--brand)', fontWeight: 700 }}>({s.employee_code})</span>
                           <span style={{ fontSize: '10px', fontWeight: 800, padding: '2px 8px', borderRadius: '999px', backgroundColor: '#D1FAE5', color: '#065F46' }}>✓ ĐỦ 3 CHỮ KÝ</span>
+                          <FinBlockChip block={payBlockOf(s)} />
                         </div>
                         <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginTop: '4px' }}>
                           <div><span style={{ color: '#64748B' }}>Ngân hàng: </span><strong>{payBankName || '—'}</strong></div>

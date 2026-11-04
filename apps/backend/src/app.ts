@@ -58,6 +58,7 @@ import { ScheduleExcelService, XLSX_MIME } from './services/schedule-excel.servi
 import { AutoScheduleService } from './services/auto-schedule.service.js';
 import { TestsService } from './services/tests.service.js';
 import { AttendanceService } from './services/attendance.service.js';
+import { OfficeService } from './services/office.service.js';
 import { LiveMapService, canonicalBranchId, distanceMeters, vnDateOf } from './services/live-map.service.js';
 import { LiveLocationStore } from './services/live-location.store.js';
 import { appendGpsTrail, readGpsTrail, summarizeGpsTrail, listGpsTrailDates } from './services/gps-trail.store.js';
@@ -70,7 +71,7 @@ import {
   type SheetsBackupKind,
 } from './services/sheets-backup.service.js';
 import { contractKeyOf } from './utils/contracts.js';
-import { PayrollService } from './services/payroll.service.js';
+import { PayrollService, financeSheetsSyncState } from './services/payroll.service.js';
 import { NotificationsService } from './services/notifications.service.js';
 import { autoRemindersTick, sendCheckinReminderForShift } from './services/auto-reminders.service.js';
 import {
@@ -298,6 +299,10 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   const autoScheduleService = new AutoScheduleService(adapter);
   const testsService = new TestsService(adapter);
   const attendanceService = new AttendanceService(adapter);
+  // Nghiệp vụ riêng nhân viên KHỐI VĂN PHÒNG (group = VAN_PHONG): lịch hành chính,
+  // nghỉ phép 1 ngày/tháng (duyệt Nhân sự → Kế toán → Giám đốc), điểm danh 08:00–08:30
+  // + GPS 300m, bổ sung công 4 phiếu/tháng, lương tạm tính.
+  const officeService = new OfficeService(adapter);
   const liveLocationStore = new LiveLocationStore();
   const liveMapService = new LiveMapService(adapter, liveLocationStore);
 
@@ -1259,7 +1264,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         return res.json({ window, required: 2, registered: [], completed: true, locked: false });
       }
       const emp = await employeesService.getEmployee(req.user.employeeId);
-      if (!emp || emp.employment_status !== 'OFFICIAL') {
+      // Nhân viên KHỐI VĂN PHÒNG không bị ràng buộc đăng ký 2 ngày OFF/tuần.
+      if (!emp || emp.employment_status !== 'OFFICIAL' || OfficeService.isOfficeEmployee(emp)) {
         return res.json({ window, required: 2, registered: [], completed: true, locked: false });
       }
       const completion = await getWeeklyOffCompletion(
@@ -1276,6 +1282,191 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
+  });
+
+  // =====================================================================
+  // NHÂN VIÊN KHỐI VĂN PHÒNG (group = VAN_PHONG)
+  // =====================================================================
+  const officeErr = (res: any, err: any, status = 400) => res.status(status).json({ error: err?.message || String(err) });
+
+  // --- Lịch làm việc hành chính + công của tôi ---
+  app.get('/me/office/schedule', authMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      if (req.user?.role !== 'EMPLOYEE' || !req.user.employeeId) return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
+      res.json(await officeService.getSchedule(req.user.employeeId, String(req.query.fromDate || ''), String(req.query.toDate || '')));
+    } catch (err: any) { officeErr(res, err); }
+  });
+
+  app.get('/me/office/timesheet', authMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      if (req.user?.role !== 'EMPLOYEE' || !req.user.employeeId) return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
+      res.json(await officeService.getTimesheet(req.user.employeeId, String(req.query.period || '')));
+    } catch (err: any) { officeErr(res, err); }
+  });
+
+  // --- Điểm danh văn phòng ---
+  app.get('/me/office/attendance', authMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      if (req.user?.role !== 'EMPLOYEE' || !req.user.employeeId) return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
+      res.json(await officeService.getAttendance(req.user.employeeId, String(req.query.fromDate || ''), String(req.query.toDate || '')));
+    } catch (err: any) { officeErr(res, err); }
+  });
+
+  app.get('/me/office/attendance/state', authMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      if (req.user?.role !== 'EMPLOYEE' || !req.user.employeeId) return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
+      res.json(await officeService.attendanceState(req.user.employeeId));
+    } catch (err: any) { officeErr(res, err); }
+  });
+
+  app.post('/me/office/checkin', authMiddleware, requireRole(['EMPLOYEE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      if (!req.user?.employeeId) return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
+      const gps = req.body?.gps || req.body || {};
+      const event = await officeService.checkIn(req.user.employeeId, {
+        latitude: Number(gps.latitude ?? gps.lat),
+        longitude: Number(gps.longitude ?? gps.lng),
+        accuracy: Number(gps.accuracy),
+      });
+      broadcastUpdate('office-attendance', { action: 'checkin', employeeId: req.user.employeeId });
+      broadcastUpdate('attendance', { action: 'office-checkin', employeeId: req.user.employeeId });
+      res.json({ success: true, event });
+    } catch (err: any) { officeErr(res, err); }
+  });
+
+  app.post('/me/office/checkout', authMiddleware, requireRole(['EMPLOYEE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      if (!req.user?.employeeId) return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
+      const gps = req.body?.gps || req.body || {};
+      const event = await officeService.checkOut(req.user.employeeId, {
+        latitude: Number(gps.latitude ?? gps.lat),
+        longitude: Number(gps.longitude ?? gps.lng),
+        accuracy: Number(gps.accuracy),
+      });
+      broadcastUpdate('office-attendance', { action: 'checkout', employeeId: req.user.employeeId });
+      broadcastUpdate('attendance', { action: 'office-checkout', employeeId: req.user.employeeId });
+      res.json({ success: true, event });
+    } catch (err: any) { officeErr(res, err); }
+  });
+
+  // --- Đăng ký nghỉ phép văn phòng (1 ngày/tháng) ---
+  app.get('/me/office/leaves', authMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      if (req.user?.role !== 'EMPLOYEE' || !req.user.employeeId) return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
+      const [leaves, quota] = await Promise.all([
+        officeService.listLeaves(req.user.employeeId),
+        officeService.leaveQuota(req.user.employeeId),
+      ]);
+      res.json({ leaves, quota });
+    } catch (err: any) { officeErr(res, err); }
+  });
+
+  app.post('/me/office/leaves', authMiddleware, requireRole(['EMPLOYEE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      if (!req.user?.employeeId) return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
+      const leave = await officeService.requestLeave(req.user.employeeId, {
+        date: req.body?.date || req.body?.leave_date || '',
+        reason: req.body?.reason || '',
+      });
+      broadcastUpdate('office-leaves', { action: 'created', id: leave.leave_id, employeeId: req.user.employeeId });
+      res.json({ success: true, leave });
+    } catch (err: any) { officeErr(res, err); }
+  });
+
+  // --- Bổ sung công văn phòng (4 phiếu/tháng) ---
+  app.get('/me/office/adjustments', authMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      if (req.user?.role !== 'EMPLOYEE' || !req.user.employeeId) return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
+      const [adjustments, quota] = await Promise.all([
+        officeService.listAdjustments(req.user.employeeId),
+        officeService.adjustmentQuota(req.user.employeeId),
+      ]);
+      res.json({ adjustments, quota });
+    } catch (err: any) { officeErr(res, err); }
+  });
+
+  app.post('/me/office/adjustments', authMiddleware, requireRole(['EMPLOYEE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      if (!req.user?.employeeId) return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
+      const adj = await officeService.requestAdjustment(req.user.employeeId, {
+        date: req.body?.date || req.body?.work_date || '',
+        reason: req.body?.reason || '',
+        minutesRequested: req.body?.minutesRequested ?? req.body?.minutes_requested,
+      });
+      broadcastUpdate('office-adjustments', { action: 'created', id: adj.adjustment_id, employeeId: req.user.employeeId });
+      res.json({ success: true, adjustment: adj });
+    } catch (err: any) { officeErr(res, err); }
+  });
+
+  // --- Hàng đợi duyệt cho Nhân sự / Kế toán / Giám đốc ---
+  app.get('/office/leaves', authMiddleware, requireRole(['HR', 'FINANCE', 'DIRECTOR', 'ADMIN']), async (req: AuthenticatedRequest, res) => {
+    try {
+      res.json({ leaves: await officeService.listAllLeaves() });
+    } catch (err: any) { officeErr(res, err, 500); }
+  });
+
+  app.post('/office/leaves/:id/review', authMiddleware, requireRole(['HR', 'FINANCE', 'DIRECTOR', 'ADMIN']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const decision = String(req.body?.decision || 'APPROVE').toUpperCase() === 'REJECT' ? 'REJECT' : 'APPROVE';
+      const leave = await officeService.reviewLeave(String(req.params.id || ''), {
+        id: String(req.user!.id || ''),
+        role: String(req.user!.role || ''),
+      }, decision, req.body?.note);
+      broadcastUpdate('office-leaves', { action: 'reviewed', id: leave.leave_id, status: leave.status });
+      res.json({ success: true, leave });
+    } catch (err: any) { officeErr(res, err); }
+  });
+
+  app.get('/office/adjustments', authMiddleware, requireRole(['HR', 'DIRECTOR', 'ADMIN']), async (req: AuthenticatedRequest, res) => {
+    try {
+      res.json({ adjustments: await officeService.listAllAdjustments() });
+    } catch (err: any) { officeErr(res, err, 500); }
+  });
+
+  app.post('/office/adjustments/:id/review', authMiddleware, requireRole(['HR', 'DIRECTOR', 'ADMIN']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const decision = String(req.body?.decision || 'APPROVE').toUpperCase() === 'REJECT' ? 'REJECT' : 'APPROVE';
+      const adj = await officeService.reviewAdjustment(String(req.params.id || ''), {
+        id: String(req.user!.id || ''),
+        role: String(req.user!.role || ''),
+      }, decision, req.body?.note);
+      broadcastUpdate('office-adjustments', { action: 'reviewed', id: adj.adjustment_id, status: adj.status });
+      res.json({ success: true, adjustment: adj });
+    } catch (err: any) { officeErr(res, err); }
+  });
+
+  // --- Danh sách nhân viên KHỐI VĂN PHÒNG + lương cơ bản & phúc lợi (để Nhân sự cập nhật) ---
+  app.get('/office/employees', authMiddleware, requireRole(['HR', 'ADMIN', 'FINANCE', 'DIRECTOR']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const list = (await employeesService.listEmployees().catch(() => [])) as any[];
+      const office = (list || [])
+        .filter((e: any) => OfficeService.isOfficeEmployee(e) && String(e.employment_status) !== 'TERMINATED')
+        .sort((a: any, b: any) => String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi'));
+      const employees = (await Promise.all(office.map(async (e: any) => ({
+        employee_id: e.employee_id,
+        employee_code: e.employee_code,
+        full_name: e.full_name,
+        employment_status: e.employment_status,
+        rate_per_hour: Number(e.current_rate_per_hour) || 0,
+        benefits: await officeService.getBenefits(e.employee_id),
+      }))));
+      res.json({ employees });
+    } catch (err: any) { officeErr(res, err, 500); }
+  });
+
+  // --- Phúc lợi (HR/Admin cập nhật để cộng vào lương tạm tính) ---
+  app.get('/office/benefits/:employeeId', authMiddleware, requireRole(['HR', 'ADMIN', 'FINANCE', 'DIRECTOR']), async (req: AuthenticatedRequest, res) => {
+    try {
+      res.json({ employee_id: req.params.employeeId, benefits: await officeService.getBenefits(String(req.params.employeeId)) });
+    } catch (err: any) { officeErr(res, err, 500); }
+  });
+
+  app.put('/office/benefits/:employeeId', authMiddleware, requireRole(['HR', 'ADMIN']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const benefits = await officeService.setBenefits(String(req.params.employeeId), Number(req.body?.benefits || 0));
+      broadcastUpdate('office-benefits', { employeeId: req.params.employeeId, benefits });
+      res.json({ success: true, employee_id: req.params.employeeId, benefits });
+    } catch (err: any) { officeErr(res, err); }
   });
 
   // Quét SĐT trùng toàn hệ thống ( realtime cho HR đối soát ).
@@ -5515,6 +5706,11 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
+  });
+
+  // Trạng thái đồng bộ Sheets của các thao tác kế toán (hiển thị realtime trên UI).
+  app.get('/payroll/sync-status', authMiddleware, requireRole(['DIRECTOR', 'ADMIN', 'FINANCE']), async (_req, res) => {
+    res.json({ ...financeSheetsSyncState });
   });
 
   app.get('/payroll/runs', authMiddleware, requireRole(['DIRECTOR', 'ADMIN', 'FINANCE']), async (req, res) => {
