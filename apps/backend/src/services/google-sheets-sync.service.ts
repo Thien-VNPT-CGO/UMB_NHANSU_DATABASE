@@ -4759,9 +4759,9 @@ export class GoogleSheetsSyncService {
    * (Ký lập/quản lý, Lưu phiếu, Phát hành, Nhân viên ký xác nhận, Hoàn thành chuyển tiền)
    * để 3 chữ ký và toàn bộ mốc thời gian bền vững trên Google Sheet NGAY.
    */
-  public async pushPayslipsTab(repo: ISheetsRepository): Promise<number> {
-    const slipsForPush = await this.collectAllPayslips(repo);
-    const slipPushRows = (slipsForPush || []).map((s: any) => ([
+  /** Dựng dòng PHIEU_LUONG từ danh sách phiếu (dùng chung cho push đọc Sheets và push từ bộ nhớ). */
+  private buildPayslipPushRows(slipsForPush: any[]): any[][] {
+    return (slipsForPush || []).map((s: any) => ([
       s.item_id,
       s.run_id,
       s.employee_id,
@@ -4803,18 +4803,40 @@ export class GoogleSheetsSyncService {
       s.slip_confirmed_at || '',
       s.slip_paid_at || '',
     ]));
+  }
+
+  public async pushPayslipsTab(repo: ISheetsRepository): Promise<number> {
+    const slipsForPush = await this.collectAllPayslips(repo);
+    const slipPushRows = this.buildPayslipPushRows(slipsForPush);
     await this.overwriteSheetData('PHIEU_LUONG', SHEETS_DEFINITIONS.find(d => d.title === 'PHIEU_LUONG')!.headers, slipPushRows);
     return slipPushRows.length;
   }
 
   /**
-   * Đẩy RIÊNG các tab kế toán (nhỏ, ít ghi): KY_LUONG + CONG_THUC_LUONG +
-   * DULIEU_LUONG_KY + PHIEU_LUONG. Dùng sau mọi thao tác kế toán (tính/duyệt/
-   * phát hành/PAID/nhập tay) để Sheet khớp hệ thống NGAY trong cùng request,
-   * KHÔNG đợi full-sync nền (vốn tối thiểu 180s và hay bị hoãn do quota).
+   * Đẩy PHIEU_LUONG CHỈ từ bộ nhớ — KHÔNG đọc lại Sheets (tiết kiệm quota;
+   * dùng ở đường ghi nóng sau mỗi thao tác kế toán). Bộ nhớ rỗng → bỏ qua
+   * (chống ghi đè rỗng lên tab Master).
+   */
+  public async pushPayslipsMem(repo: ISheetsRepository): Promise<number> {
+    const fb: any = (repo as any)?.fallbackAdapter || repo;
+    const slips: any[] = Array.isArray(fb?.payslips) ? fb.payslips : [];
+    if (slips.length === 0) {
+      console.warn('[GoogleSheetsSyncService] pushPayslipsMem: bộ nhớ 0 phiếu — bỏ qua (chống ghi đè rỗng).');
+      return 0;
+    }
+    const rows = this.buildPayslipPushRows(slips);
+    await this.overwriteSheetData('PHIEU_LUONG', SHEETS_DEFINITIONS.find(d => d.title === 'PHIEU_LUONG')!.headers, rows);
+    return rows.length;
+  }
+
+  /**
+   * Đẩy RIÊNG các tab kế toán: KY_LUONG + CONG_THUC_LUONG + DULIEU_LUONG_KY +
+   * PHIEU_LUONG. CHỈ ghi từ bộ nhớ, KHÔNG đọc lại Sheets (tiết kiệm quota Read —
+   * production đang chạm hạn 60 request/phút do full-pull liên tục). Dùng sau
+   * mỗi thao tác kế toán để Sheet khớp hệ thống trong cùng request.
    * Best-effort: 0 dòng (chưa có dữ liệu) thì bỏ qua, không ghi đè rỗng tab.
    */
-  public async pushFinanceTabsNow(repo: ISheetsRepository): Promise<{ skipped?: string; errors: string[]; tabs: Record<string, number> }> {
+  public async pushFinanceTabsNow(repo: ISheetsRepository, opts?: { skipSlips?: boolean }): Promise<{ skipped?: string; errors: string[]; tabs: Record<string, number> }> {
     const errors: string[] = [];
     const tabs: Record<string, number> = {};
     // Không có client Sheets (chưa cấu hình/môi trường dev) => bỏ qua, không báo lỗi.
@@ -4827,10 +4849,10 @@ export class GoogleSheetsSyncService {
     if ((repo as any).fallbackAdapter) fb = (repo as any).fallbackAdapter;
     else if (repo) fb = repo;
 
-    // 1) KY_LUONG — các kỳ lương
+    // 1) KY_LUONG — các kỳ lương (đọc từ BỘ NHỚ, không đọc lại Sheets → tiết kiệm quota Read)
     try {
-      const payrollRuns = await repo.listPayrollRuns().catch(() => []);
-      const payrollRows = (payrollRuns || []).map((pr: any) => ([
+      const payrollRuns: any[] = Array.isArray(fb?.payrollRuns) ? fb.payrollRuns : [];
+      const payrollRows = payrollRuns.map((pr: any) => ([
         pr.run_id,
         pr.period,
         pr.status,
@@ -4881,11 +4903,16 @@ export class GoogleSheetsSyncService {
       errors.push(`DULIEU_LUONG_KY: ${e?.message || String(e)}`);
     }
 
-    // 4) PHIEU_LUONG — phiếu lương (đã có sẵn hàm push, gồm ký/trạng thái).
-    try {
-      tabs.PHIEU_LUONG = await this.pushPayslipsTab(repo);
-    } catch (e: any) {
-      errors.push(`PHIEU_LUONG: ${e?.message || String(e)}`);
+    // 4) PHIEU_LUONG — phiếu lương (memory-only, không đọc lại Sheets).
+    //    Thao tác nhẹ (công thức/nhập tay) không đụng phiếu → bỏ qua để tiết kiệm write-quota.
+    if (opts?.skipSlips) {
+      tabs.PHIEU_LUONG = -1;
+    } else {
+      try {
+        tabs.PHIEU_LUONG = await this.pushPayslipsMem(repo);
+      } catch (e: any) {
+        errors.push(`PHIEU_LUONG: ${e?.message || String(e)}`);
+      }
     }
 
     return { errors, tabs };

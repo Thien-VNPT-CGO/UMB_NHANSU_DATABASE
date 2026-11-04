@@ -254,7 +254,7 @@ export class PayrollService {
    * toàn trên PostgreSQL/bộ nhớ) nhưng luôn ghi lại trạng thái để UI hiển thị
    * và báo rõ thay vì giả vờ "đã đồng bộ".
    */
-  public async syncFinanceToSheets(): Promise<{ ok: boolean; error?: string }> {
+  public async syncFinanceToSheets(opts?: { skipSlips?: boolean }): Promise<{ ok: boolean; error?: string }> {
     financeSheetsSyncState.at = new Date(Date.now() + 7 * 3_600_000).toISOString();
     try {
       const sync = (this.repo as any)?.syncService || (this.repo as any)?.fallbackAdapter?.syncService;
@@ -263,7 +263,7 @@ export class PayrollService {
         financeSheetsSyncState.error = '';
         return { ok: true };
       }
-      const res = await sync.pushFinanceTabsNow(this.repo);
+      const res = await sync.pushFinanceTabsNow(this.repo, opts);
       if (res?.skipped) {
         financeSheetsSyncState.ok = true;
         financeSheetsSyncState.error = '';
@@ -489,7 +489,7 @@ export class PayrollService {
     const res = await this.repo.savePayrollFormula({
       period, rateTV, rateCT, otPerSlot: 0, otThreshold1: t1, otThreshold2: t2, updatedBy: actorId,
     });
-    await this.syncFinanceToSheets();
+    await this.syncFinanceToSheets({ skipSlips: true });
     return res;
   }
 
@@ -512,7 +512,7 @@ export class PayrollService {
       note: String(data.note || '').slice(0, 500) || undefined,
       updatedBy: actorId,
     });
-    await this.syncFinanceToSheets();
+    await this.syncFinanceToSheets({ skipSlips: true });
     return res;
   }
 
