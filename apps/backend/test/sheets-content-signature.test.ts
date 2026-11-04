@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeSheetsContentSignature, fingerprintSheetsContent } from '../src/utils/sheets-content-signature.js';
+import { computeSheetsContentSignature, fingerprintSheetsContent, hashSheetRows } from '../src/utils/sheets-content-signature.js';
 
 const tabs = {
   NHAN_VIEN_MASTER: [
@@ -84,4 +84,24 @@ test('sửa tay lịch PV trên tab FROM_NHAN_VIEN (master) cũng đổi hash + 
   assert.notEqual(before.signature, after.signature);
   const changedTabs = Object.keys(after.tabs).filter(t => before.tabs[t] !== after.tabs[t]);
   assert.deepEqual(changedTabs, ['FROM_NHAN_VIEN']);
+});
+
+test('hashSheetRows: phát hiện nguồn form đổi để hẹn đẩy lại Sheet đích', () => {
+  const form = [
+    ['Thời Gian', 'Họ Và Tên', 'Số Điện Thoại'],
+    ['2026-11-04 08:00', 'Nguyễn Văn C', '0901234567'],
+  ];
+  const sameForm = form.map(r => [...r]);
+  assert.equal(hashSheetRows(form), hashSheetRows(sameForm), 'nội dung y hệt -> hash không đổi');
+
+  const newSubmission = [...form, ['2026-11-04 09:00', 'Trần Thị D', '0907654321']];
+  assert.notEqual(hashSheetRows(form), hashSheetRows(newSubmission), 'có ứng viên mới -> hash đổi');
+
+  const editedCell = [
+    ['Thời Gian', 'Họ Và Tên', 'Số Điện Thoại'],
+    ['2026-11-04 08:00', 'Nguyễn Văn C', '0909999999'],
+  ];
+  assert.notEqual(hashSheetRows(form), hashSheetRows(editedCell), 'sửa 1 ô (số dòng không đổi) -> hash đổi');
+
+  assert.equal(typeof hashSheetRows(undefined), 'string', 'nguồn rỗng vẫn trả hash hợp lệ');
 });

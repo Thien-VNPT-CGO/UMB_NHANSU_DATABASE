@@ -64,3 +64,15 @@ export function computeSheetsContentSignature(
 ): string {
   return fingerprintSheetsContent(tabs, extraRows).signature;
 }
+
+/**
+ * Hash nội dung 1 bảng rows bất kỳ (không kèm tên tab).
+ *
+ * Dùng để phát hiện Spreadsheet NGUỒN (form ứng viên) vừa có dòng/sửa ô mới:
+ * so hash giữa 2 lượt đọc liên tiếp, khác nhau = nguồn đổi -> phải đồng bộ
+ * sang Spreadsheet đích. Tách riêng khỏi `computeSheetsContentSignature` để
+ * bản thân việc so sánh nguồn không phụ thuộc danh sách tab.
+ */
+export function hashSheetRows(rows: string[][] | undefined): string {
+  return hashRows(rows);
+}

@@ -542,6 +542,62 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     }
   }
 
+  /**
+   * ===== ĐỒNG BỘ ỨNG VIÊN: Spreadsheet nguồn (form, 2) -> Spreadsheet đích (1) =====
+   *
+   * Pull định kỳ đọc tab form ứng viên vào bộ nhớ nhưng KHÔNG đặt cờ dirty, nên
+   * ứng viên vừa nộp form không bao giờ tự xuất hiện trên Spreadsheet đích
+   * `FROM_NHAN_VIEN` (auto-push 60 phút chỉ chạy khi có cờ dirty). SyncService gọi
+   * hàm này khi hash nguồn form đổi -> hẹn đẩy RIÊNG tab FROM_NHAN_VIEN (2 write:
+   * clear + update) sau debounce ngắn, gần thời gian thực mà không đốt quota như
+   * full-sync 20 tab.
+   */
+  private candidatePushTimer: ReturnType<typeof setTimeout> | null = null;
+  private candidatePushRunning = false;
+
+  public scheduleCandidatesPushFromSource(delayMs?: number): void {
+    if (!this.isConfigured) return;
+    // Vẫn đặt cờ dirty để auto-push định kỳ dọn dẹp nếu lượt đẩy riêng này rớt.
+    this.markMemoryDirty();
+    if (this.candidatePushTimer || this.candidatePushRunning) return;
+    const wait = Math.max(
+      5_000,
+      delayMs ?? (Number(process.env.SHEETS_CANDIDATE_PUSH_MS) || 15_000),
+    );
+    this.candidatePushTimer = setTimeout(() => {
+      this.candidatePushTimer = null;
+      void this.runCandidatesPushFromSource();
+    }, wait);
+    (this.candidatePushTimer as any)?.unref?.();
+  }
+
+  private async runCandidatesPushFromSource(): Promise<void> {
+    if (this.candidatePushRunning || !this.isConfigured) return;
+    // Full-sync / soon-push cũng ghi đè FROM_NHAN_VIEN -> nhường, hẹn lại.
+    if (this.fullSyncInFlight || this.soonPushRunning) {
+      this.scheduleCandidatesPushFromSource(30_000);
+      return;
+    }
+    // Đang pull: đợi pull xong để tránh đua ghi/đọc cùng Spreadsheet. Một số lượt
+    // pull do tick gọi trực tiếp không gán `adapter.pullInFlight`, nên hỏi thêm
+    // SyncService (nguồn sự thật về pull đang bay).
+    const pulling = !!this.pullInFlight || !!this.syncService.isPullInFlight?.();
+    if (pulling) {
+      this.scheduleCandidatesPushFromSource(15_000);
+      return;
+    }
+    this.candidatePushRunning = true;
+    try {
+      await this.syncService.pushCandidatesTab(this.fallbackAdapter);
+      this.lastSheetsWriteAt = new Date().toISOString();
+      console.log('[GoogleSheetsAdapter] Đã đồng bộ ứng viên từ Form (nguồn) sang Sheet đích FROM_NHAN_VIEN.');
+    } catch (err: any) {
+      console.warn('[GoogleSheetsAdapter] Đẩy FROM_NHAN_VIEN theo nguồn form thất bại:', err?.message || err);
+    } finally {
+      this.candidatePushRunning = false;
+    }
+  }
+
   private scheduleSheetsWrite(task: () => Promise<unknown>, label: string) {
     if (!this.isConfigured) return;
     // Đặt cờ dirty: bộ nhớ vừa có thay đổi chưa chắc đã lên Sheet — auto-push

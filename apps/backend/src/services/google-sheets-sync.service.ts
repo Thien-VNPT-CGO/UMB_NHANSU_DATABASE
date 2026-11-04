@@ -40,7 +40,7 @@ import {
   getEmployeeProfilesFolder,
 } from '../config/drive-folders.js';
 import { TAB_THEMES, buildSheetFormattingRequests, resolveTheme } from './sheets-beautifier.service.js';
-import { computeSheetsContentSignature, fingerprintSheetsContent } from '../utils/sheets-content-signature.js';
+import { computeSheetsContentSignature, fingerprintSheetsContent, hashSheetRows } from '../utils/sheets-content-signature.js';
 import { getSpreadsheetIdForTab, listSeparatedSheetSources, listSeparatedSpreadsheetIds } from '../config/sheets-mapping.js';
 
 /** Tên segment Drive an toàn cho cây thư mục phiếu bù công. */
@@ -371,6 +371,14 @@ export class GoogleSheetsSyncService {
    *  vẫn giữ hash cũ trong lúc bỏ qua để không báo "đổi" giả. */
   private lastCandidateRows: string[][] = [];
   private lastCandidatePullAt = 0;
+  /**
+   * Hash nội dung Spreadsheet NGUỒN (form ứng viên, CANDIDATE_SPREADSHEET_ID)
+   * ở lượt đọc thành công gần nhất. Khi hash đổi (dòng mới / sửa ô), Spreadsheet
+   * đích `FROM_NHAN_VIEN` phải được đẩy lại ngay — nếu không, ứng viên nộp form
+   * chỉ nằm trong bộ nhớ mà không bao giờ tự xuất hiện trên Sheet đích (auto-push
+   * 60 phút chỉ chạy khi cờ dirty, mà pull nguồn không đặt cờ dirty).
+   */
+  private lastCandidateSourceSignature: string | null = null;
   /** Bản đọc tab FROM_NHAN_VIEN (master) dùng để phủ lịch PV/Zalo — đưa vào
    *  hash nội dung để sửa tay lịch PV trên master cũng bắn realtime. */
   private lastMasterCandidateRows: string[][] = [];
@@ -2265,6 +2273,16 @@ export class GoogleSheetsSyncService {
     return true;
   }
 
+  /**
+   * Có lượt pull nào đang bay không. Adapter dùng để nhường ghi: một số lượt pull
+   * do tick/gọi trực tiếp không gán `adapter.pullInFlight`, nên chỉ kiểm tra ở
+   * adapter là không đủ — đọc và ghi cùng Spreadsheet đích trong lúc pull sẽ thấy
+   * Sheet rỗng giữa `clear` và `update`.
+   */
+  public isPullInFlight(): boolean {
+    return !!this.pullInFlight;
+  }
+
   private pullInFlight: Promise<SheetsPullResult> | null = null;
   private pullStartedAt = 0;
 
@@ -2282,6 +2300,9 @@ export class GoogleSheetsSyncService {
     // Khi bỏ qua lượt đọc ứng viên (throttle quota), dùng lại rows cũ để hash ổn định.
     let candRowsForSignature: string[][] = this.lastCandidateRows;
     let masterCandRowsForSignature: string[][] = this.lastMasterCandidateRows;
+    // Nguồn form ứng viên (Spreadsheet 2) vừa đổi -> hẹn đẩy lại tab FROM_NHAN_VIEN
+    // sang Spreadsheet đích (1) ngay sau khi pull xong.
+    let candidateSourceChanged = false;
     // Ứng viên đọc từ spreadsheet riêng: 5s/lần để lịch PV cập nhật gần như tức
     // thì. Vẫn dưới quota đọc (batch 12 + candidate ~36 = ~48 lượt/phút); có thể
     // giãn bằng SHEETS_CANDIDATE_PULL_MS khi Google chậm.
@@ -3560,6 +3581,10 @@ export class GoogleSheetsSyncService {
       // 12. Đọc Ứng viên tuyển dụng từ Form ứng viên Google Sheets (đầy đủ 17 cột)
       let candRows: string[][] = [];
       let targetSheetTitle = 'FROM_NHAN_VIEN';
+      // true = candRows dưới đây thật sự đọc từ Spreadsheet nguồn form (2), không
+      // phải đọc dự phòng từ Spreadsheet đích (1). Chỉ khi đọc được từ nguồn mới
+      // xét "nguồn đổi -> đẩy lại đích".
+      let candidateSourceRead = false;
 
       if (this.sheetsClient && shouldPullCandidates) {
         // A. Thử đọc từ candidateSpreadsheetId trước (bọc timeout: Google treo
@@ -3588,6 +3613,7 @@ export class GoogleSheetsSyncService {
                   range: `'${targetSheetTitle}'!A1:ZZ`,
                 }) as any, 25000);
               candRows = (candRes.data.values as string[][]) || [];
+              candidateSourceRead = true;
             }
           } catch (e: any) {
             console.warn('[GoogleSheetsSyncService] Đọc candidateSpreadsheetId gặp lỗi, thử master sheet:', e.message);
@@ -3616,6 +3642,18 @@ export class GoogleSheetsSyncService {
         this.lastCandidatePullAt = Date.now();
         this.lastCandidateRows = candRows;
         candRowsForSignature = candRows;
+        // Phát hiện nguồn form (Spreadsheet 2) vừa đổi: hash nội dung đọc được so
+        // với lượt đọc nguồn trước. Đổi -> phải đẩy lại tab FROM_NHAN_VIEN sang
+        // Spreadsheet đích (1). Chỉ xét khi thật sự đọc từ Spreadsheet nguồn.
+        if (candidateSourceRead) {
+          const sourceSig = hashSheetRows(candRows);
+          // Lần đọc đầu sau khởi động cũng coi là "đổi" (hash cũ = null) để Sheet
+          // đích tự đuổi kịp nguồn ngay, không phải chờ HR thao tác hay form mới.
+          if (sourceSig !== this.lastCandidateSourceSignature) {
+            candidateSourceChanged = true;
+          }
+          this.lastCandidateSourceSignature = sourceSig;
+        }
       }
 
       if (candRows.length > 1) {
@@ -3912,6 +3950,22 @@ export class GoogleSheetsSyncService {
           } catch (e: any) {
             console.warn('[GoogleSheetsSyncService] data-change listener lỗi:', e?.message || e);
           }
+        }
+      }
+
+      // Nguồn form ứng viên (Spreadsheet 2) vừa đổi: hẹn đẩy lại tab FROM_NHAN_VIEN
+      // sang Spreadsheet đích (1). Trước đây pull chỉ cập nhật bộ nhớ + bắn socket,
+      // không đặt cờ dirty nên ứng viên nộp form KHÔNG tự xuất hiện trên Sheet đích
+      // (auto-push 60 phút bỏ qua vì không dirty). Chỉ gọi khi repo hỗ trợ (adapter
+      // Google Sheets thật); Mock/Postgres không có hàm -> no-op.
+      if (candidateSourceChanged && candRowsForSignature.length > 1) {
+        try {
+          const trigger = (repo as any).scheduleCandidatesPushFromSource;
+          if (typeof trigger === 'function') {
+            trigger.call(repo);
+          }
+        } catch (e: any) {
+          console.warn('[GoogleSheetsSyncService] Hẹn đẩy FROM_NHAN_VIEN theo nguồn form lỗi:', e?.message || e);
         }
       }
 
