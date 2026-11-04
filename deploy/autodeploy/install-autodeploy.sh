@@ -40,7 +40,7 @@ sed -i "s|^PROD_DIR=.*|PROD_DIR=\"$PROD_DIR\"|" "$BIN_DIR/autodeploy.sh"
 
 cat > "$CRON_FILE" <<EOF
 # UBM auto-deploy watcher prod (go bo = xoa file nay)
-* * * * * root PROD_DIR="$PROD_DIR" /usr/bin/flock -n /tmp/ubm-autodeploy.lock $BIN_DIR/autodeploy.sh >> $LOG_FILE 2>&1
+* * * * * root PROD_DIR="$PROD_DIR" /usr/bin/flock -w 600 /tmp/ubm-autodeploy.lock $BIN_DIR/autodeploy.sh >> $LOG_FILE 2>&1
 EOF
 chmod 0644 "$CRON_FILE"
 touch "$LOG_FILE"; chmod 0644 "$LOG_FILE"
