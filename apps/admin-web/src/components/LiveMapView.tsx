@@ -47,6 +47,9 @@ interface LiveMapEmployee {
   gps_status?: string;
   gps_accuracy?: number;
   distance_meters?: number;
+  radius_meters?: number;
+  /** Có GPS thật và đang nằm trong bán kính cửa hàng (đang làm việc tại cửa hàng). */
+  at_branch?: boolean;
   last_gps_at?: string;
   note?: string;
 }
@@ -76,6 +79,8 @@ interface LiveMapSnapshot {
     completed: number;
     missing: number;
     with_gps: number;
+    at_store: number;
+    outside: number;
   };
 }
 
@@ -148,11 +153,18 @@ function tooltipHtml(emp: LiveMapEmployee): string {
       </div>`;
   }).join('');
 
+  const placeLine = emp.gps_source === 'BRANCH'
+    ? '<div class="ubm-map-tt-line">🏬 Vị trí: <b>chưa có GPS thiết bị</b> — hiển thị tại toạ độ cửa hàng</div>'
+    : (emp.at_branch
+      ? '<div class="ubm-map-tt-line">🏬 Vị trí: <b style="color:#6EE7B7">Đang ở cửa hàng</b> (trong bán kính cho phép)</div>'
+      : '<div class="ubm-map-tt-line">🚶 Vị trí: <b style="color:#FCA5A5">Ngoài cửa hàng</b> — không có mặt tại điểm làm việc</div>');
+
   const gpsLine = emp.gps_source === 'BRANCH'
-    ? '<div class="ubm-map-tt-line">📍 Vị trí: <b>toạ độ cửa hàng</b> (chưa có GPS chấm công)</div>'
+    ? '<div class="ubm-map-tt-line">📍 Toạ độ: <b>toạ độ cửa hàng</b> (chưa có GPS chấm công)</div>'
     : `<div class="ubm-map-tt-line">📍 GPS ${emp.gps_source === 'LIVE' ? 'trực tiếp (realtime)' : emp.gps_source === 'CHECK_OUT' ? 'check-out' : 'check-in'}:
         <b>${Number(emp.latitude).toFixed(6)}, ${Number(emp.longitude).toFixed(6)}</b></div>
        <div class="ubm-map-tt-line">🎯 Cách cửa hàng: <b>${Number(emp.distance_meters || 0).toLocaleString('vi-VN')} m</b>
+        ${emp.radius_meters ? ` / bán kính ${Number(emp.radius_meters).toLocaleString('vi-VN')} m` : ''}
         ${emp.gps_accuracy ? ` • sai số ±${Math.round(Number(emp.gps_accuracy))} m` : ''}
         ${emp.gps_status && emp.gps_status !== 'VALID' ? ` • <span style="color:#FCA5A5">${escapeHtml(emp.gps_status)}</span>` : ''}</div>
        <div class="ubm-map-tt-line">🕒 Cập nhật GPS: <b>${timeAgo(emp.last_gps_at)}</b></div>`;
@@ -165,6 +177,7 @@ function tooltipHtml(emp: LiveMapEmployee): string {
         ${meta.label}${emp.note ? ` — ${escapeHtml(emp.note)}` : ''}
       </div>
       ${shiftRows || '<div class="ubm-map-tt-line">Hôm nay không có ca làm</div>'}
+      ${placeLine}
       ${gpsLine}
     </div>`;
 }
@@ -180,6 +193,7 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
   const [lastUpdated, setLastUpdated] = useState<number>(0);
   const [branchFilter, setBranchFilter] = useState<string>('*');
   const [statusFilter, setStatusFilter] = useState<'ALL' | LiveMapStatus>('ALL');
+  const [placeFilter, setPlaceFilter] = useState<'ALL' | 'AT_STORE' | 'OUTSIDE'>('ALL');
   const [autoRefresh, setAutoRefresh] = useState(true);
 
   const mapElRef = useRef<HTMLDivElement | null>(null);
@@ -249,6 +263,7 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
           const distance = branch
             ? haversineMeters(lat, lng, Number(branch.latitude), Number(branch.longitude))
             : e.distance_meters;
+          const radius = Number(branch?.radius_meters) || Number(e.radius_meters) || 300;
           return {
             ...e,
             latitude: lat,
@@ -257,6 +272,8 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
             gps_status: 'VALID',
             gps_accuracy: Number.isFinite(Number(p?.accuracy)) ? Number(p.accuracy) : e.gps_accuracy,
             distance_meters: distance,
+            radius_meters: radius,
+            at_branch: Number(distance) <= radius,
             last_gps_at: String(p?.at || new Date().toISOString()),
           };
         });
@@ -273,8 +290,12 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
     return list.filter(e =>
       (branchFilter === '*' || e.branch_id === branchFilter)
       && (statusFilter === 'ALL' || e.status === statusFilter)
+      // Lọc theo vị trí: chỉ NV có GPS thật (đang ở cửa hàng / ở ngoài).
+      && (placeFilter === 'ALL'
+        || (placeFilter === 'AT_STORE' && e.gps_source !== 'BRANCH' && e.at_branch === true)
+        || (placeFilter === 'OUTSIDE' && e.gps_source !== 'BRANCH' && e.at_branch !== true))
     );
-  }, [data, branchFilter, statusFilter]);
+  }, [data, branchFilter, statusFilter, placeFilter]);
 
   // Khởi tạo bản đồ 1 lần.
   useEffect(() => {
@@ -379,10 +400,11 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
         }
         points.push([lat, lng]);
         const meta = STATUS_META[emp.status];
+        const outside = emp.gps_source !== 'BRANCH' && emp.at_branch !== true;
         const marker = L.marker([lat, lng], {
           icon: L.divIcon({
             className: 'ubm-map-marker',
-            html: `<div class="ubm-map-dot ubm-map-dot--${emp.status.toLowerCase()}" style="--dot-color:${meta.color}"></div>`,
+            html: `<div class="ubm-map-dot ubm-map-dot--${emp.status.toLowerCase()}${outside ? ' ubm-map-dot--outside' : ''}" style="--dot-color:${meta.color}"></div>`,
             iconSize: [18, 18],
             iconAnchor: [9, 9],
           }),
@@ -458,6 +480,12 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
         <div className="ubm-map-stat">
           <Wifi size={16} /> <span>Có GPS</span> <b>{summary?.with_gps ?? 0}</b>
         </div>
+        <div className="ubm-map-stat ubm-map-stat--at-store">
+          <span aria-hidden>🏬</span> <span>Tại cửa hàng</span> <b>{summary?.at_store ?? 0}</b>
+        </div>
+        <div className="ubm-map-stat ubm-map-stat--outside">
+          <span aria-hidden>🚶</span> <span>Ngoài cửa hàng</span> <b>{summary?.outside ?? 0}</b>
+        </div>
       </div>
 
       <div className="ubm-map-toolbar">
@@ -479,6 +507,16 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
           )}
         </div>
         <div className="ubm-map-toolbar-right">
+          <select
+            value={placeFilter}
+            onChange={e => setPlaceFilter(e.target.value as 'ALL' | 'AT_STORE' | 'OUTSIDE')}
+            className="ubm-map-select"
+            title="Lọc theo vị trí so với cửa hàng"
+          >
+            <option value="ALL">Mọi vị trí</option>
+            <option value="AT_STORE">🏬 Đang ở cửa hàng</option>
+            <option value="OUTSIDE">🚶 Ngoài cửa hàng</option>
+          </select>
           <select value={branchFilter} onChange={e => setBranchFilter(e.target.value)} className="ubm-map-select">
             <option value="*">Tất cả cửa hàng</option>
             {(data?.branches || []).map(b => (
@@ -507,6 +545,8 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
         Rê chuột vào điểm màu để xem <b>Tên NV + Mã NV + ca làm + giờ check-in/out</b> theo thời gian thực.
         Điểm vàng nhấp nháy = đang trong ca. Vị trí ưu tiên GPS trực tiếp từ cổng NV (cập nhật ~30 giây/lần),
         sau đó GPS lần chấm công gần nhất; nếu chưa có GPS sẽ hiển thị tại cửa hàng.
+        Điểm có <b>viền cam nét đứt</b> = NV đang ở <b>ngoài cửa hàng</b> (ngoài bán kính cho phép);
+        dùng ô <b>“Đang ở cửa hàng / Ngoài cửa hàng”</b> để lọc nhanh.
       </div>
     </div>
   );

@@ -70,7 +70,7 @@
 
 .ubm-map-stats {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 10px;
 }
 
@@ -91,6 +91,8 @@
 .ubm-map-stat--completed b { color: #047857; }
 .ubm-map-stat--missing b { color: #B91C1C; }
 .ubm-map-stat--normal b { color: #475569; }
+.ubm-map-stat--at-store b { color: #047857; }
+.ubm-map-stat--outside b { color: #C2410C; }
 
 .ubm-map-toolbar {
   display: flex;
@@ -215,6 +217,13 @@
 .ubm-map-dot--working {
   background: #F59E0B;
   animation: ubm-map-pulse 1.5s ease-in-out infinite;
+}
+
+/* NV có GPS thật nhưng đang ở ngoài bán kính cửa hàng: viền cam nét đứt. */
+.ubm-map-dot--outside {
+  border-color: #FFFFFF;
+  outline: 2px dashed #F97316;
+  outline-offset: 2px;
 }
 
 @keyframes ubm-map-pulse {

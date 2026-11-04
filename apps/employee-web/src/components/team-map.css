@@ -146,6 +146,12 @@
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.25), 0 2px 8px rgba(37, 99, 235, 0.35);
 }
 
+/* Có GPS thật nhưng ngoài bán kính cửa hàng: viền cam nét đứt. */
+.ubm-team-dot--outside {
+  outline: 2px dashed #F97316;
+  outline-offset: 2px;
+}
+
 .ubm-team-me-label {
   position: absolute;
   left: 50%;
@@ -232,3 +238,6 @@
 .ubm-team-tt-row-times { font-size: 11px; color: #CBD5E1; }
 .ubm-team-tt-row-ci { font-size: 11px; color: #E2E8F0; }
 .ubm-team-tt-gps { font-size: 11px; color: #CBD5E1; margin-top: 6px; }
+.ubm-team-tt-place { font-size: 11.5px; font-weight: 800; margin-top: 6px; }
+.ubm-team-tt-place--in { color: #6EE7B7; }
+.ubm-team-tt-place--out { color: #FCA5A5; }

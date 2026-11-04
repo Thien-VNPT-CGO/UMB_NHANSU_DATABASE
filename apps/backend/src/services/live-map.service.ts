@@ -60,6 +60,10 @@ export interface LiveMapEmployee {
   gps_status?: string;
   gps_accuracy?: number;
   distance_meters?: number;
+  /** Bán kính hợp lệ của cửa hàng (m) — dùng để xét NV có đang ở cửa hàng không. */
+  radius_meters: number;
+  /** Có GPS thật và đang nằm trong bán kính cửa hàng (đang làm việc tại cửa hàng). */
+  at_branch: boolean;
   last_gps_at?: string;
   note?: string;
 }
@@ -75,14 +79,20 @@ export interface LiveMapSnapshot {
   date: string;
   branches: LiveMapBranch[];
   employees: LiveMapEmployee[];
-  summary: {
-    total: number;
-    normal: number;
-    working: number;
-    completed: number;
-    missing: number;
-    with_gps: number;
-  };
+  summary: LiveMapSummary;
+}
+
+export interface LiveMapSummary {
+  total: number;
+  normal: number;
+  working: number;
+  completed: number;
+  missing: number;
+  with_gps: number;
+  /** Có GPS thật và đang trong bán kính cửa hàng. */
+  at_store: number;
+  /** Có GPS thật nhưng đang ở ngoài bán kính cửa hàng. */
+  outside: number;
 }
 
 const VN_OFFSET_MS = 7 * 3_600_000;
@@ -247,8 +257,22 @@ export class LiveMapService {
       const live = this.liveLocations?.get(empId, nowMs) || null;
       const branchLat = Number((branch as any).latitude);
       const branchLng = Number((branch as any).longitude);
+      const radiusMeters = Number((branch as any).radius_meters) || 300;
       const shownLat = live ? live.latitude : (gps?.latitude ?? branchLat);
       const shownLng = live ? live.longitude : (gps?.longitude ?? branchLng);
+      const gpsSource: LiveMapEmployee['gps_source'] = live
+        ? 'LIVE'
+        : (gps
+          ? (String((latestGpsEv as any)?.type || '').toUpperCase() === 'CHECK_OUT' ? 'CHECK_OUT' : 'CHECK_IN')
+          : 'BRANCH');
+      const distance = live
+        ? distanceMeters(shownLat, shownLng, branchLat, branchLng)
+        : (gps
+          ? (gps.distance_meters ?? distanceMeters(gps.latitude, gps.longitude, branchLat, branchLng))
+          : 0);
+      // Chỉ kết luận "đang ở cửa hàng" khi có GPS thật (live/chấm công) nằm
+      // trong bán kính. Không có GPS thật (rơi về toạ độ cửa hàng) ⇒ false.
+      const atBranch = gpsSource !== 'BRANCH' && distance <= radiusMeters;
 
       out.push({
         employee_id: empId,
@@ -263,18 +287,12 @@ export class LiveMapService {
         primary_shift: primary,
         latitude: shownLat,
         longitude: shownLng,
-        gps_source: live
-          ? 'LIVE'
-          : (gps
-            ? (String((latestGpsEv as any)?.type || '').toUpperCase() === 'CHECK_OUT' ? 'CHECK_OUT' : 'CHECK_IN')
-            : 'BRANCH'),
+        gps_source: gpsSource,
         gps_status: live ? 'VALID' : gps?.gps_status,
         gps_accuracy: live?.accuracy ?? gps?.accuracy,
-        distance_meters: live
-          ? distanceMeters(shownLat, shownLng, branchLat, branchLng)
-          : (gps
-            ? (gps.distance_meters ?? distanceMeters(gps.latitude, gps.longitude, branchLat, branchLng))
-            : 0),
+        distance_meters: distance,
+        radius_meters: radiusMeters,
+        at_branch: atBranch,
         last_gps_at: live?.at ?? gps?.at,
         note,
       });
@@ -298,21 +316,27 @@ export class LiveMapService {
       };
     });
 
-    const summary = {
-      total: out.length,
-      normal: out.filter(e => e.status === 'NORMAL').length,
-      working: out.filter(e => e.status === 'WORKING').length,
-      completed: out.filter(e => e.status === 'COMPLETED').length,
-      missing: out.filter(e => e.status === 'MISSING').length,
-      with_gps: out.filter(e => e.gps_source !== 'BRANCH').length,
-    };
-
     return {
       server_time: now.toISOString(),
       date: today,
       branches: branchesOut,
       employees: out,
-      summary,
+      summary: this.summarize(out),
+    };
+  }
+
+  /** Tổng hợp số liệu bản đồ (dùng chung cho bản đồ admin và cổng NV). */
+  private summarize(list: LiveMapEmployee[]): LiveMapSummary {
+    const withRealGps = list.filter(e => e.gps_source !== 'BRANCH');
+    return {
+      total: list.length,
+      normal: list.filter(e => e.status === 'NORMAL').length,
+      working: list.filter(e => e.status === 'WORKING').length,
+      completed: list.filter(e => e.status === 'COMPLETED').length,
+      missing: list.filter(e => e.status === 'MISSING').length,
+      with_gps: withRealGps.length,
+      at_store: withRealGps.filter(e => e.at_branch).length,
+      outside: withRealGps.filter(e => !e.at_branch).length,
     };
   }
 
@@ -323,7 +347,7 @@ export class LiveMapService {
   async getBranchSnapshot(branchId: string, nowInput?: Date): Promise<LiveMapSnapshot> {
     const snap = await this.getSnapshot(nowInput);
     const target = canonicalBranchId(branchId);
-    if (!target) return { ...snap, branches: [], employees: [], summary: { total: 0, normal: 0, working: 0, completed: 0, missing: 0, with_gps: 0 } };
+    if (!target) return { ...snap, branches: [], employees: [], summary: this.summarize([]) };
 
     const employees = snap.employees.filter(e => canonicalBranchId(e.branch_id) === target);
     const branches = snap.branches.filter(b => canonicalBranchId((b as any)?.id || (b as any)?.branch_id) === target);
@@ -331,14 +355,7 @@ export class LiveMapService {
       ...snap,
       branches,
       employees,
-      summary: {
-        total: employees.length,
-        normal: employees.filter(e => e.status === 'NORMAL').length,
-        working: employees.filter(e => e.status === 'WORKING').length,
-        completed: employees.filter(e => e.status === 'COMPLETED').length,
-        missing: employees.filter(e => e.status === 'MISSING').length,
-        with_gps: employees.filter(e => e.gps_source !== 'BRANCH').length,
-      },
+      summary: this.summarize(employees),
     };
   }
 

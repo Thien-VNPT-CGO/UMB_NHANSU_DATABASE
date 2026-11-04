@@ -3936,6 +3936,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           latitude: e.latitude,
           longitude: e.longitude,
           gps_source: e.gps_source,
+          radius_meters: e.radius_meters,
+          at_branch: e.at_branch,
           last_gps_at: e.last_gps_at,
           note: e.note,
         })),
@@ -3977,8 +3979,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           at: ping.at,
         };
         // Chỉ phát cho đồng nghiệp CÙNG CHI NHÁNH (room branch) + khối giám sát
-        // (ADMIN/HR/FINANCE). Không broadcast toàn hệ thống để tránh lộ vị trí
-        // của nhân viên chi nhánh khác trên cổng nhân viên.
+        // (ADMIN/HR/FINANCE/DIRECTOR). Không broadcast toàn hệ thống để tránh lộ
+        // vị trí của nhân viên chi nhánh khác trên cổng nhân viên.
         const branchScope = String(req.user?.branchScope || '*').trim();
         if (io) {
           if (!branchScope || branchScope === '*') {
@@ -3988,6 +3990,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
               .to('role:ADMIN')
               .to('role:HR')
               .to('role:FINANCE')
+              .to('role:DIRECTOR')
               .emit('live-location:update', payload);
           }
         }

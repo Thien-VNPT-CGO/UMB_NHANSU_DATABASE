@@ -258,3 +258,56 @@ test('map chi nhánh cho cổng NV: chỉ đồng nghiệp cùng chi nhánh, lo�
   assert.equal(snap.summary.total, 1);
 });
 
+test('map: GPS realtime trong bán kính cửa hàng -> at_branch + summary.at_store', async () => {
+  const store = new LiveLocationStore();
+  // ~96m so với BRANCH (bán kính 300m) => đang ở cửa hàng.
+  store.upsert({ employee_id: 'E1', latitude: 10.79850, longitude: 106.69400 }, NOW.getTime());
+  const svc = new LiveMapService(makeRepo({
+    employees: [EMP],
+    branches: [BRANCH],
+    shifts: [],
+    events: [],
+  }), store);
+  const snap = await svc.getSnapshot(NOW);
+  const e = snap.employees[0];
+  assert.equal(e.at_branch, true);
+  assert.equal(e.radius_meters, 300);
+  assert.ok(Number(e.distance_meters) <= 300);
+  assert.equal(snap.summary.at_store, 1);
+  assert.equal(snap.summary.outside, 0);
+});
+
+test('map: GPS realtime ngoài bán kính cửa hàng -> at_branch=false + summary.outside', async () => {
+  const store = new LiveLocationStore();
+  // ~410m so với BRANCH (bán kính 300m) => đang ở ngoài cửa hàng.
+  store.upsert({ employee_id: 'E1', latitude: 10.80150, longitude: 106.69345 }, NOW.getTime());
+  const svc = new LiveMapService(makeRepo({
+    employees: [EMP],
+    branches: [BRANCH],
+    shifts: [],
+    events: [],
+  }), store);
+  const snap = await svc.getSnapshot(NOW);
+  const e = snap.employees[0];
+  assert.equal(e.at_branch, false);
+  assert.ok(Number(e.distance_meters) > 300);
+  assert.equal(snap.summary.at_store, 0);
+  assert.equal(snap.summary.outside, 1);
+});
+
+test('map: chưa có GPS thật (rơi về toạ độ cửa hàng) -> không tính là tại cửa hàng', async () => {
+  const svc = new LiveMapService(makeRepo({
+    employees: [EMP],
+    branches: [BRANCH],
+    shifts: [],
+    events: [],
+  }));
+  const snap = await svc.getSnapshot(NOW);
+  const e = snap.employees[0];
+  assert.equal(e.gps_source, 'BRANCH');
+  assert.equal(e.at_branch, false);
+  assert.equal(snap.summary.with_gps, 0);
+  assert.equal(snap.summary.at_store, 0);
+  assert.equal(snap.summary.outside, 0);
+});
+

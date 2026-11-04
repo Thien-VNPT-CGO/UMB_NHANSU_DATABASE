@@ -32,6 +32,9 @@ interface TeamEmployee {
   latitude: number;
   longitude: number;
   gps_source: 'LIVE' | 'CHECK_IN' | 'CHECK_OUT' | 'BRANCH';
+  radius_meters?: number;
+  /** Có GPS thật và đang nằm trong bán kính cửa hàng. */
+  at_branch?: boolean;
   last_gps_at?: string;
   note?: string;
 }
@@ -113,6 +116,11 @@ function tooltipHtml(emp: TeamEmployee, isMe: boolean): string {
       <div class="ubm-team-tt-sub">${escapeHtml(emp.employee_code)} • ${escapeHtml(emp.branch_name)}</div>
       <div class="ubm-team-tt-status" style="color:${meta.color};border-color:${meta.color}">${meta.label}${emp.note ? ` — ${escapeHtml(emp.note)}` : ''}</div>
       ${shiftRows || '<div class="ubm-team-tt-row">Hôm nay không có ca làm</div>'}
+      ${emp.gps_source !== 'BRANCH'
+        ? (emp.at_branch
+          ? '<div class="ubm-team-tt-place ubm-team-tt-place--in">🏬 Đang ở cửa hàng</div>'
+          : '<div class="ubm-team-tt-place ubm-team-tt-place--out">🚶 Ngoài cửa hàng</div>')
+        : ''}
       <div class="ubm-team-tt-gps">📍 ${emp.gps_source === 'LIVE'
         ? 'GPS trực tiếp (realtime)'
         : emp.gps_source === 'BRANCH' ? 'toạ độ cửa hàng' : `GPS lúc ${emp.gps_source === 'CHECK_OUT' ? 'check-out' : 'check-in'}`}
@@ -175,14 +183,21 @@ export const TeamMapView: React.FC = () => {
       setData(prev => {
         if (!prev) return prev;
         let changed = false;
-        const employees = prev.employees.map(e => {
-          if (e.employee_id !== id) return e;
+        const branch = prev.branches?.[0];
+        const radius = Number(branch?.radius_meters) || 300;
+        const employees = prev.employees.map(emp => {
+          if (emp.employee_id !== id) return emp;
           changed = true;
+          const distance = branch
+            ? haversineMeters(lat, lng, Number(branch.latitude), Number(branch.longitude))
+            : NaN;
           return {
-            ...e,
+            ...emp,
             latitude: lat,
             longitude: lng,
             gps_source: 'LIVE' as const,
+            radius_meters: radius,
+            at_branch: Number.isFinite(distance) ? distance <= radius : emp.at_branch,
             last_gps_at: String(p?.at || new Date().toISOString()),
           };
         });
@@ -297,7 +312,7 @@ export const TeamMapView: React.FC = () => {
         const marker = L.marker([lat, lng], {
           icon: L.divIcon({
             className: 'ubm-team-marker',
-            html: `<div class="ubm-team-dot ubm-team-dot--${e.status.toLowerCase()}${isMe ? ' ubm-team-dot--me' : ''}">
+            html: `<div class="ubm-team-dot ubm-team-dot--${e.status.toLowerCase()}${isMe ? ' ubm-team-dot--me' : ''}${e.gps_source !== 'BRANCH' && e.at_branch !== true ? ' ubm-team-dot--outside' : ''}">
                      <span class="ubm-team-dot-core" style="background:${meta.color}"></span>
                    </div>${isMe ? '<span class="ubm-team-me-label">Bạn</span>' : ''}`,
             iconSize: isMe ? [26, 26] : [22, 22],
