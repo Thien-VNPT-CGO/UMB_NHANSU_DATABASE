@@ -474,14 +474,18 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
     if (!map || !layer || !data) return;
     layer.clearLayers();
 
-    const branchIds = new Set(employees.map(e => e.branch_id));
+    const points: Array<[number, number]> = [];
 
-    // Cửa hàng: vòng bán kính + nhãn tên.
+    // Cửa hàng: hiển thị TẤT CẢ chi nhánh (kể cả chi nhánh chưa có NV gửi GPS)
+    // — vòng bán kính + ghim tên.
     for (const b of data.branches || []) {
       if (branchFilter !== '*' && b.id !== branchFilter) continue;
-      if (branchFilter === '*' && employees.length > 0 && !branchIds.has(b.id)) continue;
+      const bLat = Number(b.latitude);
+      const bLng = Number(b.longitude);
+      if (!Number.isFinite(bLat) || !Number.isFinite(bLng)) continue;
       const radius = Number(b.radius_meters) || 300;
-      L.circle([b.latitude, b.longitude], {
+      points.push([bLat, bLng]);
+      L.circle([bLat, bLng], {
         radius,
         color: '#7C3AED',
         weight: 1.5,
@@ -490,7 +494,7 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
         fillOpacity: 0.06,
         interactive: false,
       }).addTo(layer);
-      L.marker([b.latitude, b.longitude], {
+      L.marker([bLat, bLng], {
         icon: L.divIcon({
           className: 'ubm-map-branch-icon',
           html: `<div class="ubm-map-branch-pin">🏬</div>`,
@@ -516,7 +520,6 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
       groups.set(key, arr);
     }
 
-    const points: Array<[number, number]> = [];
     for (const [, list] of groups) {
       const n = list.length;
       list.forEach((emp, idx) => {
