@@ -13986,7 +13986,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </div>
           )}
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', minWidth: '980px' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', minWidth: '1220px' }}>
               <thead>
                 <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
                   <th style={{ padding: '10px 14px' }}>Nhân viên</th>
@@ -13997,6 +13997,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <th style={{ padding: '10px 14px' }}>Ứng lương</th>
                   <th style={{ padding: '10px 14px' }}>Trừ KPI</th>
                   <th style={{ padding: '10px 14px' }}>Trừ ĐP</th>
+                  <th style={{ padding: '10px 14px' }}>Ghi chú</th>
                   <th style={{ padding: '10px 14px' }}></th>
                 </tr>
               </thead>
@@ -14023,6 +14024,16 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           <input type="number" min={0} value={v[k] ?? ''} placeholder="0" onChange={ev => set(k, ev.target.value)} style={numIn()} />
                         </td>
                       ))}
+                      <td style={{ padding: '6px 8px' }}>
+                        <input
+                          value={v.note ?? ''}
+                          placeholder="VD: đi trễ 3 lần..."
+                          maxLength={500}
+                          title={v.note || 'Ghi chú sẽ hiện trên phiếu lương (bản in)'}
+                          onChange={ev => set('note', ev.target.value)}
+                          style={{ width: '230px', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '12px' }}
+                        />
+                      </td>
                       <td style={{ padding: '8px 14px' }}>
                         <button className="btn-secondary" style={{ fontSize: '11px', padding: '5px 10px', fontWeight: 700 }} disabled={payInputsBusy === e.employee_id} onClick={() => savePayInput(e.employee_id)}>
                           {payInputsBusy === e.employee_id ? '⏳...' : '💾 Lưu'}
@@ -14253,7 +14264,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   return (
                     <tr key={p.item_id} style={{ borderBottom: '1px solid var(--border)' }}>
                       <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--brand)', ...stickyL }}>{p.employee_code}</td>
-                      <td style={{ padding: '12px 16px', fontWeight: 700, ...stickyL2 }}>{p.full_name}</td>
+                      <td style={{ padding: '12px 16px', fontWeight: 700, ...stickyL2 }} title={p.input_note ? `Ghi chú: ${p.input_note}` : undefined}>
+                        {p.full_name}
+                        {p.input_note && <span style={{ marginLeft: '6px', fontSize: '11px' }}>💬</span>}
+                      </td>
                       <td style={{ padding: '12px 10px' }}><FinBlockChip block={blockOfSlip(p)} /></td>
                       {finSlipCols.map(([h, f], i) => (
                         <td key={h} style={{ padding: '12px 16px', fontWeight: i === finSlipCols.length - 1 ? 800 : 400, color: i === finSlipCols.length - 1 ? '#10B981' : undefined }}>{f(p)}</td>
@@ -14432,6 +14446,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     <span style={{ color: '#059669', fontSize: '20px' }}>{vnd0(viewSlipModal.thuc_lanh ?? viewSlipModal.net_pay)}</span>
                   </div>
                 </div>
+
+                {/* Ghi chú từ kế toán (nếu có) */}
+                {viewSlipModal.input_note && (
+                  <div style={{ border: '1px dashed #F59E0B', backgroundColor: '#FFFBEB', borderRadius: '10px', padding: '10px 14px' }}>
+                    <div style={{ fontSize: '10px', fontWeight: 800, letterSpacing: '1.5px', textTransform: 'uppercase', color: '#B45309', marginBottom: '4px' }}>Ghi chú từ kế toán</div>
+                    <div style={{ fontSize: '13px', color: '#92400E', lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{viewSlipModal.input_note}</div>
+                  </div>
+                )}
 
                 {/* Thanh công cụ nút Chữ Ký trên phiếu */}
                 {hasConfiguredSigs && !(viewSlipModal.sign_lap && viewSlipModal.sign_quanly) && viewSlipModal.status !== 'PAID' && (

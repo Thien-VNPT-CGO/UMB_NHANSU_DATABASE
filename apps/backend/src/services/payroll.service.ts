@@ -749,7 +749,7 @@ export class PayrollService {
       }
     }
     if (!run) return null;
-    return { run, slips: this.latestSlipsPerPeriod(slips) };
+    return { run, slips: await this.attachInputNotes(this.latestSlipsPerPeriod(slips)) };
   }
 
   async reconcileRun(runId: string, actorId: string) {
@@ -835,7 +835,7 @@ export class PayrollService {
 
   async getEmployeePayslips(employeeId: string) {
     const slips = await this.repo.getPayslipsForEmployee(employeeId);
-    return this.latestSlipsPerPeriod(slips);
+    return this.attachInputNotes(this.latestSlipsPerPeriod(slips));
   }
 
   /** Mỗi NV chỉ giữ 1 phiếu mới nhất cho mỗi kỳ (tránh phiếu trùng do tính lại
@@ -855,6 +855,29 @@ export class PayrollService {
       if (!cur || recency(s) >= recency(cur)) best.set(key, s);
     }
     return Array.from(best.values());
+  }
+
+  /** Nhúng ghi chú nhập tay (DULIEU_LUONG_KY.note) vào từng phiếu — join theo (period, employee_id).
+   *  Phiếu lưu ở PHIEU_LUONG không chứa note; note chỉ tồn tại ở DULIEU_LUONG_KY.
+   *  Best-effort: lỗi đọc inputs không làm hỏng API trả phiếu. */
+  private async attachInputNotes(slips: any[]): Promise<any[]> {
+    try {
+      const list = slips || [];
+      const periods = [...new Set(list.map(s => String(s?.period || '').trim()).filter(p => /^\d{4}-(0[1-9]|1[0-2])$/.test(p)))];
+      if (periods.length === 0) return list;
+      const noteByKey = new Map<string, string>();
+      for (const p of periods) {
+        const inputs = await this.repo.getPayrollInputs(p).catch(() => [] as any[]);
+        for (const x of (inputs || []) as any[]) {
+          const emp = String(x?.employee_id || '').trim();
+          const note = String(x?.note || '').trim();
+          if (emp && note) noteByKey.set(`${p}:${emp}`, note);
+        }
+      }
+      return list.map(s => ({ ...s, input_note: noteByKey.get(`${s?.period}:${s?.employee_id}`) || '' }));
+    } catch {
+      return slips || [];
+    }
   }
 
   // --- Quy trình ký: DRAFT -> GĐ ký -> QL ký -> PUBLISHED -> NV ký -> CONFIRMED -> PAID ---
@@ -1445,7 +1468,7 @@ export class PayrollService {
     }
     // Tab KY_LUONG có thể rỗng sau khi restart (chỉ còn PHIEU_LUONG): nhiều lần
     // tính lại tạo nhiều run, mỗi run 1 bộ phiếu. Chỉ trả phiếu mới nhất/NV/kỳ.
-    slips = this.latestSlipsPerPeriod(slips);
+    slips = await this.attachInputNotes(this.latestSlipsPerPeriod(slips));
     return { run, slips };
   }
 
@@ -1460,7 +1483,8 @@ export class PayrollService {
     // (createPayrollRun trả { run, items }). Trước đây .run/.slips đều undefined nên
     // ensure luôn trả slips rỗng dù vừa tạo xong.
     const inner = res?.result ?? res;
-    return { run: inner.run, slips: inner.slips || inner.items || inner.payslips || [] };
+    const rawSlips = inner.slips || inner.items || inner.payslips || [];
+    return { run: inner.run, slips: await this.attachInputNotes(rawSlips) };
   }
 
   /**
@@ -1514,7 +1538,7 @@ export class PayrollService {
       backfilled,
       backfilledIds,
       run: inner?.run || null,
-      slips: inner?.slips || inner?.items || (ensured as any)?.slips || [],
+      slips: await this.attachInputNotes(inner?.slips || inner?.items || (ensured as any)?.slips || []),
     };
   }
   // --- Cấu hình VietQR công ty (lưu trong system settings, tự đồng bộ Sheets) ---

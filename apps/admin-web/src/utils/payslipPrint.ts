@@ -131,6 +131,8 @@ function renderSlip(p: any): string {
       </div>
     </div>
 
+    ${p?.input_note ? `<div class="ps-note"><div class="ps-note-title">Ghi chú từ kế toán</div><div class="ps-note-body">${esc(p.input_note)}</div></div>` : ''}
+
     <div class="ps-signatures">
       ${sign('1. Người Lập Phiếu (Kế toán)', p?.sign_lap, 'Kế toán')}
       ${sign('2. Quản Lý Chi Nhánh', p?.sign_quanly)}
@@ -175,6 +177,9 @@ export function printPayslips(slips: any[], opts?: { title?: string }): boolean 
     .ps-bank-grid { display:flex; gap:14px; align-items:center; }
     .ps-qr-empty { width:150px; height:150px; border:1.5px dashed #F87171; border-radius:8px; display:flex; align-items:center; justify-content:center; color:#DC2626; font-size:12px; }
     .ps-bank-lines { font-size:12px; display:flex; flex-direction:column; gap:5px; }
+    .ps-note { border:1px dashed #F59E0B; background:#FFFBEB; border-radius:8px; padding:8px 12px; margin-bottom:10px; }
+    .ps-note-title { font-size:10px; font-weight:800; letter-spacing:1.5px; text-transform:uppercase; color:#B45309; margin-bottom:4px; }
+    .ps-note-body { font-size:12px; color:#92400E; line-height:1.5; white-space:pre-wrap; word-break:break-word; }
     .ps-signatures { display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; border-top:1px solid #E2E8F0; padding-top:10px; }
     .sig-box { border:1px solid #E2E8F0; border-radius:8px; padding:8px; text-align:center; min-height:118px; display:flex; flex-direction:column; }
     .sig-title { font-size:10.5px; font-weight:800; color:#334155; }

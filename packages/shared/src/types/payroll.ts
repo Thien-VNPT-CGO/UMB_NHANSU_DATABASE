@@ -99,6 +99,8 @@ export interface PayslipItem {
   /** Thời điểm kế toán xác nhận đã chuyển khoản. */
   slip_paid_at?: string;
   slip_paid_by?: string;
+  /** Ghi chú của kế toán nhập ở tab Tính lương (join từ DULIEU_LUONG_KY) — hiển thị trên phiếu khi in/phát hành. */
+  input_note?: string;
   bank_name?: string;
   bank_account?: string;
   bank_holder?: string;
