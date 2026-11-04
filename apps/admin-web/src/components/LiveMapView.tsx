@@ -181,52 +181,72 @@ function timeAgo(iso?: string): string {
   return `${Math.floor(hours / 24)} ngày trước`;
 }
 
-/** Tooltip khi rê chuột: Tên + mã NV + ca làm + giờ check-in/out (realtime). */
+/** Tooltip khi rê chuột: thẻ gọn gàng nhưng đầy đủ (định danh, trạng thái, vị trí, GPS, ca làm). */
 function tooltipHtml(emp: LiveMapEmployee): string {
   const meta = STATUS_META[emp.status];
+
+  // Dòng vị trí (ưu tiên cảnh báo mất tín hiệu).
+  const place = emp.gps_stale
+    ? { icon: '📵', label: 'Mất tín hiệu GPS', cls: 'is-danger', hint: 'Thiết bị đang không gửi vị trí' }
+    : emp.gps_source === 'BRANCH'
+      ? { icon: '🏬', label: 'Chưa có GPS thiết bị', cls: 'is-muted', hint: 'Chưa từng gửi vị trí' }
+      : emp.at_branch
+        ? { icon: '🏬', label: 'Đang ở cửa hàng', cls: 'is-ok', hint: 'Trong bán kính cho phép' }
+        : { icon: '🚶', label: 'Ngoài cửa hàng', cls: 'is-warn', hint: 'Không có mặt tại điểm làm việc' };
+
+  const sourceLabel = emp.gps_source === 'LIVE' ? 'GPS trực tiếp'
+    : emp.gps_source === 'CHECK_OUT' ? 'GPS lúc check-out'
+      : emp.gps_source === 'CHECK_IN' ? 'GPS lúc check-in'
+        : 'Toạ độ cửa hàng';
+  const acc = emp.gps_accuracy ? `±${Math.round(Number(emp.gps_accuracy))} m` : '—';
+  const initial = escapeHtml((emp.full_name || '?').trim().charAt(0).toUpperCase());
+
   const shiftRows = (emp.shifts || []).map(s => {
     const sMeta = STATUS_META[s.status];
     return `
       <div class="ubm-map-tt-shift">
-        <div class="ubm-map-tt-shift-head">
-          <span>${escapeHtml(s.shift_label || s.shift_code || 'Ca làm')}</span>
-          <span class="ubm-map-tt-chip" style="color:${sMeta.color};background:${sMeta.bg};border-color:${sMeta.border}">${sMeta.label}</span>
+        <div class="ubm-map-tt-shift-top">
+          <span class="ubm-map-tt-shift-name">${escapeHtml(s.shift_label || s.shift_code || 'Ca làm')}</span>
+          <span class="ubm-map-tt-badge ubm-map-tt-badge--sm" style="color:${sMeta.color};background:${sMeta.bg};border-color:${sMeta.border}">${sMeta.label}</span>
         </div>
-        <div class="ubm-map-tt-line">⏱️ Ca: <b>${fmtRange(s.start_at, s.end_at)}</b></div>
-        <div class="ubm-map-tt-line">🟢 Check-in: <b>${fmtTime(s.check_in_at)}</b></div>
-        <div class="ubm-map-tt-line">🔵 Check-out: <b>${fmtTime(s.check_out_at)}</b></div>
+        <div class="ubm-map-tt-times">
+          <span class="t">⏱️ ${fmtRange(s.start_at, s.end_at)}</span>
+          <span class="in">🟢 ${s.check_in_at ? fmtTime(s.check_in_at) : 'chưa vào'}</span>
+          <span class="out">🔵 ${s.check_out_at ? fmtTime(s.check_out_at) : 'chưa ra'}</span>
+        </div>
         ${s.note ? `<div class="ubm-map-tt-note">⚠️ ${escapeHtml(s.note)}</div>` : ''}
       </div>`;
   }).join('');
 
-  const placeLine = emp.gps_stale
-    ? '<div class="ubm-map-tt-line">📵 Tín hiệu: <b style="color:#FCA5A5">Mất tín hiệu GPS</b> — thiết bị đang không gửi vị trí</div>'
-    : emp.gps_source === 'BRANCH'
-      ? '<div class="ubm-map-tt-line">🏬 Vị trí: <b>chưa có GPS thiết bị</b> — hiển thị tại toạ độ cửa hàng</div>'
-      : (emp.at_branch
-        ? '<div class="ubm-map-tt-line">🏬 Vị trí: <b style="color:#6EE7B7">Đang ở cửa hàng</b> (trong bán kính cho phép)</div>'
-        : '<div class="ubm-map-tt-line">🚶 Vị trí: <b style="color:#FCA5A5">Ngoài cửa hàng</b> — không có mặt tại điểm làm việc</div>');
-
-  const gpsLine = emp.gps_source === 'BRANCH'
-    ? '<div class="ubm-map-tt-line">📍 Toạ độ: <b>toạ độ cửa hàng</b> (chưa có GPS chấm công)</div>'
-    : `<div class="ubm-map-tt-line">📍 GPS ${emp.gps_source === 'LIVE' ? 'trực tiếp (realtime)' : emp.gps_source === 'CHECK_OUT' ? 'check-out' : 'check-in'}:
-        <b>${Number(emp.latitude).toFixed(6)}, ${Number(emp.longitude).toFixed(6)}</b></div>
-       <div class="ubm-map-tt-line">🎯 Cách cửa hàng: <b>${Number(emp.distance_meters || 0).toLocaleString('vi-VN')} m</b>
-        ${emp.radius_meters ? ` / bán kính ${Number(emp.radius_meters).toLocaleString('vi-VN')} m` : ''}
-        ${emp.gps_accuracy ? ` • sai số ±${Math.round(Number(emp.gps_accuracy))} m` : ''}
-        ${emp.gps_status && emp.gps_status !== 'VALID' ? ` • <span style="color:#FCA5A5">${escapeHtml(emp.gps_status)}</span>` : ''}</div>
-       <div class="ubm-map-tt-line">🕒 Cập nhật GPS: <b>${timeAgo(emp.last_gps_at)}</b></div>`;
-
   return `
     <div class="ubm-map-tt">
-      <div class="ubm-map-tt-title">${escapeHtml(emp.full_name)}</div>
-      <div class="ubm-map-tt-sub">${escapeHtml(emp.employee_code)} • ${escapeHtml(emp.branch_name)}</div>
-      <div class="ubm-map-tt-status" style="color:${meta.color};background:${meta.bg};border-color:${meta.border}">
+      <div class="ubm-map-tt-head">
+        <span class="ubm-map-tt-avatar" style="background:${meta.color}">${initial}</span>
+        <div class="ubm-map-tt-ident">
+          <div class="ubm-map-tt-name">${escapeHtml(emp.full_name)}</div>
+          <div class="ubm-map-tt-meta">${escapeHtml(emp.employee_code)} • ${escapeHtml(emp.branch_name)}</div>
+        </div>
+      </div>
+
+      <div class="ubm-map-tt-badge ubm-map-tt-badge--full" style="color:${meta.color};background:${meta.bg};border-color:${meta.border}">
         ${meta.label}${emp.note ? ` — ${escapeHtml(emp.note)}` : ''}
       </div>
-      ${shiftRows || '<div class="ubm-map-tt-line">Hôm nay không có ca làm</div>'}
-      ${placeLine}
-      ${gpsLine}
+
+      <div class="ubm-map-tt-place ${place.cls}">
+        <span class="ico">${place.icon}</span>
+        <span class="txt"><b>${place.label}</b> · ${place.hint}</span>
+      </div>
+
+      <div class="ubm-map-tt-grid">
+        <div class="ubm-map-tt-cell"><span class="k">🛰️ Nguồn</span><span class="v">${escapeHtml(sourceLabel)}</span></div>
+        <div class="ubm-map-tt-cell"><span class="k">🕒 Cập nhật</span><span class="v">${timeAgo(emp.last_gps_at)}</span></div>
+        <div class="ubm-map-tt-cell"><span class="k">🎯 Cách cửa hàng</span><span class="v">${Number(emp.distance_meters || 0).toLocaleString('vi-VN')} m${emp.radius_meters ? ` <small>/ ${Number(emp.radius_meters).toLocaleString('vi-VN')} m</small>` : ''}</span></div>
+        <div class="ubm-map-tt-cell"><span class="k">📐 Sai số</span><span class="v">${acc}${emp.gps_status && emp.gps_status !== 'VALID' ? ` <small class="is-danger">${escapeHtml(emp.gps_status)}</small>` : ''}</span></div>
+        <div class="ubm-map-tt-cell ubm-map-tt-cell--full"><span class="k">📌 Toạ độ</span><span class="v mono">${Number(emp.latitude).toFixed(6)}, ${Number(emp.longitude).toFixed(6)}</span></div>
+      </div>
+
+      <div class="ubm-map-tt-sec">Ca làm hôm nay</div>
+      ${shiftRows || '<div class="ubm-map-tt-empty">Hôm nay không có ca làm</div>'}
     </div>`;
 }
 

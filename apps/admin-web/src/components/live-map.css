@@ -251,57 +251,107 @@
   box-shadow: 0 2px 8px rgba(124, 58, 237, 0.35);
 }
 
-/* --- Tooltip --- */
+/* --- Tooltip (thiết kế lại: gọn gàng, đầy đủ chi tiết) --- */
 .leaflet-tooltip.ubm-map-tooltip {
-  background: #0F172A;
-  color: #F8FAFC;
-  border: none;
-  border-radius: 12px;
-  padding: 10px 12px;
-  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.3);
+  background: #0B1220;
+  color: #E2E8F0;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 14px;
+  padding: 0;
+  box-shadow: 0 18px 45px rgba(2, 6, 23, 0.5);
   font-size: 12px;
-  line-height: 1.45;
-  max-width: 320px;
+  line-height: 1.4;
+  max-width: 340px;
   white-space: normal;
+  overflow: hidden;
   z-index: 900;
 }
-.leaflet-tooltip.ubm-map-tooltip::before { border-top-color: #0F172A; }
+.leaflet-tooltip.ubm-map-tooltip::before { border-top-color: #0B1220; }
 
-.ubm-map-tt-title { font-size: 13.5px; font-weight: 800; color: #FFFFFF; }
-.ubm-map-tt-sub { font-size: 11.5px; color: #CBD5E1; margin-bottom: 6px; }
-.ubm-map-tt-status {
-  display: inline-block;
-  font-size: 11px;
-  font-weight: 800;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  padding: 2px 8px;
-  margin-bottom: 8px;
+.ubm-map-tt { padding: 12px 13px; }
+
+.ubm-map-tt-head { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; }
+.ubm-map-tt-avatar {
+  flex: 0 0 auto;
+  width: 34px; height: 34px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px; font-weight: 800; color: #FFFFFF;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.08);
 }
+.ubm-map-tt-ident { min-width: 0; }
+.ubm-map-tt-name {
+  font-size: 14px; font-weight: 800; color: #FFFFFF;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ubm-map-tt-meta {
+  font-size: 11px; color: #94A3B8;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.ubm-map-tt-badge {
+  display: inline-flex; align-items: center;
+  font-size: 10.5px; font-weight: 800;
+  border: 1px solid transparent; border-radius: 999px;
+  padding: 3px 9px;
+}
+.ubm-map-tt-badge--full { width: 100%; justify-content: center; margin-bottom: 9px; box-sizing: border-box; }
+.ubm-map-tt-badge--sm { padding: 1px 7px; font-size: 9.5px; }
+
+.ubm-map-tt-place {
+  display: flex; align-items: center; gap: 7px;
+  padding: 7px 9px; border-radius: 10px; margin-bottom: 10px;
+  font-size: 11.5px; border: 1px solid transparent;
+}
+.ubm-map-tt-place .ico { font-size: 14px; flex: 0 0 auto; }
+.ubm-map-tt-place .txt { min-width: 0; }
+.ubm-map-tt-place .txt b { color: #FFFFFF; }
+.ubm-map-tt-place.is-ok { background: rgba(34, 197, 94, 0.12); border-color: rgba(34, 197, 94, 0.35); color: #BBF7D0; }
+.ubm-map-tt-place.is-warn { background: rgba(245, 158, 11, 0.12); border-color: rgba(245, 158, 11, 0.35); color: #FDE68A; }
+.ubm-map-tt-place.is-danger { background: rgba(239, 68, 68, 0.14); border-color: rgba(239, 68, 68, 0.42); color: #FECACA; }
+.ubm-map-tt-place.is-muted { background: rgba(148, 163, 184, 0.1); border-color: rgba(148, 163, 184, 0.3); color: #CBD5E1; }
+
+.ubm-map-tt-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 7px 12px;
+  padding: 9px 10px; border-radius: 10px;
+  background: rgba(148, 163, 184, 0.08);
+  margin-bottom: 10px;
+}
+.ubm-map-tt-cell { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.ubm-map-tt-cell--full { grid-column: 1 / -1; }
+.ubm-map-tt-cell .k {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.03em;
+  color: #94A3B8; font-weight: 700; white-space: nowrap;
+}
+.ubm-map-tt-cell .v { font-size: 12px; color: #F1F5F9; font-weight: 700; overflow-wrap: anywhere; }
+.ubm-map-tt-cell .v small { font-weight: 600; color: #94A3B8; }
+.ubm-map-tt-cell .v.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px; letter-spacing: -0.01em;
+}
+.ubm-map-tt-cell small.is-danger { color: #FCA5A5; }
+
+.ubm-map-tt-sec {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: #94A3B8; font-weight: 800; margin: 0 0 6px;
+}
+.ubm-map-tt-empty { font-size: 11.5px; color: #94A3B8; }
 .ubm-map-tt-shift {
-  border-top: 1px dashed rgba(148, 163, 184, 0.35);
-  padding-top: 6px;
-  margin-top: 6px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 10px; padding: 7px 9px; margin-bottom: 6px;
+  background: rgba(15, 23, 42, 0.35);
 }
-.ubm-map-tt-shift-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  font-weight: 800;
-  color: #E2E8F0;
+.ubm-map-tt-shift:last-child { margin-bottom: 0; }
+.ubm-map-tt-shift-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ubm-map-tt-shift-name { font-size: 12px; font-weight: 800; color: #E2E8F0; }
+.ubm-map-tt-times {
+  display: flex; flex-wrap: wrap; gap: 3px 12px; margin-top: 4px;
+  font-size: 11px; color: #CBD5E1;
 }
-.ubm-map-tt-chip {
-  font-size: 10px;
-  font-weight: 800;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  padding: 1px 7px;
-  white-space: nowrap;
-}
-.ubm-map-tt-line { color: #E2E8F0; margin-top: 2px; }
-.ubm-map-tt-line b { color: #FFFFFF; }
-.ubm-map-tt-note { color: #FCA5A5; margin-top: 3px; font-weight: 700; }
+.ubm-map-tt-times .t { color: #E2E8F0; font-weight: 700; }
+.ubm-map-tt-times .in { color: #86EFAC; }
+.ubm-map-tt-times .out { color: #93C5FD; }
+.ubm-map-tt-note { color: #FCA5A5; font-weight: 700; margin-top: 4px; font-size: 11px; }
 
 /* --- Cảnh báo GPS (rời cửa hàng / mất tín hiệu) --- */
 .ubm-map-alerts {
