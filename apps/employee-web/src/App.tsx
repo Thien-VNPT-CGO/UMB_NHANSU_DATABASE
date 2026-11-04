@@ -12,7 +12,6 @@ import { EventAnnouncementCountdown } from './components/EventAnnouncementCountd
 import type { LoginThemeId } from './components/loginThemeData';
 import { ThemeAmbientEffects } from './components/ThemeAmbientEffects';
 import { SignaturePad } from './components/SignaturePad';
-import { TeamMapView } from './components/TeamMapView';
 import {
   Home,
   Calendar,
@@ -4242,14 +4241,13 @@ export function App() {
     { id: 'schedule', label: '2. Lịch thử việc', icon: Calendar },
     { id: 'leave', label: '3. Đăng ký OFF thử việc', icon: Clock },
     { id: 'attendance', label: '4. Điểm danh', icon: Camera, highlight: true },
-    { id: 'team_map', label: '5. Bản đồ chi nhánh', icon: MapPin },
-    { id: 'timesheet', label: '6. Công của tôi', icon: CheckCircle2 },
-    { id: 'swap_emergency', label: '7. Tự đổi ca / Nghỉ khẩn', icon: RefreshCw },
-    { id: 'rereg', label: '8. Cập Nhật Ca Làm', icon: FileText, beta: true },
-    { id: 'adjustment', label: '9. Bổ sung công', icon: FileText },
-    { id: 'test_exam', label: '10. Thi TEST', icon: Award },
-    { id: 'notifs_salary', label: '11. Thông báo & Lương', icon: Bell },
-    { id: 'profile', label: '12. Hồ Sơ', icon: User },
+    { id: 'timesheet', label: '5. Công của tôi', icon: CheckCircle2 },
+    { id: 'swap_emergency', label: '6. Tự đổi ca / Nghỉ khẩn', icon: RefreshCw },
+    { id: 'rereg', label: '7. Cập Nhật Ca Làm', icon: FileText, beta: true },
+    { id: 'adjustment', label: '8. Bổ sung công', icon: FileText },
+    { id: 'test_exam', label: '9. Thi TEST', icon: Award },
+    { id: 'notifs_salary', label: '10. Thông báo & Lương', icon: Bell },
+    { id: 'profile', label: '11. Hồ Sơ', icon: User },
   ];
 
   const officialTabs = [
@@ -4257,14 +4255,13 @@ export function App() {
     { id: 'schedule', label: '2. Lịch làm việc', icon: Calendar },
     { id: 'leave', label: '3. Đăng ký OFF tuần', icon: Clock },
     { id: 'attendance', label: '4. Điểm danh', icon: Camera, highlight: true },
-    { id: 'team_map', label: '5. Bản đồ chi nhánh', icon: MapPin },
-    { id: 'timesheet', label: '6. Công của tôi', icon: CheckCircle2 },
-    { id: 'swap_shift', label: '7. Đổi ca làm', icon: RefreshCw },
-    { id: 'rereg', label: '8. Cập Nhật Ca Làm', icon: FileText, beta: true },
-    { id: 'emergency_adjust', label: '9. Nghỉ khẩn & Bổ sung công', icon: AlertTriangle },
-    { id: 'test_training', label: '10. TEST / Đào tạo', icon: Award },
-    { id: 'notifs_salary', label: '11. Thông báo & Lương', icon: Bell },
-    { id: 'profile', label: '12. Hồ Sơ', icon: User },
+    { id: 'timesheet', label: '5. Công của tôi', icon: CheckCircle2 },
+    { id: 'swap_shift', label: '6. Đổi ca làm', icon: RefreshCw },
+    { id: 'rereg', label: '7. Cập Nhật Ca Làm', icon: FileText, beta: true },
+    { id: 'emergency_adjust', label: '8. Nghỉ khẩn & Bổ sung công', icon: AlertTriangle },
+    { id: 'test_training', label: '9. TEST / Đào tạo', icon: Award },
+    { id: 'notifs_salary', label: '10. Thông báo & Lương', icon: Bell },
+    { id: 'profile', label: '11. Hồ Sơ', icon: User },
   ];
 
   // Tab "7. Cập Nhật Ca Làm" CHỈ hiển thị khi Admin BẬT phiếu "Cập Nhật Ca" (enabled === true).
@@ -4274,12 +4271,16 @@ export function App() {
     (t) => t.id !== 'rereg' || reRegEnabled
   );
 
-  // Tự động chuyển về trang chủ nếu tab Cập Nhật Ca bị Admin đóng khi đang mở
+  // Tự động về trang chủ nếu tab đang mở không còn tồn tại (VD: tab Cập Nhật Ca
+  // bị Admin đóng, hoặc tab "Bản đồ chi nhánh" đã bị gỡ nhưng còn lưu localStorage).
+  const currentTabIds = currentTabs.map((t) => t.id).join(',');
   useEffect(() => {
-    if (activeTab === 'rereg' && !reRegEnabled) {
+    if (!isLoggedIn) return;
+    if (!currentTabs.some((t) => t.id === activeTab)) {
       setActiveTab('home');
     }
-  }, [activeTab, reRegEnabled]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, currentTabIds, isLoggedIn]);
 
   // =========================================================================
   // VIEW: PHONE LOGIN
@@ -6592,12 +6593,7 @@ export function App() {
         })()}
 
         {/* ========================================================= */}
-        {/* TAB 5: BẢN ĐỒ CHI NHÁNH (GPS REALTIME, CÙNG CHI NHÁNH) */}
-        {/* ========================================================= */}
-        {activeTab === 'team_map' && <TeamMapView />}
-
-        {/* ========================================================= */}
-        {/* TAB 6: CÔNG CỦA TÔI (DỮ LIỆU THẬT 100%, XÓA SẠCH DỮ LIỆU TEST) */}
+        {/* TAB: CÔNG CỦA TÔI (DỮ LIỆU THẬT 100%, XÓA SẠCH DỮ LIỆU TEST) */}
         {/* ========================================================= */}
         {activeTab === 'timesheet' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>

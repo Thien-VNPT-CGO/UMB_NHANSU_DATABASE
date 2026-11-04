@@ -620,11 +620,13 @@ Tab active lưu `localStorage["ubm_active_tab"]`. Lưu ý: tab `attendance` (Đi
 - **Cờ mất mạng:** 4 nhóm API tải dữ liệu fail → banner đỏ "📡 Mất kết nối máy chủ — đang hiển thị dữ liệu cũ".
 - Token: `ubm_emp_token`, `ubm_emp_refresh`; hồ sơ `ubm_emp_data`; tab `ubm_emp_active_tab`.
 
-## 7.2. Cấu trúc 12 tab (khác nhau theo giai đoạn)
+## 7.2. Cấu trúc 11 tab (khác nhau theo giai đoạn)
 
-**NV THỬ VIỆC (PROBATION):** 1. Trang chủ · 2. Lịch thử việc · 3. Đăng ký OFF thử việc · 4. Điểm danh · 5. Bản đồ chi nhánh · 6. Công của tôi · 7. Tự đổi ca / Nghỉ khẩn · 8. Cập Nhật Ca Làm · 9. Bổ sung công · 10. Thi TEST · 11. Thông báo & Lương · 12. Hồ Sơ
+> Cập nhật: **đã gỡ tab "Bản đồ chi nhánh" khỏi cổng nhân viên** (giám sát GPS chỉ còn ở bản đồ Admin/HR/Kế toán/Giám đốc).
 
-**NV CHÍNH THỨC:** 1. Trang chủ · 2. Lịch làm việc · 3. Đăng ký OFF tuần · 4. Điểm danh · 5. Bản đồ chi nhánh · 6. Công của tôi · 7. Đổi ca làm · 8. Cập Nhật Ca Làm · 9. Nghỉ khẩn & Bổ sung công · 10. TEST / Đào tạo · 11. Thông báo & Lương · 12. Hồ Sơ
+**NV THỬ VIỆC (PROBATION):** 1. Trang chủ · 2. Lịch thử việc · 3. Đăng ký OFF thử việc · 4. Điểm danh · 5. Công của tôi · 6. Tự đổi ca / Nghỉ khẩn · 7. Cập Nhật Ca Làm · 8. Bổ sung công · 9. Thi TEST · 10. Thông báo & Lương · 11. Hồ Sơ
+
+**NV CHÍNH THỨC:** 1. Trang chủ · 2. Lịch làm việc · 3. Đăng ký OFF tuần · 4. Điểm danh · 5. Công của tôi · 6. Đổi ca làm · 7. Cập Nhật Ca Làm · 8. Nghỉ khẩn & Bổ sung công · 9. TEST / Đào tạo · 10. Thông báo & Lương · 11. Hồ Sơ
 
 Header sticky: logo, họ tên, badge "Thử việc (12 ngày)"/"Chính thức", mã NV + chi nhánh, nút đăng xuất. Sub-bar tab cuộn ngang.
 
@@ -661,14 +663,10 @@ Header sticky: logo, họ tên, badge "Thử việc (12 ngày)"/"Chính thức",
   5. **Màn xác nhận:** thời gian, `receipt.distance_meters`, cảnh báo `OUT_OF_BOUNDS` nếu GPS ngoài 300m (vẫn ghi nhận để đối soát); sau check-in lại do GPS vượt 300m → banner "bắt điểm danh lại" tự tắt (POST read).
 - Nút bấm đúp chặn bằng guard đồng bộ (`attendBusyRef`).
 
-### Tab 5 — BẢN ĐỒ CHI NHÁNH (`team_map`)
-- Bản đồ Google Maps (fallback OpenStreetMap) hiển thị **đồng nghiệp cùng chi nhánh** + chính mình; marker tự di chuyển khi đồng nghiệp mở cổng NV trong khung ca (Socket.IO `live-location:update` → event `ubm:team-location`).
-- Chấm màu giống bản đồ admin: ⚪ bình thường · 🟡 đang làm (nhấp nháy) · 🟢 xong ca · 🔴 thiếu chấm. Chấm của mình có viền xanh + nhãn "Bạn".
-- Chạm vào chấm để xem tên, mã NV, ca, giờ check-in/check-out, nguồn GPS + thời điểm cập nhật.
-- Nút "về vị trí của tôi", nút tải lại, bật/tắt tự làm mới 60 giây (vị trí vẫn cập nhật tức thì qua Socket.IO).
-- **Tài khoản bị khóa không xuất hiện** trên bản đồ (server lọc từ `account_locked`/`account_status = LOCKED`).
+### ~~Tab 5 — BẢN ĐỒ CHI NHÁNH (`team_map`)~~ — ĐÃ GỠ
+- Tab "Bản đồ chi nhánh" trên cổng NV **đã bị gỡ** theo yêu cầu. Nút/tab không còn hiển thị; nếu localStorage còn lưu tab này, cổng tự chuyển về Trang chủ. Giám sát GPS chỉ còn ở **bản đồ Admin/HR/Kế toán/Giám đốc**. Component `TeamMapView.tsx` vẫn giữ trong mã nguồn nhưng không dùng (có thể khôi phục nhanh nếu cần).
 
-### Tab 6 — CÔNG CỦA TÔI (`timesheet`)
+### Tab 5 — CÔNG CỦA TÔI (`timesheet`)
 - Chọn tháng (chu kỳ lương, ◀ ▶ + "Tháng này") — tải `GET /me/schedule?fromDate=&toDate=`, `GET /me/attendance?fromDate=&toDate=`, `GET /me/monthly-timesheet?period=YYYY-MM`.
 - **6 thẻ tổng hợp:** Đủ công / Đang làm / Thiếu check-out / Vắng–Không điểm danh / **Tổng phạt tháng** / **Lương tháng** (ưu tiên số server `totals.deduction`, `totals.netPay` — **khớp 100% công thức Bảng Tổng Hợp Finance**).
 - **Thẻ từng ngày có ca:** mỗi ca 1 dòng — tên ca + khung giờ, Vào/Ra (giờ VN), badge theo `attShiftStatus` của `@ubm/shared`: ⏳ Chờ duyệt (DRAFT — không tính công) / ✓ Đủ công (+ tiền ca server) / Đang làm / Thiếu check-out — không lương / 🔴 Vắng / Không điểm danh — nghỉ không lương / Lịch đã duyệt. Ghi chú: Trễ Xp / Về sớm Xp / mức phạt (`FLAT_30K|HALF_SHIFT|FULL_SHIFT`) / GPS vượt 300m / tự ghi vắng / tiền ca theo giai đoạn TV/CT.
