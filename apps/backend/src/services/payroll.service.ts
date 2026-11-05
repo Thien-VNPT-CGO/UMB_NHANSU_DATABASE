@@ -1982,6 +1982,13 @@ export class PayrollService {
     for (const emp of employees) {
       const empId = (emp as any).employee_id;
       const empShifts = await this.repo.getShiftsForEmployee(empId, fromDate, toDate).catch(() => []);
+      // Hình thức lương: khối Văn Phòng luôn THEO THÁNG — không có lương ca/giờ.
+      // Tính sớm để mọi số tiền theo ca của NV lương tháng đều trả về 0.
+      const cfgEmp = salaryConfigs[empId];
+      const payMode = effectivePayMode((emp as any).group, cfgEmp?.pay_mode);
+      const monthly = payMode === 'MONTHLY';
+      const monthlyBase = Math.max(0, Math.floor(Number(cfgEmp?.base_salary) || 0));
+      const allowance = Math.max(0, Math.floor(Number(cfgEmp?.allowance) || 0));
       const published = (empShifts || []).filter(
         s => (s as any).status === 'PUBLISHED' && String((s as any).date || '').slice(0, 10) >= fromDate && String((s as any).date || '').slice(0, 10) <= toDate
       );
@@ -2091,9 +2098,9 @@ export class PayrollService {
           shiftCode: (s as any).shift_code,
           branchId: (s as any).branch_id,
           hours: h,
-          rate: dayRate.rate,
+          rate: monthly ? 0 : dayRate.rate,
           stage: dayRate.stage,
-          shiftPay,
+          shiftPay: monthly ? 0 : shiftPay,
           status,
           lateMin,
           fineTier,
@@ -2105,12 +2112,7 @@ export class PayrollService {
       details.sort((a, b) => String(a.date).localeCompare(String(b.date)));
       // Thưởng nhường ca HR điều phối đã duyệt trong kỳ.
       const bonus = 0;
-      // Hình thức lương: NV lương THÁNG không tính theo ca — thực nhận = LCB + phụ cấp − phạt.
-      const cfgEmp = salaryConfigs[empId];
-      const payMode = effectivePayMode((emp as any).group, cfgEmp?.pay_mode);
-      const monthly = payMode === 'MONTHLY';
-      const monthlyBase = Math.max(0, Math.floor(Number(cfgEmp?.base_salary) || 0));
-      const allowance = Math.max(0, Math.floor(Number(cfgEmp?.allowance) || 0));
+      // NV lương THÁNG không có lương theo ca/giờ — thực nhận = LCB + phụ cấp − phạt.
       const netPay = monthly ? (monthlyBase + allowance - deduction) : (standardPay - deduction);
       rows.push({
         employeeId: empId,
@@ -2120,17 +2122,17 @@ export class PayrollService {
         stage: (emp as any).employment_status,
         group: (emp as any).group,
         payMode,
-        rate,
+        rate: monthly ? 0 : rate,
         totalShifts: published.length,
         full,
         partial,
         absent,
         hours: Math.round(hours * 10) / 10,
         tvHours: Math.round(tvHours * 10) / 10,
-        tvPay,
+        tvPay: monthly ? 0 : tvPay,
         ctHours: Math.round(ctHours * 10) / 10,
-        ctPay,
-        standardPay,
+        ctPay: monthly ? 0 : ctPay,
+        standardPay: monthly ? 0 : standardPay,
         monthlyBase,
         allowance,
         deduction,

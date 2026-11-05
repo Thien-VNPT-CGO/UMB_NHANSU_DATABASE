@@ -505,6 +505,7 @@ interface RoleViewsProps {
   swaps?: any[];
   payrollRuns: any[];
   branches: any[];
+  salaryConfigs?: Record<string, { pay_mode?: 'MONTHLY' | 'HOURLY'; base_salary?: number; allowance?: number; updatedAt?: string; updatedByName?: string }>;
   systemNotifications: any[];
   showToast: (msg: string, type?: 'INFO' | 'WARNING', customTitle?: string) => void;
   openNewEmpModal: () => void;
@@ -914,6 +915,8 @@ import {
   lateMinOf,
   inferExtraShiftCode,
   shiftPayInfo,
+  effectivePayMode,
+  isOfficeGroup,
 } from '@ubm/shared';
 
 /** Chuẩn hóa mã chi nhánh (Sheets có thể ghi CN1..CN4, hệ thống dùng CN130/261/120/111). */
@@ -1328,6 +1331,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   swaps = [],
   payrollRuns,
   branches,
+  salaryConfigs = {},
   systemNotifications,
   showToast,
   openNewEmpModal,
@@ -2275,8 +2279,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   /**
    * Các bước tính lương realtime của 1 NV theo đúng công thức Excel của Kế toán
    * (đã bỏ hoàn toàn phụ cấp OT):
-   * B1 Lương giờ = giờ đủ công × đơn giá (TV/CT theo diện)
-   * B2 TỔNG CỘNG = LCB + lương giờ + OT thêm + Bonus
+   * B1 NV lương tháng = LCB cấu hình (hoặc nhập tay ghi đè) + phụ cấp;
+   *    NV lương ca = giờ đủ công × đơn giá (TV/CT theo diện).
+   * B2 TỔNG CỘNG = B1 + OT thêm + Bonus (NV lương ca cộng thêm phụ cấp).
    * B3 TỔNG LƯƠNG = TỔNG CỘNG − KPI − phạt trễ/vắng
    * B4 THỰC LÃNH = TỔNG LƯƠNG − Ứng − Đồng phục.
    */
@@ -2286,6 +2291,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       rateTV: Number(formula?.rateTV ?? 21000) || 0,
       rateCT: Number(formula?.rateCT ?? 25500) || 0,
     };
+    // Khối Văn Phòng / NV lương tháng: KHÔNG tính lương theo ca/giờ.
+    const isMonthly = row?.payMode === 'MONTHLY';
+    const monthlyBase = Math.max(0, Math.floor(Number((row as any)?.monthlyBase ?? (row as any)?.monthly_base) || 0));
+    const cfgAllowance = Math.max(0, Math.floor(Number((row as any)?.allowance) || 0));
     const tvH = Number((row as any)?.tv_hours ?? (row as any)?.tvHours) || 0;
     const ctH = Number((row as any)?.ct_hours ?? (row as any)?.ctHours) || 0;
     const tvP = Number((row as any)?.tv_pay ?? (row as any)?.tvPay) || 0;
@@ -2294,8 +2303,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const isProb = String(row?.stage || '') === 'PROBATION';
     const rate = hasSplit ? 0 : (isProb ? f.rateTV : f.rateCT);
     const hours = hasSplit ? tvH + ctH : (Number(row?.hours) || 0);
-    const standardPay = hasSplit ? tvP + ctP : (Number(row?.standardPay ?? hours * rate) || 0);
-    const luongCB = Number(input?.luong_cb) || 0;
+    const hourlyPay = hasSplit ? tvP + ctP : (Number(row?.standardPay ?? hours * rate) || 0);
+    const detailPay = isMonthly ? 0 : hourlyPay;
+    const hasManualCb = input?.luong_cb !== undefined && input?.luong_cb !== null && String(input.luong_cb).trim() !== '';
+    const luongCB = isMonthly ? (hasManualCb ? Number(input.luong_cb) || 0 : monthlyBase) : 0;
+    const allowance = cfgAllowance;
     const otExtra = Number(input?.ot_extra) || 0;
     const bonusExtra = Number(input?.bonus_extra) || 0;
     const bonusSys = Number(row?.bonus) || 0;
@@ -2304,16 +2316,23 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const kpi = Number(input?.tru_kpi) || 0;
     const dp = Number(input?.dong_phuc) || 0;
     const deduction = Number(row?.deduction) || 0;
-    const tongCong = luongCB + standardPay + otExtra + bonusTotal;
+    const monthlyTotal = luongCB + allowance;
+    // B1 hiển thị: NV lương tháng = LCB + phụ cấp; NV lương ca = tiền giờ.
+    const standardPay = isMonthly ? monthlyTotal : detailPay;
+    const tongCong = standardPay + (isMonthly ? 0 : allowance) + otExtra + bonusTotal;
     const tongLuong = tongCong - kpi - deduction;
     const thucLanh = tongLuong - ung - dp;
     return {
-      rate, isProb, hours, standardPay,
-      luongCB, otExtra, bonusSys, bonusExtra, bonusTotal, ung, kpi, dp, deduction,
+      rate, isProb, hours, standardPay, isMonthly, monthlyBase, allowance, luongCB,
+      otExtra, bonusSys, bonusExtra, bonusTotal, ung, kpi, dp, deduction,
       tongCong, tongLuong, thucLanh, vnd,
       steps: [
-        { k: 'B1', label: hasSplit ? `Lương giờ = TV ${tvH} giờ × ${vnd(f.rateTV).replace('đ', '')}/h + CT ${ctH} giờ × ${vnd(f.rateCT).replace('đ', '')}/h` : `Lương giờ = ${hours} giờ đủ công × ${vnd(rate).replace('đ', '')}/h (${isProb ? 'thử việc' : 'chính thức'})`, value: standardPay },
-        { k: 'B2', label: `TỔNG CỘNG = LCB ${vnd(luongCB)} + giờ ${vnd(standardPay)} + OT thêm ${vnd(otExtra)} + Bonus ${vnd(bonusTotal)}`, value: tongCong },
+        isMonthly
+          ? { k: 'B1', label: `Lương tháng = LCB ${vnd(luongCB)} + phụ cấp ${vnd(allowance)} (không tính ca/giờ)`, value: standardPay }
+          : { k: 'B1', label: hasSplit ? `Lương giờ = TV ${tvH} giờ × ${vnd(f.rateTV).replace('đ', '')}/h + CT ${ctH} giờ × ${vnd(f.rateCT).replace('đ', '')}/h` : `Lương giờ = ${hours} giờ đủ công × ${vnd(rate).replace('đ', '')}/h (${isProb ? 'thử việc' : 'chính thức'})`, value: standardPay },
+        isMonthly
+          ? { k: 'B2', label: `TỔNG CỘNG = Lương tháng ${vnd(standardPay)} + OT thêm ${vnd(otExtra)} + Bonus ${vnd(bonusTotal)}`, value: tongCong }
+          : { k: 'B2', label: `TỔNG CỘNG = giờ ${vnd(standardPay)} + phụ cấp ${vnd(allowance)} + OT thêm ${vnd(otExtra)} + Bonus ${vnd(bonusTotal)}`, value: tongCong },
         { k: 'B3', label: `TỔNG LƯƠNG = TỔNG CỘNG ${vnd(tongCong)} − KPI ${vnd(kpi)} − phạt trễ/vắng ${vnd(deduction)}`, value: tongLuong },
         { k: 'B4', label: `THỰC LÃNH = TỔNG LƯƠNG ${vnd(tongLuong)} − Ứng ${vnd(ung)} − Đồng phục ${vnd(dp)}`, value: thucLanh },
       ],
@@ -7024,9 +7043,13 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       <div style={{ fontWeight: 700, marginTop: '2px' }}>{getDisplayBranch(emp.default_branch_id || emp.branch_id, emp.group)} • {emp.group === 'VAN_PHONG' ? 'Văn phòng' : emp.group === 'XUONG' ? 'Sản xuất' : emp.group === 'SALE' ? 'Sale' : 'Cửa hàng'}</div>
                     </div>
                     <div style={{ backgroundColor: 'var(--bg)', borderRadius: '8px', padding: '8px 10px' }}>
-                      <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 700 }}>💰 LƯƠNG GIỜ • BẮT ĐẦU</div>
-                      <div style={{ fontWeight: 800, marginTop: '2px', color: '#059669' }}>{emp.current_rate_per_hour ? `${Number(emp.current_rate_per_hour).toLocaleString('vi-VN')} đ/h` : '21.000 đ/h'}</div>
-                      <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Từ {toISODate(emp.start_date) ? fmtDM(toISODate(emp.start_date)) : 'đang cập nhật'}</div>
+                      <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 700 }}>💰 LƯƠNG • BẮT ĐẦU</div>
+                      <div style={{ fontWeight: 800, marginTop: '2px', color: '#059669' }}>
+                        {isOfficeGroup(emp.group) ? 'Theo tháng (LCB + PC)' : `${Number(emp.current_rate_per_hour || 0).toLocaleString('vi-VN')} đ/h`}
+                      </div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                        {isOfficeGroup(emp.group) ? 'Văn phòng: lương tháng = LCB + phụ cấp' : `Từ ${toISODate(emp.start_date) ? fmtDM(toISODate(emp.start_date)) : 'đang cập nhật'}`}
+                      </div>
                     </div>
                     <div style={{ backgroundColor: 'var(--bg)', borderRadius: '8px', padding: '8px 10px' }}>
                       <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 700 }}>🕒 CA ĐÃ XẾP</div>
@@ -7306,7 +7329,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <label style={{ fontSize: '12px', fontWeight: 700 }}>SĐT (đổi số vẫn login được)<input value={editEmpForm.phone || ''} onChange={e => setEditEmpForm({ ...editEmpForm, phone: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
                 <label style={{ fontSize: '12px', fontWeight: 700 }}>Chi nhánh<select value={editEmpForm.branchId || 'CN130'} onChange={e => setEditEmpForm({ ...editEmpForm, branchId: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}><option value="CN130">CN130</option><option value="CN120">CN120</option><option value="CN261">CN261</option><option value="CN111">CN111</option></select></label>
                 <label style={{ fontSize: '12px', fontWeight: 700 }}>Khối<select value={['STORE', 'XUONG', 'VAN_PHONG', 'SALE'].includes(editEmpForm.group) ? editEmpForm.group : 'STORE'} onChange={e => setEditEmpForm({ ...editEmpForm, group: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}><option value="STORE">Cửa hàng</option><option value="XUONG">Xưởng</option><option value="VAN_PHONG">Văn phòng</option><option value="SALE">Sale</option></select></label>
-                <label style={{ fontSize: '12px', fontWeight: 700 }}>Lương giờ (đ/h)<input type="number" value={editEmpForm.rate || 21000} onChange={e => setEditEmpForm({ ...editEmpForm, rate: Number(e.target.value) })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
+                <label style={{ fontSize: '12px', fontWeight: 700 }}>Lương giờ (đ/h)<input type="number" value={isOfficeGroup(editEmpForm.group) ? 0 : (editEmpForm.rate || 21000)} onChange={e => setEditEmpForm({ ...editEmpForm, rate: Number(e.target.value) })} disabled={isOfficeGroup(editEmpForm.group)} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
                 <label style={{ fontSize: '12px', fontWeight: 700 }}>Ca cố định<select value={editEmpForm.shift || ''} onChange={e => setEditEmpForm({ ...editEmpForm, shift: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}><option value="">— Chưa gán —</option><option value="CA_1">Ca 1 (07–12)</option><option value="CA_2">Ca 2 (12–18)</option><option value="CA_3">Ca 3 (18–23)</option></select></label>
                 <label style={{ fontSize: '12px', fontWeight: 700 }}>Ngày bắt đầu<input type="date" value={editEmpForm.startDate || ''} onChange={e => setEditEmpForm({ ...editEmpForm, startDate: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
                 <label style={{ fontSize: '12px', fontWeight: 700 }}>Ngày chính thức<input type="date" value={editEmpForm.officialDate || ''} onChange={e => setEditEmpForm({ ...editEmpForm, officialDate: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
@@ -7609,7 +7632,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <th style={{ padding: '12px 18px', width: '130px' }}>Số Điện Thoại</th>
                   <th style={{ padding: '12px 18px' }}>Chi Nhánh Làm Việc</th>
                   <th style={{ padding: '12px 18px', width: '130px' }}>Khối / Vị Trí</th>
-                  <th style={{ padding: '12px 18px', width: '130px' }}>Mức Lương Giờ</th>
+                  <th style={{ padding: '12px 18px', width: '130px' }}>Mức Lương</th>
                   <th style={{ padding: '12px 18px', width: '130px' }}>Ngày Chính Thức</th>
                   <th style={{ padding: '12px 18px', width: '130px', textAlign: 'center' }}>Trạng Thái</th>
                   <th style={{ padding: '12px 18px', width: '110px', textAlign: 'center' }}>Thao Tác</th>
@@ -7678,9 +7701,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         </span>
                       </td>
                       <td style={{ padding: '14px 18px', fontWeight: 800, color: '#059669', fontSize: '13px' }}>
-                        {emp.current_rate_per_hour
-                          ? `${Number(emp.current_rate_per_hour).toLocaleString('vi-VN')} đ/h`
-                          : '25.500 đ/h'}
+                        {isOfficeGroup(emp.group) ? 'Theo tháng' : (emp.current_rate_per_hour ? `${Number(emp.current_rate_per_hour).toLocaleString('vi-VN')} đ/h` : '25.500 đ/h')}
                       </td>
                       <td style={{ padding: '14px 18px', fontSize: '12px', color: 'var(--text-muted)' }}>
                         {toISODate(emp.official_date) || toISODate(emp.start_date) || 'Đang cập nhật'}
@@ -7883,7 +7904,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <label style={{ fontSize: '12px', fontWeight: 700 }}>SĐT (đổi số vẫn login được)<input value={editEmpForm.phone || ''} onChange={e => setEditEmpForm({ ...editEmpForm, phone: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
                 <label style={{ fontSize: '12px', fontWeight: 700 }}>Chi nhánh<select value={editEmpForm.branchId || 'CN130'} onChange={e => setEditEmpForm({ ...editEmpForm, branchId: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}><option value="CN130">CN130</option><option value="CN120">CN120</option><option value="CN261">CN261</option><option value="CN111">CN111</option></select></label>
                 <label style={{ fontSize: '12px', fontWeight: 700 }}>Khối<select value={['STORE', 'XUONG', 'VAN_PHONG', 'SALE'].includes(editEmpForm.group) ? editEmpForm.group : 'STORE'} onChange={e => setEditEmpForm({ ...editEmpForm, group: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}><option value="STORE">Cửa hàng</option><option value="XUONG">Xưởng</option><option value="VAN_PHONG">Văn phòng</option><option value="SALE">Sale</option></select></label>
-                <label style={{ fontSize: '12px', fontWeight: 700 }}>Lương giờ (đ/h)<input type="number" value={editEmpForm.rate || 25500} onChange={e => setEditEmpForm({ ...editEmpForm, rate: Number(e.target.value) })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
+                <label style={{ fontSize: '12px', fontWeight: 700 }}>Lương giờ (đ/h)<input type="number" value={isOfficeGroup(editEmpForm.group) ? 0 : (editEmpForm.rate || 25500)} onChange={e => setEditEmpForm({ ...editEmpForm, rate: Number(e.target.value) })} disabled={isOfficeGroup(editEmpForm.group)} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
                 <label style={{ fontSize: '12px', fontWeight: 700 }}>Ca cố định<select value={editEmpForm.shift || ''} onChange={e => setEditEmpForm({ ...editEmpForm, shift: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}><option value="">— Chưa gán —</option><option value="CA_1">Ca 1 (07–12)</option><option value="CA_2">Ca 2 (12–18)</option><option value="CA_3">Ca 3 (18–23)</option></select></label>
                 <label style={{ fontSize: '12px', fontWeight: 700 }}>Ngày bắt đầu<input type="date" value={editEmpForm.startDate || ''} onChange={e => setEditEmpForm({ ...editEmpForm, startDate: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
                 <label style={{ fontSize: '12px', fontWeight: 700 }}>Ngày chính thức<input type="date" value={editEmpForm.officialDate || ''} onChange={e => setEditEmpForm({ ...editEmpForm, officialDate: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
@@ -13617,7 +13638,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       <td style={{ padding: '12px 16px' }}><FinBlockChip block={financeBlockOf(r)} /></td>
                       <td style={{ padding: '12px 16px' }}><strong>{r.totalShifts}</strong> <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>(<span style={{ color: '#059669', fontWeight: 700 }}>{r.full}</span>/<span style={{ color: '#B45309', fontWeight: 700 }}>{r.partial}</span>/<span style={{ color: '#DC2626', fontWeight: 700 }}>{r.absent}</span>)</span></td>
                       <td style={{ padding: '12px 16px', fontWeight: 700 }}>{r.hours}</td>
-                      <td style={{ padding: '12px 16px' }}>{Number(r.rate || 0).toLocaleString('vi-VN')}đ</td>
+                      <td style={{ padding: '12px 16px' }}>{r.payMode === 'MONTHLY' ? <span style={{ color: '#1D4ED8', fontWeight: 700 }} title="NV lương tháng — không có đơn giá giờ">Theo tháng</span> : `${Number(r.rate || 0).toLocaleString('vi-VN')}đ`}</td>
                       <td style={{ padding: '12px 16px', fontWeight: 700 }}>
                         {r.payMode === 'MONTHLY'
                           ? <span title={`Lương CB ${Number(r.monthlyBase || 0).toLocaleString('vi-VN')}đ + phụ cấp ${Number(r.allowance || 0).toLocaleString('vi-VN')}đ`}>{Number((Number(r.monthlyBase) || 0) + (Number(r.allowance) || 0)).toLocaleString('vi-VN')}đ</span>
@@ -13656,7 +13677,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                   <td style={{ padding: '6px 8px' }}><span style={{ fontSize: '11px', fontWeight: 800, padding: '2px 8px', borderRadius: '999px', backgroundColor: st.bg, color: st.c }}>{st.t}</span></td>
                                   <td style={{ padding: '6px 8px', fontSize: '11px' }}>{s.checkIn ? String(s.checkIn).slice(11, 16) : '—'}</td>
                                   <td style={{ padding: '6px 8px' }}>{s.lateMin > 0 ? `${s.lateMin}p` : '—'}</td>
-                                  <td style={{ padding: '6px 8px', fontWeight: 700 }}>{Number(s.shiftPay || 0).toLocaleString('vi-VN')}đ</td>
+                                  <td style={{ padding: '6px 8px', fontWeight: 700 }}>{r.payMode === 'MONTHLY' ? '—' : Number(s.shiftPay || 0).toLocaleString('vi-VN') + 'đ'}</td>
                                   <td style={{ padding: '6px 8px', color: '#DC2626' }}>{Number(s.fineAmount || 0) > 0 ? `${Number(s.fineAmount).toLocaleString('vi-VN')}đ` : '—'}</td>
                                 </tr>
                               );
@@ -14067,7 +14088,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
                   <th style={{ padding: '10px 14px' }}>Nhân viên</th>
                   <th style={{ padding: '10px 10px' }}>Khối</th>
-                  <th style={{ padding: '10px 14px' }}>B1 Lương giờ</th>
+                  <th style={{ padding: '10px 14px' }}>B1 Lương ca / tháng</th>
                   <th style={{ padding: '10px 14px' }}>B2 Tổng cộng</th>
                   <th style={{ padding: '10px 14px' }}>B3 Tổng lương</th>
                   <th style={{ padding: '10px 14px' }}>B4 Thực lãnh</th>
@@ -15601,6 +15622,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         showToast('Chưa chọn nhân viên để xuất hồ sơ!');
         return;
       }
+      const extraRows: [string, string][] = isOfficeGroup(profEmp.group)
+        ? []
+        : [['Lương giờ', String(profEmp.current_rate_per_hour || '')]];
       const rows: [string, string][] = [
         ['Họ tên', profEmp.full_name || ''],
         ['Mã NV', profEmp.employee_code || ''],
@@ -15615,7 +15639,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         ['Trạng thái', profEmp.employment_status || ''],
         ['Ngày vào làm', profEmp.start_date || ''],
         ['Ngày chính thức', profEmp.official_date || ''],
-        ['Lương giờ', String(profEmp.current_rate_per_hour || '')],
+        ...extraRows,
         ['Ngày công (điểm danh)', String(workDays)],
         ['Lượt check-in', String(empIns.length)],
         ['Đi trễ (lượt)', String(lateCount)],
@@ -15675,7 +15699,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         + row('Trạng thái', statusVI)
         + row('Ngày vào làm', profEmp.start_date)
         + row('Ngày chính thức', profEmp.official_date)
-        + row('Lương giờ', profEmp.current_rate_per_hour ? `${Number(profEmp.current_rate_per_hour).toLocaleString('vi-VN')}đ/giờ` : '—')
+        + (isOfficeGroup(profEmp.group) ? '' : row('Lương giờ', profEmp.current_rate_per_hour ? `${Number(profEmp.current_rate_per_hour).toLocaleString('vi-VN')}đ/giờ` : '—'))
         + `</table>`
         + sec('3. Hiệu suất chấm công (dữ liệu hệ thống)')
         + `<table style="border-collapse:collapse;width:100%;font-size:13px;">`
@@ -16215,7 +16239,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     </div>
                     <label style={{ fontSize: '12px', fontWeight: 700 }}>Chi nhánh<select value={editEmpForm.branchId || 'CN130'} onChange={e => setEditEmpForm({ ...editEmpForm, branchId: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}>{(branches || []).length > 0 ? (branches || []).map((b: any) => <option key={b.branch_id || b.id} value={b.branch_id || b.id}>{b.branch_id || b.id}</option>) : (<><option value="CN130">CN130</option><option value="CN120">CN120</option><option value="CN261">CN261</option><option value="CN111">CN111</option></>)}</select></label>
                     <label style={{ fontSize: '12px', fontWeight: 700 }}>Khối<select value={['STORE', 'XUONG', 'VAN_PHONG', 'SALE'].includes(editEmpForm.group) ? editEmpForm.group : 'STORE'} onChange={e => setEditEmpForm({ ...editEmpForm, group: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}><option value="STORE">Cửa hàng</option><option value="XUONG">Xưởng</option><option value="VAN_PHONG">Văn phòng</option><option value="SALE">Sale</option></select></label>
-                    <label style={{ fontSize: '12px', fontWeight: 700 }}>Lương giờ (đ/h)<input type="number" value={editEmpForm.rate || 21000} onChange={e => setEditEmpForm({ ...editEmpForm, rate: Number(e.target.value) })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
+                    <label style={{ fontSize: '12px', fontWeight: 700 }}>Lương giờ (đ/h)<input type="number" value={isOfficeGroup(editEmpForm.group) ? 0 : (editEmpForm.rate || 21000)} onChange={e => setEditEmpForm({ ...editEmpForm, rate: Number(e.target.value) })} disabled={isOfficeGroup(editEmpForm.group)} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
                     <label style={{ fontSize: '12px', fontWeight: 700 }}>Ca cố định<select value={editEmpForm.shift || ''} onChange={e => setEditEmpForm({ ...editEmpForm, shift: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}><option value="">— Chưa gán —</option><option value="CA_1">Ca 1 (07–12)</option><option value="CA_2">Ca 2 (12–18)</option><option value="CA_3">Ca 3 (18–23)</option></select></label>
                     <label style={{ fontSize: '12px', fontWeight: 700 }}>Ngày bắt đầu<input type="date" value={editEmpForm.startDate || ''} onChange={e => setEditEmpForm({ ...editEmpForm, startDate: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>
                     <label style={{ fontSize: '12px', fontWeight: 700 }}>Ngày chính thức<input type="date" value={editEmpForm.officialDate || ''} onChange={e => setEditEmpForm({ ...editEmpForm, officialDate: e.target.value })} style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }} /></label>

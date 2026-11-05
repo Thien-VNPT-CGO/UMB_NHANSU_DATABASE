@@ -107,7 +107,7 @@ function renderSlip(p: any): string {
     </table>
 
     <table class="ps-table">
-      ${lineItem('Lương theo giờ', vnd(p?.standard_pay))}
+      ${Number(p?.rate_snapshot) > 0 ? lineItem('Lương theo ca (giờ)', vnd(p?.standard_pay)) : ''}
       ${lineItem('Lương cơ bản (tháng)', vnd(p?.luong_cb))}
       ${Number(p?.allowance) > 0 ? lineItem('Phụ cấp (theo cấu hình Kế toán)', vnd(p?.allowance)) : ''}
       ${lineItem('OT thêm (nhập tay)', vnd(p?.ot_extra))}

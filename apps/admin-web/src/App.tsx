@@ -4294,7 +4294,7 @@ export function App() {
                       <th style={{ padding: '12px 20px' }}>SĐT Chuẩn Hóa</th>
                       <th style={{ padding: '12px 20px' }}>Khối / Nhóm</th>
                       <th style={{ padding: '12px 20px' }}>Chi Nhánh</th>
-                      <th style={{ padding: '12px 20px' }}>Lương Giờ (VND)</th>
+                      <th style={{ padding: '12px 20px' }}>Đơn Giá Lương</th>
                       <th style={{ padding: '12px 20px' }}>Lương CB <span style={{ textTransform: 'none' }}>(Kế toán)</span></th>
                       <th style={{ padding: '12px 20px' }}>Phụ cấp <span style={{ textTransform: 'none' }}>(Kế toán)</span></th>
                       <th style={{ padding: '12px 20px' }}>Hình Thức Lương</th>
@@ -4349,7 +4349,12 @@ export function App() {
                           </span>
                         </td>
                         <td style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--success)' }}>
-                          {emp.current_rate_per_hour?.toLocaleString('vi-VN')} đ/h
+                          {(() => {
+                            const mode = effectivePayMode(emp.group, salaryConfigs[emp.employee_id]?.pay_mode);
+                            return mode === 'MONTHLY'
+                              ? <span style={{ color: '#1D4ED8' }} title="NV lương tháng — không có lương theo ca/giờ">Theo tháng</span>
+                              : `${(emp.current_rate_per_hour || 0).toLocaleString('vi-VN')} đ/h`;
+                          })()}
                         </td>
                         <td style={{ padding: '14px 20px', fontWeight: 700, color: '#065F46', whiteSpace: 'nowrap' }} title={(() => { const c = salaryConfigs[emp.employee_id]; return c ? "Kế toán đã cấu hình (cập nhật " + (c.updatedAt ? new Date(c.updatedAt).toLocaleString('vi-VN') : '—') + ")" : "Kế toán chưa cấu hình lương cơ bản cho NV này"; })()}>
                           {(() => { const v = Number(salaryConfigs[emp.employee_id]?.base_salary ?? 0); return v > 0 ? v.toLocaleString('vi-VN') + ' đ' : <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>—</span>; })()}
@@ -5592,6 +5597,7 @@ export function App() {
             swaps={swaps}
             payrollRuns={payrollRuns}
             branches={branches}
+            salaryConfigs={salaryConfigs}
             systemNotifications={systemNotifications}
             showToast={(msg) => {
               setSuccessMsg(msg);
