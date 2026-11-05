@@ -2122,6 +2122,29 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoggedIn, serverClockOffsetMs]);
 
+  // KHỐI VĂN PHÒNG: lưới an toàn đồng bộ — ngoài Socket.IO, tự tải lại dữ liệu
+  // (lịch, điểm danh, công, lương, phiếu) định kỳ 45s và khi mở lại app / có mạng.
+  useEffect(() => {
+    const isOfficeGroup = String((employee as any)?.group || '').toUpperCase() === 'VAN_PHONG';
+    if (!isLoggedIn || !isOfficeGroup) return;
+    let stopped = false;
+    const bump = () => {
+      if (stopped || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) return;
+      setSchedRefresh((k) => k + 1);
+    };
+    const timer = setInterval(bump, 45_000);
+    document.addEventListener('visibilitychange', bump);
+    window.addEventListener('focus', bump);
+    window.addEventListener('online', bump);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', bump);
+      window.removeEventListener('focus', bump);
+      window.removeEventListener('online', bump);
+    };
+  }, [isLoggedIn, employee?.group]);
+
   const fetchMySwapsRef = useRef(fetchMySwaps);
   fetchMySwapsRef.current = fetchMySwaps;
   const fetchMyAdjustmentsRef = useRef(fetchMyAdjustments);
