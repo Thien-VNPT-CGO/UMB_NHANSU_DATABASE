@@ -797,4 +797,102 @@ body.theme-halloween .btn-primary:hover {
   box-shadow: 0 4px 12px rgba(219, 39, 119, 0.25);
 }
 
+/* ============================================================
+   THANH TAB CON (nhóm chức năng lớn) — Cổng HR
+   ============================================================ */
+.subtabs-wrap {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 8px 24px;
+  position: relative;
+  z-index: 6;
+}
+.subtabs-inner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.subtabs-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  font-weight: 800;
+  color: var(--brand);
+  white-space: nowrap;
+  padding-right: 12px;
+  border-right: 1px solid var(--border);
+}
+.subtabs-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--success);
+  background: var(--success-soft);
+  border-radius: 999px;
+  padding: 2px 9px;
+  margin-left: 4px;
+}
+.subtabs-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.55);
+  animation: subtabs-pulse 1.8s infinite;
+}
+@keyframes subtabs-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5); }
+  70% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+.subtabs-list {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+.subtab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 13px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.16s ease;
+}
+.subtab-btn:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+  background: var(--brand-soft);
+}
+.subtab-btn.is-active {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #FFF;
+  box-shadow: 0 3px 10px rgba(232, 93, 146, 0.28);
+}
+.subtab-btn.is-active:hover {
+  background: var(--brand-hover);
+  border-color: var(--brand-hover);
+  color: #FFF;
+}
+@media (max-width: 820px) {
+  .subtabs-wrap { padding: 8px 12px; }
+  .subtabs-heading { border-right: none; padding-right: 0; }
+}
+
 

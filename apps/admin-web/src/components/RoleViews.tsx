@@ -4393,7 +4393,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
-            <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>1. Dashboard Quản Trị Nhân Sự (HR)</h1>
+            <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>Dashboard Quản Trị Nhân Sự (HR)</h1>
             <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Vận hành tuyển dụng, thử việc, đánh giá chính thức, lịch làm việc và chấm công</p>
           </div>
           <button className="btn-primary" onClick={openNewEmpModal} style={{ padding: '8px 16px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -4735,7 +4735,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)', margin: 0 }}>
-                2. Danh Sách Ứng Viên Mới (Google Forms)
+                Ứng Viên Mới (Google Forms)
               </h1>
               <span style={{
                 display: 'inline-flex',
@@ -5541,7 +5541,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
-            <h1 style={{ fontSize: '20px', fontWeight: 800 }}>3. Quản Lý Lịch Phỏng Vấn & BOT Zalo Cá Nhân</h1>
+            <h1 style={{ fontSize: '20px', fontWeight: 800 }}>Quản Lý Lịch Phỏng Vấn & BOT Zalo Cá Nhân</h1>
             <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
               Tích hợp Zalo cá nhân của HR qua mã QR quét thật, BOT gửi thư mời kèm lịch hẹn đến Zalo ứng viên (link Meet do HR dán hoặc cấu hình sẵn)
             </p>
@@ -6801,7 +6801,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
           <div>
             <h1 style={{ fontSize: '22px', fontWeight: 800, margin: 0, color: 'var(--text)' }}>
-              4. Quản Lý Nhân Viên Thử Việc (12 Ngày)
+              Nhân Viên Thử Việc (12 Ngày)
             </h1>
             <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--text-muted)' }}>
               Theo dõi 12 ngày thử việc (7 làm / 5 OFF), kết quả làm bài TEST và đề xuất lên chính thức. Bạn nào đẩy nhanh (2 ca/ngày) hiện badge ⚡ ở cột Mật độ ca.
@@ -7436,7 +7436,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
           <div>
             <h1 style={{ fontSize: '22px', fontWeight: 800, margin: 0, color: 'var(--text)' }}>
-              5. Danh Sách Nhân Viên Chính Thức
+              Danh Sách Nhân Viên Chính Thức
             </h1>
             <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--text-muted)' }}>
               Quản lý danh sách nhân sự chính thức, mức lương giờ chuẩn 25.500 đ/h và nhập khẩu dữ liệu hàng loạt.
@@ -8986,7 +8986,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
               <h1 style={{ fontSize: '18px', fontWeight: 800, margin: 0, color: 'var(--text)' }}>
-                7. Lịch Làm Việc Tuần & Giám Sát Điểm Danh Realtime
+                Lịch Làm Việc Tuần & Giám Sát Điểm Danh Realtime
               </h1>
               <span style={{
                 display: 'inline-flex',
@@ -10972,7 +10972,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     return (
       <div id="sec-leave" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h1 style={{ fontSize: '20px', fontWeight: 800 }}>8. Lịch OFF 2 ngày/tuần</h1>
+          <h1 style={{ fontSize: '20px', fontWeight: 800 }}>Lịch OFF 2 ngày/tuần</h1>
         </div>
         <div style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 'var(--radius-md)', padding: '10px 14px', fontSize: '12px', color: '#1E40AF' }}>
           Lịch OFF 2 ngày/tuần (HANG_TUAN) <strong>tự động ghi nhận, không cần duyệt</strong> — theo dõi ở bảng bên dưới.
@@ -11183,7 +11183,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     return (
       <div id="sec-support" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <div>
-          <h1 style={{ fontSize: '20px', fontWeight: 800 }}>10. Chuyển Ca Hỗ Trợ Chi Nhánh</h1>
+          <h1 style={{ fontSize: '20px', fontWeight: 800 }}>Chuyển Ca Hỗ Trợ Chi Nhánh</h1>
           <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
             A bận nhường ca cho B (nhân viên chính thức, thường khác chi nhánh) làm thay. B xác nhận trên Cổng Nhân Viên là ca chuyển sang B ngay, lịch 2 cổng đồng bộ realtime.
           </p>
@@ -11296,7 +11296,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       <div id="sec-swap" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
-            <h1 style={{ fontSize: '20px', fontWeight: 800 }}>9. Giám Sát & Điều Phối Đổi Ca / Nhường Ca</h1>
+            <h1 style={{ fontSize: '20px', fontWeight: 800 }}>Giám Sát & Điều Phối Đổi Ca / Nhường Ca</h1>
             <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
               Theo dõi quy trình Tráo đổi ca (A ⇄ B) & Điều phối Nhường ca khi NV không tìm được người thay
             </p>
@@ -11672,7 +11672,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       <div id="sec-attendance" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
-            <h1 style={{ fontSize: '20px', fontWeight: 800 }}>10. Bảng Chấm Công Thời Gian Thực</h1>
+            <h1 style={{ fontSize: '20px', fontWeight: 800 }}>Bảng Chấm Công Thời Gian Thực</h1>
             <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
               Giám sát check-in, check-out, hình ảnh áo hồng + bảng tên, tọa độ GPS vệ tinh (100% Realtime)
             </p>
@@ -12381,7 +12381,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
-            <h1 style={{ fontSize: '20px', fontWeight: 800, margin: 0 }}>11. Bổ Sung & Điều Chỉnh Dữ Liệu Công</h1>
+            <h1 style={{ fontSize: '20px', fontWeight: 800, margin: 0 }}>Bổ Sung & Điều Chỉnh Dữ Liệu Công</h1>
             <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '4px 0 0' }}>Xử lý quên check-in/out hoặc sự cố GPS/Camera gửi từ Cổng Nhân Viên (có audit trail). NV chính thức <strong>1 phiếu/tuần, tối đa 4 phiếu/tháng</strong> (tuần không dùng cộng dồn trong tháng, qua tháng reset); phiếu quá <strong>72 giờ</strong> kể từ lúc nhận phiếu chưa duyệt thì hệ thống <strong>tự động hủy</strong> (giữ phiếu để đối soát, tự xóa sau 7 ngày nữa). <strong>Chỉ hiển thị phiếu tháng này</strong> và chia theo tuần — hết tháng tự ẩn khỏi cổng admin (Drive vẫn lưu đủ các tháng).</p>
           </div>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -12686,7 +12686,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
-            <h1 style={{ fontSize: '20px', fontWeight: 800 }}>12. Quản Lý Ngân Hàng Câu Hỏi & Bài Thi TEST</h1>
+            <h1 style={{ fontSize: '20px', fontWeight: 800 }}>Quản Lý Ngân Hàng Câu Hỏi & Bài Thi TEST</h1>
             <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
               Bộ đề 25 câu hỏi trắc nghiệm đánh giá đầu ra thử việc (12 ngày) & sát hạch nghiệp vụ định kỳ Ụm Bò Milk V5.1
             </p>
@@ -12938,7 +12938,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-          <h1 style={{ fontSize: '20px', fontWeight: 800, margin: 0 }}>13. Báo Cáo Phân Tích Nhân Sự (HR Reports)</h1>
+          <h1 style={{ fontSize: '20px', fontWeight: 800, margin: 0 }}>Báo Cáo Phân Tích Nhân Sự (HR Reports)</h1>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)' }}>Kỳ báo cáo:</label>
             <input
@@ -13105,7 +13105,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-           <h1 style={{ fontSize: '20px', fontWeight: 800 }}>14. Trung Tâm Thông Báo Nghiệp Vụ HR</h1>
+           <h1 style={{ fontSize: '20px', fontWeight: 800 }}>Trung Tâm Thông Báo Nghiệp Vụ HR</h1>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <select
               value={notifFilter}
@@ -15915,7 +15915,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
           <div>
-            <h1 style={{ fontSize: '20px', fontWeight: 800, margin: 0 }}>15. Hồ Sơ Nhân Viên Ụm Bò Milk</h1>
+            <h1 style={{ fontSize: '20px', fontWeight: 800, margin: 0 }}>Hồ Sơ Nhân Viên Ụm Bò Milk</h1>
             <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '4px 0 0' }}>
               Dashboard trực quan theo nhân viên bán hàng — 100% dữ liệu thật từ hồ sơ, chấm công và lương hệ thống.
             </p>

@@ -163,27 +163,30 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'office-approvals', label: '18. Duyệt Văn Phòng', icon: FileText },
     { id: 'fin-salary-config', label: '19. Cấu hình Lương CB & Phụ cấp (Theo Khối)', icon: DollarSign },
   ],
+  /** HR giữ đúng THỨ TỰ QUY TRÌNH TUYỂN DỤNG: Ứng viên → Phỏng vấn →
+   *  Thử việc → Chính thức → Hồ sơ. Tab `staff` là bản sao hoàn toàn của
+   *  `hr-official` nên đã được gỡ khỏi menu HR (vẫn giữ alias để deep-link cũ
+   *  không gãy). Nav thực tế của HR render theo HR_TAB_GROUPS bên dưới. */
   HR: [
     { id: 'hr-dashboard', label: '1. Dashboard HR', icon: Building2 },
-    { id: 'activation', label: '2. PIN & TK Nhân viên', icon: FileCheck },
-    { id: 'hr-candidates', label: '3. Ứng viên mới', icon: UserCheck },
-    { id: 'hr-interviews', label: '4. Phỏng vấn & BOT Zalo', icon: Calendar },
-    { id: 'hr-probation', label: '5. Nhân viên Thử việc', icon: Users },
-    { id: 'hr-official', label: '6. Nhân viên Chính thức', icon: Users },
+    { id: 'hr-candidates', label: '2. Ứng viên mới', icon: UserCheck },
+    { id: 'hr-interviews', label: '3. Phỏng vấn & BOT Zalo', icon: Calendar },
+    { id: 'hr-probation', label: '4. Nhân viên Thử việc', icon: Users },
+    { id: 'hr-official', label: '5. Nhân viên Chính thức', icon: Users },
+    { id: 'hr-profile', label: '6. Hồ Sơ Nhân Viên', icon: IdCard },
     { id: 'hr-schedule', label: '7. Lịch làm việc', icon: Calendar },
     { id: 'hr-leave', label: '8. Nghỉ OFF', icon: Clock },
     { id: 'hr-swap', label: '9. Đổi ca', icon: RefreshCw },
     { id: 'hr-support', label: '10. Chuyển ca hỗ trợ CN', icon: Send },
     { id: 'hr-attendance', label: '11. Chấm công', icon: CheckCircle },
     { id: 'hr-adjustments', label: '12. Bổ sung/Điều chỉnh công', icon: FileText },
-    { id: 'hr-tests', label: '13. TEST nhân viên', icon: FileCheck },
-    { id: 'hr-reports', label: '14. Báo cáo HR', icon: FileSpreadsheet },
-    { id: 'hr-notifications', label: '15. Thông báo', icon: Bell },
-    { id: 'hr-profile', label: '16. Hồ Sơ Nhân Viên Ụm Bò Milk', icon: IdCard },
-    { id: 'bank-changes', label: '17. Duyệt đổi STK', icon: CreditCard },
-    { id: 'live-map', label: '18. Bản đồ GPS', icon: MapPin },
+    { id: 'live-map', label: '13. Bản đồ GPS Realtime', icon: MapPin },
+    { id: 'hr-tests', label: '14. TEST nhân viên', icon: FileCheck },
+    { id: 'hr-reports', label: '15. Báo cáo HR', icon: FileSpreadsheet },
+    { id: 'hr-notifications', label: '16. Thông báo HR', icon: Bell },
+    { id: 'activation', label: '17. PIN & TK Nhân viên', icon: FileCheck },
+    { id: 'bank-changes', label: '18. Duyệt đổi STK', icon: CreditCard },
     { id: 'office-approvals', label: '19. Duyệt Văn Phòng', icon: FileText },
-    { id: 'staff', label: '20. Nhân viên (Theo Khối)', icon: Users },
   ],
   STORE: [
     { id: 'store-dashboard', label: '1. Dashboard Store', icon: Store },
@@ -230,6 +233,129 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
   ],
 };
 
+export interface RoleSubTab { id: string; label: string; icon: any }
+export interface RoleTabGroup { id: string; label: string; icon: any; tabs: RoleSubTab[] }
+
+/** CỔNG HR — gom 19 màn hình rời thành 8 NHÓM LỚN theo đúng quy trình nhân sự.
+ *  Mỗi nhóm là 1 tab trên sidebar; bên trong chia tab con, mỗi chức năng chỉ
+ *  còn đúng 1 tab con (không lặp màn hình). Dữ liệu/realtime giữ nguyên vì các
+ *  tab con vẫn dùng chính id màn hình cũ. */
+export const HR_TAB_GROUPS: RoleTabGroup[] = [
+  {
+    id: 'hr-group-dashboard',
+    label: '1. Dashboard HR',
+    icon: Building2,
+    tabs: [{ id: 'hr-dashboard', label: 'Tổng quan nhân sự', icon: Building2 }],
+  },
+  {
+    id: 'hr-group-recruitment',
+    label: '2. Tuyển dụng',
+    icon: UserCheck,
+    tabs: [
+      { id: 'hr-candidates', label: 'Ứng viên mới', icon: UserCheck },
+      { id: 'hr-interviews', label: 'Phỏng vấn & BOT Zalo', icon: Calendar },
+    ],
+  },
+  {
+    id: 'hr-group-staff',
+    label: '3. Nhân sự',
+    icon: Users,
+    tabs: [
+      { id: 'hr-probation', label: 'Thử việc', icon: Users },
+      { id: 'hr-official', label: 'Chính thức', icon: Users },
+      { id: 'hr-profile', label: 'Hồ sơ nhân viên', icon: IdCard },
+    ],
+  },
+  {
+    id: 'hr-group-schedule',
+    label: '4. Lịch & Ca',
+    icon: Calendar,
+    tabs: [
+      { id: 'hr-schedule', label: 'Lịch làm việc', icon: Calendar },
+      { id: 'hr-leave', label: 'Nghỉ OFF', icon: Clock },
+      { id: 'hr-swap', label: 'Đổi ca', icon: RefreshCw },
+      { id: 'hr-support', label: 'Chuyển ca hỗ trợ CN', icon: Send },
+    ],
+  },
+  {
+    id: 'hr-group-attendance',
+    label: '5. Chấm công',
+    icon: CheckCircle,
+    tabs: [
+      { id: 'hr-attendance', label: 'Chấm công', icon: CheckCircle },
+      { id: 'hr-adjustments', label: 'Bổ sung / Điều chỉnh công', icon: FileText },
+      { id: 'live-map', label: 'Bản đồ GPS Realtime', icon: MapPin },
+    ],
+  },
+  {
+    id: 'hr-group-evaluation',
+    label: '6. TEST & Báo cáo',
+    icon: FileCheck,
+    tabs: [
+      { id: 'hr-tests', label: 'TEST nhân viên', icon: FileCheck },
+      { id: 'hr-reports', label: 'Báo cáo HR', icon: FileSpreadsheet },
+    ],
+  },
+  {
+    id: 'hr-group-notifications',
+    label: '7. Thông báo',
+    icon: Bell,
+    tabs: [{ id: 'hr-notifications', label: 'Thông báo HR', icon: Bell }],
+  },
+  {
+    id: 'hr-group-admin',
+    label: '8. TK & Phê duyệt',
+    icon: Shield,
+    tabs: [
+      { id: 'activation', label: 'PIN & TK Nhân viên', icon: FileCheck },
+      { id: 'bank-changes', label: 'Duyệt đổi STK', icon: CreditCard },
+      { id: 'office-approvals', label: 'Duyệt Văn Phòng', icon: FileText },
+    ],
+  },
+];
+
+/** Nhóm tab lớn cho từng vai trò (hiện áp dụng cho HR). Vai trò không có
+ *  nhóm sẽ render danh sách phẳng ROLE_TABS như cũ. */
+export const ROLE_TAB_GROUPS: Record<string, RoleTabGroup[]> = {
+  HR: HR_TAB_GROUPS,
+};
+
+/** Tìm nhóm lớn đang chứa tab con (dùng cho nav + thanh tab con). */
+export function findTabGroup(role: string | undefined, tabId: string): RoleTabGroup | null {
+  const groups = role ? ROLE_TAB_GROUPS[role] : undefined;
+  if (!groups) return null;
+  return groups.find((g) => g.tabs.some((t) => t.id === tabId)) || null;
+}
+
+/** Tab con HR -> loại dữ liệu cần tải lại khi mở tab hoặc khi Socket.IO gián đoạn. */
+export const HR_ENTITY_BY_TAB: Record<string, string> = {
+  'hr-candidates': 'candidates',
+  'hr-interviews': 'candidates',
+  'hr-schedule': 'schedules',
+  'hr-leave': 'leaves',
+  'hr-swap': 'schedules',
+  'hr-support': 'schedules',
+  activation: 'accounts',
+  'hr-notifications': 'notifications',
+  'hr-tests': 'tests',
+  'hr-adjustments': 'adjustments',
+  'hr-attendance': 'attendance',
+  'live-map': 'attendance',
+};
+
+/** Báo các tab con tự tải dữ liệu riêng (CustomEvent) khi mở tab / mất socket. */
+export function dispatchHrTabReload(tabId: string) {
+  try {
+    if (tabId === 'hr-leave') window.dispatchEvent(new CustomEvent('ubm:leaves-reload'));
+    if (tabId === 'hr-schedule') window.dispatchEvent(new CustomEvent('ubm:schedule-reload'));
+    if (tabId === 'hr-adjustments') window.dispatchEvent(new CustomEvent('ubm:adjustments-reload'));
+    if (tabId === 'hr-tests') window.dispatchEvent(new CustomEvent('ubm:tests-reload'));
+    if (tabId === 'hr-swap' || tabId === 'hr-support') window.dispatchEvent(new CustomEvent('ubm:swaps-reload'));
+    if (tabId === 'hr-attendance' || tabId === 'live-map') window.dispatchEvent(new CustomEvent('ubm:attendance-reload'));
+  } catch { /* non-fatal */ }
+}
+
+
 /** Tab FINANCE (Kế toán) tách/đổi tên theo quy trình lương:
  *  ánh xạ id cũ → tab mới để tab đã lưu trong trình duyệt / deep-link không gãy. */
 export const FINANCE_TAB_ALIASES: Record<string, string> = {
@@ -255,9 +381,16 @@ export const ADMIN_TAB_ALIASES: Record<string, string> = {
   'hr-attendance': 'hr-adjustments',
 };
 
+/** Tab HR đã gộp/nhóm: `staff` trùng hoàn toàn với `hr-official` nên gỡ khỏi
+ *  menu HR, deep-link cũ tự chuyển về đúng màn hình. */
+export const HR_TAB_ALIASES: Record<string, string> = {
+  staff: 'hr-official',
+};
+
 export function resolveAdminTab(role: string | undefined, tabId: string): string {
   if (role === 'ADMIN' && ADMIN_TAB_ALIASES[tabId]) return ADMIN_TAB_ALIASES[tabId];
   if (role === 'FINANCE' && FINANCE_TAB_ALIASES[tabId]) return FINANCE_TAB_ALIASES[tabId];
+  if (role === 'HR' && HR_TAB_ALIASES[tabId]) return HR_TAB_ALIASES[tabId];
   return tabId;
 }
 
@@ -473,23 +606,27 @@ export function App() {
   });
   const [activeTab, setActiveTab] = useState<string>(() => {
     const savedTab = localStorage.getItem('ubm_active_tab');
-    // Tab gộp cũ (operations/system/safety) -> tab tách mới tương ứng.
-    if (savedTab) {
-      const legacy: Record<string, string> = { operations: 'branches', system: 'policies', safety: 'audit', 'hr-attendance': 'hr-adjustments' };
-      return legacy[savedTab] || FINANCE_TAB_ALIASES[savedTab] || savedTab;
-    }
     try {
       const savedUser = localStorage.getItem('ubm_admin_user');
-      if (savedUser) {
-        const u = JSON.parse(savedUser);
-        if (u.role === 'DIRECTOR') return 'director-payroll';
-        if (u.role === 'IT') return 'internal-workflow';
-        if (u.role === 'ADMIN') return 'dashboard';
-        if (u.role === 'HR') return 'hr-dashboard';
-        if (u.role === 'STORE') return 'store-dashboard';
-        if (u.role === 'FINANCE') return 'fin-dashboard';
-        if (u.role === 'MARKETING') return 'mkt-dashboard';
+      const savedRole: string | undefined = savedUser ? JSON.parse(savedUser)?.role : undefined;
+      if (savedTab) {
+        const legacy: Record<string, string> = {
+          operations: 'branches',
+          system: 'policies',
+          safety: 'audit',
+          // Riêng ADMIN đã khóa tab Chấm công -> chuyển về Bổ sung công.
+          // HR vẫn dùng hr-attendance bình thường (tab con nhóm Chấm công).
+          ...(savedRole === 'ADMIN' ? { 'hr-attendance': 'hr-adjustments' } : {}),
+        };
+        return legacy[savedTab] || FINANCE_TAB_ALIASES[savedTab] || HR_TAB_ALIASES[savedTab] || savedTab;
       }
+      if (savedRole === 'DIRECTOR') return 'director-payroll';
+      if (savedRole === 'IT') return 'internal-workflow';
+      if (savedRole === 'ADMIN') return 'dashboard';
+      if (savedRole === 'HR') return 'hr-dashboard';
+      if (savedRole === 'STORE') return 'store-dashboard';
+      if (savedRole === 'FINANCE') return 'fin-dashboard';
+      if (savedRole === 'MARKETING') return 'mkt-dashboard';
     } catch {}
     return 'dashboard';
   });
@@ -1323,12 +1460,39 @@ export function App() {
     }, 150);
   };
 
+  // MỞ TAB CON HR: tải ngay dữ liệu mới nhất của đúng nghiệp vụ đó (không chờ
+  // socket/vòng poll) — dữ liệu luôn tươi ngay khi HR chuyển tab.
+  useEffect(() => {
+    if (!currentUser || currentUser.role !== 'HR') return;
+    const entity = HR_ENTITY_BY_TAB[activeTab];
+    if (!entity) return;
+    scheduleReload(currentUser, entity);
+    dispatchHrTabReload(activeTab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, currentUser?.role]);
+
+  // LƯỚI AN TOÀN REALTIME: khi Socket.IO mất kết nối (mạng chập chờn, server
+  // ngủ, proxy chặn websocket...), tự đồng bộ lại dữ liệu của tab HR đang mở
+  // mỗi 45 giây. Khi socket đã nối thì bỏ qua hoàn toàn (không tải trùng).
+  useEffect(() => {
+    if (!currentUser) return;
+    const timer = setInterval(() => {
+      if (socketConnectedRef.current) return;
+      if (document.visibilityState !== 'visible') return;
+      scheduleReload(currentUser, HR_ENTITY_BY_TAB[activeTab] || 'employees');
+      dispatchHrTabReload(activeTab);
+    }, 45000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser, activeTab]);
+
   useEffect(() => {
     if (!currentUser) return;
     const token = getAuthToken();
     if (!token) return;
 
     let socket: Socket | null = null;
+
     // Chống vòng lặp refresh-reconnect: tối đa 3 lần gia hạn token cho socket,
     // quá 3 lần là token thật sự bị thu hồi (khóa/đổi PIN) -> để logout xử lý.
     let socketAuthRetries = 0;
@@ -2793,36 +2957,88 @@ export function App() {
 
         {/* Dynamic Role Navigation Items */}
         <nav style={{ padding: '12px 8px', flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '3px' }}>
-          {(ROLE_TABS[currentUser?.role || 'ADMIN'] || ROLE_TABS.ADMIN).map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '10px',
-                  padding: '9px 12px',
-                  borderRadius: 'var(--radius-sm)',
-                  fontSize: '12.5px',
-                  fontWeight: 600,
-                  color: isActive ? 'var(--brand)' : 'var(--text)',
-                  backgroundColor: isActive ? 'var(--brand-soft)' : 'transparent',
-                  border: 'none',
-                  cursor: 'pointer',
-                  textAlign: 'left',
-                  width: '100%',
-                  boxSizing: 'border-box',
-                }}
-              >
-                <Icon size={16} style={{ flexShrink: 0 }} />
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tab.label}</span>
-                {isBetaFeature(tab.id) && <BetaChip />}
-              </button>
-            );
-          })}
+          {(() => {
+            const role = currentUser?.role || 'ADMIN';
+            const groups = ROLE_TAB_GROUPS[role];
+            // Vai trò có nhóm (HR): sidebar chỉ hiện tab lớn, tab con nằm trong nội dung.
+            if (groups) {
+              return groups.map((group) => {
+                const Icon = group.icon;
+                const isActive = group.tabs.some((t) => t.id === activeTab);
+                return (
+                  <button
+                    key={group.id}
+                    onClick={() => { if (!isActive) setActiveTab(group.tabs[0].id); }}
+                    title={group.tabs.map((t) => t.label).join(' • ')}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      padding: '9px 12px',
+                      borderRadius: 'var(--radius-sm)',
+                      fontSize: '12.5px',
+                      fontWeight: 600,
+                      color: isActive ? 'var(--brand)' : 'var(--text)',
+                      backgroundColor: isActive ? 'var(--brand-soft)' : 'transparent',
+                      border: 'none',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      width: '100%',
+                      boxSizing: 'border-box',
+                    }}
+                  >
+                    <Icon size={16} style={{ flexShrink: 0 }} />
+                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{group.label}</span>
+                    {group.tabs.length > 1 && (
+                      <span style={{
+                        fontSize: '10px',
+                        fontWeight: 800,
+                        minWidth: '18px',
+                        height: '18px',
+                        padding: '0 5px',
+                        borderRadius: '999px',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        backgroundColor: isActive ? 'var(--brand)' : 'var(--border)',
+                        color: isActive ? '#FFF' : 'var(--text-muted)',
+                      }}>{group.tabs.length}</span>
+                    )}
+                  </button>
+                );
+              });
+            }
+            return (ROLE_TABS[role] || ROLE_TABS.ADMIN).map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    padding: '9px 12px',
+                    borderRadius: 'var(--radius-sm)',
+                    fontSize: '12.5px',
+                    fontWeight: 600,
+                    color: isActive ? 'var(--brand)' : 'var(--text)',
+                    backgroundColor: isActive ? 'var(--brand-soft)' : 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                    width: '100%',
+                    boxSizing: 'border-box',
+                  }}
+                >
+                  <Icon size={16} style={{ flexShrink: 0 }} />
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tab.label}</span>
+                  {isBetaFeature(tab.id) && <BetaChip />}
+                </button>
+              );
+            });
+          })()}
         </nav>
 
         {/* Current User & Logout Button */}
@@ -3294,6 +3510,45 @@ export function App() {
             <button onClick={() => setSuccessMsg(null)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--success)' }}><X size={16} /></button>
           </div>
         )}
+
+        {/* THANH TAB CON — chỉ hiện với vai trò có nhóm tab lớn (HR).
+            Mỗi nhóm lớn chia nhỏ chức năng, mỗi chức năng đúng 1 tab con. */}
+        {(() => {
+          const group = findTabGroup(currentUser?.role, activeTab);
+          if (!group || group.tabs.length < 2) return null;
+          return (
+            <div className="subtabs-wrap">
+              <div className="subtabs-inner">
+                <div className="subtabs-heading">
+                  <group.icon size={15} />
+                  <span>{group.label}</span>
+                  <span className="subtabs-live" title="Dữ liệu tự cập nhật realtime qua Socket.IO">
+                    <span className="subtabs-live-dot" /> Realtime
+                  </span>
+                </div>
+                <div className="subtabs-list" role="tablist" aria-label={`Chức năng trong nhóm ${group.label}`}>
+                  {group.tabs.map((t) => {
+                    const Icon = t.icon;
+                    const isActive = t.id === activeTab;
+                    return (
+                      <button
+                        key={t.id}
+                        role="tab"
+                        aria-selected={isActive}
+                        className={`subtab-btn${isActive ? ' is-active' : ''}`}
+                        onClick={() => setActiveTab(t.id)}
+                      >
+                        <Icon size={14} />
+                        <span>{t.label}</span>
+                        {isBetaFeature(t.id) && <BetaChip />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* TAB CONTENTS */}
         <div style={{ flex: 1, padding: '24px', overflowY: 'auto' }}>

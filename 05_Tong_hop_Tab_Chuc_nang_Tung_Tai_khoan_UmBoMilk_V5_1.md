@@ -26,7 +26,7 @@ THEO TỪNG TÀI KHOẢN**
 | **Tài khoản**            | **Số tab** | **Phạm vi chính**                                |
 |--------------------------|------------|--------------------------------------------------|
 | **Admin**                | **12**     | Quản trị hệ thống, tài khoản, cấu hình, tích hợp |
-| **HR**                   | **15**     | Tuyển dụng, nhân sự, lịch, OFF, công, TEST       |
+| **HR**                   | **8 nhóm / 19 tab con** | Tuyển dụng, nhân sự, lịch & ca, chấm công, TEST & báo cáo, thông báo, tài khoản & phê duyệt |
 | **Store**                | **10**     | Vận hành nhân sự tại chi nhánh                   |
 | **Finance**              | **11**     | Công, đối soát, tính lương, phiếu lương          |
 | **MKT**                  | **9**      | Truyền thông nội bộ                              |
@@ -179,7 +179,23 @@ Quản trị hệ thống, quyền truy cập và cấu hình toàn hệ thống
 
 Quản lý vòng đời nhân sự từ ứng viên đến chính thức.
 
-| **15 TAB** | HR chịu trách nhiệm nghiệp vụ tuyển dụng, thử việc, lịch, OFF, đổi ca, chấm công và TEST; Admin là bên kích hoạt tài khoản nhân viên theo quyết định hiện tại. |
+**Cấu trúc nhóm tab HR (V5.2 — mỗi chức năng 1 tab con, nhóm liên quan vào 1 tab lớn):**
+
+| **Tab lớn** | **Tab con** |
+|-------------|-------------|
+| **1. Dashboard HR** | Tổng quan nhân sự |
+| **2. Tuyển dụng** | Ứng viên mới → Phỏng vấn & BOT Zalo |
+| **3. Nhân sự** | Thử việc → Chính thức → Hồ sơ nhân viên |
+| **4. Lịch & Ca** | Lịch làm việc • Nghỉ OFF • Đổi ca • Chuyển ca hỗ trợ CN |
+| **5. Chấm công** | Chấm công • Bổ sung/Điều chỉnh công • Bản đồ GPS Realtime |
+| **6. TEST & Báo cáo** | TEST nhân viên • Báo cáo HR |
+| **7. Thông báo** | Thông báo HR |
+| **8. TK & Phê duyệt** | PIN & TK Nhân viên • Duyệt đổi STK • Duyệt Văn Phòng |
+
+*Đã gỡ tab "Nhân viên (Theo Khối)" — trùng hoàn toàn với "Nhân viên Chính thức"; deep-link cũ tự chuyển về đúng màn hình. Dữ liệu realtime giữ nguyên qua Socket.IO + tự đồng bộ dự phòng khi mất kết nối.*
+
+
+| **8 nhóm / 19 tab con** | HR chịu trách nhiệm nghiệp vụ tuyển dụng, thử việc, lịch, OFF, đổi ca, chấm công và TEST; Admin là bên kích hoạt tài khoản nhân viên theo quyết định hiện tại. |
 |------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------|
 
 <table>
