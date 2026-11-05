@@ -130,6 +130,55 @@ export class OfficeService {
     return emp;
   }
 
+  /**
+   * Ghi lượt điểm danh Văn Phòng vào SỔ ĐIỂM DANH CHUẨN của hệ thống
+   * (attendance events) để cổng Admin — Lịch tuần, Bảng chấm công, tính lương,
+   * phiếu lương — thấy đúng cùng dữ liệu với cổng nhân viên (đồng bộ 2 chiều).
+   * Nguồn nghiệp vụ vẫn là office_attendance_events; đây là bản mirror chuẩn.
+   */
+  private async mirrorAttendanceEvent(
+    emp: any,
+    now: { date: string; iso: string },
+    type: 'CHECK_IN' | 'CHECK_OUT',
+    gps: { latitude: number; longitude: number; accuracy: number },
+    v: { distance_meters: number; accuracy: number; gps_status: string },
+    extra?: { is_late?: boolean; minutes_deviation?: number },
+  ) {
+    const employeeId = String(emp?.employee_id || '');
+    if (!employeeId) return;
+    try {
+      // Tránh ghi trùng nếu lượt này đã được mirror trước đó.
+      const existing = await this.repo.getAttendanceEvents(employeeId, now.date).catch(() => []);
+      if ((existing || []).some((e: any) => String(e?.type || '') === type && String(e?.client_time || '').slice(0, 10) === now.date)) return;
+      const shifts = await this.repo.getShiftsForEmployee(employeeId, now.date, now.date).catch(() => []);
+      const assignment: any = (shifts || []).find(
+        (s: any) => String(s?.status || '') !== 'CANCELLED' && String(s?.date || '').slice(0, 10) === now.date,
+      );
+      await this.repo.recordAttendanceEvent({
+        event_id: `VP_EVT_${type}_${employeeId}_${Date.now()}`,
+        request_id: `OFFICE_${employeeId}_${now.date}_${type}`,
+        assignment_id: String(assignment?.assignment_id || ''),
+        employee_id: employeeId,
+        branch_id: String(emp?.default_branch_id || assignment?.branch_id || OFFICE_BRANCH_ID),
+        type,
+        client_time: now.iso,
+        server_received_at: new Date().toISOString(),
+        gps_latitude: Number(gps.latitude),
+        gps_longitude: Number(gps.longitude),
+        gps_accuracy: v.accuracy,
+        distance_meters: v.distance_meters,
+        gps_status: v.gps_status as any,
+        is_late: !!extra?.is_late,
+        minutes_deviation: Number(extra?.minutes_deviation) || 0,
+        fine_tier: 'NONE',
+        fine_amount: 0,
+      } as any);
+    } catch (err: any) {
+      // Không chặn điểm danh nếu mirror lỗi (Sheets chậm) — office_* vẫn là nguồn chính.
+      console.warn('[office] mirror attendance event failed:', err?.message || err);
+    }
+  }
+
   private branchOf() {
     const b = BRANCHES.find((x) => x.id === OFFICE_BRANCH_ID) || BRANCHES[0];
     return { ...b, radius_meters: Math.min(Number(b?.radius_meters) || 300, 300) };
@@ -383,6 +432,53 @@ export class OfficeService {
     return { distance_meters: distance, accuracy: Number.isFinite(accuracy) ? accuracy : 0, gps_status: 'VALID' as const };
   }
 
+  /**
+   * Migrate MỘT LẦN: các lượt điểm danh Văn Phòng đã có trong sổ riêng
+   * (office_attendance_events) được mirror sang sổ điểm danh chuẩn để cổng Admin
+   * hiển thị đúng lịch sử (trước đây Admin không thấy lượt nào của khối VP).
+   * Idempotent — chạy lại không ghi trùng.
+   */
+  async migrateAttendanceToStandardEvents() {
+    const settings = await this.readSettings();
+    const list: OfficeAttendanceEvent[] = Array.isArray(settings[SETTINGS_KEY_ATTENDANCE]) ? settings[SETTINGS_KEY_ATTENDANCE] : [];
+    let mirrored = 0;
+    for (const e of list) {
+      const employeeId = String(e?.employee_id || '');
+      const date = String(e?.date || '').slice(0, 10);
+      const type: 'CHECK_IN' | 'CHECK_OUT' = e?.type === 'CHECK_OUT' ? 'CHECK_OUT' : 'CHECK_IN';
+      if (!employeeId || !date) continue;
+      try {
+        const existing = await this.repo.getAttendanceEvents(employeeId, date).catch(() => []);
+        if ((existing || []).some((x: any) => String(x?.type || '') === type && String(x?.client_time || '').slice(0, 10) === date)) continue;
+        const emp: any = await this.repo.getEmployeeById(employeeId).catch(() => null);
+        if (!emp || !OfficeService.isOfficeEmployee(emp)) continue;
+        const shifts = await this.repo.getShiftsForEmployee(employeeId, date, date).catch(() => []);
+        const assignment: any = (shifts || []).find((s: any) => String(s?.status || '') !== 'CANCELLED');
+        await this.repo.recordAttendanceEvent({
+          event_id: `VP_EVT_${type}_${employeeId}_${Date.now()}_${mirrored}`,
+          request_id: `OFFICE_${employeeId}_${date}_${type}`,
+          assignment_id: String(assignment?.assignment_id || ''),
+          employee_id: employeeId,
+          branch_id: String(emp?.default_branch_id || assignment?.branch_id || OFFICE_BRANCH_ID),
+          type,
+          client_time: String(e?.at || `${date}T00:00:00.000Z`),
+          server_received_at: new Date().toISOString(),
+          gps_latitude: Number(e?.latitude) || undefined,
+          gps_longitude: Number(e?.longitude) || undefined,
+          gps_accuracy: Number(e?.accuracy) || undefined,
+          distance_meters: Number(e?.distance_meters) || undefined,
+          gps_status: (e as any)?.gps_status || 'VALID',
+          is_late: false,
+          minutes_deviation: 0,
+          fine_tier: 'NONE',
+          fine_amount: 0,
+        } as any);
+        mirrored += 1;
+      } catch { /* bỏ qua lượt lỗi, không chặn khởi động */ }
+    }
+    return mirrored;
+  }
+
   /** Trạng thái điểm danh hôm nay + khung giờ mở nút VÀO CA. */
   async attendanceState(employeeId: string) {
     await this.getEmployeeOrThrow(employeeId);
@@ -408,7 +504,7 @@ export class OfficeService {
   }
 
   async checkIn(employeeId: string, gps: { latitude: number; longitude: number; accuracy: number }) {
-    await this.getEmployeeOrThrow(employeeId);
+    const emp = await this.getEmployeeOrThrow(employeeId);
     const v = this.validateGps(gps);
     return withOfficeLock(async () => {
       const now = OfficeService.vnNow();
@@ -442,12 +538,17 @@ export class OfficeService {
       };
       all.push(event);
       await this.repo.updateSystemSettings({ [SETTINGS_KEY_ATTENDANCE]: all });
+      // Mirror sang sổ điểm danh chuẩn để Admin thấy ngay (Lịch tuần/Chấm công/Lương).
+      await this.mirrorAttendanceEvent(emp, now, 'CHECK_IN', gps, v, {
+        is_late: now.minutesOfDay > OFFICE_CHECKIN_OPEN_HOUR * 60 + OFFICE_CHECKIN_OPEN_MINUTE,
+        minutes_deviation: Math.max(0, now.minutesOfDay - (OFFICE_CHECKIN_OPEN_HOUR * 60 + OFFICE_CHECKIN_OPEN_MINUTE)),
+      });
       return event;
     });
   }
 
   async checkOut(employeeId: string, gps: { latitude: number; longitude: number; accuracy: number }) {
-    await this.getEmployeeOrThrow(employeeId);
+    const emp = await this.getEmployeeOrThrow(employeeId);
     const v = this.validateGps(gps);
     return withOfficeLock(async () => {
       const now = OfficeService.vnNow();
@@ -474,6 +575,8 @@ export class OfficeService {
       };
       all.push(event);
       await this.repo.updateSystemSettings({ [SETTINGS_KEY_ATTENDANCE]: all });
+      // Mirror sang sổ điểm danh chuẩn để Admin thấy ngay (Lịch tuần/Chấm công/Lương).
+      await this.mirrorAttendanceEvent(emp, now, 'CHECK_OUT', gps, v);
       return event;
     });
   }

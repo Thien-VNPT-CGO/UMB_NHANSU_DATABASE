@@ -1507,7 +1507,7 @@ export function App() {
           // Realtime lịch tuần: backend bắn data:updated(schedules/swaps/leaves)
           // sau mọi nút xếp/publish/đổi ca/duyệt OFF — báo cho tab Lịch tải lại
           // ca + điểm danh ngay, không chờ vòng tải chung.
-          if (payload?.entity === 'schedules' || payload?.entity === 'swaps' || payload?.entity === 'leaves' || payload?.entity === 'attendance' || payload?.entity === 'all') {
+          if (payload?.entity === 'schedules' || payload?.entity === 'swaps' || payload?.entity === 'leaves' || payload?.entity === 'office-leaves' || payload?.entity === 'attendance' || payload?.entity === 'office-attendance' || payload?.entity === 'all') {
             if (payload?.entity === 'all' && Array.isArray(payload?.data?.changedTabs) && payload.data.changedTabs.some((t: string) => /^PHAN_CONG_CA(_P\d+)?$/i.test(t))) {
               apiRequest('/schedules').then(sList => { if (Array.isArray(sList)) setShifts(sList); }).catch(() => null);
             }

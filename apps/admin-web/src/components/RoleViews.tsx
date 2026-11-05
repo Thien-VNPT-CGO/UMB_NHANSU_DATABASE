@@ -3707,6 +3707,31 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   useEffect(() => {
     liveAttendanceEventsRef.current = liveAttendanceEvents;
   }, [liveAttendanceEvents]);
+  // Phiếu nghỉ phép KHỐI VĂN PHÒNG (duyệt Nhân sự → Kế toán → Giám đốc) — dùng để
+  // lưới Lịch tuần + Bảng chấm công hiển thị đúng ngày nghỉ như cổng nhân viên.
+  const [officeLeaveRows, setOfficeLeaveRows] = useState<any[]>([]);
+  useEffect(() => {
+    if (activeTab !== 'hr-schedule' && activeTab !== 'hr-attendance' && activeTab !== 'operations') return;
+    let stopped = false;
+    const load = () => {
+      apiRequest('/office/leaves')
+        .then((r: any) => {
+          if (stopped) return;
+          const rows = Array.isArray(r?.leaves) ? r.leaves : Array.isArray(r) ? r : [];
+          setOfficeLeaveRows(rows);
+        })
+        .catch(() => null);
+    };
+    load();
+    const timer = setInterval(load, 60_000);
+    const handler = () => load();
+    window.addEventListener('ubm:schedule-reload', handler);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+      window.removeEventListener('ubm:schedule-reload', handler);
+    };
+  }, [activeTab]);
   // Lần đầu vào tab Lịch: chưa có sự kiện chấm công → nếu render ngay, mọi ca
   // hiện xám "Lịch đã duyệt"/"chưa điểm danh" rồi mới chuyển xanh sau ~1-2s.
   // Chờ /attendance/events xong (thành công hay lỗi) mới vẽ lưới để hết nhấp nháy.
@@ -8526,6 +8551,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           if (isOfficeEmp) {
             // Xây dựng dayDataMap từ OFFICE_WEEK_RULES thay vì ca làm việc.
             const officeDayDataMap: Record<string, any> = {};
+            const empOfficeLeaves = (officeLeaveRows || []).filter((l: any) => String(l.employee_id) === String(emp.employee_id));
             weekDays.forEach((day) => {
               const dow = new Date(day.isoDate).getUTCDay(); // 0 = CN, 1 = T2, ... 6 = T7
               const rule = OFFICE_WEEK_RULES.find((r) => r.weekday === dow);
@@ -8534,10 +8560,17 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               const dayEvts = empEvents.filter((e: any) => vnDayOf(e.client_time) === day.isoDate);
               const checkInEvent = dayEvts.find((e: any) => e.type === 'CHECK_IN');
               const checkOutEvent = dayEvts.find((e: any) => e.type === 'CHECK_OUT');
+              const dayLeaves = empOfficeLeaves.filter((l: any) => String(l?.leave_date || '').slice(0, 10) === day.isoDate);
+              const approvedLeave = dayLeaves.find((l: any) => l?.status === 'APPROVED');
+              const pendingLeave = dayLeaves.find((l: any) => String(l?.status || '').startsWith('PENDING'));
               let status: 'NO_SHIFT' | 'OFF' | 'CHECKED_IN' | 'COMPLETED' | 'MISSING_OUT' | 'PENDING' | 'ABSENT' | 'LOCKED' | 'UPCOMING';
               let shiftLabel = isWorkDay ? `Làm theo giờ hành chính (${officeDayHoursLabel(day.isoDate)})` : 'Nghỉ';
               let note = isWorkDay ? 'Lịch làm việc cố định văn phòng' : 'Chủ nhật nghỉ';
-              if (!isWorkDay) {
+              if (approvedLeave) {
+                status = 'OFF';
+                shiftLabel = 'Nghỉ phép (đã duyệt)';
+                note = 'Nghỉ phép khối Văn Phòng — có hiệu lực';
+              } else if (!isWorkDay) {
                 status = 'NO_SHIFT';
               } else if (checkInEvent && checkOutEvent) {
                 status = 'COMPLETED';
@@ -8562,6 +8595,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 status = 'UPCOMING';
                 note = 'Lịch đã duyệt';
               }
+              if (!approvedLeave && pendingLeave) note = 'Chờ duyệt nghỉ phép';
               officeDayDataMap[day.key] = {
                 shift: shiftLabel,
                 status,
@@ -11543,9 +11577,38 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         String(a.employee_code || '').localeCompare(String(b.employee_code || '')) ||
         String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi')
       );
-    const attCellOf = (empId: string, iso: string) => {
+    const attCellOf = (empArg: any, iso: string) => {
+      const emp = typeof empArg === 'string' ? { employee_id: empArg } : empArg;
+      const empId = String(emp?.employee_id || '');
       const shs = attWeekShifts.filter((s: any) => s.employee_id === empId && (s.date || '').slice(0, 10) === iso);
       const evs = attWeekEvts.filter((e: any) => e.employee_id === empId && vnDayOf(e.client_time || '') === iso);
+      // KHỐI VĂN PHÒNG: lịch cố định hành chính kể cả khi chưa có ca auto-created
+      // (tuần cũ / tuần xa) — luôn hiển thị giống tab Lịch và cổng nhân viên.
+      if (isOfficeGroup(emp.group)) {
+        const rule = OFFICE_WEEK_RULES.find((r) => r.weekday === new Date(`${iso}T00:00:00Z`).getUTCDay());
+        if (!rule?.work) return [];
+        const approvedLeave = (officeLeaveRows || []).some(
+          (l: any) => String(l.employee_id) === empId && String(l?.leave_date || '').slice(0, 10) === iso && l?.status === 'APPROVED',
+        );
+        if (approvedLeave) return [];
+        const realShift: any = shs[0] || null;
+        const startIso = `${iso}T${String(rule.startHour).padStart(2, '0')}:${String(rule.startMinute).padStart(2, '0')}:00+07:00`;
+        const endIso = `${iso}T${String(rule.endHour).padStart(2, '0')}:${String(rule.endMinute).padStart(2, '0')}:00+07:00`;
+        const pseudo: any = {
+          assignment_id: String(realShift?.assignment_id || ''),
+          date: iso,
+          shift_code: 'OFFICE',
+          employee_id: empId,
+          branch_id: emp.default_branch_id || 'VAN_PHONG',
+          start_at: String(realShift?.start_at || startIso),
+          end_at: String(realShift?.end_at || endIso),
+          status: 'PUBLISHED',
+        };
+        const inE = evs.find((e: any) => e.type === 'CHECK_IN');
+        const outE = evs.find((e: any) => e.type === 'CHECK_OUT');
+        const absentE = evs.find((e: any) => e.type === 'ABSENT');
+        return [{ shift: pseudo, list: evs, st: attShiftStatus(pseudo, inE, outE, absentE) }];
+      }
       const byAssign = new Map<string, any[]>();
       for (const e of evs) {
         const k = e.assignment_id || `__${e.type}`;
@@ -11860,14 +11923,16 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   </td>
                 </tr>
               ) : (
-                attEmps.map((emp: any) => (
+                attEmps.map((emp: any) => {
+                  const empIsOffice = isOfficeGroup(emp.group);
+                  return (
                   <tr key={emp.employee_id} style={{ borderBottom: '1px solid var(--border)' }}>
                     <td style={{ padding: '10px 14px', fontWeight: 700, fontSize: '12px' }}>
                       {emp.full_name}
-                      <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 400 }}>{emp.employee_code} • {getDisplayBranch(emp.default_branch_id) || emp.default_branch_id || ''}{emp.default_shift_code ? ` • ${emp.default_shift_code.replace('CA_', 'Ca ')}` : ''}</div>
+                      <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 400 }}>{emp.employee_code} • {getDisplayBranch(emp.default_branch_id) || emp.default_branch_id || ''}{empIsOffice ? ' • Văn phòng (hành chính)' : emp.default_shift_code ? ` • ${emp.default_shift_code.replace('CA_', 'Ca ')}` : ''}</div>
                     </td>
                     {attDays.map((day: any) => {
-                      const items = attCellOf(emp.employee_id, day.iso);
+                      const items = attCellOf(emp, day.iso);
                       return (
                         <td key={day.key} style={{ padding: '6px', verticalAlign: 'top', backgroundColor: day.isToday ? '#FFFBFB' : undefined }}>
                           {items.length === 0 ? (
@@ -11918,20 +11983,23 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                     onMouseEnter={() => setAttHover(hoverKey)}
                                     onMouseLeave={() => setAttHover(h => (h === hoverKey ? null : h))}
                                   >
-                                    <div style={{ fontWeight: 800, fontSize: '11px' }}>{isExtra ? '➕ Ngoài lịch (tự điểm danh)' : (it.shift?.shift_code || 'Không ca')}</div>
+                                    <div style={{ fontWeight: 800, fontSize: '11px' }}>{empIsOffice ? 'Hành chính' : isExtra ? '➕ Ngoài lịch (tự điểm danh)' : (it.shift?.shift_code || 'Không ca')}</div>
                                     <div style={{ fontSize: '10px', color: it.st.fg, fontWeight: 700 }}>{it.st.label}{late}</div>
                                     <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
                                       {inE ? `Vào ${timeOf(inE.client_time)}` : '—'} • {outE ? `Ra ${timeOf(outE.client_time)}` : '—'}
                                     </div>
-                                    {it.st.key === 'COMPLETED' && !isExtra && (
+                                    {it.st.key === 'COMPLETED' && !isExtra && !empIsOffice && (
                                       <div style={{ fontSize: '10px', color: pay.unpaid ? '#991B1B' : '#065F46', fontWeight: 800 }}>
                                         💰 {fmtVnd(pay.net)}{pay.deduction > 0 ? ` (phạt ${fmtVnd(pay.deduction)})` : ''}{pay.unpaid ? ' (không lương)' : ''}
                                       </div>
                                     )}
-                                    {it.st.key === 'COMPLETED' && isExtra && extraPay && (
+                                    {it.st.key === 'COMPLETED' && isExtra && !empIsOffice && extraPay && (
                                       <div style={{ fontSize: '10px', color: extraPay.unpaid ? '#991B1B' : '#065F46', fontWeight: 800 }}>
                                         💰 {fmtVnd(extraPay.net)}{extraPay.deduction > 0 ? ` (phạt ${fmtVnd(extraPay.deduction)})` : ''}{extraPay.unpaid ? ' (không lương)' : ''} <span style={{ fontWeight: 700 }}>(tạm tính {extraShiftCode.replace('CA_', 'Ca ')})</span>
                                       </div>
+                                    )}
+                                    {empIsOffice && it.st.key === 'COMPLETED' && (
+                                      <div style={{ fontSize: '10px', color: '#065F46', fontWeight: 800 }}>💰 Lương tháng (LCB + phụ cấp)</div>
                                     )}
                                     {((!isExtra && it.shift?.assignment_id) || (isExtra && inE)) && (
                                       <button
@@ -11963,7 +12031,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                         </div>
                                         <div>🕒 Vào: <strong>{inE ? timeOf(inE.client_time) : '—'}</strong> • Ra: <strong>{outE ? timeOf(outE.client_time) : '—'}</strong></div>
                                         <div>📌 Trạng thái: <strong>{it.st.label}{late}</strong></div>
-                                        {!isExtra ? (
+                                        {empIsOffice ? (
+                                        <div style={{ borderTop: '1px dashed var(--border)', margin: '6px 0', paddingTop: '6px' }}>
+                                          💰 Lương tháng: <strong>LCB + phụ cấp (Kế toán cấu hình)</strong>
+                                          <div style={{ color: 'var(--text-muted)', fontSize: '10px' }}>Khối Văn Phòng không tính lương theo ca/giờ.</div>
+                                        </div>
+                                        ) : !isExtra ? (
                                         <div style={{ borderTop: '1px dashed var(--border)', margin: '6px 0', paddingTop: '6px' }}>
                                           💵 Đơn giá: <strong>{empRate ? fmtVnd(empRate) + '/giờ' : 'chưa gán'}</strong> • Công: <strong>{pay.hours}h</strong><br />
                                           💰 Lương ca: <strong>{fmtVnd(pay.shiftPay)}</strong><br />
@@ -12003,7 +12076,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       );
                     })}
                   </tr>
-                )))
+                  );
+                }))
               }
             </tbody>
           </table>

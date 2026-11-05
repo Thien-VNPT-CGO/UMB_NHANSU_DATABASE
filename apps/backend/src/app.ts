@@ -313,6 +313,11 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   salaryConfigService.migrateLegacyOfficeBenefits()
     .then(() => console.log('[salary-config] office_benefits migration done'))
     .catch(err => console.warn('[salary-config] office_benefits migration failed:', err?.message || err));
+  // Migrate MỘT LẦN: điểm danh Văn Phòng (sổ riêng) → sổ điểm danh chuẩn để
+  // cổng Admin (Lịch tuần/Bảng chấm công/Lương) thấy đúng dữ liệu của khối VP.
+  officeService.migrateAttendanceToStandardEvents()
+    .then((n) => console.log(`[office] mirrored attendance events: ${n}`))
+    .catch(err => console.warn('[office] attendance mirror migration failed:', err?.message || err));
   const liveLocationStore = new LiveLocationStore();
   const liveMapService = new LiveMapService(adapter, liveLocationStore);
 
@@ -320,10 +325,10 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
    * KHỐI VĂN PHÒNG: tự động xếp lịch hành chính (T2–T6 08:00–17:00, T7 08:00–12:00,
    * CN nghỉ) ngay khi Nhân sự tạo tài khoản — không cần bấm Publish như cửa hàng.
    */
-  const autoCreateOfficeShifts = async (employeeId: string, group: string, branchId: string, actorId: string) => {
-    if (!employeeId || String(group || '') !== 'VAN_PHONG') return;
+  const autoCreateOfficeShifts = async (employeeId: string, group: string, branchId: string, actorId: string, fromOverride?: string) => {
+    if (!employeeId || !OfficeService.isOfficeEmployee({ group })) return;
     const vnNow = new Date(Date.now() + 7 * 3_600_000);
-    const fromDate = vnNow.toISOString().slice(0, 10);
+    const fromDate = fromOverride || vnNow.toISOString().slice(0, 10);
     const end = new Date(vnNow);
     end.setUTCDate(end.getUTCDate() + 28); // phủ 4 tuần tới
     try {
@@ -338,6 +343,32 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       console.warn('[employees] auto office shifts failed:', e?.message || e);
     }
   };
+
+  // Backfill MỘT LẦN cho nhân viên Văn Phòng đã tạo TRƯỚC khi có tính năng tự xếp lịch:
+  // bổ sung ca hành chính từ đầu tháng hiện tại → 4 tuần tới để lưới Admin, điểm danh
+  // và cổng NV dùng chung đúng một nguồn (chạy nền, không chặn khởi động).
+  setTimeout(async () => {
+    try {
+      const emps: any[] = await adapter.listEmployees().catch(() => []);
+      const officeEmps = (emps || []).filter(
+        (e: any) => OfficeService.isOfficeEmployee(e) && String(e?.employment_status || '') !== 'TERMINATED',
+      );
+      const vnNow = new Date(Date.now() + 7 * 3_600_000);
+      const monthStart = `${vnNow.toISOString().slice(0, 7)}-01`;
+      for (const e of officeEmps) {
+        await autoCreateOfficeShifts(
+          String(e.employee_id || ''),
+          'VAN_PHONG',
+          String(e.default_branch_id || 'VAN_PHONG'),
+          'SYSTEM_BACKFILL',
+          monthStart,
+        );
+      }
+      if (officeEmps.length > 0) console.log(`[office] backfilled shifts for ${officeEmps.length} office employees`);
+    } catch (err: any) {
+      console.warn('[office] shift backfill failed:', err?.message || err);
+    }
+  }, 20_000);
 
   // C2: phát hiện di chuyển bất khả thi giữa 2 ping live (teleport / nghi giả lập GPS).
   const suspiciousCooldown = new Map<string, number>();

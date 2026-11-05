@@ -195,12 +195,17 @@ export function OfficeScheduleView({ employee, refreshKey }: OfficeViewProps) {
             const isToday = d.date === today;
             const isLeave = !!d.is_leave;
             const isWork = !!rule?.work;
+            // Nhãn trạng thái khớp 100% với lưới Lịch tuần bên cổng Admin.
+            const startMs = isWork
+              ? Date.parse(`${d.date}T${String(rule!.startHour).padStart(2, '0')}:${String(rule!.startMinute).padStart(2, '0')}:00+07:00`)
+              : NaN;
+            const lockedNoOut = !!d.check_in_at && !d.check_out_at && Number.isFinite(startMs) && Date.now() - startMs > 3 * 60 * 60 * 1000;
             const status = isLeave ? 'Nghỉ phép (đã duyệt)'
-              : !isWork ? 'Nghỉ tuần'
+              : !isWork ? 'Chủ nhật nghỉ'
                 : d.check_in_at && d.check_out_at ? 'Đã làm ' + fmtHours(Number(d.worked_minutes) || 0)
-                  : d.check_in_at ? 'Đang làm (chưa ra ca)'
-                    : d.date < today ? 'Không có công'
-                      : d.date === today ? 'Hôm nay' : 'Sắp tới';
+                  : d.check_in_at ? (lockedNoOut ? 'Quá 3h chưa check-out — khóa, nghỉ không lương' : 'Đang làm (chưa ra ca)')
+                    : d.date < today ? 'Không điểm danh'
+                      : d.date === today ? 'Chưa check-in (Chờ ca)' : 'Lịch đã duyệt';
             const statusColor = isLeave ? '#9D174D' : d.check_in_at && d.check_out_at ? SUCCESS : d.check_in_at ? WARN : MUTED;
             return (
               <Card key={d.date} style={isToday ? { border: `1.5px solid ${BRAND}` } : undefined}>
