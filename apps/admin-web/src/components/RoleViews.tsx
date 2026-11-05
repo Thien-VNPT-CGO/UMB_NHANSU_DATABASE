@@ -7073,10 +7073,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     <div style={{ backgroundColor: 'var(--bg)', borderRadius: '8px', padding: '8px 10px' }}>
                       <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 700 }}>💰 LƯƠNG • BẮT ĐẦU</div>
                       <div style={{ fontWeight: 800, marginTop: '2px', color: '#059669' }}>
-                        {isOfficeGroup(emp.group) ? 'Theo tháng (LCB + PC)' : `${Number(emp.current_rate_per_hour || 0).toLocaleString('vi-VN')} đ/h`}
+                        {effectivePayMode(emp.group, salaryConfigs[emp.employee_id]?.pay_mode) === 'MONTHLY'
+                          ? 'Theo tháng (LCB + PC)'
+                          : `${Number(emp.current_rate_per_hour || 0).toLocaleString('vi-VN')} đ/h`}
                       </div>
                       <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                        {isOfficeGroup(emp.group) ? 'Văn phòng: lương tháng = LCB + phụ cấp' : `Từ ${toISODate(emp.start_date) ? fmtDM(toISODate(emp.start_date)) : 'đang cập nhật'}`}
+                        {effectivePayMode(emp.group, salaryConfigs[emp.employee_id]?.pay_mode) === 'MONTHLY'
+                          ? 'Lương tháng = LCB + phụ cấp'
+                          : `Từ ${toISODate(emp.start_date) ? fmtDM(toISODate(emp.start_date)) : 'đang cập nhật'}`}
                       </div>
                     </div>
                     <div style={{ backgroundColor: 'var(--bg)', borderRadius: '8px', padding: '8px 10px' }}>
@@ -7730,7 +7734,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         </span>
                       </td>
                       <td style={{ padding: '14px 18px', fontWeight: 800, color: '#059669', fontSize: '13px' }}>
-                        {isOfficeGroup(emp.group) ? 'Theo tháng' : (emp.current_rate_per_hour ? `${Number(emp.current_rate_per_hour).toLocaleString('vi-VN')} đ/h` : '25.500 đ/h')}
+                        {effectivePayMode(emp.group, salaryConfigs[emp.employee_id]?.pay_mode) === 'MONTHLY'
+                          ? 'Theo tháng'
+                          : (emp.current_rate_per_hour ? `${Number(emp.current_rate_per_hour).toLocaleString('vi-VN')} đ/h` : '25.500 đ/h')}
                       </td>
                       <td style={{ padding: '14px 18px', fontSize: '12px', color: 'var(--text-muted)' }}>
                         {toISODate(emp.official_date) || toISODate(emp.start_date) || 'Đang cập nhật'}
