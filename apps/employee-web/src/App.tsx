@@ -12,8 +12,8 @@ import type { LoginThemeId } from './components/loginThemeData';
 import { ThemeAmbientEffects } from './components/ThemeAmbientEffects';
 import { SignaturePad } from './components/SignaturePad';
 import {
+  OfficeHomeView,
   OfficeScheduleView,
-  OfficeLeaveView,
   OfficeAttendanceView,
   OfficeTimesheetView,
   OfficeAdjustmentView,
@@ -4511,7 +4511,7 @@ export function App() {
         {/* ========================================================= */}
         {/* TAB 1: TRANG CHỦ */}
         {/* ========================================================= */}
-        {activeTab === 'home' && (
+        {activeTab === 'home' && !isOffice && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             {/* BANNER KIỂM TRA ĐẦU RA THỬ VIỆC (Meet vấn đáp + trắc nghiệm) */}
             {isProbation && probationAssessment && !probationAssessment?.meetDone && (() => {
@@ -4665,6 +4665,11 @@ export function App() {
             </div>
           </div>
         )}
+
+        {activeTab === 'home' && isOffice && (
+          <OfficeHomeView employee={employee} showToast={showToast} />
+        )}
+
 
         {/* ========================================================= */}
         {/* TAB 2: LỊCH THỬ VIỆC / LỊCH LÀM VIỆC */}
@@ -5479,9 +5484,6 @@ export function App() {
         {/* ========================================================= */}
         {/* TAB 3: ĐĂNG KÝ OFF (THỬ VIỆC: 1 NGÀY / CHÍNH THỨC: 2 NGÀY/TUẦN) */}
         {/* ========================================================= */}
-        {isOffice && activeTab === 'leave' && (
-          <OfficeLeaveView employee={employee} showToast={showToast} />
-        )}
         {!isOffice && activeTab === 'leave' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             <div className="card">
