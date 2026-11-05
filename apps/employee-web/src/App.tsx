@@ -2262,9 +2262,22 @@ export function App() {
           }).catch(() => null);
         }
 
-        // Lịch publish/thay đổi + điểm danh mới → tải lại dải ngày tab Lịch và công tháng (kể cả tuần sau).
-        if (!entity || entity === 'schedules' || entity === 'attendance' || entity === 'all') {
-          setSchedRefresh(k => k + 1);
+        // Lịch publish/thay đổi, điểm danh VP, phiếu bổ sung/nghỉ VP, bảng lương,
+        // hồ sơ/lương cấu hình → tải lại toàn bộ view Văn Phòng (đồng bộ từ admin).
+        if (
+          !entity ||
+          entity === 'schedules' ||
+          entity === 'attendance' ||
+          entity === 'office-attendance' ||
+          entity === 'office-schedules' ||
+          entity === 'office-adjustments' ||
+          entity === 'office-leaves' ||
+          entity === 'payroll' ||
+          entity === 'payslips' ||
+          entity === 'employees' ||
+          entity === 'all'
+        ) {
+          setSchedRefresh((k) => k + 1);
         }
 
         // Đơn xin nghỉ / 2 ngày OFF tuần / 5 ngày OFF thử việc
@@ -2479,6 +2492,8 @@ export function App() {
         const fromAdmin = !n?.origin || n.origin === 'ADMIN';
         if (fromAdmin && (n?.message || n?.title)) showToastRef.current(`🔔 ${n.title || ''}${n.title && n.message ? ': ' : ''}${n.message || ''}`.trim());
         reload();
+        // Thông báo từ Admin thường đi kèm thay đổi dữ liệu → đồng bộ lại cổng Văn Phòng.
+        setSchedRefresh((k) => k + 1);
       });
     } catch { /* offline — lần mở sau thử lại */ }
     return () => {
@@ -4648,7 +4663,7 @@ export function App() {
         )}
 
         {activeTab === 'home' && isOffice && (
-          <OfficeHomeView employee={employee} showToast={showToast} />
+          <OfficeHomeView employee={employee} showToast={showToast} refreshKey={schedRefresh} />
         )}
 
 
@@ -4659,7 +4674,7 @@ export function App() {
         {/* TAB 2: LỊCH THỬ VIỆC / LỊCH LÀM VIỆC TUẦN */}
         {/* ========================================================= */}
         {isOffice && activeTab === 'schedule' && (
-          <OfficeScheduleView employee={employee} showToast={showToast} />
+          <OfficeScheduleView employee={employee} showToast={showToast} refreshKey={schedRefresh} />
         )}
         {!isOffice && activeTab === 'schedule' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
@@ -5712,7 +5727,7 @@ export function App() {
         {/* TAB 4: ĐIỂM DANH (GPS 300M + CAMERA ÁO HỒNG + BẢNG TÊN) */}
         {/* ========================================================= */}
         {isOffice && activeTab === 'attendance' && (
-          <OfficeAttendanceView employee={employee} showToast={showToast} />
+          <OfficeAttendanceView employee={employee} showToast={showToast} refreshKey={schedRefresh} />
         )}
         {!isOffice && activeTab === 'attendance' && (() => {
           // Ngày VN (UTC+7): cổng CA_1 mở 06:30 VN (= 23:30 UTC hôm trước) nên phải
@@ -6149,7 +6164,7 @@ export function App() {
         {/* TAB: CÔNG CỦA TÔI (DỮ LIỆU THẬT 100%, XÓA SẠCH DỮ LIỆU TEST) */}
         {/* ========================================================= */}
         {isOffice && activeTab === 'timesheet' && (
-          <OfficeTimesheetView employee={employee} showToast={showToast} />
+          <OfficeTimesheetView employee={employee} showToast={showToast} refreshKey={schedRefresh} />
         )}
         {!isOffice && activeTab === 'timesheet' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
@@ -7260,7 +7275,7 @@ export function App() {
         )}
 
         {isOffice && activeTab === 'adjustment' && (
-          <OfficeAdjustmentView employee={employee} showToast={showToast} />
+          <OfficeAdjustmentView employee={employee} showToast={showToast} refreshKey={schedRefresh} />
         )}
         {!isOffice && (activeTab === 'adjustment' || activeTab === 'emergency_adjust') && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>

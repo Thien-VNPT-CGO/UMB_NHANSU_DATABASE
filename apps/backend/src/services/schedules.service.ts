@@ -711,6 +711,21 @@ export class SchedulesService {
           });
           created.push(date);
         }
+        // Broadcast sang cổng NV Văn Phòng để tải lại lịch làm việc ngay.
+        if (this.io && created.length > 0) {
+          this.io.to(`user:${data.employeeId}`).emit('data:updated', {
+            entity: 'schedules',
+            data: { action: 'create-office-shifts', employeeId: data.employeeId, branchId: data.branchId, count: created.length },
+            timestamp: new Date().toISOString(),
+          });
+          this.io.to(`user:${data.employeeId}`).emit('system:notification', {
+            type: 'SYSTEM',
+            origin: 'ADMIN',
+            title: '📅 Lịch làm việc văn phòng đã sẵn sàng',
+            message: `Hệ thống đã tự động xếp lịch ${created.length} ngày cho bạn (T2–T6 08:00–17:00, T7 08:00–12:00, CN nghỉ).`,
+            timestamp: new Date().toISOString(),
+          });
+        }
         return { created, count: created.length };
       },
     });

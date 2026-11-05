@@ -23,6 +23,8 @@ import {
 interface OfficeViewProps {
   employee: any;
   showToast: (msg: string) => void;
+  /** Tăng mỗi khi Admin/Kế toán cập nhật dữ liệu → view tự tải lại để đồng bộ realtime. */
+  refreshKey?: number;
 }
 
 const BRAND = '#1D4ED8';
@@ -91,7 +93,8 @@ const StatCard = ({ title, value, sub, color, icon }: { title: string; value: st
 // ============================================================================
 // 1. TRANG CHỦ — TỔNG QUAN
 // ============================================================================
-export function OfficeHomeView({ employee, showToast }: OfficeViewProps) {
+export function OfficeHomeView({ employee, showToast, refreshKey }: OfficeViewProps) {
+  void showToast;
   const [period, setPeriod] = useState(() => vnToday().slice(0, 7));
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -104,7 +107,7 @@ export function OfficeHomeView({ employee, showToast }: OfficeViewProps) {
       setData(d);
     } catch (e: any) { setErr(e?.message || 'Không tải được dữ liệu.'); }
     finally { setLoading(false); }
-  }, [period]);
+  }, [period, refreshKey]);
   useEffect(() => { load(); }, [load]);
 
   const baseSalary = Number(data?.base_salary) || 0;
@@ -147,7 +150,7 @@ export function OfficeHomeView({ employee, showToast }: OfficeViewProps) {
 // ============================================================================
 // 2. LỊCH LÀM VIỆC HÀNH CHÍNH
 // ============================================================================
-export function OfficeScheduleView({ employee }: OfficeViewProps) {
+export function OfficeScheduleView({ employee, refreshKey }: OfficeViewProps) {
   void employee;
   const [sel, setSel] = useState<'THIS' | 'NEXT'>('THIS');
   const [days, setDays] = useState<any[]>([]);
@@ -165,7 +168,7 @@ export function OfficeScheduleView({ employee }: OfficeViewProps) {
     } catch (e: any) {
       setErr(e?.message || 'Không tải được lịch làm việc.');
     } finally { setLoading(false); }
-  }, [sel]);
+  }, [sel, refreshKey]);
   useEffect(() => { load(); }, [load]);
 
   const today = vnToday();
@@ -238,7 +241,7 @@ export function OfficeScheduleView({ employee }: OfficeViewProps) {
 // ============================================================================
 // 3. ĐIỂM DANH
 // ============================================================================
-export function OfficeAttendanceView({ employee, showToast }: OfficeViewProps) {
+export function OfficeAttendanceView({ employee, showToast, refreshKey }: OfficeViewProps) {
   void employee;
   const [state, setState] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -257,7 +260,7 @@ export function OfficeAttendanceView({ employee, showToast }: OfficeViewProps) {
       setState(d);
     } catch (e: any) { setErr(e?.message || 'Không tải được trạng thái điểm danh.'); }
     finally { setLoading(false); }
-  }, []);
+  }, [refreshKey]);
   useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
@@ -387,7 +390,7 @@ const OFFICE_LNG = 106.689620;
 // ============================================================================
 // 4. CÔNG CỦA TÔI (lương tạm tính theo tháng)
 // ============================================================================
-export function OfficeTimesheetView({ employee, showToast }: OfficeViewProps) {
+export function OfficeTimesheetView({ employee, showToast, refreshKey }: OfficeViewProps) {
   void showToast;
   void employee;
   const [period, setPeriod] = useState(() => vnToday().slice(0, 7));
@@ -402,7 +405,7 @@ export function OfficeTimesheetView({ employee, showToast }: OfficeViewProps) {
       setData(d);
     } catch (e: any) { setErr(e?.message || 'Không tải được công của tôi.'); }
     finally { setLoading(false); }
-  }, [period]);
+  }, [period, refreshKey]);
   useEffect(() => { load(); }, [load]);
 
   const shiftMonth = (delta: number) => {
@@ -481,7 +484,7 @@ export function OfficeTimesheetView({ employee, showToast }: OfficeViewProps) {
 // ============================================================================
 // 5. BỔ SUNG CÔNG (4 phiếu/tháng)
 // ============================================================================
-export function OfficeAdjustmentView({ employee, showToast }: OfficeViewProps) {
+export function OfficeAdjustmentView({ employee, showToast, refreshKey }: OfficeViewProps) {
   void employee;
   const [data, setData] = useState<any>(null);
   const [date, setDate] = useState('');
@@ -498,7 +501,7 @@ export function OfficeAdjustmentView({ employee, showToast }: OfficeViewProps) {
       setData(d);
     } catch (e: any) { setErr(e?.message || 'Không tải được phiếu bổ sung công.'); }
     finally { setLoading(false); }
-  }, []);
+  }, [refreshKey]);
   useEffect(() => { load(); }, [load]);
 
   const quota = data?.quota || { monthRemaining: OFFICE_ADJUST_MONTHLY_QUOTA, monthLimit: OFFICE_ADJUST_MONTHLY_QUOTA, monthUsed: 0, locked: false };

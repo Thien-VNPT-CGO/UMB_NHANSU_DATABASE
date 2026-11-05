@@ -316,6 +316,29 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   const liveLocationStore = new LiveLocationStore();
   const liveMapService = new LiveMapService(adapter, liveLocationStore);
 
+  /**
+   * KHỐI VĂN PHÒNG: tự động xếp lịch hành chính (T2–T6 08:00–17:00, T7 08:00–12:00,
+   * CN nghỉ) ngay khi Nhân sự tạo tài khoản — không cần bấm Publish như cửa hàng.
+   */
+  const autoCreateOfficeShifts = async (employeeId: string, group: string, branchId: string, actorId: string) => {
+    if (!employeeId || String(group || '') !== 'VAN_PHONG') return;
+    const vnNow = new Date(Date.now() + 7 * 3_600_000);
+    const fromDate = vnNow.toISOString().slice(0, 10);
+    const end = new Date(vnNow);
+    end.setUTCDate(end.getUTCDate() + 28); // phủ 4 tuần tới
+    try {
+      await schedulesService.createOfficeShiftsForEmployee({
+        employeeId,
+        branchId: branchId || 'CN130',
+        actorId,
+        fromDate,
+        toDate: end.toISOString().slice(0, 10),
+      });
+    } catch (e: any) {
+      console.warn('[employees] auto office shifts failed:', e?.message || e);
+    }
+  };
+
   // C2: phát hiện di chuyển bất khả thi giữa 2 ping live (teleport / nghi giả lập GPS).
   const suspiciousCooldown = new Map<string, number>();
   const detectSuspiciousMovement = async (
@@ -2140,23 +2163,12 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       // Đính kèm tài khoản vừa sinh (kèm PIN) để UI chèn tức thì, khỏi fetch lại.
       const empId = (result as any)?.result?.employee_id || (result as any)?.employee_id;
       // Tự động tạo lịch làm việc cho Văn Phòng (giờ hành chính, không cần publish như cửa hàng)
-      if (String((result as any)?.group || b.group || '') === 'VAN_PHONG') {
-        const fromDate = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
-        const toDateD = new Date(Date.now() + 7 * 3_600_000);
-        toDateD.setUTCDate(toDateD.getUTCDate() + 28); // 4 tuần tới
-        const toDate = toDateD.toISOString().slice(0, 10);
-        try {
-          await schedulesService.createOfficeShiftsForEmployee({
-            employeeId: empId,
-            branchId: b.branchId || b.branch_id || b.default_branch_id || 'CN130',
-            actorId: req.user!.id,
-            fromDate,
-            toDate,
-          });
-        } catch (officeShiftErr: any) {
-          console.warn('[employees] auto office shifts failed:', officeShiftErr?.message || officeShiftErr);
-        }
-      }
+      await autoCreateOfficeShifts(
+        empId,
+        String((result as any)?.group || b.group || ''),
+        b.branchId || b.branch_id || b.default_branch_id || 'CN130',
+        req.user!.id,
+      );
       let account: any = null;
       try {
         const accs = normPhone ? await adapter.findAccountByPhone(normPhone) : [];
@@ -2224,6 +2236,14 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
             actorId: req.user!.id,
           });
           createdList.push(created);
+          // Văn Phòng: tự xếp lịch hành chính ngay sau khi import.
+          const c: any = created as any;
+          await autoCreateOfficeShifts(
+            c?.result?.employee_id || c?.employee_id,
+            String(c?.group || item.group || 'STORE'),
+            c?.default_branch_id || item.branchId || item.branch_id || 'CN130',
+            req.user!.id,
+          );
         } catch (e: any) {
           errors.push(`Dòng ${i + 1} (${name}): ${e.message}`);
         }
@@ -2280,6 +2300,14 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         req.user!.id
       );
       broadcastUpdate('employees', { action: 'update', employee: result });
+      // NV được chuyển sang Văn Phòng → bổ sung lịch hành chính (idempotent, bỏ qua nếu đã có).
+      const updEmp: any = result as any;
+      await autoCreateOfficeShifts(
+        updEmp?.employee_id || req.params.id,
+        String(updEmp?.group || group || ''),
+        updEmp?.default_branch_id || 'CN130',
+        req.user!.id,
+      );
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -2779,6 +2807,13 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       broadcastUpdate('candidates', { action: 'approve', id: req.params.id });
       broadcastUpdate('employees', { action: 'create', employee: (result as any).employee });
       broadcastUpdate('accounts', { action: 'create_emp_account' });
+      const appEmp: any = (result as any).employee;
+      await autoCreateOfficeShifts(
+        appEmp?.employee_id,
+        String(appEmp?.group || ''),
+        appEmp?.default_branch_id || 'CN130',
+        req.user!.id,
+      );
       res.json({ success: true, ...result });
     } catch (err: any) {
       res.status(400).json({ error: String(err?.message || 'Lỗi duyệt chính thức') });
