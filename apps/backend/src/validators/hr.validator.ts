@@ -58,6 +58,11 @@ export const employeeCreateBody = z
     base_salary: z.coerce.number().min(0).max(1_000_000_000).optional(),
     allowance: z.coerce.number().min(0).max(1_000_000_000).optional(),
     allowance_vnd: z.coerce.number().min(0).max(1_000_000_000).optional(),
+    // Hình thức lương chọn lúc tạo: "Chính thức (Lương cơ bản)" -> MONTHLY.
+    // Chỉ có hiệu lực với khối cho phép (Sale/Xưởng); khối Cửa hàng/Văn phòng
+    // bị khóa theo quy định nên server tự bỏ qua, không ảnh hưởng dữ liệu cũ.
+    payMode: z.enum(['MONTHLY', 'HOURLY']).optional(),
+    pay_mode: z.enum(['MONTHLY', 'HOURLY']).optional(),
   })
   .passthrough();
 

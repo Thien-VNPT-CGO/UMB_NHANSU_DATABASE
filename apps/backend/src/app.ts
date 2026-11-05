@@ -2183,20 +2183,28 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       });
       // Lương cơ bản + phụ cấp: CHỈ ADMIN được đặt ngay lúc tạo; HR gửi lên bị bỏ qua
       // (HR không đặt lương — Kế toán cấu hình sau, theo khối làm việc của NV).
+      // Hình thức lương (payMode): HR được chọn "Chính thức (Lương cơ bản)" khi
+      // tạo NV thuộc khối Sale/Xưởng — chỉ lưu pay_mode, KHÔNG lưu mức lương.
       const salaryBase = Number(b.baseSalary ?? b.base_salary ?? NaN);
       const salaryAllowance = Number(b.allowance ?? b.allowance_vnd ?? NaN);
-      const wantSalary = Number.isFinite(salaryBase) || Number.isFinite(salaryAllowance);
-      if (wantSalary && req.user!.role === 'ADMIN') {
-        const newId = (result as any)?.result?.employee_id || (result as any)?.employee_id;
-        if (newId && Number.isFinite(salaryBase)) {
-          try {
-            await salaryConfigService.setForEmployee(newId, {
-              baseSalary: salaryBase,
-              allowance: Number.isFinite(salaryAllowance) ? salaryAllowance : 0,
-            }, { id: req.user!.id, name: (req.user as any)?.fullName });
-          } catch (salaryErr: any) {
-            console.warn('[employees] set salary config failed:', salaryErr?.message || salaryErr);
-          }
+      const isAdmin = req.user!.role === 'ADMIN';
+      const wantSalary = isAdmin && (Number.isFinite(salaryBase) || Number.isFinite(salaryAllowance));
+      const payModeRaw = String(b.payMode ?? b.pay_mode ?? '').trim().toUpperCase();
+      const requestedPayMode = payModeRaw === 'MONTHLY' || payModeRaw === 'HOURLY' ? payModeRaw : undefined;
+      const newId = (result as any)?.result?.employee_id || (result as any)?.employee_id;
+      const createdGroup = String((result as any)?.result?.group || (result as any)?.group || b.group || '').trim().toUpperCase();
+      // STORE/VAN_PHONG bị khóa hình thức lương theo khối -> không ghi pay_mode.
+      const canStorePayMode = ['SALE', 'XUONG'].includes(createdGroup);
+      if (newId && (wantSalary || (requestedPayMode && canStorePayMode))) {
+        try {
+          const prev = await salaryConfigService.getForEmployee(newId).catch(() => null);
+          await salaryConfigService.setForEmployee(newId, {
+            baseSalary: wantSalary && Number.isFinite(salaryBase) ? salaryBase : (prev?.base_salary ?? 0),
+            allowance: wantSalary && Number.isFinite(salaryAllowance) ? salaryAllowance : (prev?.allowance ?? 0),
+            ...(requestedPayMode && canStorePayMode ? { payMode: requestedPayMode } : {}),
+          }, { id: req.user!.id, name: (req.user as any)?.fullName }, { group: createdGroup });
+        } catch (salaryErr: any) {
+          console.warn('[employees] set salary config failed:', salaryErr?.message || salaryErr);
         }
       }
       broadcastUpdate('employees', { action: 'create', employee: result });

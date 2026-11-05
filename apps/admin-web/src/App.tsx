@@ -934,6 +934,17 @@ export function App() {
         ? 'VAN_PHONG'
         : (newEmpForm.group === 'XUONG' ? 'XUONG_SX' : newEmpForm.branchId);
 
+      // "Chính thức (Lương cơ bản)" chỉ là lựa chọn của form — trạng thái lưu
+      // xuống hệ thống vẫn là OFFICIAL, kèm hình thức lương MONTHLY để Kế toán
+      // cấu hình LCB + phụ cấp. Với Sale/Xưởng chọn "Lương 25.500 đ/h" thì lưu
+      // HOURLY để không bị mặc định của khối ghi đè.
+      const isMonthlyOfficial = newEmpForm.employmentStatus === 'OFFICIAL_MONTHLY';
+      const explicitPayMode = isMonthlyOfficial
+        ? 'MONTHLY'
+        : (newEmpForm.employmentStatus === 'OFFICIAL' && (newEmpForm.group === 'SALE' || newEmpForm.group === 'XUONG'))
+          ? 'HOURLY'
+          : undefined;
+
       const createdCode = newEmpForm.employeeCode;
       const created = await apiRequest('/employees', {
         method: 'POST',
@@ -941,7 +952,7 @@ export function App() {
           fullName: newEmpForm.fullName.trim(),
           phone: newEmpForm.phone.trim(),
           branchId: finalBranch,
-          employmentStatus: newEmpForm.employmentStatus,
+          employmentStatus: isMonthlyOfficial ? 'OFFICIAL' : newEmpForm.employmentStatus,
           group: newEmpForm.group,
           employeeCode: newEmpForm.employeeCode,
           gender: newEmpForm.gender,
@@ -952,6 +963,7 @@ export function App() {
           bankName: newEmpForm.bankName.trim() || undefined,
           bankAccount: newEmpForm.bankAccount.trim() || undefined,
           bankHolder: newEmpForm.bankHolder.trim() || undefined,
+          ...(explicitPayMode ? { payMode: explicitPayMode } : {}),
           // Lương: chỉ Admin được đặt khi tạo — HR gửi lên server cũng bỏ qua.
           ...(currentUser?.role === 'ADMIN' ? {
             baseSalary: newEmpForm.baseSalary === '' ? undefined : Math.max(0, Math.floor(Number(newEmpForm.baseSalary) || 0)),
@@ -6191,7 +6203,13 @@ export function App() {
                       if (g === 'VAN_PHONG' || g === 'SALE') b = 'VAN_PHONG';
                       else if (g === 'XUONG') b = 'XUONG_SX';
                       else if (b === 'VAN_PHONG' || b === 'XUONG_SX') b = 'CN130';
-                      setNewEmpForm({ ...newEmpForm, group: g, branchId: b });
+                      // Đồng bộ giai đoạn với hình thức lương của khối:
+                      //  - Văn phòng: chính thức luôn hưởng lương cơ bản theo tháng.
+                      //  - Cửa hàng: chính thức luôn hưởng lương ca (25.500 đ/h).
+                      let st = newEmpForm.employmentStatus;
+                      if (g === 'VAN_PHONG' && st === 'OFFICIAL') st = 'OFFICIAL_MONTHLY';
+                      if (g === 'STORE' && st === 'OFFICIAL_MONTHLY') st = 'OFFICIAL';
+                      setNewEmpForm({ ...newEmpForm, group: g, branchId: b, employmentStatus: st });
                     }}
                     style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px' }}
                   >
@@ -6241,8 +6259,20 @@ export function App() {
                   >
                     <option value="PRE_ONBOARDING">Nhân viên mới (PIN khởi tạo tự động)</option>
                     <option value="PROBATION">Thử việc (Lương 21.000 đ/h)</option>
-                    <option value="OFFICIAL">Chính thức (Lương 25.500 đ/h)</option>
+                    {/* Văn phòng hưởng lương tháng nên chỉ có lựa chọn "Lương cơ bản". */}
+                    {newEmpForm.group !== 'VAN_PHONG' && (
+                      <option value="OFFICIAL">Chính thức (Lương 25.500 đ/h)</option>
+                    )}
+                    {/* Cửa hàng bắt buộc lương ca; Văn phòng/Sale/Xưởng chọn được lương tháng. */}
+                    {newEmpForm.group !== 'STORE' && (
+                      <option value="OFFICIAL_MONTHLY">Chính thức (Lương cơ bản)</option>
+                    )}
                   </select>
+                  {newEmpForm.employmentStatus === 'OFFICIAL_MONTHLY' && (
+                    <div style={{ fontSize: '11px', color: '#1D4ED8', marginTop: '3px', fontWeight: 600 }}>
+                      Lương theo tháng = Lương cơ bản + Phụ cấp (Kế toán cấu hình tại tab “Cấu hình Lương CB &amp; Phụ cấp”).
+                    </div>
+                  )}
                 </div>
 
                 {/* NGÀY VÀO LÀM */}
