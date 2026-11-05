@@ -347,28 +347,38 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   // Backfill MỘT LẦN cho nhân viên Văn Phòng đã tạo TRƯỚC khi có tính năng tự xếp lịch:
   // bổ sung ca hành chính từ đầu tháng hiện tại → 4 tuần tới để lưới Admin, điểm danh
   // và cổng NV dùng chung đúng một nguồn (chạy nền, không chặn khởi động).
-  setTimeout(async () => {
-    try {
-      const emps: any[] = await adapter.listEmployees().catch(() => []);
-      const officeEmps = (emps || []).filter(
-        (e: any) => OfficeService.isOfficeEmployee(e) && String(e?.employment_status || '') !== 'TERMINATED',
+  // Thử lại vài lần: ngay sau restart, kho dữ liệu Sheets có thể CHƯA nạp xong
+  // (listEmployees trả rỗng) — nếu chỉ chạy 1 lần sẽ bỏ sót toàn bộ NV Văn Phòng.
+  const runOfficeShiftBackfill = async () => {
+    const emps: any[] = await employeesService.listEmployees().catch(() => []);
+    if (!Array.isArray(emps) || emps.length === 0) return 0;
+    const officeEmps = emps.filter(
+      (e: any) => OfficeService.isOfficeEmployee(e) && String(e?.employment_status || '') !== 'TERMINATED',
+    );
+    const vnNow = new Date(Date.now() + 7 * 3_600_000);
+    const monthStart = `${vnNow.toISOString().slice(0, 7)}-01`;
+    for (const e of officeEmps) {
+      await autoCreateOfficeShifts(
+        String(e.employee_id || ''),
+        'VAN_PHONG',
+        String(e.default_branch_id || 'VAN_PHONG'),
+        'SYSTEM_BACKFILL',
+        monthStart,
       );
-      const vnNow = new Date(Date.now() + 7 * 3_600_000);
-      const monthStart = `${vnNow.toISOString().slice(0, 7)}-01`;
-      for (const e of officeEmps) {
-        await autoCreateOfficeShifts(
-          String(e.employee_id || ''),
-          'VAN_PHONG',
-          String(e.default_branch_id || 'VAN_PHONG'),
-          'SYSTEM_BACKFILL',
-          monthStart,
-        );
-      }
-      if (officeEmps.length > 0) console.log(`[office] backfilled shifts for ${officeEmps.length} office employees`);
+    }
+    if (officeEmps.length > 0) console.log(`[office] backfilled shifts for ${officeEmps.length} office employees`);
+    else console.log('[office] no office employees to backfill');
+    return officeEmps.length > 0 ? officeEmps.length : -1;
+  };
+  const officeBackfillTimer = setInterval(async () => {
+    try {
+      const done = await runOfficeShiftBackfill();
+      if (done !== 0) clearInterval(officeBackfillTimer);
     } catch (err: any) {
       console.warn('[office] shift backfill failed:', err?.message || err);
     }
   }, 20_000);
+  setTimeout(() => clearInterval(officeBackfillTimer), 10 * 60_000); // dừng sau 10 phút
 
   // C2: phát hiện di chuyển bất khả thi giữa 2 ping live (teleport / nghi giả lập GPS).
   const suspiciousCooldown = new Map<string, number>();
