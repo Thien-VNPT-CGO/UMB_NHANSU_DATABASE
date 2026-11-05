@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef } from 'react';
-import jsQR from 'jsqr';
 import { attShiftStatus, inferExtraShiftCode, mergeOrphanCheckins, shiftPayInfo } from '@ubm/shared';
 import { Socket } from 'socket.io-client';
 import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl, onPinLockRequired, tryRefreshSession } from './services/api';
@@ -73,7 +72,6 @@ interface EmployeeProfile {
   bank_name?: string;
   bank_account?: string;
   bank_holder?: string;
-  bank_qr_img?: string;
   start_date?: string;
   official_date?: string;
   default_shift_code?: string;
@@ -1119,7 +1117,6 @@ export function App() {
     bank_name: '',
     bank_account: '',
     bank_holder: '',
-    bank_qr_img: '',
     id_card_front_img: '',
     id_card_back_img: '',
   });
@@ -1158,14 +1155,13 @@ export function App() {
       bank_name: (employee as any)?.bank_name || '',
       bank_account: (employee as any)?.bank_account || '',
       bank_holder: (employee as any)?.bank_holder || '',
-      bank_qr_img: (employee as any)?.bank_qr_img || '',
       id_card_front_img: '',
       id_card_back_img: '',
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [employee?.employee_id]);
   // Khi HR/Finance duyệt đổi STK, hồ sơ NV được đẩy realtime -> đồng bộ riêng
-  // phần ngân hàng để form không còn QR/STK cũ và không vô tình gửi yêu cầu ngược.
+  // phần ngân hàng để form không còn STK cũ và không vô tình gửi yêu cầu ngược.
   useEffect(() => {
     if (!employee?.employee_id) return;
     setProfForm(s => ({
@@ -1173,12 +1169,11 @@ export function App() {
       bank_name: (employee as any)?.bank_name || '',
       bank_account: (employee as any)?.bank_account || '',
       bank_holder: (employee as any)?.bank_holder || '',
-      bank_qr_img: (employee as any)?.bank_qr_img || '',
     }));
     // Hồ sơ ngân hàng vừa đổi (HR duyệt) -> tải lại trạng thái chờ để ẩn banner.
     fetchBankChangeRequest();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [employee?.employee_id, (employee as any)?.bank_name, (employee as any)?.bank_account, (employee as any)?.bank_holder, (employee as any)?.bank_qr_img]);
+  }, [employee?.employee_id, (employee as any)?.bank_name, (employee as any)?.bank_account, (employee as any)?.bank_holder]);
 
   const uploadSingleCccd = async (side: 'front' | 'back') => {
     const dataUrl = side === 'front' ? profForm.id_card_front_img : profForm.id_card_back_img;
@@ -1229,7 +1224,6 @@ export function App() {
           bank_name: profForm.bank_name.trim(),
           bank_account: profForm.bank_account.trim(),
           bank_holder: profForm.bank_holder.trim(),
-          bank_qr_img: profForm.bank_qr_img,
           id_card_front_img: profForm.id_card_front_img || undefined,
           id_card_back_img: profForm.id_card_back_img || undefined,
         }),
@@ -1238,7 +1232,6 @@ export function App() {
       const bankReview = res?.bank_change_review;
       if (res?.employee) {
         const merged = { ...(employee || {}), ...(res.employee || {}) };
-        if (!(res.employee as any)?.bank_qr_img && !(profForm.bank_qr_img)) delete (merged as any).bank_qr_img;
         setEmployee(merged as any);
         try { localStorage.setItem('ubm_emp_data', JSON.stringify(merged)); } catch {}
         // Tự từ chối (STK trùng) hoặc còn yêu cầu cũ đang chờ -> đưa form về STK
@@ -1249,7 +1242,6 @@ export function App() {
             bank_name: (res.employee as any)?.bank_name || '',
             bank_account: (res.employee as any)?.bank_account || '',
             bank_holder: (res.employee as any)?.bank_holder || '',
-            bank_qr_img: (res.employee as any)?.bank_qr_img || '',
           }));
         }
       }
@@ -3114,464 +3106,6 @@ export function App() {
       showToast('⚠️ Không thể đọc ảnh. Vui lòng thử lại!');
     }
   };
-
-  // Nén ảnh QR ngân hàng đủ nhỏ để lưu trực tiếp (server cắt 45KB như chữ ký):
-  // QR là nét đen-trắng nên 480px + JPEG là đủ quét, dataURL thường <40KB.
-  // Nén ảnh QR. Mặc định nhỏ (<=44KB) để lưu vào ô Sheets; khi gửi SERVER giải mã
-  // thì dùng độ phân giải cao hơn để QR dày/mờ vẫn đọc được.
-  const compressBankQr = (
-    file: File,
-    opts?: { maxPx?: number; quality?: number; maxChars?: number },
-  ): Promise<string> => {
-    const maxPx = opts?.maxPx ?? 480;
-    const startQ = opts?.quality ?? 0.7;
-    const maxChars = opts?.maxChars ?? 44000;
-    return new Promise((resolve, reject) => {
-      const url = URL.createObjectURL(file);
-      const img = new Image();
-      img.onload = () => {
-        try {
-          const trySize = (px: number, q: number): void => {
-            const scale = Math.min(1, px / Math.max(img.width, img.height));
-            const w = Math.max(1, Math.round(img.width * scale));
-            const h = Math.max(1, Math.round(img.height * scale));
-            const cv = document.createElement('canvas');
-            cv.width = w;
-            cv.height = h;
-            const ctx = cv.getContext('2d');
-            if (!ctx) {
-              URL.revokeObjectURL(url);
-              reject(new Error('canvas'));
-              return;
-            }
-            ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(0, 0, w, h);
-            ctx.drawImage(img, 0, 0, w, h);
-            const out = cv.toDataURL('image/jpeg', q);
-            if (out.length > maxChars && (px > 320 || q > 0.5)) {
-              if (q > 0.5) trySize(px, Math.round((q - 0.15) * 100) / 100);
-              else trySize(Math.max(320, Math.round(px / 2)), 0.6);
-              return;
-            }
-            URL.revokeObjectURL(url);
-            resolve(out);
-          };
-          trySize(maxPx, startQ);
-        } catch (e) {
-          URL.revokeObjectURL(url);
-          reject(e);
-        }
-      };
-      img.onerror = () => {
-        URL.revokeObjectURL(url);
-        reject(new Error('decode'));
-      };
-      img.src = url;
-    });
-  };
-
-  // Đọc payload QR từ file ảnh: thử toàn ảnh nhiều độ phân giải + cắt vùng trung
-  // tâm (QR thường nằm giữa thẻ, xung quanh là logo/chữ gây nhiễu) để QR dày,
-  // ảnh chụp màn hình hoặc hơi mờ vẫn đọc được.
-  const decodeQrPayload = (file: File): Promise<string | null> => {
-    return new Promise((resolve) => {
-      const url = URL.createObjectURL(file);
-      const img = new Image();
-      img.onload = () => {
-        try {
-          const W = img.width;
-          const H = img.height;
-          const regions: { x: number; y: number; w: number; h: number }[] = [{ x: 0, y: 0, w: W, h: H }];
-          for (const frac of [0.8, 0.62]) {
-            const rw = W * frac;
-            const rh = H * frac;
-            regions.push({ x: (W - rw) / 2, y: (H - rh) / 2, w: rw, h: rh });
-          }
-          for (const r of regions) {
-            const scale = Math.min(1, 900 / Math.max(r.w, r.h));
-            const w = Math.max(1, Math.round(r.w * scale));
-            const h = Math.max(1, Math.round(r.h * scale));
-            const cv = document.createElement('canvas');
-            cv.width = w;
-            cv.height = h;
-            const ctx = cv.getContext('2d', { willReadFrequently: true });
-            if (!ctx) continue;
-            ctx.drawImage(img, r.x, r.y, r.w, r.h, 0, 0, w, h);
-            const data = ctx.getImageData(0, 0, w, h);
-            const code = jsQR(data.data, w, h);
-            if (code?.data) {
-              URL.revokeObjectURL(url);
-              resolve(code.data);
-              return;
-            }
-          }
-          URL.revokeObjectURL(url);
-          resolve(null);
-        } catch {
-          URL.revokeObjectURL(url);
-          resolve(null);
-        }
-      };
-      img.onerror = () => {
-        URL.revokeObjectURL(url);
-        resolve(null);
-      };
-      img.src = url;
-    });
-  };
-
-  // Mã BIN Napas (6 số trong QR VietQR) -> tên ngân hàng hiển thị.
-  // Đồng bộ với backend (apps/backend/src/utils/vietqr.ts), lấy theo API chính
-  // thức https://api.vietqr.io/v2/banks. Trước đây thiếu nhiều BIN phổ biến
-  // (CAKE/Ubank by VPBank, Timo, CIMB, HSBC, Kookmin, IBK, MoMo/ZaloPay...) nên
-  // QR hợp lệ vẫn bị báo "không nhận diện được ngân hàng".
-  const VIETQR_BANK_BY_BIN: Record<string, string> = {
-    '970400': 'SaigonBank', '970403': 'Sacombank', '970405': 'Agribank', '970406': 'Vikki',
-    '970407': 'Techcombank', '970408': 'GPBank', '970409': 'BacABank', '970410': 'Standard Chartered',
-    '970412': 'PVcomBank', '970414': 'MBV', '970415': 'VietinBank', '970416': 'ACB',
-    '970418': 'BIDV', '970419': 'NCB', '970421': 'VRB', '970422': 'MBBank',
-    '970423': 'TPBank', '970424': 'Shinhan Bank', '970425': 'ABBANK', '970426': 'MSB',
-    '970427': 'VietABank', '970428': 'NamABank', '970429': 'SCB', '970430': 'PGBank',
-    '970431': 'Eximbank', '970432': 'VPBank', '970433': 'VietBank', '970434': 'IndovinaBank',
-    '970436': 'Vietcombank', '970437': 'HDBank', '970438': 'BaoVietBank', '970439': 'PublicBank',
-    '970440': 'SeABank', '970441': 'VIB', '970442': 'HongLeong', '970443': 'SHB',
-    '970444': 'CBBank', '970446': 'COOPBANK', '970448': 'OCB', '970449': 'LPBank',
-    '970452': 'KienLongBank', '970454': 'BVBank', '970455': 'IBKHN', '970456': 'IBKHCM',
-    '970457': 'Woori', '970458': 'UOB', '970462': 'KookminHN', '970463': 'KookminHCM',
-    '970465': 'BSP', '970466': 'KEBHanaHCM', '970467': 'KEBHanaHN',
-    '422589': 'CIMB', '458761': 'HSBC', '546034': 'CAKE', '546035': 'Ubank',
-    '555666': 'BIDC', '668888': 'KBank', '796500': 'DBSBank', '801011': 'Nonghyup',
-    '963326': 'TNEX', '963388': 'Timo', '963666': 'BNP HCM', '963668': 'BNP HN',
-    '963669': 'ICBC', '963686': 'ESUN', '963688': 'BOCHK', '971005': 'ViettelMoney',
-    '971011': 'VNPTMoney', '971025': 'MoMo', '971032': 'MVAS', '971101': 'ZaloPay',
-    '971133': 'PVcomBank Pay', '977777': 'MAFC', '999888': 'VBSP', '168999': 'CUBHCM',
-    '533948': 'Citibank',
-  };
-  const VIETQR_KNOWN_BIN_RE = new RegExp(Object.keys(VIETQR_BANK_BY_BIN).join('|'));
-
-  // Parse QR VietQR (EMVCo TLV), bản tolerant: trả về những gì đọc được
-  // (bank/account/holder có thể rỗng) để luồng dự phòng OCR gộp tiếp.
-  const parseVietQRPartial = (payload: string): { isVietQR: boolean; bank: string; account: string; holder: string; bin: string } => {
-    const empty = { isVietQR: false, bank: '', account: '', holder: '', bin: '' };
-    const s = String(payload || '').trim();
-    if (!/^000201/.test(s)) return empty;
-    const parseTLV = (src: string): { id: string; value: string }[] => {
-      const out: { id: string; value: string }[] = [];
-      let i = 0;
-      while (i + 4 <= src.length) {
-        const id = src.slice(i, i + 2);
-        const len = parseInt(src.slice(i + 2, i + 4), 10);
-        if (!Number.isFinite(len) || len < 0 || i + 4 + len > src.length) break;
-        out.push({ id, value: src.slice(i + 4, i + 4 + len) });
-        i += 4 + len;
-      }
-      return out;
-    };
-    const top = parseTLV(s);
-    const acctField = top.find(
-      (f) => {
-        const n = Number(f.id);
-        return Number.isFinite(n) && n >= 26 && n <= 51 && f.value.includes('A000000727');
-      }
-    );
-    if (!acctField) return empty;
-    const sub = parseTLV(acctField.value);
-    // Chuẩn VietQR/Napas: tag 01 trong khối tài khoản là TLV LỒNG thêm 1 tầng —
-    // 00 = mã BIN ngân hàng (6 số), 01 = số tài khoản. Trước đây code lấy nguyên
-    // chuỗi lồng làm BIN (vd '0006970422...') -> không khớp bảng ngân hàng nào
-    // và báo lỗi "mã BIN 0006970422..." cho MB/VCB... dù QR chuẩn.
-    let bin = '';
-    let account = '';
-    const cField = sub.find((x) => x.id === '01');
-    if (cField) {
-      const nested = parseTLV(cField.value);
-      const nBin = (nested.find((x) => x.id === '00')?.value || '').trim();
-      const nAcc = (nested.find((x) => x.id === '01')?.value || '').trim();
-      if (/^\d{6}$/.test(nBin)) {
-        bin = nBin;
-        account = nAcc;
-      }
-    }
-    // Biến thể QR vài ngân hàng tự sinh: BIN nằm ngay tag 01 (6 số), STK tag 02.
-    if (!bin && cField && /^\d{6}$/.test(cField.value.trim())) {
-      bin = cField.value.trim();
-      account = (sub.find((x) => x.id === '02')?.value || '').trim();
-    }
-    // Chốt hạ: parse TLV lệch độ (QR mờ/nghiêng) -> dò BIN đã biết sau nhãn AID
-    // (A000000727) thay vì nguyên chuỗi (tránh khớp nhầm số STK). Dùng đủ danh
-    // sách BIN để nhận cả CAKE/Ubank (546034/546035), Timo (963388)...
-    if (!/^\d{6}$/.test(bin)) {
-      const aidIdx = s.indexOf('A000000727');
-      const m = (aidIdx >= 0 ? s.slice(aidIdx) : s).match(VIETQR_KNOWN_BIN_RE);
-      if (m) bin = m[0];
-    }
-    const holder = (top.find((f) => f.id === '59')?.value || '').trim();
-    return { isVietQR: true, bank: VIETQR_BANK_BY_BIN[bin] || '', account: /^[0-9]{6,19}$/.test(account) ? account : '', holder, bin };
-  };
-
-  // Từ khóa tên ngân hàng -> tên hiển thị (dùng cho OCR chữ in trên thẻ).
-  const OCR_BANK_KEYWORDS: [RegExp, string][] = [
-    [/\bVIETCOMBANK\b|\bVCB\b/, 'Vietcombank'],
-    [/\bTECHCOMBANK\b|\bTCB\b/, 'Techcombank'],
-    [/\bMBBANK\b|\bMB\b/, 'MBBank'],
-    [/\bBIDV\b/, 'BIDV'],
-    [/\bVIETINBANK\b|\bCTG\b/, 'VietinBank'],
-    [/\bSACOMBANK\b|\bSTB\b/, 'Sacombank'],
-    [/\bHDBANK\b|\bHDB\b/, 'HDBank'],
-    [/\bVPBANK\b|\bVPB\b/, 'VPBank'],
-    [/\bTPBANK\b|\bTPB\b/, 'TPBank'],
-    [/\bAGRIBANK\b/, 'Agribank'],
-    [/\bEXIMBANK\b/, 'Eximbank'],
-    [/\bLPBANK\b|\bLIENVIET\b/, 'LPBank'],
-    [/\bNAM\s?A\s?BANK\b/, 'Nam A Bank'],
-    [/\bVIETBANK\b/, 'VietBank'],
-    [/\bABBANK\b|\bABB\b/, 'ABBank'],
-    [/\bBAC\s?A\s?BANK\b/, 'Bac A Bank'],
-    [/\bBAOVIET\b.*\bBANK\b/, 'BaoVietBank'],
-    [/\bPGBANK\b|\bPG\s?BANK\b/, 'PG Bank'],
-    [/\bVIET\s?A\s?BANK\b/, 'Viet A Bank'],
-    [/\bNCB\b/, 'NCB'],
-    [/\bSEABANK\b|\bSEAB\b/, 'SeABank'],
-    [/\bBVBANK\b|\bBV\s?BANK\b/, 'BVBank'],
-    [/\bKIENLONG\b|\bKLB\b/, 'KienLongBank'],
-    [/\bSAIGONBANK\b|\bSGB\b/, 'SaigonBank'],
-    [/\bDONGA\s?BANK\b|\bDONGABANK\b/, 'DongA Bank'],
-    [/\bACB\b/, 'ACB'],
-    [/\bVIB\b/, 'VIB'],
-    [/\bSHB\b/, 'SHB'],
-    [/\bOCB\b/, 'OCB'],
-    [/\bMSB\b/, 'MSB'],
-  ];
-
-  // Các họ phổ biến VN — dòng rác OCR không bao giờ chứa (so khớp theo token).
-  const VN_SURNAMES = new Set([
-    'NGUYEN', 'TRAN', 'LE', 'PHAM', 'HOANG', 'HUYNH', 'PHAN', 'VU', 'VO', 'DANG',
-    'BUI', 'DO', 'HO', 'NGO', 'DUONG', 'LY', 'CAO', 'CHU', 'LUONG', 'DINH',
-    'DOAN', 'TRUONG', 'TA', 'TRINH', 'MAI', 'LAM', 'HA', 'CHAU', 'TANG', 'TONG',
-    'DIEP', 'QUACH', 'THACH', 'SON', 'HUA', 'LA', 'BAN', 'GIA',
-  ]);
-  const normalizeVnName = (s: string): string => String(s || '')
-    .toUpperCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/Đ/g, 'D')
-    .replace(/[^A-Z\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  // Đọc chữ in trên thẻ QR (tên + STK + ngân hàng) khi payload QR thiếu/không đọc được.
-  // Chống nhận nhầm ngân hàng khác: tìm tên chủ TK trước, loại dòng tên khỏi vùng
-  // tìm logo (tên người có thể chứa chuỗi giống mã NH), rồi chọn từ khóa DÀI NHẤT
-  // khớp được (VD thẻ có cả "MB" lẻ và "SACOMBANK" thì lấy Sacombank).
-  // Chống rác OCR vào cột chủ TK: tên phải khớp tên NV trong hồ sơ (>=2 token)
-  // hoặc chứa họ VN — nếu không thì coi như thiếu tên, báo tải lại.
-  const extractBankQrFromOcrText = (text: string, employeeName?: string): { bank: string; account: string; holder: string } => {
-    const upper = String(text || '').toUpperCase();
-    const badLine = /(VIETQR|NAPAS|PAY|GLOBAL|BANK|24\/7|HOTLINE|1900|\d)/;
-    const lines = String(text || '')
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => l.length >= 6);
-    // Tên chủ TK: ưu tiên dòng khớp tên NV trong hồ sơ (>=2 token trùng), sau đó
-    // dòng chứa họ VN. Dòng rác OCR không bao giờ đạt 2 điều này -> loại.
-    const empToks = new Set(normalizeVnName(employeeName || '').split(' ').filter(Boolean));
-    let holder = '';
-    let bestHolderScore = -1;
-    for (const l of lines) {
-      const u = l.toUpperCase();
-      if (!/^[A-ZÀ-Ỹ\s]+$/.test(u)) continue;
-      if (u.split(/\s+/).length < 2) continue;
-      if (badLine.test(u)) continue;
-      const toks = normalizeVnName(l).split(' ').filter(Boolean);
-      let overlap = 0;
-      for (const w of toks) if (empToks.has(w)) overlap++;
-      const hasSurname = toks.some((w) => VN_SURNAMES.has(w));
-      const score = overlap >= 2 ? 100 + overlap : (hasSurname ? 10 + toks.length : -1);
-      if (score > bestHolderScore) {
-        bestHolderScore = score;
-        holder = l.trim();
-      }
-    }
-    if (bestHolderScore < 0) holder = '';
-    // Logo ngân hàng thường in 1 dòng rất ngắn (MB, TCB, ACB...) nên quét mọi dòng
-    // (kể cả ngắn), chỉ trừ đúng dòng tên chủ TK.
-    const bankScope = holder
-      ? String(text || '')
-        .split('\n')
-        .map((l) => l.trim())
-        .filter((l) => l && l.toUpperCase() !== holder.toUpperCase())
-        .join('\n')
-        .toUpperCase()
-      : upper;
-    let bank = '';
-    let bestLen = 0;
-    for (const [re, name] of OCR_BANK_KEYWORDS) {
-      const m = bankScope.match(re);
-      if (m && m[0].length > bestLen) {
-        bestLen = m[0].length;
-        bank = name;
-      }
-    }
-    const compact = upper.replace(/[\s.\-_,]/g, '');
-    const runs = compact.match(/\d{8,19}/g) || [];
-    const scoreRun = (d: string): number => {
-      let sc = d.length >= 10 && d.length <= 16 ? 100 : 0;
-      sc += d.length;
-      return sc;
-    };
-    const account = [...runs].sort((a, b) => scoreRun(b) - scoreRun(a))[0] || '';
-    return { bank, account, holder };
-  };
-
-  // OCR ảnh thẻ QR (chỉ gọi khi QR payload thiếu — lazy load để nhẹ bundle).
-  // Lỗi mạng/CDN -> trả null để luồng chính báo lỗi như cũ.
-  const readBankCardOcrText = async (file: File): Promise<string | null> => {
-    try {
-      const { createWorker } = await import('tesseract.js');
-      const worker: any = await (createWorker as any)('eng');
-      const { data }: any = await worker.recognize(file);
-      const text = String(data?.text || '');
-      try {
-        await worker.terminate();
-      } catch { /* bỏ qua */ }
-      return text;
-    } catch {
-      return null;
-    }
-  };
-
-  const handleBankQrSelected = async (file: File | undefined) => {
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      showToast('⚠️ File không phải ảnh! Vui lòng chọn ảnh mã QR.');
-      return;
-    }
-    if (file.size > 15 * 1024 * 1024) {
-      showToast('⚠️ Ảnh quá lớn (>15MB)! Vui lòng chụp lại.');
-      return;
-    }
-    // Tên chủ TK hợp lệ? (có họ VN hoặc khớp tên NV trong hồ sơ) — dùng để phát
-    // hiện OCR đọc rác; KHÔNG còn chặn lưu ảnh nữa.
-    const isPlausibleHolder = (name: string): boolean => {
-      const ht = normalizeVnName(name);
-      const htoks = ht.split(' ').filter(Boolean);
-      const empToks = new Set(normalizeVnName((employee as any)?.full_name).split(' ').filter(Boolean));
-      let hov = 0;
-      for (const w of htoks) if (empToks.has(w)) hov++;
-      return ht.length >= 6 && htoks.length >= 2 &&
-        (htoks.some((w) => VN_SURNAMES.has(w)) || hov >= 2);
-    };
-    // Lưu ảnh QR + điền những gì đọc được. Thiếu trường nào thì để NV nhập tay
-    // (trước đây thiếu 1 trường là chặn luôn, không lưu được ảnh).
-    const acceptQrInfo = async (
-      info: { bank: string; account: string; holder: string },
-      viaOcr: boolean,
-    ): Promise<boolean> => {
-      const dataUrl = await compressBankQr(file);
-      if (!dataUrl) {
-        showToast('⚠️ Không đọc được ảnh! Vui lòng chọn lại.');
-        return false;
-      }
-      const profileName = String((employee as any)?.full_name || '').trim();
-      // QR nhiều ngân hàng KHÔNG ghi tên chủ TK (tag 59 trống) → lấy tên trong hồ
-      // sơ làm mặc định, NV vẫn sửa được ở ô nhập tay bên dưới.
-      const holder = isPlausibleHolder(info.holder) ? info.holder.trim()
-        : (profileName || info.holder.trim());
-      const bank = String(info.bank || '').trim();
-      const account = String(info.account || '').trim();
-      setProfForm((st) => ({
-        ...st,
-        bank_qr_img: dataUrl,
-        bank_name: bank || st.bank_name,
-        bank_account: account || st.bank_account,
-        bank_holder: holder || st.bank_holder,
-      }));
-      const missing = [
-        !bank ? 'tên ngân hàng' : '',
-        !account ? 'số tài khoản' : '',
-        !holder ? 'tên chủ tài khoản' : '',
-      ].filter(Boolean);
-      if (missing.length) {
-        showToast(`⚠️ Đã lưu ảnh QR nhưng chưa đọc được ${missing.join(', ')}. Vui lòng nhập tay bên dưới rồi bấm "Lưu Hồ Sơ".`);
-      } else {
-        showToast(`✓ QR hợp lệ${viaOcr ? ' (đọc từ chữ in trên thẻ)' : ''}: ${bank} • ${account} • ${holder}. Bấm "Lưu Hồ Sơ" để đồng bộ qua Kế toán.`);
-      }
-      return true;
-    };
-    // OCR có thể tải worker từ CDN rất chậm — chặn 12s để không treo nút.
-    const ocrWithTimeout = async (): Promise<string | null> => {
-      try {
-        return await Promise.race([
-          readBankCardOcrText(file),
-          new Promise<null>((resolve) => { setTimeout(() => resolve(null), 12000); }),
-        ]);
-      } catch { return null; }
-    };
-    // Giải mã QR ở SERVER (fallback): trình duyệt/NV có thể tải ảnh lớn, QR dày
-    // hoặc jsQR trên máy không đọc được — server dùng jsQR + jpeg-js thử nhiều
-    // vùng cắt. Chỉ gửi ảnh đã nén (JPEG) để nhẹ và đúng định dạng server đọc.
-    const decodeOnServer = async (): Promise<{ bank: string; account: string; holder: string } | null> => {
-      try {
-        // Ảnh gửi server: giữ độ phân giải cao (QR dày cần điểm ảnh), tối đa ~900KB.
-        const dataUrl = await compressBankQr(file, { maxPx: 1280, quality: 0.9, maxChars: 900000 });
-        if (!dataUrl) return null;
-        const res: any = await apiRequest('/me/bank-qr/decode', {
-          method: 'POST',
-          body: JSON.stringify({ image: dataUrl }),
-        });
-        if (!res?.ok) return null;
-        return { bank: String(res.bank || ''), account: String(res.account || ''), holder: String(res.holder || '') };
-      } catch { return null; }
-    };
-    try {
-      showToast('⏳ Đang kiểm tra mã QR ngân hàng...');
-      const payload = await decodeQrPayload(file);
-      const partial = payload ? parseVietQRPartial(payload) : null;
-      // Thiếu ngân hàng/STK (hoặc máy không đọc được QR) -> nhờ server đọc lại.
-      const needsServer = !partial?.isVietQR || !partial.bank || !partial.account;
-      const serverInfo = needsServer ? await decodeOnServer() : null;
-      const merged = {
-        bank: partial?.bank || serverInfo?.bank || '',
-        account: partial?.account || serverInfo?.account || '',
-        holder: partial?.holder || serverInfo?.holder || '',
-      };
-      if (merged.bank && merged.account) {
-        // 1. Đọc được bank + STK (máy hoặc server): nhận ngay, thiếu tên chủ TK
-        //    thì acceptQrInfo lấy tên hồ sơ.
-        await acceptQrInfo(merged, false);
-        return;
-      }
-      if (partial?.isVietQR || serverInfo) {
-        showToast('⏳ Mã QR thiếu thông tin, đang đọc chữ in trên thẻ...');
-        const ocrText = await ocrWithTimeout();
-        const ocr = extractBankQrFromOcrText(ocrText || '', (employee as any)?.full_name);
-        await acceptQrInfo({
-          bank: merged.bank || ocr.bank,
-          account: merged.account || ocr.account,
-          holder: merged.holder || ocr.holder,
-        }, true);
-        return;
-      }
-      // 2. Không giải mã được QR (ảnh mờ/cắt góc/QR không chuẩn) -> OCR toàn bộ
-      //    chữ trên thẻ; dù OCR thất bại vẫn LƯU ẢNH để NV nhập tay.
-      showToast('⏳ Không quét được mã QR, đang đọc chữ in trên thẻ...');
-      const ocrText = await ocrWithTimeout();
-      const ocr = extractBankQrFromOcrText(ocrText || '', (employee as any)?.full_name);
-      await acceptQrInfo({ bank: ocr.bank, account: ocr.account, holder: ocr.holder }, true);
-    } catch {
-      // Lỗi bất ngờ: vẫn cố lưu ảnh để NV không phải chụp lại.
-      try {
-        const dataUrl = await compressBankQr(file);
-        if (dataUrl) {
-          setProfForm((st) => ({ ...st, bank_qr_img: dataUrl }));
-          showToast('⚠️ Chưa đọc được thông tin trên QR. Ảnh đã được lưu — vui lòng nhập tay ngân hàng/số tài khoản/chủ tài khoản rồi bấm "Lưu Hồ Sơ".');
-          return;
-        }
-      } catch { /* ignore */ }
-      showToast('⚠️ Không xử lý được ảnh! Vui lòng chọn ảnh khác.');
-    }
-  };
-
 
   const handlePhotoSelected = async (file: File | undefined) => {
     if (!file) return;
@@ -8242,7 +7776,7 @@ export function App() {
                             </div>
                             <p style={{ fontSize: '12px', color: '#1E40AF', margin: 0, lineHeight: 1.5 }}>
                               Bạn đã xác nhận đúng số tiền thực lãnh <strong>{vnd(netPayVal)}</strong>.
-                              Hệ thống đã thông báo đến Kế toán để quét mã QR ngân hàng chuyển khoản vào tài khoản của bạn.
+                              Hệ thống đã thông báo đến Kế toán để quét mã VietQR ngân hàng chuyển khoản vào tài khoản của bạn.
                             </p>
                             {slip.sign_nhanvien?.img && (
                               <div style={{ marginTop: '10px', textAlign: 'center' }}>
@@ -8512,30 +8046,11 @@ export function App() {
                   </div>
                 </div>
                 <div>
-                  <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Mã QR ngân hàng (Kế toán dùng để chuyển khoản)</label>
+                  <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Thông tin ngân hàng (Kế toán dùng để chuyển khoản lương)</label>
                   <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '6px', lineHeight: 1.5 }}>
                     STK hợp lệ được hệ thống tự duyệt ngay khi lưu. Yêu cầu đổi sang STK đã thuộc về nhân viên khác (hoặc trùng STK hiện tại) sẽ bị từ chối tự động.
                   </div>
-                  {profForm.bank_qr_img ? (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <img src={profForm.bank_qr_img} alt="QR ngân hàng" style={{ width: '96px', height: '96px', objectFit: 'contain', borderRadius: '8px', border: '1px solid var(--border)', backgroundColor: '#FFF' }} />
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                        <label className="btn-secondary" style={{ fontSize: '12px', padding: '7px 12px', fontWeight: 700, cursor: 'pointer', textAlign: 'center' }}>
-                          🔄 Đổi ảnh QR
-                          <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => { handleBankQrSelected(e.target.files?.[0]); e.target.value = ''; }} />
-                        </label>
-                        <button className="btn-secondary" style={{ fontSize: '12px', padding: '7px 12px' }} onClick={() => setProfForm((s) => ({ ...s, bank_qr_img: '' }))}>🗑️ Gỡ QR</button>
-                      </div>
-                    </div>
-                  ) : (
-                    <label className="btn-secondary" style={{ display: 'block', fontSize: '13px', padding: '10px', fontWeight: 700, cursor: 'pointer', textAlign: 'center' }}>
-                      📷 Tải ảnh mã QR ngân hàng
-                      <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => { handleBankQrSelected(e.target.files?.[0]); e.target.value = ''; }} />
-                    </label>
-                  )}
-
-                  {/* Nhập tay: QR nhiều ngân hàng không ghi tên chủ TK / ảnh mờ không
-                      đọc được BIN. Cho phép sửa trực tiếp để không bị chặn lưu. */}
+                  {/* Kế toán dùng VietQR sinh từ ngân hàng + STK + chủ TK (không cần ảnh QR). */}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginTop: '10px' }}>
                     <div>
                       <label style={{ fontSize: '11px', fontWeight: 700, display: 'block', marginBottom: '3px' }}>Ngân hàng</label>
@@ -8570,7 +8085,7 @@ export function App() {
                     />
                   </div>
                   <div style={{ fontSize: '10.5px', color: 'var(--text-muted)', marginTop: '6px', lineHeight: 1.5 }}>
-                    Hệ thống tự đọc từ QR; nếu ngân hàng không ghi tên chủ tài khoản, hệ thống dùng tên trong hồ sơ. Bạn có thể sửa tay 3 ô trên rồi bấm <b>Lưu Hồ Sơ</b>.
+                    Nhập đúng ngân hàng + số tài khoản + chủ tài khoản; Kế toán dùng thông tin này để sinh mã VietQR chuyển khoản lương. STK hợp lệ được tự duyệt ngay khi bấm <b>Lưu Hồ Sơ</b>.
                   </div>
                 </div>
                 <button className="btn-primary" disabled={profBusy} onClick={handleSaveProfile} style={{ width: '100%', padding: '11px', fontSize: '14px', fontWeight: 800 }}>

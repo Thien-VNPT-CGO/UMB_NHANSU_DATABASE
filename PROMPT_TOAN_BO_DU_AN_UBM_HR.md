@@ -82,7 +82,7 @@ umbo-milk-hr-system v1.0.0 (private, node >=20)
 
 Scripts root: `build:shared | build:backend | build:admin | build:employee` (qua `--workspace=@ubm/...`); `build` chạy tuần tự shared → backend → admin → employee; `start`: `node apps/backend/dist/server.js`; `dev:backend | dev:admin | dev:employee`. Prebuild của 2 web app tự sinh `src/app-version.ts` (`APP_COMMIT = "<git commit>"` qua `scripts/gen-version.cjs`) để đối chiếu bản app vs bản API.
 
-**Thư viện chính:** React 18, socket.io-client 4.8.1, lucide-react, jsqr (quét QR ngân hàng), tesseract.js (OCR fallback), @ubm/shared (file: link). **Không dùng Tailwind/shadcn ở bản thật** — CSS thuần design system hồng trong `index.css`.
+**Thư viện chính:** React 18, socket.io-client 4.8.1, lucide-react, @ubm/shared (file: link). **Không dùng Tailwind/shadcn ở bản thật** — CSS thuần design system hồng trong `index.css`. (jsqr/tesseract.js từng dùng cho NV tải ảnh QR — đã gỡ khi bỏ tính năng upload QR.)
 
 ## 2.2. Backend
 
@@ -118,7 +118,7 @@ Chuẩn thực thể: `id` bất biến, `version` tăng (optimistic lock), `cre
 
 - **AdminAccount:** `admin_id, username, password_hash (bcrypt), full_name, role, branch_scope, is_active, version, created_at, updated_at`.
 - **EmployeeAccount:** `account_id, employee_id, phone_normalized, account_status (ACTIVE|LOCKED), role, branch_scope, pin_hash (bcrypt), pin_must_change (PIN HR cấp → bắt đổi lần đầu), pin_changed_at, pin_rotation_cycle (kỳ YYYY-MM đã đổi — chu kỳ đổi PIN 1–5 hàng tháng), version, …`
-- **EmployeeMaster:** `employee_id, employee_code, full_name, phone_normalized, id_card_number?, email?, gender (NAM|NU|KHAC), birth_date?, employment_status, group, default_branch_id, default_shift_code?, current_rate_per_hour, start_date, official_date?, bank_name/account/holder?, bank_qr_img? (dataURL ≤45KB NV tự tải), avatar_base64?, contract_docs? ({probation?, official?} — metadata file HĐLĐ, xem 6.3.17), version, …`
+- **EmployeeMaster:** `employee_id, employee_code, full_name, phone_normalized, id_card_number?, email?, gender (NAM|NU|KHAC), birth_date?, employment_status, group, default_branch_id, default_shift_code?, current_rate_per_hour, start_date, official_date?, bank_name/account/holder?, bank_qr_img? (legacy — NV không còn tải QR; giữ trường để không mất dữ liệu cũ), avatar_base64?, contract_docs? ({probation?, official?} — metadata file HĐLĐ, xem 6.3.17), version, …`
 - **ShiftAssignment:** `assignment_id, employee_id, branch_id, shift_code, date, start_at/end_at, status (DRAFT|PUBLISHED|CANCELLED), schedule_version, …` — **chỉ ca PUBLISHED là lịch chính thức / được điểm danh / được đổi**.
 - **AttendanceEvent:** `event_id, request_id (idempotency), assignment_id, employee_id, branch_id, type (CHECK_IN|CHECK_OUT|ABSENT), client_time, server_received_at, gps_latitude/longitude/accuracy?, distance_meters?, gps_status (VALID|OUT_OF_BOUNDS|LOW_ACCURACY|MOCK_DETECTED|UNAVAILABLE), drive_object_id?, drive_path, uniform_pink_ratio? (% hồng — chặn <10%), is_early/is_late?, minutes_deviation?, fine_tier (NONE|FLAT_30K|HALF_SHIFT|FULL_SHIFT), fine_amount?, compensated_by/at/reason?, created_at`. **Event gốc bất biến — sai công chỉ sửa qua DIEU_CHINH_CONG.**
 - **AttendanceAdjustment:** `adjustment_id, assignment_id, employee_id, branch_id, reason, minutes_requested, minutes_approved?, approver_id?, status (PENDING|APPROVED|REJECTED), review_note?, evidence_drive_id?, version, …`
@@ -221,7 +221,7 @@ Chuẩn thực thể: `id` bất biến, `version` tăng (optimistic lock), `cre
 | `POST /auth/employee/phone-login` | Bước 2: login SĐT + PIN |
 | `POST /auth/employee/change-pin` | Đổi PIN đúng 6 số |
 | `POST /auth/admin/login`, `POST /auth/refresh`, `POST /auth/admin/change-password` | Admin + refresh + đổi mật khẩu |
-| `GET /me`, `PUT /me/profile` | Hồ sơ tôi / NV tự sửa (avatar, email, ngày sinh, CCCD, ngân hàng + ảnh QR) |
+| `GET /me`, `PUT /me/profile` | Hồ sơ tôi / NV tự sửa (avatar, email, ngày sinh, CCCD, ngân hàng) |
 | `GET /me/colleagues`, `GET /me/colleague-shifts` | Đồng nghiệp cùng chi nhánh / ca thật của B (đổi ca) |
 | `GET /me/weekly-off-status`, `GET /me/emergency-leave-status` | Trạng thái đăng ký OFF / lượt nghỉ đột xuất còn lại |
 | `GET /me/schedule`, `GET /me/attendance`, `GET /me/monthly-timesheet` | Lịch / sự kiện chấm công / bảng công tháng của tôi |
@@ -543,7 +543,7 @@ Tab active lưu `localStorage["ubm_active_tab"]`. Lưu ý: tab `attendance` (Đi
 - **`fin-deductions`:** cột N=KPI, O=Ứng, P=Đồng phục — sửa inline + Lưu.
 - **`fin-payment` Trả Lương:** phiếu CONFIRMED đủ 3 chữ ký → VietQR + copy STK/tiền/nội dung + **Hoàn thành**; bulk **PAID cả kỳ**.
 - **`fin-signatures` Chữ Ký Mặc Định:** chữ ký `lap` / `quanly` — họ tên + SignaturePad (canvas 440×180, nén JPEG 360px/q0.72, Vẽ lại / Lưu), nút **LƯU CẤU HÌNH** (`ubm_default_signatures`), xem trước chân phiếu.
-- **`fin-bank-qr` QR Ngân Hàng:** bảng QR từng NV — NV cập nhật QR ở Hồ sơ (cổng NV) → realtime về đây cho kế toán quét chuyển khoản. Filter: ô tìm (tên/mã NV/SĐT/STK), chi nhánh, trạng thái **Có QR/Chưa có QR**; cột "Mã QR NV gửi" (thumbnail 64×64 + zoom modal + ⬇️ Tải QR) + cột "VietQR đối chiếu" (`img.vietqr.io` tab mới theo `{bank code}-{STK}-compact2.png?accountName=`); badge đếm "✅ Có QR: n/N".
+- **`fin-bank-qr` QR Ngân Hàng:** bảng thông tin ngân hàng từng NV — Kế toán mở VietQR sinh tự động từ (ngân hàng + STK + chủ TK) để quét chuyển khoản lương (NV không tải ảnh QR; mã chuyển khoản do hệ thống tự tạo). Filter: ô tìm (tên/mã NV/SĐT/STK), chi nhánh, trạng thái **Có STK/Chưa có STK**; cột "VietQR chuyển khoản" (`img.vietqr.io` tab mới theo `{bank code}-{STK}-compact2.png?accountName=`); badge đếm "✅ Có STK: n/N".
 
 ### 6.3.16. Nhóm tab MARKETING (9 tab)
 - `dashboard` (3 stats + Soạn Bản Tin), `create-broadcast` (soạn văn bản + đối tượng — dùng broadcast modal), `audiences` / `schedule` / `campaigns` / `media` / `tracking` — bảng tĩnh, `sent-list` — lịch sử `systemNotifications`, `mkt-notifications` — màn trạng thái hạ tầng (Socket.IO + Sheets hoạt động bình thường).
@@ -706,7 +706,7 @@ Header sticky: logo, họ tên, badge "Thử việc (12 ngày)"/"Chính thức",
 
 ### Tab 12 — HỒ SƠ CÁ NHÂN (`profile`)
 - **Khối chỉ xem (HR quản lý):** Họ tên, Mã NV, SĐT (tài khoản), Chi nhánh, Trạng thái (Thử việc/Chính thức), Đơn giá đ/h, Ngày vào làm, Ngày chính thức.
-- **Khối tự cập nhật** (lưu là HR/Kế toán thấy ngay realtime): Email, Giới tính (NAM/NU/KHAC), Ngày sinh, **CCCD**, **Mã QR ngân hàng** — tính năng đặc biệt: tải ảnh QR → **giải mã QR VietQR (EMVCo TLV) bằng `jsqr`** (thử toàn ảnh + cắt vùng trung tâm nhiều độ phân giải) → tự điền `bank_name` (tra mã BIN 6 số → 30 ngân hàng VN), `bank_account`, `bank_holder`; QR thiếu trường → **OCR fallback `tesseract.js`** đọc thẻ (nhận diện 27 ngân hàng + STK 8–19 chữ + chủ TK khớp tên NV/họ VN, chống rác OCR); đủ 3 trường + ảnh nén ≤45KB (480px) → `PUT /me/profile` `{email, gender, birth_date, id_card_number, bank_name, bank_account, bank_holder, bank_qr_img}`. Nút Đổi ảnh QR / Gỡ QR.
+- **Khối tự cập nhật** (lưu là HR/Kế toán thấy ngay realtime): Email, Giới tính (NAM/NU/KHAC), Ngày sinh, **CCCD**, **Ngân hàng/STK/Chủ TK** — NV nhập tay 3 trường `bank_name, bank_account, bank_holder` → `PUT /me/profile`; mã QR chuyển khoản do hệ thống (kế toán) sinh tự động từ STK qua VietQR, NV không cần/không còn tải ảnh QR. STK hợp lệ được tự duyệt ngay; trùng STK của NV khác bị từ chối tự động.
 
 ### Banner nền luôn hiển thị khi đã đăng nhập
 Banner REMINDER (sắp mở cổng OFF) · banner đang trong thời gian đăng ký 2 ngày OFF · banner đã hoàn thành đăng ký · **banner bắt điểm danh lại (GPS vượt 300m)** — hiện mọi tab, nút "Điểm danh lại ngay" / "Để sau" (POST read) · banner phiếu đổi ca chờ xác nhận.
@@ -754,7 +754,7 @@ Banner REMINDER (sắp mở cổng OFF) · banner đang trong thời gian đăng
 
 ## 10.4. Đồng bộ chéo 2 cổng (tính năng độc đáo)
 
-QR ngân hàng NV gửi ở Hồ sơ → hiện ngay tab `fin-bank-qr` kế toán; NV điểm danh → `attendance.recorded` → lưới lịch admin cập nhật tức thì; Kế toán phát phiếu lương → NV nhận toast realtime; khóa TK → NV văng phiên ngay.
+Thông tin ngân hàng NV ở Hồ sơ → hiện ngay tab `fin-bank-qr` kế toán (QR sinh qua VietQR từ STK); NV điểm danh → `attendance.recorded` → lưới lịch admin cập nhật tức thì; Kế toán phát phiếu lương → NV nhận toast realtime; khóa TK → NV văng phiên ngay.
 
 ---
 

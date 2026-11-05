@@ -197,7 +197,6 @@ import {
   vnToday as backupVnToday,
   previousMonthOf as backupPreviousMonthOf,
 } from './services/monthly-backup.service.js';
-import { decodeQrDataUrl, parseVietQRPartial } from './utils/vietqr.js';
 import { buildZipStore } from './utils/zip-store.js';
 import { getThemeScheduleState, normalizeThemeSchedule } from './utils/theme-schedule.js';
 import { lateFineFor } from './services/payroll.service.js';
@@ -1125,33 +1124,6 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       res.send(file.buffer);
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'DOWNLOAD_FAILED' });
-    }
-  });
-
-  // Giải mã QR ngân hàng ở SERVER (fallback khi trình duyệt/NV tải ảnh lớn, QR
-  // dày/mờ mà jsQR trên máy không đọc được). Trả đủ 3 trường để app tự điền.
-  app.post('/me/bank-qr/decode', authMiddleware, requireRole(['EMPLOYEE']), async (req: AuthenticatedRequest, res) => {
-    try {
-      const image = String((req.body || {}).image || '');
-      if (!image) return res.status(400).json({ error: 'MISSING_IMAGE' });
-      if (image.length > 8 * 1024 * 1024) return res.status(413).json({ error: 'IMAGE_TOO_LARGE' });
-      const payload = decodeQrDataUrl(image);
-      if (!payload) return res.status(422).json({ error: 'QR_NOT_DECODED' });
-      const info = parseVietQRPartial(payload);
-      if (!info.isVietQR) {
-        return res.status(422).json({ error: 'NOT_VIETQR', payload });
-      }
-      return res.json({
-        ok: true,
-        payload,
-        bank: info.bank,
-        account: info.account,
-        holder: info.holder,
-        bin: info.bin,
-        complete: Boolean(info.bank && info.account && info.holder),
-      });
-    } catch (err: any) {
-      return res.status(500).json({ error: err?.message || 'DECODE_FAILED' });
     }
   });
 

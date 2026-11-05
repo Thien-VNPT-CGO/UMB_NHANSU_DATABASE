@@ -1768,11 +1768,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [slipActionBusy, setSlipActionBusy] = useState<string | null>(null);
   const [editingBankSlipId, setEditingBankSlipId] = useState<string | null>(null);
   const [bankEditForm, setBankEditForm] = useState({ bank_name: '', bank_account: '', bank_holder: '' });
-  // Tab 12 Finance: quản lý QR ngân hàng từng NV (NV đổi ở Hồ sơ là realtime về đây).
+  // Tab 12 Finance: quản lý thông tin ngân hàng từng NV (VietQR sinh tự động từ STK).
   const [bankQrSearch, setBankQrSearch] = useState('');
   const [bankQrBranch, setBankQrBranch] = useState('ALL');
   const [bankQrFilter, setBankQrFilter] = useState<'ALL' | 'HAS' | 'MISSING'>('ALL');
-  const [bankQrZoom, setBankQrZoom] = useState<any | null>(null);
 
   const toVietQRBankCode = (bankName: string): string => {
     // 'sacombank' chứa 'mb' nên phải khớp TRƯỚC luật mb (trước đây rớt nhầm sang
@@ -16276,14 +16275,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const bq = bankQrSearch.trim().toLowerCase();
     const bqList = (allEmployees || [])
       .filter((e: any) => bankQrBranch === 'ALL' || String(e?.default_branch_id || '') === bankQrBranch)
-      .filter((e: any) => bankQrFilter === 'ALL' || (bankQrFilter === 'HAS' ? !!(e as any)?.bank_qr_img : !(e as any)?.bank_qr_img))
+      .filter((e: any) => bankQrFilter === 'ALL' || (bankQrFilter === 'HAS' ? !!String((e as any)?.bank_account || '').trim() : !String((e as any)?.bank_account || '').trim()))
       .filter((e: any) => {
         if (!bq) return true;
         const hay = `${e?.full_name || ''} ${e?.employee_code || ''} ${e?.phone_normalized || ''} ${e?.bank_name || ''} ${e?.bank_account || ''} ${e?.bank_holder || ''}`.toLowerCase();
         return hay.includes(bq);
       })
       .sort((a: any, b: any) => String(a?.full_name || '').localeCompare(String(b?.full_name || ''), 'vi'));
-    const bqHas = (allEmployees || []).filter((e: any) => !!(e as any)?.bank_qr_img).length;
+    const bqHas = (allEmployees || []).filter((e: any) => !!String((e as any)?.bank_account || '').trim()).length;
     const bqVietUrl = (e: any) => {
       const acc = String(e?.bank_account || '').trim();
       if (!acc) return '';
@@ -16294,10 +16293,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         <FinHead
           icon="🏦"
           title="12. QR Ngân Hàng Từng Nhân Viên"
-          sub="Nhân viên cập nhật mã QR ở mục Hồ sơ (cổng nhân viên) là hệ thống tự động đồng bộ realtime về đây — Kế toán dùng để quét chuyển khoản lương"
+          sub="QR chuyển khoản được sinh tự động từ ngân hàng + số tài khoản (VietQR) — Kế toán mở VietQR và quét để chuyển khoản lương"
           right={<>
             <span style={{ fontSize: '12px', fontWeight: 800, color: '#065F46', backgroundColor: '#D1FAE5', border: '1px solid #6EE7B7', padding: '8px 14px', borderRadius: '999px' }}>
-              ✅ Có QR: {bqHas}/{ (allEmployees || []).length} NV
+              ✅ Có STK: {bqHas}/{ (allEmployees || []).length} NV
             </span>
             <button
               className="btn-secondary"
@@ -16322,8 +16321,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           </select>
           <select value={bankQrFilter} onChange={e => setBankQrFilter(e.target.value as any)} style={{ flex: '1 1 140px', padding: '9px 12px', fontSize: '13px', border: '1px solid #D1D5DB', borderRadius: '8px' }}>
             <option value="ALL">Tất cả trạng thái</option>
-            <option value="HAS">✅ Đã có QR</option>
-            <option value="MISSING">⚠️ Chưa có QR</option>
+            <option value="HAS">✅ Đã có STK</option>
+            <option value="MISSING">⚠️ Chưa có STK</option>
           </select>
         </div>
         <div style={{ backgroundColor: '#FFF', borderRadius: '14px', border: '1px solid #E5E7EB', overflow: 'hidden' }}>
@@ -16335,13 +16334,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <th style={{ padding: '10px 14px' }}>Ngân hàng</th>
                   <th style={{ padding: '10px 14px' }}>Số tài khoản</th>
                   <th style={{ padding: '10px 14px' }}>Chủ tài khoản</th>
-                  <th style={{ padding: '10px 14px', textAlign: 'center' }}>Mã QR NV gửi</th>
-                  <th style={{ padding: '10px 14px', textAlign: 'center' }}>VietQR đối chiếu</th>
+                  <th style={{ padding: '10px 14px', textAlign: 'center' }}>VietQR chuyển khoản</th>
                 </tr>
               </thead>
               <tbody>
                 {bqList.map((e: any) => {
-                  const qr = (e as any)?.bank_qr_img || '';
                   const vUrl = bqVietUrl(e);
                   return (
                     <tr key={e.employee_id} style={{ borderTop: '1px solid #F1F5F9' }}>
@@ -16352,13 +16349,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       <td style={{ padding: '10px 14px' }}>{e.bank_name || <span style={{ color: '#94A3B8' }}>—</span>}</td>
                       <td style={{ padding: '10px 14px', fontWeight: 700 }}>{e.bank_account || <span style={{ color: '#94A3B8' }}>—</span>}</td>
                       <td style={{ padding: '10px 14px' }}>{e.bank_holder || <span style={{ color: '#94A3B8' }}>—</span>}</td>
-                      <td style={{ padding: '10px 14px', textAlign: 'center' }}>
-                        {qr ? (
-                          <img src={qr} alt={`QR ${e.full_name}`} onClick={() => setBankQrZoom(e)} style={{ width: '64px', height: '64px', objectFit: 'contain', borderRadius: '8px', border: '1px solid #6EE7B7', backgroundColor: '#FFF', cursor: 'zoom-in' }} />
-                        ) : (
-                          <span style={{ backgroundColor: '#FEF3C7', color: '#B45309', padding: '3px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: 800 }}>Chưa có QR</span>
-                        )}
-                      </td>
                       <td style={{ padding: '10px 14px', textAlign: 'center' }}>
                         {vUrl ? (
                           <button className="btn-secondary" style={{ fontSize: '11px', padding: '5px 12px', fontWeight: 700 }} onClick={() => { try { window.open(vUrl, '_blank'); } catch {} }}>
@@ -16372,31 +16362,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   );
                 })}
                 {bqList.length === 0 && (
-                  <tr><td colSpan={6} style={{ padding: '22px', textAlign: 'center', color: '#94A3B8' }}>Không có nhân viên nào khớp bộ lọc.</td></tr>
+                  <tr><td colSpan={5} style={{ padding: '22px', textAlign: 'center', color: '#94A3B8' }}>Không có nhân viên nào khớp bộ lọc.</td></tr>
                 )}
               </tbody>
             </table>
           </div>
         </div>
-        {bankQrZoom && (
-          <div
-            style={{ position: 'fixed', inset: 0, zIndex: 9999, backgroundColor: 'rgba(15,23,42,0.65)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}
-            onClick={() => setBankQrZoom(null)}
-          >
-            <div
-              style={{ backgroundColor: '#FFF', borderRadius: '16px', padding: '22px', maxWidth: '420px', width: '100%', textAlign: 'center' }}
-              onClick={e => e.stopPropagation()}
-            >
-              <div style={{ fontWeight: 900, fontSize: '15px', marginBottom: '4px' }}>QR ngân hàng — {bankQrZoom.full_name}</div>
-              <div style={{ fontSize: '12px', color: '#64748B', marginBottom: '12px' }}>{bankQrZoom.bank_name || ''} • {bankQrZoom.bank_account || ''} • {bankQrZoom.bank_holder || ''}</div>
-              {(bankQrZoom as any)?.bank_qr_img && <img src={(bankQrZoom as any).bank_qr_img} alt="QR ngân hàng" style={{ width: '100%', maxWidth: '320px', objectFit: 'contain', borderRadius: '12px', border: '1px solid #E5E7EB', backgroundColor: '#FFF' }} />}
-              <div style={{ display: 'flex', gap: '8px', marginTop: '14px' }}>
-                {(bankQrZoom as any)?.bank_qr_img && <button className="btn-secondary" style={{ flex: 1, padding: '9px', fontWeight: 700 }} onClick={() => { try { const a = document.createElement('a'); a.href = (bankQrZoom as any).bank_qr_img; a.download = `QR_${bankQrZoom.employee_code || bankQrZoom.employee_id}.jpg`; a.click(); } catch {} }}>⬇️ Tải QR</button>}
-                <button className="btn-secondary" style={{ flex: 1, padding: '9px', fontWeight: 700 }} onClick={() => setBankQrZoom(null)}>Đóng</button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     );
   }
