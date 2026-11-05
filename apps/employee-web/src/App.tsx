@@ -4411,25 +4411,6 @@ export function App() {
         </div>
       )}
 
-      {!isProbation && hasRegisteredWeeklyOff && (
-        <div style={{
-          margin: '12px 16px 0',
-          padding: '8px 14px',
-          backgroundColor: '#F0FDF4',
-          border: '1px solid #86EFAC',
-          borderRadius: 'var(--radius-sm)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          fontSize: '12px',
-          color: '#166534',
-          fontWeight: 600,
-        }}>
-          <span>✓ Đã hoàn tất đăng ký 2 ngày nghỉ OFF tuần ({weeklyOffData.day1 || 'Ngày 1'} & {weeklyOffData.day2 || 'Ngày 2'})</span>
-          <span style={{ fontSize: '11px', color: '#15803D' }}>• Đã mở khóa toàn bộ chức năng</span>
-        </div>
-      )}
-
       {/* BANNER BẮT ĐIỂM DANH LẠI (GPS vượt 300m) — hiện mọi tab đến khi xử lý */}
       {(() => {
         const redo = (Array.isArray(notifications) ? notifications : []).filter((n: any) =>

@@ -140,66 +140,6 @@ export function OfficeHomeView({ employee, showToast }: OfficeViewProps) {
           )}
         </div>
       </Card>
-
-      <Card>
-        <div style={{ padding: '16px' }}>
-          <SectionTitle>Lịch làm việc 7 ngày</SectionTitle>
-          {loading && <div className="fx-skeleton" style={{ height: 400 }} />}
-          {err && <ErrorBox msg={err} />}
-          {!loading && data && data.days && data.days.length > 0 && (
-            <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 4 }}>
-              {data.days.slice(0, 7).map((d: any) => {
-                const rule = officeRuleOfWeekday(Number(d.weekday));
-                const isToday = d.date === vnToday();
-                const isWork = !!rule?.work;
-                const checkedIn = !!d.check_in_at;
-                const checkedOut = !!d.check_out_at;
-                const isCompleted = checkedIn && checkedOut;
-                const statusColor = isCompleted ? SUCCESS : checkedIn ? WARN : isWork ? BRAND : MUTED;
-                return (
-                  <div key={d.date} style={{ flex: '0 0 auto', width: 95, background: isToday ? BRAND_SOFT : '#FFF', borderRadius: 14, border: `1px solid ${isToday ? BRAND : BORDER}`, padding: '10px 8px', display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'center' }}>
-                    <div style={{ width: 36, height: 36, borderRadius: 10, background: isWork ? (isToday ? BRAND : '#F1F5F9') : '#F1F5F9', color: isWork ? (isToday ? '#FFF' : MUTED) : '#9CA3AF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 12 }}>
-                      {d.weekday_label?.replace('Thứ ', 'T') || 'CN'}
-                    </div>
-                    <div style={{ fontSize: 11.5, fontWeight: 700, color: '#0F172A', textAlign: 'center' }}>{fmtDate(d.date)}</div>
-                    <div style={{ fontSize: 10, color: MUTED, textAlign: 'center' }}>{isWork ? officeDayHoursLabel(d.date) : 'Nghỉ'}</div>
-                    <div style={{ width: 26, height: 26, borderRadius: 8, background: statusColor === SUCCESS ? SUCCESS_SOFT : statusColor === WARN ? WARN_SOFT : BG, color: statusColor, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 11 }}>
-                      {isCompleted ? '✓' : checkedIn ? '⏱' : isWork ? '◐' : '—'}
-                    </div>
-                    <div style={{ fontSize: 9.5, color: MUTED, textAlign: 'center', fontWeight: 600 }}>
-                      {isCompleted ? 'Đã ra ca' : checkedIn ? 'Đang làm' : isWork ? 'Chưa vào' : 'Nghỉ'}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </Card>
-
-      <Card>
-        <div style={{ padding: '16px' }}>
-          <SectionTitle>Chức năng nhanh</SectionTitle>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            <button className="btn-primary" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, padding: '16px 10', borderRadius: 14, background: BRAND, color: '#FFF', border: 'none', fontWeight: 800, fontSize: 13, cursor: 'pointer' }} onClick={() => showToast('Chuyển sang tab Điểm danh')}>
-              <span style={{ fontSize: 24 }}>📍</span>
-              <span>Điểm danh</span>
-            </button>
-            <button className="btn-primary" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, padding: '16px 10', borderRadius: 14, background: '#FFF', color: BRAND, border: `1px solid ${BRAND}`, fontWeight: 800, fontSize: 13, cursor: 'pointer' }} onClick={() => showToast('Chuyển sang tab Công của tôi')}>
-              <span style={{ fontSize: 24 }}>💰</span>
-              <span>Xem lương</span>
-            </button>
-            <button className="btn-primary" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, padding: '16px 10', borderRadius: 14, background: '#FFF', color: '#0F172A', border: `1px solid ${BORDER}`, fontWeight: 800, fontSize: 13, cursor: 'pointer' }} onClick={() => showToast('Chuyển sang tab Bổ sung công')}>
-              <span style={{ fontSize: 24 }}>📝</span>
-              <span>Bổ sung công</span>
-            </button>
-            <button className="btn-primary" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, padding: '16px 10', borderRadius: 14, background: '#FFF', color: '#0F172A', border: `1px solid ${BORDER}`, fontWeight: 800, fontSize: 13, cursor: 'pointer' }} onClick={() => showToast('Chuyển sang tab Hồ Sơ')}>
-              <span style={{ fontSize: 24 }}>👤</span>
-              <span>Hồ sơ</span>
-            </button>
-          </div>
-        </div>
-      </Card>
     </div>
   );
 }
