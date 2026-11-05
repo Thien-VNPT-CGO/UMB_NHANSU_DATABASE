@@ -7340,8 +7340,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </div>
               <button
                 className="btn-primary"
+                type="button"
                 disabled={editEmpBusy}
-                style={{ width: '100%', marginTop: '14px', padding: '10px', fontWeight: 800, backgroundColor: '#B45309' }}
+                style={{ width: '100%', marginTop: '14px', padding: '10px', fontWeight: 800, backgroundColor: editEmpBusy ? '#9CA3AF' : '#B45309', opacity: editEmpBusy ? 0.7 : 1 }}
                 onClick={async () => {
                   setEditEmpBusy(true);
                   try {
@@ -7376,7 +7377,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   }
                 }}
               >
-                {editEmpBusy ? 'Đang lưu...' : 'Lưu thay đổi'}
+                {editEmpBusy ? '⏳ Đang lưu...' : '💾 Lưu thay đổi'}
               </button>
             </div>
           </div>
@@ -7915,8 +7916,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               </div>
               <button
                 className="btn-primary"
+                type="button"
                 disabled={editEmpBusy}
-                style={{ width: '100%', marginTop: '14px', padding: '10px', fontWeight: 800, backgroundColor: '#059669' }}
+                style={{ width: '100%', marginTop: '14px', padding: '10px', fontWeight: 800, backgroundColor: editEmpBusy ? '#9CA3AF' : '#059669', opacity: editEmpBusy ? 0.7 : 1 }}
                 onClick={async () => {
                   setEditEmpBusy(true);
                   try {
@@ -7951,7 +7953,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   }
                 }}
               >
-                {editEmpBusy ? 'Đang lưu...' : 'Lưu thay đổi'}
+                {editEmpBusy ? '⏳ Đang lưu...' : '💾 Lưu thay đổi'}
               </button>
             </div>
           </div>
@@ -16250,8 +16252,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   </div>
                   <button
                     className="btn-primary"
+                    type="button"
                     disabled={editEmpBusy}
-                    style={{ width: '100%', marginTop: '14px', padding: '10px', fontWeight: 800, backgroundColor: '#B45309' }}
+                    style={{ width: '100%', marginTop: '14px', padding: '10px', fontWeight: 800, backgroundColor: editEmpBusy ? '#9CA3AF' : '#B45309', opacity: editEmpBusy ? 0.7 : 1 }}
                     onClick={async () => {
                       if (editEmpBusy) return;
                       setEditEmpBusy(true);
@@ -16294,7 +16297,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       }
                     }}
                   >
-                    {editEmpBusy ? 'Đang lưu...' : 'Lưu thay đổi'}
+                    {editEmpBusy ? '⏳ Đang lưu...' : '💾 Lưu thay đổi'}
                   </button>
                 </div>
               </div>
