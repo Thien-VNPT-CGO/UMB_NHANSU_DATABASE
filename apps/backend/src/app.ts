@@ -2139,6 +2139,24 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       broadcastUpdate('accounts', { action: 'create_emp_account' });
       // Đính kèm tài khoản vừa sinh (kèm PIN) để UI chèn tức thì, khỏi fetch lại.
       const empId = (result as any)?.result?.employee_id || (result as any)?.employee_id;
+      // Tự động tạo lịch làm việc cho Văn Phòng (giờ hành chính, không cần publish như cửa hàng)
+      if (String((result as any)?.group || b.group || '') === 'VAN_PHONG') {
+        const fromDate = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+        const toDateD = new Date(Date.now() + 7 * 3_600_000);
+        toDateD.setUTCDate(toDateD.getUTCDate() + 28); // 4 tuần tới
+        const toDate = toDateD.toISOString().slice(0, 10);
+        try {
+          await schedulesService.createOfficeShiftsForEmployee({
+            employeeId: empId,
+            branchId: b.branchId || b.branch_id || b.default_branch_id || 'CN130',
+            actorId: req.user!.id,
+            fromDate,
+            toDate,
+          });
+        } catch (officeShiftErr: any) {
+          console.warn('[employees] auto office shifts failed:', officeShiftErr?.message || officeShiftErr);
+        }
+      }
       let account: any = null;
       try {
         const accs = normPhone ? await adapter.findAccountByPhone(normPhone) : [];

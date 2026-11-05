@@ -6,6 +6,8 @@ import {
   ShiftCode,
   SHIFT_TEMPLATES,
   SwapRequest,
+  OFFICE_WEEK_RULES,
+  officeDayRuleOfIso,
 } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { singleWriterQueue } from '../repositories/single-writer-queue.js';
@@ -650,6 +652,66 @@ export class SchedulesService {
           }
         }
         return finalShift;
+      },
+    });
+  }
+
+  /**
+   * Tự động tạo lịch làm việc cho nhân viên Văn Phòng khi HR tạo tài khoản.
+   * Lịch cố định theo giờ hành chính: T2–T6 08:00–17:00, T7 08:00–12:00, CN nghỉ.
+   * Tất cả ca đánh PUBLISHED (không cần HR publish như khối cửa hàng).
+   */
+  async createOfficeShiftsForEmployee(data: {
+    employeeId: string;
+    branchId: string;
+    actorId: string;
+    fromDate: string;
+    toDate: string;
+  }) {
+    return singleWriterQueue.enqueue({
+      entityType: 'OFFICE_SCHEDULE',
+      entityId: data.employeeId,
+      actorId: data.actorId,
+      execute: async () => {
+        const from = String(data.fromDate || '').slice(0, 10);
+        const to = String(data.toDate || '').slice(0, 10);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+          throw new Error('Ngày fromDate/toDate phải dạng YYYY-MM-DD!');
+        }
+        const startD = new Date(`${from}T00:00:00Z`);
+        const endD = new Date(`${to}T00:00:00Z`);
+        const created: string[] = [];
+        for (let t = startD.getTime(), guard = 0; t <= endD.getTime() && guard < 400; t += 86_400_000, guard++) {
+          const date = new Date(t).toISOString().slice(0, 10);
+          const rule = officeDayRuleOfIso(date);
+          if (!rule?.work) continue; // Chủ nhật nghỉ
+          const shiftCode = 'CA_1' as ShiftCode; // mã đại diện cho ca văn phòng (không dùng tính lương ca)
+          const startAt = `${date}T${String(rule.startHour).padStart(2, '0')}:${String(rule.startMinute).padStart(2, '0')}:00+07:00`;
+          const endAt = `${date}T${String(rule.endHour).padStart(2, '0')}:${String(rule.endMinute).padStart(2, '0')}:00+07:00`;
+          const assignmentId = `SHIFT_OFFICE_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+          // Kiểm tra trùng ca cùng ngày + chi nhánh
+          const sameDay = await this.repo.getShiftsForEmployee(data.employeeId, date, date).catch(() => []);
+          const dup = (sameDay || []).find(
+            (s: any) =>
+              String((s as any)?.status || '') !== 'CANCELLED' &&
+              String((s as any)?.date || '').slice(0, 10) === date &&
+              canonicalBranch((s as any)?.branch_id) === canonicalBranch(data.branchId)
+          );
+          if (dup) continue;
+          await this.repo.createShiftAssignment({
+            assignment_id: assignmentId,
+            employee_id: data.employeeId,
+            branch_id: data.branchId,
+            shift_code: shiftCode,
+            date,
+            start_at: startAt,
+            end_at: endAt,
+            status: 'PUBLISHED',
+            schedule_version: 1,
+          });
+          created.push(date);
+        }
+        return { created, count: created.length };
       },
     });
   }
