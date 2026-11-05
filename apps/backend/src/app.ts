@@ -59,6 +59,7 @@ import { AutoScheduleService } from './services/auto-schedule.service.js';
 import { TestsService } from './services/tests.service.js';
 import { AttendanceService } from './services/attendance.service.js';
 import { OfficeService } from './services/office.service.js';
+import { SalaryConfigService } from './services/salary-config.service.js';
 import { LiveMapService, canonicalBranchId, distanceMeters, vnDateOf } from './services/live-map.service.js';
 import { LiveLocationStore } from './services/live-location.store.js';
 import { appendGpsTrail, readGpsTrail, summarizeGpsTrail, listGpsTrailDates } from './services/gps-trail.store.js';
@@ -166,6 +167,8 @@ import {
   zaloLoginIdParams,
   zaloSendInviteBody,
   interviewDraftBody,
+  salaryConfigBody,
+  employeeIdParams,
 } from './validators/hr.validator.js';
 import {
   backupCreateBody,
@@ -301,7 +304,15 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   // Nghiệp vụ riêng nhân viên KHỐI VĂN PHÒNG (group = VAN_PHONG): lịch hành chính,
   // nghỉ phép 1 ngày/tháng (duyệt Nhân sự → Kế toán → Giám đốc), điểm danh 08:00–08:30
   // + GPS 300m, bổ sung công 4 phiếu/tháng, lương tạm tính.
-  const officeService = new OfficeService(adapter);
+  // Cấu hình LƯƠNG CƠ BẢN + PHỤ CẤP theo từng NV (4 khối) — Kế toán/Admin cấu hình,
+  // HR chỉ thêm nhân viên mới (không đặt lương).
+  const salaryConfigService = new SalaryConfigService(adapter);
+  const officeService = new OfficeService(adapter, salaryConfigService);
+  // Migrate MỘT LẦN: phúc lợi VP (office_benefits — trước đây HR sửa) gộp vào phụ cấp
+  // trong employee_salary_config. Idempotent, không chặn khởi động.
+  salaryConfigService.migrateLegacyOfficeBenefits()
+    .then(() => console.log('[salary-config] office_benefits migration done'))
+    .catch(err => console.warn('[salary-config] office_benefits migration failed:', err?.message || err));
   const liveLocationStore = new LiveLocationStore();
   const liveMapService = new LiveMapService(adapter, liveLocationStore);
 
@@ -366,7 +377,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     schedulesService, employeesService, attendanceService,
     (adapter as any).syncService, adapter,
   );
-  const payrollService = new PayrollService(adapter);
+  const payrollService = new PayrollService(adapter, undefined, salaryConfigService);
   const notificationsService = new NotificationsService(adapter);
   payrollService.setNotificationsService(notificationsService);
   const zaloService = new ZaloService(adapter);
@@ -529,6 +540,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     if (p === '/ping' || p === '/health') return null;
     if (p.startsWith('/auth/')) return null; // login đã có broadcast riêng khi cần
     if (p.startsWith('/employees')) return 'employees';
+    if (p.startsWith('/salary-config')) return 'employees';
     // Ứng viên/lịch PV: tách khỏi 'employees' để bắn data:updated(candidates) —
     // tab "Quản Lý Lịch Phỏng Vấn & BOT Zalo Cá Nhân" tải lại ngay khi HR lập
     // lịch/chấm/xác nhận/vắng/hủy (trước đây gộp 'employees' nên tab PV đứng dữ liệu).
@@ -1407,38 +1419,73 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     } catch (err: any) { officeErr(res, err); }
   });
 
-  // --- Danh sách nhân viên KHỐI VĂN PHÒNG + lương cơ bản & phúc lợi (để Nhân sự cập nhật) ---
+  // --- Danh sách nhân viên KHỐI VĂN PHÒNG + lương (Kế toán cấu hình theo tháng) ---
+  // Read-only: văn phòng lương theo THÁNG = LBH + phụ cấp (tab "Cấu hình Lương CB & Phụ cấp"),
+  // không tính theo ca. HR xem được, không sửa — Kế toán/Admin sửa.
   app.get('/office/employees', authMiddleware, requireRole(['HR', 'ADMIN', 'FINANCE', 'DIRECTOR']), async (req: AuthenticatedRequest, res) => {
     try {
       const list = (await employeesService.listEmployees().catch(() => [])) as any[];
       const office = (list || [])
         .filter((e: any) => OfficeService.isOfficeEmployee(e) && String(e.employment_status) !== 'TERMINATED')
         .sort((a: any, b: any) => String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi'));
-      const employees = (await Promise.all(office.map(async (e: any) => ({
-        employee_id: e.employee_id,
-        employee_code: e.employee_code,
-        full_name: e.full_name,
-        employment_status: e.employment_status,
-        rate_per_hour: Number(e.current_rate_per_hour) || 0,
-        benefits: await officeService.getBenefits(e.employee_id),
-      }))));
+      const salaryMap = await salaryConfigService.getAll().catch(() => ({} as any));
+      const employees = office.map((e: any) => {
+        const cfg = salaryMap[e.employee_id];
+        const base = Math.max(0, Math.floor(Number(cfg?.base_salary) || 0));
+        const allowance = Math.max(0, Math.floor(Number(cfg?.allowance) || 0));
+        return {
+          employee_id: e.employee_id,
+          employee_code: e.employee_code,
+          full_name: e.full_name,
+          employment_status: e.employment_status,
+          pay_mode: 'MONTHLY' as const, // văn phòng: lương cơ bản theo tháng (không theo ca)
+          base_salary: base,
+          allowance,
+          monthly_total: base + allowance,
+          updatedAt: cfg?.updatedAt,
+        };
+      });
       res.json({ employees });
     } catch (err: any) { officeErr(res, err, 500); }
   });
 
-  // --- Phúc lợi (HR/Admin cập nhật để cộng vào lương tạm tính) ---
-  app.get('/office/benefits/:employeeId', authMiddleware, requireRole(['HR', 'ADMIN', 'FINANCE', 'DIRECTOR']), async (req: AuthenticatedRequest, res) => {
+  // --- Cấu hình LƯƠNG CƠ BẢN + PHỤ CẤP theo từng NV (cả 4 khối) ---
+  // HR & Admin thêm nhân viên mới nhưng KHÔNG đặt lương; Kế toán (FINANCE) + Admin cấu hình
+  // mức lương cơ bản cho từng NV, phụ thuộc khối làm việc (STORE/XUONG/VAN_PHONG/SALE).
+  // Lương 1 NV = Lương cơ bản + Phụ cấp. HR/DIRECTOR chỉ xem (read-only).
+  app.get('/salary-config', authMiddleware, requireRole(['DIRECTOR', 'ADMIN', 'HR', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
     try {
-      res.json({ employee_id: req.params.employeeId, benefits: await officeService.getBenefits(String(req.params.employeeId)) });
-    } catch (err: any) { officeErr(res, err, 500); }
+      res.json({ configs: await salaryConfigService.getAll() });
+    } catch (err: any) {
+      res.status(500).json({ error: 'SALARY_CONFIG_READ_FAILED', message: err?.message || 'Không đọc được cấu hình lương.' });
+    }
   });
 
-  app.put('/office/benefits/:employeeId', authMiddleware, requireRole(['HR', 'ADMIN']), async (req: AuthenticatedRequest, res) => {
+  app.put('/salary-config/:employeeId', authMiddleware, requireRole(['FINANCE', 'ADMIN']), validate({ params: employeeIdParams, body: salaryConfigBody }), async (req: AuthenticatedRequest, res) => {
     try {
-      const benefits = await officeService.setBenefits(String(req.params.employeeId), Number(req.body?.benefits || 0));
-      broadcastUpdate('office-benefits', { employeeId: req.params.employeeId, benefits });
-      res.json({ success: true, employee_id: req.params.employeeId, benefits });
-    } catch (err: any) { officeErr(res, err); }
+      const employeeId = String(req.params.employeeId);
+      const emp = await employeesService.getEmployee(employeeId).catch(() => null);
+      if (!emp) {
+        return res.status(404).json({ error: 'EMPLOYEE_NOT_FOUND', message: 'Nhân viên không tồn tại trong hệ thống.' });
+      }
+      const b = req.body || {};
+      const baseSalary = Number(b.baseSalary ?? b.base_salary ?? 0);
+      const allowance = Number(b.allowance ?? b.allowance_vnd ?? 0);
+      const payMode = b.payMode ?? b.pay_mode;
+      if (!Number.isFinite(baseSalary) || !Number.isFinite(allowance) || baseSalary < 0 || allowance < 0) {
+        return res.status(400).json({ error: 'INVALID_SALARY_CONFIG', message: 'Lương cơ bản / phụ cấp phải là số ≥ 0.' });
+      }
+      const entry = await salaryConfigService.setForEmployee(
+        employeeId,
+        { payMode, baseSalary, allowance },
+        { id: req.user!.id, name: (req.user as any)?.fullName },
+        { group: (emp as any)?.group },
+      );
+      broadcastUpdate('employees', { action: 'salary-config', employeeId });
+      res.json({ success: true, employee_id: employeeId, config: entry });
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message || 'SALARY_CONFIG_WRITE_FAILED', message: err?.message || 'Không lưu được cấu hình lương.' });
+    }
   });
 
   // Quét SĐT trùng toàn hệ thống ( realtime cho HR đối soát ).
@@ -2062,11 +2109,32 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         startDate: b.startDate || b.start_date,
         officialDate: b.officialDate || b.official_date,
         ratePerHour: b.currentRatePerHour || b.current_rate_per_hour,
+        bankName: b.bankName || b.bank_name,
+        bankAccount: b.bankAccount || b.bank_account,
+        bankHolder: b.bankHolder || b.bank_holder,
         defaultShiftCode: ['CA_1', 'CA_2', 'CA_3'].includes(String(b.defaultShiftCode || b.default_shift_code || '').toUpperCase())
           ? String(b.defaultShiftCode || b.default_shift_code).toUpperCase() as any
           : undefined,
         actorId: req.user!.id,
       });
+      // Lương cơ bản + phụ cấp: CHỈ ADMIN được đặt ngay lúc tạo; HR gửi lên bị bỏ qua
+      // (HR không đặt lương — Kế toán cấu hình sau, theo khối làm việc của NV).
+      const salaryBase = Number(b.baseSalary ?? b.base_salary ?? NaN);
+      const salaryAllowance = Number(b.allowance ?? b.allowance_vnd ?? NaN);
+      const wantSalary = Number.isFinite(salaryBase) || Number.isFinite(salaryAllowance);
+      if (wantSalary && req.user!.role === 'ADMIN') {
+        const newId = (result as any)?.result?.employee_id || (result as any)?.employee_id;
+        if (newId && Number.isFinite(salaryBase)) {
+          try {
+            await salaryConfigService.setForEmployee(newId, {
+              baseSalary: salaryBase,
+              allowance: Number.isFinite(salaryAllowance) ? salaryAllowance : 0,
+            }, { id: req.user!.id, name: (req.user as any)?.fullName });
+          } catch (salaryErr: any) {
+            console.warn('[employees] set salary config failed:', salaryErr?.message || salaryErr);
+          }
+        }
+      }
       broadcastUpdate('employees', { action: 'create', employee: result });
       broadcastUpdate('accounts', { action: 'create_emp_account' });
       // Đính kèm tài khoản vừa sinh (kèm PIN) để UI chèn tức thì, khỏi fetch lại.

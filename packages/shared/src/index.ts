@@ -10,3 +10,4 @@ export * from './types/tests.js';
 export * from './constants/index.js';
 export * from './constants/office.js';
 export * from './attendance-grid.js';
+export * from './payMode.js';

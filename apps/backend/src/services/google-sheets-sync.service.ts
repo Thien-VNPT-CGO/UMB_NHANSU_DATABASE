@@ -307,7 +307,7 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   },
   {
     title: 'PHIEU_LUONG',
-    headers: ['ID Phiếu', 'Mã Kỳ Lương', 'ID Nhân Viên', 'Mã NV', 'Họ Và Tên', 'Kỳ Lương', 'Số Ca', 'Ca Vắng', 'Giờ Chuẩn', 'Đơn Giá', 'Lương Chuẩn', 'Không Dùng', 'Thưởng', 'Khấu Trừ', 'Thực Nhận', 'Trạng Thái', 'Không Dùng', 'Không Dùng', 'Lương CB (tay)', 'OT Thêm (tay)', 'Bonus Thêm (tay)', 'Ứng Lương', 'Trừ KPI (tay)', 'Trừ Đồng Phục', 'Tổng Cộng', 'Tổng Lương', 'Thực Lãnh', 'Ký Lập (tên)', 'Ký Lập Lúc', 'Ký QL (tên)', 'Ký QL Lúc', 'Ký NV (tên)', 'Ký NV Lúc', 'Ảnh Ký Lập', 'Ảnh Ký QL', 'Ảnh Ký NV', 'Phát Hành Lúc', 'Xác Nhận Lúc', 'Chi Trả Lúc'],
+    headers: ['ID Phiếu', 'Mã Kỳ Lương', 'ID Nhân Viên', 'Mã NV', 'Họ Và Tên', 'Kỳ Lương', 'Số Ca', 'Ca Vắng', 'Giờ Chuẩn', 'Đơn Giá', 'Lương Chuẩn', 'Không Dùng', 'Thưởng', 'Khấu Trừ', 'Thực Nhận', 'Trạng Thái', 'Không Dùng', 'Không Dùng', 'Lương CB (tay)', 'OT Thêm (tay)', 'Bonus Thêm (tay)', 'Ứng Lương', 'Trừ KPI (tay)', 'Trừ Đồng Phục', 'Tổng Cộng', 'Tổng Lương', 'Thực Lãnh', 'Ký Lập (tên)', 'Ký Lập Lúc', 'Ký QL (tên)', 'Ký QL Lúc', 'Ký NV (tên)', 'Ký NV Lúc', 'Ảnh Ký Lập', 'Ảnh Ký QL', 'Ảnh Ký NV', 'Phát Hành Lúc', 'Xác Nhận Lúc', 'Chi Trả Lúc', 'Phụ Cấp (cấu hình)'],
   },
   {
     title: 'CONG_THUC_LUONG',
@@ -602,7 +602,7 @@ export class GoogleSheetsSyncService {
   private static readonly WRITE_RATE_LIMIT_MS = 1100;
 
   /** Số cột (1-based) -> chữ cột Sheets (1=A ... 26=Z, 27=AA, 39=AM...).
-   *  Mọi range cứng A1:Z/A2:Z cũ đều vỡ với tab >26 cột (PHIEU_LUONG 39 cột,
+   *  Mọi range cứng A1:Z/A2:Z cũ đều vỡ với tab >26 cột (PHIEU_LUONG 40 cột,
    *  FROM_NHAN_VIEN 26 cột) — ghi thì 400, đọc thì mất cột AA+. */
   public static colLetter(n: number): string {
     let s = '';
@@ -3408,6 +3408,8 @@ export class GoogleSheetsSyncService {
           const isFinal = ['PAID', 'CONFIRMED'].includes(String(status).toUpperCase());
           const luong_cb = numOr(r[18]);
           const standard_pay = Number(r[10]) || 0;
+          // Phụ cấp theo cấu hình Kế toán (cột 40 — thêm mới, không đụng cột legacy).
+          const allowance = numOr(r[39]) || 0;
           const ot_extra = numOr(r[19]);
           const bonus = Number(r[12]) || 0;
           const tru_kpi = numOr(r[22]);
@@ -3415,8 +3417,8 @@ export class GoogleSheetsSyncService {
           const ung_luong = numOr(r[21]);
           const dong_phuc = numOr(r[23]);
           // Phụ cấp OT đã bỏ: luôn đọc/ghi 0. Phiếu chưa chốt được tính lại tổng
-          // từ breakdown để không còn cộng khoản phụ cấp cũ trong Sheet.
-          const tongCong = isFinal ? numOr(r[24]) : (luong_cb || 0) + standard_pay + (ot_extra || 0) + bonus;
+          // từ breakdown để luôn khớp cấu hình hiện tại.
+          const tongCong = isFinal ? numOr(r[24]) : (luong_cb || 0) + allowance + standard_pay + (ot_extra || 0) + bonus;
           const tongLuong = isFinal ? numOr(r[25]) : (tongCong || 0) - (tru_kpi || 0) - deduction;
           const thucLanh = isFinal ? numOr(r[26]) : (tongLuong || 0) - (ung_luong || 0) - (dong_phuc || 0);
           return {
@@ -3431,8 +3433,7 @@ export class GoogleSheetsSyncService {
             standard_hours: Number(r[8]) || 0,
             rate_snapshot: Number(r[9]) || 0,
             standard_pay,
-            // Legacy: luôn 0, không đọc lại phụ cấp từ Sheet.
-            allowance: 0,
+            allowance,
             bonus,
             deduction,
             net_pay: isFinal ? (numOr(r[14]) || 0) : (thucLanh || 0),
@@ -4802,6 +4803,7 @@ export class GoogleSheetsSyncService {
       s.slip_published_at || '',
       s.slip_confirmed_at || '',
       s.slip_paid_at || '',
+      s.allowance ?? '',
     ]));
   }
 
@@ -6323,7 +6325,7 @@ export class GoogleSheetsSyncService {
     }
 
     // Xóa đuôi thừa khi dữ liệu mới ngắn hơn cũ (tránh dòng ma). Clear tới ZZ
-    // để tab >26 cột (PHIEU_LUONG 39 cột) cũng sạch đuôi ở cột AA+.
+    // để tab >26 cột (PHIEU_LUONG 40 cột) cũng sạch đuôi ở cột AA+.
     try {
       await this.sheetsCall(`clear.${sheetTitle}`, () =>
         this.sheetsClient!.spreadsheets.values.clear({

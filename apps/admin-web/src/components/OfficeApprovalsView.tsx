@@ -1,22 +1,25 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { Building2, CheckCircle, XCircle, RefreshCw, DollarSign, Save } from 'lucide-react';
+﻿import React, { useCallback, useEffect, useState } from 'react';
+import { Building2, CheckCircle, XCircle, RefreshCw } from 'lucide-react';
 import { apiRequest } from '../services/api';
 
 /**
- * Duyệt Văn Phòng — 2 hàng đợi cho nhân viên khối VĂN PHÒNG (group = VAN_PHONG):
- *  1. Nghỉ phép: Nhân sự → Kế toán → Giám đốc (tuần tự).
- *  2. Bổ sung công (Nhân sự/Giám đốc duyệt, 4 phiếu/tháng/NV).
+ * Duyá»‡t VÄƒn PhÃ²ng â€” 2 hÃ ng Ä‘á»£i cho nhÃ¢n viÃªn khá»‘i VÄ‚N PHÃ’NG (group = VAN_PHONG):
+ *  1. Nghá»‰ phÃ©p: NhÃ¢n sá»± â†’ Káº¿ toÃ¡n â†’ GiÃ¡m Ä‘á»‘c (tuáº§n tá»±).
+ *  2. Bá»• sung cÃ´ng (NhÃ¢n sá»±/GiÃ¡m Ä‘á»‘c duyá»‡t, 4 phiáº¿u/thÃ¡ng/NV).
  *
- * Mỗi vai trò chỉ thấy/xử lý đúng bước của mình; Giám đốc duyệt xong phiếu nghỉ
- * phép mới có hiệu lực. Realtime: tự tải lại khi có sự kiện "office-*" phát ra.
+ * LÆ°Æ¡ng & phá»¥ cáº¥p KHÃ”NG cÃ²n chá»‰nh á»Ÿ Ä‘Ã¢y: Káº¿ toÃ¡n cáº¥u hÃ¬nh táº¡i tab
+ * "Cáº¥u hÃ¬nh LÆ°Æ¡ng CB & Phá»¥ cáº¥p (Theo Khá»‘i)" â€” vÄƒn phÃ²ng lÆ°Æ¡ng theo THÃNG.
+ *
+ * Má»—i vai trÃ² chá»‰ tháº¥y/xá»­ lÃ½ Ä‘Ãºng bÆ°á»›c cá»§a mÃ¬nh; GiÃ¡m Ä‘á»‘c duyá»‡t xong phiáº¿u nghá»‰
+ * phÃ©p má»›i cÃ³ hiá»‡u lá»±c. Realtime: tá»± táº£i láº¡i khi cÃ³ sá»± kiá»‡n "office-*" phÃ¡t ra.
  */
 
 const LEAVE_STATUS_LABEL: Record<string, string> = {
-  PENDING_HR: 'Chờ Nhân sự duyệt',
-  PENDING_FINANCE: 'Chờ Kế toán duyệt',
-  PENDING_DIRECTOR: 'Chờ Giám đốc duyệt',
-  APPROVED: 'Đã duyệt — có hiệu lực',
-  REJECTED: 'Đã từ chối',
+  PENDING_HR: 'Chá» NhÃ¢n sá»± duyá»‡t',
+  PENDING_FINANCE: 'Chá» Káº¿ toÃ¡n duyá»‡t',
+  PENDING_DIRECTOR: 'Chá» GiÃ¡m Ä‘á»‘c duyá»‡t',
+  APPROVED: 'ÄÃ£ duyá»‡t â€” cÃ³ hiá»‡u lá»±c',
+  REJECTED: 'ÄÃ£ tá»« chá»‘i',
 };
 
 const LEAVE_STATUS_COLOR: Record<string, { bg: string; fg: string }> = {
@@ -28,9 +31,9 @@ const LEAVE_STATUS_COLOR: Record<string, { bg: string; fg: string }> = {
 };
 
 const ADJ_STATUS_LABEL: Record<string, string> = {
-  PENDING: 'Chờ duyệt',
-  APPROVED: 'Đã duyệt',
-  REJECTED: 'Đã từ chối',
+  PENDING: 'Chá» duyá»‡t',
+  APPROVED: 'ÄÃ£ duyá»‡t',
+  REJECTED: 'ÄÃ£ tá»« chá»‘i',
 };
 
 export const OfficeApprovalsView: React.FC<{ currentUser: any }> = ({ currentUser }) => {
@@ -39,18 +42,13 @@ export const OfficeApprovalsView: React.FC<{ currentUser: any }> = ({ currentUse
   const canFinance = ['FINANCE', 'ADMIN'].includes(role);
   const canDirector = ['DIRECTOR', 'ADMIN'].includes(role);
   const canAdj = ['HR', 'DIRECTOR', 'ADMIN'].includes(role);
-  const canBenefitsRead = ['HR', 'FINANCE', 'DIRECTOR', 'ADMIN'].includes(role);
-  const canBenefitsEdit = ['HR', 'ADMIN'].includes(role);
 
   const [leaves, setLeaves] = useState<any[]>([]);
   const [adjustments, setAdjustments] = useState<any[]>([]);
-  const [officeEmps, setOfficeEmps] = useState<any[]>([]);
-  const [benefitDrafts, setBenefitDrafts] = useState<Record<string, string>>({});
-  const [empLoading, setEmpLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState('');
   const [notice, setNotice] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
-  const [tab, setTab] = useState<'leave' | 'adjust' | 'benefits'>(canHr || canFinance || canDirector ? 'leave' : 'benefits');
+  const [tab, setTab] = useState<'leave' | 'adjust'>('leave');
 
   const load = useCallback(async () => {
     setLoading(true); setNotice(null);
@@ -63,48 +61,15 @@ export const OfficeApprovalsView: React.FC<{ currentUser: any }> = ({ currentUse
       if (a.status === 'fulfilled') setAdjustments((a.value as any)?.adjustments || []);
       else setAdjustments([]);
     } catch (err: any) {
-      setNotice({ kind: 'err', text: `Không tải được hàng đợi: ${err?.message || err}` });
+      setNotice({ kind: 'err', text: `KhÃ´ng táº£i Ä‘Æ°á»£c hÃ ng Ä‘á»£i: ${err?.message || err}` });
     } finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  const loadOfficeEmployees = useCallback(async () => {
-    if (!canBenefitsRead) return;
-    setEmpLoading(true);
-    try {
-      const data: any = await apiRequest('/office/employees');
-      const list = Array.isArray(data?.employees) ? data.employees : [];
-      setOfficeEmps(list);
-      setBenefitDrafts((prev) => {
-        const next = { ...prev };
-        for (const e of list) if (!(e.employee_id in next)) next[e.employee_id] = String(e.benefits ?? 0);
-        return next;
-      });
-    } catch (err: any) {
-      setNotice({ kind: 'err', text: `Không tải được danh sách NV văn phòng: ${err?.message || err}` });
-    } finally { setEmpLoading(false); }
-  }, [canBenefitsRead]);
-  useEffect(() => { loadOfficeEmployees(); }, [loadOfficeEmployees]);
-
-  const saveBenefit = async (employeeId: string) => {
-    const value = Number(benefitDrafts[employeeId] || 0);
-    setBusy(`${employeeId}:benefit`); setNotice(null);
-    try {
-      await apiRequest(`/office/benefits/${encodeURIComponent(employeeId)}`, {
-        method: 'PUT',
-        body: JSON.stringify({ benefits: value }),
-      });
-      setNotice({ kind: 'ok', text: 'Đã lưu phúc lợi.' });
-      await loadOfficeEmployees();
-    } catch (err: any) {
-      setNotice({ kind: 'err', text: `Lưu phúc lợi thất bại: ${err?.message || err}` });
-    } finally { setBusy(''); }
-  };
-
   const review = async (kind: 'leave' | 'adjust', id: string, decision: 'APPROVE' | 'REJECT') => {
     let note = '';
     if (decision === 'REJECT') {
-      note = window.prompt('Lý do từ chối?') || '';
+      note = window.prompt('LÃ½ do tá»« chá»‘i?') || '';
       if (!note.trim()) return;
     }
     setBusy(`${id}:${decision}`); setNotice(null);
@@ -113,10 +78,10 @@ export const OfficeApprovalsView: React.FC<{ currentUser: any }> = ({ currentUse
         method: 'POST',
         body: JSON.stringify({ decision, note }),
       });
-      setNotice({ kind: 'ok', text: decision === 'APPROVE' ? 'Đã duyệt phiếu.' : 'Đã từ chối phiếu.' });
+      setNotice({ kind: 'ok', text: decision === 'APPROVE' ? 'ÄÃ£ duyá»‡t phiáº¿u.' : 'ÄÃ£ tá»« chá»‘i phiáº¿u.' });
       await load();
     } catch (err: any) {
-      setNotice({ kind: 'err', text: `Thao tác thất bại: ${err?.message || err}` });
+      setNotice({ kind: 'err', text: `Thao tÃ¡c tháº¥t báº¡i: ${err?.message || err}` });
     } finally { setBusy(''); }
   };
 
@@ -142,14 +107,14 @@ export const OfficeApprovalsView: React.FC<{ currentUser: any }> = ({ currentUse
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' }}>
         <div>
           <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Building2 size={20} /> Duyệt Văn Phòng
+            <Building2 size={20} /> Duyá»‡t VÄƒn PhÃ²ng
           </h1>
           <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-            Vai trò của bạn: <b>{role}</b>. Nghỉ phép duyệt tuần tự <b>Nhân sự → Kế toán → Giám đốc</b>.
+            Vai trÃ² cá»§a báº¡n: <b>{role}</b>. Nghá»‰ phÃ©p duyá»‡t tuáº§n tá»± <b>NhÃ¢n sá»± â†’ Káº¿ toÃ¡n â†’ GiÃ¡m Ä‘á»‘c</b>.
           </p>
         </div>
         <button onClick={load} disabled={loading} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', backgroundColor: 'var(--surface)', color: 'var(--text)', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>
-          <RefreshCw size={14} /> Tải lại
+          <RefreshCw size={14} /> Táº£i láº¡i
         </button>
       </div>
 
@@ -161,27 +126,22 @@ export const OfficeApprovalsView: React.FC<{ currentUser: any }> = ({ currentUse
 
       <div style={{ display: 'flex', gap: '8px' }}>
         <button onClick={() => setTab('leave')} style={{ padding: '8px 16px', borderRadius: '999px', fontSize: '13px', fontWeight: 700, cursor: 'pointer', border: `1px solid ${tab === 'leave' ? 'var(--brand)' : 'var(--border)'}`, backgroundColor: tab === 'leave' ? 'var(--brand)' : 'var(--surface)', color: tab === 'leave' ? '#FFF' : 'var(--text)' }}>
-          Nghỉ phép ({pendingLeaves.length} chờ)
+          Nghá»‰ phÃ©p ({pendingLeaves.length} chá»)
         </button>
         <button onClick={() => setTab('adjust')} style={{ padding: '8px 16px', borderRadius: '999px', fontSize: '13px', fontWeight: 700, cursor: 'pointer', border: `1px solid ${tab === 'adjust' ? 'var(--brand)' : 'var(--border)'}`, backgroundColor: tab === 'adjust' ? 'var(--brand)' : 'var(--surface)', color: tab === 'adjust' ? '#FFF' : 'var(--text)' }}>
-          Bổ sung công ({pendingAdjust.length} chờ)
+          Bá»• sung cÃ´ng ({pendingAdjust.length} chá»)
         </button>
-        {canBenefitsRead && (
-          <button onClick={() => setTab('benefits')} style={{ padding: '8px 16px', borderRadius: '999px', fontSize: '13px', fontWeight: 700, cursor: 'pointer', border: `1px solid ${tab === 'benefits' ? 'var(--brand)' : 'var(--border)'}`, backgroundColor: tab === 'benefits' ? 'var(--brand)' : 'var(--surface)', color: tab === 'benefits' ? '#FFF' : 'var(--text)' }}>
-            Lương & Phúc lợi VP
-          </button>
-        )}
       </div>
 
       {tab === 'leave' && (
         <div style={{ ...card, overflow: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '900px' }}>
-            <thead><tr><th style={th}>Nhân viên</th><th style={th}>Ngày nghỉ</th><th style={th}>Lý do</th><th style={th}>Trạng thái</th><th style={th}>Duyệt</th></tr></thead>
+            <thead><tr><th style={th}>NhÃ¢n viÃªn</th><th style={th}>NgÃ y nghá»‰</th><th style={th}>LÃ½ do</th><th style={th}>Tráº¡ng thÃ¡i</th><th style={th}>Duyá»‡t</th></tr></thead>
             <tbody>
               {loading ? (
-                <tr><td style={td} colSpan={5}>Đang tải…</td></tr>
+                <tr><td style={td} colSpan={5}>Äang táº£iâ€¦</td></tr>
               ) : leaves.length === 0 ? (
-                <tr><td style={td} colSpan={5}>Chưa có phiếu nghỉ phép văn phòng nào.</td></tr>
+                <tr><td style={td} colSpan={5}>ChÆ°a cÃ³ phiáº¿u nghá»‰ phÃ©p vÄƒn phÃ²ng nÃ o.</td></tr>
               ) : leaves.map((l: any) => {
                 const sc = LEAVE_STATUS_COLOR[l.status] || LEAVE_STATUS_COLOR.PENDING_HR;
                 return (
@@ -193,10 +153,10 @@ export const OfficeApprovalsView: React.FC<{ currentUser: any }> = ({ currentUse
                     <td style={td}>
                       {canActOnLeave(l.status) ? (
                         <div style={{ display: 'flex', gap: '6px' }}>
-                          <button onClick={() => review('leave', l.leave_id, 'APPROVE')} disabled={!!busy} style={{ padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: 'none', backgroundColor: '#059669', color: '#FFF', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}><CheckCircle size={13} /> Duyệt</button>
-                          <button onClick={() => review('leave', l.leave_id, 'REJECT')} disabled={!!busy} style={{ padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid #FCA5A5', backgroundColor: '#FEF2F2', color: '#991B1B', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}><XCircle size={13} /> Từ chối</button>
+                          <button onClick={() => review('leave', l.leave_id, 'APPROVE')} disabled={!!busy} style={{ padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: 'none', backgroundColor: '#059669', color: '#FFF', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}><CheckCircle size={13} /> Duyá»‡t</button>
+                          <button onClick={() => review('leave', l.leave_id, 'REJECT')} disabled={!!busy} style={{ padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid #FCA5A5', backgroundColor: '#FEF2F2', color: '#991B1B', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}><XCircle size={13} /> Tá»« chá»‘i</button>
                         </div>
-                      ) : <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>—</span>}
+                      ) : <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>â€”</span>}
                     </td>
                   </tr>
                 );
@@ -209,79 +169,34 @@ export const OfficeApprovalsView: React.FC<{ currentUser: any }> = ({ currentUse
       {tab === 'adjust' && (
         <div style={{ ...card, overflow: 'auto' }}>
           {!canAdj ? (
-            <div style={{ padding: '18px', fontSize: 13, color: 'var(--text-muted)' }}>Vai trò của bạn không có quyền duyệt phiếu bổ sung công văn phòng.</div>
+            <div style={{ padding: '18px', fontSize: 13, color: 'var(--text-muted)' }}>Vai trÃ² cá»§a báº¡n khÃ´ng cÃ³ quyá»n duyá»‡t phiáº¿u bá»• sung cÃ´ng vÄƒn phÃ²ng.</div>
           ) : (
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '900px' }}>
-              <thead><tr><th style={th}>Nhân viên</th><th style={th}>Ngày cần bổ sung</th><th style={th}>Lý do</th><th style={th}>Trạng thái</th><th style={th}>Duyệt</th></tr></thead>
+              <thead><tr><th style={th}>NhÃ¢n viÃªn</th><th style={th}>NgÃ y cáº§n bá»• sung</th><th style={th}>LÃ½ do</th><th style={th}>Tráº¡ng thÃ¡i</th><th style={th}>Duyá»‡t</th></tr></thead>
               <tbody>
                 {loading ? (
-                  <tr><td style={td} colSpan={5}>Đang tải…</td></tr>
+                  <tr><td style={td} colSpan={5}>Äang táº£iâ€¦</td></tr>
                 ) : adjustments.length === 0 ? (
-                  <tr><td style={td} colSpan={5}>Chưa có phiếu bổ sung công văn phòng nào.</td></tr>
+                  <tr><td style={td} colSpan={5}>ChÆ°a cÃ³ phiáº¿u bá»• sung cÃ´ng vÄƒn phÃ²ng nÃ o.</td></tr>
                 ) : adjustments.map((a: any) => (
                   <tr key={a.adjustment_id}>
                     <td style={td}><b>{a.full_name}</b><div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{a.employee_code}</div></td>
                     <td style={td}>{String(a.work_date).slice(0, 10).split('-').reverse().join('/')}</td>
-                    <td style={td}>{a.reason}{Number(a.minutes_requested) > 0 ? ` (${a.minutes_requested} phút)` : ''}</td>
+                    <td style={td}>{a.reason}{Number(a.minutes_requested) > 0 ? ` (${a.minutes_requested} phÃºt)` : ''}</td>
                     <td style={td}><span style={{ fontSize: 11, fontWeight: 800, padding: '2px 8px', borderRadius: '999px', backgroundColor: a.status === 'APPROVED' ? '#D1FAE5' : a.status === 'REJECTED' ? '#FEE2E2' : '#FEF3C7', color: a.status === 'APPROVED' ? '#065F46' : a.status === 'REJECTED' ? '#991B1B' : '#92400E' }}>{ADJ_STATUS_LABEL[a.status] || a.status}</span></td>
                     <td style={td}>
                       {canActOnAdjust(a.status) ? (
                         <div style={{ display: 'flex', gap: '6px' }}>
-                          <button onClick={() => review('adjust', a.adjustment_id, 'APPROVE')} disabled={!!busy} style={{ padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: 'none', backgroundColor: '#059669', color: '#FFF', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}><CheckCircle size={13} /> Duyệt</button>
-                          <button onClick={() => review('adjust', a.adjustment_id, 'REJECT')} disabled={!!busy} style={{ padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid #FCA5A5', backgroundColor: '#FEF2F2', color: '#991B1B', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}><XCircle size={13} /> Từ chối</button>
+                          <button onClick={() => review('adjust', a.adjustment_id, 'APPROVE')} disabled={!!busy} style={{ padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: 'none', backgroundColor: '#059669', color: '#FFF', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}><CheckCircle size={13} /> Duyá»‡t</button>
+                          <button onClick={() => review('adjust', a.adjustment_id, 'REJECT')} disabled={!!busy} style={{ padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid #FCA5A5', backgroundColor: '#FEF2F2', color: '#991B1B', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}><XCircle size={13} /> Tá»« chá»‘i</button>
                         </div>
-                      ) : <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>—</span>}
+                      ) : <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>â€”</span>}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
-        </div>
-      )}
-
-      {tab === 'benefits' && (
-        <div style={{ ...card, overflow: 'auto' }}>
-          <div style={{ padding: '14px 16px 0' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 800, fontSize: 14 }}>
-              <DollarSign size={16} /> Lương cơ bản & Phúc lợi — Nhân viên Văn Phòng
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
-              Lương cơ bản đơn giá/giờ do HR cập nhật ở tab “Hồ Sơ Nhân Viên”; phúc lợi (nếu có) nhập tại đây và được cộng vào Lương tạm tính tại Cổng NV.
-            </div>
-          </div>
-          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '900px', marginTop: 10 }}>
-            <thead><tr><th style={th}>Nhân viên</th><th style={th}>Đơn giá/giờ</th><th style={th}>Phúc lợi / tháng</th><th style={th}>Cập nhật</th></tr></thead>
-            <tbody>
-              {empLoading ? (
-                <tr><td style={td} colSpan={4}>Đang tải…</td></tr>
-              ) : officeEmps.length === 0 ? (
-                <tr><td style={td} colSpan={4}>Không có nhân viên khối Văn Phòng nào.</td></tr>
-              ) : officeEmps.map((e: any) => (
-                <tr key={e.employee_id}>
-                  <td style={td}><b>{e.full_name}</b><div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{e.employee_code} · {e.employment_status === 'OFFICIAL' ? 'Chính thức' : 'Thử việc'}</div></td>
-                  <td style={td}>{Number(e.rate_per_hour || 0).toLocaleString('vi-VN')}đ</td>
-                  <td style={td}>
-                    <input
-                      type="number"
-                      min={0}
-                      disabled={!canBenefitsEdit}
-                      value={benefitDrafts[e.employee_id] ?? ''}
-                      onChange={(ev) => setBenefitDrafts((prev) => ({ ...prev, [e.employee_id]: ev.target.value }))}
-                      style={{ width: '140px', padding: '7px 9px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', backgroundColor: canBenefitsEdit ? 'var(--surface)' : '#F1F5F9', color: 'var(--text)', fontSize: 13 }}
-                    />
-                  </td>
-                  <td style={td}>
-                    {canBenefitsEdit ? (
-                      <button onClick={() => saveBenefit(e.employee_id)} disabled={!!busy} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 'var(--radius-sm)', border: 'none', backgroundColor: 'var(--brand)', color: '#FFF', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
-                        <Save size={13} /> {busy === `${e.employee_id}:benefit` ? 'Đang lưu…' : 'Lưu'}
-                      </button>
-                    ) : <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Chỉ xem</span>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
         </div>
       )}
     </div>

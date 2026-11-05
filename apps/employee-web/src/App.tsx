@@ -4626,9 +4626,11 @@ export function App() {
                 </div>
               </div>
               <div className="card" style={{ padding: '12px', textAlign: 'center' }}>
-                <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600 }}>Đơn giá lương</div>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600 }}>{employee?.group === 'VAN_PHONG' ? 'Hình thức lương' : 'Đơn giá lương'}</div>
                 <div style={{ fontSize: '15px', fontWeight: 800, color: '#10B981', marginTop: '4px' }}>
-                  {(employee?.current_rate_per_hour || (isProbation ? 23000 : 25000)).toLocaleString('vi-VN')} đ/h
+                  {employee?.group === 'VAN_PHONG'
+                    ? 'Theo tháng (LCB + PC)'
+                    : `${(employee?.current_rate_per_hour || (isProbation ? 23000 : 25000)).toLocaleString('vi-VN')} đ/h`}
                 </div>
               </div>
             </div>
@@ -7694,7 +7696,7 @@ export function App() {
                         <strong>{v}</strong>
                       </div>
                     );
-                    const tongCong = slip.tong_cong ?? ((slip.luong_cb || 0) + (slip.standard_pay || 0) + (slip.ot_extra || 0) + (slip.bonus || 0));
+                    const tongCong = slip.tong_cong ?? ((slip.luong_cb || 0) + (slip.allowance || 0) + (slip.standard_pay || 0) + (slip.ot_extra || 0) + (slip.bonus || 0));
                     const netPayVal = slip.thuc_lanh ?? slip.net_pay ?? 0;
                     const st = slip.status || 'DRAFT';
                     return (
@@ -7724,8 +7726,9 @@ export function App() {
 
                         {/* Breakdown */}
                         <div style={{ backgroundColor: '#FFF', padding: '12px', borderRadius: '8px', border: '1px solid #FDE68A' }}>
-                          {row(`Công: ${slip.standard_hours || 0} giờ (${slip.total_shifts ?? 0} ca${Number(slip.absent_shifts) > 0 ? `, vắng ${slip.absent_shifts}` : ''}) × ${vnd(slip.rate_snapshot).replace('đ', '')}/h`, vnd(slip.standard_pay))}
-                          {Number(slip.luong_cb) > 0 && row('Lương cơ bản', vnd(slip.luong_cb))}
+                          {Number(slip.standard_pay) > 0 && row(`Công: ${slip.standard_hours || 0} giờ (${slip.total_shifts ?? 0} ca${Number(slip.absent_shifts) > 0 ? `, vắng ${slip.absent_shifts}` : ''}) × ${vnd(slip.rate_snapshot).replace('đ', '')}/h`, vnd(slip.standard_pay))}
+                          {Number(slip.luong_cb) > 0 && row('Lương cơ bản (tháng)', vnd(slip.luong_cb))}
+                          {Number(slip.allowance) > 0 && row('Phụ cấp', vnd(slip.allowance))}
                           {Number(slip.ot_extra) > 0 && row('OT thêm', vnd(slip.ot_extra))}
                           {Number(slip.bonus) > 0 && row('Thưởng/Bonus', `+${vnd(slip.bonus)}`)}
                           {row('TỔNG CỘNG THU NHẬP', vnd(tongCong), true)}
@@ -7876,7 +7879,7 @@ export function App() {
                 <div style={{ backgroundColor: '#FAFAFA', borderRadius: '8px', padding: '8px 10px' }}><div style={{ color: 'var(--text-muted)' }}>SĐT (tài khoản)</div><strong>{(employee as any)?.phone_normalized || '—'}</strong></div>
                 <div style={{ backgroundColor: '#FAFAFA', borderRadius: '8px', padding: '8px 10px' }}><div style={{ color: 'var(--text-muted)' }}>Chi nhánh</div><strong>{employee?.default_branch_id || '—'}</strong></div>
                 <div style={{ backgroundColor: '#FAFAFA', borderRadius: '8px', padding: '8px 10px' }}><div style={{ color: 'var(--text-muted)' }}>Trạng thái</div><strong>{isProbation ? 'Thử việc' : 'Chính thức'}</strong></div>
-                <div style={{ backgroundColor: '#FAFAFA', borderRadius: '8px', padding: '8px 10px' }}><div style={{ color: 'var(--text-muted)' }}>Đơn giá</div><strong>{Number(employee?.current_rate_per_hour || 0).toLocaleString('vi-VN')} đ/h</strong></div>
+                <div style={{ backgroundColor: '#FAFAFA', borderRadius: '8px', padding: '8px 10px' }}><div style={{ color: 'var(--text-muted)' }}>{employee?.group === 'VAN_PHONG' ? 'Hình thức lương' : 'Đơn giá'}</div><strong>{employee?.group === 'VAN_PHONG' ? 'Theo tháng (LCB + phụ cấp)' : `${Number(employee?.current_rate_per_hour || 0).toLocaleString('vi-VN')} đ/h`}</strong></div>
                 <div style={{ backgroundColor: '#FAFAFA', borderRadius: '8px', padding: '8px 10px' }}><div style={{ color: 'var(--text-muted)' }}>Ngày vào làm</div><strong>{String((employee as any)?.start_date || '').slice(0, 10) || '—'}</strong></div>
                 <div style={{ backgroundColor: '#FAFAFA', borderRadius: '8px', padding: '8px 10px' }}><div style={{ color: 'var(--text-muted)' }}>Ngày chính thức</div><strong>{String((employee as any)?.official_date || '').slice(0, 10) || '—'}</strong></div>
               </div>

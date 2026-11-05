@@ -5,7 +5,7 @@
  *  - Lịch làm việc hành chính (T2–T6 08:00–17:00, T7 08:00–12:00).
  *  - Đăng ký nghỉ phép (1 ngày/tháng, duyệt Nhân sự → Kế toán → Giám đốc).
  *  - Điểm danh (VÀO CA 08:00–08:30, RA CA; GPS realtime trong 300m mới hiện nút).
- *  - Công của tôi (lương tạm tính = giờ công × đơn giá + phúc lợi).
+ *  - Công của tôi (văn phòng: lương cơ bản theo THÁNG = LBH + phụ cấp, không theo ca).
  *  - Bổ sung công (4 phiếu/tháng, dùng hết khóa tới tháng sau).
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -438,6 +438,7 @@ const OFFICE_LNG = 106.689620;
 // ============================================================================
 export function OfficeTimesheetView({ employee, showToast }: OfficeViewProps) {
   void showToast;
+  void employee;
   const [period, setPeriod] = useState(() => vnToday().slice(0, 7));
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -459,7 +460,9 @@ export function OfficeTimesheetView({ employee, showToast }: OfficeViewProps) {
     setPeriod(d.toISOString().slice(0, 7));
   };
 
-  const rate = Number(data?.rate_per_hour) || Number(employee?.current_rate_per_hour) || 0;
+  const baseSalary = Number(data?.base_salary) || 0;
+  const allowance = Number(data?.allowance) || 0;
+  const monthlyTotal = Number(data?.monthly_total) || 0;
   const days: any[] = Array.isArray(data?.days) ? data.days : [];
 
   return (
@@ -475,11 +478,16 @@ export function OfficeTimesheetView({ employee, showToast }: OfficeViewProps) {
         {!loading && data && (
           <>
             <div style={{ background: 'linear-gradient(135deg, var(--brand-soft), #FFF)', borderRadius: 'var(--radius-md)', padding: 14, textAlign: 'center', marginBottom: 12 }}>
-              <div style={{ fontSize: 12, color: MUTED, fontWeight: 700 }}>LƯƠNG TẠM TÍNH</div>
-              <div style={{ fontSize: 26, fontWeight: 900, color: BRAND }}>{vnd(data.total_estimated)}</div>
+              <div style={{ fontSize: 12, color: MUTED, fontWeight: 700 }}>LƯƠNG CƠ BẢN (THEO THÁNG)</div>
+              <div style={{ fontSize: 26, fontWeight: 900, color: BRAND }}>{vnd(monthlyTotal)}</div>
               <div style={{ fontSize: 11.5, color: MUTED, marginTop: 2 }}>
-                {vnd(rate)}/giờ × {data.total_hours}h {Number(data.benefits) > 0 ? `+ phúc lợi ${vnd(data.benefits)}` : '(chưa có phúc lợi)'}
+                Lương CB {vnd(baseSalary)} + Phụ cấp {vnd(allowance)} · Không tính theo ca
               </div>
+              {data.configured === false && (
+                <div style={{ fontSize: 11, color: '#9A3412', marginTop: 4, fontWeight: 600 }}>
+                  Kế toán chưa cấu hình lương tháng cho bạn.
+                </div>
+              )}
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
               <div style={{ background: '#F8FAFC', borderRadius: 'var(--radius-sm)', padding: 9, textAlign: 'center' }}>
@@ -511,15 +519,14 @@ export function OfficeTimesheetView({ employee, showToast }: OfficeViewProps) {
                 {d.missing_checkout && <span style={{ color: '#9A3412' }}> · thiếu ra ca</span>}
               </div>
             </div>
-            <div style={{ textAlign: 'right' }}>
-              <div style={{ fontWeight: 800, fontSize: 13 }}>{vnd(d.est_pay)}</div>
-              <div style={{ fontSize: 11, color: MUTED }}>{fmtHours(Number(d.worked_minutes) || 0)}</div>
+            <div style={{ textAlign: 'right', fontWeight: 800, fontSize: 13 }}>
+              {fmtHours(Number(d.worked_minutes) || 0)}
             </div>
           </div>
         ))}
       </Card>
       <div style={{ margin: '0 16px 24px', fontSize: 11, color: MUTED, textAlign: 'center' }}>
-        * Lương tạm tính theo giờ công thực tế × đơn giá của vị trí + phúc lợi (nếu có). Số chính thức do Kế toán chốt ở kỳ lương.
+        * Văn phòng hưởng lương cơ bản theo tháng = Lương CB + Phụ cấp (Kế toán cấu hình), không tính theo ca. Số chính thức do Kế toán chốt ở kỳ lương.
       </div>
     </div>
   );

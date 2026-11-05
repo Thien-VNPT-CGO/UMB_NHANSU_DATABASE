@@ -10,6 +10,8 @@ import {
   DEFAULT_PAYROLL_FORMULA,
 } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
+import { SalaryConfigService } from './salary-config.service.js';
+import { effectivePayMode } from '@ubm/shared';
 import { singleWriterQueue } from '../repositories/single-writer-queue.js';
 import { v4 as uuidv4 } from 'uuid';
 import { Server } from 'socket.io';
@@ -236,7 +238,9 @@ export function monthRange(period: string): { fromDate: string; toDate: string; 
 export class PayrollService {
   constructor(
     private repo: ISheetsRepository,
-    private io?: Server
+    private io?: Server,
+    /** Cấu hình lương (LCB/phụ cấp/hình thức theo tháng-ca) — Kế toán cấu hình. */
+    private salaryConfig?: SalaryConfigService,
   ) {}
 
   public setSocketServer(io: Server) {
@@ -301,6 +305,9 @@ export class PayrollService {
       actorId: creatorId,
       execute: async () => {
         const employees = await this.repo.listEmployees({ branch: branchScope });
+        const salaryConfigs: any = await this.salaryConfig?.getAll().catch(() => ({})) || {};
+        const inputsArr = await this.repo.getPayrollInputs(period).catch(() => [] as any[]);
+        const inputs = new Map((inputsArr || []).map((x: any) => [x.employee_id, x]));
         const { fromDate, toDate } = monthRange(period);
 
         const payslipItems: Omit<PayslipItem, 'created_at' | 'updated_at'>[] = [];
@@ -414,12 +421,22 @@ export class PayrollService {
             }
           }
 
-          const allowance = 0;
-          // Đã bỏ phụ cấp HR điều phối nhường ca: ca nhận thay chỉ hưởng lương ca.
+          // Hình thức lương theo cấu hình Kế toán: MONTHLY -> không tính tiền theo ca,
+          // lương = LBH (cấu hình) + phụ cấp; HOURLY giữ nguyên tính theo ca + phụ cấp.
+          const cfgEmp = salaryConfigs[emp.employee_id];
+          const monthly = effectivePayMode((emp as any).group, cfgEmp?.pay_mode) === 'MONTHLY';
+          const allowance = Math.max(0, Math.floor(Number(cfgEmp?.allowance) || 0));
+          const standardPayEff = monthly ? 0 : standardPay;
+          // LCB: kế toán nhập tay theo kỳ sẽ ghi đè mặc định lấy từ cấu hình.
+          const inp: any = inputs.get(emp.employee_id) || {};
+          const hasManualCb = inp.luong_cb !== undefined && inp.luong_cb !== null && inp.luong_cb !== '';
+          const luongCB = hasManualCb
+            ? Number(inp.luong_cb) || 0
+            : (monthly ? Math.max(0, Math.floor(Number(cfgEmp?.base_salary) || 0)) : 0);
           const bonus = 0;
-          const netPay = standardPay + allowance - deduction;
+          const netPay = standardPayEff + allowance + luongCB - deduction;
 
-          totalHours += empHours;
+          totalHours += monthly ? 0 : empHours;
           totalAmount += netPay;
 
           payslipItems.push({
@@ -432,15 +449,16 @@ export class PayrollService {
             total_shifts: publishedShifts.length,
             absent_shifts: absentShifts,
             standard_hours: empHours,
-            rate_snapshot: rate,
-            standard_pay: standardPay,
+            rate_snapshot: monthly ? 0 : rate,
+            standard_pay: standardPayEff,
             tv_hours: tvHours,
-            tv_pay: tvPay,
+            tv_pay: monthly ? 0 : tvPay,
             ct_hours: ctHours,
-            ct_pay: ctPay,
+            ct_pay: monthly ? 0 : ctPay,
             allowance,
             bonus,
             deduction,
+            luong_cb: luongCB,
             net_pay: netPay,
             bank_name: (emp as any).bank_name || '',
             bank_account: (emp as any).bank_account || '',
@@ -500,10 +518,25 @@ export class PayrollService {
   async upsertInput(period: string, data: any, actorId: string) {
     if (!data?.employeeId) throw new Error('MISSING_EMPLOYEE: thiếu nhân viên!');
     const num = (v: any) => Math.max(0, Math.floor(Number(v) || 0));
+    const employeeId = String(data.employeeId);
+    // LCB: nếu Kế toán để TRỐNG thì NV lương THÁNG tự lấy lương cơ bản từ cấu hình
+    // làm mặc định (vẫn ghi đè được bằng số nhập tay). NV theo ca giữ 0.
+    const rawCb = data.luong_cb;
+    const cbMissing = rawCb === undefined || rawCb === null || String(rawCb).trim() === '';
+    let luongCb = cbMissing ? 0 : num(rawCb);
+    if (cbMissing && this.salaryConfig) {
+      try {
+        const emp = await this.repo.getEmployeeById(employeeId);
+        const cfg = await this.salaryConfig.getForEmployee(employeeId);
+        if (effectivePayMode((emp as any)?.group, cfg?.pay_mode) === 'MONTHLY') {
+          luongCb = Math.max(0, Math.floor(Number(cfg?.base_salary) || 0));
+        }
+      } catch { /* fallback 0 */ }
+    }
     const res = await this.repo.upsertPayrollInput({
       period,
-      employee_id: String(data.employeeId),
-      luong_cb: num(data.luong_cb),
+      employee_id: employeeId,
+      luong_cb: luongCb,
       ot_extra: num(data.ot_extra),
       bonus_extra: num(data.bonus_extra),
       ung_luong: num(data.ung_luong),
@@ -533,6 +566,7 @@ export class PayrollService {
         const inputsArr = await this.repo.getPayrollInputs(period).catch(() => []);
         const inputs = new Map((inputsArr || []).map((x: any) => [x.employee_id, x]));
         const employees = await this.repo.listEmployees({ branch: branchScope });
+        const salaryConfigs: any = await this.salaryConfig?.getAll().catch(() => ({})) || {};
         const { fromDate, toDate } = monthRange(period);
 
         const payslipItems: Omit<PayslipItem, 'created_at' | 'updated_at'>[] = [];
@@ -636,19 +670,28 @@ export class PayrollService {
             if (deductAmt > 0) deduction += deductAmt;
           }
           // Đã bỏ hoàn toàn phụ cấp OT và phụ cấp HR điều phối — bonus chỉ còn phần nhập tay.
+          // Cấu hình Kế toán (LCB/phụ cấp/hình thức): NV lương THÁNG không tính tiền theo ca;
+          // LBH tự lấy cấu hình làm mặc định (kế toán nhập tay luong_cb theo kỳ sẽ ghi đè).
+          const cfgEmp = salaryConfigs[emp.employee_id];
+          const monthly = effectivePayMode((emp as any).group, cfgEmp?.pay_mode) === 'MONTHLY';
+          const allowanceCfg = Math.max(0, Math.floor(Number(cfgEmp?.allowance) || 0));
+          const standardPayEff = monthly ? 0 : standardPay;
           const inp: any = inputs.get(emp.employee_id) || {};
-          const luongCB = Number(inp.luong_cb) || 0;
+          const hasManualCb = inp.luong_cb !== undefined && inp.luong_cb !== null && inp.luong_cb !== '';
+          const luongCB = hasManualCb
+            ? Number(inp.luong_cb) || 0
+            : (monthly ? Math.max(0, Math.floor(Number(cfgEmp?.base_salary) || 0)) : 0);
           const otExtra = Number(inp.ot_extra) || 0;
           const bonusExtra = Number(inp.bonus_extra) || 0;
           const ung = Number(inp.ung_luong) || 0;
           const kpi = Number(inp.tru_kpi) || 0;
           const dp = Number(inp.dong_phuc) || 0;
           const bonusTotal = bonusExtra;
-          const tongCong = luongCB + standardPay + otExtra + bonusTotal;
+          const tongCong = luongCB + allowanceCfg + standardPayEff + otExtra + bonusTotal;
           const tongLuong = tongCong - kpi - deduction;
           const thucLanh = tongLuong - ung - dp;
 
-          totalHours += empHours;
+          totalHours += monthly ? 0 : empHours;
           totalAmount += thucLanh;
 
           payslipItems.push({
@@ -662,13 +705,13 @@ export class PayrollService {
             absent_shifts: absentShifts,
             standard_hours: empHours,
             rate_snapshot: curRate,
-            standard_pay: standardPay,
+            standard_pay: standardPayEff,
             tv_hours: tvHours,
-            tv_pay: tvPay,
+            tv_pay: monthly ? 0 : tvPay,
             ct_hours: ctHours,
-            ct_pay: ctPay,
-            // Legacy: giữ trường để phiếu cũ đọc được, nhưng luôn ghi 0.
-            allowance: 0,
+            ct_pay: monthly ? 0 : ctPay,
+            // Phụ cấp theo cấu hình Kế toán (mọi hình thức lương đều cộng).
+            allowance: allowanceCfg,
             bonus: bonusTotal,
             deduction,
             net_pay: thucLanh,
@@ -1371,13 +1414,15 @@ export class PayrollService {
   }
 
   /**
-   * Bỏ hoàn toàn phụ cấp (allowance / phu_cap_ot / ot_slots) còn sót trên phiếu
-   * CHƯA chi trả/chốt (DRAFT/RECONCILED/APPROVED/PUBLISHED). Tính lại các tổng
-   * tiền từ breakdown hiện có để khớp công thức mới:
+   * Dọn PHIẾU LEGACY: bỏ phụ cấp OT cũ (`phu_cap_ot` / `ot_slots`) còn sót trên phiếu
+   * CHƯA chi trả/chốt (DRAFT/RECONCILED/APPROVED/PUBLISHED). Tính lại các tổng tiền
+   * từ breakdown hiện có:
    *   TỔNG CỘNG = luong_cb + standard_pay + ot_extra + bonus
    *   TỔNG LƯƠNG = TỔNG CỘNG − tru_kpi − deduction
    *   THỰC LÃNH = TỔNG LƯƠNG − ung_luong − dong_phuc
-   * Idempotent: phiếu đã sạch (allowance/phu_cap_ot/ot_slots = 0) được bỏ qua.
+   * LƯU Ý (2026-11): `allowance` giờ là PHỤ CẤP HỢP LỆ do Kế toán cấu hình — KHÔNG dọn
+   * các phiếu chỉ có `allowance`. Chỉ dọn phiếu legacy có dấu hiệu OT cũ
+   * (`phu_cap_ot` / `ot_slots` > 0) để tránh xóa phụ cấp mới ở mỗi lần khởi động.
    */
   async purgeLegacyAllowance(period?: string) {
     const all = await this.collectAllSlipsInternal();
@@ -1385,8 +1430,8 @@ export class PayrollService {
     const targets = (all || []).filter(s => {
       if (FINAL.has(String((s as any)?.status || '').toUpperCase())) return false;
       if (period && String((s as any)?.period || '') !== period) return false;
-      return (Number((s as any)?.allowance) || 0) > 0 ||
-        (Number((s as any)?.phu_cap_ot) || 0) > 0 ||
+      // Chỉ phiếu legacy thật sự: còn dấu vết phụ cấp OT cũ.
+      return (Number((s as any)?.phu_cap_ot) || 0) > 0 ||
         (Number((s as any)?.ot_slots) || 0) > 0;
     });
     let updated = 0;
@@ -1904,6 +1949,7 @@ export class PayrollService {
     const formula = await this.getFormula(period).catch(() => ({ ...DEFAULT_PAYROLL_FORMULA, period }) as any);
     const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
     const all = await this.repo.listEmployees({ branch: branchScope });
+    const salaryConfigs: any = await this.salaryConfig?.getAll().catch(() => ({})) || {};
     const employees = (all || []).filter(
       e => (e as any)?.employment_status !== 'TERMINATED' &&
         (!onlyEmployeeId || String((e as any)?.employee_id) === String(onlyEmployeeId))
@@ -2059,6 +2105,13 @@ export class PayrollService {
       details.sort((a, b) => String(a.date).localeCompare(String(b.date)));
       // Thưởng nhường ca HR điều phối đã duyệt trong kỳ.
       const bonus = 0;
+      // Hình thức lương: NV lương THÁNG không tính theo ca — thực nhận = LCB + phụ cấp − phạt.
+      const cfgEmp = salaryConfigs[empId];
+      const payMode = effectivePayMode((emp as any).group, cfgEmp?.pay_mode);
+      const monthly = payMode === 'MONTHLY';
+      const monthlyBase = Math.max(0, Math.floor(Number(cfgEmp?.base_salary) || 0));
+      const allowance = Math.max(0, Math.floor(Number(cfgEmp?.allowance) || 0));
+      const netPay = monthly ? (monthlyBase + allowance - deduction) : (standardPay - deduction);
       rows.push({
         employeeId: empId,
         employeeCode: (emp as any).employee_code,
@@ -2066,6 +2119,7 @@ export class PayrollService {
         branchId: (emp as any).default_branch_id,
         stage: (emp as any).employment_status,
         group: (emp as any).group,
+        payMode,
         rate,
         totalShifts: published.length,
         full,
@@ -2077,9 +2131,11 @@ export class PayrollService {
         ctHours: Math.round(ctHours * 10) / 10,
         ctPay,
         standardPay,
+        monthlyBase,
+        allowance,
         deduction,
         bonus,
-        netPay: standardPay - deduction,
+        netPay,
         shifts: details,
       });
     }

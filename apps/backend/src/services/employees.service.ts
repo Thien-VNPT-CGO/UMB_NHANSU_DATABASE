@@ -283,6 +283,9 @@ export class EmployeesService {
     officialDate?: string;
     ratePerHour?: number;
     defaultShiftCode?: 'CA_1' | 'CA_2' | 'CA_3';
+    bankName?: string;
+    bankAccount?: string;
+    bankHolder?: string;
     actorId: string;
   }) {
     const employeeId = `EMP_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
@@ -318,6 +321,14 @@ export class EmployeesService {
         if (clashAccs.length > 0) {
           throw new Error(`DUPLICATE_PHONE: SĐT ${data.phone} đã có tài khoản ${clashAccs[0].account_id}! Mỗi SĐT chỉ dùng cho 1 nhân viên.`);
         }
+        // Chặn trùng STK ngay khi tạo (cùng quy tắc với cập nhật hồ sơ).
+        const nextBankKey = bankAccountKey(data.bankAccount);
+        if (nextBankKey) {
+          const clashSt = existingEmps.find(e => bankAccountKey(e.bank_account) === nextBankKey);
+          if (clashSt) {
+            throw new Error(`DUPLICATE_BANK_ACCOUNT: STK đã thuộc về ${clashSt.full_name} (${clashSt.employee_code})! Không thể dùng trùng STK.`);
+          }
+        }
 
         const emp = await this.repo.createEmployee({
           employee_id: employeeId,
@@ -336,6 +347,9 @@ export class EmployeesService {
           birth_date: data.birthDate,
           id_card_number: data.idCardNumber,
           email: data.email,
+          ...(data.bankName ? { bank_name: String(data.bankName).trim().slice(0, 100) } : {}),
+          ...(data.bankAccount ? { bank_account: String(data.bankAccount).trim().slice(0, 64) } : {}),
+          ...(data.bankHolder ? { bank_holder: String(data.bankHolder).trim().slice(0, 100) } : {}),
           ...(data.defaultShiftCode ? { default_shift_code: data.defaultShiftCode } : {}),
         });
 

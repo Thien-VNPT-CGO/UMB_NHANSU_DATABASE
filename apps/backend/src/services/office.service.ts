@@ -7,7 +7,8 @@
  *    chỉ có hiệu lực khi Giám đốc duyệt.
  *  - Điểm danh: VÀO CA trong khung 08:00–08:30, RA CA sau khi vào ca; bắt buộc GPS
  *    trong bán kính 300m của Văn Phòng Trụ Sở Chính.
- *  - Công của tôi: lương TẠM TÍNH = giờ công thực tế × đơn giá giờ + phúc lợi.
+ *  - Công của tôi: lương CƠ BẢN THEO THÁNG (không tính theo ca) = Lương CB + phụ cấp,
+ *    do Kế toán cấu hình theo từng NV (mẫu employee_salary_config).
  *  - Bổ sung công: 4 phiếu/tháng, dùng hết khóa đến tháng sau.
  *
  * Bền vững: lưu trong CÀI ĐẶT HỆ THỐNG (đồng bộ Google Sheets qua updateSystemSettings)
@@ -29,12 +30,12 @@ import {
 } from '@ubm/shared';
 import type { OfficeApprovalRole, OfficeLeaveStatus } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
+import { SalaryConfigService } from './salary-config.service.js';
 import { calculateDistanceMeters } from './attendance.service.js';
 
 const SETTINGS_KEY_LEAVES = 'office_leave_requests';
 const SETTINGS_KEY_ATTENDANCE = 'office_attendance_events';
 const SETTINGS_KEY_ADJUSTMENTS = 'office_adjustments';
-const SETTINGS_KEY_BENEFITS = 'office_benefits';
 
 const OFFICE_BRANCH_ID = 'VAN_PHONG';
 
@@ -92,7 +93,7 @@ function withOfficeLock<T>(fn: () => Promise<T>): Promise<T> {
 const pad2 = (n: number) => String(n).padStart(2, '0');
 
 export class OfficeService {
-  constructor(private repo: ISheetsRepository) {}
+  constructor(private repo: ISheetsRepository, private salaryConfig?: SalaryConfigService) {}
 
   /** Nhân viên khối văn phòng? Nhận cả biến thể chuỗi ("văn phòng", "VAN PHONG"…). */
   static isOfficeEmployee(emp: any): boolean {
@@ -565,25 +566,9 @@ export class OfficeService {
   }
 
   // ==================================================================
-  // CÔNG CỦA TÔI — LƯƠNG TẠM TÍNH
+  // CÔNG CỦA TÔI — LƯƠNG CƠ BẢN THEO THÁNG (không tính theo ca)
+  //   Văn phòng: lương cứng theo tháng = Lương CB + phụ cấp (Kế toán cấu hình).
   // ==================================================================
-  async getBenefits(employeeId: string): Promise<number> {
-    const settings = await this.readSettings();
-    const map = settings[SETTINGS_KEY_BENEFITS] && typeof settings[SETTINGS_KEY_BENEFITS] === 'object' ? settings[SETTINGS_KEY_BENEFITS] : {};
-    return Math.max(0, Math.floor(Number(map[String(employeeId)]) || 0));
-  }
-
-  async setBenefits(employeeId: string, amount: number): Promise<number> {
-    const value = Math.max(0, Math.floor(Number(amount) || 0));
-    return withOfficeLock(async () => {
-      const settings = await this.readSettings();
-      const map = settings[SETTINGS_KEY_BENEFITS] && typeof settings[SETTINGS_KEY_BENEFITS] === 'object' ? { ...settings[SETTINGS_KEY_BENEFITS] } : {};
-      map[String(employeeId)] = value;
-      await this.repo.updateSystemSettings({ [SETTINGS_KEY_BENEFITS]: map });
-      return value;
-    });
-  }
-
   async getTimesheet(employeeId: string, period: string) {
     const emp = await this.getEmployeeOrThrow(employeeId);
     const p = /^\d{4}-\d{2}$/.test(String(period || '')) ? String(period) : OfficeService.vnNow().month;
@@ -591,8 +576,11 @@ export class OfficeService {
     const to = `${p}-31`;
     const map = await this.attendanceByDate(employeeId, from, to);
     const leaves = await this.approvedLeaveDates(employeeId, from, to);
-    const rate = Number((emp as any).current_rate_per_hour) || 0;
-    const benefits = await this.getBenefits(employeeId);
+    // Văn phòng LUÔN lương theo tháng — cấu hình do Kế toán đặt (HR không sửa).
+    const cfg = this.salaryConfig ? await this.salaryConfig.getForEmployee(employeeId).catch(() => null) : null;
+    const baseSalary = Math.max(0, Math.floor(Number(cfg?.base_salary) || 0));
+    const allowance = Math.max(0, Math.floor(Number(cfg?.allowance) || 0));
+    const monthlyTotal = baseSalary + allowance;
     let totalMinutes = 0;
     let workDays = 0;
     const days: any[] = [];
@@ -608,12 +596,10 @@ export class OfficeService {
         check_out_at: v.check_out?.at || null,
         worked_minutes: minutes,
         hours: Math.round((minutes / 60) * 100) / 100,
-        est_pay: Math.round((minutes / 60) * rate),
         missing_checkout: !v.check_out,
       });
     }
     const hours = Math.round((totalMinutes / 60) * 100) / 100;
-    const estimatedPay = Math.round(hours * rate);
     return {
       period: p,
       employee: {
@@ -622,13 +608,15 @@ export class OfficeService {
         full_name: String((emp as any).full_name || ''),
         group: 'VAN_PHONG',
       },
-      rate_per_hour: rate,
-      benefits,
+      pay_mode: 'MONTHLY' as const,
+      base_salary: baseSalary,
+      allowance,
+      monthly_total: monthlyTotal,
       work_days: workDays,
       total_hours: hours,
       leave_days: leaves.size,
-      estimated_pay: estimatedPay,
-      total_estimated: estimatedPay + benefits,
+      total_estimated: monthlyTotal,
+      configured: baseSalary > 0 || allowance > 0,
       days,
     };
   }

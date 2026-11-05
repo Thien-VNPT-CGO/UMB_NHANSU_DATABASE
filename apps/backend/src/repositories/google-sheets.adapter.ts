@@ -1022,6 +1022,13 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
         (snapshot as any).default_shift_code || '',
         sheetDateText((snapshot as any).official_date),
         (snapshot as any).email || '',
+        (snapshot as any).gender || '',
+        sheetDateText((snapshot as any).birth_date),
+        GoogleSheetsSyncService.sheetText((snapshot as any).id_card_number || ''),
+        '', // col 16: Avatar (Drive ID) — chưa có khi tạo mới
+        (snapshot as any).bank_name || '',
+        GoogleSheetsSyncService.sheetText((snapshot as any).bank_account || ''),
+        (snapshot as any).bank_holder || '',
       ]], 'NHAN_VIEN_MASTER.append');
     }
     return res;

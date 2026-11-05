@@ -103,15 +103,16 @@ function renderSlip(p: any): string {
       <tr><td>Họ và tên</td><td><strong>${esc(p?.full_name || '—')}</strong></td><td>Mã NV</td><td><strong>${esc(p?.employee_code || '—')}</strong></td></tr>
       <tr><td>Khối</td><td>${esc(blockOfSlip(p))}</td><td>Chi nhánh</td><td>${esc(p?.branch_id || p?.branchId || p?.__branch || '—')}</td></tr>
       <tr><td>Số ca</td><td>${esc(String(p?.total_shifts ?? '—'))} ca (vắng ${esc(String(p?.absent_shifts ?? 0))})</td><td>Giờ công</td><td>${esc(String(p?.standard_hours ?? 0))} giờ</td></tr>
-      <tr><td>Đơn giá</td><td>${esc(vnd(p?.rate_snapshot))}/giờ</td><td>Trạng thái</td><td>${esc(STATUS_VI[String(p?.status || '').toUpperCase()] || p?.status || '—')}</td></tr>
+      <tr><td>Hình thức</td><td>${Number(p?.rate_snapshot) > 0 ? 'Theo ca (giờ)' : 'Theo tháng'}</td><td>Trạng thái</td><td>${esc(STATUS_VI[String(p?.status || '').toUpperCase()] || p?.status || '—')}</td></tr>
     </table>
 
     <table class="ps-table">
       ${lineItem('Lương theo giờ', vnd(p?.standard_pay))}
-      ${lineItem('Lương cơ bản (nhập tay)', vnd(p?.luong_cb))}
+      ${lineItem('Lương cơ bản (tháng)', vnd(p?.luong_cb))}
+      ${Number(p?.allowance) > 0 ? lineItem('Phụ cấp (theo cấu hình Kế toán)', vnd(p?.allowance)) : ''}
       ${lineItem('OT thêm (nhập tay)', vnd(p?.ot_extra))}
       ${lineItem('Bonus / Thưởng', vnd(p?.bonus))}
-      ${lineItem('TỔNG CỘNG', vnd(p?.tong_cong ?? ((Number(p?.luong_cb) || 0) + (Number(p?.standard_pay) || 0) + (Number(p?.ot_extra) || 0) + (Number(p?.bonus) || 0))), { bold: true })}
+      ${lineItem('TỔNG CỘNG', vnd(p?.tong_cong ?? ((Number(p?.luong_cb) || 0) + (Number(p?.allowance) || 0) + (Number(p?.standard_pay) || 0) + (Number(p?.ot_extra) || 0) + (Number(p?.bonus) || 0))), { bold: true })}
       ${lineItem('Trừ KPI / Phạt', `−${vnd((Number(p?.tru_kpi) || 0) + (Number(p?.deduction) || 0))}`, { negative: true })}
       ${lineItem('Ứng lương', `−${vnd(p?.ung_luong)}`, { negative: true })}
       ${lineItem('Trừ đồng phục', `−${vnd(p?.dong_phuc)}`, { negative: true })}

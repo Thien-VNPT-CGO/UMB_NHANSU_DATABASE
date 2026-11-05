@@ -13511,7 +13511,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         showToast('Chưa có dữ liệu để xuất!');
         return;
       }
-      const head = ['MaNV', 'HoTen', 'Khoi', 'ChiNhanh', 'Dien', 'DonGia', 'CaPhanCong', 'DuCong', 'Thieu', 'Vang', 'Gio', 'LuongCa', 'Phat', 'Thuong', 'ThucNhan'];
+      const head = ['MaNV', 'HoTen', 'Khoi', 'ChiNhanh', 'Dien', 'HinhThuc', 'DonGia', 'CaPhanCong', 'DuCong', 'Thieu', 'Vang', 'Gio', 'LuongCa', 'LuongCB', 'PhuCap', 'Phat', 'Thuong', 'ThucNhan'];
       const lines = [head.join(',')];
       for (const r of rows) {
         lines.push([
@@ -13520,9 +13520,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           FINANCE_BLOCK_SHORT[financeBlockOf(r)],
           r.branchId || '',
           r.stage === 'PROBATION' ? 'ThuViec' : 'ChinhThuc',
+          r.payMode === 'MONTHLY' ? 'TheoThang' : 'TheoCa',
           r.rate || 0,
           r.totalShifts || 0, r.full || 0, r.partial || 0, r.absent || 0,
-          r.hours || 0, r.standardPay || 0, r.deduction || 0, r.bonus || 0, r.netPay || 0,
+          r.hours || 0, r.standardPay || 0, r.monthlyBase || 0, r.allowance || 0, r.deduction || 0, r.bonus || 0, r.netPay || 0,
         ].join(','));
       }
       const blob = new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
@@ -13571,6 +13572,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <span>📋 {t.totalShifts ?? 0} ca ({t.full ?? 0} đủ / {t.partial ?? 0} thiếu / {t.absent ?? 0} vắng)</span>
             <span>⏱ {t.hours ?? 0} giờ</span>
             <span style={{ color: '#059669' }}>💰 Lương ca: {Number(t.standardPay || 0).toLocaleString('vi-VN')}đ</span>
+            <span style={{ color: '#1D4ED8' }}>🏢 Lương tháng (CB+PC): {allRows.filter((r: any) => r.payMode === 'MONTHLY').reduce((s: number, r: any) => s + (Number(r.monthlyBase) || 0) + (Number(r.allowance) || 0), 0).toLocaleString('vi-VN')}đ</span>
             <span style={{ color: '#DC2626' }}>Phạt: {Number(t.deduction || 0).toLocaleString('vi-VN')}đ</span>
             <span style={{ color: '#1D4ED8' }}>Thực nhận: {Number(t.netPay || 0).toLocaleString('vi-VN')}đ</span>
           </div>
@@ -13591,7 +13593,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <th style={{ padding: '12px 16px' }}>Ca (đủ/thiếu/vắng)</th>
                 <th style={{ padding: '12px 16px' }}>Giờ</th>
                 <th style={{ padding: '12px 16px' }}>Đơn Giá</th>
-                <th style={{ padding: '12px 16px' }}>Lương Ca</th>
+                <th style={{ padding: '12px 16px' }}>Lương Ca / CB</th>
                 <th style={{ padding: '12px 16px' }}>Phạt</th>
                 <th style={{ padding: '12px 16px' }}>Thưởng</th>
                 <th style={{ padding: '12px 16px' }}>Thực Nhận</th>
@@ -13611,12 +13613,16 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   const open = finExpandId === r.employeeId;
                   const main = (
                     <tr key={r.employeeId} style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer', backgroundColor: open ? '#F0FDF4' : undefined }} onClick={() => setFinExpandId(open ? null : r.employeeId)}>
-                      <td style={{ padding: '12px 16px', fontWeight: 700 }}>{open ? '▼ ' : '▶ '}{r.fullName || r.employeeId}<div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }}>{r.employeeCode || ''} • {r.branchId || ''} • {r.stage === 'PROBATION' ? 'Thử việc' : 'Chính thức'}</div></td>
+                      <td style={{ padding: '12px 16px', fontWeight: 700 }}>{open ? '▼ ' : '▶ '}{r.fullName || r.employeeId}<div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }}>{r.employeeCode || ''} • {r.branchId || ''} • {r.stage === 'PROBATION' ? 'Thử việc' : 'Chính thức'} • {r.payMode === 'MONTHLY' ? 'Lương tháng' : 'Lương ca'}</div></td>
                       <td style={{ padding: '12px 16px' }}><FinBlockChip block={financeBlockOf(r)} /></td>
                       <td style={{ padding: '12px 16px' }}><strong>{r.totalShifts}</strong> <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>(<span style={{ color: '#059669', fontWeight: 700 }}>{r.full}</span>/<span style={{ color: '#B45309', fontWeight: 700 }}>{r.partial}</span>/<span style={{ color: '#DC2626', fontWeight: 700 }}>{r.absent}</span>)</span></td>
                       <td style={{ padding: '12px 16px', fontWeight: 700 }}>{r.hours}</td>
                       <td style={{ padding: '12px 16px' }}>{Number(r.rate || 0).toLocaleString('vi-VN')}đ</td>
-                      <td style={{ padding: '12px 16px', fontWeight: 700 }}>{Number(r.standardPay || 0).toLocaleString('vi-VN')}đ</td>
+                      <td style={{ padding: '12px 16px', fontWeight: 700 }}>
+                        {r.payMode === 'MONTHLY'
+                          ? <span title={`Lương CB ${Number(r.monthlyBase || 0).toLocaleString('vi-VN')}đ + phụ cấp ${Number(r.allowance || 0).toLocaleString('vi-VN')}đ`}>{Number((Number(r.monthlyBase) || 0) + (Number(r.allowance) || 0)).toLocaleString('vi-VN')}đ</span>
+                          : `${Number(r.standardPay || 0).toLocaleString('vi-VN')}đ`}
+                      </td>
                       <td style={{ padding: '12px 16px', color: '#DC2626', fontWeight: 700 }}>{Number(r.deduction || 0).toLocaleString('vi-VN')}đ</td>
                       <td style={{ padding: '12px 16px', color: '#1D4ED8', fontWeight: 700 }}>{Number(r.bonus || 0).toLocaleString('vi-VN')}đ</td>
                       <td style={{ padding: '12px 16px', fontWeight: 800, color: '#059669' }}>{Number(r.netPay || 0).toLocaleString('vi-VN')}đ</td>
@@ -13832,7 +13838,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           method: 'PUT',
           body: JSON.stringify({
             employeeId: empId,
-            luong_cb: Number(v.luong_cb) || 0,
+            // Để trống LCB -> server tự lấy lương cơ bản cấu hình cho NV lương tháng.
+            ...(String(v.luong_cb ?? '').trim() !== '' ? { luong_cb: Number(v.luong_cb) || 0 } : {}),
             ot_extra: Number(v.ot_extra) || 0,
             bonus_extra: Number(v.bonus_extra) || 0,
             ung_luong: Number(v.ung_luong) || 0,
@@ -13871,7 +13878,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             method: 'PUT',
             body: JSON.stringify({
               employeeId: empId,
-              luong_cb: Number(v.luong_cb) || 0,
+              ...(String(v.luong_cb ?? '').trim() !== '' ? { luong_cb: Number(v.luong_cb) || 0 } : {}),
               ot_extra: Number(v.ot_extra) || 0,
               bonus_extra: Number(v.bonus_extra) || 0,
               ung_luong: Number(v.ung_luong) || 0,
@@ -13937,7 +13944,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             <div style={{ fontSize: '14px', fontWeight: 800 }}>📐 Công thức lương theo file Excel <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(lưu theo kỳ, tính cho toàn bộ NV)</span></div>
           </div>
           <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px', lineHeight: 1.6 }}>
-            TỔNG CỘNG = Lương CB (tay) + Lương giờ + OT thêm (tay) + Bonus • TỔNG LƯƠNG = TỔNG CỘNG − KPI (tay) − phạt trễ/vắng •
+            TỔNG CỘNG = Lương CB (tay — NV lương tháng để trống sẽ tự lấy <strong>Lương cơ bản</strong> từ cấu hình Kế toán) + <strong>Phụ cấp (cấu hình)</strong> + Lương giờ (NV theo ca) + OT thêm (tay) + Bonus • TỔNG LƯƠNG = TỔNG CỘNG − KPI (tay) − phạt trễ/vắng •
             THỰC LÃNH = TỔNG LƯƠNG − Ứng − Đồng phục. Ngày ≥ <strong>{payFormula?.otThreshold1 ?? 10}h</strong> là ngày tăng ca 1, ≥ <strong>{payFormula?.otThreshold2 ?? 15}h</strong> là ngày tăng ca 2 (chỉ để thống kê).
           </div>
           <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
@@ -13982,6 +13989,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           {Object.keys(payInputsSaved).filter(k => payInputsSaved[k]).length === 0 && (
             <div style={{ margin: '0 20px 12px', padding: '10px 14px', borderRadius: '8px', backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', fontSize: '12px', color: '#92400E' }}>
               Kỳ này chưa có số nhập tay nào — ô trống là bình thường. Nhập số vào từng dòng rồi bấm <strong>Lưu</strong> (hoặc <strong>Lưu tất cả</strong>). Số đã lưu sẽ dùng ở B4, phiếu mẫu và khi Tính theo Excel.
+              <br /><strong>Lương CB</strong>: NV lương tháng (Văn phòng, Xưởng/Sale chọn Theo tháng) để <strong>trống</strong> sẽ tự lấy Lương cơ bản tại tab “Cấu hình Lương CB &amp; Phụ cấp”; nhập số tay để ghi đè kỳ này. Phụ cấp luôn cộng tự động theo cấu hình.
             </div>
           )}
           <div style={{ overflowX: 'auto' }}>
@@ -14146,9 +14154,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       ['Giờ', (p: any) => `${p.standard_hours || 0}h / ${p.total_shifts || 0} ca`],
       ['Lương giờ', (p: any) => vnd0(p.standard_pay)],
       ['Lương CB', (p: any) => vnd0(p.luong_cb)],
+      ['Phụ cấp', (p: any) => vnd0(p.allowance)],
       ['OT+ thêm', (p: any) => vnd0(p.ot_extra)],
       ['Bonus', (p: any) => vnd0(p.bonus)],
-      ['Tổng cộng', (p: any) => vnd0(p.tong_cong ?? ((p.luong_cb || 0) + (p.standard_pay || 0) + (p.ot_extra || 0) + (p.bonus || 0)))],
+      ['Tổng cộng', (p: any) => vnd0(p.tong_cong ?? ((p.luong_cb || 0) + (p.allowance || 0) + (p.standard_pay || 0) + (p.ot_extra || 0) + (p.bonus || 0)))],
       ['KPI + phạt', (p: any) => vnd0((p.tru_kpi || 0) + (p.deduction || 0))],
       ['Ứng', (p: any) => vnd0(p.ung_luong)],
       ['Trừ ĐP', (p: any) => vnd0(p.dong_phuc)],
@@ -14429,9 +14438,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   {[
                     ['Lương theo giờ', vnd0(viewSlipModal.standard_pay)],
                     ['Lương cơ bản', vnd0(viewSlipModal.luong_cb)],
+                    ['Phụ cấp', vnd0(viewSlipModal.allowance)],
                     ['OT thêm', vnd0(viewSlipModal.ot_extra)],
                     ['Bonus / Thưởng', vnd0(viewSlipModal.bonus)],
-                    ['Tổng cộng', vnd0(viewSlipModal.tong_cong ?? ((viewSlipModal.luong_cb || 0) + (viewSlipModal.standard_pay || 0) + (viewSlipModal.ot_extra || 0) + (viewSlipModal.bonus || 0)))],
+                    ['Tổng cộng', vnd0(viewSlipModal.tong_cong ?? ((viewSlipModal.luong_cb || 0) + (viewSlipModal.allowance || 0) + (viewSlipModal.standard_pay || 0) + (viewSlipModal.ot_extra || 0) + (viewSlipModal.bonus || 0)))],
                     ['Trừ KPI / Phạt', `−${vnd0((viewSlipModal.tru_kpi || 0) + (viewSlipModal.deduction || 0))}`],
                     ['Ứng lương', `−${vnd0(viewSlipModal.ung_luong)}`],
                     ['Trừ đồng phục', `−${vnd0(viewSlipModal.dong_phuc)}`],

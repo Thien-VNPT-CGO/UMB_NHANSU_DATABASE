@@ -46,6 +46,18 @@ export const employeeCreateBody = z
     official_date: looseOptString(64),
     currentRatePerHour: z.coerce.number().int().min(0).max(10_000_000).optional(),
     current_rate_per_hour: z.coerce.number().int().min(0).max(10_000_000).optional(),
+    bankName: looseOptString(100),
+    bank_name: looseOptString(100),
+    bankAccount: looseOptString(64),
+    bank_account: looseOptString(64),
+    bankHolder: looseOptString(100),
+    bank_holder: looseOptString(100),
+    // Lương cơ bản + phụ cấp — server CHỈ áp dụng khi người tạo là ADMIN;
+    // HR gửi lên sẽ bị bỏ qua (HR không được đặt lương — Kế toán cấu hình).
+    baseSalary: z.coerce.number().min(0).max(1_000_000_000).optional(),
+    base_salary: z.coerce.number().min(0).max(1_000_000_000).optional(),
+    allowance: z.coerce.number().min(0).max(1_000_000_000).optional(),
+    allowance_vnd: z.coerce.number().min(0).max(1_000_000_000).optional(),
   })
   .passthrough();
 
@@ -511,9 +523,26 @@ export const payrollRunIdParams = z.object({
 });
 
 // --- Quy trình ký 3 bên từng phiếu lương ---
+export const employeeIdParams = z.object({
+  employeeId: shortId(160),
+});
+
 export const payslipIdParams = z.object({
   id: shortId(160),
 });
+
+/** Cấu hình lương: LBH / phụ cấp / hình thức lương cho 1 NV — Kế toán (FINANCE) / Admin. */
+export const salaryConfigBody = z
+  .object({
+    baseSalary: z.coerce.number().min(0).max(1_000_000_000).optional(),
+    base_salary: z.coerce.number().min(0).max(1_000_000_000).optional(),
+    allowance: z.coerce.number().min(0).max(1_000_000_000).optional(),
+    allowance_vnd: z.coerce.number().min(0).max(1_000_000_000).optional(),
+    // Hình thức lương — chỉ lưu cho XUONG/SALE; STORE/VAN_PHONG bị khóa theo khối.
+    payMode: z.enum(['MONTHLY', 'HOURLY']).optional(),
+    pay_mode: z.enum(['MONTHLY', 'HOURLY']).optional(),
+  })
+  .passthrough();
 
 export const payslipSignBody = z.object({
   role: z.enum(['giamdoc', 'lap', 'quanly', 'nhanvien']),

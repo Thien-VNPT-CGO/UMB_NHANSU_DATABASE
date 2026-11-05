@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Socket } from 'socket.io-client';
 import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl, tryRefreshSession } from './services/api';
 import { connectRealtime } from './services/realtime';
+import { effectivePayMode, payModeLabel } from '@ubm/shared';
 import { APP_COMMIT } from './app-version';
 import {
   Users,
@@ -55,6 +56,8 @@ import { ChangePasswordView } from './components/ChangePasswordView';
 import { DirectorPayrollView } from './components/DirectorPayrollView';
 import { InternalWorkflowView } from './components/InternalWorkflowView';
 import { OfficeApprovalsView } from './components/OfficeApprovalsView';
+import { SalaryConfigView } from './components/SalaryConfigView';
+import { FINANCE_BLOCK_OPTIONS, FINANCE_BLOCK_SHORT, FINANCE_BLOCK_STYLE, financeBlockOf } from './utils/financeBlocks';
 import { CompanyPolicyView } from './components/CompanyPolicyView';
 import { BetaChip, BetaBanner, isBetaFeature } from './betaFeatures';
 import {
@@ -158,6 +161,7 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'bank-changes', label: '16. Duyệt đổi STK', icon: CreditCard },
     { id: 'live-map', label: '17. Bản đồ GPS', icon: MapPin },
     { id: 'office-approvals', label: '18. Duyệt Văn Phòng', icon: FileText },
+    { id: 'fin-salary-config', label: '19. Cấu hình Lương CB & Phụ cấp (Theo Khối)', icon: DollarSign },
   ],
   HR: [
     { id: 'hr-dashboard', label: '1. Dashboard HR', icon: Building2 },
@@ -179,6 +183,7 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'bank-changes', label: '17. Duyệt đổi STK', icon: CreditCard },
     { id: 'live-map', label: '18. Bản đồ GPS', icon: MapPin },
     { id: 'office-approvals', label: '19. Duyệt Văn Phòng', icon: FileText },
+    { id: 'staff', label: '20. Nhân viên (Theo Khối)', icon: Users },
   ],
   STORE: [
     { id: 'store-dashboard', label: '1. Dashboard Store', icon: Store },
@@ -210,6 +215,7 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'fin-bank-qr', label: '10. QR Ngân Hàng NV', icon: QrCode },
     { id: 'bank-changes', label: '11. Duyệt Đổi STK', icon: CreditCard },
     { id: 'office-approvals', label: '12. Duyệt Văn Phòng', icon: FileText },
+    { id: 'fin-salary-config', label: '13. Cấu hình Lương CB & Phụ cấp (Theo Khối)', icon: DollarSign },
   ],
   MARKETING: [
     { id: 'mkt-dashboard', label: '1. Dashboard MKT', icon: Megaphone },
@@ -522,6 +528,8 @@ export function App() {
   const [internalAccounts, setInternalAccounts] = useState<any[]>([]);
   const [employeeAccounts, setEmployeeAccounts] = useState<any[]>([]);
   const [allEmployees, setAllEmployees] = useState<any[]>([]);
+  // Cấu hình LƯƠNG CƠ BẢN + PHỤ CẤP do Kế toán đặt cho từng NV (theo khối) — HR chỉ xem.
+  const [salaryConfigs, setSalaryConfigs] = useState<Record<string, { pay_mode?: 'MONTHLY' | 'HOURLY'; base_salary?: number; allowance?: number; updatedAt?: string; updatedByName?: string }>>({});
   const [branches, setBranches] = useState<any[]>([]);
   // Sửa toạ độ GPS cửa hàng ngay trên tab Chi nhánh (ADMIN) — bản đồ GPS dùng trực tiếp.
   const [branchEditId, setBranchEditId] = useState<string | null>(null);
@@ -738,19 +746,32 @@ export function App() {
   const [activationSubTab, setActivationSubTab] = useState<'ALL' | 'PROBATION' | 'OFFICIAL' | 'VAN_PHONG' | 'XUONG' | 'SALE'>('ALL');
 
   // Modal & Form for Module 4: Thêm Hồ Sơ Nhân Viên Mới (Ràng buộc: UBM_NV0000 random từ 0000 đến 9999)
+  // Đầy đủ thông tin 1 NV mới: Cá nhân — Công việc (khối/chi nhánh) — Ngân hàng — Lương (LCB + phụ cấp).
+  // Lương CHỈ Admin được nhập lúc tạo; HR thấy read-only — Kế toán cấu hình sau ở tab "Cấu hình Lương CB & Phụ cấp".
   const [showNewEmpModal, setShowNewEmpModal] = useState(false);
   const generateRandomEmployeeCode = () => {
     const digits = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
     return `UBM_NV${digits}`;
   };
-  const [newEmpForm, setNewEmpForm] = useState({
+  const emptyNewEmpForm = () => ({
     employeeCode: generateRandomEmployeeCode(),
     fullName: '',
     phone: '',
+    gender: 'NAM',
+    birthDate: '',
+    idCardNumber: '',
+    email: '',
     group: 'STORE',
     branchId: 'CN130',
     employmentStatus: 'PRE_ONBOARDING',
+    startDate: new Date().toISOString().split('T')[0],
+    bankName: '',
+    bankAccount: '',
+    bankHolder: '',
+    baseSalary: '',
+    allowance: '',
   });
+  const [newEmpForm, setNewEmpForm] = useState(emptyNewEmpForm());
 
   const handleCreateEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -786,6 +807,19 @@ export function App() {
           employmentStatus: newEmpForm.employmentStatus,
           group: newEmpForm.group,
           employeeCode: newEmpForm.employeeCode,
+          gender: newEmpForm.gender,
+          birthDate: newEmpForm.birthDate || undefined,
+          idCardNumber: newEmpForm.idCardNumber.trim() || undefined,
+          email: newEmpForm.email.trim() || undefined,
+          startDate: newEmpForm.startDate || undefined,
+          bankName: newEmpForm.bankName.trim() || undefined,
+          bankAccount: newEmpForm.bankAccount.trim() || undefined,
+          bankHolder: newEmpForm.bankHolder.trim() || undefined,
+          // Lương: chỉ Admin được đặt khi tạo — HR gửi lên server cũng bỏ qua.
+          ...(currentUser?.role === 'ADMIN' ? {
+            baseSalary: newEmpForm.baseSalary === '' ? undefined : Math.max(0, Math.floor(Number(newEmpForm.baseSalary) || 0)),
+            allowance: newEmpForm.allowance === '' ? undefined : Math.max(0, Math.floor(Number(newEmpForm.allowance) || 0)),
+          } : {}),
         }),
       });
       // Chèn tức thì vào danh sách (khỏi chờ tải lại) — server đã trả kèm account + PIN.
@@ -798,15 +832,7 @@ export function App() {
         setEmployeeAccounts((prev: any[]) => [newAcc, ...prev.filter(a => a.account_id !== newAcc.account_id)]);
       }
       setShowNewEmpModal(false);
-      const nextCode = generateRandomEmployeeCode();
-      setNewEmpForm({
-        employeeCode: nextCode,
-        fullName: '',
-        phone: '',
-        group: 'STORE',
-        branchId: 'CN130',
-        employmentStatus: 'PRE_ONBOARDING',
-      });
+      setNewEmpForm(emptyNewEmpForm());
       setSuccessMsg(`Đã tạo ${createdCode}! Đang đồng bộ Google Sheets...`);
       // Poll xác nhận đã ghi Sheets (không chặn UI) — xong báo khớp 100%.
       (async () => {
@@ -948,6 +974,14 @@ export function App() {
   // Cờ đánh dấu đã tải các dữ liệu cấu hình ít thay đổi (tránh bắn lại 17 API mỗi khi có realtime event)
   const staticDataLoadedRef = useRef(false);
 
+  // Tải cấu hình lương (LCB + phụ cấp) — vai trò không có quyền xem sẽ bị 403 và giữ nguyên map rỗng.
+  const refreshSalaryConfigs = async () => {
+    try {
+      const res: any = await apiRequest('/salary-config');
+      setSalaryConfigs(res?.configs && typeof res.configs === 'object' ? res.configs : {});
+    } catch { /* không có quyền / lỗi mạng — bỏ qua */ }
+  };
+
   const loadAllData = async (user = currentUser, forceAll = false) => {
     if (!user) return;
     try {
@@ -978,6 +1012,9 @@ export function App() {
         tasks.push(
           apiRequest('/employees').then(emps => setAllEmployees(emps || [])).catch(() => null),
         );
+        if (['DIRECTOR', 'ADMIN', 'HR', 'FINANCE'].includes(user.role)) {
+          tasks.push(refreshSalaryConfigs());
+        }
       }
       if (['ADMIN', 'HR', 'STORE'].includes(user.role)) {
         tasks.push(
@@ -1042,6 +1079,7 @@ export function App() {
     switch (entity) {
       case 'employees':
         if (wantEmployees) add(apiRequest('/employees').then(emps => setAllEmployees(Array.isArray(emps) ? emps : [])).catch(() => null));
+        if (['DIRECTOR', 'ADMIN', 'HR', 'FINANCE'].includes(user.role)) add(refreshSalaryConfigs());
         if (wantAccounts) add(apiRequest('/admin/employee-accounts').then(eAccs => setEmployeeAccounts(eAccs || [])).catch(() => null));
         add(apiRequest('/admin/dashboard/stats').then(stats => { if (stats) setDashboardStats(stats); }).catch(() => null));
         break;
@@ -1108,6 +1146,14 @@ export function App() {
     if (activeTab !== 'hr-interviews' && activeTab !== 'hr-candidates') return;
     apiRequest('/applications').then(cList => setCandidates(Array.isArray(cList) ? cList : [])).catch(() => null);
   }, [activeTab]);
+
+  // Kế toán lưu cấu hình lương (LCB + phụ cấp) → tải lại để cột lương trong tab Nhân sự cập nhật ngay.
+  useEffect(() => {
+    const handler = () => { refreshSalaryConfigs(); };
+    window.addEventListener('ubm:salary-config-saved', handler);
+    return () => window.removeEventListener('ubm:salary-config-saved', handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Tab đã lưu có thể không còn tồn tại (VD tab bị gỡ bỏ/gộp) -> về tab đầu của vai trò.
   useEffect(() => {
@@ -2224,7 +2270,8 @@ export function App() {
       emp.full_name?.toLowerCase().includes(empSearch.toLowerCase()) ||
       emp.employee_code?.toLowerCase().includes(empSearch.toLowerCase()) ||
       emp.phone_normalized?.includes(empSearch);
-    const matchGroup = empGroupFilter === 'ALL' || emp.group === empGroupFilter;
+    const matchGroup = empGroupFilter === 'ALL'
+      || (empGroupFilter === 'CUA_HANG' ? financeBlockOf(emp) === 'CUA_HANG' : emp.group === empGroupFilter);
     const matchBranch = empBranchFilter === 'ALL' ||
       (empBranchFilter === 'VAN_PHONG' && (emp.group === 'VAN_PHONG' || emp.group === 'SALE' || emp.default_branch_id === 'VAN_PHONG')) ||
       (empBranchFilter === 'XUONG_SX' && (emp.group === 'XUONG' || emp.default_branch_id === 'XUONG_SX')) ||
@@ -4144,20 +4191,13 @@ export function App() {
               <SecNav items={[['sec-staff-list', 'Danh sách nhân viên'], ['sec-official', 'NV chính thức']]} />
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
-                  <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>4. Quản Lý Hồ Sơ & Lộ Trình Nhân Viên</h1>
-                  <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Toàn bộ 4 nhóm nhân sự: Cửa hàng (Store), Xưởng sản xuất, Văn phòng, Marketing/Sale. Ràng buộc Mã NV: UBM_NV0000 (random từ 0000 đến 9999).</p>
+                  <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>Nhân Viên — Theo Khối (HR & Admin)</h1>
+                  <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Danh sách nhân sự theo đúng 4 khối: Cửa hàng (Store) · Xưởng sản xuất · Văn phòng · Sale/MKT. Lương = Lương cơ bản + Phụ cấp — do Kế toán cấu hình theo khối (HR chỉ xem). Ràng buộc Mã NV: UBM_NV0000 (random từ 0000 đến 9999).</p>
                 </div>
                 {['ADMIN', 'HR'].includes(currentUser?.role || '') && (
                   <button
                     onClick={() => {
-                      setNewEmpForm({
-                        employeeCode: generateRandomEmployeeCode(),
-                        fullName: '',
-                        phone: '',
-                        group: 'STORE',
-                        branchId: 'CN130',
-                        employmentStatus: 'PRE_ONBOARDING',
-                      });
+                      setNewEmpForm(emptyNewEmpForm());
                       setShowNewEmpModal(true);
                     }}
                     style={{
@@ -4181,6 +4221,42 @@ export function App() {
                 )}
               </div>
 
+              {/* Bộ lọc Khối — đúng theo từng khối nhân viên trong hệ thống */}
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                <span style={{ fontSize: '11px', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.4px' }}>Khối nhân viên:</span>
+                {FINANCE_BLOCK_OPTIONS.map(o => {
+                  const active = empGroupFilter === o.id;
+                  const count = allEmployees.filter(e => o.id === 'ALL'
+                    ? true
+                    : (o.id === 'CUA_HANG' ? financeBlockOf(e) === 'CUA_HANG' : String(e.group || '').toUpperCase() === o.id)).length;
+                  return (
+                    <button
+                      key={o.id}
+                      onClick={() => setEmpGroupFilter(o.id)}
+                      title={`Lọc nhân viên ${o.label}`}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '6px',
+                        padding: '7px 14px', borderRadius: 'var(--radius-full)',
+                        border: `1px solid ${active ? 'var(--brand)' : 'var(--border)'}`,
+                        backgroundColor: active ? 'var(--brand-soft)' : 'var(--surface)',
+                        color: active ? 'var(--brand)' : 'var(--text)',
+                        fontSize: '12px', fontWeight: 700, cursor: 'pointer',
+                        boxShadow: active ? '0 2px 8px rgba(232,93,146,0.2)' : 'none',
+                      }}
+                    >
+                      <span style={{ fontSize: '14px' }}>{o.icon}</span>
+                      {o.label}
+                      <span style={{
+                        minWidth: '22px', textAlign: 'center', padding: '1px 7px',
+                        borderRadius: 'var(--radius-full)', fontSize: '11px', fontWeight: 800,
+                        backgroundColor: active ? 'var(--brand)' : 'var(--bg)',
+                        color: active ? '#FFF' : 'var(--text-muted)',
+                      }}>{count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
               {/* Filters */}
               <div style={{ display: 'flex', gap: '16px', backgroundColor: 'var(--surface)', padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
                 <div style={{ flex: 1, position: 'relative' }}>
@@ -4193,17 +4269,6 @@ export function App() {
                   />
                   <Search size={16} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
                 </div>
-                <select
-                  value={empGroupFilter}
-                  onChange={(e) => setEmpGroupFilter(e.target.value)}
-                  style={{ padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px' }}
-                >
-                  <option value="ALL">Mọi Khối Nhóm (Store, Xưởng, VP, Sale)</option>
-                  <option value="STORE">Khối Cửa Hàng (Store)</option>
-                  <option value="XUONG">Khối Xưởng Sản Xuất</option>
-                  <option value="VAN_PHONG">Khối Văn Phòng</option>
-                  <option value="SALE">Khối Sale / Marketing</option>
-                </select>
                 <select
                   value={empBranchFilter}
                   onChange={(e) => setEmpBranchFilter(e.target.value)}
@@ -4220,8 +4285,8 @@ export function App() {
               </div>
 
               {/* Employee Cards / Table */}
-              <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+              <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflowX: 'auto' }}>
+                <table style={{ width: '100%', minWidth: '1320px', borderCollapse: 'collapse', fontSize: '13px' }}>
                   <thead>
                     <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
                       <th style={{ padding: '12px 20px' }}>Mã NV</th>
@@ -4230,6 +4295,9 @@ export function App() {
                       <th style={{ padding: '12px 20px' }}>Khối / Nhóm</th>
                       <th style={{ padding: '12px 20px' }}>Chi Nhánh</th>
                       <th style={{ padding: '12px 20px' }}>Lương Giờ (VND)</th>
+                      <th style={{ padding: '12px 20px' }}>Lương CB <span style={{ textTransform: 'none' }}>(Kế toán)</span></th>
+                      <th style={{ padding: '12px 20px' }}>Phụ cấp <span style={{ textTransform: 'none' }}>(Kế toán)</span></th>
+                      <th style={{ padding: '12px 20px' }}>Hình Thức Lương</th>
                       <th style={{ padding: '12px 20px' }}>Giai Đoạn</th>
                       <th style={{ padding: '12px 20px' }}>Thao Tác</th>
                     </tr>
@@ -4257,13 +4325,11 @@ export function App() {
                             borderRadius: 'var(--radius-full)',
                             fontSize: '11px',
                             fontWeight: 700,
-                            backgroundColor: 'var(--brand-soft)',
-                            color: 'var(--brand)',
+                            backgroundColor: FINANCE_BLOCK_STYLE[financeBlockOf(emp)].bg,
+                            color: FINANCE_BLOCK_STYLE[financeBlockOf(emp)].c,
+                            whiteSpace: 'nowrap',
                           }}>
-                            {emp.group === 'STORE' ? 'Cửa Hàng' :
-                             emp.group === 'XUONG' ? 'Xưởng SX' :
-                             emp.group === 'VAN_PHONG' ? 'Văn Phòng' :
-                             emp.group === 'SALE' ? 'Sales / MKT' : emp.group}
+                            {FINANCE_BLOCK_SHORT[financeBlockOf(emp)]}
                           </span>
                         </td>
                         <td style={{ padding: '14px 20px' }}>
@@ -4284,6 +4350,27 @@ export function App() {
                         </td>
                         <td style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--success)' }}>
                           {emp.current_rate_per_hour?.toLocaleString('vi-VN')} đ/h
+                        </td>
+                        <td style={{ padding: '14px 20px', fontWeight: 700, color: '#065F46', whiteSpace: 'nowrap' }} title={(() => { const c = salaryConfigs[emp.employee_id]; return c ? "Kế toán đã cấu hình (cập nhật " + (c.updatedAt ? new Date(c.updatedAt).toLocaleString('vi-VN') : '—') + ")" : "Kế toán chưa cấu hình lương cơ bản cho NV này"; })()}>
+                          {(() => { const v = Number(salaryConfigs[emp.employee_id]?.base_salary ?? 0); return v > 0 ? v.toLocaleString('vi-VN') + ' đ' : <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>—</span>; })()}
+                        </td>
+                        <td style={{ padding: '14px 20px', fontWeight: 700, color: '#9D174D', whiteSpace: 'nowrap' }} title={salaryConfigs[emp.employee_id] ? 'Phụ cấp theo cấu hình của Kế toán' : 'Kế toán chưa cấu hình phụ cấp'}>
+                          {(() => { const v = Number(salaryConfigs[emp.employee_id]?.allowance ?? 0); return v > 0 ? v.toLocaleString('vi-VN') + ' đ' : <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>—</span>; })()}
+                        </td>
+                        <td style={{ padding: '14px 20px', whiteSpace: 'nowrap' }}>
+                          {(() => {
+                            const mode = effectivePayMode(emp.group, salaryConfigs[emp.employee_id]?.pay_mode);
+                            const monthly = mode === 'MONTHLY';
+                            return (
+                              <span title={monthly ? 'Lương cơ bản theo tháng (Kế toán cấu hình)' : 'Lương theo ca: giờ công × đơn giá + phụ cấp'} style={{
+                                padding: '4px 9px', borderRadius: 'var(--radius-full)', fontSize: '11px', fontWeight: 800,
+                                backgroundColor: monthly ? '#DBEAFE' : '#FEF3C7',
+                                color: monthly ? '#1D4ED8' : '#92400E',
+                              }}>
+                                {payModeLabel(mode)}
+                              </span>
+                            );
+                          })()}
                         </td>
                         <td style={{ padding: '14px 20px' }}>
                           <span style={{
@@ -5488,6 +5575,7 @@ export function App() {
           {/* QUY TRÌNH YÊU CẦU CÔNG VIỆC NỘI BỘ (GĐ - KT - HR - IT) */}
           {activeTab === 'internal-workflow' && <InternalWorkflowView currentUser={currentUser} />}
           {activeTab === 'office-approvals' && <OfficeApprovalsView currentUser={currentUser} />}
+          {activeTab === 'fin-salary-config' && <SalaryConfigView currentUser={currentUser} />}
 
           {/* QUY CHẾ CÔNG TY THEO ĐỐI TƯỢNG (từng NV / từng chi nhánh / tất cả) */}
           {activeTab === 'company-policies' && <CompanyPolicyView currentUser={currentUser} />}
@@ -5684,13 +5772,14 @@ export function App() {
       )}
 
       {/* MODAL: THÊM HỒ SƠ NHÂN VIÊN MỚI (RÀNG BUỘC UBM_NV0000 RANDOM 0000-9999) */}
+      {/* MODAL: THÊM HỒ SƠ NHÂN VIÊN MỚI — đầy đủ thông tin: Cá nhân · Công việc · Ngân hàng · Lương */}
       {showNewEmpModal && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-          <div style={{ backgroundColor: 'var(--surface)', padding: '24px', borderRadius: 'var(--radius-md)', width: '520px', maxWidth: '95vw', boxShadow: 'var(--shadow-modal)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <div style={{ backgroundColor: 'var(--surface)', padding: '20px 24px', borderRadius: 'var(--radius-md)', width: '780px', maxWidth: '96vw', maxHeight: '92vh', overflowY: 'auto', boxShadow: 'var(--shadow-modal)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
               <div>
                 <h2 style={{ fontSize: '17px', fontWeight: 800, color: 'var(--text)', margin: 0 }}>Thêm Hồ Sơ Nhân Viên Mới</h2>
-                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>Hệ thống quản lý nhân sự Ụm Bò Milk HR V5.1</div>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>Đủ thông tin 1 nhân viên mới — hệ thống quản lý nhân sự Ụm Bò Milk HR V5.1</div>
               </div>
               <button
                 onClick={() => setShowNewEmpModal(false)}
@@ -5701,7 +5790,10 @@ export function App() {
             </div>
 
             <form onSubmit={handleCreateEmployee} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              {/* Mã NV */}
+              {/* ===== NHÓM 1: THÔNG TIN CÁ NHÂN ===== */}
+              <div style={{ fontSize: '11px', fontWeight: 800, color: 'var(--brand)', textTransform: 'uppercase', letterSpacing: '0.5px', borderBottom: '2px solid var(--brand-soft)', paddingBottom: '6px' }}>👤 Thông tin cá nhân</div>
+
+              {/* MÃ NV */}
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
                   <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text)' }}>
@@ -5721,7 +5813,7 @@ export function App() {
                       cursor: 'pointer',
                     }}
                   >
-                    🎲 Tạo Mã Random
+                    🎲 Tạo MÃ Random
                   </button>
                 </div>
                 <input
@@ -5743,131 +5835,262 @@ export function App() {
                     backgroundColor: 'var(--brand-soft)',
                   }}
                 />
-                <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '3px' }}>
-                  * Ràng buộc: <strong style={{ color: 'var(--brand)' }}>UBM_NV</strong> + 4 chữ số ngẫu nhiên từ 0000 đến 9999 (Ví dụ: UBM_NV0482).
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                {/* HỌ VÀ TÊN */}
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>Họ Và Tên *:</label>
+                  <input
+                    required
+                    type="text"
+                    placeholder="Ví dụ: Nguyễn Văn Hoàng"
+                    value={newEmpForm.fullName}
+                    onChange={(e) => setNewEmpForm({ ...newEmpForm, fullName: e.target.value })}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px' }}
+                  />
+                </div>
+
+                {/* SĐT */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>Số Điện Thoại *:</label>
+                  <input
+                    required
+                    type="text"
+                    placeholder="Ví dụ: 0901234567"
+                    value={newEmpForm.phone}
+                    onChange={(e) => setNewEmpForm({ ...newEmpForm, phone: e.target.value })}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px' }}
+                  />
+                </div>
+
+                {/* GIỚI TÍNH */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>Giới Tính:</label>
+                  <select
+                    value={newEmpForm.gender}
+                    onChange={(e) => setNewEmpForm({ ...newEmpForm, gender: e.target.value })}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px' }}
+                  >
+                    <option value="NAM">Nam</option>
+                    <option value="NU">Nữ</option>
+                    <option value="KHAC">Khác</option>
+                  </select>
+                </div>
+
+                {/* NGÀY SINH */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>Ngày Sinh:</label>
+                  <input
+                    type="date"
+                    value={newEmpForm.birthDate}
+                    onChange={(e) => setNewEmpForm({ ...newEmpForm, birthDate: e.target.value })}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px' }}
+                  />
+                </div>
+
+                {/* CCCD */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>CCCD / CMND:</label>
+                  <input
+                    type="text"
+                    placeholder="Ví dụ: 079123456789"
+                    value={newEmpForm.idCardNumber}
+                    onChange={(e) => setNewEmpForm({ ...newEmpForm, idCardNumber: e.target.value })}
+                    maxLength={20}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px' }}
+                  />
+                </div>
+
+                {/* EMAIL */}
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>Email:</label>
+                  <input
+                    type="email"
+                    placeholder="Ví dụ: hoang.nguyen@umbomilk.vn"
+                    value={newEmpForm.email}
+                    onChange={(e) => setNewEmpForm({ ...newEmpForm, email: e.target.value })}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px' }}
+                  />
                 </div>
               </div>
 
-              {/* Họ Và Tên */}
-              <div>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>Họ Và Tên:</label>
-                <input
-                  required
-                  type="text"
-                  placeholder="Ví dụ: Nguyễn Văn Hoàng"
-                  value={newEmpForm.fullName}
-                  onChange={(e) => setNewEmpForm({ ...newEmpForm, fullName: e.target.value })}
-                  style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px' }}
-                />
-              </div>
+              {/* ===== NHÓM 2: CÔNG VIỆC — KHỐI / CHI NHÁNH / GIAI ĐOẠN ===== */}
+              <div style={{ fontSize: '11px', fontWeight: 800, color: 'var(--brand)', textTransform: 'uppercase', letterSpacing: '0.5px', borderBottom: '2px solid var(--brand-soft)', paddingBottom: '6px', marginTop: '4px' }}>🏢 Công việc — Khối · Chi nhánh · Giai đoạn</div>
 
-              {/* Số Điện Thoại */}
-              <div>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>Số Điện Thoại:</label>
-                <input
-                  required
-                  type="text"
-                  placeholder="Ví dụ: 0901234567"
-                  value={newEmpForm.phone}
-                  onChange={(e) => setNewEmpForm({ ...newEmpForm, phone: e.target.value })}
-                  style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px' }}
-                />
-              </div>
-
-              {/* Khối / Nhóm */}
-              <div>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>Khối / Nhóm Nhân Sự:</label>
-                <select
-                  value={newEmpForm.group}
-                  onChange={(e) => {
-                    const g = e.target.value as any;
-                    let b = newEmpForm.branchId;
-                    if (g === 'VAN_PHONG' || g === 'SALE') b = 'VAN_PHONG';
-                    else if (g === 'XUONG') b = 'XUONG_SX';
-                    else if (b === 'VAN_PHONG' || b === 'XUONG_SX') b = 'CN130';
-                    setNewEmpForm({ ...newEmpForm, group: g, branchId: b });
-                  }}
-                  style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px' }}
-                >
-                  <option value="STORE">Khối Cửa Hàng (Store)</option>
-                  <option value="XUONG">Khối Xưởng Sản Xuất</option>
-                  <option value="VAN_PHONG">Khối Văn Phòng</option>
-                  <option value="SALE">Khối Sales / Marketing</option>
-                </select>
-              </div>
-
-              {/* Chi Nhánh */}
-              <div>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>Chi Nhánh Làm Việc:</label>
-                {newEmpForm.group === 'VAN_PHONG' || newEmpForm.group === 'SALE' ? (
-                  <div>
-                    <input
-                      readOnly
-                      value="Trụ sở chính (Khối Văn phòng & Sales)"
-                      style={{
-                        width: '100%',
-                        padding: '8px 12px',
-                        borderRadius: 'var(--radius-sm)',
-                        border: '1px solid var(--border)',
-                        backgroundColor: '#EDE9FE',
-                        color: '#6D28D9',
-                        fontWeight: 700,
-                        fontSize: '13px',
-                      }}
-                    />
-                    <div style={{ fontSize: '11px', color: '#6D28D9', marginTop: '3px' }}>
-                      ✓ Tự động gán Trụ sở chính theo quy định hệ thống.
-                    </div>
-                  </div>
-                ) : newEmpForm.group === 'XUONG' ? (
-                  <div>
-                    <input
-                      readOnly
-                      value="Củ Chi (Khối Xưởng Sản Xuất)"
-                      style={{
-                        width: '100%',
-                        padding: '8px 12px',
-                        borderRadius: 'var(--radius-sm)',
-                        border: '1px solid var(--border)',
-                        backgroundColor: '#FEF3C7',
-                        color: '#B45309',
-                        fontWeight: 700,
-                        fontSize: '13px',
-                      }}
-                    />
-                    <div style={{ fontSize: '11px', color: '#B45309', marginTop: '3px' }}>
-                      ✓ Tự động gán Củ Chi theo quy định hệ thống.
-                    </div>
-                  </div>
-                ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                {/* KHỐI / NHÓM */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>Khối / Nhóm Nhân Sự *:</label>
                   <select
-                    value={newEmpForm.branchId}
-                    onChange={(e) => setNewEmpForm({ ...newEmpForm, branchId: e.target.value })}
+                    value={newEmpForm.group}
+                    onChange={(e) => {
+                      const g = e.target.value as any;
+                      let b = newEmpForm.branchId;
+                      if (g === 'VAN_PHONG' || g === 'SALE') b = 'VAN_PHONG';
+                      else if (g === 'XUONG') b = 'XUONG_SX';
+                      else if (b === 'VAN_PHONG' || b === 'XUONG_SX') b = 'CN130';
+                      setNewEmpForm({ ...newEmpForm, group: g, branchId: b });
+                    }}
                     style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px' }}
                   >
-                    <option value="CN130">CN1: 130 Vạn Kiếp (Bình Thạnh)</option>
-                    <option value="CN261">CN2: 261 Tô Hiến Thành (Q.10)</option>
-                    <option value="CN120">CN3: 120 Hoàng Diệu 2 (Thủ Đức)</option>
-                    <option value="CN111">CN4: 111 Tôn Đản (Q.4)</option>
+                    <option value="STORE">Khối Cửa Hàng (Store)</option>
+                    <option value="XUONG">Khối Xưởng Sản Xuất</option>
+                    <option value="VAN_PHONG">Khối Văn Phòng</option>
+                    <option value="SALE">Khối Sales / Marketing</option>
                   </select>
+                </div>
+
+                {/* CHI NHÁNH */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>Chi Nhánh Làm Việc:</label>
+                  {newEmpForm.group === 'VAN_PHONG' || newEmpForm.group === 'SALE' ? (
+                    <input
+                      readOnly
+                      value="Trụ sở chính (Văn Phòng & Sales)"
+                      style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', backgroundColor: '#EDE9FE', color: '#6D28D9', fontWeight: 700, fontSize: '13px' }}
+                    />
+                  ) : newEmpForm.group === 'XUONG' ? (
+                    <input
+                      readOnly
+                      value="Củ Chi (Xưởng Sản Xuất)"
+                      style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', backgroundColor: '#FEF3C7', color: '#B45309', fontWeight: 700, fontSize: '13px' }}
+                    />
+                  ) : (
+                    <select
+                      value={newEmpForm.branchId}
+                      onChange={(e) => setNewEmpForm({ ...newEmpForm, branchId: e.target.value })}
+                      style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px' }}
+                    >
+                      <option value="CN130">CN1: 130 Vạn Kiếp (Bình Thạnh)</option>
+                      <option value="CN261">CN2: 261 Tô Hiến Thành (Q.10)</option>
+                      <option value="CN120">CN3: 120 Hoàng Diệu 2 (Thủ Đức)</option>
+                      <option value="CN111">CN4: 111 Tôn Đản (Q.4)</option>
+                    </select>
+                  )}
+                </div>
+
+                {/* GIAI ĐOẠN */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>Giai Đoạn Nhân Sự:</label>
+                  <select
+                    value={newEmpForm.employmentStatus}
+                    onChange={(e) => setNewEmpForm({ ...newEmpForm, employmentStatus: e.target.value as any })}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px' }}
+                  >
+                    <option value="PRE_ONBOARDING">Nhân viên mới (PIN khởi tạo tự động)</option>
+                    <option value="PROBATION">Thử việc (Lương 21.000 đ/h)</option>
+                    <option value="OFFICIAL">Chính thức (Lương 25.500 đ/h)</option>
+                  </select>
+                </div>
+
+                {/* NGÀY VÀO LÀM */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>Ngày Vào Làm:</label>
+                  <input
+                    type="date"
+                    value={newEmpForm.startDate}
+                    onChange={(e) => setNewEmpForm({ ...newEmpForm, startDate: e.target.value })}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px' }}
+                  />
+                </div>
+              </div>
+
+              {/* ===== NHÓM 3: NGÂN HÀNG ===== */}
+              <div style={{ fontSize: '11px', fontWeight: 800, color: 'var(--brand)', textTransform: 'uppercase', letterSpacing: '0.5px', borderBottom: '2px solid var(--brand-soft)', paddingBottom: '6px', marginTop: '4px' }}>🏦 Ngân hàng — tài khoản nhận lương</div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>Ngân Hàng:</label>
+                  <input
+                    type="text"
+                    placeholder="Ví dụ: Vietcombank"
+                    value={newEmpForm.bankName}
+                    onChange={(e) => setNewEmpForm({ ...newEmpForm, bankName: e.target.value })}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>Số Tài Khoản:</label>
+                  <input
+                    type="text"
+                    placeholder="Ví dụ: 0123456789"
+                    value={newEmpForm.bankAccount}
+                    onChange={(e) => setNewEmpForm({ ...newEmpForm, bankAccount: e.target.value })}
+                    maxLength={30}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px' }}
+                  />
+                </div>
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>Chủ Tài Khoản (đúng tên trên thẻ):</label>
+                  <input
+                    type="text"
+                    placeholder="Ví dụ: NGUYEN VAN HOANG"
+                    value={newEmpForm.bankHolder}
+                    onChange={(e) => setNewEmpForm({ ...newEmpForm, bankHolder: e.target.value.toUpperCase() })}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px', textTransform: 'uppercase' }}
+                  />
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '3px' }}>
+                    STK không được trùng với nhân viên khác trong hệ thống (server kiểm tra tự động).
+                  </div>
+                </div>
+              </div>
+
+              {/* ===== NHÓM 4: LƯƠNG — LƯƠNG CƠ BẢN + PHỤ CẤP (KẾ TOÁN CẤU HÌNH) ===== */}
+              <div style={{ fontSize: '11px', fontWeight: 800, color: 'var(--brand)', textTransform: 'uppercase', letterSpacing: '0.5px', borderBottom: '2px solid var(--brand-soft)', paddingBottom: '6px', marginTop: '4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span>💵 Lương — cơ bản + phụ cấp</span>
+                {currentUser?.role !== 'ADMIN' && (
+                  <span style={{ fontSize: '10px', fontWeight: 800, color: '#92400E', backgroundColor: '#FEF3C7', border: '1px solid #FCD34D', borderRadius: '4px', padding: '2px 8px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    🔒 CHỈ XEM — KẾ TOÁN CẤU HÌNH
+                  </span>
                 )}
               </div>
 
-              {/* Giai Đoạn Nhân Sự */}
-              <div>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>Giai Đoạn Nhân Sự:</label>
-                <select
-                  value={newEmpForm.employmentStatus}
-                  onChange={(e) => setNewEmpForm({ ...newEmpForm, employmentStatus: e.target.value as any })}
-                  style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px' }}
-                >
-                  <option value="PRE_ONBOARDING">Nhân viên mới (PIN khởi tạo tự động)</option>
-                  <option value="PROBATION">Thử việc (Lương 21.000 đ/h)</option>
-                  <option value="OFFICIAL">Chính thức (Lương 25.500 đ/h)</option>
-                </select>
+              {currentUser?.role !== 'ADMIN' && (
+                <div style={{ fontSize: '11px', color: '#92400E', backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 'var(--radius-sm)', padding: '8px 12px' }}>
+                  HR <strong>không đặt lương</strong> khi tạo hồ sơ — sau khi tạo xong, <strong>Kế toán (FINANCE)</strong> sẽ cấu hình
+                  mức lương cơ bản + phụ cấp cho nhân viên này, phụ thuộc khối làm việc, tại tab <strong>“Cấu hình Lương CB & Phụ cấp”</strong>.
+                  Lương 1 NV = Lương cơ bản + Phụ cấp.
+                </div>
+              )}
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px', color: currentUser?.role === 'ADMIN' ? 'var(--text)' : 'var(--text-muted)' }}>Lương cơ bản (đ/tháng):</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={100000}
+                    disabled={currentUser?.role !== 'ADMIN'}
+                    placeholder="Ví dụ: 6000000"
+                    value={newEmpForm.baseSalary}
+                    onChange={(e) => setNewEmpForm({ ...newEmpForm, baseSalary: e.target.value })}
+                    title={currentUser?.role === 'ADMIN' ? 'Admin đặt khi tạo (tuỳ chọn)' : 'Chỉ Kế toán / Admin cấu hình — HR không đặt lương'}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px', fontWeight: 700, textAlign: 'right', backgroundColor: currentUser?.role === 'ADMIN' ? '#FFF' : 'var(--bg)', cursor: currentUser?.role === 'ADMIN' ? 'text' : 'not-allowed' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px', color: currentUser?.role === 'ADMIN' ? 'var(--text)' : 'var(--text-muted)' }}>Phụ cấp (đ/tháng):</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={50000}
+                    disabled={currentUser?.role !== 'ADMIN'}
+                    placeholder="Ví dụ: 500000"
+                    value={newEmpForm.allowance}
+                    onChange={(e) => setNewEmpForm({ ...newEmpForm, allowance: e.target.value })}
+                    title={currentUser?.role === 'ADMIN' ? 'Admin đặt khi tạo (tuỳ chọn)' : 'Chỉ Kế toán / Admin cấu hình — HR không đặt lương'}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: '13px', fontWeight: 700, textAlign: 'right', backgroundColor: currentUser?.role === 'ADMIN' ? '#FFF' : 'var(--bg)', cursor: currentUser?.role === 'ADMIN' ? 'text' : 'not-allowed' }}
+                  />
+                </div>
+                {currentUser?.role === 'ADMIN' && (
+                  <div style={{ gridColumn: '1 / -1', fontSize: '12px', fontWeight: 700, color: 'var(--success)' }}>
+                    Tổng lương = Lương cơ bản + Phụ cấp = {(Math.max(0, Number(newEmpForm.baseSalary) || 0) + Math.max(0, Number(newEmpForm.allowance) || 0)).toLocaleString('vi-VN')} đ/tháng
+                  </div>
+                )}
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '4px' }}>
                 <button
                   type="button"
                   onClick={() => setShowNewEmpModal(false)}
@@ -5886,6 +6109,7 @@ export function App() {
           </div>
         </div>
       )}
+
       {/* SPOOKY-CUTE HALLOWEEN ACCENTS (POINTER-EVENTS: NONE) */}
       {halloweenTheme && <HangingSpiderDangler />}
       {halloweenTheme && <CuteGhostAccent />}

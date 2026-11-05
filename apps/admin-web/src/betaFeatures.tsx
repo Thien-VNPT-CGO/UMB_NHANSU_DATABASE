@@ -17,6 +17,7 @@ export type BetaFeatureNote = { note: string };
 export const BETA_FEATURES: Record<string, BetaFeatureNote> = {
   // ==== VÍ DỤ (bỏ dòng dưới khi tính năng chính thức) ====
   'hr-schedule': { note: 'Nhập lịch làm việc bằng Excel đang chạy thử (Beta) — dùng thử, góp ý rồi chốt chính thức.' },
+  'fin-salary-config': { note: 'Cấu hình Lương cơ bản + Phụ cấp theo khối cho từng nhân viên đang chạy thử (Beta) — lương = LCB + phụ cấp, HR chỉ xem, Kế toán cấu hình.' },
 };
 
 /** id tab có nổi Beta không */
