@@ -917,6 +917,9 @@ import {
   shiftPayInfo,
   effectivePayMode,
   isOfficeGroup,
+  OFFICE_WEEK_RULES,
+  officeDayRuleOfIso,
+  officeDayHoursLabel,
 } from '@ubm/shared';
 
 /** Chuẩn hóa mã chi nhánh (Sheets có thể ghi CN1..CN4, hệ thống dùng CN130/261/120/111). */
@@ -8516,12 +8519,73 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       };
       return baseEmps
         .map((emp, empIdx) => {
-      const empShifts = (schedAllShifts || []).filter((s: any) => s.employee_id === emp.employee_id);
-      const empLeaves = (leaves || []).filter((l: any) => l.employee_id === emp.employee_id && (l.status === 'APPROVED' || l.status === 'PENDING'));
-      const empEvents = (schedAllEvents || []).filter((e: any) => e.employee_id === emp.employee_id);
-      const dayDataMap: Record<string, any> = {};
-      // Mã ca THẬT từng ngày trong tuần đang xem (để sắp xếp Ca 1 → Ca 2 → Ca 3).
-      const weekShiftCodes: string[] = [];
+          // ---- KHỐI VĂN PHÒNG: lịch làm việc cố định theo giờ hành chính (T2–T6 08:00–17:00, T7 08:00–12:00, CN nghỉ).
+          // Không xếp ca, không có ca cố định, không đăng ký OFF. Chỉ hiển thị trạng thái điểm danh theo giờ hành chính.
+          const isOfficeEmp = isOfficeGroup(emp.group);
+          let weekShiftCodes: string[] = [];
+          if (isOfficeEmp) {
+            // Xây dựng dayDataMap từ OFFICE_WEEK_RULES thay vì ca làm việc.
+            const officeDayDataMap: Record<string, any> = {};
+            weekDays.forEach((day) => {
+              const dow = new Date(day.isoDate).getUTCDay(); // 0 = CN, 1 = T2, ... 6 = T7
+              const rule = OFFICE_WEEK_RULES.find((r) => r.weekday === dow);
+              const isWorkDay = !!rule?.work;
+              const empEvents = (schedAllEvents || []).filter((e: any) => e.employee_id === emp.employee_id);
+              const dayEvts = empEvents.filter((e: any) => vnDayOf(e.client_time) === day.isoDate);
+              const checkInEvent = dayEvts.find((e: any) => e.type === 'CHECK_IN');
+              const checkOutEvent = dayEvts.find((e: any) => e.type === 'CHECK_OUT');
+              let status: 'NO_SHIFT' | 'OFF' | 'CHECKED_IN' | 'COMPLETED' | 'MISSING_OUT' | 'PENDING' | 'ABSENT' | 'LOCKED' | 'UPCOMING';
+              let shiftLabel = isWorkDay ? `Làm theo giờ hành chính (${officeDayHoursLabel(day.isoDate)})` : 'Nghỉ';
+              let note = isWorkDay ? 'Lịch làm việc cố định văn phòng' : 'Chủ nhật nghỉ';
+              if (!isWorkDay) {
+                status = 'NO_SHIFT';
+              } else if (checkInEvent && checkOutEvent) {
+                status = 'COMPLETED';
+                note = `Đã làm ${Math.round(((new Date(checkOutEvent.client_time).getTime() - new Date(checkInEvent.client_time).getTime()) / 60000) / 60 * 10) / 10}h`;
+              } else if (checkInEvent) {
+                const startMs = new Date(`${day.isoDate}T0${rule!.startHour}:${String(rule!.startMinute).padStart(2,'0')}:00+07:00`).getTime();
+                const nowMs = Date.now();
+                if (nowMs - startMs > 3 * 60 * 60 * 1000) {
+                  status = 'LOCKED';
+                  note = 'Quá 3h chưa check-out — khóa, nghỉ không lương';
+                } else {
+                  status = 'CHECKED_IN';
+                  note = 'Đang làm (chưa ra ca)';
+                }
+              } else if (day.isPast && !day.isToday) {
+                status = 'ABSENT';
+                note = 'Không điểm danh';
+              } else if (day.isToday) {
+                status = 'PENDING';
+                note = 'Chưa check-in (Chờ ca)';
+              } else {
+                status = 'UPCOMING';
+                note = 'Lịch đã duyệt';
+              }
+              officeDayDataMap[day.key] = {
+                shift: shiftLabel,
+                status,
+                note,
+                isToday: day.isToday,
+                checkInAt: checkInEvent ? checkInEvent.client_time : null,
+                checkOutAt: checkOutEvent ? checkOutEvent.client_time : null,
+              };
+            });
+            return {
+              empId: emp.employee_id,
+              empCode: emp.employee_code || `UBM_NV${String(1000 + empIdx)}`,
+              name: emp.full_name,
+              stage: emp.employment_status === 'PROBATION' ? 'PROBATION' : 'OFFICIAL',
+              branch: emp.default_branch_id || emp.branch_id || 'CN130',
+              days: officeDayDataMap,
+              weekShiftCodes: [],
+              isOffice: true,
+            };
+          }
+          const empShifts = (schedAllShifts || []).filter((s: any) => s.employee_id === emp.employee_id);
+          const empLeaves = (leaves || []).filter((l: any) => l.employee_id === emp.employee_id && (l.status === 'APPROVED' || l.status === 'PENDING'));
+          const empEvents = (schedAllEvents || []).filter((e: any) => e.employee_id === emp.employee_id);
+          const dayDataMap: Record<string, any> = {};
 
       weekDays.forEach((day) => {
         // Tìm ca làm việc THẬT được phân công trên hệ thống cho ngày này
@@ -9855,6 +9919,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         {emp.stage === 'PROBATION' ? '🌸 THỬ VIỆC' : '💼 CHÍNH THỨC'}
                       </span>
                       {(() => {
+                        // Văn Phòng: không có ca cố định — hiển thị giờ hành chính.
+                        if (emp.isOffice) {
+                          return (
+                            <span className="badge" title="Khối Văn Phòng: làm theo giờ hành chính cố định" style={{ fontSize: '10px', backgroundColor: '#E0E7FF', color: '#3730A3', fontWeight: 800 }}>
+                              🏢 Văn Phòng
+                            </span>
+                          );
+                        }
                         const fixed = normShiftCode(empShiftOf(emp.empId));
                         return fixed && SHIFT_LABEL[fixed] ? (
                           <span className="badge" title={`Ca cố định trong hồ sơ: ${SHIFT_LABEL[fixed]}`} style={{ fontSize: '10px', backgroundColor: '#E0E7FF', color: '#3730A3', fontWeight: 800 }}>
@@ -9874,6 +9946,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       <span style={{ fontWeight: 700, color: 'var(--brand)' }}>{emp.empCode}</span> • {getDisplayBranch(emp.branch)}
                     </div>
                     {(() => {
+                      // Văn Phòng: không có ca tuần — hiển thị lịch cố định.
+                      if (emp.isOffice) {
+                        return (
+                          <div style={{ fontSize: '11px', color: '#1D4ED8', fontWeight: 700, marginTop: '4px', lineHeight: '1.5' }}>
+                            🏢 Làm theo giờ hành chính (T2–T6 08:00–17:00, T7 08:00–12:00)
+                          </div>
+                        );
+                      }
                       const summary = weekShiftSummary(emp);
                       if (summary) {
                         return (
@@ -9934,20 +10014,38 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         }}
                       >
                         {isNoShift ? (
-                          <div style={{
-                            padding: '10px 6px',
-                            borderRadius: '10px',
-                            backgroundColor: '#F9FAFB',
-                            border: '1px dashed #E5E7EB',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            minHeight: '52px',
-                          }}>
-                            <span style={{ fontSize: '13px', fontWeight: 600, color: '#9CA3AF' }}>—</span>
-                            <span style={{ fontSize: '10px', color: '#9CA3AF', marginTop: '2px' }}>Không có ca</span>
-                          </div>
+                          // Văn Phòng: Chủ nhật nghỉ → hiển thị "Nghỉ" thay vì "Không có ca".
+                          emp.isOffice ? (
+                            <div style={{
+                              padding: '10px 6px',
+                              borderRadius: '10px',
+                              backgroundColor: '#F9FAFB',
+                              border: '1px dashed #E5E7EB',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              minHeight: '52px',
+                            }}>
+                              <span style={{ fontSize: '13px', fontWeight: 600, color: '#64748B' }}>📅</span>
+                              <span style={{ fontSize: '10px', color: '#64748B', marginTop: '2px', fontWeight: 600 }}>Nghỉ</span>
+                            </div>
+                          ) : (
+                            <div style={{
+                              padding: '10px 6px',
+                              borderRadius: '10px',
+                              backgroundColor: '#F9FAFB',
+                              border: '1px dashed #E5E7EB',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              minHeight: '52px',
+                            }}>
+                              <span style={{ fontSize: '13px', fontWeight: 600, color: '#9CA3AF' }}>—</span>
+                              <span style={{ fontSize: '10px', color: '#9CA3AF', marginTop: '2px' }}>Không có ca</span>
+                            </div>
+                          )
                         ) : d.status === 'MULTI' ? (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
                             {(d.shifts || []).map((sd: any, si: number) => {

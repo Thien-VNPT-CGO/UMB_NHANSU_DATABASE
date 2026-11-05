@@ -3788,12 +3788,11 @@ export function App() {
   const officeTabs = [
     { id: 'home', label: '1. Trang chủ', icon: Home },
     { id: 'schedule', label: '2. Lịch làm việc', icon: Calendar },
-    { id: 'leave', label: '3. Đăng ký nghỉ phép', icon: Clock },
-    { id: 'attendance', label: '4. Điểm danh', icon: Camera, highlight: true },
-    { id: 'timesheet', label: '5. Công của tôi', icon: CheckCircle2 },
-    { id: 'adjustment', label: '6. Bổ sung công', icon: FileText },
-    { id: 'notifs_salary', label: '7. Thông báo & Lương', icon: Bell },
-    { id: 'profile', label: '8. Hồ Sơ', icon: User },
+    { id: 'attendance', label: '3. Điểm danh', icon: Camera, highlight: true },
+    { id: 'timesheet', label: '4. Công của tôi', icon: CheckCircle2 },
+    { id: 'adjustment', label: '5. Bổ sung công', icon: FileText },
+    { id: 'notifs_salary', label: '6. Thông báo & Lương', icon: Bell },
+    { id: 'profile', label: '7. Hồ Sơ', icon: User },
   ];
 
   const probationTabs = [
