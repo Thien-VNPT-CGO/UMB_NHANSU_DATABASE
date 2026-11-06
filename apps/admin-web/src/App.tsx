@@ -5878,8 +5878,7 @@ export function App() {
 
           {/* QUY TRÌNH YÊU CẦU CÔNG VIỆC NỘI BỘ (GĐ - KT - HR - IT) */}
           {activeTab === 'internal-workflow' && <InternalWorkflowView currentUser={currentUser} />}
-          {activeTab === 'office-approvals' && <OfficeApprovalsView currentUser={currentUser} />}
-          {activeTab === 'fin-salary-config' && <SalaryConfigView currentUser={currentUser} />}
+          {/* office-approvals & fin-salary-config render qua FinanceModule (cổng Kế toán) */}
 
           {/* QUY CHẾ CÔNG TY THEO ĐỐI TƯỢNG (từng NV / từng chi nhánh / tất cả) */}
           {activeTab === 'company-policies' && <CompanyPolicyView currentUser={currentUser} />}

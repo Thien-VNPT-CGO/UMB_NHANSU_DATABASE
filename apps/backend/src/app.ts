@@ -20,6 +20,8 @@ import {
   weekRangeOf,
 } from './services/weekly-off.service.js';
 import { ZaloService, defaultMeetUrl } from './services/zalo.service.js';
+import { PayslipDriveService } from './services/payslip-drive.service.js';
+import { withStage, withStageAll } from './utils/payslip-view.js';
 import {
   bankAccountKey,
   bankChangeRemainingSeconds,
@@ -462,6 +464,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   const payrollService = new PayrollService(adapter, undefined, salaryConfigService);
   const notificationsService = new NotificationsService(adapter);
   payrollService.setNotificationsService(notificationsService);
+  const payslipDriveService = new PayslipDriveService(adapter);
+  payrollService.setPayslipDriveService(payslipDriveService);
   const zaloService = new ZaloService(adapter);
   // Khôi phục phiên Zalo cá nhân HR sau restart (không cần quét QR lại).
   // Chạy lần đầu sau khi pull Sheets xong + tick nền 5 phút giữ phiên tới khi HR đăng xuất.
@@ -5966,7 +5970,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         details = await payrollService.ensurePeriodSlips(req.params.id, '*', req.user!.id).catch(() => null);
       }
       if (!details) return res.status(404).json({ error: `PAYROLL_RUN_NOT_FOUND: Chưa tìm thấy kỳ lương ${req.params.id}. Vui lòng bấm tính lương kỳ này trước.` });
-      res.json(details);
+      res.json({ ...details, slips: withStageAll((details as any).slips) });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -6079,7 +6083,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const employeeId = req.user?.employeeId;
       if (!employeeId) return res.status(400).json({ error: 'NOT_AN_EMPLOYEE' });
       const slips = await payrollService.getEmployeePayslips(employeeId);
-      res.json(slips);
+      res.json(withStageAll(slips));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -6093,7 +6097,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const { name, img } = req.body || {};
       const updated = await payrollService.signSlip(req.params.id, 'nhanvien', name, img, employeeId);
       broadcastUpdate('payroll', { action: 'confirm-slip', itemId: req.params.id });
-      res.json(updated);
+      res.json(withStage(updated));
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -6103,7 +6107,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.get('/payroll/period-slips/:period', authMiddleware, requireRole(['DIRECTOR', 'ADMIN', 'FINANCE']), async (req, res) => {
     try {
       const data = await payrollService.getPeriodSlips(req.params.period);
-      res.json(data);
+      res.json({ ...data, slips: withStageAll((data as any)?.slips) });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -6115,7 +6119,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const branchScope = (req.body && req.body.branchScope) || '*';
       const data = await payrollService.ensurePeriodSlips(req.params.period, branchScope, req.user!.id);
       broadcastUpdate('payroll', { action: 'ensure-slips', period: req.params.period });
-      res.json(data);
+      res.json({ ...data, slips: withStageAll((data as any)?.slips) });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -6137,7 +6141,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       }
       const updated = await payrollService.signSlip(req.params.id, role, name, img, req.user!.id);
       broadcastUpdate('payroll', { action: 'sign-slip', itemId: req.params.id, role });
-      res.json(updated);
+      res.json(withStage(updated));
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -6149,7 +6153,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const { lapName, lapImg, qlName, qlImg } = req.body || {};
       const updated = await payrollService.applyBothSignatures(req.params.id, lapName, lapImg, qlName, qlImg, req.user!.id);
       broadcastUpdate('payroll', { action: 'sign-slip', itemId: req.params.id });
-      res.json(updated);
+      res.json(withStage(updated));
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -6533,7 +6537,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const { sign_lap, sign_quanly } = req.body || {};
       const updated = await payrollService.publishSlip(req.params.id, req.user!.id, { sign_lap, sign_quanly });
       broadcastUpdate('payroll', { action: 'publish-slip', itemId: req.params.id });
-      res.json(updated);
+      res.json(withStage(updated));
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -6544,7 +6548,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       const updated = await payrollService.returnSlip(req.params.id, req.user!.id);
       broadcastUpdate('payroll', { action: 'return-slip', itemId: req.params.id });
-      res.json(updated);
+      res.json(withStage(updated));
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -6572,11 +6576,12 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // Kế toán xác nhận hoàn thành chi trả (PAID) sau khi quét QR chuyển khoản
+  // Kế toán xác nhận hoàn thành chi trả (PAID) sau khi quét QR chuyển khoản
   app.post('/payroll/slips/:id/mark-paid', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
     try {
       const updated = await payrollService.markSlipPaid(req.params.id, req.user!.id);
       broadcastUpdate('payroll', { action: 'mark-slip-paid', itemId: req.params.id });
-      res.json(updated);
+      res.json(withStage(updated));
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -6592,7 +6597,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const holder = b.holder ?? b.bank_holder;
       const updated = await payrollService.updateSlipBank(req.params.id, bank, account, holder, req.user!.id);
       broadcastUpdate('payroll', { action: 'update-bank', itemId: req.params.id });
-      res.json(updated);
+      res.json(withStage(updated));
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -6615,6 +6620,56 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       res.json(cfg);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
+    }
+  });
+
+  // --- QUY TRÌNH KẾ TOÁN: trạng thái mở/khóa tab 7 bước của 1 kỳ lương ---
+  app.get('/payroll/workflow-status', authMiddleware, requireRole(['DIRECTOR', 'ADMIN', 'FINANCE']), async (req, res) => {
+    try {
+      const vn = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7);
+      const period = String((req.query as any)?.period || vn);
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
+        return res.status(400).json({ error: 'Kỳ báo cáo phải đúng định dạng YYYY-MM (VD: 2026-10)!' });
+      }
+      res.json(await payrollService.getWorkflowStatus(period));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // --- ĐỒNG BỘ DRIVE (Kế toán): tự tạo cây thư mục tháng + xuất file kỳ + PDF phiếu PAID ---
+  app.post('/payroll/drive-sync', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const period = String((req.body as any)?.period || '');
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
+        return res.status(400).json({ error: 'Kỳ đồng bộ phải đúng định dạng YYYY-MM (VD: 2026-10)!' });
+      }
+      const result = await payslipDriveService.syncMonthToDrive(period, req.user!.id);
+      broadcastUpdate('payroll', { action: 'drive-sync', period, ok: result.ok });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/payroll/drive-sync/status', authMiddleware, requireRole(['DIRECTOR', 'ADMIN', 'FINANCE']), async (req, res) => {
+    try {
+      const vn = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7);
+      const period = String((req.query as any)?.period || vn);
+      res.json(await payslipDriveService.getSyncStatus(period));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Đồng bộ lại PDF 1 phiếu (đường dự phòng khi lần tự động thất bại).
+  app.post('/payroll/slips/:id/drive-sync', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await payslipDriveService.syncSlipToDrive(req.params.id);
+      broadcastUpdate('payroll', { action: 'drive-sync-slip', itemId: req.params.id });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 

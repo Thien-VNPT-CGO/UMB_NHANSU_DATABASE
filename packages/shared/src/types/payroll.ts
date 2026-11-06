@@ -33,6 +33,54 @@ export interface PayslipSignature {
 
 export type PayslipSignerRole = 'giamdoc' | 'lap' | 'quanly' | 'nhanvien';
 
+/**
+ * Giai đoạn xử lý phiếu lương — DẪN XUẤT từ chữ ký + trạng thái (không lưu riêng,
+ * tránh lệch dữ liệu). Dùng chung FE/BE/PDF để hiển thị timeline & khóa nút.
+ *
+ * Thứ tự: Kế toán lập & ký (DRAFT→) → Giám đốc ký duyệt → Kế toán gửi NV
+ * → Nhân viên ký → phiếu về Kế toán (KHÓA, hiện QR chuyển khoản)
+ * → Kế toán bấm "Đã Chuyển Khoản" → PAID (khóa hoàn toàn, đồng bộ Drive).
+ */
+export type PayslipStage =
+  | 'DRAFT'            // chưa ký gì
+  | 'CHO_GD_DUYET'     // KT đã ký, chờ Giám đốc duyệt
+  | 'CHO_GUI_NV'       // GĐ đã duyệt, chờ KT gửi NV
+  | 'CHO_NV_KY'        // đã gửi, chờ NV ký
+  | 'CHO_CHUYEN_KHOAN' // NV đã ký — phiếu KHÓA, chờ KT chuyển khoản (hiện QR)
+  | 'PAID';            // KT đã chuyển khoản — khóa hoàn toàn
+
+export function payslipStage(
+  slip: Pick<PayslipItem, 'status' | 'sign_lap' | 'sign_giamdoc' | 'sign_nhanvien'> | null | undefined,
+): PayslipStage {
+  if (!slip) return 'DRAFT';
+  const st = String(slip.status || '').toUpperCase();
+  if (st === 'PAID') return 'PAID';
+  if (st === 'CONFIRMED' || slip.sign_nhanvien) return 'CHO_CHUYEN_KHOAN';
+  if (st === 'PUBLISHED') return 'CHO_NV_KY';
+  if (slip.sign_lap && slip.sign_giamdoc) return 'CHO_GUI_NV';
+  if (slip.sign_lap) return 'CHO_GD_DUYET';
+  return 'DRAFT';
+}
+
+export const PAYSLIP_STAGE_LABEL: Record<PayslipStage, string> = {
+  DRAFT: 'Nháp — Kế toán chưa ký',
+  CHO_GD_DUYET: 'Chờ Giám đốc ký duyệt',
+  CHO_GUI_NV: 'Chờ Kế toán gửi nhân viên',
+  CHO_NV_KY: 'Chờ nhân viên ký nhận',
+  CHO_CHUYEN_KHOAN: 'Chờ chuyển khoản (đã khóa phiếu)',
+  PAID: 'Đã chuyển khoản',
+};
+
+/** Thứ tự bước trong timeline 6 nấc — dùng cho stepper UI/PDF. */
+export const PAYSLIP_STAGE_STEPS: Array<{ key: PayslipStage; label: string }> = [
+  { key: 'DRAFT', label: 'KT tạo & ký' },
+  { key: 'CHO_GD_DUYET', label: 'Giám đốc ký' },
+  { key: 'CHO_GUI_NV', label: 'KT gửi NV' },
+  { key: 'CHO_NV_KY', label: 'NV ký nhận' },
+  { key: 'CHO_CHUYEN_KHOAN', label: 'Chờ chuyển khoản' },
+  { key: 'PAID', label: 'Đã chuyển khoản' },
+];
+
 export interface PayslipItem {
   item_id: string;
   run_id: string;
@@ -99,6 +147,17 @@ export interface PayslipItem {
   /** Thời điểm kế toán xác nhận đã chuyển khoản. */
   slip_paid_at?: string;
   slip_paid_by?: string;
+  // --- Đồng bộ Google Drive (PDF phiếu lương sau khi Đã Chuyển Khoản) ---
+  /** ID file PDF trên Drive. */
+  drive_pdf_id?: string;
+  /** Link xem file trên Drive. */
+  drive_pdf_link?: string;
+  /** Thời điểm đồng bộ Drive thành công gần nhất. */
+  drive_synced_at?: string;
+  /** Lỗi đồng bộ Drive lần gần nhất (rỗng nếu OK). */
+  drive_sync_error?: string;
+  /** Giai đoạn xử lý (dẫn xuất — BE gắn vào payload để FE không phải tự đoán). */
+  stage?: PayslipStage;
   /** Ghi chú của kế toán nhập ở tab Tính lương (join từ DULIEU_LUONG_KY) — hiển thị trên phiếu khi in/phát hành. */
   input_note?: string;
   bank_name?: string;

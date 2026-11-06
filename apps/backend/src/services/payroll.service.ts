@@ -252,6 +252,11 @@ export class PayrollService {
     this.notificationsService = svc;
   }
 
+  private payslipDriveService?: { syncSlipToDrive(itemId: string): Promise<{ ok: boolean; fileId?: string; link?: string; error?: string }> };
+  public setPayslipDriveService(svc: any) {
+    this.payslipDriveService = svc;
+  }
+
   /**
    * Đẩy NGAY (await) các tab kế toán lên Google Sheets sau mỗi thao tác tài
    * chính. Best-effort: lỗi Sheets không làm hỏng nghiệp vụ (dữ liệu vẫn an
@@ -485,6 +490,70 @@ export class PayrollService {
 
   async listRuns() {
     return this.repo.listPayrollRuns();
+  }
+
+  // Cache đếm ca trong kỳ (tính chậm — gọi từ workflow-status)
+  private wfAttCache = new Map<string, { at: number; shifts: number }>();
+
+  /**
+   * Trạng thái quy trình kế toán của 1 kỳ lương — dùng để khóa/mở khóa tab theo thứ tự.
+   * Hoàn toàn dẫn xuất từ dữ liệu (không lưu trạng thái thủ công):
+   *   1 Đối soát công → 2 BCC → 3 Tính lương → 4 Payment (bảng lương) → 5 Kỳ lương → 6 Phiếu lương → 7 Thanh toán
+   */
+  async getWorkflowStatus(period: string) {
+    const now = Date.now();
+    const cached = this.wfAttCache.get(period);
+    let attShifts = cached && now - cached.at < 60_000 ? cached.shifts : -1;
+    if (attShifts < 0) {
+      attShifts = 0;
+      try {
+        const { fromDate, toDate } = monthRange(period);
+        const employees: any[] = await this.repo.listEmployees({ branch: '*' }).catch(() => []);
+        for (const e of employees || []) {
+          const s: any[] = await this.repo.getShiftsForEmployee((e as any).employee_id, fromDate, toDate).catch(() => []);
+          attShifts += (s || []).filter(x => String(x?.status) === 'PUBLISHED').length;
+        }
+      } catch { /* giữ 0 */ }
+      this.wfAttCache.set(period, { at: now, shifts: attShifts });
+    }
+
+    const [formula, inputs, runsAll] = await Promise.all([
+      this.repo.getPayrollFormula(period).catch(() => null),
+      this.repo.getPayrollInputs(period).catch(() => [] as any[]),
+      this.repo.listPayrollRuns().catch(() => [] as any[]),
+    ]);
+    const runs = (runsAll || []).filter((r: any) => String(r?.period) === period);
+    runs.sort((a: any, b: any) => String(b?.created_at || '').localeCompare(String(a?.created_at || '')));
+    const latest: any = runs[0] || null;
+    const latestStatus = String(latest?.status || '');
+    const slips: any[] = latest ? await this.repo.getPayslipsByRunId(latest.run_id).catch(() => []) : [];
+    const byEmp = new Map<string, any>();
+    for (const s of slips || []) {
+      const k = String(s?.employee_id || '');
+      const cur = byEmp.get(k);
+      if (!cur || String(s?.updated_at || s?.created_at || '') >= String(cur?.updated_at || cur?.created_at || '')) byEmp.set(k, s);
+    }
+    const uniqueSlips = [...byEmp.values()];
+    const hasData = attShifts > 0;
+    const inputsCount = (inputs || []).filter((i: any) => i && (i.luong_cb > 0 || i.ot_extra > 0 || i.bonus_extra > 0 || i.ung_luong > 0 || i.tru_kpi > 0 || i.dong_phuc > 0 || (i.note && String(i.note).trim()))).length;
+    const calcDone = !!formula || inputsCount > 0 || !!latest;
+    const runDone = !!latest;
+    const approved = ['APPROVED', 'PUBLISHED', 'PAID'].includes(latestStatus);
+    const allSigned = uniqueSlips.length > 0 && uniqueSlips.every(s => ['CONFIRMED', 'PAID'].includes(String(s?.status)));
+    const someConfirmed = uniqueSlips.some(s => ['CONFIRMED', 'PAID'].includes(String(s?.status)));
+    const allPaid = uniqueSlips.length > 0 && uniqueSlips.every(s => String(s?.status) === 'PAID');
+    const runPaid = latestStatus === 'PAID';
+
+    const steps = [
+      { id: 'fin-timesheet', order: 1, title: 'Đối soát công & Bảng chấm công', open: true, done: hasData, reason: '', stat: `${attShifts.toLocaleString('vi-VN')} ca đã phát hành` },
+      { id: 'fin-bcc', order: 2, title: 'BCC — Bảng công từng ngày', open: hasData, done: hasData, reason: hasData ? '' : 'Chưa có ca chấm công nào được phát hành trong kỳ — chờ Store/HR xếp ca & xác nhận công.', stat: hasData ? `${attShifts.toLocaleString('vi-VN')} ca` : 'Chưa có dữ liệu' },
+      { id: 'fin-calculate', order: 3, title: 'Tính lương (công thức & nhập tay)', open: hasData, done: calcDone, reason: hasData ? '' : 'Chưa có dữ liệu chấm công để tính lương.', stat: calcDone ? 'Đã có công thức/dữ liệu nhập' : 'Chưa tính' },
+      { id: 'fin-payroll-sheet', order: 4, title: 'Payment — Bảng lương tháng', open: calcDone, done: runDone, reason: calcDone ? '' : 'Hãy lưu công thức hoặc nhập liệu lương (hoặc bấm Tính lương) ở tab Tính lương trước.', stat: runDone ? `Kỳ ${latest?.run_id || ''} (${latestStatus})` : 'Chưa có kỳ lương' },
+      { id: 'fin-payroll-periods', order: 5, title: 'Kỳ lương (DRAFT → PAID)', open: runDone, done: approved, reason: runDone ? '' : 'Chưa có kỳ lương — hãy tính lương ở tab Tính lương.', stat: runDone ? `Trạng thái: ${latestStatus}` : 'Chưa có kỳ lương' },
+      { id: 'fin-payslips', order: 6, title: 'Phiếu lương (KT ký → GĐ duyệt → NV ký)', open: approved, done: allSigned, reason: approved ? '' : 'Kỳ lương cần được DUYỆT (APPROVED) trước khi ký & phát hành phiếu lương.', stat: uniqueSlips.length ? `${uniqueSlips.filter(s => ['CONFIRMED', 'PAID'].includes(String(s?.status))).length}/${uniqueSlips.length} phiếu NV đã ký` : 'Chưa có phiếu' },
+      { id: 'fin-payment', order: 7, title: 'Thanh toán (VietQR — Đã chuyển khoản)', open: someConfirmed || runPaid || latestStatus === 'PUBLISHED', done: allPaid || runPaid, reason: (someConfirmed || runPaid || latestStatus === 'PUBLISHED') ? '' : 'Chờ nhân viên ký phiếu (CONFIRMED) trước khi chuyển khoản.', stat: uniqueSlips.length ? `${uniqueSlips.filter(s => String(s?.status) === 'PAID').length}/${uniqueSlips.length} phiếu đã chuyển` : 'Chưa có phiếu' },
+    ];
+    return { period, steps, generatedAt: new Date().toISOString() };
   }
 
   // --- Công thức lương theo file Excel (Finance) ---
@@ -923,7 +992,7 @@ export class PayrollService {
     }
   }
 
-  // --- Quy trình ký: DRAFT -> GĐ ký -> QL ký -> PUBLISHED -> NV ký -> CONFIRMED -> PAID ---
+  // --- Quy trình ký 3 bên: DRAFT → KT ký lập → GĐ ký duyệt → KT gửi NV → NV ký (CONFIRMED, KHÓA) → KT chuyển khoản (PAID) ---
   private notifySlipsChanged(action: string, extra: any = {}) {
     if (!this.io) return;
     try {
@@ -1013,8 +1082,8 @@ export class PayrollService {
     return out;
   }
 
-  /** Kế toán áp dụng nhanh 2 chữ ký mẫu (Người lập + Quản lý chi nhánh) */
-  async applyBothSignatures(itemId: string, lapName: string, lapImg: string, qlName: string, qlImg: string, actorId: string) {
+  /** Kế toán KÝ LẬP PHIẾU (ký nhanh bằng chữ ký mẫu — chỉ chữ ký Kế toán) */
+  async applyBothSignatures(itemId: string, lapName: string, lapImg: string, _qlName: string, _qlImg: string, actorId: string) {
     return singleWriterQueue.enqueue({
       entityType: 'PHIEU_LUONG',
       entityId: itemId,
@@ -1027,21 +1096,13 @@ export class PayrollService {
         }
         let finalLapImg = lapImg;
         let finalLapName = lapName;
-        let finalQlImg = qlImg;
-        let finalQlName = qlName;
-        if (!finalLapImg || !finalQlImg) {
+        if (!finalLapImg) {
           try {
             const settings: any = await this.repo.getSystemSettings();
             const tmpl = settings?.payroll_signatures;
-            if (tmpl) {
-              if (!finalLapImg && tmpl.lap?.img) {
-                finalLapImg = tmpl.lap.img;
-                finalLapName = finalLapName || tmpl.lap.name;
-              }
-              if (!finalQlImg && tmpl.quanly?.img) {
-                finalQlImg = tmpl.quanly.img;
-                finalQlName = finalQlName || tmpl.quanly.name;
-              }
+            if (tmpl?.lap?.img) {
+              finalLapImg = tmpl.lap.img;
+              finalLapName = finalLapName || tmpl.lap.name;
             }
           } catch {}
         }
@@ -1049,13 +1110,10 @@ export class PayrollService {
         if (finalLapImg) {
           updates.sign_lap = { name: finalLapName || 'Kế toán viên', img: finalLapImg, at: new Date().toISOString() };
         }
-        if (finalQlImg) {
-          updates.sign_quanly = { name: finalQlName || 'Quản lý chi nhánh', img: finalQlImg, at: new Date().toISOString() };
-        }
         // Không có ảnh ký nào (client không gửi + server chưa cấu hình mẫu):
         // báo lỗi rõ thay vì lưu rỗng khiến nút ký báo thành công giả.
         if (Object.keys(updates).length === 0) {
-          throw new Error('MISSING_SIGNATURE_IMAGES: chưa có ảnh chữ ký mẫu (người lập + quản lý), vui lòng cài đặt chữ ký mẫu trước!');
+          throw new Error('MISSING_SIGNATURE_IMAGES: chưa có ảnh chữ ký mẫu của Kế toán, vui lòng cài đặt chữ ký mẫu trước!');
         }
         const updated = await this.repo.updatePayslip(itemId, updates);
         this.notifySlipsChanged('sign', { itemId });
@@ -1065,7 +1123,7 @@ export class PayrollService {
     });
   }
 
-  /** Gửi 1 phiếu đến NV: yêu cầu đủ 2 chữ ký lập + quản lý, phiếu đang DRAFT. Tự động bù chữ ký mẫu nếu có. */
+  /** Gửi 1 phiếu đến NV: yêu cầu Kế toán đã ký lập + Giám đốc đã ký duyệt, phiếu đang DRAFT. Tự động bù chữ ký Kế toán từ mẫu nếu có. */
   async publishSlip(itemId: string, actorId: string, extraSignatures?: { sign_lap?: any; sign_quanly?: any }) {
     // FIX deadlock hàng đợi đơn: xem signSlip.
     let publishedSlip: any = null;
@@ -1089,46 +1147,29 @@ export class PayrollService {
             };
           }
         }
-        if (!(slip as any).sign_quanly) {
-          if (extraSignatures?.sign_quanly?.img) {
-            updates.sign_quanly = {
-              name: extraSignatures.sign_quanly.name || 'Quản lý chi nhánh',
-              img: extraSignatures.sign_quanly.img,
-              at: extraSignatures.sign_quanly.at || new Date().toISOString(),
-            };
-          }
-        }
-
-        // Nếu vẫn còn thiếu chữ ký, tự động nạp từ cấu hình chữ ký mẫu (signature-templates)
-        if ((!updates.sign_lap && !(slip as any).sign_lap) || (!updates.sign_quanly && !(slip as any).sign_quanly)) {
+        // Nếu thiếu chữ ký Kế toán, tự động nạp từ cấu hình chữ ký mẫu (signature-templates)
+        if (!updates.sign_lap && !(slip as any).sign_lap) {
           try {
             const settings: any = await this.repo.getSystemSettings();
             const tmpl = settings?.payroll_signatures;
-            if (tmpl) {
-              if (!updates.sign_lap && !(slip as any).sign_lap && tmpl.lap?.img) {
-                updates.sign_lap = {
-                  name: tmpl.lap.name || 'Kế toán viên',
-                  img: tmpl.lap.img,
-                  at: new Date().toISOString(),
-                };
-              }
-              if (!updates.sign_quanly && !(slip as any).sign_quanly && tmpl.quanly?.img) {
-                updates.sign_quanly = {
-                  name: tmpl.quanly.name || 'Quản lý chi nhánh',
-                  img: tmpl.quanly.img,
-                  at: new Date().toISOString(),
-                };
-              }
+            if (tmpl?.lap?.img) {
+              updates.sign_lap = {
+                name: tmpl.lap.name || 'Kế toán viên',
+                img: tmpl.lap.img,
+                at: new Date().toISOString(),
+              };
             }
           } catch {}
         }
+        // Không tự ký thay Giám đốc — Giám đốc phải ký trên cổng Giám đốc.
+        // (Chữ ký quản lý chi nhánh không còn thuộc quy trình phiếu lương 3 bên.)
 
         if (Object.keys(updates).length > 0) {
           slip = await this.repo.updatePayslip(itemId, updates);
         }
 
-        if (!(slip as any).sign_giamdoc || !(slip as any).sign_lap || !(slip as any).sign_quanly) {
-          throw new Error('MISSING_SIGNATURES: thiếu chữ ký Giám đốc / người lập / quản lý chi nhánh! Quy trình: Giám đốc ký trước, rồi Quản lý chi nhánh ký.');
+        if (!(slip as any).sign_giamdoc || !(slip as any).sign_lap) {
+          throw new Error('MISSING_SIGNATURES: phiếu cần đủ chữ ký Kế toán (lập phiếu) và Giám đốc (ký duyệt) trước khi gửi nhân viên!');
         }
         const updated = await this.repo.updatePayslip(itemId, {
           status: 'PUBLISHED',
@@ -1190,23 +1231,15 @@ export class PayrollService {
             continue;
           }
 
-          // Tự bù chữ ký mẫu nếu thiếu
-          if ((!(s as any).sign_lap || !(s as any).sign_quanly) && tmpl) {
-            const updates: any = {};
-            if (!(s as any).sign_lap && tmpl.lap?.img) {
-              updates.sign_lap = { name: tmpl.lap.name || 'Kế toán viên', img: tmpl.lap.img, at: new Date().toISOString() };
-            }
-            if (!(s as any).sign_quanly && tmpl.quanly?.img) {
-              updates.sign_quanly = { name: tmpl.quanly.name || 'Quản lý chi nhánh', img: tmpl.quanly.img, at: new Date().toISOString() };
-            }
-            if (Object.keys(updates).length > 0) {
-              await this.repo.updatePayslip((s as any).item_id, updates);
-              Object.assign(s, updates);
-            }
+          // Tự bù chữ ký Kế toán từ mẫu nếu thiếu (không bao giờ tự ký thay Giám đốc)
+          if (!(s as any).sign_lap && tmpl?.lap?.img) {
+            const updates: any = { sign_lap: { name: tmpl.lap.name || 'Kế toán viên', img: tmpl.lap.img, at: new Date().toISOString() } };
+            await this.repo.updatePayslip((s as any).item_id, updates);
+            Object.assign(s, updates);
           }
 
-          if (!(s as any).sign_giamdoc || !(s as any).sign_lap || !(s as any).sign_quanly) {
-            skipped.push({ itemId: (s as any).item_id, employee: (s as any).full_name || (s as any).employee_id, reason: 'thiếu chữ ký Giám đốc/lập/quản lý' });
+          if (!(s as any).sign_giamdoc || !(s as any).sign_lap) {
+            skipped.push({ itemId: (s as any).item_id, employee: (s as any).full_name || (s as any).employee_id, reason: 'thiếu chữ ký Giám đốc / Kế toán' });
             continue;
           }
           await this.repo.updatePayslip((s as any).item_id, {
@@ -1238,9 +1271,10 @@ export class PayrollService {
     return out;
   }
 
-  /** Hoàn phiếu: thu hồi phiếu đã gửi NV (PUBLISHED/CONFIRMED) về DRAFT khi gửi nhầm.
-   * Phiếu hoàn về mặc định CHƯA KÝ: xóa toàn bộ 3 chữ ký (lập/quản lý/NV)
-   * + các mốc thời gian phát hành/xác nhận/chi trả để ký + phát hành lại từ đầu. */
+  /** Hoàn phiếu: thu hồi phiếu ĐÃ GỬI NV (chỉ PUBLISHED, chưa NV ký) về DRAFT khi gửi nhầm.
+   *  Phiếu CONFIRMED (NV đã ký) bị KHÓA — không hoàn được; PAID là trạng thái cuối.
+   *  Phiếu hoàn về xóa chữ ký Kế toán + NV + mốc thời gian để ký/phát hành lại từ đầu;
+   *  giữ chữ ký Giám đốc (nội dung đã được duyệt). */
   async returnSlip(itemId: string, actorId: string) {
     // FIX deadlock hàng đợi đơn: xem signSlip.
     let returnedSlip: any = null;
@@ -1251,7 +1285,7 @@ export class PayrollService {
       execute: async () => {
         const slip = await this.repo.getPayslipById(itemId);
         if (!slip) throw new Error('PAYSLIP_NOT_FOUND');
-        if (slip.status !== 'PUBLISHED' && slip.status !== 'CONFIRMED') throw new Error(`SLIP_NOT_RETURNABLE: phiếu đang ở trạng thái ${slip.status}, chỉ hoàn được phiếu đã gửi (PUBLISHED) hoặc đã xác nhận (CONFIRMED)!`);
+        if (slip.status !== 'PUBLISHED') throw new Error(`SLIP_NOT_RETURNABLE: phiếu đang ở trạng thái ${slip.status}. Phiếu NV đã ký (CONFIRMED) hoặc đã chuyển khoản (PAID) bị khóa, không hoàn được!`);
         const updated = await this.repo.updatePayslip(itemId, {
           status: 'DRAFT',
           sign_lap: undefined,
@@ -1294,8 +1328,8 @@ export class PayrollService {
         const slip = await this.repo.getPayslipById(itemId);
         if (!slip) throw new Error('PAYSLIP_NOT_FOUND');
         if (slip.status !== 'CONFIRMED') throw new Error('SLIP_NOT_CONFIRMED: nhân viên chưa ký xác nhận, chưa chuyển khoản!');
-        if (!(slip as any).sign_lap || !(slip as any).sign_quanly || !(slip as any).sign_nhanvien) {
-          throw new Error('MISSING_SIGNATURES: phiếu chưa đủ 3 chữ ký!');
+        if (!(slip as any).sign_lap || !(slip as any).sign_giamdoc || !(slip as any).sign_nhanvien) {
+          throw new Error('MISSING_SIGNATURES: phiếu chưa đủ 3 chữ ký (Kế toán — Giám đốc — Nhân viên)!');
         }
         const updated = await this.repo.updatePayslip(itemId, {
           status: 'PAID',
@@ -1308,6 +1342,18 @@ export class PayrollService {
         return updated;
       },
     });
+    // Đồng bộ PDF phiếu lương (đủ 3 chữ ký) lên Drive — best effort, không chặn nghiệp vụ.
+    if (paidSlip && this.payslipDriveService) {
+      try {
+        const driveRes = await this.payslipDriveService.syncSlipToDrive(itemId);
+        (out as any).driveSync = driveRes;
+        if (!driveRes?.ok) {
+          console.warn('[payroll] Đồng bộ Drive phiếu lương thất bại:', driveRes?.error);
+        }
+      } catch (err: any) {
+        (out as any).driveSync = { ok: false, error: String(err?.message || err).slice(0, 300) };
+      }
+    }
     if (paidSlip && this.notificationsService) {
       const amt = Number(paidSlip.thuc_lanh ?? paidSlip.net_pay ?? 0).toLocaleString('vi-VN');
       await this.notificationsService.sendNotification({
@@ -1332,6 +1378,9 @@ export class PayrollService {
       execute: async () => {
         const slip = await this.repo.getPayslipById(itemId);
         if (!slip) throw new Error('PAYSLIP_NOT_FOUND');
+        if (slip.status === 'CONFIRMED' || slip.status === 'PAID') {
+          throw new Error('SLIP_LOCKED: phiếu đã được nhân viên ký / đã chuyển khoản — bị khóa, không đổi tài khoản thụ hưởng!');
+        }
         const bName = String(bankName || '').trim().toUpperCase().slice(0, 30);
         const bAcc = String(bankAccount || '').trim().replace(/\s+/g, '').slice(0, 30);
         const bHolder = String(bankHolder || '').trim().toUpperCase().slice(0, 80);

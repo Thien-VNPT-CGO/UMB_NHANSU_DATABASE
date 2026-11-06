@@ -5,7 +5,19 @@
  * URL: https://drive.google.com/drive/folders/1tBbooiPlppJV8QrpY2gtm8ij6FUf-k0j
  */
 
+import { PAYSLIP_DRIVE_ROOT_ID } from '@ubm/shared';
+
 export const DRIVE_ROOT_FOLDER_ID = '1tBbooiPlppJV8QrpY2gtm8ij6FUf-k0j';
+
+/**
+ * Root Drive cho dữ liệu Kế toán (PHIEU_LUONG/THANG_MM/CN... + THANG_MM_YYYY/<chức năng>).
+ * Mặc định dùng folder do chủ dự án cấp; override bằng env GOOGLE_DRIVE_PHIEU_LUONG_ROOT_ID.
+ */
+export const PAYSLIP_DRIVE_ROOT = PAYSLIP_DRIVE_ROOT_ID;
+
+export function getPayslipDriveRootId(): string {
+  return String(process.env.GOOGLE_DRIVE_PHIEU_LUONG_ROOT_ID || '').trim() || PAYSLIP_DRIVE_ROOT_ID;
+}
 
 export const DRIVE_SUBFOLDERS = {
   /** 00. DATABASE: Chứa 25 file Google Sheets nghiệp vụ */

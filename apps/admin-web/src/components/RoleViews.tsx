@@ -67,6 +67,7 @@ import { printPayslips } from '../utils/payslipPrint';
 import { playInterviewAlert, playFanfare } from '../utils/sound-effects';
 import { PerfectScoreCelebration } from './PerfectScoreCelebration';
 import { SignaturePad } from './SignaturePad';
+import FinanceModule from './FinanceModule';
 
 /** Chat Zalo với ứng viên: tự động kết bạn qua nick HR + gửi lời chào (dùng chung 2 tab). */
 export async function chatZaloWithCandidate(c: any, showToast: (msg: string) => void): Promise<void> {
@@ -13555,7 +13556,29 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }
 
   // =========================================================================
-  // FINANCE VIEWS (12 TABS)
+  // FINANCE MODULE — tất cả tab Kế toán (render từ FinanceModule.tsx)
+  // =========================================================================
+  if (activeTab.startsWith('fin-') || activeTab === 'bank-changes' || activeTab === 'office-approvals') {
+    return (
+      <FinanceModule
+        activeTab={activeTab}
+        currentUser={currentUser}
+        allEmployees={allEmployees}
+        shifts={shifts}
+        payrollRuns={payrollRuns}
+        branches={branches}
+        salaryConfigs={salaryConfigs}
+        systemNotifications={systemNotifications}
+        showToast={showToast}
+        onRefreshData={onRefreshData}
+        onSyncSheets={onSyncSheets}
+        onPushSheets={onPushSheets}
+      />
+    );
+  }
+
+  // =========================================================================
+  // FINANCE VIEWS (12 TABS) — GỮ NGUYÊN (code chết, không chạy vì trên đã return)
   // =========================================================================
   if (activeTab === 'fin-dashboard') {
     const totalPayroll = payrollRuns.reduce((sum, p) => sum + (Number(p.net_pay) || 0), 0);
