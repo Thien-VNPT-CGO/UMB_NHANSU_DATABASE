@@ -99,28 +99,22 @@ export default function FinanceModule(props: FinanceModuleProps) {
   const [finSheetSync, setFinSheetSync] = useState<any>(null);
 
   const mountedRef = useRef(true);
-  const api = (path: string, opts?: RequestInit) => apiRequest(path, opts);
-  const post = (path: string, body: any) => api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
-  const put = (path: string, body: any) => api(path, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+  const api = useCallback((path: string, opts?: RequestInit) => apiRequest(path, opts), []);
+  const post = useCallback((path: string, body: any) => api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) }), [api]);
+  const put = useCallback((path: string, body: any) => api(path, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) }), [api]);
 
-  const handleRealtime = useCallback((evt: CustomEvent) => {
-    const ent = (evt.detail as any)?.entity;
-    if (!ent) return;
-    const want = ent === 'payroll' || ent === 'payslips' || ent === 'all';
-    const att = ent === 'attendance' || ent === 'shift' || ent === 'swap' || ent === 'leave' || ent === 'all';
-    const needTimesheet = ['fin-timesheet', 'fin-bcc', 'fin-dashboard', 'fin-calculate', 'fin-payroll-sheet'].includes(activeTab);
-    const needPayslip = ['fin-payslips', 'fin-payment', 'fin-payroll-periods', 'fin-signatures'].includes(activeTab);
-    if ((want && needPayslip) || (att && needTimesheet)) {
-      refreshCurrentTab();
-    }
-  }, [activeTab]);
-
-  useEffect(() => {
-    window.addEventListener('ubm:fin-timesheet-reload', handleRealtime as any);
-    window.addEventListener('ubm:payslips-reload', handleRealtime as any);
-    window.addEventListener('data:updated', handleRealtime as any);
-    return () => { mountedRef.current = false; window.removeEventListener('ubm:fin-timesheet-reload', handleRealtime as any); window.removeEventListener('ubm:payslips-reload', handleRealtime as any); window.removeEventListener('data:updated', handleRealtime as any); };
-  }, [handleRealtime, activeTab]);
+  // Fix ReferenceError: Cannot access 'Bt' before initialization (TDZ):
+  // Loaders MUST be declared BEFORE refreshCurrentTab / handleRealtime that
+  // list them in their useCallback dependency arrays. Previously loaders were
+  // defined after refreshCurrentTab, so evaluating the deps array at render
+  // touched uninitialized const bindings and crashed the Finance module.
+  const loadWorkflow = useCallback(async () => { try { setWorkflow(await api(`/payroll/workflow-status?period=${encodeURIComponent(month)}`)); } catch { setWorkflow(null); } }, [api, month]);
+  const loadRuns = useCallback(async () => { try { setRuns(await api('/payroll/runs')); } catch { setRuns([]); } }, [api]);
+  const loadSlips = useCallback(async () => { setSlipsLoading(true); try { const d = await api(`/payroll/period-slips/${encodeURIComponent(month)}`); setSlips((d as any)?.slips || []); } catch { setSlips([]); } finally { setSlipsLoading(false); } }, [api, month]);
+  const loadFinSheet = useCallback(async () => { setFinSheetLoading(true); try { const fs = await api(`/admin/reports/finance-timesheet?period=${encodeURIComponent(month)}&branchScope=*`); setFinSheet(fs); if (activeTab === 'fin-dashboard') { try { setFinSheetSync(await api('/payroll/sync-status')); } catch { setFinSheetSync(null); } } } catch { setFinSheet(null); } finally { setFinSheetLoading(false); } }, [api, activeTab, month]);
+  const loadFormula = useCallback(async () => { try { setFormula(await api(`/payroll/formula/${encodeURIComponent(month)}`)); } catch { setFormula(null); } }, [api, month]);
+  const loadInputs = useCallback(async () => { setInputsLoading(true); try { setInputs(await api(`/payroll/inputs/${encodeURIComponent(month)}`)); } catch { setInputs([]); } finally { setInputsLoading(false); } }, [api, month]);
+  const loadDriveStatus = useCallback(async () => { try { const st = await api(`/payroll/drive-sync/status?period=${encodeURIComponent(month)}`); setSyncStatus(st); setDriveConfigured(!!st?.configured); } catch { setDriveConfigured(false); } }, [api, month]);
 
   const refreshCurrentTab = useCallback(() => {
     loadWorkflow();
@@ -132,13 +126,24 @@ export default function FinanceModule(props: FinanceModuleProps) {
     if (activeTab === 'fin-payment') loadSlips();
   }, [activeTab, loadWorkflow, onRefreshData, loadFinSheet, loadSlips, loadRuns, loadFormula, loadInputs]);
 
-  const loadWorkflow = useCallback(async () => { try { setWorkflow(await api(`/payroll/workflow-status?period=${encodeURIComponent(month)}`)); } catch { setWorkflow(null); } }, [api, month]);
-  const loadRuns = useCallback(async () => { try { setRuns(await api('/payroll/runs')); } catch { setRuns([]); } }, [api]);
-  const loadSlips = useCallback(async () => { setSlipsLoading(true); try { const d = await api(`/payroll/period-slips/${encodeURIComponent(month)}`); setSlips((d as any)?.slips || []); } catch { setSlips([]); } finally { setSlipsLoading(false); } }, [api, month]);
-  const loadFinSheet = useCallback(async () => { setFinSheetLoading(true); try { const fs = await api(`/admin/reports/finance-timesheet?period=${encodeURIComponent(month)}&branchScope=*`); setFinSheet(fs); if (activeTab === 'fin-dashboard') { try { setFinSheetSync(await api('/payroll/sync-status')); } catch { setFinSheetSync(null); } } } catch { setFinSheet(null); } finally { setFinSheetLoading(false); } }, [api, activeTab, month]);
-  const loadFormula = useCallback(async () => { try { setFormula(await api(`/payroll/formula/${encodeURIComponent(month)}`)); } catch { setFormula(null); } }, [api, month]);
-  const loadInputs = useCallback(async () => { setInputsLoading(true); try { setInputs(await api(`/payroll/inputs/${encodeURIComponent(month)}`)); } catch { setInputs([]); } finally { setInputsLoading(false); } }, [api, month]);
-  const loadDriveStatus = useCallback(async () => { try { const st = await api(`/payroll/drive-sync/status?period=${encodeURIComponent(month)}`); setSyncStatus(st); setDriveConfigured(!!st?.configured); } catch { setDriveConfigured(false); } }, [api, month]);
+  const handleRealtime = useCallback((evt: CustomEvent) => {
+    const ent = (evt.detail as any)?.entity;
+    if (!ent) return;
+    const want = ent === 'payroll' || ent === 'payslips' || ent === 'all';
+    const att = ent === 'attendance' || ent === 'shift' || ent === 'swap' || ent === 'leave' || ent === 'all';
+    const needTimesheet = ['fin-timesheet', 'fin-bcc', 'fin-dashboard', 'fin-calculate', 'fin-payroll-sheet'].includes(activeTab);
+    const needPayslip = ['fin-payslips', 'fin-payment', 'fin-payroll-periods', 'fin-signatures'].includes(activeTab);
+    if ((want && needPayslip) || (att && needTimesheet)) {
+      refreshCurrentTab();
+    }
+  }, [activeTab, refreshCurrentTab]);
+
+  useEffect(() => {
+    window.addEventListener('ubm:fin-timesheet-reload', handleRealtime as any);
+    window.addEventListener('ubm:payslips-reload', handleRealtime as any);
+    window.addEventListener('data:updated', handleRealtime as any);
+    return () => { mountedRef.current = false; window.removeEventListener('ubm:fin-timesheet-reload', handleRealtime as any); window.removeEventListener('ubm:payslips-reload', handleRealtime as any); window.removeEventListener('data:updated', handleRealtime as any); };
+  }, [handleRealtime]);
 
   useEffect(() => {
     loadWorkflow();
