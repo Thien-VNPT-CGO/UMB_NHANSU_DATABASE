@@ -177,7 +177,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
   const loadSlips = useCallback(async () => { setSlipsLoading(true); try { const d = await api(`/payroll/period-slips/${encodeURIComponent(month)}`); setSlips((d as any)?.slips || []); } catch { setSlips([]); } finally { setSlipsLoading(false); } }, [api, month]);
   const loadFinSheet = useCallback(async () => { setFinSheetLoading(true); try { const fs = await api(`/admin/reports/finance-timesheet?period=${encodeURIComponent(month)}&branchScope=*`); setFinSheet(fs); if (activeTab === 'fin-dashboard') { try { setFinSheetSync(await api('/payroll/sync-status')); } catch { setFinSheetSync(null); } } } catch { setFinSheet(null); } finally { setFinSheetLoading(false); } }, [api, activeTab, month]);
   const loadFormula = useCallback(async () => { try { setFormula(await api(`/payroll/formula/${encodeURIComponent(month)}`)); } catch { setFormula(null); } }, [api, month]);
-  const loadInputs = useCallback(async () => { setInputsLoading(true); try { setInputs(await api(`/payroll/inputs/${encodeURIComponent(month)}`)); } catch { setInputs([]); } finally { setInputsLoading(false); } }, [api, month]);
+  const loadInputs = useCallback(async () => { setInputsLoading(true); try { const arr: any[] = await api(`/payroll/inputs/${encodeURIComponent(month)}`); setInputs((Array.isArray(arr) ? arr : []).map((i: any) => ({ ...i, note: String(i?.note ?? '') }))); } catch { setInputs([]); } finally { setInputsLoading(false); } }, [api, month]);
   const loadDriveStatus = useCallback(async () => { try { const st = await api(`/payroll/drive-sync/status?period=${encodeURIComponent(month)}`); setSyncStatus(st); setDriveConfigured(!!st?.configured); } catch { setDriveConfigured(false); } }, [api, month]);
 
   /** Đang có ô nhập liệu trong module được focus → không clobber dữ liệu đang gõ. */
@@ -260,8 +260,28 @@ export default function FinanceModule(props: FinanceModuleProps) {
   const syncMonthDrive = useCallback(async () => { if (!driveConfigured) { showToast('Google Drive chưa cấu hình trên server.'); return; } try { setTimeout(() => {}, 0); const r = await post('/payroll/drive-sync', { period: month }); showToast(r?.ok ? `Đồng bộ xong: ${r?.slips?.pdfSynced ?? 0}/${r?.slips?.paid ?? 0} phiếu PDF` : 'Hoàn tất (có lỗi)'); await loadDriveStatus(); refreshCurrentTab(); } catch (e: any) { showToast('Lỗi Drive: ' + (e?.message || '')); } }, [post, driveConfigured, month, showToast, loadDriveStatus, refreshCurrentTab]);
   const syncSlipDrive = useCallback(async (itemId: string) => { try { const r = await post(`/payroll/slips/${encodeURIComponent(itemId)}/drive-sync`, {}); showToast(r?.ok ? 'Đã đồng bộ PDF phiếu lên Drive' : 'Lỗi: ' + (r?.error || '')); refreshCurrentTab(); } catch (e: any) { showToast('Lỗi: ' + (e?.message || '')); } }, [post, showToast, refreshCurrentTab]);
   const saveFormula = useCallback(async () => { try { await put(`/payroll/formula/${encodeURIComponent(month)}`, { rateTV: Number(formula?.rateTV) || 21000, rateCT: Number(formula?.rateCT) || 25500, otPerSlot: 0, otThreshold1: 10, otThreshold2: 15 }); showToast('Đã lưu công thức lương'); loadFormula(); } catch (e: any) { showToast(e?.message || 'Lưu công thức thất bại'); } }, [put, month, formula, showToast, loadFormula]);
-  const upsertInput = useCallback(async (employeeId: string, field: string, value: string) => { const n = Number(value); const existing = inputs.find(i => i.employee_id === employeeId); const payload: any = { period: month, employee_id: employeeId, luong_cb: 0, ot_extra: 0, bonus_extra: 0, ung_luong: 0, tru_kpi: 0, dong_phuc: 0, note: '' }; if (existing) Object.assign(payload, existing); payload[field] = isNaN(n) ? 0 : n; try { await put(`/payroll/inputs/${encodeURIComponent(month)}`, payload); setInputs(inputs.map(i => i.employee_id === employeeId ? { ...i, [field]: payload[field], note: payload.note } : i)); if (!existing) setInputs([...inputs, { ...payload, employee_id: employeeId }]); } catch (e: any) { showToast(e?.message || 'Lưu nhập tay thất bại'); } }, [put, month, inputs, showToast]);
-  const saveAllInputs = useCallback(async () => { try { for (const i of inputs) { await put(`/payroll/inputs/${encodeURIComponent(month)}`, { ...i, period: month }); } showToast('Đã lưu tất cả nhập tay'); } catch (e: any) { showToast(e?.message || 'Lưu thất bại'); } }, [put, month, inputs, showToast]);
+  const upsertInput = useCallback(async (employeeId: string, field: string, value: string) => {
+    // Backend Zod yêu cầu employeeId (camelCase) + note là STRING. Trước đây
+    // payload gửi employee_id và note bị ép số (isNaN -> 0) => 400 "Dữ liệu gửi
+    // lên không hợp lệ — employeeId: Required; note: Expected string".
+    const num = Number(value);
+    const existing = inputs.find(i => i.employee_id === employeeId);
+    const payload: any = { employeeId, employee_id: employeeId, period: month, luong_cb: 0, ot_extra: 0, bonus_extra: 0, ung_luong: 0, tru_kpi: 0, dong_phuc: 0, note: '' };
+    if (existing) Object.assign(payload, existing);
+    payload[field] = field === 'note' ? String(value ?? '') : (isNaN(num) ? 0 : num);
+    payload.note = String(payload.note ?? '');
+    payload.employeeId = employeeId;
+    try {
+      await put(`/payroll/inputs/${encodeURIComponent(month)}`, payload);
+      setInputs(inputs.map(i => i.employee_id === employeeId ? { ...i, [field]: payload[field], note: String(payload.note) } : i));
+      if (!existing) setInputs([...inputs, { ...payload, employee_id: employeeId, note: String(payload.note) }]);
+    } catch (e: any) { showToast(e?.message || 'Lưu nhập tay thất bại'); }
+  }, [put, month, inputs, showToast]);
+  const saveAllInputs = useCallback(async () => {
+    // Chuẩn hóa từng dòng sang shape backend mong đợi (employeeId camelCase + note string).
+    const rows = inputs.map((i: any) => ({ ...i, employeeId: i.employeeId || i.employee_id, employee_id: i.employee_id, period: month, note: String(i.note ?? '') }));
+    try { for (const i of rows) { await put(`/payroll/inputs/${encodeURIComponent(month)}`, i); } showToast('Đã lưu tất cả nhập tay'); } catch (e: any) { showToast(e?.message || 'Lưu thất bại'); }
+  }, [put, month, inputs, showToast]);
 
   const open = isTabOpen(activeTab);
   const lockReason = tabLocked.get(activeTab)?.reason || '';
