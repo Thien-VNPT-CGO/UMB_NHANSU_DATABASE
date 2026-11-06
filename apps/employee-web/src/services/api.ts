@@ -29,9 +29,31 @@ export function setCustomApiUrl(url: string) {
 
 let authToken = localStorage.getItem('ubm_emp_token') || '';
 
+// ---------------------------------------------------------------------------
+// Cache ngắn hạn cho GET + gộp request trùng đang bay.
+// Trước đây mở tab / realtime bắn nhiều lần cùng lúc sẽ tạo 4-5 request song
+// song cho cùng endpoint (đặc biệt loadEmployeeData gọi từ mount + profile +
+// socket onConnect). Cache 2.5s + in-flight dedupe giúp bấm tab phản hồi tức thì
+// mà dữ liệu vẫn tươi; mọi request GHI sẽ xoá cache ngay.
+// ---------------------------------------------------------------------------
+const GET_CACHE_TTL_MS = 2500;
+const MAX_CACHE_ENTRIES = 200;
+const getCache = new Map<string, { at: number; data: any }>();
+const inflightGets = new Map<string, Promise<any>>();
+let cacheEpoch = 0;
+
+/** Xoá cache GET (dùng trước khi tải lại do realtime để chắc chắn thấy dữ liệu mới). */
+export function clearApiCache(): void {
+  cacheEpoch += 1;
+  getCache.clear();
+  inflightGets.clear();
+}
+
 function fetchWithTimeout(url: string, options: RequestInit = {}, ms = 45000): Promise<Response> {
   const method = String(options.method || 'GET').toUpperCase();
-  const defaultMs = (method === 'POST' || method === 'PUT' || method === 'DELETE') ? 60000 : ms;
+  // Ghi (gửi phiếu/điểm danh) phải trả lỗi sớm để người dùng biết bấm lại,
+  // thay vì treo 60s. Ảnh điểm danh đã nén ≤800KB nên 30s là đủ cho 3G yếu.
+  const defaultMs = (method === 'POST' || method === 'PUT' || method === 'DELETE') ? 30000 : ms;
   const timeoutMs = (options as any)?._timeoutMs || defaultMs;
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -62,6 +84,7 @@ function isNetworkFailure(err: any): boolean {
 
 export function setAuthToken(token: string) {
   authToken = token;
+  clearApiCache();
   if (token) {
     localStorage.setItem('ubm_emp_token', token);
   } else {
@@ -119,6 +142,43 @@ export function onPinLockRequired(cb: (() => void) | null) {
 
 
 export async function apiRequest<T = any>(endpoint: string, options: RequestInit = {}, retries = 2): Promise<T> {
+  const method = String(options.method || 'GET').toUpperCase();
+  const isRead = method === 'GET' || method === 'HEAD';
+  const skipCache = (options as any)._noCache === true;
+
+  // Mọi request ghi đều làm dữ liệu cũ không còn đúng -> xoá cache đọc ngay.
+  if (!isRead) clearApiCache();
+
+  if (!isRead || skipCache) {
+    return performRequest<T>(endpoint, options, retries);
+  }
+
+  const key = `${getApiBase()}::${authToken ? authToken.slice(-16) : 'anon'}::${endpoint}`;
+  const cached = getCache.get(key);
+  if (cached && Date.now() - cached.at < GET_CACHE_TTL_MS) {
+    return cached.data as T;
+  }
+  const running = inflightGets.get(key);
+  if (running) return running as Promise<T>;
+
+  const epoch = cacheEpoch;
+  const task = performRequest<T>(endpoint, options, retries)
+    .then(data => {
+      // Chỉ ghi cache nếu không có write/realtime nào xen ngang.
+      if (epoch === cacheEpoch) {
+        if (getCache.size >= MAX_CACHE_ENTRIES) getCache.clear();
+        getCache.set(key, { at: Date.now(), data });
+      }
+      return data;
+    })
+    .finally(() => {
+      if (inflightGets.get(key) === task) inflightGets.delete(key);
+    });
+  inflightGets.set(key, task);
+  return task;
+}
+
+async function performRequest<T = any>(endpoint: string, options: RequestInit = {}, retries = 2): Promise<T> {
   const base = getApiBase();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -143,7 +203,7 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
       const waitMs = retryAfterHeader ? Math.min(Number(retryAfterHeader) * 1000, 3000) : 1000;
       console.warn(`[API] 429 Too Many Requests tại ${endpoint}. Tự động thử lại sau ${waitMs}ms...`);
       await new Promise(r => setTimeout(r, waitMs));
-      return apiRequest<T>(endpoint, options, retries - 1);
+      return performRequest<T>(endpoint, options, retries - 1);
     }
 
     // 401 hết hạn token -> thử gia hạn 1 lần rồi gọi lại (trừ API login và chính API refresh).
@@ -152,7 +212,7 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
     if (res.status === 401 && !alreadyRefreshed && !isLoginEndpoint && endpoint !== '/auth/refresh' && retries > 0) {
       const r = await tryRefreshSession();
       if (r === 'ok') {
-        return apiRequest<T>(endpoint, { ...options, _refreshed: true } as any, retries - 1);
+        return performRequest<T>(endpoint, { ...options, _refreshed: true } as any, retries - 1);
       }
       refreshWhy = r;
     }
@@ -165,7 +225,7 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
     if (res.status === 503 && ((data as any)?.code === 'SHEETS_LOADING' || (data as any)?.error === 'SHEETS_LOADING')) {
       if (retries > 0) {
         await new Promise(r => setTimeout(r, 4000));
-        return apiRequest<T>(endpoint, options, retries - 1);
+        return performRequest<T>(endpoint, options, retries - 1);
       }
       const err: any = new Error('Hệ thống đang khởi động/tải dữ liệu — thử lại sau ít giây (F5 nếu kéo dài).');
       err.code = 'SHEETS_LOADING';
@@ -203,15 +263,29 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
     // Lỗi mạng lần đầu (server tạm ngắt / đang khởi động) -> tự đánh thức backend rồi thử lại,
     // cho tối đa 2 vòng (~80s) thay vì 1 round — chết đớ với cửa sổ restart dài.
     const wakeRounds = (options as any)._wakeRounds ?? 0;
+    const method = String(options.method || 'GET').toUpperCase();
+    const isWrite = method !== 'GET' && method !== 'HEAD';
+    // KHÔNG tự gửi lại request GHI sau lỗi mạng/timeout: server có thể đã ghi
+    // xong nhưng phản hồi bị mất — gửi lại có nguy cơ tạo phiếu trùng và khiến
+    // người dùng chờ thêm ~80s. Báo lỗi rõ để họ kiểm tra rồi bấm lại.
+    if (isWrite) {
+      if (isNetworkFailure(err)) {
+        const timeoutErr = String(err?.name || err?.message || '').toLowerCase().includes('abort');
+        throw new Error(timeoutErr
+          ? `Máy chủ phản hồi chậm khi gửi (${base}). Vui lòng mở lại mục vừa gửi để kiểm tra trước khi bấm gửi lại — hệ thống có chống trùng.`
+          : `Không gửi được lên máy chủ (${base}) — kiểm tra mạng rồi thử lại. Dữ liệu bạn vừa nhập vẫn còn trên form.`);
+      }
+      throw err;
+    }
     if (isNetworkFailure(err) && wakeRounds < 2 && endpoint !== '/ping' && endpoint !== '/version') {
       const round = wakeRounds + 1;
       console.warn(`[API] Mất kết nối ${endpoint} — đang đánh thức backend (vòng ${round}/2)...`);
       if (await wakeBackend(base)) {
-        return apiRequest<T>(endpoint, { ...options, _wakeRounds: round } as any, retries);
+        return performRequest<T>(endpoint, { ...options, _wakeRounds: round } as any, retries);
       }
       if (round < 2) {
         // Vòng wake không thấy server sống — thử tiếp 1 lần nữa rồi mới báo lỗi
-        return apiRequest<T>(endpoint, { ...options, _wakeRounds: round } as any, retries);
+        return performRequest<T>(endpoint, { ...options, _wakeRounds: round } as any, retries);
       }
     }
     if (isNetworkFailure(err)) {

@@ -254,6 +254,24 @@ function auditLoginLockout(
     .catch((err: any) => console.warn('[auth-lockout] audit failed:', err?.message || err));
 }
 
+/**
+ * Chuẩn hoá toạ độ GPS tuỳ chọn từ body request. Trả `undefined` khi không có
+ * toạ độ hợp lệ — nhờ đó backend biết chi nhánh có bắt buộc định vị hay không.
+ */
+function parseOptionalGps(input: any): { latitude: number; longitude: number; accuracy: number } | undefined {
+  const src = input || {};
+  const rawLat = src.latitude ?? src.lat;
+  const rawLng = src.longitude ?? src.lng;
+  if (rawLat === undefined || rawLat === null || rawLat === '' || rawLng === undefined || rawLng === null || rawLng === '') {
+    return undefined;
+  }
+  const latitude = Number(rawLat);
+  const longitude = Number(rawLng);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return undefined;
+  const rawAcc = Number(src.accuracy);
+  return { latitude, longitude, accuracy: Number.isFinite(rawAcc) ? rawAcc : 0 };
+}
+
 export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   const app = express();
   // Chạy sau proxy (Nginx) — cần để rate-limit lấy đúng IP client.
@@ -517,7 +535,9 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           timestamp: new Date().toISOString(),
         };
         io.emit('system:notification', payload);
-        io.emit('data:updated', { entity: 'notifications', data: payload, timestamp: payload.timestamp });
+        // KHÔNG emit thêm data:updated(notifications) ở đây: notificationsService
+        // đã bắn notification.created + data:updated sau khi lưu inbox, tránh
+        // mỗi lượt chấm công khiến 2 cổng web tải lại 2 lần.
       }
     } catch (e) {
       // non-fatal
@@ -601,8 +621,20 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   // RÀNG BUỘC REALTIME 100%: mọi request GHI thành công đều bắn socket `data:updated`
   // để 2 web app cập nhật tức thì — không route nào được phép im lặng.
   const entityForPath = (p: string): string | null => {
-    if (p === '/ping' || p === '/health') return null;
+    if (p === '/ping' || p === '/health' || p === '/version') return null;
     if (p.startsWith('/auth/')) return null; // login đã có broadcast riêng khi cần
+    // GPS ping ~60s/lần của từng NV: chỉ phát live-location:update theo chi nhánh
+    // (đã scoped trong route). KHÔNG bắn data:updated toàn hệ thống — trước đây
+    // mỗi ping khiến toàn bộ nhân viên đang online tải lại dữ liệu.
+    if (p.startsWith('/attendance/live-location')) return null;
+    // Các route này đã tự gọi broadcastUpdate sau khi ghi thành công (kèm dữ liệu
+    // chi tiết: employeeId/event) — middleware bắn thêm sẽ gây reload trùng.
+    if (p === '/attendance/checkin' || p === '/attendance/checkout' || p === '/attendance/adjustments') return null;
+    // Đánh dấu đã đọc/ack thông báo là write cá nhân, không cần broadcast toàn hệ
+    // thống (trước đây 1 NV bấm đọc là mọi NV cùng tải lại dữ liệu).
+    if (/^\/me\/notifications\/[^/]+\/(read|acknowledge)$/.test(p)) return null;
+    // Điểm danh/nghỉ/bổ sung công Văn Phòng: route đã broadcastUpdate('office-*').
+    if (p.startsWith('/me/office/')) return null;
     if (p.startsWith('/employees')) return 'employees';
     if (p.startsWith('/salary-config')) return 'employees';
     // Ứng viên/lịch PV: tách khỏi 'employees' để bắn data:updated(candidates) —
@@ -1269,6 +1301,32 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Cấu hình chi nhánh của nhân viên (toạ độ, bán kính, cờ bật/tắt GPS).
+  // Cổng NV dùng dữ liệu này để biết có bắt buộc định vị khi điểm danh hay không.
+  app.get('/me/branch', authMiddleware, requireRole(['EMPLOYEE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      if (!req.user?.employeeId) return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
+      const emp: any = await employeesService.getEmployee(req.user.employeeId).catch(() => null);
+      const branchId = canonicalBranchId(emp?.default_branch_id || req.user?.branchScope || '');
+      if (!branchId) return res.json(null);
+      const branches = await adapter.getBranches().catch(() => [] as any[]);
+      const branch = (branches || []).find((b: any) => canonicalBranchId(b?.id || b?.branch_id) === branchId);
+      if (!branch) return res.json(null);
+      res.json({
+        id: branch.id || branch.branch_id,
+        name: branch.name || '',
+        address: branch.address || '',
+        latitude: Number(branch.latitude),
+        longitude: Number(branch.longitude),
+        radius_meters: Number(branch.radius_meters) || 300,
+        gps_enabled: (branch as any).gps_enabled !== false,
+        status: branch.status || 'ACTIVE',
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Yêu cầu đổi STK đang chờ duyệt của chính NV (cổng nhân viên hiển thị banner).
   app.get('/me/bank-change', authMiddleware, requireRole(['EMPLOYEE']), async (req: AuthenticatedRequest, res) => {
     try {
@@ -1371,11 +1429,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       if (!req.user?.employeeId) return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
       const gps = req.body?.gps || req.body || {};
-      const event = await officeService.checkIn(req.user.employeeId, {
-        latitude: Number(gps.latitude ?? gps.lat),
-        longitude: Number(gps.longitude ?? gps.lng),
-        accuracy: Number(gps.accuracy),
-      });
+      const event = await officeService.checkIn(req.user.employeeId, parseOptionalGps(gps));
       broadcastUpdate('office-attendance', { action: 'checkin', employeeId: req.user.employeeId });
       broadcastUpdate('attendance', { action: 'office-checkin', employeeId: req.user.employeeId });
       res.json({ success: true, event });
@@ -1386,11 +1440,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       if (!req.user?.employeeId) return res.status(403).json({ error: 'NOT_AN_EMPLOYEE' });
       const gps = req.body?.gps || req.body || {};
-      const event = await officeService.checkOut(req.user.employeeId, {
-        latitude: Number(gps.latitude ?? gps.lat),
-        longitude: Number(gps.longitude ?? gps.lng),
-        accuracy: Number(gps.accuracy),
-      });
+      const event = await officeService.checkOut(req.user.employeeId, parseOptionalGps(gps));
       broadcastUpdate('office-attendance', { action: 'checkout', employeeId: req.user.employeeId });
       broadcastUpdate('attendance', { action: 'office-checkout', employeeId: req.user.employeeId });
       res.json({ success: true, event });
@@ -3913,10 +3963,13 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   // Cổng NV gửi device_id (UUID bền trong localStorage mỗi máy). Backend lưu
   // sổ đăng ký thiết bị trong systemSettings.device_registry (LRU tối đa 500
   // mục). Thiết bị vừa được NV KHÁC dùng trong vòng buddy_punch_block_minutes
-  // (mặc định 120p) -> CHẶN lượt chấm + cảnh báo ADMIN/HR (nghi vấn điểm danh
-  // hộ). Quá hạn -> cho phép rebind đúng nghĩa (máy chuyển NV). 0 phút = tắt.
+  // -> CHẶN lượt chấm + cảnh báo ADMIN/HR (nghi vấn điểm danh hộ). Quá hạn ->
+  // cho phép rebind đúng nghĩa (máy chuyển NV). 0 phút = tắt.
   // Không đổi cột Sheet (schema an toàn); fail-open nếu lỗi đọc cấu hình.
-  const BUDDY_PUNCH_DEFAULT_MINUTES = 120;
+  // MẶC ĐỊNH TẮT (0 phút) để không chặn oan nhân viên dùng chung máy tính
+  // cửa hàng / nhiều tài khoản test trên cùng thiết bị. Bật lại bằng cài đặt
+  // buddy_punch_block_minutes hoặc biến môi trường BUDDY_PUNCH_BLOCK_MINUTES.
+  const BUDDY_PUNCH_DEFAULT_MINUTES = 0;
   const buddyPunchGuard = async (
     req: AuthenticatedRequest,
     employeeId: string,
@@ -3955,7 +4008,13 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         });
         return { minutes, otherName: entry.employee_name || String(entry.employee_id), otherId: String(entry.employee_id) };
       }
-      // Hợp lệ (cùng NV / máy mới / quá hạn rebind) -> cập nhật sổ + lưu
+      // Hợp lệ (cùng NV / máy mới / quá hạn rebind) -> cập nhật sổ + lưu.
+      // Máy đã ghi nhận cho đúng NV trong 5 phút thì bỏ qua write để không làm
+      // nặng single-writer queue mỗi lượt chấm công.
+      const lastSeenMs = entry ? new Date(entry.last_seen || 0).getTime() : NaN;
+      if (entry && entry.employee_id === employeeId && Number.isFinite(lastSeenMs) && now - lastSeenMs < 5 * 60_000) {
+        return null;
+      }
       registry[deviceId] = { employee_id: employeeId, employee_name: empName, last_seen: new Date(now).toISOString() };
       let entries = Object.entries(registry);
       if (entries.length > 500) {
@@ -3969,6 +4028,21 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       return null;
     } catch {
       return null; // fail-open: lỗi nội bộ thì cứ cho chấm như quy chế cũ
+    }
+  };
+
+  /** Chi nhánh có đang bật yêu cầu định vị GPS khi điểm danh không. */
+  const branchGpsEnabledOf = async (branchId?: string): Promise<boolean> => {
+    try {
+      const target = canonicalBranchId(branchId);
+      if (!target) return true;
+      const branches = await adapter.getBranches().catch(() => [] as any[]);
+      const branch: any = (branches || []).find(
+        (b: any) => canonicalBranchId(b?.id || b?.branch_id) === target
+      );
+      return branch ? (branch as any).gps_enabled !== false : true;
+    } catch {
+      return true;
     }
   };
 
@@ -4045,10 +4119,13 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         });
       }
 
-      // GPS thật bắt buộc (không dùng tọa độ mặc định) + ảnh xác nhận bắt buộc khi check-in.
+      // GPS thật: bắt buộc khi chi nhánh BẬT định vị; nếu Admin đã tắt GPS cho
+      // chi nhánh thì cho phép điểm danh không cần toạ độ (vẫn nhận nếu có gửi).
+      const gpsRequired = await branchGpsEnabledOf(String((existingShift as any).branch_id || ''));
       const lat = req.body.lat ?? req.body.latitude;
       const lng = req.body.lng ?? req.body.longitude;
-      if (lat === undefined || lng === undefined || Number.isNaN(Number(lat)) || Number.isNaN(Number(lng))) {
+      const hasGps = lat !== undefined && lng !== undefined && !Number.isNaN(Number(lat)) && !Number.isNaN(Number(lng));
+      if (gpsRequired && !hasGps) {
         return res.status(400).json({
           error: 'GPS_REQUIRED',
           message: 'Thiếu tọa độ GPS thật! Hãy bật định vị và thử lại — hệ thống không chấp nhận điểm danh không GPS.',
@@ -4077,11 +4154,11 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         employeeId,
         type: 'CHECK_IN',
         clientTime: req.body.clientTime || new Date().toISOString(),
-        gps: {
+        gps: hasGps ? {
           latitude: Number(lat),
           longitude: Number(lng),
           accuracy: req.body.accuracy || 15,
-        },
+        } : undefined,
         hasCameraImage: true,
         imageMeta: 'UNIFORM_PINK_AND_BADGE',
         photoBase64: req.body.photo_base64,
@@ -4090,7 +4167,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
       broadcastUpdate('attendance', { action: 'checkin', employeeId, event: result.result });
       const checkinEmp = await employeesService.getEmployee(employeeId).catch(() => null);
-      const dist = Math.round(result.result.distance_meters || 45);
+      const dist = Math.round(Number((result.result as any).distance_meters) || 0);
       // Báo nấc phạt trễ ngay khi check-in để NV/HR biết (10p:30k • 30p:50% • 60p:100% ca).
       let lateNote = '';
       if ((result.result as any).is_late) {
@@ -4107,7 +4184,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       broadcastNotification({
         type: 'CHECKIN',
         title: (result.result as any).is_late ? '🟡 Check-in Trễ Giờ' : '🟢 Điểm Danh Check-in Realtime',
-        message: `${checkinEmp?.full_name || employeeId} (${checkinEmp?.employee_code || 'NV'}) vừa vào ca! GPS ${dist}m hợp lệ, áo hồng chuẩn thương hiệu.${lateNote}`,
+        message: `${checkinEmp?.full_name || employeeId} (${checkinEmp?.employee_code || 'NV'}) vừa vào ca! ${gpsRequired ? `GPS ${dist}m hợp lệ` : 'Chi nhánh đã tắt định vị GPS'}, áo hồng chuẩn thương hiệu.${lateNote}`,
         linkTab: 'hr-schedule',
         metadata: { employeeId, event: result.result },
         targetRoles: ['ADMIN', 'HR', 'STORE'],
@@ -4206,10 +4283,16 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       } catch { /* lớp service chặn tiếp bên dưới */ }
       const requestId = (req.headers['idempotency-key'] as string) || req.body.requestId || `REQ_OUT_${employeeId}_${Date.now()}`;
 
-      // GPS thật bắt buộc khi check-out (không dùng tọa độ mặc định).
+      // GPS thật: bắt buộc khi chi nhánh BẬT định vị; nếu đã TẮT thì cho phép
+      // check-out không cần toạ độ (vẫn lưu nếu thiết bị gửi kèm).
+      const outShift: any = actualAssignmentId
+        ? await adapter.getShiftById(actualAssignmentId).catch(() => null)
+        : null;
+      const gpsRequired = await branchGpsEnabledOf(String(outShift?.branch_id || (checkInEvent as any)?.branch_id || ''));
       const outLat = req.body.lat ?? req.body.latitude;
       const outLng = req.body.lng ?? req.body.longitude;
-      if (outLat === undefined || outLng === undefined || Number.isNaN(Number(outLat)) || Number.isNaN(Number(outLng))) {
+      const hasOutGps = outLat !== undefined && outLng !== undefined && !Number.isNaN(Number(outLat)) && !Number.isNaN(Number(outLng));
+      if (gpsRequired && !hasOutGps) {
         return res.status(400).json({
           error: 'GPS_REQUIRED',
           message: 'Thiếu tọa độ GPS thật! Hãy bật định vị và thử lại — hệ thống không chấp nhận điểm danh không GPS.',
@@ -4231,11 +4314,11 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         employeeId,
         type: 'CHECK_OUT',
         clientTime: req.body.clientTime || new Date().toISOString(),
-        gps: {
+        gps: hasOutGps ? {
           latitude: Number(outLat),
           longitude: Number(outLng),
           accuracy: req.body.accuracy || 15,
-        },
+        } : undefined,
         hasCameraImage: !!req.body.photo_base64,
         imageMeta: req.body.photo_base64 ? 'UNIFORM_PINK_AND_BADGE' : undefined,
         photoBase64: req.body.photo_base64,
@@ -4821,12 +4904,24 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
         return res.status(400).json({ error: 'INVALID_DATE' });
       }
+      // Dùng cấu hình chi nhánh hiện tại; bỏ qua chi nhánh đã TẮT định vị GPS
+      // (không có khái niệm "vượt bán kính" khi GPS không bắt buộc).
+      const branchRows = await adapter.getBranches().catch(() => [] as any[]);
+      const branchOf = (branchId?: string): any => (branchRows || []).find(
+        (b: any) => canonicalBranchId(b?.id || b?.branch_id) === canonicalBranchId(branchId)
+      );
       const radiusOf = (branchId?: string) =>
-        BRANCHES.find(b => b.id === branchId)?.radius_meters ?? 300;
+        Number(branchOf(branchId)?.radius_meters) ||
+        BRANCHES.find(b => b.id === branchId)?.radius_meters || 300;
+      const gpsOn = (branchId?: string) => {
+        const b = branchOf(branchId);
+        return b ? (b as any).gps_enabled !== false : true;
+      };
       const events: any[] = await adapter.getAttendanceEvents(undefined, date);
       const bad = (events || []).filter(
         e =>
           (e.type === 'CHECK_IN' || e.type === 'CHECK_OUT') &&
+          gpsOn(e.branch_id) &&
           Number(e.distance_meters) > radiusOf(e.branch_id)
       );
       // XÓA bản ghi vi phạm: xóa toàn bộ IN+OUT của (ca, nhân viên) chứa lượt vượt
@@ -6969,7 +7064,14 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   app.put('/admin/branches/:id', authMiddleware, requireRole(['ADMIN']), validate({ params: adminIdParams, body: opaqueConfigBody }), async (req: AuthenticatedRequest, res) => {
     try {
-      const updated = await adapter.updateBranch(req.params.id, req.body);
+      const body: any = { ...(req.body || {}) };
+      // Chuẩn hoá cờ bật/tắt định vị GPS (nhận boolean hoặc chuỗi từ client cũ).
+      if (Object.prototype.hasOwnProperty.call(body, 'gps_enabled')) {
+        const raw = body.gps_enabled;
+        body.gps_enabled = !(raw === false || raw === 0 || raw === '0' ||
+          ['false', 'off', 'no', 'tắt', 'tat', 'không', 'khong'].includes(String(raw).trim().toLowerCase()));
+      }
+      const updated = await adapter.updateBranch(req.params.id, body);
       await adapter.recordAuditLog({
         actor_id: req.user!.id,
         action: 'BRANCH_UPDATED',
@@ -7383,11 +7485,21 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       // Lịch giao diện sự kiện: chỉ lộ chủ đề + 2 mốc giờ an toàn (không lộ
       // toàn bộ object maintenance). Client tự tính lại theo server_time.
       const themeState = getThemeScheduleState(m);
+      // Cửa sổ mở check-in do Admin cấu hình (policies.check_in_window_minutes):
+      // cổng NV dùng đúng con số này để không tự chặn sớm hơn server (trước đây
+      // frontend hardcode 30 phút, Admin đổi lên 60 phút thì NV vẫn bị chặn oan).
+      let checkInWindowMinutes = 30;
+      try {
+        const policies: any = await adapter.getPolicies().catch(() => null);
+        const w = Number(policies?.check_in_window_minutes);
+        if (Number.isFinite(w) && w > 0 && w <= 180) checkInWindowMinutes = Math.floor(w);
+      } catch { /* giữ mặc định 30 phút */ }
       res.json({
         system_maintenance: !!m?.system_maintenance,
         employee_web_maintenance: !!m?.employee_web_maintenance,
         maintenance_message: String(m?.maintenance_message || ''),
         updated_at: m?.updated_at || null,
+        check_in_window_minutes: checkInWindowMinutes,
         // Lịch giao diện sự kiện do Admin cấu hình.
         event_theme_enabled: themeState.enabled,
         event_theme: themeState.theme,
@@ -7409,6 +7521,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         event_theme_end_at: null,
         event_theme_phase: 'off',
         server_time: new Date().toISOString(),
+        check_in_window_minutes: 30,
       });
     }
   });

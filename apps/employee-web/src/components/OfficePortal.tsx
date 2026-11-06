@@ -15,7 +15,6 @@ import { apiRequest } from '../services/api';
 import {
   OFFICE_ADJUST_MONTHLY_QUOTA,
   OFFICE_LEAVE_MONTHLY_QUOTA,
-  OFFICE_GPS_RADIUS_METERS,
   officeDayHoursLabel,
   officeRuleOfWeekday,
 } from '@ubm/shared';
@@ -254,17 +253,19 @@ export function OfficeAttendanceView({ employee, showToast, refreshKey }: Office
   const [busy, setBusy] = useState<'IN' | 'OUT' | null>(null);
   const [coords, setCoords] = useState<{ lat: number; lng: number; accuracy: number } | null>(null);
   const [gpsErr, setGpsErr] = useState('');
-  const [distance, setDistance] = useState<number | null>(null);
   const [tick, setTick] = useState(Date.now());
+  const [syncedAt, setSyncedAt] = useState(Date.now());
   const watchId = useRef<number | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true); setErr('');
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
+    setErr('');
     try {
       const d: any = await apiRequest('/me/office/attendance/state');
       setState(d);
+      setSyncedAt(Date.now());
     } catch (e: any) { setErr(e?.message || 'Không tải được trạng thái điểm danh.'); }
-    finally { setLoading(false); }
+    finally { if (!silent) setLoading(false); }
   }, [refreshKey]);
   useEffect(() => { load(); }, [load]);
 
@@ -280,7 +281,6 @@ export function OfficeAttendanceView({ employee, showToast, refreshKey }: Office
         setGpsErr('');
         const c = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: Math.round(pos.coords.accuracy || 0) };
         setCoords(c);
-        setDistance(haversine(c.lat, c.lng, OFFICE_LAT, OFFICE_LNG));
       },
       () => setGpsErr('Không lấy được GPS. Hãy bật định vị và cấp quyền cho ứng dụng.'),
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 },
@@ -288,24 +288,45 @@ export function OfficeAttendanceView({ employee, showToast, refreshKey }: Office
     return () => { if (watchId.current !== null && navigator.geolocation) navigator.geolocation.clearWatch(watchId.current); };
   }, []);
 
-  const withinRadius = distance !== null && distance <= OFFICE_GPS_RADIUS_METERS;
-  const goodAccuracy = !!coords && coords.accuracy > 0 && coords.accuracy <= 150;
+  // Cấu hình chi nhánh do Admin đặt (toạ độ, bán kính, bật/tắt định vị GPS).
+  const branchCfg = state?.branch || null;
+  const gpsEnabled = branchCfg ? branchCfg.gps_enabled !== false : true;
+  const officeLat = Number(branchCfg?.latitude);
+  const officeLng = Number(branchCfg?.longitude);
+  const hasBranchCoords = Number.isFinite(officeLat) && Number.isFinite(officeLng);
+  const radiusMeters = Number(branchCfg?.radius_meters) || 300;
+  const distance = coords && hasBranchCoords ? haversine(coords.lat, coords.lng, officeLat, officeLng) : null;
+
+  // Khi chi nhánh TẮT GPS: không cần toạ độ/bán kính, không chặn điểm danh.
+  const withinRadius = !gpsEnabled || (distance !== null && distance <= radiusMeters);
+  // Không chặn tuyệt đối theo sai số: trong nhà/văn phòng kín sóng GPS hay báo
+  // sai số 150–300m. Chỉ chặn khi sai số quá lớn (>1000m) — backend vẫn kiểm
+  // tra bán kính và gắn cờ LOW_ACCURACY để HR đối soát.
+  const gpsUsable = !gpsEnabled || (!!coords && coords.accuracy > 0 && coords.accuracy <= 1000);
+  const weakGps = gpsEnabled && gpsUsable && !!coords && coords.accuracy > 150;
 
   const doAction = async (kind: 'IN' | 'OUT') => {
-    if (!coords) return showToast('⚠️ Chưa có vị trí GPS, vui lòng chờ trong giây lát!');
+    if (gpsEnabled && !coords) return showToast('⚠️ Chưa có vị trí GPS, vui lòng chờ trong giây lát!');
     setBusy(kind);
     try {
       await apiRequest(`/me/office/${kind === 'IN' ? 'checkin' : 'checkout'}`, {
         method: 'POST',
-        body: JSON.stringify({ gps: { latitude: coords.lat, longitude: coords.lng, accuracy: coords.accuracy } }),
+        body: JSON.stringify(coords
+          ? { gps: { latitude: coords.lat, longitude: coords.lng, accuracy: coords.accuracy } }
+          : {}),
       });
       showToast(kind === 'IN' ? '✅ Vào ca thành công!' : '✅ Ra ca thành công!');
-      await load();
+      // Không chặn nút: server đã ghi xong, trạng thái tải lại ở nền.
+      void load(true);
     } catch (e: any) { showToast(`⚠️ ${e?.message || 'Điểm danh thất bại.'}`); }
     finally { setBusy(null); }
   };
 
-  const nowVn = new Date(tick + 7 * 3_600_000);
+  // Dùng giờ SERVER làm mốc (điện thoại lệch giờ vẫn mở đúng cổng 08:00–08:30).
+  const serverNowMs = state?.now
+    ? new Date(state.now).getTime() + Math.max(0, tick - syncedAt)
+    : tick;
+  const nowVn = new Date(serverNowMs + 7 * 3_600_000);
   const minutes = nowVn.getUTCHours() * 60 + nowVn.getUTCMinutes();
   const isWorkday = state?.is_workday !== false;
   const inWindow = isWorkday && minutes >= 8 * 60 && minutes <= 8 * 60 + 30;
@@ -334,23 +355,29 @@ export function OfficeAttendanceView({ employee, showToast, refreshKey }: Office
 
               <div style={{
                 borderRadius: 12, padding: '12px 14px', fontSize: 12.5, fontWeight: 600, marginBottom: 14,
-                background: withinRadius && goodAccuracy ? SUCCESS_SOFT : WARN_SOFT,
-                color: withinRadius && goodAccuracy ? '#065F46' : WARN,
-                border: `1px solid ${withinRadius && goodAccuracy ? '#A7F3D0' : '#FDE68A'}`,
+                background: withinRadius && gpsUsable ? SUCCESS_SOFT : WARN_SOFT,
+                color: withinRadius && gpsUsable ? '#065F46' : WARN,
+                border: `1px solid ${withinRadius && gpsUsable ? '#A7F3D0' : '#FDE68A'}`,
               }}>
                 <div>Khung giờ vào ca: <b>{state?.window_from || '08:00'} – {state?.window_to || '08:30'}</b></div>
-                {gpsErr && <div style={{ marginTop: 4 }}>⚠️ {gpsErr}</div>}
-                {!gpsErr && distance !== null && (
+                {!gpsEnabled && (
                   <div style={{ marginTop: 4 }}>
-                    GPS: cách văn phòng <b>{distance}m</b> / bán kính {OFFICE_GPS_RADIUS_METERS}m
-                    {coords ? ` (sai số ±${coords.accuracy}m)` : ''} — {withinRadius ? '✅ Trong bán kính' : '❌ Ngoài bán kính'}
+                    📵 Chi nhánh đã tắt định vị GPS — bạn <b>không cần GPS</b> khi điểm danh.
                   </div>
                 )}
-                {!gpsErr && distance === null && <div style={{ marginTop: 4 }}>Đang xác định vị trí GPS…</div>}
+                {gpsEnabled && gpsErr && <div style={{ marginTop: 4 }}>⚠️ {gpsErr}</div>}
+                {gpsEnabled && !gpsErr && distance !== null && (
+                  <div style={{ marginTop: 4 }}>
+                    GPS: cách văn phòng <b>{distance}m</b> / bán kính {radiusMeters}m
+                    {coords ? ` (sai số ±${coords.accuracy}m)` : ''} — {withinRadius ? '✅ Trong bán kính' : '❌ Ngoài bán kính'}
+                    {weakGps ? ' · ⚠️ Sóng yếu, vẫn có thể điểm danh (HR sẽ đối soát).' : ''}
+                  </div>
+                )}
+                {gpsEnabled && !gpsErr && distance === null && <div style={{ marginTop: 4 }}>Đang xác định vị trí GPS…</div>}
               </div>
 
               {!checkedIn && (
-                withinRadius && goodAccuracy && inWindow ? (
+                withinRadius && gpsUsable && inWindow ? (
                   <button className={`btn-primary${busy === 'IN' ? ' fx-loading' : ''}`} disabled={busy !== null} style={{ width: '100%', padding: 16, fontSize: 16, fontWeight: 800, borderRadius: 12, background: SUCCESS, color: '#FFF', border: 'none' }} onClick={() => doAction('IN')}>
                     {busy === 'IN' ? 'ĐANG GỬI...' : '🟢 VÀO CA'}
                   </button>
@@ -358,20 +385,20 @@ export function OfficeAttendanceView({ employee, showToast, refreshKey }: Office
                   <div style={{ textAlign: 'center', fontSize: 12.5, color: MUTED, padding: '14px 6px', background: BG, borderRadius: 12 }}>
                     {!isWorkday ? 'Hôm nay là ngày nghỉ — không cần điểm danh.'
                       : !inWindow ? `Nút VÀO CA chỉ hiện trong khung ${state?.window_from || '08:00'} – ${state?.window_to || '08:30'}.`
-                        : !withinRadius ? 'Bạn đang ngoài bán kính 300m — nút điểm danh tạm ẩn.'
-                          : 'Sóng GPS yếu — vui lòng ra nơi thoáng rồi thử lại.'}
+                        : !withinRadius ? `Bạn đang ngoài bán kính ${radiusMeters}m — nút điểm danh tạm ẩn.`
+                          : 'Chưa lấy được GPS hợp lệ — vui lòng ra nơi thoáng rồi thử lại.'}
                   </div>
                 )
               )}
 
               {checkedIn && !checkedOut && (
-                withinRadius && goodAccuracy ? (
+                withinRadius && gpsUsable ? (
                   <button className="btn-primary" disabled={busy !== null} style={{ width: '100%', padding: 16, fontSize: 16, fontWeight: 800, borderRadius: 12, background: DANGER, color: '#FFF', border: 'none' }} onClick={() => doAction('OUT')}>
                     {busy === 'OUT' ? 'ĐANG GỬI...' : '🔴 RA CA'}
                   </button>
                 ) : (
                   <div style={{ textAlign: 'center', fontSize: 12.5, color: MUTED, padding: '14px 6px', background: BG, borderRadius: 12 }}>
-                    Di chuyển lại trong bán kính 300m để RA CA.
+                    Di chuyển lại trong bán kính {radiusMeters}m để RA CA.
                   </div>
                 )
               )}
@@ -388,9 +415,6 @@ export function OfficeAttendanceView({ employee, showToast, refreshKey }: Office
     </div>
   );
 }
-
-const OFFICE_LAT = 10.799540;
-const OFFICE_LNG = 106.689620;
 
 // ============================================================================
 // 4. CÔNG CỦA TÔI (lương tạm tính theo tháng)
@@ -525,7 +549,8 @@ export function OfficeAdjustmentView({ employee, showToast, refreshKey }: Office
       });
       showToast('✅ Đã gửi phiếu bổ sung công!');
       setDate(''); setReason(''); setMinutes('');
-      await load();
+      // Trả kết quả ngay; danh sách/quota tải lại ở nền.
+      void load();
     } catch (e: any) { setErr(e?.message || 'Lỗi gửi phiếu.'); showToast(`⚠️ ${e?.message || 'Lỗi gửi phiếu.'}`); }
     finally { setBusy(false); }
   };

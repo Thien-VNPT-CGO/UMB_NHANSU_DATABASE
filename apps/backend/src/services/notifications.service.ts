@@ -71,6 +71,8 @@ export class NotificationsService {
           const payload = (inbox: NotificationInboxItem) => ({
             inboxId: inbox.inbox_id,
             eventId,
+            type: inbox.type,
+            recipientId: inbox.recipient_id,
             title: inbox.title,
             summary: inbox.summary,
             severity: inbox.severity,

@@ -474,7 +474,11 @@ export class PostgresAdapter {
       );
     })();
 
-    const waitMs = Math.max(0, Number(process.env.DRIVE_UPLOAD_BLOCK_MS ?? 4000));
+    // Mặc định KHÔNG chờ upload Drive: file đã lưu đĩa + fallback đọc đĩa, nên
+    // thao tác trả kết quả ngay; upload Drive chạy nền rồi cập nhật id sau.
+    // Đặt DRIVE_UPLOAD_BLOCK_MS>0 nếu muốn chờ tối đa N ms.
+    const rawWait = Number(process.env.DRIVE_UPLOAD_BLOCK_MS ?? 0);
+    const waitMs = Number.isFinite(rawWait) ? Math.max(0, rawWait) : 0;
     try {
       const ref = await withTimeout(upload, waitMs);
       event.drive_object_id = ref.fileId;
@@ -522,7 +526,11 @@ export class PostgresAdapter {
       const emp: any = await this.inner.getEmployeeById(adj.employee_id).catch(() => null);
       return this.drive.uploadAdjustmentPhoto({ ...adj, photo_base64: dataUrl }, emp?.full_name || String(adj.employee_id || 'KHONG_NV'));
     })();
-    const waitMs = Math.max(0, Number(process.env.DRIVE_UPLOAD_BLOCK_MS ?? 4000));
+    // Mặc định KHÔNG chờ upload Drive: file đã lưu đĩa + fallback đọc đĩa, nên
+    // thao tác trả kết quả ngay; upload Drive chạy nền rồi cập nhật id sau.
+    // Đặt DRIVE_UPLOAD_BLOCK_MS>0 nếu muốn chờ tối đa N ms.
+    const rawWait = Number(process.env.DRIVE_UPLOAD_BLOCK_MS ?? 0);
+    const waitMs = Number.isFinite(rawWait) ? Math.max(0, rawWait) : 0;
     try {
       const ref = await withTimeout(upload, waitMs);
       adj.evidence_drive_id = ref.fileId;
@@ -565,7 +573,11 @@ export class PostgresAdapter {
       return;
     }
     const upload = (async () => this.drive.uploadAvatar(employeeId, dataUrl))();
-    const waitMs = Math.max(0, Number(process.env.DRIVE_UPLOAD_BLOCK_MS ?? 4000));
+    // Mặc định KHÔNG chờ upload Drive: file đã lưu đĩa + fallback đọc đĩa, nên
+    // thao tác trả kết quả ngay; upload Drive chạy nền rồi cập nhật id sau.
+    // Đặt DRIVE_UPLOAD_BLOCK_MS>0 nếu muốn chờ tối đa N ms.
+    const rawWait = Number(process.env.DRIVE_UPLOAD_BLOCK_MS ?? 0);
+    const waitMs = Number.isFinite(rawWait) ? Math.max(0, rawWait) : 0;
     try {
       const ref = await withTimeout(upload, waitMs);
       updateOrData.avatar_drive_id = ref.fileId;

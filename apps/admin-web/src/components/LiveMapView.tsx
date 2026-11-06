@@ -48,6 +48,8 @@ interface LiveMapEmployee {
   gps_accuracy?: number;
   distance_meters?: number;
   radius_meters?: number;
+  /** Chi nhánh có bật yêu cầu định vị GPS không. */
+  gps_enabled?: boolean;
   /** Có GPS thật và đang nằm trong bán kính cửa hàng (đang làm việc tại cửa hàng). */
   at_branch?: boolean;
   /** Đang trong khung giờ chia sẻ GPS (trước vào ca 30p → sau tan ca 30p). */

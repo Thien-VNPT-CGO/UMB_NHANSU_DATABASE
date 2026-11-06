@@ -83,6 +83,20 @@ export function parseSheetNumber(value: unknown): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
+/**
+ * Đọc cờ bật/tắt từ Google Sheets. Ô trống hoặc dữ liệu cũ chưa có cột
+ * → mặc định BẬT để không làm thay đổi hành vi hiện tại.
+ */
+export function parseSheetBoolean(value: unknown, fallback = true): boolean {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === 'boolean') return value;
+  const s = String(value).trim().toLowerCase();
+  if (!s) return fallback;
+  if (/^(false|0|no|off|tắt|tat|không|khong)$/.test(s)) return false;
+  if (/^(true|1|yes|on|bật|bat|có|co)$/.test(s)) return true;
+  return fallback;
+}
+
 /** Lấy lại mốc HH-mm từ tên file txt đã ghi trước đó (giữ nguyên tên khi cập nhật). */
 export function hhmmFromAdjustmentFileName(name: unknown): string {
   const m = String(name || '').match(/^PHIEU_(\d{2}-\d{2})_/);
@@ -251,7 +265,7 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   },
   {
     title: 'DANH_SACH_CHI_NHANH',
-    headers: ['Mã Chi Nhánh', 'Tên Chi Nhánh', 'Địa Chỉ', 'Vĩ Độ GPS', 'Kinh Độ GPS', 'Bán Kính Cho Phép (m)', 'Trạng Thái'],
+    headers: ['Mã Chi Nhánh', 'Tên Chi Nhánh', 'Địa Chỉ', 'Vĩ Độ GPS', 'Kinh Độ GPS', 'Bán Kính Cho Phép (m)', 'Trạng Thái', 'Bật Định Vị GPS'],
   },
   {
     title: 'CAU_HINH_HE_THONG',
@@ -2815,6 +2829,7 @@ export class GoogleSheetsSyncService {
           min_staff: 2,
           max_staff: 10,
           status: (r[6] as any) || 'ACTIVE',
+          gps_enabled: parseSheetBoolean(r[7], true),
         }));
       } else {
         fallback.branches = [...BRANCHES];
@@ -4216,6 +4231,7 @@ export class GoogleSheetsSyncService {
         b.longitude,
         b.radius_meters,
         b.status,
+        b.gps_enabled === false ? 'FALSE' : 'TRUE',
       ]);
       if (rows.length === 0) return false;
       const def = SHEETS_DEFINITIONS.find(d => d.title === 'DANH_SACH_CHI_NHANH')!;
@@ -4349,6 +4365,7 @@ export class GoogleSheetsSyncService {
         b.longitude,
         b.radius_meters,
         b.status,
+        b.gps_enabled === false ? 'FALSE' : 'TRUE',
       ]);
       await this.pushTabSafe(details, 'branches', 'DANH_SACH_CHI_NHANH', SHEETS_DEFINITIONS.find(d => d.title === 'DANH_SACH_CHI_NHANH')!.headers, branchRows);
 

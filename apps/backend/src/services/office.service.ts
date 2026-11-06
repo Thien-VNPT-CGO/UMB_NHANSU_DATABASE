@@ -22,9 +22,9 @@ import {
   OFFICE_CHECKIN_CLOSE_MINUTE,
   OFFICE_CHECKIN_OPEN_HOUR,
   OFFICE_CHECKIN_OPEN_MINUTE,
-  OFFICE_GPS_MAX_ACCURACY_METERS,
   OFFICE_LEAVE_MONTHLY_QUOTA,
   OFFICE_ROLE_LABELS,
+  isBranchGpsEnabled,
   officeDayRuleOfIso,
   officeStandardHours,
 } from '@ubm/shared';
@@ -60,11 +60,12 @@ export interface OfficeAttendanceEvent {
   date: string; // YYYY-MM-DD (giờ VN)
   type: 'CHECK_IN' | 'CHECK_OUT';
   at: string; // ISO
-  latitude: number;
-  longitude: number;
+  /** Có thể không có khi chi nhánh đã TẮT định vị GPS. */
+  latitude?: number;
+  longitude?: number;
   accuracy: number;
   distance_meters: number;
-  gps_status: 'VALID' | 'OUT_OF_BOUNDS' | 'UNAVAILABLE';
+  gps_status: 'VALID' | 'OUT_OF_BOUNDS' | 'LOW_ACCURACY' | 'UNAVAILABLE';
 }
 
 export interface OfficeAdjustmentRecord {
@@ -140,7 +141,7 @@ export class OfficeService {
     emp: any,
     now: { date: string; iso: string },
     type: 'CHECK_IN' | 'CHECK_OUT',
-    gps: { latitude: number; longitude: number; accuracy: number },
+    gps: { latitude?: number; longitude?: number; accuracy?: number } | undefined,
     v: { distance_meters: number; accuracy: number; gps_status: string },
     extra?: { is_late?: boolean; minutes_deviation?: number },
   ) {
@@ -163,8 +164,8 @@ export class OfficeService {
         type,
         client_time: now.iso,
         server_received_at: new Date().toISOString(),
-        gps_latitude: Number(gps.latitude),
-        gps_longitude: Number(gps.longitude),
+        gps_latitude: Number.isFinite(Number(gps?.latitude)) ? Number(gps?.latitude) : undefined,
+        gps_longitude: Number.isFinite(Number(gps?.longitude)) ? Number(gps?.longitude) : undefined,
         gps_accuracy: v.accuracy,
         distance_meters: v.distance_meters,
         gps_status: v.gps_status as any,
@@ -179,9 +180,18 @@ export class OfficeService {
     }
   }
 
-  private branchOf() {
-    const b = BRANCHES.find((x) => x.id === OFFICE_BRANCH_ID) || BRANCHES[0];
-    return { ...b, radius_meters: Math.min(Number(b?.radius_meters) || 300, 300) };
+  private async branchOf() {
+    // Ưu tiên cấu hình thật trong DANH_SACH_CHI_NHANH (Admin có thể sửa toạ độ
+    // hoặc tắt GPS); fallback hằng số seed khi Sheet chưa tải.
+    const rows = await this.repo.getBranches().catch(() => [] as any[]);
+    const b: any = (rows || []).find(
+      (x: any) => String(x?.id || x?.branch_id) === OFFICE_BRANCH_ID
+    ) || BRANCHES.find((x) => x.id === OFFICE_BRANCH_ID) || BRANCHES[0];
+    return {
+      ...b,
+      radius_meters: Math.min(Number(b?.radius_meters) || 300, 300),
+      gps_enabled: isBranchGpsEnabled(b),
+    };
   }
 
   // ==================================================================
@@ -216,7 +226,8 @@ export class OfficeService {
         });
       }
     }
-    return { from, to, branch_id: OFFICE_BRANCH_ID, branch_name: this.branchOf().name, days };
+    const branch: any = await this.branchOf();
+    return { from, to, branch_id: OFFICE_BRANCH_ID, branch_name: branch.name, days };
   }
 
   // ==================================================================
@@ -416,20 +427,54 @@ export class OfficeService {
     };
   }
 
-  private validateGps(gps: { latitude: number; longitude: number; accuracy: number } | undefined) {
-    const branch = this.branchOf();
-    if (!gps || !Number.isFinite(Number(gps.latitude)) || !Number.isFinite(Number(gps.longitude))) {
+  private async validateGps(gps: { latitude?: number; longitude?: number; accuracy?: number } | undefined) {
+    const branch: any = await this.branchOf();
+    const gpsEnabled = isBranchGpsEnabled(branch);
+    const hasCoords = !!gps &&
+      Number.isFinite(Number(gps.latitude)) &&
+      Number.isFinite(Number(gps.longitude));
+    if (!gpsEnabled) {
+      // Chi nhánh đã tắt định vị: KHÔNG cần toạ độ và KHÔNG chặn bán kính.
+      // Nếu thiết bị vẫn gửi toạ độ thì lưu thô để HR đối soát.
+      const accuracy = Number(gps?.accuracy);
+      const latitude = hasCoords ? Number(gps!.latitude) : undefined;
+      const longitude = hasCoords ? Number(gps!.longitude) : undefined;
+      const distance = hasCoords
+        ? calculateDistanceMeters(latitude as number, longitude as number, branch.latitude, branch.longitude)
+        : 0;
+      return {
+        distance_meters: distance,
+        accuracy: Number.isFinite(accuracy) ? accuracy : 0,
+        gps_status: 'VALID' as const,
+        latitude,
+        longitude,
+      };
+    }
+    if (!hasCoords) {
       throw new Error('GPS_REQUIRED: Chưa lấy được vị trí GPS của bạn. Vui lòng bật định vị và thử lại!');
     }
-    const accuracy = Number(gps.accuracy);
-    if (Number.isFinite(accuracy) && accuracy > OFFICE_GPS_MAX_ACCURACY_METERS) {
-      throw new Error(`GPS_LOW_ACCURACY: Sóng GPS yếu (sai số ${Math.round(accuracy)}m > ${OFFICE_GPS_MAX_ACCURACY_METERS}m). Ra nơi thoáng và thử lại!`);
+    const latitude = Number(gps!.latitude);
+    const longitude = Number(gps!.longitude);
+    const accuracy = Number(gps?.accuracy);
+    if (Number.isFinite(accuracy) && accuracy > 1000) {
+      throw new Error(`GPS_LOW_ACCURACY: Sóng GPS quá yếu (sai số ${Math.round(accuracy)}m). Ra nơi thoáng và thử lại!`);
     }
-    const distance = calculateDistanceMeters(Number(gps.latitude), Number(gps.longitude), branch.latitude, branch.longitude);
-    if (distance > branch.radius_meters) {
+    const distance = calculateDistanceMeters(latitude, longitude, branch.latitude, branch.longitude);
+    // Dung sai theo sai số thiết bị (tối đa 150m): trong nhà/văn phòng kín sóng
+    // GPS hay báo sai số 150–300m, trước đây chặn tuyệt đối nên không điểm danh
+    // được. Trong bán kính -> VALID; ngoài bán kính nhưng trừ dung sai vẫn có
+    // khả năng trong vùng -> ghi nhận kèm cờ LOW_ACCURACY để HR đối soát.
+    const tolerance = Number.isFinite(accuracy) ? Math.min(Math.max(accuracy, 0), 150) : 0;
+    if (distance > branch.radius_meters + tolerance) {
       throw new Error(`GPS_OUT_OF_BOUNDS: Bạn đang cách văn phòng ${distance}m (bán kính cho phép ${branch.radius_meters}m) nên chưa thể điểm danh!`);
     }
-    return { distance_meters: distance, accuracy: Number.isFinite(accuracy) ? accuracy : 0, gps_status: 'VALID' as const };
+    return {
+      distance_meters: distance,
+      accuracy: Number.isFinite(accuracy) ? accuracy : 0,
+      gps_status: (distance <= branch.radius_meters ? 'VALID' : 'LOW_ACCURACY') as 'VALID' | 'LOW_ACCURACY',
+      latitude,
+      longitude,
+    };
   }
 
   /**
@@ -488,6 +533,7 @@ export class OfficeService {
     const open = OFFICE_CHECKIN_OPEN_HOUR * 60 + OFFICE_CHECKIN_OPEN_MINUTE;
     const close = OFFICE_CHECKIN_CLOSE_HOUR * 60 + OFFICE_CHECKIN_CLOSE_MINUTE;
     const rule = officeDayRuleOfIso(now.date);
+    const branch: any = await this.branchOf();
     return {
       date: now.date,
       now: now.iso,
@@ -500,12 +546,22 @@ export class OfficeService {
       check_in_at: today.check_in?.at || null,
       check_out_at: today.check_out?.at || null,
       worked_minutes: today.worked_minutes || 0,
+      // Cấu hình chi nhánh để cổng NV biết toạ độ/bán kính và có bắt buộc GPS không.
+      branch: {
+        id: OFFICE_BRANCH_ID,
+        name: String(branch?.name || ''),
+        address: String(branch?.address || ''),
+        latitude: Number(branch?.latitude) || 0,
+        longitude: Number(branch?.longitude) || 0,
+        radius_meters: Number(branch?.radius_meters) || 300,
+        gps_enabled: isBranchGpsEnabled(branch),
+      },
     };
   }
 
-  async checkIn(employeeId: string, gps: { latitude: number; longitude: number; accuracy: number }) {
+  async checkIn(employeeId: string, gps?: { latitude?: number; longitude?: number; accuracy?: number }) {
     const emp = await this.getEmployeeOrThrow(employeeId);
-    const v = this.validateGps(gps);
+    const v = await this.validateGps(gps);
     return withOfficeLock(async () => {
       const now = OfficeService.vnNow();
       const rule = officeDayRuleOfIso(now.date);
@@ -530,8 +586,8 @@ export class OfficeService {
         date: now.date,
         type: 'CHECK_IN',
         at: now.iso,
-        latitude: Number(gps.latitude),
-        longitude: Number(gps.longitude),
+        latitude: v.latitude,
+        longitude: v.longitude,
         accuracy: v.accuracy,
         distance_meters: v.distance_meters,
         gps_status: v.gps_status,
@@ -547,9 +603,9 @@ export class OfficeService {
     });
   }
 
-  async checkOut(employeeId: string, gps: { latitude: number; longitude: number; accuracy: number }) {
+  async checkOut(employeeId: string, gps?: { latitude?: number; longitude?: number; accuracy?: number }) {
     const emp = await this.getEmployeeOrThrow(employeeId);
-    const v = this.validateGps(gps);
+    const v = await this.validateGps(gps);
     return withOfficeLock(async () => {
       const now = OfficeService.vnNow();
       const settings = await this.readSettings();
@@ -567,8 +623,8 @@ export class OfficeService {
         date: now.date,
         type: 'CHECK_OUT',
         at: now.iso,
-        latitude: Number(gps.latitude),
-        longitude: Number(gps.longitude),
+        latitude: v.latitude,
+        longitude: v.longitude,
         accuracy: v.accuracy,
         distance_meters: v.distance_meters,
         gps_status: v.gps_status,

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { attShiftStatus, inferExtraShiftCode, mergeOrphanCheckins, shiftPayInfo } from '@ubm/shared';
 import { Socket } from 'socket.io-client';
-import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl, onPinLockRequired, tryRefreshSession } from './services/api';
+import { apiRequest, setAuthToken, getAuthToken, getApiBase, setCustomApiUrl, onPinLockRequired, tryRefreshSession, clearApiCache } from './services/api';
 import { connectRealtime, stopRealtimeRevive } from './services/realtime';
 import { APP_COMMIT } from './app-version';
 import { PremiumLogin } from './components/PremiumLogin';
@@ -1012,6 +1012,9 @@ export function App() {
   const [attendanceActionType, setAttendanceActionType] = useState<'CHECK_IN' | 'CHECK_OUT'>('CHECK_IN');
   // GPS thật từ thiết bị (null = chưa đo được, KHÔNG dùng số giả lập)
   const [gpsCoords, setGpsCoords] = useState<{ lat: number; lng: number; accuracy: number } | null>(null);
+  // Cấu hình chi nhánh của NV: Admin có thể TẮT định vị GPS cho chi nhánh.
+  const [branchInfo, setBranchInfo] = useState<any>(null);
+  const gpsEnabled = branchInfo ? branchInfo.gps_enabled !== false : true;
   // Ảnh chụp thật từ camera (dataURL), null = chưa chụp
   const [photoData, setPhotoData] = useState<string | null>(null);
   // % hồng đồng phục đo được lúc chụp (gửi kèm để HR đối soát)
@@ -1300,10 +1303,9 @@ export function App() {
       });
       const warns: string[] = (res as any)?.result?._warnings || (res as any)?._warnings || [];
       showToast(accept ? `✓ Đã đồng ý! Hai ca hoán đổi ngay.${warns.length ? ` Lưu ý: ${warns.join(' ')}` : ''}` : 'Đã từ chối phiếu đổi ca.');
-      // Tải lịch trước rồi mới tải phiếu (nối tiếp): loadEmployeeData cũng fetch
-      // phiếu ngầm — fetch song song response cũ về sau sẽ ghi đè, reload hiện sai.
-      await loadEmployeeData(employee?.employee_id);
-      await fetchMySwaps();
+      // Trả kết quả ngay; lịch + phiếu tải nền (không chặn nút).
+      void loadEmployeeData(employee?.employee_id, true);
+      void fetchMySwaps().catch(() => null);
     } catch (e: any) {
       showToast(e?.message || 'Lỗi khi phản hồi!');
       await fetchMySwaps().catch(() => null);
@@ -1342,7 +1344,7 @@ export function App() {
       });
       const s = res?.result || res;
       showToast(`⚡ Đã tự thêm ${s.shift_code} ngày ${s.date} thành công! Không cần HR duyệt — HR đã nhận thông báo theo dõi.`);
-      await loadEmployeeData(employee?.employee_id);
+      void loadEmployeeData(employee?.employee_id, true);
     } catch (err: any) {
       const msg = String(err?.message || '');
       if (/MAX_2_SHIFTS_PER_DAY/.test(msg)) {
@@ -1420,6 +1422,9 @@ export function App() {
     }
   }, [activePortalThemeId]);
   const [maintChecking, setMaintChecking] = useState(false);
+  // Cửa sổ mở check-in lấy từ server (policies.check_in_window_minutes). Trước
+  // đây hardcode 30 phút nên Admin đổi chính sách là cổng NV chặn lệch server.
+  const [checkInWindowMinutes, setCheckInWindowMinutes] = useState(30);
   const fetchPortalMaintenance = async (): Promise<boolean | null> => {
     try {
       const m: any = await apiRequest('/public/portal-maintenance');
@@ -1429,6 +1434,8 @@ export function App() {
       // Lịch sự kiện: bù lệch đồng hồ theo giờ server để đổi theme đúng mốc.
       const serverNow = Date.parse(String(m?.server_time || ''));
       const serverOffsetMs = Number.isFinite(serverNow) ? serverNow - Date.now() : 0;
+      const gateW = Number(m?.check_in_window_minutes);
+      if (Number.isFinite(gateW) && gateW > 0 && gateW <= 180) setCheckInWindowMinutes(Math.floor(gateW));
       // Áp cho TOÀN BỘ cổng NV, không chỉ riêng theme sự kiện.
       // Lần đo đầu luôn áp; các lần sau chỉ cập nhật khi lệch > 1 phút để tránh
       // reload dữ liệu liên tục vì jitter mạng vài trăm ms mỗi lần poll.
@@ -1739,7 +1746,17 @@ export function App() {
     }
   };
 
-  const loadEmployeeData = async (empId?: string) => {
+  // Gộp các lần gọi loadEmployeeData trùng nhau (mount + fetchMyProfile + socket
+  // onConnect + đổi tab). Trước đây mỗi lần gọi tạo thêm 4 request song song.
+  const loadInFlightRef = useRef<Promise<void> | null>(null);
+  const loadEmployeeData = async (empId?: string, force = false): Promise<void> => {
+    if (loadInFlightRef.current) {
+      if (!force) return loadInFlightRef.current;
+      // Sau khi ghi (check-in/gửi phiếu) cần dữ liệu mới: đợi lần đang chạy xong
+      // rồi tải lại, tránh trả về snapshot cũ.
+      try { await loadInFlightRef.current; } catch { /* lần mới sẽ thử lại */ }
+    }
+    const run = (async () => {
     try {
       let fails = 0;
       // 4 nhóm độc lập bắn SONG SONG (trước await nối tiếp + 30 request attendance).
@@ -1747,13 +1764,15 @@ export function App() {
       const toDate = vnTodayStr();
       const fromDate = vnDateAdd(-29, toDate);
       const toFuture = vnDateAdd(60, toDate);
-      const [shifts, notifs, attRange, colleagues] = await Promise.all([
+      const [shifts, notifs, attRange, colleagues, , branchCfg] = await Promise.all([
         apiRequest(`/me/schedule?fromDate=${fromDate}&toDate=${toFuture}`).catch(() => { fails++; return null; }),
         apiRequest('/me/notifications').catch(() => { fails++; return []; }),
         apiRequest(`/me/attendance?fromDate=${fromDate}&toDate=${toDate}`).catch(() => { fails++; return null; }),
         apiRequest('/me/colleagues').catch(() => { fails++; return []; }),
         refreshWeeklyOffStatus(),
+        apiRequest('/me/branch').catch(() => { fails++; return null; }),
       ]);
+      if (branchCfg) setBranchInfo(branchCfg);
       // CHỈ thay danh sách ca khi server trả mảng hợp lệ. Trước đây lỗi mạng /
       // backend restart giữa phiên trả [] -> xóa sạch ca đang có -> trang chủ báo
       // "không có ca" oan cho tới lần tải sau. Giữ dữ liệu cũ khi lỗi.
@@ -1828,6 +1847,13 @@ export function App() {
     } catch (err) {
       console.error(err);
     }
+    })();
+    let tracked: Promise<void>;
+    tracked = run.finally(() => {
+      if (loadInFlightRef.current === tracked) loadInFlightRef.current = null;
+    });
+    loadInFlightRef.current = tracked;
+    return tracked;
   };
 
   const [checkingStatus, setCheckingStatus] = useState<'IDLE' | 'CHECKING' | 'ACTIVE' | 'ERROR'>('IDLE');
@@ -2181,56 +2207,79 @@ export function App() {
     // Chống vòng lặp refresh-reconnect socket khi token thật sự bị thu hồi.
     let socketAuthRetries = 0;
     let socketAuthRetrying = false;
+    // Gom sự kiện realtime: tối đa 1 lần tải nặng mỗi 2.5s thay vì mỗi check-in
+    // của mọi nhân viên / mỗi GPS ping / mỗi thông báo đều full reload.
+    const FULL_RELOAD_MIN_GAP_MS = 2500;
     let timer: any = null;
-    let reloading = false;
-    let queued = false;
-    const reload = (entity?: string) => {
-      if (reloading) { queued = true; return; }
-      if (timer) clearTimeout(timer);
+    let running = false;
+    let pending = false;
+    let pendingEntity: string | undefined;
+    let lastRunAt = 0;
+    const runReload = async (entity?: string) => {
+      await loadEmployeeDataRef.current(empIdRef.current, true);
+      await fetchMySwapsRef.current().catch(() => null);
+      // Kết quả duyệt phiếu công: tải lại ngay
+      if (!entity || entity === 'adjustments' || entity === 'attendance' || entity === 'all' || activeTabRef.current === 'adjustment' || activeTabRef.current === 'emergency_adjust') {
+        await fetchMyAdjustmentsRef.current().catch(() => null);
+      }
+      // Bài test / Đào tạo: tải lại ngay
+      if (!entity || entity === 'tests' || entity === 'all' || activeTabRef.current === 'test_exam' || activeTabRef.current === 'test_training') {
+        await fetchMyTestsRef.current().catch(() => null);
+        await fetchProbationAssessmentRef.current().catch(() => null);
+      }
+      // Lịch nghỉ / OFF tuần / OFF thử việc
+      if (!entity || entity === 'leaves' || entity === 'all' || activeTabRef.current === 'leave') {
+        await refreshWeeklyOffStatusRef.current?.().catch(() => null);
+        await loadProbationOffRef.current?.().catch(() => null);
+      }
+      // Yêu cầu đổi STK ngân hàng
+      if (!entity || entity === 'bank_change' || entity === 'employees' || entity === 'all' || activeTabRef.current === 'profile') {
+        await fetchBankChangeRequestRef.current().catch(() => null);
+      }
+      // FIX publish mẫu không tới NV: phiếu lương chỉ load khi bấm "Xem",
+      // realtime về chỉ reload lịch/thông báo nên NV đã mở khóa vẫn thấy trống.
+      // Tự tải lại phiếu khi đã mở khóa để Realtime 100% với Kế toán.
+      if (payslipUnlockedRef.current && (!entity || entity === 'payslips' || entity === 'payroll' || entity === 'notifications' || entity === 'all')) {
+        try {
+          const slips = await apiRequest('/me/payslips');
+          const arr = Array.isArray(slips) ? slips : [];
+          const prevIds = new Set((payslipsRef.current || []).map((s: any) => s.item_id));
+          const hasNew = arr.some((s: any) => !prevIds.has(s.item_id) || s.status === 'PUBLISHED');
+          setPayslips(arr);
+          if (hasNew && arr.length > (payslipsRef.current || []).length) {
+            showToastRef.current('💰 Kế toán vừa phát hành phiếu lương mới cho bạn! Mở mục Thông báo & Lương để kiểm tra.');
+          }
+        } catch { /* giữ phiếu cũ khi offline */ }
+      }
+    };
+    const reload = (entity?: string, payload?: any, immediate = false) => {
+      // Lọc sự kiện KHÔNG liên quan tới chính nhân viên này — trước đây mỗi lượt
+      // check-in của đồng nghiệp / mỗi thông báo feed đều khiến toàn bộ NV tải lại.
+      if (entity === 'me') return; // write cá nhân: luồng submit đã tự cập nhật
+      if (entity === 'notifications') return; // notification.created xử lý riêng
+      if (entity === 'attendance' || entity === 'office-attendance') {
+        const actor = payload?.data?.employeeId || payload?.data?.employee_id;
+        if (actor && empIdRef.current && String(actor) !== String(empIdRef.current)) return;
+      }
+      // Dữ liệu vừa đổi: bỏ cache đọc ngắn hạn để chắc chắn thấy bản mới.
+      clearApiCache();
+      pending = true;
+      pendingEntity = entity ?? pendingEntity;
+      if (running || timer) return;
+      const wait = immediate ? 0 : Math.max(120, FULL_RELOAD_MIN_GAP_MS - (Date.now() - lastRunAt));
       timer = setTimeout(async () => {
         timer = null;
-        reloading = true;
-        try {
-          await loadEmployeeDataRef.current(empIdRef.current);
-          await fetchMySwapsRef.current().catch(() => null);
-          // Kết quả duyệt phiếu công: tải lại ngay
-          if (!entity || entity === 'adjustments' || entity === 'attendance' || entity === 'all' || activeTabRef.current === 'adjustment' || activeTabRef.current === 'emergency_adjust') {
-            await fetchMyAdjustmentsRef.current().catch(() => null);
-          }
-          // Bài test / Đào tạo: tải lại ngay
-          if (!entity || entity === 'tests' || entity === 'all' || activeTabRef.current === 'test_exam' || activeTabRef.current === 'test_training') {
-            await fetchMyTestsRef.current().catch(() => null);
-            await fetchProbationAssessmentRef.current().catch(() => null);
-          }
-          // Lịch nghỉ / OFF tuần / OFF thử việc
-          if (!entity || entity === 'leaves' || entity === 'all' || activeTabRef.current === 'leave') {
-            await refreshWeeklyOffStatusRef.current?.().catch(() => null);
-            await loadProbationOffRef.current?.().catch(() => null);
-          }
-          // Yêu cầu đổi STK ngân hàng
-          if (!entity || entity === 'bank_change' || entity === 'employees' || entity === 'all' || activeTabRef.current === 'profile') {
-            await fetchBankChangeRequestRef.current().catch(() => null);
-          }
-          // FIX publish mẫu không tới NV: phiếu lương chỉ load khi bấm "Xem",
-          // realtime về chỉ reload lịch/thông báo nên NV đã mở khóa vẫn thấy trống.
-          // Tự tải lại phiếu khi đã mở khóa để Realtime 100% với Kế toán.
-          if (payslipUnlockedRef.current && (!entity || entity === 'payslips' || entity === 'payroll' || entity === 'notifications' || entity === 'all')) {
-            try {
-              const slips = await apiRequest('/me/payslips');
-              const arr = Array.isArray(slips) ? slips : [];
-              const prevIds = new Set((payslipsRef.current || []).map((s: any) => s.item_id));
-              const hasNew = arr.some((s: any) => !prevIds.has(s.item_id) || s.status === 'PUBLISHED');
-              setPayslips(arr);
-              if (hasNew && arr.length > (payslipsRef.current || []).length) {
-                showToastRef.current('💰 Kế toán vừa phát hành phiếu lương mới cho bạn! Mở mục Thông báo & Lương để kiểm tra.');
-              }
-            } catch { /* giữ phiếu cũ khi offline */ }
-          }
-        } catch { /* lần sau */ } finally {
-          reloading = false;
-          if (queued) { queued = false; reload(); }
+        if (!pending) return;
+        running = true;
+        const ent = pendingEntity;
+        pending = false;
+        pendingEntity = undefined;
+        try { await runReload(ent); } catch { /* lần sau */ } finally {
+          running = false;
+          lastRunAt = Date.now();
+          if (pending) reload(pendingEntity);
         }
-      }, 150);
+      }, wait);
     };
     try {
       const base = getApiBase();
@@ -2240,7 +2289,7 @@ export function App() {
         onConnect: () => {
           // Nối lại thành công (kể cả sau khi tự gia hạn token) — xả bộ đếm lỗi auth.
           socketAuthRetries = 0;
-          reload();
+          reload(undefined, undefined, true);
         },
         onGiveUp: () => {
           console.warn(
@@ -2272,8 +2321,17 @@ export function App() {
 
       // 1. Phổ quát các thay đổi dữ liệu theo entity
       socket.on('data:updated', (p: any) => {
-        reload(p?.entity);
         const entity = p?.entity;
+        // Sự kiện cá nhân / thông báo: luồng submit + notification.created lo;
+        // tránh full reload toàn cổng cho mỗi lần đọc thông báo hay tự cập nhật hồ sơ.
+        if (entity === 'me' || entity === 'notifications') return;
+        // Check-in/out của đồng nghiệp khác: bản đồ đã nhận 'attendance.recorded'
+        // theo chi nhánh, không cần mọi NV tải lại toàn bộ dữ liệu.
+        if (entity === 'attendance' || entity === 'office-attendance') {
+          const actor = p?.data?.employeeId || p?.data?.employee_id;
+          if (actor && empIdRef.current && String(actor) !== String(empIdRef.current)) return;
+        }
+        reload(entity, p);
 
         // Hồ sơ thay đổi (tôi sửa ở máy khác / HR sửa) -> tải lại hồ sơ của tôi.
         if (!entity || entity === 'employees' || entity === 'accounts' || entity === 'all') {
@@ -2368,7 +2426,12 @@ export function App() {
 
       // 2. Thông báo mới trong hộp thư
       socket.on('notification.created', (p: any) => {
-        reload('notifications');
+        // Feed sự kiện của TẤT CẢ nhân viên (emp.checkin/emp.checkout/emp.leave/
+        // emp.swap/...) được phát cho mọi role. Cổng NV bỏ qua để không full
+        // reload toàn bộ mỗi lượt đồng nghiệp chấm công; sự kiện của chính mình
+        // đã có handler riêng (leave.updated, swap.updated, adjustment.updated...).
+        if (String(p?.type || '').startsWith('emp.')) return;
+        reload(undefined, p);
         // Thông báo inbox mới (VD HR phát hành lịch tuần) → tab Lịch tải lại dải ngày.
         setSchedRefresh(k => k + 1);
         // HR duyệt/từ chối đổi STK -> cập nhật banner "đang chờ duyệt" ngay.
@@ -2514,7 +2577,10 @@ export function App() {
       socket.on('system:notification', (n: any) => {
         const fromAdmin = !n?.origin || n.origin === 'ADMIN';
         if (fromAdmin && (n?.message || n?.title)) showToastRef.current(`🔔 ${n.title || ''}${n.title && n.message ? ': ' : ''}${n.message || ''}`.trim());
-        reload();
+        // Sự kiện do CHÍNH nhân viên phát sinh (origin EMPLOYEE) được phát toàn hệ
+        // thống để cổng quản trị hiện popup — cổng NV KHÔNG cần tải lại dữ liệu.
+        if (!fromAdmin) return;
+        reload(undefined, n);
         // Thông báo từ Admin thường đi kèm thay đổi dữ liệu → đồng bộ lại cổng Văn Phòng.
         setSchedRefresh((k) => k + 1);
       });
@@ -2911,14 +2977,15 @@ export function App() {
     }
     const st = shiftChecked(todayShift.assignment_id);
 
-    // Ràng buộc thời gian mở Check-in: Mở trước giờ vào ca 30 phút
+    // Ràng buộc thời gian mở Check-in: mở trước giờ vào ca theo
+    // policies.check_in_window_minutes do server trả về (mặc định 30 phút).
     if (action === 'CHECK_IN' && todayShift?.start_at) {
       try {
         const shiftStart = new Date(todayShift.start_at).getTime();
-        const openTime = shiftStart - 30 * 60 * 1000;
+        const openTime = shiftStart - checkInWindowMinutes * 60 * 1000;
         if (vnNowMs() < openTime) {
           const openStr = new Date(openTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' });
-          showToast(`⏰ CHƯA ĐẾN GIỜ CHECK-IN: Cổng điểm danh mở trước giờ ca 30 phút (Mở lúc ${openStr}). Vui lòng quay lại sau!`);
+          showToast(`⏰ CHƯA ĐẾN GIỜ CHECK-IN: Cổng điểm danh mở trước giờ ca ${checkInWindowMinutes} phút (Mở lúc ${openStr}). Vui lòng quay lại sau!`);
           return;
         }
       } catch {}
@@ -2956,6 +3023,11 @@ export function App() {
 
     // GPS THẬT 100%: đo từ vệ tinh thiết bị, không dùng tọa độ giả lập.
     // Từ chối định vị / ngoài vùng phủ sóng -> dừng, KHÔNG ghi nhận.
+    // Ngoại lệ: chi nhánh đã TẮT định vị (Admin cấu hình) -> bỏ qua bước GPS.
+    if (!gpsEnabled) {
+      setAttendanceStep('READY_CAMERA');
+      return;
+    }
     if (!('geolocation' in navigator)) {
       showToast('🚫 Thiết bị của bạn không hỗ trợ định vị GPS! Không thể điểm danh.');
       setAttendanceStep('IDLE');
@@ -3191,7 +3263,8 @@ export function App() {
       return;
     }
     // Bắt buộc: GPS thật + ảnh thật (check-in). Không có -> không gửi.
-    if (!gpsCoords) {
+    // Chi nhánh đã tắt định vị thì không bắt buộc GPS.
+    if (gpsEnabled && !gpsCoords) {
       showToast('🚫 Chưa có tọa độ GPS thật! Vui lòng bấm Bắt đầu lại để đo GPS.');
       setAttendanceStep('IDLE');
       return;
@@ -3218,9 +3291,7 @@ export function App() {
         method: 'POST',
         body: JSON.stringify({
           assignment_id: todayShift?.assignment_id,
-          lat: gpsCoords.lat,
-          lng: gpsCoords.lng,
-          accuracy: gpsCoords.accuracy,
+          ...(gpsCoords ? { lat: gpsCoords.lat, lng: gpsCoords.lng, accuracy: gpsCoords.accuracy } : {}),
           device_id: getOrCreateDeviceId(),
           ...(photoData ? { photo_base64: photoData } : {}),
           ...(photoPinkRatio !== null ? { uniform_pink_ratio: photoPinkRatio } : {}),
@@ -3242,12 +3313,12 @@ export function App() {
         }
       } catch { /* không chặn luồng chính */ }
       // GPS yếu/vượt phạm vi bị server từ chối thẳng (không ghi nhận) nên không còn nhánh này.
-      const gpsNote = '';
+      const gpsNote = gpsEnabled ? '' : ' (chi nhánh đã tắt định vị GPS)';
       showToast(attendanceActionType === 'CHECK_IN'
-        ? `✓ Điểm danh Check-in thành công! GPS thật + ảnh thật đã ghi nhận.${gpsNote}`
+        ? `✓ Điểm danh Check-in thành công!${gpsEnabled ? ' GPS thật + ảnh thật đã ghi nhận.' : ''}${gpsNote}`
         : `✓ Điểm danh Check-out thành công! Ca làm việc đã ghi nhận vào Google Sheets.${gpsNote}`
       );
-      await loadEmployeeData(employee?.employee_id);
+      void loadEmployeeData(employee?.employee_id, true);
     } catch (err: any) {
       showToast(err.message || 'Lỗi khi điểm danh!');
       setAttendanceStep('READY_CAMERA');
@@ -3310,8 +3381,8 @@ export function App() {
       persistWeeklyOff(true, (weeklyOffWindow as any)?.targetWeekMon || undefined);
 
       showToast('🎉 ĐÃ ĐĂNG KÝ 2 NGÀY NGHỈ OFF TUẦN THÀNH CÔNG! Toàn bộ chức năng hệ thống đã được mở khóa.');
-      await refreshWeeklyOffStatus();
-      await loadEmployeeData(employee?.employee_id);
+      void refreshWeeklyOffStatus().catch(() => null);
+      void loadEmployeeData(employee?.employee_id, true);
     } catch (err: any) {
       showToast(weeklyOffErrMsg(err, 'Lỗi khi gửi đăng ký 2 ngày nghỉ!'));
     } finally {
@@ -3332,8 +3403,8 @@ export function App() {
         body: JSON.stringify(leaveData),
       });
       showToast('Đã gửi yêu cầu nghỉ OFF thành công!');
-      await refreshWeeklyOffStatus();
-      await loadEmployeeData(employee?.employee_id);
+      void refreshWeeklyOffStatus().catch(() => null);
+      void loadEmployeeData(employee?.employee_id, true);
     } catch (err: any) {
       showToast(weeklyOffErrMsg(err, 'Lỗi khi gửi yêu cầu nghỉ!'));
     } finally {
@@ -3475,7 +3546,7 @@ export function App() {
       const r = res?.result || res;
       setProbOffDone({ offDates: r.offDates || dates, workDates: r.workDates || [] });
       showToast(`🎉 ĐÃ ĐĂNG KÝ 5 NGÀY OFF THỬ VIỆC! Hệ thống đã tự xếp ${(r.workDates || []).length} ca làm cho bạn.`);
-      await loadEmployeeData(employee?.employee_id);
+      void loadEmployeeData(employee?.employee_id, true);
     } catch (err: any) {
       showToast(err?.message || 'Lỗi khi đăng ký OFF thử việc!');
     } finally {
@@ -3578,9 +3649,9 @@ export function App() {
       showToast(sid ? `✓ Đã gửi yêu cầu đổi ca THẬT! Mã đơn: ${sid}. B đồng ý là 2 ca hoán đổi ngay.` : '✓ Đã gửi yêu cầu đổi ca! Mở danh sách phiếu để kiểm tra trạng thái.');
       setSwapData({ myShift: '', targetEmployeeId: '', targetEmployeeName: '', targetShift: '', reason: '' });
       setTargetShifts([]);
-      // Lịch trước, phiếu sau (nối tiếp) — tránh response cũ ghi đè danh sách mới.
-      await loadEmployeeData(employee?.employee_id);
-      await fetchMySwaps();
+      // Trả kết quả ngay; lịch + phiếu tải nền.
+      void loadEmployeeData(employee?.employee_id, true);
+      void fetchMySwaps().catch(() => null);
     } catch (err: any) {
       showToast(err.message || 'Lỗi khi gửi yêu cầu đổi ca!');
     } finally {
@@ -3612,7 +3683,7 @@ export function App() {
       showToast(probationSelfSwap.direction === 'WORK_TO_OFF'
         ? `✓ Đã tự chuyển nghỉ OFF ngày ${r?.date || probationSelfSwap.date}! Hệ thống tự duyệt — lịch và công đã cập nhật ngay.`
         : `✓ Đã tự xếp đi làm Ca 1 ngày ${r?.date || probationSelfSwap.date}! Hệ thống tự duyệt — lịch và công đã cập nhật ngay.`);
-      await loadEmployeeData(employee?.employee_id);
+      void loadEmployeeData(employee?.employee_id, true);
     } catch (err: any) {
       showToast(err.message || 'Lỗi khi tự đổi ca!');
     } finally {
@@ -3640,7 +3711,7 @@ export function App() {
       // Lượt dùng 1 lần đã bị tiêu thụ ở server — ẩn chức năng ngay lập tức.
       setEmergencyEnabled(false);
       showToast('🚨 ĐÃ GỬI ĐƠN BÁO NGHỈ KHẨN CẤP! Lượt dùng 1 lần của bạn đã hết — chức năng tự ẩn. Dữ liệu đã đồng bộ realtime sang HR Tab 10 và Google Sheets.');
-      await loadEmployeeData(employee?.employee_id);
+      void loadEmployeeData(employee?.employee_id, true);
     } catch (err: any) {
       if (String(err?.message || '').includes('EMERGENCY_LEAVE_NOT_GRANTED')) {
         setEmergencyEnabled(false);
@@ -3756,8 +3827,8 @@ export function App() {
         setEvidencePhoto(null);
         showToast('✓ Đã gửi phiếu giải trình bổ sung công đến Cửa Hàng Trưởng và HR!');
       }
-      await fetchMyAdjustments();
-      await loadEmployeeData(employee?.employee_id);
+      void fetchMyAdjustments().catch(() => null);
+      void loadEmployeeData(employee?.employee_id, true);
     } catch (err: any) {
       showToast(err.message || 'Lỗi khi gửi phiếu giải trình!');
     } finally {
@@ -5776,7 +5847,7 @@ export function App() {
           };
           const shiftStartHour = todayShift?.shift_code === 'CA_1' ? 7 : todayShift?.shift_code === 'CA_2' ? 12 : todayShift?.shift_code === 'CA_3' ? 18 : undefined;
           const shiftStart = todayShift?.start_at ? new Date(todayShift.start_at).getTime() : 0;
-          const openTime = shiftStart ? shiftStart - 30 * 60 * 1000 : 0;
+          const openTime = shiftStart ? shiftStart - checkInWindowMinutes * 60 * 1000 : 0;
           const isEarly = shiftStart > 0 && vnNowMs() < openTime;
           const openTimeStr = openTime > 0 ? new Date(openTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }) : (shiftStartHour !== undefined ? `${String(shiftStartHour === 7 ? 6 : shiftStartHour - 1).padStart(2, '0')}:30` : '');
           const shiftStartStr = shiftStartHour !== undefined
@@ -5875,7 +5946,7 @@ export function App() {
                   }}>
                     {isEarly ? (
                       <div style={{ color: '#92400E' }}>
-                        ⏰ <strong>CHƯA ĐẾN GIỜ CHECK-IN:</strong> Cổng điểm danh mở trước ca <strong>30 phút</strong>. Ca bắt đầu lúc <strong>{shiftStartStr}</strong>, cổng check-in sẽ mở lúc <strong>{openTimeStr}</strong>.
+                        ⏰ <strong>CHƯA ĐẾN GIỜ CHECK-IN:</strong> Cổng điểm danh mở trước ca <strong>{checkInWindowMinutes} phút</strong>. Ca bắt đầu lúc <strong>{shiftStartStr}</strong>, cổng check-in sẽ mở lúc <strong>{openTimeStr}</strong>.
                       </div>
                     ) : (
                       <div style={{ color: '#166534' }}>
@@ -5982,7 +6053,9 @@ export function App() {
                     </div>
                     <div>
                       <div style={{ color: 'var(--text-muted)' }}>GPS thật của bạn:</div>
-                      {gpsCoords ? (
+                      {!gpsEnabled ? (
+                        <strong style={{ color: 'var(--brand)' }}>📵 Chi nhánh đã tắt định vị — không bắt buộc GPS</strong>
+                      ) : gpsCoords ? (
                         <strong style={{ color: '#10B981' }}>
                           ±{gpsCoords.accuracy}m (Chuẩn &lt; 300m)
                         </strong>
@@ -6112,7 +6185,7 @@ export function App() {
                         )}
                       </div>
                       <div style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center' }}>
-                        GPS đã đo: {gpsCoords ? `${gpsCoords.lat.toFixed(6)}, ${gpsCoords.lng.toFixed(6)} (±${gpsCoords.accuracy}m)` : '—'}
+                        GPS đã đo: {!gpsEnabled ? 'Không bắt buộc (chi nhánh tắt định vị)' : gpsCoords ? `${gpsCoords.lat.toFixed(6)}, ${gpsCoords.lng.toFixed(6)} (±${gpsCoords.accuracy}m)` : '—'}
                       </div>
 
                       {!photoData ? (
@@ -6137,7 +6210,7 @@ export function App() {
                             onClick={handleSubmitAttendance}
                             style={{ width: '100%', fontSize: '15px', fontWeight: 800 }}
                           >
-                            ✅ GHI NHẬN {attendanceActionType === 'CHECK_IN' ? 'CHECK-IN' : 'CHECK-OUT'} (GPS + ẢNH THẬT)
+                            ✅ GHI NHẬN {attendanceActionType === 'CHECK_IN' ? 'CHECK-IN' : 'CHECK-OUT'} {gpsEnabled ? '(GPS + ẢNH THẬT)' : '(ẢNH THẬT)'}
                           </button>
                         </>
                       )}
@@ -6165,8 +6238,8 @@ export function App() {
                       </h4>
                       <div style={{ fontSize: '12px', color: '#047857', marginTop: '4px' }}>
                         Thời gian: {new Date().toLocaleTimeString('vi-VN')} • Khoảng cách:{' '}
-                        {typeof lastReceipt?.distance_meters === 'number' ? `${Math.round(lastReceipt.distance_meters)}m` : 'đang đối soát'}
-                        {lastReceipt?.gps_status === 'OUT_OF_BOUNDS' ? ' (⚠️ ngoài 300m — đã ghi nhận để đối soát)' : ''} • Đồng phục: Áo hồng + Bảng tên hợp lệ.
+                        {typeof lastReceipt?.distance_meters === 'number' ? `${Math.round(lastReceipt.distance_meters)}m` : (gpsEnabled ? 'đang đối soát' : 'không bắt buộc GPS')}
+                        {gpsEnabled && lastReceipt?.gps_status === 'OUT_OF_BOUNDS' ? ' (⚠️ ngoài 300m — đã ghi nhận để đối soát)' : ''} • Đồng phục: Áo hồng + Bảng tên hợp lệ.
                       </div>
                       <button
                         className="btn-secondary"
@@ -6355,6 +6428,7 @@ export function App() {
                     }
                     const usedAssign = new Set<string>();
                     const merged = mergeOrphanCheckins(dShifts, byAssign, usedAssign, stByAssign, shByAssign);
+                    const effectiveRadius = Number(branchInfo?.radius_meters) || 300;
                     const rows = dShifts.map((sh: any) => {
                       const list = [...(byAssign.get(String((sh as any)?.assignment_id)) || []), ...(merged.get(String((sh as any)?.assignment_id)) || [])];
                       const ci = list.find((e: any) => e.type === 'CHECK_IN');
@@ -6368,7 +6442,7 @@ export function App() {
                       const fine = ci ? fineTextOf(ci) : '';
                       if (fine && isLiveShift(sh)) { fineTotal += Number(ci?.fine_amount) || 0; }
                       const ciDist = Number(ci?.distance_meters);
-                      const gpsBad = !!ci && ((ci as any)?.gps_status === 'OUT_OF_BOUNDS' || (Number.isFinite(ciDist) && ciDist > 300));
+                      const gpsBad = gpsEnabled && !!ci && ((ci as any)?.gps_status === 'OUT_OF_BOUNDS' || (Number.isFinite(ciDist) && ciDist > effectiveRadius));
                       let badge: string, bg: string, fg: string, border: string;
                       // Ca nháp HR chưa duyệt: hiện Y NHƯ quản trị nhưng KHÔNG
                       // tính công/lương/phạt (server Finance cũng bỏ qua).
@@ -6409,7 +6483,7 @@ export function App() {
                         if (lateMin > 0) notes.push(`Trễ ${lateMin}p`);
                         if (earlyMin > 0) notes.push(`Về sớm ${earlyMin}p`);
                         if (fine) notes.push(fine);
-                        if (gpsBad) notes.push(`GPS vượt ${ciDist}m (quá 300m)`);
+                        if (gpsBad) notes.push(`GPS vượt ${ciDist}m (quá ${effectiveRadius}m)`);
                         if (ab && !ci) notes.push('Hệ thống tự ghi vắng');
                       }
                       // Tiền ca theo số liệu server (khớp Bảng Tổng Hợp Finance).
@@ -7075,8 +7149,8 @@ export function App() {
                         showToast(sid ? `✓ Đã gửi yêu cầu nhờ làm thay! Mã đơn: ${sid}. B đồng ý là ca chuyển ngay.` : '✓ Đã gửi yêu cầu nhờ làm thay! Mở danh sách phiếu để kiểm tra trạng thái.');
                         setSwapData({ myShift: '', targetEmployeeId: '', targetEmployeeName: '', targetShift: '', reason: '' });
                         setTargetShifts([]);
-                        await loadEmployeeData(employee?.employee_id);
-                        await fetchMySwaps();
+                        void loadEmployeeData(employee?.employee_id, true);
+                        void fetchMySwaps().catch(() => null);
                       } catch (err: any) {
                         showToast(err.message || 'Lỗi khi gửi yêu cầu!');
                       } finally {

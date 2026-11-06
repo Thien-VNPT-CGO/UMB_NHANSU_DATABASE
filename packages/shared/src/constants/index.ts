@@ -41,10 +41,17 @@ export interface BranchInfo {
   latitude: number;
   longitude: number;
   radius_meters: number;
+  /** Bật/tắt yêu cầu định vị GPS khi điểm danh tại chi nhánh. Mặc định bật. */
+  gps_enabled?: boolean;
   min_staff: number;
   max_staff: number;
   manager_name?: string;
   status: 'ACTIVE' | 'MAINTENANCE' | 'CLOSED';
+}
+
+/** Chi nhánh có bật định vị GPS không (mặc định BẬT nếu dữ liệu cũ chưa có cờ). */
+export function isBranchGpsEnabled(branch: any): boolean {
+  return branch?.gps_enabled !== false;
 }
 
 export const BRANCHES: BranchInfo[] = [
@@ -55,6 +62,7 @@ export const BRANCHES: BranchInfo[] = [
     latitude: 10.799831,
     longitude: 106.693370,
     radius_meters: 300,
+    gps_enabled: true,
     min_staff: 2,
     max_staff: 5,
     manager_name: 'Cửa Hàng Trưởng CN1',
@@ -67,6 +75,7 @@ export const BRANCHES: BranchInfo[] = [
     latitude: 10.778639,
     longitude: 106.666665,
     radius_meters: 300,
+    gps_enabled: true,
     min_staff: 2,
     max_staff: 5,
     manager_name: 'Cửa Hàng Trưởng CN2',
@@ -79,6 +88,7 @@ export const BRANCHES: BranchInfo[] = [
     latitude: 10.856457,
     longitude: 106.765621,
     radius_meters: 300,
+    gps_enabled: true,
     min_staff: 2,
     max_staff: 5,
     manager_name: 'Cửa Hàng Trưởng CN3',
@@ -91,6 +101,7 @@ export const BRANCHES: BranchInfo[] = [
     latitude: 10.759223,
     longitude: 106.706995,
     radius_meters: 300,
+    gps_enabled: true,
     min_staff: 2,
     max_staff: 5,
     manager_name: 'Cửa Hàng Trưởng CN4',
@@ -103,6 +114,7 @@ export const BRANCHES: BranchInfo[] = [
     latitude: 10.974420,
     longitude: 106.494900,
     radius_meters: 500,
+    gps_enabled: true,
     min_staff: 4,
     max_staff: 15,
     manager_name: 'Quản Đốc Xưởng',
@@ -112,9 +124,10 @@ export const BRANCHES: BranchInfo[] = [
     id: 'VAN_PHONG',
     name: 'Ụm Bò Milk - Văn Phòng Trụ Sở Chính',
     address: 'Trụ sở chính - Số 10 Đặng Thai Mai, Phường Phú Nhuận, TP. Hồ Chí Minh',
-    latitude: 10.799540,
-    longitude: 106.689620,
+    latitude: 10.80304,
+    longitude: 106.68962,
     radius_meters: 300,
+    gps_enabled: true,
     min_staff: 1,
     max_staff: 20,
     manager_name: 'Ban Giám Đốc',

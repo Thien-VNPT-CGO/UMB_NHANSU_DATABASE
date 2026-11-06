@@ -670,7 +670,7 @@ export function App() {
   const [branches, setBranches] = useState<any[]>([]);
   // Sửa toạ độ GPS cửa hàng ngay trên tab Chi nhánh (ADMIN) — bản đồ GPS dùng trực tiếp.
   const [branchEditId, setBranchEditId] = useState<string | null>(null);
-  const [branchEditForm, setBranchEditForm] = useState<{ latitude: string; longitude: string; radius_meters: string }>({ latitude: '', longitude: '', radius_meters: '300' });
+  const [branchEditForm, setBranchEditForm] = useState<{ latitude: string; longitude: string; radius_meters: string; gps_enabled: boolean }>({ latitude: '', longitude: '', radius_meters: '300', gps_enabled: true });
   const [branchEditBusy, setBranchEditBusy] = useState(false);
   const [shiftTemplates, setShiftTemplates] = useState<any>({});
   const [policies, setPolicies] = useState<any>({});
@@ -2161,30 +2161,45 @@ export function App() {
   };
 
   const handleSaveBranchCoords = async (branchId: string) => {
-    const lat = Number(branchEditForm.latitude.replace(',', '.'));
-    const lng = Number(branchEditForm.longitude.replace(',', '.'));
+    const latRaw = branchEditForm.latitude.trim();
+    const lngRaw = branchEditForm.longitude.trim();
+    const lat = Number(latRaw.replace(',', '.'));
+    const lng = Number(lngRaw.replace(',', '.'));
+    const hasLat = latRaw !== '' && Number.isFinite(lat);
+    const hasLng = lngRaw !== '' && Number.isFinite(lng);
     const radius = Number(branchEditForm.radius_meters) || 300;
-    if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
-      setErrorMsg('Vĩ độ (latitude) phải là số trong khoảng -90 → 90.');
-      return;
-    }
-    if (!Number.isFinite(lng) || lng < -180 || lng > 180) {
-      setErrorMsg('Kinh độ (longitude) phải là số trong khoảng -180 → 180.');
-      return;
-    }
-    if (!Number.isFinite(radius) || radius < 10 || radius > 5000) {
-      setErrorMsg('Bán kính hợp lệ phải từ 10 → 5000 mét.');
-      return;
+    // Khi tắt định vị, toạ độ không còn dùng để chặn điểm danh — vẫn cho lưu
+    // nếu Admin đã nhập, nhưng không bắt buộc phải hợp lệ.
+    if (branchEditForm.gps_enabled) {
+      if (!hasLat || lat < -90 || lat > 90) {
+        setErrorMsg('Vĩ độ (latitude) phải là số trong khoảng -90 → 90.');
+        return;
+      }
+      if (!hasLng || lng < -180 || lng > 180) {
+        setErrorMsg('Kinh độ (longitude) phải là số trong khoảng -180 → 180.');
+        return;
+      }
+      if (!Number.isFinite(radius) || radius < 10 || radius > 5000) {
+        setErrorMsg('Bán kính hợp lệ phải từ 10 → 5000 mét.');
+        return;
+      }
     }
     setBranchEditBusy(true);
     try {
+      const payload: any = { radius_meters: radius, gps_enabled: branchEditForm.gps_enabled };
+      if (hasLat && lat >= -90 && lat <= 90) payload.latitude = lat;
+      if (hasLng && lng >= -180 && lng <= 180) payload.longitude = lng;
       const updated: any = await apiRequest(`/admin/branches/${encodeURIComponent(branchId)}`, {
         method: 'PUT',
-        body: JSON.stringify({ latitude: lat, longitude: lng, radius_meters: radius }),
+        body: JSON.stringify(payload),
       });
-      setBranches(prev => prev.map((b: any) => ((b.id || b.branch_id) === branchId ? { ...b, ...(updated || {}), latitude: lat, longitude: lng, radius_meters: radius } : b)));
+      setBranches(prev => prev.map((b: any) => ((b.id || b.branch_id) === branchId
+        ? { ...b, ...(updated || {}), radius_meters: radius, gps_enabled: branchEditForm.gps_enabled }
+        : b)));
       setBranchEditId(null);
-      setSuccessMsg('Đã lưu toạ độ GPS cửa hàng — bản đồ giám sát cập nhật ngay.');
+      setSuccessMsg(branchEditForm.gps_enabled
+        ? 'Đã lưu toạ độ GPS cửa hàng — bản đồ giám sát cập nhật ngay.'
+        : 'Đã TẮT định vị GPS — nhân viên chi nhánh này điểm danh không cần GPS.');
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (err: any) {
       setErrorMsg(err?.message || 'Không lưu được toạ độ cửa hàng.');
@@ -4782,6 +4797,17 @@ export function App() {
                               onChange={e => setBranchEditForm({ ...branchEditForm, radius_meters: e.target.value })}
                               style={{ width: '100%', marginTop: '3px', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border)' }} />
                           </label>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '10px', fontSize: '11.5px', fontWeight: 700, cursor: 'pointer' }}>
+                            <input type="checkbox" checked={branchEditForm.gps_enabled}
+                              onChange={e => setBranchEditForm({ ...branchEditForm, gps_enabled: e.target.checked })}
+                              style={{ width: 16, height: 16 }} />
+                            Bật định vị GPS (bắt buộc GPS khi điểm danh)
+                          </label>
+                          {!branchEditForm.gps_enabled && (
+                            <div style={{ marginTop: '6px', fontSize: '10.5px', color: 'var(--warning, #B45309)', fontWeight: 600 }}>
+                              Khi tắt: nhân viên chi nhánh này điểm danh không cần GPS và không bị chặn bán kính.
+                            </div>
+                          )}
                           <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
                             <button type="button" className="btn-primary" disabled={branchEditBusy}
                               onClick={() => handleSaveBranchCoords(b.id)}
@@ -4799,6 +4825,11 @@ export function App() {
                         <>
                           <div style={{ marginTop: '6px' }}>🌐 GPS: {Number(b.latitude).toFixed(6)}, {Number(b.longitude).toFixed(6)}</div>
                           <div style={{ marginTop: '4px' }}>🎯 Bán kính cho phép: <strong>{b.radius_meters}m</strong></div>
+                          <div style={{ marginTop: '4px' }}>
+                            {b.gps_enabled === false
+                              ? <span style={{ color: 'var(--warning, #B45309)', fontWeight: 700 }}>📵 Định vị GPS: ĐÃ TẮT (không bắt buộc)</span>
+                              : <span style={{ color: 'var(--success)', fontWeight: 700 }}>📡 Định vị GPS: ĐANG BẬT</span>}
+                          </div>
                           <div style={{ marginTop: '4px' }}>👥 Định biên ca: <strong>{b.min_staff} - {b.max_staff} NV</strong></div>
                           {currentUser?.role === 'ADMIN' && (
                             <button type="button" className="btn-secondary"
@@ -4808,6 +4839,7 @@ export function App() {
                                   latitude: String(b.latitude ?? ''),
                                   longitude: String(b.longitude ?? ''),
                                   radius_meters: String(b.radius_meters ?? 300),
+                                  gps_enabled: b.gps_enabled !== false,
                                 });
                               }}
                               style={{ marginTop: '10px', fontSize: '11.5px', padding: '5px 10px', fontWeight: 700 }}>

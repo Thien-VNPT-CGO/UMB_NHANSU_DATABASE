@@ -7,6 +7,7 @@ import {
   ERROR_CODES,
   GPSStatus,
   SHIFT_TEMPLATES,
+  isBranchGpsEnabled,
 } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { singleWriterQueue } from '../repositories/single-writer-queue.js';
@@ -144,26 +145,47 @@ export class AttendanceService {
         }
 
         // 3. Validate GPS
-        // Ràng buộc: GPS không đúng (quá bán kính 300m HOẶC sóng quá yếu >150m)
-        // -> TỪ CHỐI ghi nhận, ca quay về chưa điểm danh để NV làm lại.
-        const branch = BRANCHES.find(b => b.id === shift.branch_id);
+        // Ràng buộc: phải có GPS thật và ở trong phạm vi chi nhánh. Sai số GPS
+        // trong nhà thường 100–300m nên KHÔNG chặn tuyệt đối theo sai số (trước
+        // đây >150m là từ chối, khiến NV trong cửa hàng/xưởng không điểm danh
+        // được). Thay vào đó: cho phép dung sai tối đa 150m khi toạ độ báo ra
+        // vẫn nằm trong bán kính; ngoài bán kính nhưng trừ dung sai vẫn còn khả
+        // năng trong vùng thì ghi nhận kèm cờ LOW_ACCURACY để HR đối soát.
+        // Đọc từ cấu hình chi nhánh hiện tại (Admin có thể sửa toạ độ / tắt GPS);
+        // fallback về hằng số seed khi Sheet chưa kịp tải.
+        const branchRows = await this.repo.getBranches().catch(() => [] as any[]);
+        const branch: any = (branchRows || []).find(
+          (b: any) => String(b?.id || b?.branch_id) === String(shift.branch_id)
+        ) || BRANCHES.find(b => b.id === shift.branch_id);
+        const gpsEnabled = isBranchGpsEnabled(branch);
         let distanceMeters = 0;
-        let gpsStatus: GPSStatus = 'UNAVAILABLE';
+        let gpsStatus: GPSStatus = gpsEnabled ? 'UNAVAILABLE' : 'VALID';
 
         if (data.gps && branch) {
-          if (data.gps.accuracy > 150) {
-            throw new Error(`GPS_LOW_ACCURACY:${data.gps.accuracy}`);
-          }
+          const accuracy = Number(data.gps.accuracy);
           distanceMeters = calculateDistanceMeters(
             data.gps.latitude,
             data.gps.longitude,
             branch.latitude,
             branch.longitude
           );
-          if (distanceMeters <= branch.radius_meters) {
+          if (!gpsEnabled) {
+            // Chi nhánh đã TẮT định vị: vẫn lưu toạ độ thô nếu thiết bị gửi kèm
+            // nhưng KHÔNG chặn theo bán kính và không đánh dấu vượt phạm vi.
             gpsStatus = 'VALID';
           } else {
-            throw new Error(`GPS_OUT_OF_BOUNDS:${distanceMeters}:${branch.radius_meters}`);
+            if (Number.isFinite(accuracy) && accuracy > 1000) {
+              throw new Error(`GPS_LOW_ACCURACY:${Math.round(accuracy)}`);
+            }
+            // Dung sai theo sai số thiết bị, tối đa 150m (không nới quá xa).
+            const tolerance = Number.isFinite(accuracy) ? Math.min(Math.max(accuracy, 0), 150) : 0;
+            if (distanceMeters <= branch.radius_meters) {
+              gpsStatus = 'VALID';
+            } else if (distanceMeters <= branch.radius_meters + tolerance) {
+              gpsStatus = 'LOW_ACCURACY';
+            } else {
+              throw new Error(`GPS_OUT_OF_BOUNDS:${distanceMeters}:${branch.radius_meters}`);
+            }
           }
         }
 

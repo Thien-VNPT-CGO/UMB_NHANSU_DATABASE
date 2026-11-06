@@ -1,4 +1,4 @@
-import { AttendanceEvent, BranchInfo, EmployeeMaster, ShiftAssignment } from '@ubm/shared';
+import { AttendanceEvent, BranchInfo, EmployeeMaster, ShiftAssignment, isBranchGpsEnabled } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { LiveLocationStore } from './live-location.store.js';
 
@@ -62,6 +62,8 @@ export interface LiveMapEmployee {
   distance_meters?: number;
   /** Bán kính hợp lệ của cửa hàng (m) — dùng để xét NV có đang ở cửa hàng không. */
   radius_meters: number;
+  /** Chi nhánh có bật yêu cầu định vị GPS không (Admin cấu hình). */
+  gps_enabled: boolean;
   /** Có GPS thật và đang nằm trong bán kính cửa hàng (đang làm việc tại cửa hàng). */
   at_branch: boolean;
   /** Đang trong khung giờ chia sẻ GPS (trước vào ca 30p → sau tan ca 30p). */
@@ -309,6 +311,7 @@ export class LiveMapService {
       const branchLat = Number((branch as any).latitude);
       const branchLng = Number((branch as any).longitude);
       const radiusMeters = Number((branch as any).radius_meters) || 300;
+      const branchGpsEnabled = isBranchGpsEnabled(branch as any);
       const shownLat = live ? live.latitude : (gps?.latitude ?? branchLat);
       const shownLng = live ? live.longitude : (gps?.longitude ?? branchLng);
       const gpsSource: LiveMapEmployee['gps_source'] = live
@@ -323,7 +326,7 @@ export class LiveMapService {
           : 0);
       // Chỉ kết luận "đang ở cửa hàng" khi có GPS thật (live/chấm công) nằm
       // trong bán kính. Không có GPS thật (rơi về toạ độ cửa hàng) ⇒ false.
-      const atBranch = gpsSource !== 'BRANCH' && distance <= radiusMeters;
+      const atBranch = !branchGpsEnabled || (gpsSource !== 'BRANCH' && distance <= radiusMeters);
 
       // Khung chia sẻ GPS đang bật + tình trạng tín hiệu (A2).
       const liveOnline = !!live;
@@ -333,7 +336,7 @@ export class LiveMapService {
           !!w && nowMs >= w.start && nowMs <= w.end);
       const sharingNow = activeWindows.length > 0;
       const earliestStart = activeWindows.length ? Math.min(...activeWindows.map(w => w.start)) : 0;
-      const gpsStale = sharingNow && !liveOnline
+      const gpsStale = branchGpsEnabled && sharingNow && !liveOnline
         && earliestStart > 0 && nowMs > earliestStart + LIVE_STALE_GRACE_MINUTES * 60_000;
 
       out.push({
@@ -354,6 +357,7 @@ export class LiveMapService {
         gps_accuracy: live?.accuracy ?? gps?.accuracy,
         distance_meters: distance,
         radius_meters: radiusMeters,
+        gps_enabled: branchGpsEnabled,
         at_branch: atBranch,
         sharing_now: sharingNow,
         live_online: liveOnline,
@@ -469,8 +473,8 @@ export class LiveMapService {
     for (const e of snap.employees) {
       present.add(e.employee_id);
 
-      // Geofence chỉ xét khi có GPS thật (live/chấm công).
-      if (e.gps_source !== 'BRANCH') {
+      // Geofence chỉ xét khi có GPS thật (live/chấm công) và chi nhánh BẬT định vị.
+      if (e.gps_enabled && e.gps_source !== 'BRANCH') {
         const radius = Number(e.radius_meters) || 300;
         const outside = Number(e.distance_meters || 0) > radius + GEOFENCE_MARGIN_METERS;
         const inside = !outside;
@@ -488,10 +492,10 @@ export class LiveMapService {
       }
 
       const prevStale = this.staleFlag.get(e.employee_id) === true;
-      if (e.gps_stale && !prevStale) {
+      if (e.gps_enabled && e.gps_stale && !prevStale) {
         emit('GPS_STALE', 'WARNING', e,
           `${e.full_name} (${e.employee_code}) đang trong ca nhưng MẤT TÍN HIỆU GPS (không gửi vị trí).`);
-      } else if (!e.gps_stale && prevStale) {
+      } else if (e.gps_enabled && !e.gps_stale && prevStale) {
         emit('GPS_RESTORED', 'INFO', e,
           `${e.full_name} (${e.employee_code}) đã có tín hiệu GPS trở lại.`);
       }
