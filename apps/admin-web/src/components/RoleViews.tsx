@@ -517,6 +517,8 @@ interface RoleViewsProps {
    *  đọc Sheet cũ (push nền ~10s) và gây cảm giác mất dữ liệu realtime. */
   onPushSheets?: () => Promise<void> | void;
   onRefreshData?: () => Promise<void> | void;
+  /** Điều hướng tab của cổng admin (dùng cho nút quay về bước đang xử lý ở Cổng Kế toán). */
+  onNavigateTab?: (id: string) => void;
 }
 
 /** Lưới an toàn cho từng tab nặng (Lịch/Chấm công): lỗi render thì hiện nút thử
@@ -1343,6 +1345,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   onSyncSheets,
   onPushSheets,
   onRefreshData,
+  onNavigateTab,
 }) => {
   const branchScope = currentUser?.branchScope || '*';
   const branchName = branchScope === '*' ? 'Toàn Hệ Thống' : getDisplayBranch(branchScope);
@@ -13620,6 +13623,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         onRefreshData={onRefreshData}
         onSyncSheets={onSyncSheets}
         onPushSheets={onPushSheets}
+        onNavigateTab={onNavigateTab}
       />
     );
   }

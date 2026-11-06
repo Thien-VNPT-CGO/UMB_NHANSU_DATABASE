@@ -1120,6 +1120,29 @@ export function App() {
     await handleLogin(undefined, username, password);
   };
 
+  // Gộp bão realtime từ Google Sheets (mỗi check-in 15s/lần đổi hash):
+  // map tab Sheets vừa đổi → đúng nhóm entity cần tải lại, tránh loadAllData 12+ API
+  // gây re-render toàn app + mất focus ô kế toán đang gõ.
+  const entitiesForSheetTabs = (tabs?: string[]): string[] => {
+    const t = (tabs || []).map(x => String(x).toUpperCase());
+    const out = new Set<string>();
+    const has = (re: RegExp) => t.some(x => re.test(x));
+    if (has(/CAU_HINH|MAINTENANCE|THEME|BAO_TRI/)) out.add('config');
+    if (has(/NHAN_VIEN|HO_SO|EMPLOYEE|STAFF|PROBATION|OFFICIAL/)) out.add('employees');
+    if (has(/PHAN_CONG_CA|SHIFT|SCHEDULE|LICH_LAM|XEP_CA/)) out.add('schedules');
+    if (has(/DIEM_DANH|CHAM_CONG|ATTENDANCE|CHECK/)) out.add('attendance');
+    if (has(/NGHI_PHEP|LEAVE|OFF/)) out.add('leaves');
+    if (has(/DOI_CA|SWAP/)) out.add('swaps');
+    if (has(/PAYROLL|LUONG|KY_LUONG|PHIEU_LUONG|DULIEU_LUONG|BCC|PAYMENT/)) out.add('payroll');
+    if (has(/TAI_KHOAN|ACCOUNT|INTERNAL/)) out.add('accounts');
+    if (has(/THONG_BAO|NOTIF/)) out.add('notifications');
+    if (has(/UNG_VIEN|CANDIDATE|TUYEN|PHONG_VAN/)) out.add('candidates');
+    if (has(/TEST/)) out.add('tests');
+    // Tab lạ → chỉ đồng bộ nhân sự + thống kê (nhẹ) thay vì toàn bộ app
+    if (out.size === 0) { out.add('employees'); }
+    return [...out];
+  };
+
   // Cờ đánh dấu đã tải các dữ liệu cấu hình ít thay đổi (tránh bắn lại 17 API mỗi khi có realtime event)
   const staticDataLoadedRef = useRef(false);
 
@@ -1219,8 +1242,18 @@ export function App() {
 
   // Tải lại ĐÚNG nhóm dữ liệu vừa đổi (thay vì gọi cả loadAllData 10 API):
   // giữ realtime nhanh như socket, không giật toàn bộ dashboard mỗi sự kiện.
-  const reloadEntity = async (entity?: string, user = currentUser) => {
+  // entity='all' → map tab Sheets vừa đổi sang ĐÚNG nhóm entity, KHÔNG full-reload.
+  const reloadEntity = async (entity?: string, user = currentUser, changedTabs?: string[]) => {
     if (!user) return;
+    if (entity === 'all') {
+      const ents = entitiesForSheetTabs(changedTabs);
+      for (const e of ents) {
+        // 'config' cần cấu hình tĩnh → reload đầy đủ (hiếm khi đổi)
+        if (e === 'config') { await loadAllData(user, true); return; }
+        await reloadEntity(e, user);
+      }
+      return;
+    }
     const tasks: Promise<any>[] = [];
     const add = (p: Promise<any>) => { tasks.push(p.catch(() => null)); };
     const wantEmployees = ['DIRECTOR', 'ADMIN', 'HR', 'STORE', 'FINANCE'].includes(user.role);
@@ -1273,9 +1306,12 @@ export function App() {
         await loadAllData(user, true);
         return;
       default:
-        // entity 'all'/không rõ (Sheets đổi tay): tải đầy đủ để chắc chắn đồng bộ.
-        await loadAllData(user);
-        return;
+        // Entity không rõ: chỉ đồng bộ nhẹ (dashboard + nhân sự) — KHÔNG full-reload app.
+        if (['DIRECTOR', 'ADMIN', 'HR', 'STORE', 'FINANCE'].includes(user.role)) {
+          add(apiRequest('/employees').then(emps => setAllEmployees(Array.isArray(emps) ? emps : [])).catch(() => null));
+        }
+        add(apiRequest('/admin/dashboard/stats').then(stats => { if (stats) setDashboardStats(stats); }).catch(() => null));
+        break;
     }
     await Promise.allSettled(tasks);
   };
@@ -1446,10 +1482,10 @@ export function App() {
   const reloadTimerRef = useRef<any>(null);
   const reloadingRef = useRef(false);
   const needReloadAgainRef = useRef(false);
-  const lastReloadEntityRef = useRef<string>('all');
+  const lastReloadRef = useRef<{ entity?: string; changedTabs?: string[] }>({ entity: 'all' });
 
-  const scheduleReload = (user = currentUser, entity?: string) => {
-    lastReloadEntityRef.current = entity || 'all';
+  const scheduleReload = (user = currentUser, entity?: string, changedTabs?: string[]) => {
+    lastReloadRef.current = { entity: entity || 'all', changedTabs };
     if (reloadingRef.current) {
       needReloadAgainRef.current = true;
       return;
@@ -1457,19 +1493,24 @@ export function App() {
     if (reloadTimerRef.current) {
       clearTimeout(reloadTimerRef.current);
     }
+    // 'all' (Sheets đổi/webhook): gom dồn 1.2s cho ổn định rồi mới tải nhóm entity,
+    // tránh giật lag khi nhiều tab Sheets đổi liên tiếp. Entity đơn: 150ms.
+    const delay = entity === 'all' ? 1200 : 150;
     reloadTimerRef.current = setTimeout(async () => {
       reloadTimerRef.current = null;
       reloadingRef.current = true;
+      const pending = lastReloadRef.current;
       try {
-        await reloadEntity(lastReloadEntityRef.current, user);
+        await reloadEntity(pending.entity, user, pending.changedTabs);
       } finally {
         reloadingRef.current = false;
         if (needReloadAgainRef.current) {
           needReloadAgainRef.current = false;
-          scheduleReload(user, lastReloadEntityRef.current);
+          const p = lastReloadRef.current;
+          scheduleReload(user, p.entity, p.changedTabs);
         }
       }
-    }, 150);
+    }, delay);
   };
 
   // MỞ TAB CON HR: tải ngay dữ liệu mới nhất của đúng nghiệp vụ đó (không chờ
@@ -1517,7 +1558,9 @@ export function App() {
         onConnect: () => {
           console.log('🟢 [Socket.IO] Realtime kết nối thành công tới:', base);
           socketConnectedRef.current = true;
-          scheduleReload(currentUser);
+          // Chỉ đồng bộ nhẹ khi kết nối lại (KHÔNG full-reload app);
+          // mọi thay đổi phát sinh lúc mất kết nối sẽ tự đẩy qua data:updated.
+          scheduleReload(currentUser, 'employees');
         },
         onDisconnect: () => {
           socketConnectedRef.current = false;
@@ -1763,7 +1806,7 @@ export function App() {
           // Bỏ qua loadAllData (10 API) khi sự kiện chỉ là điểm danh hoặc xếp ca
           // vì cả 2 đã được cập nhật trực tiếp tức thì phía trên
           if (!['attendance', 'schedules'].includes(payload?.entity)) {
-            scheduleReload(currentUser, payload?.entity);
+            scheduleReload(currentUser, payload?.entity, Array.isArray(payload?.data?.changedTabs) ? payload.data.changedTabs : undefined);
           }
         }
       });
@@ -5906,6 +5949,7 @@ export function App() {
             onSyncSheets={handleForcePull}
             onPushSheets={handleForceSync}
             onRefreshData={() => loadAllData(currentUser)}
+            onNavigateTab={(id: string) => setActiveTab(id)}
           />
           </RoleViewsErrorBoundary>
 

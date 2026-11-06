@@ -7,9 +7,10 @@
  *
  * - ensureAccountingMonthTree: tự tạo folder tháng + folder từng chức năng + folder PHIEU_LUONG tháng.
  * - syncSlipToDrive: xuất 1 phiếu PDF (đủ 3 chữ ký) → đúng cây PHIEU_LUONG/…; ghi kết quả lên slip.
- * - syncMonthToDrive: tạo cây thư mục + xuất Bảng lương tháng (.xlsx) + KY_LUONG (.csv)
- *   + THANH_TOAN (.csv) + đồng bộ PDF cho mọi phiếu PAID chưa/không thành công.
- * - Lưu trạng thái đồng bộ vào system settings `payslipDriveSync:<period>`.
+ * - syncMonthToDrive: tạo cây thư mục + xuất Excel (.xlsx) cho TOÀN BỘ 7 chức năng
+ *   (01_DOI_SOAT_CONG, 02_BCC, 03_TINH_LUONG, 04_BANG_LUONG_THANG, 05_KY_LUONG,
+ *   06_THANH_TOAN, 07_CAU_HINH_LUONG) + đồng bộ PDF cho mọi phiếu PAID.
+ * - Lưu trạng thái đồng bộ vào system settings `payslipDriveSync:<period>` (kèm exportErrors nếu có).
  */
 import ExcelJS from 'exceljs';
 import {
@@ -25,6 +26,15 @@ import {
 import { getPayslipDriveRootId } from '../config/drive-folders.js';
 import { getDriveStorage } from './drive-storage.service.js';
 import { buildPayslipPdf } from './payslip-pdf.service.js';
+import {
+  buildBccXlsx,
+  buildCauHinhLuongXlsx,
+  buildDoiSoatCongXlsx,
+  buildKyLuongXlsx,
+  buildThanhToanXlsx,
+  buildTinhLuongXlsx,
+  payrollExportFileNames,
+} from './payroll-exports.service.js';
 
 const BRANCH_LABEL: Record<string, string> = {
   CN130: 'CN1 — 130 Vạn Kiếp',
@@ -46,14 +56,6 @@ const blockLabelOf = (group?: string | null, branchId?: string | null): string =
 };
 const branchLabelOf = (id?: string | null) => BRANCH_LABEL[String(id || '').trim()] || String(id || '—');
 
-const csvCell = (v: unknown) => {
-  const s = String(v ?? '');
-  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-};
-const csvRow = (cells: unknown[]) => cells.map(csvCell).join(',');
-const csvDoc = (header: string[], rows: unknown[][]) =>
-  '﻿' + [csvRow(header), ...rows.map(csvRow)].join('\r\n') + '\r\n';
-
 export interface DriveMonthSyncResult {
   ok: boolean;
   period: string;
@@ -62,16 +64,31 @@ export interface DriveMonthSyncResult {
   folders: string[];
   files: {
     bangLuongXlsx?: string;
-    kyLuongCsv?: string;
-    thanhToanCsv?: string;
+    doiSoatCongXlsx?: string;
+    bccXlsx?: string;
+    tinhLuongXlsx?: string;
+    kyLuongXlsx?: string;
+    thanhToanXlsx?: string;
+    cauHinhLuongXlsx?: string;
   };
   slips: { total: number; paid: number; pdfSynced: number; pdfFailed: number };
   error?: string;
+  exportErrors?: string[];
   at: string;
 }
 
 export class PayslipDriveService {
   constructor(private readonly repo: any) {}
+
+  /**
+   * Provider trả về Bảng chấm công Finance (PayrollService, đã có cache).
+   * app.ts gắn sau khi khởi tạo payrollService — provider này invalidate
+   * cache trước khi đọc để Drive luôn nhận dữ liệu TƯƠI.
+   */
+  private timesheetProvider?: (period: string) => Promise<any>;
+  setTimesheetProvider(fn: (period: string) => Promise<any>) {
+    this.timesheetProvider = fn;
+  }
 
   /** Tự tạo cây thư mục tháng (idempotent — folder đã có thì tái sử dụng). */
   async ensureAccountingMonthTree(period: string) {
@@ -280,31 +297,68 @@ export class PayslipDriveService {
       const _p = parsePeriod(period);
       const mm = _p ? String(_p.month).padStart(2, '0') : '??';
       const yyyy = _p ? String(_p.year) : '????';
-
-      // 1) Bảng lương tháng (.xlsx) → 04_BANG_LUONG_THANG
-      if (slips.length > 0) {
-        const xlsx = await this.buildPayrollWorkbook(period, slips, empMap);
-        const up = await drive.uploadBuffer(`BANG_LUONG_THANG_${mm}_${yyyy}.xlsx`,
-          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          xlsx, [month, '04_BANG_LUONG_THANG'], rootId, { upsert: true });
-        result.files.bangLuongXlsx = up.viewUrl;
+      const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      const exportErrors: string[] = [];
+      const uploadXlsx = async (buf: Buffer, fileName: string, segments: string[]) => {
+        const up = await drive.uploadBuffer(fileName, XLSX_MIME, buf, segments, rootId, { upsert: true });
+        return up.viewUrl;
+      };
+      // Dữ liệu dùng chung cho các export Excel
+      const employeesAll: any[] = await this.repo.listEmployees({ branch: '*' }).catch(() => []);
+      let timesheet: any = null;
+      if (this.timesheetProvider) {
+        try { timesheet = await this.timesheetProvider(period); } catch (e: any) { exportErrors.push(`Bảng công: ${String(e?.message || e).slice(0, 200)}`); }
       }
-      // 2) KY_LUONG (.csv) → 05_KY_LUONG
-      const kyCsv = csvDoc(
-        ['RUN_ID', 'KY', 'TRANG_THAI', 'SO_NV', 'TONG_GIO', 'TONG_TIEN', 'NGUOI_TAO', 'TAO_LUC', 'DUYET_LUC', 'PHAT_HANH_LUC', 'DA_TRA_LUC'],
-        (runs || []).map(r => [r?.run_id, r?.period, r?.status, r?.total_employees, r?.total_hours, r?.total_amount, r?.created_by, r?.created_at, r?.approved_at || '', r?.published_at || '', r?.paid_at || '']),
-      );
-      const kyUp = await drive.uploadBuffer(`KY_LUONG_${mm}_${yyyy}.csv`, 'text/csv', Buffer.from(kyCsv, 'utf8'), [month, '05_KY_LUONG'], rootId, { upsert: true });
-      result.files.kyLuongCsv = kyUp.viewUrl;
-      // 3) THANH_TOAN (.csv) → 06_THANH_TOAN
+      const formula = await this.repo.getPayrollFormula(period).catch(() => null);
+      const inputs = await this.repo.getPayrollInputs(period).catch(() => [] as any[]);
+      const salaryCfgSettings = (await this.repo.getSystemSettings().catch(() => ({}))) || {};
+      const salaryConfigMap = (salaryCfgSettings?.employee_salary_config && typeof salaryCfgSettings.employee_salary_config === 'object')
+        ? salaryCfgSettings.employee_salary_config : {};
+
+      // 1) BẢNG LƯƠNG THÁNG (.xlsx) → 04_BANG_LUONG_THANG
+      if (slips.length > 0) {
+        try {
+          const xlsx = await this.buildPayrollWorkbook(period, slips, empMap);
+          result.files.bangLuongXlsx = await uploadXlsx(xlsx, `BANG_LUONG_THANG_${mm}_${yyyy}.xlsx`, [month, '04_BANG_LUONG_THANG']);
+        } catch (e: any) { exportErrors.push(`Bảng lương: ${String(e?.message || e).slice(0, 200)}`); }
+      }
+      // 2) ĐỐI SOÁT CÔNG (.xlsx) → 01_DOI_SOAT_CONG
+      if (timesheet) {
+        try {
+          const buf = await buildDoiSoatCongXlsx(period, timesheet);
+          result.files.doiSoatCongXlsx = await uploadXlsx(buf, payrollExportFileNames.doiSoatCong(period), [month, '01_DOI_SOAT_CONG']);
+        } catch (e: any) { exportErrors.push(`Đối soát công: ${String(e?.message || e).slice(0, 200)}`); }
+        // 3) BCC THEO NGÀY (.xlsx, 1 sheet/chi nhánh) → 02_BCC
+        try {
+          const buf = await buildBccXlsx(period, timesheet);
+          result.files.bccXlsx = await uploadXlsx(buf, payrollExportFileNames.bcc(period), [month, '02_BCC']);
+        } catch (e: any) { exportErrors.push(`BCC: ${String(e?.message || e).slice(0, 200)}`); }
+      } else {
+        exportErrors.push('Đối soát công/BCC: không lấy được dữ liệu bảng chấm công');
+      }
+      // 4) TÍNH LƯƠNG — công thức + nhập tay (.xlsx) → 03_TINH_LUONG
+      try {
+        const buf = await buildTinhLuongXlsx(period, formula, inputs, employeesAll);
+        result.files.tinhLuongXlsx = await uploadXlsx(buf, payrollExportFileNames.tinhLuong(period), [month, '03_TINH_LUONG']);
+      } catch (e: any) { exportErrors.push(`Tính lương: ${String(e?.message || e).slice(0, 200)}`); }
+      // 5) KỲ LƯƠNG (.xlsx) → 05_KY_LUONG
+      try {
+        const buf = await buildKyLuongXlsx(period, runs || []);
+        result.files.kyLuongXlsx = await uploadXlsx(buf, payrollExportFileNames.kyLuong(period), [month, '05_KY_LUONG']);
+      } catch (e: any) { exportErrors.push(`Kỳ lương: ${String(e?.message || e).slice(0, 200)}`); }
+      // 6) THANH TOÁN — phiếu đã chuyển khoản (.xlsx) → 06_THANH_TOAN
+      try {
+        const buf = await buildThanhToanXlsx(period, slips, empMap);
+        result.files.thanhToanXlsx = await uploadXlsx(buf, payrollExportFileNames.thanhToan(period), [month, '06_THANH_TOAN']);
+      } catch (e: any) { exportErrors.push(`Thanh toán: ${String(e?.message || e).slice(0, 200)}`); }
+      // 7) CẤU HÌNH LƯƠNG CB & PHỤ CẤP (.xlsx) → 07_CAU_HINH_LUONG
+      try {
+        const buf = await buildCauHinhLuongXlsx(period, employeesAll, salaryConfigMap);
+        result.files.cauHinhLuongXlsx = await uploadXlsx(buf, payrollExportFileNames.cauHinhLuong(period), [month, '07_CAU_HINH_LUONG']);
+      } catch (e: any) { exportErrors.push(`Cấu hình lương: ${String(e?.message || e).slice(0, 200)}`); }
+      if (exportErrors.length) result.exportErrors = exportErrors;
+      // 8) PDF phiếu lương (PAID) → PHIEU_LUONG/THANG_MM/CN/TÊN NV
       const paidSlips = slips.filter(s => String(s?.status).toUpperCase() === 'PAID');
-      const ttCsv = csvDoc(
-        ['MA_NV', 'HO_TEN', 'CHI_NHANH', 'NGAN_HANG', 'SO_TK', 'CHU_TK', 'THUC_LANH', 'DA_CHUYEN_LUC', 'NGUOI_XAC_NHAN'],
-        paidSlips.map(s => [s?.employee_code, s?.full_name, branchLabelOf(empMap.get(String(s?.employee_id))?.default_branch_id), s?.bank_name, s?.bank_account, s?.bank_holder, s?.thuc_lanh ?? s?.net_pay, s?.slip_paid_at || '', s?.slip_paid_by || '']),
-      );
-      const ttUp = await drive.uploadBuffer(`THANH_TOAN_${mm}_${yyyy}.csv`, 'text/csv', Buffer.from(ttCsv, 'utf8'), [month, '06_THANH_TOAN'], rootId, { upsert: true });
-      result.files.thanhToanCsv = ttUp.viewUrl;
-      // 4) PDF phiếu lương (PAID) → PHIEU_LUONG/THANG_MM/CN/TÊN NV
       for (const s of paidSlips) {
         const r = await this.syncSlipToDrive(String(s.item_id));
         if (r.ok) result.slips.pdfSynced += 1; else result.slips.pdfFailed += 1;
@@ -317,7 +371,7 @@ export class PayslipDriveService {
       const settings = (await this.repo.getSystemSettings().catch(() => ({}))) || {};
       await this.repo.updateSystemSettings({
         ...settings,
-        [`payslipDriveSync:${period}`]: { at, by: actorId || '', ok: result.ok, rootId, monthFolder: month, files: result.files, slips: result.slips, error: result.error || '' },
+        [`payslipDriveSync:${period}`]: { at, by: actorId || '', ok: result.ok, rootId, monthFolder: month, files: result.files, slips: result.slips, error: result.error || '', exportErrors: result.exportErrors || [] },
         payslipDriveSyncLast: { period, at, ok: result.ok },
       });
     } catch { /* best-effort */ }

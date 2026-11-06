@@ -466,6 +466,12 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   payrollService.setNotificationsService(notificationsService);
   const payslipDriveService = new PayslipDriveService(adapter);
   payrollService.setPayslipDriveService(payslipDriveService);
+  // Drive sync cần Bảng chấm công TƯƠI — invalidate cache 45s của PayrollService
+  // rồi đọc lại (chỉ khi kế toán bấm "Đồng bộ tháng lên Drive").
+  payslipDriveService.setTimesheetProvider(async (period: string) => {
+    payrollService.invalidateFinanceTimesheetCache(period);
+    return payrollService.getFinanceTimesheet(period, '*');
+  });
   const zaloService = new ZaloService(adapter);
   // Khôi phục phiên Zalo cá nhân HR sau restart (không cần quét QR lại).
   // Chạy lần đầu sau khi pull Sheets xong + tick nền 5 phút giữ phiên tới khi HR đăng xuất.
@@ -6598,7 +6604,6 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // Kế toán xác nhận hoàn thành chi trả (PAID) sau khi quét QR chuyển khoản
-  // Kế toán xác nhận hoàn thành chi trả (PAID) sau khi quét QR chuyển khoản
   app.post('/payroll/slips/:id/mark-paid', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
     try {
       const updated = await payrollService.markSlipPaid(req.params.id, req.user!.id);
@@ -6606,6 +6611,38 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       res.json(withStage(updated));
     } catch (err: any) {
       res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Tải PDF phiếu lương (đủ chữ ký đã có tại thời điểm in) — dùng để in/archieve.
+  // Phiếu PAID in ra bản chính thức (3 chữ ký); phiếu chưa xong in kèm trạng thái.
+  app.get('/payroll/slips/:id/pdf', authMiddleware, requireRole(['DIRECTOR', 'ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const slip = await (adapter as any).getPayslipById?.(req.params.id);
+      if (!slip) return res.status(404).json({ error: 'PAYSLIP_NOT_FOUND' });
+      let branchLabel = '—';
+      let blockLabel = '—';
+      try {
+        const emp = await (adapter as any).getEmployeeById?.(String(slip.employee_id));
+        const bid = String(emp?.default_branch_id || slip.branch_id || '');
+        const BRANCH_LABEL_VI: Record<string, string> = {
+          CN130: 'CN1 — 130 Vạn Kiếp', CN261: 'CN2 — 261 Tô Hiến Thành',
+          CN120: 'CN3 — 120 Hoàng Diệu 2', CN111: 'CN4 — 111 Tôn Đản',
+          XUONG_SX: 'Xưởng Sản Xuất (Củ Chi)', VAN_PHONG: 'Văn Phòng Trụ Sở',
+        };
+        branchLabel = BRANCH_LABEL_VI[bid] || bid || '—';
+        const g = String(emp?.group || '').toUpperCase();
+        blockLabel = g === 'VAN_PHONG' ? 'Văn Phòng' : g === 'XUONG' ? 'Xưởng SX' : (g === 'SALE' || g === 'MKT') ? 'Sales / MKT' : 'Cửa Hàng';
+      } catch { /* thiếu hồ sơ → vẫn in được */ }
+      const { buildPayslipPdf } = await import('./services/payslip-pdf.service.js');
+      const pdf = await buildPayslipPdf({ slip, branchLabel, blockLabel });
+      const fname = `PHIEU_LUONG_${String(slip.period || '').replace('-', '')}_${String(slip.employee_code || slip.item_id)}.pdf`;
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="${fname}"`);
+      res.setHeader('Cache-Control', 'no-store');
+      res.send(pdf);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Không tạo được PDF phiếu lương' });
     }
   });
 

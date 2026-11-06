@@ -496,6 +496,24 @@ export class PayrollService {
   private wfAttCache = new Map<string, { at: number; shifts: number }>();
 
   /**
+   * Cache kết quả Bảng chấm công Finance (rất nặng: duyệt toàn bộ NV × ca ×
+   * sự kiện điểm danh — không cache thì mỗi lần web realtime refresh là server
+   * tính lại hàng nghìn truy vấn, làm cả 2 cổng web ì). TTL 45s là đủ "tươi"
+   * cho kế toán (thay đổi điểm danh sẽ thấy chậm nhất 45s hoặc bấm Tải lại).
+   */
+  private finSheetCache = new Map<string, { at: number; data: any }>();
+  private finSheetInflight = new Map<string, Promise<any>>();
+  private static readonly FIN_SHEET_TTL_MS = 45_000;
+  /** Xóa cache bảng công (gọi sau khi ghi dữ liệu lương để lần đọc sau tính mới). */
+  invalidateFinanceTimesheetCache(period?: string) {
+    if (period) {
+      for (const k of this.finSheetCache.keys()) if (k.startsWith(`${period}|`)) this.finSheetCache.delete(k);
+    } else {
+      this.finSheetCache.clear();
+    }
+  }
+
+  /**
    * Trạng thái quy trình kế toán của 1 kỳ lương — dùng để khóa/mở khóa tab theo thứ tự.
    * Hoàn toàn dẫn xuất từ dữ liệu (không lưu trạng thái thủ công):
    *   1 Đối soát công → 2 BCC → 3 Tính lương → 4 Payment (bảng lương) → 5 Kỳ lương → 6 Phiếu lương → 7 Thanh toán
@@ -576,6 +594,7 @@ export class PayrollService {
     const res = await this.repo.savePayrollFormula({
       period, rateTV, rateCT, otPerSlot: 0, otThreshold1: t1, otThreshold2: t2, updatedBy: actorId,
     });
+    this.invalidateFinanceTimesheetCache(period);
     await this.syncFinanceToSheets({ skipSlips: true });
     return res;
   }
@@ -1991,6 +2010,29 @@ export class PayrollService {
    * tính lương. Đồng bộ cả ca quá khứ lẫn hiện tại, không phụ thuộc tab tuần.
    */
   async getFinanceTimesheet(period: string, branchScope = '*', onlyEmployeeId?: string) {
+    const cacheKey = `${period}|${branchScope}|${onlyEmployeeId || ''}`;
+    const nowTs = Date.now();
+    const hit = this.finSheetCache.get(cacheKey);
+    if (hit && nowTs - hit.at < PayrollService.FIN_SHEET_TTL_MS) return hit.data;
+    const inflight = this.finSheetInflight.get(cacheKey);
+    if (inflight) return inflight;
+    const task = this.computeFinanceTimesheet(period, branchScope, onlyEmployeeId)
+      .then(data => {
+        this.finSheetCache.set(cacheKey, { at: Date.now(), data });
+        // Giữ cache nhỏ: chỉ giữ 20 bản ghi gần nhất
+        if (this.finSheetCache.size > 20) {
+          const oldest = [...this.finSheetCache.entries()].sort((a, b) => a[1].at - b[1].at)[0];
+          if (oldest) this.finSheetCache.delete(oldest[0]);
+        }
+        return data;
+      })
+      .finally(() => { this.finSheetInflight.delete(cacheKey); });
+    this.finSheetInflight.set(cacheKey, task);
+    return task;
+  }
+
+  /** Tính Bảng chấm công Finance (không cache — xem getFinanceTimesheet). */
+  private async computeFinanceTimesheet(period: string, branchScope = '*', onlyEmployeeId?: string) {
     const { fromDate, toDate, daysInMonth } = monthRange(period);
     // Cùng đơn giá với Tính lương: Bảng Tổng Hợp phải dùng công thức kỳ
     // (Finance sửa rateTV/rateCT ở tab Tính lương) thay vì lương hiện tại,

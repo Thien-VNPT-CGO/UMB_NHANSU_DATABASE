@@ -1,35 +1,56 @@
 /**
- * FINANCE MODULE — Cổng Kế toán tính lương (UMB HR V5.1)
- * Layout theo quy trình 7 bước, khóa tab, realtime, đồng bộ Drive, ký phiếu 3 bên, thanh toán.
+ * FINANCE MODULE — Cổng Kế toán tính lương (UMB Milk V5.1)
+ * Bố cục thiết kế lại: topbar + chuyển dữ liệu tháng + Drive bar +
+ * stepper quy trình 8 bước + bảng theo CHI NHÁNH (band + subtotal).
+ * Nghiệp vụ giữ nguyên: đối soát → BCC → tính lương → kỳ lương →
+ * phiếu lương (KT → GĐ → NV ký) → đã chuyển khoản (khóa + Drive PDF).
  */
 // @ts-nocheck
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  DollarSign, FileSpreadsheet, Calendar, CreditCard, CheckCircle,
-  PenTool, QrCode, FileText, Users, Bell, Loader2, RefreshCw,
-  Upload, Download, Printer, ShieldAlert, ArrowRight, Eye, Copy,
-  AlertCircle, Plus, Save, User, LayoutDashboard, List, Activity,
-  Send, Check, X, ChevronDown, Folder, HardDrive, ShieldCheck, Lock,
-  Clock,
+  DollarSign, FileSpreadsheet, Calendar, CalendarRange, CreditCard, CheckCircle,
+  PenTool, QrCode, FileText, Users, Loader2, RefreshCw,
+  Upload, Download, Printer, ShieldAlert, ArrowRight,
+  Plus, Save, LayoutDashboard, List, Activity, Receipt,
+  Send, Check, X, ChevronDown, Folder, HardDrive, Lock,
+  Clock, Wallet, History, Archive, Search, FileDown, Building2,
+  ShieldCheck, AlertCircle, Banknote, Calculator, Settings2, Inbox,
 } from 'lucide-react';
-import { apiRequest, getApiBase } from '../services/api.js';
+import { apiRequest, getApiBase, getAuthToken } from '../services/api.js';
 import {
   payslipStage, PAYSLIP_STAGE_LABEL,
   monthShortFolder, periodLabel, parsePeriod,
-  branchDriveFolder, employeeDriveFolder, payslipDriveFileName,
 } from '@ubm/shared';
 import { SalaryConfigView } from './SalaryConfigView.js';
 import { OfficeApprovalsView } from './OfficeApprovalsView.js';
 import { formatVND } from '../utils/FinanceFormat';
+import './finance.css';
 
 const BRANCH_LABEL: Record<string, string> = {
   CN130: 'CN1 — 130 Vạn Kiếp', CN261: 'CN2 — 261 Tô Hiến Thành',
   CN120: 'CN3 — 120 Hoàng Diệu 2', CN111: 'CN4 — 111 Tôn Đản',
   XUONG_SX: 'Xưởng Sản Xuất (Củ Chi)', VAN_PHONG: 'Văn Phòng Trụ Sở',
 };
+const BRANCH_ORDER = ['CN130', 'CN261', 'CN120', 'CN111', 'XUONG_SX', 'VAN_PHONG'];
 const branchLabelOf = (id?: string | null) => BRANCH_LABEL[String(id || '').trim()] || String(id || '—');
+const orderedBranchKeys = (keys: Iterable<string>) => {
+  const set = new Set([...keys].map(k => String(k || 'KHAC')));
+  return [...BRANCH_ORDER.filter(k => set.has(k)), ...[...set].filter(k => !BRANCH_ORDER.includes(k)).sort()];
+};
 const MONTH_KEY = 'ubm_fin_month';
-const defaultMonth = () => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7);
+const VN_OFFSET_MS = 7 * 3_600_000;
+const currentPeriod = () => new Date(Date.now() + VN_OFFSET_MS).toISOString().slice(0, 7);
+const defaultMonth = currentPeriod;
+const monthOptions = () => {
+  const out: Array<{ value: string; label: string }> = [];
+  const base = new Date(Date.now() + VN_OFFSET_MS);
+  for (let i = 0; i < 13; i++) {
+    const d = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() - i, 1));
+    const v = d.toISOString().slice(0, 7);
+    out.push({ value: v, label: `Tháng ${v.slice(5, 7)}/${v.slice(0, 4)}${i === 0 ? ' (hiện tại)' : ''}` });
+  }
+  return out;
+};
 
 const STAGE_COLOR: Record<string, { bg: string; fg: string; border: string }> = {
   DRAFT: { bg: '#F1F5F9', fg: '#475569', border: '#CBD5E1' },
@@ -40,30 +61,27 @@ const STAGE_COLOR: Record<string, { bg: string; fg: string; border: string }> = 
   PAID: { bg: '#DCFCE7', fg: '#166534', border: '#86EFAC' },
 };
 
-const TAB_ORDER: Array<{ id: string; label: string; step: number }> = [
-  { id: 'fin-dashboard', label: '1. Dashboard Tài Chính', step: 0 },
-  { id: 'fin-timesheet', label: '2. Đối Soát Công & Bảng Chấm Công', step: 1 },
-  { id: 'fin-bcc', label: '3. BCC — Bảng Công Từng Ngày', step: 2 },
-  { id: 'fin-calculate', label: '4. Tính Lương (Công Thức & Nhập Tay)', step: 3 },
-  { id: 'fin-payroll-sheet', label: '5. Payment — Bảng Lương Tháng', step: 4 },
-  { id: 'fin-payroll-periods', label: '6. Kỳ Lương (DRAFT → PAID)', step: 5 },
-  { id: 'fin-payslips', label: '7. Phiếu Lương (KT ký → GĐ → NV ký)', step: 6 },
-  { id: 'fin-payment', label: '8. Thanh Toán (VietQR — Đã Chuyển Khoản)', step: 7 },
-  { id: 'fin-signatures', label: '9. Chữ Ký Mẫu', step: 8 },
-  { id: 'fin-bank-qr', label: '10. QR Ngân Hàng NV', step: 8 },
-  { id: 'bank-changes', label: '11. Duyệt Đổi STK', step: 8 },
-  { id: 'office-approvals', label: '12. Duyệt Văn Phòng', step: 8 },
-  { id: 'fin-salary-config', label: '13. Cấu Hình Lương CB & Phụ Cấp', step: 8 },
+/** Quy trình kế toán (8 bước, khóa tuần tự theo workflow-status). */
+const PROCESS_STEPS = [
+  { id: 'fin-dashboard', label: 'Tổng quan', icon: LayoutDashboard, step: 1 },
+  { id: 'fin-timesheet', label: 'Đối soát công', icon: FileSpreadsheet, step: 2 },
+  { id: 'fin-bcc', label: 'BCC theo ngày', icon: Calendar, step: 3 },
+  { id: 'fin-calculate', label: 'Tính lương', icon: Calculator, step: 4 },
+  { id: 'fin-payroll-sheet', label: 'Bảng lương tháng', icon: FileText, step: 5 },
+  { id: 'fin-payroll-periods', label: 'Kỳ lương', icon: CalendarRange, step: 6 },
+  { id: 'fin-payslips', label: 'Phiếu lương', icon: Receipt, step: 7 },
+  { id: 'fin-payment', label: 'Thanh toán', icon: CreditCard, step: 8 },
 ];
+/** Tiện ích & cài đặt (luôn mở, không thuộc chuỗi khóa). */
+const UTIL_TABS = [
+  { id: 'fin-signatures', label: 'Chữ ký mẫu', icon: PenTool },
+  { id: 'fin-bank-qr', label: 'QR ngân hàng NV', icon: QrCode },
+  { id: 'bank-changes', label: 'Duyệt đổi STK', icon: CreditCard },
+  { id: 'office-approvals', label: 'Duyệt văn phòng', icon: FileText },
+  { id: 'fin-salary-config', label: 'Cấu hình lương CB', icon: Settings2 },
+];
+const ALL_TAB_IDS = [...PROCESS_STEPS.map(t => t.id), ...UTIL_TABS.map(t => t.id)];
 
-const btn = (active: boolean, busy = false, danger?: boolean) => ({
-  display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px',
-  borderRadius: '8px', fontSize: '12.5px', fontWeight: 700,
-  cursor: busy || danger ? 'not-allowed' : 'pointer', disabled: busy || danger,
-  backgroundColor: busy ? '#E2E8F0' : (danger ? '#FEE2E2' : (active ? '#E85D92' : '#FFFFFF')),
-  color: busy ? '#94A3B8' : (danger ? '#B91C1C' : (active ? '#FFFFFF' : '#273142')),
-  border: `1px solid ${busy ? '#CBD5E1' : (danger ? '#FCA5A5' : 'var(--border)')}`,
-});
 const accentStrip = (s: unknown) => String(s ?? '').replace(/đ/g, 'd').replace(/Đ/g, 'D').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 /** Slug ngân hàng cho ảnh VietQR (img.vietqr.io). */
 const vietQrSlug = (bankName?: string | null) => {
@@ -100,50 +118,55 @@ const bankQrUrlOf = (b: string, acct: string, holder?: string) => {
   return `https://img.vietqr.io/image/${vietQrSlug(b)}-${encodeURIComponent(acct.trim())}-compact2.png?accountName=${encodeURIComponent(String(holder || '').slice(0, 50))}`;
 };
 
-/** Gom list theo chi nhánh — giữ thứ tự xuất hiện, trả [{id, rows}] . */
-function branchGroups(items: any[], getBranch: (x: any) => any) {
-  const map = new Map<string, any[]>();
+/** Gom list theo chi nhánh — trả về [{id, rows}] theo thứ tự chuẩn toàn hệ thống. */
+function branchGroups<T>(items: T[], getBranch: (x: T) => any) {
+  const map = new Map<string, T[]>();
   for (const it of items) {
     const k = String(getBranch(it) ?? '—');
     const arr = map.get(k);
     if (arr) arr.push(it); else map.set(k, [it]);
   }
-  return [...map.entries()].map(([id, rows]) => ({ id, rows }));
+  return orderedBranchKeys(map.keys()).map(id => ({ id, rows: map.get(id)! }));
 }
 
-/** Dải băng tiêu đề nhóm chi nhánh chèn giữa các <tr> (dùng trong <tbody>). */
-function BranchBand({ label, rows, cols, totalText }: { label: string; rows: any[]; cols: number; totalText?: string }) {
-  return (
-    <tr key={`band-${label}`}>
-      <td colSpan={cols} style={{ padding: '7px 14px', background: '#FDF2F7', borderTop: '1px solid #F9A8D4', borderBottom: '1px solid #FBCFE8', fontWeight: 800, fontSize: '11px', color: '#9D174D', textTransform: 'uppercase', letterSpacing: '0.6px', position: 'sticky', left: 0 }}>
-        📍 {label} <span style={{ opacity: 0.75 }}>({rows.length} NV{totalText ? ` — ${totalText}` : ''})</span>
-      </td>
-    </tr>
-  );
-}
+const sumBy = (rows: any[], key: string) => rows.reduce((s, r) => s + (Number(r?.[key]) || 0), 0);
+const r1 = (n: number) => Math.round(n * 10) / 10;
+const fmtDateTime = (v?: string | null) => (v ? new Date(v).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' }) : '—');
 
 export interface FinanceModuleProps {
   activeTab: string; currentUser: any; allEmployees: any; shifts: any;
   payrollRuns: any; branches: any; salaryConfigs: any;
   systemNotifications: any; showToast: (msg: string) => void;
   onRefreshData?: () => void | Promise<void>; onSyncSheets?: () => void | Promise<void>; onPushSheets?: () => void | Promise<void>;
+  /** Điều hướng tab (sidebar của cổng admin) — dùng cho nút "Quay về bước đang xử lý". */
+  onNavigateTab?: (id: string) => void;
 }
 
 export default function FinanceModule(props: FinanceModuleProps) {
   const {
     activeTab, currentUser, allEmployees, shifts, payrollRuns, branches,
-    salaryConfigs, showToast, onRefreshData, onPushSheets,
+    salaryConfigs, showToast, onRefreshData, onPushSheets, onNavigateTab,
   } = props;
+  const curPeriod = useMemo(() => currentPeriod(), []);
   const [month, setMonth] = useState<string>(() => {
     const saved = localStorage.getItem(MONTH_KEY);
-    if (/^\d{4}-(0[1-9]|1[0-2])$/.test(saved || '')) return saved || '';
-    return defaultMonth();
+    if (/^\d{4}-(0[1-9]|1[0-2])$/.test(saved || '')) return saved || curPeriod;
+    return curPeriod;
   });
   useEffect(() => { localStorage.setItem(MONTH_KEY, month); }, [month]);
+  const isCurrentMonth = month === curPeriod;
+  const options = useMemo(() => {
+    const base = monthOptions();
+    if (month && !base.some(o => o.value === month)) {
+      base.push({ value: month, label: periodLabel(month) });
+    }
+    return base;
+  }, [month]);
 
   const [workflow, setWorkflow] = useState<any>(null);
   const [syncStatus, setSyncStatus] = useState<any>(null);
   const [driveConfigured, setDriveConfigured] = useState(false);
+  const [lastSync, setLastSync] = useState<any>(null);
   const [slips, setSlips] = useState<any[]>([]);
   const [slipsLoading, setSlipsLoading] = useState(false);
   const [runs, setRuns] = useState<any[]>([]);
@@ -154,6 +177,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
   const [finSheet, setFinSheet] = useState<any>(null);
   const [finSheetLoading, setFinSheetLoading] = useState(false);
   const [finSheetSync, setFinSheetSync] = useState<any>(null);
+  const [calcBusy, setCalcBusy] = useState(false);
 
   const mountedRef = useRef(true);
   // Chống "tự reload" làm mất ô đang gõ: nếu kế toán đang focus 1 ô nhập trong
@@ -169,11 +193,9 @@ export default function FinanceModule(props: FinanceModuleProps) {
 
   // Fix ReferenceError: Cannot access 'Bt' before initialization (TDZ):
   // Loaders MUST be declared BEFORE refreshCurrentTab / handleRealtime that
-  // list them in their useCallback dependency arrays. Previously loaders were
-  // defined after refreshCurrentTab, so evaluating the deps array at render
-  // touched uninitialized const bindings and crashed the Finance module.
+  // list them in their useCallback dependency arrays.
   const loadWorkflow = useCallback(async () => { try { setWorkflow(await api(`/payroll/workflow-status?period=${encodeURIComponent(month)}`)); } catch { setWorkflow(null); } }, [api, month]);
-  const loadRuns = useCallback(async () => { try { setRuns(await api('/payroll/runs')); } catch { setRuns([]); } }, [api]);
+  const loadRuns = useCallback(async () => { setRunsLoading(true); try { const d = await api('/payroll/runs'); setRuns(Array.isArray(d) ? d : []); } catch { setRuns([]); } finally { setRunsLoading(false); } }, [api]);
   const loadSlips = useCallback(async () => { setSlipsLoading(true); try { const d = await api(`/payroll/period-slips/${encodeURIComponent(month)}`); setSlips((d as any)?.slips || []); } catch { setSlips([]); } finally { setSlipsLoading(false); } }, [api, month]);
   const loadFinSheet = useCallback(async () => { setFinSheetLoading(true); try { const fs = await api(`/admin/reports/finance-timesheet?period=${encodeURIComponent(month)}&branchScope=*`); setFinSheet(fs); if (activeTab === 'fin-dashboard') { try { setFinSheetSync(await api('/payroll/sync-status')); } catch { setFinSheetSync(null); } } } catch { setFinSheet(null); } finally { setFinSheetLoading(false); } }, [api, activeTab, month]);
   const loadFormula = useCallback(async () => { try { setFormula(await api(`/payroll/formula/${encodeURIComponent(month)}`)); } catch { setFormula(null); } }, [api, month]);
@@ -197,10 +219,8 @@ export default function FinanceModule(props: FinanceModuleProps) {
     if (['fin-payroll-periods', 'fin-dashboard'].includes(activeTab)) loadRuns();
     if (activeTab === 'fin-calculate') { loadFormula(); if (!isUserEditing()) loadInputs(); }
     if (activeTab === 'fin-payment') loadSlips();
-    // KHÔNG gọi onRefreshData (loadAllData 10 API của App) trong realtime nữa:
-    // trước đây mỗi sự kiện điểm danh/xếp ca/pull Sheets bắn tới đều tải lại
-    // toàn bộ app → web chậm, nhấp nháy, mất ô kế toán đang gõ (tự reload).
-    // Nhấn nút "Tải lại" trên toolbar thì onRefreshData vẫn chạy như cũ.
+    // KHÔNG gọi onRefreshData (loadAllData 10 API của App) trong realtime nữa;
+    // nút "Tải lại" trên topbar vẫn gọi onRefreshData như cũ.
   }, [activeTab, loadWorkflow, loadFinSheet, loadSlips, loadRuns, loadFormula, loadInputs, isUserEditing]);
 
   const handleRealtime = useCallback((evt: CustomEvent) => {
@@ -233,7 +253,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
     switch (activeTab) {
       case 'fin-dashboard': loadFinSheet(); loadRuns(); break;
       case 'fin-timesheet': case 'fin-bcc': case 'fin-calculate': case 'fin-payroll-sheet': loadFinSheet(); if (activeTab === 'fin-calculate') { loadFormula(); loadInputs(); } break;
-      case 'fin-payroll-periods': loadRuns(); break;
+      case 'fin-payroll-periods': loadRuns(); loadSlips(); break;
       case 'fin-payslips': case 'fin-payment': case 'fin-signatures': loadSlips(); break;
     }
     if (activeTab === 'fin-payment' || activeTab === 'fin-payslips') loadDriveStatus();
@@ -256,14 +276,42 @@ export default function FinanceModule(props: FinanceModuleProps) {
 
   const fastSignLap = useCallback(async (itemId: string) => { try { await post(`/payroll/slips/${encodeURIComponent(itemId)}/fast-sign`, { lapName: 'Kế toán viên', lapImg: '', qlName: '', qlImg: '' }); showToast(`Đã ký lập phiếu ${itemId.replace('SLIP_', '')}`); refreshCurrentTab(); } catch (e: any) { showToast(e?.message || 'Ký lập thất bại'); } }, [post, showToast, refreshCurrentTab]);
   const publishSlip = useCallback(async (itemId: string) => { if (!window.confirm('Gửi phiếu này đến nhân viên? Sau khi gửi, nhân viên có thể ký xác nhận.')) return; try { await post(`/payroll/slips/${encodeURIComponent(itemId)}/publish`, {}); showToast('Đã gửi phiếu lương đến nhân viên'); refreshCurrentTab(); } catch (e: any) { showToast(e?.message || 'Gửi thất bại'); } }, [post, showToast, refreshCurrentTab]);
-  const markPaidSlip = useCallback(async (itemId: string) => { if (!window.confirm('Xác nhận ĐÃ CHUYỂN KHOẢN? Phiếu sẽ bị KHÓA và đồng bộ PDF lên Google Drive.')) return; try { await post(`/payroll/slips/${encodeURIComponent(itemId)}/mark-paid`, {}); showToast('Đã chuyển khoản — phiếu khóa & đồng bộ Drive'); refreshCurrentTab(); } catch (e: any) { showToast(e?.message || 'Thanh toán thất bại'); } }, [post, showToast, refreshCurrentTab]);
-  const syncMonthDrive = useCallback(async () => { if (!driveConfigured) { showToast('Google Drive chưa cấu hình trên server.'); return; } try { setTimeout(() => {}, 0); const r = await post('/payroll/drive-sync', { period: month }); showToast(r?.ok ? `Đồng bộ xong: ${r?.slips?.pdfSynced ?? 0}/${r?.slips?.paid ?? 0} phiếu PDF` : 'Hoàn tất (có lỗi)'); await loadDriveStatus(); refreshCurrentTab(); } catch (e: any) { showToast('Lỗi Drive: ' + (e?.message || '')); } }, [post, driveConfigured, month, showToast, loadDriveStatus, refreshCurrentTab]);
+  const markPaidSlip = useCallback(async (itemId: string) => { if (!window.confirm('Xác nhận ĐÃ CHUYỂN KHOẢN? Phiếu sẽ bị KHÓA và đồng bộ PDF lên Google Drive.')) return; try { const r = await post(`/payroll/slips/${encodeURIComponent(itemId)}/mark-paid`, {}); showToast('Đã chuyển khoản — phiếu khóa & đồng bộ Drive' + (r?.driveSync?.ok ? ' ✓' : '')); refreshCurrentTab(); } catch (e: any) { showToast(e?.message || 'Thanh toán thất bại'); } }, [post, showToast, refreshCurrentTab]);
+  const calendarLabel = useMemo(() => { const p = parsePeriod(month); return p ? `THÁNG ${String(p.month).padStart(2, '0')}` : 'THÁNG'; }, [month]);
+  const syncMonthDrive = useCallback(async () => {
+    if (!driveConfigured) { showToast('Google Drive chưa cấu hình trên server.'); return; }
+    if (!window.confirm(`Đồng bộ TOÀN BỘ dữ liệu ${periodLabel(month)} lên Google Drive?\nHệ thống sẽ tự tạo cây thư mục: ${calendarLabel}_${month.slice(0, 4)}/* (Excel từng chức năng) + PHIEU_LUONG/${calendarLabel}/CN/TÊN NV/*.pdf`)) return;
+    try {
+      setLastSync({ pending: true });
+      const r = await post('/payroll/drive-sync', { period: month });
+      setLastSync(r);
+      const errs = Array.isArray(r?.exportErrors) ? r.exportErrors : [];
+      showToast(r?.ok ? `Đồng bộ xong: ${r?.slips?.pdfSynced ?? 0}/${r?.slips?.paid ?? 0} phiếu PDF${errs.length ? ` — ${errs.length} mục lỗi` : ''}` : 'Hoàn tất (có lỗi)');
+      await loadDriveStatus();
+      refreshCurrentTab();
+    } catch (e: any) { setLastSync(null); showToast('Lỗi Drive: ' + (e?.message || '')); }
+  }, [post, driveConfigured, month, showToast, loadDriveStatus, refreshCurrentTab, calendarLabel]);
   const syncSlipDrive = useCallback(async (itemId: string) => { try { const r = await post(`/payroll/slips/${encodeURIComponent(itemId)}/drive-sync`, {}); showToast(r?.ok ? 'Đã đồng bộ PDF phiếu lên Drive' : 'Lỗi: ' + (r?.error || '')); refreshCurrentTab(); } catch (e: any) { showToast('Lỗi: ' + (e?.message || '')); } }, [post, showToast, refreshCurrentTab]);
+  const downloadSlipPdf = useCallback(async (itemId: string, employeeCode?: string) => {
+    try {
+      const base = getApiBase();
+      const token = getAuthToken();
+      const resp = await fetch(`${base}/payroll/slips/${encodeURIComponent(itemId)}/pdf`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      if (!resp.ok) { const j = await resp.json().catch(() => ({})); throw new Error(j?.error || `HTTP ${resp.status}`); }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `PHIEU_LUONG_${month.replace('-', '')}_${employeeCode || itemId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e: any) { showToast('Không tải được PDF: ' + (e?.message || '')); }
+  }, [month, showToast]);
   const saveFormula = useCallback(async () => { try { await put(`/payroll/formula/${encodeURIComponent(month)}`, { rateTV: Number(formula?.rateTV) || 21000, rateCT: Number(formula?.rateCT) || 25500, otPerSlot: 0, otThreshold1: 10, otThreshold2: 15 }); showToast('Đã lưu công thức lương'); loadFormula(); } catch (e: any) { showToast(e?.message || 'Lưu công thức thất bại'); } }, [put, month, formula, showToast, loadFormula]);
   const upsertInput = useCallback(async (employeeId: string, field: string, value: string) => {
-    // Backend Zod yêu cầu employeeId (camelCase) + note là STRING. Trước đây
-    // payload gửi employee_id và note bị ép số (isNaN -> 0) => 400 "Dữ liệu gửi
-    // lên không hợp lệ — employeeId: Required; note: Expected string".
+    // Backend Zod yêu cầu employeeId (camelCase) + note là STRING.
     const num = Number(value);
     const existing = inputs.find(i => i.employee_id === employeeId);
     const payload: any = { employeeId, employee_id: employeeId, period: month, luong_cb: 0, ot_extra: 0, bonus_extra: 0, ung_luong: 0, tru_kpi: 0, dong_phuc: 0, note: '' };
@@ -282,703 +330,1037 @@ export default function FinanceModule(props: FinanceModuleProps) {
     const rows = inputs.map((i: any) => ({ ...i, employeeId: i.employeeId || i.employee_id, employee_id: i.employee_id, period: month, note: String(i.note ?? '') }));
     try { for (const i of rows) { await put(`/payroll/inputs/${encodeURIComponent(month)}`, i); } showToast('Đã lưu tất cả nhập tay'); } catch (e: any) { showToast(e?.message || 'Lưu thất bại'); }
   }, [put, month, inputs, showToast]);
+  /** Tính lương kỳ (công thức Excel) + tạo/cập nhật phiếu — thay cho nút "Tính lương" bị thiếu ở bản cũ. */
+  const runCalculate = useCallback(async () => {
+    if (!window.confirm(`TÍNH LƯƠNG ${periodLabel(month)} theo CÔNG THỨC EXCEL?\nTỔNG CỘNG = LCB + giờ công + OT thêm + Bonus; THỰC LÃNH = TỔNG CỘNG − KPI − phạt − ứng − đồng phục.\nHệ thống sẽ tạo/cập nhật kỳ lương và phiếu cho toàn bộ nhân viên.`)) return;
+    setCalcBusy(true);
+    try {
+      const r: any = await post(`/payroll/${encodeURIComponent(month)}/calculate-formula`, { branchScope: '*' });
+      const res = r?.result ?? r;
+      showToast(`Đã tính lương ${periodLabel(month)}: ${res?.run?.total_employees ?? '?'} NV — thực lãnh ${formatVND(res?.run?.total_amount || 0)}`);
+      await post(`/payroll/period-slips/${encodeURIComponent(month)}/ensure`, { branchScope: '*' }).catch(() => null);
+      await Promise.all([loadSlips(), loadRuns(), loadWorkflow()]);
+      refreshCurrentTab();
+    } catch (e: any) { showToast(e?.message || 'Tính lương thất bại'); } finally { setCalcBusy(false); }
+  }, [post, month, showToast, loadSlips, loadRuns, loadWorkflow, refreshCurrentTab]);
 
   const open = isTabOpen(activeTab);
   const lockReason = tabLocked.get(activeTab)?.reason || '';
+  const firstOpenStep = useMemo(() => {
+    for (const s of PROCESS_STEPS) { if (s.id === 'fin-dashboard') continue; if (isTabOpen(s.id)) return s.id; }
+    return 'fin-dashboard';
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workflow]);
+  const goTab = useCallback((id: string) => { onNavigateTab?.(id); }, [onNavigateTab]);
 
   return (
-    <div ref={rootRef} style={{ display: 'flex', flexDirection: 'column', gap: '14px', minHeight: '100vh' }}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: '#E85D92', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }}>$</div>
-            <div>
-              <div style={{ fontSize: '16px', fontWeight: 800, letterSpacing: '-0.5px' }}>Cổng Kế toán — Tính lương</div>
-              <div style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>Tài khoản: {currentUser?.fullName || 'Kế toán'}  •  Vai trò: {currentUser?.role}</div>
-            </div>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '10px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '1px', color: '#E85D92' }}>REALTIME</span>
-            <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10B981', boxShadow: '0 0 0 2px rgba(16,185,129,0.25)' }} />
-            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Socket.IO — tự cập nhật khi có sự kiện mới</span>
+    <div ref={rootRef} className="fin-shell">
+      {/* ═══════════ TOPBAR ═══════════ */}
+      <header className="fin-topbar">
+        <div className="fin-brand">
+          <div className="fin-logo" aria-hidden="true"><Wallet size={22} strokeWidth={2.2} /></div>
+          <div>
+            <div className="fin-title">Cổng Kế toán — Tính lương</div>
+            <div className="fin-subtitle">Tài khoản: {currentUser?.fullName || 'Kế toán'} &nbsp;•&nbsp; Vai trò: {currentUser?.role} &nbsp;•&nbsp; UMB Milk HR</div>
           </div>
         </div>
-        <div style={{ background: '#FDF7F2', border: '1.5px solid #FCD34D', borderRadius: '10px', padding: '10px 16px', display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: '11px', fontWeight: 800, color: '#9A3412', textTransform: 'uppercase', letterSpacing: '1px' }}>Tháng đang xử lý</span>
-          <select value={month} onChange={e => setMonth(e.target.value)} style={{ padding: '6px 10px', borderRadius: '8px', border: '1px solid var(--border)', background: '#fff', fontSize: '13px', fontWeight: 700, color: '#E85D92', minWidth: '130px' }}>
-            {[...Array(12)].map((_, i) => { const m = String(i + 1).padStart(2, '0'); const y = new Date(Date.now() + 7 * 3_600_000).getFullYear(); const val = `${y}-${m}`; return <option key={val} value={val}>{`Tháng ${m}/${y}`}</option>; })}
-            {['2026-11', '2026-12', '2027-01', '2027-02'].map(v => <option key={v} value={v}>{periodLabel(v)}</option>)}
+        <div className="fin-topbar-right">
+          <span className="fin-realtime" title="Socket.IO — tự cập nhật khi có sự kiện mới, không cần F5"><span className="fin-dot" /> REALTIME</span>
+          <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={onRefreshData} title="Tải lại toàn bộ dữ liệu tháng đang chọn">
+            <RefreshCw size={13} /> Tải lại
+          </button>
+        </div>
+      </header>
+
+      {/* ═══════════ THANH CHUYỂN DỮ LIỆU THÁNG ═══════════ */}
+      <section className={`fin-monthbar${isCurrentMonth ? '' : ' is-past'}`} aria-label="Chọn tháng xử lý">
+        <div className="fin-monthbar-left">
+          <div className="fin-monthbar-icon">{isCurrentMonth ? <CalendarRange size={20} /> : <History size={20} />}</div>
+          <div>
+            <div className="fin-monthbar-label">KẾ TOÁN ĐANG XỬ LÝ</div>
+            <div className="fin-monthbar-value">
+              {periodLabel(month)}
+              {isCurrentMonth
+                ? <span className="fin-chip fin-chip-current">THÁNG HIỆN TẠI</span>
+                : <span className="fin-chip fin-chip-past">DỮ LIỆU THÁNG CŨ</span>}
+            </div>
+          </div>
+          <select className="fin-month-select" value={month} onChange={e => setMonth(e.target.value)} aria-label="Chọn tháng xử lý">
+            {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
-          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>• Dữ liệu chỉ hiển thị tháng này. Tháng khác không bị ảnh hưởng.</span>
-          <button onClick={onRefreshData} style={btn(false)} title="Tải lại dữ liệu tháng hiện tại"><RefreshCw size={14} style={{ marginRight: '4px' }} /> Tải lại</button>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: '11px', fontWeight: 800, color: driveConfigured ? '#166534' : '#B91C1C', textTransform: 'uppercase', letterSpacing: '1px' }}>{driveConfigured ? 'DRIVE: SẴN SÀNG' : 'DRIVE: CHƯA CẤU HÌNH'}</span>
-          {syncStatus && (
-            <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-              Cuối: {syncStatus?.last?.at ? new Date(syncStatus.last.at).toLocaleString('vi-VN') : '—'}  •
-              {syncStatus?.last?.ok ? 'OK' : 'CHƯA'}  • {syncStatus?.rootId ? `Root: ${String(syncStatus.rootId).slice(0, 10)}…` : '—'}
-            </div>
-          )}
-          <button onClick={syncMonthDrive} disabled={!driveConfigured} style={btn(false, !driveConfigured)} title="Tự tạo cây folder tháng & xuất file lên Drive"><Upload size={14} style={{ marginRight: '4px' }} /> Đồng bộ tháng lên Drive</button>
-          <span style={{ fontSize: '11.5px', color: '#94A3B8' }}>PHIEU_LUONG → THANG_10 → CN → TÊN NV → PDF</span>
-        </div>
-      </div>
+        {!isCurrentMonth ? (
+          <button type="button" className="fin-btn fin-btn-amber" onClick={() => setMonth(curPeriod)}>
+            <History size={14} /> Dùng dữ liệu hiện tại ({periodLabel(curPeriod)})
+          </button>
+        ) : (
+          <div className="fin-monthbar-note">Dữ liệu realtime — tháng nào hiển thị tháng đó, không ảnh hưởng tháng khác.</div>
+        )}
+      </section>
 
-      <div style={{ background: '#FFFFFF', border: '1px solid var(--border)', borderRadius: '12px', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: '6px', overflowX: 'auto' }}>
-        {TAB_ORDER.map((t, i) => {
-          const l = tabLocked.get(t.id);
-          const locked = !l ? false : l.locked;
-          const done = l ? (!!workflow?.steps.find(s => s.id === t.id)?.done) : false;
-          const cur = activeTab === t.id;
-          const color = locked ? '#CBD5E1' : (done ? '#10B981' : cur ? '#E85D92' : '#6B7280');
-          return (
-            <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
-              {i > 0 && <ArrowRight size={13} style={{ color: locked ? '#E2E8F0' : '#9CA3AF' }} />}
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '92px', opacity: locked ? 0.55 : 1 }}>
-                <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: locked ? '#F1F5F9' : color, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '12px', border: cur ? '2px solid #E85D92' : 'none', boxShadow: cur ? '0 0 0 3px rgba(232,93,146,0.2)' : 'none' }}>{t.step === 0 ? '1' : t.step}</div>
-                <div style={{ fontSize: '9.5px', fontWeight: 700, color: locked ? '#9CA3AF' : '#273142', textAlign: 'center', lineHeight: 1.25, marginTop: '4px', width: '86px' }}>{t.label.split(' ').slice(1).join(' ')}</div>
-                {locked && l && <div style={{ fontSize: '7.5px', color: '#EF4444', marginTop: '2px', whiteSpace: 'nowrap', maxWidth: '110px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{l.reason}</div>}
-                {!locked && !done && l && <div style={{ fontSize: '7.5px', color: '#65A30D', marginTop: '2px' }}>{l.stat}</div>}
-                {done && <div style={{ fontSize: '7.5px', color: '#10B981', marginTop: '2px' }}>✓ Hoàn tất</div>}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {!open && (
-        <div style={{ background: '#FEF2F2', border: '1px solid #FCA5A5', borderRadius: '10px', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <ShieldAlert size={18} style={{ color: '#B91C1C' }} />
-          <div style={{ fontSize: '13px', color: '#B91C1C', fontWeight: 700 }}>Tab đã khóa theo quy trình kế toán</div>
-          <div style={{ fontSize: '12px', color: '#7F1D1D', marginLeft: '8px', flex: 1 }}>{lockReason}</div>
+      {!isCurrentMonth && (
+        <div className="fin-past-banner" role="status">
+          <Archive size={18} />
+          <div>
+            Bạn đang xử lý <b>{periodLabel(month)}</b>. Toàn bộ màn hình (đối soát, BCC, tính lương, phiếu lương, thanh toán) đang hiển thị <b>dữ liệu tháng này</b> — tháng hiện tại <b>{periodLabel(curPeriod)}</b> vẫn cập nhật bình thường ở chế độ nền, không bị ảnh hưởng.
+            Khi xử lý xong, bấm <b>“Dùng dữ liệu hiện tại”</b> để quay về {periodLabel(curPeriod)} — lúc đó hệ thống sẽ nạp lại dữ liệu hiện tại.
+          </div>
         </div>
       )}
-      <div style={{ flex: 1, padding: '0 4px', overflowY: 'auto' }}>
-        {activeTab === 'fin-dashboard' && <DashboardTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} slips={slips} workflow={workflow} loadFinSheet={loadFinSheet} loadRuns={loadRuns} periodLabel={periodLabel} formatVND={formatVND} />}
-        {activeTab === 'fin-timesheet' && <TimesheetTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} loadFinSheet={loadFinSheet} branchLabelOf={branchLabelOf} formatVND={formatVND} periodLabel={periodLabel} />}
-        {activeTab === 'fin-bcc' && <BccTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} formatVND={formatVND} periodLabel={periodLabel} />}
-        {activeTab === 'fin-calculate' && <CalculateTab month={month} formula={formula} setFormula={setFormula} inputs={inputs} setInputs={setInputs} inputsLoading={inputsLoading} allEmployees={allEmployees} saveFormula={saveFormula} upsertInput={upsertInput} saveAllInputs={saveAllInputs} loadFormula={loadFormula} loadInputs={loadInputs} />}
-        {activeTab === 'fin-payroll-sheet' && <PayrollSheetTab month={month} slips={slips} allEmployees={allEmployees} branchLabelOf={branchLabelOf} formatVND={formatVND} periodLabel={periodLabel} />}
-        {activeTab === 'fin-payroll-periods' && <PayrollPeriodsTab month={month} runs={runs} runsLoading={runsLoading} loadRuns={loadRuns} periodLabel={periodLabel} formatVND={formatVND} />}
-        {activeTab === 'fin-payslips' && <PayslipsTab month={month} slips={slips} slipsLoading={slipsLoading} allEmployees={allEmployees} branchLabelOf={branchLabelOf} formatVND={formatVND} loadSlips={loadSlips} stageBadge={stageBadge} slipQrUrl={slipQrUrl} fastSignLap={fastSignLap} publishSlip={publishSlip} markPaidSlip={markPaidSlip} syncSlipDrive={syncSlipDrive} periodLabel={periodLabel} />}
-        {activeTab === 'fin-payment' && <PaymentTab month={month} slips={slips} allEmployees={allEmployees} branchLabelOf={branchLabelOf} formatVND={formatVND} loadSlips={loadSlips} slipQrUrl={slipQrUrl} markPaidSlip={markPaidSlip} periodLabel={periodLabel} />}
-        {activeTab === 'fin-signatures' && <SignatureTemplatesTab currentUser={currentUser} showToast={showToast} />}
-        {activeTab === 'fin-bank-qr' && <BankQrTab allEmployees={allEmployees} slips={slips} periodLabel={periodLabel} month={month} />}
-        {activeTab === 'fin-salary-config' && <SalaryConfigView currentUser={currentUser} />}
-        {activeTab === 'office-approvals' && <OfficeApprovalsView currentUser={currentUser} />}
-        {activeTab === 'bank-changes' && <BankChangesTab currentUser={currentUser} showToast={showToast} />}
+
+      {/* ═══════════ DRIVE SYNC BAR ═══════════ */}
+      <section className="fin-drivebar" aria-label="Đồng bộ Google Drive">
+        <span className={`fin-drive-chip ${driveConfigured ? 'ok' : 'err'}`}><HardDrive size={12} /> DRIVE: {driveConfigured ? 'SẴN SÀNG' : 'CHƯA CẤU HÌNH'}</span>
+        {syncStatus?.last && (
+          <span className="fin-drive-meta">Đồng bộ gần nhất ({periodLabel(syncStatus?.last?.period || month)}): {fmtDateTime(syncStatus?.last?.at)} — {syncStatus?.last?.ok ? '✓ OK' : '✗ LỖI'}</span>
+        )}
+        <span className="fin-drive-path" title="Cấu trúc thư mục tự tạo trên Google Drive">PHIEU_LUONG → THANG_MM → CN… → TÊN NV → PDF&nbsp;&nbsp;|&nbsp;&nbsp;THANG_MM_YYYY/01…07_*.xlsx</span>
+        <div className="fin-drive-actions">
+          <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" disabled={!driveConfigured} onClick={syncMonthDrive}
+            title="Tự tạo cây thư mục tháng + xuất Excel từng chức năng + PDF phiếu đã thanh toán lên Drive">
+            <Upload size={13} /> Đồng bộ {calendarLabel.toLowerCase()} lên Drive
+          </button>
+        </div>
+      </section>
+      {(() => {
+        const errs: string[] = (lastSync?.exportErrors?.length ? lastSync.exportErrors : (syncStatus?.last?.exportErrors || [])) as string[];
+        if (!errs.length) return null;
+        return (
+          <div className="fin-warn" role="alert">
+            <b>⚠ Một số file chưa đồng bộ được:</b>
+            <ul style={{ margin: '6px 0 0 16px' }}>{errs.map((e: string, i: number) => <li key={i}>{e}</li>)}</ul>
+          </div>
+        );
+      })()}
+
+      {/* ═══════════ STEPPER QUY TRÌNH ═══════════ */}
+      <nav className="fin-stepper-wrap" aria-label="Các bước xử lý lương">
+        <div className="fin-stepper-title">
+          <span>QUY TRÌNH KẾ TOÁN — XỬ LÝ TUẦN TỰ</span>
+          <em>Bước sau chỉ mở khi bước trước hoàn tất</em>
+        </div>
+        <div className="fin-stepper">
+          {PROCESS_STEPS.map(t => {
+            const l = tabLocked.get(t.id);
+            const locked = t.id === 'fin-dashboard' ? false : (l ? l.locked : false);
+            const wfStep = workflow?.steps?.find((s: any) => s.id === t.id);
+            const done = !!wfStep?.done;
+            const cur = activeTab === t.id;
+            const cls = locked ? 'is-locked' : done ? 'is-done' : cur ? 'is-current' : 'is-open';
+            const Icon = t.icon;
+            return (
+              <button
+                type="button"
+                key={t.id}
+                className={`fin-step ${cls}`}
+                disabled={locked}
+                onClick={() => goTab(t.id)}
+                title={locked ? (l?.reason || 'Chưa mở khóa — hoàn tất bước trước') : t.label}
+                aria-current={cur ? 'step' : undefined}
+              >
+                <span className="fin-step-dot">{done ? <Check size={15} strokeWidth={3} /> : locked ? <Lock size={13} /> : <Icon size={15} />}</span>
+                <span className="fin-step-name">{t.step}. {t.label}</span>
+                <span className="fin-step-status">{locked ? 'Đã khóa' : done ? '✓ Hoàn tất' : (wfStep?.stat || 'Đang xử lý')}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="fin-utilbar">
+          <span className="fin-utilbar-label">TIỆN ÍCH &amp; CÀI ĐẶT</span>
+          {UTIL_TABS.map(t => {
+            const Icon = t.icon;
+            const cur = activeTab === t.id;
+            return (
+              <button key={t.id} type="button" className={`fin-util-chip${cur ? ' is-active' : ''}`} onClick={() => goTab(t.id)}>
+                <Icon size={12} /> {t.label}
+              </button>
+            );
+          })}
+        </div>
+      </nav>
+
+      {/* ═══════════ LOCK SCREEN — KHÔNG render nội dung tab khi còn khóa ═══════════ */}
+      {!open && (
+        <div className="fin-lockscreen" role="alert">
+          <div className="fin-lock-icon"><Lock size={30} /></div>
+          <h3>Bước này đang bị khóa theo quy trình kế toán</h3>
+          <p>{lockReason || 'Vui lòng hoàn tất các bước trước trong quy trình.'}</p>
+          <button type="button" className="fin-btn fin-btn-dark" onClick={() => goTab(firstOpenStep)}>
+            <ArrowRight size={14} /> Quay về bước đang xử lý
+          </button>
+        </div>
+      )}
+
+      {/* ═══════════ NỘI DUNG TAB ═══════════ */}
+      {open && (
+        <main style={{ flex: 1 }}>
+          {activeTab === 'fin-dashboard' && <DashboardTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} slips={slips} workflow={workflow} formatVND={formatVND} />}
+          {activeTab === 'fin-timesheet' && <TimesheetTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} loadFinSheet={loadFinSheet} formatVND={formatVND} />}
+          {activeTab === 'fin-bcc' && <BccTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} formatVND={formatVND} />}
+          {activeTab === 'fin-calculate' && <CalculateTab month={month} formula={formula} setFormula={setFormula} inputs={inputs} inputsLoading={inputsLoading} allEmployees={allEmployees} saveFormula={saveFormula} upsertInput={upsertInput} saveAllInputs={saveAllInputs} loadFormula={loadFormula} loadInputs={loadInputs} runCalculate={runCalculate} calcBusy={calcBusy} runs={runs} />}
+          {activeTab === 'fin-payroll-sheet' && <PayrollSheetTab month={month} slips={slips} allEmployees={allEmployees} formatVND={formatVND} stageBadge={stageBadge} />}
+          {activeTab === 'fin-payroll-periods' && <PayrollPeriodsTab month={month} runs={runs} runsLoading={runsLoading} loadRuns={loadRuns} slips={slips} allEmployees={allEmployees} formatVND={formatVND} runCalculate={runCalculate} calcBusy={calcBusy} />}
+          {activeTab === 'fin-payslips' && <PayslipsTab month={month} slips={slips} slipsLoading={slipsLoading} allEmployees={allEmployees} formatVND={formatVND} loadSlips={loadSlips} stageBadge={stageBadge} slipQrUrl={slipQrUrl} fastSignLap={fastSignLap} publishSlip={publishSlip} markPaidSlip={markPaidSlip} syncSlipDrive={syncSlipDrive} downloadSlipPdf={downloadSlipPdf} />}
+          {activeTab === 'fin-payment' && <PaymentTab month={month} slips={slips} allEmployees={allEmployees} formatVND={formatVND} loadSlips={loadSlips} slipQrUrl={slipQrUrl} markPaidSlip={markPaidSlip} downloadSlipPdf={downloadSlipPdf} />}
+          {activeTab === 'fin-signatures' && <SignatureTemplatesTab currentUser={currentUser} showToast={showToast} />}
+          {activeTab === 'fin-bank-qr' && <BankQrTab allEmployees={allEmployees} month={month} />}
+          {activeTab === 'bank-changes' && <BankChangesTab currentUser={currentUser} showToast={showToast} />}
+          {activeTab === 'fin-salary-config' && <SalaryConfigView currentUser={currentUser} />}
+          {activeTab === 'office-approvals' && <OfficeApprovalsView currentUser={currentUser} />}
+        </main>
+      )}
+    </div>
+  );
+}
+
+/* ============================================================================
+   SHARED PIECES
+   ============================================================================ */
+
+function Kpi({ icon, label, value, sub, tone }: { icon: React.ReactNode; label: string; value: string; sub: string; tone?: 'green' | 'blue' | 'violet' | 'amber' }) {
+  return (
+    <div className="fin-kpi">
+      <div className={`fin-kpi-icon${tone ? ' ' + tone : ''}`}>{icon}</div>
+      <div style={{ minWidth: 0 }}>
+        <div className="fin-kpi-label">{label}</div>
+        <div className="fin-kpi-value">{value}</div>
+        <div className="fin-kpi-sub">{sub}</div>
+      </div>
+    </div>
+  );
+}
+
+function CardHead({ title, icon, sub, children }: { title: string; icon?: React.ReactNode; sub?: string; children?: React.ReactNode }) {
+  return (
+    <div className="fin-card-head">
+      <div>
+        <div className="fin-card-title">{icon}{title}</div>
+        {sub && <div className="fin-card-sub">{sub}</div>}
+      </div>
+      {children && <div className="fin-chips">{children}</div>}
+    </div>
+  );
+}
+
+function TabHead({ step, title, desc, children }: { step: number | string; title: string; desc: string; children?: React.ReactNode }) {
+  return (
+    <div className="fin-tab-head">
+      <div>
+        <div className="fin-tab-title"><span className="fin-tab-num">{step}</span>{title}</div>
+        <div className="fin-tab-desc">{desc}</div>
+      </div>
+      {children && <div className="fin-chips">{children}</div>}
+    </div>
+  );
+}
+
+const matchesFilter = (q: string) => (row: any) => {
+  if (!q) return true;
+  const s = q.toLowerCase();
+  return [row?.fullName, row?.full_name, row?.employeeCode, row?.employee_code, row?.branchId, branchLabelOf(row?.branchId || row?.default_branch_id)]
+    .some(v => String(v || '').toLowerCase().includes(s));
+};
+
+function SearchBox({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
+  return (
+    <div className="fin-search" role="search">
+      <Search size={14} color="#94a3b8" />
+      <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder || 'Tìm theo tên / mã NV / chi nhánh…'} aria-label="Tìm kiếm" />
+      {value && <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" style={{ border: 'none', padding: 2 }} onClick={() => onChange('')} aria-label="Xóa tìm kiếm"><X size={14} /></button>}
+    </div>
+  );
+}
+
+function BranchBandRow({ label, count, cols, totalText }: { label: string; count: number; cols: number; totalText?: string }) {
+  return (
+    <tr className="fin-band">
+      <td colSpan={cols}>
+        <Building2 size={12} style={{ verticalAlign: -1, marginRight: 6 }} />
+        {label}
+        <span className="fin-band-count">{count} NV</span>
+        {totalText && <span className="fin-band-total">{totalText}</span>}
+      </td>
+    </tr>
+  );
+}
+
+const slipBranchId = (s: any, allEmployees: any[]) => {
+  const emp = (allEmployees || []).find((e: any) => String(e.employee_id) === String(s?.employee_id));
+  return emp?.default_branch_id || s?.branch_id || 'KHAC';
+};
+
+/* ============================================================================
+   1 · DASHBOARD TÀI CHÍNH
+   ============================================================================ */
+function DashboardTab({ month, finSheet, finSheetLoading, slips, workflow, formatVND }: any) {
+  const fs = finSheet;
+  const rows: any[] = fs?.rows || [];
+  const branchGroupsAll = useMemo(() => branchGroups(rows, (r: any) => r.branchId), [rows]);
+  const publishedCount = slips.filter((s: any) => ['PUBLISHED', 'CONFIRMED', 'PAID'].includes(String(s?.status))).length;
+  const blockEntries = Object.values(fs?.byBlock || {}) as any[];
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <TabHead step={1} title="Tổng quan Tài chính & Quỹ lương" desc={`Tổng quan kỳ ${periodLabel(month)} — quỹ lương, giờ công, tiến độ phiếu lương. Bấm vào từng bước trên thanh quy trình để xử lý tuần tự.`} />
+      {finSheetLoading && <div className="fin-empty">Đang tải dữ liệu {periodLabel(month)}…</div>}
+      {!finSheetLoading && (
+        <div className="fin-kpi-grid">
+          <Kpi icon={<Banknote size={18} />} label="Quỹ lương dự kiến" value={formatVND(fs?.totals?.totalAmount ?? fs?.totals?.netPay ?? 0)} sub="Tổng thực nhận kỳ" />
+          <Kpi icon={<Clock size={18} />} tone="blue" label="Tổng giờ công" value={`${Number(fs?.totals?.hours ?? 0).toFixed(1)} giờ`} sub="Từ chấm công thực tế" />
+          <Kpi icon={<Receipt size={18} />} tone="violet" label="Phiếu đã phát hành" value={`${publishedCount} / ${slips.length}`} sub="PUBLISHED + CONFIRMED + PAID" />
+          <Kpi icon={<Activity size={18} />} tone="amber" label="Trạng thái kỳ" value={workflow?.steps?.find((s: any) => s.id === 'fin-payroll-periods')?.stat || '—'} sub="Theo workflow kỳ lương" />
+        </div>
+      )}
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 5fr) minmax(0, 7fr)', gap: 12, alignItems: 'start' }} className="fin-dash-grid">
+        {/* Khối */}
+        <div className="fin-card">
+          <CardHead title="Lương theo Khối" icon={<Users size={14} color="#E85D92" />} sub={`Kỳ ${periodLabel(month)}`} />
+          <div className="fin-table-wrap" style={{ maxHeight: 'none' }}>
+            <table className="fin-table">
+              <thead>
+                <tr><th>Khối</th><th className="num">NV</th><th className="num">Giờ</th><th className="num">T.Cộng</th><th className="num">Thực lĩnh</th></tr>
+              </thead>
+              <tbody>
+                {blockEntries.map((b: any) => (
+                  <tr key={b.key}>
+                    <td style={{ fontWeight: 700 }}>{b.label}</td>
+                    <td className="num">{b.employees}</td>
+                    <td className="num">{Number(b.hours ?? 0).toFixed(1)}</td>
+                    <td className="num fin-money">{formatVND(b.value ?? 0)}</td>
+                    <td className="num fin-money" style={{ fontWeight: 800, color: 'var(--fin-green)' }}>{formatVND(b.netPay ?? 0)}</td>
+                  </tr>
+                ))}
+                {blockEntries.length === 0 && <tr><td colSpan={5} className="fin-empty">Chưa có dữ liệu.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Chi nhánh */}
+        <div className="fin-card">
+          <CardHead title="Lương theo Chi nhánh" icon={<Building2 size={14} color="#E85D92" />} sub="Gộp từ bảng chấm công kỳ này" />
+          <div className="fin-table-wrap" style={{ maxHeight: 'none' }}>
+            <table className="fin-table">
+              <thead>
+                <tr><th>Chi nhánh</th><th className="num">NV</th><th className="num">Giờ</th><th className="num">Lương ca</th><th className="num">Trừ</th><th className="num">Thực nhận</th></tr>
+              </thead>
+              <tbody>
+                {branchGroupsAll.map(g => (
+                  <React.Fragment key={g.id}>
+                    <tr className="fin-band"><td colSpan={6}>{branchLabelOf(g.id)}<span className="fin-band-count">{g.rows.length} NV</span></td></tr>
+                    <tr className="fin-subtotal">
+                      <td>Cộng {branchLabelOf(g.id)}</td>
+                      <td className="num">{g.rows.length}</td>
+                      <td className="num">{r1(sumBy(g.rows, 'hours')).toFixed(1)}</td>
+                      <td className="num fin-money">{formatVND(sumBy(g.rows, 'standardPay'))}</td>
+                      <td className="num fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(sumBy(g.rows, 'deduction'))}</td>
+                      <td className="num fin-money">{formatVND(sumBy(g.rows, 'netPay'))}</td>
+                    </tr>
+                  </React.Fragment>
+                ))}
+                {branchGroupsAll.length > 0 && (
+                  <tr className="fin-grand"><td>TỔNG CỘNG</td><td className="num">{rows.length}</td><td className="num">{r1(sumBy(rows, 'hours')).toFixed(1)}</td><td className="num fin-money">{formatVND(sumBy(rows, 'standardPay'))}</td><td className="num fin-money">{formatVND(sumBy(rows, 'deduction'))}</td><td className="num fin-money">{formatVND(sumBy(rows, 'netPay'))}</td></tr>
+                )}
+                {branchGroupsAll.length === 0 && <tr><td colSpan={6} className="fin-empty">Chưa có dữ liệu chi nhánh.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <style>{`@media (max-width: 1100px) { .fin-dash-grid { grid-template-columns: 1fr !important; } }`}</style>
+    </div>
+  );
+}
+
+/* ============================================================================
+   2 · ĐỐI SOÁT CÔNG & BẢNG CHẤM CÔNG
+   ============================================================================ */
+function TimesheetTab({ month, finSheet, finSheetLoading, loadFinSheet, formatVND }: any) {
+  const fs = finSheet;
+  const [q, setQ] = useState('');
+  const groups = useMemo(() => {
+    const all: any[] = fs?.rows || [];
+    const filtered = all.filter(matchesFilter(q.trim()));
+    return branchGroups(filtered, (r: any) => r.branchId);
+  }, [fs, q]);
+  const filteredCount = groups.reduce((s, g) => s + g.rows.length, 0);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <TabHead step={2} title="Đối soát công & Bảng chấm công" desc={`Tổng hợp ca/giờ/phạt theo nhân viên — kỳ ${periodLabel(month)}. Dữ liệu realtime từ chấm công + lịch đã phát hành.`}>
+        <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={loadFinSheet} disabled={finSheetLoading}>{finSheetLoading ? <Loader2 size={13} className="fin-spin" /> : <RefreshCw size={13} />} Tải lại bảng công</button>
+      </TabHead>
+      <div className="fin-card">
+        <CardHead title={`Kỳ ${periodLabel(month)} — ${fs?.fromDate || ''} → ${fs?.toDate || ''}`} icon={<FileSpreadsheet size={14} color="#E85D92" />} sub={fs ? `${fs?.totals?.employees ?? 0} NV • ${fs?.totals?.totalShifts ?? 0} ca • ${Number(fs?.totals?.hours ?? 0).toFixed(1)} giờ` : 'Chưa có dữ liệu'}>
+          <SearchBox value={q} onChange={setQ} />
+          {q && <span className="fin-chip-stat">{filteredCount} kết quả</span>}
+        </CardHead>
+        {finSheetLoading ? (
+          <div className="fin-empty">Đang tải bảng chấm công {periodLabel(month)}…</div>
+        ) : (
+          <div className="fin-table-wrap">
+            <table className="fin-table">
+              <thead>
+                <tr><th>Họ tên</th><th>Mã NV</th><th>Chi nhánh</th><th className="num">Ca đủ</th><th className="num">Thiếu</th><th className="num">Vắng</th><th className="num">Giờ công</th><th className="num">Lương ca</th><th className="num">Trừ</th><th className="num">THỰC NHẬN</th></tr>
+              </thead>
+              <tbody>
+                {groups.map(g => {
+                  const gh = r1(sumBy(g.rows, 'hours'));
+                  const gNet = sumBy(g.rows, 'netPay');
+                  return (
+                    <React.Fragment key={g.id}>
+                      <BranchBandRow label={branchLabelOf(g.id)} count={g.rows.length} cols={10} totalText={`${gh.toFixed(1)} giờ • ${formatVND(gNet)}`} />
+                      {g.rows.map((r: any) => (
+                        <tr key={r.employeeId}>
+                          <td style={{ fontWeight: 700 }}>{r.fullName}</td>
+                          <td className="ctr fin-mono">{r.employeeCode}</td>
+                          <td>{branchLabelOf(r.branchId)}</td>
+                          <td className="num">{r.full ?? 0}</td>
+                          <td className="num" style={{ color: '#92400e' }}>{r.partial ?? 0}</td>
+                          <td className="num" style={{ color: 'var(--fin-red)', fontWeight: 800 }}>{r.absent ?? 0}</td>
+                          <td className="num">{Number(r.hours ?? 0).toFixed(1)}</td>
+                          <td className="num fin-money">{formatVND(r.standardPay)}</td>
+                          <td className="num fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(r.deduction)}</td>
+                          <td className="num fin-money" style={{ fontWeight: 800, color: 'var(--fin-green)' }}>{formatVND(r.netPay)}</td>
+                        </tr>
+                      ))}
+                      <tr className="fin-subtotal">
+                        <td colSpan={3}>CỘNG {branchLabelOf(g.id).toUpperCase()}</td>
+                        <td className="num">{sumBy(g.rows, 'full')}</td>
+                        <td className="num">{sumBy(g.rows, 'partial')}</td>
+                        <td className="num">{sumBy(g.rows, 'absent')}</td>
+                        <td className="num">{gh.toFixed(1)}</td>
+                        <td className="num fin-money">{formatVND(sumBy(g.rows, 'standardPay'))}</td>
+                        <td className="num fin-money">{formatVND(sumBy(g.rows, 'deduction'))}</td>
+                        <td className="num fin-money">{formatVND(gNet)}</td>
+                      </tr>
+                    </React.Fragment>
+                  );
+                })}
+                {groups.length === 0 && <tr><td colSpan={10} className="fin-empty">{q ? 'Không tìm thấy nhân viên phù hợp.' : 'Chưa có dữ liệu chấm công tháng này.'}</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
 /* ============================================================================
-   SUB COMPONENTS
+   3 · BCC — BẢNG CÔNG TỪNG NGÀY (nhóm chi nhánh, accordion từng NV)
    ============================================================================ */
+const STATUS_META: Record<string, { l: string; cls: string }> = {
+  DU: { l: 'Đủ', cls: 'fin-status-DU' },
+  VANG: { l: 'Vắng', cls: 'fin-status-VANG' },
+  THIEU: { l: 'Thiếu chấm', cls: 'fin-status-THIEU' },
+};
 
-function StatCard({ icon, label, value, sub }: { icon: React.ReactNode; label: string; value: string; sub: string }) {
-  return (
-    <div style={{ background: 'var(--surface)', padding: '16px', borderRadius: '12px', border: '1px solid var(--border)', boxShadow: '0 4px 14px rgba(15,23,42,0.06)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-        <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: '#FDF2F7', color: '#E85D92', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }}>{icon}</div>
-        <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{label}</div>
-      </div>
-      <div style={{ fontSize: '22px', fontWeight: 800, color: 'var(--text)', marginTop: '8px' }}>{value}</div>
-      <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '3px' }}>{sub}</div>
-    </div>
-  );
-}
-
-function DashboardTab({ month, finSheet, finSheetLoading, slips, workflow, loadFinSheet, loadRuns, periodLabel, formatVND }: any) {
+function BccTab({ month, finSheet, finSheetLoading, formatVND }: any) {
   const fs = finSheet;
+  const [q, setQ] = useState('');
+  const groups = useMemo(() => {
+    const all: any[] = fs?.rows || [];
+    return branchGroups(all.filter(matchesFilter(q.trim())), (r: any) => r.branchId);
+  }, [fs, q]);
+  const fmtTime = (v: any) => {
+    if (!v) return '—';
+    const t = String(v);
+    const d = new Date(t.length > 12 && /^\d+$/.test(t) ? Number(t) : t);
+    return Number.isFinite(d.getTime()) ? d.toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '—';
+  };
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-      <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text)' }}>💰 1. Dashboard Tài Chính & Tính Lương</div>
-      <div style={{ fontSize: '12.5px', color: 'var(--text-muted)' }}>Tổng quan quỹ lương toàn công ty theo từng Khối.</div>
-      {finSheetLoading && <div style={{ padding: '16px', color: 'var(--text-muted)' }}>Đang tải dữ liệu tháng {periodLabel(month)}…</div>}
-      {!finSheetLoading && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '12px' }}>
-          <StatCard icon={<DollarSign size={16} />} label="Quỹ lương dự kiến" value={formatVND(fs?.totals?.totalAmount ?? 0)} sub="Tổng thực lĩnh tháng" />
-          <StatCard icon={<Clock size={16} />} label="Tổng giờ công" value={`${Number(fs?.totals?.hours ?? 0).toFixed(1)} giờ`} sub="Từ dữ liệu chấm công thực" />
-          <StatCard icon={<FileText size={16} />} label="Phiếu lương" value={`${slips.filter(s => ['PUBLISHED', 'CONFIRMED', 'PAID'].includes(String(s.status))).length} / ${slips.length}`} sub="Đã phát hành / tổng phiếu" />
-          <StatCard icon={<Activity size={16} />} label="Trạng thái kỳ" value={workflow?.steps.find(s => s.id === 'fin-payroll-periods')?.stat || '—'} sub="Kỳ mới nhất" />
-        </div>
-      )}
-      {fs && (
-        <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: '12px', overflow: 'hidden' }}>
-          <div style={{ padding: '12px 16px', fontWeight: 800, fontSize: '13px', color: 'var(--text)', borderBottom: '1px solid var(--border)' }}>📦 Lương theo từng Khối — Kỳ {periodLabel(month)}</div>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-              <thead>
-                <tr style={{ background: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
-                  <th style={{ padding: '10px 14px', fontWeight: 800 }}>Khối</th>
-                  <th style={{ padding: '10px 14px', fontWeight: 800, textAlign: 'right' }}>NV</th>
-                  <th style={{ padding: '10px 14px', fontWeight: 800, textAlign: 'right' }}>Giờ công</th>
-                  <th style={{ padding: '10px 14px', fontWeight: 800, textAlign: 'right' }}>Tổng tiền</th>
-                  <th style={{ padding: '10px 14px', fontWeight: 800, textAlign: 'right' }}>Thực lĩnh</th>
-                </tr>
-              </thead>
-              <tbody>
-                {Object.values(fs?.byBlock || {}).map((b: any) => (
-                  <tr key={b.key} style={{ borderBottom: '1px solid var(--border-light)' }}>
-                    <td style={{ padding: '10px 14px', fontWeight: 700 }}>{b.label}</td>
-                    <td style={{ padding: '10px 14px', textAlign: 'right' }}>{b.employees}</td>
-                    <td style={{ padding: '10px 14px', textAlign: 'right' }}>{Number(b.hours ?? 0).toFixed(1)}</td>
-                    <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: 700 }}>{formatVND(b.value ?? 0)}</td>
-                    <td style={{ padding: '10px 14px', textAlign: 'right' }}>{formatVND(b.netPay ?? 0)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function TimesheetTab({ month, finSheet, finSheetLoading, loadFinSheet, branchLabelOf, formatVND, periodLabel }: any) {
-  const fs = finSheet;
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text)' }}>📋 2. Đối Soát Công & Bảng Chấm Công</div>
-        <button onClick={loadFinSheet} disabled={finSheetLoading} style={{ ...{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', borderRadius: '8px', fontSize: '12.5px', fontWeight: 700, border: 'none', cursor: 'pointer', backgroundColor: '#E85D92', color: '#fff' } } }><RefreshCw size={14} style={{ marginRight: '4px' }} /> Tải lại bảng công</button>
-      </div>
-      <div style={{ fontSize: '12.5px', color: 'var(--text-muted)' }}>Tổng hợp công theo nhân viên, chi nhánh, tháng — dữ liệu realtime.</div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <TabHead step={3} title="BCC — Bảng công từng ngày" desc={`Chi tiết check-in/out, giờ, lương ca, trễ/vắng từng ngày — kỳ ${periodLabel(month)}. Mở từng nhân viên để xem chi tiết.`}>
+        <SearchBox value={q} onChange={setQ} />
+      </TabHead>
       {finSheetLoading ? (
-        <div style={{ padding: '20px', color: 'var(--text-muted)' }}>Đang tải bảng chấm công tháng {periodLabel(month)}…</div>
-      ) : finSheet ? (
-        <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: '12px', overflow: 'hidden' }}>
-          <div style={{ padding: '10px 14px', fontWeight: 800, fontSize: '12.5px', color: 'var(--text)', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between' }}>
-            <span>Kỳ {periodLabel(month)} — {fs.fromDate} → {fs.toDate} ({fs.daysInMonth} ngày)</span>
-            <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{fs.totals?.employees} NV • {fs.totals?.totalShifts} ca • {Number(fs.totals?.hours ?? 0).toFixed(1)} giờ</span>
-          </div>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12.5px' }}>
-              <thead>
-                <tr style={{ background: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
-                  <th style={{ padding: '10px 14px', fontWeight: 800 }}>Họ tên</th>
-                  <th style={{ padding: '10px 14px', fontWeight: 800 }}>Mã NV</th>
-                  <th style={{ padding: '10px 14px', fontWeight: 800 }}>Chi nhánh</th>
-                  <th style={{ padding: '10px 14px', fontWeight: 800, textAlign: 'right' }}>Giờ công</th>
-                  <th style={{ padding: '10px 14px', fontWeight: 800, textAlign: 'right' }}>Ca đủ</th>
-                  <th style={{ padding: '10px 14px', fontWeight: 800, textAlign: 'right' }}>Ca vắng</th>
-                  <th style={{ padding: '10px 14px', fontWeight: 800, textAlign: 'right' }}>Tiền lương</th>
-                </tr>
-              </thead>
-              <tbody>
-                {branchGroups(fs.rows || [], (r: any) => branchLabelOf(r.branchId)).map((g: any) => (
-                  <React.Fragment key={g.id}>
-                    <BranchBand label={g.id} rows={g.rows} cols={7} totalText={`${g.rows.reduce((s: number, r: any) => s + (Number(r.hours) || 0), 0).toFixed(1)} giờ`} />
-                    {g.rows.map((r: any) => (
-                      <tr key={r.employeeId} style={{ borderBottom: '1px solid var(--border-light)' }}>
-                        <td style={{ padding: '10px 14px', fontWeight: 700 }}>{r.fullName}</td>
-                        <td style={{ padding: '10px 14px' }}>{r.employeeCode}</td>
-                        <td style={{ padding: '10px 14px' }}>{branchLabelOf(r.branchId)}</td>
-                        <td style={{ padding: '10px 14px', textAlign: 'right' }}>{Number(r.hours ?? 0).toFixed(1)}</td>
-                        <td style={{ padding: '10px 14px', textAlign: 'right' }}>{r.full}</td>
-                        <td style={{ padding: '10px 14px', textAlign: 'right', color: '#B91C1C', fontWeight: 700 }}>{r.absent}</td>
-                        <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: 700 }}>{formatVND(r.netPay ?? r.salary ?? 0)}</td>
-                      </tr>
-                    ))}
-                  </React.Fragment>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <div className="fin-empty">Đang tải bảng công {periodLabel(month)}…</div>
+      ) : !fs ? (
+        <div className="fin-empty">Chưa có dữ liệu công tháng này.</div>
       ) : (
-        <div style={{ padding: '20px', color: 'var(--text-muted)', textAlign: 'center' }}>Chưa có dữ liệu chấm công tháng này.</div>
+        groups.map(g => (
+          <div key={g.id} className="fin-card fin-bcc-branch">
+            <div className="fin-bcc-branch-head">
+              <span><Building2 size={13} style={{ verticalAlign: -2, marginRight: 6 }} />{branchLabelOf(g.id)}</span>
+              <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'none', letterSpacing: 0 }}>
+                {g.rows.length} NV • {r1(sumBy(g.rows, 'hours')).toFixed(1)} giờ • {formatVND(sumBy(g.rows, 'netPay'))}
+              </span>
+            </div>
+            <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {g.rows.map((r: any) => (
+                <details key={r.employeeId} className="fin-details">
+                  <summary>
+                    <span style={{ fontWeight: 800 }}>{r.fullName} <span style={{ color: '#94a3b8', fontWeight: 600 }}>({r.employeeCode})</span></span>
+                    <span className="fin-kv" style={{ color: '#2563eb' }}><b>{Number(r.hours ?? 0).toFixed(1)}</b> giờ</span>
+                    <span className="fin-kv" style={{ color: '#166534' }}>Đủ {r.full || 0}</span>
+                    <span className="fin-kv" style={{ color: '#92400e' }}>Thiếu {r.partial || 0}</span>
+                    <span className="fin-kv" style={{ color: '#b91c1c' }}>Vắng {r.absent || 0}</span>
+                    <span className="fin-kv" style={{ color: '#166534', marginLeft: 'auto' }}><b>{formatVND(r.netPay ?? r.standardPay ?? 0)}</b></span>
+                  </summary>
+                  <div className="fin-details-body">
+                    <table className="fin-mini-table">
+                      <thead>
+                        <tr><th>Ngày</th><th>Ca</th><th style={{ textAlign: 'center' }}>Giờ</th><th>Trạng thái</th><th>Check-in</th><th style={{ textAlign: 'right' }}>Trễ (phút)</th><th style={{ textAlign: 'right' }}>Lương ca</th><th style={{ textAlign: 'right' }}>Phạt/Trừ</th></tr>
+                      </thead>
+                      <tbody>
+                        {(r.shifts || []).map((d: any, idx: number) => {
+                          const meta = STATUS_META[String(d.status || '')] || { l: d.status || '—', cls: '' };
+                          return (
+                            <tr key={`${r.employeeId}-${idx}`}>
+                              <td style={{ fontWeight: 700 }}>{String(d.date || '').slice(0, 10)}</td>
+                              <td>{d.shiftCode || '—'}{d.branchId ? <span style={{ color: '#94a3b8' }}> ({branchLabelOf(d.branchId)})</span> : null}</td>
+                              <td style={{ textAlign: 'center' }}>{Number(d.hours ?? 0).toFixed(1)}</td>
+                              <td className={meta.cls}>{meta.l}</td>
+                              <td>{fmtTime(d.checkIn)}</td>
+                              <td style={{ textAlign: 'right', color: (d.lateMin || 0) > 0 ? 'var(--fin-red)' : 'inherit' }}>{d.lateMin || 0}</td>
+                              <td style={{ textAlign: 'right' }} className="fin-money">{formatVND(d.shiftPay || 0)}</td>
+                              <td style={{ textAlign: 'right', color: (d.fineAmount || 0) > 0 ? 'var(--fin-red)' : 'inherit' }} className="fin-money">{formatVND(d.fineAmount || 0)}</td>
+                            </tr>
+                          );
+                        })}
+                        {(r.shifts || []).length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--fin-muted)', padding: 10 }}>Không có ca trong kỳ.</td></tr>}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+              ))}
+              {g.rows.length === 0 && <div className="fin-empty">Không có nhân viên phù hợp.</div>}
+            </div>
+          </div>
+        ))
       )}
+      {groups.length === 0 && !finSheetLoading && fs && <div className="fin-empty">Không tìm thấy nhân viên phù hợp.</div>}
     </div>
   );
 }
 
-function CalculateTab({ month, formula, setFormula, inputs, setInputs, inputsLoading, allEmployees, saveFormula, upsertInput, saveAllInputs, loadFormula, loadInputs }: any) {
+/* ============================================================================
+   4 · TÍNH LƯƠNG — CÔNG THỨC & NHẬP TAY (+ NÚT TÍNH LƯƠNG)
+   ============================================================================ */
+function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEmployees, saveFormula, upsertInput, saveAllInputs, loadFormula, loadInputs, runCalculate, calcBusy, runs }: any) {
+  const [q, setQ] = useState('');
+  const latestRun = useMemo(() => (Array.isArray(runs) ? runs : []).filter((r: any) => r.period === month).sort((a: any, b: any) => String(b?.created_at || '').localeCompare(String(a?.created_at || '')))[0] || null, [runs, month]);
+  const groups = useMemo(() => {
+    const filtered = (allEmployees || []).filter(matchesFilter(q.trim()));
+    return branchGroups(filtered, (e: any) => e.default_branch_id);
+  }, [allEmployees, q]);
+  const inputTotals = useMemo(() => ({
+    lcb: sumBy(inputs, 'luong_cb'), ot: sumBy(inputs, 'ot_extra'), bonus: sumBy(inputs, 'bonus_extra'),
+    ung: sumBy(inputs, 'ung_luong'), kpi: sumBy(inputs, 'tru_kpi'), dp: sumBy(inputs, 'dong_phuc'),
+  }), [inputs]);
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-      <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text)' }}>🧮 4. Tính Lương (Công Thức & Nhập Tay)</div>
-      <div style={{ fontSize: '12.5px', color: 'var(--text-muted)' }}>Lưu công thức + nhập liệu tay cho từng NV.</div>
-      <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: '12px', padding: '14px' }}>
-        <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '8px' }}>Công thức kỳ {month}</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '10px', marginBottom: '10px' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            <div style={{ fontSize: '10.5px', color: 'var(--text-muted)', fontWeight: 700 }}>Đơn giá giờ thử việc (rateTV)</div>
-            <input type="number" value={formula?.rateTV ?? ''} onChange={e => setFormula({ ...formula, rateTV: Number(e.target.value) || 0 })} style={{ padding: '6px 8px', borderRadius: '8px', border: '1px solid var(--border)', fontSize: '12px' }} />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <TabHead step={4} title="Tính lương — Công thức & Nhập tay" desc={`Lưu công thức kỳ, nhập liệu tay từng NV, rồi bấm TÍNH LƯƠNG để sinh kỳ + phiếu. Kỳ ${periodLabel(month)}.`}>
+        <SearchBox value={q} onChange={setQ} />
+      </TabHead>
+
+      {/* Nút tính lương — tạo kỳ + phiếu cho toàn bộ NV */}
+      <div className="fin-card" style={{ border: '1.5px solid var(--fin-brand-line)', background: 'linear-gradient(120deg, #fff 0%, #fdf2f7 100%)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '16px 18px', flexWrap: 'wrap' }}>
+          <div style={{ width: 52, height: 52, borderRadius: 14, background: 'var(--fin-brand)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 6px 16px rgba(232,93,146,.45)' }}>
+            <Calculator size={26} />
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            <div style={{ fontSize: '10.5px', color: 'var(--text-muted)', fontWeight: 700 }}>Đơn giá giờ chính thức (rateCT)</div>
-            <input type="number" value={formula?.rateCT ?? ''} onChange={e => setFormula({ ...formula, rateCT: Number(e.target.value) || 0 })} style={{ padding: '6px 8px', borderRadius: '8px', border: '1px solid var(--border)', fontSize: '12px' }} />
+          <div style={{ flex: 1, minWidth: 260 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 800, color: 'var(--fin-ink)' }}>TÍNH LƯƠNG {periodLabel(month).toUpperCase()} — SINH KỲ &amp; PHIẾU</div>
+            <div style={{ fontSize: 11, color: 'var(--fin-muted)', marginTop: 2, lineHeight: 1.5 }}>
+              Chạy công thức Excel trên toàn bộ NV (LCB + giờ công × đơn giá + OT + Bonus − KPI − phạt − ứng − đồng phục).
+              {latestRun
+                ? <> Kỳ gần nhất: <b>{latestRun.run_id}</b> — trạng thái <b>{latestRun.status}</b>. Bấm lại sẽ TÍNH LẠI và tạo kỳ mới.</>
+                : <> Chưa có kỳ lương cho tháng này — bấm nút bên phải để tạo.</>}
+            </div>
           </div>
+          <button type="button" className="fin-btn fin-btn-primary" style={{ fontSize: 13, padding: '12px 20px' }} onClick={runCalculate} disabled={calcBusy}>
+            {calcBusy ? <Loader2 size={16} className="fin-spin" /> : <Calculator size={16} />} {calcBusy ? 'Đang tính…' : 'TÍNH LƯƠNG NGAY'}
+          </button>
         </div>
-        <button onClick={saveFormula} disabled={inputsLoading} style={{ ...{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', borderRadius: '8px', fontSize: '12.5px', fontWeight: 700, border: 'none', cursor: 'pointer', backgroundColor: '#E85D92', color: '#fff' } } }><Save size={14} style={{ marginRight: '4px' }} /> Lưu công thức lương</button>
       </div>
-      <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: '12px', padding: '14px' }}>
-        <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '8px' }}>Nhập liệu tay theo kỳ</div>
-        <div style={{ overflowX: 'auto', marginBottom: '8px' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12.5px', minWidth: '820px' }}>
+
+      {/* Công thức */}
+      <div className="fin-card">
+        <CardHead title={`Công thức kỳ ${periodLabel(month)}`} icon={<Settings2 size={14} color="#E85D92" />} sub="Dùng cho cả BẢNG TỔNG HỢP, TÍNH LƯƠNG và PHIẾU từng NV" />
+        <div style={{ padding: '14px 16px', display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 210 }}>
+            <span style={{ fontSize: 10, fontWeight: 800, color: 'var(--fin-muted)', letterSpacing: .6, textTransform: 'uppercase' }}>Đơn giá giờ THỬ VIỆC (đ)</span>
+            <input type="number" className="fin-input" value={formula?.rateTV ?? ''} onChange={e => setFormula({ ...formula, rateTV: Number(e.target.value) || 0 })} />
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 210 }}>
+            <span style={{ fontSize: 10, fontWeight: 800, color: 'var(--fin-muted)', letterSpacing: .6, textTransform: 'uppercase' }}>Đơn giá giờ CHÍNH THỨC (đ)</span>
+            <input type="number" className="fin-input" value={formula?.rateCT ?? ''} onChange={e => setFormula({ ...formula, rateCT: Number(e.target.value) || 0 })} />
+          </label>
+          <button type="button" className="fin-btn fin-btn-dark" onClick={saveFormula} disabled={inputsLoading}><Save size={14} /> Lưu công thức</button>
+        </div>
+      </div>
+
+      {/* Nhập tay theo chi nhánh */}
+      <div className="fin-card">
+        <CardHead title="Nhập liệu tay theo kỳ" icon={<FileSpreadsheet size={14} color="#E85D92" />} sub="Nhóm theo chi nhánh — tự lưu khi rời ô"
+          >
+          <span className="fin-chip-stat">LCB {formatVND(inputTotals.lcb)}</span>
+          <span className="fin-chip-stat">OT {formatVND(inputTotals.ot)}</span>
+          <span className="fin-chip-stat">Bonus {formatVND(inputTotals.bonus)}</span>
+          <span className="fin-chip-stat">Ứng {formatVND(inputTotals.ung)}</span>
+        </CardHead>
+        <div className="fin-table-wrap" style={{ maxHeight: '62vh' }}>
+          <table className="fin-table" style={{ minWidth: 1080 }}>
             <thead>
-              <tr style={{ background: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
-                <th style={{ padding: '8px 10px', fontWeight: 800 }}>Mã NV</th><th style={{ padding: '8px 10px', fontWeight: 800 }}>Họ tên</th>
-                <th style={{ padding: '8px 10px', fontWeight: 800, textAlign: 'right' }}>LCB</th><th style={{ padding: '8px 10px', fontWeight: 800, textAlign: 'right' }}>OT thêm</th>
-                <th style={{ padding: '8px 10px', fontWeight: 800, textAlign: 'right' }}>Bonus</th><th style={{ padding: '8px 10px', fontWeight: 800, textAlign: 'right' }}>Ứng lương</th>
-                <th style={{ padding: '8px 10px', fontWeight: 800, textAlign: 'right' }}>Trừ KPI</th><th style={{ padding: '8px 10px', fontWeight: 800, textAlign: 'right' }}>Trừ ĐP</th><th style={{ padding: '8px 10px', fontWeight: 800 }}>Ghi chú</th>
-              </tr>
+              <tr><th>Mã NV</th><th>Họ tên</th><th className="num">LCB</th><th className="num">OT thêm</th><th className="num">Bonus</th><th className="num">Ứng lương</th><th className="num">Trừ KPI</th><th className="num">Trừ ĐP</th><th>Ghi chú</th></tr>
             </thead>
             <tbody>
-              {branchGroups(allEmployees, (emp: any) => branchLabelOf(emp.default_branch_id)).map((g: any) => (
+              {groups.map(g => (
                 <React.Fragment key={g.id}>
-                  <BranchBand label={g.id} rows={g.rows} cols={9} />
+                  <BranchBandRow label={branchLabelOf(g.id)} count={g.rows.length} cols={9} />
                   {g.rows.map((emp: any) => {
                     const inp = inputs.find((i: any) => i.employee_id === emp.employee_id) || {};
+                    const cell = (field: string, width = '100%') => (
+                      <input type="number" className="fin-input" style={{ width, padding: '5px 7px', fontSize: 11.5 }}
+                        value={inp[field] ?? ''} onChange={v => upsertInput(emp.employee_id, field, v.target.value)} aria-label={field} />
+                    );
                     return (
-                  <tr key={emp.employee_id} style={{ borderBottom: '1px solid var(--border-light)' }}>
-                    <td style={{ padding: '7px 10px', fontWeight: 700 }}>{emp.employee_code}</td>
-                    <td style={{ padding: '7px 10px' }}>{emp.full_name}</td>
-                    <td style={{ padding: '7px 10px', textAlign: 'right' }}><input type="number" value={inp.luong_cb ?? ''} onChange={v => upsertInput(emp.employee_id, 'luong_cb', v.target.value)} style={{ width: '100%', padding: '4px 6px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '11.5px', background: '#fff' }} /></td>
-                    <td style={{ padding: '7px 10px', textAlign: 'right' }}><input type="number" value={inp.ot_extra ?? ''} onChange={v => upsertInput(emp.employee_id, 'ot_extra', v.target.value)} style={{ width: '100%', padding: '4px 6px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '11.5px', background: '#fff' }} /></td>
-                    <td style={{ padding: '7px 10px', textAlign: 'right' }}><input type="number" value={inp.bonus_extra ?? ''} onChange={v => upsertInput(emp.employee_id, 'bonus_extra', v.target.value)} style={{ width: '100%', padding: '4px 6px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '11.5px', background: '#fff' }} /></td>
-                    <td style={{ padding: '7px 10px', textAlign: 'right' }}><input type="number" value={inp.ung_luong ?? ''} onChange={v => upsertInput(emp.employee_id, 'ung_luong', v.target.value)} style={{ width: '100%', padding: '4px 6px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '11.5px', background: '#fff' }} /></td>
-                    <td style={{ padding: '7px 10px', textAlign: 'right' }}><input type="number" value={inp.tru_kpi ?? ''} onChange={v => upsertInput(emp.employee_id, 'tru_kpi', v.target.value)} style={{ width: '100%', padding: '4px 6px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '11.5px', background: '#fff' }} /></td>
-                    <td style={{ padding: '7px 10px', textAlign: 'right' }}><input type="number" value={inp.dong_phuc ?? ''} onChange={v => upsertInput(emp.employee_id, 'dong_phuc', v.target.value)} style={{ width: '100%', padding: '4px 6px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '11.5px', background: '#fff' }} /></td>
-                    <td style={{ padding: '7px 10px' }}><input value={inp.note ?? ''} onChange={v => upsertInput(emp.employee_id, 'note', v.target.value)} style={{ width: '100%', padding: '4px 6px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '11.5px', background: '#fff' }} /></td>
-                  </tr>
+                      <tr key={emp.employee_id}>
+                        <td className="ctr fin-mono">{emp.employee_code}</td>
+                        <td style={{ fontWeight: 700 }}>{emp.full_name}</td>
+                        <td className="num">{cell('luong_cb')}</td>
+                        <td className="num">{cell('ot_extra')}</td>
+                        <td className="num">{cell('bonus_extra')}</td>
+                        <td className="num">{cell('ung_luong')}</td>
+                        <td className="num">{cell('tru_kpi')}</td>
+                        <td className="num">{cell('dong_phuc')}</td>
+                        <td><input className="fin-input" style={{ fontSize: 11.5, padding: '5px 7px' }} value={inp.note ?? ''} onChange={v => upsertInput(emp.employee_id, 'note', v.target.value)} placeholder="Ghi chú…" aria-label="Ghi chú" /></td>
+                      </tr>
                     );
                   })}
                 </React.Fragment>
               ))}
+              {groups.length === 0 && <tr><td colSpan={9} className="fin-empty">{q ? 'Không tìm thấy nhân viên phù hợp.' : 'Chưa có nhân viên.'}</td></tr>}
             </tbody>
           </table>
         </div>
-        <button onClick={saveAllInputs} disabled={inputsLoading} style={{ ...{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', borderRadius: '8px', fontSize: '12.5px', fontWeight: 700, border: 'none', cursor: 'pointer', backgroundColor: '#E85D92', color: '#fff' } } }><Save size={14} style={{ marginRight: '4px' }} /> Lưu tất cả nhập tay</button>
+        <div style={{ padding: '10px 16px', borderTop: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 10.5, color: 'var(--fin-muted)' }}>Tổng trích: KPI <b className="fin-money">{formatVND(inputTotals.kpi)}</b> • Đồng phục <b className="fin-money">{formatVND(inputTotals.dp)}</b></span>
+          <button type="button" className="fin-btn fin-btn-dark fin-btn-sm" onClick={saveAllInputs} disabled={inputsLoading}><Save size={13} /> Lưu tất cả nhập tay</button>
+        </div>
       </div>
     </div>
   );
 }
 
-function PayrollSheetTab({ month, slips, allEmployees, branchLabelOf, formatVND, periodLabel }: any) {
+/* ============================================================================
+   5 · PAYMENT — BẢNG LƯƠNG THÁNG (nhóm chi nhánh + subtotal)
+   ============================================================================ */
+function PayrollSheetTab({ month, slips, allEmployees, formatVND, stageBadge }: any) {
+  const [q, setQ] = useState('');
+  const groups = useMemo(() => {
+    const filtered = (slips || []).filter(matchesFilter(q.trim()));
+    return branchGroups(filtered, (s: any) => slipBranchId(s, allEmployees));
+  }, [slips, allEmployees, q]);
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-      <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text)' }}>📊 5. Payment — Bảng Lương Tháng</div>
-      <div style={{ fontSize: '12.5px', color: 'var(--text-muted)' }}>Bảng lương tháng theo từng chi nhánh.</div>
-      <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: '12px', overflow: 'hidden' }}>
-        <div style={{ padding: '10px 14px', fontWeight: 800, fontSize: '12.5px', color: 'var(--text)', borderBottom: '1px solid var(--border)' }}>Kỳ {periodLabel(month)} — Bảng lương theo chi nhánh</div>
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12.5px', minWidth: '900px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <TabHead step={5} title="Payment — Bảng lương tháng" desc={`Bảng lương tổng hợp theo từng chi nhánh — kỳ ${periodLabel(month)}. Dữ liệu phiếu đã tạo (cột THỰC LÃNH gồm cả LCB, giờ công, OT, bonus − khấu trừ).`}>
+        <SearchBox value={q} onChange={setQ} />
+      </TabHead>
+      <div className="fin-card">
+        <CardHead title={`Kỳ ${periodLabel(month)} — Bảng lương theo chi nhánh`} icon={<FileText size={14} color="#E85D92" />} sub={`${slips.length} phiếu`}>
+          <span className="fin-chip-stat">Tổng thực lãnh: {formatVND(sumBy(slips || [], 'thuc_lanh') || sumBy(slips || [], 'net_pay'))}</span>
+        </CardHead>
+        <div className="fin-table-wrap">
+          <table className="fin-table" style={{ minWidth: 1150 }}>
             <thead>
-              <tr style={{ background: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
-                <th style={{ padding: '10px 14px', fontWeight: 800 }}>Họ tên</th><th style={{ padding: '10px 14px', fontWeight: 800 }}>Mã NV</th><th style={{ padding: '10px 14px', fontWeight: 800 }}>Chi nhánh</th>
-                <th style={{ padding: '10px 14px', fontWeight: 800, textAlign: 'right' }}>LCB</th><th style={{ padding: '10px 14px', fontWeight: 800, textAlign: 'right' }}>OT</th><th style={{ padding: '10px 14px', fontWeight: 800, textAlign: 'right' }}>Bonus</th>
-                <th style={{ padding: '10px 14px', fontWeight: 800, textAlign: 'right' }}>Tổng cộng</th><th style={{ padding: '10px 14px', fontWeight: 800, textAlign: 'right' }}>Khấu trừ</th><th style={{ padding: '10px 14px', fontWeight: 800, textAlign: 'right' }}>Ứng</th><th style={{ padding: '10px 14px', fontWeight: 800, textAlign: 'right' }}>THỰC LÃNH</th><th style={{ padding: '10px 14px', fontWeight: 800 }}>Trạng thái</th>
-              </tr>
+              <tr><th>Họ tên</th><th>Mã NV</th><th>Chi nhánh</th><th className="num">LCB</th><th className="num">OT</th><th className="num">Bonus</th><th className="num">Tổng cộng</th><th className="num">Khấu trừ</th><th className="num">Ứng</th><th className="num">THỰC LÃNH</th><th>Trạng thái</th></tr>
             </thead>
             <tbody>
-              {branchGroups(slips, (s: any) => {
-                const emp = allEmployees.find((e: any) => String(e.employee_id) === String(s.employee_id));
-                return branchLabelOf(emp?.default_branch_id || s.branch_id);
-              }).map((g: any) => (
-                <React.Fragment key={g.id}>
-                  <BranchBand label={g.id} rows={g.rows} cols={11} totalText={`THỰC LÃNH ${formatVND(g.rows.reduce((s: number, r: any) => s + (Number(r.thuc_lanh ?? r.net_pay) || 0), 0))}`} />
-                  {g.rows.map((s: any) => {
-                    const kpi = (Number(s.tru_kpi) || 0) + (Number(s.deduction) || 0);
-                    const tongCong = Number(s.tong_cong) || ((Number(s.standard_pay) || 0) + (Number(s.luong_cb) || 0) + (Number(s.ot_extra) || 0) + (Number(s.bonus) || 0));
-                    const thuc = Number(s.thuc_lanh ?? s.net_pay) || 0;
-                    const st = stageBadge(s.stage ?? s.status);
-                    const emp = allEmployees.find((e: any) => String(e.employee_id) === String(s.employee_id));
-                    return (
-                    <tr key={s.item_id} style={{ borderBottom: '1px solid var(--border-light)' }}>
-                      <td style={{ padding: '9px 14px', fontWeight: 700 }}>{s.full_name}</td>
-                      <td style={{ padding: '9px 14px' }}>{s.employee_code}</td>
-                      <td style={{ padding: '9px 14px' }}>{branchLabelOf(emp?.default_branch_id || s.branch_id)}</td>
-                      <td style={{ padding: '9px 14px', textAlign: 'right' }}>{formatVND(s.luong_cb)}</td>
-                      <td style={{ padding: '9px 14px', textAlign: 'right' }}>{formatVND(s.ot_extra)}</td>
-                      <td style={{ padding: '9px 14px', textAlign: 'right' }}>{formatVND(s.bonus)}</td>
-                      <td style={{ padding: '9px 14px', textAlign: 'right', fontWeight: 700 }}>{formatVND(tongCong)}</td>
-                      <td style={{ padding: '9px 14px', textAlign: 'right', color: '#B91C1C' }}>{formatVND(kpi)}</td>
-                      <td style={{ padding: '9px 14px', textAlign: 'right', color: '#B91C1C' }}>{formatVND(s.ung_luong)}</td>
-                      <td style={{ padding: '9px 14px', textAlign: 'right', fontWeight: 800, color: '#166534' }}>{formatVND(thuc)}</td>
-                      <td style={{ padding: '9px 14px' }}><span style={{ display: 'inline-block', padding: '3px 8px', borderRadius: '6px', background: st.bg, color: st.fg, fontSize: '10.5px', fontWeight: 800, border: `1px solid ${st.border}` }}>{st.label}</span></td>
+              {groups.map(g => {
+                const gThuc = g.rows.reduce((s: number, r: any) => s + (Number(r.thuc_lanh ?? r.net_pay) || 0), 0);
+                return (
+                  <React.Fragment key={g.id}>
+                    <BranchBandRow label={branchLabelOf(g.id)} count={g.rows.length} cols={11} totalText={`THỰC LÃNH ${formatVND(gThuc)}`} />
+                    {g.rows.map((s: any) => {
+                      const kpi = (Number(s.tru_kpi) || 0) + (Number(s.deduction) || 0);
+                      const tongCong = Number(s.tong_cong) || ((Number(s.standard_pay) || 0) + (Number(s.luong_cb) || 0) + (Number(s.ot_extra) || 0) + (Number(s.bonus) || 0));
+                      const thuc = Number(s.thuc_lanh ?? s.net_pay) || 0;
+                      const st = stageBadge(s.stage ?? s.status);
+                      return (
+                        <tr key={s.item_id}>
+                          <td style={{ fontWeight: 700 }}>{s.full_name}</td>
+                          <td className="ctr fin-mono">{s.employee_code}</td>
+                          <td>{branchLabelOf(slipBranchId(s, allEmployees))}</td>
+                          <td className="num fin-money">{formatVND(s.luong_cb)}</td>
+                          <td className="num fin-money">{formatVND(s.ot_extra)}</td>
+                          <td className="num fin-money">{formatVND(s.bonus)}</td>
+                          <td className="num fin-money" style={{ fontWeight: 700 }}>{formatVND(tongCong)}</td>
+                          <td className="num fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(kpi)}</td>
+                          <td className="num fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(s.ung_luong)}</td>
+                          <td className="num fin-money" style={{ fontWeight: 800, color: 'var(--fin-green)' }}>{formatVND(thuc)}</td>
+                          <td><span className="fin-badge" style={{ color: st.fg, background: st.bg, borderColor: st.border }}><span className="fin-badge-dot" />{st.label}</span></td>
+                        </tr>
+                      );
+                    })}
+                    <tr className="fin-subtotal">
+                      <td colSpan={9}>CỘNG {branchLabelOf(g.id).toUpperCase()}</td>
+                      <td className="num fin-money">{formatVND(gThuc)}</td>
+                      <td />
                     </tr>
-                    );
-                  })}
-                </React.Fragment>
-              ))}
+                  </React.Fragment>
+                );
+              })}
+              {groups.length === 0 && <tr><td colSpan={11} className="fin-empty">{q ? 'Không tìm thấy phiếu phù hợp.' : 'Chưa có bảng lương tháng này — hãy TÍNH LƯƠNG ở tab 4.'}</td></tr>}
             </tbody>
           </table>
         </div>
-        {slips.length === 0 && <div style={{ padding: '16px', color: 'var(--text-muted)', textAlign: 'center' }}>Chưa có bảng lương tháng này.</div>}
+        {slips.length > 0 && (
+          <div style={{ padding: '10px 16px', borderTop: '1px solid #f1f5f9', display: 'flex', justifyContent: 'flex-end' }}>
+            <span className="fin-chip-stat" style={{ fontSize: 11 }}>TỔNG THỰC LÃNH TOÀN CÔNG TY: {formatVND(sumBy(slips || [], 'thuc_lanh') || sumBy(slips || [], 'net_pay'))}</span>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, periodLabel, formatVND }: any) {
+/* ============================================================================
+   6 · KỲ LƯƠNG — PHÂN THEO CHI NHÁNH + VÒNG ĐỜI KỲ
+   ============================================================================ */
+const RUN_STATUS_STYLE: Record<string, { bg: string; fg: string; label: string }> = {
+  DRAFT: { bg: '#F1F5F9', fg: '#475569', label: 'Nháp' },
+  RECONCILED: { bg: '#EFF6FF', fg: '#1D4ED8', label: 'Đã đối soát' },
+  APPROVED: { bg: '#F5F3FF', fg: '#7C3AED', label: 'Đã duyệt' },
+  PUBLISHED: { bg: '#ECFDF5', fg: '#047857', label: 'Đã phát hành' },
+  PAID: { bg: '#DCFCE7', fg: '#166534', label: 'ĐÃ THANH TOÁN' },
+  CONFIRMED: { bg: '#FEF9C3', fg: '#854D0E', label: 'Đã xác nhận' },
+};
+
+function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmployees, formatVND, runCalculate, calcBusy }: any) {
+  const monthRuns = useMemo(() => (Array.isArray(runs) ? runs : []).filter((r: any) => r.period === month).sort((a: any, b: any) => String(b?.created_at || '').localeCompare(String(a?.created_at || ''))), [runs, month]);
+  const latest = monthRuns[0] || null;
+  // Tổng hợp theo CHI NHÁNH từ phiếu của kỳ (số liệu sống)
+  const byBranch = useMemo(() => {
+    const map = new Map<string, any[]>();
+    for (const s of slips || []) {
+      const k = String(slipBranchId(s, allEmployees) || 'KHAC');
+      const arr = map.get(k);
+      if (arr) arr.push(s); else map.set(k, [s]);
+    }
+    return orderedBranchKeys(map.keys()).map(k => ({ id: k, rows: map.get(k)! }));
+  }, [slips, allEmployees]);
+  const grandThuc = (slips || []).reduce((s: number, x: any) => s + (Number(x?.thuc_lanh ?? x?.net_pay) || 0), 0);
+  const grandHours = (slips || []).reduce((s: number, x: any) => s + (Number(x?.standard_hours) || 0), 0);
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-      <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text)' }}>📅 6. Kỳ Lương (DRAFT → PAID)</div>
-      <div style={{ fontSize: '12.5px', color: 'var(--text-muted)' }}>Quản lý vòng đời kỳ lương.</div>
-      <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: '12px', padding: '14px' }}>
-        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: '12px', fontWeight: 800, color: 'var(--text-muted)' }}>Kỳ: {periodLabel(month)}</span>
-          <button onClick={loadRuns} style={{ ...{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', borderRadius: '8px', fontSize: '12.5px', fontWeight: 700, border: 'none', cursor: 'pointer', backgroundColor: '#E85D92', color: '#fff' } } }><RefreshCw size={14} style={{ marginRight: '4px' }} /> Tải lại</button>
-        </div>
-        {runsLoading ? <div style={{ padding: '16px', color: 'var(--text-muted)' }}>Đang tải kỳ lương…</div> : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12.5px', minWidth: '620px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <TabHead step={6} title="Kỳ lương — DRAFT → PAID" desc={`Vòng đời kỳ lương ${periodLabel(month)}: tính → đối soát → duyệt → phát hành → thanh toán. Bảng dưới gộp theo TỪNG CHI NHÁNH.`}>
+        <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={loadRuns}><RefreshCw size={13} /> Tải lại</button>
+        <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={runCalculate} disabled={calcBusy} title="Tính lại kỳ (tạo kỳ mới — không mất dữ liệu kỳ cũ)">
+          {calcBusy ? <Loader2 size={13} className="fin-spin" /> : <Calculator size={13} />} {latest ? 'Tính lại kỳ' : 'Tính lương ngay'}
+        </button>
+      </TabHead>
+
+      {/* Bảng tổng hợp THEO CHI NHÁNH */}
+      <div className="fin-card">
+        <CardHead title={`Kỳ ${periodLabel(month)} — Tổng hợp theo chi nhánh`} icon={<Building2 size={14} color="#E85D92" />} sub="Gộp từ phiếu của kỳ đang hiển thị">
+          <span className="fin-chip-stat">{(slips || []).length} phiếu</span>
+          <span className="fin-chip-stat">{r1(grandHours).toFixed(1)} giờ</span>
+          <span className="fin-chip-stat">THỰC LÃNH {formatVND(grandThuc)}</span>
+        </CardHead>
+        {runsLoading && slips.length === 0 ? (
+          <div className="fin-empty">Đang tải kỳ lương…</div>
+        ) : byBranch.length === 0 ? (
+          <div className="fin-empty">
+            <Inbox size={28} style={{ margin: '0 auto 8px', color: '#cbd5e1' }} />
+            <div style={{ fontWeight: 800, color: 'var(--fin-ink)', marginBottom: 4 }}>Chưa có phiếu lương cho {periodLabel(month)}</div>
+            <div style={{ marginBottom: 12 }}>Bấm “Tính lương ngay” ở góc phải trên — hệ thống sẽ sinh kỳ và phiếu cho toàn bộ nhân viên.</div>
+            <button type="button" className="fin-btn fin-btn-primary" onClick={runCalculate} disabled={calcBusy}>{calcBusy ? <Loader2 size={15} className="fin-spin" /> : <Calculator size={15} />} TÍNH LƯƠNG NGAY</button>
+          </div>
+        ) : (
+          <div className="fin-table-wrap">
+            <table className="fin-table" style={{ minWidth: 1060 }}>
               <thead>
-                <tr style={{ background: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
-                  <th style={{ padding: '10px 14px', fontWeight: 800 }}>Kỳ</th><th style={{ padding: '10px 14px', fontWeight: 800 }}>Trạng thái</th><th style={{ padding: '10px 14px', fontWeight: 800, textAlign: 'right' }}>NV</th><th style={{ padding: '10px 14px', fontWeight: 800, textAlign: 'right' }}>Giờ</th><th style={{ padding: '10px 14px', fontWeight: 800, textAlign: 'right' }}>Tiền</th><th style={{ padding: '10px 14px', fontWeight: 800 }}>Thao tác</th>
-                </tr>
+                <tr><th>Chi nhánh</th><th className="num">NV</th><th className="num">Giờ công</th><th className="num">Lương ca</th><th className="num">TỔNG CỘNG</th><th className="num">THỰC LÃNH</th><th className="ctr">Đã ký NV</th><th className="ctr">Đã chuyển</th><th>Tiến độ</th></tr>
               </thead>
               <tbody>
-                {(runs.filter((r: any) => r.period === month).length ? runs.filter((r: any) => r.period === month) : [{ run_id: 'PAY_' + month, period: month, status: 'DRAFT', total_employees: 0, total_hours: 0, total_amount: 0 }]).map((r: any) => {
-                  const st = String(r.status || 'DRAFT');
-                  const color = st === 'PAID' ? '#166534' : st === 'PUBLISHED' ? '#059669' : st === 'APPROVED' ? '#7C3AED' : st === 'RECONCILED' ? '#2563EB' : '#6B7280';
+                {byBranch.map(g => {
+                  const rows = g.rows;
+                  const hours = r1(sumBy(rows, 'standard_hours'));
+                  const stdPay = sumBy(rows, 'standard_pay');
+                  const tongCong = rows.reduce((s: number, x: any) => s + (Number(x.tong_cong) || ((Number(x.standard_pay) || 0) + (Number(x.luong_cb) || 0) + (Number(x.ot_extra) || 0) + (Number(x.bonus) || 0))), 0);
+                  const thuc = rows.reduce((s: number, x: any) => s + (Number(x.thuc_lanh ?? x.net_pay) || 0), 0);
+                  const signed = rows.filter((x: any) => ['CONFIRMED', 'PAID'].includes(String(x.status))).length;
+                  const paid = rows.filter((x: any) => String(x.status) === 'PAID').length;
+                  const pct = rows.length ? Math.round((paid / rows.length) * 100) : 0;
                   return (
-                    <tr key={r.run_id} style={{ borderBottom: '1px solid var(--border-light)' }}>
-                      <td style={{ padding: '10px 14px', fontWeight: 700 }}>{r.period}</td>
-                      <td style={{ padding: '10px 14px' }}><span style={{ display: 'inline-block', padding: '3px 8px', borderRadius: '6px', background: `${color}15`, color, fontSize: '10.5px', fontWeight: 800, border: `1px solid ${color}40` }}>{st}</span></td>
-                      <td style={{ padding: '10px 14px', textAlign: 'right' }}>{r.total_employees}</td>
-                      <td style={{ padding: '10px 14px', textAlign: 'right' }}>{Number(r.total_hours ?? 0).toFixed(1)}</td>
-                      <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: 700 }}>{formatVND(r.total_amount)}</td>
-                      <td style={{ padding: '10px 14px' }}>{st === 'PAID' ? <span style={{ fontSize: '11px', color: '#166534', fontWeight: 800 }}>✓ Hoàn tất</span> : <span style={{ fontSize: '11px', color: '#6B7280' }}>Đang xử lý</span>}</td>
+                    <tr key={g.id}>
+                      <td style={{ fontWeight: 800 }}><Building2 size={13} style={{ verticalAlign: -2, marginRight: 6, color: 'var(--fin-brand)' }} />{branchLabelOf(g.id)}</td>
+                      <td className="num">{rows.length}</td>
+                      <td className="num">{hours.toFixed(1)}</td>
+                      <td className="num fin-money">{formatVND(stdPay)}</td>
+                      <td className="num fin-money">{formatVND(tongCong)}</td>
+                      <td className="num fin-money" style={{ fontWeight: 800, color: 'var(--fin-green)' }}>{formatVND(thuc)}</td>
+                      <td className="ctr">{signed}/{rows.length}</td>
+                      <td className="ctr" style={{ fontWeight: 800, color: paid === rows.length ? 'var(--fin-green)' : 'var(--fin-ink)' }}>{paid}/{rows.length}</td>
+                      <td>
+                        <div className="fin-progress" title={`${pct}% đã chuyển khoản`}><div style={{ width: `${pct}%` }} /></div>
+                        <div style={{ fontSize: 8.5, color: 'var(--fin-muted)', marginTop: 3, textAlign: 'right' }}>{pct}% đã CK</div>
+                      </td>
                     </tr>
                   );
                 })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function PayslipsTab({ month, slips, slipsLoading, allEmployees, branchLabelOf, formatVND, loadSlips, stageBadge, slipQrUrl, fastSignLap, publishSlip, markPaidSlip, syncSlipDrive, periodLabel }: any) {
-  const confirmed = slips.filter(s => String(s.status) === 'CONFIRMED' || s.sign_nhanvien);
-  const published = slips.filter(s => String(s.status) === 'PUBLISHED');
-  const paid = slips.filter(s => String(s.status) === 'PAID');
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-      <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text)' }}>🧾 7. Phiếu Lương (KT ký → GĐ → NV ký)</div>
-      <div style={{ fontSize: '12.5px', color: 'var(--text-muted)' }}>Quy trình 3 chữ ký: Kế toán ký lập → Giám đốc ký duyệt → Kế toán gửi NV → Nhân viên ký → Kế toán chuyển khoản (khóa phiếu + QR ngân hàng).</div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px', marginBottom: '6px' }}>
-        <StatCard icon={<FileText size={16} />} label="Tổng phiếu" value={slips.length.toString()} sub="Kỳ" />
-        <StatCard icon={<PenTool size={16} />} label="Chờ GĐ duyệt" value={slips.filter(s => String(s.status) === 'DRAFT' && s.sign_lap).length.toString()} sub="KT đã ký lập" />
-        <StatCard icon={<Send size={16} />} label="Chờ NV ký" value={published.length.toString()} sub="Đã gửi nhân viên" />
-        <StatCard icon={<CreditCard size={16} />} label="Chờ chuyển khoản" value={confirmed.length.toString()} sub="NV đã ký — hiện QR" />
-        <StatCard icon={<Check size={16} />} label="Đã chuyển khoản" value={paid.length.toString()} sub="Phiếu khóa + PDF Drive" />
-      </div>
-      <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: '12px', overflow: 'hidden' }}>
-        <div style={{ padding: '10px 14px', fontWeight: 800, fontSize: '12.5px', color: 'var(--text)', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span>Danh sách phiếu lương — Kỳ {periodLabel(month)}</span>
-          <button onClick={loadSlips} disabled={slipsLoading} style={{ ...{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', borderRadius: '8px', fontSize: '12.5px', fontWeight: 700, border: 'none', cursor: 'pointer', backgroundColor: '#E85D92', color: '#fff' } } }><RefreshCw size={13} style={{ marginRight: '4px' }} /> Tải lại</button>
-        </div>
-        {slipsLoading && <div style={{ padding: '16px', color: 'var(--text-muted)' }}>Đang tải phiếu lương…</div>}
-        {!slipsLoading && (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12.5px', minWidth: '980px' }}>
-              <thead>
-                <tr style={{ background: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
-                  <th style={{ padding: '9px 14px', fontWeight: 800 }}>Họ tên</th><th style={{ padding: '9px 14px', fontWeight: 800 }}>Mã NV</th><th style={{ padding: '9px 14px', fontWeight: 800 }}>Chi nhánh</th>
-                  <th style={{ padding: '9px 14px', fontWeight: 800, textAlign: 'right' }}>THỰC LÃNH</th><th style={{ padding: '9px 14px', fontWeight: 800 }}>Trạng thái / Chữ ký</th><th style={{ padding: '9px 14px', fontWeight: 800 }}>Thao tác</th>
+                <tr className="fin-grand">
+                  <td>TỔNG CỘNG</td>
+                  <td className="num">{(slips || []).length}</td>
+                  <td className="num">{grandHours.toFixed(1)}</td>
+                  <td className="num fin-money">{formatVND(sumBy(slips || [], 'standard_pay'))}</td>
+                  <td className="num fin-money">{formatVND((slips || []).reduce((s: number, x: any) => s + (Number(x.tong_cong) || 0), 0))}</td>
+                  <td className="num fin-money">{formatVND(grandThuc)}</td>
+                  <td className="ctr">{(slips || []).filter((x: any) => ['CONFIRMED', 'PAID'].includes(String(x.status))).length}/{(slips || []).length}</td>
+                  <td className="ctr">{(slips || []).filter((x: any) => String(x.status) === 'PAID').length}/{(slips || []).length}</td>
+                  <td />
                 </tr>
-              </thead>
-              <tbody>
-                {branchGroups(slips, (s: any) => {
-                  const emp = allEmployees.find((e: any) => String(e.employee_id) === String(s.employee_id));
-                  return branchLabelOf(emp?.default_branch_id || s.branch_id);
-                }).map((g: any) => (
-                  <React.Fragment key={g.id}>
-                    <BranchBand label={g.id} rows={g.rows} cols={6} totalText={`THỰC LÃNH ${formatVND(g.rows.reduce((x: number, r: any) => x + (Number(r.thuc_lanh ?? r.net_pay) || 0), 0))}`} />
-                    {g.rows.map((s: any) => {
-                      const st = stageBadge(s.stage ?? s.status);
-                      const thuc = Number(s.thuc_lanh ?? s.net_pay) || 0;
-                      const emp = allEmployees.find((e: any) => String(e.employee_id) === String(s.employee_id));
-                      const hasLap = !!s.sign_lap;
-                      const hasGd = !!s.sign_giamdoc;
-                      const hasNv = !!s.sign_nhanvien;
-                      const isPaid = String(s.status) === 'PAID';
-                      const qrUrl = slipQrUrl(s);
-                      return (
-                    <tr key={s.item_id} style={{ borderBottom: '1px solid var(--border-light)' }}>
-                      <td style={{ padding: '9px 14px', fontWeight: 700 }}>{s.full_name}</td>
-                      <td style={{ padding: '9px 14px' }}>{s.employee_code}</td>
-                      <td style={{ padding: '9px 14px' }}>{branchLabelOf(emp?.default_branch_id || s.branch_id)}</td>
-                      <td style={{ padding: '9px 14px', textAlign: 'right', fontWeight: 800, color: '#166534' }}>{formatVND(thuc)}</td>
-                      <td style={{ padding: '9px 14px' }}>
-                        <div style={{ fontSize: '10.5px', fontWeight: 800, color: st.fg, background: st.bg, border: `1px solid ${st.border}`, borderRadius: '6px', padding: '4px 8px', display: 'inline-block', marginBottom: '4px' }}>{st.label}</div>
-                        <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
-                          <span style={{ fontSize: '9px', padding: '1px 6px', borderRadius: '4px', background: hasLap ? '#DBEAFE' : '#F1F5F9', color: hasLap ? '#1D4ED8' : '#64748B', fontWeight: 700 }}>{hasLap ? '✓ KT' : 'KT?'}</span>
-                          <span style={{ fontSize: '9px', padding: '1px 6px', borderRadius: '4px', background: hasGd ? '#DBEAFE' : '#F1F5F9', color: hasGd ? '#1D4ED8' : '#64748B', fontWeight: 700 }}>{hasGd ? '✓ GĐ' : 'GĐ?'}</span>
-                          <span style={{ fontSize: '9px', padding: '1px 6px', borderRadius: '4px', background: hasNv ? '#D1FAE5' : '#F1F5F9', color: hasNv ? '#065F46' : '#64748B', fontWeight: 700 }}>{hasNv ? '✓ NV' : 'NV?'}</span>
-                        </div>
-                      </td>
-                      <td style={{ padding: '9px 14px' }}>
-                        {isPaid ? (
-                          <>
-                            <button onClick={() => syncSlipDrive(s.item_id)} style={{ ...{ display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', border: '1px solid var(--border)', background: '#F3F4F6', color: '#374151', cursor: 'pointer' } } }><Download size={12} style={{ marginRight: '4px' }} /> PDF Drive</button>
-                            <span style={{ fontSize: '11px', color: '#166534', fontWeight: 800, marginLeft: '8px' }}>ĐÃ CHUYỂN KHOẢN — khóa</span>
-                          </>
-                        ) : String(s.status) === 'CONFIRMED' ? (
-                          <>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                              {qrUrl && <img src={qrUrl} alt="VietQR" style={{ width: '64px', height: '64px', border: '1px solid #CBD5E1', borderRadius: '6px', background: '#fff' }} onError={(e: any) => { (e.target as any).style.display = 'none'; }} />}
-                              <div style={{ fontSize: '11.5px' }}>
-                                <div style={{ fontWeight: 800, color: '#273142' }}>{formatVND(thuc)}</div>
-                                <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Ngân hàng: {s.bank_name || '—'} / STK: {s.bank_account || '—'}</div>
-                              </div>
-                              <button onClick={() => markPaidSlip(s.item_id)} style={{ ...{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, border: 'none', cursor: 'pointer', backgroundColor: '#E85D92', color: '#fff' } } }><Check size={13} style={{ marginRight: '4px' }} /> Đã Chuyển Khoản</button>
-                            </div>
-                            <div style={{ fontSize: '10.5px', color: '#9A3412', marginTop: '4px' }}>Phiếu đã khóa sau khi NV ký — chỉ Kế toán có thể bấm "Đã Chuyển Khoản".</div>
-                          </>
-                        ) : String(s.status) === 'PUBLISHED' ? (
-                          <button onClick={() => publishSlip(s.item_id)} style={{ ...{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, border: 'none', cursor: 'pointer', backgroundColor: '#E85D92', color: '#fff' } } }><Send size={13} style={{ marginRight: '4px' }} /> Gửi NV ký</button>
-                        ) : hasLap && !hasGd ? (
-                          <span style={{ fontSize: '10.5px', color: '#92400E', fontWeight: 700 }}>Chờ Giám đốc ký duyệt</span>
-                        ) : (
-                          <button onClick={() => fastSignLap(s.item_id)} disabled={!hasLap} style={{ ...{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, border: 'none', cursor: !hasLap ? 'not-allowed' : 'pointer', backgroundColor: !hasLap ? '#E2E8F0' : '#E85D92', color: !hasLap ? '#94A3B8' : '#fff' } } }><PenTool size={13} style={{ marginRight: '4px' }} /> Kế toán ký lập</button>
-                        )}
-                       </td>
-                    </tr>
-                      );
-                    })}
-                  </React.Fragment>
-                ))}
               </tbody>
             </table>
           </div>
         )}
-        {slips.length === 0 && <div style={{ padding: '16px', color: 'var(--text-muted)', textAlign: 'center' }}>Chưa có phiếu lương kỳ này. Hãy tính lương và phát hành phiếu trước.</div>}
       </div>
-    </div>
-  );
-}
 
-function PaymentTab({ month, slips, allEmployees, branchLabelOf, formatVND, loadSlips, slipQrUrl, markPaidSlip, periodLabel }: any) {
-  const ready = slips.filter(s => String(s.status) === 'CONFIRMED');
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-      <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text)' }}>💳 8. Thanh Toán (VietQR — Đã Chuyển Khoản)</div>
-      <div style={{ fontSize: '12.5px', color: 'var(--text-muted)' }}>Chỉ hiển thị phiếu NV đã ký (CONFIRMED). Quét QR → chuyển khoản → bấm "Đã Chuyển Khoản" → phiếu khóa + đồng bộ PDF Drive.</div>
-      <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: '12px', overflow: 'hidden' }}>
-        <div style={{ padding: '10px 14px', fontWeight: 800, fontSize: '12.5px', color: 'var(--text)', borderBottom: '1px solid var(--border)' }}>Phiếu chờ chuyển khoản — Kỳ {periodLabel(month)} ({ready.length} phiếu)</div>
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12.5px', minWidth: '860px' }}>
+      {/* Vòng đời kỳ (runs) */}
+      <div className="fin-card">
+        <CardHead title="Các kỳ lương trong tháng" icon={<CalendarRange size={14} color="#E85D92" />} sub="Mỗi lần TÍNH LƯƠNG tạo một kỳ mới — kỳ cũ vẫn giữ nguyên để đối chiếu" />
+        <div className="fin-table-wrap" style={{ maxHeight: 'none' }}>
+          <table className="fin-table">
             <thead>
-              <tr style={{ background: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
-                <th style={{ padding: '10px 14px', fontWeight: 800 }}>Họ tên</th><th style={{ padding: '10px 14px', fontWeight: 800 }}>Mã NV</th><th style={{ padding: '10px 14px', fontWeight: 800 }}>Chi nhánh</th>
-                <th style={{ padding: '10px 14px', fontWeight: 800, textAlign: 'right' }}>THỰC LÃNH</th><th style={{ padding: '10px 14px', fontWeight: 800 }}>Ngân hàng / STK</th><th style={{ padding: '10px 14px', fontWeight: 800 }}>VietQR quét</th><th style={{ padding: '10px 14px', fontWeight: 800 }}>Thao tác</th>
-              </tr>
+              <tr><th>Kỳ</th><th>Phạm vi</th><th>Trạng thái</th><th className="num">NV</th><th className="num">Giờ</th><th className="num">Tổng tiền</th><th>Tạo lúc</th></tr>
             </thead>
             <tbody>
-              {branchGroups(ready, (s: any) => {
-                const emp = allEmployees.find((e: any) => String(e.employee_id) === String(s.employee_id));
-                return branchLabelOf(emp?.default_branch_id || s.branch_id);
-              }).map((g: any) => (
-                <React.Fragment key={g.id}>
-                  <BranchBand label={g.id} rows={g.rows} cols={7} totalText={`Cần chuyển ${formatVND(g.rows.reduce((x: number, r: any) => x + (Number(r.thuc_lanh ?? r.net_pay) || 0), 0))}`} />
-                  {g.rows.map((s: any) => {
-                    const thuc = Number(s.thuc_lanh ?? s.net_pay) || 0;
-                    const qrUrl = slipQrUrl(s);
-                    const emp = allEmployees.find((e: any) => String(e.employee_id) === String(s.employee_id));
-                    return (
-                  <tr key={s.item_id} style={{ borderBottom: '1px solid var(--border-light)' }}>
-                    <td style={{ padding: '10px 14px', fontWeight: 700 }}>{s.full_name}</td>
-                    <td style={{ padding: '10px 14px' }}>{s.employee_code}</td>
-                    <td style={{ padding: '10px 14px' }}>{branchLabelOf(emp?.default_branch_id || s.branch_id)}</td>
-                    <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: 800, color: '#166534' }}>{formatVND(thuc)}</td>
-                    <td style={{ padding: '10px 14px', fontSize: '11px' }}>{s.bank_name || '—'}<br /><span style={{ fontWeight: 800, color: '#273142' }}>{s.bank_account || '—'}</span></td>
-                    <td style={{ padding: '10px 14px' }}>
-                      {qrUrl ? <img src={qrUrl} alt="VietQR" style={{ width: '56px', height: '56px', border: '1px solid #CBD5E1', borderRadius: '6px', background: '#fff' }} onError={(e: any) => { (e.target as any).style.display = 'none'; }} /> : <div style={{ width: '56px', height: '56px', border: '1.5px dashed #F87171', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', color: '#DC2626' }}>Chưa có STK</div>}
-                    </td>
-                    <td style={{ padding: '10px 14px' }}><button onClick={() => markPaidSlip(s.item_id)} style={{ ...{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, border: 'none', cursor: 'pointer', backgroundColor: '#E85D92', color: '#fff' } } }><Check size={13} style={{ marginRight: '4px' }} /> Đã Chuyển Khoản</button></td>
+              {monthRuns.map((r: any) => {
+                const st = RUN_STATUS_STYLE[String(r.status || 'DRAFT')] || RUN_STATUS_STYLE.DRAFT;
+                return (
+                  <tr key={r.run_id}>
+                    <td className="fin-mono" style={{ fontWeight: 700 }}>{r.run_id}</td>
+                    <td>{String(r.branch_scope || 'ALL') === 'ALL' ? 'Toàn hệ thống' : branchLabelOf(r.branch_scope)}</td>
+                    <td><span className="fin-badge" style={{ color: st.fg, background: st.bg, borderColor: st.fg + '40' }}><span className="fin-badge-dot" />{st.label}</span></td>
+                    <td className="num">{r.total_employees ?? 0}</td>
+                    <td className="num">{Number(r.total_hours ?? 0).toFixed(1)}</td>
+                    <td className="num fin-money" style={{ fontWeight: 800 }}>{formatVND(r.total_amount)}</td>
+                    <td style={{ color: 'var(--fin-muted)', fontSize: 11 }}>{fmtDateTime(r.created_at)}</td>
                   </tr>
-                    );
-                  })}
-                </React.Fragment>
-              ))}
+                );
+              })}
+              {monthRuns.length === 0 && <tr><td colSpan={7} className="fin-empty">Chưa có kỳ — vẫn hiển thị bảng tổng hợp theo chi nhánh ở trên.</td></tr>}
             </tbody>
           </table>
         </div>
-        {ready.length === 0 && <div style={{ padding: '16px', color: 'var(--text-muted)', textAlign: 'center' }}>Không có phiếu nào chờ chuyển khoản (chưa NV ký hoặc đã chuyển hết).</div>}
       </div>
     </div>
   );
 }
 
 /* ============================================================================
-   BCC — Bảng công từng ngày (nhóm theo chi nhánh, mở chi tiết từng NV)
+   7 · PHIẾU LƯƠNG — KT ký → GĐ ký → KT gửi NV → NV ký → KT chuyển khoản
    ============================================================================ */
-function BccTab({ month, finSheet, finSheetLoading, formatVND, periodLabel }: any) {
-  const fs = finSheet;
-  const STATUS_LABEL: Record<string, { l: string; c: string }> = {
-    DU: { l: 'Đủ', c: '#166534' },
-    VANG: { l: 'Vắng', c: '#B91C1C' },
-    THIEU: { l: 'Thiếu chấm', c: '#92400E' },
-  };
+const STAGE_FILTERS = [
+  { key: 'ALL', label: 'Tất cả' },
+  { key: 'DRAFT', label: 'Chờ KT ký' },
+  { key: 'CHO_GD_DUYET', label: 'Chờ GĐ duyệt' },
+  { key: 'CHO_GUI_NV', label: 'Chờ KT gửi NV' },
+  { key: 'CHO_NV_KY', label: 'Chờ NV ký' },
+  { key: 'CHO_CHUYEN_KHOAN', label: 'Chờ chuyển khoản' },
+  { key: 'PAID', label: 'Đã chuyển khoản' },
+];
+
+function PayslipsTab({ month, slips, slipsLoading, allEmployees, formatVND, loadSlips, stageBadge, slipQrUrl, fastSignLap, publishSlip, markPaidSlip, syncSlipDrive, downloadSlipPdf }: any) {
+  const [stageFilter, setStageFilter] = useState('ALL');
+  const [q, setQ] = useState('');
+  const stageOf = (s: any) => String(s?.stage || payslipStage(s) || 'DRAFT');
+  const counts = useMemo(() => {
+    const m: Record<string, number> = { ALL: slips.length };
+    for (const s of slips) { const k = stageOf(s); m[k] = (m[k] || 0) + 1; }
+    return m;
+  }, [slips]);
+  const groups = useMemo(() => {
+    let filtered = (slips || []).filter(matchesFilter(q.trim()));
+    if (stageFilter !== 'ALL') filtered = filtered.filter((s: any) => stageOf(s) === stageFilter);
+    return branchGroups(filtered, (s: any) => slipBranchId(s, allEmployees));
+  }, [slips, allEmployees, q, stageFilter]);
+  const confirmedCount = slips.filter((s: any) => String(s?.status) === 'CONFIRMED' || s?.sign_nhanvien).length;
+  const paidCount = slips.filter((s: any) => String(s?.status) === 'PAID').length;
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-      <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text)' }}>🗓 3. BCC — Bảng Công Từng Ngày</div>
-      <div style={{ fontSize: '12.5px', color: 'var(--text-muted)' }}>Chi tiết từng ngày công theo chi nhánh — mở từng nhân viên để xem check-in/out, giờ, lương ca, trễ/vắng.</div>
-      {finSheetLoading ? (
-        <div style={{ padding: '20px', color: 'var(--text-muted)' }}>Đang tải bảng công tháng {periodLabel(month)}…</div>
-      ) : !fs ? (
-        <div style={{ padding: '20px', color: 'var(--text-muted)', textAlign: 'center' }}>Chưa có dữ liệu công tháng này.</div>
-      ) : branchGroups(fs.rows || [], (r: any) => branchLabelOf(r.branchId)).map((g: any) => (
-        <div key={g.id} style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: '12px', overflow: 'hidden' }}>
-          <div style={{ padding: '10px 14px', background: '#FDF2F7', color: '#9D174D', fontWeight: 800, fontSize: '12.5px', borderBottom: '1px solid #FBCFE8', display: 'flex', justifyContent: 'space-between' }}>
-            <span>📍 {g.id}</span>
-            <span style={{ fontSize: '11px' }}>{g.rows.length} NV • {g.rows.reduce((s: number, r: any) => s + (Number(r.hours) || 0), 0).toFixed(1)} giờ • {formatVND(g.rows.reduce((s: number, r: any) => s + (Number(r.netPay ?? r.standardPay) || 0), 0))}</span>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', padding: '10px 14px' }}>
-            {g.rows.map((r: any) => (
-              <details key={r.employeeId} style={{ border: '1px solid var(--border-light)', borderRadius: '8px', padding: '8px 10px', background: '#FAFAFA' }}>
-                <summary style={{ cursor: 'pointer', fontSize: '12.5px', fontWeight: 800, color: '#273142', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                  <span>{r.fullName} <span style={{ color: '#94A3B8', fontWeight: 600 }}>({r.employee_code})</span></span>
-                  <span style={{ fontWeight: 700, color: '#2563EB' }}>{Number(r.hours ?? 0).toFixed(1)} giờ</span>
-                  <span style={{ color: '#10B981' }}>Đủ {r.full || 0}</span>
-                  <span style={{ color: '#92400E' }}>Thiếu {r.partial || 0}</span>
-                  <span style={{ color: '#B91C1C' }}>Vắng {r.absent || 0}</span>
-                  <span style={{ color: '#166534' }}>{formatVND(r.netPay ?? r.standardPay ?? 0)}</span>
-                </summary>
-                <div style={{ overflowX: 'auto', marginTop: '8px' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11.5px' }}>
-                    <thead>
-                      <tr style={{ color: 'var(--text-muted)', textAlign: 'left' }}>
-                        <th style={{ padding: '5px 8px' }}>Ngày</th><th style={{ padding: '5px 8px' }}>Ca</th><th style={{ padding: '5px 8px', textAlign: 'center' }}>Giờ</th><th style={{ padding: '5px 8px' }}>Trạng thái</th><th style={{ padding: '5px 8px' }}>Check-in</th><th style={{ padding: '5px 8px', textAlign: 'right' }}>Trễ (phút)</th><th style={{ padding: '5px 8px', textAlign: 'right' }}>Lương ca</th><th style={{ padding: '5px 8px', textAlign: 'right' }}>Trừ</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(r.shifts || []).map((d: any, idx: number) => {
-                        const stt = STATUS_LABEL[String(d.status || '')] || { l: d.status || '—', c: '#64748B' };
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <TabHead step={7} title="Phiếu lương — KT ký → GĐ → NV ký" desc="Luồng ký 3 bên theo đúng thứ tự: Kế toán lập & ký → Giám đốc ký duyệt → Kế toán gửi NV → Nhân viên ký → Phiếu trả về Kế toán (khóa + hiện QR) → Kế toán bấm ĐÃ CHUYỂN KHOẢN (phiếu khóa vĩnh viễn + PDF lên Drive)." />
+
+      <div className="fin-kpi-grid">
+        <Kpi icon={<Receipt size={18} />} label="Tổng phiếu" value={String(slips.length)} sub={`Kỳ ${periodLabel(month)}`} />
+        <Kpi icon={<PenTool size={18} />} tone="amber" label="Chờ GĐ duyệt" value={String(counts['CHO_GD_DUYET'] || 0)} sub="KT đã ký lập" />
+        <Kpi icon={<Send size={18} />} tone="violet" label="Chờ NV ký" value={String(counts['CHO_NV_KY'] || 0)} sub="Đã gửi nhân viên" />
+        <Kpi icon={<CreditCard size={18} />} tone="amber" label="Chờ chuyển khoản" value={String(confirmedCount)} sub="NV đã ký — hiện QR" />
+        <Kpi icon={<CheckCircle size={18} />} tone="green" label="Đã chuyển khoản" value={String(paidCount)} sub="Phiếu khóa + PDF Drive" />
+      </div>
+
+      <div className="fin-card">
+        <CardHead title={`Danh sách phiếu — ${periodLabel(month)}`} icon={<Receipt size={14} color="#E85D92" />} sub="Lọc theo bước xử lý hoặc tìm theo tên/mã">
+          <SearchBox value={q} onChange={setQ} />
+          <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={loadSlips} disabled={slipsLoading}>{slipsLoading ? <Loader2 size={13} className="fin-spin" /> : <RefreshCw size={13} />} Tải lại</button>
+        </CardHead>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '10px 16px', borderBottom: '1px solid #f1f5f9' }}>
+          {STAGE_FILTERS.map(f => (
+            <button key={f.key} type="button" className={`fin-pill${stageFilter === f.key ? ' is-active' : ''}`} onClick={() => setStageFilter(f.key)}>
+              {f.label} <span style={{ opacity: .7 }}>({counts[f.key] || 0})</span>
+            </button>
+          ))}
+        </div>
+        {slipsLoading && <div className="fin-empty">Đang tải phiếu lương…</div>}
+        {!slipsLoading && (
+          <div className="fin-table-wrap">
+            <table className="fin-table" style={{ minWidth: 1180 }}>
+              <thead>
+                <tr><th>Họ tên</th><th>Mã NV</th><th>Chi nhánh</th><th className="num">THỰC LÃNH</th><th>Trạng thái / Chữ ký</th><th>Thao tác</th></tr>
+              </thead>
+              <tbody>
+                {groups.map(g => {
+                  const gThuc = g.rows.reduce((x: number, r: any) => x + (Number(r.thuc_lanh ?? r.net_pay) || 0), 0);
+                  return (
+                    <React.Fragment key={g.id}>
+                      <BranchBandRow label={branchLabelOf(g.id)} count={g.rows.length} cols={6} totalText={`THỰC LÃNH ${formatVND(gThuc)}`} />
+                      {g.rows.map((s: any) => {
+                        const st = stageBadge(s.stage ?? s.status);
+                        const thuc = Number(s.thuc_lanh ?? s.net_pay) || 0;
+                        const hasLap = !!s.sign_lap;
+                        const hasGd = !!s.sign_giamdoc;
+                        const hasNv = !!s.sign_nhanvien;
+                        const isPaid = String(s.status) === 'PAID';
+                        const isConfirmed = String(s.status) === 'CONFIRMED';
+                        const isPublished = String(s.status) === 'PUBLISHED';
+                        const qrUrl = slipQrUrl(s);
                         return (
-                          <tr key={`${r.employeeId}-${idx}`} style={{ borderBottom: '1px solid var(--border-light)' }}>
-                            <td style={{ padding: '4px 8px', fontWeight: 700 }}>{String(d.date || '').slice(0, 10)}</td>
-                            <td style={{ padding: '4px 8px' }}>{d.shiftCode || '—'} <span style={{ color: '#94A3B8' }}>({branchLabelOf(d.branchId)})</span></td>
-                            <td style={{ padding: '4px 8px', textAlign: 'center' }}>{Number(d.hours ?? 0).toFixed(1)}</td>
-                            <td style={{ padding: '4px 8px', color: stt.c, fontWeight: 800 }}>{stt.l}</td>
-                            <td style={{ padding: '4px 8px' }}>{d.checkIn ? new Date(d.checkIn.length > 12 ? Number(d.checkIn) : d.checkIn).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '—'}</td>
-                            <td style={{ padding: '4px 8px', textAlign: 'right', color: (d.lateMin || 0) > 0 ? '#B91C1C' : 'inherit' }}>{d.lateMin || 0}</td>
-                            <td style={{ padding: '4px 8px', textAlign: 'right' }}>{formatVND(d.shiftPay || 0)}</td>
-                            <td style={{ padding: '4px 8px', textAlign: 'right', color: (d.fineAmount || 0) > 0 ? '#B91C1C' : 'inherit' }}>{formatVND(d.fineAmount || 0)}</td>
+                          <tr key={s.item_id}>
+                            <td style={{ fontWeight: 700 }}>{s.full_name}</td>
+                            <td className="ctr fin-mono">{s.employee_code}</td>
+                            <td>{branchLabelOf(slipBranchId(s, allEmployees))}</td>
+                            <td className="num fin-money" style={{ fontWeight: 800, color: 'var(--fin-green)' }}>{formatVND(thuc)}</td>
+                            <td>
+                              <span className="fin-badge" style={{ color: st.fg, background: st.bg, borderColor: st.border, marginBottom: 5 }}><span className="fin-badge-dot" />{st.label}</span>
+                              <div style={{ display: 'flex', gap: 4, marginTop: 5, flexWrap: 'wrap' }}>
+                                <span className={`fin-sign ${hasLap ? 'ok' : 'pending'}`}>{hasLap ? '✓ KT lập' : 'KT?'}</span>
+                                <span className={`fin-sign ${hasGd ? 'ok' : 'pending'}`}>{hasGd ? '✓ GĐ duyệt' : 'GĐ?'}</span>
+                                <span className={`fin-sign ${hasNv ? 'ok-green' : 'pending'}`}>{hasNv ? '✓ NV ký' : 'NV?'}</span>
+                              </div>
+                            </td>
+                            <td>
+                              {isPaid ? (
+                                <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                                  <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={() => downloadSlipPdf(s.item_id, s.employee_code)} title="Tải PDF phiếu (đủ 3 chữ ký)"><FileDown size={12} /> PDF</button>
+                                  <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={() => syncSlipDrive(s.item_id)} title="Đồng bộ lại PDF lên Drive"><Upload size={12} /> Drive{s.drive_pdf_id ? ' ✓' : ''}</button>
+                                  <span style={{ fontSize: 9, fontWeight: 800, color: 'var(--fin-green)', background: 'var(--fin-green-soft)', padding: '3px 8px', borderRadius: 6, border: '1px solid #86efac' }}>ĐÃ CHUYỂN KHOẢN — KHÓA</span>
+                                </div>
+                              ) : isConfirmed ? (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                                  {qrUrl
+                                    ? <img src={qrUrl} alt="VietQR chuyển khoản" className="fin-qr" onError={(e: any) => { (e.target as any).style.display = 'none'; }} />
+                                    : <div className="fin-qr-missing">Chưa có STK</div>}
+                                  <div style={{ fontSize: 10.5, lineHeight: 1.45 }}>
+                                    <div className="fin-money" style={{ fontWeight: 800, fontSize: 13 }}>{formatVND(thuc)}</div>
+                                    <div style={{ color: 'var(--fin-muted)' }}>{s.bank_name || '—'} • STK <span className="fin-mono" style={{ color: 'var(--fin-ink)', fontWeight: 800 }}>{s.bank_account || '—'}</span></div>
+                                    <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" style={{ marginTop: 4 }} onClick={() => markPaidSlip(s.item_id)}><Check size={12} /> Đã Chuyển Khoản</button>
+                                  </div>
+                                </div>
+                              ) : isPublished ? (
+                                <span style={{ fontSize: 10.5, color: '#9a3412', fontWeight: 700 }}>Chờ nhân viên ký nhận…</span>
+                              ) : hasLap && !hasGd ? (
+                                <span style={{ fontSize: 10.5, color: '#92400e', fontWeight: 700 }}>Chờ Giám đốc ký duyệt</span>
+                              ) : hasGd && hasLap ? (
+                                <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={() => publishSlip(s.item_id)}><Send size={12} /> Gửi NV ký</button>
+                              ) : (
+                                <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={() => fastSignLap(s.item_id)} disabled={hasLap}><PenTool size={12} /> Kế toán ký lập</button>
+                              )}
+                            </td>
                           </tr>
                         );
                       })}
-                      {(r.shifts || []).length === 0 && <tr><td colSpan={8} style={{ padding: '8px', color: 'var(--text-muted)', textAlign: 'center' }}>Không có ca trong kỳ.</td></tr>}
-                    </tbody>
-                  </table>
-                </div>
-              </details>
-            ))}
+                      <tr className="fin-subtotal">
+                        <td colSpan={3}>CỘNG {branchLabelOf(g.id).toUpperCase()}</td>
+                        <td className="num fin-money">{formatVND(gThuc)}</td>
+                        <td colSpan={2} />
+                      </tr>
+                    </React.Fragment>
+                  );
+                })}
+                {groups.length === 0 && <tr><td colSpan={6} className="fin-empty">{q || stageFilter !== 'ALL' ? 'Không có phiếu phù hợp bộ lọc.' : 'Chưa có phiếu lương kỳ này — hãy TÍNH LƯƠNG ở tab 4.'}</td></tr>}
+              </tbody>
+            </table>
           </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/* ============================================================================
-   QR Ngân Hàng từng nhân viên (nhóm theo chi nhánh)
-   ============================================================================ */
-function BankQrTab({ allEmployees, periodLabel, month }: any) {
-  const branches = branchGroups(allEmployees, (e: any) => branchLabelOf(e.default_branch_id));
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-      <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text)' }}>🏦 10. QR Ngân Hàng Từng Nhân Viên</div>
-      <div style={{ fontSize: '12.5px', color: 'var(--text-muted)' }}>Danh sách tài khoản ngân hàng NV (tháng {periodLabel(month)}) — quét QR để chuyển khoản lương tự do.</div>
-      {branches.map((g: any) => (
-        <div key={g.id} style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: '12px', overflow: 'hidden' }}>
-          <div style={{ padding: '10px 14px', background: '#FDF2F7', color: '#9D174D', fontWeight: 800, fontSize: '12.5px', borderBottom: '1px solid #FBCFE8' }}>📍 {g.id} — {g.rows.length} NV</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '10px', padding: '12px 14px' }}>
-            {g.rows.map((e: any) => {
-              const acct = String(e.bank_account || '').trim();
-              const qr = bankQrUrlOf(e.bank_name, acct, e.bank_holder || e.full_name);
-              return (
-                <div key={e.employee_id} style={{ display: 'flex', gap: '10px', alignItems: 'center', border: '1px solid var(--border-light)', borderRadius: '10px', padding: '10px', background: '#FAFAFA' }}>
-                  {qr ? <img src={qr} alt="VietQR" style={{ width: '64px', height: '64px', borderRadius: '8px', border: '1px solid #CBD5E1', background: '#fff' }} onError={(ev: any) => { (ev.target as any).style.display = 'none'; }} /> : <div style={{ width: '64px', height: '64px', border: '1.5px dashed #F87171', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', color: '#DC2626', textAlign: 'center' }}>Chưa có STK</div>}
-                  <div style={{ fontSize: '11.5px', minWidth: 0 }}>
-                    <div style={{ fontWeight: 800, color: '#273142' }}>{e.full_name} <span style={{ color: '#94A3B8', fontWeight: 600 }}>{e.employee_code}</span></div>
-                    <div style={{ color: 'var(--text-muted)' }}>{e.bank_name || '—'}</div>
-                    <div style={{ fontFamily: 'monospace', fontWeight: 800, color: '#273142' }}>{acct || '—'}</div>
-                    <div style={{ color: 'var(--text-muted)' }}>{e.bank_holder || e.full_name}</div>
-                  </div>
-                </div>
-              );
-            })}
-            {g.rows.length === 0 && <div style={{ padding: '10px', color: 'var(--text-muted)' }}>Chưa có nhân viên.</div>}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/* ============================================================================
-   Duyệt Đổi STK (Kế toán/Admin/HR)
-   ============================================================================ */
-function BankChangesTab({ currentUser, showToast }: any) {
-  const [reqs, setReqs] = React.useState<any[]>([]);
-  const [loading, setLoading] = React.useState(false);
-  const [busy, setBusy] = React.useState<string | null>(null);
-  const load = React.useCallback(async () => {
-    setLoading(true);
-    try { setReqs(await apiRequest('/admin/bank-change-requests')); } catch (e: any) { showToast('Lỗi tải yêu cầu đổi STK: ' + (e?.message || '')); } finally { setLoading(false); }
-  }, [showToast]);
-  React.useEffect(() => { load(); }, [load]);
-  const review = async (employeeId: string, action: 'approve' | 'reject') => {
-    const emp = reqs.find((r: any) => String(r.employee_id) === String(employeeId));
-    const label = action === 'approve' ? 'PHÊ DUYỆT đổi STK' : 'TỪ CHỐI đổi STK';
-    if (!window.confirm(`${label} cho ${emp?.full_name || employeeId}? Số TK mới: ${emp?.new_bank_account || emp?.bank_account || '—'}`)) return;
-    setBusy(employeeId + action);
-    try {
-      await apiRequest(`/admin/bank-change-requests/${encodeURIComponent(employeeId)}/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note: `${label} bởi ${currentUser?.fullName || 'Kế toán'}` }) });
-      showToast(`Đã ${action === 'approve' ? 'phê duyệt' : 'từ chối'} đổi STK của ${emp?.full_name || employeeId}`);
-      load();
-    } catch (e: any) { showToast(e?.message || 'Thao tác thất bại'); } finally { setBusy(null); }
-  };
-  const pending = reqs.filter((r: any) => String(r.status || '').toUpperCase() === 'PENDING');
-  const done = reqs.filter((r: any) => String(r.status || '').toUpperCase() !== 'PENDING');
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text)' }}>💳 11. Duyệt Đổi STK</div>
-        <button onClick={load} disabled={loading} style={{ ...{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', borderRadius: '8px', fontSize: '12.5px', fontWeight: 700, border: 'none', cursor: 'pointer', backgroundColor: '#E85D92', color: '#fff' } } }><RefreshCw size={13} style={{ marginRight: '4px' }} /> Tải lại</button>
+        )}
       </div>
-      {loading && <div style={{ padding: '14px', color: 'var(--text-muted)' }}>Đang tải yêu cầu…</div>}
-      <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: '12px', overflow: 'hidden' }}>
-        <div style={{ padding: '10px 14px', fontWeight: 800, fontSize: '12.5px', borderBottom: '1px solid var(--border)' }}>⏳ Chờ duyệt ({pending.length})</div>
-        {pending.map((r: any) => (
-          <div key={r.employee_id || r.id} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', borderBottom: '1px solid var(--border-light)', flexWrap: 'wrap' }}>
-            <div style={{ flex: 1, minWidth: 220 }}>
-              <div style={{ fontWeight: 800, fontSize: '12.5px' }}>{r.full_name} <span style={{ color: '#94A3B8', fontWeight: 600 }}>{r.employee_code}</span></div>
-              <div style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>STK mới: <span style={{ fontFamily: 'monospace', fontWeight: 800, color: '#273142' }}>{r.new_bank_account || r.bank_account || '—'}</span> — {r.new_bank_name || r.bank_name || '—'} {r.new_bank_holder ? (`(CTK: ${r.new_bank_holder})`) : ''}</div>
-              {r.requested_at && <div style={{ fontSize: '10.5px', color: '#94A3B8' }}>Yêu cầu lúc: {new Date(r.requested_at).toLocaleString('vi-VN')}</div>}
-            </div>
-            <button onClick={() => review(r.employee_id, 'approve')} disabled={!!busy} style={{ padding: '6px 12px', borderRadius: '7px', fontSize: '11.5px', fontWeight: 800, border: 'none', cursor: 'pointer', background: '#DCFCE7', color: '#166534' }}>Duyệt</button>
-            <button onClick={() => review(r.employee_id, 'reject')} disabled={!!busy} style={{ padding: '6px 12px', borderRadius: '7px', fontSize: '11.5px', fontWeight: 800, border: 'none', cursor: 'pointer', background: '#FEE2E2', color: '#B91C1C' }}>Từ chối</button>
-          </div>
-        ))}
-        {pending.length === 0 && <div style={{ padding: '14px', color: 'var(--text-muted)', textAlign: 'center' }}>Không có yêu cầu đổi STK nào đang chờ.</div>}
-      </div>
-      {done.length > 0 && (
-        <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: '12px', overflow: 'hidden' }}>
-          <div style={{ padding: '10px 14px', fontWeight: 800, fontSize: '12.5px', borderBottom: '1px solid var(--border)' }}>Đã xử lý gần đây ({done.length})</div>
-          {done.slice(0, 20).map((r: any) => (
-            <div key={r.employee_id || r.id} style={{ display: 'flex', gap: '10px', padding: '8px 14px', borderBottom: '1px solid var(--border-light)', fontSize: '11.5px', color: 'var(--text-muted)' }}>
-              <span style={{ fontWeight: 800, color: '#273142' }}>{r.full_name}</span><span>{r.new_bank_account || r.bank_account}</span><span style={{ marginLeft: 'auto', fontWeight: 800, color: String(r.status).toUpperCase() === 'APPROVED' ? '#166534' : '#B91C1C' }}>{String(r.status).toUpperCase()}</span>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
 
 /* ============================================================================
-   Chữ Ký Mẫu (Kế toán) — lưu /payroll/signature-templates cho nút Ký ngay
+   8 · THANH TOÁN — CHỈ PHIẾU NV ĐÃ KÝ (CONFIRMED)
+   ============================================================================ */
+function PaymentTab({ month, slips, allEmployees, formatVND, loadSlips, slipQrUrl, markPaidSlip, downloadSlipPdf }: any) {
+  const [q, setQ] = useState('');
+  const ready = useMemo(() => (slips || []).filter((s: any) => String(s?.status) === 'CONFIRMED').filter(matchesFilter(q.trim())), [slips, q]);
+  const groups = useMemo(() => branchGroups(ready, (s: any) => slipBranchId(s, allEmployees)), [ready, allEmployees]);
+  const totalReady = ready.reduce((s: number, x: any) => s + (Number(x?.thuc_lanh ?? x?.net_pay) || 0), 0);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <TabHead step={8} title="Thanh toán — VietQR & Đã chuyển khoản" desc="Chỉ hiện phiếu NHÂN VIÊN ĐÃ KÝ. Quét QR → chuyển khoản → bấm ĐÃ CHUYỂN KHOẢN: phiếu KHÓA vĩnh viễn và PDF (đủ 3 chữ ký) tự lên Drive theo PHIEU_LUONG/THANG_MM/CHI_NHÁNH/TÊN NV.">
+        <SearchBox value={q} onChange={setQ} />
+        <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={loadSlips}><RefreshCw size={13} /> Tải lại</button>
+      </TabHead>
+
+      <div className="fin-kpi-grid">
+        <Kpi icon={<CreditCard size={18} />} tone="amber" label="Phiếu chờ CK" value={String(ready.length)} sub="Đã đủ 3 chữ ký" />
+        <Kpi icon={<Banknote size={18} />} label="Tổng cần chuyển" value={formatVND(totalReady)} sub="Theo thực lãnh" />
+      </div>
+
+      <div className="fin-card">
+        <CardHead title={`Chờ chuyển khoản — ${periodLabel(month)} (${ready.length})`} icon={<CreditCard size={14} color="#E85D92" />} sub="Sau khi chuyển, bấm ĐÃ CHUYỂN KHOẢN để khóa phiếu + đẩy PDF lên Drive" />
+        <div className="fin-table-wrap">
+          <table className="fin-table" style={{ minWidth: 1080 }}>
+            <thead>
+              <tr><th>Họ tên</th><th>Mã NV</th><th>Chi nhánh</th><th className="num">THỰC LÃNH</th><th>Ngân hàng / STK</th><th className="ctr">VietQR</th><th>Thao tác</th></tr>
+            </thead>
+            <tbody>
+              {groups.map(g => {
+                const gTotal = g.rows.reduce((x: number, r: any) => x + (Number(r.thuc_lanh ?? r.net_pay) || 0), 0);
+                return (
+                  <React.Fragment key={g.id}>
+                    <BranchBandRow label={branchLabelOf(g.id)} count={g.rows.length} cols={7} totalText={`Cần chuyển ${formatVND(gTotal)}`} />
+                    {g.rows.map((s: any) => {
+                      const thuc = Number(s.thuc_lanh ?? s.net_pay) || 0;
+                      const qrUrl = slipQrUrl(s);
+                      return (
+                        <tr key={s.item_id}>
+                          <td style={{ fontWeight: 700 }}>{s.full_name}</td>
+                          <td className="ctr fin-mono">{s.employee_code}</td>
+                          <td>{branchLabelOf(slipBranchId(s, allEmployees))}</td>
+                          <td className="num fin-money" style={{ fontWeight: 800, color: 'var(--fin-green)' }}>{formatVND(thuc)}</td>
+                          <td style={{ fontSize: 11 }}>{s.bank_name || '—'}<br /><span className="fin-mono" style={{ fontWeight: 800, color: 'var(--fin-ink)' }}>{s.bank_account || '—'}</span><br /><span style={{ color: 'var(--fin-muted)' }}>{s.bank_holder || ''}</span></td>
+                          <td className="ctr">{qrUrl ? <img src={qrUrl} alt="VietQR" className="fin-qr" style={{ width: 72, height: 72 }} onError={(e: any) => { (e.target as any).style.display = 'none'; }} /> : <div className="fin-qr-missing">Chưa có STK</div>}</td>
+                          <td>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-start' }}>
+                              <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={() => markPaidSlip(s.item_id)}><Check size={12} /> Đã Chuyển Khoản</button>
+                              <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={() => downloadSlipPdf(s.item_id, s.employee_code)}><FileDown size={12} /> PDF (3 chữ ký)</button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    <tr className="fin-subtotal">
+                      <td colSpan={3}>CỘNG {branchLabelOf(g.id).toUpperCase()}</td>
+                      <td className="num fin-money">{formatVND(gTotal)}</td>
+                      <td colSpan={3} />
+                    </tr>
+                  </React.Fragment>
+                );
+              })}
+              {groups.length === 0 && <tr><td colSpan={7} className="fin-empty">Không có phiếu nào chờ chuyển khoản (chưa NV ký hoặc đã chuyển hết).</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================================
+   9 · CHỮ KÝ MẪU (Kế toán) — lưu server, mọi máy dùng chung
    ============================================================================ */
 function SignatureTemplatesTab({ currentUser, showToast }: any) {
   const [sigs, setSigs] = React.useState<any>(() => { try { return JSON.parse(localStorage.getItem('ubm_default_signatures') || '') || { lap: { name: '', img: null }, quanly: { name: '', img: null } }; } catch { return { lap: { name: '', img: null }, quanly: { name: '', img: null } }; } });
@@ -1007,35 +1389,146 @@ function SignatureTemplatesTab({ currentUser, showToast }: any) {
     } catch (e: any) { showToast('Lưu máy chủ lỗi: ' + (e?.message || '')); } finally { setBusy(false); }
   };
   const rows = [
-    { key: 'lap' as const, title: '✍️ Chữ ký Kế toán (Người lập phiếu)', hint: 'Dùng cho nút "Kế toán ký lập" và tự động bù chữ ký khi Gửi NV' },
-    { key: 'quanly' as const, title: '✍️ Chữ ký Quản lý chi nhánh (nếu cần)', hint: 'Không bắt buộc trong quy trình 3 chữ ký mới (KT → GĐ → NV)' },
+    { key: 'lap' as const, title: 'Chữ ký Kế toán (người lập phiếu)', hint: 'Dùng cho nút "Kế toán ký lập" và tự bù khi gửi NV', required: true },
+    { key: 'quanly' as const, title: 'Chữ ký Quản lý chi nhánh (dự phòng)', hint: 'Không bắt buộc trong quy trình 3 chữ ký hiện hành (KT → GĐ → NV)', required: false },
   ];
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-      <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text)' }}>✍ 9. Chữ Ký Mẫu</div>
-      <div style={{ fontSize: '12.5px', color: 'var(--text-muted)' }}>Lưu tại máy chủ — mọi máy của Kế toán cùng dùng một bộ chữ ký mẫu khi ký phiếu nhanh.</div>
-      {rows.map(r => (
-        <div key={r.key} style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: '12px', padding: '14px', display: 'flex', gap: '14px', alignItems: 'center', flexWrap: 'wrap' }}>
-          <div style={{ width: '140px', height: '70px', border: '1.5px dashed var(--border)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#FAFAFA', overflow: 'hidden' }}>
-            {sigs[r.key]?.img ? <img src={sigs[r.key].img} alt={r.key} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} /> : <span style={{ fontSize: '10px', color: '#94A3B8' }}>Chưa có mẫu</span>}
-          </div>
-          <div style={{ flex: 1, minWidth: 240, display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <div style={{ fontSize: '12.5px', fontWeight: 800, color: '#273142' }}>{r.title}</div>
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{r.hint}</div>
-            <input value={sigs[r.key]?.name || ''} onChange={(e: any) => setSigs((prev: any) => ({ ...prev, [r.key]: { ...prev[r.key], name: e.target.value } }))} placeholder="Tên hiển thị trên phiếu (VD: Nguyễn Thị A — Kế toán)" style={{ padding: '6px 8px', borderRadius: '7px', border: '1px solid var(--border)', fontSize: '12px' }} />
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <label style={{ padding: '6px 12px', borderRadius: '7px', background: '#F3F4F6', border: '1px solid var(--border)', cursor: 'pointer', fontSize: '11.5px', fontWeight: 700 }}>
-                Tải ảnh ký lên<input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e: any) => onFile(r.key, e.target.files?.[0] || null)} />
-              </label>
-              {sigs[r.key]?.img && <button onClick={() => setSigs((prev: any) => ({ ...prev, [r.key]: { ...prev[r.key], img: null } }))} style={{ padding: '6px 10px', borderRadius: '7px', border: '1px solid #FCA5A5', background: '#FEE2E2', color: '#B91C1C', cursor: 'pointer', fontSize: '11.5px', fontWeight: 700 }}>Xóa ảnh</button>}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <TabHead step={9} title="Chữ ký mẫu — Ký nhanh 1 chạm" desc="Lưu tại máy chủ: mọi máy của Kế toán dùng chung một bộ chữ ký khi bấm “Kế toán ký lập”. Ảnh nên nền trong suốt (PNG), nén sẵn." />
+      <div className="fin-card">
+        {rows.map(r => (
+          <div key={r.key} className="fin-sig-row" style={{ borderBottom: '1px solid #f1f5f9' }}>
+            <div className="fin-sig-preview">
+              {sigs[r.key]?.img
+                ? <img src={sigs[r.key].img} alt={r.title} />
+                : <span style={{ fontSize: 10, color: '#94a3b8' }}>Chưa có mẫu</span>}
             </div>
+            <div style={{ flex: 1, minWidth: 260, display: 'flex', flexDirection: 'column', gap: 7 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--fin-ink)' }}>
+                {r.title}
+                {r.required && <span className="fin-chip fin-chip-past" style={{ marginLeft: 8 }}>BẮT BUỘC</span>}
+              </div>
+              <div style={{ fontSize: 10.5, color: 'var(--fin-muted)' }}>{r.hint}</div>
+              <input className="fin-input" style={{ maxWidth: 420 }} value={sigs[r.key]?.name || ''} onChange={(e: any) => setSigs((prev: any) => ({ ...prev, [r.key]: { ...prev[r.key], name: e.target.value } }))} placeholder="Tên hiển thị trên phiếu (VD: Nguyễn Thị A — Kế toán)" aria-label="Tên chữ ký" />
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <label className="fin-btn fin-btn-ghost fin-btn-sm" style={{ cursor: 'pointer' }}>
+                  <Upload size={13} /> Tải ảnh ký lên<input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e: any) => onFile(r.key, e.target.files?.[0] || null)} />
+                </label>
+                {sigs[r.key]?.img && <button type="button" className="fin-btn fin-btn-danger fin-btn-sm" onClick={() => setSigs((prev: any) => ({ ...prev, [r.key]: { ...prev[r.key], img: null } }))}><X size={13} /> Xóa ảnh</button>}
+              </div>
+            </div>
+          </div>
+        ))}
+        <div style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <button type="button" className="fin-btn fin-btn-primary" onClick={save} disabled={busy}>{busy ? <Loader2 size={14} className="fin-spin" /> : <Save size={14} />} Lưu chữ ký mẫu</button>
+          <span style={{ fontSize: 10.5, color: 'var(--fin-muted)' }}>Bởi: {currentUser?.fullName || 'Kế toán'} — ảnh lưu chung mọi thiết bị.</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================================
+   10 · QR NGÂN HÀNG TỪNG NV (chuyển lương tự do)
+   ============================================================================ */
+function BankQrTab({ allEmployees, month }: any) {
+  const [q, setQ] = useState('');
+  const groups = useMemo(() => {
+    const filtered = (allEmployees || []).filter((e: any) => String(e?.employment_status || '').toUpperCase() !== 'TERMINATED').filter(matchesFilter(q.trim()));
+    return branchGroups(filtered, (e: any) => e.default_branch_id);
+  }, [allEmployees, q]);
+  const withStk = (allEmployees || []).filter((e: any) => String(e?.bank_account || '').trim()).length;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <TabHead step={10} title="QR ngân hàng từng nhân viên" desc={`Quét QR để chuyển khoản lương tự do (không kèm số tiền). ${withStk}/${(allEmployees || []).length} NV đã có STK. Dữ liệu tháng đang chọn: ${periodLabel(month)}.`}>
+        <SearchBox value={q} onChange={setQ} />
+      </TabHead>
+      {groups.map(g => (
+        <div key={g.id} className="fin-card">
+          <div className="fin-bcc-branch-head"><span><Building2 size={13} style={{ verticalAlign: -2, marginRight: 6 }} />{branchLabelOf(g.id)}</span><span style={{ fontSize: 10 }}>{g.rows.length} NV</span></div>
+          <div className="fin-qr-grid">
+            {g.rows.map((e: any) => {
+              const acct = String(e.bank_account || '').trim();
+              const qr = bankQrUrlOf(e.bank_name, acct, e.bank_holder || e.full_name);
+              return (
+                <div key={e.employee_id} className="fin-qr-card">
+                  {qr
+                    ? <img src={qr} alt={`VietQR ${e.full_name}`} className="fin-qr" style={{ width: 76, height: 76 }} onError={(ev: any) => { (ev.target as any).style.display = 'none'; }} />
+                    : <div className="fin-qr-missing" style={{ width: 76, height: 76 }}>Chưa có STK</div>}
+                  <div style={{ fontSize: 11, minWidth: 0 }}>
+                    <div style={{ fontWeight: 800, color: 'var(--fin-ink)' }}>{e.full_name} <span style={{ color: '#94a3b8', fontWeight: 600 }}>{e.employee_code}</span></div>
+                    <div style={{ color: 'var(--fin-muted)', marginTop: 1 }}>{e.bank_name || '—'}</div>
+                    <div className="fin-mono" style={{ fontWeight: 800, color: 'var(--fin-ink)', fontSize: 12 }}>{acct || '—'}</div>
+                    <div style={{ color: 'var(--fin-muted)' }}>{e.bank_holder || e.full_name}</div>
+                  </div>
+                </div>
+              );
+            })}
+            {g.rows.length === 0 && <div className="fin-empty">Không có nhân viên phù hợp.</div>}
           </div>
         </div>
       ))}
-      <div>
-        <button onClick={save} disabled={busy} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: '8px', fontSize: '12.5px', fontWeight: 800, border: 'none', cursor: busy ? 'wait' : 'pointer', backgroundColor: '#E85D92', color: '#fff' }}><Save size={14} style={{ marginRight: '4px' }} /> Lưu chữ ký mẫu</button>
-        <div style={{ fontSize: '10.5px', color: '#94A3B8', marginTop: '6px' }}>Bởi: {currentUser?.fullName || 'Kế toán'} — ảnh lưu chung mọi thiết bị.</div>
+    </div>
+  );
+}
+
+/* ============================================================================
+   11 · DUYỆT ĐỔI STK (Kế toán / Admin / HR)
+   ============================================================================ */
+function BankChangesTab({ currentUser, showToast }: any) {
+  const [reqs, setReqs] = React.useState<any[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [busy, setBusy] = React.useState<string | null>(null);
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    try { setReqs(await apiRequest('/admin/bank-change-requests')); } catch (e: any) { showToast('Lỗi tải yêu cầu đổi STK: ' + (e?.message || '')); } finally { setLoading(false); }
+  }, [showToast]);
+  React.useEffect(() => { load(); }, [load]);
+  const review = async (employeeId: string, action: 'approve' | 'reject') => {
+    const emp = reqs.find((r: any) => String(r.employee_id) === String(employeeId));
+    const label = action === 'approve' ? 'PHÊ DUYỆT đổi STK' : 'TỪ CHỐI đổi STK';
+    if (!window.confirm(`${label} cho ${emp?.full_name || employeeId}? Số TK mới: ${emp?.new_bank_account || emp?.bank_account || '—'}`)) return;
+    setBusy(employeeId + action);
+    try {
+      await apiRequest(`/admin/bank-change-requests/${encodeURIComponent(employeeId)}/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note: `${label} bởi ${currentUser?.fullName || 'Kế toán'}` }) });
+      showToast(`Đã ${action === 'approve' ? 'phê duyệt' : 'từ chối'} đổi STK của ${emp?.full_name || employeeId}`);
+      load();
+    } catch (e: any) { showToast(e?.message || 'Thao tác thất bại'); } finally { setBusy(null); }
+  };
+  const pending = reqs.filter((r: any) => String(r.status || '').toUpperCase() === 'PENDING');
+  const done = reqs.filter((r: any) => String(r.status || '').toUpperCase() !== 'PENDING');
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <TabHead step={11} title="Duyệt đổi tài khoản ngân hàng" desc="Yêu cầu đổi STK từ nhân viên — kiểm tra kỹ số tài khoản mới trước khi phê duyệt (ảnh hưởng chuyển lương).">
+        <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={load} disabled={loading}>{loading ? <Loader2 size={13} className="fin-spin" /> : <RefreshCw size={13} />} Tải lại</button>
+      </TabHead>
+      <div className="fin-card">
+        <CardHead title={`⏳ Chờ duyệt (${pending.length})`} icon={<AlertCircle size={14} color="#d97706" />} />
+        {pending.map((r: any) => (
+          <div key={r.employee_id || r.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderBottom: '1px solid #f1f5f9', flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: 240 }}>
+              <div style={{ fontWeight: 800, fontSize: 13 }}>{r.full_name} <span style={{ color: '#94a3b8', fontWeight: 600 }}>{r.employee_code}</span></div>
+              <div style={{ fontSize: 11.5, color: 'var(--fin-muted)', marginTop: 2 }}>STK mới: <span className="fin-mono" style={{ fontWeight: 800, color: 'var(--fin-ink)' }}>{r.new_bank_account || r.bank_account || '—'}</span> — {r.new_bank_name || r.bank_name || '—'}{r.new_bank_holder ? ` (CTK: ${r.new_bank_holder})` : ''}</div>
+              {r.requested_at && <div style={{ fontSize: 9.5, color: '#94a3b8', marginTop: 2 }}>Yêu cầu lúc: {fmtDateTime(r.requested_at)}</div>}
+            </div>
+            <button type="button" className="fin-btn fin-btn-green fin-btn-sm" onClick={() => review(r.employee_id, 'approve')} disabled={!!busy}><Check size={12} /> Duyệt đổi STK</button>
+            <button type="button" className="fin-btn fin-btn-danger fin-btn-sm" onClick={() => review(r.employee_id, 'reject')} disabled={!!busy}><X size={12} /> Từ chối</button>
+          </div>
+        ))}
+        {pending.length === 0 && <div className="fin-empty">Không có yêu cầu đổi STK nào đang chờ.</div>}
       </div>
+      {done.length > 0 && (
+        <div className="fin-card">
+          <CardHead title={`Đã xử lý gần đây (${done.length})`} icon={<ShieldCheck size={14} color="#059669" />} />
+          {done.slice(0, 20).map((r: any) => (
+            <div key={r.employee_id || r.id} style={{ display: 'flex', gap: 12, padding: '8px 16px', borderBottom: '1px solid #f1f5f9', fontSize: 11.5, color: 'var(--fin-muted)', alignItems: 'center' }}>
+              <span style={{ fontWeight: 800, color: 'var(--fin-ink)' }}>{r.full_name}</span>
+              <span className="fin-mono">{r.new_bank_account || r.bank_account}</span>
+              <span style={{ marginLeft: 'auto', fontWeight: 800, color: String(r.status).toUpperCase() === 'APPROVED' ? 'var(--fin-green)' : 'var(--fin-red)' }}>{String(r.status).toUpperCase()}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
