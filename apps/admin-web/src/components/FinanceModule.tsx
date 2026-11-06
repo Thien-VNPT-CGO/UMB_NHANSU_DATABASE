@@ -58,12 +58,69 @@ const TAB_ORDER: Array<{ id: string; label: string; step: number }> = [
 
 const btn = (active: boolean, busy = false, danger?: boolean) => ({
   display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px',
-  borderRadius: '8px', fontSize: '12.5px', fontWeight: 700, border: 'none',
+  borderRadius: '8px', fontSize: '12.5px', fontWeight: 700,
   cursor: busy || danger ? 'not-allowed' : 'pointer', disabled: busy || danger,
   backgroundColor: busy ? '#E2E8F0' : (danger ? '#FEE2E2' : (active ? '#E85D92' : '#FFFFFF')),
   color: busy ? '#94A3B8' : (danger ? '#B91C1C' : (active ? '#FFFFFF' : '#273142')),
   border: `1px solid ${busy ? '#CBD5E1' : (danger ? '#FCA5A5' : 'var(--border)')}`,
 });
+const accentStrip = (s: unknown) => String(s ?? '').replace(/đ/g, 'd').replace(/Đ/g, 'D').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+/** Slug ngân hàng cho ảnh VietQR (img.vietqr.io). */
+const vietQrSlug = (bankName?: string | null) => {
+  const s = String(bankName || '').trim().toLowerCase();
+  if (s.includes('vietcom') || s === 'vcb') return 'vietcombank';
+  if (s.includes('techcom') || s === 'tcb') return 'techcombank';
+  if (s.includes('sacom') || s.includes('stb')) return 'sacombank';
+  if (s.includes('mb') || s.includes('quan doi')) return 'mbbank';
+  if (s.includes('bidv')) return 'bidv';
+  if (s.includes('vietin') || s === 'ctg') return 'vietinbank';
+  if (s.includes('acb') || s.includes('a chau')) return 'acb';
+  if (s.includes('vpbank') || s.includes('vp')) return 'vpbank';
+  if (s.includes('tpbank') || s.includes('tp') || s.includes('tien phong')) return 'tpbank';
+  if (s.includes('hdbank') || s.includes('hdb')) return 'hdbank';
+  if (s.includes('vib')) return 'vib';
+  if (s.includes('shb')) return 'shb';
+  if (s.includes('ocb')) return 'ocb';
+  if (s.includes('msb') || s.includes('hang hai')) return 'msb';
+  if (s.includes('agribank') || s.includes('nong nghiep')) return 'agribank';
+  return accentStrip(s).toLowerCase().replace(/[^a-z0-9]/g, '') || 'vietcombank';
+};
+/** QR chuyển khoản có số tiền theo phiếu (khi đã biết thực lãnh). */
+const slipQrUrlOf = (s: any) => {
+  const acct = String(s?.bank_account || '').trim();
+  if (!acct) return null;
+  const amt = Math.max(0, Math.round(Number(s?.thuc_lanh ?? s?.net_pay) || 0));
+  const info = `LUONG ${s?.period || ''} ${s?.employee_code || ''}`.slice(0, 50);
+  const holder = String(s?.bank_holder || s?.full_name || '').slice(0, 50);
+  return `https://img.vietqr.io/image/${vietQrSlug(s?.bank_name)}-${encodeURIComponent(acct)}-compact2.png?amount=${amt}&addInfo=${encodeURIComponent(info)}&accountName=${encodeURIComponent(holder)}`;
+};
+/** QR đây/mã STK tự do (không gắn số tiền) — dùng tab QR Ngân Hàng NV. */
+const bankQrUrlOf = (b: string, acct: string, holder?: string) => {
+  if (!String(acct || '').trim()) return null;
+  return `https://img.vietqr.io/image/${vietQrSlug(b)}-${encodeURIComponent(acct.trim())}-compact2.png?accountName=${encodeURIComponent(String(holder || '').slice(0, 50))}`;
+};
+
+/** Gom list theo chi nhánh — giữ thứ tự xuất hiện, trả [{id, rows}] . */
+function branchGroups(items: any[], getBranch: (x: any) => any) {
+  const map = new Map<string, any[]>();
+  for (const it of items) {
+    const k = String(getBranch(it) ?? '—');
+    const arr = map.get(k);
+    if (arr) arr.push(it); else map.set(k, [it]);
+  }
+  return [...map.entries()].map(([id, rows]) => ({ id, rows }));
+}
+
+/** Dải băng tiêu đề nhóm chi nhánh chèn giữa các <tr> (dùng trong <tbody>). */
+function BranchBand({ label, rows, cols, totalText }: { label: string; rows: any[]; cols: number; totalText?: string }) {
+  return (
+    <tr key={`band-${label}`}>
+      <td colSpan={cols} style={{ padding: '7px 14px', background: '#FDF2F7', borderTop: '1px solid #F9A8D4', borderBottom: '1px solid #FBCFE8', fontWeight: 800, fontSize: '11px', color: '#9D174D', textTransform: 'uppercase', letterSpacing: '0.6px', position: 'sticky', left: 0 }}>
+        📍 {label} <span style={{ opacity: 0.75 }}>({rows.length} NV{totalText ? ` — ${totalText}` : ''})</span>
+      </td>
+    </tr>
+  );
+}
 
 export interface FinanceModuleProps {
   activeTab: string; currentUser: any; allEmployees: any; shifts: any;
@@ -195,34 +252,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
 
   const isTabOpen = (id: string) => { const l = tabLocked.get(id); return !l ? true : !l.locked; };
   const stageBadge = (stage?: string | null) => { const c = (STAGE_COLOR as any)[String(stage || 'DRAFT')]; return { ...c, label: (PAYSLIP_STAGE_LABEL as any)[String(stage || 'DRAFT')] || '—' }; };
-  const stripAccents = (s: unknown) => String(s ?? '').replace(/đ/g, 'd').replace(/Đ/g, 'D').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  const vietQrSlug = (bankName?: string | null) => {
-    const s = String(bankName || '').trim().toLowerCase();
-    if (s.includes('vietcom') || s === 'vcb') return 'vietcombank';
-    if (s.includes('techcom') || s === 'tcb') return 'techcombank';
-    if (s.includes('sacom') || s.includes('stb')) return 'sacombank';
-    if (s.includes('mb') || s.includes('quan doi')) return 'mbbank';
-    if (s.includes('bidv')) return 'bidv';
-    if (s.includes('vietin') || s === 'ctg') return 'vietinbank';
-    if (s.includes('acb') || s.includes('a chau')) return 'acb';
-    if (s.includes('vpbank') || s.includes('vp')) return 'vpbank';
-    if (s.includes('tpbank') || s.includes('tp') || s.includes('tien phong')) return 'tpbank';
-    if (s.includes('hdbank') || s.includes('hdb')) return 'hdbank';
-    if (s.includes('vib')) return 'vib';
-    if (s.includes('shb')) return 'shb';
-    if (s.includes('ocb')) return 'ocb';
-    if (s.includes('msb') || s.includes('hang hai')) return 'msb';
-    if (s.includes('agribank') || s.includes('nong nghiep')) return 'agribank';
-    return stripAccents(s).toLowerCase().replace(/[^a-z0-9]/g, '') || 'vietcombank';
-  };
-  const slipQrUrl = (s: any) => {
-    const acct = String(s?.bank_account || '').trim();
-    if (!acct) return null;
-    const amt = Math.max(0, Math.round(Number(s?.thuc_lanh ?? s?.net_pay) || 0));
-    const info = `LUONG ${s?.period || ''} ${s?.employee_code || ''}`.slice(0, 50);
-    const holder = String(s?.bank_holder || s?.full_name || '').slice(0, 50);
-    return `https://img.vietqr.io/image/${vietQrSlug(s?.bank_name)}-${encodeURIComponent(acct)}-compact2.png?amount=${amt}&addInfo=${encodeURIComponent(info)}&accountName=${encodeURIComponent(holder)}`;
-  };
+  const slipQrUrl = slipQrUrlOf;
 
   const fastSignLap = useCallback(async (itemId: string) => { try { await post(`/payroll/slips/${encodeURIComponent(itemId)}/fast-sign`, { lapName: 'Kế toán viên', lapImg: '', qlName: '', qlImg: '' }); showToast(`Đã ký lập phiếu ${itemId.replace('SLIP_', '')}`); refreshCurrentTab(); } catch (e: any) { showToast(e?.message || 'Ký lập thất bại'); } }, [post, showToast, refreshCurrentTab]);
   const publishSlip = useCallback(async (itemId: string) => { if (!window.confirm('Gửi phiếu này đến nhân viên? Sau khi gửi, nhân viên có thể ký xác nhận.')) return; try { await post(`/payroll/slips/${encodeURIComponent(itemId)}/publish`, {}); showToast('Đã gửi phiếu lương đến nhân viên'); refreshCurrentTab(); } catch (e: any) { showToast(e?.message || 'Gửi thất bại'); } }, [post, showToast, refreshCurrentTab]);
@@ -307,17 +337,17 @@ export default function FinanceModule(props: FinanceModuleProps) {
       <div style={{ flex: 1, padding: '0 4px', overflowY: 'auto' }}>
         {activeTab === 'fin-dashboard' && <DashboardTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} slips={slips} workflow={workflow} loadFinSheet={loadFinSheet} loadRuns={loadRuns} periodLabel={periodLabel} formatVND={formatVND} />}
         {activeTab === 'fin-timesheet' && <TimesheetTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} loadFinSheet={loadFinSheet} branchLabelOf={branchLabelOf} formatVND={formatVND} periodLabel={periodLabel} />}
-        {activeTab === 'fin-bcc' && <div style={{ padding: '16px' }}><div style={{ fontSize: '18px', fontWeight: 800 }}>🗓 BCC — Bảng Công Từng Ngày</div><div style={{ fontSize: '12.5px', color: 'var(--text-muted)', marginTop: '4px' }}>Chi tiết từng ngày công theo chi nhánh — dữ liệu realtime tháng {periodLabel(month)}.</div></div>}
+        {activeTab === 'fin-bcc' && <BccTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} formatVND={formatVND} periodLabel={periodLabel} />}
         {activeTab === 'fin-calculate' && <CalculateTab month={month} formula={formula} setFormula={setFormula} inputs={inputs} setInputs={setInputs} inputsLoading={inputsLoading} allEmployees={allEmployees} saveFormula={saveFormula} upsertInput={upsertInput} saveAllInputs={saveAllInputs} loadFormula={loadFormula} loadInputs={loadInputs} />}
         {activeTab === 'fin-payroll-sheet' && <PayrollSheetTab month={month} slips={slips} allEmployees={allEmployees} branchLabelOf={branchLabelOf} formatVND={formatVND} periodLabel={periodLabel} />}
         {activeTab === 'fin-payroll-periods' && <PayrollPeriodsTab month={month} runs={runs} runsLoading={runsLoading} loadRuns={loadRuns} periodLabel={periodLabel} formatVND={formatVND} />}
         {activeTab === 'fin-payslips' && <PayslipsTab month={month} slips={slips} slipsLoading={slipsLoading} allEmployees={allEmployees} branchLabelOf={branchLabelOf} formatVND={formatVND} loadSlips={loadSlips} stageBadge={stageBadge} slipQrUrl={slipQrUrl} fastSignLap={fastSignLap} publishSlip={publishSlip} markPaidSlip={markPaidSlip} syncSlipDrive={syncSlipDrive} periodLabel={periodLabel} />}
         {activeTab === 'fin-payment' && <PaymentTab month={month} slips={slips} allEmployees={allEmployees} branchLabelOf={branchLabelOf} formatVND={formatVND} loadSlips={loadSlips} slipQrUrl={slipQrUrl} markPaidSlip={markPaidSlip} periodLabel={periodLabel} />}
-        {activeTab === 'fin-signatures' && <div style={{ padding: '16px' }}><div style={{ fontSize: '18px', fontWeight: 800 }}>✍ Chữ Ký Mẫu</div><div style={{ fontSize: '12.5px', color: 'var(--text-muted)', marginTop: '4px' }}>Cài đặt chữ ký mẫu Kế toán & Quản lý chi nhánh.</div></div>}
-        {activeTab === 'fin-bank-qr' && <div style={{ padding: '16px' }}><div style={{ fontSize: '18px', fontWeight: 800 }}>🏦 QR Ngân Hàng Từng Nhân Viên</div><div style={{ fontSize: '12.5px', color: 'var(--text-muted)', marginTop: '4px' }}>Danh sách tài khoản ngân hàng NV để quét QR chuyển khoản lương.</div></div>}
+        {activeTab === 'fin-signatures' && <SignatureTemplatesTab currentUser={currentUser} showToast={showToast} />}
+        {activeTab === 'fin-bank-qr' && <BankQrTab allEmployees={allEmployees} slips={slips} periodLabel={periodLabel} month={month} />}
         {activeTab === 'fin-salary-config' && <SalaryConfigView currentUser={currentUser} />}
         {activeTab === 'office-approvals' && <OfficeApprovalsView currentUser={currentUser} />}
-        {activeTab === 'bank-changes' && <div style={{ padding: '16px' }}><div style={{ fontSize: '18px', fontWeight: 800 }}>💳 Duyệt Đổi STK</div><div style={{ fontSize: '12.5px', color: 'var(--text-muted)', marginTop: '4px' }}>Duyệt đổi số tài khoản ngân hàng (dùng chung ADMIN/HR/FINANCE).</div></div>}
+        {activeTab === 'bank-changes' && <BankChangesTab currentUser={currentUser} showToast={showToast} />}
       </div>
     </div>
   );
@@ -419,16 +449,21 @@ function TimesheetTab({ month, finSheet, finSheetLoading, loadFinSheet, branchLa
                 </tr>
               </thead>
               <tbody>
-                {(fs.rows || []).map((r: any) => (
-                  <tr key={r.employeeId} style={{ borderBottom: '1px solid var(--border-light)' }}>
-                    <td style={{ padding: '10px 14px', fontWeight: 700 }}>{r.fullName}</td>
-                    <td style={{ padding: '10px 14px' }}>{r.employeeCode}</td>
-                    <td style={{ padding: '10px 14px' }}>{branchLabelOf(r.branchId)}</td>
-                    <td style={{ padding: '10px 14px', textAlign: 'right' }}>{Number(r.hours ?? 0).toFixed(1)}</td>
-                    <td style={{ padding: '10px 14px', textAlign: 'right' }}>{r.full}</td>
-                    <td style={{ padding: '10px 14px', textAlign: 'right', color: '#B91C1C', fontWeight: 700 }}>{r.absent}</td>
-                    <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: 700 }}>{formatVND(r.netPay ?? r.salary ?? 0)}</td>
-                  </tr>
+                {branchGroups(fs.rows || [], (r: any) => branchLabelOf(r.branchId)).map((g: any) => (
+                  <React.Fragment key={g.id}>
+                    <BranchBand label={g.id} rows={g.rows} cols={7} totalText={`${g.rows.reduce((s: number, r: any) => s + (Number(r.hours) || 0), 0).toFixed(1)} giờ`} />
+                    {g.rows.map((r: any) => (
+                      <tr key={r.employeeId} style={{ borderBottom: '1px solid var(--border-light)' }}>
+                        <td style={{ padding: '10px 14px', fontWeight: 700 }}>{r.fullName}</td>
+                        <td style={{ padding: '10px 14px' }}>{r.employeeCode}</td>
+                        <td style={{ padding: '10px 14px' }}>{branchLabelOf(r.branchId)}</td>
+                        <td style={{ padding: '10px 14px', textAlign: 'right' }}>{Number(r.hours ?? 0).toFixed(1)}</td>
+                        <td style={{ padding: '10px 14px', textAlign: 'right' }}>{r.full}</td>
+                        <td style={{ padding: '10px 14px', textAlign: 'right', color: '#B91C1C', fontWeight: 700 }}>{r.absent}</td>
+                        <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: 700 }}>{formatVND(r.netPay ?? r.salary ?? 0)}</td>
+                      </tr>
+                    ))}
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>
@@ -473,9 +508,12 @@ function CalculateTab({ month, formula, setFormula, inputs, setInputs, inputsLoa
               </tr>
             </thead>
             <tbody>
-              {allEmployees.map((emp: any) => {
-                const inp = inputs.find((i: any) => i.employee_id === emp.employee_id) || {};
-                return (
+              {branchGroups(allEmployees, (emp: any) => branchLabelOf(emp.default_branch_id)).map((g: any) => (
+                <React.Fragment key={g.id}>
+                  <BranchBand label={g.id} rows={g.rows} cols={9} />
+                  {g.rows.map((emp: any) => {
+                    const inp = inputs.find((i: any) => i.employee_id === emp.employee_id) || {};
+                    return (
                   <tr key={emp.employee_id} style={{ borderBottom: '1px solid var(--border-light)' }}>
                     <td style={{ padding: '7px 10px', fontWeight: 700 }}>{emp.employee_code}</td>
                     <td style={{ padding: '7px 10px' }}>{emp.full_name}</td>
@@ -487,8 +525,10 @@ function CalculateTab({ month, formula, setFormula, inputs, setInputs, inputsLoa
                     <td style={{ padding: '7px 10px', textAlign: 'right' }}><input type="number" value={inp.dong_phuc ?? ''} onChange={v => upsertInput(emp.employee_id, 'dong_phuc', v.target.value)} style={{ width: '100%', padding: '4px 6px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '11.5px', background: '#fff' }} /></td>
                     <td style={{ padding: '7px 10px' }}><input value={inp.note ?? ''} onChange={v => upsertInput(emp.employee_id, 'note', v.target.value)} style={{ width: '100%', padding: '4px 6px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '11.5px', background: '#fff' }} /></td>
                   </tr>
-                );
-              })}
+                    );
+                  })}
+                </React.Fragment>
+              ))}
             </tbody>
           </table>
         </div>
@@ -515,28 +555,36 @@ function PayrollSheetTab({ month, slips, allEmployees, branchLabelOf, formatVND,
               </tr>
             </thead>
             <tbody>
-              {slips.map((s: any) => {
-                const kpi = (Number(s.tru_kpi) || 0) + (Number(s.deduction) || 0);
-                const tongCong = Number(s.tong_cong) || ((Number(s.standard_pay) || 0) + (Number(s.luong_cb) || 0) + (Number(s.ot_extra) || 0) + (Number(s.bonus) || 0));
-                const thuc = Number(s.thuc_lanh ?? s.net_pay) || 0;
-                const st = stageBadge(s.stage ?? s.status);
+              {branchGroups(slips, (s: any) => {
                 const emp = allEmployees.find((e: any) => String(e.employee_id) === String(s.employee_id));
-                return (
-                  <tr key={s.item_id} style={{ borderBottom: '1px solid var(--border-light)' }}>
-                    <td style={{ padding: '9px 14px', fontWeight: 700 }}>{s.full_name}</td>
-                    <td style={{ padding: '9px 14px' }}>{s.employee_code}</td>
-                    <td style={{ padding: '9px 14px' }}>{branchLabelOf(emp?.default_branch_id || s.branch_id)}</td>
-                    <td style={{ padding: '9px 14px', textAlign: 'right' }}>{formatVND(s.luong_cb)}</td>
-                    <td style={{ padding: '9px 14px', textAlign: 'right' }}>{formatVND(s.ot_extra)}</td>
-                    <td style={{ padding: '9px 14px', textAlign: 'right' }}>{formatVND(s.bonus)}</td>
-                    <td style={{ padding: '9px 14px', textAlign: 'right', fontWeight: 700 }}>{formatVND(tongCong)}</td>
-                    <td style={{ padding: '9px 14px', textAlign: 'right', color: '#B91C1C' }}>{formatVND(kpi)}</td>
-                    <td style={{ padding: '9px 14px', textAlign: 'right', color: '#B91C1C' }}>{formatVND(s.ung_luong)}</td>
-                    <td style={{ padding: '9px 14px', textAlign: 'right', fontWeight: 800, color: '#166534' }}>{formatVND(thuc)}</td>
-                    <td style={{ padding: '9px 14px' }}><span style={{ display: 'inline-block', padding: '3px 8px', borderRadius: '6px', background: st.bg, color: st.fg, fontSize: '10.5px', fontWeight: 800, border: `1px solid ${st.border}` }}>{st.label}</span></td>
-                  </tr>
-                );
-              })}
+                return branchLabelOf(emp?.default_branch_id || s.branch_id);
+              }).map((g: any) => (
+                <React.Fragment key={g.id}>
+                  <BranchBand label={g.id} rows={g.rows} cols={11} totalText={`THỰC LÃNH ${formatVND(g.rows.reduce((s: number, r: any) => s + (Number(r.thuc_lanh ?? r.net_pay) || 0), 0))}`} />
+                  {g.rows.map((s: any) => {
+                    const kpi = (Number(s.tru_kpi) || 0) + (Number(s.deduction) || 0);
+                    const tongCong = Number(s.tong_cong) || ((Number(s.standard_pay) || 0) + (Number(s.luong_cb) || 0) + (Number(s.ot_extra) || 0) + (Number(s.bonus) || 0));
+                    const thuc = Number(s.thuc_lanh ?? s.net_pay) || 0;
+                    const st = stageBadge(s.stage ?? s.status);
+                    const emp = allEmployees.find((e: any) => String(e.employee_id) === String(s.employee_id));
+                    return (
+                    <tr key={s.item_id} style={{ borderBottom: '1px solid var(--border-light)' }}>
+                      <td style={{ padding: '9px 14px', fontWeight: 700 }}>{s.full_name}</td>
+                      <td style={{ padding: '9px 14px' }}>{s.employee_code}</td>
+                      <td style={{ padding: '9px 14px' }}>{branchLabelOf(emp?.default_branch_id || s.branch_id)}</td>
+                      <td style={{ padding: '9px 14px', textAlign: 'right' }}>{formatVND(s.luong_cb)}</td>
+                      <td style={{ padding: '9px 14px', textAlign: 'right' }}>{formatVND(s.ot_extra)}</td>
+                      <td style={{ padding: '9px 14px', textAlign: 'right' }}>{formatVND(s.bonus)}</td>
+                      <td style={{ padding: '9px 14px', textAlign: 'right', fontWeight: 700 }}>{formatVND(tongCong)}</td>
+                      <td style={{ padding: '9px 14px', textAlign: 'right', color: '#B91C1C' }}>{formatVND(kpi)}</td>
+                      <td style={{ padding: '9px 14px', textAlign: 'right', color: '#B91C1C' }}>{formatVND(s.ung_luong)}</td>
+                      <td style={{ padding: '9px 14px', textAlign: 'right', fontWeight: 800, color: '#166534' }}>{formatVND(thuc)}</td>
+                      <td style={{ padding: '9px 14px' }}><span style={{ display: 'inline-block', padding: '3px 8px', borderRadius: '6px', background: st.bg, color: st.fg, fontSize: '10.5px', fontWeight: 800, border: `1px solid ${st.border}` }}>{st.label}</span></td>
+                    </tr>
+                    );
+                  })}
+                </React.Fragment>
+              ))}
             </tbody>
           </table>
         </div>
@@ -619,16 +667,22 @@ function PayslipsTab({ month, slips, slipsLoading, allEmployees, branchLabelOf, 
                 </tr>
               </thead>
               <tbody>
-                {slips.map((s: any) => {
-                  const st = stageBadge(s.stage ?? s.status);
-                  const thuc = Number(s.thuc_lanh ?? s.net_pay) || 0;
+                {branchGroups(slips, (s: any) => {
                   const emp = allEmployees.find((e: any) => String(e.employee_id) === String(s.employee_id));
-                  const hasLap = !!s.sign_lap;
-                  const hasGd = !!s.sign_giamdoc;
-                  const hasNv = !!s.sign_nhanvien;
-                  const isPaid = String(s.status) === 'PAID';
-                  const qrUrl = slipQrUrl(s);
-                  return (
+                  return branchLabelOf(emp?.default_branch_id || s.branch_id);
+                }).map((g: any) => (
+                  <React.Fragment key={g.id}>
+                    <BranchBand label={g.id} rows={g.rows} cols={6} totalText={`THỰC LÃNH ${formatVND(g.rows.reduce((x: number, r: any) => x + (Number(r.thuc_lanh ?? r.net_pay) || 0), 0))}`} />
+                    {g.rows.map((s: any) => {
+                      const st = stageBadge(s.stage ?? s.status);
+                      const thuc = Number(s.thuc_lanh ?? s.net_pay) || 0;
+                      const emp = allEmployees.find((e: any) => String(e.employee_id) === String(s.employee_id));
+                      const hasLap = !!s.sign_lap;
+                      const hasGd = !!s.sign_giamdoc;
+                      const hasNv = !!s.sign_nhanvien;
+                      const isPaid = String(s.status) === 'PAID';
+                      const qrUrl = slipQrUrl(s);
+                      return (
                     <tr key={s.item_id} style={{ borderBottom: '1px solid var(--border-light)' }}>
                       <td style={{ padding: '9px 14px', fontWeight: 700 }}>{s.full_name}</td>
                       <td style={{ padding: '9px 14px' }}>{s.employee_code}</td>
@@ -667,10 +721,12 @@ function PayslipsTab({ month, slips, slipsLoading, allEmployees, branchLabelOf, 
                         ) : (
                           <button onClick={() => fastSignLap(s.item_id)} disabled={!hasLap} style={{ ...{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, border: 'none', cursor: !hasLap ? 'not-allowed' : 'pointer', backgroundColor: !hasLap ? '#E2E8F0' : '#E85D92', color: !hasLap ? '#94A3B8' : '#fff' } } }><PenTool size={13} style={{ marginRight: '4px' }} /> Kế toán ký lập</button>
                         )}
-                      </td>
+                       </td>
                     </tr>
-                  );
-                })}
+                      );
+                    })}
+                  </React.Fragment>
+                ))}
               </tbody>
             </table>
           </div>
@@ -698,11 +754,17 @@ function PaymentTab({ month, slips, allEmployees, branchLabelOf, formatVND, load
               </tr>
             </thead>
             <tbody>
-              {ready.map((s: any) => {
-                const thuc = Number(s.thuc_lanh ?? s.net_pay) || 0;
-                const qrUrl = slipQrUrl(s);
+              {branchGroups(ready, (s: any) => {
                 const emp = allEmployees.find((e: any) => String(e.employee_id) === String(s.employee_id));
-                return (
+                return branchLabelOf(emp?.default_branch_id || s.branch_id);
+              }).map((g: any) => (
+                <React.Fragment key={g.id}>
+                  <BranchBand label={g.id} rows={g.rows} cols={7} totalText={`Cần chuyển ${formatVND(g.rows.reduce((x: number, r: any) => x + (Number(r.thuc_lanh ?? r.net_pay) || 0), 0))}`} />
+                  {g.rows.map((s: any) => {
+                    const thuc = Number(s.thuc_lanh ?? s.net_pay) || 0;
+                    const qrUrl = slipQrUrl(s);
+                    const emp = allEmployees.find((e: any) => String(e.employee_id) === String(s.employee_id));
+                    return (
                   <tr key={s.item_id} style={{ borderBottom: '1px solid var(--border-light)' }}>
                     <td style={{ padding: '10px 14px', fontWeight: 700 }}>{s.full_name}</td>
                     <td style={{ padding: '10px 14px' }}>{s.employee_code}</td>
@@ -714,12 +776,245 @@ function PaymentTab({ month, slips, allEmployees, branchLabelOf, formatVND, load
                     </td>
                     <td style={{ padding: '10px 14px' }}><button onClick={() => markPaidSlip(s.item_id)} style={{ ...{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, border: 'none', cursor: 'pointer', backgroundColor: '#E85D92', color: '#fff' } } }><Check size={13} style={{ marginRight: '4px' }} /> Đã Chuyển Khoản</button></td>
                   </tr>
-                );
-              })}
+                    );
+                  })}
+                </React.Fragment>
+              ))}
             </tbody>
           </table>
         </div>
         {ready.length === 0 && <div style={{ padding: '16px', color: 'var(--text-muted)', textAlign: 'center' }}>Không có phiếu nào chờ chuyển khoản (chưa NV ký hoặc đã chuyển hết).</div>}
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================================
+   BCC — Bảng công từng ngày (nhóm theo chi nhánh, mở chi tiết từng NV)
+   ============================================================================ */
+function BccTab({ month, finSheet, finSheetLoading, formatVND, periodLabel }: any) {
+  const fs = finSheet;
+  const STATUS_LABEL: Record<string, { l: string; c: string }> = {
+    DU: { l: 'Đủ', c: '#166534' },
+    VANG: { l: 'Vắng', c: '#B91C1C' },
+    THIEU: { l: 'Thiếu chấm', c: '#92400E' },
+  };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text)' }}>🗓 3. BCC — Bảng Công Từng Ngày</div>
+      <div style={{ fontSize: '12.5px', color: 'var(--text-muted)' }}>Chi tiết từng ngày công theo chi nhánh — mở từng nhân viên để xem check-in/out, giờ, lương ca, trễ/vắng.</div>
+      {finSheetLoading ? (
+        <div style={{ padding: '20px', color: 'var(--text-muted)' }}>Đang tải bảng công tháng {periodLabel(month)}…</div>
+      ) : !fs ? (
+        <div style={{ padding: '20px', color: 'var(--text-muted)', textAlign: 'center' }}>Chưa có dữ liệu công tháng này.</div>
+      ) : branchGroups(fs.rows || [], (r: any) => branchLabelOf(r.branchId)).map((g: any) => (
+        <div key={g.id} style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: '12px', overflow: 'hidden' }}>
+          <div style={{ padding: '10px 14px', background: '#FDF2F7', color: '#9D174D', fontWeight: 800, fontSize: '12.5px', borderBottom: '1px solid #FBCFE8', display: 'flex', justifyContent: 'space-between' }}>
+            <span>📍 {g.id}</span>
+            <span style={{ fontSize: '11px' }}>{g.rows.length} NV • {g.rows.reduce((s: number, r: any) => s + (Number(r.hours) || 0), 0).toFixed(1)} giờ • {formatVND(g.rows.reduce((s: number, r: any) => s + (Number(r.netPay ?? r.standardPay) || 0), 0))}</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', padding: '10px 14px' }}>
+            {g.rows.map((r: any) => (
+              <details key={r.employeeId} style={{ border: '1px solid var(--border-light)', borderRadius: '8px', padding: '8px 10px', background: '#FAFAFA' }}>
+                <summary style={{ cursor: 'pointer', fontSize: '12.5px', fontWeight: 800, color: '#273142', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                  <span>{r.fullName} <span style={{ color: '#94A3B8', fontWeight: 600 }}>({r.employee_code})</span></span>
+                  <span style={{ fontWeight: 700, color: '#2563EB' }}>{Number(r.hours ?? 0).toFixed(1)} giờ</span>
+                  <span style={{ color: '#10B981' }}>Đủ {r.full || 0}</span>
+                  <span style={{ color: '#92400E' }}>Thiếu {r.partial || 0}</span>
+                  <span style={{ color: '#B91C1C' }}>Vắng {r.absent || 0}</span>
+                  <span style={{ color: '#166534' }}>{formatVND(r.netPay ?? r.standardPay ?? 0)}</span>
+                </summary>
+                <div style={{ overflowX: 'auto', marginTop: '8px' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11.5px' }}>
+                    <thead>
+                      <tr style={{ color: 'var(--text-muted)', textAlign: 'left' }}>
+                        <th style={{ padding: '5px 8px' }}>Ngày</th><th style={{ padding: '5px 8px' }}>Ca</th><th style={{ padding: '5px 8px', textAlign: 'center' }}>Giờ</th><th style={{ padding: '5px 8px' }}>Trạng thái</th><th style={{ padding: '5px 8px' }}>Check-in</th><th style={{ padding: '5px 8px', textAlign: 'right' }}>Trễ (phút)</th><th style={{ padding: '5px 8px', textAlign: 'right' }}>Lương ca</th><th style={{ padding: '5px 8px', textAlign: 'right' }}>Trừ</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(r.shifts || []).map((d: any, idx: number) => {
+                        const stt = STATUS_LABEL[String(d.status || '')] || { l: d.status || '—', c: '#64748B' };
+                        return (
+                          <tr key={`${r.employeeId}-${idx}`} style={{ borderBottom: '1px solid var(--border-light)' }}>
+                            <td style={{ padding: '4px 8px', fontWeight: 700 }}>{String(d.date || '').slice(0, 10)}</td>
+                            <td style={{ padding: '4px 8px' }}>{d.shiftCode || '—'} <span style={{ color: '#94A3B8' }}>({branchLabelOf(d.branchId)})</span></td>
+                            <td style={{ padding: '4px 8px', textAlign: 'center' }}>{Number(d.hours ?? 0).toFixed(1)}</td>
+                            <td style={{ padding: '4px 8px', color: stt.c, fontWeight: 800 }}>{stt.l}</td>
+                            <td style={{ padding: '4px 8px' }}>{d.checkIn ? new Date(d.checkIn.length > 12 ? Number(d.checkIn) : d.checkIn).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '—'}</td>
+                            <td style={{ padding: '4px 8px', textAlign: 'right', color: (d.lateMin || 0) > 0 ? '#B91C1C' : 'inherit' }}>{d.lateMin || 0}</td>
+                            <td style={{ padding: '4px 8px', textAlign: 'right' }}>{formatVND(d.shiftPay || 0)}</td>
+                            <td style={{ padding: '4px 8px', textAlign: 'right', color: (d.fineAmount || 0) > 0 ? '#B91C1C' : 'inherit' }}>{formatVND(d.fineAmount || 0)}</td>
+                          </tr>
+                        );
+                      })}
+                      {(r.shifts || []).length === 0 && <tr><td colSpan={8} style={{ padding: '8px', color: 'var(--text-muted)', textAlign: 'center' }}>Không có ca trong kỳ.</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ============================================================================
+   QR Ngân Hàng từng nhân viên (nhóm theo chi nhánh)
+   ============================================================================ */
+function BankQrTab({ allEmployees, periodLabel, month }: any) {
+  const branches = branchGroups(allEmployees, (e: any) => branchLabelOf(e.default_branch_id));
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text)' }}>🏦 10. QR Ngân Hàng Từng Nhân Viên</div>
+      <div style={{ fontSize: '12.5px', color: 'var(--text-muted)' }}>Danh sách tài khoản ngân hàng NV (tháng {periodLabel(month)}) — quét QR để chuyển khoản lương tự do.</div>
+      {branches.map((g: any) => (
+        <div key={g.id} style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: '12px', overflow: 'hidden' }}>
+          <div style={{ padding: '10px 14px', background: '#FDF2F7', color: '#9D174D', fontWeight: 800, fontSize: '12.5px', borderBottom: '1px solid #FBCFE8' }}>📍 {g.id} — {g.rows.length} NV</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '10px', padding: '12px 14px' }}>
+            {g.rows.map((e: any) => {
+              const acct = String(e.bank_account || '').trim();
+              const qr = bankQrUrlOf(e.bank_name, acct, e.bank_holder || e.full_name);
+              return (
+                <div key={e.employee_id} style={{ display: 'flex', gap: '10px', alignItems: 'center', border: '1px solid var(--border-light)', borderRadius: '10px', padding: '10px', background: '#FAFAFA' }}>
+                  {qr ? <img src={qr} alt="VietQR" style={{ width: '64px', height: '64px', borderRadius: '8px', border: '1px solid #CBD5E1', background: '#fff' }} onError={(ev: any) => { (ev.target as any).style.display = 'none'; }} /> : <div style={{ width: '64px', height: '64px', border: '1.5px dashed #F87171', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', color: '#DC2626', textAlign: 'center' }}>Chưa có STK</div>}
+                  <div style={{ fontSize: '11.5px', minWidth: 0 }}>
+                    <div style={{ fontWeight: 800, color: '#273142' }}>{e.full_name} <span style={{ color: '#94A3B8', fontWeight: 600 }}>{e.employee_code}</span></div>
+                    <div style={{ color: 'var(--text-muted)' }}>{e.bank_name || '—'}</div>
+                    <div style={{ fontFamily: 'monospace', fontWeight: 800, color: '#273142' }}>{acct || '—'}</div>
+                    <div style={{ color: 'var(--text-muted)' }}>{e.bank_holder || e.full_name}</div>
+                  </div>
+                </div>
+              );
+            })}
+            {g.rows.length === 0 && <div style={{ padding: '10px', color: 'var(--text-muted)' }}>Chưa có nhân viên.</div>}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ============================================================================
+   Duyệt Đổi STK (Kế toán/Admin/HR)
+   ============================================================================ */
+function BankChangesTab({ currentUser, showToast }: any) {
+  const [reqs, setReqs] = React.useState<any[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [busy, setBusy] = React.useState<string | null>(null);
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    try { setReqs(await apiRequest('/admin/bank-change-requests')); } catch (e: any) { showToast('Lỗi tải yêu cầu đổi STK: ' + (e?.message || '')); } finally { setLoading(false); }
+  }, [showToast]);
+  React.useEffect(() => { load(); }, [load]);
+  const review = async (employeeId: string, action: 'approve' | 'reject') => {
+    const emp = reqs.find((r: any) => String(r.employee_id) === String(employeeId));
+    const label = action === 'approve' ? 'PHÊ DUYỆT đổi STK' : 'TỪ CHỐI đổi STK';
+    if (!window.confirm(`${label} cho ${emp?.full_name || employeeId}? Số TK mới: ${emp?.new_bank_account || emp?.bank_account || '—'}`)) return;
+    setBusy(employeeId + action);
+    try {
+      await apiRequest(`/admin/bank-change-requests/${encodeURIComponent(employeeId)}/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note: `${label} bởi ${currentUser?.fullName || 'Kế toán'}` }) });
+      showToast(`Đã ${action === 'approve' ? 'phê duyệt' : 'từ chối'} đổi STK của ${emp?.full_name || employeeId}`);
+      load();
+    } catch (e: any) { showToast(e?.message || 'Thao tác thất bại'); } finally { setBusy(null); }
+  };
+  const pending = reqs.filter((r: any) => String(r.status || '').toUpperCase() === 'PENDING');
+  const done = reqs.filter((r: any) => String(r.status || '').toUpperCase() !== 'PENDING');
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text)' }}>💳 11. Duyệt Đổi STK</div>
+        <button onClick={load} disabled={loading} style={{ ...{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', borderRadius: '8px', fontSize: '12.5px', fontWeight: 700, border: 'none', cursor: 'pointer', backgroundColor: '#E85D92', color: '#fff' } } }><RefreshCw size={13} style={{ marginRight: '4px' }} /> Tải lại</button>
+      </div>
+      {loading && <div style={{ padding: '14px', color: 'var(--text-muted)' }}>Đang tải yêu cầu…</div>}
+      <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: '12px', overflow: 'hidden' }}>
+        <div style={{ padding: '10px 14px', fontWeight: 800, fontSize: '12.5px', borderBottom: '1px solid var(--border)' }}>⏳ Chờ duyệt ({pending.length})</div>
+        {pending.map((r: any) => (
+          <div key={r.employee_id || r.id} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', borderBottom: '1px solid var(--border-light)', flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: 220 }}>
+              <div style={{ fontWeight: 800, fontSize: '12.5px' }}>{r.full_name} <span style={{ color: '#94A3B8', fontWeight: 600 }}>{r.employee_code}</span></div>
+              <div style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>STK mới: <span style={{ fontFamily: 'monospace', fontWeight: 800, color: '#273142' }}>{r.new_bank_account || r.bank_account || '—'}</span> — {r.new_bank_name || r.bank_name || '—'} {r.new_bank_holder ? (`(CTK: ${r.new_bank_holder})`) : ''}</div>
+              {r.requested_at && <div style={{ fontSize: '10.5px', color: '#94A3B8' }}>Yêu cầu lúc: {new Date(r.requested_at).toLocaleString('vi-VN')}</div>}
+            </div>
+            <button onClick={() => review(r.employee_id, 'approve')} disabled={!!busy} style={{ padding: '6px 12px', borderRadius: '7px', fontSize: '11.5px', fontWeight: 800, border: 'none', cursor: 'pointer', background: '#DCFCE7', color: '#166534' }}>Duyệt</button>
+            <button onClick={() => review(r.employee_id, 'reject')} disabled={!!busy} style={{ padding: '6px 12px', borderRadius: '7px', fontSize: '11.5px', fontWeight: 800, border: 'none', cursor: 'pointer', background: '#FEE2E2', color: '#B91C1C' }}>Từ chối</button>
+          </div>
+        ))}
+        {pending.length === 0 && <div style={{ padding: '14px', color: 'var(--text-muted)', textAlign: 'center' }}>Không có yêu cầu đổi STK nào đang chờ.</div>}
+      </div>
+      {done.length > 0 && (
+        <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: '12px', overflow: 'hidden' }}>
+          <div style={{ padding: '10px 14px', fontWeight: 800, fontSize: '12.5px', borderBottom: '1px solid var(--border)' }}>Đã xử lý gần đây ({done.length})</div>
+          {done.slice(0, 20).map((r: any) => (
+            <div key={r.employee_id || r.id} style={{ display: 'flex', gap: '10px', padding: '8px 14px', borderBottom: '1px solid var(--border-light)', fontSize: '11.5px', color: 'var(--text-muted)' }}>
+              <span style={{ fontWeight: 800, color: '#273142' }}>{r.full_name}</span><span>{r.new_bank_account || r.bank_account}</span><span style={{ marginLeft: 'auto', fontWeight: 800, color: String(r.status).toUpperCase() === 'APPROVED' ? '#166534' : '#B91C1C' }}>{String(r.status).toUpperCase()}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ============================================================================
+   Chữ Ký Mẫu (Kế toán) — lưu /payroll/signature-templates cho nút Ký ngay
+   ============================================================================ */
+function SignatureTemplatesTab({ currentUser, showToast }: any) {
+  const [sigs, setSigs] = React.useState<any>(() => { try { return JSON.parse(localStorage.getItem('ubm_default_signatures') || '') || { lap: { name: '', img: null }, quanly: { name: '', img: null } }; } catch { return { lap: { name: '', img: null }, quanly: { name: '', img: null } }; } });
+  const [busy, setBusy] = React.useState(false);
+  React.useEffect(() => {
+    apiRequest('/payroll/signature-templates').then((data: any) => {
+      if (data && (data.lap?.img || data.quanly?.img)) {
+        setSigs({ lap: data.lap || { name: '', img: null }, quanly: data.quanly || { name: '', img: null } });
+        localStorage.setItem('ubm_default_signatures', JSON.stringify({ lap: data.lap || { name: '', img: null }, quanly: data.quanly || { name: '', img: null } }));
+      }
+    }).catch(() => null);
+  }, []);
+  const onFile = (key: 'lap' | 'quanly', file: File | null) => {
+    if (!file) return;
+    if (!/^image\//.test(file.type)) { showToast('Chọn file ảnh (PNG/JPG) để làm chữ ký mẫu'); return; }
+    const reader = new FileReader();
+    reader.onload = () => setSigs((prev: any) => ({ ...prev, [key]: { ...prev[key], img: reader.result } }));
+    reader.readAsDataURL(file);
+  };
+  const save = async () => {
+    setBusy(true);
+    try {
+      localStorage.setItem('ubm_default_signatures', JSON.stringify(sigs));
+      await apiRequest('/payroll/signature-templates', { method: 'PUT', body: JSON.stringify(sigs) });
+      showToast('💾 Đã lưu chữ ký mẫu — nút "Kế toán ký lập" sẽ dùng mẫu này');
+    } catch (e: any) { showToast('Lưu máy chủ lỗi: ' + (e?.message || '')); } finally { setBusy(false); }
+  };
+  const rows = [
+    { key: 'lap' as const, title: '✍️ Chữ ký Kế toán (Người lập phiếu)', hint: 'Dùng cho nút "Kế toán ký lập" và tự động bù chữ ký khi Gửi NV' },
+    { key: 'quanly' as const, title: '✍️ Chữ ký Quản lý chi nhánh (nếu cần)', hint: 'Không bắt buộc trong quy trình 3 chữ ký mới (KT → GĐ → NV)' },
+  ];
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text)' }}>✍ 9. Chữ Ký Mẫu</div>
+      <div style={{ fontSize: '12.5px', color: 'var(--text-muted)' }}>Lưu tại máy chủ — mọi máy của Kế toán cùng dùng một bộ chữ ký mẫu khi ký phiếu nhanh.</div>
+      {rows.map(r => (
+        <div key={r.key} style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: '12px', padding: '14px', display: 'flex', gap: '14px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ width: '140px', height: '70px', border: '1.5px dashed var(--border)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#FAFAFA', overflow: 'hidden' }}>
+            {sigs[r.key]?.img ? <img src={sigs[r.key].img} alt={r.key} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} /> : <span style={{ fontSize: '10px', color: '#94A3B8' }}>Chưa có mẫu</span>}
+          </div>
+          <div style={{ flex: 1, minWidth: 240, display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <div style={{ fontSize: '12.5px', fontWeight: 800, color: '#273142' }}>{r.title}</div>
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{r.hint}</div>
+            <input value={sigs[r.key]?.name || ''} onChange={(e: any) => setSigs((prev: any) => ({ ...prev, [r.key]: { ...prev[r.key], name: e.target.value } }))} placeholder="Tên hiển thị trên phiếu (VD: Nguyễn Thị A — Kế toán)" style={{ padding: '6px 8px', borderRadius: '7px', border: '1px solid var(--border)', fontSize: '12px' }} />
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <label style={{ padding: '6px 12px', borderRadius: '7px', background: '#F3F4F6', border: '1px solid var(--border)', cursor: 'pointer', fontSize: '11.5px', fontWeight: 700 }}>
+                Tải ảnh ký lên<input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e: any) => onFile(r.key, e.target.files?.[0] || null)} />
+              </label>
+              {sigs[r.key]?.img && <button onClick={() => setSigs((prev: any) => ({ ...prev, [r.key]: { ...prev[r.key], img: null } }))} style={{ padding: '6px 10px', borderRadius: '7px', border: '1px solid #FCA5A5', background: '#FEE2E2', color: '#B91C1C', cursor: 'pointer', fontSize: '11.5px', fontWeight: 700 }}>Xóa ảnh</button>}
+            </div>
+          </div>
+        </div>
+      ))}
+      <div>
+        <button onClick={save} disabled={busy} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: '8px', fontSize: '12.5px', fontWeight: 800, border: 'none', cursor: busy ? 'wait' : 'pointer', backgroundColor: '#E85D92', color: '#fff' }}><Save size={14} style={{ marginRight: '4px' }} /> Lưu chữ ký mẫu</button>
+        <div style={{ fontSize: '10.5px', color: '#94A3B8', marginTop: '6px' }}>Bởi: {currentUser?.fullName || 'Kế toán'} — ảnh lưu chung mọi thiết bị.</div>
       </div>
     </div>
   );
