@@ -63,25 +63,35 @@ export default function RateAdjustTab({ month, currentUser, showToast }: { month
   const [historyRows, setHistoryRows] = useState<any[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
+  // showToast đổi identity mỗi lần App re-render (inline arrow) — dùng ref để
+  // effect load() KHÔNG bị re-trigger liên tục (gây fetch storm/giật lag).
+  const showToastRef = useRef(showToast);
+  useEffect(() => { showToastRef.current = showToast; });
+  const inflightRef = useRef(false);
+
   useEffect(() => {
     const t = setTimeout(() => setDebouncedQ(q.trim()), 400);
     return () => clearTimeout(t);
   }, [q]);
 
   const load = useCallback(async () => {
+    if (inflightRef.current) return;
+    inflightRef.current = true;
     setLoading(true);
     try {
       const params = new URLSearchParams({ period: month, branch, includeProbation: includeProbation ? '1' : '0', effectiveFrom });
       if (debouncedQ) params.set('q', debouncedQ);
       const data: any = await apiRequest(`/payroll/rates/eligible?${params.toString()}`);
       setRows(Array.isArray(data?.rows) ? data.rows : []);
+      if (effectiveFrom && !data?.rows) { /* giữ rows cũ nếu server lỗi */ }
     } catch (e: any) {
-      showToast(e?.message || 'Không tải được danh sách nhân viên');
-      setRows([]);
+      showToastRef.current?.(e?.message || 'Không tải được danh sách nhân viên');
+      // KHÔNG xoá rows hiện có — tránh bảng nhấp nháy/mất dữ liệu đang xem
     } finally {
+      inflightRef.current = false;
       setLoading(false);
     }
-  }, [month, branch, includeProbation, effectiveFrom, debouncedQ, showToast]);
+  }, [month, branch, includeProbation, effectiveFrom, debouncedQ]);
 
   useEffect(() => { load(); /* tải khi đổi lọc/kỳ/ngày hiệu lực */ }, [load]);
 

@@ -91,19 +91,21 @@ export class RateAdjustService {
       return true;
     };
     const rows = [];
-    for (const e of all.filter(wanted)) {
-      const code = String(e?.employee_code || '');
-      const name = String(e?.full_name || '');
-      if (q) {
-        const hay = `${code} ${name}`.toLowerCase();
-        if (!hay.includes(q)) continue;
-      }
-      const hist = await this.repo.getStageHistory(String(e.employee_id)).catch(() => []);
+    const candidates = all.filter(wanted).filter(e => {
+      if (!q) return true;
+      const hay = `${String(e?.employee_code || '')} ${String(e?.full_name || '')}`.toLowerCase();
+      return hay.includes(q);
+    });
+    // Tải lịch sử rate SONG SONG (tránh N+1 tuần tự chậm ở Postgres)
+    const hists = await Promise.all(candidates.map(e => this.repo.getStageHistory(String(e.employee_id)).catch(() => [])));
+    for (let i = 0; i < candidates.length; i++) {
+      const e = candidates[i];
+      const hist = hists[i] || [];
       const curRate = this.rateOf(e, hist, effFrom, formula);
       rows.push({
         employeeId: String(e.employee_id),
-        employeeCode: code,
-        fullName: name,
+        employeeCode: String(e?.employee_code || ''),
+        fullName: String(e?.full_name || ''),
         branchId: String(e?.default_branch_id || ''),
         group: String(e?.group || ''),
         stage: normalizeStage(e?.employment_status),
