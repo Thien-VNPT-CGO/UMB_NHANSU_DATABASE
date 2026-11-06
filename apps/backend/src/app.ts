@@ -5226,6 +5226,28 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // HR/Admin xóa lịch đăng ký OFF của 1 nhân viên trong 1 tuần (cả 2 ngày hoặc các ngày chỉ định)
+  // Sau khi xóa, nhân viên sẽ được phép đăng ký lại ngày OFF trên Cổng Nhân Viên.
+  app.post('/admin/weekly-off/cancel-employee', authMiddleware, requireRole(['ADMIN', 'HR']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const b: any = req.body || {};
+      const employeeId = String(b.employeeId || '').trim();
+      const weekMon = String(b.weekMon || '').trim();
+      const weekSun = String(b.weekSun || '').trim();
+      if (!employeeId || !weekMon || !weekSun) {
+        return res.status(400).json({ error: 'MISSING_FIELDS: Cần employeeId, weekMon, weekSun!' });
+      }
+      const dates = Array.isArray(b.dates) ? b.dates.map(String) : undefined;
+      const branchId = String(b.branchId || '*');
+      const result = await schedulesService.cancelWeeklyOff({ employeeId, branchId, weekMon, weekSun, dates, actorId: req.user!.id });
+      const cancelled = (result as any)?.cancelled ?? 0;
+      broadcastUpdate('leaves', { action: 'weekly-off-cancel', employeeId, branchId, cancelled });
+      res.json({ success: true, ...(result as any) });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/leaves', authMiddleware, validate({ query: leaveListQuery }), async (req: AuthenticatedRequest, res) => {
     try {
       const branchId = req.user?.role === 'STORE' ? req.user.branchScope : (req.query.branchId as string);

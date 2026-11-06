@@ -1599,6 +1599,63 @@ export class SchedulesService {
     });
   }
 
+  /** HR/Admin xóa lịch đăng ký OFF của 1 nhân viên trong 1 tuần (cả 2 ngày hoặc các ngày chỉ định).
+   *  Cập nhật leave requests thành CANCELLED, broadcast realtime để cổng nhân viên biết
+   *  và có thể đăng ký lại ngày OFF. */
+  async cancelWeeklyOff(data: {
+    employeeId: string;
+    branchId: string;
+    weekMon: string;
+    weekSun: string;
+    dates?: string[];
+    actorId: string;
+  }) {
+    const wk1 = weekRangeOf(data.weekMon);
+    const targetDates = data.dates ? data.dates.map(d => normSheetDate(d)) : null;
+    return singleWriterQueue.enqueue({
+      entityType: 'PHIEU_OFF',
+      entityId: `${data.employeeId}_${wk1.mon}_cancel`,
+      actorId: data.actorId,
+      execute: async () => {
+        const existing = await this.repo.listLeaveRequests(undefined, data.employeeId);
+        const toCancel = existing.filter(l => {
+          if (l.leave_type !== 'HANG_TUAN') return false;
+          if (l.status === 'REJECTED' || l.status === 'CANCELLED') return false;
+          const d = normSheetDate(l.requested_date);
+          if (d < wk1.mon || d > wk1.sun) return false;
+          if (targetDates && !targetDates.includes(d)) return false;
+          return true;
+        });
+        if (toCancel.length === 0) {
+          return { cancelled: 0, message: 'Không tìm thấy đăng ký OFF HANG_TUAN hiệu lực của nhân viên này trong tuần đã chọn.' };
+        }
+        for (const l of toCancel) {
+          await this.repo.updateLeaveRequest(l.request_id, 'CANCELLED', data.actorId, 'HR/Admin xóa đăng ký OFF — cho phép đăng ký lại');
+        }
+        if (this.io) {
+          this.io.to(`user:${data.employeeId}`).emit('leave.updated', {
+            requestId: 'cancel-weekly-off',
+            status: 'CANCELLED',
+            cancelledDates: toCancel.map(l => l.requested_date),
+          });
+          this.io.emit('data:updated', {
+            entity: 'leaves',
+            data: {
+              action: 'weekly-off-cancel',
+              employeeId: data.employeeId,
+              branchId: data.branchId,
+              week: `${wk1.mon} → ${wk1.sun}`,
+              cancelled: toCancel.length,
+              cancelledDates: toCancel.map(l => l.requested_date),
+            },
+            timestamp: new Date().toISOString(),
+          });
+        }
+        return { cancelled: toCancel.length, cancelledDates: toCancel.map(l => l.requested_date), week: `${wk1.mon} → ${wk1.sun}` };
+      },
+    });
+  }
+
   async listLeaves(branchId?: string, employeeId?: string) {
     return this.repo.listLeaveRequests(branchId, employeeId);
   }

@@ -1362,6 +1362,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [offOverlapBusy, setOffOverlapBusy] = useState(false);
   // Đồng bộ phiếu cũ: ca làm trùng ngày OFF của cùng NV → ngày OFF thành ca làm.
   const [shiftOffSyncBusy, setShiftOffSyncBusy] = useState(false);
+  const [cancelBusyKey, setCancelBusyKey] = useState<string | null>(null);
   const handleSyncShiftOffOverlaps = async () => {
     if (shiftOffSyncBusy) return;
     setShiftOffSyncBusy(true);
@@ -1431,6 +1432,31 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       showToast(e?.message || 'Lỗi khi reset lịch OFF trùng ca!');
     } finally {
       setOffOverlapBusy(false);
+    }
+  };
+
+  // HR/Admin xóa lịch đăng ký OFF của 1 NV trong 1 tuần -> NV có thể đăng ký lại
+  const handleCancelWeeklyOff = async (employeeId: string, employeeName: string, weekMon: string, weekSun: string) => {
+    const key = `${employeeId}__${weekMon}`;
+    if (cancelBusyKey === key) return;
+    if (!window.confirm(`Xóa TẤT CẢ ngày OFF đã đăng ký của ${employeeName} trong tuần ${weekMon} → ${weekSun}?\nSau khi xóa, nhân viên này sẽ được phép đăng ký lại ngày OFF trên Cổng Nhân Viên.`)) return;
+    setCancelBusyKey(key);
+    try {
+      const res: any = await apiRequest('/admin/weekly-off/cancel-employee', {
+        method: 'POST',
+        body: JSON.stringify({ employeeId, weekMon, weekSun, branchId: '*' }),
+      });
+      if (res?.success) {
+        showToast(`🗑 Đã xóa ${res?.cancelled || 0} đăng ký OFF của ${employeeName} (tuần ${weekMon}) — cho phép đăng ký lại!`);
+        if (onRefreshData) await onRefreshData();
+        if (onPushSheets) await onPushSheets();
+      } else {
+        showToast(res?.error || 'Xóa OFF thất bại!');
+      }
+    } catch (e: any) {
+      showToast(e?.message || 'Lỗi khi xóa lịch OFF!');
+    } finally {
+      setCancelBusyKey(null);
     }
   };
   // Rà soát lịch thử việc còn sót ở NV đã lên chính thức (xem trước + xác nhận rồi mới hủy).
@@ -11042,34 +11068,55 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <th style={{ padding: '12px 20px' }}>Tuần (Mon → Sun)</th>
                 <th style={{ padding: '12px 20px' }}>Ngày OFF đã đăng ký</th>
                 <th style={{ padding: '12px 20px' }}>Tình trạng</th>
+                <th style={{ padding: '12px 20px', textAlign: 'center' }}>Thao tác</th>
               </tr>
             </thead>
             <tbody>
               {weeklyOffList.length === 0 ? (
                 <tr>
-                  <td colSpan={5} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                  <td colSpan={6} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
                     Chưa có đăng ký OFF tuần nào trong chu kỳ này. Khi nhân viên đăng ký 2 ngày OFF (T6 09h00 → T7 09h00), dữ liệu tự ghi nhận và hiện realtime tại đây.
                   </td>
                 </tr>
               ) : (
-                weeklyOffList.map((g: any) => (
-                  <tr key={g.key} style={{ borderBottom: '1px solid var(--border)' }}>
-                    <td style={{ padding: '12px 20px', fontWeight: 700 }}>
-                      {g.employee_name}
-                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }}>{g.employee_id}</div>
-                    </td>
-                    <td style={{ padding: '12px 20px' }}>{getDisplayBranch(g.branch_id) || g.branch_id || 'Chưa rõ'}</td>
-                    <td style={{ padding: '12px 20px' }}>{g.week}</td>
-                    <td style={{ padding: '12px 20px', fontWeight: 600 }}>{g.dates.join(' • ')}</td>
-                    <td style={{ padding: '12px 20px' }}>
-                      {g.count >= 2 ? (
-                        <span className="badge badge-success" style={{ fontWeight: 700 }}>✓ Đủ 2 ngày</span>
-                      ) : (
-                        <span className="badge" style={{ backgroundColor: '#FEF3C7', color: '#92400E', fontWeight: 700 }}>Thiếu ({g.count}/2)</span>
-                      )}
-                    </td>
-                  </tr>
-                ))
+                weeklyOffList.map((g: any) => {
+                  const [weekMon, weekSun] = String(g.week || '').split(' → ');
+                  const isCancelBusy = cancelBusyKey === `${g.employee_id}__${weekMon || ''}`;
+                  return (
+                    <tr key={g.key} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <td style={{ padding: '12px 20px', fontWeight: 700 }}>
+                        {g.employee_name}
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }}>{g.employee_id}</div>
+                      </td>
+                      <td style={{ padding: '12px 20px' }}>{getDisplayBranch(g.branch_id) || g.branch_id || 'Chưa rõ'}</td>
+                      <td style={{ padding: '12px 20px' }}>{g.week}</td>
+                      <td style={{ padding: '12px 20px', fontWeight: 600 }}>{g.dates.join(' • ')}</td>
+                      <td style={{ padding: '12px 20px' }}>
+                        {g.count >= 2 ? (
+                          <span className="badge badge-success" style={{ fontWeight: 700 }}>✓ Đủ 2 ngày</span>
+                        ) : (
+                          <span className="badge" style={{ backgroundColor: '#FEF3C7', color: '#92400E', fontWeight: 700 }}>Thiếu ({g.count}/2)</span>
+                        )}
+                      </td>
+                      <td style={{ padding: '12px 20px', textAlign: 'center' }}>
+                        <button
+                          disabled={isCancelBusy}
+                          onClick={() => handleCancelWeeklyOff(g.employee_id, g.employee_name, weekMon || '', weekSun || '')}
+                          title={`Xóa tất cả ngày OFF của ${g.employee_name} trong tuần ${g.week} để đăng ký lại`}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '6px',
+                            border: 'none', backgroundColor: isCancelBusy ? '#9CA3AF' : '#FEE2E2',
+                            color: isCancelBusy ? '#9CA3AF' : '#B91C1C', fontWeight: 800, fontSize: '11.5px',
+                            cursor: isCancelBusy ? 'not-allowed' : 'pointer',
+                          }}
+                        >
+                          <Trash2 size={13} style={{ marginRight: '4px' }} />
+                          {isCancelBusy ? '⏳' : 'Xóa OFF'}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>

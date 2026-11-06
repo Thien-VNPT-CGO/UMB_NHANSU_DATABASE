@@ -2639,6 +2639,11 @@ export function App() {
             day2: d.day2 || st.registered[1] || '',
           }));
         }
+      } else if (!st.completed) {
+        // HR/Admin đã xóa OFF (hoặc chưa đủ 2 ngày) -> mở khóa để NV đăng ký lại khi cổng mở
+        setHasRegisteredWeeklyOff(false);
+        setWeeklyOffLocked(false);
+        persistWeeklyOff(false, targetWk);
       } else if (st.window?.phase === 'OPEN') {
         // Chu kỳ mới đang mở mà chưa đủ 2 ngày -> khóa lại
         setHasRegisteredWeeklyOff(false);
