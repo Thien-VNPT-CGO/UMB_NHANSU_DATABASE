@@ -64,7 +64,10 @@ export class RateAdjustService {
   }
 
   private rateOf(emp: any, hist: any[], effectiveFrom: string, formula: any): number {
-    return r0(rateOnDate(emp, effectiveFrom, hist, Number(formula?.rateTV) || 21000, Number(emp?.current_rate_per_hour) || Number(formula?.rateCT) || 25500).rate);
+    // Khớp CHÍNH XÁC cách payroll engine chọn đơn giá: theo ngày, ưu tiên hist;
+    // fallback = đơn giá CÔNG THỨC kỳ (rateTV/rateCT) — không dùng current_rate_per_hour
+    // (engine không đọc trường này, tránh hiển thị khác với tiền lương thực tính).
+    return r0(rateOnDate(emp, effectiveFrom, hist, Number(formula?.rateTV) || 21000, Number(formula?.rateCT) || 25500).rate);
   }
 
   private effectiveFromOrToday(v?: string): string {
@@ -113,7 +116,8 @@ export class RateAdjustService {
     return { period, effectiveFrom: effFrom, rows };
   }
 
-  /** Kỳ nào được tính lại: kỳ có ≥1 phiếu chưa CONFIRMED/PAID, hoặc chưa có phiếu. */
+  /** Kỳ nào được tính lại: kỳ CHƯA có phiếu NV ký/PAID (mọi phiếu đều DRAFT, hoặc chưa có phiếu).
+   *  Kỳ đã có ≥1 phiếu CONFIRMED/PAID → BỎ QUA tuyệt đối (không đổi số tiền NV đã ký/đã nhận). */
   private async affectedPeriods(opts: RateAdjustOptions) {
     const cur = currentPeriodVN();
     const from = opts.pastFromPeriod && PERIOD_RE.test(opts.pastFromPeriod) ? opts.pastFromPeriod : cur;
@@ -128,7 +132,8 @@ export class RateAdjustService {
       const confirmed = slips.filter(s => String(s?.status || '').toUpperCase() === 'CONFIRMED').length;
       const paid = slips.filter(s => String(s?.status || '').toUpperCase() === 'PAID').length;
       const draft = slips.length - confirmed - paid;
-      const locked = slips.length > 0 && confirmed + paid === slips.length;
+      // Kỳ đã có ≥1 phiếu NV ký/PAID → BỎ QUA toàn kỳ (phiếu đã cam kết, không đổi số tiền).
+      const locked = confirmed + paid > 0;
       out.push({ period: p, slips: slips.length, draft, confirmed, paid, action: locked ? 'skip_locked' : 'recalc' });
     }
     return out;
