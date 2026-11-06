@@ -296,6 +296,25 @@ export class PayrollService {
     }
   }
 
+  /**
+   * Gom đồng bộ Sheets thành 1 lượt CHẠY SAU cùng (trailing debounce).
+   * Trước đây mỗi lần kế toán gõ 1 ký tự vào ô nhập tay là 1 lần ghi đè
+   * TOÀN BỘ tab DULIEU_LUONG_KY/CONG_THUC_LUONG/KY_LUONG lên Google Sheets
+   * → đụng quota ghi, request timeout, "nhập tay không hoạt động".
+   * Các thao tác lớn (tính lương, phát hành phiếu, thanh toán) vẫn sync NGAY.
+   */
+  private sheetsSyncTimer: ReturnType<typeof setTimeout> | null = null;
+  scheduleFinanceToSheetsSync(delayMs = 20_000): void {
+    try {
+      if (this.sheetsSyncTimer) clearTimeout(this.sheetsSyncTimer);
+      this.sheetsSyncTimer = setTimeout(() => {
+        this.sheetsSyncTimer = null;
+        void this.syncFinanceToSheets({ skipSlips: true }).catch(() => null);
+      }, Math.max(1000, delayMs));
+      (this.sheetsSyncTimer as any)?.unref?.();
+    } catch { /* best-effort */ }
+  }
+
   public triggerSheetsPush(): void {
     // Giữ nguyên chữ ký gọi fire-and-forget cho các caller chưa kịp await.
     void this.syncFinanceToSheets();
@@ -633,7 +652,8 @@ export class PayrollService {
       note: String(data.note || '').slice(0, 500) || undefined,
       updatedBy: actorId,
     });
-    await this.syncFinanceToSheets({ skipSlips: true });
+    // KHÔNG sync Sheets ngay mỗi lần gõ — gom 1 lượt sau 20s ngừng gõ (xem scheduleFinanceToSheetsSync).
+    this.scheduleFinanceToSheetsSync(20_000);
     return res;
   }
 

@@ -178,6 +178,15 @@ export default function FinanceModule(props: FinanceModuleProps) {
   const [finSheetLoading, setFinSheetLoading] = useState(false);
   const [finSheetSync, setFinSheetSync] = useState<any>(null);
   const [calcBusy, setCalcBusy] = useState(false);
+  // Nhập tay: lưu local ngay + debounce PUT 800ms (trước đây mỗi phím gõ là 1 PUT +
+  // ghi đè toàn bộ tab Sheets → Google chặn quota → "nhập tay không hoạt động").
+  const inputsRef = useRef<any[]>([]);
+  const inputTimersRef = useRef<Map<string, any>>(new Map());
+  const inputPendingRef = useRef<Map<string, { employeeId: string; field: string }>>(new Map());
+  const [pendingCount, setPendingCount] = useState(0);
+  const [inputsSaving, setInputsSaving] = useState(false);
+  const [inputsSavedAt, setInputsSavedAt] = useState<Date | null>(null);
+  useEffect(() => { inputsRef.current = inputs; }, [inputs]);
 
   const mountedRef = useRef(true);
   // Chống "tự reload" làm mất ô đang gõ: nếu kế toán đang focus 1 ô nhập trong
@@ -310,26 +319,91 @@ export default function FinanceModule(props: FinanceModuleProps) {
     } catch (e: any) { showToast('Không tải được PDF: ' + (e?.message || '')); }
   }, [month, showToast]);
   const saveFormula = useCallback(async () => { try { await put(`/payroll/formula/${encodeURIComponent(month)}`, { rateTV: Number(formula?.rateTV) || 21000, rateCT: Number(formula?.rateCT) || 25500, otPerSlot: 0, otThreshold1: 10, otThreshold2: 15 }); showToast('Đã lưu công thức lương'); loadFormula(); } catch (e: any) { showToast(e?.message || 'Lưu công thức thất bại'); } }, [put, month, formula, showToast, loadFormula]);
-  const upsertInput = useCallback(async (employeeId: string, field: string, value: string) => {
-    // Backend Zod yêu cầu employeeId (camelCase) + note là STRING.
+  /** Payload chuẩn backend (employeeId camelCase + note string) từ ô đang sửa. */
+  const buildInputPayload = useCallback((employeeId: string, field: string, value: string) => {
+    const existing = (inputsRef.current || []).find((i: any) => i.employee_id === employeeId) || {};
+    const payload: any = { employeeId, employee_id: employeeId, period: month, luong_cb: 0, ot_extra: 0, bonus_extra: 0, ung_luong: 0, tru_kpi: 0, dong_phuc: 0, note: '', ...existing };
     const num = Number(value);
-    const existing = inputs.find(i => i.employee_id === employeeId);
-    const payload: any = { employeeId, employee_id: employeeId, period: month, luong_cb: 0, ot_extra: 0, bonus_extra: 0, ung_luong: 0, tru_kpi: 0, dong_phuc: 0, note: '' };
-    if (existing) Object.assign(payload, existing);
     payload[field] = field === 'note' ? String(value ?? '') : (isNaN(num) ? 0 : num);
     payload.note = String(payload.note ?? '');
     payload.employeeId = employeeId;
+    return payload;
+  }, [month]);
+
+  /** Gửi 1 ô đang chờ lên server (best-effort; lỗi thì trả lại hàng đợi để thử lại). */
+  const flushInputKey = useCallback(async (key: string) => {
+    const p = inputPendingRef.current.get(key);
+    if (!p) return;
+    inputPendingRef.current.delete(key);
+    setPendingCount(inputPendingRef.current.size);
+    const cur = (inputsRef.current || []).find((i: any) => i.employee_id === p.employeeId) || ({} as any);
     try {
-      await put(`/payroll/inputs/${encodeURIComponent(month)}`, payload);
-      setInputs(inputs.map(i => i.employee_id === employeeId ? { ...i, [field]: payload[field], note: String(payload.note) } : i));
-      if (!existing) setInputs([...inputs, { ...payload, employee_id: employeeId, note: String(payload.note) }]);
-    } catch (e: any) { showToast(e?.message || 'Lưu nhập tay thất bại'); }
-  }, [put, month, inputs, showToast]);
+      await put(`/payroll/inputs/${encodeURIComponent(month)}`, buildInputPayload(p.employeeId, p.field, String(cur[p.field] ?? '')));
+      setInputsSavedAt(new Date());
+    } catch (e: any) {
+      inputPendingRef.current.set(key, p);
+      setPendingCount(inputPendingRef.current.size);
+      showToast(e?.message || 'Lưu nhập tay thất bại — sẽ thử lại khi bạn gõ tiếp');
+    } finally {
+      setInputsSaving(inputPendingRef.current.size > 0 || inputTimersRef.current.size > 0);
+    }
+  }, [put, month, buildInputPayload, showToast]);
+
+  /** Gọi mỗi lần gõ phím: cập nhật local ngay + hẹn lưu server sau 800ms. */
+  const upsertInput = useCallback((employeeId: string, field: string, value: string) => {
+    const num = Number(value);
+    const val = field === 'note' ? String(value ?? '') : (isNaN(num) ? 0 : num);
+    setInputs((prev: any[]) => {
+      const arr = Array.isArray(prev) ? [...prev] : [];
+      const i = arr.findIndex(x => x.employee_id === employeeId);
+      if (i >= 0) arr[i] = { ...arr[i], [field]: val };
+      else arr.push({ employee_id: employeeId, employeeId, period: month, luong_cb: 0, ot_extra: 0, bonus_extra: 0, ung_luong: 0, tru_kpi: 0, dong_phuc: 0, note: field === 'note' ? String(value ?? '') : '', [field]: val });
+      return arr;
+    });
+    const key = `${employeeId}|${field}`;
+    inputPendingRef.current.set(key, { employeeId, field });
+    setPendingCount(inputPendingRef.current.size);
+    setInputsSaving(true);
+    const t = inputTimersRef.current.get(key);
+    if (t) clearTimeout(t);
+    inputTimersRef.current.set(key, setTimeout(() => { inputTimersRef.current.delete(key); void flushInputKey(key); }, 800));
+  }, [flushInputKey, month]);
+
+  /** Flush mọi ô đang chờ (dùng cho nút Lưu tất cả + khi rời tab). */
+  const flushAllPendingInputs = useCallback(async () => {
+    for (const [, t] of inputTimersRef.current) clearTimeout(t);
+    inputTimersRef.current.clear();
+    const keys = [...inputPendingRef.current.keys()];
+    for (const key of keys) { await flushInputKey(key); }
+    return keys.length;
+  }, [flushInputKey]);
+
+  // Rời module / đổi tháng / đổi tab → flush mọi ô đang chờ (không mất dữ liệu)
+  useEffect(() => () => {
+    for (const [, t] of inputTimersRef.current) clearTimeout(t);
+    for (const key of [...inputPendingRef.current.keys()]) {
+      const p = inputPendingRef.current.get(key);
+      if (!p) continue;
+      const cur = (inputsRef.current || []).find((i: any) => i.employee_id === p.employeeId) || ({} as any);
+      const payload = (() => {
+        const existing = cur;
+        const body: any = { employeeId: p.employeeId, employee_id: p.employeeId, period: month, luong_cb: 0, ot_extra: 0, bonus_extra: 0, ung_luong: 0, tru_kpi: 0, dong_phuc: 0, note: '', ...existing };
+        const num = Number(cur[p.field]);
+        body[p.field] = p.field === 'note' ? String(cur[p.field] ?? '') : (isNaN(num) ? 0 : num);
+        body.note = String(body.note ?? '');
+        return body;
+      })();
+      // fire-and-forget khi unmount
+      try { apiRequest(`/payroll/inputs/${encodeURIComponent(month)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).catch(() => null); } catch { /* ignore */ }
+    }
+    inputPendingRef.current.clear();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [month]);
+
   const saveAllInputs = useCallback(async () => {
-    // Chuẩn hóa từng dòng sang shape backend mong đợi (employeeId camelCase + note string).
-    const rows = inputs.map((i: any) => ({ ...i, employeeId: i.employeeId || i.employee_id, employee_id: i.employee_id, period: month, note: String(i.note ?? '') }));
-    try { for (const i of rows) { await put(`/payroll/inputs/${encodeURIComponent(month)}`, i); } showToast('Đã lưu tất cả nhập tay'); } catch (e: any) { showToast(e?.message || 'Lưu thất bại'); }
-  }, [put, month, inputs, showToast]);
+    const flushed = await flushAllPendingInputs();
+    showToast(flushed > 0 ? `Đã lưu ${flushed} ô đang chờ` : 'Không có thay đổi chờ lưu — mọi ô đã tự lưu realtime');
+  }, [flushAllPendingInputs, showToast]);
   /** Tính lương kỳ (công thức Excel) + tạo/cập nhật phiếu — thay cho nút "Tính lương" bị thiếu ở bản cũ. */
   const runCalculate = useCallback(async () => {
     if (!window.confirm(`TÍNH LƯƠNG ${periodLabel(month)} theo CÔNG THỨC EXCEL?\nTỔNG CỘNG = LCB + giờ công + OT thêm + Bonus; THỰC LÃNH = TỔNG CỘNG − KPI − phạt − ứng − đồng phục.\nHệ thống sẽ tạo/cập nhật kỳ lương và phiếu cho toàn bộ nhân viên.`)) return;
@@ -497,7 +571,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
           {activeTab === 'fin-dashboard' && <DashboardTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} slips={slips} workflow={workflow} formatVND={formatVND} />}
           {activeTab === 'fin-timesheet' && <TimesheetTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} loadFinSheet={loadFinSheet} formatVND={formatVND} />}
           {activeTab === 'fin-bcc' && <BccTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} formatVND={formatVND} />}
-          {activeTab === 'fin-calculate' && <CalculateTab month={month} formula={formula} setFormula={setFormula} inputs={inputs} inputsLoading={inputsLoading} allEmployees={allEmployees} saveFormula={saveFormula} upsertInput={upsertInput} saveAllInputs={saveAllInputs} loadFormula={loadFormula} loadInputs={loadInputs} runCalculate={runCalculate} calcBusy={calcBusy} runs={runs} />}
+          {activeTab === 'fin-calculate' && <CalculateTab month={month} formula={formula} setFormula={setFormula} inputs={inputs} inputsLoading={inputsLoading} allEmployees={allEmployees} saveFormula={saveFormula} upsertInput={upsertInput} saveAllInputs={saveAllInputs} loadFormula={loadFormula} loadInputs={loadInputs} runCalculate={runCalculate} calcBusy={calcBusy} runs={runs} inputsSaving={inputsSaving} pendingCount={pendingCount} inputsSavedAt={inputsSavedAt} />}
           {activeTab === 'fin-payroll-sheet' && <PayrollSheetTab month={month} slips={slips} allEmployees={allEmployees} formatVND={formatVND} stageBadge={stageBadge} />}
           {activeTab === 'fin-payroll-periods' && <PayrollPeriodsTab month={month} runs={runs} runsLoading={runsLoading} loadRuns={loadRuns} slips={slips} allEmployees={allEmployees} formatVND={formatVND} runCalculate={runCalculate} calcBusy={calcBusy} />}
           {activeTab === 'fin-payslips' && <PayslipsTab month={month} slips={slips} slipsLoading={slipsLoading} allEmployees={allEmployees} formatVND={formatVND} loadSlips={loadSlips} stageBadge={stageBadge} slipQrUrl={slipQrUrl} fastSignLap={fastSignLap} publishSlip={publishSlip} markPaidSlip={markPaidSlip} syncSlipDrive={syncSlipDrive} downloadSlipPdf={downloadSlipPdf} />}
@@ -837,7 +911,7 @@ function BccTab({ month, finSheet, finSheetLoading, formatVND }: any) {
 /* ============================================================================
    4 · TÍNH LƯƠNG — CÔNG THỨC & NHẬP TAY (+ NÚT TÍNH LƯƠNG)
    ============================================================================ */
-function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEmployees, saveFormula, upsertInput, saveAllInputs, loadFormula, loadInputs, runCalculate, calcBusy, runs }: any) {
+function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEmployees, saveFormula, upsertInput, saveAllInputs, loadFormula, loadInputs, runCalculate, calcBusy, runs, inputsSaving, pendingCount, inputsSavedAt }: any) {
   const [q, setQ] = useState('');
   const latestRun = useMemo(() => (Array.isArray(runs) ? runs : []).filter((r: any) => r.period === month).sort((a: any, b: any) => String(b?.created_at || '').localeCompare(String(a?.created_at || '')))[0] || null, [runs, month]);
   const groups = useMemo(() => {
@@ -893,8 +967,13 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
 
       {/* Nhập tay theo chi nhánh */}
       <div className="fin-card">
-        <CardHead title="Nhập liệu tay theo kỳ" icon={<FileSpreadsheet size={14} color="#E85D92" />} sub="Nhóm theo chi nhánh — tự lưu khi rời ô"
+        <CardHead title="Nhập liệu tay theo kỳ" icon={<FileSpreadsheet size={14} color="#E85D92" />} sub="Nhóm theo chi nhánh — tự động lưu 0,8s sau khi ngừng gõ"
           >
+          {inputsSaving
+            ? <span className="fin-chip-stat" style={{ borderColor: '#fcd34d', background: '#fffbeb', color: '#92400e' }}><Loader2 size={11} className="fin-spin" style={{ verticalAlign: -1 }} /> Đang lưu {pendingCount} ô…</span>
+            : inputsSavedAt
+              ? <span className="fin-chip-stat" style={{ borderColor: '#86efac', background: '#f0fdf4', color: '#166534' }}>✓ Đã lưu lúc {inputsSavedAt.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+              : <span className="fin-chip-stat">Chưa có thay đổi</span>}
           <span className="fin-chip-stat">LCB {formatVND(inputTotals.lcb)}</span>
           <span className="fin-chip-stat">OT {formatVND(inputTotals.ot)}</span>
           <span className="fin-chip-stat">Bonus {formatVND(inputTotals.bonus)}</span>
@@ -903,7 +982,7 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
         <div className="fin-table-wrap" style={{ maxHeight: '62vh' }}>
           <table className="fin-table" style={{ minWidth: 1080 }}>
             <thead>
-              <tr><th>Mã NV</th><th>Họ tên</th><th className="num">LCB</th><th className="num">OT thêm</th><th className="num">Bonus</th><th className="num">Ứng lương</th><th className="num">Trừ KPI</th><th className="num">Trừ ĐP</th><th>Ghi chú</th></tr>
+              <tr><th>Mã NV</th><th>Họ tên</th><th className="num">LCB</th><th className="num">OT thêm</th><th className="num">Bonus</th><th className="num">Ứng lương</th><th className="num">Trừ KPI</th><th className="num">Trừ ĐP</th><th style={{ minWidth: 280 }}>Ghi chú (nhiều dòng)</th></tr>
             </thead>
             <tbody>
               {groups.map(g => (
@@ -925,7 +1004,9 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
                         <td className="num">{cell('ung_luong')}</td>
                         <td className="num">{cell('tru_kpi')}</td>
                         <td className="num">{cell('dong_phuc')}</td>
-                        <td><input className="fin-input" style={{ fontSize: 11.5, padding: '5px 7px' }} value={inp.note ?? ''} onChange={v => upsertInput(emp.employee_id, 'note', v.target.value)} placeholder="Ghi chú…" aria-label="Ghi chú" /></td>
+                        <td>
+                          <textarea className="fin-input" rows={2} value={inp.note ?? ''} onChange={v => upsertInput(emp.employee_id, 'note', v.target.value)} placeholder="Ghi chú… (nhiều dòng)" aria-label="Ghi chú" style={{ fontSize: 11.5, padding: '6px 8px', resize: 'vertical', minHeight: 42, lineHeight: 1.4, whiteSpace: 'pre-wrap' }} />
+                        </td>
                       </tr>
                     );
                   })}
@@ -936,8 +1017,8 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
           </table>
         </div>
         <div style={{ padding: '10px 16px', borderTop: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 10.5, color: 'var(--fin-muted)' }}>Tổng trích: KPI <b className="fin-money">{formatVND(inputTotals.kpi)}</b> • Đồng phục <b className="fin-money">{formatVND(inputTotals.dp)}</b></span>
-          <button type="button" className="fin-btn fin-btn-dark fin-btn-sm" onClick={saveAllInputs} disabled={inputsLoading}><Save size={13} /> Lưu tất cả nhập tay</button>
+          <span style={{ fontSize: 10.5, color: 'var(--fin-muted)' }}>Tự lưu 0,8s sau khi ngừng gõ · Sheets cập nhật gom 1 lượt sau 20s · Tổng trích: KPI <b className="fin-money">{formatVND(inputTotals.kpi)}</b> • Đồng phục <b className="fin-money">{formatVND(inputTotals.dp)}</b></span>
+          <button type="button" className="fin-btn fin-btn-dark fin-btn-sm" onClick={saveAllInputs} disabled={inputsLoading || pendingCount === 0 && !inputsSaving}><Save size={13} /> Lưu tất cả nhập tay{pendingCount > 0 ? ` (${pendingCount})` : ''}</button>
         </div>
       </div>
     </div>
