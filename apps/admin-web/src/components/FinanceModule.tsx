@@ -99,6 +99,13 @@ export default function FinanceModule(props: FinanceModuleProps) {
   const [finSheetSync, setFinSheetSync] = useState<any>(null);
 
   const mountedRef = useRef(true);
+  // Chống "tự reload" làm mất ô đang gõ: nếu kế toán đang focus 1 ô nhập trong
+  // module thì HOÃN việc tải lại dữ liệu chỉnh sửa (inputs) sang lần realtime sau.
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  // Gộp bão realtime: backend bắn nhiều data:updated liên tiếp (điểm danh, lịch,
+  // pull Sheets 15s...) — mỗi event một lần refresh sẽ nhấp nháy bảng & đốt API.
+  // Gộp về 1 lần refresh "trailing" 2s, chỉ khi đang ở tab cần dữ liệu đó.
+  const refreshTimerRef = useRef<any>(null);
   const api = useCallback((path: string, opts?: RequestInit) => apiRequest(path, opts), []);
   const post = useCallback((path: string, body: any) => api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) }), [api]);
   const put = useCallback((path: string, body: any) => api(path, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) }), [api]);
@@ -116,15 +123,28 @@ export default function FinanceModule(props: FinanceModuleProps) {
   const loadInputs = useCallback(async () => { setInputsLoading(true); try { setInputs(await api(`/payroll/inputs/${encodeURIComponent(month)}`)); } catch { setInputs([]); } finally { setInputsLoading(false); } }, [api, month]);
   const loadDriveStatus = useCallback(async () => { try { const st = await api(`/payroll/drive-sync/status?period=${encodeURIComponent(month)}`); setSyncStatus(st); setDriveConfigured(!!st?.configured); } catch { setDriveConfigured(false); } }, [api, month]);
 
+  /** Đang có ô nhập liệu trong module được focus → không clobber dữ liệu đang gõ. */
+  const isUserEditing = useCallback(() => {
+    try {
+      const el = document.activeElement as HTMLElement | null;
+      if (!el) return false;
+      const tag = el.tagName;
+      return (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') && !!rootRef.current?.contains(el);
+    } catch { return false; }
+  }, []);
+
   const refreshCurrentTab = useCallback(() => {
     loadWorkflow();
-    onRefreshData?.();
     if (['fin-timesheet', 'fin-bcc', 'fin-dashboard', 'fin-calculate', 'fin-payroll-sheet'].includes(activeTab)) loadFinSheet();
     if (['fin-payslips', 'fin-payment', 'fin-payroll-periods', 'fin-signatures'].includes(activeTab)) loadSlips();
     if (['fin-payroll-periods', 'fin-dashboard'].includes(activeTab)) loadRuns();
-    if (activeTab === 'fin-calculate') { loadFormula(); loadInputs(); }
+    if (activeTab === 'fin-calculate') { loadFormula(); if (!isUserEditing()) loadInputs(); }
     if (activeTab === 'fin-payment') loadSlips();
-  }, [activeTab, loadWorkflow, onRefreshData, loadFinSheet, loadSlips, loadRuns, loadFormula, loadInputs]);
+    // KHÔNG gọi onRefreshData (loadAllData 10 API của App) trong realtime nữa:
+    // trước đây mỗi sự kiện điểm danh/xếp ca/pull Sheets bắn tới đều tải lại
+    // toàn bộ app → web chậm, nhấp nháy, mất ô kế toán đang gõ (tự reload).
+    // Nhấn nút "Tải lại" trên toolbar thì onRefreshData vẫn chạy như cũ.
+  }, [activeTab, loadWorkflow, loadFinSheet, loadSlips, loadRuns, loadFormula, loadInputs, isUserEditing]);
 
   const handleRealtime = useCallback((evt: CustomEvent) => {
     const ent = (evt.detail as any)?.entity;
@@ -134,7 +154,13 @@ export default function FinanceModule(props: FinanceModuleProps) {
     const needTimesheet = ['fin-timesheet', 'fin-bcc', 'fin-dashboard', 'fin-calculate', 'fin-payroll-sheet'].includes(activeTab);
     const needPayslip = ['fin-payslips', 'fin-payment', 'fin-payroll-periods', 'fin-signatures'].includes(activeTab);
     if ((want && needPayslip) || (att && needTimesheet)) {
-      refreshCurrentTab();
+      // Debounce trailing 2s: 10 sự kiện liên tiếp trong 2s chỉ refresh 1 lần.
+      if (refreshTimerRef.current) return;
+      refreshTimerRef.current = setTimeout(() => {
+        refreshTimerRef.current = null;
+        if (!mountedRef.current) return;
+        refreshCurrentTab();
+      }, 2000);
     }
   }, [activeTab, refreshCurrentTab]);
 
@@ -142,7 +168,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
     window.addEventListener('ubm:fin-timesheet-reload', handleRealtime as any);
     window.addEventListener('ubm:payslips-reload', handleRealtime as any);
     window.addEventListener('data:updated', handleRealtime as any);
-    return () => { mountedRef.current = false; window.removeEventListener('ubm:fin-timesheet-reload', handleRealtime as any); window.removeEventListener('ubm:payslips-reload', handleRealtime as any); window.removeEventListener('data:updated', handleRealtime as any); };
+    return () => { mountedRef.current = false; if (refreshTimerRef.current) { clearTimeout(refreshTimerRef.current); refreshTimerRef.current = null; } window.removeEventListener('ubm:fin-timesheet-reload', handleRealtime as any); window.removeEventListener('ubm:payslips-reload', handleRealtime as any); window.removeEventListener('data:updated', handleRealtime as any); };
   }, [handleRealtime]);
 
   useEffect(() => {
@@ -211,7 +237,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
   const lockReason = tabLocked.get(activeTab)?.reason || '';
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', minHeight: '100vh' }}>
+    <div ref={rootRef} style={{ display: 'flex', flexDirection: 'column', gap: '14px', minHeight: '100vh' }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
