@@ -21,6 +21,7 @@ import {
 } from './services/weekly-off.service.js';
 import { ZaloService, defaultMeetUrl } from './services/zalo.service.js';
 import { PayslipDriveService } from './services/payslip-drive.service.js';
+import { RateAdjustService } from './services/rate-adjust.service.js';
 import { withStage, withStageAll } from './utils/payslip-view.js';
 import {
   bankAccountKey,
@@ -148,6 +149,7 @@ import {
   payrollRunParams,
   payslipIdParams,
   payslipSignBody,
+  rateAdjustBody,
   probationOffBody,
   probationExtraShiftBody,
   probationSelfSwapBody,
@@ -471,6 +473,19 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   payslipDriveService.setTimesheetProvider(async (period: string) => {
     payrollService.invalidateFinanceTimesheetCache(period);
     return payrollService.getFinanceTimesheet(period, '*');
+  });
+  const rateAdjustService = new RateAdjustService({
+    repo: adapter,
+    payrollService,
+    // io chỉ được set sau khi createApp trả về (server.ts: app.set('io', io)) → lấy lazy
+    io: {
+      emit: (...args: any[]) => {
+        try {
+          const io = (app as any).get?.('io');
+          io?.emit?.(...(args as [any, ...any[]]));
+        } catch { /* realtime best-effort */ }
+      },
+    },
   });
   const zaloService = new ZaloService(adapter);
   // Khôi phục phiên Zalo cá nhân HR sau restart (không cần quét QR lại).
@@ -6729,6 +6744,53 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ═══ ĐIỀU CHỈNH LƯƠNG CA — từng nhân viên (Cổng Kế toán) ═══
+  const ratePeriodOf = (q: any) => {
+    const vn = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7);
+    const p = String(q?.period || vn);
+    return /^\d{4}-(0[1-9]|1[0-2])$/.test(p) ? p : vn;
+  };
+  app.get('/payroll/rates/eligible', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const q = String((req.query as any)?.q || '').trim();
+      const branchScope = String((req.query as any)?.branch || '*');
+      const includeProbation = String((req.query as any)?.includeProbation || '') === '1';
+      const effectiveFrom = String((req.query as any)?.effectiveFrom || '');
+      const data = await rateAdjustService.listEligible({ period: ratePeriodOf(req.query), branchScope, q, includeProbation, effectiveFrom });
+      res.json(data);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+  app.post('/payroll/rates/adjust/preview', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ body: rateAdjustBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const b: any = req.body || {};
+      const result = await rateAdjustService.preview(b.changes, { effectiveFrom: b.effectiveFrom, applyPast: !!b.applyPast, pastFromPeriod: b.pastFromPeriod, reason: b.reason });
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+  app.post('/payroll/rates/adjust/commit', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ body: rateAdjustBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const b: any = req.body || {};
+      const result = await rateAdjustService.commit(b.changes, { effectiveFrom: b.effectiveFrom, applyPast: !!b.applyPast, pastFromPeriod: b.pastFromPeriod, reason: b.reason }, req.user!.id);
+      broadcastUpdate('payroll', { action: 'rate-adjust', count: result.applied.length, applyPast: !!b.applyPast });
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+  app.get('/payroll/rates/history', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const employeeId = String((req.query as any)?.employeeId || '').trim();
+      const limit = Number((req.query as any)?.limit) || 300;
+      res.json(await rateAdjustService.listHistory(employeeId || undefined, limit));
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
     }
   });
 

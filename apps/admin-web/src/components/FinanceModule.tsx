@@ -23,6 +23,7 @@ import {
 } from '@ubm/shared';
 import { SalaryConfigView } from './SalaryConfigView.js';
 import { OfficeApprovalsView } from './OfficeApprovalsView.js';
+import RateAdjustTab from './RateAdjustTab';
 import { formatVND } from '../utils/FinanceFormat';
 import './finance.css';
 
@@ -76,6 +77,7 @@ const PROCESS_STEPS = [
 const UTIL_TABS = [
   { id: 'fin-signatures', label: 'Chữ ký mẫu', icon: PenTool },
   { id: 'fin-bank-qr', label: 'QR ngân hàng NV', icon: QrCode },
+  { id: 'fin-rate-adjust', label: 'Điều chỉnh lương ca', icon: Banknote },
   { id: 'bank-changes', label: 'Duyệt đổi STK', icon: CreditCard },
   { id: 'office-approvals', label: 'Duyệt văn phòng', icon: FileText },
   { id: 'fin-salary-config', label: 'Cấu hình lương CB', icon: Settings2 },
@@ -577,6 +579,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
           {activeTab === 'fin-payslips' && <PayslipsTab month={month} slips={slips} slipsLoading={slipsLoading} allEmployees={allEmployees} formatVND={formatVND} loadSlips={loadSlips} stageBadge={stageBadge} slipQrUrl={slipQrUrl} fastSignLap={fastSignLap} publishSlip={publishSlip} markPaidSlip={markPaidSlip} syncSlipDrive={syncSlipDrive} downloadSlipPdf={downloadSlipPdf} />}
           {activeTab === 'fin-payment' && <PaymentTab month={month} slips={slips} allEmployees={allEmployees} formatVND={formatVND} loadSlips={loadSlips} slipQrUrl={slipQrUrl} markPaidSlip={markPaidSlip} downloadSlipPdf={downloadSlipPdf} />}
           {activeTab === 'fin-signatures' && <SignatureTemplatesTab currentUser={currentUser} showToast={showToast} />}
+          {activeTab === 'fin-rate-adjust' && <RateAdjustTab month={month} currentUser={currentUser} showToast={showToast} />}
           {activeTab === 'fin-bank-qr' && <BankQrTab allEmployees={allEmployees} month={month} />}
           {activeTab === 'bank-changes' && <BankChangesTab currentUser={currentUser} showToast={showToast} />}
           {activeTab === 'fin-salary-config' && <SalaryConfigView currentUser={currentUser} />}

@@ -49,6 +49,7 @@ import {
   QrCode,
   MapPin,
   KeyRound,
+  Banknote,
 } from 'lucide-react';
 import { RoleViews } from './components/RoleViews';
 import { LiveMapView } from './components/LiveMapView';
@@ -216,9 +217,10 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'fin-payment', label: '8. Thanh Toán (VietQR)', icon: CheckCircle },
     { id: 'fin-signatures', label: '9. Chữ Ký Mẫu', icon: PenTool },
     { id: 'fin-bank-qr', label: '10. QR Ngân Hàng NV', icon: QrCode },
-    { id: 'bank-changes', label: '11. Duyệt Đổi STK', icon: CreditCard },
-    { id: 'office-approvals', label: '12. Duyệt Văn Phòng', icon: FileText },
-    { id: 'fin-salary-config', label: '13. Cấu hình Lương CB & Phụ cấp (Theo Khối)', icon: DollarSign },
+    { id: 'fin-rate-adjust', label: '11. Điều chỉnh lương ca (từng NV)', icon: Banknote },
+    { id: 'bank-changes', label: '12. Duyệt Đổi STK', icon: CreditCard },
+    { id: 'office-approvals', label: '13. Duyệt Văn Phòng', icon: FileText },
+    { id: 'fin-salary-config', label: '14. Cấu hình Lương CB & Phụ cấp (Theo Khối)', icon: DollarSign },
   ],
   MARKETING: [
     { id: 'mkt-dashboard', label: '1. Dashboard MKT', icon: Megaphone },

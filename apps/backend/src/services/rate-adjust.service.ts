@@ -1,0 +1,287 @@
+/**
+ * RATE ADJUST — Điều chỉnh đơn giá LƯƠNG CA theo TỪNG nhân viên (Cổng Kế toán).
+ *
+ * - Không ghi đè đơn giá cũ: chỉ THÊM bản ghi lịch sử giai đoạn/đơn giá
+ *   (EmployeeStageHistory, stage OFFICIAL/PROBATION) có hiệu lực từ ngày chọn.
+ * - Payroll engine (rateOnDate) tự lấy đúng đơn giá theo từng ngày công →
+ *   NV đổi đơn giá giữa tháng vẫn tính tách giai đoạn.
+ * - "Áp dụng cho tháng cũ": CHỈ tính lại các kỳ mà TOÀN BỘ phiếu đều DRAFT
+ *   (hoặc chưa có phiếu). Kỳ đã có phiếu NV ký (CONFIRMED) hoặc đã thanh
+ *   toán (PAID) → BỎ QUA tuyệt đối + liệt kê lý do (phiếu đã khóa/ký).
+ * - Mọi thay đổi đều ghi audit log + có thể truy vết lịch sử theo từng NV.
+ */
+import { rateOnDate } from './payroll.service.js';
+
+export interface RateAdjustChange {
+  employeeId: string;
+  newRate: number;
+}
+export interface RateAdjustOptions {
+  /** Ngày hiệu lực, YYYY-MM-DD */
+  effectiveFrom: string;
+  applyPast: boolean;
+  /** Kỳ hồi tố bắt đầu (YYYY-MM) — mặc định = kỳ hiện tại */
+  pastFromPeriod?: string;
+  reason: string;
+}
+export interface RateAdjustDeps {
+  repo: any;
+  payrollService: any;
+  io?: any;
+  logger?: (msg: string) => void;
+}
+
+const PERIOD_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+const currentPeriodVN = () => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7);
+const periodsBetween = (fromP: string, toP: string): string[] => {
+  const out: string[] = [];
+  let [y, m] = fromP.split('-').map(Number);
+  const [y2, m2] = toP.split('-').map(Number);
+  while (y < y2 || (y === y2 && m <= m2)) {
+    out.push(`${y}-${String(m).padStart(2, '0')}`);
+    m += 1;
+    if (m > 12) { m = 1; y += 1; }
+    if (out.length > 36) break;
+  }
+  return out;
+};
+const r0 = (n: number) => Math.round(Number(n) || 0);
+const normalizeStage = (s: any): 'OFFICIAL' | 'PROBATION' => {
+  const u = String(s || '').toUpperCase();
+  return u === 'PROBATION' || u === 'TV' ? 'PROBATION' : 'OFFICIAL';
+};
+
+export class RateAdjustService {
+  constructor(private readonly deps: RateAdjustDeps) {}
+
+  private get repo() { return this.deps.repo; }
+  private get payrollService() { return this.deps.payrollService; }
+  private log(msg: string) { try { this.deps.logger?.(msg); } catch { /* noop */ } }
+
+  private async formulaFor(period: string) {
+    return this.payrollService.getFormula(period).catch(() => ({ rateTV: 21000, rateCT: 25500 }));
+  }
+
+  private rateOf(emp: any, hist: any[], effectiveFrom: string, formula: any): number {
+    return r0(rateOnDate(emp, effectiveFrom, hist, Number(formula?.rateTV) || 21000, Number(emp?.current_rate_per_hour) || Number(formula?.rateCT) || 25500).rate);
+  }
+
+  private effectiveFromOrToday(v?: string): string {
+    if (v && DAY_RE.test(v)) return v;
+    return new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+  }
+
+  /** Danh sách NV đủ điều kiện (Chính thức; tùy chọn gồm cả thử việc). */
+  async listEligible(opts: { period?: string; branchScope?: string; q?: string; includeProbation?: boolean; effectiveFrom?: string }) {
+    const period = PERIOD_RE.test(String(opts.period || '')) ? String(opts.period) : currentPeriodVN();
+    const branchScope = String(opts.branchScope || '*');
+    const effFrom = this.effectiveFromOrToday(opts.effectiveFrom);
+    const formula = await this.formulaFor(period);
+    const all: any[] = await this.repo.listEmployees({ branch: branchScope }).catch(() => []);
+    const q = String(opts.q || '').trim().toLowerCase();
+    const wanted = (e: any) => {
+      const st = String(e?.employment_status || '').toUpperCase();
+      if (st === 'TERMINATED' || st === 'RESIGNED') return false;
+      if (!opts.includeProbation && st !== 'OFFICIAL') return false;
+      if (opts.includeProbation && !['OFFICIAL', 'PROBATION'].includes(st)) return false;
+      return true;
+    };
+    const rows = [];
+    for (const e of all.filter(wanted)) {
+      const code = String(e?.employee_code || '');
+      const name = String(e?.full_name || '');
+      if (q) {
+        const hay = `${code} ${name}`.toLowerCase();
+        if (!hay.includes(q)) continue;
+      }
+      const hist = await this.repo.getStageHistory(String(e.employee_id)).catch(() => []);
+      const curRate = this.rateOf(e, hist, effFrom, formula);
+      rows.push({
+        employeeId: String(e.employee_id),
+        employeeCode: code,
+        fullName: name,
+        branchId: String(e?.default_branch_id || ''),
+        group: String(e?.group || ''),
+        stage: normalizeStage(e?.employment_status),
+        currentRate: curRate,
+        officialDate: e?.official_date ? String(e.official_date).slice(0, 10) : '',
+        historyCount: (hist || []).length,
+      });
+    }
+    rows.sort((a, b) => String(a.branchId).localeCompare(String(b.branchId)) || String(a.fullName).localeCompare(String(b.fullName), 'vi'));
+    return { period, effectiveFrom: effFrom, rows };
+  }
+
+  /** Kỳ nào được tính lại: kỳ có ≥1 phiếu chưa CONFIRMED/PAID, hoặc chưa có phiếu. */
+  private async affectedPeriods(opts: RateAdjustOptions) {
+    const cur = currentPeriodVN();
+    const from = opts.pastFromPeriod && PERIOD_RE.test(opts.pastFromPeriod) ? opts.pastFromPeriod : cur;
+    const periods = opts.applyPast ? periodsBetween(from <= cur ? from : cur, cur) : [];
+    const out: Array<{ period: string; slips: number; draft: number; confirmed: number; paid: number; action: 'recalc' | 'skip_locked' }> = [];
+    for (const p of periods) {
+      let slips: any[] = [];
+      try {
+        const data: any = await this.payrollService.getPeriodSlips(p);
+        slips = Array.isArray(data?.slips) ? data.slips : [];
+      } catch { slips = []; }
+      const confirmed = slips.filter(s => String(s?.status || '').toUpperCase() === 'CONFIRMED').length;
+      const paid = slips.filter(s => String(s?.status || '').toUpperCase() === 'PAID').length;
+      const draft = slips.length - confirmed - paid;
+      const locked = slips.length > 0 && confirmed + paid === slips.length;
+      out.push({ period: p, slips: slips.length, draft, confirmed, paid, action: locked ? 'skip_locked' : 'recalc' });
+    }
+    return out;
+  }
+
+  /** Preview: ai đổi gì, kỳ nào sẽ tính lại, chênh lệch ước tính. */
+  async preview(changes: RateAdjustChange[], opts: RateAdjustOptions) {
+    if (!DAY_RE.test(String(opts.effectiveFrom || ''))) throw new Error('INVALID_EFFECTIVE_FROM: ngày hiệu lực phải dạng YYYY-MM-DD!');
+    if (opts.applyPast && opts.pastFromPeriod && !PERIOD_RE.test(opts.pastFromPeriod)) {
+      throw new Error('INVALID_PAST_FROM: kỳ hồi tố phải dạng YYYY-MM!');
+    }
+    const reason = String(opts.reason || '').trim();
+    if (reason.length < 3) throw new Error('MISSING_REASON: bắt buộc nhập lý do điều chỉnh!');
+    const effFrom = opts.effectiveFrom;
+    const formula = await this.formulaFor(currentPeriodVN());
+    const periods = await this.affectedPeriods(opts);
+    const recalcSet = new Set(periods.filter(p => p.action === 'recalc').map(p => p.period));
+    const rows = [];
+    let estTotal = 0;
+    for (const ch of changes) {
+      const newRate = r0(ch.newRate);
+      if (newRate < 1000 || newRate > 1_000_000) throw new Error(`INVALID_RATE: đơn giá ${newRate} ngoài ngưỡng cho phép!`);
+      const emp = await this.repo.getEmployeeById(ch.employeeId).catch(() => null);
+      if (!emp) { rows.push({ employeeId: ch.employeeId, ok: false, error: 'NOT_FOUND' } as any); continue; }
+      const hist = await this.repo.getStageHistory(ch.employeeId).catch(() => []);
+      const oldRate = this.rateOf(emp, hist, effFrom, formula);
+      // Ước tính chênh lệch: Σ giờ trên phiếu (kỳ sẽ tính lại) × delta
+      let estDelta = 0;
+      for (const p of recalcSet) {
+        let slip: any = null;
+        try {
+          const data: any = await this.payrollService.getPeriodSlips(p);
+          slip = (Array.isArray(data?.slips) ? data.slips : []).find((s: any) => String(s?.employee_id) === String(ch.employeeId)) || null;
+        } catch { slip = null; }
+        if (!slip) continue;
+        const isPro = normalizeStage(emp?.employment_status) === 'PROBATION';
+        const hrs = Number(isPro ? (slip?.tv_hours ?? slip?.standard_hours) : (slip?.ct_hours ?? slip?.standard_hours)) || 0;
+        estDelta += hrs * (newRate - oldRate);
+      }
+      rows.push({
+        employeeId: String(emp.employee_id),
+        employeeCode: String(emp?.employee_code || ''),
+        fullName: String(emp?.full_name || ''),
+        branchId: String(emp?.default_branch_id || ''),
+        stage: normalizeStage(emp?.employment_status),
+        oldRate,
+        newRate,
+        deltaRate: newRate - oldRate,
+        estDelta: r0(estDelta),
+        ok: true,
+      });
+      estTotal += estDelta;
+    }
+    return {
+      effectiveFrom: effFrom,
+      applyPast: !!opts.applyPast,
+      pastFromPeriod: opts.pastFromPeriod || currentPeriodVN(),
+      reason,
+      rows,
+      periods,
+      totals: { count: rows.filter(r => r.ok).length, estDelta: r0(estTotal) },
+    };
+  }
+
+  /** Commit: ghi lịch sử đơn giá + (nếu chọn) tính lại các kỳ đủ điều kiện. */
+  async commit(changes: RateAdjustChange[], opts: RateAdjustOptions, actorId: string) {
+    const preview = await this.preview(changes, opts); // validate lại toàn bộ
+    const valid = preview.rows.filter(r => r.ok);
+    if (valid.length === 0) throw new Error('NOTHING_TO_APPLY: không có dòng hợp lệ để áp dụng!');
+    const applied: Array<{ employeeId: string; newRate: number }> = [];
+    const stamp = new Date().toISOString();
+    for (const row of valid) {
+      const emp = await this.repo.getEmployeeById(row.employeeId).catch(() => null);
+      if (!emp) continue;
+      const stage = normalizeStage(emp?.employment_status);
+      await this.repo.addStageHistory({
+        period_id: `RA_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        employee_id: row.employeeId,
+        stage,
+        effective_from: opts.effectiveFrom,
+        rate_per_hour: row.newRate,
+        note: `[RATE_ADJUST] ${opts.reason}`.slice(0, 300),
+        approved_by: actorId,
+      } as any);
+      applied.push({ employeeId: row.employeeId, newRate: row.newRate });
+    }
+    // Hồi tố: tính lại các kỳ đủ điều kiện
+    const recalcResults: Array<{ period: string; action: string; slips?: number; error?: string }> = [];
+    if (opts.applyPast) {
+      for (const p of preview.periods) {
+        if (p.action !== 'recalc') { recalcResults.push({ period: p.period, action: 'skip_locked' }); continue; }
+        try {
+          const res: any = await this.payrollService.calculateFormulaPayroll(p.period, '*', actorId);
+          const inner = res?.result ?? res;
+          recalcResults.push({ period: p.period, action: 'recalculated', slips: Number(inner?.run?.total_employees || inner?.slips?.length || 0) || undefined });
+        } catch (e: any) {
+          recalcResults.push({ period: p.period, action: 'error', error: String(e?.message || e).slice(0, 200) });
+        }
+      }
+    }
+    // Vô hiệu cache bảng công + đẩy Sheets 1 lần + báo realtime
+    try { this.payrollService.invalidateFinanceTimesheetCache?.(); } catch { /* noop */ }
+    try { await this.payrollService.syncFinanceToSheets({ skipSlips: false }); } catch { /* best-effort */ }
+    try {
+      this.deps.io?.emit?.('data:updated', { entity: 'payroll', data: { action: 'rate-adjust', count: applied.length, applyPast: !!opts.applyPast, at: stamp }, timestamp: stamp });
+    } catch { /* noop */ }
+    try {
+      await this.repo.recordAuditLog?.({
+        log_id: `LOG_RATE_${Date.now()}`,
+        actor_id: actorId,
+        actor_role: 'FINANCE',
+        action: 'RATE_ADJUST',
+        target_entity: 'NHAN_VIEN_MASTER',
+        target_id: applied.map(a => a.employeeId).join(',').slice(0, 500),
+        details: `Điều chỉnh đơn giá ${applied.length} NV — hiệu lực ${opts.effectiveFrom}${opts.applyPast ? ` — hồi tố từ ${opts.pastFromPeriod || currentPeriodVN()}` : ''} — Lý do: ${opts.reason}`.slice(0, 1000),
+        ip_address: '',
+        created_at: stamp,
+      });
+    } catch { /* audit best-effort */ }
+    this.log(`[rate-adjust] ${actorId} applied=${applied.length} applyPast=${!!opts.applyPast}`);
+    return {
+      applied,
+      skipped: preview.rows.filter(r => !r.ok),
+      periods: recalcResults,
+      appliedAt: stamp,
+    };
+  }
+
+  /** Lịch sử điều chỉnh đơn giá (lọc theo ghi chú [RATE_ADJUST]). */
+  async listHistory(employeeId?: string, limit = 300) {
+    const lim = Math.min(Math.max(Number(limit) || 300, 1), 1000);
+    const out: any[] = [];
+    if (employeeId) {
+      const hist: any[] = await this.repo.getStageHistory(String(employeeId)).catch(() => []);
+      const emp = await this.repo.getEmployeeById(String(employeeId)).catch(() => null);
+      for (const h of hist) {
+        if (!String(h?.note || '').includes('[RATE_ADJUST]')) continue;
+        out.push({ ...h, full_name: emp?.full_name, employee_code: emp?.employee_code });
+      }
+    } else {
+      const all: any[] = await this.repo.listEmployees({ branch: '*' }).catch(() => []);
+      for (const e of all) {
+        const hist: any[] = await this.repo.getStageHistory(String(e.employee_id)).catch(() => []);
+        for (const h of hist) {
+          if (!String(h?.note || '').includes('[RATE_ADJUST]')) continue;
+          out.push({ ...h, full_name: e?.full_name, employee_code: e?.employee_code, branchId: e?.default_branch_id });
+        }
+        if (out.length > lim * 2) break;
+      }
+      out.sort((a, b) => String(b?.created_at || '').localeCompare(String(a?.created_at || '')));
+    }
+    return out.slice(0, lim);
+  }
+}
+
+export const RATE_ADJUST_NOTE_TAG = '[RATE_ADJUST]';

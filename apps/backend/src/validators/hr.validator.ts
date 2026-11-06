@@ -519,6 +519,18 @@ export const payrollInputBody = z.object({
   note: optString(500),
 }).passthrough();
 
+// Điều chỉnh đơn giá lương ca theo từng NV (Cổng Kế toán)
+export const rateAdjustBody = z.object({
+  changes: z.array(z.object({
+    employeeId: shortId(64),
+    newRate: z.coerce.number().min(1000).max(1_000_000),
+  })).min(1).max(500),
+  effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ngày hiệu lực phải dạng YYYY-MM-DD!'),
+  applyPast: z.coerce.boolean().default(false),
+  pastFromPeriod: z.string().regex(PERIOD_RE, 'Kỳ hồi tố phải dạng YYYY-MM!').optional(),
+  reason: z.string().trim().min(3, 'Bắt buộc nhập lý do (ít nhất 3 ký tự)!').max(300),
+}).passthrough();
+
 export const payrollRunParams = z.object({
   run: shortId(128),
 });
