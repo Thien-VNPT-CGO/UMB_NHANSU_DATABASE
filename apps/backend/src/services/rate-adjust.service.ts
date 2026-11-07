@@ -338,8 +338,11 @@ export class RateAdjustService {
         }
         if (out.length > lim * 2) break;
       }
-      out.sort((a, b) => String(b?.created_at || '').localeCompare(String(a?.created_at || '')));
     }
+    // Luôn trả bản MỚI NHẤT trước rồi mới cắt limit — trước đây lọc theo 1 NV
+    // trả N dòng ĐẦU trong bộ nhớ nên bảng lịch sử không thấy lần điều chỉnh
+    // vừa thực hiện (tưởng như "lưu không ăn").
+    out.sort((a, b) => String(b?.created_at || '').localeCompare(String(a?.created_at || '')));
     return out.slice(0, lim);
   }
 }
