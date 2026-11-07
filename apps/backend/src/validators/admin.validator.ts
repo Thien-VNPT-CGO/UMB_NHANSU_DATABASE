@@ -53,6 +53,19 @@ export const opaqueConfigBody = openObjectBody;
 export const backupCreateBody = z.object({
   name: optString(100),
 });
+export const restoreBody = z.object({
+  confirm: z.literal('RESTORE'),
+  filename: optString(255),
+  contentBase64: z.string().min(1).max(50_000_000),
+}).passthrough();
+export const deltaSyncBody = z.object({
+  rows: z.array(z.object({
+    tableName: z.string().min(1).max(64),
+    id: z.string().min(1).max(128),
+    updatedAt: z.string().min(1).max(64),
+    data: z.any(),
+  })).max(1000),
+}).passthrough();
 export const testRecoveryBody = z.object({
   snapshot_id: z.string().trim().min(1).max(128),
 });

@@ -74,6 +74,10 @@ import {
   getSheetsBackupScheduler,
   type SheetsBackupKind,
 } from './services/sheets-backup.service.js';
+import { RestoreService } from './services/restore.service.js';
+import { getSheetsExportService } from './services/sheets-export.service.js';
+import { getQueueStats } from './queue/queue.js';
+import { getRedisStatus } from './config/redis.js';
 import { contractKeyOf } from './utils/contracts.js';
 import { PayrollService, financeSheetsSyncState } from './services/payroll.service.js';
 import { NotificationsService } from './services/notifications.service.js';
@@ -176,6 +180,8 @@ import {
 } from './validators/hr.validator.js';
 import {
   backupCreateBody,
+  deltaSyncBody,
+  restoreBody,
   bankChangeParams,
   bankChangeReviewBody,
   emergencyGrantBody,
@@ -777,6 +783,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           counts: pg.counts || {},
           lastWriteAt: pg.lastWriteAt || null,
           error: pg.error || null,
+          redis: getRedisStatus(),
         },
         sheets: { mode: sheets.mode, role: 'EXPORT_ONLY', connected: sheets.connected },
         drive: (sheets as any).drive || null,
@@ -7973,6 +7980,58 @@ async function send(d){document.getElementById('msg').textContent='⏳ Đang g�
     try {
       const result = await adapter.testRecovery(req.body.snapshot_id);
       res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // --- P2: Restore Drive/Sheet -> DB (disaster recovery, ADMIN only) ---
+  app.post('/admin/backup/restore', authMiddleware, requireRole(['ADMIN']), validate({ body: restoreBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const restoreSvc: any = new (RestoreService as any)(adapter);
+      const filename = String((req.body as any).filename || 'backup.jsonl.gz');
+      const buf = Buffer.from(String((req.body as any).contentBase64 || ''), 'base64');
+      // Preview trước để tránh restore file lạ ăn chặn
+      const preview: any = await restoreSvc.previewFromBuffer(buf, filename);
+      if (preview.kind === 'sql.gz') {
+        return res.status(409).json({
+          error: 'SQL_RESTORE_NEEDS_PSQL',
+          message: 'File .sql.gz cần áp dụng bằng pg_dump/psql trên VPS (xem deploy/vps/backup-sql.sh). API này chỉ tự động restore JSONL.gz để an toàn (không shell-out).',
+          preview,
+        });
+      }
+      const result: any = await restoreSvc.restoreJsonlBuffer(buf);
+      await adapter.recordAuditLog({
+        actor_id: req.user!.id,
+        action: 'BACKUP_RESTORED',
+        target_type: 'BACKUP',
+        target_id: filename,
+        payload_after: { ...preview, total: result.total, snapshot: result.snapshot },
+      }).catch(() => undefined);
+      broadcastUpdate('all', { action: 'backup-restored', ...preview, total: result.total });
+      res.json({ ok: true, preview, total: result.total, counts: result.counts, snapshot: result.snapshot });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || String(err) });
+    }
+  });
+
+  app.get('/admin/sync/outbox/status', authMiddleware, requireRole(['ADMIN', 'HR']), async (_req, res) => {
+    try {
+      const store: any = (adapter as any).store;
+      const outbox = store?.getOutboxStats ? await store.getOutboxStats() : { pending: 0 };
+      const queue = await getQueueStats().catch(() => null);
+      res.json({ outbox, queue, redis: getRedisStatus(), exportEnabled: String(process.env.GOOGLE_SHEETS_EXPORT || '0') === '1' });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/admin/sync/sheets/delta', authMiddleware, requireRole(['ADMIN']), validate({ body: deltaSyncBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const restoreSvc: any = new (RestoreService as any)(adapter);
+      const result: any = await restoreSvc.deltaSyncFromSheetRows((req.body as any).rows || []);
+      broadcastUpdate('all', { action: 'sheets-delta-sync', ...result });
+      res.json({ ok: true, ...result });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }

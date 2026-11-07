@@ -332,6 +332,42 @@ server.listen(Number(PORT), '0.0.0.0', async () => {
     });
   }
 
+  // P1: Đồng bộ Postgres -> Sheet/Drive qua Outbox (BullMQ khi có Redis, poll 30s fallback)
+  try {
+    const { getSheetsExportService } = await import('./services/sheets-export.service.js');
+    const { startOutboxWorkers } = await import('./workers/outbox.worker.js');
+    const exportSvc: any = getSheetsExportService(adapter);
+    const outboxPollMs = Number(process.env.SYNC_OUTBOX_POLL_MS || 30000);
+    let outboxPolling = false;
+    const outboxPollTick = () => {
+      if (outboxPolling || !postgresMode) return;
+      outboxPolling = true;
+      exportSvc.runOutboxPollOnce()
+        .catch((e: any) => console.warn('[sheets-export] poll error:', e?.message || e))
+        .finally(() => { outboxPolling = false; });
+    };
+    // Chạy lần đầu sau 10s, sau đó mỗi 30s (đúng thiết kế tài liệu)
+    setTimeout(outboxPollTick, 10_000);
+    const outboxTimer = setInterval(outboxPollTick, outboxPollMs);
+    (outboxTimer as any)?.unref?.();
+    // Khởi động BullMQ Workers nếu có Redis
+    try {
+      const workers = startOutboxWorkers({
+        adapter,
+        onSyncOne: async (job: any) => {
+          const r = await exportSvc.pushOneToSheet(job.tableName, job.recordId, {}, job.op);
+          return { ok: true, sheetRow: r.sheetRow, driveUrl: r.driveUrl };
+        },
+      } as any);
+      if (workers) console.log('[sheets-export] BullMQ workers started (Redis).');
+      else console.log('[sheets-export] Fallback poll only (Redis chưa cấu hình).');
+    } catch (e: any) {
+      console.warn('[sheets-export] BullMQ worker start failed, fallback poll:', e?.message || e);
+    }
+  } catch (e: any) {
+    console.warn('[sheets-export] init skipped:', e?.message || e);
+  }
+
   // Làm ấm cache kho lưu trữ chấm công (tab "Dữ Liệu Công Của Tôi" + bảng công
   // tháng) sau khi pull đầu tiên xong — chạy nền, không chặn khởi động.
   setTimeout(() => {

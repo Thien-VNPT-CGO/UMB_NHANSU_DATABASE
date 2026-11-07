@@ -58,7 +58,7 @@ if (!process.env.GOOGLE_SERVICE_ACCOUNT_JSON && !process.env.GOOGLE_SERVICE_ACCO
       try {
         const dlFiles = fs.readdirSync(downloadsDir);
         for (const f of dlFiles) {
-          if ((f.startsWith('umbomilk-hr') || f.includes('service_account') || f.includes('service-account')) && f.endsWith('.json')) {
+          if ((f.startsWith('umbomilk-nhansu-database') || f.startsWith('umbomilk-hr') || f.includes('service_account') || f.includes('service-account')) && f.endsWith('.json')) {
             candidateKeys.push(path.join(downloadsDir, f));
           }
         }

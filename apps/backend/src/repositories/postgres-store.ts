@@ -253,6 +253,26 @@ export class PostgresStore {
           created_at timestamptz NOT NULL DEFAULT now()
         )
       `);
+      // Outbox for Postgres -> Google Sheet/Drive sync (VPS_DataBase_Sheet.md Prompt 2).
+      // Worker ghi vào đây cùng transaction với upsert để không mất sync khi crash.
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS sync_outbox (
+          id uuid PRIMARY KEY,
+          table_name text NOT NULL,
+          record_id text NOT NULL,
+          op text NOT NULL DEFAULT 'upsert',
+          payload jsonb NOT NULL DEFAULT '{}',
+          status text NOT NULL DEFAULT 'PENDING',
+          attempts int NOT NULL DEFAULT 0,
+          last_error text,
+          sheet_row_number int,
+          drive_file_url text,
+          created_at timestamptz NOT NULL DEFAULT now(),
+          updated_at timestamptz NOT NULL DEFAULT now()
+        )
+      `);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_sync_outbox_status ON sync_outbox (status, created_at)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_sync_outbox_record ON sync_outbox (table_name, record_id)`);
       for (const def of COLLECTIONS) {
         await client.query(`
           CREATE TABLE IF NOT EXISTS ${def.table} (
@@ -791,6 +811,89 @@ export class PostgresStore {
       if (!id || this.persistedAuditIds.has(id)) break; // audit mới được unshift lên đầu
       await this.upsertRecord(def, entry, client);
       this.persistedAuditIds.add(id);
+    }
+  }
+
+  // ========== Sync Outbox: Postgres -> Google Sheet/Drive (P1) ==========
+  public async enqueueSyncOutbox(input: {
+    tableName: string;
+    recordId: string;
+    op?: 'upsert' | 'delete';
+    payload?: any;
+  }): Promise<{ id: string } | null> {
+    if (!this.configured || !input.recordId || !input.tableName) return null;
+    const id = `00000000-0000-4000-8000-${Date.now().toString(16).padStart(12, '0').slice(-12)}`;
+    // dùng uuid thô để không cần thêm dep; PostgresStore dùng text id nên giữ string uuid-like, OK vì cột id là uuid
+    // Thử insert với gen_random_uuid() của Postgres sẽ an toàn hơn khi có pgcrypto, nhưng ta dùng uuid generate ở app
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { v4: uuidv4 } = require('uuid');
+      const uid = uuidv4();
+      await pgQuery(
+        `INSERT INTO sync_outbox (id, table_name, record_id, op, payload, status) VALUES ($1::uuid, $2, $3, $4, $5::jsonb, 'PENDING')`,
+        [uid, input.tableName, input.recordId, input.op || 'upsert', JSON.stringify(input.payload || {})],
+      );
+      return { id: uid };
+    } catch {
+      // Fallback khi bảng chưa có uuid extension hoặc uuid package chưa có: dùng id text
+      try {
+        await pgQuery(
+          `INSERT INTO sync_outbox (id, table_name, record_id, op, payload, status) VALUES (gen_random_uuid(), $1, $2, $3, $4::jsonb, 'PENDING')`,
+          [input.tableName, input.recordId, input.op || 'upsert', JSON.stringify(input.payload || {})],
+        );
+        return { id };
+      } catch (e: any) {
+        if (String(e?.message || '').includes('does not exist')) return null;
+        throw e;
+      }
+    }
+  }
+
+  public async claimPendingOutbox(limit = 100): Promise<any[]> {
+    if (!this.configured) return [];
+    const safe = Math.max(1, Math.min(500, Number(limit) || 100));
+    try {
+      const res = await pgQuery(
+        `UPDATE sync_outbox SET status='PROCESSING', attempts=attempts+1, updated_at=now()
+         WHERE id IN (
+           SELECT id FROM sync_outbox
+           WHERE status='PENDING' AND attempts < ${Number(process.env.SYNC_OUTBOX_MAX_ATTEMPTS || 5)}
+           ORDER BY created_at ASC LIMIT ${safe}
+           FOR UPDATE SKIP LOCKED
+         )
+         RETURNING *`,
+      );
+      return res.rows;
+    } catch {
+      return [];
+    }
+  }
+
+  public async markOutboxSynced(id: string, extra?: { sheetRow?: number; driveUrl?: string }): Promise<void> {
+    if (!this.configured || !id) return;
+    await pgQuery(
+      `UPDATE sync_outbox SET status='SYNCED', sheet_row_number=COALESCE($2, sheet_row_number), drive_file_url=COALESCE($3, drive_file_url), updated_at=now() WHERE id=$1`,
+      [id, extra?.sheetRow ?? null, extra?.driveUrl ?? null],
+    ).catch(() => undefined);
+  }
+
+  public async markOutboxFailed(id: string, error: string): Promise<void> {
+    if (!this.configured || !id) return;
+    await pgQuery(
+      `UPDATE sync_outbox SET status=CASE WHEN attempts >= ${Number(process.env.SYNC_OUTBOX_MAX_ATTEMPTS || 5)} THEN 'FAILED' ELSE 'PENDING' END, last_error=$2, updated_at=now() WHERE id=$1`,
+      [id, String(error || '').slice(0, 2000)],
+    ).catch(() => undefined);
+  }
+
+  public async getOutboxStats(): Promise<any> {
+    if (!this.configured) return { pending: 0, processing: 0, synced: 0, failed: 0 };
+    try {
+      const res = await pgQuery(`SELECT status, count(*)::text AS c FROM sync_outbox GROUP BY status`);
+      const out: any = { pending: 0, processing: 0, synced: 0, failed: 0 };
+      for (const r of res.rows) out[String(r.status).toLowerCase()] = Number(r.c || 0);
+      return out;
+    } catch {
+      return { pending: 0, processing: 0, synced: 0, failed: 0, error: 'OUTBOX_NOT_READY' };
     }
   }
 }

@@ -438,6 +438,21 @@ export class PostgresAdapter {
       this.loadError = `PERSIST_FAILED:${method}:${err?.message || err}`;
       throw new Error(`PERSIST_FAILED:${method}`);
     }
+    // P1: ghi outbox Postgres -> Sheet/Drive (fire-and-forget, không chặn request).
+    try {
+      const tableName = methodToTableName(method);
+      if (tableName) {
+        const recordId = extractRecordId(method, args, result);
+        if (recordId) {
+          // Lazy require để server không sập khi chưa cài BullMQ/Redis.
+          const mod = await import('../services/sheets-export.service.js').catch(() => null);
+          if (mod?.getSheetsExportService) {
+            const svc = mod.getSheetsExportService(this);
+            await svc.enqueueAfterMutation(tableName, recordId, result || args[0] || {}).catch(() => undefined);
+          }
+        }
+      }
+    } catch { /* outbox không được làm hỏng write chính */ }
     return result;
   }
 
@@ -612,4 +627,40 @@ export class PostgresAdapter {
 /** Factory dùng trong app.ts / server.ts. */
 export function createPostgresRepository(): any {
   return new PostgresAdapter().asRepository();
+}
+
+function methodToTableName(method: string): string | null {
+  const map: Record<string, string> = {
+    createEmployee: 'employees',
+    updateEmployee: 'employees',
+    deleteEmployee: 'employees',
+    createAccount: 'employee_accounts',
+    createAdminAccount: 'admin_accounts',
+    createShiftAssignment: 'shift_assignments',
+    updateShiftAssignment: 'shift_assignments',
+    createLeaveRequest: 'leave_requests',
+    updateLeaveRequest: 'leave_requests',
+    createSwapRequest: 'swap_requests',
+    updateSwapRequest: 'swap_requests',
+    recordAttendanceEvent: 'attendance_events',
+    updateAttendanceEvent: 'attendance_events',
+    createAttendanceAdjustment: 'attendance_adjustments',
+    createPayrollRun: 'payroll_runs',
+    updatePayslip: 'payslips',
+    createNotification: 'notification_outbox',
+  };
+  return map[method] || null;
+}
+
+function extractRecordId(method: string, args: any[], result: any): string {
+  const pick = (obj: any) => String(obj?.employee_id || obj?.account_id || obj?.admin_id || obj?.event_id || obj?.request_id || obj?.swap_id || obj?.assignment_id || obj?.run_id || obj?.item_id || obj?.adjustment_id || obj?.id || '');
+  if (result && typeof result === 'object') {
+    if (result.run?.run_id) return String(result.run.run_id);
+    if (result.outbox?.notification_id) return String(result.outbox.notification_id);
+    const id = pick(result);
+    if (id) return id;
+    if (Array.isArray(result.items) && result.items[0]) return pick(result.items[0]);
+  }
+  if (args?.[0] && typeof args[0] === 'object') return pick(args[0]) || String(args[0]?.employee_id || args[0]?.event_id || '');
+  return String(args?.[0] || '');
 }

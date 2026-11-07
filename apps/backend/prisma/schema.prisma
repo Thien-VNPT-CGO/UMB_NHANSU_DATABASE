@@ -1,0 +1,105 @@
+// UBM HR - schema.prisma tham khảo theo VPS_DataBase_Sheet.md Prompt 2.
+// QUAN TRỌNG: Dự án hiện chạy với PostgresStore JSONB (id + data jsonb)
+// để giữ tính tương thích với logic nghiệp vụ cũ. File này KHÔNG thay thế
+// PostgresStore ngay. Dùng làm "hợp đồng" cho Worker đồng bộ Sheet
+// (isSyncedToSheet / sheetRowNumber / driveFileUrl) và là lộ trình chuẩn hóa
+// dần dần sang relational khi cần.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  DIRECTOR
+  ACCOUNTANT
+  ADMIN
+  HR
+  EMPLOYEE
+}
+
+model User {
+  id        String   @id @default(uuid()) @db.Uuid
+  username  String   @unique
+  phoneNormalized String? @unique @map("phone_normalized")
+  fullName  String   @map("full_name")
+  role      UserRole
+  branchScope String @default("*") @map("branch_scope")
+  isActive  Boolean  @default(true) @map("is_active")
+  passwordHash String @map("password_hash")
+  pinHash   String?  @map("pin_hash")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  approvalRequests ApprovalRequest[]
+  financialTransactions FinancialTransaction[]
+
+  @@map("users")
+}
+
+// Bảng nghiệp vụ mẫu cho đồng bộ: ApprovalRequest (phiếu nghỉ/đổi ca/duyệt)
+// và FinancialTransaction (thu/chi, công nợ) — có đủ trường sync như tài liệu.
+model ApprovalRequest {
+  id              String   @id @default(uuid()) @db.Uuid
+  requesterId     String   @map("requester_id")
+  requester       User     @relation(fields: [requesterId], references: [id])
+  type            String   // LEAVE | SWAP | ADJUSTMENT
+  status          String   @default("PENDING")
+  payload         Json     @default("{}")
+  approvedById    String?  @map("approved_by_id")
+
+  // Trường phục vụ đồng bộ Sheet/Drive (Prompt 2 yêu cầu)
+  isSyncedToSheet Boolean  @default(false) @map("is_synced_to_sheet")
+  sheetRowNumber  Int?     @map("sheet_row_number")
+  driveFileUrl    String?  @map("drive_file_url")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([isSyncedToSheet, createdAt])
+  @@map("approval_requests")
+}
+
+model FinancialTransaction {
+  id              String   @id @default(uuid()) @db.Uuid
+  createdById     String   @map("created_by_id")
+  createdBy       User     @relation(fields: [createdById], references: [id])
+  type            String   // INCOME | EXPENSE | DEBT
+  amount          Decimal  @db.Decimal(18, 2)
+  description     String?
+  attachmentUrl   String?  @map("attachment_url")
+
+  isSyncedToSheet Boolean  @default(false) @map("is_synced_to_sheet")
+  sheetRowNumber  Int?     @map("sheet_row_number")
+  driveFileUrl    String?  @map("drive_file_url")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([isSyncedToSheet, createdAt])
+  @@map("financial_transactions")
+}
+
+// Outbox pattern: mỗi lần ghi Postgres thành công, ghi 1 dòng vào đây
+// cùng transaction để Worker đồng bộ Sheet/Drive sau, không chặn request.
+model SyncOutbox {
+  id          String   @id @default(uuid()) @db.Uuid
+  tableName   String   @map("table_name")
+  recordId    String   @map("record_id")
+  op          String   @default("upsert") // upsert | delete
+  payload     Json     @default("{}")
+  status      String   @default("PENDING") // PENDING | PROCESSING | SYNCED | FAILED
+  attempts    Int      @default(0)
+  lastError   String?  @map("last_error")
+  sheetRow    Int?     @map("sheet_row_number")
+  driveUrl    String?  @map("drive_file_url")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([status, createdAt])
+  @@map("sync_outbox")
+}
