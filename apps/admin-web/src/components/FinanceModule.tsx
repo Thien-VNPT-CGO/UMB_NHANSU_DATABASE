@@ -320,15 +320,26 @@ export default function FinanceModule(props: FinanceModuleProps) {
       URL.revokeObjectURL(url);
     } catch (e: any) { showToast('Không tải được PDF: ' + (e?.message || '')); }
   }, [month, showToast]);
-  const saveFormula = useCallback(async () => { try { await put(`/payroll/formula/${encodeURIComponent(month)}`, { rateTV: Number(formula?.rateTV) || 21000, rateCT: Number(formula?.rateCT) || 25500, otPerSlot: 0, otThreshold1: 10, otThreshold2: 15 }); showToast('Đã lưu công thức lương'); loadFormula(); } catch (e: any) { showToast(e?.message || 'Lưu công thức thất bại'); } }, [put, month, formula, showToast, loadFormula]);
+  const saveFormula = useCallback(async () => {
+    const rateTV = Math.floor(Number(formula?.rateTV));
+    const rateCT = Math.floor(Number(formula?.rateCT));
+    const t1 = Number(formula?.otThreshold1 ?? 10);
+    const t2 = Number(formula?.otThreshold2 ?? 15);
+    if (!Number.isFinite(rateTV) || rateTV <= 0) { showToast('Đơn giá TV phải > 0!'); return; }
+    if (!Number.isFinite(rateCT) || rateCT <= 0) { showToast('Đơn giá CT phải > 0!'); return; }
+    if (!Number.isFinite(t1) || !Number.isFinite(t2) || t1 < 0 || t2 <= t1 || t2 > 24) { showToast('Ngưỡng tăng ca phải 0 ≤ T1 < T2 ≤ 24!'); return; }
+    try { await put(`/payroll/formula/${encodeURIComponent(month)}`, { rateTV, rateCT, otPerSlot: 0, otThreshold1: t1, otThreshold2: t2 }); showToast('Đã lưu công thức lương'); loadFormula(); } catch (e: any) { showToast(e?.message || 'Lưu công thức thất bại'); }
+  }, [put, month, formula, showToast, loadFormula]);
   /** Payload chuẩn backend (employeeId camelCase + note string) từ ô đang sửa. */
   const buildInputPayload = useCallback((employeeId: string, field: string, value: string) => {
     const existing = (inputsRef.current || []).find((i: any) => i.employee_id === employeeId) || {};
-    const payload: any = { employeeId, employee_id: employeeId, period: month, luong_cb: 0, ot_extra: 0, bonus_extra: 0, ung_luong: 0, tru_kpi: 0, dong_phuc: 0, note: '', ...existing };
+    // Lưu ý: period/employeeId phải thắng existing (tránh dính kỳ cũ sau khi đổi tháng).
+    const payload: any = { luong_cb: 0, ot_extra: 0, bonus_extra: 0, ung_luong: 0, tru_kpi: 0, dong_phuc: 0, note: '', ...existing, employeeId, employee_id: employeeId, period: month };
     const num = Number(value);
-    payload[field] = field === 'note' ? String(value ?? '') : (isNaN(num) ? 0 : num);
-    payload.note = String(payload.note ?? '');
+    payload[field] = field === 'note' ? String(value ?? '').slice(0, 1000) : (isNaN(num) ? 0 : Math.max(0, Math.floor(num)));
+    payload.note = String(payload.note ?? '').slice(0, 1000);
     payload.employeeId = employeeId;
+    payload.employee_id = employeeId;
     return payload;
   }, [month]);
 
@@ -353,13 +364,15 @@ export default function FinanceModule(props: FinanceModuleProps) {
 
   /** Gọi mỗi lần gõ phím: cập nhật local ngay + hẹn lưu server sau 800ms. */
   const upsertInput = useCallback((employeeId: string, field: string, value: string) => {
-    const num = Number(value);
-    const val = field === 'note' ? String(value ?? '') : (isNaN(num) ? 0 : num);
+    // Giữ NGUYÊN chuỗi đang gõ ("" khi xóa trắng) để ô nhập xóa được & gõ tiếp được.
+    // Quy đổi số chỉ khi gửi server (buildInputPayload/flush) — trước đây đổi số ngay
+    // khiến xóa trắng là nhảy thành 0, không gõ tiếp được ("nhập tay không hoạt động").
+    const val = field === 'note' ? String(value ?? '').slice(0, 1000) : String(value ?? '');
     setInputs((prev: any[]) => {
       const arr = Array.isArray(prev) ? [...prev] : [];
       const i = arr.findIndex(x => x.employee_id === employeeId);
       if (i >= 0) arr[i] = { ...arr[i], [field]: val };
-      else arr.push({ employee_id: employeeId, employeeId, period: month, luong_cb: 0, ot_extra: 0, bonus_extra: 0, ung_luong: 0, tru_kpi: 0, dong_phuc: 0, note: field === 'note' ? String(value ?? '') : '', [field]: val });
+      else arr.push({ employee_id: employeeId, employeeId, period: month, luong_cb: '', ot_extra: '', bonus_extra: '', ung_luong: '', tru_kpi: '', dong_phuc: '', note: field === 'note' ? val : '', [field]: val });
       return arr;
     });
     const key = `${employeeId}|${field}`;
@@ -411,6 +424,8 @@ export default function FinanceModule(props: FinanceModuleProps) {
     if (!window.confirm(`TÍNH LƯƠNG ${periodLabel(month)} theo CÔNG THỨC EXCEL?\nTỔNG CỘNG = LCB + giờ công + OT thêm + Bonus; THỰC LÃNH = TỔNG CỘNG − KPI − phạt − ứng − đồng phục.\nHệ thống sẽ tạo/cập nhật kỳ lương và phiếu cho toàn bộ nhân viên.`)) return;
     setCalcBusy(true);
     try {
+      // Flush mọi ô nhập tay đang chờ trước khi tính — nếu không, kỳ lương đọc số cũ.
+      await flushAllPendingInputs();
       const r: any = await post(`/payroll/${encodeURIComponent(month)}/calculate-formula`, { branchScope: '*' }, { _timeoutMs: 180000 });
       const res = r?.result ?? r;
       showToast(`Đã tính lương ${periodLabel(month)}: ${res?.run?.total_employees ?? '?'} NV — thực lãnh ${formatVND(res?.run?.total_amount || 0)}`);
@@ -418,7 +433,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
       await Promise.all([loadSlips(), loadRuns(), loadWorkflow()]);
       refreshCurrentTab();
     } catch (e: any) { showToast(e?.message || 'Tính lương thất bại'); } finally { setCalcBusy(false); }
-  }, [post, month, showToast, loadSlips, loadRuns, loadWorkflow, refreshCurrentTab]);
+  }, [post, month, showToast, loadSlips, loadRuns, loadWorkflow, refreshCurrentTab, flushAllPendingInputs]);
 
   const open = isTabOpen(activeTab);
   const lockReason = tabLocked.get(activeTab)?.reason || '';
@@ -573,7 +588,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
           {activeTab === 'fin-dashboard' && <DashboardTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} slips={slips} workflow={workflow} formatVND={formatVND} />}
           {activeTab === 'fin-timesheet' && <TimesheetTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} loadFinSheet={loadFinSheet} formatVND={formatVND} />}
           {activeTab === 'fin-bcc' && <BccTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} formatVND={formatVND} />}
-          {activeTab === 'fin-calculate' && <CalculateTab month={month} formula={formula} setFormula={setFormula} inputs={inputs} inputsLoading={inputsLoading} allEmployees={allEmployees} saveFormula={saveFormula} upsertInput={upsertInput} saveAllInputs={saveAllInputs} loadFormula={loadFormula} loadInputs={loadInputs} runCalculate={runCalculate} calcBusy={calcBusy} runs={runs} inputsSaving={inputsSaving} pendingCount={pendingCount} inputsSavedAt={inputsSavedAt} />}
+          {activeTab === 'fin-calculate' && <CalculateTab month={month} formula={formula} setFormula={setFormula} inputs={inputs} inputsLoading={inputsLoading} allEmployees={allEmployees} finSheet={finSheet} finSheetLoading={finSheetLoading} salaryConfigs={salaryConfigs} saveFormula={saveFormula} upsertInput={upsertInput} saveAllInputs={saveAllInputs} loadFormula={loadFormula} loadInputs={loadInputs} runCalculate={runCalculate} calcBusy={calcBusy} runs={runs} inputsSaving={inputsSaving} pendingCount={pendingCount} inputsSavedAt={inputsSavedAt} />}
           {activeTab === 'fin-payroll-sheet' && <PayrollSheetTab month={month} slips={slips} allEmployees={allEmployees} formatVND={formatVND} stageBadge={stageBadge} />}
           {activeTab === 'fin-payroll-periods' && <PayrollPeriodsTab month={month} runs={runs} runsLoading={runsLoading} loadRuns={loadRuns} slips={slips} allEmployees={allEmployees} formatVND={formatVND} runCalculate={runCalculate} calcBusy={calcBusy} />}
           {activeTab === 'fin-payslips' && <PayslipsTab month={month} slips={slips} slipsLoading={slipsLoading} allEmployees={allEmployees} formatVND={formatVND} loadSlips={loadSlips} stageBadge={stageBadge} slipQrUrl={slipQrUrl} fastSignLap={fastSignLap} publishSlip={publishSlip} markPaidSlip={markPaidSlip} syncSlipDrive={syncSlipDrive} downloadSlipPdf={downloadSlipPdf} />}
@@ -914,8 +929,10 @@ function BccTab({ month, finSheet, finSheetLoading, formatVND }: any) {
 /* ============================================================================
    4 · TÍNH LƯƠNG — CÔNG THỨC & NHẬP TAY (+ NÚT TÍNH LƯƠNG)
    ============================================================================ */
-function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEmployees, saveFormula, upsertInput, saveAllInputs, loadFormula, loadInputs, runCalculate, calcBusy, runs, inputsSaving, pendingCount, inputsSavedAt }: any) {
+function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEmployees, finSheet, finSheetLoading, salaryConfigs, saveFormula, upsertInput, saveAllInputs, loadFormula, loadInputs, runCalculate, calcBusy, runs, inputsSaving, pendingCount, inputsSavedAt }: any) {
   const [q, setQ] = useState('');
+  const [expandId, setExpandId] = useState<string | null>(null);
+  const fmt = useCallback((n: any) => `${Math.round(Number(n) || 0).toLocaleString('vi-VN')}đ`, []);
   const latestRun = useMemo(() => (Array.isArray(runs) ? runs : []).filter((r: any) => r.period === month).sort((a: any, b: any) => String(b?.created_at || '').localeCompare(String(a?.created_at || '')))[0] || null, [runs, month]);
   const groups = useMemo(() => {
     const filtered = (allEmployees || []).filter(matchesFilter(q.trim()));
@@ -958,11 +975,19 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
         <div style={{ padding: '14px 16px', display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 210 }}>
             <span style={{ fontSize: 10, fontWeight: 800, color: 'var(--fin-muted)', letterSpacing: .6, textTransform: 'uppercase' }}>Đơn giá giờ THỬ VIỆC (đ)</span>
-            <input type="number" className="fin-input" value={formula?.rateTV ?? ''} onChange={e => setFormula({ ...formula, rateTV: Number(e.target.value) || 0 })} />
+            <input type="number" className="fin-input" value={formula?.rateTV ?? ''} placeholder="VD: 21000" onChange={e => setFormula({ ...(formula || {}), rateTV: e.target.value })} />
           </label>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 210 }}>
             <span style={{ fontSize: 10, fontWeight: 800, color: 'var(--fin-muted)', letterSpacing: .6, textTransform: 'uppercase' }}>Đơn giá giờ CHÍNH THỨC (đ)</span>
-            <input type="number" className="fin-input" value={formula?.rateCT ?? ''} onChange={e => setFormula({ ...formula, rateCT: Number(e.target.value) || 0 })} />
+            <input type="number" className="fin-input" value={formula?.rateCT ?? ''} placeholder="VD: 25500" onChange={e => setFormula({ ...(formula || {}), rateCT: e.target.value })} />
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 150 }}>
+            <span style={{ fontSize: 10, fontWeight: 800, color: 'var(--fin-muted)', letterSpacing: .6, textTransform: 'uppercase' }}>Ngưỡng tăng ca 1 (giờ/ngày)</span>
+            <input type="number" className="fin-input" value={formula?.otThreshold1 ?? 10} onChange={e => setFormula({ ...(formula || {}), otThreshold1: e.target.value })} />
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 150 }}>
+            <span style={{ fontSize: 10, fontWeight: 800, color: 'var(--fin-muted)', letterSpacing: .6, textTransform: 'uppercase' }}>Ngưỡng tăng ca 2 (giờ/ngày)</span>
+            <input type="number" className="fin-input" value={formula?.otThreshold2 ?? 15} onChange={e => setFormula({ ...(formula || {}), otThreshold2: e.target.value })} />
           </label>
           <button type="button" className="fin-btn fin-btn-dark" onClick={saveFormula} disabled={inputsLoading}><Save size={14} /> Lưu công thức</button>
         </div>
@@ -1024,6 +1049,63 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
           <button type="button" className="fin-btn fin-btn-dark fin-btn-sm" onClick={saveAllInputs} disabled={inputsLoading || pendingCount === 0 && !inputsSaving}><Save size={13} /> Lưu tất cả nhập tay{pendingCount > 0 ? ` (${pendingCount})` : ''}</button>
         </div>
       </div>
+
+      {/* B4 xem trước realtime: công thức kỳ × chấm công thật × nhập tay — bấm dòng để xem từng bước */}
+      <div className="fin-card" style={{ border: '1.5px solid #a7f3d0' }}>
+        <CardHead title="B4 — Các bước tính lương xem trước (realtime)" icon={<Calculator size={14} color="#059669" />} sub={`Kỳ ${periodLabel(month)} • B1 giờ công/LCB • B2 Tổng cộng • B3 Tổng lương • B4 Thực lãnh. Bấm ▶ để xem từng bước.`} />
+        <div className="fin-table-wrap" style={{ maxHeight: '60vh' }}>
+          <table className="fin-table" style={{ minWidth: 980 }}>
+            <thead><tr><th>Nhân viên</th><th className="num">B1 Giờ/LCB</th><th className="num">B2 Tổng cộng</th><th className="num">B3 Tổng lương</th><th className="num">B4 Thực lãnh</th></tr></thead>
+            <tbody>
+              {finSheetLoading ? (
+                <tr><td colSpan={5} className="fin-empty">Đang tải bảng chấm công…</td></tr>
+              ) : (() => {
+                const rows: any[] = (() => {
+                  const list = (finSheet?.rows || []) as any[];
+                  if (!list.length) return [];
+                  const qv = q.trim().toLowerCase();
+                  return qv ? list.filter((r: any) => String(r.fullName || '').toLowerCase().includes(qv) || String(r.employeeCode || '').toLowerCase().includes(qv)) : list;
+                })();
+                if (!rows.length) return <tr><td colSpan={5} className="fin-empty">{finSheet ? 'Kỳ này chưa có ca chấm công — xem trước hiện sau khi có chấm công. Vẫn bấm TÍNH LƯƠNG NGAY được.' : 'Chưa tải được bảng công — bấm Tải lại ở tab Đối soát công, hoặc bấm TÍNH LƯƠNG NGAY để tính trên server.'}</td></tr>;
+                return rows.flatMap((r: any) => {
+                  const inp = (inputs || []).find((i: any) => i.employee_id === r.employeeId) || {};
+                  const num = (v: any) => Math.max(0, Math.floor(Number(v) || 0));
+                  const isMonthly = r.payMode === 'MONTHLY';
+                  const manualCb = inp.luong_cb !== undefined && inp.luong_cb !== null && String(inp.luong_cb).trim() !== '' && Number(inp.luong_cb) > 0;
+                  const luongCB = isMonthly ? (manualCb ? num(inp.luong_cb) : num(r.monthlyBase ?? r.monthly_base)) : 0;
+                  const allowance = num(r.allowance);
+                  const hourly = isMonthly ? 0 : num(r.standardPay);
+                  const b1 = isMonthly ? luongCB + allowance : hourly + allowance;
+                  const ot = num(inp.ot_extra), bonus = num(inp.bonus_extra) + num(r.bonus);
+                  const b2 = b1 + ot + bonus;
+                  const kpi = num(inp.tru_kpi), ded = num(r.deduction);
+                  const b3 = b2 - kpi - ded;
+                  const b4 = b3 - num(inp.ung_luong) - num(inp.dong_phuc);
+                  const open = expandId === r.employeeId;
+                  const main = (
+                    <tr key={r.employeeId} style={{ cursor: 'pointer', backgroundColor: open ? '#f0fdf4' : undefined }} onClick={() => setExpandId(open ? null : r.employeeId)}>
+                      <td style={{ fontWeight: 700 }}>{open ? '▼ ' : '▶ '}{r.fullName}<div style={{ fontSize: 10, color: 'var(--fin-muted)', fontWeight: 400 }}>{r.employeeCode} • {Number(r.hours || 0).toFixed(1)}h • TV {Number(r.tvHours || 0)}h / CT {Number(r.ctHours || 0)}h</div></td>
+                      <td className="num">{fmt(b1)}</td><td className="num" style={{ fontWeight: 700 }}>{fmt(b2)}</td><td className="num" style={{ fontWeight: 700 }}>{fmt(b3)}</td><td className="num fin-money" style={{ fontWeight: 800, color: 'var(--fin-green)' }}>{fmt(b4)}</td>
+                    </tr>
+                  );
+                  if (!open) return [main];
+                  return [main, (
+                    <tr key={`${r.employeeId}-x`} style={{ backgroundColor: '#f8fafc' }}>
+                      <td colSpan={5} style={{ padding: '8px 14px 14px 22px', fontSize: 12 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}><span><b style={{ color: '#059669' }}>B1.</b> {isMonthly ? `Lương tháng = LCB ${fmt(luongCB)} + phụ cấp ${fmt(allowance)} (không tính ca/giờ)` : `Lương giờ = TV ${Number(r.tvHours || 0)}h × ${fmt(formula?.rateTV ?? 21000)} + CT ${Number(r.ctHours || 0)}h × ${fmt(formula?.rateCT ?? 25500)}; + phụ cấp ${fmt(allowance)}`}</span><strong>= {fmt(b1)}</strong></div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}><span><b style={{ color: '#059669' }}>B2.</b> TỔNG CỘNG = LCB/giờ {fmt(b1)} + OT thêm {fmt(ot)} + Bonus {fmt(bonus)}</span><strong>= {fmt(b2)}</strong></div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}><span><b style={{ color: '#059669' }}>B3.</b> TỔNG LƯƠNG = TỔNG CỘNG {fmt(b2)} − KPI {fmt(kpi)} − phạt trễ/vắng {fmt(ded)}</span><strong>= {fmt(b3)}</strong></div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}><span><b style={{ color: '#059669' }}>B4.</b> THỰC LÃNH = TỔNG LƯƠNG {fmt(b3)} − Ứng {fmt(num(inp.ung_luong))} − Đồng phục {fmt(num(inp.dong_phuc))}</span><strong style={{ color: '#059669' }}>= {fmt(b4)}</strong></div>
+                        <div style={{ fontSize: 11, color: 'var(--fin-muted)', marginTop: 6 }}>Nhập tay lấy từ bảng Nhập liệu tay phía trên. LCB trống/0 với NV lương tháng tự lấy LCB cấu hình. Bấm TÍNH LƯƠNG NGAY để chốt kỳ + phiếu.</div>
+                      </td>
+                    </tr>
+                  )];
+                });
+              })()}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1059,7 +1141,7 @@ function PayrollSheetTab({ month, slips, allEmployees, formatVND, stageBadge }: 
                     <BranchBandRow label={branchLabelOf(g.id)} count={g.rows.length} cols={11} totalText={`THỰC LÃNH ${formatVND(gThuc)}`} />
                     {g.rows.map((s: any) => {
                       const kpi = (Number(s.tru_kpi) || 0) + (Number(s.deduction) || 0);
-                      const tongCong = Number(s.tong_cong) || ((Number(s.standard_pay) || 0) + (Number(s.luong_cb) || 0) + (Number(s.ot_extra) || 0) + (Number(s.bonus) || 0));
+                      const tongCong = Number(s.tong_cong) || ((Number(s.standard_pay) || 0) + (Number(s.luong_cb) || 0) + (Number(s.allowance) || 0) + (Number(s.ot_extra) || 0) + (Number(s.bonus) || 0));
                       const thuc = Number(s.thuc_lanh ?? s.net_pay) || 0;
                       const st = stageBadge(s.stage ?? s.status);
                       return (

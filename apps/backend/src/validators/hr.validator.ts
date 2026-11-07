@@ -508,16 +508,21 @@ export const payrollFormulaBody = z.object({
 }).passthrough();
 
 // Dữ liệu nhập tay theo kỳ cho 1 NV (6 cột: H/K/AW/O/N/P).
+// Chấp nhận cả employeeId (camel) lẫn employee_id (snake) để client cũ không 400 oan.
 export const payrollInputBody = z.object({
-  employeeId: shortId(64),
+  employeeId: z.string().trim().min(1).max(64).optional(),
+  employee_id: z.string().trim().min(1).max(64).optional(),
   luong_cb: z.coerce.number().min(0).max(1_000_000_000).default(0),
   ot_extra: z.coerce.number().min(0).max(1_000_000_000).default(0),
   bonus_extra: z.coerce.number().min(0).max(1_000_000_000).default(0),
   ung_luong: z.coerce.number().min(0).max(1_000_000_000).default(0),
   tru_kpi: z.coerce.number().min(0).max(1_000_000_000).default(0),
   dong_phuc: z.coerce.number().min(0).max(1_000_000_000).default(0),
-  note: optString(500),
-}).passthrough();
+  note: optString(1000),
+}).passthrough().refine(
+  (v: any) => String(v?.employeeId || '').trim() !== '' || String(v?.employee_id || '').trim() !== '',
+  { message: 'Thiếu nhân viên (employeeId)', path: ['employeeId'] }
+);
 
 // Điều chỉnh đơn giá lương ca theo từng NV (Cổng Kế toán)
 export const rateAdjustBody = z.object({

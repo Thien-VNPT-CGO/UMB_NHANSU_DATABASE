@@ -1,0 +1,5 @@
+sleep 10
+docker compose -f /ubm-vps/docker-compose.yml ps
+curl -s http://127.0.0.1:4005/health | head -c 400
+echo
+node /tmp/vps-test2.mjs

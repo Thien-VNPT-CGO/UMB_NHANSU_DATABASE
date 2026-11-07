@@ -1,0 +1,5 @@
+cd /ubm-vps
+git fetch origin vps
+git checkout -f vps
+git reset --hard origin/vps
+bash deploy/vps/deploy.sh

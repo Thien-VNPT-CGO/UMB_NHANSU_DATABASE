@@ -453,7 +453,9 @@ export class PayrollService {
           const standardPayEff = monthly ? 0 : standardPay;
           // LCB: kế toán nhập tay theo kỳ sẽ ghi đè mặc định lấy từ cấu hình.
           const inp: any = inputs.get(emp.employee_id) || {};
-          const hasManualCb = inp.luong_cb !== undefined && inp.luong_cb !== null && inp.luong_cb !== '';
+          // Chỉ coi là nhập tay ghi đè khi > 0 — dữ liệu cũ/lưu mặc định có 0
+          // thì NV lương THÁNG vẫn lấy LCB cấu hình (tránh tính lương = 0đ).
+          const hasManualCb = inp.luong_cb !== undefined && inp.luong_cb !== null && inp.luong_cb !== '' && Number(inp.luong_cb) > 0;
           const luongCB = hasManualCb
             ? Number(inp.luong_cb) || 0
             : (monthly ? Math.max(0, Math.floor(Number(cfgEmp?.base_salary) || 0)) : 0);
@@ -624,13 +626,15 @@ export class PayrollService {
   }
 
   async upsertInput(period: string, data: any, actorId: string) {
-    if (!data?.employeeId) throw new Error('MISSING_EMPLOYEE: thiếu nhân viên!');
+    const employeeId = String(data?.employeeId || data?.employee_id || '').trim();
+    if (!employeeId) throw new Error('MISSING_EMPLOYEE: thiếu nhân viên!');
     const num = (v: any) => Math.max(0, Math.floor(Number(v) || 0));
-    const employeeId = String(data.employeeId);
-    // LCB: nếu Kế toán để TRỐNG thì NV lương THÁNG tự lấy lương cơ bản từ cấu hình
-    // làm mặc định (vẫn ghi đè được bằng số nhập tay). NV theo ca giữ 0.
+    // LCB: nếu Kế toán để TRỐNG hoặc 0 thì NV lương THÁNG tự lấy lương cơ bản từ cấu hình
+    // làm mặc định (vẫn ghi đè được bằng số nhập tay > 0). NV theo ca giữ 0.
+    // Client gửi 0 cho mọi ô trống — coi 0 như "chưa nhập" với NV tháng để
+    // tránh việc sửa 1 ô khác làm mất LCB cấu hình (lỗi tính lương = 0đ).
     const rawCb = data.luong_cb;
-    const cbMissing = rawCb === undefined || rawCb === null || String(rawCb).trim() === '';
+    const cbMissing = rawCb === undefined || rawCb === null || String(rawCb).trim() === '' || num(rawCb) === 0;
     let luongCb = cbMissing ? 0 : num(rawCb);
     if (cbMissing && this.salaryConfig) {
       try {
@@ -650,7 +654,7 @@ export class PayrollService {
       ung_luong: num(data.ung_luong),
       tru_kpi: num(data.tru_kpi),
       dong_phuc: num(data.dong_phuc),
-      note: String(data.note || '').slice(0, 500) || undefined,
+      note: String(data.note || '').slice(0, 1000) || undefined,
       updatedBy: actorId,
     });
     // KHÔNG sync Sheets ngay mỗi lần gõ — gom 1 lượt sau 20s ngừng gõ (xem scheduleFinanceToSheetsSync).
@@ -786,7 +790,9 @@ export class PayrollService {
           const allowanceCfg = Math.max(0, Math.floor(Number(cfgEmp?.allowance) || 0));
           const standardPayEff = monthly ? 0 : standardPay;
           const inp: any = inputs.get(emp.employee_id) || {};
-          const hasManualCb = inp.luong_cb !== undefined && inp.luong_cb !== null && inp.luong_cb !== '';
+          // Chỉ coi là nhập tay ghi đè khi > 0 — dữ liệu cũ/lưu mặc định có 0
+          // thì NV lương THÁNG vẫn lấy LCB cấu hình (tránh tính lương = 0đ).
+          const hasManualCb = inp.luong_cb !== undefined && inp.luong_cb !== null && inp.luong_cb !== '' && Number(inp.luong_cb) > 0;
           const luongCB = hasManualCb
             ? Number(inp.luong_cb) || 0
             : (monthly ? Math.max(0, Math.floor(Number(cfgEmp?.base_salary) || 0)) : 0);
