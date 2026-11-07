@@ -1879,7 +1879,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       const signRaw: any = await apiRequest(`/payroll/slips/${itemId}/sign`, {
         method: 'POST',
         body: JSON.stringify({ role, name, img }),
-      });
+        _timeoutMs: 90_000,
+      } as any);
       // Backend trả { operationId, result } qua hàng đợi ghi — bóc result mới có chữ ký.
       const updated = signRaw?.result ?? signRaw;
       showToast(`Đã lưu chữ ký: ${role === 'lap' ? 'Người lập phiếu (Kế toán)' : 'Quản lý chi nhánh'}! Tự động đồng bộ Google Sheet.`);

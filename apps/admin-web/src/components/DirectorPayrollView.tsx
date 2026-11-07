@@ -67,7 +67,9 @@ export const DirectorPayrollView: React.FC<{ currentUser: any }> = ({ currentUse
       await apiRequest(`/payroll/slips/${itemId}/sign`, {
         method: 'POST',
         body: JSON.stringify({ role: 'giamdoc', name: signName.trim() }),
-      });
+        // Backend đã trả nhanh; timeout rộng để không báo nhầm khi mạng chậm.
+        _timeoutMs: 90_000,
+      } as any);
       setNotice({ kind: 'ok', text: 'Đã ký phiếu. Đã chuyển sang Quản lý chi nhánh ký tiếp.' });
       await load(period);
     } catch (err: any) {

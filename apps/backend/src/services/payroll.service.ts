@@ -1062,7 +1062,10 @@ export class PayrollService {
           reconciled_at: new Date().toISOString(),
         });
         this.notifySlipsChanged('reconcile-run', { runId });
-        await this.syncFinanceToSheets();
+        // Không await full finance push trong request: updatePayslip/updatePayrollRunStatus
+        // đã bền ở bộ nhớ + snapshot đĩa và tự đẩy tab PHIEU_LUONG/KY_LUONG nền.
+        // Await 4-5 tab ở đây từng làm nút Ký quá 45s -> client báo "máy chủ xử lý lâu".
+        this.scheduleFinanceToSheetsSync(1_500);
         return updated;
       },
     });
@@ -1088,7 +1091,10 @@ export class PayrollService {
 
         const updated = await this.repo.updatePayrollRunStatus(runId, 'APPROVED', approverId);
         this.notifySlipsChanged('approve-run', { runId });
-        await this.syncFinanceToSheets();
+        // Không await full finance push trong request: updatePayslip/updatePayrollRunStatus
+        // đã bền ở bộ nhớ + snapshot đĩa và tự đẩy tab PHIEU_LUONG/KY_LUONG nền.
+        // Await 4-5 tab ở đây từng làm nút Ký quá 45s -> client báo "máy chủ xử lý lâu".
+        this.scheduleFinanceToSheetsSync(1_500);
         return updated;
       },
     });
@@ -1111,7 +1117,10 @@ export class PayrollService {
           });
         }
         this.notifySlipsChanged('publish-run', { runId });
-        await this.syncFinanceToSheets();
+        // Không await full finance push trong request: updatePayslip/updatePayrollRunStatus
+        // đã bền ở bộ nhớ + snapshot đĩa và tự đẩy tab PHIEU_LUONG/KY_LUONG nền.
+        // Await 4-5 tab ở đây từng làm nút Ký quá 45s -> client báo "máy chủ xử lý lâu".
+        this.scheduleFinanceToSheetsSync(1_500);
 
         return updated;
       },
@@ -1126,7 +1135,10 @@ export class PayrollService {
       execute: async () => {
         const updated = await this.repo.updatePayrollRunStatus(runId, 'PAID', actorId);
         this.notifySlipsChanged('mark-paid-run', { runId });
-        await this.syncFinanceToSheets();
+        // Không await full finance push trong request: updatePayslip/updatePayrollRunStatus
+        // đã bền ở bộ nhớ + snapshot đĩa và tự đẩy tab PHIEU_LUONG/KY_LUONG nền.
+        // Await 4-5 tab ở đây từng làm nút Ký quá 45s -> client báo "máy chủ xử lý lâu".
+        this.scheduleFinanceToSheetsSync(1_500);
         return updated;
       },
     });
@@ -1251,7 +1263,10 @@ export class PayrollService {
           } as any);
         }
         this.notifySlipsChanged('sign', { itemId, role });
-        await this.syncFinanceToSheets();
+        // Không await full finance push trong request: updatePayslip/updatePayrollRunStatus
+        // đã bền ở bộ nhớ + snapshot đĩa và tự đẩy tab PHIEU_LUONG/KY_LUONG nền.
+        // Await 4-5 tab ở đây từng làm nút Ký quá 45s -> client báo "máy chủ xử lý lâu".
+        this.scheduleFinanceToSheetsSync(1_500);
         return updated;
       },
     });
@@ -1304,7 +1319,10 @@ export class PayrollService {
         }
         const updated = await this.repo.updatePayslip(itemId, updates);
         this.notifySlipsChanged('sign', { itemId });
-        await this.syncFinanceToSheets();
+        // Không await full finance push trong request: updatePayslip/updatePayrollRunStatus
+        // đã bền ở bộ nhớ + snapshot đĩa và tự đẩy tab PHIEU_LUONG/KY_LUONG nền.
+        // Await 4-5 tab ở đây từng làm nút Ký quá 45s -> client báo "máy chủ xử lý lâu".
+        this.scheduleFinanceToSheetsSync(1_500);
         return updated;
       },
     });
@@ -1364,7 +1382,10 @@ export class PayrollService {
         });
         publishedSlip = slip;
         this.notifySlipsChanged('publish', { itemId });
-        await this.syncFinanceToSheets();
+        // Không await full finance push trong request: updatePayslip/updatePayrollRunStatus
+        // đã bền ở bộ nhớ + snapshot đĩa và tự đẩy tab PHIEU_LUONG/KY_LUONG nền.
+        // Await 4-5 tab ở đây từng làm nút Ký quá 45s -> client báo "máy chủ xử lý lâu".
+        this.scheduleFinanceToSheetsSync(1_500);
         return updated;
       },
     });
@@ -1440,7 +1461,10 @@ export class PayrollService {
           publishAllEmpIds = [...new Set(pubSlips.map(s => (s as any).employee_id).filter(Boolean))];
         }
         this.notifySlipsChanged('publish-all', { runId: runIdOrPeriod, count: published.length });
-        await this.syncFinanceToSheets();
+        // Không await full finance push trong request: updatePayslip/updatePayrollRunStatus
+        // đã bền ở bộ nhớ + snapshot đĩa và tự đẩy tab PHIEU_LUONG/KY_LUONG nền.
+        // Await 4-5 tab ở đây từng làm nút Ký quá 45s -> client báo "máy chủ xử lý lâu".
+        this.scheduleFinanceToSheetsSync(1_500);
         return { published, skipped };
       },
     });
@@ -1485,7 +1509,10 @@ export class PayrollService {
         } as any);
         returnedSlip = slip;
         this.notifySlipsChanged('return', { itemId });
-        await this.syncFinanceToSheets();
+        // Không await full finance push trong request: updatePayslip/updatePayrollRunStatus
+        // đã bền ở bộ nhớ + snapshot đĩa và tự đẩy tab PHIEU_LUONG/KY_LUONG nền.
+        // Await 4-5 tab ở đây từng làm nút Ký quá 45s -> client báo "máy chủ xử lý lâu".
+        this.scheduleFinanceToSheetsSync(1_500);
         return updated;
       },
     });
@@ -1525,7 +1552,10 @@ export class PayrollService {
         });
         paidSlip = slip;
         this.notifySlipsChanged('paid', { itemId });
-        await this.syncFinanceToSheets();
+        // Không await full finance push trong request: updatePayslip/updatePayrollRunStatus
+        // đã bền ở bộ nhớ + snapshot đĩa và tự đẩy tab PHIEU_LUONG/KY_LUONG nền.
+        // Await 4-5 tab ở đây từng làm nút Ký quá 45s -> client báo "máy chủ xử lý lâu".
+        this.scheduleFinanceToSheetsSync(1_500);
         return updated;
       },
     });
@@ -1592,7 +1622,10 @@ export class PayrollService {
         if (this.io && slip.employee_id) {
           this.io.emit('data:updated', { entity: 'employees', data: { action: 'bank-sync', employeeId: slip.employee_id }, timestamp: new Date().toISOString() });
         }
-        await this.syncFinanceToSheets();
+        // Không await full finance push trong request: updatePayslip/updatePayrollRunStatus
+        // đã bền ở bộ nhớ + snapshot đĩa và tự đẩy tab PHIEU_LUONG/KY_LUONG nền.
+        // Await 4-5 tab ở đây từng làm nút Ký quá 45s -> client báo "máy chủ xử lý lâu".
+        this.scheduleFinanceToSheetsSync(1_500);
         return updated;
       },
     });
