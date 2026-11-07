@@ -57,6 +57,21 @@ function pad2(n: number): string {
 }
 
 /**
+ * Tuỳ chọn đọc Google Sheets cho MỌI luồng pull.
+ *
+ * - UNFORMATTED_VALUE: trả SỐ THẬT thay vì chuỗi hiển thị. Ô tiền định dạng
+ *   "25.500 đ" hoặc số thập phân "5,0" trước đây bị `Number()` → NaN → 0,
+ *   khiến đơn giá lương ca / tiền lương bị ghi đè về 0 ngay sau lượt pull kế
+ *   tiếp (mất dữ liệu thật dù vừa lưu thành công).
+ * - FORMATTED_STRING: riêng cột ngày/giờ vẫn trả chuỗi hiển thị
+ *   (YYYY-MM-DD...) để các hàm chuẩn hoá ngày hiện có tiếp tục hoạt động.
+ */
+const SHEETS_READ_OPTIONS = {
+  valueRenderOption: 'UNFORMATTED_VALUE' as const,
+  dateTimeRenderOption: 'FORMATTED_STRING' as const,
+};
+
+/**
  * Đọc số từ ô Google Sheets có thể ở định dạng Việt Nam ("10,79782", "1.234,5",
  * "10.79782") hoặc số chuẩn. Trả undefined khi ô trống/không phải số.
  *
@@ -2167,6 +2182,7 @@ export class GoogleSheetsSyncService {
             const hRes = await this.sheetsClient!.spreadsheets.values.get({
               spreadsheetId: sId,
               range: `'${title}'!1:20`,
+              ...SHEETS_READ_OPTIONS,
             });
             const rawRows = (hRes.data.values as any[][]) || [];
             if (rawRows.length > 0) {
@@ -3753,6 +3769,7 @@ export class GoogleSheetsSyncService {
                 this.sheetsClient!.spreadsheets.values.get({
                   spreadsheetId: this.candidateSpreadsheetId,
                   range: `'${targetSheetTitle}'!A1:ZZ`,
+                  ...SHEETS_READ_OPTIONS,
                 }) as any, 25000);
               candRows = (candRes.data.values as string[][]) || [];
               candidateSourceRead = true;
@@ -3770,6 +3787,7 @@ export class GoogleSheetsSyncService {
               this.sheetsClient!.spreadsheets.values.get({
                 spreadsheetId: this.spreadsheetIdOf('FROM_NHAN_VIEN'),
                 range: `'FROM_NHAN_VIEN'!A1:ZZ`,
+                ...SHEETS_READ_OPTIONS,
               }) as any, 25000);
             if (candRes.data.values && candRes.data.values.length > 1) {
               candRows = candRes.data.values as string[][];
@@ -3946,6 +3964,7 @@ export class GoogleSheetsSyncService {
                 // A2:ZZ (không lấy tiêu đề) để cùng biểu diễn với batchGet dùng
                 // cho hash nội dung — tránh mỗi lần webhook/pull lại báo "đổi" giả.
                 range: `'FROM_NHAN_VIEN'!A2:ZZ`,
+                ...SHEETS_READ_OPTIONS,
               }) as any, 25000);
             const mRows = (mRes.data.values as string[][]) || [];
             masterCandRowsForSignature = mRows;
@@ -4159,6 +4178,7 @@ export class GoogleSheetsSyncService {
         this.sheetsClient!.spreadsheets.values.get({
           spreadsheetId: this.spreadsheetIdOf(sheetTitle),
           range: `'${sheetTitle}'!A2:ZZ`,
+          ...SHEETS_READ_OPTIONS,
         })
       );
       return (res.data.values as string[][]) || [];
@@ -4180,6 +4200,7 @@ export class GoogleSheetsSyncService {
         this.sheetsClient!.spreadsheets.values.get({
           spreadsheetId: this.spreadsheetIdOf(safe),
           range: `'${safe}'!A2:ZZ`,
+          ...SHEETS_READ_OPTIONS,
         }), timeoutMs);
       return (res.data.values as string[][]) || [];
     } catch (e: any) {
@@ -4196,6 +4217,7 @@ export class GoogleSheetsSyncService {
         this.sheetsClient!.spreadsheets.values.get({
           spreadsheetId: this.spreadsheetIdOf(sheetTitle),
           range,
+          ...SHEETS_READ_OPTIONS,
         }), timeoutMs);
       return (res.data.values as string[][]) || [];
     } catch (e: any) {
@@ -4296,6 +4318,7 @@ export class GoogleSheetsSyncService {
           this.sheetsClient!.spreadsheets.values.batchGet({
             spreadsheetId: sid,
             ranges: tabs.map(t => `'${t}'!A2:AZ`),
+            ...SHEETS_READ_OPTIONS,
           }), timeoutMs
         );
         const groups = res.data.valueRanges || [];
@@ -4309,6 +4332,7 @@ export class GoogleSheetsSyncService {
             const single = await this.sheetsClient!.spreadsheets.values.get({
               spreadsheetId: sid,
               range: `'${t}'!A2:AZ`,
+              ...SHEETS_READ_OPTIONS,
             });
             out[t] = (single.data.values as string[][]) || [];
           } catch {
@@ -5864,6 +5888,7 @@ export class GoogleSheetsSyncService {
         () => this.sheetsClient!.spreadsheets.values.get({
           spreadsheetId: getSpreadsheetIdForTab(t, this.spreadsheetId),
           range: `'${t}'!A:AZ`,
+          ...SHEETS_READ_OPTIONS,
         }),
         60000
       );
@@ -6680,6 +6705,7 @@ export class GoogleSheetsSyncService {
           this.sheetsClient!.spreadsheets.values.get({
             spreadsheetId,
             range: `'${sheetName}'!A1:G`,
+            ...SHEETS_READ_OPTIONS,
           }) as any,
         30000
       );
