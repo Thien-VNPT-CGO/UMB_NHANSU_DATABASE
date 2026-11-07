@@ -221,6 +221,7 @@ export class RateAdjustService {
     if (valid.length === 0) throw new Error('NOTHING_TO_APPLY: không có dòng hợp lệ để áp dụng!');
     const applied: Array<{ employeeId: string; newRate: number }> = [];
     const stamp = new Date().toISOString();
+    const todayVn = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
     for (const row of valid) {
       const emp = await this.repo.getEmployeeById(row.employeeId).catch(() => null);
       if (!emp) continue;
@@ -234,7 +235,49 @@ export class RateAdjustService {
         note: `[RATE_ADJUST] ${opts.reason}`.slice(0, 300),
         approved_by: actorId,
       } as any);
+      // Đơn giá hiện tại trên HỒ SƠ NV phải đổi theo khi ngày hiệu lực đã tới.
+      // Trước đây chỉ ghi lịch sử giai đoạn nên mọi nơi đọc
+      // `current_rate_per_hour` (Hồ Sơ HR, cổng NV, NHAN_VIEN_MASTER) vẫn
+      // hiển thị đơn giá cũ dù bảng lương đã tính đơn giá mới.
+      if (opts.effectiveFrom <= todayVn) {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            const fresh = await this.repo.getEmployeeById(row.employeeId).catch(() => null);
+            if (!fresh) break;
+            const histNow = await this.repo.getStageHistory(row.employeeId).catch(() => []);
+            const fallback = Number((fresh as any)?.current_rate_per_hour) || row.newRate;
+            // Lấy đúng đơn giá áp dụng HÔM NAY (không phải newRate nếu có nhiều
+            // lần điều chỉnh chồng nhau với ngày hiệu lực khác nhau).
+            const effective = rateOnDate(fresh, todayVn, histNow, fallback, fallback);
+            const nextRate = Math.max(0, Math.round(Number(effective?.rate) || 0));
+            if (nextRate > 0 && nextRate !== Number((fresh as any)?.current_rate_per_hour)) {
+              await this.repo.updateEmployee(
+                row.employeeId,
+                { current_rate_per_hour: nextRate } as any,
+                Number((fresh as any)?.version) || 1
+              );
+            }
+            break;
+          } catch (e: any) {
+            // VERSION_CONFLICT do pull/ghi đồng thời: đọc lại bản mới và thử lần 2.
+            if (attempt === 0 && /VERSION_CONFLICT/.test(String(e?.message || e))) continue;
+            this.log(`[rate-adjust] cập nhật hồ sơ ${row.employeeId} lỗi: ${e?.message || e}`);
+            break;
+          }
+        }
+      }
       applied.push({ employeeId: row.employeeId, newRate: row.newRate });
+    }
+    // Đẩy ngay NHAN_VIEN_MASTER để lượt pull kế tiếp không kéo đơn giá cũ trên
+    // Sheet về đè hồ sơ (version đã tăng nên pull cũng giữ bộ nhớ, nhưng Sheet
+    // phải khớp để HR/đối soát nhìn thấy đúng).
+    try {
+      const sync = (this.repo as any)?.syncService || (this.repo as any)?.fallbackAdapter?.syncService;
+      if (sync && typeof sync.pushEmployeesTab === 'function') {
+        await sync.pushEmployeesTab(this.repo);
+      }
+    } catch (e: any) {
+      this.log(`[rate-adjust] đẩy NHAN_VIEN_MASTER lỗi: ${e?.message || e}`);
     }
     // Đồng bộ lương các NV vừa đổi trên toàn hệ thống (cache + Sheets + realtime
     // cả 2 cổng web) — dùng chung helper với cấu hình lương.

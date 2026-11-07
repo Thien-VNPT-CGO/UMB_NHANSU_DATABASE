@@ -304,6 +304,7 @@ export class PayrollService {
    * Các thao tác lớn (tính lương, phát hành phiếu, thanh toán) vẫn sync NGAY.
    */
   private sheetsSyncTimer: ReturnType<typeof setTimeout> | null = null;
+  private inputsSyncTimer: ReturnType<typeof setTimeout> | null = null;
   scheduleFinanceToSheetsSync(delayMs = 20_000): void {
     try {
       if (this.sheetsSyncTimer) clearTimeout(this.sheetsSyncTimer);
@@ -313,6 +314,38 @@ export class PayrollService {
       }, Math.max(1000, delayMs));
       (this.sheetsSyncTimer as any)?.unref?.();
     } catch { /* best-effort */ }
+  }
+
+  /**
+   * Đẩy riêng tab DULIEU_LUONG_KY ngay sau khi Kế toán nhập tay. Khác với
+   * scheduleFinanceToSheetsSync (20s, 4-5 tab), lượt này chỉ 1 tab nên có thể
+   * chạy sớm (mặc định 3s) — thu hẹp cửa sổ mất dữ liệu nếu server restart
+   * hoặc người dùng F5 trước lượt push đầy đủ.
+   */
+  schedulePayrollInputsSync(delayMs = 3_000): void {
+    try {
+      if (this.inputsSyncTimer) clearTimeout(this.inputsSyncTimer);
+      this.inputsSyncTimer = setTimeout(() => {
+        this.inputsSyncTimer = null;
+        void this.pushPayrollInputsNow().catch(() => null);
+      }, Math.max(800, delayMs));
+      (this.inputsSyncTimer as any)?.unref?.();
+    } catch { /* best-effort */ }
+  }
+
+  /** Đẩy NGAY (await) tab DULIEU_LUONG_KY — dùng cho nút "Lưu tất cả". */
+  public async pushPayrollInputsNow(): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const sync = (this.repo as any)?.syncService || (this.repo as any)?.fallbackAdapter?.syncService;
+      if (!sync || typeof sync.pushPayrollInputsNow !== 'function') return { ok: true };
+      const res = await sync.pushPayrollInputsNow(this.repo);
+      if (res?.skipped) return { ok: true };
+      const errs: string[] = res?.errors || [];
+      if (errs.length > 0) return { ok: false, error: errs.join('; ').slice(0, 300) };
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || e).slice(0, 300) };
+    }
   }
 
   public triggerSheetsPush(): void {
@@ -713,7 +746,7 @@ export class PayrollService {
     return this.repo.getPayrollInputs(period).catch(() => []);
   }
 
-  async upsertInput(period: string, data: any, actorId: string) {
+  async upsertInput(period: string, data: any, actorId: string, opts?: { flush?: boolean }) {
     const employeeId = String(data?.employeeId || data?.employee_id || '').trim();
     if (!employeeId) throw new Error('MISSING_EMPLOYEE: thiếu nhân viên!');
     const num = (v: any) => Math.max(0, Math.floor(Number(v) || 0));
@@ -745,8 +778,20 @@ export class PayrollService {
       note: String(data.note || '').slice(0, 1000) || undefined,
       updatedBy: actorId,
     });
-    // KHÔNG sync Sheets ngay mỗi lần gõ — gom 1 lượt sau 20s ngừng gõ (xem scheduleFinanceToSheetsSync).
+    // Ghi bộ nhớ là nguồn sự thật ngay; Sheets đẩy sớm (3s, riêng tab nhập tay)
+    // để F5/restart ngay sau khi lưu vẫn không mất. Nút "Lưu tất cả" gửi
+    // flush=true -> đẩy NGAY trong request và chỉ báo thành công khi Sheet đã ghi.
+    this.schedulePayrollInputsSync(3_000);
     this.scheduleFinanceToSheetsSync(20_000);
+    if (opts?.flush) {
+      const pushed = await this.pushPayrollInputsNow();
+      if (!pushed.ok) {
+        // Không giả vờ thành công: dữ liệu vẫn an toàn trong bộ nhớ nhưng người
+        // dùng cần biết Sheet chưa ghi được để thử lại.
+        return { ...res, sheetsSync: { ok: false, error: pushed.error } };
+      }
+      return { ...res, sheetsSync: { ok: true } };
+    }
     return res;
   }
 
@@ -2339,6 +2384,26 @@ export class PayrollService {
         });
       }
       details.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+      // Đơn giá HIỂN THỊ của kỳ: lấy đúng đơn giá áp dụng cho ngày công cuối
+      // cùng đã phát hành (hoặc ngày cuối kỳ nếu chưa có ca). Trước đây lấy
+      // `current_rate_per_hour` nên sau khi Điều chỉnh lương ca, Bảng Tổng Hợp
+      // vẫn hiện đơn giá cũ dù tiền lương đã tính đơn giá mới.
+      const lastPublishedDay = published.reduce(
+        (mx, s) => {
+          const d = String((s as any).date || '').slice(0, 10);
+          return d > mx ? d : mx;
+        },
+        ''
+      );
+      const displayRate = monthly
+        ? 0
+        : rateOnDate(
+            emp,
+            lastPublishedDay || toDate,
+            hist,
+            Number((formula as any)?.rateTV) || STANDARD_HOURLY_RATES.PROBATION,
+            Number((formula as any)?.rateCT) || rate
+          ).rate;
       // Thưởng nhường ca HR điều phối đã duyệt trong kỳ.
       const bonus = 0;
       // NV lương THÁNG không có lương theo ca/giờ — thực nhận = LCB + phụ cấp − phạt.
@@ -2351,7 +2416,7 @@ export class PayrollService {
         stage: (emp as any).employment_status,
         group: (emp as any).group,
         payMode,
-        rate: monthly ? 0 : rate,
+        rate: monthly ? 0 : (Number(displayRate) || rate),
         totalShifts: published.length,
         full,
         partial,

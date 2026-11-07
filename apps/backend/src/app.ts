@@ -2500,6 +2500,20 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         req.user!.id
       );
       broadcastUpdate('employees', { action: 'update', employee: result });
+      // Đổi ĐƠN GIÁ CA qua Hồ Sơ: đồng bộ ngay bảng công + cổng NV + Sheets.
+      // Trước đây chỉ đổi hồ sơ, Bảng Tổng Hợp/cổng NV/NHAN_VIEN_MASTER vẫn
+      // hiện đơn giá cũ tới lượt pull/push sau.
+      if (b.currentRatePerHour !== undefined || b.current_rate_per_hour !== undefined) {
+        try {
+          payrollService.syncEmployeeSalary(req.params.id, { action: 'employee-rate', actorId: req.user!.id });
+        } catch { /* realtime best-effort */ }
+        try {
+          const syncSvc = (adapter as any)?.syncService;
+          if (syncSvc?.pushEmployeesTab) {
+            void syncSvc.pushEmployeesTab(adapter).catch(() => null);
+          }
+        } catch { /* Sheets best-effort */ }
+      }
       // NV được chuyển sang Văn Phòng → bổ sung lịch hành chính (idempotent, bỏ qua nếu đã có).
       const updEmp: any = result as any;
       await autoCreateOfficeShifts(
@@ -5631,6 +5645,10 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         fromDate: sheet?.fromDate || null,
         toDate: sheet?.toDate || null,
         formula: sheet?.formula || null,
+        // Đơn giá THỰC của NV trong kỳ (theo lịch sử điều chỉnh), không phải
+        // đơn giá công thức chung — cổng NV hiển thị/tính tạm đúng đơn giá này.
+        rate: row?.rate ?? null,
+        stage: row?.stage ?? null,
         periodPaid: paidPeriods.includes(period),
         paidPeriods,
         latestUnpaidPeriod,
@@ -6031,11 +6049,23 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   app.put('/payroll/inputs/:period', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollPeriodParams, body: payrollInputBody }), async (req: AuthenticatedRequest, res) => {
     try {
-      const result = await payrollService.upsertInput(req.params.period, req.body || {}, req.user!.id);
+      const flush = !!(req.body as any)?.flush;
+      const result = await payrollService.upsertInput(req.params.period, req.body || {}, req.user!.id, { flush });
       broadcastUpdate('payroll', { action: 'inputs', period: req.params.period });
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Đẩy NGAY tab nhập tay lên Google Sheets và chỉ báo thành công khi ghi xong.
+  app.post('/payroll/inputs/:period/flush', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollPeriodParams }), async (req, res) => {
+    try {
+      const result = await payrollService.pushPayrollInputsNow();
+      if (!result.ok) return res.status(502).json({ error: result.error || 'SHEETS_WRITE_FAILED' });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 

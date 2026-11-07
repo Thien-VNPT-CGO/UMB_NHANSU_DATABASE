@@ -185,6 +185,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
   const inputsRef = useRef<any[]>([]);
   const inputTimersRef = useRef<Map<string, any>>(new Map());
   const inputPendingRef = useRef<Map<string, { employeeId: string; field: string }>>(new Map());
+  const inputInflightRef = useRef(0);
   const [pendingCount, setPendingCount] = useState(0);
   const [inputsSaving, setInputsSaving] = useState(false);
   const [inputsSavedAt, setInputsSavedAt] = useState<Date | null>(null);
@@ -210,7 +211,18 @@ export default function FinanceModule(props: FinanceModuleProps) {
   const loadSlips = useCallback(async () => { setSlipsLoading(true); try { const d = await api(`/payroll/period-slips/${encodeURIComponent(month)}`); setSlips((d as any)?.slips || []); } catch { setSlips([]); } finally { setSlipsLoading(false); } }, [api, month]);
   const loadFinSheet = useCallback(async () => { setFinSheetLoading(true); try { const fs = await api(`/admin/reports/finance-timesheet?period=${encodeURIComponent(month)}&branchScope=*`); setFinSheet(fs); if (activeTab === 'fin-dashboard') { try { setFinSheetSync(await api('/payroll/sync-status')); } catch { setFinSheetSync(null); } } } catch { setFinSheet(null); } finally { setFinSheetLoading(false); } }, [api, activeTab, month]);
   const loadFormula = useCallback(async () => { try { setFormula(await api(`/payroll/formula/${encodeURIComponent(month)}`)); } catch { setFormula(null); } }, [api, month]);
-  const loadInputs = useCallback(async () => { setInputsLoading(true); try { const arr: any[] = await api(`/payroll/inputs/${encodeURIComponent(month)}`); setInputs((Array.isArray(arr) ? arr : []).map((i: any) => ({ ...i, note: String(i?.note ?? '') }))); } catch { setInputs([]); } finally { setInputsLoading(false); } }, [api, month]);
+  const loadInputs = useCallback(async () => {
+    // KHÔNG ghi đè ô đang gõ / đang chờ lưu / đang gửi: một sự kiện realtime
+    // chen ngang có thể trả về bản cũ hơn và xóa sạch số Kế toán vừa nhập.
+    if (inputPendingRef.current.size > 0 || inputTimersRef.current.size > 0 || inputInflightRef.current > 0) return;
+    setInputsLoading(true);
+    try {
+      const arr: any[] = await api(`/payroll/inputs/${encodeURIComponent(month)}`);
+      // Lần nữa sau khi await: người dùng có thể vừa bắt đầu gõ.
+      if (inputPendingRef.current.size > 0 || inputTimersRef.current.size > 0 || inputInflightRef.current > 0) return;
+      setInputs((Array.isArray(arr) ? arr : []).map((i: any) => ({ ...i, note: String(i?.note ?? '') })));
+    } catch { setInputs([]); } finally { setInputsLoading(false); }
+  }, [api, month]);
   const loadDriveStatus = useCallback(async () => { try { const st = await api(`/payroll/drive-sync/status?period=${encodeURIComponent(month)}`); setSyncStatus(st); setDriveConfigured(!!st?.configured); } catch { setDriveConfigured(false); } }, [api, month]);
 
   /** Đang có ô nhập liệu trong module được focus → không clobber dữ liệu đang gõ. */
@@ -363,6 +375,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
     inputPendingRef.current.delete(key);
     setPendingCount(inputPendingRef.current.size);
     const cur = (inputsRef.current || []).find((i: any) => i.employee_id === p.employeeId) || ({} as any);
+    inputInflightRef.current += 1;
     try {
       await put(`/payroll/inputs/${encodeURIComponent(month)}`, buildInputPayload(p.employeeId, p.field, String(cur[p.field] ?? '')));
       setInputsSavedAt(new Date());
@@ -371,7 +384,8 @@ export default function FinanceModule(props: FinanceModuleProps) {
       setPendingCount(inputPendingRef.current.size);
       showToast(e?.message || 'Lưu nhập tay thất bại — sẽ thử lại khi bạn gõ tiếp');
     } finally {
-      setInputsSaving(inputPendingRef.current.size > 0 || inputTimersRef.current.size > 0);
+      inputInflightRef.current = Math.max(0, inputInflightRef.current - 1);
+      setInputsSaving(inputPendingRef.current.size > 0 || inputTimersRef.current.size > 0 || inputInflightRef.current > 0);
     }
   }, [put, month, buildInputPayload, showToast]);
 
@@ -430,8 +444,15 @@ export default function FinanceModule(props: FinanceModuleProps) {
 
   const saveAllInputs = useCallback(async () => {
     const flushed = await flushAllPendingInputs();
-    showToast(flushed > 0 ? `Đã lưu ${flushed} ô đang chờ` : 'Không có thay đổi chờ lưu — mọi ô đã tự lưu realtime');
-  }, [flushAllPendingInputs, showToast]);
+    // Chỉ báo "đã lưu" khi tab nhập tay đã ghi xong lên Google Sheets — reload
+    // hoặc restart server ngay sau đó vẫn khôi phục đủ dữ liệu.
+    try {
+      await post(`/payroll/inputs/${encodeURIComponent(month)}/flush`, {});
+      showToast(flushed > 0 ? `Đã lưu ${flushed} ô và đồng bộ Google Sheets` : 'Đã đồng bộ Google Sheets — không có ô nào chờ lưu');
+    } catch (e: any) {
+      showToast(e?.message || 'Đã lưu vào hệ thống nhưng CHƯA ghi được Google Sheets — vui lòng thử lại');
+    }
+  }, [flushAllPendingInputs, post, month, showToast]);
   /** Tính lương kỳ (công thức Excel) + tạo/cập nhật phiếu — thay cho nút "Tính lương" bị thiếu ở bản cũ. */
   const runCalculate = useCallback(async () => {
     if (!window.confirm(`TÍNH LƯƠNG ${periodLabel(month)} theo CÔNG THỨC EXCEL?\nTỔNG CỘNG = LCB + giờ công + OT thêm + Bonus; THỰC LÃNH = TỔNG CỘNG − KPI − phạt − ứng − đồng phục.\nHệ thống sẽ tạo/cập nhật kỳ lương và phiếu cho toàn bộ nhân viên.`)) return;
@@ -1105,7 +1126,7 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
                   return [main, (
                     <tr key={`${r.employeeId}-x`} style={{ backgroundColor: '#f8fafc' }}>
                       <td colSpan={5} style={{ padding: '8px 14px 14px 22px', fontSize: 12 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}><span><b style={{ color: '#059669' }}>B1.</b> {isMonthly ? `Lương tháng = LCB ${fmt(luongCB)} + phụ cấp ${fmt(allowance)} (không tính ca/giờ)` : `Lương giờ = TV ${Number(r.tvHours || 0)}h × ${fmt(formula?.rateTV ?? 21000)} + CT ${Number(r.ctHours || 0)}h × ${fmt(formula?.rateCT ?? 25500)}; + phụ cấp ${fmt(allowance)}`}</span><strong>= {fmt(b1)}</strong></div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}><span><b style={{ color: '#059669' }}>B1.</b> {isMonthly ? `Lương tháng = LCB ${fmt(luongCB)} + phụ cấp ${fmt(allowance)} (không tính ca/giờ)` : `Lương giờ = TV ${Number(r.tvHours || 0)}h × ${fmt(Number(r.tvHours || 0) > 0 && Number(r.tvPay || 0) > 0 ? Number(r.tvPay) / Number(r.tvHours) : (formula?.rateTV ?? 21000))} + CT ${Number(r.ctHours || 0)}h × ${fmt(Number(r.ctHours || 0) > 0 && Number(r.ctPay || 0) > 0 ? Number(r.ctPay) / Number(r.ctHours) : (Number(r.rate) || formula?.rateCT || 25500))}; + phụ cấp ${fmt(allowance)}`}</span><strong>= {fmt(b1)}</strong></div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}><span><b style={{ color: '#059669' }}>B2.</b> TỔNG CỘNG = LCB/giờ {fmt(b1)} + OT thêm {fmt(ot)} + Bonus {fmt(bonus)}</span><strong>= {fmt(b2)}</strong></div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}><span><b style={{ color: '#059669' }}>B3.</b> TỔNG LƯƠNG = TỔNG CỘNG {fmt(b2)} − KPI {fmt(kpi)} − phạt trễ/vắng {fmt(ded)}</span><strong>= {fmt(b3)}</strong></div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}><span><b style={{ color: '#059669' }}>B4.</b> THỰC LÃNH = TỔNG LƯƠNG {fmt(b3)} − Ứng {fmt(num(inp.ung_luong))} − Đồng phục {fmt(num(inp.dong_phuc))}</span><strong style={{ color: '#059669' }}>= {fmt(b4)}</strong></div>

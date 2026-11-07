@@ -102,7 +102,41 @@ export function parseSheetNumber(value: unknown): number | undefined {
       ? s.replace(/\./g, '').replace(',', '.')
       : s.replace(/,/g, '');
   } else if (hasComma) {
-    s = s.replace(/,/g, '.');
+    // "1,500,000" (phân cách nghìn EN) vs "10,5" (thập phân VN).
+    s = /^\d{1,3}(,\d{3}){2,}$/.test(s) ? s.replace(/,/g, '') : s.replace(/,/g, '.');
+  } else if (hasDot) {
+    // "1.500.000" (phân cách nghìn VN) vs "10.79782" (thập phân).
+    // Chỉ coi là phân cách nghìn khi có từ 2 nhóm 3 chữ số trở lên — tránh
+    // biến toạ độ "10.776" thành 10776.
+    if (/^\d{1,3}(\.\d{3}){2,}$/.test(s)) s = s.replace(/\./g, '');
+  }
+  const n = Number(s);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/**
+ * Đọc số TIỀN từ ô Sheets. Khác `parseSheetNumber` ở chỗ một nhóm 3 chữ số
+ * sau dấu chấm cũng được hiểu là phân cách nghìn: "250.000" = 250000đ
+ * (toạ độ "10.776" vẫn dùng `parseSheetNumber` để giữ 10.776).
+ */
+export function parseSheetCurrency(value: unknown): number | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+  let s = String(value).trim().replace(/\u00a0/g, '').replace(/\s/g, '');
+  if (!s || s === '-') return undefined;
+  // Bỏ ký hiệu tiền tệ hai đầu ("1.500.000đ", "VND 1.500.000").
+  s = s.replace(/^(vnđ|vnd|₫|đ|d)/i, '').replace(/(vnđ|vnd|₫|đ|d)$/i, '');
+  if (!s) return undefined;
+  const hasDot = s.includes('.');
+  const hasComma = s.includes(',');
+  if (hasDot && hasComma) {
+    s = s.lastIndexOf(',') > s.lastIndexOf('.')
+      ? s.replace(/\./g, '').replace(',', '.')
+      : s.replace(/,/g, '');
+  } else if (hasComma) {
+    s = /^\d{1,3}(,\d{3})+$/.test(s) ? s.replace(/,/g, '') : s.replace(/,/g, '.');
+  } else if (hasDot) {
+    s = /^\d{1,3}(\.\d{3})+$/.test(s) ? s.replace(/\./g, '') : s;
   }
   const n = Number(s);
   return Number.isFinite(n) ? n : undefined;
@@ -395,6 +429,52 @@ function mergeById<T extends Record<string, any>>(memory: T[], sheets: T[], idKe
     mem.delete(key);
   }
   for (const m of mem.values()) out.push(m);
+  return out;
+}
+
+/**
+ * Gộp nhập tay theo kỳ (DULIEU_LUONG_KY) từ Sheet vào bộ nhớ.
+ *
+ * Quy tắc sống còn: KHÔNG để bản Sheet cũ đè lên ô Kế toán vừa nhập. Trước đây
+ * pull `Object.assign` vô điều kiện nên sau khi lưu (bộ nhớ mới, Sheet chưa kịp
+ * đẩy) lượt pull kế tiếp trả số cũ/0 → "lưu xong F5 mất dữ liệu".
+ * - Bản có `updatedAt` mới hơn thắng.
+ * - Sheet thiếu mốc thời gian không bao giờ đè bản bộ nhớ CÓ mốc.
+ * - Số đọc bằng `parseSheetNumber` để hiểu định dạng VN ("1.500.000").
+ */
+export function mergePayrollInputRows(memory: any[], inputRows: any[][]): any[] {
+  const out: any[] = Array.isArray(memory) ? memory : [];
+  const tsOf = (v: any): number => {
+    const t = Date.parse(String(v || '').trim());
+    return Number.isFinite(t) ? t : 0;
+  };
+  for (const r of inputRows || []) {
+    if (!r || !r[0] || !r[1]) continue;
+    const row = {
+      period: normalizeSheetPeriod(r[0]),
+      employee_id: String(r[1]).trim(),
+      luong_cb: parseSheetCurrency(r[2]) ?? 0,
+      ot_extra: parseSheetCurrency(r[3]) ?? 0,
+      bonus_extra: parseSheetCurrency(r[4]) ?? 0,
+      ung_luong: parseSheetCurrency(r[5]) ?? 0,
+      tru_kpi: parseSheetCurrency(r[6]) ?? 0,
+      dong_phuc: parseSheetCurrency(r[7]) ?? 0,
+      note: r[8] ? String(r[8]) : undefined,
+      updatedBy: r[9] ? String(r[9]) : undefined,
+      updatedAt: r[10] ? String(r[10]) : undefined,
+    };
+    const ex = out.find((x: any) => x.period === row.period && x.employee_id === row.employee_id);
+    if (!ex) {
+      out.push(row);
+      continue;
+    }
+    const sheetAt = tsOf(row.updatedAt);
+    const memAt = tsOf(ex.updatedAt);
+    // Bộ nhớ mới hơn (vừa lưu, Sheet chưa kịp đẩy) -> giữ bộ nhớ.
+    // Bộ nhớ chưa có mốc -> nhận bản Sheet (nguồn cũ duy nhất).
+    if (memAt > 0 && (sheetAt === 0 || sheetAt < memAt)) continue;
+    Object.assign(ex, row);
+  }
   return out;
 }
 
@@ -2627,7 +2707,7 @@ export class GoogleSheetsSyncService {
             const status = (r[4] as any) || 'OFFICIAL';
             const group = (r[5] as any) || 'STORE';
             const branchId = (r[6] || '').trim() || 'CN130';
-            const rate = Number(r[7]) || 25500;
+            const rate = parseSheetCurrency(r[7]) ?? 25500;
             // Ngày chuẩn YYYY-MM-DD: ô Sheet có thể là serial/locate-format do
             // USER_ENTERED (VD '10/5/2026') — chuẩn hóa để không mất ngày sau reload.
             const startDate = normSheetDate(r[8]) || new Date().toISOString().split('T')[0];
@@ -3711,8 +3791,8 @@ export class GoogleSheetsSyncService {
           // dữ liệu lương thay vì phản ánh đúng thứ Kế toán đã lưu.
           const row = {
             period: r[0],
-            rateTV: parseSheetNumber(r[1]) ?? 21000,
-            rateCT: parseSheetNumber(r[2]) ?? 25500,
+            rateTV: parseSheetCurrency(r[1]) ?? 21000,
+            rateCT: parseSheetCurrency(r[2]) ?? 25500,
             // Legacy: đã bỏ phụ cấp OT, luôn 0 (không đọc lại đơn giá suất cũ).
             otPerSlot: 0,
             otThreshold1: parseSheetNumber(r[4]) ?? 10,
@@ -3727,26 +3807,7 @@ export class GoogleSheetsSyncService {
       const inputRows = batch['DULIEU_LUONG_KY'] || [];
       if (inputRows.length > 0) {
         const fb: any = fallback as any;
-        fb.payrollInputs = fb.payrollInputs || [];
-        for (const r of inputRows) {
-          if (!r || !r[0] || !r[1]) continue;
-          const row = {
-            period: r[0],
-            employee_id: r[1],
-            luong_cb: Number(r[2]) || 0,
-            ot_extra: Number(r[3]) || 0,
-            bonus_extra: Number(r[4]) || 0,
-            ung_luong: Number(r[5]) || 0,
-            tru_kpi: Number(r[6]) || 0,
-            dong_phuc: Number(r[7]) || 0,
-            note: r[8] || undefined,
-            updatedBy: r[9] || undefined,
-            updatedAt: r[10] || undefined,
-          };
-          const ex = fb.payrollInputs.find((x: any) => x.period === row.period && x.employee_id === row.employee_id);
-          if (ex) Object.assign(ex, row);
-          else fb.payrollInputs.push(row);
-        }
+        fb.payrollInputs = mergePayrollInputRows(fb.payrollInputs || [], inputRows);
       }
 
       // 10c. Đọc LICH_SU_GIAI_DOAN (lịch sử thử việc/chính thức — merge theo ID).
@@ -3761,7 +3822,7 @@ export class GoogleSheetsSyncService {
             employee_id: r[1] || '',
             stage: (r[2] || '') as any,
             effective_from: r[3] || '',
-            rate_per_hour: Number(r[4]) || 0,
+            rate_per_hour: parseSheetCurrency(r[4]) ?? 0,
             approved_by: r[5] || '',
             note: r[6] || '',
             version: Number(r[7]) || 1,
@@ -5270,6 +5331,37 @@ export class GoogleSheetsSyncService {
     }
 
     return { errors, tabs };
+  }
+
+  /**
+   * Đẩy RIÊNG tab DULIEU_LUONG_KY (await được) ngay sau khi Kế toán nhập tay.
+   * Chỉ 1 tab nên không đốt write-quota như pushFinanceTabsNow (4-5 tab).
+   * Nhờ vậy reload/restart ngay sau khi lưu vẫn còn dữ liệu trên Sheet.
+   */
+  public async pushPayrollInputsNow(repo: ISheetsRepository): Promise<{ skipped?: string; errors: string[]; rows: number }> {
+    const errors: string[] = [];
+    if (!(this as any).sheetsClient) return { skipped: 'SHEETS_NOT_CONFIGURED', errors, rows: 0 };
+    let fb: any = null;
+    if ((repo as any).fallbackAdapter) fb = (repo as any).fallbackAdapter;
+    else if (repo) fb = repo;
+    // Tính lại rows mỗi lượt (kể cả lượt follow-up) để không ghi snapshot cũ.
+    const buildRows = (): any[] => ((fb?.payrollInputs || []).map((x: any) => ([
+      x.period, x.employee_id, x.luong_cb ?? 0, x.ot_extra ?? 0, x.bonus_extra ?? 0,
+      x.ung_luong ?? 0, x.tru_kpi ?? 0, x.dong_phuc ?? 0, x.note || '', x.updatedBy || '', x.updatedAt || '',
+    ])));
+    if (buildRows().length === 0) return { skipped: 'NO_INPUTS', errors, rows: 0 };
+    try {
+      const n = await this.coalescedTabPush('DULIEU_LUONG_KY', async () => {
+        const rows = buildRows();
+        if (rows.length === 0) return 0;
+        await this.overwriteSheetData('DULIEU_LUONG_KY', SHEETS_DEFINITIONS.find(d => d.title === 'DULIEU_LUONG_KY')!.headers, rows);
+        return rows.length;
+      });
+      return { errors, rows: n };
+    } catch (e: any) {
+      errors.push(`DULIEU_LUONG_KY: ${e?.message || String(e)}`);
+      return { errors, rows: 0 };
+    }
   }
 
   /**

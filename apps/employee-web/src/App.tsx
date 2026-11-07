@@ -6382,7 +6382,8 @@ export function App() {
                   const srvFormula = ((monthServerPay as any)?.formula) || null;
                   const srvRateOf = (isoDay: string) => {
                     const fTV = Number(srvFormula?.rateTV) || 21000;
-                    const fCT = Number(srvFormula?.rateCT) || Number((employee as any)?.current_rate_per_hour) || 25500;
+                    // Đơn giá thực của NV (đã điều chỉnh) thắng đơn giá công thức kỳ.
+                    const fCT = Number((monthServerPay as any)?.rate) || Number(srvFormula?.rateCT) || Number((employee as any)?.current_rate_per_hour) || 25500;
                     const off = String((employee as any)?.official_date || '').slice(0, 10);
                     if (off && isoDay < off) return fTV;
                     if (String((employee as any)?.employment_status || '') === 'PROBATION') return fTV;
@@ -6550,7 +6551,11 @@ export function App() {
                       <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
                         {dayBlocks.length} ngày có ca trong tháng {tsMonth.slice(5, 7)}/{tsMonth.slice(0, 4)}
                         {cDraft > 0 ? ` • ${cDraft} ca chờ duyệt (chưa tính công)` : ''}
-                        {(monthServerPay as any)?.formula ? ` • Đơn giá kỳ: TV ${money(Number((monthServerPay as any).formula.rateTV))}đ/h, CT ${money(Number((monthServerPay as any).formula.rateCT))}đ/h — khớp 100% với Kế toán` : ' • Lương theo đơn giá hiện tại, Finance chốt chính thức ở kỳ lương.'}
+                        {Number((monthServerPay as any)?.rate) > 0
+                          ? ` • Đơn giá của bạn: ${money(Number((monthServerPay as any).rate))}đ/h — khớp 100% với Kế toán`
+                          : (monthServerPay as any)?.formula
+                            ? ` • Đơn giá kỳ: TV ${money(Number((monthServerPay as any).formula.rateTV))}đ/h, CT ${money(Number((monthServerPay as any).formula.rateCT))}đ/h — khớp 100% với Kế toán`
+                            : ' • Lương theo đơn giá hiện tại, Finance chốt chính thức ở kỳ lương.'}
                       </div>
                       {dayBlocks.length === 0 && (
                         <div style={{ fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center', padding: '20px' }}>

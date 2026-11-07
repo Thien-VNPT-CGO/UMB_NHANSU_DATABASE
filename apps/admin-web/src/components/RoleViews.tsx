@@ -2334,7 +2334,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     const ctP = Number((row as any)?.ct_pay ?? (row as any)?.ctPay) || 0;
     const hasSplit = tvH + ctH + tvP + ctP > 0;
     const isProb = String(row?.stage || '') === 'PROBATION';
-    const rate = hasSplit ? 0 : (isProb ? f.rateTV : f.rateCT);
+    // Đơn giá THỰC của NV (điều chỉnh riêng) thắng đơn giá công thức chung.
+    const rowRate = Number(row?.rate) || 0;
+    const tvRate = tvH > 0 && tvP > 0 ? tvP / tvH : f.rateTV;
+    const ctRate = ctH > 0 && ctP > 0 ? ctP / ctH : (rowRate || f.rateCT);
+    const rate = hasSplit ? 0 : (rowRate || (isProb ? f.rateTV : f.rateCT));
     const hours = hasSplit ? tvH + ctH : (Number(row?.hours) || 0);
     const hourlyPay = hasSplit ? tvP + ctP : (Number(row?.standardPay ?? hours * rate) || 0);
     const detailPay = isMonthly ? 0 : hourlyPay;
@@ -2362,7 +2366,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       steps: [
         isMonthly
           ? { k: 'B1', label: `Lương tháng = LCB ${vnd(luongCB)} + phụ cấp ${vnd(allowance)} (không tính ca/giờ)`, value: standardPay }
-          : { k: 'B1', label: hasSplit ? `Lương giờ = TV ${tvH} giờ × ${vnd(f.rateTV).replace('đ', '')}/h + CT ${ctH} giờ × ${vnd(f.rateCT).replace('đ', '')}/h` : `Lương giờ = ${hours} giờ đủ công × ${vnd(rate).replace('đ', '')}/h (${isProb ? 'thử việc' : 'chính thức'})`, value: standardPay },
+          : { k: 'B1', label: hasSplit ? `Lương giờ = TV ${tvH} giờ × ${vnd(tvRate).replace('đ', '')}/h + CT ${ctH} giờ × ${vnd(ctRate).replace('đ', '')}/h` : `Lương giờ = ${hours} giờ đủ công × ${vnd(rate).replace('đ', '')}/h (${isProb ? 'thử việc' : 'chính thức'})`, value: standardPay },
         isMonthly
           ? { k: 'B2', label: `TỔNG CỘNG = Lương tháng ${vnd(standardPay)} + OT thêm ${vnd(otExtra)} + Bonus ${vnd(bonusTotal)}`, value: tongCong }
           : { k: 'B2', label: `TỔNG CỘNG = giờ ${vnd(standardPay)} + phụ cấp ${vnd(allowance)} + OT thêm ${vnd(otExtra)} + Bonus ${vnd(bonusTotal)}`, value: tongCong },
@@ -14946,7 +14950,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <th style={{ padding: '10px 14px', position: 'sticky', left: 0, backgroundColor: 'var(--bg)', zIndex: 2, textAlign: 'left' }}>Nhân viên</th>
                   {dayCols.map(d => <th key={d} style={{ padding: '10px 4px', minWidth: '44px' }}>{d}</th>)}
                   {th('AN', 'tổng giờ')}{th('AO', 'ngày công')}{th('AP', 'số ca')}{th('AQ', 'tăng ca')}{th('AR', 'tổng ca')}
-                  {th('AS', `TV ${xlFormula.rateTV / 1000}K`)}{th('AT', 'CT 25.5K')}{th('AU', 'lương giờ')}{th('AW', 'bonus')}{th('AX', 'tổng nhận')}
+                  {th('AS', `TV ${xlFormula.rateTV / 1000}K`)}{th('AT', `CT ${xlFormula.rateCT / 1000}K`)}{th('AU', 'lương giờ')}{th('AW', 'bonus')}{th('AX', 'tổng nhận')}
                 </tr>
               </thead>
               <tbody>
