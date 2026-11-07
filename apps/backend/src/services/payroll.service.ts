@@ -1256,7 +1256,10 @@ export class PayrollService {
           if (slip.status === 'CONFIRMED' || slip.status === 'PAID') {
             throw new Error('SLIP_LOCKED: phiếu đã xác nhận/chi trả, không ký lại!');
           }
-          if (role === 'giamdoc' && slip.sign_giamdoc) throw new Error('ALREADY_SIGNED: Giám đốc đã ký phiếu này!');
+          // Đã ký rồi (VD lần trước server ghi xong nhưng phản hồi bị timeout):
+          // trả nguyên phiếu hiện tại thay vì báo lỗi — Giám đốc không phải
+          // bấm lại nhiều lần và không lo ghi trùng chữ ký.
+          if (role === 'giamdoc' && slip.sign_giamdoc) return slip;
           if (role === 'quanly' && !slip.sign_giamdoc) throw new Error('DIRECTOR_SIGNATURE_REQUIRED: phiếu phải được Giám đốc ký trước!');
           updated = await this.repo.updatePayslip(itemId, {
             [role === 'giamdoc' ? 'sign_giamdoc' : role === 'lap' ? 'sign_lap' : 'sign_quanly']: sig,
