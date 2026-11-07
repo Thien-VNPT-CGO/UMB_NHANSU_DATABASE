@@ -61,8 +61,7 @@ test('single writer phục hồi task dở dang thành dead-letter ORPHANED_ON_R
   }
 });
 
-test('single writer retry lỗi timeout có idempotencyKey rồi thành công', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ubm-sw-retry-'));
+test('single writer retry lỗi timeout có idempotencyKey rồi thành công', async () => {  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ubm-sw-retry-'));
   const file = path.join(dir, 'journal.json');
   try {
     let calls = 0;
@@ -81,6 +80,46 @@ test('single writer retry lỗi timeout có idempotencyKey rồi thành công', 
     assert.equal(calls, 2);
     assert.deepEqual(result.result, { ok: true });
     assert.equal(queue.getDurabilityStatus().deadLetters, 0);
+    assert.equal(queue.getPendingCount(), 0);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('single writer chạy tác vụ high trước low đang chờ (không để thông báo chặn ký phiếu)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ubm-sw-priority-'));
+  const file = path.join(dir, 'journal.json');
+  const order: string[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>(r => { release = r; });
+  try {
+    const queue = new SingleWriterQueue({ journalPath: file, maxRetries: 0 });
+    const running = queue.enqueue({
+      entityType: 'SHIFT',
+      entityId: 'RUNNING',
+      actorId: 'ADMIN_1',
+      execute: async () => { await gate; order.push('running'); },
+    });
+    // Đợi task đầu bắt đầu chạy để 2 task sau chắc chắn nằm trong hàng đợi.
+    await new Promise(r => setTimeout(r, 30));
+    const low = queue.enqueue({
+      entityType: 'NOTIFICATION_OUTBOX',
+      entityId: 'LOW',
+      actorId: 'SYSTEM',
+      priority: 'low',
+      execute: async () => { order.push('low'); },
+    });
+    const high = queue.enqueue({
+      entityType: 'PHIEU_LUONG',
+      entityId: 'HIGH',
+      actorId: 'ADMIN_1',
+      priority: 'high',
+      execute: async () => { order.push('high'); },
+    });
+    await new Promise(r => setTimeout(r, 30));
+    release();
+    await Promise.all([running, low, high]);
+    assert.deepEqual(order, ['running', 'high', 'low']);
     assert.equal(queue.getPendingCount(), 0);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

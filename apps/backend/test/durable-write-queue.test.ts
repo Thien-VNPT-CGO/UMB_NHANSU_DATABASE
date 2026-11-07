@@ -69,6 +69,39 @@ test('durable queue chuyển dead-letter và nạp lại sau restart', async () 
   }
 });
 
+test('durable queue bỏ payload rows của dead-letter thông báo để journal không phình', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ubm-durable-compact-'));
+  const file = path.join(dir, 'pending-writes.json');
+  const marker = 'x'.repeat(500);
+  const bigRows = Array.from({ length: 40 }, (_, i) => [`inbox-${i}`, marker]);
+  const queue = new DurableWriteQueue({
+    append: async () => false,
+    filePath: file,
+    maxAttempts: 1,
+    retryBaseMs: 25,
+  });
+  try {
+    await queue.enqueue('THONGBAO_NV', bigRows);
+    await waitFor(() => queue.getStats().deadLetters === 1 && queue.getStats().processing === false);
+    const raw = fs.readFileSync(file, 'utf8');
+    // Payload thông báo không còn trong file (trước đây ~90MB, mỗi lần persist
+    // chặn mọi thao tác người dùng trong cổng ghi tuần tự).
+    assert.equal(raw.includes(marker), false);
+    const parsed = JSON.parse(raw);
+    assert.equal(parsed.deadLetters.length, 1);
+    assert.deepEqual(parsed.deadLetters[0].rows, []);
+    // Dead-letter dữ liệu nghiệp vụ vẫn giữ rows để gửi lại được.
+    await queue.enqueue('SU_KIEN_DIEM_DANH', [['event-keep', 'value']]);
+    await waitFor(() => queue.getStats().deadLetters === 2 && queue.getStats().processing === false);
+    const parsed2 = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const kept = parsed2.deadLetters.find((e: any) => e.sheetTitle === 'SU_KIEN_DIEM_DANH');
+    assert.deepEqual(kept.rows, [['event-keep', 'value']]);
+  } finally {
+    queue.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('durable queue gộp nhiều bản ghi cùng tab vào 1 lần append', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ubm-durable-batch-'));
   const file = path.join(dir, 'pending-writes.json');

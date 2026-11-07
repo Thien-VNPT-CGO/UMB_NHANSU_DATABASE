@@ -1056,6 +1056,8 @@ export class PayrollService {
       entityType: 'KY_LUONG',
       entityId: runId,
       actorId,
+      // Thao tác người dùng đang chờ — không xếp sau việc nền.
+      priority: 'high',
       execute: async () => {
         const updated = await this.repo.updatePayrollRunStatus(runId, 'RECONCILED', actorId, {
           reconciled_by: actorId,
@@ -1105,6 +1107,8 @@ export class PayrollService {
       entityType: 'KY_LUONG',
       entityId: runId,
       actorId,
+      // Thao tác người dùng đang chờ — không xếp sau việc nền.
+      priority: 'high',
       execute: async () => {
         const updated = await this.repo.updatePayrollRunStatus(runId, 'PUBLISHED', actorId);
 
@@ -1132,6 +1136,8 @@ export class PayrollService {
       entityType: 'KY_LUONG',
       entityId: runId,
       actorId,
+      // Thao tác người dùng đang chờ — không xếp sau việc nền.
+      priority: 'high',
       execute: async () => {
         const updated = await this.repo.updatePayrollRunStatus(runId, 'PAID', actorId);
         this.notifySlipsChanged('mark-paid-run', { runId });
@@ -1205,6 +1211,15 @@ export class PayrollService {
    * - nhanvien (chính chủ): chỉ ký khi phiếu đã PUBLISHED -> chuyển CONFIRMED (đủ 3 chữ ký).
    */
   async signSlip(itemId: string, role: PayslipSignerRole, name: string, img: string | undefined, actorId: string) {
+    // Fast-path idempotent: Giám đốc đã ký rồi (kể cả lần trước server ghi xong
+    // nhưng phản hồi bị timeout) → trả ngay, KHÔNG xếp sau hàng đợi ghi nền.
+    // Trước đây phải chờ hàng chục tác vụ thông báo phía trước nên nút Ký treo 2-3 phút.
+    if (role === 'giamdoc') {
+      const existing = await this.repo.getPayslipById(itemId).catch(() => null);
+      if (existing && (existing as any).sign_giamdoc) {
+        return { operationId: `IDEMPOTENT_${itemId}`, result: existing };
+      }
+    }
     // FIX deadlock hàng đợi đơn: sendNotification cũng enqueue cùng queue —
     // phải gửi SAU khi task ghi commit, không await trong execute.
     let confirmedSlip: any = null;
@@ -1212,6 +1227,8 @@ export class PayrollService {
       entityType: 'PHIEU_LUONG',
       entityId: itemId,
       actorId,
+      // Thao tác người dùng đang chờ kết quả — ưu tiên trước việc nền.
+      priority: 'high',
       execute: async () => {
         const slip = await this.repo.getPayslipById(itemId);
         if (!slip) throw new Error('PAYSLIP_NOT_FOUND');
@@ -1293,6 +1310,8 @@ export class PayrollService {
       entityType: 'PHIEU_LUONG',
       entityId: itemId,
       actorId,
+      // Thao tác người dùng đang chờ — không xếp sau việc nền.
+      priority: 'high',
       execute: async () => {
         const slip = await this.repo.getPayslipById(itemId);
         if (!slip) throw new Error('PAYSLIP_NOT_FOUND');
@@ -1339,6 +1358,8 @@ export class PayrollService {
       entityType: 'PHIEU_LUONG',
       entityId: itemId,
       actorId,
+      // Thao tác người dùng đang chờ — không xếp sau việc nền.
+      priority: 'high',
       execute: async () => {
         let slip = await this.repo.getPayslipById(itemId);
         if (!slip) throw new Error('PAYSLIP_NOT_FOUND');
@@ -1414,6 +1435,7 @@ export class PayrollService {
       entityType: 'KY_LUONG',
       entityId: runIdOrPeriod,
       actorId,
+      priority: 'high',
       execute: async () => {
         let slips: any[] = [];
         if (runIdOrPeriod.startsWith('PAY_') || runIdOrPeriod.startsWith('RUN_')) {
@@ -1496,6 +1518,8 @@ export class PayrollService {
       entityType: 'PHIEU_LUONG',
       entityId: itemId,
       actorId,
+      // Thao tác người dùng đang chờ — không xếp sau việc nền.
+      priority: 'high',
       execute: async () => {
         const slip = await this.repo.getPayslipById(itemId);
         if (!slip) throw new Error('PAYSLIP_NOT_FOUND');
@@ -1541,6 +1565,8 @@ export class PayrollService {
       entityType: 'PHIEU_LUONG',
       entityId: itemId,
       actorId,
+      // Thao tác người dùng đang chờ — không xếp sau việc nền.
+      priority: 'high',
       execute: async () => {
         const slip = await this.repo.getPayslipById(itemId);
         if (!slip) throw new Error('PAYSLIP_NOT_FOUND');
@@ -1595,6 +1621,8 @@ export class PayrollService {
       entityType: 'PHIEU_LUONG',
       entityId: itemId,
       actorId,
+      // Thao tác người dùng đang chờ — không xếp sau việc nền.
+      priority: 'high',
       execute: async () => {
         const slip = await this.repo.getPayslipById(itemId);
         if (!slip) throw new Error('PAYSLIP_NOT_FOUND');

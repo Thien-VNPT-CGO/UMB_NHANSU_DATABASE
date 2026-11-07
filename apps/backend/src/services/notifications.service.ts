@@ -36,6 +36,9 @@ export class NotificationsService {
       entityType: 'NOTIFICATION_OUTBOX',
       entityId: notifId,
       actorId: data.actorId || 'SYSTEM',
+      // Thông báo là việc nền: xếp sau thao tác người dùng đang chờ (ký phiếu,
+      // chốt lương...) để hàng trăm thông báo không đẩy các nút bấm thành 2-3 phút.
+      priority: 'low',
       execute: async () => {
         const outbox: Omit<NotificationOutboxItem, 'created_at'> = {
           notification_id: notifId,

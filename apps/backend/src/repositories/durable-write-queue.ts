@@ -144,7 +144,11 @@ export class DurableWriteQueue {
       const parsed = JSON.parse(raw) as JournalFile;
       if (!parsed || parsed.version !== 1) return;
       this.pending = (Array.isArray(parsed.pending) ? parsed.pending : []).filter(this.isValidEntry);
-      this.deadLetters = (Array.isArray(parsed.deadLetters) ? parsed.deadLetters : []).filter(this.isValidEntry);
+      this.deadLetters = (Array.isArray(parsed.deadLetters) ? parsed.deadLetters : [])
+        .filter(this.isValidDeadLetter)
+        // File cũ có thể còn payload thông báo rất lớn — nén ngay khi nạp để
+        // lần persist kế tiếp không phải ghi lại hàng chục MB vô ích.
+        .map(e => DurableWriteQueue.LOW_PRIORITY_TABS.has(e.sheetTitle) ? { ...e, rows: [] } : e);
       if (this.pending.length) {
         this.logger.warn(`[durable-writes] Nạp ${this.pending.length} lượt ghi chưa lên Sheets từ ${this.filePath}`);
       }
@@ -162,6 +166,26 @@ export class DurableWriteQueue {
       && typeof entry.sheetTitle === 'string'
       && Array.isArray(entry.rows)
       && entry.rows.length > 0;
+  }
+
+  /**
+   * Dead-letter của tab thông báo được lưu KHÔNG kèm rows: mỗi thông báo gửi
+   * "ALL" sinh ~37 dòng, 500+ dead-letter từng làm file journal phình ~90MB và
+   * mỗi lần persist (await trong lúc gửi thông báo) tốn hàng giây → cổng ghi
+   * tuần tự dồn hàng trăm tác vụ, nút Ký phiếu lương phải chờ 2-3 phút.
+   * Nội dung thông báo vẫn nằm trong bộ nhớ + runtime snapshot và được full-sync
+   * đẩy lại, nên chỉ cần giữ metadata để đối soát.
+   */
+  private isValidDeadLetter(entry: any): entry is DurableWriteEntry {
+    return !!entry
+      && typeof entry.id === 'string'
+      && typeof entry.sheetTitle === 'string'
+      && Array.isArray(entry.rows);
+  }
+
+  /** Có rows thật để gửi lại Google không (dead-letter thông báo thì không). */
+  private isReplayable(entry: DurableWriteEntry): boolean {
+    return Array.isArray(entry.rows) && entry.rows.length > 0;
   }
 
   private payload(): JournalFile {
@@ -349,7 +373,9 @@ export class DurableWriteQueue {
           if (deadLettered.length) {
             const deadIds = new Set(deadLettered.map(e => e.id));
             this.pending = this.pending.filter(e => !deadIds.has(e.id));
-            this.deadLetters.push(...deadLettered);
+            // Tab thông báo: bỏ payload rows khi lưu dead-letter (xem isValidDeadLetter).
+            this.deadLetters.push(...deadLettered.map(e =>
+              DurableWriteQueue.LOW_PRIORITY_TABS.has(e.sheetTitle) ? { ...e, rows: [] } : e));
             // Trần dead-letter: đủ lớn để không mất dữ liệu nghiệp vụ khi Google
             // chặn ghi kéo dài (trước đây 500 → vài giờ là tràn và mất bản ghi cũ).
             const deadCap = Math.max(500, Number(process.env.DURABLE_DEAD_LETTER_MAX) || 5000);
@@ -490,7 +516,9 @@ export class DurableWriteQueue {
     const wanted = opts.tabs && opts.tabs.length
       ? new Set(opts.tabs.map(t => String(t).trim().toUpperCase()))
       : null;
-    const retry = wanted ? this.deadLetters.filter(e => wanted.has(e.sheetTitle)) : this.deadLetters;
+    // Dead-letter thông báo đã bỏ payload → không thể gửi lại; chỉ đối soát.
+    const retry = (wanted ? this.deadLetters.filter(e => wanted.has(e.sheetTitle)) : this.deadLetters)
+      .filter(e => this.isReplayable(e));
     if (!retry.length) return 0;
     const count = retry.length;
     // Thao tác tay = người vận hành đã xử lý nguyên nhân (quota/mạng): bỏ nghỉ

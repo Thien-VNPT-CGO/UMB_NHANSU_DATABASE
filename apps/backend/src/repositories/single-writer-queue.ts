@@ -4,6 +4,11 @@ import { v4 as uuidv4 } from 'uuid';
 import { OperationRecord, OperationState } from '@ubm/shared';
 import { ISheetsRepository } from './sheets.interface.js';
 
+/** Mức ưu tiên trong cổng ghi tuần tự. */
+export type QueuePriority = 'high' | 'normal' | 'low';
+
+const PRIORITY_RANK: Record<QueuePriority, number> = { high: 0, normal: 1, low: 2 };
+
 export interface QueuedTask<T> {
   operationId: string;
   idempotencyKey?: string;
@@ -16,6 +21,9 @@ export interface QueuedTask<T> {
   reject: (reason?: any) => void;
   attempts: number;
   nextAttemptAt: number;
+  priority: QueuePriority;
+  /** Thứ tự vào hàng đợi — giữ FIFO trong cùng mức ưu tiên. */
+  seq: number;
 }
 
 export interface QueueDeadLetter {
@@ -77,6 +85,7 @@ export class SingleWriterQueue {
   private deadLetters: QueueDeadLetter[] = [];
   private persistChain: Promise<void> = Promise.resolve();
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private seqCounter = 0;
 
   constructor(opts: SingleWriterQueueOptions = {}) {
     this.journalPath = opts.journalPath
@@ -185,6 +194,11 @@ export class SingleWriterQueue {
     entityId: string;
     expectedVersion?: number;
     actorId: string;
+    /**
+     * Mức ưu tiên. `high` dành cho thao tác người dùng đang chờ (ký phiếu,
+     * chốt lương...), `low` cho việc nền (thông báo) để không chặn nghiệp vụ.
+     */
+    priority?: QueuePriority;
     execute: () => Promise<T>;
   }): Promise<{ operationId: string; result: T }> {
     const operationId = uuidv4();
@@ -234,6 +248,8 @@ export class SingleWriterQueue {
         reject,
         attempts: 0,
         nextAttemptAt: 0,
+        priority: options.priority || 'normal',
+        seq: ++this.seqCounter,
       });
 
       void this.processQueue();
@@ -243,7 +259,13 @@ export class SingleWriterQueue {
   private nextDueTask(now: number): QueuedTask<any> | undefined {
     return this.queue
       .filter(t => (t.nextAttemptAt || 0) <= now)
-      .sort((a, b) => (a.nextAttemptAt || 0) - (b.nextAttemptAt || 0))[0];
+      .sort((a, b) => {
+        const byPriority = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority];
+        if (byPriority !== 0) return byPriority;
+        const bySeq = (a.seq || 0) - (b.seq || 0);
+        if (bySeq !== 0) return bySeq;
+        return (a.nextAttemptAt || 0) - (b.nextAttemptAt || 0);
+      })[0];
   }
 
   private scheduleRetryWakeup(): void {
