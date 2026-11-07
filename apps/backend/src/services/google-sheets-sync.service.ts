@@ -680,6 +680,11 @@ export class GoogleSheetsSyncService {
     else this.writeBusy = false;
   }
 
+  private isQuotaError(err: any): boolean {
+    const msg = String(err?.message || err || '');
+    return /quota|429|rate limit|too many requests|RESOURCE_EXHAUSTED/i.test(msg);
+  }
+
   private async sheetsCall<T>(label: string, fn: () => Promise<T>, ms = 20000): Promise<T> {
     const isWrite = label.startsWith('write.')
       || label.startsWith('append.')
@@ -698,15 +703,28 @@ export class GoogleSheetsSyncService {
     const high = label.startsWith('append.') || label.startsWith('part.header.');
     await this.acquireWrite(high);
     try {
-      const now = Date.now();
-      const wait = Math.max(0, GoogleSheetsSyncService.WRITE_RATE_LIMIT_MS - (now - this.lastWriteAt));
-      if (wait > 0) {
-        await new Promise(r => setTimeout(r, wait));
+      // Quota Google là per-phút và thoáng qua: ghi Sheet cần tự thử lại thay vì
+      // bỏ luôn (trước đây hỏng 1 lần là chờ lượt auto-push sau tới 60 phút —
+      // người dùng sửa lương mãi không thấy lên Sheet). Tối đa 5 lần, lùi dần
+      // 2s/5s/10s/20s/40s (giữ khóa ghi để không tràn lượt khác lên trước).
+      const backoffs = [2000, 5000, 10000, 20000, 40000];
+      for (let attempt = 0; ; attempt++) {
+        const now = Date.now();
+        const wait = Math.max(0, GoogleSheetsSyncService.WRITE_RATE_LIMIT_MS - (now - this.lastWriteAt));
+        if (wait > 0) {
+          await new Promise(r => setTimeout(r, wait));
+        }
+        this.lastWriteAt = Date.now();
+        // Ghi thật (duyệt phiếu, điểm danh, đẩy tab...) — job dọn rule sẽ nhường.
+        if (!label.startsWith('write.beautify.')) this.lastUserWriteAt = Date.now();
+        try {
+          return await this.withDeadline(label, fn, ms);
+        } catch (err: any) {
+          if (attempt >= backoffs.length || !this.isQuotaError(err)) throw err;
+          console.warn(`[GoogleSheetsSyncService] ${label} chạm quota (lần ${attempt + 1}/${backoffs.length + 1}) — chờ ${backoffs[attempt]}ms rồi thử lại.`);
+          await new Promise(r => setTimeout(r, backoffs[attempt]));
+        }
       }
-      this.lastWriteAt = Date.now();
-      // Ghi thật (duyệt phiếu, điểm danh, đẩy tab...) — job dọn rule sẽ nhường.
-      if (!label.startsWith('write.beautify.')) this.lastUserWriteAt = Date.now();
-      return await this.withDeadline(label, fn, ms);
     } finally {
       this.releaseWrite();
     }
@@ -4200,18 +4218,27 @@ export class GoogleSheetsSyncService {
    */
   public async syncSystemSettingsToSheet(settings: any): Promise<boolean> {
     if (!this.sheetsClient) return false;
-    try {
-      const rows = Object.entries(settings || {}).map(([k, v]) => [
-        k,
-        typeof v === 'object' ? JSON.stringify(v) : String(v ?? ''),
-        `Cấu hình tham số ${k}`,
-        new Date().toISOString(),
-      ]);
-      await this.overwriteSheetData('CAU_HINH_HE_THONG', ['Tham Số', 'Giá Trị', 'Mô Tả', 'Cập Nhật Lần Cuối'], rows);
-      return true;
-    } catch (err: any) {
-      console.warn('[GoogleSheetsSyncService] Lỗi ghi CAU_HINH_HE_THONG:', err?.message || err);
-      return false;
+    // Cấu hình lương nằm ở đây (employee_salary_config): ghi hỏng vì quota không
+    // được bỏ — thử lại vài lần rồi mới trả false (không chờ lượt nền sau).
+    const backoffs = [2000, 5000, 10000, 20000];
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const rows = Object.entries(settings || {}).map(([k, v]) => [
+          k,
+          typeof v === 'object' ? JSON.stringify(v) : String(v ?? ''),
+          `Cấu hình tham số ${k}`,
+          new Date().toISOString(),
+        ]);
+        await this.overwriteSheetData('CAU_HINH_HE_THONG', ['Tham Số', 'Giá Trị', 'Mô Tả', 'Cập Nhật Lần Cuối'], rows);
+        return true;
+      } catch (err: any) {
+        if (attempt >= backoffs.length || !this.isQuotaError(err)) {
+          console.warn('[GoogleSheetsSyncService] Lỗi ghi CAU_HINH_HE_THONG:', err?.message || err);
+          return false;
+        }
+        console.warn(`[GoogleSheetsSyncService] Ghi CAU_HINH_HE_THONG chạm quota (lần ${attempt + 1}) — chờ ${backoffs[attempt]}ms rồi thử lại.`);
+        await new Promise(r => setTimeout(r, backoffs[attempt]));
+      }
     }
   }
 
@@ -4920,6 +4947,31 @@ export class GoogleSheetsSyncService {
       }
     } catch (e: any) {
       errors.push(`DULIEU_LUONG_KY: ${e?.message || String(e)}`);
+    }
+
+    // 3b) LICH_SU_GIAI_DOAN — lịch sử đơn giá từng NV (điều chỉnh lương ca).
+    //     Đưa vào luồng đẩy riêng này để lương lên Sheet ngay sau khi điều chỉnh,
+    //     thay vì chờ full-pull 25 sheet (rất nặng quota, từng bị bỏ lại tới 45s+).
+    try {
+      const stageRows: any[] = ((fb as any)?.stageHistories || []).map((h: any) => ([
+        h.period_id,
+        h.employee_id,
+        h.stage || '',
+        h.effective_from || '',
+        h.rate_per_hour ?? 0,
+        h.approved_by || '',
+        h.reason || h.note || '',
+        h.version ?? 1,
+        h.created_at || '',
+      ]));
+      if (stageRows.length > 0) {
+        await this.overwriteSheetData('LICH_SU_GIAI_DOAN', headers('LICH_SU_GIAI_DOAN'), stageRows);
+        tabs.LICH_SU_GIAI_DOAN = stageRows.length;
+      } else {
+        tabs.LICH_SU_GIAI_DOAN = 0;
+      }
+    } catch (e: any) {
+      errors.push(`LICH_SU_GIAI_DOAN: ${e?.message || String(e)}`);
     }
 
     // 4) PHIEU_LUONG — phiếu lương (memory-only, không đọc lại Sheets).
