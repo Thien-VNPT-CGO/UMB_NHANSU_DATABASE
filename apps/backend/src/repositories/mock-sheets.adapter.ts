@@ -1419,7 +1419,25 @@ export class MockSheetsAdapter implements ISheetsRepository {
 
   async updateSystemSettings(settings: any): Promise<any> {
     this.checkErrors();
-    this.systemSettings = { ...this.systemSettings, ...settings, updated_at: new Date().toISOString() };
+    const next = { ...this.systemSettings, ...settings, updated_at: new Date().toISOString() };
+    // CHỐNG GHI ĐÈ NGƯỢC: nhiều dịch vụ đọc snapshot cài đặt rồi ghi lại toàn bộ
+    // (`{...settings, key}`). Nếu snapshot đó cũ, cấu hình lương vừa lưu có thể bị
+    // ghi đè bằng bản cũ. Với employee_salary_config, hợp nhất theo TỪNG nhân viên
+    // và chỉ nhận bản có `updatedAt` mới hơn/không cũ hơn.
+    if (settings && Object.prototype.hasOwnProperty.call(settings, 'employee_salary_config')) {
+      const prev = this.systemSettings?.employee_salary_config;
+      const incoming = settings.employee_salary_config;
+      if (incoming && typeof incoming === 'object' && !Array.isArray(incoming)) {
+        const merged: Record<string, any> = (prev && typeof prev === 'object' && !Array.isArray(prev)) ? { ...prev } : {};
+        for (const [employeeId, entry] of Object.entries(incoming)) {
+          const oldAt = Date.parse(String((merged[employeeId] as any)?.updatedAt || '')) || 0;
+          const newAt = Date.parse(String((entry as any)?.updatedAt || '')) || 0;
+          if (!merged[employeeId] || newAt >= oldAt) merged[employeeId] = entry;
+        }
+        next.employee_salary_config = merged;
+      }
+    }
+    this.systemSettings = next;
     return { ...this.systemSettings };
   }
 }

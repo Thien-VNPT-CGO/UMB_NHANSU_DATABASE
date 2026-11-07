@@ -1620,6 +1620,15 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         { id: req.user!.id, name: (req.user as any)?.fullName },
         { group: (emp as any)?.group },
       );
+      // Chỉ coi là thành công khi ĐỌC LẠI được đúng cấu hình vừa ghi.
+      const savedConfig = await salaryConfigService.getForEmployee(employeeId).catch(() => null);
+      if (
+        !savedConfig ||
+        Number(savedConfig.base_salary) !== Number(entry.base_salary) ||
+        Number(savedConfig.allowance) !== Number(entry.allowance)
+      ) {
+        throw new Error('SALARY_CONFIG_NOT_PERSISTED: Không đọc lại được cấu hình lương vừa lưu.');
+      }
       // Đồng bộ lương NV này trên toàn hệ thống: xóa cache bảng công + đẩy Sheets
       // + bắn realtime payroll/employees (admin + cổng NV tự tải lại, không chờ F5).
       let salarySync: { ok: boolean; at: string } | undefined;
@@ -1653,9 +1662,27 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       } catch (e: any) {
         recalc = { period: '', action: 'error', error: String(e?.message || e).slice(0, 200) };
       }
-      res.json({ success: true, employee_id: employeeId, config: entry, salarySync, recalc });
+      // Đẩy CAU_HINH_HE_THONG lên Google Sheets (chế độ PostgreSQL Sheets là export-only)
+      // và trả về kết quả THẬT. Đặt SAU realtime để cổng nhân viên/admin nhận số mới
+      // ngay, không phải chờ lượt ghi Sheet (có thể tới 15s).
+      const sheetsSync = await salaryConfigService.pushToGoogleSheets();
+      res.json({
+        success: true,
+        employee_id: employeeId,
+        verified: true,
+        config: savedConfig || entry,
+        sheetsSync,
+        salarySync,
+        recalc,
+      });
     } catch (err: any) {
-      res.status(400).json({ error: err?.message || 'SALARY_CONFIG_WRITE_FAILED', message: err?.message || 'Không lưu được cấu hình lương.' });
+      const msg = String(err?.message || '');
+      const notPersisted = msg.includes('SALARY_CONFIG_NOT_PERSISTED') || msg.includes('PERSIST_FAILED');
+      res.status(notPersisted ? 503 : 400).json({
+        error: notPersisted ? 'SALARY_CONFIG_NOT_PERSISTED' : (err?.message || 'SALARY_CONFIG_WRITE_FAILED'),
+        message: err?.message || 'Không lưu được cấu hình lương.',
+        verified: false,
+      });
     }
   });
 
@@ -2310,6 +2337,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
             allowance: wantSalary && Number.isFinite(salaryAllowance) ? salaryAllowance : (prev?.allowance ?? 0),
             ...(requestedPayMode && canStorePayMode ? { payMode: requestedPayMode } : {}),
           }, { id: req.user!.id, name: (req.user as any)?.fullName }, { group: createdGroup });
+          // Đẩy CAU_HINH_HE_THONG lên Sheets nền — không chặn phản hồi tạo NV.
+          void salaryConfigService.pushToGoogleSheets().catch(() => undefined);
         } catch (salaryErr: any) {
           console.warn('[employees] set salary config failed:', salaryErr?.message || salaryErr);
         }

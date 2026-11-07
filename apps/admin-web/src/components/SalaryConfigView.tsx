@@ -26,8 +26,29 @@ import {
 
 type SalaryEntry = { pay_mode?: PayMode; base_salary?: number; allowance?: number; updatedAt?: string; updatedByName?: string };
 type Draft = { base: string; allowance: string; mode: PayMode | '' };
+type Notice = { kind: 'ok' | 'warn' | 'err'; text: string };
+type RowSync = { state: 'saving' | 'ok' | 'warn' | 'err'; text: string; at?: string };
 
 const fmtVnd = (n: number) => `${Math.max(0, Math.floor(Number(n) || 0)).toLocaleString('vi-VN')} đ`;
+
+/**
+ * Diễn giải kết quả đồng bộ Google Sheet do backend trả về. Nguyên tắc:
+ * KHÔNG BAO GIỜ báo "thành công toàn phần" khi CSDL đã lưu nhưng Sheet lỗi/chờ.
+ */
+const describeSheetSync = (sync: any): { kind: 'ok' | 'warn' | 'err'; text: string } => {
+  if (!sync) return { kind: 'warn', text: 'Đã lưu CSDL — chưa nhận được kết quả đồng bộ Google Sheet.' };
+  if (sync.skipped === 'SHEETS_NOT_CONFIGURED') {
+    return { kind: 'ok', text: 'Đã lưu CSDL (hệ thống chưa cấu hình Google Sheet).' };
+  }
+  if (sync.ok) return { kind: 'ok', text: 'Đã lưu CSDL + đã đồng bộ Google Sheet.' };
+  if (sync.pending) {
+    return { kind: 'warn', text: 'Đã lưu CSDL; Google Sheet đang đồng bộ tiếp ở nền — chưa xác nhận xong.' };
+  }
+  return {
+    kind: 'err',
+    text: `Đã lưu CSDL nhưng Google Sheet LỖI: ${String(sync.error || 'không rõ nguyên nhân').slice(0, 160)}`,
+  };
+};
 
 const STATUS_LABEL: Record<string, string> = {
   PRE_ONBOARDING: 'Mới tiếp nhận',
@@ -45,11 +66,12 @@ export const SalaryConfigView: React.FC<{ currentUser: any }> = ({ currentUser }
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [dirty, setDirty] = useState<Record<string, boolean>>({});
   const [savingIds, setSavingIds] = useState<Record<string, boolean>>({});
+  const [rowSync, setRowSync] = useState<Record<string, RowSync>>({});
   const [savingAll, setSavingAll] = useState(false);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [block, setBlock] = useState<FinanceBlock>('ALL');
-  const [notice, setNotice] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
 
   // Ref mirror để `load()` (useCallback deps=[]) luôn đọc đúng tập dirty mới nhất.
   const dirtyRef = useRef<Record<string, boolean>>({});
@@ -57,7 +79,6 @@ export const SalaryConfigView: React.FC<{ currentUser: any }> = ({ currentUser }
 
   const load = useCallback(async () => {
     setLoading(true);
-    setNotice(null);
     try {
       const [empsRes, cfgRes] = await Promise.allSettled([
         apiRequest('/employees'),
@@ -116,13 +137,14 @@ export const SalaryConfigView: React.FC<{ currentUser: any }> = ({ currentUser }
     return effectivePayMode(emp?.group, configs[emp.employee_id]?.pay_mode);
   }, [drafts, configs]);
 
-  const saveOne = async (employeeId: string): Promise<boolean> => {
-    if (!canEdit) return false;
+  const saveOne = async (employeeId: string): Promise<{ ok: boolean; persisted: boolean; kind: 'ok' | 'warn' | 'err'; text: string }> => {
+    if (!canEdit) return { ok: false, persisted: false, kind: 'err', text: 'Bạn không có quyền lưu cấu hình lương.' };
     const draft = drafts[employeeId] || { base: '0', allowance: '0', mode: '' };
     const baseSalary = Math.max(0, Math.floor(Number(draft.base || 0) || 0));
     const allowance = Math.max(0, Math.floor(Number(draft.allowance || 0) || 0));
     const payMode = draft.mode || undefined;
     setSavingIds(prev => ({ ...prev, [employeeId]: true }));
+    setRowSync(prev => ({ ...prev, [employeeId]: { state: 'saving', text: 'Đang ghi CSDL + đồng bộ Sheet...' } }));
     try {
       const res: any = await apiRequest(`/salary-config/${encodeURIComponent(employeeId)}`, {
         method: 'PUT',
@@ -133,11 +155,24 @@ export const SalaryConfigView: React.FC<{ currentUser: any }> = ({ currentUser }
       setDrafts(prev => ({ ...prev, [employeeId]: { base: String(entry.base_salary ?? 0), allowance: String(entry.allowance ?? 0), mode: entry.pay_mode ?? '' } }));
       setDirty(prev => ({ ...prev, [employeeId]: false }));
       window.dispatchEvent(new CustomEvent('ubm:salary-config-saved'));
-      setNotice({ kind: 'ok', text: `Đã lưu lương — đang đồng bộ lên cổng nhân viên, admin và Google Sheet (realtime).` });
-      return true;
+      const sheet = describeSheetSync(res?.sheetsSync);
+      const verified = res?.verified === true;
+      const kind: 'ok' | 'warn' | 'err' = !verified ? 'warn' : sheet.kind;
+      const text = verified ? sheet.text : `Đã gửi lưu nhưng chưa xác minh được dữ liệu: ${sheet.text}`;
+      setRowSync(prev => ({ ...prev, [employeeId]: { state: kind, text, at: new Date().toISOString() } }));
+      setNotice({ kind, text });
+      return { ok: true, persisted: true, kind, text };
     } catch (err: any) {
-      setNotice({ kind: 'err', text: `Lưu lương thất bại: ${err?.message || err}` });
-      return false;
+      const msg = String(err?.message || err);
+      const persistedUnknown = /NOT_PERSISTED|PERSIST_FAILED/.test(msg);
+      setRowSync(prev => ({ ...prev, [employeeId]: { state: 'err', text: msg, at: new Date().toISOString() } }));
+      setNotice({
+        kind: 'err',
+        text: persistedUnknown
+          ? `KHÔNG lưu được cấu hình lương (chưa xác minh được dữ liệu): ${msg}`
+          : `Lưu lương thất bại: ${msg}`,
+      });
+      return { ok: false, persisted: false, kind: 'err', text: msg };
     } finally {
       setSavingIds(prev => ({ ...prev, [employeeId]: false }));
     }
@@ -149,17 +184,26 @@ export const SalaryConfigView: React.FC<{ currentUser: any }> = ({ currentUser }
     if (!canEdit || dirtyIds.length === 0) return;
     setSavingAll(true);
     setNotice(null);
-    let ok = 0;
+    const results: Array<{ persisted: boolean; kind: 'ok' | 'warn' | 'err'; text: string }> = [];
     for (const id of dirtyIds) {
       // Tuần tự để tránh ghi đè cấu hình (backend đã có khóa tuần tự, đây là lớp bảo vệ thứ 2).
       // eslint-disable-next-line no-await-in-loop
       const saved = await saveOne(id);
-      if (saved) ok += 1;
+      results.push({ persisted: saved.persisted, kind: saved.kind, text: saved.text });
     }
     setSavingAll(false);
-    setNotice(ok === dirtyIds.length
-      ? { kind: 'ok', text: `Đã lưu cấu hình lương cho ${ok} nhân viên.` }
-      : { kind: 'err', text: `Đã lưu ${ok}/${dirtyIds.length} nhân viên — kiểm tra lại các dòng lỗi.` });
+    const n = results.length;
+    const persistedCount = results.filter(r => r.persisted).length;
+    const sheetOkCount = results.filter(r => r.kind === 'ok').length;
+    const notSavedCount = n - persistedCount;
+    const sheetIssueCount = persistedCount - sheetOkCount;
+    if (notSavedCount > 0) {
+      setNotice({ kind: 'err', text: `Đã lưu ${persistedCount}/${n} nhân viên vào CSDL — ${notSavedCount} dòng KHÔNG lưu được. Kiểm tra lại từng dòng.` });
+    } else if (sheetIssueCount > 0) {
+      setNotice({ kind: 'warn', text: `Đã lưu đủ ${n}/${n} nhân viên vào CSDL — ${sheetIssueCount} dòng chưa xác nhận xong Google Sheet (đang chờ hoặc lỗi).` });
+    } else {
+      setNotice({ kind: 'ok', text: `Đã lưu ${n}/${n} nhân viên — đã ghi CSDL và đồng bộ Google Sheet.` });
+    }
   };
 
   const filtered = useMemo(() => {
@@ -239,7 +283,9 @@ export const SalaryConfigView: React.FC<{ currentUser: any }> = ({ currentUser }
               opacity: savingAll ? 0.75 : 1,
             }}
           >
-            <Save size={15} />
+            {savingAll ? (
+              <span style={{ display: 'inline-block', width: '14px', height: '14px', border: '2px solid rgba(255,255,255,0.45)', borderTopColor: '#FFF', borderRadius: '50%', animation: 'salary-spin 0.8s linear infinite' }} />
+            ) : <Save size={15} />}
             {savingAll ? 'Đang lưu...' : `Lưu tất cả${dirtyIds.length ? ` (${dirtyIds.length})` : ''}`}
           </button>
         </div>
@@ -254,17 +300,22 @@ export const SalaryConfigView: React.FC<{ currentUser: any }> = ({ currentUser }
       )}
 
       {/* Notice */}
-      {notice && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 14px', borderRadius: 'var(--radius-sm)', fontSize: '13px', fontWeight: 600,
-          backgroundColor: notice.kind === 'ok' ? '#ECFDF5' : '#FEF2F2',
-          border: `1px solid ${notice.kind === 'ok' ? '#A7F3D0' : '#FECACA'}`,
-          color: notice.kind === 'ok' ? '#065F46' : '#991B1B',
-        }}>
-          {notice.kind === 'ok' ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
-          {notice.text}
-          <button onClick={() => setNotice(null)} style={{ marginLeft: 'auto', border: 'none', background: 'transparent', cursor: 'pointer', color: 'inherit', fontWeight: 800 }}>✕</button>
-        </div>
-      )}
+      {notice && (() => {
+        const tone = notice.kind === 'ok'
+          ? { bg: '#ECFDF5', border: '#A7F3D0', color: '#065F46' }
+          : notice.kind === 'warn'
+            ? { bg: '#FFFBEB', border: '#FDE68A', color: '#92400E' }
+            : { bg: '#FEF2F2', border: '#FECACA', color: '#991B1B' };
+        return (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 14px', borderRadius: 'var(--radius-sm)', fontSize: '13px', fontWeight: 600,
+            backgroundColor: tone.bg, border: `1px solid ${tone.border}`, color: tone.color,
+          }}>
+            {notice.kind === 'ok' ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
+            {notice.text}
+            <button onClick={() => setNotice(null)} style={{ marginLeft: 'auto', border: 'none', background: 'transparent', cursor: 'pointer', color: 'inherit', fontWeight: 800 }}>✕</button>
+          </div>
+        );
+      })()}
 
       {/* Summary per block */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '12px' }}>
@@ -335,7 +386,7 @@ export const SalaryConfigView: React.FC<{ currentUser: any }> = ({ currentUser }
       </div>
 
       {/* Table, grouped by block */}
-      <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflowX: 'auto' }}>
+      <div style={{ position: 'relative', backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflowX: 'auto' }}>
         <table style={{ width: '100%', minWidth: '1280px', borderCollapse: 'collapse', fontSize: '13px' }}>
           <thead>
             <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
@@ -440,24 +491,58 @@ export const SalaryConfigView: React.FC<{ currentUser: any }> = ({ currentUser }
                         {cfg?.updatedAt ? new Date(cfg.updatedAt).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'Chưa cấu hình'}
                       </td>
                       <td style={{ padding: '10px 16px' }}>
-                        <button
-                          onClick={() => saveOne(emp.employee_id)}
-                          disabled={!canEdit || !isDirty || isSaving}
-                          title={!canEdit ? 'Chỉ Kế toán / Admin lưu được' : isDirty ? 'Lưu cấu hình cho nhân viên này' : 'Không có thay đổi'}
-                          style={{
-                            display: 'flex', alignItems: 'center', gap: '5px',
-                            padding: '7px 12px', borderRadius: 'var(--radius-sm)',
-                            border: `1px solid ${!canEdit || !isDirty ? 'var(--border)' : '#059669'}`,
-                            backgroundColor: !canEdit || !isDirty ? 'var(--bg)' : '#ECFDF5',
-                            color: !canEdit || !isDirty ? 'var(--text-muted)' : '#047857',
-                            fontWeight: 800, fontSize: '12px',
-                            cursor: !canEdit || !isDirty || isSaving ? 'not-allowed' : 'pointer',
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          <Save size={13} />
-                          {isSaving ? 'Đang lưu' : 'Lưu'}
-                        </button>
+                        {(() => {
+                          const rs = rowSync[emp.employee_id];
+                          const tone = rs?.state === 'ok'
+                            ? { bg: '#ECFDF5', c: '#047857' }
+                            : rs?.state === 'warn'
+                              ? { bg: '#FFFBEB', c: '#92400E' }
+                              : rs?.state === 'err'
+                                ? { bg: '#FEF2F2', c: '#B91C1C' }
+                                : { bg: '#EFF6FF', c: '#1D4ED8' };
+                          const label = !rs
+                            ? ''
+                            : rs.state === 'saving'
+                              ? 'Đang đồng bộ...'
+                              : rs.state === 'ok'
+                                ? 'Đã lưu + đã sync'
+                                : rs.state === 'warn'
+                                  ? (String(rs.text || '').includes('chưa xác minh') ? 'Chưa xác minh được' : 'Đã lưu, Sheet chờ')
+                                  : String(rs.text || '').startsWith('Đã lưu CSDL') ? 'Đã lưu, Sheet lỗi' : 'Lỗi / chưa xác minh';
+                          return (
+                            <>
+                              <button
+                                onClick={() => saveOne(emp.employee_id)}
+                                disabled={!canEdit || !isDirty || isSaving}
+                                title={!canEdit ? 'Chỉ Kế toán / Admin lưu được' : isDirty ? 'Lưu cấu hình cho nhân viên này' : 'Không có thay đổi'}
+                                style={{
+                                  display: 'flex', alignItems: 'center', gap: '5px',
+                                  padding: '7px 12px', borderRadius: 'var(--radius-sm)',
+                                  border: `1px solid ${!canEdit || !isDirty ? 'var(--border)' : '#059669'}`,
+                                  backgroundColor: !canEdit || !isDirty ? 'var(--bg)' : '#ECFDF5',
+                                  color: !canEdit || !isDirty ? 'var(--text-muted)' : '#047857',
+                                  fontWeight: 800, fontSize: '12px',
+                                  cursor: !canEdit || !isDirty || isSaving ? 'not-allowed' : 'pointer',
+                                  whiteSpace: 'nowrap',
+                                }}
+                              >
+                                {isSaving ? (
+                                  <span style={{ display: 'inline-block', width: '13px', height: '13px', border: '2px solid #A7F3D0', borderTopColor: '#047857', borderRadius: '50%', animation: 'salary-spin 0.8s linear infinite' }} />
+                                ) : <Save size={13} />}
+                                {isSaving ? 'Đang lưu' : 'Lưu'}
+                              </button>
+                              {rs && (
+                                <div
+                                  title={rs.text}
+                                  style={{ marginTop: '5px', padding: '3px 7px', borderRadius: '4px', backgroundColor: tone.bg, color: tone.c, fontSize: '10px', fontWeight: 700, maxWidth: '170px', lineHeight: 1.35 }}
+                                >
+                                  {rs.state === 'saving' ? '⏳ ' : rs.state === 'ok' ? '✓ ' : rs.state === 'warn' ? '⚠ ' : '✕ '}
+                                  {label}
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
                       </td>
                     </tr>
                   );
@@ -474,6 +559,14 @@ export const SalaryConfigView: React.FC<{ currentUser: any }> = ({ currentUser }
             )}
           </tbody>
         </table>
+        {loading && employees.length > 0 && (
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: '18px', backgroundColor: 'rgba(255,255,255,0.72)', backdropFilter: 'blur(1px)', zIndex: 5 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', borderRadius: 'var(--radius-full)', backgroundColor: 'var(--surface)', border: '1px solid var(--border)', boxShadow: '0 4px 14px rgba(0,0,0,0.08)', color: 'var(--text)', fontSize: '12px', fontWeight: 700 }}>
+              <span style={{ display: 'inline-block', width: '14px', height: '14px', border: '2px solid var(--border)', borderTopColor: 'var(--brand)', borderRadius: '50%', animation: 'salary-spin 0.8s linear infinite' }} />
+              Đang tải lại cấu hình lương...
+            </div>
+          </div>
+        )}
         {loading && employees.length === 0 && (
           <div style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
             <div style={{ display: 'inline-block', width: '18px', height: '18px', border: '2px solid var(--border)', borderTopColor: 'var(--brand)', borderRadius: '50%', animation: 'salary-spin 0.8s linear infinite', verticalAlign: -4, marginRight: 8 }} />

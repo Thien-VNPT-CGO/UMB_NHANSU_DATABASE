@@ -41,12 +41,31 @@ export interface SalaryConfigEntry {
 
 export type SalaryConfigMap = Record<string, SalaryConfigEntry>;
 
+export interface SheetPushResult {
+  ok: boolean;
+  at: string;
+  error?: string;
+  skipped?: string;
+  pending?: boolean;
+}
+
 /** Serialize read-modify-write settings: 2 thao tác cùng lúc không ghi đè nhau. */
 let salaryConfigLock: Promise<unknown> = Promise.resolve();
 function withSalaryConfigLock<T>(fn: () => Promise<T>): Promise<T> {
   const run = salaryConfigLock.then(fn, fn);
   salaryConfigLock = run.then(() => undefined, () => undefined);
   return run;
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('TIMEOUT')), Math.max(1000, ms));
+    (timer as any)?.unref?.();
+    promise.then(
+      value => { clearTimeout(timer); resolve(value); },
+      err => { clearTimeout(timer); reject(err); },
+    );
+  });
 }
 
 function sanitizeEntry(raw: any): SalaryConfigEntry | null {
@@ -132,8 +151,64 @@ export class SalaryConfigService {
       };
       map[String(employeeId)] = entry;
       await this.repo.updateSystemSettings({ [SETTINGS_KEY_SALARY_CONFIG]: map });
+
+      // XÁC MINH ĐÃ GHI: không bao giờ trả "lưu thành công" nếu dữ liệu đọc lại
+      // không khớp (bộ nhớ hoặc PostgreSQL). Đây là lớp chống "báo thành công giả".
+      const readBackMap = await this.readMap();
+      const readBack = readBackMap[String(employeeId)];
+      const mismatch =
+        !readBack ||
+        Number(readBack.base_salary) !== entry.base_salary ||
+        Number(readBack.allowance) !== entry.allowance ||
+        String(readBack.updatedAt || '') !== String(entry.updatedAt || '') ||
+        (entry.pay_mode ? readBack.pay_mode !== entry.pay_mode : false);
+      if (mismatch) {
+        throw new Error('SALARY_CONFIG_NOT_PERSISTED: Hệ thống chưa xác minh được cấu hình vừa lưu — dữ liệu KHÔNG được coi là thành công.');
+      }
+
+      // Chế độ PostgreSQL: đọc lại đúng bản ghi app_settings để chắc chắn DB đã ghi.
+      const store: any = (this.repo as any)?.store;
+      if (store?.configured && typeof store.getSetting === 'function') {
+        try {
+          const persisted = await store.getSetting('systemSettings');
+          const row = persisted?.[SETTINGS_KEY_SALARY_CONFIG]?.[String(employeeId)];
+          if (row && String(row.updatedAt || '') !== String(entry.updatedAt || '')) {
+            throw new Error('SALARY_CONFIG_NOT_PERSISTED: Bản ghi PostgreSQL chưa khớp cấu hình vừa lưu.');
+          }
+        } catch (verifyErr: any) {
+          if (String(verifyErr?.message || '').includes('SALARY_CONFIG_NOT_PERSISTED')) throw verifyErr;
+          // Lỗi đọc lại DB (không phải lệch dữ liệu): updateSystemSettings đã await
+          // persistMutation thành công nên vẫn coi là đã lưu; chỉ ghi log để chẩn đoán.
+          console.warn('[salary-config] Không đọc lại được app_settings để xác minh:', verifyErr?.message || verifyErr);
+        }
+      }
       return entry;
     });
+  }
+
+  /**
+   * Đẩy cấu hình (employee_salary_config) lên Google Sheets NGAY và trả về kết quả
+   * thật. Dùng trong API lưu lương để UI biết Sheet đã đồng bộ hay đang lỗi.
+   */
+  async pushToGoogleSheets(): Promise<SheetPushResult> {
+    const sync: any = (this.repo as any)?.syncService || (this.repo as any)?.fallbackAdapter?.syncService;
+    if (!sync || typeof sync.pushSystemSettingsNow !== 'function') {
+      return { ok: true, at: new Date().toISOString(), skipped: 'SHEETS_NOT_CONFIGURED' };
+    }
+    try {
+      const res = await withTimeout<SheetPushResult>(sync.pushSystemSettingsNow(this.repo), 15_000);
+      return res && typeof res === 'object'
+        ? res
+        : { ok: false, at: new Date().toISOString(), error: 'SHEET_SYNC_INVALID_RESULT' };
+    } catch (e: any) {
+      const timeout = String(e?.message || '') === 'TIMEOUT';
+      return {
+        ok: false,
+        at: new Date().toISOString(),
+        error: timeout ? 'SHEETS_TIMEOUT' : String(e?.message || e).slice(0, 300),
+        pending: timeout,
+      };
+    }
   }
 
   /**

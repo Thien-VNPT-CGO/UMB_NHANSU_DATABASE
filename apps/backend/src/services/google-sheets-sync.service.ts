@@ -373,6 +373,95 @@ function mergeById<T extends Record<string, any>>(memory: T[], sheets: T[], idKe
   return out;
 }
 
+/**
+ * Một ô Google Sheets chỉ nhận tối đa 50.000 ký tự. Cài đặt hệ thống có thể chứa
+ * giá trị rất lớn (lịch sử điểm danh VP, phiên Zalo, danh sách yêu cầu...). Nếu
+ * ghi thẳng, Google từ chối CẢ lượt ghi và `employee_salary_config` (cấu hình
+ * lương) không bao giờ lên Sheet. Vì vậy giá trị lớn được CHIA THÀNH NHIỀU DÒNG
+ * (`<key>::part1/N`) và được ghép lại khi pull.
+ */
+export const SETTINGS_CELL_MAX_CHARS = 45_000;
+const SETTINGS_CELL_CHUNK_CHARS = 40_000;
+const SETTINGS_CHUNK_KEY_RE = /^(.*)::part(\d+)\/(\d+)$/;
+
+export function buildSystemSettingsRows(
+  settings: any,
+  now = new Date().toISOString(),
+): { rows: any[]; chunkedKeys: string[] } {
+  const rows: any[] = [];
+  const chunkedKeys: string[] = [];
+  for (const [k, v] of Object.entries(settings || {})) {
+    const raw = typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v ?? '');
+    if (raw.length <= SETTINGS_CELL_MAX_CHARS) {
+      rows.push([k, raw, `Cấu hình tham số ${k}`, now]);
+      continue;
+    }
+    const total = Math.ceil(raw.length / SETTINGS_CELL_CHUNK_CHARS);
+    for (let i = 0; i < total; i++) {
+      rows.push([
+        `${k}::part${i + 1}/${total}`,
+        raw.slice(i * SETTINGS_CELL_CHUNK_CHARS, (i + 1) * SETTINGS_CELL_CHUNK_CHARS),
+        `Cấu hình tham số ${k} (phần ${i + 1}/${total})`,
+        now,
+      ]);
+    }
+    chunkedKeys.push(k);
+  }
+  return { rows, chunkedKeys };
+}
+
+export function parseSystemSettingsRows(configRows: any[]): any {
+  const settingsObj: any = {};
+  const chunks = new Map<string, { total: number; parts: Record<number, string> }>();
+  for (const r of configRows || []) {
+    const key = String(r?.[0] ?? '').trim();
+    const val = r?.[1];
+    if (!key) continue;
+    // Bản ghi cũ từng ghi chuỗi đánh dấu "bỏ qua" cho key quá lớn — không phải
+    // dữ liệu thật, giữ nguyên giá trị đang có trong bộ nhớ.
+    if (typeof val === 'string' && /^\s*\[BỎ QUA:/.test(val)) continue;
+    if (val === undefined || val === null) continue;
+    const m = key.match(SETTINGS_CHUNK_KEY_RE);
+    if (m) {
+      const base = m[1];
+      const idx = Number(m[2]);
+      const total = Number(m[3]);
+      if (!base || !Number.isFinite(idx) || !Number.isFinite(total) || idx < 1 || idx > total) continue;
+      const cur = chunks.get(base) || { total, parts: {} };
+      cur.total = total;
+      cur.parts[idx] = String(val);
+      chunks.set(base, cur);
+      continue;
+    }
+    try {
+      settingsObj[key] = JSON.parse(val);
+    } catch {
+      settingsObj[key] = val;
+    }
+  }
+  // Ghép các key bị chia phần; thiếu phần nào thì BỎ (giữ nguyên bộ nhớ) thay vì
+  // đọc về một giá trị cụt gây hỏng cấu hình.
+  for (const [base, c] of chunks) {
+    const parts: string[] = [];
+    let complete = true;
+    for (let i = 1; i <= c.total; i++) {
+      if (typeof c.parts[i] !== 'string') { complete = false; break; }
+      parts.push(c.parts[i]);
+    }
+    if (!complete) {
+      console.warn(`[GoogleSheetsSyncService] Bỏ qua giá trị chia phần thiếu dữ liệu: ${base}`);
+      continue;
+    }
+    const joined = parts.join('');
+    try {
+      settingsObj[base] = JSON.parse(joined);
+    } catch {
+      settingsObj[base] = joined;
+    }
+  }
+  return settingsObj;
+}
+
 export class GoogleSheetsSyncService {
   private sheetsClient: sheets_v4.Sheets | null = null;
   private driveClient: drive_v3.Drive | null = null;
@@ -442,6 +531,17 @@ export class GoogleSheetsSyncService {
   /** Mốc pull gần nhất đã xử lý xong tab CAU_HINH_HE_THONG (null = chưa từng).
    *  Đọc bảo trì đợi mốc này để không trả seed OFF ngay sau boot. */
   public lastSettingsPullAt: number | null = null;
+  /** Lỗi ghi CAU_HINH_HE_THONG gần nhất (rỗng = thành công). */
+  private lastSystemSettingsWriteError = '';
+  /** Trạng thái đồng bộ cấu hình (đặc biệt employee_salary_config) lên Sheet —
+   *  API cấu hình lương trả về cho UI để KHÔNG báo "đã đồng bộ" khi Sheet lỗi. */
+  public systemSettingsSheetSyncState: {
+    at: string;
+    ok: boolean | null;
+    error: string;
+    pending: boolean;
+    skipped?: string;
+  } = { at: '', ok: null, error: '', pending: false };
   /** Mốc reset hộp thư 23h00 (ISO): pull chỉ giữ thông báo tạo sau mốc này trong
    *  ngày reset, để hộp thư đã reset tối không bị dòng Sheet cũ kéo lại đầy ngay.
    *  Qua ngày mới thì tự xả latch (mốc cũ hơn 00h00 hôm nay). */
@@ -930,6 +1030,8 @@ export class GoogleSheetsSyncService {
       writeProbe: this.writeProbeResult,
       sheetsCount: SHEETS_DEFINITIONS.length,
       definedTabs: SHEETS_DEFINITIONS.map(d => d.title),
+      /** Kết quả ghi gần nhất của tab CAU_HINH_HE_THONG (chứa cấu hình lương). */
+      systemSettingsSheetSync: this.systemSettingsSheetSyncState,
       hasFullBatchCache: !!this.lastFullBatch,
     };
   }
@@ -3579,18 +3681,7 @@ export class GoogleSheetsSyncService {
       // 11. Đọc CAU_HINH_HE_THONG (cài đặt kỹ thuật hệ thống)
       const configRows = batch['CAU_HINH_HE_THONG'];
       if (configRows && configRows.length > 0) {
-        const settingsObj: any = {};
-        for (const r of configRows) {
-          const key = (r[0] || '').trim();
-          const val = r[1];
-          if (key) {
-            try {
-              settingsObj[key] = JSON.parse(val);
-            } catch {
-              settingsObj[key] = val;
-            }
-          }
-        }
+        const settingsObj: any = parseSystemSettingsRows(configRows);
         if (Object.keys(settingsObj).length > 0) {
           // Gộp theo từng nhân viên + so updatedAt cho cau hinh luong: du lieu moi
           // trong bo nho (vua luu, sheet chua kip day) KHONG bi ban cu tren Sheet
@@ -4231,24 +4322,41 @@ export class GoogleSheetsSyncService {
   }
 
   /**
-   * Đồng bộ cấu hình kỹ thuật hệ thống lên tab CAU_HINH_HE_THONG trên Google Sheets
+   * Đồng bộ cấu hình kỹ thuật hệ thống lên tab CAU_HINH_HE_THONG trên Google Sheets.
+   *
+   * Lưu ý: bảng cài đặt có thể chứa key rất lớn (lịch sử điểm danh VP, phiên Zalo,
+   * danh sách yêu cầu...). Một ô Google Sheets chỉ nhận tối đa 50.000 ký tự — nếu
+   * ghi nguyên JSON, cả lượt ghi sẽ bị từ chối và `employee_salary_config`
+   * (cấu hình lương) không bao giờ lên Sheet. Vì vậy giá trị lớn được chia nhiều
+   * dòng và ghép lại khi pull (xem `buildSystemSettingsRows`).
    */
-  public async syncSystemSettingsToSheet(settings: any): Promise<boolean> {
+  public async syncSystemSettingsToSheet(
+    settings: any,
+    opts?: { attempts?: number },
+  ): Promise<boolean> {
     if (!this.sheetsClient) return false;
     // Cấu hình lương nằm ở đây (employee_salary_config): ghi hỏng vì quota không
     // được bỏ — thử lại vài lần rồi mới trả false (không chờ lượt nền sau).
-    const backoffs = [2000, 5000, 10000, 20000];
+    const maxAttempts = Math.max(1, Math.min(5, Number(opts?.attempts ?? 5) || 5));
+    const backoffs = [2000, 5000, 10000, 20000].slice(0, Math.max(0, maxAttempts - 1));
+    this.lastSystemSettingsWriteError = '';
     for (let attempt = 0; ; attempt++) {
       try {
-        const rows = Object.entries(settings || {}).map(([k, v]) => [
-          k,
-          typeof v === 'object' ? JSON.stringify(v) : String(v ?? ''),
-          `Cấu hình tham số ${k}`,
-          new Date().toISOString(),
-        ]);
+        const { rows, chunkedKeys } = buildSystemSettingsRows(settings);
+        if (chunkedKeys.length > 0) {
+          console.warn(`[GoogleSheetsSyncService] Chia phần ${chunkedKeys.length} khóa cài đặt quá lớn khi ghi CAU_HINH_HE_THONG: ${chunkedKeys.slice(0, 5).join(', ')}`);
+        }
+        // ANTI-WIPE: đọc cấu hình lỗi/rỗng bất thường thì KHÔNG ghi đè (tránh xoá
+        // trắng tab). Lần sau có cấu hình sẽ ghi lại đầy đủ.
+        if (rows.length === 0) {
+          console.warn('[GoogleSheetsSyncService] Bỏ qua ghi CAU_HINH_HE_THONG: cấu hình rỗng bất thường.');
+          return false;
+        }
         await this.overwriteSheetData('CAU_HINH_HE_THONG', ['Tham Số', 'Giá Trị', 'Mô Tả', 'Cập Nhật Lần Cuối'], rows);
+        this.lastSystemSettingsWriteError = '';
         return true;
       } catch (err: any) {
+        this.lastSystemSettingsWriteError = String(err?.message || err).slice(0, 300);
         const transient = this.isQuotaError(err) || /timeout|timed out|ETIMEDOUT|SHEETS_TIMEOUT|ECONN|socket|5\d\d/i.test(String(err?.message || err));
         if (attempt >= backoffs.length || !transient) {
           console.warn('[GoogleSheetsSyncService] Lỗi ghi CAU_HINH_HE_THONG:', err?.message || err);
@@ -4258,6 +4366,47 @@ export class GoogleSheetsSyncService {
         await new Promise(r => setTimeout(r, backoffs[attempt]));
       }
     }
+  }
+
+  /**
+   * Đẩy NGAY (await) tab CAU_HINH_HE_THONG từ bộ nhớ/PostgreSQL lên Sheet và ghi
+   * lại trạng thái. Dùng sau khi Kế toán lưu cấu hình lương để API trả về kết quả
+   * đồng bộ THẬT (ok/false/pending) thay vì hứa "đã đồng bộ" mà không kiểm chứng.
+   *
+   * Lượt đầu chỉ thử tối đa 2 lần (nhanh, không giữ request quá lâu). Nếu vẫn lỗi,
+   * một lượt thử lại đầy đủ chạy nền và cập nhật lại `systemSettingsSheetSyncState`.
+   */
+  public async pushSystemSettingsNow(repo: ISheetsRepository): Promise<{
+    ok: boolean;
+    at: string;
+    error?: string;
+    skipped?: string;
+    pending?: boolean;
+  }> {
+    const at = () => new Date().toISOString();
+    if (!this.sheetsClient) {
+      this.systemSettingsSheetSyncState = { at: at(), ok: true, error: '', pending: false, skipped: 'SHEETS_NOT_CONFIGURED' };
+      return { ok: true, at: this.systemSettingsSheetSyncState.at, skipped: 'SHEETS_NOT_CONFIGURED' };
+    }
+    const settings = await repo.getSystemSettings().catch(() => ({}));
+    this.systemSettingsSheetSyncState = { ...this.systemSettingsSheetSyncState, at: at(), pending: true, error: '' };
+    const ok = await this.syncSystemSettingsToSheet(settings, { attempts: 2 });
+    const error = ok ? '' : (this.lastSystemSettingsWriteError || 'SHEET_WRITE_FAILED');
+    this.systemSettingsSheetSyncState = { at: at(), ok, error, pending: false };
+    if (!ok) {
+      // Thử lại nền với backoff đầy đủ — dữ liệu đã chắc chắn nằm trong PostgreSQL.
+      void this.syncSystemSettingsToSheet(settings, { attempts: 5 })
+        .then(ok2 => {
+          this.systemSettingsSheetSyncState = {
+            at: at(),
+            ok: ok2,
+            error: ok2 ? '' : (this.lastSystemSettingsWriteError || 'SHEET_WRITE_FAILED'),
+            pending: false,
+          };
+        })
+        .catch(() => null);
+    }
+    return { ok, at: this.systemSettingsSheetSyncState.at, error: error || undefined, pending: !ok };
   }
 
   /**
@@ -5002,6 +5151,19 @@ export class GoogleSheetsSyncService {
       } catch (e: any) {
         errors.push(`PHIEU_LUONG: ${e?.message || String(e)}`);
       }
+    }
+
+    // 5) CAU_HINH_HE_THONG - cấu hình hệ thống + employee_salary_config.
+    //    Trước đây chỉ full-sync mới đẩy tab này; chế độ PostgreSQL tắt full-sync
+    //    nên đổi lương KHÔNG bao giờ lên Sheet. Đẩy kèm lượt tài chính để Sheet
+    //    luôn khớp (retry 1 lần, không chặn lâu).
+    try {
+      const settings = await repo.getSystemSettings().catch(() => ({}));
+      const ok = await this.syncSystemSettingsToSheet(settings, { attempts: 2 });
+      tabs.CAU_HINH_HE_THONG = ok ? Object.keys(settings || {}).length : -1;
+      if (!ok) errors.push(`CAU_HINH_HE_THONG: ${this.lastSystemSettingsWriteError || 'SHEET_WRITE_FAILED'}`);
+    } catch (e: any) {
+      errors.push(`CAU_HINH_HE_THONG: ${e?.message || String(e)}`);
     }
 
     return { errors, tabs };
