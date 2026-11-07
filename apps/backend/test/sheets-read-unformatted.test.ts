@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { GoogleSheetsSyncService } from '../src/services/google-sheets-sync.service.js';
+import { GoogleSheetsSyncService, normalizeSheetPeriod } from '../src/services/google-sheets-sync.service.js';
 
 /**
  * Regression: backend PHẢI đọc Google Sheets ở chế độ UNFORMATTED_VALUE.
@@ -57,4 +57,12 @@ test('readTabRows đọc số thô để đơn giá/tiền lương không bị N
   assert.equal(calls[0].method, 'get');
   assert.equal(calls[0].params.valueRenderOption, 'UNFORMATTED_VALUE');
   assert.equal(calls[0].params.dateTimeRenderOption, 'FORMATTED_STRING');
+});
+
+test('normalizeSheetPeriod: Sheet đổi "2026-10" thành ngày vẫn về đúng kỳ', () => {
+  assert.equal(normalizeSheetPeriod('2026-10'), '2026-10');
+  assert.equal(normalizeSheetPeriod('2026-10-01'), '2026-10');
+  assert.equal(normalizeSheetPeriod('2026-11-30'), '2026-11');
+  assert.equal(normalizeSheetPeriod('2026-10-01T00:00:00.000Z'), '2026-10');
+  assert.equal(normalizeSheetPeriod(''), '');
 });

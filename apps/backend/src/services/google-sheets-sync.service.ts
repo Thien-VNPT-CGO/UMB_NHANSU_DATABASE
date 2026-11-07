@@ -72,6 +72,16 @@ const SHEETS_READ_OPTIONS = {
 };
 
 /**
+ * Kỳ lương trên Sheet có thể bị USER_ENTERED biến "2026-10" thành ngày
+ * ("2026-10-01"). Chuẩn hoá về YYYY-MM để mọi nơi so khớp đúng kỳ.
+ */
+export function normalizeSheetPeriod(value: unknown): string {
+  const raw = String(value ?? '').trim();
+  const m = raw.match(/^(\d{4})-(0[1-9]|1[0-2])(?:$|[-/T\s])/);
+  return m ? `${m[1]}-${m[2]}` : raw;
+}
+
+/**
  * Đọc số từ ô Google Sheets có thể ở định dạng Việt Nam ("10,79782", "1.234,5",
  * "10.79782") hoặc số chuẩn. Trả undefined khi ô trống/không phải số.
  *
@@ -3526,11 +3536,12 @@ export class GoogleSheetsSyncService {
       if (keepIfEmpty('KY_LUONG', payrollRows, (fallback.payrollRuns || []).length)) {
         counts.payrollRuns = (fallback.payrollRuns || []).length;
       } else if (payrollRows && payrollRows.length > 0) {
-        fallback.payrollRuns = payrollRows
+        const mappedRuns = payrollRows
           .filter(r => r && (r[0] || r[1]))
           .map(r => ({
             run_id: r[0] || `RUN_${uuidv4().slice(0, 8)}`,
-            period: r[1] || new Date().toISOString().slice(0, 7),
+            // Sheet có thể trả "2026-10-01" (USER_ENTERED đổi kỳ thành ngày).
+            period: normalizeSheetPeriod(r[1] || new Date().toISOString().slice(0, 7)),
             branch_scope: 'ALL',
             status: (r[2] as any) || 'DRAFT',
             total_employees: 0,
@@ -3543,6 +3554,26 @@ export class GoogleSheetsSyncService {
             paid_at: r[6] || undefined,
             version: 1,
           }));
+        // MERGE theo run_id: kỳ vừa tính lại trong bộ nhớ nhưng Sheet chưa kịp
+        // đẩy KHÔNG được biến mất sau lượt pull (lỗi "vừa tính lương xong đã
+        // không thấy kỳ"). Bản trên Sheet thắng các cột trạng thái/tiền, nhưng
+        // không ghi đè số liệu tổng hợp Sheet không có cột (employees/hours).
+        const mergedRuns = new Map<string, any>(
+          (fallback.payrollRuns || []).map((r: any) => [String(r.run_id), { ...r }]),
+        );
+        for (const row of mappedRuns) {
+          const ex = mergedRuns.get(String(row.run_id));
+          mergedRuns.set(String(row.run_id), ex
+            ? {
+                ...ex,
+                ...row,
+                total_employees: Number(row.total_employees) || Number(ex.total_employees) || 0,
+                total_hours: Number(row.total_hours) || Number(ex.total_hours) || 0,
+                total_amount: Number(row.total_amount) || Number(ex.total_amount) || 0,
+              }
+            : row);
+        }
+        fallback.payrollRuns = [...mergedRuns.values()];
       } else if (fallback.payrollRuns.length === 0) {
         fallback.payrollRuns = [];
       }
@@ -3578,7 +3609,7 @@ export class GoogleSheetsSyncService {
             employee_id: r[2] || '',
             employee_code: r[3] || '',
             full_name: r[4] || '',
-            period: r[5] || '',
+            period: normalizeSheetPeriod(r[5]),
             total_shifts: Number(r[6]) || 0,
             absent_shifts: Number(r[7]) || 0,
             standard_hours: Number(r[8]) || 0,

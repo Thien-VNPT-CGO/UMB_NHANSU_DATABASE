@@ -842,7 +842,11 @@ export class PayrollService {
             total_shifts: publishedShifts.length,
             absent_shifts: absentShifts,
             standard_hours: empHours,
-            rate_snapshot: curRate,
+            // Đơn giá hiển thị trên phiếu = đơn giá THỰC TẾ đã dùng để tính
+            // (bình quân theo giờ công). Trước đây luôn ghi đơn giá công thức
+            // kỳ → NV được điều chỉnh đơn giá riêng vẫn thấy số cũ (VD 25.500
+            // dù tiền đã tính 30.000).
+            rate_snapshot: empHours > 0 ? Math.round(standardPay / empHours) : curRate,
             standard_pay: standardPayEff,
             tv_hours: tvHours,
             tv_pay: monthly ? 0 : tvPay,
