@@ -265,39 +265,32 @@ export class RateAdjustService {
       ? (preview.periods || []).filter(p => p.action !== 'recalc').map(p => ({ period: p.period, action: 'skip_locked' }))
       : [];
 
+    // Tính lại NGAY trong request (không chạy nền): nhiệm vụ nền chỉ nằm trong
+    // bộ nhớ — restart/deploy là chết, người dùng mãi thấy "đang tính lại" mà số
+    // không đổi (đã xảy ra thực tế). Mỗi kỳ <15s, tổng 2 kỳ <60s, nằm trong
+    // timeout client (120s) + Nginx (180s) nên await trực tiếp là an toàn.
+    const recalcResults: Array<{ period: string; action: string; slips?: number; error?: string }> = [];
     if (recalcPeriods.length > 0) {
-      // Chạy nền: tính lại từng kỳ + đẩy Sheets 1 lần sau khi xong.
-      // Không await → client nhận kết quả ngay, không còn timeout/retry.
-      void (async () => {
-        const results: Array<{ period: string; action: string; slips?: number; error?: string }> = [];
-        for (const period of recalcPeriods) {
-          try {
-            const res: any = await this.payrollService.calculateFormulaPayroll(period, '*', actorId);
-            const inner = res?.result ?? res;
-            try { this.payrollService.invalidateFinanceTimesheetCache?.(period); } catch { /* noop */ }
-            results.push({ period, action: 'recalculated', slips: Number(inner?.run?.total_employees || inner?.slips?.length || 0) || undefined });
-            this.log(`[rate-adjust] recalc ${period} OK`);
-          } catch (e: any) {
-            this.log(`[rate-adjust] recalc ${period} FAILED: ${e?.message || e}`);
-            results.push({ period, action: 'error', error: String(e?.message || e).slice(0, 200) });
-          }
+      for (const period of recalcPeriods) {
+        try {
+          const res: any = await this.payrollService.calculateFormulaPayroll(period, '*', actorId);
+          const inner = res?.result ?? res;
+          try { this.payrollService.invalidateFinanceTimesheetCache?.(period); } catch { /* noop */ }
+          recalcResults.push({ period, action: 'recalculated', slips: Number(inner?.run?.total_employees || inner?.slips?.length || 0) || undefined });
+          this.log(`[rate-adjust] recalc ${period} OK`);
+        } catch (e: any) {
+          this.log(`[rate-adjust] recalc ${period} FAILED: ${e?.message || e}`);
+          recalcResults.push({ period, action: 'error', error: String(e?.message || e).slice(0, 200) });
         }
-        // calculateFormulaPayroll đã tự sync Sheets sau mỗi kỳ; gom 1 lượt cuối (schedule để không chặn).
-        try {
-          if (typeof this.payrollService.scheduleFinanceToSheetsSync === 'function') {
-            this.payrollService.scheduleFinanceToSheetsSync(5_000);
-          } else {
-            await this.payrollService.syncFinanceToSheets({ skipSlips: false });
-          }
-        } catch { /* best-effort */ }
-        try {
-          this.deps.io?.emit?.('data:updated', {
-            entity: 'payroll',
-            data: { action: 'rate-adjust-recalc-done', count: applied.length, periods: results, at: new Date().toISOString() },
-            timestamp: new Date().toISOString(),
-          });
-        } catch { /* noop */ }
-      })();
+      }
+      // calculateFormulaPayroll đã tự hẹn đồng bộ Sheets sau mỗi kỳ.
+      try {
+        this.deps.io?.emit?.('data:updated', {
+          entity: 'payroll',
+          data: { action: 'rate-adjust-recalc-done', count: applied.length, periods: recalcResults, at: new Date().toISOString() },
+          timestamp: new Date().toISOString(),
+        });
+      } catch { /* noop */ }
     } else if (!opts.applyPast) {
       // Không hồi tố: không cần tính lại; chỉ đẩy Sheets nền (không chặn).
       try {
@@ -309,16 +302,15 @@ export class RateAdjustService {
       } catch { /* noop */ }
     }
 
-    this.log(`[rate-adjust] ${actorId} applied=${applied.length} applyPast=${!!opts.applyPast} recalcBackground=${recalcPeriods.length}`);
+    this.log(`[rate-adjust] ${actorId} applied=${applied.length} applyPast=${!!opts.applyPast} recalcNow=${recalcResults.length}`);
     return {
       applied,
       skipped: preview.rows.filter(r => !r.ok),
-      // Tương thích ngược: kỳ khóa vẫn liệt kê; kỳ recalc báo queued (chạy nền sau response).
       periods: [
-        ...recalcPeriods.map(p => ({ period: p, action: 'queued' })),
+        ...recalcResults,
         ...skippedPeriods,
       ] as Array<{ period: string; action: string }>,
-      recalc: recalcPeriods.length > 0 ? 'background' : 'none',
+      recalc: recalcResults.length > 0 ? 'now' : 'none',
       appliedAt: stamp,
     } as any;
   }
