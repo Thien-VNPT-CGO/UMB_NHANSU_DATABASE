@@ -1818,8 +1818,9 @@ export class PayrollService {
       if (!hasOut) hasOut = !!orphanLegFor(dayEvents, s, dayLiveIds, statusByAssign, consumedOrphans, 'CHECK_OUT', (inEvt as any)?.assignment_id);
       const template = (SHIFT_TEMPLATES as any)[(s as any).shift_code];
       const h = template ? Number(template.duration_hours) || 5 : 5;
-      const dayStage = rateOnDate(emp, day, hist, fRateTV, fRateCT).stage;
-      const dayRate = { stage: dayStage, rate: dayStage === 'TV' ? fRateTV : fRateCT };
+      // Đơn giá đúng từng ngày: lịch sử đơn giá NV (điều chỉnh) ưu tiên,
+      // công thức kỳ là dự phòng — khớp Finance (trước đây bỏ qua lịch sử).
+      const dayRate = rateOnDate(emp, day, hist, fRateTV, fRateCT);
       const shiftPay = h * dayRate.rate;
       const isToday = day === today;
       if (isToday) todayStat.shifts++;
@@ -1861,12 +1862,30 @@ export class PayrollService {
         todayStat.pay += Math.max(0, shiftPay - deductAmt);
       }
     }
-    // Đã bỏ phụ cấp HR điều phối nhường ca — thu nhập chỉ gồm lương ca trừ phạt.
+    // NV lương THÁNG: lương = LCB cấu hình + phụ cấp (không tính theo ca) —
+    // hồ sơ phải thấy lương mới ngay sau khi Kế toán đổi cấu hình.
+    let payMode: 'MONTHLY' | 'HOURLY' = 'HOURLY';
+    let monthlyBase = 0;
+    let allowanceCfg = 0;
+    try {
+      const cfg: any = await this.salaryConfig?.getForEmployee(employeeId).catch(() => null);
+      payMode = effectivePayMode((emp as any)?.group, cfg?.pay_mode);
+      monthlyBase = Math.max(0, Math.floor(Number(cfg?.base_salary) || 0));
+      allowanceCfg = Math.max(0, Math.floor(Number(cfg?.allowance) || 0));
+    } catch { payMode = 'HOURLY'; }
+    const isMonthly = payMode === 'MONTHLY';
+    const monthlyGross = monthlyBase + allowanceCfg;
+    const grossEff = isMonthly ? monthlyGross : gross;
+    // Đã bỏ phụ cấp HR điều phối nhường ca — thu nhập gồm lương trừ phạt.
     const bonus = 0;
     return {
       period: per,
       employeeId,
       rateNow,
+      payMode,
+      monthlyBase,
+      allowance: allowanceCfg,
+      monthlyTotal: monthlyGross,
       officialDate: String((emp as any)?.official_date || '').slice(0, 10) || null,
       stageNow: (emp as any)?.employment_status || null,
       shiftsTotal: published.length,
@@ -1875,13 +1894,13 @@ export class PayrollService {
       days: doneDays.size,
       hours: Math.round(hours * 10) / 10,
       tvHours: Math.round(tvHours * 10) / 10,
-      tvPay,
+      tvPay: isMonthly ? 0 : tvPay,
       ctHours: Math.round(ctHours * 10) / 10,
-      ctPay,
-      gross,
+      ctPay: isMonthly ? 0 : ctPay,
+      gross: grossEff,
       fines,
       bonus,
-      net: gross + bonus - fines,
+      net: grossEff + bonus - fines,
       lateCases,
       today: todayStat,
       calculatedAt: new Date().toISOString(),

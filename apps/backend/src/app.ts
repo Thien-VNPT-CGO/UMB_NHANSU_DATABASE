@@ -1630,7 +1630,30 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           broadcastUpdate('employees', { action: 'salary-config', employeeId });
         }
       } catch { broadcastUpdate('employees', { action: 'salary-config', employeeId }); }
-      res.json({ success: true, employee_id: employeeId, config: entry, salarySync });
+      // Kỳ hiện tại có phiếu DRAFT (hoặc chưa có) thì tính lại ngay để phiếu +
+      // Payment + B4 đổi theo lương mới — trước đây chỉ đổi cấu hình, phiếu cũ
+      // vẫn giữ số cũ khiến người dùng tưởng "không cập nhật". Kỳ đã ký/PAID
+      // không đụng (số đã cam kết).
+      let recalc: { period: string; action: string; error?: string } | undefined;
+      try {
+        const curPeriod = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7);
+        const periodData: any = await payrollService.getPeriodSlips(curPeriod).catch(() => null);
+        const slips: any[] = periodData?.slips || [];
+        const locked = slips.some((s: any) => ['CONFIRMED', 'PAID'].includes(String(s?.status || '').toUpperCase()));
+        if (slips.length === 0) {
+          // Chưa có phiếu kỳ này: không tạo kỳ vội — Kế toán bấm Tính lương khi chốt.
+          recalc = { period: curPeriod, action: 'no_slips' };
+        } else if (!locked) {
+          const calcRes: any = await payrollService.calculateFormulaPayroll(curPeriod, '*', req.user!.id);
+          recalc = { period: curPeriod, action: 'recalculated' };
+          void calcRes;
+        } else {
+          recalc = { period: curPeriod, action: 'skip_locked' };
+        }
+      } catch (e: any) {
+        recalc = { period: '', action: 'error', error: String(e?.message || e).slice(0, 200) };
+      }
+      res.json({ success: true, employee_id: employeeId, config: entry, salarySync, recalc });
     } catch (err: any) {
       res.status(400).json({ error: err?.message || 'SALARY_CONFIG_WRITE_FAILED', message: err?.message || 'Không lưu được cấu hình lương.' });
     }

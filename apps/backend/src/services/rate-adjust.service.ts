@@ -135,7 +135,9 @@ export class RateAdjustService {
   private async affectedPeriods(opts: RateAdjustOptions, cache?: Map<string, any[]>) {
     const cur = currentPeriodVN();
     const from = opts.pastFromPeriod && PERIOD_RE.test(opts.pastFromPeriod) ? opts.pastFromPeriod : cur;
-    const periods = opts.applyPast ? periodsBetween(from <= cur ? from : cur, cur) : [];
+    // Kỳ hiện tại LUÔN tính lại (đơn giá mới phải đổi số ngay, kể cả không
+    // tick hồi tố); tick hồi tố mới cộng thêm các tháng cũ.
+    const periods = opts.applyPast ? periodsBetween(from <= cur ? from : cur, cur) : [cur];
     const out: Array<{ period: string; slips: number; draft: number; confirmed: number; paid: number; action: 'recalc' | 'skip_locked' }> = [];
     for (const p of periods) {
       const slips = await this.slipsForPeriod(p, cache ?? new Map());
