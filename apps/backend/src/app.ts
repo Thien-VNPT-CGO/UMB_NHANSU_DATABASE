@@ -509,6 +509,21 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     } catch (e) {
       // non-fatal
     }
+    // QUY TRÌNH KẾ TOÁN REALTIME: mọi thay đổi công/ca/nghỉ/đổi ca/lương vừa
+    // ghi xong phải làm mới bảng công ngay tại đúng thời điểm đó. Không xóa
+    // cache thì /payroll/workflow-status có thể trả số ca cũ tới 45 giây, khiến
+    // bước 1–2 không hoàn tất dù dữ liệu đã xong → các bước sau bị khóa oan.
+    try {
+      const ent = String(entity || '').toLowerCase();
+      if (ent === 'all' || [
+        'attendance', 'shift', 'shift-rereg', 'schedules', 'schedule',
+        'swap', 'swaps', 'leave', 'leaves', 'emergencyleave', 'weekly-off',
+        'adjustments', 'office-adjustments', 'office-attendance', 'office-leaves',
+        'payroll', 'payslips', 'employees',
+      ].includes(ent)) {
+        payrollService.invalidateFinanceTimesheetCache();
+      }
+    } catch { /* cache invalidation không được làm hỏng nghiệp vụ */ }
   };
 
   // Dọn dẹp/xóa mọi thông báo nhắc hẹn điểm danh khỏi bộ nhớ hệ thống

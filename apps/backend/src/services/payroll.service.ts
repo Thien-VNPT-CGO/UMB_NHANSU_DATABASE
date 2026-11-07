@@ -535,9 +535,6 @@ export class PayrollService {
     return this.repo.listPayrollRuns();
   }
 
-  // Cache đếm ca trong kỳ (tính chậm — gọi từ workflow-status)
-  private wfAttCache = new Map<string, { at: number; shifts: number }>();
-
   /**
    * Cache kết quả Bảng chấm công Finance (rất nặng: duyệt toàn bộ NV × ca ×
    * sự kiện điểm danh — không cache thì mỗi lần web realtime refresh là server
@@ -558,63 +555,132 @@ export class PayrollService {
 
   /**
    * Trạng thái quy trình kế toán của 1 kỳ lương — dùng để khóa/mở khóa tab theo thứ tự.
-   * Hoàn toàn dẫn xuất từ dữ liệu (không lưu trạng thái thủ công):
+   *
+   * QUAN TRỌNG: mọi bước đều dẫn xuất từ dữ liệu THẬT đang lưu (bảng công tính
+   * từ ca + sự kiện điểm danh, kỳ lương + phiếu lương thật). Không dùng cache
+   * 60 giây, không suy đoán "đã tính" chỉ vì có dòng công thức, không gán mốc
+   * thời gian giả. Mỗi bước có `completedAt` là thời điểm THẬT của sự kiện hoàn
+   * tất gần nhất; bước sau chỉ `open` khi bước trước `done`.
+   *
    *   1 Đối soát công → 2 BCC → 3 Tính lương → 4 Payment (bảng lương) → 5 Kỳ lương → 6 Phiếu lương → 7 Thanh toán
    */
   async getWorkflowStatus(period: string) {
-    const now = Date.now();
-    const cached = this.wfAttCache.get(period);
-    let attShifts = cached && now - cached.at < 60_000 ? cached.shifts : -1;
-    if (attShifts < 0) {
-      attShifts = 0;
-      try {
-        const { fromDate, toDate } = monthRange(period);
-        const employees: any[] = await this.repo.listEmployees({ branch: '*' }).catch(() => []);
-        for (const e of employees || []) {
-          const s: any[] = await this.repo.getShiftsForEmployee((e as any).employee_id, fromDate, toDate).catch(() => []);
-          attShifts += (s || []).filter(x => String(x?.status) === 'PUBLISHED').length;
-        }
-      } catch { /* giữ 0 */ }
-      this.wfAttCache.set(period, { at: now, shifts: attShifts });
-    }
-
-    const [formula, inputs, runsAll] = await Promise.all([
-      this.repo.getPayrollFormula(period).catch(() => null),
-      this.repo.getPayrollInputs(period).catch(() => [] as any[]),
+    // Bảng công/BCC lấy đúng nguồn 2 tab Finance đang hiển thị. Cache 45s của
+    // getFinanceTimesheet được xóa ngay khi có ghi công/ca/lương (app.ts +
+    // server.ts) nên số liệu luôn là thời điểm hiện tại, không trễ 60s.
+    const [timesheet, periodData, runsAll] = await Promise.all([
+      this.getFinanceTimesheet(period, '*').catch(() => null as any),
+      this.getPeriodSlips(period).catch(() => ({ run: null, slips: [] } as any)),
       this.repo.listPayrollRuns().catch(() => [] as any[]),
     ]);
-    const runs = (runsAll || []).filter((r: any) => String(r?.period) === period);
-    runs.sort((a: any, b: any) => String(b?.created_at || '').localeCompare(String(a?.created_at || '')));
-    const latest: any = runs[0] || null;
-    const latestStatus = String(latest?.status || '');
-    const slips: any[] = latest ? await this.repo.getPayslipsByRunId(latest.run_id).catch(() => []) : [];
-    const byEmp = new Map<string, any>();
-    for (const s of slips || []) {
-      const k = String(s?.employee_id || '');
-      const cur = byEmp.get(k);
-      if (!cur || String(s?.updated_at || s?.created_at || '') >= String(cur?.updated_at || cur?.created_at || '')) byEmp.set(k, s);
-    }
-    const uniqueSlips = [...byEmp.values()];
-    const hasData = attShifts > 0;
-    const inputsCount = (inputs || []).filter((i: any) => i && (i.luong_cb > 0 || i.ot_extra > 0 || i.bonus_extra > 0 || i.ung_luong > 0 || i.tru_kpi > 0 || i.dong_phuc > 0 || (i.note && String(i.note).trim()))).length;
-    const calcDone = !!formula || inputsCount > 0 || !!latest;
-    const runDone = !!latest;
-    const approved = ['APPROVED', 'PUBLISHED', 'PAID'].includes(latestStatus);
-    const allSigned = uniqueSlips.length > 0 && uniqueSlips.every(s => ['CONFIRMED', 'PAID'].includes(String(s?.status)));
-    const someConfirmed = uniqueSlips.some(s => ['CONFIRMED', 'PAID'].includes(String(s?.status)));
-    const allPaid = uniqueSlips.length > 0 && uniqueSlips.every(s => String(s?.status) === 'PAID');
-    const runPaid = latestStatus === 'PAID';
 
-    const steps = [
-      { id: 'fin-timesheet', order: 1, title: 'Đối soát công & Bảng chấm công', open: true, done: hasData, reason: '', stat: `${attShifts.toLocaleString('vi-VN')} ca đã phát hành` },
-      { id: 'fin-bcc', order: 2, title: 'BCC — Bảng công từng ngày', open: hasData, done: hasData, reason: hasData ? '' : 'Chưa có ca chấm công nào được phát hành trong kỳ — chờ Store/HR xếp ca & xác nhận công.', stat: hasData ? `${attShifts.toLocaleString('vi-VN')} ca` : 'Chưa có dữ liệu' },
-      { id: 'fin-calculate', order: 3, title: 'Tính lương (công thức & nhập tay)', open: hasData, done: calcDone, reason: hasData ? '' : 'Chưa có dữ liệu chấm công để tính lương.', stat: calcDone ? 'Đã có công thức/dữ liệu nhập' : 'Chưa tính' },
-      { id: 'fin-payroll-sheet', order: 4, title: 'Payment — Bảng lương tháng', open: calcDone, done: runDone, reason: calcDone ? '' : 'Hãy lưu công thức hoặc nhập liệu lương (hoặc bấm Tính lương) ở tab Tính lương trước.', stat: runDone ? `Kỳ ${latest?.run_id || ''} (${latestStatus})` : 'Chưa có kỳ lương' },
-      { id: 'fin-payroll-periods', order: 5, title: 'Kỳ lương (DRAFT → PAID)', open: runDone, done: approved, reason: runDone ? '' : 'Chưa có kỳ lương — hãy tính lương ở tab Tính lương.', stat: runDone ? `Trạng thái: ${latestStatus}` : 'Chưa có kỳ lương' },
-      { id: 'fin-payslips', order: 6, title: 'Phiếu lương (KT ký → GĐ duyệt → NV ký)', open: approved, done: allSigned, reason: approved ? '' : 'Kỳ lương cần được DUYỆT (APPROVED) trước khi ký & phát hành phiếu lương.', stat: uniqueSlips.length ? `${uniqueSlips.filter(s => ['CONFIRMED', 'PAID'].includes(String(s?.status))).length}/${uniqueSlips.length} phiếu NV đã ký` : 'Chưa có phiếu' },
-      { id: 'fin-payment', order: 7, title: 'Thanh toán (VietQR — Đã chuyển khoản)', open: someConfirmed || runPaid || latestStatus === 'PUBLISHED', done: allPaid || runPaid, reason: (someConfirmed || runPaid || latestStatus === 'PUBLISHED') ? '' : 'Chờ nhân viên ký phiếu (CONFIRMED) trước khi chuyển khoản.', stat: uniqueSlips.length ? `${uniqueSlips.filter(s => String(s?.status) === 'PAID').length}/${uniqueSlips.length} phiếu đã chuyển` : 'Chưa có phiếu' },
+    const totals: any = (timesheet as any)?.totals || {};
+    const totalShifts = Number(totals.totalShifts) || 0;
+    const fullShifts = Number(totals.full) || 0;
+    const partialShifts = Number(totals.partial) || 0;
+    const absentShifts = Number(totals.absent) || 0;
+
+    const slips: any[] = (((periodData as any)?.slips || []) as any[]).filter(Boolean);
+    const slipCount = slips.length;
+    const slipStatus = (s: any) => String(s?.status || '').toUpperCase();
+    const publishedSlips = slips.filter(s => ['PUBLISHED', 'CONFIRMED', 'PAID'].includes(slipStatus(s)));
+    const confirmedSlips = slips.filter(s => ['CONFIRMED', 'PAID'].includes(slipStatus(s)));
+    const paidSlips = slips.filter(s => slipStatus(s) === 'PAID');
+    const publishedCount = publishedSlips.length;
+    const signedCount = confirmedSlips.length;
+    const paidCount = paidSlips.length;
+    const slipHours = slips.reduce((sum, s) => sum + (Number(s?.standard_hours) || 0), 0);
+    const slipNet = slips.reduce((sum, s) => sum + (Number(s?.net_pay ?? s?.thuc_lanh) || 0), 0);
+
+    // Chọn kỳ lương đang thực sự có phiếu (nếu kỳ mới nhất rỗng do vừa tạo
+    // nhầm, vẫn phản ánh đúng bộ phiếu đang hiển thị ở các tab).
+    const periodRuns = (runsAll || [])
+      .filter((r: any) => String(r?.period) === period)
+      .sort((a: any, b: any) => String(b?.created_at || '').localeCompare(String(a?.created_at || '')));
+    const slipRunIds = new Set(slips.map(s => String(s?.run_id || '')).filter(Boolean));
+    const run: any = periodRuns.find((r: any) => slipRunIds.has(String(r.run_id)))
+      || periodRuns[0]
+      || (periodData as any)?.run
+      || null;
+    const runStatus = String(run?.status || '').toUpperCase();
+
+    // Mốc thời gian THẬT (không gán "now" mỗi lần đọc).
+    const maxTime = (...vals: any[]): string => {
+      let best = 0;
+      let out = '';
+      for (const v of vals) {
+        const t = Date.parse(String(v || ''));
+        if (Number.isFinite(t) && t > best) { best = t; out = String(v); }
+      }
+      return out;
+    };
+    const checkInTimes = (((timesheet as any)?.rows || []) as any[]).flatMap((r: any) =>
+      ((r?.shifts || []) as any[]).map((d: any) => d?.checkIn).filter(Boolean)
+    );
+    const lastCheckInAt = maxTime(...checkInTimes);
+    const lastSlipPublishedAt = maxTime(...slips.map(s => s?.slip_published_at), run?.published_at);
+    // Phiếu có thể được đánh dấu PAID thẳng (không ghi mốc CONFIRMED) — khi đó
+    // mốc chi trả là bằng chứng thật cho việc nhân viên đã xác nhận.
+    const lastSlipConfirmedAt = maxTime(...slips.map(s => s?.slip_confirmed_at || s?.sign_nhanvien?.at || s?.slip_paid_at));
+    const lastSlipPaidAt = maxTime(...slips.map(s => s?.slip_paid_at), run?.paid_at);
+
+    const hasTimesheet = totalShifts > 0;
+    const hasBcc = hasTimesheet;
+    const calculated = slipCount > 0;
+    // Kỳ lương được coi là "đã mở" khi run đã duyệt/phát hành/chi trả HOẶC đã
+    // có ít nhất 1 phiếu được phát hành (Kế toán có thể phát hành từng phiếu
+    // trước khi đổi trạng thái run — trước đây bước 6 bị khóa vĩnh viễn).
+    const periodOpen = calculated && (['APPROVED', 'PUBLISHED', 'PAID'].includes(runStatus) || publishedCount > 0);
+    const allSigned = slipCount > 0 && signedCount === slipCount;
+    const allPaid = slipCount > 0 && paidCount === slipCount;
+
+    const raw = [
+      {
+        id: 'fin-timesheet', order: 1, title: 'Đối soát công & Bảng chấm công', done: hasTimesheet,
+        stat: hasTimesheet ? `${totalShifts.toLocaleString('vi-VN')} ca đã phát hành` : 'Chưa có ca đã phát hành',
+        reason: hasTimesheet ? '' : 'Chưa có ca chấm công nào được phát hành trong kỳ — chờ Store/HR xếp ca & xác nhận công.',
+        completedAt: hasTimesheet ? lastCheckInAt : '',
+      },
+      {
+        id: 'fin-bcc', order: 2, title: 'BCC — Bảng công từng ngày', done: hasBcc,
+        stat: hasBcc ? `${(fullShifts + partialShifts).toLocaleString('vi-VN')}/${totalShifts.toLocaleString('vi-VN')} ca có chấm công · ${absentShifts.toLocaleString('vi-VN')} ca vắng` : 'Chưa có dữ liệu',
+        reason: hasBcc ? '' : 'Chưa có bảng công ngày để đối soát — chờ dữ liệu chấm công của kỳ.',
+        completedAt: hasBcc ? lastCheckInAt : '',
+      },
+      {
+        id: 'fin-calculate', order: 3, title: 'Tính lương (công thức & nhập tay)', done: calculated,
+        stat: calculated ? `${slipCount} phiếu · ${slipHours.toLocaleString('vi-VN')} giờ · ${Math.round(slipNet).toLocaleString('vi-VN')} đ` : 'Chưa tính',
+        reason: calculated ? '' : (hasTimesheet ? 'Chưa có bảng lương — bấm "Tính lương" để tạo phiếu cho kỳ.' : 'Chưa có dữ liệu chấm công để tính lương.'),
+        completedAt: calculated ? String(run?.created_at || '') : '',
+      },
+      {
+        id: 'fin-payroll-sheet', order: 4, title: 'Payment — Bảng lương tháng', done: calculated && !!run,
+        stat: calculated && run ? `Kỳ ${run.run_id} (${runStatus || 'DRAFT'}) · ${slipCount} phiếu` : 'Chưa có kỳ lương',
+        reason: calculated && run ? '' : 'Hãy tính lương trước để có bảng lương tháng.',
+        completedAt: calculated && run ? String(run?.created_at || '') : '',
+      },
+      {
+        id: 'fin-payroll-periods', order: 5, title: 'Kỳ lương (DRAFT → PAID)', done: periodOpen,
+        stat: run ? `Trạng thái: ${runStatus || 'DRAFT'} · ${publishedCount}/${slipCount || 0} phiếu đã phát hành` : 'Chưa có kỳ lương',
+        reason: periodOpen ? '' : (run ? 'Kỳ lương đang DRAFT — cần Duyệt/Phát hành phiếu trước khi ký.' : 'Chưa có kỳ lương — hãy tính lương trước.'),
+        completedAt: periodOpen ? (maxTime(lastSlipPublishedAt, run?.approved_at, run?.published_at, run?.paid_at) || String(run?.updated_at || '')) : '',
+      },
+      {
+        id: 'fin-payslips', order: 6, title: 'Phiếu lương (KT ký → GĐ duyệt → NV ký)', done: allSigned,
+        stat: slipCount ? `${signedCount}/${slipCount} phiếu NV đã ký` : 'Chưa có phiếu',
+        reason: allSigned ? '' : (periodOpen ? 'Còn phiếu chưa được nhân viên ký xác nhận.' : 'Kỳ lương cần được DUYỆT/PHÁT HÀNH trước khi ký & phát hành phiếu lương.'),
+        completedAt: allSigned ? lastSlipConfirmedAt : '',
+      },
+      {
+        id: 'fin-payment', order: 7, title: 'Thanh toán (VietQR — Đã chuyển khoản)', done: allPaid,
+        stat: slipCount ? `${paidCount}/${slipCount} phiếu đã chuyển` : 'Chưa có phiếu',
+        reason: allPaid ? '' : ((signedCount > 0 || ['PUBLISHED', 'PAID'].includes(runStatus)) ? 'Còn phiếu chưa xác nhận chuyển khoản.' : 'Chờ nhân viên ký phiếu (CONFIRMED) trước khi chuyển khoản.'),
+        completedAt: allPaid ? lastSlipPaidAt : '',
+      },
     ];
-    return { period, steps, generatedAt: new Date().toISOString() };
+    // Khóa TUẦN TỰ ở backend: bước sau chỉ mở khi bước trước đã hoàn tất.
+    const steps = raw.map((s, i) => ({ ...s, open: i === 0 ? true : !!raw[i - 1].done }));
+    return { period, runId: run?.run_id || null, steps, generatedAt: new Date().toISOString() };
   }
 
   // --- Công thức lương theo file Excel (Finance) ---

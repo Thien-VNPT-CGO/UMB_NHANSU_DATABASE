@@ -235,22 +235,26 @@ export default function FinanceModule(props: FinanceModuleProps) {
   }, [activeTab, loadWorkflow, loadFinSheet, loadSlips, loadRuns, loadFormula, loadInputs, isUserEditing]);
 
   const handleRealtime = useCallback((evt: CustomEvent) => {
-    const ent = (evt.detail as any)?.entity;
+    const ent = String((evt.detail as any)?.entity || '');
     if (!ent) return;
-    const want = ent === 'payroll' || ent === 'payslips' || ent === 'all';
-    const att = ent === 'attendance' || ent === 'shift' || ent === 'swap' || ent === 'leave' || ent === 'all';
-    const needTimesheet = ['fin-timesheet', 'fin-bcc', 'fin-dashboard', 'fin-calculate', 'fin-payroll-sheet'].includes(activeTab);
-    const needPayslip = ['fin-payslips', 'fin-payment', 'fin-payroll-periods', 'fin-signatures'].includes(activeTab);
-    if ((want && needPayslip) || (att && needTimesheet)) {
-      // Debounce trailing 2s: 10 sự kiện liên tiếp trong 2s chỉ refresh 1 lần.
-      if (refreshTimerRef.current) return;
-      refreshTimerRef.current = setTimeout(() => {
-        refreshTimerRef.current = null;
-        if (!mountedRef.current) return;
-        refreshCurrentTab();
-      }, 2000);
-    }
-  }, [activeTab, refreshCurrentTab]);
+    // Mọi nguồn dữ liệu của quy trình (công, ca, nghỉ, đổi ca, lương, phiếu,
+    // nhân sự) đều có thể làm đổi trạng thái bước 1–7 → luôn nạp lại workflow
+    // ngay tại thời điểm dữ liệu vừa ghi xong (refreshCurrentTab có loadWorkflow).
+    const workflowEnt = [
+      'all', 'payroll', 'payslips', 'employees',
+      'attendance', 'shift', 'shift-rereg', 'schedules', 'schedule',
+      'swap', 'swaps', 'leave', 'leaves', 'weekly-off',
+      'adjustments', 'office-adjustments', 'office-attendance', 'office-leaves',
+    ].includes(ent);
+    if (!workflowEnt) return;
+    // Debounce trailing 2s: 10 sự kiện liên tiếp trong 2s chỉ refresh 1 lần.
+    if (refreshTimerRef.current) return;
+    refreshTimerRef.current = setTimeout(() => {
+      refreshTimerRef.current = null;
+      if (!mountedRef.current) return;
+      refreshCurrentTab();
+    }, 2000);
+  }, [refreshCurrentTab]);
 
   // Đổi lương 1 NV ở tab Cấu hình lương (máy này): bảng công + phiếu phải thấy
   // lương mới ngay, không chờ sự kiện socket vòng qua App (socket báo máy khác).

@@ -3536,24 +3536,35 @@ export class GoogleSheetsSyncService {
       if (keepIfEmpty('KY_LUONG', payrollRows, (fallback.payrollRuns || []).length)) {
         counts.payrollRuns = (fallback.payrollRuns || []).length;
       } else if (payrollRows && payrollRows.length > 0) {
+        const memRuns = new Map<string, any>(
+          (fallback.payrollRuns || []).map((r: any) => [String(r.run_id), r]),
+        );
         const mappedRuns = payrollRows
           .filter(r => r && (r[0] || r[1]))
-          .map(r => ({
-            run_id: r[0] || `RUN_${uuidv4().slice(0, 8)}`,
-            // Sheet có thể trả "2026-10-01" (USER_ENTERED đổi kỳ thành ngày).
-            period: normalizeSheetPeriod(r[1] || new Date().toISOString().slice(0, 7)),
-            branch_scope: 'ALL',
-            status: (r[2] as any) || 'DRAFT',
-            total_employees: 0,
-            total_hours: 0,
-            total_amount: Number(r[3]) || 0,
-            created_by: 'ADM_001',
-            created_at: r[4] || new Date().toISOString(),
-            updated_at: r[4] || new Date().toISOString(),
-            published_at: r[5] || undefined,
-            paid_at: r[6] || undefined,
-            version: 1,
-          }));
+          .map(r => {
+            const runId = r[0] || `RUN_${uuidv4().slice(0, 8)}`;
+            const ex = memRuns.get(String(runId));
+            const sheetTotal = parseSheetNumber(r[3]);
+            return {
+              run_id: runId,
+              // Sheet có thể trả "2026-10-01" (USER_ENTERED đổi kỳ thành ngày).
+              period: normalizeSheetPeriod(r[1] || new Date().toISOString().slice(0, 7)),
+              branch_scope: ex?.branch_scope || 'ALL',
+              status: (r[2] as any) || 'DRAFT',
+              // KY_LUONG không có cột số NV/số giờ — giữ số đã biết trong bộ nhớ,
+              // sau khi đọc PHIEU_LUONG sẽ tính lại từ chính các phiếu thật.
+              total_employees: Number(ex?.total_employees) || 0,
+              total_hours: Number(ex?.total_hours) || 0,
+              total_amount: sheetTotal !== undefined ? sheetTotal : (Number(ex?.total_amount) || 0),
+              // Không gán cứng ADM_001: giữ người tạo thật nếu đã biết.
+              created_by: ex?.created_by || 'SYSTEM',
+              created_at: r[4] || ex?.created_at || '',
+              updated_at: r[4] || ex?.updated_at || '',
+              published_at: r[5] || ex?.published_at || undefined,
+              paid_at: r[6] || ex?.paid_at || undefined,
+              version: Number(ex?.version) || 1,
+            };
+          });
         // MERGE theo run_id: kỳ vừa tính lại trong bộ nhớ nhưng Sheet chưa kịp
         // đẩy KHÔNG được biến mất sau lượt pull (lỗi "vừa tính lương xong đã
         // không thấy kỳ"). Bản trên Sheet thắng các cột trạng thái/tiền, nhưng
@@ -3585,7 +3596,11 @@ export class GoogleSheetsSyncService {
         counts.payslips = (fallback.payslips || []).length;
       } else if (slipRows.length > 0) {
         const numOr = (v: any) => (v === '' || v === undefined || v === null ? undefined : Number(v) || 0);
+        const memSlips = new Map<string, any>(
+          (fallback.payslips || []).map((s: any) => [String(s.item_id), s]),
+        );
         const mapSlipRow = (r: any) => {
+          const ex = memSlips.get(String(r[0]));
           const status: any = r[15] || 'DRAFT';
           const isFinal = ['PAID', 'CONFIRMED'].includes(String(status).toUpperCase());
           const luong_cb = numOr(r[18]);
@@ -3639,8 +3654,14 @@ export class GoogleSheetsSyncService {
             slip_published_at: String(r[36] || '') || undefined,
             slip_confirmed_at: String(r[37] || '') || undefined,
             slip_paid_at: String(r[38] || '') || undefined,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
+            // Mốc thời gian THẬT: giữ mốc đã có trong bộ nhớ; phiếu mới lấy mốc
+            // tạo kỳ lương (hoặc sự kiện sớm nhất có trên Sheet). KHÔNG gán
+            // `now` mỗi lượt pull — trước đây mọi phiếu bị dồn về cùng một thời
+            // điểm giả, làm "phiếu mới nhất" và mốc hoàn tất bước bị sai.
+            created_at: String(ex?.created_at || '') || String(
+              (fallback.payrollRuns || []).find((x: any) => String(x?.run_id) === String(r[1] || ''))?.created_at || ''
+            ) || String(r[36] || r[37] || r[38] || r[28] || r[30] || r[32] || ''),
+            updated_at: String(ex?.updated_at || '') || String(r[38] || r[37] || r[36] || r[32] || r[30] || r[28] || '') || String(ex?.created_at || ''),
             version: 1,
           };
         };
@@ -3653,6 +3674,30 @@ export class GoogleSheetsSyncService {
         fallback.payslips = [];
       }
 
+      // 10b1. Tổng hợp kỳ lương từ CHÍNH các phiếu vừa đọc. Tab KY_LUONG không
+      // có cột số nhân viên/số giờ nên trước đây pull gán cứng 0 — số liệu
+      // tổng hợp trên Dashboard/Kỳ lương bị sai cho tới khi tính lại.
+      try {
+        const byRun = new Map<string, any[]>();
+        for (const s of (fallback.payslips || []) as any[]) {
+          const rid = String(s?.run_id || '');
+          if (!rid) continue;
+          if (!byRun.has(rid)) byRun.set(rid, []);
+          byRun.get(rid)!.push(s);
+        }
+        fallback.payrollRuns = (fallback.payrollRuns || []).map((r: any) => {
+          const list = byRun.get(String(r.run_id)) || [];
+          if (list.length === 0) return r;
+          return {
+            ...r,
+            total_employees: new Set(list.map(s => String(s.employee_id || '')).filter(Boolean)).size,
+            total_hours: list.reduce((sum, s) => sum + (Number(s.standard_hours) || 0), 0),
+            total_amount: list.reduce((sum, s) => sum + (Number(s.net_pay ?? s.thuc_lanh) || 0), 0),
+          };
+        });
+        counts.payrollRuns = fallback.payrollRuns.length;
+      } catch { /* best-effort: số tổng hợp không được làm hỏng pull */ }
+
       // 10b2. Đọc CONG_THUC_LUONG + DULIEU_LUONG_KY (công thức & nhập tay Finance).
       const formulaRows = batch['CONG_THUC_LUONG'] || [];
       if (formulaRows.length > 0) {
@@ -3661,14 +3706,17 @@ export class GoogleSheetsSyncService {
           const fb: any = fallback as any;
           fb.payrollFormulas = fb.payrollFormulas || [];
           const ex = fb.payrollFormulas.find((f: any) => f.period === r[0]);
+          // Đọc SỐ THẬT: ô trống mới dùng mặc định. Trước đây `Number(x) || 21000`
+          // biến đơn giá 0 (hoặc ô lỗi định dạng) thành mặc định, tức là tự bịa
+          // dữ liệu lương thay vì phản ánh đúng thứ Kế toán đã lưu.
           const row = {
             period: r[0],
-            rateTV: Number(r[1]) || 21000,
-            rateCT: Number(r[2]) || 25500,
+            rateTV: parseSheetNumber(r[1]) ?? 21000,
+            rateCT: parseSheetNumber(r[2]) ?? 25500,
             // Legacy: đã bỏ phụ cấp OT, luôn 0 (không đọc lại đơn giá suất cũ).
             otPerSlot: 0,
-            otThreshold1: Number(r[4]) || 10,
-            otThreshold2: Number(r[5]) || 15,
+            otThreshold1: parseSheetNumber(r[4]) ?? 10,
+            otThreshold2: parseSheetNumber(r[5]) ?? 15,
             updatedBy: r[6] || undefined,
             updatedAt: r[7] || undefined,
           };

@@ -172,6 +172,15 @@ const healDraftShiftsSoon = (delayMs = 1500) => {
       try {
         if ((changedTabs || []).some(t => /^PHAN_CONG_CA(_P\d+)?$/i.test(String(t)))) healDraftShiftsSoon(2500);
       } catch { /* non-fatal */ }
+      // QUY TRÌNH KẾ TOÁN REALTIME: Sheet vừa đổi (sửa tay hoặc pull) các tab
+      // công/ca/nghỉ/đổi ca/lương → xóa cache bảng công để bước 1–2 và các bước
+      // sau cập nhật đúng ngay thời điểm dữ liệu về, không chờ TTL 45 giây.
+      try {
+        const payrollTabs = /^(PHAN_CONG_CA|SU_KIEN_DIEM_DANH|DON_NGHI_PHEP|DON_DOI_CA|KY_LUONG|PHIEU_LUONG|LICH_SU_GIAI_DOAN|CONG_THUC_LUONG|DULIEU_LUONG_KY|NHAN_VIEN_MASTER)(_P\d+)?$/i;
+        if ((changedTabs || []).some(t => payrollTabs.test(String(t)))) {
+          (services as any).payrollService?.invalidateFinanceTimesheetCache?.();
+        }
+      } catch { /* non-fatal */ }
       // Write do chính server phát ra đã được middleware bắn realtime theo entity
       // ngay khi thao tác; bắn thêm 'all' là 2 cổng web tải lại toàn bộ lần 2.
       // Ngoại lệ: vừa có webhook onEdit (sửa tay trên Sheet) thì luôn bắn, trừ khi
