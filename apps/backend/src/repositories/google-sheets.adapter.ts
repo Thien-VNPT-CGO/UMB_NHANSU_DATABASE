@@ -2070,6 +2070,9 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async updateSystemSettings(settings: any) {
     const updated = await this.fallbackAdapter.updateSystemSettings(settings);
+    // Luu snapshot ngay (gom 1.5s): doi luong khong mat khi restart truoc khi
+    // ghi Sheet kip xong. Truoc day thieu dong nay nen PUT ve thanh cong van mat.
+    this.scheduleRuntimeSnapshot();
     if (this.isConfigured) {
       const snapshot = { ...updated };
       this.scheduleSheetsWrite(() => this.syncService.syncSystemSettingsToSheet(snapshot), 'SETTINGS.update');

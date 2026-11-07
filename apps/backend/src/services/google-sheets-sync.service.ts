@@ -3592,7 +3592,24 @@ export class GoogleSheetsSyncService {
           }
         }
         if (Object.keys(settingsObj).length > 0) {
-          fallback.systemSettings = { ...fallback.systemSettings, ...settingsObj };
+          // Gộp theo từng nhân viên + so updatedAt cho cau hinh luong: du lieu moi
+          // trong bo nho (vua luu, sheet chua kip day) KHONG bi ban cu tren Sheet
+          // ghi de — loi "luu bao thanh cong nhung reload mat".
+          const curSettings: any = (fallback.systemSettings || {});
+          const mergedSettings: any = { ...curSettings, ...settingsObj };
+          const sheetSalary = (settingsObj as any)['employee_salary_config'];
+          const memSalary = curSettings['employee_salary_config'];
+          if (memSalary && typeof memSalary === 'object' && sheetSalary && typeof sheetSalary === 'object') {
+            const map: any = { ...memSalary };
+            for (const [eid, sheetEntry] of Object.entries(sheetSalary as Record<string, any>)) {
+              const memEntry = map[eid];
+              const memAt = Date.parse(String((memEntry as any)?.updatedAt || '')) || 0;
+              const sheetAt = Date.parse(String((sheetEntry as any)?.updatedAt || '')) || 0;
+              if (!memEntry || sheetAt > memAt) map[eid] = sheetEntry;
+            }
+            mergedSettings['employee_salary_config'] = map;
+          }
+          fallback.systemSettings = mergedSettings;
           counts.systemSettings = Object.keys(settingsObj).length;
           // Cấu hình giao diện/vận hành (ca mẫu, chính sách, bảo trì) được mirror
           // trong systemSettings để đồng bộ Sheets — pull về thì khôi phục lại
@@ -4232,11 +4249,12 @@ export class GoogleSheetsSyncService {
         await this.overwriteSheetData('CAU_HINH_HE_THONG', ['Tham Số', 'Giá Trị', 'Mô Tả', 'Cập Nhật Lần Cuối'], rows);
         return true;
       } catch (err: any) {
-        if (attempt >= backoffs.length || !this.isQuotaError(err)) {
+        const transient = this.isQuotaError(err) || /timeout|timed out|ETIMEDOUT|SHEETS_TIMEOUT|ECONN|socket|5\d\d/i.test(String(err?.message || err));
+        if (attempt >= backoffs.length || !transient) {
           console.warn('[GoogleSheetsSyncService] Lỗi ghi CAU_HINH_HE_THONG:', err?.message || err);
           return false;
         }
-        console.warn(`[GoogleSheetsSyncService] Ghi CAU_HINH_HE_THONG chạm quota (lần ${attempt + 1}) — chờ ${backoffs[attempt]}ms rồi thử lại.`);
+        console.warn(`[GoogleSheetsSyncService] Ghi CAU_HINH_HE_THONG loi tam thoi (lan ${attempt + 1}) — cho ${backoffs[attempt]}ms roi thu lai.`);
         await new Promise(r => setTimeout(r, backoffs[attempt]));
       }
     }

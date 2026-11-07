@@ -133,6 +133,7 @@ export const SalaryConfigView: React.FC<{ currentUser: any }> = ({ currentUser }
       setDrafts(prev => ({ ...prev, [employeeId]: { base: String(entry.base_salary ?? 0), allowance: String(entry.allowance ?? 0), mode: entry.pay_mode ?? '' } }));
       setDirty(prev => ({ ...prev, [employeeId]: false }));
       window.dispatchEvent(new CustomEvent('ubm:salary-config-saved'));
+      setNotice({ kind: 'ok', text: `Đã lưu lương — đang đồng bộ lên cổng nhân viên, admin và Google Sheet (realtime).` });
       return true;
     } catch (err: any) {
       setNotice({ kind: 'err', text: `Lưu lương thất bại: ${err?.message || err}` });
@@ -473,7 +474,22 @@ export const SalaryConfigView: React.FC<{ currentUser: any }> = ({ currentUser }
             )}
           </tbody>
         </table>
+        {loading && employees.length === 0 && (
+          <div style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
+            <div style={{ display: 'inline-block', width: '18px', height: '18px', border: '2px solid var(--border)', borderTopColor: 'var(--brand)', borderRadius: '50%', animation: 'salary-spin 0.8s linear infinite', verticalAlign: -4, marginRight: 8 }} />
+            Đang tải cấu hình lương realtime...
+            <style>{`@keyframes salary-spin { to { transform: rotate(360deg); } }`}</style>
+          </div>
+        )}
       </div>
+
+      {(Object.values(savingIds).some(Boolean) || savingAll) && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 14px', borderRadius: 'var(--radius-sm)', backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', color: '#1D4ED8', fontSize: '12px', fontWeight: 700 }}>
+          <span style={{ display: 'inline-block', width: '12px', height: '12px', border: '2px solid #BFDBFE', borderTopColor: '#1D4ED8', borderRadius: '50%', animation: 'salary-spin 0.8s linear infinite' }} />
+          Đang lưu + đồng bộ lương lên hệ thống, cổng nhân viên và Google Sheet...
+          <style>{`@keyframes salary-spin { to { transform: rotate(360deg); } }`}</style>
+        </div>
+      )}
 
       <div style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'flex', gap: '8px', alignItems: 'center' }}>
         <DollarSign size={12} />
