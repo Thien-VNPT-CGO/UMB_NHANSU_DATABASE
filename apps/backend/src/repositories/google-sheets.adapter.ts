@@ -1669,18 +1669,12 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
   async createPayrollRun(run: any, items: any) {
     const res = await this.fallbackAdapter.createPayrollRun(run, items);
     this.scheduleRuntimeSnapshot();
-    // FIX publish báo PAYSLIP_NOT_FOUND: phiếu vừa tạo chỉ nằm ở bộ nhớ, restart
-    // trước khi full-sync nền flush là mất (dòng KY_LUONG/PHIEU_LUONG trên Sheets
-    // chưa có) — đẩy tab phiếu đồng bộ ngay trong request, như phiếu đổi ca.
+    // FIX timeout calculate-formula (27-30s): KHÔNG await đẩy Sheets đồng bộ trong request.
+    // Phiếu đã bền ở snapshot đĩa + full-sync nền; pushPayslipsTab chạy nền để không treo
+    // 15s chờ Google API (đang quotaExceeded/timeout) khiến Tính lương/Công thức/Nhập tay "không được".
     if (this.isConfigured) {
-      try {
-        await Promise.race([
-          this.syncService.pushPayslipsTab(this.fallbackAdapter).catch(() => 0),
-          new Promise<number>(r => setTimeout(() => r(0), 15000)),
-        ]);
-      } catch {
-        this.scheduleFullSync('KY_LUONG.create-retry');
-      }
+      void this.syncService.pushPayslipsTab(this.fallbackAdapter).catch(() => 0);
+      this.scheduleFullSync('KY_LUONG.create');
     } else {
       this.scheduleFullSync('KY_LUONG.create');
     }
@@ -1716,18 +1710,11 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
 
   async updatePayslip(itemId: string, updates: any) {
     const res = await (this.fallbackAdapter as any).updatePayslip(itemId, updates);
-    // FIX mất chữ ký/trạng thái phiếu sau restart: pushPayslipsTab vốn được thiết
-    // kế "dùng sau mọi mutation phiếu lương" nhưng adapter chỉ gọi full-sync nền.
-    // Đẩy đồng bộ để ký/phát hành bền vững ngay (đúng ý comment gốc của hàm push).
+    // FIX timeout: phiếu đã bền ở snapshot đĩa; đẩy Sheets nền thay vì await tới 15s.
+    this.scheduleRuntimeSnapshot();
     if (this.isConfigured) {
-      try {
-        await Promise.race([
-          this.syncService.pushPayslipsTab(this.fallbackAdapter).catch(() => 0),
-          new Promise<number>(r => setTimeout(() => r(0), 15000)),
-        ]);
-      } catch {
-        this.scheduleFullSync('PHIEU_LUONG.update-retry');
-      }
+      void this.syncService.pushPayslipsTab(this.fallbackAdapter).catch(() => 0);
+      this.scheduleFullSync('PHIEU_LUONG.update');
     } else {
       this.scheduleFullSync('PHIEU_LUONG.update');
     }

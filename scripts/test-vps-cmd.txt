@@ -1,0 +1,28 @@
+cat > /tmp/vps-test2.mjs << 'ENDOFFILE'
+const BASE = "http://127.0.0.1:4005";
+for (const u of [{username:"finance", password:"Umbomilk@2027"}, {username:"admin", password:"Nguyenthanhthien@9999"}]) {
+  const login = await fetch(BASE + "/auth/admin/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(u)
+  });
+  console.log("LOGIN", u.username, login.status);
+  const j = await login.json().catch(() => ({}));
+  if (!j.token) continue;
+  const H = { "Content-Type": "application/json", Authorization: "Bearer " + j.token };
+  console.log("USER", JSON.stringify(j.user).slice(0, 200));
+  const period = "2026-10";
+  for (const [method, path, body] of [
+    ["GET", "/payroll/formula/" + period, null],
+    ["GET", "/payroll/inputs/" + period, null],
+    ["PUT", "/payroll/formula/" + period, { rateTV: 21000, rateCT: 25500, otPerSlot: 0, otThreshold1: 10, otThreshold2: 15 }],
+    ["POST", "/payroll/" + period + "/calculate-formula", { branchScope: "*" }]
+  ]) {
+    const t0 = Date.now();
+    const res = await fetch(BASE + path, { method, headers: H, body: body ? JSON.stringify(body) : undefined });
+    const text = await res.text();
+    console.log(u.username, method, path, res.status, Date.now() - t0 + "ms", text.slice(0, 300));
+  }
+}
+ENDOFFILE
+node /tmp/vps-test2.mjs
