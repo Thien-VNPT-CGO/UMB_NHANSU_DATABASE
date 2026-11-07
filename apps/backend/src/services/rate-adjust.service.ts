@@ -269,8 +269,11 @@ export class RateAdjustService {
           try {
             const res: any = await this.payrollService.calculateFormulaPayroll(period, '*', actorId);
             const inner = res?.result ?? res;
+            try { this.payrollService.invalidateFinanceTimesheetCache?.(period); } catch { /* noop */ }
             results.push({ period, action: 'recalculated', slips: Number(inner?.run?.total_employees || inner?.slips?.length || 0) || undefined });
+            this.log(`[rate-adjust] recalc ${period} OK`);
           } catch (e: any) {
+            this.log(`[rate-adjust] recalc ${period} FAILED: ${e?.message || e}`);
             results.push({ period, action: 'error', error: String(e?.message || e).slice(0, 200) });
           }
         }

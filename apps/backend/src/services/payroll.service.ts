@@ -750,9 +750,10 @@ export class PayrollService {
             if (!hasOut) hasOut = !!orphanLegFor(dayEvents, s, dayLiveIds, statusByAssign, consumedOrphans, 'CHECK_OUT', (inEvt as any)?.assignment_id);
             const template = SHIFT_TEMPLATES[s.shift_code];
             const hours = template ? template.duration_hours : 5;
-            // Giai đoạn đúng của ngày công (lịch sử/official_date), giá trị theo công thức kỳ của Finance.
-            const dayStage = rateOnDate(emp, s.date, hist, formula.rateTV, formula.rateCT).stage;
-            const dayRate = { stage: dayStage, rate: dayStage === 'TV' ? formula.rateTV : formula.rateCT };
+            // Đơn giá đúng của ngày công: lịch sử đơn giá từng NV (Điều chỉnh lương ca
+            // ghi vào lịch sử) ƯU TIÊN, công thức kỳ (rateTV/rateCT) chỉ là fallback.
+            // Trước đây dùng cứng công thức kỳ → điều chỉnh đơn giá không bao giờ đổi tiền.
+            const dayRate = rateOnDate(emp, s.date, hist, formula.rateTV, formula.rateCT);
             const shiftPay = hours * dayRate.rate;
             if (!inEvt || !hasOut) {
               absentShifts++;
@@ -2157,14 +2158,10 @@ export class PayrollService {
         const hasAbs = mine.some((e: any) => e.type === 'ABSENT');
         const template = (SHIFT_TEMPLATES as any)[(s as any).shift_code];
         const h = template ? Number(template.duration_hours) || 5 : 5;
-        // Giai đoạn đúng của ngày công (TV trước official_date); đơn giá lấy
-        // đúng công thức kỳ như calculateFormulaPayroll để Bảng Tổng Hợp,
-        // Tính lương và Phiếu NV khớp 100% sau mỗi lần Finance sửa công thức.
-        const dayStage = rateOnDate(emp, date, hist, Number((formula as any)?.rateTV) || STANDARD_HOURLY_RATES.PROBATION, Number((formula as any)?.rateCT) || rate).stage;
-        const rateVal = dayStage === 'TV'
-          ? (Number((formula as any)?.rateTV) || STANDARD_HOURLY_RATES.PROBATION)
-          : (Number((formula as any)?.rateCT) || rate || STANDARD_HOURLY_RATES.OFFICIAL);
-        const dayRate = { stage: dayStage, rate: rateVal };
+        // Đơn giá đúng của ngày công: lịch sử đơn giá từng NV (Điều chỉnh lương ca)
+        // ưu tiên, công thức kỳ là fallback — phải khớp 100% calculateFormulaPayroll
+        // để Bảng Tổng Hợp/Tính lương/Phiếu NV thấy cùng 1 số sau khi điều chỉnh.
+        const dayRate = rateOnDate(emp, date, hist, Number((formula as any)?.rateTV) || STANDARD_HOURLY_RATES.PROBATION, Number((formula as any)?.rateCT) || rate);
         const shiftPay = h * dayRate.rate;
         let status: 'DU' | 'THIEU' | 'VANG' = 'THIEU';
         let lateMin = 0;

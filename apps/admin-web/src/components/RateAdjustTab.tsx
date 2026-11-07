@@ -10,7 +10,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Building2, Search, RefreshCw, Loader2, Check, X, Banknote, Users, ArrowRight,
-  ShieldCheck, AlertCircle, History, Info, Lock, Filter,
+  ShieldCheck, AlertCircle, History, Info, Lock, Filter, Clock,
 } from 'lucide-react';
 import { apiRequest } from '../services/api.js';
 import { periodLabel } from '@ubm/shared';
@@ -400,6 +400,8 @@ export default function RateAdjustTab({ month, currentUser, showToast }: { month
                         <td style={{ fontWeight: 800 }}>{periodLabel(p.period)}</td>
                         <td>{p.action === 'recalculated'
                           ? <span style={{ color: 'var(--fin-green)', fontWeight: 800 }}><Check size={12} style={{ verticalAlign: -2 }} /> Đã tính lại kỳ (phiếu MỚI, chưa ký)</span>
+                          : p.action === 'queued'
+                            ? <span style={{ color: '#b45309', fontWeight: 800 }}><Clock size={12} style={{ verticalAlign: -2 }} /> Đang tính lại ở nền — vài phút sau mở lại tab Tính lương / Payment để xem số mới</span>
                           : p.action === 'skip_locked'
                             ? <span style={{ color: 'var(--fin-red)', fontWeight: 800 }}><Lock size={12} style={{ verticalAlign: -2 }} /> Bỏ qua — phiếu đã ký/PAID</span>
                             : <span style={{ color: 'var(--fin-red)' }}>Lỗi: {p.error || p.action}</span>}</td>
