@@ -1620,8 +1620,17 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         { id: req.user!.id, name: (req.user as any)?.fullName },
         { group: (emp as any)?.group },
       );
-      broadcastUpdate('employees', { action: 'salary-config', employeeId });
-      res.json({ success: true, employee_id: employeeId, config: entry });
+      // Đồng bộ lương NV này trên toàn hệ thống: xóa cache bảng công + đẩy Sheets
+      // + bắn realtime payroll/employees (admin + cổng NV tự tải lại, không chờ F5).
+      let salarySync: { ok: boolean; at: string } | undefined;
+      try {
+        if (typeof payrollService.syncEmployeeSalary === 'function') {
+          salarySync = payrollService.syncEmployeeSalary(employeeId, { action: 'salary-config', actorId: req.user!.id });
+        } else {
+          broadcastUpdate('employees', { action: 'salary-config', employeeId });
+        }
+      } catch { broadcastUpdate('employees', { action: 'salary-config', employeeId }); }
+      res.json({ success: true, employee_id: employeeId, config: entry, salarySync });
     } catch (err: any) {
       res.status(400).json({ error: err?.message || 'SALARY_CONFIG_WRITE_FAILED', message: err?.message || 'Không lưu được cấu hình lương.' });
     }

@@ -252,12 +252,21 @@ export default function FinanceModule(props: FinanceModuleProps) {
     }
   }, [activeTab, refreshCurrentTab]);
 
+  // Đổi lương 1 NV ở tab Cấu hình lương (máy này): bảng công + phiếu phải thấy
+  // lương mới ngay, không chờ sự kiện socket vòng qua App (socket báo máy khác).
+  const handleSalarySaved = useCallback(() => {
+    if (['fin-timesheet', 'fin-bcc', 'fin-dashboard', 'fin-calculate', 'fin-payroll-sheet'].includes(activeTab)) loadFinSheet();
+    if (activeTab === 'fin-calculate' && !isUserEditing()) loadInputs();
+    loadWorkflow();
+  }, [activeTab, loadFinSheet, loadInputs, loadWorkflow, isUserEditing]);
+
   useEffect(() => {
     window.addEventListener('ubm:fin-timesheet-reload', handleRealtime as any);
     window.addEventListener('ubm:payslips-reload', handleRealtime as any);
     window.addEventListener('data:updated', handleRealtime as any);
-    return () => { mountedRef.current = false; if (refreshTimerRef.current) { clearTimeout(refreshTimerRef.current); refreshTimerRef.current = null; } window.removeEventListener('ubm:fin-timesheet-reload', handleRealtime as any); window.removeEventListener('ubm:payslips-reload', handleRealtime as any); window.removeEventListener('data:updated', handleRealtime as any); };
-  }, [handleRealtime]);
+    window.addEventListener('ubm:salary-config-saved', handleSalarySaved as any);
+    return () => { mountedRef.current = false; if (refreshTimerRef.current) { clearTimeout(refreshTimerRef.current); refreshTimerRef.current = null; } window.removeEventListener('ubm:fin-timesheet-reload', handleRealtime as any); window.removeEventListener('ubm:payslips-reload', handleRealtime as any); window.removeEventListener('data:updated', handleRealtime as any); window.removeEventListener('ubm:salary-config-saved', handleSalarySaved as any); };
+  }, [handleRealtime, handleSalarySaved]);
 
   useEffect(() => {
     loadWorkflow();

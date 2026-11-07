@@ -320,6 +320,28 @@ export class PayrollService {
     void this.syncFinanceToSheets();
   }
 
+  /**
+   * Đồng bộ dữ liệu lương của 1 NV trên toàn bộ hệ thống sau khi đổi lương
+   * (salary-config LCB/phụ cấp/hình thức, hoặc điều chỉnh đơn giá ca):
+   *  - Xóa cache Bảng chấm công (45s) để lần đọc sau tính lại từ cấu hình mới.
+   *  - Hẹn đẩy các tab tài chính lên Google Sheets (gom debounce, không chặn request).
+   *  - Bắn realtime cả entity `payroll` (phiếu/bảng tạo lại số) lẫn `employees`
+   *    (hồ sơ/cấu hình lương) kèm employeeId để cả 2 cổng web tải lại ngay.
+   * Không tạo/sửa phiếu ở đây — phiếu là snapshot, vẫn cần Tính lương để chốt kỳ.
+   */
+  public syncEmployeeSalary(employeeId: string, opts?: { action?: string; actorId?: string }): { ok: boolean; at: string } {
+    const at = new Date().toISOString();
+    try { this.invalidateFinanceTimesheetCache(); } catch { /* noop */ }
+    try { this.scheduleFinanceToSheetsSync(2_000); } catch { /* noop */ }
+    try {
+      const action = String(opts?.action || 'salary-config');
+      this.notifySlipsChanged(action, { employeeId, at });
+      this.io?.emit?.('data:updated', { entity: 'employees', data: { action, employeeId, at }, timestamp: at });
+      this.io?.emit?.('data:updated', { entity: 'payroll', data: { action, employeeId, at }, timestamp: at });
+    } catch { /* noop */ }
+    return { ok: true, at };
+  }
+
   async calculateDraftPayroll(period: string, branchScope = '*', creatorId: string) {
     const runId = `PAY_${period.replace('-', '_')}_${Date.now()}`;
 

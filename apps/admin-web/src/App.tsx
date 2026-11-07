@@ -1786,6 +1786,17 @@ export function App() {
               window.dispatchEvent(new CustomEvent('ubm:payslips-reload'));
             } catch { /* non-fatal */ }
           }
+          // Đổi lương 1 NV (cấu hình LCB/phụ cấp/hình thức hoặc điều chỉnh đơn giá ca):
+          // Bảng chấm công Finance câu số từ cấu hình + lịch sử đơn giá mới — phải
+          // tải lại ngay trên mọi máy, nếu không cả cổng admin hiển thị lương cũ.
+          const salarySyncAction = String(payload?.data?.action || '');
+          if ((payload?.entity === 'payroll' || payload?.entity === 'employees' || payload?.entity === 'payslips') &&
+              (salarySyncAction === 'salary-config' || salarySyncAction === 'rate-adjust' || salarySyncAction === 'rate-adjust-recalc-done' || salarySyncAction.startsWith('calculate'))) {
+            try {
+              window.dispatchEvent(new CustomEvent('ubm:fin-timesheet-reload'));
+            } catch { /* non-fatal */ }
+            notifyReportsRealtime();
+          }
           // Realtime yêu cầu công việc nội bộ (GĐ - KT - HR - IT): mọi máy thấy
           // công việc đang tới bộ phận nào xử lý ngay lập tức.
           if (payload?.entity === 'internal-requests' || payload?.entity === 'all') {

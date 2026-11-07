@@ -234,8 +234,13 @@ export class RateAdjustService {
       } as any);
       applied.push({ employeeId: row.employeeId, newRate: row.newRate });
     }
-    // Vô hiệu cache bảng công ngay để lần đọc sau tính mới.
-    try { this.payrollService.invalidateFinanceTimesheetCache?.(); } catch { /* noop */ }
+    // Đồng bộ lương các NV vừa đổi trên toàn hệ thống (cache + Sheets + realtime
+    // cả 2 cổng web) — dùng chung helper với cấu hình lương.
+    try {
+      for (const a of applied) {
+        try { this.payrollService.syncEmployeeSalary?.(a.employeeId, { action: 'rate-adjust', actorId }); } catch { /* noop */ }
+      }
+    } catch { /* noop */ }
     try {
       this.deps.io?.emit?.('data:updated', { entity: 'payroll', data: { action: 'rate-adjust', count: applied.length, applyPast: !!opts.applyPast, at: stamp }, timestamp: stamp });
     } catch { /* noop */ }
