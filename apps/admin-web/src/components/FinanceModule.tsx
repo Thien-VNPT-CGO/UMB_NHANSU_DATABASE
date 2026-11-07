@@ -199,7 +199,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
   // Gộp về 1 lần refresh "trailing" 2s, chỉ khi đang ở tab cần dữ liệu đó.
   const refreshTimerRef = useRef<any>(null);
   const api = useCallback((path: string, opts?: RequestInit) => apiRequest(path, opts), []);
-  const post = useCallback((path: string, body: any) => api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) }), [api]);
+  const post = useCallback((path: string, body: any, extra?: any) => api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}), ...extra } as any), [api]);
   const put = useCallback((path: string, body: any) => api(path, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) }), [api]);
 
   // Fix ReferenceError: Cannot access 'Bt' before initialization (TDZ):
@@ -411,10 +411,10 @@ export default function FinanceModule(props: FinanceModuleProps) {
     if (!window.confirm(`TÍNH LƯƠNG ${periodLabel(month)} theo CÔNG THỨC EXCEL?\nTỔNG CỘNG = LCB + giờ công + OT thêm + Bonus; THỰC LÃNH = TỔNG CỘNG − KPI − phạt − ứng − đồng phục.\nHệ thống sẽ tạo/cập nhật kỳ lương và phiếu cho toàn bộ nhân viên.`)) return;
     setCalcBusy(true);
     try {
-      const r: any = await post(`/payroll/${encodeURIComponent(month)}/calculate-formula`, { branchScope: '*' });
+      const r: any = await post(`/payroll/${encodeURIComponent(month)}/calculate-formula`, { branchScope: '*' }, { _timeoutMs: 180000 });
       const res = r?.result ?? r;
       showToast(`Đã tính lương ${periodLabel(month)}: ${res?.run?.total_employees ?? '?'} NV — thực lãnh ${formatVND(res?.run?.total_amount || 0)}`);
-      await post(`/payroll/period-slips/${encodeURIComponent(month)}/ensure`, { branchScope: '*' }).catch(() => null);
+      await post(`/payroll/period-slips/${encodeURIComponent(month)}/ensure`, { branchScope: '*' }, { _timeoutMs: 180000 }).catch(() => null);
       await Promise.all([loadSlips(), loadRuns(), loadWorkflow()]);
       refreshCurrentTab();
     } catch (e: any) { showToast(e?.message || 'Tính lương thất bại'); } finally { setCalcBusy(false); }

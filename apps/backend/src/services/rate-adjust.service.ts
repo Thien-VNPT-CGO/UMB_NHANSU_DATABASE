@@ -118,19 +118,27 @@ export class RateAdjustService {
     return { period, effectiveFrom: effFrom, rows };
   }
 
+  /** Lấy slips 1 kỳ có cache theo request — tránh gọi O(N×P) lần getPeriodSlips ở preview/commit. */
+  private async slipsForPeriod(period: string, cache: Map<string, any[]>) {
+    if (cache.has(period)) return cache.get(period)!;
+    let slips: any[] = [];
+    try {
+      const data: any = await this.payrollService.getPeriodSlips(period);
+      slips = Array.isArray(data?.slips) ? data.slips : [];
+    } catch { slips = []; }
+    cache.set(period, slips);
+    return slips;
+  }
+
   /** Kỳ nào được tính lại: kỳ CHƯA có phiếu NV ký/PAID (mọi phiếu đều DRAFT, hoặc chưa có phiếu).
    *  Kỳ đã có ≥1 phiếu CONFIRMED/PAID → BỎ QUA tuyệt đối (không đổi số tiền NV đã ký/đã nhận). */
-  private async affectedPeriods(opts: RateAdjustOptions) {
+  private async affectedPeriods(opts: RateAdjustOptions, cache?: Map<string, any[]>) {
     const cur = currentPeriodVN();
     const from = opts.pastFromPeriod && PERIOD_RE.test(opts.pastFromPeriod) ? opts.pastFromPeriod : cur;
     const periods = opts.applyPast ? periodsBetween(from <= cur ? from : cur, cur) : [];
     const out: Array<{ period: string; slips: number; draft: number; confirmed: number; paid: number; action: 'recalc' | 'skip_locked' }> = [];
     for (const p of periods) {
-      let slips: any[] = [];
-      try {
-        const data: any = await this.payrollService.getPeriodSlips(p);
-        slips = Array.isArray(data?.slips) ? data.slips : [];
-      } catch { slips = []; }
+      const slips = await this.slipsForPeriod(p, cache ?? new Map());
       const confirmed = slips.filter(s => String(s?.status || '').toUpperCase() === 'CONFIRMED').length;
       const paid = slips.filter(s => String(s?.status || '').toUpperCase() === 'PAID').length;
       const draft = slips.length - confirmed - paid;
@@ -151,7 +159,8 @@ export class RateAdjustService {
     if (reason.length < 3) throw new Error('MISSING_REASON: bắt buộc nhập lý do điều chỉnh!');
     const effFrom = opts.effectiveFrom;
     const formula = await this.formulaFor(currentPeriodVN());
-    const periods = await this.affectedPeriods(opts);
+    const slipsCache = new Map<string, any[]>();
+    const periods = await this.affectedPeriods(opts, slipsCache);
     const recalcSet = new Set(periods.filter(p => p.action === 'recalc').map(p => p.period));
     const rows = [];
     let estTotal = 0;
@@ -162,14 +171,11 @@ export class RateAdjustService {
       if (!emp) { rows.push({ employeeId: ch.employeeId, ok: false, error: 'NOT_FOUND' } as any); continue; }
       const hist = await this.repo.getStageHistory(ch.employeeId).catch(() => []);
       const oldRate = this.rateOf(emp, hist, effFrom, formula);
-      // Ước tính chênh lệch: Σ giờ trên phiếu (kỳ sẽ tính lại) × delta
+      // Ước tính chênh lệch: Σ giờ trên phiếu (kỳ sẽ tính lại) × delta (dùng cache theo kỳ)
       let estDelta = 0;
       for (const p of recalcSet) {
-        let slip: any = null;
-        try {
-          const data: any = await this.payrollService.getPeriodSlips(p);
-          slip = (Array.isArray(data?.slips) ? data.slips : []).find((s: any) => String(s?.employee_id) === String(ch.employeeId)) || null;
-        } catch { slip = null; }
+        const slips = await this.slipsForPeriod(p, slipsCache);
+        const slip = slips.find((s: any) => String(s?.employee_id) === String(ch.employeeId)) || null;
         if (!slip) continue;
         const isPro = normalizeStage(emp?.employment_status) === 'PROBATION';
         const hrs = Number(isPro ? (slip?.tv_hours ?? slip?.standard_hours) : (slip?.ct_hours ?? slip?.standard_hours)) || 0;
@@ -200,7 +206,13 @@ export class RateAdjustService {
     };
   }
 
-  /** Commit: ghi lịch sử đơn giá + (nếu chọn) tính lại các kỳ đủ điều kiện. */
+  /**
+   * Commit: ghi lịch sử đơn giá + (nếu chọn) tính lại các kỳ đủ điều kiện.
+   * FIX timeout: ghi history (nhẹ, ~ms/NV) xong TRẢ NGAY; phần tính lại lương
+   * hồi tố (calculateFormulaPayroll quét toàn bộ NV × ca × sự kiện) + đồng bộ
+   * Sheets chạy NỀN sau response. Trước đây await 100% trong request → vượt
+   * timeout client (60s) & Nginx /api (60s) → abort/retry gây trùng lịch sử.
+   */
   async commit(changes: RateAdjustChange[], opts: RateAdjustOptions, actorId: string) {
     const preview = await this.preview(changes, opts); // validate lại toàn bộ
     const valid = preview.rows.filter(r => r.ok);
@@ -222,23 +234,8 @@ export class RateAdjustService {
       } as any);
       applied.push({ employeeId: row.employeeId, newRate: row.newRate });
     }
-    // Hồi tố: tính lại các kỳ đủ điều kiện
-    const recalcResults: Array<{ period: string; action: string; slips?: number; error?: string }> = [];
-    if (opts.applyPast) {
-      for (const p of preview.periods) {
-        if (p.action !== 'recalc') { recalcResults.push({ period: p.period, action: 'skip_locked' }); continue; }
-        try {
-          const res: any = await this.payrollService.calculateFormulaPayroll(p.period, '*', actorId);
-          const inner = res?.result ?? res;
-          recalcResults.push({ period: p.period, action: 'recalculated', slips: Number(inner?.run?.total_employees || inner?.slips?.length || 0) || undefined });
-        } catch (e: any) {
-          recalcResults.push({ period: p.period, action: 'error', error: String(e?.message || e).slice(0, 200) });
-        }
-      }
-    }
-    // Vô hiệu cache bảng công + đẩy Sheets 1 lần + báo realtime
+    // Vô hiệu cache bảng công ngay để lần đọc sau tính mới.
     try { this.payrollService.invalidateFinanceTimesheetCache?.(); } catch { /* noop */ }
-    try { await this.payrollService.syncFinanceToSheets({ skipSlips: false }); } catch { /* best-effort */ }
     try {
       this.deps.io?.emit?.('data:updated', { entity: 'payroll', data: { action: 'rate-adjust', count: applied.length, applyPast: !!opts.applyPast, at: stamp }, timestamp: stamp });
     } catch { /* noop */ }
@@ -255,13 +252,67 @@ export class RateAdjustService {
         created_at: stamp,
       });
     } catch { /* audit best-effort */ }
-    this.log(`[rate-adjust] ${actorId} applied=${applied.length} applyPast=${!!opts.applyPast}`);
+
+    const recalcPeriods = opts.applyPast
+      ? (preview.periods || []).filter(p => p.action === 'recalc').map(p => p.period)
+      : [];
+    const skippedPeriods = opts.applyPast
+      ? (preview.periods || []).filter(p => p.action !== 'recalc').map(p => ({ period: p.period, action: 'skip_locked' }))
+      : [];
+
+    if (recalcPeriods.length > 0) {
+      // Chạy nền: tính lại từng kỳ + đẩy Sheets 1 lần sau khi xong.
+      // Không await → client nhận kết quả ngay, không còn timeout/retry.
+      void (async () => {
+        const results: Array<{ period: string; action: string; slips?: number; error?: string }> = [];
+        for (const period of recalcPeriods) {
+          try {
+            const res: any = await this.payrollService.calculateFormulaPayroll(period, '*', actorId);
+            const inner = res?.result ?? res;
+            results.push({ period, action: 'recalculated', slips: Number(inner?.run?.total_employees || inner?.slips?.length || 0) || undefined });
+          } catch (e: any) {
+            results.push({ period, action: 'error', error: String(e?.message || e).slice(0, 200) });
+          }
+        }
+        // calculateFormulaPayroll đã tự sync Sheets sau mỗi kỳ; gom 1 lượt cuối (schedule để không chặn).
+        try {
+          if (typeof this.payrollService.scheduleFinanceToSheetsSync === 'function') {
+            this.payrollService.scheduleFinanceToSheetsSync(5_000);
+          } else {
+            await this.payrollService.syncFinanceToSheets({ skipSlips: false });
+          }
+        } catch { /* best-effort */ }
+        try {
+          this.deps.io?.emit?.('data:updated', {
+            entity: 'payroll',
+            data: { action: 'rate-adjust-recalc-done', count: applied.length, periods: results, at: new Date().toISOString() },
+            timestamp: new Date().toISOString(),
+          });
+        } catch { /* noop */ }
+      })();
+    } else if (!opts.applyPast) {
+      // Không hồi tố: không cần tính lại; chỉ đẩy Sheets nền (không chặn).
+      try {
+        if (typeof this.payrollService.scheduleFinanceToSheetsSync === 'function') {
+          this.payrollService.scheduleFinanceToSheetsSync(5_000);
+        } else {
+          void this.payrollService.syncFinanceToSheets({ skipSlips: false }).catch(() => null);
+        }
+      } catch { /* noop */ }
+    }
+
+    this.log(`[rate-adjust] ${actorId} applied=${applied.length} applyPast=${!!opts.applyPast} recalcBackground=${recalcPeriods.length}`);
     return {
       applied,
       skipped: preview.rows.filter(r => !r.ok),
-      periods: recalcResults,
+      // Tương thích ngược: kỳ khóa vẫn liệt kê; kỳ recalc báo queued (chạy nền sau response).
+      periods: [
+        ...recalcPeriods.map(p => ({ period: p, action: 'queued' })),
+        ...skippedPeriods,
+      ] as Array<{ period: string; action: string }>,
+      recalc: recalcPeriods.length > 0 ? 'background' : 'none',
       appliedAt: stamp,
-    };
+    } as any;
   }
 
   /** Lịch sử điều chỉnh đơn giá (lọc theo ghi chú [RATE_ADJUST]). */

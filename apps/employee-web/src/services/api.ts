@@ -49,15 +49,20 @@ export function clearApiCache(): void {
   inflightGets.clear();
 }
 
+function stripInternalOpts(options: RequestInit): RequestInit {
+  const { _timeoutMs, _wakeRounds, _refreshed, _noCache, ...rest }: any = options || {};
+  return rest as RequestInit;
+}
+
 function fetchWithTimeout(url: string, options: RequestInit = {}, ms = 45000): Promise<Response> {
   const method = String(options.method || 'GET').toUpperCase();
   // Ghi (gửi phiếu/điểm danh) phải trả lỗi sớm để người dùng biết bấm lại,
   // thay vì treo 60s. Ảnh điểm danh đã nén ≤800KB nên 30s là đủ cho 3G yếu.
   const defaultMs = (method === 'POST' || method === 'PUT' || method === 'DELETE') ? 30000 : ms;
-  const timeoutMs = (options as any)?._timeoutMs || defaultMs;
+  const timeoutMs = Number((options as any)?._timeoutMs) || defaultMs;
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
-  return fetch(url, { ...options, signal: ctrl.signal }).finally(() => clearTimeout(t));
+  return fetch(url, { ...stripInternalOpts(options), signal: ctrl.signal }).finally(() => clearTimeout(t));
 }
 
 // Server có thể vừa khởi động lại (VD nhánh vps restart backend): fetch đầu tiên

@@ -14045,7 +14045,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         const res = await apiRequest(`/payroll/${period}/calculate`, {
           method: 'POST',
           body: JSON.stringify({ branchScope }),
-        });
+          _timeoutMs: 180000,
+        } as any);
         const r = (res as any)?.result ?? res;
         showToast(`Đã tính lương ${period}: ${r?.run?.total_employees ?? '?'} NV, ${Number(r?.run?.total_amount || 0).toLocaleString('vi-VN')}đ!`);
         if (onRefreshData) await onRefreshData();
@@ -14068,7 +14069,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         const res = await apiRequest(`/payroll/${period}/calculate-formula`, {
           method: 'POST',
           body: JSON.stringify({ branchScope }),
-        });
+          _timeoutMs: 180000,
+        } as any);
         const r = (res as any)?.result ?? res;
         showToast(`Đã tính theo Excel ${period}: ${r?.run?.total_employees ?? '?'} NV, thực lãnh ${Number(r?.run?.total_amount || 0).toLocaleString('vi-VN')}đ!`);
         if (onRefreshData) await onRefreshData();

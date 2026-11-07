@@ -152,11 +152,12 @@ export default function RateAdjustTab({ month, currentUser, showToast }: { month
 
   const doPreview = useCallback(async () => {
     if (!canPreview) { showToast('Nhập đơn giá mới cho ít nhất 1 NV + lý do (tối thiểu 3 ký tự).'); return; }
+    if (previewBusy) return;
     setPreviewBusy(true);
     try {
       const data: any = await apiRequest('/payroll/rates/adjust/preview', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(buildPayload()),
-      });
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(buildPayload()), _timeoutMs: 120000,
+      } as any);
       setPreview(data);
     } catch (e: any) {
       showToast(e?.message || 'Không tạo được bản xem trước');
@@ -165,16 +166,20 @@ export default function RateAdjustTab({ month, currentUser, showToast }: { month
   }, [canPreview, effectiveFrom, applyPast, pastFromPeriod, reason, validChanges, showToast]);
 
   const doCommit = useCallback(async () => {
+    if (commitBusy) return; // chặn bấm đúp -> tránh ghi trùng lịch sử đơn giá
     setCommitBusy(true);
     try {
       const data: any = await apiRequest('/payroll/rates/adjust/commit', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(buildPayload()),
-      });
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(buildPayload()), _timeoutMs: 120000,
+      } as any);
       setCommitResult(data);
       setPreview(null);
       setNewRates({});
       setChecked({});
-      showToast(`Đã áp dụng đơn giá mới cho ${data?.applied?.length ?? 0} nhân viên`);
+      const queued = (data?.periods || []).filter((p: any) => p?.action === 'queued').length;
+      showToast(queued > 0
+        ? `Đã áp dụng đơn giá mới cho ${data?.applied?.length ?? 0} nhân viên — đang tính lại ${queued} kỳ hồi tố ở nền (vài phút), hệ thống sẽ tự cập nhật.`
+        : `Đã áp dụng đơn giá mới cho ${data?.applied?.length ?? 0} nhân viên`);
       load();
     } catch (e: any) {
       showToast(e?.message || 'Áp dụng thất bại');

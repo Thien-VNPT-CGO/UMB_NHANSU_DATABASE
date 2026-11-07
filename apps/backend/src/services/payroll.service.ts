@@ -614,7 +614,8 @@ export class PayrollService {
       period, rateTV, rateCT, otPerSlot: 0, otThreshold1: t1, otThreshold2: t2, updatedBy: actorId,
     });
     this.invalidateFinanceTimesheetCache(period);
-    await this.syncFinanceToSheets({ skipSlips: true });
+    // FIX timeout: Sheets là export một chiều, không chặn response (payroll đã persist DB).
+    this.scheduleFinanceToSheetsSync(2_000);
     return res;
   }
 
@@ -853,7 +854,10 @@ export class PayrollService {
         };
         const created = await this.repo.createPayrollRun(runRecord, payslipItems);
         this.notifySlipsChanged('calculate-draft', { runId, period });
-        await this.syncFinanceToSheets();
+        // FIX timeout (/payroll/:period/calculate-formula mất kết nối): Sheets là export một
+        // chiều chậm (Google API) — không await trong singleWriterQueue để không khóa hàng đợi
+        // và không vượt timeout 60s của client/Nginx. Đẩy Sheets nền sau 2s.
+        this.scheduleFinanceToSheetsSync(2_000);
         return created;
       },
     });

@@ -29,13 +29,18 @@ export function setCustomApiUrl(url: string) {
 
 let authToken = localStorage.getItem('ubm_admin_token') || '';
 
+function stripInternalOpts(options: RequestInit): RequestInit {
+  const { _timeoutMs, _wakeRounds, _refreshed, _noCache, ...rest }: any = options || {};
+  return rest as RequestInit;
+}
+
 function fetchWithTimeout(url: string, options: RequestInit = {}, ms = 45000): Promise<Response> {
   const method = String(options.method || 'GET').toUpperCase();
   const defaultMs = (method === 'POST' || method === 'PUT' || method === 'DELETE') ? 60000 : ms;
-  const timeoutMs = (options as any)?._timeoutMs || defaultMs;
+  const timeoutMs = Number((options as any)?._timeoutMs) || defaultMs;
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
-  return fetch(url, { ...options, signal: ctrl.signal }).finally(() => clearTimeout(t));
+  return fetch(url, { ...stripInternalOpts(options), signal: ctrl.signal }).finally(() => clearTimeout(t));
 }
 
 // Server có thể vừa khởi động lại (VD nhánh vps restart backend): fetch đầu tiên
@@ -185,7 +190,22 @@ export async function apiRequest<T = any>(endpoint: string, options: RequestInit
 
     return data;
   } catch (err: any) {
-    // Lỗi mạng lần đầu (server tạm ngắt / đang khởi động) -> tự đánh thức backend rồi thử lại 1 lần.
+    // Lỗi mạng/timeout:
+    // - GET: tự đánh thức backend rồi thử lại tối đa 2 vòng (server vừa restart).
+    // - GHI (POST/PUT/DELETE): KHÔNG tự gửi lại — server có thể đã xử lý nhưng
+    //   phản hồi bị mất, gửi lại gây trùng (đắc biệt /payroll/rates/adjust/commit
+    //   sẽ ghi thêm 1 lượt lịch sử đơn giá). Báo rõ để người dùng kiểm tra rồi bấm lại.
+    const method = String(options.method || 'GET').toUpperCase();
+    const isWrite = method !== 'GET' && method !== 'HEAD';
+    if (isWrite) {
+      if (isNetworkFailure(err)) {
+        const timeoutErr = String(err?.name || err?.message || '').toLowerCase().includes('abort');
+        throw new Error(timeoutErr
+          ? `Máy chủ xử lý lâu khi gửi (${endpoint}) — thao tác có thể ĐÃ được ghi. Vui lòng tải lại trang để kiểm tra kết quả trước khi bấm lại (hệ thống không tự gửi trùng).`
+          : `Không gửi được lên máy chủ (${endpoint}) — kiểm tra mạng rồi thử lại. Dữ liệu bạn vừa nhập vẫn còn trên form.`);
+      }
+      throw err;
+    }
     const wokenRounds = (options as any)._wakeRounds ?? 0;
     if (isNetworkFailure(err) && wokenRounds < 2 && endpoint !== '/ping' && endpoint !== '/version') {
       const round = wokenRounds + 1;
