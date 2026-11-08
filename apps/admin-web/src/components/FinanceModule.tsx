@@ -250,8 +250,9 @@ export default function FinanceModule(props: FinanceModuleProps) {
     const ent = String((evt.detail as any)?.entity || '');
     if (!ent) return;
     // Mọi nguồn dữ liệu của quy trình (công, ca, nghỉ, đổi ca, lương, phiếu,
-    // nhân sự) đều có thể làm đổi trạng thái bước 1–7 → luôn nạp lại workflow
-    // ngay tại thời điểm dữ liệu vừa ghi xong (refreshCurrentTab có loadWorkflow).
+    // nhân sự) đều có thể làm đổi trạng thái bước 1–7 → nạp lại workflow ngay
+    // tại thời điểm dữ liệu vừa ghi xong để tab khóa/mở realtime (không F5).
+    // Workflow là API nhẹ nên gọi NGAY; bảng số liệu nặng hơn vẫn gom 2s mới tải.
     const workflowEnt = [
       'all', 'payroll', 'payslips', 'employees',
       'attendance', 'shift', 'shift-rereg', 'schedules', 'schedule',
@@ -259,14 +260,15 @@ export default function FinanceModule(props: FinanceModuleProps) {
       'adjustments', 'office-adjustments', 'office-attendance', 'office-leaves',
     ].includes(ent);
     if (!workflowEnt) return;
-    // Debounce trailing 2s: 10 sự kiện liên tiếp trong 2s chỉ refresh 1 lần.
+    try { void loadWorkflow(); } catch { /* noop */ }
+    // Debounce trailing 2s cho bảng: 10 sự kiện liên tiếp trong 2s chỉ tải 1 lần.
     if (refreshTimerRef.current) return;
     refreshTimerRef.current = setTimeout(() => {
       refreshTimerRef.current = null;
       if (!mountedRef.current) return;
       refreshCurrentTab();
     }, 2000);
-  }, [refreshCurrentTab]);
+  }, [refreshCurrentTab, loadWorkflow]);
 
   // Đổi lương 1 NV ở tab Cấu hình lương (máy này): bảng công + phiếu phải thấy
   // lương mới ngay, không chờ sự kiện socket vòng qua App (socket báo máy khác).
@@ -295,15 +297,35 @@ export default function FinanceModule(props: FinanceModuleProps) {
     if (activeTab === 'fin-payment' || activeTab === 'fin-payslips') loadDriveStatus();
   }, [activeTab, month, loadWorkflow, loadFinSheet, loadRuns, loadSlips, loadFormula, loadInputs, loadDriveStatus]);
 
+  // QUY TRÌNH TUẦN TỰ + KHÓA KHI HOÀN TẤT (realtime theo workflow-status):
+  //  - Bước ĐÃ HOÀN TẤT -> khóa lại (tránh sửa số liệu đã chốt).
+  //  - Bước CHƯA MỞ (bước trước chưa xong) -> khóa, chờ tới lượt.
+  //  - Chỉ bước ĐANG XỬ LÝ (chưa xong, bước trước đã xong) là mở.
+  // Workflow nạp lại ngay khi có sự kiện socket (handleRealtime gọi loadWorkflow),
+  // nên khóa/mở thay đổi realtime, không cần F5.
   const tabLocked = useMemo(() => {
-    if (!workflow) return new Map<string, { locked: boolean; reason: string; stat: string }>();
-    const m = new Map<string, { locked: boolean; reason: string; stat: string }>();
+    if (!workflow?.steps?.length) return new Map<string, { locked: boolean; done: boolean; reason: string; completedReason: string; stat: string; completedAt: string }>();
+    const m = new Map<string, { locked: boolean; done: boolean; reason: string; completedReason: string; stat: string; completedAt: string }>();
     for (const s of workflow.steps) {
       const idx = workflow.steps.indexOf(s);
       const prev = idx > 0 ? workflow.steps[idx - 1] : null;
-      m.set(s.id, { locked: !!(prev && !prev.done), reason: prev && !prev.done ? prev.reason : '', stat: s.stat });
+      const done = !!s.done;
+      const pending = !!(prev && !prev.done);
+      m.set(s.id, {
+        locked: done || pending,
+        done,
+        reason: pending ? (prev.reason || 'Vui lòng hoàn tất bước trước.') : '',
+        completedReason: done ? `Bước "${s.title || s.id}" đã hoàn tất — tab đã khóa để giữ số liệu đã chốt.` : '',
+        stat: s.stat,
+        completedAt: s.completedAt || '',
+      });
     }
     return m;
+  }, [workflow]);
+  // Bước đang xử lý: chưa done đầu tiên theo đúng thứ tự workflow.
+  const currentOpenStep = useMemo(() => {
+    if (!workflow?.steps?.length) return null;
+    return workflow.steps.find((s: any) => !s.done) || null;
   }, [workflow]);
 
   const isTabOpen = (id: string) => { const l = tabLocked.get(id); return !l ? true : !l.locked; };
@@ -470,13 +492,38 @@ export default function FinanceModule(props: FinanceModuleProps) {
   }, [post, month, showToast, loadSlips, loadRuns, loadWorkflow, refreshCurrentTab, flushAllPendingInputs]);
 
   const open = isTabOpen(activeTab);
-  const lockReason = tabLocked.get(activeTab)?.reason || '';
+  const activeLock = tabLocked.get(activeTab);
+  const activeStepDone = !!activeLock?.done;
+  const lockReason = activeStepDone ? (activeLock?.completedReason || '') : (activeLock?.reason || '');
+  const lockMeta = activeLock?.completedAt ? `Hoàn tất lúc: ${fmtDateTime(activeLock.completedAt)}` : '';
   const firstOpenStep = useMemo(() => {
+    if (currentOpenStep?.id) return currentOpenStep.id;
     for (const s of PROCESS_STEPS) { if (s.id === 'fin-dashboard') continue; if (isTabOpen(s.id)) return s.id; }
     return 'fin-dashboard';
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workflow]);
+  }, [workflow, currentOpenStep]);
   const goTab = useCallback((id: string) => { onNavigateTab?.(id); }, [onNavigateTab]);
+
+  // Chuyển trạng thái KỲ LƯƠNG cấp run: DRAFT -> RECONCILED (Đối soát) -> APPROVED (Phê duyệt).
+  // PUBLISHED/PAID của PHỤC KHÔNG dùng ở đây: phiếu được phát hành/chi trả TỪNG PHIẾU
+  // ở tab 7 (đủ chữ ký 3 bên) và tab 8 — nút chuyển trạng thái cấp kỳ sẽ phát hành/
+  // chi trả hàng loạt không qua chữ ký, sai quy trình xuất phiếu.
+  const payRunAction = useCallback(async (runId: string, action: 'reconcile' | 'approve') => {
+    const labels: Record<string, string> = {
+      reconcile: 'Đối soát (đánh dấu kỳ đã chốt số tính)',
+      approve: 'Phê duyệt (người duyệt phải khác người tính)',
+    };
+    if (!window.confirm(`${labels[action]} kỳ ${runId}?`)) return;
+    try {
+      await post(`/payroll/${encodeURIComponent(runId)}/${action}`, {});
+      showToast(`Đã ${labels[action].toLowerCase()} kỳ lương!`);
+      refreshCurrentTab();
+    } catch (e: any) {
+      const msg = String(e?.message || '');
+      if (msg.includes('SEPARATION_OF_DUTIES_VIOLATION')) showToast('⚠️ Người tính lương không được tự duyệt kỳ của mình!');
+      else showToast(e?.message || 'Lỗi chuyển trạng thái kỳ!');
+    }
+  }, [post, showToast, refreshCurrentTab]);
 
   return (
     <div ref={rootRef} className="fin-shell">
@@ -561,8 +608,8 @@ export default function FinanceModule(props: FinanceModuleProps) {
       {/* ═══════════ STEPPER QUY TRÌNH ═══════════ */}
       <nav className="fin-stepper-wrap" aria-label="Các bước xử lý lương">
         <div className="fin-stepper-title">
-          <span>QUY TRÌNH KẾ TOÁN — XỬ LÝ TUẦN TỰ</span>
-          <em>Bước sau chỉ mở khi bước trước hoàn tất</em>
+          <span>QUY TRÌNH KẾ TOÁN — XỬ LÝ TUẦN TỰ (REALTIME)</span>
+          <em>Chỉ bước đang xử lý được mở · xong bước nào khóa bước đó · bước sau mở khi bước trước xong{currentOpenStep ? ` — đang xử lý: ${currentOpenStep.title}` : ' — đã hoàn tất toàn bộ'}</em>
         </div>
         <div className="fin-stepper">
           {PROCESS_STEPS.map(t => {
@@ -571,7 +618,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
             const wfStep = workflow?.steps?.find((s: any) => s.id === t.id);
             const done = !!wfStep?.done;
             const cur = activeTab === t.id;
-            const cls = locked ? 'is-locked' : done ? 'is-done' : cur ? 'is-current' : 'is-open';
+            const cls = done && locked ? 'is-done is-locked' : locked ? 'is-locked' : cur ? 'is-current' : 'is-open';
             const Icon = t.icon;
             return (
               <button
@@ -580,12 +627,12 @@ export default function FinanceModule(props: FinanceModuleProps) {
                 className={`fin-step ${cls}`}
                 disabled={locked}
                 onClick={() => goTab(t.id)}
-                title={locked ? (l?.reason || 'Chưa mở khóa — hoàn tất bước trước') : t.label}
+                title={done ? (l?.completedReason || 'Đã hoàn tất — tab đã khóa') : locked ? (l?.reason || 'Chưa mở khóa — hoàn tất bước trước') : t.label}
                 aria-current={cur ? 'step' : undefined}
               >
                 <span className="fin-step-dot">{done ? <Check size={15} strokeWidth={3} /> : locked ? <Lock size={13} /> : <Icon size={15} />}</span>
                 <span className="fin-step-name">{t.step}. {t.label}</span>
-                <span className="fin-step-status">{locked ? 'Đã khóa' : done ? '✓ Hoàn tất' : (wfStep?.stat || 'Đang xử lý')}</span>
+                <span className="fin-step-status">{done ? '✓ Xong — đã khóa' : locked ? 'Đã khóa' : (wfStep?.stat || 'Đang xử lý')}</span>
               </button>
             );
           })}
@@ -607,12 +654,16 @@ export default function FinanceModule(props: FinanceModuleProps) {
       {/* ═══════════ LOCK SCREEN — KHÔNG render nội dung tab khi còn khóa ═══════════ */}
       {!open && (
         <div className="fin-lockscreen" role="alert">
-          <div className="fin-lock-icon"><Lock size={30} /></div>
-          <h3>Bước này đang bị khóa theo quy trình kế toán</h3>
+          <div className="fin-lock-icon">{activeStepDone ? <Check size={30} strokeWidth={3} /> : <Lock size={30} />}</div>
+          <h3>{activeStepDone ? 'Bước đã hoàn tất — tab đã khóa' : 'Bước này đang bị khóa theo quy trình kế toán'}</h3>
           <p>{lockReason || 'Vui lòng hoàn tất các bước trước trong quy trình.'}</p>
-          <button type="button" className="fin-btn fin-btn-dark" onClick={() => goTab(firstOpenStep)}>
-            <ArrowRight size={14} /> Quay về bước đang xử lý
-          </button>
+          {lockMeta && <p style={{ fontSize: 11, color: 'var(--fin-muted)' }}>{lockMeta} — số liệu bước này đã chốt, không sửa trên tab này nữa.</p>}
+          {activeStepDone && currentOpenStep && <p style={{ fontSize: 11 }}>Bước đang xử lý tiếp theo: <b>{currentOpenStep.title}</b></p>}
+          {firstOpenStep !== activeTab && (
+            <button type="button" className="fin-btn fin-btn-dark" onClick={() => goTab(firstOpenStep)}>
+              <ArrowRight size={14} /> Quay về bước đang xử lý
+            </button>
+          )}
         </div>
       )}
 
@@ -624,7 +675,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
           {activeTab === 'fin-bcc' && <BccTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} formatVND={formatVND} />}
           {activeTab === 'fin-calculate' && <CalculateTab month={month} formula={formula} setFormula={setFormula} inputs={inputs} inputsLoading={inputsLoading} allEmployees={allEmployees} finSheet={finSheet} finSheetLoading={finSheetLoading} salaryConfigs={salaryConfigs} saveFormula={saveFormula} upsertInput={upsertInput} saveAllInputs={saveAllInputs} loadFormula={loadFormula} loadInputs={loadInputs} runCalculate={runCalculate} calcBusy={calcBusy} runs={runs} inputsSaving={inputsSaving} pendingCount={pendingCount} inputsSavedAt={inputsSavedAt} />}
           {activeTab === 'fin-payroll-sheet' && <PayrollSheetTab month={month} slips={slips} allEmployees={allEmployees} formatVND={formatVND} stageBadge={stageBadge} />}
-          {activeTab === 'fin-payroll-periods' && <PayrollPeriodsTab month={month} runs={runs} runsLoading={runsLoading} loadRuns={loadRuns} slips={slips} allEmployees={allEmployees} formatVND={formatVND} runCalculate={runCalculate} calcBusy={calcBusy} />}
+          {activeTab === 'fin-payroll-periods' && <PayrollPeriodsTab month={month} runs={runs} runsLoading={runsLoading} loadRuns={loadRuns} slips={slips} allEmployees={allEmployees} formatVND={formatVND} runCalculate={runCalculate} calcBusy={calcBusy} payRunAction={payRunAction} onNavigateTab={goTab} />}
           {activeTab === 'fin-payslips' && <PayslipsTab month={month} slips={slips} slipsLoading={slipsLoading} allEmployees={allEmployees} formatVND={formatVND} loadSlips={loadSlips} stageBadge={stageBadge} slipQrUrl={slipQrUrl} fastSignLap={fastSignLap} publishSlip={publishSlip} markPaidSlip={markPaidSlip} syncSlipDrive={syncSlipDrive} downloadSlipPdf={downloadSlipPdf} />}
           {activeTab === 'fin-payment' && <PaymentTab month={month} slips={slips} allEmployees={allEmployees} formatVND={formatVND} loadSlips={loadSlips} slipQrUrl={slipQrUrl} markPaidSlip={markPaidSlip} downloadSlipPdf={downloadSlipPdf} />}
           {activeTab === 'fin-signatures' && <SignatureTemplatesTab currentUser={currentUser} showToast={showToast} />}
@@ -1228,88 +1279,178 @@ const RUN_STATUS_STYLE: Record<string, { bg: string; fg: string; label: string }
   CONFIRMED: { bg: '#FEF9C3', fg: '#854D0E', label: 'Đã xác nhận' },
 };
 
-function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmployees, formatVND, runCalculate, calcBusy }: any) {
+const PERIOD_SLIP_FILTERS = [
+  { key: 'ALL', label: 'Tất cả' },
+  { key: 'DRAFT', label: 'Nháp' },
+  { key: 'PUBLISHED', label: 'Đã gửi NV' },
+  { key: 'CONFIRMED', label: 'NV đã ký' },
+  { key: 'PAID', label: 'Đã chi trả' },
+];
+
+function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmployees, formatVND, runCalculate, calcBusy, payRunAction, onNavigateTab }: any) {
+  const [q, setQ] = useState('');
+  const [statusFilter, setStatusFilter] = useState('ALL');
   const monthRuns = useMemo(() => (Array.isArray(runs) ? runs : []).filter((r: any) => r.period === month).sort((a: any, b: any) => String(b?.created_at || '').localeCompare(String(a?.created_at || ''))), [runs, month]);
   const latest = monthRuns[0] || null;
-  // Tổng hợp theo CHI NHÁNH từ phiếu của kỳ (số liệu sống)
-  const byBranch = useMemo(() => {
-    const map = new Map<string, any[]>();
-    for (const s of slips || []) {
-      const k = String(slipBranchId(s, allEmployees) || 'KHAC');
-      const arr = map.get(k);
-      if (arr) arr.push(s); else map.set(k, [s]);
-    }
-    return orderedBranchKeys(map.keys()).map(k => ({ id: k, rows: map.get(k)! }));
-  }, [slips, allEmployees]);
-  const grandThuc = (slips || []).reduce((s: number, x: any) => s + (Number(x?.thuc_lanh ?? x?.net_pay) || 0), 0);
-  const grandHours = (slips || []).reduce((s: number, x: any) => s + (Number(x?.standard_hours) || 0), 0);
+  const allSlips = useMemo(() => Array.isArray(slips) ? slips : [], [slips]);
+  const grandThuc = allSlips.reduce((s: number, x: any) => s + (Number(x?.thuc_lanh ?? x?.net_pay) || 0), 0);
+  const grandHours = allSlips.reduce((s: number, x: any) => s + (Number(x?.standard_hours) || 0), 0);
+  const tongCongOf = (x: any) => Number(x?.tong_cong) || ((Number(x?.standard_pay) || 0) + (Number(x?.luong_cb) || 0) + (Number(x?.ot_extra) || 0) + (Number(x?.bonus) || 0));
+  // Số học xuất phiếu: phiếu chỉ được xuất khi đủ KT lập + GĐ duyệt; NV ký xong mới CK được.
+  const readiness = useMemo(() => ({
+    needKtSign: allSlips.filter((s: any) => !s.sign_lap).length,
+    needGdSign: allSlips.filter((s: any) => s.sign_lap && !s.sign_giamdoc).length,
+    readyToSend: allSlips.filter((s: any) => s.sign_lap && s.sign_giamdoc && String(s.status || '') === 'DRAFT').length,
+    waitingNvSign: allSlips.filter((s: any) => String(s.status || '') === 'PUBLISHED').length,
+    waitingPayment: allSlips.filter((s: any) => String(s.status || '') === 'CONFIRMED').length,
+    paid: allSlips.filter((s: any) => String(s.status || '') === 'PAID').length,
+  }), [allSlips]);
+  const filteredSlips = useMemo(() => {
+    let rows = [...allSlips];
+    if (statusFilter !== 'ALL') rows = rows.filter((s: any) => String(s?.status || '').toUpperCase() === statusFilter);
+    const kw = q.trim().toLowerCase();
+    if (kw) rows = rows.filter((s: any) => [s?.full_name, s?.fullName, s?.employee_code, s?.employeeCode, slipBranchId(s, allEmployees), branchLabelOf(slipBranchId(s, allEmployees))].some(v => String(v || '').toLowerCase().includes(kw)));
+    rows.sort((a: any, b: any) => String(b?.updated_at || b?.created_at || '').localeCompare(String(a?.updated_at || a?.created_at || '')) || String(a?.full_name || '').localeCompare(String(b?.full_name || '')));
+    return rows;
+  }, [allSlips, statusFilter, q, allEmployees]);
+  const RUN_STAGES = ['DRAFT', 'RECONCILED', 'APPROVED', 'PUBLISHED', 'PAID'];
+  const RUN_STAGE_LABEL: Record<string, string> = { DRAFT: 'Nháp', RECONCILED: 'Đối soát', APPROVED: 'Duyệt', PUBLISHED: 'Đã phát hành', PAID: 'Chi trả' };
+  const latestStageIdx = latest ? RUN_STAGES.indexOf(String(latest.status || 'DRAFT').toUpperCase()) : -1;
+  const canReconcile = latest && String(latest.status || '').toUpperCase() === 'DRAFT';
+  const canApprove = latest && String(latest.status || '').toUpperCase() === 'RECONCILED';
+  const canGoSign = latest && ['APPROVED', 'PUBLISHED', 'PAID'].includes(String(latest.status || '').toUpperCase());
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <TabHead step={6} title="Kỳ lương — DRAFT → PAID" desc={`Vòng đời kỳ lương ${periodLabel(month)}: tính → đối soát → duyệt → phát hành → thanh toán. Bảng dưới gộp theo TỪNG CHI NHÁNH.`}>
+      <TabHead step={6} title="Kỳ lương — DRAFT → PAID" desc={`Vòng đời kỳ lương ${periodLabel(month)}: Tính → Đối soát → Duyệt → từng phiếu gửi NV → NV ký → chi trả. Bảng dưới hiển thị TỪNG PHIẾU LƯƠNG NHÂN VIÊN (mỗi NV 1 dòng).`}>
         <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={loadRuns}><RefreshCw size={13} /> Tải lại</button>
         <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={runCalculate} disabled={calcBusy} title="Tính lại kỳ (tạo kỳ mới — không mất dữ liệu kỳ cũ)">
           {calcBusy ? <Loader2 size={13} className="fin-spin" /> : <Calculator size={13} />} {latest ? 'Tính lại kỳ' : 'Tính lương ngay'}
         </button>
       </TabHead>
 
-      {/* Bảng tổng hợp THEO CHI NHÁNH */}
+      {/* Vòng đời kỳ mới nhất DRAFT -> PAID */}
       <div className="fin-card">
-        <CardHead title={`Kỳ ${periodLabel(month)} — Tổng hợp theo chi nhánh`} icon={<Building2 size={14} color="#E85D92" />} sub="Gộp từ phiếu của kỳ đang hiển thị">
-          <span className="fin-chip-stat">{(slips || []).length} phiếu</span>
+        <CardHead title="Tiến độ kỳ lương (kỳ mới nhất)" icon={<CalendarRange size={14} color="#E85D92" />} sub={latest ? `${latest.run_id} — tạo ${fmtDateTime(latest.created_at)}` : 'Chưa có kỳ — hãy tính lương trước'}>
+          {latest && (() => { const st = RUN_STATUS_STYLE[String(latest.status || 'DRAFT')] || RUN_STATUS_STYLE.DRAFT; return <span className="fin-badge" style={{ color: st.fg, background: st.bg, borderColor: st.fg + '40' }}><span className="fin-badge-dot" />{st.label}</span>; })()}
+        </CardHead>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 0, flexWrap: 'wrap', padding: '12px 16px' }}>
+          {RUN_STAGES.map((s, i) => {
+            const done = latestStageIdx >= 0 && i <= latestStageIdx;
+            const cur = latestStageIdx === i;
+            const st = RUN_STATUS_STYLE[s] || RUN_STATUS_STYLE.DRAFT;
+            return (
+              <span key={s} style={{ display: 'inline-flex', alignItems: 'center' }}>
+                <span style={{ padding: '6px 14px', borderRadius: '999px', fontSize: 12, fontWeight: 800, background: done ? st.bg : '#F8FAFC', color: done ? st.fg : '#9CA3AF', border: `1.5px solid ${done ? st.fg + '40' : '#E5E7EB'}`, boxShadow: cur ? '0 0 0 3px rgba(16,185,129,0.15)' : undefined }}>
+                  {done ? '✓ ' : ''}{RUN_STAGE_LABEL[s]}
+                </span>
+                {i < RUN_STAGES.length - 1 && <span style={{ width: 22, height: 2, background: latestStageIdx > i ? '#10B981' : '#E5E7EB', display: 'inline-block' }} />}
+              </span>
+            );
+          })}
+          {!latest && <span style={{ fontSize: 11, color: 'var(--fin-muted)' }}>Chưa có kỳ nào — bấm “Tính lương ngay”.</span>}
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', padding: '0 16px 14px', alignItems: 'center' }}>
+          {canReconcile && <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={() => payRunAction(latest.run_id, 'reconcile')}>Đối soát kỳ</button>}
+          {canApprove && <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={() => payRunAction(latest.run_id, 'approve')}>Phê duyệt kỳ</button>}
+          {canGoSign && <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={() => onNavigateTab?.('fin-payslips')}><Send size={12} /> Sang tab Phiếu lương: ký & gửi NV</button>}
+          {!canReconcile && !canApprove && !canGoSign && latest && <span style={{ fontSize: 11, color: 'var(--fin-muted)' }}>Kỳ chưa đủ điều kiện chuyển trạng thái tiếp — theo quy trình, phiếu lương phát hành/chi trả TỪNG PHIẾU ở tab 7–8 (đủ chữ ký 3 bên).</span>}
+          {latest && <span style={{ fontSize: 10.5, color: 'var(--fin-muted)' }}>Xuất phiếu đúng quy trình: KT ký lập → GĐ ký duyệt → KT gửi NV → NV ký → KT chuyển khoản.</span>}
+        </div>
+      </div>
+
+      {/* Rà soát chuẩn bị xuất phiếu */}
+      <div className="fin-card">
+        <CardHead title="Rà soát chuẩn bị xuất phiếu lương" icon={<ShieldCheck size={14} color="#047857" />} sub="Đếm realtime từ trạng thái từng phiếu — không ước lượng">
+          <span className="fin-chip-stat">{allSlips.length} phiếu</span>
+          <span className="fin-chip-stat">{readiness.paid} đã chi trả</span>
+        </CardHead>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8, padding: '12px 16px' }}>
+          {[
+            { label: 'Chờ KT ký lập', value: readiness.needKtSign, hint: 'Tab 7: “Kế toán ký lập”' },
+            { label: 'Chờ GĐ duyệt', value: readiness.needGdSign, hint: 'Cổng Giám đốc duyệt' },
+            { label: 'Sẵn sàng gửi NV', value: readiness.readyToSend, hint: 'Tab 7: “Gửi NV ký”' },
+            { label: 'Chờ NV ký', value: readiness.waitingNvSign, hint: 'NV ký trong Cổng NV' },
+            { label: 'Chờ chuyển khoản', value: readiness.waitingPayment, hint: 'Tab 8: quét QR & CK' },
+            { label: 'Đã chi trả', value: readiness.paid, hint: 'Khóa + PDF lên Drive' },
+          ].map((c: any) => (
+            <div key={c.label} className="fin-kpi" style={{ padding: 10 }}>
+              <div style={{ minWidth: 0 }}>
+                <div className="fin-kpi-label">{c.label}</div>
+                <div className="fin-kpi-value" style={{ fontSize: 20 }}>{c.value}</div>
+                <div className="fin-kpi-sub">{c.hint}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Danh sách PHIẾU LƯƠNG từng nhân viên */}
+      <div className="fin-card">
+        <CardHead title={`Danh sách phiếu lương — ${periodLabel(month)} (${filteredSlips.length}/${allSlips.length} phiếu)`} icon={<Receipt size={14} color="#E85D92" />} sub="Mỗi NV 1 dòng — đúng phiếu xuất cho nhân viên, không gộp chi nhánh">
+          <SearchBox value={q} onChange={setQ} />
           <span className="fin-chip-stat">{r1(grandHours).toFixed(1)} giờ</span>
           <span className="fin-chip-stat">THỰC LÃNH {formatVND(grandThuc)}</span>
         </CardHead>
-        {runsLoading && slips.length === 0 ? (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '10px 16px', borderBottom: '1px solid #f1f5f9' }}>
+          {PERIOD_SLIP_FILTERS.map(f => (
+            <button key={f.key} type="button" className={`fin-pill${statusFilter === f.key ? ' is-active' : ''}`} onClick={() => setStatusFilter(f.key)}>
+              {f.label} <span style={{ opacity: .7 }}>({f.key === 'ALL' ? allSlips.length : allSlips.filter((s: any) => String(s?.status || '').toUpperCase() === f.key).length})</span>
+            </button>
+          ))}
+        </div>
+        {runsLoading && allSlips.length === 0 ? (
           <div className="fin-empty">Đang tải kỳ lương…</div>
-        ) : byBranch.length === 0 ? (
+        ) : allSlips.length === 0 ? (
           <div className="fin-empty">
             <Inbox size={28} style={{ margin: '0 auto 8px', color: '#cbd5e1' }} />
             <div style={{ fontWeight: 800, color: 'var(--fin-ink)', marginBottom: 4 }}>Chưa có phiếu lương cho {periodLabel(month)}</div>
-            <div style={{ marginBottom: 12 }}>Bấm “Tính lương ngay” ở góc phải trên — hệ thống sẽ sinh kỳ và phiếu cho toàn bộ nhân viên.</div>
+            <div style={{ marginBottom: 12 }}>Bấm “Tính lương ngay” ở góc phải trên — hệ thống sẽ sinh phiếu cho toàn bộ nhân viên.</div>
             <button type="button" className="fin-btn fin-btn-primary" onClick={runCalculate} disabled={calcBusy}>{calcBusy ? <Loader2 size={15} className="fin-spin" /> : <Calculator size={15} />} TÍNH LƯƠNG NGAY</button>
           </div>
         ) : (
           <div className="fin-table-wrap">
-            <table className="fin-table" style={{ minWidth: 1060 }}>
+            <table className="fin-table" style={{ minWidth: 1180 }}>
               <thead>
-                <tr><th>Chi nhánh</th><th className="num">NV</th><th className="num">Giờ công</th><th className="num">Lương ca</th><th className="num">TỔNG CỘNG</th><th className="num">THỰC LÃNH</th><th className="ctr">Đã ký NV</th><th className="ctr">Đã chuyển</th><th>Tiến độ</th></tr>
+                <tr><th>Họ tên</th><th>Mã NV</th><th>Chi nhánh</th><th className="num">Giờ công</th><th className="num">Lương ca</th><th className="num">LCB</th><th className="num">TỔNG CỘNG</th><th className="num">Trừ</th><th className="num">THỰC LÃNH</th><th>Trạng thái phiếu</th></tr>
               </thead>
               <tbody>
-                {byBranch.map(g => {
-                  const rows = g.rows;
-                  const hours = r1(sumBy(rows, 'standard_hours'));
-                  const stdPay = sumBy(rows, 'standard_pay');
-                  const tongCong = rows.reduce((s: number, x: any) => s + (Number(x.tong_cong) || ((Number(x.standard_pay) || 0) + (Number(x.luong_cb) || 0) + (Number(x.ot_extra) || 0) + (Number(x.bonus) || 0))), 0);
-                  const thuc = rows.reduce((s: number, x: any) => s + (Number(x.thuc_lanh ?? x.net_pay) || 0), 0);
-                  const signed = rows.filter((x: any) => ['CONFIRMED', 'PAID'].includes(String(x.status))).length;
-                  const paid = rows.filter((x: any) => String(x.status) === 'PAID').length;
-                  const pct = rows.length ? Math.round((paid / rows.length) * 100) : 0;
+                {filteredSlips.map((s: any) => {
+                  const st = String(s?.status || 'DRAFT').toUpperCase();
+                  const colors: Record<string, { bg: string; fg: string }> = { DRAFT: { bg: '#F1F5F9', fg: '#475569' }, PUBLISHED: { bg: '#ECFDF5', fg: '#047857' }, CONFIRMED: { bg: '#FEF3C7', fg: '#92400E' }, PAID: { bg: '#DCFCE7', fg: '#166534' } };
+                  const c = colors[st] || colors.DRAFT;
+                  const tongCong = tongCongOf(s);
+                  const tru = Math.max(0, tongCong - (Number(s?.thuc_lanh ?? s?.net_pay) || 0));
                   return (
-                    <tr key={g.id}>
-                      <td style={{ fontWeight: 800 }}><Building2 size={13} style={{ verticalAlign: -2, marginRight: 6, color: 'var(--fin-brand)' }} />{branchLabelOf(g.id)}</td>
-                      <td className="num">{rows.length}</td>
-                      <td className="num">{hours.toFixed(1)}</td>
-                      <td className="num fin-money">{formatVND(stdPay)}</td>
+                    <tr key={s?.item_id || `${s?.employee_id}-${s?.period}`}>
+                      <td style={{ fontWeight: 700 }}>{s?.full_name || s?.fullName || '—'}</td>
+                      <td className="ctr fin-mono">{s?.employee_code || s?.employeeCode || '—'}</td>
+                      <td>{branchLabelOf(slipBranchId(s, allEmployees))}</td>
+                      <td className="num">{Number(s?.standard_hours || 0).toFixed(1)}</td>
+                      <td className="num fin-money">{formatVND(Number(s?.standard_pay) || 0)}</td>
+                      <td className="num fin-money">{formatVND(Number(s?.luong_cb) || 0)}</td>
                       <td className="num fin-money">{formatVND(tongCong)}</td>
-                      <td className="num fin-money" style={{ fontWeight: 800, color: 'var(--fin-green)' }}>{formatVND(thuc)}</td>
-                      <td className="ctr">{signed}/{rows.length}</td>
-                      <td className="ctr" style={{ fontWeight: 800, color: paid === rows.length ? 'var(--fin-green)' : 'var(--fin-ink)' }}>{paid}/{rows.length}</td>
+                      <td className="num fin-money" style={{ color: tru > 0 ? '#DC2626' : 'inherit' }}>{tru > 0 ? formatVND(tru) : '—'}</td>
+                      <td className="num fin-money" style={{ fontWeight: 800, color: 'var(--fin-green)' }}>{formatVND(Number(s?.thuc_lanh ?? s?.net_pay) || 0)}</td>
                       <td>
-                        <div className="fin-progress" title={`${pct}% đã chuyển khoản`}><div style={{ width: `${pct}%` }} /></div>
-                        <div style={{ fontSize: 8.5, color: 'var(--fin-muted)', marginTop: 3, textAlign: 'right' }}>{pct}% đã CK</div>
+                        <span className="fin-badge" style={{ color: c.fg, background: c.bg, borderColor: c.fg + '40' }}><span className="fin-badge-dot" />{st}</span>
+                        <div style={{ display: 'flex', gap: 4, marginTop: 4, flexWrap: 'wrap' }}>
+                          <span className={`fin-sign${s?.sign_lap ? ' ok' : ' pending'}`}>{s?.sign_lap ? '✓ KT' : 'KT?'}</span>
+                          <span className={`fin-sign${s?.sign_giamdoc ? ' ok' : ' pending'}`}>{s?.sign_giamdoc ? '✓ GĐ' : 'GĐ?'}</span>
+                          <span className={`fin-sign${s?.sign_nhanvien ? ' ok-green' : ' pending'}`}>{s?.sign_nhanvien ? '✓ NV' : 'NV?'}</span>
+                        </div>
                       </td>
                     </tr>
                   );
                 })}
+                {filteredSlips.length === 0 && <tr><td colSpan={10} className="fin-empty">{q || statusFilter !== 'ALL' ? 'Không có phiếu phù hợp bộ lọc.' : 'Chưa có phiếu lương kỳ này.'}</td></tr>}
                 <tr className="fin-grand">
-                  <td>TỔNG CỘNG</td>
-                  <td className="num">{(slips || []).length}</td>
-                  <td className="num">{grandHours.toFixed(1)}</td>
-                  <td className="num fin-money">{formatVND(sumBy(slips || [], 'standard_pay'))}</td>
-                  <td className="num fin-money">{formatVND((slips || []).reduce((s: number, x: any) => s + (Number(x.tong_cong) || 0), 0))}</td>
+                  <td>TỔNG CỘNG</td><td className="ctr">{allSlips.length}</td><td />
+                  <td className="num">{r1(grandHours).toFixed(1)}</td>
+                  <td className="num fin-money">{formatVND(sumBy(allSlips, 'standard_pay'))}</td>
+                  <td className="num fin-money">{formatVND(sumBy(allSlips, 'luong_cb'))}</td>
+                  <td className="num fin-money">{formatVND(allSlips.reduce((s: number, x: any) => s + tongCongOf(x), 0))}</td>
+                  <td className="num fin-money">{formatVND(Math.max(0, allSlips.reduce((s: number, x: any) => s + tongCongOf(x), 0) - grandThuc))}</td>
                   <td className="num fin-money">{formatVND(grandThuc)}</td>
-                  <td className="ctr">{(slips || []).filter((x: any) => ['CONFIRMED', 'PAID'].includes(String(x.status))).length}/{(slips || []).length}</td>
-                  <td className="ctr">{(slips || []).filter((x: any) => String(x.status) === 'PAID').length}/{(slips || []).length}</td>
                   <td />
                 </tr>
               </tbody>
@@ -1318,9 +1459,9 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
         )}
       </div>
 
-      {/* Vòng đời kỳ (runs) */}
+      {/* Các kỳ trong tháng (metadata) */}
       <div className="fin-card">
-        <CardHead title="Các kỳ lương trong tháng" icon={<CalendarRange size={14} color="#E85D92" />} sub="Mỗi lần TÍNH LƯƠNG tạo một kỳ mới — kỳ cũ vẫn giữ nguyên để đối chiếu" />
+        <CardHead title="Các kỳ lương trong tháng" icon={<Building2 size={14} color="#E85D92" />} sub="Mỗi lần TÍNH LƯƠNG tạo một kỳ mới — kỳ cũ vẫn giữ nguyên để đối chiếu" />
         <div className="fin-table-wrap" style={{ maxHeight: 'none' }}>
           <table className="fin-table">
             <thead>
@@ -1341,7 +1482,7 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
                   </tr>
                 );
               })}
-              {monthRuns.length === 0 && <tr><td colSpan={7} className="fin-empty">Chưa có kỳ — vẫn hiển thị bảng tổng hợp theo chi nhánh ở trên.</td></tr>}
+              {monthRuns.length === 0 && <tr><td colSpan={7} className="fin-empty">Chưa có kỳ — danh sách phiếu từng nhân viên ở trên sẽ hiện sau khi tính lương.</td></tr>}
             </tbody>
           </table>
         </div>

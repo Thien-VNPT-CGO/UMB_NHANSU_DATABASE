@@ -1011,27 +1011,31 @@ export class MockSheetsAdapter implements ISheetsRepository {
       throw new Error('SEPARATION_OF_DUTIES_VIOLATION: Payroll creator cannot approve own payroll run');
     }
 
+    // QUY TRÌNH TUẦN TỰ CẤP KỲ: DRAFT -> RECONCILED -> APPROVED -> PUBLISHED -> PAID.
+    // Nhấn lại trạng thái hiện tại là idempotent (retry/timeout), không phải nhảy cóc.
+    // Trạng thái phiếu TỪNG PHIẾU (DRAFT -> PUBLISHED -> CONFIRMED -> PAID) do
+    // publishSlip/markSlipPaid quản lý theo chữ ký 3 bên — KHÔNG được gán hàng
+    // loạt ở đây, nếu không sẽ bỏ qua chữ ký GĐ/NV (sai quy trình xuất phiếu).
+    const RUN_ORDER = ['DRAFT', 'RECONCILED', 'APPROVED', 'PUBLISHED', 'PAID'];
+    const fromIdx = RUN_ORDER.indexOf(String(run.status || 'DRAFT'));
+    const toIdx = RUN_ORDER.indexOf(String(status));
+    if (fromIdx >= 0 && toIdx >= 0 && toIdx !== fromIdx && toIdx !== fromIdx + 1) {
+      throw new Error(`RUN_INVALID_TRANSITION: không thể chuyển kỳ lương từ ${run.status} sang ${status} — phải theo thứ tự DRAFT -> RECONCILED -> APPROVED -> PUBLISHED -> PAID!`);
+    }
+
     run.status = status;
     run.updated_at = new Date().toISOString();
     run.version += 1;
 
-    const targetRuns = [run.run_id, cleanId, run.period].filter(Boolean);
     if (status === 'APPROVED') {
       run.approved_by = actorId;
       run.approved_at = run.updated_at;
     } else if (status === 'PUBLISHED') {
       run.published_by = actorId;
       run.published_at = run.updated_at;
-      // Cập nhật toàn bộ phiếu thuộc kỳ này
-      this.payslips
-        .filter(p => targetRuns.includes(p.run_id) || targetRuns.includes(p.period))
-        .forEach(p => { p.status = 'PUBLISHED'; });
     } else if (status === 'PAID') {
       run.paid_by = actorId;
       run.paid_at = run.updated_at;
-      this.payslips
-        .filter(p => targetRuns.includes(p.run_id) || targetRuns.includes(p.period))
-        .forEach(p => { p.status = 'PAID'; });
     }
 
     if (updates) Object.assign(run, updates);

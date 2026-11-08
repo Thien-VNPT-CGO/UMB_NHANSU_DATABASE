@@ -1139,6 +1139,20 @@ export class PayrollService {
       // Thao tác người dùng đang chờ — không xếp sau việc nền.
       priority: 'high',
       execute: async () => {
+        // Kỳ chỉ được chốt PAID khi MỌI phiếu của kỳ đã chi trả từng phiếu
+        // (đủ 3 chữ ký + NV ký + chuyển khoản ở tab Thanh toán). Chặn chốt
+        // PAID sớm khiến phiếu chưa chuyển cũng mang trạng thái PAID.
+        try {
+          const det: any = await this.getRunDetails(runId);
+          const runSlips: any[] = Array.isArray(det?.slips) ? det.slips : [];
+          const unpaid = runSlips.filter((s: any) => String(s?.status || '').toUpperCase() !== 'PAID');
+          if (runSlips.length > 0 && unpaid.length > 0) {
+            throw new Error(`RUN_NOT_ALL_PAID: còn ${unpaid.length}/${runSlips.length} phiếu chưa chi trả — kỳ chỉ chốt PAID khi mọi phiếu đã chuyển khoản!`);
+          }
+        } catch (e: any) {
+          if (String(e?.message || '').startsWith('RUN_NOT_ALL_PAID')) throw e;
+          // Không có chi tiết kỳ: để adapter báo PAYROLL_RUN_NOT_FOUND theo thứ tự.
+        }
         const updated = await this.repo.updatePayrollRunStatus(runId, 'PAID', actorId);
         this.notifySlipsChanged('mark-paid-run', { runId });
         // Không await full finance push trong request: updatePayslip/updatePayrollRunStatus
