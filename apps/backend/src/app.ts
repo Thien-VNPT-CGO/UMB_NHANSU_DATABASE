@@ -6677,11 +6677,14 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  // Cấu hình chữ ký mẫu của Kế toán & Quản lý chi nhánh
+  // Cấu hình chữ ký mẫu: Kế toán (lập) + Giám đốc (duyệt). Slot "quản lý chi nhánh
+  // (dự phòng)" cũ đã bỏ — dữ liệu cũ tự chuyển sang giamdoc để tương thích.
   app.get('/payroll/signature-templates', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req, res) => {
     try {
       const settings: any = await adapter.getSystemSettings();
-      res.json(settings?.payroll_signatures || { lap: null, quanly: null });
+      const t = settings?.payroll_signatures || {};
+      const giamdoc = t.giamdoc || t.quanly || null;
+      res.json({ lap: t.lap || null, giamdoc, quanly: giamdoc });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -6690,12 +6693,15 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   app.put('/payroll/signature-templates', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
     try {
       const current: any = await adapter.getSystemSettings();
+      const body: any = req.body || {};
+      const giamdoc = body.giamdoc || body.quanly || null;
+      const normalized = { lap: body.lap || null, giamdoc, quanly: giamdoc };
       const updated = await adapter.updateSystemSettings({
         ...current,
-        payroll_signatures: req.body,
+        payroll_signatures: normalized,
       });
       broadcastUpdate('payroll', { action: 'update-signature-templates' });
-      res.json(updated?.payroll_signatures || req.body);
+      res.json(updated?.payroll_signatures || normalized);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }

@@ -8027,9 +8027,9 @@ export function App() {
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '8px', borderTop: '1px dashed #CBD5E1', paddingTop: '10px', marginTop: '4px' }}>
                           <div style={{ textAlign: 'center', fontSize: '11px', padding: '8px', backgroundColor: '#F8FAFC', borderRadius: '8px' }}>
                             <div style={{ fontWeight: 700, color: '#475569', marginBottom: '4px' }}>1. Kế toán lập</div>
-                            {slip.sign_lap?.img ? (
+                            {slip.sign_lap ? (
                               <>
-                                <img src={slip.sign_lap.img} alt="Kế toán" style={{ height: '40px', maxWidth: '100px', objectFit: 'contain', backgroundColor: '#FFF' }} />
+                                {slip.sign_lap.img && <img src={slip.sign_lap.img} alt="Kế toán" style={{ height: '40px', maxWidth: '100px', objectFit: 'contain', backgroundColor: '#FFF' }} />}
                                 <div style={{ fontWeight: 700, color: '#047857', marginTop: '2px' }}>{slip.sign_lap.name || 'Kế toán viên'}</div>
                                 <div style={{ fontSize: '9px', color: '#94A3B8' }}>{slip.sign_lap.at ? new Date(slip.sign_lap.at).toLocaleDateString('vi-VN') : ''}</div>
                               </>
@@ -8039,9 +8039,9 @@ export function App() {
                           </div>
                           <div style={{ textAlign: 'center', fontSize: '11px', padding: '8px', backgroundColor: '#F8FAFC', borderRadius: '8px' }}>
                             <div style={{ fontWeight: 700, color: '#475569', marginBottom: '4px' }}>2. Giám đốc duyệt</div>
-                            {slip.sign_giamdoc?.img ? (
+                            {slip.sign_giamdoc ? (
                               <>
-                                <img src={slip.sign_giamdoc.img} alt="Giám đốc" style={{ height: '40px', maxWidth: '100px', objectFit: 'contain', backgroundColor: '#FFF' }} />
+                                {slip.sign_giamdoc.img && <img src={slip.sign_giamdoc.img} alt="Giám đốc" style={{ height: '40px', maxWidth: '100px', objectFit: 'contain', backgroundColor: '#FFF' }} />}
                                 <div style={{ fontWeight: 700, color: '#047857', marginTop: '2px' }}>{slip.sign_giamdoc.name || 'Giám đốc'}</div>
                                 <div style={{ fontSize: '9px', color: '#94A3B8' }}>{slip.sign_giamdoc.at ? new Date(slip.sign_giamdoc.at).toLocaleDateString('vi-VN') : ''}</div>
                               </>

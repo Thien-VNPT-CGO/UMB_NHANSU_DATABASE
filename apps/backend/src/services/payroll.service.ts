@@ -1630,8 +1630,22 @@ export class PayrollService {
           // bấm lại nhiều lần và không lo ghi trùng chữ ký.
           if (role === 'giamdoc' && slip.sign_giamdoc) return slip;
           if (role === 'quanly' && !slip.sign_giamdoc) throw new Error('DIRECTOR_SIGNATURE_REQUIRED: phiếu phải được Giám đốc ký trước!');
+          // Giám đốc duyệt: nếu lần ký này không kèm ảnh vẽ tay, tự lấy CHỮ KÝ MẪU
+          // Giám đốc đã cài (signature-templates.giamdoc, thay slot dự phòng cũ)
+          // + tên mẫu để gắn đúng tên Giám đốc và ảnh ký lên phiếu lương.
+          let gdSig: any = sig as any;
+          if (role === 'giamdoc' && !(gdSig as any).img) {
+            try {
+              const settingsGd: any = await this.repo.getSystemSettings();
+              const tmplGd = settingsGd?.payroll_signatures?.giamdoc || settingsGd?.payroll_signatures?.quanly;
+              if (tmplGd?.img) {
+                gdSig = { ...gdSig, img: tmplGd.img };
+              }
+              if (tmplGd?.name && !(gdSig as any).name) gdSig = { ...gdSig, name: tmplGd.name };
+            } catch { /* tự ký tay vẫn hợp lệ */ }
+          }
           updated = await this.repo.updatePayslip(itemId, {
-            [role === 'giamdoc' ? 'sign_giamdoc' : role === 'lap' ? 'sign_lap' : 'sign_quanly']: sig,
+            [role === 'giamdoc' ? 'sign_giamdoc' : role === 'lap' ? 'sign_lap' : 'sign_quanly']: role === 'giamdoc' ? gdSig : (sig as any),
           } as any);
         }
         this.notifySlipsChanged('sign', { itemId, role });

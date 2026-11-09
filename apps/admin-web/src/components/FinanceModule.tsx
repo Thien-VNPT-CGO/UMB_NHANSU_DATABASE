@@ -2557,17 +2557,18 @@ function PaymentTab({ month, slips, allEmployees, formatVND, loadSlips, slipQrUr
    9 · CHỮ KÝ MẪU (Kế toán) — lưu server, mọi máy dùng chung
    ============================================================================ */
 function SignatureTemplatesTab({ currentUser, showToast }: any) {
-  const [sigs, setSigs] = React.useState<any>(() => { try { return JSON.parse(localStorage.getItem('ubm_default_signatures') || '') || { lap: { name: '', img: null }, quanly: { name: '', img: null } }; } catch { return { lap: { name: '', img: null }, quanly: { name: '', img: null } }; } });
+  const [sigs, setSigs] = React.useState<any>(() => { try { const p = JSON.parse(localStorage.getItem('ubm_default_signatures') || '') || {}; const gd = p.giamdoc || p.quanly || { name: '', img: null }; return { lap: p.lap || { name: '', img: null }, giamdoc: gd }; } catch { return { lap: { name: '', img: null }, giamdoc: { name: '', img: null } }; } });
   const [busy, setBusy] = React.useState(false);
   React.useEffect(() => {
     apiRequest('/payroll/signature-templates').then((data: any) => {
-      if (data && (data.lap?.img || data.quanly?.img)) {
-        setSigs({ lap: data.lap || { name: '', img: null }, quanly: data.quanly || { name: '', img: null } });
-        localStorage.setItem('ubm_default_signatures', JSON.stringify({ lap: data.lap || { name: '', img: null }, quanly: data.quanly || { name: '', img: null } }));
+      const gd = data?.giamdoc || data?.quanly || null;
+      if (data && (data.lap?.img || gd?.img)) {
+        setSigs({ lap: data.lap || { name: '', img: null }, giamdoc: gd || { name: '', img: null } });
+        localStorage.setItem('ubm_default_signatures', JSON.stringify({ lap: data.lap || { name: '', img: null }, giamdoc: gd || { name: '', img: null } }));
       }
     }).catch(() => null);
   }, []);
-  const onFile = (key: 'lap' | 'quanly', file: File | null) => {
+  const onFile = (key: 'lap' | 'giamdoc', file: File | null) => {
     if (!file) return;
     if (!/^image\//.test(file.type)) { showToast('Chọn file ảnh (PNG/JPG) để làm chữ ký mẫu'); return; }
     const reader = new FileReader();
@@ -2583,12 +2584,12 @@ function SignatureTemplatesTab({ currentUser, showToast }: any) {
     } catch (e: any) { showToast('Lưu máy chủ lỗi: ' + (e?.message || '')); } finally { setBusy(false); }
   };
   const rows = [
-    { key: 'lap' as const, title: 'Chữ ký Kế toán (người lập phiếu)', hint: 'Dùng cho nút "Kế toán ký lập" và tự bù khi gửi NV', required: true },
-    { key: 'quanly' as const, title: 'Chữ ký Quản lý chi nhánh (dự phòng)', hint: 'Không bắt buộc trong quy trình 3 chữ ký hiện hành (KT → GĐ → NV)', required: false },
+    { key: 'lap' as const, title: 'Chữ ký Kế toán (người lập phiếu)', hint: 'Dùng cho nút "Kế toán ký lập" và tự bù khi gửi NV — hiển thị đúng tên + chữ ký lên phiếu lương.', required: true },
+    { key: 'giamdoc' as const, title: 'Chữ ký Giám đốc (người duyệt phiếu)', hint: 'Khi Giám đốc duyệt phiếu lương, chữ ký này (ảnh + tên) tự gắn lên phiếu. Hiển thị đúng tên Giám đốc + chữ ký trên phiếu.', required: true },
   ];
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <TabHead step={9} title="Chữ ký mẫu — Ký nhanh 1 chạm" desc="Lưu tại máy chủ: mọi máy của Kế toán dùng chung một bộ chữ ký khi bấm “Kế toán ký lập”. Ảnh nên nền trong suốt (PNG), nén sẵn." />
+      <TabHead step={9} title="Chữ ký mẫu — Kế toán & Giám đốc" desc="Lưu tại máy chủ: mọi máy của Kế toán dùng chung. Phiếu lương hiển thị đúng tên + chữ ký Kế toán và Giám đốc. Ảnh nên nền trong suốt (PNG), nén sẵn." />
       <div className="fin-card">
         {rows.map(r => (
           <div key={r.key} className="fin-sig-row" style={{ borderBottom: '1px solid #f1f5f9' }}>
