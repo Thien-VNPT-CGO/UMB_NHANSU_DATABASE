@@ -377,27 +377,31 @@ export default function FinanceModule(props: FinanceModuleProps) {
   const stageBadge = (stage?: string | null) => { const c = (STAGE_COLOR as any)[String(stage || 'DRAFT')]; return { ...c, label: (PAYSLIP_STAGE_LABEL as any)[String(stage || 'DRAFT')] || '—' }; };
   const slipQrUrl = slipQrUrlOf;
 
-  // --- QUAY VỀ BƯỚC TRƯỚC (khi bước sai): yêu cầu lý do, hoàn phiếu/run về DRAFT,
-  //     mở khóa tạm tháng đã hết, rồi điều hướng về bước trước. Realtime qua workflow-status.
-  //     Cho phép quay về KỂ CẢ khi phiếu đã PAID (đã chuyển tiền phải đối soát ngoài hệ thống).
+  // --- QUAY VỀ BƯỚC TRƯỚC (khi bước sai): ghi lý do, mở đúng bước mục tiêu lại
+  //     (backend workflowOverride ép bước mục tiêu chưa xong), rồi điều hướng về
+  //     bước trước. Realtime qua workflow-status. Cho phép kể cả PAID.
   //     Lấy tiêu đề bước trước từ TAB ĐANG XEM (activeTab), không phải bước đang xử lý.
   const [rollbackBusy, setRollbackBusy] = useState(false);
   const rollbackToPrevious = useCallback(async (toStepId: string, fromTabId?: string) => {
     if (!toStepId) return;
     const lockedInfo = tabLocked.get(fromTabId || activeTab);
     const prevTitle = lockedInfo?.previousTitle || tabLocked.get(toStepId)?.previousTitle || '';
-    const reason = window.prompt(`Quay về bước trước${prevTitle ? ` (${prevTitle})` : ''}?\nPhiếu đã gửi/xác nhận/khiếu nại/ĐÃ CHUYỂN KHOẢN sẽ về DRAFT để tính lại, kỳ lương về DRAFT. Tiền PAID đã chuyển phải đối soát/thu hồi ngoài hệ thống trước. Vui lòng ghi LÝ DO quay về:`);
+    const reason = window.prompt(`Quay về bước trước${prevTitle ? ` (${prevTitle})` : ''}?\nBước này sẽ MỞ LẠI để sửa (các bước sau khóa lại). Phiếu liên quan sẽ được hoàn về trạng thái trước bước đó. Vui lòng ghi LÝ DO quay về:`);
     if (reason === null) return;
     if (!String(reason).trim()) { showToast('Vui lòng ghi lý do quay về bước trước!'); return; }
     const paidSlips = slips.filter((s: any) => String(s?.status || '').toUpperCase() === 'PAID').length;
-    const extraWarn = paidSlips > 0 ? `\n\n⚠️ Kỳ này có ${paidSlips} phiếu PAID — quay về sẽ hoàn ${paidSlips} phiếu về DRAFT (xóa chữ ký NV). Hãy đối soát/thu hồi tiền ngoài hệ thống trước!` : '';
+    const extraWarn = paidSlips > 0 ? `\n\n⚠️ Kỳ này có ${paidSlips} phiếu PAID — quay về sẽ hoàn ${paidSlips} phiếu để tính lại (xóa chữ ký NV). Hãy đối soát/thu hồi tiền ngoài hệ thống trước!` : '';
     if (!window.confirm(`Xác nhận quay về bước trước với lý do:\n${String(reason).trim()}\n\nTiếp tục?${extraWarn}`)) return;
     setRollbackBusy(true);
     try {
       const r: any = await post('/payroll/workflow/rollback', { period: month, stepId: toStepId, reason: String(reason).trim() });
-      setWorkflow(r?.workflow || null);
-      showToast(`Đã quay về bước trước — hoàn ${r?.revertedSlips ?? 0} phiếu về DRAFT${r?.revertedPaid ? ` (gồm ${r.revertedPaid} PAID)` : ''}`);
+      const payload: any = r?.result ?? r ?? {};
+      const wf = payload?.workflow || r?.workflow || null;
+      if (wf) setWorkflow(wf);
+      showToast(`Đã quay về bước trước — hoàn ${payload?.revertedSlips ?? r?.revertedSlips ?? 0} phiếu${payload?.revertedPaid || r?.revertedPaid ? ` (gồm ${payload?.revertedPaid ?? r?.revertedPaid} PAID)` : ''} · đang mở bước ${prevTitle || toStepId}`);
+      // Điều hướng NGAY tới bước mục tiêu; workflow mới đã chứa open=true cho bước đó.
       onNavigateTab?.(toStepId);
+      await loadWorkflow();
     } catch (e: any) {
       showToast(e?.message || 'Quay về bước trước thất bại');
     } finally {

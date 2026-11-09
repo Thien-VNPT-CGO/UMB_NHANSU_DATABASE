@@ -681,7 +681,11 @@ export class PayrollService {
     const vnCurrent = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7);
     const isPastMonth = String(period) < vnCurrent;
     const isCurrentMonth = String(period) === vnCurrent;
+    // --- Mở khóa + ép bước mục tiêu mở lại (override theo thời điểm) ---
     const unlockInfo: any = (settings as any)?.[`payrollMonthUnlock:${period}`] || null;
+    const overrideInfo: any = (settings as any)?.[`payrollWorkflowOverride:${period}`] || null;
+    const overrideAt = overrideInfo?.at ? Date.parse(String(overrideInfo.at)) : 0;
+    const overrideOrder = Number(overrideInfo?.toOrder) || 0;
     const monthLocked = isPastMonth && !unlockInfo;
 
     const raw = [
@@ -731,20 +735,36 @@ export class PayrollService {
     // Khóa TUẦN TỰ realtime: bước sau chỉ mở khi bước trước đã hoàn tất.
     // Tháng đã hết (monthLocked) → khóa toàn bộ các bước (kể cả bước đã xong / đang xử lý).
     // Tháng mới/hiện tại → không khóa theo tháng, chỉ khóa tuần tự như cũ.
+    // Override quay về bước trước: bước có order >= reopenOrder bị ép chưa xong
+    // (cho đến khi completedAt mới hơn thời điểm quay về) để tab trước MỞ LẠI.
+    const effDoneOf = (s: any): boolean => {
+      if (!s.done) return false;
+      if (!overrideAt || !overrideOrder) return true;
+      if (s.order < 3) return true; // Đối soát/BCC (1-2) là dẫn xuất từ ca — không ép chưa xong (chỉ xem lại)
+      if (s.order < overrideOrder) return true;
+      const ct = Date.parse(String(s.completedAt || ''));
+      // completedAt mới hơn thời điểm rollback = đã hoàn tất lại sau khi quay về
+      return Number.isFinite(ct) && ct > overrideAt;
+    };
     const steps = raw.map((s, i) => {
       const prev = i > 0 ? raw[i - 1] : null;
-      const sequentialOpen = i === 0 ? true : !!prev?.done;
+      const effDone = effDoneOf(s);
+      const prevEffDone = prev ? effDoneOf(prev) : true;
+      const sequentialOpen = i === 0 ? true : prevEffDone;
       const lockedDueToMonth = monthLocked;
       const open = monthLocked ? false : sequentialOpen;
-      const locked = monthLocked ? true : (!sequentialOpen || !!s.done);
+      const locked = monthLocked ? true : (!sequentialOpen || effDone);
       return {
         ...s,
+        done: effDone,
+        doneRaw: s.done,
+        reopened: effDone !== s.done,
         open,
         locked,
         lockedDueToMonth,
         previousStepId: prev?.id || null,
         previousTitle: prev?.title || null,
-        canRollback: i > 0 && (!!s.done || monthLocked || !!prev?.done),
+        canRollback: i > 0 && (!!effDone || monthLocked || prevEffDone),
         canGoBack: i > 0,
       };
     });
@@ -757,6 +777,7 @@ export class PayrollService {
         isFutureMonth: String(period) > vnCurrent,
         monthLocked,
         monthUnlock: unlockInfo || null,
+        reopenOverride: overrideInfo || null,
         complainedCount,
       },
     };
@@ -764,16 +785,18 @@ export class PayrollService {
 
   /**
    * QUAY VỀ BƯỚC TRƯỚC ĐÓ khi bước hiện tại sai (realtime, có lý do, theo tùy tháng).
-   *  - Hoàn phiếu đã gửi/CONFIRMED/COMPLAINED/PAID về DRAFT (giữ chữ ký GĐ, xóa chữ ký NV),
-   *    run PUBLISHED/APPROVED/PAID về DRAFT để tính/phát hành lại.
-   *    Kể cả PAID cũng được hoàn khi kế toán xác nhận sai (tiền đã chuyển phải
+   * LƯU Ý quan trọng: chỉ hoàn dữ liệu của các bước TỪ bước mục tiêu trở đi,
+   * giữ nguyên hoàn tất của các bước TRƯỚC mục tiêu để bước mục tiêu MỞ LẠI được
+   * (không hoàn cả kỳ về DRAFT khi quay về bước sau).
+   *  - toOrder 6-7 (Phiếu/Thanh toán): chỉ hoàn PAID/CONFIRMED → PUBLISHED,
+   *    giữ publishedCount để bước 5 vẫn xong; override sẽ ép bước 6 chưa xong.
+   *  - toOrder 5 (Kỳ lương): hoàn về DRAFT + run về DRAFT (mở bước 5).
+   *  - toOrder <=4 (Tính lương/Bảng lương): hoàn về DRAFT + run về DRAFT +
+   *    override sẽ ép bước 3-4 mở lại (tính lại).
+   *  - Kể cả PAID cũng được hoàn khi kế toán xác nhận sai (tiền đã chuyển phải
    *    đối soát/thu hồi ngoài hệ thống trước; audit vẫn ghi lại đầy đủ).
-   *  - Nếu tháng đã khóa (hết tháng) mà KT rollback → tự ghi monthUnlock tạm thời để
-   *    các bước mở lại tuần tự, kèm lý do + người thực hiện (audit).
-   *  - Steps 1-2 (Đối soát/BCC) là dữ liệu dẫn xuất từ ca/điểm danh nên không "xóa"
-   *    trạng thái — rollback về 1-2 sẽ hoàn phiếu/run về DRAFT để KT sửa nguồn rồi tính lại.
-   *    Backend vẫn ghi monthUnlock để màn hình mở lại (không kẹt khóa tháng),
-   *    frontend hiển thị bước 1-2 đã xong ở chế độ xem lại (chỉ xem).
+   *  - Ghi monthUnlock + workflowOverride (theo thời điểm) để màn hình quay về
+   *    MỞ ĐÚNG bước mục tiêu (không kẹt khóa tháng / khóa tuần tự cũ).
    */
   async rollbackWorkflow(period: string, toStepId: string, actorId: string, reason?: string) {
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) throw new Error('Kỳ lương phải dạng YYYY-MM (VD: 2026-10)!');
@@ -795,26 +818,45 @@ export class PayrollService {
       execute: async () => {
         let revertedSlips = 0;
         let revertedPaid = 0;
+        const revertToDraft = toOrder <= 5;
         for (const s of list) {
           const st = String(s?.status || '').toUpperCase();
           if (!['PUBLISHED', 'CONFIRMED', 'COMPLAINED', 'APPROVED', 'RECONCILED', 'PAID'].includes(st)) continue;
-          await this.repo.updatePayslip((s as any).item_id, {
-            status: 'DRAFT',
-            sign_lap: undefined,
-            sign_quanly: undefined,
-            sign_nhanvien: undefined,
-            slip_published_at: undefined,
-            slip_confirmed_at: undefined,
-            slip_paid_at: undefined,
-            slip_paid_by: undefined,
-            complaint_status: 'RESOLVED',
-            complaint_resolved_at: new Date().toISOString(),
-            complaint_resolved_by: actorId,
-          } as any).catch(() => null);
+          // Bước sau (Phiếu/Thanh toán): chỉ lùi về PUBLISHED để giữ bước 5 xong,
+          // bước 6 được override ép chưa xong. Bước <=5 thì lùi hẳn về DRAFT.
+          const targetStatus = revertToDraft ? 'DRAFT' : 'PUBLISHED';
+          const patch: any = revertToDraft
+            ? {
+                status: 'DRAFT',
+                sign_lap: undefined,
+                sign_quanly: undefined,
+                sign_nhanvien: undefined,
+                slip_published_at: undefined,
+                slip_confirmed_at: undefined,
+                slip_paid_at: undefined,
+                slip_paid_by: undefined,
+                complaint_status: 'RESOLVED',
+                complaint_resolved_at: new Date().toISOString(),
+                complaint_resolved_by: actorId,
+              }
+            : {
+                status: 'PUBLISHED',
+                sign_nhanvien: undefined,
+                slip_confirmed_at: undefined,
+                slip_paid_at: undefined,
+                slip_paid_by: undefined,
+                complaint_status: 'RESOLVED',
+                complaint_resolved_at: new Date().toISOString(),
+                complaint_resolved_by: actorId,
+              };
+          await this.repo.updatePayslip((s as any).item_id, patch as any).catch(() => null);
           if (st === 'PAID') revertedPaid++;
           revertedSlips++;
         }
-        if (run && ['APPROVED', 'PUBLISHED', 'PAID', 'RECONCILED'].includes(String((run as any).status || '').toUpperCase())) {
+        // Chỉ hạ run về DRAFT khi quay về <= bước Kỳ lương (5). Quay về bước
+        // Phiếu/Thanh toán (6-7) GIỮ nguyên run (đã duyệt/phát hành/chi trả)
+        // để bước 5 vẫn xong; bước 6 mở lại nhờ workflowOverride.
+        if (revertToDraft && run && ['APPROVED', 'PUBLISHED', 'PAID', 'RECONCILED'].includes(String((run as any).status || '').toUpperCase())) {
           await this.repo.updatePayrollRunStatus((run as any).run_id, 'DRAFT' as any, actorId, {
             approved_by: undefined,
             approved_at: undefined,
@@ -826,21 +868,21 @@ export class PayrollService {
             reconciled_at: undefined,
           } as any).catch(() => null);
         }
-        // Mở khóa tạm THÁNG NÀO CŨNG ĐƯỢC (kể cả tháng đã hết và tháng hiện tại) để
-        // màn hình quay về không bị kẹt khóa tháng — unlock này chỉ gỡ khóa tháng,
-        // bước vẫn mở tuần tự theo dữ liệu thật (đã hoàn về DRAFT).
+        // Mở khóa tạm THÁNG NÀO CŨNG ĐƯỢC + ghi workflowOverride để bước mục
+        // tiêu MỞ LẠI ngay (không kẹt khóa tuần tự/tháng cũ).
         const settings: any = await (this.repo as any)?.getSystemSettings?.().catch(() => ({})) || {};
-        const vnCurrent = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7);
+        const atIso = new Date().toISOString();
         await (this.repo as any)?.updateSystemSettings?.({
           ...settings,
-          [`payrollMonthUnlock:${period}`]: { at: new Date().toISOString(), by: actorId, reason: rsn, toStepId, toOrder },
+          [`payrollMonthUnlock:${period}`]: { at: atIso, by: actorId, reason: rsn, toStepId, toOrder },
+          [`payrollWorkflowOverride:${period}`]: { at: atIso, by: actorId, reason: rsn, toStepId, toOrder },
         }).catch(() => null);
         await (this.repo as any)?.recordAuditLog?.({
           actor_id: actorId,
           action: 'PAYROLL_WORKFLOW_ROLLBACK',
           target_type: 'KY_LUONG',
           target_id: period,
-          detail: `Quay về bước ${toStepId} (order ${toOrder}). Hoàn ${revertedSlips} phiếu về DRAFT (gồm ${revertedPaid} phiếu PAID). Lý do: ${rsn}`,
+          detail: `Quay về bước ${toStepId} (order ${toOrder}). Hoàn ${revertedSlips} phiếu (gồm ${revertedPaid} PAID) về ${revertToDraft ? 'DRAFT' : 'PUBLISHED'} + workflowOverride. Lý do: ${rsn}`,
         } as any).catch(() => null);
         this.notifySlipsChanged('workflow-rollback', { period, toStepId, revertedSlips });
         this.invalidateFinanceTimesheetCache(period);

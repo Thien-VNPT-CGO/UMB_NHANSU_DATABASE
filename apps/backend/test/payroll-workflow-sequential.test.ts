@@ -158,6 +158,65 @@ test('workflow: tháng đã hết nhưng đã mở khóa tạm (rollback) thì k
   assert.equal(wf.steps[0].open, true);
 });
 
+test('workflow: đã mở khóa tạm nhưng completedAt mới hơn rollback thì bước xong lại', async () => {
+  const repo: any = {
+    listPayrollRuns: async () => [runDraft],
+    getSystemSettings: async () => ({
+      'payrollMonthUnlock:2026-10': { at: '2026-10-31T00:00:00.000Z', by: 'ADM_001', reason: 'test', toStepId: 'fin-calculate', toOrder: 3 },
+      'payrollWorkflowOverride:2026-10': { at: '2026-10-31T00:00:00.000Z', by: 'ADM_001', reason: 'test', toStepId: 'fin-calculate', toOrder: 3 },
+    }),
+  };
+  const svc: any = new PayrollService(repo);
+  svc.getFinanceTimesheet = async () => ({ totals: { totalShifts: 4, full: 3, partial: 1, absent: 0 }, rows: [] });
+  svc.getPeriodSlips = async () => ({ run: runDraft, slips: [{ run_id: 'R1', employee_id: 'E1', status: 'DRAFT' }] });
+  const wf: any = await svc.getWorkflowStatus('2026-10');
+  const byId: any = Object.fromEntries(wf.steps.map((s: any) => [s.id, s]));
+  // run.created_at=2026-10-31T00:00:00.000Z không mới hơn thời điểm rollback → bước 3 vẫn mở lại.
+  assert.equal(byId['fin-calculate'].done, false);
+  assert.equal(byId['fin-calculate'].open, true);
+  // Bước 1-2 không bị ép chưa xong.
+  assert.equal(byId['fin-timesheet'].done, true);
+});
+
+test('rollback: quay về Kỳ lương (5) mở đúng bước 5, bước trước vẫn xong', async () => {
+  const paidRun = { ...runDraft, status: 'APPROVED', approved_at: '2026-11-01T02:00:00.000Z', approved_by: 'ADM_001' };
+  const slipsStore: any[] = [
+    { item_id: 'SLIP_R1_E1', run_id: 'R1', employee_id: 'E1', employee_code: 'E1', status: 'PUBLISHED', slip_published_at: '2026-11-02T02:00:00.000Z', standard_hours: 5, net_pay: 150000 },
+    { item_id: 'SLIP_R1_E2', run_id: 'R1', employee_id: 'E2', employee_code: 'E2', status: 'PUBLISHED', slip_published_at: '2026-11-02T02:00:00.000Z', standard_hours: 5, net_pay: 150000 },
+  ];
+  let runStore: any = { ...paidRun };
+  const repo: any = {
+    listPayrollRuns: async () => [runStore],
+    getSystemSettings: async () => (repo._settings || {}),
+    updateSystemSettings: async (next: any) => { repo._settings = next; return next; },
+    getPayslipById: async (id: string) => slipsStore.find(x => x.item_id === id) || null,
+    updatePayslip: async (id: string, updates: any) => {
+      const s = slipsStore.find(x => x.item_id === id);
+      Object.assign(s, updates);
+      for (const k of Object.keys(updates)) if ((updates as any)[k] === undefined) delete (s as any)[k];
+      return { ...s };
+    },
+    updatePayrollRunStatus: async (_id: string, _status: string, _actor: string, updates: any) => {
+      runStore = { ...runStore, status: _status, ...(updates || {}) };
+      return runStore;
+    },
+    recordAuditLog: async () => ({}),
+  };
+  const svc: any = new PayrollService(repo);
+  svc.getFinanceTimesheet = async () => ({ totals: { totalShifts: 2, full: 2, partial: 0, absent: 0 }, rows: [] });
+  svc.getPeriodSlips = async () => ({ run: runStore, slips: slipsStore });
+  const res: any = await svc.rollbackWorkflow('2026-10', 'fin-payroll-periods', 'ADM_001', 'duyệt nhầm');
+  const inner = res?.result ?? res;
+  assert.equal(inner.ok, true);
+  assert.equal(slipsStore.every(x => x.status === 'DRAFT'), true);
+  assert.equal(runStore.status, 'DRAFT');
+  const wf: any = inner.workflow;
+  const byId: any = Object.fromEntries(wf.steps.map((s: any) => [s.id, s]));
+  assert.equal(byId['fin-payroll-periods'].done, false);
+  assert.equal(byId['fin-payroll-periods'].open, true);
+  assert.equal(byId['fin-payroll-sheet'].done, true);
+});
+
 test('rollback: phiếu PAID cũng hoàn về DRAFT khi kế toán xác nhận sai (ghi lý do)', async () => {
   const paidRun = { ...runDraft, status: 'PAID', paid_at: '2026-11-02T03:00:00.000Z' };
   const slipsStore: any[] = [
@@ -167,7 +226,7 @@ test('rollback: phiếu PAID cũng hoàn về DRAFT khi kế toán xác nhận s
   let runStore: any = { ...paidRun };
   const repo: any = {
     listPayrollRuns: async () => [runStore],
-    getSystemSettings: async () => ({}),
+    getSystemSettings: async () => (repo._settings || {}),
     updateSystemSettings: async (next: any) => { repo._settings = next; return next; },
     getPayslipById: async (id: string) => slipsStore.find(x => x.item_id === id) || null,
     updatePayslip: async (id: string, updates: any) => {
@@ -182,17 +241,31 @@ test('rollback: phiếu PAID cũng hoàn về DRAFT khi kế toán xác nhận s
       return runStore;
     },
     recordAuditLog: async () => ({}),
+    getFinanceTimesheet: async () => ({ totals: { totalShifts: 2, full: 2, partial: 0, absent: 0 }, rows: [] }),
   };
   const svc: any = new PayrollService(repo);
+  // Override các hàm lấy dữ liệu cho getWorkflowStatus phía trong rollback.
   svc.getFinanceTimesheet = async () => ({ totals: { totalShifts: 2, full: 2, partial: 0, absent: 0 }, rows: [] });
   svc.getPeriodSlips = async () => ({ run: runStore, slips: slipsStore });
   // Mock queue: chạy ngay thay vì hàng đợi đơn (singleWriterQueue trong test trước đã có test riêng).
   // PayrollService dùng singleWriterQueue thật — rollback sẽ đi qua nó và vẫn gọi execute.
+  // Quay về bước Phiếu lương (6): chỉ lùi PAID → PUBLISHED, GIỮ run PAID để bước 5 vẫn xong;
+  // workflowOverride ép bước 6 mở lại (done=false, open=true).
   const res: any = await svc.rollbackWorkflow('2026-10', 'fin-payslips', 'ADM_001', 'tính sai đơn giá kỳ 10');
   const inner = res?.result ?? res;
   assert.equal(inner.ok, true);
   assert.equal(inner.revertedSlips, 2);
   assert.equal(inner.revertedPaid, 2);
-  assert.equal(slipsStore.every(x => x.status === 'DRAFT'), true);
-  assert.equal(runStore.status, 'DRAFT');
+  assert.equal(slipsStore.every(x => x.status === 'PUBLISHED'), true);
+  assert.equal(runStore.status, 'PAID');
+  // Workflow sau rollback phải mở đúng bước mục tiêu (fin-payslips), khóa bước sau.
+  const wf: any = inner.workflow;
+  assert.ok(wf);
+  const byId: any = Object.fromEntries(wf.steps.map((s: any) => [s.id, s]));
+  assert.equal(byId['fin-payslips'].done, false);
+  assert.equal(byId['fin-payslips'].open, true);
+  assert.equal(byId['fin-payment'].done, false);
+  assert.equal(byId['fin-payment'].open, false);
+  // Bước trước mục tiêu (Kỳ lương) vẫn xong.
+  assert.equal(byId['fin-payroll-periods'].done, true);
 });
