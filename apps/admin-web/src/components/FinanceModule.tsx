@@ -202,6 +202,103 @@ export default function FinanceModule(props: FinanceModuleProps) {
     return base;
   }, [month]);
 
+  /** Hiển thị cột theo tab (lưu server theo TÀI KHOẢN, đồng bộ 2 máy) */
+  const FIN_COL_DEFS: Record<string, Array<{ key: string; label: string }>> = {
+    'fin-timesheet': [
+      { key: 'stt', label: 'STT' }, { key: 'fullName', label: 'Họ tên' }, { key: 'code', label: 'Mã NV' }, { key: 'branch', label: 'Chi nhánh' },
+      { key: 'full', label: 'Ca đủ' }, { key: 'partial', label: 'Thiếu' }, { key: 'absent', label: 'Vắng' }, { key: 'hours', label: 'Giờ công' },
+      { key: 'standardPay', label: 'Lương ca' }, { key: 'deduction', label: 'Trừ' }, { key: 'netPay', label: 'THỰC NHẬN' },
+    ],
+    'fin-bcc': [
+      { key: 'summary', label: 'Tóm tắt NV (giờ/đủ/thiếu/vắng/tiền)' }, { key: 'date', label: 'Ngày' }, { key: 'shift', label: 'Ca' }, { key: 'hours', label: 'Giờ' },
+      { key: 'status', label: 'Trạng thái' }, { key: 'checkIn', label: 'Check-in' }, { key: 'lateMin', label: 'Trễ (phút)' }, { key: 'shiftPay', label: 'Lương ca' }, { key: 'fineAmount', label: 'Phạt/Trừ' },
+    ],
+    'fin-calculate': [
+      { key: 'stt', label: 'STT' }, { key: 'code', label: 'Mã NV' }, { key: 'name', label: 'Họ tên' }, { key: 'branch', label: 'Chi nhánh' },
+      { key: 'luong_cb', label: 'LCB' }, { key: 'ot_extra', label: 'OT thêm' }, { key: 'bonus_extra', label: 'Bonus' }, { key: 'ung_luong', label: 'Ứng lương' },
+      { key: 'tru_kpi', label: 'Trừ KPI' }, { key: 'dong_phuc', label: 'Trừ ĐP' }, { key: 'note', label: 'Ghi chú' },
+      { key: 'b1', label: 'B1 Giờ/LCB' }, { key: 'b2', label: 'B2 Tổng cộng' }, { key: 'b3', label: 'B3 Tổng lương' }, { key: 'b4', label: 'B4 Thực lãnh' },
+    ],
+    'fin-payroll-sheet': [
+      { key: 'stt', label: 'STT' }, { key: 'full_name', label: 'Họ tên' }, { key: 'employee_code', label: 'Mã NV' }, { key: 'branch', label: 'Chi nhánh' },
+      { key: 'gio', label: 'Giờ công' }, { key: 'banCa', label: 'Lương ca' }, { key: 'phuCap', label: 'Phụ cấp' }, { key: 'lcb', label: 'LCB' },
+      { key: 'ot', label: 'OT thêm' }, { key: 'bonus', label: 'Bonus' }, { key: 'tongCong', label: 'TỔNG CỘNG' }, { key: 'truKpiPhat', label: 'Trừ KPI/phạt' },
+      { key: 'ung', label: 'Ứng lương' }, { key: 'dongPhuc', label: 'Trừ ĐP' }, { key: 'tongLuong', label: 'TỔNG LƯƠNG' }, { key: 'thuc', label: 'THỰC LÃNH' }, { key: 'status', label: 'Trạng thái' },
+    ],
+    'fin-payroll-periods': [
+      { key: 'stt', label: 'STT' }, { key: 'full_name', label: 'Họ tên' }, { key: 'employee_code', label: 'Mã NV' }, { key: 'branch', label: 'Chi nhánh' },
+      { key: 'gio', label: 'Giờ công' }, { key: 'banCa', label: 'Lương ca' }, { key: 'phuCap', label: 'Phụ cấp' }, { key: 'lcb', label: 'LCB' },
+      { key: 'ot', label: 'OT thêm' }, { key: 'bonus', label: 'Bonus' }, { key: 'tongCong', label: 'TỔNG CỘNG' }, { key: 'truKpiPhat', label: 'Trừ KPI/phạt' },
+      { key: 'ung', label: 'Ứng lương' }, { key: 'dongPhuc', label: 'Trừ ĐP' }, { key: 'tongLuong', label: 'TỔNG LƯƠNG' }, { key: 'thuc', label: 'THỰC LÃNH' },
+      { key: 'status', label: 'Trạng thái phiếu' }, { key: 'edit', label: 'Sửa trực tiếp' },
+    ],
+    'fin-payslips': [
+      { key: 'stt', label: 'STT' }, { key: 'full_name', label: 'Họ tên' }, { key: 'employee_code', label: 'Mã NV' }, { key: 'branch', label: 'Chi nhánh' },
+      { key: 'gio', label: 'Giờ công' }, { key: 'banCa', label: 'Lương ca' }, { key: 'phuCap', label: 'Phụ cấp' }, { key: 'lcb', label: 'LCB' },
+      { key: 'ot', label: 'OT thêm' }, { key: 'bonus', label: 'Bonus' }, { key: 'tongCong', label: 'TỔNG CỘNG' }, { key: 'truKpiPhat', label: 'Trừ KPI/phạt' },
+      { key: 'ung', label: 'Ứng lương' }, { key: 'dongPhuc', label: 'Trừ ĐP' }, { key: 'tongLuong', label: 'TỔNG LƯƠNG' }, { key: 'thuc', label: 'THỰC LÃNH' },
+      { key: 'sign', label: 'Trạng thái / Chữ ký' }, { key: 'action', label: 'Thao tác' },
+    ],
+    'fin-payment': [
+      { key: 'stt', label: 'STT' }, { key: 'full_name', label: 'Họ tên' }, { key: 'employee_code', label: 'Mã NV' }, { key: 'branch', label: 'Chi nhánh' },
+      { key: 'gio', label: 'Giờ công' }, { key: 'banCa', label: 'Lương ca' }, { key: 'phuCap', label: 'Phụ cấp' }, { key: 'lcb', label: 'LCB' },
+      { key: 'ot', label: 'OT thêm' }, { key: 'bonus', label: 'Bonus' }, { key: 'tongCong', label: 'TỔNG CỘNG' }, { key: 'truKpiPhat', label: 'Trừ KPI/phạt' },
+      { key: 'ung', label: 'Ứng lương' }, { key: 'dongPhuc', label: 'Trừ ĐP' }, { key: 'tongLuong', label: 'TỔNG LƯƠNG' }, { key: 'thuc', label: 'THỰC LÃNH' },
+      { key: 'bank', label: 'Ngân hàng / STK' }, { key: 'qr', label: 'VietQR' }, { key: 'action', label: 'Thao tác' },
+    ],
+  };
+  const [colVis, setColVis] = useState<Record<string, Record<string, boolean>>>({});
+  const [colVisSaving, setColVisSaving] = useState(false);
+  const colVisSavingRef = useRef(false);
+  // Mở/đóng panel chọn cột của tab đang xem — 1 state dùng chung, render trong CardHead từng tab.
+  const [colVisOpenTab, setColVisOpenTab] = useState<string>('');
+  const colsVisible = useCallback((tabId: string) => {
+    const defs = FIN_COL_DEFS[tabId] || [];
+    return {
+      show: (key: string) => colVis?.[tabId]?.[key] !== false,
+      defs,
+    };
+  }, [colVis]);
+  const saveColVis = useCallback(async (next: Record<string, Record<string, boolean>>) => {
+    if (colVisSavingRef.current) return;
+    colVisSavingRef.current = true;
+    setColVisSaving(true);
+    try {
+      await apiRequest('/payroll/table-columns', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ columns: next }) });
+      // Đồng bộ realtime cho các máy khác cùng tài khoản (socket trong App).
+    } catch (e: any) {
+      showToast?.(e?.message || 'Lưu ẩn/hiện cột thất bại');
+    } finally {
+      colVisSavingRef.current = false;
+      setColVisSaving(false);
+    }
+  }, [showToast]);
+
+  const toggleCol = useCallback((tabKey: string, colKey: string) => {
+    setColVis(prev => {
+      const next: Record<string, Record<string, boolean>> = {
+        ...prev,
+        [tabKey]: { ...(prev?.[tabKey] || {}), [colKey]: (prev?.[tabKey] || {})[colKey] === false ? true : false },
+      };
+      const defs = FIN_COL_DEFS[tabKey] || [];
+      const visibleDefs = defs.filter(d => next[tabKey][d.key] !== false).length;
+      if (visibleDefs === 0) return prev;
+      void saveColVis(next);
+      return next;
+    });
+  }, [saveColVis]);
+
+  const showAllCols = useCallback((tabKey: string) => {
+    const defs = FIN_COL_DEFS[tabKey] || [];
+    const allTrue: Record<string, boolean> = {};
+    defs.forEach(d => { allTrue[d.key] = true; });
+    setColVis(prev => {
+      const next = { ...prev, [tabKey]: allTrue };
+      void saveColVis(next);
+      return next;
+    });
+  }, [saveColVis]);
+
   const [workflow, setWorkflow] = useState<any>(null);
   const [syncStatus, setSyncStatus] = useState<any>(null);
   const [driveConfigured, setDriveConfigured] = useState(false);
@@ -277,6 +374,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
     } catch { if (monthRef.current === p) setInputs([]); } finally { if (monthRef.current === p) setInputsLoading(false); }
   }, [api]);
   const loadDriveStatus = useCallback(async () => { const p = monthRef.current; try { const st = await api(`/payroll/drive-sync/status?period=${encodeURIComponent(p)}`); if (monthRef.current === p) { setSyncStatus(st); setDriveConfigured(!!st?.configured); } } catch { if (monthRef.current === p) setDriveConfigured(false); } }, [api]);
+  const loadColVis = useCallback(async () => { try { const d: any = await api('/payroll/table-columns'); if (d?.columns) setColVis(d.columns); } catch { /* giữ mặc định hiện tất cả */ } }, [api]);
 
   /** Đang có ô nhập liệu trong module được focus → không clobber dữ liệu đang gõ. */
   const isUserEditing = useCallback(() => {
@@ -341,6 +439,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
 
   useEffect(() => {
     loadWorkflow();
+    loadColVis();
     switch (activeTab) {
       case 'fin-dashboard': loadFinSheet(); loadRuns(); break;
       case 'fin-timesheet': case 'fin-bcc': case 'fin-calculate': case 'fin-payroll-sheet': loadFinSheet(); if (activeTab === 'fin-calculate') { loadFormula(); loadInputs(); } break;
@@ -348,7 +447,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
       case 'fin-payslips': case 'fin-payment': case 'fin-signatures': loadSlips(); break;
     }
     if (activeTab === 'fin-payment' || activeTab === 'fin-payslips') loadDriveStatus();
-  }, [activeTab, month, loadWorkflow, loadFinSheet, loadRuns, loadSlips, loadFormula, loadInputs, loadDriveStatus]);
+  }, [activeTab, month, loadWorkflow, loadFinSheet, loadRuns, loadSlips, loadFormula, loadInputs, loadDriveStatus, loadColVis]);
 
   // QUY TRÌNH TUẦN TỰ + KHÓA KHI HOÀN TẤT (realtime theo workflow-status):
   //  - Bước ĐÃ HOÀN TẤT -> khóa lại (tránh sửa số liệu đã chốt).
@@ -929,13 +1028,13 @@ export default function FinanceModule(props: FinanceModuleProps) {
       {showTabContent && (
         <main style={{ flex: 1 }}>
           {activeTab === 'fin-dashboard' && <DashboardTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} slips={slips} workflow={workflow} formatVND={formatVND} />}
-          {activeTab === 'fin-timesheet' && <TimesheetTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} loadFinSheet={loadFinSheet} formatVND={formatVND} />}
-          {activeTab === 'fin-bcc' && <BccTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} formatVND={formatVND} />}
-          {activeTab === 'fin-calculate' && <CalculateTab month={month} formula={formula} setFormula={setFormula} inputs={inputs} inputsLoading={inputsLoading} allEmployees={allEmployees} finSheet={finSheet} finSheetLoading={finSheetLoading} salaryConfigs={salaryConfigs} saveFormula={saveFormula} upsertInput={upsertInput} saveAllInputs={saveAllInputs} loadFormula={loadFormula} loadInputs={loadInputs} runCalculate={runCalculate} calcBusy={calcBusy} runs={runs} inputsSaving={inputsSaving} pendingCount={pendingCount} inputsSavedAt={inputsSavedAt} />}
-          {activeTab === 'fin-payroll-sheet' && <PayrollSheetTab month={month} slips={slips} allEmployees={allEmployees} formatVND={formatVND} stageBadge={stageBadge} />}
-          {activeTab === 'fin-payroll-periods' && <PayrollPeriodsTab month={month} runs={runs} runsLoading={runsLoading} loadRuns={loadRuns} slips={slips} allEmployees={allEmployees} formatVND={formatVND} runCalculate={runCalculate} calcBusy={calcBusy} payRunAction={payRunAction} onNavigateTab={goTab} inputs={inputs} loadInputs={loadInputs} loadSlips={loadSlips} showToast={showToast} />}
-          {activeTab === 'fin-payslips' && <PayslipsTab month={month} slips={slips} slipsLoading={slipsLoading} allEmployees={allEmployees} formatVND={formatVND} loadSlips={loadSlips} stageBadge={stageBadge} slipQrUrl={slipQrUrl} fastSignLap={fastSignLap} publishSlip={publishSlip} returnSlip={returnSlip} markPaidSlip={markPaidSlip} syncSlipDrive={syncSlipDrive} downloadSlipPdf={downloadSlipPdf} />}
-          {activeTab === 'fin-payment' && <PaymentTab month={month} slips={slips} allEmployees={allEmployees} formatVND={formatVND} loadSlips={loadSlips} slipQrUrl={slipQrUrl} markPaidSlip={markPaidSlip} downloadSlipPdf={downloadSlipPdf} />}
+          {activeTab === 'fin-timesheet' && <TimesheetTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} loadFinSheet={loadFinSheet} formatVND={formatVND} cols={colsVisible('fin-timesheet')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-timesheet']} />}
+          {activeTab === 'fin-bcc' && <BccTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} formatVND={formatVND} cols={colsVisible('fin-bcc')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-bcc']} />}
+          {activeTab === 'fin-calculate' && <CalculateTab month={month} formula={formula} setFormula={setFormula} inputs={inputs} inputsLoading={inputsLoading} allEmployees={allEmployees} finSheet={finSheet} finSheetLoading={finSheetLoading} salaryConfigs={salaryConfigs} saveFormula={saveFormula} upsertInput={upsertInput} saveAllInputs={saveAllInputs} loadFormula={loadFormula} loadInputs={loadInputs} runCalculate={runCalculate} calcBusy={calcBusy} runs={runs} inputsSaving={inputsSaving} pendingCount={pendingCount} inputsSavedAt={inputsSavedAt} cols={colsVisible('fin-calculate')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-calculate']} />}
+          {activeTab === 'fin-payroll-sheet' && <PayrollSheetTab month={month} slips={slips} allEmployees={allEmployees} formatVND={formatVND} stageBadge={stageBadge} cols={colsVisible('fin-payroll-sheet')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payroll-sheet']} />}
+          {activeTab === 'fin-payroll-periods' && <PayrollPeriodsTab month={month} runs={runs} runsLoading={runsLoading} loadRuns={loadRuns} slips={slips} allEmployees={allEmployees} formatVND={formatVND} runCalculate={runCalculate} calcBusy={calcBusy} payRunAction={payRunAction} onNavigateTab={goTab} inputs={inputs} loadInputs={loadInputs} loadSlips={loadSlips} showToast={showToast} cols={colsVisible('fin-payroll-periods')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payroll-periods']} />}
+          {activeTab === 'fin-payslips' && <PayslipsTab month={month} slips={slips} slipsLoading={slipsLoading} allEmployees={allEmployees} formatVND={formatVND} loadSlips={loadSlips} stageBadge={stageBadge} slipQrUrl={slipQrUrl} fastSignLap={fastSignLap} publishSlip={publishSlip} returnSlip={returnSlip} markPaidSlip={markPaidSlip} syncSlipDrive={syncSlipDrive} downloadSlipPdf={downloadSlipPdf} cols={colsVisible('fin-payslips')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payslips']} />}
+          {activeTab === 'fin-payment' && <PaymentTab month={month} slips={slips} allEmployees={allEmployees} formatVND={formatVND} loadSlips={loadSlips} slipQrUrl={slipQrUrl} markPaidSlip={markPaidSlip} downloadSlipPdf={downloadSlipPdf} cols={colsVisible('fin-payment')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payment']} />}
           {activeTab === 'fin-signatures' && <SignatureTemplatesTab currentUser={currentUser} showToast={showToast} />}
           {activeTab === 'fin-rate-adjust' && <RateAdjustTab month={month} currentUser={currentUser} showToast={showToast} />}
           {activeTab === 'fin-bank-qr' && <BankQrTab allEmployees={allEmployees} month={month} />}
@@ -961,6 +1060,40 @@ function Kpi({ icon, label, value, sub, tone }: { icon: React.ReactNode; label: 
         <div className="fin-kpi-value">{value}</div>
         <div className="fin-kpi-sub">{sub}</div>
       </div>
+    </div>
+  );
+}
+
+/** Nút + panel ẩn/hiện cột cho 1 tab (dùng chung cho mọi tab Finance). */
+const FIN_COL_HEADER_COUNT = (tabKey: string, defs: any, cols: any) => {
+  const show = cols?.show;
+  if (!show || !defs) return 1;
+  return (defs as any[]).filter((d: any) => show(d.key)).length || 1;
+};
+function ColumnSettings({ tabKey, defs, value, onToggle, onShowAll, saving }: any) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ position: 'relative' }}>
+      <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={() => setOpen(v => !v)} title="Ẩn/hiện các cột bảng (lưu theo tài khoản, đồng bộ 2 máy)">
+        <List size={13} /> {saving ? 'Đang lưu…' : 'Cột hiển thị'}
+      </button>
+      {open && (
+        <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 60, width: 280, background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, boxShadow: '0 12px 32px rgba(15,23,42,.18)', padding: '10px 12px' }}>
+          <div style={{ fontSize: 11, fontWeight: 800, marginBottom: 6 }}>Cột hiển thị — tab này (lưu theo tài khoản)</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 320, overflowY: 'auto' }}>
+            {(defs || []).map((d: any) => (
+              <label key={d.key} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, cursor: 'pointer' }}>
+                <input type="checkbox" checked={value?.[tabKey]?.[d.key] !== false} onChange={() => onToggle(tabKey, d.key)} /> {d.label}
+              </label>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+            <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={onShowAll}>Hiện tất cả</button>
+            <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={() => setOpen(false)}>Đóng</button>
+          </div>
+          <div style={{ fontSize: 10.5, color: 'var(--fin-muted)', marginTop: 6 }}>Sẽ đồng bộ realtime cho máy khác cùng tài khoản.</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1110,15 +1243,17 @@ function DashboardTab({ month, finSheet, finSheetLoading, slips, workflow, forma
 /* ============================================================================
    2 · ĐỐI SOÁT CÔNG & BẢNG CHẤM CÔNG
    ============================================================================ */
-function TimesheetTab({ month, finSheet, finSheetLoading, loadFinSheet, formatVND }: any) {
+function TimesheetTab({ month, finSheet, finSheetLoading, loadFinSheet, formatVND, cols, onToggleCol, onShowAllCols, colVis, colVisSaving, colDefs }: any) {
   const fs = finSheet;
   const [q, setQ] = useState('');
+  const show = cols?.show || (() => true);
   const groups = useMemo(() => {
     const all: any[] = fs?.rows || [];
     const filtered = all.filter(matchesFilter(q.trim()));
     return branchGroups(filtered, (r: any) => r.branchId);
   }, [fs, q]);
   const filteredCount = groups.reduce((s, g) => s + g.rows.length, 0);
+  const colCount = FIN_COL_HEADER_COUNT('fin-timesheet', colDefs, cols);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <TabHead step={2} title="Đối soát công & Bảng chấm công" desc={`Tổng hợp ca/giờ/phạt theo nhân viên — kỳ ${periodLabel(month)}. Dữ liệu realtime từ chấm công + lịch đã phát hành.`}>
@@ -1128,6 +1263,7 @@ function TimesheetTab({ month, finSheet, finSheetLoading, loadFinSheet, formatVN
         <CardHead title={`Kỳ ${periodLabel(month)} — ${fs?.fromDate || ''} → ${fs?.toDate || ''}`} icon={<FileSpreadsheet size={14} color="#E85D92" />} sub={fs ? `${fs?.totals?.employees ?? 0} NV • ${fs?.totals?.totalShifts ?? 0} ca • ${Number(fs?.totals?.hours ?? 0).toFixed(1)} giờ` : 'Chưa có dữ liệu'}>
           <SearchBox value={q} onChange={setQ} />
           {q && <span className="fin-chip-stat">{filteredCount} kết quả</span>}
+          <ColumnSettings tabKey="fin-timesheet" defs={colDefs} value={colVis} onToggle={onToggleCol} onShowAll={() => onShowAllCols('fin-timesheet')} saving={colVisSaving} />
         </CardHead>
         {finSheetLoading ? (
           <div className="fin-empty">Đang tải bảng chấm công {periodLabel(month)}…</div>
@@ -1135,7 +1271,7 @@ function TimesheetTab({ month, finSheet, finSheetLoading, loadFinSheet, formatVN
           <div className="fin-table-wrap">
             <table className="fin-table">
               <thead>
-                <tr><th>Họ tên</th><th>Mã NV</th><th>Chi nhánh</th><th className="num">Ca đủ</th><th className="num">Thiếu</th><th className="num">Vắng</th><th className="num">Giờ công</th><th className="num">Lương ca</th><th className="num">Trừ</th><th className="num">THỰC NHẬN</th></tr>
+                <tr>{show('stt') && <th className="ctr">STT</th>}{show('fullName') && <th>Họ tên</th>}{show('code') && <th>Mã NV</th>}{show('branch') && <th>Chi nhánh</th>}{show('full') && <th className="num">Ca đủ</th>}{show('partial') && <th className="num">Thiếu</th>}{show('absent') && <th className="num">Vắng</th>}{show('hours') && <th className="num">Giờ công</th>}{show('standardPay') && <th className="num">Lương ca</th>}{show('deduction') && <th className="num">Trừ</th>}{show('netPay') && <th className="num">THỰC NHẬN</th>}</tr>
               </thead>
               <tbody>
                 {groups.map(g => {
@@ -1143,35 +1279,36 @@ function TimesheetTab({ month, finSheet, finSheetLoading, loadFinSheet, formatVN
                   const gNet = sumBy(g.rows, 'netPay');
                   return (
                     <React.Fragment key={g.id}>
-                      <BranchBandRow label={branchLabelOf(g.id)} count={g.rows.length} cols={10} totalText={`${gh.toFixed(1)} giờ • ${formatVND(gNet)}`} />
-                      {g.rows.map((r: any) => (
+                      <BranchBandRow label={branchLabelOf(g.id)} count={g.rows.length} cols={colCount} totalText={`${gh.toFixed(1)} giờ • ${formatVND(gNet)}`} />
+                      {g.rows.map((r: any, idx: number) => (
                         <tr key={r.employeeId}>
-                          <td style={{ fontWeight: 700 }}>{r.fullName}</td>
-                          <td className="ctr fin-mono">{r.employeeCode}</td>
-                          <td>{branchLabelOf(r.branchId)}</td>
-                          <td className="num">{r.full ?? 0}</td>
-                          <td className="num" style={{ color: '#92400e' }}>{r.partial ?? 0}</td>
-                          <td className="num" style={{ color: 'var(--fin-red)', fontWeight: 800 }}>{r.absent ?? 0}</td>
-                          <td className="num">{Number(r.hours ?? 0).toFixed(1)}</td>
-                          <td className="num fin-money">{formatVND(r.standardPay)}</td>
-                          <td className="num fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(r.deduction)}</td>
-                          <td className="num fin-money" style={{ fontWeight: 800, color: 'var(--fin-green)' }}>{formatVND(r.netPay)}</td>
+                          {show('stt') && <td className="ctr">{idx + 1}</td>}
+                          {show('fullName') && <td style={{ fontWeight: 700 }}>{r.fullName}</td>}
+                          {show('code') && <td className="ctr fin-mono">{r.employeeCode}</td>}
+                          {show('branch') && <td>{branchLabelOf(r.branchId)}</td>}
+                          {show('full') && <td className="num">{r.full ?? 0}</td>}
+                          {show('partial') && <td className="num" style={{ color: '#92400e' }}>{r.partial ?? 0}</td>}
+                          {show('absent') && <td className="num" style={{ color: 'var(--fin-red)', fontWeight: 800 }}>{r.absent ?? 0}</td>}
+                          {show('hours') && <td className="num">{Number(r.hours ?? 0).toFixed(1)}</td>}
+                          {show('standardPay') && <td className="num fin-money">{formatVND(r.standardPay)}</td>}
+                          {show('deduction') && <td className="num fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(r.deduction)}</td>}
+                          {show('netPay') && <td className="num fin-money" style={{ fontWeight: 800, color: 'var(--fin-green)' }}>{formatVND(r.netPay)}</td>}
                         </tr>
                       ))}
                       <tr className="fin-subtotal">
-                        <td colSpan={3}>CỘNG {branchLabelOf(g.id).toUpperCase()}</td>
-                        <td className="num">{sumBy(g.rows, 'full')}</td>
-                        <td className="num">{sumBy(g.rows, 'partial')}</td>
-                        <td className="num">{sumBy(g.rows, 'absent')}</td>
-                        <td className="num">{gh.toFixed(1)}</td>
-                        <td className="num fin-money">{formatVND(sumBy(g.rows, 'standardPay'))}</td>
-                        <td className="num fin-money">{formatVND(sumBy(g.rows, 'deduction'))}</td>
-                        <td className="num fin-money">{formatVND(gNet)}</td>
+                        <td colSpan={colCount - 7}>CỘNG {branchLabelOf(g.id).toUpperCase()}</td>
+                        {show('full') && <td className="num">{sumBy(g.rows, 'full')}</td>}
+                        {show('partial') && <td className="num">{sumBy(g.rows, 'partial')}</td>}
+                        {show('absent') && <td className="num">{sumBy(g.rows, 'absent')}</td>}
+                        {show('hours') && <td className="num">{gh.toFixed(1)}</td>}
+                        {show('standardPay') && <td className="num fin-money">{formatVND(sumBy(g.rows, 'standardPay'))}</td>}
+                        {show('deduction') && <td className="num fin-money">{formatVND(sumBy(g.rows, 'deduction'))}</td>}
+                        {show('netPay') && <td className="num fin-money">{formatVND(gNet)}</td>}
                       </tr>
                     </React.Fragment>
                   );
                 })}
-                {groups.length === 0 && <tr><td colSpan={10} className="fin-empty">{q ? 'Không tìm thấy nhân viên phù hợp.' : 'Chưa có dữ liệu chấm công tháng này.'}</td></tr>}
+                {groups.length === 0 && <tr><td colSpan={colCount} className="fin-empty">{q ? 'Không tìm thấy nhân viên phù hợp.' : 'Chưa có dữ liệu chấm công tháng này.'}</td></tr>}
               </tbody>
             </table>
           </div>
@@ -1190,9 +1327,10 @@ const STATUS_META: Record<string, { l: string; cls: string }> = {
   THIEU: { l: 'Thiếu chấm', cls: 'fin-status-THIEU' },
 };
 
-function BccTab({ month, finSheet, finSheetLoading, formatVND }: any) {
+function BccTab({ month, finSheet, finSheetLoading, formatVND, cols, onToggleCol, onShowAllCols, colVis, colVisSaving, colDefs }: any) {
   const fs = finSheet;
   const [q, setQ] = useState('');
+  const show = cols?.show || (() => true);
   const groups = useMemo(() => {
     const all: any[] = fs?.rows || [];
     return branchGroups(all.filter(matchesFilter(q.trim())), (r: any) => r.branchId);
@@ -1207,6 +1345,7 @@ function BccTab({ month, finSheet, finSheetLoading, formatVND }: any) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <TabHead step={3} title="BCC — Bảng công từng ngày" desc={`Chi tiết check-in/out, giờ, lương ca, trễ/vắng từng ngày — kỳ ${periodLabel(month)}. Mở từng nhân viên để xem chi tiết.`}>
         <SearchBox value={q} onChange={setQ} />
+        <ColumnSettings tabKey="fin-bcc" defs={colDefs} value={colVis} onToggle={onToggleCol} onShowAll={() => onShowAllCols('fin-bcc')} saving={colVisSaving} />
       </TabHead>
       {finSheetLoading ? (
         <div className="fin-empty">Đang tải bảng công {periodLabel(month)}…</div>
@@ -1226,34 +1365,36 @@ function BccTab({ month, finSheet, finSheetLoading, formatVND }: any) {
                 <details key={r.employeeId} className="fin-details">
                   <summary>
                     <span style={{ fontWeight: 800 }}>{r.fullName} <span style={{ color: '#94a3b8', fontWeight: 600 }}>({r.employeeCode})</span></span>
-                    <span className="fin-kv" style={{ color: '#2563eb' }}><b>{Number(r.hours ?? 0).toFixed(1)}</b> giờ</span>
-                    <span className="fin-kv" style={{ color: '#166534' }}>Đủ {r.full || 0}</span>
-                    <span className="fin-kv" style={{ color: '#92400e' }}>Thiếu {r.partial || 0}</span>
-                    <span className="fin-kv" style={{ color: '#b91c1c' }}>Vắng {r.absent || 0}</span>
-                    <span className="fin-kv" style={{ color: '#166534', marginLeft: 'auto' }}><b>{formatVND(r.netPay ?? r.standardPay ?? 0)}</b></span>
+                    {show('summary') && <>
+                      <span className="fin-kv" style={{ color: '#2563eb' }}><b>{Number(r.hours ?? 0).toFixed(1)}</b> giờ</span>
+                      <span className="fin-kv" style={{ color: '#166534' }}>Đủ {r.full || 0}</span>
+                      <span className="fin-kv" style={{ color: '#92400e' }}>Thiếu {r.partial || 0}</span>
+                      <span className="fin-kv" style={{ color: '#b91c1c' }}>Vắng {r.absent || 0}</span>
+                      <span className="fin-kv" style={{ color: '#166534', marginLeft: 'auto' }}><b>{formatVND(r.netPay ?? r.standardPay ?? 0)}</b></span>
+                    </>}
                   </summary>
                   <div className="fin-details-body">
                     <table className="fin-mini-table">
                       <thead>
-                        <tr><th>Ngày</th><th>Ca</th><th style={{ textAlign: 'center' }}>Giờ</th><th>Trạng thái</th><th>Check-in</th><th style={{ textAlign: 'right' }}>Trễ (phút)</th><th style={{ textAlign: 'right' }}>Lương ca</th><th style={{ textAlign: 'right' }}>Phạt/Trừ</th></tr>
+                        <tr>{show('date') && <th>Ngày</th>}{show('shift') && <th>Ca</th>}{show('hours') && <th style={{ textAlign: 'center' }}>Giờ</th>}{show('status') && <th>Trạng thái</th>}{show('checkIn') && <th>Check-in</th>}{show('lateMin') && <th style={{ textAlign: 'right' }}>Trễ (phút)</th>}{show('shiftPay') && <th style={{ textAlign: 'right' }}>Lương ca</th>}{show('fineAmount') && <th style={{ textAlign: 'right' }}>Phạt/Trừ</th>}</tr>
                       </thead>
                       <tbody>
                         {(r.shifts || []).map((d: any, idx: number) => {
                           const meta = STATUS_META[String(d.status || '')] || { l: d.status || '—', cls: '' };
                           return (
                             <tr key={`${r.employeeId}-${idx}`}>
-                              <td style={{ fontWeight: 700 }}>{String(d.date || '').slice(0, 10)}</td>
-                              <td>{d.shiftCode || '—'}{d.branchId ? <span style={{ color: '#94a3b8' }}> ({branchLabelOf(d.branchId)})</span> : null}</td>
-                              <td style={{ textAlign: 'center' }}>{Number(d.hours ?? 0).toFixed(1)}</td>
-                              <td className={meta.cls}>{meta.l}</td>
-                              <td>{fmtTime(d.checkIn)}</td>
-                              <td style={{ textAlign: 'right', color: (d.lateMin || 0) > 0 ? 'var(--fin-red)' : 'inherit' }}>{d.lateMin || 0}</td>
-                              <td style={{ textAlign: 'right' }} className="fin-money">{formatVND(d.shiftPay || 0)}</td>
-                              <td style={{ textAlign: 'right', color: (d.fineAmount || 0) > 0 ? 'var(--fin-red)' : 'inherit' }} className="fin-money">{formatVND(d.fineAmount || 0)}</td>
+                              {show('date') && <td style={{ fontWeight: 700 }}>{String(d.date || '').slice(0, 10)}</td>}
+                              {show('shift') && <td>{d.shiftCode || '—'}{d.branchId ? <span style={{ color: '#94a3b8' }}> ({branchLabelOf(d.branchId)})</span> : null}</td>}
+                              {show('hours') && <td style={{ textAlign: 'center' }}>{Number(d.hours ?? 0).toFixed(1)}</td>}
+                              {show('status') && <td className={meta.cls}>{meta.l}</td>}
+                              {show('checkIn') && <td>{fmtTime(d.checkIn)}</td>}
+                              {show('lateMin') && <td style={{ textAlign: 'right', color: (d.lateMin || 0) > 0 ? 'var(--fin-red)' : 'inherit' }}>{d.lateMin || 0}</td>}
+                              {show('shiftPay') && <td style={{ textAlign: 'right' }} className="fin-money">{formatVND(d.shiftPay || 0)}</td>}
+                              {show('fineAmount') && <td style={{ textAlign: 'right', color: (d.fineAmount || 0) > 0 ? 'var(--fin-red)' : 'inherit' }} className="fin-money">{formatVND(d.fineAmount || 0)}</td>}
                             </tr>
                           );
                         })}
-                        {(r.shifts || []).length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--fin-muted)', padding: 10 }}>Không có ca trong kỳ.</td></tr>}
+                        {(r.shifts || []).length === 0 && <tr><td colSpan={FIN_COL_HEADER_COUNT('fin-bcc', colDefs, cols)} style={{ textAlign: 'center', color: 'var(--fin-muted)', padding: 10 }}>Không có ca trong kỳ.</td></tr>}
                       </tbody>
                     </table>
                   </div>
@@ -1272,9 +1413,10 @@ function BccTab({ month, finSheet, finSheetLoading, formatVND }: any) {
 /* ============================================================================
    4 · TÍNH LƯƠNG — CÔNG THỨC & NHẬP TAY (+ NÚT TÍNH LƯƠNG)
    ============================================================================ */
-function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEmployees, finSheet, finSheetLoading, salaryConfigs, saveFormula, upsertInput, saveAllInputs, loadFormula, loadInputs, runCalculate, calcBusy, runs, inputsSaving, pendingCount, inputsSavedAt }: any) {
+function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEmployees, finSheet, finSheetLoading, salaryConfigs, saveFormula, upsertInput, saveAllInputs, loadFormula, loadInputs, runCalculate, calcBusy, runs, inputsSaving, pendingCount, inputsSavedAt, cols, onToggleCol, onShowAllCols, colVis, colVisSaving, colDefs }: any) {
   const [q, setQ] = useState('');
   const [expandId, setExpandId] = useState<string | null>(null);
+  const show = cols?.show || (() => true);
   const fmt = useCallback((n: any) => `${Math.round(Number(n) || 0).toLocaleString('vi-VN')}đ`, []);
   const latestRun = useMemo(() => (Array.isArray(runs) ? runs : []).filter((r: any) => r.period === month).sort((a: any, b: any) => String(b?.created_at || '').localeCompare(String(a?.created_at || '')))[0] || null, [runs, month]);
   const groups = useMemo(() => {
@@ -1289,6 +1431,7 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <TabHead step={4} title="Tính lương — Công thức & Nhập tay" desc={`Lưu công thức kỳ, nhập liệu tay từng NV, rồi bấm TÍNH LƯƠNG để sinh kỳ + phiếu. Kỳ ${periodLabel(month)}.`}>
         <SearchBox value={q} onChange={setQ} />
+        <ColumnSettings tabKey="fin-calculate" defs={colDefs} value={colVis} onToggle={onToggleCol} onShowAll={() => onShowAllCols('fin-calculate')} saving={colVisSaving} />
       </TabHead>
 
       {/* Nút tính lương — tạo kỳ + phiếu cho toàn bộ NV */}
@@ -1353,15 +1496,16 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
         <div className="fin-table-wrap" style={{ maxHeight: '62vh' }}>
           <table className="fin-table" style={{ minWidth: 1080 }}>
             <thead>
-              <tr><th className="ctr">STT</th><th>Mã NV</th><th>Họ tên</th><th>Chi nhánh</th><th className="num">LCB</th><th className="num">OT thêm</th><th className="num">Bonus</th><th className="num">Ứng lương</th><th className="num">Trừ KPI</th><th className="num">Trừ ĐP</th><th style={{ minWidth: 280 }}>Ghi chú (nhiều dòng)</th></tr>
+              <tr>{show('stt') && <th className="ctr">STT</th>}{show('code') && <th>Mã NV</th>}{show('name') && <th>Họ tên</th>}{show('branch') && <th>Chi nhánh</th>}{show('luong_cb') && <th className="num">LCB</th>}{show('ot_extra') && <th className="num">OT thêm</th>}{show('bonus_extra') && <th className="num">Bonus</th>}{show('ung_luong') && <th className="num">Ứng lương</th>}{show('tru_kpi') && <th className="num">Trừ KPI</th>}{show('dong_phuc') && <th className="num">Trừ ĐP</th>}{show('note') && <th style={{ minWidth: 280 }}>Ghi chú (nhiều dòng)</th>}</tr>
             </thead>
             <tbody>
               {groups.map(g => {
                 const gInps = g.rows.map((emp: any) => (inputs || []).find((i: any) => i.employee_id === emp.employee_id) || {});
                 const gSum = (k: string) => gInps.reduce((s: number, x: any) => s + (Number(x?.[k]) || 0), 0);
+                const colCount = FIN_COL_HEADER_COUNT('fin-calculate', colDefs, cols);
                 return (
                 <React.Fragment key={g.id}>
-                  <BranchBandRow label={branchLabelOf(g.id)} count={g.rows.length} cols={11} totalText={`LCB ${formatVND(gSum('luong_cb'))} · OT ${formatVND(gSum('ot_extra'))} · Bonus ${formatVND(gSum('bonus_extra'))} · Ứng ${formatVND(gSum('ung_luong'))} · KPI ${formatVND(gSum('tru_kpi'))} · ĐP ${formatVND(gSum('dong_phuc'))}`} />
+                  <BranchBandRow label={branchLabelOf(g.id)} count={g.rows.length} cols={colCount} totalText={`LCB ${formatVND(gSum('luong_cb'))} · OT ${formatVND(gSum('ot_extra'))} · Bonus ${formatVND(gSum('bonus_extra'))} · Ứng ${formatVND(gSum('ung_luong'))} · KPI ${formatVND(gSum('tru_kpi'))} · ĐP ${formatVND(gSum('dong_phuc'))}`} />
                   {g.rows.map((emp: any, idx: number) => {
                     const inp = inputs.find((i: any) => i.employee_id === emp.employee_id) || {};
                     const cell = (field: string, width = '100%') => (
@@ -1370,45 +1514,45 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
                     );
                     return (
                       <tr key={emp.employee_id}>
-                        <td className="ctr">{idx + 1}</td>
-                        <td className="ctr fin-mono">{emp.employee_code}</td>
-                        <td style={{ fontWeight: 700 }}>{emp.full_name}</td>
-                        <td>{branchLabelOf(g.id)}</td>
-                        <td className="num">{cell('luong_cb')}</td>
-                        <td className="num">{cell('ot_extra')}</td>
-                        <td className="num">{cell('bonus_extra')}</td>
-                        <td className="num">{cell('ung_luong')}</td>
-                        <td className="num">{cell('tru_kpi')}</td>
-                        <td className="num">{cell('dong_phuc')}</td>
-                        <td>
+                        {show('stt') && <td className="ctr">{idx + 1}</td>}
+                        {show('code') && <td className="ctr fin-mono">{emp.employee_code}</td>}
+                        {show('name') && <td style={{ fontWeight: 700 }}>{emp.full_name}</td>}
+                        {show('branch') && <td>{branchLabelOf(g.id)}</td>}
+                        {show('luong_cb') && <td className="num">{cell('luong_cb')}</td>}
+                        {show('ot_extra') && <td className="num">{cell('ot_extra')}</td>}
+                        {show('bonus_extra') && <td className="num">{cell('bonus_extra')}</td>}
+                        {show('ung_luong') && <td className="num">{cell('ung_luong')}</td>}
+                        {show('tru_kpi') && <td className="num">{cell('tru_kpi')}</td>}
+                        {show('dong_phuc') && <td className="num">{cell('dong_phuc')}</td>}
+                        {show('note') && <td>
                           <textarea className="fin-input" rows={2} value={inp.note ?? ''} onChange={v => upsertInput(emp.employee_id, 'note', v.target.value)} placeholder="Ghi chú… (nhiều dòng)" aria-label="Ghi chú" style={{ fontSize: 11.5, padding: '6px 8px', resize: 'vertical', minHeight: 42, lineHeight: 1.4, whiteSpace: 'pre-wrap' }} />
-                        </td>
+                        </td>}
                       </tr>
                     );
                   })}
                   <tr className="fin-subtotal">
-                    <td colSpan={4}>CỘNG {branchLabelOf(g.id).toUpperCase()} ({g.rows.length} NV)</td>
-                    <td className="num fin-money">{formatVND(gSum('luong_cb'))}</td>
-                    <td className="num fin-money">{formatVND(gSum('ot_extra'))}</td>
-                    <td className="num fin-money">{formatVND(gSum('bonus_extra'))}</td>
-                    <td className="num fin-money">{formatVND(gSum('ung_luong'))}</td>
-                    <td className="num fin-money">{formatVND(gSum('tru_kpi'))}</td>
-                    <td className="num fin-money">{formatVND(gSum('dong_phuc'))}</td>
+                    <td colSpan={Math.max(0, colCount - 7)}>CỘNG {branchLabelOf(g.id).toUpperCase()} ({g.rows.length} NV)</td>
+                    {show('luong_cb') && <td className="num fin-money">{formatVND(gSum('luong_cb'))}</td>}
+                    {show('ot_extra') && <td className="num fin-money">{formatVND(gSum('ot_extra'))}</td>}
+                    {show('bonus_extra') && <td className="num fin-money">{formatVND(gSum('bonus_extra'))}</td>}
+                    {show('ung_luong') && <td className="num fin-money">{formatVND(gSum('ung_luong'))}</td>}
+                    {show('tru_kpi') && <td className="num fin-money">{formatVND(gSum('tru_kpi'))}</td>}
+                    {show('dong_phuc') && <td className="num fin-money">{formatVND(gSum('dong_phuc'))}</td>}
                     <td />
                   </tr>
                 </React.Fragment>
                 );
               })}
-              {groups.length === 0 && <tr><td colSpan={11} className="fin-empty">{q ? 'Không tìm thấy nhân viên phù hợp.' : 'Chưa có nhân viên.'}</td></tr>}
+              {groups.length === 0 && <tr><td colSpan={FIN_COL_HEADER_COUNT('fin-calculate', colDefs, cols)} className="fin-empty">{q ? 'Không tìm thấy nhân viên phù hợp.' : 'Chưa có nhân viên.'}</td></tr>}
               {inputs.length > 0 && (
                 <tr className="fin-grand">
-                  <td colSpan={4}>TỔNG TOÀN CÔNG TY</td>
-                  <td className="num fin-money">{formatVND(inputTotals.lcb)}</td>
-                  <td className="num fin-money">{formatVND(inputTotals.ot)}</td>
-                  <td className="num fin-money">{formatVND(inputTotals.bonus)}</td>
-                  <td className="num fin-money">{formatVND(inputTotals.ung)}</td>
-                  <td className="num fin-money">{formatVND(inputTotals.kpi)}</td>
-                  <td className="num fin-money">{formatVND(inputTotals.dp)}</td>
+                  <td colSpan={Math.max(0, FIN_COL_HEADER_COUNT('fin-calculate', colDefs, cols) - 7)}>TỔNG TOÀN CÔNG TY</td>
+                  {show('luong_cb') && <td className="num fin-money">{formatVND(inputTotals.lcb)}</td>}
+                  {show('ot_extra') && <td className="num fin-money">{formatVND(inputTotals.ot)}</td>}
+                  {show('bonus_extra') && <td className="num fin-money">{formatVND(inputTotals.bonus)}</td>}
+                  {show('ung_luong') && <td className="num fin-money">{formatVND(inputTotals.ung)}</td>}
+                  {show('tru_kpi') && <td className="num fin-money">{formatVND(inputTotals.kpi)}</td>}
+                  {show('dong_phuc') && <td className="num fin-money">{formatVND(inputTotals.dp)}</td>}
                   <td />
                 </tr>
               )}
@@ -1423,13 +1567,15 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
 
       {/* B4 xem trước realtime: công thức kỳ × chấm công thật × nhập tay — bấm dòng để xem từng bước */}
       <div className="fin-card" style={{ border: '1.5px solid #a7f3d0' }}>
-        <CardHead title="B4 — Các bước tính lương xem trước (realtime)" icon={<Calculator size={14} color="#059669" />} sub={`Kỳ ${periodLabel(month)} • B1 giờ công/LCB • B2 Tổng cộng • B3 Tổng lương • B4 Thực lãnh. Bấm ▶ để xem từng bước.`} />
+        <CardHead title="B4 — Các bước tính lương xem trước (realtime)" icon={<Calculator size={14} color="#059669" />} sub={`Kỳ ${periodLabel(month)} • B1 giờ công/LCB • B2 Tổng cộng • B3 Tổng lương • B4 Thực lãnh. Bấm ▶ để xem từng bước.`}>
+          <ColumnSettings tabKey="fin-calculate" defs={colDefs} value={colVis} onToggle={onToggleCol} onShowAll={() => onShowAllCols('fin-calculate')} saving={colVisSaving} />
+        </CardHead>
         <div className="fin-table-wrap" style={{ maxHeight: '60vh' }}>
           <table className="fin-table" style={{ minWidth: 980 }}>
-            <thead><tr><th>Nhân viên</th><th className="num">B1 Giờ/LCB</th><th className="num">B2 Tổng cộng</th><th className="num">B3 Tổng lương</th><th className="num">B4 Thực lãnh</th></tr></thead>
+            <thead><tr>{show('name') && <th>Nhân viên</th>}{show('b1') && <th className="num">B1 Giờ/LCB</th>}{show('b2') && <th className="num">B2 Tổng cộng</th>}{show('b3') && <th className="num">B3 Tổng lương</th>}{show('b4') && <th className="num">B4 Thực lãnh</th>}</tr></thead>
             <tbody>
               {finSheetLoading ? (
-                <tr><td colSpan={5} className="fin-empty">Đang tải bảng chấm công…</td></tr>
+                <tr><td colSpan={FIN_COL_HEADER_COUNT('fin-calculate', colDefs, cols)} className="fin-empty">Đang tải bảng chấm công…</td></tr>
               ) : (() => {
                 const rows: any[] = (() => {
                   const list = (finSheet?.rows || []) as any[];
@@ -1437,7 +1583,7 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
                   const qv = q.trim().toLowerCase();
                   return qv ? list.filter((r: any) => String(r.fullName || '').toLowerCase().includes(qv) || String(r.employeeCode || '').toLowerCase().includes(qv)) : list;
                 })();
-                if (!rows.length) return <tr><td colSpan={5} className="fin-empty">{finSheet ? 'Kỳ này chưa có ca chấm công — xem trước hiện sau khi có chấm công. Vẫn bấm TÍNH LƯƠNG NGAY được.' : 'Chưa tải được bảng công — bấm Tải lại ở tab Đối soát công, hoặc bấm TÍNH LƯƠNG NGAY để tính trên server.'}</td></tr>;
+                if (!rows.length) return <tr><td colSpan={FIN_COL_HEADER_COUNT('fin-calculate', colDefs, cols)} className="fin-empty">{finSheet ? 'Kỳ này chưa có ca chấm công — xem trước hiện sau khi có chấm công. Vẫn bấm TÍNH LƯƠNG NGAY được.' : 'Chưa tải được bảng công — bấm Tải lại ở tab Đối soát công, hoặc bấm TÍNH LƯƠNG NGAY để tính trên server.'}</td></tr>;
                 return rows.flatMap((r: any) => {
                   const inp = (inputs || []).find((i: any) => i.employee_id === r.employeeId) || {};
                   const num = (v: any) => Math.max(0, Math.floor(Number(v) || 0));
@@ -1455,14 +1601,14 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
                   const open = expandId === r.employeeId;
                   const main = (
                     <tr key={r.employeeId} style={{ cursor: 'pointer', backgroundColor: open ? '#f0fdf4' : undefined }} onClick={() => setExpandId(open ? null : r.employeeId)}>
-                      <td style={{ fontWeight: 700 }}>{open ? '▼ ' : '▶ '}{r.fullName}<div style={{ fontSize: 10, color: 'var(--fin-muted)', fontWeight: 400 }}>{r.employeeCode} • {Number(r.hours || 0).toFixed(1)}h • TV {Number(r.tvHours || 0)}h / CT {Number(r.ctHours || 0)}h</div></td>
-                      <td className="num">{fmt(b1)}</td><td className="num" style={{ fontWeight: 700 }}>{fmt(b2)}</td><td className="num" style={{ fontWeight: 700 }}>{fmt(b3)}</td><td className="num fin-money" style={{ fontWeight: 800, color: 'var(--fin-green)' }}>{fmt(b4)}</td>
+                      {show('name') && <td style={{ fontWeight: 700 }}>{open ? '▼ ' : '▶ '}{r.fullName}<div style={{ fontSize: 10, color: 'var(--fin-muted)', fontWeight: 400 }}>{r.employeeCode} • {Number(r.hours || 0).toFixed(1)}h • TV {Number(r.tvHours || 0)}h / CT {Number(r.ctHours || 0)}h</div></td>}
+                      {show('b1') && <td className="num">{fmt(b1)}</td>}{show('b2') && <td className="num" style={{ fontWeight: 700 }}>{fmt(b2)}</td>}{show('b3') && <td className="num" style={{ fontWeight: 700 }}>{fmt(b3)}</td>}{show('b4') && <td className="num fin-money" style={{ fontWeight: 800, color: 'var(--fin-green)' }}>{fmt(b4)}</td>}
                     </tr>
                   );
                   if (!open) return [main];
                   return [main, (
                     <tr key={`${r.employeeId}-x`} style={{ backgroundColor: '#f8fafc' }}>
-                      <td colSpan={5} style={{ padding: '8px 14px 14px 22px', fontSize: 12 }}>
+                      <td colSpan={FIN_COL_HEADER_COUNT('fin-calculate', colDefs, cols)} style={{ padding: '8px 14px 14px 22px', fontSize: 12 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}><span><b style={{ color: '#059669' }}>B1.</b> {isMonthly ? `Lương tháng = LCB ${fmt(luongCB)} + phụ cấp ${fmt(allowance)} (không tính ca/giờ)` : `Lương giờ = TV ${Number(r.tvHours || 0)}h × ${fmt(Number(r.tvHours || 0) > 0 && Number(r.tvPay || 0) > 0 ? Number(r.tvPay) / Number(r.tvHours) : (formula?.rateTV ?? 21000))} + CT ${Number(r.ctHours || 0)}h × ${fmt(Number(r.ctHours || 0) > 0 && Number(r.ctPay || 0) > 0 ? Number(r.ctPay) / Number(r.ctHours) : (Number(r.rate) || formula?.rateCT || 25500))}; + phụ cấp ${fmt(allowance)}`}</span><strong>= {fmt(b1)}</strong></div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}><span><b style={{ color: '#059669' }}>B2.</b> TỔNG CỘNG = LCB/giờ {fmt(b1)} + OT thêm {fmt(ot)} + Bonus {fmt(bonus)}</span><strong>= {fmt(b2)}</strong></div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}><span><b style={{ color: '#059669' }}>B3.</b> TỔNG LƯƠNG = TỔNG CỘNG {fmt(b2)} − KPI {fmt(kpi)} − phạt trễ/vắng {fmt(ded)}</span><strong>= {fmt(b3)}</strong></div>
@@ -1484,18 +1630,20 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
 /* ============================================================================
    5 · PAYMENT — BẢNG LƯƠNG THÁNG (nhóm chi nhánh + subtotal)
    ============================================================================ */
-function PayrollSheetTab({ month, slips, allEmployees, formatVND, stageBadge }: any) {
+function PayrollSheetTab({ month, slips, allEmployees, formatVND, stageBadge, cols, onToggleCol, onShowAllCols, colVis, colVisSaving, colDefs }: any) {
   const [q, setQ] = useState('');
+  const show = cols?.show || (() => true);
   const groups = useMemo(() => {
     const filtered = (slips || []).filter(matchesFilter(q.trim()));
     return branchGroups(filtered, (s: any) => slipBranchId(s, allEmployees));
   }, [slips, allEmployees, q]);
   const grand = sumCalc(slips || []);
-  const COLS = 18;
+  const COLS = FIN_COL_HEADER_COUNT('fin-payroll-sheet', colDefs, cols);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <TabHead step={5} title="Payment — Bảng lương tháng" desc={`Bảng lương tổng hợp theo từng chi nhánh — kỳ ${periodLabel(month)}. Mỗi chi nhánh hiển thị TỪNG NHÂN VIÊN (STT, họ tên, mã, chi nhánh) với ĐỦ cột: Giờ công, Lương ca, Phụ cấp, LCB, OT, Bonus, TỔNG CỘNG, Trừ KPI/phạt, Ứng, Trừ ĐP, TỔNG LƯƠNG, THỰC LÃNH, Trạng thái. Mỗi chi nhánh có dòng CỘNG tổng tiền chi nhánh đó; cuối bảng là TỔNG TOÀN CÔNG TY.`}>
         <SearchBox value={q} onChange={setQ} />
+        <ColumnSettings tabKey="fin-payroll-sheet" defs={colDefs} value={colVis} onToggle={onToggleCol} onShowAll={() => onShowAllCols('fin-payroll-sheet')} saving={colVisSaving} />
       </TabHead>
       <div className="fin-card">
         <CardHead title={`Kỳ ${periodLabel(month)} — Bảng lương theo chi nhánh (${slips.length} phiếu)`} icon={<FileText size={14} color="#E85D92" />} sub="Nhóm theo chi nhánh · mỗi chi nhánh 1 dòng CỘNG tổng tiền">
@@ -1504,7 +1652,7 @@ function PayrollSheetTab({ month, slips, allEmployees, formatVND, stageBadge }: 
         <div className="fin-table-wrap">
           <table className="fin-table" style={{ minWidth: 1980 }}>
             <thead>
-              <tr><th className="ctr">STT</th><th>Họ tên</th><th>Mã NV</th><th>Chi nhánh</th><th className="num">Giờ công</th><th className="num">Lương ca</th><th className="num">Phụ cấp</th><th className="num">LCB</th><th className="num">OT thêm</th><th className="num">Bonus</th><th className="num">TỔNG CỘNG</th><th className="num">Trừ KPI/phạt</th><th className="num">Ứng lương</th><th className="num">Trừ ĐP</th><th className="num">TỔNG LƯƠNG</th><th className="num">THỰC LÃNH</th><th>Trạng thái</th></tr>
+              <tr>{show('stt') && <th className="ctr">STT</th>}{show('full_name') && <th>Họ tên</th>}{show('employee_code') && <th>Mã NV</th>}{show('branch') && <th>Chi nhánh</th>}{show('gio') && <th className="num">Giờ công</th>}{show('banCa') && <th className="num">Lương ca</th>}{show('phuCap') && <th className="num">Phụ cấp</th>}{show('lcb') && <th className="num">LCB</th>}{show('ot') && <th className="num">OT thêm</th>}{show('bonus') && <th className="num">Bonus</th>}{show('tongCong') && <th className="num">TỔNG CỘNG</th>}{show('truKpiPhat') && <th className="num">Trừ KPI/phạt</th>}{show('ung') && <th className="num">Ứng lương</th>}{show('dongPhuc') && <th className="num">Trừ ĐP</th>}{show('tongLuong') && <th className="num">TỔNG LƯƠNG</th>}{show('thuc') && <th className="num">THỰC LÃNH</th>}{show('status') && <th>Trạng thái</th>}</tr>
             </thead>
             <tbody>
               {groups.map(g => {
@@ -1517,41 +1665,41 @@ function PayrollSheetTab({ month, slips, allEmployees, formatVND, stageBadge }: 
                       const st = stageBadge(s.stage ?? s.status);
                       return (
                         <tr key={s.item_id}>
-                          <td className="ctr">{idx + 1}</td>
-                          <td style={{ fontWeight: 700 }}>{s.full_name}</td>
-                          <td className="ctr fin-mono">{s.employee_code}</td>
-                          <td>{branchLabelOf(slipBranchId(s, allEmployees))}</td>
-                          <td className="num">{r1(c.gio).toFixed(1)}</td>
-                          <td className="num fin-money">{formatVND(c.banCa)}</td>
-                          <td className="num fin-money">{formatVND(c.phuCap)}</td>
-                          <td className="num fin-money">{formatVND(c.lcb)}</td>
-                          <td className="num fin-money">{formatVND(c.ot)}</td>
-                          <td className="num fin-money">{formatVND(c.bonus)}</td>
-                          <td className="num fin-money" style={{ fontWeight: 700 }}>{formatVND(c.tongCong)}</td>
-                          <td className="num fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(c.truKpiPhat)}</td>
-                          <td className="num fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(c.ung)}</td>
-                          <td className="num fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(c.dongPhuc)}</td>
-                          <td className="num fin-money">{formatVND(c.tongLuong)}</td>
-                          <td className="num fin-money" style={{ fontWeight: 800, color: 'var(--fin-green)' }}>{formatVND(c.thuc)}</td>
-                          <td><span className="fin-badge" style={{ color: st.fg, background: st.bg, borderColor: st.border }}><span className="fin-badge-dot" />{st.label}</span></td>
+                          {show('stt') && <td className="ctr">{idx + 1}</td>}
+                          {show('full_name') && <td style={{ fontWeight: 700 }}>{s.full_name}</td>}
+                          {show('employee_code') && <td className="ctr fin-mono">{s.employee_code}</td>}
+                          {show('branch') && <td>{branchLabelOf(slipBranchId(s, allEmployees))}</td>}
+                          {show('gio') && <td className="num">{r1(c.gio).toFixed(1)}</td>}
+                          {show('banCa') && <td className="num fin-money">{formatVND(c.banCa)}</td>}
+                          {show('phuCap') && <td className="num fin-money">{formatVND(c.phuCap)}</td>}
+                          {show('lcb') && <td className="num fin-money">{formatVND(c.lcb)}</td>}
+                          {show('ot') && <td className="num fin-money">{formatVND(c.ot)}</td>}
+                          {show('bonus') && <td className="num fin-money">{formatVND(c.bonus)}</td>}
+                          {show('tongCong') && <td className="num fin-money" style={{ fontWeight: 700 }}>{formatVND(c.tongCong)}</td>}
+                          {show('truKpiPhat') && <td className="num fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(c.truKpiPhat)}</td>}
+                          {show('ung') && <td className="num fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(c.ung)}</td>}
+                          {show('dongPhuc') && <td className="num fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(c.dongPhuc)}</td>}
+                          {show('tongLuong') && <td className="num fin-money">{formatVND(c.tongLuong)}</td>}
+                          {show('thuc') && <td className="num fin-money" style={{ fontWeight: 800, color: 'var(--fin-green)' }}>{formatVND(c.thuc)}</td>}
+                          {show('status') && <td><span className="fin-badge" style={{ color: st.fg, background: st.bg, borderColor: st.border }}><span className="fin-badge-dot" />{st.label}</span></td>}
                         </tr>
                       );
                     })}
                     <tr className="fin-subtotal">
-                      <td colSpan={4}>CỘNG {branchLabelOf(g.id).toUpperCase()} ({g.rows.length} NV)</td>
-                      <td className="num">{r1(gs.gio).toFixed(1)}</td>
-                      <td className="num fin-money">{formatVND(gs.banCa)}</td>
-                      <td className="num fin-money">{formatVND(gs.phuCap)}</td>
-                      <td className="num fin-money">{formatVND(gs.lcb)}</td>
-                      <td className="num fin-money">{formatVND(gs.ot)}</td>
-                      <td className="num fin-money">{formatVND(gs.bonus)}</td>
-                      <td className="num fin-money">{formatVND(gs.tongCong)}</td>
-                      <td className="num fin-money">{formatVND(gs.truKpiPhat)}</td>
-                      <td className="num fin-money">{formatVND(gs.ung)}</td>
-                      <td className="num fin-money">{formatVND(gs.dongPhuc)}</td>
-                      <td className="num fin-money">{formatVND(gs.tongLuong)}</td>
-                      <td className="num fin-money">{formatVND(gs.thuc)}</td>
-                      <td />
+                      <td colSpan={Math.max(1, COLS - 14)}>CỘNG {branchLabelOf(g.id).toUpperCase()} ({g.rows.length} NV)</td>
+                      {show('gio') && <td className="num">{r1(gs.gio).toFixed(1)}</td>}
+                      {show('banCa') && <td className="num fin-money">{formatVND(gs.banCa)}</td>}
+                      {show('phuCap') && <td className="num fin-money">{formatVND(gs.phuCap)}</td>}
+                      {show('lcb') && <td className="num fin-money">{formatVND(gs.lcb)}</td>}
+                      {show('ot') && <td className="num fin-money">{formatVND(gs.ot)}</td>}
+                      {show('bonus') && <td className="num fin-money">{formatVND(gs.bonus)}</td>}
+                      {show('tongCong') && <td className="num fin-money">{formatVND(gs.tongCong)}</td>}
+                      {show('truKpiPhat') && <td className="num fin-money">{formatVND(gs.truKpiPhat)}</td>}
+                      {show('ung') && <td className="num fin-money">{formatVND(gs.ung)}</td>}
+                      {show('dongPhuc') && <td className="num fin-money">{formatVND(gs.dongPhuc)}</td>}
+                      {show('tongLuong') && <td className="num fin-money">{formatVND(gs.tongLuong)}</td>}
+                      {show('thuc') && <td className="num fin-money">{formatVND(gs.thuc)}</td>}
+                      {show('status') && <td />}
                     </tr>
                   </React.Fragment>
                 );
@@ -1559,20 +1707,20 @@ function PayrollSheetTab({ month, slips, allEmployees, formatVND, stageBadge }: 
               {groups.length === 0 && <tr><td colSpan={COLS} className="fin-empty">{q ? 'Không tìm thấy phiếu phù hợp.' : 'Chưa có bảng lương tháng này — hãy TÍNH LƯƠNG ở tab 4.'}</td></tr>}
               {slips.length > 0 && (
                 <tr className="fin-grand">
-                  <td colSpan={4}>TỔNG TOÀN CÔNG TY ({slips.length} phiếu)</td>
-                  <td className="num">{r1(grand.gio).toFixed(1)}</td>
-                  <td className="num fin-money">{formatVND(grand.banCa)}</td>
-                  <td className="num fin-money">{formatVND(grand.phuCap)}</td>
-                  <td className="num fin-money">{formatVND(grand.lcb)}</td>
-                  <td className="num fin-money">{formatVND(grand.ot)}</td>
-                  <td className="num fin-money">{formatVND(grand.bonus)}</td>
-                  <td className="num fin-money">{formatVND(grand.tongCong)}</td>
-                  <td className="num fin-money">{formatVND(grand.truKpiPhat)}</td>
-                  <td className="num fin-money">{formatVND(grand.ung)}</td>
-                  <td className="num fin-money">{formatVND(grand.dongPhuc)}</td>
-                  <td className="num fin-money">{formatVND(grand.tongLuong)}</td>
-                  <td className="num fin-money">{formatVND(grand.thuc)}</td>
-                  <td />
+                  <td colSpan={Math.max(1, COLS - 14)}>TỔNG TOÀN CÔNG TY ({slips.length} phiếu)</td>
+                  {show('gio') && <td className="num">{r1(grand.gio).toFixed(1)}</td>}
+                  {show('banCa') && <td className="num fin-money">{formatVND(grand.banCa)}</td>}
+                  {show('phuCap') && <td className="num fin-money">{formatVND(grand.phuCap)}</td>}
+                  {show('lcb') && <td className="num fin-money">{formatVND(grand.lcb)}</td>}
+                  {show('ot') && <td className="num fin-money">{formatVND(grand.ot)}</td>}
+                  {show('bonus') && <td className="num fin-money">{formatVND(grand.bonus)}</td>}
+                  {show('tongCong') && <td className="num fin-money">{formatVND(grand.tongCong)}</td>}
+                  {show('truKpiPhat') && <td className="num fin-money">{formatVND(grand.truKpiPhat)}</td>}
+                  {show('ung') && <td className="num fin-money">{formatVND(grand.ung)}</td>}
+                  {show('dongPhuc') && <td className="num fin-money">{formatVND(grand.dongPhuc)}</td>}
+                  {show('tongLuong') && <td className="num fin-money">{formatVND(grand.tongLuong)}</td>}
+                  {show('thuc') && <td className="num fin-money">{formatVND(grand.thuc)}</td>}
+                  {show('status') && <td />}
                 </tr>
               )}
             </tbody>
@@ -1608,13 +1756,14 @@ const PERIOD_SLIP_FILTERS = [
   { key: 'PAID', label: 'Đã chi trả' },
 ];
 
-function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmployees, formatVND, runCalculate, calcBusy, payRunAction, onNavigateTab, inputs = [], loadInputs, loadSlips, showToast }: any) {
+function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmployees, formatVND, runCalculate, calcBusy, payRunAction, onNavigateTab, inputs = [], loadInputs, loadSlips, showToast, cols, onToggleCol, onShowAllCols, colVis, colVisSaving, colDefs }: any) {
   const [q, setQ] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editVals, setEditVals] = useState<any>({});
   const [editSaving, setEditSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const show = cols?.show || (() => true);
   const monthRuns = useMemo(() => (Array.isArray(runs) ? runs : []).filter((r: any) => r.period === month).sort((a: any, b: any) => String(b?.created_at || '').localeCompare(String(a?.created_at || ''))), [runs, month]);
   const latest = monthRuns[0] || null;
   const allSlips = useMemo(() => Array.isArray(slips) ? slips : [], [slips]);
@@ -1710,10 +1859,11 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <TabHead step={6} title="Kỳ lương — DRAFT → PAID" desc={`Vòng đời kỳ lương ${periodLabel(month)}: Tính → Đối soát → Duyệt → từng phiếu gửi NV → NV ký → chi trả. Bảng dưới Nhóm theo CHI NHÁNH, mỗi NV 1 dòng với ĐỦ cột tiền + dòng CỘNG tổng tiền chi nhánh. Kế toán có thể SỬA TRỰC TIẾP từng NV (LCB/OT/Bonus/Ứng/KPI/ĐP) ngay trên bảng, rồi bấm CẬP NHẬT DỮ LIỆU để tải lại / TÍNH LẠI KỲ để áp số mới.`}>
         <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={loadRuns}><RefreshCw size={13} /> Tải lại</button>
+        <ColumnSettings tabKey="fin-payroll-periods" defs={colDefs} value={colVis} onToggle={onToggleCol} onShowAll={() => onShowAllCols('fin-payroll-periods')} saving={colVisSaving} />
         <button type="button" className="fin-btn fin-btn-dark fin-btn-sm" onClick={refreshData} disabled={refreshing} title="Tải lại dữ liệu mới nhất từ server (inputs, phiếu, kỳ, workflow) — realtime">
           {refreshing ? <Loader2 size={13} className="fin-spin" /> : <RefreshCw size={13} />} Cập nhật dữ liệu
         </button>
-        <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={runCalculate} disabled={calcBusy} title="Tính lại kỳ (tạo kỳ mới — so phiếu cũ vẫn giữ để đối chiếu)">
+        <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={runCalculate} disabled={calcBusy} title="Tính lại kỳ (tạo kỳ mới — phiếu cũ vẫn giữ để đối chiếu)">
           {calcBusy ? <Loader2 size={13} className="fin-spin" /> : <Calculator size={13} />} {latest ? 'Tính lại kỳ' : 'Tính lương ngay'}
         </button>
       </TabHead>
@@ -1779,6 +1929,7 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
       <div className="fin-card">
         <CardHead title={`Danh sách phiếu lương — ${periodLabel(month)} (${filteredSlips.length}/${allSlips.length} phiếu)`} icon={<Receipt size={14} color="#E85D92" />} sub="Nhóm theo chi nhánh · mỗi NV 1 dòng với ĐỦ cột · mỗi chi nhánh 1 dòng CỘNG tổng tiền · bấm ✏️ để sửa trực tiếp (LCB/OT/Bonus/Ứng/KPI/ĐP)">
           <SearchBox value={q} onChange={setQ} />
+          <ColumnSettings tabKey="fin-payroll-periods" defs={colDefs} value={colVis} onToggle={onToggleCol} onShowAll={() => onShowAllCols('fin-payroll-periods')} saving={colVisSaving} />
           <span className="fin-chip-stat">{r1(grand.gio).toFixed(1)} giờ</span>
           <span className="fin-chip-stat">THỰC LÃNH {formatVND(grand.thuc)}</span>
         </CardHead>
@@ -1802,14 +1953,15 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
           <div className="fin-table-wrap">
             <table className="fin-table" style={{ minWidth: 2380 }}>
               <thead>
-                <tr><th className="ctr">STT</th><th>Họ tên</th><th>Mã NV</th><th>Chi nhánh</th><th className="num">Giờ công</th><th className="num">Lương ca</th><th className="num">Phụ cấp</th><th className="num">LCB</th><th className="num">OT thêm</th><th className="num">Bonus</th><th className="num">TỔNG CỘNG</th><th className="num">Trừ KPI/phạt</th><th className="num">Ứng lương</th><th className="num">Trừ ĐP</th><th className="num">TỔNG LƯƠNG</th><th className="num">THỰC LÃNH</th><th>Trạng thái phiếu</th><th className="ctr">Sửa trực tiếp</th></tr>
+                <tr>{show('stt') && <th className="ctr">STT</th>}{show('full_name') && <th>Họ tên</th>}{show('employee_code') && <th>Mã NV</th>}{show('branch') && <th>Chi nhánh</th>}{show('gio') && <th className="num">Giờ công</th>}{show('banCa') && <th className="num">Lương ca</th>}{show('phuCap') && <th className="num">Phụ cấp</th>}{show('lcb') && <th className="num">LCB</th>}{show('ot') && <th className="num">OT thêm</th>}{show('bonus') && <th className="num">Bonus</th>}{show('tongCong') && <th className="num">TỔNG CỘNG</th>}{show('truKpiPhat') && <th className="num">Trừ KPI/phạt</th>}{show('ung') && <th className="num">Ứng lương</th>}{show('dongPhuc') && <th className="num">Trừ ĐP</th>}{show('tongLuong') && <th className="num">TỔNG LƯƠNG</th>}{show('thuc') && <th className="num">THỰC LÃNH</th>}{show('status') && <th>Trạng thái phiếu</th>}{show('edit') && <th className="ctr">Sửa trực tiếp</th>}</tr>
               </thead>
               <tbody>
                 {branchGroupsFiltered.map(g => {
                   const gs = sumCalc(g.rows);
+                  const colCount = FIN_COL_HEADER_COUNT('fin-payroll-periods', colDefs, cols);
                   return (
                     <React.Fragment key={g.id}>
-                      <BranchBandRow label={branchLabelOf(g.id)} count={g.rows.length} cols={19} totalText={`THỰC LÃNH ${formatVND(gs.thuc)} · TỔNG CỘNG ${formatVND(gs.tongCong)} · ${r1(gs.gio).toFixed(1)} giờ`} />
+                      <BranchBandRow label={branchLabelOf(g.id)} count={g.rows.length} cols={colCount} totalText={`THỰC LÃNH ${formatVND(gs.thuc)} · TỔNG CỘNG ${formatVND(gs.tongCong)} · ${r1(gs.gio).toFixed(1)} giờ`} />
                       {g.rows.map((s: any, idx: number) => {
                         const st = String(s?.status || 'DRAFT').toUpperCase();
                         const colors: Record<string, { bg: string; fg: string }> = { DRAFT: { bg: '#F1F5F9', fg: '#475569' }, PUBLISHED: { bg: '#ECFDF5', fg: '#047857' }, CONFIRMED: { bg: '#FEF3C7', fg: '#92400E' }, PAID: { bg: '#DCFCE7', fg: '#166534' }, COMPLAINED: { bg: '#FEF2F2', fg: '#991B1B' } };
@@ -1824,31 +1976,31 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
                         );
                         return (
                           <tr key={s?.item_id || `${s?.employee_id}-${s?.period}`} style={isEditing ? { backgroundColor: '#FFFBEB' } : undefined}>
-                            <td className="ctr">{idx + 1}</td>
-                            <td style={{ fontWeight: 700 }}>{s?.full_name || s?.fullName || '—'}</td>
-                            <td className="ctr fin-mono">{s?.employee_code || s?.employeeCode || '—'}</td>
-                            <td>{branchLabelOf(slipBranchId(s, allEmployees))}</td>
-                            <td className="num">{r1(calc.gio).toFixed(1)}</td>
-                            <td className="num fin-money">{formatVND(calc.banCa)}</td>
-                            <td className="num fin-money">{formatVND(calc.phuCap)}</td>
-                            <td className="num">{isEditing ? numCell('luong_cb') : <span className="fin-money">{formatVND(calc.lcb)}</span>}</td>
-                            <td className="num">{isEditing ? numCell('ot_extra') : <span className="fin-money">{formatVND(calc.ot)}</span>}</td>
-                            <td className="num">{isEditing ? numCell('bonus_extra') : <span className="fin-money">{formatVND(calc.bonus)}</span>}</td>
-                            <td className="num fin-money" style={{ fontWeight: 700 }}>{formatVND(calc.tongCong)}</td>
-                            <td className="num">{isEditing ? numCell('tru_kpi') : <span className="fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(calc.truKpiPhat)}</span>}</td>
-                            <td className="num">{isEditing ? numCell('ung_luong') : <span className="fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(calc.ung)}</span>}</td>
-                            <td className="num">{isEditing ? numCell('dong_phuc') : <span className="fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(calc.dongPhuc)}</span>}</td>
-                            <td className="num fin-money">{formatVND(calc.tongLuong)}</td>
-                            <td className="num fin-money" style={{ fontWeight: 800, color: 'var(--fin-green)' }}>{formatVND(calc.thuc)}</td>
-                            <td>
+                            {show('stt') && <td className="ctr">{idx + 1}</td>}
+                            {show('full_name') && <td style={{ fontWeight: 700 }}>{s?.full_name || s?.fullName || '—'}</td>}
+                            {show('employee_code') && <td className="ctr fin-mono">{s?.employee_code || s?.employeeCode || '—'}</td>}
+                            {show('branch') && <td>{branchLabelOf(slipBranchId(s, allEmployees))}</td>}
+                            {show('gio') && <td className="num">{r1(calc.gio).toFixed(1)}</td>}
+                            {show('banCa') && <td className="num fin-money">{formatVND(calc.banCa)}</td>}
+                            {show('phuCap') && <td className="num fin-money">{formatVND(calc.phuCap)}</td>}
+                            {show('lcb') && <td className="num">{isEditing ? numCell('luong_cb') : <span className="fin-money">{formatVND(calc.lcb)}</span>}</td>}
+                            {show('ot') && <td className="num">{isEditing ? numCell('ot_extra') : <span className="fin-money">{formatVND(calc.ot)}</span>}</td>}
+                            {show('bonus') && <td className="num">{isEditing ? numCell('bonus_extra') : <span className="fin-money">{formatVND(calc.bonus)}</span>}</td>}
+                            {show('tongCong') && <td className="num fin-money" style={{ fontWeight: 700 }}>{formatVND(calc.tongCong)}</td>}
+                            {show('truKpiPhat') && <td className="num">{isEditing ? numCell('tru_kpi') : <span className="fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(calc.truKpiPhat)}</span>}</td>}
+                            {show('ung') && <td className="num">{isEditing ? numCell('ung_luong') : <span className="fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(calc.ung)}</span>}</td>}
+                            {show('dongPhuc') && <td className="num">{isEditing ? numCell('dong_phuc') : <span className="fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(calc.dongPhuc)}</span>}</td>}
+                            {show('tongLuong') && <td className="num fin-money">{formatVND(calc.tongLuong)}</td>}
+                            {show('thuc') && <td className="num fin-money" style={{ fontWeight: 800, color: 'var(--fin-green)' }}>{formatVND(calc.thuc)}</td>}
+                            {show('status') && <td>
                               <span className="fin-badge" style={{ color: c.fg, background: c.bg, borderColor: c.fg + '40' }}><span className="fin-badge-dot" />{st}</span>
                               <div style={{ display: 'flex', gap: 4, marginTop: 4, flexWrap: 'wrap' }}>
                                 <span className={`fin-sign${s?.sign_lap ? ' ok' : ' pending'}`}>{s?.sign_lap ? '✓ KT' : 'KT?'}</span>
                                 <span className={`fin-sign${s?.sign_giamdoc ? ' ok' : ' pending'}`}>{s?.sign_giamdoc ? '✓ GĐ' : 'GĐ?'}</span>
                                 <span className={`fin-sign${s?.sign_nhanvien ? ' ok-green' : ' pending'}`}>{s?.sign_nhanvien ? '✓ NV' : 'NV?'}</span>
                               </div>
-                            </td>
-                            <td className="ctr">
+                            </td>}
+                            {show('edit') && <td className="ctr">
                               {isEditing ? (
                                 <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
                                   <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" disabled={editSaving} onClick={() => saveEdit(s)}>{editSaving ? 'Đang lưu…' : <Save size={12} />}</button>
@@ -1861,46 +2013,48 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
                                   ✏️ Sửa
                                 </button>
                               )}
-                            </td>
+                            </td>}
                           </tr>
                         );
                       })}
                       <tr className="fin-subtotal">
-                        <td colSpan={4}>CỘNG {branchLabelOf(g.id).toUpperCase()} ({g.rows.length} NV)</td>
-                        <td className="num">{r1(gs.gio).toFixed(1)}</td>
-                        <td className="num fin-money">{formatVND(gs.banCa)}</td>
-                        <td className="num fin-money">{formatVND(gs.phuCap)}</td>
-                        <td className="num fin-money">{formatVND(gs.lcb)}</td>
-                        <td className="num fin-money">{formatVND(gs.ot)}</td>
-                        <td className="num fin-money">{formatVND(gs.bonus)}</td>
-                        <td className="num fin-money">{formatVND(gs.tongCong)}</td>
-                        <td className="num fin-money">{formatVND(gs.truKpiPhat)}</td>
-                        <td className="num fin-money">{formatVND(gs.ung)}</td>
-                        <td className="num fin-money">{formatVND(gs.dongPhuc)}</td>
-                        <td className="num fin-money">{formatVND(gs.tongLuong)}</td>
-                        <td className="num fin-money">{formatVND(gs.thuc)}</td>
-                        <td colSpan={2} />
+                        <td colSpan={Math.max(1, colCount - 14)}>CỘNG {branchLabelOf(g.id).toUpperCase()} ({g.rows.length} NV)</td>
+                        {show('gio') && <td className="num">{r1(gs.gio).toFixed(1)}</td>}
+                        {show('banCa') && <td className="num fin-money">{formatVND(gs.banCa)}</td>}
+                        {show('phuCap') && <td className="num fin-money">{formatVND(gs.phuCap)}</td>}
+                        {show('lcb') && <td className="num fin-money">{formatVND(gs.lcb)}</td>}
+                        {show('ot') && <td className="num fin-money">{formatVND(gs.ot)}</td>}
+                        {show('bonus') && <td className="num fin-money">{formatVND(gs.bonus)}</td>}
+                        {show('tongCong') && <td className="num fin-money">{formatVND(gs.tongCong)}</td>}
+                        {show('truKpiPhat') && <td className="num fin-money">{formatVND(gs.truKpiPhat)}</td>}
+                        {show('ung') && <td className="num fin-money">{formatVND(gs.ung)}</td>}
+                        {show('dongPhuc') && <td className="num fin-money">{formatVND(gs.dongPhuc)}</td>}
+                        {show('tongLuong') && <td className="num fin-money">{formatVND(gs.tongLuong)}</td>}
+                        {show('thuc') && <td className="num fin-money">{formatVND(gs.thuc)}</td>}
+                        {show('status') && <td />}
+                        {show('edit') && <td />}
                       </tr>
                     </React.Fragment>
                   );
                 })}
-                {filteredSlips.length === 0 && <tr><td colSpan={19} className="fin-empty">{q || statusFilter !== 'ALL' ? 'Không có phiếu phù hợp bộ lọc.' : 'Chưa có phiếu lương kỳ này.'}</td></tr>}
+                {filteredSlips.length === 0 && <tr><td colSpan={FIN_COL_HEADER_COUNT('fin-payroll-periods', colDefs, cols)} className="fin-empty">{q || statusFilter !== 'ALL' ? 'Không có phiếu phù hợp bộ lọc.' : 'Chưa có phiếu lương kỳ này.'}</td></tr>}
                 {allSlips.length > 0 && (
                   <tr className="fin-grand">
-                    <td colSpan={4}>TỔNG TOÀN CÔNG TY ({allSlips.length} phiếu)</td>
-                    <td className="num">{r1(grand.gio).toFixed(1)}</td>
-                    <td className="num fin-money">{formatVND(grand.banCa)}</td>
-                    <td className="num fin-money">{formatVND(grand.phuCap)}</td>
-                    <td className="num fin-money">{formatVND(grand.lcb)}</td>
-                    <td className="num fin-money">{formatVND(grand.ot)}</td>
-                    <td className="num fin-money">{formatVND(grand.bonus)}</td>
-                    <td className="num fin-money">{formatVND(grand.tongCong)}</td>
-                    <td className="num fin-money">{formatVND(grand.truKpiPhat)}</td>
-                    <td className="num fin-money">{formatVND(grand.ung)}</td>
-                    <td className="num fin-money">{formatVND(grand.dongPhuc)}</td>
-                    <td className="num fin-money">{formatVND(grand.tongLuong)}</td>
-                    <td className="num fin-money">{formatVND(grand.thuc)}</td>
-                    <td colSpan={2} />
+                    <td colSpan={Math.max(1, FIN_COL_HEADER_COUNT('fin-payroll-periods', colDefs, cols) - 14)}>TỔNG TOÀN CÔNG TY ({allSlips.length} phiếu)</td>
+                    {show('gio') && <td className="num">{r1(grand.gio).toFixed(1)}</td>}
+                    {show('banCa') && <td className="num fin-money">{formatVND(grand.banCa)}</td>}
+                    {show('phuCap') && <td className="num fin-money">{formatVND(grand.phuCap)}</td>}
+                    {show('lcb') && <td className="num fin-money">{formatVND(grand.lcb)}</td>}
+                    {show('ot') && <td className="num fin-money">{formatVND(grand.ot)}</td>}
+                    {show('bonus') && <td className="num fin-money">{formatVND(grand.bonus)}</td>}
+                    {show('tongCong') && <td className="num fin-money">{formatVND(grand.tongCong)}</td>}
+                    {show('truKpiPhat') && <td className="num fin-money">{formatVND(grand.truKpiPhat)}</td>}
+                    {show('ung') && <td className="num fin-money">{formatVND(grand.ung)}</td>}
+                    {show('dongPhuc') && <td className="num fin-money">{formatVND(grand.dongPhuc)}</td>}
+                    {show('tongLuong') && <td className="num fin-money">{formatVND(grand.tongLuong)}</td>}
+                    {show('thuc') && <td className="num fin-money">{formatVND(grand.thuc)}</td>}
+                    {show('status') && <td />}
+                    {show('edit') && <td />}
                   </tr>
                 )}
               </tbody>
@@ -1955,9 +2109,10 @@ const STAGE_FILTERS = [
   { key: 'PAID', label: 'Đã chuyển khoản' },
 ];
 
-function PayslipsTab({ month, slips, slipsLoading, allEmployees, formatVND, loadSlips, stageBadge, slipQrUrl, fastSignLap, publishSlip, returnSlip, markPaidSlip, syncSlipDrive, downloadSlipPdf }: any) {
+function PayslipsTab({ month, slips, slipsLoading, allEmployees, formatVND, loadSlips, stageBadge, slipQrUrl, fastSignLap, publishSlip, returnSlip, markPaidSlip, syncSlipDrive, downloadSlipPdf, cols, onToggleCol, onShowAllCols, colVis, colVisSaving, colDefs }: any) {
   const [stageFilter, setStageFilter] = useState('ALL');
   const [q, setQ] = useState('');
+  const show = cols?.show || (() => true);
   const stageOf = (s: any) => String(s?.stage || payslipStage(s) || 'DRAFT');
   const counts = useMemo(() => {
     const m: Record<string, number> = { ALL: slips.length };
@@ -1987,6 +2142,7 @@ function PayslipsTab({ month, slips, slipsLoading, allEmployees, formatVND, load
       <div className="fin-card">
         <CardHead title={`Danh sách phiếu lương — ${periodLabel(month)} (${slips.length}/${slips.length} phiếu)`} icon={<Receipt size={14} color="#E85D92" />} sub="Nhóm theo chi nhánh · mỗi NV 1 dòng với ĐỦ cột tiền · mỗi chi nhánh 1 dòng CỘNG tổng tiền">
           <SearchBox value={q} onChange={setQ} />
+          <ColumnSettings tabKey="fin-payslips" defs={colDefs} value={colVis} onToggle={onToggleCol} onShowAll={() => onShowAllCols('fin-payslips')} saving={colVisSaving} />
           <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={loadSlips} disabled={slipsLoading}>{slipsLoading ? <Loader2 size={13} className="fin-spin" /> : <RefreshCw size={13} />} Tải lại</button>
         </CardHead>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '10px 16px', borderBottom: '1px solid #f1f5f9' }}>
@@ -2001,12 +2157,12 @@ function PayslipsTab({ month, slips, slipsLoading, allEmployees, formatVND, load
           <div className="fin-table-wrap">
             <table className="fin-table" style={{ minWidth: 2150 }}>
               <thead>
-                <tr><th className="ctr">STT</th><th>Họ tên</th><th>Mã NV</th><th>Chi nhánh</th><th className="num">Giờ công</th><th className="num">Lương ca</th><th className="num">Phụ cấp</th><th className="num">LCB</th><th className="num">OT thêm</th><th className="num">Bonus</th><th className="num">TỔNG CỘNG</th><th className="num">Trừ KPI/phạt</th><th className="num">Ứng lương</th><th className="num">Trừ ĐP</th><th className="num">TỔNG LƯƠNG</th><th className="num">THỰC LÃNH</th><th>Trạng thái / Chữ ký</th><th>Thao tác</th></tr>
+                <tr>{show('stt') && <th className="ctr">STT</th>}{show('full_name') && <th>Họ tên</th>}{show('employee_code') && <th>Mã NV</th>}{show('branch') && <th>Chi nhánh</th>}{show('gio') && <th className="num">Giờ công</th>}{show('banCa') && <th className="num">Lương ca</th>}{show('phuCap') && <th className="num">Phụ cấp</th>}{show('lcb') && <th className="num">LCB</th>}{show('ot') && <th className="num">OT thêm</th>}{show('bonus') && <th className="num">Bonus</th>}{show('tongCong') && <th className="num">TỔNG CỘNG</th>}{show('truKpiPhat') && <th className="num">Trừ KPI/phạt</th>}{show('ung') && <th className="num">Ứng lương</th>}{show('dongPhuc') && <th className="num">Trừ ĐP</th>}{show('tongLuong') && <th className="num">TỔNG LƯƠNG</th>}{show('thuc') && <th className="num">THỰC LÃNH</th>}{show('sign') && <th>Trạng thái / Chữ ký</th>}{show('action') && <th>Thao tác</th>}</tr>
               </thead>
               <tbody>
                 {groups.map(g => {
                   const gs = sumCalc(g.rows);
-                  const COLS = 18;
+                  const COLS = FIN_COL_HEADER_COUNT('fin-payslips', colDefs, cols);
                   return (
                     <React.Fragment key={g.id}>
                       <BranchBandRow label={branchLabelOf(g.id)} count={g.rows.length} cols={COLS} totalText={`THỰC LÃNH ${formatVND(gs.thuc)} · TỔNG CỘNG ${formatVND(gs.tongCong)} · ${r1(gs.gio).toFixed(1)} giờ`} />
@@ -2023,23 +2179,23 @@ function PayslipsTab({ month, slips, slipsLoading, allEmployees, formatVND, load
                         const qrUrl = slipQrUrl(s);
                         return (
                           <tr key={s.item_id}>
-                            <td className="ctr">{idx + 1}</td>
-                            <td style={{ fontWeight: 700 }}>{s.full_name}</td>
-                            <td className="ctr fin-mono">{s.employee_code}</td>
-                            <td>{branchLabelOf(slipBranchId(s, allEmployees))}</td>
-                            <td className="num">{r1(c.gio).toFixed(1)}</td>
-                            <td className="num fin-money">{formatVND(c.banCa)}</td>
-                            <td className="num fin-money">{formatVND(c.phuCap)}</td>
-                            <td className="num fin-money">{formatVND(c.lcb)}</td>
-                            <td className="num fin-money">{formatVND(c.ot)}</td>
-                            <td className="num fin-money">{formatVND(c.bonus)}</td>
-                            <td className="num fin-money" style={{ fontWeight: 700 }}>{formatVND(c.tongCong)}</td>
-                            <td className="num fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(c.truKpiPhat)}</td>
-                            <td className="num fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(c.ung)}</td>
-                            <td className="num fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(c.dongPhuc)}</td>
-                            <td className="num fin-money">{formatVND(c.tongLuong)}</td>
-                            <td className="num fin-money" style={{ fontWeight: 800, color: 'var(--fin-green)' }}>{formatVND(thuc)}</td>
-                            <td>
+                            {show('stt') && <td className="ctr">{idx + 1}</td>}
+                            {show('full_name') && <td style={{ fontWeight: 700 }}>{s.full_name}</td>}
+                            {show('employee_code') && <td className="ctr fin-mono">{s.employee_code}</td>}
+                            {show('branch') && <td>{branchLabelOf(slipBranchId(s, allEmployees))}</td>}
+                            {show('gio') && <td className="num">{r1(c.gio).toFixed(1)}</td>}
+                            {show('banCa') && <td className="num fin-money">{formatVND(c.banCa)}</td>}
+                            {show('phuCap') && <td className="num fin-money">{formatVND(c.phuCap)}</td>}
+                            {show('lcb') && <td className="num fin-money">{formatVND(c.lcb)}</td>}
+                            {show('ot') && <td className="num fin-money">{formatVND(c.ot)}</td>}
+                            {show('bonus') && <td className="num fin-money">{formatVND(c.bonus)}</td>}
+                            {show('tongCong') && <td className="num fin-money" style={{ fontWeight: 700 }}>{formatVND(c.tongCong)}</td>}
+                            {show('truKpiPhat') && <td className="num fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(c.truKpiPhat)}</td>}
+                            {show('ung') && <td className="num fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(c.ung)}</td>}
+                            {show('dongPhuc') && <td className="num fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(c.dongPhuc)}</td>}
+                            {show('tongLuong') && <td className="num fin-money">{formatVND(c.tongLuong)}</td>}
+                            {show('thuc') && <td className="num fin-money" style={{ fontWeight: 800, color: 'var(--fin-green)' }}>{formatVND(thuc)}</td>}
+                            {show('sign') && <td>
                               <span className="fin-badge" style={{ color: st.fg, background: st.bg, borderColor: st.border, marginBottom: 5 }}><span className="fin-badge-dot" />{st.label}</span>
                               <div style={{ display: 'flex', gap: 4, marginTop: 5, flexWrap: 'wrap' }}>
                                 <span className={`fin-sign ${hasLap ? 'ok' : 'pending'}`}>{hasLap ? '✓ KT lập' : 'KT?'}</span>
@@ -2054,8 +2210,9 @@ function PayslipsTab({ month, slips, slipsLoading, allEmployees, formatVND, load
                               )}
                               {s.drive_pdf_id && <div style={{ marginTop: 4, fontSize: 9.5, color: 'var(--fin-muted)' }}>✓ PDF Drive 04 ({s.drive_synced_at ? fmtDateTime(s.drive_synced_at) : ''})</div>}
                               {s.drive_sync_error && <div style={{ marginTop: 4, fontSize: 9.5, color: '#dc2626' }}>⚠ Drive: {s.drive_sync_error}</div>}
-                            </td>
-                            <td>
+                            </td>}
+                            {show('action') && (
+                              <td>
                               {isPaid ? (
                                 <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                                   <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={() => downloadSlipPdf(s.item_id, s.employee_code)} title="Tải PDF phiếu (đủ 3 chữ ký)"><FileDown size={12} /> PDF</button>
@@ -2092,46 +2249,49 @@ function PayslipsTab({ month, slips, slipsLoading, allEmployees, formatVND, load
                               ) : (
                                 <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={() => fastSignLap(s.item_id)} disabled={hasLap}><PenTool size={12} /> Kế toán ký lập</button>
                               )}
-                            </td>
+                              </td>
+                            )}
                           </tr>
                         );
                       })}
                       <tr className="fin-subtotal">
-                        <td colSpan={4}>CỘNG {branchLabelOf(g.id).toUpperCase()} ({g.rows.length} NV)</td>
-                        <td className="num">{r1(gs.gio).toFixed(1)}</td>
-                        <td className="num fin-money">{formatVND(gs.banCa)}</td>
-                        <td className="num fin-money">{formatVND(gs.phuCap)}</td>
-                        <td className="num fin-money">{formatVND(gs.lcb)}</td>
-                        <td className="num fin-money">{formatVND(gs.ot)}</td>
-                        <td className="num fin-money">{formatVND(gs.bonus)}</td>
-                        <td className="num fin-money">{formatVND(gs.tongCong)}</td>
-                        <td className="num fin-money">{formatVND(gs.truKpiPhat)}</td>
-                        <td className="num fin-money">{formatVND(gs.ung)}</td>
-                        <td className="num fin-money">{formatVND(gs.dongPhuc)}</td>
-                        <td className="num fin-money">{formatVND(gs.tongLuong)}</td>
-                        <td className="num fin-money">{formatVND(gs.thuc)}</td>
-                        <td colSpan={2} />
+                        <td colSpan={Math.max(1, FIN_COL_HEADER_COUNT('fin-payslips', colDefs, cols) - 14)}>CỘNG {branchLabelOf(g.id).toUpperCase()} ({g.rows.length} NV)</td>
+                        {show('gio') && <td className="num">{r1(gs.gio).toFixed(1)}</td>}
+                        {show('banCa') && <td className="num fin-money">{formatVND(gs.banCa)}</td>}
+                        {show('phuCap') && <td className="num fin-money">{formatVND(gs.phuCap)}</td>}
+                        {show('lcb') && <td className="num fin-money">{formatVND(gs.lcb)}</td>}
+                        {show('ot') && <td className="num fin-money">{formatVND(gs.ot)}</td>}
+                        {show('bonus') && <td className="num fin-money">{formatVND(gs.bonus)}</td>}
+                        {show('tongCong') && <td className="num fin-money">{formatVND(gs.tongCong)}</td>}
+                        {show('truKpiPhat') && <td className="num fin-money">{formatVND(gs.truKpiPhat)}</td>}
+                        {show('ung') && <td className="num fin-money">{formatVND(gs.ung)}</td>}
+                        {show('dongPhuc') && <td className="num fin-money">{formatVND(gs.dongPhuc)}</td>}
+                        {show('tongLuong') && <td className="num fin-money">{formatVND(gs.tongLuong)}</td>}
+                        {show('thuc') && <td className="num fin-money">{formatVND(gs.thuc)}</td>}
+                        {show('sign') && <td />}
+                        {show('action') && <td />}
                       </tr>
                     </React.Fragment>
                   );
                 })}
-                {groups.length === 0 && <tr><td colSpan={18} className="fin-empty">{q || stageFilter !== 'ALL' ? 'Không có phiếu phù hợp bộ lọc.' : 'Chưa có phiếu lương kỳ này — hãy TÍNH LƯƠNG ở tab 4.'}</td></tr>}
+                {groups.length === 0 && <tr><td colSpan={FIN_COL_HEADER_COUNT('fin-payslips', colDefs, cols)} className="fin-empty">{q || stageFilter !== 'ALL' ? 'Không có phiếu phù hợp bộ lọc.' : 'Chưa có phiếu lương kỳ này — hãy TÍNH LƯƠNG ở tab 4.'}</td></tr>}
                 {slips.length > 0 && (
                   <tr className="fin-grand">
-                    <td colSpan={4}>TỔNG TOÀN CÔNG TY ({slips.length} phiếu)</td>
-                    <td className="num">{r1(sumCalc(slips).gio).toFixed(1)}</td>
-                    <td className="num fin-money">{formatVND(sumCalc(slips).banCa)}</td>
-                    <td className="num fin-money">{formatVND(sumCalc(slips).phuCap)}</td>
-                    <td className="num fin-money">{formatVND(sumCalc(slips).lcb)}</td>
-                    <td className="num fin-money">{formatVND(sumCalc(slips).ot)}</td>
-                    <td className="num fin-money">{formatVND(sumCalc(slips).bonus)}</td>
-                    <td className="num fin-money">{formatVND(sumCalc(slips).tongCong)}</td>
-                    <td className="num fin-money">{formatVND(sumCalc(slips).truKpiPhat)}</td>
-                    <td className="num fin-money">{formatVND(sumCalc(slips).ung)}</td>
-                    <td className="num fin-money">{formatVND(sumCalc(slips).dongPhuc)}</td>
-                    <td className="num fin-money">{formatVND(sumCalc(slips).tongLuong)}</td>
-                    <td className="num fin-money">{formatVND(sumCalc(slips).thuc)}</td>
-                    <td colSpan={2} />
+                    <td colSpan={Math.max(1, FIN_COL_HEADER_COUNT('fin-payslips', colDefs, cols) - 14)}>TỔNG TOÀN CÔNG TY ({slips.length} phiếu)</td>
+                    {show('gio') && <td className="num">{r1(sumCalc(slips).gio).toFixed(1)}</td>}
+                    {show('banCa') && <td className="num fin-money">{formatVND(sumCalc(slips).banCa)}</td>}
+                    {show('phuCap') && <td className="num fin-money">{formatVND(sumCalc(slips).phuCap)}</td>}
+                    {show('lcb') && <td className="num fin-money">{formatVND(sumCalc(slips).lcb)}</td>}
+                    {show('ot') && <td className="num fin-money">{formatVND(sumCalc(slips).ot)}</td>}
+                    {show('bonus') && <td className="num fin-money">{formatVND(sumCalc(slips).bonus)}</td>}
+                    {show('tongCong') && <td className="num fin-money">{formatVND(sumCalc(slips).tongCong)}</td>}
+                    {show('truKpiPhat') && <td className="num fin-money">{formatVND(sumCalc(slips).truKpiPhat)}</td>}
+                    {show('ung') && <td className="num fin-money">{formatVND(sumCalc(slips).ung)}</td>}
+                    {show('dongPhuc') && <td className="num fin-money">{formatVND(sumCalc(slips).dongPhuc)}</td>}
+                    {show('tongLuong') && <td className="num fin-money">{formatVND(sumCalc(slips).tongLuong)}</td>}
+                    {show('thuc') && <td className="num fin-money">{formatVND(sumCalc(slips).thuc)}</td>}
+                    {show('sign') && <td />}
+                    {show('action') && <td />}
                   </tr>
                 )}
               </tbody>
@@ -2146,16 +2306,18 @@ function PayslipsTab({ month, slips, slipsLoading, allEmployees, formatVND, load
 /* ============================================================================
    8 · THANH TOÁN — CHỈ PHIẾU NV ĐÃ KÝ (CONFIRMED)
    ============================================================================ */
-function PaymentTab({ month, slips, allEmployees, formatVND, loadSlips, slipQrUrl, markPaidSlip, downloadSlipPdf }: any) {
+function PaymentTab({ month, slips, allEmployees, formatVND, loadSlips, slipQrUrl, markPaidSlip, downloadSlipPdf, cols, onToggleCol, onShowAllCols, colVis, colVisSaving, colDefs }: any) {
   const [q, setQ] = useState('');
+  const show = cols?.show || (() => true);
   const ready = useMemo(() => (slips || []).filter((s: any) => String(s?.status) === 'CONFIRMED').filter(matchesFilter(q.trim())), [slips, q]);
   const groups = useMemo(() => branchGroups(ready, (s: any) => slipBranchId(s, allEmployees)), [ready, allEmployees]);
   const grand = sumCalc(ready);
-  const COLS = 20;
+  const COLS = FIN_COL_HEADER_COUNT('fin-payment', colDefs, cols);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <TabHead step={8} title="Thanh toán — VietQR & Đã chuyển khoản" desc="Chỉ hiện phiếu NHÂN VIÊN ĐÃ KÝ. Nhóm theo chi nhánh, mỗi NV 1 dòng với ĐỦ cột tiền + dòng CỘNG tổng tiền chi nhánh. Quét QR → chuyển khoản → bấm ĐÃ CHUYỂN KHOẢN: phiếu KHÓA vĩnh viễn và PDF (đủ 3 chữ ký) tự lên Drive theo 04. PHIẾU LƯƠNG NHÂN VIÊN/THANG_MM/CHI_NHANH_*/PHIEU_LUONG_TMM.YYYY_TÊN NV.pdf.">
         <SearchBox value={q} onChange={setQ} />
+        <ColumnSettings tabKey="fin-payment" defs={colDefs} value={colVis} onToggle={onToggleCol} onShowAll={() => onShowAllCols('fin-payment')} saving={colVisSaving} />
         <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={loadSlips}><RefreshCw size={13} /> Tải lại</button>
       </TabHead>
 
@@ -2169,7 +2331,7 @@ function PaymentTab({ month, slips, allEmployees, formatVND, loadSlips, slipQrUr
         <div className="fin-table-wrap">
           <table className="fin-table" style={{ minWidth: 2250 }}>
             <thead>
-              <tr><th className="ctr">STT</th><th>Họ tên</th><th>Mã NV</th><th>Chi nhánh</th><th className="num">Giờ công</th><th className="num">Lương ca</th><th className="num">Phụ cấp</th><th className="num">LCB</th><th className="num">OT thêm</th><th className="num">Bonus</th><th className="num">TỔNG CỘNG</th><th className="num">Trừ KPI/phạt</th><th className="num">Ứng lương</th><th className="num">Trừ ĐP</th><th className="num">TỔNG LƯƠNG</th><th className="num">THỰC LÃNH</th><th>Ngân hàng / STK</th><th className="ctr">VietQR</th><th>Thao tác</th></tr>
+              <tr>{show('stt') && <th className="ctr">STT</th>}{show('full_name') && <th>Họ tên</th>}{show('employee_code') && <th>Mã NV</th>}{show('branch') && <th>Chi nhánh</th>}{show('gio') && <th className="num">Giờ công</th>}{show('banCa') && <th className="num">Lương ca</th>}{show('phuCap') && <th className="num">Phụ cấp</th>}{show('lcb') && <th className="num">LCB</th>}{show('ot') && <th className="num">OT thêm</th>}{show('bonus') && <th className="num">Bonus</th>}{show('tongCong') && <th className="num">TỔNG CỘNG</th>}{show('truKpiPhat') && <th className="num">Trừ KPI/phạt</th>}{show('ung') && <th className="num">Ứng lương</th>}{show('dongPhuc') && <th className="num">Trừ ĐP</th>}{show('tongLuong') && <th className="num">TỔNG LƯƠNG</th>}{show('thuc') && <th className="num">THỰC LÃNH</th>}{show('bank') && <th>Ngân hàng / STK</th>}{show('qr') && <th className="ctr">VietQR</th>}{show('action') && <th>Thao tác</th>}</tr>
             </thead>
             <tbody>
               {groups.map(g => {
@@ -2182,48 +2344,50 @@ function PaymentTab({ month, slips, allEmployees, formatVND, loadSlips, slipQrUr
                       const qrUrl = slipQrUrl(s);
                       return (
                         <tr key={s.item_id}>
-                          <td className="ctr">{idx + 1}</td>
-                          <td style={{ fontWeight: 700 }}>{s.full_name}</td>
-                          <td className="ctr fin-mono">{s.employee_code}</td>
-                          <td>{branchLabelOf(slipBranchId(s, allEmployees))}</td>
-                          <td className="num">{r1(c.gio).toFixed(1)}</td>
-                          <td className="num fin-money">{formatVND(c.banCa)}</td>
-                          <td className="num fin-money">{formatVND(c.phuCap)}</td>
-                          <td className="num fin-money">{formatVND(c.lcb)}</td>
-                          <td className="num fin-money">{formatVND(c.ot)}</td>
-                          <td className="num fin-money">{formatVND(c.bonus)}</td>
-                          <td className="num fin-money" style={{ fontWeight: 700 }}>{formatVND(c.tongCong)}</td>
-                          <td className="num fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(c.truKpiPhat)}</td>
-                          <td className="num fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(c.ung)}</td>
-                          <td className="num fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(c.dongPhuc)}</td>
-                          <td className="num fin-money">{formatVND(c.tongLuong)}</td>
-                          <td className="num fin-money" style={{ fontWeight: 800, color: 'var(--fin-green)' }}>{formatVND(c.thuc)}</td>
-                          <td style={{ fontSize: 11 }}>{s.bank_name || '—'}<br /><span className="fin-mono" style={{ fontWeight: 800, color: 'var(--fin-ink)' }}>{s.bank_account || '—'}</span><br /><span style={{ color: 'var(--fin-muted)' }}>{s.bank_holder || ''}</span></td>
-                          <td className="ctr">{qrUrl ? <img src={qrUrl} alt="VietQR" className="fin-qr" style={{ width: 72, height: 72 }} onError={(e: any) => { (e.target as any).style.display = 'none'; }} /> : <div className="fin-qr-missing">Chưa có STK</div>}</td>
-                          <td>
+                          {show('stt') && <td className="ctr">{idx + 1}</td>}
+                          {show('full_name') && <td style={{ fontWeight: 700 }}>{s.full_name}</td>}
+                          {show('employee_code') && <td className="ctr fin-mono">{s.employee_code}</td>}
+                          {show('branch') && <td>{branchLabelOf(slipBranchId(s, allEmployees))}</td>}
+                          {show('gio') && <td className="num">{r1(c.gio).toFixed(1)}</td>}
+                          {show('banCa') && <td className="num fin-money">{formatVND(c.banCa)}</td>}
+                          {show('phuCap') && <td className="num fin-money">{formatVND(c.phuCap)}</td>}
+                          {show('lcb') && <td className="num fin-money">{formatVND(c.lcb)}</td>}
+                          {show('ot') && <td className="num fin-money">{formatVND(c.ot)}</td>}
+                          {show('bonus') && <td className="num fin-money">{formatVND(c.bonus)}</td>}
+                          {show('tongCong') && <td className="num fin-money" style={{ fontWeight: 700 }}>{formatVND(c.tongCong)}</td>}
+                          {show('truKpiPhat') && <td className="num fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(c.truKpiPhat)}</td>}
+                          {show('ung') && <td className="num fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(c.ung)}</td>}
+                          {show('dongPhuc') && <td className="num fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(c.dongPhuc)}</td>}
+                          {show('tongLuong') && <td className="num fin-money">{formatVND(c.tongLuong)}</td>}
+                          {show('thuc') && <td className="num fin-money" style={{ fontWeight: 800, color: 'var(--fin-green)' }}>{formatVND(c.thuc)}</td>}
+                          {show('bank') && <td style={{ fontSize: 11 }}>{s.bank_name || '—'}<br /><span className="fin-mono" style={{ fontWeight: 800, color: 'var(--fin-ink)' }}>{s.bank_account || '—'}</span><br /><span style={{ color: 'var(--fin-muted)' }}>{s.bank_holder || ''}</span></td>}
+                          {show('qr') && <td className="ctr">{qrUrl ? <img src={qrUrl} alt="VietQR" className="fin-qr" style={{ width: 72, height: 72 }} onError={(e: any) => { (e.target as any).style.display = 'none'; }} /> : <div className="fin-qr-missing">Chưa có STK</div>}</td>}
+                          {show('action') && (
+                            <td>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-start' }}>
                               <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={() => markPaidSlip(s.item_id)}><Check size={12} /> Đã Chuyển Khoản</button>
                               <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={() => downloadSlipPdf(s.item_id, s.employee_code)}><FileDown size={12} /> PDF (3 chữ ký)</button>
                             </div>
                           </td>
+                          )}
                         </tr>
                       );
                     })}
                     <tr className="fin-subtotal">
-                      <td colSpan={4}>CỘNG {branchLabelOf(g.id).toUpperCase()} ({g.rows.length} NV)</td>
-                      <td className="num">{r1(gs.gio).toFixed(1)}</td>
-                      <td className="num fin-money">{formatVND(gs.banCa)}</td>
-                      <td className="num fin-money">{formatVND(gs.phuCap)}</td>
-                      <td className="num fin-money">{formatVND(gs.lcb)}</td>
-                      <td className="num fin-money">{formatVND(gs.ot)}</td>
-                      <td className="num fin-money">{formatVND(gs.bonus)}</td>
-                      <td className="num fin-money">{formatVND(gs.tongCong)}</td>
-                      <td className="num fin-money">{formatVND(gs.truKpiPhat)}</td>
-                      <td className="num fin-money">{formatVND(gs.ung)}</td>
-                      <td className="num fin-money">{formatVND(gs.dongPhuc)}</td>
-                      <td className="num fin-money">{formatVND(gs.tongLuong)}</td>
-                      <td className="num fin-money">{formatVND(gs.thuc)}</td>
-                      <td colSpan={3} />
+                      <td colSpan={Math.max(1, COLS - 14)}>CỘNG {branchLabelOf(g.id).toUpperCase()} ({g.rows.length} NV)</td>
+                      {show('gio') && <td className="num">{r1(gs.gio).toFixed(1)}</td>}
+                      {show('banCa') && <td className="num fin-money">{formatVND(gs.banCa)}</td>}
+                      {show('phuCap') && <td className="num fin-money">{formatVND(gs.phuCap)}</td>}
+                      {show('lcb') && <td className="num fin-money">{formatVND(gs.lcb)}</td>}
+                      {show('ot') && <td className="num fin-money">{formatVND(gs.ot)}</td>}
+                      {show('bonus') && <td className="num fin-money">{formatVND(gs.bonus)}</td>}
+                      {show('tongCong') && <td className="num fin-money">{formatVND(gs.tongCong)}</td>}
+                      {show('truKpiPhat') && <td className="num fin-money">{formatVND(gs.truKpiPhat)}</td>}
+                      {show('ung') && <td className="num fin-money">{formatVND(gs.ung)}</td>}
+                      {show('dongPhuc') && <td className="num fin-money">{formatVND(gs.dongPhuc)}</td>}
+                      {show('tongLuong') && <td className="num fin-money">{formatVND(gs.tongLuong)}</td>}
+                      {show('thuc') && <td className="num fin-money">{formatVND(gs.thuc)}</td>}
+                      <td colSpan={[show('bank'), show('qr'), show('action')].filter(Boolean).length} />
                     </tr>
                   </React.Fragment>
                 );
@@ -2231,20 +2395,20 @@ function PaymentTab({ month, slips, allEmployees, formatVND, loadSlips, slipQrUr
               {groups.length === 0 && <tr><td colSpan={COLS} className="fin-empty">Không có phiếu nào chờ chuyển khoản (chưa NV ký hoặc đã chuyển hết).</td></tr>}
               {ready.length > 0 && (
                 <tr className="fin-grand">
-                  <td colSpan={4}>TỔNG TOÀN CÔNG TY ({ready.length} phiếu)</td>
-                  <td className="num">{r1(grand.gio).toFixed(1)}</td>
-                  <td className="num fin-money">{formatVND(grand.banCa)}</td>
-                  <td className="num fin-money">{formatVND(grand.phuCap)}</td>
-                  <td className="num fin-money">{formatVND(grand.lcb)}</td>
-                  <td className="num fin-money">{formatVND(grand.ot)}</td>
-                  <td className="num fin-money">{formatVND(grand.bonus)}</td>
-                  <td className="num fin-money">{formatVND(grand.tongCong)}</td>
-                  <td className="num fin-money">{formatVND(grand.truKpiPhat)}</td>
-                  <td className="num fin-money">{formatVND(grand.ung)}</td>
-                  <td className="num fin-money">{formatVND(grand.dongPhuc)}</td>
-                  <td className="num fin-money">{formatVND(grand.tongLuong)}</td>
-                  <td className="num fin-money">{formatVND(grand.thuc)}</td>
-                  <td colSpan={3} />
+                  <td colSpan={Math.max(1, COLS - 14)}>TỔNG TOÀN CÔNG TY ({ready.length} phiếu)</td>
+                  {show('gio') && <td className="num">{r1(grand.gio).toFixed(1)}</td>}
+                  {show('banCa') && <td className="num fin-money">{formatVND(grand.banCa)}</td>}
+                  {show('phuCap') && <td className="num fin-money">{formatVND(grand.phuCap)}</td>}
+                  {show('lcb') && <td className="num fin-money">{formatVND(grand.lcb)}</td>}
+                  {show('ot') && <td className="num fin-money">{formatVND(grand.ot)}</td>}
+                  {show('bonus') && <td className="num fin-money">{formatVND(grand.bonus)}</td>}
+                  {show('tongCong') && <td className="num fin-money">{formatVND(grand.tongCong)}</td>}
+                  {show('truKpiPhat') && <td className="num fin-money">{formatVND(grand.truKpiPhat)}</td>}
+                  {show('ung') && <td className="num fin-money">{formatVND(grand.ung)}</td>}
+                  {show('dongPhuc') && <td className="num fin-money">{formatVND(grand.dongPhuc)}</td>}
+                  {show('tongLuong') && <td className="num fin-money">{formatVND(grand.tongLuong)}</td>}
+                  {show('thuc') && <td className="num fin-money">{formatVND(grand.thuc)}</td>}
+                  <td colSpan={[show('bank'), show('qr'), show('action')].filter(Boolean).length} />
                 </tr>
               )}
             </tbody>

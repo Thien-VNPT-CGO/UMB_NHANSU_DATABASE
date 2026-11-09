@@ -6838,6 +6838,56 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // --- Cấu hình hiển thị cột theo tab (lưu theo TÀI KHOẢN kế toán, đồng bộ 2 máy) ---
+  const FIN_TABLE_COLUMNS: Record<string, string[]> = {
+    'fin-timesheet': ['stt', 'fullName', 'code', 'branch', 'full', 'partial', 'absent', 'hours', 'standardPay', 'deduction', 'netPay'],
+    'fin-bcc': ['summary', 'date', 'shift', 'hours', 'status', 'checkIn', 'lateMin', 'shiftPay', 'fineAmount'],
+    'fin-calculate': ['stt', 'code', 'name', 'branch', 'luong_cb', 'ot_extra', 'bonus_extra', 'ung_luong', 'tru_kpi', 'dong_phuc', 'note', 'b1', 'b2', 'b3', 'b4'],
+    'fin-payroll-sheet': ['stt', 'full_name', 'employee_code', 'branch', 'gio', 'banCa', 'phuCap', 'lcb', 'ot', 'bonus', 'tongCong', 'truKpiPhat', 'ung', 'dongPhuc', 'tongLuong', 'thuc', 'status'],
+    'fin-payroll-periods': ['stt', 'full_name', 'employee_code', 'branch', 'gio', 'banCa', 'phuCap', 'lcb', 'ot', 'bonus', 'tongCong', 'truKpiPhat', 'ung', 'dongPhuc', 'tongLuong', 'thuc', 'status', 'edit'],
+    'fin-payslips': ['stt', 'full_name', 'employee_code', 'branch', 'gio', 'banCa', 'phuCap', 'lcb', 'ot', 'bonus', 'tongCong', 'truKpiPhat', 'ung', 'dongPhuc', 'tongLuong', 'thuc', 'sign', 'action'],
+    'fin-payment': ['stt', 'full_name', 'employee_code', 'branch', 'gio', 'banCa', 'phuCap', 'lcb', 'ot', 'bonus', 'tongCong', 'truKpiPhat', 'ung', 'dongPhuc', 'tongLuong', 'thuc', 'bank', 'qr', 'action'],
+  };
+  const finVisKey = (adminId: string) => `financeColumnVis:${String(adminId || '').trim()}`;
+  app.get('/payroll/table-columns', authMiddleware, requireRole(['DIRECTOR', 'ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const settings: any = await adapter.getSystemSettings().catch(() => ({})) || {};
+      const saved = settings?.[finVisKey(req.user!.id)] || {};
+      // Chỉ trả về các tab/cột hợp lệ, thiếu cột nào coi như hiển thị (true).
+      const out: Record<string, Record<string, boolean>> = {};
+      for (const [tab, cols] of Object.entries(FIN_TABLE_COLUMNS)) {
+        const m: Record<string, boolean> = {};
+        for (const c of cols) m[c] = saved?.[tab]?.[c] !== false;
+        out[tab] = m;
+      }
+      res.json({ columns: out, updatedAt: (saved as any)?.updatedAt || '' });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+  app.put('/payroll/table-columns', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const incoming = (req.body as any)?.columns || req.body || {};
+      const clean: Record<string, Record<string, boolean>> = {};
+      for (const [tab, cols] of Object.entries(FIN_TABLE_COLUMNS)) {
+        const m: Record<string, boolean> = {};
+        for (const c of cols as string[]) m[c] = (incoming as any)?.[tab]?.[c] !== false;
+        clean[tab] = m;
+      }
+      const at = new Date().toISOString();
+      const settings: any = await adapter.getSystemSettings().catch(() => ({})) || {};
+      await adapter.updateSystemSettings({ ...settings, [finVisKey(req.user!.id)]: { ...(clean as any), updatedAt: at } });
+      broadcastUpdate('payroll', { action: 'finance-table-columns', by: req.user!.id });
+      try {
+        const io = (app as any).get('io');
+        io?.emit?.('data:updated', { entity: 'payroll', data: { action: 'finance-table-columns', by: req.user!.id }, timestamp: at });
+      } catch { /* non-fatal */ }
+      res.json({ ok: true, columns: clean, updatedAt: at });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   // --- QUY TRÌNH KẾ TOÁN: quay về bước trước đó khi bước sai (realtime, theo tùy tháng) ---
   app.post('/payroll/workflow/rollback', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
     try {
