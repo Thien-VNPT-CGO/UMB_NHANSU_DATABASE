@@ -368,6 +368,7 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
       'Chi Tiết Chấm',
       'VIP',
       'Hạng VIP',
+      'Lý Do Từ Chối PV',
     ],
   },
   {
@@ -4168,6 +4169,9 @@ export class GoogleSheetsSyncService {
                 } else if (nz(mr[24]) === '' && (c as any).vip !== true) {
                   (c as any).vip = false;
                 }
+                // Lý do từ chối PV (cột 26, thêm sau): giữ bền qua restart.
+                const mDecline = nz(mr[26]);
+                if (mDecline !== undefined) (c as any).interview_decline_reason = mDecline;
               }
             }
           }
@@ -5005,6 +5009,7 @@ export class GoogleSheetsSyncService {
           (c as any).interview_score_detail || '',
           (c as any).vip ? 'VIP' : '',
           (c as any).vip_rank !== undefined && (c as any).vip_rank !== null ? String((c as any).vip_rank) : '',
+          (c as any).interview_decline_reason || '',
         ]);
         await this.pushTabSafe(details, 'candidates', 'FROM_NHAN_VIEN', candHeaders, candRows);
       }
@@ -5595,6 +5600,7 @@ export class GoogleSheetsSyncService {
       (c as any).interview_score_detail || '',
       (c as any).vip ? 'VIP' : '',
       (c as any).vip_rank !== undefined && (c as any).vip_rank !== null ? String((c as any).vip_rank) : '',
+      (c as any).interview_decline_reason || '',
     ]);
     await this.overwriteSheetData('FROM_NHAN_VIEN', candHeaders, candRows);
     return candRows.length;

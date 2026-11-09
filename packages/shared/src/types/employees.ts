@@ -74,10 +74,12 @@ export interface CandidateApplication {
   birth_year: number;
   apply_position: string;
   preferred_branch_id: string;
-  status: 'NEW' | 'NEED_INFO' | 'INVITED_INTERVIEW' | 'CONFIRMED' | 'RESCHEDULE_REQUESTED' | 'INTERVIEWED' | 'ACCEPTED' | 'REJECTED' | 'NO_SHOW' | string;
+  status: 'NEW' | 'NEED_INFO' | 'INVITED_INTERVIEW' | 'CONFIRMED' | 'DECLINED' | 'RESCHEDULE_REQUESTED' | 'INTERVIEWED' | 'ACCEPTED' | 'REJECTED' | 'NO_SHOW' | string;
   interview_date?: string;
   interview_time_slot?: string;
   interviewer_id?: string;
+  /** Lý do ứng viên từ chối tham gia PV qua link xác nhận (bắt buộc nhập, tối đa 500 ký tự). */
+  interview_decline_reason?: string;
   interview_score?: number;
   /** Bộ rubric đã chấm: 'store' (9 câu) | 'office' (7 câu). */
   interview_rubric?: string;

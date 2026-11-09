@@ -429,8 +429,10 @@ export class ZaloService {
     }
     lines.push(`👤 Người phỏng vấn: Phòng Nhân Sự Ụm Bò Milk`);
     if (o.rsvpUrl) {
-      lines.push(`✅ BẤM XÁC NHẬN THAM GIA / XIN DỜI LỊCH tại đây (trước giờ hẹn):`);
+      lines.push(`✅ BẤM XÁC NHẬN THAM GIA / TỪ CHỐI PHỎNG VẤN tại đây (không cần đăng nhập):`);
       lines.push(o.rsvpUrl);
+      lines.push(`• Xác nhận tham gia: HR giữ lịch cho bạn.`);
+      lines.push(`• Từ chối: bắt buộc nhập lý do để HR nắm được.`);
       lines.push(`Quá giờ hẹn 30 phút không xác nhận, lịch sẽ tự hủy để nhường slot.`);
     }
     lines.push(`📌 Lưu ý: Bạn vui lòng vào trước 5 phút và chuẩn bị trang phục lịch sự nhé.`);

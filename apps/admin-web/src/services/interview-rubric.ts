@@ -294,6 +294,7 @@ export function candStatusVI(s: unknown): string {
     NEED_INFO: 'Cần bổ sung',
     INVITED_INTERVIEW: 'Đã mời phỏng vấn',
     CONFIRMED: 'Đã xác nhận tham gia',
+    DECLINED: 'Đã từ chối tham gia',
     RESCHEDULE_REQUESTED: 'Xin dời lịch',
     INTERVIEWED: 'Đã phỏng vấn',
     SCORED: 'Chờ duyệt thử việc',

@@ -1465,6 +1465,7 @@ export class EmployeesService {
       interview_date: String(interviewDate).slice(0, 10),
       interview_time_slot: checked.value.normalized,
       interviewer_id: interviewerId,
+      interview_decline_reason: undefined,
     });
   }
 
@@ -1591,17 +1592,18 @@ export class EmployeesService {
     return updated;
   }
 
-  /** Xác nhận ứng viên SẼ tham gia PV (HR bấm tay khi UV báo qua điện thoại/Zalo,
-   *  hoặc UV tự bấm link xác nhận). Chỉ từ INVITED_INTERVIEW. Giữ nguyên lịch. */
-  async confirmInterview(submissionId: string, actorId: string, by: 'HR' | 'CANDIDATE' = 'HR') {
+  /** Xác nhận ứng viên SẼ tham gia PV (UV tự bấm link xác nhận; HR xác nhận tay đã bỏ).
+   *  Chỉ từ INVITED_INTERVIEW; bấm lại khi đã CONFIRMED thì idempotent (giữ lịch). */
+  async confirmInterview(submissionId: string, actorId: string, by: 'HR' | 'CANDIDATE' = 'CANDIDATE') {
     const cur = (await this.repo.listCandidates().catch(() => []))
       .find((c: any) => c.submission_id === submissionId) as any;
     if (!cur) throw new Error('CANDIDATE_NOT_FOUND');
+    if (cur.status === 'CONFIRMED') return cur; // Đã xác nhận: bấm lại -> giữ nguyên (idempotent)
     if (cur.status !== 'INVITED_INTERVIEW') {
       throw new Error(`Chỉ xác nhận được lịch đang chờ (hiện: ${cur.status})!`);
     }
     if (!cur.interview_date) throw new Error('Ứng viên chưa có lịch phỏng vấn để xác nhận!');
-    const updated = await this.repo.updateCandidate(submissionId, { status: 'CONFIRMED' } as any);
+    const updated = await this.repo.updateCandidate(submissionId, { status: 'CONFIRMED', interview_decline_reason: undefined } as any);
     await this.repo.recordAuditLog({
       log_id: `LOG_${Date.now()}`,
       actor_id: actorId,
@@ -1643,7 +1645,38 @@ export class EmployeesService {
     return updated;
   }
 
-  /** Ứng viên bấm "Xin dời lịch" qua link RSVP: trạng thái RESCHEDULE_REQUESTED +
+  /** Ứng viên bấm "Từ chối" qua link RSVP: trạng thái DECLINED + XÓA lịch cũ để
+   *  giải phóng slot, BẮT BUỘC có lý do (1-500 ký tự). HR muốn PV lại thì đặt lịch mới.
+   *  Giữ requestInterviewReschedule làm tương thích link cũ (không lý do). */
+  async declineInterview(submissionId: string, reason: string) {
+    const cur = (await this.repo.listCandidates().catch(() => []))
+      .find((c: any) => c.submission_id === submissionId) as any;
+    if (!cur) throw new Error('CANDIDATE_NOT_FOUND');
+    if (!['INVITED_INTERVIEW', 'CONFIRMED'].includes(String(cur.status || ''))) {
+      throw new Error('Lịch này không còn hiệu lực để từ chối! Liên hệ HR đặt lịch mới.');
+    }
+    const clean = String(reason || '').trim().slice(0, 500);
+    if (!clean) throw new Error('Vui lòng nhập lý do từ chối (bắt buộc để HR nắm được và xếp lại lịch).');
+    const updated = await this.repo.updateCandidate(submissionId, {
+      status: 'DECLINED',
+      interview_date: undefined,
+      interview_time_slot: undefined,
+      interviewer_id: undefined,
+      interview_decline_reason: clean,
+    } as any);
+    await this.repo.recordAuditLog({
+      log_id: `LOG_${Date.now()}`,
+      actor_id: 'CANDIDATE',
+      actor_role: 'SYSTEM',
+      action: 'INTERVIEW_DECLINED',
+      target_entity: 'UNG_VIEN',
+      target_id: submissionId,
+      details: `${(updated as any).full_name || submissionId} TỪ CHỐI tham gia PV qua link xác nhận; lý do: ${clean}; slot đã giải phóng, chờ HR quyết định lịch mới`,
+    }).catch(() => null);
+    return updated;
+  }
+
+  /** Ứng viên bấm "Xin dời lịch" qua link RSVP (link cũ): trạng thái RESCHEDULE_REQUESTED +
    *  XÓA lịch cũ để giải phóng slot, HR đặt lịch mới cho bạn. */
   async requestInterviewReschedule(submissionId: string) {
     const cur = (await this.repo.listCandidates().catch(() => []))

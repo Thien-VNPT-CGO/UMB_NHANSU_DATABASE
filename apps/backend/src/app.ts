@@ -2847,6 +2847,16 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  /** Domain công khai để làm link xác nhận cho ứng viên: ưu tiên PUBLIC_BASE_URL,
+   *  thiếu thì dùng origin của request (qua proxy có x-forwarded-*). */
+  function publicBaseUrl(req: any): string {
+    const env = String(process.env.PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '');
+    if (env) return env;
+    const proto = String(req?.headers?.['x-forwarded-proto'] || req?.protocol || 'https').split(',')[0].trim();
+    const host = String(req?.headers?.['x-forwarded-host'] || req?.get?.('host') || req?.headers?.host || 'localhost:4000');
+    return `${proto}://${host}`;
+  }
+
   app.get('/applications', authMiddleware, requireRole(['ADMIN', 'HR']), async (req, res) => {
     try {
       const list = await employeesService.listCandidates();
@@ -3130,11 +3140,12 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       await employeesService.scheduleInterview(req.params.id, interviewDate, timeSlot, req.user!.id);
 
       // Link xác nhận cho ứng viên bấm (không cần đăng nhập, token 7 ngày).
-      // Chưa cấu hình PUBLIC_BASE_URL thì gửi thư mời như cũ (không kèm link).
+      // PUBLIC_BASE_URL (domain thật) ưu tiên; thiếu thì dùng origin của request
+      // hiện tại để link vẫn ra trong thư mời (đừng để mất tính năng xác nhận).
       let rsvpUrl: string | undefined;
       try {
-        const base = String(process.env.PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '');
-        if (base) rsvpUrl = `${base}/public/interview/rsvp?token=${encodeURIComponent(employeesService.buildRsvpToken(req.params.id))}`;
+        const base = publicBaseUrl(req);
+        rsvpUrl = `${base}/public/interview/rsvp?token=${encodeURIComponent(employeesService.buildRsvpToken(req.params.id))}`;
       } catch { /* không kèm link */ }
 
       const phone = (cand as any).phone_normalized || (cand as any).phone || '';
@@ -7926,19 +7937,47 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   const escapeHtml = (s: string) => String(s || '')
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-  // Trang xác nhận gọn cho điện thoại (token nằm sẵn trong nút, không lộ thêm).
+  // Trang xác nhận cho ứng viên (mobile): nút 1 Xác nhận tham gia, nút 2 Từ chối
+  // (mở ô nhập lý do BẮT BUỘC mới gửi được). Token nằm sẵn trong JS, không lộ thêm.
   const rsvpPage = (title: string, bodyHtml: string, ctx: { token: string; name: string; status: string } | null) => `<!DOCTYPE html>
 <html lang="vi"><head><meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
 <title>${escapeHtml(title)} — Ụm Bò Milk</title>
-<style>body{margin:0;font-family:system-ui,sans-serif;background:linear-gradient(160deg,#0F172A,#831843);color:#fff;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}.card{background:#fff;color:#1F2937;border-radius:16px;max-width:440px;width:100%;padding:28px 22px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.4)}.logo{font-weight:800;color:#E85D92;font-size:15px;letter-spacing:1px}h1{font-size:20px;margin:10px 0}p{font-size:14px;line-height:1.65}.btn{display:block;width:100%;padding:13px;border-radius:10px;border:none;font-size:15px;font-weight:800;cursor:pointer;margin-top:10px}.ok{background:linear-gradient(135deg,#059669,#34D399);color:#fff}.later{background:#F3F4F6;color:#374151}.msg{margin-top:12px;font-size:13px;font-weight:700}</style>
+<style>body{margin:0;font-family:system-ui,sans-serif;background:linear-gradient(160deg,#0F172A,#831843);color:#fff;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}.card{background:#fff;color:#1F2937;border-radius:16px;max-width:460px;width:100%;padding:28px 22px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.4)}.logo{font-weight:800;color:#E85D92;font-size:15px;letter-spacing:1px}h1{font-size:20px;margin:10px 0}p{font-size:14px;line-height:1.65}.btn{display:block;width:100%;padding:13px;border-radius:10px;border:none;font-size:15px;font-weight:800;cursor:pointer;margin-top:10px}.ok{background:linear-gradient(135deg,#059669,#34D399);color:#fff}.no{background:#FEF2F2;color:#991B1B;border:1px solid #FCA5A5}textarea{width:100%;box-sizing:border-box;padding:10px;border-radius:8px;border:1px solid #CBD5E1;font:inherit;font-size:14px;resize:vertical;margin-top:8px}.wrap{display:none;margin-top:10px;text-align:left}.msg{margin-top:12px;font-size:13px;font-weight:700;white-space:pre-wrap}</style>
 </head><body><div class="card"><div class="logo">ỤM BÒ MILK • TUYỂN DỤNG</div><h1>${escapeHtml(title)}</h1><p>${bodyHtml}</p>
-${ctx ? `<button class="btn ok" id="bOk">✅ Tôi sẽ tham gia</button><button class="btn later" id="bLater">🔄 Xin dời lịch khác</button><div class="msg" id="msg"></div>
+${ctx ? `<button class="btn ok" id="bOk">✅ Xác nhận tham gia</button><button class="btn no" id="bNo" type="button">❌ Từ chối tham gia</button>
+<div class="wrap" id="declineBox"><label for="declineReason" style="font-size:13px;font-weight:800">Lý do từ chối (bắt buộc):</label>
+<textarea id="declineReason" rows="3" maxlength="500" placeholder="VD: bận việc gia đình, đã tìm được việc khác, lịch không phù hợp..."></textarea>
+<button class="btn no" id="bSendNo" type="button" disabled>Gửi từ chối</button></div><div class="msg" id="msg"></div>
 <script>const tk=${JSON.stringify(ctx.token)};
-async function send(d){document.getElementById('msg').textContent='⏳ Đang gửi...';try{const r=await fetch('./rsvp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:tk,decision:d})});const j=await r.json();if(!r.ok)throw new Error(j.error||'Lỗi');document.getElementById('msg').textContent=d==='CONFIRM'?'🎉 Đã ghi nhận! Hẹn gặp bạn đúng giờ nhé.':'📝 Đã ghi nhận xin dời lịch! HR sẽ liên hệ xếp lịch mới.';}catch(e){document.getElementById('msg').textContent='⚠️ '+e.message;}}</script>
-<script>document.getElementById('bOk').onclick=()=>send('CONFIRM');document.getElementById('bLater').onclick=()=>send('RESCHEDULE');</script>` : ''}
+const reasonEl=document.getElementById('declineReason'),sendNo=document.getElementById('bSendNo'),msgEl=document.getElementById('msg');
+reasonEl.addEventListener('input',()=>{sendNo.disabled=!reasonEl.value.trim();});
+async function post(body){const r=await fetch('./rsvp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'Lỗi');return j;}
+document.getElementById('bOk').onclick=async()=>{msgEl.textContent='⏳ Đang gửi...';try{await post({token:tk,decision:'CONFIRM'});msgEl.textContent='🎉 Đã xác nhận tham gia! HR sẽ giữ lịch cho bạn. Hẹn gặp bạn đúng giờ nhé.';}catch(e){msgEl.textContent='⚠️ '+e.message;}};
+document.getElementById('bNo').onclick=()=>{const box=document.getElementById('declineBox');box.style.display=box.style.display==='block'?'none':'block';reasonEl.focus();};
+sendNo.onclick=async()=>{const reason=reasonEl.value.trim();if(!reason){msgEl.textContent='⚠️ Vui lòng nhập lý do từ chối trước khi gửi.';return;}msgEl.textContent='⏳ Đang gửi...';try{await post({token:tk,decision:'DECLINE',reason});msgEl.textContent='📝 Đã ghi nhận từ chối. Cảm ơn bạn đã dành thời gian ứng tuyển — HR sẽ xem xét lý do của bạn.';}catch(e){msgEl.textContent='⚠️ '+e.message;}};</script>` : ''}
 </div></body></html>`;
-  // Trang xác nhận: hiện tên + lịch hẹn + 2 nút Xác nhận tham gia / Xin dời lịch.
+
+  const notifyHRDeclined = async (updated: any, sid: string) => {
+    try {
+      const admins = await adapter.listAdminAccounts().catch(() => []);
+      const ids = admins.filter((a: any) => (a.role === 'ADMIN' || a.role === 'HR') && a.is_active !== false).map((a: any) => a.admin_id);
+      if (ids.length > 0) {
+        const c: any = updated || {};
+        await notificationsService.sendNotification({
+          recipientIds: ids,
+          type: 'INTERVIEW_DECLINED',
+          severity: 'ACTION_REQUIRED',
+          title: `❌ ${c.full_name || sid} TỪ CHỐI tham gia phỏng vấn`,
+          summary: `Lý do: ${String(c.interview_decline_reason || 'không nêu lý do')}. Lịch cũ đã giải phóng — vào tab Lịch PV để biết thêm.`,
+          targetPath: '/hr-interviews',
+          actorId: 'CANDIDATE',
+        }).catch(() => null);
+      }
+    } catch { /* best-effort */ }
+  };
+
+  // Trang xác nhận: hiện tên + lịch hẹn + 2 chức năng Xác nhận tham gia / Từ chối.
   app.get('/public/interview/rsvp', async (req, res) => {
     try {
       const sid = employeesService.verifyRsvpToken(String(req.query.token || ''));
@@ -7946,7 +7985,21 @@ async function send(d){document.getElementById('msg').textContent='⏳ Đang g�
         .find((c: any) => c.submission_id === sid);
       if (!cand) return res.status(404).send(rsvpPage('Link không còn hiệu lực', 'Hồ sơ ứng viên không tồn tại. Liên hệ HR để được hỗ trợ.', null));
       const st = String(cand.status || '');
-      if (!['INVITED_INTERVIEW', 'CONFIRMED', 'RESCHEDULE_REQUESTED'].includes(st)) {
+      if (st === 'DECLINED') {
+        return res.send(rsvpPage(
+          'Đã ghi nhận từ chối',
+          `Chào <b>${escapeHtml(cand.full_name || 'bạn')}</b>! Bạn đã từ chối tham gia buổi phỏng vấn này.${cand.interview_decline_reason ? `<br/>Lý do bạn gửi: <i>“${escapeHtml(String(cand.interview_decline_reason))}”</i>` : ''}<br/>Lượt từ chối này đã được ghi nhận. Nếu đổi ý hoặc muốn đặt lịch mới, vui lòng liên hệ HR.`,
+          null
+        ));
+      }
+      if (st === 'RESCHEDULE_REQUESTED') {
+        return res.send(rsvpPage(
+          'Đã ghi nhận xin dời lịch',
+          `Chào <b>${escapeHtml(cand.full_name || 'bạn')}</b>! Bạn đã xin dời lịch phỏng vấn trước đó.<br/>HR sẽ liên hệ với bạn để xếp lịch mới — không cần xác nhận lại.`,
+          null
+        ));
+      }
+      if (!['INVITED_INTERVIEW', 'CONFIRMED'].includes(st)) {
         return res.send(rsvpPage(
           'Lịch hẹn không còn hiệu lực',
           `Chào ${cand.full_name || 'bạn'}! Lịch phỏng vấn này hiện ở trạng thái "${st}". Liên hệ HR để đặt lịch mới.`,
@@ -7955,7 +8008,7 @@ async function send(d){document.getElementById('msg').textContent='⏳ Đang g�
       }
       res.send(rsvpPage(
         'Xác nhận tham gia phỏng vấn',
-        `Chào <b>${escapeHtml(cand.full_name || 'bạn')}</b>!<br/>Lịch hẹn của bạn: <b>${escapeHtml(String(cand.interview_time_slot || ''))}</b> ngày <b>${escapeHtml(String(cand.interview_date || '').slice(0, 10))}</b>.<br/>Vui lòng xác nhận để HR giữ lịch cho bạn${st === 'CONFIRMED' ? ' (bạn đã xác nhận — bấm lại để chắc chắn)' : ''}.`,
+        `Chào <b>${escapeHtml(cand.full_name || 'bạn')}</b>!<br/>Lịch hẹn của bạn: <b>${escapeHtml(String(cand.interview_time_slot || ''))}</b> ngày <b>${escapeHtml(String(cand.interview_date || '').slice(0, 10))}</b>.<br/>Vui lòng chọn 1 trong 2:<br/>✅ <b>Xác nhận tham gia</b> — HR giữ lịch, hệ thống tự cập nhật trạng thái cho HR.<br/>❌ <b>Từ chối tham gia</b> — bắt buộc nhập lý do.`,
         { token: String(req.query.token || ''), name: String(cand.full_name || ''), status: st }
       ));
     } catch (e: any) {
@@ -7963,7 +8016,7 @@ async function send(d){document.getElementById('msg').textContent='⏳ Đang g�
     }
   });
 
-  // Ứng viên bấm nút trên trang RSVP.
+  // Ứng viên bấm nút trên trang RSVP: CONFIRM / DECLINE (bắt buộc lý do) / RESCHEDULE (link cũ).
   app.post('/public/interview/rsvp', async (req, res) => {
     try {
       const sid = employeesService.verifyRsvpToken(String((req.body as any)?.token || ''));
@@ -7974,6 +8027,17 @@ async function send(d){document.getElementById('msg').textContent='⏳ Đang g�
         try {
           await (adapter as any)?.pushCandidatesNow?.();
         } catch { /* best-effort */ }
+        return res.json({ success: true, status: updated.status });
+      }
+      if (decision === 'DECLINE') {
+        const updated: any = await employeesService.declineInterview(sid, String((req.body as any)?.reason || ''));
+        broadcastUpdate('candidates', { action: 'interview-declined', id: sid });
+        try {
+          const syncSvc = (adapter as any)?.syncService;
+          syncSvc?.markInterviewScheduleCleared?.(sid);
+          await (adapter as any)?.pushCandidatesNow?.();
+        } catch { /* best-effort */ }
+        await notifyHRDeclined(updated, sid);
         return res.json({ success: true, status: updated.status });
       }
       if (decision === 'RESCHEDULE') {
@@ -8004,6 +8068,25 @@ async function send(d){document.getElementById('msg').textContent='⏳ Đang g�
       return res.status(400).json({ error: 'INVALID_DECISION' });
     } catch (e: any) {
       res.status(400).json({ error: String(e?.message || 'Lỗi xác nhận') });
+    }
+  });
+
+  // HR lấy lại link xác nhận cho ứng viên (gửi lại qua Zalo/phone khi cần) —
+  // chỉ trả URL token, không trả token thô; dùng để copy/gửi tiếp.
+  app.get('/interviews/:id/rsvp-link', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const candidates = await adapter.listCandidates();
+      const cand = candidates.find((c: any) => c.submission_id === req.params.id);
+      if (!cand) return res.status(404).json({ error: 'CANDIDATE_NOT_FOUND' });
+      const st = String((cand as any).status || '');
+      if (!['INVITED_INTERVIEW', 'CONFIRMED'].includes(st)) {
+        return res.status(400).json({ error: `Link xác nhận chỉ có khi đang chờ xác nhận (hiện: ${st}). Đặt lịch mới qua form lập lịch trước.` });
+      }
+      const base = publicBaseUrl(req);
+      const url = `${base}/public/interview/rsvp?token=${encodeURIComponent(employeesService.buildRsvpToken(req.params.id))}`;
+      res.json({ success: true, url });
+    } catch (err: any) {
+      res.status(400).json({ error: String(err?.message || 'Lỗi lấy link xác nhận') });
     }
   });
 

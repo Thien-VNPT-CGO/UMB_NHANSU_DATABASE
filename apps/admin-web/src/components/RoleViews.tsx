@@ -2596,24 +2596,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [candDelBusyId, setCandDelBusyId] = useState<string | null>(null);
   // Khôi phục / Chat Zalo ứng viên (bấm là nút đó hiện ⏳ + khóa bấm đúp).
   const [candActionBusyId, setCandActionBusyId] = useState<string | null>(null);
-  // Xác nhận / đánh vắng PV (HR bấm tay khi UV báo qua điện thoại/Zalo).
+  // Đánh vắng PV (HR bấm tay khi UV không đến dù đã xác nhận qua link).
   const [rsvpBusyId, setRsvpBusyId] = useState<string | null>(null);
-  const handleConfirmInterview = async (c: any) => {
-    const sid = String((c as any)?.submission_id || '');
-    if (!sid || rsvpBusyId) return;
-    if (!window.confirm(`Xác nhận ${c?.full_name || ''} SẼ tham gia PV ${String(c?.interview_time_slot || '').slice(0, 5)} ngày ${String(c?.interview_date || '').slice(0, 10)}?`)) return;
-    setRsvpBusyId(sid);
-    try {
-      await apiRequest(`/interviews/${sid}/confirm`, { method: 'POST', body: JSON.stringify({}) });
-      showToast(`Đã ghi nhận ${c?.full_name || ''} xác nhận tham gia PV!`);
-      if (onRefreshData) await onRefreshData();
-      if (onPushSheets) await onPushSheets();
-    } catch (e: any) {
-      showToast(e?.message || 'Lỗi khi xác nhận!');
-    } finally {
-      setRsvpBusyId(null);
-    }
-  };
+  // (Nút "Xác nhận" thủ công đã bỏ — ứng viên xác nhận/từ chối (bắt buộc
+  // lý do) trực tiếp qua link RSVP trong thư mời Zalo; tab tự cập nhật realtime.)
   const handleNoShowInterview = async (c: any) => {
     const sid = String((c as any)?.submission_id || '');
     if (!sid || rsvpBusyId) return;
@@ -4762,13 +4748,26 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     });
 
     const rejectedCount = (candidates || []).filter(c => String(c.status || '') === 'REJECTED').length;
-
+    // Thẻ thống kê nhanh trên đầu tab (theo logic lọc hiện tại: ẩn REJECTED mặc định)
+    const candStats = (() => {
+      const arr = candidates || [];
+      let pass = 0, fail = 0, fresh = 0;
+      for (const c of arr) {
+        if (String(c.status || '') === 'REJECTED') continue;
+        const r = evaluateCandidateAiScore(c).result;
+        if (r === 'Đạt') pass++; else fail++;
+        if (String(c.status || 'NEW') === 'NEW') fresh++;
+      }
+      return { total: arr.length, pass, fail, fresh, rejected: rejectedCount };
+    })();
+    // Nhóm màu tiêu đề cột (để mắt HR quét 3 cụm: hồ sơ / nhu cầu / đánh giá)
+    const grpTh: React.CSSProperties = { textAlign: 'center', borderBottom: 'none', paddingBottom: '6px', letterSpacing: '0.4px' };
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
         {/* HEADER SECTION */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
               <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)', margin: 0 }}>
                 Ứng Viên Mới (Google Forms)
               </h1>
@@ -4788,8 +4787,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 Realtime Google Sheets
               </span>
             </div>
-            <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '4px 0 0' }}>
-                Đầy đủ 16 cột dữ liệu đồng bộ trực tiếp từ trang tính Google Form (FROM_NHAN_VIEN) — Không dữ liệu ảo
+            <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '4px 0 0', maxWidth: '680px' }}>
+              Đồng bộ trực tiếp từ Google Form (FROM_NHAN_VIEN). Bảng gom 17 cột gốc thành <strong>9 cột theo nhóm</strong> — bấm <strong>👁 Chi Tiết</strong> để xem toàn bộ hồ sơ + ma trận 9 tiêu chí AI.
             </p>
           </div>
 
@@ -4810,6 +4809,22 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               {isSyncingCandidates ? 'Đang Tải Sheets...' : 'Đồng Bộ Sheets Realtime'}
             </button>
           </div>
+        </div>
+
+        {/* THẺ THỐNG KÊ NHANH */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px' }}>
+          {[
+            { label: 'TỔNG ỨNG VIÊN', value: candStats.total, color: '#0068FF', bg: '#EFF6FF', icon: '📥' },
+            { label: 'ĐẠT — MỜI PHỎNG VẤN', value: candStats.pass, color: '#059669', bg: '#ECFDF5', icon: '✅' },
+            { label: 'LOẠI (AI SÀNG LỌC)', value: candStats.fail, color: '#DC2626', bg: '#FEF2F2', icon: '⛔' },
+            { label: 'MỚI CHƯA XỬ LÝ', value: candStats.fresh, color: '#D97706', bg: '#FFFBEB', icon: '⏳' },
+            { label: 'ĐÃ LOẠI (HR)', value: candStats.rejected, color: '#6B7280', bg: '#F3F4F6', icon: '🚫' },
+          ].map((s) => (
+            <div key={s.label} style={{ backgroundColor: s.bg, borderRadius: '12px', padding: '12px 14px', border: `1px solid ${s.color}33` }}>
+              <div style={{ fontSize: '11px', fontWeight: 800, color: s.color, letterSpacing: '0.4px' }}>{s.icon} {s.label}</div>
+              <div style={{ fontSize: '26px', fontWeight: 900, color: s.color, marginTop: '2px' }}>{s.value}</div>
+            </div>
+          ))}
         </div>
 
         {/* FILTER & STATS BAR */}
@@ -4909,7 +4924,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           </div>
         </div>
 
-        {/* 17 COLUMNS FULL TABLE CONTAINER */}
+        {/* BẢNG GOM 9 CỘT THEO NHÓM (17 cột gốc vẫn đủ trong Chi tiết) */}
         <div style={{
           backgroundColor: 'var(--surface)',
           borderRadius: 'var(--radius-md)',
@@ -4920,7 +4935,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           <div className="ubm-sticky-tbl" style={{ overflowX: 'auto', width: '100%' }}>
             <table style={{
               width: '100%',
-              minWidth: '2100px',
+              minWidth: '1450px',
               borderCollapse: 'collapse',
               fontSize: '13px',
               textAlign: 'left',
@@ -4928,37 +4943,43 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               <thead>
                 <tr style={{
                   backgroundColor: 'var(--bg)',
-                  borderBottom: '2px solid var(--border)',
                   color: 'var(--text-muted)',
                   fontSize: '11px',
                   textTransform: 'uppercase',
                   letterSpacing: '0.5px',
                 }}>
-                  <th style={{ padding: '12px 14px', width: '150px' }}>1. Ngày Đăng Ký</th>
-                  <th style={{ padding: '12px 14px', width: '170px' }}>2. Họ Tên</th>
-                  <th style={{ padding: '12px 12px', width: '90px' }}>3. Giới Tính</th>
-                  <th style={{ padding: '12px 12px', width: '110px' }}>4. Năm Sinh</th>
-                  <th style={{ padding: '12px 14px', width: '140px' }}>5. Trình Độ</th>
-                  <th style={{ padding: '12px 14px', width: '140px' }}>6. Quê Quán</th>
-                  <th style={{ padding: '12px 14px', width: '130px' }}>7. SĐT</th>
-                  <th style={{ padding: '12px 14px', width: '150px' }}>8. Ca Đăng Ký</th>
-                  <th style={{ padding: '12px 14px', width: '160px' }}>9. Chi Nhánh ĐK</th>
-                  <th style={{ padding: '12px 16px', width: '220px' }}>10. Kinh Nghiệm</th>
-                  <th style={{ padding: '12px 16px', width: '210px' }}>11. Xử Lý Đột Xuất</th>
-                  <th style={{ padding: '12px 14px', width: '140px' }}>12. Facebook</th>
-                  <th style={{ padding: '12px 14px', width: '140px' }}>13. Nguồn Biết Tin</th>
-                  <th style={{ padding: '12px 12px', width: '110px', textAlign: 'center' }}>14. Điểm AI</th>
-                  <th style={{ padding: '12px 14px', width: '150px' }}>15. Kết Quả</th>
-                  <th style={{ padding: '12px 12px', width: '130px' }}>16. Trạng Thái</th>
-                  <th style={{ padding: '12px 14px', width: '190px', textAlign: 'center', position: 'sticky', right: 0, backgroundColor: 'var(--bg)', zIndex: 1, boxShadow: '-3px 0 6px rgba(0,0,0,0.05)' }}>
-                    Thao Tác
+                  <th colSpan={1} style={{ ...grpTh, backgroundColor: '#EFF6FF', color: '#1D4ED8' }}>📋 Ứng viên</th>
+                  <th colSpan={3} style={{ ...grpTh, backgroundColor: '#F5F3FF', color: '#6D28D9' }}>🎯 Nhu cầu làm việc</th>
+                  <th colSpan={2} style={{ ...grpTh, backgroundColor: '#ECFDF5', color: '#047857' }}>🗂 Hồ sơ</th>
+                  <th colSpan={1} style={{ ...grpTh, backgroundColor: '#FFFBEB', color: '#92400E' }}>⭐ Đánh giá AI</th>
+                  <th colSpan={1} style={{ ...grpTh, backgroundColor: '#FEF2F2', color: '#991B1B' }}>Trạng thái</th>
+                  <th colSpan={1} style={{ ...grpTh, backgroundColor: '#F8FAFC', color: '#475569', position: 'sticky', right: 0, zIndex: 2 }}>⚙️ Thao tác</th>
+                </tr>
+                <tr style={{
+                  backgroundColor: 'var(--bg)',
+                  borderBottom: '2px solid var(--border)',
+                  color: 'var(--text-muted)',
+                  fontSize: '11px',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.4px',
+                }}>
+                  <th style={{ padding: '10px 14px', width: '240px' }}>Ứng viên & liên hệ</th>
+                  <th style={{ padding: '10px 14px', width: '150px' }}>Ca đăng ký</th>
+                  <th style={{ padding: '10px 14px', width: '160px' }}>Chi nhánh ĐK</th>
+                  <th style={{ padding: '10px 14px', width: '170px' }}>Học vấn & quê</th>
+                  <th style={{ padding: '10px 16px', width: '240px' }}>Kinh nghiệm</th>
+                  <th style={{ padding: '10px 16px', width: '220px' }}>Xử lý đột xuất</th>
+                  <th style={{ padding: '10px 12px', width: '130px', textAlign: 'center' }}>Điểm AI & kết quả</th>
+                  <th style={{ padding: '10px 12px', width: '130px' }}>Trạng thái</th>
+                  <th style={{ padding: '10px 14px', width: '190px', textAlign: 'center', position: 'sticky', right: 0, backgroundColor: 'var(--bg)', zIndex: 1, boxShadow: '-3px 0 6px rgba(0,0,0,0.05)' }}>
+                    Thao tác
                   </th>
                 </tr>
               </thead>
               <tbody>
                 {filteredCandidates.length === 0 ? (
                   <tr>
-                    <td colSpan={17} style={{ padding: '48px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    <td colSpan={9} style={{ padding: '48px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
                       <div style={{ fontSize: '32px', marginBottom: '8px' }}>📂</div>
                       <div style={{ fontWeight: 700, fontSize: '15px', color: 'var(--text)' }}>Không tìm thấy ứng viên nào</div>
                       <div style={{ fontSize: '13px', marginTop: '4px' }}>
@@ -4989,73 +5010,50 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           transition: 'background-color 0.15s ease',
                         }}
                       >
-                        {/* 1. Ngày đăng ký */}
-                        <td style={{ padding: '12px 14px', color: '#475569', fontSize: '12px', whiteSpace: 'nowrap' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                            <Clock size={12} color="#64748B" />
-                            <span>{formatRegDate(c.created_at)}</span>
-                          </div>
-                        </td>
-
-                        {/* 2. Họ tên */}
-                        <td style={{ padding: '12px 14px', fontWeight: 700, color: 'var(--text)' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        {/* 1. Ứng viên & liên hệ (gộp Ngày gửi + Họ tên + GT/Tuổi + SĐT + FB/Nguồn) */}
+                        <td style={{ padding: '12px 14px' }}>
+                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
                             <div style={{
-                              width: '28px',
-                              height: '28px',
+                              width: '36px',
+                              height: '36px',
                               borderRadius: '50%',
-                              backgroundColor: '#E0E7FF',
-                              color: '#3730A3',
+                              backgroundColor: c.gender === 'Nữ' ? '#FCE7F3' : '#E0E7FF',
+                              color: c.gender === 'Nữ' ? '#BE185D' : '#3730A3',
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'center',
                               fontWeight: 800,
-                              fontSize: '12px',
+                              fontSize: '14px',
                               flexShrink: 0,
                             }}>
                               {(c.full_name || 'U')[0].toUpperCase()}
                             </div>
-                            <span style={{ whiteSpace: 'nowrap' }}>{c.full_name}</span>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ fontWeight: 800, color: 'var(--text)', whiteSpace: 'nowrap' }}>{c.full_name}</div>
+                              <div style={{ fontSize: '11px', color: 'var(--text-muted)', whiteSpace: 'nowrap', marginTop: '1px' }}>
+                                {c.gender || 'Nam'}{c.birth_year ? ` • ${c.birth_year}${age ? ` (${age})` : ''}` : ''}
+                              </div>
+                              <div style={{ fontSize: '12px', fontFamily: 'monospace', fontWeight: 700, color: '#0F172A', marginTop: '2px', whiteSpace: 'nowrap' }}>
+                                📞 {c.phone || c.phone_normalized || '---'}
+                              </div>
+                              <div style={{ fontSize: '11px', color: '#64748B', marginTop: '3px', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                <span>🕐 {formatRegDate(c.created_at)}</span>
+                                <span>• {c.referral_source || 'Facebook'}</span>
+                                {c.facebook_url ? (
+                                  <a href={c.facebook_url} target="_blank" rel="noopener noreferrer" title={c.facebook_url} style={{ color: '#0068FF', fontWeight: 800, textDecoration: 'none' }}>f ↗</a>
+                                ) : null}
+                              </div>
+                            </div>
                           </div>
                         </td>
 
-                        {/* 3. Giới tính */}
-                        <td style={{ padding: '12px 12px' }}>
-                          <span style={{
-                            display: 'inline-block',
-                            padding: '2px 8px',
-                            borderRadius: '999px',
-                            fontSize: '11px',
-                            fontWeight: 700,
-                            backgroundColor: c.gender === 'Nữ' ? '#FCE7F3' : '#DBEAFE',
-                            color: c.gender === 'Nữ' ? '#BE185D' : '#1D4ED8',
-                          }}>
-                            {c.gender || 'Nam'}
-                          </span>
-                        </td>
-
-                        {/* 4. Năm sinh */}
-                        <td style={{ padding: '12px 12px', whiteSpace: 'nowrap' }}>
-                          <div style={{ fontWeight: 600 }}>{c.birth_year || '2002'}</div>
-                          {age && <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{age}</div>}
-                        </td>
-
-                        {/* 5. Trình độ */}
+                        {/* 2. Học vấn & quê quán (gộp) */}
                         <td style={{ padding: '12px 14px', color: '#334155' }}>
-                          {c.education_level || 'Đại học'}
-                        </td>
-
-                        {/* 6. Quê quán */}
-                        <td style={{ padding: '12px 14px', color: '#334155' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            <MapPin size={12} color="#64748B" />
+                          <div style={{ fontWeight: 700 }}>{c.education_level || 'Đại học'}</div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#64748B', marginTop: '2px' }}>
+                            <MapPin size={11} color="#64748B" />
                             <span>{c.hometown || 'TP. Hồ Chí Minh'}</span>
                           </div>
-                        </td>
-
-                        {/* 7. SĐT */}
-                        <td style={{ padding: '12px 14px', fontFamily: 'monospace', fontWeight: 600, color: '#0F172A', whiteSpace: 'nowrap' }}>
-                          {c.phone || c.phone_normalized || '---'}
                         </td>
 
                         {/* 8. Ca đăng ký */}
@@ -5088,8 +5086,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           </span>
                         </td>
 
-                        {/* 10. Kinh nghiệm */}
-                        <td style={{ padding: '12px 16px', maxWidth: '240px' }} title={c.experience}>
+                        {/* Kinh nghiệm (bấm mở chi tiết) */}
+                        <td style={{ padding: '12px 16px', maxWidth: '240px', cursor: 'pointer' }} title={`Bấm để xem chi tiết: ${c.experience || ''}`} onClick={() => setSelectedCandidateDetail(c)}>
                           <div style={{
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
@@ -5102,10 +5100,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           }}>
                             {c.experience || 'Chưa có kinh nghiệm'}
                           </div>
+                          <div style={{ fontSize: '10px', color: '#0068FF', fontWeight: 800, marginTop: '3px' }}>Xem thêm →</div>
                         </td>
 
-                        {/* 11. Xử lý đột xuất */}
-                        <td style={{ padding: '12px 16px', maxWidth: '220px' }} title={c.emergency_handling}>
+                        {/* Xử lý đột xuất (bấm mở chi tiết) */}
+                        <td style={{ padding: '12px 16px', maxWidth: '220px', cursor: 'pointer' }} title={`Bấm để xem chi tiết: ${c.emergency_handling || ''}`} onClick={() => setSelectedCandidateDetail(c)}>
                           <div style={{
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
@@ -5119,86 +5118,45 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           }}>
                             {c.emergency_handling || 'Sẵn sàng hỗ trợ và tăng ca khi có điều động'}
                           </div>
+                          <div style={{ fontSize: '10px', color: '#059669', fontWeight: 800, marginTop: '3px' }}>Xem thêm →</div>
                         </td>
 
-                        {/* 12. Facebook (Click vào xem trực tiếp được) */}
-                        <td style={{ padding: '12px 14px', whiteSpace: 'nowrap' }}>
-                          {c.facebook_url ? (
-                            <a
-                              href={c.facebook_url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '5px',
-                                color: '#0068FF',
-                                fontWeight: 700,
-                                textDecoration: 'none',
-                                backgroundColor: '#EFF6FF',
-                                padding: '4px 10px',
-                                borderRadius: '6px',
-                                border: '1px solid #BFDBFE',
-                                fontSize: '12px',
-                              }}
-                            >
-                              <ExternalLink size={12} />
-                              Mở Facebook
-                            </a>
-                          ) : (
-                            <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>Chưa có</span>
-                          )}
-                        </td>
-
-                        {/* 13. Nguồn biết tin */}
-                        <td style={{ padding: '12px 14px', color: '#475569', fontSize: '12px' }}>
-                          {c.referral_source || 'Facebook'}
-                        </td>
-
-                        {/* 14. Điểm AI */}
-                        <td style={{ padding: '12px 12px', textAlign: 'center' }}>
+                        {/* Điểm AI & kết quả (gộp) */}
+                        <td style={{ padding: '12px 12px', textAlign: 'center', whiteSpace: 'nowrap' }}>
                           {(() => {
                             const evalItem = evaluateCandidateAiScore(c);
                             const isPass = evalItem.result === 'Đạt';
                             return (
-                              <span style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '4px',
-                                padding: '4px 10px',
-                                borderRadius: '999px',
-                                fontSize: '12px',
-                                fontWeight: 800,
-                                backgroundColor: isPass ? '#ECFDF5' : '#FEF2F2',
-                                color: isPass ? '#059669' : '#DC2626',
-                                border: `1px solid ${isPass ? '#A7F3D0' : '#FECACA'}`,
-                              }}>
-                                ⭐ {evalItem.score} / 14
-                              </span>
-                            );
-                          })()}
-                        </td>
-
-                        {/* 15. Kết quả */}
-                        <td style={{ padding: '12px 14px', whiteSpace: 'nowrap' }}>
-                          {(() => {
-                            const evalItem = evaluateCandidateAiScore(c);
-                            const isPass = evalItem.result === 'Đạt';
-                            return (
-                              <span
-                                style={{
-                                  display: 'inline-block',
-                                  padding: '4px 9px',
-                                  borderRadius: '6px',
-                                  fontSize: '11px',
+                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px' }}>
+                                <span style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  padding: '4px 10px',
+                                  borderRadius: '999px',
+                                  fontSize: '12px',
                                   fontWeight: 800,
                                   backgroundColor: isPass ? '#ECFDF5' : '#FEF2F2',
                                   color: isPass ? '#059669' : '#DC2626',
-                                }}
-                                title={evalItem.screeningNote}
-                              >
-                                {isPass ? '✓ ĐẠT (Mời PV)' : '✕ LOẠI'}
-                              </span>
+                                  border: `1px solid ${isPass ? '#A7F3D0' : '#FECACA'}`,
+                                }} title={evalItem.screeningNote}>
+                                  ⭐ {evalItem.score} / 14
+                                </span>
+                                <span
+                                  style={{
+                                    display: 'inline-block',
+                                    padding: '3px 9px',
+                                    borderRadius: '6px',
+                                    fontSize: '11px',
+                                    fontWeight: 800,
+                                    backgroundColor: isPass ? '#059669' : '#DC2626',
+                                    color: '#FFF',
+                                  }}
+                                  title={evalItem.screeningNote}
+                                >
+                                  {isPass ? '✓ ĐẠT — Mời PV' : '✕ LOẠI'}
+                                </span>
+                              </div>
                             );
                           })()}
                         </td>
@@ -5229,11 +5187,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 display: 'inline-flex', alignItems: 'center', gap: '4px',
                                 whiteSpace: 'nowrap',
                               };
+                              const phone = String(c.phone || c.phone_normalized || '');
                               return (<>
                                 <button
-                                  style={{ ...btn, backgroundColor: '#F1F5F9', color: '#334155', border: '1px solid #E2E8F0' }}
+                                  style={{ ...btn, backgroundColor: '#0068FF', color: '#FFF', boxShadow: '0 2px 6px rgba(0,104,255,0.25)' }}
                                   onClick={() => setSelectedCandidateDetail(c)}
-                                  title="Xem toàn bộ thông tin hồ sơ"
+                                  title="Xem toàn bộ thông tin hồ sơ + ma trận AI"
                                 >
                                   👁 Chi Tiết
                                 </button>
@@ -5247,14 +5206,36 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                     {candActionBusyId === `restore-${c.submission_id}` ? '⏳...' : '♻️ Khôi Phục'}
                                   </button>
                                 ) : (
-                                  <button
-                                    style={{ ...btn, backgroundColor: '#10B981', color: '#FFF', boxShadow: '0 2px 6px rgba(16,185,129,0.3)' }}
-                                    onClick={() => handleChatZalo(c)}
-                                    disabled={candActionBusyId === `zalo-${c.submission_id}`}
-                                    title="Tự động kết bạn Zalo qua nick HR + gửi lời chào"
-                                  >
-                                    {candActionBusyId === `zalo-${c.submission_id}` ? '⏳...' : '💬 Chat Zalo'}
-                                  </button>
+                                  <>
+                                    <button
+                                      style={{ ...btn, backgroundColor: '#10B981', color: '#FFF', boxShadow: '0 2px 6px rgba(16,185,129,0.3)' }}
+                                      onClick={() => handleChatZalo(c)}
+                                      disabled={candActionBusyId === `zalo-${c.submission_id}`}
+                                      title="Tự động kết bạn Zalo qua nick HR + gửi lời chào"
+                                    >
+                                      {candActionBusyId === `zalo-${c.submission_id}` ? '⏳...' : '💬 Zalo'}
+                                    </button>
+                                    <button
+                                      style={{ ...btn, backgroundColor: '#F1F5F9', color: '#334155', border: '1px solid #E2E8F0' }}
+                                      onClick={async () => {
+                                        if (!phone) { showToast('Ứng viên chưa có SĐT!'); return; }
+                                        try { await navigator.clipboard.writeText(phone); showToast(`📋 Đã sao chép ${phone}`); }
+                                        catch { showToast(`SĐT: ${phone}`); }
+                                      }}
+                                      title={phone ? `Sao chép ${phone}` : 'Chưa có SĐT'}
+                                    >
+                                      📋 SĐT
+                                    </button>
+                                    {phone ? (
+                                      <a
+                                        href={`tel:${phone}`}
+                                        style={{ ...btn, backgroundColor: '#FFF', color: '#0068FF', border: '1px solid #BFDBFE', textDecoration: 'none' }}
+                                        title={`Gọi ${phone}`}
+                                      >
+                                        📞 Gọi
+                                      </a>
+                                    ) : null}
+                                  </>
                                 )}
                               </>);
                             })()}
@@ -5298,16 +5279,40 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
-                backgroundColor: 'var(--bg)',
+                backgroundColor: 'linear-gradient(135deg, #EFF6FF 0%, #F5F3FF 100%)',
                 borderTopLeftRadius: '16px',
                 borderTopRightRadius: '16px',
               }}>
-                <div>
-                  <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 800, color: 'var(--text)' }}>
-                    Chi Tiết Hồ Sơ Ứng Viên (Google Forms)
-                  </h3>
-                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                    Mã hồ sơ: <strong>{selectedCandidateDetail.submission_id}</strong> • Ngày gửi: {formatRegDate(selectedCandidateDetail.created_at)}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div style={{
+                    width: '44px',
+                    height: '44px',
+                    borderRadius: '50%',
+                    backgroundColor: selectedCandidateDetail.gender === 'Nữ' ? '#FCE7F3' : '#E0E7FF',
+                    color: selectedCandidateDetail.gender === 'Nữ' ? '#BE185D' : '#3730A3',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontWeight: 900,
+                    fontSize: '18px',
+                  }}>
+                    {(selectedCandidateDetail.full_name || 'U')[0].toUpperCase()}
+                  </div>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 800, color: 'var(--text)' }}>
+                      {selectedCandidateDetail.full_name}
+                    </h3>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                      Mã hồ sơ: <strong>{selectedCandidateDetail.submission_id}</strong> • Ngày gửi: {formatRegDate(selectedCandidateDetail.created_at)}
+                    </div>
+                    <div style={{ marginTop: '4px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                      <span className="badge badge-brand" style={{ fontSize: '11px', padding: '3px 8px' }}>{candStatusVI(selectedCandidateDetail.status)}</span>
+                      {(() => {
+                        const ev = evaluateCandidateAiScore(selectedCandidateDetail);
+                        const ok = ev.result === 'Đạt';
+                        return <span style={{ fontSize: '11px', fontWeight: 800, padding: '3px 8px', borderRadius: '999px', backgroundColor: ok ? '#059669' : '#DC2626', color: '#FFF' }}>⭐ {ev.score}/14 • {ok ? 'ĐẠT — Mời PV' : 'LOẠI'}</span>;
+                      })()}
+                    </div>
                   </div>
                 </div>
                 <button
@@ -5531,6 +5536,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 display: 'flex',
                 justifyContent: 'flex-end',
                 gap: '10px',
+                flexWrap: 'wrap',
                 backgroundColor: 'var(--bg)',
                 borderBottomLeftRadius: '16px',
                 borderBottomRightRadius: '16px',
@@ -5540,6 +5546,34 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   onClick={() => setSelectedCandidateDetail(null)}
                 >
                   Đóng
+                </button>
+                <button
+                  className="btn-secondary"
+                  onClick={async () => {
+                    const phone = selectedCandidateDetail.phone || selectedCandidateDetail.phone_normalized || '';
+                    if (!phone) { showToast('Ứng viên chưa có SĐT!'); return; }
+                    try { await navigator.clipboard.writeText(phone); showToast(`📋 Đã sao chép ${phone}`); }
+                    catch { showToast(`SĐT: ${phone}`); }
+                  }}
+                >
+                  📋 Sao chép SĐT
+                </button>
+                {(selectedCandidateDetail.phone || selectedCandidateDetail.phone_normalized) ? (
+                  <a
+                    href={`tel:${selectedCandidateDetail.phone || selectedCandidateDetail.phone_normalized}`}
+                    className="btn-secondary"
+                    style={{ textDecoration: 'none', color: '#0068FF' }}
+                  >
+                    📞 Gọi ngay
+                  </a>
+                ) : null}
+                <button
+                  className="btn-primary"
+                  style={{ backgroundColor: '#10B981' }}
+                  disabled={candActionBusyId === `zalo-${selectedCandidateDetail.submission_id}`}
+                  onClick={() => handleChatZalo(selectedCandidateDetail)}
+                >
+                  {candActionBusyId === `zalo-${selectedCandidateDetail.submission_id}` ? '⏳...' : '💬 Chat Zalo'}
                 </button>
                 <button
                   className="btn-primary"
@@ -5853,7 +5887,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <div style={{ fontSize: '12px', color: '#1E3A8A', lineHeight: '1.6' }}>
                   1. <strong>Link Google Meet:</strong> HR dán link phòng họp vào form lịch hẹn (hoặc cấu hình sẵn <code>ZALO_DEFAULT_MEET_URL</code> trên server).<br />
                   2. <strong>Kết nối Zalo cá nhân thật của HR:</strong> quét QR đăng nhập 1 lần, phiên lưu trên server, restart không cần quét lại.<br />
-                  3. <strong>Bắn thư mời thật:</strong> bấm "Gửi thư mời Zalo" ở từng ứng viên — tin nhắn đi từ nick Zalo HR tới Zalo ứng viên (yêu cầu đã kết bạn, chưa bạn thì bấm Kết bạn trước).
+                  3. <strong>Bắn thư mời thật:</strong> bấm "Gửi thư mời Zalo" ở từng ứng viên — tin nhắn đi từ nick Zalo HR tới Zalo ứng viên (yêu cầu đã kết bạn, chưa bạn thì bấm Kết bạn trước).<br />
+                  4. <strong>Ứng viên tự xác nhận:</strong> thư mời kèm <strong>link xác nhận</strong> (không cần đăng nhập) — UV chọn <strong>✅ Xác nhận tham gia</strong> hoặc <strong>❌ Từ chối (bắt buộc nhập lý do)</strong>; tab này tự cập nhật trạng thái realtime, HR không cần xác nhận tay nữa.
                 </div>
               </div>
 
@@ -5904,6 +5939,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                         <>📌 <strong>Hình thức:</strong> Trực tiếp tại cửa hàng — đến trước 5 phút<br /></>
                       )}
                       👤 <strong>Người phỏng vấn:</strong> Phòng Nhân Sự Ụm Bò Milk<br />
+                      ✅ <strong>Xác nhận tham gia / ❌ Từ chối (bắt buộc nhập lý do)</strong> — bấm link xác nhận trong thư mời; tab Lịch PV tự cập nhật trạng thái cho HR.<br />
                       📌 <em>Lưu ý: Bạn vui lòng vào trước 5 phút và chuẩn bị trang phục lịch sự nhé.</em><br />
                       <span style={{ fontSize: '11px', color: '#64748B', display: 'block', marginTop: '6px' }}>
                         ✓✓ BOT lấy đúng mẫu này (tên, giờ, chi nhánh, ca làm việc, link) bắn qua Zalo khi HR bấm "Tạo Lịch & BOT Bắn Tin"
@@ -6317,13 +6353,18 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           return (
                             <>
                               <span style={{
-                                backgroundColor: c.status === 'CONFIRMED' ? '#DCFCE7' : c.status === 'NO_SHOW' ? '#FEE2E2' : c.status === 'RESCHEDULE_REQUESTED' ? '#FEF3C7' : '#FEF3C7',
-                                color: c.status === 'CONFIRMED' ? '#166534' : c.status === 'NO_SHOW' ? '#991B1B' : c.status === 'RESCHEDULE_REQUESTED' ? '#92400E' : '#92400E',
+                                backgroundColor: c.status === 'CONFIRMED' ? '#DCFCE7' : c.status === 'DECLINED' ? '#FEE2E2' : c.status === 'NO_SHOW' ? '#FEE2E2' : c.status === 'RESCHEDULE_REQUESTED' ? '#FEF3C7' : '#FEF3C7',
+                                color: c.status === 'CONFIRMED' ? '#166534' : c.status === 'DECLINED' ? '#991B1B' : c.status === 'NO_SHOW' ? '#991B1B' : c.status === 'RESCHEDULE_REQUESTED' ? '#92400E' : '#92400E',
                                 padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700, display: 'inline-block',
-                                border: c.status === 'CONFIRMED' ? '1px solid #BBF7D0' : c.status === 'NO_SHOW' ? '1px solid #FECACA' : '1px solid #FDE68A'
+                                border: c.status === 'CONFIRMED' ? '1px solid #BBF7D0' : (c.status === 'DECLINED' || c.status === 'NO_SHOW') ? '1px solid #FECACA' : '1px solid #FDE68A'
                               }}>
-                                {candStatusVI(c.status)}
+                                {c.status === 'CONFIRMED' ? '✅ Đã xác nhận tham gia' : candStatusVI(c.status)}
                               </span>
+                              {c.status === 'DECLINED' && (c as any).interview_decline_reason && (
+                                <div style={{ fontSize: '10.5px', color: '#991B1B', fontWeight: 600, marginTop: '3px', maxWidth: '220px', whiteSpace: 'normal', lineHeight: 1.4 }}>
+                                  📝 Lý do: {String((c as any).interview_decline_reason)}
+                                </div>
+                              )}
                               {(() => {
                                 const d = parseScoreDetailClient((c as any)?.interview_score_detail);
                                 if (!d) return null;
@@ -6368,14 +6409,29 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                               >
                                 {candActionBusyId === `zalo-${c.submission_id}` ? '⏳...' : '💬 Chat Zalo'}
                               </button>
-                              {(String(c.status || '') === 'INVITED_INTERVIEW') && !disabledForFail && (
+                              {(['INVITED_INTERVIEW', 'CONFIRMED'].includes(String(c.status || ''))) && !disabledForFail && (
                                 <button
-                                  disabled={rsvpBusyId === c.submission_id}
-                                  style={{ ...btn2, backgroundColor: '#059669', color: '#FFF' }}
-                                  onClick={() => handleConfirmInterview(c)}
-                                  title="Ứng viên báo sẽ tham gia (qua điện thoại/Zalo tay) — ghi nhận để giữ lịch"
+                                  disabled={candActionBusyId === `rsvp-${c.submission_id}`}
+                                  style={{ ...btn2, backgroundColor: '#0EA5E9', color: '#FFF' }}
+                                  onClick={async () => {
+                                    if (candActionBusyId) return;
+                                    const k = `rsvp-${c.submission_id}`;
+                                    setCandActionBusyId(k);
+                                    try {
+                                      const r: any = await apiRequest(`/interviews/${c.submission_id}/rsvp-link`);
+                                      const url = String(r?.url || '');
+                                      if (!url) throw new Error('Không lấy được link!');
+                                      try { await navigator.clipboard.writeText(url); } catch { window.prompt('Chép link xác nhận cho ứng viên:', url); return; }
+                                      showToast('🔗 Đã sao chép link xác nhận — gửi cho ứng viên qua Zalo/phone!');
+                                    } catch (e: any) {
+                                      showToast(e?.message || 'Lỗi lấy link xác nhận!');
+                                    } finally {
+                                      setCandActionBusyId(null);
+                                    }
+                                  }}
+                                  title="Lấy lại link để ứng viên tự Xác nhận tham gia / Từ chối (bắt buộc lý do)"
                                 >
-                                  {rsvpBusyId === c.submission_id ? '⏳...' : '✓ Xác nhận'}
+                                  {candActionBusyId === `rsvp-${c.submission_id}` ? '⏳...' : '🔗 Link RSVP'}
                                 </button>
                               )}
                               {(['INVITED_INTERVIEW', 'CONFIRMED'].includes(String(c.status || ''))) && !disabledForFail && (
@@ -12199,6 +12255,37 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         } catch { /* bỏ qua */ }
       }
     };
+    // --- Hiển thị "Ca cần bổ sung" cho HR: tra ca theo assignment_id, rớt về
+    // ngày trong lý do ([TYPE] YYYY-MM-DD) nếu ca thuộc tuần khác chưa tải.
+    const adjShiftLabel = (code: string) =>
+      code === 'CA_1' ? 'Ca 1 (07:00–12:00)' : code === 'CA_2' ? 'Ca 2 (12:00–18:00)' : code === 'CA_3' ? 'Ca 3 (18:00–23:00)' : (code || 'Ca ?');
+    const adjShiftBg = (code: string) => (code === 'CA_1' ? '#DCFCE7' : code === 'CA_2' ? '#DBEAFE' : code === 'CA_3' ? '#EDE9FE' : '#F3F4F6');
+    const adjShiftFg = (code: string) => (code === 'CA_1' ? '#166534' : code === 'CA_2' ? '#1D4ED8' : code === 'CA_3' ? '#6D28D9' : '#4B5563');
+    // Ngày ISO "YYYY-MM-DD" -> { vi: "T2 03/11/2026", short: "03/11" } (null nếu không rõ ngày)
+    const adjFmtDay = (iso?: string): { vi: string; short: string; iso: string } | null => {
+      const s = String(iso || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+      const wd = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'][(new Date(s + 'T00:00:00').getDay() + 6) % 7] || '';
+      const dd = s.slice(8, 10) + '/' + s.slice(5, 7) + '/' + s.slice(0, 4);
+      return { vi: `${wd} ${dd}`, short: s.slice(8, 10) + '/' + s.slice(5, 7), iso: s };
+    };
+    const adjShiftOf = (a: any) => {
+      const aid = String(a?.assignment_id || '');
+      const sh: any = aid ? (shifts || []).find((s: any) => String(s?.assignment_id || '') === aid) : null;
+      const reasonDate = String(a?.reason || '').match(/(\d{4}-\d{2}-\d{2})/)?.[1] || '';
+      if (sh) {
+        const rawDate = String(sh?.date || '').slice(0, 10);
+        const iso = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate : reasonDate;
+        const day = adjFmtDay(iso);
+        const t0 = String(sh?.start_at || '').slice(11, 16);
+        const t1 = String(sh?.end_at || '').slice(11, 16);
+        const time = t0 && t1 ? `${t0}–${t1}` : '';
+        return { found: true, code: String(sh?.shift_code || ''), day, time, status: String(sh?.status || ''), raw: aid };
+      }
+      const day = adjFmtDay(reasonDate);
+      const tail = aid ? `Ca #${aid.slice(-5)}` : 'Ca chưa rõ';
+      return { found: false, code: '', day, time: '', status: '', raw: aid, fallback: tail };
+    };
     const renderAdjRows = (list: any[], isPending: boolean) =>
       list.map((a: any) => {
         const emp = (allEmployees || []).find((e: any) => e.employee_id === a.employee_id);
@@ -12210,8 +12297,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         const isBuCongNgaySlip = /BU_CONG_NGAY/i.test(String(a.reason || ''));
         const canDirectorApprove = ['DIRECTOR', 'ADMIN'].includes(String((currentUser as any)?.role || ''));
         const approveDisabled = adjBusy === a.adjustment_id || adjExpired || (isBuCongNgaySlip && !canDirectorApprove);
+        const shiftInfo = adjShiftOf(a);
         return (
           <tr key={a.adjustment_id} style={{ borderBottom: '1px solid var(--border)', backgroundColor: isPending ? '#FFFBEB' : undefined }}>
+            {/* 1. Nhân viên */}
             <td
               style={{ padding: '12px 20px', fontWeight: 700, cursor: 'pointer' }}
               title="Bấm để xem chi tiết phiếu (lý do, số phút, ảnh bằng chứng)"
@@ -12220,11 +12309,40 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               <span style={{ color: 'var(--brand)', textDecoration: 'underline' }}>{emp?.full_name || a.employee_id}</span>
               <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }}>{emp?.employee_code || ''}</div>
             </td>
+            {/* 2. Chi nhánh */}
             <td style={{ padding: '12px 20px' }}>{getDisplayBranch(a.branch_id) || a.branch_id || 'Chưa rõ'}</td>
-            <td style={{ padding: '12px 20px' }}>
-              <div>{a.reason || 'Bổ sung công'}</div>
-              <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Ca: {a.assignment_id || '—'} • Xin: {a.minutes_requested ?? 0} phút{a.minutes_approved !== undefined && a.status === 'APPROVED' ? ` • Duyệt: ${a.minutes_approved} phút` : ''}</div>
+            {/* 3. Ca cần bổ sung */}
+            <td style={{ padding: '12px 20px' }} title={shiftInfo.raw ? `Mã ca (hệ thống): ${shiftInfo.raw}` : undefined}>
+              {shiftInfo.found ? (
+                <>
+                  <span className="badge" style={{ backgroundColor: adjShiftBg(shiftInfo.code), color: adjShiftFg(shiftInfo.code), fontWeight: 800 }}>
+                    🕒 {adjShiftLabel(shiftInfo.code)}
+                  </span>
+                  <div style={{ fontSize: '12px', fontWeight: 700, marginTop: '4px' }}>{shiftInfo.day?.vi || 'Ngày —'}</div>
+                  {(shiftInfo.time || shiftInfo.status) && (
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                      {shiftInfo.time ? `⏱ ${shiftInfo.time}` : ''}{shiftInfo.status ? ` • ${shiftInfo.status}` : ''}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <span style={{ fontSize: '13px', fontWeight: 800 }}>{shiftInfo.fallback || 'Ca chưa rõ'}</span>
+                  {shiftInfo.day && <div style={{ fontSize: '12px', fontWeight: 700, marginTop: '2px' }}>{shiftInfo.day.vi}</div>}
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>Ca tuần khác — mở chi tiết để đối soát</div>
+                </>
+              )}
             </td>
+            {/* 4. Lý do */}
+            <td style={{ padding: '12px 20px', maxWidth: '260px', overflowWrap: 'break-word' }}>{a.reason || 'Bổ sung công'}</td>
+            {/* 5. Số phút */}
+            <td style={{ padding: '12px 20px', whiteSpace: 'nowrap', fontWeight: 800 }}>
+              Xin {a.minutes_requested ?? 0} phút
+              {a.minutes_approved !== undefined && a.status === 'APPROVED' ? (
+                <div style={{ fontSize: '11px', color: '#166534', fontWeight: 700, marginTop: '2px' }}>Duyệt: {a.minutes_approved} phút</div>
+              ) : null}
+            </td>
+            {/* 6. Ảnh bằng chứng */}
             <td style={{ padding: '12px 20px' }} onClick={() => (a.has_photo ?? (a.evidence_drive_id && !String(a.evidence_drive_id).startsWith('DRV_'))) && setSelectedAdj(a)} title={(a.has_photo ?? (a.evidence_drive_id && !String(a.evidence_drive_id).startsWith('DRV_'))) ? 'Bấm để xem ảnh lớn' : undefined}>
               {(a.has_photo ?? (a.evidence_drive_id && !String(a.evidence_drive_id).startsWith('DRV_'))) ? (
                 <AdjPhoto adjustmentId={a.adjustment_id} evidenceDriveId={a.evidence_drive_id} hasPhoto={a.has_photo} />
@@ -12232,43 +12350,32 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>—</span>
               )}
             </td>
-            <td style={{ padding: '12px 20px', fontSize: '12px', color: 'var(--text-muted)' }}>
+            {/* 7. Gửi lúc */}
+            <td style={{ padding: '12px 20px', fontSize: '12px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
               <div>{a.created_at ? new Date(a.created_at).toLocaleString('vi-VN') : '—'}</div>
             </td>
-            <td style={{ padding: '12px 20px', fontSize: '12px' }}>
-              {adjDl ? (
-                isPending ? (
-                  <div
-                    style={{
-                      fontSize: '11px',
-                      fontWeight: 700,
-                      color: adjDl.expired ? '#991B1B' : adjDl.remainingMs <= 5 * 60 * 1000 ? '#B45309' : '#166534',
-                    }}
-                  >
-                    <div>⏰ {adjDl.deadlineText} (hạn 72h{adjDl.isBuCongNgay ? ' — Giám đốc duyệt' : ''})</div>
-                    <div style={{ marginTop: '2px' }}>
-                      {adjDl.expired
-                        ? (adjDl.isBuCongNgay ? 'Đã hết hạn 72h — hệ thống tự hủy, hoàn 5 điểm' : 'Đã hết hạn 72h — hệ thống tự hủy')
-                        : `Còn ${formatCountdown(adjDl.remainingMs)}`}
-                    </div>
-                  </div>
-                ) : (
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                    ⏰ {adjDl.deadlineText} (hạn 72h{adjDl.isBuCongNgay ? ' — Giám đốc duyệt' : ''})
-                    <div style={{ marginTop: '2px' }}>{adjDl.expired ? 'Đã hết hạn duyệt' : 'Trong hạn duyệt'}</div>
-                  </div>
-                )
-              ) : (
-                <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>—</span>
-              )}
-            </td>
+            {/* 8. Trạng thái + hạn duyệt (gộp) */}
             <td style={{ padding: '12px 20px' }}>
               <span className="badge" style={{ backgroundColor: a.status === 'APPROVED' ? '#DCFCE7' : a.status === 'REJECTED' ? '#FEE2E2' : '#FEF3C7', color: a.status === 'APPROVED' ? '#166534' : a.status === 'REJECTED' ? '#991B1B' : '#92400E', fontWeight: 700 }}>
                 {a.status === 'APPROVED' ? 'Đã duyệt' : a.status === 'REJECTED' ? (String(a.review_note || '').startsWith('Tự động hủy')
                   ? 'Tự động hủy (72h)'
                   : String(a.review_note || '').startsWith('Tự động từ chối') ? 'Tự từ chối (hết hạn)' : 'Đã từ chối') : 'Chờ duyệt'}
               </span>
+              {adjDl && (
+                <div
+                  style={{
+                    marginTop: '4px',
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    color: isPending ? (adjDl.expired ? '#991B1B' : adjDl.remainingMs <= 5 * 60 * 1000 ? '#B45309' : '#166534') : 'var(--text-muted)',
+                  }}
+                  title={`Hạn duyệt 72h: ${adjDl.deadlineText}${adjDl.isBuCongNgay ? ' — Giám đốc duyệt' : ''}`}
+                >
+                  ⏰ {isPending && !adjDl.expired ? `Còn ${formatCountdown(adjDl.remainingMs)}` : adjDl.expired ? (isPending ? 'Đã quá hạn 72h' : 'Đã hết hạn duyệt') : 'Trong hạn duyệt'}
+                </div>
+              )}
             </td>
+            {/* 9. Thao tác */}
             <td style={{ padding: '12px 20px' }}>
               {isPending ? (
                 <div style={{ display: 'flex', gap: '6px' }}>
@@ -12615,18 +12722,19 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
                 <th style={{ padding: '12px 20px' }}>Nhân Viên</th>
                 <th style={{ padding: '12px 20px' }}>Chi Nhánh</th>
-                <th style={{ padding: '12px 20px' }}>Lý Do & Số Phút</th>
+                <th style={{ padding: '12px 20px' }}>Ca Cần Bổ Sung</th>
+                <th style={{ padding: '12px 20px' }}>Lý Do</th>
+                <th style={{ padding: '12px 20px' }}>Số Phút</th>
                 <th style={{ padding: '12px 20px' }}>Hình Ảnh</th>
                 <th style={{ padding: '12px 20px' }}>Gửi Lúc</th>
-                <th style={{ padding: '12px 20px' }}>Hạn Duyệt</th>
-                <th style={{ padding: '12px 20px' }}>Trạng Thái</th>
+                <th style={{ padding: '12px 20px' }}>Trạng Thái & Hạn</th>
                 <th style={{ padding: '12px 20px' }}>Thao Tác</th>
               </tr>
             </thead>
             <tbody>
               {monthAdjustments.length === 0 ? (
                 <tr>
-                  <td colSpan={8} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                  <td colSpan={9} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
                     Tháng {adjMonth.slice(5, 7)}/{adjMonth.slice(0, 4)} chưa có yêu cầu bổ sung hay điều chỉnh dữ liệu công nào. Phiếu NV gửi từ Cổng Nhân Viên sẽ hiện realtime tại đây.
                   </td>
                 </tr>
@@ -12636,7 +12744,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   return (
                     <React.Fragment key={g.key}>
                       <tr>
-                        <td colSpan={8} style={{ padding: 0, borderBottom: '1px solid var(--border)' }}>
+                        <td colSpan={9} style={{ padding: 0, borderBottom: '1px solid var(--border)' }}>
                           <button
                             onClick={() => setAdjWeekOpen((pr) => ({ ...pr, [g.key]: !open }))}
                             style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 20px', border: 'none', cursor: 'pointer', backgroundColor: open ? '#EFF6FF' : '#F8FAFC', fontSize: '13px' }}
@@ -12664,6 +12772,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         {/* POPUP CHI TIẾT PHIẾU: bấm tên NV / ảnh ở bảng để xem đầy đủ */}
         {selectedAdj && (() => {
           const selEmp = (allEmployees || []).find((e: any) => e.employee_id === selectedAdj.employee_id);
+          const selShift = adjShiftOf(selectedAdj);
           return (
             <div
               style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '16px' }}
@@ -12683,11 +12792,32 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>
                   {selEmp?.employee_code || selectedAdj.employee_id} • {getDisplayBranch(selectedAdj.branch_id) || selectedAdj.branch_id || 'Chưa rõ chi nhánh'}
                 </div>
+                <div style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '8px', padding: '12px', fontSize: '13px', marginBottom: '12px' }}>
+                  <div style={{ fontWeight: 700, marginBottom: '4px' }}>🕒 Ca cần bổ sung:</div>
+                  {selShift.found ? (
+                    <>
+                      <div style={{ fontWeight: 800 }}>
+                        <span className="badge" style={{ backgroundColor: adjShiftBg(selShift.code), color: adjShiftFg(selShift.code), fontWeight: 800 }}>{adjShiftLabel(selShift.code)}</span>
+                        <span style={{ marginLeft: '8px' }}>{selShift.day?.vi || 'Ngày —'}{selShift.time ? ` • ${selShift.time}` : ''}</span>
+                      </div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                        Mã ca: {selShift.raw || '—'}{selShift.status ? ` • Trạng thái ca: ${selShift.status}` : ''}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div style={{ fontWeight: 800 }}>{selShift.fallback || 'Ca chưa rõ'}{selShift.day ? ` • ${selShift.day.vi}` : ''}</div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                        Mã ca: {selShift.raw || '—'} • Ca ngoài tuần đang tải — đối soát ngày trong lý do.
+                      </div>
+                    </>
+                  )}
+                </div>
                 <div style={{ backgroundColor: 'var(--bg)', borderRadius: '8px', padding: '12px', fontSize: '13px', marginBottom: '12px' }}>
                   <div style={{ fontWeight: 700, marginBottom: '4px' }}>Lý do & Số phút:</div>
                   <div>{selectedAdj.reason || 'Bổ sung công'}</div>
                   <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                    Ca: {selectedAdj.assignment_id || '—'} • Xin: {selectedAdj.minutes_requested ?? 0} phút
+                    Xin: {selectedAdj.minutes_requested ?? 0} phút
                     {selectedAdj.minutes_approved !== undefined && selectedAdj.status === 'APPROVED' ? ` • Duyệt: ${selectedAdj.minutes_approved} phút` : ''}
                   </div>
                 </div>
