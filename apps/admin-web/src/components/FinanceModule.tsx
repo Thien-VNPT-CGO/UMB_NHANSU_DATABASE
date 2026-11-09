@@ -127,6 +127,29 @@ const copyText = async (t: string, showToast?: (m: string) => void) => {
     showToast?.(`Đã copy: ${t}`);
   } catch { showToast?.('Không copy được — bấm giữ để copiar tay'); }
 };
+/** QR phóng to khi đưa chuột vào + bấm để mở lớn. Số tiền trong QR đã gắn theo phiếu. */
+function QrZoom({ src, alt, amountLabel, subLabel, size = 64 }: { src: string; alt: string; amountLabel?: string; subLabel?: string; size?: number }) {
+  const [open, setOpen] = React.useState(false);
+  const [hover, setHover] = React.useState(false);
+  return (
+    <>
+      <span className="fin-qr-wrap" onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)} onClick={() => setOpen(true)} title={`Bấm để mở lớn — quét là tiền tự hiện: ${amountLabel || ''}`}>
+        <img src={src} alt={alt} className="fin-qr" style={{ width: size, height: size, transform: hover ? 'scale(2.4)' : undefined, zIndex: hover ? 5 : undefined }} onError={(e: any) => { (e.target as any).style.display = 'none'; }} />
+      </span>
+      {open && (
+        <div className="fin-qr-modal" onClick={() => setOpen(false)} role="dialog" aria-label="VietQR chuyển khoản">
+          <div className="fin-qr-modal-card" onClick={e => e.stopPropagation()}>
+            <div style={{ fontWeight: 800, fontSize: 14 }}>Quét VietQR để chuyển khoản</div>
+            {amountLabel && <div style={{ fontSize: 13, fontWeight: 800, color: '#059669', marginTop: 2 }}>Số tiền tự động: {amountLabel}</div>}
+            {subLabel && <div style={{ fontSize: 11, color: 'var(--fin-muted)', marginTop: 2 }}>{subLabel}</div>}
+            <img src={src} alt={alt} style={{ width: 280, height: 280, margin: '12px auto', display: 'block', border: '1px solid #e2e8f0', borderRadius: 12, background: '#fff', padding: 8 }} />
+            <div style={{ fontSize: 11, color: 'var(--fin-muted)' }}>Mở app ngân hàng → Quét QR → số tiền đã điền sẵn theo phiếu. Bấm ra ngoài để đóng.</div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
 /** QR chuyển khoản có số tiền theo phiếu (khi đã biết thực lãnh). */
 const slipQrUrlOf = (s: any, allEmployees: any[] = []) => {
   const b = bankOfSlip(s, allEmployees);
@@ -2261,7 +2284,8 @@ function PayslipsTab({ month, slips, slipsLoading, allEmployees, formatVND, load
                         const isPaid = String(s.status) === 'PAID';
                         const isConfirmed = String(s.status) === 'CONFIRMED';
                         const isPublished = String(s.status) === 'PUBLISHED';
-                        const qrUrl = slipQrUrl(s);
+                        const bkQ = bankOfSlip(s, allEmployees);
+                        const qrUrl = slipQrUrl({ ...s, thuc_lanh: thuc, bank_name: bkQ.bank_name || s.bank_name, bank_account: bkQ.bank_account || s.bank_account, bank_holder: bkQ.bank_holder || s.bank_holder });
                         return (
                           <tr key={s.item_id}>
                             {show('stt') && <td className="ctr">{idx + 1}</td>}
@@ -2307,7 +2331,7 @@ function PayslipsTab({ month, slips, slipsLoading, allEmployees, formatVND, load
                               ) : isConfirmed ? (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                                   {qrUrl
-                                    ? <img src={qrUrl} alt="VietQR chuyển khoản" className="fin-qr" onError={(e: any) => { (e.target as any).style.display = 'none'; }} />
+                                    ? <QrZoom src={qrUrl} alt="VietQR chuyển khoản" amountLabel={formatVND(thuc)} subLabel={`${s.full_name} — ${bkQ.bank_name || ''} ${bkQ.bank_account || ''}`} />
                                     : <div className="fin-qr-missing">Chưa có STK</div>}
                                   <div style={{ fontSize: 10.5, lineHeight: 1.45 }}>
                                     <div className="fin-money" style={{ fontWeight: 800, fontSize: 13 }}>{formatVND(thuc)}</div>
@@ -2450,7 +2474,8 @@ function PaymentTab({ month, slips, allEmployees, formatVND, loadSlips, slipQrUr
                     <BranchBandRow label={branchLabelOf(g.id)} count={g.rows.length} cols={COLS} totalText={`Cần chuyển ${formatVND(gs.thuc)} · TỔNG CỘNG ${formatVND(gs.tongCong)}`} />
                     {g.rows.map((s: any, idx: number) => {
                       const c = slipCalc(s);
-                      const qrUrl = slipQrUrl(s);
+                      const bkP = bankOfSlip(s, allEmployees);
+                      const qrUrl = slipQrUrl({ ...s, thuc_lanh: c.thuc, bank_name: bkP.bank_name || s.bank_name, bank_account: bkP.bank_account || s.bank_account, bank_holder: bkP.bank_holder || s.bank_holder });
                       return (
                         <tr key={s.item_id}>
                           {show('stt') && <td className="ctr">{idx + 1}</td>}
@@ -2470,7 +2495,7 @@ function PaymentTab({ month, slips, allEmployees, formatVND, loadSlips, slipQrUr
                           {show('tongLuong') && <td className="num fin-money">{formatVND(c.tongLuong)}</td>}
                           {show('thuc') && <td className="num fin-money" style={{ fontWeight: 800, color: 'var(--fin-green)' }}>{formatVND(c.thuc)}</td>}
                           {show('bank') && <td style={{ fontSize: 11 }}>{(() => { const bk = bankOfSlip(s, allEmployees); return bk.bank_account ? (<><div>{bk.bank_name || '—'}</div><span className="fin-mono" style={{ fontWeight: 800, color: 'var(--fin-ink)' }}>{bk.bank_account}</span><br /><span style={{ color: 'var(--fin-muted)' }}>{bk.bank_holder || s.full_name || ''}</span><br /><button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" style={{ marginTop: 3 }} onClick={() => copyText(bk.bank_account)}>📋 Copy STK</button></>) : (<span style={{ color: '#b45309', fontWeight: 700 }}>⚠ Chưa có STK — bổ sung ở hồ sơ NV</span>); })()}</td>}
-                          {show('qr') && <td className="ctr">{qrUrl ? <img src={qrUrl} alt="VietQR" className="fin-qr" style={{ width: 72, height: 72 }} onError={(e: any) => { (e.target as any).style.display = 'none'; }} /> : <div className="fin-qr-missing">Chưa có STK</div>}</td>}
+                          {show('qr') && <td className="ctr">{qrUrl ? <QrZoom src={qrUrl} alt="VietQR" amountLabel={formatVND(c.thuc)} subLabel={`${s.full_name} — quét là tiền tự hiện`} size={72} /> : <div className="fin-qr-missing">Chưa có STK</div>}</td>}
                           {show('action') && (
                             <td>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-start' }}>
