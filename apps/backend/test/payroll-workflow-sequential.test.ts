@@ -157,3 +157,42 @@ test('workflow: tháng đã hết nhưng đã mở khóa tạm (rollback) thì k
   assert.equal(wf.periodMeta.monthUnlock.by, 'ADM_001');
   assert.equal(wf.steps[0].open, true);
 });
+
+test('rollback: phiếu PAID cũng hoàn về DRAFT khi kế toán xác nhận sai (ghi lý do)', async () => {
+  const paidRun = { ...runDraft, status: 'PAID', paid_at: '2026-11-02T03:00:00.000Z' };
+  const slipsStore: any[] = [
+    { item_id: 'SLIP_R1_E1', run_id: 'R1', employee_id: 'E1', employee_code: 'E1', status: 'PAID', sign_lap: { name: 'KT' }, sign_giamdoc: { name: 'GD' }, sign_nhanvien: { name: 'NV' }, standard_hours: 5, net_pay: 150000 },
+    { item_id: 'SLIP_R1_E2', run_id: 'R1', employee_id: 'E2', employee_code: 'E2', status: 'PAID', sign_lap: { name: 'KT' }, sign_giamdoc: { name: 'GD' }, sign_nhanvien: { name: 'NV' }, standard_hours: 5, net_pay: 150000 },
+  ];
+  let runStore: any = { ...paidRun };
+  const repo: any = {
+    listPayrollRuns: async () => [runStore],
+    getSystemSettings: async () => ({}),
+    updateSystemSettings: async (next: any) => { repo._settings = next; return next; },
+    getPayslipById: async (id: string) => slipsStore.find(x => x.item_id === id) || null,
+    updatePayslip: async (id: string, updates: any) => {
+      const s = slipsStore.find(x => x.item_id === id);
+      if (!s) throw new Error('PAYSLIP_NOT_FOUND');
+      Object.assign(s, updates);
+      for (const k of Object.keys(updates)) if ((updates as any)[k] === undefined) delete (s as any)[k];
+      return { ...s };
+    },
+    updatePayrollRunStatus: async (_id: string, _status: string, _actor: string, updates: any) => {
+      runStore = { ...runStore, status: _status, ...(updates || {}) };
+      return runStore;
+    },
+    recordAuditLog: async () => ({}),
+  };
+  const svc: any = new PayrollService(repo);
+  svc.getFinanceTimesheet = async () => ({ totals: { totalShifts: 2, full: 2, partial: 0, absent: 0 }, rows: [] });
+  svc.getPeriodSlips = async () => ({ run: runStore, slips: slipsStore });
+  // Mock queue: chạy ngay thay vì hàng đợi đơn (singleWriterQueue trong test trước đã có test riêng).
+  // PayrollService dùng singleWriterQueue thật — rollback sẽ đi qua nó và vẫn gọi execute.
+  const res: any = await svc.rollbackWorkflow('2026-10', 'fin-payslips', 'ADM_001', 'tính sai đơn giá kỳ 10');
+  const inner = res?.result ?? res;
+  assert.equal(inner.ok, true);
+  assert.equal(inner.revertedSlips, 2);
+  assert.equal(inner.revertedPaid, 2);
+  assert.equal(slipsStore.every(x => x.status === 'DRAFT'), true);
+  assert.equal(runStore.status, 'DRAFT');
+});

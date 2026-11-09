@@ -378,20 +378,25 @@ export default function FinanceModule(props: FinanceModuleProps) {
   const slipQrUrl = slipQrUrlOf;
 
   // --- QUAY VỀ BƯỚC TRƯỚC (khi bước sai): yêu cầu lý do, hoàn phiếu/run về DRAFT,
-  //     mở khóa tạm tháng đã hết, rồi điều hướng về bước trước. Realtime qua workflow-status. ---
+  //     mở khóa tạm tháng đã hết, rồi điều hướng về bước trước. Realtime qua workflow-status.
+  //     Cho phép quay về KỂ CẢ khi phiếu đã PAID (đã chuyển tiền phải đối soát ngoài hệ thống).
+  //     Lấy tiêu đề bước trước từ TAB ĐANG XEM (activeTab), không phải bước đang xử lý.
   const [rollbackBusy, setRollbackBusy] = useState(false);
-  const rollbackToPrevious = useCallback(async (toStepId: string) => {
+  const rollbackToPrevious = useCallback(async (toStepId: string, fromTabId?: string) => {
     if (!toStepId) return;
-    const prevTitle = tabLocked.get(currentOpenStep?.id || activeTab)?.previousTitle || '';
-    const reason = window.prompt(`Quay về bước trước${prevTitle ? ` (${prevTitle})` : ''}?\nPhiếu đã gửi/xác nhận/khiếu nại sẽ về DRAFT để tính lại, kỳ lương về DRAFT. Vui lòng ghi LÝ DO quay về:`);
+    const lockedInfo = tabLocked.get(fromTabId || activeTab);
+    const prevTitle = lockedInfo?.previousTitle || tabLocked.get(toStepId)?.previousTitle || '';
+    const reason = window.prompt(`Quay về bước trước${prevTitle ? ` (${prevTitle})` : ''}?\nPhiếu đã gửi/xác nhận/khiếu nại/ĐÃ CHUYỂN KHOẢN sẽ về DRAFT để tính lại, kỳ lương về DRAFT. Tiền PAID đã chuyển phải đối soát/thu hồi ngoài hệ thống trước. Vui lòng ghi LÝ DO quay về:`);
     if (reason === null) return;
     if (!String(reason).trim()) { showToast('Vui lòng ghi lý do quay về bước trước!'); return; }
-    if (!window.confirm(`Xác nhận quay về bước trước với lý do:\n${String(reason).trim()}\n\nTiếp tục?`)) return;
+    const paidSlips = slips.filter((s: any) => String(s?.status || '').toUpperCase() === 'PAID').length;
+    const extraWarn = paidSlips > 0 ? `\n\n⚠️ Kỳ này có ${paidSlips} phiếu PAID — quay về sẽ hoàn ${paidSlips} phiếu về DRAFT (xóa chữ ký NV). Hãy đối soát/thu hồi tiền ngoài hệ thống trước!` : '';
+    if (!window.confirm(`Xác nhận quay về bước trước với lý do:\n${String(reason).trim()}\n\nTiếp tục?${extraWarn}`)) return;
     setRollbackBusy(true);
     try {
       const r: any = await post('/payroll/workflow/rollback', { period: month, stepId: toStepId, reason: String(reason).trim() });
       setWorkflow(r?.workflow || null);
-      showToast(`Đã quay về bước trước — hoàn ${r?.revertedSlips ?? 0} phiếu về DRAFT`);
+      showToast(`Đã quay về bước trước — hoàn ${r?.revertedSlips ?? 0} phiếu về DRAFT${r?.revertedPaid ? ` (gồm ${r.revertedPaid} PAID)` : ''}`);
       onNavigateTab?.(toStepId);
     } catch (e: any) {
       showToast(e?.message || 'Quay về bước trước thất bại');
@@ -400,7 +405,20 @@ export default function FinanceModule(props: FinanceModuleProps) {
       refreshCurrentTab();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [month, post, showToast, tabLocked, refreshCurrentTab, onNavigateTab]);
+  }, [month, post, showToast, tabLocked, refreshCurrentTab, onNavigateTab, activeTab, slips]);
+
+  // Nút quay về ở tab Kỳ lương bắn event này → gọi cùng rollbackToPrevious
+  // (đặt SAU rollbackToPrevious để tránh TDZ ReferenceError).
+  const handleRollbackKyLuong = useCallback((_evt: Event) => {
+    const lastStepId = workflow?.steps?.[workflow.steps.length - 1]?.id || 'fin-payment';
+    const prevId = (workflow?.steps?.find((s: any) => s.id === lastStepId) as any)?.previousStepId || 'fin-payslips';
+    void rollbackToPrevious(prevId, lastStepId);
+  }, [workflow, rollbackToPrevious]);
+  useEffect(() => {
+    const h = handleRollbackKyLuong as any;
+    window.addEventListener('ubm:rollback-kyluong', h);
+    return () => { window.removeEventListener('ubm:rollback-kyluong', h); };
+  }, [handleRollbackKyLuong]);
 
   const fastSignLap = useCallback(async (itemId: string) => { try { await post(`/payroll/slips/${encodeURIComponent(itemId)}/fast-sign`, { lapName: 'Kế toán viên', lapImg: '', qlName: '', qlImg: '' }); showToast(`Đã ký lập phiếu ${itemId.replace('SLIP_', '')}`); refreshCurrentTab(); } catch (e: any) { showToast(e?.message || 'Ký lập thất bại'); } }, [post, showToast, refreshCurrentTab]);
   const publishSlip = useCallback(async (itemId: string) => { if (!window.confirm('Gửi phiếu này đến nhân viên? Sau khi gửi, nhân viên có thể ký xác nhận.')) return; try { await post(`/payroll/slips/${encodeURIComponent(itemId)}/publish`, {}); showToast('Đã gửi phiếu lương đến nhân viên'); refreshCurrentTab(); } catch (e: any) { showToast(e?.message || 'Gửi thất bại'); } }, [post, showToast, refreshCurrentTab]);
@@ -567,6 +585,12 @@ export default function FinanceModule(props: FinanceModuleProps) {
   const activeStepDone = !!activeLock?.done;
   const lockReason = activeStepDone ? (activeLock?.completedReason || '') : (activeLock?.reason || '');
   const lockMeta = activeLock?.completedAt ? `Hoàn tất lúc: ${fmtDateTime(activeLock.completedAt)}` : '';
+  // Cho phép XEM lại bước đã xong / tháng đã khóa ở chế độ chỉ xem (bấm nút ở lockscreen),
+  // để kế toán kiểm tra dữ liệu trước khi quay về bước trước sửa số.
+  const [viewLockedContent, setViewLockedContent] = useState(false);
+  useEffect(() => { setViewLockedContent(false); }, [activeTab, month]);
+  const isPendingLock = !open && !activeStepDone;
+  const showTabContent = open || (activeStepDone && viewLockedContent);
   const firstOpenStep = useMemo(() => {
     if (currentOpenStep?.id) return currentOpenStep.id;
     for (const s of PROCESS_STEPS) { if (s.id === 'fin-dashboard') continue; if (isTabOpen(s.id)) return s.id; }
@@ -654,12 +678,19 @@ export default function FinanceModule(props: FinanceModuleProps) {
       {monthLocked && (
         <div className="fin-warn" role="alert" style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
           <Lock size={16} style={{ flexShrink: 0, marginTop: 2 }} />
-          <div>
+          <div style={{ flex: 1 }}>
             <b>Tháng {periodLabel(month)} đã kết thúc — quy trình kế toán đã KHÓA toàn bộ các bước</b> (chỉ xem, không sửa).
             Tháng mới ({periodLabel(curPeriod)}) không bị khóa — chuyển sang tháng mới để xử lý tiếp.
-            Nếu bước nào sai, dùng nút <b>“↩ Quay về bước trước”</b> ở màn hình khóa để mở khóa tạm (ghi lý do, hoàn phiếu về DRAFT, realtime cho mọi máy).
+            Nếu bước nào sai, bấm nút <b>“↩ Quay về bước trước”</b> ngay bên dưới để mở khóa tạm (ghi lý do, hoàn phiếu về DRAFT, realtime cho mọi máy), hoặc bấm vào từng bước ở thanh stepper để xem màn hình khóa của bước đó.
             {monthUnlockInfo ? <span style={{ display: 'block', marginTop: 4, fontSize: 11 }}>Đã mở khóa tạm lúc {fmtDateTime(monthUnlockInfo.at)} bởi {monthUnlockInfo.by} — lý do: {monthUnlockInfo.reason}</span> : null}
           </div>
+          <button type="button" className="fin-btn fin-btn-amber fin-btn-sm" disabled={rollbackBusy || !currentOpenStep?.previousStepId && !workflow?.steps?.length}
+            onClick={() => {
+              const target = (currentOpenStep as any)?.previousStepId || workflow?.steps?.[workflow.steps.length - 1]?.previousStepId || 'fin-payroll-periods';
+              void rollbackToPrevious(target, currentOpenStep?.id || 'fin-payment');
+            }}>
+            {rollbackBusy ? 'Đang quay về…' : '↩ Quay về bước trước'}
+          </button>
         </div>
       )}
 
@@ -708,14 +739,16 @@ export default function FinanceModule(props: FinanceModuleProps) {
                 type="button"
                 key={t.id}
                 className={`fin-step ${cls}`}
-                disabled={locked}
+                // KHÔNG disabled khi khóa: cho phép bấm vào để XEM màn hình khóa +
+                // nút "Quay về bước trước" (sau khi xong/khóa hết/tháng đã khóa mới
+                // cần quay về). Nút khóa vẫn giữ visual is-locked, chỉ không chặn click.
                 onClick={() => goTab(t.id)}
-                title={done ? (l?.completedReason || 'Đã hoàn tất — tab đã khóa') : locked ? (l?.reason || 'Chưa mở khóa — hoàn tất bước trước') : t.label}
+                title={`${done ? (l?.completedReason || 'Đã hoàn tất — bấm để xem lý do khóa & nút quay về') : locked ? (l?.reason || 'Chưa mở khóa — hoàn tất bước trước') : t.label} — bấm để vào`}
                 aria-current={cur ? 'step' : undefined}
               >
                 <span className="fin-step-dot">{done ? <Check size={15} strokeWidth={3} /> : locked ? <Lock size={13} /> : <Icon size={15} />}</span>
                 <span className="fin-step-name">{t.step}. {t.label}</span>
-                <span className="fin-step-status">{done ? '✓ Xong — đã khóa' : locked ? 'Đã khóa' : (wfStep?.stat || 'Đang xử lý')}</span>
+                <span className="fin-step-status">{done ? '✓ Xong — đã khóa (xem)' : locked ? 'Đã khóa (xem)' : (wfStep?.stat || 'Đang xử lý')}</span>
               </button>
             );
           })}
@@ -734,8 +767,8 @@ export default function FinanceModule(props: FinanceModuleProps) {
         </div>
       </nav>
 
-      {/* ═══════════ LOCK SCREEN — KHÔNG render nội dung tab khi còn khóa ═══════════ */}
-      {!open && (
+      {/* ═══════════ LOCK SCREEN — bước chưa mở (pending) mới chặn hẳn; bước đã xong/tháng khóa cho xem lại ═══════════ */}
+      {isPendingLock && !viewLockedContent ? (
         <div className="fin-lockscreen" role="alert">
           <div className="fin-lock-icon">{activeStepDone ? <Check size={30} strokeWidth={3} /> : <Lock size={30} />}</div>
           <h3>{activeStepDone ? 'Bước đã hoàn tất — tab đã khóa' : 'Bước này đang bị khóa theo quy trình kế toán'}</h3>
@@ -757,12 +790,47 @@ export default function FinanceModule(props: FinanceModuleProps) {
               Về Tổng quan (chỉ xem)
             </button>
           </div>
-          {activeLock?.previousStepId && <p style={{ fontSize: 11, color: 'var(--fin-muted)' }}>Nút quay về: hoàn phiếu (đã gửi/khiếu nại/xác nhận) về DRAFT + kỳ lương về DRAFT, mở khóa tạm tháng đã hết (nếu có), mọi máy cập nhật realtime.</p>}
+          {activeLock?.previousStepId && <p style={{ fontSize: 11, color: 'var(--fin-muted)' }}>Nút quay về: hoàn phiếu (đã gửi/khiếu nại/xác nhận/ĐÃ CHUYỂN KHOẢN) về DRAFT + kỳ lương về DRAFT, mở khóa tháng, mọi máy cập nhật realtime.</p>}
         </div>
-      )}
+      ) : activeStepDone && viewLockedContent ? (
+        <div className="fin-past-banner" role="status" style={{ alignItems: 'center' }}>
+          <Lock size={16} />
+          <div style={{ flex: 1 }}>
+            <b>Đang xem lại bước đã hoàn tất ở chế độ chỉ xem</b> ({lockReason || 'Đã khóa để giữ số liệu'})
+            {lockMeta ? ` — ${lockMeta}` : ''}
+          </div>
+          {activeLock?.previousStepId && (
+            <button type="button" className="fin-btn fin-btn-amber" disabled={rollbackBusy} onClick={() => rollbackToPrevious(activeLock.previousStepId!)}>
+              ↩ Quay về bước trước{activeLock.previousTitle ? ` — ${activeLock.previousTitle}` : ''}
+            </button>
+          )}
+          <button type="button" className="fin-btn fin-btn-ghost" onClick={() => setViewLockedContent(false)}>Khóa lại</button>
+        </div>
+      ) : !open ? (
+        <div className="fin-lockscreen" role="alert">
+          <div className="fin-lock-icon"><Lock size={30} /></div>
+          <h3>Bước này đang bị khóa theo quy trình kế toán</h3>
+          <p>{lockReason || 'Vui lòng hoàn tất các bước trước trong quy trình.'}</p>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center', marginTop: 6 }}>
+            {activeLock?.previousStepId && (
+              <button type="button" className="fin-btn fin-btn-amber" disabled={rollbackBusy} onClick={() => rollbackToPrevious(activeLock.previousStepId!)}>
+                ↩ Quay về bước trước{activeLock.previousTitle ? ` — ${activeLock.previousTitle}` : ''}
+              </button>
+            )}
+            {firstOpenStep !== activeTab && (
+              <button type="button" className="fin-btn fin-btn-dark" onClick={() => goTab(firstOpenStep)}>
+                <ArrowRight size={14} /> Quay về bước đang xử lý
+              </button>
+            )}
+            <button type="button" className="fin-btn fin-btn-ghost" onClick={() => goTab('fin-dashboard')}>Về Tổng quan (chỉ xem)</button>
+            <button type="button" className="fin-btn fin-btn-ghost" onClick={() => setViewLockedContent(true)}>👁 Xem dữ liệu bước này (chỉ xem)</button>
+          </div>
+          <p style={{ fontSize: 11, color: 'var(--fin-muted)' }}>Bấm vào bước ở thanh stepper để quay lại màn hình này bất cứ lúc nào. Nếu bước này sai, bấm <b>“↩ Quay về bước trước”</b> để hoàn về DRAFT và xử lý lại.</p>
+        </div>
+      ) : null}
 
       {/* ═══════════ NỘI DUNG TAB ═══════════ */}
-      {open && (
+      {showTabContent && (
         <main style={{ flex: 1 }}>
           {activeTab === 'fin-dashboard' && <DashboardTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} slips={slips} workflow={workflow} formatVND={formatVND} />}
           {activeTab === 'fin-timesheet' && <TimesheetTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} loadFinSheet={loadFinSheet} formatVND={formatVND} />}
@@ -1579,8 +1647,9 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
           {canReconcile && <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={() => payRunAction(latest.run_id, 'reconcile')}>Đối soát kỳ</button>}
           {canApprove && <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={() => payRunAction(latest.run_id, 'approve')}>Phê duyệt kỳ</button>}
           {canGoSign && <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={() => onNavigateTab?.('fin-payslips')}><Send size={12} /> Sang tab Phiếu lương: ký & gửi NV</button>}
+          {latest && <button type="button" className="fin-btn fin-btn-amber fin-btn-sm" onClick={() => window.dispatchEvent(new CustomEvent('ubm:rollback-kyluong', { detail: { period: month } }))}>↩ Quay về bước trước</button>}
           {!canReconcile && !canApprove && !canGoSign && latest && <span style={{ fontSize: 11, color: 'var(--fin-muted)' }}>Kỳ chưa đủ điều kiện chuyển trạng thái tiếp — theo quy trình, phiếu lương phát hành/chi trả TỪNG PHIẾU ở tab 7–8 (đủ chữ ký 3 bên).</span>}
-          {latest && <span style={{ fontSize: 10.5, color: 'var(--fin-muted)' }}>Xuất phiếu đúng quy trình: KT ký lập → GĐ ký duyệt → KT gửi NV → NV ký → KT chuyển khoản.</span>}
+          {latest && <span style={{ fontSize: 10.5, color: 'var(--fin-muted)' }}>Xuất phiếu đúng quy trình: KT ký lập → GĐ ký duyệt → KT gửi NV → NV ký → KT chuyển khoản. Sai bước nào → “↩ Quay về bước trước”.</span>}
         </div>
       </div>
 

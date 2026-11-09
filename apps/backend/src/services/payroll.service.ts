@@ -764,13 +764,16 @@ export class PayrollService {
 
   /**
    * QUAY VỀ BƯỚC TRƯỚC ĐÓ khi bước hiện tại sai (realtime, có lý do, theo tùy tháng).
-   *  - Hoàn phiếu đã gửi/CONFIRMED/COMPLAINED về DRAFT (giữ chữ ký GĐ, xóa chữ ký NV),
-   *    run PUBLISHED/APPROVED/PAID về DRAFT để tính/phát hành lại. PAID không rollback
-   *    trực tiếp (đã chuyển tiền thật) — phải xử lý tay ngoài hệ thống.
+   *  - Hoàn phiếu đã gửi/CONFIRMED/COMPLAINED/PAID về DRAFT (giữ chữ ký GĐ, xóa chữ ký NV),
+   *    run PUBLISHED/APPROVED/PAID về DRAFT để tính/phát hành lại.
+   *    Kể cả PAID cũng được hoàn khi kế toán xác nhận sai (tiền đã chuyển phải
+   *    đối soát/thu hồi ngoài hệ thống trước; audit vẫn ghi lại đầy đủ).
    *  - Nếu tháng đã khóa (hết tháng) mà KT rollback → tự ghi monthUnlock tạm thời để
    *    các bước mở lại tuần tự, kèm lý do + người thực hiện (audit).
    *  - Steps 1-2 (Đối soát/BCC) là dữ liệu dẫn xuất từ ca/điểm danh nên không "xóa"
    *    trạng thái — rollback về 1-2 sẽ hoàn phiếu/run về DRAFT để KT sửa nguồn rồi tính lại.
+   *    Backend vẫn ghi monthUnlock để màn hình mở lại (không kẹt khóa tháng),
+   *    frontend hiển thị bước 1-2 đã xong ở chế độ xem lại (chỉ xem).
    */
   async rollbackWorkflow(period: string, toStepId: string, actorId: string, reason?: string) {
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) throw new Error('Kỳ lương phải dạng YYYY-MM (VD: 2026-10)!');
@@ -784,10 +787,6 @@ export class PayrollService {
     if (!rsn) throw new Error('MISSING_REASON: vui lòng ghi lý do quay về bước trước!');
     const { slips, run } = await this.getPeriodSlips(period);
     const list: any[] = (slips || []).filter(Boolean);
-    const paidSlips = list.filter(s => String(s?.status || '').toUpperCase() === 'PAID');
-    if (paidSlips.length > 0 && toOrder <= 6) {
-      throw new Error(`PAID_LOCKED: còn ${paidSlips.length} phiếu đã chuyển khoản (PAID) — không quay về bước trước được. Hãy đối soát/thu hồi tiền ngoài hệ thống trước!`);
-    }
     return singleWriterQueue.enqueue({
       entityType: 'KY_LUONG',
       entityId: period,
@@ -795,9 +794,10 @@ export class PayrollService {
       priority: 'high',
       execute: async () => {
         let revertedSlips = 0;
+        let revertedPaid = 0;
         for (const s of list) {
           const st = String(s?.status || '').toUpperCase();
-          if (!['PUBLISHED', 'CONFIRMED', 'COMPLAINED', 'APPROVED', 'RECONCILED'].includes(st)) continue;
+          if (!['PUBLISHED', 'CONFIRMED', 'COMPLAINED', 'APPROVED', 'RECONCILED', 'PAID'].includes(st)) continue;
           await this.repo.updatePayslip((s as any).item_id, {
             status: 'DRAFT',
             sign_lap: undefined,
@@ -811,6 +811,7 @@ export class PayrollService {
             complaint_resolved_at: new Date().toISOString(),
             complaint_resolved_by: actorId,
           } as any).catch(() => null);
+          if (st === 'PAID') revertedPaid++;
           revertedSlips++;
         }
         if (run && ['APPROVED', 'PUBLISHED', 'PAID', 'RECONCILED'].includes(String((run as any).status || '').toUpperCase())) {
@@ -825,27 +826,27 @@ export class PayrollService {
             reconciled_at: undefined,
           } as any).catch(() => null);
         }
-        // Mở khóa tạm tháng đã hết để KT quay về sửa (nếu đang bị khóa theo tháng).
+        // Mở khóa tạm THÁNG NÀO CŨNG ĐƯỢC (kể cả tháng đã hết và tháng hiện tại) để
+        // màn hình quay về không bị kẹt khóa tháng — unlock này chỉ gỡ khóa tháng,
+        // bước vẫn mở tuần tự theo dữ liệu thật (đã hoàn về DRAFT).
         const settings: any = await (this.repo as any)?.getSystemSettings?.().catch(() => ({})) || {};
         const vnCurrent = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7);
-        if (String(period) < vnCurrent) {
-          await (this.repo as any)?.updateSystemSettings?.({
-            ...settings,
-            [`payrollMonthUnlock:${period}`]: { at: new Date().toISOString(), by: actorId, reason: rsn, toStepId, toOrder },
-          }).catch(() => null);
-        }
+        await (this.repo as any)?.updateSystemSettings?.({
+          ...settings,
+          [`payrollMonthUnlock:${period}`]: { at: new Date().toISOString(), by: actorId, reason: rsn, toStepId, toOrder },
+        }).catch(() => null);
         await (this.repo as any)?.recordAuditLog?.({
           actor_id: actorId,
           action: 'PAYROLL_WORKFLOW_ROLLBACK',
           target_type: 'KY_LUONG',
           target_id: period,
-          detail: `Quay về bước ${toStepId} (order ${toOrder}). Hoàn ${revertedSlips} phiếu về DRAFT. Lý do: ${rsn}`,
+          detail: `Quay về bước ${toStepId} (order ${toOrder}). Hoàn ${revertedSlips} phiếu về DRAFT (gồm ${revertedPaid} phiếu PAID). Lý do: ${rsn}`,
         } as any).catch(() => null);
         this.notifySlipsChanged('workflow-rollback', { period, toStepId, revertedSlips });
         this.invalidateFinanceTimesheetCache(period);
         this.scheduleFinanceToSheetsSync(1_500);
         const wf = await this.getWorkflowStatus(period).catch(() => null);
-        return { ok: true, period, toStepId, toOrder, revertedSlips, reason: rsn, workflow: wf };
+        return { ok: true, period, toStepId, toOrder, revertedSlips, revertedPaid, reason: rsn, workflow: wf };
       },
     }) as any;
   }
