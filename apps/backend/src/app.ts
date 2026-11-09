@@ -6266,6 +6266,16 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const { name, img } = req.body || {};
       const updated = await payrollService.signSlip(req.params.id, 'nhanvien', name, img, employeeId);
       broadcastUpdate('payroll', { action: 'confirm-slip', itemId: req.params.id });
+      // TỰ ĐỘNG cập nhật file Payment trên Drive theo danh sách mới nhất (debounce 30s).
+      const per = String((updated as any)?.period || '');
+      if (per) {
+        const prev = paymentAutoTimers.get(per);
+        if (prev) clearTimeout(prev);
+        paymentAutoTimers.set(per, setTimeout(() => {
+          paymentAutoTimers.delete(per);
+          payslipDriveService.exportPaymentToDrive(per, 'system').catch(() => null);
+        }, 30_000));
+      }
       res.json(withStage(updated));
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -6765,10 +6775,23 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // Kế toán xác nhận hoàn thành chi trả (PAID) sau khi quét QR chuyển khoản
+  // TỰ ĐỘNG xuất file PAYMENT lên Drive sau mỗi lần ĐÃ CHUYỂN KHOẢN 1 phiếu
+  // (debounce theo kỳ 10s: bấm nhiều phiếu liên tiếp chỉ xuất 1 lần sau cùng).
+  const paymentAutoTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const scheduleAutoPaymentExport = (period: string, actorId: string) => {
+    if (!period) return;
+    const prev = paymentAutoTimers.get(period);
+    if (prev) clearTimeout(prev);
+    paymentAutoTimers.set(period, setTimeout(() => {
+      paymentAutoTimers.delete(period);
+      payslipDriveService.exportPaymentToDrive(period, actorId).catch(() => null);
+    }, 10_000));
+  };
   app.post('/payroll/slips/:id/mark-paid', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
     try {
       const updated = await payrollService.markSlipPaid(req.params.id, req.user!.id);
       broadcastUpdate('payroll', { action: 'mark-slip-paid', itemId: req.params.id });
+      scheduleAutoPaymentExport(String((updated as any)?.period || ''), req.user!.id);
       res.json(withStage(updated));
     } catch (err: any) {
       res.status(400).json({ error: err.message });
