@@ -883,6 +883,46 @@ export class AttendanceService {
   }
 
   /**
+   * Gắn thông tin ca (mọi tuần, không chỉ tuần hiện tại) vào từng phiếu để UI
+   * hiển thị "Ca cần bổ sung" đúng Ca 1/2/3 + ngày/giờ. Client chỉ tải ca tuần
+   * hiện tại nên tra assignment_id phía client luôn rớt về "Ca tuần khác".
+   * Tra: 1) theo assignment_id, 2) theo (nhân viên, ngày sự cố trong lý do).
+   */
+  async enrichAdjustmentsWithShift(list: any[]): Promise<any[]> {
+    const out: any[] = [];
+    const cache = new Map<string, any | null>();
+    for (const a of list || []) {
+      const aid = String((a as any)?.assignment_id || '');
+      let shift: any = null;
+      if (aid && !aid.startsWith('SHIFT_UNKNOWN_')) {
+        if (cache.has(aid)) shift = cache.get(aid);
+        else {
+          shift = await this.repo.getShiftById(aid).catch(() => null);
+          cache.set(aid, shift);
+        }
+      }
+      if (!shift) {
+        try { shift = await this.resolveAdjustmentShift((a as any)?.employee_id, aid || undefined, (a as any)?.reason).catch(() => null); }
+        catch { shift = null; }
+      }
+      if (shift) {
+        const rawDate = String((shift as any)?.date || '').slice(0, 10);
+        out.push({
+          ...a,
+          shift_code: String((shift as any)?.shift_code || ''),
+          shift_date: /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate : '',
+          shift_start_at: String((shift as any)?.start_at || ''),
+          shift_end_at: String((shift as any)?.end_at || ''),
+          shift_status: String((shift as any)?.status || ''),
+        });
+      } else {
+        out.push(a);
+      }
+    }
+    return out;
+  }
+
+  /**
    * Hiệu lực duyệt phiếu bổ sung công: **72 giờ** tính từ lúc nhận phiếu (tạo).
    * Quá 72h chưa duyệt, hệ thống tự động HỦY phiếu (giữ phiếu để đối soát,
    * hoàn 5 điểm nếu là phiếu Bù công cả ngày).

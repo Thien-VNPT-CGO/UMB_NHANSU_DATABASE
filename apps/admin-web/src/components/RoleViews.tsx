@@ -12271,6 +12271,18 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     };
     const adjShiftOf = (a: any) => {
       const aid = String(a?.assignment_id || '');
+      // Ưu tiên dữ liệu ca do backend gắn kèm (tra mọi tuần, không chỉ tuần
+      // hiện tại) — ca cũ/tuần khác vẫn ra đúng Ca 1/2/3.
+      if (String((a as any)?.shift_code || '').trim()) {
+        const iso = /^\d{4}-\d{2}-\d{2}$/.test(String((a as any)?.shift_date || '').slice(0, 10))
+          ? String((a as any).shift_date).slice(0, 10)
+          : (String(a?.reason || '').match(/(\d{4}-\d{2}-\d{2})/)?.[1] || '');
+        const day = adjFmtDay(iso);
+        const t0 = String((a as any)?.shift_start_at || '').slice(11, 16);
+        const t1 = String((a as any)?.shift_end_at || '').slice(11, 16);
+        const time = t0 && t1 ? `${t0}–${t1}` : '';
+        return { found: true, code: String((a as any).shift_code), day, time, status: String((a as any)?.shift_status || ''), raw: aid };
+      }
       const sh: any = aid ? (shifts || []).find((s: any) => String(s?.assignment_id || '') === aid) : null;
       const reasonDate = String(a?.reason || '').match(/(\d{4}-\d{2}-\d{2})/)?.[1] || '';
       if (sh) {
@@ -12283,7 +12295,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         return { found: true, code: String(sh?.shift_code || ''), day, time, status: String(sh?.status || ''), raw: aid };
       }
       const day = adjFmtDay(reasonDate);
-      const tail = aid ? `Ca #${aid.slice(-5)}` : 'Ca chưa rõ';
+      const tail = aid ? `Mã ca ${aid}` : 'Ca chưa rõ';
       return { found: false, code: '', day, time: '', status: '', raw: aid, fallback: tail };
     };
     const renderAdjRows = (list: any[], isPending: boolean) =>
@@ -12329,7 +12341,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <>
                   <span style={{ fontSize: '13px', fontWeight: 800 }}>{shiftInfo.fallback || 'Ca chưa rõ'}</span>
                   {shiftInfo.day && <div style={{ fontSize: '12px', fontWeight: 700, marginTop: '2px' }}>{shiftInfo.day.vi}</div>}
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>Ca tuần khác — mở chi tiết để đối soát</div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>Chưa tra được ca — đối soát ngày trong lý do</div>
                 </>
               )}
             </td>

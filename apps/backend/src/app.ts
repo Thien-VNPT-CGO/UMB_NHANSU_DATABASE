@@ -5805,12 +5805,14 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const branchId = req.user?.role === 'STORE' ? req.user.branchScope : (req.query.branchId as string);
       const employeeId = req.user?.role === 'EMPLOYEE' ? req.user.employeeId : undefined;
       const list = await attendanceService.listAdjustments(branchId, employeeId);
+      // Gắn thông tin ca mọi tuần (Ca 1/2/3 + ngày/giờ) cho cột "Ca cần bổ sung".
+      const enriched = await attendanceService.enrichAdjustmentsWithShift(list || []).catch(() => list || []);
       // Cổng admin/HR/Store chỉ hiển thị phiếu của THÁNG hiện tại (giờ VN);
       // hết tháng phiếu tháng cũ tự ẩn (Sheets + Drive vẫn giữ nguyên lịch sử).
       // Nhân viên xem "Phiếu của tôi" vẫn thấy đủ lịch sử của chính mình.
       const scopedList = req.user?.role === 'EMPLOYEE'
-        ? (list || [])
-        : AttendanceService.filterAdjustmentsByVnMonth(list || []);
+        ? (enriched || [])
+        : AttendanceService.filterAdjustmentsByVnMonth(enriched || []);
       // Cắt bytes ảnh inline khỏi danh sách (nhẹ payload); ảnh xem qua /:id/photo.
       // Gắn cờ has_photo để client biết phiếu nào THỰC SỰ có ảnh, tránh gọi /:id/photo sinh 404 trong console.
       res.json((scopedList || []).map((a: any) => {
