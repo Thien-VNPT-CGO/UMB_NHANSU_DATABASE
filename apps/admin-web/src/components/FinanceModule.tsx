@@ -806,7 +806,12 @@ export default function FinanceModule(props: FinanceModuleProps) {
   const [viewLockedContent, setViewLockedContent] = useState(false);
   useEffect(() => { setViewLockedContent(false); }, [activeTab, month]);
   const isPendingLock = isFinance ? (!open && !activeStepDone) : false;
-  const showTabContent = isFinance ? (open || (activeStepDone && viewLockedContent)) : true;
+  // Tab Thanh toán: FINANCE được XEM danh sách chuyển khoản (chỉ xem) ngay cả khi
+  // bước chưa mở / bước trước chưa xong — phiếu chờ CK (CONFIRMED) + QR + nút
+  // Đã Chuyển Khoản vẫn dùng được nhờ thao tác độc lập từng phiếu.
+  const [paymentPreview, setPaymentPreview] = useState(false);
+  useEffect(() => { setPaymentPreview(false); }, [activeTab, month]);
+  const showTabContent = isFinance ? (open || (activeStepDone && viewLockedContent) || (activeTab === 'fin-payment' && paymentPreview)) : true;
   const firstOpenStep = useMemo(() => {
     if (currentOpenStep?.id) return currentOpenStep.id;
     for (const s of PROCESS_STEPS) { if (s.id === 'fin-dashboard') continue; if (isTabOpen(s.id)) return s.id; }
@@ -1072,7 +1077,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
       )}
 
       {/* ═══════════ LOCK SCREEN — bước chưa mở (pending) mới chặn hẳn; bước đã xong/tháng khóa cho xem lại ═══════════ */}
-      {isPendingLock && !viewLockedContent ? (
+      {isPendingLock && !viewLockedContent && !(activeTab === 'fin-payment' && paymentPreview) ? (
         <div className="fin-lockscreen" role="alert">
           <div className="fin-lock-icon">{activeStepDone ? <Check size={30} strokeWidth={3} /> : <Lock size={30} />}</div>
           <h3>{activeStepDone ? 'Bước đã hoàn tất — tab đã khóa' : 'Bước này đang bị khóa theo quy trình kế toán'}</h3>
@@ -1093,6 +1098,11 @@ export default function FinanceModule(props: FinanceModuleProps) {
             <button type="button" className="fin-btn fin-btn-ghost" onClick={() => goTab('fin-dashboard')}>
               Về Tổng quan (chỉ xem)
             </button>
+            {activeTab === 'fin-payment' && (
+              <button type="button" className="fin-btn fin-btn-primary" onClick={() => setPaymentPreview(true)}>
+                👁 Xem danh sách chờ chuyển khoản
+              </button>
+            )}
           </div>
           {activeLock?.previousStepId && <p style={{ fontSize: 11, color: 'var(--fin-muted)' }}>Nút quay về: hoàn phiếu (đã gửi/khiếu nại/xác nhận/ĐÃ CHUYỂN KHOẢN) về DRAFT + kỳ lương về DRAFT, mở khóa tháng, mọi máy cập nhật realtime.</p>}
         </div>
