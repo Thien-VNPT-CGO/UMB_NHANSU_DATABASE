@@ -29,6 +29,9 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({ label, value, signer
     if (open) setName(signerName || '');
   }, [open, signerName]);
 
+  // LƯU Ý: transform của ctx ĐƯỢC ĐẶT MỘT LẦN (setTransform) ở setupCanvas.
+  // Tuyệt đối KHÔNG scale lại trong pointermove (save/scale/restore mỗi nét) —
+  // scale chồng scale (dpr^2) làm mực vẽ gấp đôi vị trí ngón tay trên màn hình mật độ cao.
   const setupCanvas = () => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
@@ -41,7 +44,7 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({ label, value, signer
     canvas.style.height = `${H}px`;
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
-    ctx.scale(dpr, dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = '#FFFFFF';
     ctx.fillRect(0, 0, W, H);
     ctx.strokeStyle = '#1E3A8A';
@@ -60,10 +63,14 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({ label, value, signer
 
   const posOf = (e: React.PointerEvent) => {
     const canvas = canvasRef.current!;
-    const r = canvas.getBoundingClientRect();
+    // Trừ border (clientLeft/clientTop) để tọa độ trùng đúng với vùng vẽ bên trong khung.
+    const x = e.clientX - canvas.getBoundingClientRect().left - canvas.clientLeft;
+    const y = e.clientY - canvas.getBoundingClientRect().top - canvas.clientTop;
+    const cw = canvas.clientWidth || canvas.getBoundingClientRect().width;
+    const ch = canvas.clientHeight || canvas.getBoundingClientRect().height;
     return {
-      x: ((e.clientX - r.left) / r.width) * 440,
-      y: ((e.clientY - r.top) / r.height) * 180,
+      x: (x / cw) * 440,
+      y: (y / ch) * 180,
     };
   };
 
@@ -184,16 +191,13 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({ label, value, signer
                 const canvas = canvasRef.current;
                 const ctx = canvas?.getContext('2d');
                 if (!canvas || !ctx) return;
-                const dpr = Math.min(2, window.devicePixelRatio || 1);
-                ctx.save();
-                ctx.scale(dpr, dpr);
+                // KHÔNG scale thêm: ctx đã có transform dpr từ setupCanvas.
                 const p = posOf(e);
                 const last = lastRef.current || p;
                 ctx.beginPath();
                 ctx.moveTo(last.x, last.y);
                 ctx.lineTo(p.x, p.y);
                 ctx.stroke();
-                ctx.restore();
                 lastRef.current = p;
                 strokedRef.current = true;
               }}
