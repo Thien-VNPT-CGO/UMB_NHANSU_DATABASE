@@ -624,6 +624,77 @@ export default function FinanceModule(props: FinanceModuleProps) {
   }, [workflow, currentOpenStep]);
   const goTab = useCallback((id: string) => { onNavigateTab?.(id); }, [onNavigateTab]);
 
+  // Thanh cuộn ngang NGAY khi click chuột vào bảng: bấm vào bảng → dùng phím mũi tên
+  // ← → cuộn ngang nhanh (Shift + ← → cuộn 3×), ↑ ↓ cuộn dọc. Kéo chuột để cuộn
+  // cũng được (grab). Áp dụng cho MỌI bảng .fin-table-wrap của mọi tab Finance.
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const enhance = (wrap: HTMLElement) => {
+      if (!wrap.hasAttribute('tabindex')) { wrap.setAttribute('tabindex', '0'); wrap.setAttribute('role', 'region'); wrap.setAttribute('aria-label', wrap.getAttribute('aria-label') || 'Bảng — bấm rồi dùng phím ← → để cuộn ngang'); }
+      if (!wrap.querySelector('.fin-scroll-hint')) {
+        const hint = document.createElement('div');
+        hint.className = 'fin-scroll-hint';
+        hint.textContent = '⤢ Đã vào bảng — dùng ← → cuộn ngang · ↑ ↓ cuộn dọc';
+        wrap.prepend(hint);
+      }
+    };
+    const enhanceAll = () => { root.querySelectorAll<HTMLElement>('.fin-table-wrap').forEach(enhance); };
+    enhanceAll();
+    const mo = new MutationObserver(() => enhanceAll());
+    mo.observe(root, { childList: true, subtree: true });
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      const wrap = (t?.closest?.('.fin-table-wrap') as HTMLElement | null) || null;
+      if (!wrap || !root.contains(wrap)) return;
+      // Không cướp phím mũi tên khi đang gõ trong ô nhập liệu/textarea/select của bảng.
+      const tag = t?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (t as any)?.isContentEditable) return;
+      const step = e.shiftKey ? 240 : 80;
+      const vStep = e.shiftKey ? 180 : 60;
+      if (e.key === 'ArrowLeft') { e.preventDefault(); wrap.scrollBy({ left: -step }); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); wrap.scrollBy({ left: step }); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); wrap.scrollBy({ top: -vStep }); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); wrap.scrollBy({ top: vStep }); }
+      else if (e.key === 'Home') { e.preventDefault(); wrap.scrollTo({ left: 0 }); }
+      else if (e.key === 'End') { e.preventDefault(); wrap.scrollTo({ left: wrap.scrollWidth }); }
+    };
+    // Kéo chuột (grab) để cuộn ngang cho nhanh.
+    let drag: { wrap: HTMLElement; x: number; y: number; sl: number; st: number } | null = null;
+    const onPointerDown = (e: PointerEvent) => {
+      const wrap = (e.target as HTMLElement | null)?.closest?.('.fin-table-wrap') as HTMLElement | null;
+      if (!wrap || !root.contains(wrap)) return;
+      if ((e.target as HTMLElement)?.closest?.('input,textarea,select,button,a,[contenteditable]')) return;
+      drag = { wrap, x: e.clientX, y: e.clientY, sl: wrap.scrollLeft, st: wrap.scrollTop };
+      wrap.setPointerCapture?.(e.pointerId);
+      wrap.style.cursor = 'grabbing';
+    };
+    const onPointerMove = (e: PointerEvent) => {
+      if (!drag) return;
+      drag.wrap.scrollLeft = drag.sl - (e.clientX - drag.x);
+      drag.wrap.scrollTop = drag.st - (e.clientY - drag.y);
+    };
+    const onPointerUp = () => {
+      if (!drag) return;
+      drag.wrap.style.cursor = '';
+      drag = null;
+    };
+    document.addEventListener('keydown', onKeyDown as any, { passive: false });
+    document.addEventListener('pointerdown', onPointerDown as any);
+    document.addEventListener('pointermove', onPointerMove as any);
+    document.addEventListener('pointerup', onPointerUp as any);
+    document.addEventListener('pointercancel', onPointerUp as any);
+    return () => {
+      mo.disconnect();
+      document.removeEventListener('keydown', onKeyDown as any);
+      document.removeEventListener('pointerdown', onPointerDown as any);
+      document.removeEventListener('pointermove', onPointerMove as any);
+      document.removeEventListener('pointerup', onPointerUp as any);
+      document.removeEventListener('pointercancel', onPointerUp as any);
+    };
+  }, []);
+
   // Chuyển trạng thái KỲ LƯƠNG cấp run: DRAFT -> RECONCILED (Đối soát) -> APPROVED (Phê duyệt).
   // PUBLISHED/PAID của PHỤC KHÔNG dùng ở đây: phiếu được phát hành/chi trả TỪNG PHIẾU
   // ở tab 7 (đủ chữ ký 3 bên) và tab 8 — nút chuyển trạng thái cấp kỳ sẽ phát hành/
