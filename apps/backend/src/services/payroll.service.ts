@@ -688,18 +688,27 @@ export class PayrollService {
     const overrideOrder = Number(overrideInfo?.toOrder) || 0;
     const monthLocked = isPastMonth && !unlockInfo;
 
+    // --- Xác nhận thủ công của kế toán cho bước 1-2 (theo đúng tháng) ---
+    // Đối soát công / BCC KHÔNG tự xong chỉ vì có ca đã phát hành (dữ liệu realtime
+    // chỉ cho thấy đã có ca). Kế toán phải kiểm tra rồi xác nhận, bước mới xong.
+    const doneMap: any = (settings as any)?.[`payrollWorkflowDone:${period}`] || {};
+    const isConfirmed = (stepId: string) => !!doneMap?.[stepId];
+    const confirmAtOf = (stepId: string) => String(doneMap?.[stepId]?.at || '');
+
     const raw = [
       {
-        id: 'fin-timesheet', order: 1, title: 'Đối soát công & Bảng chấm công', done: hasTimesheet,
+        id: 'fin-timesheet', order: 1, title: 'Đối soát công & Bảng chấm công', done: hasTimesheet && isConfirmed('fin-timesheet'),
+        dataReady: hasTimesheet,
         stat: hasTimesheet ? `${totalShifts.toLocaleString('vi-VN')} ca đã phát hành` : 'Chưa có ca đã phát hành',
         reason: hasTimesheet ? '' : 'Chưa có ca chấm công nào được phát hành trong kỳ — chờ Store/HR xếp ca & xác nhận công.',
-        completedAt: hasTimesheet ? lastCheckInAt : '',
+        completedAt: hasTimesheet && isConfirmed('fin-timesheet') ? (confirmAtOf('fin-timesheet') || lastCheckInAt) : (hasTimesheet ? (confirmAtOf('fin-timesheet') || lastCheckInAt) : ''),
       },
       {
-        id: 'fin-bcc', order: 2, title: 'BCC — Bảng công từng ngày', done: hasBcc,
+        id: 'fin-bcc', order: 2, title: 'BCC — Bảng công từng ngày', done: hasBcc && isConfirmed('fin-bcc'),
+        dataReady: hasBcc,
         stat: hasBcc ? `${(fullShifts + partialShifts).toLocaleString('vi-VN')}/${totalShifts.toLocaleString('vi-VN')} ca có chấm công · ${absentShifts.toLocaleString('vi-VN')} ca vắng` : 'Chưa có dữ liệu',
         reason: hasBcc ? '' : 'Chưa có bảng công ngày để đối soát — chờ dữ liệu chấm công của kỳ.',
-        completedAt: hasBcc ? lastCheckInAt : '',
+        completedAt: hasBcc && isConfirmed('fin-bcc') ? (confirmAtOf('fin-bcc') || lastCheckInAt) : (hasBcc ? (confirmAtOf('fin-bcc') || lastCheckInAt) : ''),
       },
       {
         id: 'fin-calculate', order: 3, title: 'Tính lương (công thức & nhập tay)', done: calculated,
@@ -737,10 +746,10 @@ export class PayrollService {
     // Tháng mới/hiện tại → không khóa theo tháng, chỉ khóa tuần tự như cũ.
     // Override quay về bước trước: bước có order >= reopenOrder bị ép chưa xong
     // (cho đến khi completedAt mới hơn thời điểm quay về) để tab trước MỞ LẠI.
+    // Bước 1-2 chỉ xong khi kế toán đã XÁC NHẬN (done đã gồm isConfirmed ở raw).
     const effDoneOf = (s: any): boolean => {
       if (!s.done) return false;
       if (!overrideAt || !overrideOrder) return true;
-      if (s.order < 3) return true; // Đối soát/BCC (1-2) là dẫn xuất từ ca — không ép chưa xong (chỉ xem lại)
       if (s.order < overrideOrder) return true;
       const ct = Date.parse(String(s.completedAt || ''));
       // completedAt mới hơn thời điểm rollback = đã hoàn tất lại sau khi quay về
@@ -758,6 +767,8 @@ export class PayrollService {
         ...s,
         done: effDone,
         doneRaw: s.done,
+        dataReady: (s as any).dataReady,
+        confirmed: (s as any).id ? isConfirmed((s as any).id) : undefined,
         reopened: effDone !== s.done,
         open,
         locked,
@@ -778,9 +789,50 @@ export class PayrollService {
         monthLocked,
         monthUnlock: unlockInfo || null,
         reopenOverride: overrideInfo || null,
+        confirmedSteps: doneMap || {},
         complainedCount,
       },
     };
+  }
+
+  /**
+   * Kế toán XÁC NHẬN hoàn tất bước Đối soát công (1) / BCC (2) theo đúng tháng.
+   * - Phải có dữ liệu thật (ca đã phát hành) mới xác nhận được.
+   * - Phải xác nhận tuần tự: bước 2 chỉ xác nhận được khi bước 1 đã xác nhận.
+   * - Lưu vào payrollWorkflowDone:<period>, đồng bộ realtime cho mọi máy.
+   * Bước 3-7 vẫn hoàn tất bằng thao tác thật (Tính lương → Duyệt → Gửi/Ký → Chi trả).
+   */
+  async confirmWorkflowStep(period: string, stepId: string, actorId: string) {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) throw new Error('Kỳ lương phải dạng YYYY-MM (VD: 2026-10)!');
+    if (!['fin-timesheet', 'fin-bcc'].includes(String(stepId))) {
+      throw new Error('INVALID_STEP: chỉ xác nhận thủ công bước Đối soát công (fin-timesheet) và BCC (fin-bcc) được.');
+    }
+    const wf: any = await this.getWorkflowStatus(period).catch(() => null);
+    const step = wf?.steps?.find((s: any) => s.id === stepId);
+    if (!step) throw new Error('STEP_NOT_FOUND');
+    if (step.locked) throw new Error(`STEP_LOCKED: bước này đang bị khóa (${step.reason || 'chờ bước trước'}).`);
+    if (!step.dataReady && step.id !== 'fin-timesheet') throw new Error('DATA_NOT_READY: chưa có dữ liệu chấm công để xác nhận.');
+    if (step.id === 'fin-timesheet' && !step.dataReady) throw new Error('DATA_NOT_READY: chưa có ca chấm công đã phát hành trong kỳ.');
+    if (step.id === 'fin-bcc' && !step.dataReady) throw new Error('DATA_NOT_READY: chưa có bảng công ngày để xác nhận.');
+    return singleWriterQueue.enqueue({
+      entityType: 'KY_LUONG',
+      entityId: period,
+      actorId,
+      priority: 'high',
+      execute: async () => {
+        const at = new Date().toISOString();
+        const settings: any = await (this.repo as any)?.getSystemSettings?.().catch(() => ({})) || {};
+        const cur: any = settings?.[`payrollWorkflowDone:${period}`] || {};
+        await (this.repo as any)?.updateSystemSettings?.({
+          ...settings,
+          [`payrollWorkflowDone:${period}`]: { ...cur, [stepId]: { at, by: actorId } },
+        }).catch(() => null);
+        this.notifySlipsChanged('workflow-confirm', { period, stepId });
+        this.invalidateFinanceTimesheetCache(period);
+        const next = await this.getWorkflowStatus(period).catch(() => null);
+        return { ok: true, period, stepId, at, by: actorId, workflow: next };
+      },
+    }) as any;
   }
 
   /**
@@ -869,13 +921,21 @@ export class PayrollService {
           } as any).catch(() => null);
         }
         // Mở khóa tạm THÁNG NÀO CŨNG ĐƯỢC + ghi workflowOverride để bước mục
-        // tiêu MỞ LẠI ngay (không kẹt khóa tuần tự/tháng cũ).
+        // tiêu MỞ LẠI ngay (không kẹt khóa tuần tự/tháng cũ). Đồng thời xóa
+        // xác nhận thủ công của các bước TỪ mục tiêu trở đi (bước 1-2 phải xác nhận lại).
         const settings: any = await (this.repo as any)?.getSystemSettings?.().catch(() => ({})) || {};
         const atIso = new Date().toISOString();
+        const curDone: any = settings?.[`payrollWorkflowDone:${period}`] || {};
+        const nextDone: any = { ...curDone };
+        const ORDER_OF: Record<string, number> = { 'fin-timesheet': 1, 'fin-bcc': 2 };
+        for (const k of Object.keys(nextDone)) {
+          if (Number(ORDER_OF[k] || 99) >= Number(toOrder)) delete nextDone[k];
+        }
         await (this.repo as any)?.updateSystemSettings?.({
           ...settings,
           [`payrollMonthUnlock:${period}`]: { at: atIso, by: actorId, reason: rsn, toStepId, toOrder },
           [`payrollWorkflowOverride:${period}`]: { at: atIso, by: actorId, reason: rsn, toStepId, toOrder },
+          [`payrollWorkflowDone:${period}`]: nextDone,
         }).catch(() => null);
         await (this.repo as any)?.recordAuditLog?.({
           actor_id: actorId,

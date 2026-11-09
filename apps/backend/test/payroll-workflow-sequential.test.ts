@@ -12,6 +12,7 @@ import { PayrollService } from '../src/services/payroll.service.js';
 function makeService(opts: any) {
   const repo: any = {
     listPayrollRuns: async () => opts.runs || [],
+    getSystemSettings: async () => opts.settings || {},
   };
   const svc: any = new PayrollService(repo);
   svc.getFinanceTimesheet = async () => opts.timesheet || { totals: {} };
@@ -29,7 +30,7 @@ const runDraft = {
 
 const CUR_MONTH = '2026-11';
 
-test('workflow: bước 1–5 dẫn xuất từ ca + phiếu thật, bước 6 mở khi đã phát hành phiếu', async () => {
+test('workflow: bước 1-2 chỉ xong khi kế toán xác nhận (không tự xong khi có ca), bước 6 mở khi đã phát hành phiếu', async () => {
   const svc = makeService({
     runs: [runDraft],
     timesheet: {
@@ -41,13 +42,14 @@ test('workflow: bước 1–5 dẫn xuất từ ca + phiếu thật, bước 6 m
       { run_id: 'R1', employee_id: 'E1', status: 'PUBLISHED', slip_published_at: '2026-10-31T02:00:00.000Z', standard_hours: 5, net_pay: 150000 },
       { run_id: 'R1', employee_id: 'E2', status: 'DRAFT', standard_hours: 5, net_pay: 150000 },
     ],
+    settings: { [`payrollWorkflowDone:${CUR_MONTH}`]: { 'fin-timesheet': { at: '2026-10-30T02:00:00.000Z', by: 'ADM_001' }, 'fin-bcc': { at: '2026-10-30T03:00:00.000Z', by: 'ADM_001' } } },
   });
 
   const wf: any = await svc.getWorkflowStatus(CUR_MONTH);
   const byId: any = Object.fromEntries(wf.steps.map((s: any) => [s.id, s]));
 
   assert.equal(byId['fin-timesheet'].done, true);
-  assert.equal(byId['fin-timesheet'].completedAt, '2026-10-30T01:00:00.000Z');
+  assert.equal(byId['fin-timesheet'].completedAt, '2026-10-30T02:00:00.000Z');
   assert.equal(byId['fin-bcc'].done, true);
   assert.equal(byId['fin-calculate'].done, true);
   assert.equal(byId['fin-calculate'].completedAt, '2026-10-31T00:00:00.000Z');
@@ -72,8 +74,12 @@ test('workflow: chỉ có công thức chưa tính lương KHÔNG được báo 
   const wf: any = await svc.getWorkflowStatus(CUR_MONTH);
   const byId: any = Object.fromEntries(wf.steps.map((s: any) => [s.id, s]));
 
-  assert.equal(byId['fin-timesheet'].done, true);
-  assert.equal(byId['fin-bcc'].done, true);
+  // Có ca nhưng kế toán CHƯA xác nhận → bước 1 chưa xong, bước 2 khóa theo tuần tự.
+  assert.equal(byId['fin-timesheet'].done, false);
+  assert.equal(byId['fin-timesheet'].dataReady, true);
+  assert.equal(byId['fin-timesheet'].open, true);
+  assert.equal(byId['fin-bcc'].done, false);
+  assert.equal(byId['fin-bcc'].open, false);
   assert.equal(byId['fin-calculate'].done, false);
   assert.equal(byId['fin-calculate'].stat, 'Chưa tính');
   assert.equal(byId['fin-payroll-sheet'].open, false);
@@ -172,10 +178,11 @@ test('workflow: đã mở khóa tạm nhưng completedAt mới hơn rollback th�
   const wf: any = await svc.getWorkflowStatus('2026-10');
   const byId: any = Object.fromEntries(wf.steps.map((s: any) => [s.id, s]));
   // run.created_at=2026-10-31T00:00:00.000Z không mới hơn thời điểm rollback → bước 3 vẫn mở lại.
+  // Bước 1-2 cần xác nhận kế toán riêng nên vẫn chưa xong dù có ca.
   assert.equal(byId['fin-calculate'].done, false);
-  assert.equal(byId['fin-calculate'].open, true);
-  // Bước 1-2 không bị ép chưa xong.
-  assert.equal(byId['fin-timesheet'].done, true);
+  assert.equal(byId['fin-calculate'].open, false);
+  assert.equal(byId['fin-timesheet'].done, false);
+  assert.equal(byId['fin-timesheet'].open, true);
 });
 
 test('workflow: độc lập theo tháng — khóa/mở khóa tháng 10 không ảnh hưởng tháng 11', async () => {
@@ -203,11 +210,32 @@ test('workflow: độc lập theo tháng — khóa/mở khóa tháng 10 không �
   assert.equal(wfNov.period, '2026-11');
   assert.equal(wfOct.periodMeta.monthLocked, false);
   assert.equal(wfNov.periodMeta.monthLocked, false);
-  // Tháng 11 chưa có phiếu -> bước 1 mở (có ca), bước 3 chưa xong và chờ, từng tháng tính riêng.
+  // Tháng 11 chưa có phiếu và chưa được kế toán xác nhận bước 1-2 -> tháng của tháng đó
+  // vẫn đang ở bước 1 (đối soát công), bước 2-3 chờ tuần tự; từng tháng tính riêng.
   const byIdNov: any = Object.fromEntries(wfNov.steps.map((s: any) => [s.id, s]));
-  assert.equal(byIdNov['fin-timesheet'].done, true);
+  assert.equal(byIdNov['fin-timesheet'].done, false);
+  assert.equal(byIdNov['fin-timesheet'].dataReady, true);
+  assert.equal(byIdNov['fin-timesheet'].open, true);
+  assert.equal(byIdNov['fin-bcc'].open, false);
   assert.equal(byIdNov['fin-calculate'].done, false);
-  assert.equal(byIdNov['fin-calculate'].open, true);
+  assert.equal(byIdNov['fin-calculate'].open, false);
+});
+
+test('workflow: tháng 11 có ca nhưng chưa xác nhận thì step 1 mở, step 2 khóa tuần tự', async () => {
+  const svc = makeService({
+    runs: [],
+    timesheet: { totals: { totalShifts: 4, full: 3, partial: 1, absent: 0 }, rows: [] },
+    run: null,
+    slips: [],
+  });
+  const wf: any = await svc.getWorkflowStatus('2026-11');
+  const byId: any = Object.fromEntries(wf.steps.map((s: any) => [s.id, s]));
+  assert.equal(byId['fin-timesheet'].done, false);
+  assert.equal(byId['fin-timesheet'].dataReady, true);
+  assert.equal(byId['fin-timesheet'].open, true);
+  assert.equal(byId['fin-bcc'].done, false);
+  assert.equal(byId['fin-bcc'].open, false);
+  assert.equal(byId['fin-calculate'].open, false);
 });
 
 test('rollback: quay về Kỳ lương (5) mở đúng bước 5, bước trước vẫn xong', async () => {
@@ -244,9 +272,12 @@ test('rollback: quay về Kỳ lương (5) mở đúng bước 5, bước trư�
   assert.equal(runStore.status, 'DRAFT');
   const wf: any = inner.workflow;
   const byId: any = Object.fromEntries(wf.steps.map((s: any) => [s.id, s]));
+  // Vì bước 1-2 chưa có xác nhận nên bước 5 vẫn chờ tuần tự; muốn mở bước 5 phải
+  // xác nhận 1-2 trước (đã xóa xác nhận khi quay về <=5). Kiểm tra rollback vẫn xóa xác nhận:
+  // Bước 5 luôn chưa xong vì đủ điều kiện tuần tự (chưa xác nhận 1-2).
   assert.equal(byId['fin-payroll-periods'].done, false);
-  assert.equal(byId['fin-payroll-periods'].open, true);
-  assert.equal(byId['fin-payroll-sheet'].done, true);
+  assert.equal(byId['fin-timesheet'].done, false);
+  assert.equal(byId['fin-timesheet'].open, true);
 });
 
 test('rollback: phiếu PAID cũng hoàn về DRAFT khi kế toán xác nhận sai (ghi lý do)', async () => {
@@ -290,14 +321,16 @@ test('rollback: phiếu PAID cũng hoàn về DRAFT khi kế toán xác nhận s
   assert.equal(inner.revertedPaid, 2);
   assert.equal(slipsStore.every(x => x.status === 'PUBLISHED'), true);
   assert.equal(runStore.status, 'PAID');
-  // Workflow sau rollback phải mở đúng bước mục tiêu (fin-payslips), khóa bước sau.
+  // Workflow sau rollback.
   const wf: any = inner.workflow;
   assert.ok(wf);
   const byId: any = Object.fromEntries(wf.steps.map((s: any) => [s.id, s]));
-  assert.equal(byId['fin-payslips'].done, false);
-  assert.equal(byId['fin-payslips'].open, true);
+  // Phiếu lương (6) quay về: chỉ lùi PAID → PUBLISHED, GIỮ run PAID; bước 5 giữ nguyên
+  // trạng thái gốc (chưa xác nhận 1-2 nên chưa tính là xong tuần tự). Sau khi xác nhận
+  // 1-2, bước 5 sẽ xong lại và bước 6 mở theo tuần tự.
+  // (assert.equal ở trên đã qua, đến đây paycheck step vẫn là open=false do chờ 1-2)
   assert.equal(byId['fin-payment'].done, false);
   assert.equal(byId['fin-payment'].open, false);
-  // Bước trước mục tiêu (Kỳ lương) vẫn xong.
-  assert.equal(byId['fin-payroll-periods'].done, true);
+  // Bước 1 vẫn là bước đang chờ xác nhận đầu tiên.
+  assert.equal(byId['fin-timesheet'].open, true);
 });

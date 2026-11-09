@@ -723,6 +723,16 @@ export default function FinanceModule(props: FinanceModuleProps) {
   }, [workflow, currentOpenStep]);
   const goTab = useCallback((id: string) => { onNavigateTab?.(id); }, [onNavigateTab]);
 
+  // Xác nhận hoàn tất bước Đối soát/BCC theo đúng tháng (realtime cho mọi máy).
+  const confirmWorkflowStep = useCallback(async (stepId: string) => {
+    const r: any = await post('/payroll/workflow/confirm', { period: month, stepId });
+    const payload: any = r?.result ?? r ?? {};
+    if (payload?.workflow) setWorkflow(payload.workflow);
+    else await loadWorkflow();
+    broadcastUpdate?.('payroll', { action: 'workflow-confirm', period: month, stepId });
+    return payload;
+  }, [post, month, loadWorkflow]);
+
   // Thanh cuộn ngang NGAY khi click chuột vào bảng: bấm vào bảng → dùng phím mũi tên
   // ← → cuộn ngang nhanh (Shift + ← → cuộn 3×), ↑ ↓ cuộn dọc. Kéo chuột để cuộn
   // cũng được (grab). Áp dụng cho MỌI bảng .fin-table-wrap của mọi tab Finance.
@@ -1028,8 +1038,8 @@ export default function FinanceModule(props: FinanceModuleProps) {
       {showTabContent && (
         <main style={{ flex: 1 }}>
           {activeTab === 'fin-dashboard' && <DashboardTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} slips={slips} workflow={workflow} formatVND={formatVND} />}
-          {activeTab === 'fin-timesheet' && <TimesheetTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} loadFinSheet={loadFinSheet} formatVND={formatVND} cols={colsVisible('fin-timesheet')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-timesheet']} />}
-          {activeTab === 'fin-bcc' && <BccTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} formatVND={formatVND} cols={colsVisible('fin-bcc')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-bcc']} />}
+          {activeTab === 'fin-timesheet' && <TimesheetTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} loadFinSheet={loadFinSheet} formatVND={formatVND} cols={colsVisible('fin-timesheet')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-timesheet']} workflowStep={workflow?.steps?.find((s: any) => s.id === 'fin-timesheet') || null} onConfirmStep={confirmWorkflowStep} showToast={showToast} />}
+          {activeTab === 'fin-bcc' && <BccTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} formatVND={formatVND} cols={colsVisible('fin-bcc')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-bcc']} workflowStep={workflow?.steps?.find((s: any) => s.id === 'fin-bcc') || null} onConfirmStep={confirmWorkflowStep} showToast={showToast} />}
           {activeTab === 'fin-calculate' && <CalculateTab month={month} formula={formula} setFormula={setFormula} inputs={inputs} inputsLoading={inputsLoading} allEmployees={allEmployees} finSheet={finSheet} finSheetLoading={finSheetLoading} salaryConfigs={salaryConfigs} saveFormula={saveFormula} upsertInput={upsertInput} saveAllInputs={saveAllInputs} loadFormula={loadFormula} loadInputs={loadInputs} runCalculate={runCalculate} calcBusy={calcBusy} runs={runs} inputsSaving={inputsSaving} pendingCount={pendingCount} inputsSavedAt={inputsSavedAt} cols={colsVisible('fin-calculate')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-calculate']} />}
           {activeTab === 'fin-payroll-sheet' && <PayrollSheetTab month={month} slips={slips} allEmployees={allEmployees} formatVND={formatVND} stageBadge={stageBadge} cols={colsVisible('fin-payroll-sheet')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payroll-sheet']} />}
           {activeTab === 'fin-payroll-periods' && <PayrollPeriodsTab month={month} runs={runs} runsLoading={runsLoading} loadRuns={loadRuns} slips={slips} allEmployees={allEmployees} formatVND={formatVND} runCalculate={runCalculate} calcBusy={calcBusy} payRunAction={payRunAction} onNavigateTab={goTab} inputs={inputs} loadInputs={loadInputs} loadSlips={loadSlips} showToast={showToast} cols={colsVisible('fin-payroll-periods')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payroll-periods']} />}
@@ -1243,7 +1253,7 @@ function DashboardTab({ month, finSheet, finSheetLoading, slips, workflow, forma
 /* ============================================================================
    2 · ĐỐI SOÁT CÔNG & BẢNG CHẤM CÔNG
    ============================================================================ */
-function TimesheetTab({ month, finSheet, finSheetLoading, loadFinSheet, formatVND, cols, onToggleCol, onShowAllCols, colVis, colVisSaving, colDefs }: any) {
+function TimesheetTab({ month, finSheet, finSheetLoading, loadFinSheet, formatVND, cols, onToggleCol, onShowAllCols, colVis, colVisSaving, colDefs, workflowStep, onConfirmStep, showToast }: any) {
   const fs = finSheet;
   const [q, setQ] = useState('');
   const show = cols?.show || (() => true);
@@ -1254,11 +1264,27 @@ function TimesheetTab({ month, finSheet, finSheetLoading, loadFinSheet, formatVN
   }, [fs, q]);
   const filteredCount = groups.reduce((s, g) => s + g.rows.length, 0);
   const colCount = FIN_COL_HEADER_COUNT('fin-timesheet', colDefs, cols);
+  const dataReady = !!(fs?.totals?.totalShifts > 0);
+  const confirmed = !!workflowStep?.done;
+  const [confirming, setConfirming] = useState(false);
+  const doConfirm = async () => {
+    if (!window.confirm(`Xác nhận đã đối soát công kỳ ${periodLabel(month)}? Sau khi xác nhận, bước này sẽ khóa và bước BCC sẽ mở.`)) return;
+    setConfirming(true);
+    try { await onConfirmStep('fin-timesheet'); showToast?.('Đã xác nhận Đối soát công — bước BCC đã mở'); }
+    catch (e: any) { showToast?.(e?.message || 'Xác nhận thất bại'); }
+    finally { setConfirming(false); }
+  };
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <TabHead step={2} title="Đối soát công & Bảng chấm công" desc={`Tổng hợp ca/giờ/phạt theo nhân viên — kỳ ${periodLabel(month)}. Dữ liệu realtime từ chấm công + lịch đã phát hành.`}>
         <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={loadFinSheet} disabled={finSheetLoading}>{finSheetLoading ? <Loader2 size={13} className="fin-spin" /> : <RefreshCw size={13} />} Tải lại bảng công</button>
+        {!confirmed && (
+          <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={doConfirm} disabled={!dataReady || confirming} title={!dataReady ? 'Chưa có ca đã phát hành — chờ Store/HR xếp ca' : 'Kế toán kiểm tra rồi xác nhận hoàn tất bước Đối soát công'}>
+            {confirming ? 'Đang xác nhận…' : '✓ Xác nhận hoàn tất Đối soát công'}
+          </button>
+        )}
       </TabHead>
+      {!dataReady && <div style={{ fontSize: 11, color: 'var(--fin-muted)' }}>Chưa có ca chấm công đã phát hành trong kỳ — chờ Store/HR xếp ca & xác nhận công. Bước vẫn mở, không tự động đóng.</div>}
       <div className="fin-card">
         <CardHead title={`Kỳ ${periodLabel(month)} — ${fs?.fromDate || ''} → ${fs?.toDate || ''}`} icon={<FileSpreadsheet size={14} color="#E85D92" />} sub={fs ? `${fs?.totals?.employees ?? 0} NV • ${fs?.totals?.totalShifts ?? 0} ca • ${Number(fs?.totals?.hours ?? 0).toFixed(1)} giờ` : 'Chưa có dữ liệu'}>
           <SearchBox value={q} onChange={setQ} />
@@ -1327,10 +1353,20 @@ const STATUS_META: Record<string, { l: string; cls: string }> = {
   THIEU: { l: 'Thiếu chấm', cls: 'fin-status-THIEU' },
 };
 
-function BccTab({ month, finSheet, finSheetLoading, formatVND, cols, onToggleCol, onShowAllCols, colVis, colVisSaving, colDefs }: any) {
+function BccTab({ month, finSheet, finSheetLoading, formatVND, cols, onToggleCol, onShowAllCols, colVis, colVisSaving, colDefs, workflowStep, onConfirmStep, showToast }: any) {
   const fs = finSheet;
   const [q, setQ] = useState('');
   const show = cols?.show || (() => true);
+  const dataReady = !!(fs?.totals?.totalShifts > 0);
+  const confirmed = !!workflowStep?.done;
+  const [confirming, setConfirming] = useState(false);
+  const doConfirm = async () => {
+    if (!window.confirm(`Xác nhận đã kiểm tra BCC kỳ ${periodLabel(month)}? Sau khi xác nhận, bước Tính lương sẽ mở.`)) return;
+    setConfirming(true);
+    try { await onConfirmStep('fin-bcc'); showToast?.('Đã xác nhận BCC — bước Tính lương đã mở'); }
+    catch (e: any) { showToast?.(e?.message || 'Xác nhận thất bại'); }
+    finally { setConfirming(false); }
+  };
   const groups = useMemo(() => {
     const all: any[] = fs?.rows || [];
     return branchGroups(all.filter(matchesFilter(q.trim())), (r: any) => r.branchId);
@@ -1346,6 +1382,11 @@ function BccTab({ month, finSheet, finSheetLoading, formatVND, cols, onToggleCol
       <TabHead step={3} title="BCC — Bảng công từng ngày" desc={`Chi tiết check-in/out, giờ, lương ca, trễ/vắng từng ngày — kỳ ${periodLabel(month)}. Mở từng nhân viên để xem chi tiết.`}>
         <SearchBox value={q} onChange={setQ} />
         <ColumnSettings tabKey="fin-bcc" defs={colDefs} value={colVis} onToggle={onToggleCol} onShowAll={() => onShowAllCols('fin-bcc')} saving={colVisSaving} />
+        {!confirmed && (
+          <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={doConfirm} disabled={!dataReady || confirming} title={!dataReady ? 'Chưa có dữ liệu chấm công' : 'Kế toán đã kiểm tra BCC — xác nhận để mở bước Tính lương'}>
+            {confirming ? 'Đang xác nhận…' : '✓ Xác nhận hoàn tất BCC'}
+          </button>
+        )}
       </TabHead>
       {finSheetLoading ? (
         <div className="fin-empty">Đang tải bảng công {periodLabel(month)}…</div>

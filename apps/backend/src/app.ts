@@ -6888,6 +6888,24 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // --- QUY TRÌNH KẾ TOÁN: kế toán xác nhận hoàn tất bước 1-2 theo đúng tháng ---
+  app.post('/payroll/workflow/confirm', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const { period, stepId } = req.body || {};
+      const p = String(period || '');
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(p)) return res.status(400).json({ error: 'Kỳ lương phải dạng YYYY-MM (VD: 2026-10)!' });
+      const result = await payrollService.confirmWorkflowStep(p, String(stepId || ''), req.user!.id);
+      broadcastUpdate('payroll', { action: 'workflow-confirm', period: p, stepId });
+      try {
+        const io = (app as any).get('io');
+        io?.emit?.('data:updated', { entity: 'payroll', data: { action: 'workflow-confirm', period: p, stepId }, timestamp: new Date().toISOString() });
+      } catch { /* non-fatal */ }
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   // --- QUY TRÌNH KẾ TOÁN: quay về bước trước đó khi bước sai (realtime, theo tùy tháng) ---
   app.post('/payroll/workflow/rollback', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
     try {
