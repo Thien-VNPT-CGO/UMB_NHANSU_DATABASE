@@ -716,7 +716,10 @@ export default function FinanceModule(props: FinanceModuleProps) {
     } catch (e: any) { showToast(e?.message || 'Tính lương thất bại'); } finally { setCalcBusy(false); }
   }, [post, month, showToast, loadSlips, loadRuns, loadWorkflow, refreshCurrentTab, flushAllPendingInputs]);
 
-  const open = isTabOpen(activeTab);
+  // CHỈ tài khoản FINANCE mới thấy thanh QUY TRÌNH KẾ TOÁN tuần tự/sẽ bị khóa theo workflow.
+  // Các tài khoản khác (ADMIN, DIRECTOR, HR...) không hiển thị thanh quy trình và không bị khóa tuần tự khi mở tab.
+  const isFinance = String((currentUser as any)?.role || '').toUpperCase() === 'FINANCE';
+  const open = isFinance ? isTabOpen(activeTab) : true;
   const activeLock = tabLocked.get(activeTab);
   const activeStepDone = !!activeLock?.done;
   const lockReason = activeStepDone ? (activeLock?.completedReason || '') : (activeLock?.reason || '');
@@ -725,8 +728,8 @@ export default function FinanceModule(props: FinanceModuleProps) {
   // để kế toán kiểm tra dữ liệu trước khi quay về bước trước sửa số.
   const [viewLockedContent, setViewLockedContent] = useState(false);
   useEffect(() => { setViewLockedContent(false); }, [activeTab, month]);
-  const isPendingLock = !open && !activeStepDone;
-  const showTabContent = open || (activeStepDone && viewLockedContent);
+  const isPendingLock = isFinance ? (!open && !activeStepDone) : false;
+  const showTabContent = isFinance ? (open || (activeStepDone && viewLockedContent)) : true;
   const firstOpenStep = useMemo(() => {
     if (currentOpenStep?.id) return currentOpenStep.id;
     for (const s of PROCESS_STEPS) { if (s.id === 'fin-dashboard') continue; if (isTabOpen(s.id)) return s.id; }
@@ -892,7 +895,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
         </div>
       )}
 
-      {monthLocked && (
+      {isFinance && monthLocked && (
         <div className="fin-warn" role="alert" style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
           <Lock size={16} style={{ flexShrink: 0, marginTop: 2 }} />
           <div style={{ flex: 1 }}>
@@ -936,8 +939,8 @@ export default function FinanceModule(props: FinanceModuleProps) {
         );
       })()}
 
-      {/* ═══════════ STEPPER QUY TRÌNH ═══════════ */}
-      <nav className="fin-stepper-wrap" aria-label="Các bước xử lý lương">
+      {/* ═══════════ STEPPER QUY TRÌNH — CHỈ FINANCE ═══════════ */}
+      {isFinance && (<nav className="fin-stepper-wrap" aria-label="Các bước xử lý lương">
         <div className="fin-stepper-title">
           <span>QUY TRÌNH KẾ TOÁN — XỬ LÝ TUẦN TỰ (REALTIME) · {periodLabel(month)} · THEO TỪNG THÁNG{monthLocked ? ' · ĐÃ KHÓA (HẾT THÁNG NÀY)' : ''}</span>
           <em>Tháng nào theo tháng đó (độc lập, không dùng chung): chỉ bước đang xử lý được mở · xong bước nào khóa bước đó · bước sau mở khi bước trước xong{currentOpenStep ? ` — đang xử lý: ${currentOpenStep.title}` : ' — đã hoàn tất toàn bộ'}{complainedCount ? ` · ⚠️ ${complainedCount} phiếu bị khiếu nại chờ kiểm tra lại` : ''}</em>
@@ -982,9 +985,9 @@ export default function FinanceModule(props: FinanceModuleProps) {
             );
           })}
         </div>
-      </nav>
+      </nav>)}
 
-      {!open && activeTab === 'fin-payroll-periods' && (
+      {!isFinance && activeTab === 'fin-payroll-periods' && (
         <div style={{ border: '1.5px solid #fcd34d', background: '#fffbeb', borderRadius: 12, padding: '10px 14px' }}>
           <b style={{ fontSize: 12 }}>Duyệt kỳ (ADMIN):</b>
           <span style={{ fontSize: 11, color: 'var(--fin-muted)' }}> Bấm <b>Đối soát kỳ</b> (DRAFT → RECONCILED) rồi <b>Phê duyệt kỳ</b> (RECONCILED → APPROVED). ADMIN được duyệt kỳ của mình.</span>
