@@ -111,14 +111,31 @@ const vietQrSlug = (bankName?: string | null) => {
   if (s.includes('agribank') || s.includes('nong nghiep')) return 'agribank';
   return accentStrip(s).toLowerCase().replace(/[^a-z0-9]/g, '') || 'vietcombank';
 };
+/** Tự lấy thông tin ngân hàng đúng NV: ưu tiên snapshot trên phiếu, thiếu thì
+ * lấy từ hồ sơ nhân viên hiện tại (allEmployees) theo employee_id. */
+const bankOfSlip = (s: any, allEmployees: any[] = []) => {
+  const pick = (o: any) => ({ bank_name: String(o?.bank_name || o?.bankName || '').trim(), bank_account: String(o?.bank_account || o?.bankAccount || '').trim(), bank_holder: String(o?.bank_holder || o?.bankHolder || '').trim() });
+  const fromSlip = pick(s);
+  if (fromSlip.bank_account) return fromSlip;
+  const emp = (allEmployees || []).find((e: any) => String(e?.employee_id) === String(s?.employee_id) || String(e?.employee_code) === String(s?.employee_code));
+  const fromEmp = pick(emp || {});
+  return fromEmp.bank_account ? fromEmp : fromSlip;
+};
+const copyText = async (t: string, showToast?: (m: string) => void) => {
+  try {
+    await navigator.clipboard.writeText(t);
+    showToast?.(`Đã copy: ${t}`);
+  } catch { showToast?.('Không copy được — bấm giữ để copiar tay'); }
+};
 /** QR chuyển khoản có số tiền theo phiếu (khi đã biết thực lãnh). */
-const slipQrUrlOf = (s: any) => {
-  const acct = String(s?.bank_account || '').trim();
+const slipQrUrlOf = (s: any, allEmployees: any[] = []) => {
+  const b = bankOfSlip(s, allEmployees);
+  const acct = String(b.bank_account || '').trim();
   if (!acct) return null;
   const amt = Math.max(0, Math.round(Number(s?.thuc_lanh ?? s?.net_pay) || 0));
   const info = `LUONG ${s?.period || ''} ${s?.employee_code || ''}`.slice(0, 50);
-  const holder = String(s?.bank_holder || s?.full_name || '').slice(0, 50);
-  return `https://img.vietqr.io/image/${vietQrSlug(s?.bank_name)}-${encodeURIComponent(acct)}-compact2.png?amount=${amt}&addInfo=${encodeURIComponent(info)}&accountName=${encodeURIComponent(holder)}`;
+  const holder = String(b.bank_holder || s?.full_name || '').slice(0, 50);
+  return `https://img.vietqr.io/image/${vietQrSlug(b.bank_name)}-${encodeURIComponent(acct)}-compact2.png?amount=${amt}&addInfo=${encodeURIComponent(info)}&accountName=${encodeURIComponent(holder)}`;
 };
 /** QR đây/mã STK tự do (không gắn số tiền) — dùng tab QR Ngân Hàng NV. */
 const bankQrUrlOf = (b: string, acct: string, holder?: string) => {
@@ -495,7 +512,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
 
   const isTabOpen = (id: string) => { const l = tabLocked.get(id); return !l ? true : !l.locked; };
   const stageBadge = (stage?: string | null) => { const c = (STAGE_COLOR as any)[String(stage || 'DRAFT')]; return { ...c, label: (PAYSLIP_STAGE_LABEL as any)[String(stage || 'DRAFT')] || '—' }; };
-  const slipQrUrl = slipQrUrlOf;
+  const slipQrUrl = (s: any) => slipQrUrlOf(s, allEmployees);
 
   // --- QUAY VỀ BƯỚC TRƯỚC (khi bước sai): ghi lý do, mở đúng bước mục tiêu lại
   //     (backend workflowOverride ép bước mục tiêu chưa xong), rồi điều hướng về
@@ -2294,7 +2311,21 @@ function PayslipsTab({ month, slips, slipsLoading, allEmployees, formatVND, load
                                     : <div className="fin-qr-missing">Chưa có STK</div>}
                                   <div style={{ fontSize: 10.5, lineHeight: 1.45 }}>
                                     <div className="fin-money" style={{ fontWeight: 800, fontSize: 13 }}>{formatVND(thuc)}</div>
-                                    <div style={{ color: 'var(--fin-muted)' }}>{s.bank_name || '—'} • STK <span className="fin-mono" style={{ color: 'var(--fin-ink)', fontWeight: 800 }}>{s.bank_account || '—'}</span></div>
+                                    {(() => {
+                                      const bk = bankOfSlip(s, allEmployees);
+                                      return bk.bank_account ? (
+                                        <>
+                                          <div style={{ color: 'var(--fin-muted)' }}>{bk.bank_name || '—'} • STK <span className="fin-mono" style={{ color: 'var(--fin-ink)', fontWeight: 800 }}>{bk.bank_account}</span></div>
+                                          <div style={{ color: 'var(--fin-muted)' }}>CTK: {bk.bank_holder || s.full_name || ''}</div>
+                                          <div style={{ display: 'flex', gap: 4, marginTop: 4, flexWrap: 'wrap' }}>
+                                            <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={() => copyText(bk.bank_account)}>📋 Copy STK</button>
+                                            {bk.bank_holder && <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={() => copyText(bk.bank_holder)}>Copy tên</button>}
+                                          </div>
+                                        </>
+                                      ) : (
+                                        <div style={{ color: '#b45309', fontWeight: 700 }}>⚠ NV chưa có STK — vào hồ sơ NV để bổ sung</div>
+                                      );
+                                    })()}
                                     <div style={{ color: 'var(--fin-muted)', fontSize: 9.5 }}>✓ Đã trả về KT + PDF Drive 04 ({s.drive_pdf_id ? 'đã lên' : 'đang chờ'})</div>
                                     <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" style={{ marginTop: 4 }} onClick={() => markPaidSlip(s.item_id)}><Check size={12} /> Đã Chuyển Khoản</button>
                                     <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" style={{ marginTop: 4, marginLeft: 4 }} onClick={() => syncSlipDrive(s.item_id)} title="Đồng bộ lại PDF lên Drive 04"><Upload size={12} /> Drive</button>
@@ -2438,7 +2469,7 @@ function PaymentTab({ month, slips, allEmployees, formatVND, loadSlips, slipQrUr
                           {show('dongPhuc') && <td className="num fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(c.dongPhuc)}</td>}
                           {show('tongLuong') && <td className="num fin-money">{formatVND(c.tongLuong)}</td>}
                           {show('thuc') && <td className="num fin-money" style={{ fontWeight: 800, color: 'var(--fin-green)' }}>{formatVND(c.thuc)}</td>}
-                          {show('bank') && <td style={{ fontSize: 11 }}>{s.bank_name || '—'}<br /><span className="fin-mono" style={{ fontWeight: 800, color: 'var(--fin-ink)' }}>{s.bank_account || '—'}</span><br /><span style={{ color: 'var(--fin-muted)' }}>{s.bank_holder || ''}</span></td>}
+                          {show('bank') && <td style={{ fontSize: 11 }}>{(() => { const bk = bankOfSlip(s, allEmployees); return bk.bank_account ? (<><div>{bk.bank_name || '—'}</div><span className="fin-mono" style={{ fontWeight: 800, color: 'var(--fin-ink)' }}>{bk.bank_account}</span><br /><span style={{ color: 'var(--fin-muted)' }}>{bk.bank_holder || s.full_name || ''}</span><br /><button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" style={{ marginTop: 3 }} onClick={() => copyText(bk.bank_account)}>📋 Copy STK</button></>) : (<span style={{ color: '#b45309', fontWeight: 700 }}>⚠ Chưa có STK — bổ sung ở hồ sơ NV</span>); })()}</td>}
                           {show('qr') && <td className="ctr">{qrUrl ? <img src={qrUrl} alt="VietQR" className="fin-qr" style={{ width: 72, height: 72 }} onError={(e: any) => { (e.target as any).style.display = 'none'; }} /> : <div className="fin-qr-missing">Chưa có STK</div>}</td>}
                           {show('action') && (
                             <td>

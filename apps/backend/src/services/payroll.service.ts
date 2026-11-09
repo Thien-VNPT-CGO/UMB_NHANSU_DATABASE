@@ -1502,7 +1502,33 @@ export class PayrollService {
           if (emp && note) noteByKey.set(`${p}:${emp}`, note);
         }
       }
-      return list.map(s => ({ ...s, input_note: noteByKey.get(`${s?.period}:${s?.employee_id}`) || '' }));
+      // NT: tự lấy tài khoản ngân hàng HIỆN TẠI của NV theo employee_id để KT
+      // chuyển khoản đúng người (phiếu cũ / NV mới đổi STK sau khi tính lương
+      // có thể thiếu bank_* trên phiếu).
+      const bankByEmp = new Map<string, { bank_name: string; bank_account: string; bank_holder: string }>();
+      const needBank = [...new Set(list.filter((s: any) => !String(s?.bank_account || '').trim()).map((s: any) => String(s?.employee_id || '').trim()).filter(Boolean))];
+      for (const empId of needBank) {
+        try {
+          const emp: any = await (this.repo as any).getEmployeeById(empId);
+          if (emp && String(emp.bank_account || '').trim()) {
+            bankByEmp.set(empId, {
+              bank_name: String(emp.bank_name || '').trim(),
+              bank_account: String(emp.bank_account || '').trim(),
+              bank_holder: String(emp.bank_holder || emp.full_name || '').trim(),
+            });
+          }
+        } catch { /* best-effort */ }
+      }
+      return list.map((s: any) => {
+        const bank = bankByEmp.get(String(s?.employee_id || '').trim());
+        return {
+          ...s,
+          input_note: noteByKey.get(`${s?.period}:${s?.employee_id}`) || '',
+          ...(bank && !String(s?.bank_account || '').trim()
+            ? { bank_name: bank.bank_name, bank_account: bank.bank_account, bank_holder: bank.bank_holder }
+            : {}),
+        };
+      });
     } catch {
       return slips || [];
     }
@@ -1557,11 +1583,23 @@ export class PayrollService {
             throw new Error(ERROR_CODES.FORBIDDEN);
           }
           if (slip.status !== 'PUBLISHED') throw new Error('SLIP_NOT_PUBLISHED: phiếu chưa được gửi, chưa ký xác nhận được!');
+          // Khi NV trả phiếu về KT, tự gắn lại thông tin ngân hàng HIỆN TẠI của
+          // đúng NV này (bắt trường hợp NV mới đổi STK sau khi tính lương) để KT
+          // quét VietQR/chuyển khoản đúng người.
+          const empNow: any = await (this.repo as any).getEmployeeById(String(slip.employee_id)).catch(() => null);
+          const bankSnapshot = empNow && String(empNow.bank_account || '').trim()
+            ? {
+                bank_name: String(empNow.bank_name || (slip as any).bank_name || '').trim(),
+                bank_account: String(empNow.bank_account || '').trim(),
+                bank_holder: String(empNow.bank_holder || empNow.full_name || slip.full_name || '').trim(),
+              }
+            : {};
           updated = await this.repo.updatePayslip(itemId, {
             sign_nhanvien: sig as any,
             status: 'CONFIRMED',
             slip_confirmed_at: (sig as any).at,
-          });
+            ...bankSnapshot,
+          } as any);
           // Gửi thông báo đến Kế toán & Admin (sau commit — xem cuối hàm).
           confirmedSlip = slip;
           if (this.io) {
