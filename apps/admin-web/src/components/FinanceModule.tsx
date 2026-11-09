@@ -640,12 +640,13 @@ export default function FinanceModule(props: FinanceModuleProps) {
   }, [post, driveConfigured, month, showToast, loadDriveStatus, refreshCurrentTab, calendarLabel]);
   const syncSlipDrive = useCallback(async (itemId: string) => { try { const r = await post(`/payroll/slips/${encodeURIComponent(itemId)}/drive-sync`, {}); showToast(r?.ok ? 'Đã đồng bộ PDF phiếu lên Drive' : 'Lỗi: ' + (r?.error || '')); refreshCurrentTab(); } catch (e: any) { showToast('Lỗi: ' + (e?.message || '')); } }, [post, showToast, refreshCurrentTab]);
   const exportPaymentFile = useCallback(async () => {
-    if (!window.confirm('Xuat file PAYMENT ' + periodLabel(month) + ' len Drive?')) return;
+    if (!window.confirm('Xuat 2 file PAYMENT ' + periodLabel(month) + ' len Drive? (1 file CHUA CHUYEN KHOAN + 1 file DA THANH TOAN)')) return;
     try {
       const r: any = await post('/payroll/payment-export', { period: month });
       if (r?.ok) {
-        showToast('Da xuat PAYMENT: ' + (r?.count || 0) + ' phieu len Drive');
-        if (r?.link) window.open(r.link, '_blank');
+        showToast('Da xuat PAYMENT: ' + (r?.count || 0) + ' phieu (2 file) len Drive');
+        if (Array.isArray(r?.files)) r.files.forEach((f: any, i: number) => { if (f?.link && i < 2) window.open(f.link, '_blank'); });
+        else if (r?.link) window.open(r.link, '_blank');
       } else {
         showToast('Xuat file loi: ' + (r?.error || 'khong ro'));
       }

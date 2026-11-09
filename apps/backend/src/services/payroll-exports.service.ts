@@ -565,21 +565,24 @@ export async function buildKyLuongXlsx(period: string, runs: any[]): Promise<Buf
 }
 
 /* ============================================================
-   PAYMENT EXPORT — đủ cột, phân theo từng chi nhánh (CONFIRMED + PAID)
-   Xuất để chuyển khoản: mỗi chi nhánh 1 sheet + sheet TONGHOP.
+   PAYMENT EXPORT — đủ cột, phân theo từng chi nhánh.
+   Xuât 2 file: CHƯA CHUYỂN KHOẢN (CONFIRMED) + ĐÃ THÀNH TOÁN (PAID).
    ============================================================ */
-export async function buildPaymentExportXlsx(period: string, slips: any[], empMap: Map<string, any>): Promise<Buffer> {
-  const all = (slips || []).filter(s => ['CONFIRMED', 'PAID'].includes(String(s?.status || '').toUpperCase()));
+export async function buildPaymentExportXlsx(period: string, slips: any[], empMap: Map<string, any>, statusFilter?: 'CONFIRMED' | 'PAID'): Promise<Buffer> {
+  const all = (slips || []).filter(s => statusFilter
+    ? String(s?.status || '').toUpperCase() === statusFilter
+    : ['CONFIRMED', 'PAID'].includes(String(s?.status || '').toUpperCase()));
   const byBranch = groupByBranch(all, (s: any) => empMap.get(String(s?.employee_id))?.default_branch_id || s?.branch_id);
   const wb = newWorkbook();
   const COLS = ['STT', 'MÃ NV', 'HỌ TÊN', 'CHI NHÁNH', 'GIỜ CÔNG', 'LƯƠNG CA', 'LCB (THÁNG)', 'OT THÊM', 'BONUS', 'TỔNG CỘNG', 'TRỪ KPI/PHẠT', 'ỨNG LƯƠNG', 'TRỪ ĐỒNG PHỤC', 'TỔNG LƯƠNG', 'THỰC LÃNH', 'NGÂN HÀNG', 'SỐ TÀI KHOẢN', 'CHỦ TÀI KHOẢN', 'TRẠNG THÁI'];
   const totalAmt = all.reduce((acc, x) => acc + (Number(x?.thuc_lanh ?? x?.net_pay) || 0), 0);
+  const nameTag = statusFilter === 'PAID' ? 'DA THANH TOAN' : statusFilter === 'CONFIRMED' ? 'CHUA CHUYEN KHOAN' : 'DA KY';
   // Sheet TỔNG HỢP (tổng từng chi nhánh)
   const wsSum = wb.addWorksheet('TONGHOP', { views: [{ state: 'frozen', ySplit: 5 }] });
   addTitleBlock(wsSum, 'F', [
     { text: 'CÔNG TY TNHH UNIQUE&NICHE GROUP', size: 10, color: BRAND_DARK },
-    { text: 'FILE PAYMENT — TỔNG HỢP THEO CHI NHÁNH', size: 14, color: DARK },
-    { text: `${monthLabel(period).toUpperCase()}  •  ${all.length} phiếu (đã ký NV)  •  Tổng cần chuyển ${totalAmt.toLocaleString('vi-VN')} đ`, size: 10, color: BRAND },
+    { text: 'FILE PAYMENT (' + nameTag + ') — TONG HOP THEO CHI NHANH', size: 14, color: DARK },
+    { text: monthLabel(period).toUpperCase() + '  •  ' + all.length + ' phieu  •  Tong ' + totalAmt.toLocaleString('vi-VN') + ' d', size: 10, color: BRAND },
   ]);
   wsSum.getRow(4).height = 6;
   const hSum = wsSum.getRow(5);

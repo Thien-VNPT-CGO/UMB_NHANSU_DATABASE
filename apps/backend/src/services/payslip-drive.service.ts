@@ -385,32 +385,43 @@ export class PayslipDriveService {
     return result;
   }
 
-  /** Xuất FILE PAYMENT (đủ cột, theo chi nhánh) lên Drive root riêng (1hbE...).
-   * File: <ROOT>/THANG_MM_YYYY/PAYMENT_TMM.YYYY.xlsx — sheet TONGHOP + 1 sheet/chi nhánh.
-   * Gồm phiếu CONFIRMED (chờ CK) + PAID (đã CK). */
-  async exportPaymentToDrive(period: string, actorId?: string): Promise<{ ok: boolean; period: string; rootId: string; folder: string; fileName: string; link?: string; fileId?: string; count?: number; total?: number; error?: string; at: string }> {
+  /** Xuất 2 FILE PAYMENT (đủ cột, theo chi nhánh) lên Drive root riêng (1hbE...).
+   * - PAYMENT_CHUA_CHUYEN_KHOAN_TMM.YYYY.xlsx: phiếu CONFIRMED (NV đã ký, chờ CK)
+   * - PAYMENT_DA_THANH_TOAN_TMM.YYYY.xlsx: phiếu PAID (đã chuyển khoản)
+   * Mỗi file: sheet TONGHOP + 1 sheet/chi nhánh trong <ROOT>/THANG_MM_YYYY/. */
+  async exportPaymentToDrive(period: string, actorId?: string): Promise<{ ok: boolean; period: string; rootId: string; folder: string; files?: Array<{ fileName: string; link?: string; count?: number }>; fileName: string; link?: string; fileId?: string; count?: number; total?: number; error?: string; at: string }> {
     const at = new Date().toISOString();
     const rootId = getPaymentExportDriveRootId();
     const month = monthFolderName(period);
     const _p = parsePeriod(period);
     const mm = _p ? String(_p.month).padStart(2, '0') : '??';
     const yyyy = _p ? String(_p.year) : '????';
-    const fileName = `PAYMENT_T${mm}.${yyyy}.xlsx`;
+    const filesDef = [
+      { status: 'CONFIRMED' as const, fileName: `PAYMENT_CHUA_CHUYEN_KHOAN_T${mm}.${yyyy}.xlsx` },
+      { status: 'PAID' as const, fileName: `PAYMENT_DA_THANH_TOAN_T${mm}.${yyyy}.xlsx` },
+    ];
     try {
       const { slips, empMap } = await this.latestSlipsOfPeriod(period);
-      const buf = await buildPaymentExportXlsx(period, slips, empMap);
       const drive = getDriveStorage();
-      if (!drive.isConfigured()) throw new Error('DRIVE_NOT_CONFIGURED: Google Drive chưa được cấu hình trên server!');
-      const up = await drive.uploadBuffer(fileName, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buf, [month], rootId, { upsert: true, appProperties: { kind: 'payment-export', period } });
-      const target = (slips || []).filter(s => ['CONFIRMED', 'PAID'].includes(String(s?.status || '').toUpperCase()));
-      const total = target.reduce((acc, x) => acc + (Number(x?.thuc_lanh ?? x?.net_pay) || 0), 0);
+      if (!drive.isConfigured()) throw new Error('DRIVE_NOT_CONFIGURED: Google Drive chua duoc cau hinh tren server!');
+      const files: Array<{ fileName: string; link?: string; count?: number }> = [];
+      let total = 0, count = 0, firstLink: string | undefined;
+      for (const def of filesDef) {
+        const buf = await buildPaymentExportXlsx(period, slips, empMap, def.status);
+        const up = await drive.uploadBuffer(def.fileName, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buf, [month], rootId, { upsert: true, appProperties: { kind: 'payment-export', period, status: def.status } });
+        const target = (slips || []).filter(s => String(s?.status || '').toUpperCase() === def.status);
+        const subTotal = target.reduce((acc, x) => acc + (Number(x?.thuc_lanh ?? x?.net_pay) || 0), 0);
+        total += subTotal; count += target.length;
+        if (!firstLink && up.viewUrl) firstLink = up.viewUrl;
+        files.push({ fileName: def.fileName, link: up.viewUrl, count: target.length });
+      }
       try {
         const settings = (await this.repo.getSystemSettings().catch(() => ({}))) || {};
-        await this.repo.updateSystemSettings({ ...settings, [`paymentExportSync:${period}`]: { at, by: actorId || '', ok: true, rootId, fileName, link: up.viewUrl, count: target.length, total } });
+        await this.repo.updateSystemSettings({ ...settings, [`paymentExportSync:${period}`]: { at, by: actorId || '', ok: true, rootId, files, count, total } });
       } catch { /* best-effort */ }
-      return { ok: true, period, rootId, folder: month, fileName, link: up.viewUrl, fileId: up.fileId, count: target.length, total, at };
+      return { ok: true, period, rootId, folder: month, files, fileName: filesDef[0].fileName, link: firstLink, count, total, at };
     } catch (err: any) {
-      return { ok: false, period, rootId, folder: month, fileName, error: String(err?.message || err).slice(0, 400), at };
+      return { ok: false, period, rootId, folder: month, fileName: filesDef[0].fileName, error: String(err?.message || err).slice(0, 400), at };
     }
   }
 
