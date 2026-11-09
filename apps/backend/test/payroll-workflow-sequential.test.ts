@@ -178,6 +178,38 @@ test('workflow: đã mở khóa tạm nhưng completedAt mới hơn rollback th�
   assert.equal(byId['fin-timesheet'].done, true);
 });
 
+test('workflow: độc lập theo tháng — khóa/mở khóa tháng 10 không ảnh hưởng tháng 11', async () => {
+  const svc: any = new PayrollService({ listPayrollRuns: async () => [] } as any);
+  svc.getFinanceTimesheet = async (period: string) => ({
+    totals: { totalShifts: 5, full: 4, partial: 1, absent: 0 },
+    rows: [],
+  });
+  svc.getPeriodSlips = async (period: string) => {
+    if (period === '2026-10') {
+      return { run: { ...runDraft, status: 'PAID' }, slips: [{ run_id: 'R1', employee_id: 'E1', status: 'PAID' }] };
+    }
+    return { run: null, slips: [] };
+  };
+  svc.repo = {
+    listPayrollRuns: async () => [{ ...runDraft, status: 'PAID' }],
+    getSystemSettings: async () => ({
+      'payrollMonthUnlock:2026-10': { at: '2026-11-05T00:00:00.000Z', by: 'ADM_001', reason: 'rollback tháng 10' },
+    }),
+  };
+  const wfOct: any = await svc.getWorkflowStatus('2026-10');
+  const wfNov: any = await svc.getWorkflowStatus('2026-11');
+  // Tháng 10 đã mở khóa tạm -> không còn monthLocked; tháng 11 là hiện tại -> cũng không locked.
+  assert.equal(wfOct.period, '2026-10');
+  assert.equal(wfNov.period, '2026-11');
+  assert.equal(wfOct.periodMeta.monthLocked, false);
+  assert.equal(wfNov.periodMeta.monthLocked, false);
+  // Tháng 11 chưa có phiếu -> bước 1 mở (có ca), bước 3 chưa xong và chờ, từng tháng tính riêng.
+  const byIdNov: any = Object.fromEntries(wfNov.steps.map((s: any) => [s.id, s]));
+  assert.equal(byIdNov['fin-timesheet'].done, true);
+  assert.equal(byIdNov['fin-calculate'].done, false);
+  assert.equal(byIdNov['fin-calculate'].open, true);
+});
+
 test('rollback: quay về Kỳ lương (5) mở đúng bước 5, bước trước vẫn xong', async () => {
   const paidRun = { ...runDraft, status: 'APPROVED', approved_at: '2026-11-01T02:00:00.000Z', approved_by: 'ADM_001' };
   const slipsStore: any[] = [

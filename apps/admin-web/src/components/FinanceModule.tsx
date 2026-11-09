@@ -187,7 +187,12 @@ export default function FinanceModule(props: FinanceModuleProps) {
     if (/^\d{4}-(0[1-9]|1[0-2])$/.test(saved || '')) return saved || curPeriod;
     return curPeriod;
   });
-  useEffect(() => { localStorage.setItem(MONTH_KEY, month); }, [month]);
+  // Tháng xử lý hiện tại — mọi request workflow/bảng đều gắn theo tháng này (độc lập theo tháng).
+  const monthRef = useRef(month);
+  useEffect(() => {
+    localStorage.setItem(MONTH_KEY, month);
+    monthRef.current = month;
+  }, [month]);
   const isCurrentMonth = month === curPeriod;
   const options = useMemo(() => {
     const base = monthOptions();
@@ -222,6 +227,17 @@ export default function FinanceModule(props: FinanceModuleProps) {
   const [inputsSaving, setInputsSaving] = useState(false);
   const [inputsSavedAt, setInputsSavedAt] = useState<Date | null>(null);
   useEffect(() => { inputsRef.current = inputs; }, [inputs]);
+  // Đổi tháng: XÓA NGAY trạng thái tháng cũ (workflow/phiếu/kỳ/bảng công/nhập tay) để
+  // tháng mới KHÔNG hiển thị khóa/mở theo quy trình của tháng cũ. Các response cũ
+  // về trễ sẽ bị bỏ qua (kiểm tra monthRef trước khi set trong từng loader).
+  useEffect(() => {
+    setWorkflow(null);
+    setSlips([]);
+    setRuns([]);
+    setFinSheet(null);
+    setFormula(null);
+    setInputs([]);
+  }, [month]);
 
   const mountedRef = useRef(true);
   // Chống "tự reload" làm mất ô đang gõ: nếu kế toán đang focus 1 ô nhập trong
@@ -238,24 +254,29 @@ export default function FinanceModule(props: FinanceModuleProps) {
   // Fix ReferenceError: Cannot access 'Bt' before initialization (TDZ):
   // Loaders MUST be declared BEFORE refreshCurrentTab / handleRealtime that
   // list them in their useCallback dependency arrays.
-  const loadWorkflow = useCallback(async () => { try { setWorkflow(await api(`/payroll/workflow-status?period=${encodeURIComponent(month)}`)); } catch { setWorkflow(null); } }, [api, month]);
+  // Mỗi loader gắn theo đúng tháng tại lúc gọi (monthRef) và CHỈ nhận kết quả
+  // khi tháng đó còn đang hiển thị — chống race khi đổi tháng nhanh làm tháng mới
+  // nhận khóa/mở của tháng cũ (tháng nào theo tháng đó).
+  const loadWorkflow = useCallback(async () => { const p = monthRef.current; try { const wf = await api(`/payroll/workflow-status?period=${encodeURIComponent(p)}`); if (monthRef.current === p && String((wf as any)?.period || p) === p) setWorkflow(wf); } catch { if (monthRef.current === p) setWorkflow(null); } }, [api]);
   const loadRuns = useCallback(async () => { setRunsLoading(true); try { const d = await api('/payroll/runs'); setRuns(Array.isArray(d) ? d : []); } catch { setRuns([]); } finally { setRunsLoading(false); } }, [api]);
-  const loadSlips = useCallback(async () => { setSlipsLoading(true); try { const d = await api(`/payroll/period-slips/${encodeURIComponent(month)}`); setSlips((d as any)?.slips || []); } catch { setSlips([]); } finally { setSlipsLoading(false); } }, [api, month]);
-  const loadFinSheet = useCallback(async () => { setFinSheetLoading(true); try { const fs = await api(`/admin/reports/finance-timesheet?period=${encodeURIComponent(month)}&branchScope=*`); setFinSheet(fs); if (activeTab === 'fin-dashboard') { try { setFinSheetSync(await api('/payroll/sync-status')); } catch { setFinSheetSync(null); } } } catch { setFinSheet(null); } finally { setFinSheetLoading(false); } }, [api, activeTab, month]);
-  const loadFormula = useCallback(async () => { try { setFormula(await api(`/payroll/formula/${encodeURIComponent(month)}`)); } catch { setFormula(null); } }, [api, month]);
+  const loadSlips = useCallback(async () => { const p = monthRef.current; setSlipsLoading(true); try { const d = await api(`/payroll/period-slips/${encodeURIComponent(p)}`); if (monthRef.current !== p) return; setSlips((d as any)?.slips || []); } catch { if (monthRef.current === p) setSlips([]); } finally { if (monthRef.current === p) setSlipsLoading(false); } }, [api]);
+  const loadFinSheet = useCallback(async () => { const p = monthRef.current; setFinSheetLoading(true); try { const fs = await api(`/admin/reports/finance-timesheet?period=${encodeURIComponent(p)}&branchScope=*`); if (monthRef.current !== p) return; setFinSheet(fs); if (activeTab === 'fin-dashboard') { try { setFinSheetSync(await api('/payroll/sync-status')); } catch { setFinSheetSync(null); } } } catch { if (monthRef.current === p) setFinSheet(null); } finally { if (monthRef.current === p) setFinSheetLoading(false); } }, [api, activeTab]);
+  const loadFormula = useCallback(async () => { const p = monthRef.current; try { const f = await api(`/payroll/formula/${encodeURIComponent(p)}`); if (monthRef.current === p) setFormula(f); } catch { if (monthRef.current === p) setFormula(null); } }, [api]);
   const loadInputs = useCallback(async () => {
     // KHÔNG ghi đè ô đang gõ / đang chờ lưu / đang gửi: một sự kiện realtime
     // chen ngang có thể trả về bản cũ hơn và xóa sạch số Kế toán vừa nhập.
     if (inputPendingRef.current.size > 0 || inputTimersRef.current.size > 0 || inputInflightRef.current > 0) return;
+    const p = monthRef.current;
     setInputsLoading(true);
     try {
-      const arr: any[] = await api(`/payroll/inputs/${encodeURIComponent(month)}`);
-      // Lần nữa sau khi await: người dùng có thể vừa bắt đầu gõ.
+      const arr: any[] = await api(`/payroll/inputs/${encodeURIComponent(p)}`);
+      // Lần nữa sau khi await: người dùng có thể vừa bắt đầu gõ hoặc vừa đổi tháng.
+      if (monthRef.current !== p) return;
       if (inputPendingRef.current.size > 0 || inputTimersRef.current.size > 0 || inputInflightRef.current > 0) return;
       setInputs((Array.isArray(arr) ? arr : []).map((i: any) => ({ ...i, note: String(i?.note ?? '') })));
-    } catch { setInputs([]); } finally { setInputsLoading(false); }
-  }, [api, month]);
-  const loadDriveStatus = useCallback(async () => { try { const st = await api(`/payroll/drive-sync/status?period=${encodeURIComponent(month)}`); setSyncStatus(st); setDriveConfigured(!!st?.configured); } catch { setDriveConfigured(false); } }, [api, month]);
+    } catch { if (monthRef.current === p) setInputs([]); } finally { if (monthRef.current === p) setInputsLoading(false); }
+  }, [api]);
+  const loadDriveStatus = useCallback(async () => { const p = monthRef.current; try { const st = await api(`/payroll/drive-sync/status?period=${encodeURIComponent(p)}`); if (monthRef.current === p) { setSyncStatus(st); setDriveConfigured(!!st?.configured); } } catch { if (monthRef.current === p) setDriveConfigured(false); } }, [api]);
 
   /** Đang có ô nhập liệu trong module được focus → không clobber dữ liệu đang gõ. */
   const isUserEditing = useCallback(() => {
@@ -726,8 +747,8 @@ export default function FinanceModule(props: FinanceModuleProps) {
       {/* ═══════════ STEPPER QUY TRÌNH ═══════════ */}
       <nav className="fin-stepper-wrap" aria-label="Các bước xử lý lương">
         <div className="fin-stepper-title">
-          <span>QUY TRÌNH KẾ TOÁN — XỬ LÝ TUẦN TỰ (REALTIME){monthLocked ? ' · ĐÃ KHÓA (HẾT THÁNG)' : ''}</span>
-          <em>Chỉ bước đang xử lý được mở · xong bước nào khóa bước đó · bước sau mở khi bước trước xong{currentOpenStep ? ` — đang xử lý: ${currentOpenStep.title}` : ' — đã hoàn tất toàn bộ'}{complainedCount ? ` · ⚠️ ${complainedCount} phiếu bị khiếu nại chờ kiểm tra lại` : ''}</em>
+          <span>QUY TRÌNH KẾ TOÁN — XỬ LÝ TUẦN TỰ (REALTIME) · {periodLabel(month)} · THEO TỪNG THÁNG{monthLocked ? ' · ĐÃ KHÓA (HẾT THÁNG NÀY)' : ''}</span>
+          <em>Tháng nào theo tháng đó (độc lập, không dùng chung): chỉ bước đang xử lý được mở · xong bước nào khóa bước đó · bước sau mở khi bước trước xong{currentOpenStep ? ` — đang xử lý: ${currentOpenStep.title}` : ' — đã hoàn tất toàn bộ'}{complainedCount ? ` · ⚠️ ${complainedCount} phiếu bị khiếu nại chờ kiểm tra lại` : ''}</em>
         </div>
         <div className="fin-stepper">
           {PROCESS_STEPS.map(t => {
