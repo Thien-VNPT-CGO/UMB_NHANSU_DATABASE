@@ -545,6 +545,18 @@ export default function FinanceModule(props: FinanceModuleProps) {
   }, [handleRollbackKyLuong]);
 
   const fastSignLap = useCallback(async (itemId: string) => { try { await post(`/payroll/slips/${encodeURIComponent(itemId)}/fast-sign`, { lapName: 'Kế toán viên', lapImg: '', qlName: '', qlImg: '' }); showToast(`Đã ký lập phiếu ${itemId.replace('SLIP_', '')}`); refreshCurrentTab(); } catch (e: any) { showToast(e?.message || 'Ký lập thất bại'); } }, [post, showToast, refreshCurrentTab]);
+  const fastSignLapAll = useCallback(async () => {
+    const targets = (slips || []).filter((s: any) => String(s?.status || '').toUpperCase() === 'DRAFT' && !s?.sign_lap);
+    if (!targets.length) { showToast('Không có phiếu nào chờ Kế toán ký lập (tất cả đã có chữ ký KT hoặc không phải DRAFT).'); return; }
+    if (!window.confirm(`KÝ LẬP HÀNG LOẠT ${targets.length} phiếu DRAFT chưa có chữ ký Kế toán bằng chữ ký mẫu? Kế toán ký xong là Giám đốc sẽ thấy phiếu để ký.`)) return;
+    let ok = 0; const fails: string[] = [];
+    for (const s of targets) {
+      try { await post(`/payroll/slips/${encodeURIComponent(String((s as any).item_id))}/fast-sign`, { lapName: 'Kế toán viên', lapImg: '', qlName: '', qlImg: '' }); ok++; }
+      catch (e: any) { fails.push(`${(s as any).full_name || (s as any).employee_code || (s as any).item_id}: ${e?.message || ''}`); }
+    }
+    showToast(`Đã ký lập ${ok}/${targets.length} phiếu${fails.length ? ` — lỗi ${fails.length}: ${fails.slice(0, 2).join('; ')}` : ''}`);
+    refreshCurrentTab();
+  }, [post, showToast, refreshCurrentTab, slips]);
   const publishSlip = useCallback(async (itemId: string) => { if (!window.confirm('Gửi phiếu này đến nhân viên? Sau khi gửi, nhân viên có thể ký xác nhận.')) return; try { await post(`/payroll/slips/${encodeURIComponent(itemId)}/publish`, {}); showToast('Đã gửi phiếu lương đến nhân viên'); refreshCurrentTab(); } catch (e: any) { showToast(e?.message || 'Gửi thất bại'); } }, [post, showToast, refreshCurrentTab]);
   const returnSlip = useCallback(async (itemId: string) => { const reason = window.prompt('Thu hồi phiếu về DRAFT để kiểm tra lại? Vui lòng ghi lý do (hiển thị audit):', 'Kiểm tra lại sau khiếu nại chưa đúng'); if (reason === null) return; try { await post(`/payroll/slips/${encodeURIComponent(itemId)}/return`, {}); showToast('Đã hoàn phiếu về DRAFT — kiểm tra lại rồi ký/gửi lại'); refreshCurrentTab(); } catch (e: any) { showToast(e?.message || 'Hoàn phiếu thất bại'); } }, [post, showToast, refreshCurrentTab]);
   const markPaidSlip = useCallback(async (itemId: string) => { if (!window.confirm('Xác nhận ĐÃ CHUYỂN KHOẢN? Phiếu sẽ bị KHÓA và đồng bộ PDF lên Google Drive 04.')) return; try { const r = await post(`/payroll/slips/${encodeURIComponent(itemId)}/mark-paid`, {}); showToast('Đã chuyển khoản — phiếu khóa & đồng bộ Drive 04' + (r?.driveSync?.ok ? ' ✓' : '')); refreshCurrentTab(); } catch (e: any) { showToast(e?.message || 'Thanh toán thất bại'); } }, [post, showToast, refreshCurrentTab]);
@@ -1050,7 +1062,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
           {activeTab === 'fin-calculate' && <CalculateTab month={month} formula={formula} setFormula={setFormula} inputs={inputs} inputsLoading={inputsLoading} allEmployees={allEmployees} finSheet={finSheet} finSheetLoading={finSheetLoading} salaryConfigs={salaryConfigs} saveFormula={saveFormula} upsertInput={upsertInput} saveAllInputs={saveAllInputs} loadFormula={loadFormula} loadInputs={loadInputs} runCalculate={runCalculate} calcBusy={calcBusy} runs={runs} inputsSaving={inputsSaving} pendingCount={pendingCount} inputsSavedAt={inputsSavedAt} cols={colsVisible('fin-calculate')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-calculate']} />}
           {activeTab === 'fin-payroll-sheet' && <PayrollSheetTab month={month} slips={slips} allEmployees={allEmployees} formatVND={formatVND} stageBadge={stageBadge} cols={colsVisible('fin-payroll-sheet')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payroll-sheet']} />}
           {activeTab === 'fin-payroll-periods' && <PayrollPeriodsTab month={month} runs={runs} runsLoading={runsLoading} loadRuns={loadRuns} slips={slips} allEmployees={allEmployees} formatVND={formatVND} runCalculate={runCalculate} calcBusy={calcBusy} payRunAction={payRunAction} onNavigateTab={goTab} inputs={inputs} loadInputs={loadInputs} loadSlips={loadSlips} showToast={showToast} cols={colsVisible('fin-payroll-periods')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payroll-periods']} />}
-          {activeTab === 'fin-payslips' && <PayslipsTab month={month} slips={slips} slipsLoading={slipsLoading} allEmployees={allEmployees} formatVND={formatVND} loadSlips={loadSlips} stageBadge={stageBadge} slipQrUrl={slipQrUrl} fastSignLap={fastSignLap} publishSlip={publishSlip} returnSlip={returnSlip} markPaidSlip={markPaidSlip} syncSlipDrive={syncSlipDrive} downloadSlipPdf={downloadSlipPdf} cols={colsVisible('fin-payslips')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payslips']} />}
+          {activeTab === 'fin-payslips' && <PayslipsTab month={month} slips={slips} slipsLoading={slipsLoading} allEmployees={allEmployees} formatVND={formatVND} loadSlips={loadSlips} stageBadge={stageBadge} slipQrUrl={slipQrUrl} fastSignLap={fastSignLap} fastSignLapAll={fastSignLapAll} publishSlip={publishSlip} returnSlip={returnSlip} markPaidSlip={markPaidSlip} syncSlipDrive={syncSlipDrive} downloadSlipPdf={downloadSlipPdf} cols={colsVisible('fin-payslips')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payslips']} />}
           {activeTab === 'fin-payment' && <PaymentTab month={month} slips={slips} allEmployees={allEmployees} formatVND={formatVND} loadSlips={loadSlips} slipQrUrl={slipQrUrl} markPaidSlip={markPaidSlip} downloadSlipPdf={downloadSlipPdf} cols={colsVisible('fin-payment')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payment']} />}
           {activeTab === 'fin-signatures' && <SignatureTemplatesTab currentUser={currentUser} showToast={showToast} />}
           {activeTab === 'fin-rate-adjust' && <RateAdjustTab month={month} currentUser={currentUser} showToast={showToast} />}
@@ -2158,7 +2170,7 @@ const STAGE_FILTERS = [
   { key: 'PAID', label: 'Đã chuyển khoản' },
 ];
 
-function PayslipsTab({ month, slips, slipsLoading, allEmployees, formatVND, loadSlips, stageBadge, slipQrUrl, fastSignLap, publishSlip, returnSlip, markPaidSlip, syncSlipDrive, downloadSlipPdf, cols, onToggleCol, onShowAllCols, colVis, colVisSaving, colDefs }: any) {
+function PayslipsTab({ month, slips, slipsLoading, allEmployees, formatVND, loadSlips, stageBadge, slipQrUrl, fastSignLap, fastSignLapAll, publishSlip, returnSlip, markPaidSlip, syncSlipDrive, downloadSlipPdf, cols, onToggleCol, onShowAllCols, colVis, colVisSaving, colDefs }: any) {
   const [stageFilter, setStageFilter] = useState('ALL');
   const [q, setQ] = useState('');
   const show = cols?.show || (() => true);
@@ -2177,7 +2189,11 @@ function PayslipsTab({ month, slips, slipsLoading, allEmployees, formatVND, load
   const paidCount = slips.filter((s: any) => String(s?.status) === 'PAID').length;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <TabHead step={7} title="Phiếu lương — KT ký → GĐ → NV ký / khiếu nại" desc="Luồng ký 3 bên theo đúng thứ tự: Kế toán lập & ký → Giám đốc ký duyệt → Kế toán gửi NV → Nhân viên ký (xác nhận đúng → phiếu trả về KT + PDF lên Drive 04) → Kế toán bấm ĐÃ CHUYỂN KHOẢN (phiếu khóa vĩnh viễn). NV khiếu nại → phiếu trả về KT kiểm tra lại (COMPLAINED)." />
+      <TabHead step={7} title="Phiếu lương — KT ký → GĐ → NV ký / khiếu nại" desc="Luồng ký 3 bên theo đúng thứ tự: Kế toán lập & ký → Giám đốc ký duyệt → Kế toán gửi NV → Nhân viên ký (xác nhận đúng → phiếu trả về KT + PDF lên Drive 04) → Kế toán bấm ĐÃ CHUYỂN KHOẢN (phiếu khóa vĩnh viễn). NV khiếu nại → phiếu trả về KT kiểm tra lại (COMPLAINED).">
+        <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={() => fastSignLapAll?.()} title="Ký lập bằng chữ ký mẫu cho mọi phiếu DRAFT chưa có chữ ký Kế toán. Giám đốc sẽ thấy phiếu ngay sau khi Kế toán ký.">
+          <PenTool size={13} /> Ký lập hàng loạt (KT)
+        </button>
+      </TabHead>
 
       <div className="fin-kpi-grid">
         <Kpi icon={<Receipt size={18} />} label="Tổng phiếu" value={String(slips.length)} sub={`Kỳ ${periodLabel(month)}`} />
