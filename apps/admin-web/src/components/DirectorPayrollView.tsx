@@ -85,6 +85,44 @@ export const DirectorPayrollView: React.FC<{ currentUser: any }> = ({ currentUse
     }
   };
 
+  // Nhóm phiếu chờ theo chi nhánh để ký hàng loạt từng CN.
+  const byBranch = React.useMemo(() => {
+    const m = new Map<string, any[]>();
+    for (const s of pending) {
+      const k = String((s as any).branch_id || (s as any).branchId || 'KHAC');
+      if (!m.has(k)) m.set(k, []);
+      m.get(k)!.push(s);
+    }
+    return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [pending]);
+
+  const signBranch = async (branchKey: string, list: any[]) => {
+    if (!signName.trim()) {
+      setNotice({ kind: 'err', text: 'Vui lòng nhập tên người ký (Giám đốc).' });
+      return;
+    }
+    if (!list.length) return;
+    if (!window.confirm(`KÝ DUYỆT HÀNG LOẠT ${list.length} phiếu chi nhánh ${branchKey} kỳ ${period}? Phiếu thuộc chi nhánh này sẽ biến mất khỏi màn hình Giám đốc ngay sau khi ký.`)) return;
+    let ok = 0; const fails: string[] = [];
+    for (const s of list) {
+      setBusy(String(s.item_id));
+      try {
+        await apiRequest(`/payroll/slips/${s.item_id}/sign`, {
+          method: 'POST',
+          body: JSON.stringify({ role: 'giamdoc', name: signName.trim() }),
+          _timeoutMs: 90_000,
+        } as any);
+        ok++;
+      } catch (e: any) {
+        fails.push(`${s.full_name || s.employee_code || s.item_id}: ${e?.message || ''}`);
+      } finally {
+        setBusy('');
+      }
+    }
+    setNotice({ kind: ok ? 'ok' : 'err', text: `Chi nhánh ${branchKey}: đã ký duyệt ${ok}/${list.length} phiếu${fails.length ? ` — lỗi ${fails.length}: ${fails.slice(0, 2).join('; ')}` : ''}.` });
+    await load(period);
+  };
+
   const signAll = async () => {
     if (!signName.trim()) {
       setNotice({ kind: 'err', text: 'Vui lòng nhập tên người ký (Giám đốc).' });
@@ -180,6 +218,18 @@ export const DirectorPayrollView: React.FC<{ currentUser: any }> = ({ currentUse
           ✍️ Ký duyệt hàng loạt ({pending.length})
         </button>
       </div>
+
+      {byBranch.length > 0 && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-muted)' }}>Ký hàng loạt theo chi nhánh:</span>
+          {byBranch.map(([k, list]) => (
+            <button key={k} onClick={() => signBranch(k, list)} disabled={!!busy}
+              style={{ padding: '7px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', backgroundColor: 'var(--surface)', color: 'var(--text)', fontSize: 12, fontWeight: 700, cursor: busy ? 'wait' : 'pointer' }}>
+              ✍️ {k} ({list.length})
+            </button>
+          ))}
+        </div>
+      )}
 
       {!loading && hiddenCount > 0 && (
         <div style={{ padding: '10px 12px', borderRadius: 'var(--radius-sm)', fontSize: '12.5px', backgroundColor: '#FFFBEB', color: '#92400E', border: '1px solid #FDE68A' }}>

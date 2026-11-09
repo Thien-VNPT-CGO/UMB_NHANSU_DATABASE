@@ -597,6 +597,18 @@ export default function FinanceModule(props: FinanceModuleProps) {
     showToast(`Đã ký lập ${ok}/${targets.length} phiếu${fails.length ? ` — lỗi ${fails.length}: ${fails.slice(0, 2).join('; ')}` : ''}`);
     refreshCurrentTab();
   }, [post, showToast, refreshCurrentTab, slips]);
+  const fastSignLapBranch = useCallback(async (branchId: string, branchLabel: string, count: number) => {
+    const targets = (slips || []).filter((s: any) => String(s?.status || '').toUpperCase() === 'DRAFT' && !s?.sign_lap && String(slipBranchId(s, allEmployees)) === String(branchId));
+    if (!targets.length) { showToast(`Chi nhánh ${branchLabel} không có phiếu nào chờ Kế toán ký lập.`); return; }
+    if (!window.confirm(`KÝ LẬP HÀNG LOẠT ${targets.length} phiếu chi nhánh ${branchLabel} bằng chữ ký mẫu? Giám đốc sẽ thấy phiếu của chi nhánh này ngay sau khi ký.`)) return;
+    let ok = 0; const fails: string[] = [];
+    for (const s of targets) {
+      try { await post(`/payroll/slips/${encodeURIComponent(String((s as any).item_id))}/fast-sign`, { lapName: 'Kế toán viên', lapImg: '', qlName: '', qlImg: '' }); ok++; }
+      catch (e: any) { fails.push(`${(s as any).full_name || (s as any).employee_code}: ${e?.message || ''}`); }
+    }
+    showToast(`Chi nhánh ${branchLabel}: đã ký lập ${ok}/${targets.length} phiếu${fails.length ? ` — lỗi ${fails.length}: ${fails.slice(0, 2).join('; ')}` : ''}`);
+    refreshCurrentTab();
+  }, [post, showToast, refreshCurrentTab, slips, allEmployees]);
   const publishSlip = useCallback(async (itemId: string) => { if (!window.confirm('Gửi phiếu này đến nhân viên? Phiếu bắt buộc đủ 2 chữ ký Kế toán + Giám đốc (đã đủ mới hiện nút Gửi). Sau khi gửi, nhân viên sẽ thấy ghi chú phạt đầy đủ và ký xác nhận chữ ký thứ 3.')) return; try { await post(`/payroll/slips/${encodeURIComponent(itemId)}/publish`, {}); showToast('Đã gửi phiếu lương đến nhân viên (đủ 2 chữ ký KT + GĐ)'); refreshCurrentTab(); } catch (e: any) { showToast(e?.message || 'Gửi thất bại'); } }, [post, showToast, refreshCurrentTab]);
   const returnSlip = useCallback(async (itemId: string) => { const reason = window.prompt('Thu hồi phiếu về DRAFT để kiểm tra lại? Vui lòng ghi lý do (hiển thị audit):', 'Kiểm tra lại sau khiếu nại chưa đúng'); if (reason === null) return; try { await post(`/payroll/slips/${encodeURIComponent(itemId)}/return`, {}); showToast('Đã hoàn phiếu về DRAFT — kiểm tra lại rồi ký/gửi lại'); refreshCurrentTab(); } catch (e: any) { showToast(e?.message || 'Hoàn phiếu thất bại'); } }, [post, showToast, refreshCurrentTab]);
   const markPaidSlip = useCallback(async (itemId: string) => { if (!window.confirm('Xác nhận ĐÃ CHUYỂN KHOẢN? Phiếu sẽ bị KHÓA và đồng bộ PDF lên Google Drive 04.')) return; try { const r = await post(`/payroll/slips/${encodeURIComponent(itemId)}/mark-paid`, {}); showToast('Đã chuyển khoản — phiếu khóa & đồng bộ Drive 04' + (r?.driveSync?.ok ? ' ✓' : '')); refreshCurrentTab(); } catch (e: any) { showToast(e?.message || 'Thanh toán thất bại'); } }, [post, showToast, refreshCurrentTab]);
@@ -1105,7 +1117,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
           {activeTab === 'fin-calculate' && <CalculateTab month={month} formula={formula} setFormula={setFormula} inputs={inputs} inputsLoading={inputsLoading} allEmployees={allEmployees} finSheet={finSheet} finSheetLoading={finSheetLoading} salaryConfigs={salaryConfigs} saveFormula={saveFormula} upsertInput={upsertInput} saveAllInputs={saveAllInputs} loadFormula={loadFormula} loadInputs={loadInputs} runCalculate={runCalculate} calcBusy={calcBusy} runs={runs} inputsSaving={inputsSaving} pendingCount={pendingCount} inputsSavedAt={inputsSavedAt} cols={colsVisible('fin-calculate')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-calculate']} />}
           {activeTab === 'fin-payroll-sheet' && <PayrollSheetTab month={month} slips={slips} allEmployees={allEmployees} formatVND={formatVND} stageBadge={stageBadge} cols={colsVisible('fin-payroll-sheet')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payroll-sheet']} />}
           {activeTab === 'fin-payroll-periods' && <PayrollPeriodsTab month={month} runs={runs} runsLoading={runsLoading} loadRuns={loadRuns} slips={slips} allEmployees={allEmployees} formatVND={formatVND} runCalculate={runCalculate} calcBusy={calcBusy} payRunAction={payRunAction} onNavigateTab={goTab} inputs={inputs} loadInputs={loadInputs} loadSlips={loadSlips} showToast={showToast} cols={colsVisible('fin-payroll-periods')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payroll-periods']} />}
-          {activeTab === 'fin-payslips' && <PayslipsTab month={month} slips={slips} slipsLoading={slipsLoading} allEmployees={allEmployees} formatVND={formatVND} loadSlips={loadSlips} stageBadge={stageBadge} slipQrUrl={slipQrUrl} fastSignLap={fastSignLap} fastSignLapAll={fastSignLapAll} publishSlip={publishSlip} returnSlip={returnSlip} markPaidSlip={markPaidSlip} syncSlipDrive={syncSlipDrive} downloadSlipPdf={downloadSlipPdf} cols={colsVisible('fin-payslips')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payslips']} />}
+          {activeTab === 'fin-payslips' && <PayslipsTab month={month} slips={slips} slipsLoading={slipsLoading} allEmployees={allEmployees} formatVND={formatVND} loadSlips={loadSlips} stageBadge={stageBadge} slipQrUrl={slipQrUrl} fastSignLap={fastSignLap} fastSignLapAll={fastSignLapAll} fastSignLapBranch={fastSignLapBranch} publishSlip={publishSlip} returnSlip={returnSlip} markPaidSlip={markPaidSlip} syncSlipDrive={syncSlipDrive} downloadSlipPdf={downloadSlipPdf} cols={colsVisible('fin-payslips')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payslips']} />}
           {activeTab === 'fin-payment' && <PaymentTab month={month} slips={slips} allEmployees={allEmployees} formatVND={formatVND} loadSlips={loadSlips} slipQrUrl={slipQrUrl} markPaidSlip={markPaidSlip} downloadSlipPdf={downloadSlipPdf} cols={colsVisible('fin-payment')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payment']} />}
           {activeTab === 'fin-signatures' && <SignatureTemplatesTab currentUser={currentUser} showToast={showToast} />}
           {activeTab === 'fin-rate-adjust' && <RateAdjustTab month={month} currentUser={currentUser} showToast={showToast} />}
@@ -1211,7 +1223,7 @@ function SearchBox({ value, onChange, placeholder }: { value: string; onChange: 
   );
 }
 
-function BranchBandRow({ label, count, cols, totalText }: { label: string; count: number; cols: number; totalText?: string }) {
+function BranchBandRow({ label, count, cols, totalText, children }: { label: string; count: number; cols: number; totalText?: string; children?: React.ReactNode }) {
   return (
     <tr className="fin-band">
       <td colSpan={cols}>
@@ -1219,6 +1231,7 @@ function BranchBandRow({ label, count, cols, totalText }: { label: string; count
         {label}
         <span className="fin-band-count">{count} NV</span>
         {totalText && <span className="fin-band-total">{totalText}</span>}
+        {children && <span style={{ float: 'right', display: 'inline-flex', gap: 6 }}>{children}</span>}
       </td>
     </tr>
   );
@@ -2213,7 +2226,7 @@ const STAGE_FILTERS = [
   { key: 'PAID', label: 'Đã chuyển khoản' },
 ];
 
-function PayslipsTab({ month, slips, slipsLoading, allEmployees, formatVND, loadSlips, stageBadge, slipQrUrl, fastSignLap, fastSignLapAll, publishSlip, returnSlip, markPaidSlip, syncSlipDrive, downloadSlipPdf, cols, onToggleCol, onShowAllCols, colVis, colVisSaving, colDefs }: any) {
+function PayslipsTab({ month, slips, slipsLoading, allEmployees, formatVND, loadSlips, stageBadge, slipQrUrl, fastSignLap, fastSignLapAll, fastSignLapBranch, publishSlip, returnSlip, markPaidSlip, syncSlipDrive, downloadSlipPdf, cols, onToggleCol, onShowAllCols, colVis, colVisSaving, colDefs }: any) {
   const [stageFilter, setStageFilter] = useState('ALL');
   const [q, setQ] = useState('');
   const show = cols?.show || (() => true);
@@ -2271,9 +2284,20 @@ function PayslipsTab({ month, slips, slipsLoading, allEmployees, formatVND, load
                 {groups.map(g => {
                   const gs = sumCalc(g.rows);
                   const COLS = FIN_COL_HEADER_COUNT('fin-payslips', colDefs, cols);
+                  const branchPendingSign = (g.rows || []).filter((r: any) => String(r.status || '').toUpperCase() === 'DRAFT' && !r.sign_lap).length;
+                  const branchReadySend = (g.rows || []).filter((r: any) => r.sign_lap && r.sign_giamdoc && String(r.status || '') === 'DRAFT').length;
                   return (
                     <React.Fragment key={g.id}>
-                      <BranchBandRow label={branchLabelOf(g.id)} count={g.rows.length} cols={COLS} totalText={`THỰC LÃNH ${formatVND(gs.thuc)} · TỔNG CỘNG ${formatVND(gs.tongCong)} · ${r1(gs.gio).toFixed(1)} giờ`} />
+                      <BranchBandRow label={branchLabelOf(g.id)} count={g.rows.length} cols={COLS} totalText={`THỰC LÃNH ${formatVND(gs.thuc)} · TỔNG CỘNG ${formatVND(gs.tongCong)} · ${r1(gs.gio).toFixed(1)} giờ`}>
+                        {branchPendingSign > 0 && fastSignLapBranch && (
+                          <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={() => fastSignLapBranch(g.id, branchLabelOf(g.id), branchPendingSign)} title={`Ký lập bằng chữ ký mẫu cho ${branchPendingSign} phiếu chi nhánh này`}>
+                            <PenTool size={12} /> Ký lập hàng loạt CN ({branchPendingSign})
+                          </button>
+                        )}
+                        {branchReadySend > 0 && (
+                          <span style={{ fontSize: 9.5, color: '#047857', fontWeight: 700 }}>✓ {branchReadySend} phiếu đủ 2 ký — sẵn sàng Gửi NV</span>
+                        )}
+                      </BranchBandRow>
                       {g.rows.map((s: any, idx: number) => {
                         const st = stageBadge(s.stage ?? s.status);
                         const c = slipCalc(s);
