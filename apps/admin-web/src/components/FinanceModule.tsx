@@ -972,6 +972,13 @@ export default function FinanceModule(props: FinanceModuleProps) {
         </div>
       </nav>
 
+      {!open && activeTab === 'fin-payroll-periods' && (
+        <div style={{ border: '1.5px solid #fcd34d', background: '#fffbeb', borderRadius: 12, padding: '10px 14px' }}>
+          <b style={{ fontSize: 12 }}>Duyệt kỳ (ADMIN):</b>
+          <span style={{ fontSize: 11, color: 'var(--fin-muted)' }}> Bấm <b>Đối soát kỳ</b> (DRAFT → RECONCILED) rồi <b>Phê duyệt kỳ</b> (RECONCILED → APPROVED). ADMIN được duyệt kỳ của mình.</span>
+        </div>
+      )}
+
       {/* ═══════════ LOCK SCREEN — bước chưa mở (pending) mới chặn hẳn; bước đã xong/tháng khóa cho xem lại ═══════════ */}
       {isPendingLock && !viewLockedContent ? (
         <div className="fin-lockscreen" role="alert">
@@ -1931,12 +1938,13 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
           {!latest && <span style={{ fontSize: 11, color: 'var(--fin-muted)' }}>Chưa có kỳ nào — bấm “Tính lương ngay”.</span>}
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', padding: '0 16px 14px', alignItems: 'center' }}>
-          {canReconcile && <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={() => payRunAction(latest.run_id, 'reconcile')}>Đối soát kỳ</button>}
-          {canApprove && <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={() => payRunAction(latest.run_id, 'approve')}>Phê duyệt kỳ</button>}
+          {latest && <span style={{ fontSize: 11, fontWeight: 800 }}>Trạng thái kỳ: {String(latest.status || 'DRAFT').toUpperCase()}</span>}
+          <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" disabled={!canReconcile} title={canReconcile ? 'Đánh dấu kỳ đã đối soát (DRAFT → RECONCILED). Bước 1 bắt buộc trước khi duyệt.' : 'Chỉ bấm được khi kỳ đang ở trạng thái DRAFT'} onClick={() => payRunAction(latest.run_id, 'reconcile')}>Đối soát kỳ</button>
+          <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" disabled={!canApprove} title={canApprove ? 'Phê duyệt kỳ (RECONCILED → APPROVED). ADMIN được duyệt kỳ của mình; FINANCE phải dùng tài khoản khác.' : 'Chỉ bấm được khi kỳ đã Đối soát (RECONCILED). Hãy bấm Đối soát kỳ trước.'} onClick={() => payRunAction(latest.run_id, 'approve')}>Phê duyệt kỳ</button>
           {canGoSign && <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={() => onNavigateTab?.('fin-payslips')}><Send size={12} /> Sang tab Phiếu lương: ký & gửi NV</button>}
           {latest && <button type="button" className="fin-btn fin-btn-amber fin-btn-sm" onClick={() => window.dispatchEvent(new CustomEvent('ubm:rollback-kyluong', { detail: { period: month } }))}>↩ Quay về bước trước</button>}
-          {!canReconcile && !canApprove && !canGoSign && latest && <span style={{ fontSize: 11, color: 'var(--fin-muted)' }}>Kỳ chưa đủ điều kiện chuyển trạng thái tiếp — theo quy trình, phiếu lương phát hành/chi trả TỪNG PHIẾU ở tab 7–8 (đủ chữ ký 3 bên).</span>}
-          {latest && <span style={{ fontSize: 10.5, color: 'var(--fin-muted)' }}>Xuất phiếu đúng quy trình: KT ký lập → GĐ ký duyệt → KT gửi NV → NV ký → KT chuyển khoản. Sai bước nào → “↩ Quay về bước trước”.</span>}
+          {latest && !canReconcile && !canApprove && !canGoSign && <span style={{ fontSize: 11, color: 'var(--fin-muted)' }}>Kỳ đang ở trạng thái {String(latest.status || '').toUpperCase()} — theo quy trình, phiếu lương phát hành/chi trả TỪNG PHIẾU ở tab 7–8 (đủ chữ ký 3 bên).</span>}
+          {latest && <span style={{ fontSize: 10.5, color: 'var(--fin-muted)' }}>Quy trình: DRAFT → Bấm <b>Đối soát kỳ</b> → RECONCILED → Bấm <b>Phê duyệt kỳ</b> → APPROVED → Sang tab Phiếu lương (KT ký → GĐ duyệt → NV ký → KT chuyển khoản).</span>}
         </div>
       </div>
 

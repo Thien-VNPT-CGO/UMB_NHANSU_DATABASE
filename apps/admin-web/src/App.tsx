@@ -163,6 +163,17 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'live-map', label: '17. Bản đồ GPS', icon: MapPin },
     { id: 'office-approvals', label: '18. Duyệt Văn Phòng', icon: FileText },
     { id: 'fin-salary-config', label: '19. Cấu hình Lương CB & Phụ cấp (Theo Khối)', icon: DollarSign },
+    { id: 'fin-dashboard', label: 'Ke toan: Dashboard Tài Chính', icon: DollarSign },
+    { id: 'fin-timesheet', label: 'Ke toan: Đối Soát Công', icon: FileSpreadsheet },
+    { id: 'fin-bcc', label: 'Ke toan: Bảng Công Từng Ngày (BCC)', icon: Calendar },
+    { id: 'fin-calculate', label: 'Ke toan: Tính Lương', icon: DollarSign },
+    { id: 'fin-payroll-sheet', label: 'Ke toan: Bảng Lương Tháng', icon: FileSpreadsheet },
+    { id: 'fin-payroll-periods', label: 'Ke toan: Kỳ Lương (DRAFT → PAID)', icon: Calendar },
+    { id: 'fin-payslips', label: 'Ke toan: Phiếu Lương', icon: CreditCard },
+    { id: 'fin-payment', label: 'Ke toan: Thanh Toán (VietQR)', icon: CheckCircle },
+    { id: 'fin-signatures', label: 'Ke toan: Chữ Ký Mẫu', icon: PenTool },
+    { id: 'fin-bank-qr', label: 'Ke toan: QR Ngân Hàng NV', icon: QrCode },
+    { id: 'fin-rate-adjust', label: 'Ke toan: Điều chỉnh lương ca', icon: Banknote },
   ],
   /** HR giữ đúng THỨ TỰ QUY TRÌNH TUYỂN DỤNG: Ứng viên → Phỏng vấn →
    *  Thử việc → Chính thức → Hồ sơ. Tab `staff` là bản sao hoàn toàn của
