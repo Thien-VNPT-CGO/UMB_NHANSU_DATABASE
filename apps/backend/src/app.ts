@@ -6959,6 +6959,21 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // --- XUẤT FILE PAYMENT (đủ cột, theo chi nhánh) lên Drive root riêng 1hbE... ---
+  app.post('/payroll/payment-export', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const period = String((req.body as any)?.period || '');
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
+        return res.status(400).json({ error: 'Kỳ xuất file phải đúng định dạng YYYY-MM (VD: 2026-10)!' });
+      }
+      const result = await payslipDriveService.exportPaymentToDrive(period, req.user!.id);
+      broadcastUpdate('payroll', { action: 'payment-export', period, ok: result.ok });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/payroll/drive-sync/status', authMiddleware, requireRole(['DIRECTOR', 'ADMIN', 'FINANCE']), async (req, res) => {
     try {
       const vn = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7);

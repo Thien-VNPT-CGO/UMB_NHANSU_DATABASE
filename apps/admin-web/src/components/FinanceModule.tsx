@@ -639,6 +639,18 @@ export default function FinanceModule(props: FinanceModuleProps) {
     } catch (e: any) { setLastSync(null); showToast('Lỗi Drive: ' + (e?.message || '')); }
   }, [post, driveConfigured, month, showToast, loadDriveStatus, refreshCurrentTab, calendarLabel]);
   const syncSlipDrive = useCallback(async (itemId: string) => { try { const r = await post(`/payroll/slips/${encodeURIComponent(itemId)}/drive-sync`, {}); showToast(r?.ok ? 'Đã đồng bộ PDF phiếu lên Drive' : 'Lỗi: ' + (r?.error || '')); refreshCurrentTab(); } catch (e: any) { showToast('Lỗi: ' + (e?.message || '')); } }, [post, showToast, refreshCurrentTab]);
+  const exportPaymentFile = useCallback(async () => {
+    if (!window.confirm('Xuat file PAYMENT ' + periodLabel(month) + ' len Drive?')) return;
+    try {
+      const r: any = await post('/payroll/payment-export', { period: month });
+      if (r?.ok) {
+        showToast('Da xuat PAYMENT: ' + (r?.count || 0) + ' phieu len Drive');
+        if (r?.link) window.open(r.link, '_blank');
+      } else {
+        showToast('Xuat file loi: ' + (r?.error || 'khong ro'));
+      }
+    } catch (e: any) { showToast('Xuat file loi: ' + (e?.message || '')); }
+  }, [post, month, showToast]);
   const downloadSlipPdf = useCallback(async (itemId: string, employeeCode?: string) => {
     try {
       const base = getApiBase();
@@ -1130,7 +1142,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
           {activeTab === 'fin-payroll-sheet' && <PayrollSheetTab month={month} slips={slips} allEmployees={allEmployees} formatVND={formatVND} stageBadge={stageBadge} cols={colsVisible('fin-payroll-sheet')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payroll-sheet']} />}
           {activeTab === 'fin-payroll-periods' && <PayrollPeriodsTab month={month} runs={runs} runsLoading={runsLoading} loadRuns={loadRuns} slips={slips} allEmployees={allEmployees} formatVND={formatVND} runCalculate={runCalculate} calcBusy={calcBusy} payRunAction={payRunAction} onNavigateTab={goTab} inputs={inputs} loadInputs={loadInputs} loadSlips={loadSlips} showToast={showToast} cols={colsVisible('fin-payroll-periods')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payroll-periods']} />}
           {activeTab === 'fin-payslips' && <PayslipsTab month={month} slips={slips} slipsLoading={slipsLoading} allEmployees={allEmployees} formatVND={formatVND} loadSlips={loadSlips} stageBadge={stageBadge} slipQrUrl={slipQrUrl} fastSignLap={fastSignLap} fastSignLapAll={fastSignLapAll} fastSignLapBranch={fastSignLapBranch} publishBranch={publishBranch} publishSlip={publishSlip} returnSlip={returnSlip} markPaidSlip={markPaidSlip} syncSlipDrive={syncSlipDrive} downloadSlipPdf={downloadSlipPdf} cols={colsVisible('fin-payslips')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payslips']} />}
-          {activeTab === 'fin-payment' && <PaymentTab month={month} slips={slips} allEmployees={allEmployees} formatVND={formatVND} loadSlips={loadSlips} slipQrUrl={slipQrUrl} markPaidSlip={markPaidSlip} downloadSlipPdf={downloadSlipPdf} cols={colsVisible('fin-payment')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payment']} />}
+          {activeTab === 'fin-payment' && <PaymentTab month={month} slips={slips} allEmployees={allEmployees} formatVND={formatVND} loadSlips={loadSlips} slipQrUrl={slipQrUrl} markPaidSlip={markPaidSlip} downloadSlipPdf={downloadSlipPdf} exportPaymentFile={exportPaymentFile} cols={colsVisible('fin-payment')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payment']} />}
           {activeTab === 'fin-signatures' && <SignatureTemplatesTab currentUser={currentUser} showToast={showToast} />}
           {activeTab === 'fin-rate-adjust' && <RateAdjustTab month={month} currentUser={currentUser} showToast={showToast} />}
           {activeTab === 'fin-bank-qr' && <BankQrTab allEmployees={allEmployees} month={month} />}
@@ -2480,7 +2492,7 @@ function PayslipsTab({ month, slips, slipsLoading, allEmployees, formatVND, load
 /* ============================================================================
    8 · THANH TOÁN — CHỈ PHIẾU NV ĐÃ KÝ (CONFIRMED)
    ============================================================================ */
-function PaymentTab({ month, slips, allEmployees, formatVND, loadSlips, slipQrUrl, markPaidSlip, downloadSlipPdf, cols, onToggleCol, onShowAllCols, colVis, colVisSaving, colDefs }: any) {
+function PaymentTab({ month, slips, allEmployees, formatVND, loadSlips, slipQrUrl, markPaidSlip, downloadSlipPdf, exportPaymentFile, cols, onToggleCol, onShowAllCols, colVis, colVisSaving, colDefs }: any) {
   const [q, setQ] = useState('');
   const show = cols?.show || (() => true);
   const ready = useMemo(() => (slips || []).filter((s: any) => String(s?.status) === 'CONFIRMED').filter(matchesFilter(q.trim())), [slips, q]);
@@ -2493,6 +2505,9 @@ function PaymentTab({ month, slips, allEmployees, formatVND, loadSlips, slipQrUr
         <SearchBox value={q} onChange={setQ} />
         <ColumnSettings tabKey="fin-payment" defs={colDefs} value={colVis} onToggle={onToggleCol} onShowAll={() => onShowAllCols('fin-payment')} saving={colVisSaving} />
         <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={loadSlips}><RefreshCw size={13} /> Tải lại</button>
+        <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={exportPaymentFile} title="Xuất file PAYMENT Excel đủ cột, phân theo từng chi nhánh (tổng hợp + 1 sheet/CN) và tự đẩy lên Drive">
+          <FileDown size={13} /> Xuất file Payment → Drive
+        </button>
       </TabHead>
 
       <div className="fin-kpi-grid">

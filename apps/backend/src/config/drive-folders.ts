@@ -30,6 +30,17 @@ export function getPayslip04DriveRootId(): string {
   return String(process.env.GOOGLE_DRIVE_PHIEU_LUONG04_ROOT_ID || '').trim() || PAYSLIP04_DRIVE_ROOT_ID;
 }
 
+/**
+ * Root Drive cho file PAYMENT (xuất bảng thanh toán đủ cột theo chi nhánh).
+ * ID do chủ dự án cấp: 1hbEfBINk6Kfwr9Z21uhNsDm9kx_AOVvZ
+ * override bằng env GOOGLE_DRIVE_PAYMENT_EXPORT_ROOT_ID.
+ * Cấu trúc: <ROOT>/THANG_MM_YYYY/PAYMENT_TMM.YYYY_<ngày>.xlsx
+ */
+export const PAYMENT_EXPORT_DRIVE_ROOT = '1hbEfBINk6Kfwr9Z21uhNsDm9kx_AOVvZ';
+export function getPaymentExportDriveRootId(): string {
+  return String(process.env.GOOGLE_DRIVE_PAYMENT_EXPORT_ROOT_ID || '').trim() || PAYMENT_EXPORT_DRIVE_ROOT;
+}
+
 export const DRIVE_SUBFOLDERS = {
   /** 00. DATABASE: Chứa 25 file Google Sheets nghiệp vụ */
   DATABASE: '1SFYEOgjsZyC23OWGXMZDFMGemsdcVeSJ',

@@ -565,6 +565,92 @@ export async function buildKyLuongXlsx(period: string, runs: any[]): Promise<Buf
 }
 
 /* ============================================================
+   PAYMENT EXPORT — đủ cột, phân theo từng chi nhánh (CONFIRMED + PAID)
+   Xuất để chuyển khoản: mỗi chi nhánh 1 sheet + sheet TONGHOP.
+   ============================================================ */
+export async function buildPaymentExportXlsx(period: string, slips: any[], empMap: Map<string, any>): Promise<Buffer> {
+  const all = (slips || []).filter(s => ['CONFIRMED', 'PAID'].includes(String(s?.status || '').toUpperCase()));
+  const byBranch = groupByBranch(all, (s: any) => empMap.get(String(s?.employee_id))?.default_branch_id || s?.branch_id);
+  const wb = newWorkbook();
+  const COLS = ['STT', 'MÃ NV', 'HỌ TÊN', 'CHI NHÁNH', 'GIỜ CÔNG', 'LƯƠNG CA', 'LCB (THÁNG)', 'OT THÊM', 'BONUS', 'TỔNG CỘNG', 'TRỪ KPI/PHẠT', 'ỨNG LƯƠNG', 'TRỪ ĐỒNG PHỤC', 'TỔNG LƯƠNG', 'THỰC LÃNH', 'NGÂN HÀNG', 'SỐ TÀI KHOẢN', 'CHỦ TÀI KHOẢN', 'TRẠNG THÁI'];
+  const totalAmt = all.reduce((acc, x) => acc + (Number(x?.thuc_lanh ?? x?.net_pay) || 0), 0);
+  // Sheet TỔNG HỢP (tổng từng chi nhánh)
+  const wsSum = wb.addWorksheet('TONGHOP', { views: [{ state: 'frozen', ySplit: 5 }] });
+  addTitleBlock(wsSum, 'F', [
+    { text: 'CÔNG TY TNHH UNIQUE&NICHE GROUP', size: 10, color: BRAND_DARK },
+    { text: 'FILE PAYMENT — TỔNG HỢP THEO CHI NHÁNH', size: 14, color: DARK },
+    { text: `${monthLabel(period).toUpperCase()}  •  ${all.length} phiếu (đã ký NV)  •  Tổng cần chuyển ${totalAmt.toLocaleString('vi-VN')} đ`, size: 10, color: BRAND },
+  ]);
+  wsSum.getRow(4).height = 6;
+  const hSum = wsSum.getRow(5);
+  hSum.values = ['STT', 'CHI NHÁNH', 'SỐ NV', 'TỔNG GIỜ CÔNG', 'TỔNG CỘNG', 'THỰC LÃNH (đ)'];
+  styleHeaderRow(hSum);
+  wsSum.columns = [{ key: 'a', width: 8 }, { key: 'b', width: 30 }, { key: 'c', width: 10 }, { key: 'd', width: 18 }, { key: 'e', width: 18 }, { key: 'f', width: 20 }];
+  let rSum = 6;
+  let gW = 0, gGio = 0, gTong = 0, gThuc = 0, sttSum = 0;
+  for (const g of byBranch) {
+    sttSum += 1;
+    const gio = g.rows.reduce((a, x) => a + (Number(x?.standard_hours) || 0), 0);
+    const tong = g.rows.reduce((a, x) => a + (Number(x?.tong_cong) || (Number(x?.standard_pay) || 0) + (Number(x?.luong_cb) || 0) + (Number(x?.ot_extra) || 0) + (Number(x?.bonus) || 0)), 0);
+    const thuc = g.rows.reduce((a, x) => a + (Number(x?.thuc_lanh ?? x?.net_pay) || 0), 0);
+    gW += g.rows.length; gGio += gio; gTong += tong; gThuc += thuc;
+    const row = wsSum.getRow(rSum);
+    row.values = [sttSum, branchLabelOf(g.key), g.rows.length, gio, tong, thuc];
+    row.eachCell((cell, col) => bodyCell(cell, { align: col === 1 || col === 3 ? 'center' : 'right', fmt: col === 4 ? hoursFmt : col >= 5 ? money : undefined, bold: col === 6 }));
+    row.height = 17;
+    rSum += 1;
+  }
+  grandTotalRow(wsSum, rSum, 'TỔNG TOÀN CÔNG TY', { 3: gW, 4: gGio, 5: gTong, 6: gThuc }, { 4: hoursFmt, 5: money, 6: money });
+  pageSetup(wsSum, 'F', `Payment tổng hợp ${monthLabel(period)}`);
+  // Mỗi chi nhánh 1 sheet
+  for (const g of byBranch) {
+    const sheetName = String(branchLabelOf(g.key)).replace(/[\\/:*?"<>|]/g, '_').slice(0, 31) || 'CN';
+    const ws = wb.addWorksheet(sheetName, { views: [{ state: 'frozen', ySplit: 5 }] });
+    addTitleBlock(ws, 'S', [
+      { text: 'CÔNG TY TNHH UNIQUE&NICHE GROUP', size: 10, color: BRAND_DARK },
+      { text: `PAYMENT — ${branchLabelOf(g.key).toUpperCase()}`, size: 14, color: DARK },
+      { text: `${monthLabel(period).toUpperCase()}  •  ${g.rows.length} phiếu`, size: 10, color: BRAND },
+    ]);
+    ws.getRow(4).height = 6;
+    const headerRow = ws.getRow(5);
+    headerRow.values = COLS;
+    styleHeaderRow(headerRow);
+    ws.columns = [
+      { key: 'stt', width: 6 }, { key: 'code', width: 12 }, { key: 'name', width: 26 }, { key: 'branch', width: 24 },
+      { key: 'gio', width: 11 }, { key: 'lca', width: 15 }, { key: 'lcb', width: 15 }, { key: 'ot', width: 12 },
+      { key: 'bonus', width: 13 }, { key: 'tong', width: 16 }, { key: 'kpi', width: 15 }, { key: 'ung', width: 14 },
+      { key: 'dp', width: 14 }, { key: 'tl', width: 17 }, { key: 'thuc', width: 18 },
+      { key: 'bank', width: 18 }, { key: 'acct', width: 22 }, { key: 'holder', width: 28 }, { key: 'status', width: 13 },
+    ];
+    ws.autoFilter = { from: 'A5', to: `S5` };
+    let rowIdx = 6, stt = 0, bTong = 0, bThuc = 0, zebraOn = false;
+    for (const s of g.rows) {
+      stt += 1; zebraOn = !zebraOn;
+      const kpi = (Number(s?.tru_kpi) || 0) + (Number(s?.deduction) || 0);
+      const tongCong = Number(s?.tong_cong) || (Number(s?.standard_pay) || 0) + (Number(s?.luong_cb) || 0) + (Number(s?.ot_extra) || 0) + (Number(s?.bonus) || 0);
+      const tl = tongCong - kpi;
+      const thuc = Number(s?.thuc_lanh ?? s?.net_pay) || 0;
+      bTong += tongCong; bThuc += thuc;
+      const row = ws.getRow(rowIdx);
+      row.values = [stt, s?.employee_code, s?.full_name, branchLabelOf(g.key),
+        Number(s?.standard_hours) || 0, Number(s?.standard_pay) || 0, Number(s?.luong_cb) || 0, Number(s?.ot_extra) || 0, Number(s?.bonus) || 0,
+        tongCong, kpi, Number(s?.ung_luong) || 0, Number(s?.dong_phuc) || 0, tl, thuc,
+        s?.bank_name || '—', s?.bank_account || '—', s?.bank_holder || s?.full_name || '—', String(s?.status || '')];
+      row.eachCell((cell, col) => {
+        bodyCell(cell, { align: col === 1 || col === 2 ? 'center' : (col >= 6 && col <= 15 ? 'right' : 'left'), fmt: col === 5 ? hoursFmt : col >= 6 && col <= 15 ? money : undefined, bold: col === 15 });
+      });
+      row.getCell(17).font = { size: 9, bold: true, name: 'Consolas', color: { argb: 'FF' + DARK } };
+      zebra(ws, rowIdx, 19, zebraOn);
+      row.height = 17;
+      rowIdx += 1;
+    }
+    subtotalRow(ws, rowIdx, `CỘNG ${branchLabelOf(g.key).toUpperCase()}`, { 10: bTong, 15: bThuc }, { 10: money, 15: money });
+    pageSetup(ws, 'S', `Payment ${branchLabelOf(g.key)} ${monthLabel(period)}`);
+  }
+  return toBuffer(wb);
+}
+
+/* ============================================================
    06_THANH_TOAN — Đã chuyển khoản (phiếu PAID)
    ============================================================ */
 export async function buildThanhToanXlsx(period: string, slips: any[], empMap: Map<string, any>): Promise<Buffer> {

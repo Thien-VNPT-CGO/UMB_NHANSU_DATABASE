@@ -25,7 +25,7 @@ import {
   payslipDriveSegments,
   payslipDriveSegments04,
 } from '@ubm/shared';
-import { getPayslip04DriveRootId, getPayslipDriveRootId } from '../config/drive-folders.js';
+import { getPayslip04DriveRootId, getPayslipDriveRootId, getPaymentExportDriveRootId } from '../config/drive-folders.js';
 import { getDriveStorage } from './drive-storage.service.js';
 import { buildPayslipPdf } from './payslip-pdf.service.js';
 import {
@@ -34,6 +34,7 @@ import {
   buildDoiSoatCongXlsx,
   buildKyLuongXlsx,
   buildThanhToanXlsx,
+  buildPaymentExportXlsx,
   buildTinhLuongXlsx,
   payrollExportFileNames,
 } from './payroll-exports.service.js';
@@ -382,6 +383,35 @@ export class PayslipDriveService {
       });
     } catch { /* best-effort */ }
     return result;
+  }
+
+  /** Xuất FILE PAYMENT (đủ cột, theo chi nhánh) lên Drive root riêng (1hbE...).
+   * File: <ROOT>/THANG_MM_YYYY/PAYMENT_TMM.YYYY.xlsx — sheet TONGHOP + 1 sheet/chi nhánh.
+   * Gồm phiếu CONFIRMED (chờ CK) + PAID (đã CK). */
+  async exportPaymentToDrive(period: string, actorId?: string): Promise<{ ok: boolean; period: string; rootId: string; folder: string; fileName: string; link?: string; fileId?: string; count?: number; total?: number; error?: string; at: string }> {
+    const at = new Date().toISOString();
+    const rootId = getPaymentExportDriveRootId();
+    const month = monthFolderName(period);
+    const _p = parsePeriod(period);
+    const mm = _p ? String(_p.month).padStart(2, '0') : '??';
+    const yyyy = _p ? String(_p.year) : '????';
+    const fileName = `PAYMENT_T${mm}.${yyyy}.xlsx`;
+    try {
+      const { slips, empMap } = await this.latestSlipsOfPeriod(period);
+      const buf = await buildPaymentExportXlsx(period, slips, empMap);
+      const drive = getDriveStorage();
+      if (!drive.isConfigured()) throw new Error('DRIVE_NOT_CONFIGURED: Google Drive chưa được cấu hình trên server!');
+      const up = await drive.uploadBuffer(fileName, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buf, [month], rootId, { upsert: true, appProperties: { kind: 'payment-export', period } });
+      const target = (slips || []).filter(s => ['CONFIRMED', 'PAID'].includes(String(s?.status || '').toUpperCase()));
+      const total = target.reduce((acc, x) => acc + (Number(x?.thuc_lanh ?? x?.net_pay) || 0), 0);
+      try {
+        const settings = (await this.repo.getSystemSettings().catch(() => ({}))) || {};
+        await this.repo.updateSystemSettings({ ...settings, [`paymentExportSync:${period}`]: { at, by: actorId || '', ok: true, rootId, fileName, link: up.viewUrl, count: target.length, total } });
+      } catch { /* best-effort */ }
+      return { ok: true, period, rootId, folder: month, fileName, link: up.viewUrl, fileId: up.fileId, count: target.length, total, at };
+    } catch (err: any) {
+      return { ok: false, period, rootId, folder: month, fileName, error: String(err?.message || err).slice(0, 400), at };
+    }
   }
 
   /** Trạng thái đồng bộ Drive của kỳ (đọc từ system settings). */
