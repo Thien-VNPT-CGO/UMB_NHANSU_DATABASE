@@ -7874,11 +7874,29 @@ export function App() {
                           </div>
                         </div>
 
+                        {/* GHI CHÚ CỦA KẾ TOÁN — luôn hiển thị ngay trên phiếu để NV đọc trước khi ký */}
+                        {(() => {
+                          const noteKetoan = String(slip.input_note || slip.note || slip.note_text || '').trim();
+                          return (
+                            <div style={{ backgroundColor: noteKetoan ? '#FFFBEB' : '#F8FAFC', border: `1.5px solid ${noteKetoan ? '#FCD34D' : '#E2E8F0'}`, borderRadius: '10px', padding: '12px 14px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                                <span style={{ fontSize: '16px' }}>📝</span>
+                                <strong style={{ fontSize: '13px', color: noteKetoan ? '#92400E' : '#64748B' }}>GHI CHÚ CỦA KẾ TOÁN (khi tính lương)</strong>
+                              </div>
+                              {noteKetoan ? (
+                                <p style={{ fontSize: '13px', color: '#78350F', margin: 0, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{noteKetoan}</p>
+                              ) : (
+                                <p style={{ fontSize: '12px', color: '#94A3B8', margin: 0 }}>Kỳ này Kế toán không ghi chú gì thêm.</p>
+                              )}
+                            </div>
+                          );
+                        })()}
+
                         {/* GHI CHÚ PHẠT / KHẤU TRỪ — hiển thị đầy đủ để nhân viên biết lý do bị trừ */}
                         {(() => {
                           const kpiVal = Number(slip.tru_kpi) || 0;
                           const phatVal = Number(slip.deduction) || 0;
-                          const noteVal = String(slip.input_note || '').trim();
+                          const noteVal = String(slip.input_note || slip.note || '').trim();
                           const absentVal = Number(slip.absent_shifts) || 0;
                           const hasFine = kpiVal > 0 || phatVal > 0 || noteVal.length > 0 || absentVal > 0;
                           return (
