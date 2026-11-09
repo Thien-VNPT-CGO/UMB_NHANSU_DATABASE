@@ -1016,10 +1016,12 @@ export class MockSheetsAdapter implements ISheetsRepository {
     // Trạng thái phiếu TỪNG PHIẾU (DRAFT -> PUBLISHED -> CONFIRMED -> PAID) do
     // publishSlip/markSlipPaid quản lý theo chữ ký 3 bên — KHÔNG được gán hàng
     // loạt ở đây, nếu không sẽ bỏ qua chữ ký GĐ/NV (sai quy trình xuất phiếu).
+    // Ngoại lệ: QUAY VỀ BƯỚC TRƯỚC (rollback có lý do) → cho phép về DRAFT từ bất kỳ trạng thái nào.
     const RUN_ORDER = ['DRAFT', 'RECONCILED', 'APPROVED', 'PUBLISHED', 'PAID'];
     const fromIdx = RUN_ORDER.indexOf(String(run.status || 'DRAFT'));
     const toIdx = RUN_ORDER.indexOf(String(status));
-    if (fromIdx >= 0 && toIdx >= 0 && toIdx !== fromIdx && toIdx !== fromIdx + 1) {
+    const isRollbackToDraft = String(status) === 'DRAFT';
+    if (!isRollbackToDraft && fromIdx >= 0 && toIdx >= 0 && toIdx !== fromIdx && toIdx !== fromIdx + 1) {
       throw new Error(`RUN_INVALID_TRANSITION: không thể chuyển kỳ lương từ ${run.status} sang ${status} — phải theo thứ tự DRAFT -> RECONCILED -> APPROVED -> PUBLISHED -> PAID!`);
     }
 
@@ -1044,8 +1046,9 @@ export class MockSheetsAdapter implements ISheetsRepository {
 
   async getPayslipsForEmployee(employeeId: string): Promise<PayslipItem[]> {
     this.checkErrors();
-    // NV thấy phiếu đã gửi (PUBLISHED), đã xác nhận (CONFIRMED) và đã chi trả (PAID).
-    return this.payslips.filter(p => p.employee_id === employeeId && (p.status === 'PUBLISHED' || p.status === 'CONFIRMED' || p.status === 'PAID'));
+    // NV thấy phiếu đã gửi (PUBLISHED), đang khiếu nại (COMPLAINED), đã xác nhận
+    // (CONFIRMED) và đã chi trả (PAID) để theo dõi xử lý khiếu nại.
+    return this.payslips.filter(p => p.employee_id === employeeId && (p.status === 'PUBLISHED' || p.status === 'COMPLAINED' || p.status === 'CONFIRMED' || p.status === 'PAID'));
   }
 
   async getPayslipsByRunId(runId: string): Promise<PayslipItem[]> {

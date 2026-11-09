@@ -2,7 +2,9 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig({
-  base: './',
+  // Base tuyệt đối cho cổng nhân viên "/" (KHÔNG dùng './' để tránh lỗi
+  // Service Worker scope khi deploy phía sau Nginx/Express subpath).
+  base: '/',
   plugins: [react()],
   server: {
     port: 3006,

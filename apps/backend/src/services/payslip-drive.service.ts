@@ -21,9 +21,11 @@ import {
   monthShortFolder,
   parsePeriod,
   payslipDriveFileName,
+  payslipDriveFileName04,
   payslipDriveSegments,
+  payslipDriveSegments04,
 } from '@ubm/shared';
-import { getPayslipDriveRootId } from '../config/drive-folders.js';
+import { getPayslip04DriveRootId, getPayslipDriveRootId } from '../config/drive-folders.js';
 import { getDriveStorage } from './drive-storage.service.js';
 import { buildPayslipPdf } from './payslip-pdf.service.js';
 import {
@@ -127,26 +129,30 @@ export class PayslipDriveService {
     return { latestRun: latest, slips: [...byEmp.values()], empMap, runs: inPeriod };
   }
 
-  /** Đồng bộ 1 phiếu PDF lên Drive (chỉ phiếu PAID). Trả trạng thái, không ném lỗi ra ngoài. */
+  /** Đồng bộ 1 phiếu PDF lên Drive root 04 (CONFIRMED hoặc PAID). Trả trạng thái, không ném lỗi ra ngoài.
+   *  Cây: 04. PHIẾU LƯƠNG NHÂN VIÊN / THANG_10 / CHI_NHANH_130 / PHIEU_LUONG_T10.2026_<TÊN NV>.pdf
+   *  - CONFIRMED: NV đã xác nhận đúng + ký tên → phiếu trả về KT (chờ CK) + PDF lên Drive ngay.
+   *  - PAID: đã chuyển khoản → cập nhật PDF chính thức lên cùng cây 04. */
   async syncSlipToDrive(itemId: string): Promise<{ ok: boolean; fileId?: string; link?: string; error?: string }> {
     try {
       const slip = await this.repo.getPayslipById(itemId);
       if (!slip) return { ok: false, error: 'PAYSLIP_NOT_FOUND' };
-      if (String(slip.status).toUpperCase() !== 'PAID') {
-        return { ok: false, error: 'Phiếu chưa ở trạng thái ĐÃ CHUYỂN KHOẢN — chỉ đồng bộ phiếu đã thanh toán.' };
+      const status = String(slip.status).toUpperCase();
+      if (status !== 'CONFIRMED' && status !== 'PAID') {
+        return { ok: false, error: 'Phiếu chưa được nhân viên xác nhận đúng (CONFIRMED) hoặc chưa ĐÃ CHUYỂN KHOẢN (PAID) — chỉ đồng bộ phiếu đã xác nhận/đã thanh toán lên Drive 04.' };
       }
       const emp = await this.repo.getEmployeeById(String(slip.employee_id)).catch(() => null);
       const branchId = String(emp?.default_branch_id || slip.branch_id || '');
       const branchName = branchLabelOf(branchId);
       const blockLabel = blockLabelOf(emp?.group, branchId);
       const pdf = await buildPayslipPdf({ slip, branchLabel: branchName, blockLabel });
-      const segments = payslipDriveSegments(slip.period, branchId, branchLabelOf(branchId), String(slip.full_name || ''));
-      const fileName = payslipDriveFileName(slip.period, String(slip.employee_code || 'NV'));
+      const segments = payslipDriveSegments04(slip.period, branchId, branchLabelOf(branchId));
+      const fileName = payslipDriveFileName04(slip.period, String(slip.full_name || ''), String(slip.employee_code || 'NV'));
       const drive = getDriveStorage();
-      const rootId = getPayslipDriveRootId();
+      const rootId = getPayslip04DriveRootId();
       const up = await drive.uploadBuffer(fileName, 'application/pdf', pdf, segments, rootId, {
         upsert: true,
-        appProperties: { kind: 'payslip', period: String(slip.period || ''), employee_code: String(slip.employee_code || '') },
+        appProperties: { kind: 'payslip04', period: String(slip.period || ''), employee_code: String(slip.employee_code || ''), employee_name: String(slip.full_name || '') },
       });
       await this.repo.updatePayslip(itemId, {
         drive_pdf_id: up.fileId,
@@ -357,9 +363,9 @@ export class PayslipDriveService {
         result.files.cauHinhLuongXlsx = await uploadXlsx(buf, payrollExportFileNames.cauHinhLuong(period), [month, '07_CAU_HINH_LUONG']);
       } catch (e: any) { exportErrors.push(`Cấu hình lương: ${String(e?.message || e).slice(0, 200)}`); }
       if (exportErrors.length) result.exportErrors = exportErrors;
-      // 8) PDF phiếu lương (PAID) → PHIEU_LUONG/THANG_MM/CN/TÊN NV
-      const paidSlips = slips.filter(s => String(s?.status).toUpperCase() === 'PAID');
-      for (const s of paidSlips) {
+      // 8) PDF phiếu lương (CONFIRMED + PAID) → 04/THANG_MM/CHI_NHANH_*/<TÊN NV>.pdf
+      const syncableSlips = slips.filter(s => ['CONFIRMED', 'PAID'].includes(String(s?.status).toUpperCase()));
+      for (const s of syncableSlips) {
         const r = await this.syncSlipToDrive(String(s.item_id));
         if (r.ok) result.slips.pdfSynced += 1; else result.slips.pdfFailed += 1;
       }
@@ -384,6 +390,7 @@ export class PayslipDriveService {
     return {
       period,
       rootId: getPayslipDriveRootId(),
+      root04Id: getPayslip04DriveRootId(),
       monthFolder: monthFolderName(period),
       last: settings[`payslipDriveSync:${period}`] || null,
       lastAny: settings.payslipDriveSyncLast || null,

@@ -1,4 +1,4 @@
-export type PayrollRunStatus = 'DRAFT' | 'RECONCILED' | 'APPROVED' | 'PUBLISHED' | 'PAID' | 'CONFIRMED';
+export type PayrollRunStatus = 'DRAFT' | 'RECONCILED' | 'APPROVED' | 'PUBLISHED' | 'PAID' | 'CONFIRMED' | 'COMPLAINED';
 
 export interface PayrollRun {
   run_id: string;
@@ -46,15 +46,17 @@ export type PayslipStage =
   | 'CHO_GD_DUYET'     // KT đã ký, chờ Giám đốc duyệt
   | 'CHO_GUI_NV'       // GĐ đã duyệt, chờ KT gửi NV
   | 'CHO_NV_KY'        // đã gửi, chờ NV ký
+  | 'BI_KHIEU_NAI'     // NV khiếu nại (phiếu trả về KT kiểm tra lại)
   | 'CHO_CHUYEN_KHOAN' // NV đã ký — phiếu KHÓA, chờ KT chuyển khoản (hiện QR)
   | 'PAID';            // KT đã chuyển khoản — khóa hoàn toàn
 
 export function payslipStage(
-  slip: Pick<PayslipItem, 'status' | 'sign_lap' | 'sign_giamdoc' | 'sign_nhanvien'> | null | undefined,
+  slip: Pick<PayslipItem, 'status' | 'sign_lap' | 'sign_giamdoc' | 'sign_nhanvien'> & { complaint_status?: string } | null | undefined,
 ): PayslipStage {
   if (!slip) return 'DRAFT';
   const st = String(slip.status || '').toUpperCase();
   if (st === 'PAID') return 'PAID';
+  if (st === 'COMPLAINED' || String((slip as any).complaint_status || '').toUpperCase() === 'PENDING') return 'BI_KHIEU_NAI';
   if (st === 'CONFIRMED' || slip.sign_nhanvien) return 'CHO_CHUYEN_KHOAN';
   if (st === 'PUBLISHED') return 'CHO_NV_KY';
   if (slip.sign_lap && slip.sign_giamdoc) return 'CHO_GUI_NV';
@@ -67,6 +69,7 @@ export const PAYSLIP_STAGE_LABEL: Record<PayslipStage, string> = {
   CHO_GD_DUYET: 'Chờ Giám đốc ký duyệt',
   CHO_GUI_NV: 'Chờ Kế toán gửi nhân viên',
   CHO_NV_KY: 'Chờ nhân viên ký nhận',
+  BI_KHIEU_NAI: 'NV khiếu nại — chờ Kế toán kiểm tra lại',
   CHO_CHUYEN_KHOAN: 'Chờ chuyển khoản (đã khóa phiếu)',
   PAID: 'Đã chuyển khoản',
 };
@@ -77,6 +80,7 @@ export const PAYSLIP_STAGE_STEPS: Array<{ key: PayslipStage; label: string }> = 
   { key: 'CHO_GD_DUYET', label: 'Giám đốc ký' },
   { key: 'CHO_GUI_NV', label: 'KT gửi NV' },
   { key: 'CHO_NV_KY', label: 'NV ký nhận' },
+  { key: 'BI_KHIEU_NAI', label: 'NV khiếu nại' },
   { key: 'CHO_CHUYEN_KHOAN', label: 'Chờ chuyển khoản' },
   { key: 'PAID', label: 'Đã chuyển khoản' },
 ];
@@ -147,6 +151,20 @@ export interface PayslipItem {
   /** Thời điểm kế toán xác nhận đã chuyển khoản. */
   slip_paid_at?: string;
   slip_paid_by?: string;
+  // --- Khiếu nại phiếu lương (NV gửi khi phiếu PUBLISHED có sai) ---
+  /** Lý do khiếu nại (VD: THIẾU CÔNG, SAI ĐƠN GIÁ, SAI KHẤU TRỪ...). */
+  complaint_reason?: string;
+  /** Nội dung khiếu nại chi tiết. */
+  complaint_detail?: string;
+  /** Thời điểm NV gửi khiếu nại. */
+  complaint_at?: string;
+  /** ID NV khiếu nại. */
+  complaint_by?: string;
+  /** NONE | PENDING | RESOLVED — PENDING = phiếu đã trả về KT kiểm tra lại. */
+  complaint_status?: 'NONE' | 'PENDING' | 'RESOLVED';
+  /** Thời điểm KT xử lý xong khiếu nại (hoàn phiếu về DRAFT). */
+  complaint_resolved_at?: string;
+  complaint_resolved_by?: string;
   // --- Đồng bộ Google Drive (PDF phiếu lương sau khi Đã Chuyển Khoản) ---
   /** ID file PDF trên Drive. */
   drive_pdf_id?: string;

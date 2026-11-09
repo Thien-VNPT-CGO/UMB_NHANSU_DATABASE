@@ -596,15 +596,24 @@ export class PayrollService {
    * tất gần nhất; bước sau chỉ `open` khi bước trước `done`.
    *
    *   1 Đối soát công → 2 BCC → 3 Tính lương → 4 Payment (bảng lương) → 5 Kỳ lương → 6 Phiếu lương → 7 Thanh toán
+   *
+   * Khóa theo tháng (theo tùy tháng / realtime):
+   *  - Tháng đã hết (period < tháng VN hiện tại) → monthLocked = true: TOÀN BỘ bước
+   *    khóa (chỉ xem). Tháng mới/hiện tại → không khóa theo tháng, chỉ khóa tuần tự.
+   *  - Kế toán mở khóa tạm (rollback có lý do) → monthUnlock ghi vào system settings,
+   *    các lần đọc sau thấy unlock cho đến khi kế toán khóa lại (hoặc hết rollback).
+   *  - Mỗi bước kèm previousStepId/previousTitle/canRollback để UI hiện nút
+   *    "↩ Quay về bước trước đó" khi bước sai.
    */
   async getWorkflowStatus(period: string) {
     // Bảng công/BCC lấy đúng nguồn 2 tab Finance đang hiển thị. Cache 45s của
     // getFinanceTimesheet được xóa ngay khi có ghi công/ca/lương (app.ts +
     // server.ts) nên số liệu luôn là thời điểm hiện tại, không trễ 60s.
-    const [timesheet, periodData, runsAll] = await Promise.all([
+    const [timesheet, periodData, runsAll, settings] = await Promise.all([
       this.getFinanceTimesheet(period, '*').catch(() => null as any),
       this.getPeriodSlips(period).catch(() => ({ run: null, slips: [] } as any)),
       this.repo.listPayrollRuns().catch(() => [] as any[]),
+      (this.repo as any)?.getSystemSettings?.().catch(() => ({})),
     ]);
 
     const totals: any = (timesheet as any)?.totals || {};
@@ -666,6 +675,14 @@ export class PayrollService {
     const periodOpen = calculated && (['APPROVED', 'PUBLISHED', 'PAID'].includes(runStatus) || publishedCount > 0);
     const allSigned = slipCount > 0 && signedCount === slipCount;
     const allPaid = slipCount > 0 && paidCount === slipCount;
+    const complainedCount = slips.filter(s => slipStatus(s) === 'COMPLAINED').length;
+
+    // --- Khóa theo tháng: tháng đã hết (period < tháng VN hiện tại) thì khóa toàn bộ.
+    const vnCurrent = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7);
+    const isPastMonth = String(period) < vnCurrent;
+    const isCurrentMonth = String(period) === vnCurrent;
+    const unlockInfo: any = (settings as any)?.[`payrollMonthUnlock:${period}`] || null;
+    const monthLocked = isPastMonth && !unlockInfo;
 
     const raw = [
       {
@@ -699,8 +716,8 @@ export class PayrollService {
         completedAt: periodOpen ? (maxTime(lastSlipPublishedAt, run?.approved_at, run?.published_at, run?.paid_at) || String(run?.updated_at || '')) : '',
       },
       {
-        id: 'fin-payslips', order: 6, title: 'Phiếu lương (KT ký → GĐ duyệt → NV ký)', done: allSigned,
-        stat: slipCount ? `${signedCount}/${slipCount} phiếu NV đã ký` : 'Chưa có phiếu',
+        id: 'fin-payslips', order: 6, title: 'Phiếu lương (KT ký → GĐ duyệt → NV ký / khiếu nại)', done: allSigned,
+        stat: slipCount ? `${signedCount}/${slipCount} phiếu NV đã ký${complainedCount ? ` · ${complainedCount} khiếu nại chờ KT kiểm tra lại` : ''}` : 'Chưa có phiếu',
         reason: allSigned ? '' : (periodOpen ? 'Còn phiếu chưa được nhân viên ký xác nhận.' : 'Kỳ lương cần được DUYỆT/PHÁT HÀNH trước khi ký & phát hành phiếu lương.'),
         completedAt: allSigned ? lastSlipConfirmedAt : '',
       },
@@ -711,9 +728,186 @@ export class PayrollService {
         completedAt: allPaid ? lastSlipPaidAt : '',
       },
     ];
-    // Khóa TUẦN TỰ ở backend: bước sau chỉ mở khi bước trước đã hoàn tất.
-    const steps = raw.map((s, i) => ({ ...s, open: i === 0 ? true : !!raw[i - 1].done }));
-    return { period, runId: run?.run_id || null, steps, generatedAt: new Date().toISOString() };
+    // Khóa TUẦN TỰ realtime: bước sau chỉ mở khi bước trước đã hoàn tất.
+    // Tháng đã hết (monthLocked) → khóa toàn bộ các bước (kể cả bước đã xong / đang xử lý).
+    // Tháng mới/hiện tại → không khóa theo tháng, chỉ khóa tuần tự như cũ.
+    const steps = raw.map((s, i) => {
+      const prev = i > 0 ? raw[i - 1] : null;
+      const sequentialOpen = i === 0 ? true : !!prev?.done;
+      const lockedDueToMonth = monthLocked;
+      const open = monthLocked ? false : sequentialOpen;
+      const locked = monthLocked ? true : (!sequentialOpen || !!s.done);
+      return {
+        ...s,
+        open,
+        locked,
+        lockedDueToMonth,
+        previousStepId: prev?.id || null,
+        previousTitle: prev?.title || null,
+        canRollback: i > 0 && (!!s.done || monthLocked || !!prev?.done),
+        canGoBack: i > 0,
+      };
+    });
+    return {
+      period, runId: run?.run_id || null, steps, generatedAt: new Date().toISOString(),
+      periodMeta: {
+        currentPeriod: vnCurrent,
+        isCurrentMonth,
+        isPastMonth,
+        isFutureMonth: String(period) > vnCurrent,
+        monthLocked,
+        monthUnlock: unlockInfo || null,
+        complainedCount,
+      },
+    };
+  }
+
+  /**
+   * QUAY VỀ BƯỚC TRƯỚC ĐÓ khi bước hiện tại sai (realtime, có lý do, theo tùy tháng).
+   *  - Hoàn phiếu đã gửi/CONFIRMED/COMPLAINED về DRAFT (giữ chữ ký GĐ, xóa chữ ký NV),
+   *    run PUBLISHED/APPROVED/PAID về DRAFT để tính/phát hành lại. PAID không rollback
+   *    trực tiếp (đã chuyển tiền thật) — phải xử lý tay ngoài hệ thống.
+   *  - Nếu tháng đã khóa (hết tháng) mà KT rollback → tự ghi monthUnlock tạm thời để
+   *    các bước mở lại tuần tự, kèm lý do + người thực hiện (audit).
+   *  - Steps 1-2 (Đối soát/BCC) là dữ liệu dẫn xuất từ ca/điểm danh nên không "xóa"
+   *    trạng thái — rollback về 1-2 sẽ hoàn phiếu/run về DRAFT để KT sửa nguồn rồi tính lại.
+   */
+  async rollbackWorkflow(period: string, toStepId: string, actorId: string, reason?: string) {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) throw new Error('Kỳ lương phải dạng YYYY-MM (VD: 2026-10)!');
+    const STEP_ORDER: Record<string, number> = {
+      'fin-timesheet': 1, 'fin-bcc': 2, 'fin-calculate': 3, 'fin-payroll-sheet': 4,
+      'fin-payroll-periods': 5, 'fin-payslips': 6, 'fin-payment': 7,
+    };
+    const toOrder = STEP_ORDER[String(toStepId || '')];
+    if (!toOrder) throw new Error(`UNKNOWN_STEP: bước ${toStepId} không thuộc quy trình kế toán!`);
+    const rsn = String(reason || '').trim().slice(0, 500);
+    if (!rsn) throw new Error('MISSING_REASON: vui lòng ghi lý do quay về bước trước!');
+    const { slips, run } = await this.getPeriodSlips(period);
+    const list: any[] = (slips || []).filter(Boolean);
+    const paidSlips = list.filter(s => String(s?.status || '').toUpperCase() === 'PAID');
+    if (paidSlips.length > 0 && toOrder <= 6) {
+      throw new Error(`PAID_LOCKED: còn ${paidSlips.length} phiếu đã chuyển khoản (PAID) — không quay về bước trước được. Hãy đối soát/thu hồi tiền ngoài hệ thống trước!`);
+    }
+    return singleWriterQueue.enqueue({
+      entityType: 'KY_LUONG',
+      entityId: period,
+      actorId,
+      priority: 'high',
+      execute: async () => {
+        let revertedSlips = 0;
+        for (const s of list) {
+          const st = String(s?.status || '').toUpperCase();
+          if (!['PUBLISHED', 'CONFIRMED', 'COMPLAINED', 'APPROVED', 'RECONCILED'].includes(st)) continue;
+          await this.repo.updatePayslip((s as any).item_id, {
+            status: 'DRAFT',
+            sign_lap: undefined,
+            sign_quanly: undefined,
+            sign_nhanvien: undefined,
+            slip_published_at: undefined,
+            slip_confirmed_at: undefined,
+            slip_paid_at: undefined,
+            slip_paid_by: undefined,
+            complaint_status: 'RESOLVED',
+            complaint_resolved_at: new Date().toISOString(),
+            complaint_resolved_by: actorId,
+          } as any).catch(() => null);
+          revertedSlips++;
+        }
+        if (run && ['APPROVED', 'PUBLISHED', 'PAID', 'RECONCILED'].includes(String((run as any).status || '').toUpperCase())) {
+          await this.repo.updatePayrollRunStatus((run as any).run_id, 'DRAFT' as any, actorId, {
+            approved_by: undefined,
+            approved_at: undefined,
+            published_by: undefined,
+            published_at: undefined,
+            paid_by: undefined,
+            paid_at: undefined,
+            reconciled_by: undefined,
+            reconciled_at: undefined,
+          } as any).catch(() => null);
+        }
+        // Mở khóa tạm tháng đã hết để KT quay về sửa (nếu đang bị khóa theo tháng).
+        const settings: any = await (this.repo as any)?.getSystemSettings?.().catch(() => ({})) || {};
+        const vnCurrent = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 7);
+        if (String(period) < vnCurrent) {
+          await (this.repo as any)?.updateSystemSettings?.({
+            ...settings,
+            [`payrollMonthUnlock:${period}`]: { at: new Date().toISOString(), by: actorId, reason: rsn, toStepId, toOrder },
+          }).catch(() => null);
+        }
+        await (this.repo as any)?.recordAuditLog?.({
+          actor_id: actorId,
+          action: 'PAYROLL_WORKFLOW_ROLLBACK',
+          target_type: 'KY_LUONG',
+          target_id: period,
+          detail: `Quay về bước ${toStepId} (order ${toOrder}). Hoàn ${revertedSlips} phiếu về DRAFT. Lý do: ${rsn}`,
+        } as any).catch(() => null);
+        this.notifySlipsChanged('workflow-rollback', { period, toStepId, revertedSlips });
+        this.invalidateFinanceTimesheetCache(period);
+        this.scheduleFinanceToSheetsSync(1_500);
+        const wf = await this.getWorkflowStatus(period).catch(() => null);
+        return { ok: true, period, toStepId, toOrder, revertedSlips, reason: rsn, workflow: wf };
+      },
+    }) as any;
+  }
+
+  /**
+   * Nhân viên KHIEU NAI phiếu lương đã được phát hành (PUBLISHED) → phiếu trả về Kế toán
+   * kiểm tra lại (status COMPLAINED, complaint_status PENDING). Kế toán xử lý bằng
+   * returnSlip (hoàn về DRAFT) rồi tính lại / gửi lại NV.
+   */
+  async complainSlip(itemId: string, employeeId: string, reason: string, detail: string) {
+    let complainedSlip: any = null;
+    const out = await singleWriterQueue.enqueue({
+      entityType: 'PHIEU_LUONG',
+      entityId: itemId,
+      actorId: employeeId,
+      priority: 'high',
+      execute: async () => {
+        const slip = await this.repo.getPayslipById(itemId);
+        if (!slip) throw new Error('PAYSLIP_NOT_FOUND');
+        if (String(slip.employee_id) !== String(employeeId) && String(slip.employee_code) !== String(employeeId)) {
+          throw new Error(ERROR_CODES.FORBIDDEN);
+        }
+        if (String(slip.status).toUpperCase() !== 'PUBLISHED') {
+          throw new Error(`SLIP_NOT_PUBLISHED: phiếu đang ở trạng thái ${slip.status}, chỉ khiếu nại được khi phiếu đã gửi đến bạn (PUBLISHED)!`);
+        }
+        const rsn = String(reason || '').trim().slice(0, 120);
+        const dtl = String(detail || '').trim().slice(0, 2000);
+        if (!rsn) throw new Error('MISSING_REASON: vui lòng chọn lý do khiếu nại!');
+        if (!dtl) throw new Error('MISSING_DETAIL: vui lòng ghi rõ khiếu nại của bạn!');
+        const updated = await this.repo.updatePayslip(itemId, {
+          status: 'COMPLAINED' as any,
+          complaint_reason: rsn,
+          complaint_detail: dtl,
+          complaint_at: new Date().toISOString(),
+          complaint_by: employeeId,
+          complaint_status: 'PENDING',
+          complaint_resolved_at: undefined,
+          complaint_resolved_by: undefined,
+        } as any);
+        complainedSlip = slip;
+        this.notifySlipsChanged('complain', { itemId });
+        if (this.io) {
+          try {
+            this.io.emit('payroll.complained', { itemId, period: slip.period, employeeId: slip.employee_id, employeeCode: slip.employee_code, fullName: slip.full_name, reason: rsn });
+          } catch { /* non-fatal */ }
+        }
+        this.scheduleFinanceToSheetsSync(1_500);
+        return updated;
+      },
+    });
+    if (complainedSlip && this.notificationsService) {
+      await this.notificationsService.sendNotification({
+        recipientIds: ['ALL'],
+        type: 'emp.payslip',
+        severity: 'SYSTEM',
+        title: `⚠️ Nhân viên ${complainedSlip.full_name} khiếu nại phiếu lương kỳ ${complainedSlip.period}!`,
+        summary: `${complainedSlip.full_name} (${complainedSlip.employee_code}) khiếu nại: ${String((out as any)?.complaint_reason || '')}. Phiếu đã trả về Kế toán để kiểm tra lại.`,
+        targetPath: '/fin_payslips',
+        actorId: employeeId,
+      }).catch(() => null);
+    }
+    return out;
   }
 
   // --- Công thức lương theo file Excel (Finance) ---
@@ -1287,6 +1481,9 @@ export class PayrollService {
           if (slip.status === 'CONFIRMED' || slip.status === 'PAID') {
             throw new Error('SLIP_LOCKED: phiếu đã xác nhận/chi trả, không ký lại!');
           }
+          if (String(slip.status).toUpperCase() === 'COMPLAINED') {
+            throw new Error('SLIP_COMPLAINED: phiếu đang bị nhân viên khiếu nại — Kế toán cần hoàn phiếu về DRAFT kiểm tra lại trước khi ký lại!');
+          }
           // Đã ký rồi (VD lần trước server ghi xong nhưng phản hồi bị timeout):
           // trả nguyên phiếu hiện tại thay vì báo lỗi — Giám đốc không phải
           // bấm lại nhiều lần và không lo ghi trùng chữ ký.
@@ -1310,10 +1507,23 @@ export class PayrollService {
         type: 'emp.payslip',
         severity: 'SYSTEM',
         title: `✍️ Nhân viên ${confirmedSlip.full_name} đã xác nhận phiếu lương!`,
-        summary: `${confirmedSlip.full_name} (${confirmedSlip.employee_code}) đã kiểm tra và ký xác nhận phiếu lương kỳ ${confirmedSlip.period}. Đã đủ 3 chữ ký, sẵn sàng quét mã QR chuyển khoản.`,
+        summary: `${confirmedSlip.full_name} (${confirmedSlip.employee_code}) đã kiểm tra và ký xác nhận phiếu lương kỳ ${confirmedSlip.period}. Đã đủ 3 chữ ký, phiếu trả về Kế toán, sẵn sàng quét mã QR chuyển khoản.`,
         targetPath: '/fin_payslips',
         actorId,
       }).catch(() => null);
+    }
+    // NV xác nhận đúng ký tên → phiếu trả về Kế toán + đồng bộ PDF lên Drive 04.
+    // Best-effort sau commit, không chặn phản hồi.
+    if (confirmedSlip && this.payslipDriveService) {
+      try {
+        const driveRes = await this.payslipDriveService.syncSlipToDrive(itemId);
+        (out as any).driveSync = driveRes;
+        if (!driveRes?.ok) {
+          console.warn('[payroll] Đồng bộ Drive 04 sau NV xác nhận thất bại:', driveRes?.error);
+        }
+      } catch (err: any) {
+        (out as any).driveSync = { ok: false, error: String(err?.message || err).slice(0, 300) };
+      }
     }
     return out;
   }
@@ -1521,10 +1731,11 @@ export class PayrollService {
     return out;
   }
 
-  /** Hoàn phiếu: thu hồi phiếu ĐÃ GỬI NV (chỉ PUBLISHED, chưa NV ký) về DRAFT khi gửi nhầm.
-   *  Phiếu CONFIRMED (NV đã ký) bị KHÓA — không hoàn được; PAID là trạng thái cuối.
+  /** Hoàn phiếu: thu hồi phiếu ĐÃ GỬI NV (PUBLISHED hoặc COMPLAINED khi NV khiếu nại) về DRAFT
+   *  để Kế toán kiểm tra lại / tính lại rồi gửi lại NV.
+   *  Phiếu CONFIRMED (NV đã ký đúng) bị KHÓA — không hoàn được; PAID là trạng thái cuối.
    *  Phiếu hoàn về xóa chữ ký Kế toán + NV + mốc thời gian để ký/phát hành lại từ đầu;
-   *  giữ chữ ký Giám đốc (nội dung đã được duyệt). */
+   *  giữ chữ ký Giám đốc (nội dung đã được duyệt). Khiếu nại được đánh RESOLVED. */
   async returnSlip(itemId: string, actorId: string) {
     // FIX deadlock hàng đợi đơn: xem signSlip.
     let returnedSlip: any = null;
@@ -1537,7 +1748,9 @@ export class PayrollService {
       execute: async () => {
         const slip = await this.repo.getPayslipById(itemId);
         if (!slip) throw new Error('PAYSLIP_NOT_FOUND');
-        if (slip.status !== 'PUBLISHED') throw new Error(`SLIP_NOT_RETURNABLE: phiếu đang ở trạng thái ${slip.status}. Phiếu NV đã ký (CONFIRMED) hoặc đã chuyển khoản (PAID) bị khóa, không hoàn được!`);
+        const st = String(slip.status).toUpperCase();
+        if (st !== 'PUBLISHED' && st !== 'COMPLAINED') throw new Error(`SLIP_NOT_RETURNABLE: phiếu đang ở trạng thái ${slip.status}. Phiếu NV đã ký (CONFIRMED) hoặc đã chuyển khoản (PAID) bị khóa, không hoàn được!`);
+        const wasComplained = st === 'COMPLAINED';
         const updated = await this.repo.updatePayslip(itemId, {
           status: 'DRAFT',
           sign_lap: undefined,
@@ -1547,6 +1760,9 @@ export class PayrollService {
           slip_confirmed_at: undefined,
           slip_paid_at: undefined,
           slip_paid_by: undefined,
+          complaint_status: wasComplained ? 'RESOLVED' : (slip as any).complaint_status,
+          complaint_resolved_at: wasComplained ? new Date().toISOString() : (slip as any).complaint_resolved_at,
+          complaint_resolved_by: wasComplained ? actorId : (slip as any).complaint_resolved_by,
         } as any);
         returnedSlip = slip;
         this.notifySlipsChanged('return', { itemId });
@@ -1558,12 +1774,13 @@ export class PayrollService {
       },
     });
     if (returnedSlip && this.notificationsService && returnedSlip.employee_id) {
+      const wasComplained = String((out as any)?.complaint_status || '').toUpperCase() === 'RESOLVED' || true;
       await this.notificationsService.sendNotification({
         recipientIds: [returnedSlip.employee_id],
         type: 'emp.payslip',
         severity: 'SYSTEM',
-        title: `↩️ Phiếu lương kỳ ${returnedSlip.period} đã được thu hồi!`,
-        summary: `Kế toán đã thu hồi phiếu lương kỳ ${returnedSlip.period} do gửi nhầm. Phiếu mới sẽ được gửi lại sau, bạn không cần ký phiếu cũ.`,
+        title: `↩️ Phiếu lương kỳ ${returnedSlip.period} đã được thu hồi để kiểm tra lại!`,
+        summary: `Kế toán đã thu hồi phiếu lương kỳ ${returnedSlip.period} để kiểm tra lại${wasComplained && (out as any)?.complaint_at ? ` sau khi bạn khiếu nại` : ''}. Phiếu mới sẽ được gửi lại sau, bạn không cần ký phiếu cũ.`,
         targetPath: '/notifs_salary',
         actorId,
       }).catch(() => null);

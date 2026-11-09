@@ -4,7 +4,7 @@
  * - Precache app shell + offline fallback.
  * - Navigation: network-first; asset tĩnh: stale-while-revalidate.
  */
-const VERSION = 'v2';
+const VERSION = 'v3';
 const CORE_CACHE = `ubm-admin-core-${VERSION}`;
 const RUNTIME_CACHE = `ubm-admin-runtime-${VERSION}`;
 const PRECACHE_URLS = [

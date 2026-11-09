@@ -27,6 +27,8 @@ const runDraft = {
   updated_at: '2026-10-31T00:00:00.000Z',
 };
 
+const CUR_MONTH = '2026-11';
+
 test('workflow: bước 1–5 dẫn xuất từ ca + phiếu thật, bước 6 mở khi đã phát hành phiếu', async () => {
   const svc = makeService({
     runs: [runDraft],
@@ -41,7 +43,7 @@ test('workflow: bước 1–5 dẫn xuất từ ca + phiếu thật, bước 6 m
     ],
   });
 
-  const wf: any = await svc.getWorkflowStatus('2026-10');
+  const wf: any = await svc.getWorkflowStatus(CUR_MONTH);
   const byId: any = Object.fromEntries(wf.steps.map((s: any) => [s.id, s]));
 
   assert.equal(byId['fin-timesheet'].done, true);
@@ -67,7 +69,7 @@ test('workflow: chỉ có công thức chưa tính lương KHÔNG được báo 
     slips: [],
   });
 
-  const wf: any = await svc.getWorkflowStatus('2026-10');
+  const wf: any = await svc.getWorkflowStatus(CUR_MONTH);
   const byId: any = Object.fromEntries(wf.steps.map((s: any) => [s.id, s]));
 
   assert.equal(byId['fin-timesheet'].done, true);
@@ -110,4 +112,48 @@ test('workflow: tất cả phiếu PAID → bước 7 hoàn tất với mốc ch
   // 03:00 (sau khi phiếu cuối đã chi trả 02:30) — không phải "now" mỗi lần đọc.
   assert.equal(byId['fin-payment'].completedAt, '2026-11-02T03:00:00.000Z');
   assert.equal(byId['fin-payment'].stat, '2/2 phiếu đã chuyển');
+});
+
+test('workflow: tháng đã hết (quá khứ) thì khóa toàn bộ bước; tháng mới/hiện tại không khóa theo tháng', async () => {
+  const svcPast = makeService({
+    runs: [runDraft],
+    timesheet: { totals: { totalShifts: 4, full: 3, partial: 1, absent: 0 }, rows: [] },
+    run: runDraft,
+    slips: [{ run_id: 'R1', employee_id: 'E1', status: 'DRAFT', standard_hours: 5, net_pay: 150000 }],
+  });
+  const wfPast: any = await svcPast.getWorkflowStatus('2026-10');
+  assert.equal(wfPast.periodMeta.isPastMonth, true);
+  assert.equal(wfPast.periodMeta.monthLocked, true);
+  assert.equal(wfPast.steps.every((s: any) => s.locked), true);
+  assert.equal(wfPast.steps.every((s: any) => s.open === false), true);
+  assert.equal(wfPast.steps.every((s: any) => s.lockedDueToMonth), true);
+
+  const svcNow = makeService({
+    runs: [runDraft],
+    timesheet: { totals: { totalShifts: 4, full: 3, partial: 1, absent: 0 }, rows: [] },
+    run: runDraft,
+    slips: [{ run_id: 'R1', employee_id: 'E1', status: 'DRAFT', standard_hours: 5, net_pay: 150000 }],
+  });
+  const wfNow: any = await svcNow.getWorkflowStatus(CUR_MONTH);
+  assert.equal(wfNow.periodMeta.monthLocked, false);
+  assert.equal(wfNow.periodMeta.isCurrentMonth, true);
+  assert.equal(wfNow.steps.every((s: any) => s.lockedDueToMonth === false), true);
+  assert.equal(wfNow.steps[0].open, true);
+  assert.equal(wfNow.steps[0].previousStepId, null);
+  assert.equal(wfNow.steps[1].previousStepId, 'fin-timesheet');
+});
+
+test('workflow: tháng đã hết nhưng đã mở khóa tạm (rollback) thì không còn khóa theo tháng', async () => {
+  const repo: any = {
+    listPayrollRuns: async () => [runDraft],
+    getSystemSettings: async () => ({ 'payrollMonthUnlock:2026-10': { at: '2026-11-05T00:00:00.000Z', by: 'ADM_001', reason: 'sửa sai', toStepId: 'fin-calculate' } }),
+  };
+  const svc: any = new PayrollService(repo);
+  svc.getFinanceTimesheet = async () => ({ totals: { totalShifts: 4, full: 3, partial: 1, absent: 0 }, rows: [] });
+  svc.getPeriodSlips = async () => ({ run: runDraft, slips: [{ run_id: 'R1', employee_id: 'E1', status: 'DRAFT' }] });
+
+  const wf: any = await svc.getWorkflowStatus('2026-10');
+  assert.equal(wf.periodMeta.monthLocked, false);
+  assert.equal(wf.periodMeta.monthUnlock.by, 'ADM_001');
+  assert.equal(wf.steps[0].open, true);
 });

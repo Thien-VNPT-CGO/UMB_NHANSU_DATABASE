@@ -38,6 +38,7 @@ const STAGE_COLORS: Record<PayslipStage, { bg: string; fg: string }> = {
   CHO_GD_DUYET: { bg: '#FEF3C7', fg: '#92400E' },
   CHO_GUI_NV: { bg: '#E0E7FF', fg: '#3730A3' },
   CHO_NV_KY: { bg: '#FFEDD5', fg: '#9A3412' },
+  BI_KHIEU_NAI: { bg: '#FEE2E2', fg: '#991B1B' },
   CHO_CHUYEN_KHOAN: { bg: '#FEF9C3', fg: '#854D0E' },
   PAID: { bg: '#DCFCE7', fg: '#166534' },
 };

@@ -6259,6 +6259,20 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Nhân viên KHIEU NAI phiếu lương đã phát hành → phiếu trả về Kế toán kiểm tra lại (Cổng nhân viên)
+  app.post('/me/payslips/:id/complain', authMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const employeeId = req.user?.employeeId || req.user?.id;
+      if (!employeeId) return res.status(400).json({ error: 'NOT_AN_EMPLOYEE' });
+      const { reason, detail } = req.body || {};
+      const updated = await payrollService.complainSlip(req.params.id, employeeId, reason, detail);
+      broadcastUpdate('payroll', { action: 'complain-slip', itemId: req.params.id });
+      res.json(withStage(updated));
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   // Kế toán / Quản trị viên lấy danh sách phiếu lương theo kỳ
   app.get('/payroll/period-slips/:period', authMiddleware, requireRole(['DIRECTOR', 'ADMIN', 'FINANCE']), async (req, res) => {
     try {
@@ -6821,6 +6835,25 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       res.json(await payrollService.getWorkflowStatus(period));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // --- QUY TRÌNH KẾ TOÁN: quay về bước trước đó khi bước sai (realtime, theo tùy tháng) ---
+  app.post('/payroll/workflow/rollback', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const { period, stepId, reason } = req.body || {};
+      const p = String(period || '');
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(p)) return res.status(400).json({ error: 'Kỳ lương phải dạng YYYY-MM (VD: 2026-10)!' });
+      const result = await payrollService.rollbackWorkflow(p, String(stepId || ''), req.user!.id, reason);
+      broadcastUpdate('payroll', { action: 'workflow-rollback', period: p, stepId });
+      // Realtime cho cổng web còn lại (Finance re-load workflow ngay, không cần F5).
+      try {
+        const io = (app as any).get('io');
+        io?.emit?.('data:updated', { entity: 'payroll', data: { action: 'workflow-rollback', period: p, stepId }, timestamp: new Date().toISOString() });
+      } catch { /* non-fatal */ }
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
     }
   });
 

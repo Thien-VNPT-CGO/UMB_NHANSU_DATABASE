@@ -3874,7 +3874,8 @@ export function App() {
       });
       // Backend trả { operationId, result } qua hàng đợi ghi — bóc result.
       const updated = confirmRaw?.result ?? confirmRaw;
-      showToast('✅ Bạn đã ký xác nhận phiếu lương thành công! Kế toán đã nhận được thông báo để chuyển khoản.');
+      const driveOk = confirmRaw?.driveSync?.ok || updated?.driveSync?.ok || updated?.drive_pdf_id;
+      showToast(`✅ Bạn đã ký xác nhận phiếu lương thành công! Phiếu đã trả về Kế toán${driveOk ? ' và PDF đã lên Drive 04' : ''} để chuyển khoản.`);
       setPayslips(prev => prev.map(s => s.item_id === slipId ? {
         ...s,
         ...(updated || {}),
@@ -3885,6 +3886,28 @@ export function App() {
       showToast(err?.message || 'Lỗi khi ký xác nhận phiếu lương!');
     } finally {
       setConfirmSlipBusy(null);
+    }
+  };
+
+  // Khiếu nại phiếu lương (PUBLISHED): phiếu trả về Kế toán để kiểm tra lại (COMPLAINED).
+  const [complainSlipBusy, setComplainSlipBusy] = useState<string | null>(null);
+  const handleComplainPayslip = async (slipId: string, reason: string, detail: string) => {
+    if (!String(reason || '').trim()) { showToast('⚠️ Vui lòng chọn lý do khiếu nại!'); return; }
+    if (!String(detail || '').trim()) { showToast('⚠️ Vui lòng ghi rõ nội dung khiếu nại!'); return; }
+    if (!window.confirm(`Gửi khiếu nại này đến Kế toán? Phiếu sẽ trả về Kế toán để kiểm tra lại (không ký xác nhận phiếu này nữa).\nLý do: ${reason}\nChi tiết: ${String(detail).slice(0, 200)}`)) return;
+    setComplainSlipBusy(slipId);
+    try {
+      const raw: any = await apiRequest(`/me/payslips/${slipId}/complain`, {
+        method: 'POST',
+        body: JSON.stringify({ reason: String(reason).trim(), detail: String(detail).trim() }),
+      });
+      const updated = raw?.result ?? raw;
+      showToast('✅ Đã gửi khiếu nại đến Kế toán! Phiếu đã trả về Kế toán để kiểm tra lại — phiếu mới sẽ được gửi lại sau.');
+      setPayslips(prev => prev.map(s => s.item_id === slipId ? { ...s, ...(updated || {}), status: 'COMPLAINED', complaint_reason: reason, complaint_detail: detail, complaint_at: new Date().toISOString(), complaint_status: 'PENDING' } : s));
+    } catch (err: any) {
+      showToast(err?.message || 'Lỗi khi gửi khiếu nại phiếu lương!');
+    } finally {
+      setComplainSlipBusy(null);
     }
   };
 
@@ -7815,9 +7838,14 @@ export function App() {
                                 🔔 Chờ bạn kiểm tra & ký nhận
                               </span>
                             )}
+                            {st === 'COMPLAINED' && (
+                              <span style={{ fontSize: '11px', fontWeight: 800, padding: '3px 10px', borderRadius: '999px', backgroundColor: '#FEF2F2', color: '#991B1B', border: '1px solid #FCA5A5' }}>
+                                ⚠️ Đã khiếu nại — chờ Kế toán kiểm tra lại
+                              </span>
+                            )}
                             {st === 'CONFIRMED' && (
                               <span style={{ fontSize: '11px', fontWeight: 800, padding: '3px 10px', borderRadius: '999px', backgroundColor: '#EFF6FF', color: '#1D4ED8', border: '1px solid #BFDBFE' }}>
-                                ✍️ Đã ký xác nhận (3/3 chữ ký) • Chờ chuyển khoản
+                                ✍️ Đã ký xác nhận (3/3 chữ ký) • Phiếu đã trả về Kế toán • Chờ chuyển khoản
                               </span>
                             )}
                             {st === 'PAID' && (
@@ -7872,6 +7900,63 @@ export function App() {
                                 ⏳ Đang gửi xác nhận và thông báo đến Kế toán...
                               </div>
                             )}
+                            {/* Khiếu nại phiếu lương — phiếu trả về Kế toán kiểm tra lại */}
+                            <div style={{ marginTop: '12px', borderTop: '1px dashed #F59E0B', paddingTop: '12px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                                <span style={{ fontSize: '16px' }}>⚠️</span>
+                                <strong style={{ fontSize: '13px', color: '#92400E' }}>PHÁT HIỆN SAI? HÃY KHIẾU NẠI</strong>
+                              </div>
+                              <p style={{ fontSize: '11.5px', color: '#78350F', margin: '0 0 8px', lineHeight: 1.5 }}>
+                                Nếu số tiền/giờ công/khấu trừ chưa đúng, bạn bấm <strong>Khiếu nại</strong> bên dưới (chọn lý do + ghi chi tiết).
+                                Phiếu sẽ <strong>trả về Kế toán để kiểm tra lại</strong> và phiếu mới sẽ được gửi lại sau — bạn <strong>không cần ký</strong> phiếu này.
+                              </p>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                <select
+                                  id={`complain-reason-${slip.item_id}`}
+                                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #F59E0B', background: '#FFF', fontSize: '12px' }}
+                                  defaultValue=""
+                                >
+                                  <option value="" disabled>— Chọn lý do khiếu nại —</option>
+                                  <option value="THIẾU CÔNG">Thiếu công / thiếu ca</option>
+                                  <option value="SAI ĐƠN GIÁ">Sai đơn giá giờ</option>
+                                  <option value="SAI KHẤU TRỪ">Sai khấu trừ / phạt trễ</option>
+                                  <option value="SAI TỔNG TIỀN">Sai tổng tiền thực lãnh</option>
+                                  <option value="KHÁC">Lý do khác</option>
+                                </select>
+                                <textarea
+                                  id={`complain-detail-${slip.item_id}`}
+                                  placeholder="Ghi rõ nội dung khiếu nại (VD: thiếu 2 ca ngày 12/10, phạt trễ chưa đúng...)"
+                                  rows={3}
+                                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #F59E0B', background: '#FFF', fontSize: '12px', resize: 'vertical' }}
+                                />
+                                <button
+                                  className="btn-secondary"
+                                  disabled={complainSlipBusy === slip.item_id}
+                                  style={{ fontSize: '12px', fontWeight: 800, borderColor: '#DC2626', color: '#991B1B' }}
+                                  onClick={() => {
+                                    const r = (document.getElementById(`complain-reason-${slip.item_id}`) as HTMLSelectElement)?.value || '';
+                                    const d = (document.getElementById(`complain-detail-${slip.item_id}`) as HTMLTextAreaElement)?.value || '';
+                                    void handleComplainPayslip(slip.item_id, r, d);
+                                  }}
+                                >
+                                  {complainSlipBusy === slip.item_id ? '⏳ Đang gửi khiếu nại...' : '⚠️ Khiếu nại — trả phiếu về Kế toán kiểm tra lại'}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {st === 'COMPLAINED' && (
+                          <div style={{ backgroundColor: '#FEF2F2', border: '1.5px solid #EF4444', borderRadius: '10px', padding: '14px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                              <span style={{ fontSize: '18px' }}>⚠️</span>
+                              <strong style={{ fontSize: '14px', color: '#991B1B' }}>ĐÃ KHIẾU NẠI — CHỜ KẾ TOÁN KIỂM TRA LẠI</strong>
+                            </div>
+                            <p style={{ fontSize: '12px', color: '#7F1D1D', margin: 0, lineHeight: 1.5 }}>
+                              Bạn đã khiếu nại phiếu lương <strong>{vnd(netPayVal)}</strong>{slip.complaint_reason ? ` — <b>${slip.complaint_reason}</b>` : ''}{slip.complaint_detail ? `: ${slip.complaint_detail}` : ''}.
+                              Phiếu đã trả về Kế toán để kiểm tra lại. Khi sửa xong, Kế toán sẽ gửi lại phiếu mới — bạn không cần làm gì thêm lúc này.
+                              {slip.complaint_at ? ` (Gửi lúc ${new Date(slip.complaint_at).toLocaleString('vi-VN')})` : ''}
+                            </p>
                           </div>
                         )}
 
@@ -7883,7 +7968,8 @@ export function App() {
                             </div>
                             <p style={{ fontSize: '12px', color: '#1E40AF', margin: 0, lineHeight: 1.5 }}>
                               Bạn đã xác nhận đúng số tiền thực lãnh <strong>{vnd(netPayVal)}</strong>.
-                              Hệ thống đã thông báo đến Kế toán để quét mã VietQR ngân hàng chuyển khoản vào tài khoản của bạn.
+                              Phiếu đã trả về Kế toán để quét mã VietQR chuyển khoản. PDF phiếu đã được cập nhật lên Drive 04 (theo tháng/chi nhánh/tên bạn) để lưu trữ.
+                              {slip.drive_pdf_id ? ' ✓ Đã lên Drive 04.' : ''}
                             </p>
                             {slip.sign_nhanvien?.img && (
                               <div style={{ marginTop: '10px', textAlign: 'center' }}>

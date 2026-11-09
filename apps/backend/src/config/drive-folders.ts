@@ -5,7 +5,7 @@
  * URL: https://drive.google.com/drive/folders/1tBbooiPlppJV8QrpY2gtm8ij6FUf-k0j
  */
 
-import { PAYSLIP_DRIVE_ROOT_ID } from '@ubm/shared';
+import { PAYSLIP_DRIVE_ROOT_ID, PAYSLIP04_DRIVE_ROOT_ID } from '@ubm/shared';
 
 export const DRIVE_ROOT_FOLDER_ID = '1tBbooiPlppJV8QrpY2gtm8ij6FUf-k0j';
 
@@ -17,6 +17,17 @@ export const PAYSLIP_DRIVE_ROOT = PAYSLIP_DRIVE_ROOT_ID;
 
 export function getPayslipDriveRootId(): string {
   return String(process.env.GOOGLE_DRIVE_PHIEU_LUONG_ROOT_ID || '').trim() || PAYSLIP_DRIVE_ROOT_ID;
+}
+
+/**
+ * Root Drive "04. PHIẾU LƯƠNG NHÂN VIÊN" (PDF phiếu lương sau khi NV xác nhận đúng
+ * ký tên / đã thanh toán). Mặc định ID 1yxKdjbF1uEil6kalkBgxtbdVFeLuiSKC,
+ * override bằng env GOOGLE_DRIVE_PHIEU_LUONG04_ROOT_ID.
+ * Cấu trúc: <ROOT>/THANG_10/CHI_NHANH_130/<PHIEU_LUONG_T10.2026_<TEN_NHAN_VIEN>.pdf>
+ */
+export const PAYSLIP04_DRIVE_ROOT = PAYSLIP04_DRIVE_ROOT_ID;
+export function getPayslip04DriveRootId(): string {
+  return String(process.env.GOOGLE_DRIVE_PHIEU_LUONG04_ROOT_ID || '').trim() || PAYSLIP04_DRIVE_ROOT_ID;
 }
 
 export const DRIVE_SUBFOLDERS = {

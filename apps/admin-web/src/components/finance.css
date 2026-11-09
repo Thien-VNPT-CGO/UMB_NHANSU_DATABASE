@@ -191,6 +191,7 @@
 .fin-kpi-icon.blue { background: #eff6ff; color: #2563eb; }
 .fin-kpi-icon.violet { background: #f5f3ff; color: #7c3aed; }
 .fin-kpi-icon.amber { background: #fffbeb; color: #d97706; }
+.fin-kpi-icon.red { background: #fef2f2; color: #dc2626; }
 .fin-kpi-label { font-size: 8px; font-weight: 800; letter-spacing: 1.1px; text-transform: uppercase; color: var(--fin-muted); }
 .fin-kpi-value { font-size: 18px; font-weight: 800; color: var(--fin-ink); letter-spacing: -0.4px; font-variant-numeric: tabular-nums; margin-top: 1px; }
 .fin-kpi-sub { font-size: 9.5px; color: #94a3b8; margin-top: 1px; }

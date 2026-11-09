@@ -21,7 +21,15 @@
 
 /** Root Drive ID mặc định — override bằng env GOOGLE_DRIVE_PHIEU_LUONG_ROOT_ID. */
 export const PAYSLIP_DRIVE_ROOT_ID = '1V3MOk_KF7SeVL4jFG6YyRldRAwiZBw2x';
+/**
+ * Root Drive PHIEU LUONG PDF theo quy trình mới (cấp 04):
+ *   ID 1yxKdjbF1uEil6kalkBgxtbdVFeLuiSKC = "04. PHIẾU LƯƠNG NHÂN VIÊN"
+ *   <ROOT>/THANG_10/CHI_NHANH_130/<PHIEU_LUONG_T10.2026_<TEN_NHAN_VIEN>.pdf>
+ * Override bằng env GOOGLE_DRIVE_PHIEU_LUONG04_ROOT_ID.
+ */
+export const PAYSLIP04_DRIVE_ROOT_ID = '1yxKdjbF1uEil6kalkBgxtbdVFeLuiSKC';
 export const PHIEU_LUONG_FOLDER = 'PHIEU_LUONG';
+export const PHIEU_LUONG04_FOLDER = '04. PHIẾU LƯƠNG NHÂN VIÊN';
 
 /** Folder theo từng chức năng của tài khoản Kế toán (tự tạo khi đồng bộ tháng). */
 export const ACCOUNTING_MONTH_FOLDERS: Array<{ name: string; label: string }> = [
@@ -47,6 +55,22 @@ export const BRANCH_DRIVE_FOLDERS: Record<string, string> = {
   CN2: 'CN2_261_TO_HIEN_THANH',
   CN3: 'CN3_120_HOANG_DIEU_2',
   CN4: 'CN4_111_TON_DAN',
+};
+/**
+ * Map branch_id → folder chi nhánh trong root 04 (quy trình mới):
+ *   THANG_10/CHI_NHANH_130/..., CHI_NHANH_261, CHI_NHANH_120, CHI_NHANH_111.
+ */
+export const BRANCH_DRIVE_FOLDERS_04: Record<string, string> = {
+  CN130: 'CHI_NHANH_130',
+  CN261: 'CHI_NHANH_261',
+  CN120: 'CHI_NHANH_120',
+  CN111: 'CHI_NHANH_111',
+  XUONG_SX: 'XUONG_SAN_XUAT',
+  VAN_PHONG: 'VAN_PHONG',
+  CN1: 'CHI_NHANH_130',
+  CN2: 'CHI_NHANH_261',
+  CN3: 'CHI_NHANH_120',
+  CN4: 'CHI_NHANH_111',
 };
 
 /** Thứ tự hiển thị chi nhánh toàn hệ thống (dùng cho bảng phân nhóm). */
@@ -135,10 +159,49 @@ export function payslipDriveSegments(period: string, branchId: string | null | u
   return [PHIEU_LUONG_FOLDER, monthShortFolder(period), branchDriveFolder(branchId, branchName), employeeDriveFolder(fullName)];
 }
 
+/** Slug folder chi nhánh trong root 04: ưu tiên map cố định, fallback sinh từ tên. */
+export function branchDriveFolder04(branchId?: string | null, branchName?: string | null): string {
+  const id = String(branchId || '').trim();
+  if (id && BRANCH_DRIVE_FOLDERS_04[id]) return BRANCH_DRIVE_FOLDERS_04[id];
+  const src = String(branchName || id || '').trim();
+  if (!src) return 'KHONG_XAC_DINH';
+  // Trích 3-4 chữ số chi nhánh nếu có (VD "CN1 — 130 Vạn Kiếp" -> CHI_NHANH_130).
+  const digits = src.match(/\b(\d{3,4})\b/);
+  if (digits) return `CHI_NHANH_${digits[1]}`;
+  const slug = stripAccents(src)
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 60);
+  return slug || 'KHONG_XAC_DINH';
+}
+
+/**
+ * Đường dẫn folder PDF phiếu lương trong root 04 (quy trình mới):
+ *   [THANG_10, CHI_NHANH_130] — file PDF đặt trực tiếp trong folder chi nhánh
+ *   theo TÊN từng nhân viên (không tạo thêm folder theo tên NV).
+ */
+export function payslipDriveSegments04(period: string, branchId: string | null | undefined, branchName: string | null | undefined): string[] {
+  return [monthShortFolder(period), branchDriveFolder04(branchId, branchName)];
+}
+
 /** Tên file PDF phiếu lương: PHIEU_LUONG_T10.2026_130.1.pdf */
 export function payslipDriveFileName(period: string, employeeCode: string): string {
   const p = parsePeriod(period);
   const ym = p ? `T${String(p.month).padStart(2, '0')}.${p.year}` : sanitizeDriveName(period);
   const code = sanitizeDriveName(employeeCode).replace(/\s+/g, '');
   return `PHIEU_LUONG_${ym}_${code}.pdf`;
+}
+
+/**
+ * Tên file PDF root 04 theo TÊN nhân viên (giữ dấu, chữ HOA):
+ * PHIEU_LUONG_T10.2026_<TEN_NHAN_VIEN>.pdf — VD: PHIEU_LUONG_T10.2026_ĐINH KIM NGÂN.pdf
+ */
+export function payslipDriveFileName04(period: string, fullName: string, employeeCode?: string): string {
+  const p = parsePeriod(period);
+  const ym = p ? `T${String(p.month).padStart(2, '0')}.${p.year}` : sanitizeDriveName(period);
+  const name = sanitizeDriveName(fullName, { upper: true });
+  const fallback = String(employeeCode || '').trim() ? sanitizeDriveName(employeeCode) : 'KHONG_XAC_DINH';
+  const byName = name !== 'KHONG_XAC_DINH' ? name : fallback;
+  return `PHIEU_LUONG_${ym}_${byName}.pdf`;
 }
