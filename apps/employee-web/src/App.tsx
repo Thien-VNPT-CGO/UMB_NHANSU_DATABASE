@@ -7864,7 +7864,8 @@ export function App() {
                           {Number(slip.ot_extra) > 0 && row('OT thêm', vnd(slip.ot_extra))}
                           {Number(slip.bonus) > 0 && row('Thưởng/Bonus', `+${vnd(slip.bonus)}`)}
                           {row('TỔNG CỘNG THU NHẬP', vnd(tongCong), true)}
-                          {(Number(slip.tru_kpi) > 0 || Number(slip.deduction) > 0) && row(`Trừ KPI + phạt (${vnd(slip.tru_kpi)} + ${vnd(slip.deduction)})`, `−${vnd((slip.tru_kpi || 0) + (slip.deduction || 0))}`)}
+                          {Number(slip.tru_kpi) > 0 && row('− Trừ KPI', `−${vnd(slip.tru_kpi)}`)}
+                          {Number(slip.deduction) > 0 && row('Phạt trễ/vắng' + (Number(slip.absent_shifts) > 0 ? ' (' + Number(slip.absent_shifts) + ' ca vắng)' : ''), '−' + vnd(slip.deduction))}
                           {Number(slip.ung_luong) > 0 && row('Ứng lương', `−${vnd(slip.ung_luong)}`)}
                           {Number(slip.dong_phuc) > 0 && row('Trừ đồng phục', `−${vnd(slip.dong_phuc)}`)}
                           <div style={{ borderTop: '2px solid #F59E0B', paddingTop: '8px', marginTop: '8px', display: 'flex', justifyContent: 'space-between', fontSize: '16px', fontWeight: 900, color: '#059669' }}>
@@ -7872,6 +7873,35 @@ export function App() {
                             <span>{vnd(netPayVal)}</span>
                           </div>
                         </div>
+
+                        {/* GHI CHÚ PHẠT / KHẤU TRỪ — hiển thị đầy đủ để nhân viên biết lý do bị trừ */}
+                        {(() => {
+                          const kpiVal = Number(slip.tru_kpi) || 0;
+                          const phatVal = Number(slip.deduction) || 0;
+                          const noteVal = String(slip.input_note || '').trim();
+                          const absentVal = Number(slip.absent_shifts) || 0;
+                          const hasFine = kpiVal > 0 || phatVal > 0 || noteVal.length > 0 || absentVal > 0;
+                          return (
+                            <div style={{ backgroundColor: hasFine ? '#FEF2F2' : '#F0FDF4', border: `1.5px solid ${hasFine ? '#FCA5A5' : '#A7F3D0'}`, borderRadius: '10px', padding: '12px 14px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                                <span style={{ fontSize: '16px' }}>{hasFine ? '⚠️' : '✅'}</span>
+                                <strong style={{ fontSize: '13px', color: hasFine ? '#991B1B' : '#065F46' }}>GHI CHÚ PHẠT / KHẤU TRỪ{hasFine ? ' (nếu có)' : ' — Không có'}</strong>
+                              </div>
+                              {hasFine ? (
+                                <ul style={{ margin: 0, paddingLeft: '18px', fontSize: '12px', color: '#7F1D1D', lineHeight: 1.6 }}>
+                                  {kpiVal > 0 && <li>Trừ KPI: <strong>−{vnd(kpiVal)}</strong></li>}
+                                  {phatVal > 0 && <li>Phạt trễ/vắng: <strong>−{vnd(phatVal)}</strong>{absentVal > 0 ? ` (gồm ${absentVal} ca vắng không lương)` : ''}</li>}
+                                  {kpiVal === 0 && phatVal === 0 && absentVal > 0 && <li>Số ca vắng không lương: <strong>{absentVal} ca</strong> (vắng không tính giờ công)</li>}
+                                  {Number(slip.ung_luong) > 0 && <li>Ứng lương đã trừ: −{vnd(slip.ung_luong)}</li>}
+                                  {Number(slip.dong_phuc) > 0 && <li>Trừ đồng phục: −{vnd(slip.dong_phuc)}</li>}
+                                  {noteVal && <li>Ghi chú Kế toán: <strong>{noteVal}</strong></li>}
+                                </ul>
+                              ) : (
+                                <p style={{ fontSize: '12px', color: '#065F46', margin: 0 }}>Kỳ này bạn không bị phạt/khấu trừ nào.</p>
+                              )}
+                            </div>
+                          );
+                        })()}
 
                         {/* Mục kiểm tra tiền thực lãnh & Ký tên */}
                         {st === 'PUBLISHED' && (
@@ -7996,7 +8026,7 @@ export function App() {
                         {/* 3 Chữ ký điện tử đối soát */}
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '8px', borderTop: '1px dashed #CBD5E1', paddingTop: '10px', marginTop: '4px' }}>
                           <div style={{ textAlign: 'center', fontSize: '11px', padding: '8px', backgroundColor: '#F8FAFC', borderRadius: '8px' }}>
-                            <div style={{ fontWeight: 700, color: '#475569', marginBottom: '4px' }}>1. Người Lập Phiếu</div>
+                            <div style={{ fontWeight: 700, color: '#475569', marginBottom: '4px' }}>1. Kế toán lập</div>
                             {slip.sign_lap?.img ? (
                               <>
                                 <img src={slip.sign_lap.img} alt="Kế toán" style={{ height: '40px', maxWidth: '100px', objectFit: 'contain', backgroundColor: '#FFF' }} />
@@ -8008,19 +8038,19 @@ export function App() {
                             )}
                           </div>
                           <div style={{ textAlign: 'center', fontSize: '11px', padding: '8px', backgroundColor: '#F8FAFC', borderRadius: '8px' }}>
-                            <div style={{ fontWeight: 700, color: '#475569', marginBottom: '4px' }}>2. Quản Lý Chi Nhánh</div>
-                            {slip.sign_quanly?.img ? (
+                            <div style={{ fontWeight: 700, color: '#475569', marginBottom: '4px' }}>2. Giám đốc duyệt</div>
+                            {slip.sign_giamdoc?.img ? (
                               <>
-                                <img src={slip.sign_quanly.img} alt="Quản lý" style={{ height: '40px', maxWidth: '100px', objectFit: 'contain', backgroundColor: '#FFF' }} />
-                                <div style={{ fontWeight: 700, color: '#047857', marginTop: '2px' }}>{slip.sign_quanly.name || 'Quản lý'}</div>
-                                <div style={{ fontSize: '9px', color: '#94A3B8' }}>{slip.sign_quanly.at ? new Date(slip.sign_quanly.at).toLocaleDateString('vi-VN') : ''}</div>
+                                <img src={slip.sign_giamdoc.img} alt="Giám đốc" style={{ height: '40px', maxWidth: '100px', objectFit: 'contain', backgroundColor: '#FFF' }} />
+                                <div style={{ fontWeight: 700, color: '#047857', marginTop: '2px' }}>{slip.sign_giamdoc.name || 'Giám đốc'}</div>
+                                <div style={{ fontSize: '9px', color: '#94A3B8' }}>{slip.sign_giamdoc.at ? new Date(slip.sign_giamdoc.at).toLocaleDateString('vi-VN') : ''}</div>
                               </>
                             ) : (
                               <span style={{ color: '#94A3B8', fontStyle: 'italic' }}>Chưa ký</span>
                             )}
                           </div>
                           <div style={{ textAlign: 'center', fontSize: '11px', padding: '8px', backgroundColor: '#F8FAFC', borderRadius: '8px' }}>
-                            <div style={{ fontWeight: 700, color: '#475569', marginBottom: '4px' }}>3. Người Nhận Tiền</div>
+                            <div style={{ fontWeight: 700, color: '#475569', marginBottom: '4px' }}>3. Nhân viên nhận</div>
                             {slip.sign_nhanvien?.img ? (
                               <>
                                 <img src={slip.sign_nhanvien.img} alt="Nhân viên" style={{ height: '40px', maxWidth: '100px', objectFit: 'contain', backgroundColor: '#FFF' }} />

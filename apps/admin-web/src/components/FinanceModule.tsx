@@ -557,7 +557,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
     showToast(`Đã ký lập ${ok}/${targets.length} phiếu${fails.length ? ` — lỗi ${fails.length}: ${fails.slice(0, 2).join('; ')}` : ''}`);
     refreshCurrentTab();
   }, [post, showToast, refreshCurrentTab, slips]);
-  const publishSlip = useCallback(async (itemId: string) => { if (!window.confirm('Gửi phiếu này đến nhân viên? Sau khi gửi, nhân viên có thể ký xác nhận.')) return; try { await post(`/payroll/slips/${encodeURIComponent(itemId)}/publish`, {}); showToast('Đã gửi phiếu lương đến nhân viên'); refreshCurrentTab(); } catch (e: any) { showToast(e?.message || 'Gửi thất bại'); } }, [post, showToast, refreshCurrentTab]);
+  const publishSlip = useCallback(async (itemId: string) => { if (!window.confirm('Gửi phiếu này đến nhân viên? Phiếu bắt buộc đủ 2 chữ ký Kế toán + Giám đốc (đã đủ mới hiện nút Gửi). Sau khi gửi, nhân viên sẽ thấy ghi chú phạt đầy đủ và ký xác nhận chữ ký thứ 3.')) return; try { await post(`/payroll/slips/${encodeURIComponent(itemId)}/publish`, {}); showToast('Đã gửi phiếu lương đến nhân viên (đủ 2 chữ ký KT + GĐ)'); refreshCurrentTab(); } catch (e: any) { showToast(e?.message || 'Gửi thất bại'); } }, [post, showToast, refreshCurrentTab]);
   const returnSlip = useCallback(async (itemId: string) => { const reason = window.prompt('Thu hồi phiếu về DRAFT để kiểm tra lại? Vui lòng ghi lý do (hiển thị audit):', 'Kiểm tra lại sau khiếu nại chưa đúng'); if (reason === null) return; try { await post(`/payroll/slips/${encodeURIComponent(itemId)}/return`, {}); showToast('Đã hoàn phiếu về DRAFT — kiểm tra lại rồi ký/gửi lại'); refreshCurrentTab(); } catch (e: any) { showToast(e?.message || 'Hoàn phiếu thất bại'); } }, [post, showToast, refreshCurrentTab]);
   const markPaidSlip = useCallback(async (itemId: string) => { if (!window.confirm('Xác nhận ĐÃ CHUYỂN KHOẢN? Phiếu sẽ bị KHÓA và đồng bộ PDF lên Google Drive 04.')) return; try { const r = await post(`/payroll/slips/${encodeURIComponent(itemId)}/mark-paid`, {}); showToast('Đã chuyển khoản — phiếu khóa & đồng bộ Drive 04' + (r?.driveSync?.ok ? ' ✓' : '')); refreshCurrentTab(); } catch (e: any) { showToast(e?.message || 'Thanh toán thất bại'); } }, [post, showToast, refreshCurrentTab]);
   const calendarLabel = useMemo(() => { const p = parsePeriod(month); return p ? `THÁNG ${String(p.month).padStart(2, '0')}` : 'THÁNG'; }, [month]);
@@ -2311,11 +2311,21 @@ function PayslipsTab({ month, slips, slipsLoading, allEmployees, formatVND, load
                                   <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={() => returnSlip(s.item_id)} title="Thu hồi phiếu đã gửi NV về DRAFT khi gửi nhầm"><RefreshCw size={12} /> Thu hồi</button>
                                 </div>
                               ) : hasLap && !hasGd ? (
-                                <span style={{ fontSize: 10.5, color: '#92400e', fontWeight: 700 }}>Chờ Giám đốc ký duyệt</span>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                  <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" disabled title="Chưa đủ chữ ký bắt buộc: cần cả Kế toán (đã có) + Giám đốc (thiếu) mới gửi được cho NV">
+                                    🔒 Chưa đủ 2 chữ ký — chưa gửi được
+                                  </button>
+                                  <span style={{ fontSize: 10, color: '#92400e', fontWeight: 700 }}>Chờ Giám đốc ký duyệt (KT đã ký)</span>
+                                </div>
                               ) : hasGd && hasLap ? (
-                                <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={() => publishSlip(s.item_id)}><Send size={12} /> Gửi NV ký</button>
+                                <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={() => publishSlip(s.item_id)} title="Đủ 2 chữ ký bắt buộc: Kế toán + Giám đốc"><Send size={12} /> Gửi NV ký</button>
                               ) : (
-                                <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={() => fastSignLap(s.item_id)} disabled={hasLap}><PenTool size={12} /> Kế toán ký lập</button>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                  <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={() => fastSignLap(s.item_id)} disabled={hasLap}><PenTool size={12} /> Kế toán ký lập</button>
+                                  <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" disabled title="Chưa đủ chữ ký bắt buộc: cần cả Kế toán + Giám đốc mới gửi được cho NV">
+                                    🔒 Chưa đủ 2 chữ ký — chưa gửi được
+                                  </button>
+                                </div>
                               )}
                               </td>
                             )}

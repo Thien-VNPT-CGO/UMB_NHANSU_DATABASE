@@ -342,7 +342,10 @@ export async function buildPayslipPdf(input: PayslipPdfInput): Promise<Buffer> {
   rowIdx = 0;
   y = drawTableHeader(y, 'B.  CÁC KHOẢN KHẤU TRỪ');
   y = drawHeaderRow(y);
-  if (kpi > 0) y = drawRow(y, 'Trừ KPI / Phạt', kpi, { negative: true });
+  const truKpi = Number(slip.tru_kpi) || 0;
+  const phat = Number(slip.deduction) || 0;
+  if (truKpi > 0) y = drawRow(y, 'Trừ KPI', truKpi, { negative: true });
+  if (phat > 0) y = drawRow(y, `Phạt trễ/vắng (${absent} ca vắng)`, phat, { negative: true });
   if (ungLuong > 0) y = drawRow(y, 'Ứng lương', ungLuong, { negative: true });
   if (dongPhuc > 0) y = drawRow(y, 'Trừ đồng phục (cọc)', dongPhuc, { negative: true });
   if (deductTotal === 0) {
@@ -393,15 +396,23 @@ export async function buildPayslipPdf(input: PayslipPdfInput): Promise<Buffer> {
   bankLine(bx, y + 46, colW2, 'Chủ tài khoản', slip.bank_holder || slip.full_name || '—');
   bankLine(bx + colW2 + 10, y + 46, colW2, 'Nội dung CK', `LUONG ${periodLabelVi(period)} ${slip.employee_code || ''}`);
 
-  // ---------- 7) Ghi chú kế toán ----------
+  // ---------- 7) GHI CHÚ PHẠT / KHẤU TRỪ + Ghi chú kế toán ----------
   y = y + bankH + 10;
-  if (slip.input_note) {
-    const noteText = String(slip.input_note);
+  {
+    const fineLines: string[] = [];
+    const truKpi2 = Number(slip.tru_kpi) || 0;
+    const phat2 = Number(slip.deduction) || 0;
+    if (truKpi2 > 0) fineLines.push(`Trừ KPI: -${vnd(truKpi2)}`);
+    if (phat2 > 0) fineLines.push(`Phạt trễ/vắng (${absent} ca vắng không lương): -${vnd(phat2)}`);
+    if (ungLuong > 0) fineLines.push(`Ứng lương đã trừ: -${vnd(ungLuong)}`);
+    if (dongPhuc > 0) fineLines.push(`Trừ đồng phục: -${vnd(dongPhuc)}`);
+    if (slip.input_note) fineLines.push(`Ghi chú Kế toán: ${String(slip.input_note)}`);
+    const noteText = fineLines.length ? fineLines.join('  |  ') : 'Không có khoản phạt/khấu trừ trong kỳ.';
     doc.font('Regular').fontSize(7.2);
-    const noteH = Math.min(48, 20 + doc.heightOfString(noteText, { width: CW - 24 }));
-    doc.roundedRect(ML, y, CW, noteH, 6).fillAndStroke('#FFFBEB', '#FCD34D');
-    doc.fillColor('#B45309').font('Bold').fontSize(5.8).text('G H I   C H Ú   T Ừ   K Ế   T O Á N', ML + 12, y + 5, { characterSpacing: 1.2 });
-    doc.fillColor('#92400E').font('Regular').fontSize(7.2)
+    const noteH = Math.min(52, 20 + doc.heightOfString(noteText, { width: CW - 24 }));
+    doc.roundedRect(ML, y, CW, noteH, 6).fillAndStroke(fineLines.length ? '#FEF2F2' : '#F0FDF4', fineLines.length ? '#FCA5A5' : '#A7F3D0');
+    doc.fillColor(fineLines.length ? '#991B1B' : '#065F46').font('Bold').fontSize(5.8).text('G H I   C H Ú   P H Ạ T  /  K H Ấ U   T R Ừ', ML + 12, y + 5, { characterSpacing: 1.2 });
+    doc.fillColor(fineLines.length ? '#7F1D1D' : '#065F46').font('Regular').fontSize(7.2)
       .text(noteText, ML + 12, y + 15, { width: CW - 24, height: noteH - 19, ellipsis: true });
     y += noteH + 8;
   }
