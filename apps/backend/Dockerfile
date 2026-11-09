@@ -36,6 +36,9 @@ RUN npm ci --omit=dev --ignore-scripts \
 # Output đã build (backend serve static frontend nếu tồn tại)
 COPY --from=build /app/packages/shared/dist ./packages/shared/dist
 COPY --from=build /app/apps/backend/dist ./apps/backend/dist
+# Tài sản runtime của backend: font PDF phiếu lương (BeVietnam Pro) + logo.
+# Không copy thư mục này thì buildPayslipPdf ném PDF_FONT_MISSING trên prod.
+COPY --from=build /app/apps/backend/assets ./apps/backend/assets
 COPY --from=build /app/apps/admin-web/dist ./apps/admin-web/dist
 COPY --from=build /app/apps/employee-web/dist ./apps/employee-web/dist
 

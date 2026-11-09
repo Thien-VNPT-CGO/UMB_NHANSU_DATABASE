@@ -19,8 +19,23 @@ import {
   type PayslipStage,
 } from '@ubm/shared';
 
+/** Thư mục font có thể nằm ở nhiều vị trí tùy môi trường (src/dist/docker).
+ * Ưu tiên apps/backend/assets/fonts (được COPY vào image prod), dự phòng assets/fonts cạnh root. */
+function findFontDir(): string {
+  const candidates = [
+    path.resolve(__dirname, '..', '..', 'assets', 'fonts'),          // dist/apps/backend/assets/fonts (prod)
+    path.resolve(__dirname, '..', '..', '..', 'assets', 'fonts'),  // app/assets/fonts
+    path.join(process.cwd(), 'apps', 'backend', 'assets', 'fonts'),
+    path.join(process.cwd(), 'assets', 'fonts'),
+    '/app/apps/backend/assets/fonts',
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(path.join(c, 'BeVietnamPro-Regular.ttf'))) return c;
+  }
+  return candidates[0];
+}
 const ASSETS_DIR = path.resolve(__dirname, '..', '..', 'assets');
-const FONT_DIR = path.join(ASSETS_DIR, 'fonts');
+const FONT_DIR = findFontDir();
 const LOGO_PATH = path.join(ASSETS_DIR, 'logo.jpg');
 
 const BRAND = '#E85D92';
