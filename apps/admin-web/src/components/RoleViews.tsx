@@ -619,6 +619,31 @@ export const PV_SLOT_MINUTES = 30;
 export const PV_WORK_START = '08:00';
 export const PV_WORK_END = '17:00';
 
+/** Khung giờ PV MẶC ĐỊNH theo lịch làm việc HR (mirror PROPOSAL_WORK_WINDOWS):
+ *  sáng 08:00–11:30, chiều 13:30–16:30. HR chỉ chọn trong danh sách này. */
+export const PV_HR_WINDOWS: Array<{ key: 'SANG' | 'CHIEU'; label: string; start: string; end: string }> = [
+  { key: 'SANG', label: 'Buổi sáng', start: '08:00', end: '11:30' },
+  { key: 'CHIEU', label: 'Buổi chiều', start: '13:30', end: '16:30' },
+];
+
+/** Toàn bộ khung giờ bắt đầu hợp lệ theo lịch HR (bước 30 phút) + giờ kết thúc. */
+export const PV_HR_SLOT_TIMES: Array<{ time: string; end: string; session: 'SANG' | 'CHIEU' }> =
+  PV_HR_WINDOWS.flatMap(({ key, start, end }) => {
+    const [sh, sm] = start.split(':').map(Number);
+    const [eh, em] = end.split(':').map(Number);
+    const lastStart = eh * 60 + em - PV_SLOT_MINUTES;
+    const out: Array<{ time: string; end: string; session: 'SANG' | 'CHIEU' }> = [];
+    for (let m = sh * 60 + sm; m <= lastStart; m += PV_SLOT_MINUTES) {
+      const hh = String(Math.floor(m / 60)).padStart(2, '0');
+      const mm = String(m % 60).padStart(2, '0');
+      const endTotal = m + PV_SLOT_MINUTES;
+      const eh2 = String(Math.floor(endTotal / 60)).padStart(2, '0');
+      const em2 = String(endTotal % 60).padStart(2, '0');
+      out.push({ time: `${hh}:${mm}`, end: `${eh2}:${em2}`, session: key });
+    }
+    return out;
+  });
+
 export function pvNormalizeSlot(input: unknown): string | null {
   const m = String(input || '').match(/(\d{1,2})\s*:\s*(\d{2})/);
   if (!m) return null;
@@ -3417,6 +3442,32 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   }, []);
   // Chặn chọn quá khứ ngay ở input (lớp mềm — server vẫn validate + báo đăng ký lại).
   const pvMinDateTime = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  // Form lập lịch: tách NGÀY + KHUNG GIỜ từ inviteDateTime (YYYY-MM-DDTHH:mm) để HR
+  // chọn giờ từ DANH SÁCH mặc định theo lịch làm việc HR, không gõ tay.
+  const inviteDatePart = (inviteDateTime || '').slice(0, 10);
+  const inviteTimePart = (inviteDateTime || '').slice(11, 16);
+  /** Lý do 1 khung không chọn được: đã kín (<30 phút so với lịch khác) / đã qua giờ. */
+  const inviteSlotReason = (time: string, date: string): 'TAKEN' | 'PAST' | '' => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return '';
+    const ms = new Date(`${date}T${time}:00+07:00`).getTime();
+    if (!Number.isFinite(ms)) return '';
+    if (ms + PV_SLOT_MINUTES * 60_000 < Date.now() - 5 * 60_000) return 'PAST';
+    return pvFindConflict(candidates, date, ms, inviteCandidateId) ? 'TAKEN' : '';
+  };
+  const inviteSlotOptions = PV_HR_SLOT_TIMES.map(s => ({
+    ...s,
+    reason: inviteDatePart ? inviteSlotReason(s.time, inviteDatePart) : ('' as '' | 'TAKEN' | 'PAST'),
+  }));
+  const inviteFreeSlots = inviteDatePart ? inviteSlotOptions.filter(s => !s.reason) : [];
+  // Đổi NGÀY -> giữ khung giờ đang chọn; đổi KHUNG GIỜ -> ghép lại thành inviteDateTime.
+  const setInviteDatePart = (v: string) => {
+    if (!v) { setInviteDateTime(''); return; }
+    setInviteDateTime(`${v}T${inviteTimePart}`);
+  };
+  const setInviteTimePart = (v: string) => {
+    if (!inviteDatePart) { showToast('Vui lòng chọn ngày phỏng vấn trước!'); return; }
+    setInviteDateTime(v ? `${inviteDatePart}T${v}` : `${inviteDatePart}T`);
+  };
   // Danh sách lịch PV: ẩn đã loại + đã duyệt thử việc (thành NV, không còn là ứng viên).
   // Ràng buộc chéo theo SĐT: ứng viên nào đã có hồ sơ nhân viên (dù duyệt bằng
   // đường nào: tab PV, tạo trực tiếp, duyệt trước đây) cũng ẩn khỏi tab PV.
@@ -3613,8 +3664,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       showToast('Vui lòng chọn ứng viên!');
       return;
     }
-    if (!inviteDateTime) {
-      showToast('Vui lòng chọn thời gian phỏng vấn!');
+    if (!inviteDatePart || !inviteTimePart) {
+      showToast('Vui lòng chọn ngày và khung giờ phỏng vấn!');
       return;
     }
     // UV đã phỏng vấn xong / đã có lịch sắp tới: chặn ngay trên tab (backend chặn cứng thêm).
@@ -6031,7 +6082,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           </div>
 
           <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '14px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 1.8fr 1fr', gap: '14px' }}>
               <div>
                 <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Chọn ứng viên mới:</label>
                 <select style={{ width: '100%' }} value={inviteCandidateId} onChange={(e) => setInviteCandidateId(e.target.value)}>
@@ -6086,18 +6137,78 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
 
               <div>
                 <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Thời gian phỏng vấn (khung cố định 30 phút):</label>
-                <input type="datetime-local" step={1800} min={pvMinDateTime} value={inviteDateTime} onChange={(e) => setInviteDateTime(e.target.value)} style={{ width: '100%' }} />
-                <div style={{ fontSize: '11px', color: '#1E40AF', marginTop: '4px', lineHeight: '1.5' }}>
-                  ⏱️ Mỗi bạn cách nhau 30 phút — phút phải là <strong>:00</strong> hoặc <strong>:30</strong>, giờ hành chính <strong>08:00–17:00</strong>. Sai khung hệ thống báo lỗi và yêu cầu đăng ký lại.
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <input
+                    type="date"
+                    min={pvMinDateTime.slice(0, 10)}
+                    value={inviteDatePart}
+                    onChange={(e) => setInviteDatePart(e.target.value)}
+                    title="Chọn ngày phỏng vấn"
+                    style={{ flex: '0 0 140px' }}
+                  />
+                  <select
+                    value={inviteTimePart}
+                    onChange={(e) => setInviteTimePart(e.target.value)}
+                    disabled={!inviteDatePart}
+                    title={inviteDatePart ? 'Danh sách khung giờ mặc định theo lịch làm việc HR' : 'Chọn ngày phỏng vấn trước'}
+                    style={{ flex: 1, minWidth: 0 }}
+                  >
+                    <option value="">{inviteDatePart ? '-- Chọn khung giờ --' : '-- Chọn ngày trước --'}</option>
+                    {PV_HR_WINDOWS.map(w => (
+                      <optgroup key={w.key} label={`${w.label} · ${w.start} – ${w.end}`}>
+                        {inviteSlotOptions.filter(s => s.session === w.key).map(s => {
+                          const label = `${s.time} – ${s.end}`;
+                          const reasonVI = s.reason === 'TAKEN' ? 'đã kín' : s.reason === 'PAST' ? 'đã qua giờ' : '';
+                          return (
+                            <option key={s.time} value={s.time} disabled={!!s.reason}>
+                              {reasonVI ? `${label}  (${reasonVI})` : label}
+                            </option>
+                          );
+                        })}
+                      </optgroup>
+                    ))}
+                  </select>
                 </div>
-                {(() => {
-                  const dd = (inviteDateTime || '').split('T')[0];
-                  if (!/^\d{4}-\d{2}-\d{2}$/.test(dd || '')) return null;
-                  const booked = pvBookedSlots(candidates, dd, inviteCandidateId);
-                  if (booked.length === 0) return null;
+                <div style={{ fontSize: '11px', color: '#1E40AF', marginTop: '4px', lineHeight: '1.5' }}>
+                  ⏱️ Chọn từ danh sách khung 30 phút theo lịch làm việc HR: <strong>sáng 08:00–11:30</strong>, <strong>chiều 13:30–16:30</strong>. Khung có ghi chú <em>(đã kín / đã qua giờ)</em> sẽ không chọn được.
+                </div>
+                {inviteDatePart && (
+                  <div style={{ fontSize: '11px', marginTop: '6px', lineHeight: 1.5, color: inviteFreeSlots.length > 0 ? '#065F46' : '#991B1B', fontWeight: 600 }}>
+                    {inviteFreeSlots.length > 0
+                      ? `✅ Ngày ${inviteDatePart.slice(8, 10)}/${inviteDatePart.slice(5, 7)}/${inviteDatePart.slice(0, 4)} còn ${inviteFreeSlots.length}/${inviteSlotOptions.length} khung trống.`
+                      : `⛔ Ngày ${inviteDatePart.slice(8, 10)}/${inviteDatePart.slice(5, 7)}/${inviteDatePart.slice(0, 4)} đã kín lịch — chọn ngày khác.`}
+                  </div>
+                )}
+                {inviteDatePart && inviteFreeSlots.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px', alignItems: 'center' }}>
+                    <span style={{ fontSize: '11px', color: '#475569' }}>Chọn nhanh:</span>
+                    {inviteFreeSlots.slice(0, 5).map(s => (
+                      <button
+                        key={s.time}
+                        type="button"
+                        onClick={() => setInviteTimePart(s.time)}
+                        style={{
+                          fontSize: '11px', fontWeight: 700, padding: '3px 8px', borderRadius: '999px', cursor: 'pointer',
+                          border: inviteTimePart === s.time ? '1.5px solid #2563EB' : '1px solid #CBD5E1',
+                          backgroundColor: inviteTimePart === s.time ? '#DBEAFE' : '#FFF',
+                          color: inviteTimePart === s.time ? '#1D4ED8' : '#334155',
+                        }}
+                        title={`Chọn khung ${s.time} – ${s.end}`}
+                      >
+                        {s.time}
+                      </button>
+                    ))}
+                    {inviteFreeSlots.length > 5 && (
+                      <span style={{ fontSize: '11px', color: '#64748B' }}>+{inviteFreeSlots.length - 5} khung khác trong danh sách</span>
+                    )}
+                  </div>
+                )}
+                {inviteDatePart && inviteTimePart && (() => {
+                  const pickedReason = inviteSlotReason(inviteTimePart, inviteDatePart);
+                  if (!pickedReason) return null;
                   return (
-                    <div style={{ fontSize: '11px', color: '#92400E', backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '6px', padding: '6px 8px', marginTop: '6px', lineHeight: '1.5' }}>
-                      📅 Ngày {`${dd.slice(8, 10)}/${dd.slice(5, 7)}/${dd.slice(0, 4)}`} đã kín: <strong>{booked.join(', ')}</strong> — vui lòng chọn khung khác cách ít nhất 30 phút!
+                    <div style={{ fontSize: '11px', color: '#991B1B', backgroundColor: '#FEF2F2', border: '1px solid #FCA5A5', borderRadius: '6px', padding: '6px 8px', marginTop: '6px', lineHeight: 1.5, fontWeight: 600 }}>
+                      ⛔ Khung {inviteTimePart} {pickedReason === 'TAKEN' ? 'đã có ứng viên khác đặt lịch' : 'đã qua giờ'} — vui lòng chọn khung khác.
                     </div>
                   );
                 })()}
