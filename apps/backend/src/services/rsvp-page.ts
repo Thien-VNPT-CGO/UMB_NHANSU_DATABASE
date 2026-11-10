@@ -55,19 +55,19 @@ export function renderRsvpPage(
 <title>${escapeHtml(title)} — Ụm Bò Milk</title>
 <style>
 *{box-sizing:border-box}
-html,body{min-height:100%}
-body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;background:#160A11;color:#111827;display:flex;align-items:center;justify-content:center;padding:22px 16px;position:relative;overflow-x:hidden}
+html{height:100%}
+body{min-height:100vh;min-height:100dvh;margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;background:#160A11;color:#111827;display:flex;align-items:center;justify-content:center;padding:22px 16px;position:relative;overflow-x:hidden}
 body::before{content:'';position:fixed;inset:0;z-index:-2;background:radial-gradient(900px 500px at 88% -8%,rgba(232,93,146,.38),transparent 60%),radial-gradient(700px 520px at -10% 112%,rgba(190,24,93,.30),transparent 60%),linear-gradient(160deg,#1C0C14 0%,#3A0F26 55%,#1A0A12 100%)}
 body::after{content:'';position:fixed;inset:0;z-index:-1;opacity:.45;background-image:radial-gradient(rgba(255,255,255,.06) 1px,transparent 1px);background-size:22px 22px}
 .card{width:100%;max-width:460px;background:#fff;border-radius:24px;overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.5),0 1px 0 rgba(255,255,255,.5) inset;animation:up .45s ease-out both}
 @keyframes up{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
 .top{height:5px;background:linear-gradient(90deg,#F7A8C4,#E85D92,#B4265B,#E85D92)}
 .hero{padding:24px 22px 6px;text-align:center;background:linear-gradient(180deg,#FFF4F8 0%,#FFFCFD 72%,#FFF 100%)}
-.brand{display:inline-flex;align-items:center;gap:9px}
+.brand{display:flex;width:max-content;margin:0 auto;align-items:center;gap:9px;text-align:left}
 .mark{width:34px;height:34px;border-radius:11px;background:linear-gradient(135deg,#E85D92,#B4265B);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:15px;box-shadow:0 6px 14px rgba(232,93,146,.35)}
 .brand b{display:block;font-size:12.5px;letter-spacing:.14em;color:#B4265B;line-height:1.1;text-align:left}
 .brand small{display:block;font-size:9px;letter-spacing:.22em;color:#B08A99;font-weight:700;margin-top:3px;text-align:left}
-.pill{display:inline-flex;align-items:center;gap:6px;margin:16px auto 0;padding:5px 11px;border-radius:999px;font-size:11px;font-weight:800;letter-spacing:.02em;line-height:1.2}
+.pill{display:flex;width:max-content;align-items:center;gap:6px;margin:14px auto 0;padding:5px 11px;border-radius:999px;font-size:11px;font-weight:800;letter-spacing:.02em;line-height:1.2}
 .pill i{width:6px;height:6px;border-radius:50%;display:block}
 .pill.pending{background:#FFF4E5;color:#B45309;border:1px solid #FDE3BF}
 .pill.pending i{background:#F59E0B;box-shadow:0 0 0 3px rgba(245,158,11,.18)}
