@@ -151,19 +151,18 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'hr-schedule', label: '5. Lịch làm việc', icon: Calendar },
     { id: 'hr-leave', label: '6. Nghỉ OFF', icon: Clock },
     { id: 'hr-swap', label: '7. Đổi ca', icon: RefreshCw },
-    { id: 'hr-support', label: '8. Chuyển ca hỗ trợ', icon: Send },
-    { id: 'hr-adjustments', label: '9. Bổ sung công', icon: FileText },
-    { id: 'notify', label: '10. Thông báo', icon: Bell },
-    { id: 'policies', label: '11. Chính sách', icon: Sliders },
-    { id: 'integrations', label: '12. Tích hợp & Đồng bộ', icon: Database },
-    { id: 'maintenance', label: '13. Bảo trì', icon: Activity },
-    { id: 'audit', label: '14. Nhật ký Audit', icon: FileCheck },
-    { id: 'backup', label: '15. Sao lưu & Phục hồi', icon: HardDrive },
-    { id: 'bank-changes', label: '16. Duyệt đổi STK', icon: CreditCard },
-    { id: 'live-map', label: '17. Bản đồ GPS', icon: MapPin },
-    { id: 'office-approvals', label: '18. Duyệt Văn Phòng', icon: FileText },
-    // Toàn bộ chức năng KẾ TOÁN (kể cả "Cấu hình Lương CB & Phụ cấp — theo Khối")
-    // chỉ hiển thị trên tài khoản FINANCE. ADMIN không có thẩm quyền xem.
+    { id: 'hr-adjustments', label: '8. Bổ sung công', icon: FileText },
+    { id: 'notify', label: '9. Thông báo', icon: Bell },
+    { id: 'policies', label: '10. Chính sách', icon: Sliders },
+    { id: 'integrations', label: '11. Tích hợp & Đồng bộ', icon: Database },
+    { id: 'maintenance', label: '12. Bảo trì', icon: Activity },
+    { id: 'audit', label: '13. Nhật ký Audit', icon: FileCheck },
+    { id: 'backup', label: '14. Sao lưu & Phục hồi', icon: HardDrive },
+    { id: 'live-map', label: '15. Bản đồ GPS', icon: MapPin },
+    { id: 'office-approvals', label: '16. Duyệt Văn Phòng', icon: FileText },
+    // GỠ khỏi cổng ADMIN (chỉ HR/Kế toán nghiệp vụ): "Chuyển ca hỗ trợ" (hr-support)
+    // và "Duyệt đổi STK" (bank-changes). Toàn bộ chức năng KẾ TOÁN (kể cả
+    // "Cấu hình Lương CB & Phụ cấp — theo Khối") chỉ hiển thị trên tài khoản FINANCE.
   ],
   /** HR giữ đúng THỨ TỰ QUY TRÌNH TUYỂN DỤNG: Ứng viên → Phỏng vấn →
    *  Thử việc → Chính thức → Hồ sơ. Tab `staff` là bản sao hoàn toàn của
@@ -317,10 +316,78 @@ export const HR_TAB_GROUPS: RoleTabGroup[] = [
   },
 ];
 
-/** Nhóm tab lớn cho từng vai trò (hiện áp dụng cho HR). Vai trò không có
- *  nhóm sẽ render danh sách phẳng ROLE_TABS như cũ. */
+/** CỔNG ADMIN — gom 16 màn hình thành 6 NHÓM theo mục đích sử dụng, thay cho
+ *  danh sách phẳng 18 tab trước đây: sidebar chỉ còn 6 mục lớn dễ quét mắt,
+ *  chức năng chi tiết nằm trong thanh tab con của từng nhóm.
+ *
+ *  Đã GỠ khỏi ADMIN (giữ nguyên cho HR/Kế toán):
+ *   • hr-support     — "Chuyển ca hỗ trợ" (nghiệp vụ HR tại chi nhánh)
+ *   • bank-changes   — "Duyệt đổi STK" (nghiệp vụ Kế toán)
+ *  Mọi deep-link/tab đã lưu của 2 màn này tự chuyển hướng (xem ADMIN_TAB_ALIASES). */
+export const ADMIN_TAB_GROUPS: RoleTabGroup[] = [
+  {
+    id: 'admin-group-overview',
+    label: '1. Tổng quan',
+    icon: Building2,
+    tabs: [{ id: 'dashboard', label: 'Dashboard hệ thống', icon: Building2 }],
+  },
+  {
+    id: 'admin-group-people',
+    label: '2. Nhân sự & Tài khoản',
+    icon: Users,
+    tabs: [
+      { id: 'staff', label: 'Nhân sự', icon: Users },
+      { id: 'accounts', label: 'Tài khoản & PIN', icon: Shield },
+      { id: 'branches', label: 'Chi nhánh & Ca', icon: Store },
+    ],
+  },
+  {
+    id: 'admin-group-schedule',
+    label: '3. Lịch & Ca làm',
+    icon: Calendar,
+    tabs: [
+      { id: 'hr-schedule', label: 'Lịch làm việc', icon: Calendar },
+      { id: 'hr-leave', label: 'Nghỉ OFF', icon: Clock },
+      { id: 'hr-swap', label: 'Đổi ca', icon: RefreshCw },
+    ],
+  },
+  {
+    id: 'admin-group-work',
+    label: '4. Công & Bản đồ',
+    icon: CheckCircle,
+    tabs: [
+      { id: 'hr-adjustments', label: 'Bổ sung công', icon: FileText },
+      { id: 'live-map', label: 'Bản đồ GPS', icon: MapPin },
+    ],
+  },
+  {
+    id: 'admin-group-approvals',
+    label: '5. Duyệt & Thông báo',
+    icon: Bell,
+    tabs: [
+      { id: 'notify', label: 'Thông báo', icon: Bell },
+      { id: 'office-approvals', label: 'Duyệt Văn Phòng', icon: FileText },
+      { id: 'policies', label: 'Chính sách', icon: Sliders },
+    ],
+  },
+  {
+    id: 'admin-group-system',
+    label: '6. Hệ thống & Dữ liệu',
+    icon: Database,
+    tabs: [
+      { id: 'integrations', label: 'Tích hợp & Đồng bộ', icon: Database },
+      { id: 'maintenance', label: 'Bảo trì', icon: Activity },
+      { id: 'audit', label: 'Nhật ký Audit', icon: FileCheck },
+      { id: 'backup', label: 'Sao lưu & Phục hồi', icon: HardDrive },
+    ],
+  },
+];
+
+/** Nhóm tab lớn cho từng vai trò (hiện áp dụng cho HR và ADMIN). Vai trò không
+ *  có nhóm sẽ render danh sách phẳng ROLE_TABS như cũ. */
 export const ROLE_TAB_GROUPS: Record<string, RoleTabGroup[]> = {
   HR: HR_TAB_GROUPS,
+  ADMIN: ADMIN_TAB_GROUPS,
 };
 
 /** Tìm nhóm lớn đang chứa tab con (dùng cho nav + thanh tab con). */
@@ -397,6 +464,10 @@ export const ADMIN_TAB_ALIASES: Record<string, string> = {
   'fin-rate-adjust': 'dashboard',
   // "Cấu hình Lương cơ bản & Phụ cấp — theo Khối" cũng là chức năng Kế toán.
   'fin-salary-config': 'dashboard',
+  // Hai màn đã GỠ khỏi cổng ADMIN (chỉ HR/Kế toán dùng): deep-link cũ tự chuyển
+  // về màn gần nhất còn tồn tại, không để trắng trang.
+  'hr-support': 'hr-schedule',
+  'bank-changes': 'dashboard',
 };
 
 /** Tab HR đã gộp/nhóm: `staff` trùng hoàn toàn với `hr-official` nên gỡ khỏi
@@ -3664,7 +3735,7 @@ export function App() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
                 <div>
                   <h1 style={{ fontSize: '18px', fontWeight: 800, margin: 0, color: 'var(--text)' }}>
-                    1. Dashboard Tổng Thể Hệ Thống Ụm Bò Milk
+                    Dashboard Tổng Thể Hệ Thống Ụm Bò Milk
                   </h1>
                   <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '2px 0 0' }}>
                     Cập nhật theo thời gian thực từ Google Sheets Master và Socket.IO
@@ -3996,7 +4067,7 @@ export function App() {
               <SecNav items={[['sec-accounts-internal', 'Tài khoản nội bộ'], ['sec-accounts-pin', 'PIN & TK nhân viên']]} />
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
-                  <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>2. Quản Lý Tài Khoản Nội Bộ & Phân Quyền</h1>
+                  <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>Quản Lý Tài Khoản Nội Bộ & Phân Quyền</h1>
                   <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Phân quyền 5 vai trò (Admin, HR, Store, Finance, Marketing) và phạm vi chi nhánh (branchScope)</p>
                 </div>
                 <button
@@ -4113,7 +4184,7 @@ export function App() {
           {(activeTab === 'activation' || activeTab === 'accounts') && (
             <div id="sec-accounts-pin" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               <div>
-                <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>3. PIN & Quản Lý Tài Khoản Nhân Viên</h1>
+                <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>PIN & Quản Lý Tài Khoản Nhân Viên</h1>
                   <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Phân nhóm theo 6 tab nghiệp vụ: Tất cả, Thử việc, Chính thức, Văn Phòng, Xưởng, Sales. Nhân viên đăng nhập trên Cổng Employee Web bằng SĐT + mã PIN 6 số, rồi đặt PIN riêng ngay lần đầu. Hệ thống KHÔNG tự reset PIN: quên PIN thì HR xem lại mã hiện tại; tới hạn đổi PIN, NV nhập PIN cũ rồi đặt PIN mới.</p>
               </div>
 
@@ -4827,7 +4898,7 @@ export function App() {
             <div id="sec-branches" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
               <SecNav items={[['sec-branches', 'Chi nhánh & ca']]} />
               <div>
-                <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>5. Quản Lý Chi Nhánh & Cấu Hình Ca Làm</h1>
+                <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>Quản Lý Chi Nhánh & Cấu Hình Ca Làm</h1>
                 <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Tọa độ GPS, bán kính quét hợp lệ (300m), định biên nhân sự và khung giờ ca 1/2/3</p>
               </div>
 
@@ -4960,7 +5031,7 @@ export function App() {
             <div id="sec-policies" style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '800px' }}>
               <SecNav items={[['sec-policies', 'Chính sách']]} />
               <div>
-                <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>6. Cấu Hình Chính Sách Hệ Thống</h1>
+                <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>Cấu Hình Chính Sách Hệ Thống</h1>
                 <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Cửa sổ điểm danh, bán kính GPS, đăng ký OFF tuần và tiêu chuẩn bài kiểm tra TEST</p>
               </div>
 
@@ -5056,7 +5127,7 @@ export function App() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
-                  <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>7. Trung Tâm Thông Báo (Notification Center)</h1>
+                  <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>Trung Tâm Thông Báo (Notification Center)</h1>
                   <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Phân loại thông báo hệ thống, cảnh báo định biên, thông điệp bảo trì và phát thanh</p>
                 </div>
                 <button
@@ -5126,7 +5197,7 @@ export function App() {
           {activeTab === 'integrations' && (
             <div id="sec-integrations" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
               <div>
-                <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>8. Tích Hợp & Đồng Bộ Google Sheets Master</h1>
+                <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>Tích Hợp & Đồng Bộ Google Sheets Master</h1>
                 <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Cấu trúc 23 Tabs Google Sheets Master, Google Drive Receipts, Realtime Socket.IO & Sequential Queue</p>
               </div>
 
@@ -5326,7 +5397,7 @@ export function App() {
           {activeTab === 'maintenance' && (
             <div id="sec-maintenance" style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '800px' }}>
               <div>
-                <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>9. Quản Lý Chế Độ Bảo Trì Kỹ Thuật</h1>
+                <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>Quản Lý Chế Độ Bảo Trì Kỹ Thuật</h1>
                 <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Bật/tắt bảo trì toàn hệ thống, Web nhân viên, từng phân hệ — và hẹn giờ giao diện sự kiện cho cổng nhân viên</p>
               </div>
 
@@ -5810,7 +5881,7 @@ export function App() {
             <div id="sec-audit" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               <SecNav items={[['sec-audit', 'Audit log']]} />
               <div>
-                <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>10. Nhật Ký Hệ Thống Bất Biến (Audit Trail)</h1>
+                <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>Nhật Ký Hệ Thống Bất Biến (Audit Trail)</h1>
                 <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Ghi lại toàn bộ hành động: Actor ID, Hành động, Đối tượng, Thời gian và JSON Before/After</p>
               </div>
 
@@ -5854,7 +5925,7 @@ export function App() {
             <div id="sec-backup" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
-                  <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>11. Sao Lưu & Phục Hồi Dữ Liệu (Backup & Recovery)</h1>
+                  <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>Sao Lưu & Phục Hồi Dữ Liệu (Backup & Recovery)</h1>
                   <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Snapshot toàn bộ 23 tabs Google Sheets + receipts Google Drive, kiểm tra tính toàn vẹn</p>
                 </div>
                 <button
