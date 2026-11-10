@@ -6366,7 +6366,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <th style={{ padding: '10px 14px' }}>VỊ TRÍ & CHI NHÁNH</th>
                   <th style={{ padding: '10px 14px' }}>CA LÀM VIỆC ĐK</th>
                   <th style={{ padding: '10px 14px' }}>THỜI GIAN</th>
-                  <th style={{ padding: '10px 14px' }}>GOOGLE MEET SINH TỰ ĐỘNG</th>
                   <th style={{ padding: '10px 14px' }}>TRẠNG THÁI</th>
                   <th style={{ padding: '10px 14px', textAlign: 'right' }}>THAO TÁC</th>
                 </tr>
@@ -6447,85 +6446,6 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       </td>
                       <td style={{ padding: '10px 14px', verticalAlign: 'middle', fontWeight: 600, color: '#1E293B' }}>
                         {fmtPvTime(c) || (c.interview_time || 'Chờ xếp lịch')}
-                      </td>
-                      <td style={{ padding: '10px 14px', verticalAlign: 'middle' }}>
-                        {(() => {
-                          const st = interviewStartMs(c);
-                          if (!st) return <span style={{ fontSize: '12px', color: '#94A3B8' }}>Chờ xếp lịch Meet</span>;
-                          const diff = st - meetNow;
-                          const elapsed = meetNow - st;
-                          const endMs = st + PV_SLOT_MINUTES * 60_000;
-                          const pad = (n: number) => String(n).padStart(2, '0');
-                          const fmtLeft = (ms: number) => {
-                            const s = Math.floor(ms / 1000);
-                            const h = Math.floor(s / 3600);
-                            const m = Math.floor((s % 3600) / 60);
-                            const ss = s % 60;
-                            return h > 0 ? `${h}h ${pad(m)}p ${pad(ss)}s` : `${m}p ${pad(ss)}s`;
-                          };
-                          const fmtHM = (ms: number) => {
-                            const vn = new Date(ms + 7 * 3_600_000);
-                            return `${pad(vn.getUTCHours())}:${pad(vn.getUTCMinutes())}`;
-                          };
-                          const pvKey = `${(c as any).submission_id}|${String((c as any).interview_date || '').slice(0, 10)}`;
-                          const pvJoined = pvJoinedRef.current.has(pvKey);
-                          const pvScored = !!parseScoreDetailClient((c as any)?.interview_score_detail);
-                          const noJoinMs = PV_NOJOIN_CANCEL_MIN * 60_000;
-                          if (elapsed >= noJoinMs && !pvJoined && !pvScored) {
-                            const remainSec = Math.max(0, PV_CANCEL_COUNTDOWN_SEC - Math.floor((elapsed - noJoinMs) / 1000));
-                            const busy = pvCancelBusyId === (c as any).submission_id;
-                            return (
-                              <div style={{ backgroundColor: '#FEF2F2', border: '1px solid #FCA5A5', borderRadius: '6px', padding: '6px 8px' }}>
-                                <div style={{ fontSize: '11.5px', fontWeight: 700, color: '#991B1B' }}>
-                                  ⚠️ Quá {PV_NOJOIN_CANCEL_MIN}p chưa vào Meet
-                                </div>
-                                <div style={{ fontSize: '11px', fontWeight: 700, color: '#DC2626', margin: '2px 0', fontVariantNumeric: 'tabular-nums' }}>
-                                  ⏳ Tự hủy sau: 00:{String(remainSec).padStart(2, '0')}
-                                </div>
-                                <button
-                                  disabled={busy}
-                                  onClick={() => handleCancelInterview(c, false)}
-                                  style={{ display: 'inline-block', backgroundColor: busy ? '#9CA3AF' : '#DC2626', color: '#FFF', fontWeight: 700, fontSize: '11px', padding: '5px 10px', borderRadius: '5px', border: 'none', cursor: busy ? 'wait' : 'pointer', width: '100%' }}
-                                >
-                                  {busy ? '⏳ Đang hủy...' : '✖ Huỷ Phỏng vấn'}
-                                </button>
-                                <a href={SYSTEM_MEET_URL} target="_blank" rel="noreferrer" data-meet-open="1" onClick={() => markPvJoined(c)}
-                                  style={{ display: 'block', fontSize: '10.5px', color: '#0068FF', fontWeight: 700, marginTop: '3px', textAlign: 'center' }}>
-                                  Vào Meet để giữ lịch →
-                                </a>
-                              </div>
-                            );
-                          }
-                          if (diff <= 0 && elapsed < PV_SLOT_MINUTES * 60_000) {
-                            return (
-                              <div>
-                                <a href={SYSTEM_MEET_URL} target="_blank" rel="noreferrer" data-meet-open="1" onClick={() => markPvJoined(c)}
-                                  style={{ display: 'inline-block', backgroundColor: '#DC2626', color: '#FFF', fontWeight: 700, fontSize: '11.5px', padding: '5px 10px', borderRadius: '6px', textDecoration: 'none', animation: 'fx-blink 1.2s infinite' }}>
-                                  🔴 ĐANG PV — Vào Meet
-                                </a>
-                                <div style={{ fontSize: '10.5px', color: '#DC2626', fontWeight: 600, marginTop: '3px' }}>
-                                  Còn {fmtLeft(endMs - meetNow)}
-                                </div>
-                              </div>
-                            );
-                          }
-                          if (diff <= 0) return (
-                            <div>
-                              <div style={{ display: 'inline-block', fontSize: '11.5px', fontWeight: 700, color: '#065F46', backgroundColor: '#D1FAE5', padding: '4px 8px', borderRadius: '5px' }}>
-                                ✅ Hết giờ PV ({fmtHM(endMs)})
-                              </div>
-                              <div style={{ fontSize: '10.5px', color: '#64748B', marginTop: '2px' }}>
-                                Đủ 30 phút — chờ HR chấm →
-                              </div>
-                            </div>
-                          );
-                          return (
-                            <div>
-                              <div style={{ fontSize: '11.5px', fontWeight: 700, color: '#1D4ED8' }}>⏳ Còn {fmtLeft(diff)}</div>
-                              <a href={SYSTEM_MEET_URL} target="_blank" rel="noreferrer" data-meet-open="1" onClick={() => markPvJoined(c)} style={{ fontSize: '11px', color: '#0068FF', fontWeight: 600 }}>Vào trước qua Meet →</a>
-                            </div>
-                          );
-                        })()}
                       </td>
                       <td style={{ padding: '10px 14px', verticalAlign: 'middle' }}>
                         {(() => {
@@ -6614,8 +6534,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           const isAccepted = String(c.status || '') === 'ACCEPTED';
                           const isScored = !!d;
                           const disabledForFail = failInfo.isFail;
+                          // Nút Thao tác HIỂN THỊ THEO TAB (yêu cầu HR): mỗi tab chỉ
+                          // đúng các nút cần cho bước nghiệp vụ đó, tránh rối mắt.
+                          const tabKey = pvTabOf(c);
                           return (
                             <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center' }}>
+                              {tabKey !== 'NO_SHOW' && (
                               <button
                                 disabled={disabledForFail || candActionBusyId === `zalo-${c.submission_id}`}
                                 style={{ ...btn2, backgroundColor: disabledForFail ? '#94A3B8' : '#10B981', color: '#FFF' }}
@@ -6629,42 +6553,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                               >
                                 {candActionBusyId === `zalo-${c.submission_id}` ? '⏳...' : '💬 Chat Zalo'}
                               </button>
-                              {(['INVITED_INTERVIEW', 'CONFIRMED'].includes(String(c.status || ''))) && !disabledForFail && (
-                                <button
-                                  disabled={candActionBusyId === `rsvp-${c.submission_id}`}
-                                  style={{ ...btn2, backgroundColor: '#0EA5E9', color: '#FFF' }}
-                                  onClick={async () => {
-                                    if (candActionBusyId) return;
-                                    const k = `rsvp-${c.submission_id}`;
-                                    setCandActionBusyId(k);
-                                    try {
-                                      const r: any = await apiRequest(`/interviews/${c.submission_id}/rsvp-link`);
-                                      const url = String(r?.url || '');
-                                      if (!url) throw new Error('Không lấy được link!');
-                                      try { await navigator.clipboard.writeText(url); } catch { window.prompt('Chép link xác nhận cho ứng viên:', url); return; }
-                                      showToast('🔗 Đã sao chép link xác nhận — gửi cho ứng viên qua Zalo/phone!');
-                                    } catch (e: any) {
-                                      showToast(e?.message || 'Lỗi lấy link xác nhận!');
-                                    } finally {
-                                      setCandActionBusyId(null);
-                                    }
-                                  }}
-                                  title="Lấy lại link để ứng viên tự Xác nhận tham gia / Từ chối (bắt buộc lý do)"
-                                >
-                                  {candActionBusyId === `rsvp-${c.submission_id}` ? '⏳...' : '🔗 Link RSVP'}
-                                </button>
                               )}
-                              {(['INVITED_INTERVIEW', 'CONFIRMED'].includes(String(c.status || ''))) && !disabledForFail && (
-                                <button
-                                  disabled={rsvpBusyId === c.submission_id}
-                                  style={{ ...btn2, backgroundColor: '#EF4444', color: '#FFF' }}
-                                  onClick={() => handleNoShowInterview(c)}
-                                  title="Ứng viên không đến — đánh vắng, hủy lịch giải phóng slot (PV lại phải đặt lịch mới)"
-                                >
-                                  {rsvpBusyId === c.submission_id ? '⏳...' : '🚫 Vắng'}
-                                </button>
-                              )}
-                              {(['INVITED_INTERVIEW', 'CONFIRMED'].includes(String(c.status || ''))) && !disabledForFail && (
+                              {(tabKey === 'WAIT_CONFIRM' || tabKey === 'WAIT_INTERVIEW') && !disabledForFail && (
                                 <button
                                   disabled={candActionBusyId === `bl-${c.submission_id}`}
                                   style={{ ...btn2, backgroundColor: '#111827', color: '#FFF' }}
@@ -6750,17 +6640,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                   {candActionBusyId === `ub-${c.submission_id}` ? '⏳...' : '↩️ Bỏ đen'}
                                 </button>
                               )}
-                              {!isAccepted && !isScored && String(c.status || '') !== 'BLACKLIST' && String(c.status || '') !== 'RESCHEDULE_PROPOSED' && (
-                                <button
-                                  disabled={disabledForFail}
-                                  style={{ ...btn2, backgroundColor: disabledForFail ? '#94A3B8' : '#8B5CF6', color: '#FFF' }}
-                                  onClick={() => !disabledForFail && openScoring(c)}
-                                  title={disabledForFail ? (failInfo.remainingMs <= 0 ? 'Ứng viên Chưa đạt — đã quá 24h, hệ thống sẽ tự động xoá khỏi hệ thống' : 'Ứng viên Chưa đạt — các chức năng đã bị khoá (tự xoá sau 24h)') : 'Chấm điểm theo TIÊU CHÍ LỌC HỒ SƠ (chấm xong nút này ẩn đi)'}
-                                >
-                                  📝 Chấm điểm
-                                </button>
-                              )}
-                              {!isAccepted && String(c.status || '') !== 'BLACKLIST' && (
+                              {tabKey === 'WAIT_INTERVIEW' && !isAccepted && String(c.status || '') !== 'BLACKLIST' && (
                                 <button
                                   disabled={disabledForFail}
                                   style={{ ...btn2, backgroundColor: disabledForFail ? '#94A3B8' : '#F59E0B', color: '#FFF' }}
@@ -6770,7 +6650,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                   ✏️ Cập nhật TT
                                 </button>
                               )}
-                              {canApprove && (
+                              {tabKey === 'WAIT_PROBATION' && canApprove && (
                                 <button
                                   disabled={disabledForFail || approveBusyId === c.submission_id}
                                   style={{ ...btn2, backgroundColor: disabledForFail ? '#94A3B8' : '#059669', color: '#FFF' }}
@@ -6780,7 +6660,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                   {approveBusyId === c.submission_id ? '⏳...' : '✅ Duyệt NV'}
                                 </button>
                               )}
-                              {isScored && (
+                              {tabKey === 'WAIT_PROBATION' && isScored && (
                                 <button
                                   disabled={disabledForFail || vipBusyId === c.submission_id}
                                   style={{ ...btn2, backgroundColor: (c as any).vip ? '#7C3AED' : '#F59E0B', color: '#FFF' }}
@@ -6852,7 +6732,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={7} style={{ textAlign: 'center', padding: '36px', color: 'var(--text-muted)', fontSize: '13px' }}>
+                    <td colSpan={6} style={{ textAlign: 'center', padding: '36px', color: 'var(--text-muted)', fontSize: '13px' }}>
                       {(pvBranchFilter !== 'ALL' || pvSearch.trim())
                         ? 'Không có ứng viên nào khớp bộ lọc ở tab này — thử đổi chi nhánh, từ khóa tìm kiếm hoặc chọn tab khác.'
                         : pvTab === 'WAIT_SCHEDULE'
