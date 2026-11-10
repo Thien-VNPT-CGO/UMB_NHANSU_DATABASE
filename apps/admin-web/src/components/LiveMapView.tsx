@@ -319,9 +319,15 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
   const layerRef = useRef<L.LayerGroup | null>(null);
   const fittedRef = useRef(false);
   const inFlightRef = useRef(false);
+  const pendingReloadRef = useRef(false);
+  const loadRef = useRef<(opts?: { silent?: boolean }) => Promise<void>>(async () => {});
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
-    if (inFlightRef.current) return;
+    // Đang tải dở: ghi nhớ để tải lại NGAY sau khi xong (realtime không bị nuốt).
+    if (inFlightRef.current) {
+      pendingReloadRef.current = true;
+      return;
+    }
     inFlightRef.current = true;
     if (!opts?.silent) setLoading(true);
     try {
@@ -334,8 +340,13 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
     } finally {
       inFlightRef.current = false;
       setLoading(false);
+      if (pendingReloadRef.current) {
+        pendingReloadRef.current = false;
+        window.setTimeout(() => { loadRef.current({ silent: true }); }, 250);
+      }
     }
   }, []);
+  loadRef.current = load;
 
   // Tải lần đầu + tự làm mới mỗi 30s (trạng thái ca đổi theo giờ dù không có sự kiện).
   useEffect(() => {
@@ -355,15 +366,19 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
   }, []);
 
   // Realtime: backend bắn data:updated(attendance/schedules/config) → App phát event này.
+  // 'ubm:branches-reload' = Admin vừa đổi chi nhánh (ẩn/hiện, toạ độ, thêm mới).
   useEffect(() => {
     let timer: number | null = null;
     const onReload = () => {
       if (timer) window.clearTimeout(timer);
-      timer = window.setTimeout(() => load({ silent: true }), 800);
+      // 400ms: gộp nhiều sự kiện liên tiếp (VD bấm Lưu + socket cùng lúc).
+      timer = window.setTimeout(() => load({ silent: true }), 400);
     };
     window.addEventListener('ubm:live-map-reload', onReload);
+    window.addEventListener('ubm:branches-reload', onReload);
     return () => {
       window.removeEventListener('ubm:live-map-reload', onReload);
+      window.removeEventListener('ubm:branches-reload', onReload);
       if (timer) window.clearTimeout(timer);
     };
   }, [load]);
@@ -446,6 +461,9 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
       });
       setBranchMsg({ kind: 'ok', text: okMsg });
       await load({ silent: true });
+      // Báo các tab khác (Chi nhánh & Ca, dropdown chi nhánh...) tải lại ngay,
+      // kể cả khi socket đang ngắt.
+      try { window.dispatchEvent(new CustomEvent('ubm:branches-reload', { detail: { area: 'branches', id } })); } catch { /* non-fatal */ }
     } catch (e: any) {
       setBranchMsg({ kind: 'err', text: e?.message || 'Không lưu được chi nhánh' });
     } finally {
@@ -519,6 +537,7 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
       setBranchMsg({ kind: 'ok', text: `Đã thêm chi nhánh ${name} (${id})` });
       setNewBranch({ id: '', name: '', address: '', latitude: '', longitude: '', radius_meters: '300' });
       await load({ silent: true });
+      try { window.dispatchEvent(new CustomEvent('ubm:branches-reload', { detail: { area: 'branches', id, action: 'create' } })); } catch { /* non-fatal */ }
     } catch (e: any) {
       setBranchMsg({ kind: 'err', text: e?.message || 'Không thêm được chi nhánh' });
     } finally {

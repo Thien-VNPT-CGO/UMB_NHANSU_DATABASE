@@ -1409,6 +1409,26 @@ export function App() {
     await Promise.allSettled(tasks);
   };
 
+  // Realtime chi nhánh: mọi thay đổi (ẩn/hiện trên bản đồ, toạ độ, thêm mới) đều
+  // phát 'ubm:branches-reload' → tải lại danh sách chi nhánh dùng chung cho MỌI
+  // tab (Chi nhánh & Ca, dropdown chi nhánh ở Nhân sự/Lịch, bản đồ GPS...).
+  useEffect(() => {
+    let timer: any = null;
+    const onBranchesReload = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        apiRequest('/admin/branches')
+          .then(bList => { if (Array.isArray(bList)) setBranches(bList); })
+          .catch(() => null);
+      }, 120);
+    };
+    window.addEventListener('ubm:branches-reload', onBranchesReload);
+    return () => {
+      window.removeEventListener('ubm:branches-reload', onBranchesReload);
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
+
   // Synchronize active tab to localStorage whenever it changes
   useEffect(() => {
     if (activeTab) {
@@ -1772,7 +1792,23 @@ export function App() {
           payload?.entity === 'all' &&
           Array.isArray(payload?.data?.changedTabs) &&
           payload.data.changedTabs.includes('CAU_HINH_HE_THONG');
-        if (payload?.entity === 'config' || configChangedOnSheet) {
+        // ADMIN vừa đổi chi nhánh trên bản đồ / tab Chi nhánh (ẩn-hiện, toạ độ,
+        // thêm mới): backend bắn cả `config{area:branches}` (route riêng) và
+        // `branches` (middleware ghi chung). Chỉ tải lại danh sách chi nhánh
+        // (1 request) + báo mọi tab vẽ lại, KHÔNG full-reload 10 API.
+        const branchConfigChanged =
+          (payload?.entity === 'config' && payload?.data?.area === 'branches') ||
+          payload?.entity === 'branches';
+        if (branchConfigChanged) {
+          // 1 event dùng chung: tab Chi nhánh tự tải lại (xem effect
+          // 'ubm:branches-reload'), bản đồ GPS vẽ lại ngay — không full-reload.
+          try {
+            window.dispatchEvent(new CustomEvent('ubm:branches-reload', { detail: payload?.data }));
+          } catch { /* non-fatal */ }
+          try {
+            window.dispatchEvent(new CustomEvent('ubm:live-map-reload', { detail: payload?.data }));
+          } catch { /* non-fatal */ }
+        } else if (payload?.entity === 'config' || configChangedOnSheet) {
           loadAllData(currentUser, true);
           // Toạ độ cửa hàng/bán kính vừa đổi -> bản đồ GPS vẽ lại ngay.
           try {
@@ -1909,7 +1945,7 @@ export function App() {
           }
           // Bỏ qua loadAllData (10 API) khi sự kiện chỉ là điểm danh hoặc xếp ca
           // vì cả 2 đã được cập nhật trực tiếp tức thì phía trên
-          if (!['attendance', 'schedules'].includes(payload?.entity)) {
+          if (!['attendance', 'schedules', 'branches'].includes(payload?.entity)) {
             scheduleReload(currentUser, payload?.entity, Array.isArray(payload?.data?.changedTabs) ? payload.data.changedTabs : undefined);
           }
         }
@@ -2344,6 +2380,8 @@ export function App() {
         ? { ...b, ...(updated || {}), radius_meters: radius, gps_enabled: branchEditForm.gps_enabled }
         : b)));
       setBranchEditId(null);
+      // Bản đồ GPS vẽ lại ngay (không chờ socket) — toạ độ/bán kính/GPS vừa đổi.
+      try { window.dispatchEvent(new CustomEvent('ubm:live-map-reload', { detail: { area: 'branches', id: branchId } })); } catch { /* non-fatal */ }
       setSuccessMsg(branchEditForm.gps_enabled
         ? 'Đã lưu toạ độ GPS cửa hàng — bản đồ giám sát cập nhật ngay.'
         : 'Đã TẮT định vị GPS — nhân viên chi nhánh này điểm danh không cần GPS.');
