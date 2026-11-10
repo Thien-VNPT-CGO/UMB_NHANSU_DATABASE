@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildProposalSlots,
   proposalSlotTimes,
+  suggestFreeSlots,
   validateProposalSlot,
 } from '../src/services/interview-slots.service.js';
 import { reminderKeyOf } from '../src/services/interview-zalo-reminder.service.js';
@@ -68,4 +69,17 @@ test('validateProposalSlot từ chối ngoài khung làm việc / ngày đã qua
 test('reminderKeyOf đổi khi đổi lịch -> tự nhắc lại lịch mới', () => {
   assert.equal(reminderKeyOf('2026-11-11', '14:00 - 14:30'), '2026-11-11|14:00');
   assert.notEqual(reminderKeyOf('2026-11-11', '14:00'), reminderKeyOf('2026-11-12', '14:00'));
+});
+
+test('gợi ý khung trống theo lịch HR: không gợi ý giờ nghỉ trưa 12:00', () => {
+  const future = new Date(Date.now() + 7 * 86_400_000 + 7 * 3_600_000).toISOString().slice(0, 10);
+  const sugg = suggestFreeSlots([], future, 20);
+  assert.ok(sugg.includes('08:00'));
+  assert.ok(sugg.includes('11:00'));
+  assert.ok(!sugg.includes('11:30'), '11:30 là giờ kết thúc buổi sáng');
+  assert.ok(!sugg.includes('12:00'), 'không gợi ý giờ nghỉ trưa');
+  assert.ok(sugg.includes('13:30'));
+  assert.ok(sugg.includes('16:00'));
+  assert.ok(!sugg.includes('16:30'), '16:30 là giờ kết thúc buổi chiều');
+  assert.equal(sugg.length, 13);
 });

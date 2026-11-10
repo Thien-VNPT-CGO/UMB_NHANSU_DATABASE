@@ -242,7 +242,7 @@ export function findSlotConflict(
   return null;
 }
 
-/** Gợi ý các khung trống cùng ngày (08:00–16:30, bước 30 phút, loại khung đã kẹt). */
+/** Gợi ý các khung trống cùng ngày theo lịch làm việc HR (bước 30 phút, loại khung đã kẹt). */
 export function suggestFreeSlots(candidates: any[], date: string, limit = 5, excludeSubmissionId?: string): string[] {
   const taken: number[] = [];
   for (const c of candidates || []) {
@@ -252,9 +252,7 @@ export function suggestFreeSlots(candidates: any[], date: string, limit = 5, exc
     if (st !== null) taken.push(st);
   }
   const out: string[] = [];
-  const lastStart = toMinutes(INTERVIEW_WORK_END) - INTERVIEW_SLOT_MINUTES;
-  for (let m = toMinutes(INTERVIEW_WORK_START); m <= lastStart; m += INTERVIEW_SLOT_MINUTES) {
-    const hhmm = toHHmm(Math.floor(m / 60), m % 60);
+  for (const { time: hhmm } of proposalSlotTimes()) {
     const startMs = new Date(`${date}T${hhmm}:00+07:00`).getTime();
     if (!Number.isFinite(startMs)) continue;
     if (startMs + INTERVIEW_SLOT_MINUTES * 60_000 < Date.now() - 5 * 60_000) continue; // khung đã qua
