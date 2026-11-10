@@ -163,10 +163,6 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'live-map', label: '17. Bản đồ GPS', icon: MapPin },
     { id: 'office-approvals', label: '18. Duyệt Văn Phòng', icon: FileText },
     { id: 'fin-salary-config', label: '19. Cấu hình Lương CB & Phụ cấp (Theo Khối)', icon: DollarSign },
-    // ADMIN chỉ giữ DUY NHẤT 1 chức năng của Kế toán: duyệt phiếu lương kỳ.
-    // Mọi tab Kế toán còn lại (đối soát, tính lương, phiếu lương, thanh toán…)
-    // chỉ dành cho tài khoản FINANCE, không hiển thị trên ADMIN.
-    { id: 'fin-payroll-periods', label: '20. Duyệt phiếu lương kỳ (Kế toán)', icon: FileSpreadsheet },
   ],
   /** HR giữ đúng THỨ TỰ QUY TRÌNH TUYỂN DỤNG: Ứng viên → Phỏng vấn →
    *  Thử việc → Chính thức → Hồ sơ. Tab `staff` là bản sao hoàn toàn của
@@ -385,19 +381,19 @@ export const ADMIN_TAB_ALIASES: Record<string, string> = {
   notifications: 'notify',
   // Tab Chấm công đã khóa với Admin — tab cũ đã lưu chuyển về Bổ sung công.
   'hr-attendance': 'hr-adjustments',
-  // ADMIN chỉ còn 1 chức năng Kế toán là DUYỆT PHIẾU LƯƠNG KỲ. Các tab Kế toán
-  // khác đã gỡ khỏi menu ADMIN (chỉ FINANCE dùng) — deep-link/tab đã lưu cũ tự
-  // chuyển về màn hình duyệt để không bị trắng trang.
-  'fin-dashboard': 'fin-payroll-periods',
-  'fin-timesheet': 'fin-payroll-periods',
-  'fin-bcc': 'fin-payroll-periods',
-  'fin-calculate': 'fin-payroll-periods',
-  'fin-payroll-sheet': 'fin-payroll-periods',
-  'fin-payslips': 'fin-payroll-periods',
-  'fin-payment': 'fin-payroll-periods',
-  'fin-signatures': 'fin-payroll-periods',
-  'fin-bank-qr': 'fin-payroll-periods',
-  'fin-rate-adjust': 'fin-payroll-periods',
+  // Các tab Kế toán KHÔNG hiển thị trên ADMIN (chỉ tài khoản FINANCE dùng).
+  // Deep-link/tab đã lưu cũ tự chuyển về Dashboard thay vì trắng trang.
+  'fin-dashboard': 'dashboard',
+  'fin-timesheet': 'dashboard',
+  'fin-bcc': 'dashboard',
+  'fin-calculate': 'dashboard',
+  'fin-payroll-sheet': 'dashboard',
+  'fin-payroll-periods': 'dashboard',
+  'fin-payslips': 'dashboard',
+  'fin-payment': 'dashboard',
+  'fin-signatures': 'dashboard',
+  'fin-bank-qr': 'dashboard',
+  'fin-rate-adjust': 'dashboard',
 };
 
 /** Tab HR đã gộp/nhóm: `staff` trùng hoàn toàn với `hr-official` nên gỡ khỏi

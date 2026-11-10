@@ -222,7 +222,6 @@ export default function FinanceModule(props: FinanceModuleProps) {
     salaryConfigs, showToast, onRefreshData, onPushSheets, onNavigateTab,
   } = props;
   const isFinance = String((currentUser as any)?.role || '').toUpperCase() === 'FINANCE';
-  const isAdmin = String((currentUser as any)?.role || '').toUpperCase() === 'ADMIN';
   const curPeriod = useMemo(() => currentPeriod(), []);
   const [month, setMonth] = useState<string>(() => {
     const saved = localStorage.getItem(MONTH_KEY);
@@ -934,7 +933,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
         <div className="fin-brand">
           <div className="fin-logo" aria-hidden="true"><Wallet size={22} strokeWidth={2.2} /></div>
           <div>
-            <div className="fin-title">{isAdmin ? 'Duyệt phiếu lương kỳ — Kế toán' : 'Cổng Kế toán — Tính lương'}</div>
+            <div className="fin-title">Cổng Kế toán — Tính lương</div>
             <div className="fin-subtitle">Tài khoản: {currentUser?.fullName || 'Kế toán'} &nbsp;•&nbsp; Vai trò: {currentUser?.role} &nbsp;•&nbsp; UMB Milk HR</div>
           </div>
         </div>
