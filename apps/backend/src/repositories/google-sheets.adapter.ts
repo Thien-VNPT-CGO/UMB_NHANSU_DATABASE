@@ -1946,14 +1946,30 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     return this.fallbackAdapter.getBranches();
   }
 
+  /**
+   * Khoá tạm việc ĐỌC ĐÈ chi nhánh từ Sheet sau khi Admin vừa sửa.
+   *
+   * Ghi tab DANH_SACH_CHI_NHANH chạy nền (queue) nên có khoảng ~5-10s dữ liệu
+   * mới lên Sheet; nếu tick pull (12s/lần) chen vào giữa, bộ nhớ bị gán lại
+   * theo dữ liệu CŨ và thao tác bật/tắt chi nhánh trên bản đồ bị "nhảy" lại.
+   * Trong cửa sổ này, pull bỏ qua tab chi nhánh (giữ nguyên bộ nhớ vừa lưu).
+   */
+  private branchWriteLockUntil = 0;
+
+  public isBranchWriteLocked(): boolean {
+    return Date.now() < this.branchWriteLockUntil;
+  }
+
   async createBranch(branch: any) {
     const created = await this.fallbackAdapter.createBranch(branch);
     // Chi nhánh mới phải nằm trong tab DANH_SACH_CHI_NHANH ngay (kèm toạ độ +
     // cờ hiển thị bản đồ) để restart/pull không làm mất chi nhánh vừa thêm.
     if (this.isConfigured) {
+      // Chụp danh sách NGAY (trước khi pull có thể ghi đè) rồi mới ghi nền.
+      const snapshot = await this.fallbackAdapter.getBranches();
+      this.branchWriteLockUntil = Date.now() + 90_000;
       this.scheduleSheetsWrite(async () => {
-        const branches = await this.fallbackAdapter.getBranches();
-        await this.syncService.syncBranchesToSheet(branches);
+        await this.syncService.syncBranchesToSheet(snapshot);
       }, 'BRANCH.create');
     }
     return created;
@@ -1965,9 +1981,12 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     // ghi riêng tab DANH_SACH_CHI_NHANH ngay (1 request) thay vì chờ full-sync
     // 24 tab có thể bị hoãn — restart giữa chừng sẽ mất toạ độ vừa lưu.
     if (this.isConfigured) {
+      // Chụp danh sách NGAY sau khi sửa: nếu đọc lại bên trong task nền thì pull
+      // chen ngang có thể đã trả bộ nhớ về dữ liệu cũ -> ghi đè mất thay đổi.
+      const snapshot = await this.fallbackAdapter.getBranches();
+      this.branchWriteLockUntil = Date.now() + 90_000;
       this.scheduleSheetsWrite(async () => {
-        const branches = await this.fallbackAdapter.getBranches();
-        await this.syncService.syncBranchesToSheet(branches);
+        await this.syncService.syncBranchesToSheet(snapshot);
       }, 'BRANCH.update');
     }
     return res;

@@ -3045,7 +3045,13 @@ export class GoogleSheetsSyncService {
       try {
       // 3. Đọc DANH_SACH_CHI_NHANH
       const branchRows = batch['DANH_SACH_CHI_NHANH'];
-      if (branchRows.length > 0) {
+      // Admin/HR vừa bật-tắt/sửa toạ độ chi nhánh: bản ghi mới có thể chưa kịp
+      // lên Sheet. Bỏ qua đọc đè trong thời gian khoá để cờ trên bản đồ không
+      // bị "nhảy" về giá trị cũ giữa 2 lần pull.
+      const branchPullLocked = !!(repo as any).isBranchWriteLocked?.();
+      if (branchPullLocked) {
+        counts.branches = fallback.branches.length;
+      } else if (branchRows.length > 0) {
         fallback.branches = branchRows.map(r => ({
           id: r[0],
           name: r[1],
