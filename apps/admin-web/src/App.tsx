@@ -162,7 +162,8 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'bank-changes', label: '16. Duyệt đổi STK', icon: CreditCard },
     { id: 'live-map', label: '17. Bản đồ GPS', icon: MapPin },
     { id: 'office-approvals', label: '18. Duyệt Văn Phòng', icon: FileText },
-    { id: 'fin-salary-config', label: '19. Cấu hình Lương CB & Phụ cấp (Theo Khối)', icon: DollarSign },
+    // Toàn bộ chức năng KẾ TOÁN (kể cả "Cấu hình Lương CB & Phụ cấp — theo Khối")
+    // chỉ hiển thị trên tài khoản FINANCE. ADMIN không có thẩm quyền xem.
   ],
   /** HR giữ đúng THỨ TỰ QUY TRÌNH TUYỂN DỤNG: Ứng viên → Phỏng vấn →
    *  Thử việc → Chính thức → Hồ sơ. Tab `staff` là bản sao hoàn toàn của
@@ -394,6 +395,8 @@ export const ADMIN_TAB_ALIASES: Record<string, string> = {
   'fin-signatures': 'dashboard',
   'fin-bank-qr': 'dashboard',
   'fin-rate-adjust': 'dashboard',
+  // "Cấu hình Lương cơ bản & Phụ cấp — theo Khối" cũng là chức năng Kế toán.
+  'fin-salary-config': 'dashboard',
 };
 
 /** Tab HR đã gộp/nhóm: `staff` trùng hoàn toàn với `hr-official` nên gỡ khỏi
@@ -5951,7 +5954,8 @@ export function App() {
 
           {/* QUY TRÌNH YÊU CẦU CÔNG VIỆC NỘI BỘ (GĐ - KT - HR - IT) */}
           {activeTab === 'internal-workflow' && <InternalWorkflowView currentUser={currentUser} />}
-          {/* office-approvals & fin-salary-config render qua FinanceModule (cổng Kế toán) */}
+          {/* bank-changes & office-approvals render qua FinanceModule nhưng KHÔNG kèm
+              khung Cổng Kế toán khi tài khoản không phải FINANCE. */}
 
           {/* QUY CHẾ CÔNG TY THEO ĐỐI TƯỢNG (từng NV / từng chi nhánh / tất cả) */}
           {activeTab === 'company-policies' && <CompanyPolicyView currentUser={currentUser} />}

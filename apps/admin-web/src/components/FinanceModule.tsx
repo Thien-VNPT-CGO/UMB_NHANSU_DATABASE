@@ -926,6 +926,30 @@ export default function FinanceModule(props: FinanceModuleProps) {
     }
   }, [post, showToast, refreshCurrentTab]);
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // Tài khoản KHÔNG phải Kế toán (ADMIN / HR / DIRECTOR / STORE / …) không có
+  // thẩm quyền với Cổng Kế toán. Chỉ render 2 màn hình DUYỆT DÙNG CHUNG là
+  // "Duyệt đổi STK" và "Duyệt Văn Phòng" — KHÔNG render topbar, thanh chọn
+  // tháng, Drive bar, stepper quy trình lương hay banner Kế toán.
+  // ═══════════════════════════════════════════════════════════════════════
+  if (!isFinance) {
+    const isSharedApproval = activeTab === 'bank-changes' || activeTab === 'office-approvals';
+    return (
+      <div ref={rootRef} style={{ display: 'flex', flexDirection: 'column', gap: 12, width: '100%', maxWidth: 1760, margin: '0 auto' }}>
+        {activeTab === 'bank-changes' && <BankChangesTab currentUser={currentUser} showToast={showToast} />}
+        {activeTab === 'office-approvals' && <OfficeApprovalsView currentUser={currentUser} />}
+        {!isSharedApproval && (
+          <div className="fin-card" style={{ padding: 28, textAlign: 'center' }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--fin-ink)', marginBottom: 6 }}>Khu vực này chỉ dành cho tài khoản Kế toán</div>
+            <div style={{ fontSize: 12, color: 'var(--fin-muted)' }}>
+              Các chức năng tính lương, kỳ lương, phiếu lương và cấu hình lương chỉ hiển thị với tài khoản Kế toán (FINANCE).
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div ref={rootRef} className="fin-shell">
       {/* ═══════════ TOPBAR ═══════════ */}
@@ -1072,13 +1096,6 @@ export default function FinanceModule(props: FinanceModuleProps) {
           })}
         </div>
       </nav>)}
-
-      {!isFinance && activeTab === 'fin-payroll-periods' && (
-        <div style={{ border: '1.5px solid #fcd34d', background: '#fffbeb', borderRadius: 12, padding: '10px 14px' }}>
-          <b style={{ fontSize: 12 }}>Duyệt phiếu lương kỳ (ADMIN):</b>
-          <span style={{ fontSize: 11, color: 'var(--fin-muted)' }}> Kế toán xuất phiếu lương kỳ → ADMIN rà soát số liệu, bấm <b>Đối soát kỳ</b> (DRAFT → RECONCILED) rồi <b>Phê duyệt kỳ</b> (RECONCILED → APPROVED). Các thao tác tính lương/sửa phiếu chỉ dành cho tài khoản Kế toán.</span>
-        </div>
-      )}
 
       {/* ═══════════ LOCK SCREEN — bước chưa mở (pending) mới chặn hẳn; bước đã xong/tháng khóa cho xem lại ═══════════ */}
       {isPendingLock && !viewLockedContent && !(activeTab === 'fin-payment' && paymentPreview) ? (
