@@ -1863,8 +1863,9 @@ export function App() {
               window.dispatchEvent(new CustomEvent('ubm:schedule-reload', { detail: payload?.data }));
             } catch { /* non-fatal */ }
           }
-          // Bản đồ GPS: chấm công / xếp ca / bù công đổi là marker cập nhật ngay.
-          if (payload?.entity === 'attendance' || payload?.entity === 'schedules' || payload?.entity === 'all') {
+          // Bản đồ GPS: chấm công / xếp ca / bù công / hồ sơ nhân sự (đổi chi nhánh,
+          // khóa TK) đổi là marker + bộ lọc chi nhánh cập nhật ngay.
+          if (['attendance', 'schedules', 'employees', 'accounts', 'leaves', 'swaps', 'all'].includes(payload?.entity)) {
             try {
               window.dispatchEvent(new CustomEvent('ubm:live-map-reload', { detail: payload?.data }));
             } catch { /* non-fatal */ }
