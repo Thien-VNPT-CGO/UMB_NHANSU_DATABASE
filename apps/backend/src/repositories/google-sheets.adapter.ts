@@ -1967,9 +1967,13 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     if (this.isConfigured) {
       // Chụp danh sách NGAY (trước khi pull có thể ghi đè) rồi mới ghi nền.
       const snapshot = await this.fallbackAdapter.getBranches();
-      this.branchWriteLockUntil = Date.now() + 90_000;
+      this.branchWriteLockUntil = Date.now() + 180_000;
       this.scheduleSheetsWrite(async () => {
-        await this.syncService.syncBranchesToSheet(snapshot);
+        const ok = await this.syncService.syncBranchesToSheet(snapshot);
+        // Ghi xong thì mở khoá sớm (chờ 1 nhịp pull để Sheet kịp đồng bộ),
+        // ghi lỗi thì giữ khoá lâu hơn — bộ nhớ mới vẫn là bản đúng.
+        this.branchWriteLockUntil = Date.now() + (ok ? 20_000 : 180_000);
+        return ok;
       }, 'BRANCH.create');
     }
     return created;
@@ -1984,9 +1988,11 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
       // Chụp danh sách NGAY sau khi sửa: nếu đọc lại bên trong task nền thì pull
       // chen ngang có thể đã trả bộ nhớ về dữ liệu cũ -> ghi đè mất thay đổi.
       const snapshot = await this.fallbackAdapter.getBranches();
-      this.branchWriteLockUntil = Date.now() + 90_000;
+      this.branchWriteLockUntil = Date.now() + 180_000;
       this.scheduleSheetsWrite(async () => {
-        await this.syncService.syncBranchesToSheet(snapshot);
+        const ok = await this.syncService.syncBranchesToSheet(snapshot);
+        this.branchWriteLockUntil = Date.now() + (ok ? 20_000 : 180_000);
+        return ok;
       }, 'BRANCH.update');
     }
     return res;
