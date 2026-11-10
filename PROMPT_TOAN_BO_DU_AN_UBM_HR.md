@@ -211,7 +211,7 @@ Chuẩn thực thể: `id` bất biến, `version` tăng (optimistic lock), `cre
 | `GET /api/sheets/status` | public | Trạng thái sync (spreadsheetId/Url, candidate, drive, authError, 21 tab) |
 | `GET /api/weekly-off-window` | public | Cửa sổ 2 OFF/tuần đang hiệu lực (phase OPEN/REMINDER/CLOSED, mở bù VIP) |
 | `GET /public/portal-maintenance` | public | Trạng thái bảo trì cổng (`CAU_HINH_HE_THONG`) |
-| `GET/POST /public/interview/rsvp` | public (token JWT `typ=interview-rsvp`, HẾT HẠN 7 ngày) | Trang RSVP ứng viên: Xác nhận / Xin dời lịch (`RESCHEDULE_REQUESTED` + xóa slot) |
+| `GET/POST /api/public/interview/rsvp` | public (token JWT `typ=interview-rsvp`, HẾT HẠN 7 ngày) | Trang RSVP ứng viên (không cần đăng nhập): xem đủ thông tin chi nhánh + Xác nhận / Từ chối (`/public/interview/rsvp` cũ được Nginx 302 sang đây) |
 | `POST /hooks/sheets-edit` | webhook | Sửa Sheet trên web → onEdit → trigger pull (chống dồn 3s); header `x-webhook-secret` = `SHEETS_WEBHOOK_SECRET` |
 
 ### Auth / `/me` (nhân viên)

@@ -935,6 +935,28 @@ export function canonicalBranchId(branchId?: string): string {
   return b;
 }
 
+/** Nhãn chi nhánh ĐẦY ĐỦ (tên + địa chỉ) cho thư mời phỏng vấn — khớp backend.
+ *  Ưu tiên dữ liệu DANH_SACH_CHI_NHANH đang tải; thiếu thì dùng hằng số chuẩn. */
+export function fullBranchLabel(branchId?: string, branches?: any[]): string {
+  const id = canonicalBranchId(branchId);
+  const list = Array.isArray(branches) ? branches : [];
+  const hit: any = list.find((b: any) => canonicalBranchId(b?.branch_id || b?.id) === id);
+  const fallback: Record<string, { name: string; address: string }> = {
+    CN130: { name: 'Ụm Bò Milk - CN1 (130 Vạn Kiếp)', address: '130 Vạn Kiếp, Phường 3, Quận Bình Thạnh, TP. Hồ Chí Minh' },
+    CN261: { name: 'Ụm Bò Milk - CN2 (261 Tô Hiến Thành)', address: '261 Tô Hiến Thành, Phường 12, Quận 10, TP. Hồ Chí Minh' },
+    CN120: { name: 'Ụm Bò Milk - CN3 (120 Hoàng Diệu 2)', address: '120 Hoàng Diệu 2, Phường Linh Trung, TP. Thủ Đức, TP. Hồ Chí Minh' },
+    CN111: { name: 'Ụm Bò Milk - CN4 (111 Tôn Đản)', address: '111 Tôn Đản, Phường 15, Quận 4, TP. Hồ Chí Minh' },
+  };
+  const hitName = String(hit?.name || '').trim();
+  const plainName = hitName.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[đĐ]/g, 'd').trim().toLowerCase();
+  const name = (hitName && !/^(cn\s*\d+|chi nhanh\s*\d+)$/.test(plainName))
+    ? hitName
+    : (fallback[id]?.name || hitName || String(branchId || '').trim());
+  const address = String(hit?.address || '').trim() || fallback[id]?.address || '';
+  if (name && address && !name.includes(address)) return `${name} — ${address}`;
+  return name || address;
+}
+
 const PUBLISH_BRANCH_OPTIONS = ['CN130', 'CN120', 'CN261', 'CN111'];
 
 /**
@@ -3592,9 +3614,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       showToast(`⛔ TRÙNG LỊCH PV: ${clash.slot} ngày ${d} đã có ${clash.name} (mỗi bạn cách nhau 30 phút)!${booked.length > 0 ? ` Đã kín: ${booked.join(', ')}.` : ''} Vui lòng đăng ký lại khung giờ khác!`);
       return;
     }
-    const invBranchName = branches.length > 0
-      ? (branches.find((b: any) => (b.branch_id || b.id) === inviteBranchId)?.name || inviteBranchId)
-      : ({ CN130: 'CN1: 130 Vạn Kiếp (Bình Thạnh)', CN261: 'CN2: 261 Tô Hiến Thành (Q.10)', CN120: 'CN3: 120 Hoàng Diệu 2 (Thủ Đức)', CN111: 'CN4: 111 Tôn Đản (Q.4)' } as any)[inviteBranchId] || inviteBranchId;
+    const invBranchName = fullBranchLabel(inviteBranchId, branches);
     setInviteBusy(true);
     try {
       const res = await apiRequest(`/interviews/${inviteCandidateId}/send-zalo-invite`, {
@@ -5922,9 +5942,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   {(() => {
                     const pvCand = candidates.find((c: any) => c.submission_id === inviteCandidateId);
                     const [pvD, pvT] = (inviteDateTime || '').split('T');
-                    const pvBranch = branches.length > 0
-                      ? (branches.find((b: any) => (b.branch_id || b.id) === inviteBranchId)?.name || inviteBranchId)
-                      : ({ CN130: 'CN1: 130 Vạn Kiếp (Bình Thạnh)', CN261: 'CN2: 261 Tô Hiến Thành (Q.10)', CN120: 'CN3: 120 Hoàng Diệu 2 (Thủ Đức)', CN111: 'CN4: 111 Tôn Đản (Q.4)' } as any)[inviteBranchId] || inviteBranchId;
+                    const pvBranch = fullBranchLabel(inviteBranchId, branches);
                     const ph = (v?: string, fb?: string) => v || <span style={{ color: '#94A3B8' }}>{fb}</span>;
                     return (<>
                       <strong style={{ color: '#0068FF' }}>[ỤM BÒ MILK] THƯ MỜI PHỎNG VẤN VỊ TRÍ {(pvCand?.apply_position || 'NHÂN VIÊN BÁN HÀNG').toUpperCase()}</strong><br />

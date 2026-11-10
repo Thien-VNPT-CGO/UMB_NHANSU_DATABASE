@@ -2857,6 +2857,41 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     return `${proto}://${host}`;
   }
 
+  /** Hiển thị chi nhánh ĐẦY ĐỦ cho thư mời/trang RSVP: "Tên chi nhánh — Địa chỉ".
+   *  Hồ sơ ứng viên thường chỉ lưu mã (CN2) hoặc tên viết tắt, nên phải tra bảng
+   *  chi nhánh thật (DANH_SACH_CHI_NHANH) + hằng số dự phòng và chuẩn hóa
+   *  CN2 ↔ CN261 trước khi so khớp. Không tìm thấy thì trả nguyên giá trị cũ. */
+  async function resolveFullBranchLabel(raw?: unknown): Promise<string> {
+    const value = String(raw ?? '').trim();
+    if (!value) return '';
+    const normalize = (s: unknown) => String(s ?? '')
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[đĐ]/g, 'd').replace(/\s+/g, ' ').trim().toLowerCase();
+    // "CN2", "CN2: 261 Tô Hiến Thành (Q.10)", "CN261"... -> cùng 1 mã chuẩn.
+    const codeInText = value.toUpperCase().match(/CN\s*(\d+)/);
+    const wanted = canonicalBranchId(codeInText ? `CN${codeInText[1]}` : value);
+    const nv = normalize(value);
+    let list: any[] = [];
+    try { list = (await adapter.getBranches().catch(() => [] as any)) || []; } catch { list = []; }
+    const pool: any[] = [...(list || []), ...BRANCHES];
+    const matches = pool.filter((b: any) => {
+      const id = canonicalBranchId(b?.id || b?.branch_id);
+      if (id && wanted && id === wanted) return true;
+      const name = normalize(b?.name);
+      const addr = normalize(b?.address);
+      return (!!name && (name === nv || name.includes(nv) || nv.includes(name)))
+        || (!!addr && addr === nv);
+    });
+    if (matches.length === 0) return value;
+    // Ưu tiên tên mô tả thật (bỏ qua tên chỉ là mã "CN2"/"Chi nhánh 2").
+    const name = matches
+      .map((b: any) => String(b?.name || '').trim())
+      .find((n: string) => n && !/^(cn\s*\d+|chi nhanh\s*\d+)$/i.test(normalize(n))) || '';
+    const address = matches.map((b: any) => String(b?.address || '').trim()).find(Boolean) || '';
+    if (name && address) return `${name} — ${address}`;
+    return name || address || value;
+  }
+
   app.get('/applications', authMiddleware, requireRole(['ADMIN', 'HR']), async (req, res) => {
     try {
       const list = await employeesService.listCandidates();
@@ -3134,7 +3169,11 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       // Ràng buộc cứng: lịch PV online dùng link Meet mặc định hệ thống (bỏ qua link
       // client gửi lên); OFFLINE (client không gửi meetUrl) thì không gắn link.
       const meetUrl = req.body.meetUrl !== undefined ? (defaultMeetUrl() || undefined) : undefined;
-      const branchName = req.body.branchName || (cand as any).branch_name || (cand as any).preferred_branch_id;
+      // Thư mời phải hiện ĐẦY ĐỦ chi nhánh (tên + địa chỉ), không chỉ mã "CN2".
+      const branchRaw = req.body.branchName || (cand as any).branch_name || (cand as any).preferred_branch_id;
+      const branchName = (await resolveFullBranchLabel(branchRaw))
+        || (await resolveFullBranchLabel((cand as any).preferred_branch_id))
+        || String(branchRaw || '');
 
       // Lưu lịch phỏng vấn trước khi gửi (idempotent theo submission).
       await employeesService.scheduleInterview(req.params.id, interviewDate, timeSlot, req.user!.id);
@@ -3145,7 +3184,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       let rsvpUrl: string | undefined;
       try {
         const base = publicBaseUrl(req);
-        rsvpUrl = `${base}/public/interview/rsvp?token=${encodeURIComponent(employeesService.buildRsvpToken(req.params.id))}`;
+        rsvpUrl = `${base}/api/public/interview/rsvp?token=${encodeURIComponent(employeesService.buildRsvpToken(req.params.id))}`;
       } catch { /* không kèm link */ }
 
       const phone = (cand as any).phone_normalized || (cand as any).phone || '';
@@ -8071,10 +8110,23 @@ sendNo.onclick=async()=>{const reason=reasonEl.value.trim();if(!reason){msgEl.te
           null
         ));
       }
+      const branchLabel = await resolveFullBranchLabel((cand as any).branch_name || (cand as any).preferred_branch_id);
+      const position = String((cand as any).apply_position || '').trim();
+      const shift = String((cand as any).registered_shift || '').trim();
+      const timeSlot = String(cand.interview_time_slot || '').trim();
+      const dateStr = String(cand.interview_date || '').slice(0, 10);
+      const alreadyConfirmed = st === 'CONFIRMED';
+      const infoRows = [
+        (timeSlot || dateStr) ? `🕒 <b>Thời gian:</b> ${escapeHtml(timeSlot)}${timeSlot && dateStr ? ' - ' : ''}${escapeHtml(dateStr)}` : '',
+        branchLabel ? `📍 <b>Chi nhánh tuyển dụng:</b> ${escapeHtml(branchLabel)}` : '',
+        position ? `💼 <b>Vị trí:</b> ${escapeHtml(position)}` : '',
+        shift ? `🕐 <b>Ca làm việc đăng ký:</b> ${escapeHtml(shift)}` : '',
+        `👤 <b>Người phỏng vấn:</b> Phòng Nhân Sự Ụm Bò Milk`,
+      ].filter(Boolean).join('<br/>');
       res.send(rsvpPage(
-        'Xác nhận tham gia phỏng vấn',
-        `Chào <b>${escapeHtml(cand.full_name || 'bạn')}</b>!<br/>Lịch hẹn của bạn: <b>${escapeHtml(String(cand.interview_time_slot || ''))}</b> ngày <b>${escapeHtml(String(cand.interview_date || '').slice(0, 10))}</b>.<br/>Vui lòng chọn 1 trong 2:<br/>✅ <b>Xác nhận tham gia</b> — HR giữ lịch, hệ thống tự cập nhật trạng thái cho HR.<br/>❌ <b>Từ chối tham gia</b> — bắt buộc nhập lý do.`,
-        { token: String(req.query.token || ''), name: String(cand.full_name || ''), status: st }
+        alreadyConfirmed ? 'Bạn đã xác nhận tham gia' : 'Xác nhận tham gia phỏng vấn',
+        `Chào <b>${escapeHtml(cand.full_name || 'bạn')}</b>!<br/>${alreadyConfirmed ? 'Bạn đã xác nhận tham gia buổi phỏng vấn này.' : 'Thông tin buổi phỏng vấn của bạn:'}<br/><br/>${infoRows}<br/><br/>${alreadyConfirmed ? 'Nếu có thay đổi, vui lòng liên hệ HR để được hỗ trợ.' : 'Vui lòng chọn 1 trong 2:<br/>✅ <b>Xác nhận tham gia</b> — HR giữ lịch, hệ thống tự cập nhật trạng thái cho HR.<br/>❌ <b>Từ chối tham gia</b> — bắt buộc nhập lý do.'}`,
+        alreadyConfirmed ? null : { token: String(req.query.token || ''), name: String(cand.full_name || ''), status: st }
       ));
     } catch (e: any) {
       res.status(400).send(rsvpPage('Link không hợp lệ', escapeHtml(String(e?.message || 'Link xác nhận hết hạn hoặc không hợp lệ!')), null));
@@ -8148,7 +8200,7 @@ sendNo.onclick=async()=>{const reason=reasonEl.value.trim();if(!reason){msgEl.te
         return res.status(400).json({ error: `Link xác nhận chỉ có khi đang chờ xác nhận (hiện: ${st}). Đặt lịch mới qua form lập lịch trước.` });
       }
       const base = publicBaseUrl(req);
-      const url = `${base}/public/interview/rsvp?token=${encodeURIComponent(employeesService.buildRsvpToken(req.params.id))}`;
+      const url = `${base}/api/public/interview/rsvp?token=${encodeURIComponent(employeesService.buildRsvpToken(req.params.id))}`;
       res.json({ success: true, url });
     } catch (err: any) {
       res.status(400).json({ error: String(err?.message || 'Lỗi lấy link xác nhận') });

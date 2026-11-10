@@ -4,6 +4,16 @@ import { App } from './App';
 import { PwaInstallPrompt } from './components/PwaInstallPrompt';
 import './index.css';
 
+// Link xác nhận phỏng vấn KIỂU CŨ (/public/interview/rsvp) từng bị cổng nhân viên
+// (SPA) phục vụ nên hiện form đăng nhập SĐT. Chuyển thẳng sang API công khai của
+// backend (/api/public/interview/rsvp) để ứng viên chỉ thấy bảng xác nhận.
+(() => {
+  const path = window.location.pathname.replace(/\/+$/, '');
+  if (path === '/public/interview/rsvp') {
+    window.location.replace(`/api${window.location.pathname}${window.location.search}`);
+  }
+})();
+
 // Chặn màn hình trắng "không một lời": nếu JS/DOM lỗi trước khi React mount
 // (thiếu bundle, MIME sai, cache cũ), hiện thông báo thay vì để trang trắng trơn.
 window.addEventListener('error', (event) => {
