@@ -8775,6 +8775,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   };
 
   if (activeTab === 'hr-schedule' || activeTab === 'operations') {
+    // GIÁM ĐỐC (DIRECTOR): CHỈ XEM lịch làm việc & giám sát điểm danh realtime.
+    // Ẩn toàn bộ chức năng ghi trên tab này (phát hành lịch, xếp/sửa/xóa ca,
+    // nhập Excel, bù ca). Backend cũng đã chặn DIRECTOR ở các route ghi lịch.
+    const isDirectorView = currentUser?.role === 'DIRECTOR';
     // Dynamic calculation of week days (Monday -> Sunday) + chuyển tuần trước/sau.
     // Nhân viên đăng ký OFF 2 ngày cho TUẦN SAU (T6 09h → T7 09h) → bấm "Tuần sau" để xem OFF + ca đã xếp.
     const now = new Date();
@@ -9301,6 +9305,22 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </div>
           </div>
 
+          {isDirectorView ? (
+            <span style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '6px 12px',
+              borderRadius: '999px',
+              backgroundColor: '#EFF6FF',
+              color: '#1D4ED8',
+              border: '1px solid #BFDBFE',
+              fontSize: '12px',
+              fontWeight: 800,
+            }}>
+              👁 Chế độ chỉ xem — Giám đốc xem lịch & giám sát điểm danh realtime
+            </span>
+          ) : (
           <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
             <button
               className="btn-primary"
@@ -9370,6 +9390,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               <Plus size={14} /> {supBusy ? 'Đang rà...' : 'Bù ca tuần trước'}
             </button>
           </div>
+          )}
         </div>
 
         {/* BETA — Card ADMIN: bật/tắt phiếu "Cập Nhật Ca" + đặt thời gian hiển thị */}
@@ -9536,7 +9557,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         )}
 
         {/* Modal HR bổ sung lịch làm việc cho NV */}
-        {xlOpen && (() => {
+        {!isDirectorView && xlOpen && (() => {
           // --- Modal NHẬP LỊCH LÀM VIỆC TUẦN EXCEL (chỉ ADMIN) ---
           const doTemplate = async () => {
             if (!/^\d{4}-\d{2}-\d{2}$/.test(xlWeek || '')) { showToast('Chọn tuần (ngày thứ Hai) trước!'); return; }
@@ -9679,7 +9700,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </div>
           );
         })()}
-        {supShiftOpen && (() => {
+        {!isDirectorView && supShiftOpen && (() => {
           const empList = (allEmployees || []).filter((e: any) =>
             String((e as any)?.employment_status || '') !== 'TERMINATED'
           );
@@ -9811,10 +9832,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           );
         })()}
 
-        {renderEditShiftModal()}
+        {!isDirectorView && renderEditShiftModal()}
 
         {/* Modal bù ca tuần trước cho NV mới chính thức: tự chọn NV + ngày + ca */}
-        {bfOpen && (() => {
+        {!isDirectorView && bfOpen && (() => {
           const todayVN = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
           const yd = new Date(`${todayVN}T00:00:00Z`);
           yd.setUTCDate(yd.getUTCDate() - 1);
@@ -9981,7 +10002,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         })()}
 
         {/* MODAL HR DỌN CA KHÔNG LIVE (xem trước từ trước đến giờ + xác nhận) */}
-        {purgeOpen && (
+        {!isDirectorView && purgeOpen && (
           <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
             <div style={{ backgroundColor: 'var(--surface)', borderRadius: '12px', maxWidth: '560px', width: '100%', maxHeight: '88vh', overflow: 'auto', padding: '20px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -10527,7 +10548,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                         : sd.note || sd.status}
                                     </div>
                                   )}
-                                  {sd.assignment_id && (
+                                  {!isDirectorView && sd.assignment_id && (
                                     <button
                                       disabled={schedDelBusy === sd.assignment_id}
                                       onClick={() => handleDeleteShift(sd.assignment_id, `${sd.shift || ''} ${sd.shift_date || ''} (${emp.name || ''})`, sd.status === 'COMPLETED' || sd.status === 'CHECKED_IN')}
@@ -10552,7 +10573,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                       {schedDelBusy === sd.assignment_id ? '⏳...' : '✕ Xóa ca'}
                                     </button>
                                   )}
-                                  {!sd.assignment_id && (sd as any)?.isExtra && ((sd as any)?.event?.event_id || (sd as any)?.outEvent?.event_id) && (
+                                  {!isDirectorView && !sd.assignment_id && (sd as any)?.isExtra && ((sd as any)?.event?.event_id || (sd as any)?.outEvent?.event_id) && (
                                     <button
                                       disabled={!!extraDelBusy}
                                       onClick={() => handleDeleteExtraEvents([(sd as any)?.event?.event_id, (sd as any)?.outEvent?.event_id], `${sd.shift || 'ngoài lịch'} ${sd.shift_date || ''} (${emp.name || ''})`)}
@@ -10577,7 +10598,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                       {extraDelBusy ? '⏳...' : '✕ Xóa lượt'}
                                     </button>
                                   )}
-                                  {(sd.assignment_id || (sd as any)?.isExtra) && (
+                                  {!isDirectorView && (sd.assignment_id || (sd as any)?.isExtra) && (
                                     <button
                                       onClick={() => openEditShift({ assignmentId: sd.assignment_id || '', empId: emp.empId, empName: emp.name, branch: emp.branch, shiftCode: sd.shift_code || inferExtraShiftCode((sd as any).event, empShiftOf(emp.empId)), date: (sd as any).shift_date || day.isoDate, status: sd.status })}
                                       title={(sd as any)?.isExtra && !sd.assignment_id ? 'Tạo ca chính thức (nháp) từ lượt điểm danh ngoài lịch này — lượt check-in/out tự gộp vào ca, Phát Hành để chốt công' : 'Cập nhật ca này (kể cả ca đã điểm danh): đổi ca/nhân viên/chi nhánh — lượt điểm danh giữ nguyên, lương tính lại realtime'}
@@ -10895,7 +10916,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                               </div>
                             )}
 
-                            {d.assignment_id && (
+                            {!isDirectorView && d.assignment_id && (
                               <button
                                 disabled={schedDelBusy === d.assignment_id}
                                 onClick={() => handleDeleteShift(d.assignment_id, `${d.shift || ''} ${day.isoDate} (${emp.name || ''})`, isCompleted || isCheckedIn)}
@@ -10920,7 +10941,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 {schedDelBusy === d.assignment_id ? '⏳...' : '✕ Xóa ca'}
                               </button>
                             )}
-                            {!d.assignment_id && (d as any)?.isExtra && ((d as any)?.event?.event_id || (d as any)?.outEvent?.event_id) && (
+                            {!isDirectorView && !d.assignment_id && (d as any)?.isExtra && ((d as any)?.event?.event_id || (d as any)?.outEvent?.event_id) && (
                               <button
                                 disabled={!!extraDelBusy}
                                 onClick={() => handleDeleteExtraEvents([(d as any)?.event?.event_id, (d as any)?.outEvent?.event_id], `${d.shift || 'ngoài lịch'} ${day.isoDate} (${emp.name || ''})`)}
@@ -10945,7 +10966,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                 {extraDelBusy ? '⏳...' : '✕ Xóa lượt'}
                               </button>
                             )}
-                            {(d.assignment_id || (d as any)?.isExtra) && (
+                            {!isDirectorView && (d.assignment_id || (d as any)?.isExtra) && (
                               <button
                                 onClick={() => openEditShift({ assignmentId: d.assignment_id || '', empId: emp.empId, empName: emp.name, branch: emp.branch, shiftCode: (d as any).shift_code || inferExtraShiftCode((d as any).event, empShiftOf(emp.empId)), date: (d as any).shift_date || day.isoDate, status: d.status })}
                                 title={(d as any)?.isExtra && !d.assignment_id ? 'Tạo ca chính thức (nháp) từ lượt điểm danh ngoài lịch này — lượt check-in/out tự gộp vào ca, Phát Hành để chốt công' : 'Cập nhật ca này (kể cả ca đã điểm danh): đổi ca/nhân viên/chi nhánh — lượt điểm danh giữ nguyên, lương tính lại realtime'}
@@ -11196,7 +11217,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           );
         })()}
 
-        {publishOpen && (
+        {!isDirectorView && publishOpen && (
           <PublishScheduleModal
             weekMon={weekDays[0]?.isoDate || new Date().toISOString().split('T')[0]}
             weekSun={weekDays[6]?.isoDate || weekDays[0]?.isoDate || new Date().toISOString().split('T')[0]}
