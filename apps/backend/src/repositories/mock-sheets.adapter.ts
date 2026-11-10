@@ -1338,11 +1338,55 @@ export class MockSheetsAdapter implements ISheetsRepository {
     return [...this.branches];
   }
 
+  /** Thêm chi nhánh mới (Admin). Dữ liệu ghi xuống tab DANH_SACH_CHI_NHANH. */
+  async createBranch(branch: Partial<BranchInfo>): Promise<BranchInfo> {
+    this.checkErrors();
+    const id = String(branch?.id ?? '').trim().toUpperCase();
+    if (!id) throw new Error('BRANCH_ID_REQUIRED');
+    if (!String(branch?.name ?? '').trim()) throw new Error('BRANCH_NAME_REQUIRED');
+    if (this.branches.some(b => String(b.id).trim().toUpperCase() === id)) {
+      throw new Error('BRANCH_ALREADY_EXISTS');
+    }
+    const lat = Number(branch?.latitude);
+    const lng = Number(branch?.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) throw new Error('BRANCH_COORDS_REQUIRED');
+    const created: BranchInfo = {
+      id,
+      name: String(branch.name).trim(),
+      address: String(branch?.address ?? '').trim(),
+      latitude: lat,
+      longitude: lng,
+      radius_meters: Number(branch?.radius_meters) > 0 ? Number(branch?.radius_meters) : 300,
+      gps_enabled: (branch as any)?.gps_enabled !== false,
+      map_visible: (branch as any)?.map_visible !== false,
+      min_staff: Number(branch?.min_staff) > 0 ? Number(branch?.min_staff) : 2,
+      max_staff: Number(branch?.max_staff) > 0 ? Number(branch?.max_staff) : 10,
+      manager_name: String((branch as any)?.manager_name ?? ''),
+      status: ((branch?.status as any) || 'ACTIVE'),
+    };
+    this.branches.push(created);
+    return { ...created };
+  }
+
   async updateBranch(id: string, updates: Partial<BranchInfo>): Promise<BranchInfo> {
     this.checkErrors();
     const idx = this.branches.findIndex(b => b.id === id);
     if (idx === -1) throw new Error('BRANCH_NOT_FOUND');
-    this.branches[idx] = { ...this.branches[idx], ...updates };
+    const next: any = { ...(updates || {}) };
+    const num = (v: any) => (v === '' || v === null || v === undefined ? undefined : Number(v));
+    for (const k of ['latitude', 'longitude', 'radius_meters', 'min_staff', 'max_staff']) {
+      if (Object.prototype.hasOwnProperty.call(next, k)) {
+        const n = num(next[k]);
+        if (n === undefined) delete next[k];
+        else if (!Number.isFinite(n)) throw new Error('BRANCH_INVALID_NUMBER');
+        else next[k] = n;
+      }
+    }
+    const bool = (v: any) => !(v === false || v === 0 || v === '0' || ['false', 'off', 'no', 'tắt', 'tat', 'không', 'khong'].includes(String(v).trim().toLowerCase()));
+    if (Object.prototype.hasOwnProperty.call(next, 'gps_enabled')) next.gps_enabled = bool(next.gps_enabled);
+    if (Object.prototype.hasOwnProperty.call(next, 'map_visible')) next.map_visible = bool(next.map_visible);
+    if (Object.prototype.hasOwnProperty.call(next, 'id')) delete next.id;
+    this.branches[idx] = { ...this.branches[idx], ...next };
     return { ...this.branches[idx] };
   }
 

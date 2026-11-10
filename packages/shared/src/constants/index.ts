@@ -43,6 +43,8 @@ export interface BranchInfo {
   radius_meters: number;
   /** Bật/tắt yêu cầu định vị GPS khi điểm danh tại chi nhánh. Mặc định bật. */
   gps_enabled?: boolean;
+  /** Bật/tắt hiển thị chi nhánh (ghim + vòng bán kính) trên bản đồ GPS. Mặc định bật. */
+  map_visible?: boolean;
   min_staff: number;
   max_staff: number;
   manager_name?: string;
@@ -52,6 +54,11 @@ export interface BranchInfo {
 /** Chi nhánh có bật định vị GPS không (mặc định BẬT nếu dữ liệu cũ chưa có cờ). */
 export function isBranchGpsEnabled(branch: any): boolean {
   return branch?.gps_enabled !== false;
+}
+
+/** Chi nhánh có hiển thị trên bản đồ GPS không (mặc định HIỂN THỊ nếu chưa có cờ). */
+export function isBranchMapVisible(branch: any): boolean {
+  return branch?.map_visible !== false;
 }
 
 export const BRANCHES: BranchInfo[] = [

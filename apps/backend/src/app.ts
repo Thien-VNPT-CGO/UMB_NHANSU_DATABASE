@@ -7509,6 +7509,25 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Thêm chi nhánh mới (Admin) — toạ độ + cờ hiển thị bản đồ lưu vào
+  // DANH_SACH_CHI_NHANH qua syncBranchesToSheet ngay sau khi tạo.
+  app.post('/admin/branches', authMiddleware, requireRole(['ADMIN']), validate({ body: opaqueConfigBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const created = await adapter.createBranch({ ...(req.body || {}) });
+      await adapter.recordAuditLog({
+        actor_id: req.user!.id,
+        action: 'BRANCH_CREATED',
+        target_type: 'BRANCH',
+        target_id: created.id,
+        payload_after: created,
+      });
+      broadcastUpdate('config', { area: 'branches', id: created.id, action: 'create' });
+      res.status(201).json(created);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   app.put('/admin/branches/:id', authMiddleware, requireRole(['ADMIN']), validate({ params: adminIdParams, body: opaqueConfigBody }), async (req: AuthenticatedRequest, res) => {
     try {
       const body: any = { ...(req.body || {}) };
@@ -7517,6 +7536,12 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         const raw = body.gps_enabled;
         body.gps_enabled = !(raw === false || raw === 0 || raw === '0' ||
           ['false', 'off', 'no', 'tắt', 'tat', 'không', 'khong'].includes(String(raw).trim().toLowerCase()));
+      }
+      // Cờ ẩn/hiện chi nhánh trên bản đồ GPS.
+      if (Object.prototype.hasOwnProperty.call(body, 'map_visible')) {
+        const raw = body.map_visible;
+        body.map_visible = !(raw === false || raw === 0 || raw === '0' ||
+          ['false', 'off', 'no', 'tắt', 'tat', 'không', 'khong', 'ẩn', 'an'].includes(String(raw).trim().toLowerCase()));
       }
       const updated = await adapter.updateBranch(req.params.id, body);
       await adapter.recordAuditLog({

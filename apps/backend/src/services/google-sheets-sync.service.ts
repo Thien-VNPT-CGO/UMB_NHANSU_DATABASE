@@ -324,7 +324,7 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   },
   {
     title: 'DANH_SACH_CHI_NHANH',
-    headers: ['Mã Chi Nhánh', 'Tên Chi Nhánh', 'Địa Chỉ', 'Vĩ Độ GPS', 'Kinh Độ GPS', 'Bán Kính Cho Phép (m)', 'Trạng Thái', 'Bật Định Vị GPS'],
+    headers: ['Mã Chi Nhánh', 'Tên Chi Nhánh', 'Địa Chỉ', 'Vĩ Độ GPS', 'Kinh Độ GPS', 'Bán Kính Cho Phép (m)', 'Trạng Thái', 'Bật Định Vị GPS', 'Hiển Thị Trên Bản Đồ'],
   },
   {
     title: 'CAU_HINH_HE_THONG',
@@ -3057,6 +3057,7 @@ export class GoogleSheetsSyncService {
           max_staff: 10,
           status: (r[6] as any) || 'ACTIVE',
           gps_enabled: parseSheetBoolean(r[7], true),
+          map_visible: parseSheetBoolean(r[8], true),
         }));
       } else {
         fallback.branches = [...BRANCHES];
@@ -4594,6 +4595,7 @@ export class GoogleSheetsSyncService {
         b.radius_meters,
         b.status,
         b.gps_enabled === false ? 'FALSE' : 'TRUE',
+        (b as any).map_visible === false ? 'FALSE' : 'TRUE',
       ]);
       if (rows.length === 0) return false;
       const def = SHEETS_DEFINITIONS.find(d => d.title === 'DANH_SACH_CHI_NHANH')!;
@@ -4728,6 +4730,7 @@ export class GoogleSheetsSyncService {
         b.radius_meters,
         b.status,
         b.gps_enabled === false ? 'FALSE' : 'TRUE',
+        (b as any).map_visible === false ? 'FALSE' : 'TRUE',
       ]);
       await this.pushTabSafe(details, 'branches', 'DANH_SACH_CHI_NHANH', SHEETS_DEFINITIONS.find(d => d.title === 'DANH_SACH_CHI_NHANH')!.headers, branchRows);
 

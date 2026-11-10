@@ -74,6 +74,7 @@ const WRITE_METHODS = new Set<string>([
   'updateAdminAccount',
   'deleteAdminAccount',
   'updateBranch',
+  'createBranch',
   'updateShiftTemplates',
   'updatePolicies',
   'updateMaintenance',

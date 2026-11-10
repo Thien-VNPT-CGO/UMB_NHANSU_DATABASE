@@ -591,3 +591,147 @@
 }
 .ubm-trail-pin--start { background: #2563EB; }
 .ubm-trail-pin--end { background: #DC2626; }
+
+/* --- ADMIN: quản lý chi nhánh trên bản đồ (ẩn/hiện, toạ độ, thêm mới) --- */
+.ubm-map-branchbox {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.ubm-map-branchbox-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: none;
+  padding: 10px 14px;
+  font-size: 12.5px;
+  font-weight: 800;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.ubm-map-branchbox-toggle:hover { background: rgba(37, 99, 235, 0.06); }
+
+.ubm-map-branchbox-count {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  background: rgba(37, 99, 235, 0.08);
+  border-radius: 999px;
+  padding: 2px 9px;
+}
+.ubm-map-branchbox-caret { font-size: 10px; color: var(--text-muted); }
+
+.ubm-map-branchbox-body {
+  border-top: 1px solid var(--border);
+  padding: 12px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ubm-map-branchbox-msg {
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 8px;
+  padding: 7px 10px;
+}
+.ubm-map-branchbox-msg.is-ok { color: #047857; background: rgba(4, 120, 87, 0.10); }
+.ubm-map-branchbox-msg.is-err { color: #B91C1C; background: rgba(185, 28, 28, 0.10); }
+
+.ubm-map-branchbox-hint {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.ubm-map-branchbox-scroll { max-height: 300px; overflow: auto; }
+
+.ubm-map-branch-table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+.ubm-map-branch-table th, .ubm-map-branch-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.ubm-map-branch-table th {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-weight: 800;
+  white-space: nowrap;
+}
+.ubm-map-branch-table td small {
+  display: block;
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+.ubm-map-branch-table td input[type="number"] {
+  width: 108px;
+  font-size: 11.5px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+}
+.ubm-map-branch-table td input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--brand); cursor: pointer; }
+.ubm-map-branch-table tr.is-hidden { opacity: 0.55; }
+.ubm-map-branch-table tr.is-hidden td:nth-child(2) b { text-decoration: line-through; }
+
+.ubm-map-branchbox-empty { padding: 10px; text-align: center; color: var(--text-muted); }
+
+.ubm-map-branchbox-add {
+  border-top: 1px dashed var(--border);
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ubm-map-branchbox-add-title { font-size: 12px; font-weight: 800; color: var(--text); }
+.ubm-map-branchbox-add-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+.ubm-map-branchbox-add-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+.ubm-map-branchbox-add-grid label.is-wide { grid-column: 1 / -1; }
+.ubm-map-branchbox-add-grid input {
+  font-size: 12px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+}
+.ubm-map-branchbox-add button { align-self: flex-start; }
+
+.ubm-map-btn--primary {
+  color: #FFFFFF;
+  background: var(--brand);
+  border-color: var(--brand);
+}
+
+.ubm-map-hidden-note {
+  font-size: 11px;
+  font-weight: 700;
+  color: #B45309;
+  background: rgba(180, 83, 9, 0.10);
+  border-radius: 999px;
+  padding: 4px 10px;
+  white-space: nowrap;
+}

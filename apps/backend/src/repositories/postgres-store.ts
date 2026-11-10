@@ -515,6 +515,7 @@ export class PostgresStore {
           await this.deleteRecord(TABLES.adminAccounts, str(args[0]), client);
           break;
 
+        case 'createBranch':
         case 'updateBranch':
           await upsert('branches', result);
           break;

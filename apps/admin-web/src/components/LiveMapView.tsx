@@ -87,6 +87,10 @@ interface LiveMapBranch {
   latitude: number;
   longitude: number;
   radius_meters: number;
+  /** Bật/tắt yêu cầu GPS khi điểm danh (Kế toán/Admin cấu hình ở tab Chi nhánh). */
+  gps_enabled?: boolean;
+  /** Hiển thị chi nhánh trên bản đồ GPS (Admin bật/tắt ngay trên bản đồ). */
+  map_visible?: boolean;
   status: string;
   employees_total: number;
   employees_working: number;
@@ -293,6 +297,15 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selectedIdRef = useRef<string | null>(null);
   selectedIdRef.current = selectedId;
+  // ADMIN: quản lý chi nhánh ngay trên bản đồ (ẩn/hiện, sửa toạ độ, thêm mới).
+  const isAdmin = String(currentUserRole || '').toUpperCase() === 'ADMIN';
+  const [branchPanelOpen, setBranchPanelOpen] = useState(false);
+  const [branchBusy, setBranchBusy] = useState('');
+  const [branchMsg, setBranchMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const [branchDrafts, setBranchDrafts] = useState<Record<string, { latitude: string; longitude: string; radius_meters: string }>>({});
+  const [newBranch, setNewBranch] = useState({
+    id: '', name: '', address: '', latitude: '', longitude: '', radius_meters: '300',
+  });
   // B1/B2: lịch sử hành trình + báo cáo trong/ngoài cửa hàng.
   const [historyDate, setHistoryDate] = useState<string>(() => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10));
   const [trail, setTrail] = useState<any | null>(null);
@@ -410,6 +423,109 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
     return () => window.removeEventListener('ubm:live-map-alert', onAlert);
   }, []);
 
+  // Chi nhánh đang BẬT hiển thị trên bản đồ (mặc định bật nếu chưa có cờ).
+  const branchesAll = useMemo(() => data?.branches || [], [data]);
+  const hiddenBranchIds = useMemo(
+    () => new Set(branchesAll.filter(b => b.map_visible === false).map(b => b.id)),
+    [branchesAll],
+  );
+  const visibleBranches = useMemo(
+    () => branchesAll.filter(b => b.map_visible !== false),
+    [branchesAll],
+  );
+
+  /** Lưu thay đổi 1 chi nhánh (toạ độ / bán kính / ẩn-hiện bản đồ) rồi tải lại. */
+  const patchBranch = useCallback(async (id: string, patch: Record<string, unknown>, okMsg: string, busyKey: string) => {
+    setBranchBusy(busyKey);
+    setBranchMsg(null);
+    try {
+      await apiRequest(`/admin/branches/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      setBranchMsg({ kind: 'ok', text: okMsg });
+      await load({ silent: true });
+    } catch (e: any) {
+      setBranchMsg({ kind: 'err', text: e?.message || 'Không lưu được chi nhánh' });
+    } finally {
+      setBranchBusy('');
+    }
+  }, [load]);
+
+  /** Bật/tắt hiển thị chi nhánh trên bản đồ (Admin). */
+  const toggleBranchOnMap = useCallback((b: LiveMapBranch) => {
+    const nextVisible = b.map_visible === false;
+    return patchBranch(
+      b.id,
+      { map_visible: nextVisible },
+      `${nextVisible ? 'Đã hiện lại' : 'Đã ẩn'} chi nhánh ${b.name || b.id} trên bản đồ`,
+      `toggle:${b.id}`,
+    );
+  }, [patchBranch]);
+
+  /** Lưu toạ độ + bán kính đang nhập của 1 chi nhánh. */
+  const saveBranchCoords = useCallback((b: LiveMapBranch) => {
+    const d = branchDrafts[b.id];
+    const lat = Number(d?.latitude ?? b.latitude);
+    const lng = Number(d?.longitude ?? b.longitude);
+    const radius = Number(d?.radius_meters ?? b.radius_meters) || 300;
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      setBranchMsg({ kind: 'err', text: 'Toạ độ không hợp lệ (vĩ độ −90..90, kinh độ −180..180).' });
+      return;
+    }
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      setBranchMsg({ kind: 'err', text: 'Toạ độ ngoài phạm vi: vĩ độ −90..90, kinh độ −180..180.' });
+      return;
+    }
+    return patchBranch(
+      b.id,
+      { latitude: lat, longitude: lng, radius_meters: radius },
+      `Đã lưu toạ độ chi nhánh ${b.name || b.id}`,
+      `save:${b.id}`,
+    );
+  }, [branchDrafts, patchBranch]);
+
+  /** Thêm chi nhánh mới (Admin) — ghi vào Google Sheets tab DANH_SACH_CHI_NHANH. */
+  const createBranch = useCallback(async () => {
+    const id = newBranch.id.trim().toUpperCase();
+    const name = newBranch.name.trim();
+    const lat = Number(newBranch.latitude);
+    const lng = Number(newBranch.longitude);
+    if (!id) { setBranchMsg({ kind: 'err', text: 'Nhập mã chi nhánh (VD: CN150).' }); return; }
+    if (!name) { setBranchMsg({ kind: 'err', text: 'Nhập tên chi nhánh.' }); return; }
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      setBranchMsg({ kind: 'err', text: 'Nhập toạ độ GPS (vĩ độ + kinh độ) cho chi nhánh mới.' });
+      return;
+    }
+    setBranchBusy('create');
+    setBranchMsg(null);
+    try {
+      await apiRequest('/admin/branches', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id,
+          name,
+          address: newBranch.address.trim(),
+          latitude: lat,
+          longitude: lng,
+          radius_meters: Number(newBranch.radius_meters) || 300,
+          status: 'ACTIVE',
+          gps_enabled: true,
+          map_visible: true,
+        }),
+      });
+      setBranchMsg({ kind: 'ok', text: `Đã thêm chi nhánh ${name} (${id})` });
+      setNewBranch({ id: '', name: '', address: '', latitude: '', longitude: '', radius_meters: '300' });
+      await load({ silent: true });
+    } catch (e: any) {
+      setBranchMsg({ kind: 'err', text: e?.message || 'Không thêm được chi nhánh' });
+    } finally {
+      setBranchBusy('');
+    }
+  }, [newBranch, load]);
+
   const employees = useMemo(() => {
     const list = data?.employees || [];
     const q = searchText.trim().toLowerCase();
@@ -417,6 +533,8 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
       // KHÔNG hiển thị NV chỉ có "toạ độ cửa hàng" (GPS gán cứng) — bản đồ chỉ
       // vẽ NV thực sự có GPS thật (live hoặc từ phiên chấm công).
       e.gps_source !== 'BRANCH'
+      // Chi nhánh đã bị Admin TẮT hiển thị → ẩn cả NV của chi nhánh đó.
+      && !hiddenBranchIds.has(e.branch_id)
       && (branchFilter === '*' || e.branch_id === branchFilter)
       && (statusFilter === 'ALL' || e.status === statusFilter)
       // Lọc theo vị trí: đang ở cửa hàng / ở ngoài / mất tín hiệu.
@@ -428,7 +546,7 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
         || String(e.full_name || '').toLowerCase().includes(q)
         || String(e.employee_code || '').toLowerCase().includes(q))
     );
-  }, [data, branchFilter, statusFilter, placeFilter, searchText]);
+  }, [data, branchFilter, statusFilter, placeFilter, searchText, hiddenBranchIds]);
 
   // Khởi tạo bản đồ 1 lần.
   useEffect(() => {
@@ -478,9 +596,9 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
 
     const points: Array<[number, number]> = [];
 
-    // Cửa hàng: hiển thị TẤT CẢ chi nhánh (kể cả chi nhánh chưa có NV gửi GPS)
-    // — vòng bán kính + ghim tên.
-    for (const b of data.branches || []) {
+    // Cửa hàng: hiển thị các chi nhánh đang BẬT (Admin có thể tắt từng chi nhánh
+    // ngay trên bản đồ) — vòng bán kính + ghim tên.
+    for (const b of visibleBranches) {
       if (branchFilter !== '*' && b.id !== branchFilter) continue;
       const bLat = Number(b.latitude);
       const bLng = Number(b.longitude);
@@ -571,7 +689,7 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
       }, 60);
     }
     map.invalidateSize();
-  }, [data, employees, branchFilter, selectedId]);
+  }, [data, employees, visibleBranches, branchFilter, selectedId]);
 
   // A4: zoom tới NV được chọn từ danh sách bên trái.
   const focusEmployee = useCallback((emp: LiveMapEmployee) => {
@@ -679,6 +797,152 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
         </div>
       </div>
 
+      {/* ADMIN: bật/tắt hiển thị từng chi nhánh trên bản đồ + cấu hình toạ độ + thêm chi nhánh */}
+      {isAdmin && (
+        <div className="ubm-map-branchbox">
+          <button
+            type="button"
+            className="ubm-map-branchbox-toggle"
+            onClick={() => setBranchPanelOpen(v => !v)}
+            title="Chỉ tài khoản ADMIN thấy chức năng này"
+          >
+            ⚙️ Quản lý chi nhánh trên bản đồ
+            <span className="ubm-map-branchbox-count">
+              {visibleBranches.length}/{branchesAll.length} đang hiện
+            </span>
+            <span className="ubm-map-branchbox-caret">{branchPanelOpen ? '▲' : '▼'}</span>
+          </button>
+
+          {branchPanelOpen && (
+            <div className="ubm-map-branchbox-body">
+              {branchMsg && (
+                <div className={`ubm-map-branchbox-msg ${branchMsg.kind === 'ok' ? 'is-ok' : 'is-err'}`}>{branchMsg.text}</div>
+              )}
+
+              <div className="ubm-map-branchbox-hint">
+                Tắt “Hiện” để chi nhánh (ghim + vòng bán kính + nhân viên) ẩn khỏi bản đồ.
+                Toạ độ/bán kính lưu xuống Google Sheets tab <b>DANH_SACH_CHI_NHANH</b> ngay khi bấm Lưu.
+              </div>
+
+              <div className="ubm-map-branchbox-scroll">
+                <table className="ubm-map-branch-table">
+                  <thead>
+                    <tr>
+                      <th>Hiện</th>
+                      <th>Chi nhánh</th>
+                      <th>Vĩ độ (lat)</th>
+                      <th>Kinh độ (lng)</th>
+                      <th>Bán kính (m)</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {branchesAll.map(b => {
+                      const visible = b.map_visible !== false;
+                      const d = branchDrafts[b.id] || {
+                        latitude: String(b.latitude ?? ''),
+                        longitude: String(b.longitude ?? ''),
+                        radius_meters: String(b.radius_meters ?? 300),
+                      };
+                      const setD = (key: 'latitude' | 'longitude' | 'radius_meters', v: string) => {
+                        setBranchDrafts(prev => ({ ...prev, [b.id]: { ...d, [key]: v } }));
+                      };
+                      return (
+                        <tr key={b.id} className={visible ? '' : 'is-hidden'}>
+                          <td>
+                            <input
+                              type="checkbox"
+                              checked={visible}
+                              disabled={branchBusy === `toggle:${b.id}`}
+                              onChange={() => toggleBranchOnMap(b)}
+                              title={visible ? 'Đang hiện trên bản đồ — bỏ chọn để ẩn' : 'Đang ẩn — chọn để hiện lại'}
+                            />
+                          </td>
+                          <td>
+                            <b>{b.name}</b>
+                            <small>{b.id}{b.address ? ` • ${b.address}` : ''}</small>
+                          </td>
+                          <td>
+                            <input
+                              type="number"
+                              step="0.000001"
+                              value={d.latitude}
+                              onChange={e => setD('latitude', e.target.value)}
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="number"
+                              step="0.000001"
+                              value={d.longitude}
+                              onChange={e => setD('longitude', e.target.value)}
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="number"
+                              min="20"
+                              step="10"
+                              value={d.radius_meters}
+                              onChange={e => setD('radius_meters', e.target.value)}
+                            />
+                          </td>
+                          <td>
+                            <button
+                              type="button"
+                              className="ubm-map-btn"
+                              disabled={branchBusy === `save:${b.id}`}
+                              onClick={() => saveBranchCoords(b)}
+                            >
+                              {branchBusy === `save:${b.id}` ? 'Đang lưu…' : 'Lưu'}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {branchesAll.length === 0 && (
+                      <tr><td colSpan={6} className="ubm-map-branchbox-empty">Chưa có chi nhánh nào.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="ubm-map-branchbox-add">
+                <div className="ubm-map-branchbox-add-title">➕ Thêm chi nhánh mới</div>
+                <div className="ubm-map-branchbox-add-grid">
+                  <label>Mã CN
+                    <input value={newBranch.id} onChange={e => setNewBranch(p => ({ ...p, id: e.target.value }))} placeholder="VD: CN150" />
+                  </label>
+                  <label>Tên chi nhánh
+                    <input value={newBranch.name} onChange={e => setNewBranch(p => ({ ...p, name: e.target.value }))} placeholder="Ụm Bò Milk - CN5 (…)" />
+                  </label>
+                  <label className="is-wide">Địa chỉ
+                    <input value={newBranch.address} onChange={e => setNewBranch(p => ({ ...p, address: e.target.value }))} placeholder="Số nhà, phường, quận, TP" />
+                  </label>
+                  <label>Vĩ độ (lat)
+                    <input type="number" step="0.000001" value={newBranch.latitude} onChange={e => setNewBranch(p => ({ ...p, latitude: e.target.value }))} placeholder="10.799831" />
+                  </label>
+                  <label>Kinh độ (lng)
+                    <input type="number" step="0.000001" value={newBranch.longitude} onChange={e => setNewBranch(p => ({ ...p, longitude: e.target.value }))} placeholder="106.693370" />
+                  </label>
+                  <label>Bán kính (m)
+                    <input type="number" min="20" step="10" value={newBranch.radius_meters} onChange={e => setNewBranch(p => ({ ...p, radius_meters: e.target.value }))} />
+                  </label>
+                </div>
+                <button
+                  type="button"
+                  className="ubm-map-btn ubm-map-btn--primary"
+                  disabled={branchBusy === 'create'}
+                  onClick={createBranch}
+                >
+                  {branchBusy === 'create' ? 'Đang thêm…' : 'Thêm chi nhánh'}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="ubm-map-stats">
         <div className="ubm-map-stat">
           <Users size={16} /> <span>Tổng NV</span> <b>{summary?.total ?? 0}</b>
@@ -757,10 +1021,17 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ currentUserRole }) => 
           </select>
           <select value={branchFilter} onChange={e => setBranchFilter(e.target.value)} className="ubm-map-select">
             <option value="*">Tất cả cửa hàng</option>
-            {(data?.branches || []).map(b => (
-              <option key={b.id} value={b.id}>{b.name} ({b.id})</option>
+            {branchesAll.map(b => (
+              <option key={b.id} value={b.id}>
+                {b.map_visible === false ? '🚫 (ẩn) ' : ''}{b.name} ({b.id})
+              </option>
             ))}
           </select>
+          {isAdmin && hiddenBranchIds.size > 0 && (
+            <span className="ubm-map-hidden-note" title="Bật lại trong ô Quản lý chi nhánh trên bản đồ">
+              🚫 Đang ẩn {hiddenBranchIds.size} chi nhánh
+            </span>
+          )}
           <span className="ubm-map-updated">
             Cập nhật: <b>{lastUpdated ? ageLabel(new Date(lastUpdated).toISOString(), nowTick) : '—'}</b>
           </span>

@@ -136,6 +136,7 @@ export interface ISheetsRepository {
   deleteAdminAccount(id: string): Promise<boolean>;
 
   getBranches(): Promise<BranchInfo[]>;
+  createBranch(branch: Partial<BranchInfo>): Promise<BranchInfo>;
   updateBranch(id: string, updates: Partial<BranchInfo>): Promise<BranchInfo>;
   getShiftTemplates(): Promise<any>;
   updateShiftTemplates(templates: any): Promise<any>;

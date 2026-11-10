@@ -1946,6 +1946,19 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
     return this.fallbackAdapter.getBranches();
   }
 
+  async createBranch(branch: any) {
+    const created = await this.fallbackAdapter.createBranch(branch);
+    // Chi nhánh mới phải nằm trong tab DANH_SACH_CHI_NHANH ngay (kèm toạ độ +
+    // cờ hiển thị bản đồ) để restart/pull không làm mất chi nhánh vừa thêm.
+    if (this.isConfigured) {
+      this.scheduleSheetsWrite(async () => {
+        const branches = await this.fallbackAdapter.getBranches();
+        await this.syncService.syncBranchesToSheet(branches);
+      }, 'BRANCH.create');
+    }
+    return created;
+  }
+
   async updateBranch(id: string, updates: any) {
     const res = await this.fallbackAdapter.updateBranch(id, updates);
     // Toạ độ GPS cửa hàng là dữ liệu cấu hình quan trọng của bản đồ giám sát:
