@@ -849,12 +849,6 @@ export default function FinanceModule(props: FinanceModuleProps) {
     if (!root) return;
     const enhance = (wrap: HTMLElement) => {
       if (!wrap.hasAttribute('tabindex')) { wrap.setAttribute('tabindex', '0'); wrap.setAttribute('role', 'region'); wrap.setAttribute('aria-label', wrap.getAttribute('aria-label') || 'Bảng — bấm rồi dùng phím ← → để cuộn ngang'); }
-      if (!wrap.querySelector('.fin-scroll-hint')) {
-        const hint = document.createElement('div');
-        hint.className = 'fin-scroll-hint';
-        hint.textContent = '⤢ Đã vào bảng — dùng ← → cuộn ngang · ↑ ↓ cuộn dọc';
-        wrap.prepend(hint);
-      }
     };
     const enhanceAll = () => { root.querySelectorAll<HTMLElement>('.fin-table-wrap').forEach(enhance); };
     enhanceAll();
