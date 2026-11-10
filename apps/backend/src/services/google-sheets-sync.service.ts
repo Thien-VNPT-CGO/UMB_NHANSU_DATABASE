@@ -3049,23 +3049,37 @@ export class GoogleSheetsSyncService {
       // lên Sheet. Bỏ qua đọc đè trong thời gian khoá để cờ trên bản đồ không
       // bị "nhảy" về giá trị cũ giữa 2 lần pull.
       const branchPullLocked = !!(repo as any).isBranchWriteLocked?.();
+      const branchesInMemory = Array.isArray(fallback.branches) ? fallback.branches : [];
       if (branchPullLocked) {
-        counts.branches = fallback.branches.length;
+        counts.branches = branchesInMemory.length;
+      } else if (keepIfEmpty('DANH_SACH_CHI_NHANH', branchRows, branchesInMemory.length)) {
+        // Đọc rỗng (quota/glitch): GIỮ NGUYÊN chi nhánh trong bộ nhớ. Trước đây rơi
+        // xuống nhánh else -> gán lại BRANCHES mẫu: mất cờ ẩn/hiện + toạ độ Admin
+        // vừa sửa, và các tab khác đọc thấy chi nhánh "hiện lại" như bị revert.
+        counts.branches = branchesInMemory.length;
       } else if (branchRows.length > 0) {
-        fallback.branches = branchRows.map(r => ({
-          id: r[0],
-          name: r[1],
-          address: r[2],
-          latitude: parseSheetNumber(r[3]) ?? 10.776889,
-          longitude: parseSheetNumber(r[4]) ?? 106.700806,
-          radius_meters: parseSheetNumber(r[5]) ?? 300,
-          min_staff: 2,
-          max_staff: 10,
-          status: (r[6] as any) || 'ACTIVE',
-          gps_enabled: parseSheetBoolean(r[7], true),
-          map_visible: parseSheetBoolean(r[8], true),
-        }));
-      } else {
+        // Sheet không có cột quản lý/định biên -> giữ giá trị đang có trong bộ nhớ
+        // thay vì ghi đè bằng hằng số mặc định.
+        const prevById = new Map(branchesInMemory.map((b: any) => [String(b?.id ?? '').trim().toUpperCase(), b]));
+        fallback.branches = branchRows.map(r => {
+          const id = String(r[0] ?? '').trim();
+          const old: any = prevById.get(id.toUpperCase()) || {};
+          return {
+            id,
+            name: r[1] || old.name || id,
+            address: r[2] ?? old.address ?? '',
+            latitude: parseSheetNumber(r[3]) ?? old.latitude ?? 10.776889,
+            longitude: parseSheetNumber(r[4]) ?? old.longitude ?? 106.700806,
+            radius_meters: parseSheetNumber(r[5]) ?? old.radius_meters ?? 300,
+            min_staff: Number(old.min_staff) > 0 ? Number(old.min_staff) : 2,
+            max_staff: Number(old.max_staff) > 0 ? Number(old.max_staff) : 10,
+            manager_name: old.manager_name || '',
+            status: (r[6] as any) || old.status || 'ACTIVE',
+            gps_enabled: parseSheetBoolean(r[7], old.gps_enabled !== false),
+            map_visible: parseSheetBoolean(r[8], old.map_visible !== false),
+          };
+        });
+      } else if (branchesInMemory.length === 0) {
         fallback.branches = [...BRANCHES];
       }
       counts.branches = fallback.branches.length;
