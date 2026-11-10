@@ -312,7 +312,7 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   },
   {
     title: 'DIEU_CHINH_CONG',
-    headers: ['ID Điều Chỉnh', 'ID Ca', 'ID Nhân Viên', 'Lý Do', 'Số Phút Được Duyệt', 'Người Duyệt', 'Trạng Thái', 'Ghi Chú', 'Ảnh Bằng Chứng (Drive ID)'],
+    headers: ['ID Điều Chỉnh', 'ID Ca', 'ID Nhân Viên', 'Lý Do', 'Số Phút Được Duyệt', 'Người Duyệt', 'Trạng Thái', 'Ghi Chú', 'Ảnh Bằng Chứng (Drive ID)', 'Mã Băm Ảnh'],
   },
   {
     title: 'KY_LUONG',
@@ -3600,6 +3600,7 @@ export class GoogleSheetsSyncService {
           status: (r[6] as any) || 'PENDING',
           review_note: r[7] || undefined,
           evidence_drive_id: r[8] || undefined,
+          photo_hash: r[9] ? String(r[9]).trim() : undefined,
           version: 1,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -3618,6 +3619,10 @@ export class GoogleSheetsSyncService {
             }
             if (!(row as any).evidence_photo && (mem as any).evidence_photo) {
               (row as any).evidence_photo = (mem as any).evidence_photo;
+            }
+            // Sheet cũ chưa có cột mã băm ảnh -> giữ bản nhớ để chống trùng ảnh.
+            if (!(row as any).photo_hash && (mem as any).photo_hash) {
+              (row as any).photo_hash = (mem as any).photo_hash;
             }
             // Sheet không lưu ngày tạo (pull luôn gán now) -> giữ mốc gốc trong bộ nhớ
             // để hạn duyệt 72 giờ tính đúng, không gia hạn oan mỗi lần pull.
@@ -4936,6 +4941,7 @@ export class GoogleSheetsSyncService {
         a.status,
         a.review_note || '',
         (a as any).evidence_drive_id || '',
+        (a as any).photo_hash || '',
       ]);
       await this.pushTabSafe(details, 'adjustments', 'DIEU_CHINH_CONG', SHEETS_DEFINITIONS.find(d => d.title === 'DIEU_CHINH_CONG')!.headers, adjRows);
 
@@ -5496,6 +5502,7 @@ export class GoogleSheetsSyncService {
       a.status,
       a.review_note || '',
       a.evidence_drive_id || '',
+      (a as any).photo_hash || '',
     ]);
     await this.overwriteSheetData('DIEU_CHINH_CONG', SHEETS_DEFINITIONS.find(d => d.title === 'DIEU_CHINH_CONG')!.headers, adjRows);
     return adjRows.length;

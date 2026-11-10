@@ -3772,6 +3772,12 @@ export function App() {
         showToast('⚠️ Vui lòng nhập chi tiết lý do & bằng chứng!');
         return;
       }
+      // BẮT BUỘC ảnh bằng chứng: phiếu bổ sung công không có ảnh thì không gửi được.
+      // (Server cũng chặn cứng — đây là lớp báo sớm cho NV.)
+      if (adjustmentData.type !== 'NGHI_KHAN' && !evidencePhoto) {
+        showToast('⚠️ Bắt buộc phải có ảnh bằng chứng mới gửi được phiếu! Chụp hoặc chọn ảnh rồi gửi lại.');
+        return;
+      }
       // Phiếu bù công ngày: ngày trong tháng hiện tại + đủ 5 điểm (server trừ/hoàn).
       if (adjustmentData.type === 'BU_CONG_NGAY') {
         const curYm = vnMonthStr();
@@ -7414,7 +7420,7 @@ export function App() {
                 {isProbation ? '7. Giải Trình & Bổ Sung Công' : '7. Bổ Sung Công'}
               </h3>
               <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '14px' }}>
-                Gửi giải trình khi quên check-in/out (đồng bộ trực tiếp sang HR Tab 10 và Google Sheets); phiếu quên check-in/out không giới hạn số lượt. Riêng phiếu <strong>bù công cả ngày</strong> tốn 5 điểm và bị giới hạn <strong>1 phiếu/tuần, tối đa 4 phiếu/tháng</strong> (tuần không dùng cộng dồn trong tháng, qua tháng mới không cộng dồn). Phiếu gửi HR quá <strong>72 giờ</strong> kể từ lúc nhận phiếu chưa duyệt thì hệ thống <strong>tự động hủy</strong> (giữ phiếu để đối soát, tự xóa sau 7 ngày nữa).
+                Gửi giải trình khi quên check-in/out (đồng bộ trực tiếp sang HR Tab 10 và Google Sheets); phiếu quên check-in/out không giới hạn số lượt. <strong>Bắt buộc đính kèm ảnh bằng chứng</strong> — không có ảnh thì phiếu không gửi được. Hệ thống tự loại phiếu có <strong>nội dung tương tự</strong> hoặc <strong>hình ảnh giống</strong> phiếu đã gửi để tránh trùng phiếu. Riêng phiếu <strong>bù công cả ngày</strong> tốn 5 điểm và bị giới hạn <strong>1 phiếu/tuần, tối đa 4 phiếu/tháng</strong> (tuần không dùng cộng dồn trong tháng, qua tháng mới không cộng dồn). Phiếu gửi HR quá <strong>72 giờ</strong> kể từ lúc nhận phiếu chưa duyệt thì hệ thống <strong>tự động hủy</strong> (giữ phiếu để đối soát, tự xóa sau 7 ngày nữa).
               </p>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -7530,7 +7536,7 @@ export function App() {
                 {adjustmentData.type !== 'NGHI_KHAN' && (
                   <div>
                     <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>
-                      📷 Ảnh bằng chứng <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(không bắt buộc — chọn ảnh có sẵn trong thư viện để HR duyệt nhanh)</span>:
+                      📷 Ảnh bằng chứng <span style={{ fontWeight: 800, color: '#DC2626' }}>(bắt buộc — không có ảnh không gửi được phiếu)</span>:
                     </label>
                     <input
                       ref={evidenceInputRef}
@@ -7566,10 +7572,14 @@ export function App() {
 
                 <button
                   className="btn-primary"
-                  disabled={actionBusy === 'adj-submit' || !ticketWindowOpen}
+                  disabled={actionBusy === 'adj-submit' || !ticketWindowOpen || (adjustmentData.type !== 'NGHI_KHAN' && !evidencePhoto)}
                   onClick={handleAdjustmentSubmit}
-                  title={ticketWindowOpen ? undefined : 'Ngoài khung giờ 08:00–21:00, không gửi được phiếu'}
-                  style={{ opacity: actionBusy === 'adj-submit' || !ticketWindowOpen ? 0.6 : 1 }}
+                  title={
+                    !ticketWindowOpen
+                      ? 'Ngoài khung giờ 08:00–21:00, không gửi được phiếu'
+                      : (adjustmentData.type !== 'NGHI_KHAN' && !evidencePhoto ? 'Bắt buộc đính kèm ảnh bằng chứng mới gửi được phiếu' : undefined)
+                  }
+                  style={{ opacity: actionBusy === 'adj-submit' || !ticketWindowOpen || (adjustmentData.type !== 'NGHI_KHAN' && !evidencePhoto) ? 0.6 : 1 }}
                 >
                   {actionBusy === 'adj-submit' ? '⏳ ĐANG GỬI...' : (adjustmentData.type === 'NGHI_KHAN' ? 'Gửi Báo Nghỉ Khẩn Cấp Đến HR' : 'Gửi Phiếu Bổ Sung Công')}
                 </button>

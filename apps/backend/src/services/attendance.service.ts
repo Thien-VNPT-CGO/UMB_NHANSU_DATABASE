@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import {
   AttendanceAdjustment,
@@ -11,7 +12,7 @@ import {
 } from '@ubm/shared';
 import { ISheetsRepository } from '../repositories/sheets.interface.js';
 import { singleWriterQueue } from '../repositories/single-writer-queue.js';
-import { deleteAttendancePhotoDisk, readAttendancePhotoDiskAsDataUrl } from './photo-disk.store.js';
+import { deleteAttendancePhotoDisk, readAdjustmentPhotoDisk, readAttendancePhotoDiskAsDataUrl } from './photo-disk.store.js';
 import { lateFineFor, linkDayEvents, LATE_FINE_GRACE_MINUTES } from './payroll.service.js';
 import { getAttendanceFolderForBranch } from '../config/drive-folders.js';
 
@@ -761,6 +762,90 @@ export class AttendanceService {
     return String(reason || '').match(/^\[([A-Z_]+)\]/)?.[1] || '';
   }
 
+  /** Số ngày còn đối soát chống trùng nội dung ảnh/nội dung phiếu. */
+  static readonly ADJUSTMENT_DUP_WINDOW_DAYS = 90;
+
+  /**
+   * Phần "nội dung" thật của lý do: bỏ tiền tố `[LOAI]` và ngày sự cố
+   * (`YYYY-MM-DD:`) để 2 phiếu khác ngày nhưng cùng nội dung vẫn bị coi là trùng.
+   */
+  static adjustmentReasonBody(reason: string): string {
+    return String(reason || '')
+      .replace(/^\s*\[[A-Z_]+\]\s*/, '')
+      .replace(/^\s*\d{4}-\d{2}-\d{2}\s*[:\-–]?\s*/, '')
+      .trim();
+  }
+
+  /** Chuẩn hóa text để so trùng: bỏ dấu tiếng Việt, dấu câu, khoảng trắng thừa. */
+  static normalizeAdjustmentText(input: string): string {
+    return String(input || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/đ/g, 'd')
+      .replace(/Đ/g, 'D')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  /**
+   * Nội dung 2 phiếu được coi là "tương tự" khi:
+   * - trùng khớp sau chuẩn hóa, HOẶC
+   * - một nội dung nằm trong nội dung còn lại (độ dài ≥ 12 ký tự), HOẶC
+   * - độ tương đồng token (Jaccard) ≥ 0.8.
+   */
+  static adjustmentReasonSimilar(a: string, b: string): boolean {
+    const na = AttendanceService.normalizeAdjustmentText(AttendanceService.adjustmentReasonBody(a));
+    const nb = AttendanceService.normalizeAdjustmentText(AttendanceService.adjustmentReasonBody(b));
+    if (!na || !nb) return false;
+    if (na === nb) return true;
+    const short = na.length <= nb.length ? na : nb;
+    const long = na.length <= nb.length ? nb : na;
+    if (short.length >= 12 && long.includes(short)) return true;
+    const ta = new Set(na.split(' '));
+    const tb = new Set(nb.split(' '));
+    let inter = 0;
+    for (const t of ta) if (tb.has(t)) inter++;
+    const union = ta.size + tb.size - inter;
+    return union > 0 && inter / union >= 0.8;
+  }
+
+  /** Mã băm SHA-256 của ảnh (bỏ tiền tố data URL) — chống dùng lại đúng 1 ảnh. */
+  static adjustmentPhotoHash(photoBase64: string): string {
+    const raw = String(photoBase64 || '').replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '').trim();
+    if (!raw) return '';
+    try {
+      const buf = Buffer.from(raw, 'base64');
+      if (!buf.length) return '';
+      return createHash('sha256').update(buf).digest('hex');
+    } catch {
+      return '';
+    }
+  }
+
+  /** Mốc tạo phiếu (epoch ms) — ưu tiên epoch nhúng trong mã `ADJ_<ms>_<rand>`. */
+  static adjustmentCreatedMsOf(adj: any): number {
+    const m = String(adj?.adjustment_id || '').match(/^ADJ_(\d{12,13})(?:_|$)/);
+    if (m) {
+      const t = Number(m[1]);
+      if (Number.isFinite(t) && t > 0) return t;
+    }
+    const t = Date.parse(String(adj?.created_at || ''));
+    return Number.isFinite(t) ? t : 0;
+  }
+
+  /** Hash ảnh của phiếu đã có: ưu tiên `photo_hash` đã lưu, rớt về đọc ảnh đệm trên đĩa. */
+  static adjustmentExistingPhotoHash(adj: any): string {
+    const saved = String(adj?.photo_hash || '').trim();
+    if (saved) return saved;
+    try {
+      const disk = readAdjustmentPhotoDisk(String(adj?.adjustment_id || ''));
+      if (disk?.buffer?.length) return createHash('sha256').update(disk.buffer).digest('hex');
+    } catch { /* best-effort */ }
+    return '';
+  }
+
   async requestAdjustment(data: {
     assignmentId: string;
     employeeId: string;
@@ -785,6 +870,16 @@ export class AttendanceService {
         if (vnH < AttendanceService.ADJUSTMENT_CREATE_OPEN_HOUR || vnH >= AttendanceService.ADJUSTMENT_CREATE_CLOSE_HOUR) {
           throw new Error('ADJUSTMENT_WINDOW_CLOSED: Chỉ được tạo phiếu từ 08:00 đến 21:00 hằng ngày! Ngoài giờ hệ thống không nhận phiếu, quay lại trong khung giờ nhé.');
         }
+        // BẮT BUỘC ảnh bằng chứng: không có ảnh thì phiếu KHÔNG được gửi.
+        // Chặn ở server để app cũ / gọi API trực tiếp cũng không lách được.
+        const photoBase64 = String(data.photoBase64 || '').trim();
+        if (!photoBase64) {
+          throw new Error('ADJUSTMENT_PHOTO_REQUIRED: Phiếu bổ sung công bắt buộc phải có ảnh bằng chứng! Chụp hoặc chọn ảnh rồi gửi lại.');
+        }
+        const photoHash = AttendanceService.adjustmentPhotoHash(photoBase64);
+        if (!photoHash) {
+          throw new Error('ADJUSTMENT_PHOTO_INVALID: Ảnh bằng chứng không hợp lệ hoặc bị lỗi! Vui lòng chọn ảnh khác.');
+        }
         // Chốt đúng ca theo NGÀY sự cố (không tin mù assignment client gửi):
         // app NV cũ thiếu ca ngày đó sẽ rớt về ca đầu danh sách (sai ngày) khiến
         // duyệt xong dựng công nhầm sang ngày khác.
@@ -807,6 +902,24 @@ export class AttendanceService {
         );
         if (dup) {
           throw new Error('ADJUSTMENT_DUPLICATE: Bạn đã có phiếu cùng ca đang chờ duyệt, không cần gửi lại! Chờ HR xử lý phiếu hiện tại.');
+        }
+        // Chống trùng nội dung / trùng ảnh: quét phiếu của chính NV trong 90 ngày
+        // gần nhất. Nội dung tương tự HOẶC ảnh giống nhau đều bị loại, không cho
+        // gửi — tránh 1 sự việc gửi nhiều phiếu. Phiếu đã bị TỪ CHỐI không tính
+        // (NV được sửa nội dung/ảnh và gửi lại).
+        const dupWindowStart = Date.now() - AttendanceService.ADJUSTMENT_DUP_WINDOW_DAYS * 86_400_000;
+        for (const x of existing || []) {
+          if (String((x as any)?.status || '').toUpperCase() === 'REJECTED') continue;
+          if (AttendanceService.adjustmentCreatedMsOf(x) < dupWindowStart) continue;
+          const samePhoto = Boolean(photoHash) && AttendanceService.adjustmentExistingPhotoHash(x) === photoHash;
+          if (samePhoto) {
+            const day = AttendanceService.incidentDateOf((x as any)?.reason) || 'trước đó';
+            throw new Error(`ADJUSTMENT_DUPLICATE_PHOTO: Hình ảnh bằng chứng này đã được dùng cho phiếu ${(x as any)?.adjustment_id} (${day}) — không thể gửi trùng! Vui lòng dùng ảnh khác.`);
+          }
+          if (AttendanceService.adjustmentReasonSimilar(data.reason, (x as any)?.reason)) {
+            const day = AttendanceService.incidentDateOf((x as any)?.reason) || 'trước đó';
+            throw new Error(`ADJUSTMENT_SIMILAR_CONTENT: Nội dung phiếu trùng/tương tự phiếu ${(x as any)?.adjustment_id} (${day}) đã gửi trước đó — vui lòng nhập nội dung khác hoặc chờ HR xử lý!`);
+          }
         }
         // Phiếu quên check-in/out: KHÔNG giới hạn số phiếu/tuần (chống trùng PENDING
         // cùng ca ở trên đã đủ).
@@ -848,7 +961,9 @@ export class AttendanceService {
           minutes_requested: data.minutesRequested,
           status: 'PENDING',
           // Transient: adapter upload Drive -> evidence_drive_id rồi tự bỏ (không lưu base64).
-          ...(data.photoBase64 ? { photo_base64: data.photoBase64 } : {}),
+          ...(photoBase64 ? { photo_base64: photoBase64 } : {}),
+          // Mã băm ảnh: chống dùng lại đúng ảnh đó cho phiếu khác.
+          photo_hash: photoHash,
         });
       },
     });

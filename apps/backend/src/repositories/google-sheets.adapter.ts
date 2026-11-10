@@ -1583,6 +1583,7 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
         snapshot.status,
         snapshot.review_note || '',
         (snapshot as any).evidence_drive_id || '',
+        (snapshot as any).photo_hash || '',
       ]], 'DIEU_CHINH_CONG.append');
     }
     return res;

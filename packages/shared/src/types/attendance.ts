@@ -57,6 +57,8 @@ export interface AttendanceAdjustment {
   review_note?: string;
   /** Drive file ID ảnh bằng chứng NV upload kèm phiếu (upload lúc tạo, xem qua /attendance/adjustments/:id/photo). */
   evidence_drive_id?: string;
+  /** SHA-256 ảnh bằng chứng — chống gửi trùng đúng 1 ảnh cho nhiều phiếu. */
+  photo_hash?: string;
   created_at: string;
   updated_at: string;
   version: number;
