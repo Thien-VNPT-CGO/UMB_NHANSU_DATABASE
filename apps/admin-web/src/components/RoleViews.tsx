@@ -3469,6 +3469,34 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     return true;
   });
 
+  // --- 5 TAB NGHIỆP VỤ CỦA LỊCH PV ---------------------------------------
+  // Mỗi ứng viên nằm đúng 1 tab theo trạng thái hiện tại, HR chỉ cần mở đúng
+  // tab là thấy việc cần làm (xếp lịch / chờ UV xác nhận / chờ PV / chờ thử
+  // việc / vắng - từ chối). Bộ lọc chi nhánh + tìm kiếm áp dụng cho mọi tab.
+  type PvTabKey = 'WAIT_SCHEDULE' | 'WAIT_CONFIRM' | 'WAIT_INTERVIEW' | 'WAIT_PROBATION' | 'NO_SHOW';
+  const PV_TABS: Array<{ key: PvTabKey; label: string; hint: string; color: string; bg: string }> = [
+    { key: 'WAIT_SCHEDULE', label: 'Chờ xếp lịch', hint: 'Ứng viên mới / cần bổ sung / xin dời lịch — chưa có lịch phỏng vấn', color: '#475569', bg: '#F1F5F9' },
+    { key: 'WAIT_CONFIRM', label: 'Chờ xác nhận tham gia', hint: 'Đã gửi thư mời Zalo — chờ ứng viên bấm xác nhận tham gia', color: '#0369A1', bg: '#E0F2FE' },
+    { key: 'WAIT_INTERVIEW', label: 'Chờ phỏng vấn', hint: 'Ứng viên ĐÃ xác nhận — chờ tới giờ phỏng vấn', color: '#4F46E5', bg: '#EEF2FF' },
+    { key: 'WAIT_PROBATION', label: 'Chờ thử việc', hint: 'Đã phỏng vấn xong / đã chấm điểm — chờ duyệt và bắt đầu thử việc', color: '#7C3AED', bg: '#F5F3FF' },
+    { key: 'NO_SHOW', label: 'Vắng phỏng vấn', hint: 'Ứng viên vắng (no-show) hoặc từ chối tham gia phỏng vấn', color: '#B91C1C', bg: '#FEF2F2' },
+  ];
+  const pvTabOf = (c: any): PvTabKey => {
+    const st = String(c?.status || '').trim().toUpperCase();
+    if (st === 'NO_SHOW' || st === 'DECLINED') return 'NO_SHOW';
+    if (st === 'CONFIRMED') return 'WAIT_INTERVIEW';
+    if (st === 'INTERVIEWED' || st === 'SCORED') return 'WAIT_PROBATION';
+    if (st === 'INVITED_INTERVIEW') return 'WAIT_CONFIRM';
+    return 'WAIT_SCHEDULE';
+  };
+  const [pvTab, setPvTab] = useState<PvTabKey>('WAIT_SCHEDULE');
+  const pvTabCounts: Record<PvTabKey, number> = {
+    WAIT_SCHEDULE: 0, WAIT_CONFIRM: 0, WAIT_INTERVIEW: 0, WAIT_PROBATION: 0, NO_SHOW: 0,
+  };
+  pvFiltered.forEach((c: any) => { pvTabCounts[pvTabOf(c)] += 1; });
+  const pvTabRows = pvFiltered.filter((c: any) => pvTabOf(c) === pvTab);
+  const pvTabInfo = PV_TABS.find(t => t.key === pvTab) || PV_TABS[0];
+
   // Lịch PV: UV đã phỏng vấn xong (đã chấm điểm/PASS/duyệt/có điểm) hoặc đã có
   // lịch sắp tới thì KHÔNG được đặt lịch tiếp — dropdown lập lịch loại sẵn
   // theo dữ liệu realtime, backend chặn cứng thêm 1 lớp.
@@ -6181,6 +6209,39 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             </div>
           </div>
 
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '10px 14px', backgroundColor: '#FFF', borderBottom: '1px solid #E2E8F0', overflowX: 'auto' }}>
+            {PV_TABS.map((t) => {
+              const active = pvTab === t.key;
+              const count = pvTabCounts[t.key];
+              return (
+                <button
+                  key={t.key}
+                  onClick={() => setPvTab(t.key)}
+                  title={t.hint}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: '6px',
+                    padding: '7px 12px', borderRadius: '999px', fontSize: '12px', fontWeight: 800,
+                    whiteSpace: 'nowrap', cursor: 'pointer', fontFamily: 'inherit',
+                    border: `1px solid ${active ? t.color : '#E2E8F0'}`,
+                    backgroundColor: active ? t.bg : '#FFF',
+                    color: active ? t.color : '#64748B',
+                    transition: 'all 0.15s ease',
+                  }}
+                >
+                  {t.label}
+                  <span style={{
+                    backgroundColor: active ? t.color : '#E2E8F0',
+                    color: active ? '#FFF' : '#475569',
+                    borderRadius: '999px', padding: '0 6px', fontSize: '10.5px', fontWeight: 800,
+                    minWidth: '18px', textAlign: 'center', lineHeight: '16px',
+                  }}>
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12.5px' }}>
               <thead>
@@ -6195,8 +6256,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 </tr>
               </thead>
               <tbody>
-                {pvFiltered.length > 0 ? (
-                  pvFiltered.map((c, i) => (
+                {pvTabRows.length > 0 ? (
+                  pvTabRows.map((c, i) => (
                     <tr key={i} style={{ borderBottom: '1px solid #F1F5F9', transition: 'background-color 0.15s ease' }} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F8FAFC'} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}>
                       <td style={{ padding: '10px 14px', verticalAlign: 'middle' }}>
                         <div style={{ fontWeight: 700, color: '#1E293B', display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -6566,8 +6627,16 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <tr>
                     <td colSpan={7} style={{ textAlign: 'center', padding: '36px', color: 'var(--text-muted)', fontSize: '13px' }}>
                       {(pvBranchFilter !== 'ALL' || pvSearch.trim())
-                        ? 'Không có ứng viên nào khớp bộ lọc — thử đổi chi nhánh hoặc từ khóa tìm kiếm.'
-                        : 'Chưa có lịch phỏng vấn nào. Dữ liệu sẽ tự động xuất hiện khi tiếp nhận ứng viên từ Google Forms hoặc Google Sheets.'}
+                        ? 'Không có ứng viên nào khớp bộ lọc ở tab này — thử đổi chi nhánh, từ khóa tìm kiếm hoặc chọn tab khác.'
+                        : pvTab === 'WAIT_SCHEDULE'
+                          ? 'Không có ứng viên nào đang chờ xếp lịch. Dữ liệu tự xuất hiện khi tiếp nhận ứng viên từ Google Forms hoặc Google Sheets.'
+                          : pvTab === 'WAIT_CONFIRM'
+                            ? 'Không có ứng viên nào đang chờ xác nhận tham gia phỏng vấn.'
+                            : pvTab === 'WAIT_INTERVIEW'
+                              ? 'Không có ứng viên nào đã xác nhận và đang chờ tới giờ phỏng vấn.'
+                              : pvTab === 'WAIT_PROBATION'
+                                ? 'Không có ứng viên nào đã phỏng vấn xong đang chờ duyệt thử việc.'
+                                : 'Chưa có ứng viên nào vắng hoặc từ chối phỏng vấn.'}
                     </td>
                   </tr>
                 )}
