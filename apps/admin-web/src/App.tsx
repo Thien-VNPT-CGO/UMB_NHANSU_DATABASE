@@ -163,17 +163,10 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'live-map', label: '17. Bản đồ GPS', icon: MapPin },
     { id: 'office-approvals', label: '18. Duyệt Văn Phòng', icon: FileText },
     { id: 'fin-salary-config', label: '19. Cấu hình Lương CB & Phụ cấp (Theo Khối)', icon: DollarSign },
-    { id: 'fin-dashboard', label: 'Ke toan: Dashboard Tài Chính', icon: DollarSign },
-    { id: 'fin-timesheet', label: 'Ke toan: Đối Soát Công', icon: FileSpreadsheet },
-    { id: 'fin-bcc', label: 'Ke toan: Bảng Công Từng Ngày (BCC)', icon: Calendar },
-    { id: 'fin-calculate', label: 'Ke toan: Tính Lương', icon: DollarSign },
-    { id: 'fin-payroll-sheet', label: 'Ke toan: Bảng Lương Tháng', icon: FileSpreadsheet },
-    { id: 'fin-payroll-periods', label: 'Ke toan: Kỳ Lương (DRAFT → PAID)', icon: Calendar },
-    { id: 'fin-payslips', label: 'Ke toan: Phiếu Lương', icon: CreditCard },
-    { id: 'fin-payment', label: 'Ke toan: Thanh Toán (VietQR)', icon: CheckCircle },
-    { id: 'fin-signatures', label: 'Ke toan: Chữ Ký Mẫu', icon: PenTool },
-    { id: 'fin-bank-qr', label: 'Ke toan: QR Ngân Hàng NV', icon: QrCode },
-    { id: 'fin-rate-adjust', label: 'Ke toan: Điều chỉnh lương ca', icon: Banknote },
+    // ADMIN chỉ giữ DUY NHẤT 1 chức năng của Kế toán: duyệt phiếu lương kỳ.
+    // Mọi tab Kế toán còn lại (đối soát, tính lương, phiếu lương, thanh toán…)
+    // chỉ dành cho tài khoản FINANCE, không hiển thị trên ADMIN.
+    { id: 'fin-payroll-periods', label: '20. Duyệt phiếu lương kỳ (Kế toán)', icon: FileSpreadsheet },
   ],
   /** HR giữ đúng THỨ TỰ QUY TRÌNH TUYỂN DỤNG: Ứng viên → Phỏng vấn →
    *  Thử việc → Chính thức → Hồ sơ. Tab `staff` là bản sao hoàn toàn của
@@ -392,6 +385,19 @@ export const ADMIN_TAB_ALIASES: Record<string, string> = {
   notifications: 'notify',
   // Tab Chấm công đã khóa với Admin — tab cũ đã lưu chuyển về Bổ sung công.
   'hr-attendance': 'hr-adjustments',
+  // ADMIN chỉ còn 1 chức năng Kế toán là DUYỆT PHIẾU LƯƠNG KỲ. Các tab Kế toán
+  // khác đã gỡ khỏi menu ADMIN (chỉ FINANCE dùng) — deep-link/tab đã lưu cũ tự
+  // chuyển về màn hình duyệt để không bị trắng trang.
+  'fin-dashboard': 'fin-payroll-periods',
+  'fin-timesheet': 'fin-payroll-periods',
+  'fin-bcc': 'fin-payroll-periods',
+  'fin-calculate': 'fin-payroll-periods',
+  'fin-payroll-sheet': 'fin-payroll-periods',
+  'fin-payslips': 'fin-payroll-periods',
+  'fin-payment': 'fin-payroll-periods',
+  'fin-signatures': 'fin-payroll-periods',
+  'fin-bank-qr': 'fin-payroll-periods',
+  'fin-rate-adjust': 'fin-payroll-periods',
 };
 
 /** Tab HR đã gộp/nhóm: `staff` trùng hoàn toàn với `hr-official` nên gỡ khỏi
@@ -631,7 +637,11 @@ export function App() {
           // HR vẫn dùng hr-attendance bình thường (tab con nhóm Chấm công).
           ...(savedRole === 'ADMIN' ? { 'hr-attendance': 'hr-adjustments' } : {}),
         };
-        return legacy[savedTab] || FINANCE_TAB_ALIASES[savedTab] || HR_TAB_ALIASES[savedTab] || savedTab;
+        return legacy[savedTab]
+          || (savedRole === 'ADMIN' ? ADMIN_TAB_ALIASES[savedTab] : undefined)
+          || FINANCE_TAB_ALIASES[savedTab]
+          || HR_TAB_ALIASES[savedTab]
+          || savedTab;
       }
       if (savedRole === 'DIRECTOR') return 'director-payroll';
       if (savedRole === 'IT') return 'internal-workflow';

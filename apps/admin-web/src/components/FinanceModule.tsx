@@ -221,6 +221,8 @@ export default function FinanceModule(props: FinanceModuleProps) {
     activeTab, currentUser, allEmployees, shifts, payrollRuns, branches,
     salaryConfigs, showToast, onRefreshData, onPushSheets, onNavigateTab,
   } = props;
+  const isFinance = String((currentUser as any)?.role || '').toUpperCase() === 'FINANCE';
+  const isAdmin = String((currentUser as any)?.role || '').toUpperCase() === 'ADMIN';
   const curPeriod = useMemo(() => currentPeriod(), []);
   const [month, setMonth] = useState<string>(() => {
     const saved = localStorage.getItem(MONTH_KEY);
@@ -299,6 +301,12 @@ export default function FinanceModule(props: FinanceModuleProps) {
       defs,
     };
   }, [colVis]);
+  // ADMIN chỉ DUYỆT phiếu lương kỳ → ẩn cột "Sửa trực tiếp" (thao tác của Kế toán).
+  const payrollPeriodsCols = useMemo(() => {
+    const c = colsVisible('fin-payroll-periods');
+    if (isFinance) return c;
+    return { ...c, show: (key: string) => key !== 'edit' && c.show(key) };
+  }, [colsVisible, isFinance]);
   const saveColVis = useCallback(async (next: Record<string, Record<string, boolean>>) => {
     if (colVisSavingRef.current) return;
     colVisSavingRef.current = true;
@@ -779,6 +787,10 @@ export default function FinanceModule(props: FinanceModuleProps) {
   }, [flushAllPendingInputs, post, month, showToast]);
   /** Tính lương kỳ (công thức Excel) + tạo/cập nhật phiếu — thay cho nút "Tính lương" bị thiếu ở bản cũ. */
   const runCalculate = useCallback(async () => {
+    if (!isFinance) {
+      showToast?.('Chỉ tài khoản Kế toán (FINANCE) được tính lương. ADMIN chỉ duyệt phiếu lương kỳ.');
+      return;
+    }
     if (!window.confirm(`TÍNH LƯƠNG ${periodLabel(month)} theo CÔNG THỨC EXCEL?\nTỔNG CỘNG = LCB + giờ công + OT thêm + Bonus; THỰC LÃNH = TỔNG CỘNG − KPI − phạt − ứng − đồng phục.\nHệ thống sẽ tạo/cập nhật kỳ lương và phiếu cho toàn bộ nhân viên.`)) return;
     setCalcBusy(true);
     try {
@@ -795,7 +807,6 @@ export default function FinanceModule(props: FinanceModuleProps) {
 
   // CHỈ tài khoản FINANCE mới thấy thanh QUY TRÌNH KẾ TOÁN tuần tự/sẽ bị khóa theo workflow.
   // Các tài khoản khác (ADMIN, DIRECTOR, HR...) không hiển thị thanh quy trình và không bị khóa tuần tự khi mở tab.
-  const isFinance = String((currentUser as any)?.role || '').toUpperCase() === 'FINANCE';
   const open = isFinance ? isTabOpen(activeTab) : true;
   const activeLock = tabLocked.get(activeTab);
   const activeStepDone = !!activeLock?.done;
@@ -929,7 +940,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
         <div className="fin-brand">
           <div className="fin-logo" aria-hidden="true"><Wallet size={22} strokeWidth={2.2} /></div>
           <div>
-            <div className="fin-title">Cổng Kế toán — Tính lương</div>
+            <div className="fin-title">{isAdmin ? 'Duyệt phiếu lương kỳ — Kế toán' : 'Cổng Kế toán — Tính lương'}</div>
             <div className="fin-subtitle">Tài khoản: {currentUser?.fullName || 'Kế toán'} &nbsp;•&nbsp; Vai trò: {currentUser?.role} &nbsp;•&nbsp; UMB Milk HR</div>
           </div>
         </div>
@@ -1071,8 +1082,8 @@ export default function FinanceModule(props: FinanceModuleProps) {
 
       {!isFinance && activeTab === 'fin-payroll-periods' && (
         <div style={{ border: '1.5px solid #fcd34d', background: '#fffbeb', borderRadius: 12, padding: '10px 14px' }}>
-          <b style={{ fontSize: 12 }}>Duyệt kỳ (ADMIN):</b>
-          <span style={{ fontSize: 11, color: 'var(--fin-muted)' }}> Bấm <b>Đối soát kỳ</b> (DRAFT → RECONCILED) rồi <b>Phê duyệt kỳ</b> (RECONCILED → APPROVED). ADMIN được duyệt kỳ của mình.</span>
+          <b style={{ fontSize: 12 }}>Duyệt phiếu lương kỳ (ADMIN):</b>
+          <span style={{ fontSize: 11, color: 'var(--fin-muted)' }}> Kế toán xuất phiếu lương kỳ → ADMIN rà soát số liệu, bấm <b>Đối soát kỳ</b> (DRAFT → RECONCILED) rồi <b>Phê duyệt kỳ</b> (RECONCILED → APPROVED). Các thao tác tính lương/sửa phiếu chỉ dành cho tài khoản Kế toán.</span>
         </div>
       )}
 
@@ -1151,7 +1162,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
           {activeTab === 'fin-bcc' && <BccTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} formatVND={formatVND} cols={colsVisible('fin-bcc')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-bcc']} workflowStep={workflow?.steps?.find((s: any) => s.id === 'fin-bcc') || null} onConfirmStep={confirmWorkflowStep} showToast={showToast} />}
           {activeTab === 'fin-calculate' && <CalculateTab month={month} formula={formula} setFormula={setFormula} inputs={inputs} inputsLoading={inputsLoading} allEmployees={allEmployees} finSheet={finSheet} finSheetLoading={finSheetLoading} salaryConfigs={salaryConfigs} saveFormula={saveFormula} upsertInput={upsertInput} saveAllInputs={saveAllInputs} loadFormula={loadFormula} loadInputs={loadInputs} runCalculate={runCalculate} calcBusy={calcBusy} runs={runs} inputsSaving={inputsSaving} pendingCount={pendingCount} inputsSavedAt={inputsSavedAt} cols={colsVisible('fin-calculate')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-calculate']} />}
           {activeTab === 'fin-payroll-sheet' && <PayrollSheetTab month={month} slips={slips} allEmployees={allEmployees} formatVND={formatVND} stageBadge={stageBadge} cols={colsVisible('fin-payroll-sheet')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payroll-sheet']} />}
-          {activeTab === 'fin-payroll-periods' && <PayrollPeriodsTab month={month} runs={runs} runsLoading={runsLoading} loadRuns={loadRuns} slips={slips} allEmployees={allEmployees} formatVND={formatVND} runCalculate={runCalculate} calcBusy={calcBusy} payRunAction={payRunAction} onNavigateTab={goTab} inputs={inputs} loadInputs={loadInputs} loadSlips={loadSlips} showToast={showToast} cols={colsVisible('fin-payroll-periods')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payroll-periods']} />}
+          {activeTab === 'fin-payroll-periods' && <PayrollPeriodsTab month={month} runs={runs} runsLoading={runsLoading} loadRuns={loadRuns} slips={slips} allEmployees={allEmployees} formatVND={formatVND} runCalculate={runCalculate} calcBusy={calcBusy} payRunAction={payRunAction} onNavigateTab={goTab} inputs={inputs} loadInputs={loadInputs} loadSlips={loadSlips} showToast={showToast} financeEditable={isFinance} cols={payrollPeriodsCols} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payroll-periods']} />}
           {activeTab === 'fin-payslips' && <PayslipsTab month={month} slips={slips} slipsLoading={slipsLoading} allEmployees={allEmployees} formatVND={formatVND} loadSlips={loadSlips} stageBadge={stageBadge} slipQrUrl={slipQrUrl} fastSignLap={fastSignLap} fastSignLapAll={fastSignLapAll} fastSignLapBranch={fastSignLapBranch} publishBranch={publishBranch} publishSlip={publishSlip} returnSlip={returnSlip} markPaidSlip={markPaidSlip} syncSlipDrive={syncSlipDrive} downloadSlipPdf={downloadSlipPdf} cols={colsVisible('fin-payslips')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payslips']} />}
           {activeTab === 'fin-payment' && <PaymentTab month={month} slips={slips} allEmployees={allEmployees} formatVND={formatVND} loadSlips={loadSlips} slipQrUrl={slipQrUrl} markPaidSlip={markPaidSlip} downloadSlipPdf={downloadSlipPdf} exportPaymentFile={exportPaymentFile} cols={colsVisible('fin-payment')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payment']} />}
           {activeTab === 'fin-signatures' && <SignatureTemplatesTab currentUser={currentUser} showToast={showToast} />}
@@ -1907,7 +1918,7 @@ const PERIOD_SLIP_FILTERS = [
   { key: 'PAID', label: 'Đã chi trả' },
 ];
 
-function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmployees, formatVND, runCalculate, calcBusy, payRunAction, onNavigateTab, inputs = [], loadInputs, loadSlips, showToast, cols, onToggleCol, onShowAllCols, colVis, colVisSaving, colDefs }: any) {
+function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmployees, formatVND, runCalculate, calcBusy, payRunAction, onNavigateTab, inputs = [], loadInputs, loadSlips, showToast, financeEditable = false, cols, onToggleCol, onShowAllCols, colVis, colVisSaving, colDefs }: any) {
   const [q, setQ] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -1946,6 +1957,10 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
 
   /** Chỉnh sửa trực tiếp trên nhân viên (nhập tay: LCB/OT/Bonus/Ứng/KPI/ĐP). */
   const startEdit = (s: any) => {
+    if (!financeEditable) {
+      showToast?.('ADMIN chỉ duyệt phiếu lương kỳ — chỉ tài khoản Kế toán (FINANCE) được sửa số liệu.');
+      return;
+    }
     const st = String(s?.status || '').toUpperCase();
     if (['CONFIRMED', 'PAID'].includes(st)) {
       showToast?.('Phiếu đã khóa (NV đã ký/đã chuyển khoản) — hãy dùng nút "Quay về bước trước" ở màn hình khóa để hoàn về DRAFT trước khi sửa!');
@@ -2008,15 +2023,17 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
   };
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <TabHead step={6} title="Kỳ lương — DRAFT → PAID" desc={`Vòng đời kỳ lương ${periodLabel(month)}: Tính → Đối soát → Duyệt → từng phiếu gửi NV → NV ký → chi trả. Bảng dưới Nhóm theo CHI NHÁNH, mỗi NV 1 dòng với ĐỦ cột tiền + dòng CỘNG tổng tiền chi nhánh. Kế toán có thể SỬA TRỰC TIẾP từng NV (LCB/OT/Bonus/Ứng/KPI/ĐP) ngay trên bảng, rồi bấm CẬP NHẬT DỮ LIỆU để tải lại / TÍNH LẠI KỲ để áp số mới.`}>
+      <TabHead step={6} title={financeEditable ? 'Kỳ lương — DRAFT → PAID' : 'Duyệt phiếu lương kỳ'} desc={financeEditable ? `Vòng đời kỳ lương ${periodLabel(month)}: Tính → Đối soát → Duyệt → từng phiếu gửi NV → NV ký → chi trả. Bảng dưới Nhóm theo CHI NHÁNH, mỗi NV 1 dòng với ĐỦ cột tiền + dòng CỘNG tổng tiền chi nhánh. Kế toán có thể SỬA TRỰC TIẾP từng NV (LCB/OT/Bonus/Ứng/KPI/ĐP) ngay trên bảng, rồi bấm CẬP NHẬT DỮ LIỆU để tải lại / TÍNH LẠI KỲ để áp số mới.` : `Kế toán xuất phiếu lương kỳ ${periodLabel(month)} → ADMIN rà soát số liệu và duyệt kỳ. Chỉ xem và duyệt, không sửa số liệu của Kế toán.`}>
         <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={loadRuns}><RefreshCw size={13} /> Tải lại</button>
         <ColumnSettings tabKey="fin-payroll-periods" defs={colDefs} value={colVis} onToggle={onToggleCol} onShowAll={() => onShowAllCols('fin-payroll-periods')} saving={colVisSaving} />
         <button type="button" className="fin-btn fin-btn-dark fin-btn-sm" onClick={refreshData} disabled={refreshing} title="Tải lại dữ liệu mới nhất từ server (inputs, phiếu, kỳ, workflow) — realtime">
           {refreshing ? <Loader2 size={13} className="fin-spin" /> : <RefreshCw size={13} />} Cập nhật dữ liệu
         </button>
-        <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={runCalculate} disabled={calcBusy} title="Tính lại kỳ (tạo kỳ mới — phiếu cũ vẫn giữ để đối chiếu)">
-          {calcBusy ? <Loader2 size={13} className="fin-spin" /> : <Calculator size={13} />} {latest ? 'Tính lại kỳ' : 'Tính lương ngay'}
-        </button>
+        {financeEditable && (
+          <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={runCalculate} disabled={calcBusy} title="Tính lại kỳ (tạo kỳ mới — phiếu cũ vẫn giữ để đối chiếu)">
+            {calcBusy ? <Loader2 size={13} className="fin-spin" /> : <Calculator size={13} />} {latest ? 'Tính lại kỳ' : 'Tính lương ngay'}
+          </button>
+        )}
       </TabHead>
 
       {/* Vòng đời kỳ mới nhất DRAFT -> PAID */}
@@ -2044,8 +2061,8 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
           {latest && <span style={{ fontSize: 11, fontWeight: 800 }}>Trạng thái kỳ: {String(latest.status || 'DRAFT').toUpperCase()}</span>}
           <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" disabled={!canReconcile} title={canReconcile ? 'Đánh dấu kỳ đã đối soát (DRAFT → RECONCILED). Bước 1 bắt buộc trước khi duyệt.' : 'Chỉ bấm được khi kỳ đang ở trạng thái DRAFT'} onClick={() => payRunAction(latest.run_id, 'reconcile')}>Đối soát kỳ</button>
           <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" disabled={!canApprove} title={canApprove ? 'Phê duyệt kỳ (RECONCILED → APPROVED). ADMIN được duyệt kỳ của mình; FINANCE phải dùng tài khoản khác.' : 'Chỉ bấm được khi kỳ đã Đối soát (RECONCILED). Hãy bấm Đối soát kỳ trước.'} onClick={() => payRunAction(latest.run_id, 'approve')}>Phê duyệt kỳ</button>
-          {canGoSign && <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={() => onNavigateTab?.('fin-payslips')}><Send size={12} /> Sang tab Phiếu lương: ký & gửi NV</button>}
-          {latest && <button type="button" className="fin-btn fin-btn-amber fin-btn-sm" onClick={() => window.dispatchEvent(new CustomEvent('ubm:rollback-kyluong', { detail: { period: month } }))}>↩ Quay về bước trước</button>}
+          {financeEditable && canGoSign && <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={() => onNavigateTab?.('fin-payslips')}><Send size={12} /> Sang tab Phiếu lương: ký & gửi NV</button>}
+          {financeEditable && latest && <button type="button" className="fin-btn fin-btn-amber fin-btn-sm" onClick={() => window.dispatchEvent(new CustomEvent('ubm:rollback-kyluong', { detail: { period: month } }))}>↩ Quay về bước trước</button>}
           {latest && !canReconcile && !canApprove && !canGoSign && <span style={{ fontSize: 11, color: 'var(--fin-muted)' }}>Kỳ đang ở trạng thái {String(latest.status || '').toUpperCase()} — theo quy trình, phiếu lương phát hành/chi trả TỪNG PHIẾU ở tab 7–8 (đủ chữ ký 3 bên).</span>}
           {latest && <span style={{ fontSize: 10.5, color: 'var(--fin-muted)' }}>Quy trình: DRAFT → Bấm <b>Đối soát kỳ</b> → RECONCILED → Bấm <b>Phê duyệt kỳ</b> → APPROVED → Sang tab Phiếu lương (KT ký → GĐ duyệt → NV ký → KT chuyển khoản).</span>}
         </div>
@@ -2098,8 +2115,14 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
           <div className="fin-empty">
             <Inbox size={28} style={{ margin: '0 auto 8px', color: '#cbd5e1' }} />
             <div style={{ fontWeight: 800, color: 'var(--fin-ink)', marginBottom: 4 }}>Chưa có phiếu lương cho {periodLabel(month)}</div>
-            <div style={{ marginBottom: 12 }}>Bấm “Tính lương ngay” ở góc phải trên — hệ thống sẽ sinh phiếu cho toàn bộ nhân viên.</div>
-            <button type="button" className="fin-btn fin-btn-primary" onClick={runCalculate} disabled={calcBusy}>{calcBusy ? <Loader2 size={15} className="fin-spin" /> : <Calculator size={15} />} TÍNH LƯƠNG NGAY</button>
+            {financeEditable ? (
+              <>
+                <div style={{ marginBottom: 12 }}>Bấm “Tính lương ngay” ở góc phải trên — hệ thống sẽ sinh phiếu cho toàn bộ nhân viên.</div>
+                <button type="button" className="fin-btn fin-btn-primary" onClick={runCalculate} disabled={calcBusy}>{calcBusy ? <Loader2 size={15} className="fin-spin" /> : <Calculator size={15} />} TÍNH LƯƠNG NGAY</button>
+              </>
+            ) : (
+              <div style={{ marginBottom: 12 }}>Kế toán chưa xuất phiếu lương cho kỳ này. Khi Kế toán xuất phiếu, danh sách sẽ tự hiện ra để ADMIN duyệt.</div>
+            )}
           </div>
         ) : (
           <div className="fin-table-wrap">
