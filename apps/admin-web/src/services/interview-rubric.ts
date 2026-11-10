@@ -296,11 +296,13 @@ export function candStatusVI(s: unknown): string {
     CONFIRMED: 'Đã xác nhận tham gia',
     DECLINED: 'Đã từ chối tham gia',
     RESCHEDULE_REQUESTED: 'Xin dời lịch',
+    RESCHEDULE_PROPOSED: 'Đề xuất lịch mới',
     INTERVIEWED: 'Đã phỏng vấn',
     SCORED: 'Chờ duyệt thử việc',
     ACCEPTED: 'Đã duyệt thử việc',
     REJECTED: 'Đã loại',
     NO_SHOW: 'Vắng không phép',
+    BLACKLIST: 'Danh sách đen',
   };
   const k = String(s || '').trim();
   return vi[k] || k || 'Mới ứng tuyển';

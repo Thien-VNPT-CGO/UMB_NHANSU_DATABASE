@@ -249,6 +249,19 @@ export interface ColumnStyle {
 }
 
 /**
+ * Đổi chỉ số cột (0-based) sang ký tự A1 (0 -> A, 26 -> AA).
+ */
+function columnIndexToA1(idx: number): string {
+  let n = Math.max(0, Math.floor(idx));
+  let out = '';
+  do {
+    out = String.fromCharCode(65 + (n % 26)) + out;
+    n = Math.floor(n / 26) - 1;
+  } while (n >= 0);
+  return out;
+}
+
+/**
  * Phân tích và tự động xác định phong cách định dạng của một cột dựa vào tên tiêu đề:
  */
 export function getColumnStyle(header: string, sampleValues: any[] = []): ColumnStyle {
@@ -777,7 +790,7 @@ export function buildSheetFormattingRequests(
       // Màu ĐỎ (Ngừng / Từ chối / Không đạt / Check-out / Vắng)
       const redKeywords = [
         'INACTIVE', 'REJECTED', 'TỪ CHỐI', 'OUT', 'CHECK_OUT', 'KHÔNG ĐẠT',
-        'BỊ KHÓA', 'RESIGNED', 'NO', 'FALSE', 'INVALID', 'VẮNG', 'LATE', 'TRỄ', 'FAIL'
+        'BỊ KHÓA', 'RESIGNED', 'NO', 'FALSE', 'INVALID', 'VẮNG', 'LATE', 'TRỄ', 'FAIL', 'BLACKLIST'
       ];
       redKeywords.forEach(keyword => {
         requests.push({
@@ -887,6 +900,45 @@ export function buildSheetFormattingRequests(
       });
     }
   });
+
+  // 5d. DANH SÁCH ĐEN: tô đỏ TOÀN BỘ DÒNG ứng viên vi phạm quy chế
+  // (cột Trạng Thái = BLACKLIST) để HR thấy ngay trên Sheet.
+  if (sheetDef.title === 'FROM_NHAN_VIEN' && !opts.skipConditionalRules) {
+    const statusCol = sheetDef.headers.findIndex(h => String(h || '').toLowerCase().includes('trạng thái'));
+    if (statusCol >= 0) {
+      const statusA1 = columnIndexToA1(statusCol);
+      requests.push({
+        addConditionalFormatRule: {
+          rule: {
+            ranges: [{
+              sheetId,
+              startRowIndex: 1,
+              startColumnIndex: 0,
+              endColumnIndex: colCount,
+            }],
+            booleanRule: {
+              condition: {
+                type: 'CUSTOM_FORMULA',
+                values: [{ userEnteredValue: `=$${statusA1}2="BLACKLIST"` }],
+              },
+              format: {
+                backgroundColorStyle: {
+                  rgbColor: { red: 1.00, green: 0.85, blue: 0.85 },
+                },
+                textFormat: {
+                  foregroundColorStyle: {
+                    rgbColor: { red: 0.60, green: 0.05, blue: 0.05 },
+                  },
+                  bold: true,
+                },
+              },
+            },
+          },
+          index: 0,
+        },
+      });
+    }
+  }
 
   // 6. Sọc xen kẽ (Alternating Row Banding) cho toàn bộ sheet
   if (theme.bandColor) {

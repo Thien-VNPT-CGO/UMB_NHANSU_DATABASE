@@ -105,6 +105,111 @@ export function validateInterviewSlot(
   };
 }
 
+/**
+ * Khung giờ làm việc HR dùng cho phần "Đề xuất lịch mới" của ứng viên:
+ *   Buổi sáng 08:00–11:30, buổi chiều 13:30–16:30 (mỗi lịch 30 phút).
+ * Ứng viên chỉ chọn được giờ bắt đầu trên lưới 30 phút nằm trong 2 khung này.
+ */
+export const PROPOSAL_WORK_WINDOWS: Array<{ start: string; end: string; session: 'SANG' | 'CHIEU'; label: string }> = [
+  { start: '08:00', end: '11:30', session: 'SANG', label: 'Buổi sáng' },
+  { start: '13:30', end: '16:30', session: 'CHIEU', label: 'Buổi chiều' },
+];
+
+export interface ProposalSlotOption {
+  /** Giờ bắt đầu HH:mm */
+  time: string;
+  session: 'SANG' | 'CHIEU';
+  /** Khung đã có ứng viên khác đặt hoặc đã qua giờ -> không chọn được. */
+  disabled: boolean;
+  /** Tên ứng viên đang giữ khung (chỉ để hiển thị cho HR, KHÔNG trả ra API công khai). */
+  takenBy?: string;
+  reason?: 'TAKEN' | 'PAST';
+}
+
+/** Danh sách giờ bắt đầu hợp lệ của 1 buổi (bước 30 phút, kết thúc muộn nhất = end - 30'). */
+function windowStartTimes(start: string, end: string): string[] {
+  const out: string[] = [];
+  const lastStart = toMinutes(end) - INTERVIEW_SLOT_MINUTES;
+  for (let m = toMinutes(start); m <= lastStart; m += INTERVIEW_SLOT_MINUTES) {
+    out.push(toHHmm(Math.floor(m / 60), m % 60));
+  }
+  return out;
+}
+
+/** Toàn bộ giờ bắt đầu của 2 buổi làm việc HR. */
+export function proposalSlotTimes(): Array<{ time: string; session: 'SANG' | 'CHIEU' }> {
+  return PROPOSAL_WORK_WINDOWS.flatMap(w => windowStartTimes(w.start, w.end).map(time => ({ time, session: w.session })));
+}
+
+/**
+ * Sinh danh sách khung giờ đề xuất của 1 ngày kèm trạng thái:
+ *  - disabled khi khung đó đã có ứng viên khác đặt lịch PV (cách < 30 phút) hoặc đã qua giờ.
+ * Bỏ qua chính ứng viên đang đề xuất (excludeSubmissionId).
+ */
+export function buildProposalSlots(
+  date: string,
+  candidates: any[],
+  excludeSubmissionId?: string,
+  nowMs: number = Date.now()
+): ProposalSlotOption[] {
+  const d = String(date || '').slice(0, 10);
+  const taken: Array<{ startMs: number; name: string }> = [];
+  if (/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+    for (const c of candidates || []) {
+      if (!c) continue;
+      if (excludeSubmissionId && (c as any).submission_id === excludeSubmissionId) continue;
+      if (String((c as any).interview_date || '').slice(0, 10) !== d) continue;
+      const st = candidateInterviewStartMs(c);
+      if (st === null) continue;
+      taken.push({ startMs: st, name: String((c as any).full_name || 'ứng viên khác') });
+    }
+  }
+  return proposalSlotTimes().map(({ time, session }) => {
+    const startMs = new Date(`${d}T${time}:00+07:00`).getTime();
+    const clash = Number.isFinite(startMs)
+      ? taken.find(t => Math.abs(t.startMs - startMs) < INTERVIEW_SLOT_MINUTES * 60_000)
+      : undefined;
+    if (clash) return { time, session, disabled: true, reason: 'TAKEN' as const, takenBy: clash.name };
+    if (!Number.isFinite(startMs) || startMs < nowMs) return { time, session, disabled: true, reason: 'PAST' as const };
+    return { time, session, disabled: false };
+  });
+}
+
+/** Validate ngày + khung giờ đề xuất của ứng viên (thông điệp tiếng Việt sẵn để hiển thị). */
+export function validateProposalSlot(
+  dateInput: unknown,
+  slotInput: unknown,
+  candidates: any[],
+  excludeSubmissionId?: string,
+  nowMs: number = Date.now()
+): { ok: true; value: { date: string; time: string } } | { ok: false; error: string } {
+  const date = String(dateInput || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return { ok: false, error: 'Vui lòng chọn ngày phỏng vấn mong muốn.' };
+  }
+  const dayMs = new Date(`${date}T00:00:00+07:00`).getTime();
+  if (!Number.isFinite(dayMs)) return { ok: false, error: `Ngày ${date} không tồn tại trên lịch.` };
+  if (date < vnToday()) return { ok: false, error: `Ngày ${date} đã qua — vui lòng chọn từ hôm nay trở đi.` };
+  const parsed = parseSlotStart(slotInput);
+  if (!parsed) return { ok: false, error: 'Vui lòng chọn khung giờ phỏng vấn mong muốn.' };
+  const time = toHHmm(parsed.hours, parsed.minutes);
+  const allowed = proposalSlotTimes().some(s => s.time === time);
+  if (!allowed) {
+    const times = PROPOSAL_WORK_WINDOWS.map(w => `${w.label} ${w.start}–${w.end}`).join(' • ');
+    return { ok: false, error: `Giờ ${time} nằm ngoài khung làm việc của HR (${times}). Vui lòng chọn lại.` };
+  }
+  const options = buildProposalSlots(date, candidates, excludeSubmissionId, nowMs);
+  const picked = options.find(o => o.time === time);
+  if (!picked) return { ok: false, error: `Giờ ${time} không hợp lệ — vui lòng chọn lại.` };
+  if (picked.disabled && picked.reason === 'TAKEN') {
+    return { ok: false, error: `Khung ${time} ngày ${date} đã có ứng viên khác đặt lịch. Vui lòng chọn khung khác.` };
+  }
+  if (picked.disabled) {
+    return { ok: false, error: `Khung ${time} ngày ${date} đã qua giờ. Vui lòng chọn khung khác.` };
+  }
+  return { ok: true, value: { date, time } };
+}
+
 /** Mốc bắt đầu (ms, giờ VN) của 1 bản ghi ứng viên — null khi chưa xếp lịch. */
 export function candidateInterviewStartMs(c: any): number | null {
   const d = String((c as any)?.interview_date || '').slice(0, 10);

@@ -65,6 +65,7 @@ import { OfficeService } from './services/office.service.js';
 import { SalaryConfigService } from './services/salary-config.service.js';
 import { LiveMapService, canonicalBranchId, distanceMeters, vnDateOf } from './services/live-map.service.js';
 import { renderRsvpPage as rsvpPage, escapeHtml, type RsvpIconName } from './services/rsvp-page.js';
+import { buildProposalSlots, PROPOSAL_WORK_WINDOWS } from './services/interview-slots.service.js';
 import { LiveLocationStore } from './services/live-location.store.js';
 import { appendGpsTrail, readGpsTrail, summarizeGpsTrail, listGpsTrailDates } from './services/gps-trail.store.js';
 import { ShiftReRegService } from './services/shift-rereg.service.js';
@@ -3049,6 +3050,72 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // HR CHỐT lịch theo đề xuất của ứng viên (tab "Đề xuất lịch mới"): ghi lịch PV
+  // mới + chuyển về INVITED_INTERVIEW. Có thể truyền date/time khác đề xuất.
+  app.post('/interviews/:id/approve-proposal', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const b: any = req.body || {};
+      const result = await employeesService.approveProposedSchedule(req.params.id, req.user!.id, {
+        date: b.date ? String(b.date) : undefined,
+        time: b.time ? String(b.time) : undefined,
+      });
+      try {
+        await (adapter as any)?.pushCandidatesNow?.();
+      } catch { /* best-effort */ }
+      broadcastUpdate('candidates', { action: 'interview-proposal-approved', id: req.params.id });
+      res.json({ success: true, candidate: result });
+    } catch (err: any) {
+      res.status(400).json({ error: String(err?.message || 'Lỗi chốt lịch đề xuất') });
+    }
+  });
+
+  // HR bấm "HỦY PV" khi ứng viên đã xác nhận nhưng không đến: lịch PV bị hủy và
+  // ứng viên vào thẳng DANH SÁCH ĐEN (đồng bộ Sheet + tô đỏ dòng trên Sheet).
+  app.post('/interviews/:id/blacklist', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const reason = String((req.body as any)?.reason || '').slice(0, 500);
+      const result = await employeesService.blacklistCandidate(req.params.id, req.user!.id, reason || undefined);
+      try {
+        const syncSvc = (adapter as any)?.syncService;
+        syncSvc?.markInterviewScheduleCleared?.(req.params.id);
+        await (adapter as any)?.pushCandidatesNow?.();
+      } catch { /* best-effort */ }
+      broadcastUpdate('candidates', { action: 'candidate-blacklisted', id: req.params.id });
+      try {
+        const admins = await adapter.listAdminAccounts().catch(() => []);
+        const ids = admins.filter((a: any) => (a.role === 'ADMIN' || a.role === 'HR') && a.is_active !== false).map((a: any) => a.admin_id);
+        if (ids.length > 0) {
+          await notificationsService.sendNotification({
+            recipientIds: ids,
+            type: 'INTERVIEW_DECLINED',
+            severity: 'ACTION_REQUIRED',
+            title: `⛔ ${(result as any)?.full_name || req.params.id} vào DANH SÁCH ĐEN`,
+            summary: `Lịch PV đã hủy. Lý do: ${String((result as any)?.blacklist_reason || reason || 'không đến phỏng vấn theo lịch đã xác nhận')}.`,
+            targetPath: '/hr-interviews',
+            actorId: req.user!.id,
+          }).catch(() => null);
+        }
+      } catch { /* best-effort */ }
+      res.json({ success: true, candidate: result });
+    } catch (err: any) {
+      res.status(400).json({ error: String(err?.message || 'Lỗi đưa vào danh sách đen') });
+    }
+  });
+
+  // HR bỏ ứng viên khỏi DANH SÁCH ĐEN (xử lý nhầm) -> về chưa xếp lịch.
+  app.post('/interviews/:id/unblacklist', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await employeesService.restoreFromBlacklist(req.params.id, req.user!.id);
+      try {
+        await (adapter as any)?.pushCandidatesNow?.();
+      } catch { /* best-effort */ }
+      broadcastUpdate('candidates', { action: 'candidate-unblacklisted', id: req.params.id });
+      res.json({ success: true, candidate: result });
+    } catch (err: any) {
+      res.status(400).json({ error: String(err?.message || 'Lỗi bỏ khỏi danh sách đen') });
+    }
+  });
+
   // Chấm điểm rubric PV (server tự tính; dính LOẠI thẳng -> REJECTED + xóa lịch luôn).
   app.post('/applications/:id/score', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams, body: candidateScoreBody }), async (req: AuthenticatedRequest, res) => {    try {
       const { rubric, answers } = req.body as any;
@@ -3249,6 +3316,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           zalo_uid: uid,
           zalo_invite_at: new Date().toISOString(),
           zalo_invite_error: undefined,
+          // Nhớ hình thức để tin nhắc trước giờ 30 phút hiện đúng Meet/trực tiếp.
+          interview_mode: meetUrl ? 'ONLINE' : 'OFFLINE',
         } as any).catch(() => null);
         broadcastUpdate('candidates', { action: 'zalo-invite', id: req.params.id });
         res.json({ success: true, uid, msgId: sent.msgId, meetUrl: meetUrl || null });
@@ -8047,12 +8116,17 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const ids = admins.filter((a: any) => (a.role === 'ADMIN' || a.role === 'HR') && a.is_active !== false).map((a: any) => a.admin_id);
       if (ids.length > 0) {
         const c: any = updated || {};
+        const proposed = String(c.status || '') === 'RESCHEDULE_PROPOSED';
         await notificationsService.sendNotification({
           recipientIds: ids,
-          type: 'INTERVIEW_DECLINED',
+          type: proposed ? 'INTERVIEW_RESCHEDULE' : 'INTERVIEW_DECLINED',
           severity: 'ACTION_REQUIRED',
-          title: `❌ ${c.full_name || sid} TỪ CHỐI tham gia phỏng vấn`,
-          summary: `Lý do: ${String(c.interview_decline_reason || 'không nêu lý do')}. Lịch cũ đã giải phóng — vào tab Lịch PV để biết thêm.`,
+          title: proposed
+            ? `🔄 ${c.full_name || sid} từ chối lịch cũ & ĐỀ XUẤT lịch mới`
+            : `❌ ${c.full_name || sid} TỪ CHỐI tham gia phỏng vấn`,
+          summary: proposed
+            ? `Lý do: ${String(c.interview_decline_reason || 'không nêu lý do')}. Đề xuất: ${String(c.interview_proposed_time_slot || '?')} ngày ${String(c.interview_proposed_date || '?')}${c.interview_proposed_note ? ` — ghi chú: ${String(c.interview_proposed_note)}` : ''}. Vào tab "Đề xuất lịch mới" để chốt lịch.`
+            : `Lý do: ${String(c.interview_decline_reason || 'không nêu lý do')}. Lịch cũ đã giải phóng — vào tab Lịch PV để biết thêm.`,
           targetPath: '/hr-interviews',
           actorId: 'CANDIDATE',
         }).catch(() => null);
@@ -8074,6 +8148,25 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           `Chào <b>${escapeHtml(cand.full_name || 'bạn')}</b>! Bạn đã từ chối tham gia buổi phỏng vấn này.${cand.interview_decline_reason ? `<br/>Lý do bạn gửi: <i>“${escapeHtml(String(cand.interview_decline_reason))}”</i>` : ''}<br/>Lượt từ chối này đã được ghi nhận. Nếu đổi ý hoặc muốn đặt lịch mới, vui lòng liên hệ HR.`,
           null,
           { badge: 'Đã ghi nhận từ chối', tone: 'muted' }
+        ));
+      }
+      if (st === 'RESCHEDULE_PROPOSED') {
+        const pd = String(cand.interview_proposed_date || '');
+        const pt = String(cand.interview_proposed_time_slot || '');
+        const pdVI = /^\d{4}-\d{2}-\d{2}$/.test(pd) ? `${pd.slice(8, 10)}/${pd.slice(5, 7)}/${pd.slice(0, 4)}` : pd;
+        return res.send(rsvpPage(
+          'Đã ghi nhận đề xuất lịch mới',
+          `Chào <b>${escapeHtml(cand.full_name || 'bạn')}</b>! Bạn đã từ chối lịch cũ và đề xuất lịch mới${pt || pd ? `: <b>${escapeHtml(pt || '?')}</b>${pdVI ? ` ngày <b>${escapeHtml(pdVI)}</b>` : ''}` : ''}.${cand.interview_decline_reason ? `<br/>Lý do bạn gửi: <i>“${escapeHtml(String(cand.interview_decline_reason))}”</i>` : ''}<br/>HR sẽ xem xét đề xuất này và gửi lại thư mời xác nhận qua Zalo. Hệ thống cũng tự nhắc bạn trước giờ hẹn <b>30 phút</b>.`,
+          null,
+          { badge: 'Đã ghi nhận đề xuất', tone: 'pending' }
+        ));
+      }
+      if (st === 'BLACKLIST') {
+        return res.send(rsvpPage(
+          'Lịch hẹn không còn hiệu lực',
+          `Chào ${escapeHtml(cand.full_name || 'bạn')}! Hồ sơ này hiện không thể tiếp tục phỏng vấn trực tuyến. Vui lòng liên hệ Phòng Nhân Sự Ụm Bò Milk để được giải đáp.`,
+          null,
+          { badge: 'Liên hệ HR', tone: 'muted' }
         ));
       }
       if (st === 'RESCHEDULE_REQUESTED') {
@@ -8120,6 +8213,29 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // Khung giờ trống cho phần "Đề xuất lịch mới" trên trang RSVP (công khai, chỉ
+  // cần token hợp lệ). Trả các khung 30 phút thuộc giờ làm việc HR, đánh dấu
+  // disabled cho khung đã có ứng viên khác đặt hoặc đã qua giờ. Không trả tên
+  // ứng viên khác ra API công khai.
+  app.get('/public/interview/rsvp/slots', async (req, res) => {
+    try {
+      const sid = employeesService.verifyRsvpToken(String(req.query.token || ''));
+      const date = String(req.query.date || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'INVALID_DATE' });
+      const all = await adapter.listCandidates().catch(() => []);
+      if (!all.some((c: any) => c.submission_id === sid)) return res.status(404).json({ error: 'CANDIDATE_NOT_FOUND' });
+      const slots = buildProposalSlots(date, all as any[], sid).map(s => ({
+        time: s.time,
+        session: s.session,
+        disabled: s.disabled,
+        reason: s.reason,
+      }));
+      res.json({ success: true, date, slots, windows: PROPOSAL_WORK_WINDOWS.map(w => ({ start: w.start, end: w.end, label: w.label, session: w.session })) });
+    } catch (e: any) {
+      res.status(400).json({ error: String(e?.message || 'Link không hợp lệ') });
+    }
+  });
+
   // Ứng viên bấm nút trên trang RSVP: CONFIRM / DECLINE (bắt buộc lý do) / RESCHEDULE (link cũ).
   app.post('/public/interview/rsvp', async (req, res) => {
     try {
@@ -8134,8 +8250,14 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         return res.json({ success: true, status: updated.status });
       }
       if (decision === 'DECLINE') {
-        const updated: any = await employeesService.declineInterview(sid, String((req.body as any)?.reason || ''));
-        broadcastUpdate('candidates', { action: 'interview-declined', id: sid });
+        const b: any = req.body || {};
+        const updated: any = await employeesService.declineInterview(sid, String(b.reason || ''), {
+          date: b.proposedDate ? String(b.proposedDate) : undefined,
+          time: b.proposedTime ? String(b.proposedTime) : undefined,
+          note: b.proposedNote ? String(b.proposedNote) : undefined,
+        });
+        const proposed = String(updated?.status || '') === 'RESCHEDULE_PROPOSED';
+        broadcastUpdate('candidates', { action: proposed ? 'interview-reschedule-proposed' : 'interview-declined', id: sid });
         try {
           const syncSvc = (adapter as any)?.syncService;
           syncSvc?.markInterviewScheduleCleared?.(sid);

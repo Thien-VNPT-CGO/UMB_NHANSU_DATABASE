@@ -369,6 +369,10 @@ export const SHEETS_DEFINITIONS: SheetDefinition[] = [
       'VIP',
       'Hạng VIP',
       'Lý Do Từ Chối PV',
+      'Ngày Đề Xuất PV',
+      'Khung Giờ Đề Xuất',
+      'Ghi Chú Đề Xuất',
+      'Lý Do Danh Sách Đen',
     ],
   },
   {
@@ -4198,6 +4202,15 @@ export class GoogleSheetsSyncService {
                 // Lý do từ chối PV (cột 26, thêm sau): giữ bền qua restart.
                 const mDecline = nz(mr[26]);
                 if (mDecline !== undefined) (c as any).interview_decline_reason = mDecline;
+                // Đề xuất lịch mới + lý do danh sách đen (cột 27-30, thêm sau).
+                const mPropDate = nz(mr[27]);
+                if (mPropDate !== undefined) (c as any).interview_proposed_date = mPropDate;
+                const mPropTime = nz(mr[28]);
+                if (mPropTime !== undefined) (c as any).interview_proposed_time_slot = mPropTime;
+                const mPropNote = nz(mr[29]);
+                if (mPropNote !== undefined) (c as any).interview_proposed_note = mPropNote;
+                const mBlacklist = nz(mr[30]);
+                if (mBlacklist !== undefined) (c as any).blacklist_reason = mBlacklist;
               }
             }
           }
@@ -5039,6 +5052,10 @@ export class GoogleSheetsSyncService {
           (c as any).vip ? 'VIP' : '',
           (c as any).vip_rank !== undefined && (c as any).vip_rank !== null ? String((c as any).vip_rank) : '',
           (c as any).interview_decline_reason || '',
+          (c as any).interview_proposed_date || '',
+          (c as any).interview_proposed_time_slot || '',
+          (c as any).interview_proposed_note || '',
+          (c as any).blacklist_reason || '',
         ]);
         await this.pushTabSafe(details, 'candidates', 'FROM_NHAN_VIEN', candHeaders, candRows);
       }

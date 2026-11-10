@@ -15,6 +15,7 @@ import {
   findSlotConflict,
   suggestFreeSlots,
   validateInterviewSlot,
+  validateProposalSlot,
 } from './interview-slots.service.js';
 import { decodeQrDataUrl, isPlausibleHolder, parseVietQRPartial } from '../utils/vietqr.js';
 import { bankAccountKey } from './bank-change.service.js';
@@ -1466,7 +1467,9 @@ export class EmployeesService {
       interview_time_slot: checked.value.normalized,
       interviewer_id: interviewerId,
       interview_decline_reason: undefined,
-    });
+      // Lịch mới -> xóa mốc nhắc Zalo cũ để hệ thống tự nhắc lại trước giờ 30 phút.
+      interview_reminder_at: undefined,
+    } as any);
   }
 
   /** Cập nhật thông tin ứng viên (ca đăng ký, chi nhánh...): whitelist chặt. */
@@ -1645,33 +1648,152 @@ export class EmployeesService {
     return updated;
   }
 
-  /** Ứng viên bấm "Từ chối" qua link RSVP: trạng thái DECLINED + XÓA lịch cũ để
-   *  giải phóng slot, BẮT BUỘC có lý do (1-500 ký tự). HR muốn PV lại thì đặt lịch mới.
-   *  Giữ requestInterviewReschedule làm tương thích link cũ (không lý do). */
-  async declineInterview(submissionId: string, reason: string) {
-    const cur = (await this.repo.listCandidates().catch(() => []))
-      .find((c: any) => c.submission_id === submissionId) as any;
+  /** Ứng viên bấm "Từ chối" qua link RSVP: BẮT BUỘC lý do (1-500 ký tự).
+   *  - Có đề xuất ngày + khung giờ mới -> RESCHEDULE_PROPOSED (tab "Đề xuất lịch mới").
+   *  - Không đề xuất -> DECLINED (tab "Vắng phỏng vấn").
+   *  Cả hai đều XÓA lịch cũ để giải phóng slot. */
+  async declineInterview(
+    submissionId: string,
+    reason: string,
+    proposal?: { date?: string; time?: string; note?: string }
+  ) {
+    const all = (await this.repo.listCandidates().catch(() => [])) as any[];
+    const cur = all.find((c: any) => c.submission_id === submissionId) as any;
     if (!cur) throw new Error('CANDIDATE_NOT_FOUND');
-    if (!['INVITED_INTERVIEW', 'CONFIRMED'].includes(String(cur.status || ''))) {
+    if (!['INVITED_INTERVIEW', 'CONFIRMED', 'RESCHEDULE_PROPOSED'].includes(String(cur.status || ''))) {
       throw new Error('Lịch này không còn hiệu lực để từ chối! Liên hệ HR đặt lịch mới.');
     }
     const clean = String(reason || '').trim().slice(0, 500);
     if (!clean) throw new Error('Vui lòng nhập lý do từ chối (bắt buộc để HR nắm được và xếp lại lịch).');
-    const updated = await this.repo.updateCandidate(submissionId, {
-      status: 'DECLINED',
+
+    const wantedDate = String(proposal?.date || '').trim().slice(0, 10);
+    const wantedTime = String(proposal?.time || '').trim().slice(0, 5);
+    const note = String(proposal?.note || '').trim().slice(0, 500);
+    const wantsProposal = !!(wantedDate || wantedTime);
+    if (wantsProposal) {
+      const check = validateProposalSlot(wantedDate, wantedTime, all, submissionId);
+      if (!check.ok) throw new Error(check.error);
+    }
+
+    const patch: any = {
+      status: wantsProposal ? 'RESCHEDULE_PROPOSED' : 'DECLINED',
       interview_date: undefined,
       interview_time_slot: undefined,
       interviewer_id: undefined,
       interview_decline_reason: clean,
-    } as any);
+      interview_reminder_at: undefined,
+    };
+    if (wantsProposal) {
+      patch.interview_proposed_date = wantedDate;
+      patch.interview_proposed_time_slot = wantedTime;
+      patch.interview_proposed_note = note || undefined;
+      patch.interview_proposed_at = new Date().toISOString();
+    } else {
+      patch.interview_proposed_date = undefined;
+      patch.interview_proposed_time_slot = undefined;
+      patch.interview_proposed_note = undefined;
+      patch.interview_proposed_at = undefined;
+    }
+    const updated = await this.repo.updateCandidate(submissionId, patch as any);
     await this.repo.recordAuditLog({
       log_id: `LOG_${Date.now()}`,
       actor_id: 'CANDIDATE',
       actor_role: 'SYSTEM',
-      action: 'INTERVIEW_DECLINED',
+      action: wantsProposal ? 'INTERVIEW_RESCHEDULE_PROPOSED' : 'INTERVIEW_DECLINED',
       target_entity: 'UNG_VIEN',
       target_id: submissionId,
-      details: `${(updated as any).full_name || submissionId} TỪ CHỐI tham gia PV qua link xác nhận; lý do: ${clean}; slot đã giải phóng, chờ HR quyết định lịch mới`,
+      details: `${(updated as any).full_name || submissionId} TỪ CHỐI tham gia PV qua link xác nhận; lý do: ${clean}${wantsProposal ? `; ĐỀ XUẤT lịch mới ${wantedTime} ngày ${wantedDate}${note ? ` (ghi chú: ${note})` : ''}` : ''}; slot cũ đã giải phóng`,
+    }).catch(() => null);
+    return updated;
+  }
+
+  /** HR chốt lịch theo đề xuất của ứng viên: ghi lịch PV mới + chuyển về
+   *  INVITED_INTERVIEW để chờ ứng viên xác nhận lại (và hệ thống tự nhắc Zalo
+   *  trước giờ hẹn 30 phút). Có thể truyền ngày/giờ khác đề xuất nếu HR muốn. */
+  async approveProposedSchedule(
+    submissionId: string,
+    actorId: string,
+    override?: { date?: string; time?: string }
+  ) {
+    const all = (await this.repo.listCandidates().catch(() => [])) as any[];
+    const cur = all.find((c: any) => c.submission_id === submissionId) as any;
+    if (!cur) throw new Error('CANDIDATE_NOT_FOUND');
+    const date = String(override?.date || cur.interview_proposed_date || '').trim().slice(0, 10);
+    const time = String(override?.time || cur.interview_proposed_time_slot || '').trim().slice(0, 5);
+    if (!date || !time) throw new Error('Ứng viên chưa đề xuất ngày/giờ — vui lòng đặt lịch thủ công.');
+    const check = validateProposalSlot(date, time, all, submissionId);
+    if (!check.ok) throw new Error(check.error);
+    const updated = await this.repo.updateCandidate(submissionId, {
+      status: 'INVITED_INTERVIEW',
+      interview_date: date,
+      interview_time_slot: time,
+      interviewer_id: undefined,
+      interview_reminder_at: undefined,
+    } as any);
+    await this.repo.recordAuditLog({
+      log_id: `LOG_${Date.now()}`,
+      actor_id: actorId,
+      actor_role: 'HR',
+      action: 'INTERVIEW_PROPOSAL_APPROVED',
+      target_entity: 'UNG_VIEN',
+      target_id: submissionId,
+      details: `HR chốt lịch PV mới ${time} ngày ${date} theo đề xuất của ${(updated as any).full_name || submissionId}${(cur as any).interview_proposed_note ? ` — ghi chú UV: ${(cur as any).interview_proposed_note}` : ''}`,
+    }).catch(() => null);
+    return updated;
+  }
+
+  /** Đưa ứng viên vào DANH SÁCH ĐEN (vi phạm quy chế / gian dối / xác nhận mà
+   *  không đến PV): xóa lịch + đề xuất, giữ lý do để HR tra cứu. */
+  async blacklistCandidate(submissionId: string, actorId: string, reason?: string) {
+    const cur = (await this.repo.listCandidates().catch(() => []))
+      .find((c: any) => c.submission_id === submissionId) as any;
+    if (!cur) throw new Error('CANDIDATE_NOT_FOUND');
+    if (cur.status === 'ACCEPTED') throw new Error('Ứng viên đã duyệt thử việc — không thể đưa vào danh sách đen!');
+    const clean = String(reason || '').trim().slice(0, 500);
+    const updated = await this.repo.updateCandidate(submissionId, {
+      status: 'BLACKLIST',
+      interview_date: undefined,
+      interview_time_slot: undefined,
+      interviewer_id: undefined,
+      interview_reminder_at: undefined,
+      interview_proposed_date: undefined,
+      interview_proposed_time_slot: undefined,
+      interview_proposed_note: undefined,
+      interview_proposed_at: undefined,
+      blacklist_reason: clean || 'Không đến phỏng vấn theo lịch đã xác nhận (vi phạm quy chế tuyển dụng).',
+      blacklist_at: new Date().toISOString(),
+    } as any);
+    await this.repo.recordAuditLog({
+      log_id: `LOG_${Date.now()}`,
+      actor_id: actorId,
+      actor_role: actorId === 'SYSTEM' ? 'SYSTEM' : 'HR',
+      action: 'CANDIDATE_BLACKLISTED',
+      target_entity: 'UNG_VIEN',
+      target_id: submissionId,
+      details: `${(updated as any).full_name || submissionId} vào DANH SÁCH ĐEN${clean ? ` — lý do: ${clean}` : ''}`,
+    }).catch(() => null);
+    return updated;
+  }
+
+  /** Bỏ ứng viên khỏi danh sách đen (HR xử lý nhầm) -> về chưa xếp lịch. */
+  async restoreFromBlacklist(submissionId: string, actorId: string) {
+    const cur = (await this.repo.listCandidates().catch(() => []))
+      .find((c: any) => c.submission_id === submissionId) as any;
+    if (!cur) throw new Error('CANDIDATE_NOT_FOUND');
+    if (String(cur.status || '') !== 'BLACKLIST') throw new Error('Ứng viên này không nằm trong danh sách đen!');
+    const updated = await this.repo.updateCandidate(submissionId, {
+      status: 'NEW',
+      blacklist_reason: undefined,
+      blacklist_at: undefined,
+    } as any);
+    await this.repo.recordAuditLog({
+      log_id: `LOG_${Date.now()}`,
+      actor_id: actorId,
+      actor_role: 'HR',
+      action: 'CANDIDATE_RESTORED_FROM_BLACKLIST',
+      target_entity: 'UNG_VIEN',
+      target_id: submissionId,
+      details: `Bỏ ${(updated as any).full_name || submissionId} khỏi DANH SÁCH ĐEN, đưa về chưa xếp lịch`,
     }).catch(() => null);
     return updated;
   }

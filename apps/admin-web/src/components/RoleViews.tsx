@@ -3469,20 +3469,25 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     return true;
   });
 
-  // --- 5 TAB NGHIỆP VỤ CỦA LỊCH PV ---------------------------------------
+  // --- 7 TAB NGHIỆP VỤ CỦA LỊCH PV ---------------------------------------
   // Mỗi ứng viên nằm đúng 1 tab theo trạng thái hiện tại, HR chỉ cần mở đúng
   // tab là thấy việc cần làm (xếp lịch / chờ UV xác nhận / chờ PV / chờ thử
-  // việc / vắng - từ chối). Bộ lọc chi nhánh + tìm kiếm áp dụng cho mọi tab.
-  type PvTabKey = 'WAIT_SCHEDULE' | 'WAIT_CONFIRM' | 'WAIT_INTERVIEW' | 'WAIT_PROBATION' | 'NO_SHOW';
+  // việc / đề xuất lịch mới / vắng - từ chối / danh sách đen). Bộ lọc chi
+  // nhánh + tìm kiếm áp dụng cho mọi tab.
+  type PvTabKey = 'WAIT_SCHEDULE' | 'WAIT_CONFIRM' | 'WAIT_INTERVIEW' | 'WAIT_PROBATION' | 'WAIT_PROPOSAL' | 'NO_SHOW' | 'BLACKLIST';
   const PV_TABS: Array<{ key: PvTabKey; label: string; hint: string; color: string; bg: string }> = [
     { key: 'WAIT_SCHEDULE', label: 'Chờ xếp lịch', hint: 'Ứng viên mới / cần bổ sung / xin dời lịch — chưa có lịch phỏng vấn', color: '#475569', bg: '#F1F5F9' },
     { key: 'WAIT_CONFIRM', label: 'Chờ xác nhận tham gia', hint: 'Đã gửi thư mời Zalo — chờ ứng viên bấm xác nhận tham gia', color: '#0369A1', bg: '#E0F2FE' },
     { key: 'WAIT_INTERVIEW', label: 'Chờ phỏng vấn', hint: 'Ứng viên ĐÃ xác nhận — chờ tới giờ phỏng vấn', color: '#4F46E5', bg: '#EEF2FF' },
     { key: 'WAIT_PROBATION', label: 'Chờ thử việc', hint: 'Đã phỏng vấn xong / đã chấm điểm — chờ duyệt và bắt đầu thử việc', color: '#7C3AED', bg: '#F5F3FF' },
+    { key: 'WAIT_PROPOSAL', label: 'Đề xuất lịch mới', hint: 'Ứng viên đã từ chối lịch cũ và đề xuất ngày/giờ mới — HR cần chốt lịch', color: '#C2410C', bg: '#FFF7ED' },
     { key: 'NO_SHOW', label: 'Vắng phỏng vấn', hint: 'Ứng viên vắng (no-show) hoặc từ chối tham gia phỏng vấn', color: '#B91C1C', bg: '#FEF2F2' },
+    { key: 'BLACKLIST', label: 'Danh sách đen', hint: 'Vi phạm quy chế / gian dối / xác nhận mà không đến phỏng vấn', color: '#111827', bg: '#E5E7EB' },
   ];
   const pvTabOf = (c: any): PvTabKey => {
     const st = String(c?.status || '').trim().toUpperCase();
+    if (st === 'BLACKLIST') return 'BLACKLIST';
+    if (st === 'RESCHEDULE_PROPOSED') return 'WAIT_PROPOSAL';
     if (st === 'NO_SHOW' || st === 'DECLINED') return 'NO_SHOW';
     if (st === 'CONFIRMED') return 'WAIT_INTERVIEW';
     if (st === 'INTERVIEWED' || st === 'SCORED') return 'WAIT_PROBATION';
@@ -3491,7 +3496,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   };
   const [pvTab, setPvTab] = useState<PvTabKey>('WAIT_SCHEDULE');
   const pvTabCounts: Record<PvTabKey, number> = {
-    WAIT_SCHEDULE: 0, WAIT_CONFIRM: 0, WAIT_INTERVIEW: 0, WAIT_PROBATION: 0, NO_SHOW: 0,
+    WAIT_SCHEDULE: 0, WAIT_CONFIRM: 0, WAIT_INTERVIEW: 0, WAIT_PROBATION: 0, WAIT_PROPOSAL: 0, NO_SHOW: 0, BLACKLIST: 0,
   };
   pvFiltered.forEach((c: any) => { pvTabCounts[pvTabOf(c)] += 1; });
   const pvTabRows = pvFiltered.filter((c: any) => pvTabOf(c) === pvTab);
@@ -6431,17 +6436,42 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           }
                           return (
                             <>
-                              <span style={{
-                                backgroundColor: c.status === 'CONFIRMED' ? '#DCFCE7' : c.status === 'DECLINED' ? '#FEE2E2' : c.status === 'NO_SHOW' ? '#FEE2E2' : c.status === 'RESCHEDULE_REQUESTED' ? '#FEF3C7' : '#FEF3C7',
-                                color: c.status === 'CONFIRMED' ? '#166534' : c.status === 'DECLINED' ? '#991B1B' : c.status === 'NO_SHOW' ? '#991B1B' : c.status === 'RESCHEDULE_REQUESTED' ? '#92400E' : '#92400E',
-                                padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700, display: 'inline-block',
-                                border: c.status === 'CONFIRMED' ? '1px solid #BBF7D0' : (c.status === 'DECLINED' || c.status === 'NO_SHOW') ? '1px solid #FECACA' : '1px solid #FDE68A'
-                              }}>
-                                {c.status === 'CONFIRMED' ? '✅ Đã xác nhận tham gia' : candStatusVI(c.status)}
-                              </span>
-                              {c.status === 'DECLINED' && (c as any).interview_decline_reason && (
-                                <div style={{ fontSize: '10.5px', color: '#991B1B', fontWeight: 600, marginTop: '3px', maxWidth: '220px', whiteSpace: 'normal', lineHeight: 1.4 }}>
+                              {(() => {
+                                const st = String(c.status || '');
+                                const palette: Record<string, { bg: string; fg: string; bd: string }> = {
+                                  CONFIRMED: { bg: '#DCFCE7', fg: '#166534', bd: '#BBF7D0' },
+                                  DECLINED: { bg: '#FEE2E2', fg: '#991B1B', bd: '#FECACA' },
+                                  NO_SHOW: { bg: '#FEE2E2', fg: '#991B1B', bd: '#FECACA' },
+                                  RESCHEDULE_REQUESTED: { bg: '#FEF3C7', fg: '#92400E', bd: '#FDE68A' },
+                                  RESCHEDULE_PROPOSED: { bg: '#FFEDD5', fg: '#9A3412', bd: '#FDBA74' },
+                                  BLACKLIST: { bg: '#1F2937', fg: '#F9FAFB', bd: '#111827' },
+                                };
+                                const p = palette[st] || { bg: '#FEF3C7', fg: '#92400E', bd: '#FDE68A' };
+                                return (
+                                  <span style={{ backgroundColor: p.bg, color: p.fg, padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700, display: 'inline-block', border: `1px solid ${p.bd}` }}>
+                                    {st === 'CONFIRMED' ? '✅ Đã xác nhận tham gia' : st === 'BLACKLIST' ? '⛔ Danh sách đen' : st === 'RESCHEDULE_PROPOSED' ? '🔄 Đề xuất lịch mới' : candStatusVI(c.status)}
+                                  </span>
+                                );
+                              })()}
+                              {['DECLINED', 'RESCHEDULE_PROPOSED'].includes(String(c.status || '')) && (c as any).interview_decline_reason && (
+                                <div style={{ fontSize: '10.5px', color: '#991B1B', fontWeight: 600, marginTop: '3px', maxWidth: '240px', whiteSpace: 'normal', lineHeight: 1.4 }}>
                                   📝 Lý do: {String((c as any).interview_decline_reason)}
+                                </div>
+                              )}
+                              {String(c.status || '') === 'RESCHEDULE_PROPOSED' && ((c as any).interview_proposed_date || (c as any).interview_proposed_time_slot) && (
+                                <div style={{ fontSize: '10.5px', color: '#9A3412', fontWeight: 700, marginTop: '3px', maxWidth: '240px', whiteSpace: 'normal', lineHeight: 1.4 }}>
+                                  📅 Đề xuất: {String((c as any).interview_proposed_time_slot || '?')} ngày {(() => {
+                                    const dd = String((c as any).interview_proposed_date || '');
+                                    return /^\d{4}-\d{2}-\d{2}$/.test(dd) ? `${dd.slice(8, 10)}/${dd.slice(5, 7)}/${dd.slice(0, 4)}` : dd;
+                                  })()}
+                                  {(c as any).interview_proposed_note && (
+                                    <div style={{ fontWeight: 600, color: '#78350F', marginTop: '2px' }}>💬 {String((c as any).interview_proposed_note)}</div>
+                                  )}
+                                </div>
+                              )}
+                              {String(c.status || '') === 'BLACKLIST' && (c as any).blacklist_reason && (
+                                <div style={{ fontSize: '10.5px', color: '#7F1D1D', fontWeight: 600, marginTop: '3px', maxWidth: '240px', whiteSpace: 'normal', lineHeight: 1.4 }}>
+                                  🚫 {String((c as any).blacklist_reason)}
                                 </div>
                               )}
                               {(() => {
@@ -6523,7 +6553,93 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                   {rsvpBusyId === c.submission_id ? '⏳...' : '🚫 Vắng'}
                                 </button>
                               )}
-                              {!isAccepted && !isScored && (
+                              {(['INVITED_INTERVIEW', 'CONFIRMED'].includes(String(c.status || ''))) && !disabledForFail && (
+                                <button
+                                  disabled={candActionBusyId === `bl-${c.submission_id}`}
+                                  style={{ ...btn2, backgroundColor: '#111827', color: '#FFF' }}
+                                  onClick={async () => {
+                                    if (candActionBusyId) return;
+                                    const sid = String(c.submission_id || '');
+                                    const reason = window.prompt(
+                                      `HỦY PV và đưa ${c.full_name || sid} vào DANH SÁCH ĐEN.\nLịch phỏng vấn sẽ bị hủy ngay và dòng trên Google Sheet sẽ tô đỏ.\n\nLý do (bắt buộc):`,
+                                      'Ứng viên xác nhận tham gia nhưng không đến phỏng vấn (vi phạm quy chế tuyển dụng).'
+                                    );
+                                    if (reason === null) return;
+                                    if (!String(reason).trim()) { showToast('⚠️ Vui lòng nhập lý do đưa vào danh sách đen!'); return; }
+                                    const k = `bl-${sid}`;
+                                    setCandActionBusyId(k);
+                                    try {
+                                      await apiRequest(`/interviews/${sid}/blacklist`, { method: 'POST', body: JSON.stringify({ reason: String(reason).trim() }) });
+                                      showToast(`⛔ Đã hủy PV và đưa ${c.full_name || sid} vào DANH SÁCH ĐEN — đã đồng bộ Sheet!`);
+                                      if (onRefreshData) await onRefreshData();
+                                      if (onPushSheets) await onPushSheets();
+                                    } catch (e: any) {
+                                      showToast(e?.message || 'Lỗi đưa vào danh sách đen!');
+                                    } finally {
+                                      setCandActionBusyId(null);
+                                    }
+                                  }}
+                                  title="HỦY PV: ứng viên đã xác nhận nhưng không đến — hủy lịch + chuyển thẳng vào DANH SÁCH ĐEN (Sheet tô đỏ)"
+                                >
+                                  {candActionBusyId === `bl-${c.submission_id}` ? '⏳...' : '⛔ Hủy PV'}
+                                </button>
+                              )}
+                              {String(c.status || '') === 'RESCHEDULE_PROPOSED' && (
+                                <button
+                                  disabled={candActionBusyId === `ap-${c.submission_id}`}
+                                  style={{ ...btn2, backgroundColor: '#C2410C', color: '#FFF' }}
+                                  onClick={async () => {
+                                    if (candActionBusyId) return;
+                                    const sid = String(c.submission_id || '');
+                                    const dd = String((c as any).interview_proposed_date || '');
+                                    const tt = String((c as any).interview_proposed_time_slot || '');
+                                    const ddVI = /^\d{4}-\d{2}-\d{2}$/.test(dd) ? `${dd.slice(8, 10)}/${dd.slice(5, 7)}/${dd.slice(0, 4)}` : dd;
+                                    if (!window.confirm(`Chốt lịch phỏng vấn theo đề xuất của ${c.full_name || sid}?\n\n⏰ ${tt || '?'} ngày ${ddVI || '?'}${(c as any).interview_proposed_note ? `\n💬 Ghi chú: ${String((c as any).interview_proposed_note)}` : ''}\n\nỨng viên sẽ được hệ thống tự nhắc qua Zalo trước giờ hẹn 30 phút.`)) return;
+                                    const k = `ap-${sid}`;
+                                    setCandActionBusyId(k);
+                                    try {
+                                      await apiRequest(`/interviews/${sid}/approve-proposal`, { method: 'POST', body: JSON.stringify({}) });
+                                      showToast(`✅ Đã chốt lịch ${tt} ngày ${ddVI} — chuyển sang tab Chờ xác nhận tham gia.`);
+                                      if (onRefreshData) await onRefreshData();
+                                      if (onPushSheets) await onPushSheets();
+                                    } catch (e: any) {
+                                      showToast(e?.message || 'Lỗi chốt lịch đề xuất!');
+                                    } finally {
+                                      setCandActionBusyId(null);
+                                    }
+                                  }}
+                                  title="Chốt ngày/giờ ứng viên đề xuất — tạo lịch PV mới và chờ ứng viên xác nhận lại"
+                                >
+                                  {candActionBusyId === `ap-${c.submission_id}` ? '⏳...' : '✅ Chốt lịch đề xuất'}
+                                </button>
+                              )}
+                              {String(c.status || '') === 'BLACKLIST' && (
+                                <button
+                                  disabled={candActionBusyId === `ub-${c.submission_id}`}
+                                  style={{ ...btn2, backgroundColor: '#0F766E', color: '#FFF' }}
+                                  onClick={async () => {
+                                    if (candActionBusyId) return;
+                                    const sid = String(c.submission_id || '');
+                                    if (!window.confirm(`Bỏ ${c.full_name || sid} khỏi DANH SÁCH ĐEN? Ứng viên sẽ trở về trạng thái "Chờ xếp lịch".`)) return;
+                                    const k = `ub-${sid}`;
+                                    setCandActionBusyId(k);
+                                    try {
+                                      await apiRequest(`/interviews/${sid}/unblacklist`, { method: 'POST', body: JSON.stringify({}) });
+                                      showToast(`↩️ Đã bỏ ${c.full_name || sid} khỏi danh sách đen.`);
+                                      if (onRefreshData) await onRefreshData();
+                                      if (onPushSheets) await onPushSheets();
+                                    } catch (e: any) {
+                                      showToast(e?.message || 'Lỗi bỏ khỏi danh sách đen!');
+                                    } finally {
+                                      setCandActionBusyId(null);
+                                    }
+                                  }}
+                                  title="Bỏ khỏi danh sách đen (xử lý nhầm) — đưa về chờ xếp lịch"
+                                >
+                                  {candActionBusyId === `ub-${c.submission_id}` ? '⏳...' : '↩️ Bỏ đen'}
+                                </button>
+                              )}
+                              {!isAccepted && !isScored && String(c.status || '') !== 'BLACKLIST' && String(c.status || '') !== 'RESCHEDULE_PROPOSED' && (
                                 <button
                                   disabled={disabledForFail}
                                   style={{ ...btn2, backgroundColor: disabledForFail ? '#94A3B8' : '#8B5CF6', color: '#FFF' }}
@@ -6533,7 +6649,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                                   📝 Chấm điểm
                                 </button>
                               )}
-                              {!isAccepted && (
+                              {!isAccepted && String(c.status || '') !== 'BLACKLIST' && (
                                 <button
                                   disabled={disabledForFail}
                                   style={{ ...btn2, backgroundColor: disabledForFail ? '#94A3B8' : '#F59E0B', color: '#FFF' }}
@@ -6636,7 +6752,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                               ? 'Không có ứng viên nào đã xác nhận và đang chờ tới giờ phỏng vấn.'
                               : pvTab === 'WAIT_PROBATION'
                                 ? 'Không có ứng viên nào đã phỏng vấn xong đang chờ duyệt thử việc.'
-                                : 'Chưa có ứng viên nào vắng hoặc từ chối phỏng vấn.'}
+                                : pvTab === 'WAIT_PROPOSAL'
+                                  ? 'Không có ứng viên nào đang đề xuất lịch phỏng vấn mới.'
+                                  : pvTab === 'BLACKLIST'
+                                    ? 'Danh sách đen đang trống. Ứng viên bị "Hủy PV" do không đến phỏng vấn sẽ xuất hiện ở đây.'
+                                    : 'Chưa có ứng viên nào vắng hoặc từ chối phỏng vấn.'}
                     </td>
                   </tr>
                 )}

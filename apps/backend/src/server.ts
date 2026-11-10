@@ -31,6 +31,7 @@ import { weeklyOffScheduler } from './services/weekly-off.service.js';
 import { pinRotationTick } from './services/pin-rotation.service.js';
 import { dedupeDuplicateInterviews, enforceScreeningOutcomes } from './services/interview-dedupe.service.js';
 import { interviewNoShowTick, interviewReminderTick } from './services/interview-reminders.service.js';
+import { interviewZaloReminderTick } from './services/interview-zalo-reminder.service.js';
 import { autoRemindersTick } from './services/auto-reminders.service.js';
 import { notifySystemAlert, startSystemAlertMonitor } from './services/system-alert.service.js';
 import { pruneGpsTrail } from './services/gps-trail.store.js';
@@ -1066,6 +1067,27 @@ server.listen(Number(PORT), '0.0.0.0', async () => {
   };
   setTimeout(interviewReminderTickSafe, 30_000);
   setInterval(interviewReminderTickSafe, 60_000);
+
+  // TỰ NHẮC ZALO TRƯỚC GIỜ PV 30 PHÚT (mỗi 60s): gửi lại thư mời + link RSVP để
+  // ứng viên xác nhận lần cuối. Chống lặp bằng `interview_reminder_at` (khóa
+  // ngày|giờ của lịch đã nhắc) -> đổi lịch là tự nhắc lại.
+  const interviewZaloReminderTickSafe = () => {
+    interviewZaloReminderTick(adapter, services.zaloService, {
+      buildRsvpUrl: (sid: string) => {
+        const base = String(process.env.PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '')
+          || 'https://umbomilk-nhansu-diemdanh.duckdns.org';
+        return `${base}/api/public/interview/rsvp?token=${encodeURIComponent(services.employeesService.buildRsvpToken(sid))}`;
+      },
+    })
+      .then(r => {
+        for (const s of r?.sent || []) {
+          console.log(`[interview-zalo-reminder] Đã nhắc Zalo ${s.candidateName} ${s.timeSlot} ${s.date} (còn ${s.minutesLeft}p).`);
+        }
+      })
+      .catch(err => console.warn('[interview-zalo-reminder] tick error:', err?.message || err));
+  };
+  setTimeout(interviewZaloReminderTickSafe, 90_000);
+  setInterval(interviewZaloReminderTickSafe, 60_000);
 
   // Tự đánh VẮNG PV không phép (phương án A, mỗi 5 phút): INVITED quá giờ hẹn
   // 30 phút vẫn im lặng -> NO_SHOW + xóa lịch giải phóng slot + báo HR.
