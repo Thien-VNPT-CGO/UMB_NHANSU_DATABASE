@@ -6037,8 +6037,8 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 <select style={{ width: '100%' }} value={inviteCandidateId} onChange={(e) => setInviteCandidateId(e.target.value)}>
                   <option value="">-- Chọn ứng viên --</option>
                   {(() => {
-                    // UV đã phỏng vấn xong / đã có lịch sắp tới: loại khỏi dropdown.
-                    const eligible = pvFiltered.filter((c: any) => !pvScoredOf(c).scored && !pvHasUpcomingOf(c).upcoming);
+                    // UV đã phỏng vấn xong / đã có lịch sắp tới / trong danh sách đen: loại khỏi dropdown.
+                    const eligible = pvFiltered.filter((c: any) => pvTabOf(c) !== 'BLACKLIST' && !pvScoredOf(c).scored && !pvHasUpcomingOf(c).upcoming);
                     if (pvFiltered.length === 0) return (<option value="">Chưa có ứng viên (Dữ liệu từ Google Sheets)</option>);
                     if (eligible.length === 0) return (<option value="">Không còn ứng viên đủ điều kiện xếp lịch</option>);
                     return eligible.map((c, i) => (
@@ -6052,7 +6052,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   🤖 Chọn tên là chi nhánh tự điền đúng theo hồ sơ ứng viên.
                 </div>
                 {(() => {
-                  const hidden = pvFiltered.filter((c: any) => pvScoredOf(c).scored || pvHasUpcomingOf(c).upcoming).length;
+                  const hidden = pvFiltered.filter((c: any) => pvTabOf(c) === 'BLACKLIST' || pvScoredOf(c).scored || pvHasUpcomingOf(c).upcoming).length;
                   if (hidden === 0) return null;
                   return (
                     <div style={{ fontSize: '11px', color: '#92400E', backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '6px', padding: '6px 8px', marginTop: '6px', lineHeight: 1.5 }}>

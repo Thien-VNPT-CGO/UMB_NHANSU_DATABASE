@@ -1419,6 +1419,9 @@ export class EmployeesService {
     if (existing?.status === 'REJECTED') {
       throw new Error(`Ứng viên ${existing.full_name || ''} đã bị LOẠI khỏi quy trình tuyển dụng! Không thể xếp lịch phỏng vấn.`);
     }
+    if (existing?.status === 'BLACKLIST') {
+      throw new Error(`Ứng viên ${existing.full_name || ''} đang trong DANH SÁCH ĐEN! Bấm "Bỏ đen" trước khi xếp lịch phỏng vấn.`);
+    }
     // Ứng viên đã phỏng vấn xong (đã chấm điểm / đã duyệt thử việc): không sắp lịch tiếp.
     const existStatus = String((existing as any)?.status || '');
     const existScore = (existing as any)?.interview_score;
@@ -1718,6 +1721,9 @@ export class EmployeesService {
     const all = (await this.repo.listCandidates().catch(() => [])) as any[];
     const cur = all.find((c: any) => c.submission_id === submissionId) as any;
     if (!cur) throw new Error('CANDIDATE_NOT_FOUND');
+    if (String(cur.status || '') !== 'RESCHEDULE_PROPOSED') {
+      throw new Error('Ứng viên không ở trạng thái "Đề xuất lịch mới" — không cần chốt đề xuất.');
+    }
     const date = String(override?.date || cur.interview_proposed_date || '').trim().slice(0, 10);
     const time = String(override?.time || cur.interview_proposed_time_slot || '').trim().slice(0, 5);
     if (!date || !time) throw new Error('Ứng viên chưa đề xuất ngày/giờ — vui lòng đặt lịch thủ công.');
