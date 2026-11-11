@@ -12,8 +12,11 @@ export function vnDayOf(iso: string): string {
   return new Date(t + 7 * 3_600_000).toISOString().slice(0, 10);
 }
 
-/** Trạng thái 1 ca chấm công theo đúng luật (xanh/vàng nhấp nháy/xám/đỏ/cam/chàm). */
-export function attShiftStatus(shift: any, inEvt: any, outEvt: any, absentEvt: any): {
+/** Trạng thái 1 ca chấm công theo đúng luật (xanh/vàng nhấp nháy/xám/đỏ/cam/chàm).
+ *  `opts.lockAfterMs`: thời gian tối đa sau giờ vào ca để còn được check-in
+ *  (mặc định 3h như khối cửa hàng/xưởng; khối Văn Phòng truyền 30 phút để cổng
+ *  chốt đúng 08:30 giờ Việt Nam). `opts.lockedLabel`: nhãn thay thế khi khóa. */
+export function attShiftStatus(shift: any, inEvt: any, outEvt: any, absentEvt: any, opts?: { lockAfterMs?: number; lockedLabel?: string }): {
   key: string; label: string; bg: string; fg: string; border: string; blink: boolean; lateMin: number;
 } {
   const complete = !!(inEvt && outEvt);
@@ -24,9 +27,12 @@ export function attShiftStatus(shift: any, inEvt: any, outEvt: any, absentEvt: a
   if (inEvt && !outEvt && shiftDay && shiftDay < todayStr) return { key: 'MISSING_OUT', label: 'Thiếu check-out — không lương', bg: '#FFF7ED', fg: '#9A3412', border: '1.5px solid #EA580C', blink: false, lateMin: 0 };
   const startMs = shift?.start_at ? new Date(shift.start_at).getTime() : NaN;
   const endMs = shift?.end_at ? new Date(shift.end_at).getTime() : NaN;
+  const lockAfterMs = Number.isFinite(Number(opts?.lockAfterMs)) && Number(opts?.lockAfterMs) > 0
+    ? Number(opts?.lockAfterMs)
+    : 3 * 60 * 60 * 1000;
   const now = Date.now();
   if (!inEvt && absentEvt) return { key: 'ABSENT', label: '🔴 Vắng — không lương', bg: '#FEE2E2', fg: '#991B1B', border: '1.5px solid #EF4444', blink: false, lateMin: 0 };
-  if (!inEvt && Number.isFinite(startMs) && now - startMs > 3 * 60 * 60 * 1000) return { key: 'LOCKED', label: '🔒 Khóa — nghỉ không lương', bg: '#F1F5F9', fg: '#475569', border: '1.5px solid #64748B', blink: false, lateMin: 0 };
+  if (!inEvt && Number.isFinite(startMs) && now - startMs > lockAfterMs) return { key: 'LOCKED', label: opts?.lockedLabel || '🔒 Khóa — nghỉ không lương', bg: '#F1F5F9', fg: '#475569', border: '1.5px solid #64748B', blink: false, lateMin: 0 };
   if (inEvt && !outEvt && Number.isFinite(endMs) && now - endMs > 30 * 60 * 1000) return { key: 'MISSING_OUT', label: 'Thiếu check-out — không lương', bg: '#FFF7ED', fg: '#9A3412', border: '1.5px solid #EA580C', blink: false, lateMin: 0 };
   if (!inEvt && Number.isFinite(startMs) && now < startMs - 30 * 60 * 1000) return { key: 'UPCOMING', label: 'Lịch đã duyệt', bg: '#EEF2FF', fg: '#3730A3', border: '1px solid #C7D2FE', blink: false, lateMin: 0 };
   const lateMin = inEvt?.is_late ? Number(inEvt.minutes_deviation) || 0 : 0;

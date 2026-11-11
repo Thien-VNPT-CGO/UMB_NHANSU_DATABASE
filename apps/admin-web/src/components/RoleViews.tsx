@@ -948,6 +948,7 @@ import {
   OFFICE_WEEK_RULES,
   officeDayRuleOfIso,
   officeDayHoursLabel,
+  officeCheckInWindowOf,
 } from '@ubm/shared';
 
 /** Chuẩn hóa mã chi nhánh (Sheets có thể ghi CN1..CN4, hệ thống dùng CN130/261/120/111). */
@@ -8888,8 +8889,16 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                 status = 'ABSENT';
                 note = 'Không điểm danh';
               } else if (day.isToday) {
-                status = 'PENDING';
-                note = 'Chưa check-in (Chờ ca)';
+                // Đóng cổng đúng 08:30 giờ VN: hết khung mà chưa vào ca → chốt luôn,
+                // không treo "Chưa check-in (Chờ ca)" tới hết ngày.
+                const win = officeCheckInWindowOf(Date.now(), day.isoDate);
+                if (win.phase === 'CLOSED') {
+                  status = 'LOCKED';
+                  note = 'Đã đóng điểm danh (quá 08:30 giờ VN) — nghỉ không lương';
+                } else {
+                  status = 'PENDING';
+                  note = 'Chưa check-in (Chờ ca)';
+                }
               } else {
                 status = 'UPCOMING';
                 note = 'Lịch đã duyệt';
@@ -11937,14 +11946,25 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           shift_code: 'OFFICE',
           employee_id: empId,
           branch_id: emp.default_branch_id || 'VAN_PHONG',
-          start_at: String(realShift?.start_at || startIso),
-          end_at: String(realShift?.end_at || endIso),
+          // Luôn dùng giờ hành chính chuẩn (08:00–17:00 / T7 08:00–12:00) — không lấy
+          // giờ ca cũ (VD CA_1 07:00) vì sẽ lệch khung điểm danh 08:00–08:30 giờ VN.
+          start_at: startIso,
+          end_at: endIso,
           status: 'PUBLISHED',
         };
         const inE = evs.find((e: any) => e.type === 'CHECK_IN');
         const outE = evs.find((e: any) => e.type === 'CHECK_OUT');
         const absentE = evs.find((e: any) => e.type === 'ABSENT');
-        return [{ shift: pseudo, list: evs, st: attShiftStatus(pseudo, inE, outE, absentE) }];
+        // Văn Phòng: cổng VÀO CA đóng đúng 08:30 giờ VN → quá mốc đó mà chưa có
+        // lượt vào ca thì chốt "Khóa" ngay (không chờ đủ 3h như khối khác).
+        return [{
+          shift: pseudo,
+          list: evs,
+          st: attShiftStatus(pseudo, inE, outE, absentE, {
+            lockAfterMs: 30 * 60 * 1000,
+            lockedLabel: '🔒 Quá 08:30 — nghỉ không lương',
+          }),
+        }];
       }
       const byAssign = new Map<string, any[]>();
       for (const e of evs) {
@@ -16592,7 +16612,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               const fmtAt = (iso: string) => {
                 const t = new Date(iso || '').getTime();
                 if (!Number.isFinite(t)) return '';
-                return new Date(t + 7 * 3_600_000).toLocaleString('vi-VN', { hour12: false }).slice(0, 16);
+                // Giờ Việt Nam cố định — KHÔNG cộng 7h vào epoch rồi format theo giờ máy
+                // (máy ở VN sẽ bị lệch +7h).
+                return new Date(t).toLocaleString('vi-VN', { hour12: false, timeZone: 'Asia/Ho_Chi_Minh' }).slice(0, 16);
               };
               const blocks: { kind: AdminContractKind; title: string; icon: string; hint: string }[] = [
                 {

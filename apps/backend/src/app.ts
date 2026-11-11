@@ -4293,6 +4293,17 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const employeeId = req.user?.employeeId || req.body.employee_id || req.body.employeeId;
       if (!employeeId) return res.status(400).json({ error: 'Thiếu thông tin mã nhân viên' });
 
+      // KHỐI VĂN PHÒNG: chỉ điểm danh qua cổng Văn Phòng (/me/office/checkin) — cổng
+      // chuẩn mở 30p trước ca và kéo dài tới 3 H SẼ CHO CHECK-IN SAU 08:30, phá quy chế
+      // 08:00–08:30 giờ Việt Nam. Chặn tuyệt đối ở đây để không có đường vòng.
+      const empForGuard: any = await employeesService.getEmployee(employeeId).catch(() => null);
+      if (empForGuard && OfficeService.isOfficeEmployee(empForGuard)) {
+        return res.status(403).json({
+          error: 'OFFICE_PORTAL_ONLY',
+          message: 'Nhân viên khối Văn Phòng điểm danh tại tab "Điểm danh" của cổng nhân viên (khung 08:00–08:30 giờ Việt Nam).',
+        });
+      }
+
       // Ngày VN (UTC+7): ca CA_1 mở cổng 06:30 VN (= 23:30 UTC hôm trước) nên không
       // được dùng ngày UTC — 00:00–07:00 VN sẽ lookup nhầm sang ngày hôm qua.
       const today = new Date(Date.now() + 7 * 3_600_000).toISOString().split('T')[0];

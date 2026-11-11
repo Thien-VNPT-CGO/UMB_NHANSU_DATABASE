@@ -24,7 +24,9 @@ import {
   OFFICE_CHECKIN_OPEN_MINUTE,
   OFFICE_LEAVE_MONTHLY_QUOTA,
   OFFICE_ROLE_LABELS,
+  formatHm,
   isBranchGpsEnabled,
+  officeCheckInWindowOf,
   officeDayRuleOfIso,
   officeStandardHours,
 } from '@ubm/shared';
@@ -106,7 +108,8 @@ export class OfficeService {
 
   /** Thời gian VN hiện tại dưới dạng {date, hour, minute, iso, minutesOfDay}. */
   static vnNow(now: Date = new Date()) {
-    const shifted = new Date(now.getTime() + 7 * 3_600_000);
+    const nowMs = now.getTime();
+    const shifted = new Date(nowMs + 7 * 3_600_000);
     const date = shifted.toISOString().slice(0, 10);
     return {
       date,
@@ -115,6 +118,8 @@ export class OfficeService {
       minute: shifted.getUTCMinutes(),
       minutesOfDay: shifted.getUTCHours() * 60 + shifted.getUTCMinutes(),
       iso: now.toISOString(),
+      /** Mốc epoch thật (UTC) — client dùng để đếm ngược realtime. */
+      nowMs,
     };
   }
 
@@ -205,12 +210,14 @@ export class OfficeService {
     const end = Date.parse(`${to}T00:00:00Z`);
     const attendance = await this.attendanceByDate(employeeId, from, to);
     const leaves = await this.approvedLeaveDates(employeeId, from, to);
+    const now = OfficeService.vnNow();
     const days: any[] = [];
     if (Number.isFinite(start) && Number.isFinite(end)) {
       for (let t = start, guard = 0; t <= end && guard < 400; t += 86_400_000, guard++) {
         const date = new Date(t).toISOString().slice(0, 10);
         const rule = officeDayRuleOfIso(date);
         const att = attendance.get(date) || {};
+        const window = officeCheckInWindowOf(now.nowMs, date);
         days.push({
           date,
           weekday: rule.weekday,
@@ -223,11 +230,27 @@ export class OfficeService {
           check_in_at: att.check_in?.at || null,
           check_out_at: att.check_out?.at || null,
           worked_minutes: att.worked_minutes || 0,
+          /** Khung giờ VÀO CA (giờ VN) của ngày này — client hiển thị/đếm ngược. */
+          checkin_open_at: rule.work ? window.openAt : null,
+          checkin_close_at: rule.work ? window.closeAt : null,
+          checkin_phase: window.phase,
         });
       }
     }
     const branch: any = await this.branchOf();
-    return { from, to, branch_id: OFFICE_BRANCH_ID, branch_name: branch.name, days };
+    return {
+      from,
+      to,
+      now: now.iso,
+      now_ms: now.nowMs,
+      checkin_window: {
+        from: `${pad2(OFFICE_CHECKIN_OPEN_HOUR)}:${pad2(OFFICE_CHECKIN_OPEN_MINUTE)}`,
+        to: `${pad2(OFFICE_CHECKIN_CLOSE_HOUR)}:${pad2(OFFICE_CHECKIN_CLOSE_MINUTE)}`,
+      },
+      branch_id: OFFICE_BRANCH_ID,
+      branch_name: branch.name,
+      days,
+    };
   }
 
   // ==================================================================
@@ -524,23 +547,32 @@ export class OfficeService {
     return mirrored;
   }
 
-  /** Trạng thái điểm danh hôm nay + khung giờ mở nút VÀO CA. */
+  /** Trạng thái điểm danh hôm nay + khung giờ mở nút VÀO CA (giờ Việt Nam realtime). */
   async attendanceState(employeeId: string) {
     await this.getEmployeeOrThrow(employeeId);
     const now = OfficeService.vnNow();
     const map = await this.attendanceByDate(employeeId, now.date, now.date);
     const today = map.get(now.date) || {};
-    const open = OFFICE_CHECKIN_OPEN_HOUR * 60 + OFFICE_CHECKIN_OPEN_MINUTE;
-    const close = OFFICE_CHECKIN_CLOSE_HOUR * 60 + OFFICE_CHECKIN_CLOSE_MINUTE;
-    const rule = officeDayRuleOfIso(now.date);
+    // Khung giờ chốt theo GIỜ VIỆT NAM (UTC+7): mở 08:00, ĐÓNG đúng 08:30:00.
+    const window = officeCheckInWindowOf(now.nowMs, now.date);
     const branch: any = await this.branchOf();
     return {
       date: now.date,
       now: now.iso,
-      is_workday: rule.work,
-      window_open: rule.work && now.minutesOfDay >= open && now.minutesOfDay <= close,
+      now_ms: now.nowMs,
+      /** Giờ VN hiện tại (để client hiển thị đồng hồ chuẩn, không lệch máy). */
+      vn_hour: window.vnHour,
+      vn_minute: window.vnMinute,
+      vn_second: window.vnSecond,
+      is_workday: window.isWorkday,
+      window_phase: window.phase,
+      window_open: window.phase === 'OPEN',
       window_from: `${pad2(OFFICE_CHECKIN_OPEN_HOUR)}:${pad2(OFFICE_CHECKIN_OPEN_MINUTE)}`,
       window_to: `${pad2(OFFICE_CHECKIN_CLOSE_HOUR)}:${pad2(OFFICE_CHECKIN_CLOSE_MINUTE)}`,
+      open_at: window.openAt,
+      close_at: window.closeAt,
+      /** Còn bao nhiêu giây nữa đóng cổng (0 khi chưa mở/đã đóng). */
+      remaining_seconds: Math.floor((window.remainingMs || 0) / 1000),
       checked_in: !!today.check_in,
       checked_out: !!today.check_out,
       check_in_at: today.check_in?.at || null,
@@ -559,21 +591,29 @@ export class OfficeService {
     };
   }
 
+  /** Chốt cứng khung VÀO CA theo giờ Việt Nam — dùng cho cả pre-check lẫn trong lock. */
+  private assertCheckInWindowOpen(nowMs: number) {
+    const window = officeCheckInWindowOf(nowMs);
+    if (!window.isWorkday) throw new Error('OFFICE_DAY_OFF: Hôm nay là ngày nghỉ, không cần vào ca!');
+    if (window.phase === 'BEFORE') {
+      throw new Error(`CHECKIN_NOT_OPEN: Chưa đến giờ vào ca — cổng mở lúc ${formatHm(OFFICE_CHECKIN_OPEN_HOUR, OFFICE_CHECKIN_OPEN_MINUTE)} (giờ Việt Nam). Vui lòng chờ đúng khung giờ!`);
+    }
+    if (window.phase !== 'OPEN') {
+      throw new Error(`CHECKIN_CLOSED: Đã ĐÓNG cổng vào ca lúc ${formatHm(OFFICE_CHECKIN_CLOSE_HOUR, OFFICE_CHECKIN_CLOSE_MINUTE)} (giờ Việt Nam). Khung điểm danh là ${formatHm(OFFICE_CHECKIN_OPEN_HOUR, OFFICE_CHECKIN_OPEN_MINUTE)}–${formatHm(OFFICE_CHECKIN_CLOSE_HOUR, OFFICE_CHECKIN_CLOSE_MINUTE)}. Liên hệ Nhân sự nếu quên điểm danh!`);
+    }
+    return window;
+  }
+
   async checkIn(employeeId: string, gps?: { latitude?: number; longitude?: number; accuracy?: number }) {
     const emp = await this.getEmployeeOrThrow(employeeId);
+    // Kiểm tra khung giờ TRƯỚC khi đòi GPS: hết 08:30 thì báo đóng cổng, không bắt
+    // nhân viên đi tìm GPS nữa.
+    this.assertCheckInWindowOpen(Date.now());
     const v = await this.validateGps(gps);
     return withOfficeLock(async () => {
       const now = OfficeService.vnNow();
-      const rule = officeDayRuleOfIso(now.date);
-      if (!rule.work) throw new Error('OFFICE_DAY_OFF: Hôm nay là ngày nghỉ, không cần vào ca!');
-      const open = OFFICE_CHECKIN_OPEN_HOUR * 60 + OFFICE_CHECKIN_OPEN_MINUTE;
-      const close = OFFICE_CHECKIN_CLOSE_HOUR * 60 + OFFICE_CHECKIN_CLOSE_MINUTE;
-      if (now.minutesOfDay < open) {
-        throw new Error(`CHECKIN_NOT_OPEN: Chưa đến giờ vào ca (mở từ ${pad2(OFFICE_CHECKIN_OPEN_HOUR)}:${pad2(OFFICE_CHECKIN_OPEN_MINUTE)}). Vui lòng chờ đúng khung giờ!`);
-      }
-      if (now.minutesOfDay > close) {
-        throw new Error(`CHECKIN_CLOSED: Đã quá khung giờ vào ca (${pad2(OFFICE_CHECKIN_OPEN_HOUR)}:${pad2(OFFICE_CHECKIN_OPEN_MINUTE)}–${pad2(OFFICE_CHECKIN_CLOSE_HOUR)}:${pad2(OFFICE_CHECKIN_CLOSE_MINUTE)}). Liên hệ Nhân sự nếu quên điểm danh!`);
-      }
+      // Ràng buộc cứng theo GIỜ VIỆT NAM thật của server (không tin giờ máy khách).
+      this.assertCheckInWindowOpen(now.nowMs);
       const settings = await this.readSettings();
       const all: OfficeAttendanceEvent[] = Array.isArray(settings[SETTINGS_KEY_ATTENDANCE]) ? [...settings[SETTINGS_KEY_ATTENDANCE]] : [];
       const mineToday = all.filter((e) => String(e.employee_id) === String(employeeId) && e.date === now.date);

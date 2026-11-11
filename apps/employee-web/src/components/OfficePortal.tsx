@@ -37,6 +37,7 @@ const WARN = '#B45309';
 const WARN_SOFT = '#FEF3C7';
 const DANGER = '#DC2626';
 
+const VN_TZ = 'Asia/Ho_Chi_Minh';
 const vnToday = () => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
 const addDays = (iso: string, n: number) =>
   new Date(Date.parse(`${iso.slice(0, 10)}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
@@ -45,16 +46,24 @@ const mondayOf = (iso: string) => {
   const dow = new Date(t).getUTCDay();
   return addDays(iso, -((dow + 6) % 7));
 };
+/**
+ * Giờ Việt Nam (UTC+7) của một mốc ISO.
+ * LƯU Ý: KHÔNG cộng thêm 7h vào epoch rồi format theo giờ máy — máy ở VN sẽ bị
+ * cộng 7h lần nữa (check-in 08:05 hiện thành 15:05). Luôn format bằng timeZone
+ * cố định Asia/Ho_Chi_Minh.
+ */
 const fmtTime = (iso?: string | null) => {
   if (!iso) return '--:--';
   const t = new Date(iso).getTime();
   if (!Number.isFinite(t)) return '--:--';
-  return new Date(t + 7 * 3_600_000).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+  return new Date(t).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: VN_TZ });
 };
+const fmtClock = (ms: number) => new Date(ms).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: VN_TZ });
+
 const fmtDate = (iso: string) => {
   const t = Date.parse(`${String(iso).slice(0, 10)}T00:00:00Z`);
   if (!Number.isFinite(t)) return iso;
-  return new Date(t).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' });
+  return new Date(t).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', timeZone: VN_TZ });
 };
 const fmtHours = (min: number) => `${Math.floor(min / 60)}h${String(min % 60).padStart(2, '0')}`;
 const vnd = (n: number) => `${Math.round(Number(n) || 0).toLocaleString('vi-VN')}đ`;
@@ -155,6 +164,10 @@ export function OfficeScheduleView({ employee, refreshKey }: OfficeViewProps) {
   const [days, setDays] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
+  // Mốc giờ SERVER (giờ VN) + đồng hồ nhích 15s → trạng thái "Chưa check-in" tự
+  // ĐÓNG đúng 08:30 giờ VN dù điện thoại lệch giờ/múi giờ.
+  const [anchor, setAnchor] = useState<{ ms: number; at: number } | null>(null);
+  const [tick, setTick] = useState(Date.now());
 
   const load = useCallback(async () => {
     setLoading(true); setErr('');
@@ -164,13 +177,20 @@ export function OfficeScheduleView({ employee, refreshKey }: OfficeViewProps) {
       const sunday = addDays(monday, 6);
       const data: any = await apiRequest(`/me/office/schedule?fromDate=${monday}&toDate=${sunday}`);
       setDays(Array.isArray(data?.days) ? data.days : []);
+      const serverMs = Number(data?.now_ms) || (data?.now ? Date.parse(data.now) : NaN);
+      if (Number.isFinite(serverMs)) setAnchor({ ms: serverMs, at: Date.now() });
     } catch (e: any) {
       setErr(e?.message || 'Không tải được lịch làm việc.');
     } finally { setLoading(false); }
   }, [sel, refreshKey]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const t = setInterval(() => setTick(Date.now()), 15000);
+    return () => clearInterval(t);
+  }, []);
 
   const today = vnToday();
+  const liveNowMs = anchor ? anchor.ms + Math.max(0, tick - anchor.at) : tick;
   return (
     <div style={{ paddingTop: 12 }}>
       <Card>
@@ -198,14 +218,19 @@ export function OfficeScheduleView({ employee, refreshKey }: OfficeViewProps) {
             const startMs = isWork
               ? Date.parse(`${d.date}T${String(rule!.startHour).padStart(2, '0')}:${String(rule!.startMinute).padStart(2, '0')}:00+07:00`)
               : NaN;
-            const lockedNoOut = !!d.check_in_at && !d.check_out_at && Number.isFinite(startMs) && Date.now() - startMs > 3 * 60 * 60 * 1000;
+            const lockedNoOut = !!d.check_in_at && !d.check_out_at && Number.isFinite(startMs) && liveNowMs - startMs > 3 * 60 * 60 * 1000;
+            // Cổng VÀO CA đóng đúng 08:30 giờ VN (mốc server trả về) → hết khung thì
+            // trạng thái chốt luôn, không treo "Chưa check-in" cả ngày.
+            const closeMs = d.checkin_close_at ? Date.parse(d.checkin_close_at) : NaN;
+            const closedNoCheckIn = !d.check_in_at && Number.isFinite(closeMs) && liveNowMs >= closeMs;
             const status = isLeave ? 'Nghỉ phép (đã duyệt)'
               : !isWork ? 'Chủ nhật nghỉ'
                 : d.check_in_at && d.check_out_at ? 'Đã làm ' + fmtHours(Number(d.worked_minutes) || 0)
                   : d.check_in_at ? (lockedNoOut ? 'Quá 3h chưa check-out — khóa, nghỉ không lương' : 'Đang làm (chưa ra ca)')
                     : d.date < today ? 'Không điểm danh'
-                      : d.date === today ? 'Chưa check-in (Chờ ca)' : 'Lịch đã duyệt';
-            const statusColor = isLeave ? '#9D174D' : d.check_in_at && d.check_out_at ? SUCCESS : d.check_in_at ? WARN : MUTED;
+                      : closedNoCheckIn ? 'Đã đóng điểm danh (quá 08:30 VN)'
+                        : d.date === today ? 'Chưa check-in (Chờ ca)' : 'Lịch đã duyệt';
+            const statusColor = isLeave ? '#9D174D' : d.check_in_at && d.check_out_at ? SUCCESS : d.check_in_at ? WARN : closedNoCheckIn ? DANGER : MUTED;
             return (
               <Card key={d.date} style={isToday ? { border: `1.5px solid ${BRAND}` } : undefined}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '14px 16px' }}>
@@ -270,9 +295,26 @@ export function OfficeAttendanceView({ employee, showToast, refreshKey }: Office
   useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
-    const t = setInterval(() => setTick(Date.now()), 15000);
+    const t = setInterval(() => setTick(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
+
+  // Real-time: tự tải lại ĐÚNG mốc mở cổng 08:00 và ĐÓNG cổng 08:30 giờ VN
+  // (theo mốc server trả về) để nút VÀO CA biến mất ngay khi hết khung.
+  useEffect(() => {
+    if (!state) return;
+    const base = Number(state.now_ms) || (state.now ? Date.parse(state.now) : NaN);
+    if (!Number.isFinite(base)) return;
+    const nowMs = base + Math.max(0, Date.now() - syncedAt);
+    const marks = [state.open_at, state.close_at]
+      .map((v: any) => (v ? Date.parse(v) : NaN))
+      .filter((t: number) => Number.isFinite(t) && t > nowMs)
+      .sort((a: number, b: number) => a - b);
+    if (!marks.length) return;
+    const delay = Math.min(marks[0] - nowMs + 1500, 2_000_000_000);
+    const id = setTimeout(() => { void load(true); }, delay);
+    return () => clearTimeout(id);
+  }, [state, syncedAt, load]);
 
   useEffect(() => {
     if (!navigator.geolocation) { setGpsErr('Thiết bị không hỗ trợ định vị GPS.'); return; }
@@ -322,14 +364,24 @@ export function OfficeAttendanceView({ employee, showToast, refreshKey }: Office
     finally { setBusy(null); }
   };
 
-  // Dùng giờ SERVER làm mốc (điện thoại lệch giờ vẫn mở đúng cổng 08:00–08:30).
-  const serverNowMs = state?.now
-    ? new Date(state.now).getTime() + Math.max(0, tick - syncedAt)
+  // Dùng giờ SERVER làm mốc (điện thoại lệch giờ/múi giờ vẫn đóng cổng đúng 08:30 VN).
+  const serverBaseMs = Number(state?.now_ms) || (state?.now ? Date.parse(state.now) : NaN);
+  const serverNowMs = Number.isFinite(serverBaseMs)
+    ? serverBaseMs + Math.max(0, tick - syncedAt)
     : tick;
-  const nowVn = new Date(serverNowMs + 7 * 3_600_000);
-  const minutes = nowVn.getUTCHours() * 60 + nowVn.getUTCMinutes();
   const isWorkday = state?.is_workday !== false;
-  const inWindow = isWorkday && minutes >= 8 * 60 && minutes <= 8 * 60 + 30;
+  const openMs = state?.open_at ? Date.parse(state.open_at) : NaN;
+  const closeMs = state?.close_at ? Date.parse(state.close_at) : NaN;
+  const hasWindow = Number.isFinite(openMs) && Number.isFinite(closeMs);
+  // Khung mở: [08:00:00, 08:30:00) giờ Việt Nam — ĐÓNG đúng 08:30:00.
+  const phase: 'BEFORE' | 'OPEN' | 'CLOSED' | 'DAY_OFF' = !isWorkday
+    ? 'DAY_OFF'
+    : !hasWindow ? 'CLOSED'
+      : serverNowMs < openMs ? 'BEFORE'
+        : serverNowMs < closeMs ? 'OPEN' : 'CLOSED';
+  const inWindow = phase === 'OPEN';
+  const remainingMs = inWindow ? Math.max(0, closeMs - serverNowMs) : 0;
+  const remainingLabel = `${Math.floor(remainingMs / 60000)}:${String(Math.floor((remainingMs % 60000) / 1000)).padStart(2, '0')}`;
   const checkedIn = !!state?.checked_in;
   const checkedOut = !!state?.checked_out;
 
@@ -359,7 +411,16 @@ export function OfficeAttendanceView({ employee, showToast, refreshKey }: Office
                 color: withinRadius && gpsUsable ? '#065F46' : WARN,
                 border: `1px solid ${withinRadius && gpsUsable ? '#A7F3D0' : '#FDE68A'}`,
               }}>
-                <div>Khung giờ vào ca: <b>{state?.window_from || '08:00'} – {state?.window_to || '08:30'}</b></div>
+                <div>Khung giờ vào ca (giờ Việt Nam): <b>{state?.window_from || '08:00'} – {state?.window_to || '08:30'}</b></div>
+                <div style={{ marginTop: 4 }}>
+                  {phase === 'OPEN'
+                    ? <>🕒 Đang mở cổng vào ca — còn <b>{remainingLabel}</b> (đóng lúc <b>{state?.window_to || '08:30'}</b> giờ VN).</>
+                    : phase === 'CLOSED'
+                      ? <>🔒 Cổng vào ca đã <b>ĐÓNG</b> lúc <b>{state?.window_to || '08:30'}</b> giờ VN.</>
+                      : phase === 'BEFORE'
+                        ? <>⏳ Cổng vào ca mở lúc <b>{fmtClock(openMs)}</b> — còn {Math.max(0, Math.ceil((openMs - serverNowMs) / 60000))} phút.</>
+                        : <>😴 Hôm nay là ngày nghỉ — cổng điểm danh không mở.</>}
+                </div>
                 {!gpsEnabled && (
                   <div style={{ marginTop: 4 }}>
                     📵 Chi nhánh đã tắt định vị GPS — bạn <b>không cần GPS</b> khi điểm danh.
@@ -383,10 +444,11 @@ export function OfficeAttendanceView({ employee, showToast, refreshKey }: Office
                   </button>
                 ) : (
                   <div style={{ textAlign: 'center', fontSize: 12.5, color: MUTED, padding: '14px 6px', background: BG, borderRadius: 12 }}>
-                    {!isWorkday ? 'Hôm nay là ngày nghỉ — không cần điểm danh.'
-                      : !inWindow ? `Nút VÀO CA chỉ hiện trong khung ${state?.window_from || '08:00'} – ${state?.window_to || '08:30'}.`
-                        : !withinRadius ? `Bạn đang ngoài bán kính ${radiusMeters}m — nút điểm danh tạm ẩn.`
-                          : 'Chưa lấy được GPS hợp lệ — vui lòng ra nơi thoáng rồi thử lại.'}
+                    {phase === 'DAY_OFF' ? 'Hôm nay là ngày nghỉ — không cần điểm danh.'
+                      : phase === 'CLOSED' ? `Đã hết khung điểm danh (${state?.window_from || '08:00'} – ${state?.window_to || '08:30'} giờ VN). Hôm nay không ghi nhận vào ca.`
+                        : phase === 'BEFORE' ? `Nút VÀO CA mở lúc ${fmtClock(openMs)} (còn ${Math.max(0, Math.ceil((openMs - serverNowMs) / 60000))} phút).`
+                          : !withinRadius ? `Bạn đang ngoài bán kính ${radiusMeters}m — nút điểm danh tạm ẩn.`
+                            : 'Chưa lấy được GPS hợp lệ — vui lòng ra nơi thoáng rồi thử lại.'}
                   </div>
                 )
               )}

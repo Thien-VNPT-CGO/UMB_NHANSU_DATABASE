@@ -9,7 +9,7 @@
 | 1 | Trang chủ | giữ nguyên |
 | 2 | Lịch làm việc | lịch hành chính cố định: T2–T6 08:00–17:00, T7 08:00–12:00, CN nghỉ |
 | 3 | Đăng ký nghỉ phép | 1 ngày/tháng; phiếu duyệt tuần tự **Nhân sự → Kế toán → Giám đốc**; chỉ hiệu lực khi Giám đốc duyệt |
-| 4 | Điểm danh | nút **VÀO CA** chỉ hiện trong khung 08:00–08:30 (giờ VN); **RA CA** sau khi vào ca; GPS realtime trong bán kính **300m** của Văn Phòng Trụ Sở Chính mới hiện nút (>150m sai số bị chặn) |
+| 4 | Điểm danh | nút **VÀO CA** chỉ hiện trong khung **08:00:00 – 08:30:00 (giờ VN)** — đóng đúng 08:30:00, đếm ngược realtime theo giờ server; **RA CA** sau khi vào ca; GPS realtime trong bán kính **300m** của Văn Phòng Trụ Sở Chính mới hiện nút (>150m sai số bị chặn) |
 | 5 | Công của tôi | **lương cơ bản theo THÁNG** = Lương CB + Phụ cấp (Kế toán cấu hình, không tính theo ca); ngày công/tổng giờ chỉ để theo dõi |
 | 6 | Bổ sung công | tối đa **4 phiếu/tháng**; dùng hết thì khóa tới tháng sau |
 | 7 | Thông báo & Lương | giữ nguyên |
@@ -22,7 +22,7 @@
 | `GET /me/office/schedule?fromDate&toDate` | lịch hành chính + trạng thái điểm danh/nghỉ phép đã duyệt |
 | `GET /me/office/timesheet?period=YYYY-MM` | công + **lương cơ bản theo tháng** (LCB + phụ cấp) |
 | `GET /me/office/attendance?fromDate&toDate` | sự kiện vào/ra ca |
-| `GET /me/office/attendance/state` | trạng thái hôm nay + khung giờ mở nút |
+| `GET /me/office/attendance/state` | trạng thái hôm nay + khung giờ mở nút (`window_phase`, `open_at`, `close_at`, `remaining_seconds`, `now_ms`) |
 | `POST /me/office/checkin` | GPS + giờ server (08:00–08:30) chốt cứng |
 | `POST /me/office/checkout` | sau khi đã vào ca |
 | `GET /me/office/leaves` · `POST /me/office/leaves` | phiếu nghỉ `{date, reason}` — 1 ngày/tháng; quota trả kèm trong response |
@@ -36,7 +36,7 @@
 
 - **Nghỉ phép**: tối đa 1 ngày/tháng (dựa trên PENDING/APPROVED cùng tháng); chỉ chọn ngày hiện tại/tháng hiện tại; ngày CN không cần đăng ký.
 - **Chuỗi duyệt**: `PENDING_HR → PENDING_FINANCE → PENDING_DIRECTOR → APPROVED`; bất cứ bước nào cũng có thể `REJECTED`. Mỗi vai trò chỉ duyệt đúng bước của mình (ADMIN duyệt thay được).
-- **Điểm danh**: server chặn ngoài khung 08:00–08:30, ngoài bán kính 300m, và sai số GPS > 150m.
+- **Điểm danh**: server chặn ngoài khung **08:00:00–08:30:00 giờ Việt Nam** (đóng đúng 08:30:00, tính bằng giờ server — không tin giờ máy khách), ngoài bán kính 300m, và sai số GPS > 150m. Nhân viên Văn Phòng **không** dùng được `POST /attendance/checkin` của khối cửa hàng (cổng đó mở tới 3 giờ sau ca) — chỉ dùng `POST /me/office/checkin`.
 - **Bổ sung công**: 4 phiếu/tháng (PENDING + APPROVED chiếm quota); hết tháng tự mở lại; REJECTED không chiếm quota.
 - **Lương Văn Phòng**: lương cơ bản theo **tháng** = Lương CB + Phụ cấp, do **Kế toán/Admin** cấu hình tại tab "Cấu hình Lương CB & Phụ cấp" (HR chỉ xem). HR không còn quyền sửa lương/phúc lợi.
 

@@ -118,3 +118,88 @@ export function officeInCheckInWindow(vnHour: number, vnMinute: number): boolean
   const close = OFFICE_CHECKIN_CLOSE_HOUR * 60 + OFFICE_CHECKIN_CLOSE_MINUTE;
   return cur >= open && cur <= close;
 }
+
+/* ==========================================================================
+ * KHUNG ĐIỂM DANH THEO GIỜ VIỆT NAM (UTC+7) — NGUỒN SỰ THẬT DUY NHẤT
+ *
+ * Toàn bộ cổng Nhân viên / Admin / backend đều đi qua các hàm dưới đây để:
+ *  - Không phụ thuộc múi giờ máy chủ (VPS có thể chạy UTC) hay giờ điện thoại.
+ *  - Cổng VÀO CA ĐÓNG đúng 08:30:00 giờ VN (hết 08:29 là khóa, không mở lây
+ *    sang phút 08:30 như trước).
+ *  - Trả về mốc epoch + ISO kèm offset +07:00 để client đếm ngược realtime.
+ * ========================================================================== */
+
+/** Tách ngày/giờ Việt Nam (UTC+7) từ một mốc epoch ms — không phụ thuộc TZ máy. */
+export function officeVnParts(nowMs: number = Date.now()) {
+  const shifted = new Date((Number.isFinite(nowMs) ? nowMs : Date.now()) + 7 * 3_600_000);
+  return {
+    date: shifted.toISOString().slice(0, 10),
+    hour: shifted.getUTCHours(),
+    minute: shifted.getUTCMinutes(),
+    seconds: shifted.getUTCSeconds(),
+    minutesOfDay: shifted.getUTCHours() * 60 + shifted.getUTCMinutes(),
+  };
+}
+
+/** Pha của cổng VÀO CA trong ngày: chưa mở / đang mở / đã đóng / ngày nghỉ. */
+export type OfficeCheckInPhase = 'BEFORE' | 'OPEN' | 'CLOSED' | 'DAY_OFF';
+
+export interface OfficeCheckInWindow {
+  /** Ngày (YYYY-MM-DD, giờ VN) của khung điểm danh. */
+  date: string;
+  weekday: number;
+  isWorkday: boolean;
+  phase: OfficeCheckInPhase;
+  /** Mốc mở/đóng cổng (epoch ms). */
+  openMs: number;
+  closeMs: number;
+  /** ISO kèm offset +07:00 để client hiển thị/đếm ngược chính xác. */
+  openAt: string;
+  closeAt: string;
+  /** Giờ VN hiện tại tại thời điểm tính. */
+  vnHour: number;
+  vnMinute: number;
+  vnSecond: number;
+  minutesOfDay: number;
+  /** Thời gian còn lại tới lúc đóng cổng (ms, >0 khi OPEN). */
+  remainingMs: number;
+}
+
+/**
+ * Tính khung điểm danh VÀO CA của một ngày theo giờ Việt Nam.
+ * `dateIso` bỏ trống → lấy ngày VN hiện tại của `nowMs`.
+ */
+export function officeCheckInWindowOf(nowMs: number = Date.now(), dateIso?: string): OfficeCheckInWindow {
+  const at = Number.isFinite(nowMs) ? nowMs : Date.now();
+  const vn = officeVnParts(at);
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(String(dateIso || '')) ? String(dateIso).slice(0, 10) : vn.date;
+  const openAt = `${date}T${formatHm(OFFICE_CHECKIN_OPEN_HOUR, OFFICE_CHECKIN_OPEN_MINUTE)}:00+07:00`;
+  const closeAt = `${date}T${formatHm(OFFICE_CHECKIN_CLOSE_HOUR, OFFICE_CHECKIN_CLOSE_MINUTE)}:00+07:00`;
+  const openMs = Date.parse(openAt);
+  const closeMs = Date.parse(closeAt);
+  const rule = officeDayRuleOfIso(date);
+  const sameDay = date === vn.date;
+
+  let phase: OfficeCheckInPhase;
+  if (!rule.work) phase = 'DAY_OFF';
+  else if (!sameDay) phase = date < vn.date ? 'CLOSED' : 'BEFORE';
+  else if (at < openMs) phase = 'BEFORE';
+  else if (at >= closeMs) phase = 'CLOSED'; // ĐÓNG đúng 08:30:00 giờ VN
+  else phase = 'OPEN';
+
+  return {
+    date,
+    weekday: rule.weekday,
+    isWorkday: rule.work,
+    phase,
+    openMs,
+    closeMs,
+    openAt,
+    closeAt,
+    vnHour: vn.hour,
+    vnMinute: vn.minute,
+    vnSecond: vn.seconds,
+    minutesOfDay: sameDay ? vn.minutesOfDay : 0,
+    remainingMs: phase === 'OPEN' ? Math.max(0, closeMs - at) : 0,
+  };
+}
