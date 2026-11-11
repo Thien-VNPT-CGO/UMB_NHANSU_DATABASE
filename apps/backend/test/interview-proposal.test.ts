@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildProposalSlots,
   proposalSlotTimes,
+  publicProposalSlots,
   suggestFreeSlots,
   validateProposalSlot,
 } from '../src/services/interview-slots.service.js';
@@ -32,6 +33,23 @@ test('khung đã có ứng viên khác đặt (cách < 30 phút) bị khóa', ()
   assert.equal(nine?.disabled, true);
   assert.equal(nine?.reason, 'TAKEN');
   assert.equal(slots.find(s => s.time === '10:00')?.disabled, false);
+});
+
+test('khung HR đã có lịch họp với ứng viên khác bị ẨN khỏi danh sách trả cho ứng viên', () => {
+  const all = [
+    { submission_id: 'CAND_0001', full_name: 'Người khác', status: 'CONFIRMED', interview_date: '2026-11-12', interview_time_slot: '09:00' },
+  ];
+  const pub = publicProposalSlots('2026-11-12', all, 'CAND_9999', NOW);
+  assert.equal(pub.length, 12, 'chỉ mất đúng khung 09:00 đã có lịch họp');
+  assert.ok(!pub.some(s => s.time === '09:00'), 'khung bận không được trả ra');
+  assert.ok(!pub.some(s => s.disabled), 'không còn khung disabled kiểu TAKEN');
+  assert.ok(!pub.some((s: any) => 'takenBy' in s), 'không lộ tên ứng viên khác');
+  // Khung đã qua giờ vẫn trả về (disabled) để giao diện gạch.
+  const noonVn = new Date('2026-11-10T12:00:00+07:00').getTime();
+  const past = publicProposalSlots('2026-11-10', [], undefined, noonVn);
+  const nine = past.find(s => s.time === '09:00');
+  assert.equal(nine?.disabled, true);
+  assert.equal(nine?.reason, 'PAST');
 });
 
 test('bỏ qua chính ứng viên đang đề xuất (không tự khóa lịch của mình)', () => {

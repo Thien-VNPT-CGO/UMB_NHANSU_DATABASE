@@ -123,6 +123,7 @@ input[type=date]:focus{border-color:#EF4444;box-shadow:0 0 0 3px rgba(239,68,68,
 .slot.on{background:linear-gradient(135deg,#E85D92,#B4265B);border-color:#B4265B;color:#FFF;box-shadow:0 4px 10px rgba(180,38,91,.25)}
 .slot:disabled{background:#F1F5F9;border-color:#E2E8F0;color:#CBD5E1;cursor:not-allowed;text-decoration:line-through;box-shadow:none}
 .slotHint{font-size:10.5px;color:#9CA3AF;margin-top:6px;line-height:1.5}
+.slotEmpty{display:none;font-size:11px;font-weight:700;color:#B45309;background:#FFFBEB;border:1px dashed #FDE3BF;border-radius:9px;padding:7px 9px;line-height:1.45}
 #declineNote{min-height:58px}
 .send{background:linear-gradient(135deg,#EF4444,#B91C1C);color:#fff;box-shadow:0 8px 18px rgba(185,28,28,.25)}
 .msg{margin-top:12px;font-size:13px;font-weight:700;line-height:1.55;white-space:pre-wrap;text-align:center;color:#374151}
@@ -147,9 +148,11 @@ ${ctx ? `<div class="actions"><button class="btn confirm" id="bOk">${RSVP_ICONS.
 <input type="date" id="propDate" min="${vnToday}" />
 <div class="slotGroup">Buổi sáng · 08:00 – 11:30</div>
 <div class="slotWrap" id="slotSang">${slotButtons('SANG')}</div>
+<div class="slotEmpty" id="emptySang">Buổi sáng đã kín lịch họp — vui lòng chọn buổi khác.</div>
 <div class="slotGroup">Buổi chiều · 13:30 – 16:30</div>
 <div class="slotWrap" id="slotChieu">${slotButtons('CHIEU')}</div>
-<div class="slotHint" id="slotHint">Chọn ngày để xem khung giờ còn trống — khung đã có ứng viên khác đặt sẽ bị gạch, không chọn được.</div>
+<div class="slotEmpty" id="emptyChieu">Buổi chiều đã kín lịch họp — vui lòng chọn buổi khác.</div>
+<div class="slotHint" id="slotHint">Chọn ngày để xem khung giờ còn trống — khung HR đã có lịch họp với ứng viên khác sẽ được ẩn, khung đã qua giờ sẽ bị gạch.</div>
 <label for="declineNote" style="margin-top:12px">Ghi chú (nếu có)</label>
 <textarea id="declineNote" rows="2" maxlength="500" placeholder="VD: chỉ rảnh buổi chiều, muốn dời sang tuần sau..."></textarea>
 <button class="btn send" id="bSendNo" type="button" disabled>Gửi từ chối</button></div><div class="msg" id="msg"></div></div>
@@ -157,21 +160,28 @@ ${ctx ? `<div class="actions"><button class="btn confirm" id="bOk">${RSVP_ICONS.
 const reasonEl=document.getElementById('declineReason'),sendNo=document.getElementById('bSendNo'),msgEl=document.getElementById('msg'),okBtn=document.getElementById('bOk'),noBtn=document.getElementById('bNo');
 const propDate=document.getElementById('propDate'),declineBox=document.getElementById('declineBox'),slotHint=document.getElementById('slotHint'),noteEl=document.getElementById('declineNote');
 const slotBtns=Array.prototype.slice.call(document.querySelectorAll('.slot'));
-const HINT_IDLE='Chọn ngày để xem khung giờ còn trống — khung đã có ứng viên khác đặt sẽ bị gạch, không chọn được.';
+const HINT_IDLE='Chọn ngày để xem khung giờ còn trống — khung HR đã có lịch họp với ứng viên khác sẽ được ẩn, khung đã qua giờ sẽ bị gạch.';
 let pickedTime='',loadSeq=0;
 function syncSend(){sendNo.disabled=!reasonEl.value.trim();}
 async function post(body){const r=await fetch('./rsvp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'Lỗi');return j;}
 function clearPicked(){pickedTime='';slotBtns.forEach(function(b){b.classList.remove('on');});}
 function pickSlot(b){clearPicked();b.classList.add('on');pickedTime=b.getAttribute('data-time');slotHint.textContent='Bạn chọn '+pickedTime+' — HR sẽ xem xét và gửi lại thư mời xác nhận.';}
 slotBtns.forEach(function(b){b.addEventListener('click',function(){if(!b.disabled)pickSlot(b);});});
-function resetSlots(){clearPicked();slotBtns.forEach(function(b){b.disabled=false;b.removeAttribute('title');});}
+function showSlot(b,on){b.style.display=on?'':'none';if(!on){b.disabled=true;b.classList.remove('on');}}
+function setSessionEmpty(){
+[['slotSang','emptySang'],['slotChieu','emptyChieu']].forEach(function(p){
+const wrap=document.getElementById(p[0]),note=document.getElementById(p[1]);
+const left=slotBtns.filter(function(b){return b.parentNode===wrap&&b.style.display!=='none';}).length;
+note.style.display=left?'none':'block';});}
+function resetSlots(){clearPicked();slotBtns.forEach(function(b){b.style.display='';b.disabled=false;b.removeAttribute('title');});setSessionEmpty();}
 function paintSlots(slots){
-if(!slots||!slots.length){resetSlots();slotHint.textContent='Không có khung giờ phù hợp ngày này — vui lòng chọn ngày khác.';return;}
-const byTime={};slots.forEach(function(s){byTime[s.time]=s;});
+const byTime={};(slots||[]).forEach(function(s){byTime[s.time]=s;});
 slotBtns.forEach(function(b){const s=byTime[b.getAttribute('data-time')];
-if(!s){b.disabled=false;b.removeAttribute('title');return;}
-b.disabled=!!s.disabled;
-if(s.disabled){b.title=s.reason==='TAKEN'?'Khung này đã có ứng viên khác đặt lịch':'Khung này đã qua giờ';}else{b.removeAttribute('title');}});
+// Không có trong danh sách trả về = HR đã có lịch họp với ứng viên khác -> ẩn hẳn.
+if(!s){showSlot(b,false);b.removeAttribute('title');return;}
+showSlot(b,true);b.disabled=!!s.disabled;
+if(s.disabled){b.title='Khung này đã qua giờ';}else{b.removeAttribute('title');}});
+setSessionEmpty();
 if(pickedTime&&(!byTime[pickedTime]||byTime[pickedTime].disabled))clearPicked();
 else if(pickedTime){const keep=slotBtns.filter(function(b){return b.getAttribute('data-time')===pickedTime;})[0];if(keep)keep.classList.add('on');}}
 async function loadSlots(){const d=propDate.value,seq=++loadSeq;
@@ -180,7 +190,7 @@ slotHint.textContent='⏳ Đang tải khung giờ...';
 try{const r=await fetch('./rsvp/slots?token='+encodeURIComponent(tk)+'&date='+encodeURIComponent(d));const j=await r.json().catch(()=>({}));if(seq!==loadSeq)return;if(!r.ok)throw new Error(j.error||'Không tải được khung giờ');
 const slots=j.slots||[];paintSlots(slots);const free=slots.filter(function(s){return !s.disabled;}).length;
 if(pickedTime){slotHint.textContent='Bạn chọn '+pickedTime+' — HR sẽ xem xét và gửi lại thư mời xác nhận.';}
-else{slotHint.textContent=free>0?('Còn '+free+' khung trống — chạm vào khung giờ bạn muốn. Khung gạch chéo là đã kín hoặc đã qua giờ.'):'Ngày này đã kín lịch — vui lòng chọn ngày khác.';}}
+else{slotHint.textContent=free>0?('Còn '+free+' khung trống — chạm vào khung giờ bạn muốn. Khung HR đã có lịch họp được ẩn, khung đã qua giờ bị gạch.'):'Ngày này đã kín lịch họp — vui lòng chọn ngày khác.';}}
 catch(e){if(seq!==loadSeq)return;resetSlots();slotHint.textContent='⚠️ '+e.message+' — bạn vẫn chọn được khung giờ bên trên, HR sẽ kiểm tra lại khi chốt lịch.';}}
 ['change','input','blur'].forEach(function(ev){propDate.addEventListener(ev,loadSlots);});
 reasonEl.addEventListener('input',syncSend);

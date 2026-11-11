@@ -175,6 +175,24 @@ export function buildProposalSlots(
   });
 }
 
+/**
+ * Khung giờ trả cho ứng viên trên trang RSVP (API công khai):
+ *  - Khung HR đã có lịch họp với ứng viên khác -> ẨN HOÀN TOÀN (không trả ra,
+ *    ứng viên không thấy cũng không chọn được).
+ *  - Khung đã qua giờ -> vẫn trả về ở trạng thái disabled để hiển thị gạch.
+ * Không kèm tên ứng viên khác (takenBy) ra API công khai.
+ */
+export function publicProposalSlots(
+  date: string,
+  candidates: any[],
+  excludeSubmissionId?: string,
+  nowMs: number = Date.now()
+): Array<{ time: string; session: 'SANG' | 'CHIEU'; disabled: boolean; reason?: 'TAKEN' | 'PAST' }> {
+  return buildProposalSlots(date, candidates, excludeSubmissionId, nowMs)
+    .filter((s) => !(s.disabled && s.reason === 'TAKEN'))
+    .map((s) => ({ time: s.time, session: s.session, disabled: s.disabled, reason: s.reason }));
+}
+
 /** Validate ngày + khung giờ đề xuất của ứng viên (thông điệp tiếng Việt sẵn để hiển thị). */
 export function validateProposalSlot(
   dateInput: unknown,

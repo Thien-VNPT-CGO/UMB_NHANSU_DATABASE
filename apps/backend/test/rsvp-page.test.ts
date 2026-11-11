@@ -29,6 +29,11 @@ test('trang RSVP có khối "Đề xuất lịch mới" + khung giờ sáng/chi�
   assert.match(html, /data-time="11:00"/);
   assert.match(html, /data-time="13:30"/);
   assert.match(html, /data-time="16:00"/);
+  // Khung HR đã có lịch họp bị ẩn hẳn + ghi chú khi kín cả buổi
+  assert.match(html, /id="emptySang"/);
+  assert.match(html, /id="emptyChieu"/);
+  assert.match(html, /function showSlot/);
+  assert.match(html, /function setSessionEmpty/);
 });
 
 test('trang RSVP không có khối thao tác khi không truyền ctx', () => {

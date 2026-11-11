@@ -65,7 +65,7 @@ import { OfficeService } from './services/office.service.js';
 import { SalaryConfigService } from './services/salary-config.service.js';
 import { LiveMapService, canonicalBranchId, distanceMeters, vnDateOf } from './services/live-map.service.js';
 import { renderRsvpPage as rsvpPage, escapeHtml, type RsvpIconName } from './services/rsvp-page.js';
-import { buildProposalSlots, PROPOSAL_WORK_WINDOWS } from './services/interview-slots.service.js';
+import { publicProposalSlots, PROPOSAL_WORK_WINDOWS } from './services/interview-slots.service.js';
 import { LiveLocationStore } from './services/live-location.store.js';
 import { appendGpsTrail, readGpsTrail, summarizeGpsTrail, listGpsTrailDates } from './services/gps-trail.store.js';
 import { ShiftReRegService } from './services/shift-rereg.service.js';
@@ -8214,9 +8214,10 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   });
 
   // Khung giờ trống cho phần "Đề xuất lịch mới" trên trang RSVP (công khai, chỉ
-  // cần token hợp lệ). Trả các khung 30 phút thuộc giờ làm việc HR, đánh dấu
-  // disabled cho khung đã có ứng viên khác đặt hoặc đã qua giờ. Không trả tên
-  // ứng viên khác ra API công khai.
+  // cần token hợp lệ). Chỉ trả khung 30 phút thuộc giờ làm việc HR:
+  //  - Khung HR đã có lịch họp với ứng viên khác: ẨN HOÀN TOÀN khỏi danh sách.
+  //  - Khung đã qua giờ: trả về disabled để giao diện gạch.
+  // Không trả tên ứng viên khác ra API công khai.
   app.get('/public/interview/rsvp/slots', async (req, res) => {
     try {
       const sid = employeesService.verifyRsvpToken(String(req.query.token || ''));
@@ -8224,12 +8225,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'INVALID_DATE' });
       const all = await adapter.listCandidates().catch(() => []);
       if (!all.some((c: any) => c.submission_id === sid)) return res.status(404).json({ error: 'CANDIDATE_NOT_FOUND' });
-      const slots = buildProposalSlots(date, all as any[], sid).map(s => ({
-        time: s.time,
-        session: s.session,
-        disabled: s.disabled,
-        reason: s.reason,
-      }));
+      const slots = publicProposalSlots(date, all as any[], sid);
       res.json({ success: true, date, slots, windows: PROPOSAL_WORK_WINDOWS.map(w => ({ start: w.start, end: w.end, label: w.label, session: w.session })) });
     } catch (e: any) {
       res.status(400).json({ error: String(e?.message || 'Link không hợp lệ') });
