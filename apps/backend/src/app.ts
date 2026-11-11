@@ -6024,7 +6024,9 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       res.json({
         ...quota,
         points: AttendanceService.adjustPointsOf(emp),
-        cost: AttendanceService.BU_CONG_NGAY_COST,
+        // NV thử việc (PROBATION) = 0 điểm: không cần tích điểm để bù công ngày.
+        cost: AttendanceService.buCongNgayPointCost(emp),
+        isProbation: AttendanceService.isProbationEmployee(emp),
         monthLimitTotal: AttendanceService.BU_CONG_NGAY_MONTH_LIMIT,
       });
     } catch (err: any) {

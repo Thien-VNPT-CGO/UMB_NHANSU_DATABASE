@@ -59,6 +59,9 @@ export interface AttendanceAdjustment {
   evidence_drive_id?: string;
   /** SHA-256 ảnh bằng chứng — chống gửi trùng đúng 1 ảnh cho nhiều phiếu. */
   photo_hash?: string;
+  /** Số điểm bù công đã trừ lúc tạo phiếu. 0 = miễn phí (NV thử việc).
+   *  Dùng để hoàn ĐÚNG số điểm khi phiếu bị từ chối/hết hạn, tránh cộng điểm ảo. */
+  points_charged?: number;
   created_at: string;
   updated_at: string;
   version: number;

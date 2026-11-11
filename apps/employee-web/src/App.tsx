@@ -1589,6 +1589,9 @@ export function App() {
   const myPointsEarned = Math.max(0, Math.floor(Number((employee as any)?.adjust_points_earned) || 0));
   const myPointsSpent = Math.max(0, Math.floor(Number((employee as any)?.adjust_points_spent) || 0));
   const myPointsBalance = Math.max(0, myPointsEarned - myPointsSpent);
+  // NV THỬ VIỆC không phải tích điểm để dùng bù công ngày (server cũng miễn trừ).
+  const isProbationEmployee = String((employee as any)?.employment_status || '').trim().toUpperCase() === 'PROBATION';
+  const buCongPointCost = isProbationEmployee ? 0 : 5;
 
   // Lịch kiểm tra đầu ra thử việc (Meet vấn đáp + trắc nghiệm) do HR lên lịch.
   const [probationAssessment, setProbationAssessment] = useState<any | null>(null);
@@ -3778,15 +3781,16 @@ export function App() {
         showToast('⚠️ Bắt buộc phải có ảnh bằng chứng mới gửi được phiếu! Chụp hoặc chọn ảnh rồi gửi lại.');
         return;
       }
-      // Phiếu bù công ngày: ngày trong tháng hiện tại + đủ 5 điểm (server trừ/hoàn).
+      // Phiếu bù công ngày: ngày trong tháng hiện tại + điểm (NV thử việc miễn phí).
       if (adjustmentData.type === 'BU_CONG_NGAY') {
         const curYm = vnMonthStr();
         if (String(adjustmentData.date).slice(0, 7) !== curYm) {
           showToast('⚠️ Phiếu bù công ngày chỉ chọn ngày trong tháng hiện tại!');
           return;
         }
-        if (myPointsBalance < 5) {
-          showToast(`⚠️ Phiếu bù công ngày tốn 5 điểm, bạn đang có ${myPointsBalance} điểm (đủ 1 ca check-in + check-out = +2 điểm). Tích thêm điểm rồi gửi lại!`);
+        // NV thử việc được miễn điểm hoàn toàn (buCongPointCost = 0).
+        if (buCongPointCost > 0 && myPointsBalance < buCongPointCost) {
+          showToast(`⚠️ Phiếu bù công ngày tốn ${buCongPointCost} điểm, bạn đang có ${myPointsBalance} điểm (đủ 1 ca check-in + check-out = +2 điểm). Tích thêm điểm rồi gửi lại!`);
           return;
         }
         // Quota realtime: 1 phiếu/tuần, tối đa 4 phiếu/tháng (server chốt cứng).
@@ -7420,7 +7424,7 @@ export function App() {
                 {isProbation ? '7. Giải Trình & Bổ Sung Công' : '7. Bổ Sung Công'}
               </h3>
               <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '14px' }}>
-                Gửi giải trình khi quên check-in/out (đồng bộ trực tiếp sang HR Tab 10 và Google Sheets); phiếu quên check-in/out không giới hạn số lượt. <strong>Bắt buộc đính kèm ảnh bằng chứng</strong> — không có ảnh thì phiếu không gửi được. Hệ thống tự loại phiếu có <strong>nội dung tương tự</strong> hoặc <strong>hình ảnh giống</strong> phiếu đã gửi để tránh trùng phiếu. Riêng phiếu <strong>bù công cả ngày</strong> tốn 5 điểm và bị giới hạn <strong>1 phiếu/tuần, tối đa 4 phiếu/tháng</strong> (tuần không dùng cộng dồn trong tháng, qua tháng mới không cộng dồn). Phiếu gửi HR quá <strong>72 giờ</strong> kể từ lúc nhận phiếu chưa duyệt thì hệ thống <strong>tự động hủy</strong> (giữ phiếu để đối soát, tự xóa sau 7 ngày nữa).
+                Gửi giải trình khi quên check-in/out (đồng bộ trực tiếp sang HR Tab 10 và Google Sheets); phiếu quên check-in/out không giới hạn số lượt. <strong>Bắt buộc đính kèm ảnh bằng chứng</strong> — không có ảnh thì phiếu không gửi được. Hệ thống tự loại phiếu có <strong>nội dung tương tự</strong> hoặc <strong>hình ảnh giống</strong> phiếu đã gửi để tránh trùng phiếu. Riêng phiếu <strong>bù công cả ngày</strong> {isProbationEmployee ? 'miễn phí điểm cho nhân viên thử việc' : 'tốn 5 điểm'} và bị giới hạn <strong>1 phiếu/tuần, tối đa 4 phiếu/tháng</strong> (tuần không dùng cộng dồn trong tháng, qua tháng mới không cộng dồn). Phiếu gửi HR quá <strong>72 giờ</strong> kể từ lúc nhận phiếu chưa duyệt thì hệ thống <strong>tự động hủy</strong> (giữ phiếu để đối soát, tự xóa sau 7 ngày nữa).
               </p>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -7469,7 +7473,12 @@ export function App() {
 
                 <div style={{ fontSize: '12px', lineHeight: 1.6, backgroundColor: ticketWindowOpen ? '#F0FDF4' : '#FEF2F2', border: ticketWindowOpen ? '1px solid #86EFAC' : '1px solid #FECACA', borderRadius: '8px', padding: '8px 10px' }}>
                   <div>⭐ Điểm bù công của bạn: <strong>{myPointsBalance}</strong> <span style={{ color: 'var(--text-muted)' }}>(tích lũy {myPointsEarned} • đã dùng {myPointsSpent})</span></div>
-                  <div style={{ color: 'var(--text-muted)' }}>Đủ 1 ca (check-in + check-out) +2 điểm • 1 phiếu bù công ngày = 5 điểm • Tạo phiếu 08:00–21:00 hằng ngày{ticketWindowOpen ? '' : ' — hiện ĐANG NGOÀI GIỜ, không gửi được phiếu'}.</div>
+                  <div style={{ color: 'var(--text-muted)' }}>
+                    {isProbationEmployee
+                      ? '🎓 Nhân viên thử việc: KHÔNG cần tích điểm — phiếu bù công ngày miễn phí điểm.'
+                      : 'Đủ 1 ca (check-in + check-out) +2 điểm • 1 phiếu bù công ngày = 5 điểm.'}
+                    {' '}Tạo phiếu 08:00–21:00 hằng ngày{ticketWindowOpen ? '' : ' — hiện ĐANG NGOÀI GIỜ, không gửi được phiếu'}.
+                  </div>
                 </div>
 
                 {/* QUOTA BÙ CÔNG NGÀY: 1 phiếu/tuần, tối đa 4 phiếu/tháng.
@@ -7519,7 +7528,7 @@ export function App() {
                   >
                     <option value="QUEN_CHECKIN">Quên Check-in khi vào ca → duyệt là ghi check-in ca đó</option>
                     <option value="QUEN_CHECKOUT">Quên Check-out khi hết ca → duyệt là ghi check-out ca đó</option>
-                    <option value="BU_CONG_NGAY">Bù công cả ngày trong tháng (tốn 5 điểm) → duyệt là ghi cả in + out</option>
+                    <option value="BU_CONG_NGAY">Bù công cả ngày trong tháng ({isProbationEmployee ? 'miễn phí điểm' : 'tốn 5 điểm'}) → duyệt là ghi cả in + out</option>
                   </select>
                 </div>
 

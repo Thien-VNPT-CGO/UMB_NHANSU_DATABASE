@@ -1584,6 +1584,8 @@ export class GoogleSheetsAdapter implements ISheetsRepository {
         snapshot.review_note || '',
         (snapshot as any).evidence_drive_id || '',
         (snapshot as any).photo_hash || '',
+        // 0 = NV thử việc miễn phí; luôn ghi để lần pull/restart sau hoàn đúng điểm.
+        (snapshot as any).points_charged ?? '',
       ]], 'DIEU_CHINH_CONG.append');
     }
     return res;

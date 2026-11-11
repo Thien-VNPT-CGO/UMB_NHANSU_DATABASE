@@ -927,6 +927,9 @@ export class AttendanceService {
         // từ chối/hết hạn thì hoàn lại) + QUOTA 1 phiếu/tuần, tối đa 4 phiếu/tháng.
         // Tuần không dùng được cộng dồn trong cùng tháng; qua tháng mới reset về
         // đúng số tuần đã bắt đầu của tháng đó (không mang phiếu tháng cũ sang).
+        // Số điểm thực trừ cho phiếu này (0 = NV thử việc được miễn) — lưu kèm
+        // phiếu để hoàn đúng số điểm khi bị từ chối/hết hạn.
+        let pointsCharged = 0;
         if (kind === 'BU_CONG_NGAY') {
           const quota = AttendanceService.buCongNgayQuotaOf(existing, data.employeeId, new Date());
           // Kiểm tra TUẦN trước: tuần này đã dùng 1 phiếu thì chặn ngay (kể cả
@@ -945,12 +948,18 @@ export class AttendanceService {
           if (!incDay || incDay.slice(0, 7) !== todayVn.slice(0, 7)) {
             throw new Error('BU_CONG_NGAY_MONTH: Phiếu bù công ngày chỉ chọn ngày trong tháng hiện tại!');
           }
+          // NV THỬ VIỆC (PROBATION) được MIỄN ĐIỂM: chưa cần tích điểm để dùng
+          // chức năng bù công ngày. Chỉ NV chính thức mới bị trừ điểm.
           const me: any = await this.repo.getEmployeeById(data.employeeId).catch(() => null);
-          const pts = AttendanceService.adjustPointsOf(me);
-          if (pts.balance < AttendanceService.BU_CONG_NGAY_COST) {
-            throw new Error(`ADJUSTMENT_NO_POINTS: Phiếu bù công ngày tốn ${AttendanceService.BU_CONG_NGAY_COST} điểm, bạn đang có ${pts.balance} điểm (đủ 1 ca check-in + check-out = +${AttendanceService.POINTS_PER_COMPLETE_SHIFT} điểm). Tích thêm điểm rồi gửi lại!`);
+          const pointCost = AttendanceService.buCongNgayPointCost(me);
+          if (pointCost > 0) {
+            const pts = AttendanceService.adjustPointsOf(me);
+            if (pts.balance < pointCost) {
+              throw new Error(`ADJUSTMENT_NO_POINTS: Phiếu bù công ngày tốn ${pointCost} điểm, bạn đang có ${pts.balance} điểm (đủ 1 ca check-in + check-out = +${AttendanceService.POINTS_PER_COMPLETE_SHIFT} điểm). Tích thêm điểm rồi gửi lại!`);
+            }
+            await this.addAdjustPoints(data.employeeId, 0, pointCost);
           }
-          await this.addAdjustPoints(data.employeeId, 0, AttendanceService.BU_CONG_NGAY_COST);
+          pointsCharged = pointCost;
         }
         return this.repo.createAttendanceAdjustment({
           adjustment_id: adjId,
@@ -964,6 +973,8 @@ export class AttendanceService {
           ...(photoBase64 ? { photo_base64: photoBase64 } : {}),
           // Mã băm ảnh: chống dùng lại đúng ảnh đó cho phiếu khác.
           photo_hash: photoHash,
+          // 0 = miễn phí (NV thử việc) — không trừ điểm, không hoàn điểm khi hủy.
+          points_charged: pointsCharged,
         });
       },
     });
@@ -1051,6 +1062,31 @@ export class AttendanceService {
   /** Phiếu BU_CONG_NGAY tốn 5 điểm/lượt; đủ 1 ca (check-in + check-out) +2 điểm. */
   static readonly BU_CONG_NGAY_COST = 5;
   static readonly POINTS_PER_COMPLETE_SHIFT = 2;
+
+  /**
+   * NV THỬ VIỆC (PROBATION) KHÔNG phải tích điểm để dùng chức năng bù công ngày.
+   * Đây là quy định vận hành: thử việc chưa có đủ ca để tích điểm, nếu bắt tích
+   * điểm thì không bao giờ gửi được phiếu.
+   */
+  static isProbationEmployee(emp: any): boolean {
+    return String((emp as any)?.employment_status || '').trim().toUpperCase() === 'PROBATION';
+  }
+
+  /** Điểm phải trả cho 1 phiếu bù công ngày: NV thử việc = 0 (miễn phí). */
+  static buCongNgayPointCost(emp: any): number {
+    return AttendanceService.isProbationEmployee(emp) ? 0 : AttendanceService.BU_CONG_NGAY_COST;
+  }
+
+  /** Số điểm đã trừ lúc tạo phiếu. Phiếu cũ (chưa lưu trường này) coi như đã trừ đủ
+   *  — trước đây mọi phiếu đều bị trừ 5 điểm. */
+  static adjustmentPointsCharged(adj: any): number {
+    const raw = (adj as any)?.points_charged;
+    if (raw === undefined || raw === null || String(raw).trim() === '') {
+      return AttendanceService.BU_CONG_NGAY_COST;
+    }
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  }
   /** Quota phiếu bù công ngày: 1 phiếu/tuần, tối đa 4 phiếu/tháng. */
   static readonly BU_CONG_NGAY_MONTH_LIMIT = 4;
 
@@ -1225,13 +1261,16 @@ export class AttendanceService {
     } catch { /* thiếu điểm lẻ tẻ thì vòng sau bù, không chặn luồng chính */ }
   }
 
-  /** Hoàn 5 điểm BU_CONG_NGAY khi phiếu bị từ chối/hết hạn (chỉ trừ lúc tạo). */
+  /** Hoàn ĐÚNG số điểm đã trừ khi phiếu BU_CONG_NGAY bị từ chối/hết hạn.
+   *  Phiếu miễn phí (NV thử việc, points_charged = 0) -> không hoàn gì. */
   private async refundTicketPoints(adj: any): Promise<void> {
     try {
       if (AttendanceService.adjustmentKindOf((adj as any)?.reason) !== 'BU_CONG_NGAY') return;
       const empId = String((adj as any)?.employee_id || '');
       if (!empId) return;
-      await this.addAdjustPoints(empId, 0, -AttendanceService.BU_CONG_NGAY_COST);
+      const charged = AttendanceService.adjustmentPointsCharged(adj);
+      if (charged <= 0) return;
+      await this.addAdjustPoints(empId, 0, -charged);
     } catch { /* best-effort */ }
   }
 
@@ -1269,8 +1308,11 @@ export class AttendanceService {
         checked++;
         const isBuCongNgay = AttendanceService.adjustmentKindOf((a as any)?.reason) === 'BU_CONG_NGAY';
         if (ageMin <= ttlMinutes) continue;
+        const charged = AttendanceService.adjustmentPointsCharged(a);
         const note = isBuCongNgay
-          ? 'Tự động hủy sau 72 giờ Giám đốc không duyệt (đã hoàn 5 điểm)'
+          ? (charged > 0
+            ? `Tự động hủy sau 72 giờ Giám đốc không duyệt (đã hoàn ${charged} điểm)`
+            : 'Tự động hủy sau 72 giờ Giám đốc không duyệt (miễn phí điểm — NV thử việc)')
           : AttendanceService.AUTO_REJECT_NOTE;
         try {
           await singleWriterQueue.enqueue({
@@ -1435,8 +1477,11 @@ export class AttendanceService {
         if (Number.isFinite(createdMs)) {
           const ageMin = (Date.now() - createdMs) / 60000;
           if (ageMin > AttendanceService.ADJUSTMENT_TTL_MINUTES) {
+            const charged = AttendanceService.adjustmentPointsCharged(fresh);
             const expireNote = isBuCongNgay
-              ? 'Tự động hủy sau 72 giờ Giám đốc không duyệt (đã hoàn 5 điểm)'
+              ? (charged > 0
+                ? `Tự động hủy sau 72 giờ Giám đốc không duyệt (đã hoàn ${charged} điểm)`
+                : 'Tự động hủy sau 72 giờ Giám đốc không duyệt (miễn phí điểm — NV thử việc)')
               : AttendanceService.AUTO_REJECT_NOTE;
             const rejected = await this.repo.updateAttendanceAdjustment(adjId, 'REJECTED', 'SYSTEM', undefined, expireNote).catch(() => null);
             await this.refundTicketPoints(rejected || fresh).catch(() => null);
@@ -1446,7 +1491,7 @@ export class AttendanceService {
               } catch { /* non-fatal */ }
             }
             throw new Error(isBuCongNgay
-              ? 'ADJUSTMENT_EXPIRED: Phiếu bù công cả ngày đã quá hạn 72 giờ và tự động hủy (đã hoàn 5 điểm)! NV gửi lại phiếu mới.'
+              ? `ADJUSTMENT_EXPIRED: Phiếu bù công cả ngày đã quá hạn 72 giờ và tự động hủy${charged > 0 ? ` (đã hoàn ${charged} điểm)` : ' (miễn phí điểm — NV thử việc)'}! NV gửi lại phiếu mới.`
               : 'ADJUSTMENT_EXPIRED: Phiếu đã quá hạn 72 giờ và tự động hủy! NV gửi lại phiếu mới.');
           }
         }
