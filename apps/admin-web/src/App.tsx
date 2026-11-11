@@ -1910,6 +1910,13 @@ export function App() {
               window.dispatchEvent(new CustomEvent('ubm:interview-draft-reload', { detail: payload?.data }));
             } catch { /* non-fatal */ }
           }
+          // Realtime ẩn/hiện cột bảng Kế toán: máy khác cùng tài khoản vừa lưu
+          // cấu hình cột -> FinanceModule tải lại ngay, không cần F5.
+          if (String(payload?.data?.action || '') === 'finance-table-columns') {
+            try {
+              window.dispatchEvent(new CustomEvent('ubm:finance-columns-reload'));
+            } catch { /* non-fatal */ }
+          }
           // Realtime phiếu lương: backend bắn data:updated(payroll/payslips)
           // sau mọi nút Ký/Gửi/Hoàn/Duyệt/Chi trả — báo cho RoleViews tải lại
           // bảng phiếu chi tiết (loadAllData không chứa periodSlips).

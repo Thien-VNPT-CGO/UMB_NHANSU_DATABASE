@@ -290,7 +290,6 @@ export default function FinanceModule(props: FinanceModuleProps) {
   };
   const [colVis, setColVis] = useState<Record<string, Record<string, boolean>>>({});
   const [colVisSaving, setColVisSaving] = useState(false);
-  const colVisSavingRef = useRef(false);
   // Mở/đóng panel chọn cột của tab đang xem — 1 state dùng chung, render trong CardHead từng tab.
   const [colVisOpenTab, setColVisOpenTab] = useState<string>('');
   const colsVisible = useCallback((tabId: string) => {
@@ -306,20 +305,39 @@ export default function FinanceModule(props: FinanceModuleProps) {
     if (isFinance) return c;
     return { ...c, show: (key: string) => key !== 'edit' && c.show(key) };
   }, [colsVisible, isFinance]);
-  const saveColVis = useCallback(async (next: Record<string, Record<string, boolean>>) => {
-    if (colVisSavingRef.current) return;
-    colVisSavingRef.current = true;
+  // Lưu ẩn/hiện cột: debounce 300ms + LUÔN gửi trạng thái MỚI NHẤT.
+  // Trước đây bấm nhanh nhiều cột thì chỉ lần bấm đầu được lưu (các lần sau bị
+  // bỏ vì đang có request) → F5 lại thấy cột cũ. Giờ gộp mọi lần bấm và gửi
+  // bản cuối cùng, kể cả khi có thay đổi mới trong lúc đang lưu.
+  const colVisPendingRef = useRef<Record<string, Record<string, boolean>> | null>(null);
+  const colVisTimerRef = useRef<number | null>(null);
+  const colVisInFlightRef = useRef(false);
+  const flushColVis = useCallback(async () => {
+    if (colVisInFlightRef.current) return;
+    const payload = colVisPendingRef.current;
+    if (!payload) return;
+    colVisPendingRef.current = null;
+    colVisInFlightRef.current = true;
     setColVisSaving(true);
     try {
-      await apiRequest('/payroll/table-columns', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ columns: next }) });
-      // Đồng bộ realtime cho các máy khác cùng tài khoản (socket trong App).
+      await apiRequest('/payroll/table-columns', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ columns: payload }) });
     } catch (e: any) {
       showToast?.(e?.message || 'Lưu ẩn/hiện cột thất bại');
     } finally {
-      colVisSavingRef.current = false;
+      colVisInFlightRef.current = false;
       setColVisSaving(false);
+      // Có thay đổi mới phát sinh trong lúc đang lưu -> gửi tiếp bản mới nhất.
+      if (colVisPendingRef.current) {
+        if (colVisTimerRef.current) window.clearTimeout(colVisTimerRef.current);
+        colVisTimerRef.current = window.setTimeout(() => { void flushColVis(); }, 250);
+      }
     }
   }, [showToast]);
+  const saveColVis = useCallback((next: Record<string, Record<string, boolean>>) => {
+    colVisPendingRef.current = next;
+    if (colVisTimerRef.current) window.clearTimeout(colVisTimerRef.current);
+    colVisTimerRef.current = window.setTimeout(() => { void flushColVis(); }, 300);
+  }, [flushColVis]);
 
   const toggleCol = useCallback((tabKey: string, colKey: string) => {
     setColVis(prev => {
@@ -495,6 +513,19 @@ export default function FinanceModule(props: FinanceModuleProps) {
     }
     if (activeTab === 'fin-payment' || activeTab === 'fin-payslips') loadDriveStatus();
   }, [activeTab, month, loadWorkflow, loadFinSheet, loadRuns, loadSlips, loadFormula, loadInputs, loadDriveStatus, loadColVis]);
+
+  // Realtime ẩn/hiện cột: máy khác của CÙNG tài khoản kế toán vừa bấm lưu ->
+  // tải lại cấu hình cột ngay (backend bắn data:updated action=finance-table-columns).
+  // Bỏ qua khi máy này đang có thay đổi chưa lưu xong — tránh ghi đè lựa chọn
+  // vừa bấm bằng bản cũ trên server (echo của chính mình).
+  useEffect(() => {
+    const onColsReload = () => {
+      if (colVisPendingRef.current || colVisInFlightRef.current) return;
+      void loadColVis();
+    };
+    window.addEventListener('ubm:finance-columns-reload', onColsReload as any);
+    return () => window.removeEventListener('ubm:finance-columns-reload', onColsReload as any);
+  }, [loadColVis]);
 
   // QUY TRÌNH TUẦN TỰ + KHÓA KHI HOÀN TẤT (realtime theo workflow-status):
   //  - Bước ĐÃ HOÀN TẤT -> khóa lại (tránh sửa số liệu đã chốt).
@@ -1958,6 +1989,10 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
     return rows;
   }, [allSlips, statusFilter, q, allEmployees]);
   const branchGroupsFiltered = useMemo(() => branchGroups(filteredSlips, (s: any) => slipBranchId(s, allEmployees)), [filteredSlips, allEmployees]);
+  // Tổng số cột đang hiển thị + số cột nhóm trái (STT/Họ tên/Mã/Chi nhánh) để
+  // dòng CỘNG/TỔNG vẫn thẳng hàng khi Kế toán ẩn bớt cột.
+  const periodColCount = FIN_COL_HEADER_COUNT('fin-payroll-periods', colDefs, cols);
+  const leftColCount = ['stt', 'full_name', 'employee_code', 'branch'].filter(k => show(k)).length;
   const RUN_STAGES = ['DRAFT', 'RECONCILED', 'APPROVED', 'PUBLISHED', 'PAID'];
   const RUN_STAGE_LABEL: Record<string, string> = { DRAFT: 'Nháp', RECONCILED: 'Đối soát', APPROVED: 'Duyệt', PUBLISHED: 'Đã phát hành', PAID: 'Chi trả' };
   const latestStageIdx = latest ? RUN_STAGES.indexOf(String(latest.status || 'DRAFT').toUpperCase()) : -1;
@@ -2106,7 +2141,7 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
 
       {/* Danh sách PHIẾU LƯƠNG từng nhân viên — nhóm theo chi nhánh, đủ cột, sửa trực tiếp */}
       <div className="fin-card">
-        <CardHead title={`Danh sách phiếu lương — ${periodLabel(month)} (${filteredSlips.length}/${allSlips.length} phiếu)`} icon={<Receipt size={14} color="#E85D92" />} sub="Nhóm theo chi nhánh · mỗi NV 1 dòng với ĐỦ cột · mỗi chi nhánh 1 dòng CỘNG tổng tiền · bấm ✏️ để sửa trực tiếp (LCB/OT/Bonus/Ứng/KPI/ĐP)">
+        <CardHead title={`Danh sách phiếu lương — ${periodLabel(month)} (${filteredSlips.length}/${allSlips.length} phiếu)`} icon={<Receipt size={14} color="#E85D92" />} sub="Nhóm theo chi nhánh · mỗi NV 1 dòng với ĐỦ cột · mỗi chi nhánh 1 dòng CỘNG tổng tiền · bấm ✏️ để sửa trực tiếp (LCB/OT/Bonus/Ứng/KPI/ĐP) · bấm “Cột hiển thị” để ẩn/hiện cột (lưu theo tài khoản, đồng bộ realtime)">
           <SearchBox value={q} onChange={setQ} />
           <ColumnSettings tabKey="fin-payroll-periods" defs={colDefs} value={colVis} onToggle={onToggleCol} onShowAll={() => onShowAllCols('fin-payroll-periods')} saving={colVisSaving} />
           <span className="fin-chip-stat">{r1(grand.gio).toFixed(1)} giờ</span>
@@ -2136,14 +2171,14 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
           </div>
         ) : (
           <div className="fin-table-wrap">
-            <table className="fin-table" style={{ minWidth: 2380 }}>
+            <table className="fin-table" style={{ minWidth: Math.max(760, periodColCount * 130) }}>
               <thead>
                 <tr>{show('stt') && <th className="ctr">STT</th>}{show('full_name') && <th>Họ tên</th>}{show('employee_code') && <th>Mã NV</th>}{show('branch') && <th>Chi nhánh</th>}{show('gio') && <th className="num">Giờ công</th>}{show('banCa') && <th className="num">Lương ca</th>}{show('phuCap') && <th className="num">Phụ cấp</th>}{show('lcb') && <th className="num">LCB</th>}{show('ot') && <th className="num">OT thêm</th>}{show('bonus') && <th className="num">Bonus</th>}{show('tongCong') && <th className="num">TỔNG CỘNG</th>}{show('truKpiPhat') && <th className="num">Trừ KPI/phạt</th>}{show('ung') && <th className="num">Ứng lương</th>}{show('dongPhuc') && <th className="num">Trừ ĐP</th>}{show('tongLuong') && <th className="num">TỔNG LƯƠNG</th>}{show('thuc') && <th className="num">THỰC LÃNH</th>}{show('status') && <th>Trạng thái phiếu</th>}{show('edit') && <th className="ctr">Sửa trực tiếp</th>}</tr>
               </thead>
               <tbody>
                 {branchGroupsFiltered.map(g => {
                   const gs = sumCalc(g.rows);
-                  const colCount = FIN_COL_HEADER_COUNT('fin-payroll-periods', colDefs, cols);
+                  const colCount = periodColCount;
                   return (
                     <React.Fragment key={g.id}>
                       <BranchBandRow label={branchLabelOf(g.id)} count={g.rows.length} cols={colCount} totalText={`THỰC LÃNH ${formatVND(gs.thuc)} · TỔNG CỘNG ${formatVND(gs.tongCong)} · ${r1(gs.gio).toFixed(1)} giờ`} />
@@ -2203,7 +2238,7 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
                         );
                       })}
                       <tr className="fin-subtotal">
-                        <td colSpan={Math.max(1, colCount - 14)}>CỘNG {branchLabelOf(g.id).toUpperCase()} ({g.rows.length} NV)</td>
+                        <td colSpan={Math.max(1, leftColCount)}>CỘNG {branchLabelOf(g.id).toUpperCase()} ({g.rows.length} NV)</td>
                         {show('gio') && <td className="num">{r1(gs.gio).toFixed(1)}</td>}
                         {show('banCa') && <td className="num fin-money">{formatVND(gs.banCa)}</td>}
                         {show('phuCap') && <td className="num fin-money">{formatVND(gs.phuCap)}</td>}
@@ -2225,7 +2260,7 @@ function PayrollPeriodsTab({ month, runs, runsLoading, loadRuns, slips, allEmplo
                 {filteredSlips.length === 0 && <tr><td colSpan={FIN_COL_HEADER_COUNT('fin-payroll-periods', colDefs, cols)} className="fin-empty">{q || statusFilter !== 'ALL' ? 'Không có phiếu phù hợp bộ lọc.' : 'Chưa có phiếu lương kỳ này.'}</td></tr>}
                 {allSlips.length > 0 && (
                   <tr className="fin-grand">
-                    <td colSpan={Math.max(1, FIN_COL_HEADER_COUNT('fin-payroll-periods', colDefs, cols) - 14)}>TỔNG TOÀN CÔNG TY ({allSlips.length} phiếu)</td>
+                    <td colSpan={Math.max(1, leftColCount)}>TỔNG TOÀN CÔNG TY ({allSlips.length} phiếu)</td>
                     {show('gio') && <td className="num">{r1(grand.gio).toFixed(1)}</td>}
                     {show('banCa') && <td className="num fin-money">{formatVND(grand.banCa)}</td>}
                     {show('phuCap') && <td className="num fin-money">{formatVND(grand.phuCap)}</td>}
