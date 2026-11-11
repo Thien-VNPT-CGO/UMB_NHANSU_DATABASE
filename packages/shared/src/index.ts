@@ -12,3 +12,4 @@ export * from './constants/payslip-drive.js';
 export * from './constants/office.js';
 export * from './attendance-grid.js';
 export * from './payMode.js';
+export * from './candidate-age.js';

@@ -1,9 +1,13 @@
+import { evaluateCandidateAge } from '@ubm/shared';
+
 /**
  * Hệ thống AI tự động chấm điểm ứng viên đăng ký Google Forms
- * Tuân thủ 100% Ma trận 9 Tiêu chí tuyển dụng chuẩn của UBM:
+ * Tuân thủ Ma trận 9 Tiêu chí tuyển dụng chuẩn của UBM:
  * - Thang điểm tối đa (MAXIMUM): 14 điểm
  * - Đạt: >= 8 điểm (và không bị vi phạm tiêu chí Loại)
  * - Loại: < 8 điểm hoặc vi phạm bất kỳ tiêu chí Loại nào
+ * - Tiêu chí 2 (Năm sinh): chấm theo TUỔI THẬT realtime (giờ VN) — dưới 18
+ *   tuổi 0đ, 18-19 tuổi 1đ, từ 20 tuổi trở lên 2đ.
  */
 
 export interface AiScoringResult {
@@ -39,8 +43,8 @@ export function evaluateCandidateAiScore(candidate: {
   facebook_url?: string;
 }): AiScoringResult {
   const name = (candidate.full_name || '').trim();
-  const rawBirth = candidate.birth_year;
-  const birthYear = typeof rawBirth === 'number' ? rawBirth : parseInt(String(rawBirth || '').replace(/\D/g, ''), 10) || 2002;
+  // Tuổi thật tại thời điểm chấm (giờ VN) — xem packages/shared/src/candidate-age.ts.
+  const ageEval = evaluateCandidateAge(candidate.birth_year);
   const hometown = (candidate.hometown || '').trim().toLowerCase();
   const phone = (candidate.phone_normalized || candidate.phone || '').replace(/\D/g, '');
   const education = (candidate.education_level || '').trim().toLowerCase();
@@ -61,22 +65,10 @@ export function evaluateCandidateAiScore(candidate: {
     c1Note = 'Ghi đủ họ và tên';
   }
 
-  // --- TIÊU CHÍ 2: Năm Sinh của bạn? (2000-2004: 2đ | 2005-2008: 1đ | >2008: 0đ | <2000: 1đ) ---
-  let c2Points = 0;
-  let c2Note = 'Chưa phù hợp độ tuổi';
-  if (birthYear >= 2000 && birthYear <= 2004) {
-    c2Points = 2;
-    c2Note = `Năm sinh ${birthYear} (2000-2004: Độ tuổi vàng F&B)`;
-  } else if (birthYear >= 2005 && birthYear <= 2008) {
-    c2Points = 1;
-    c2Note = `Năm sinh ${birthYear} (2005-2008)`;
-  } else if (birthYear > 2008) {
-    c2Points = 0;
-    c2Note = `Năm sinh ${birthYear} (Dưới độ tuổi tuyển dụng phổ thông)`;
-  } else {
-    c2Points = 1;
-    c2Note = `Năm sinh ${birthYear} (Trước năm 2000)`;
-  }
+  // --- TIÊU CHÍ 2: Năm Sinh của bạn? TUỔI THẬT realtime (giờ VN):
+  //     < 18 tuổi: 0đ | 18-19 tuổi: 1đ | >= 20 tuổi: 2đ | thiếu năm sinh: 0đ ---
+  const c2Points = ageEval.points;
+  const c2Note = ageEval.note;
 
   // --- TIÊU CHÍ 3: Quê Quán theo CCCD? (Ưu tiên miền Nam, miền Tây: 1đ | Miền Bắc, miền Trung: 0đ) ---
   let c3Points = 0;
