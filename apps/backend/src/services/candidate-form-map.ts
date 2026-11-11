@@ -20,16 +20,14 @@ export function parseFormBirthYear(raw: unknown): number {
   return 2002;
 }
 
-/** Giữ link Facebook đúng như ứng viên gửi; chỉ thêm scheme khi thiếu. */
+/**
+ * Giữ NGUYÊN giá trị ô Facebook ứng viên đã gửi.
+ * Code cũ tự ghép "https://facebook.com/<tên>" cho mọi giá trị không phải URL
+ * ("Pun Nguyễn" -> https://facebook.com/Pun Nguyễn) khiến Sheet đích sai dữ
+ * liệu thật. Không suy diễn gì thêm ở đây.
+ */
 export function normalizeFormFacebook(raw: unknown): string {
-  const text = String(raw ?? '').trim();
-  if (!text) return '';
-  if (/^https?:\/\//i.test(text)) return text;
-  // Chỉ ghép scheme khi giá trị thật sự là đường dẫn Facebook. Tên/ghi chú
-  // ("Pun Nguyễn", "Ko") phải giữ nguyên, không bịa thành URL hỏng.
-  if (/^(www\.)?(facebook\.com|fb\.com|fb\.me)\//i.test(text)) return `https://${text}`;
-  if (/^[a-z0-9.]{5,}$/i.test(text) && !text.includes(' ')) return `https://facebook.com/${text}`;
-  return text;
+  return String(raw ?? '').trim();
 }
 
 /** Mã trạng thái gửi Zalo hợp lệ (cột "Zalo Thư Mời" trên Sheet đích). */
@@ -47,6 +45,30 @@ export function parseZaloInviteCell(raw: unknown): { status?: string; note?: str
   const upper = text.toUpperCase();
   if ((ZALO_INVITE_STATUSES as readonly string[]).includes(upper)) return { status: upper };
   return { note: text };
+}
+
+/** Nhãn ca do HR chốt qua dropdown "Cập nhật TT" (khác câu trả lời thô của form). */
+export function isHrShiftLabel(raw: unknown): boolean {
+  return /^Ca\s+(sáng|chiều|tối)\s*\(\d{2}\s*-\s*\d{2}\)$/i.test(String(raw ?? '').trim());
+}
+
+/** Nhãn chi nhánh do HR chốt (VD "Ụm Bò Milk - CN2 (261 Tô Hiến Thành)"). */
+export function isHrBranchLabel(raw: unknown): boolean {
+  return /^Ụm\s+Bò\s+Milk\s*-\s*CN/i.test(String(raw ?? '').trim());
+}
+
+/**
+ * Khoá nhận diện ứng viên để ghép dữ liệu vận hành (ca/chi nhánh/lịch PV…).
+ *
+ * `submission_id` hiện đánh theo THỨ TỰ DÒNG nên rất dễ lệch khi Sheet bị
+ * sắp xếp/chèn dòng: dữ liệu HR của người này bị gắn sang người khác. Luôn ghép
+ * theo SĐT + tên (+ thời gian gửi nếu có) để đúng người.
+ */
+export function candidateIdentityKey(phone: unknown, name: unknown, createdAt?: unknown): string {
+  const ph = String(phone ?? '').replace(/\D/g, '');
+  const nm = String(name ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const t = String(createdAt ?? '').trim();
+  return `${ph}|${nm}${t ? `|${t}` : ''}`;
 }
 
 /** Giá trị ghi lại vào cột "Zalo Thư Mời": ưu tiên trạng thái, không có thì giữ ghi chú. */

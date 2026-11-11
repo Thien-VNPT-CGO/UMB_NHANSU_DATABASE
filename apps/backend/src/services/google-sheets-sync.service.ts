@@ -26,6 +26,9 @@ import { normSheetDate, normSheetDateTime, sheetDateText, sheetDateTimeText } fr
 import { evaluateCandidateAiScore } from './ai-scorer.js';
 import {
   buildZaloInviteCell,
+  candidateIdentityKey,
+  isHrBranchLabel,
+  isHrShiftLabel,
   normalizeFormFacebook,
   parseFormBirthYear,
   parseZaloInviteCell,
@@ -4075,6 +4078,15 @@ export class GoogleSheetsSyncService {
         const prevById = new Map<string, any>(
           ((fallback as any).candidates || []).map((c: any) => [c.submission_id, c])
         );
+        // Ghép theo NHÂN THÂN (SĐT + tên + thời gian gửi) thay vì submission_id
+        // đánh theo thứ tự dòng — tránh gắn ca/chi nhánh của người này sang người
+        // khác khi Sheet bị sắp xếp/chèn dòng.
+        const prevByKey = new Map<string, any>();
+        for (const pc of (fallback as any).candidates || []) {
+          const ph = pc.phone_normalized || pc.phone;
+          prevByKey.set(candidateIdentityKey(ph, pc.full_name), pc);
+          if (pc.created_at) prevByKey.set(candidateIdentityKey(ph, pc.full_name, pc.created_at), pc);
+        }
 
         const dataRows = candRows.slice(1);
         fallback.candidates = dataRows
@@ -4123,7 +4135,10 @@ export class GoogleSheetsSyncService {
             const rawStatus = getVal(colStatus) || '';
             const sourceCode = getVal(colSourceCode) || `UBM_FORM_${String(idx + 1).padStart(4, '0')}`;
             const submissionId = `CAND_${String(idx + 1).padStart(4, '0')}`;
-            const prev = prevById.get(submissionId) || {};
+            const prev = prevByKey.get(candidateIdentityKey(phoneNormalized, fullName, rawCreatedAt))
+              || prevByKey.get(candidateIdentityKey(phoneNormalized, fullName))
+              || prevById.get(submissionId)
+              || {};
             // Sheet form gốc không có trạng thái -> 'NEW'/trống thì giữ trạng thái bộ nhớ (INVITED...)
             const status = (rawStatus && rawStatus !== 'NEW' ? rawStatus : (prev.status && prev.status !== 'NEW' ? prev.status : (rawStatus || 'NEW'))) as any;
             // VIP (ưu tiên vào việc) là trường vận hành do HR đánh dấu trên hệ thống,
@@ -4164,9 +4179,14 @@ export class GoogleSheetsSyncService {
               // đổi sau khi gửi, nên ưu tiên giá trị bộ nhớ (HR vừa cập nhật) — nếu không
               // pull nền (~10s) sẽ dựng lại từ form và đè mất, HR thấy "lưu thành công
               // nhưng dữ liệu không đổi".
-              preferred_branch_id: (prev as any).preferred_branch_id || (branchName.includes('CN') ? (branchName.match(/CN\d+/)?.[0] || 'CN130') : 'CN130'),
-              branch_name: (prev as any).branch_name || branchName,
-              registered_shift: (prev as any).registered_shift || registeredShift,
+              // Chỉ giữ ca/chi nhánh khi đó là nhãn HR ĐÃ CHỐT qua dropdown.
+              // Giá trị dạng câu trả lời thô còn sót từ lần đồng bộ lệch dòng
+              // trước đây phải trả về đúng câu trả lời của ứng viên trên form.
+              preferred_branch_id: isHrBranchLabel((prev as any).branch_name)
+                ? ((prev as any).preferred_branch_id || (branchName.match(/CN\d+/)?.[0] || 'CN130'))
+                : (branchName.match(/CN\d+/)?.[0] || 'CN130'),
+              branch_name: isHrBranchLabel((prev as any).branch_name) ? (prev as any).branch_name : branchName,
+              registered_shift: isHrShiftLabel((prev as any).registered_shift) ? (prev as any).registered_shift : registeredShift,
               experience,
               emergency_handling: emergencyHandling,
               facebook_url: facebookUrl,
@@ -4208,8 +4228,11 @@ export class GoogleSheetsSyncService {
                 if (ph && nm) byPhoneName.set(`${ph}|${nm}`, r);
               });
               for (const c of fallback.candidates as any[]) {
-                const mr = byId.get(c.submission_id)
-                  || byPhoneName.get(`${c.phone_normalized || ''}|${String(c.full_name || '').trim().toLowerCase()}`);
+                // Ưu tiên khớp theo SĐT + tên: master có thể bị HR sắp xếp lại
+                // dòng, khi đó khớp theo vị trí (byId) sẽ gắn lịch PV/Zalo/VIP
+                // của người này sang người khác.
+                const mr = byPhoneName.get(`${c.phone_normalized || ''}|${String(c.full_name || '').trim().toLowerCase()}`)
+                  || byId.get(c.submission_id);
                 if (!mr) continue;
                 // Lịch vừa bị hủy (tay/auto): ÉP XÓA thay vì hồi sinh dòng cũ trên Sheet.
                 if (this.isInterviewScheduleClearedRecently(c.submission_id)) {
@@ -4232,9 +4255,12 @@ export class GoogleSheetsSyncService {
                 // Ca + chi nhánh HR đã chốt (Cập nhật TT) lưu ở master cột 7/8: phủ lại để
                 // bền vững qua restart (bộ nhớ trắng, form gốc chỉ còn giá trị ban đầu).
                 // PUT đã đẩy master đồng bộ (await) trước khi trả response nên master tươi.
-                if (nz(mr[7]) !== undefined) c.registered_shift = nz(mr[7]) as any;
+                // Chỉ phủ ca/chi nhánh khi master giữ NHÃN HR đã chốt. Giá trị thô
+                // kiểu câu trả lời form là dữ liệu cũ bị lệch dòng -> bỏ qua.
+                const mShift = nz(mr[7]);
+                if (mShift && isHrShiftLabel(mShift)) c.registered_shift = mShift as any;
                 const mBranch = nz(mr[8]);
-                if (mBranch !== undefined) {
+                if (mBranch && isHrBranchLabel(mBranch)) {
                   c.branch_name = mBranch as any;
                   const mCode = String(mBranch).match(/CN\d+/i)?.[0]?.toUpperCase();
                   if (mCode) c.preferred_branch_id = mCode as any;
