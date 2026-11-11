@@ -6,6 +6,8 @@
  * Tách khỏi app.ts để dễ chỉnh giao diện + test render độc lập.
  */
 
+import { proposalSlotTimes } from './interview-slots.service.js';
+
 export const escapeHtml = (s: unknown) => String(s || '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -47,6 +49,14 @@ export function renderRsvpPage(
   const tone = opts?.tone || 'muted';
   // "Hôm nay" theo giờ VN — dùng làm min cho ô chọn ngày đề xuất lịch mới.
   const vnToday = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+  // Khung giờ được render SẴN ở server (không chờ JS/API) để ứng viên luôn thấy
+  // chức năng chọn giờ phỏng vấn, kể cả khi WebView chặn sự kiện change hoặc API
+  // khung giờ tạm lỗi. JS chỉ cập nhật trạng thái kín/qua giờ sau đó.
+  const slotTimes = proposalSlotTimes();
+  const slotButtons = (session: 'SANG' | 'CHIEU') => slotTimes
+    .filter((s) => s.session === session)
+    .map((s) => `<button type="button" class="slot" data-time="${s.time}" data-session="${s.session}" aria-label="Chọn ${s.time}">${s.time}</button>`)
+    .join('');
   const infoHtml = (opts?.info && opts.info.length > 0)
     ? `<div class="info">${opts.info.map((r) => `<div class="row${r.highlight ? ' hl' : ''}"><div class="ico">${RSVP_ICONS[r.icon]}</div><div class="txt"><div class="lab">${escapeHtml(r.label)}</div><div class="val">${escapeHtml(r.value)}</div></div></div>`).join('')}</div>`
     : '';
@@ -136,43 +146,55 @@ ${ctx ? `<div class="actions"><button class="btn confirm" id="bOk">${RSVP_ICONS.
 <label for="propDate">Chọn ngày tham gia phỏng vấn</label>
 <input type="date" id="propDate" min="${vnToday}" />
 <div class="slotGroup">Buổi sáng · 08:00 – 11:30</div>
-<div class="slotWrap" id="slotSang"></div>
+<div class="slotWrap" id="slotSang">${slotButtons('SANG')}</div>
 <div class="slotGroup">Buổi chiều · 13:30 – 16:30</div>
-<div class="slotWrap" id="slotChieu"></div>
+<div class="slotWrap" id="slotChieu">${slotButtons('CHIEU')}</div>
 <div class="slotHint" id="slotHint">Chọn ngày để xem khung giờ còn trống — khung đã có ứng viên khác đặt sẽ bị gạch, không chọn được.</div>
 <label for="declineNote" style="margin-top:12px">Ghi chú (nếu có)</label>
 <textarea id="declineNote" rows="2" maxlength="500" placeholder="VD: chỉ rảnh buổi chiều, muốn dời sang tuần sau..."></textarea>
 <button class="btn send" id="bSendNo" type="button" disabled>Gửi từ chối</button></div><div class="msg" id="msg"></div></div>
 <script>const tk=${JSON.stringify(ctx.token)};
 const reasonEl=document.getElementById('declineReason'),sendNo=document.getElementById('bSendNo'),msgEl=document.getElementById('msg'),okBtn=document.getElementById('bOk'),noBtn=document.getElementById('bNo');
-const propDate=document.getElementById('propDate'),slotSang=document.getElementById('slotSang'),slotChieu=document.getElementById('slotChieu'),slotHint=document.getElementById('slotHint'),noteEl=document.getElementById('declineNote');
-let pickedTime='';
+const propDate=document.getElementById('propDate'),declineBox=document.getElementById('declineBox'),slotHint=document.getElementById('slotHint'),noteEl=document.getElementById('declineNote');
+const slotBtns=Array.prototype.slice.call(document.querySelectorAll('.slot'));
+const HINT_IDLE='Chọn ngày để xem khung giờ còn trống — khung đã có ứng viên khác đặt sẽ bị gạch, không chọn được.';
+let pickedTime='',loadSeq=0;
 function syncSend(){sendNo.disabled=!reasonEl.value.trim();}
 async function post(body){const r=await fetch('./rsvp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'Lỗi');return j;}
-function clearSlots(){pickedTime='';slotSang.innerHTML='';slotChieu.innerHTML='';}
-function paintSlots(slots){clearSlots();if(!slots||!slots.length){slotHint.textContent='Không có khung giờ phù hợp ngày này — vui lòng chọn ngày khác.';return;}
-slots.forEach(function(s){const b=document.createElement('button');b.type='button';b.className='slot';b.textContent=s.time;
-if(s.disabled){b.disabled=true;b.title=s.reason==='TAKEN'?'Khung này đã có ứng viên khác đặt lịch':'Khung này đã qua giờ';}
-else{b.onclick=function(){document.querySelectorAll('.slot.on').forEach(function(x){x.classList.remove('on');});b.classList.add('on');pickedTime=s.time;slotHint.textContent='Bạn chọn '+s.time+' — HR sẽ xem xét và gửi lại thư mời xác nhận.';};}
-(s.session==='SANG'?slotSang:slotChieu).appendChild(b);});}
-async function loadSlots(){clearSlots();const d=propDate.value;
-if(!/^\d{4}-\d{2}-\d{2}$/.test(d)){slotHint.textContent='Chọn ngày để xem khung giờ còn trống — khung đã có ứng viên khác đặt sẽ bị gạch.';return;}
+function clearPicked(){pickedTime='';slotBtns.forEach(function(b){b.classList.remove('on');});}
+function pickSlot(b){clearPicked();b.classList.add('on');pickedTime=b.getAttribute('data-time');slotHint.textContent='Bạn chọn '+pickedTime+' — HR sẽ xem xét và gửi lại thư mời xác nhận.';}
+slotBtns.forEach(function(b){b.addEventListener('click',function(){if(!b.disabled)pickSlot(b);});});
+function resetSlots(){clearPicked();slotBtns.forEach(function(b){b.disabled=false;b.removeAttribute('title');});}
+function paintSlots(slots){
+if(!slots||!slots.length){resetSlots();slotHint.textContent='Không có khung giờ phù hợp ngày này — vui lòng chọn ngày khác.';return;}
+const byTime={};slots.forEach(function(s){byTime[s.time]=s;});
+slotBtns.forEach(function(b){const s=byTime[b.getAttribute('data-time')];
+if(!s){b.disabled=false;b.removeAttribute('title');return;}
+b.disabled=!!s.disabled;
+if(s.disabled){b.title=s.reason==='TAKEN'?'Khung này đã có ứng viên khác đặt lịch':'Khung này đã qua giờ';}else{b.removeAttribute('title');}});
+if(pickedTime&&(!byTime[pickedTime]||byTime[pickedTime].disabled))clearPicked();
+else if(pickedTime){const keep=slotBtns.filter(function(b){return b.getAttribute('data-time')===pickedTime;})[0];if(keep)keep.classList.add('on');}}
+async function loadSlots(){const d=propDate.value,seq=++loadSeq;
+if(!/^\d{4}-\d{2}-\d{2}$/.test(d)){resetSlots();slotHint.textContent=HINT_IDLE;return;}
 slotHint.textContent='⏳ Đang tải khung giờ...';
-try{const r=await fetch('./rsvp/slots?token='+encodeURIComponent(tk)+'&date='+encodeURIComponent(d));const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'Không tải được khung giờ');
+try{const r=await fetch('./rsvp/slots?token='+encodeURIComponent(tk)+'&date='+encodeURIComponent(d));const j=await r.json().catch(()=>({}));if(seq!==loadSeq)return;if(!r.ok)throw new Error(j.error||'Không tải được khung giờ');
 const slots=j.slots||[];paintSlots(slots);const free=slots.filter(function(s){return !s.disabled;}).length;
-slotHint.textContent=free>0?('Còn '+free+' khung trống — chạm vào khung giờ bạn muốn. Khung gạch chéo là đã kín hoặc đã qua giờ.'):'Ngày này đã kín lịch — vui lòng chọn ngày khác.';}
-catch(e){slotHint.textContent='⚠️ '+e.message;}}
-propDate.addEventListener('change',loadSlots);
+if(pickedTime){slotHint.textContent='Bạn chọn '+pickedTime+' — HR sẽ xem xét và gửi lại thư mời xác nhận.';}
+else{slotHint.textContent=free>0?('Còn '+free+' khung trống — chạm vào khung giờ bạn muốn. Khung gạch chéo là đã kín hoặc đã qua giờ.'):'Ngày này đã kín lịch — vui lòng chọn ngày khác.';}}
+catch(e){if(seq!==loadSeq)return;resetSlots();slotHint.textContent='⚠️ '+e.message+' — bạn vẫn chọn được khung giờ bên trên, HR sẽ kiểm tra lại khi chốt lịch.';}}
+['change','input','blur'].forEach(function(ev){propDate.addEventListener(ev,loadSlots);});
 reasonEl.addEventListener('input',syncSend);
 okBtn.onclick=async()=>{msgEl.textContent='⏳ Đang gửi...';try{await post({token:tk,decision:'CONFIRM'});msgEl.textContent='🎉 Đã xác nhận tham gia! HR sẽ giữ lịch cho bạn. Hẹn gặp bạn đúng giờ nhé.';okBtn.textContent='✅ Đã xác nhận tham gia';okBtn.disabled=true;noBtn.style.display='none';document.getElementById('declineBox').classList.remove('show');}catch(e){msgEl.textContent='⚠️ '+e.message;}};
-noBtn.onclick=()=>{const box=document.getElementById('declineBox');box.classList.toggle('show');if(box.classList.contains('show'))reasonEl.focus();};
+noBtn.onclick=()=>{declineBox.classList.toggle('show');if(declineBox.classList.contains('show')){reasonEl.focus();loadSlots();}};
+if(/^\d{4}-\d{2}-\d{2}$/.test(propDate.value))loadSlots();
 sendNo.onclick=async()=>{const reason=reasonEl.value.trim();if(!reason){msgEl.textContent='⚠️ Vui lòng nhập lý do từ chối trước khi gửi.';return;}
-const d=propDate.value;if(d&&!pickedTime){msgEl.textContent='⚠️ Bạn đã chọn ngày nhưng chưa chọn khung giờ — chạm vào 1 khung giờ bên trên (hoặc xóa ngày nếu không đề xuất).';return;}
+const d=propDate.value;if(pickedTime&&!d){msgEl.textContent='⚠️ Bạn đã chọn khung giờ nhưng chưa chọn ngày — vui lòng chọn ngày phỏng vấn mong muốn.';return;}
+if(d&&!pickedTime){msgEl.textContent='⚠️ Bạn đã chọn ngày nhưng chưa chọn khung giờ — chạm vào 1 khung giờ bên trên (hoặc xóa ngày nếu không đề xuất).';return;}
 const body={token:tk,decision:'DECLINE',reason};const hasProposal=!!(d&&pickedTime);
 if(hasProposal){body.proposedDate=d;body.proposedTime=pickedTime;const n=noteEl.value.trim();if(n)body.proposedNote=n;}
 msgEl.textContent='⏳ Đang gửi...';
 try{await post(body);msgEl.textContent=hasProposal?'📝 Đã ghi nhận. HR sẽ xem xét đề xuất lịch mới của bạn và gửi lại thư mời — chú ý tin nhắn Zalo trước giờ hẹn 30 phút.':'📝 Đã ghi nhận từ chối. Cảm ơn bạn đã dành thời gian ứng tuyển — HR sẽ xem xét lý do của bạn.';
-sendNo.disabled=true;reasonEl.disabled=true;propDate.disabled=true;noteEl.disabled=true;okBtn.style.display='none';noBtn.style.display='none';}catch(e){msgEl.textContent='⚠️ '+e.message;}};</script>` : ''}
+sendNo.disabled=true;reasonEl.disabled=true;propDate.disabled=true;noteEl.disabled=true;slotBtns.forEach(function(b){b.disabled=true;});okBtn.style.display='none';noBtn.style.display='none';}catch(e){msgEl.textContent='⚠️ '+e.message;}};</script>` : ''}
 <div class="foot">${RSVP_ICONS.lock}<span>Trang xác nhận riêng cho ứng viên • Không cần đăng nhập</span></div>
 </div>
 </div></body></html>`;

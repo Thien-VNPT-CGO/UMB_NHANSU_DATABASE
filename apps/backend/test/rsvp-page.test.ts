@@ -23,6 +23,12 @@ test('trang RSVP có khối "Đề xuất lịch mới" + khung giờ sáng/chi�
   assert.match(html, /proposedNote/);
   // Endpoint khung giờ tương đối đúng thư mục hiện tại
   assert.match(html, /\.\/rsvp\/slots/);
+  // Khung giờ render sẵn ở server (không phụ thuộc JS/API): 7 sáng + 6 chiều.
+  assert.equal((html.match(/class="slot"/g) || []).length, 13);
+  assert.match(html, /data-time="08:00"/);
+  assert.match(html, /data-time="11:00"/);
+  assert.match(html, /data-time="13:30"/);
+  assert.match(html, /data-time="16:00"/);
 });
 
 test('trang RSVP không có khối thao tác khi không truyền ctx', () => {
