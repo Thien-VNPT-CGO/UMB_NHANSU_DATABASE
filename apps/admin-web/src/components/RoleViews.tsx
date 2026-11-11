@@ -11732,11 +11732,32 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             const m = map[st] || { bg: '#F3F4F6', fg: '#6B7280', label: st };
             return <span className="badge" style={{ backgroundColor: m.bg, color: m.fg, fontWeight: 700 }}>{m.label}</span>;
           };
+          // LOẠI PHIẾU CHÍNH XÁC: tách rõ "Đổi ca" (tráo 2 chiều A ⇄ B) và
+          // "Nhường ca" (1 chiều — B làm thay ca của A). Trước đây mọi phiếu NV
+          // gửi đều bị gộp thành "NV tự tráo" nên HR không biết NV chọn hình thức
+          // nào. Dữ liệu phân biệt: form Đổi ca gửi kèm ca thật của B
+          // (target_assignment_id), form Nhường ca/nhờ làm thay gửi rỗng.
+          const swapTypeOf = (sw: any) => {
+            const kind = String(sw?.swap_kind || 'EMPLOYEE_SWAP');
+            if (kind === 'HR_SUPPORT') {
+              return { code: 'HR_SUPPORT' as const, label: 'Hỗ trợ chi nhánh', sub: 'HR chuyển ca sang chi nhánh khác', bg: '#DBEAFE', fg: '#1D4ED8' };
+            }
+            if (kind === 'HR_DISPATCH') {
+              return { code: 'HR_DISPATCH' as const, label: 'HR điều phối nhường ca', sub: 'HR giao ca cho NV nhận', bg: '#EDE9FE', fg: '#6D28D9' };
+            }
+            if (String(sw?.target_assignment_id || '').trim()) {
+              return { code: 'SWAP' as const, label: 'Đổi ca', sub: 'A ⇄ B — hai người tráo ca cho nhau', bg: '#ECFDF5', fg: '#047857' };
+            }
+            return { code: 'GIVE' as const, label: 'Nhường ca', sub: 'B làm thay ca của A (1 chiều)', bg: '#FEF3C7', fg: '#92400E' };
+          };
           const reviewSwap = async (sw: any, accept: boolean) => {
-            const isDispatch = (sw.swap_kind || 'EMPLOYEE_SWAP') === 'HR_DISPATCH';
-            const isSupport = (sw.swap_kind || '') === 'HR_SUPPORT';
+            const type = swapTypeOf(sw);
+            const isSupport = type.code === 'HR_SUPPORT';
             if (isSupport) { showToast('Phiếu hỗ trợ chi nhánh do nhân viên xác nhận trên cổng NV (không cần HR duyệt thêm). Theo dõi trạng thái tại tab Chuyển ca hỗ trợ!'); return; }
-            if (!window.confirm(accept ? (isDispatch ? `Duyệt nhường ca ${sw.swap_id}? Ca chuyển cho người nhận.` : `Duyệt tráo ca ${sw.swap_id}? Hai ca sẽ hoán đổi người trực.`) : `Từ chối phiếu ${sw.swap_id}?`)) return;
+            const okMsg = type.code === 'SWAP'
+              ? `Duyệt ĐỔI CA ${sw.swap_id}? Hai ca sẽ hoán đổi người trực.`
+              : `Duyệt NHƯỜNG CA ${sw.swap_id}? Ca của ${empName(sw.requester_id)} chuyển cho ${sw.target_employee_id ? empName(sw.target_employee_id) : 'người nhận'} làm thay.`;
+            if (!window.confirm(accept ? okMsg : `Từ chối phiếu ${sw.swap_id}?`)) return;
             if (swapReviewBusy) return;
             setSwapReviewBusy(sw.swap_id);
             try {
@@ -11766,8 +11787,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           };
           const renderRows = (rows: any[], canReview: boolean) =>
             rows.map((sw: any) => {
-              const isDispatch = (sw.swap_kind || 'EMPLOYEE_SWAP') === 'HR_DISPATCH';
-              const isSupport = (sw.swap_kind || '') === 'HR_SUPPORT';
+              const type = swapTypeOf(sw);
+              const isDispatch = type.code === 'HR_DISPATCH';
+              const isSupport = type.code === 'HR_SUPPORT';
               const supportInfo = isSupport
                 ? `${(sw as any).support_branch_id || ''} • ${String((sw as any).support_date || '').slice(0, 10)} • ${shiftNameOf((sw as any).support_shift_code || '')}`
                 : '';
@@ -11782,13 +11804,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }} title={sw.target_assignment_id || ''}>{sw.target_assignment_id ? `Ca: ${shiftInfo(sw.target_assignment_id)}` : (sw.target_employee_id ? (isSupport ? 'Nhận hỗ trợ (làm thay ca A)' : 'Nhận làm thay (1 chiều)') : '')}</div>
                 </td>
                 <td style={{ padding: '12px 20px' }}>
-                  <span className="badge" style={{ backgroundColor: isDispatch ? '#EDE9FE' : isSupport ? '#DBEAFE' : '#F3F4F6', color: isDispatch ? '#6D28D9' : isSupport ? '#1D4ED8' : '#4B5563', fontWeight: 700 }}>
-                    {isDispatch ? 'HR điều phối' : isSupport ? 'Hỗ trợ chi nhánh' : 'NV tự tráo'}
+                  <span className="badge" style={{ backgroundColor: type.bg, color: type.fg, fontWeight: 700 }}>
+                    {type.label}
                   </span>
-                  {isDispatch && sw.status === 'APPROVED' && (
-                    <div style={{ fontSize: '11px', color: '#059669', fontWeight: 700, marginTop: '2px' }}>Ca đã chuyển ✓</div>
-                  )}
-                  {isSupport && sw.status === 'APPROVED' && (
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 500, marginTop: '2px' }}>{type.sub}</div>
+                  {(isDispatch || isSupport) && sw.status === 'APPROVED' && (
                     <div style={{ fontSize: '11px', color: '#059669', fontWeight: 700, marginTop: '2px' }}>Ca đã chuyển ✓</div>
                   )}
                 </td>
@@ -11804,7 +11824,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                       <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: '12px', color: '#DC2626' }} disabled={swapReviewBusy === sw.swap_id} onClick={() => reviewSwap(sw, false)}>{swapReviewBusy === sw.swap_id ? '⏳...' : 'Từ chối'}</button>
                     </div>
                   ) : (
-                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{sw.status === 'APPROVED' ? (isDispatch ? 'Đã giao ca' : isSupport ? 'Đã tạo ca hỗ trợ' : 'Đã hoán đổi ca') : (isSupport && sw.status === 'PENDING_PARTNER' ? 'Chờ NV xác nhận' : '—')}</span>
+                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{sw.status === 'APPROVED' ? (type.code === 'SWAP' ? 'Đã hoán đổi ca' : type.code === 'GIVE' ? 'Đã nhường ca' : isSupport ? 'Đã tạo ca hỗ trợ' : 'Đã giao ca') : (isSupport && sw.status === 'PENDING_PARTNER' ? 'Chờ NV xác nhận' : '—')}</span>
                   )}
                 </td>
               </tr>
@@ -11857,14 +11877,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
           return (
             <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden' }}>
               <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <strong style={{ fontSize: '14px' }}>Phiếu tráo đổi ca A ⇄ B ({list.length})</strong>
+                <strong style={{ fontSize: '14px' }}>Phiếu đổi ca / nhường ca ({list.length})</strong>
                 <span className="badge" style={{ backgroundColor: ready.length > 0 ? '#DBEAFE' : '#DCFCE7', color: ready.length > 0 ? '#1D4ED8' : '#166534', fontWeight: 800 }}>
                   {ready.length} chờ HR duyệt • {waiting.length} chờ NV B
                 </span>
               </div>
               {list.length === 0 ? (
                 <div style={{ padding: '28px 20px', textAlign: 'center', fontSize: '13px', color: 'var(--text-muted)' }}>
-                  Chưa có yêu cầu tráo đổi ca nào từ Cổng Nhân Viên. Phiếu mới sẽ hiện realtime tại đây.
+                  Chưa có phiếu đổi ca / nhường ca nào từ Cổng Nhân Viên. Phiếu mới sẽ hiện realtime tại đây.
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column' }}>
@@ -11885,7 +11905,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
                             <th style={{ padding: '12px 20px' }}>NV A (Người đề xuất)</th>
                             <th style={{ padding: '12px 20px' }}>NV B (Người nhận)</th>
-                            <th style={{ padding: '12px 20px' }}>Loại Phiếu</th>
+                            <th style={{ padding: '12px 20px' }}>Loại Phiếu (Đổi Ca / Nhường Ca)</th>
                             <th style={{ padding: '12px 20px' }}>Lý Do</th>
                             <th style={{ padding: '12px 20px' }}>Thời Gian Gửi</th>
                             <th style={{ padding: '12px 20px' }}>Tình Trạng</th>
