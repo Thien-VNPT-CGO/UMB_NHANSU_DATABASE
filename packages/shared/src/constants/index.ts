@@ -117,9 +117,9 @@ export const BRANCHES: BranchInfo[] = [
   {
     id: 'XUONG_SX',
     name: 'Ụm Bò Milk - Xưởng Sản Xuất (Củ Chi)',
-    address: 'Xưởng Sản Xuất Ụm Bò Milk, Huyện Củ Chi, TP. Hồ Chí Minh',
-    latitude: 10.974420,
-    longitude: 106.494900,
+    address: '85/14 Bùi Công Trừng, Hóc Môn / Q.12, TP. Hồ Chí Minh',
+    latitude: 10.908028,
+    longitude: 106.650444,
     radius_meters: 500,
     gps_enabled: true,
     min_staff: 4,
