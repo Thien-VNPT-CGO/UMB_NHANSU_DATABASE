@@ -810,6 +810,10 @@ export default function FinanceModule(props: FinanceModuleProps) {
   const [paymentPreview, setPaymentPreview] = useState(false);
   useEffect(() => { setPaymentPreview(false); }, [activeTab, month]);
   const showTabContent = isFinance ? (open || (activeStepDone && viewLockedContent) || (activeTab === 'fin-payment' && paymentPreview)) : true;
+  // Bước đã khóa (đã xong / chưa mở / tháng đã kết thúc) → CHỈ XEM: nội dung
+  // tab vẫn xem được nhưng mọi ô nhập & nút thao tác bị vô hiệu hóa. Muốn sửa
+  // phải bấm "Quay về bước trước" (backend cũng chặn STEP_LOCKED).
+  const contentReadOnly = isFinance && !open;
   const firstOpenStep = useMemo(() => {
     if (currentOpenStep?.id) return currentOpenStep.id;
     for (const s of PROCESS_STEPS) { if (s.id === 'fin-dashboard') continue; if (isTabOpen(s.id)) return s.id; }
@@ -1041,7 +1045,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
       {isFinance && (<nav className="fin-stepper-wrap" aria-label="Các bước xử lý lương">
         <div className="fin-stepper-title">
           <span>QUY TRÌNH KẾ TOÁN — XỬ LÝ TUẦN TỰ (REALTIME) · {periodLabel(month)} · THEO TỪNG THÁNG{monthLocked ? ' · ĐÃ KHÓA (HẾT THÁNG NÀY)' : ''}</span>
-          <em>Tháng nào theo tháng đó (độc lập, không dùng chung): chỉ bước đang xử lý được mở · xong bước nào khóa bước đó · bước sau mở khi bước trước xong{currentOpenStep ? ` — đang xử lý: ${currentOpenStep.title}` : ' — đã hoàn tất toàn bộ'}{complainedCount ? ` · ⚠️ ${complainedCount} phiếu bị khiếu nại chờ kiểm tra lại` : ''}</em>
+          <em>Tháng nào theo tháng đó (độc lập, không dùng chung): mỗi tháng mới tự bắt đầu lại từ bước 1 · chỉ bước đang xử lý được mở · xong bước nào khóa bước đó (chỉ xem) · bước sau mở khi bước trước xong{currentOpenStep ? ` — đang xử lý: ${currentOpenStep.title}` : ' — đã hoàn tất toàn bộ'}{complainedCount ? ` · ⚠️ ${complainedCount} phiếu bị khiếu nại chờ kiểm tra lại` : ''}</em>
         </div>
         <div className="fin-stepper">
           {PROCESS_STEPS.map(t => {
@@ -1153,8 +1157,29 @@ export default function FinanceModule(props: FinanceModuleProps) {
       ) : null}
 
       {/* ═══════════ NỘI DUNG TAB ═══════════ */}
+      {showTabContent && contentReadOnly && !(activeStepDone && viewLockedContent) && (
+        <div className="fin-past-banner" role="status" style={{ alignItems: 'center' }}>
+          <Lock size={16} />
+          <div style={{ flex: 1 }}>
+            <b>CHỈ XEM</b> — bước <b>{PROCESS_STEPS.find(t => t.id === activeTab)?.label || activeTab}</b> đang khóa theo quy trình tuần tự.
+            Muốn sửa số liệu phải bấm <b>“↩ Quay về bước trước”</b> (kèm lý do) để mở lại đúng bước đó.
+          </div>
+          <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={() => setPaymentPreview(false)}>Khóa lại</button>
+        </div>
+      )}
       {showTabContent && (
-        <main style={{ flex: 1 }}>
+        <main
+          className={contentReadOnly ? 'fin-readonly' : undefined}
+          aria-readonly={contentReadOnly || undefined}
+          onKeyDownCapture={contentReadOnly ? (e: any) => {
+            const tag = String(e?.target?.tagName || '').toUpperCase();
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e?.target?.isContentEditable) {
+              e.preventDefault();
+              e.stopPropagation();
+            }
+          } : undefined}
+          style={{ flex: 1 }}
+        >
           {activeTab === 'fin-dashboard' && <DashboardTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} slips={slips} workflow={workflow} formatVND={formatVND} colVis={colVis} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVisSaving={colVisSaving} />}
           {activeTab === 'fin-timesheet' && <TimesheetTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} loadFinSheet={loadFinSheet} formatVND={formatVND} cols={colsVisible('fin-timesheet')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-timesheet']} workflowStep={workflow?.steps?.find((s: any) => s.id === 'fin-timesheet') || null} onConfirmStep={confirmWorkflowStep} showToast={showToast} />}
           {activeTab === 'fin-bcc' && <BccTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} formatVND={formatVND} cols={colsVisible('fin-bcc')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-bcc']} workflowStep={workflow?.steps?.find((s: any) => s.id === 'fin-bcc') || null} onConfirmStep={confirmWorkflowStep} showToast={showToast} />}
@@ -1162,7 +1187,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
           {activeTab === 'fin-payroll-sheet' && <PayrollSheetTab month={month} slips={slips} allEmployees={allEmployees} formatVND={formatVND} stageBadge={stageBadge} cols={colsVisible('fin-payroll-sheet')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payroll-sheet']} />}
           {activeTab === 'fin-payroll-periods' && <PayrollPeriodsTab month={month} runs={runs} runsLoading={runsLoading} loadRuns={loadRuns} slips={slips} allEmployees={allEmployees} formatVND={formatVND} runCalculate={runCalculate} calcBusy={calcBusy} payRunAction={payRunAction} onNavigateTab={goTab} inputs={inputs} loadInputs={loadInputs} loadSlips={loadSlips} showToast={showToast} financeEditable={isFinance} cols={payrollPeriodsCols} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payroll-periods']} />}
           {activeTab === 'fin-payslips' && <PayslipsTab month={month} slips={slips} slipsLoading={slipsLoading} allEmployees={allEmployees} formatVND={formatVND} loadSlips={loadSlips} stageBadge={stageBadge} slipQrUrl={slipQrUrl} fastSignLap={fastSignLap} fastSignLapAll={fastSignLapAll} fastSignLapBranch={fastSignLapBranch} publishBranch={publishBranch} publishSlip={publishSlip} returnSlip={returnSlip} markPaidSlip={markPaidSlip} syncSlipDrive={syncSlipDrive} downloadSlipPdf={downloadSlipPdf} cols={colsVisible('fin-payslips')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payslips']} />}
-          {activeTab === 'fin-payment' && <PaymentTab month={month} slips={slips} allEmployees={allEmployees} formatVND={formatVND} loadSlips={loadSlips} slipQrUrl={slipQrUrl} markPaidSlip={markPaidSlip} downloadSlipPdf={downloadSlipPdf} exportPaymentFile={exportPaymentFile} cols={colsVisible('fin-payment')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payment']} />}
+          {activeTab === 'fin-payment' && <PaymentTab month={month} slips={slips} allEmployees={allEmployees} formatVND={formatVND} loadSlips={loadSlips} slipQrUrl={slipQrUrl} markPaidSlip={markPaidSlip} downloadSlipPdf={downloadSlipPdf} exportPaymentFile={exportPaymentFile} readOnly={contentReadOnly} cols={colsVisible('fin-payment')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payment']} />}
           {activeTab === 'fin-signatures' && <SignatureTemplatesTab currentUser={currentUser} showToast={showToast} />}
           {activeTab === 'fin-rate-adjust' && <RateAdjustTab month={month} currentUser={currentUser} showToast={showToast} cols={colsVisible('fin-rate-adjust')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-rate-adjust']} />}
           {activeTab === 'fin-bank-qr' && <BankQrTab allEmployees={allEmployees} month={month} cols={colsVisible('fin-bank-qr')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-bank-qr']} />}
@@ -2502,7 +2527,7 @@ function PayslipsTab({ month, slips, slipsLoading, allEmployees, formatVND, load
 /* ============================================================================
    8 · THANH TOÁN — CHỈ PHIẾU NV ĐÃ KÝ (CONFIRMED)
    ============================================================================ */
-function PaymentTab({ month, slips, allEmployees, formatVND, loadSlips, slipQrUrl, markPaidSlip, downloadSlipPdf, exportPaymentFile, cols, onToggleCol, onShowAllCols, colVis, colVisSaving, colDefs }: any) {
+function PaymentTab({ month, slips, allEmployees, formatVND, loadSlips, slipQrUrl, markPaidSlip, downloadSlipPdf, exportPaymentFile, readOnly = false, cols, onToggleCol, onShowAllCols, colVis, colVisSaving, colDefs }: any) {
   const [q, setQ] = useState('');
   const show = cols?.show || (() => true);
   const ready = useMemo(() => (slips || []).filter((s: any) => String(s?.status) === 'CONFIRMED').filter(matchesFilter(q.trim())), [slips, q]);
@@ -2565,7 +2590,9 @@ function PaymentTab({ month, slips, allEmployees, formatVND, loadSlips, slipQrUr
                           {show('action') && (
                             <td>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-start' }}>
-                              <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={() => markPaidSlip(s.item_id)}><Check size={12} /> Đã Chuyển Khoản</button>
+                              {readOnly
+                                ? <span style={{ fontSize: 11, color: 'var(--fin-muted)', fontWeight: 700 }}>Chỉ xem — chưa mở bước Thanh toán</span>
+                                : <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={() => markPaidSlip(s.item_id)}><Check size={12} /> Đã Chuyển Khoản</button>}
                               <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={() => downloadSlipPdf(s.item_id, s.employee_code)}><FileDown size={12} /> PDF (3 chữ ký)</button>
                             </div>
                           </td>

@@ -179,6 +179,25 @@
 .fin-lockscreen p { margin: 0 auto 16px; max-width: 560px; font-size: 12.5px; color: #7f1d1d; line-height: 1.6; }
 .fin-lock-icon { width: 64px; height: 64px; border-radius: 18px; background: #fee2e2; color: #dc2626; display: flex; align-items: center; justify-content: center; margin: 0 auto; }
 
+/* ---------- Chỉ xem (bước đã khóa / xem trước thanh toán) ----------
+   Quy trình kế toán tuần tự: bước đã xong hoặc chưa mở thì CHỈ XEM. Mọi điều
+   khiển bên trong bị vô hiệu hóa (không click, không gõ, không kéo), nhưng vẫn
+   cuộn/đọc số liệu bình thường. Nút "Cột hiển thị" được phép dùng vì chỉ là
+   tùy chọn hiển thị của tài khoản, không sửa dữ liệu. */
+.fin-readonly { position: relative; }
+.fin-readonly input,
+.fin-readonly select,
+.fin-readonly textarea,
+.fin-readonly button,
+.fin-readonly [role="button"],
+.fin-readonly [contenteditable="true"] { pointer-events: none !important; cursor: not-allowed !important; }
+.fin-readonly input,
+.fin-readonly select,
+.fin-readonly textarea { background-color: #f1f5f9 !important; color: #475569 !important; }
+.fin-readonly button { opacity: 0.55; }
+.fin-readonly .fin-colsettings,
+.fin-readonly .fin-colsettings * { pointer-events: auto !important; cursor: pointer !important; opacity: 1; }
+
 /* ---------- Tab head ---------- */
 .fin-tab-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 2px 2px 0; }
 .fin-tab-title { display: flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 800; color: var(--fin-ink); letter-spacing: -0.2px; }

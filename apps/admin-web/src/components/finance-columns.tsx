@@ -101,7 +101,7 @@ export const financeColHeaderCount = (tabKey: string, defs: any, cols: any) => {
 export function ColumnSettings({ tabKey, defs, value, onToggle, onShowAll, saving }: any) {
   const [open, setOpen] = useState(false);
   return (
-    <div style={{ position: 'relative' }}>
+    <div className="fin-colsettings" style={{ position: 'relative' }}>
       <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={() => setOpen(v => !v)} title="Ẩn/hiện các cột bảng (lưu theo tài khoản, đồng bộ realtime mọi máy)">
         <List size={13} /> {saving ? 'Đang lưu…' : 'Cột hiển thị'}
       </button>

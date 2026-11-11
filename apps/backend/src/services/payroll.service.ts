@@ -796,6 +796,36 @@ export class PayrollService {
   }
 
   /**
+   * CHẶN THAO TÁC SAI THỨ TỰ Ở SERVER (dùng cho API của tài khoản Kế toán).
+   *
+   * Quy trình kế toán là tuần tự realtime: chỉ bước ĐANG MỞ mới được ghi dữ liệu
+   * tiến trình (tính lương, duyệt/phát hành kỳ, phát hành phiếu, xác nhận đã
+   * chuyển khoản). Hàm này ném `STEP_LOCKED` nếu bước chưa mở để không thể lách
+   * bằng cách mở tab khác hoặc gọi thẳng API, đồng thời trả lý do rõ ràng cho
+   * người dùng (khóa tuần tự / tháng đã kết thúc / bước đã xong).
+   *
+   * `stepIds` cho phép nhiều bước cùng hợp lệ cho 1 thao tác (VD phát hành phiếu
+   * được làm ở tab Kỳ lương (5) hoặc tab Phiếu lương (6)); chỉ cần MỘT bước mở.
+   */
+  async assertWorkflowStepOpen(period: string, stepIds: string | string[], action: string) {
+    const p = String(period || '').trim();
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(p)) return;
+    const wf: any = await this.getWorkflowStatus(p).catch(() => null);
+    if (!wf?.steps?.length) return;
+    const ids = Array.isArray(stepIds) ? stepIds : [stepIds];
+    const targets = (wf.steps as any[]).filter(s => ids.includes(String(s?.id)));
+    if (!targets.length) return;
+    if (targets.some(s => s.open)) return;
+    const step = targets[0];
+    const why = step.lockedDueToMonth
+      ? 'Tháng này đã kết thúc nên quy trình đã khóa — bấm "Quay về bước trước" (kèm lý do) để mở khóa tạm.'
+      : step.done
+        ? `Bước "${step.title}" đã hoàn tất và đã khóa để giữ số liệu đã chốt.`
+        : (step.reason || 'Bước trước chưa hoàn tất.');
+    throw new Error(`STEP_LOCKED: ${action} chỉ thực hiện được khi bước "${step.title}" đang mở. ${why}`);
+  }
+
+  /**
    * Kế toán XÁC NHẬN hoàn tất bước Đối soát công (1) / BCC (2) theo đúng tháng.
    * - Phải có dữ liệu thật (ca đã phát hành) mới xác nhận được.
    * - Phải xác nhận tuần tự: bước 2 chỉ xác nhận được khi bước 1 đã xác nhận.

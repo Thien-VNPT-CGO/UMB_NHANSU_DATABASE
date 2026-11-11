@@ -6183,9 +6183,29 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // ── CHẶN THAO TÁC SAI THỨ TỰ QUY TRÌNH (chỉ tài khoản Kế toán FINANCE) ──
+  // Quy trình kế toán tuần tự realtime: chỉ bước đang mở mới ghi được dữ liệu
+  // tiến trình. ADMIN/DIRECTOR có luồng duyệt riêng nên không áp dụng.
+  const guardFinanceStep = async (
+    req: AuthenticatedRequest,
+    period: string | null | undefined,
+    stepIds: string | string[],
+    action: string,
+  ) => {
+    if (String(req.user?.role || '').toUpperCase() !== 'FINANCE') return;
+    const p = String(period || '').trim();
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(p)) return;
+    await payrollService.assertWorkflowStepOpen(p, stepIds, action);
+  };
+  /** Bước hợp lệ để TÍNH LƯƠNG: tab Tính lương (3) hoặc tab Kỳ lương (5, nút "Tính lại kỳ"). */
+  const CALC_STEPS = ['fin-calculate', 'fin-payroll-periods'];
+  /** Bước hợp lệ để PHÁT HÀNH PHIẾU: tab Kỳ lương (5) hoặc tab Phiếu lương (6). */
+  const PUBLISH_STEPS = ['fin-payroll-periods', 'fin-payslips'];
+
   // Tính lương theo công thức Excel cho toàn bộ NV (Finance).
   app.post('/payroll/:period/calculate-formula', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollPeriodParams, body: payrollCalculateBody }), async (req: AuthenticatedRequest, res) => {
     try {
+      await guardFinanceStep(req, req.params.period, CALC_STEPS, 'Tính lương');
       const branchScope = req.body.branchScope || '*';
       const result = await payrollService.calculateFormulaPayroll(req.params.period, branchScope, req.user!.id);
       broadcastUpdate('payroll', { action: 'calculate', period: req.params.period });
@@ -6359,6 +6379,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   app.post('/payroll/:run/reconcile', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollRunParams }), async (req: AuthenticatedRequest, res) => {
     try {
+      const det: any = await payrollService.getRunDetails(req.params.run).catch(() => null);
+      await guardFinanceStep(req, det?.run?.period, 'fin-payroll-periods', 'Đối soát kỳ lương');
       const result = await payrollService.reconcileRun(req.params.run, req.user!.id);
       broadcastUpdate('payroll', { action: 'reconcile', run: req.params.run });
       res.json(result);
@@ -6369,6 +6391,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   app.post('/payroll/:run/approve', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollRunParams }), async (req: AuthenticatedRequest, res) => {
     try {
+      const det: any = await payrollService.getRunDetails(req.params.run).catch(() => null);
+      await guardFinanceStep(req, det?.run?.period, 'fin-payroll-periods', 'Phê duyệt kỳ lương');
       const result = await payrollService.approveRun(req.params.run, req.user!.id);
       broadcastUpdate('payroll', { action: 'approve', run: req.params.run });
       res.json(result);
@@ -6379,6 +6403,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   app.post('/payroll/:run/publish', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollRunParams }), async (req: AuthenticatedRequest, res) => {
     try {
+      const det0: any = await payrollService.getRunDetails(req.params.run).catch(() => null);
+      await guardFinanceStep(req, det0?.run?.period, PUBLISH_STEPS, 'Phát hành kỳ lương');
       const result = await payrollService.publishRun(req.params.run, req.user!.id);
       broadcastUpdate('payroll', { action: 'publish', run: req.params.run });
       // XUẤT phiếu đến từng NV: 1 thông báo tới tất cả NV trong kỳ (mỗi người nhận
@@ -6407,6 +6433,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   app.post('/payroll/:run/mark-paid', authMiddleware, requireRole(['ADMIN', 'FINANCE']), validate({ params: payrollRunParams }), async (req: AuthenticatedRequest, res) => {
     try {
+      const det: any = await payrollService.getRunDetails(req.params.run).catch(() => null);
+      await guardFinanceStep(req, det?.run?.period, 'fin-payment', 'Xác nhận đã chi trả kỳ lương');
       const result = await payrollService.markPaid(req.params.run, req.user!.id);
       broadcastUpdate('payroll', { action: 'mark-paid', run: req.params.run });
       res.json(result);
@@ -6902,6 +6930,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   // Kế toán phát hành từng phiếu (yêu cầu đủ 2 chữ ký)
   app.post('/payroll/slips/:id/publish', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
     try {
+      const slip0: any = await (adapter as any).getPayslipById?.(req.params.id).catch(() => null);
+      await guardFinanceStep(req, slip0?.period, PUBLISH_STEPS, 'Phát hành phiếu lương');
       const { sign_lap, sign_quanly } = req.body || {};
       const updated = await payrollService.publishSlip(req.params.id, req.user!.id, { sign_lap, sign_quanly });
       broadcastUpdate('payroll', { action: 'publish-slip', itemId: req.params.id });
@@ -6925,6 +6955,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   // Kế toán phát hành tất cả các phiếu đã đủ 2 chữ ký của kỳ
   app.post('/payroll/runs/:id/publish-all-slips', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
     try {
+      const det: any = await payrollService.getRunDetails(req.params.id).catch(() => null);
+      await guardFinanceStep(req, det?.run?.period, PUBLISH_STEPS, 'Phát hành tất cả phiếu lương');
       const result = await payrollService.publishAllSlips(req.params.id, req.user!.id);
       broadcastUpdate('payroll', { action: 'publish-all-slips', runId: req.params.id });
       res.json(result);
@@ -6935,6 +6967,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   app.post('/payroll/:run/publish-all-slips', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
     try {
+      const det: any = await payrollService.getRunDetails(req.params.run).catch(() => null);
+      await guardFinanceStep(req, det?.run?.period, PUBLISH_STEPS, 'Phát hành tất cả phiếu lương');
       const result = await payrollService.publishAllSlips(req.params.run, req.user!.id);
       broadcastUpdate('payroll', { action: 'publish-all-slips', runId: req.params.run });
       res.json(result);
@@ -6958,6 +6992,8 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   };
   app.post('/payroll/slips/:id/mark-paid', authMiddleware, requireRole(['ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
     try {
+      const slip0: any = await (adapter as any).getPayslipById?.(req.params.id).catch(() => null);
+      await guardFinanceStep(req, slip0?.period, 'fin-payment', 'Xác nhận đã chuyển khoản');
       const updated = await payrollService.markSlipPaid(req.params.id, req.user!.id);
       broadcastUpdate('payroll', { action: 'mark-slip-paid', itemId: req.params.id });
       scheduleAutoPaymentExport(String((updated as any)?.period || ''), req.user!.id);
