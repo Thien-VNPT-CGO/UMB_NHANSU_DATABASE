@@ -1394,6 +1394,147 @@ export class EmployeesService {
     return { employeeId, opened, pin: freshPin };
   }
 
+  /**
+   * DANH SÁCH ĐEN — NV THỬ VIỆC nghỉ giữa kỳ (chưa đủ hoặc đã đủ 7 ngày thử việc):
+   *  1) Khóa đăng nhập web app + xóa PIN + văng phiên + hủy lịch từ hôm nay
+   *     (dùng lại lockEmployeeAccount) => NV biến mất khỏi Lịch làm việc admin.
+   *  2) Ghi cờ blacklisted + lý do/ghi chú vào cột JSON "Danh Sách Đen (JSON)".
+   *  3) TUYỆT ĐỐI KHÔNG đổi employment_status sang TERMINATED — bảng lương chỉ
+   *     loại TERMINATED, nên giữ PROBATION để Phiếu lương vẫn hiện đầy đủ để
+   *     tính lương (hồ sơ/điểm danh/công/lương giữ nguyên 100%).
+   */
+  async blacklistEmployee(
+    employeeId: string,
+    input: { reason?: string; note?: string } | undefined,
+    actorId: string
+  ) {
+    const emp = await this.repo.getEmployeeById(employeeId);
+    if (!emp) throw new Error('EMPLOYEE_NOT_FOUND');
+    if ((emp as any).blacklisted === true) {
+      throw new Error('ALREADY_BLACKLISTED: Nhân viên này đã nằm trong Danh sách đen!');
+    }
+    if (String((emp as any).employment_status || '').toUpperCase() !== 'PROBATION') {
+      throw new Error('BLACKLIST_PROBATION_ONLY: Chỉ đưa nhân viên THỬ VIỆC vào Danh sách đen!');
+    }
+    const reason = String(input?.reason || '').trim().slice(0, 300) || 'Nghỉ giữa kỳ thử việc';
+    const note = String(input?.note || '').trim().slice(0, 1000);
+    // Số ngày thử việc đã trải qua (1..12) — cột mốc 7 ngày để HR đối soát.
+    const probationDays = (() => {
+      const s = String((emp as any).start_date || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return 0;
+      const startMs = new Date(`${s}T00:00:00+07:00`).getTime();
+      if (!Number.isFinite(startMs)) return 0;
+      const todayStr = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+      const todayMs = new Date(`${todayStr}T00:00:00+07:00`).getTime();
+      return Math.max(0, Math.min(12, Math.floor((todayMs - startMs) / 86_400_000) + 1));
+    })();
+    // 1) Khóa đăng nhập trước (xóa PIN + hủy ca từ hôm nay) => ẩn khỏi Lịch.
+    const lock = await this.lockEmployeeAccount(employeeId, actorId);
+    // 2) Đánh dấu danh sách đen trên hồ sơ (re-fetch để lấy version vừa bump).
+    const fresh = (await this.repo.getEmployeeById(employeeId).catch(() => null)) || emp;
+    const record = {
+      reason,
+      note,
+      blacklisted_at: new Date().toISOString(),
+      blacklisted_by: actorId,
+      stage: 'PROBATION' as const,
+      probation_days: probationDays,
+    };
+    if ((this.repo as any).updateEmployee) {
+      let saved = false;
+      for (let attempt = 0; attempt < 3 && !saved; attempt++) {
+        const cur = (await this.repo.getEmployeeById(employeeId).catch(() => null)) || fresh;
+        try {
+          await (this.repo as any).updateEmployee(employeeId, {
+            blacklisted: true,
+            blacklist: record,
+          } as any, cur.version);
+          saved = true;
+        } catch (e) {
+          if (attempt === 2) {
+            console.error('[employeesService] Lưu danh sách đen thất bại:', e);
+          }
+        }
+      }
+      if (!saved) {
+        throw new Error('BLACKLIST_SAVE_FAILED: Đã khóa đăng nhập nhưng chưa lưu được Danh sách đen — bấm lại để thử tiếp!');
+      }
+    }
+    // 3) Đẩy Sheet ngay: cột JSON danh sách đen + tài khoản LOCKED/PIN trắng.
+    if ((this.repo as any).syncService?.pushEmployeesTab) {
+      try {
+        await (this.repo as any).syncService.pushEmployeesTab((this.repo as any).fallbackAdapter || this.repo);
+      } catch (e) {
+        console.warn('[employeesService] pushEmployeesTab sau khi blacklist thất bại:', e);
+      }
+    }
+    await this.repo.recordAuditLog({
+      log_id: `LOG_${Date.now()}_BL`,
+      actor_id: actorId,
+      actor_role: 'HR',
+      action: 'EMPLOYEE_BLACKLISTED',
+      target_entity: 'NHAN_VIEN_MASTER',
+      target_id: employeeId,
+      details: `Đưa ${(emp as any).full_name || employeeId} vào DANH SÁCH ĐEN (thử việc ${probationDays}/12 ngày). Lý do: ${reason}. Đã khóa đăng nhập + xóa ${lock.shiftsCancelled} ca từ hôm nay; giữ hồ sơ/công/lương.`,
+    } as any).catch(() => null);
+    return { ...lock, blacklist: record };
+  }
+
+  /**
+   * Bỏ khỏi DANH SÁCH ĐEN: gỡ cờ + xóa metadata, mở khóa đăng nhập và cấp PIN
+   * 6 số mới (nếu tài khoản đang ACTIVE thì chỉ gỡ cờ).
+   */
+  async unblacklistEmployee(employeeId: string, actorId: string) {
+    const emp = await this.repo.getEmployeeById(employeeId);
+    if (!emp) throw new Error('EMPLOYEE_NOT_FOUND');
+    if ((emp as any).blacklisted !== true && !(emp as any).blacklist) {
+      throw new Error('NOT_BLACKLISTED: Nhân viên này không nằm trong Danh sách đen!');
+    }
+    if ((this.repo as any).updateEmployee) {
+      let saved = false;
+      for (let attempt = 0; attempt < 3 && !saved; attempt++) {
+        const cur = (await this.repo.getEmployeeById(employeeId).catch(() => null)) || emp;
+        try {
+          await (this.repo as any).updateEmployee(employeeId, {
+            blacklisted: false,
+            blacklist: null,
+          } as any, cur.version);
+          saved = true;
+        } catch (e) {
+          if (attempt === 2) console.error('[employeesService] Gỡ danh sách đen thất bại:', e);
+        }
+      }
+      if (!saved) throw new Error('UNBLACKLIST_SAVE_FAILED: Chưa gỡ được Danh sách đen — thử lại!');
+    }
+    let pin = '';
+    let opened: string[] = [];
+    try {
+      const res = await this.unlockEmployeeAccount(employeeId, actorId);
+      pin = res.pin;
+      opened = res.opened;
+    } catch (e: any) {
+      // Tài khoản đang ACTIVE (chưa từng bị khóa) -> chỉ cần gỡ cờ danh sách đen.
+      if (!/ACCOUNT_NOT_LOCKED/.test(String(e?.message || ''))) throw e;
+    }
+    if ((this.repo as any).syncService?.pushEmployeesTab) {
+      try {
+        await (this.repo as any).syncService.pushEmployeesTab((this.repo as any).fallbackAdapter || this.repo);
+      } catch (e) {
+        console.warn('[employeesService] pushEmployeesTab sau khi bỏ blacklist thất bại:', e);
+      }
+    }
+    await this.repo.recordAuditLog({
+      log_id: `LOG_${Date.now()}_UNBL`,
+      actor_id: actorId,
+      actor_role: 'HR',
+      action: 'EMPLOYEE_UNBLACKLISTED',
+      target_entity: 'NHAN_VIEN_MASTER',
+      target_id: employeeId,
+      details: `Bỏ ${(emp as any).full_name || employeeId} khỏi DANH SÁCH ĐEN + mở khóa đăng nhập${pin ? ' + cấp PIN mới' : ''}`,
+    } as any).catch(() => null);
+    return { employeeId, pin, opened, removed: true };
+  }
+
   // Candidates & Recruitment
   async listCandidates() {
     return this.repo.listCandidates();

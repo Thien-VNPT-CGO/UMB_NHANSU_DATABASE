@@ -2735,6 +2735,53 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
+  // DANH SÁCH ĐEN (NV thử việc nghỉ giữa kỳ): khóa đăng nhập + xóa PIN + hủy ca
+  // từ hôm nay (ẩn khỏi Lịch admin) + ghi lý do vào cột JSON Danh Sách Đen.
+  // GIỮ NGUYÊN hồ sơ/điểm danh/công/lương để Phiếu lương vẫn tính bình thường.
+  app.post('/employees/:id/blacklist', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const reason = String(req.body?.reason || '').trim();
+      const note = String(req.body?.note || '').trim();
+      if (reason.length > 300) return res.status(400).json({ error: 'Lý do tối đa 300 ký tự!' });
+      if (note.length > 1000) return res.status(400).json({ error: 'Ghi chú tối đa 1000 ký tự!' });
+      const result = await employeesService.blacklistEmployee(
+        req.params.id,
+        { reason, note },
+        req.user!.id
+      );
+      broadcastUpdate('employees', { action: 'blacklist', employeeId: req.params.id });
+      broadcastUpdate('accounts', { action: 'lock', employeeId: req.params.id });
+      broadcastUpdate('schedules', { action: 'delete', employeeId: req.params.id });
+      const io = app.get('io');
+      if (io) {
+        // Dùng chung sự kiện khóa: FE thêm NV vào lockedEmpIds và ẩn khỏi Lịch ngay.
+        io.emit('employees:locked', { employeeId: req.params.id });
+        io.emit('employees:blacklisted', { employeeId: req.params.id });
+        io.emit('schedule.published', { employeeId: req.params.id });
+      }
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Bỏ khỏi DANH SÁCH ĐEN: gỡ cờ + mở khóa đăng nhập (cấp PIN mới nếu đang khóa).
+  app.post('/employees/:id/unblacklist', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await employeesService.unblacklistEmployee(req.params.id, req.user!.id);
+      broadcastUpdate('employees', { action: 'unblacklist', employeeId: req.params.id });
+      broadcastUpdate('accounts', { action: 'unlock', employeeId: req.params.id });
+      const io = app.get('io');
+      if (io) {
+        io.emit('employees:unlocked', { employeeId: req.params.id });
+        io.emit('employees:unblacklisted', { employeeId: req.params.id });
+      }
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   app.post('/employees/:id/transition-official', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: idParams, body: transitionBody }), async (req: AuthenticatedRequest, res) => {    try {
       const result = await employeesService.transitionToOfficial(
         req.params.id,

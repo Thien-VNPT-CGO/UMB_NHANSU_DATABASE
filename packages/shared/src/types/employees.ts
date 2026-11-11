@@ -29,9 +29,32 @@ export interface EmployeeMaster {
    * (chính) + đĩa VPS (dự phòng) — KHÔNG nhét base64 vào Sheet.
    */
   contract_docs?: EmployeeContractDocs;
+  /**
+   * Cờ DANH SÁCH ĐEN: NV thử việc nghỉ giữa kỳ (chưa/đã đủ 7 ngày thử việc) bị
+   * đưa vào danh sách đen -> khóa đăng nhập web app, ẩn khỏi Lịch làm việc,
+   * NHƯNG giữ nguyên hồ sơ + điểm danh + công + phiếu lương để tính lương.
+   */
+  blacklisted?: boolean;
+  /** Chi tiết danh sách đen (lý do, ghi chú, người đưa vào, thời điểm). */
+  blacklist?: EmployeeBlacklist;
   created_at: string;
   updated_at: string;
   version: number;
+}
+
+export interface EmployeeBlacklist {
+  /** Lý do đưa vào danh sách đen (HR chọn/nhập). */
+  reason: string;
+  /** Ghi chú chi tiết thêm (không bắt buộc). */
+  note?: string;
+  /** ISO timestamp (giờ máy chủ) lúc đưa vào danh sách đen. */
+  blacklisted_at: string;
+  /** ID admin/HR thực hiện. */
+  blacklisted_by: string;
+  /** Giai đoạn khi đưa vào danh sách đen (thực tế luôn là PROBATION). */
+  stage?: EmploymentStatus;
+  /** Số ngày thử việc đã trải qua (0..12) — để HR đối soát 7 ngày. */
+  probation_days?: number;
 }
 
 export interface EmployeeContractDocMeta {

@@ -67,6 +67,7 @@ import { printPayslips } from '../utils/payslipPrint';
 import { playInterviewAlert, playFanfare } from '../utils/sound-effects';
 import { PerfectScoreCelebration } from './PerfectScoreCelebration';
 import { SignaturePad } from './SignaturePad';
+import { BlacklistButton, BlacklistView } from './BlacklistView';
 import FinanceModule from './FinanceModule';
 
 /** Chat Zalo với ứng viên: tự động kết bạn qua nick HR + gửi lời chào (dùng chung 2 tab). */
@@ -3888,6 +3889,23 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // (lockedEmpIds khai báo TẠI ĐÂY — trước mọi chỗ dùng — vì khối chung chạy
   // ngay khi render, khai báo sau sẽ gây lỗi TDZ trắng trang.)
   const [lockedEmpIds, setLockedEmpIds] = useState<Set<string>>(new Set());
+  // Nạp lại cờ khóa từ danh sách NV sau mỗi lần tải trang: NV bị khóa / vào
+  // DANH SÁCH ĐEN phải biến mất khỏi Lịch làm việc NGAY cả khi vừa F5 (sự kiện
+  // realtime chỉ bổ sung trong phiên). Chỉ cộng thêm, không xóa — nút Mở khóa
+  // sẽ tự gỡ qua sự kiện ubm:employee-unlocked.
+  useEffect(() => {
+    const lockedFromData = (allEmployees || [])
+      .filter((e: any) => e && (e.account_locked === true || String(e.account_status || '').toUpperCase() === 'LOCKED'))
+      .map((e: any) => String(e.employee_id || ''))
+      .filter(Boolean);
+    if (lockedFromData.length === 0) return;
+    setLockedEmpIds(prev => {
+      const next = new Set(prev);
+      let changed = false;
+      for (const id of lockedFromData) if (!next.has(id)) { next.add(id); changed = true; }
+      return changed ? next : prev;
+    });
+  }, [allEmployees]);
   // Thứ tự chi nhánh cố định: CN1 (130 Vạn Kiếp) → CN2 (261 Tô Hiến Thành) →
   // CN3 (120 Hoàng Diệu 2) → CN4 (111 Tôn Đản).
   const BRANCH_RANK: Record<string, number> = { CN130: 1, CN261: 2, CN120: 3, CN111: 4 };
@@ -7001,6 +7019,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     );
   }
 
+  if (activeTab === 'hr-blacklist') {
+    return <BlacklistView employees={allEmployees} showToast={showToast} onRefreshData={onRefreshData} />;
+  }
+
   if (activeTab === 'hr-probation') {
     // Mật độ ca thử việc: gom ca theo ngày (loại CANCELLED, khử trùng assignment_id).
     // Bạn nào muốn đẩy nhanh (2 ca/ngày) sẽ lộ ở đây: maxPerDay >= 2 + danh sách ngày.
@@ -7032,7 +7054,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
       multi.sort((a, b) => a.date.localeCompare(b.date));
       return { maxPerDay: max, total: seen.size, multiDays: multi };
     };
-    const probationEmps = allEmployees.filter((e) => e.employment_status === 'PROBATION');
+    const probationEmps = allEmployees.filter((e) => e.employment_status === 'PROBATION' && !(e as any).blacklisted && !(e as any).blacklist);
     const doubleShiftEmps = probationEmps.filter((e) => probationShiftDensity(e.employee_id).maxPerDay >= 2);
     // Ngày hoàn thành thử việc = start_date + 11 (cửa sổ 12 ngày). Không có ngày
     // bắt đầu -> null (HR bổ sung rồi mới biết hạn).
@@ -7513,6 +7535,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     >
                       {transitionBusyId === emp.employee_id ? '⏳ Đang chuyển...' : 'Đề Xuất Chính Thức'}
                     </button>
+                    <BlacklistButton emp={emp} showToast={showToast} onRefreshData={onRefreshData} />
                     <button
                       className="btn-secondary"
                       style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 700 }}

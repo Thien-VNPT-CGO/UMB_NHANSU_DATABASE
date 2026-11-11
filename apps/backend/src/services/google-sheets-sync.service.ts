@@ -26,6 +26,7 @@ import { normSheetDate, normSheetDateTime, sheetDateText, sheetDateTimeText } fr
 import { evaluateCandidateAiScore } from './ai-scorer.js';
 import { buildZipStore, ZipEntry } from '../utils/zip-store.js';
 import { contractDocsCell, parseContractDocs } from '../utils/contracts.js';
+import { blacklistCell, parseBlacklist } from '../utils/blacklist.js';
 import { readAttendancePhotoDisk } from './photo-disk.store.js';
 import { createDriveOAuthClient, describeDriveAuth, describeGoogleApiError, type GoogleDriveAuthMode } from './google-drive-auth.js';
 import { uploadBufferViaDriveWebhook, downloadBufferViaDriveWebhook } from './drive-upload-webhook.js';
@@ -280,7 +281,7 @@ interface SheetsPullOptions {
 export const SHEETS_DEFINITIONS: SheetDefinition[] = [
   {
     title: 'NHAN_VIEN_MASTER',
-    headers: ['ID Nhân Viên', 'Mã NV', 'Họ Và Tên', 'Số Điện Thoại', 'Trạng Thái', 'Nhóm', 'Chi Nhánh', 'Lương Giờ (VNĐ)', 'Ngày Bắt Đầu', 'Phiên Bản', 'Ca Cố Định', 'Ngày Chính Thức', 'Email', 'Giới Tính', 'Ngày Sinh', 'CCCD', 'Avatar (Drive ID)', 'Ngân Hàng', 'Số Tài Khoản', 'Chủ Tài Khoản', 'QR Ngân Hàng (Base64)', 'Điểm Tích Lũy', 'Điểm Đã Dùng', 'Hợp Đồng Lao Động (JSON)'],
+    headers: ['ID Nhân Viên', 'Mã NV', 'Họ Và Tên', 'Số Điện Thoại', 'Trạng Thái', 'Nhóm', 'Chi Nhánh', 'Lương Giờ (VNĐ)', 'Ngày Bắt Đầu', 'Phiên Bản', 'Ca Cố Định', 'Ngày Chính Thức', 'Email', 'Giới Tính', 'Ngày Sinh', 'CCCD', 'Avatar (Drive ID)', 'Ngân Hàng', 'Số Tài Khoản', 'Chủ Tài Khoản', 'QR Ngân Hàng (Base64)', 'Điểm Tích Lũy', 'Điểm Đã Dùng', 'Hợp Đồng Lao Động (JSON)', 'Danh Sách Đen (JSON)'],
   },
   {
     title: 'TAI_KHOAN_NHAN_VIEN',
@@ -2763,6 +2764,12 @@ export class GoogleSheetsSyncService {
                 const docs = parseContractDocs(r[23]);
                 return docs.probation || docs.official ? { contract_docs: docs } : {};
               })(),
+              // Cột Y: danh sách đen (JSON: lý do/ghi chú/người đưa vào/thời điểm).
+              // Có dữ liệu = NV đang bị đưa vào danh sách đen -> bật cờ blacklisted.
+              ...(() => {
+                const rec = parseBlacklist(r[24]);
+                return rec ? { blacklist: rec, blacklisted: true } : {};
+              })(),
             };
           });
         // Đọc thiếu dòng (partial/truncated) mà bộ nhớ đang nhiều hơn gấp đôi -> giữ bộ nhớ.
@@ -2815,6 +2822,12 @@ export class GoogleSheetsSyncService {
                 // Cột X: hợp đồng lao động — sheet cũ chưa có cột thì vá từ bộ nhớ,
                 // tránh pull xóa mất metadata hợp đồng vừa upload.
                 if (!(s as any).contract_docs && (m as any).contract_docs) (s as any).contract_docs = (m as any).contract_docs;
+                // Cột Y: danh sách đen — bộ nhớ có mà sheet trống (dòng cũ/chưa push)
+                // thì vá lại, tránh pull gỡ cờ đen + khóa tài khoản.
+                if (!(s as any).blacklist && (m as any).blacklist) {
+                  (s as any).blacklist = (m as any).blacklist;
+                  (s as any).blacklisted = true;
+                }
               }
               mergedEmps.push(s);
             }
@@ -4801,6 +4814,7 @@ export class GoogleSheetsSyncService {
         Number((e as any).adjust_points_earned) || 0,
         Number((e as any).adjust_points_spent) || 0,
         contractDocsCell((e as any).contract_docs),
+        blacklistCell((e as any).blacklist),
       ]);
       await this.pushTabSafe(details, 'employees', 'NHAN_VIEN_MASTER', SHEETS_DEFINITIONS.find(d => d.title === 'NHAN_VIEN_MASTER')!.headers, employeeRows);
 
@@ -5135,6 +5149,7 @@ export class GoogleSheetsSyncService {
       Number((e as any).adjust_points_earned) || 0,
       Number((e as any).adjust_points_spent) || 0,
       contractDocsCell((e as any).contract_docs),
+      blacklistCell((e as any).blacklist),
     ]));
     await this.overwriteSheetData('NHAN_VIEN_MASTER', SHEETS_DEFINITIONS.find(d => d.title === 'NHAN_VIEN_MASTER')!.headers, rows);
     return rows.length;

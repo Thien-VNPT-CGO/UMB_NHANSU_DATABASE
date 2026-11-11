@@ -50,6 +50,7 @@ import {
   MapPin,
   KeyRound,
   Banknote,
+  Ban,
 } from 'lucide-react';
 import { RoleViews } from './components/RoleViews';
 import { LiveMapView } from './components/LiveMapView';
@@ -173,6 +174,7 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'hr-candidates', label: '2. Ứng viên mới', icon: UserCheck },
     { id: 'hr-interviews', label: '3. Phỏng vấn & BOT Zalo', icon: Calendar },
     { id: 'hr-probation', label: '4. Nhân viên Thử việc', icon: Users },
+    { id: 'hr-blacklist', label: 'Danh sách đen', icon: Ban },
     { id: 'hr-official', label: '5. Nhân viên Chính thức', icon: Users },
     { id: 'hr-profile', label: '6. Hồ Sơ Nhân Viên', icon: IdCard },
     { id: 'hr-schedule', label: '7. Lịch làm việc', icon: Calendar },
@@ -265,6 +267,7 @@ export const HR_TAB_GROUPS: RoleTabGroup[] = [
     tabs: [
       { id: 'hr-probation', label: 'Thử việc', icon: Users },
       { id: 'hr-official', label: 'Chính thức', icon: Users },
+      { id: 'hr-blacklist', label: 'Danh sách đen', icon: Ban },
       { id: 'hr-profile', label: 'Hồ sơ nhân viên', icon: IdCard },
     ],
   },
@@ -337,6 +340,7 @@ export const ADMIN_TAB_GROUPS: RoleTabGroup[] = [
     icon: Users,
     tabs: [
       { id: 'staff', label: 'Nhân sự', icon: Users },
+      { id: 'hr-blacklist', label: 'Danh sách đen', icon: Ban },
       { id: 'accounts', label: 'Tài khoản & PIN', icon: Shield },
       { id: 'branches', label: 'Chi nhánh & Ca', icon: Store },
     ],
