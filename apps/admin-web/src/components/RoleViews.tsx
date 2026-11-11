@@ -5123,6 +5123,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     const aiColor = aiScore >= 85 ? '#10B981' : aiScore >= 70 ? '#F59E0B' : '#EF4444';
                     const aiBg = aiScore >= 85 ? '#ECFDF5' : aiScore >= 70 ? '#FFFBEB' : '#FEF2F2';
                     const age = c.birth_year ? `${new Date().getFullYear() - c.birth_year} tuổi` : '';
+                    // Form hỏi theo khoảng tuổi ("2004 - 2008") -> hiển thị đúng chuỗi
+                    // gốc, chỉ dùng birth_year (số) để tính tuổi/điểm AI.
+                    const birthLabel = (c as any).birth_year_raw || c.birth_year;
 
                     return (
                       <tr
@@ -5154,7 +5157,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             <div style={{ minWidth: 0 }}>
                               <div style={{ fontWeight: 800, color: 'var(--text)', whiteSpace: 'nowrap' }}>{c.full_name}</div>
                               <div style={{ fontSize: '11px', color: 'var(--text-muted)', whiteSpace: 'nowrap', marginTop: '1px' }}>
-                                {c.gender || 'Nam'}{c.birth_year ? ` • ${c.birth_year}${age ? ` (${age})` : ''}` : ''}
+                                {c.gender || 'Nam'}{birthLabel ? ` • ${birthLabel}${age ? ` (${age})` : ''}` : ''}
                               </div>
                               <div style={{ fontSize: '12px', fontFamily: 'monospace', fontWeight: 700, color: '#0F172A', marginTop: '2px', whiteSpace: 'nowrap' }}>
                                 📞 {c.phone || c.phone_normalized || '---'}
@@ -5567,7 +5570,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   <div>
                     <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Giới tính & Năm sinh:</span>
                     <div style={{ fontWeight: 700 }}>
-                      {selectedCandidateDetail.gender || 'Nam'} • {selectedCandidateDetail.birth_year || '2002'} ({new Date().getFullYear() - (selectedCandidateDetail.birth_year || 2002)} tuổi)
+                      {selectedCandidateDetail.gender || 'Nam'} • {(selectedCandidateDetail as any).birth_year_raw || selectedCandidateDetail.birth_year || '2002'} ({new Date().getFullYear() - (selectedCandidateDetail.birth_year || 2002)} tuổi)
                     </div>
                   </div>
                   <div>

@@ -95,6 +95,10 @@ export interface CandidateApplication {
   full_name: string;
   phone_normalized: string;
   birth_year: number;
+  /** Chuỗi "Năm Sinh" NGUYÊN BẢN từ Google Form (VD "2004 - 2008", "2008 trở lên").
+   *  Form hỏi theo khoảng tuổi nên không được ép về 1 năm — Sheet đích phải giữ đúng
+   *  giá trị thật; `birth_year` chỉ là số suy ra để tính điểm AI/xếp hạng. */
+  birth_year_raw?: string;
   apply_position: string;
   preferred_branch_id: string;
   status: 'NEW' | 'NEED_INFO' | 'INVITED_INTERVIEW' | 'CONFIRMED' | 'DECLINED' | 'RESCHEDULE_REQUESTED' | 'RESCHEDULE_PROPOSED' | 'INTERVIEWED' | 'ACCEPTED' | 'REJECTED' | 'NO_SHOW' | 'BLACKLIST' | string;
@@ -111,6 +115,9 @@ export interface CandidateApplication {
   interview_notes?: string;
   /** Trạng thái gửi thư mời Zalo: SENT | NOT_FRIEND | FAILED */
   zalo_invite_status?: string;
+  /** Ghi chú Zalo/SĐT phụ HR nhập tay vào cột "Zalo Thư Mời" trên Sheet (dữ liệu cũ).
+   *  Không phải trạng thái gửi — tách riêng để không bị ghi đè thành mã trạng thái. */
+  zalo_invite_note?: string;
   zalo_uid?: string;
   zalo_invite_at?: string;
   zalo_invite_error?: string;

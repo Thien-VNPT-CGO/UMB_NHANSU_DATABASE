@@ -24,6 +24,12 @@ import { hashPasswordSync, isBcryptHash, hashPin, generateAutoPin } from './pass
 import { canonicalPhone } from './employees.service.js';
 import { normSheetDate, normSheetDateTime, sheetDateText, sheetDateTimeText } from './employees.service.js';
 import { evaluateCandidateAiScore } from './ai-scorer.js';
+import {
+  buildZaloInviteCell,
+  normalizeFormFacebook,
+  parseFormBirthYear,
+  parseZaloInviteCell,
+} from './candidate-form-map.js';
 import { buildZipStore, ZipEntry } from '../utils/zip-store.js';
 import { contractDocsCell, parseContractDocs } from '../utils/contracts.js';
 import { blacklistCell, parseBlacklist } from '../utils/blacklist.js';
@@ -585,6 +591,8 @@ export class GoogleSheetsSyncService {
    *  vẫn giữ hash cũ trong lúc bỏ qua để không báo "đổi" giả. */
   private lastCandidateRows: string[][] = [];
   private lastCandidatePullAt = 0;
+  /** Mốc tạm ngưng đọc lại nguồn form sau lỗi quota/mạng (tránh đốt hạn mức). */
+  private candidateReadBackoffUntil = 0;
   /**
    * Hash nội dung Spreadsheet NGUỒN (form ứng viên, CANDIDATE_SPREADSHEET_ID)
    * ở lượt đọc thành công gần nhất. Khi hash đổi (dòng mới / sửa ô), Spreadsheet
@@ -2553,7 +2561,9 @@ export class GoogleSheetsSyncService {
     // thì. Vẫn dưới quota đọc (batch 12 + candidate ~36 = ~48 lượt/phút); có thể
     // giãn bằng SHEETS_CANDIDATE_PULL_MS khi Google chậm.
     const candidatePullMs = Math.max(2_000, Number(process.env.SHEETS_CANDIDATE_PULL_MS) || 5_000);
-    const shouldPullCandidates = !!opts.forceCandidates || Date.now() - this.lastCandidatePullAt >= candidatePullMs;
+    const candidateBackoff = Date.now() < this.candidateReadBackoffUntil;
+    const shouldPullCandidates = !!opts.forceCandidates
+      || (!candidateBackoff && Date.now() - this.lastCandidatePullAt >= candidatePullMs);
 
     try {
       // Hỗ trợ cả 2 trường hợp:
@@ -3929,42 +3939,70 @@ export class GoogleSheetsSyncService {
       let candidateSourceRead = false;
 
       if (this.sheetsClient && shouldPullCandidates) {
-        // A. Thử đọc từ candidateSpreadsheetId trước (bọc timeout: Google treo
-        // request này là cả pull treo theo, UI chờ vô hạn).
+        // A. NGUỒN SỰ THẬT: Spreadsheet form ứng viên (CANDIDATE_SPREADSHEET_ID).
+        // Đọc thẳng tab FROM_NHAN_VIEN (1 request) thay vì hỏi metadata trước —
+        // mỗi lượt bớt 1 request, tránh chạm hạn mức đọc 60/phút của Google.
         if (this.candidateSpreadsheetId) {
           try {
-            const meta: any = await this.sheetsCall('read.candidateMeta', () =>
-              this.sheetsClient!.spreadsheets.get({
+            const candRes: any = await this.sheetsCall('read.candidates', () =>
+              this.sheetsClient!.spreadsheets.values.get({
                 spreadsheetId: this.candidateSpreadsheetId,
-                // Chỉ lấy title: KHÔNG kéo conditionalFormats/chart/protectedRanges.
-                // Bản không giới hạn fields từng trả hàng chục MB mỗi 15s khi sheet
-                // ứng viên có nhiều rule định dạng -> pull 5-8s, có lúc 60s+.
-                fields: 'sheets.properties.title',
+                range: `'${targetSheetTitle}'!A1:ZZ`,
+                ...SHEETS_READ_OPTIONS,
               }) as any, 25000);
-            const sheets = meta.data.sheets || [];
-            const found = sheets.find((s: any) => {
-              const t = s.properties?.title || '';
-              return /FROM_NHAN_VIEN|Form|Biểu mẫu|Câu trả lời|Ứng viên/i.test(t);
-            }) || sheets[0];
-
-            if (found?.properties?.title) {
-              targetSheetTitle = found.properties.title;
-              const candRes: any = await this.sheetsCall('read.candidates', () =>
-                this.sheetsClient!.spreadsheets.values.get({
-                  spreadsheetId: this.candidateSpreadsheetId,
-                  range: `'${targetSheetTitle}'!A1:ZZ`,
-                  ...SHEETS_READ_OPTIONS,
-                }) as any, 25000);
-              candRows = (candRes.data.values as string[][]) || [];
-              candidateSourceRead = true;
-            }
+            candRows = (candRes.data.values as string[][]) || [];
+            candidateSourceRead = true;
           } catch (e: any) {
-            console.warn('[GoogleSheetsSyncService] Đọc candidateSpreadsheetId gặp lỗi, thử master sheet:', e.message);
+            const msg = String(e?.message || e);
+            // Tab bị đổi tên -> dò metadata 1 lần rồi đọc lại đúng tên tab mới.
+            if (/Unable to parse range|not found|NOT_FOUND|404/i.test(msg)) {
+              try {
+                const meta: any = await this.sheetsCall('read.candidateMeta', () =>
+                  this.sheetsClient!.spreadsheets.get({
+                    spreadsheetId: this.candidateSpreadsheetId,
+                    fields: 'sheets.properties.title',
+                  }) as any, 25000);
+                const sheets = meta.data.sheets || [];
+                const found = sheets.find((s: any) => {
+                  const t = s.properties?.title || '';
+                  return /FROM_NHAN_VIEN|Form|Biểu mẫu|Câu trả lời|Ứng viên/i.test(t);
+                }) || sheets[0];
+                if (found?.properties?.title) {
+                  targetSheetTitle = found.properties.title;
+                  const retry: any = await this.sheetsCall('read.candidatesRetry', () =>
+                    this.sheetsClient!.spreadsheets.values.get({
+                      spreadsheetId: this.candidateSpreadsheetId,
+                      range: `'${targetSheetTitle}'!A1:ZZ`,
+                      ...SHEETS_READ_OPTIONS,
+                    }) as any, 25000);
+                  candRows = (retry.data.values as string[][]) || [];
+                  candidateSourceRead = true;
+                }
+              } catch (e2: any) {
+                console.warn('[GoogleSheetsSyncService] Dò lại tên tab form ứng viên lỗi:', e2?.message || e2);
+              }
+            }
+            if (!candidateSourceRead) {
+              const quota = /quota|rate.?limit|429/i.test(msg);
+              // Giãn nhịp đọc để không đốt hạn mức: quota 60s, lỗi khác 20s.
+              this.candidateReadBackoffUntil = Date.now() + (quota ? 60_000 : 20_000);
+              console.warn(
+                `[GoogleSheetsSyncService] Đọc nguồn form ứng viên lỗi (${quota ? 'quota' : 'khác'}) — dùng bản đọc nguồn gần nhất, KHÔNG lấy bản sao master cũ:`,
+                msg,
+              );
+            }
           }
         }
 
-        // B. Nếu chưa có dữ liệu từ candidateSpreadsheetId, thử đọc từ file
-        // FROM_NHAN_VIEN riêng (bộ 25 sheet) — không đọc file tổng hợp cũ.
+        // B. Giữ bản đọc NGUỒN gần nhất khi Google lỗi/quota. Trước đây rơi về
+        // file master FROM_NHAN_VIEN (bản sao có thể chậm hơn) -> chính là lý do
+        // dữ liệu hiển thị "sai, chưa đúng dữ liệu thật" trên form.
+        if (!candidateSourceRead && candRows.length <= 1 && this.lastCandidateRows.length > 1) {
+          candRows = this.lastCandidateRows;
+        }
+
+        // C. Chỉ lần đầu (chưa từng đọc được nguồn) mới tạm dùng file
+        // FROM_NHAN_VIEN của hệ thống để có dữ liệu hiển thị.
         if (candRows.length <= 1) {
           try {
             const candRes: any = await this.sheetsCall('read.candidatesMaster', () =>
@@ -3975,6 +4013,7 @@ export class GoogleSheetsSyncService {
               }) as any, 25000);
             if (candRes.data.values && candRes.data.values.length > 1) {
               candRows = candRes.data.values as string[][];
+              console.warn('[GoogleSheetsSyncService] Chưa đọc được nguồn form — tạm dùng bản sao FROM_NHAN_VIEN (sẽ thay bằng dữ liệu thật ngay khi đọc được).');
             }
           } catch (e) {
             // Sheet FROM_NHAN_VIEN chưa được tạo trên master
@@ -4047,7 +4086,9 @@ export class GoogleSheetsSyncService {
             const fullName = getVal(colFullName) || `Ứng viên ${idx + 1}`;
             const gender = getVal(colGender) || 'Nam';
             const birthRaw = getVal(colBirthYear);
-            const birthYear = Number(birthRaw?.replace(/\D/g, '').slice(-4)) || 2002;
+            // Form hỏi theo KHOẢNG tuổi ("2004 - 2008") -> giữ nguyên chuỗi gốc để
+            // Sheet đích đúng dữ liệu thật, chỉ suy ra số cho điểm AI.
+            const birthYear = parseFormBirthYear(birthRaw);
             const educationLevel = getVal(colEducation) || 'THPT / Cao đẳng';
             const hometown = getVal(colHometown) || 'TP. Hồ Chí Minh';
             const phone = getVal(colPhone) || '';
@@ -4057,14 +4098,9 @@ export class GoogleSheetsSyncService {
             const experience = getVal(colExperience) || 'Chưa có kinh nghiệm (sẵn sàng đào tạo)';
             const emergencyHandling = getVal(colEmergency) || 'Sẵn sàng hỗ trợ và tăng ca khi có điều động đột xuất';
 
-            let facebookUrl = getVal(colFacebook);
-            if (facebookUrl && !facebookUrl.startsWith('http://') && !facebookUrl.startsWith('https://')) {
-              if (facebookUrl.includes('facebook.com')) {
-                facebookUrl = 'https://' + facebookUrl;
-              } else {
-                facebookUrl = `https://facebook.com/${facebookUrl.replace(/^@/, '')}`;
-              }
-            }
+            // Không bịa URL từ tên/ghi chú ("Pun Nguyễn" -> facebook.com/Pun Nguyễn):
+            // Sheet đích phải giữ đúng giá trị ứng viên đã gửi.
+            const facebookUrl = normalizeFormFacebook(getVal(colFacebook));
 
             const referralSource = getVal(colReferral) || 'Facebook / Fanpage Ụm Bò Milk';
 
@@ -4095,6 +4131,9 @@ export class GoogleSheetsSyncService {
             // (~10s) sẽ xóa mất toàn bộ VIP/VIP rank.
             const vip = prev.vip === true;
             const vipRank = vip ? (Number(prev.vip_rank) || 0) : undefined;
+            // Cột "Zalo Thư Mời" trên form gốc là cột trống (prompt Zalo OA) —
+            // chỉ nhận giá trị nếu là mã trạng thái thật, còn lại coi là ghi chú.
+            const zaloSrc = parseZaloInviteCell(getVal(colZaloStatus));
 
             return {
               submission_id: submissionId,
@@ -4104,7 +4143,8 @@ export class GoogleSheetsSyncService {
               interview_score: prev.interview_score,
               interview_rubric: prev.interview_rubric || undefined,
               interview_score_detail: prev.interview_score_detail || undefined,
-              zalo_invite_status: getVal(colZaloStatus) || prev.zalo_invite_status || undefined,
+              zalo_invite_status: zaloSrc.status || prev.zalo_invite_status || undefined,
+              zalo_invite_note: zaloSrc.note || prev.zalo_invite_note || undefined,
               zalo_invite_at: getVal(colZaloAt) || prev.zalo_invite_at || undefined,
               zalo_uid: prev.zalo_uid || undefined,
               vip,
@@ -4116,6 +4156,7 @@ export class GoogleSheetsSyncService {
               phone,
               gender,
               birth_year: birthYear,
+              birth_year_raw: birthRaw || prev.birth_year_raw || undefined,
               education_level: educationLevel,
               hometown,
               apply_position: 'Nhân viên Bán hàng',
@@ -4181,6 +4222,13 @@ export class GoogleSheetsSyncService {
                 const nz = (v: any) => (v !== undefined && String(v).trim() !== '' ? String(v).trim() : undefined);
                 const mStatus = nz(mr[15]);
                 if (mStatus && mStatus !== 'NEW') c.status = mStatus as any;
+                // Năm sinh: ưu tiên chuỗi gốc từ form; master chỉ bổ sung khi form
+                // không có (VD dữ liệu cũ chỉ còn 1 năm).
+                const mBirthRaw = nz(mr[3]);
+                if (mBirthRaw && !c.birth_year_raw) {
+                  c.birth_year_raw = mBirthRaw;
+                  c.birth_year = parseFormBirthYear(mBirthRaw);
+                }
                 // Ca + chi nhánh HR đã chốt (Cập nhật TT) lưu ở master cột 7/8: phủ lại để
                 // bền vững qua restart (bộ nhớ trắng, form gốc chỉ còn giá trị ban đầu).
                 // PUT đã đẩy master đồng bộ (await) trước khi trả response nên master tươi.
@@ -4194,7 +4242,12 @@ export class GoogleSheetsSyncService {
                 c.interview_date = nz(mr[17]) || c.interview_date;
                 c.interview_time_slot = nz(mr[18]) || c.interview_time_slot;
                 c.interviewer_id = nz(mr[19]) || c.interviewer_id;
-                c.zalo_invite_status = nz(mr[20]) || c.zalo_invite_status;
+                // Cột "Zalo Thư Mời" có thể còn dữ liệu cũ HR nhập tay (SĐT/Zalo
+                // phụ). Chỉ nhận mã trạng thái hợp lệ; phần còn lại lưu thành
+                // ghi chú để push không ghi ngược SĐT vào cột trạng thái.
+                const mZalo = parseZaloInviteCell(nz(mr[20]));
+                if (mZalo.status) c.zalo_invite_status = mZalo.status;
+                if (mZalo.note) c.zalo_invite_note = mZalo.note;
                 c.zalo_invite_at = nz(mr[21]) || c.zalo_invite_at;
                 if (nz(mr[22]) !== undefined) (c as any).interview_score = Number(nz(mr[22]));
                 if (nz(mr[23]) !== undefined) {
@@ -4673,7 +4726,14 @@ export class GoogleSheetsSyncService {
     'SU_KIEN_DIEM_DANH',
   ]);
 
-  private async pushTabSafe(details: any, key: string, title: string, headers: string[], rows: any[][]): Promise<void> {
+  private async pushTabSafe(
+    details: any,
+    key: string,
+    title: string,
+    headers: string[],
+    rows: any[][],
+    valueInputOption: 'RAW' | 'USER_ENTERED' = 'USER_ENTERED',
+  ): Promise<void> {
     try {
       // BẢO VỆ CHỐNG MẤT DỮ LIỆU: Tuyệt đối không cho phép ghi đè rỗng (0 dòng) lên các tab Master
       if (rows.length === 0 && GoogleSheetsSyncService.CRITICAL_TABS.has(title)) {
@@ -4693,7 +4753,7 @@ export class GoogleSheetsSyncService {
       if (GoogleSheetsSyncService.PARTITION_TABS.has(title)) {
         await this.rewritePartitionedTab(title, rows);
       } else {
-        await this.overwriteSheetData(title, headers, rows);
+        await this.overwriteSheetData(title, headers, rows, false, valueInputOption);
       }
       details[key] = rows.length;
     } catch (err: any) {
@@ -5042,7 +5102,8 @@ export class GoogleSheetsSyncService {
           c.created_at || new Date().toISOString(),
           c.full_name || '',
           c.gender || 'Nam',
-          c.birth_year ? String(c.birth_year) : '2002',
+          // Giữ đúng chuỗi gốc từ form ("2004 - 2008"), chỉ fallback số khi thiếu.
+          (c as any).birth_year_raw || (c.birth_year ? String(c.birth_year) : '2002'),
           c.education_level || 'Đại học',
           c.hometown || 'TP. Hồ Chí Minh',
           c.phone || c.phone_normalized || '',
@@ -5059,7 +5120,7 @@ export class GoogleSheetsSyncService {
           (c as any).interview_date || '',
           (c as any).interview_time_slot || '',
           (c as any).interviewer_id || '',
-          (c as any).zalo_invite_status || '',
+          buildZaloInviteCell((c as any).zalo_invite_status, (c as any).zalo_invite_note),
           (c as any).zalo_invite_at || '',
           (c as any).interview_score ?? '',
           (c as any).interview_score_detail || '',
@@ -5071,7 +5132,8 @@ export class GoogleSheetsSyncService {
           (c as any).interview_proposed_note || '',
           (c as any).blacklist_reason || '',
         ]);
-        await this.pushTabSafe(details, 'candidates', 'FROM_NHAN_VIEN', candHeaders, candRows);
+        // RAW: cột SĐT/CCCD/"Năm Sinh" phải giữ đúng chuỗi form gửi lên.
+        await this.pushTabSafe(details, 'candidates', 'FROM_NHAN_VIEN', candHeaders, candRows, 'RAW');
       }
 
       // 18. Đồng bộ Cài đặt hệ thống (CAU_HINH_HE_THONG)
@@ -5639,7 +5701,7 @@ export class GoogleSheetsSyncService {
       c.created_at || new Date().toISOString(),
       c.full_name || '',
       c.gender || 'Nam',
-      c.birth_year ? String(c.birth_year) : '2002',
+      (c as any).birth_year_raw || (c.birth_year ? String(c.birth_year) : '2002'),
       c.education_level || 'Đại học',
       c.hometown || 'TP. Hồ Chí Minh',
       c.phone || c.phone_normalized || '',
@@ -5656,7 +5718,7 @@ export class GoogleSheetsSyncService {
       (c as any).interview_date || '',
       (c as any).interview_time_slot || '',
       (c as any).interviewer_id || '',
-      (c as any).zalo_invite_status || '',
+      buildZaloInviteCell((c as any).zalo_invite_status, (c as any).zalo_invite_note),
       (c as any).zalo_invite_at || '',
       (c as any).interview_score ?? '',
       (c as any).interview_score_detail || '',
@@ -5664,7 +5726,7 @@ export class GoogleSheetsSyncService {
       (c as any).vip_rank !== undefined && (c as any).vip_rank !== null ? String((c as any).vip_rank) : '',
       (c as any).interview_decline_reason || '',
     ]);
-    await this.overwriteSheetData('FROM_NHAN_VIEN', candHeaders, candRows);
+    await this.overwriteSheetData('FROM_NHAN_VIEN', candHeaders, candRows, false, 'RAW');
     return candRows.length;
   }
 
@@ -6807,7 +6869,15 @@ export class GoogleSheetsSyncService {
   /**
    * Ghi đè dữ liệu một Sheet tab (giữ nguyên tiêu đề ở dòng 1)
    */
-  public async overwriteSheetData(sheetTitle: string, headers: string[], rows: any[][], allowEmpty = false) {
+  public async overwriteSheetData(
+    sheetTitle: string,
+    headers: string[],
+    rows: any[][],
+    allowEmpty = false,
+    // RAW: giữ nguyên chuỗi (SĐT/CCCD có số 0 đầu, "2004 - 2008", "6:50:29").
+    // USER_ENTERED để Google tự parse -> mất số 0 đầu và đổi định dạng ngày giờ.
+    valueInputOption: 'RAW' | 'USER_ENTERED' = 'USER_ENTERED',
+  ) {
     if (!this.sheetsClient) return;
 
     // BẢO VỆ CHỐNG MẤT DỮ LIỆU: Tab Master không được phép xoá sạch dữ liệu (0 dòng)
@@ -6825,7 +6895,7 @@ export class GoogleSheetsSyncService {
         this.sheetsClient!.spreadsheets.values.update({
           spreadsheetId: targetSpreadsheetId,
           range: `'${sheetTitle}'!A1`,
-          valueInputOption: 'USER_ENTERED',
+          valueInputOption,
           requestBody: {
             values: allValues,
           },
