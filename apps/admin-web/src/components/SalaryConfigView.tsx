@@ -9,6 +9,7 @@ import {
   financeBlockOf,
   type FinanceBlock,
 } from '../utils/financeBlocks';
+import { ColumnSettings } from './finance-columns.js';
 
 /**
  * Cấu hình Lương cơ bản + Phụ cấp — Kế toán (FINANCE) / Admin.
@@ -57,9 +58,12 @@ const STATUS_LABEL: Record<string, string> = {
   TERMINATED: 'Đã nghỉ',
 };
 
-export const SalaryConfigView: React.FC<{ currentUser: any }> = ({ currentUser }) => {
+export const SalaryConfigView: React.FC<{ currentUser: any; cols?: any; onToggleCol?: any; onShowAllCols?: any; colVis?: any; colVisSaving?: boolean; colDefs?: any }> = ({ currentUser, cols, onToggleCol, onShowAllCols, colVis, colVisSaving, colDefs }) => {
   const role: string = String(currentUser?.role || '').toUpperCase();
   const canEdit = ['FINANCE', 'ADMIN'].includes(role);
+  const show = cols?.show || (() => true);
+  /** Cột "Lưu" luôn hiện nên +1. */
+  const cfgColCount = 1 + ['code', 'name', 'block', 'branch', 'stage', 'mode', 'base', 'allowance', 'total', 'updated'].filter(k => show(k)).length;
 
   const [employees, setEmployees] = useState<any[]>([]);
   const [configs, setConfigs] = useState<Record<string, SalaryEntry>>({});
@@ -383,6 +387,7 @@ export const SalaryConfigView: React.FC<{ currentUser: any }> = ({ currentUser }
         <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 700 }}>
           {filtered.length} NV hiển thị · {totalConfigured} đã cấu hình
         </div>
+        <ColumnSettings tabKey="fin-salary-config" defs={colDefs} value={colVis} onToggle={onToggleCol} onShowAll={() => onShowAllCols?.('fin-salary-config')} saving={colVisSaving} />
       </div>
 
       {/* Table, grouped by block */}
@@ -390,16 +395,16 @@ export const SalaryConfigView: React.FC<{ currentUser: any }> = ({ currentUser }
         <table style={{ width: '100%', minWidth: '1280px', borderCollapse: 'collapse', fontSize: '13px' }}>
           <thead>
             <tr style={{ backgroundColor: 'var(--bg)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
-              <th style={{ padding: '11px 16px' }}>Mã NV</th>
-              <th style={{ padding: '11px 16px' }}>Họ và tên</th>
-              <th style={{ padding: '11px 16px' }}>Khối</th>
-              <th style={{ padding: '11px 16px' }}>Chi nhánh</th>
-              <th style={{ padding: '11px 16px' }}>Giai đoạn</th>
-              <th style={{ padding: '11px 16px', width: '170px' }}>Hình thức lương</th>
-              <th style={{ padding: '11px 16px', width: '150px' }}>Lương cơ bản (đ/tháng)</th>
-              <th style={{ padding: '11px 16px', width: '140px' }}>Phụ cấp (đ/tháng)</th>
-              <th style={{ padding: '11px 16px', width: '140px' }}>Tổng lương</th>
-              <th style={{ padding: '11px 16px' }}>Cập nhật</th>
+              {show('code') && <th style={{ padding: '11px 16px' }}>Mã NV</th>}
+              {show('name') && <th style={{ padding: '11px 16px' }}>Họ và tên</th>}
+              {show('block') && <th style={{ padding: '11px 16px' }}>Khối</th>}
+              {show('branch') && <th style={{ padding: '11px 16px' }}>Chi nhánh</th>}
+              {show('stage') && <th style={{ padding: '11px 16px' }}>Giai đoạn</th>}
+              {show('mode') && <th style={{ padding: '11px 16px', width: '170px' }}>Hình thức lương</th>}
+              {show('base') && <th style={{ padding: '11px 16px', width: '150px' }}>Lương cơ bản (đ/tháng)</th>}
+              {show('allowance') && <th style={{ padding: '11px 16px', width: '140px' }}>Phụ cấp (đ/tháng)</th>}
+              {show('total') && <th style={{ padding: '11px 16px', width: '140px' }}>Tổng lương</th>}
+              {show('updated') && <th style={{ padding: '11px 16px' }}>Cập nhật</th>}
               <th style={{ padding: '11px 16px', width: '90px' }}>Lưu</th>
             </tr>
           </thead>
@@ -407,7 +412,7 @@ export const SalaryConfigView: React.FC<{ currentUser: any }> = ({ currentUser }
             {grouped.map(group => (
               <React.Fragment key={group.key}>
                 <tr style={{ backgroundColor: FINANCE_BLOCK_STYLE[group.key].bg }}>
-                  <td colSpan={11} style={{ padding: '7px 16px', fontSize: '11px', fontWeight: 800, color: FINANCE_BLOCK_STYLE[group.key].c, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                  <td colSpan={cfgColCount} style={{ padding: '7px 16px', fontSize: '11px', fontWeight: 800, color: FINANCE_BLOCK_STYLE[group.key].c, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
                     {FINANCE_BLOCK_OPTIONS.find(o => o.id === group.key)?.icon} Khối {group.label} — {group.rows.length} nhân viên
                   </td>
                 </tr>
@@ -425,20 +430,20 @@ export const SalaryConfigView: React.FC<{ currentUser: any }> = ({ currentUser }
                   const monthly = effMode === 'MONTHLY';
                   return (
                     <tr key={emp.employee_id} style={{ borderBottom: '1px solid var(--border)', backgroundColor: isDirty ? '#FFFBEB' : undefined }}>
-                      <td style={{ padding: '10px 16px' }}>
+                      {show('code') && <td style={{ padding: '10px 16px' }}>
                         <span style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--brand)', backgroundColor: 'var(--brand-soft)', padding: '3px 8px', borderRadius: '4px' }}>
                           {emp.employee_code}
                         </span>
-                      </td>
-                      <td style={{ padding: '10px 16px', fontWeight: 700 }}>{emp.full_name}</td>
-                      <td style={{ padding: '10px 16px' }}>
+                      </td>}
+                      {show('name') && <td style={{ padding: '10px 16px', fontWeight: 700 }}>{emp.full_name}</td>}
+                      {show('block') && <td style={{ padding: '10px 16px' }}>
                         <span style={{ padding: '3px 10px', borderRadius: 'var(--radius-full)', fontSize: '11px', fontWeight: 700, backgroundColor: blkStyle.bg, color: blkStyle.c, whiteSpace: 'nowrap' }}>
                           {FINANCE_BLOCK_SHORT[blk]}
                         </span>
-                      </td>
-                      <td style={{ padding: '10px 16px', fontSize: '12px' }}>{emp.default_branch_id}</td>
-                      <td style={{ padding: '10px 16px', fontSize: '12px' }}>{STATUS_LABEL[emp.employment_status] || emp.employment_status}</td>
-                      <td style={{ padding: '10px 16px' }}>
+                      </td>}
+                      {show('branch') && <td style={{ padding: '10px 16px', fontSize: '12px' }}>{emp.default_branch_id}</td>}
+                      {show('stage') && <td style={{ padding: '10px 16px', fontSize: '12px' }}>{STATUS_LABEL[emp.employment_status] || emp.employment_status}</td>}
+                      {show('mode') && <td style={{ padding: '10px 16px' }}>
                         {modeLocked ? (
                           <span title={effMode === 'MONTHLY' ? 'Khối văn phòng: lương cơ bản theo tháng (cố định)' : 'Khối cửa hàng: lương theo ca (cố định)'} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '6px 12px', borderRadius: 'var(--radius-full)', fontSize: '11px', fontWeight: 800, backgroundColor: effMode === 'MONTHLY' ? '#DBEAFE' : '#FEF3C7', color: effMode === 'MONTHLY' ? '#1D4ED8' : '#92400E', whiteSpace: 'nowrap' }}>
                             <Lock size={11} /> {payModeLabel(effMode)} (cố định)
@@ -455,8 +460,8 @@ export const SalaryConfigView: React.FC<{ currentUser: any }> = ({ currentUser }
                             <option value="HOURLY">Theo ca (giờ công)</option>
                           </select>
                         )}
-                      </td>
-                      <td style={{ padding: '10px 16px' }}>
+                      </td>}
+                      {show('base') && <td style={{ padding: '10px 16px' }}>
                         <input
                           type="number"
                           min={0}
@@ -468,8 +473,8 @@ export const SalaryConfigView: React.FC<{ currentUser: any }> = ({ currentUser }
                           title={canEdit ? 'Nhập lương cơ bản (đ/tháng)' : 'Kế toán cấu hình'}
                           style={{ width: '100%', padding: '7px 9px', borderRadius: 'var(--radius-sm)', border: `1px solid ${isDirty ? '#F59E0B' : 'var(--border)'}`, fontSize: '13px', fontWeight: 700, textAlign: 'right', backgroundColor: canEdit ? '#FFF' : 'var(--bg)' }}
                         />
-                      </td>
-                      <td style={{ padding: '10px 16px' }}>
+                      </td>}
+                      {show('allowance') && <td style={{ padding: '10px 16px' }}>
                         <input
                           type="number"
                           min={0}
@@ -481,15 +486,15 @@ export const SalaryConfigView: React.FC<{ currentUser: any }> = ({ currentUser }
                           title={canEdit ? 'Nhập phụ cấp (đ/tháng)' : 'Kế toán cấu hình'}
                           style={{ width: '100%', padding: '7px 9px', borderRadius: 'var(--radius-sm)', border: `1px solid ${isDirty ? '#F59E0B' : 'var(--border)'}`, fontSize: '13px', fontWeight: 700, textAlign: 'right', backgroundColor: canEdit ? '#FFF' : 'var(--bg)' }}
                         />
-                      </td>
-                      <td style={{ padding: '10px 16px', fontWeight: 800, color: 'var(--success)', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      </td>}
+                      {show('total') && <td style={{ padding: '10px 16px', fontWeight: 800, color: 'var(--success)', textAlign: 'right', whiteSpace: 'nowrap' }}>
                         {monthly
                           ? fmtVnd(base + allowance)
                           : <span title="NV hình thức theo ca: lương = giờ công × đơn giá; phụ cấp vẫn cộng theo tháng" style={{ fontSize: '11px', fontWeight: 800, color: '#92400E', backgroundColor: '#FEF3C7', borderRadius: 'var(--radius-full)', padding: '3px 10px' }}>Theo ca + PC {allowance > 0 ? fmtVnd(allowance) : '0 đ'}</span>}
-                      </td>
-                      <td style={{ padding: '10px 16px', fontSize: '11px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                      </td>}
+                      {show('updated') && <td style={{ padding: '10px 16px', fontSize: '11px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
                         {cfg?.updatedAt ? new Date(cfg.updatedAt).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'Chưa cấu hình'}
-                      </td>
+                      </td>}
                       <td style={{ padding: '10px 16px' }}>
                         {(() => {
                           const rs = rowSync[emp.employee_id];
@@ -551,7 +556,7 @@ export const SalaryConfigView: React.FC<{ currentUser: any }> = ({ currentUser }
             ))}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={11} style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
+                <td colSpan={cfgColCount} style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
                   <Building2 size={28} style={{ opacity: 0.4, marginBottom: '6px' }} />
                   <div>Không tìm thấy nhân viên phù hợp bộ lọc.</div>
                 </td>

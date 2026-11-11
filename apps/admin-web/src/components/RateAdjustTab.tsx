@@ -15,6 +15,7 @@ import {
 import { apiRequest } from '../services/api.js';
 import { periodLabel } from '@ubm/shared';
 import { formatVND } from '../utils/FinanceFormat';
+import { ColumnSettings } from './finance-columns.js';
 import './finance.css';
 
 const BRANCH_LABEL: Record<string, string> = {
@@ -42,7 +43,10 @@ const monthOptions = () => {
 };
 const sum = (rows: any[], key: string) => rows.reduce((s, r) => s + (Number(r?.[key]) || 0), 0);
 
-export default function RateAdjustTab({ month, currentUser, showToast }: { month: string; currentUser: any; showToast: (msg: string) => void }) {
+export default function RateAdjustTab({ month, currentUser, showToast, cols, onToggleCol, onShowAllCols, colVis, colVisSaving, colDefs }: { month: string; currentUser: any; showToast: (msg: string) => void; cols?: any; onToggleCol?: any; onShowAllCols?: any; colVis?: any; colVisSaving?: boolean; colDefs?: any }) {
+  const show = cols?.show || (() => true);
+  /** Số cột đang hiện — cột "Đơn giá MỚI" luôn hiện nên +1. */
+  const visibleColCount = 1 + ['select', 'code', 'name', 'stage', 'currentRate', 'delta', 'history'].filter(k => show(k)).length;
   const [branch, setBranch] = useState('*');
   const [q, setQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
@@ -238,6 +242,7 @@ export default function RateAdjustTab({ month, currentUser, showToast }: { month
             <div className="fin-card-sub">Chỉ nhập đơn giá MỚI ở những NV cần điều chỉnh — bỏ trống = giữ nguyên. Đơn giá cũ được giữ nguyên trong lịch sử, không ghi đè.</div>
           </div>
           <div className="fin-chips">
+            <ColumnSettings tabKey="fin-rate-adjust" defs={colDefs} value={colVis} onToggle={onToggleCol} onShowAll={() => onShowAllCols?.('fin-rate-adjust')} saving={colVisSaving} />
             <button type="button" className="fin-pill" onClick={() => toggleAll(true)}>Chọn hết dòng có giá mới</button>
             <button type="button" className="fin-pill" onClick={() => toggleAll(false)}>Bỏ chọn hết</button>
           </div>
@@ -248,12 +253,12 @@ export default function RateAdjustTab({ month, currentUser, showToast }: { month
           <div className="fin-table-wrap" style={{ maxHeight: '52vh' }}>
             <table className="fin-table" style={{ minWidth: 1060 }}>
               <thead>
-                <tr><th className="ctr" style={{ width: 44 }}>Chọn</th><th>Mã NV</th><th>Họ tên</th><th>Giai đoạn</th><th className="num">Đơn giá hiện tại</th><th className="num" style={{ minWidth: 150 }}>Đơn giá MỚI (đ/giờ)</th><th className="num">Chênh lệch</th><th className="ctr">Lịch sử</th></tr>
+                <tr>{show('select') && <th className="ctr" style={{ width: 44 }}>Chọn</th>}{show('code') && <th>Mã NV</th>}{show('name') && <th>Họ tên</th>}{show('stage') && <th>Giai đoạn</th>}{show('currentRate') && <th className="num">Đơn giá hiện tại</th>}<th className="num" style={{ minWidth: 150 }}>Đơn giá MỚI (đ/giờ)</th>{show('delta') && <th className="num">Chênh lệch</th>}{show('history') && <th className="ctr">Lịch sử</th>}</tr>
               </thead>
               <tbody>
                 {groups.map(g => (
                   <React.Fragment key={g.id}>
-                    <tr className="fin-band"><td colSpan={8}><Building2 size={12} style={{ verticalAlign: -1, marginRight: 6 }} />{branchLabelOf(g.id)}<span className="fin-band-count">{g.rows.length} NV</span></td></tr>
+                    <tr className="fin-band"><td colSpan={visibleColCount}><Building2 size={12} style={{ verticalAlign: -1, marginRight: 6 }} />{branchLabelOf(g.id)}<span className="fin-band-count">{g.rows.length} NV</span></td></tr>
                     {g.rows.map((r: any) => {
                       const raw = String(newRates[r.employeeId] ?? '');
                       const v = Number(raw);
@@ -262,24 +267,24 @@ export default function RateAdjustTab({ month, currentUser, showToast }: { month
                       const isChecked = !!checked[r.employeeId];
                       return (
                         <tr key={r.employeeId} style={isChecked ? { background: '#fff7fb' } : undefined}>
-                          <td className="ctr"><input type="checkbox" checked={isChecked} onChange={e => setChecked(prev => ({ ...prev, [r.employeeId]: e.target.checked }))} aria-label={`Chọn ${r.fullName}`} /></td>
-                          <td className="ctr fin-mono">{r.employeeCode}</td>
-                          <td style={{ fontWeight: 700 }}>{r.fullName}</td>
-                          <td><span className="fin-sign" style={r.stage === 'OFFICIAL' ? { background: '#eff6ff', color: '#1d4ed8' } : { background: '#fff7ed', color: '#92400e' }}>{r.stage === 'OFFICIAL' ? 'CHÍNH THỨC' : 'THỬ VIỆC'}</span></td>
-                          <td className="num fin-money" style={{ fontWeight: 700 }}>{r.currentRate.toLocaleString('vi-VN')} đ</td>
+                          {show('select') && <td className="ctr"><input type="checkbox" checked={isChecked} onChange={e => setChecked(prev => ({ ...prev, [r.employeeId]: e.target.checked }))} aria-label={`Chọn ${r.fullName}`} /></td>}
+                          {show('code') && <td className="ctr fin-mono">{r.employeeCode}</td>}
+                          {show('name') && <td style={{ fontWeight: 700 }}>{r.fullName}</td>}
+                          {show('stage') && <td><span className="fin-sign" style={r.stage === 'OFFICIAL' ? { background: '#eff6ff', color: '#1d4ed8' } : { background: '#fff7ed', color: '#92400e' }}>{r.stage === 'OFFICIAL' ? 'CHÍNH THỨC' : 'THỬ VIỆC'}</span></td>}
+                          {show('currentRate') && <td className="num fin-money" style={{ fontWeight: 700 }}>{r.currentRate.toLocaleString('vi-VN')} đ</td>}
                           <td className="num">
                             <input type="number" className="fin-input" style={{ textAlign: 'right', fontWeight: 800, borderColor: isChecked ? '#f9a8d4' : undefined, background: isChecked ? '#fff' : undefined }}
                               min={1000} step={500} placeholder={String(r.currentRate)} value={raw}
                               onChange={e => setRate(r, e.target.value)} aria-label={`Đơn giá mới của ${r.fullName}`} />
                           </td>
-                          <td className="num fin-money" style={{ color: delta > 0 ? 'var(--fin-green)' : delta < 0 ? 'var(--fin-red)' : 'inherit', fontWeight: delta !== 0 ? 800 : 400 }}>{delta !== 0 ? `${delta > 0 ? '+' : ''}${delta.toLocaleString('vi-VN')}` : '—'}</td>
-                          <td className="ctr"><button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={() => openHistory(r)} title="Xem lịch sử đơn giá"><History size={13} /></button></td>
+                          {show('delta') && <td className="num fin-money" style={{ color: delta > 0 ? 'var(--fin-green)' : delta < 0 ? 'var(--fin-red)' : 'inherit', fontWeight: delta !== 0 ? 800 : 400 }}>{delta !== 0 ? `${delta > 0 ? '+' : ''}${delta.toLocaleString('vi-VN')}` : '—'}</td>}
+                          {show('history') && <td className="ctr"><button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={() => openHistory(r)} title="Xem lịch sử đơn giá"><History size={13} /></button></td>}
                         </tr>
                       );
                     })}
                   </React.Fragment>
                 ))}
-                {groups.length === 0 && <tr><td colSpan={8} className="fin-empty">{debouncedQ ? 'Không tìm thấy nhân viên phù hợp.' : 'Chưa có nhân viên.'}</td></tr>}
+                {groups.length === 0 && <tr><td colSpan={visibleColCount} className="fin-empty">{debouncedQ ? 'Không tìm thấy nhân viên phù hợp.' : 'Chưa có nhân viên.'}</td></tr>}
               </tbody>
             </table>
           </div>

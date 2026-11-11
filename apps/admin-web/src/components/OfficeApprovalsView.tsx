@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Building2, CheckCircle, XCircle, RefreshCw } from 'lucide-react';
 import { apiRequest } from '../services/api';
+import { ColumnSettings } from './finance-columns.js';
 
 /**
  * Duyệt Văn Phòng — 2 hàng đợi cho nhân viên khối VĂN PHÒNG (group = VAN_PHONG):
@@ -36,8 +37,11 @@ const ADJ_STATUS_LABEL: Record<string, string> = {
   REJECTED: 'Đã từ chối',
 };
 
-export const OfficeApprovalsView: React.FC<{ currentUser: any }> = ({ currentUser }) => {
+export const OfficeApprovalsView: React.FC<{ currentUser: any; cols?: any; onToggleCol?: any; onShowAllCols?: any; colVis?: any; colVisSaving?: boolean; colDefs?: any }> = ({ currentUser, cols, onToggleCol, onShowAllCols, colVis, colVisSaving, colDefs }) => {
   const role: string = String(currentUser?.role || '').toUpperCase();
+  /** Ẩn/hiện cột (dùng chung cho cả 2 bảng nghỉ phép & bổ sung công). Cột "Duyệt" luôn hiện. */
+  const show = cols?.show || (() => true);
+  const officeColCount = 1 + ['employee', 'date', 'reason', 'status'].filter(k => show(k)).length;
   const canHr = ['HR', 'ADMIN'].includes(role);
   const canFinance = ['FINANCE', 'ADMIN'].includes(role);
   const canDirector = ['DIRECTOR', 'ADMIN'].includes(role);
@@ -113,9 +117,12 @@ export const OfficeApprovalsView: React.FC<{ currentUser: any }> = ({ currentUse
             Vai trò của bạn: <b>{role}</b>. Nghỉ phép duyệt tuần tự <b>Nhân sự → Kế toán → Giám đốc</b>.
           </p>
         </div>
-        <button onClick={load} disabled={loading} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', backgroundColor: 'var(--surface)', color: 'var(--text)', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>
-          <RefreshCw size={14} /> Tải lại
-        </button>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <ColumnSettings tabKey="office-approvals" defs={colDefs} value={colVis} onToggle={onToggleCol} onShowAll={() => onShowAllCols?.('office-approvals')} saving={colVisSaving} />
+          <button onClick={load} disabled={loading} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', backgroundColor: 'var(--surface)', color: 'var(--text)', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>
+            <RefreshCw size={14} /> Tải lại
+          </button>
+        </div>
       </div>
 
       {notice && (
@@ -136,20 +143,20 @@ export const OfficeApprovalsView: React.FC<{ currentUser: any }> = ({ currentUse
       {tab === 'leave' && (
         <div style={{ ...card, overflow: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '900px' }}>
-            <thead><tr><th style={th}>Nhân viên</th><th style={th}>Ngày nghỉ</th><th style={th}>Lý do</th><th style={th}>Trạng thái</th><th style={th}>Duyệt</th></tr></thead>
+            <thead><tr>{show('employee') && <th style={th}>Nhân viên</th>}{show('date') && <th style={th}>Ngày nghỉ</th>}{show('reason') && <th style={th}>Lý do</th>}{show('status') && <th style={th}>Trạng thái</th>}<th style={th}>Duyệt</th></tr></thead>
             <tbody>
               {loading ? (
-                <tr><td style={td} colSpan={5}>Đang tải…</td></tr>
+                <tr><td style={td} colSpan={officeColCount}>Đang tải…</td></tr>
               ) : leaves.length === 0 ? (
-                <tr><td style={td} colSpan={5}>Chưa có phiếu nghỉ phép văn phòng nào.</td></tr>
+                <tr><td style={td} colSpan={officeColCount}>Chưa có phiếu nghỉ phép văn phòng nào.</td></tr>
               ) : leaves.map((l: any) => {
                 const sc = LEAVE_STATUS_COLOR[l.status] || LEAVE_STATUS_COLOR.PENDING_HR;
                 return (
                   <tr key={l.leave_id}>
-                    <td style={td}><b>{l.full_name}</b><div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{l.employee_code}</div></td>
-                    <td style={td}>{String(l.leave_date).slice(0, 10).split('-').reverse().join('/')}</td>
-                    <td style={td}>{l.reason}</td>
-                    <td style={td}><span style={{ fontSize: 11, fontWeight: 800, padding: '2px 8px', borderRadius: '999px', backgroundColor: sc.bg, color: sc.fg }}>{LEAVE_STATUS_LABEL[l.status] || l.status}</span></td>
+                    {show('employee') && <td style={td}><b>{l.full_name}</b><div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{l.employee_code}</div></td>}
+                    {show('date') && <td style={td}>{String(l.leave_date).slice(0, 10).split('-').reverse().join('/')}</td>}
+                    {show('reason') && <td style={td}>{l.reason}</td>}
+                    {show('status') && <td style={td}><span style={{ fontSize: 11, fontWeight: 800, padding: '2px 8px', borderRadius: '999px', backgroundColor: sc.bg, color: sc.fg }}>{LEAVE_STATUS_LABEL[l.status] || l.status}</span></td>}
                     <td style={td}>
                       {canActOnLeave(l.status) ? (
                         <div style={{ display: 'flex', gap: '6px' }}>
@@ -172,18 +179,18 @@ export const OfficeApprovalsView: React.FC<{ currentUser: any }> = ({ currentUse
             <div style={{ padding: '18px', fontSize: 13, color: 'var(--text-muted)' }}>Vai trò của bạn không có quyền duyệt phiếu bổ sung công văn phòng.</div>
           ) : (
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '900px' }}>
-              <thead><tr><th style={th}>Nhân viên</th><th style={th}>Ngày cần bổ sung</th><th style={th}>Lý do</th><th style={th}>Trạng thái</th><th style={th}>Duyệt</th></tr></thead>
+              <thead><tr>{show('employee') && <th style={th}>Nhân viên</th>}{show('date') && <th style={th}>Ngày cần bổ sung</th>}{show('reason') && <th style={th}>Lý do</th>}{show('status') && <th style={th}>Trạng thái</th>}<th style={th}>Duyệt</th></tr></thead>
               <tbody>
                 {loading ? (
-                  <tr><td style={td} colSpan={5}>Đang tải…</td></tr>
+                  <tr><td style={td} colSpan={officeColCount}>Đang tải…</td></tr>
                 ) : adjustments.length === 0 ? (
-                  <tr><td style={td} colSpan={5}>Chưa có phiếu bổ sung công văn phòng nào.</td></tr>
+                  <tr><td style={td} colSpan={officeColCount}>Chưa có phiếu bổ sung công văn phòng nào.</td></tr>
                 ) : adjustments.map((a: any) => (
                   <tr key={a.adjustment_id}>
-                    <td style={td}><b>{a.full_name}</b><div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{a.employee_code}</div></td>
-                    <td style={td}>{String(a.work_date).slice(0, 10).split('-').reverse().join('/')}</td>
-                    <td style={td}>{a.reason}{Number(a.minutes_requested) > 0 ? ` (${a.minutes_requested} phút)` : ''}</td>
-                    <td style={td}><span style={{ fontSize: 11, fontWeight: 800, padding: '2px 8px', borderRadius: '999px', backgroundColor: a.status === 'APPROVED' ? '#D1FAE5' : a.status === 'REJECTED' ? '#FEE2E2' : '#FEF3C7', color: a.status === 'APPROVED' ? '#065F46' : a.status === 'REJECTED' ? '#991B1B' : '#92400E' }}>{ADJ_STATUS_LABEL[a.status] || a.status}</span></td>
+                    {show('employee') && <td style={td}><b>{a.full_name}</b><div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{a.employee_code}</div></td>}
+                    {show('date') && <td style={td}>{String(a.work_date).slice(0, 10).split('-').reverse().join('/')}</td>}
+                    {show('reason') && <td style={td}>{a.reason}{Number(a.minutes_requested) > 0 ? ` (${a.minutes_requested} phút)` : ''}</td>}
+                    {show('status') && <td style={td}><span style={{ fontSize: 11, fontWeight: 800, padding: '2px 8px', borderRadius: '999px', backgroundColor: a.status === 'APPROVED' ? '#D1FAE5' : a.status === 'REJECTED' ? '#FEE2E2' : '#FEF3C7', color: a.status === 'APPROVED' ? '#065F46' : a.status === 'REJECTED' ? '#991B1B' : '#92400E' }}>{ADJ_STATUS_LABEL[a.status] || a.status}</span></td>}
                     <td style={td}>
                       {canActOnAdjust(a.status) ? (
                         <div style={{ display: 'flex', gap: '6px' }}>

@@ -11,7 +11,7 @@ import {
   DollarSign, FileSpreadsheet, Calendar, CalendarRange, CreditCard, CheckCircle,
   PenTool, QrCode, FileText, Users, Loader2, RefreshCw,
   Upload, Download, Printer, ShieldAlert, ArrowRight,
-  Plus, Save, LayoutDashboard, List, Activity, Receipt,
+  Plus, Save, LayoutDashboard, Activity, Receipt,
   Send, Check, X, ChevronDown, Folder, HardDrive, Lock,
   Clock, Wallet, History, Archive, Search, FileDown, Building2,
   ShieldCheck, AlertCircle, Banknote, Calculator, Settings2, Inbox,
@@ -24,6 +24,7 @@ import {
 import { SalaryConfigView } from './SalaryConfigView.js';
 import { OfficeApprovalsView } from './OfficeApprovalsView.js';
 import RateAdjustTab from './RateAdjustTab';
+import { FINANCE_COLUMN_DEFS as FIN_COL_DEFS, ColumnSettings, financeColHeaderCount as FIN_COL_HEADER_COUNT } from './finance-columns.js';
 import { formatVND } from '../utils/FinanceFormat';
 import './finance.css';
 
@@ -243,55 +244,11 @@ export default function FinanceModule(props: FinanceModuleProps) {
     return base;
   }, [month]);
 
-  /** Hiển thị cột theo tab (lưu server theo TÀI KHOẢN, đồng bộ 2 máy) */
-  const FIN_COL_DEFS: Record<string, Array<{ key: string; label: string }>> = {
-    'fin-timesheet': [
-      { key: 'stt', label: 'STT' }, { key: 'fullName', label: 'Họ tên' }, { key: 'code', label: 'Mã NV' }, { key: 'branch', label: 'Chi nhánh' },
-      { key: 'full', label: 'Ca đủ' }, { key: 'partial', label: 'Thiếu' }, { key: 'absent', label: 'Vắng' }, { key: 'hours', label: 'Giờ công' },
-      { key: 'standardPay', label: 'Lương ca' }, { key: 'deduction', label: 'Trừ' }, { key: 'netPay', label: 'THỰC NHẬN' },
-    ],
-    'fin-bcc': [
-      { key: 'summary', label: 'Tóm tắt NV (giờ/đủ/thiếu/vắng/tiền)' }, { key: 'date', label: 'Ngày' }, { key: 'shift', label: 'Ca' }, { key: 'hours', label: 'Giờ' },
-      { key: 'status', label: 'Trạng thái' }, { key: 'checkIn', label: 'Check-in' }, { key: 'lateMin', label: 'Trễ (phút)' }, { key: 'shiftPay', label: 'Lương ca' }, { key: 'fineAmount', label: 'Phạt/Trừ' },
-    ],
-    'fin-calculate': [
-      { key: 'stt', label: 'STT' }, { key: 'code', label: 'Mã NV' }, { key: 'name', label: 'Họ tên' }, { key: 'branch', label: 'Chi nhánh' },
-      { key: 'luong_cb', label: 'LCB' }, { key: 'ot_extra', label: 'OT thêm' }, { key: 'bonus_extra', label: 'Bonus' }, { key: 'ung_luong', label: 'Ứng lương' },
-      { key: 'tru_kpi', label: 'Trừ KPI' }, { key: 'dong_phuc', label: 'Trừ ĐP' }, { key: 'note', label: 'Ghi chú' },
-      { key: 'b1', label: 'B1 Giờ/LCB' }, { key: 'b2', label: 'B2 Tổng cộng' }, { key: 'b3', label: 'B3 Tổng lương' }, { key: 'b4', label: 'B4 Thực lãnh' },
-    ],
-    'fin-payroll-sheet': [
-      { key: 'stt', label: 'STT' }, { key: 'full_name', label: 'Họ tên' }, { key: 'employee_code', label: 'Mã NV' }, { key: 'branch', label: 'Chi nhánh' },
-      { key: 'gio', label: 'Giờ công' }, { key: 'banCa', label: 'Lương ca' }, { key: 'phuCap', label: 'Phụ cấp' }, { key: 'lcb', label: 'LCB' },
-      { key: 'ot', label: 'OT thêm' }, { key: 'bonus', label: 'Bonus' }, { key: 'tongCong', label: 'TỔNG CỘNG' }, { key: 'truKpiPhat', label: 'Trừ KPI/phạt' },
-      { key: 'ung', label: 'Ứng lương' }, { key: 'dongPhuc', label: 'Trừ ĐP' }, { key: 'tongLuong', label: 'TỔNG LƯƠNG' }, { key: 'thuc', label: 'THỰC LÃNH' }, { key: 'status', label: 'Trạng thái' },
-    ],
-    'fin-payroll-periods': [
-      { key: 'stt', label: 'STT' }, { key: 'full_name', label: 'Họ tên' }, { key: 'employee_code', label: 'Mã NV' }, { key: 'branch', label: 'Chi nhánh' },
-      { key: 'gio', label: 'Giờ công' }, { key: 'banCa', label: 'Lương ca' }, { key: 'phuCap', label: 'Phụ cấp' }, { key: 'lcb', label: 'LCB' },
-      { key: 'ot', label: 'OT thêm' }, { key: 'bonus', label: 'Bonus' }, { key: 'tongCong', label: 'TỔNG CỘNG' }, { key: 'truKpiPhat', label: 'Trừ KPI/phạt' },
-      { key: 'ung', label: 'Ứng lương' }, { key: 'dongPhuc', label: 'Trừ ĐP' }, { key: 'tongLuong', label: 'TỔNG LƯƠNG' }, { key: 'thuc', label: 'THỰC LÃNH' },
-      { key: 'status', label: 'Trạng thái phiếu' }, { key: 'edit', label: 'Sửa trực tiếp' },
-    ],
-    'fin-payslips': [
-      { key: 'stt', label: 'STT' }, { key: 'full_name', label: 'Họ tên' }, { key: 'employee_code', label: 'Mã NV' }, { key: 'branch', label: 'Chi nhánh' },
-      { key: 'gio', label: 'Giờ công' }, { key: 'banCa', label: 'Lương ca' }, { key: 'phuCap', label: 'Phụ cấp' }, { key: 'lcb', label: 'LCB' },
-      { key: 'ot', label: 'OT thêm' }, { key: 'bonus', label: 'Bonus' }, { key: 'tongCong', label: 'TỔNG CỘNG' }, { key: 'truKpiPhat', label: 'Trừ KPI/phạt' },
-      { key: 'ung', label: 'Ứng lương' }, { key: 'dongPhuc', label: 'Trừ ĐP' }, { key: 'tongLuong', label: 'TỔNG LƯƠNG' }, { key: 'thuc', label: 'THỰC LÃNH' },
-      { key: 'sign', label: 'Trạng thái / Chữ ký' }, { key: 'action', label: 'Thao tác' },
-    ],
-    'fin-payment': [
-      { key: 'stt', label: 'STT' }, { key: 'full_name', label: 'Họ tên' }, { key: 'employee_code', label: 'Mã NV' }, { key: 'branch', label: 'Chi nhánh' },
-      { key: 'gio', label: 'Giờ công' }, { key: 'banCa', label: 'Lương ca' }, { key: 'phuCap', label: 'Phụ cấp' }, { key: 'lcb', label: 'LCB' },
-      { key: 'ot', label: 'OT thêm' }, { key: 'bonus', label: 'Bonus' }, { key: 'tongCong', label: 'TỔNG CỘNG' }, { key: 'truKpiPhat', label: 'Trừ KPI/phạt' },
-      { key: 'ung', label: 'Ứng lương' }, { key: 'dongPhuc', label: 'Trừ ĐP' }, { key: 'tongLuong', label: 'TỔNG LƯƠNG' }, { key: 'thuc', label: 'THỰC LÃNH' },
-      { key: 'bank', label: 'Ngân hàng / STK' }, { key: 'qr', label: 'VietQR' }, { key: 'action', label: 'Thao tác' },
-    ],
-  };
+  /** Hiển thị cột theo bảng — danh sách cột + nút panel nằm ở finance-columns.tsx
+   *  (dùng chung cho cả các tab tách file như RateAdjustTab / SalaryConfigView). */
   const [colVis, setColVis] = useState<Record<string, Record<string, boolean>>>({});
   const [colVisSaving, setColVisSaving] = useState(false);
-  // Mở/đóng panel chọn cột của tab đang xem — 1 state dùng chung, render trong CardHead từng tab.
-  const [colVisOpenTab, setColVisOpenTab] = useState<string>('');
+  // Mở/đóng panel chọn cột: mỗi ColumnSettings tự quản lý, không cần state chung.
   const colsVisible = useCallback((tabId: string) => {
     const defs = FIN_COL_DEFS[tabId] || [];
     return {
@@ -1198,7 +1155,7 @@ export default function FinanceModule(props: FinanceModuleProps) {
       {/* ═══════════ NỘI DUNG TAB ═══════════ */}
       {showTabContent && (
         <main style={{ flex: 1 }}>
-          {activeTab === 'fin-dashboard' && <DashboardTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} slips={slips} workflow={workflow} formatVND={formatVND} />}
+          {activeTab === 'fin-dashboard' && <DashboardTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} slips={slips} workflow={workflow} formatVND={formatVND} colVis={colVis} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVisSaving={colVisSaving} />}
           {activeTab === 'fin-timesheet' && <TimesheetTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} loadFinSheet={loadFinSheet} formatVND={formatVND} cols={colsVisible('fin-timesheet')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-timesheet']} workflowStep={workflow?.steps?.find((s: any) => s.id === 'fin-timesheet') || null} onConfirmStep={confirmWorkflowStep} showToast={showToast} />}
           {activeTab === 'fin-bcc' && <BccTab month={month} finSheet={finSheet} finSheetLoading={finSheetLoading} formatVND={formatVND} cols={colsVisible('fin-bcc')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-bcc']} workflowStep={workflow?.steps?.find((s: any) => s.id === 'fin-bcc') || null} onConfirmStep={confirmWorkflowStep} showToast={showToast} />}
           {activeTab === 'fin-calculate' && <CalculateTab month={month} formula={formula} setFormula={setFormula} inputs={inputs} inputsLoading={inputsLoading} allEmployees={allEmployees} finSheet={finSheet} finSheetLoading={finSheetLoading} salaryConfigs={salaryConfigs} saveFormula={saveFormula} upsertInput={upsertInput} saveAllInputs={saveAllInputs} loadFormula={loadFormula} loadInputs={loadInputs} runCalculate={runCalculate} calcBusy={calcBusy} runs={runs} inputsSaving={inputsSaving} pendingCount={pendingCount} inputsSavedAt={inputsSavedAt} cols={colsVisible('fin-calculate')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-calculate']} />}
@@ -1207,11 +1164,11 @@ export default function FinanceModule(props: FinanceModuleProps) {
           {activeTab === 'fin-payslips' && <PayslipsTab month={month} slips={slips} slipsLoading={slipsLoading} allEmployees={allEmployees} formatVND={formatVND} loadSlips={loadSlips} stageBadge={stageBadge} slipQrUrl={slipQrUrl} fastSignLap={fastSignLap} fastSignLapAll={fastSignLapAll} fastSignLapBranch={fastSignLapBranch} publishBranch={publishBranch} publishSlip={publishSlip} returnSlip={returnSlip} markPaidSlip={markPaidSlip} syncSlipDrive={syncSlipDrive} downloadSlipPdf={downloadSlipPdf} cols={colsVisible('fin-payslips')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payslips']} />}
           {activeTab === 'fin-payment' && <PaymentTab month={month} slips={slips} allEmployees={allEmployees} formatVND={formatVND} loadSlips={loadSlips} slipQrUrl={slipQrUrl} markPaidSlip={markPaidSlip} downloadSlipPdf={downloadSlipPdf} exportPaymentFile={exportPaymentFile} cols={colsVisible('fin-payment')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-payment']} />}
           {activeTab === 'fin-signatures' && <SignatureTemplatesTab currentUser={currentUser} showToast={showToast} />}
-          {activeTab === 'fin-rate-adjust' && <RateAdjustTab month={month} currentUser={currentUser} showToast={showToast} />}
-          {activeTab === 'fin-bank-qr' && <BankQrTab allEmployees={allEmployees} month={month} />}
+          {activeTab === 'fin-rate-adjust' && <RateAdjustTab month={month} currentUser={currentUser} showToast={showToast} cols={colsVisible('fin-rate-adjust')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-rate-adjust']} />}
+          {activeTab === 'fin-bank-qr' && <BankQrTab allEmployees={allEmployees} month={month} cols={colsVisible('fin-bank-qr')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-bank-qr']} />}
           {activeTab === 'bank-changes' && <BankChangesTab currentUser={currentUser} showToast={showToast} />}
-          {activeTab === 'fin-salary-config' && <SalaryConfigView currentUser={currentUser} />}
-          {activeTab === 'office-approvals' && <OfficeApprovalsView currentUser={currentUser} />}
+          {activeTab === 'fin-salary-config' && <SalaryConfigView currentUser={currentUser} cols={colsVisible('fin-salary-config')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['fin-salary-config']} />}
+          {activeTab === 'office-approvals' && <OfficeApprovalsView currentUser={currentUser} cols={colsVisible('office-approvals')} onToggleCol={toggleCol} onShowAllCols={showAllCols} colVis={colVis} colVisSaving={colVisSaving} colDefs={FIN_COL_DEFS['office-approvals']} />}
         </main>
       )}
     </div>
@@ -1231,40 +1188,6 @@ function Kpi({ icon, label, value, sub, tone }: { icon: React.ReactNode; label: 
         <div className="fin-kpi-value">{value}</div>
         <div className="fin-kpi-sub">{sub}</div>
       </div>
-    </div>
-  );
-}
-
-/** Nút + panel ẩn/hiện cột cho 1 tab (dùng chung cho mọi tab Finance). */
-const FIN_COL_HEADER_COUNT = (tabKey: string, defs: any, cols: any) => {
-  const show = cols?.show;
-  if (!show || !defs) return 1;
-  return (defs as any[]).filter((d: any) => show(d.key)).length || 1;
-};
-function ColumnSettings({ tabKey, defs, value, onToggle, onShowAll, saving }: any) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div style={{ position: 'relative' }}>
-      <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={() => setOpen(v => !v)} title="Ẩn/hiện các cột bảng (lưu theo tài khoản, đồng bộ 2 máy)">
-        <List size={13} /> {saving ? 'Đang lưu…' : 'Cột hiển thị'}
-      </button>
-      {open && (
-        <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 60, width: 280, background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, boxShadow: '0 12px 32px rgba(15,23,42,.18)', padding: '10px 12px' }}>
-          <div style={{ fontSize: 11, fontWeight: 800, marginBottom: 6 }}>Cột hiển thị — tab này (lưu theo tài khoản)</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 320, overflowY: 'auto' }}>
-            {(defs || []).map((d: any) => (
-              <label key={d.key} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, cursor: 'pointer' }}>
-                <input type="checkbox" checked={value?.[tabKey]?.[d.key] !== false} onChange={() => onToggle(tabKey, d.key)} /> {d.label}
-              </label>
-            ))}
-          </div>
-          <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-            <button type="button" className="fin-btn fin-btn-primary fin-btn-sm" onClick={onShowAll}>Hiện tất cả</button>
-            <button type="button" className="fin-btn fin-btn-ghost fin-btn-sm" onClick={() => setOpen(false)}>Đóng</button>
-          </div>
-          <div style={{ fontSize: 10.5, color: 'var(--fin-muted)', marginTop: 6 }}>Sẽ đồng bộ realtime cho máy khác cùng tài khoản.</div>
-        </div>
-      )}
     </div>
   );
 }
@@ -1332,12 +1255,16 @@ const slipBranchId = (s: any, allEmployees: any[]) => {
 /* ============================================================================
    1 · DASHBOARD TÀI CHÍNH
    ============================================================================ */
-function DashboardTab({ month, finSheet, finSheetLoading, slips, workflow, formatVND }: any) {
+function DashboardTab({ month, finSheet, finSheetLoading, slips, workflow, formatVND, colVis, onToggleCol, onShowAllCols, colVisSaving }: any) {
   const fs = finSheet;
   const rows: any[] = fs?.rows || [];
   const branchGroupsAll = useMemo(() => branchGroups(rows, (r: any) => r.branchId), [rows]);
   const publishedCount = slips.filter((s: any) => ['PUBLISHED', 'CONFIRMED', 'PAID'].includes(String(s?.status))).length;
   const blockEntries = Object.values(fs?.byBlock || {}) as any[];
+  const showBlock = (k: string) => colVis?.['fin-dashboard-block']?.[k] !== false;
+  const showBranch = (k: string) => colVis?.['fin-dashboard-branch']?.[k] !== false;
+  const blockCols = FIN_COL_DEFS['fin-dashboard-block'].filter(d => showBlock(d.key)).length || 1;
+  const branchCols = FIN_COL_DEFS['fin-dashboard-branch'].filter(d => showBranch(d.key)).length || 1;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <TabHead step={1} title="Tổng quan Tài chính & Quỹ lương" desc={`Tổng quan kỳ ${periodLabel(month)} — quỹ lương, giờ công, tiến độ phiếu lương. Bấm vào từng bước trên thanh quy trình để xử lý tuần tự.`} />
@@ -1354,23 +1281,25 @@ function DashboardTab({ month, finSheet, finSheetLoading, slips, workflow, forma
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 5fr) minmax(0, 7fr)', gap: 12, alignItems: 'start' }} className="fin-dash-grid">
         {/* Khối */}
         <div className="fin-card">
-          <CardHead title="Lương theo Khối" icon={<Users size={14} color="#E85D92" />} sub={`Kỳ ${periodLabel(month)}`} />
+          <CardHead title="Lương theo Khối" icon={<Users size={14} color="#E85D92" />} sub={`Kỳ ${periodLabel(month)}`}>
+            <ColumnSettings tabKey="fin-dashboard-block" defs={FIN_COL_DEFS['fin-dashboard-block']} value={colVis} onToggle={onToggleCol} onShowAll={() => onShowAllCols('fin-dashboard-block')} saving={colVisSaving} />
+          </CardHead>
           <div className="fin-table-wrap" style={{ maxHeight: 'none' }}>
             <table className="fin-table">
               <thead>
-                <tr><th>Khối</th><th className="num">NV</th><th className="num">Giờ</th><th className="num">T.Cộng</th><th className="num">Thực lĩnh</th></tr>
+                <tr>{showBlock('block') && <th>Khối</th>}{showBlock('nv') && <th className="num">NV</th>}{showBlock('hours') && <th className="num">Giờ</th>}{showBlock('total') && <th className="num">T.Cộng</th>}{showBlock('net') && <th className="num">Thực lĩnh</th>}</tr>
               </thead>
               <tbody>
                 {blockEntries.map((b: any) => (
                   <tr key={b.key}>
-                    <td style={{ fontWeight: 700 }}>{b.label}</td>
-                    <td className="num">{b.employees}</td>
-                    <td className="num">{Number(b.hours ?? 0).toFixed(1)}</td>
-                    <td className="num fin-money">{formatVND(b.value ?? 0)}</td>
-                    <td className="num fin-money" style={{ fontWeight: 800, color: 'var(--fin-green)' }}>{formatVND(b.netPay ?? 0)}</td>
+                    {showBlock('block') && <td style={{ fontWeight: 700 }}>{b.label}</td>}
+                    {showBlock('nv') && <td className="num">{b.employees}</td>}
+                    {showBlock('hours') && <td className="num">{Number(b.hours ?? 0).toFixed(1)}</td>}
+                    {showBlock('total') && <td className="num fin-money">{formatVND(b.value ?? 0)}</td>}
+                    {showBlock('net') && <td className="num fin-money" style={{ fontWeight: 800, color: 'var(--fin-green)' }}>{formatVND(b.netPay ?? 0)}</td>}
                   </tr>
                 ))}
-                {blockEntries.length === 0 && <tr><td colSpan={5} className="fin-empty">Chưa có dữ liệu.</td></tr>}
+                {blockEntries.length === 0 && <tr><td colSpan={blockCols} className="fin-empty">Chưa có dữ liệu.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -1378,30 +1307,32 @@ function DashboardTab({ month, finSheet, finSheetLoading, slips, workflow, forma
 
         {/* Chi nhánh */}
         <div className="fin-card">
-          <CardHead title="Lương theo Chi nhánh" icon={<Building2 size={14} color="#E85D92" />} sub="Gộp từ bảng chấm công kỳ này" />
+          <CardHead title="Lương theo Chi nhánh" icon={<Building2 size={14} color="#E85D92" />} sub="Gộp từ bảng chấm công kỳ này">
+            <ColumnSettings tabKey="fin-dashboard-branch" defs={FIN_COL_DEFS['fin-dashboard-branch']} value={colVis} onToggle={onToggleCol} onShowAll={() => onShowAllCols('fin-dashboard-branch')} saving={colVisSaving} />
+          </CardHead>
           <div className="fin-table-wrap" style={{ maxHeight: 'none' }}>
             <table className="fin-table">
               <thead>
-                <tr><th>Chi nhánh</th><th className="num">NV</th><th className="num">Giờ</th><th className="num">Lương ca</th><th className="num">Trừ</th><th className="num">Thực nhận</th></tr>
+                <tr>{showBranch('branch') && <th>Chi nhánh</th>}{showBranch('nv') && <th className="num">NV</th>}{showBranch('hours') && <th className="num">Giờ</th>}{showBranch('shiftPay') && <th className="num">Lương ca</th>}{showBranch('deduction') && <th className="num">Trừ</th>}{showBranch('net') && <th className="num">Thực nhận</th>}</tr>
               </thead>
               <tbody>
                 {branchGroupsAll.map(g => (
                   <React.Fragment key={g.id}>
-                    <tr className="fin-band"><td colSpan={6}>{branchLabelOf(g.id)}<span className="fin-band-count">{g.rows.length} NV</span></td></tr>
+                    <tr className="fin-band"><td colSpan={branchCols}>{branchLabelOf(g.id)}<span className="fin-band-count">{g.rows.length} NV</span></td></tr>
                     <tr className="fin-subtotal">
                       <td>Cộng {branchLabelOf(g.id)}</td>
-                      <td className="num">{g.rows.length}</td>
-                      <td className="num">{r1(sumBy(g.rows, 'hours')).toFixed(1)}</td>
-                      <td className="num fin-money">{formatVND(sumBy(g.rows, 'standardPay'))}</td>
-                      <td className="num fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(sumBy(g.rows, 'deduction'))}</td>
-                      <td className="num fin-money">{formatVND(sumBy(g.rows, 'netPay'))}</td>
+                      {showBranch('nv') && <td className="num">{g.rows.length}</td>}
+                      {showBranch('hours') && <td className="num">{r1(sumBy(g.rows, 'hours')).toFixed(1)}</td>}
+                      {showBranch('shiftPay') && <td className="num fin-money">{formatVND(sumBy(g.rows, 'standardPay'))}</td>}
+                      {showBranch('deduction') && <td className="num fin-money" style={{ color: 'var(--fin-red)' }}>{formatVND(sumBy(g.rows, 'deduction'))}</td>}
+                      {showBranch('net') && <td className="num fin-money">{formatVND(sumBy(g.rows, 'netPay'))}</td>}
                     </tr>
                   </React.Fragment>
                 ))}
                 {branchGroupsAll.length > 0 && (
-                  <tr className="fin-grand"><td>TỔNG CỘNG</td><td className="num">{rows.length}</td><td className="num">{r1(sumBy(rows, 'hours')).toFixed(1)}</td><td className="num fin-money">{formatVND(sumBy(rows, 'standardPay'))}</td><td className="num fin-money">{formatVND(sumBy(rows, 'deduction'))}</td><td className="num fin-money">{formatVND(sumBy(rows, 'netPay'))}</td></tr>
+                  <tr className="fin-grand"><td>TỔNG CỘNG</td>{showBranch('nv') && <td className="num">{rows.length}</td>}{showBranch('hours') && <td className="num">{r1(sumBy(rows, 'hours')).toFixed(1)}</td>}{showBranch('shiftPay') && <td className="num fin-money">{formatVND(sumBy(rows, 'standardPay'))}</td>}{showBranch('deduction') && <td className="num fin-money">{formatVND(sumBy(rows, 'deduction'))}</td>}{showBranch('net') && <td className="num fin-money">{formatVND(sumBy(rows, 'netPay'))}</td>}</tr>
                 )}
-                {branchGroupsAll.length === 0 && <tr><td colSpan={6} className="fin-empty">Chưa có dữ liệu chi nhánh.</td></tr>}
+                {branchGroupsAll.length === 0 && <tr><td colSpan={branchCols} className="fin-empty">Chưa có dữ liệu chi nhánh.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -2761,8 +2692,9 @@ function SignatureTemplatesTab({ currentUser, showToast }: any) {
 /* ============================================================================
    10 · QR NGÂN HÀNG TỪNG NV (chuyển lương tự do)
    ============================================================================ */
-function BankQrTab({ allEmployees, month }: any) {
+function BankQrTab({ allEmployees, month, cols, onToggleCol, onShowAllCols, colVis, colVisSaving, colDefs }: any) {
   const [q, setQ] = useState('');
+  const show = cols?.show || (() => true);
   const groups = useMemo(() => {
     const filtered = (allEmployees || []).filter((e: any) => String(e?.employment_status || '').toUpperCase() !== 'TERMINATED').filter(matchesFilter(q.trim()));
     return branchGroups(filtered, (e: any) => e.default_branch_id);
@@ -2772,6 +2704,7 @@ function BankQrTab({ allEmployees, month }: any) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <TabHead step={10} title="QR ngân hàng từng nhân viên" desc={`Quét QR để chuyển khoản lương tự do (không kèm số tiền). ${withStk}/${(allEmployees || []).length} NV đã có STK. Dữ liệu tháng đang chọn: ${periodLabel(month)}.`}>
         <SearchBox value={q} onChange={setQ} />
+        <ColumnSettings tabKey="fin-bank-qr" defs={colDefs} value={colVis} onToggle={onToggleCol} onShowAll={() => onShowAllCols('fin-bank-qr')} saving={colVisSaving} />
       </TabHead>
       {groups.map(g => (
         <div key={g.id} className="fin-card">
@@ -2782,14 +2715,14 @@ function BankQrTab({ allEmployees, month }: any) {
               const qr = bankQrUrlOf(e.bank_name, acct, e.bank_holder || e.full_name);
               return (
                 <div key={e.employee_id} className="fin-qr-card">
-                  {qr
+                  {show('qr') && (qr
                     ? <img src={qr} alt={`VietQR ${e.full_name}`} className="fin-qr" style={{ width: 76, height: 76 }} onError={(ev: any) => { (ev.target as any).style.display = 'none'; }} />
-                    : <div className="fin-qr-missing" style={{ width: 76, height: 76 }}>Chưa có STK</div>}
+                    : <div className="fin-qr-missing" style={{ width: 76, height: 76 }}>Chưa có STK</div>)}
                   <div style={{ fontSize: 11, minWidth: 0 }}>
-                    <div style={{ fontWeight: 800, color: 'var(--fin-ink)' }}>{e.full_name} <span style={{ color: '#94a3b8', fontWeight: 600 }}>{e.employee_code}</span></div>
-                    <div style={{ color: 'var(--fin-muted)', marginTop: 1 }}>{e.bank_name || '—'}</div>
-                    <div className="fin-mono" style={{ fontWeight: 800, color: 'var(--fin-ink)', fontSize: 12 }}>{acct || '—'}</div>
-                    <div style={{ color: 'var(--fin-muted)' }}>{e.bank_holder || e.full_name}</div>
+                    {show('name') && <div style={{ fontWeight: 800, color: 'var(--fin-ink)' }}>{e.full_name} <span style={{ color: '#94a3b8', fontWeight: 600 }}>{e.employee_code}</span></div>}
+                    {show('bank') && <div style={{ color: 'var(--fin-muted)', marginTop: 1 }}>{e.bank_name || '—'}</div>}
+                    {show('account') && <div className="fin-mono" style={{ fontWeight: 800, color: 'var(--fin-ink)', fontSize: 12 }}>{acct || '—'}</div>}
+                    {show('holder') && <div style={{ color: 'var(--fin-muted)' }}>{e.bank_holder || e.full_name}</div>}
                   </div>
                 </div>
               );

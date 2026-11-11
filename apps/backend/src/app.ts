@@ -7058,6 +7058,17 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     'fin-payroll-periods': ['stt', 'full_name', 'employee_code', 'branch', 'gio', 'banCa', 'phuCap', 'lcb', 'ot', 'bonus', 'tongCong', 'truKpiPhat', 'ung', 'dongPhuc', 'tongLuong', 'thuc', 'status', 'edit'],
     'fin-payslips': ['stt', 'full_name', 'employee_code', 'branch', 'gio', 'banCa', 'phuCap', 'lcb', 'ot', 'bonus', 'tongCong', 'truKpiPhat', 'ung', 'dongPhuc', 'tongLuong', 'thuc', 'sign', 'action'],
     'fin-payment': ['stt', 'full_name', 'employee_code', 'branch', 'gio', 'banCa', 'phuCap', 'lcb', 'ot', 'bonus', 'tongCong', 'truKpiPhat', 'ung', 'dongPhuc', 'tongLuong', 'thuc', 'bank', 'qr', 'action'],
+    // Tab 1 — 2 bảng riêng (Khối / Chi nhánh) dùng key riêng.
+    'fin-dashboard-block': ['block', 'nv', 'hours', 'total', 'net'],
+    'fin-dashboard-branch': ['branch', 'nv', 'hours', 'shiftPay', 'deduction', 'net'],
+    // Tab 12 — điều chỉnh đơn giá ca ("Đơn giá MỚI" luôn hiện, không nằm trong danh sách).
+    'fin-rate-adjust': ['select', 'code', 'name', 'stage', 'currentRate', 'delta', 'history'],
+    // Tab Cấu hình lương CB ("Lưu" luôn hiện).
+    'fin-salary-config': ['code', 'name', 'block', 'branch', 'stage', 'mode', 'base', 'allowance', 'total', 'updated'],
+    // Tab Duyệt Văn Phòng — 2 bảng nghỉ phép & bổ sung công ("Duyệt" luôn hiện).
+    'office-approvals': ['employee', 'date', 'reason', 'status'],
+    // Tab QR ngân hàng NV — dạng thẻ, ẩn/hiện từng dòng thông tin.
+    'fin-bank-qr': ['qr', 'name', 'bank', 'account', 'holder'],
   };
   const finVisKey = (adminId: string) => `financeColumnVis:${String(adminId || '').trim()}`;
   app.get('/payroll/table-columns', authMiddleware, requireRole(['DIRECTOR', 'ADMIN', 'FINANCE']), async (req: AuthenticatedRequest, res) => {
