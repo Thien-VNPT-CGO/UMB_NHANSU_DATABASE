@@ -11756,6 +11756,14 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
               setSwapReviewBusy(null);
             }
           };
+          // Thời gian phiếu được gửi (giờ VN) — HR nhìn nhanh phiếu nào mới/đang tồn.
+          const sentAt = (iso?: string) => {
+            const t = new Date(iso || '');
+            if (!Number.isFinite(t.getTime())) return '—';
+            return t.toLocaleString('vi-VN', {
+              hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric',
+            });
+          };
           const renderRows = (rows: any[], canReview: boolean) =>
             rows.map((sw: any) => {
               const isDispatch = (sw.swap_kind || 'EMPLOYEE_SWAP') === 'HR_DISPATCH';
@@ -11785,6 +11793,9 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                   )}
                 </td>
                 <td style={{ padding: '12px 20px' }}>{sw.reason || '—'}</td>
+                <td style={{ padding: '12px 20px', whiteSpace: 'nowrap', fontSize: '12px' }} title={sw.created_at ? `Gửi lúc ${sentAt(sw.created_at)}` : ''}>
+                  {sentAt(sw.created_at)}
+                </td>
                 <td style={{ padding: '12px 20px' }}>{statusBadge(sw.status)}</td>
                 <td style={{ padding: '12px 20px' }}>
                   {canReview && !isSupport ? (
@@ -11876,6 +11887,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             <th style={{ padding: '12px 20px' }}>NV B (Người nhận)</th>
                             <th style={{ padding: '12px 20px' }}>Loại Phiếu</th>
                             <th style={{ padding: '12px 20px' }}>Lý Do</th>
+                            <th style={{ padding: '12px 20px' }}>Thời Gian Gửi</th>
                             <th style={{ padding: '12px 20px' }}>Tình Trạng</th>
                             <th style={{ padding: '12px 20px' }}>HR Duyệt</th>
                           </tr>
