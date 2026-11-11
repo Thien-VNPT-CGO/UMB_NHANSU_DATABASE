@@ -582,6 +582,44 @@ export function parseSystemSettingsRows(configRows: any[]): any {
   return settingsObj;
 }
 
+/**
+ * Gộp cấu hình đọc từ Sheet vào cấu hình đang có trong BỘ NHỚ.
+ *
+ * - `employee_salary_config`: gộp theo từng nhân viên, so `updatedAt`.
+ * - Mọi khóa dạng object có `updatedAt` (VD `financeColumnVis:<adminId>` của
+ *   tính năng ẩn/hiện cột Kế toán): nếu bộ nhớ MỚI HƠN thì GIỮ bộ nhớ.
+ *   Không có bước này, lượt pull kế tiếp (45s/lần, hoặc pull do chính GET
+ *   `/payroll/table-columns` kích hoạt) sẽ ghi đè bản vừa lưu bằng bản Sheet
+ *   cũ → "bấm lưu xong tải lại trang là mất".
+ */
+export function mergeSystemSettingsFromSheet(curSettings: any, settingsObj: any): any {
+  const cur: any = curSettings && typeof curSettings === 'object' ? curSettings : {};
+  const sheet: any = settingsObj && typeof settingsObj === 'object' ? settingsObj : {};
+  const merged: any = { ...cur, ...sheet };
+
+  const memoTime = (v: any) => Date.parse(String(v?.updatedAt || '')) || 0;
+
+  const sheetSalary = sheet['employee_salary_config'];
+  const memSalary = cur['employee_salary_config'];
+  if (memSalary && typeof memSalary === 'object' && sheetSalary && typeof sheetSalary === 'object') {
+    const map: any = { ...memSalary };
+    for (const [eid, sheetEntry] of Object.entries(sheetSalary as Record<string, any>)) {
+      const memEntry = map[eid];
+      if (!memEntry || memoTime(sheetEntry) > memoTime(memEntry)) map[eid] = sheetEntry;
+    }
+    merged['employee_salary_config'] = map;
+  }
+
+  for (const k of Object.keys(sheet)) {
+    if (k === 'employee_salary_config') continue;
+    const sheetV: any = sheet[k];
+    const memV: any = cur[k];
+    if (!memV || !sheetV || typeof memV !== 'object' || typeof sheetV !== 'object') continue;
+    if (memoTime(memV) > memoTime(sheetV)) merged[k] = memV;
+  }
+  return merged;
+}
+
 export class GoogleSheetsSyncService {
   private sheetsClient: sheets_v4.Sheets | null = null;
   private driveClient: drive_v3.Drive | null = null;
@@ -3963,21 +4001,10 @@ export class GoogleSheetsSyncService {
         if (Object.keys(settingsObj).length > 0) {
           // Gộp theo từng nhân viên + so updatedAt cho cau hinh luong: du lieu moi
           // trong bo nho (vua luu, sheet chua kip day) KHONG bi ban cu tren Sheet
-          // ghi de — loi "luu bao thanh cong nhung reload mat".
+          // ghi de — loi "luu bao thanh cong nhung reload mat". Áp dụng cả cho
+          // financeColumnVis:* (ẩn/hiện cột Kế toán lưu theo tài khoản).
           const curSettings: any = (fallback.systemSettings || {});
-          const mergedSettings: any = { ...curSettings, ...settingsObj };
-          const sheetSalary = (settingsObj as any)['employee_salary_config'];
-          const memSalary = curSettings['employee_salary_config'];
-          if (memSalary && typeof memSalary === 'object' && sheetSalary && typeof sheetSalary === 'object') {
-            const map: any = { ...memSalary };
-            for (const [eid, sheetEntry] of Object.entries(sheetSalary as Record<string, any>)) {
-              const memEntry = map[eid];
-              const memAt = Date.parse(String((memEntry as any)?.updatedAt || '')) || 0;
-              const sheetAt = Date.parse(String((sheetEntry as any)?.updatedAt || '')) || 0;
-              if (!memEntry || sheetAt > memAt) map[eid] = sheetEntry;
-            }
-            mergedSettings['employee_salary_config'] = map;
-          }
+          const mergedSettings: any = mergeSystemSettingsFromSheet(curSettings, settingsObj);
           fallback.systemSettings = mergedSettings;
           counts.systemSettings = Object.keys(settingsObj).length;
           // Cấu hình giao diện/vận hành (ca mẫu, chính sách, bảo trì) được mirror

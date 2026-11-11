@@ -7088,11 +7088,10 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       const at = new Date().toISOString();
       const settings: any = await adapter.getSystemSettings().catch(() => ({})) || {};
       await adapter.updateSystemSettings({ ...settings, [finVisKey(req.user!.id)]: { ...(clean as any), updatedAt: at } });
+      // broadcastUpdate đã phát data:updated(entity=payroll, action=finance-table-columns)
+      // cho MỌI máy -> máy khác cùng tài khoản tải lại cột realtime. Không emit
+      // thêm lần nữa để tránh 2 lần gọi Google Sheets cho mỗi thao tác.
       broadcastUpdate('payroll', { action: 'finance-table-columns', by: req.user!.id });
-      try {
-        const io = (app as any).get('io');
-        io?.emit?.('data:updated', { entity: 'payroll', data: { action: 'finance-table-columns', by: req.user!.id }, timestamp: at });
-      } catch { /* non-fatal */ }
       res.json({ ok: true, columns: clean, updatedAt: at });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
