@@ -427,6 +427,21 @@ server.listen(Number(PORT), '0.0.0.0', async () => {
   const syncIntervalMs = Number(process.env.SHEETS_SYNC_INTERVAL_MS) || 15_000;
   setInterval(autoPullSheetsTick, syncIntervalMs);
 
+  // ỨNG VIÊN có nhịp riêng, nhanh hơn vòng pull nền: chỉ đọc nguồn form (1
+  // request) + master overlay (1 request). Nhờ vậy hồ sơ mới lên web trong ~10s
+  // mà KHÔNG phải đọc lại 15 tab nghiệp vụ — chính là nguyên nhân vượt hạn mức
+  // 60 request đọc/phút và làm dữ liệu form chậm/hỏng.
+  const candidateRefreshMs = Math.max(5_000, Number(process.env.SHEETS_CANDIDATE_REFRESH_MS) || 10_000);
+  setInterval(() => {
+    if (postgresMode) return;
+    const syncService = (adapter as any).syncService;
+    if (!syncService?.getStatus?.().isConfigured) return;
+    if (typeof syncService.refreshCandidatesOnly !== 'function') return;
+    syncService
+      .refreshCandidatesOnly(adapter)
+      .catch((err: any) => console.warn('[sheets-candidate-tick] lỗi:', err?.message || err));
+  }, candidateRefreshMs);
+
   // Chẩn đoán đường GHI Google: khi hàng đợi append báo timeout, /health cần
   // phân biệt "Google chặn POST" hay "Sheet/quota" — probe chạy nền, POST no-op.
   {

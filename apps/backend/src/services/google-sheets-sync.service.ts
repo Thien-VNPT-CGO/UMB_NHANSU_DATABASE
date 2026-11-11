@@ -2408,6 +2408,61 @@ export class GoogleSheetsSyncService {
   }
 
   /**
+   * Nhịp RIÊNG cho ứng viên (form tuyển dụng).
+   *
+   * Vòng pull nền đọc lại toàn bộ ~15 tab nghiệp vụ nên không thể chạy quá dày:
+   * hạn mức của service account là 60 request đọc/phút, đọc 15 tab mỗi 20s đã
+   * vượt hạn mức -> Google trả 429, dữ liệu form (nguồn thật) bị chậm/hỏng.
+   *
+   * Hàm này chỉ đọc ĐÚNG nguồn form (1 request) + master overlay (1 request) rồi
+   * parse trên cache các tab còn lại — nhờ vậy hồ sơ mới lên web trong vài giây
+   * mà không đốt hạn mức của cả hệ thống.
+   */
+  public refreshCandidatesOnly(repo: ISheetsRepository): Promise<SheetsPullResult> {
+    if (!this.isConfigured || !this.sheetsClient) {
+      return Promise.resolve({ success: false, message: 'Google Sheets chưa kết nối', counts: null });
+    }
+    if (this.pullInFlight) {
+      return Promise.resolve({ success: false, message: 'Đang pull — bỏ qua nhịp ứng viên', counts: null });
+    }
+    // Chưa có cache tab: chạy pull đầy đủ để có nền dữ liệu.
+    if (!this.lastFullBatch) return this.pullAllDataFromGoogleSheets(repo);
+    // Vừa lỗi quota: tạm nghỉ, không bắn thêm request (càng bắn càng khoá lâu).
+    if (Date.now() < this.candidateReadBackoffUntil) {
+      return Promise.resolve({ success: false, message: 'Tạm nghỉ đọc nguồn ứng viên sau lỗi quota', counts: null });
+    }
+    const pullMs = Math.max(2_000, Number(process.env.SHEETS_CANDIDATE_PULL_MS) || 5_000);
+    if (Date.now() - this.lastCandidatePullAt < pullMs) {
+      return Promise.resolve({ success: true, message: 'Chưa tới nhịp đọc ứng viên', counts: null });
+    }
+    // Bỏ tab nhật ký khỏi batch cache: parse lại 56k dòng mỗi 10s là lãng phí CPU
+    // (nhịp lịch sử riêng đã lo phần này).
+    const cachedBatch: Record<string, string[][]> = {};
+    const historyBases = [...GoogleSheetsSyncService.HISTORY_TABS];
+    for (const [key, rows] of Object.entries(this.lastFullBatch)) {
+      if (historyBases.includes(key)) continue;
+      if (historyBases.some(base => key.startsWith(`${base}_P`))) continue;
+      cachedBatch[key] = rows as string[][];
+    }
+    if (!Object.keys(cachedBatch).length) return this.pullAllDataFromGoogleSheets(repo);
+
+    let run: Promise<SheetsPullResult>;
+    run = this.doPullAllDataFromGoogleSheets(repo, {
+      prefetchedBatch: cachedBatch,
+      forceCandidates: true,
+      reason: 'candidate-tick',
+    }).finally(() => {
+      if (this.pullInFlight === run) {
+        this.pullInFlight = null;
+        this.pullStartedAt = 0;
+      }
+    });
+    this.pullStartedAt = Date.now();
+    this.pullInFlight = run;
+    return run;
+  }
+
+  /**
    * P0.3 — Pull nhanh theo tab vừa sửa từ webhook.
    *
    * Chỉ đọc lại đúng 1 tab (1 request), cập nhật cache raw rows rồi chạy lại
