@@ -197,6 +197,37 @@ import {
   webhookBody,
 } from './validators/admin.validator.js';
 import {
+  evVehicleCreateBody,
+  evVehicleUpdateBody,
+  evVehicleIdParams,
+  evRouteCreateBody,
+  evRouteUpdateBody,
+  evRouteIdParams,
+  evRouteStopCreateBody,
+  evRouteStopUpdateBody,
+  evRouteStopIdParams,
+  evRouteStopsQuery,
+  evShiftCreateBody,
+  evShiftUpdateBody,
+  evShiftIdParams,
+  evShiftsQuery,
+  evStartShiftBody,
+  evCheckinBody,
+  evEndShiftBody,
+  evChargingTicketCreateBody,
+  evChargingTicketApproveBody,
+  evChargingTicketRejectBody,
+  evChargingStartBody,
+  evChargingEndBody,
+  evChargingTicketIdParams,
+  evChargingTicketsQuery,
+  evGpsBatchBody,
+  evPayrollGenerateBody,
+  evPayrollApproveBody,
+  evPayrollQuery,
+  evLiveShiftsQuery,
+} from './validators/milkroute.validator.js';
+import {
   requirePermission,
   requireRole,
   enforceBranchScope,
@@ -214,6 +245,7 @@ import {
 import { buildZipStore } from './utils/zip-store.js';
 import { getThemeScheduleState, normalizeThemeSchedule } from './utils/theme-schedule.js';
 import { lateFineFor } from './services/payroll.service.js';
+import { createMilkRouteModule } from './services/milkroute/index.js';
 
 // Thời điểm process khởi động — đo uptime thật (không hardcode).
 const SERVER_STARTED_AT = Date.now();
@@ -454,6 +486,13 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     (zaloService.autoRestoreTick() as Promise<boolean>).catch(err => console.warn('[zalo] auto-restore error:', err?.message || err));
   }, 5 * 60_000);
 
+  // MilkRoute EV Module
+  const milkRouteModule = createMilkRouteModule(adapter as any);
+  // Seed default route data (chạy nền, không chặn khởi động)
+  setTimeout(() => {
+    milkRouteModule.seedDefaultData().catch(err => console.warn('[milkroute] seed failed:', err?.message || err));
+  }, 5000);
+
   // Realtime WebSocket broadcast helper
   const broadcastUpdate = (entity: string, data?: any) => {
     try {
@@ -480,6 +519,602 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       }
     } catch { /* cache invalidation không được làm hỏng nghiệp vụ */ }
   };
+
+  // =====================================================================
+  // MILKROUTE EV — QUẢN LÝ TÀI XẾ GIAO SỮA + ĐỊNH VỊ GPS (BETA)
+  //   /ev/admin/* : Fleet/HR/Director quản lý xe, lộ trình, ca, phiếu, lương
+  //   /ev/me/*    : Tài xế chạy ca, bấm điểm, gửi GPS, phiếu sạc
+  // Mọi ghi đều đi qua repo method (createEV*/updateEV*) → persist PostgreSQL.
+  // =====================================================================
+  const ev = milkRouteModule;
+
+  /** Đọc mảng phiếu sạc từ adapter (qua proxy → inner MockSheetsAdapter). */
+  const evChargingTicketsSource = (): any[] => (adapter as any)?.evChargingTickets || [];
+  /** Đọc mảng lương tài xế từ adapter. */
+  const evPayrollSource = (): any[] => (adapter as any)?.evDriverPayroll || [];
+
+  /** Mã lỗi dịch vụ dạng "CODE: message" → HTTP status tương ứng. */
+  const evErr = (res: any, err: any) => {
+    const msg = String(err?.message || err || 'UNKNOWN_ERROR');
+    const status = /_NOT_FOUND\b|NOT_FOUND:/.test(msg) ? 404 : 400;
+    res.status(status).json({ error: msg });
+  };
+
+  /** Vai trò được phép thao tác phía admin. */
+  const EV_ADMIN_ROLES: Array<'ADMIN' | 'HR' | 'DIRECTOR' | 'FLEET_MANAGER' | 'FINANCE'> =
+    ['ADMIN', 'HR', 'DIRECTOR', 'FLEET_MANAGER', 'FINANCE'];
+
+  /** Mã nhân viên của người đang gọi (tài xế đăng nhập bằng employeeId). */
+  const evDriverId = (req: AuthenticatedRequest) => String(req.user?.employeeId || '').trim();
+
+  /** Đọc + kiểm tra ca thuộc về tài xế đang gọi (tránh sửa ca người khác). */
+  const evOwnShift = async (req: AuthenticatedRequest, shiftId: string) => {
+    const shift = await ev.shifts.getShift(String(shiftId || ''));
+    if (!shift) throw new Error('SHIFT_NOT_FOUND: Không tìm thấy ca vận chuyển');
+    const driverId = evDriverId(req);
+    if (!driverId) throw new Error('DRIVER_NOT_FOUND: Tài khoản không gắn với nhân viên');
+    if (shift.driver_id !== driverId) throw new Error('FORBIDDEN: Ca này không thuộc tài xế của bạn');
+    return shift;
+  };
+
+  /** Tóm tắt ca đang chạy cho Live Map (dùng khi broadcast bắt đầu/kết thúc ca). */
+  const evLiveSummary = async (shift: any) => {
+    const detail = await ev.shifts.getShiftDetail(shift.shift_id).catch(() => null);
+    const gps = await ev.gps.getVehicleLatestGPS(shift.vehicle_id).catch(() => null);
+    const stops: any[] = detail?.stops || [];
+    const next = stops.find(s => !s.isCompleted);
+    // SLA còn lại tính từ lần check-in gần nhất (nếu có).
+    const lastCheckin = stops.filter(s => s.checkedInAt).pop();
+    const baseAt = Date.parse(lastCheckin?.checkedInAt || shift.actual_start_at || shift.planned_start_at || '');
+    const elapsedMin = Number.isFinite(baseAt) ? (Date.now() - baseAt) / 60000 : 0;
+    const slaRemainingSeconds = next
+      ? Math.max(0, Math.round((Number(next.sla_minutes || 0) - elapsedMin) * 60))
+      : 0;
+    return {
+      shiftId: shift.shift_id,
+      driverId: shift.driver_id,
+      driverName: detail?.driverName || '',
+      vehicleId: shift.vehicle_id,
+      licensePlate: detail?.vehiclePlate || '',
+      routeName: detail?.routeName || '',
+      status: shift.status,
+      currentStopOrder: next?.stop_order ?? stops.length,
+      nextStopName: next?.name ?? 'Hoàn tất',
+      slaRemainingSeconds,
+      lastGpsUpdate: gps?.recorded_at || '',
+      latitude: gps?.latitude ?? 0,
+      longitude: gps?.longitude ?? 0,
+      speed: gps?.speed_kmh ?? 0,
+      battery: gps?.battery_pct ?? 0,
+      penaltyPoints: Number(shift.penalty_points || 0),
+      penaltyAmount: Number(shift.penalty_amount || 0),
+    };
+  };
+
+  // ---------------------------------------------------------------
+  // ADMIN — Xe điện
+  // ---------------------------------------------------------------
+  app.get('/ev/admin/vehicles', authMiddleware, requireRole(EV_ADMIN_ROLES), async (req: AuthenticatedRequest, res) => {
+    try {
+      const q = req.query as any;
+      res.json(await ev.vehicles.listVehicles({
+        status: q.status || undefined,
+        assignedDriverId: q.assigned_driver_id || undefined,
+      }));
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.post('/ev/admin/vehicles', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ body: evVehicleCreateBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      res.status(201).json(await ev.vehicles.createVehicle(req.body));
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.get('/ev/admin/vehicles/:id', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ params: evVehicleIdParams }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const v = await ev.vehicles.getVehicle(req.params.id);
+      if (!v) return res.status(404).json({ error: 'VEHICLE_NOT_FOUND' });
+      res.json(v);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.put('/ev/admin/vehicles/:id', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ params: evVehicleIdParams, body: evVehicleUpdateBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const v = await ev.vehicles.updateVehicle(req.params.id, req.body);
+      if (!v) return res.status(404).json({ error: 'VEHICLE_NOT_FOUND' });
+      broadcastUpdate('evVehicle', { action: 'update', id: req.params.id });
+      res.json(v);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.delete('/ev/admin/vehicles/:id', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ params: evVehicleIdParams }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const ok = await ev.vehicles.deleteVehicle(req.params.id);
+      if (!ok) return res.status(404).json({ error: 'VEHICLE_NOT_FOUND' });
+      broadcastUpdate('evVehicle', { action: 'delete', id: req.params.id });
+      res.json({ success: true });
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  // ---------------------------------------------------------------
+  // ADMIN — Lộ trình & điểm dừng
+  // ---------------------------------------------------------------
+  app.get('/ev/admin/routes', authMiddleware, requireRole(EV_ADMIN_ROLES), async (_req, res) => {
+    try { res.json(await ev.routes.listRoutes()); } catch (err: any) { evErr(res, err); }
+  });
+
+  app.post('/ev/admin/routes', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ body: evRouteCreateBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const r = await ev.routes.createRoute(req.body);
+      broadcastUpdate('evRoute', { action: 'create', id: r.route_id });
+      res.status(201).json(r);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.get('/ev/admin/routes/:id', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ params: evRouteIdParams }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const r = await ev.routes.getRoute(req.params.id);
+      if (!r) return res.status(404).json({ error: 'ROUTE_NOT_FOUND' });
+      res.json(r);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.put('/ev/admin/routes/:id', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ params: evRouteIdParams, body: evRouteUpdateBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const r = await ev.routes.updateRoute(req.params.id, req.body);
+      if (!r) return res.status(404).json({ error: 'ROUTE_NOT_FOUND' });
+      broadcastUpdate('evRoute', { action: 'update', id: req.params.id });
+      res.json(r);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.delete('/ev/admin/routes/:id', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ params: evRouteIdParams }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const ok = await ev.routes.deleteRoute(req.params.id);
+      if (!ok) return res.status(404).json({ error: 'ROUTE_NOT_FOUND' });
+      broadcastUpdate('evRoute', { action: 'delete', id: req.params.id });
+      res.json({ success: true });
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.get('/ev/admin/stops', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ query: evRouteStopsQuery }), async (req: AuthenticatedRequest, res) => {
+    try { res.json(await ev.routes.listRouteStops((req.query as any).routeId)); } catch (err: any) { evErr(res, err); }
+  });
+
+  app.post('/ev/admin/routes/:id/stops', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ params: evRouteIdParams, body: evRouteStopCreateBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const s = await ev.routes.createRouteStop({ ...req.body, route_id: req.params.id });
+      broadcastUpdate('evRouteStop', { action: 'create', routeId: req.params.id });
+      res.status(201).json(s);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.put('/ev/admin/stops/:id', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ params: evRouteStopIdParams, body: evRouteStopUpdateBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const s = await ev.routes.updateRouteStop(req.params.id, req.body);
+      if (!s) return res.status(404).json({ error: 'STOP_NOT_FOUND' });
+      broadcastUpdate('evRouteStop', { action: 'update', id: req.params.id });
+      res.json(s);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.delete('/ev/admin/stops/:id', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ params: evRouteStopIdParams }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const ok = await ev.routes.deleteRouteStop(req.params.id);
+      if (!ok) return res.status(404).json({ error: 'STOP_NOT_FOUND' });
+      broadcastUpdate('evRouteStop', { action: 'delete', id: req.params.id });
+      res.json({ success: true });
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  // ---------------------------------------------------------------
+  // ADMIN — Ca vận chuyển
+  // ---------------------------------------------------------------
+  app.get('/ev/admin/shifts', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ query: evShiftsQuery }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const q = req.query as any;
+      const all = await ev.shifts.listShifts({
+        driverId: q.driver_id || undefined,
+        vehicleId: q.vehicle_id || undefined,
+        routeId: q.route_id || undefined,
+        status: q.status || undefined,
+        dateFrom: q.date_from || undefined,
+        dateTo: q.date_to || undefined,
+      });
+      const offset = Number(q.offset || 0);
+      const limit = Number(q.limit || 50);
+      res.json({ total: all.length, items: all.slice(offset, offset + limit) });
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.post('/ev/admin/shifts', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ body: evShiftCreateBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const b = req.body;
+      const s = await ev.shifts.createShift({
+        routeId: b.route_id,
+        driverId: b.driver_id,
+        vehicleId: b.vehicle_id,
+        shiftDate: b.shift_date,
+        plannedStartAt: b.planned_start_at,
+        plannedEndAt: b.planned_end_at,
+        workDayIndex: b.work_day_index,
+        notes: b.notes,
+        createdBy: req.user!.id,
+      });
+      broadcastUpdate('evShift', { action: 'create', id: s.shift_id });
+      res.status(201).json(s);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.get('/ev/admin/shifts/:id', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ params: evShiftIdParams }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const d = await ev.shifts.getShiftDetail(req.params.id);
+      if (!d) return res.status(404).json({ error: 'SHIFT_NOT_FOUND' });
+      res.json(d);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.put('/ev/admin/shifts/:id', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ params: evShiftIdParams, body: evShiftUpdateBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const s = await ev.shifts.updateShift(req.params.id, req.body);
+      if (!s) return res.status(404).json({ error: 'SHIFT_NOT_FOUND' });
+      broadcastUpdate('evShift', { action: 'update', id: req.params.id });
+      res.json(s);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.delete('/ev/admin/shifts/:id', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ params: evShiftIdParams }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const ok = await ev.shifts.deleteShift(req.params.id);
+      if (!ok) return res.status(404).json({ error: 'SHIFT_NOT_FOUND' });
+      broadcastUpdate('evShift', { action: 'delete', id: req.params.id });
+      res.json({ success: true });
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  // ---------------------------------------------------------------
+  // ADMIN — Phiếu sạc (duyệt 2 cấp: HR → Giám đốc)
+  // ---------------------------------------------------------------
+  app.get('/ev/admin/charging-tickets', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ query: evChargingTicketsQuery }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const q = req.query as any;
+      if (q.status === 'PENDING_HR') return res.json(await ev.charging.getPendingHRTickets());
+      if (q.status === 'PENDING_DIRECTOR') return res.json(await ev.charging.getPendingDirectorTickets());
+      let items = evChargingTicketsSource().slice();
+      if (q.status) items = items.filter((t: any) => t.status === q.status);
+      if (q.driver_id) items = items.filter((t: any) => t.driver_id === q.driver_id);
+      if (q.date_from) items = items.filter((t: any) => t.requested_date >= q.date_from);
+      if (q.date_to) items = items.filter((t: any) => t.requested_date <= q.date_to);
+      const offset = Number(q.offset || 0);
+      const limit = Number(q.limit || 50);
+      res.json({ total: items.length, items: items.slice(offset, offset + limit) });
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.post('/ev/admin/charging-tickets/:id/approve-hr', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: evChargingTicketIdParams, body: evChargingTicketApproveBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const t = await ev.charging.approveByHR(req.params.id, req.user!.id, req.body?.notes);
+      if (!t) return res.status(404).json({ error: 'TICKET_NOT_FOUND' });
+      ev.realtime.broadcastChargingStatus(t.ticket_id, t.shift_id, t.driver_id, 'APPROVED', { level: 'HR' });
+      broadcastUpdate('evChargingTicket', { action: 'approve-hr', id: t.ticket_id });
+      res.json(t);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.post('/ev/admin/charging-tickets/:id/reject-hr', authMiddleware, requireRole(['ADMIN', 'HR']), validate({ params: evChargingTicketIdParams, body: evChargingTicketRejectBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const t = await ev.charging.rejectByHR(req.params.id, req.user!.id, req.body.notes);
+      if (!t) return res.status(404).json({ error: 'TICKET_NOT_FOUND' });
+      ev.realtime.broadcastChargingStatus(t.ticket_id, t.shift_id, t.driver_id, 'REJECTED', { level: 'HR' });
+      broadcastUpdate('evChargingTicket', { action: 'reject-hr', id: t.ticket_id });
+      res.json(t);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.post('/ev/admin/charging-tickets/:id/approve-director', authMiddleware, requireRole(['ADMIN', 'DIRECTOR']), validate({ params: evChargingTicketIdParams, body: evChargingTicketApproveBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const t = await ev.charging.approveByDirector(req.params.id, req.user!.id, req.body?.notes);
+      if (!t) return res.status(404).json({ error: 'TICKET_NOT_FOUND' });
+      ev.realtime.broadcastChargingStatus(t.ticket_id, t.shift_id, t.driver_id, 'APPROVED', { level: 'DIRECTOR' });
+      broadcastUpdate('evChargingTicket', { action: 'approve-director', id: t.ticket_id });
+      res.json(t);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.post('/ev/admin/charging-tickets/:id/reject-director', authMiddleware, requireRole(['ADMIN', 'DIRECTOR']), validate({ params: evChargingTicketIdParams, body: evChargingTicketRejectBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const t = await ev.charging.rejectByDirector(req.params.id, req.user!.id, req.body.notes);
+      if (!t) return res.status(404).json({ error: 'TICKET_NOT_FOUND' });
+      ev.realtime.broadcastChargingStatus(t.ticket_id, t.shift_id, t.driver_id, 'REJECTED', { level: 'DIRECTOR' });
+      broadcastUpdate('evChargingTicket', { action: 'reject-director', id: t.ticket_id });
+      res.json(t);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  // ---------------------------------------------------------------
+  // ADMIN — Lương tài xế
+  // ---------------------------------------------------------------
+  app.get('/ev/admin/payroll', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ query: evPayrollQuery }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const q = req.query as any;
+      if (q.period) {
+        let items = await ev.payroll.listPayrollByPeriod(q.period);
+        if (q.driver_id) items = items.filter(p => p.driver_id === q.driver_id);
+        if (q.status) items = items.filter(p => p.status === q.status);
+        return res.json({ total: items.length, items });
+      }
+      // Không có kỳ → trả toàn bộ.
+      const all = (evPayrollSource()).slice();
+      const offset = Number(q.offset || 0);
+      const limit = Number(q.limit || 50);
+      res.json({ total: all.length, items: all.slice(offset, offset + limit) });
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.post('/ev/admin/payroll/generate', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ body: evPayrollGenerateBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const { period, driver_ids } = req.body;
+      // Không truyền danh sách => tính cho mọi tài xế đang còn làm (group XUONG).
+      const ids: string[] = Array.isArray(driver_ids) && driver_ids.length
+        ? driver_ids
+        : ((adapter as any)?.employees || [])
+            .filter((e: any) => e?.group === 'XUONG' && e?.employment_status !== 'TERMINATED')
+            .map((e: any) => String(e.employee_id));
+      const saved: any[] = [];
+      for (const driverId of ids) {
+        try {
+          const payroll = await ev.payroll.calculateDriverPayroll(driverId, period);
+          saved.push(await ev.payroll.savePayroll(payroll));
+        } catch (err: any) {
+          console.warn(`[ev-payroll] bỏ qua ${driverId}:`, err?.message || err);
+        }
+      }
+      broadcastUpdate('evPayroll', { action: 'generate', period, count: saved.length });
+      res.json({ success: true, period, count: saved.length, items: saved });
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.post('/ev/admin/payroll/approve', authMiddleware, requireRole(['ADMIN', 'FINANCE', 'HR']), validate({ body: evPayrollApproveBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const p = await ev.payroll.approvePayroll(String(req.body.payroll_id || ''), req.user!.id);
+      if (!p) return res.status(404).json({ error: 'PAYROLL_NOT_FOUND' });
+      ev.realtime.broadcastPayrollUpdated(p.driver_id, p);
+      broadcastUpdate('evPayroll', { action: 'approve', id: p.payroll_id });
+      res.json(p);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  // ---------------------------------------------------------------
+  // ADMIN — Live map (GPS realtime)
+  // ---------------------------------------------------------------
+  app.get('/ev/admin/live/vehicles', authMiddleware, requireRole(EV_ADMIN_ROLES), async (_req, res) => {
+    try { res.json(await ev.gps.getLiveVehicles()); } catch (err: any) { evErr(res, err); }
+  });
+
+  app.get('/ev/admin/live/shifts', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ query: evLiveShiftsQuery }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const q = req.query as any;
+      const shifts = q.status
+        ? (await ev.shifts.listShifts({ status: q.status }))
+        : await ev.shifts.getLiveShifts();
+      const items = [];
+      for (const s of shifts) items.push(await evLiveSummary(s));
+      res.json(items);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.get('/ev/admin/live/shifts/:id/gps', authMiddleware, requireRole(EV_ADMIN_ROLES), validate({ params: evShiftIdParams }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const limit = Number(req.query.limit || 1000);
+      res.json(await ev.gps.getShiftGPSHistory(req.params.id, limit));
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  // ---------------------------------------------------------------
+  // DRIVER — Ca của tôi
+  // ---------------------------------------------------------------
+  const evDriverRoles: Array<'EMPLOYEE' | 'DRIVER'> = ['EMPLOYEE', 'DRIVER'];
+
+  app.get('/ev/me/shifts', authMiddleware, requireRole(evDriverRoles), async (req: AuthenticatedRequest, res) => {
+    try {
+      const driverId = evDriverId(req);
+      if (!driverId) return res.status(403).json({ error: 'DRIVER_NOT_FOUND: Tài khoản không gắn nhân viên' });
+      const date = String(req.query.date || '').trim();
+      const all = await ev.shifts.listShifts({ driverId, dateFrom: date || undefined, dateTo: date || undefined });
+      const current = await ev.shifts.getCurrentShift(driverId).catch(() => null);
+      res.json({ current, items: all });
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.get('/ev/me/shifts/:id', authMiddleware, requireRole(evDriverRoles), validate({ params: evShiftIdParams }), async (req: AuthenticatedRequest, res) => {
+    try {
+      await evOwnShift(req, req.params.id);
+      const d = await ev.shifts.getShiftDetail(req.params.id);
+      res.json(d);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.post('/ev/me/shifts/start', authMiddleware, requireRole(evDriverRoles), validate({ body: evStartShiftBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const shift = await evOwnShift(req, req.body.shift_id);
+      const loc = { latitude: req.body.latitude, longitude: req.body.longitude, accuracy: req.body.accuracy };
+      const updated = await ev.shifts.startShift(shift.shift_id, loc);
+      ev.realtime.broadcastShiftStarted(await evLiveSummary(updated));
+      broadcastUpdate('evShift', { action: 'start', id: shift.shift_id });
+      res.json(updated);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.post('/ev/me/shifts/end', authMiddleware, requireRole(evDriverRoles), validate({ body: evEndShiftBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const shift = await evOwnShift(req, req.body.shift_id);
+      const loc = { latitude: req.body.latitude, longitude: req.body.longitude, accuracy: req.body.accuracy };
+      const updated = await ev.shifts.endShift(shift.shift_id, loc);
+      // Điểm bắt buộc chưa bấm sẽ bị ghi nhận là bỏ lọt (trừ điểm CHARGING tùy chọn)
+      // để bảng lương tài xế tính đúng phạt 25%/điểm.
+      const missed = await ev.checkins.detectMissedStops(shift.shift_id).catch(() => []);
+      if (missed.length) {
+        console.warn(`[milkroute] ca ${shift.shift_id}: ${missed.length} điểm bắt buộc bị bỏ lọt`);
+      }
+      ev.realtime.broadcastShiftEnded(updated.shift_id, updated.driver_id, {
+        totalDistance: Number(updated.total_distance_km || 0),
+        totalDuration: Number(updated.total_duration_min || 0),
+        penaltyPoints: Number(updated.penalty_points || 0),
+        penaltyAmount: Number(updated.penalty_amount || 0),
+        netPay: Number(updated.net_pay || 0),
+      });
+      broadcastUpdate('evShift', { action: 'end', id: shift.shift_id });
+      res.json(updated);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  // ---------------------------------------------------------------
+  // DRIVER — Xác nhận điểm (check-in theo geofence 100m)
+  // ---------------------------------------------------------------
+  app.post('/ev/me/checkins', authMiddleware, requireRole(evDriverRoles), validate({ body: evCheckinBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const shift = await evOwnShift(req, req.body.shift_id);
+      const stop = await ev.routes.getRouteStop(String(req.body.stop_id || ''));
+      if (!stop) return res.status(404).json({ error: 'STOP_NOT_FOUND' });
+      const checkin = await ev.checkins.checkinStop({
+        shiftId: shift.shift_id,
+        stopId: stop.stop_id,
+        driverLocation: { latitude: req.body.latitude, longitude: req.body.longitude, accuracy: req.body.accuracy },
+      });
+      ev.realtime.broadcastCheckin(shift.shift_id, shift.driver_id, {
+        stopId: stop.stop_id,
+        stopOrder: checkin.stop_order,
+        stopName: stop.name,
+        checkedInAt: checkin.checked_in_at,
+        isLate: !!checkin.is_late,
+        lateMinutes: Number(checkin.late_minutes || 0),
+        penaltyAmount: Number(checkin.penalty_amount || 0),
+      });
+      broadcastUpdate('evShiftCheckin', { action: 'create', shiftId: shift.shift_id });
+      res.status(201).json(checkin);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.get('/ev/me/shifts/:id/checkins', authMiddleware, requireRole(evDriverRoles), validate({ params: evShiftIdParams }), async (req: AuthenticatedRequest, res) => {
+    try {
+      await evOwnShift(req, req.params.id);
+      res.json(await ev.checkins.getShiftCheckins(req.params.id));
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  // ---------------------------------------------------------------
+  // DRIVER — GPS (ghi theo lô, broadcast lên Live Map)
+  // ---------------------------------------------------------------
+  app.post('/ev/me/gps', authMiddleware, requireRole(evDriverRoles), validate({ body: evGpsBatchBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const driverId = evDriverId(req);
+      const points: any[] = [];
+      for (const p of req.body.points) {
+        const shift = await ev.shifts.getShift(p.shift_id).catch(() => null);
+        if (!shift || shift.driver_id !== driverId) continue;
+        points.push({
+          shiftId: shift.shift_id,
+          driverId,
+          vehicleId: shift.vehicle_id,
+          recordedAt: p.recorded_at,
+          latitude: p.latitude,
+          longitude: p.longitude,
+          accuracy: p.accuracy,
+          speed: p.speed,
+          heading: p.heading,
+          battery: p.battery,
+          isMock: p.is_mock,
+        });
+      }
+      if (!points.length) return res.status(400).json({ error: 'NO_VALID_POINTS: Không có điểm GPS hợp lệ thuộc ca của bạn' });
+      const result = await ev.gps.ingestGPSPoints(points);
+      // Broadcast điểm cuối (mới nhất) lên Live Map.
+      const last = points[points.length - 1];
+      ev.realtime.broadcastGPSUpdate(last.shiftId, driverId, {
+        latitude: last.latitude,
+        longitude: last.longitude,
+        accuracy: Number(last.accuracy || 0),
+        speed: Number(last.speed || 0),
+        heading: Number(last.heading || 0),
+        battery: Number(last.battery || 0),
+        recordedAt: last.recordedAt,
+        isMock: !!last.isMock,
+      });
+      res.json(result);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.get('/ev/me/shifts/:id/gps', authMiddleware, requireRole(evDriverRoles), validate({ params: evShiftIdParams }), async (req: AuthenticatedRequest, res) => {
+    try {
+      await evOwnShift(req, req.params.id);
+      res.json(await ev.gps.getShiftGPSHistory(req.params.id, Number(req.query.limit || 1000)));
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  // ---------------------------------------------------------------
+  // DRIVER — Phiếu sạc
+  // ---------------------------------------------------------------
+  app.get('/ev/me/charging-tickets', authMiddleware, requireRole(evDriverRoles), async (req: AuthenticatedRequest, res) => {
+    try {
+      const driverId = evDriverId(req);
+      if (!driverId) return res.status(403).json({ error: 'DRIVER_NOT_FOUND' });
+      res.json(await ev.charging.getChargingTicketsByDriver(driverId, { status: (req.query.status as any) || undefined }));
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.post('/ev/me/charging-tickets', authMiddleware, requireRole(evDriverRoles), validate({ body: evChargingTicketCreateBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const t = await ev.charging.createChargingTicket({
+        shiftId: req.body.shift_id,
+        requestedDate: req.body.requested_date,
+        batteryLevelPct: req.body.battery_level_pct,
+        notes: req.body.notes,
+      });
+      ev.realtime.broadcastChargingStatus(t.ticket_id, t.shift_id, t.driver_id, 'APPROVED', { status: t.status });
+      broadcastUpdate('evChargingTicket', { action: 'create', id: t.ticket_id });
+      res.status(201).json(t);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.post('/ev/me/charging/start', authMiddleware, requireRole(evDriverRoles), validate({ body: evChargingStartBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const ticket = await ev.charging.getChargingTicket(req.body.ticket_id);
+      if (!ticket) return res.status(404).json({ error: 'TICKET_NOT_FOUND' });
+      await evOwnShift(req, ticket.shift_id);
+      const t = await ev.charging.startCharging(ticket.ticket_id, {
+        latitude: req.body.latitude, longitude: req.body.longitude, accuracy: req.body.accuracy,
+      });
+      ev.realtime.broadcastChargingStatus(t!.ticket_id, t!.shift_id, t!.driver_id, 'CHARGING');
+      broadcastUpdate('evChargingTicket', { action: 'start', id: t!.ticket_id });
+      res.json(t);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  app.post('/ev/me/charging/end', authMiddleware, requireRole(evDriverRoles), validate({ body: evChargingEndBody }), async (req: AuthenticatedRequest, res) => {
+    try {
+      const ticket = await ev.charging.getChargingTicket(req.body.ticket_id);
+      if (!ticket) return res.status(404).json({ error: 'TICKET_NOT_FOUND' });
+      await evOwnShift(req, ticket.shift_id);
+      const t = await ev.charging.endCharging(ticket.ticket_id);
+      ev.realtime.broadcastChargingStatus(t!.ticket_id, t!.shift_id, t!.driver_id, 'COMPLETED');
+      broadcastUpdate('evChargingTicket', { action: 'end', id: t!.ticket_id });
+      res.json(t);
+    } catch (err: any) { evErr(res, err); }
+  });
+
+  // ---------------------------------------------------------------
+  // DRIVER — Lương của tôi
+  // ---------------------------------------------------------------
+  app.get('/ev/me/payroll', authMiddleware, requireRole(evDriverRoles), async (req: AuthenticatedRequest, res) => {
+    try {
+      const driverId = evDriverId(req);
+      if (!driverId) return res.status(403).json({ error: 'DRIVER_NOT_FOUND' });
+      const period = String(req.query.period || '').trim();
+      if (period) return res.json(await ev.payroll.getPayroll(driverId, period));
+      const all = evPayrollSource().filter((p: any) => p.driver_id === driverId);
+      res.json(all);
+    } catch (err: any) { evErr(res, err); }
+  });
 
   // Dọn dẹp/xóa mọi thông báo nhắc hẹn điểm danh khỏi bộ nhớ hệ thống
   const purgeCheckinReminders = () => {

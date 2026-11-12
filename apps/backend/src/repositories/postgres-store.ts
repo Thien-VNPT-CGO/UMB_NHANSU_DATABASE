@@ -43,6 +43,15 @@ const TABLES = {
   auditLogs: 'audit_logs',
   branches: 'branches',
   backupSnapshots: 'backup_snapshots',
+  // --- MILKROUTE EV TABLES ---
+  evVehicles: 'ev_vehicles',
+  evRoutes: 'ev_routes',
+  evRouteStops: 'ev_route_stops',
+  evShifts: 'ev_shifts',
+  evShiftCheckins: 'ev_shift_checkins',
+  evChargingTickets: 'ev_charging_tickets',
+  evGpsPoints: 'ev_gps_points',
+  evDriverPayroll: 'ev_driver_payroll',
 } as const;
 
 type CollectionKey = keyof typeof TABLES;
@@ -160,6 +169,44 @@ const COLLECTIONS: CollectionDef[] = [
   },
   { key: 'branches', table: TABLES.branches, id: r => str(r.id || r.branch_id) },
   { key: 'backupSnapshots', table: TABLES.backupSnapshots, id: r => str(r.snapshot_id) },
+  // --- MILKROUTE EV COLLECTIONS ---
+  { key: 'evVehicles', table: TABLES.evVehicles, id: r => str(r.vehicle_id) },
+  { key: 'evRoutes', table: TABLES.evRoutes, id: r => str(r.route_id) },
+  {
+    key: 'evRouteStops',
+    table: TABLES.evRouteStops,
+    id: r => str(r.stop_id),
+  },
+  {
+    key: 'evShifts',
+    table: TABLES.evShifts,
+    id: r => str(r.shift_id),
+    bucketMonth: r => monthOf(r.shift_date),
+  },
+  {
+    key: 'evShiftCheckins',
+    table: TABLES.evShiftCheckins,
+    id: r => str(r.checkin_id),
+    bucketMonth: r => monthOf(r.checked_in_at),
+  },
+  {
+    key: 'evChargingTickets',
+    table: TABLES.evChargingTickets,
+    id: r => str(r.ticket_id),
+    bucketMonth: r => monthOf(r.requested_date),
+  },
+  {
+    key: 'evGpsPoints',
+    table: TABLES.evGpsPoints,
+    id: r => str(r.point_id),
+    bucketMonth: r => monthOf(r.recorded_at),
+  },
+  {
+    key: 'evDriverPayroll',
+    table: TABLES.evDriverPayroll,
+    id: r => str(r.payroll_id),
+    bucketMonth: r => monthOf(r.period),
+  },
 ];
 
 const SINGLETON_KEYS = ['shiftTemplates', 'policies', 'maintenance', 'systemSettings'] as const;
@@ -219,6 +266,20 @@ const INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_accounts_phone ON employee_accounts ((data->>'phone_normalized'))`,
   `CREATE INDEX IF NOT EXISTS idx_candidates_phone ON candidate_applications ((data->>'phone_normalized'))`,
   `CREATE INDEX IF NOT EXISTS idx_operations_idem ON operations ((data->>'idempotency_key'))`,
+  // --- MILKROUTE EV INDEXES ---
+  `CREATE INDEX IF NOT EXISTS idx_ev_shifts_driver_date ON ev_shifts ((data->>'driver_id'), (data->>'shift_date'))`,
+  `CREATE INDEX IF NOT EXISTS idx_ev_shifts_status ON ev_shifts ((data->>'status'))`,
+  `CREATE INDEX IF NOT EXISTS idx_ev_shifts_vehicle ON ev_shifts ((data->>'vehicle_id'))`,
+  `CREATE INDEX IF NOT EXISTS idx_ev_checkins_shift ON ev_shift_checkins ((data->>'shift_id'), (data->>'stop_order'))`,
+  `CREATE INDEX IF NOT EXISTS idx_ev_checkins_driver ON ev_shift_checkins ((data->>'driver_id'))`,
+  `CREATE INDEX IF NOT EXISTS idx_ev_tickets_driver_status ON ev_charging_tickets ((data->>'driver_id'), (data->>'status'))`,
+  `CREATE INDEX IF NOT EXISTS idx_ev_tickets_shift ON ev_charging_tickets ((data->>'shift_id'))`,
+  `CREATE INDEX IF NOT EXISTS idx_ev_gps_shift_time ON ev_gps_points ((data->>'shift_id'), (data->>'recorded_at'))`,
+  `CREATE INDEX IF NOT EXISTS idx_ev_gps_driver_time ON ev_gps_points ((data->>'driver_id'), (data->>'recorded_at'))`,
+  `CREATE INDEX IF NOT EXISTS idx_ev_gps_vehicle_time ON ev_gps_points ((data->>'vehicle_id'), (data->>'recorded_at'))`,
+  `CREATE INDEX IF NOT EXISTS idx_ev_payroll_driver_period ON ev_driver_payroll ((data->>'driver_id'), (data->>'period'))`,
+  `CREATE INDEX IF NOT EXISTS idx_ev_vehicles_driver ON ev_vehicles ((data->>'assigned_driver_id'))`,
+  `CREATE INDEX IF NOT EXISTS idx_ev_vehicles_status ON ev_vehicles ((data->>'status'))`,
 ];
 
 export class PostgresStore {
@@ -551,6 +612,84 @@ export class PostgresStore {
           break;
         case 'deleteAccount':
           await this.deleteRecord(TABLES.accounts, str(args[0]), client);
+          break;
+
+        // --- MILKROUTE EV MUTATIONS ---
+        case 'createEVVehicle':
+        case 'updateEVVehicle':
+          await upsert('evVehicles', result);
+          break;
+        case 'deleteEVVehicle':
+          await this.deleteRecord(TABLES.evVehicles, str(args[0]), client);
+          break;
+
+        case 'createEVRoute':
+        case 'updateEVRoute':
+          await upsert('evRoutes', result);
+          break;
+        case 'deleteEVRoute':
+          await this.deleteRecord(TABLES.evRoutes, str(args[0]), client);
+          break;
+
+        case 'createEVRouteStop':
+        case 'updateEVRouteStop':
+          await upsert('evRouteStops', result);
+          break;
+        case 'deleteEVRouteStop':
+          await this.deleteRecord(TABLES.evRouteStops, str(args[0]), client);
+          break;
+
+        case 'createEVShift':
+        case 'updateEVShift':
+          await upsert('evShifts', result);
+          break;
+        case 'deleteEVShift':
+          await this.deleteRecord(TABLES.evShifts, str(args[0]), client);
+          break;
+
+        case 'createEVShiftCheckin':
+        case 'updateEVShiftCheckin':
+          await upsert('evShiftCheckins', result);
+          break;
+        case 'deleteEVShiftCheckin':
+          await this.deleteRecord(TABLES.evShiftCheckins, str(args[0]), client);
+          break;
+
+        case 'createEVChargingTicket':
+        case 'updateEVChargingTicket':
+          await upsert('evChargingTickets', result);
+          break;
+        case 'deleteEVChargingTicket':
+          await this.deleteRecord(TABLES.evChargingTickets, str(args[0]), client);
+          break;
+
+        case 'createEVGpsPoints':
+        case 'upsertEVGpsPoints':
+          // GPS points are batched - result is array
+          if (Array.isArray(result)) {
+            for (const point of result) {
+              await upsert('evGpsPoints', point);
+            }
+          }
+          break;
+        case 'pruneEVGpsPoints': {
+          // Dọn GPS quá hạn: xóa cứng theo mốc thời gian (args[0] = cutoffISO).
+          const cutoff = String(args?.[0] || '');
+          if (cutoff) {
+            await client.query(
+              `DELETE FROM ${TABLES.evGpsPoints} WHERE (data->>'recorded_at') < $1`,
+              [cutoff],
+            );
+          }
+          break;
+        }
+
+        case 'createEVDriverPayroll':
+        case 'updateEVDriverPayroll':
+          await upsert('evDriverPayroll', result);
+          break;
+        case 'deleteEVDriverPayroll':
+          await this.deleteRecord(TABLES.evDriverPayroll, str(args[0]), client);
           break;
 
         default:

@@ -29,6 +29,14 @@ import {
   SHIFT_TEMPLATES,
   TestPaper,
   TestSubmission,
+  EVVehicle,
+  EVRoute,
+  EVRouteStop,
+  EVShift,
+  EVShiftCheckin,
+  EVChargingTicket,
+  EVGPSPoint,
+  EVDriverPayroll,
 } from '@ubm/shared';
 import { ISheetsRepository } from './sheets.interface.js';
 import { dedupeShiftAssignments, findLiveShift } from './shift-dedupe.js';
@@ -97,6 +105,16 @@ export class MockSheetsAdapter implements ISheetsRepository {
   public maintenance: any = {};
   public backupSnapshots: any[] = [];
   public systemSettings: any = {};
+
+  // --- MILKROUTE EV (quản lý tài xế giao sữa + định vị GPS) ---
+  public evVehicles: EVVehicle[] = [];
+  public evRoutes: EVRoute[] = [];
+  public evRouteStops: EVRouteStop[] = [];
+  public evShifts: EVShift[] = [];
+  public evShiftCheckins: EVShiftCheckin[] = [];
+  public evChargingTickets: EVChargingTicket[] = [];
+  public evGpsPoints: EVGPSPoint[] = [];
+  public evDriverPayroll: EVDriverPayroll[] = [];
 
   // Nhân viên TERMINATED đã thu hồi token (tránh audit spam mỗi lần pull)
   public terminatedRevoked: Set<string> = new Set();
@@ -1490,6 +1508,431 @@ export class MockSheetsAdapter implements ISheetsRepository {
     }
     this.systemSettings = next;
     return { ...this.systemSettings };
+  }
+
+  // ============================================================
+  // MILKROUTE EV — thao tác ghi
+  // Các method này được PostgresAdapter bọc lại (WRITE_METHODS) để
+  // persistMutation() ghi xuống bảng ev_* NGAY trong cùng request.
+  // ============================================================
+
+  private touchEv<T extends { updated_at?: string; version?: number }>(row: T): T {
+    return { ...row, updated_at: new Date().toISOString(), version: Number((row as any).version || 0) + 1 };
+  }
+
+  // ---------- Xe điện ----------
+  async createEVVehicle(input: Partial<EVVehicle>): Promise<EVVehicle> {
+    this.checkErrors();
+    const plate = String(input?.license_plate ?? '').trim().toUpperCase();
+    if (!plate) throw new Error('VEHICLE_PLATE_REQUIRED');
+    if (this.evVehicles.some(v => v.license_plate.toUpperCase() === plate)) {
+      throw new Error('VEHICLE_PLATE_EXISTS: Biển số xe đã tồn tại');
+    }
+    const now = new Date().toISOString();
+    const created: EVVehicle = {
+      vehicle_id: uuidv4(),
+      license_plate: plate,
+      frame_number: String(input?.frame_number ?? '').trim() || undefined,
+      battery_capacity_kwh: Number(input?.battery_capacity_kwh) > 0 ? Number(input.battery_capacity_kwh) : undefined,
+      current_battery_pct: Number.isFinite(Number(input?.current_battery_pct)) ? Number(input.current_battery_pct) : 100,
+      status: (input?.status as EVVehicle['status']) || 'ACTIVE',
+      assigned_driver_id: String(input?.assigned_driver_id ?? '').trim() || undefined,
+      gps_device_id: String(input?.gps_device_id ?? '').trim() || undefined,
+      notes: String(input?.notes ?? '').trim() || undefined,
+      created_at: now,
+      updated_at: now,
+      version: 1,
+    };
+    this.evVehicles.push(created);
+    return { ...created };
+  }
+
+  async updateEVVehicle(vehicleId: string, updates: Partial<EVVehicle>): Promise<EVVehicle> {
+    this.checkErrors();
+    const idx = this.evVehicles.findIndex(v => v.vehicle_id === vehicleId);
+    if (idx === -1) throw new Error('VEHICLE_NOT_FOUND');
+    const next: any = { ...(updates || {}) };
+    if (Object.prototype.hasOwnProperty.call(next, 'license_plate')) {
+      const plate = String(next.license_plate ?? '').trim().toUpperCase();
+      if (!plate) throw new Error('VEHICLE_PLATE_REQUIRED');
+      if (this.evVehicles.some((v, i) => i !== idx && v.license_plate.toUpperCase() === plate)) {
+        throw new Error('VEHICLE_PLATE_EXISTS: Biển số xe đã tồn tại');
+      }
+      next.license_plate = plate;
+    }
+    delete next.vehicle_id;
+    delete next.created_at;
+    this.evVehicles[idx] = this.touchEv({ ...this.evVehicles[idx], ...next });
+    return { ...this.evVehicles[idx] };
+  }
+
+  async deleteEVVehicle(vehicleId: string): Promise<boolean> {
+    this.checkErrors();
+    const idx = this.evVehicles.findIndex(v => v.vehicle_id === vehicleId);
+    if (idx === -1) return false;
+    this.evVehicles.splice(idx, 1);
+    return true;
+  }
+
+  // ---------- Lộ trình & điểm dừng ----------
+  async createEVRoute(input: Partial<EVRoute>): Promise<EVRoute> {
+    this.checkErrors();
+    const name = String(input?.name ?? '').trim();
+    if (!name) throw new Error('ROUTE_NAME_REQUIRED');
+    const now = new Date().toISOString();
+    const created: EVRoute = {
+      route_id: uuidv4(),
+      name,
+      description: String(input?.description ?? '').trim() || undefined,
+      is_active: input?.is_active !== false,
+      total_distance_km: Number(input?.total_distance_km) > 0 ? Number(input.total_distance_km) : undefined,
+      estimated_duration_min: Number(input?.estimated_duration_min) > 0 ? Number(input.estimated_duration_min) : undefined,
+      created_at: now,
+      updated_at: now,
+      version: 1,
+    };
+    this.evRoutes.push(created);
+    return { ...created };
+  }
+
+  async updateEVRoute(routeId: string, updates: Partial<EVRoute>): Promise<EVRoute> {
+    this.checkErrors();
+    const idx = this.evRoutes.findIndex(r => r.route_id === routeId);
+    if (idx === -1) throw new Error('ROUTE_NOT_FOUND');
+    const next: any = { ...(updates || {}) };
+    delete next.route_id;
+    delete next.created_at;
+    this.evRoutes[idx] = this.touchEv({ ...this.evRoutes[idx], ...next });
+    return { ...this.evRoutes[idx] };
+  }
+
+  async deleteEVRoute(routeId: string): Promise<boolean> {
+    this.checkErrors();
+    const idx = this.evRoutes.findIndex(r => r.route_id === routeId);
+    if (idx === -1) return false;
+    if (this.evRouteStops.some(s => s.route_id === routeId)) throw new Error('ROUTE_HAS_STOPS: Lộ trình còn điểm dừng');
+    if (this.evShifts.some(s => s.route_id === routeId)) throw new Error('ROUTE_HAS_SHIFTS: Lộ trình còn ca vận chuyển');
+    this.evRoutes.splice(idx, 1);
+    return true;
+  }
+
+  async createEVRouteStop(input: Partial<EVRouteStop>): Promise<EVRouteStop> {
+    this.checkErrors();
+    const routeId = String(input?.route_id ?? '').trim();
+    if (!routeId) throw new Error('STOP_ROUTE_REQUIRED');
+    if (!this.evRoutes.some(r => r.route_id === routeId)) throw new Error('ROUTE_NOT_FOUND');
+    const order = Number(input?.stop_order);
+    if (!Number.isInteger(order) || order < 1) throw new Error('STOP_ORDER_INVALID');
+    if (this.evRouteStops.some(s => s.route_id === routeId && s.stop_order === order)) {
+      throw new Error('STOP_ORDER_EXISTS: Thứ tự điểm dừng này đã có trên lộ trình');
+    }
+    const name = String(input?.name ?? '').trim();
+    if (!name) throw new Error('STOP_NAME_REQUIRED');
+    const now = new Date().toISOString();
+    const created: EVRouteStop = {
+      stop_id: uuidv4(),
+      route_id: routeId,
+      stop_order: order,
+      name,
+      address: String(input?.address ?? '').trim() || undefined,
+      latitude: Number(input?.latitude),
+      longitude: Number(input?.longitude),
+      geofence_radius_m: Number(input?.geofence_radius_m) > 0 ? Number(input.geofence_radius_m) : 100,
+      sla_minutes: Number(input?.sla_minutes) >= 0 ? Number(input.sla_minutes) : 0,
+      stop_type: (input?.stop_type as EVRouteStop['stop_type']) || 'DELIVERY',
+      is_mandatory: input?.is_mandatory !== false,
+      notes: String(input?.notes ?? '').trim() || undefined,
+      created_at: now,
+      updated_at: now,
+      version: 1,
+    };
+    this.evRouteStops.push(created);
+    return { ...created };
+  }
+
+  async updateEVRouteStop(stopId: string, updates: Partial<EVRouteStop>): Promise<EVRouteStop> {
+    this.checkErrors();
+    const idx = this.evRouteStops.findIndex(s => s.stop_id === stopId);
+    if (idx === -1) throw new Error('STOP_NOT_FOUND');
+    const next: any = { ...(updates || {}) };
+    delete next.stop_id;
+    delete next.created_at;
+    if (Object.prototype.hasOwnProperty.call(next, 'stop_order') || Object.prototype.hasOwnProperty.call(next, 'route_id')) {
+      const routeId = String(next.route_id ?? this.evRouteStops[idx].route_id);
+      const order = Number(next.stop_order ?? this.evRouteStops[idx].stop_order);
+      if (this.evRouteStops.some((s, i) => i !== idx && s.route_id === routeId && s.stop_order === order)) {
+        throw new Error('STOP_ORDER_EXISTS: Thứ tự điểm dừng này đã có trên lộ trình');
+      }
+    }
+    this.evRouteStops[idx] = this.touchEv({ ...this.evRouteStops[idx], ...next });
+    return { ...this.evRouteStops[idx] };
+  }
+
+  async deleteEVRouteStop(stopId: string): Promise<boolean> {
+    this.checkErrors();
+    const idx = this.evRouteStops.findIndex(s => s.stop_id === stopId);
+    if (idx === -1) return false;
+    if (this.evShiftCheckins.some(c => c.stop_id === stopId)) {
+      throw new Error('STOP_HAS_CHECKINS: Điểm dừng đã có lượt xác nhận, không thể xóa');
+    }
+    this.evRouteStops.splice(idx, 1);
+    return true;
+  }
+
+  // ---------- Ca vận chuyển ----------
+  async createEVShift(input: Partial<EVShift>): Promise<EVShift> {
+    this.checkErrors();
+    const routeId = String(input?.route_id ?? '').trim();
+    const driverId = String(input?.driver_id ?? '').trim();
+    const vehicleId = String(input?.vehicle_id ?? '').trim();
+    const shiftDate = String(input?.shift_date ?? '').trim();
+    if (!routeId || !driverId || !vehicleId || !shiftDate) throw new Error('SHIFT_REQUIRED_FIELDS');
+    if (!this.evRoutes.some(r => r.route_id === routeId)) throw new Error('ROUTE_NOT_FOUND');
+    if (!this.evVehicles.some(v => v.vehicle_id === vehicleId)) throw new Error('VEHICLE_NOT_FOUND');
+    if (!this.employees.some(e => e.employee_id === driverId)) throw new Error('DRIVER_NOT_FOUND');
+    if (this.evShifts.some(s => s.driver_id === driverId && s.shift_date === shiftDate && s.status !== 'CANCELLED')) {
+      throw new Error('DRIVER_HAS_SHIFT: Tài xế đã có ca vào ngày này');
+    }
+    if (this.evShifts.some(s => s.vehicle_id === vehicleId && s.shift_date === shiftDate && s.status !== 'CANCELLED')) {
+      throw new Error('VEHICLE_HAS_SHIFT: Xe đã được phân ca vào ngày này');
+    }
+    const now = new Date().toISOString();
+    const created: EVShift = {
+      shift_id: uuidv4(),
+      route_id: routeId,
+      driver_id: driverId,
+      vehicle_id: vehicleId,
+      shift_date: shiftDate,
+      planned_start_at: String(input?.planned_start_at ?? now),
+      planned_end_at: input?.planned_end_at || undefined,
+      status: 'SCHEDULED',
+      penalty_points: 0,
+      penalty_amount: 0,
+      net_pay: 0,
+      work_day_index: Number(input?.work_day_index) > 0 ? Number(input.work_day_index) : undefined,
+      notes: String(input?.notes ?? '').trim() || undefined,
+      created_by: String(input?.created_by ?? '').trim() || 'SYSTEM',
+      created_at: now,
+      updated_at: now,
+      version: 1,
+    };
+    this.evShifts.push(created);
+    return { ...created };
+  }
+
+  async updateEVShift(shiftId: string, updates: Partial<EVShift>): Promise<EVShift> {
+    this.checkErrors();
+    const idx = this.evShifts.findIndex(s => s.shift_id === shiftId);
+    if (idx === -1) throw new Error('SHIFT_NOT_FOUND');
+    const next: any = { ...(updates || {}) };
+    delete next.shift_id;
+    delete next.created_at;
+    this.evShifts[idx] = this.touchEv({ ...this.evShifts[idx], ...next });
+    return { ...this.evShifts[idx] };
+  }
+
+  async deleteEVShift(shiftId: string): Promise<boolean> {
+    this.checkErrors();
+    const idx = this.evShifts.findIndex(s => s.shift_id === shiftId);
+    if (idx === -1) return false;
+    const status = this.evShifts[idx].status;
+    if (status === 'IN_PROGRESS' || status === 'COMPLETED') {
+      throw new Error('SHIFT_IN_PROGRESS: Không thể xóa ca đã bắt đầu hoặc hoàn thành');
+    }
+    this.evShiftCheckins = this.evShiftCheckins.filter(c => c.shift_id !== shiftId);
+    this.evChargingTickets = this.evChargingTickets.filter(t => t.shift_id !== shiftId);
+    this.evGpsPoints = this.evGpsPoints.filter(p => p.shift_id !== shiftId);
+    this.evShifts.splice(idx, 1);
+    return true;
+  }
+
+  // ---------- Xác nhận điểm (check-in) ----------
+  async createEVShiftCheckin(input: Partial<EVShiftCheckin>): Promise<EVShiftCheckin> {
+    this.checkErrors();
+    const shiftId = String(input?.shift_id ?? '').trim();
+    const stopId = String(input?.stop_id ?? '').trim();
+    if (!shiftId || !stopId) throw new Error('CHECKIN_REQUIRED_FIELDS');
+    if (!this.evShifts.some(s => s.shift_id === shiftId)) throw new Error('SHIFT_NOT_FOUND');
+    if (!this.evRouteStops.some(s => s.stop_id === stopId)) throw new Error('STOP_NOT_FOUND');
+    if (this.evShiftCheckins.some(c => c.shift_id === shiftId && c.stop_id === stopId)) {
+      throw new Error('ALREADY_CHECKED_IN: Đã check-in tại điểm này');
+    }
+    const now = new Date().toISOString();
+    const created: EVShiftCheckin = {
+      checkin_id: uuidv4(),
+      shift_id: shiftId,
+      stop_id: stopId,
+      stop_order: Number(input?.stop_order) || 0,
+      checked_in_at: String(input?.checked_in_at ?? now),
+      latitude: Number(input?.latitude) || 0,
+      longitude: Number(input?.longitude) || 0,
+      distance_m: Number(input?.distance_m) || 0,
+      is_within_geofence: input?.is_within_geofence !== false,
+      sla_minutes: Number(input?.sla_minutes) || 0,
+      actual_travel_min: Number(input?.actual_travel_min) || 0,
+      is_late: !!input?.is_late,
+      late_minutes: Number(input?.late_minutes) || 0,
+      penalty_amount: Number(input?.penalty_amount) || 0,
+      is_missed: !!input?.is_missed,
+      notes: String(input?.notes ?? '').trim() || undefined,
+      created_at: now,
+    };
+    this.evShiftCheckins.push(created);
+    return { ...created };
+  }
+
+  async updateEVShiftCheckin(checkinId: string, updates: Partial<EVShiftCheckin>): Promise<EVShiftCheckin> {
+    this.checkErrors();
+    const idx = this.evShiftCheckins.findIndex(c => c.checkin_id === checkinId);
+    if (idx === -1) throw new Error('CHECKIN_NOT_FOUND');
+    const next: any = { ...(updates || {}) };
+    delete next.checkin_id;
+    delete next.created_at;
+    this.evShiftCheckins[idx] = { ...this.evShiftCheckins[idx], ...next };
+    return { ...this.evShiftCheckins[idx] };
+  }
+
+  async deleteEVShiftCheckin(checkinId: string): Promise<boolean> {
+    this.checkErrors();
+    const idx = this.evShiftCheckins.findIndex(c => c.checkin_id === checkinId);
+    if (idx === -1) return false;
+    this.evShiftCheckins.splice(idx, 1);
+    return true;
+  }
+
+  // ---------- Phiếu sạc xe điện ----------
+  async createEVChargingTicket(input: Partial<EVChargingTicket>): Promise<EVChargingTicket> {
+    this.checkErrors();
+    const shiftId = String(input?.shift_id ?? '').trim();
+    const driverId = String(input?.driver_id ?? '').trim();
+    if (!shiftId || !driverId) throw new Error('TICKET_REQUIRED_FIELDS');
+    if (!this.evShifts.some(s => s.shift_id === shiftId)) throw new Error('SHIFT_NOT_FOUND');
+    const now = new Date().toISOString();
+    const created: EVChargingTicket = {
+      ticket_id: uuidv4(),
+      shift_id: shiftId,
+      driver_id: driverId,
+      requested_date: String(input?.requested_date ?? '').trim(),
+      battery_level_pct: Number.isFinite(Number(input?.battery_level_pct)) ? Number(input.battery_level_pct) : undefined,
+      notes: String(input?.notes ?? '').trim() || undefined,
+      status: 'PENDING_HR',
+      created_at: now,
+      updated_at: now,
+    };
+    this.evChargingTickets.push(created);
+    return { ...created };
+  }
+
+  async updateEVChargingTicket(ticketId: string, updates: Partial<EVChargingTicket>): Promise<EVChargingTicket> {
+    this.checkErrors();
+    const idx = this.evChargingTickets.findIndex(t => t.ticket_id === ticketId);
+    if (idx === -1) throw new Error('TICKET_NOT_FOUND');
+    const next: any = { ...(updates || {}) };
+    delete next.ticket_id;
+    delete next.created_at;
+    this.evChargingTickets[idx] = { ...this.evChargingTickets[idx], ...next, updated_at: new Date().toISOString() };
+    return { ...this.evChargingTickets[idx] };
+  }
+
+  async deleteEVChargingTicket(ticketId: string): Promise<boolean> {
+    this.checkErrors();
+    const idx = this.evChargingTickets.findIndex(t => t.ticket_id === ticketId);
+    if (idx === -1) return false;
+    this.evChargingTickets.splice(idx, 1);
+    return true;
+  }
+
+  // ---------- GPS (ghi theo lô) ----------
+  async createEVGpsPoints(points: Partial<EVGPSPoint>[]): Promise<EVGPSPoint[]> {
+    this.checkErrors();
+    const now = new Date().toISOString();
+    const saved: EVGPSPoint[] = [];
+    for (const input of points || []) {
+      const shiftId = String(input?.shift_id ?? '').trim();
+      const lat = Number(input?.latitude);
+      const lng = Number(input?.longitude);
+      if (!shiftId || !Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+      if (lat < -90 || lat > 90 || lng < -180 || lng > 180) continue;
+      const point: EVGPSPoint = {
+        point_id: uuidv4(),
+        shift_id: shiftId,
+        driver_id: String(input?.driver_id ?? '').trim(),
+        vehicle_id: String(input?.vehicle_id ?? '').trim(),
+        recorded_at: String(input?.recorded_at ?? now),
+        latitude: lat,
+        longitude: lng,
+        accuracy_m: Number.isFinite(Number(input?.accuracy_m)) ? Number(input.accuracy_m) : undefined,
+        speed_kmh: Number.isFinite(Number(input?.speed_kmh)) ? Number(input.speed_kmh) : undefined,
+        heading: Number.isFinite(Number(input?.heading)) ? Number(input.heading) : undefined,
+        battery_pct: Number.isFinite(Number(input?.battery_pct)) ? Number(input.battery_pct) : undefined,
+        is_mock: !!input?.is_mock,
+        created_at: now,
+      };
+      this.evGpsPoints.push(point);
+      saved.push(point);
+    }
+    return saved;
+  }
+
+  /** Dọn GPS quá hạn — xóa theo mốc thời gian (persist bằng DELETE riêng). */
+  async pruneEVGpsPoints(cutoffISO: string): Promise<number> {
+    this.checkErrors();
+    const before = this.evGpsPoints.length;
+    this.evGpsPoints = this.evGpsPoints.filter(p => String(p.recorded_at) >= cutoffISO);
+    return before - this.evGpsPoints.length;
+  }
+
+  // ---------- Bảng lương tài xế ----------
+  async createEVDriverPayroll(input: Partial<EVDriverPayroll>): Promise<EVDriverPayroll> {
+    this.checkErrors();
+    const driverId = String(input?.driver_id ?? '').trim();
+    const period = String(input?.period ?? '').trim();
+    if (!driverId || !period) throw new Error('PAYROLL_REQUIRED_FIELDS');
+    if (this.evDriverPayroll.some(p => p.driver_id === driverId && p.period === period)) {
+      throw new Error('PAYROLL_EXISTS: Đã có bảng lương tài xế cho kỳ này');
+    }
+    const now = new Date().toISOString();
+    const created: EVDriverPayroll = {
+      payroll_id: uuidv4(),
+      driver_id: driverId,
+      period,
+      total_shifts: Number(input?.total_shifts) || 0,
+      total_work_days: Number(input?.total_work_days) || 0,
+      standard_days: Number(input?.standard_days) || 0,
+      extra_days: Number(input?.extra_days) || 0,
+      standard_pay: Number(input?.standard_pay) || 0,
+      extra_pay: Number(input?.extra_pay) || 0,
+      total_penalty_points: Number(input?.total_penalty_points) || 0,
+      total_penalty_amount: Number(input?.total_penalty_amount) || 0,
+      penalty_breakdown: input?.penalty_breakdown || { missed_checkins: 0, late_sla: 0, details: [] },
+      gross_pay: Number(input?.gross_pay) || 0,
+      net_pay: Number(input?.net_pay) || 0,
+      status: 'DRAFT',
+      created_by: String(input?.created_by ?? '').trim() || 'SYSTEM',
+      created_at: now,
+      updated_at: now,
+    };
+    this.evDriverPayroll.push(created);
+    return { ...created };
+  }
+
+  async updateEVDriverPayroll(payrollId: string, updates: Partial<EVDriverPayroll>): Promise<EVDriverPayroll> {
+    this.checkErrors();
+    const idx = this.evDriverPayroll.findIndex(p => p.payroll_id === payrollId);
+    if (idx === -1) throw new Error('PAYROLL_NOT_FOUND');
+    const next: any = { ...(updates || {}) };
+    delete next.payroll_id;
+    delete next.created_at;
+    this.evDriverPayroll[idx] = { ...this.evDriverPayroll[idx], ...next, updated_at: new Date().toISOString() };
+    return { ...this.evDriverPayroll[idx] };
+  }
+
+  async deleteEVDriverPayroll(payrollId: string): Promise<boolean> {
+    this.checkErrors();
+    const idx = this.evDriverPayroll.findIndex(p => p.payroll_id === payrollId);
+    if (idx === -1) return false;
+    this.evDriverPayroll.splice(idx, 1);
+    return true;
   }
 }
 

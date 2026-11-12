@@ -43,6 +43,7 @@ import {
 } from './services/monthly-backup.service.js';
 import { buildSocketCorsOptions, getAllowedOrigins } from './config/security.js';
 import { isPostgresMode } from './repositories/repository.factory.js';
+import { evRealtimeService } from './services/milkroute/ev-realtime.service.js';
 import { getDriveBackupScheduler } from './services/backup-drive.service.js';
 import { getSheetsBackupScheduler } from './services/sheets-backup.service.js';
 
@@ -83,6 +84,11 @@ let sheetsBackupScheduler: ReturnType<typeof getSheetsBackupScheduler> | null = 
 
 // Attach io to express app for route broadcasting
 app.set('io', io);
+
+// MilkRoute EV: realtime GPS/SLA/phiếu sạc qua Socket.IO (nhãn BETA).
+// setIO() đăng ký thêm handlers ev:* trên cùng server — không đụng handler
+// authentication có sẵn ở dưới.
+evRealtimeService.setIO(io);
 
 // Tự chữa ca DRAFT lọt vào tuần ĐÃ phát hành (dữ liệu cũ, nhập Excel muộn, BOT xếp
 // lại, ca tạo tay sau publish): cả tuần đã publish thì mọi ca phải PUBLISHED —

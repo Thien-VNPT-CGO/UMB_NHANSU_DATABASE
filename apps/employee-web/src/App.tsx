@@ -18,6 +18,7 @@ import {
   OfficeTimesheetView,
   OfficeAdjustmentView,
 } from './components/OfficePortal';
+import { MilkRouteDriverView } from './components/MilkRouteDriver';
 import {
   Home,
   Calendar,
@@ -45,6 +46,7 @@ import {
   Briefcase,
   Palmtree,
   Filter,
+  Truck,
 } from 'lucide-react';
 import {
   EmployeeEventLogoAccessory,
@@ -1037,6 +1039,17 @@ export function App() {
   const [schedWeekSel, setSchedWeekSel] = useState<SchedWeek>('THIS');
   const schedWeekTouched = useRef(false);
   const [schedRefresh, setSchedRefresh] = useState(0);
+  // MilkRoute EV: tài khoản có CA VẬN CHUYỂN (tài xế giao sữa) thì mới hiện tab
+  // "12. Vận chuyển" — NV thường không thấy tab thừa. Chạy 1 lần sau đăng nhập.
+  const [isEvDriver, setIsEvDriver] = useState(false);
+  useEffect(() => {
+    if (!isLoggedIn || !employee?.employee_id) return;
+    let alive = true;
+    apiRequest('/ev/me/shifts')
+      .then((d: any) => { if (alive && (d?.current || (Array.isArray(d?.items) && d.items.length > 0))) setIsEvDriver(true); })
+      .catch(() => { /* không có ca vận chuyển / API lỗi → ẩn tab */ });
+    return () => { alive = false; };
+  }, [isLoggedIn, employee?.employee_id, schedRefresh]);
   // Tab Dữ Liệu Công theo THÁNG (chu kỳ lương): tải ca + sự kiện cả tháng đang xem.
   // Ca quá khứ HR vẫn có thể xóa/sửa (không bất biến) nên tải lại theo realtime
   // lịch (schedRefresh) chứ không chỉ khi mở tab — nếu không ca đã xóa vẫn hiện
@@ -2519,6 +2532,11 @@ export function App() {
         // đã có handler riêng (leave.updated, swap.updated, adjustment.updated...).
         if (String(p?.type || '').startsWith('emp.')) return;
         reload(undefined, p);
+        // Lịch kiểm tra đầu ra thử việc: tải ngay + báo rõ để NV không bỏ lỡ link Meet.
+        if (String(p?.type || '') === 'PROBATION_ASSESSMENT') {
+          fetchProbationAssessmentRef.current().catch(() => null);
+          showToastRef.current('📅 HR vừa gửi lịch kiểm tra đầu ra — mở tab Lịch hoặc Thông báo để vào Google Meet!');
+        }
         // Thông báo inbox mới (VD HR phát hành lịch tuần) → tab Lịch tải lại dải ngày.
         setSchedRefresh(k => k + 1);
         // HR duyệt/từ chối đổi STK -> cập nhật banner "đang chờ duyệt" ngay.
@@ -3909,13 +3927,16 @@ export function App() {
     { id: 'test_training', label: '9. TEST / Đào tạo', icon: Award },
     { id: 'notifs_salary', label: '10. Thông báo & Lương', icon: Bell },
     { id: 'profile', label: '11. Hồ Sơ', icon: User },
+    // MilkRoute EV — tài xế giao sữa. Chỉ hiện khi tài khoản có ca vận chuyển
+    // (xác nhận qua /ev/me/shifts) để NV thường không thấy tab thừa.
+    { id: 'ev_route', label: '12. Vận chuyển', icon: Truck, beta: true },
   ];
 
   // Tab "7. Cập Nhật Ca Làm" CHỈ hiển thị khi Admin BẬT phiếu "Cập Nhật Ca" (enabled === true).
   // Mặc định ẩn hoàn toàn nếu Admin chưa bật hoặc đã đóng.
   const reRegEnabled = !!reRegStatus?.enabled;
   const currentTabs = (isOffice ? officeTabs : isProbation ? probationTabs : officialTabs).filter(
-    (t) => t.id !== 'rereg' || reRegEnabled
+    (t) => (t.id !== 'rereg' || reRegEnabled) && (t.id !== 'ev_route' || isEvDriver)
   );
 
   // Tự động về trang chủ nếu tab đang mở không còn tồn tại (VD: tab Cập Nhật Ca bị Admin đóng).
@@ -4573,6 +4594,32 @@ export function App() {
         </div>
       )}
 
+      {/* NHẮC LỊCH KIỂM TRA ĐẦU RA Ở MỌI TAB: NV thường ở tab khác (Lịch/Thông báo/
+          Chấm công) nên chỉ đặt banner ở Trang chủ là bỏ lỡ link Google Meet. */}
+      {isProbation && probationAssessment && !probationAssessment?.meetDone && activeTab !== 'home' && activeTab !== 'schedule' && (() => {
+        const a: any = probationAssessment;
+        const meetUrl = String(a.meetUrl || '').trim();
+        const q = a.quiz;
+        const quizPending = !!a.quizTestId && (!q || q.status === 'ASSIGNED');
+        return (
+          <div style={{ margin: '0 16px', padding: '10px 12px', backgroundColor: '#EFF6FF', border: '2px solid #2563EB', borderRadius: 'var(--radius-sm)', display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: '180px', fontSize: '12px', fontWeight: 800, color: '#1E40AF' }}>
+              🎓 Kiểm tra đầu ra thử việc: {a.meetTime} ngày {String(a.meetDate || '').split('-').reverse().join('/')}
+            </div>
+            {meetUrl ? (
+              <a href={meetUrl} target="_blank" rel="noreferrer" style={{ backgroundColor: '#2563EB', color: '#FFF', borderRadius: '6px', padding: '8px 12px', fontSize: '12px', fontWeight: 800, textDecoration: 'none' }}>
+                🎥 Vào Meet vấn đáp
+              </a>
+            ) : null}
+            {quizPending ? (
+              <button onClick={() => setActiveTab(isProbation ? 'test_exam' : 'test_training')} style={{ backgroundColor: '#FFF', color: '#1E40AF', border: '1.5px solid #2563EB', borderRadius: '6px', padding: '8px 12px', fontSize: '12px', fontWeight: 800, cursor: 'pointer' }}>
+                📝 Làm bài trắc nghiệm
+              </button>
+            ) : null}
+          </div>
+        );
+      })()}
+
       {/* MAIN CONTENT AREA */}
       <main style={{ padding: '16px', flex: 1, paddingBottom: '32px' }}>
 
@@ -4605,9 +4652,13 @@ export function App() {
                     {a.endDate ? <> Ngày hoàn thành thử việc của bạn: <strong>{String(a.endDate).split('-').reverse().join('/')}</strong>.</> : null}
                   </div>
                   <div style={{ display: 'flex', gap: '8px', marginTop: '10px', flexWrap: 'wrap' }}>
-                    <a href={a.meetUrl} target="_blank" rel="noreferrer" style={{ flex: 1, minWidth: '140px', backgroundColor: '#2563EB', color: '#FFF', borderRadius: '6px', padding: '9px 12px', fontSize: '13px', fontWeight: 700, cursor: 'pointer', textDecoration: 'none', textAlign: 'center' }}>
-                      🎥 Vào Meet vấn đáp
-                    </a>
+                    {String(a.meetUrl || '').trim() ? (
+                      <a href={a.meetUrl} target="_blank" rel="noreferrer" style={{ flex: 1, minWidth: '140px', backgroundColor: '#2563EB', color: '#FFF', borderRadius: '6px', padding: '9px 12px', fontSize: '13px', fontWeight: 700, cursor: 'pointer', textDecoration: 'none', textAlign: 'center' }}>
+                        🎥 Vào Meet vấn đáp
+                      </a>
+                    ) : (
+                      <span style={{ fontSize: '12px', color: '#B45309', fontWeight: 700 }}>⚠️ HR chưa gắn link Google Meet — vui lòng liên hệ HR.</span>
+                    )}
                     {quizPending && (
                       <button
                         onClick={() => setActiveTab(isProbation ? 'test_exam' : 'test_training')}
@@ -4750,6 +4801,42 @@ export function App() {
         )}
         {!isOffice && activeTab === 'schedule' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {/* LỊCH KIỂM TRA ĐẦU RA: thông báo dẫn thẳng về tab Lịch nên phải có
+                link Meet ngay tại đây (trước chỉ hiện ở Trang chủ). */}
+            {isProbation && probationAssessment && !probationAssessment?.meetDone && (() => {
+              const a: any = probationAssessment;
+              const meetUrl = String(a.meetUrl || '').trim();
+              const q = a.quiz;
+              const quizPending = !!a.quizTestId && (!q || q.status === 'ASSIGNED');
+              return (
+                <div style={{ padding: '12px 14px', backgroundColor: '#EFF6FF', border: '2px solid #2563EB', borderRadius: 'var(--radius-sm)', boxShadow: '0 4px 12px rgba(37, 99, 235, 0.2)' }}>
+                  <div style={{ fontSize: '13px', fontWeight: 800, color: '#1E40AF' }}>
+                    🎓 Kiểm tra đầu ra thử việc — {a.meetTime} ngày {String(a.meetDate || '').split('-').reverse().join('/')}
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#1E40AF', marginTop: '4px' }}>
+                    1️⃣ Vấn đáp Google Meet • 2️⃣ Bài trắc nghiệm{quizPending ? ' (đang chờ bạn làm)' : q ? ` (đã nộp: ${q.score ?? '—'}/10)` : ''}.
+                    {a.endDate ? <> Ngày hoàn thành thử việc: <strong>{String(a.endDate).split('-').reverse().join('/')}</strong>.</> : null}
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '10px', flexWrap: 'wrap' }}>
+                    {meetUrl ? (
+                      <a href={meetUrl} target="_blank" rel="noreferrer" style={{ flex: 1, minWidth: '140px', backgroundColor: '#2563EB', color: '#FFF', borderRadius: '6px', padding: '9px 12px', fontSize: '13px', fontWeight: 700, cursor: 'pointer', textDecoration: 'none', textAlign: 'center' }}>
+                        🎥 Vào Meet vấn đáp
+                      </a>
+                    ) : (
+                      <span style={{ fontSize: '12px', color: '#B45309', fontWeight: 700 }}>⚠️ HR chưa gắn link Google Meet — vui lòng liên hệ HR.</span>
+                    )}
+                    {quizPending && (
+                      <button
+                        onClick={() => setActiveTab(isProbation ? 'test_exam' : 'test_training')}
+                        style={{ flex: 1, minWidth: '140px', backgroundColor: '#FFF', color: '#1E40AF', border: '1.5px solid #2563EB', borderRadius: '6px', padding: '9px 12px', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}
+                      >
+                        📝 Làm bài trắc nghiệm
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
             <div className="card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
               {/* Header Card */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '8px' }}>
@@ -7740,6 +7827,28 @@ export function App() {
                       <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
                         {n.created_at ? new Date(n.created_at).toLocaleString('vi-VN') : ''}
                       </div>
+                      {/* Thông báo lịch kiểm tra đầu ra: cho bấm Meet NGAY trong thông báo
+                          (trước đây chỉ có link ở Trang chủ nên NV không thấy). */}
+                      {n.type === 'PROBATION_ASSESSMENT' && (probationAssessment?.meetUrl || probationAssessment?.meetDate) && (
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginTop: '8px' }}>
+                          {probationAssessment?.meetUrl ? (
+                            <a
+                              href={probationAssessment.meetUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              style={{ backgroundColor: '#2563EB', color: '#FFF', borderRadius: '6px', padding: '7px 12px', fontSize: '12px', fontWeight: 800, textDecoration: 'none' }}
+                            >
+                              🎥 Vào Meet vấn đáp
+                            </a>
+                          ) : null}
+                          {probationAssessment?.meetDate ? (
+                            <span style={{ fontSize: '11px', fontWeight: 700, color: '#1E40AF' }}>
+                              {probationAssessment.meetTime || ''} ngày {String(probationAssessment.meetDate).split('-').reverse().join('/')}
+                            </span>
+                          ) : null}
+                        </div>
+                      )}
                     </div>
                     );
                   })
@@ -8493,6 +8602,13 @@ export function App() {
               </div>
             </div>
           </div>
+        )}
+
+        {/* ========================================================= */}
+        {/* TAB 12: VẬN CHUYỂN SỮA (MilkRoute EV — tài xế, BETA)      */}
+        {/* ========================================================= */}
+        {activeTab === 'ev_route' && isEvDriver && (
+          <MilkRouteDriverView employee={employee} showToast={showToast} refreshKey={schedRefresh} />
         )}
       </main>
       {updateReady && <UpdateBanner />}

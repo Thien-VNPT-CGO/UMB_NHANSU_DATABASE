@@ -50,6 +50,7 @@ import {
   KeyRound,
   Banknote,
   Ban,
+  Truck,
 } from 'lucide-react';
 import { RoleViews } from './components/RoleViews';
 import { ChangePasswordView } from './components/ChangePasswordView';
@@ -59,6 +60,7 @@ import { OfficeApprovalsView } from './components/OfficeApprovalsView';
 import { SalaryConfigView } from './components/SalaryConfigView';
 import { FINANCE_BLOCK_OPTIONS, FINANCE_BLOCK_SHORT, FINANCE_BLOCK_STYLE, financeBlockOf } from './utils/financeBlocks';
 import { CompanyPolicyView } from './components/CompanyPolicyView';
+import { MilkRouteAdminView } from './components/MilkRouteAdmin';
 import { BetaChip, BetaBanner, isBetaFeature } from './betaFeatures';
 import {
   ADMIN_EVENT_THEMES,
@@ -135,7 +137,8 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'hr-schedule', label: '7. Lịch làm việc', icon: Calendar },
     { id: 'internal-workflow', label: '8. Yêu cầu công việc nội bộ', icon: Send },
     { id: 'office-approvals', label: '9. Duyệt Văn Phòng', icon: FileText },
-    { id: 'change-password', label: '10. Đổi mật khẩu', icon: KeyRound },
+    { id: 'ev-transport', label: '10. Vận chuyển sữa (EV)', icon: Truck },
+    { id: 'change-password', label: '11. Đổi mật khẩu', icon: KeyRound },
   ],
   IT: [
     { id: 'internal-workflow', label: '1. Yêu cầu công việc nội bộ', icon: Send },
@@ -157,6 +160,7 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'audit', label: '13. Nhật ký Audit', icon: FileCheck },
     { id: 'backup', label: '14. Sao lưu & Phục hồi', icon: HardDrive },
     { id: 'office-approvals', label: '15. Duyệt Văn Phòng', icon: FileText },
+    { id: 'ev-transport', label: '16. Vận chuyển sữa (EV)', icon: Truck },
     // GỠ khỏi cổng ADMIN (chỉ HR/Kế toán nghiệp vụ): "Chuyển ca hỗ trợ" (hr-support)
     // và "Duyệt đổi STK" (bank-changes). Toàn bộ chức năng KẾ TOÁN (kể cả
     // "Cấu hình Lương CB & Phụ cấp — theo Khối") chỉ hiển thị trên tài khoản FINANCE.
@@ -185,6 +189,7 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'activation', label: '16. PIN & TK Nhân viên', icon: FileCheck },
     { id: 'bank-changes', label: '17. Duyệt đổi STK', icon: CreditCard },
     { id: 'office-approvals', label: '18. Duyệt Văn Phòng', icon: FileText },
+    { id: 'ev-transport', label: '19. Vận chuyển sữa (EV)', icon: Truck },
   ],
   STORE: [
     { id: 'store-dashboard', label: '1. Dashboard Store', icon: Store },
@@ -218,6 +223,7 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'bank-changes', label: '12. Duyệt Đổi STK', icon: CreditCard },
     { id: 'office-approvals', label: '13. Duyệt Văn Phòng', icon: FileText },
     { id: 'fin-salary-config', label: '14. Cấu hình Lương CB & Phụ cấp (Theo Khối)', icon: DollarSign },
+    { id: 'ev-transport', label: '15. Vận chuyển sữa (EV)', icon: Truck },
   ],
   MARKETING: [
     { id: 'mkt-dashboard', label: '1. Dashboard MKT', icon: Megaphone },
@@ -311,6 +317,12 @@ export const HR_TAB_GROUPS: RoleTabGroup[] = [
       { id: 'office-approvals', label: 'Duyệt Văn Phòng', icon: FileText },
     ],
   },
+  {
+    id: 'hr-group-transport',
+    label: '9. Vận chuyển sữa',
+    icon: Truck,
+    tabs: [{ id: 'ev-transport', label: 'Quản lý tài xế & GPS', icon: Truck }],
+  },
 ];
 
 /** CỔNG ADMIN — gom 16 màn hình thành 6 NHÓM theo mục đích sử dụng, thay cho
@@ -377,6 +389,12 @@ export const ADMIN_TAB_GROUPS: RoleTabGroup[] = [
       { id: 'audit', label: 'Nhật ký Audit', icon: FileCheck },
       { id: 'backup', label: 'Sao lưu & Phục hồi', icon: HardDrive },
     ],
+  },
+  {
+    id: 'admin-group-transport',
+    label: '7. Vận chuyển sữa',
+    icon: Truck,
+    tabs: [{ id: 'ev-transport', label: 'Tài xế & Định vị GPS', icon: Truck }],
   },
 ];
 
@@ -6034,6 +6052,15 @@ export function App() {
 
           {/* QUY CHẾ CÔNG TY THEO ĐỐI TƯỢNG (từng NV / từng chi nhánh / tất cả) */}
           {activeTab === 'company-policies' && <CompanyPolicyView currentUser={currentUser} />}
+
+          {/* VẬN CHUYỂN SỮA — LIVE MAP GPS + PHIẾU SẠC DUYỆT 2 CẤP + LƯƠNG TÀI XẾ (BETA) */}
+          {activeTab === 'ev-transport' && (
+            <MilkRouteAdminView
+              currentUser={currentUser}
+              allEmployees={allEmployees}
+              showToast={(m: string) => showToast(m)}
+            />
+          )}
 
           {/* DEDICATED VIEWS FOR HR (15 TABS), STORE (10 TABS), FINANCE (12 TABS), MARKETING (9 TABS) */}
           <RoleViewsErrorBoundary tab={activeTab} key={activeTab}>
