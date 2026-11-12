@@ -1311,8 +1311,8 @@ export class AttendanceService {
         const charged = AttendanceService.adjustmentPointsCharged(a);
         const note = isBuCongNgay
           ? (charged > 0
-            ? `Tự động hủy sau 72 giờ Giám đốc không duyệt (đã hoàn ${charged} điểm)`
-            : 'Tự động hủy sau 72 giờ Giám đốc không duyệt (miễn phí điểm — NV thử việc)')
+            ? `Tự động hủy sau 72 giờ chưa được duyệt (đã hoàn ${charged} điểm)`
+            : 'Tự động hủy sau 72 giờ chưa được duyệt (miễn phí điểm — NV thử việc)')
           : AttendanceService.AUTO_REJECT_NOTE;
         try {
           await singleWriterQueue.enqueue({
@@ -1468,10 +1468,11 @@ export class AttendanceService {
         // và báo hết hiệu lực (NV gửi lại phiếu mới trong quota tuần).
         const kind = AttendanceService.adjustmentKindOf((fresh as any)?.reason);
         const isBuCongNgay = kind === 'BU_CONG_NGAY';
-        // Phiếu "Bù công cả ngày" chỉ GIÁM ĐỐC (hoặc ADMIN) được duyệt.
+        // Phiếu "Bù công cả ngày" do GIÁM ĐỐC/HR (hoặc ADMIN) duyệt — HR được
+        // duyệt luôn khi Giám đốc bận, không phải chờ chuyển cấp.
         if (isBuCongNgay && status === 'APPROVED'
-          && !['DIRECTOR', 'ADMIN'].includes(String(approverRole || '').toUpperCase())) {
-          throw new Error('APPROVER_FORBIDDEN: Phiếu bù công cả ngày do Giám đốc duyệt, không phải cấp này!');
+          && !['DIRECTOR', 'ADMIN', 'HR'].includes(String(approverRole || '').toUpperCase())) {
+          throw new Error('APPROVER_FORBIDDEN: Phiếu bù công cả ngày do Giám đốc/HR duyệt, không phải cấp này!');
         }
         const createdMs = new Date((fresh as any).created_at).getTime();
         if (Number.isFinite(createdMs)) {
@@ -1480,8 +1481,8 @@ export class AttendanceService {
             const charged = AttendanceService.adjustmentPointsCharged(fresh);
             const expireNote = isBuCongNgay
               ? (charged > 0
-                ? `Tự động hủy sau 72 giờ Giám đốc không duyệt (đã hoàn ${charged} điểm)`
-                : 'Tự động hủy sau 72 giờ Giám đốc không duyệt (miễn phí điểm — NV thử việc)')
+                ? `Tự động hủy sau 72 giờ chưa được duyệt (đã hoàn ${charged} điểm)`
+                : 'Tự động hủy sau 72 giờ chưa được duyệt (miễn phí điểm — NV thử việc)')
               : AttendanceService.AUTO_REJECT_NOTE;
             const rejected = await this.repo.updateAttendanceAdjustment(adjId, 'REJECTED', 'SYSTEM', undefined, expireNote).catch(() => null);
             await this.refundTicketPoints(rejected || fresh).catch(() => null);

@@ -876,7 +876,7 @@ export function adjDeadlineInfo(createdAt?: string, nowMs: number = Date.now(), 
   if (!Number.isFinite(createdMs)) return null;
   // Mọi phiếu bù công (mọi loại) có hạn DUY NHẤT 72 giờ kể từ lúc nhận phiếu;
   // quá 72h hệ thống tự hủy (không còn chốt 21:00). isBuCongNgay chỉ còn dùng để
-  // phân biệt loại phiếu do Giám đốc duyệt (Bù công cả ngày).
+  // phân biệt loại phiếu do Giám đốc/HR duyệt (Bù công cả ngày).
   const isBuCongNgay = /BU_CONG_NGAY/i.test(String(reason || ''));
   const deadlineMs = createdMs + 72 * 60 * 60 * 1000;
   const remainingMs = Math.max(0, deadlineMs - nowMs);
@@ -12604,10 +12604,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         // Quá hạn duyệt: backend đã/đang tự từ chối -> khóa nút Duyệt/Từ chối,
         // tránh HR bấm rồi nhận lỗi "phiếu hết hiệu lực".
         const adjExpired = isPending && !!adjDl?.expired;
-        // Phiếu "Bù công cả ngày" (BU_CONG_NGAY) chỉ Giám đốc/ADMIN được DUYỆT.
+        // Phiếu "Bù công cả ngày" (BU_CONG_NGAY) do Giám đốc/HR/ADMIN duyệt —
+        // HR được duyệt luôn khi Giám đốc bận, không cần chuyển cấp.
         const isBuCongNgaySlip = /BU_CONG_NGAY/i.test(String(a.reason || ''));
-        const canDirectorApprove = ['DIRECTOR', 'ADMIN'].includes(String((currentUser as any)?.role || ''));
-        const approveDisabled = adjBusy === a.adjustment_id || adjExpired || (isBuCongNgaySlip && !canDirectorApprove);
+        const canApproveBuCongNgay = ['DIRECTOR', 'ADMIN', 'HR'].includes(String((currentUser as any)?.role || ''));
+        const approveDisabled = adjBusy === a.adjustment_id || adjExpired || (isBuCongNgaySlip && !canApproveBuCongNgay);
         const shiftInfo = adjShiftOf(a);
         return (
           <tr key={a.adjustment_id} style={{ borderBottom: '1px solid var(--border)', backgroundColor: isPending ? '#FFFBEB' : undefined }}>
@@ -12680,7 +12681,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     fontWeight: 700,
                     color: isPending ? (adjDl.expired ? '#991B1B' : adjDl.remainingMs <= 5 * 60 * 1000 ? '#B45309' : '#166534') : 'var(--text-muted)',
                   }}
-                  title={`Hạn duyệt 72h: ${adjDl.deadlineText}${adjDl.isBuCongNgay ? ' — Giám đốc duyệt' : ''}`}
+                  title={`Hạn duyệt 72h: ${adjDl.deadlineText}${adjDl.isBuCongNgay ? ' — Giám đốc/HR duyệt' : ''}`}
                 >
                   ⏰ {isPending && !adjDl.expired ? `Còn ${formatCountdown(adjDl.remainingMs)}` : adjDl.expired ? (isPending ? 'Đã quá hạn 72h' : 'Đã hết hạn duyệt') : 'Trong hạn duyệt'}
                 </div>
@@ -12696,12 +12697,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     disabled={approveDisabled}
                     title={adjExpired
                       ? `Phiếu đã quá hạn duyệt (${adjDl?.deadlineText}) — hệ thống tự hủy, không duyệt được nữa`
-                      : (isBuCongNgaySlip && !canDirectorApprove)
-                        ? 'Phiếu bù công cả ngày do Giám đốc duyệt — cấp này không có quyền duyệt.'
+                      : (isBuCongNgaySlip && !canApproveBuCongNgay)
+                        ? 'Phiếu bù công cả ngày do Giám đốc/HR duyệt — cấp này không có quyền duyệt.'
                         : undefined}
                     onClick={() => reviewAdj(a, 'APPROVED')}
                   >
-                    {adjBusy === a.adjustment_id ? '⏳...' : adjExpired ? '⏰ Hết hạn' : (isBuCongNgaySlip && !canDirectorApprove) ? '🔒 Giám đốc duyệt' : 'Duyệt'}
+                    {adjBusy === a.adjustment_id ? '⏳...' : adjExpired ? '⏰ Hết hạn' : (isBuCongNgaySlip && !canApproveBuCongNgay) ? '🔒 Giám đốc/HR duyệt' : 'Duyệt'}
                   </button>
                   <button
                     className="btn-secondary"
