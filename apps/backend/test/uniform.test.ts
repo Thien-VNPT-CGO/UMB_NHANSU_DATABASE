@@ -4,8 +4,10 @@ import {
   UNIFORM_UNIT_PRICE,
   normalizeUniformDate,
   parseUniform,
+  parseUniformSizes,
   uniformCell,
   uniformPeriod,
+  uniformSizesLabel,
 } from '../src/utils/uniform.js';
 import { EmployeesService } from '../src/services/employees.service.js';
 
@@ -44,6 +46,35 @@ test('parseUniform tính thành tiền = số lượng × đơn giá, mặc đ�
   assert.equal(parseUniform('{hong'), null);
 });
 
+test('parseUniform phân size L/XL: tổng số lượng = L + XL, tiền theo tổng', () => {
+  const u = parseUniform({ received_date: '2026-11-12', quantity: 999, sizes: { L: 2, XL: 3 } });
+  assert.equal(u?.quantity, 5, 'quantity luôn bằng L + XL khi có phân size');
+  assert.deepEqual(u?.sizes, { L: 2, XL: 3 });
+  assert.equal(u?.amount, 750_000);
+
+  // Size nhận dạng chữ thường / size_L / sizeXL.
+  assert.deepEqual(parseUniformSizes({ sizes: { l: 1, xl: 4 } }), { L: 1, XL: 4 });
+  assert.deepEqual(parseUniformSizes({ size_L: 2, sizeXL: 1 }), { L: 2, XL: 1 });
+  assert.equal(parseUniformSizes({ sizes: { L: 0, XL: 0 } }), null);
+  assert.equal(parseUniformSizes({}), null);
+
+  // Bản ghi cũ chưa phân size vẫn đọc theo quantity như trước.
+  const legacy = parseUniform({ received_date: '2026-11-12', quantity: 2 });
+  assert.equal(legacy?.quantity, 2);
+  assert.equal(legacy?.sizes, undefined);
+
+  // Size toàn 0 -> coi như chưa nhận (gỡ thông tin), không rơi về quantity.
+  assert.equal(parseUniform({ received_date: '2026-11-12', quantity: 3, sizes: { L: 0, XL: 0 } })?.quantity, 3);
+  assert.equal(parseUniform({ received_date: '2026-11-12', quantity: 0, sizes: { L: 0, XL: 0 } }), null);
+});
+
+test('uniformSizesLabel hiển thị đúng size cho Admin/NV/Kế toán', () => {
+  assert.equal(uniformSizesLabel({ received_date: '2026-11-12', sizes: { L: 2, XL: 0 } }), 'L: 2');
+  assert.equal(uniformSizesLabel({ received_date: '2026-11-12', sizes: { L: 2, XL: 3 } }), 'L: 2 · XL: 3');
+  assert.equal(uniformSizesLabel({ received_date: '2026-11-12', quantity: 4 }), '');
+  assert.equal(uniformSizesLabel(null), '');
+});
+
 test('uniformCell phát JSON gọn và rỗng khi chưa có dữ liệu', () => {
   assert.equal(uniformCell(undefined), '');
   assert.equal(uniformCell({}), '');
@@ -78,13 +109,15 @@ test('saveUniform: HR nhập số lượng -> lưu hồ sơ + trả bản ghi tr
     recordAuditLog: async (log: any) => { audit = log; },
   };
   const svc = new EmployeesService(repo);
-  const r = await svc.saveUniform(empId, { received_date: '2026-11-12', quantity: 3 }, 'HR1');
+  const r = await svc.saveUniform(empId, { received_date: '2026-11-12', quantity: 3, sizes: { L: 2, XL: 1 } }, 'HR1');
   assert.equal(r.previous?.amount, 300_000);
   assert.equal(r.previous?.received_date, '2026-10-05');
   assert.equal(r.current?.amount, 450_000);
   assert.equal(emp.uniform.quantity, 3);
+  assert.deepEqual(emp.uniform.sizes, { L: 2, XL: 1 });
   assert.equal(audit?.action, 'UPDATE_UNIFORM');
   assert.match(String(audit?.details || ''), /450\.000/);
+  assert.match(String(audit?.details || ''), /L: 2 · XL: 1/);
 
   // Số lượng 0 -> gỡ thông tin đồng phục.
   const cleared = await svc.saveUniform(empId, { received_date: '', quantity: 0 }, 'HR1');

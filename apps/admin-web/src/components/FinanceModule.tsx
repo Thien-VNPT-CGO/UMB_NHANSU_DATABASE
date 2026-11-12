@@ -674,6 +674,16 @@ export default function FinanceModule(props: FinanceModuleProps) {
     if (!Number.isFinite(t1) || !Number.isFinite(t2) || t1 < 0 || t2 <= t1 || t2 > 24) { showToast('Ngưỡng tăng ca phải 0 ≤ T1 < T2 ≤ 24!'); return; }
     try { await put(`/payroll/formula/${encodeURIComponent(month)}`, { rateTV, rateCT, otPerSlot: 0, otThreshold1: t1, otThreshold2: t2 }); showToast('Đã lưu công thức lương'); loadFormula(); } catch (e: any) { showToast(e?.message || 'Lưu công thức thất bại'); }
   }, [put, month, formula, showToast, loadFormula]);
+  /** Tiền đồng phục HR đã nhập cho NV trong ĐÚNG tháng đang chọn (0 nếu không có). */
+  const uniformAmountFor = useCallback((employeeId: string) => {
+    const e = (allEmployees || []).find((x: any) => String(x?.employee_id) === String(employeeId));
+    const u: any = e?.uniform;
+    if (!u) return 0;
+    if (String(u.received_date || '').slice(0, 7) !== month) return 0;
+    const qty = Math.max(0, Math.floor(Number(u.quantity) || 0));
+    if (!qty) return 0;
+    return Number(u.amount) || qty * (Number(u.unit_price) || 150000);
+  }, [allEmployees, month]);
   /** Payload chuẩn backend (employeeId camelCase + note string) từ ô đang sửa. */
   const buildInputPayload = useCallback((employeeId: string, field: string, value: string) => {
     const existing = (inputsRef.current || []).find((i: any) => i.employee_id === employeeId) || {};
@@ -681,11 +691,17 @@ export default function FinanceModule(props: FinanceModuleProps) {
     const payload: any = { luong_cb: 0, ot_extra: 0, bonus_extra: 0, ung_luong: 0, tru_kpi: 0, dong_phuc: 0, note: '', ...existing, employeeId, employee_id: employeeId, period: month };
     const num = Number(value);
     payload[field] = field === 'note' ? String(value ?? '').slice(0, 1000) : (isNaN(num) ? 0 : Math.max(0, Math.floor(num)));
+    // Chưa có dòng nhập tay (hoặc ô trống) -> giữ tiền đồng phục HR đã nhập,
+    // tránh việc sửa 1 ô khác làm khoản trừ đồng phục về 0.
+    const dp = payload.dong_phuc;
+    if (dp === undefined || dp === null || String(dp).trim() === '') {
+      payload.dong_phuc = uniformAmountFor(employeeId);
+    }
     payload.note = String(payload.note ?? '').slice(0, 1000);
     payload.employeeId = employeeId;
     payload.employee_id = employeeId;
     return payload;
-  }, [month]);
+  }, [month, uniformAmountFor]);
 
   /** Gửi 1 ô đang chờ lên server (best-effort; lỗi thì trả lại hàng đợi để thử lại). */
   const flushInputKey = useCallback(async (key: string) => {
@@ -751,6 +767,9 @@ export default function FinanceModule(props: FinanceModuleProps) {
         const body: any = { employeeId: p.employeeId, employee_id: p.employeeId, period: month, luong_cb: 0, ot_extra: 0, bonus_extra: 0, ung_luong: 0, tru_kpi: 0, dong_phuc: 0, note: '', ...existing };
         const num = Number(cur[p.field]);
         body[p.field] = p.field === 'note' ? String(cur[p.field] ?? '') : (isNaN(num) ? 0 : num);
+        if (body.dong_phuc === undefined || body.dong_phuc === null || String(body.dong_phuc).trim() === '') {
+          body.dong_phuc = uniformAmountFor(p.employeeId);
+        }
         body.note = String(body.note ?? '');
         return body;
       })();
@@ -1598,11 +1617,15 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
         const qty = Math.max(0, Math.floor(Number(u.quantity) || 0));
         if (!qty) return null;
         const unitPrice = Number(u.unit_price) || 150000;
+        const sizes = u?.sizes
+          ? [Number(u.sizes.L) > 0 ? `L: ${u.sizes.L}` : '', Number(u.sizes.XL) > 0 ? `XL: ${u.sizes.XL}` : ''].filter(Boolean).join(' · ')
+          : '';
         return {
           employee_id: e.employee_id,
           name: e.full_name || e.employee_code || e.employee_id,
           code: e.employee_code || '',
           qty,
+          sizes,
           unitPrice,
           amount: Number(u.amount) || qty * unitPrice,
           received_date: rd,
@@ -1610,6 +1633,35 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
       })
       .filter(Boolean) as any[];
   }, [allEmployees, month]);
+  // Bản đồ đồng phục theo NV để cột "Trừ ĐP" luôn hiện số tiền HR vừa nhập,
+  // kể cả khi tab nhập tay chưa kịp nạp dòng của NV đó (realtime từ Hồ Sơ NV).
+  const uniformByEmp = useMemo(() => {
+    const m = new Map<string, any>();
+    for (const r of uniformRecords) m.set(String(r.employee_id), r);
+    return m;
+  }, [uniformRecords]);
+  /** Dòng nhập tay của NV; nếu chưa có thì trả bản "ảo" mang tiền đồng phục HR đã nhập. */
+  const rowInput = useCallback((empId: string) => {
+    const row = (inputs || []).find((i: any) => String(i.employee_id) === String(empId));
+    if (row) return row;
+    const u = uniformByEmp.get(String(empId));
+    return u ? { employee_id: empId, dong_phuc: u.amount, note: '', __autoUniform: true } : {};
+  }, [inputs, uniformByEmp]);
+  // Tổng "Trừ ĐP" = tiền Kế toán nhập tay, cộng phần đồng phục HR đã nhập cho
+  // NV chưa có dòng nhập tay trong tháng (không cộng trùng).
+  const dpTotal = useMemo(() => {
+    let total = 0;
+    const seen = new Set<string>();
+    for (const i of (inputs || [])) {
+      total += Number(i?.dong_phuc) || 0;
+      seen.add(String(i?.employee_id));
+    }
+    for (const r of uniformRecords) {
+      if (!seen.has(String(r.employee_id))) total += Number(r.amount) || 0;
+    }
+    return total;
+  }, [inputs, uniformRecords]);
+  const totals = useMemo(() => ({ ...inputTotals, dp: dpTotal }), [inputTotals, dpTotal]);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <TabHead step={4} title="Tính lương — Công thức & Nhập tay" desc={`Lưu công thức kỳ, nhập liệu tay từng NV, rồi bấm TÍNH LƯƠNG để sinh kỳ + phiếu. Kỳ ${periodLabel(month)}.`}>
@@ -1628,7 +1680,7 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
           <div style={{ padding: '10px 14px', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {uniformRecords.map((r) => (
               <span key={r.employee_id} className="fin-chip-stat" style={{ borderColor: '#FED7AA', background: '#FFF', color: '#7C2D12' }}>
-                <b>{r.name}</b>{r.code ? ` (${r.code})` : ''} • {r.qty} áo × {fmt(r.unitPrice)} = <b style={{ color: '#B91C1C' }}>{fmt(r.amount)}</b> • {r.received_date.split('-').reverse().join('/')}
+                <b>{r.name}</b>{r.code ? ` (${r.code})` : ''} • {r.qty} áo{r.sizes ? ` (${r.sizes})` : ''} × {fmt(r.unitPrice)} = <b style={{ color: '#B91C1C' }}>{fmt(r.amount)}</b> • {r.received_date.split('-').reverse().join('/')}
               </span>
             ))}
           </div>
@@ -1701,17 +1753,20 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
             </thead>
             <tbody>
               {groups.map(g => {
-                const gInps = g.rows.map((emp: any) => (inputs || []).find((i: any) => i.employee_id === emp.employee_id) || {});
+                const gInps = g.rows.map((emp: any) => rowInput(emp.employee_id));
                 const gSum = (k: string) => gInps.reduce((s: number, x: any) => s + (Number(x?.[k]) || 0), 0);
                 const colCount = FIN_COL_HEADER_COUNT('fin-calculate', colDefs, cols);
                 return (
                 <React.Fragment key={g.id}>
                   <BranchBandRow label={branchLabelOf(g.id)} count={g.rows.length} cols={colCount} totalText={`LCB ${formatVND(gSum('luong_cb'))} · OT ${formatVND(gSum('ot_extra'))} · Bonus ${formatVND(gSum('bonus_extra'))} · Ứng ${formatVND(gSum('ung_luong'))} · KPI ${formatVND(gSum('tru_kpi'))} · ĐP ${formatVND(gSum('dong_phuc'))}`} />
                   {g.rows.map((emp: any, idx: number) => {
-                    const inp = inputs.find((i: any) => i.employee_id === emp.employee_id) || {};
+                    const inp = rowInput(emp.employee_id);
+                    const autoUniform = uniformByEmp.get(String(emp.employee_id));
                     const cell = (field: string, width = '100%') => (
                       <input type="number" className="fin-input" style={{ width, padding: '5px 7px', fontSize: 11.5 }}
-                        value={inp[field] ?? ''} onChange={v => upsertInput(emp.employee_id, field, v.target.value)} aria-label={field} />
+                        value={inp[field] ?? ''}
+                        title={field === 'dong_phuc' && autoUniform && (inp as any).__autoUniform ? `Tự động từ Hồ Sơ NV: ${autoUniform.qty} áo${autoUniform.sizes ? ` (${autoUniform.sizes})` : ''} — gõ để sửa` : undefined}
+                        onChange={v => upsertInput(emp.employee_id, field, v.target.value)} aria-label={field} />
                     );
                     return (
                       <tr key={emp.employee_id}>
@@ -1753,7 +1808,7 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
                   {show('bonus_extra') && <td className="num fin-money">{formatVND(inputTotals.bonus)}</td>}
                   {show('ung_luong') && <td className="num fin-money">{formatVND(inputTotals.ung)}</td>}
                   {show('tru_kpi') && <td className="num fin-money">{formatVND(inputTotals.kpi)}</td>}
-                  {show('dong_phuc') && <td className="num fin-money">{formatVND(inputTotals.dp)}</td>}
+                  {show('dong_phuc') && <td className="num fin-money">{formatVND(totals.dp)}</td>}
                   <td />
                 </tr>
               )}
@@ -1761,7 +1816,7 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
           </table>
         </div>
         <div style={{ padding: '10px 16px', borderTop: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 10.5, color: 'var(--fin-muted)' }}>Tự lưu 0,8s sau khi ngừng gõ · Sheets cập nhật gom 1 lượt sau 20s · Tổng trích: KPI <b className="fin-money">{formatVND(inputTotals.kpi)}</b> • Đồng phục <b className="fin-money">{formatVND(inputTotals.dp)}</b></span>
+          <span style={{ fontSize: 10.5, color: 'var(--fin-muted)' }}>Tự lưu 0,8s sau khi ngừng gõ · Sheets cập nhật gom 1 lượt sau 20s · Tổng trích: KPI <b className="fin-money">{formatVND(inputTotals.kpi)}</b> • Đồng phục <b className="fin-money">{formatVND(totals.dp)}</b></span>
           <button type="button" className="fin-btn fin-btn-dark fin-btn-sm" onClick={saveAllInputs} disabled={inputsLoading || pendingCount === 0 && !inputsSaving}><Save size={13} /> Lưu tất cả nhập tay{pendingCount > 0 ? ` (${pendingCount})` : ''}</button>
         </div>
       </div>

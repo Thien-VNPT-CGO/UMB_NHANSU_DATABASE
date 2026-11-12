@@ -8351,6 +8351,9 @@ export function App() {
                   const unitPrice = Number(uniform?.unit_price) || 150000;
                   const qty = Math.max(0, Math.floor(Number(uniform?.quantity) || 0));
                   const amount = Number(uniform?.amount) || qty * unitPrice;
+                  const sizeText = uniform?.sizes
+                    ? [Number(uniform.sizes.L) > 0 ? `L: ${uniform.sizes.L}` : '', Number(uniform.sizes.XL) > 0 ? `XL: ${uniform.sizes.XL}` : ''].filter(Boolean).join(' · ')
+                    : '';
                   const fmtDate = (v: any) => {
                     const s = String(v || '').slice(0, 10);
                     if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return '—';
@@ -8401,7 +8404,7 @@ export function App() {
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                           <div style={{ fontWeight: 800, fontSize: '13px', color: '#1E293B' }}>👕 Đồng phục</div>
                           <span style={{ fontSize: '10.5px', fontWeight: 700, color: uniform ? '#C2410C' : '#D97706' }}>
-                            {uniform ? `Đã nhận ${qty} áo` : 'Chưa cập nhật'}
+                            {uniform ? `Đã nhận ${qty} áo${sizeText ? ` (${sizeText})` : ''}` : 'Chưa cập nhật'}
                           </span>
                         </div>
                         {uniform ? (
@@ -8415,10 +8418,14 @@ export function App() {
                               <div style={{ fontWeight: 800, color: '#7C2D12' }}>{qty} áo</div>
                             </div>
                             <div style={{ backgroundColor: '#FFF', borderRadius: '8px', padding: '8px 10px', border: '1px solid #FED7AA' }}>
+                              <div style={{ color: '#9A3412', fontSize: '10px', fontWeight: 700 }}>Size</div>
+                              <div style={{ fontWeight: 800, color: '#7C2D12' }}>{sizeText || '—'}</div>
+                            </div>
+                            <div style={{ backgroundColor: '#FFF', borderRadius: '8px', padding: '8px 10px', border: '1px solid #FED7AA' }}>
                               <div style={{ color: '#9A3412', fontSize: '10px', fontWeight: 700 }}>Đơn giá</div>
                               <div style={{ fontWeight: 800, color: '#7C2D12' }}>{unitPrice.toLocaleString('vi-VN')}đ/áo</div>
                             </div>
-                            <div style={{ backgroundColor: '#FFF', borderRadius: '8px', padding: '8px 10px', border: '1px solid #FED7AA' }}>
+                            <div style={{ backgroundColor: '#FFF', borderRadius: '8px', padding: '8px 10px', border: '1px solid #FED7AA', gridColumn: '1 / -1' }}>
                               <div style={{ color: '#9A3412', fontSize: '10px', fontWeight: 700 }}>Thành tiền</div>
                               <div style={{ fontWeight: 800, color: '#B91C1C' }}>{amount.toLocaleString('vi-VN')}đ</div>
                             </div>

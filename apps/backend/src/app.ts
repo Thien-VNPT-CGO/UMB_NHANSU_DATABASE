@@ -2667,12 +2667,16 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     async (req: AuthenticatedRequest, res) => {
       try {
         const employeeId = req.params.id;
+        const body: any = req.body || {};
         const { employee, previous, current } = await employeesService.saveUniform(
           employeeId,
           {
-            received_date: String((req.body as any).received_date || ''),
-            quantity: Number((req.body as any).quantity) || 0,
-            unit_price: (req.body as any).unit_price === undefined ? undefined : Number((req.body as any).unit_price),
+            received_date: String(body.received_date || ''),
+            quantity: Number(body.quantity) || 0,
+            sizes: body?.sizes && typeof body.sizes === 'object'
+              ? { L: Number(body.sizes.L) || 0, XL: Number(body.sizes.XL) || 0 }
+              : undefined,
+            unit_price: body.unit_price === undefined ? undefined : Number(body.unit_price),
           },
           req.user!.id,
         );
@@ -2680,6 +2684,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         const prevPeriod = previous?.received_date ? previous.received_date.slice(0, 7) : '';
         const curPeriod = current?.received_date ? current.received_date.slice(0, 7) : '';
         const touched = new Set<string>();
+        const slipsTouched = new Set<string>();
 
         // Ghi/cập nhật `dong_phuc` nhưng GIỮ NGUYÊN các cột lương khác Kế toán
         // đã nhập trong tháng (LCB, OT, Bonus, Ứng, KPI, ghi chú).
@@ -2704,6 +2709,10 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
             req.user!.id,
           );
           touched.add(period);
+          // Kế toán đã "Tính lương" trước đó -> phiếu lương đang giữ số cũ (0đ).
+          // Cập nhật thẳng vào phiếu để Bảng lương/Phiếu lương/Chi trả thấy ngay.
+          const r = await payrollService.applyUniformToSlips(period, employeeId, amount);
+          if (r.updated > 0) slipsTouched.add(period);
         };
 
         // HR đổi sang tháng khác -> dọn tiền đồng phục ở tháng cũ trước.
@@ -2712,12 +2721,13 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
         broadcastUpdate('employees', { action: 'update-uniform', employee });
         for (const p of touched) broadcastUpdate('payroll', { action: 'inputs', period: p });
+        for (const p of slipsTouched) broadcastUpdate('payslips', { action: 'uniform', period: p, employeeId });
         res.json({
           success: true,
           uniform: current,
           previous,
           employee,
-          payroll: { months: Array.from(touched) },
+          payroll: { months: Array.from(touched), slipsMonths: Array.from(slipsTouched) },
         });
       } catch (err: any) {
         res.status(400).json({ error: err.message });

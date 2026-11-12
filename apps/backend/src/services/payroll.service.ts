@@ -1123,6 +1123,50 @@ export class PayrollService {
   }
 
   /**
+   * Áp tiền ĐỒNG PHỤC vào các phiếu lương ĐÃ CÓ của 1 NV trong kỳ.
+   *
+   * HR lưu đồng phục sau khi Kế toán đã "Tính lương" — nếu chỉ ghi tab nhập tay
+   * thì bảng lương/phiếu lương vẫn giữ số cũ (0đ) tới lần tính lại. Hàm này cập
+   * nhật thẳng `dong_phuc` + tính lại THỰC LÃNH cho phiếu của NV đó.
+   *
+   * - Bỏ qua phiếu đã CHI TRẢ (PAID): không sửa số tiền đã trả.
+   * - amount = 0 (HR gỡ đồng phục) -> trả khoản trừ về 0.
+   */
+  async applyUniformToSlips(
+    period: string,
+    employeeId: string,
+    amount: number,
+    _actorId?: string,
+  ): Promise<{ updated: number; skipped: number }> {
+    let updated = 0;
+    let skipped = 0;
+    try {
+      const { slips } = await this.getPeriodSlips(period);
+      const mine = (slips || []).filter((s: any) => String(s?.employee_id) === String(employeeId));
+      const dp = Math.max(0, Math.floor(Number(amount) || 0));
+      for (const s of mine) {
+        if (String(s?.status || '').toUpperCase() === 'PAID') { skipped += 1; continue; }
+        if (Number(s?.dong_phuc) === dp) continue;
+        const tongLuong = Number(s?.tong_luong) || 0;
+        const ung = Number(s?.ung_luong) || 0;
+        const thucLanh = tongLuong - ung - dp;
+        await this.repo.updatePayslip((s as any).item_id, {
+          dong_phuc: dp,
+          thuc_lanh: thucLanh,
+          net_pay: thucLanh,
+        } as any);
+        updated += 1;
+      }
+    } catch { /* phiếu lương không chặn luồng lưu đồng phục */ }
+    if (updated > 0) {
+      try { this.notifySlipsChanged('uniform', { period, employeeId }); } catch { /* noop */ }
+      try { this.invalidateFinanceTimesheetCache(period); } catch { /* noop */ }
+      try { this.scheduleFinanceToSheetsSync(2_000); } catch { /* noop */ }
+    }
+    return { updated, skipped };
+  }
+
+  /**
    * Tính lương theo công thức Excel cho toàn bộ NV (đã bỏ hoàn toàn phụ cấp OT):
    * TỔNG CỘNG = LCB(tay) + Lương giờ + OT thêm(tay) + Bonus
    * TỔNG LƯƠNG = TỔNG CỘNG − KPI(tay) − phạt trễ/vắng

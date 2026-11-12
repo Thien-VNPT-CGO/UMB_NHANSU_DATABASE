@@ -79,12 +79,18 @@ export const employeeContractBody = z.object({
   base64: z.string().min(16).max(9_000_000),
 });
 
-// HR cập nhật nhận Đồng phục: ngày nhận + số lượng (1 áo = 150.000đ).
-// quantity = 0 -> gỡ thông tin đồng phục. unit_price để trống -> dùng 150.000đ.
+// HR cập nhật nhận Đồng phục: ngày nhận + số lượng theo size L/XL (1 áo = 150.000đ).
+// quantity = 0 (và L/XL đều 0) -> gỡ thông tin đồng phục. unit_price trống -> 150.000đ.
 export const employeeUniformBody = z
   .object({
     received_date: z.string().max(32).optional().default(''),
     quantity: z.coerce.number().int().min(0).max(1000).default(0),
+    sizes: z
+      .object({
+        L: z.coerce.number().int().min(0).max(1000).default(0),
+        XL: z.coerce.number().int().min(0).max(1000).default(0),
+      })
+      .optional(),
     unit_price: z.coerce.number().int().min(0).max(10_000_000).optional(),
   })
   .passthrough();

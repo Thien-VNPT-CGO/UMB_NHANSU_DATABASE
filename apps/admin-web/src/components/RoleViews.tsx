@@ -3947,11 +3947,12 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   const [contractBusy, setContractBusy] = useState<'' | AdminContractKind>('');
   const contractInputRef = useRef<HTMLInputElement | null>(null);
   const contractKindRef = useRef<AdminContractKind>('probation');
-  // Đồng phục: HR nhập ngày nhận + số lượng (1 áo = 150.000đ), tự trừ vào
-  // lương đúng tháng của ngày nhận.
+  // Đồng phục: HR nhập ngày nhận + số lượng theo size L/XL (1 áo = 150.000đ),
+  // tự trừ vào lương đúng tháng của ngày nhận.
   const UNIFORM_PRICE = 150000;
   const [uniformDate, setUniformDate] = useState('');
-  const [uniformQty, setUniformQty] = useState('1');
+  const [uniformL, setUniformL] = useState('1');
+  const [uniformXL, setUniformXL] = useState('0');
   const [uniformBusy, setUniformBusy] = useState(false);
   const currentUniform: any = (() => {
     const e = (allEmployees || []).find((x: any) => x.employee_id === profileEmpId);
@@ -3960,7 +3961,16 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   useEffect(() => {
     if (!profileEmpId) return;
     setUniformDate(currentUniform?.received_date ? String(currentUniform.received_date).slice(0, 10) : '');
-    setUniformQty(currentUniform?.quantity ? String(currentUniform.quantity) : '1');
+    const sizes = currentUniform?.sizes;
+    if (sizes) {
+      setUniformL(String(Math.max(0, Math.floor(Number(sizes.L) || 0))));
+      setUniformXL(String(Math.max(0, Math.floor(Number(sizes.XL) || 0))));
+    } else {
+      // Bản ghi cũ chưa phân size: giữ nguyên tổng số áo ở size L để không mất số lượng.
+      const legacyQty = Math.max(0, Math.floor(Number(currentUniform?.quantity) || 0));
+      setUniformL(String(legacyQty || 1));
+      setUniformXL('0');
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profileEmpId, currentUniform?.received_date, currentUniform?.quantity, currentUniform?.unit_price]);
   // Thu nhập tạm tính realtime theo điểm danh hằng ngày (mục Lương & Thu nhập trong Hồ Sơ).
@@ -16367,26 +16377,33 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
         setContractBusy('');
       }
     };
-    /** Lưu thông tin nhận đồng phục (ngày nhận + số lượng). qtyOverride dùng cho nút Gỡ. */
+    /** Lưu thông tin nhận đồng phục (ngày nhận + số lượng theo size L/XL). qtyOverride dùng cho nút Gỡ. */
     const saveUniform = async (qtyOverride?: number) => {
       if (!profEmp) return;
-      const qty = typeof qtyOverride === 'number' ? qtyOverride : Math.max(0, Math.floor(Number(uniformQty) || 0));
+      const sizeL = Math.max(0, Math.floor(Number(uniformL) || 0));
+      const sizeXL = Math.max(0, Math.floor(Number(uniformXL) || 0));
+      const qty = typeof qtyOverride === 'number' ? qtyOverride : sizeL + sizeXL;
       if (qty > 0 && !uniformDate) {
         showToast('⚠️ Vui lòng chọn ngày nhận đồng phục.');
         return;
       }
       const amount = qty * UNIFORM_PRICE;
-      if (qty > 0 && !window.confirm(`Xác nhận ${profEmp.full_name} nhận ${qty} áo đồng phục (${amount.toLocaleString('vi-VN')}đ), trừ vào lương tháng ${uniformDate.slice(0, 7)}?`)) return;
+      const sizeText = qty > 0 ? ` [${[sizeL > 0 ? `L: ${sizeL}` : '', sizeXL > 0 ? `XL: ${sizeXL}` : ''].filter(Boolean).join(' · ')}]` : '';
+      if (qty > 0 && !window.confirm(`Xác nhận ${profEmp.full_name} nhận ${qty} áo${sizeText} đồng phục (${amount.toLocaleString('vi-VN')}đ), trừ vào lương tháng ${uniformDate.slice(0, 7)}?`)) return;
       if (qty === 0 && !window.confirm(`Gỡ thông tin đồng phục của ${profEmp.full_name}?`)) return;
       setUniformBusy(true);
       try {
         const r: any = await apiRequest(`/employees/${profEmp.employee_id}/uniform`, {
           method: 'POST',
-          body: JSON.stringify({ received_date: qty > 0 ? uniformDate : '', quantity: qty }),
+          body: JSON.stringify({
+            received_date: qty > 0 ? uniformDate : '',
+            quantity: qty,
+            sizes: { L: qty > 0 ? sizeL : 0, XL: qty > 0 ? sizeXL : 0 },
+          }),
         });
         const savedAmount = Number(r?.uniform?.amount ?? amount) || 0;
         showToast(qty > 0
-          ? `✓ Đã lưu ${qty} áo đồng phục (${savedAmount.toLocaleString('vi-VN')}đ) vào lương tháng ${String(r?.uniform?.received_date || uniformDate).slice(0, 7)}!`
+          ? `✓ Đã lưu ${qty} áo${sizeText} đồng phục (${savedAmount.toLocaleString('vi-VN')}đ) vào lương tháng ${String(r?.uniform?.received_date || uniformDate).slice(0, 7)}!`
           : '✓ Đã gỡ thông tin đồng phục.');
         if (onRefreshData) await onRefreshData();
         if (onPushSheets) await onPushSheets();
@@ -16501,7 +16518,10 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             if (!u || !Number(u.quantity)) return row('Đồng phục', 'Chưa cập nhật');
             const unit = Number(u.unit_price) || 150000;
             const amt = Number(u.amount) || Number(u.quantity) * unit;
-            return row('Đồng phục', `${u.quantity} áo × ${unit.toLocaleString('vi-VN')}đ = ${amt.toLocaleString('vi-VN')}đ (ngày ${String(u.received_date || '').split('-').reverse().join('/')})`);
+            const sz = u?.sizes
+              ? [Number(u.sizes.L) > 0 ? `L: ${u.sizes.L}` : '', Number(u.sizes.XL) > 0 ? `XL: ${u.sizes.XL}` : ''].filter(Boolean).join(' · ')
+              : '';
+            return row('Đồng phục', `${u.quantity} áo${sz ? ` (${sz})` : ''} × ${unit.toLocaleString('vi-VN')}đ = ${amt.toLocaleString('vi-VN')}đ (ngày ${String(u.received_date || '').split('-').reverse().join('/')})`);
           })()
         + `</table>`
         + `<p style="margin-top:26px;font-size:13px;">Người lập phiếu (HR ký): ............................. &nbsp;&nbsp; Nhân viên (ký): .............................</p>`
@@ -16928,11 +16948,16 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                     Định dạng: PDF, JPG, PNG, WEBP, DOC, DOCX • File được lưu vào Google Drive theo tên từng nhân viên và đồng bộ realtime.
                   </div>
 
-                  {/* ĐỒNG PHỤC: HR nhập ngày nhận + số lượng, tiền tự trừ vào lương đúng tháng */}
+                  {/* ĐỒNG PHỤC: HR nhập ngày nhận + số lượng theo size L/XL, tiền tự trừ vào lương đúng tháng */}
                   {(() => {
                     const savedUniform: any = (profEmp as any)?.uniform;
-                    const qty = Math.max(0, Math.floor(Number(uniformQty) || 0));
+                    const sizeL = Math.max(0, Math.floor(Number(uniformL) || 0));
+                    const sizeXL = Math.max(0, Math.floor(Number(uniformXL) || 0));
+                    const qty = sizeL + sizeXL;
                     const amount = qty * UNIFORM_PRICE;
+                    const savedSizeText = savedUniform?.sizes
+                      ? [Number(savedUniform.sizes.L) > 0 ? `L: ${savedUniform.sizes.L}` : '', Number(savedUniform.sizes.XL) > 0 ? `XL: ${savedUniform.sizes.XL}` : ''].filter(Boolean).join(' · ')
+                      : '';
                     const savedAmount = Number(savedUniform?.amount ?? (Number(savedUniform?.quantity || 0) * (Number(savedUniform?.unit_price) || UNIFORM_PRICE))) || 0;
                     return (
                       <div style={{ marginTop: '14px', borderTop: '1px dashed var(--border)', paddingTop: '12px' }}>
@@ -16940,7 +16965,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           <span>👕</span> Đồng phục (1 áo = 150.000đ)
                           {savedUniform ? (
                             <span style={{ fontSize: '11px', fontWeight: 700, color: '#065F46', backgroundColor: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: '999px', padding: '2px 8px' }}>
-                              Đã nhận {savedUniform.quantity} áo • {savedAmount.toLocaleString('vi-VN')}đ • {String(savedUniform.received_date || '').split('-').reverse().join('/')}
+                              Đã nhận {savedUniform.quantity} áo{savedSizeText ? ` (${savedSizeText})` : ''} • {savedAmount.toLocaleString('vi-VN')}đ • {String(savedUniform.received_date || '').split('-').reverse().join('/')}
                             </span>
                           ) : (
                             <span style={{ fontSize: '11px', fontWeight: 700, color: '#D97706', backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '999px', padding: '2px 8px' }}>
@@ -16949,7 +16974,7 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                           )}
                         </div>
                         <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '10px' }}>
-                          Nhập ngày nhận + số lượng. Số tiền được <strong>tự động trừ vào lương đúng tháng của ngày nhận</strong> trên cổng Kế Toán (realtime).
+                          Nhập ngày nhận + số lượng theo size L / XL. Số tiền được <strong>tự động trừ vào lương đúng tháng của ngày nhận</strong> trên cổng Kế Toán (realtime).
                         </div>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px', alignItems: 'end' }}>
                           <label style={{ fontSize: '12px', fontWeight: 700 }}>
@@ -16962,18 +16987,29 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
                             />
                           </label>
                           <label style={{ fontSize: '12px', fontWeight: 700 }}>
-                            Số lượng (áo)
+                            Size L (áo)
                             <input
                               type="number"
                               min={0}
                               step={1}
-                              value={uniformQty}
-                              onChange={(e) => setUniformQty(e.target.value)}
+                              value={uniformL}
+                              onChange={(e) => setUniformL(e.target.value)}
+                              style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}
+                            />
+                          </label>
+                          <label style={{ fontSize: '12px', fontWeight: 700 }}>
+                            Size XL (áo)
+                            <input
+                              type="number"
+                              min={0}
+                              step={1}
+                              value={uniformXL}
+                              onChange={(e) => setUniformXL(e.target.value)}
                               style={{ width: '100%', padding: '7px 9px', borderRadius: '6px', border: '1px solid var(--border)', marginTop: '4px' }}
                             />
                           </label>
                           <div style={{ fontSize: '12px', fontWeight: 700 }}>
-                            Thành tiền
+                            Tổng: {qty} áo — Thành tiền
                             <div style={{ marginTop: '4px', padding: '7px 9px', borderRadius: '6px', backgroundColor: 'var(--bg)', border: '1px solid var(--border)', color: '#B91C1C', fontSize: '14px' }}>
                               {amount.toLocaleString('vi-VN')}đ
                             </div>

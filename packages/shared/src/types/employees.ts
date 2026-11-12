@@ -91,11 +91,20 @@ export interface EmployeeContractDocs {
  * (`amount`) tự tính = quantity × unit_price và được trừ vào lương đúng tháng
  * của `received_date` trên cổng Kế Toán.
  */
+export interface EmployeeUniformSizes {
+  /** Số áo size L. */
+  L: number;
+  /** Số áo size XL. */
+  XL: number;
+}
+
 export interface EmployeeUniformInfo {
   /** Ngày nhận đồng phục (YYYY-MM-DD) — quyết định tháng trừ tiền lương. */
   received_date: string;
-  /** Số lượng áo đồng phục đã nhận. */
+  /** Số lượng áo đồng phục đã nhận (tổng = sizes.L + sizes.XL nếu có phân size). */
   quantity: number;
+  /** Số lượng theo size L/XL (bản ghi cũ chưa phân size thì để trống). */
+  sizes?: EmployeeUniformSizes;
   /** Đơn giá mỗi áo (mặc định 150.000đ). */
   unit_price: number;
   /** Tổng tiền = quantity × unit_price. */
