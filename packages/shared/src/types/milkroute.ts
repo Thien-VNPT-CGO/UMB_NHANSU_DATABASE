@@ -73,6 +73,8 @@ export interface EVRouteStop {
   route_id: string;
   stop_order: number;              // 1,2,3,4,5,6
   name: string;                    // 'Xưởng Sản Xuất', 'CH130', ...
+  /** Chi nhánh tương ứng (nếu có) — toạ độ tự đồng bộ theo tab Quản Lý Chi Nhánh. */
+  branch_id?: string;
   address?: string;
   latitude: number;
   longitude: number;

@@ -8246,6 +8246,13 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
           ['false', 'off', 'no', 'tắt', 'tat', 'không', 'khong', 'ẩn', 'an'].includes(String(raw).trim().toLowerCase()));
       }
       const updated = await adapter.updateBranch(req.params.id, body);
+      // Toạ độ chi nhánh vừa đổi → đồng bộ điểm dừng lộ trình EV để Live Map
+      // và geofence check-in của tài xế khớp tab Quản Lý Chi Nhánh.
+      try {
+        await milkRouteModule.routes.syncBranchStops(updated as any);
+      } catch (syncErr: any) {
+        console.warn('[branches] Đồng bộ toạ độ điểm dừng EV thất bại:', syncErr?.message || syncErr);
+      }
       await adapter.recordAuditLog({
         actor_id: req.user!.id,
         action: 'BRANCH_UPDATED',
@@ -8255,6 +8262,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       });
       // Realtime: các máy khác tải lại danh sách chi nhánh/GPS ngay.
       broadcastUpdate('config', { area: 'branches', id: req.params.id });
+      broadcastUpdate('ev', { area: 'branch-coords', id: req.params.id });
       res.json(updated);
     } catch (err: any) {
       res.status(400).json({ error: err.message });

@@ -121,6 +121,39 @@ const Card: React.FC<{ children: React.ReactNode; style?: React.CSSProperties }>
   </div>
 );
 
+/** Bỏ dấu tiếng Việt để so khớp tên điểm dừng với chi nhánh ổn định. */
+const normText = (v: any) => String(v || '')
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .replace(/đ/gi, 'd')
+  .toLowerCase()
+  .replace(/\s+/g, ' ')
+  .trim();
+
+/** Từ khoá nhận diện điểm dừng của chi nhánh (dữ liệu seed cũ chưa có branch_id). */
+const BRANCH_STOP_KEYWORDS: Record<string, string[]> = {
+  CN130: ['ch130', '130 van kiep'],
+  CN261: ['ch261', '261 to hien thanh'],
+  CN120: ['ch120', '120 hoang dieu'],
+  CN111: ['ch111', '111 ton dan'],
+  XUONG_SX: ['xuong san xuat', 'bui cong trung'],
+  VAN_PHONG: ['tru so', 'van phong', 'dang thai mai'],
+};
+
+/** Tìm chi nhánh tương ứng với một điểm dừng lộ trình (null nếu không có). */
+const findBranchForStop = (stop: any, branches: any[]): any | null => {
+  if (!stop || stop.stop_type === 'CHARGING') return null;
+  const bid = String(stop.branch_id || '').trim();
+  if (bid) return branches.find((b: any) => String(b.id) === bid) || null;
+  const hay = `${normText(stop.name)} | ${normText(stop.address)}`;
+  return branches.find((b: any) => {
+    const id = normText(b.id);
+    if (id && hay.includes(id)) return true;
+    const kws = BRANCH_STOP_KEYWORDS[String(b.id)] || [];
+    return kws.some((k) => hay.includes(normText(k)));
+  }) || null;
+};
+
 // ============================================================
 // 1. LIVE MAP
 // ============================================================
@@ -129,6 +162,7 @@ const LiveMapView: React.FC<{ showToast: (m: string) => void }> = ({ showToast }
   const [liveShifts, setLiveShifts] = useState<any[]>([]);
   const [stops, setStops] = useState<any[]>([]);
   const [routes, setRoutes] = useState<any[]>([]);
+  const [branches, setBranches] = useState<any[]>([]);
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState('');
@@ -138,16 +172,32 @@ const LiveMapView: React.FC<{ showToast: (m: string) => void }> = ({ showToast }
   const mapRef = useRef<any>(null);
   const markersRef = useRef<Record<string, any>>({});
   const routeLayerRef = useRef<any>(null);
+  const branchLayerRef = useRef<any>(null);
+  const branchesSigRef = useRef('');
   const fittedRef = useRef(false);
 
   const loadLive = useCallback(async () => {
     try {
-      const [vRes, sRes] = await Promise.allSettled([
+      const [vRes, sRes, bRes] = await Promise.allSettled([
         apiRequest('/ev/admin/live/vehicles'),
         apiRequest('/ev/admin/live/shifts'),
+        // Toạ độ chi nhánh lấy trực tiếp từ tab Quản Lý Chi Nhánh.
+        apiRequest('/admin/branches'),
       ]);
       if (vRes.status === 'fulfilled') setVehicles(Array.isArray(vRes.value) ? vRes.value : []);
       if (sRes.status === 'fulfilled') setLiveShifts(Array.isArray(sRes.value) ? sRes.value : []);
+      if (bRes.status === 'fulfilled') {
+        const list = Array.isArray(bRes.value) ? bRes.value : [];
+        // Chỉ vẽ lại lớp chi nhánh khi cấu hình thật sự đổi (tránh nhấp nháy 10s/lần).
+        const sig = JSON.stringify(list.map((b: any) => [
+          b.id, b.name, b.address, b.latitude, b.longitude,
+          b.radius_meters, b.map_visible, b.gps_enabled,
+        ]));
+        if (sig !== branchesSigRef.current) {
+          branchesSigRef.current = sig;
+          setBranches(list);
+        }
+      }
       setErr('');
     } catch (e: any) {
       setErr(e?.message || 'Không tải được dữ liệu realtime.');
@@ -185,6 +235,7 @@ const LiveMapView: React.FC<{ showToast: (m: string) => void }> = ({ showToast }
       attribution: '&copy; OpenStreetMap',
     }).addTo(map);
     mapRef.current = map;
+    branchLayerRef.current = L.layerGroup().addTo(map);
     routeLayerRef.current = L.layerGroup().addTo(map);
     // Chống "map co0" khi vừa mount (layout chưa chốt).
     const t = setTimeout(() => map.invalidateSize(), 250);
@@ -194,9 +245,59 @@ const LiveMapView: React.FC<{ showToast: (m: string) => void }> = ({ showToast }
       mapRef.current = null;
       markersRef.current = {};
       routeLayerRef.current = null;
+      branchLayerRef.current = null;
       fittedRef.current = false;
     };
   }, []);
+
+  // Điểm dừng lộ trình LUÔN lấy toạ độ hiện tại của chi nhánh tương ứng
+  // (tab Quản Lý Chi Nhánh) — kể cả dữ liệu seed cũ chưa được đồng bộ.
+  const resolvedStops = useMemo(() => stops.map((s: any) => {
+    const branch = findBranchForStop(s, branches);
+    if (!branch) return s;
+    const lat = Number(branch.latitude);
+    const lng = Number(branch.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || (lat === 0 && lng === 0)) return s;
+    return { ...s, latitude: lat, longitude: lng };
+  }), [stops, branches]);
+
+  // Vẽ chi nhánh (ghim + vòng bán kính) theo cấu hình Quản Lý Chi Nhánh.
+  useEffect(() => {
+    const map = mapRef.current;
+    const layer = branchLayerRef.current;
+    if (!map || !layer) return;
+    layer.clearLayers();
+    branches.forEach((b: any) => {
+      if (b.map_visible === false) return;
+      const lat = Number(b.latitude);
+      const lng = Number(b.longitude);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng) || (lat === 0 && lng === 0)) return;
+      const pos: [number, number] = [lat, lng];
+      L.circle(pos, {
+        radius: Number(b.radius_meters) || 300,
+        color: '#1D4ED8',
+        weight: 1.5,
+        opacity: 0.55,
+        fillColor: '#1D4ED8',
+        fillOpacity: 0.05,
+        dashArray: b.gps_enabled === false ? '2 6' : undefined,
+      }).addTo(layer);
+      L.marker(pos, {
+        icon: L.divIcon({
+          className: '',
+          html: `<div style="width:18px;height:18px;border-radius:5px;background:#1D4ED8;border:2px solid #fff;box-shadow:0 2px 6px rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;color:#fff;font:900 10px/1 system-ui,sans-serif">B</div>`,
+          iconSize: [18, 18],
+          iconAnchor: [9, 9],
+          popupAnchor: [0, -9],
+        }),
+      })
+        .bindTooltip(
+          `${b.name || b.id}${b.gps_enabled === false ? ' • GPS tắt' : ''}<br/><span style="font-weight:600">${b.address || ''}</span><br/>Bán kính ${Number(b.radius_meters) || 300}m`,
+          { direction: 'top', offset: [0, -10] },
+        )
+        .addTo(layer);
+    });
+  }, [branches]);
 
   // Vẽ tuyến + điểm dừng (geofence).
   useEffect(() => {
@@ -204,14 +305,17 @@ const LiveMapView: React.FC<{ showToast: (m: string) => void }> = ({ showToast }
     const layer = routeLayerRef.current;
     if (!map || !layer) return;
     layer.clearLayers();
-    if (!stops.length) return;
+    if (!resolvedStops.length) return;
     const latlngs: any[] = [];
-    stops
+    resolvedStops
       .slice()
       .sort((a, b) => Number(a.stop_order) - Number(b.stop_order))
       .forEach((s: any) => {
         const pos: [number, number] = [Number(s.latitude), Number(s.longitude)];
+        // (0,0) = điểm sạc chưa ghim toạ độ → không vẽ để khỏi kéo bản đồ về
+        // giữa đại dương (làm hỏng fitBounds của cả lộ trình).
         if (!Number.isFinite(pos[0]) || !Number.isFinite(pos[1])) return;
+        if (pos[0] === 0 && pos[1] === 0) return;
         latlngs.push(pos);
         L.circle(pos, {
           radius: Number(s.geofence_radius_m) || 100,
@@ -239,7 +343,7 @@ const LiveMapView: React.FC<{ showToast: (m: string) => void }> = ({ showToast }
       fittedRef.current = true;
       map.fitBounds(L.latLngBounds(latlngs), { padding: [40, 40] });
     }
-  }, [stops]);
+  }, [resolvedStops]);
 
   // Đánh dấu xe realtime.
   useEffect(() => {
@@ -331,11 +435,14 @@ const LiveMapView: React.FC<{ showToast: (m: string) => void }> = ({ showToast }
           ref={containerRef}
           style={{ width: '100%', height: '480px', borderRadius: '8px', overflow: 'hidden', background: '#E2E8F0' }}
         />
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 4px 2px', fontSize: '11.5px', color: MUTED, fontWeight: 600 }}>
-          <span>🟢 Xe đang chạy • ⭕ vòng nét = geofence 100m • ➖ chấm = điểm giao</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 4px 2px', fontSize: '11.5px', color: MUTED, fontWeight: 600, flexWrap: 'wrap' }}>
+          <span>🟢 Xe đang chạy • 🏢 chi nhánh (vòng bán kính theo cấu hình) • ⭕ geofence điểm giao</span>
           <button className="btn-secondary" style={{ marginLeft: 'auto', padding: '5px 11px', fontSize: '11.5px', fontWeight: 700 }} onClick={() => void loadLive()}>
             <RefreshCw size={13} /> Làm mới
           </button>
+        </div>
+        <div style={{ padding: '0 4px 4px', fontSize: '11px', color: MUTED, fontWeight: 600 }}>
+          Toạ độ chi nhánh & điểm giao đồng bộ với tab <b>Quản Lý Chi Nhánh</b> — tự cập nhật sau mỗi 10 giây.
         </div>
       </Card>
 

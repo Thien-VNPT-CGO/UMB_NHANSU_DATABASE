@@ -34,10 +34,27 @@ export class MilkRouteModule {
     this.realtime = evRealtimeService;
   }
 
+  /** Danh sách chi nhánh hiện tại (tab Quản Lý Chi Nhánh). */
+  private async currentBranches(): Promise<any[]> {
+    const repo: any = this.repo as any;
+    if (Array.isArray(repo.branches) && repo.branches.length) return repo.branches;
+    if (typeof repo.getBranches === 'function') {
+      try {
+        const list = await repo.getBranches();
+        return Array.isArray(list) ? list : [];
+      } catch { /* không chặn khởi động */ }
+    }
+    return [];
+  }
+
   /** Khởi tạo dữ liệu mẫu (seed) */
   async seedDefaultData(): Promise<void> {
-    // Check if already seeded
-    if (this.repo.evRoutes.length > 0) return;
+    // Đã seed trước đây: vẫn đồng bộ toạ độ điểm dừng theo cấu hình chi nhánh
+    // hiện tại để Live Map + geofence check-in khớp tab Quản Lý Chi Nhánh.
+    if (this.repo.evRoutes.length > 0) {
+      await this.routes.syncAllBranchStops(await this.currentBranches());
+      return;
+    }
 
     console.log('[MilkRoute] Seeding default route data...');
 
@@ -56,6 +73,7 @@ export class MilkRouteModule {
         route_id: route.route_id,
         stop_order: 1,
         name: 'Xưởng Sản Xuất Ụm Bò Milk',
+        branch_id: 'XUONG_SX',
         address: '85/14 Bùi Công Trừng, Hóc Môn / Q.12, TP. Hồ Chí Minh',
         latitude: 10.908028,
         longitude: 106.650444,
@@ -68,6 +86,7 @@ export class MilkRouteModule {
         route_id: route.route_id,
         stop_order: 2,
         name: 'Cửa hàng CH130',
+        branch_id: 'CN130',
         address: '130 Vạn Kiếp, Phường 3, Quận Bình Thạnh, TP. Hồ Chí Minh',
         latitude: 10.799831,
         longitude: 106.693370,
@@ -80,6 +99,7 @@ export class MilkRouteModule {
         route_id: route.route_id,
         stop_order: 3,
         name: 'Cửa hàng CH111',
+        branch_id: 'CN111',
         address: '111 Tôn Đản, Phường 15, Quận 4, TP. Hồ Chí Minh',
         latitude: 10.759223,
         longitude: 106.706995,
@@ -92,6 +112,7 @@ export class MilkRouteModule {
         route_id: route.route_id,
         stop_order: 4,
         name: 'Cửa hàng CH261',
+        branch_id: 'CN261',
         address: '261 Tô Hiến Thành, Phường 12, Quận 10, TP. Hồ Chí Minh',
         latitude: 10.778639,
         longitude: 106.666665,
@@ -104,6 +125,7 @@ export class MilkRouteModule {
         route_id: route.route_id,
         stop_order: 5,
         name: 'Trụ sở chính (Văn phòng)',
+        branch_id: 'VAN_PHONG',
         address: 'Số 10 Đặng Thai Mai, Phường Phú Nhuận, TP. Hồ Chí Minh',
         latitude: 10.803040,
         longitude: 106.689620,
@@ -128,6 +150,7 @@ export class MilkRouteModule {
         route_id: route.route_id,
         stop_order: 7,
         name: 'Xưởng Sản Xuất (Kết thúc ca)',
+        branch_id: 'XUONG_SX',
         address: '85/14 Bùi Công Trừng, Hóc Môn / Q.12, TP. Hồ Chí Minh',
         latitude: 10.908028,
         longitude: 106.650444,
@@ -141,6 +164,9 @@ export class MilkRouteModule {
     for (const stop of stops) {
       await this.routes.createRouteStop(stop);
     }
+
+    // Toạ độ seed chỉ là mặc định — ưu tiên cấu hình thực tế của Admin.
+    await this.routes.syncAllBranchStops(await this.currentBranches());
 
     console.log('[MilkRoute] Default route seeded successfully.');
   }

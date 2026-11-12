@@ -1648,6 +1648,7 @@ export class MockSheetsAdapter implements ISheetsRepository {
       route_id: routeId,
       stop_order: order,
       name,
+      branch_id: String(input?.branch_id ?? '').trim() || undefined,
       address: String(input?.address ?? '').trim() || undefined,
       latitude: Number(input?.latitude),
       longitude: Number(input?.longitude),
