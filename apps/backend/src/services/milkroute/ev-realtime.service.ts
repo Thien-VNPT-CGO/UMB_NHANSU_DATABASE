@@ -215,8 +215,14 @@ export class EVRealtimeService {
     this.io.to(`shift:${shiftId}`).emit('ev:live:sla:violated', payload);
   }
 
-  /** Broadcast charging status change */
-  broadcastChargingStatus(ticketId: string, shiftId: string, driverId: string, status: 'APPROVED' | 'CHARGING' | 'COMPLETED' | 'REJECTED', extra?: any) {
+  /** Broadcast charging status change (status = trạng thái THẬT của phiếu) */
+  broadcastChargingStatus(
+    ticketId: string,
+    shiftId: string,
+    driverId: string,
+    status: 'PENDING_HR' | 'PENDING_DIRECTOR' | 'APPROVED' | 'CHARGING' | 'USED' | 'COMPLETED' | 'REJECTED',
+    extra?: any,
+  ) {
     if (!this.io) return;
 
     const payload: EVWSPayload<any> = {

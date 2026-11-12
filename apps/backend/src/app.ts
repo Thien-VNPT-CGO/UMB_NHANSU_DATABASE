@@ -795,7 +795,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     try {
       const t = await ev.charging.approveByHR(req.params.id, req.user!.id, req.body?.notes);
       if (!t) return res.status(404).json({ error: 'TICKET_NOT_FOUND' });
-      ev.realtime.broadcastChargingStatus(t.ticket_id, t.shift_id, t.driver_id, 'APPROVED', { level: 'HR' });
+      ev.realtime.broadcastChargingStatus(t.ticket_id, t.shift_id, t.driver_id, 'PENDING_DIRECTOR', { level: 'HR' });
       broadcastUpdate('evChargingTicket', { action: 'approve-hr', id: t.ticket_id });
       res.json(t);
     } catch (err: any) { evErr(res, err); }
@@ -1064,13 +1064,15 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
 
   app.post('/ev/me/charging-tickets', authMiddleware, requireRole(evDriverRoles), validate({ body: evChargingTicketCreateBody }), async (req: AuthenticatedRequest, res) => {
     try {
+      // Chỉ được tạo phiếu cho CA CỦA CHÍNH MÌNH (tránh tạo hộ ca tài xế khác).
+      await evOwnShift(req, req.body.shift_id);
       const t = await ev.charging.createChargingTicket({
         shiftId: req.body.shift_id,
         requestedDate: req.body.requested_date,
         batteryLevelPct: req.body.battery_level_pct,
         notes: req.body.notes,
       });
-      ev.realtime.broadcastChargingStatus(t.ticket_id, t.shift_id, t.driver_id, 'APPROVED', { status: t.status });
+      ev.realtime.broadcastChargingStatus(t.ticket_id, t.shift_id, t.driver_id, 'PENDING_HR', { status: t.status });
       broadcastUpdate('evChargingTicket', { action: 'create', id: t.ticket_id });
       res.status(201).json(t);
     } catch (err: any) { evErr(res, err); }
@@ -1096,7 +1098,7 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       if (!ticket) return res.status(404).json({ error: 'TICKET_NOT_FOUND' });
       await evOwnShift(req, ticket.shift_id);
       const t = await ev.charging.endCharging(ticket.ticket_id);
-      ev.realtime.broadcastChargingStatus(t!.ticket_id, t!.shift_id, t!.driver_id, 'COMPLETED');
+      ev.realtime.broadcastChargingStatus(t!.ticket_id, t!.shift_id, t!.driver_id, 'USED');
       broadcastUpdate('evChargingTicket', { action: 'end', id: t!.ticket_id });
       res.json(t);
     } catch (err: any) { evErr(res, err); }

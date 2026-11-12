@@ -12,7 +12,10 @@ export class EVCheckinService {
   }): Promise<EVShiftCheckin> {
     const shift = this.repo.evShifts.find(s => s.shift_id === input.shiftId);
     if (!shift) throw new Error('SHIFT_NOT_FOUND');
-    if (shift.status !== 'IN_PROGRESS') throw new Error('SHIFT_NOT_IN_PROGRESS: Ca không ở trạng thái đang chạy');
+    // RETURNING: sau khi kết thúc sạc, tài xế vẫn phải check-in điểm kết thúc (về xưởng).
+    if (shift.status !== 'IN_PROGRESS' && shift.status !== 'RETURNING') {
+      throw new Error('SHIFT_NOT_IN_PROGRESS: Ca không ở trạng thái đang chạy');
+    }
 
     const stop = this.repo.evRouteStops.find(s => s.stop_id === input.stopId);
     if (!stop) throw new Error('STOP_NOT_FOUND');
@@ -27,9 +30,16 @@ export class EVCheckinService {
     const completedStops = this.repo.evShiftCheckins.filter(c => c.shift_id === input.shiftId).map(c => c.stop_order);
     const maxCompletedOrder = completedStops.length > 0 ? Math.max(...completedStops) : 0;
 
-    if (stop.stop_order !== maxCompletedOrder + 1) {
-      const expectedStop = stops.find(s => s.stop_order === maxCompletedOrder + 1);
-      throw new Error(`WRONG_STOP_ORDER: Phải check-in theo thứ tự. Điểm tiếp theo là ${expectedStop?.name || 'không xác định'}`);
+    if (stop.stop_order <= maxCompletedOrder) {
+      throw new Error('WRONG_STOP_ORDER: Điểm này đã đi qua, hãy chọn điểm kế tiếp');
+    }
+    // Cho phép BỎ QUA điểm tùy chọn (VD: trạm sạc ghim GPS động, toạ độ 0,0),
+    // nhưng tuyệt đối không được bỏ qua điểm bắt buộc.
+    const skippedMandatory = stops.find(
+      s => s.stop_order > maxCompletedOrder && s.stop_order < stop.stop_order && s.is_mandatory,
+    );
+    if (skippedMandatory) {
+      throw new Error(`WRONG_STOP_ORDER: Phải check-in theo thứ tự. Điểm tiếp theo là ${skippedMandatory.name}`);
     }
 
     // Validate geofence
@@ -58,13 +68,31 @@ export class EVCheckinService {
       const actualCheckin = Date.now();
       actualTravelMin = Math.round((actualCheckin - plannedStart) / 60000);
     } else {
-      // Subsequent stops: SLA from previous check-in
+      // Subsequent stops: SLA tính từ mốc trước đó.
       const prevStop = stops.find(s => s.stop_order === stop.stop_order - 1);
       const prevCheckin = this.repo.evShiftCheckins.find(c => c.shift_id === input.shiftId && c.stop_id === prevStop?.stop_id);
+      let prevTime: number | null = null;
       if (prevCheckin) {
-        const prevTime = new Date(prevCheckin.checked_in_at).getTime();
-        const actualCheckin = Date.now();
-        actualTravelMin = Math.round((actualCheckin - prevTime) / 60000);
+        prevTime = new Date(prevCheckin.checked_in_at).getTime();
+      } else if (prevStop?.stop_type === 'CHARGING') {
+        // Chặng cuối (trạm sạc → xưởng): mốc là lúc KẾT THÚC SẠC,
+        // vì điểm sạc là tùy chọn và không bắt buộc check-in.
+        const ends = this.repo.evChargingTickets
+          .filter(t => t.shift_id === input.shiftId && t.charging_end_at)
+          .map(t => Date.parse(String(t.charging_end_at)))
+          .filter(n => Number.isFinite(n))
+          .sort((a, b) => b - a);
+        if (ends.length) prevTime = ends[0];
+      }
+      if (prevTime == null) {
+        // Bỏ qua điểm tùy chọn không check-in → lấy mốc check-in gần nhất trước đó.
+        const lastAny = this.repo.evShiftCheckins
+          .filter(c => c.shift_id === input.shiftId && c.stop_order < stop.stop_order)
+          .sort((a, b) => b.stop_order - a.stop_order)[0];
+        if (lastAny) prevTime = new Date(lastAny.checked_in_at).getTime();
+      }
+      if (prevTime != null && Number.isFinite(prevTime)) {
+        actualTravelMin = Math.round((Date.now() - prevTime) / 60000);
       }
     }
 

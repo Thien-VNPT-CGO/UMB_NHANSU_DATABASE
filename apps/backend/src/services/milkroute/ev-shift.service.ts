@@ -137,7 +137,11 @@ export class EVShiftService {
   async endShift(shiftId: string, driverLocation: { latitude: number; longitude: number; accuracy: number }): Promise<EVShift> {
     const shift = await this.getShift(shiftId);
     if (!shift) throw new Error('SHIFT_NOT_FOUND');
-    if (shift.status !== 'IN_PROGRESS' && shift.status !== 'PAUSED') throw new Error('SHIFT_NOT_IN_PROGRESS: Ca không ở trạng thái đang chạy');
+    // RETURNING: đã kết thúc sạc và đang về xưởng. CHARGING: cho phép kết thúc
+    // ca ngay cả khi tài xế quên bấm "Kết thúc sạc" (tránh kẹt ca vĩnh viễn).
+    if (!['IN_PROGRESS', 'PAUSED', 'RETURNING', 'CHARGING'].includes(shift.status)) {
+      throw new Error('SHIFT_NOT_IN_PROGRESS: Ca không ở trạng thái đang chạy');
+    }
 
     // Get route stops
     const stops = this.repo.evRouteStops.filter(s => s.route_id === shift.route_id).sort((a, b) => a.stop_order - b.stop_order);

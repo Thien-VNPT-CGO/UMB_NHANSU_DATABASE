@@ -854,6 +854,8 @@ const ShiftsView: React.FC<{ allEmployees: any[]; showToast: (m: string) => void
           {items.map((s: any) => {
             const st = SHIFT_STATUS[s.status] || SHIFT_STATUS.SCHEDULED;
             const isOpen = openId === String(s.shift_id);
+            const drv = allEmployees.find((e: any) => e.employee_id === s.driver_id);
+            const veh = vehicles.find((v: any) => v.vehicle_id === s.vehicle_id);
             return (
               <div key={s.shift_id} style={{ border: `1.5px solid ${isOpen ? '#93C5FD' : BORDER}`, borderRadius: '10px', overflow: 'hidden', backgroundColor: isOpen ? '#EFF6FF' : 'var(--bg)' }}>
                 <button onClick={() => void openDetail(s)}
@@ -863,7 +865,7 @@ const ShiftsView: React.FC<{ allEmployees: any[]; showToast: (m: string) => void
                   </span>
                   {pill(st.fg, st.bg, st.text)}
                   <span style={{ fontSize: '12px', color: MUTED, fontWeight: 700 }}>
-                    Tài xế {s.driver_id} • Xe {s.vehicle_id}
+                    Tài xế {drv?.full_name || s.driver_id} • Xe {veh?.license_plate || s.vehicle_id}
                   </span>
                   {Number(s.penalty_points) > 0 && (
                     <span style={{ fontSize: '11.5px', fontWeight: 800, color: '#B91C1C' }}>
@@ -940,12 +942,24 @@ const ShiftsView: React.FC<{ allEmployees: any[]; showToast: (m: string) => void
 // ============================================================
 // 4. PHIẾU SẠC (DUYỆT 2 CẤP)
 // ============================================================
-const ChargingView: React.FC<{ showToast: (m: string) => void; canHr: boolean; canDirector: boolean }> = ({
-  showToast, canHr, canDirector,
+const ChargingView: React.FC<{ showToast: (m: string) => void; canHr: boolean; canDirector: boolean; allEmployees: any[] }> = ({
+  showToast, canHr, canDirector, allEmployees,
 }) => {
-  const [filter, setFilter] = useState<string>('PENDING_HR');
+  // Mặc định mở đúng hàng đợi của vai trò: HR → cấp 1, Giám đốc → cấp 2,
+  // vai trò khác (Kế toán/Admin xem) → tất cả. Tránh chọn sẵn tab bị ẩn.
+  const [filter, setFilter] = useState<string>(canHr ? 'PENDING_HR' : canDirector ? 'PENDING_DIRECTOR' : 'ALL');
   const [items, setItems] = useState<any[]>([]);
   const [busy, setBusy] = useState('');
+
+  // Đổi vai trò/khả năng duyệt → đưa bộ lọc về hàng đợi còn được phép xem.
+  useEffect(() => {
+    const allowed = [
+      ...(canHr ? ['PENDING_HR'] : []),
+      ...(canDirector ? ['PENDING_DIRECTOR'] : []),
+      'APPROVED', 'REJECTED', 'ALL',
+    ];
+    if (!allowed.includes(filter)) setFilter(canHr ? 'PENDING_HR' : canDirector ? 'PENDING_DIRECTOR' : 'ALL');
+  }, [canHr, canDirector, filter]);
 
   const load = useCallback(async () => {
     try {
@@ -993,6 +1007,12 @@ const ChargingView: React.FC<{ showToast: (m: string) => void; canHr: boolean; c
   ];
   const visibleTabs = TABS.filter((t) => t.need);
 
+  /** Mã tài xế (EMP_...) → "Họ tên (mã)" để HR/GĐ đọc được ngay. */
+  const driverLabel = (driverId: string) => {
+    const emp = allEmployees.find((e: any) => e.employee_id === driverId);
+    return emp ? `${emp.full_name} (${emp.employee_code || driverId})` : driverId;
+  };
+
   return (
     <Card>
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
@@ -1026,7 +1046,7 @@ const ChargingView: React.FC<{ showToast: (m: string) => void; canHr: boolean; c
             <div key={t.ticket_id} style={{ border: `1.5px solid ${pendingHr || pendingDir ? '#FDE68A' : BORDER}`, borderRadius: '10px', padding: '12px 13px', backgroundColor: pendingHr || pendingDir ? '#FFFBEB' : 'var(--bg)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '9px', flexWrap: 'wrap' }}>
                 <span style={{ fontSize: '13px', fontWeight: 900, color: 'var(--text)' }}>
-                  🎫 Ngày sạc {fmtDay(t.requested_date)} • tài xế {t.driver_id}
+                  🎫 Ngày sạc {fmtDay(t.requested_date)} • tài xế {driverLabel(t.driver_id)}
                 </span>
                 {t.battery_level_pct != null && (
                   <span style={{ fontSize: '12px', fontWeight: 700, color: MUTED }}>pin {t.battery_level_pct}%</span>
@@ -1299,7 +1319,7 @@ export const MilkRouteAdminView: React.FC<MilkRouteAdminProps> = ({ currentUser,
       {tab === 'map' && <LiveMapView showToast={showToast} />}
       {tab === 'fleet' && <FleetView allEmployees={allEmployees} showToast={showToast} canManage={canManage} />}
       {tab === 'shifts' && <ShiftsView allEmployees={allEmployees} showToast={showToast} canManage={canManage} />}
-      {tab === 'charging' && <ChargingView showToast={showToast} canHr={canHr} canDirector={canDirector} />}
+      {tab === 'charging' && <ChargingView showToast={showToast} canHr={canHr} canDirector={canDirector} allEmployees={allEmployees} />}
       {tab === 'payroll' && canPayroll && <PayrollView allEmployees={allEmployees} showToast={showToast} canManage={canPayroll} />}
     </div>
   );

@@ -153,6 +153,15 @@ export function MilkRouteDriverView({ employee, showToast, refreshKey = 0 }: Pro
 
   useEffect(() => { void load(); }, [load, refreshKey]);
 
+  // Tự làm mới khi còn phiếu chờ duyệt (HR/Giám đốc duyệt xong là tài xế thấy ngay)
+  // hoặc khi ca đang chạy (đồng bộ trạng thái ca/điểm dừng). Không cần F5.
+  useEffect(() => {
+    const hasPendingTicket = tickets.some((t: any) => t.status === 'PENDING_HR' || t.status === 'PENDING_DIRECTOR');
+    if (!hasPendingTicket && !isRunning) return;
+    const timer = setInterval(() => { void load(true); }, 30000);
+    return () => clearInterval(timer);
+  }, [tickets, isRunning, load]);
+
   // Đồng hồ đếm ngược SLA (1s/lần, chỉ khi ca đang chạy).
   useEffect(() => {
     if (!isRunning) return;
@@ -365,7 +374,14 @@ export function MilkRouteDriverView({ employee, showToast, refreshKey = 0 }: Pro
   // SLA countdown cho điểm kế tiếp
   // ------------------------------------------------------------------
   const stops: any[] = detail?.stops || [];
-  const nextStop = useMemo(() => stops.find((s: any) => !s.isCompleted), [stops]);
+  const nextStop = useMemo(() => stops.find((s: any) => {
+    if (s.isCompleted) return false;
+    const lat = Number(s.latitude);
+    const lng = Number(s.longitude);
+    // Trạm sạc (tùy chọn) ghim toạ độ động, seed là (0,0) — không phải điểm giao cần đi tới.
+    if (!s.is_mandatory && (!Number.isFinite(lat) || !Number.isFinite(lng) || (lat === 0 && lng === 0))) return false;
+    return true;
+  }), [stops]);
   const slaLeftSec = useMemo(() => {
     if (!nextStop || !current) return null;
     // Mốc bắt đầu chặng = check-in điểm trước (hoặc giờ bắt đầu ca).
@@ -384,7 +400,9 @@ export function MilkRouteDriverView({ employee, showToast, refreshKey = 0 }: Pro
   const checkedCount = stops.filter((s: any) => s.isCompleted).length;
   const mandatoryLeft = stops.filter((s: any) => !s.isCompleted && s.is_mandatory).length;
   const lastTicket = tickets[0];
-  const chargingTicket = tickets.find((t: any) => t.status === 'APPROVED' && !t.charging_end_at);
+  // Phiếu đang sạc: backend chuyển APPROVED -> USED ngay khi bắt đầu sạc,
+  // nên phải nhận cả 2 trạng thái để nút "Kết thúc sạc" không biến mất.
+  const chargingTicket = tickets.find((t: any) => (t.status === 'APPROVED' || t.status === 'USED') && !t.charging_end_at);
 
   // ------------------------------------------------------------------
   // Render
