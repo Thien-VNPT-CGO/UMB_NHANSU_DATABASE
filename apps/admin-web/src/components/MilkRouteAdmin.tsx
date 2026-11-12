@@ -1235,8 +1235,15 @@ export const MilkRouteAdminView: React.FC<MilkRouteAdminProps> = ({ currentUser,
   const canHr = ['ADMIN', 'HR'].includes(role);
   const canDirector = ['ADMIN', 'DIRECTOR'].includes(role);
   const canManage = ['ADMIN', 'FLEET_MANAGER'].includes(role);
+  // Bảng lương tài xế: CHỈ tài khoản Kế toán (FINANCE) thấy tab con này.
+  const canPayroll = role === 'FINANCE';
 
   const [tab, setTab] = useState<SubTab>('map');
+
+  // Đổi vai trò giữa chừng đang ở màn Lương -> đá về Live Map (tránh render màn bị ẩn).
+  useEffect(() => {
+    if (tab === 'payroll' && !canPayroll) setTab('map');
+  }, [tab, canPayroll]);
 
   if (!isEvAdmin) {
     return (
@@ -1253,7 +1260,8 @@ export const MilkRouteAdminView: React.FC<MilkRouteAdminProps> = ({ currentUser,
     { id: 'fleet', label: 'Xe & Lộ trình', icon: Truck },
     { id: 'shifts', label: 'Ca vận chuyển', icon: CalendarClock },
     { id: 'charging', label: 'Phiếu sạc', icon: BatteryCharging },
-    { id: 'payroll', label: 'Lương tài xế', icon: Wallet },
+    // Lương tài xế: chỉ FINANCE (Kế toán) — các vai trò khác không thấy tab này.
+    ...(canPayroll ? [{ id: 'payroll' as SubTab, label: 'Lương tài xế', icon: Wallet }] : []),
   ];
 
   return (
@@ -1292,7 +1300,7 @@ export const MilkRouteAdminView: React.FC<MilkRouteAdminProps> = ({ currentUser,
       {tab === 'fleet' && <FleetView allEmployees={allEmployees} showToast={showToast} canManage={canManage} />}
       {tab === 'shifts' && <ShiftsView allEmployees={allEmployees} showToast={showToast} canManage={canManage} />}
       {tab === 'charging' && <ChargingView showToast={showToast} canHr={canHr} canDirector={canDirector} />}
-      {tab === 'payroll' && <PayrollView allEmployees={allEmployees} showToast={showToast} canManage={canManage || canHr || canDirector} />}
+      {tab === 'payroll' && canPayroll && <PayrollView allEmployees={allEmployees} showToast={showToast} canManage={canPayroll} />}
     </div>
   );
 };
