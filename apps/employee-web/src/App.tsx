@@ -1280,7 +1280,7 @@ export function App() {
   };
 
   /** Mở file hợp đồng đã lưu (Drive/đĩa VPS) của chính mình. */
-  const openMyContract = async (kind: 'probation' | 'official') => {
+  const openMyContract = async (kind: 'probation' | 'official' | 'health_cert') => {
     try {
       showToast('⏳ Đang mở file hợp đồng...');
       const token = getAuthToken();
@@ -8343,6 +8343,100 @@ export function App() {
                     })}
                   </div>
                 </div>
+
+                {/* Giấy khám sức khỏe (HR cập nhật) + Đồng phục (chỉ xem) */}
+                {(() => {
+                  const healthDoc = myContractDocs?.health_cert;
+                  const uniform: any = (employee as any)?.uniform;
+                  const unitPrice = Number(uniform?.unit_price) || 150000;
+                  const qty = Math.max(0, Math.floor(Number(uniform?.quantity) || 0));
+                  const amount = Number(uniform?.amount) || qty * unitPrice;
+                  const fmtDate = (v: any) => {
+                    const s = String(v || '').slice(0, 10);
+                    if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return '—';
+                    return s.split('-').reverse().join('/');
+                  };
+                  return (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '12px' }}>
+                      {/* Giấy khám sức khỏe: HR upload, NV xem trạng thái */}
+                      <div style={{ backgroundColor: healthDoc ? '#F0FDF4' : '#F8FAFC', border: healthDoc ? '1.5px solid #A7F3D0' : '1.5px solid #E2E8F0', borderRadius: '12px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                          <div style={{ fontWeight: 800, fontSize: '13px', color: '#1E293B' }}>🩺 Giấy khám sức khỏe</div>
+                          <span style={{ fontSize: '10.5px', fontWeight: 700, color: healthDoc ? '#059669' : '#D97706' }}>
+                            {healthDoc ? '✅ Đã có' : '⚠️ Chưa có'}
+                          </span>
+                        </div>
+                        <div style={{ minHeight: '52px', borderRadius: '8px', border: healthDoc ? '1px solid #A7F3D0' : '1.5px dashed #CBD5E1', backgroundColor: '#FFF', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '2px', padding: '6px', textAlign: 'center' }}>
+                          {healthDoc ? (
+                            <>
+                              <span style={{ fontSize: '20px' }}>📋</span>
+                              <span style={{ fontSize: '10.5px', color: '#334155', fontWeight: 700, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={healthDoc.file_name}>
+                                {healthDoc.file_name || 'Giấy khám sức khỏe'}
+                              </span>
+                              <span style={{ fontSize: '10px', color: '#64748B' }}>
+                                {healthDoc.uploaded_at ? fmtDate(healthDoc.uploaded_at) : ''}
+                                {healthDoc.storage === 'DRIVE' ? ' • ☁️ Google Drive' : healthDoc.storage === 'DISK' ? ' • Đĩa VPS' : ''}
+                              </span>
+                            </>
+                          ) : (
+                            <span style={{ fontSize: '10.5px', color: '#94A3B8', lineHeight: 1.5 }}>
+                              HR sẽ cập nhật giấy khám sức khỏe của bạn tại đây.
+                            </span>
+                          )}
+                        </div>
+                        {healthDoc && (
+                          <button
+                            className="btn-secondary"
+                            onClick={() => void openMyContract('health_cert')}
+                            style={{ fontSize: '11.5px', padding: '6px 10px', fontWeight: 700 }}
+                          >
+                            👁 Xem giấy khám
+                          </button>
+                        )}
+                        <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Chỉ HR được cập nhật • trạng thái tự đồng bộ realtime.</div>
+                      </div>
+
+                      {/* Đồng phục: CHỈ XEM, do HR nhập ngày nhận + số lượng */}
+                      <div style={{ backgroundColor: '#FFF7ED', border: '1.5px solid #FED7AA', borderRadius: '12px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                          <div style={{ fontWeight: 800, fontSize: '13px', color: '#1E293B' }}>👕 Đồng phục</div>
+                          <span style={{ fontSize: '10.5px', fontWeight: 700, color: uniform ? '#C2410C' : '#D97706' }}>
+                            {uniform ? `Đã nhận ${qty} áo` : 'Chưa cập nhật'}
+                          </span>
+                        </div>
+                        {uniform ? (
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '11.5px' }}>
+                            <div style={{ backgroundColor: '#FFF', borderRadius: '8px', padding: '8px 10px', border: '1px solid #FED7AA' }}>
+                              <div style={{ color: '#9A3412', fontSize: '10px', fontWeight: 700 }}>Ngày nhận</div>
+                              <div style={{ fontWeight: 800, color: '#7C2D12' }}>{fmtDate(uniform.received_date)}</div>
+                            </div>
+                            <div style={{ backgroundColor: '#FFF', borderRadius: '8px', padding: '8px 10px', border: '1px solid #FED7AA' }}>
+                              <div style={{ color: '#9A3412', fontSize: '10px', fontWeight: 700 }}>Số lượng</div>
+                              <div style={{ fontWeight: 800, color: '#7C2D12' }}>{qty} áo</div>
+                            </div>
+                            <div style={{ backgroundColor: '#FFF', borderRadius: '8px', padding: '8px 10px', border: '1px solid #FED7AA' }}>
+                              <div style={{ color: '#9A3412', fontSize: '10px', fontWeight: 700 }}>Đơn giá</div>
+                              <div style={{ fontWeight: 800, color: '#7C2D12' }}>{unitPrice.toLocaleString('vi-VN')}đ/áo</div>
+                            </div>
+                            <div style={{ backgroundColor: '#FFF', borderRadius: '8px', padding: '8px 10px', border: '1px solid #FED7AA' }}>
+                              <div style={{ color: '#9A3412', fontSize: '10px', fontWeight: 700 }}>Thành tiền</div>
+                              <div style={{ fontWeight: 800, color: '#B91C1C' }}>{amount.toLocaleString('vi-VN')}đ</div>
+                            </div>
+                          </div>
+                        ) : (
+                          <div style={{ minHeight: '52px', borderRadius: '8px', border: '1.5px dashed #FDBA74', backgroundColor: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px', textAlign: 'center', fontSize: '10.5px', color: '#94A3B8' }}>
+                            HR chưa cập nhật thông tin nhận đồng phục.
+                          </div>
+                        )}
+                        <div style={{ fontSize: '10px', color: '#9A3412', lineHeight: 1.5 }}>
+                          {uniform
+                            ? `Số tiền được trừ vào lương tháng ${String(uniform.received_date || '').slice(0, 7)} (chỉ xem).`
+                            : 'Thông tin do HR nhập và tự đồng bộ realtime (chỉ xem).'}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
                 <div>
                   <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Thông tin ngân hàng (Kế toán dùng để chuyển khoản lương)</label>
                   <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '6px', lineHeight: 1.5 }}>

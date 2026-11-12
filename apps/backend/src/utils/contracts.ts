@@ -8,8 +8,8 @@
 
 import type { EmployeeContractDocMeta, EmployeeContractDocs } from '@ubm/shared';
 
-export type ContractKind = 'PROBATION' | 'OFFICIAL' | 'ID_CARD_FRONT' | 'ID_CARD_BACK';
-export type ContractKey = 'probation' | 'official' | 'id_card_front' | 'id_card_back';
+export type ContractKind = 'PROBATION' | 'OFFICIAL' | 'ID_CARD_FRONT' | 'ID_CARD_BACK' | 'HEALTH_CERT';
+export type ContractKey = 'probation' | 'official' | 'id_card_front' | 'id_card_back' | 'health_cert';
 
 /** Dùng chung type với @ubm/shared để FE/BE không lệch cấu trúc ô JSON. */
 export type ContractDocMeta = EmployeeContractDocMeta;
@@ -23,18 +23,20 @@ export const CONTRACT_KIND_LABEL: Record<ContractKey, string> = {
   official: 'Hợp đồng chính thức',
   id_card_front: 'Mặt trước CCCD',
   id_card_back: 'Mặt sau CCCD',
+  health_cert: 'Giấy khám sức khỏe',
 };
 
 /**
  * Tên file cố định trên Drive cho từng loại tài liệu.
- * Dùng upsert theo tên nên mỗi nhân viên chỉ có đúng 4 file:
- * 2 hợp đồng (thử việc/chính thức) + 2 ảnh CCCD (trước/sau).
+ * Dùng upsert theo tên nên mỗi nhân viên chỉ có đúng 5 file:
+ * 2 hợp đồng (thử việc/chính thức) + 2 ảnh CCCD (trước/sau) + giấy khám sức khỏe.
  */
 export const CONTRACT_DRIVE_BASE_NAME: Record<ContractKey, string> = {
   probation: 'Hợp đồng thử việc',
   official: 'Hợp đồng chính thức',
   id_card_front: 'CCCD mặt trước',
   id_card_back: 'CCCD mặt sau',
+  health_cert: 'Giấy khám sức khỏe',
 };
 
 export function contractDriveFileName(key: ContractKey, ext: string): string {
@@ -47,6 +49,7 @@ export function contractKeyOf(kind: unknown): ContractKey | null {
   if (k === 'OFFICIAL' || k === 'CHINH_THUC' || k === 'CHÍNH THỨC') return 'official';
   if (k === 'ID_CARD_FRONT' || k === 'CCCD_FRONT' || k === 'CCCD_TRUOC' || k === 'MAT_TRUOC' || k === 'MẶT TRƯỚC' || k === 'id_card_front') return 'id_card_front';
   if (k === 'ID_CARD_BACK' || k === 'CCCD_BACK' || k === 'CCCD_SAU' || k === 'MAT_SAU' || k === 'MẶT SAU' || k === 'id_card_back') return 'id_card_back';
+  if (k === 'HEALTH_CERT' || k === 'GIAY_KHAM_SUC_KHOE' || k === 'KHAM_SUC_KHOE' || k === 'HEALTH' || k === 'HEALTH_CERTIFICATE') return 'health_cert';
   return null;
 }
 
@@ -54,6 +57,7 @@ export function contractKindOfKey(key: ContractKey): ContractKind {
   if (key === 'official') return 'OFFICIAL';
   if (key === 'id_card_front') return 'ID_CARD_FRONT';
   if (key === 'id_card_back') return 'ID_CARD_BACK';
+  if (key === 'health_cert') return 'HEALTH_CERT';
   return 'PROBATION';
 }
 
@@ -87,17 +91,21 @@ export function parseContractDocs(value: unknown): ContractDocs {
   const official = normalizeMeta(raw.official);
   const id_card_front = normalizeMeta(raw.id_card_front || raw.idCardFront);
   const id_card_back = normalizeMeta(raw.id_card_back || raw.idCardBack);
+  const health_cert = normalizeMeta(raw.health_cert || raw.healthCert || raw.HEALTH_CERT);
   if (probation) out.probation = probation;
   if (official) out.official = official;
   if (id_card_front) out.id_card_front = id_card_front;
   if (id_card_back) out.id_card_back = id_card_back;
+  if (health_cert) out.health_cert = health_cert;
   return out;
 }
 
-/** Ô Sheet: JSON gọn (rỗng nếu chưa có hợp đồng hay CCCD nào). */
+/** Ô Sheet: JSON gọn (rỗng nếu chưa có hợp đồng/CCCD/giấy khám sức khỏe nào). */
 export function contractDocsCell(value: unknown): string {
   const docs = parseContractDocs(value);
-  return docs.probation || docs.official || docs.id_card_front || docs.id_card_back ? JSON.stringify(docs) : '';
+  return docs.probation || docs.official || docs.id_card_front || docs.id_card_back || docs.health_cert
+    ? JSON.stringify(docs)
+    : '';
 }
 
 /** MIME + phần mở rộng hợp lệ cho file hợp đồng. */

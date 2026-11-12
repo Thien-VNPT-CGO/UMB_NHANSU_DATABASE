@@ -9,7 +9,7 @@ import path from 'path';
  * đồng thời cho phép chạy dev/test không cần service account.
  */
 
-export type ContractKind = 'PROBATION' | 'OFFICIAL' | 'ID_CARD_FRONT' | 'ID_CARD_BACK';
+export type ContractKind = 'PROBATION' | 'OFFICIAL' | 'ID_CARD_FRONT' | 'ID_CARD_BACK' | 'HEALTH_CERT';
 
 function resolveContractDir(): string {
   if (process.env.CONTRACT_FILE_DIR) {

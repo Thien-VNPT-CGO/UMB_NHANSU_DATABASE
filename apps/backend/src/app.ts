@@ -127,6 +127,7 @@ import {
   supportCreateBody,
   employeeCreateBody,
   employeeContractBody,
+  employeeUniformBody,
   employeeUpdateBody,
   employeeSelfUpdateBody,
   idCardPhotoBody,
@@ -2649,6 +2650,75 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         const employee = await employeesService.removeContract(req.params.id, req.params.kind, req.user!.id);
         broadcastUpdate('employees', { action: 'update', employee });
         res.json({ success: true, employee });
+      } catch (err: any) {
+        res.status(400).json({ error: err.message });
+      }
+    },
+  );
+
+  // --- ĐỒNG PHỤC ---
+  // HR nhập ngày nhận + số lượng (1 áo = 150.000đ). Tiền đồng phục được tự
+  // động ghi vào lương ĐÚNG THÁNG của ngày nhận (Kế toán thấy realtime).
+  app.post(
+    '/employees/:id/uniform',
+    authMiddleware,
+    requireRole(['ADMIN', 'HR']),
+    validate({ params: idParams, body: employeeUniformBody }),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const employeeId = req.params.id;
+        const { employee, previous, current } = await employeesService.saveUniform(
+          employeeId,
+          {
+            received_date: String((req.body as any).received_date || ''),
+            quantity: Number((req.body as any).quantity) || 0,
+            unit_price: (req.body as any).unit_price === undefined ? undefined : Number((req.body as any).unit_price),
+          },
+          req.user!.id,
+        );
+
+        const prevPeriod = previous?.received_date ? previous.received_date.slice(0, 7) : '';
+        const curPeriod = current?.received_date ? current.received_date.slice(0, 7) : '';
+        const touched = new Set<string>();
+
+        // Ghi/cập nhật `dong_phuc` nhưng GIỮ NGUYÊN các cột lương khác Kế toán
+        // đã nhập trong tháng (LCB, OT, Bonus, Ứng, KPI, ghi chú).
+        const applyAmount = async (period: string, amount: number) => {
+          if (!period) return;
+          const list = await payrollService.getInputs(period).catch(() => []);
+          const existing: any = (list || []).find((x: any) => String(x.employee_id) === String(employeeId));
+          // Không tạo dòng rỗng chỉ để ghi 0 khi nhân viên chưa có dữ liệu tháng đó.
+          if (!existing && amount === 0) return;
+          await payrollService.upsertInput(
+            period,
+            {
+              employeeId,
+              luong_cb: existing?.luong_cb,
+              ot_extra: existing?.ot_extra,
+              bonus_extra: existing?.bonus_extra,
+              ung_luong: existing?.ung_luong,
+              tru_kpi: existing?.tru_kpi,
+              dong_phuc: Math.max(0, Math.floor(Number(amount) || 0)),
+              note: existing?.note,
+            },
+            req.user!.id,
+          );
+          touched.add(period);
+        };
+
+        // HR đổi sang tháng khác -> dọn tiền đồng phục ở tháng cũ trước.
+        if (prevPeriod && prevPeriod !== curPeriod) await applyAmount(prevPeriod, 0);
+        await applyAmount(curPeriod, current?.amount || 0);
+
+        broadcastUpdate('employees', { action: 'update-uniform', employee });
+        for (const p of touched) broadcastUpdate('payroll', { action: 'inputs', period: p });
+        res.json({
+          success: true,
+          uniform: current,
+          previous,
+          employee,
+          payroll: { months: Array.from(touched) },
+        });
       } catch (err: any) {
         res.status(400).json({ error: err.message });
       }

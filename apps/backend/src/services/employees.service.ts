@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import {
   CandidateApplication,
   EmployeeMaster,
+  EmployeeUniformInfo,
   EmploymentStatus,
   STANDARD_HOURLY_RATES,
 } from '@ubm/shared';
@@ -31,6 +32,7 @@ import {
   parseContractDocs,
 } from '../utils/contracts.js';
 import { readContractDisk, removeContractDisk, saveContractDisk } from './contract-disk.store.js';
+import { parseUniform } from '../utils/uniform.js';
 import {
   getBranchFolderLabel,
   getEmployeeProfilesFolder,
@@ -861,7 +863,7 @@ export class EmployeesService {
     actorId: string,
   ): Promise<{ employee: EmployeeMaster; meta: ContractDocMeta }> {
     const key = contractKeyOf(input.kind);
-    if (!key) throw new Error('INVALID_CONTRACT_KIND: Loại tài liệu phải là PROBATION, OFFICIAL, ID_CARD_FRONT hoặc ID_CARD_BACK.');
+    if (!key) throw new Error('INVALID_CONTRACT_KIND: Loại tài liệu phải là PROBATION, OFFICIAL, ID_CARD_FRONT, ID_CARD_BACK hoặc HEALTH_CERT.');
     const emp = await this.repo.getEmployeeById(employeeId);
     if (!emp) throw new Error('EMPLOYEE_NOT_FOUND');
 
@@ -933,13 +935,15 @@ export class EmployeesService {
               ? 'ảnh CCCD mặt sau'
               : key === 'probation'
                 ? 'hợp đồng thử việc'
-                : 'hợp đồng chính thức';
+                : key === 'health_cert'
+                  ? 'giấy khám sức khỏe'
+                  : 'hợp đồng chính thức';
         try {
           await this.repo.recordAuditLog({
             log_id: `LOG_${Date.now()}_${employeeId}`,
             actor_id: actorId,
             actor_role: actorId === employeeId ? 'EMPLOYEE' : 'HR',
-            action: key.startsWith('id_card') ? 'UPLOAD_ID_CARD' : 'UPLOAD_CONTRACT',
+            action: key.startsWith('id_card') ? 'UPLOAD_ID_CARD' : key === 'health_cert' ? 'UPLOAD_HEALTH_CERT' : 'UPLOAD_CONTRACT',
             target_entity: 'NHAN_VIEN_MASTER',
             target_id: employeeId,
             details: `Upload ${docLabel}: ${meta.file_name} (${Math.round(meta.size / 1024)}KB, ${storage})`,
@@ -954,7 +958,7 @@ export class EmployeesService {
   /** Gỡ file hợp đồng / CCCD: xóa metadata + file Drive/đĩa. */
   async removeContract(employeeId: string, kindRaw: string, actorId: string): Promise<EmployeeMaster> {
     const key = contractKeyOf(kindRaw);
-    if (!key) throw new Error('INVALID_CONTRACT_KIND: Loại tài liệu phải là PROBATION, OFFICIAL, ID_CARD_FRONT hoặc ID_CARD_BACK.');
+    if (!key) throw new Error('INVALID_CONTRACT_KIND: Loại tài liệu phải là PROBATION, OFFICIAL, ID_CARD_FRONT, ID_CARD_BACK hoặc HEALTH_CERT.');
     const { result } = await singleWriterQueue.enqueue({
       entityType: 'NHAN_VIEN_MASTER',
       entityId: employeeId,
@@ -966,7 +970,7 @@ export class EmployeesService {
         const old = docs[key];
         if (!old) return fresh as EmployeeMaster;
         delete docs[key];
-        const hasAnyDoc = Boolean(docs.probation || docs.official || docs.id_card_front || docs.id_card_back);
+        const hasAnyDoc = Boolean(docs.probation || docs.official || docs.id_card_front || docs.id_card_back || docs.health_cert);
         const updated = await this.repo.updateEmployee(
           employeeId,
           { contract_docs: hasAnyDoc ? docs : undefined } as any,
@@ -983,19 +987,85 @@ export class EmployeesService {
               ? 'ảnh CCCD mặt sau'
               : key === 'probation'
                 ? 'hợp đồng thử việc'
-                : 'hợp đồng chính thức';
+                : key === 'health_cert'
+                  ? 'giấy khám sức khỏe'
+                  : 'hợp đồng chính thức';
         try {
           await this.repo.recordAuditLog({
             log_id: `LOG_${Date.now()}_${employeeId}`,
             actor_id: actorId,
             actor_role: actorId === employeeId ? 'EMPLOYEE' : 'HR',
-            action: key.startsWith('id_card') ? 'REMOVE_ID_CARD' : 'REMOVE_CONTRACT',
+            action: key.startsWith('id_card') ? 'REMOVE_ID_CARD' : key === 'health_cert' ? 'REMOVE_HEALTH_CERT' : 'REMOVE_CONTRACT',
             target_entity: 'NHAN_VIEN_MASTER',
             target_id: employeeId,
             details: `Gỡ ${docLabel}: ${old.file_name}`,
           } as any);
         } catch { /* non-fatal */ }
         return updated as EmployeeMaster;
+      },
+    });
+    return result;
+  }
+
+  /**
+   * HR cập nhật thông tin nhận ĐỒNG PHỤC (ngày nhận + số lượng).
+   *
+   * - 1 áo = 150.000đ (hoặc `unit_price` truyền vào), thành tiền = số lượng × đơn giá.
+   * - Số lượng 0 / ngày rỗng -> gỡ thông tin đồng phục của nhân viên.
+   * - Trả về cả bản ghi TRƯỚC ĐÓ để route Kế toán biết có phải dọn tiền ở
+   *   tháng cũ hay không (khi HR đổi sang tháng khác).
+   */
+  async saveUniform(
+    employeeId: string,
+    input: { received_date?: string; quantity?: number; unit_price?: number },
+    actorId: string,
+  ): Promise<{ employee: EmployeeMaster; previous: EmployeeUniformInfo | null; current: EmployeeUniformInfo | null }> {
+    const { result } = await singleWriterQueue.enqueue({
+      entityType: 'NHAN_VIEN_MASTER',
+      entityId: employeeId,
+      actorId,
+      execute: async () => {
+        const fresh = await this.repo.getEmployeeById(employeeId);
+        if (!fresh) throw new Error('EMPLOYEE_NOT_FOUND');
+        const previous = parseUniform((fresh as any).uniform);
+        const current = parseUniform({
+          received_date: input.received_date,
+          quantity: input.quantity,
+          unit_price: input.unit_price,
+          updated_at: new Date().toISOString(),
+          updated_by: String(actorId || ''),
+        });
+
+        if (!current) {
+          if (!previous) return { employee: fresh as EmployeeMaster, previous: null, current: null };
+          const updated = await this.repo.updateEmployee(employeeId, { uniform: undefined } as any, fresh.version);
+          try {
+            await this.repo.recordAuditLog({
+              log_id: `LOG_${Date.now()}_${employeeId}`,
+              actor_id: actorId,
+              actor_role: 'HR',
+              action: 'REMOVE_UNIFORM',
+              target_entity: 'NHAN_VIEN_MASTER',
+              target_id: employeeId,
+              details: `Gỡ thông tin đồng phục (trước đó ${previous.quantity} áo, ngày ${previous.received_date})`,
+            } as any);
+          } catch { /* non-fatal */ }
+          return { employee: updated as EmployeeMaster, previous, current: null };
+        }
+
+        const updated = await this.repo.updateEmployee(employeeId, { uniform: current } as any, fresh.version);
+        try {
+          await this.repo.recordAuditLog({
+            log_id: `LOG_${Date.now()}_${employeeId}`,
+            actor_id: actorId,
+            actor_role: 'HR',
+            action: 'UPDATE_UNIFORM',
+            target_entity: 'NHAN_VIEN_MASTER',
+            target_id: employeeId,
+            details: `Nhận đồng phục: ${current.quantity} áo × ${current.unit_price.toLocaleString('vi-VN')}đ = ${current.amount.toLocaleString('vi-VN')}đ (ngày ${current.received_date})`,
+          } as any);
+        } catch { /* non-fatal */ }
+        return { employee: updated as EmployeeMaster, previous, current };
       },
     });
     return result;
@@ -1050,7 +1120,7 @@ export class EmployeesService {
       return { checked: 0, synced: 0, failed: 0, skipped: 0, details: [] };
     }
     const employees = await this.repo.listEmployees().catch(() => []);
-    const keys: ContractKey[] = ['probation', 'official', 'id_card_front', 'id_card_back'];
+    const keys: ContractKey[] = ['probation', 'official', 'id_card_front', 'id_card_back', 'health_cert'];
     let checked = 0;
     let synced = 0;
     let failed = 0;

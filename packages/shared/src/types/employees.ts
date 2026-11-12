@@ -30,6 +30,12 @@ export interface EmployeeMaster {
    */
   contract_docs?: EmployeeContractDocs;
   /**
+   * Thông tin nhận ĐỒNG PHỤC do HR nhập ở tab Hồ Sơ Nhân Viên.
+   * 1 áo = 150.000đ; số tiền = số lượng × đơn giá, tự trừ vào lương
+   * của tháng chứa `received_date` (Finance thấy realtime).
+   */
+  uniform?: EmployeeUniformInfo;
+  /**
    * Cờ DANH SÁCH ĐEN: NV thử việc nghỉ giữa kỳ (chưa/đã đủ 7 ngày thử việc) bị
    * đưa vào danh sách đen -> khóa đăng nhập web app, ẩn khỏi Lịch làm việc,
    * NHƯNG giữ nguyên hồ sơ + điểm danh + công + phiếu lương để tính lương.
@@ -74,6 +80,30 @@ export interface EmployeeContractDocs {
   official?: EmployeeContractDocMeta;
   id_card_front?: EmployeeContractDocMeta;
   id_card_back?: EmployeeContractDocMeta;
+  /** Giấy khám sức khỏe (HR upload — đồng bộ Google Drive cùng hồ sơ NV). */
+  health_cert?: EmployeeContractDocMeta;
+}
+
+/**
+ * Thông tin nhận đồng phục của nhân viên.
+ *
+ * Quy định: 1 áo đồng phục = 150.000đ. HR nhập ngày nhận + số lượng; số tiền
+ * (`amount`) tự tính = quantity × unit_price và được trừ vào lương đúng tháng
+ * của `received_date` trên cổng Kế Toán.
+ */
+export interface EmployeeUniformInfo {
+  /** Ngày nhận đồng phục (YYYY-MM-DD) — quyết định tháng trừ tiền lương. */
+  received_date: string;
+  /** Số lượng áo đồng phục đã nhận. */
+  quantity: number;
+  /** Đơn giá mỗi áo (mặc định 150.000đ). */
+  unit_price: number;
+  /** Tổng tiền = quantity × unit_price. */
+  amount: number;
+  /** ISO timestamp lần cập nhật gần nhất. */
+  updated_at?: string;
+  /** ID admin/HR cập nhật gần nhất. */
+  updated_by?: string;
 }
 
 export interface EmployeeStageHistory {

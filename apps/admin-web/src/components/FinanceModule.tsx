@@ -1586,12 +1586,54 @@ function CalculateTab({ month, formula, setFormula, inputs, inputsLoading, allEm
     lcb: sumBy(inputs, 'luong_cb'), ot: sumBy(inputs, 'ot_extra'), bonus: sumBy(inputs, 'bonus_extra'),
     ung: sumBy(inputs, 'ung_luong'), kpi: sumBy(inputs, 'tru_kpi'), dp: sumBy(inputs, 'dong_phuc'),
   }), [inputs]);
+  // Đồng phục HR đã nhập cho đúng tháng đang chọn — hiển thị để Kế toán đối soát
+  // với cột "Trừ ĐP" (tiền được backend tự ghi vào lương theo ngày nhận).
+  const uniformRecords = useMemo(() => {
+    return (allEmployees || [])
+      .map((e: any) => {
+        const u = e?.uniform;
+        if (!u) return null;
+        const rd = String(u.received_date || '').slice(0, 10);
+        if (!rd || rd.slice(0, 7) !== month) return null;
+        const qty = Math.max(0, Math.floor(Number(u.quantity) || 0));
+        if (!qty) return null;
+        const unitPrice = Number(u.unit_price) || 150000;
+        return {
+          employee_id: e.employee_id,
+          name: e.full_name || e.employee_code || e.employee_id,
+          code: e.employee_code || '',
+          qty,
+          unitPrice,
+          amount: Number(u.amount) || qty * unitPrice,
+          received_date: rd,
+        };
+      })
+      .filter(Boolean) as any[];
+  }, [allEmployees, month]);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <TabHead step={4} title="Tính lương — Công thức & Nhập tay" desc={`Lưu công thức kỳ, nhập liệu tay từng NV, rồi bấm TÍNH LƯƠNG để sinh kỳ + phiếu. Kỳ ${periodLabel(month)}.`}>
         <SearchBox value={q} onChange={setQ} />
         <ColumnSettings tabKey="fin-calculate" defs={colDefs} value={colVis} onToggle={onToggleCol} onShowAll={() => onShowAllCols('fin-calculate')} saving={colVisSaving} />
       </TabHead>
+
+      {/* Đồng phục HR đã nhập trong tháng — tiền tự trừ vào cột "Trừ ĐP" */}
+      {uniformRecords.length > 0 && (
+        <div className="fin-card" style={{ border: '1.5px solid #FDBA74', background: '#FFF7ED' }}>
+          <CardHead
+            title={`Đồng phục tháng ${periodLabel(month)}`}
+            icon={<span style={{ fontSize: 14 }}>👕</span>}
+            sub={`${uniformRecords.length} NV đã nhận đồng phục — tiền tự động trừ vào cột "Trừ ĐP" bên dưới (realtime từ Hồ Sơ Nhân Viên)`}
+          />
+          <div style={{ padding: '10px 14px', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {uniformRecords.map((r) => (
+              <span key={r.employee_id} className="fin-chip-stat" style={{ borderColor: '#FED7AA', background: '#FFF', color: '#7C2D12' }}>
+                <b>{r.name}</b>{r.code ? ` (${r.code})` : ''} • {r.qty} áo × {fmt(r.unitPrice)} = <b style={{ color: '#B91C1C' }}>{fmt(r.amount)}</b> • {r.received_date.split('-').reverse().join('/')}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Nút tính lương — tạo kỳ + phiếu cho toàn bộ NV */}
       <div className="fin-card" style={{ border: '1.5px solid var(--fin-brand-line)', background: 'linear-gradient(120deg, #fff 0%, #fdf2f7 100%)' }}>

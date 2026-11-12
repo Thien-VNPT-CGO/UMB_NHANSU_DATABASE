@@ -12,7 +12,7 @@ import {
   parseContractDocs,
 } from '../src/utils/contracts.js';
 
-test('contractKeyOf nhận cả PROBATION/OFFICIAL, ID_CARD_FRONT/BACK và tiếng Việt, chặn loại lạ', () => {
+test('contractKeyOf nhận cả PROBATION/OFFICIAL, ID_CARD_FRONT/BACK, HEALTH_CERT và tiếng Việt, chặn loại lạ', () => {
   assert.equal(contractKeyOf('PROBATION'), 'probation');
   assert.equal(contractKeyOf('probation'), 'probation');
   assert.equal(contractKeyOf('THU_VIEC'), 'probation');
@@ -25,6 +25,10 @@ test('contractKeyOf nhận cả PROBATION/OFFICIAL, ID_CARD_FRONT/BACK và tiế
   assert.equal(contractKeyOf('ID_CARD_BACK'), 'id_card_back');
   assert.equal(contractKeyOf('CCCD_SAU'), 'id_card_back');
   assert.equal(contractKeyOf('MAT_SAU'), 'id_card_back');
+  assert.equal(contractKeyOf('HEALTH_CERT'), 'health_cert');
+  assert.equal(contractKeyOf('GIAY_KHAM_SUC_KHOE'), 'health_cert');
+  assert.equal(contractKeyOf('KHAM_SUC_KHOE'), 'health_cert');
+  assert.equal(contractKeyOf('HEALTH'), 'health_cert');
   assert.equal(contractKeyOf('hop-dong-khac'), null);
   assert.equal(contractKeyOf(''), null);
   assert.equal(contractKeyOf(null), null);
@@ -32,6 +36,7 @@ test('contractKeyOf nhận cả PROBATION/OFFICIAL, ID_CARD_FRONT/BACK và tiế
   assert.equal(contractKindOfKey('official'), 'OFFICIAL');
   assert.equal(contractKindOfKey('id_card_front'), 'ID_CARD_FRONT');
   assert.equal(contractKindOfKey('id_card_back'), 'ID_CARD_BACK');
+  assert.equal(contractKindOfKey('health_cert'), 'HEALTH_CERT');
 });
 
 test('parseContractDocs đọc object, chuỗi JSON và dữ liệu hỏng an toàn', () => {
@@ -82,6 +87,15 @@ test('contractDocsCell ghi JSON gọn, rỗng khi chưa có hợp đồng', () =
   assert.equal(JSON.parse(cell).probation.storage, 'DISK');
   // Đi vòng qua parse vẫn giữ nguyên dữ liệu.
   assert.equal(parseContractDocs(cell).probation?.file_name, 'ThuViec.pdf');
+  // Giấy khám sức khỏe cũng được lưu trong cùng ô JSON.
+  const healthCell = contractDocsCell({
+    health_cert: {
+      drive_id: 'D2', file_name: 'GKSK.pdf', mime_type: 'application/pdf', size: 50,
+      uploaded_at: '2026-10-02T00:00:00.000Z', uploaded_by: 'HR1', storage: 'DRIVE',
+    },
+  });
+  assert.equal(JSON.parse(healthCell).health_cert.file_name, 'GKSK.pdf');
+  assert.equal(parseContractDocs(healthCell).health_cert?.drive_id, 'D2');
 });
 
 test('contractFileInfo nhận đúng MIME và đoán theo đuôi file', () => {
@@ -123,17 +137,19 @@ test('giới hạn dung lượng hợp đồng là 6MB', () => {
   assert.equal(CONTRACT_MAX_BYTES, 6 * 1024 * 1024);
 });
 
-test('tên file trên Drive cố định đúng 4 tài liệu hồ sơ nhân viên', () => {
+test('tên file trên Drive cố định đúng 5 tài liệu hồ sơ nhân viên', () => {
   assert.deepEqual(CONTRACT_DRIVE_BASE_NAME, {
     probation: 'Hợp đồng thử việc',
     official: 'Hợp đồng chính thức',
     id_card_front: 'CCCD mặt trước',
     id_card_back: 'CCCD mặt sau',
+    health_cert: 'Giấy khám sức khỏe',
   });
   assert.equal(contractDriveFileName('probation', 'pdf'), 'Hợp đồng thử việc.pdf');
   assert.equal(contractDriveFileName('official', '.docx'), 'Hợp đồng chính thức.docx');
   assert.equal(contractDriveFileName('id_card_front', 'jpg'), 'CCCD mặt trước.jpg');
   assert.equal(contractDriveFileName('id_card_back', ''), 'CCCD mặt sau.bin');
+  assert.equal(contractDriveFileName('health_cert', 'pdf'), 'Giấy khám sức khỏe.pdf');
 });
 
 test('syncPendingContractsToDrive tự động upload hợp đồng DISK lên Drive và cập nhật metadata', async () => {
