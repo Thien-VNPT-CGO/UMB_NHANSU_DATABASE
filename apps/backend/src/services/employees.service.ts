@@ -1074,6 +1074,24 @@ export class EmployeesService {
         return { employee: updated as EmployeeMaster, previous, current };
       },
     });
+
+    // Đẩy RIÊNG tab NHAN_VIEN_MASTER lên Sheet ngay (cùng pattern Danh sách đen):
+    // full-sync nền bị hoãn tới ~3 phút và có thể thất bại, nên nếu không đẩy ngay
+    // thì cột "Đồng Phục (JSON)" (size L/XL) còn là bản cũ trên Sheet — backend
+    // restart/pull trước lúc push sẽ thấy dữ liệu cũ. Bộ nhớ + socket vẫn trả lời
+    // tức thì, chỉ chờ tối đa 20s cho lượt ghi Sheet.
+    try {
+      const sync = (this.repo as any).syncService;
+      if (sync?.pushEmployeesTab) {
+        await Promise.race([
+          sync.pushEmployeesTab((this.repo as any).fallbackAdapter || this.repo),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('PUSH_UNIFORM_TIMEOUT')), 20_000)),
+        ]);
+      }
+    } catch (e: any) {
+      // Rớt mạng/quota: full-sync nền (đã hẹn trong adapter.updateEmployee) sẽ thử lại.
+      console.warn('[employeesService] Đẩy Sheet sau khi lưu đồng phục thất bại:', e?.message || e);
+    }
     return result;
   }
 
