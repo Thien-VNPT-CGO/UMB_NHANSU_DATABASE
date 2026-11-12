@@ -3954,13 +3954,26 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
   // tự trừ vào lương đúng tháng của ngày nhận.
   const UNIFORM_PRICE = 150000;
   const [uniformDate, setUniformDate] = useState('');
-  const [uniformL, setUniformL] = useState('1');
+  // Mặc định 0: không tự điền 1 áo khi NV chưa có dữ liệu (tránh lưu nhầm 150.000đ).
+  const [uniformL, setUniformL] = useState('0');
   const [uniformXL, setUniformXL] = useState('0');
   const [uniformBusy, setUniformBusy] = useState(false);
   const currentUniform: any = (() => {
     const e = (allEmployees || []).find((x: any) => x.employee_id === profileEmpId);
     return e?.uniform || null;
   })();
+  // Khóa đồng bộ gồm CẢ size L/XL: trước đây thiếu sizes nên khi HR chỉ đổi
+  // phân bổ size (tổng số áo không đổi) form không cập nhật lại sau realtime/reload.
+  const uniformSyncKey = currentUniform
+    ? [
+        currentUniform.received_date || '',
+        currentUniform.quantity ?? '',
+        currentUniform.unit_price ?? '',
+        currentUniform.sizes?.L ?? '',
+        currentUniform.sizes?.XL ?? '',
+        currentUniform.updated_at || '',
+      ].join('|')
+    : '';
   useEffect(() => {
     if (!profileEmpId) return;
     setUniformDate(currentUniform?.received_date ? String(currentUniform.received_date).slice(0, 10) : '');
@@ -3971,11 +3984,11 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
     } else {
       // Bản ghi cũ chưa phân size: giữ nguyên tổng số áo ở size L để không mất số lượng.
       const legacyQty = Math.max(0, Math.floor(Number(currentUniform?.quantity) || 0));
-      setUniformL(String(legacyQty || 1));
+      setUniformL(String(legacyQty));
       setUniformXL('0');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profileEmpId, currentUniform?.received_date, currentUniform?.quantity, currentUniform?.unit_price]);
+  }, [profileEmpId, uniformSyncKey]);
   // Thu nhập tạm tính realtime theo điểm danh hằng ngày (mục Lương & Thu nhập trong Hồ Sơ).
   const [profIncome, setProfIncome] = useState<any>(null);
   const [profIncomeBusy, setProfIncomeBusy] = useState(false);
@@ -16457,9 +16470,22 @@ export const RoleViews: React.FC<RoleViewsProps> = ({
             sizes: { L: qty > 0 ? sizeL : 0, XL: qty > 0 ? sizeXL : 0 },
           }),
         });
-        const savedAmount = Number(r?.uniform?.amount ?? amount) || 0;
+        const savedUniform: any = r?.uniform || null;
+        const savedAmount = Number(savedUniform?.amount ?? amount) || 0;
+        // Đồng bộ ngay form theo dữ liệu server trả về (không chờ vòng reload),
+        // để reload/realtime sau đó luôn hiển thị đúng size đã lưu.
+        if (savedUniform) {
+          setUniformDate(String(savedUniform.received_date || '').slice(0, 10));
+          const sz = savedUniform.sizes;
+          setUniformL(String(Math.max(0, Math.floor(Number(sz ? sz.L : savedUniform.quantity) || 0))));
+          setUniformXL(String(Math.max(0, Math.floor(Number(sz ? sz.XL : 0) || 0))));
+        } else {
+          setUniformDate('');
+          setUniformL('0');
+          setUniformXL('0');
+        }
         showToast(qty > 0
-          ? `✓ Đã lưu ${qty} áo${sizeText} đồng phục (${savedAmount.toLocaleString('vi-VN')}đ) vào lương tháng ${String(r?.uniform?.received_date || uniformDate).slice(0, 7)}!`
+          ? `✓ Đã lưu ${qty} áo${sizeText} đồng phục (${savedAmount.toLocaleString('vi-VN')}đ) vào lương tháng ${String(savedUniform?.received_date || uniformDate).slice(0, 7)}!`
           : '✓ Đã gỡ thông tin đồng phục.');
         if (onRefreshData) await onRefreshData();
         if (onPushSheets) await onPushSheets();
