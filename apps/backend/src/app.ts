@@ -63,11 +63,9 @@ import { TestsService } from './services/tests.service.js';
 import { AttendanceService } from './services/attendance.service.js';
 import { OfficeService } from './services/office.service.js';
 import { SalaryConfigService } from './services/salary-config.service.js';
-import { LiveMapService, canonicalBranchId, distanceMeters, vnDateOf } from './services/live-map.service.js';
+import { canonicalBranchId } from './utils/geo.js';
 import { renderRsvpPage as rsvpPage, escapeHtml, type RsvpIconName } from './services/rsvp-page.js';
 import { publicProposalSlots, PROPOSAL_WORK_WINDOWS } from './services/interview-slots.service.js';
-import { LiveLocationStore } from './services/live-location.store.js';
-import { appendGpsTrail, readGpsTrail, summarizeGpsTrail, listGpsTrailDates } from './services/gps-trail.store.js';
 import { ShiftReRegService } from './services/shift-rereg.service.js';
 import { readAttendancePhotoDisk, readAdjustmentPhotoDisk, readAvatarPhotoDisk, hasAdjustmentPhotoDisk } from './services/photo-disk.store.js';
 import { getDriveBackupScheduler, type BackupKind } from './services/backup-drive.service.js';
@@ -348,8 +346,6 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   officeService.migrateAttendanceToStandardEvents()
     .then((n) => console.log(`[office] mirrored attendance events: ${n}`))
     .catch(err => console.warn('[office] attendance mirror migration failed:', err?.message || err));
-  const liveLocationStore = new LiveLocationStore();
-  const liveMapService = new LiveMapService(adapter, liveLocationStore);
 
   /**
    * KHỐI VĂN PHÒNG: tự động xếp lịch hành chính (T2–T6 08:00–17:00, T7 08:00–12:00,
@@ -410,61 +406,6 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   }, 20_000);
   setTimeout(() => clearInterval(officeBackfillTimer), 10 * 60_000); // dừng sau 10 phút
 
-  // C2: phát hiện di chuyển bất khả thi giữa 2 ping live (teleport / nghi giả lập GPS).
-  const suspiciousCooldown = new Map<string, number>();
-  const detectSuspiciousMovement = async (
-    prev: { latitude: number; longitude: number; at_ms: number } | null,
-    cur: { employee_id: string; latitude: number; longitude: number; at: string },
-    branchScope: string,
-  ) => {
-    try {
-      if (!prev || !prev.at_ms) return;
-      const dtMs = Date.parse(cur.at) - prev.at_ms;
-      // Chỉ xét khi đủ gần nhau về thời gian (5s–10 phút) để tránh lệch đồng hồ.
-      if (!Number.isFinite(dtMs) || dtMs < 5_000 || dtMs > 10 * 60_000) return;
-      const dist = distanceMeters(prev.latitude, prev.longitude, cur.latitude, cur.longitude);
-      if (dist < 300) return; // gần thì bỏ qua (nhiễu GPS)
-      const speedKmh = (dist / 1000) / (dtMs / 3_600_000);
-      if (speedKmh <= 150) return; // dưới ngưỡng di chuyển bất khả thi
-      const now = Date.now();
-      if (now - (suspiciousCooldown.get(cur.employee_id) || 0) < 10 * 60_000) return;
-      suspiciousCooldown.set(cur.employee_id, now);
-
-      const message = `Nghi vấn GPS: di chuyển ${Math.round(dist)} m trong ${Math.round(dtMs / 1000)}s (~${Math.round(speedKmh)} km/h) — có thể chỉnh sửa vị trí.`;
-      const alert = {
-        type: 'GPS_SUSPICIOUS',
-        severity: 'WARNING',
-        employee_id: cur.employee_id,
-        employee_code: '',
-        full_name: '',
-        branch_id: branchScope && branchScope !== '*' ? branchScope : '',
-        branch_name: '',
-        latitude: cur.latitude,
-        longitude: cur.longitude,
-        at: cur.at,
-        message,
-      };
-      try {
-        const io = app.get('io');
-        if (io) {
-          io.to('role:ADMIN').to('role:HR').to('role:FINANCE').to('role:DIRECTOR')
-            .emit('live-map:alert', alert);
-        }
-      } catch { /* non-fatal */ }
-      console.warn(`[live-map-alert] GPS_SUSPICIOUS ${cur.employee_id}: ${message}`);
-      try {
-        await adapter.recordAuditLog({
-          log_id: `LMAP_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-          actor_id: 'SYSTEM',
-          actor_role: 'SYSTEM',
-          action: 'LIVE_MAP_GPS_SUSPICIOUS',
-          target_entity: 'NHAN_VIEN_MASTER',
-          target_id: cur.employee_id,
-          details: message,
-        });
-      } catch { /* best-effort */ }
-    } catch { /* best-effort */ }
-  };
   // BETA — Phiếu "Cập Nhật Ca Làm" tự phục vụ của nhân viên (bot chấm tự động,
   // đồng bộ Sheet tab PHIEU_NV_CAP_NHAT_CA tự tạo nếu thiếu).
   const shiftReRegService = new ShiftReRegService(
@@ -671,10 +612,6 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
   const entityForPath = (p: string): string | null => {
     if (p === '/ping' || p === '/health' || p === '/version') return null;
     if (p.startsWith('/auth/')) return null; // login đã có broadcast riêng khi cần
-    // GPS ping ~60s/lần của từng NV: chỉ phát live-location:update theo chi nhánh
-    // (đã scoped trong route). KHÔNG bắn data:updated toàn hệ thống — trước đây
-    // mỗi ping khiến toàn bộ nhân viên đang online tải lại dữ liệu.
-    if (p.startsWith('/attendance/live-location')) return null;
     // Các route này đã tự gọi broadcastUpdate sau khi ghi thành công (kèm dữ liệu
     // chi tiết: employeeId/event) — middleware bắn thêm sẽ gây reload trùng.
     if (p === '/attendance/checkin' || p === '/attendance/checkout' || p === '/attendance/adjustments') return null;
@@ -4669,214 +4606,6 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
     }
   });
 
-  // Bản đồ giám sát nhân viên realtime (Admin/HR/Kế toán): trạng thái ca + GPS
-  // lần chấm công gần nhất + toạ độ cửa hàng đã cấu hình ở tab Chi nhánh.
-  app.get('/admin/live-map', authMiddleware, requireRole(['DIRECTOR', 'ADMIN', 'HR', 'FINANCE']), async (_req, res) => {
-    try {
-      const snapshot = await liveMapService.getSnapshot();
-      res.json(snapshot);
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // Bản đồ thu gọn trên CỔNG NHÂN VIÊN: chỉ đồng nghiệp cùng chi nhánh, tài khoản
-  // bị khóa không xuất hiện. Ẩn bớt thông tin nhạy cảm (khoảng cách/sai số GPS).
-  app.get('/employee/live-map', authMiddleware, requireRole(['EMPLOYEE']), async (req: AuthenticatedRequest, res) => {
-    try {
-      const employeeId = req.user?.employeeId;
-      if (!employeeId) return res.status(401).json({ error: 'UNAUTHORIZED' });
-      const me = await adapter.getEmployeeById(employeeId).catch(() => null);
-      if (!me) return res.status(404).json({ error: 'EMPLOYEE_NOT_FOUND' });
-      if ((me as any)?.account_locked === true || String((me as any)?.account_status || '').toUpperCase() === 'LOCKED') {
-        return res.status(403).json({ error: 'ACCOUNT_LOCKED' });
-      }
-      const branchId = String((me as any)?.default_branch_id || '').trim();
-      const snapshot = await liveMapService.getBranchSnapshot(branchId);
-      res.json({
-        ...snapshot,
-        me: employeeId,
-        employees: snapshot.employees.map(e => ({
-          employee_id: e.employee_id,
-          employee_code: e.employee_code,
-          full_name: e.full_name,
-          branch_id: e.branch_id,
-          branch_name: e.branch_name,
-          status: e.status,
-          status_label: e.status_label,
-          shifts: e.shifts,
-          primary_shift: e.primary_shift,
-          latitude: e.latitude,
-          longitude: e.longitude,
-          gps_source: e.gps_source,
-          radius_meters: e.radius_meters,
-          at_branch: e.at_branch,
-          last_gps_at: e.last_gps_at,
-          note: e.note,
-        })),
-      });
-    } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'LIVE_MAP_FAILED' });
-    }
-  });
-
-  // Cổng nhân viên gửi GPS trực tiếp (watchPosition) khi đang trong ca — bản đồ
-  // admin cập nhật vị trí realtime qua Socket.IO, không ghi Google Sheets.
-  app.post('/attendance/live-location', authMiddleware, requireRole(['EMPLOYEE']), async (req: AuthenticatedRequest, res) => {
-    try {
-      const employeeId = req.user?.employeeId;
-      if (!employeeId) return res.status(401).json({ error: 'UNAUTHORIZED' });
-      const body = req.body || {};
-      const latitude = Number(body.latitude);
-      const longitude = Number(body.longitude);
-      if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90
-        || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
-        return res.status(400).json({ error: 'INVALID_GPS_COORDINATES' });
-      }
-      const accuracy = Number(body.accuracy);
-      // Ping trực tiếp trước đó (còn hiệu lực) — dùng phát hiện di chuyển bất khả thi.
-      const prevLive = liveLocationStore.get(employeeId);
-      const ping = liveLocationStore.upsert({
-        employee_id: employeeId,
-        latitude,
-        longitude,
-        accuracy: Number.isFinite(accuracy) && accuracy >= 0 ? Math.round(accuracy) : undefined,
-        assignment_id: body.assignment_id ? String(body.assignment_id) : undefined,
-      });
-      const branchScope = String(req.user?.branchScope || '*').trim();
-
-      // Ghi VẾT hành trình (JSONL theo ngày, không đụng Google Sheets).
-      appendGpsTrail({
-        employee_id: employeeId,
-        latitude,
-        longitude,
-        accuracy: ping.accuracy,
-        assignment_id: ping.assignment_id,
-        branch_id: branchScope && branchScope !== '*' ? branchScope : undefined,
-        at: ping.at,
-        at_ms: Date.parse(ping.at),
-      });
-
-      try {
-        const io = app.get('io');
-        const payload = {
-          employee_id: ping.employee_id,
-          latitude: ping.latitude,
-          longitude: ping.longitude,
-          accuracy: ping.accuracy,
-          assignment_id: ping.assignment_id,
-          at: ping.at,
-        };
-        // Chỉ phát cho đồng nghiệp CÙNG CHI NHÁNH (room branch) + khối giám sát
-        // (ADMIN/HR/FINANCE/DIRECTOR). Không broadcast toàn hệ thống để tránh lộ
-        // vị trí của nhân viên chi nhánh khác trên cổng nhân viên.
-        if (io) {
-          if (!branchScope || branchScope === '*') {
-            io.emit('live-location:update', payload);
-          } else {
-            io.to(`branch:${branchScope}`)
-              .to('role:ADMIN')
-              .to('role:HR')
-              .to('role:FINANCE')
-              .to('role:DIRECTOR')
-              .emit('live-location:update', payload);
-          }
-        }
-      } catch { /* realtime lỗi không ảnh hưởng việc lưu vị trí */ }
-
-      // C2: phát hiện teleport / nghi giả lập (không chặn response).
-      void detectSuspiciousMovement(prevLive, ping, branchScope);
-
-      res.json({ ok: true, at: ping.at });
-    } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'LIVE_LOCATION_FAILED' });
-    }
-  });
-
-  // B1 — Lịch sử hành trình GPS của 1 NV trong 1 ngày (đọc vết JSONL trên đĩa).
-  app.get('/admin/live-map/trail', authMiddleware, requireRole(['DIRECTOR', 'ADMIN', 'HR', 'FINANCE']), async (req, res) => {
-    try {
-      const date = String((req.query as any).date || '').slice(0, 10);
-      const employeeId = String((req.query as any).employeeId || '').trim();
-      if (!employeeId) return res.status(400).json({ error: 'EMPLOYEE_ID_REQUIRED' });
-      const points = readGpsTrail(date, employeeId);
-      const branches = await adapter.getBranches().catch(() => [] as any[]);
-      const emp = await adapter.getEmployeeById(employeeId).catch(() => null);
-      const empBranch = canonicalBranchId((emp as any)?.default_branch_id);
-      const branch = (branches || []).find((b: any) => canonicalBranchId(b?.id || b?.branch_id) === empBranch);
-      const center = branch && Number.isFinite(Number((branch as any).latitude)) && Number.isFinite(Number((branch as any).longitude))
-        ? { lat: Number((branch as any).latitude), lng: Number((branch as any).longitude), radius: Number((branch as any).radius_meters) || 300 }
-        : undefined;
-      res.json({
-        date: date || undefined,
-        employee_id: employeeId,
-        employee_code: (emp as any)?.employee_code || '',
-        full_name: (emp as any)?.full_name || '',
-        branch_id: empBranch,
-        branch_name: (branch as any)?.name || empBranch,
-        center: center || null,
-        points,
-        summary: summarizeGpsTrail(points, center),
-      });
-    } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'TRAIL_FAILED' });
-    }
-  });
-
-  // B2 — Báo cáo thời gian trong/ngoài cửa hàng theo ngày (tổng hợp từ vết GPS).
-  app.get('/admin/live-map/location-report', authMiddleware, requireRole(['DIRECTOR', 'ADMIN', 'HR', 'FINANCE']), async (req, res) => {
-    try {
-      const date = String((req.query as any).date || '').slice(0, 10) || vnDateOf(new Date());
-      const points = readGpsTrail(date);
-      const [branches, employees] = await Promise.all([
-        adapter.getBranches().catch(() => [] as any[]),
-        adapter.listEmployees().catch(() => [] as any[]),
-      ]);
-      const branchById = new Map<string, any>();
-      for (const b of branches || []) branchById.set(canonicalBranchId((b as any)?.id || (b as any)?.branch_id), b);
-      const empById = new Map<string, any>();
-      for (const e of employees || []) empById.set(String((e as any)?.employee_id || ''), e);
-
-      const byEmp = new Map<string, any[]>();
-      for (const p of points) {
-        const arr = byEmp.get(p.employee_id) || [];
-        arr.push(p);
-        byEmp.set(p.employee_id, arr);
-      }
-      const rows = Array.from(byEmp.entries()).map(([empId, pts]) => {
-        const emp: any = empById.get(empId) || {};
-        const empBranch = canonicalBranchId(emp?.default_branch_id);
-        const branch: any = branchById.get(empBranch);
-        const center = branch && Number.isFinite(Number(branch.latitude)) && Number.isFinite(Number(branch.longitude))
-          ? { lat: Number(branch.latitude), lng: Number(branch.longitude), radius: Number(branch.radius_meters) || 300 }
-          : undefined;
-        return {
-          employee_id: empId,
-          employee_code: emp?.employee_code || empId,
-          full_name: emp?.full_name || '',
-          branch_id: empBranch,
-          branch_name: branch?.name || empBranch,
-          ...summarizeGpsTrail(pts, center),
-        };
-      });
-      rows.sort((a, b) => String(a.branch_id).localeCompare(String(b.branch_id))
-        || String(a.full_name).localeCompare(String(b.full_name), 'vi'));
-      res.json({ date, count: rows.length, rows });
-    } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'REPORT_FAILED' });
-    }
-  });
-
-  // Danh sách ngày đã có vết (mới nhất trước) — cho bộ chọn ngày ở bản đồ.
-  app.get('/admin/live-map/trail-dates', authMiddleware, requireRole(['DIRECTOR', 'ADMIN', 'HR', 'FINANCE']), async (_req, res) => {
-    try {
-      res.json({ dates: listGpsTrailDates().slice(0, 90) });
-    } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'TRAIL_DATES_FAILED' });
-    }
-  });
-
-
   app.get('/attendance/events', authMiddleware, validate({ query: attendanceEventsQuery }), async (req: AuthenticatedRequest, res) => {
     try {
       const role = req.user?.role;
@@ -8656,8 +8385,6 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
       autoScheduleService,
       testsService,
       attendanceService,
-      liveMapService,
-      liveLocationStore,
       payrollService,
       notificationsService,
       zaloService,

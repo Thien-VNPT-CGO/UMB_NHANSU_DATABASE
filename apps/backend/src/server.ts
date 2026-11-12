@@ -34,7 +34,6 @@ import { interviewNoShowTick, interviewReminderTick } from './services/interview
 import { interviewZaloReminderTick } from './services/interview-zalo-reminder.service.js';
 import { autoRemindersTick } from './services/auto-reminders.service.js';
 import { notifySystemAlert, startSystemAlertMonitor } from './services/system-alert.service.js';
-import { pruneGpsTrail } from './services/gps-trail.store.js';
 import {
   addDaysIso,
   runMonthlyBackup,
@@ -77,8 +76,6 @@ const io = new Server(server, {
 
 // Giám sát nền: Sheets mock/stale, hàng đợi ghi kẹt... (xem system-alert.service)
 let stopSystemAlerts: (() => void) | null = null;
-// Giám sát bản đồ GPS: cảnh báo rời cửa hàng / mất tín hiệu (xem live-map.service).
-let stopLiveMapMonitor: (() => void) | null = null;
 // Backup 4 tầng lên Drive (giờ/ngày/tuần/tháng) — PostgreSQL dùng dump JSONL,
 // Google Sheets dùng bản copy spreadsheet (xem services/sheets-backup.service).
 let backupScheduler: ReturnType<typeof getDriveBackupScheduler> | null = null;
@@ -86,47 +83,6 @@ let sheetsBackupScheduler: ReturnType<typeof getSheetsBackupScheduler> | null = 
 
 // Attach io to express app for route broadcasting
 app.set('io', io);
-
-// Cảnh báo bản đồ GPS: quét mỗi 60s, phát cảnh báo rời cửa hàng / mất tín hiệu
-// tới khối giám sát (ADMIN/HR/FINANCE/DIRECTOR) qua Socket.IO + ghi audit.
-const startLiveMapMonitor = (): (() => void) => {
-  let running = false;
-  const tick = async () => {
-    if (running) return;
-    running = true;
-    try {
-      const alerts = await services.liveMapService.evaluateAlerts();
-      for (const a of alerts) {
-        try {
-          io.to('role:ADMIN').to('role:HR').to('role:FINANCE').to('role:DIRECTOR')
-            .emit('live-map:alert', a);
-        } catch { /* realtime lỗi không ảnh hưởng */ }
-        console.log(`[live-map-alert] ${a.type} ${a.employee_code} ${a.full_name}: ${a.message}`);
-        try {
-          await adapter.recordAuditLog({
-            log_id: `LMAP_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-            actor_id: 'SYSTEM',
-            actor_role: 'SYSTEM',
-            action: `LIVE_MAP_${a.type}`,
-            target_entity: 'NHAN_VIEN_MASTER',
-            target_id: a.employee_id,
-            details: a.message,
-          });
-        } catch { /* audit best-effort */ }
-      }
-    } catch (err: any) {
-      console.warn('[live-map-alert] tick error:', err?.message || err);
-    } finally {
-      running = false;
-    }
-  };
-  // Chờ dữ liệu ổn định rồi quét mỗi 60s (unref để không giữ process sống).
-  const initial = setTimeout(tick, 60_000);
-  initial.unref?.();
-  const timer = setInterval(tick, 60_000);
-  timer.unref?.();
-  return () => { clearTimeout(initial); clearInterval(timer); };
-};
 
 // Tự chữa ca DRAFT lọt vào tuần ĐÃ phát hành (dữ liệu cũ, nhập Excel muộn, BOT xếp
 // lại, ca tạo tay sau publish): cả tuần đã publish thì mọi ca phải PUBLISHED —
@@ -304,17 +260,6 @@ server.listen(Number(PORT), '0.0.0.0', async () => {
     intervalMs: 5 * 60_000,
     initialDelayMs: 90_000,
   });
-
-  // Cảnh báo bản đồ GPS (rời cửa hàng / mất tín hiệu): quét mỗi 60s.
-  stopLiveMapMonitor = startLiveMapMonitor();
-
-  // Dọn vết GPS cũ hơn 60 ngày (chạy nền 6 giờ/lần, không giữ process sống).
-  {
-    const trailPruneTimer = setInterval(() => {
-      try { pruneGpsTrail(); } catch { /* best-effort */ }
-    }, 6 * 3_600_000);
-    trailPruneTimer.unref?.();
-  }
 
   // BACKUP DỮ LIỆU HỆ THỐNG LÊN GOOGLE DRIVE:
   //   - PostgreSQL: dump JSONL (giờ/ngày/tuần/tháng).
@@ -1331,9 +1276,6 @@ const gracefulShutdown = (signal: string) => {
   (async () => {
     try {
       stopSystemAlerts?.();
-    } catch { /* non-fatal */ }
-    try {
-      stopLiveMapMonitor?.();
     } catch { /* non-fatal */ }
     try {
       backupScheduler?.stop();

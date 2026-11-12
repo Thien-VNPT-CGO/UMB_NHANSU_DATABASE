@@ -47,13 +47,11 @@ import {
   VolumeX,
   PenTool,
   QrCode,
-  MapPin,
   KeyRound,
   Banknote,
   Ban,
 } from 'lucide-react';
 import { RoleViews } from './components/RoleViews';
-import { LiveMapView } from './components/LiveMapView';
 import { ChangePasswordView } from './components/ChangePasswordView';
 import { DirectorPayrollView } from './components/DirectorPayrollView';
 import { InternalWorkflowView } from './components/InternalWorkflowView';
@@ -130,15 +128,14 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
   DIRECTOR: [
     { id: 'director-payroll', label: '1. Duyệt phiếu lương', icon: FileSpreadsheet },
     { id: 'staff', label: '2. Nhân sự toàn hệ thống', icon: Users },
-    { id: 'live-map', label: '3. Bản đồ GPS', icon: MapPin },
-    { id: 'notify', label: '4. Thông báo', icon: Bell },
-    { id: 'hr-adjustments', label: '5. Duyệt bổ sung công', icon: FileText },
-    { id: 'company-policies', label: '6. Quy chế công ty', icon: Sliders },
-    { id: 'hr-profile', label: '7. Hồ sơ nhân viên', icon: IdCard },
-    { id: 'hr-schedule', label: '8. Lịch làm việc', icon: Calendar },
-    { id: 'internal-workflow', label: '9. Yêu cầu công việc nội bộ', icon: Send },
-    { id: 'office-approvals', label: '10. Duyệt Văn Phòng', icon: FileText },
-    { id: 'change-password', label: '11. Đổi mật khẩu', icon: KeyRound },
+    { id: 'notify', label: '3. Thông báo', icon: Bell },
+    { id: 'hr-adjustments', label: '4. Duyệt bổ sung công', icon: FileText },
+    { id: 'company-policies', label: '5. Quy chế công ty', icon: Sliders },
+    { id: 'hr-profile', label: '6. Hồ sơ nhân viên', icon: IdCard },
+    { id: 'hr-schedule', label: '7. Lịch làm việc', icon: Calendar },
+    { id: 'internal-workflow', label: '8. Yêu cầu công việc nội bộ', icon: Send },
+    { id: 'office-approvals', label: '9. Duyệt Văn Phòng', icon: FileText },
+    { id: 'change-password', label: '10. Đổi mật khẩu', icon: KeyRound },
   ],
   IT: [
     { id: 'internal-workflow', label: '1. Yêu cầu công việc nội bộ', icon: Send },
@@ -159,8 +156,7 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'maintenance', label: '12. Bảo trì', icon: Activity },
     { id: 'audit', label: '13. Nhật ký Audit', icon: FileCheck },
     { id: 'backup', label: '14. Sao lưu & Phục hồi', icon: HardDrive },
-    { id: 'live-map', label: '15. Bản đồ GPS', icon: MapPin },
-    { id: 'office-approvals', label: '16. Duyệt Văn Phòng', icon: FileText },
+    { id: 'office-approvals', label: '15. Duyệt Văn Phòng', icon: FileText },
     // GỠ khỏi cổng ADMIN (chỉ HR/Kế toán nghiệp vụ): "Chuyển ca hỗ trợ" (hr-support)
     // và "Duyệt đổi STK" (bank-changes). Toàn bộ chức năng KẾ TOÁN (kể cả
     // "Cấu hình Lương CB & Phụ cấp — theo Khối") chỉ hiển thị trên tài khoản FINANCE.
@@ -183,13 +179,12 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
     { id: 'hr-support', label: '10. Chuyển ca hỗ trợ CN', icon: Send },
     { id: 'hr-attendance', label: '11. Chấm công', icon: CheckCircle },
     { id: 'hr-adjustments', label: '12. Bổ sung/Điều chỉnh công', icon: FileText },
-    { id: 'live-map', label: '13. Bản đồ GPS Realtime', icon: MapPin },
-    { id: 'hr-tests', label: '14. TEST nhân viên', icon: FileCheck },
-    { id: 'hr-reports', label: '15. Báo cáo HR', icon: FileSpreadsheet },
-    { id: 'hr-notifications', label: '16. Thông báo HR', icon: Bell },
-    { id: 'activation', label: '17. PIN & TK Nhân viên', icon: FileCheck },
-    { id: 'bank-changes', label: '18. Duyệt đổi STK', icon: CreditCard },
-    { id: 'office-approvals', label: '19. Duyệt Văn Phòng', icon: FileText },
+    { id: 'hr-tests', label: '13. TEST nhân viên', icon: FileCheck },
+    { id: 'hr-reports', label: '14. Báo cáo HR', icon: FileSpreadsheet },
+    { id: 'hr-notifications', label: '15. Thông báo HR', icon: Bell },
+    { id: 'activation', label: '16. PIN & TK Nhân viên', icon: FileCheck },
+    { id: 'bank-changes', label: '17. Duyệt đổi STK', icon: CreditCard },
+    { id: 'office-approvals', label: '18. Duyệt Văn Phòng', icon: FileText },
   ],
   STORE: [
     { id: 'store-dashboard', label: '1. Dashboard Store', icon: Store },
@@ -207,7 +202,7 @@ export const ROLE_TABS: Record<string, Array<{ id: string; label: string; icon: 
    *  Đối soát công (2 tab) → Tính lương & bảng tháng (2 tab) → Kỳ lương →
    *  Phiếu lương (ký • gửi • IN) → Thanh toán; cuối là cài đặt (chữ ký / QR ngân hàng / duyệt STK / duyệt Văn Phòng).
    *  Đã gỡ tab trùng lắp: fin-details (gộp vào Phiếu lương), fin-deductions
-   *  (gộp vào Tính lương B3), live-map (không thuộc quy trình lương kế toán). */
+   *  (gộp vào Tính lương B3), live-map (đã gỡ khỏi hệ thống). */
   FINANCE: [
     { id: 'fin-dashboard', label: '1. Dashboard Tài Chính', icon: DollarSign },
     { id: 'fin-timesheet', label: '2. Đối Soát Công & Bảng Chấm Công', icon: FileSpreadsheet },
@@ -289,7 +284,6 @@ export const HR_TAB_GROUPS: RoleTabGroup[] = [
     tabs: [
       { id: 'hr-attendance', label: 'Chấm công', icon: CheckCircle },
       { id: 'hr-adjustments', label: 'Bổ sung / Điều chỉnh công', icon: FileText },
-      { id: 'live-map', label: 'Bản đồ GPS Realtime', icon: MapPin },
     ],
   },
   {
@@ -357,11 +351,10 @@ export const ADMIN_TAB_GROUPS: RoleTabGroup[] = [
   },
   {
     id: 'admin-group-work',
-    label: '4. Công & Bản đồ',
+    label: '4. Công',
     icon: CheckCircle,
     tabs: [
       { id: 'hr-adjustments', label: 'Bổ sung công', icon: FileText },
-      { id: 'live-map', label: 'Bản đồ GPS', icon: MapPin },
     ],
   },
   {
@@ -414,7 +407,6 @@ export const HR_ENTITY_BY_TAB: Record<string, string> = {
   'hr-tests': 'tests',
   'hr-adjustments': 'adjustments',
   'hr-attendance': 'attendance',
-  'live-map': 'attendance',
 };
 
 /** Báo các tab con tự tải dữ liệu riêng (CustomEvent) khi mở tab / mất socket. */
@@ -425,7 +417,7 @@ export function dispatchHrTabReload(tabId: string) {
     if (tabId === 'hr-adjustments') window.dispatchEvent(new CustomEvent('ubm:adjustments-reload'));
     if (tabId === 'hr-tests') window.dispatchEvent(new CustomEvent('ubm:tests-reload'));
     if (tabId === 'hr-swap' || tabId === 'hr-support') window.dispatchEvent(new CustomEvent('ubm:swaps-reload'));
-    if (tabId === 'hr-attendance' || tabId === 'live-map') window.dispatchEvent(new CustomEvent('ubm:attendance-reload'));
+    if (tabId === 'hr-attendance') window.dispatchEvent(new CustomEvent('ubm:attendance-reload'));
   } catch { /* non-fatal */ }
 }
 
@@ -435,7 +427,7 @@ export function dispatchHrTabReload(tabId: string) {
 export const FINANCE_TAB_ALIASES: Record<string, string> = {
   'fin-details': 'fin-payslips',       // Chi tiết lương NV đã gộp vào Phiếu lương
   'fin-deductions': 'fin-calculate',   // KPI/Ứng/ĐP nhập tay đã gộp vào Tính lương (B3)
-  'live-map': 'fin-dashboard',         // Bản đồ GPS không thuộc quy trình lương của Kế toán
+  'live-map': 'fin-dashboard',         // Tab cũ đã gỡ — chuyển về Dashboard
 };
 
 /** Tab ADMIN tách đầy đủ (mỗi tab 1 chức năng, nội dung giữ nguyên từng khối):
@@ -1804,20 +1796,12 @@ export function App() {
           (payload?.entity === 'config' && payload?.data?.area === 'branches') ||
           payload?.entity === 'branches';
         if (branchConfigChanged) {
-          // 1 event dùng chung: tab Chi nhánh tự tải lại (xem effect
-          // 'ubm:branches-reload'), bản đồ GPS vẽ lại ngay — không full-reload.
+          // 1 event dùng chung: tab Chi nhánh tự tải lại — không full-reload.
           try {
             window.dispatchEvent(new CustomEvent('ubm:branches-reload', { detail: payload?.data }));
           } catch { /* non-fatal */ }
-          try {
-            window.dispatchEvent(new CustomEvent('ubm:live-map-reload', { detail: payload?.data }));
-          } catch { /* non-fatal */ }
         } else if (payload?.entity === 'config' || configChangedOnSheet) {
           loadAllData(currentUser, true);
-          // Toạ độ cửa hàng/bán kính vừa đổi -> bản đồ GPS vẽ lại ngay.
-          try {
-            window.dispatchEvent(new CustomEvent('ubm:live-map-reload', { detail: payload?.data }));
-          } catch { /* non-fatal */ }
         } else {
           if (payload?.entity === 'shift-rereg' || payload?.entity === 'all') {
             fetchShiftReRegConfig();
@@ -1865,13 +1849,6 @@ export function App() {
             }
             try {
               window.dispatchEvent(new CustomEvent('ubm:schedule-reload', { detail: payload?.data }));
-            } catch { /* non-fatal */ }
-          }
-          // Bản đồ GPS: chấm công / xếp ca / bù công / hồ sơ nhân sự (đổi chi nhánh,
-          // khóa TK) đổi là marker + bộ lọc chi nhánh cập nhật ngay.
-          if (['attendance', 'schedules', 'employees', 'accounts', 'leaves', 'swaps', 'all'].includes(payload?.entity)) {
-            try {
-              window.dispatchEvent(new CustomEvent('ubm:live-map-reload', { detail: payload?.data }));
             } catch { /* non-fatal */ }
           }
           if (payload?.entity === 'adjustments' || payload?.entity === 'all') {
@@ -1986,8 +1963,6 @@ export function App() {
           const today = new Date().toISOString().slice(0, 10);
           setShifts(prev => (prev || []).filter((s: any) => !(String(s?.employee_id) === id && String(s?.date || '').slice(0, 10) >= today)));
         }
-        // Người bị khóa phải biến mất khỏi bản đồ giám sát ngay lập tức.
-        try { window.dispatchEvent(new CustomEvent('ubm:live-map-reload')); } catch { /* non-fatal */ }
         scheduleReload(currentUser, 'employees');
       });
       socket.on('employees:unlocked', (payload: any) => {
@@ -1997,7 +1972,6 @@ export function App() {
             e?.employee_id === id ? { ...e, account_locked: false, account_status: 'ACTIVE' } : e
           ));
         }
-        try { window.dispatchEvent(new CustomEvent('ubm:live-map-reload')); } catch { /* non-fatal */ }
         scheduleReload(currentUser, 'employees');
       });
       socket.on('attendance.recorded', () => {
@@ -2005,19 +1979,6 @@ export function App() {
           window.dispatchEvent(new CustomEvent('ubm:attendance-reload'));
         } catch { /* non-fatal */ }
         scheduleReload(currentUser, 'attendance');
-      });
-      // GPS trực tiếp từ cổng NV: chỉ đẩy toạ độ cho bản đồ, KHÔNG tải lại toàn
-      // bộ dữ liệu (tránh reload storm khi nhiều NV cùng gửi vị trí).
-      socket.on('live-location:update', (payload: any) => {
-        try {
-          window.dispatchEvent(new CustomEvent('ubm:live-location', { detail: payload }));
-        } catch { /* non-fatal */ }
-      });
-      // Cảnh báo bản đồ GPS (rời cửa hàng / mất tín hiệu) → bản đồ hiện banner + toast.
-      socket.on('live-map:alert', (payload: any) => {
-        try {
-          window.dispatchEvent(new CustomEvent('ubm:live-map-alert', { detail: payload }));
-        } catch { /* non-fatal */ }
       });
       socket.on('payroll.published', () => scheduleReload(currentUser, 'payslips'));
     } catch (err) {
@@ -2392,10 +2353,8 @@ export function App() {
         ? { ...b, ...(updated || {}), radius_meters: radius, gps_enabled: branchEditForm.gps_enabled }
         : b)));
       setBranchEditId(null);
-      // Bản đồ GPS vẽ lại ngay (không chờ socket) — toạ độ/bán kính/GPS vừa đổi.
-      try { window.dispatchEvent(new CustomEvent('ubm:live-map-reload', { detail: { area: 'branches', id: branchId } })); } catch { /* non-fatal */ }
       setSuccessMsg(branchEditForm.gps_enabled
-        ? 'Đã lưu toạ độ GPS cửa hàng — bản đồ giám sát cập nhật ngay.'
+        ? 'Đã lưu toạ độ GPS cửa hàng — dùng để kiểm tra điểm danh trong bán kính.'
         : 'Đã TẮT định vị GPS — nhân viên chi nhánh này điểm danh không cần GPS.');
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (err: any) {
@@ -6061,11 +6020,6 @@ export function App() {
           )}
 
 
-
-          {/* BẢN ĐỒ GPS NHÂN VIÊN REALTIME (ADMIN / HR / KẾ TOÁN / GIÁM ĐỐC) */}
-          {activeTab === 'live-map' && (
-            <LiveMapView currentUserRole={currentUser?.role} />
-          )}
 
           {/* ĐỔI MẬT KHẨU TÀI KHOẢN NỘI BỘ (GIÁM ĐỐC / IT) */}
           {activeTab === 'change-password' && <ChangePasswordView />}
