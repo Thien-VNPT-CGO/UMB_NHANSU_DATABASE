@@ -1087,6 +1087,23 @@ export function createApp(sheetsAdapter?: GoogleSheetsAdapter) {
         latitude: req.body.latitude, longitude: req.body.longitude, accuracy: req.body.accuracy,
       });
       ev.realtime.broadcastChargingStatus(t!.ticket_id, t!.shift_id, t!.driver_id, 'CHARGING');
+      // Trạm sạc không cố định: toạ độ vừa lưu vào điểm dừng CHARGING phải lên
+      // Live Map + tài xế ngay lập tức (realtime), không chờ vòng poll 10s.
+      const detail = await ev.shifts.getShiftDetail(t!.shift_id).catch(() => null);
+      const chargingStop = detail?.stops.find((s: any) => s.stop_type === 'CHARGING');
+      const stationPayload = {
+        ticketId: t!.ticket_id,
+        shiftId: t!.shift_id,
+        driverId: t!.driver_id,
+        routeId: detail?.shift?.route_id || '',
+        stopId: chargingStop?.stop_id,
+        stopName: chargingStop?.name,
+        latitude: Number(req.body.latitude),
+        longitude: Number(req.body.longitude),
+        address: t!.charging_station_name,
+      };
+      ev.realtime.broadcastChargingStationUpdated(stationPayload);
+      broadcastUpdate('ev', { area: 'charging-station', ...stationPayload });
       broadcastUpdate('evChargingTicket', { action: 'start', id: t!.ticket_id });
       res.json(t);
     } catch (err: any) { evErr(res, err); }

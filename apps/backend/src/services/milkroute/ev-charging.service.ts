@@ -134,6 +134,27 @@ export class EVChargingService {
       await this.repo.updateEVShift(ticket.shift_id, { status: 'CHARGING' });
     }
 
+    // TRẠM SẠC KHÔNG CỐ ĐỊNH: lưu toạ độ GPS tài xế gửi lúc bắt đầu sạc vào
+    // điểm dừng CHARGING của lộ trình, để các ca sau đi đúng trạm sạc này và
+    // Live Map hiển thị đúng vị trí. Lỗi cập nhật không được chặn việc sạc.
+    if (shift?.route_id) {
+      try {
+        const chargingStops = this.repo.evRouteStops.filter(
+          s => s.route_id === shift.route_id && s.stop_type === 'CHARGING',
+        );
+        for (const stop of chargingStops) {
+          await this.repo.updateEVRouteStop(stop.stop_id, {
+            latitude: location.latitude,
+            longitude: location.longitude,
+            address: stationName,
+            notes: `Toạ độ trạm sạc cập nhật tự động từ GPS tài xế lúc ${new Date().toISOString()}`,
+          });
+        }
+      } catch (err: any) {
+        console.warn('[EVCharging] Không lưu được toạ độ trạm sạc:', err?.message || err);
+      }
+    }
+
     return updated;
   }
 

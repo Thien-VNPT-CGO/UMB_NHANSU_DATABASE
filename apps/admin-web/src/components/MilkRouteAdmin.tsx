@@ -206,24 +206,41 @@ const LiveMapView: React.FC<{ showToast: (m: string) => void }> = ({ showToast }
     }
   }, []);
 
-  // Lộ trình + điểm dừng (không đổi thường xuyên — tải 1 lần).
-  useEffect(() => {
-    (async () => {
-      try {
-        const rs: any = await apiRequest('/ev/admin/routes');
-        const routeList = Array.isArray(rs) ? rs : [];
-        setRoutes(routeList);
-        const lists = await Promise.all(
-          routeList.map((r: any) =>
-            apiRequest(`/ev/admin/stops?routeId=${encodeURIComponent(r.route_id)}`).catch(() => []),
-          ),
-        );
-        setStops(lists.flat().filter(Boolean));
-      } catch {
-        /* thiếu lộ trình vẫn chạy được map (chỉ không vẽ tuyến) */
-      }
-    })();
+  // Lộ trình + điểm dừng. Tải lại khi có realtime báo toạ độ trạm sạc/chi nhánh
+  // thay đổi (trạm sạc không cố định — GPS tài xế gửi lúc bắt đầu sạc).
+  const loadRouteData = useCallback(async () => {
+    try {
+      const rs: any = await apiRequest('/ev/admin/routes');
+      const routeList = Array.isArray(rs) ? rs : [];
+      setRoutes(routeList);
+      const lists = await Promise.all(
+        routeList.map((r: any) =>
+          apiRequest(`/ev/admin/stops?routeId=${encodeURIComponent(r.route_id)}`).catch(() => []),
+        ),
+      );
+      setStops(lists.flat().filter(Boolean));
+    } catch {
+      /* thiếu lộ trình vẫn chạy được map (chỉ không vẽ tuyến) */
+    }
   }, []);
+
+  useEffect(() => {
+    void loadRouteData();
+  }, [loadRouteData]);
+
+  // Realtime: App.tsx phát 2 event khi backend báo chi nhánh/trạm sạc đổi toạ độ.
+  useEffect(() => {
+    const onStationOrBranchChanged = () => {
+      void loadRouteData();
+      void loadLive();
+    };
+    window.addEventListener('ubm:ev-station-reload', onStationOrBranchChanged);
+    window.addEventListener('ubm:branches-reload', onStationOrBranchChanged);
+    return () => {
+      window.removeEventListener('ubm:ev-station-reload', onStationOrBranchChanged);
+      window.removeEventListener('ubm:branches-reload', onStationOrBranchChanged);
+    };
+  }, [loadRouteData, loadLive]);
 
   // Khởi tạo map 1 lần.
   useEffect(() => {

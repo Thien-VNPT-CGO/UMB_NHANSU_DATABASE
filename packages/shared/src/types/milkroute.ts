@@ -288,6 +288,7 @@ export type EVWSEventType =
   | 'ev:live:sla:violated'
   | 'ev:live:charging:started'
   | 'ev:live:charging:ended'
+  | 'ev:live:charging-station'
   | 'ev:live:ticket:status'
   | 'ev:live:payroll:updated';
 

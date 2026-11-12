@@ -247,6 +247,37 @@ export class EVRealtimeService {
     }
   }
 
+  /**
+   * Broadcast toạ độ trạm sạc vừa được tài xế gửi lúc bắt đầu sạc.
+   * Trạm sạc không cố định → mỗi lần sạc có thể đổi vị trí; Admin Live Map và
+   * chính tài xế nhận ngay toạ độ mới (không chờ vòng poll).
+   */
+  broadcastChargingStationUpdated(data: {
+    ticketId: string;
+    shiftId: string;
+    driverId: string;
+    routeId: string;
+    stopId?: string;
+    stopName?: string;
+    latitude: number;
+    longitude: number;
+    address?: string;
+  }) {
+    if (!this.io) return;
+
+    const payload: EVWSPayload<any> = {
+      event: 'ev:live:charging-station',
+      timestamp: new Date().toISOString(),
+      data,
+      shiftId: data.shiftId,
+      driverId: data.driverId,
+    };
+
+    this.io.to('admin:live').emit('ev:live:charging-station', payload);
+    this.io.to(`driver:${data.driverId}`).emit('ev:live:charging-station', payload);
+    this.io.to(`shift:${data.shiftId}`).emit('ev:live:charging-station', payload);
+  }
+
   /** Broadcast payroll updated */
   broadcastPayrollUpdated(driverId: string, payrollData: any) {
     if (!this.io) return;
